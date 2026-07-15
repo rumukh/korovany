@@ -42,7 +42,7 @@ import {
   type SavedGame,
   type ShopItem,
   createHealthyBody,
-  createObjectives,
+  restoreObjectives,
 } from './game/types'
 
 interface Notice {
@@ -135,8 +135,7 @@ function createInitialView(faction: Faction, savedGame?: SavedGame): GameView {
     damage: savedGame?.damage ?? (faction === 'villain' ? 31 : faction === 'guard' ? 28 : 26),
     zone,
     body: savedGame ? { ...savedGame.body } : createHealthyBody(),
-    objectives:
-      savedGame?.objectives.map((objective) => ({ ...objective })) ?? createObjectives(faction),
+    objectives: restoreObjectives(faction, savedGame?.objectives),
     prompt: '',
     markers: [],
     squad: 0,
@@ -158,6 +157,8 @@ function StatusDot({ status }: { status: PartStatus }) {
 }
 
 function MiniMap({ view }: { view: GameView }) {
+  const hasObjectiveMarker = view.markers.some((marker) => marker.kind === 'objective')
+
   return (
     <section className="hud-card minimap-card" aria-label="Карта четырёх зон">
       <header className="hud-card-header">
@@ -194,7 +195,7 @@ function MiniMap({ view }: { view: GameView }) {
               left: `${((marker.x + 80) / 160) * 100}%`,
               top: `${((marker.z + 80) / 160) * 100}%`,
             }}
-            title={marker.kind}
+            title={marker.label ?? marker.kind}
           />
         ))}
       </div>
@@ -208,6 +209,11 @@ function MiniMap({ view }: { view: GameView }) {
         <span>
           <i className="legend-dot caravan" /> корован
         </span>
+        {hasObjectiveMarker ? (
+          <span>
+            <i className="legend-dot objective" /> сдача добычи
+          </span>
+        ) : null}
       </div>
     </section>
   )
@@ -215,6 +221,10 @@ function MiniMap({ view }: { view: GameView }) {
 
 function ObjectiveList({ view }: { view: GameView }) {
   const completed = view.objectives.filter((objective) => objective.done).length
+  const raidDone = view.objectives.some((objective) => objective.id === 'raid' && objective.done)
+  const guards = view.objectives.find((objective) => objective.id === 'guards')
+  const lootTurnInReady = raidDone && Boolean(guards?.done)
+
   return (
     <section className="hud-card objectives-card">
       <header className="hud-card-header">
@@ -227,28 +237,45 @@ function ObjectiveList({ view }: { view: GameView }) {
         </span>
       </header>
       <div className="objective-list">
-        {view.objectives.map((objective) => (
-          <div className={`objective ${objective.done ? 'done' : ''}`} key={objective.id}>
-            <span className="objective-check">
-              {objective.done ? <Check aria-hidden="true" /> : <span />}
-            </span>
-            <div>
-              <p>{objective.text}</p>
-              {objective.target && !objective.done ? (
-                <div className="objective-progress">
-                  <i
-                    style={{
-                      width: `${((objective.progress ?? 0) / objective.target) * 100}%`,
-                    }}
-                  />
-                  <span>
-                    {objective.progress ?? 0}/{objective.target}
-                  </span>
-                </div>
-              ) : null}
+        {view.objectives.map((objective) => {
+          const isLootTurnIn = view.faction === 'elf' && objective.id === 'home' && !objective.done
+          const lootHint = !isLootTurnIn
+            ? null
+            : !raidDone
+              ? 'Сначала ограбьте корован'
+              : !guards?.done
+                ? `Добыча при вас • охрана ${guards?.progress ?? 0}/${guards?.target ?? 4}`
+                : 'Цель отмечена на карте • нажмите E у маяка'
+
+          return (
+            <div
+              className={`objective ${objective.done ? 'done' : ''} ${
+                isLootTurnIn && lootTurnInReady ? 'ready' : ''
+              }`}
+              key={objective.id}
+            >
+              <span className="objective-check">
+                {objective.done ? <Check aria-hidden="true" /> : <span />}
+              </span>
+              <div>
+                <p>{objective.text}</p>
+                {lootHint ? <span className="objective-hint">{lootHint}</span> : null}
+                {objective.target && !objective.done ? (
+                  <div className="objective-progress">
+                    <i
+                      style={{
+                        width: `${((objective.progress ?? 0) / objective.target) * 100}%`,
+                      }}
+                    />
+                    <span>
+                      {objective.progress ?? 0}/{objective.target}
+                    </span>
+                  </div>
+                ) : null}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </section>
   )

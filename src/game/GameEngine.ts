@@ -13,7 +13,7 @@ import {
   type ShopItem,
   type ZoneId,
   createHealthyBody,
-  createObjectives,
+  restoreObjectives,
 } from './types'
 
 type ActorRole = 'soldier' | 'scout' | 'commander' | 'minion'
@@ -177,6 +177,7 @@ export class GameEngine {
   private readonly caravan: THREE.Group
   private readonly vendorPosition = new THREE.Vector3(-46, 0, -39)
   private readonly commanderPosition = new THREE.Vector3(40, 0, -36)
+  private readonly elfHomePosition = new THREE.Vector3(-48, 0, 43)
   private objectives: Objective[]
   private body: BodyState
   private health = 100
@@ -230,7 +231,7 @@ export class GameEngine {
     this.faction = faction
     this.musicMuted = musicMuted
     this.palette = createPalette()
-    this.objectives = savedGame?.objectives.map((objective) => ({ ...objective })) ?? createObjectives(faction)
+    this.objectives = restoreObjectives(faction, savedGame?.objectives)
     this.body = savedGame ? { ...savedGame.body } : createHealthyBody()
     this.health = savedGame?.health ?? 100
     this.stamina = savedGame?.stamina ?? 100
@@ -383,13 +384,31 @@ export class GameEngine {
     this.createHitParticles(target.mesh.position, target.faction)
     this.playSound('hit')
     if (Math.random() < 0.13) this.detachActorLimb(target)
-    if (target.hp <= 0) this.killActor(target, true)
+    if (target.hp <= 0) this.killActor(target, this.faction, true)
   }
 
   interact(): void {
     if (this.paused || this.ended) return
     this.resumeAudio()
     const playerPosition = this.player.position
+    if (
+      this.hasElfLoot() &&
+      playerPosition.distanceTo(this.elfHomePosition) < 6
+    ) {
+      if (!this.isObjectiveDone('guards')) {
+        const guards = this.objectives.find((objective) => objective.id === 'guards')
+        const remaining = Math.max(0, (guards?.target ?? 4) - (guards?.progress ?? 0))
+        this.callbacks.onNotice(
+          `Добыча при вас. Чтобы сдать её, одолейте ещё ${remaining} гвардейцев.`,
+          'warning',
+        )
+      } else {
+        this.completeObjective('home')
+      }
+      this.emitView(true)
+      return
+    }
+
     if (playerPosition.distanceTo(this.vendorPosition) < 6) {
       this.callbacks.onShop()
       return
@@ -428,7 +447,13 @@ export class GameEngine {
       this.caravanCooldown = 40
       this.caravanRobbedFlash = 1
       this.completeObjective('raid')
-      this.callbacks.onNotice('Ключевой игровой процесс достигнут: корован ограблен! +95 золота', 'success')
+      const lootGuidance = this.isObjectiveDone('guards')
+        ? 'Добыча при вас: сдайте её у зелёного маяка в лагере.'
+        : 'Добыча при вас: одолейте охрану и сдайте её у зелёного маяка в лагере.'
+      this.callbacks.onNotice(
+        `Корован ограблен! +95 золота. ${lootGuidance}`,
+        'success',
+      )
       this.playSound('coin')
       this.spawnAmbush()
       this.emitView(true)
@@ -760,7 +785,12 @@ export class GameEngine {
 
   private updatePrompt(): void {
     const position = this.player.position
-    if (position.distanceTo(this.vendorPosition) < 6) {
+    if (this.hasElfLoot() && position.distanceTo(this.elfHomePosition) < 6) {
+      const guards = this.objectives.find((objective) => objective.id === 'guards')
+      this.prompt = this.isObjectiveDone('guards')
+        ? '[E] Сдать добычу'
+        : `[E] Проверить добычу • охрана ${guards?.progress ?? 0}/${guards?.target ?? 4}`
+    } else if (position.distanceTo(this.vendorPosition) < 6) {
       this.prompt = '[E] Лавка лекаря и механика'
     } else if (
       this.faction === 'guard' &&
@@ -789,14 +819,6 @@ export class GameEngine {
     }
 
     if (
-      this.faction === 'elf' &&
-      currentZone === 'forest' &&
-      this.isObjectiveDone('raid') &&
-      this.isObjectiveDone('guards')
-    ) {
-      this.completeObjective('home')
-    }
-    if (
       this.faction === 'guard' &&
       currentZone === 'fort' &&
       this.isObjectiveDone('orders') &&
@@ -821,10 +843,10 @@ export class GameEngine {
     attacker.attackCooldown = 1.3
     target.hp -= attacker.role === 'commander' ? 18 : 13
     this.createHitParticles(target.mesh.position, target.faction)
-    if (target.hp <= 0) this.killActor(target, false)
+    if (target.hp <= 0) this.killActor(target, attacker.faction, false)
   }
 
-  private killActor(actor: Actor, playerKill: boolean): void {
+  private killActor(actor: Actor, killerFaction: Faction, directPlayerKill: boolean): void {
     if (!actor.alive) return
     actor.alive = false
     actor.mesh.rotation.z = actor.phase % 2 > 1 ? Math.PI / 2 : -Math.PI / 2
@@ -832,14 +854,20 @@ export class GameEngine {
     const weapon = actor.mesh.getObjectByName('weapon')
     if (weapon) weapon.rotation.x = 1.4
     this.playSound('down')
-    if (!playerKill) return
+
+    const objectiveAdvanced =
+      killerFaction === this.faction && this.creditFactionObjective(actor)
+    if (!directPlayerKill) {
+      if (objectiveAdvanced) {
+        this.callbacks.onNotice('Союзник победил врага. Счётчик задачи обновлён.', 'info')
+        this.emitView(true)
+      }
+      return
+    }
 
     this.kills += 1
     const reward = actor.role === 'commander' ? 55 : 12
     this.gold += reward
-    if (this.faction === 'elf' && actor.faction === 'guard') this.incrementObjective('guards')
-    if (this.faction === 'guard' && actor.faction !== 'guard') this.incrementObjective('defend')
-    if (this.faction === 'villain' && actor.role === 'commander') this.completeObjective('commander')
     this.callbacks.onNotice(
       actor.role === 'commander' ? 'Командир дворца повержен!' : `Враг повержен. +${reward} золота`,
       'success',
@@ -976,15 +1004,45 @@ export class GameEngine {
     return true
   }
 
-  private incrementObjective(id: string): void {
+  private incrementObjective(id: string): boolean {
     const objective = this.objectives.find((entry) => entry.id === id)
-    if (!objective || objective.done) return
+    if (!objective || objective.done) return false
     objective.progress = Math.min(objective.target ?? 1, (objective.progress ?? 0) + 1)
-    if (objective.progress >= (objective.target ?? 1)) this.completeObjective(id)
+    if (objective.progress >= (objective.target ?? 1)) {
+      const completed = this.completeObjective(id)
+      if (completed && this.faction === 'elf' && id === 'guards' && this.isObjectiveDone('raid')) {
+        this.callbacks.onNotice(
+          'Путь свободен. Сдайте добычу у зелёного маяка в эльфийском лагере — цель отмечена на карте.',
+          'info',
+        )
+      }
+    }
+    return true
   }
 
   private isObjectiveDone(id: string): boolean {
     return this.objectives.some((objective) => objective.id === id && objective.done)
+  }
+
+  private creditFactionObjective(actor: Actor): boolean {
+    if (this.faction === 'elf' && actor.faction === 'guard') {
+      return this.incrementObjective('guards')
+    }
+    if (this.faction === 'guard' && actor.faction !== 'guard') {
+      return this.incrementObjective('defend')
+    }
+    if (this.faction === 'villain' && actor.role === 'commander') {
+      return this.completeObjective('commander')
+    }
+    return false
+  }
+
+  private hasElfLoot(): boolean {
+    return (
+      this.faction === 'elf' &&
+      this.isObjectiveDone('raid') &&
+      !this.isObjectiveDone('home')
+    )
   }
 
   private endGame(result: 'victory' | 'defeat'): void {
@@ -1020,6 +1078,17 @@ export class GameEngine {
       { id: 'forest', x: -45, z: 42, kind: 'landmark' },
       { id: 'fort', x: 45, z: 44, kind: 'landmark' },
     ]
+    if (this.hasElfLoot()) {
+      markers.push({
+        id: 'loot-turn-in',
+        x: this.elfHomePosition.x,
+        z: this.elfHomePosition.z,
+        kind: 'objective',
+        label: this.isObjectiveDone('guards')
+          ? 'Сдать добычу'
+          : 'Лагерь эльфов: сдача добычи',
+      })
+    }
     for (const actor of this.actors) {
       if (!actor.alive) continue
       markers.push({

@@ -34,7 +34,8 @@ export interface MapMarker {
   id: string
   x: number
   z: number
-  kind: 'player' | 'ally' | 'enemy' | 'caravan' | 'landmark'
+  kind: 'player' | 'ally' | 'enemy' | 'caravan' | 'landmark' | 'objective'
+  label?: string
 }
 
 export interface GameView {
@@ -184,7 +185,7 @@ export function createObjectives(faction: Faction): Objective[] {
     return [
       { id: 'raid', text: 'Ограбить имперский корован', done: false },
       { id: 'guards', text: 'Победить дворцовую охрану', done: false, progress: 0, target: 4 },
-      { id: 'home', text: 'Вернуться с добычей в чащу', done: false },
+      { id: 'home', text: 'Сдать добычу у зелёного маяка в лагере', done: false },
     ]
   }
 
@@ -201,4 +202,30 @@ export function createObjectives(faction: Faction): Objective[] {
     { id: 'breach', text: 'Войти в имперский удел', done: false },
     { id: 'commander', text: 'Победить командира дворца', done: false },
   ]
+}
+
+export function restoreObjectives(
+  faction: Faction,
+  savedObjectives?: Objective[],
+): Objective[] {
+  const currentObjectives = createObjectives(faction)
+  if (!savedObjectives) return currentObjectives
+
+  return currentObjectives.map((objective) => {
+    const saved = savedObjectives.find((entry) => entry.id === objective.id)
+    if (!saved) return objective
+
+    const progress =
+      objective.target === undefined
+        ? undefined
+        : saved.done
+          ? objective.target
+          : Math.min(objective.target, Math.max(0, saved.progress ?? 0))
+
+    return {
+      ...objective,
+      done: saved.done,
+      ...(progress === undefined ? {} : { progress }),
+    }
+  })
 }
