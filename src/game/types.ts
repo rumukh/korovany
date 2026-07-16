@@ -1,10 +1,38 @@
 export type Faction = 'elf' | 'guard' | 'villain'
 
-export type ActorRole = 'soldier' | 'scout' | 'commander' | 'minion' | 'archer' | 'brute'
+export type ActorRole =
+  | 'soldier'
+  | 'scout'
+  | 'commander'
+  | 'minion'
+  | 'archer'
+  | 'brute'
+  | 'champion'
+  | 'captive'
 
 export type ZoneId = 'neutral' | 'palace' | 'forest' | 'fort'
 
 export type PartStatus = 'healthy' | 'wounded' | 'missing' | 'prosthetic'
+
+export type NoticeTone = 'info' | 'success' | 'warning' | 'danger'
+
+export type WorldEventKind =
+  | 'richCaravan'
+  | 'defendHome'
+  | 'champion'
+  | 'rescue'
+  | 'bounty'
+
+export interface WorldEventView {
+  id: string
+  kind: WorldEventKind
+  title: string
+  description: string
+  tone: NoticeTone
+  progress?: number
+  target?: number
+  timeRemaining?: number
+}
 
 export type BodyPart =
   | 'leftArm'
@@ -97,8 +125,9 @@ export interface MapMarker {
   id: string
   x: number
   z: number
-  kind: 'player' | 'ally' | 'enemy' | 'caravan' | 'landmark' | 'objective'
+  kind: 'player' | 'ally' | 'enemy' | 'caravan' | 'landmark' | 'objective' | 'event'
   label?: string
+  heading?: number
 }
 
 export interface GameView {
@@ -120,6 +149,7 @@ export interface GameView {
   paused: boolean
   caravanCooldown: number
   ability: AbilityView
+  activeEvent: WorldEventView | null
 }
 
 export interface SavedGame {
@@ -135,11 +165,13 @@ export interface SavedGame {
   objectives: Objective[]
   elapsed: number
   savedAt: string
+  eventCooldown?: number
+  championDamageBonus?: number
 }
 
 export interface GameCallbacks {
   onView: (view: GameView) => void
-  onNotice: (message: string, tone?: 'info' | 'success' | 'warning' | 'danger') => void
+  onNotice: (message: string, tone?: NoticeTone) => void
   onShop: () => void
   onPauseRequest: () => void
   onSaveRequest: () => void

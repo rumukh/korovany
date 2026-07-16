@@ -11,6 +11,7 @@ import {
   Heart,
   Home,
   Map as MapIcon,
+  Moon,
   MousePointer2,
   Pause,
   Play,
@@ -21,13 +22,14 @@ import {
   Skull,
   Sparkles,
   Sword,
+  Sun,
   Trees,
   UserRound,
   Volume2,
   VolumeX,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import './App.css'
 import { GameEngine } from './game/GameEngine'
 import {
@@ -41,6 +43,7 @@ import {
   type PartStatus,
   type SavedGame,
   type ShopItem,
+  type WorldEventView,
   createAbilityView,
   createHealthyBody,
   restoreObjectives,
@@ -52,7 +55,10 @@ interface Notice {
   tone: 'info' | 'success' | 'warning' | 'danger'
 }
 
+type Theme = 'dark' | 'light'
+
 const MUSIC_MUTED_KEY = 'korovany-music-muted'
+const THEME_KEY = 'korovany-theme'
 
 const factionIcons: Record<Faction, ReactNode> = {
   elf: <Trees aria-hidden="true" />,
@@ -97,6 +103,15 @@ function readMusicMuted(): boolean {
   } catch (error) {
     console.warn('Korovany: music preference could not be read.', error)
     return false
+  }
+}
+
+function readTheme(): Theme {
+  try {
+    return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'
+  } catch (error) {
+    console.warn('Korovany: theme preference could not be read.', error)
+    return 'dark'
   }
 }
 
@@ -153,6 +168,7 @@ function createInitialView(faction: Faction, savedGame?: SavedGame): GameView {
     paused: false,
     caravanCooldown: 0,
     ability: createAbilityView(faction, stamina, body),
+    activeEvent: null,
   }
 }
 
@@ -168,6 +184,7 @@ function StatusDot({ status }: { status: PartStatus }) {
 
 function MiniMap({ view }: { view: GameView }) {
   const hasObjectiveMarker = view.markers.some((marker) => marker.kind === 'objective')
+  const hasEventMarker = view.markers.some((marker) => marker.kind === 'event')
 
   return (
     <section className="hud-card minimap-card" aria-label="Карта четырёх зон">
@@ -206,7 +223,16 @@ function MiniMap({ view }: { view: GameView }) {
               top: `${((marker.z + 80) / 160) * 100}%`,
             }}
             title={marker.label ?? marker.kind}
-          />
+          >
+            {marker.kind === 'player' ? (
+              <span
+                className="player-heading"
+                style={{ transform: `rotate(${marker.heading ?? 0}rad)` }}
+              />
+            ) : marker.kind === 'event' ? (
+              <Sparkles aria-hidden="true" />
+            ) : null}
+          </span>
         ))}
       </div>
       <div className="map-legend">
@@ -222,6 +248,11 @@ function MiniMap({ view }: { view: GameView }) {
         {hasObjectiveMarker ? (
           <span>
             <i className="legend-dot objective" /> сдача добычи
+          </span>
+        ) : null}
+        {hasEventMarker ? (
+          <span>
+            <i className="legend-dot event" /> событие
           </span>
         ) : null}
       </div>
@@ -291,35 +322,90 @@ function ObjectiveList({ view }: { view: GameView }) {
   )
 }
 
-function BodyPanel({ view }: { view: GameView }) {
+function EventBanner({ event }: { event: WorldEventView | null }) {
+  if (!event) return null
+  const progress =
+    event.target && event.target > 0
+      ? Math.min(100, Math.max(0, ((event.progress ?? 0) / event.target) * 100))
+      : 0
+  const urgent = event.timeRemaining !== undefined && event.timeRemaining < 10
+
   return (
-    <section className="body-panel" aria-label="Состояние тела">
+    <section
+      className={`hud-card event-banner ${event.tone} ${urgent ? 'urgent' : ''}`}
+      aria-live="polite"
+    >
+      <header className="event-banner-header">
+        <span>
+          <Sparkles aria-hidden="true" />
+          Событие
+        </span>
+        {event.timeRemaining !== undefined ? (
+          <strong>
+            <Clock3 aria-hidden="true" />
+            {Math.ceil(event.timeRemaining)} с
+          </strong>
+        ) : null}
+      </header>
+      <h2>{event.title}</h2>
+      <p>{event.description}</p>
+      {event.target && event.target > 0 ? (
+        <div className="event-progress">
+          <i style={{ width: `${progress}%` }} />
+          <span>
+            {Math.floor(event.progress ?? 0)}/{event.target}
+          </span>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
+function BodyPanel({ view }: { view: GameView }) {
+  const healthy =
+    view.body.bleeding <= 0 && bodyParts.every((part) => view.body[part.id] === 'healthy')
+
+  return (
+    <section className={`body-panel ${healthy ? 'healthy' : ''}`} aria-label="Состояние тела">
       <div className="body-title">
         <Bone aria-hidden="true" />
         <span>Состояние</span>
-        {view.body.bleeding > 0 ? <strong>Кровотечение {view.body.bleeding.toFixed(1)}</strong> : null}
+        {healthy ? (
+          <strong className="body-healthy">
+            <Check aria-hidden="true" />
+            Всё цело
+          </strong>
+        ) : view.body.bleeding > 0 ? (
+          <strong>Кровотечение {view.body.bleeding.toFixed(1)}</strong>
+        ) : null}
       </div>
-      <div className="body-parts">
-        {bodyParts.map((part) => (
-          <div className="body-part" key={part.id} title={part.label}>
-            {part.icon}
-            <span>{part.short}</span>
-            <StatusDot status={view.body[part.id]} />
-          </div>
-        ))}
-      </div>
+      {!healthy ? (
+        <div className="body-parts">
+          {bodyParts.map((part) => (
+            <div className="body-part" key={part.id} title={part.label}>
+              {part.icon}
+              <span>{part.short}</span>
+              <StatusDot status={view.body[part.id]} />
+            </div>
+          ))}
+        </div>
+      ) : null}
     </section>
   )
 }
 
 function MenuScreen({
   savedGame,
+  theme,
   onStart,
   onLoad,
+  onToggleTheme,
 }: {
   savedGame: SavedGame | null
+  theme: Theme
   onStart: (faction: Faction) => void
   onLoad: () => void
+  onToggleTheme: () => void
 }) {
   return (
     <main className="menu-screen">
@@ -328,6 +414,16 @@ function MenuScreen({
         <div className="contour contour-b" />
         <div className="contour contour-c" />
       </div>
+      <button
+        className="theme-toggle secondary-button"
+        type="button"
+        onClick={onToggleTheme}
+        aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
+        title={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
+      >
+        {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+        <span>{theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}</span>
+      </button>
       <header className="hero-header">
         <div className="hackathon-tag">
           <Sparkles aria-hidden="true" />
@@ -354,6 +450,11 @@ function MenuScreen({
             const info = FACTION_INFO[faction]
             return (
               <article className={`faction-card ${faction}`} key={faction}>
+                <div className="faction-scenery" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </div>
                 <div className="faction-icon">{factionIcons[faction]}</div>
                 <span className="faction-subtitle">{info.subtitle}</span>
                 <h3>{info.name}</h3>
@@ -680,6 +781,7 @@ function GameScreen({
   musicMuted: boolean
   onToggleMusic: () => void
 }) {
+  const [controlsDismissed, setControlsDismissed] = useState(false)
   const info = FACTION_INFO[view.faction]
   const eyeLoss =
     view.body.leftEye === 'missing' ? 'left' : view.body.rightEye === 'missing' ? 'right' : null
@@ -703,6 +805,22 @@ function GameScreen({
       : view.ability.cooldown > 0
         ? `${view.ability.cooldown.toFixed(1)} с`
         : 'Недоступно'
+
+  useEffect(() => {
+    let hideTimer: number | undefined
+    const dismissAfterMovement = (event: KeyboardEvent) => {
+      if (!['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) {
+        return
+      }
+      window.removeEventListener('keydown', dismissAfterMovement)
+      hideTimer = window.setTimeout(() => setControlsDismissed(true), 1800)
+    }
+    window.addEventListener('keydown', dismissAfterMovement)
+    return () => {
+      window.removeEventListener('keydown', dismissAfterMovement)
+      if (hideTimer !== undefined) window.clearTimeout(hideTimer)
+    }
+  }, [])
 
   const touchHold = (code: string) => ({
     onPointerDown: () => onInput(code, true),
@@ -790,6 +908,7 @@ function GameScreen({
           </div>
         </div>
         <ObjectiveList view={view} />
+        <EventBanner event={view.activeEvent} />
       </div>
 
       <div className="notice-stack" aria-live="polite">
@@ -824,7 +943,10 @@ function GameScreen({
 
       <div className="bottom-hud">
         <BodyPanel view={view} />
-        <div className="control-ribbon">
+        <div
+          className={`control-ribbon ${controlsDismissed ? 'dismissed' : ''}`}
+          aria-hidden={controlsDismissed}
+        >
           <span>
             <kbd>WASD</kbd> идти
           </span>
@@ -932,6 +1054,7 @@ function App() {
   const [shopOpen, setShopOpen] = useState(false)
   const [endResult, setEndResult] = useState<'victory' | 'defeat' | null>(null)
   const [musicMuted, setMusicMuted] = useState(() => readMusicMuted())
+  const [theme, setTheme] = useState<Theme>(() => readTheme())
   const [runId, setRunId] = useState(0)
   const worldRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<GameEngine | null>(null)
@@ -948,6 +1071,15 @@ function App() {
     },
     [],
   )
+
+  useLayoutEffect(() => {
+    document.documentElement.dataset.theme = theme
+    try {
+      localStorage.setItem(THEME_KEY, theme)
+    } catch (error) {
+      console.warn('Korovany: theme preference could not be saved.', error)
+    }
+  }, [theme])
 
   useEffect(() => {
     if (screen !== 'game' || !worldRef.current) return
@@ -1034,10 +1166,12 @@ function App() {
     return (
       <MenuScreen
         savedGame={savedGame}
+        theme={theme}
         onStart={(selectedFaction) => startGame(selectedFaction)}
         onLoad={() => {
           if (savedGame) startGame(savedGame.faction, savedGame)
         }}
+        onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
       />
     )
   }

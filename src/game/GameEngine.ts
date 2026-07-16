@@ -10,14 +10,25 @@ import {
   type GameCallbacks,
   type GameView,
   type MapMarker,
+  type NoticeTone,
   type Objective,
   type SavedGame,
   type ShopItem,
+  type WorldEventKind,
   type ZoneId,
   createAbilityView,
   createHealthyBody,
   restoreObjectives,
 } from './types'
+
+type ActorAiMode = 'normal' | 'captive' | 'attackEventProp'
+
+interface EventPropTarget {
+  object: THREE.Object3D
+  hp: number
+  maxHp: number
+  position: THREE.Vector3
+}
 
 interface Actor {
   id: string
@@ -38,6 +49,51 @@ interface Actor {
   retreatTimer: number
   reinforcementTimer: number
   reinforcementsCalled: number
+  objectiveEligible: boolean
+  squadEligible: boolean
+  aiMode: ActorAiMode
+  eventOwnerId: string | null
+  eventPropTarget: EventPropTarget | null
+  ignoredTargetId: string | null
+  healthBar: THREE.Sprite
+  healthBarCanvas: HTMLCanvasElement
+  healthBarTexture: THREE.CanvasTexture
+  healthBarVisibleUntil: number
+}
+
+interface ActorSpawnOptions {
+  objectiveEligible?: boolean
+  squadEligible?: boolean
+  aiMode?: ActorAiMode
+  eventOwnerId?: string | null
+  eventPropTarget?: EventPropTarget | null
+  ignoredTargetId?: string | null
+}
+
+interface ActorKillContext {
+  killerFaction: Faction
+  directPlayerKill: boolean
+}
+
+interface WorldEvent {
+  id: string
+  kind: WorldEventKind
+  state: 'active' | 'succeeded' | 'failed'
+  title: string
+  description: string
+  tone: NoticeTone
+  timer: number | null
+  progress: number
+  target: number
+  markerId: string
+  markerPos: THREE.Vector3
+  ownedActorIds: string[]
+  ownedProps: THREE.Object3D[]
+  update?(delta: number): void
+  onKill?(actor: Actor, context: ActorKillContext): void
+  onInteract?(): boolean
+  getPrompt?(): string | null
+  cleanup(): void
 }
 
 interface Palette {
@@ -55,12 +111,30 @@ interface Palette {
   warning: THREE.Color
   link: THREE.Color
   accentFg: THREE.Color
+  worldSky: THREE.Color
+  worldHorizon: THREE.Color
+  worldFog: THREE.Color
+  worldAmbientGround: THREE.Color
+  worldSun: THREE.Color
+  worldNeutralGround: THREE.Color
+  worldPalaceGround: THREE.Color
+  worldForestGround: THREE.Color
+  worldFortGround: THREE.Color
+}
+
+interface FoliageOccluder {
+  root: THREE.LOD
+  material: THREE.MeshStandardMaterial
+  radius: number
+  centerY: number
 }
 
 interface Particle {
   mesh: THREE.Mesh
   velocity: THREE.Vector3
   life: number
+  eventId?: string
+  mode?: 'smoke'
 }
 
 interface Projectile {
@@ -84,6 +158,11 @@ interface ProjectileHit {
 const WORLD_HALF = 78
 const PLAYER_HEIGHT = 0
 const MAX_ACTORS = 25
+const FIRST_EVENT_AT = 50
+const EVENT_COOLDOWN_MIN = 60
+const EVENT_COOLDOWN_MAX = 90
+const EVENT_RETRY = 10
+const CHAMPION_DAMAGE_CAP = 18
 const BOW_DAMAGE = 18
 const BOW_MIN_DAMAGE = 10
 const BOW_RANGE = 30
@@ -112,6 +191,37 @@ const COMMANDER_REINFORCEMENT_INTERVAL = 25
 const COMMANDER_REINFORCEMENT_LIMIT = 4
 const BRUTE_FRONTAL_DAMAGE_MULTIPLIER = 0.5
 const BRUTE_FRONT_DOT = 0.2
+
+const EVENT_WEIGHTS: Record<Faction, Record<WorldEventKind, number>> = {
+  elf: {
+    richCaravan: 5,
+    defendHome: 1,
+    champion: 2,
+    rescue: 3,
+    bounty: 2,
+  },
+  guard: {
+    richCaravan: 1,
+    defendHome: 5,
+    champion: 2,
+    rescue: 3,
+    bounty: 3,
+  },
+  villain: {
+    richCaravan: 2,
+    defendHome: 1,
+    champion: 5,
+    rescue: 2,
+    bounty: 3,
+  },
+}
+
+const EVENT_REQUIRED_SLOTS: Record<Exclude<WorldEventKind, 'bounty'>, number> = {
+  richCaravan: 3,
+  defendHome: 4,
+  champion: 1,
+  rescue: 3,
+}
 
 const MUSIC_PATTERNS: Record<Faction, readonly number[]> = {
   elf: [0, 4, 7, 12, 7, 4, 2, 4, 0, 4, 9, 12, 9, 4, 2, -1, 0, 4, 7, 11, 7, 4, 2, 4, 0, 5, 9, 12, 9, 5, 2, 4],
@@ -171,6 +281,15 @@ function createPalette(): Palette {
     warning: readCssColor('--cp-warning'),
     link: readCssColor('--cp-link'),
     accentFg: readCssColor('--cp-accent-fg'),
+    worldSky: readCssColor('--game-sky'),
+    worldHorizon: readCssColor('--game-horizon'),
+    worldFog: readCssColor('--game-fog'),
+    worldAmbientGround: readCssColor('--game-ambient-ground'),
+    worldSun: readCssColor('--game-sun'),
+    worldNeutralGround: readCssColor('--game-neutral-ground'),
+    worldPalaceGround: readCssColor('--game-palace-ground'),
+    worldForestGround: readCssColor('--game-forest-ground'),
+    worldFortGround: readCssColor('--game-fort-ground'),
   }
 }
 
@@ -226,6 +345,11 @@ export class GameEngine {
   private readonly generatedTextures = new Map<string, THREE.CanvasTexture>()
   private readonly clouds: Array<{ group: THREE.Group; speed: number }> = []
   private readonly flames: THREE.Mesh[] = []
+  private readonly villageHouses: THREE.Group[] = []
+  private readonly cameraRaycaster = new THREE.Raycaster()
+  private readonly cameraObstacles: THREE.Object3D[] = []
+  private readonly foliageOccluders: FoliageOccluder[] = []
+  private readonly eventRng = seededRandom((Date.now() % 2147483646) + 1)
   private readonly player: THREE.Group
   private readonly caravan: THREE.Group
   private readonly vendorPosition = new THREE.Vector3(-46, 0, -39)
@@ -256,6 +380,11 @@ export class GameEngine {
   private caravanDirection = 1
   private caravanCooldown = 0
   private caravanRobbedFlash = 0
+  private activeEvent: WorldEvent | null = null
+  private eventCooldown = FIRST_EVENT_AT
+  private championDamageBonus = 0
+  private eventSequence = 0
+  private actorSequence = 0
   private audioContext: AudioContext | null = null
   private musicGain: GainNode | null = null
   private musicNoiseBuffer: AudioBuffer | null = null
@@ -297,6 +426,12 @@ export class GameEngine {
     this.kills = savedGame?.kills ?? 0
     this.damage = savedGame?.damage ?? (faction === 'villain' ? 31 : faction === 'guard' ? 28 : 26)
     this.elapsed = savedGame?.elapsed ?? 0
+    this.eventCooldown =
+      savedGame?.eventCooldown ?? Math.max(0, FIRST_EVENT_AT - this.elapsed)
+    this.championDamageBonus = Math.min(
+      CHAMPION_DAMAGE_CAP,
+      Math.max(0, savedGame?.championDamageBonus ?? 0),
+    )
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
@@ -304,13 +439,13 @@ export class GameEngine {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.08
+    this.renderer.toneMappingExposure = 0.92
     this.renderer.domElement.className = 'game-canvas'
     this.renderer.domElement.setAttribute('aria-label', 'Трёхмерный игровой мир')
     this.container.appendChild(this.renderer.domElement)
 
-    this.scene.background = this.palette.bg
-    this.scene.fog = new THREE.Fog(this.palette.bg, 52, 138)
+    this.scene.background = this.palette.worldSky
+    this.scene.fog = new THREE.Fog(this.palette.worldFog, 48, 132)
     this.player = this.createCharacter(faction, true)
     const spawn = savedGame?.position ?? [FACTION_INFO[faction].spawn[0], PLAYER_HEIGHT, FACTION_INFO[faction].spawn[1]]
     this.player.position.set(spawn[0], spawn[1], spawn[2])
@@ -319,7 +454,9 @@ export class GameEngine {
     this.lastZone = zoneAt(this.player.position.x, this.player.position.z)
 
     this.setupLights()
+    const worldRootIndex = this.scene.children.length
     this.buildWorld()
+    this.collectCameraObstacles(this.scene.children.slice(worldRootIndex))
     this.caravan = this.createCaravan()
     this.scene.add(this.caravan)
     this.spawnPopulation()
@@ -359,6 +496,7 @@ export class GameEngine {
 
   destroy(): void {
     cancelAnimationFrame(this.frameHandle)
+    this.cancelActiveEvent()
     this.resizeObserver.disconnect()
     window.removeEventListener('keydown', this.boundKeyDown)
     window.removeEventListener('keyup', this.boundKeyUp)
@@ -381,6 +519,7 @@ export class GameEngine {
     })
     this.renderer.dispose()
     this.renderer.domElement.remove()
+    this.actors.forEach((actor) => actor.healthBarTexture.dispose())
     this.generatedTextures.forEach((texture) => texture.dispose())
     this.generatedTextures.clear()
     this.projectiles.length = 0
@@ -510,6 +649,10 @@ export class GameEngine {
   interact(): void {
     if (this.paused || this.ended) return
     this.resumeAudio()
+    if (this.activeEvent?.onInteract?.()) {
+      this.emitView(true)
+      return
+    }
     const playerPosition = this.player.position
     if (
       this.hasElfLoot() &&
@@ -643,6 +786,8 @@ export class GameEngine {
       objectives: this.objectives.map((objective) => ({ ...objective })),
       elapsed: this.elapsed,
       savedAt: new Date().toISOString(),
+      eventCooldown: this.activeEvent ? EVENT_COOLDOWN_MIN : this.eventCooldown,
+      championDamageBonus: this.championDamageBonus,
     }
     localStorage.setItem(SAVE_KEY, JSON.stringify(save))
     this.callbacks.onNotice('Игра сохранена. Корованы никуда не денутся.', 'success')
@@ -671,14 +816,15 @@ export class GameEngine {
     this.updateProjectiles(delta)
     this.updateParticles(delta)
     this.updateAtmosphere(delta)
-    this.updatePrompt()
-    this.updateMission()
 
     if (this.body.bleeding > 0) {
       this.health -= this.body.bleeding * delta
       if (Math.floor(this.elapsed * 2) % 10 === 0) this.createBleedParticle()
     }
     if (this.health <= 0) this.endGame('defeat')
+    this.updateMission()
+    this.updateEvents(delta)
+    this.updatePrompt()
     this.emitView(false)
   }
 
@@ -756,10 +902,16 @@ export class GameEngine {
 
   private updateActors(delta: number): void {
     for (const actor of this.actors) {
+      this.updateActorIndicators(actor)
       if (!actor.alive) continue
       actor.attackCooldown = Math.max(0, actor.attackCooldown - delta)
       actor.wanderTimer = Math.max(0, actor.wanderTimer - delta)
       actor.retreatTimer = Math.max(0, actor.retreatTimer - delta)
+      if (actor.aiMode === 'captive') {
+        actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+        this.animateCharacter(actor.mesh, actor.stride, 0)
+        continue
+      }
       if (actor.role === 'commander') this.updateCommander(actor, delta)
 
       const toPlayer = this.player.position.clone().sub(actor.mesh.position)
@@ -769,15 +921,29 @@ export class GameEngine {
       const facingDirection = new THREE.Vector3()
       let moving = false
       let targetActor: Actor | null = null
+      let targetEventProp: EventPropTarget | null = null
       let targetsPlayer = false
       let targetPosition: THREE.Vector3 | null = null
       const aggroRange = actor.role === 'archer' ? 18 : 15
 
-      if (hostile(actor.faction, this.faction) && playerDistance < aggroRange) {
+      if (
+        actor.aiMode === 'attackEventProp' &&
+        actor.eventPropTarget &&
+        actor.eventPropTarget.hp > 0
+      ) {
+        actor.targetId = null
+        targetEventProp = actor.eventPropTarget
+        targetPosition = targetEventProp.position
+      } else if (hostile(actor.faction, this.faction) && playerDistance < aggroRange) {
         actor.targetId = null
         targetsPlayer = true
         targetPosition = this.player.position
-      } else if (actor.faction === this.faction && this.squadFollowing && actor.role !== 'commander') {
+      } else if (
+        actor.faction === this.faction &&
+        actor.squadEligible &&
+        this.squadFollowing &&
+        actor.role !== 'commander'
+      ) {
         targetActor = this.findNearestEnemy(actor, actor.role === 'archer' ? 15 : 9)
         if (targetActor) {
           targetPosition = targetActor.mesh.position
@@ -825,7 +991,7 @@ export class GameEngine {
         const distance = offset.length()
         if (distance > 0.001) facingDirection.copy(offset).normalize()
 
-        if (actor.role === 'archer') {
+        if (actor.role === 'archer' && !targetEventProp) {
           if (distance < ARCHER_MIN_RANGE) {
             direction.copy(facingDirection).negate()
             moving = true
@@ -840,13 +1006,14 @@ export class GameEngine {
           direction.copy(facingDirection).negate()
           moving = true
         } else {
-          const stopDistance = targetsPlayer ? 2.55 : 2.45
+          const stopDistance = targetEventProp ? 3.4 : targetsPlayer ? 2.55 : 2.45
           if (distance > stopDistance) {
             direction.copy(facingDirection)
             moving = true
           } else if (actor.attackCooldown <= 0) {
             if (targetsPlayer) this.actorAttackPlayer(actor)
             else if (targetActor) this.actorAttackActor(actor, targetActor)
+            else if (targetEventProp) this.actorAttackEventProp(actor, targetEventProp)
           }
         }
       }
@@ -863,7 +1030,7 @@ export class GameEngine {
       if (moving && direction.lengthSq() > 0) {
         const speed =
           actor.speed *
-          (hostile(actor.faction, this.faction) && playerDistance < aggroRange ? 1.25 : 1) *
+          (targetsPlayer ? 1.25 : 1) *
           (this.hasCommanderAura(actor) ? COMMANDER_SPEED_MULTIPLIER : 1)
         direction.normalize()
         actor.mesh.position.addScaledVector(direction, speed * delta)
@@ -878,7 +1045,31 @@ export class GameEngine {
       actor.mesh.position.z = THREE.MathUtils.clamp(actor.mesh.position.z, -WORLD_HALF, WORLD_HALF)
       actor.stride = THREE.MathUtils.damp(actor.stride, desiredStride, 13, delta)
       this.animateCharacter(actor.mesh, actor.stride, 0)
+      if (actor.role === 'champion') {
+        const aura = actor.mesh.getObjectByName('champion-aura')
+        if (aura) {
+          const pulse = 1 + Math.sin(this.elapsed * 5 + actor.phase) * 0.12
+          aura.scale.setScalar(pulse)
+        }
+      }
     }
+  }
+
+  private updateActorIndicators(actor: Actor): void {
+    const playerDistance = actor.mesh.position.distanceTo(this.player.position)
+    const ring = actor.mesh.getObjectByName('faction-ring')
+    if (ring) ring.visible = actor.alive && playerDistance < 42
+
+    actor.healthBar.position.set(
+      actor.mesh.position.x,
+      actor.mesh.position.y + 3.65 * actor.mesh.scale.y,
+      actor.mesh.position.z,
+    )
+    actor.healthBar.visible =
+      actor.alive &&
+      hostile(actor.faction, this.faction) &&
+      playerDistance < 34 &&
+      this.elapsed < actor.healthBarVisibleUntil
   }
 
   private getAimDirection(): THREE.Vector3 {
@@ -1251,25 +1442,45 @@ export class GameEngine {
     for (let index = this.particles.length - 1; index >= 0; index -= 1) {
       const particle = this.particles[index]
       particle.life -= delta
-      particle.velocity.y -= delta * 9
+      if (particle.mode === 'smoke') {
+        particle.velocity.y += delta * 0.22
+      } else {
+        particle.velocity.y -= delta * 9
+      }
       particle.mesh.position.addScaledVector(particle.velocity, delta)
-      particle.mesh.rotation.x += delta * 4
-      particle.mesh.rotation.z += delta * 3
-      particle.mesh.scale.setScalar(Math.max(0.01, particle.life))
-      if (particle.life <= 0) {
-        this.scene.remove(particle.mesh)
-        particle.mesh.geometry.dispose()
+      particle.mesh.rotation.x += delta * (particle.mode === 'smoke' ? 0.5 : 4)
+      particle.mesh.rotation.z += delta * (particle.mode === 'smoke' ? 0.7 : 3)
+      if (particle.mode === 'smoke') {
+        particle.mesh.scale.multiplyScalar(1 + delta * 0.42)
         const material = particle.mesh.material
-        if (Array.isArray(material)) material.forEach((entry) => entry.dispose())
-        else material.dispose()
-        this.particles.splice(index, 1)
+        if (material instanceof THREE.MeshBasicMaterial) {
+          material.opacity = Math.min(0.42, Math.max(0, particle.life * 0.22))
+        }
+      } else {
+        particle.mesh.scale.setScalar(Math.max(0.01, particle.life))
+      }
+      if (particle.life <= 0) {
+        this.removeParticle(index)
       }
     }
   }
 
+  private removeParticle(index: number): void {
+    const particle = this.particles[index]
+    this.scene.remove(particle.mesh)
+    particle.mesh.geometry.dispose()
+    const material = particle.mesh.material
+    if (Array.isArray(material)) material.forEach((entry) => entry.dispose())
+    else material.dispose()
+    this.particles.splice(index, 1)
+  }
+
   private updatePrompt(): void {
     const position = this.player.position
-    if (this.hasElfLoot() && position.distanceTo(this.elfHomePosition) < 6) {
+    const eventPrompt = this.activeEvent?.getPrompt?.()
+    if (eventPrompt) {
+      this.prompt = eventPrompt
+    } else if (this.hasElfLoot() && position.distanceTo(this.elfHomePosition) < 6) {
       const guards = this.objectives.find((objective) => objective.id === 'guards')
       this.prompt = this.isObjectiveDone('guards')
         ? '[E] Сдать добычу'
@@ -1313,14 +1524,719 @@ export class GameEngine {
     if (this.objectives.every((objective) => objective.done)) this.endGame('victory')
   }
 
+  private updateEvents(delta: number): void {
+    if (this.ended) {
+      this.cancelActiveEvent()
+      return
+    }
+
+    const event = this.activeEvent
+    if (event) {
+      if (event.state === 'active') {
+        event.update?.(delta)
+        if (event.state === 'active' && event.timer !== null) {
+          event.timer = Math.max(0, event.timer - delta)
+          if (event.timer <= 0) event.state = 'failed'
+        }
+      }
+      if (event.state !== 'active') this.finishEvent(event.state === 'succeeded')
+      return
+    }
+
+    if (this.objectives.filter((objective) => !objective.done).length <= 1) return
+    this.eventCooldown = Math.max(0, this.eventCooldown - delta)
+    if (this.eventCooldown > 0) return
+    if (!this.startRandomEvent()) this.eventCooldown = EVENT_RETRY
+  }
+
+  private startRandomEvent(): boolean {
+    const eligibleKinds = this.getEligibleEventKinds()
+    if (eligibleKinds.length === 0) return false
+
+    const totalWeight = eligibleKinds.reduce(
+      (total, kind) => total + EVENT_WEIGHTS[this.faction][kind],
+      0,
+    )
+    let roll = this.eventRng() * totalWeight
+    let selected = eligibleKinds[eligibleKinds.length - 1]
+    for (const kind of eligibleKinds) {
+      roll -= EVENT_WEIGHTS[this.faction][kind]
+      if (roll <= 0) {
+        selected = kind
+        break
+      }
+    }
+
+    const event =
+      selected === 'richCaravan'
+        ? this.startRichCaravanEvent()
+        : selected === 'defendHome'
+          ? this.startDefendHomeEvent()
+          : selected === 'champion'
+            ? this.startChampionEvent()
+            : selected === 'rescue'
+              ? this.startRescueEvent()
+              : this.startBountyEvent()
+    if (!event) return false
+
+    this.activeEvent = event
+    this.callbacks.onNotice(`Событие: ${event.title}. ${event.description}`, event.tone)
+    this.playSound('event')
+    this.emitView(true)
+    return true
+  }
+
+  private getEligibleEventKinds(): WorldEventKind[] {
+    const kinds: WorldEventKind[] = [
+      'richCaravan',
+      'defendHome',
+      'champion',
+      'rescue',
+      'bounty',
+    ]
+    return kinds.filter((kind) => {
+      if (kind === 'bounty') {
+        return this.getEligibleBountyTargets().length > 0 || this.actors.length < MAX_ACTORS
+      }
+      if (kind === 'defendHome' && this.villageHouses.length === 0) return false
+      return this.actors.length + EVENT_REQUIRED_SLOTS[kind] <= MAX_ACTORS
+    })
+  }
+
+  private finishEvent(succeeded: boolean): void {
+    const event = this.activeEvent
+    if (!event) return
+
+    let message: string
+    if (succeeded) {
+      if (event.kind === 'richCaravan') {
+        this.gold += 180
+        message = 'Богатый корован ограблен, а погоня отстала. +180 золота.'
+      } else if (event.kind === 'defendHome') {
+        this.gold += 90
+        this.health = Math.min(100, this.health + 8)
+        message = 'Дом отстояли! +90 золота и +8 здоровья.'
+      } else if (event.kind === 'champion') {
+        this.gold += 120
+        const damageBonus = Math.min(
+          6,
+          Math.max(0, CHAMPION_DAMAGE_CAP - this.championDamageBonus),
+        )
+        this.championDamageBonus += damageBonus
+        this.damage += damageBonus
+        message =
+          damageBonus > 0
+            ? `Чемпион повержен! +120 золота и +${damageBonus} урона.`
+            : 'Чемпион повержен! +120 золота. Предел бонуса урона уже достигнут.'
+      } else if (event.kind === 'rescue') {
+        message = 'Пленник спасён и присоединился к вашему отряду.'
+      } else {
+        this.gold += 70
+        message = 'Награда за цель получена. +70 золота.'
+      }
+      this.callbacks.onNotice(message, 'success')
+      this.playSound('eventWin')
+    } else {
+      const failureMessages: Record<WorldEventKind, string> = {
+        richCaravan: 'Богатый корован ушёл вместе с добычей.',
+        defendHome: 'Дом не удалось защитить — огонь взял своё.',
+        champion: 'Чемпион скрылся.',
+        rescue: 'Пленника спасти не удалось.',
+        bounty: 'Срок награды истёк. Цель больше не отмечена.',
+      }
+      this.callbacks.onNotice(failureMessages[event.kind], 'danger')
+      this.playSound('eventFail')
+    }
+
+    event.cleanup()
+    this.activeEvent = null
+    this.eventCooldown =
+      EVENT_COOLDOWN_MIN +
+      this.eventRng() * (EVENT_COOLDOWN_MAX - EVENT_COOLDOWN_MIN)
+    this.emitView(true)
+  }
+
+  private cancelActiveEvent(): void {
+    if (!this.activeEvent) return
+    this.activeEvent.cleanup()
+    this.activeEvent = null
+  }
+
+  private createWorldEvent(config: Omit<WorldEvent, 'cleanup'>): WorldEvent {
+    let cleaned = false
+    const event: WorldEvent = {
+      ...config,
+      cleanup: () => {
+        if (cleaned) return
+        cleaned = true
+        this.removeEventParticles(event.id)
+        for (const actorId of [...event.ownedActorIds]) this.removeActorById(actorId)
+        event.ownedActorIds.length = 0
+        for (const prop of event.ownedProps) this.removeAndDisposeObject(prop)
+        event.ownedProps.length = 0
+      },
+    }
+    return event
+  }
+
+  private startRichCaravanEvent(): WorldEvent | null {
+    if (this.actors.length + EVENT_REQUIRED_SLOTS.richCaravan > MAX_ACTORS) return null
+
+    const id = this.nextEventId('richCaravan')
+    const caravan = this.createCaravan(true)
+    const roadX = this.pickEventRoadX()
+    caravan.position.set(roadX, 0, -23)
+    this.scene.add(caravan)
+
+    const enemyFaction = this.pickEventEnemyFaction()
+    const ownedActorIds: string[] = []
+    const escortOffsets: Array<[number, number]> = [
+      [-4.5, -4],
+      [0, 4.5],
+      [4.5, -4],
+    ]
+    escortOffsets.forEach(([x, z], index) => {
+      const escort = this.spawnActor(
+        enemyFaction,
+        index === 1 ? 'brute' : 'soldier',
+        THREE.MathUtils.clamp(roadX + x, -WORLD_HALF + 3, WORLD_HALF - 3),
+        -23 + z,
+        this.actors.length + index,
+        {
+          objectiveEligible: false,
+          squadEligible: false,
+          eventOwnerId: id,
+        },
+      )
+      ownedActorIds.push(escort.id)
+    })
+
+    let robbed = false
+    let robberyPoint: THREE.Vector3 | null = null
+    let direction = roadX > 0 ? -1 : 1
+    let event: WorldEvent
+    event = this.createWorldEvent({
+      id,
+      kind: 'richCaravan',
+      state: 'active',
+      title: 'Золотой корован',
+      description: 'Ограбьте обоз и оторвитесь от места налёта на 18 метров.',
+      tone: 'warning',
+      timer: 25,
+      progress: 0,
+      target: 18,
+      markerId: `${id}-marker`,
+      markerPos: caravan.position.clone(),
+      ownedActorIds,
+      ownedProps: [caravan],
+      update: (delta) => {
+        if (!robbed) {
+          caravan.position.x += direction * delta * 2.8
+          if (caravan.position.x > 58) direction = -1
+          if (caravan.position.x < -58) direction = 1
+          caravan.rotation.y = direction > 0 ? 0 : Math.PI
+          for (const wheel of caravan.getObjectsByProperty('name', 'wheel')) {
+            wheel.rotation.z -= delta * (2.8 / 0.9)
+          }
+          event.markerPos.copy(caravan.position)
+        }
+        escortOffsets.forEach(([x, z], index) => {
+          const escort = this.actors.find(
+            (actor) => actor.id === ownedActorIds[index] && actor.alive,
+          )
+          if (!escort) return
+          escort.home.set(caravan.position.x + x, 0, caravan.position.z + z)
+          if (
+            !escort.targetId &&
+            escort.mesh.position.distanceTo(this.player.position) >= 15
+          ) {
+            escort.wanderTarget.copy(escort.home)
+          }
+        })
+        if (!robbed) return
+        if (!robberyPoint) return
+        event.progress = Math.min(event.target, this.player.position.distanceTo(robberyPoint))
+        event.markerPos.copy(robberyPoint)
+        if (event.progress >= event.target) event.state = 'succeeded'
+      },
+      onInteract: () => {
+        if (this.player.position.distanceTo(caravan.position) >= 7) return false
+        if (!robbed) {
+          robbed = true
+          robberyPoint = this.player.position.clone()
+          event.description = 'Уходите от места налёта на 18 метров до конца отсчёта.'
+          event.markerPos.copy(robberyPoint)
+          const cargo = caravan.getObjectByName('cargo')
+          if (cargo instanceof THREE.Mesh) cargo.scale.y = 0.38
+          this.callbacks.onNotice('Добыча у вас. Теперь оторвитесь от погони!', 'warning')
+          this.playSound('coin')
+        }
+        return true
+      },
+      getPrompt: () =>
+        !robbed && this.player.position.distanceTo(caravan.position) < 7
+          ? '[E] Ограбить золотой корован'
+          : null,
+    })
+    return event
+  }
+
+  private startDefendHomeEvent(): WorldEvent | null {
+    if (
+      this.villageHouses.length === 0 ||
+      this.actors.length + EVENT_REQUIRED_SLOTS.defendHome > MAX_ACTORS
+    ) {
+      return null
+    }
+
+    const id = this.nextEventId('defendHome')
+    const house =
+      this.villageHouses[Math.floor(this.eventRng() * this.villageHouses.length)]
+    const target: EventPropTarget = {
+      object: house,
+      hp: 100,
+      maxHp: 100,
+      position: house.position.clone(),
+    }
+    const fire = this.createHouseFireEffect(target.position)
+    this.scene.add(fire)
+
+    const enemyFaction = this.pickEventEnemyFaction()
+    const ownedActorIds: string[] = []
+    for (let index = 0; index < 4; index += 1) {
+      const angle = (index / 4) * Math.PI * 2 + this.eventRng() * 0.45
+      const radius = 17 + this.eventRng() * 4
+      const attacker = this.spawnActor(
+        enemyFaction,
+        index === 3 ? 'brute' : 'soldier',
+        THREE.MathUtils.clamp(
+          target.position.x + Math.sin(angle) * radius,
+          -WORLD_HALF + 3,
+          WORLD_HALF - 3,
+        ),
+        THREE.MathUtils.clamp(
+          target.position.z + Math.cos(angle) * radius,
+          -WORLD_HALF + 3,
+          WORLD_HALF - 3,
+        ),
+        this.actors.length + index,
+        {
+          objectiveEligible: false,
+          squadEligible: false,
+          aiMode: 'attackEventProp',
+          eventOwnerId: id,
+          eventPropTarget: target,
+        },
+      )
+      ownedActorIds.push(attacker.id)
+    }
+
+    let smokeCooldown = 0
+    let event: WorldEvent
+    event = this.createWorldEvent({
+      id,
+      kind: 'defendHome',
+      state: 'active',
+      title: 'Дом в огне',
+      description: 'Уничтожьте четырёх налётчиков, пока дом ещё стоит.',
+      tone: 'danger',
+      timer: 45,
+      progress: 0,
+      target: 4,
+      markerId: `${id}-marker`,
+      markerPos: target.position.clone(),
+      ownedActorIds,
+      ownedProps: [fire],
+      update: (delta) => {
+        event.markerPos.copy(target.position)
+        event.description = `Уничтожьте налётчиков. Прочность дома: ${Math.ceil(target.hp)}/${target.maxHp}.`
+        smokeCooldown -= delta
+        if (smokeCooldown <= 0) {
+          smokeCooldown = 0.22 + this.eventRng() * 0.18
+          this.spawnSmokeParticle(target.position, id)
+        }
+        fire.children.forEach((child, index) => {
+          if (!(child instanceof THREE.Mesh)) return
+          const pulse = 1 + Math.sin(this.elapsed * 9 + index * 1.8) * 0.18
+          child.scale.setScalar(pulse)
+        })
+        if (target.hp <= 0) event.state = 'failed'
+      },
+      onKill: (actor) => {
+        if (!ownedActorIds.includes(actor.id)) return
+        event.progress = ownedActorIds.reduce((count, actorId) => {
+          const ownedActor = this.actors.find((candidate) => candidate.id === actorId)
+          return count + (ownedActor && !ownedActor.alive ? 1 : 0)
+        }, 0)
+        if (event.progress >= event.target && target.hp > 0) event.state = 'succeeded'
+      },
+    })
+    return event
+  }
+
+  private startChampionEvent(): WorldEvent | null {
+    if (this.actors.length + EVENT_REQUIRED_SLOTS.champion > MAX_ACTORS) return null
+
+    const id = this.nextEventId('champion')
+    const position = this.pickEventPosition()
+    const champion = this.spawnActor(
+      this.pickEventEnemyFaction(),
+      'champion',
+      position.x,
+      position.z,
+      this.actors.length,
+      {
+        objectiveEligible: false,
+        squadEligible: false,
+        eventOwnerId: id,
+      },
+    )
+    let event: WorldEvent
+    event = this.createWorldEvent({
+      id,
+      kind: 'champion',
+      state: 'active',
+      title: 'Странствующий чемпион',
+      description: 'Отыщите и победите элитного бойца.',
+      tone: 'warning',
+      timer: null,
+      progress: 0,
+      target: 1,
+      markerId: `${id}-marker`,
+      markerPos: champion.mesh.position.clone(),
+      ownedActorIds: [champion.id],
+      ownedProps: [],
+      update: () => {
+        event.markerPos.copy(champion.mesh.position)
+        event.progress = champion.alive ? 0 : 1
+      },
+      onKill: (actor) => {
+        if (actor.id !== champion.id) return
+        event.progress = 1
+        event.state = 'succeeded'
+      },
+    })
+    return event
+  }
+
+  private startRescueEvent(): WorldEvent | null {
+    if (this.actors.length + EVENT_REQUIRED_SLOTS.rescue > MAX_ACTORS) return null
+
+    const id = this.nextEventId('rescue')
+    const position = this.pickEventPosition()
+    const captive = this.spawnActor(
+      this.faction,
+      'captive',
+      position.x,
+      position.z,
+      this.actors.length,
+      {
+        objectiveEligible: false,
+        squadEligible: false,
+        aiMode: 'captive',
+        eventOwnerId: id,
+      },
+    )
+    const enemyFaction = this.pickEventEnemyFaction()
+    const guards = [
+      this.spawnActor(
+        enemyFaction,
+        'soldier',
+        position.x - 3.6,
+        position.z - 2.5,
+        this.actors.length,
+        {
+          objectiveEligible: false,
+          squadEligible: false,
+          eventOwnerId: id,
+          ignoredTargetId: captive.id,
+        },
+      ),
+      this.spawnActor(
+        enemyFaction,
+        'soldier',
+        position.x + 3.6,
+        position.z + 2.5,
+        this.actors.length + 1,
+        {
+          objectiveEligible: false,
+          squadEligible: false,
+          eventOwnerId: id,
+          ignoredTargetId: captive.id,
+        },
+      ),
+    ]
+    const guardIds = guards.map((guard) => guard.id)
+    const ownedActorIds = [captive.id, ...guardIds]
+    let event: WorldEvent
+    const rescueCaptive = (): void => {
+      if (!captive.alive || event.state !== 'active') return
+      const ownedIndex = ownedActorIds.indexOf(captive.id)
+      if (ownedIndex >= 0) ownedActorIds.splice(ownedIndex, 1)
+      captive.eventOwnerId = null
+      captive.aiMode = 'normal'
+      captive.squadEligible = true
+      captive.home.copy(captive.mesh.position)
+      captive.wanderTarget.copy(captive.mesh.position)
+      const weapon = captive.mesh.getObjectByName('weapon')
+      if (weapon) weapon.visible = true
+      event.state = 'succeeded'
+    }
+    event = this.createWorldEvent({
+      id,
+      kind: 'rescue',
+      state: 'active',
+      title: 'Пленник у дороги',
+      description: 'Убейте охрану или освободите живого пленника лично.',
+      tone: 'warning',
+      timer: null,
+      progress: 0,
+      target: 2,
+      markerId: `${id}-marker`,
+      markerPos: captive.mesh.position.clone(),
+      ownedActorIds,
+      ownedProps: [],
+      update: () => {
+        event.markerPos.copy(captive.mesh.position)
+      },
+      onKill: (actor) => {
+        if (event.state !== 'active') return
+        if (actor.id === captive.id) {
+          event.state = 'failed'
+          return
+        }
+        if (!guardIds.includes(actor.id)) return
+        event.progress = guardIds.reduce((count, guardId) => {
+          const guard = this.actors.find((candidate) => candidate.id === guardId)
+          return count + (guard && !guard.alive ? 1 : 0)
+        }, 0)
+        if (event.progress >= event.target) rescueCaptive()
+      },
+      onInteract: () => {
+        if (this.player.position.distanceTo(captive.mesh.position) >= 5.5) return false
+        rescueCaptive()
+        return true
+      },
+      getPrompt: () =>
+        captive.alive && this.player.position.distanceTo(captive.mesh.position) < 5.5
+          ? '[E] Освободить пленника'
+          : null,
+    })
+    return event
+  }
+
+  private startBountyEvent(): WorldEvent | null {
+    const id = this.nextEventId('bounty')
+    const candidates = this.getEligibleBountyTargets()
+    let spawned = false
+    let target =
+      candidates.length > 0
+        ? candidates[Math.floor(this.eventRng() * candidates.length)]
+        : null
+    if (!target) {
+      if (this.actors.length >= MAX_ACTORS) return null
+      const position = this.pickEventPosition()
+      target = this.spawnActor(
+        this.pickEventEnemyFaction(),
+        'soldier',
+        position.x,
+        position.z,
+        this.actors.length,
+        {
+          objectiveEligible: false,
+          squadEligible: false,
+          eventOwnerId: id,
+        },
+      )
+      spawned = true
+    }
+
+    const bountyTarget = target
+    let event: WorldEvent
+    event = this.createWorldEvent({
+      id,
+      kind: 'bounty',
+      state: 'active',
+      title: 'Награда за голову',
+      description: 'Уничтожьте отмеченную цель за 40 секунд.',
+      tone: 'info',
+      timer: 40,
+      progress: 0,
+      target: 1,
+      markerId: `${id}-marker`,
+      markerPos: bountyTarget.mesh.position.clone(),
+      ownedActorIds: spawned ? [bountyTarget.id] : [],
+      ownedProps: [],
+      update: () => {
+        event.markerPos.copy(bountyTarget.mesh.position)
+        event.progress = bountyTarget.alive ? 0 : 1
+      },
+      onKill: (actor) => {
+        if (actor.id !== bountyTarget.id) return
+        event.progress = 1
+        event.state = 'succeeded'
+      },
+    })
+    return event
+  }
+
+  private getEligibleBountyTargets(): Actor[] {
+    return this.actors.filter(
+      (actor) =>
+        actor.alive &&
+        hostile(this.faction, actor.faction) &&
+        actor.role !== 'commander' &&
+        actor.role !== 'captive' &&
+        !actor.eventOwnerId,
+    )
+  }
+
+  private nextEventId(kind: WorldEventKind): string {
+    this.eventSequence += 1
+    return `event-${kind}-${this.eventSequence}`
+  }
+
+  private pickEventEnemyFaction(): Faction {
+    const enemies = (['elf', 'guard', 'villain'] as Faction[]).filter(
+      (faction) => faction !== this.faction,
+    )
+    return enemies[Math.floor(this.eventRng() * enemies.length)]
+  }
+
+  private pickEventPosition(): THREE.Vector3 {
+    const candidates = [
+      new THREE.Vector3(-54, 0, -13),
+      new THREE.Vector3(-29, 0, 18),
+      new THREE.Vector3(-12, 0, 55),
+      new THREE.Vector3(18, 0, -51),
+      new THREE.Vector3(39, 0, 13),
+      new THREE.Vector3(57, 0, 34),
+      new THREE.Vector3(13, 0, 57),
+      new THREE.Vector3(54, 0, -12),
+    ]
+    const distant = candidates.filter(
+      (position) => position.distanceTo(this.player.position) >= 22,
+    )
+    const pool = distant.length > 0 ? distant : candidates
+    return pool[Math.floor(this.eventRng() * pool.length)].clone()
+  }
+
+  private pickEventRoadX(): number {
+    const candidates = [-54, -30, -5, 24, 52]
+    const distant = candidates.filter(
+      (x) => this.player.position.distanceTo(new THREE.Vector3(x, 0, -23)) >= 20,
+    )
+    const pool = distant.length > 0 ? distant : candidates
+    return pool[Math.floor(this.eventRng() * pool.length)]
+  }
+
+  private createHouseFireEffect(position: THREE.Vector3): THREE.Group {
+    const group = new THREE.Group()
+    const offsets: Array<[number, number, number]> = [
+      [-1.8, 4.8, -0.8],
+      [0.3, 5.7, 0.9],
+      [1.7, 4.5, -0.2],
+    ]
+    offsets.forEach(([x, y, z], index) => {
+      const flame = new THREE.Mesh(
+        new THREE.ConeGeometry(0.45 + index * 0.08, 1.7 + index * 0.25, 7),
+        new THREE.MeshStandardMaterial({
+          color: index === 1 ? this.palette.danger : this.palette.warning,
+          emissive: this.palette.warning,
+          emissiveIntensity: 1.5,
+          transparent: true,
+          opacity: 0.88,
+        }),
+      )
+      flame.position.set(x, y, z)
+      group.add(flame)
+    })
+    const light = new THREE.PointLight(this.palette.warning, 3.2, 16, 2)
+    light.position.y = 5
+    group.add(light)
+    group.position.copy(position)
+    return group
+  }
+
+  private spawnSmokeParticle(position: THREE.Vector3, eventId: string): void {
+    const mesh = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.48 + this.eventRng() * 0.28, 0),
+      new THREE.MeshBasicMaterial({
+        color: mix(this.palette.borderStrong, this.palette.bg, 0.42),
+        transparent: true,
+        opacity: 0.4,
+        depthWrite: false,
+      }),
+    )
+    mesh.position
+      .copy(position)
+      .add(
+        new THREE.Vector3(
+          (this.eventRng() - 0.5) * 3.8,
+          5 + this.eventRng() * 1.5,
+          (this.eventRng() - 0.5) * 2.8,
+        ),
+      )
+    mesh.scale.setScalar(0.55)
+    this.scene.add(mesh)
+    this.particles.push({
+      mesh,
+      velocity: new THREE.Vector3(
+        (this.eventRng() - 0.5) * 0.5,
+        0.75 + this.eventRng() * 0.45,
+        (this.eventRng() - 0.5) * 0.5,
+      ),
+      life: 1.8 + this.eventRng() * 0.8,
+      eventId,
+      mode: 'smoke',
+    })
+  }
+
+  private removeEventParticles(eventId: string): void {
+    for (let index = this.particles.length - 1; index >= 0; index -= 1) {
+      if (this.particles[index].eventId === eventId) this.removeParticle(index)
+    }
+  }
+
+  private removeActorById(actorId: string): void {
+    const index = this.actors.findIndex((actor) => actor.id === actorId)
+    if (index < 0) return
+    for (let projectileIndex = this.projectiles.length - 1; projectileIndex >= 0; projectileIndex -= 1) {
+      if (this.projectiles[projectileIndex].sourceActorId === actorId) {
+        this.removeProjectile(projectileIndex)
+      }
+    }
+    this.projectileSourcesToClear.delete(actorId)
+    for (const other of this.actors) {
+      if (other.targetId === actorId) other.targetId = null
+    }
+    const [actor] = this.actors.splice(index, 1)
+    this.removeAndDisposeObject(actor.healthBar)
+    actor.healthBarTexture.dispose()
+    this.removeAndDisposeObject(actor.mesh)
+  }
+
+  private removeAndDisposeObject(object: THREE.Object3D): void {
+    object.removeFromParent()
+    object.traverse((child) => {
+      if (!(child instanceof THREE.Mesh) && !(child instanceof THREE.Sprite)) return
+      if (child instanceof THREE.Mesh) child.geometry.dispose()
+      const material = child.material
+      if (Array.isArray(material)) material.forEach((entry) => entry.dispose())
+      else material.dispose()
+    })
+  }
+
   private actorAttackPlayer(actor: Actor): void {
     actor.attackCooldown = actor.role === 'commander' ? 0.8 : 1.15
     const baseDamage =
       actor.role === 'commander'
         ? 10
-        : actor.role === 'brute'
-          ? 14
-          : 6 + Math.random() * 3
+        : actor.role === 'champion'
+          ? 17
+          : actor.role === 'brute'
+            ? 14
+            : 6 + Math.random() * 3
     const incomingDirection = actor.mesh.position.clone().sub(this.player.position)
     incomingDirection.y = 0
     this.damagePlayer(
@@ -1334,7 +2250,13 @@ export class GameEngine {
   private actorAttackActor(attacker: Actor, target: Actor): void {
     attacker.attackCooldown = 1.3
     const baseDamage =
-      attacker.role === 'commander' ? 18 : attacker.role === 'brute' ? 14 : 13
+      attacker.role === 'commander'
+        ? 18
+        : attacker.role === 'champion'
+          ? 17
+          : attacker.role === 'brute'
+            ? 14
+            : 13
     this.damageActor(
       target,
       this.actorDamageWithAura(attacker, baseDamage),
@@ -1343,6 +2265,13 @@ export class GameEngine {
       false,
     )
     if (attacker.role === 'scout') attacker.retreatTimer = SCOUT_RETREAT_DURATION
+  }
+
+  private actorAttackEventProp(actor: Actor, target: EventPropTarget): void {
+    actor.attackCooldown = 1.35
+    target.hp = Math.max(0, target.hp - (4 + this.eventRng() * 2))
+    this.createHitParticles(target.position, actor.faction)
+    if (target.position.distanceTo(this.player.position) < 25) this.playSound('hit')
   }
 
   private damagePlayer(
@@ -1393,7 +2322,9 @@ export class GameEngine {
       }
     }
 
-    target.hp -= dealt
+    target.hp = Math.max(0, target.hp - dealt)
+    target.healthBarVisibleUntil = this.elapsed + 3.4
+    this.drawActorHealthBar(target)
     this.createHitParticles(target.mesh.position, target.faction)
     if (directPlayerKill) this.playSound('hit')
     if (
@@ -1450,6 +2381,9 @@ export class GameEngine {
   private killActor(actor: Actor, killerFaction: Faction, directPlayerKill: boolean): void {
     if (!actor.alive) return
     actor.alive = false
+    actor.healthBar.visible = false
+    const ring = actor.mesh.getObjectByName('faction-ring')
+    if (ring) ring.visible = false
     actor.mesh.rotation.z = actor.phase % 2 > 1 ? Math.PI / 2 : -Math.PI / 2
     actor.mesh.position.y = 0.62
     const weapon = actor.mesh.getObjectByName('weapon')
@@ -1459,6 +2393,7 @@ export class GameEngine {
 
     const objectiveAdvanced =
       killerFaction === this.faction && this.creditFactionObjective(actor)
+    this.activeEvent?.onKill?.(actor, { killerFaction, directPlayerKill })
     if (!directPlayerKill) {
       if (objectiveAdvanced) {
         this.callbacks.onNotice('Союзник победил врага. Счётчик задачи обновлён.', 'info')
@@ -1468,6 +2403,10 @@ export class GameEngine {
     }
 
     this.kills += 1
+    if (actor.eventOwnerId) {
+      this.emitView(true)
+      return
+    }
     const reward = actor.role === 'commander' ? 55 : 12
     this.gold += reward
     this.callbacks.onNotice(
@@ -1600,6 +2539,12 @@ export class GameEngine {
     if (!objective || objective.done) return false
     objective.done = true
     if (objective.target) objective.progress = objective.target
+    if (
+      !this.activeEvent &&
+      this.objectives.filter((entry) => entry.done).length === 1
+    ) {
+      this.eventCooldown = 0
+    }
     this.callbacks.onNotice(`Задача выполнена: ${objective.text}`, 'success')
     this.playSound('objective')
     this.emitView(true)
@@ -1627,6 +2572,7 @@ export class GameEngine {
   }
 
   private creditFactionObjective(actor: Actor): boolean {
+    if (!actor.objectiveEligible) return false
     if (this.faction === 'elf' && actor.faction === 'guard') {
       return this.incrementObjective('guards')
     }
@@ -1650,6 +2596,7 @@ export class GameEngine {
   private endGame(result: 'victory' | 'defeat'): void {
     if (this.ended) return
     this.dropShield()
+    this.cancelActiveEvent()
     this.ended = true
     this.updateMusicVolume()
     this.keys.clear()
@@ -1669,6 +2616,7 @@ export class GameEngine {
         x: this.player.position.x,
         z: this.player.position.z,
         kind: 'player',
+        heading: this.cameraYaw,
       },
       {
         id: 'caravan',
@@ -1690,6 +2638,15 @@ export class GameEngine {
         label: this.isObjectiveDone('guards')
           ? 'Сдать добычу'
           : 'Лагерь эльфов: сдача добычи',
+      })
+    }
+    if (this.activeEvent) {
+      markers.push({
+        id: this.activeEvent.markerId,
+        x: this.activeEvent.markerPos.x,
+        z: this.activeEvent.markerPos.z,
+        kind: 'event',
+        label: this.activeEvent.title,
       })
     }
     for (const actor of this.actors) {
@@ -1723,21 +2680,44 @@ export class GameEngine {
       objectives: this.objectives.map((objective) => ({ ...objective })),
       prompt: this.prompt,
       markers,
-      squad: this.actors.filter((actor) => actor.alive && actor.faction === this.faction && actor.role !== 'commander')
-        .length,
+      squad: this.actors.filter(
+        (actor) =>
+          actor.alive &&
+          actor.faction === this.faction &&
+          actor.squadEligible &&
+          actor.role !== 'commander',
+      ).length,
       elapsed: this.elapsed,
       pointerLocked: document.pointerLockElement === this.renderer.domElement,
       paused: this.paused,
       caravanCooldown: this.caravanCooldown,
       ability,
+      activeEvent: this.activeEvent
+        ? {
+            id: this.activeEvent.id,
+            kind: this.activeEvent.kind,
+            title: this.activeEvent.title,
+            description: this.activeEvent.description,
+            tone: this.activeEvent.tone,
+            progress: this.activeEvent.progress,
+            target: this.activeEvent.target,
+            ...(this.activeEvent.timer === null
+              ? {}
+              : { timeRemaining: Math.max(0, this.activeEvent.timer) }),
+          }
+        : null,
     }
     this.callbacks.onView(view)
   }
 
   private setupLights(): void {
-    const hemisphere = new THREE.HemisphereLight(this.palette.surface, this.palette.borderStrong, 2.2)
+    const hemisphere = new THREE.HemisphereLight(
+      this.palette.worldSky,
+      this.palette.worldAmbientGround,
+      1.65,
+    )
     this.scene.add(hemisphere)
-    const sun = new THREE.DirectionalLight(this.palette.surface, 3.5)
+    const sun = new THREE.DirectionalLight(this.palette.worldSun, 2.65)
     sun.position.set(-35, 58, 24)
     sun.castShadow = true
     sun.shadow.mapSize.set(2048, 2048)
@@ -1843,8 +2823,8 @@ export class GameEngine {
     texture.wrapT = THREE.RepeatWrapping
     texture.repeat.set(repeatX, repeatY)
     texture.magFilter = THREE.NearestFilter
-    texture.minFilter = THREE.NearestMipmapNearestFilter
-    texture.anisotropy = Math.min(4, this.renderer.capabilities.getMaxAnisotropy())
+    texture.minFilter = THREE.LinearMipmapLinearFilter
+    texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
     this.generatedTextures.set(key, texture)
     return texture
   }
@@ -1856,9 +2836,9 @@ export class GameEngine {
     const context = canvas.getContext('2d')
     if (!context) throw new Error('Could not create sky texture')
     const gradient = context.createLinearGradient(0, 0, 0, canvas.height)
-    gradient.addColorStop(0, mix(this.palette.link, this.palette.bg, 0.7).getStyle())
-    gradient.addColorStop(0.58, mix(this.palette.surface, this.palette.bg, 0.35).getStyle())
-    gradient.addColorStop(1, mix(this.palette.warning, this.palette.bg, 0.86).getStyle())
+    gradient.addColorStop(0, this.palette.worldSky.getStyle())
+    gradient.addColorStop(0.58, this.palette.worldHorizon.getStyle())
+    gradient.addColorStop(1, this.palette.worldFog.getStyle())
     context.fillStyle = gradient
     context.fillRect(0, 0, canvas.width, canvas.height)
     const skyTexture = new THREE.CanvasTexture(canvas)
@@ -1880,7 +2860,7 @@ export class GameEngine {
 
     const sun = new THREE.Mesh(
       new THREE.SphereGeometry(6, 16, 12),
-      new THREE.MeshBasicMaterial({ color: this.palette.warning, fog: false }),
+      new THREE.MeshBasicMaterial({ color: this.palette.worldSun, fog: false }),
     )
     sun.position.set(-88, 74, -112)
     this.scene.add(sun)
@@ -1888,7 +2868,7 @@ export class GameEngine {
     const random = seededRandom(731)
     const cloudGeometry = new THREE.DodecahedronGeometry(3.4, 1)
     const cloudMaterial = new THREE.MeshBasicMaterial({
-      color: this.palette.surface,
+      color: mix(this.palette.worldSun, this.palette.worldHorizon, 0.6),
       transparent: true,
       opacity: 0.58,
       depthWrite: false,
@@ -2032,10 +3012,10 @@ export class GameEngine {
 
   private createGround(): void {
     const zoneColors: Record<ZoneId, THREE.Color> = {
-      neutral: mix(this.palette.warning, this.palette.soft, 0.8),
-      palace: mix(this.palette.link, this.palette.soft, 0.86),
-      forest: mix(this.palette.success, this.palette.soft, 0.76),
-      fort: mix(this.palette.accent, this.palette.soft, 0.78),
+      neutral: this.palette.worldNeutralGround,
+      palace: this.palette.worldPalaceGround,
+      forest: this.palette.worldForestGround,
+      fort: this.palette.worldFortGround,
     }
     const zones: Array<[ZoneId, number, number]> = [
       ['neutral', -40, -40],
@@ -2148,7 +3128,9 @@ export class GameEngine {
       [-34, -37, 0.12],
     ]
     for (const [x, z, rotation] of housePositions) {
-      this.scene.add(this.createHouse(x, z, rotation, false))
+      const house = this.createHouse(x, z, rotation, false)
+      this.villageHouses.push(house)
+      this.scene.add(house)
     }
     const shop = this.createHouse(this.vendorPosition.x, this.vendorPosition.z, 0.08, true)
     this.scene.add(shop)
@@ -2271,8 +3253,8 @@ export class GameEngine {
       this.scene.add(this.createTreeLod(x, z, scale))
     }
     const huts: Array<[number, number]> = [
-      [-51, 42],
-      [-40, 49],
+      [-55, 40],
+      [-61, 50],
       [-39, 34],
     ]
     for (const [x, z] of huts) this.scene.add(this.createElfHut(x, z))
@@ -2542,7 +3524,8 @@ export class GameEngine {
     const texture = new THREE.CanvasTexture(canvas)
     texture.colorSpace = THREE.SRGBColorSpace
     texture.magFilter = THREE.NearestFilter
-    texture.minFilter = THREE.NearestMipmapNearestFilter
+    texture.minFilter = THREE.LinearMipmapLinearFilter
+    texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
     this.generatedTextures.set('tree-sprite', texture)
     return texture
   }
@@ -2568,8 +3551,9 @@ export class GameEngine {
     trunk.castShadow = true
     near.add(trunk)
     const foliageMaterial = new THREE.MeshStandardMaterial({
-      color: mix(this.palette.success, this.palette.bg, 0.12),
+      color: mix(this.palette.worldForestGround, this.palette.worldHorizon, 0.16),
       roughness: 1,
+      transparent: true,
     })
     for (const [height, radius] of [
       [4.4, 2.6],
@@ -2577,6 +3561,7 @@ export class GameEngine {
       [7.6, 1.45],
     ]) {
       const foliage = new THREE.Mesh(new THREE.ConeGeometry(radius, 3.4, 8), foliageMaterial)
+      foliage.userData.cameraPassThrough = true
       foliage.position.y = height
       foliage.castShadow = true
       near.add(foliage)
@@ -2589,8 +3574,15 @@ export class GameEngine {
     )
     sprite.scale.set(5.5 * scale, 8.2 * scale, 1)
     sprite.position.y = 4 * scale
+    sprite.userData.cameraPassThrough = true
     lod.addLevel(sprite, 25)
     lod.position.set(x, 0, z)
+    this.foliageOccluders.push({
+      root: lod,
+      material: foliageMaterial,
+      radius: 2.7 * scale,
+      centerY: 5.8 * scale,
+    })
     return lod
   }
 
@@ -2689,8 +3681,28 @@ export class GameEngine {
       horns.forEach((horn) => group.add(horn))
     }
 
+    if (!player) {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.72, 0.9, 24),
+        new THREE.MeshBasicMaterial({
+          color: this.factionColor(faction),
+          transparent: true,
+          opacity: 0.48,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+          toneMapped: false,
+        }),
+      )
+      ring.name = 'faction-ring'
+      ring.position.y = 0.05
+      ring.rotation.x = -Math.PI / 2
+      ring.renderOrder = 2
+      group.add(ring)
+    }
+
     group.traverse((object) => {
       if (object instanceof THREE.Mesh) {
+        if (object.name === 'faction-ring') return
         object.castShadow = true
         object.receiveShadow = true
       }
@@ -2698,13 +3710,67 @@ export class GameEngine {
     return group
   }
 
-  private createCaravan(): THREE.Group {
+  private createActorHealthBar(faction: Faction): {
+    sprite: THREE.Sprite
+    canvas: HTMLCanvasElement
+    texture: THREE.CanvasTexture
+  } {
+    const canvas = document.createElement('canvas')
+    canvas.width = 128
+    canvas.height = 18
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.minFilter = THREE.LinearFilter
+    texture.magFilter = THREE.LinearFilter
+    const sprite = new THREE.Sprite(
+      new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+        toneMapped: false,
+      }),
+    )
+    sprite.scale.set(1.85, 0.26, 1)
+    sprite.visible = false
+    sprite.renderOrder = 12
+
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Could not create actor health bar')
+    context.fillStyle = 'rgba(24, 24, 24, 0.82)'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.fillStyle = this.factionColor(faction).getStyle()
+    context.fillRect(3, 3, canvas.width - 6, canvas.height - 6)
+    texture.needsUpdate = true
+    return { sprite, canvas, texture }
+  }
+
+  private drawActorHealthBar(actor: Actor): void {
+    const context = actor.healthBarCanvas.getContext('2d')
+    if (!context) return
+    const ratio = THREE.MathUtils.clamp(actor.hp / actor.maxHp, 0, 1)
+    const innerWidth = actor.healthBarCanvas.width - 6
+    context.clearRect(0, 0, actor.healthBarCanvas.width, actor.healthBarCanvas.height)
+    context.fillStyle = 'rgba(24, 24, 24, 0.82)'
+    context.fillRect(0, 0, actor.healthBarCanvas.width, actor.healthBarCanvas.height)
+    context.fillStyle = 'rgba(255, 255, 255, 0.22)'
+    context.fillRect(3, 3, innerWidth, actor.healthBarCanvas.height - 6)
+    context.fillStyle = this.factionColor(actor.faction).getStyle()
+    context.fillRect(3, 3, innerWidth * ratio, actor.healthBarCanvas.height - 6)
+    actor.healthBarTexture.needsUpdate = true
+  }
+
+  private createCaravan(gilded = false): THREE.Group {
     const group = new THREE.Group()
     const wood = new THREE.MeshStandardMaterial({
       map: this.createSurfaceTexture(
-        'caravan-wood',
-        mix(this.palette.warning, this.palette.bg, 0.48),
-        mix(this.palette.warning, this.palette.text, 0.55),
+        gilded ? 'rich-caravan-wood' : 'caravan-wood',
+        gilded
+          ? mix(this.palette.warning, this.palette.surface, 0.22)
+          : mix(this.palette.warning, this.palette.bg, 0.48),
+        gilded
+          ? mix(this.palette.warning, this.palette.text, 0.34)
+          : mix(this.palette.warning, this.palette.text, 0.55),
         'wood',
         4,
         3,
@@ -2712,9 +3778,9 @@ export class GameEngine {
       roughness: 0.92,
     })
     const metal = new THREE.MeshStandardMaterial({
-      color: this.palette.borderStrong,
+      color: gilded ? this.palette.warning : this.palette.borderStrong,
       roughness: 0.55,
-      metalness: 0.45,
+      metalness: gilded ? 0.76 : 0.45,
     })
     const base = new THREE.Mesh(new THREE.BoxGeometry(5, 0.65, 3.1), wood)
     base.position.y = 1.6
@@ -2724,15 +3790,16 @@ export class GameEngine {
       new THREE.BoxGeometry(3.6, 2.5, 2.5),
       new THREE.MeshStandardMaterial({
         map: this.createSurfaceTexture(
-          'caravan-crate',
-          this.palette.warning,
+          gilded ? 'rich-caravan-crate' : 'caravan-crate',
+          gilded ? mix(this.palette.warning, this.palette.surface, 0.15) : this.palette.warning,
           mix(this.palette.warning, this.palette.text, 0.42),
           'wood',
           3,
           3,
         ),
         roughness: 0.8,
-        emissive: this.palette.bg,
+        emissive: gilded ? this.palette.warning : this.palette.bg,
+        emissiveIntensity: gilded ? 0.32 : 0,
       }),
     )
     cargo.name = 'cargo'
@@ -2772,6 +3839,19 @@ export class GameEngine {
     horseHead.position.set(5.15, 2.7, 0)
     horseHead.castShadow = true
     group.add(horseHead)
+    if (gilded) {
+      const beacon = new THREE.Mesh(
+        new THREE.TorusGeometry(2.4, 0.12, 8, 28),
+        new THREE.MeshBasicMaterial({
+          color: this.palette.warning,
+          transparent: true,
+          opacity: 0.62,
+        }),
+      )
+      beacon.position.y = 0.18
+      beacon.rotation.x = Math.PI / 2
+      group.add(beacon)
+    }
     group.position.set(-54, 0, -23)
     return group
   }
@@ -2856,9 +3936,34 @@ export class GameEngine {
     spawns.forEach(([faction, role, x, z], index) => this.spawnActor(faction, role, x, z, index))
   }
 
-  private spawnActor(faction: Faction, role: ActorRole, x: number, z: number, index: number): Actor {
+  private spawnActor(
+    faction: Faction,
+    role: ActorRole,
+    x: number,
+    z: number,
+    index: number,
+    options: ActorSpawnOptions = {},
+  ): Actor {
     const mesh = this.createCharacter(faction, false)
     if (role === 'brute') mesh.scale.set(1.28, 1.12, 1.28)
+    if (role === 'champion') {
+      mesh.scale.set(1.3, 1.18, 1.3)
+      const aura = new THREE.Mesh(
+        new THREE.TorusGeometry(1.05, 0.12, 8, 24),
+        new THREE.MeshBasicMaterial({
+          color: this.palette.warning,
+          transparent: true,
+          opacity: 0.68,
+        }),
+      )
+      aura.name = 'champion-aura'
+      aura.position.y = 0.12
+      aura.rotation.x = Math.PI / 2
+      mesh.add(aura)
+      const auraLight = new THREE.PointLight(this.palette.warning, 1.8, 9, 2)
+      auraLight.position.y = 1.4
+      mesh.add(auraLight)
+    }
     if (role === 'archer') {
       mesh.scale.setScalar(0.94)
       const weapon = mesh.getObjectByName('weapon')
@@ -2878,33 +3983,45 @@ export class GameEngine {
         weapon.add(bow)
       }
     }
+    if (role === 'captive') {
+      mesh.scale.setScalar(0.94)
+      const weapon = mesh.getObjectByName('weapon')
+      if (weapon) weapon.visible = false
+    }
     mesh.position.set(x, 0, z)
     this.scene.add(mesh)
+    const healthBar = this.createActorHealthBar(faction)
+    healthBar.sprite.position.set(x, 3.65 * mesh.scale.y, z)
+    this.scene.add(healthBar.sprite)
     const phase = index * 0.73
     const home = new THREE.Vector3(x, 0, z)
     const initialAngle = phase * 4.7
     const hp =
       role === 'commander'
         ? 150
-        : role === 'brute'
-          ? 130
-          : role === 'archer'
-            ? 45
-            : role === 'scout'
-              ? 55
-              : 70
+        : role === 'champion'
+          ? 260
+          : role === 'brute'
+            ? 130
+            : role === 'archer'
+              ? 45
+              : role === 'scout'
+                ? 55
+                : 70
     const speed =
       role === 'scout'
         ? 4.8
-        : role === 'archer'
-          ? 3.2
-          : role === 'brute'
-            ? 2.6
-            : role === 'commander'
-              ? 0
-              : 3.7
+        : role === 'champion'
+          ? 4.15
+          : role === 'archer'
+            ? 3.2
+            : role === 'brute'
+              ? 2.6
+              : role === 'commander'
+                ? 0
+                : 3.7
     const actor: Actor = {
-      id: `${faction}-${role}-${index}-${Math.floor(this.elapsed * 10)}`,
+      id: `${faction}-${role}-${this.actorSequence++}`,
       faction,
       role,
       mesh,
@@ -2924,6 +4041,16 @@ export class GameEngine {
       retreatTimer: 0,
       reinforcementTimer: COMMANDER_REINFORCEMENT_INTERVAL,
       reinforcementsCalled: 0,
+      objectiveEligible: options.objectiveEligible ?? true,
+      squadEligible: options.squadEligible ?? true,
+      aiMode: options.aiMode ?? 'normal',
+      eventOwnerId: options.eventOwnerId ?? null,
+      eventPropTarget: options.eventPropTarget ?? null,
+      ignoredTargetId: options.ignoredTargetId ?? null,
+      healthBar: healthBar.sprite,
+      healthBarCanvas: healthBar.canvas,
+      healthBarTexture: healthBar.texture,
+      healthBarVisibleUntil: 0,
     }
     this.actors.push(actor)
     return actor
@@ -2950,6 +4077,7 @@ export class GameEngine {
       : undefined
     if (
       locked?.alive &&
+      locked.id !== actor.ignoredTargetId &&
       hostile(actor.faction, locked.faction) &&
       actor.mesh.position.distanceTo(locked.mesh.position) < range * 1.35
     ) {
@@ -2960,7 +4088,14 @@ export class GameEngine {
     let nearest: Actor | null = null
     let bestDistance = range
     for (const other of this.actors) {
-      if (!other.alive || other === actor || !hostile(actor.faction, other.faction)) continue
+      if (
+        !other.alive ||
+        other === actor ||
+        other.id === actor.ignoredTargetId ||
+        !hostile(actor.faction, other.faction)
+      ) {
+        continue
+      }
       const distance = actor.mesh.position.distanceTo(other.mesh.position)
       if (distance < bestDistance) {
         nearest = other
@@ -3021,9 +4156,82 @@ export class GameEngine {
       .clone()
       .addScaledVector(forward, -10)
       .add(new THREE.Vector3(0, 5.2 + this.cameraPitch * 3.5, 0))
-    if (immediate) this.camera.position.copy(desired)
-    else this.camera.position.lerp(desired, 0.12)
+    const resolved = this.resolveCameraPosition(target, desired)
+    if (immediate) this.camera.position.copy(resolved)
+    else this.camera.position.lerp(resolved, 0.12)
     this.camera.lookAt(target)
+    this.updateFoliageOcclusion(target, this.camera.position, immediate)
+  }
+
+  private resolveCameraPosition(target: THREE.Vector3, desired: THREE.Vector3): THREE.Vector3 {
+    const offset = desired.clone().sub(target)
+    const distance = offset.length()
+    if (distance <= 0.001) return desired
+
+    const direction = offset.multiplyScalar(1 / distance)
+    this.cameraRaycaster.set(target, direction)
+    this.cameraRaycaster.camera = this.camera
+    this.cameraRaycaster.near = 0.45
+    this.cameraRaycaster.far = distance
+    const collision = this.cameraRaycaster
+      .intersectObjects(this.cameraObstacles, false)
+      .find(({ object }) => this.blocksCamera(object))
+    if (!collision) return desired
+
+    return target
+      .clone()
+      .addScaledVector(direction, Math.max(2.2, collision.distance - 1.15))
+  }
+
+  private collectCameraObstacles(roots: THREE.Object3D[]): void {
+    for (const root of roots) {
+      root.traverse((object) => {
+        if (this.blocksCamera(object)) this.cameraObstacles.push(object)
+      })
+    }
+  }
+
+  private blocksCamera(object: THREE.Object3D): boolean {
+    if (
+      !(object instanceof THREE.Mesh) ||
+      object instanceof THREE.InstancedMesh ||
+      object.userData.cameraPassThrough === true ||
+      object.geometry instanceof THREE.PlaneGeometry
+    ) {
+      return false
+    }
+    const materials = Array.isArray(object.material) ? object.material : [object.material]
+    return materials.some((material) => !material.transparent || material.opacity >= 0.65)
+  }
+
+  private updateFoliageOcclusion(
+    target: THREE.Vector3,
+    cameraPosition: THREE.Vector3,
+    immediate: boolean,
+  ): void {
+    const segment = cameraPosition.clone().sub(target)
+    const segmentLengthSquared = segment.lengthSq()
+    if (segmentLengthSquared <= 0.001) return
+
+    for (const occluder of this.foliageOccluders) {
+      const center = occluder.root.position.clone()
+      center.y += occluder.centerY
+      const alongSegment = THREE.MathUtils.clamp(
+        center.clone().sub(target).dot(segment) / segmentLengthSquared,
+        0,
+        1,
+      )
+      const closestPoint = target.clone().addScaledVector(segment, alongSegment)
+      const blocksView =
+        alongSegment > 0.06 && center.distanceTo(closestPoint) < occluder.radius
+      const targetOpacity = blocksView ? 0 : 1
+      if (!blocksView) occluder.material.visible = true
+      occluder.material.opacity = immediate
+        ? targetOpacity
+        : THREE.MathUtils.lerp(occluder.material.opacity, targetOpacity, 0.18)
+      occluder.material.depthWrite = occluder.material.opacity > 0.96
+      if (blocksView && occluder.material.opacity < 0.02) occluder.material.visible = false
+    }
   }
 
   private factionColor(faction: Faction): THREE.Color {
@@ -3334,7 +4542,10 @@ export class GameEngine {
       | 'bow'
       | 'arrow'
       | 'block'
-      | 'cleave',
+      | 'cleave'
+      | 'event'
+      | 'eventWin'
+      | 'eventFail',
   ): void {
     if (!this.audioContext) return
     const frequencies: Record<typeof type, [number, number, number]> = {
@@ -3352,12 +4563,15 @@ export class GameEngine {
       arrow: [280, 170, 0.1],
       block: [95, 58, 0.12],
       cleave: [210, 65, 0.22],
+      event: [330, 495, 0.22],
+      eventWin: [440, 990, 0.38],
+      eventFail: [180, 48, 0.34],
     }
     const [start, end, duration] = frequencies[type]
     const oscillator = this.audioContext.createOscillator()
     const gain = this.audioContext.createGain()
     oscillator.type =
-      type === 'hit' || type === 'hurt' || type === 'block'
+      type === 'hit' || type === 'hurt' || type === 'block' || type === 'eventFail'
         ? 'sawtooth'
         : 'triangle'
     oscillator.frequency.setValueAtTime(start, this.audioContext.currentTime)

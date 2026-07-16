@@ -132,6 +132,14 @@ button {
   z-index: -1;
 }
 
+.theme-toggle {
+  min-height: 2.5rem;
+  position: absolute;
+  right: clamp(1rem, 4vw, 4rem);
+  top: 1.5rem;
+  z-index: 5;
+}
+
 .contour {
   border: 1px solid color-mix(in srgb, var(--cp-border-strong) 20%, transparent);
   border-radius: 50%;
@@ -273,12 +281,105 @@ button {
     transform 180ms ease;
 }
 
+.faction-card > :not(.faction-scenery) {
+  position: relative;
+  z-index: 1;
+}
+
 .faction-card::before {
   background: var(--cp-accent);
   content: "";
   height: 3px;
   inset: 0 0 auto;
   position: absolute;
+}
+
+.faction-scenery {
+  color: var(--cp-accent);
+  height: 5.8rem;
+  opacity: 0.11;
+  pointer-events: none;
+  position: absolute;
+  right: 0.8rem;
+  top: 0.8rem;
+  width: 9rem;
+}
+
+.faction-scenery i {
+  background: currentColor;
+  bottom: 0;
+  display: block;
+  position: absolute;
+}
+
+.faction-card.elf .faction-scenery {
+  color: var(--cp-success);
+}
+
+.faction-card.elf .faction-scenery i {
+  clip-path: polygon(50% 0, 69% 34%, 59% 34%, 84% 72%, 61% 72%, 61% 100%, 39% 100%, 39% 72%, 16% 72%, 41% 34%, 31% 34%);
+  width: 3.2rem;
+}
+
+.faction-card.elf .faction-scenery i:nth-child(1) {
+  height: 4.8rem;
+  right: 0;
+}
+
+.faction-card.elf .faction-scenery i:nth-child(2) {
+  height: 3.8rem;
+  right: 2.7rem;
+}
+
+.faction-card.elf .faction-scenery i:nth-child(3) {
+  height: 2.9rem;
+  right: 5.3rem;
+}
+
+.faction-card.guard .faction-scenery {
+  color: var(--cp-link);
+}
+
+.faction-card.guard .faction-scenery i {
+  clip-path: polygon(0 18%, 18% 18%, 18% 0, 38% 0, 38% 18%, 62% 18%, 62% 0, 82% 0, 82% 18%, 100% 18%, 100% 100%, 0 100%);
+  width: 2.7rem;
+}
+
+.faction-card.guard .faction-scenery i:nth-child(1) {
+  height: 3.8rem;
+  right: 0.25rem;
+}
+
+.faction-card.guard .faction-scenery i:nth-child(2) {
+  height: 4.8rem;
+  right: 3rem;
+}
+
+.faction-card.guard .faction-scenery i:nth-child(3) {
+  height: 3.2rem;
+  right: 5.75rem;
+}
+
+.faction-card.villain .faction-scenery i {
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+
+.faction-card.villain .faction-scenery i:nth-child(1) {
+  height: 3.7rem;
+  right: 0;
+  width: 5.2rem;
+}
+
+.faction-card.villain .faction-scenery i:nth-child(2) {
+  height: 5rem;
+  right: 2.6rem;
+  width: 4.7rem;
+}
+
+.faction-card.villain .faction-scenery i:nth-child(3) {
+  height: 2.9rem;
+  right: 6rem;
+  width: 3.2rem;
 }
 
 .faction-card.elf::before {
@@ -832,11 +933,44 @@ button {
 }
 
 .map-marker.player {
-  background: var(--cp-accent);
-  box-shadow: 0 0 0 3px var(--cp-accent-soft);
-  height: 0.55rem;
-  width: 0.55rem;
+  background: transparent;
+  border: 0;
+  height: 0.7rem;
+  width: 0.7rem;
   z-index: 5;
+}
+
+.player-heading {
+  height: 2.6rem;
+  left: 50%;
+  margin: -1.3rem;
+  position: absolute;
+  top: 50%;
+  transform-origin: center;
+  width: 2.6rem;
+}
+
+.player-heading::before {
+  background: linear-gradient(180deg, transparent, var(--cp-accent-soft));
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+  content: "";
+  height: 1.4rem;
+  left: 0.45rem;
+  position: absolute;
+  top: 0;
+  width: 1.7rem;
+}
+
+.player-heading::after {
+  background: var(--cp-accent);
+  clip-path: polygon(50% 0, 100% 100%, 50% 78%, 0 100%);
+  content: "";
+  height: 0.82rem;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 0.72rem;
 }
 
 .map-marker.ally {
@@ -869,6 +1003,25 @@ button {
   transform: translate(-50%, -50%) rotate(45deg);
   width: 0.62rem;
   z-index: 6;
+}
+
+.map-marker.event {
+  align-items: center;
+  background: var(--cp-accent);
+  border: 2px solid var(--cp-panel-strong);
+  box-shadow: 0 0 0 3px var(--cp-accent-soft);
+  color: var(--cp-accent-fg);
+  display: flex;
+  height: 0.86rem;
+  justify-content: center;
+  width: 0.86rem;
+  z-index: 7;
+}
+
+.map-marker.event svg {
+  height: 0.5rem;
+  stroke-width: 3;
+  width: 0.5rem;
 }
 
 .map-legend {
@@ -911,6 +1064,11 @@ button {
   border: 2px solid var(--cp-success);
   border-radius: 0.08rem;
   transform: rotate(45deg);
+}
+
+.legend-dot.event {
+  background: var(--cp-accent);
+  box-shadow: 0 0 0 2px var(--cp-accent-soft);
 }
 
 .left-hud {
@@ -1188,6 +1346,108 @@ button {
   top: -0.7rem;
 }
 
+.event-banner {
+  --event-color: var(--cp-link);
+  border-left: 3px solid var(--event-color);
+  overflow: hidden;
+  padding: 0.7rem;
+  position: relative;
+}
+
+.event-banner.info {
+  --event-color: var(--cp-link);
+}
+
+.event-banner.success {
+  --event-color: var(--cp-success);
+}
+
+.event-banner.warning {
+  --event-color: var(--cp-warning);
+}
+
+.event-banner.danger {
+  --event-color: var(--cp-danger);
+}
+
+.event-banner-header {
+  align-items: center;
+  color: var(--event-color);
+  display: flex;
+  font-size: 0.58rem;
+  font-weight: 800;
+  justify-content: space-between;
+  text-transform: uppercase;
+}
+
+.event-banner-header span,
+.event-banner-header strong {
+  align-items: center;
+  display: flex;
+  gap: 0.32rem;
+}
+
+.event-banner-header strong {
+  font-family: Consolas, "Courier New", Courier, monospace;
+}
+
+.event-banner-header svg {
+  height: 0.8rem;
+  width: 0.8rem;
+}
+
+.event-banner h2 {
+  color: var(--cp-text);
+  font-size: 0.76rem;
+  margin-top: 0.45rem;
+}
+
+.event-banner p {
+  color: var(--cp-text-muted);
+  font-size: 0.61rem;
+  line-height: 1.4;
+  margin-top: 0.2rem;
+}
+
+.event-progress {
+  background: var(--cp-border);
+  border-radius: 999px;
+  height: 0.28rem;
+  margin-top: 0.75rem;
+  position: relative;
+}
+
+.event-progress i {
+  background: var(--event-color);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  transition: width 160ms linear;
+}
+
+.event-progress span {
+  color: var(--cp-text-muted);
+  font-family: Consolas, "Courier New", Courier, monospace;
+  font-size: 0.48rem;
+  position: absolute;
+  right: 0;
+  top: -0.72rem;
+}
+
+.event-banner.urgent {
+  animation: event-urgent 720ms ease-in-out infinite alternate;
+}
+
+@keyframes event-urgent {
+  from {
+    border-color: var(--event-color);
+  }
+  to {
+    border-color: var(--cp-panel-strong);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--event-color) 28%, transparent);
+  }
+}
+
 .notice-stack {
   display: flex;
   flex-direction: column;
@@ -1374,6 +1634,15 @@ button {
   padding: 0.6rem;
 }
 
+.body-panel.healthy {
+  min-width: 10.5rem;
+  padding: 0.58rem 0.65rem;
+}
+
+.body-panel.healthy .body-title {
+  margin-bottom: 0;
+}
+
 .body-title {
   align-items: center;
   color: var(--cp-text);
@@ -1383,6 +1652,19 @@ button {
   gap: 0.4rem;
   margin-bottom: 0.45rem;
   text-transform: uppercase;
+}
+
+.body-title .body-healthy {
+  align-items: center;
+  color: var(--cp-success);
+  display: flex;
+  gap: 0.25rem;
+}
+
+.body-healthy svg {
+  height: 0.7rem;
+  stroke-width: 3;
+  width: 0.7rem;
 }
 
 .body-title strong {
@@ -1465,6 +1747,16 @@ button {
   margin-left: auto;
   max-width: 30rem;
   padding: 0.55rem 0.65rem;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease,
+    visibility 0s linear 180ms;
+}
+
+.control-ribbon.dismissed {
+  opacity: 0;
+  transform: translateY(0.7rem);
+  visibility: hidden;
 }
 
 kbd {
@@ -1813,6 +2105,23 @@ kbd {
     padding: 1rem;
   }
 
+  .theme-toggle {
+    padding: 0;
+    right: 1rem;
+    top: 1rem;
+    width: 2.5rem;
+  }
+
+  .theme-toggle span {
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
+
   .hero-header {
     padding: 2.8rem 0 2rem;
   }
@@ -1876,6 +2185,23 @@ kbd {
 
   .minimap {
     height: 5.1rem;
+  }
+
+  .player-heading {
+    height: 1.8rem;
+    margin: -0.9rem;
+    width: 1.8rem;
+  }
+
+  .player-heading::before {
+    height: 0.95rem;
+    left: 0.3rem;
+    width: 1.2rem;
+  }
+
+  .player-heading::after {
+    height: 0.65rem;
+    width: 0.56rem;
   }
 
   .map-zone span {

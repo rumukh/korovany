@@ -23,8 +23,18 @@
   --cp-panel-strong: rgba(255, 255, 255, 0.96);
   --cp-sheen: rgba(255, 255, 255, 0.55);
   --cp-highlight: rgba(177, 31, 75, 0.12);
+  --game-sky: #8fc6dc;
+  --game-horizon: #d9e8d5;
+  --game-fog: #bdd3c2;
+  --game-ambient-ground: #536a4d;
+  --game-sun: #fff0c7;
+  --game-neutral-ground: #9ca66a;
+  --game-palace-ground: #8ca3ad;
+  --game-forest-ground: #4e8b58;
+  --game-fort-ground: #80616d;
 }
 
+:root:not([data-theme]),
 html[data-theme="dark"] {
   color-scheme: dark;
   --cp-bg: #3d3b3a;
@@ -50,6 +60,15 @@ html[data-theme="dark"] {
   --cp-panel-strong: rgba(41, 41, 41, 0.96);
   --cp-sheen: rgba(255, 255, 255, 0.04);
   --cp-highlight: rgba(253, 142, 161, 0.12);
+  --game-sky: #709eae;
+  --game-horizon: #b8cbb7;
+  --game-fog: #9eb8a7;
+  --game-ambient-ground: #3f523b;
+  --game-sun: #efd5aa;
+  --game-neutral-ground: #7f8959;
+  --game-palace-ground: #718891;
+  --game-forest-ground: #3e7549;
+  --game-fort-ground: #694f59;
 }
 
 * {
