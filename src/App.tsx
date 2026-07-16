@@ -59,6 +59,7 @@ type Theme = 'dark' | 'light'
 
 const MUSIC_MUTED_KEY = 'korovany-music-muted'
 const THEME_KEY = 'korovany-theme'
+const DYNAMIC_DAY_NIGHT_KEY = 'korovany-dynamic-day-night'
 
 const factionIcons: Record<Faction, ReactNode> = {
   elf: <Trees aria-hidden="true" />,
@@ -112,6 +113,15 @@ function readTheme(): Theme {
   } catch (error) {
     console.warn('Korovany: theme preference could not be read.', error)
     return 'dark'
+  }
+}
+
+function readDynamicDayNight(): boolean {
+  try {
+    return localStorage.getItem(DYNAMIC_DAY_NIGHT_KEY) !== 'false'
+  } catch (error) {
+    console.warn('Korovany: dynamic time preference could not be read.', error)
+    return true
   }
 }
 
@@ -397,15 +407,19 @@ function BodyPanel({ view }: { view: GameView }) {
 function MenuScreen({
   savedGame,
   theme,
+  dynamicDayNight,
   onStart,
   onLoad,
   onToggleTheme,
+  onToggleDynamicDayNight,
 }: {
   savedGame: SavedGame | null
   theme: Theme
+  dynamicDayNight: boolean
   onStart: (faction: Faction) => void
   onLoad: () => void
   onToggleTheme: () => void
+  onToggleDynamicDayNight: () => void
 }) {
   return (
     <main className="menu-screen">
@@ -414,16 +428,37 @@ function MenuScreen({
         <div className="contour contour-b" />
         <div className="contour contour-c" />
       </div>
-      <button
-        className="theme-toggle secondary-button"
-        type="button"
-        onClick={onToggleTheme}
-        aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
-        title={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
-      >
-        {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-        <span>{theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}</span>
-      </button>
+      <div className="menu-settings">
+        <button
+          className="theme-toggle secondary-button"
+          type="button"
+          onClick={onToggleTheme}
+          aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
+          title={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
+        >
+          {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+          <span>{theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}</span>
+        </button>
+        <button
+          className="day-night-toggle secondary-button"
+          type="button"
+          onClick={onToggleDynamicDayNight}
+          aria-pressed={dynamicDayNight}
+          aria-label={
+            dynamicDayNight
+              ? 'Отключить динамическое время суток'
+              : 'Включить динамическое время суток'
+          }
+          title={
+            dynamicDayNight
+              ? 'Отключить динамическое время суток'
+              : 'Включить динамическое время суток'
+          }
+        >
+          <Clock3 aria-hidden="true" />
+          <span>{dynamicDayNight ? 'Время суток: вкл.' : 'Время суток: выкл.'}</span>
+        </button>
+      </div>
       <header className="hero-header">
         <div className="hackathon-tag">
           <Sparkles aria-hidden="true" />
@@ -628,14 +663,18 @@ function ShopModal({
 
 function PauseModal({
   view,
+  dynamicDayNight,
   onResume,
   onSave,
   onMenu,
+  onToggleDynamicDayNight,
 }: {
   view: GameView
+  dynamicDayNight: boolean
   onResume: () => void
   onSave: () => void
   onMenu: () => void
+  onToggleDynamicDayNight: () => void
 }) {
   return (
     <div className="modal-backdrop" role="presentation">
@@ -659,6 +698,16 @@ function PauseModal({
             <Sword aria-hidden="true" /> {view.kills}
           </span>
         </div>
+        <button
+          className="secondary-button pause-setting"
+          type="button"
+          onClick={onToggleDynamicDayNight}
+          aria-pressed={dynamicDayNight}
+        >
+          <Clock3 aria-hidden="true" />
+          <span>Динамическое время суток</span>
+          <strong>{dynamicDayNight ? 'Вкл.' : 'Выкл.'}</strong>
+        </button>
         <div className="pause-actions">
           <button className="primary-button" type="button" onClick={onResume}>
             <Play aria-hidden="true" />
@@ -757,6 +806,8 @@ function GameScreen({
   onRestart,
   musicMuted,
   onToggleMusic,
+  dynamicDayNight,
+  onToggleDynamicDayNight,
 }: {
   view: GameView
   worldRef: React.RefObject<HTMLDivElement | null>
@@ -780,6 +831,8 @@ function GameScreen({
   onRestart: () => void
   musicMuted: boolean
   onToggleMusic: () => void
+  dynamicDayNight: boolean
+  onToggleDynamicDayNight: () => void
 }) {
   const [controlsDismissed, setControlsDismissed] = useState(false)
   const info = FACTION_INFO[view.faction]
@@ -1034,7 +1087,14 @@ function GameScreen({
 
       {shopOpen ? <ShopModal view={view} onClose={onCloseShop} onBuy={onBuy} /> : null}
       {paused && !shopOpen && !endResult ? (
-        <PauseModal view={view} onResume={onResume} onSave={onSave} onMenu={onMenu} />
+        <PauseModal
+          view={view}
+          dynamicDayNight={dynamicDayNight}
+          onResume={onResume}
+          onSave={onSave}
+          onMenu={onMenu}
+          onToggleDynamicDayNight={onToggleDynamicDayNight}
+        />
       ) : null}
       {endResult ? (
         <EndModal result={endResult} view={view} onRestart={onRestart} onMenu={onMenu} />
@@ -1055,11 +1115,13 @@ function App() {
   const [endResult, setEndResult] = useState<'victory' | 'defeat' | null>(null)
   const [musicMuted, setMusicMuted] = useState(() => readMusicMuted())
   const [theme, setTheme] = useState<Theme>(() => readTheme())
+  const [dynamicDayNight, setDynamicDayNight] = useState(() => readDynamicDayNight())
   const [runId, setRunId] = useState(0)
   const worldRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<GameEngine | null>(null)
   const noticeCounter = useRef(0)
   const musicMutedRef = useRef(musicMuted)
+  const dynamicDayNightRef = useRef(dynamicDayNight)
 
   const addNotice = useMemo(
     () => (message: string, tone: Notice['tone'] = 'info') => {
@@ -1099,6 +1161,7 @@ function App() {
       },
       pendingSave,
       musicMutedRef.current,
+      dynamicDayNightRef.current,
     )
     engineRef.current = engine
     engine.start()
@@ -1162,16 +1225,34 @@ function App() {
     addNotice(next ? '8-битная музыка выключена.' : '8-битная музыка включена.', 'info')
   }
 
+  const toggleDynamicDayNight = () => {
+    const next = !dynamicDayNightRef.current
+    dynamicDayNightRef.current = next
+    setDynamicDayNight(next)
+    engineRef.current?.setDynamicDayNight(next)
+    try {
+      localStorage.setItem(DYNAMIC_DAY_NIGHT_KEY, String(next))
+    } catch (error) {
+      console.warn('Korovany: dynamic time preference could not be saved.', error)
+    }
+    addNotice(
+      next ? 'Динамическое время суток включено.' : 'Время суток зафиксировано на полдне.',
+      'info',
+    )
+  }
+
   if (screen === 'menu') {
     return (
       <MenuScreen
         savedGame={savedGame}
         theme={theme}
+        dynamicDayNight={dynamicDayNight}
         onStart={(selectedFaction) => startGame(selectedFaction)}
         onLoad={() => {
           if (savedGame) startGame(savedGame.faction, savedGame)
         }}
         onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+        onToggleDynamicDayNight={toggleDynamicDayNight}
       />
     )
   }
@@ -1216,6 +1297,8 @@ function App() {
       onRestart={() => startGame(faction)}
       musicMuted={musicMuted}
       onToggleMusic={toggleMusic}
+      dynamicDayNight={dynamicDayNight}
+      onToggleDynamicDayNight={toggleDynamicDayNight}
     />
   )
 }

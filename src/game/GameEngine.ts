@@ -124,6 +124,28 @@ interface Palette {
   worldFortGround: THREE.Color
 }
 
+interface DayNightKeyframe {
+  sun: THREE.Color
+  sky: THREE.Color
+  fog: THREE.Color
+  hemisphereSky: THREE.Color
+  hemisphereGround: THREE.Color
+  skyTint: THREE.Color
+  sunIntensity: number
+  hemisphereIntensity: number
+}
+
+interface DayNightKeyframes {
+  night: DayNightKeyframe
+  twilight: DayNightKeyframe
+  day: DayNightKeyframe
+}
+
+interface BuildingWindowGlow {
+  material: THREE.MeshStandardMaterial
+  legacyIntensity: number
+}
+
 interface FoliageOccluder {
   root: THREE.LOD
   material: THREE.MeshStandardMaterial
@@ -234,6 +256,15 @@ const COMMANDER_REINFORCEMENT_INTERVAL = 25
 const COMMANDER_REINFORCEMENT_LIMIT = 4
 const BRUTE_FRONTAL_DAMAGE_MULTIPLIER = 0.5
 const BRUTE_FRONT_DOT = 0.2
+const DAY_LENGTH = 240
+const DAY_START_OFFSET = 0.18
+const SUN_ARC_RADIUS = 90
+const SUN_ARC_HEIGHT = 70
+const SUN_ARC_DEPTH = 40
+const CELESTIAL_DISC_DISTANCE = 150
+const MIN_SHADOW_LIGHT_HEIGHT = 8
+const STAR_COUNT = 180
+const TWO_PI = Math.PI * 2
 
 const EVENT_WEIGHTS: Record<Faction, Record<WorldEventKind, number>> = {
   elf: {
@@ -340,6 +371,61 @@ function mix(a: THREE.Color, b: THREE.Color, amount: number): THREE.Color {
   return a.clone().lerp(b, amount)
 }
 
+function createDayNightKeyframes(palette: Palette): DayNightKeyframes {
+  const white = new THREE.Color(1, 1, 1)
+  return {
+    night: {
+      sun: mix(palette.worldSun, palette.worldFog, 0.7),
+      sky: mix(palette.worldSky, palette.worldFog, 0.45).multiplyScalar(0.22),
+      fog: palette.worldFog.clone().multiplyScalar(0.35),
+      hemisphereSky: mix(palette.worldSky, palette.worldFog, 0.65).multiplyScalar(0.68),
+      hemisphereGround: palette.worldAmbientGround.clone().multiplyScalar(0.52),
+      skyTint: mix(palette.worldSky, palette.worldFog, 0.45).multiplyScalar(0.28),
+      sunIntensity: 0.15,
+      hemisphereIntensity: 0.45,
+    },
+    twilight: {
+      sun: mix(palette.worldSun, palette.danger, 0.35),
+      sky: mix(palette.worldSky, palette.warning, 0.4),
+      fog: mix(palette.worldFog, palette.warning, 0.3),
+      hemisphereSky: mix(palette.worldSky, palette.warning, 0.2),
+      hemisphereGround: mix(palette.worldAmbientGround, palette.warning, 0.22),
+      skyTint: mix(white, palette.warning, 0.22),
+      sunIntensity: 1.4,
+      hemisphereIntensity: 1,
+    },
+    day: {
+      sun: palette.worldSun.clone(),
+      sky: palette.worldSky.clone(),
+      fog: palette.worldFog.clone(),
+      hemisphereSky: palette.worldSky.clone(),
+      hemisphereGround: palette.worldAmbientGround.clone(),
+      skyTint: white,
+      sunIntensity: 2.65,
+      hemisphereIntensity: 1.65,
+    },
+  }
+}
+
+function smoothstep(min: number, max: number, value: number): number {
+  const amount = THREE.MathUtils.clamp((value - min) / (max - min), 0, 1)
+  return amount * amount * (3 - 2 * amount)
+}
+
+function interpolateKeyframes(
+  night: number,
+  twilight: number,
+  day: number,
+  nightToTwilight: number,
+  twilightToDay: number,
+): number {
+  return THREE.MathUtils.lerp(
+    THREE.MathUtils.lerp(night, twilight, nightToTwilight),
+    day,
+    twilightToDay,
+  )
+}
+
 function seededRandom(seed: number): () => number {
   let value = seed
   return () => {
@@ -388,7 +474,18 @@ export class GameEngine {
   private readonly generatedTextures = new Map<string, THREE.CanvasTexture>()
   private readonly clouds: Array<{ group: THREE.Group; speed: number }> = []
   private readonly flames: THREE.Mesh[] = []
+  private readonly torchLights: THREE.PointLight[] = []
+  private readonly buildingWindowGlows: BuildingWindowGlow[] = []
   private readonly villageHouses: THREE.Group[] = []
+  private readonly backgroundColor = new THREE.Color()
+  private readonly fog: THREE.Fog
+  private readonly dayNightKeyframes: DayNightKeyframes
+  private sun!: THREE.DirectionalLight
+  private hemisphere!: THREE.HemisphereLight
+  private skyMaterial!: THREE.MeshBasicMaterial
+  private sunDisc!: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
+  private moonDisc!: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
+  private stars!: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>
   private readonly cameraRaycaster = new THREE.Raycaster()
   private readonly cameraObstacles: THREE.Object3D[] = []
   private readonly foliageOccluders: FoliageOccluder[] = []
@@ -439,6 +536,8 @@ export class GameEngine {
   private musicNextNoteTime = 0
   private musicStep = 0
   private musicMuted: boolean
+  private dynamicDayNight: boolean
+  private nightFactor = 0
   private readonly musicSources = new Set<AudioScheduledSourceNode>()
   private readonly stopMusicOwner = () => this.stopMusic()
   private resizeObserver: ResizeObserver
@@ -459,12 +558,15 @@ export class GameEngine {
     callbacks: GameCallbacks,
     savedGame?: SavedGame,
     musicMuted = false,
+    dynamicDayNight = true,
   ) {
     this.container = container
     this.callbacks = callbacks
     this.faction = faction
     this.musicMuted = musicMuted
+    this.dynamicDayNight = dynamicDayNight
     this.palette = createPalette()
+    this.dayNightKeyframes = createDayNightKeyframes(this.palette)
     this.objectives = restoreObjectives(faction, savedGame?.objectives)
     this.body = savedGame ? { ...savedGame.body } : createHealthyBody()
     this.health = savedGame?.health ?? 100
@@ -491,8 +593,10 @@ export class GameEngine {
     this.renderer.domElement.setAttribute('aria-label', 'Трёхмерный игровой мир')
     this.container.appendChild(this.renderer.domElement)
 
-    this.scene.background = this.palette.worldSky
-    this.scene.fog = new THREE.Fog(this.palette.worldFog, 48, 132)
+    this.backgroundColor.copy(this.palette.worldSky)
+    this.scene.background = this.backgroundColor
+    this.fog = new THREE.Fog(this.palette.worldFog, 48, 132)
+    this.scene.fog = this.fog
     this.player = this.createCharacter(faction, true)
     const spawn = savedGame?.position ?? [FACTION_INFO[faction].spawn[0], PLAYER_HEIGHT, FACTION_INFO[faction].spawn[1]]
     this.player.position.set(spawn[0], spawn[1], spawn[2])
@@ -503,6 +607,8 @@ export class GameEngine {
     this.setupLights()
     const worldRootIndex = this.scene.children.length
     this.buildWorld()
+    this.updateDayNight()
+    this.updateAtmosphere(0)
     this.resolveCharacterOverlaps(this.player.position, PLAYER_COLLIDER_RADIUS)
     this.collectCameraObstacles(this.scene.children.slice(worldRootIndex))
     this.caravan = this.createCaravan()
@@ -559,8 +665,14 @@ export class GameEngine {
     window.removeEventListener('beforeunload', this.stopMusicOwner)
     if (document.pointerLockElement === this.renderer.domElement) document.exitPointerLock()
     this.scene.traverse((object) => {
-      if (!(object instanceof THREE.Mesh) && !(object instanceof THREE.Sprite)) return
-      if (object instanceof THREE.Mesh) object.geometry.dispose()
+      if (
+        !(object instanceof THREE.Mesh) &&
+        !(object instanceof THREE.Sprite) &&
+        !(object instanceof THREE.Points)
+      ) {
+        return
+      }
+      if (object instanceof THREE.Mesh || object instanceof THREE.Points) object.geometry.dispose()
       const material = object.material
       if (Array.isArray(material)) material.forEach((entry) => entry.dispose())
       else material.dispose()
@@ -604,6 +716,13 @@ export class GameEngine {
     this.musicMuted = muted
     if (!muted) this.resumeAudio()
     this.updateMusicVolume()
+  }
+
+  setDynamicDayNight(enabled: boolean): void {
+    if (this.dynamicDayNight === enabled) return
+    this.dynamicDayNight = enabled
+    this.updateDayNight()
+    this.updateAtmosphere(0)
   }
 
   stopAudio(): void {
@@ -863,6 +982,7 @@ export class GameEngine {
     this.updateActors(delta)
     this.updateProjectiles(delta)
     this.updateParticles(delta)
+    this.updateDayNight()
     this.updateAtmosphere(delta)
 
     if (this.body.bleeding > 0) {
@@ -3289,23 +3409,24 @@ export class GameEngine {
   }
 
   private setupLights(): void {
-    const hemisphere = new THREE.HemisphereLight(
+    this.hemisphere = new THREE.HemisphereLight(
       this.palette.worldSky,
       this.palette.worldAmbientGround,
       1.65,
     )
-    this.scene.add(hemisphere)
-    const sun = new THREE.DirectionalLight(this.palette.worldSun, 2.65)
-    sun.position.set(-35, 58, 24)
-    sun.castShadow = true
-    sun.shadow.mapSize.set(2048, 2048)
-    sun.shadow.camera.left = -85
-    sun.shadow.camera.right = 85
-    sun.shadow.camera.top = 85
-    sun.shadow.camera.bottom = -85
-    sun.shadow.camera.near = 1
-    sun.shadow.camera.far = 150
-    this.scene.add(sun)
+    this.scene.add(this.hemisphere)
+    this.sun = new THREE.DirectionalLight(this.palette.worldSun, 2.65)
+    this.sun.position.set(-35, 58, 24)
+    this.sun.castShadow = true
+    this.sun.shadow.mapSize.set(2048, 2048)
+    this.sun.shadow.camera.left = -85
+    this.sun.shadow.camera.right = 85
+    this.sun.shadow.camera.top = 85
+    this.sun.shadow.camera.bottom = -85
+    this.sun.shadow.camera.near = 1
+    this.sun.shadow.camera.far = 150
+    this.sun.target.position.set(0, 0, 0)
+    this.scene.add(this.sun, this.sun.target)
   }
 
   private createSurfaceTexture(
@@ -3425,23 +3546,70 @@ export class GameEngine {
     skyTexture.magFilter = THREE.LinearFilter
     this.generatedTextures.set('sky-gradient', skyTexture)
 
+    this.skyMaterial = new THREE.MeshBasicMaterial({
+      map: skyTexture,
+      color: this.dayNightKeyframes.day.skyTint,
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: false,
+    })
     const sky = new THREE.Mesh(
       new THREE.SphereGeometry(178, 32, 18),
+      this.skyMaterial,
+    )
+    this.scene.add(sky)
+
+    this.sunDisc = new THREE.Mesh(
+      new THREE.SphereGeometry(6, 16, 12),
       new THREE.MeshBasicMaterial({
-        map: skyTexture,
-        side: THREE.BackSide,
+        color: this.palette.worldSun,
+        transparent: true,
         depthWrite: false,
         fog: false,
       }),
     )
-    this.scene.add(sky)
+    this.sunDisc.position.set(-88, 74, -112)
+    this.scene.add(this.sunDisc)
 
-    const sun = new THREE.Mesh(
-      new THREE.SphereGeometry(6, 16, 12),
-      new THREE.MeshBasicMaterial({ color: this.palette.worldSun, fog: false }),
+    this.moonDisc = new THREE.Mesh(
+      new THREE.SphereGeometry(4.2, 16, 12),
+      new THREE.MeshBasicMaterial({
+        color: mix(this.palette.worldSun, this.palette.worldSky, 0.58),
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        fog: false,
+      }),
     )
-    sun.position.set(-88, 74, -112)
-    this.scene.add(sun)
+    this.scene.add(this.moonDisc)
+
+    const starPositions = new Float32Array(STAR_COUNT * 3)
+    const starRandom = seededRandom(1947)
+    for (let index = 0; index < STAR_COUNT; index += 1) {
+      const azimuth = starRandom() * TWO_PI
+      const altitude = 0.12 + starRandom() * 1.25
+      const radius = 158 + starRandom() * 10
+      const horizontalRadius = Math.cos(altitude) * radius
+      const offset = index * 3
+      starPositions[offset] = Math.cos(azimuth) * horizontalRadius
+      starPositions[offset + 1] = Math.sin(altitude) * radius
+      starPositions[offset + 2] = Math.sin(azimuth) * horizontalRadius
+    }
+    const starGeometry = new THREE.BufferGeometry()
+    starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3))
+    this.stars = new THREE.Points(
+      starGeometry,
+      new THREE.PointsMaterial({
+        color: mix(this.palette.worldSun, this.palette.worldSky, 0.35),
+        size: 0.85,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        fog: false,
+      }),
+    )
+    this.stars.frustumCulled = false
+    this.scene.add(this.stars)
 
     const random = seededRandom(731)
     const cloudGeometry = new THREE.DodecahedronGeometry(3.4, 1)
@@ -3560,20 +3728,131 @@ export class GameEngine {
   }
 
   private updateAtmosphere(delta: number): void {
-    this.clouds.forEach(({ group, speed }, index) => {
+    for (let index = 0; index < this.clouds.length; index += 1) {
+      const { group, speed } = this.clouds[index]
       group.position.x += speed * delta
       if (group.position.x > 112) group.position.x = -112
       group.position.y = Number(group.userData.baseY) + Math.sin(this.elapsed * 0.22 + index) * 0.65
-    })
-    this.flames.forEach((flame, index) => {
+    }
+    for (let index = 0; index < this.flames.length; index += 1) {
+      const flame = this.flames[index]
       const pulse = 1 + Math.sin(this.elapsed * 9 + index * 1.7) * 0.16
       const baseScale = Number(flame.userData.baseScale)
       flame.scale.setScalar(baseScale * pulse)
       const material = flame.material
       if (material instanceof THREE.MeshStandardMaterial) {
-        material.emissiveIntensity = 1.3 + Math.sin(this.elapsed * 11 + index) * 0.25
+        const baseIntensity = this.dynamicDayNight
+          ? THREE.MathUtils.lerp(0.9, 2.15, this.nightFactor)
+          : 1.3
+        const pulseIntensity = this.dynamicDayNight
+          ? THREE.MathUtils.lerp(0.16, 0.34, this.nightFactor)
+          : 0.25
+        material.emissiveIntensity =
+          baseIntensity + Math.sin(this.elapsed * 11 + index) * pulseIntensity
       }
-    })
+    }
+  }
+
+  private updateDayNight(): void {
+    if (!this.dynamicDayNight) {
+      this.nightFactor = 0
+      this.sun.position.set(-35, 58, 24)
+      this.sun.color.copy(this.palette.worldSun)
+      this.sun.intensity = 2.65
+      this.hemisphere.color.copy(this.palette.worldSky)
+      this.hemisphere.groundColor.copy(this.palette.worldAmbientGround)
+      this.hemisphere.intensity = 1.65
+      this.backgroundColor.copy(this.palette.worldSky)
+      this.fog.color.copy(this.palette.worldFog)
+      this.skyMaterial.color.copy(this.dayNightKeyframes.day.skyTint)
+      this.sunDisc.position.set(-88, 74, -112)
+      this.sunDisc.material.color.copy(this.palette.worldSun)
+      this.sunDisc.material.opacity = 1
+      this.moonDisc.material.opacity = 0
+      this.stars.material.opacity = 0
+      for (let index = 0; index < this.torchLights.length; index += 1) {
+        this.torchLights[index].intensity = 1.4
+      }
+      for (let index = 0; index < this.buildingWindowGlows.length; index += 1) {
+        const glow = this.buildingWindowGlows[index]
+        glow.material.emissiveIntensity = glow.legacyIntensity
+      }
+      return
+    }
+
+    const dayPhase = (this.elapsed / DAY_LENGTH + DAY_START_OFFSET) % 1
+    const sunAngle = dayPhase * TWO_PI
+    const elevation = Math.sin(sunAngle)
+    const orbitalX = Math.cos(sunAngle) * SUN_ARC_RADIUS
+    const orbitalY = elevation * SUN_ARC_HEIGHT
+    const orbitalZ = Math.sin(sunAngle) * SUN_ARC_DEPTH
+    const nightToTwilight = smoothstep(-0.18, 0.08, elevation)
+    const twilightToDay = smoothstep(0.08, 0.6, elevation)
+    const dayFactor = smoothstep(-0.08, 0.45, elevation)
+    this.nightFactor = 1 - dayFactor
+
+    this.sun.position.set(orbitalX, Math.max(MIN_SHADOW_LIGHT_HEIGHT, orbitalY), orbitalZ)
+    this.sunDisc.position
+      .set(orbitalX, orbitalY, orbitalZ)
+      .normalize()
+      .multiplyScalar(CELESTIAL_DISC_DISTANCE)
+    this.moonDisc.position.copy(this.sunDisc.position).multiplyScalar(-1)
+
+    const { night, twilight, day } = this.dayNightKeyframes
+    this.sun.color
+      .copy(night.sun)
+      .lerp(twilight.sun, nightToTwilight)
+      .lerp(day.sun, twilightToDay)
+    this.sun.intensity = interpolateKeyframes(
+      night.sunIntensity,
+      twilight.sunIntensity,
+      day.sunIntensity,
+      nightToTwilight,
+      twilightToDay,
+    )
+    this.hemisphere.color
+      .copy(night.hemisphereSky)
+      .lerp(twilight.hemisphereSky, nightToTwilight)
+      .lerp(day.hemisphereSky, twilightToDay)
+    this.hemisphere.groundColor
+      .copy(night.hemisphereGround)
+      .lerp(twilight.hemisphereGround, nightToTwilight)
+      .lerp(day.hemisphereGround, twilightToDay)
+    this.hemisphere.intensity = interpolateKeyframes(
+      night.hemisphereIntensity,
+      twilight.hemisphereIntensity,
+      day.hemisphereIntensity,
+      nightToTwilight,
+      twilightToDay,
+    )
+    this.backgroundColor
+      .copy(night.sky)
+      .lerp(twilight.sky, nightToTwilight)
+      .lerp(day.sky, twilightToDay)
+    this.fog.color
+      .copy(night.fog)
+      .lerp(twilight.fog, nightToTwilight)
+      .lerp(day.fog, twilightToDay)
+    this.skyMaterial.color
+      .copy(night.skyTint)
+      .lerp(twilight.skyTint, nightToTwilight)
+      .lerp(day.skyTint, twilightToDay)
+    this.sunDisc.material.color.copy(this.sun.color)
+    this.sunDisc.material.opacity = smoothstep(-0.18, 0.04, elevation)
+    this.moonDisc.material.opacity = smoothstep(-0.18, 0.08, -elevation)
+    this.stars.material.opacity = this.nightFactor * this.nightFactor * 0.88
+
+    for (let index = 0; index < this.torchLights.length; index += 1) {
+      this.torchLights[index].intensity = THREE.MathUtils.lerp(1.4, 2.6, this.nightFactor)
+    }
+    for (let index = 0; index < this.buildingWindowGlows.length; index += 1) {
+      const glow = this.buildingWindowGlows[index]
+      glow.material.emissiveIntensity = THREE.MathUtils.lerp(
+        glow.legacyIntensity * 0.22,
+        glow.legacyIntensity * 2.25,
+        this.nightFactor,
+      )
+    }
   }
 
   private buildWorld(): void {
@@ -3888,6 +4167,7 @@ export class GameEngine {
       emissiveIntensity: 0.55,
       roughness: 0.35,
     })
+    this.buildingWindowGlows.push({ material: windowMaterial, legacyIntensity: 0.55 })
     for (const x of [-5.5, 5.5]) {
       for (const y of [3.5, 6.5]) {
         const window = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.6, 0.18), windowMaterial)
@@ -4126,6 +4406,7 @@ export class GameEngine {
     group.add(flame)
     const light = new THREE.PointLight(this.palette.warning, 1.4, 11, 2)
     light.position.y = 0.35
+    this.torchLights.push(light)
     group.add(light)
     group.position.set(x, y, z)
     return group
@@ -4182,6 +4463,10 @@ export class GameEngine {
       emissiveIntensity: shop ? 0.75 : 0.38,
       roughness: 0.4,
     })
+    this.buildingWindowGlows.push({
+      material: windowMaterial,
+      legacyIntensity: shop ? 0.75 : 0.38,
+    })
     const windowOffset = shop ? 2.7 : 2.1
     for (const windowX of [-windowOffset, windowOffset]) {
       const window = new THREE.Mesh(new THREE.BoxGeometry(1.15, 1.15, 0.18), windowMaterial)
@@ -4236,39 +4521,6 @@ export class GameEngine {
     return group
   }
 
-  private getTreeSpriteTexture(): THREE.CanvasTexture {
-    const cached = this.generatedTextures.get('tree-sprite')
-    if (cached) return cached
-    const canvas = document.createElement('canvas')
-    canvas.width = 64
-    canvas.height = 96
-    const context = canvas.getContext('2d')
-    if (!context) throw new Error('Could not create tree sprite texture')
-    context.imageSmoothingEnabled = false
-    context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--cp-warning').trim()
-    context.fillRect(28, 45, 8, 45)
-    context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--cp-success').trim()
-    context.beginPath()
-    context.moveTo(32, 2)
-    context.lineTo(5, 66)
-    context.lineTo(59, 66)
-    context.closePath()
-    context.fill()
-    context.beginPath()
-    context.moveTo(32, 20)
-    context.lineTo(9, 82)
-    context.lineTo(55, 82)
-    context.closePath()
-    context.fill()
-    const texture = new THREE.CanvasTexture(canvas)
-    texture.colorSpace = THREE.SRGBColorSpace
-    texture.magFilter = THREE.NearestFilter
-    texture.minFilter = THREE.LinearMipmapLinearFilter
-    texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
-    this.generatedTextures.set('tree-sprite', texture)
-    return texture
-  }
-
   private createTreeLod(x: number, z: number, scale: number): THREE.LOD {
     const lod = new THREE.LOD()
     const near = new THREE.Group()
@@ -4307,14 +4559,6 @@ export class GameEngine {
     }
     near.scale.setScalar(scale)
     lod.addLevel(near, 0)
-
-    const sprite = new THREE.Sprite(
-      new THREE.SpriteMaterial({ map: this.getTreeSpriteTexture(), transparent: true }),
-    )
-    sprite.scale.set(5.5 * scale, 8.2 * scale, 1)
-    sprite.position.y = 4 * scale
-    sprite.userData.cameraPassThrough = true
-    lod.addLevel(sprite, 25)
     lod.position.set(x, 0, z)
     this.foliageOccluders.push({
       root: lod,

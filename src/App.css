@@ -132,12 +132,24 @@ button {
   z-index: -1;
 }
 
-.theme-toggle {
-  min-height: 2.5rem;
+.menu-settings {
+  display: flex;
+  gap: 0.5rem;
   position: absolute;
   right: clamp(1rem, 4vw, 4rem);
   top: 1.5rem;
   z-index: 5;
+}
+
+.theme-toggle,
+.day-night-toggle {
+  min-height: 2.5rem;
+}
+
+.day-night-toggle[aria-pressed="true"],
+.pause-setting[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--cp-warning) 55%, var(--cp-border));
+  color: var(--cp-warning);
 }
 
 .contour {
@@ -1969,6 +1981,15 @@ kbd {
   width: 100%;
 }
 
+.pause-setting {
+  margin-top: 1rem;
+  width: 100%;
+}
+
+.pause-setting strong {
+  margin-left: auto;
+}
+
 .end-backdrop {
   background: color-mix(in srgb, var(--cp-bg) 78%, transparent);
 }
@@ -2105,14 +2126,18 @@ kbd {
     padding: 1rem;
   }
 
-  .theme-toggle {
-    padding: 0;
+  .menu-settings {
     right: 1rem;
     top: 1rem;
+  }
+
+  .theme-toggle,
+  .day-night-toggle {
+    padding: 0;
     width: 2.5rem;
   }
 
-  .theme-toggle span {
+  .menu-settings span {
     clip: rect(0 0 0 0);
     clip-path: inset(50%);
     height: 1px;
