@@ -41,6 +41,7 @@ import {
   type PartStatus,
   type SavedGame,
   type ShopItem,
+  createAbilityView,
   createHealthyBody,
   restoreObjectives,
 } from './game/types'
@@ -57,6 +58,12 @@ const factionIcons: Record<Faction, ReactNode> = {
   elf: <Trees aria-hidden="true" />,
   guard: <Shield aria-hidden="true" />,
   villain: <Skull aria-hidden="true" />,
+}
+
+const abilityIcons: Record<GameView['ability']['id'], ReactNode> = {
+  bow: <Trees aria-hidden="true" />,
+  shield: <Shield aria-hidden="true" />,
+  cleave: <Sword aria-hidden="true" />,
 }
 
 const bodyParts: Array<{ id: BodyPart; label: string; short: string; icon: ReactNode }> = [
@@ -125,16 +132,18 @@ function createInitialView(faction: Faction, savedGame?: SavedGame): GameView {
         : spawn[0] < 0
           ? 'forest'
           : 'fort'
+  const body = savedGame ? { ...savedGame.body } : createHealthyBody()
+  const stamina = savedGame?.stamina ?? 100
   return {
     faction,
     health: savedGame?.health ?? 100,
     maxHealth: 100,
-    stamina: savedGame?.stamina ?? 100,
+    stamina,
     gold: savedGame?.gold ?? 55,
     kills: savedGame?.kills ?? 0,
     damage: savedGame?.damage ?? (faction === 'villain' ? 31 : faction === 'guard' ? 28 : 26),
     zone,
-    body: savedGame ? { ...savedGame.body } : createHealthyBody(),
+    body,
     objectives: restoreObjectives(faction, savedGame?.objectives),
     prompt: '',
     markers: [],
@@ -143,6 +152,7 @@ function createInitialView(faction: Faction, savedGame?: SavedGame): GameView {
     pointerLocked: false,
     paused: false,
     caravanCooldown: 0,
+    ability: createAbilityView(faction, stamina, body),
   }
 }
 
@@ -637,6 +647,8 @@ function GameScreen({
   onBuy,
   onCloseShop,
   onAttack,
+  onAbilityDown,
+  onAbilityUp,
   onInteract,
   onCommand,
   onPointerLock,
@@ -658,6 +670,8 @@ function GameScreen({
   onBuy: (item: ShopItem) => void
   onCloseShop: () => void
   onAttack: () => void
+  onAbilityDown: () => void
+  onAbilityUp: () => void
   onInteract: () => void
   onCommand: () => void
   onPointerLock: () => void
@@ -671,6 +685,24 @@ function GameScreen({
     view.body.leftEye === 'missing' ? 'left' : view.body.rightEye === 'missing' ? 'right' : null
   const healthPercent = `${(view.health / view.maxHealth) * 100}%`
   const staminaPercent = `${view.stamina}%`
+  const abilityProgress = `${
+    view.ability.cooldownMax > 0
+      ? Math.max(
+          0,
+          Math.min(
+            100,
+            (1 - view.ability.cooldown / view.ability.cooldownMax) * 100,
+          ),
+        )
+      : 100
+  }%`
+  const abilityStatus = view.ability.active
+    ? 'Удерживается'
+    : view.ability.ready
+      ? 'Готово'
+      : view.ability.cooldown > 0
+        ? `${view.ability.cooldown.toFixed(1)} с`
+        : 'Недоступно'
 
   const touchHold = (code: string) => ({
     onPointerDown: () => onInput(code, true),
@@ -744,6 +776,19 @@ function GameScreen({
             </span>
           </div>
         </div>
+        <div
+          className={`ability-chip hud-card ${view.ability.ready ? 'ready' : ''} ${view.ability.active ? 'active' : ''}`}
+        >
+          <div className="ability-icon">{abilityIcons[view.ability.id]}</div>
+          <div className="ability-copy">
+            <span>Способность</span>
+            <strong>{view.ability.name}</strong>
+            <small>{abilityStatus}</small>
+          </div>
+          <div className="meter ability-meter" aria-hidden="true">
+            <i style={{ width: abilityProgress }} />
+          </div>
+        </div>
         <ObjectiveList view={view} />
       </div>
 
@@ -793,6 +838,9 @@ function GameScreen({
             <kbd>ЛКМ</kbd> удар
           </span>
           <span>
+            <kbd>ПКМ/R</kbd> {view.ability.name}
+          </span>
+          <span>
             <kbd>E</kbd> действие
           </span>
           <span>
@@ -822,6 +870,26 @@ function GameScreen({
         <div className="touch-actions">
           <button type="button" onClick={onAttack} aria-label="Удар">
             <Sword aria-hidden="true" />
+          </button>
+          <button
+            className={view.ability.active ? 'active' : undefined}
+            type="button"
+            onPointerDown={(event) => {
+              event.preventDefault()
+              event.currentTarget.setPointerCapture(event.pointerId)
+              onAbilityDown()
+            }}
+            onPointerUp={(event) => {
+              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                event.currentTarget.releasePointerCapture(event.pointerId)
+              }
+              onAbilityUp()
+            }}
+            onPointerCancel={onAbilityUp}
+            onPointerLeave={onAbilityUp}
+            aria-label={view.ability.name}
+          >
+            {abilityIcons[view.ability.id]}
           </button>
           <button type="button" onClick={onInteract} aria-label="Действие">
             E
@@ -1002,6 +1070,11 @@ function App() {
       onBuy={buyItem}
       onCloseShop={() => setShopOpen(false)}
       onAttack={() => engineRef.current?.attack()}
+      onAbilityDown={() => {
+        if (faction === 'guard') engineRef.current?.setShield(true)
+        else engineRef.current?.useAbility()
+      }}
+      onAbilityUp={() => engineRef.current?.setShield(false)}
       onInteract={() => engineRef.current?.interact()}
       onCommand={() => engineRef.current?.commandSquad()}
       onPointerLock={() => engineRef.current?.requestPointerLock()}

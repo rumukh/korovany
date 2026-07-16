@@ -1,5 +1,7 @@
 export type Faction = 'elf' | 'guard' | 'villain'
 
+export type ActorRole = 'soldier' | 'scout' | 'commander' | 'minion' | 'archer' | 'brute'
+
 export type ZoneId = 'neutral' | 'palace' | 'forest' | 'fort'
 
 export type PartStatus = 'healthy' | 'wounded' | 'missing' | 'prosthetic'
@@ -20,6 +22,67 @@ export interface BodyState {
   leftEye: PartStatus
   rightEye: PartStatus
   bleeding: number
+}
+
+export type AbilityId = 'bow' | 'shield' | 'cleave'
+
+export interface AbilityView {
+  id: AbilityId
+  name: string
+  ready: boolean
+  active: boolean
+  cooldown: number
+  cooldownMax: number
+}
+
+export const ABILITY_INFO: Record<
+  Faction,
+  {
+    id: AbilityId
+    name: string
+    cooldownMax: number
+    staminaCost: number
+  }
+> = {
+  elf: {
+    id: 'bow',
+    name: 'Лесная стрела',
+    cooldownMax: 0.9,
+    staminaCost: 15,
+  },
+  guard: {
+    id: 'shield',
+    name: 'Стойка щита',
+    cooldownMax: 0.4,
+    staminaCost: 0,
+  },
+  villain: {
+    id: 'cleave',
+    name: 'Сокрушающий рывок',
+    cooldownMax: 3.5,
+    staminaCost: 30,
+  },
+}
+
+export function createAbilityView(
+  faction: Faction,
+  stamina = 100,
+  body?: BodyState,
+): AbilityView {
+  const info = ABILITY_INFO[faction]
+  const canUseBow =
+    info.id !== 'bow' ||
+    !body ||
+    body.leftArm !== 'missing' ||
+    body.rightArm !== 'missing'
+  return {
+    id: info.id,
+    name: info.name,
+    ready: (info.id === 'shield' ? stamina > 0 : stamina >= info.staminaCost) && canUseBow,
+    active: false,
+    cooldown: 0,
+    cooldownMax: info.cooldownMax,
+  }
 }
 
 export interface Objective {
@@ -56,6 +119,7 @@ export interface GameView {
   pointerLocked: boolean
   paused: boolean
   caravanCooldown: number
+  ability: AbilityView
 }
 
 export interface SavedGame {

@@ -1003,6 +1003,87 @@ button {
   color: var(--cp-text-soft);
 }
 
+.ability-chip {
+  display: grid;
+  gap: 0.35rem 0.6rem;
+  grid-template-columns: auto 1fr;
+  padding: 0.65rem 0.7rem;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease;
+}
+
+.ability-chip.ready {
+  border-color: color-mix(in srgb, var(--cp-accent) 52%, var(--cp-border));
+}
+
+.ability-chip.active {
+  background: color-mix(in srgb, var(--cp-link) 14%, var(--cp-panel));
+  border-color: var(--cp-link);
+}
+
+.ability-icon {
+  align-items: center;
+  align-self: center;
+  background: var(--cp-surface-soft);
+  border: 1px solid var(--cp-border);
+  border-radius: 0.5rem;
+  color: var(--cp-accent);
+  display: flex;
+  height: 2.35rem;
+  justify-content: center;
+  width: 2.35rem;
+}
+
+.ability-chip.active .ability-icon {
+  color: var(--cp-link);
+}
+
+.ability-icon svg {
+  height: 1.2rem;
+  width: 1.2rem;
+}
+
+.ability-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.ability-copy span,
+.ability-copy small {
+  color: var(--cp-text-muted);
+  font-size: 0.52rem;
+}
+
+.ability-copy span {
+  text-transform: uppercase;
+}
+
+.ability-copy strong {
+  color: var(--cp-text);
+  font-size: 0.7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ability-copy small {
+  font-family: Consolas, "Courier New", Courier, monospace;
+}
+
+.ability-meter {
+  grid-column: 1 / -1;
+  margin-top: 0;
+}
+
+.ability-meter i {
+  background: var(--cp-accent);
+}
+
+.ability-chip.active .ability-meter i {
+  background: var(--cp-link);
+}
+
 .objectives-card {
   padding: 0.7rem;
 }
@@ -1867,7 +1948,8 @@ kbd {
     width: 2.7rem;
   }
 
-  .touch-controls button:active {
+  .touch-controls button:active,
+  .touch-controls button.active {
     background: var(--cp-accent);
     color: var(--cp-accent-fg);
   }
