@@ -22,6 +22,13 @@ import {
   restoreObjectives,
 } from './types'
 
+export interface GameEngineSettings {
+  musicMuted: boolean
+  dynamicDayNight: boolean
+  bloomEnabled: boolean
+  screenShakeEnabled: boolean
+}
+
 type ActorAiMode = 'normal' | 'captive' | 'attackEventProp'
 
 interface EventPropTarget {
@@ -158,8 +165,22 @@ interface Particle {
   mesh: THREE.Mesh
   velocity: THREE.Vector3
   life: number
+  initialLife?: number
+  baseScale?: THREE.Vector3
+  splatScale?: number
+  pooled?: boolean
   eventId?: string
-  mode?: 'smoke'
+  mode?: 'smoke' | 'spark' | 'blood' | 'gib'
+}
+
+type DecalKind = 'blood' | 'scorch'
+
+interface Decal {
+  mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>
+  age: number
+  lifetime: number
+  serial: number
+  active: boolean
 }
 
 interface Projectile {
@@ -257,6 +278,37 @@ const COMMANDER_REINFORCEMENT_INTERVAL = 25
 const COMMANDER_REINFORCEMENT_LIMIT = 4
 const BRUTE_FRONTAL_DAMAGE_MULTIPLIER = 0.5
 const BRUTE_FRONT_DOT = 0.2
+const SHAKE_POSITION = 0.22
+const SHAKE_ROLL = 0.012
+const SHAKE_DECAY = 2.1
+const SHAKE_FREQUENCY = 24
+const TRAUMA_CLEAVE = 0.42
+const TRAUMA_BLOCK = 0.08
+const TRAUMA_DEATH_MAX = 0.16
+const TRAUMA_DEATH_RANGE = 12
+const FLASH_MIN = 0.25
+const FLASH_MAX = 0.85
+const FLASH_BLOCK_MAX = 0.12
+const FLASH_DECAY = 2.4
+const SPARK_COUNT_BLOCK = 7
+const SPARK_COUNT_CLEAVE = 5
+const SPARK_LIFE = 0.24
+const SPARK_MAX_ACTIVE = 48
+const GORE_HIT_MIN = 14
+const GORE_HIT_MAX = 30
+const GORE_PLAYER_HIT_MIN = 18
+const GORE_PLAYER_HIT_MAX = 36
+const GORE_DEATH_COUNT = 52
+const GORE_LARGE_DEATH_COUNT = 72
+const GORE_MAX_ACTIVE = 180
+const GORE_GROUND_Y = 0.08
+const GORE_COLORS = [0xff1744, 0xb00020, 0xff5f7a, 0x760014] as const
+const DECAL_MAX = 72
+const DECAL_Y = 0.025
+const DECAL_FADE = 6
+const BLOOD_DECAL_LIFE = 34
+const SCORCH_DECAL_LIFE = 28
+const BLEED_FX_INTERVAL = 1.25
 const DAY_LENGTH = 240
 const DAY_START_OFFSET = 0.18
 const SUN_ARC_RADIUS = 90
@@ -471,6 +523,7 @@ export class GameEngine {
   private readonly keys = new Set<string>()
   private readonly actors: Actor[] = []
   private readonly particles: Particle[] = []
+  private readonly decals: Decal[] = []
   private readonly projectiles: Projectile[] = []
   private readonly projectileSourcesToClear = new Set<string>()
   private readonly generatedTextures = new Map<string, THREE.CanvasTexture>()
@@ -489,6 +542,7 @@ export class GameEngine {
   private moonDisc!: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
   private stars!: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>
   private readonly cameraRaycaster = new THREE.Raycaster()
+  private readonly cameraFollowPosition = new THREE.Vector3()
   private readonly cameraObstacles: THREE.Object3D[] = []
   private readonly foliageOccluders: FoliageOccluder[] = []
   private readonly staticObstacles: StaticObstacle[] = []
@@ -515,6 +569,13 @@ export class GameEngine {
   private onGround = true
   private cameraYaw = 0
   private cameraPitch = 0.38
+  private trauma = 0
+  private shakeClock = 0
+  private damageFlash = 0
+  private bleedFxCooldown = 0
+  private activeSparks = 0
+  private activeGore = 0
+  private decalSequence = 0
   private attackCooldown = 0
   private attackAnimation = 0
   private abilityCooldown = 0
@@ -539,8 +600,10 @@ export class GameEngine {
   private musicStep = 0
   private musicMuted: boolean
   private dynamicDayNight: boolean
+  private screenShakeEnabled: boolean
   private nightFactor = 0
   private readonly musicSources = new Set<AudioScheduledSourceNode>()
+  private readonly inactiveGoreParticles: Particle[] = []
   private readonly stopMusicOwner = () => this.stopMusic()
   private resizeObserver: ResizeObserver
   private boundKeyDown: (event: KeyboardEvent) => void
@@ -559,15 +622,14 @@ export class GameEngine {
     faction: Faction,
     callbacks: GameCallbacks,
     savedGame?: SavedGame,
-    musicMuted = false,
-    dynamicDayNight = true,
-    bloomEnabled = true,
+    settings: Partial<GameEngineSettings> = {},
   ) {
     this.container = container
     this.callbacks = callbacks
     this.faction = faction
-    this.musicMuted = musicMuted
-    this.dynamicDayNight = dynamicDayNight
+    this.musicMuted = settings.musicMuted ?? false
+    this.dynamicDayNight = settings.dynamicDayNight ?? true
+    this.screenShakeEnabled = settings.screenShakeEnabled ?? true
     this.palette = createPalette()
     this.dayNightKeyframes = createDayNightKeyframes(this.palette)
     this.objectives = restoreObjectives(faction, savedGame?.objectives)
@@ -599,7 +661,7 @@ export class GameEngine {
       this.renderer,
       this.scene,
       this.camera,
-      bloomEnabled,
+      settings.bloomEnabled ?? true,
     )
 
     this.backgroundColor.copy(this.palette.worldSky)
@@ -698,7 +760,10 @@ export class GameEngine {
   }
 
   setPaused(paused: boolean): void {
-    if (paused) this.dropShield()
+    if (paused) {
+      this.dropShield()
+      this.clearTransientCombatFeedback()
+    }
     this.paused = paused
     this.keys.clear()
     if (paused && document.pointerLockElement === this.renderer.domElement) document.exitPointerLock()
@@ -737,6 +802,11 @@ export class GameEngine {
 
   setBloomEnabled(enabled: boolean): void {
     this.postProcessor.setEnabled(enabled)
+  }
+
+  setScreenShakeEnabled(enabled: boolean): void {
+    this.screenShakeEnabled = enabled
+    if (!enabled) this.trauma = 0
   }
 
   stopAudio(): void {
@@ -823,7 +893,7 @@ export class GameEngine {
       (this.body.leftArm === 'missing' ? 5 : 0) + (this.body.rightArm === 'missing' ? 9 : 0)
     const dealt = Math.max(8, this.damage - armPenalty + Math.floor(Math.random() * 7))
     this.damageActor(target, dealt, this.player.position, this.faction, true, {
-      detachChance: 0.13,
+      detachChance: 0.45,
     })
   }
 
@@ -986,6 +1056,9 @@ export class GameEngine {
 
   private update(delta: number): void {
     this.elapsed += delta
+    this.shakeClock += delta
+    this.trauma = Math.max(0, this.trauma - SHAKE_DECAY * delta)
+    this.damageFlash = Math.max(0, this.damageFlash - FLASH_DECAY * delta)
     this.attackCooldown = Math.max(0, this.attackCooldown - delta)
     this.attackAnimation = Math.max(0, this.attackAnimation - delta * 4.2)
     this.abilityCooldown = Math.max(0, this.abilityCooldown - delta)
@@ -996,12 +1069,20 @@ export class GameEngine {
     this.updateActors(delta)
     this.updateProjectiles(delta)
     this.updateParticles(delta)
+    this.updateDecals(delta)
     this.updateDayNight()
     this.updateAtmosphere(delta)
 
     if (this.body.bleeding > 0) {
       this.health -= this.body.bleeding * delta
-      if (Math.floor(this.elapsed * 2) % 10 === 0) this.createBleedParticle()
+      this.bleedFxCooldown -= delta
+      if (this.bleedFxCooldown <= 0) {
+        this.bleedFxCooldown = BLEED_FX_INTERVAL
+        this.createBleedParticle()
+        this.spawnDecal(this.player.position, 'blood', 0.55)
+      }
+    } else {
+      this.bleedFxCooldown = 0
     }
     if (this.health <= 0) this.endGame('defeat')
     this.updateMission()
@@ -1812,6 +1893,7 @@ export class GameEngine {
       (this.body.leftArm === 'missing' ? 5 : 0) +
       (this.body.rightArm === 'missing' ? 9 : 0)
     const dealt = Math.max(8, this.damage - armPenalty) * CLEAVE_DAMAGE_MULTIPLIER
+    let didHit = false
     for (const actor of this.actors) {
       if (!actor.alive || !hostile(this.faction, actor.faction)) continue
       const offset = actor.mesh.position.clone().sub(this.player.position)
@@ -1823,10 +1905,17 @@ export class GameEngine {
       ) {
         continue
       }
+      didHit = true
+      const impactPosition = actor.mesh.position.clone().add(new THREE.Vector3(0, 1.25, 0))
+      const incomingDirection = this.player.position.clone().sub(actor.mesh.position)
+      incomingDirection.y = 0
+      this.createSparks(impactPosition, incomingDirection, SPARK_COUNT_CLEAVE)
       this.damageActor(actor, dealt, this.player.position, this.faction, true, {
+        detachChance: 0.75,
         knockback: CLEAVE_KNOCKBACK_DISTANCE,
       })
     }
+    if (didHit) this.addTrauma(TRAUMA_CLEAVE)
     this.playSound('cleave')
   }
 
@@ -2162,17 +2251,65 @@ export class GameEngine {
       particle.life -= delta
       if (particle.mode === 'smoke') {
         particle.velocity.y += delta * 0.22
+      } else if (particle.mode === 'spark') {
+        particle.velocity.y -= delta * 18
+      } else if (particle.mode === 'blood') {
+        particle.velocity.y -= delta * 15
+      } else if (particle.mode === 'gib') {
+        particle.velocity.y -= delta * 12
       } else {
         particle.velocity.y -= delta * 9
       }
       particle.mesh.position.addScaledVector(particle.velocity, delta)
-      particle.mesh.rotation.x += delta * (particle.mode === 'smoke' ? 0.5 : 4)
-      particle.mesh.rotation.z += delta * (particle.mode === 'smoke' ? 0.7 : 3)
+      if (
+        (particle.mode === 'blood' || particle.mode === 'gib') &&
+        particle.mesh.position.y <= GORE_GROUND_Y &&
+        particle.velocity.y < 0
+      ) {
+        if (particle.splatScale) {
+          this.spawnDecal(particle.mesh.position, 'blood', particle.splatScale)
+        }
+        this.removeParticle(index)
+        continue
+      }
+      particle.mesh.rotation.x +=
+        delta *
+        (particle.mode === 'smoke'
+          ? 0.5
+          : particle.mode === 'spark'
+            ? 14
+            : particle.mode === 'blood'
+              ? 9
+              : particle.mode === 'gib'
+                ? 12
+                : 4)
+      particle.mesh.rotation.z +=
+        delta *
+        (particle.mode === 'smoke'
+          ? 0.7
+          : particle.mode === 'spark'
+            ? 11
+            : particle.mode === 'blood' || particle.mode === 'gib'
+              ? 10
+              : 3)
       if (particle.mode === 'smoke') {
         particle.mesh.scale.multiplyScalar(1 + delta * 0.42)
         const material = particle.mesh.material
         if (material instanceof THREE.MeshBasicMaterial) {
           material.opacity = Math.min(0.42, Math.max(0, particle.life * 0.22))
+        }
+      } else if (particle.mode === 'spark') {
+        particle.mesh.scale.setScalar(
+          THREE.MathUtils.clamp(particle.life / SPARK_LIFE, 0.01, 1),
+        )
+      } else if (particle.mode === 'blood' || particle.mode === 'gib') {
+        const ratio = THREE.MathUtils.clamp(
+          particle.life / Math.max(0.001, particle.initialLife ?? particle.life),
+          0.2,
+          1,
+        )
+        if (particle.baseScale) {
+          particle.mesh.scale.copy(particle.baseScale).multiplyScalar(0.55 + ratio * 0.45)
         }
       } else {
         particle.mesh.scale.setScalar(Math.max(0.01, particle.life))
@@ -2185,6 +2322,15 @@ export class GameEngine {
 
   private removeParticle(index: number): void {
     const particle = this.particles[index]
+    if (particle.mode === 'spark') this.activeSparks = Math.max(0, this.activeSparks - 1)
+    if (particle.mode === 'blood' || particle.mode === 'gib') {
+      this.activeGore = Math.max(0, this.activeGore - 1)
+      particle.mesh.visible = false
+      particle.splatScale = undefined
+      this.particles.splice(index, 1)
+      this.inactiveGoreParticles.push(particle)
+      return
+    }
     this.scene.remove(particle.mesh)
     particle.mesh.geometry.dispose()
     const material = particle.mesh.material
@@ -2519,6 +2665,7 @@ export class GameEngine {
     }
     const fire = this.createHouseFireEffect(target.position)
     this.scene.add(fire)
+    this.spawnDecal(target.position, 'scorch', 4.8)
 
     const enemyFaction = this.pickEventEnemyFaction()
     const ownedActorIds: string[] = []
@@ -3001,18 +3148,49 @@ export class GameEngine {
     const armor = this.faction === 'guard' ? 0.72 : 1
     const normalizedIncoming = incomingDirection.clone()
     normalizedIncoming.y = 0
+    const hasIncomingDirection = normalizedIncoming.lengthSq() > 0.0001
+    if (hasIncomingDirection) normalizedIncoming.normalize()
     const frontalBlock =
       this.shieldActive &&
-      normalizedIncoming.lengthSq() > 0.0001 &&
-      normalizedIncoming.normalize().dot(this.getAimDirection()) > SHIELD_FRONT_DOT
+      hasIncomingDirection &&
+      normalizedIncoming.dot(this.getAimDirection()) > SHIELD_FRONT_DOT
     const dealt =
       baseDamage * armor * (frontalBlock ? SHIELD_DAMAGE_MULTIPLIER : 1)
+    const impact = THREE.MathUtils.clamp(dealt / 20, 0, 1)
     this.health -= dealt
+    if (frontalBlock) {
+      this.addTrauma(TRAUMA_BLOCK)
+      this.damageFlash = Math.max(
+        this.damageFlash,
+        Math.min(FLASH_BLOCK_MAX, dealt / 20),
+      )
+      const contact = this.player.position
+        .clone()
+        .add(new THREE.Vector3(0, 1.35, 0))
+        .addScaledVector(normalizedIncoming, 0.72)
+      this.createSparks(contact, normalizedIncoming, SPARK_COUNT_BLOCK)
+    } else {
+      this.addTrauma(THREE.MathUtils.lerp(0.12, 0.35, impact))
+      this.damageFlash = Math.max(
+        this.damageFlash,
+        THREE.MathUtils.lerp(FLASH_MIN, FLASH_MAX, impact),
+      )
+      const sprayDirection = hasIncomingDirection
+        ? normalizedIncoming.clone().multiplyScalar(-1)
+        : new THREE.Vector3(0, 0, 1)
+      this.createBloodBurst(
+        this.player.position.clone().add(new THREE.Vector3(0, 1.3, 0)),
+        sprayDirection,
+        Math.round(THREE.MathUtils.lerp(GORE_PLAYER_HIT_MIN, GORE_PLAYER_HIT_MAX, impact)),
+        THREE.MathUtils.lerp(0.9, 2.25, impact),
+      )
+    }
     this.createHitParticles(this.player.position, this.faction)
     this.playSound(frontalBlock ? 'block' : 'hurt')
     if (canInjure && !frontalBlock && Math.random() < 0.11 && this.health < 82) {
       this.injurePlayer()
     }
+    this.emitView(true)
   }
 
   private damageActor(
@@ -3041,6 +3219,15 @@ export class GameEngine {
       }
     }
 
+    const impact = THREE.MathUtils.clamp(dealt / 36, 0, 1)
+    const sprayDirection = target.mesh.position.clone().sub(sourcePosition)
+    sprayDirection.y = 0
+    this.createBloodBurst(
+      target.mesh.position.clone().add(new THREE.Vector3(0, 1.3, 0)),
+      sprayDirection,
+      Math.round(THREE.MathUtils.lerp(GORE_HIT_MIN, GORE_HIT_MAX, impact)),
+      THREE.MathUtils.lerp(0.85, 2.35, impact),
+    )
     target.hp = Math.max(0, target.hp - dealt)
     target.healthBarVisibleUntil = this.elapsed + 3.4
     this.drawActorHealthBar(target)
@@ -3066,7 +3253,7 @@ export class GameEngine {
         )
       }
     }
-    if (target.hp <= 0) this.killActor(target, killerFaction, directPlayerKill)
+    if (target.hp <= 0) this.killActor(target, killerFaction, directPlayerKill, sourcePosition)
   }
 
   private dropShield(): void {
@@ -3090,8 +3277,47 @@ export class GameEngine {
     shield.rotation.set(this.shieldActive ? -0.08 : 0, 0, this.shieldActive ? 0 : 0.12)
   }
 
-  private killActor(actor: Actor, killerFaction: Faction, directPlayerKill: boolean): void {
+  private killActor(
+    actor: Actor,
+    killerFaction: Faction,
+    directPlayerKill: boolean,
+    sourcePosition: THREE.Vector3,
+  ): void {
     if (!actor.alive) return
+    const deathPosition = actor.mesh.position.clone()
+    const largeBody =
+      actor.role === 'brute' || actor.role === 'champion' || actor.role === 'commander'
+    const deathDirection = deathPosition.clone().sub(sourcePosition)
+    deathDirection.y = 0
+    this.createBloodBurst(
+      deathPosition.clone().add(new THREE.Vector3(0, 1.25, 0)),
+      deathDirection,
+      largeBody ? GORE_LARGE_DEATH_COUNT : GORE_DEATH_COUNT,
+      largeBody ? 3.15 : 2.65,
+      largeBody ? 10 : 6,
+    )
+    this.spawnDecal(deathPosition, 'blood', largeBody ? 2.8 : 2.1)
+    const satelliteSplats = largeBody ? 8 : 5
+    for (let index = 0; index < satelliteSplats; index += 1) {
+      const angle = Math.random() * TWO_PI
+      const distance = 0.7 + Math.random() * (largeBody ? 3.6 : 2.8)
+      this.spawnDecal(
+        deathPosition
+          .clone()
+          .add(new THREE.Vector3(Math.cos(angle) * distance, 0, Math.sin(angle) * distance)),
+        'blood',
+        0.38 + Math.random() * (largeBody ? 0.95 : 0.72),
+      )
+    }
+    for (let index = 0; index < (largeBody ? 3 : 2); index += 1) {
+      this.detachActorLimb(actor)
+    }
+    if (directPlayerKill) {
+      const distance = deathPosition.distanceTo(this.player.position)
+      if (distance < TRAUMA_DEATH_RANGE) {
+        this.addTrauma(TRAUMA_DEATH_MAX * (1 - distance / TRAUMA_DEATH_RANGE))
+      }
+    }
     actor.alive = false
     actor.healthBar.visible = false
     const ring = actor.mesh.getObjectByName('faction-ring')
@@ -3166,6 +3392,13 @@ export class GameEngine {
     const limb = this.player.getObjectByName(part)
     if (!limb) return
     limb.visible = false
+    this.createBloodBurst(
+      this.player.position.clone().add(new THREE.Vector3(part.startsWith('left') ? -0.4 : 0.4, 1.2, 0)),
+      new THREE.Vector3(part.startsWith('left') ? -1 : 1, 0, 0.25),
+      32,
+      2.4,
+      4,
+    )
     const detached = new THREE.Mesh(
       new THREE.BoxGeometry(part.includes('Leg') ? 0.32 : 0.25, part.includes('Leg') ? 0.95 : 0.78, 0.3),
       new THREE.MeshStandardMaterial({
@@ -3216,6 +3449,13 @@ export class GameEngine {
     if (visible.length === 0) return
     const limb = visible[Math.floor(Math.random() * visible.length)]
     limb.visible = false
+    this.createBloodBurst(
+      actor.mesh.position.clone().add(new THREE.Vector3(0, 1.35, 0)),
+      new THREE.Vector3((Math.random() - 0.5) * 2, 0, (Math.random() - 0.5) * 2),
+      20,
+      2,
+      3,
+    )
     const detached = new THREE.Mesh(
       new THREE.BoxGeometry(0.28, limb.name.includes('Leg') ? 0.92 : 0.72, 0.28),
       new THREE.MeshStandardMaterial({ color: this.factionColor(actor.faction), roughness: 0.9 }),
@@ -3309,6 +3549,7 @@ export class GameEngine {
     if (this.ended) return
     this.dropShield()
     this.cancelActiveEvent()
+    this.clearTransientCombatFeedback()
     this.ended = true
     this.updateMusicVolume()
     this.keys.clear()
@@ -3383,6 +3624,7 @@ export class GameEngine {
       faction: this.faction,
       health: Math.max(0, this.health),
       maxHealth: 100,
+      damageFlash: this.damageFlash,
       stamina: this.stamina,
       gold: this.gold,
       kills: this.kills,
@@ -3441,6 +3683,88 @@ export class GameEngine {
     this.sun.shadow.camera.far = 150
     this.sun.target.position.set(0, 0, 0)
     this.scene.add(this.sun, this.sun.target)
+  }
+
+  private createDecalTexture(kind: DecalKind): THREE.CanvasTexture {
+    const key = `decal-${kind}`
+    const cached = this.generatedTextures.get(key)
+    if (cached) return cached
+
+    const canvas = document.createElement('canvas')
+    canvas.width = 64
+    canvas.height = 64
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error(`Could not create procedural decal texture: ${kind}`)
+    const random = seededRandom(kind === 'blood' ? 2701 : 4903)
+
+    if (kind === 'blood') {
+      context.fillStyle = '#820018'
+      context.globalAlpha = 0.92
+      context.beginPath()
+      context.ellipse(32, 32, 19, 16, 0.3, 0, TWO_PI)
+      context.fill()
+      for (let index = 0; index < 30; index += 1) {
+        const angle = random() * TWO_PI
+        const distance = random() * 23
+        context.fillStyle = index % 4 === 0 ? '#ff3158' : index % 3 === 0 ? '#b00020' : '#780016'
+        context.globalAlpha = 0.42 + random() * 0.5
+        context.beginPath()
+        context.ellipse(
+          32 + Math.cos(angle) * distance,
+          32 + Math.sin(angle) * distance,
+          3 + random() * 11,
+          2 + random() * 8,
+          angle,
+          0,
+          TWO_PI,
+        )
+        context.fill()
+      }
+      for (let index = 0; index < 18; index += 1) {
+        context.fillStyle = index % 3 === 0 ? '#ff5f7a' : '#8f001b'
+        context.globalAlpha = 0.5 + random() * 0.42
+        context.beginPath()
+        context.arc(
+          3 + random() * 58,
+          3 + random() * 58,
+          0.9 + random() * 2.8,
+          0,
+          TWO_PI,
+        )
+        context.fill()
+      }
+    } else {
+      const gradient = context.createRadialGradient(32, 32, 5, 32, 32, 30)
+      gradient.addColorStop(0, 'rgba(12, 10, 8, 0.16)')
+      gradient.addColorStop(0.48, 'rgba(18, 14, 10, 0.54)')
+      gradient.addColorStop(0.72, 'rgba(6, 5, 4, 0.72)')
+      gradient.addColorStop(1, 'rgba(6, 5, 4, 0)')
+      context.fillStyle = gradient
+      context.fillRect(0, 0, 64, 64)
+      context.fillStyle = '#080706'
+      for (let index = 0; index < 28; index += 1) {
+        const angle = random() * TWO_PI
+        const distance = 12 + random() * 18
+        context.globalAlpha = 0.08 + random() * 0.18
+        context.beginPath()
+        context.arc(
+          32 + Math.cos(angle) * distance,
+          32 + Math.sin(angle) * distance,
+          1 + random() * 3.5,
+          0,
+          TWO_PI,
+        )
+        context.fill()
+      }
+    }
+    context.globalAlpha = 1
+
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.magFilter = THREE.LinearFilter
+    texture.minFilter = THREE.LinearMipmapLinearFilter
+    this.generatedTextures.set(key, texture)
+    return texture
   }
 
   private createSurfaceTexture(
@@ -5114,6 +5438,214 @@ export class GameEngine {
     return nearest
   }
 
+  private addTrauma(amount: number): void {
+    if (!this.screenShakeEnabled || this.paused || this.ended || amount <= 0) return
+    this.trauma = Math.min(1, this.trauma + amount)
+  }
+
+  private clearTransientCombatFeedback(): void {
+    this.trauma = 0
+    this.damageFlash = 0
+  }
+
+  private createSparks(
+    position: THREE.Vector3,
+    incomingDirection: THREE.Vector3,
+    count: number,
+  ): void {
+    const available = Math.min(count, SPARK_MAX_ACTIVE - this.activeSparks)
+    if (available <= 0) return
+
+    const outward = incomingDirection.clone()
+    outward.y = 0
+    if (outward.lengthSq() <= 0.0001) outward.set(0, 0, 1)
+    else outward.normalize()
+    const tangent = new THREE.Vector3(-outward.z, 0, outward.x)
+
+    for (let index = 0; index < available; index += 1) {
+      const color =
+        index % 3 === 0 ? new THREE.Color(0xffffff) : this.palette.warning.clone()
+      color.multiplyScalar(1.35)
+      const mesh = new THREE.Mesh(
+        new THREE.OctahedronGeometry(0.055, 0),
+        new THREE.MeshBasicMaterial({ color }),
+      )
+      mesh.position
+        .copy(position)
+        .addScaledVector(tangent, (Math.random() - 0.5) * 0.3)
+      this.scene.add(mesh)
+      this.particles.push({
+        mesh,
+        velocity: outward
+          .clone()
+          .multiplyScalar(1.5 + Math.random() * 3)
+          .addScaledVector(tangent, (Math.random() - 0.5) * 8)
+          .setY(4 + Math.random() * 5),
+        life: SPARK_LIFE,
+        mode: 'spark',
+      })
+      this.activeSparks += 1
+    }
+  }
+
+  private acquireGoreParticle(): Particle | null {
+    const pooled = this.inactiveGoreParticles.pop()
+    if (pooled) return pooled
+    if (this.activeGore >= GORE_MAX_ACTIVE) return null
+
+    const mesh = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(1, 0),
+      new THREE.MeshBasicMaterial({ color: GORE_COLORS[0], toneMapped: false }),
+    )
+    mesh.visible = false
+    mesh.castShadow = false
+    mesh.receiveShadow = false
+    this.scene.add(mesh)
+    return {
+      mesh,
+      velocity: new THREE.Vector3(),
+      life: 0,
+      initialLife: 0,
+      baseScale: new THREE.Vector3(1, 1, 1),
+      pooled: true,
+      mode: 'blood',
+    }
+  }
+
+  private createBloodBurst(
+    position: THREE.Vector3,
+    direction: THREE.Vector3,
+    count: number,
+    force: number,
+    chunkCount = 0,
+  ): void {
+    const available = Math.min(count, GORE_MAX_ACTIVE - this.activeGore)
+    if (available <= 0) return
+
+    const outward = direction.clone()
+    outward.y = 0
+    if (outward.lengthSq() <= 0.0001) {
+      outward.set(Math.random() - 0.5, 0, Math.random() - 0.5)
+    }
+    outward.normalize()
+    const tangent = new THREE.Vector3(-outward.z, 0, outward.x)
+
+    for (let index = 0; index < available; index += 1) {
+      const particle = this.acquireGoreParticle()
+      if (!particle) break
+      const isChunk = index < chunkCount
+      const radius = isChunk ? 0.14 + Math.random() * 0.15 : 0.045 + Math.random() * 0.07
+      const verticalScale = isChunk ? radius : radius * (1.65 + Math.random() * 1.4)
+      particle.mode = isChunk ? 'gib' : 'blood'
+      particle.mesh.visible = true
+      particle.mesh.position
+        .copy(position)
+        .addScaledVector(tangent, (Math.random() - 0.5) * 0.52)
+        .add(new THREE.Vector3(0, (Math.random() - 0.5) * 0.28, 0))
+      particle.mesh.rotation.set(
+        Math.random() * TWO_PI,
+        Math.random() * TWO_PI,
+        Math.random() * TWO_PI,
+      )
+      particle.baseScale ??= new THREE.Vector3()
+      particle.baseScale.set(radius, verticalScale, radius)
+      particle.mesh.scale.copy(particle.baseScale)
+      const material = particle.mesh.material
+      if (material instanceof THREE.MeshBasicMaterial) {
+        material.color.setHex(GORE_COLORS[index % GORE_COLORS.length])
+      }
+      particle.velocity
+        .copy(outward)
+        .multiplyScalar(force * (0.85 + Math.random() * 1.45))
+        .addScaledVector(tangent, (Math.random() - 0.5) * force * 2.4)
+      particle.velocity.x += (Math.random() - 0.5) * force * 0.7
+      particle.velocity.y = force * (1.15 + Math.random() * (isChunk ? 1.8 : 2.8))
+      particle.velocity.z += (Math.random() - 0.5) * force * 0.7
+      const life = (isChunk ? 1.35 : 0.95) + Math.random() * (isChunk ? 0.75 : 0.85)
+      particle.life = life
+      particle.initialLife = life
+      particle.splatScale =
+        isChunk || index % 3 === 0
+          ? (isChunk ? 0.42 : 0.16) + Math.random() * (isChunk ? 0.38 : 0.2)
+          : undefined
+      this.particles.push(particle)
+      this.activeGore += 1
+    }
+  }
+
+  private createDecal(): Decal {
+    const material = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 1,
+      depthWrite: false,
+      alphaTest: 0.02,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+      side: THREE.DoubleSide,
+    })
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material)
+    mesh.visible = false
+    mesh.castShadow = false
+    mesh.receiveShadow = false
+    this.scene.add(mesh)
+    const decal: Decal = {
+      mesh,
+      age: 0,
+      lifetime: 0,
+      serial: 0,
+      active: false,
+    }
+    this.decals.push(decal)
+    return decal
+  }
+
+  private spawnDecal(position: THREE.Vector3, kind: DecalKind, scale = 1): void {
+    let decal = this.decals.find((candidate) => !candidate.active)
+    if (!decal) {
+      decal =
+        this.decals.length < DECAL_MAX
+          ? this.createDecal()
+          : this.decals.reduce((oldest, candidate) =>
+              candidate.serial < oldest.serial ? candidate : oldest,
+            )
+    }
+
+    const texture = this.createDecalTexture(kind)
+    if (decal.mesh.material.map !== texture) {
+      decal.mesh.material.map = texture
+      decal.mesh.material.needsUpdate = true
+    }
+    decal.mesh.material.opacity = 1
+    decal.mesh.position.set(position.x, DECAL_Y, position.z)
+    decal.mesh.rotation.set(-Math.PI / 2, 0, Math.random() * TWO_PI)
+    decal.mesh.scale.set(
+      scale * (0.82 + Math.random() * 0.36),
+      scale * (0.82 + Math.random() * 0.36),
+      1,
+    )
+    decal.mesh.visible = true
+    decal.age = 0
+    decal.lifetime = kind === 'blood' ? BLOOD_DECAL_LIFE : SCORCH_DECAL_LIFE
+    decal.serial = ++this.decalSequence
+    decal.active = true
+  }
+
+  private updateDecals(delta: number): void {
+    for (const decal of this.decals) {
+      if (!decal.active) continue
+      decal.age += delta
+      const remaining = decal.lifetime - decal.age
+      if (remaining <= 0) {
+        decal.active = false
+        decal.mesh.visible = false
+        continue
+      }
+      decal.mesh.material.opacity =
+        remaining < DECAL_FADE ? THREE.MathUtils.clamp(remaining / DECAL_FADE, 0, 1) : 1
+    }
+  }
+
   private createHitParticles(position: THREE.Vector3, faction: Faction): void {
     for (let index = 0; index < 7; index += 1) {
       const mesh = new THREE.Mesh(
@@ -5131,17 +5663,12 @@ export class GameEngine {
   }
 
   private createBleedParticle(): void {
-    const mesh = new THREE.Mesh(
-      new THREE.OctahedronGeometry(0.08, 0),
-      new THREE.MeshBasicMaterial({ color: this.palette.danger }),
+    this.createBloodBurst(
+      this.player.position.clone().add(new THREE.Vector3(0, 0.95, 0)),
+      new THREE.Vector3(Math.random() - 0.5, 0, Math.random() - 0.5),
+      3,
+      0.55,
     )
-    mesh.position.copy(this.player.position).add(new THREE.Vector3((Math.random() - 0.5) * 0.6, 1, 0))
-    this.scene.add(mesh)
-    this.particles.push({
-      mesh,
-      velocity: new THREE.Vector3(0, -0.2, 0),
-      life: 0.7,
-    })
   }
 
   private animateCharacter(group: THREE.Group, stride: number, attack: number): void {
@@ -5165,9 +5692,34 @@ export class GameEngine {
       .addScaledVector(forward, -10)
       .add(new THREE.Vector3(0, 5.2 + this.cameraPitch * 3.5, 0))
     const resolved = this.resolveCameraPosition(target, desired)
-    if (immediate) this.camera.position.copy(resolved)
-    else this.camera.position.lerp(resolved, 0.12)
+    if (immediate) this.cameraFollowPosition.copy(resolved)
+    else this.cameraFollowPosition.lerp(resolved, 0.12)
+
+    let cameraPosition = this.cameraFollowPosition
+    let roll = 0
+    if (
+      this.screenShakeEnabled &&
+      this.trauma > 0 &&
+      !this.paused &&
+      !this.ended
+    ) {
+      const phase = this.shakeClock * SHAKE_FREQUENCY
+      const magnitude = this.trauma * this.trauma
+      const noiseX = Math.sin(phase) * Math.sin(phase * 0.47 + 1.8)
+      const noiseY = Math.sin(phase * 1.31 + 0.7) * Math.sin(phase * 0.61 + 2.4)
+      const noiseRoll = Math.sin(phase * 0.83 + 2.1) * Math.sin(phase * 0.37 + 0.4)
+      const right = new THREE.Vector3(Math.cos(this.cameraYaw), 0, Math.sin(this.cameraYaw))
+      const shakenCandidate = this.cameraFollowPosition
+        .clone()
+        .addScaledVector(right, noiseX * SHAKE_POSITION * magnitude)
+      shakenCandidate.y += noiseY * SHAKE_POSITION * 0.65 * magnitude
+      cameraPosition = this.resolveCameraPosition(target, shakenCandidate)
+      roll = noiseRoll * SHAKE_ROLL * magnitude
+    }
+
+    this.camera.position.copy(cameraPosition)
     this.camera.lookAt(target)
+    if (roll !== 0) this.camera.rotateZ(roll)
     this.updateFoliageOcclusion(target, this.camera.position, immediate)
   }
 

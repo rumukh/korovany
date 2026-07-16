@@ -134,7 +134,10 @@ button {
 
 .menu-settings {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
+  justify-content: flex-end;
+  max-width: min(52rem, calc(100% - 2rem));
   position: absolute;
   right: clamp(1rem, 4vw, 4rem);
   top: 1.5rem;
@@ -143,7 +146,8 @@ button {
 
 .theme-toggle,
 .day-night-toggle,
-.bloom-toggle {
+.bloom-toggle,
+.screen-shake-toggle {
   min-height: 2.5rem;
 }
 
@@ -157,6 +161,12 @@ button {
 .bloom-setting[aria-pressed="true"] {
   border-color: color-mix(in srgb, var(--cp-accent) 55%, var(--cp-border));
   color: var(--cp-accent);
+}
+
+.screen-shake-toggle[aria-pressed="true"],
+.screen-shake-setting[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--cp-link) 55%, var(--cp-border));
+  color: var(--cp-link);
 }
 
 .contour {
@@ -729,6 +739,10 @@ button {
   width: 100%;
 }
 
+.world-stage {
+  z-index: 0;
+}
+
 .game-canvas {
   display: block;
   outline: 0;
@@ -741,6 +755,102 @@ button {
   inset: 0;
   pointer-events: none;
   position: absolute;
+  z-index: 4;
+}
+
+.damage-vignette,
+.low-health-vignette {
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.damage-vignette {
+  background:
+    radial-gradient(
+      circle at center,
+      transparent 28%,
+      color-mix(in srgb, var(--cp-danger) 18%, transparent) 56%,
+      color-mix(in srgb, var(--cp-danger) 88%, transparent) 100%
+    ),
+    linear-gradient(90deg, rgba(92, 0, 18, 0.68), transparent 9% 91%, rgba(92, 0, 18, 0.68));
+  filter: saturate(1.35) contrast(1.08);
+  opacity: 0;
+  overflow: hidden;
+  transition: opacity 90ms linear;
+  will-change: opacity;
+  z-index: 10;
+}
+
+.damage-vignette::before,
+.damage-vignette::after {
+  content: '';
+  inset: 0;
+  position: absolute;
+}
+
+.damage-vignette::before {
+  background:
+    radial-gradient(ellipse at 6% 16%, rgba(255, 55, 91, 0.92) 0 2.8%, rgba(126, 0, 23, 0.9) 3% 5.4%, transparent 5.8%),
+    radial-gradient(ellipse at 13% 72%, rgba(155, 0, 30, 0.9) 0 4.5%, transparent 5%),
+    radial-gradient(ellipse at 28% 4%, rgba(210, 0, 42, 0.82) 0 3.6%, transparent 4.1%),
+    radial-gradient(ellipse at 72% 8%, rgba(255, 71, 101, 0.82) 0 2.4%, rgba(135, 0, 27, 0.88) 2.8% 5%, transparent 5.4%),
+    radial-gradient(ellipse at 91% 31%, rgba(174, 0, 34, 0.92) 0 5.8%, transparent 6.3%),
+    radial-gradient(ellipse at 83% 89%, rgba(126, 0, 23, 0.9) 0 4.4%, transparent 5%),
+    radial-gradient(circle at 44% 94%, rgba(255, 47, 84, 0.78) 0 2.2%, transparent 2.7%);
+  transform: scale(1.08);
+}
+
+.damage-vignette::after {
+  background:
+    linear-gradient(90deg, transparent 3%, rgba(141, 0, 27, 0.88) 3.2% 4.1%, transparent 4.3%),
+    linear-gradient(90deg, transparent 15%, rgba(216, 0, 44, 0.74) 15.2% 16%, transparent 16.2%),
+    linear-gradient(90deg, transparent 78%, rgba(151, 0, 30, 0.82) 78.2% 79%, transparent 79.2%),
+    linear-gradient(90deg, transparent 94%, rgba(105, 0, 20, 0.9) 94.2% 95.2%, transparent 95.4%);
+  clip-path: polygon(
+    0 0,
+    100% 0,
+    100% 18%,
+    96% 26%,
+    95% 48%,
+    93% 31%,
+    80% 17%,
+    79% 39%,
+    77% 18%,
+    17% 18%,
+    16% 46%,
+    14% 22%,
+    5% 28%,
+    4% 52%,
+    2.5% 25%,
+    0 18%
+  );
+}
+
+.low-health-vignette {
+  background: radial-gradient(
+    circle at center,
+    transparent 42%,
+    color-mix(in srgb, var(--cp-danger) 10%, transparent) 68%,
+    color-mix(in srgb, var(--cp-danger) 52%, transparent) 100%
+  );
+  opacity: 0;
+  z-index: 8;
+}
+
+.game-screen.low-health .low-health-vignette {
+  animation: low-health-pulse 1.7s ease-in-out infinite;
+}
+
+@keyframes low-health-pulse {
+  0%,
+  100% {
+    opacity: 0.18;
+  }
+
+  50% {
+    opacity: 0.42;
+  }
 }
 
 .vision-loss {
@@ -2389,5 +2499,10 @@ kbd {
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .game-screen.low-health .low-health-vignette {
+    animation: none !important;
+    opacity: 0.24;
   }
 }

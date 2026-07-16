@@ -134,6 +134,7 @@ export interface GameView {
   faction: Faction
   health: number
   maxHealth: number
+  damageFlash: number
   stamina: number
   gold: number
   kills: number

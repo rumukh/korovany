@@ -25,6 +25,7 @@ import {
   Sun,
   Trees,
   UserRound,
+  Vibrate,
   Volume2,
   VolumeX,
   X,
@@ -61,6 +62,7 @@ const MUSIC_MUTED_KEY = 'korovany-music-muted'
 const THEME_KEY = 'korovany-theme'
 const DYNAMIC_DAY_NIGHT_KEY = 'korovany-dynamic-day-night'
 const BLOOM_ENABLED_KEY = 'korovany-bloom'
+const SCREEN_SHAKE_ENABLED_KEY = 'korovany-screen-shake'
 
 const factionIcons: Record<Faction, ReactNode> = {
   elf: <Trees aria-hidden="true" />,
@@ -140,6 +142,16 @@ function readDynamicDayNight(): boolean {
   }
 }
 
+function readScreenShakeEnabled(): boolean {
+  try {
+    const stored = localStorage.getItem(SCREEN_SHAKE_ENABLED_KEY)
+    if (stored === 'true' || stored === 'false') return stored === 'true'
+  } catch (error) {
+    console.warn('Korovany: screen-shake preference could not be read.', error)
+  }
+  return !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
 function formatTime(seconds: number): string {
   const minutes = Math.floor(seconds / 60)
   const rest = Math.floor(seconds % 60)
@@ -178,6 +190,7 @@ function createInitialView(faction: Faction, savedGame?: SavedGame): GameView {
     faction,
     health: savedGame?.health ?? 100,
     maxHealth: 100,
+    damageFlash: 0,
     stamina,
     gold: savedGame?.gold ?? 55,
     kills: savedGame?.kills ?? 0,
@@ -424,21 +437,25 @@ function MenuScreen({
   theme,
   dynamicDayNight,
   bloomEnabled,
+  screenShakeEnabled,
   onStart,
   onLoad,
   onToggleTheme,
   onToggleDynamicDayNight,
   onToggleBloom,
+  onToggleScreenShake,
 }: {
   savedGame: SavedGame | null
   theme: Theme
   dynamicDayNight: boolean
   bloomEnabled: boolean
+  screenShakeEnabled: boolean
   onStart: (faction: Faction) => void
   onLoad: () => void
   onToggleTheme: () => void
   onToggleDynamicDayNight: () => void
   onToggleBloom: () => void
+  onToggleScreenShake: () => void
 }) {
   return (
     <main className="menu-screen">
@@ -487,6 +504,17 @@ function MenuScreen({
         >
           <Sparkles aria-hidden="true" />
           <span>{bloomEnabled ? 'Свечение: вкл.' : 'Свечение: выкл.'}</span>
+        </button>
+        <button
+          className="screen-shake-toggle secondary-button"
+          type="button"
+          onClick={onToggleScreenShake}
+          aria-pressed={screenShakeEnabled}
+          aria-label={screenShakeEnabled ? 'Отключить тряску экрана' : 'Включить тряску экрана'}
+          title={screenShakeEnabled ? 'Отключить тряску экрана' : 'Включить тряску экрана'}
+        >
+          <Vibrate aria-hidden="true" />
+          <span>{screenShakeEnabled ? 'Тряска: вкл.' : 'Тряска: выкл.'}</span>
         </button>
       </div>
       <header className="hero-header">
@@ -695,20 +723,24 @@ function PauseModal({
   view,
   dynamicDayNight,
   bloomEnabled,
+  screenShakeEnabled,
   onResume,
   onSave,
   onMenu,
   onToggleDynamicDayNight,
   onToggleBloom,
+  onToggleScreenShake,
 }: {
   view: GameView
   dynamicDayNight: boolean
   bloomEnabled: boolean
+  screenShakeEnabled: boolean
   onResume: () => void
   onSave: () => void
   onMenu: () => void
   onToggleDynamicDayNight: () => void
   onToggleBloom: () => void
+  onToggleScreenShake: () => void
 }) {
   return (
     <div className="modal-backdrop" role="presentation">
@@ -751,6 +783,16 @@ function PauseModal({
           <Sparkles aria-hidden="true" />
           <span>Свечение (bloom)</span>
           <strong>{bloomEnabled ? 'Вкл.' : 'Выкл.'}</strong>
+        </button>
+        <button
+          className="secondary-button pause-setting screen-shake-setting"
+          type="button"
+          onClick={onToggleScreenShake}
+          aria-pressed={screenShakeEnabled}
+        >
+          <Vibrate aria-hidden="true" />
+          <span>Тряска экрана</span>
+          <strong>{screenShakeEnabled ? 'Вкл.' : 'Выкл.'}</strong>
         </button>
         <div className="pause-actions">
           <button className="primary-button" type="button" onClick={onResume}>
@@ -851,9 +893,11 @@ function GameScreen({
   musicMuted,
   dynamicDayNight,
   bloomEnabled,
+  screenShakeEnabled,
   onToggleMusic,
   onToggleDynamicDayNight,
   onToggleBloom,
+  onToggleScreenShake,
 }: {
   view: GameView
   worldRef: React.RefObject<HTMLDivElement | null>
@@ -878,15 +922,18 @@ function GameScreen({
   musicMuted: boolean
   dynamicDayNight: boolean
   bloomEnabled: boolean
+  screenShakeEnabled: boolean
   onToggleMusic: () => void
   onToggleDynamicDayNight: () => void
   onToggleBloom: () => void
+  onToggleScreenShake: () => void
 }) {
   const [controlsDismissed, setControlsDismissed] = useState(false)
   const info = FACTION_INFO[view.faction]
   const eyeLoss =
     view.body.leftEye === 'missing' ? 'left' : view.body.rightEye === 'missing' ? 'right' : null
   const healthPercent = `${(view.health / view.maxHealth) * 100}%`
+  const lowHealth = view.health > 0 && view.health / view.maxHealth <= 0.25
   const staminaPercent = `${view.stamina}%`
   const abilityProgress = `${
     view.ability.cooldownMax > 0
@@ -931,9 +978,15 @@ function GameScreen({
   })
 
   return (
-    <main className={`game-screen faction-${view.faction}`}>
+    <main className={`game-screen faction-${view.faction}${lowHealth ? ' low-health' : ''}`}>
       <div className="world-stage" ref={worldRef} />
       <div className="screen-vignette" aria-hidden="true" />
+      <div className="low-health-vignette" aria-hidden="true" />
+      <div
+        className="damage-vignette"
+        style={{ opacity: view.damageFlash }}
+        aria-hidden="true"
+      />
       {eyeLoss ? <div className={`vision-loss ${eyeLoss}`} aria-label="Потеря части обзора" /> : null}
 
       <div className="top-hud">
@@ -1139,11 +1192,13 @@ function GameScreen({
           view={view}
           dynamicDayNight={dynamicDayNight}
           bloomEnabled={bloomEnabled}
+          screenShakeEnabled={screenShakeEnabled}
           onResume={onResume}
           onSave={onSave}
           onMenu={onMenu}
           onToggleDynamicDayNight={onToggleDynamicDayNight}
           onToggleBloom={onToggleBloom}
+          onToggleScreenShake={onToggleScreenShake}
         />
       ) : null}
       {endResult ? (
@@ -1165,6 +1220,7 @@ function App() {
   const [endResult, setEndResult] = useState<'victory' | 'defeat' | null>(null)
   const [musicMuted, setMusicMuted] = useState(() => readMusicMuted())
   const [bloomEnabled, setBloomEnabled] = useState(() => readBloomEnabled())
+  const [screenShakeEnabled, setScreenShakeEnabled] = useState(() => readScreenShakeEnabled())
   const [theme, setTheme] = useState<Theme>(() => readTheme())
   const [dynamicDayNight, setDynamicDayNight] = useState(() => readDynamicDayNight())
   const [runId, setRunId] = useState(0)
@@ -1174,6 +1230,7 @@ function App() {
   const musicMutedRef = useRef(musicMuted)
   const dynamicDayNightRef = useRef(dynamicDayNight)
   const bloomEnabledRef = useRef(bloomEnabled)
+  const screenShakeEnabledRef = useRef(screenShakeEnabled)
 
   const addNotice = useMemo(
     () => (message: string, tone: Notice['tone'] = 'info') => {
@@ -1212,9 +1269,12 @@ function App() {
         onEnd: setEndResult,
       },
       pendingSave,
-      musicMutedRef.current,
-      dynamicDayNightRef.current,
-      bloomEnabledRef.current,
+      {
+        musicMuted: musicMutedRef.current,
+        dynamicDayNight: dynamicDayNightRef.current,
+        bloomEnabled: bloomEnabledRef.current,
+        screenShakeEnabled: screenShakeEnabledRef.current,
+      },
     )
     engineRef.current = engine
     engine.start()
@@ -1306,6 +1366,18 @@ function App() {
     }
   }
 
+  const toggleScreenShake = () => {
+    const next = !screenShakeEnabledRef.current
+    screenShakeEnabledRef.current = next
+    setScreenShakeEnabled(next)
+    engineRef.current?.setScreenShakeEnabled(next)
+    try {
+      localStorage.setItem(SCREEN_SHAKE_ENABLED_KEY, String(next))
+    } catch (error) {
+      console.warn('Korovany: screen-shake preference could not be saved.', error)
+    }
+  }
+
   if (screen === 'menu') {
     return (
       <MenuScreen
@@ -1313,6 +1385,7 @@ function App() {
         theme={theme}
         dynamicDayNight={dynamicDayNight}
         bloomEnabled={bloomEnabled}
+        screenShakeEnabled={screenShakeEnabled}
         onStart={(selectedFaction) => startGame(selectedFaction)}
         onLoad={() => {
           if (savedGame) startGame(savedGame.faction, savedGame)
@@ -1320,6 +1393,7 @@ function App() {
         onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
         onToggleDynamicDayNight={toggleDynamicDayNight}
         onToggleBloom={toggleBloom}
+        onToggleScreenShake={toggleScreenShake}
       />
     )
   }
@@ -1364,10 +1438,12 @@ function App() {
       onRestart={() => startGame(faction)}
       musicMuted={musicMuted}
       bloomEnabled={bloomEnabled}
+      screenShakeEnabled={screenShakeEnabled}
       onToggleMusic={toggleMusic}
       dynamicDayNight={dynamicDayNight}
       onToggleDynamicDayNight={toggleDynamicDayNight}
       onToggleBloom={toggleBloom}
+      onToggleScreenShake={toggleScreenShake}
     />
   )
 }
