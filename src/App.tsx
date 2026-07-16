@@ -60,6 +60,7 @@ type Theme = 'dark' | 'light'
 const MUSIC_MUTED_KEY = 'korovany-music-muted'
 const THEME_KEY = 'korovany-theme'
 const DYNAMIC_DAY_NIGHT_KEY = 'korovany-dynamic-day-night'
+const BLOOM_ENABLED_KEY = 'korovany-bloom'
 
 const factionIcons: Record<Faction, ReactNode> = {
   elf: <Trees aria-hidden="true" />,
@@ -105,6 +106,20 @@ function readMusicMuted(): boolean {
     console.warn('Korovany: music preference could not be read.', error)
     return false
   }
+}
+
+function defaultBloomEnabled(): boolean {
+  return !window.matchMedia('(pointer: coarse)').matches
+}
+
+function readBloomEnabled(): boolean {
+  try {
+    const stored = localStorage.getItem(BLOOM_ENABLED_KEY)
+    if (stored === 'true' || stored === 'false') return stored === 'true'
+  } catch (error) {
+    console.warn('Korovany: bloom preference could not be read.', error)
+  }
+  return defaultBloomEnabled()
 }
 
 function readTheme(): Theme {
@@ -408,18 +423,22 @@ function MenuScreen({
   savedGame,
   theme,
   dynamicDayNight,
+  bloomEnabled,
   onStart,
   onLoad,
   onToggleTheme,
   onToggleDynamicDayNight,
+  onToggleBloom,
 }: {
   savedGame: SavedGame | null
   theme: Theme
   dynamicDayNight: boolean
+  bloomEnabled: boolean
   onStart: (faction: Faction) => void
   onLoad: () => void
   onToggleTheme: () => void
   onToggleDynamicDayNight: () => void
+  onToggleBloom: () => void
 }) {
   return (
     <main className="menu-screen">
@@ -457,6 +476,17 @@ function MenuScreen({
         >
           <Clock3 aria-hidden="true" />
           <span>{dynamicDayNight ? 'Время суток: вкл.' : 'Время суток: выкл.'}</span>
+        </button>
+        <button
+          className="bloom-toggle secondary-button"
+          type="button"
+          onClick={onToggleBloom}
+          aria-pressed={bloomEnabled}
+          aria-label={bloomEnabled ? 'Отключить свечение' : 'Включить свечение'}
+          title={bloomEnabled ? 'Отключить свечение' : 'Включить свечение'}
+        >
+          <Sparkles aria-hidden="true" />
+          <span>{bloomEnabled ? 'Свечение: вкл.' : 'Свечение: выкл.'}</span>
         </button>
       </div>
       <header className="hero-header">
@@ -664,17 +694,21 @@ function ShopModal({
 function PauseModal({
   view,
   dynamicDayNight,
+  bloomEnabled,
   onResume,
   onSave,
   onMenu,
   onToggleDynamicDayNight,
+  onToggleBloom,
 }: {
   view: GameView
   dynamicDayNight: boolean
+  bloomEnabled: boolean
   onResume: () => void
   onSave: () => void
   onMenu: () => void
   onToggleDynamicDayNight: () => void
+  onToggleBloom: () => void
 }) {
   return (
     <div className="modal-backdrop" role="presentation">
@@ -699,7 +733,7 @@ function PauseModal({
           </span>
         </div>
         <button
-          className="secondary-button pause-setting"
+          className="secondary-button pause-setting day-night-setting"
           type="button"
           onClick={onToggleDynamicDayNight}
           aria-pressed={dynamicDayNight}
@@ -707,6 +741,16 @@ function PauseModal({
           <Clock3 aria-hidden="true" />
           <span>Динамическое время суток</span>
           <strong>{dynamicDayNight ? 'Вкл.' : 'Выкл.'}</strong>
+        </button>
+        <button
+          className="secondary-button pause-setting bloom-setting"
+          type="button"
+          onClick={onToggleBloom}
+          aria-pressed={bloomEnabled}
+        >
+          <Sparkles aria-hidden="true" />
+          <span>Свечение (bloom)</span>
+          <strong>{bloomEnabled ? 'Вкл.' : 'Выкл.'}</strong>
         </button>
         <div className="pause-actions">
           <button className="primary-button" type="button" onClick={onResume}>
@@ -805,9 +849,11 @@ function GameScreen({
   onInput,
   onRestart,
   musicMuted,
-  onToggleMusic,
   dynamicDayNight,
+  bloomEnabled,
+  onToggleMusic,
   onToggleDynamicDayNight,
+  onToggleBloom,
 }: {
   view: GameView
   worldRef: React.RefObject<HTMLDivElement | null>
@@ -830,9 +876,11 @@ function GameScreen({
   onInput: (code: string, active: boolean) => void
   onRestart: () => void
   musicMuted: boolean
-  onToggleMusic: () => void
   dynamicDayNight: boolean
+  bloomEnabled: boolean
+  onToggleMusic: () => void
   onToggleDynamicDayNight: () => void
+  onToggleBloom: () => void
 }) {
   const [controlsDismissed, setControlsDismissed] = useState(false)
   const info = FACTION_INFO[view.faction]
@@ -1090,10 +1138,12 @@ function GameScreen({
         <PauseModal
           view={view}
           dynamicDayNight={dynamicDayNight}
+          bloomEnabled={bloomEnabled}
           onResume={onResume}
           onSave={onSave}
           onMenu={onMenu}
           onToggleDynamicDayNight={onToggleDynamicDayNight}
+          onToggleBloom={onToggleBloom}
         />
       ) : null}
       {endResult ? (
@@ -1114,6 +1164,7 @@ function App() {
   const [shopOpen, setShopOpen] = useState(false)
   const [endResult, setEndResult] = useState<'victory' | 'defeat' | null>(null)
   const [musicMuted, setMusicMuted] = useState(() => readMusicMuted())
+  const [bloomEnabled, setBloomEnabled] = useState(() => readBloomEnabled())
   const [theme, setTheme] = useState<Theme>(() => readTheme())
   const [dynamicDayNight, setDynamicDayNight] = useState(() => readDynamicDayNight())
   const [runId, setRunId] = useState(0)
@@ -1122,6 +1173,7 @@ function App() {
   const noticeCounter = useRef(0)
   const musicMutedRef = useRef(musicMuted)
   const dynamicDayNightRef = useRef(dynamicDayNight)
+  const bloomEnabledRef = useRef(bloomEnabled)
 
   const addNotice = useMemo(
     () => (message: string, tone: Notice['tone'] = 'info') => {
@@ -1162,6 +1214,7 @@ function App() {
       pendingSave,
       musicMutedRef.current,
       dynamicDayNightRef.current,
+      bloomEnabledRef.current,
     )
     engineRef.current = engine
     engine.start()
@@ -1241,18 +1294,32 @@ function App() {
     )
   }
 
+  const toggleBloom = () => {
+    const next = !bloomEnabledRef.current
+    bloomEnabledRef.current = next
+    setBloomEnabled(next)
+    engineRef.current?.setBloomEnabled(next)
+    try {
+      localStorage.setItem(BLOOM_ENABLED_KEY, String(next))
+    } catch (error) {
+      console.warn('Korovany: bloom preference could not be saved.', error)
+    }
+  }
+
   if (screen === 'menu') {
     return (
       <MenuScreen
         savedGame={savedGame}
         theme={theme}
         dynamicDayNight={dynamicDayNight}
+        bloomEnabled={bloomEnabled}
         onStart={(selectedFaction) => startGame(selectedFaction)}
         onLoad={() => {
           if (savedGame) startGame(savedGame.faction, savedGame)
         }}
         onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
         onToggleDynamicDayNight={toggleDynamicDayNight}
+        onToggleBloom={toggleBloom}
       />
     )
   }
@@ -1296,9 +1363,11 @@ function App() {
       onInput={(code, active) => engineRef.current?.setInput(code, active)}
       onRestart={() => startGame(faction)}
       musicMuted={musicMuted}
+      bloomEnabled={bloomEnabled}
       onToggleMusic={toggleMusic}
       dynamicDayNight={dynamicDayNight}
       onToggleDynamicDayNight={toggleDynamicDayNight}
+      onToggleBloom={toggleBloom}
     />
   )
 }

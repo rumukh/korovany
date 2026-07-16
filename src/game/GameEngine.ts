@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { BloomPostProcessor } from './BloomPostProcessor'
 import {
   ABILITY_INFO,
   FACTION_INFO,
@@ -465,6 +466,7 @@ export class GameEngine {
   private readonly scene = new THREE.Scene()
   private readonly camera = new THREE.PerspectiveCamera(56, 1, 0.1, 240)
   private readonly renderer: THREE.WebGLRenderer
+  private readonly postProcessor: BloomPostProcessor
   private readonly clock = new THREE.Clock()
   private readonly keys = new Set<string>()
   private readonly actors: Actor[] = []
@@ -559,6 +561,7 @@ export class GameEngine {
     savedGame?: SavedGame,
     musicMuted = false,
     dynamicDayNight = true,
+    bloomEnabled = true,
   ) {
     this.container = container
     this.callbacks = callbacks
@@ -592,6 +595,12 @@ export class GameEngine {
     this.renderer.domElement.className = 'game-canvas'
     this.renderer.domElement.setAttribute('aria-label', 'Трёхмерный игровой мир')
     this.container.appendChild(this.renderer.domElement)
+    this.postProcessor = new BloomPostProcessor(
+      this.renderer,
+      this.scene,
+      this.camera,
+      bloomEnabled,
+    )
 
     this.backgroundColor.copy(this.palette.worldSky)
     this.scene.background = this.backgroundColor
@@ -677,6 +686,7 @@ export class GameEngine {
       if (Array.isArray(material)) material.forEach((entry) => entry.dispose())
       else material.dispose()
     })
+    this.postProcessor.dispose()
     this.renderer.dispose()
     this.renderer.domElement.remove()
     this.actors.forEach((actor) => actor.healthBarTexture.dispose())
@@ -723,6 +733,10 @@ export class GameEngine {
     this.dynamicDayNight = enabled
     this.updateDayNight()
     this.updateAtmosphere(0)
+  }
+
+  setBloomEnabled(enabled: boolean): void {
+    this.postProcessor.setEnabled(enabled)
   }
 
   stopAudio(): void {
@@ -966,7 +980,7 @@ export class GameEngine {
     const delta = Math.min(this.clock.getDelta(), 0.05)
     if (!this.paused && !this.ended) this.update(delta)
     this.updateCamera(false)
-    this.renderer.render(this.scene, this.camera)
+    this.postProcessor.render()
     this.frameHandle = requestAnimationFrame(this.loop)
   }
 
@@ -5248,6 +5262,7 @@ export class GameEngine {
     const width = Math.max(1, this.container.clientWidth)
     const height = Math.max(1, this.container.clientHeight)
     this.renderer.setSize(width, height, false)
+    this.postProcessor.setSize(width, height)
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
   }
