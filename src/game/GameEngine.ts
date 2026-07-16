@@ -28,6 +28,7 @@ interface EventPropTarget {
   hp: number
   maxHp: number
   position: THREE.Vector3
+  attackRange: number
 }
 
 interface Actor {
@@ -55,6 +56,7 @@ interface Actor {
   eventOwnerId: string | null
   eventPropTarget: EventPropTarget | null
   ignoredTargetId: string | null
+  playerAggro: boolean
   healthBar: THREE.Sprite
   healthBarCanvas: HTMLCanvasElement
   healthBarTexture: THREE.CanvasTexture
@@ -155,8 +157,49 @@ interface ProjectileHit {
   player: boolean
 }
 
+interface BoxObstacle {
+  kind: 'box'
+  x: number
+  z: number
+  halfWidth: number
+  halfDepth: number
+  cos: number
+  sin: number
+}
+
+interface CircleObstacle {
+  kind: 'circle'
+  x: number
+  z: number
+  radius: number
+}
+
+type StaticObstacle = BoxObstacle | CircleObstacle
+
+interface NavigationEnclosure {
+  insideMinX: number
+  insideMaxX: number
+  insideMinZ: number
+  insideMaxZ: number
+  outerMinX: number
+  outerMaxX: number
+  outerMinZ: number
+  outerMaxZ: number
+  gateInside: readonly [number, number]
+  gateOutside: readonly [number, number]
+  gateHalfWidth: number
+  detours: ReadonlyArray<readonly [number, number]>
+}
+
 const WORLD_HALF = 78
 const PLAYER_HEIGHT = 0
+const PLAYER_COLLIDER_RADIUS = 0.64
+const ACTOR_COLLIDER_RADIUS = 0.56
+const LARGE_ACTOR_COLLIDER_RADIUS = 0.72
+const COLLISION_SKIN = 0.025
+const COLLISION_MAX_STEP = 0.32
+const COLLISION_RESOLUTION_PASSES = 6
+const NPC_STEERING_ANGLES = [0, 0.55, -0.55, 1.05, -1.05, 1.55, -1.55] as const
 const MAX_ACTORS = 25
 const FIRST_EVENT_AT = 50
 const EVENT_COOLDOWN_MIN = 60
@@ -349,6 +392,10 @@ export class GameEngine {
   private readonly cameraRaycaster = new THREE.Raycaster()
   private readonly cameraObstacles: THREE.Object3D[] = []
   private readonly foliageOccluders: FoliageOccluder[] = []
+  private readonly staticObstacles: StaticObstacle[] = []
+  private readonly navigationEnclosures: NavigationEnclosure[] = []
+  private readonly collisionProbe = new THREE.Vector3()
+  private readonly navigationWaypoint = new THREE.Vector3()
   private readonly eventRng = seededRandom((Date.now() % 2147483646) + 1)
   private readonly player: THREE.Group
   private readonly caravan: THREE.Group
@@ -456,6 +503,7 @@ export class GameEngine {
     this.setupLights()
     const worldRootIndex = this.scene.children.length
     this.buildWorld()
+    this.resolveCharacterOverlaps(this.player.position, PLAYER_COLLIDER_RADIUS)
     this.collectCameraObstacles(this.scene.children.slice(worldRootIndex))
     this.caravan = this.createCaravan()
     this.scene.add(this.caravan)
@@ -828,6 +876,462 @@ export class GameEngine {
     this.emitView(false)
   }
 
+  private registerBoxObstacle(
+    x: number,
+    z: number,
+    width: number,
+    depth: number,
+    rotation = 0,
+  ): void {
+    this.staticObstacles.push({
+      kind: 'box',
+      x,
+      z,
+      halfWidth: width * 0.5,
+      halfDepth: depth * 0.5,
+      cos: Math.cos(rotation),
+      sin: Math.sin(rotation),
+    })
+  }
+
+  private registerCircleObstacle(x: number, z: number, radius: number): void {
+    this.staticObstacles.push({ kind: 'circle', x, z, radius })
+  }
+
+  private obstacleOverlapsCircle(
+    obstacle: StaticObstacle,
+    x: number,
+    z: number,
+    radius: number,
+  ): boolean {
+    const minimumDistance = radius + COLLISION_SKIN
+    if (obstacle.kind === 'circle') {
+      const dx = x - obstacle.x
+      const dz = z - obstacle.z
+      const combinedRadius = obstacle.radius + minimumDistance
+      return dx * dx + dz * dz < combinedRadius * combinedRadius
+    }
+
+    const dx = x - obstacle.x
+    const dz = z - obstacle.z
+    const localX = dx * obstacle.cos - dz * obstacle.sin
+    const localZ = dx * obstacle.sin + dz * obstacle.cos
+    const closestX = THREE.MathUtils.clamp(localX, -obstacle.halfWidth, obstacle.halfWidth)
+    const closestZ = THREE.MathUtils.clamp(localZ, -obstacle.halfDepth, obstacle.halfDepth)
+    const separationX = localX - closestX
+    const separationZ = localZ - closestZ
+    return (
+      separationX * separationX + separationZ * separationZ <
+      minimumDistance * minimumDistance
+    )
+  }
+
+  private isWalkablePosition(x: number, z: number, radius: number): boolean {
+    if (Math.abs(x) > WORLD_HALF || Math.abs(z) > WORLD_HALF) return false
+    return !this.staticObstacles.some((obstacle) =>
+      this.obstacleOverlapsCircle(obstacle, x, z, radius),
+    )
+  }
+
+  private pushCharacterOutOfObstacle(
+    position: THREE.Vector3,
+    radius: number,
+    obstacle: StaticObstacle,
+  ): boolean {
+    const minimumDistance = radius + COLLISION_SKIN
+    if (obstacle.kind === 'circle') {
+      const dx = position.x - obstacle.x
+      const dz = position.z - obstacle.z
+      const combinedRadius = obstacle.radius + minimumDistance
+      const distanceSquared = dx * dx + dz * dz
+      if (distanceSquared >= combinedRadius * combinedRadius) return false
+      if (distanceSquared < 0.000001) {
+        position.x += combinedRadius
+        return true
+      }
+
+      const distance = Math.sqrt(distanceSquared)
+      const pushScale = (combinedRadius - distance) / distance
+      position.x += dx * pushScale
+      position.z += dz * pushScale
+      return true
+    }
+
+    const dx = position.x - obstacle.x
+    const dz = position.z - obstacle.z
+    const localX = dx * obstacle.cos - dz * obstacle.sin
+    const localZ = dx * obstacle.sin + dz * obstacle.cos
+    const closestX = THREE.MathUtils.clamp(localX, -obstacle.halfWidth, obstacle.halfWidth)
+    const closestZ = THREE.MathUtils.clamp(localZ, -obstacle.halfDepth, obstacle.halfDepth)
+    const separationX = localX - closestX
+    const separationZ = localZ - closestZ
+    const distanceSquared = separationX * separationX + separationZ * separationZ
+    if (distanceSquared >= minimumDistance * minimumDistance) return false
+
+    let localPushX = 0
+    let localPushZ = 0
+    if (distanceSquared > 0.000001) {
+      const distance = Math.sqrt(distanceSquared)
+      const pushScale = (minimumDistance - distance) / distance
+      localPushX = separationX * pushScale
+      localPushZ = separationZ * pushScale
+    } else {
+      const pushX = obstacle.halfWidth + minimumDistance - Math.abs(localX)
+      const pushZ = obstacle.halfDepth + minimumDistance - Math.abs(localZ)
+      if (pushX < pushZ) localPushX = (localX >= 0 ? 1 : -1) * pushX
+      else localPushZ = (localZ >= 0 ? 1 : -1) * pushZ
+    }
+
+    position.x += localPushX * obstacle.cos + localPushZ * obstacle.sin
+    position.z += -localPushX * obstacle.sin + localPushZ * obstacle.cos
+    return true
+  }
+
+  private resolveCharacterOverlaps(position: THREE.Vector3, radius: number): boolean {
+    let collided = false
+    for (let pass = 0; pass < COLLISION_RESOLUTION_PASSES; pass += 1) {
+      let adjusted = false
+      for (const obstacle of this.staticObstacles) {
+        if (!this.pushCharacterOutOfObstacle(position, radius, obstacle)) continue
+        adjusted = true
+        collided = true
+      }
+
+      const clampedX = THREE.MathUtils.clamp(position.x, -WORLD_HALF, WORLD_HALF)
+      const clampedZ = THREE.MathUtils.clamp(position.z, -WORLD_HALF, WORLD_HALF)
+      if (clampedX !== position.x || clampedZ !== position.z) {
+        position.x = clampedX
+        position.z = clampedZ
+        adjusted = true
+        collided = true
+      }
+      if (!adjusted) break
+    }
+    return collided
+  }
+
+  private moveCharacter(
+    position: THREE.Vector3,
+    movementX: number,
+    movementZ: number,
+    radius: number,
+  ): boolean {
+    const distance = Math.hypot(movementX, movementZ)
+    const steps = Math.max(1, Math.ceil(distance / COLLISION_MAX_STEP))
+    const stepX = movementX / steps
+    const stepZ = movementZ / steps
+    let collided = false
+
+    for (let step = 0; step < steps; step += 1) {
+      const intendedX = position.x + stepX
+      const intendedZ = position.z + stepZ
+      position.x = intendedX
+      position.z = intendedZ
+      if (this.resolveCharacterOverlaps(position, radius)) collided = true
+      if (
+        Math.abs(position.x - intendedX) > 0.000001 ||
+        Math.abs(position.z - intendedZ) > 0.000001
+      ) {
+        collided = true
+      }
+    }
+    return collided
+  }
+
+  private isMovementPathClear(
+    startX: number,
+    startZ: number,
+    endX: number,
+    endZ: number,
+    radius: number,
+  ): boolean {
+    const dx = endX - startX
+    const dz = endZ - startZ
+    const steps = Math.max(1, Math.ceil(Math.hypot(dx, dz) / COLLISION_MAX_STEP))
+    for (let step = 1; step <= steps; step += 1) {
+      const progress = step / steps
+      if (
+        !this.isWalkablePosition(
+          startX + dx * progress,
+          startZ + dz * progress,
+          radius,
+        )
+      ) {
+        return false
+      }
+    }
+    return true
+  }
+
+  private segmentIntersectsBounds(
+    startX: number,
+    startZ: number,
+    endX: number,
+    endZ: number,
+    minX: number,
+    maxX: number,
+    minZ: number,
+    maxZ: number,
+  ): boolean {
+    const dx = endX - startX
+    const dz = endZ - startZ
+    let near = 0
+    let far = 1
+    for (const [start, delta, minimum, maximum] of [
+      [startX, dx, minX, maxX],
+      [startZ, dz, minZ, maxZ],
+    ] as const) {
+      if (Math.abs(delta) < 0.000001) {
+        if (start < minimum || start > maximum) return false
+        continue
+      }
+      const first = (minimum - start) / delta
+      const second = (maximum - start) / delta
+      near = Math.max(near, Math.min(first, second))
+      far = Math.min(far, Math.max(first, second))
+      if (near > far) return false
+    }
+    return true
+  }
+
+  private pointInsideEnclosure(position: THREE.Vector3, enclosure: NavigationEnclosure): boolean {
+    return (
+      position.x > enclosure.insideMinX &&
+      position.x < enclosure.insideMaxX &&
+      position.z > enclosure.insideMinZ &&
+      position.z < enclosure.insideMaxZ
+    )
+  }
+
+  private findNavigationPathWaypoint(
+    position: THREE.Vector3,
+    destinationX: number,
+    destinationZ: number,
+    radius: number,
+    enclosure: NavigationEnclosure,
+    preferredSign: number,
+  ): boolean {
+    const [leftFront, rightFront, leftRear, rightRear] = enclosure.detours
+    const detours =
+      preferredSign > 0
+        ? [rightFront, leftFront, rightRear, leftRear]
+        : [leftFront, rightFront, leftRear, rightRear]
+    const points: Array<readonly [number, number]> = [
+      [position.x, position.z],
+      ...detours,
+      [destinationX, destinationZ],
+    ]
+    const destinationIndex = points.length - 1
+    const distances = points.map(() => Number.POSITIVE_INFINITY)
+    const previous = points.map(() => -1)
+    const visited = points.map(() => false)
+    distances[0] = 0
+
+    for (let iteration = 0; iteration < points.length; iteration += 1) {
+      let current = -1
+      for (let index = 0; index < points.length; index += 1) {
+        if (visited[index]) continue
+        if (current < 0 || distances[index] < distances[current]) current = index
+      }
+      if (current < 0 || !Number.isFinite(distances[current])) break
+      if (current === destinationIndex) break
+      visited[current] = true
+
+      for (let next = 1; next < points.length; next += 1) {
+        if (visited[next] || next === current) continue
+        const [currentX, currentZ] = points[current]
+        const [nextX, nextZ] = points[next]
+        if (!this.isMovementPathClear(currentX, currentZ, nextX, nextZ, radius)) continue
+        const distance = Math.hypot(nextX - currentX, nextZ - currentZ)
+        const candidateDistance = distances[current] + distance
+        if (candidateDistance >= distances[next]) continue
+        distances[next] = candidateDistance
+        previous[next] = current
+      }
+    }
+
+    if (!Number.isFinite(distances[destinationIndex])) return false
+    let waypointIndex = destinationIndex
+    while (previous[waypointIndex] > 0) waypointIndex = previous[waypointIndex]
+    if (previous[waypointIndex] !== 0) return false
+    const [waypointX, waypointZ] = points[waypointIndex]
+    this.navigationWaypoint.set(waypointX, 0, waypointZ)
+    return true
+  }
+
+  private getNavigationWaypoint(
+    position: THREE.Vector3,
+    destination: THREE.Vector3,
+    radius: number,
+    preferredSign: number,
+  ): THREE.Vector3 | null {
+    for (const enclosure of this.navigationEnclosures) {
+      const positionInside = this.pointInsideEnclosure(position, enclosure)
+      const destinationInside = this.pointInsideEnclosure(destination, enclosure)
+      const gateSpan = enclosure.gateOutside[1] - enclosure.gateInside[1]
+      const gateProgress =
+        Math.abs(gateSpan) < 0.000001
+          ? 0
+          : (position.z - enclosure.gateInside[1]) / gateSpan
+      const inGatePassage =
+        Math.abs(position.x - enclosure.gateInside[0]) < enclosure.gateHalfWidth
+      if (
+        inGatePassage &&
+        destinationInside &&
+        gateProgress > 0.08 &&
+        gateProgress < 1.1
+      ) {
+        this.navigationWaypoint.set(
+          enclosure.gateInside[0],
+          0,
+          enclosure.gateInside[1],
+        )
+        return this.navigationWaypoint
+      }
+      if (
+        inGatePassage &&
+        !destinationInside &&
+        gateProgress > -0.1 &&
+        gateProgress < 0.92
+      ) {
+        this.navigationWaypoint.set(
+          enclosure.gateOutside[0],
+          0,
+          enclosure.gateOutside[1],
+        )
+        return this.navigationWaypoint
+      }
+      if (positionInside && destinationInside) continue
+
+      if (positionInside) {
+        const [outsideX, outsideZ] = enclosure.gateOutside
+        const waypoint = this.isMovementPathClear(
+          position.x,
+          position.z,
+          outsideX,
+          outsideZ,
+          radius,
+        )
+          ? enclosure.gateOutside
+          : enclosure.gateInside
+        this.navigationWaypoint.set(waypoint[0], 0, waypoint[1])
+        return this.navigationWaypoint
+      }
+
+      if (destinationInside) {
+        const [insideX, insideZ] = enclosure.gateInside
+        if (
+          this.isMovementPathClear(
+            position.x,
+            position.z,
+            insideX,
+            insideZ,
+            radius,
+          )
+        ) {
+          this.navigationWaypoint.set(insideX, 0, insideZ)
+          return this.navigationWaypoint
+        }
+        const [outsideX, outsideZ] = enclosure.gateOutside
+        if (
+          this.findNavigationPathWaypoint(
+            position,
+            outsideX,
+            outsideZ,
+            radius,
+            enclosure,
+            preferredSign,
+          )
+        ) {
+          return this.navigationWaypoint
+        }
+        continue
+      }
+
+      if (
+        !this.segmentIntersectsBounds(
+          position.x,
+          position.z,
+          destination.x,
+          destination.z,
+          enclosure.outerMinX,
+          enclosure.outerMaxX,
+          enclosure.outerMinZ,
+          enclosure.outerMaxZ,
+        ) ||
+        this.isMovementPathClear(
+          position.x,
+          position.z,
+          destination.x,
+          destination.z,
+          radius,
+        )
+      ) {
+        continue
+      }
+      if (
+        this.findNavigationPathWaypoint(
+          position,
+          destination.x,
+          destination.z,
+          radius,
+          enclosure,
+          preferredSign,
+        )
+      ) {
+        return this.navigationWaypoint
+      }
+    }
+    return null
+  }
+
+  private actorColliderRadiusForRole(role: ActorRole): number {
+    return role === 'brute' || role === 'champion'
+      ? LARGE_ACTOR_COLLIDER_RADIUS
+      : ACTOR_COLLIDER_RADIUS
+  }
+
+  private moveActorWithSteering(
+    actor: Actor,
+    desiredDirection: THREE.Vector3,
+    distance: number,
+  ): void {
+    const radius = this.actorColliderRadiusForRole(actor.role)
+    const startX = actor.mesh.position.x
+    const startZ = actor.mesh.position.z
+    const steeringSign = Math.sin(actor.phase * 3.17 + 0.4) >= 0 ? 1 : -1
+    let bestX = startX
+    let bestZ = startZ
+    let bestScore = Number.NEGATIVE_INFINITY
+
+    for (const baseAngle of NPC_STEERING_ANGLES) {
+      const angle = baseAngle * steeringSign
+      const cos = Math.cos(angle)
+      const sin = Math.sin(angle)
+      const directionX = desiredDirection.x * cos - desiredDirection.z * sin
+      const directionZ = desiredDirection.x * sin + desiredDirection.z * cos
+      this.collisionProbe.copy(actor.mesh.position)
+      this.moveCharacter(
+        this.collisionProbe,
+        directionX * distance,
+        directionZ * distance,
+        radius,
+      )
+      const movedX = this.collisionProbe.x - startX
+      const movedZ = this.collisionProbe.z - startZ
+      const travelled = Math.hypot(movedX, movedZ)
+      const forwardProgress = movedX * desiredDirection.x + movedZ * desiredDirection.z
+      const score = forwardProgress + travelled * 0.18 - Math.abs(angle) * distance * 0.015
+      if (score <= bestScore) continue
+      bestScore = score
+      bestX = this.collisionProbe.x
+      bestZ = this.collisionProbe.z
+    }
+
+    actor.mesh.position.x = bestX
+    actor.mesh.position.z = bestZ
+  }
+
   private updatePlayer(delta: number): void {
     const forward = this.getAimDirection()
     const right = new THREE.Vector3(Math.cos(this.cameraYaw), 0, Math.sin(this.cameraYaw))
@@ -872,7 +1376,12 @@ export class GameEngine {
 
     if (move.lengthSq() > 0) {
       move.normalize()
-      this.player.position.addScaledVector(move, speed * delta)
+      this.moveCharacter(
+        this.player.position,
+        move.x * speed * delta,
+        move.z * speed * delta,
+        PLAYER_COLLIDER_RADIUS,
+      )
       this.player.rotation.y = this.shieldActive
         ? Math.atan2(forward.x, forward.z)
         : Math.atan2(move.x, move.z)
@@ -896,8 +1405,6 @@ export class GameEngine {
       this.onGround = true
     }
 
-    this.player.position.x = THREE.MathUtils.clamp(this.player.position.x, -WORLD_HALF, WORLD_HALF)
-    this.player.position.z = THREE.MathUtils.clamp(this.player.position.z, -WORLD_HALF, WORLD_HALF)
   }
 
   private updateActors(delta: number): void {
@@ -920,11 +1427,19 @@ export class GameEngine {
       const direction = new THREE.Vector3()
       const facingDirection = new THREE.Vector3()
       let moving = false
+      let movementDistanceLimit = Number.POSITIVE_INFINITY
       let targetActor: Actor | null = null
       let targetEventProp: EventPropTarget | null = null
       let targetsPlayer = false
       let targetPosition: THREE.Vector3 | null = null
       const aggroRange = actor.role === 'archer' ? 18 : 15
+      const colliderRadius = this.actorColliderRadiusForRole(actor.role)
+      const navigationSign = Math.sin(actor.phase * 3.17 + 0.4) >= 0 ? 1 : -1
+      const shouldTargetPlayer =
+        hostile(actor.faction, this.faction) &&
+        (playerDistance < aggroRange ||
+          (actor.playerAggro && playerDistance < aggroRange * 2.25))
+      if (!shouldTargetPlayer) actor.playerAggro = false
 
       if (
         actor.aiMode === 'attackEventProp' &&
@@ -932,10 +1447,12 @@ export class GameEngine {
         actor.eventPropTarget.hp > 0
       ) {
         actor.targetId = null
+        actor.playerAggro = false
         targetEventProp = actor.eventPropTarget
         targetPosition = targetEventProp.position
-      } else if (hostile(actor.faction, this.faction) && playerDistance < aggroRange) {
+      } else if (shouldTargetPlayer) {
         actor.targetId = null
+        actor.playerAggro = true
         targetsPlayer = true
         targetPosition = this.player.position
       } else if (
@@ -952,11 +1469,21 @@ export class GameEngine {
           const formationTarget = this.player.position
             .clone()
             .add(new THREE.Vector3(Math.sin(formationAngle) * 3.2, 0, Math.cos(formationAngle) * 3.2))
-          const toFormation = formationTarget.sub(actor.mesh.position)
+          const navigationTarget = this.getNavigationWaypoint(
+            actor.mesh.position,
+            formationTarget,
+            colliderRadius,
+            navigationSign,
+          )
+          const toFormation = (navigationTarget ?? formationTarget)
+            .clone()
+            .sub(actor.mesh.position)
           toFormation.y = 0
-          if (toFormation.length() > 1.1) {
+          const formationDistance = toFormation.length()
+          if (formationDistance > (navigationTarget ? 0.005 : 1.1)) {
             direction.copy(toFormation).normalize()
             moving = true
+            if (navigationTarget) movementDistanceLimit = formationDistance
           }
         }
       } else if (actor.role !== 'commander') {
@@ -967,7 +1494,15 @@ export class GameEngine {
         if (targetActor) {
           targetPosition = targetActor.mesh.position
         } else {
-          const toWaypoint = actor.wanderTarget.clone().sub(actor.mesh.position)
+          let navigationTarget = this.getNavigationWaypoint(
+            actor.mesh.position,
+            actor.wanderTarget,
+            colliderRadius,
+            navigationSign,
+          )
+          const toWaypoint = (navigationTarget ?? actor.wanderTarget)
+            .clone()
+            .sub(actor.mesh.position)
           toWaypoint.y = 0
           if (
             actor.wanderTimer <= 0 ||
@@ -975,12 +1510,22 @@ export class GameEngine {
             actor.mesh.position.distanceTo(actor.home) > 10
           ) {
             this.chooseWanderTarget(actor)
-            toWaypoint.copy(actor.wanderTarget).sub(actor.mesh.position)
+            navigationTarget = this.getNavigationWaypoint(
+              actor.mesh.position,
+              actor.wanderTarget,
+              colliderRadius,
+              navigationSign,
+            )
+            toWaypoint
+              .copy(navigationTarget ?? actor.wanderTarget)
+              .sub(actor.mesh.position)
             toWaypoint.y = 0
           }
-          if (toWaypoint.length() > 0.3) {
+          const waypointDistance = toWaypoint.length()
+          if (waypointDistance > (navigationTarget ? 0.005 : 0.3)) {
             direction.copy(toWaypoint).normalize()
             moving = true
+            if (navigationTarget) movementDistanceLimit = waypointDistance
           }
         }
       }
@@ -990,8 +1535,24 @@ export class GameEngine {
         offset.y = 0
         const distance = offset.length()
         if (distance > 0.001) facingDirection.copy(offset).normalize()
+        const navigationTarget = this.getNavigationWaypoint(
+          actor.mesh.position,
+          targetPosition,
+          colliderRadius,
+          navigationSign,
+        )
 
-        if (actor.role === 'archer' && !targetEventProp) {
+        if (navigationTarget) {
+          const navigationOffset = navigationTarget.clone().sub(actor.mesh.position)
+          navigationOffset.y = 0
+          const navigationDistance = navigationOffset.length()
+          if (navigationDistance > 0.005) {
+            direction.copy(navigationOffset).normalize()
+            facingDirection.copy(direction)
+            moving = true
+            movementDistanceLimit = navigationDistance
+          }
+        } else if (actor.role === 'archer' && !targetEventProp) {
           if (distance < ARCHER_MIN_RANGE) {
             direction.copy(facingDirection).negate()
             moving = true
@@ -1006,7 +1567,11 @@ export class GameEngine {
           direction.copy(facingDirection).negate()
           moving = true
         } else {
-          const stopDistance = targetEventProp ? 3.4 : targetsPlayer ? 2.55 : 2.45
+          const stopDistance = targetEventProp
+            ? targetEventProp.attackRange
+            : targetsPlayer
+              ? 2.55
+              : 2.45
           if (distance > stopDistance) {
             direction.copy(facingDirection)
             moving = true
@@ -1033,7 +1598,11 @@ export class GameEngine {
           (targetsPlayer ? 1.25 : 1) *
           (this.hasCommanderAura(actor) ? COMMANDER_SPEED_MULTIPLIER : 1)
         direction.normalize()
-        actor.mesh.position.addScaledVector(direction, speed * delta)
+        this.moveActorWithSteering(
+          actor,
+          direction,
+          Math.min(speed * delta, movementDistanceLimit),
+        )
         const targetYaw = Math.atan2(direction.x, direction.z)
         actor.mesh.rotation.y = dampAngle(actor.mesh.rotation.y, targetYaw, 10, delta)
         desiredStride = Math.sin(this.elapsed * 9 + actor.phase) * 0.55
@@ -1041,8 +1610,6 @@ export class GameEngine {
         const targetYaw = Math.atan2(facingDirection.x, facingDirection.z)
         actor.mesh.rotation.y = dampAngle(actor.mesh.rotation.y, targetYaw, 10, delta)
       }
-      actor.mesh.position.x = THREE.MathUtils.clamp(actor.mesh.position.x, -WORLD_HALF, WORLD_HALF)
-      actor.mesh.position.z = THREE.MathUtils.clamp(actor.mesh.position.z, -WORLD_HALF, WORLD_HALF)
       actor.stride = THREE.MathUtils.damp(actor.stride, desiredStride, 13, delta)
       this.animateCharacter(actor.mesh, actor.stride, 0)
       if (actor.role === 'champion') {
@@ -1099,9 +1666,12 @@ export class GameEngine {
   private cleave(): void {
     const direction = this.getAimDirection()
     this.player.rotation.y = Math.atan2(direction.x, direction.z)
-    this.player.position.addScaledVector(direction, CLEAVE_DASH_DISTANCE)
-    this.player.position.x = THREE.MathUtils.clamp(this.player.position.x, -WORLD_HALF, WORLD_HALF)
-    this.player.position.z = THREE.MathUtils.clamp(this.player.position.z, -WORLD_HALF, WORLD_HALF)
+    this.moveCharacter(
+      this.player.position,
+      direction.x * CLEAVE_DASH_DISTANCE,
+      direction.z * CLEAVE_DASH_DISTANCE,
+      PLAYER_COLLIDER_RADIUS,
+    )
     this.attackAnimation = 1
 
     const armPenalty =
@@ -1232,12 +1802,26 @@ export class GameEngine {
     actor.targetId = null
     const cycle = this.elapsed * 0.31 + actor.phase * 4.7
     const angle = cycle + Math.sin(cycle * 0.63) * 1.4
-    const radius = 2.8 + (Math.sin(cycle * 1.17) + 1) * 2.6
-    actor.wanderTarget.set(
-      actor.home.x + Math.sin(angle) * radius,
-      0,
-      actor.home.z + Math.cos(angle) * radius,
-    )
+    const wanderRadius = 2.8 + (Math.sin(cycle * 1.17) + 1) * 2.6
+    const colliderRadius = this.actorColliderRadiusForRole(actor.role)
+    let foundTarget = false
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const candidateAngle = angle + attempt * 2.399963229728653
+      const candidateRadius = Math.max(1.8, wanderRadius - attempt * 0.32)
+      const x = actor.home.x + Math.sin(candidateAngle) * candidateRadius
+      const z = actor.home.z + Math.cos(candidateAngle) * candidateRadius
+      if (!this.isWalkablePosition(x, z, colliderRadius)) continue
+      actor.wanderTarget.set(x, 0, z)
+      foundTarget = true
+      break
+    }
+    if (!foundTarget) {
+      if (this.isWalkablePosition(actor.home.x, actor.home.z, colliderRadius)) {
+        actor.wanderTarget.copy(actor.home)
+      } else {
+        actor.wanderTarget.copy(actor.mesh.position)
+      }
+    }
     actor.wanderTimer = 3.8 + (Math.sin(cycle * 0.81) + 1) * 2.2
   }
 
@@ -1797,6 +2381,7 @@ export class GameEngine {
       hp: 100,
       maxHp: 100,
       position: house.position.clone(),
+      attackRange: 5.2,
     }
     const fire = this.createHouseFireEffect(target.position)
     this.scene.add(fire)
@@ -2338,19 +2923,12 @@ export class GameEngine {
       const knockbackDirection = target.mesh.position.clone().sub(sourcePosition)
       knockbackDirection.y = 0
       if (knockbackDirection.lengthSq() > 0.0001) {
-        target.mesh.position.addScaledVector(
-          knockbackDirection.normalize(),
-          options.knockback,
-        )
-        target.mesh.position.x = THREE.MathUtils.clamp(
-          target.mesh.position.x,
-          -WORLD_HALF,
-          WORLD_HALF,
-        )
-        target.mesh.position.z = THREE.MathUtils.clamp(
-          target.mesh.position.z,
-          -WORLD_HALF,
-          WORLD_HALF,
+        knockbackDirection.normalize()
+        this.moveCharacter(
+          target.mesh.position,
+          knockbackDirection.x * options.knockback,
+          knockbackDirection.z * options.knockback,
+          this.actorColliderRadiusForRole(target.role),
         )
       }
     }
@@ -3170,6 +3748,7 @@ export class GameEngine {
     roof.castShadow = true
     well.add(roof)
     well.position.set(-48, 0, -47)
+    this.registerCircleObstacle(well.position.x, well.position.z, 2)
     this.scene.add(well)
   }
 
@@ -3200,26 +3779,106 @@ export class GameEngine {
       roughness: 0.55,
     })
     const palace = new THREE.Group()
-    const keep = new THREE.Mesh(new THREE.BoxGeometry(18, 10, 14), stone)
-    keep.position.y = 5
-    keep.castShadow = true
-    keep.receiveShadow = true
-    palace.add(keep)
-    const gate = new THREE.Mesh(new THREE.BoxGeometry(4.5, 6.2, 1), new THREE.MeshStandardMaterial({ color: this.palette.bg, roughness: 1 }))
-    gate.position.set(0, 3.1, 7.1)
-    palace.add(gate)
+    const palaceX = 44
+    const palaceZ = -47
+    const wallWidth = 18
+    const wallDepth = 14
+    const wallHeight = 10
+    const wallThickness = 1.5
+    const gateWidth = 4.5
+    const gateHeight = 6.2
+    const sideX = wallWidth * 0.5 - wallThickness * 0.5
+    const frontZ = wallDepth * 0.5 - wallThickness * 0.5
+    const gateSegmentWidth = (wallWidth - gateWidth) * 0.5
+    const gateSegmentX = gateWidth * 0.5 + gateSegmentWidth * 0.5
+    const addPalaceWall = (
+      width: number,
+      height: number,
+      depth: number,
+      x: number,
+      y: number,
+      z: number,
+    ): void => {
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), stone)
+      wall.position.set(x, y, z)
+      wall.castShadow = true
+      wall.receiveShadow = true
+      palace.add(wall)
+    }
+    addPalaceWall(wallWidth, wallHeight, wallThickness, 0, wallHeight * 0.5, -frontZ)
+    addPalaceWall(wallThickness, wallHeight, wallDepth, -sideX, wallHeight * 0.5, 0)
+    addPalaceWall(wallThickness, wallHeight, wallDepth, sideX, wallHeight * 0.5, 0)
+    addPalaceWall(
+      gateSegmentWidth,
+      wallHeight,
+      wallThickness,
+      -gateSegmentX,
+      wallHeight * 0.5,
+      frontZ,
+    )
+    addPalaceWall(
+      gateSegmentWidth,
+      wallHeight,
+      wallThickness,
+      gateSegmentX,
+      wallHeight * 0.5,
+      frontZ,
+    )
+    addPalaceWall(
+      gateWidth,
+      wallHeight - gateHeight,
+      wallThickness,
+      0,
+      gateHeight + (wallHeight - gateHeight) * 0.5,
+      frontZ,
+    )
+    this.registerBoxObstacle(palaceX, palaceZ - frontZ, wallWidth, wallThickness)
+    this.registerBoxObstacle(palaceX - sideX, palaceZ, wallThickness, wallDepth)
+    this.registerBoxObstacle(palaceX + sideX, palaceZ, wallThickness, wallDepth)
+    this.registerBoxObstacle(
+      palaceX - gateSegmentX,
+      palaceZ + frontZ,
+      gateSegmentWidth,
+      wallThickness,
+    )
+    this.registerBoxObstacle(
+      palaceX + gateSegmentX,
+      palaceZ + frontZ,
+      gateSegmentWidth,
+      wallThickness,
+    )
     for (const x of [-10, 10]) {
       for (const z of [-8, 8]) {
         const tower = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.5, 13, 10), stone)
         tower.position.set(x, 6.5, z)
         tower.castShadow = true
         palace.add(tower)
+        this.registerCircleObstacle(palaceX + x, palaceZ + z, 3.5)
         const roof = new THREE.Mesh(new THREE.ConeGeometry(4.1, 4.5, 10), trim)
         roof.position.set(x, 15, z)
         roof.castShadow = true
         palace.add(roof)
       }
     }
+    this.navigationEnclosures.push({
+      insideMinX: palaceX - sideX + wallThickness * 0.5,
+      insideMaxX: palaceX + sideX - wallThickness * 0.5,
+      insideMinZ: palaceZ - frontZ + wallThickness * 0.5,
+      insideMaxZ: palaceZ + frontZ - wallThickness * 0.5,
+      outerMinX: palaceX - 13.5,
+      outerMaxX: palaceX + 13.5,
+      outerMinZ: palaceZ - 11.5,
+      outerMaxZ: palaceZ + 11.5,
+      gateInside: [palaceX, palaceZ + 4],
+      gateOutside: [palaceX, palaceZ + 12.8],
+      gateHalfWidth: gateWidth * 0.5,
+      detours: [
+        [palaceX - 14.8, palaceZ + 12.8],
+        [palaceX + 14.8, palaceZ + 12.8],
+        [palaceX - 14.8, palaceZ - 12.8],
+        [palaceX + 14.8, palaceZ - 12.8],
+      ],
+    })
     const banner = new THREE.Mesh(new THREE.BoxGeometry(2.2, 4.2, 0.15), new THREE.MeshStandardMaterial({ color: this.palette.accent }))
     banner.position.set(0, 8.4, 7.62)
     palace.add(banner)
@@ -3237,7 +3896,7 @@ export class GameEngine {
       }
     }
     palace.add(this.createTorch(-2.8, 2.7, 7.7), this.createTorch(2.8, 2.7, 7.7))
-    palace.position.set(44, 0, -47)
+    palace.position.set(palaceX, 0, palaceZ)
     this.scene.add(palace)
     this.scene.add(this.createBeacon(40, -36, this.palette.link))
   }
@@ -3289,6 +3948,16 @@ export class GameEngine {
     }
 
     const fort = new THREE.Group()
+    const fortX = 47
+    const fortZ = 45
+    const wallWidth = 22
+    const wallDepth = 18
+    const wallHeight = 7
+    const wallThickness = 2.5
+    const gateWidth = 5
+    const gateHeight = 5
+    const gateSegmentWidth = (wallWidth - gateWidth) * 0.5
+    const gateSegmentX = gateWidth * 0.5 + gateSegmentWidth * 0.5
     const wallMaterial = new THREE.MeshStandardMaterial({
       map: this.createSurfaceTexture(
         'fort-stone',
@@ -3300,36 +3969,104 @@ export class GameEngine {
       ),
       roughness: 1,
     })
-    const wallA = new THREE.Mesh(new THREE.BoxGeometry(22, 7, 2.5), wallMaterial)
-    wallA.position.set(0, 3.5, -9)
-    wallA.castShadow = true
-    fort.add(wallA)
-    const wallB = wallA.clone()
-    wallB.position.z = 9
-    fort.add(wallB)
-    const sideA = new THREE.Mesh(new THREE.BoxGeometry(2.5, 7, 18), wallMaterial)
-    sideA.position.set(-11, 3.5, 0)
+    const rearWall = new THREE.Mesh(
+      new THREE.BoxGeometry(wallWidth, wallHeight, wallThickness),
+      wallMaterial,
+    )
+    rearWall.position.set(0, wallHeight * 0.5, wallDepth * 0.5)
+    rearWall.castShadow = true
+    rearWall.receiveShadow = true
+    fort.add(rearWall)
+    const sideA = new THREE.Mesh(
+      new THREE.BoxGeometry(wallThickness, wallHeight, wallDepth),
+      wallMaterial,
+    )
+    sideA.position.set(-wallWidth * 0.5, wallHeight * 0.5, 0)
     sideA.castShadow = true
+    sideA.receiveShadow = true
     fort.add(sideA)
     const sideB = sideA.clone()
-    sideB.position.x = 11
+    sideB.position.x = wallWidth * 0.5
     fort.add(sideB)
-    for (const x of [-11, 11]) {
-      for (const z of [-9, 9]) {
+    for (const x of [-gateSegmentX, gateSegmentX]) {
+      const gateWall = new THREE.Mesh(
+        new THREE.BoxGeometry(gateSegmentWidth, wallHeight, wallThickness),
+        wallMaterial,
+      )
+      gateWall.position.set(x, wallHeight * 0.5, -wallDepth * 0.5)
+      gateWall.castShadow = true
+      gateWall.receiveShadow = true
+      fort.add(gateWall)
+    }
+    const gateLintel = new THREE.Mesh(
+      new THREE.BoxGeometry(gateWidth, wallHeight - gateHeight, wallThickness),
+      wallMaterial,
+    )
+    gateLintel.position.set(
+      0,
+      gateHeight + (wallHeight - gateHeight) * 0.5,
+      -wallDepth * 0.5,
+    )
+    gateLintel.castShadow = true
+    fort.add(gateLintel)
+    this.registerBoxObstacle(fortX, fortZ + wallDepth * 0.5, wallWidth, wallThickness)
+    this.registerBoxObstacle(
+      fortX - wallWidth * 0.5,
+      fortZ,
+      wallThickness,
+      wallDepth,
+    )
+    this.registerBoxObstacle(
+      fortX + wallWidth * 0.5,
+      fortZ,
+      wallThickness,
+      wallDepth,
+    )
+    this.registerBoxObstacle(
+      fortX - gateSegmentX,
+      fortZ - wallDepth * 0.5,
+      gateSegmentWidth,
+      wallThickness,
+    )
+    this.registerBoxObstacle(
+      fortX + gateSegmentX,
+      fortZ - wallDepth * 0.5,
+      gateSegmentWidth,
+      wallThickness,
+    )
+    for (const x of [-wallWidth * 0.5, wallWidth * 0.5]) {
+      for (const z of [-wallDepth * 0.5, wallDepth * 0.5]) {
         const tower = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.8, 10, 8), wallMaterial)
         tower.position.set(x, 5, z)
         tower.castShadow = true
         fort.add(tower)
+        this.registerCircleObstacle(fortX + x, fortZ + z, 3.8)
       }
     }
-    const gate = new THREE.Mesh(new THREE.BoxGeometry(5, 5, 2.8), new THREE.MeshStandardMaterial({ color: this.palette.bg }))
-    gate.position.set(0, 2.5, -9)
-    fort.add(gate)
+    this.navigationEnclosures.push({
+      insideMinX: fortX - wallWidth * 0.5 + wallThickness * 0.5,
+      insideMaxX: fortX + wallWidth * 0.5 - wallThickness * 0.5,
+      insideMinZ: fortZ - wallDepth * 0.5 + wallThickness * 0.5,
+      insideMaxZ: fortZ + wallDepth * 0.5 - wallThickness * 0.5,
+      outerMinX: fortX - wallWidth * 0.5 - 3.8,
+      outerMaxX: fortX + wallWidth * 0.5 + 3.8,
+      outerMinZ: fortZ - wallDepth * 0.5 - 3.8,
+      outerMaxZ: fortZ + wallDepth * 0.5 + 3.8,
+      gateInside: [fortX, fortZ - 5.8],
+      gateOutside: [fortX, fortZ - 14],
+      gateHalfWidth: gateWidth * 0.5,
+      detours: [
+        [fortX - 16, fortZ - 14],
+        [fortX + 16, fortZ - 14],
+        [fortX - 16, fortZ + 14],
+        [fortX + 16, fortZ + 14],
+      ],
+    })
     const flag = new THREE.Mesh(new THREE.BoxGeometry(4, 2.4, 0.15), new THREE.MeshStandardMaterial({ color: this.palette.accent }))
     flag.position.set(0, 12, 0)
     fort.add(flag)
     fort.add(this.createTorch(-3.4, 2.8, -10.1), this.createTorch(3.4, 2.8, -10.1))
-    fort.position.set(47, 0, 45)
+    fort.position.set(fortX, 0, fortZ)
     this.scene.add(fort)
     this.scene.add(this.createBeacon(47, 45, this.palette.accent))
   }
@@ -3453,6 +4190,7 @@ export class GameEngine {
     }
     group.position.set(x, 0, z)
     group.rotation.y = rotation
+    this.registerBoxObstacle(x, z, shop ? 9 : 7, shop ? 7 : 6, rotation)
     return group
   }
 
@@ -3494,6 +4232,7 @@ export class GameEngine {
     door.position.set(0, 1.3, 3.05)
     group.add(door)
     group.position.set(x, 0, z)
+    this.registerCircleObstacle(x, z, 3.3)
     return group
   }
 
@@ -3989,12 +4728,13 @@ export class GameEngine {
       if (weapon) weapon.visible = false
     }
     mesh.position.set(x, 0, z)
+    this.resolveCharacterOverlaps(mesh.position, this.actorColliderRadiusForRole(role))
     this.scene.add(mesh)
     const healthBar = this.createActorHealthBar(faction)
-    healthBar.sprite.position.set(x, 3.65 * mesh.scale.y, z)
+    healthBar.sprite.position.set(mesh.position.x, 3.65 * mesh.scale.y, mesh.position.z)
     this.scene.add(healthBar.sprite)
     const phase = index * 0.73
-    const home = new THREE.Vector3(x, 0, z)
+    const home = mesh.position.clone()
     const initialAngle = phase * 4.7
     const hp =
       role === 'commander'
@@ -4047,10 +4787,20 @@ export class GameEngine {
       eventOwnerId: options.eventOwnerId ?? null,
       eventPropTarget: options.eventPropTarget ?? null,
       ignoredTargetId: options.ignoredTargetId ?? null,
+      playerAggro: false,
       healthBar: healthBar.sprite,
       healthBarCanvas: healthBar.canvas,
       healthBarTexture: healthBar.texture,
       healthBarVisibleUntil: 0,
+    }
+    if (
+      !this.isWalkablePosition(
+        actor.wanderTarget.x,
+        actor.wanderTarget.z,
+        this.actorColliderRadiusForRole(role),
+      )
+    ) {
+      this.chooseWanderTarget(actor)
     }
     this.actors.push(actor)
     return actor
