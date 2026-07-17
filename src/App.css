@@ -2389,10 +2389,6 @@ kbd {
     width: 12rem;
   }
 
-  .objectives-card {
-    display: none;
-  }
-
   .stat-strip span:nth-child(3),
   .stat-strip span:nth-child(4) {
     display: none;
@@ -2501,13 +2497,48 @@ kbd {
   }
 }
 
-@media (max-height: 700px) and (min-width: 721px) {
+@media (max-width: 720px), (pointer: coarse), (max-height: 700px) {
   .left-hud {
-    top: 5.6rem;
+    gap: 0.4rem;
   }
 
   .objectives-card {
-    display: none;
+    padding: 0.5rem;
+  }
+
+  .objectives-card .hud-card-header {
+    margin-bottom: 0.35rem;
+  }
+
+  .objective-list {
+    gap: 0.2rem;
+  }
+
+  .objective {
+    gap: 0.35rem;
+    min-height: 0;
+    padding: 0.35rem;
+  }
+
+  .objective p {
+    font-size: 0.6rem;
+    line-height: 1.22;
+  }
+
+  .objective-hint {
+    font-size: 0.52rem;
+    line-height: 1.2;
+    margin-top: 0.12rem;
+  }
+
+  .objective-progress {
+    margin-top: 0.3rem;
+  }
+}
+
+@media (max-height: 700px) and (min-width: 721px) {
+  .left-hud {
+    top: 5.6rem;
   }
 
   .minimap {
