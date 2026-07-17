@@ -32,7 +32,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import './App.css'
-import { GameEngine } from './game/GameEngine'
+import { GameEngine, type FoliageQuality } from './game/GameEngine'
 import {
   FACTION_INFO,
   SAVE_KEY,
@@ -63,6 +63,19 @@ const THEME_KEY = 'korovany-theme'
 const DYNAMIC_DAY_NIGHT_KEY = 'korovany-dynamic-day-night'
 const BLOOM_ENABLED_KEY = 'korovany-bloom'
 const SCREEN_SHAKE_ENABLED_KEY = 'korovany-screen-shake'
+const FOLIAGE_QUALITY_KEY = 'korovany-foliage'
+
+const foliageQualityLabels: Record<FoliageQuality, string> = {
+  off: 'выкл.',
+  low: 'низк.',
+  high: 'высок.',
+}
+
+function nextFoliageQuality(quality: FoliageQuality): FoliageQuality {
+  if (quality === 'high') return 'low'
+  if (quality === 'low') return 'off'
+  return 'high'
+}
 
 const factionIcons: Record<Faction, ReactNode> = {
   elf: <Trees aria-hidden="true" />,
@@ -122,6 +135,16 @@ function readBloomEnabled(): boolean {
     console.warn('Korovany: bloom preference could not be read.', error)
   }
   return defaultBloomEnabled()
+}
+
+function readFoliageQuality(): FoliageQuality {
+  try {
+    const stored = localStorage.getItem(FOLIAGE_QUALITY_KEY)
+    if (stored === 'off' || stored === 'low' || stored === 'high') return stored
+  } catch (error) {
+    console.warn('Korovany: foliage preference could not be read.', error)
+  }
+  return window.matchMedia('(pointer: coarse)').matches ? 'low' : 'high'
 }
 
 function readTheme(): Theme {
@@ -437,24 +460,28 @@ function MenuScreen({
   theme,
   dynamicDayNight,
   bloomEnabled,
+  foliageQuality,
   screenShakeEnabled,
   onStart,
   onLoad,
   onToggleTheme,
   onToggleDynamicDayNight,
   onToggleBloom,
+  onCycleFoliageQuality,
   onToggleScreenShake,
 }: {
   savedGame: SavedGame | null
   theme: Theme
   dynamicDayNight: boolean
   bloomEnabled: boolean
+  foliageQuality: FoliageQuality
   screenShakeEnabled: boolean
   onStart: (faction: Faction) => void
   onLoad: () => void
   onToggleTheme: () => void
   onToggleDynamicDayNight: () => void
   onToggleBloom: () => void
+  onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
 }) {
   return (
@@ -504,6 +531,17 @@ function MenuScreen({
         >
           <Sparkles aria-hidden="true" />
           <span>{bloomEnabled ? 'Свечение: вкл.' : 'Свечение: выкл.'}</span>
+        </button>
+        <button
+          className="foliage-toggle secondary-button"
+          type="button"
+          onClick={onCycleFoliageQuality}
+          data-quality={foliageQuality}
+          aria-label={`Качество растительности: ${foliageQualityLabels[foliageQuality]}`}
+          title="Изменить качество растительности"
+        >
+          <Trees aria-hidden="true" />
+          <span>Растительность: {foliageQualityLabels[foliageQuality]}</span>
         </button>
         <button
           className="screen-shake-toggle secondary-button"
@@ -723,23 +761,27 @@ function PauseModal({
   view,
   dynamicDayNight,
   bloomEnabled,
+  foliageQuality,
   screenShakeEnabled,
   onResume,
   onSave,
   onMenu,
   onToggleDynamicDayNight,
   onToggleBloom,
+  onCycleFoliageQuality,
   onToggleScreenShake,
 }: {
   view: GameView
   dynamicDayNight: boolean
   bloomEnabled: boolean
+  foliageQuality: FoliageQuality
   screenShakeEnabled: boolean
   onResume: () => void
   onSave: () => void
   onMenu: () => void
   onToggleDynamicDayNight: () => void
   onToggleBloom: () => void
+  onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
 }) {
   return (
@@ -783,6 +825,17 @@ function PauseModal({
           <Sparkles aria-hidden="true" />
           <span>Свечение (bloom)</span>
           <strong>{bloomEnabled ? 'Вкл.' : 'Выкл.'}</strong>
+        </button>
+        <button
+          className="secondary-button pause-setting foliage-setting"
+          type="button"
+          onClick={onCycleFoliageQuality}
+          data-quality={foliageQuality}
+          aria-label={`Качество растительности: ${foliageQualityLabels[foliageQuality]}`}
+        >
+          <Trees aria-hidden="true" />
+          <span>Растительность</span>
+          <strong>{foliageQualityLabels[foliageQuality]}</strong>
         </button>
         <button
           className="secondary-button pause-setting screen-shake-setting"
@@ -893,10 +946,12 @@ function GameScreen({
   musicMuted,
   dynamicDayNight,
   bloomEnabled,
+  foliageQuality,
   screenShakeEnabled,
   onToggleMusic,
   onToggleDynamicDayNight,
   onToggleBloom,
+  onCycleFoliageQuality,
   onToggleScreenShake,
 }: {
   view: GameView
@@ -922,10 +977,12 @@ function GameScreen({
   musicMuted: boolean
   dynamicDayNight: boolean
   bloomEnabled: boolean
+  foliageQuality: FoliageQuality
   screenShakeEnabled: boolean
   onToggleMusic: () => void
   onToggleDynamicDayNight: () => void
   onToggleBloom: () => void
+  onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
 }) {
   const [controlsDismissed, setControlsDismissed] = useState(false)
@@ -1192,12 +1249,14 @@ function GameScreen({
           view={view}
           dynamicDayNight={dynamicDayNight}
           bloomEnabled={bloomEnabled}
+          foliageQuality={foliageQuality}
           screenShakeEnabled={screenShakeEnabled}
           onResume={onResume}
           onSave={onSave}
           onMenu={onMenu}
           onToggleDynamicDayNight={onToggleDynamicDayNight}
           onToggleBloom={onToggleBloom}
+          onCycleFoliageQuality={onCycleFoliageQuality}
           onToggleScreenShake={onToggleScreenShake}
         />
       ) : null}
@@ -1220,6 +1279,7 @@ function App() {
   const [endResult, setEndResult] = useState<'victory' | 'defeat' | null>(null)
   const [musicMuted, setMusicMuted] = useState(() => readMusicMuted())
   const [bloomEnabled, setBloomEnabled] = useState(() => readBloomEnabled())
+  const [foliageQuality, setFoliageQuality] = useState(() => readFoliageQuality())
   const [screenShakeEnabled, setScreenShakeEnabled] = useState(() => readScreenShakeEnabled())
   const [theme, setTheme] = useState<Theme>(() => readTheme())
   const [dynamicDayNight, setDynamicDayNight] = useState(() => readDynamicDayNight())
@@ -1230,6 +1290,7 @@ function App() {
   const musicMutedRef = useRef(musicMuted)
   const dynamicDayNightRef = useRef(dynamicDayNight)
   const bloomEnabledRef = useRef(bloomEnabled)
+  const foliageQualityRef = useRef(foliageQuality)
   const screenShakeEnabledRef = useRef(screenShakeEnabled)
 
   const addNotice = useMemo(
@@ -1273,6 +1334,7 @@ function App() {
         musicMuted: musicMutedRef.current,
         dynamicDayNight: dynamicDayNightRef.current,
         bloomEnabled: bloomEnabledRef.current,
+        foliageQuality: foliageQualityRef.current,
         screenShakeEnabled: screenShakeEnabledRef.current,
       },
     )
@@ -1366,6 +1428,18 @@ function App() {
     }
   }
 
+  const cycleFoliageQuality = () => {
+    const next = nextFoliageQuality(foliageQualityRef.current)
+    foliageQualityRef.current = next
+    setFoliageQuality(next)
+    engineRef.current?.setFoliageQuality(next)
+    try {
+      localStorage.setItem(FOLIAGE_QUALITY_KEY, next)
+    } catch (error) {
+      console.warn('Korovany: foliage preference could not be saved.', error)
+    }
+  }
+
   const toggleScreenShake = () => {
     const next = !screenShakeEnabledRef.current
     screenShakeEnabledRef.current = next
@@ -1385,6 +1459,7 @@ function App() {
         theme={theme}
         dynamicDayNight={dynamicDayNight}
         bloomEnabled={bloomEnabled}
+        foliageQuality={foliageQuality}
         screenShakeEnabled={screenShakeEnabled}
         onStart={(selectedFaction) => startGame(selectedFaction)}
         onLoad={() => {
@@ -1393,6 +1468,7 @@ function App() {
         onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
         onToggleDynamicDayNight={toggleDynamicDayNight}
         onToggleBloom={toggleBloom}
+        onCycleFoliageQuality={cycleFoliageQuality}
         onToggleScreenShake={toggleScreenShake}
       />
     )
@@ -1438,11 +1514,13 @@ function App() {
       onRestart={() => startGame(faction)}
       musicMuted={musicMuted}
       bloomEnabled={bloomEnabled}
+      foliageQuality={foliageQuality}
       screenShakeEnabled={screenShakeEnabled}
       onToggleMusic={toggleMusic}
       dynamicDayNight={dynamicDayNight}
       onToggleDynamicDayNight={toggleDynamicDayNight}
       onToggleBloom={toggleBloom}
+      onCycleFoliageQuality={cycleFoliageQuality}
       onToggleScreenShake={toggleScreenShake}
     />
   )

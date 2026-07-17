@@ -147,6 +147,7 @@ button {
 .theme-toggle,
 .day-night-toggle,
 .bloom-toggle,
+.foliage-toggle,
 .screen-shake-toggle {
   min-height: 2.5rem;
 }
@@ -161,6 +162,18 @@ button {
 .bloom-setting[aria-pressed="true"] {
   border-color: color-mix(in srgb, var(--cp-accent) 55%, var(--cp-border));
   color: var(--cp-accent);
+}
+
+.foliage-toggle[data-quality="high"],
+.foliage-setting[data-quality="high"] {
+  border-color: color-mix(in srgb, var(--cp-success) 55%, var(--cp-border));
+  color: var(--cp-success);
+}
+
+.foliage-toggle[data-quality="low"],
+.foliage-setting[data-quality="low"] {
+  border-color: color-mix(in srgb, var(--cp-warning) 55%, var(--cp-border));
+  color: var(--cp-warning);
 }
 
 .screen-shake-toggle[aria-pressed="true"],
@@ -2045,6 +2058,11 @@ kbd {
   text-align: center;
 }
 
+.pause-modal {
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+}
+
 .pause-symbol,
 .end-icon {
   align-items: center;
@@ -2101,6 +2119,10 @@ kbd {
 .pause-setting {
   margin-top: 1rem;
   width: 100%;
+}
+
+.pause-setting + .pause-setting {
+  margin-top: 0.5rem;
 }
 
 .pause-setting strong {
@@ -2250,7 +2272,9 @@ kbd {
 
   .theme-toggle,
   .day-night-toggle,
-  .bloom-toggle {
+  .bloom-toggle,
+  .foliage-toggle,
+  .screen-shake-toggle {
     padding: 0;
     width: 2.5rem;
   }

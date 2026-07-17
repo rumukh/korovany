@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { BloomPostProcessor } from './BloomPostProcessor'
 import {
   ABILITY_INFO,
@@ -22,11 +23,14 @@ import {
   restoreObjectives,
 } from './types'
 
+export type FoliageQuality = 'off' | 'low' | 'high'
+
 export interface GameEngineSettings {
   musicMuted: boolean
   dynamicDayNight: boolean
   bloomEnabled: boolean
   screenShakeEnabled: boolean
+  foliageQuality: FoliageQuality
 }
 
 type ActorAiMode = 'normal' | 'captive' | 'attackEventProp'
@@ -235,6 +239,34 @@ interface NavigationEnclosure {
   detours: ReadonlyArray<readonly [number, number]>
 }
 
+type GroundFoliageBucket = 'grass' | 'fern' | 'flower'
+
+interface GroundFoliageDensity {
+  low: number
+  high: number
+}
+
+interface GroundFoliagePlacement {
+  zone: ZoneId
+  x: number
+  z: number
+  yaw: number
+  width: number
+  height: number
+  tone: number
+}
+
+interface GroundFoliageUniforms {
+  uTime: { value: number }
+  uWindDirection: { value: THREE.Vector2 }
+  uWindStrength: { value: number }
+}
+
+interface GroundFoliageScaleRange {
+  width: readonly [number, number]
+  height: readonly [number, number]
+}
+
 const WORLD_HALF = 78
 const PLAYER_HEIGHT = 0
 const PLAYER_COLLIDER_RADIUS = 0.64
@@ -318,6 +350,67 @@ const CELESTIAL_DISC_DISTANCE = 150
 const MIN_SHADOW_LIGHT_HEIGHT = 8
 const STAR_COUNT = 180
 const TWO_PI = Math.PI * 2
+const GROUND_FOLIAGE_CLEARANCE = 0.35
+const GROUND_FOLIAGE_ROAD_CLEARANCE = 0.6
+const GROUND_FOLIAGE_EDGE_MARGIN = 0.8
+const GROUND_FOLIAGE_MAX_ATTEMPTS = 40
+const GROUND_FOLIAGE_WIND_SPEED = 1.6
+const GROUND_FOLIAGE_DEFAULT_WIND_STRENGTH = 0.25
+const GROUND_FOLIAGE_MAX_WIND_STRENGTH = 1.5
+const GROUND_FOLIAGE_WAVE_MAX = 1.35
+const GRASS_FOLIAGE_HEIGHT = 0.7
+const FERN_FOLIAGE_HEIGHT = 0.6
+const FLOWER_FOLIAGE_HEIGHT = 0.75
+const GRASS_FOLIAGE_SWAY = 0.12
+const FERN_FOLIAGE_SWAY = 0.09
+const FLOWER_FOLIAGE_SWAY = 0.1
+
+const GROUND_FOLIAGE_ZONES: readonly ZoneId[] = ['neutral', 'forest', 'fort', 'palace']
+
+const GROUND_FOLIAGE_COUNTS: Record<
+  GroundFoliageBucket,
+  Record<ZoneId, GroundFoliageDensity>
+> = {
+  grass: {
+    neutral: { low: 230, high: 700 },
+    forest: { low: 370, high: 1100 },
+    fort: { low: 150, high: 450 },
+    palace: { low: 60, high: 180 },
+  },
+  fern: {
+    neutral: { low: 0, high: 0 },
+    forest: { low: 90, high: 260 },
+    fort: { low: 0, high: 0 },
+    palace: { low: 0, high: 0 },
+  },
+  flower: {
+    neutral: { low: 55, high: 160 },
+    forest: { low: 45, high: 140 },
+    fort: { low: 0, high: 0 },
+    palace: { low: 0, high: 0 },
+  },
+}
+
+const GROUND_FOLIAGE_SEEDS: Record<GroundFoliageBucket, Record<ZoneId, number>> = {
+  grass: { neutral: 1249, forest: 1373, fort: 1481, palace: 1597 },
+  fern: { neutral: 2213, forest: 2333, fort: 2441, palace: 2557 },
+  flower: { neutral: 3251, forest: 3371, fort: 3469, palace: 3583 },
+}
+
+const GRASS_FOLIAGE_SCALES: Record<ZoneId, GroundFoliageScaleRange> = {
+  neutral: { width: [0.75, 1.25], height: [0.8, 1.45] },
+  forest: { width: [0.8, 1.4], height: [0.9, 1.6] },
+  fort: { width: [0.7, 1.2], height: [0.45, 0.9] },
+  palace: { width: [0.75, 1], height: [0.45, 0.72] },
+}
+
+const GROUND_FOLIAGE_CLEARINGS: ReadonlyArray<readonly [number, number, number]> = [
+  [FACTION_INFO.elf.spawn[0], FACTION_INFO.elf.spawn[1], 5],
+  [FACTION_INFO.guard.spawn[0], FACTION_INFO.guard.spawn[1], 5],
+  [FACTION_INFO.villain.spawn[0], FACTION_INFO.villain.spawn[1], 5],
+  [-46, -39, 5],
+  [40, -36, 5],
+]
 
 const EVENT_WEIGHTS: Record<Faction, Record<WorldEventKind, number>> = {
   elf: {
@@ -545,6 +638,12 @@ export class GameEngine {
   private readonly cameraFollowPosition = new THREE.Vector3()
   private readonly cameraObstacles: THREE.Object3D[] = []
   private readonly foliageOccluders: FoliageOccluder[] = []
+  private readonly groundFoliageMeshes: THREE.InstancedMesh[] = []
+  private readonly groundFoliageUniforms: GroundFoliageUniforms = {
+    uTime: { value: 0 },
+    uWindDirection: { value: new THREE.Vector2(1, 0.2).normalize() },
+    uWindStrength: { value: GROUND_FOLIAGE_DEFAULT_WIND_STRENGTH },
+  }
   private readonly staticObstacles: StaticObstacle[] = []
   private readonly navigationEnclosures: NavigationEnclosure[] = []
   private readonly collisionProbe = new THREE.Vector3()
@@ -601,6 +700,7 @@ export class GameEngine {
   private musicMuted: boolean
   private dynamicDayNight: boolean
   private screenShakeEnabled: boolean
+  private groundFoliageQuality: FoliageQuality
   private nightFactor = 0
   private readonly musicSources = new Set<AudioScheduledSourceNode>()
   private readonly inactiveGoreParticles: Particle[] = []
@@ -630,6 +730,7 @@ export class GameEngine {
     this.musicMuted = settings.musicMuted ?? false
     this.dynamicDayNight = settings.dynamicDayNight ?? true
     this.screenShakeEnabled = settings.screenShakeEnabled ?? true
+    this.groundFoliageQuality = settings.foliageQuality ?? 'high'
     this.palette = createPalette()
     this.dayNightKeyframes = createDayNightKeyframes(this.palette)
     this.objectives = restoreObjectives(faction, savedGame?.objectives)
@@ -743,6 +844,7 @@ export class GameEngine {
       ) {
         return
       }
+      if (object instanceof THREE.InstancedMesh) object.dispose()
       if (object instanceof THREE.Mesh || object instanceof THREE.Points) object.geometry.dispose()
       const material = object.material
       if (Array.isArray(material)) material.forEach((entry) => entry.dispose())
@@ -802,6 +904,12 @@ export class GameEngine {
 
   setBloomEnabled(enabled: boolean): void {
     this.postProcessor.setEnabled(enabled)
+  }
+
+  setFoliageQuality(quality: FoliageQuality): void {
+    if (this.groundFoliageQuality === quality) return
+    this.groundFoliageQuality = quality
+    this.rebuildGroundFoliage()
   }
 
   setScreenShakeEnabled(enabled: boolean): void {
@@ -3973,99 +4081,420 @@ export class GameEngine {
     }
   }
 
-  private createGroundScatter(): void {
-    const dummy = new THREE.Object3D()
-    const random = seededRandom(1249)
+  private createGroundDetails(): void {
+    this.createPebbles()
+    this.rebuildGroundFoliage()
+  }
 
-    const grass = new THREE.InstancedMesh(
-      new THREE.ConeGeometry(0.1, 0.7, 3).translate(0, 0.35, 0),
-      new THREE.MeshStandardMaterial({
-        color: mix(this.palette.success, this.palette.bg, 0.18),
-        roughness: 1,
-      }),
-      420,
-    )
-    for (let index = 0; index < 420; index += 1) {
-      let x = -78 + random() * 76
-      let z = random() > 0.38 ? 2 + random() * 76 : -78 + random() * 76
-      while (Math.abs(x) < 4 || Math.abs(z + 23) < 4) {
-        x = -78 + random() * 76
-        z = random() > 0.38 ? 2 + random() * 76 : -78 + random() * 76
-      }
-      const scale = 0.6 + random() * 1.2
-      dummy.position.set(x, 0.02, z)
-      dummy.rotation.set(0, random() * Math.PI, (random() - 0.5) * 0.18)
-      dummy.scale.set(scale, scale, scale)
-      dummy.updateMatrix()
-      grass.setMatrixAt(index, dummy.matrix)
-    }
-    grass.instanceMatrix.needsUpdate = true
-    grass.computeBoundingSphere()
-    this.scene.add(grass)
-
-    const flowers = new THREE.InstancedMesh(
-      new THREE.OctahedronGeometry(0.16, 0),
-      new THREE.MeshStandardMaterial({
-        color: this.palette.warning,
-        emissive: this.palette.warning,
-        emissiveIntensity: 0.12,
-        roughness: 0.8,
-      }),
-      64,
-    )
-    const flowerStems = new THREE.InstancedMesh(
-      new THREE.CylinderGeometry(0.022, 0.034, 0.52, 5),
-      new THREE.MeshStandardMaterial({
-        color: mix(this.palette.success, this.palette.text, 0.18),
-        roughness: 1,
-      }),
-      64,
-    )
-    for (let index = 0; index < 64; index += 1) {
-      const x = -76 + random() * 70
-      const z = 5 + random() * 70
-      const bloomHeight = 0.52 + random() * 0.18
-      const scale = 0.65 + random() * 0.75
-      dummy.position.set(x, bloomHeight, z)
-      dummy.rotation.set(random(), random(), random())
-      dummy.scale.setScalar(scale)
-      dummy.updateMatrix()
-      flowers.setMatrixAt(index, dummy.matrix)
-      dummy.position.set(x, bloomHeight * 0.5, z)
-      dummy.rotation.set(0, 0, 0)
-      dummy.scale.set(scale, bloomHeight / 0.52, scale)
-      dummy.updateMatrix()
-      flowerStems.setMatrixAt(index, dummy.matrix)
-    }
-    flowers.instanceMatrix.needsUpdate = true
-    flowers.computeBoundingSphere()
-    flowerStems.instanceMatrix.needsUpdate = true
-    flowerStems.computeBoundingSphere()
-    this.scene.add(flowerStems, flowers)
-
+  private createPebbles(): void {
+    const placements = this.createGroundDetailPlacements('fort', 110, 4871, 'pebbles')
     const pebbles = new THREE.InstancedMesh(
       new THREE.DodecahedronGeometry(0.26, 0),
       new THREE.MeshStandardMaterial({
         color: mix(this.palette.borderStrong, this.palette.accent, 0.22),
         roughness: 1,
       }),
-      110,
+      placements.length,
     )
-    for (let index = 0; index < 110; index += 1) {
-      const x = 3 + random() * 74
-      const z = 3 + random() * 74
-      dummy.position.set(x, 0.14, z)
-      dummy.rotation.set(random() * Math.PI, random() * Math.PI, random() * Math.PI)
-      dummy.scale.set(0.45 + random() * 1.5, 0.4 + random() * 0.7, 0.45 + random() * 1.5)
+    const dummy = new THREE.Object3D()
+    for (let index = 0; index < placements.length; index += 1) {
+      const placement = placements[index]
+      dummy.position.set(placement.x, 0.14, placement.z)
+      dummy.rotation.set(
+        placement.width * TWO_PI,
+        placement.yaw,
+        placement.tone * TWO_PI,
+      )
+      dummy.scale.set(
+        0.45 + placement.width * 1.5,
+        0.4 + placement.height * 0.7,
+        0.45 + placement.tone * 1.5,
+      )
       dummy.updateMatrix()
       pebbles.setMatrixAt(index, dummy.matrix)
     }
+    pebbles.instanceMatrix.setUsage(THREE.StaticDrawUsage)
     pebbles.instanceMatrix.needsUpdate = true
     pebbles.computeBoundingSphere()
     this.scene.add(pebbles)
   }
 
+  private rebuildGroundFoliage(): void {
+    this.clearGroundFoliage()
+    if (this.groundFoliageQuality === 'off') return
+    this.createGrassFoliage()
+    this.createFernFoliage()
+    this.createFlowerFoliage()
+  }
+
+  private clearGroundFoliage(): void {
+    for (const mesh of this.groundFoliageMeshes) {
+      mesh.removeFromParent()
+      mesh.dispose()
+      mesh.geometry.dispose()
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      materials.forEach((material) => material.dispose())
+    }
+    this.groundFoliageMeshes.length = 0
+  }
+
+  private createGrassFoliage(): void {
+    const placements = this.collectGroundFoliagePlacements('grass')
+    if (placements.length === 0) return
+
+    const geometry = new THREE.ConeGeometry(0.1, GRASS_FOLIAGE_HEIGHT, 3).translate(
+      0,
+      GRASS_FOLIAGE_HEIGHT * 0.5,
+      0,
+    )
+    const material = this.createGroundFoliageMaterial(
+      { color: 0xffffff, flatShading: true, roughness: 1 },
+      GRASS_FOLIAGE_HEIGHT,
+      GRASS_FOLIAGE_SWAY,
+    )
+    const mesh = new THREE.InstancedMesh(geometry, material, placements.length)
+    const dummy = new THREE.Object3D()
+    const color = new THREE.Color()
+    const zoneColors: Record<ZoneId, THREE.Color> = {
+      neutral: mix(this.palette.worldNeutralGround, this.palette.success, 0.52),
+      forest: mix(this.palette.worldForestGround, this.palette.success, 0.58),
+      fort: mix(this.palette.worldFortGround, this.palette.warning, 0.34),
+      palace: mix(this.palette.worldPalaceGround, this.palette.success, 0.32),
+    }
+
+    for (let index = 0; index < placements.length; index += 1) {
+      const placement = placements[index]
+      const scale = GRASS_FOLIAGE_SCALES[placement.zone]
+      const width = THREE.MathUtils.lerp(scale.width[0], scale.width[1], placement.width)
+      const height = THREE.MathUtils.lerp(scale.height[0], scale.height[1], placement.height)
+      dummy.position.set(placement.x, 0.02, placement.z)
+      dummy.rotation.set(0, placement.yaw, 0)
+      dummy.scale.set(width, height, width)
+      dummy.updateMatrix()
+      mesh.setMatrixAt(index, dummy.matrix)
+      color
+        .copy(zoneColors[placement.zone])
+        .lerp(this.palette.worldHorizon, placement.tone * 0.12)
+      mesh.setColorAt(index, color)
+    }
+
+    this.addGroundFoliageMesh(mesh, GRASS_FOLIAGE_SWAY)
+  }
+
+  private createFernFoliage(): void {
+    const placements = this.collectGroundFoliagePlacements('fern')
+    if (placements.length === 0) return
+
+    const material = this.createGroundFoliageMaterial(
+      { color: 0xffffff, flatShading: true, roughness: 1, side: THREE.DoubleSide },
+      FERN_FOLIAGE_HEIGHT,
+      FERN_FOLIAGE_SWAY,
+    )
+    const mesh = new THREE.InstancedMesh(
+      this.createFernGeometry(),
+      material,
+      placements.length,
+    )
+    const dummy = new THREE.Object3D()
+    const baseColor = mix(this.palette.worldForestGround, this.palette.success, 0.62)
+    const color = new THREE.Color()
+
+    for (let index = 0; index < placements.length; index += 1) {
+      const placement = placements[index]
+      const width = 0.78 + placement.width * 0.58
+      const height = 0.85 + placement.height * 0.55
+      dummy.position.set(placement.x, 0.02, placement.z)
+      dummy.rotation.set(0, placement.yaw, 0)
+      dummy.scale.set(width, height, width)
+      dummy.updateMatrix()
+      mesh.setMatrixAt(index, dummy.matrix)
+      color.copy(baseColor).lerp(this.palette.worldHorizon, placement.tone * 0.1)
+      mesh.setColorAt(index, color)
+    }
+
+    this.addGroundFoliageMesh(mesh, FERN_FOLIAGE_SWAY)
+  }
+
+  private createFlowerFoliage(): void {
+    const placements = this.collectGroundFoliagePlacements('flower')
+    if (placements.length === 0) return
+
+    const material = this.createGroundFoliageMaterial(
+      { color: 0xffffff, roughness: 0.86, vertexColors: true },
+      FLOWER_FOLIAGE_HEIGHT,
+      FLOWER_FOLIAGE_SWAY,
+    )
+    const mesh = new THREE.InstancedMesh(
+      this.createFlowerGeometry(),
+      material,
+      placements.length,
+    )
+    const dummy = new THREE.Object3D()
+    const color = new THREE.Color()
+
+    for (let index = 0; index < placements.length; index += 1) {
+      const placement = placements[index]
+      const width = 0.78 + placement.width * 0.42
+      const height = 0.82 + placement.height * 0.48
+      dummy.position.set(placement.x, 0.02, placement.z)
+      dummy.rotation.set(0, placement.yaw, 0)
+      dummy.scale.set(width, height, width)
+      dummy.updateMatrix()
+      mesh.setMatrixAt(index, dummy.matrix)
+      const tint = 0.9 + placement.tone * 0.1
+      color.setRGB(tint, tint, tint)
+      mesh.setColorAt(index, color)
+    }
+
+    this.addGroundFoliageMesh(mesh, FLOWER_FOLIAGE_SWAY)
+  }
+
+  private collectGroundFoliagePlacements(
+    bucket: GroundFoliageBucket,
+  ): GroundFoliagePlacement[] {
+    const placements: GroundFoliagePlacement[] = []
+    for (const zone of GROUND_FOLIAGE_ZONES) {
+      const count = this.groundFoliageCount(bucket, zone)
+      if (count === 0) continue
+      placements.push(
+        ...this.createGroundDetailPlacements(
+          zone,
+          count,
+          GROUND_FOLIAGE_SEEDS[bucket][zone],
+          bucket,
+        ),
+      )
+    }
+    return placements
+  }
+
+  private groundFoliageCount(bucket: GroundFoliageBucket, zone: ZoneId): number {
+    if (this.groundFoliageQuality === 'off') return 0
+    return GROUND_FOLIAGE_COUNTS[bucket][zone][this.groundFoliageQuality]
+  }
+
+  private createGroundDetailPlacements(
+    zone: ZoneId,
+    target: number,
+    seed: number,
+    label: string,
+  ): GroundFoliagePlacement[] {
+    const random = seededRandom(seed)
+    const placements: GroundFoliagePlacement[] = []
+    const negativeX = zone === 'neutral' || zone === 'forest'
+    const negativeZ = zone === 'neutral' || zone === 'palace'
+    const minX = negativeX ? -WORLD_HALF + GROUND_FOLIAGE_EDGE_MARGIN : GROUND_FOLIAGE_EDGE_MARGIN
+    const maxX = negativeX ? -GROUND_FOLIAGE_EDGE_MARGIN : WORLD_HALF - GROUND_FOLIAGE_EDGE_MARGIN
+    const minZ = negativeZ ? -WORLD_HALF + GROUND_FOLIAGE_EDGE_MARGIN : GROUND_FOLIAGE_EDGE_MARGIN
+    const maxZ = negativeZ ? -GROUND_FOLIAGE_EDGE_MARGIN : WORLD_HALF - GROUND_FOLIAGE_EDGE_MARGIN
+    const maxAttempts = Math.max(target * GROUND_FOLIAGE_MAX_ATTEMPTS, 1)
+
+    for (let attempt = 0; attempt < maxAttempts && placements.length < target; attempt += 1) {
+      const x = THREE.MathUtils.lerp(minX, maxX, random())
+      const z = THREE.MathUtils.lerp(minZ, maxZ, random())
+      if (zoneAt(x, z) !== zone || !this.canPlaceGroundFoliage(x, z)) continue
+      placements.push({
+        zone,
+        x,
+        z,
+        yaw: random() * TWO_PI,
+        width: random(),
+        height: random(),
+        tone: random(),
+      })
+    }
+
+    if (placements.length < target) {
+      console.warn(
+        `Korovany: ${label} placement in ${zone} produced ${placements.length}/${target} instances.`,
+      )
+    }
+    return placements
+  }
+
+  private canPlaceGroundFoliage(x: number, z: number): boolean {
+    const roadHalfWidth = 3 + GROUND_FOLIAGE_ROAD_CLEARANCE
+    const onHorizontalRoad =
+      Math.abs(z + 23) <= roadHalfWidth &&
+      Math.abs(x) <= 75 + GROUND_FOLIAGE_ROAD_CLEARANCE
+    const onVerticalRoad =
+      Math.abs(x) <= roadHalfWidth &&
+      z >= -67 - GROUND_FOLIAGE_ROAD_CLEARANCE &&
+      z <= 75 + GROUND_FOLIAGE_ROAD_CLEARANCE
+    if (onHorizontalRoad || onVerticalRoad) return false
+    if (!this.isWalkablePosition(x, z, GROUND_FOLIAGE_CLEARANCE)) return false
+
+    for (const enclosure of this.navigationEnclosures) {
+      if (
+        x >= enclosure.outerMinX &&
+        x <= enclosure.outerMaxX &&
+        z >= enclosure.outerMinZ &&
+        z <= enclosure.outerMaxZ
+      ) {
+        return false
+      }
+    }
+
+    for (const [clearX, clearZ, radius] of GROUND_FOLIAGE_CLEARINGS) {
+      const dx = x - clearX
+      const dz = z - clearZ
+      const clearance = radius + GROUND_FOLIAGE_CLEARANCE
+      if (dx * dx + dz * dz <= clearance * clearance) return false
+    }
+    return true
+  }
+
+  private createFernGeometry(): THREE.BufferGeometry {
+    const vertices: number[] = []
+    for (let frond = 0; frond < 4; frond += 1) {
+      const angle = (frond / 4) * TWO_PI
+      const outwardX = Math.sin(angle)
+      const outwardZ = Math.cos(angle)
+      const sideX = Math.cos(angle)
+      const sideZ = -Math.sin(angle)
+      const point = (side: number, outward: number, y: number): [number, number, number] => [
+        sideX * side + outwardX * outward,
+        y,
+        sideZ * side + outwardZ * outward,
+      ]
+      const baseLeft = point(-0.025, 0, 0)
+      const baseRight = point(0.025, 0, 0)
+      const middleLeft = point(-0.1, 0.18, 0.34)
+      const middleRight = point(0.1, 0.18, 0.34)
+      const tip = point(0, 0.4, FERN_FOLIAGE_HEIGHT)
+      vertices.push(
+        ...baseLeft,
+        ...baseRight,
+        ...middleRight,
+        ...baseLeft,
+        ...middleRight,
+        ...middleLeft,
+        ...middleLeft,
+        ...middleRight,
+        ...tip,
+      )
+    }
+    const geometry = new THREE.BufferGeometry()
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
+    geometry.computeVertexNormals()
+    return geometry
+  }
+
+  private createFlowerGeometry(): THREE.BufferGeometry {
+    const stemSource = new THREE.CylinderGeometry(0.024, 0.035, 0.58, 5).translate(
+      0,
+      0.29,
+      0,
+    )
+    const budSource = new THREE.OctahedronGeometry(0.15, 0).translate(0, 0.64, 0)
+    const stem = stemSource.index ? stemSource.toNonIndexed() : stemSource
+    const bud = budSource.index ? budSource.toNonIndexed() : budSource
+    if (stem !== stemSource) stemSource.dispose()
+    if (bud !== budSource) budSource.dispose()
+    stem.deleteAttribute('uv')
+    bud.deleteAttribute('uv')
+    this.setGeometryVertexColor(stem, mix(this.palette.success, this.palette.text, 0.18))
+    this.setGeometryVertexColor(bud, this.palette.warning)
+    const geometry = mergeGeometries([stem, bud])
+    stem.dispose()
+    bud.dispose()
+    return geometry
+  }
+
+  private setGeometryVertexColor(geometry: THREE.BufferGeometry, color: THREE.Color): void {
+    const count = geometry.getAttribute('position').count
+    const colors = new Float32Array(count * 3)
+    for (let index = 0; index < count; index += 1) {
+      const offset = index * 3
+      colors[offset] = color.r
+      colors[offset + 1] = color.g
+      colors[offset + 2] = color.b
+    }
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+  }
+
+  private createGroundFoliageMaterial(
+    parameters: THREE.MeshStandardMaterialParameters,
+    foliageHeight: number,
+    swayAmplitude: number,
+  ): THREE.MeshStandardMaterial {
+    const material = new THREE.MeshStandardMaterial(parameters)
+    const heightUniform = { value: foliageHeight }
+    const swayUniform = { value: swayAmplitude }
+    material.onBeforeCompile = (shader) => {
+      const commonMarker = '#include <common>'
+      const beginVertexMarker = '#include <begin_vertex>'
+      if (
+        !shader.vertexShader.includes(commonMarker) ||
+        !shader.vertexShader.includes(beginVertexMarker)
+      ) {
+        throw new Error('Korovany: Three.js foliage shader chunks changed.')
+      }
+      shader.uniforms.uTime = this.groundFoliageUniforms.uTime
+      shader.uniforms.uWindDirection = this.groundFoliageUniforms.uWindDirection
+      shader.uniforms.uWindStrength = this.groundFoliageUniforms.uWindStrength
+      shader.uniforms.uFoliageHeight = heightUniform
+      shader.uniforms.uSwayAmplitude = swayUniform
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          commonMarker,
+          `${commonMarker}
+uniform float uTime;
+uniform vec2 uWindDirection;
+uniform float uWindStrength;
+uniform float uFoliageHeight;
+uniform float uSwayAmplitude;`,
+        )
+        .replace(
+          beginVertexMarker,
+          `${beginVertexMarker}
+#ifdef USE_INSTANCING
+  float groundFoliageHeight = smoothstep(0.0, uFoliageHeight, position.y);
+  vec2 groundFoliageRoot = (modelMatrix * instanceMatrix[3]).xz;
+  float groundFoliagePhase =
+    dot(groundFoliageRoot, vec2(0.31, 0.37)) + uTime * ${GROUND_FOLIAGE_WIND_SPEED.toFixed(1)};
+  float groundFoliageWave =
+    sin(groundFoliagePhase) + 0.35 * sin(groundFoliagePhase * 0.47 + 1.7);
+  vec2 groundFoliageAxisX =
+    (modelMatrix * vec4(instanceMatrix[0].xyz, 0.0)).xz;
+  vec2 groundFoliageAxisZ =
+    (modelMatrix * vec4(instanceMatrix[2].xyz, 0.0)).xz;
+  vec2 groundFoliageLocalWind = vec2(
+    dot(uWindDirection, normalize(groundFoliageAxisX)) /
+      max(length(groundFoliageAxisX), 0.0001),
+    dot(uWindDirection, normalize(groundFoliageAxisZ)) /
+      max(length(groundFoliageAxisZ), 0.0001)
+  );
+  transformed.xz += groundFoliageLocalWind *
+    (uWindStrength * uSwayAmplitude * groundFoliageHeight *
+      groundFoliageHeight * groundFoliageWave);
+#endif`,
+        )
+    }
+    material.customProgramCacheKey = () => 'ground-foliage-wind-v1'
+    return material
+  }
+
+  private addGroundFoliageMesh(mesh: THREE.InstancedMesh, swayAmplitude: number): void {
+    mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage)
+    mesh.instanceMatrix.needsUpdate = true
+    if (mesh.instanceColor) {
+      mesh.instanceColor.setUsage(THREE.StaticDrawUsage)
+      mesh.instanceColor.needsUpdate = true
+    }
+    mesh.castShadow = false
+    mesh.receiveShadow = false
+    mesh.computeBoundingSphere()
+    if (mesh.boundingSphere) {
+      mesh.boundingSphere.radius +=
+        swayAmplitude * GROUND_FOLIAGE_MAX_WIND_STRENGTH * GROUND_FOLIAGE_WAVE_MAX
+    }
+    this.groundFoliageMeshes.push(mesh)
+    this.scene.add(mesh)
+  }
+
   private updateAtmosphere(delta: number): void {
+    this.groundFoliageUniforms.uTime.value = this.elapsed
     for (let index = 0; index < this.clouds.length; index += 1) {
       const { group, speed } = this.clouds[index]
       group.position.x += speed * delta
@@ -4197,12 +4626,12 @@ export class GameEngine {
     this.createAtmosphere()
     this.createGround()
     this.createRoads()
-    this.createGroundScatter()
     this.createVillage()
     this.createPalace()
     this.createForest()
     this.createFort()
     this.createBoundary()
+    this.createGroundDetails()
   }
 
   private createGround(): void {
