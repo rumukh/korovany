@@ -3,6 +3,7 @@ import {
   Castle,
   Check,
   Clock3,
+  CloudRain,
   Coins,
   Eye,
   Flag,
@@ -61,6 +62,7 @@ type Theme = 'dark' | 'light'
 const MUSIC_MUTED_KEY = 'korovany-music-muted'
 const THEME_KEY = 'korovany-theme'
 const DYNAMIC_DAY_NIGHT_KEY = 'korovany-dynamic-day-night'
+const WEATHER_ENABLED_KEY = 'korovany-weather'
 const BLOOM_ENABLED_KEY = 'korovany-bloom'
 const SCREEN_SHAKE_ENABLED_KEY = 'korovany-screen-shake'
 const FOLIAGE_QUALITY_KEY = 'korovany-foliage'
@@ -161,6 +163,15 @@ function readDynamicDayNight(): boolean {
     return localStorage.getItem(DYNAMIC_DAY_NIGHT_KEY) !== 'false'
   } catch (error) {
     console.warn('Korovany: dynamic time preference could not be read.', error)
+    return true
+  }
+}
+
+function readWeatherEnabled(): boolean {
+  try {
+    return localStorage.getItem(WEATHER_ENABLED_KEY) !== 'false'
+  } catch (error) {
+    console.warn('Korovany: weather preference could not be read.', error)
     return true
   }
 }
@@ -459,6 +470,7 @@ function MenuScreen({
   savedGame,
   theme,
   dynamicDayNight,
+  weatherEnabled,
   bloomEnabled,
   foliageQuality,
   screenShakeEnabled,
@@ -466,6 +478,7 @@ function MenuScreen({
   onLoad,
   onToggleTheme,
   onToggleDynamicDayNight,
+  onToggleWeather,
   onToggleBloom,
   onCycleFoliageQuality,
   onToggleScreenShake,
@@ -473,6 +486,7 @@ function MenuScreen({
   savedGame: SavedGame | null
   theme: Theme
   dynamicDayNight: boolean
+  weatherEnabled: boolean
   bloomEnabled: boolean
   foliageQuality: FoliageQuality
   screenShakeEnabled: boolean
@@ -480,6 +494,7 @@ function MenuScreen({
   onLoad: () => void
   onToggleTheme: () => void
   onToggleDynamicDayNight: () => void
+  onToggleWeather: () => void
   onToggleBloom: () => void
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
@@ -520,6 +535,17 @@ function MenuScreen({
         >
           <Clock3 aria-hidden="true" />
           <span>{dynamicDayNight ? 'Время суток: вкл.' : 'Время суток: выкл.'}</span>
+        </button>
+        <button
+          className="weather-toggle secondary-button"
+          type="button"
+          onClick={onToggleWeather}
+          aria-pressed={weatherEnabled}
+          aria-label={weatherEnabled ? 'Отключить динамическую погоду' : 'Включить динамическую погоду'}
+          title={weatherEnabled ? 'Отключить динамическую погоду' : 'Включить динамическую погоду'}
+        >
+          <CloudRain aria-hidden="true" />
+          <span>{weatherEnabled ? 'Погода: вкл.' : 'Погода: выкл.'}</span>
         </button>
         <button
           className="bloom-toggle secondary-button"
@@ -760,6 +786,7 @@ function ShopModal({
 function PauseModal({
   view,
   dynamicDayNight,
+  weatherEnabled,
   bloomEnabled,
   foliageQuality,
   screenShakeEnabled,
@@ -767,12 +794,14 @@ function PauseModal({
   onSave,
   onMenu,
   onToggleDynamicDayNight,
+  onToggleWeather,
   onToggleBloom,
   onCycleFoliageQuality,
   onToggleScreenShake,
 }: {
   view: GameView
   dynamicDayNight: boolean
+  weatherEnabled: boolean
   bloomEnabled: boolean
   foliageQuality: FoliageQuality
   screenShakeEnabled: boolean
@@ -780,6 +809,7 @@ function PauseModal({
   onSave: () => void
   onMenu: () => void
   onToggleDynamicDayNight: () => void
+  onToggleWeather: () => void
   onToggleBloom: () => void
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
@@ -815,6 +845,16 @@ function PauseModal({
           <Clock3 aria-hidden="true" />
           <span>Динамическое время суток</span>
           <strong>{dynamicDayNight ? 'Вкл.' : 'Выкл.'}</strong>
+        </button>
+        <button
+          className="secondary-button pause-setting weather-setting"
+          type="button"
+          onClick={onToggleWeather}
+          aria-pressed={weatherEnabled}
+        >
+          <CloudRain aria-hidden="true" />
+          <span>Динамическая погода</span>
+          <strong>{weatherEnabled ? 'Вкл.' : 'Выкл.'}</strong>
         </button>
         <button
           className="secondary-button pause-setting bloom-setting"
@@ -945,11 +985,13 @@ function GameScreen({
   onRestart,
   musicMuted,
   dynamicDayNight,
+  weatherEnabled,
   bloomEnabled,
   foliageQuality,
   screenShakeEnabled,
   onToggleMusic,
   onToggleDynamicDayNight,
+  onToggleWeather,
   onToggleBloom,
   onCycleFoliageQuality,
   onToggleScreenShake,
@@ -976,11 +1018,13 @@ function GameScreen({
   onRestart: () => void
   musicMuted: boolean
   dynamicDayNight: boolean
+  weatherEnabled: boolean
   bloomEnabled: boolean
   foliageQuality: FoliageQuality
   screenShakeEnabled: boolean
   onToggleMusic: () => void
   onToggleDynamicDayNight: () => void
+  onToggleWeather: () => void
   onToggleBloom: () => void
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
@@ -1248,6 +1292,7 @@ function GameScreen({
         <PauseModal
           view={view}
           dynamicDayNight={dynamicDayNight}
+          weatherEnabled={weatherEnabled}
           bloomEnabled={bloomEnabled}
           foliageQuality={foliageQuality}
           screenShakeEnabled={screenShakeEnabled}
@@ -1255,6 +1300,7 @@ function GameScreen({
           onSave={onSave}
           onMenu={onMenu}
           onToggleDynamicDayNight={onToggleDynamicDayNight}
+          onToggleWeather={onToggleWeather}
           onToggleBloom={onToggleBloom}
           onCycleFoliageQuality={onCycleFoliageQuality}
           onToggleScreenShake={onToggleScreenShake}
@@ -1283,12 +1329,14 @@ function App() {
   const [screenShakeEnabled, setScreenShakeEnabled] = useState(() => readScreenShakeEnabled())
   const [theme, setTheme] = useState<Theme>(() => readTheme())
   const [dynamicDayNight, setDynamicDayNight] = useState(() => readDynamicDayNight())
+  const [weatherEnabled, setWeatherEnabled] = useState(() => readWeatherEnabled())
   const [runId, setRunId] = useState(0)
   const worldRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<GameEngine | null>(null)
   const noticeCounter = useRef(0)
   const musicMutedRef = useRef(musicMuted)
   const dynamicDayNightRef = useRef(dynamicDayNight)
+  const weatherEnabledRef = useRef(weatherEnabled)
   const bloomEnabledRef = useRef(bloomEnabled)
   const foliageQualityRef = useRef(foliageQuality)
   const screenShakeEnabledRef = useRef(screenShakeEnabled)
@@ -1333,6 +1381,7 @@ function App() {
       {
         musicMuted: musicMutedRef.current,
         dynamicDayNight: dynamicDayNightRef.current,
+        weatherEnabled: weatherEnabledRef.current,
         bloomEnabled: bloomEnabledRef.current,
         foliageQuality: foliageQualityRef.current,
         screenShakeEnabled: screenShakeEnabledRef.current,
@@ -1428,6 +1477,22 @@ function App() {
     }
   }
 
+  const toggleWeather = () => {
+    const next = !weatherEnabledRef.current
+    weatherEnabledRef.current = next
+    setWeatherEnabled(next)
+    engineRef.current?.setWeatherEnabled(next)
+    try {
+      localStorage.setItem(WEATHER_ENABLED_KEY, String(next))
+    } catch (error) {
+      console.warn('Korovany: weather preference could not be saved.', error)
+    }
+    addNotice(
+      next ? 'Динамическая погода включена.' : 'Динамическая погода выключена.',
+      'info',
+    )
+  }
+
   const cycleFoliageQuality = () => {
     const next = nextFoliageQuality(foliageQualityRef.current)
     foliageQualityRef.current = next
@@ -1458,6 +1523,7 @@ function App() {
         savedGame={savedGame}
         theme={theme}
         dynamicDayNight={dynamicDayNight}
+        weatherEnabled={weatherEnabled}
         bloomEnabled={bloomEnabled}
         foliageQuality={foliageQuality}
         screenShakeEnabled={screenShakeEnabled}
@@ -1467,6 +1533,7 @@ function App() {
         }}
         onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
         onToggleDynamicDayNight={toggleDynamicDayNight}
+        onToggleWeather={toggleWeather}
         onToggleBloom={toggleBloom}
         onCycleFoliageQuality={cycleFoliageQuality}
         onToggleScreenShake={toggleScreenShake}
@@ -1514,11 +1581,13 @@ function App() {
       onRestart={() => startGame(faction)}
       musicMuted={musicMuted}
       bloomEnabled={bloomEnabled}
+      weatherEnabled={weatherEnabled}
       foliageQuality={foliageQuality}
       screenShakeEnabled={screenShakeEnabled}
       onToggleMusic={toggleMusic}
       dynamicDayNight={dynamicDayNight}
       onToggleDynamicDayNight={toggleDynamicDayNight}
+      onToggleWeather={toggleWeather}
       onToggleBloom={toggleBloom}
       onCycleFoliageQuality={cycleFoliageQuality}
       onToggleScreenShake={toggleScreenShake}

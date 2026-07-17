@@ -146,6 +146,7 @@ button {
 
 .theme-toggle,
 .day-night-toggle,
+.weather-toggle,
 .bloom-toggle,
 .foliage-toggle,
 .screen-shake-toggle {
@@ -156,6 +157,12 @@ button {
 .day-night-setting[aria-pressed="true"] {
   border-color: color-mix(in srgb, var(--cp-warning) 55%, var(--cp-border));
   color: var(--cp-warning);
+}
+
+.weather-toggle[aria-pressed="true"],
+.weather-setting[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--cp-link) 55%, var(--cp-border));
+  color: var(--cp-link);
 }
 
 .bloom-toggle[aria-pressed="true"],
@@ -2272,6 +2279,7 @@ kbd {
 
   .theme-toggle,
   .day-night-toggle,
+  .weather-toggle,
   .bloom-toggle,
   .foliage-toggle,
   .screen-shake-toggle {

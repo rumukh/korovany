@@ -28,6 +28,7 @@ export type FoliageQuality = 'off' | 'low' | 'high'
 export interface GameEngineSettings {
   musicMuted: boolean
   dynamicDayNight: boolean
+  weatherEnabled: boolean
   bloomEnabled: boolean
   screenShakeEnabled: boolean
   foliageQuality: FoliageQuality
@@ -151,6 +152,26 @@ interface DayNightKeyframes {
   night: DayNightKeyframe
   twilight: DayNightKeyframe
   day: DayNightKeyframe
+}
+
+type WeatherKind = 'clear' | 'overcast' | 'rain' | 'snow'
+
+interface WeatherProfile {
+  fogNear: number
+  fogFar: number
+  sunScale: number
+  hemisphereScale: number
+  cloudOpacity: number
+  skyBrightness: number
+  desaturation: number
+  windStrength: number
+  celestialScale: number
+}
+
+interface GroundSurface {
+  material: THREE.MeshStandardMaterial
+  baseColor: THREE.Color
+  baseRoughness: number
 }
 
 interface BuildingWindowGlow {
@@ -358,6 +379,83 @@ const GROUND_FOLIAGE_WIND_SPEED = 1.6
 const GROUND_FOLIAGE_DEFAULT_WIND_STRENGTH = 0.25
 const GROUND_FOLIAGE_MAX_WIND_STRENGTH = 1.5
 const GROUND_FOLIAGE_WAVE_MAX = 1.35
+const WEATHER_KINDS: readonly WeatherKind[] = ['clear', 'overcast', 'rain', 'snow']
+const WEATHER_BY_ZONE: Record<ZoneId, WeatherKind> = {
+  neutral: 'overcast',
+  palace: 'clear',
+  forest: 'rain',
+  fort: 'snow',
+}
+const WEATHER_PROFILES: Record<WeatherKind, WeatherProfile> = {
+  clear: {
+    fogNear: 48,
+    fogFar: 132,
+    sunScale: 1,
+    hemisphereScale: 1,
+    cloudOpacity: 0.3,
+    skyBrightness: 1,
+    desaturation: 0,
+    windStrength: GROUND_FOLIAGE_DEFAULT_WIND_STRENGTH,
+    celestialScale: 1,
+  },
+  overcast: {
+    fogNear: 32,
+    fogFar: 96,
+    sunScale: 0.48,
+    hemisphereScale: 0.78,
+    cloudOpacity: 0.76,
+    skyBrightness: 0.82,
+    desaturation: 0.42,
+    windStrength: 0.58,
+    celestialScale: 0.4,
+  },
+  rain: {
+    fogNear: 18,
+    fogFar: 72,
+    sunScale: 0.22,
+    hemisphereScale: 0.62,
+    cloudOpacity: 0.94,
+    skyBrightness: 0.7,
+    desaturation: 0.62,
+    windStrength: 1.15,
+    celestialScale: 0.12,
+  },
+  snow: {
+    fogNear: 24,
+    fogFar: 82,
+    sunScale: 0.42,
+    hemisphereScale: 0.76,
+    cloudOpacity: 0.86,
+    skyBrightness: 0.88,
+    desaturation: 0.5,
+    windStrength: 0.78,
+    celestialScale: 0.26,
+  },
+}
+const WEATHER_RESPONSE_RATE = -Math.log(0.05) / 6
+const WEATHER_ZONE_HYSTERESIS = 1.5
+const BASE_CLOUD_OPACITY = 0.58
+const RAIN_DROP_COUNT = 420
+const SNOW_FLAKE_COUNT = 300
+const PRECIPITATION_HALF_WIDTH = 24
+const PRECIPITATION_HALF_DEPTH = 20
+const PRECIPITATION_TOP = 25
+const PRECIPITATION_GROUND = 0.08
+const RAIN_FALL_SPEED = 34
+const RAIN_STREAK_LENGTH = 2.2
+const RAIN_WIND_SPEED = 2.4
+const SNOW_FALL_SPEED = 5.4
+const SNOW_WIND_SPEED = 1.2
+const SNOW_DRIFT_SPEED = 0.65
+const LIGHTNING_MIN_INTERVAL = 8
+const LIGHTNING_MAX_INTERVAL = 22
+const LIGHTNING_FLASH_DURATION = 0.18
+const LIGHTNING_INTENSITY = 5.5
+const THUNDER_MIN_DELAY = 0.35
+const THUNDER_MAX_DELAY = 1.1
+const GROUND_WET_DARKEN = 0.78
+const GROUND_WET_ROUGHNESS = 0.48
+const GROUND_FROST_BLEND = 0.24
 const GRASS_FOLIAGE_HEIGHT = 0.7
 const FERN_FOLIAGE_HEIGHT = 0.6
 const FLOWER_FOLIAGE_HEIGHT = 0.75
@@ -634,6 +732,17 @@ export class GameEngine {
   private sunDisc!: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
   private moonDisc!: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
   private stars!: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>
+  private cloudMaterial!: THREE.MeshBasicMaterial
+  private readonly cloudBaseColor = new THREE.Color()
+  private readonly groundSurfaces = new Map<ZoneId, GroundSurface>()
+  private readonly weatherGray = new THREE.Color()
+  private readonly weatherFrostColor = new THREE.Color()
+  private rain!: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>
+  private snow!: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>
+  private lightningLight!: THREE.HemisphereLight
+  private readonly rainPositions = new Float32Array(RAIN_DROP_COUNT * 6)
+  private readonly snowPositions = new Float32Array(SNOW_FLAKE_COUNT * 3)
+  private readonly snowDriftPhases = new Float32Array(SNOW_FLAKE_COUNT)
   private readonly cameraRaycaster = new THREE.Raycaster()
   private readonly cameraFollowPosition = new THREE.Vector3()
   private readonly cameraObstacles: THREE.Object3D[] = []
@@ -649,6 +758,7 @@ export class GameEngine {
   private readonly collisionProbe = new THREE.Vector3()
   private readonly navigationWaypoint = new THREE.Vector3()
   private readonly eventRng = seededRandom((Date.now() % 2147483646) + 1)
+  private readonly weatherRng = seededRandom(((Date.now() + 7919) % 2147483646) + 1)
   private readonly player: THREE.Group
   private readonly caravan: THREE.Group
   private readonly vendorPosition = new THREE.Vector3(-46, 0, -39)
@@ -681,6 +791,17 @@ export class GameEngine {
   private shieldActive = false
   private lastViewAt = 0
   private lastZone: ZoneId
+  private weatherZone: ZoneId
+  private weatherTarget: WeatherKind = 'clear'
+  private readonly weatherWeights: Record<WeatherKind, number> = {
+    clear: 1,
+    overcast: 0,
+    rain: 0,
+    snow: 0,
+  }
+  private lightningCooldown = LIGHTNING_MIN_INTERVAL
+  private lightningFlash = 0
+  private thunderDelay = -1
   private prompt = ''
   private squadFollowing = false
   private caravanDirection = 1
@@ -694,11 +815,13 @@ export class GameEngine {
   private audioContext: AudioContext | null = null
   private musicGain: GainNode | null = null
   private musicNoiseBuffer: AudioBuffer | null = null
+  private thunderNoiseBuffer: AudioBuffer | null = null
   private musicTimer: number | null = null
   private musicNextNoteTime = 0
   private musicStep = 0
   private musicMuted: boolean
   private dynamicDayNight: boolean
+  private weatherEnabled: boolean
   private screenShakeEnabled: boolean
   private groundFoliageQuality: FoliageQuality
   private nightFactor = 0
@@ -729,10 +852,14 @@ export class GameEngine {
     this.faction = faction
     this.musicMuted = settings.musicMuted ?? false
     this.dynamicDayNight = settings.dynamicDayNight ?? true
+    this.weatherEnabled = settings.weatherEnabled ?? true
     this.screenShakeEnabled = settings.screenShakeEnabled ?? true
     this.groundFoliageQuality = settings.foliageQuality ?? 'high'
     this.palette = createPalette()
     this.dayNightKeyframes = createDayNightKeyframes(this.palette)
+    this.weatherFrostColor
+      .copy(this.palette.worldFog)
+      .lerp(this.palette.worldSun, 0.58)
     this.objectives = restoreObjectives(faction, savedGame?.objectives)
     this.body = savedGame ? { ...savedGame.body } : createHealthyBody()
     this.health = savedGame?.health ?? 100
@@ -775,11 +902,19 @@ export class GameEngine {
     this.scene.add(this.player)
     this.applySavedBodyAppearance()
     this.lastZone = zoneAt(this.player.position.x, this.player.position.z)
+    this.weatherZone = this.lastZone
+    this.setWeatherTarget(
+      this.weatherEnabled ? WEATHER_BY_ZONE[this.weatherZone] : 'clear',
+      true,
+    )
 
     this.setupLights()
     const worldRootIndex = this.scene.children.length
     this.buildWorld()
+    this.setupWeather()
+    this.applyGroundWeather()
     this.updateDayNight()
+    this.updateWeather(0)
     this.updateAtmosphere(0)
     this.resolveCharacterOverlaps(this.player.position, PLAYER_COLLIDER_RADIUS)
     this.collectCameraObstacles(this.scene.children.slice(worldRootIndex))
@@ -840,12 +975,19 @@ export class GameEngine {
       if (
         !(object instanceof THREE.Mesh) &&
         !(object instanceof THREE.Sprite) &&
-        !(object instanceof THREE.Points)
+        !(object instanceof THREE.Points) &&
+        !(object instanceof THREE.Line)
       ) {
         return
       }
       if (object instanceof THREE.InstancedMesh) object.dispose()
-      if (object instanceof THREE.Mesh || object instanceof THREE.Points) object.geometry.dispose()
+      if (
+        object instanceof THREE.Mesh ||
+        object instanceof THREE.Points ||
+        object instanceof THREE.Line
+      ) {
+        object.geometry.dispose()
+      }
       const material = object.material
       if (Array.isArray(material)) material.forEach((entry) => entry.dispose())
       else material.dispose()
@@ -899,6 +1041,25 @@ export class GameEngine {
     if (this.dynamicDayNight === enabled) return
     this.dynamicDayNight = enabled
     this.updateDayNight()
+    this.updateWeather(0)
+    this.updateAtmosphere(0)
+  }
+
+  setWeatherEnabled(enabled: boolean): void {
+    if (this.weatherEnabled === enabled) return
+    this.weatherEnabled = enabled
+    this.weatherZone = zoneAt(this.player.position.x, this.player.position.z)
+    this.setWeatherTarget(
+      enabled ? WEATHER_BY_ZONE[this.weatherZone] : 'clear',
+      true,
+    )
+    this.applyGroundWeather()
+    if (!enabled) {
+      this.lightningFlash = 0
+      this.thunderDelay = -1
+    }
+    this.updateDayNight()
+    this.updateWeather(0)
     this.updateAtmosphere(0)
   }
 
@@ -1179,6 +1340,7 @@ export class GameEngine {
     this.updateParticles(delta)
     this.updateDecals(delta)
     this.updateDayNight()
+    this.updateWeather(delta)
     this.updateAtmosphere(delta)
 
     if (this.body.bleeding > 0) {
@@ -4059,17 +4221,18 @@ export class GameEngine {
 
     const random = seededRandom(731)
     const cloudGeometry = new THREE.DodecahedronGeometry(3.4, 1)
-    const cloudMaterial = new THREE.MeshBasicMaterial({
+    this.cloudMaterial = new THREE.MeshBasicMaterial({
       color: mix(this.palette.worldSun, this.palette.worldHorizon, 0.6),
       transparent: true,
-      opacity: 0.58,
+      opacity: BASE_CLOUD_OPACITY,
       depthWrite: false,
       fog: true,
     })
+    this.cloudBaseColor.copy(this.cloudMaterial.color)
     for (let index = 0; index < 10; index += 1) {
       const group = new THREE.Group()
       for (let puff = 0; puff < 4; puff += 1) {
-        const cloud = new THREE.Mesh(cloudGeometry, cloudMaterial)
+        const cloud = new THREE.Mesh(cloudGeometry, this.cloudMaterial)
         cloud.position.set((puff - 1.5) * 3.6, Math.sin(puff) * 1.1, (random() - 0.5) * 2.4)
         cloud.scale.set(1 + random() * 0.8, 0.45 + random() * 0.35, 0.7 + random() * 0.5)
         group.add(cloud)
@@ -4079,6 +4242,391 @@ export class GameEngine {
       this.clouds.push({ group, speed: 0.7 + random() * 0.75 })
       this.scene.add(group)
     }
+  }
+
+  private setupWeather(): void {
+    const rainRandom = seededRandom(7879)
+    for (let index = 0; index < RAIN_DROP_COUNT; index += 1) {
+      const offset = index * 6
+      const x =
+        this.player.position.x +
+        (rainRandom() * 2 - 1) * PRECIPITATION_HALF_WIDTH
+      const y =
+        PRECIPITATION_GROUND +
+        rainRandom() * (PRECIPITATION_TOP - PRECIPITATION_GROUND)
+      const z =
+        this.player.position.z +
+        (rainRandom() * 2 - 1) * PRECIPITATION_HALF_DEPTH
+      this.rainPositions[offset] = x
+      this.rainPositions[offset + 1] = y
+      this.rainPositions[offset + 2] = z
+      this.rainPositions[offset + 3] = x
+      this.rainPositions[offset + 4] = y + RAIN_STREAK_LENGTH
+      this.rainPositions[offset + 5] = z
+    }
+    const rainAttribute = new THREE.BufferAttribute(this.rainPositions, 3)
+    rainAttribute.setUsage(THREE.DynamicDrawUsage)
+    const rainGeometry = new THREE.BufferGeometry()
+    rainGeometry.setAttribute('position', rainAttribute)
+    this.rain = new THREE.LineSegments(
+      rainGeometry,
+      new THREE.LineBasicMaterial({
+        color: mix(this.palette.worldFog, this.palette.worldSky, 0.35),
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        fog: true,
+      }),
+    )
+    this.rain.frustumCulled = false
+    this.rain.visible = false
+    this.scene.add(this.rain)
+
+    const snowRandom = seededRandom(7919)
+    for (let index = 0; index < SNOW_FLAKE_COUNT; index += 1) {
+      const offset = index * 3
+      this.snowPositions[offset] =
+        this.player.position.x +
+        (snowRandom() * 2 - 1) * PRECIPITATION_HALF_WIDTH
+      this.snowPositions[offset + 1] =
+        PRECIPITATION_GROUND +
+        snowRandom() * (PRECIPITATION_TOP - PRECIPITATION_GROUND)
+      this.snowPositions[offset + 2] =
+        this.player.position.z +
+        (snowRandom() * 2 - 1) * PRECIPITATION_HALF_DEPTH
+      this.snowDriftPhases[index] = snowRandom() * TWO_PI
+    }
+    const snowAttribute = new THREE.BufferAttribute(this.snowPositions, 3)
+    snowAttribute.setUsage(THREE.DynamicDrawUsage)
+    const snowGeometry = new THREE.BufferGeometry()
+    snowGeometry.setAttribute('position', snowAttribute)
+    this.snow = new THREE.Points(
+      snowGeometry,
+      new THREE.PointsMaterial({
+        map: this.createSnowTexture(),
+        color: mix(this.palette.worldSun, this.palette.worldFog, 0.42),
+        size: 0.46,
+        sizeAttenuation: true,
+        transparent: true,
+        opacity: 0,
+        alphaTest: 0.025,
+        depthWrite: false,
+        fog: true,
+      }),
+    )
+    this.snow.frustumCulled = false
+    this.snow.visible = false
+    this.scene.add(this.snow)
+
+    this.lightningLight = new THREE.HemisphereLight(
+      mix(this.palette.worldSun, this.palette.worldSky, 0.25),
+      this.palette.worldAmbientGround,
+      0,
+    )
+    this.scene.add(this.lightningLight)
+    this.lightningCooldown = this.randomWeatherRange(
+      LIGHTNING_MIN_INTERVAL,
+      LIGHTNING_MAX_INTERVAL,
+    )
+  }
+
+  private createSnowTexture(): THREE.CanvasTexture {
+    const cached = this.generatedTextures.get('weather-snowflake')
+    if (cached) return cached
+
+    const canvas = document.createElement('canvas')
+    canvas.width = 32
+    canvas.height = 32
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Could not create procedural snow texture')
+    const gradient = context.createRadialGradient(16, 16, 0, 16, 16, 15)
+    gradient.addColorStop(0, 'rgba(255, 255, 255, 1)')
+    gradient.addColorStop(0.42, 'rgba(255, 255, 255, 0.88)')
+    gradient.addColorStop(1, 'rgba(255, 255, 255, 0)')
+    context.fillStyle = gradient
+    context.fillRect(0, 0, canvas.width, canvas.height)
+
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.minFilter = THREE.LinearFilter
+    texture.magFilter = THREE.LinearFilter
+    this.generatedTextures.set('weather-snowflake', texture)
+    return texture
+  }
+
+  private setWeatherTarget(kind: WeatherKind, immediate = false): void {
+    this.weatherTarget = kind
+    this.renderer.domElement.dataset.weather = this.weatherEnabled ? kind : 'disabled'
+    if (!immediate) return
+    for (const weatherKind of WEATHER_KINDS) {
+      this.weatherWeights[weatherKind] = weatherKind === kind ? 1 : 0
+    }
+  }
+
+  private updateWeather(delta: number): void {
+    if (!this.weatherEnabled) {
+      this.restoreWeatherVisuals()
+      return
+    }
+
+    const nextZone = this.resolveWeatherZone()
+    if (nextZone !== this.weatherZone) {
+      this.weatherZone = nextZone
+      this.setWeatherTarget(WEATHER_BY_ZONE[nextZone])
+    }
+    this.updateWeatherWeights(delta)
+    this.applyWeatherEnvironment()
+    this.updatePrecipitation(delta)
+    this.updateLightning(delta)
+  }
+
+  private resolveWeatherZone(): ZoneId {
+    const x = this.player.position.x
+    const z = this.player.position.z
+    if (
+      Math.abs(x) < WEATHER_ZONE_HYSTERESIS ||
+      Math.abs(z) < WEATHER_ZONE_HYSTERESIS
+    ) {
+      return this.weatherZone
+    }
+    return zoneAt(x, z)
+  }
+
+  private updateWeatherWeights(delta: number): void {
+    if (delta <= 0) return
+    const response = 1 - Math.exp(-WEATHER_RESPONSE_RATE * delta)
+    let total = 0
+    for (const kind of WEATHER_KINDS) {
+      const target = kind === this.weatherTarget ? 1 : 0
+      this.weatherWeights[kind] +=
+        (target - this.weatherWeights[kind]) * response
+      total += this.weatherWeights[kind]
+    }
+    if (total <= 0) return
+    for (const kind of WEATHER_KINDS) {
+      this.weatherWeights[kind] /= total
+    }
+  }
+
+  private weightedWeatherValue(key: keyof WeatherProfile): number {
+    let value = 0
+    for (const kind of WEATHER_KINDS) {
+      value += WEATHER_PROFILES[kind][key] * this.weatherWeights[kind]
+    }
+    return value
+  }
+
+  private applyWeatherEnvironment(): void {
+    const skyBrightness = this.weightedWeatherValue('skyBrightness')
+    const desaturation = this.weightedWeatherValue('desaturation')
+    const celestialScale = this.weightedWeatherValue('celestialScale')
+
+    this.fog.near = this.weightedWeatherValue('fogNear')
+    this.fog.far = this.weightedWeatherValue('fogFar')
+    this.sun.intensity *= this.weightedWeatherValue('sunScale')
+    this.hemisphere.intensity *= this.weightedWeatherValue('hemisphereScale')
+    this.sunDisc.material.opacity *= celestialScale
+    this.moonDisc.material.opacity *= celestialScale
+    this.stars.material.opacity *= celestialScale
+    this.applyWeatherColor(this.backgroundColor, desaturation, skyBrightness)
+    this.applyWeatherColor(this.fog.color, desaturation * 0.72, skyBrightness)
+    this.applyWeatherColor(this.skyMaterial.color, desaturation * 0.5, skyBrightness)
+
+    this.cloudMaterial.opacity = this.weightedWeatherValue('cloudOpacity')
+    this.cloudMaterial.color.copy(this.cloudBaseColor)
+    this.applyWeatherColor(
+      this.cloudMaterial.color,
+      desaturation * 0.5,
+      Math.min(1, skyBrightness + 0.08),
+    )
+    this.groundFoliageUniforms.uWindStrength.value = Math.min(
+      GROUND_FOLIAGE_MAX_WIND_STRENGTH,
+      this.weightedWeatherValue('windStrength'),
+    )
+  }
+
+  private applyWeatherColor(
+    color: THREE.Color,
+    desaturation: number,
+    brightness: number,
+  ): void {
+    const luminance = color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722
+    this.weatherGray.setRGB(luminance, luminance, luminance)
+    color.lerp(this.weatherGray, desaturation).multiplyScalar(brightness)
+  }
+
+  private restoreWeatherVisuals(): void {
+    this.fog.near = WEATHER_PROFILES.clear.fogNear
+    this.fog.far = WEATHER_PROFILES.clear.fogFar
+    this.cloudMaterial.opacity = BASE_CLOUD_OPACITY
+    this.cloudMaterial.color.copy(this.cloudBaseColor)
+    this.groundFoliageUniforms.uWindStrength.value =
+      GROUND_FOLIAGE_DEFAULT_WIND_STRENGTH
+    this.rain.visible = false
+    this.rain.material.opacity = 0
+    this.snow.visible = false
+    this.snow.material.opacity = 0
+    this.lightningLight.intensity = 0
+  }
+
+  private applyGroundWeather(): void {
+    for (const [zone, surface] of this.groundSurfaces) {
+      surface.material.color.copy(surface.baseColor)
+      surface.material.roughness = surface.baseRoughness
+      if (!this.weatherEnabled) continue
+
+      if (zone === 'forest') {
+        surface.material.color.multiplyScalar(GROUND_WET_DARKEN)
+        surface.material.roughness = GROUND_WET_ROUGHNESS
+      } else if (zone === 'fort') {
+        surface.material.color.lerp(this.weatherFrostColor, GROUND_FROST_BLEND)
+      }
+    }
+  }
+
+  private updatePrecipitation(delta: number): void {
+    const rainWeight = this.weatherWeights.rain
+    const snowWeight = this.weatherWeights.snow
+    this.rain.material.opacity = rainWeight * 0.72
+    this.snow.material.opacity = snowWeight * 0.92
+    this.rain.visible = rainWeight > 0.015
+    this.snow.visible = snowWeight > 0.015
+
+    if (this.rain.visible) this.updateRain(delta)
+    if (this.snow.visible) this.updateSnow(delta)
+  }
+
+  private updateRain(delta: number): void {
+    const wind = this.groundFoliageUniforms.uWindDirection.value
+    const windStrength = this.groundFoliageUniforms.uWindStrength.value
+    const centerX = this.camera.position.x
+    const centerZ = this.camera.position.z
+    for (let index = 0; index < RAIN_DROP_COUNT; index += 1) {
+      const offset = index * 6
+      let x =
+        this.rainPositions[offset] +
+        wind.x * RAIN_WIND_SPEED * windStrength * delta
+      let y = this.rainPositions[offset + 1] - RAIN_FALL_SPEED * delta
+      let z =
+        this.rainPositions[offset + 2] +
+        wind.y * RAIN_WIND_SPEED * windStrength * delta
+      if (y < PRECIPITATION_GROUND) {
+        y += PRECIPITATION_TOP - PRECIPITATION_GROUND
+      }
+      x = this.wrapWeatherCoordinate(
+        x,
+        centerX,
+        PRECIPITATION_HALF_WIDTH,
+      )
+      z = this.wrapWeatherCoordinate(
+        z,
+        centerZ,
+        PRECIPITATION_HALF_DEPTH,
+      )
+      this.rainPositions[offset] = x
+      this.rainPositions[offset + 1] = y
+      this.rainPositions[offset + 2] = z
+      this.rainPositions[offset + 3] =
+        x - wind.x * RAIN_STREAK_LENGTH * windStrength * 0.32
+      this.rainPositions[offset + 4] = y + RAIN_STREAK_LENGTH
+      this.rainPositions[offset + 5] =
+        z - wind.y * RAIN_STREAK_LENGTH * windStrength * 0.32
+    }
+    const attribute = this.rain.geometry.getAttribute('position')
+    attribute.needsUpdate = true
+  }
+
+  private updateSnow(delta: number): void {
+    const wind = this.groundFoliageUniforms.uWindDirection.value
+    const windStrength = this.groundFoliageUniforms.uWindStrength.value
+    const centerX = this.camera.position.x
+    const centerZ = this.camera.position.z
+    for (let index = 0; index < SNOW_FLAKE_COUNT; index += 1) {
+      const offset = index * 3
+      const phase = this.elapsed * 1.3 + this.snowDriftPhases[index]
+      let x =
+        this.snowPositions[offset] +
+        (wind.x * SNOW_WIND_SPEED * windStrength +
+          Math.sin(phase) * SNOW_DRIFT_SPEED) *
+          delta
+      let y = this.snowPositions[offset + 1] - SNOW_FALL_SPEED * delta
+      let z =
+        this.snowPositions[offset + 2] +
+        (wind.y * SNOW_WIND_SPEED * windStrength +
+          Math.cos(phase * 0.83) * SNOW_DRIFT_SPEED) *
+          delta
+      if (y < PRECIPITATION_GROUND) {
+        y += PRECIPITATION_TOP - PRECIPITATION_GROUND
+      }
+      x = this.wrapWeatherCoordinate(
+        x,
+        centerX,
+        PRECIPITATION_HALF_WIDTH,
+      )
+      z = this.wrapWeatherCoordinate(
+        z,
+        centerZ,
+        PRECIPITATION_HALF_DEPTH,
+      )
+      this.snowPositions[offset] = x
+      this.snowPositions[offset + 1] = y
+      this.snowPositions[offset + 2] = z
+    }
+    const attribute = this.snow.geometry.getAttribute('position')
+    attribute.needsUpdate = true
+  }
+
+  private wrapWeatherCoordinate(
+    value: number,
+    center: number,
+    halfExtent: number,
+  ): number {
+    const min = center - halfExtent
+    const max = center + halfExtent
+    if (value >= min && value <= max) return value
+    const span = halfExtent * 2
+    return min + ((((value - min) % span) + span) % span)
+  }
+
+  private updateLightning(delta: number): void {
+    if (this.thunderDelay >= 0) {
+      this.thunderDelay -= delta
+      if (this.thunderDelay <= 0) {
+        this.thunderDelay = -1
+        this.playSound('thunder')
+      }
+    }
+
+    const rainWeight = this.weatherWeights.rain
+    if (rainWeight >= 0.72 && delta > 0) {
+      this.lightningCooldown -= delta
+      if (this.lightningCooldown <= 0) {
+        this.lightningFlash = LIGHTNING_FLASH_DURATION
+        this.thunderDelay = this.randomWeatherRange(
+          THUNDER_MIN_DELAY,
+          THUNDER_MAX_DELAY,
+        )
+        this.lightningCooldown = this.randomWeatherRange(
+          LIGHTNING_MIN_INTERVAL,
+          LIGHTNING_MAX_INTERVAL,
+        )
+      }
+    }
+
+    if (this.lightningFlash <= 0) {
+      this.lightningLight.intensity = 0
+      return
+    }
+    const progress = 1 - this.lightningFlash / LIGHTNING_FLASH_DURATION
+    const pulse =
+      (1 - progress) * (0.72 + Math.sin(progress * Math.PI * 6) ** 2 * 0.28)
+    this.lightningLight.intensity =
+      LIGHTNING_INTENSITY * pulse * Math.max(0.35, rainWeight)
+    this.lightningFlash = Math.max(0, this.lightningFlash - delta)
+  }
+
+  private randomWeatherRange(min: number, max: number): number {
+    return min + (max - min) * this.weatherRng()
   }
 
   private createGroundDetails(): void {
@@ -4660,20 +5208,23 @@ uniform float uSwayAmplitude;`,
         forest: 'grass',
         fort: 'scree',
       }
-      const ground = new THREE.Mesh(
-        new THREE.PlaneGeometry(80, 80),
-        new THREE.MeshStandardMaterial({
-          map: this.createSurfaceTexture(
-            `ground-${zone}`,
-            zoneColors[zone],
-            details[zone],
-            patterns[zone],
-            zone === 'palace' ? 10 : 18,
-            zone === 'palace' ? 10 : 18,
-          ),
-          roughness: 1,
-        }),
-      )
+      const material = new THREE.MeshStandardMaterial({
+        map: this.createSurfaceTexture(
+          `ground-${zone}`,
+          zoneColors[zone],
+          details[zone],
+          patterns[zone],
+          zone === 'palace' ? 10 : 18,
+          zone === 'palace' ? 10 : 18,
+        ),
+        roughness: 1,
+      })
+      const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), material)
+      this.groundSurfaces.set(zone, {
+        material,
+        baseColor: material.color.clone(),
+        baseRoughness: material.roughness,
+      })
       ground.rotation.x = -Math.PI / 2
       ground.position.set(x, -0.04, z)
       ground.receiveShadow = true
@@ -6361,9 +6912,23 @@ uniform float uSwayAmplitude;`,
     this.musicGain = context.createGain()
     this.musicGain.connect(context.destination)
 
-    this.musicNoiseBuffer = context.createBuffer(1, Math.floor(context.sampleRate * 0.12), context.sampleRate)
+    this.musicNoiseBuffer = context.createBuffer(
+      1,
+      Math.floor(context.sampleRate * 0.12),
+      context.sampleRate,
+    )
     const noise = this.musicNoiseBuffer.getChannelData(0)
     for (let index = 0; index < noise.length; index += 1) noise[index] = Math.random() * 2 - 1
+    this.thunderNoiseBuffer = context.createBuffer(
+      1,
+      Math.floor(context.sampleRate * 1.25),
+      context.sampleRate,
+    )
+    const thunderNoise = this.thunderNoiseBuffer.getChannelData(0)
+    const thunderRandom = seededRandom(8297)
+    for (let index = 0; index < thunderNoise.length; index += 1) {
+      thunderNoise[index] = thunderRandom() * 2 - 1
+    }
 
     this.musicNextNoteTime = context.currentTime + 0.06
     this.updateMusicVolume()
@@ -6401,6 +6966,7 @@ uniform float uSwayAmplitude;`,
     this.audioContext = null
     this.musicGain = null
     this.musicNoiseBuffer = null
+    this.thunderNoiseBuffer = null
     this.musicNextNoteTime = 0
 
     const musicWindow = window as MusicWindow
@@ -6535,9 +7101,14 @@ uniform float uSwayAmplitude;`,
       | 'cleave'
       | 'event'
       | 'eventWin'
-      | 'eventFail',
+      | 'eventFail'
+      | 'thunder',
   ): void {
     if (!this.audioContext) return
+    if (type === 'thunder') {
+      this.playThunder()
+      return
+    }
     const frequencies: Record<typeof type, [number, number, number]> = {
       swing: [180, 90, 0.08],
       hit: [110, 55, 0.11],
@@ -6573,5 +7144,41 @@ uniform float uSwayAmplitude;`,
     gain.connect(this.audioContext.destination)
     oscillator.start()
     oscillator.stop(this.audioContext.currentTime + duration)
+  }
+
+  private playThunder(): void {
+    const context = this.audioContext
+    const buffer = this.thunderNoiseBuffer
+    if (!context || !buffer) return
+
+    const now = context.currentTime
+    const duration = 1.2
+    const source = this.trackMusicSource(context.createBufferSource())
+    const filter = context.createBiquadFilter()
+    const gain = context.createGain()
+    source.buffer = buffer
+    source.playbackRate.setValueAtTime(0.82, now)
+    filter.type = 'lowpass'
+    filter.frequency.setValueAtTime(520, now)
+    filter.frequency.exponentialRampToValueAtTime(70, now + duration)
+    filter.Q.setValueAtTime(0.75, now)
+    gain.gain.setValueAtTime(0.0001, now)
+    gain.gain.exponentialRampToValueAtTime(0.16, now + 0.035)
+    gain.gain.exponentialRampToValueAtTime(0.055, now + 0.22)
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
+    source.connect(filter)
+    filter.connect(gain)
+    gain.connect(context.destination)
+    source.addEventListener(
+      'ended',
+      () => {
+        source.disconnect()
+        filter.disconnect()
+        gain.disconnect()
+      },
+      { once: true },
+    )
+    source.start(now)
+    source.stop(now + duration)
   }
 }
