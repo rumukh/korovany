@@ -60,6 +60,14 @@ interface Actor {
   targetId: string | null
   stride: number
   phase: number
+  velocity: THREE.Vector3
+  gaitPhase: number
+  visualSpeed: number
+  motionBlend: number
+  turnLean: number
+  attackAnimation: number
+  idleTimer: number
+  wanderPace: number
   retreatTimer: number
   reinforcementTimer: number
   reinforcementsCalled: number
@@ -302,6 +310,9 @@ const COLLISION_SKIN = 0.025
 const COLLISION_MAX_STEP = 0.32
 const COLLISION_RESOLUTION_PASSES = 6
 const NPC_STEERING_ANGLES = [0, 0.55, -0.55, 1.05, -1.05, 1.55, -1.55] as const
+const NPC_ACCELERATION_DAMPING = 6.5
+const NPC_BRAKING_DAMPING = 11
+const NPC_BLOCKED_SPEED_RATIO = 0.22
 const MAX_ACTORS = 25
 const FIRST_EVENT_AT = 50
 const EVENT_COOLDOWN_MIN = 60
@@ -1794,7 +1805,7 @@ export class GameEngine {
     actor: Actor,
     desiredDirection: THREE.Vector3,
     distance: number,
-  ): void {
+  ): number {
     const radius = this.actorColliderRadiusForRole(actor.role)
     const startX = actor.mesh.position.x
     const startZ = actor.mesh.position.z
@@ -1829,6 +1840,7 @@ export class GameEngine {
 
     actor.mesh.position.x = bestX
     actor.mesh.position.z = bestZ
+    return Math.hypot(bestX - startX, bestZ - startZ)
   }
 
   private updatePlayer(delta: number): void {
@@ -1911,7 +1923,9 @@ export class GameEngine {
       this.updateActorIndicators(actor)
       if (!actor.alive) continue
       actor.attackCooldown = Math.max(0, actor.attackCooldown - delta)
+      actor.attackAnimation = Math.max(0, actor.attackAnimation - delta * 4.6)
       actor.wanderTimer = Math.max(0, actor.wanderTimer - delta)
+      actor.idleTimer = Math.max(0, actor.idleTimer - delta)
       actor.retreatTimer = Math.max(0, actor.retreatTimer - delta)
       actor.aggroMemory = Math.max(0, actor.aggroMemory - delta)
       actor.rageTimer = Math.max(0, actor.rageTimer - delta)
@@ -1919,7 +1933,8 @@ export class GameEngine {
       actor.retaliationTimer = Math.max(0, actor.retaliationTimer - delta)
       if (actor.aiMode === 'captive') {
         actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
-        this.animateCharacter(actor.mesh, actor.stride, 0)
+        actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
+        this.animateActorCharacter(actor, delta, 0)
         continue
       }
       if (actor.role === 'commander') this.updateCommander(actor, delta)
@@ -1937,6 +1952,7 @@ export class GameEngine {
       let pursuesPlayer = false
       let investigatesPlayer = false
       let targetPosition: THREE.Vector3 | null = null
+      let wandering = false
       const baseAggroRange = actor.role === 'archer' ? 18 : 15
       const enraged = actor.rageTimer > 0
       const senseRange = baseAggroRange + (enraged ? RAGE_RANGE_BONUS : 0)
@@ -2039,6 +2055,7 @@ export class GameEngine {
         if (targetActor) {
           targetPosition = targetActor.mesh.position
         } else {
+          wandering = true
           let navigationTarget = this.getNavigationWaypoint(
             actor.mesh.position,
             actor.wanderTarget,
@@ -2067,7 +2084,10 @@ export class GameEngine {
             toWaypoint.y = 0
           }
           const waypointDistance = toWaypoint.length()
-          if (waypointDistance > (navigationTarget ? 0.005 : 0.3)) {
+          if (
+            actor.idleTimer <= 0 &&
+            waypointDistance > (navigationTarget ? 0.005 : 0.3)
+          ) {
             direction.copy(toWaypoint).normalize()
             moving = true
             if (navigationTarget) movementDistanceLimit = waypointDistance
@@ -2141,28 +2161,93 @@ export class GameEngine {
         }
       }
 
-      let desiredStride = 0
+      let desiredSpeed = 0
       if (moving && direction.lengthSq() > 0) {
-        const speed =
+        desiredSpeed =
           actor.speed *
           (pursuesPlayer || retaliationTarget ? 1.25 : 1) *
           (enraged ? RAGE_SPEED_MULTIPLIER : 1) *
-          (this.hasCommanderAura(actor) ? COMMANDER_SPEED_MULTIPLIER : 1)
+          (this.hasCommanderAura(actor) ? COMMANDER_SPEED_MULTIPLIER : 1) *
+          (wandering ? actor.wanderPace : 1)
         direction.normalize()
-        this.moveActorWithSteering(
-          actor,
-          direction,
-          Math.min(speed * delta, movementDistanceLimit),
-        )
-        const targetYaw = Math.atan2(direction.x, direction.z)
-        actor.mesh.rotation.y = dampAngle(actor.mesh.rotation.y, targetYaw, 10, delta)
-        desiredStride = Math.sin(this.elapsed * 9 + actor.phase) * 0.55
-      } else if (facingDirection.lengthSq() > 0) {
-        const targetYaw = Math.atan2(facingDirection.x, facingDirection.z)
-        actor.mesh.rotation.y = dampAngle(actor.mesh.rotation.y, targetYaw, 10, delta)
       }
-      actor.stride = THREE.MathUtils.damp(actor.stride, desiredStride, 13, delta)
-      this.animateCharacter(actor.mesh, actor.stride, 0)
+
+      const velocityDamping = moving ? NPC_ACCELERATION_DAMPING : NPC_BRAKING_DAMPING
+      const desiredVelocityX = direction.x * desiredSpeed
+      const desiredVelocityZ = direction.z * desiredSpeed
+      actor.velocity.x = THREE.MathUtils.damp(
+        actor.velocity.x,
+        desiredVelocityX,
+        velocityDamping,
+        delta,
+      )
+      actor.velocity.z = THREE.MathUtils.damp(
+        actor.velocity.z,
+        desiredVelocityZ,
+        velocityDamping,
+        delta,
+      )
+
+      const requestedSpeed = Math.hypot(actor.velocity.x, actor.velocity.z)
+      let travelled = 0
+      if (requestedSpeed > 0.02) {
+        direction.set(actor.velocity.x / requestedSpeed, 0, actor.velocity.z / requestedSpeed)
+        const requestedDistance = Math.min(requestedSpeed * delta, movementDistanceLimit)
+        travelled = this.moveActorWithSteering(actor, direction, requestedDistance)
+        if (
+          requestedDistance > 0.001 &&
+          travelled / requestedDistance < NPC_BLOCKED_SPEED_RATIO
+        ) {
+          actor.velocity.multiplyScalar(0.35)
+        }
+      } else {
+        actor.velocity.set(0, 0, 0)
+      }
+
+      const actualSpeed = delta > 0 ? travelled / delta : 0
+      actor.visualSpeed = THREE.MathUtils.damp(actor.visualSpeed, actualSpeed, 14, delta)
+      const roleSpeed = Math.max(actor.speed, 0.1)
+      const desiredMotionBlend = THREE.MathUtils.clamp(actor.visualSpeed / roleSpeed, 0, 1.18)
+      actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, desiredMotionBlend, 9, delta)
+      actor.gaitPhase += travelled * this.actorGaitCadence(actor.role)
+      const desiredStride = Math.sin(actor.gaitPhase) * 0.62 * actor.motionBlend
+      actor.stride = THREE.MathUtils.damp(actor.stride, desiredStride, 15, delta)
+
+      const turnDirection =
+        actualSpeed > 0.08
+          ? direction
+          : facingDirection.lengthSq() > 0
+            ? facingDirection
+            : null
+      let lookYaw = Math.sin(this.elapsed * 0.62 + actor.phase * 2.3) * 0.3
+      if (turnDirection) {
+        const targetYaw = Math.atan2(turnDirection.x, turnDirection.z)
+        const yawDelta = Math.atan2(
+          Math.sin(targetYaw - actor.mesh.rotation.y),
+          Math.cos(targetYaw - actor.mesh.rotation.y),
+        )
+        actor.turnLean = THREE.MathUtils.damp(
+          actor.turnLean,
+          THREE.MathUtils.clamp(yawDelta, -0.5, 0.5),
+          8,
+          delta,
+        )
+        actor.mesh.rotation.y = dampAngle(actor.mesh.rotation.y, targetYaw, 9, delta)
+        if (facingDirection.lengthSq() > 0) {
+          const facingYaw = Math.atan2(facingDirection.x, facingDirection.z)
+          lookYaw = THREE.MathUtils.clamp(
+            Math.atan2(
+              Math.sin(facingYaw - actor.mesh.rotation.y),
+              Math.cos(facingYaw - actor.mesh.rotation.y),
+            ),
+            -0.65,
+            0.65,
+          )
+        }
+      } else {
+        actor.turnLean = THREE.MathUtils.damp(actor.turnLean, 0, 8, delta)
+      }
+      this.animateActorCharacter(actor, delta, lookYaw)
       if (actor.role === 'champion') {
         const aura = actor.mesh.getObjectByName('champion-aura')
         if (aura) {
@@ -2285,6 +2370,7 @@ export class GameEngine {
       0,
     )
     actor.attackCooldown = this.actorAttackInterval(actor, ARCHER_FIRE_COOLDOWN)
+    actor.attackAnimation = 1
     if (actor.mesh.position.distanceTo(this.player.position) < 20) this.playSound('arrow')
   }
 
@@ -2404,6 +2490,8 @@ export class GameEngine {
       }
     }
     actor.wanderTimer = 3.8 + (Math.sin(cycle * 0.81) + 1) * 2.2
+    actor.idleTimer = 0.35 + (Math.sin(cycle * 1.43 + 0.7) + 1) * 0.48
+    actor.wanderPace = 0.72 + (Math.sin(cycle * 1.09 + 1.3) + 1) * 0.13
   }
 
   private getActorSeparation(actor: Actor): THREE.Vector3 {
@@ -3459,6 +3547,7 @@ export class GameEngine {
       actor,
       actor.role === 'commander' ? 0.8 : 1.15,
     )
+    actor.attackAnimation = 1
     const baseDamage =
       actor.role === 'commander'
         ? 10
@@ -3479,6 +3568,7 @@ export class GameEngine {
 
   private actorAttackActor(attacker: Actor, target: Actor): void {
     attacker.attackCooldown = this.actorAttackInterval(attacker, 1.3)
+    attacker.attackAnimation = 1
     const baseDamage =
       attacker.role === 'commander'
         ? 18
@@ -3500,6 +3590,7 @@ export class GameEngine {
 
   private actorAttackEventProp(actor: Actor, target: EventPropTarget): void {
     actor.attackCooldown = this.actorAttackInterval(actor, 1.35)
+    actor.attackAnimation = 1
     target.hp = Math.max(0, target.hp - (4 + this.eventRng() * 2))
     this.createHitParticles(target.position, actor.faction)
     if (target.position.distanceTo(this.player.position) < 25) this.playSound('hit')
@@ -6034,6 +6125,18 @@ uniform float uSwayAmplitude;`,
 
   private createCharacter(faction: Faction, player: boolean): THREE.Group {
     const group = new THREE.Group()
+    const bodyPivot = new THREE.Group()
+    bodyPivot.name = 'body-pivot'
+    group.add(bodyPivot)
+    const torsoPivot = new THREE.Group()
+    torsoPivot.name = 'torso-pivot'
+    bodyPivot.add(torsoPivot)
+    const headPivot = new THREE.Group()
+    headPivot.name = 'head-pivot'
+    bodyPivot.add(headPivot)
+    const pelvisPivot = new THREE.Group()
+    pelvisPivot.name = 'pelvis-pivot'
+    bodyPivot.add(pelvisPivot)
     const factionMaterial = new THREE.MeshStandardMaterial({
       color: this.factionColor(faction),
       roughness: 0.72,
@@ -6050,18 +6153,20 @@ uniform float uSwayAmplitude;`,
     })
 
     const torso = new THREE.Mesh(new THREE.BoxGeometry(player ? 1.05 : 0.9, 1.3, 0.58), factionMaterial)
+    torso.name = 'torso'
     torso.position.y = 1.72
     torso.castShadow = true
-    group.add(torso)
+    torsoPivot.add(torso)
 
     const head = new THREE.Mesh(
       faction === 'elf' ? new THREE.ConeGeometry(0.44, 0.88, 8) : new THREE.SphereGeometry(0.43, 10, 8),
       skinMaterial,
     )
+    head.name = 'head'
     head.position.y = 2.72
     if (faction === 'elf') head.rotation.z = Math.PI
     head.castShadow = true
-    group.add(head)
+    headPivot.add(head)
 
     for (const [name, x] of [
       ['leftArm', -0.68],
@@ -6074,7 +6179,7 @@ uniform float uSwayAmplitude;`,
       arm.position.y = -0.52
       arm.castShadow = true
       pivot.add(arm)
-      group.add(pivot)
+      torsoPivot.add(pivot)
     }
     for (const [name, x] of [
       ['leftLeg', -0.28],
@@ -6087,7 +6192,7 @@ uniform float uSwayAmplitude;`,
       leg.position.y = -0.5
       leg.castShadow = true
       pivot.add(leg)
-      group.add(pivot)
+      pelvisPivot.add(pivot)
     }
 
     const weaponPivot = new THREE.Group()
@@ -6098,13 +6203,13 @@ uniform float uSwayAmplitude;`,
     blade.rotation.z = -0.2
     blade.castShadow = true
     weaponPivot.add(blade)
-    group.add(weaponPivot)
+    torsoPivot.add(weaponPivot)
 
     if (faction === 'guard') {
       const helmet = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.53, 0.48, 8), darkMaterial)
       helmet.position.y = 3.02
       helmet.castShadow = true
-      group.add(helmet)
+      headPivot.add(helmet)
       if (player) {
         const shield = new THREE.Mesh(
           new THREE.BoxGeometry(0.78, 1.15, 0.16),
@@ -6114,7 +6219,7 @@ uniform float uSwayAmplitude;`,
         shield.position.set(-0.82, 1.85, 0.08)
         shield.rotation.z = 0.12
         shield.castShadow = true
-        group.add(shield)
+        torsoPivot.add(shield)
       }
     } else if (faction === 'villain') {
       const horns = [-0.28, 0.28].map((x) => {
@@ -6124,7 +6229,7 @@ uniform float uSwayAmplitude;`,
         horn.castShadow = true
         return horn
       })
-      horns.forEach((horn) => group.add(horn))
+      horns.forEach((horn) => headPivot.add(horn))
     }
 
     if (!player) {
@@ -6154,6 +6259,28 @@ uniform float uSwayAmplitude;`,
       }
     })
     return group
+  }
+
+  private applyActorVisualVariation(
+    mesh: THREE.Group,
+    faction: Faction,
+    role: ActorRole,
+    index: number,
+  ): void {
+    const variation = Math.sin((index + 1) * 12.9898 + faction.length * 7.23)
+    const bodyPivot = mesh.getObjectByName('body-pivot')
+    if (bodyPivot) {
+      const roleWidth = role === 'brute' || role === 'champion' ? 1.025 : 1
+      bodyPivot.scale.set(
+        roleWidth * (1 + variation * 0.035),
+        1 - variation * 0.025,
+        roleWidth * (1 + variation * 0.02),
+      )
+    }
+    const torso = mesh.getObjectByName('torso')
+    if (torso instanceof THREE.Mesh && torso.material instanceof THREE.MeshStandardMaterial) {
+      torso.material.color.offsetHSL(variation * 0.012, variation * 0.03, variation * 0.025)
+    }
   }
 
   private createActorHealthBar(faction: Faction): {
@@ -6434,6 +6561,7 @@ uniform float uSwayAmplitude;`,
       const weapon = mesh.getObjectByName('weapon')
       if (weapon) weapon.visible = false
     }
+    this.applyActorVisualVariation(mesh, faction, role, index)
     mesh.position.set(x, 0, z)
     this.resolveCharacterOverlaps(mesh.position, this.actorColliderRadiusForRole(role))
     this.scene.add(mesh)
@@ -6485,6 +6613,14 @@ uniform float uSwayAmplitude;`,
       targetId: null,
       stride: 0,
       phase,
+      velocity: new THREE.Vector3(),
+      gaitPhase: phase,
+      visualSpeed: 0,
+      motionBlend: 0,
+      turnLean: 0,
+      attackAnimation: 0,
+      idleTimer: 0.2 + (index % 3) * 0.25,
+      wanderPace: 0.82 + (Math.sin(phase * 2.7) + 1) * 0.08,
       retreatTimer: 0,
       reinforcementTimer: COMMANDER_REINFORCEMENT_INTERVAL,
       reinforcementsCalled: 0,
@@ -6812,6 +6948,73 @@ uniform float uSwayAmplitude;`,
     if (leftLeg) leftLeg.rotation.x = stride
     if (rightLeg) rightLeg.rotation.x = -stride
     if (weapon) weapon.rotation.x = -attack * 1.3
+  }
+
+  private actorGaitCadence(role: ActorRole): number {
+    if (role === 'scout') return 8.4
+    if (role === 'brute' || role === 'champion') return 5.8
+    if (role === 'archer') return 7.2
+    return 6.8
+  }
+
+  private animateActorCharacter(actor: Actor, delta: number, lookYaw: number): void {
+    this.animateCharacter(actor.mesh, actor.stride, actor.attackAnimation)
+    const bodyPivot = actor.mesh.getObjectByName('body-pivot')
+    const torsoPivot = actor.mesh.getObjectByName('torso-pivot')
+    const pelvisPivot = actor.mesh.getObjectByName('pelvis-pivot')
+    const headPivot = actor.mesh.getObjectByName('head-pivot')
+    const leftArm = actor.mesh.getObjectByName('leftArm')
+    const rightArm = actor.mesh.getObjectByName('rightArm')
+    const weapon = actor.mesh.getObjectByName('weapon')
+    const breathing = Math.sin(this.elapsed * 1.75 + actor.phase) * 0.018
+    const idleWeightShift =
+      Math.sin(this.elapsed * 0.7 + actor.phase * 1.9) * 0.035 * (1 - actor.motionBlend)
+    const stepBob =
+      Math.abs(Math.sin(actor.gaitPhase)) *
+      0.065 *
+      THREE.MathUtils.clamp(actor.motionBlend, 0, 1)
+    const heavy = actor.role === 'brute' || actor.role === 'champion'
+    const forwardLean =
+      actor.role === 'scout'
+        ? 0.075
+        : heavy
+          ? 0.055
+          : actor.role === 'archer'
+            ? 0.025
+            : 0.04
+
+    if (bodyPivot) bodyPivot.position.y = breathing + stepBob
+    if (torsoPivot) {
+      torsoPivot.position.x = idleWeightShift
+      torsoPivot.rotation.x = forwardLean * actor.motionBlend
+      torsoPivot.rotation.y = -actor.stride * (heavy ? 0.08 : 0.12) + actor.attackAnimation * 0.16
+      torsoPivot.rotation.z = -actor.turnLean * 0.16 + idleWeightShift * 0.55
+      torsoPivot.scale.y = 1 + breathing * 0.55
+    }
+    if (pelvisPivot) {
+      pelvisPivot.rotation.y = actor.stride * (heavy ? 0.06 : 0.1)
+      pelvisPivot.rotation.z = actor.turnLean * 0.08 - idleWeightShift * 0.3
+    }
+    if (headPivot) {
+      headPivot.rotation.y = dampAngle(headPivot.rotation.y, lookYaw, 7, delta)
+      headPivot.rotation.x = -forwardLean * actor.motionBlend * 0.35
+      headPivot.rotation.z = actor.turnLean * 0.06 - idleWeightShift * 0.2
+    }
+
+    if (actor.role === 'archer') {
+      const draw = actor.attackAnimation
+      if (leftArm) leftArm.rotation.x = -0.45 - draw * 0.62 - actor.stride * 0.15
+      if (rightArm) {
+        rightArm.rotation.x = -0.72 - draw * 0.85 + actor.stride * 0.1
+        rightArm.rotation.z = -draw * 0.18
+      }
+      if (weapon) {
+        weapon.rotation.x = -0.2 - draw * 0.72
+        weapon.rotation.z = 0.18 + draw * 0.16
+      }
+    } else if (rightArm) {
+      rightArm.rotation.z = -actor.attackAnimation * 0.16
+    }
   }
 
   private updateCamera(immediate: boolean): void {
