@@ -70,6 +70,11 @@ interface Actor {
   eventPropTarget: EventPropTarget | null
   ignoredTargetId: string | null
   playerAggro: boolean
+  aggroMemory: number
+  lastKnownTargetPos: THREE.Vector3 | null
+  rageTimer: number
+  alertCooldown: number
+  retaliationTimer: number
   healthBar: THREE.Sprite
   healthBarCanvas: HTMLCanvasElement
   healthBarTexture: THREE.CanvasTexture
@@ -324,6 +329,15 @@ const CLEAVE_ARC_DOT = 0.5
 const CLEAVE_DASH_DISTANCE = 3
 const CLEAVE_KNOCKBACK_DISTANCE = 3
 const SCOUT_RETREAT_DURATION = 0.62
+const AGGRO_MEMORY_DURATION = 6
+const RAGE_DURATION = 5
+const RAGE_SPEED_MULTIPLIER = 1.35
+const RAGE_DAMAGE_BONUS = 3
+const RAGE_COOLDOWN_MULTIPLIER = 0.7
+const RAGE_RANGE_BONUS = 6
+const ALERT_RADIUS = 14
+const ALERT_COOLDOWN = 1.5
+const NPC_RETALIATION_DURATION = 4
 const COMMANDER_AURA_RANGE = 10
 const COMMANDER_SPEED_MULTIPLIER = 1.15
 const COMMANDER_DAMAGE_BONUS = 4
@@ -1899,6 +1913,10 @@ export class GameEngine {
       actor.attackCooldown = Math.max(0, actor.attackCooldown - delta)
       actor.wanderTimer = Math.max(0, actor.wanderTimer - delta)
       actor.retreatTimer = Math.max(0, actor.retreatTimer - delta)
+      actor.aggroMemory = Math.max(0, actor.aggroMemory - delta)
+      actor.rageTimer = Math.max(0, actor.rageTimer - delta)
+      actor.alertCooldown = Math.max(0, actor.alertCooldown - delta)
+      actor.retaliationTimer = Math.max(0, actor.retaliationTimer - delta)
       if (actor.aiMode === 'captive') {
         actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
         this.animateCharacter(actor.mesh, actor.stride, 0)
@@ -1916,30 +1934,72 @@ export class GameEngine {
       let targetActor: Actor | null = null
       let targetEventProp: EventPropTarget | null = null
       let targetsPlayer = false
+      let pursuesPlayer = false
+      let investigatesPlayer = false
       let targetPosition: THREE.Vector3 | null = null
-      const aggroRange = actor.role === 'archer' ? 18 : 15
+      const baseAggroRange = actor.role === 'archer' ? 18 : 15
+      const enraged = actor.rageTimer > 0
+      const senseRange = baseAggroRange + (enraged ? RAGE_RANGE_BONUS : 0)
+      const leashRange = senseRange * 2.25
       const colliderRadius = this.actorColliderRadiusForRole(actor.role)
       const navigationSign = Math.sin(actor.phase * 3.17 + 0.4) >= 0 ? 1 : -1
-      const shouldTargetPlayer =
-        hostile(actor.faction, this.faction) &&
-        (playerDistance < aggroRange ||
-          (actor.playerAggro && playerDistance < aggroRange * 2.25))
-      if (!shouldTargetPlayer) actor.playerAggro = false
+      const hostileToPlayer = hostile(actor.faction, this.faction)
+      const canSensePlayer = hostileToPlayer && playerDistance < senseRange
+      const canTrackPlayer =
+        hostileToPlayer && actor.playerAggro && playerDistance < leashRange
+      if (canSensePlayer || canTrackPlayer) {
+        actor.playerAggro = true
+        actor.aggroMemory = AGGRO_MEMORY_DURATION
+        if (actor.lastKnownTargetPos) actor.lastKnownTargetPos.copy(this.player.position)
+        else actor.lastKnownTargetPos = this.player.position.clone()
+      }
+      const shouldPursuePlayer =
+        hostileToPlayer &&
+        actor.playerAggro &&
+        (canSensePlayer || canTrackPlayer || actor.aggroMemory > 0)
+      if (!shouldPursuePlayer) {
+        actor.playerAggro = false
+        actor.aggroMemory = 0
+        actor.lastKnownTargetPos = null
+      }
+      let retaliationTarget: Actor | null = null
+      if (actor.retaliationTimer > 0 && actor.targetId) {
+        const candidate = this.actors.find((other) => other.id === actor.targetId)
+        if (
+          candidate?.alive &&
+          candidate.id !== actor.ignoredTargetId &&
+          hostile(actor.faction, candidate.faction)
+        ) {
+          retaliationTarget = candidate
+        } else {
+          actor.retaliationTimer = 0
+          actor.targetId = null
+        }
+      }
 
-      if (
+      if (retaliationTarget) {
+        targetActor = retaliationTarget
+        targetPosition = retaliationTarget.mesh.position
+      } else if (
         actor.aiMode === 'attackEventProp' &&
         actor.eventPropTarget &&
-        actor.eventPropTarget.hp > 0
+        actor.eventPropTarget.hp > 0 &&
+        actor.rageTimer <= 0
       ) {
         actor.targetId = null
         actor.playerAggro = false
         targetEventProp = actor.eventPropTarget
         targetPosition = targetEventProp.position
-      } else if (shouldTargetPlayer) {
+      } else if (shouldPursuePlayer) {
         actor.targetId = null
-        actor.playerAggro = true
-        targetsPlayer = true
-        targetPosition = this.player.position
+        pursuesPlayer = true
+        if (canSensePlayer || canTrackPlayer) {
+          targetsPlayer = true
+          targetPosition = this.player.position
+        } else if (actor.lastKnownTargetPos) {
+          investigatesPlayer = true
+          targetPosition = actor.lastKnownTargetPos
+        }
       } else if (
         actor.faction === this.faction &&
         actor.squadEligible &&
@@ -2037,6 +2097,11 @@ export class GameEngine {
             moving = true
             movementDistanceLimit = navigationDistance
           }
+        } else if (investigatesPlayer) {
+          if (distance > 0.75) {
+            direction.copy(facingDirection)
+            moving = true
+          }
         } else if (actor.role === 'archer' && !targetEventProp) {
           if (distance < ARCHER_MIN_RANGE) {
             direction.copy(facingDirection).negate()
@@ -2080,7 +2145,8 @@ export class GameEngine {
       if (moving && direction.lengthSq() > 0) {
         const speed =
           actor.speed *
-          (targetsPlayer ? 1.25 : 1) *
+          (pursuesPlayer || retaliationTarget ? 1.25 : 1) *
+          (enraged ? RAGE_SPEED_MULTIPLIER : 1) *
           (this.hasCommanderAura(actor) ? COMMANDER_SPEED_MULTIPLIER : 1)
         direction.normalize()
         this.moveActorWithSteering(
@@ -2110,7 +2176,21 @@ export class GameEngine {
   private updateActorIndicators(actor: Actor): void {
     const playerDistance = actor.mesh.position.distanceTo(this.player.position)
     const ring = actor.mesh.getObjectByName('faction-ring')
-    if (ring) ring.visible = actor.alive && playerDistance < 42
+    if (ring) {
+      ring.visible = actor.alive && playerDistance < 42
+      if (ring instanceof THREE.Mesh && ring.material instanceof THREE.MeshBasicMaterial) {
+        const ragePulse = (Math.sin(this.elapsed * 14 + actor.phase) + 1) * 0.5
+        ring.material.color.copy(this.factionColor(actor.faction))
+        if (actor.rageTimer > 0) {
+          ring.material.color.lerp(this.palette.danger, 0.55 + ragePulse * 0.35)
+          ring.material.opacity = 0.66 + ragePulse * 0.22
+          ring.scale.setScalar(1.04 + ragePulse * 0.14)
+        } else {
+          ring.material.opacity = 0.48
+          ring.scale.setScalar(1)
+        }
+      }
+    }
 
     actor.healthBar.position.set(
       actor.mesh.position.x,
@@ -2121,7 +2201,7 @@ export class GameEngine {
       actor.alive &&
       hostile(actor.faction, this.faction) &&
       playerDistance < 34 &&
-      this.elapsed < actor.healthBarVisibleUntil
+      (this.elapsed < actor.healthBarVisibleUntil || actor.rageTimer > 0)
   }
 
   private getAimDirection(): THREE.Vector3 {
@@ -2204,7 +2284,7 @@ export class GameEngine {
       actor.id,
       0,
     )
-    actor.attackCooldown = ARCHER_FIRE_COOLDOWN
+    actor.attackCooldown = this.actorAttackInterval(actor, ARCHER_FIRE_COOLDOWN)
     if (actor.mesh.position.distanceTo(this.player.position) < 20) this.playSound('arrow')
   }
 
@@ -2288,7 +2368,15 @@ export class GameEngine {
   }
 
   private actorDamageWithAura(actor: Actor, damage: number): number {
-    return damage + (this.hasCommanderAura(actor) ? COMMANDER_DAMAGE_BONUS : 0)
+    return (
+      damage +
+      (this.hasCommanderAura(actor) ? COMMANDER_DAMAGE_BONUS : 0) +
+      (actor.rageTimer > 0 ? RAGE_DAMAGE_BONUS : 0)
+    )
+  }
+
+  private actorAttackInterval(actor: Actor, interval: number): number {
+    return interval * (actor.rageTimer > 0 ? RAGE_COOLDOWN_MULTIPLIER : 1)
   }
 
   private chooseWanderTarget(actor: Actor): void {
@@ -2417,7 +2505,10 @@ export class GameEngine {
             sourcePosition,
             projectile.faction,
             projectile.owner === 'player',
-            { detachChance: projectile.detachChance },
+            {
+              detachChance: projectile.detachChance,
+              sourceActorId: projectile.sourceActorId ?? undefined,
+            },
           )
         }
         this.removeProjectile(index)
@@ -3364,7 +3455,10 @@ export class GameEngine {
   }
 
   private actorAttackPlayer(actor: Actor): void {
-    actor.attackCooldown = actor.role === 'commander' ? 0.8 : 1.15
+    actor.attackCooldown = this.actorAttackInterval(
+      actor,
+      actor.role === 'commander' ? 0.8 : 1.15,
+    )
     const baseDamage =
       actor.role === 'commander'
         ? 10
@@ -3384,7 +3478,7 @@ export class GameEngine {
   }
 
   private actorAttackActor(attacker: Actor, target: Actor): void {
-    attacker.attackCooldown = 1.3
+    attacker.attackCooldown = this.actorAttackInterval(attacker, 1.3)
     const baseDamage =
       attacker.role === 'commander'
         ? 18
@@ -3399,12 +3493,13 @@ export class GameEngine {
       attacker.mesh.position,
       attacker.faction,
       false,
+      { sourceActorId: attacker.id },
     )
     if (attacker.role === 'scout') attacker.retreatTimer = SCOUT_RETREAT_DURATION
   }
 
   private actorAttackEventProp(actor: Actor, target: EventPropTarget): void {
-    actor.attackCooldown = 1.35
+    actor.attackCooldown = this.actorAttackInterval(actor, 1.35)
     target.hp = Math.max(0, target.hp - (4 + this.eventRng() * 2))
     this.createHitParticles(target.position, actor.faction)
     if (target.position.distanceTo(this.player.position) < 25) this.playSound('hit')
@@ -3469,9 +3564,35 @@ export class GameEngine {
     sourcePosition: THREE.Vector3,
     killerFaction: Faction,
     directPlayerKill: boolean,
-    options: { detachChance?: number; knockback?: number } = {},
+    options: {
+      detachChance?: number
+      knockback?: number
+      sourceActorId?: string
+    } = {},
   ): void {
     if (!target.alive) return
+    if (
+      directPlayerKill &&
+      target.aiMode !== 'captive' &&
+      hostile(target.faction, this.faction)
+    ) {
+      target.playerAggro = true
+      target.aggroMemory = AGGRO_MEMORY_DURATION
+      target.rageTimer = RAGE_DURATION
+      if (target.lastKnownTargetPos) target.lastKnownTargetPos.copy(this.player.position)
+      else target.lastKnownTargetPos = this.player.position.clone()
+      this.alertNearbyAllies(target, this.player.position)
+    } else if (options.sourceActorId && target.aiMode !== 'captive') {
+      const sourceActor = this.actors.find((actor) => actor.id === options.sourceActorId)
+      if (
+        sourceActor?.alive &&
+        sourceActor !== target &&
+        hostile(target.faction, sourceActor.faction)
+      ) {
+        target.targetId = sourceActor.id
+        target.retaliationTimer = NPC_RETALIATION_DURATION
+      }
+    }
     let dealt = baseDamage
     if (target.role === 'brute') {
       const facing = new THREE.Vector3(
@@ -3524,6 +3645,30 @@ export class GameEngine {
       }
     }
     if (target.hp <= 0) this.killActor(target, killerFaction, directPlayerKill, sourcePosition)
+  }
+
+  private alertNearbyAllies(source: Actor, targetPosition: THREE.Vector3): void {
+    if (source.alertCooldown > 0) return
+    source.alertCooldown = ALERT_COOLDOWN
+    const alertRadiusSq = ALERT_RADIUS * ALERT_RADIUS
+
+    for (const actor of this.actors) {
+      if (
+        actor === source ||
+        !actor.alive ||
+        actor.aiMode !== 'normal' ||
+        actor.faction !== source.faction ||
+        !hostile(actor.faction, this.faction) ||
+        actor.mesh.position.distanceToSquared(source.mesh.position) > alertRadiusSq
+      ) {
+        continue
+      }
+
+      actor.playerAggro = true
+      actor.aggroMemory = Math.max(actor.aggroMemory, AGGRO_MEMORY_DURATION)
+      if (actor.lastKnownTargetPos) actor.lastKnownTargetPos.copy(targetPosition)
+      else actor.lastKnownTargetPos = targetPosition.clone()
+    }
   }
 
   private dropShield(): void {
@@ -6350,6 +6495,11 @@ uniform float uSwayAmplitude;`,
       eventPropTarget: options.eventPropTarget ?? null,
       ignoredTargetId: options.ignoredTargetId ?? null,
       playerAggro: false,
+      aggroMemory: 0,
+      lastKnownTargetPos: null,
+      rageTimer: 0,
+      alertCooldown: 0,
+      retaliationTimer: 0,
       healthBar: healthBar.sprite,
       healthBarCanvas: healthBar.canvas,
       healthBarTexture: healthBar.texture,
