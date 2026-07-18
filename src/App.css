@@ -144,6 +144,37 @@ button {
   z-index: 5;
 }
 
+.sfx-volume-control {
+  align-items: center;
+  background: color-mix(in srgb, var(--cp-surface) 92%, transparent);
+  border: 1px solid var(--cp-border);
+  border-radius: 0.65rem;
+  color: var(--cp-text);
+  display: flex;
+  gap: 0.55rem;
+  min-height: 2.5rem;
+  padding: 0.45rem 0.7rem;
+}
+
+.sfx-volume-control svg {
+  flex: 0 0 auto;
+  height: 1rem;
+  width: 1rem;
+}
+
+.sfx-volume-control input[type="range"] {
+  accent-color: var(--cp-accent);
+  cursor: pointer;
+  min-width: 5rem;
+  width: clamp(5rem, 10vw, 8rem);
+}
+
+.sfx-volume-control strong {
+  font-variant-numeric: tabular-nums;
+  min-width: 2.7rem;
+  text-align: right;
+}
+
 .theme-toggle,
 .day-night-toggle,
 .weather-toggle,
@@ -2224,6 +2255,16 @@ kbd {
 
 .pause-setting strong {
   margin-left: auto;
+}
+
+.pause-setting.sfx-volume-control {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.pause-setting.sfx-volume-control input[type="range"] {
+  margin-left: auto;
+  width: min(10rem, 34vw);
 }
 
 .end-backdrop {

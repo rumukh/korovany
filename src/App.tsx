@@ -43,6 +43,7 @@ import {
   type ReactNode,
 } from 'react'
 import './App.css'
+import { SFX_VOLUME_DEFAULT, normalizeSfxVolume } from './game/AudioDirector'
 import { GameEngine, type FoliageQuality } from './game/GameEngine'
 import {
   ACHIEVEMENT_CATEGORY_LABELS,
@@ -90,6 +91,7 @@ interface Notice {
 type Theme = 'dark' | 'light'
 
 const MUSIC_MUTED_KEY = 'korovany-music-muted'
+const SFX_VOLUME_KEY = 'korovany-sfx-volume'
 const THEME_KEY = 'korovany-theme'
 const DYNAMIC_DAY_NIGHT_KEY = 'korovany-dynamic-day-night'
 const WEATHER_ENABLED_KEY = 'korovany-weather'
@@ -162,6 +164,19 @@ function readMusicMuted(): boolean {
     console.warn('Korovany: music preference could not be read.', error)
     return false
   }
+}
+
+function readSfxVolume(): number {
+  try {
+    const stored = localStorage.getItem(SFX_VOLUME_KEY)
+    if (stored === null) return SFX_VOLUME_DEFAULT
+    const volume = Number(stored)
+    if (Number.isFinite(volume) && volume >= 0 && volume <= 1) return volume
+    console.warn('Korovany: invalid SFX volume preference ignored.')
+  } catch (error) {
+    console.warn('Korovany: SFX volume preference could not be read.', error)
+  }
+  return SFX_VOLUME_DEFAULT
 }
 
 function defaultBloomEnabled(): boolean {
@@ -724,6 +739,7 @@ function MenuScreen({
   inkOutlinesEnabled,
   foliageQuality,
   screenShakeEnabled,
+  sfxVolume,
   onStart,
   onLoad,
   onAchievements,
@@ -734,6 +750,7 @@ function MenuScreen({
   onToggleInkOutlines,
   onCycleFoliageQuality,
   onToggleScreenShake,
+  onSfxVolumeChange,
 }: {
   savedGame: SavedGame | null
   achievementSummary: AchievementSummary
@@ -744,6 +761,7 @@ function MenuScreen({
   inkOutlinesEnabled: boolean
   foliageQuality: FoliageQuality
   screenShakeEnabled: boolean
+  sfxVolume: number
   onStart: (faction: Faction) => void
   onLoad: () => void
   onAchievements: () => void
@@ -754,6 +772,7 @@ function MenuScreen({
   onToggleInkOutlines: () => void
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
+  onSfxVolumeChange: (volume: number) => void
 }) {
   return (
     <main className="menu-screen">
@@ -859,6 +878,20 @@ function MenuScreen({
           <Vibrate aria-hidden="true" />
           <span>{screenShakeEnabled ? 'Тряска: вкл.' : 'Тряска: выкл.'}</span>
         </button>
+        <label className="sfx-volume-control menu-sfx-volume">
+          <Volume2 aria-hidden="true" />
+          <span>Громкость эффектов</span>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={sfxVolume}
+            onChange={(event) => onSfxVolumeChange(Number(event.currentTarget.value))}
+            aria-label="Громкость эффектов"
+          />
+          <strong>{Math.round(sfxVolume * 100)}%</strong>
+        </label>
       </div>
       <header className="hero-header">
         <div className="hackathon-tag">
@@ -1084,6 +1117,7 @@ function ShopModal({
 
 function PauseModal({
   view,
+  sfxVolume,
   dynamicDayNight,
   weatherEnabled,
   bloomEnabled,
@@ -1100,8 +1134,10 @@ function PauseModal({
   onToggleInkOutlines,
   onCycleFoliageQuality,
   onToggleScreenShake,
+  onSfxVolumeChange,
 }: {
   view: GameView
+  sfxVolume: number
   dynamicDayNight: boolean
   weatherEnabled: boolean
   bloomEnabled: boolean
@@ -1118,6 +1154,7 @@ function PauseModal({
   onToggleInkOutlines: () => void
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
+  onSfxVolumeChange: (volume: number) => void
 }) {
   return (
     <div className="modal-backdrop" role="presentation">
@@ -1202,6 +1239,20 @@ function PauseModal({
           <span>Тряска экрана</span>
           <strong>{screenShakeEnabled ? 'Вкл.' : 'Выкл.'}</strong>
         </button>
+        <label className="pause-setting sfx-volume-control">
+          <Volume2 aria-hidden="true" />
+          <span>Громкость эффектов</span>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={sfxVolume}
+            onChange={(event) => onSfxVolumeChange(Number(event.currentTarget.value))}
+            aria-label="Громкость эффектов"
+          />
+          <strong>{Math.round(sfxVolume * 100)}%</strong>
+        </label>
         <div className="pause-actions">
           <button className="primary-button" type="button" onClick={onResume}>
             <Play aria-hidden="true" />
@@ -1319,6 +1370,7 @@ function GameScreen({
   onInput,
   onRestart,
   musicMuted,
+  sfxVolume,
   dynamicDayNight,
   weatherEnabled,
   bloomEnabled,
@@ -1326,6 +1378,7 @@ function GameScreen({
   foliageQuality,
   screenShakeEnabled,
   onToggleMusic,
+  onSfxVolumeChange,
   onToggleDynamicDayNight,
   onToggleWeather,
   onToggleBloom,
@@ -1357,6 +1410,7 @@ function GameScreen({
   onInput: (code: string, active: boolean) => void
   onRestart: () => void
   musicMuted: boolean
+  sfxVolume: number
   dynamicDayNight: boolean
   weatherEnabled: boolean
   bloomEnabled: boolean
@@ -1364,6 +1418,7 @@ function GameScreen({
   foliageQuality: FoliageQuality
   screenShakeEnabled: boolean
   onToggleMusic: () => void
+  onSfxVolumeChange: (volume: number) => void
   onToggleDynamicDayNight: () => void
   onToggleWeather: () => void
   onToggleBloom: () => void
@@ -1646,6 +1701,7 @@ function GameScreen({
       {paused && !shopOpen && !endResult ? (
         <PauseModal
           view={view}
+          sfxVolume={sfxVolume}
           dynamicDayNight={dynamicDayNight}
           weatherEnabled={weatherEnabled}
           bloomEnabled={bloomEnabled}
@@ -1662,6 +1718,7 @@ function GameScreen({
           onToggleInkOutlines={onToggleInkOutlines}
           onCycleFoliageQuality={onCycleFoliageQuality}
           onToggleScreenShake={onToggleScreenShake}
+          onSfxVolumeChange={onSfxVolumeChange}
         />
       ) : null}
       {endResult ? (
@@ -1694,6 +1751,7 @@ function App() {
   const [shopOpen, setShopOpen] = useState(false)
   const [endResult, setEndResult] = useState<'victory' | 'defeat' | null>(null)
   const [musicMuted, setMusicMuted] = useState(() => readMusicMuted())
+  const [sfxVolume, setSfxVolume] = useState(() => readSfxVolume())
   const [bloomEnabled, setBloomEnabled] = useState(() => readBloomEnabled())
   const [inkOutlinesEnabled, setInkOutlinesEnabled] = useState(() => readInkOutlinesEnabled())
   const [foliageQuality, setFoliageQuality] = useState(() => readFoliageQuality())
@@ -1708,6 +1766,7 @@ function App() {
   const achievementsOpenRef = useRef(false)
   const noticeCounter = useRef(0)
   const musicMutedRef = useRef(musicMuted)
+  const sfxVolumeRef = useRef(sfxVolume)
   const dynamicDayNightRef = useRef(dynamicDayNight)
   const weatherEnabledRef = useRef(weatherEnabled)
   const bloomEnabledRef = useRef(bloomEnabled)
@@ -1799,6 +1858,7 @@ function App() {
       pendingSave,
       {
         musicMuted: musicMutedRef.current,
+        sfxVolume: sfxVolumeRef.current,
         dynamicDayNight: dynamicDayNightRef.current,
         weatherEnabled: weatherEnabledRef.current,
         bloomEnabled: bloomEnabledRef.current,
@@ -1879,6 +1939,18 @@ function App() {
       console.warn('Korovany: music preference could not be saved.', error)
     }
     addNotice(next ? '8-битная музыка выключена.' : '8-битная музыка включена.', 'info')
+  }
+
+  const changeSfxVolume = (volume: number) => {
+    const next = normalizeSfxVolume(volume)
+    sfxVolumeRef.current = next
+    setSfxVolume(next)
+    engineRef.current?.setSfxVolume(next)
+    try {
+      localStorage.setItem(SFX_VOLUME_KEY, String(next))
+    } catch (error) {
+      console.warn('Korovany: SFX volume preference could not be saved.', error)
+    }
   }
 
   const toggleDynamicDayNight = () => {
@@ -1978,6 +2050,7 @@ function App() {
           inkOutlinesEnabled={inkOutlinesEnabled}
           foliageQuality={foliageQuality}
           screenShakeEnabled={screenShakeEnabled}
+          sfxVolume={sfxVolume}
           onStart={(selectedFaction) => startGame(selectedFaction)}
           onLoad={() => {
             if (savedGame) startGame(savedGame.faction, savedGame)
@@ -1990,6 +2063,7 @@ function App() {
           onToggleInkOutlines={toggleInkOutlines}
           onCycleFoliageQuality={cycleFoliageQuality}
           onToggleScreenShake={toggleScreenShake}
+          onSfxVolumeChange={changeSfxVolume}
         />
         {achievementsOpen ? (
           <AchievementGallery
@@ -2044,12 +2118,14 @@ function App() {
         onInput={(code, active) => engineRef.current?.setInput(code, active)}
         onRestart={() => startGame(faction)}
         musicMuted={musicMuted}
+        sfxVolume={sfxVolume}
         bloomEnabled={bloomEnabled}
         inkOutlinesEnabled={inkOutlinesEnabled}
         weatherEnabled={weatherEnabled}
         foliageQuality={foliageQuality}
         screenShakeEnabled={screenShakeEnabled}
         onToggleMusic={toggleMusic}
+        onSfxVolumeChange={changeSfxVolume}
         dynamicDayNight={dynamicDayNight}
         onToggleDynamicDayNight={toggleDynamicDayNight}
         onToggleWeather={toggleWeather}

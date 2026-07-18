@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { AudioDirector, type SoundCue, type SoundRequest } from './AudioDirector'
 import { BloomPostProcessor } from './BloomPostProcessor'
 import {
   AchievementTracker,
@@ -46,6 +47,7 @@ export type FoliageQuality = 'off' | 'low' | 'high'
 
 export interface GameEngineSettings {
   musicMuted: boolean
+  sfxVolume: number
   dynamicDayNight: boolean
   weatherEnabled: boolean
   bloomEnabled: boolean
@@ -771,42 +773,9 @@ const EVENT_REQUIRED_SLOTS: Record<Exclude<WorldEventKind, 'bounty'>, number> = 
   rescue: 3,
 }
 
-const MUSIC_PATTERNS: Record<Faction, readonly number[]> = {
-  elf: [0, 4, 7, 12, 7, 4, 2, 4, 0, 4, 9, 12, 9, 4, 2, -1, 0, 4, 7, 11, 7, 4, 2, 4, 0, 5, 9, 12, 9, 5, 2, 4],
-  guard: [0, 7, 12, 7, 5, 9, 12, 9, 3, 7, 10, 15, 10, 7, 5, 3, 0, 7, 12, 14, 12, 7, 5, 7, 3, 7, 10, 12, 10, 7, 5, 2],
-  villain: [0, 3, 7, 10, 7, 3, -2, 3, 0, 3, 6, 10, 6, 3, -2, -5, 0, 3, 7, 12, 7, 3, 1, 3, 0, 5, 8, 12, 8, 5, 1, -2],
-}
-
-const MUSIC_ROOTS: Record<Faction, number> = {
-  elf: 57,
-  guard: 55,
-  villain: 52,
-}
-
-const MUSIC_TEMPOS: Record<Faction, number> = {
-  elf: 138,
-  guard: 128,
-  villain: 132,
-}
-
-const ZONE_MUSIC_SHIFTS: Record<ZoneId, number> = {
-  neutral: 2,
-  palace: 5,
-  forest: 0,
-  fort: -2,
-}
-
-function midiToFrequency(note: number): number {
-  return 440 * 2 ** ((note - 69) / 12)
-}
-
 function dampAngle(current: number, target: number, smoothing: number, delta: number): number {
   const difference = Math.atan2(Math.sin(target - current), Math.cos(target - current))
   return current + difference * (1 - Math.exp(-smoothing * delta))
-}
-
-type MusicWindow = Window & {
-  __korovanyStopMusic?: () => void
 }
 
 function readCssColor(token: string): THREE.Color {
@@ -1062,15 +1031,8 @@ export class GameEngine {
   private championDamageBonus = 0
   private eventSequence = 0
   private actorSequence = 0
-  private audioContext: AudioContext | null = null
-  private musicGain: GainNode | null = null
-  private musicNoiseBuffer: AudioBuffer | null = null
-  private thunderNoiseBuffer: AudioBuffer | null = null
-  private musicTimer: number | null = null
-  private musicNextNoteTime = 0
-  private musicStep = 0
-  private pendingAchievementChimes = 0
-  private musicMuted: boolean
+  private readonly audio: AudioDirector
+  private readonly audioListenerRight = new THREE.Vector3()
   private dynamicDayNight: boolean
   private weatherEnabled: boolean
   private inkOutlinesEnabled: boolean
@@ -1078,13 +1040,14 @@ export class GameEngine {
   private readonly reducedMotion: boolean
   private groundFoliageQuality: FoliageQuality
   private nightFactor = 0
-  private readonly musicSources = new Set<AudioScheduledSourceNode>()
   private readonly inactiveGoreParticles: Particle[] = []
   private hitStopRemaining = 0
   private pendingCleaveHitStop = 0
   private calloutCooldown = 0
   private damageNumberSequence = 0
-  private readonly stopMusicOwner = () => this.stopMusic()
+  private readonly pageHideAudioOwner = (event: PageTransitionEvent) => {
+    if (!event.persisted) this.audio.destroy()
+  }
   private resizeObserver: ResizeObserver
   private boundKeyDown: (event: KeyboardEvent) => void
   private boundKeyUp: (event: KeyboardEvent) => void
@@ -1107,12 +1070,14 @@ export class GameEngine {
     this.container = container
     this.callbacks = callbacks
     this.faction = faction
+    this.audio = new AudioDirector({
+      musicMuted: settings.musicMuted ?? false,
+      sfxVolume: settings.sfxVolume,
+    })
     this.achievements = new AchievementTracker((achievement) => {
       this.callbacks.onAchievementUnlocked(achievement)
-      if (this.audioContext) this.playSound('achievement')
-      else this.pendingAchievementChimes += 1
+      this.playSound('achievement')
     })
-    this.musicMuted = settings.musicMuted ?? false
     this.dynamicDayNight = settings.dynamicDayNight ?? true
     this.weatherEnabled = settings.weatherEnabled ?? true
     this.inkOutlinesEnabled = settings.inkOutlinesEnabled ?? true
@@ -1197,6 +1162,7 @@ export class GameEngine {
     this.applySavedBodyAppearance()
     this.playerOutline = this.registerOutline(this.player, 'player')
     this.lastZone = zoneAt(this.player.position.x, this.player.position.z)
+    this.audio.setMusicContext(this.faction, this.lastZone)
     // Loading a save starts a fresh achievement run; cumulative progress remains global.
     this.achievements.beginRun(faction, this.lastZone, settings.achievementRunId)
     this.weatherZone = this.lastZone
@@ -1240,8 +1206,7 @@ export class GameEngine {
     document.addEventListener('pointerlockchange', this.boundPointerLock)
     document.addEventListener('visibilitychange', this.boundVisibilityChange)
     window.addEventListener('blur', this.boundWindowBlur)
-    window.addEventListener('pagehide', this.stopMusicOwner)
-    window.addEventListener('beforeunload', this.stopMusicOwner)
+    window.addEventListener('pagehide', this.pageHideAudioOwner)
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(this.container)
     this.resize()
@@ -1266,8 +1231,7 @@ export class GameEngine {
     document.removeEventListener('pointerlockchange', this.boundPointerLock)
     document.removeEventListener('visibilitychange', this.boundVisibilityChange)
     window.removeEventListener('blur', this.boundWindowBlur)
-    window.removeEventListener('pagehide', this.stopMusicOwner)
-    window.removeEventListener('beforeunload', this.stopMusicOwner)
+    window.removeEventListener('pagehide', this.pageHideAudioOwner)
     if (document.pointerLockElement === this.renderer.domElement) document.exitPointerLock()
     const geometries = new Set<THREE.BufferGeometry>()
     const materials = new Set<THREE.Material>()
@@ -1312,7 +1276,7 @@ export class GameEngine {
     this.eventPropTargets.clear()
     this.telegraphPool.length = 0
     this.telegraphGeometries.clear()
-    this.stopMusic()
+    this.audio.destroy()
   }
 
   setPaused(paused: boolean): void {
@@ -1323,7 +1287,7 @@ export class GameEngine {
     this.paused = paused
     this.keys.clear()
     if (paused && document.pointerLockElement === this.renderer.domElement) document.exitPointerLock()
-    this.updateMusicVolume()
+    this.audio.setPaused(paused)
     this.emitView(true)
   }
 
@@ -1344,9 +1308,12 @@ export class GameEngine {
   }
 
   setMusicMuted(muted: boolean): void {
-    this.musicMuted = muted
     if (!muted) this.resumeAudio()
-    this.updateMusicVolume()
+    this.audio.setMusicMuted(muted)
+  }
+
+  setSfxVolume(volume: number): void {
+    this.audio.setSfxVolume(volume)
   }
 
   setDynamicDayNight(enabled: boolean): void {
@@ -1402,7 +1369,7 @@ export class GameEngine {
   }
 
   stopAudio(): void {
-    this.stopMusic()
+    this.audio.destroy()
   }
 
   getAchievements(): AchievementView[] {
@@ -1691,6 +1658,12 @@ export class GameEngine {
     const gameplayDelta = Math.min(Math.max(0, elapsedDelta - stopped), 0.05)
     if (!this.paused && !this.ended && gameplayDelta > 0) this.update(gameplayDelta)
     this.updateCamera(false)
+    this.audioListenerRight.setFromMatrixColumn(this.camera.matrixWorld, 0)
+    this.audio.setListener(this.camera.position, this.audioListenerRight)
+    this.audio.setMusicContext(
+      this.faction,
+      zoneAt(this.player.position.x, this.player.position.z),
+    )
     this.postProcessor.render()
     this.frameHandle = requestAnimationFrame(this.loop)
   }
@@ -2279,9 +2252,11 @@ export class GameEngine {
     this.verticalVelocity -= 23 * delta
     this.player.position.y += this.verticalVelocity * delta
     if (this.player.position.y <= PLAYER_HEIGHT) {
+      const landed = !this.onGround && this.verticalVelocity < -2
       this.player.position.y = PLAYER_HEIGHT
       this.verticalVelocity = 0
       this.onGround = true
+      if (landed) this.playSound('land')
     }
 
   }
@@ -3282,7 +3257,12 @@ export class GameEngine {
       actor.id,
       0,
     )
-    if (actor.mesh.position.distanceTo(this.player.position) < 20) this.playSound('arrow')
+    if (actor.mesh.position.distanceTo(this.player.position) < 20) {
+      this.playSound('arrow', {
+        position: actor.mesh.position,
+        variantSeed: this.actorSequence + actor.id.length,
+      })
+    }
   }
 
   private spawnProjectile(
@@ -4646,7 +4626,13 @@ export class GameEngine {
   private actorAttackEventProp(actor: Actor, target: EventPropTarget): void {
     target.hp = Math.max(0, target.hp - (4 + this.eventRng() * 2))
     this.createHitParticles(target.position, actor.faction)
-    if (target.position.distanceTo(this.player.position) < 25) this.playSound('hit')
+    if (target.position.distanceTo(this.player.position) < 25) {
+      this.playSound('hitLight', {
+        position: target.position,
+        intensity: 0.35,
+        variantSeed: this.eventSequence,
+      })
+    }
   }
 
   private damagePlayer(
@@ -4812,7 +4798,13 @@ export class GameEngine {
     target.healthBarVisibleUntil = this.elapsed + 3.4
     this.drawActorHealthBar(target)
     this.createHitParticles(target.mesh.position, target.faction)
-    if (directPlayerKill) this.playSound('hit')
+    if (directPlayerKill && target.hp > 0) {
+      this.playSound(impact >= 0.55 ? 'hitHeavy' : 'hitLight', {
+        position: target.mesh.position,
+        intensity: impact,
+        variantSeed: this.actorSequence + target.id.length,
+      })
+    }
     if (
       target.role !== 'brute' &&
       options.detachChance &&
@@ -4985,7 +4977,11 @@ export class GameEngine {
     const ring = actor.mesh.getObjectByName('faction-ring')
     if (ring) ring.visible = false
     this.projectileSourcesToClear.add(actor.id)
-    this.playSound('down')
+    this.playSound('down', {
+      position: deathPosition,
+      intensity: largeBody ? 1 : 0.65,
+      variantSeed: this.actorSequence + actor.id.length,
+    })
 
     const objectiveAdvanced =
       killerFaction === this.faction && this.creditFactionObjective(actor)
@@ -5281,11 +5277,14 @@ export class GameEngine {
     this.clearTransientCombatFeedback()
     this.ended = true
     this.achievements.recordCampaignEnd(result, this.elapsed, Math.max(0, this.health))
-    this.updateMusicVolume()
     this.keys.clear()
     if (document.pointerLockElement === this.renderer.domElement) document.exitPointerLock()
     this.callbacks.onEnd(result)
-    this.playSound(result === 'victory' ? 'victory' : 'down')
+    this.playSound(result === 'victory' ? 'victory' : 'defeat', {
+      category: 'ui',
+      intensity: 1,
+    })
+    this.audio.setEnded(true)
     this.emitView(true)
   }
 
@@ -9239,332 +9238,17 @@ uniform float uSwayAmplitude;`,
         this.emitView(true)
       }
     }
-    this.updateMusicVolume()
+    this.audio.setHidden(document.hidden)
   }
 
   private resumeAudio(): void {
-    if (!this.audioContext) {
-      this.audioContext = new AudioContext()
-      this.startMusic()
-    }
-    if (this.audioContext.state === 'suspended') this.audioContext.resume().catch(() => undefined)
-    if (this.pendingAchievementChimes > 0) {
-      const pending = this.pendingAchievementChimes
-      this.pendingAchievementChimes = 0
-      for (let index = 0; index < pending; index += 1) {
-        this.playAchievementChime(index * 0.34)
-      }
-    }
-  }
-
-  private startMusic(): void {
-    if (!this.audioContext || this.musicGain) return
-    const musicWindow = window as MusicWindow
-    if (
-      musicWindow.__korovanyStopMusic &&
-      musicWindow.__korovanyStopMusic !== this.stopMusicOwner
-    ) {
-      musicWindow.__korovanyStopMusic()
-    }
-    musicWindow.__korovanyStopMusic = this.stopMusicOwner
-
-    const context = this.audioContext
-    this.musicGain = context.createGain()
-    this.musicGain.connect(context.destination)
-
-    this.musicNoiseBuffer = context.createBuffer(
-      1,
-      Math.floor(context.sampleRate * 0.12),
-      context.sampleRate,
-    )
-    const noise = this.musicNoiseBuffer.getChannelData(0)
-    for (let index = 0; index < noise.length; index += 1) noise[index] = Math.random() * 2 - 1
-    this.thunderNoiseBuffer = context.createBuffer(
-      1,
-      Math.floor(context.sampleRate * 1.25),
-      context.sampleRate,
-    )
-    const thunderNoise = this.thunderNoiseBuffer.getChannelData(0)
-    const thunderRandom = seededRandom(8297)
-    for (let index = 0; index < thunderNoise.length; index += 1) {
-      thunderNoise[index] = thunderRandom() * 2 - 1
-    }
-
-    this.musicNextNoteTime = context.currentTime + 0.06
-    this.updateMusicVolume()
-    this.scheduleMusic()
-    this.musicTimer = window.setInterval(() => this.scheduleMusic(), 40)
-  }
-
-  private stopMusic(): void {
-    if (this.musicTimer !== null) {
-      window.clearInterval(this.musicTimer)
-      this.musicTimer = null
-    }
-
-    const context = this.audioContext
-    const gain = this.musicGain
-    if (context && gain) {
-      const now = context.currentTime
-      gain.gain.cancelScheduledValues(now)
-      gain.gain.setValueAtTime(0, now)
-      gain.disconnect()
-    }
-
-    for (const source of this.musicSources) {
-      try {
-        source.stop()
-      } catch (error) {
-        if (!(error instanceof DOMException && error.name === 'InvalidStateError')) {
-          console.warn('Korovany: scheduled music source could not be stopped.', error)
-        }
-      }
-      source.disconnect()
-    }
-    this.musicSources.clear()
-
-    this.audioContext = null
-    this.musicGain = null
-    this.musicNoiseBuffer = null
-    this.thunderNoiseBuffer = null
-    this.musicNextNoteTime = 0
-
-    const musicWindow = window as MusicWindow
-    if (musicWindow.__korovanyStopMusic === this.stopMusicOwner) {
-      delete musicWindow.__korovanyStopMusic
-    }
-    if (context?.state !== 'closed') {
-      context?.close().catch((error: unknown) => {
-        console.warn('Korovany: audio context could not be closed.', error)
-      })
-    }
-  }
-
-  private updateMusicVolume(): void {
-    if (!this.audioContext || !this.musicGain) return
-    const target = document.hidden || this.musicMuted ? 0 : this.ended ? 0.035 : this.paused ? 0.08 : 0.18
-    const now = this.audioContext.currentTime
-    this.musicGain.gain.cancelScheduledValues(now)
-    this.musicGain.gain.setTargetAtTime(target, now, 0.045)
-  }
-
-  private scheduleMusic(): void {
-    if (!this.audioContext || !this.musicGain) return
-    const context = this.audioContext
-    const stepDuration = 60 / MUSIC_TEMPOS[this.faction] / 4
-    if (this.musicNextNoteTime < context.currentTime - 0.5) {
-      this.musicNextNoteTime = context.currentTime + 0.04
-    }
-
-    while (this.musicNextNoteTime < context.currentTime + 0.16) {
-      if (!document.hidden && !this.musicMuted) this.scheduleMusicStep(this.musicNextNoteTime, stepDuration)
-      this.musicStep = (this.musicStep + 1) % 128
-      this.musicNextNoteTime += stepDuration
-    }
-  }
-
-  private scheduleMusicStep(time: number, stepDuration: number): void {
-    const zone = zoneAt(this.player.position.x, this.player.position.z)
-    const chordOffsets = [0, -4, 3, -2]
-    const chord = chordOffsets[Math.floor(this.musicStep / 16) % chordOffsets.length]
-    const root = MUSIC_ROOTS[this.faction] + ZONE_MUSIC_SHIFTS[zone] + chord
-    const pattern = MUSIC_PATTERNS[this.faction]
-    const melody = root + pattern[this.musicStep % pattern.length]
-
-    this.scheduleTone(melody, time, stepDuration * 0.82, 'square', 0.09)
-    if (this.musicStep % 4 === 0) {
-      this.scheduleTone(root - 12, time, stepDuration * 3.35, 'triangle', 0.12)
-      this.scheduleTone(root + 7, time, stepDuration * 2.6, 'square', 0.025)
-      this.scheduleKick(time)
-    }
-    if (this.musicStep % 8 === 4) this.scheduleNoise(time, 'snare')
-    if (this.musicStep % 2 === 1) this.scheduleNoise(time, 'hat')
-  }
-
-  private scheduleTone(
-    midi: number,
-    time: number,
-    duration: number,
-    type: OscillatorType,
-    volume: number,
-  ): void {
-    if (!this.audioContext || !this.musicGain) return
-    const oscillator = this.trackMusicSource(this.audioContext.createOscillator())
-    const envelope = this.audioContext.createGain()
-    oscillator.type = type
-    oscillator.frequency.setValueAtTime(midiToFrequency(midi), time)
-    envelope.gain.setValueAtTime(0.0001, time)
-    envelope.gain.exponentialRampToValueAtTime(volume, time + 0.008)
-    envelope.gain.setValueAtTime(volume * 0.72, time + duration * 0.55)
-    envelope.gain.exponentialRampToValueAtTime(0.0001, time + duration)
-    oscillator.connect(envelope)
-    envelope.connect(this.musicGain)
-    oscillator.start(time)
-    oscillator.stop(time + duration + 0.02)
-  }
-
-  private scheduleKick(time: number): void {
-    if (!this.audioContext || !this.musicGain) return
-    const oscillator = this.trackMusicSource(this.audioContext.createOscillator())
-    const envelope = this.audioContext.createGain()
-    oscillator.type = 'sine'
-    oscillator.frequency.setValueAtTime(125, time)
-    oscillator.frequency.exponentialRampToValueAtTime(42, time + 0.1)
-    envelope.gain.setValueAtTime(0.16, time)
-    envelope.gain.exponentialRampToValueAtTime(0.0001, time + 0.12)
-    oscillator.connect(envelope)
-    envelope.connect(this.musicGain)
-    oscillator.start(time)
-    oscillator.stop(time + 0.13)
-  }
-
-  private scheduleNoise(time: number, type: 'hat' | 'snare'): void {
-    if (!this.audioContext || !this.musicGain || !this.musicNoiseBuffer) return
-    const duration = type === 'hat' ? 0.035 : 0.1
-    const source = this.trackMusicSource(this.audioContext.createBufferSource())
-    const filter = this.audioContext.createBiquadFilter()
-    const envelope = this.audioContext.createGain()
-    source.buffer = this.musicNoiseBuffer
-    filter.type = type === 'hat' ? 'highpass' : 'bandpass'
-    filter.frequency.setValueAtTime(type === 'hat' ? 5200 : 1450, time)
-    filter.Q.setValueAtTime(type === 'hat' ? 0.7 : 0.9, time)
-    envelope.gain.setValueAtTime(type === 'hat' ? 0.035 : 0.08, time)
-    envelope.gain.exponentialRampToValueAtTime(0.0001, time + duration)
-    source.connect(filter)
-    filter.connect(envelope)
-    envelope.connect(this.musicGain)
-    source.start(time, 0, duration)
-    source.stop(time + duration)
-  }
-
-  private trackMusicSource<T extends AudioScheduledSourceNode>(source: T): T {
-    this.musicSources.add(source)
-    source.addEventListener('ended', () => this.musicSources.delete(source), { once: true })
-    return source
+    this.audio.resume()
   }
 
   private playSound(
-    type:
-      | 'swing'
-      | 'hit'
-      | 'hurt'
-      | 'coin'
-      | 'command'
-      | 'objective'
-      | 'jump'
-      | 'down'
-      | 'save'
-      | 'victory'
-      | 'bow'
-      | 'arrow'
-      | 'block'
-      | 'cleave'
-      | 'event'
-      | 'eventWin'
-      | 'eventFail'
-      | 'achievement'
-      | 'thunder',
+    cue: SoundCue,
+    options: Omit<SoundRequest, 'cue'> = {},
   ): void {
-    if (!this.audioContext) return
-    if (type === 'thunder') {
-      this.playThunder()
-      return
-    }
-    if (type === 'achievement') {
-      this.playAchievementChime()
-      return
-    }
-    const frequencies: Record<typeof type, [number, number, number]> = {
-      swing: [180, 90, 0.08],
-      hit: [110, 55, 0.11],
-      hurt: [150, 75, 0.16],
-      coin: [660, 920, 0.14],
-      command: [240, 360, 0.18],
-      objective: [440, 880, 0.28],
-      jump: [220, 310, 0.09],
-      down: [120, 45, 0.32],
-      save: [520, 680, 0.2],
-      victory: [392, 784, 0.52],
-      bow: [360, 110, 0.16],
-      arrow: [280, 170, 0.1],
-      block: [95, 58, 0.12],
-      cleave: [210, 65, 0.22],
-      event: [330, 495, 0.22],
-      eventWin: [440, 990, 0.38],
-      eventFail: [180, 48, 0.34],
-    }
-    const [start, end, duration] = frequencies[type]
-    const oscillator = this.audioContext.createOscillator()
-    const gain = this.audioContext.createGain()
-    oscillator.type =
-      type === 'hit' || type === 'hurt' || type === 'block' || type === 'eventFail'
-        ? 'sawtooth'
-        : 'triangle'
-    oscillator.frequency.setValueAtTime(start, this.audioContext.currentTime)
-    oscillator.frequency.exponentialRampToValueAtTime(Math.max(1, end), this.audioContext.currentTime + duration)
-    gain.gain.setValueAtTime(0.0001, this.audioContext.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.08, this.audioContext.currentTime + 0.015)
-    gain.gain.exponentialRampToValueAtTime(0.0001, this.audioContext.currentTime + duration)
-    oscillator.connect(gain)
-    gain.connect(this.audioContext.destination)
-    oscillator.start()
-    oscillator.stop(this.audioContext.currentTime + duration)
-  }
-
-  private playAchievementChime(delay = 0): void {
-    const context = this.audioContext
-    if (!context) return
-    const now = context.currentTime
-    const notes = [659.25, 880, 1174.66]
-    notes.forEach((frequency, index) => {
-      const start = now + delay + index * 0.085
-      const oscillator = context.createOscillator()
-      const gain = context.createGain()
-      oscillator.type = index === notes.length - 1 ? 'sine' : 'triangle'
-      oscillator.frequency.setValueAtTime(frequency, start)
-      gain.gain.setValueAtTime(0.0001, start)
-      gain.gain.exponentialRampToValueAtTime(0.075, start + 0.012)
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.32)
-      oscillator.connect(gain)
-      gain.connect(context.destination)
-      oscillator.start(start)
-      oscillator.stop(start + 0.34)
-    })
-  }
-
-  private playThunder(): void {
-    const context = this.audioContext
-    const buffer = this.thunderNoiseBuffer
-    if (!context || !buffer) return
-
-    const now = context.currentTime
-    const duration = 1.2
-    const source = this.trackMusicSource(context.createBufferSource())
-    const filter = context.createBiquadFilter()
-    const gain = context.createGain()
-    source.buffer = buffer
-    source.playbackRate.setValueAtTime(0.82, now)
-    filter.type = 'lowpass'
-    filter.frequency.setValueAtTime(520, now)
-    filter.frequency.exponentialRampToValueAtTime(70, now + duration)
-    filter.Q.setValueAtTime(0.75, now)
-    gain.gain.setValueAtTime(0.0001, now)
-    gain.gain.exponentialRampToValueAtTime(0.16, now + 0.035)
-    gain.gain.exponentialRampToValueAtTime(0.055, now + 0.22)
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
-    source.connect(filter)
-    filter.connect(gain)
-    gain.connect(context.destination)
-    source.addEventListener(
-      'ended',
-      () => {
-        source.disconnect()
-        filter.disconnect()
-        gain.disconnect()
-      },
-      { once: true },
-    )
-    source.start(now)
-    source.stop(now + duration)
+    this.audio.play({ cue, ...options })
   }
 }
