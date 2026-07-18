@@ -45,6 +45,7 @@ import {
   type LootReward,
   type LootRewardKind,
   type LootToastView,
+  type HatchMotif,
   type MapMarker,
   type NoticeTone,
   type Objective,
@@ -62,6 +63,11 @@ import {
   normalizeUpgradeLevels,
   restoreObjectives,
 } from './types'
+import {
+  ZONE_ART_IDS,
+  writeZoneVisualWeights,
+  type ZoneVisualWeights,
+} from './zoneArt'
 
 export type FoliageQuality = 'off' | 'low' | 'high'
 
@@ -285,6 +291,41 @@ interface GroundSurface {
   material: THREE.MeshStandardMaterial
   baseColor: THREE.Color
   baseRoughness: number
+}
+
+interface SurfaceTextureOptions {
+  pattern: 'grass' | 'dirt' | 'stone' | 'scree' | 'wood' | 'roof'
+  repeatX: number
+  repeatY: number
+  hatch?: {
+    motif: HatchMotif
+    density: number
+    angle: number
+    opacity: number
+    color: THREE.Color
+  }
+}
+
+interface ZoneArtProfile {
+  id: ZoneId
+  primary: THREE.Color
+  secondary: THREE.Color
+  accent: THREE.Color
+  ink: THREE.Color
+  hatch: {
+    motif: HatchMotif
+    density: number
+    angle: number
+    opacity: number
+  }
+  fogTint: THREE.Color
+  fogWeight: number
+}
+
+interface ZoneDecorationSet {
+  mesh: THREE.InstancedMesh
+  zone: ZoneId
+  collidable: false
 }
 
 interface BuildingWindowGlow {
@@ -680,6 +721,14 @@ const SCORCH_DECAL_LIFE = 28
 const BLEED_FX_INTERVAL = 1.25
 const DAY_LENGTH = 240
 const DAY_START_OFFSET = 0.18
+const ZONE_BLEND_WIDTH = 8
+const ZONE_TINT_DAMPING = 3.5
+const ZONE_DECORATION_COUNTS: Record<ZoneId, number> = {
+  neutral: 24,
+  palace: 18,
+  forest: 20,
+  fort: 24,
+}
 const SUN_ARC_RADIUS = 90
 const SUN_ARC_HEIGHT = 70
 const SUN_ARC_DEPTH = 40
@@ -898,6 +947,52 @@ function mix(a: THREE.Color, b: THREE.Color, amount: number): THREE.Color {
   return a.clone().lerp(b, amount)
 }
 
+function createZoneArtProfiles(palette: Palette): Record<ZoneId, ZoneArtProfile> {
+  const ink = mix(palette.text, palette.bg, 0.2)
+  return {
+    neutral: {
+      id: 'neutral',
+      primary: palette.worldNeutralGround.clone(),
+      secondary: mix(palette.warning, palette.success, 0.42),
+      accent: mix(palette.warning, palette.surface, 0.18),
+      ink: ink.clone(),
+      hatch: { motif: 'scrape', density: 7, angle: -0.08, opacity: 0.13 },
+      fogTint: mix(palette.worldFog, palette.warning, 0.35),
+      fogWeight: 0.055,
+    },
+    palace: {
+      id: 'palace',
+      primary: palette.worldPalaceGround.clone(),
+      secondary: mix(palette.link, palette.bg, 0.28),
+      accent: mix(palette.warning, palette.surface, 0.12),
+      ink: ink.clone(),
+      hatch: { motif: 'chevron', density: 8, angle: 0, opacity: 0.12 },
+      fogTint: mix(palette.worldFog, palette.link, 0.26),
+      fogWeight: 0.045,
+    },
+    forest: {
+      id: 'forest',
+      primary: palette.worldForestGround.clone(),
+      secondary: mix(palette.success, palette.warning, 0.18),
+      accent: mix(palette.warning, palette.danger, 0.12),
+      ink: ink.clone(),
+      hatch: { motif: 'organic', density: 9, angle: 0.18, opacity: 0.14 },
+      fogTint: mix(palette.worldFog, palette.success, 0.34),
+      fogWeight: 0.075,
+    },
+    fort: {
+      id: 'fort',
+      primary: palette.worldFortGround.clone(),
+      secondary: mix(palette.danger, palette.warning, 0.28),
+      accent: mix(palette.accent, palette.danger, 0.44),
+      ink: ink.clone(),
+      hatch: { motif: 'slash', density: 10, angle: -0.62, opacity: 0.16 },
+      fogTint: mix(palette.worldFog, palette.accent, 0.35),
+      fogWeight: 0.09,
+    },
+  }
+}
+
 function createDayNightKeyframes(palette: Palette): DayNightKeyframes {
   const white = new THREE.Color(1, 1, 1)
   return {
@@ -990,6 +1085,7 @@ export class GameEngine {
   private readonly faction: Faction
   private readonly achievements: AchievementTracker
   private readonly palette: Palette
+  private readonly zoneArtProfiles: Record<ZoneId, ZoneArtProfile>
   private readonly scene = new THREE.Scene()
   private readonly camera = new THREE.PerspectiveCamera(CAMERA_BASE_FOV, 1, 0.1, 240)
   private readonly renderer: THREE.WebGLRenderer
@@ -1017,6 +1113,17 @@ export class GameEngine {
   private readonly buildingWindowGlows: BuildingWindowGlow[] = []
   private readonly villageHouses: THREE.Group[] = []
   private readonly backgroundColor = new THREE.Color()
+  private readonly zoneVisualWeights: ZoneVisualWeights = {
+    neutral: 1,
+    palace: 0,
+    forest: 0,
+    fort: 0,
+  }
+  private readonly zoneTintTarget = new THREE.Color()
+  private readonly zoneTintColor = new THREE.Color()
+  private zoneTintWeight = 0
+  private readonly zoneDecorationSets: ZoneDecorationSet[] = []
+  private readonly zoneArtMaterials = new Map<ZoneId, THREE.MeshStandardMaterial>()
   private readonly fog: THREE.Fog
   private readonly dayNightKeyframes: DayNightKeyframes
   private sun!: THREE.DirectionalLight
@@ -1190,6 +1297,7 @@ export class GameEngine {
     this.palette = createPalette()
     this.lootRng = seededRandom(this.lootSeed(settings.achievementRunId ?? faction))
     this.lootMaterials = this.createLootMaterials()
+    this.zoneArtProfiles = createZoneArtProfiles(this.palette)
     this.comicMaterials = new ComicMaterialLibrary({
       player: mix(this.palette.bg, this.palette.accent, 0.16),
       enemy: mix(this.palette.bg, this.palette.danger, 0.16),
@@ -1376,6 +1484,8 @@ export class GameEngine {
     this.damageNumberFx.forEach((entry) => entry.texture.dispose())
     this.generatedTextures.forEach((texture) => texture.dispose())
     this.generatedTextures.clear()
+    this.zoneArtMaterials.clear()
+    this.zoneDecorationSets.length = 0
     this.outlineBindings.length = 0
     this.interactableOutlineBindings.length = 0
     this.projectiles.length = 0
@@ -6325,11 +6435,19 @@ export class GameEngine {
     key: string,
     base: THREE.Color,
     detail: THREE.Color,
-    pattern: 'grass' | 'dirt' | 'stone' | 'scree' | 'wood' | 'roof',
-    repeatX: number,
-    repeatY: number,
+    options: SurfaceTextureOptions,
   ): THREE.CanvasTexture {
-    const cached = this.generatedTextures.get(key)
+    const hatchKey = options.hatch
+      ? [
+          options.hatch.motif,
+          options.hatch.density,
+          options.hatch.angle.toFixed(3),
+          options.hatch.opacity.toFixed(3),
+          options.hatch.color.getHexString(),
+        ].join('-')
+      : 'none'
+    const cacheKey = `${key}|${options.pattern}|${options.repeatX}x${options.repeatY}|${hatchKey}`
+    const cached = this.generatedTextures.get(cacheKey)
     if (cached) return cached
 
     const canvas = document.createElement('canvas')
@@ -6342,26 +6460,31 @@ export class GameEngine {
     context.fillRect(0, 0, canvas.width, canvas.height)
 
     let seed = 17
-    for (const character of key) seed = (seed * 31 + character.charCodeAt(0)) % 2147483647
+    for (const character of cacheKey) {
+      seed = (seed * 31 + character.charCodeAt(0)) % 2147483647
+    }
     const random = seededRandom(Math.max(1, seed))
     const light = mix(detail, this.palette.surface, 0.34)
     const dark = mix(detail, this.palette.text, 0.3)
 
-    if (pattern === 'grass') {
+    if (options.pattern === 'grass') {
       for (let index = 0; index < 210; index += 1) {
         context.fillStyle = (index % 5 === 0 ? light : index % 3 === 0 ? dark : detail).getStyle()
         const x = Math.floor(random() * 64)
         const y = Math.floor(random() * 64)
         context.fillRect(x, y, index % 7 === 0 ? 2 : 1, 1 + Math.floor(random() * 3))
       }
-    } else if (pattern === 'dirt' || pattern === 'scree') {
-      const count = pattern === 'scree' ? 175 : 130
+    } else if (options.pattern === 'dirt' || options.pattern === 'scree') {
+      const count = options.pattern === 'scree' ? 175 : 130
       for (let index = 0; index < count; index += 1) {
         context.fillStyle = (index % 4 === 0 ? light : index % 2 === 0 ? dark : detail).getStyle()
-        const size = pattern === 'scree' ? 1 + Math.floor(random() * 4) : 1 + Math.floor(random() * 2)
+        const size =
+          options.pattern === 'scree'
+            ? 1 + Math.floor(random() * 4)
+            : 1 + Math.floor(random() * 2)
         context.fillRect(Math.floor(random() * 64), Math.floor(random() * 64), size, size)
       }
-    } else if (pattern === 'stone') {
+    } else if (options.pattern === 'stone') {
       context.strokeStyle = detail.getStyle()
       context.lineWidth = 2
       for (let y = 0; y <= 64; y += 16) {
@@ -6383,7 +6506,7 @@ export class GameEngine {
         context.fillRect(Math.floor(random() * 64), Math.floor(random() * 64), 2, 1)
       }
       context.globalAlpha = 1
-    } else if (pattern === 'wood') {
+    } else if (options.pattern === 'wood') {
       context.fillStyle = detail.getStyle()
       for (let y = 0; y < 64; y += 8) context.fillRect(0, y, 64, 1)
       context.globalAlpha = 0.6
@@ -6408,16 +6531,87 @@ export class GameEngine {
       context.globalAlpha = 1
     }
 
+    if (options.hatch) {
+      this.drawSurfaceHatch(context, options.hatch, random)
+    }
+
     const texture = new THREE.CanvasTexture(canvas)
     texture.colorSpace = THREE.SRGBColorSpace
     texture.wrapS = THREE.RepeatWrapping
     texture.wrapT = THREE.RepeatWrapping
-    texture.repeat.set(repeatX, repeatY)
+    texture.repeat.set(options.repeatX, options.repeatY)
     texture.magFilter = THREE.NearestFilter
     texture.minFilter = THREE.LinearMipmapLinearFilter
     texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
-    this.generatedTextures.set(key, texture)
+    this.generatedTextures.set(cacheKey, texture)
     return texture
+  }
+
+  private drawSurfaceHatch(
+    context: CanvasRenderingContext2D,
+    hatch: NonNullable<SurfaceTextureOptions['hatch']>,
+    random: () => number,
+  ): void {
+    context.save()
+    context.translate(32, 32)
+    context.rotate(hatch.angle)
+    context.translate(-32, -32)
+    context.globalAlpha = hatch.opacity
+    context.strokeStyle = hatch.color.getStyle()
+    context.lineCap = 'round'
+    context.lineJoin = 'round'
+    context.lineWidth = 1.4
+
+    for (let index = 0; index < hatch.density; index += 1) {
+      const x = 5 + random() * 54
+      const y = 5 + random() * 54
+      context.beginPath()
+      if (hatch.motif === 'scrape') {
+        const length = 12 + random() * 18
+        const gap = 2 + random() * 4
+        context.moveTo(x - length * 0.5, y)
+        context.lineTo(x - gap, y + random() * 1.5)
+        context.moveTo(x + gap, y + random() * 1.5)
+        context.lineTo(x + length * 0.5, y)
+      } else if (hatch.motif === 'chevron') {
+        const width = 4 + random() * 3
+        const height = 3 + random() * 3
+        context.moveTo(x - width, y - height)
+        context.lineTo(x, y)
+        context.lineTo(x + width, y - height)
+        if (index % 2 === 0) {
+          context.moveTo(x, y)
+          context.lineTo(x, y + height + 3)
+        }
+      } else if (hatch.motif === 'organic') {
+        const width = 7 + random() * 6
+        const bend = 3 + random() * 4
+        context.moveTo(x - width * 0.5, y)
+        context.bezierCurveTo(
+          x - width * 0.2,
+          y - bend,
+          x + width * 0.2,
+          y + bend,
+          x + width * 0.5,
+          y,
+        )
+        if (index % 3 === 0) {
+          context.moveTo(x - width * 0.35, y + 3)
+          context.quadraticCurveTo(x, y + bend + 3, x + width * 0.35, y + 3)
+        }
+      } else {
+        const length = 8 + random() * 10
+        context.moveTo(x - length * 0.45, y + length * 0.5)
+        context.lineTo(x + length * 0.45, y - length * 0.5)
+        if (index % 2 === 0) {
+          context.moveTo(x + 4, y + length * 0.3)
+          context.lineTo(x + 4 + length * 0.55, y - length * 0.3)
+        }
+      }
+      context.stroke()
+    }
+
+    context.restore()
   }
 
   private createAtmosphere(): void {
@@ -7326,6 +7520,7 @@ uniform float uSwayAmplitude;`,
   }
 
   private updateAtmosphere(delta: number): void {
+    this.updateZoneTint(delta)
     this.groundFoliageUniforms.uTime.value = this.elapsed
     for (let index = 0; index < this.clouds.length; index += 1) {
       const { group, speed } = this.clouds[index]
@@ -7350,6 +7545,39 @@ uniform float uSwayAmplitude;`,
           baseIntensity + Math.sin(this.elapsed * 11 + index) * pulseIntensity
       }
     }
+  }
+
+  private updateZoneTint(delta: number): void {
+    writeZoneVisualWeights(
+      this.player.position.x,
+      this.player.position.z,
+      this.zoneVisualWeights,
+      ZONE_BLEND_WIDTH,
+    )
+    this.zoneTintTarget.setRGB(0, 0, 0)
+    let targetWeight = 0
+    for (let index = 0; index < ZONE_ART_IDS.length; index += 1) {
+      const zone = ZONE_ART_IDS[index]
+      const weight = this.zoneVisualWeights[zone]
+      const profile = this.zoneArtProfiles[zone]
+      this.zoneTintTarget.r += profile.fogTint.r * weight
+      this.zoneTintTarget.g += profile.fogTint.g * weight
+      this.zoneTintTarget.b += profile.fogTint.b * weight
+      targetWeight += profile.fogWeight * weight
+    }
+
+    if (delta <= 0) {
+      this.zoneTintColor.copy(this.zoneTintTarget)
+      this.zoneTintWeight = targetWeight
+    } else {
+      const response = 1 - Math.exp(-ZONE_TINT_DAMPING * delta)
+      this.zoneTintColor.lerp(this.zoneTintTarget, response)
+      this.zoneTintWeight += (targetWeight - this.zoneTintWeight) * response
+    }
+
+    this.backgroundColor.lerp(this.zoneTintColor, this.zoneTintWeight * 0.62)
+    this.fog.color.lerp(this.zoneTintColor, this.zoneTintWeight)
+    this.skyMaterial.color.lerp(this.zoneTintColor, this.zoneTintWeight * 0.28)
   }
 
   private updateDayNight(): void {
@@ -7462,6 +7690,8 @@ uniform float uSwayAmplitude;`,
     this.createPalace()
     this.createForest()
     this.createFort()
+    this.createZoneDecorations()
+    this.createZoneLandmarks()
     this.createBoundary()
     this.createGroundDetails()
   }
@@ -7497,9 +7727,15 @@ uniform float uSwayAmplitude;`,
           `ground-${zone}`,
           zoneColors[zone],
           details[zone],
-          patterns[zone],
-          zone === 'palace' ? 10 : 18,
-          zone === 'palace' ? 10 : 18,
+          {
+            pattern: patterns[zone],
+            repeatX: zone === 'palace' ? 10 : 18,
+            repeatY: zone === 'palace' ? 10 : 18,
+            hatch: {
+              ...this.zoneArtProfiles[zone].hatch,
+              color: this.zoneArtProfiles[zone].ink,
+            },
+          },
         ),
         roughness: 1,
       })
@@ -7532,9 +7768,7 @@ uniform float uSwayAmplitude;`,
         'road-dirt-horizontal',
         roadBase,
         roadDetail,
-        'dirt',
-        24,
-        2,
+        { pattern: 'dirt', repeatX: 24, repeatY: 2 },
       ),
       roughness: 1,
     })
@@ -7543,9 +7777,7 @@ uniform float uSwayAmplitude;`,
         'road-dirt-vertical',
         roadBase,
         roadDetail,
-        'dirt',
-        2,
-        24,
+        { pattern: 'dirt', repeatX: 2, repeatY: 24 },
       ),
       roughness: 1,
     })
@@ -7608,9 +7840,15 @@ uniform float uSwayAmplitude;`,
         'well-stone',
         this.palette.borderStrong,
         this.palette.border,
-        'stone',
-        4,
-        2,
+        {
+          pattern: 'stone',
+          repeatX: 4,
+          repeatY: 2,
+          hatch: {
+            ...this.zoneArtProfiles.neutral.hatch,
+            color: this.zoneArtProfiles.neutral.ink,
+          },
+        },
       ),
       roughness: 1,
     })
@@ -7625,9 +7863,15 @@ uniform float uSwayAmplitude;`,
           'village-roof',
           this.palette.accent,
           mix(this.palette.accent, this.palette.text, 0.45),
-          'roof',
-          5,
-          3,
+          {
+            pattern: 'roof',
+            repeatX: 5,
+            repeatY: 3,
+            hatch: {
+              ...this.zoneArtProfiles.neutral.hatch,
+              color: this.zoneArtProfiles.neutral.ink,
+            },
+          },
         ),
         roughness: 0.9,
       }),
@@ -7648,9 +7892,15 @@ uniform float uSwayAmplitude;`,
         'palace-stone',
         palaceStone,
         mix(this.palette.link, this.palette.borderStrong, 0.68),
-        'stone',
-        6,
-        5,
+        {
+          pattern: 'stone',
+          repeatX: 6,
+          repeatY: 5,
+          hatch: {
+            ...this.zoneArtProfiles.palace.hatch,
+            color: this.zoneArtProfiles.palace.ink,
+          },
+        },
       ),
       roughness: 0.78,
     })
@@ -7659,9 +7909,15 @@ uniform float uSwayAmplitude;`,
         'palace-roof',
         this.palette.warning,
         mix(this.palette.warning, this.palette.text, 0.4),
-        'roof',
-        5,
-        4,
+        {
+          pattern: 'roof',
+          repeatX: 5,
+          repeatY: 4,
+          hatch: {
+            ...this.zoneArtProfiles.palace.hatch,
+            color: this.zoneArtProfiles.palace.ink,
+          },
+        },
       ),
       metalness: 0.22,
       roughness: 0.55,
@@ -7817,9 +8073,15 @@ uniform float uSwayAmplitude;`,
         'mountain-rock',
         mix(this.palette.accent, this.palette.borderStrong, 0.7),
         mix(this.palette.borderStrong, this.palette.text, 0.45),
-        'scree',
-        3,
-        3,
+        {
+          pattern: 'scree',
+          repeatX: 3,
+          repeatY: 3,
+          hatch: {
+            ...this.zoneArtProfiles.fort.hatch,
+            color: this.zoneArtProfiles.fort.ink,
+          },
+        },
       ),
       roughness: 1,
     })
@@ -7852,9 +8114,15 @@ uniform float uSwayAmplitude;`,
         'fort-stone',
         mix(this.palette.borderStrong, this.palette.bg, 0.32),
         mix(this.palette.accent, this.palette.border, 0.4),
-        'stone',
-        6,
-        4,
+        {
+          pattern: 'stone',
+          repeatX: 6,
+          repeatY: 4,
+          hatch: {
+            ...this.zoneArtProfiles.fort.hatch,
+            color: this.zoneArtProfiles.fort.ink,
+          },
+        },
       ),
       roughness: 1,
     })
@@ -7960,15 +8228,309 @@ uniform float uSwayAmplitude;`,
     this.scene.add(this.createBeacon(47, 45, this.palette.accent))
   }
 
+  private createZoneDecorations(): void {
+    let instanceTotal = 0
+    for (const zone of ZONE_ART_IDS) {
+      const placements = this.createZoneDecorationPlacements(
+        zone,
+        ZONE_DECORATION_COUNTS[zone],
+      )
+      const mesh = new THREE.InstancedMesh(
+        this.createZoneDecorationGeometry(zone),
+        this.getZoneArtMaterial(zone),
+        placements.length,
+      )
+      const profile = this.zoneArtProfiles[zone]
+      const dummy = new THREE.Object3D()
+      for (let index = 0; index < placements.length; index += 1) {
+        const [x, z, yaw, scale] = placements[index]
+        dummy.position.set(x, 0, z)
+        dummy.rotation.set(0, yaw, 0)
+        dummy.scale.setScalar(scale)
+        dummy.updateMatrix()
+        mesh.setMatrixAt(index, dummy.matrix)
+        mesh.setColorAt(index, index % 4 === 0 ? profile.accent : profile.primary)
+      }
+      mesh.name = `zone-decoration-${zone}`
+      mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage)
+      mesh.instanceMatrix.needsUpdate = true
+      if (mesh.instanceColor) {
+        mesh.instanceColor.setUsage(THREE.StaticDrawUsage)
+        mesh.instanceColor.needsUpdate = true
+      }
+      mesh.userData.zone = zone
+      mesh.userData.collidable = false
+      mesh.userData.cameraPassThrough = true
+      mesh.castShadow = false
+      mesh.receiveShadow = true
+      mesh.computeBoundingSphere()
+      this.zoneDecorationSets.push({ mesh, zone, collidable: false })
+      this.scene.add(mesh)
+      instanceTotal += placements.length
+    }
+    this.renderer.domElement.dataset.zoneDecorationInstances = String(instanceTotal)
+    this.renderer.domElement.dataset.zoneDecorationDrawCalls = String(
+      this.zoneDecorationSets.length,
+    )
+  }
+
+  private createZoneDecorationPlacements(
+    zone: ZoneId,
+    count: number,
+  ): Array<readonly [number, number, number, number]> {
+    const bounds: Record<ZoneId, readonly [number, number, number, number]> = {
+      neutral: [-73, -8, -73, -8],
+      palace: [8, 73, -73, -8],
+      forest: [-73, -8, 8, 73],
+      fort: [8, 73, 8, 73],
+    }
+    const seeds: Record<ZoneId, number> = {
+      neutral: 401,
+      palace: 809,
+      forest: 1217,
+      fort: 1621,
+    }
+    const [minX, maxX, minZ, maxZ] = bounds[zone]
+    const random = seededRandom(seeds[zone])
+    const placements: Array<readonly [number, number, number, number]> = []
+    const maxAttempts = count * 100
+    for (let attempt = 0; attempt < maxAttempts && placements.length < count; attempt += 1) {
+      const x = THREE.MathUtils.lerp(minX, maxX, random())
+      const z = THREE.MathUtils.lerp(minZ, maxZ, random())
+      if (!this.canPlaceZoneDecoration(zone, x, z)) continue
+      if (
+        placements.some(([placedX, placedZ]) => {
+          const dx = x - placedX
+          const dz = z - placedZ
+          return dx * dx + dz * dz < 10.24
+        })
+      ) {
+        continue
+      }
+      placements.push([x, z, random() * TWO_PI, 0.78 + random() * 0.38])
+    }
+    return placements
+  }
+
+  private canPlaceZoneDecoration(zone: ZoneId, x: number, z: number): boolean {
+    if (zoneAt(x, z) !== zone || Math.abs(x) > 74 || Math.abs(z) > 74) return false
+    if (Math.abs(x) < 6.5 || Math.abs(z + 23) < 6.5) return false
+    if (
+      (zone === 'palace' && x > 38 && x < 50 && z > -43 && z < -26) ||
+      (zone === 'fort' && x > 41 && x < 53 && z > 25 && z < 41)
+    ) {
+      return false
+    }
+
+    const exclusions: ReadonlyArray<readonly [number, number, number]> = [
+      [FACTION_INFO.elf.spawn[0], FACTION_INFO.elf.spawn[1], 7],
+      [FACTION_INFO.guard.spawn[0], FACTION_INFO.guard.spawn[1], 7],
+      [FACTION_INFO.villain.spawn[0], FACTION_INFO.villain.spawn[1], 7],
+      [this.vendorPosition.x, this.vendorPosition.z, 8],
+      [this.commanderPosition.x, this.commanderPosition.z, 7],
+      [this.elfHomePosition.x, this.elfHomePosition.z, 8],
+      [-54, -23, 8],
+    ]
+    for (const [centerX, centerZ, radius] of exclusions) {
+      const dx = x - centerX
+      const dz = z - centerZ
+      if (dx * dx + dz * dz < radius * radius) return false
+    }
+    return this.staticObstacles.every(
+      (obstacle) => !this.obstacleOverlapsCircle(obstacle, x, z, 1.35),
+    )
+  }
+
+  private createZoneDecorationGeometry(zone: ZoneId): THREE.BufferGeometry {
+    const parts: THREE.BufferGeometry[] = []
+    const addPart = (
+      geometry: THREE.BufferGeometry,
+      x: number,
+      y: number,
+      z: number,
+      rotationZ = 0,
+    ): void => {
+      const part = geometry.index ? geometry.toNonIndexed() : geometry
+      if (part !== geometry) geometry.dispose()
+      part.rotateZ(rotationZ)
+      part.translate(x, y, z)
+      parts.push(part)
+    }
+
+    if (zone === 'neutral') {
+      addPart(new THREE.BoxGeometry(0.18, 2.25, 0.18), 0, 1.12, 0, 0.08)
+      addPart(new THREE.BoxGeometry(1.5, 0.14, 0.14), 0, 1.05, 0, -0.12)
+      addPart(new THREE.ConeGeometry(0.32, 0.72, 3), 0.55, 1.55, 0, -Math.PI / 2)
+    } else if (zone === 'palace') {
+      addPart(new THREE.CylinderGeometry(0.09, 0.11, 2.8, 6), 0, 1.4, 0)
+      addPart(new THREE.BoxGeometry(0.95, 0.72, 0.16), 0, 1.58, 0)
+      addPart(new THREE.ConeGeometry(0.24, 0.58, 6), 0, 3.08, 0)
+    } else if (zone === 'forest') {
+      addPart(new THREE.TorusGeometry(0.84, 0.14, 6, 14, Math.PI), 0, 0.12, 0)
+      addPart(new THREE.CylinderGeometry(0.04, 0.05, 0.55, 5), 0, 0.78, 0)
+      addPart(new THREE.DodecahedronGeometry(0.2, 0), 0, 0.45, 0)
+    } else {
+      addPart(new THREE.ConeGeometry(0.24, 2.5, 6), 0, 1.12, 0, -0.55)
+      addPart(new THREE.TorusGeometry(0.58, 0.12, 6, 12, Math.PI * 1.58), 0.38, 0.78, 0)
+    }
+
+    const merged = mergeGeometries(parts, false)
+    parts.forEach((part) => part.dispose())
+    if (!merged) throw new Error(`Could not merge zone decoration geometry: ${zone}`)
+    merged.computeVertexNormals()
+    return merged
+  }
+
+  private getZoneArtMaterial(zone: ZoneId): THREE.MeshStandardMaterial {
+    const cached = this.zoneArtMaterials.get(zone)
+    if (cached) return cached
+    const profile = this.zoneArtProfiles[zone]
+    const patterns: Record<ZoneId, SurfaceTextureOptions['pattern']> = {
+      neutral: 'wood',
+      palace: 'stone',
+      forest: 'wood',
+      fort: 'scree',
+    }
+    const material = new THREE.MeshStandardMaterial({
+      map: this.createSurfaceTexture(
+        `zone-art-${zone}`,
+        profile.secondary,
+        profile.ink,
+        {
+          pattern: patterns[zone],
+          repeatX: 2,
+          repeatY: 2,
+          hatch: { ...profile.hatch, color: profile.ink },
+        },
+      ),
+      roughness: zone === 'palace' ? 0.72 : 0.96,
+      metalness: zone === 'palace' ? 0.12 : 0,
+    })
+    this.zoneArtMaterials.set(zone, material)
+    return material
+  }
+
+  private createZoneLandmarks(): void {
+    const landmarks = [
+      this.createNeutralLandmark(),
+      this.createPalaceLandmark(),
+      this.createForestLandmark(),
+      this.createFortLandmark(),
+    ]
+    let meshCount = 0
+    for (const landmark of landmarks) {
+      landmark.traverse((object) => {
+        if (object instanceof THREE.Mesh) meshCount += 1
+      })
+      this.scene.add(landmark)
+    }
+    this.renderer.domElement.dataset.zoneLandmarkMeshes = String(meshCount)
+  }
+
+  private createNeutralLandmark(): THREE.Group {
+    const group = new THREE.Group()
+    const material = this.getZoneArtMaterial('neutral')
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.2, 0.8, 8), material)
+    base.position.y = 0.4
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.55, 7.4, 0.55), material)
+    post.position.y = 4.1
+    post.rotation.z = 0.08
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.34, 0.34), material)
+    arm.position.set(1.8, 7.4, 0)
+    arm.rotation.z = -0.12
+    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.1, 5), material)
+    cable.position.set(3.55, 6.35, 0)
+    const notice = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.25, 0.22), material)
+    notice.position.set(-0.45, 4.4, 0.38)
+    notice.rotation.z = -0.08
+    group.add(base, post, arm, cable, notice)
+    group.position.set(-18, 0, -12)
+    group.rotation.y = 0.22
+    group.name = 'zone-landmark-neutral'
+    this.registerCircleObstacle(group.position.x, group.position.z, 1.1)
+    return group
+  }
+
+  private createPalaceLandmark(): THREE.Group {
+    const group = new THREE.Group()
+    const material = this.getZoneArtMaterial('palace')
+    for (const x of [-1.15, 1.15]) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.17, 11, 7), material)
+      pole.position.set(x, 5.5, 0)
+      const banner = new THREE.Mesh(new THREE.BoxGeometry(1.65, 4.1, 0.18), material)
+      banner.position.set(x + Math.sign(x) * 0.78, 7.2, 0)
+      const finial = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.9, 7), material)
+      finial.position.set(x, 11.45, 0)
+      group.add(pole, banner, finial)
+    }
+    const crossbar = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.28, 0.28), material)
+    crossbar.position.y = 9.55
+    group.add(crossbar)
+    group.position.set(44, 0, -52)
+    group.name = 'zone-landmark-palace'
+    return group
+  }
+
+  private createForestLandmark(): THREE.Group {
+    const group = new THREE.Group()
+    const material = this.getZoneArtMaterial('forest')
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(4.8, 0.48, 8, 24, Math.PI), material)
+    arch.position.y = 0.45
+    const leftRoot = new THREE.Mesh(new THREE.DodecahedronGeometry(0.9, 0), material)
+    leftRoot.position.set(-4.75, 0.55, 0)
+    leftRoot.scale.set(1, 1.5, 1)
+    const rightRoot = leftRoot.clone()
+    rightRoot.position.x = 4.75
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 1.7, 6), material)
+    stem.position.set(0, 4.1, 0)
+    const pod = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5, 1), material)
+    pod.position.set(0, 3.15, 0)
+    group.add(arch, leftRoot, rightRoot, stem, pod)
+    group.position.set(-48, 0, 49)
+    group.name = 'zone-landmark-forest'
+    group.traverse((object) => {
+      if (object instanceof THREE.Mesh) object.userData.cameraPassThrough = true
+    })
+    this.registerCircleObstacle(-52.75, 49, 0.8)
+    this.registerCircleObstacle(-43.25, 49, 0.8)
+    return group
+  }
+
+  private createFortLandmark(): THREE.Group {
+    const group = new THREE.Group()
+    const material = this.getZoneArtMaterial('fort')
+    const wheel = new THREE.Mesh(
+      new THREE.TorusGeometry(3.8, 0.42, 8, 26, Math.PI * 1.72),
+      material,
+    )
+    wheel.position.y = 4.1
+    wheel.rotation.z = 0.28
+    group.add(wheel)
+    for (const angle of [-0.7, 0.15, 0.95]) {
+      const spoke = new THREE.Mesh(new THREE.BoxGeometry(6.7, 0.3, 0.38), material)
+      spoke.position.y = 4.1
+      spoke.rotation.z = angle
+      group.add(spoke)
+    }
+    for (const x of [-2.6, 2.6]) {
+      const support = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.42, 4.2, 7), material)
+      support.position.set(x, 1.8, 0)
+      support.rotation.z = x < 0 ? -0.34 : 0.34
+      group.add(support)
+    }
+    group.position.set(47, 0, 65)
+    group.name = 'zone-landmark-fort'
+    this.registerBoxObstacle(group.position.x, group.position.z, 7.5, 1.5)
+    return group
+  }
+
   private createBoundary(): void {
     const material = new THREE.MeshStandardMaterial({
       map: this.createSurfaceTexture(
         'boundary-stone',
         mix(this.palette.borderStrong, this.palette.bg, 0.4),
         this.palette.border,
-        'scree',
-        2,
-        2,
+        { pattern: 'scree', repeatX: 2, repeatY: 2 },
       ),
       roughness: 1,
     })
@@ -8031,9 +8593,15 @@ uniform float uSwayAmplitude;`,
         shop ? 'shop-timber' : 'village-timber',
         woodBase,
         mix(this.palette.warning, this.palette.text, 0.52),
-        'wood',
-        4,
-        4,
+        {
+          pattern: 'wood',
+          repeatX: 4,
+          repeatY: 4,
+          hatch: {
+            ...this.zoneArtProfiles.neutral.hatch,
+            color: this.zoneArtProfiles.neutral.ink,
+          },
+        },
       ),
       roughness: 0.95,
     })
@@ -8049,9 +8617,15 @@ uniform float uSwayAmplitude;`,
           'house-shingles',
           this.palette.accent,
           mix(this.palette.accent, this.palette.text, 0.4),
-          'roof',
-          5,
-          4,
+          {
+            pattern: 'roof',
+            repeatX: 5,
+            repeatY: 4,
+            hatch: {
+              ...this.zoneArtProfiles.neutral.hatch,
+              color: this.zoneArtProfiles.neutral.ink,
+            },
+          },
         ),
         roughness: 1,
       }),
@@ -8095,9 +8669,15 @@ uniform float uSwayAmplitude;`,
         'elf-hut-bark',
         mix(this.palette.warning, this.palette.bg, 0.55),
         mix(this.palette.warning, this.palette.text, 0.55),
-        'wood',
-        5,
-        4,
+        {
+          pattern: 'wood',
+          repeatX: 5,
+          repeatY: 4,
+          hatch: {
+            ...this.zoneArtProfiles.forest.hatch,
+            color: this.zoneArtProfiles.forest.ink,
+          },
+        },
       ),
       roughness: 1,
     })
@@ -8112,9 +8692,15 @@ uniform float uSwayAmplitude;`,
           'elf-leaf-roof',
           mix(this.palette.success, this.palette.bg, 0.25),
           mix(this.palette.success, this.palette.text, 0.36),
-          'roof',
-          6,
-          4,
+          {
+            pattern: 'roof',
+            repeatX: 6,
+            repeatY: 4,
+            hatch: {
+              ...this.zoneArtProfiles.forest.hatch,
+              color: this.zoneArtProfiles.forest.ink,
+            },
+          },
         ),
         roughness: 1,
       }),
@@ -8140,9 +8726,7 @@ uniform float uSwayAmplitude;`,
           'tree-bark',
           mix(this.palette.warning, this.palette.bg, 0.45),
           mix(this.palette.warning, this.palette.text, 0.58),
-          'wood',
-          2,
-          5,
+          { pattern: 'wood', repeatX: 2, repeatY: 5 },
         ),
         roughness: 1,
       }),
@@ -8399,9 +8983,7 @@ uniform float uSwayAmplitude;`,
         gilded
           ? mix(this.palette.warning, this.palette.text, 0.34)
           : mix(this.palette.warning, this.palette.text, 0.55),
-        'wood',
-        4,
-        3,
+        { pattern: 'wood', repeatX: 4, repeatY: 3 },
       ),
       roughness: 0.92,
     })
@@ -8421,9 +9003,7 @@ uniform float uSwayAmplitude;`,
           gilded ? 'rich-caravan-crate' : 'caravan-crate',
           gilded ? mix(this.palette.warning, this.palette.surface, 0.15) : this.palette.warning,
           mix(this.palette.warning, this.palette.text, 0.42),
-          'wood',
-          3,
-          3,
+          { pattern: 'wood', repeatX: 3, repeatY: 3 },
         ),
         roughness: 0.8,
         emissive: gilded ? this.palette.warning : this.palette.bg,

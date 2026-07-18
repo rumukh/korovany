@@ -795,6 +795,7 @@ button {
   min-height: 34rem;
   overflow: hidden;
   position: relative;
+  --zone-accent: var(--cp-accent);
   user-select: none;
   width: 100%;
 }
@@ -966,10 +967,87 @@ button {
 
 .identity-panel {
   align-items: center;
+  border-color: color-mix(in srgb, var(--zone-accent) 42%, var(--cp-border));
   display: flex;
   gap: 0.75rem;
   min-width: 19rem;
   padding: 0.65rem 0.7rem;
+}
+
+.zone-title {
+  align-items: center;
+  animation: zone-title-enter 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  display: flex;
+  gap: 0.55rem;
+}
+
+.zone-motif {
+  border: 1px solid color-mix(in srgb, var(--zone-accent) 64%, var(--cp-border));
+  border-radius: 0.32rem;
+  height: 2rem;
+  overflow: hidden;
+  position: relative;
+  width: 1.2rem;
+}
+
+.zone-motif::after {
+  animation: zone-motif-sweep 680ms ease-out;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in srgb, var(--zone-accent) 48%, transparent),
+    transparent
+  );
+  content: '';
+  inset: -100% 0 100%;
+  position: absolute;
+}
+
+.zone-motif[data-motif='scrape'] {
+  background: repeating-linear-gradient(
+    0deg,
+    color-mix(in srgb, var(--zone-accent) 54%, transparent) 0 2px,
+    transparent 2px 7px
+  );
+}
+
+.zone-motif[data-motif='chevron'] {
+  background:
+    linear-gradient(36deg, transparent 43%, var(--zone-accent) 44% 52%, transparent 53%) 0 0 / 100% 0.8rem,
+    linear-gradient(-36deg, transparent 43%, var(--zone-accent) 44% 52%, transparent 53%) 0 0 / 100% 0.8rem;
+}
+
+.zone-motif[data-motif='organic'] {
+  background:
+    radial-gradient(ellipse at 25% 40%, transparent 38%, var(--zone-accent) 40% 48%, transparent 50%),
+    radial-gradient(ellipse at 75% 68%, transparent 34%, var(--zone-accent) 36% 44%, transparent 46%);
+}
+
+.zone-motif[data-motif='slash'] {
+  background: repeating-linear-gradient(
+    -34deg,
+    transparent 0 5px,
+    color-mix(in srgb, var(--zone-accent) 72%, transparent) 5px 7px,
+    transparent 7px 11px
+  );
+}
+
+@keyframes zone-title-enter {
+  from {
+    opacity: 0;
+    transform: translateX(-0.45rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes zone-motif-sweep {
+  to {
+    transform: translateY(300%);
+  }
 }
 
 .identity-icon {
@@ -1111,6 +1189,11 @@ button {
   gap: 0.12rem;
   justify-content: center;
   text-transform: uppercase;
+}
+
+.map-zone.current {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--zone-accent) 46%, var(--cp-text));
+  color: var(--cp-text);
 }
 
 .map-zone svg {
@@ -2008,14 +2091,14 @@ button {
 }
 
 .capture-prompt:hover {
-  border-color: var(--cp-accent);
-  color: var(--cp-accent);
+  border-color: var(--zone-accent);
+  color: color-mix(in srgb, var(--zone-accent) 76%, var(--cp-text));
 }
 
 .action-prompt {
   backdrop-filter: blur(12px);
   background: var(--cp-panel-strong);
-  border: 1px solid var(--cp-accent);
+  border: 1px solid var(--zone-accent);
   border-radius: 0.625rem;
   bottom: 8.6rem;
   box-shadow: var(--game-card-shadow);
@@ -3297,6 +3380,15 @@ kbd {
   .loot-toast {
     animation: loot-toast-reduced 2.4s linear both !important;
   }
+
+  .zone-title {
+    animation: zone-title-fade 0.01ms linear !important;
+  }
+
+  .zone-motif::after {
+    animation: none !important;
+    display: none;
+  }
 }
 
 @keyframes loot-toast-reduced {
@@ -3305,13 +3397,25 @@ kbd {
     opacity: 0;
     transform: translateX(-50%);
   }
+
   12%,
   88% {
     opacity: 1;
     transform: translateX(-50%);
   }
+
   100% {
     opacity: 0;
     transform: translateX(-50%);
+  }
+}
+
+@keyframes zone-title-fade {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
   }
 }

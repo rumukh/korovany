@@ -14,6 +14,15 @@ export type ActorRole =
 
 export type ZoneId = 'neutral' | 'palace' | 'forest' | 'fort'
 
+export type HatchMotif = 'scrape' | 'chevron' | 'organic' | 'slash'
+
+export interface ZoneInfo {
+  name: string
+  subtitle: string
+  accent: string
+  motif: HatchMotif
+}
+
 export type PartStatus = 'healthy' | 'wounded' | 'missing' | 'prosthetic'
 
 export type NoticeTone = 'info' | 'success' | 'warning' | 'danger'
@@ -274,11 +283,31 @@ export const FACTION_INFO: Record<
   },
 }
 
-export const ZONE_INFO: Record<ZoneId, { name: string; subtitle: string }> = {
-  neutral: { name: 'Вольные земли', subtitle: 'нейтральная зона людей' },
-  palace: { name: 'Имперский удел', subtitle: 'дворец и казармы' },
-  forest: { name: 'Чаща Эленвуда', subtitle: 'земли лесных эльфов' },
-  fort: { name: 'Чёрный кряж', subtitle: 'горы и старый форт' },
+export const ZONE_INFO: Record<ZoneId, ZoneInfo> = {
+  neutral: {
+    name: 'Вольные земли',
+    subtitle: 'нейтральная зона людей',
+    accent: '#c48742',
+    motif: 'scrape',
+  },
+  palace: {
+    name: 'Имперский удел',
+    subtitle: 'дворец и казармы',
+    accent: '#547ac4',
+    motif: 'chevron',
+  },
+  forest: {
+    name: 'Чаща Эленвуда',
+    subtitle: 'земли лесных эльфов',
+    accent: '#5b9d54',
+    motif: 'organic',
+  },
+  fort: {
+    name: 'Чёрный кряж',
+    subtitle: 'горы и старый форт',
+    accent: '#b75b70',
+    motif: 'slash',
+  },
 }
 
 export const SHOP_ITEMS: ShopItem[] = [

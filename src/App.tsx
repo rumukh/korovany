@@ -352,19 +352,19 @@ function MiniMap({ view }: { view: GameView }) {
         <span className="zone-code">4 зоны</span>
       </header>
       <div className="minimap">
-        <div className="map-zone neutral">
+        <div className={`map-zone neutral${view.zone === 'neutral' ? ' current' : ''}`}>
           <Home aria-hidden="true" />
           <span>Люди</span>
         </div>
-        <div className="map-zone palace">
+        <div className={`map-zone palace${view.zone === 'palace' ? ' current' : ''}`}>
           <Castle aria-hidden="true" />
           <span>Дворец</span>
         </div>
-        <div className="map-zone forest">
+        <div className={`map-zone forest${view.zone === 'forest' ? ' current' : ''}`}>
           <Trees aria-hidden="true" />
           <span>Эльфы</span>
         </div>
-        <div className="map-zone fort">
+        <div className={`map-zone fort${view.zone === 'fort' ? ' current' : ''}`}>
           <Skull aria-hidden="true" />
           <span>Форт</span>
         </div>
@@ -1471,6 +1471,7 @@ function GameScreen({
 }) {
   const [controlsDismissed, setControlsDismissed] = useState(false)
   const info = FACTION_INFO[view.faction]
+  const zoneInfo = ZONE_INFO[view.zone]
   const eyeLoss =
     view.body.leftEye === 'missing' ? 'left' : view.body.rightEye === 'missing' ? 'right' : null
   const healthPercent = `${(view.health / view.maxHealth) * 100}%`
@@ -1521,6 +1522,8 @@ function GameScreen({
   return (
     <main
       className={`game-screen faction-${view.faction}${lowHealth ? ' low-health' : ''}${simulationPaused ? ' simulation-paused' : ''}`}
+      data-zone={view.zone}
+      style={{ '--zone-accent': zoneInfo.accent } as CSSProperties}
     >
       <div className="world-stage" ref={worldRef} />
       <div className="screen-vignette" aria-hidden="true" />
@@ -1535,10 +1538,17 @@ function GameScreen({
       <div className="top-hud">
         <div className="identity-panel hud-card">
           <div className="identity-icon">{factionIcons[view.faction]}</div>
-          <div>
-            <span className="eyebrow">{info.shortName}</span>
-            <h1>{ZONE_INFO[view.zone].name}</h1>
-            <p>{ZONE_INFO[view.zone].subtitle}</p>
+          <div className="zone-title" key={view.zone}>
+            <span
+              className="zone-motif"
+              data-motif={zoneInfo.motif}
+              aria-hidden="true"
+            />
+            <div>
+              <span className="eyebrow">{info.shortName}</span>
+              <h1>{zoneInfo.name}</h1>
+              <p>{zoneInfo.subtitle}</p>
+            </div>
           </div>
           <div className={`threat-chip tier-${view.threatTier}`}>
             <Shield aria-hidden="true" />
