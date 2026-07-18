@@ -13,6 +13,22 @@ import {
   type OutlineKind,
 } from './ComicMaterialLibrary'
 import {
+  CAMERA_BASE_FOV,
+  CAMERA_FOLLOW_DAMPING,
+  CAMERA_FOV_DAMPING,
+  KILL_ACCENT_RANGE,
+  SPRINT_BLEND_DAMPING,
+  advanceAirborneState,
+  advanceCameraAccents,
+  advanceJumpAccentLatch,
+  composeCameraFov,
+  dampValue,
+  dampingAlpha,
+  queueCameraAccent as enqueueCameraAccent,
+  type CameraAccent,
+  type CameraAccentKind,
+} from './cameraAccents'
+import {
   ABILITY_INFO,
   FACTION_INFO,
   MAX_HEALTH_PER_LEVEL,
@@ -393,6 +409,7 @@ interface CombatFeedbackChannels {
   callout?: boolean
   ray?: boolean
   hitStop?: boolean
+  camera?: boolean
 }
 
 interface BoxObstacle {
@@ -907,7 +924,7 @@ export class GameEngine {
   private readonly achievements: AchievementTracker
   private readonly palette: Palette
   private readonly scene = new THREE.Scene()
-  private readonly camera = new THREE.PerspectiveCamera(56, 1, 0.1, 240)
+  private readonly camera = new THREE.PerspectiveCamera(CAMERA_BASE_FOV, 1, 0.1, 240)
   private readonly renderer: THREE.WebGLRenderer
   private readonly postProcessor: BloomPostProcessor
   private readonly comicMaterials: ComicMaterialLibrary
@@ -994,8 +1011,15 @@ export class GameEngine {
   private ended = false
   private verticalVelocity = 0
   private onGround = true
+  private airborneTime = 0
+  private jumpAccentArmed = true
+  private isSprinting = false
   private cameraYaw = 0
   private cameraPitch = 0.38
+  private readonly cameraAccents: CameraAccent[] = []
+  private sprintFovBlend = 0
+  private cameraAccentOffset = 0
+  private currentFov = CAMERA_BASE_FOV
   private trauma = 0
   private shakeClock = 0
   private damageFlash = 0
@@ -1186,7 +1210,7 @@ export class GameEngine {
     this.registerNamedInteractableOutline(this.caravan, 'cargo')
     this.spawnPopulation()
     this.cameraYaw = faction === 'elf' ? -0.8 : faction === 'guard' ? 2.4 : 0.8
-    this.updateCamera(true)
+    this.updateCamera(0, true)
 
     this.boundKeyDown = this.onKeyDown.bind(this)
     this.boundKeyUp = this.onKeyUp.bind(this)
@@ -1363,7 +1387,7 @@ export class GameEngine {
   setScreenShakeEnabled(enabled: boolean): void {
     this.screenShakeEnabled = enabled
     if (!enabled) {
-      this.trauma = 0
+      this.resetCameraMotion()
       this.hitStopRemaining = Math.min(this.hitStopRemaining, HIT_STOP_REDUCED_MAX)
     }
   }
@@ -1650,6 +1674,7 @@ export class GameEngine {
 
   private readonly loop = (): void => {
     const elapsedDelta = this.clock.getDelta()
+    const visualDelta = Math.min(elapsedDelta, 0.05)
     let stopped = 0
     if (!this.paused && !this.ended && this.hitStopRemaining > 0) {
       stopped = Math.min(this.hitStopRemaining, elapsedDelta)
@@ -1657,7 +1682,8 @@ export class GameEngine {
     }
     const gameplayDelta = Math.min(Math.max(0, elapsedDelta - stopped), 0.05)
     if (!this.paused && !this.ended && gameplayDelta > 0) this.update(gameplayDelta)
-    this.updateCamera(false)
+    if (!this.paused && !this.ended) this.updateCameraEffects(visualDelta)
+    this.updateCamera(visualDelta, false)
     this.audioListenerRight.setFromMatrixColumn(this.camera.matrixWorld, 0)
     this.audio.setListener(this.camera.position, this.audioListenerRight)
     this.audio.setMusicContext(
@@ -2171,6 +2197,7 @@ export class GameEngine {
   }
 
   private updatePlayer(delta: number): void {
+    const wasOnGround = this.onGround
     const forward = this.getAimDirection()
     const right = new THREE.Vector3(Math.cos(this.cameraYaw), 0, Math.sin(this.cameraYaw))
     const move = new THREE.Vector3()
@@ -2195,6 +2222,7 @@ export class GameEngine {
       this.stamina > 2 &&
       move.lengthSq() > 0 &&
       missingLegs === 0
+    this.isSprinting = sprinting
     const speed =
       8.2 *
       mobility *
@@ -2244,11 +2272,17 @@ export class GameEngine {
       })
     }
 
-    if (this.keys.has('Space') && this.onGround && missingLegs < 2) {
+    const jumpHeld = this.keys.has('Space')
+    let tookOff = false
+    if (jumpHeld && this.onGround && missingLegs < 2) {
       this.verticalVelocity = missingLegs === 1 ? 6.2 : 8.5
       this.onGround = false
+      tookOff = true
       this.playSound('jump')
     }
+    const jumpLatch = advanceJumpAccentLatch(this.jumpAccentArmed, jumpHeld, tookOff)
+    this.jumpAccentArmed = jumpLatch.armed
+    if (jumpLatch.triggered) this.queueCameraAccent('jump', 1, 0.18)
     this.verticalVelocity -= 23 * delta
     this.player.position.y += this.verticalVelocity * delta
     if (this.player.position.y <= PLAYER_HEIGHT) {
@@ -2258,6 +2292,14 @@ export class GameEngine {
       this.onGround = true
       if (landed) this.playSound('land')
     }
+    const airborneUpdate = advanceAirborneState(
+      this.airborneTime,
+      wasOnGround,
+      this.onGround,
+      delta,
+    )
+    this.airborneTime = airborneUpdate.airborneTime
+    if (airborneUpdate.landed) this.queueCameraAccent('land', -1.4, 0.16)
 
   }
 
@@ -3238,6 +3280,11 @@ export class GameEngine {
       this.addTrauma(TRAUMA_CLEAVE)
       this.presentCleaveFeedback(feedbackEvents)
     }
+    this.queueCameraAccent(
+      'cleave',
+      feedbackEvents.length > 0 ? 5.5 : 2,
+      feedbackEvents.length > 0 ? 0.24 : 0.16,
+    )
     this.playSound('cleave')
   }
 
@@ -7962,8 +8009,68 @@ uniform float uSwayAmplitude;`,
     this.trauma = Math.min(1, this.trauma + amount)
   }
 
-  private clearTransientCombatFeedback(): void {
+  private queueCameraAccent(
+    kind: CameraAccentKind,
+    magnitude: number,
+    duration: number,
+  ): void {
+    if (!this.screenShakeEnabled || this.paused || this.ended) return
+    enqueueCameraAccent(this.cameraAccents, kind, magnitude, duration)
+  }
+
+  private presentCameraFeedback(event: CombatFeedbackEvent): void {
+    if (event.targetId === 'player' && event.weight === 'blocked') {
+      this.queueCameraAccent('block', -0.8, 0.12)
+      return
+    }
+    if (!event.directPlayerAction || !event.killed || event.targetId === 'player') return
+
+    const distance = Math.hypot(
+      event.position.x - this.player.position.x,
+      event.position.z - this.player.position.z,
+    )
+    const strength = 1 - Math.min(1, distance / KILL_ACCENT_RANGE)
+    if (strength > 0) this.queueCameraAccent('kill', -2.4 * strength, 0.2)
+  }
+
+  private updateCameraEffects(delta: number): void {
+    if (!this.screenShakeEnabled) return
+    this.sprintFovBlend = dampValue(
+      this.sprintFovBlend,
+      this.isSprinting ? 1 : 0,
+      SPRINT_BLEND_DAMPING,
+      delta,
+    )
+    this.cameraAccentOffset = advanceCameraAccents(this.cameraAccents, delta)
+  }
+
+  private resetCameraMotion(): void {
     this.trauma = 0
+    this.cameraAccents.length = 0
+    this.sprintFovBlend = 0
+    this.cameraAccentOffset = 0
+    this.isSprinting = false
+    this.currentFov = CAMERA_BASE_FOV
+    if (this.camera.fov === CAMERA_BASE_FOV) return
+    this.camera.fov = CAMERA_BASE_FOV
+    this.camera.updateProjectionMatrix()
+  }
+
+  private updateCameraFov(delta: number, immediate: boolean): void {
+    if (immediate || !this.screenShakeEnabled || this.paused || this.ended) {
+      this.resetCameraMotion()
+      return
+    }
+
+    const targetFov = composeCameraFov(this.sprintFovBlend, this.cameraAccentOffset)
+    this.currentFov = dampValue(this.currentFov, targetFov, CAMERA_FOV_DAMPING, delta)
+    if (Math.abs(this.camera.fov - this.currentFov) < 0.01) return
+    this.camera.fov = this.currentFov
+    this.camera.updateProjectionMatrix()
+  }
+
+  private clearTransientCombatFeedback(): void {
+    this.resetCameraMotion()
     this.damageFlash = 0
     this.hitStopRemaining = 0
     this.pendingCleaveHitStop = 0
@@ -7987,6 +8094,7 @@ uniform float uSwayAmplitude;`,
     if (channels.ray ?? true) this.spawnImpactRay(event)
     if (channels.callout ?? true) this.spawnComicCallout(event)
     if (channels.hitStop ?? true) this.requestHitStop(this.hitStopForEvent(event))
+    if (channels.camera ?? true) this.presentCameraFeedback(event)
   }
 
   private presentCleaveFeedback(events: CombatFeedbackEvent[]): void {
@@ -8010,7 +8118,12 @@ uniform float uSwayAmplitude;`,
       position,
       direction,
     }
-    this.presentCombatFeedback(summary, { number: false, ray: false, hitStop: false })
+    this.presentCombatFeedback(summary, {
+      number: false,
+      ray: false,
+      hitStop: false,
+      camera: false,
+    })
     this.pendingCleaveHitStop = events.reduce(
       (duration, event) =>
         Math.max(duration, event.weight === 'lethal' ? HIT_STOP_LETHAL : HIT_STOP_CLEAVE),
@@ -9012,7 +9125,7 @@ uniform float uSwayAmplitude;`,
     aura.scale.setScalar(pulse)
   }
 
-  private updateCamera(immediate: boolean): void {
+  private updateCamera(delta: number, immediate: boolean): void {
     const forward = new THREE.Vector3(Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw))
     const target = this.player.position.clone().add(new THREE.Vector3(0, 1.65, 0))
     const desired = target
@@ -9021,7 +9134,7 @@ uniform float uSwayAmplitude;`,
       .add(new THREE.Vector3(0, 5.2 + this.cameraPitch * 3.5, 0))
     const resolved = this.resolveCameraPosition(target, desired)
     if (immediate) this.cameraFollowPosition.copy(resolved)
-    else this.cameraFollowPosition.lerp(resolved, 0.12)
+    else this.cameraFollowPosition.lerp(resolved, dampingAlpha(CAMERA_FOLLOW_DAMPING, delta))
 
     let cameraPosition = this.cameraFollowPosition
     let roll = 0
@@ -9048,6 +9161,7 @@ uniform float uSwayAmplitude;`,
     this.camera.position.copy(cameraPosition)
     this.camera.lookAt(target)
     if (roll !== 0) this.camera.rotateZ(roll)
+    this.updateCameraFov(delta, immediate)
     this.updatePlayerOutlineVisibility()
     this.updateFoliageOcclusion(target, this.camera.position, immediate)
   }

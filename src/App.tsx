@@ -872,11 +872,11 @@ function MenuScreen({
           type="button"
           onClick={onToggleScreenShake}
           aria-pressed={screenShakeEnabled}
-          aria-label={screenShakeEnabled ? 'Отключить тряску экрана' : 'Включить тряску экрана'}
-          title={screenShakeEnabled ? 'Отключить тряску экрана' : 'Включить тряску экрана'}
+          aria-label={screenShakeEnabled ? 'Отключить эффекты камеры' : 'Включить эффекты камеры'}
+          title={screenShakeEnabled ? 'Отключить эффекты камеры' : 'Включить эффекты камеры'}
         >
           <Vibrate aria-hidden="true" />
-          <span>{screenShakeEnabled ? 'Тряска: вкл.' : 'Тряска: выкл.'}</span>
+          <span>{screenShakeEnabled ? 'Камера: вкл.' : 'Камера: выкл.'}</span>
         </button>
         <label className="sfx-volume-control menu-sfx-volume">
           <Volume2 aria-hidden="true" />
@@ -1236,7 +1236,7 @@ function PauseModal({
           aria-pressed={screenShakeEnabled}
         >
           <Vibrate aria-hidden="true" />
-          <span>Тряска экрана</span>
+          <span>Эффекты камеры</span>
           <strong>{screenShakeEnabled ? 'Вкл.' : 'Выкл.'}</strong>
         </button>
         <label className="pause-setting sfx-volume-control">
