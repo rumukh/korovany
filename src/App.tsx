@@ -67,6 +67,7 @@ import {
   type BodyPart,
   type Faction,
   type GameView,
+  type LootRarity,
   type PartStatus,
   type SavedGame,
   type ShopItem,
@@ -122,6 +123,13 @@ const abilityIcons: Record<GameView['ability']['id'], ReactNode> = {
   bow: <Trees aria-hidden="true" />,
   shield: <Shield aria-hidden="true" />,
   cleave: <Sword aria-hidden="true" />,
+}
+
+const lootRarityLabels: Record<LootRarity, string> = {
+  common: 'Обычная',
+  uncommon: 'Необычная',
+  rare: 'Редкая',
+  legendary: 'Легендарная',
 }
 
 const bodyParts: Array<{ id: BodyPart; label: string; short: string; icon: ReactNode }> = [
@@ -311,6 +319,7 @@ function createInitialView(faction: Faction, savedGame?: SavedGame): GameView {
     caravanCooldown: 0,
     ability: createAbilityView(faction, currentStamina, body),
     activeEvent: null,
+    lootToast: null,
     campaignCompleted:
       savedGame?.campaignCompleted === true ||
       objectives.every((objective) => objective.done),
@@ -584,6 +593,38 @@ function AchievementBanner({ achievement }: { achievement: AchievementUnlock | n
         <p>{achievement.description}</p>
       </div>
     </aside>
+  )
+}
+
+function LootToast({ toast }: { toast: GameView['lootToast'] }) {
+  return (
+    <>
+      <span className="sr-only" role="status" aria-live="polite">
+        {toast
+          ? (
+              <span key={toast.id}>
+                {`${lootRarityLabels[toast.rarity]} награда. ${toast.title}. ${toast.detail}`}
+              </span>
+            )
+          : null}
+      </span>
+      {toast ? (
+        <aside
+          className={`loot-toast loot-${toast.rarity}`}
+          aria-hidden="true"
+          key={toast.id}
+        >
+          <span className="loot-rarity-shape">
+            <i />
+          </span>
+          <span className="loot-toast-copy">
+            <small>{lootRarityLabels[toast.rarity]} награда</small>
+            <strong>{toast.title}</strong>
+            <span>{toast.detail}</span>
+          </span>
+        </aside>
+      ) : null}
+    </>
   )
 }
 
@@ -1352,6 +1393,7 @@ function GameScreen({
   achievementBanner,
   runAchievements,
   paused,
+  simulationPaused,
   shopOpen,
   endResult,
   onResume,
@@ -1392,6 +1434,7 @@ function GameScreen({
   achievementBanner: AchievementUnlock | null
   runAchievements: AchievementView[]
   paused: boolean
+  simulationPaused: boolean
   shopOpen: boolean
   endResult: 'victory' | 'defeat' | null
   onResume: () => void
@@ -1476,7 +1519,9 @@ function GameScreen({
   })
 
   return (
-    <main className={`game-screen faction-${view.faction}${lowHealth ? ' low-health' : ''}`}>
+    <main
+      className={`game-screen faction-${view.faction}${lowHealth ? ' low-health' : ''}${simulationPaused ? ' simulation-paused' : ''}`}
+    >
       <div className="world-stage" ref={worldRef} />
       <div className="screen-vignette" aria-hidden="true" />
       <div className="low-health-vignette" aria-hidden="true" />
@@ -1591,6 +1636,7 @@ function GameScreen({
           </div>
         ))}
       </div>
+      <LootToast toast={view.lootToast} />
       <AchievementBanner achievement={achievementBanner} />
 
       <div className="crosshair" aria-hidden="true">
@@ -2097,6 +2143,9 @@ function App() {
         achievementBanner={achievementQueue[0] ?? null}
         runAchievements={runAchievements}
         paused={paused}
+        simulationPaused={
+          paused || shopOpen || achievementsOpen || Boolean(endResult)
+        }
         shopOpen={shopOpen}
         endResult={endResult}
         onResume={() => setPaused(false)}

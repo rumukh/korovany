@@ -22,6 +22,16 @@ button {
   border: 0;
 }
 
+.sr-only {
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
 .eyebrow {
   display: block;
   color: var(--cp-text-muted);
@@ -1779,6 +1789,152 @@ button {
   }
 }
 
+.loot-toast {
+  --loot-color: var(--cp-text);
+  align-items: center;
+  animation: loot-toast-life 2.4s ease-in-out both;
+  backdrop-filter: blur(14px);
+  background:
+    linear-gradient(
+      120deg,
+      color-mix(in srgb, var(--loot-color) 13%, var(--cp-panel-strong)),
+      var(--cp-panel-strong)
+    );
+  border: 1px solid color-mix(in srgb, var(--loot-color) 58%, var(--cp-border));
+  border-radius: 0.75rem;
+  box-shadow:
+    0 0 22px color-mix(in srgb, var(--loot-color) 16%, transparent),
+    var(--game-card-shadow);
+  display: grid;
+  gap: 0.72rem;
+  grid-template-columns: auto 1fr;
+  left: 50%;
+  max-width: min(24rem, calc(100% - 2rem));
+  padding: 0.72rem 0.9rem;
+  pointer-events: none;
+  position: absolute;
+  top: 6.4rem;
+  transform: translateX(-50%);
+  width: max-content;
+  z-index: 32;
+}
+
+.game-screen.simulation-paused .loot-toast {
+  animation-play-state: paused;
+}
+
+.loot-toast.loot-common {
+  --loot-color: var(--cp-text);
+}
+
+.loot-toast.loot-uncommon {
+  --loot-color: var(--cp-success);
+}
+
+.loot-toast.loot-rare {
+  --loot-color: var(--cp-link);
+}
+
+.loot-toast.loot-legendary {
+  --loot-color: var(--cp-warning);
+}
+
+.loot-rarity-shape {
+  align-items: center;
+  display: flex;
+  height: 2.3rem;
+  justify-content: center;
+  position: relative;
+  width: 2.3rem;
+}
+
+.loot-rarity-shape i,
+.loot-rarity-shape::before,
+.loot-rarity-shape::after {
+  border: 2px solid var(--loot-color);
+  box-sizing: border-box;
+  content: "";
+  display: block;
+  position: absolute;
+}
+
+.loot-common .loot-rarity-shape i {
+  border-radius: 50%;
+  height: 1.15rem;
+  width: 1.15rem;
+}
+
+.loot-uncommon .loot-rarity-shape i {
+  border-style: dashed;
+  height: 1.4rem;
+  transform: rotate(45deg);
+  width: 1.4rem;
+}
+
+.loot-rare .loot-rarity-shape::before,
+.loot-rare .loot-rarity-shape::after {
+  border-radius: 50%;
+}
+
+.loot-rare .loot-rarity-shape::before {
+  height: 1.2rem;
+  width: 1.2rem;
+}
+
+.loot-rare .loot-rarity-shape::after {
+  height: 1.85rem;
+  width: 1.85rem;
+}
+
+.loot-legendary .loot-rarity-shape i {
+  background: var(--loot-color);
+  border: 0;
+  clip-path: polygon(50% 0%, 61% 33%, 96% 15%, 74% 50%, 100% 66%, 64% 68%, 50% 100%, 37% 68%, 0% 66%, 26% 50%, 4% 15%, 39% 33%);
+  height: 2rem;
+  width: 2rem;
+}
+
+.loot-toast-copy {
+  display: grid;
+  gap: 0.08rem;
+  min-width: 0;
+}
+
+.loot-toast-copy small {
+  color: var(--loot-color);
+  font-size: 0.54rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.loot-toast-copy strong {
+  color: var(--cp-text);
+  font-size: 0.78rem;
+}
+
+.loot-toast-copy > span {
+  color: var(--cp-text-muted);
+  font-family: Consolas, "Courier New", Courier, monospace;
+  font-size: 0.64rem;
+}
+
+@keyframes loot-toast-life {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -0.6rem) scale(0.94);
+  }
+  12%,
+  82% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -0.2rem) scale(0.98);
+  }
+}
+
 .crosshair {
   height: 1.3rem;
   left: 50%;
@@ -2967,6 +3123,10 @@ kbd {
     top: 5.3rem;
   }
 
+  .loot-toast {
+    top: 8rem;
+  }
+
   .bottom-hud {
     bottom: 0.55rem;
     left: 50%;
@@ -3132,5 +3292,26 @@ kbd {
   .game-screen.low-health .low-health-vignette {
     animation: none !important;
     opacity: 0.24;
+  }
+
+  .loot-toast {
+    animation: loot-toast-reduced 2.4s linear both !important;
+  }
+}
+
+@keyframes loot-toast-reduced {
+  0%,
+  8% {
+    opacity: 0;
+    transform: translateX(-50%);
+  }
+  12%,
+  88% {
+    opacity: 1;
+    transform: translateX(-50%);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%);
   }
 }

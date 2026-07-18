@@ -18,6 +18,24 @@ export type PartStatus = 'healthy' | 'wounded' | 'missing' | 'prosthetic'
 
 export type NoticeTone = 'info' | 'success' | 'warning' | 'danger'
 
+export type LootRarity = 'common' | 'uncommon' | 'rare' | 'legendary'
+
+export type LootRewardKind = 'coins' | 'medicine' | 'whetstone'
+
+export interface LootReward {
+  kind: LootRewardKind
+  rarity: LootRarity
+  amount: number
+  label: string
+}
+
+export interface LootToastView {
+  id: number
+  rarity: LootRarity
+  title: string
+  detail: string
+}
+
 export type WorldEventKind =
   | 'richCaravan'
   | 'defendHome'
@@ -154,6 +172,7 @@ export interface GameView {
   caravanCooldown: number
   ability: AbilityView
   activeEvent: WorldEventView | null
+  lootToast: LootToastView | null
   campaignCompleted: boolean
   threatTier: number
   upgrades: UpgradeLevels

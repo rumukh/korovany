@@ -41,6 +41,10 @@ import {
   type Faction,
   type GameCallbacks,
   type GameView,
+  type LootRarity,
+  type LootReward,
+  type LootRewardKind,
+  type LootToastView,
   type MapMarker,
   type NoticeTone,
   type Objective,
@@ -307,6 +311,44 @@ interface Particle {
   mode?: 'smoke' | 'spark' | 'blood' | 'gib'
 }
 
+type LootPickupState = 'burst' | 'idle' | 'magnet'
+type LootCollectionReason = 'magnet' | 'save' | 'victory' | 'pool'
+
+interface LootRarityMaterials {
+  token: THREE.MeshBasicMaterial
+  beam: THREE.MeshBasicMaterial
+  ring: THREE.MeshBasicMaterial
+  star: THREE.SpriteMaterial
+}
+
+interface LootPickup {
+  root: THREE.Group
+  display: THREE.Group
+  tokenRoot: THREE.Group
+  tokens: Record<LootRewardKind, THREE.Group>
+  beams: [THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>, THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>]
+  smoothRing: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>
+  segmentedRing: THREE.Group
+  outerRing: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>
+  starburst: THREE.Sprite
+  reward: LootReward
+  state: LootPickupState
+  velocity: THREE.Vector3
+  age: number
+  idleAge: number
+  active: boolean
+  serial: number
+}
+
+interface LootCollectionBurst {
+  root: THREE.Group
+  shards: THREE.Mesh<THREE.OctahedronGeometry, THREE.MeshBasicMaterial>[]
+  directions: THREE.Vector3[]
+  active: boolean
+  age: number
+  serial: number
+}
+
 type DecalKind = 'blood' | 'scorch'
 
 interface Decal {
@@ -487,6 +529,31 @@ const NPC_ACCELERATION_DAMPING = 6.5
 const NPC_BRAKING_DAMPING = 11
 const NPC_BLOCKED_SPEED_RATIO = 0.22
 const MAX_ACTORS = 25
+const LOOT_DROP_CHANCE = 0.3
+const LOOT_MAX_ACTIVE = 20
+const LOOT_BURST_TIME = 0.45
+const LOOT_FORCE_MAGNET_AGE = 15
+const LOOT_MAGNET_RADIUS = 5.5
+const LOOT_COLLECT_RADIUS = 0.8
+const LOOT_MAGNET_ACCEL = 34
+const LOOT_MAGNET_MAX_SPEED = 22
+const LOOT_TOAST_TIME = 2.4
+const LOOT_Y = 0.34
+const LOOT_DAMAGE_CAP = 60
+const LOOT_COLLECTION_BURST_COUNT = 8
+const LOOT_COLLECTION_BURST_TIME = 0.42
+const LOOT_RARITY_RANK: Record<LootRarity, number> = {
+  common: 0,
+  uncommon: 1,
+  rare: 2,
+  legendary: 3,
+}
+const LOOT_BEAM_HEIGHT: Record<LootRarity, number> = {
+  common: 1.6,
+  uncommon: 2.6,
+  rare: 4.2,
+  legendary: 6.5,
+}
 const OUTLINE_ACTOR_DISTANCE_SQ = 38 * 38
 const OUTLINE_INTERACTABLE_DISTANCE_SQ = 46 * 46
 const OUTLINE_CORPSE_SECONDS = 8
@@ -985,6 +1052,13 @@ export class GameEngine {
   private readonly navigationWaypoint = new THREE.Vector3()
   private readonly eventRng = seededRandom((Date.now() % 2147483646) + 1)
   private readonly weatherRng = seededRandom(((Date.now() + 7919) % 2147483646) + 1)
+  private readonly lootRng: () => number
+  private readonly lootMaterials: Record<LootRarity, LootRarityMaterials>
+  private readonly lootPickups: LootPickup[] = []
+  private readonly lootCollectionBursts: LootCollectionBurst[] = []
+  private readonly lootTarget = new THREE.Vector3()
+  private readonly lootDirection = new THREE.Vector3()
+  private readonly reducedMotion: boolean
   private readonly player: THREE.Group
   private readonly playerOutline: OutlineBinding
   private readonly weaponTrail: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>
@@ -1057,6 +1131,11 @@ export class GameEngine {
   private actorSequence = 0
   private readonly audio: AudioDirector
   private readonly audioListenerRight = new THREE.Vector3()
+  private lootSequence = 0
+  private lootBurstSequence = 0
+  private lootToastSequence = 0
+  private lootToast: LootToastView | null = null
+  private lootToastExpiresAt = 0
   private dynamicDayNight: boolean
   private weatherEnabled: boolean
   private inkOutlinesEnabled: boolean
@@ -1109,6 +1188,8 @@ export class GameEngine {
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     this.groundFoliageQuality = settings.foliageQuality ?? 'high'
     this.palette = createPalette()
+    this.lootRng = seededRandom(this.lootSeed(settings.achievementRunId ?? faction))
+    this.lootMaterials = this.createLootMaterials()
     this.comicMaterials = new ComicMaterialLibrary({
       player: mix(this.palette.bg, this.palette.accent, 0.16),
       enemy: mix(this.palette.bg, this.palette.danger, 0.16),
@@ -1205,6 +1286,7 @@ export class GameEngine {
     this.updateAtmosphere(0)
     this.resolveCharacterOverlaps(this.player.position, PLAYER_COLLIDER_RADIUS)
     this.collectCameraObstacles(this.scene.children.slice(worldRootIndex))
+    this.initializeLootPool()
     this.caravan = this.createCaravan()
     this.scene.add(this.caravan)
     this.registerNamedInteractableOutline(this.caravan, 'cargo')
@@ -1245,6 +1327,7 @@ export class GameEngine {
   destroy(): void {
     cancelAnimationFrame(this.frameHandle)
     this.cancelActiveEvent()
+    this.clearLootRuntime()
     this.resizeObserver.disconnect()
     window.removeEventListener('keydown', this.boundKeyDown)
     window.removeEventListener('keyup', this.boundKeyUp)
@@ -1643,6 +1726,7 @@ export class GameEngine {
   }
 
   save(): SavedGame {
+    this.settleActiveLoot('save')
     const save: SavedGame = {
       version: 1,
       faction: this.faction,
@@ -1696,6 +1780,7 @@ export class GameEngine {
 
   private update(delta: number): void {
     this.elapsed += delta
+    this.updateLoot(delta)
     this.updateThreat()
     this.cleanupDeadActors()
     this.shakeClock += delta
@@ -3778,6 +3863,7 @@ export class GameEngine {
       this.completeObjective('patrol')
     }
     if (!this.campaignCompleted && this.objectives.every((objective) => objective.done)) {
+      this.settleActiveLoot('victory')
       this.campaignCompleted = true
       this.campaignCompletedAt = this.elapsed
       this.gold += 250
@@ -4022,6 +4108,7 @@ export class GameEngine {
         this.achievements.recordGoldEarned(70)
         message = 'Награда за цель получена. +70 золота.'
       }
+      this.spawnEventLoot(event)
       this.callbacks.onNotice(message, 'success')
       this.playSound('eventWin')
     } else {
@@ -5051,6 +5138,7 @@ export class GameEngine {
     const reward = actor.role === 'commander' ? 55 : 12
     this.gold += reward
     this.achievements.recordGoldEarned(reward)
+    this.trySpawnKillLoot(actor, deathPosition)
     this.callbacks.onNotice(
       actor.role === 'commander' ? 'Командир дворца повержен!' : `Враг повержен. +${reward} золота`,
       'success',
@@ -5322,6 +5410,8 @@ export class GameEngine {
     this.dropShield()
     this.cancelActiveEvent()
     this.clearTransientCombatFeedback()
+    if (result === 'victory') this.settleActiveLoot('victory')
+    else this.clearLootRuntime()
     this.ended = true
     this.achievements.recordCampaignEnd(result, this.elapsed, Math.max(0, this.health))
     this.keys.clear()
@@ -5426,6 +5516,7 @@ export class GameEngine {
       campaignCompleted: this.campaignCompleted,
       threatTier: this.threatTier,
       upgrades: { ...this.upgrades },
+      lootToast: this.lootToast ? { ...this.lootToast } : null,
       activeEvent: this.activeEvent
         ? {
             id: this.activeEvent.id,
@@ -5442,6 +5533,689 @@ export class GameEngine {
         : null,
     }
     this.callbacks.onView(view)
+  }
+
+  private lootSeed(value: string): number {
+    let seed = 104729
+    for (const character of value) {
+      seed = (seed * 31 + character.charCodeAt(0)) % 2147483647
+    }
+    return Math.max(1, seed)
+  }
+
+  private createLootMaterials(): Record<LootRarity, LootRarityMaterials> {
+    const canvas = document.createElement('canvas')
+    canvas.width = 64
+    canvas.height = 64
+    const context = canvas.getContext('2d')
+    if (context) {
+      context.translate(32, 32)
+      context.fillStyle = '#ffffff'
+      context.beginPath()
+      for (let point = 0; point < 16; point += 1) {
+        const angle = -Math.PI / 2 + (point * Math.PI) / 8
+        const radius = point % 2 === 0 ? 29 : 11
+        const x = Math.cos(angle) * radius
+        const y = Math.sin(angle) * radius
+        if (point === 0) context.moveTo(x, y)
+        else context.lineTo(x, y)
+      }
+      context.closePath()
+      context.fill()
+    }
+    const starTexture = new THREE.CanvasTexture(canvas)
+    starTexture.colorSpace = THREE.SRGBColorSpace
+    this.generatedTextures.set('loot-starburst', starTexture)
+
+    const colors: Record<LootRarity, THREE.Color> = {
+      common: this.palette.text.clone(),
+      uncommon: this.palette.success.clone(),
+      rare: this.palette.link.clone(),
+      legendary: this.palette.warning.clone(),
+    }
+    const create = (rarity: LootRarity): LootRarityMaterials => ({
+      token: new THREE.MeshBasicMaterial({
+        color: colors[rarity],
+        toneMapped: false,
+      }),
+      beam: new THREE.MeshBasicMaterial({
+        color: colors[rarity],
+        transparent: true,
+        opacity: 1,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      }),
+      ring: new THREE.MeshBasicMaterial({
+        color: colors[rarity],
+        transparent: true,
+        opacity: 1,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+      }),
+      star: new THREE.SpriteMaterial({
+        color: colors[rarity],
+        map: starTexture,
+        transparent: true,
+        opacity: 1,
+        depthWrite: false,
+        toneMapped: false,
+      }),
+    })
+    return {
+      common: create('common'),
+      uncommon: create('uncommon'),
+      rare: create('rare'),
+      legendary: create('legendary'),
+    }
+  }
+
+  private initializeLootPool(): void {
+    const coinGeometry = new THREE.CylinderGeometry(0.28, 0.28, 0.12, 8)
+    const medicineGeometry = new THREE.OctahedronGeometry(0.34, 0)
+    const medicineCrossGeometry = new THREE.BoxGeometry(0.12, 0.5, 0.08)
+    const whetstoneGeometry = new THREE.DodecahedronGeometry(0.3, 0)
+    const beamGeometry = new THREE.PlaneGeometry(0.34, 1)
+    const ringGeometry = new THREE.RingGeometry(0.62, 0.78, 32)
+    const outerRingGeometry = new THREE.RingGeometry(0.94, 1.05, 32)
+    const ringSegmentGeometry = new THREE.BoxGeometry(0.46, 0.035, 0.11)
+    const burstGeometry = new THREE.OctahedronGeometry(0.09, 0)
+    const placeholderReward: LootReward = {
+      kind: 'coins',
+      rarity: 'common',
+      amount: 0,
+      label: 'Монеты',
+    }
+
+    for (let index = 0; index < LOOT_MAX_ACTIVE; index += 1) {
+      const root = new THREE.Group()
+      root.name = `loot-pickup-${index}`
+      root.visible = false
+      const display = new THREE.Group()
+      const tokenRoot = new THREE.Group()
+      tokenRoot.position.y = 0.24
+      display.add(tokenRoot)
+      root.add(display)
+
+      const coins = new THREE.Group()
+      const coin = new THREE.Mesh(coinGeometry, this.lootMaterials.common.token)
+      coin.rotation.z = Math.PI / 2
+      coins.add(coin)
+
+      const medicine = new THREE.Group()
+      const vial = new THREE.Mesh(medicineGeometry, this.lootMaterials.common.token)
+      const crossVertical = new THREE.Mesh(
+        medicineCrossGeometry,
+        this.lootMaterials.common.token,
+      )
+      const crossHorizontal = new THREE.Mesh(
+        medicineCrossGeometry,
+        this.lootMaterials.common.token,
+      )
+      crossVertical.position.z = 0.25
+      crossHorizontal.position.z = 0.25
+      crossHorizontal.rotation.z = Math.PI / 2
+      medicine.add(vial, crossVertical, crossHorizontal)
+
+      const whetstone = new THREE.Group()
+      const stone = new THREE.Mesh(whetstoneGeometry, this.lootMaterials.common.token)
+      stone.scale.set(1.65, 0.72, 0.72)
+      stone.rotation.z = -0.2
+      whetstone.add(stone)
+
+      const tokens: Record<LootRewardKind, THREE.Group> = {
+        coins,
+        medicine,
+        whetstone,
+      }
+      tokenRoot.add(coins, medicine, whetstone)
+
+      const beamA = new THREE.Mesh(beamGeometry, this.lootMaterials.common.beam)
+      const beamB = new THREE.Mesh(beamGeometry, this.lootMaterials.common.beam)
+      beamB.rotation.y = Math.PI / 2
+      this.bindLootOpacity(beamA)
+      this.bindLootOpacity(beamB)
+      display.add(beamA, beamB)
+
+      const smoothRing = new THREE.Mesh(
+        ringGeometry,
+        this.lootMaterials.common.ring,
+      )
+      smoothRing.rotation.x = -Math.PI / 2
+      smoothRing.position.y = -LOOT_Y + 0.04
+      this.bindLootOpacity(smoothRing)
+      display.add(smoothRing)
+
+      const segmentedRing = new THREE.Group()
+      segmentedRing.position.y = -LOOT_Y + 0.04
+      for (let segment = 0; segment < 8; segment += 1) {
+        const angle = (segment / 8) * TWO_PI
+        const mesh = new THREE.Mesh(
+          ringSegmentGeometry,
+          this.lootMaterials.common.ring,
+        )
+        mesh.position.set(Math.cos(angle) * 0.72, 0, Math.sin(angle) * 0.72)
+        mesh.rotation.y = -angle
+        this.bindLootOpacity(mesh)
+        segmentedRing.add(mesh)
+      }
+      display.add(segmentedRing)
+
+      const outerRing = new THREE.Mesh(
+        outerRingGeometry,
+        this.lootMaterials.common.ring,
+      )
+      outerRing.rotation.x = -Math.PI / 2
+      outerRing.position.y = -LOOT_Y + 0.045
+      this.bindLootOpacity(outerRing)
+      display.add(outerRing)
+
+      const starburst = new THREE.Sprite(this.lootMaterials.common.star)
+      this.bindLootOpacity(starburst)
+      display.add(starburst)
+
+      this.scene.add(root)
+      this.lootPickups.push({
+        root,
+        display,
+        tokenRoot,
+        tokens,
+        beams: [beamA, beamB],
+        smoothRing,
+        segmentedRing,
+        outerRing,
+        starburst,
+        reward: placeholderReward,
+        state: 'burst',
+        velocity: new THREE.Vector3(),
+        age: 0,
+        idleAge: 0,
+        active: false,
+        serial: 0,
+      })
+    }
+
+    for (let index = 0; index < LOOT_COLLECTION_BURST_COUNT; index += 1) {
+      const root = new THREE.Group()
+      root.name = `loot-collection-burst-${index}`
+      root.visible = false
+      const shards: THREE.Mesh<THREE.OctahedronGeometry, THREE.MeshBasicMaterial>[] = []
+      const directions: THREE.Vector3[] = []
+      for (let shardIndex = 0; shardIndex < 7; shardIndex += 1) {
+        const angle = (shardIndex / 7) * TWO_PI
+        const shard = new THREE.Mesh(
+          burstGeometry,
+          this.lootMaterials.common.ring,
+        )
+        this.bindLootOpacity(shard)
+        shards.push(shard)
+        directions.push(
+          new THREE.Vector3(
+            Math.cos(angle),
+            0.45 + (shardIndex % 2) * 0.28,
+            Math.sin(angle),
+          ).normalize(),
+        )
+        root.add(shard)
+      }
+      this.scene.add(root)
+      this.lootCollectionBursts.push({
+        root,
+        shards,
+        directions,
+        active: false,
+        age: 0,
+        serial: 0,
+      })
+    }
+  }
+
+  private bindLootOpacity(object: THREE.Object3D): void {
+    object.userData.lootOpacity = 1
+    object.onBeforeRender = (
+      _renderer,
+      _scene,
+      _camera,
+      _geometry,
+      material,
+    ) => {
+      if (
+        material instanceof THREE.MeshBasicMaterial ||
+        material instanceof THREE.SpriteMaterial
+      ) {
+        material.opacity = object.userData.lootOpacity as number
+      }
+    }
+  }
+
+  private trySpawnKillLoot(actor: Actor, deathPosition: THREE.Vector3): void {
+    if (actor.role !== 'commander' && this.lootRng() >= LOOT_DROP_CHANCE) return
+    const minimumRarity: LootRarity =
+      actor.role === 'commander' ? 'rare' : 'common'
+    this.spawnLoot(this.rollLootReward(minimumRarity), deathPosition)
+  }
+
+  private spawnEventLoot(event: WorldEvent): void {
+    const legendary = event.kind === 'champion'
+    const position = legendary ? event.markerPos : this.player.position
+    this.spawnLoot(
+      this.rollLootReward(legendary ? 'legendary' : 'uncommon'),
+      position,
+    )
+  }
+
+  private rollLootReward(minimumRarity: LootRarity): LootReward {
+    const rarity = this.rollLootRarity(minimumRarity)
+    let kinds: LootRewardKind[]
+    if (rarity === 'common') {
+      kinds = ['coins']
+    } else if (rarity === 'uncommon') {
+      kinds = ['coins', 'medicine']
+    } else {
+      kinds =
+        this.damage >= LOOT_DAMAGE_CAP
+          ? ['coins', 'medicine']
+          : ['coins', 'medicine', 'whetstone']
+    }
+    const kind = kinds[Math.floor(this.lootRng() * kinds.length)]
+    let amount: number
+    if (rarity === 'legendary') {
+      amount = kind === 'coins' ? 70 : kind === 'medicine' ? 45 : 2
+    } else if (rarity === 'rare') {
+      amount =
+        kind === 'coins'
+          ? this.rollLootInteger(28, 42)
+          : kind === 'medicine'
+            ? this.rollLootInteger(24, 32)
+            : 1
+    } else if (rarity === 'uncommon') {
+      amount =
+        kind === 'coins'
+          ? this.rollLootInteger(12, 20)
+          : this.rollLootInteger(12, 18)
+    } else {
+      amount = this.rollLootInteger(5, 10)
+    }
+    const labels: Record<LootRewardKind, string> = {
+      coins: 'Монеты',
+      medicine: 'Лекарство',
+      whetstone: 'Точильный камень',
+    }
+    return { kind, rarity, amount, label: labels[kind] }
+  }
+
+  private rollLootRarity(minimumRarity: LootRarity): LootRarity {
+    const roll = this.lootRng()
+    const rolled: LootRarity =
+      roll < 0.62
+        ? 'common'
+        : roll < 0.89
+          ? 'uncommon'
+          : roll < 0.98
+            ? 'rare'
+            : 'legendary'
+    return LOOT_RARITY_RANK[rolled] < LOOT_RARITY_RANK[minimumRarity]
+      ? minimumRarity
+      : rolled
+  }
+
+  private rollLootInteger(min: number, max: number): number {
+    return min + Math.floor(this.lootRng() * (max - min + 1))
+  }
+
+  private spawnLoot(reward: LootReward, position: THREE.Vector3): void {
+    const pickup = this.acquireLootPickup()
+    pickup.reward = reward
+    pickup.state = 'burst'
+    pickup.age = 0
+    pickup.idleAge = 0
+    pickup.active = true
+    pickup.serial = ++this.lootSequence
+    pickup.root.position.set(
+      position.x,
+      Math.max(LOOT_Y, position.y + 0.4),
+      position.z,
+    )
+    const angle = this.lootRng() * TWO_PI
+    const radialSpeed = 0.8 + this.lootRng() * 1.25
+    pickup.velocity.set(
+      Math.cos(angle) * radialSpeed,
+      2.4 + this.lootRng() * 1.2,
+      Math.sin(angle) * radialSpeed,
+    )
+    pickup.root.visible = true
+    this.configureLootVisual(pickup)
+  }
+
+  private acquireLootPickup(): LootPickup {
+    const inactive = this.lootPickups.find((pickup) => !pickup.active)
+    if (inactive) return inactive
+
+    let candidate: LootPickup | null = null
+    for (const pickup of this.lootPickups) {
+      if (
+        pickup.reward.rarity === 'common' &&
+        (!candidate ||
+          candidate.reward.rarity !== 'common' ||
+          pickup.serial < candidate.serial)
+      ) {
+        candidate = pickup
+      }
+    }
+    if (!candidate) {
+      for (const pickup of this.lootPickups) {
+        if (
+          !candidate ||
+          LOOT_RARITY_RANK[pickup.reward.rarity] <
+            LOOT_RARITY_RANK[candidate.reward.rarity] ||
+          (pickup.reward.rarity === candidate.reward.rarity &&
+            pickup.serial < candidate.serial)
+        ) {
+          candidate = pickup
+        }
+      }
+    }
+    if (!candidate) throw new Error('Korovany: loot pool is unexpectedly empty.')
+    this.collectLoot(candidate, 'pool')
+    return candidate
+  }
+
+  private configureLootVisual(pickup: LootPickup): void {
+    const { rarity, kind } = pickup.reward
+    const materials = this.lootMaterials[rarity]
+    const beamHeight = LOOT_BEAM_HEIGHT[rarity]
+    pickup.root.scale.setScalar(1)
+    pickup.display.scale.setScalar(1)
+    pickup.tokenRoot.position.y = 0.24
+    pickup.tokenRoot.rotation.set(0, 0, 0)
+    pickup.tokenRoot.scale.setScalar(0.2)
+    for (const [tokenKind, token] of Object.entries(pickup.tokens)) {
+      token.visible = tokenKind === kind
+      token.traverse((object) => {
+        if (object instanceof THREE.Mesh) object.material = materials.token
+      })
+    }
+    for (const beam of pickup.beams) {
+      beam.material = materials.beam
+      beam.position.y = beamHeight * 0.5
+      beam.scale.set(1, beamHeight, 1)
+      beam.userData.lootOpacity = 0
+      beam.visible = true
+    }
+    pickup.smoothRing.material = materials.ring
+    pickup.outerRing.material = materials.ring
+    pickup.segmentedRing.traverse((object) => {
+      if (object instanceof THREE.Mesh) object.material = materials.ring
+    })
+    pickup.smoothRing.visible = rarity !== 'uncommon'
+    pickup.segmentedRing.visible = rarity === 'uncommon'
+    pickup.outerRing.visible = rarity === 'rare' || rarity === 'legendary'
+    pickup.smoothRing.scale.setScalar(1)
+    pickup.segmentedRing.scale.setScalar(1)
+    pickup.outerRing.scale.setScalar(1)
+    this.setLootRingOpacity(pickup, 0)
+    pickup.starburst.material = materials.star
+    pickup.starburst.position.set(0, beamHeight + 0.45, 0)
+    pickup.starburst.scale.setScalar(rarity === 'legendary' ? 0.95 : 0)
+    pickup.starburst.visible = rarity === 'legendary'
+    pickup.starburst.userData.lootOpacity = 0
+  }
+
+  private updateLoot(delta: number): void {
+    if (this.lootToast && this.elapsed >= this.lootToastExpiresAt) {
+      this.lootToast = null
+      this.lootToastExpiresAt = 0
+      this.emitView(true)
+    }
+    this.updateLootCollectionBursts(delta)
+
+    for (const pickup of this.lootPickups) {
+      if (!pickup.active) continue
+      pickup.age += delta
+      const phase = pickup.serial * 2.399963229728653
+      const motion = this.reducedMotion ? 0 : Math.sin(this.elapsed * 2.7 + phase)
+      pickup.tokenRoot.position.y = 0.24 + motion * 0.07
+      if (!this.reducedMotion) pickup.tokenRoot.rotation.y += delta * 1.7
+
+      if (pickup.state === 'burst') {
+        pickup.velocity.y -= 9.5 * delta
+        pickup.root.position.addScaledVector(pickup.velocity, delta)
+        const burstProgress = THREE.MathUtils.clamp(
+          pickup.age / LOOT_BURST_TIME,
+          0,
+          1,
+        )
+        pickup.tokenRoot.scale.setScalar(
+          THREE.MathUtils.lerp(0.2, 1, smoothstep(0, 1, burstProgress)),
+        )
+        if (
+          pickup.root.position.y <= LOOT_Y ||
+          pickup.age >= LOOT_BURST_TIME
+        ) {
+          pickup.root.position.y = LOOT_Y
+          pickup.velocity.set(0, 0, 0)
+          pickup.state = 'idle'
+          pickup.idleAge = 0
+          pickup.tokenRoot.scale.setScalar(1)
+        }
+      } else {
+        pickup.tokenRoot.scale.setScalar(1)
+        pickup.idleAge += delta
+      }
+
+      const reveal =
+        pickup.state === 'burst'
+          ? 0
+          : THREE.MathUtils.clamp(pickup.idleAge / 0.12, 0, 1)
+      for (const beam of pickup.beams) beam.userData.lootOpacity = reveal * 0.32
+      this.setLootRingOpacity(pickup, reveal * 0.82)
+      pickup.starburst.userData.lootOpacity = reveal * 0.95
+      this.updateLootPulse(pickup, phase)
+
+      if (pickup.state === 'idle') {
+        const dx = pickup.root.position.x - this.player.position.x
+        const dz = pickup.root.position.z - this.player.position.z
+        if (
+          dx * dx + dz * dz <= LOOT_MAGNET_RADIUS * LOOT_MAGNET_RADIUS ||
+          pickup.age >= LOOT_FORCE_MAGNET_AGE
+        ) {
+          pickup.state = 'magnet'
+        }
+      }
+      if (pickup.state !== 'magnet' || this.health <= 0) continue
+
+      this.lootTarget.copy(this.player.position)
+      this.lootTarget.y += 1.25
+      this.lootDirection.copy(this.lootTarget).sub(pickup.root.position)
+      let distance = this.lootDirection.length()
+      if (distance <= LOOT_COLLECT_RADIUS) {
+        this.collectLoot(pickup, 'magnet')
+        continue
+      }
+      this.lootDirection.multiplyScalar(1 / Math.max(distance, 0.0001))
+      pickup.velocity.addScaledVector(
+        this.lootDirection,
+        LOOT_MAGNET_ACCEL * delta,
+      )
+      pickup.velocity.multiplyScalar(Math.exp(-3.2 * delta))
+      pickup.velocity.clampLength(0, LOOT_MAGNET_MAX_SPEED)
+      pickup.root.position.addScaledVector(pickup.velocity, delta)
+      this.lootDirection.copy(this.lootTarget).sub(pickup.root.position)
+      distance = this.lootDirection.length()
+      if (distance <= LOOT_COLLECT_RADIUS) this.collectLoot(pickup, 'magnet')
+    }
+  }
+
+  private updateLootPulse(pickup: LootPickup, phase: number): void {
+    pickup.display.scale.setScalar(1)
+    pickup.smoothRing.scale.setScalar(1)
+    pickup.segmentedRing.scale.setScalar(1)
+    pickup.outerRing.scale.setScalar(1)
+    for (const beam of pickup.beams) beam.scale.x = 1
+    if (this.reducedMotion || pickup.reward.rarity === 'common') return
+
+    const pulse = Math.sin(this.elapsed * 2.3 + phase)
+    if (pickup.reward.rarity === 'uncommon') {
+      pickup.segmentedRing.scale.setScalar(1 + pulse * 0.055)
+    } else if (pickup.reward.rarity === 'rare') {
+      pickup.smoothRing.scale.setScalar(1 + pulse * 0.07)
+      pickup.outerRing.scale.setScalar(1 - pulse * 0.07)
+    } else {
+      const strongPulse = 1 + Math.max(0, pulse) * 0.12
+      pickup.smoothRing.scale.setScalar(strongPulse)
+      pickup.outerRing.scale.setScalar(2 - strongPulse)
+      for (const beam of pickup.beams) beam.scale.x = strongPulse
+    }
+  }
+
+  private setLootRingOpacity(pickup: LootPickup, opacity: number): void {
+    pickup.smoothRing.userData.lootOpacity = opacity
+    pickup.outerRing.userData.lootOpacity = opacity
+    pickup.segmentedRing.traverse((object) => {
+      if (object instanceof THREE.Mesh) object.userData.lootOpacity = opacity
+    })
+  }
+
+  private collectLoot(
+    pickup: LootPickup,
+    reason: LootCollectionReason,
+  ): void {
+    if (!pickup.active) return
+    void reason
+    const reward = pickup.reward
+    pickup.active = false
+    this.spawnLootCollectionBurst(pickup.root.position, reward.rarity)
+    pickup.root.visible = false
+    pickup.velocity.set(0, 0, 0)
+    pickup.age = 0
+    pickup.idleAge = 0
+    const detail = this.applyLootReward(reward)
+    this.playSound('coin')
+    this.lootToast = {
+      id: ++this.lootToastSequence,
+      rarity: reward.rarity,
+      title: reward.label,
+      detail,
+    }
+    this.lootToastExpiresAt = this.elapsed + LOOT_TOAST_TIME
+    this.emitView(true)
+  }
+
+  private applyLootReward(reward: LootReward): string {
+    if (reward.kind === 'coins') {
+      this.gold += reward.amount
+      this.achievements.recordGoldEarned(reward.amount)
+      return `+${reward.amount} золота`
+    }
+    if (reward.kind === 'medicine') {
+      if (this.health >= this.maxHealth) {
+        const convertedGold = Math.ceil(reward.amount / 2)
+        this.gold += convertedGold
+        this.achievements.recordGoldEarned(convertedGold)
+        return `Полное здоровье: +${convertedGold} золота`
+      }
+      const before = Math.ceil(this.health)
+      this.health = Math.min(this.maxHealth, this.health + reward.amount)
+      return `Здоровье ${before} -> ${Math.ceil(this.health)}`
+    }
+
+    const before = this.damage
+    const usable = Math.min(
+      reward.amount,
+      Math.max(0, LOOT_DAMAGE_CAP - this.damage),
+    )
+    const unused = reward.amount - usable
+    this.damage += usable
+    const convertedGold = unused * 25
+    if (convertedGold > 0) {
+      this.gold += convertedGold
+      this.achievements.recordGoldEarned(convertedGold)
+    }
+    if (usable > 0 && convertedGold > 0) {
+      return `Урон ${before} -> ${this.damage}; излишек +${convertedGold} золота`
+    }
+    if (usable > 0) return `Урон ${before} -> ${this.damage}`
+    return `Предел урона ${this.damage}: +${convertedGold} золота`
+  }
+
+  private spawnLootCollectionBurst(
+    position: THREE.Vector3,
+    rarity: LootRarity,
+  ): void {
+    let burst = this.lootCollectionBursts.find((entry) => !entry.active)
+    if (!burst) {
+      burst = this.lootCollectionBursts.reduce((oldest, entry) =>
+        entry.serial < oldest.serial ? entry : oldest,
+      )
+    }
+    burst.active = true
+    burst.age = 0
+    burst.serial = ++this.lootBurstSequence
+    burst.root.position.copy(position)
+    burst.root.visible = true
+    const material = this.lootMaterials[rarity].ring
+    for (const shard of burst.shards) {
+      shard.material = material
+      shard.position.set(0, 0, 0)
+      shard.scale.setScalar(1)
+      shard.userData.lootOpacity = 1
+    }
+  }
+
+  private updateLootCollectionBursts(delta: number): void {
+    for (const burst of this.lootCollectionBursts) {
+      if (!burst.active) continue
+      burst.age += delta
+      if (burst.age >= LOOT_COLLECTION_BURST_TIME) {
+        burst.active = false
+        burst.root.visible = false
+        continue
+      }
+      const progress = burst.age / LOOT_COLLECTION_BURST_TIME
+      const distance = progress * 1.65
+      const scale = 1 - progress * 0.65
+      for (let index = 0; index < burst.shards.length; index += 1) {
+        const shard = burst.shards[index]
+        shard.position.copy(burst.directions[index]).multiplyScalar(distance)
+        shard.position.y -= progress * progress * 0.7
+        shard.rotation.x += delta * 5
+        shard.rotation.y += delta * 7
+        shard.scale.setScalar(scale)
+        shard.userData.lootOpacity = 1 - progress
+      }
+    }
+  }
+
+  private settleActiveLoot(reason: Extract<LootCollectionReason, 'save' | 'victory'>): void {
+    while (true) {
+      let oldest: LootPickup | null = null
+      for (const pickup of this.lootPickups) {
+        if (pickup.active && (!oldest || pickup.serial < oldest.serial)) {
+          oldest = pickup
+        }
+      }
+      if (!oldest) return
+      this.collectLoot(oldest, reason)
+    }
+  }
+
+  private clearLootRuntime(): void {
+    for (const pickup of this.lootPickups) {
+      pickup.active = false
+      pickup.root.visible = false
+      pickup.velocity.set(0, 0, 0)
+      pickup.age = 0
+      pickup.idleAge = 0
+    }
+    for (const burst of this.lootCollectionBursts) {
+      burst.active = false
+      burst.root.visible = false
+      burst.age = 0
+    }
+    this.lootToast = null
+    this.lootToastExpiresAt = 0
   }
 
   private setupLights(): void {
