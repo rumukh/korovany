@@ -7,6 +7,11 @@ import {
   type AchievementView,
 } from './achievements'
 import {
+  ComicMaterialLibrary,
+  type OutlineBinding,
+  type OutlineKind,
+} from './ComicMaterialLibrary'
+import {
   ABILITY_INFO,
   FACTION_INFO,
   SAVE_KEY,
@@ -35,6 +40,7 @@ export interface GameEngineSettings {
   dynamicDayNight: boolean
   weatherEnabled: boolean
   bloomEnabled: boolean
+  inkOutlinesEnabled: boolean
   screenShakeEnabled: boolean
   foliageQuality: FoliageQuality
   achievementRunId: string
@@ -93,6 +99,8 @@ interface Actor {
   healthBarCanvas: HTMLCanvasElement
   healthBarTexture: THREE.CanvasTexture
   healthBarVisibleUntil: number
+  outlineBinding: OutlineBinding
+  outlineUntil: number
 }
 
 interface ActorSpawnOptions {
@@ -107,6 +115,11 @@ interface ActorSpawnOptions {
 interface ActorKillContext {
   killerFaction: Faction
   directPlayerKill: boolean
+}
+
+interface InteractableOutlineBinding {
+  binding: OutlineBinding
+  positionRoot: THREE.Object3D
 }
 
 interface WorldEvent {
@@ -320,6 +333,10 @@ const NPC_ACCELERATION_DAMPING = 6.5
 const NPC_BRAKING_DAMPING = 11
 const NPC_BLOCKED_SPEED_RATIO = 0.22
 const MAX_ACTORS = 25
+const OUTLINE_ACTOR_DISTANCE_SQ = 38 * 38
+const OUTLINE_INTERACTABLE_DISTANCE_SQ = 46 * 46
+const OUTLINE_CORPSE_SECONDS = 8
+const OUTLINE_PLAYER_HIDE_DISTANCE_SQ = 2.4 * 2.4
 const FIRST_EVENT_AT = 50
 const EVENT_COOLDOWN_MIN = 60
 const EVENT_COOLDOWN_MAX = 90
@@ -657,7 +674,7 @@ function createDayNightKeyframes(palette: Palette): DayNightKeyframes {
       hemisphereGround: palette.worldAmbientGround.clone().multiplyScalar(0.52),
       skyTint: mix(palette.worldSky, palette.worldFog, 0.45).multiplyScalar(0.28),
       sunIntensity: 0.15,
-      hemisphereIntensity: 0.45,
+      hemisphereIntensity: 0.9,
     },
     twilight: {
       sun: mix(palette.worldSun, palette.danger, 0.35),
@@ -742,6 +759,7 @@ export class GameEngine {
   private readonly camera = new THREE.PerspectiveCamera(56, 1, 0.1, 240)
   private readonly renderer: THREE.WebGLRenderer
   private readonly postProcessor: BloomPostProcessor
+  private readonly comicMaterials: ComicMaterialLibrary
   private readonly clock = new THREE.Clock()
   private readonly keys = new Set<string>()
   private readonly actors: Actor[] = []
@@ -750,6 +768,8 @@ export class GameEngine {
   private readonly projectiles: Projectile[] = []
   private readonly projectileSourcesToClear = new Set<string>()
   private readonly generatedTextures = new Map<string, THREE.CanvasTexture>()
+  private readonly outlineBindings: OutlineBinding[] = []
+  private readonly interactableOutlineBindings: InteractableOutlineBinding[] = []
   private readonly clouds: Array<{ group: THREE.Group; speed: number }> = []
   private readonly flames: THREE.Mesh[] = []
   private readonly torchLights: THREE.PointLight[] = []
@@ -792,6 +812,7 @@ export class GameEngine {
   private readonly eventRng = seededRandom((Date.now() % 2147483646) + 1)
   private readonly weatherRng = seededRandom(((Date.now() + 7919) % 2147483646) + 1)
   private readonly player: THREE.Group
+  private readonly playerOutline: OutlineBinding
   private readonly caravan: THREE.Group
   private readonly vendorPosition = new THREE.Vector3(-46, 0, -39)
   private readonly commanderPosition = new THREE.Vector3(40, 0, -36)
@@ -855,6 +876,7 @@ export class GameEngine {
   private musicMuted: boolean
   private dynamicDayNight: boolean
   private weatherEnabled: boolean
+  private inkOutlinesEnabled: boolean
   private screenShakeEnabled: boolean
   private groundFoliageQuality: FoliageQuality
   private nightFactor = 0
@@ -891,9 +913,15 @@ export class GameEngine {
     this.musicMuted = settings.musicMuted ?? false
     this.dynamicDayNight = settings.dynamicDayNight ?? true
     this.weatherEnabled = settings.weatherEnabled ?? true
+    this.inkOutlinesEnabled = settings.inkOutlinesEnabled ?? true
     this.screenShakeEnabled = settings.screenShakeEnabled ?? true
     this.groundFoliageQuality = settings.foliageQuality ?? 'high'
     this.palette = createPalette()
+    this.comicMaterials = new ComicMaterialLibrary({
+      player: mix(this.palette.bg, this.palette.accent, 0.16),
+      enemy: mix(this.palette.bg, this.palette.danger, 0.16),
+      interactable: mix(this.palette.bg, this.palette.warning, 0.18),
+    })
     this.dayNightKeyframes = createDayNightKeyframes(this.palette)
     this.weatherFrostColor
       .copy(this.palette.worldFog)
@@ -939,6 +967,7 @@ export class GameEngine {
     this.player.position.set(spawn[0], spawn[1], spawn[2])
     this.scene.add(this.player)
     this.applySavedBodyAppearance()
+    this.playerOutline = this.registerOutline(this.player, 'player')
     this.lastZone = zoneAt(this.player.position.x, this.player.position.z)
     // Loading a save starts a fresh achievement run; cumulative progress remains global.
     this.achievements.beginRun(faction, this.lastZone, settings.achievementRunId)
@@ -960,6 +989,7 @@ export class GameEngine {
     this.collectCameraObstacles(this.scene.children.slice(worldRootIndex))
     this.caravan = this.createCaravan()
     this.scene.add(this.caravan)
+    this.registerNamedInteractableOutline(this.caravan, 'cargo')
     this.spawnPopulation()
     this.cameraYaw = faction === 'elf' ? -0.8 : faction === 'guard' ? 2.4 : 0.8
     this.updateCamera(true)
@@ -1011,6 +1041,8 @@ export class GameEngine {
     window.removeEventListener('pagehide', this.stopMusicOwner)
     window.removeEventListener('beforeunload', this.stopMusicOwner)
     if (document.pointerLockElement === this.renderer.domElement) document.exitPointerLock()
+    const geometries = new Set<THREE.BufferGeometry>()
+    const materials = new Set<THREE.Material>()
     this.scene.traverse((object) => {
       if (
         !(object instanceof THREE.Mesh) &&
@@ -1026,18 +1058,25 @@ export class GameEngine {
         object instanceof THREE.Points ||
         object instanceof THREE.Line
       ) {
-        object.geometry.dispose()
+        geometries.add(object.geometry)
       }
       const material = object.material
-      if (Array.isArray(material)) material.forEach((entry) => entry.dispose())
-      else material.dispose()
+      if (Array.isArray(material)) material.forEach((entry) => materials.add(entry))
+      else materials.add(material)
+    })
+    geometries.forEach((geometry) => geometry.dispose())
+    materials.forEach((material) => {
+      if (!ComicMaterialLibrary.isLibraryOwned(material)) material.dispose()
     })
     this.postProcessor.dispose()
+    this.comicMaterials.dispose()
     this.renderer.dispose()
     this.renderer.domElement.remove()
     this.actors.forEach((actor) => actor.healthBarTexture.dispose())
     this.generatedTextures.forEach((texture) => texture.dispose())
     this.generatedTextures.clear()
+    this.outlineBindings.length = 0
+    this.interactableOutlineBindings.length = 0
     this.projectiles.length = 0
     this.projectileSourcesToClear.clear()
     this.stopMusic()
@@ -1105,6 +1144,14 @@ export class GameEngine {
 
   setBloomEnabled(enabled: boolean): void {
     this.postProcessor.setEnabled(enabled)
+  }
+
+  setInkOutlinesEnabled(enabled: boolean): void {
+    if (this.inkOutlinesEnabled === enabled) return
+    this.inkOutlinesEnabled = enabled
+    this.updatePlayerOutlineVisibility()
+    for (const actor of this.actors) this.updateActorOutlineVisibility(actor)
+    this.updateInteractableOutlines()
   }
 
   setFoliageQuality(quality: FoliageQuality): void {
@@ -1395,6 +1442,7 @@ export class GameEngine {
     this.updatePlayer(delta)
     this.updateCaravan(delta)
     this.updateActors(delta)
+    this.updateInteractableOutlines()
     this.updateProjectiles(delta)
     this.updateParticles(delta)
     this.updateDecals(delta)
@@ -2321,6 +2369,100 @@ export class GameEngine {
       hostile(actor.faction, this.faction) &&
       playerDistance < 34 &&
       (this.elapsed < actor.healthBarVisibleUntil || actor.rageTimer > 0)
+    this.updateActorOutlineVisibility(actor, playerDistance * playerDistance)
+  }
+
+  private updateActorOutlineVisibility(actor: Actor, playerDistanceSq?: number): void {
+    let distanceSq = playerDistanceSq
+    if (distanceSq === undefined) {
+      const dx = actor.mesh.position.x - this.player.position.x
+      const dy = actor.mesh.position.y - this.player.position.y
+      const dz = actor.mesh.position.z - this.player.position.z
+      distanceSq = dx * dx + dy * dy + dz * dz
+    }
+    this.setOutlineVisible(
+      actor.outlineBinding,
+      this.inkOutlinesEnabled &&
+        distanceSq <= OUTLINE_ACTOR_DISTANCE_SQ &&
+        (actor.alive || this.elapsed < actor.outlineUntil),
+    )
+  }
+
+  private registerOutline(root: THREE.Object3D, kind: OutlineKind): OutlineBinding {
+    const binding = this.comicMaterials.applyOutline(root, kind)
+    this.outlineBindings.push(binding)
+    this.setOutlineVisible(binding, false)
+    return binding
+  }
+
+  private registerInteractableOutline(
+    root: THREE.Object3D,
+    positionRoot: THREE.Object3D = root,
+  ): OutlineBinding {
+    const binding = this.registerOutline(root, 'interactable')
+    this.interactableOutlineBindings.push({ binding, positionRoot })
+    this.updateInteractableOutline(binding, positionRoot)
+    return binding
+  }
+
+  private registerNamedInteractableOutline(root: THREE.Object3D, name: string): OutlineBinding | null {
+    const target = root.getObjectByName(name)
+    return target ? this.registerInteractableOutline(target, root) : null
+  }
+
+  private updateInteractableOutlines(): void {
+    for (const entry of this.interactableOutlineBindings) {
+      this.updateInteractableOutline(entry.binding, entry.positionRoot)
+    }
+  }
+
+  private updateInteractableOutline(binding: OutlineBinding, positionRoot: THREE.Object3D): void {
+    const dx = positionRoot.position.x - this.player.position.x
+    const dy = positionRoot.position.y - this.player.position.y
+    const dz = positionRoot.position.z - this.player.position.z
+    this.setOutlineVisible(
+      binding,
+      this.inkOutlinesEnabled &&
+        dx * dx + dy * dy + dz * dz <= OUTLINE_INTERACTABLE_DISTANCE_SQ,
+    )
+  }
+
+  private updatePlayerOutlineVisibility(): void {
+    const distanceSq = this.camera.position.distanceToSquared(this.player.position)
+    this.setOutlineVisible(
+      this.playerOutline,
+      this.inkOutlinesEnabled && distanceSq >= OUTLINE_PLAYER_HIDE_DISTANCE_SQ,
+    )
+  }
+
+  private setOutlineVisible(binding: OutlineBinding, visible: boolean): void {
+    for (const shell of binding.shells) shell.visible = visible
+  }
+
+  private unregisterOutlineRoot(root: THREE.Object3D): void {
+    for (let index = this.interactableOutlineBindings.length - 1; index >= 0; index -= 1) {
+      const entry = this.interactableOutlineBindings[index]
+      if (
+        this.objectBelongsToRoot(root, entry.binding.root) ||
+        this.objectBelongsToRoot(root, entry.positionRoot)
+      ) {
+        this.interactableOutlineBindings.splice(index, 1)
+      }
+    }
+    for (let index = this.outlineBindings.length - 1; index >= 0; index -= 1) {
+      if (this.objectBelongsToRoot(root, this.outlineBindings[index].root)) {
+        this.outlineBindings.splice(index, 1)
+      }
+    }
+  }
+
+  private objectBelongsToRoot(root: THREE.Object3D, candidate: THREE.Object3D): boolean {
+    let current: THREE.Object3D | null = candidate
+    while (current) {
+      if (current === root) return true
+      current = current.parent
+    }
+    return false
   }
 
   private getAimDirection(): THREE.Vector3 {
@@ -3042,6 +3184,7 @@ export class GameEngine {
     const roadX = this.pickEventRoadX()
     caravan.position.set(roadX, 0, -23)
     this.scene.add(caravan)
+    this.registerNamedInteractableOutline(caravan, 'cargo')
 
     const enemyFaction = this.pickEventEnemyFaction()
     const ownedActorIds: string[] = []
@@ -3574,13 +3717,20 @@ export class GameEngine {
   }
 
   private removeAndDisposeObject(object: THREE.Object3D): void {
+    this.unregisterOutlineRoot(object)
     object.removeFromParent()
+    const geometries = new Set<THREE.BufferGeometry>()
+    const materials = new Set<THREE.Material>()
     object.traverse((child) => {
       if (!(child instanceof THREE.Mesh) && !(child instanceof THREE.Sprite)) return
-      if (child instanceof THREE.Mesh) child.geometry.dispose()
+      if (child instanceof THREE.Mesh) geometries.add(child.geometry)
       const material = child.material
-      if (Array.isArray(material)) material.forEach((entry) => entry.dispose())
-      else material.dispose()
+      if (Array.isArray(material)) material.forEach((entry) => materials.add(entry))
+      else materials.add(material)
+    })
+    geometries.forEach((geometry) => geometry.dispose())
+    materials.forEach((material) => {
+      if (!ComicMaterialLibrary.isLibraryOwned(material)) material.dispose()
     })
   }
 
@@ -3868,6 +4018,7 @@ export class GameEngine {
       }
     }
     actor.alive = false
+    actor.outlineUntil = this.elapsed + OUTLINE_CORPSE_SECONDS
     actor.healthBar.visible = false
     const ring = actor.mesh.getObjectByName('faction-ring')
     if (ring) ring.visible = false
@@ -3954,9 +4105,9 @@ export class GameEngine {
     )
     const detached = new THREE.Mesh(
       new THREE.BoxGeometry(part.includes('Leg') ? 0.32 : 0.25, part.includes('Leg') ? 0.95 : 0.78, 0.3),
-      new THREE.MeshStandardMaterial({
+      this.comicMaterials.createToonMaterial({
         color: this.factionColor(this.faction),
-        roughness: 0.9,
+        surface: 'cloth',
       }),
     )
     detached.position.copy(this.player.position).add(new THREE.Vector3(part.startsWith('left') ? -0.6 : 0.6, 1.2, 0))
@@ -3975,11 +4126,12 @@ export class GameEngine {
     if (!limb) return
     limb.visible = true
     limb.traverse((object) => {
-      if (!(object instanceof THREE.Mesh)) return
-      object.material = new THREE.MeshStandardMaterial({
+      if (!(object instanceof THREE.Mesh) || object.userData.comicOutline === true) return
+      object.material = this.comicMaterials.createToonMaterial({
         color: this.palette.borderStrong,
-        metalness: 0.72,
-        roughness: 0.35,
+        surface: 'metal',
+        emissive: this.palette.borderStrong,
+        emissiveIntensity: 0.08,
       })
     })
   }
@@ -4011,7 +4163,10 @@ export class GameEngine {
     )
     const detached = new THREE.Mesh(
       new THREE.BoxGeometry(0.28, limb.name.includes('Leg') ? 0.92 : 0.72, 0.28),
-      new THREE.MeshStandardMaterial({ color: this.factionColor(actor.faction), roughness: 0.9 }),
+      this.comicMaterials.createToonMaterial({
+        color: this.factionColor(actor.faction),
+        surface: 'cloth',
+      }),
     )
     detached.position.copy(actor.mesh.position).add(new THREE.Vector3(0, 1.4, 0))
     detached.castShadow = true
@@ -5596,6 +5751,13 @@ uniform float uSwayAmplitude;`,
     this.scene.add(shop)
     const sign = this.createSign('ЛЕКАРЬ • ПРОТЕЗЫ', this.vendorPosition.x, 4.5, this.vendorPosition.z + 2.8)
     this.scene.add(sign)
+    const vendorBeacon = this.createBeacon(
+      this.vendorPosition.x,
+      this.vendorPosition.z + 3.8,
+      this.palette.warning,
+    )
+    this.scene.add(vendorBeacon)
+    this.registerInteractableOutline(vendorBeacon)
     const well = new THREE.Group()
     const stone = new THREE.MeshStandardMaterial({
       map: this.createSurfaceTexture(
@@ -6186,19 +6348,19 @@ uniform float uSwayAmplitude;`,
     const pelvisPivot = new THREE.Group()
     pelvisPivot.name = 'pelvis-pivot'
     bodyPivot.add(pelvisPivot)
-    const factionMaterial = new THREE.MeshStandardMaterial({
+    const factionMaterial = this.comicMaterials.createToonMaterial({
       color: this.factionColor(faction),
-      roughness: 0.72,
-      metalness: faction === 'guard' ? 0.35 : 0.08,
+      surface: faction === 'guard' ? 'metal' : 'cloth',
+      emissive: faction === 'guard' ? this.factionColor(faction) : undefined,
+      emissiveIntensity: faction === 'guard' ? 0.07 : undefined,
     })
-    const skinMaterial = new THREE.MeshStandardMaterial({
+    const skinMaterial = this.comicMaterials.createToonMaterial({
       color: mix(this.palette.warning, this.palette.surface, 0.7),
-      roughness: 0.86,
+      surface: 'skin',
     })
-    const darkMaterial = new THREE.MeshStandardMaterial({
+    const darkMaterial = this.comicMaterials.createToonMaterial({
       color: mix(this.palette.text, this.palette.bg, 0.28),
-      roughness: 0.8,
-      metalness: 0.24,
+      surface: 'dark',
     })
 
     const torso = new THREE.Mesh(new THREE.BoxGeometry(player ? 1.05 : 0.9, 1.3, 0.58), factionMaterial)
@@ -6327,7 +6489,7 @@ uniform float uSwayAmplitude;`,
       )
     }
     const torso = mesh.getObjectByName('torso')
-    if (torso instanceof THREE.Mesh && torso.material instanceof THREE.MeshStandardMaterial) {
+    if (torso instanceof THREE.Mesh && torso.material instanceof THREE.MeshToonMaterial) {
       torso.material.color.offsetHSL(variation * 0.012, variation * 0.03, variation * 0.025)
     }
   }
@@ -6595,9 +6757,9 @@ uniform float uSwayAmplitude;`,
         })
         const bow = new THREE.Mesh(
           new THREE.TorusGeometry(0.48, 0.045, 6, 14, Math.PI),
-          new THREE.MeshStandardMaterial({
+          this.comicMaterials.createToonMaterial({
             color: this.palette.warning,
-            roughness: 0.82,
+            surface: 'dark',
           }),
         )
         bow.rotation.x = Math.PI / 2
@@ -6611,6 +6773,7 @@ uniform float uSwayAmplitude;`,
       if (weapon) weapon.visible = false
     }
     this.applyActorVisualVariation(mesh, faction, role, index)
+    const outlineBinding = this.registerOutline(mesh, 'enemy')
     mesh.position.set(x, 0, z)
     this.resolveCharacterOverlaps(mesh.position, this.actorColliderRadiusForRole(role))
     this.scene.add(mesh)
@@ -6689,6 +6852,8 @@ uniform float uSwayAmplitude;`,
       healthBarCanvas: healthBar.canvas,
       healthBarTexture: healthBar.texture,
       healthBarVisibleUntil: 0,
+      outlineBinding,
+      outlineUntil: Number.POSITIVE_INFINITY,
     }
     if (
       !this.isWalkablePosition(
@@ -6700,6 +6865,7 @@ uniform float uSwayAmplitude;`,
       this.chooseWanderTarget(actor)
     }
     this.actors.push(actor)
+    this.updateActorOutlineVisibility(actor)
     return actor
   }
 
@@ -7102,6 +7268,7 @@ uniform float uSwayAmplitude;`,
     this.camera.position.copy(cameraPosition)
     this.camera.lookAt(target)
     if (roll !== 0) this.camera.rotateZ(roll)
+    this.updatePlayerOutlineVisibility()
     this.updateFoliageOcclusion(target, this.camera.position, immediate)
   }
 
@@ -7137,6 +7304,7 @@ uniform float uSwayAmplitude;`,
     if (
       !(object instanceof THREE.Mesh) ||
       object instanceof THREE.InstancedMesh ||
+      object.userData.comicOutline === true ||
       object.userData.cameraPassThrough === true ||
       object.geometry instanceof THREE.PlaneGeometry
     ) {

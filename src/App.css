@@ -148,6 +148,7 @@ button {
 .day-night-toggle,
 .weather-toggle,
 .bloom-toggle,
+.ink-outlines-toggle,
 .foliage-toggle,
 .screen-shake-toggle {
   min-height: 2.5rem;
@@ -169,6 +170,12 @@ button {
 .bloom-setting[aria-pressed="true"] {
   border-color: color-mix(in srgb, var(--cp-accent) 55%, var(--cp-border));
   color: var(--cp-accent);
+}
+
+.ink-outlines-toggle[aria-pressed="true"],
+.ink-outlines-setting[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--cp-text) 55%, var(--cp-border));
+  color: var(--cp-text);
 }
 
 .foliage-toggle[data-quality="high"],

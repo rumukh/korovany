@@ -85,6 +85,7 @@ const THEME_KEY = 'korovany-theme'
 const DYNAMIC_DAY_NIGHT_KEY = 'korovany-dynamic-day-night'
 const WEATHER_ENABLED_KEY = 'korovany-weather'
 const BLOOM_ENABLED_KEY = 'korovany-bloom'
+const INK_OUTLINES_ENABLED_KEY = 'korovany-ink-outlines'
 const SCREEN_SHAKE_ENABLED_KEY = 'korovany-screen-shake'
 const FOLIAGE_QUALITY_KEY = 'korovany-foliage'
 
@@ -166,6 +167,15 @@ function readBloomEnabled(): boolean {
     console.warn('Korovany: bloom preference could not be read.', error)
   }
   return defaultBloomEnabled()
+}
+
+function readInkOutlinesEnabled(): boolean {
+  try {
+    return localStorage.getItem(INK_OUTLINES_ENABLED_KEY) !== 'false'
+  } catch (error) {
+    console.warn('Korovany: ink-outline preference could not be read.', error)
+    return true
+  }
 }
 
 function readFoliageQuality(): FoliageQuality {
@@ -675,6 +685,7 @@ function MenuScreen({
   dynamicDayNight,
   weatherEnabled,
   bloomEnabled,
+  inkOutlinesEnabled,
   foliageQuality,
   screenShakeEnabled,
   onStart,
@@ -684,6 +695,7 @@ function MenuScreen({
   onToggleDynamicDayNight,
   onToggleWeather,
   onToggleBloom,
+  onToggleInkOutlines,
   onCycleFoliageQuality,
   onToggleScreenShake,
 }: {
@@ -693,6 +705,7 @@ function MenuScreen({
   dynamicDayNight: boolean
   weatherEnabled: boolean
   bloomEnabled: boolean
+  inkOutlinesEnabled: boolean
   foliageQuality: FoliageQuality
   screenShakeEnabled: boolean
   onStart: (faction: Faction) => void
@@ -702,6 +715,7 @@ function MenuScreen({
   onToggleDynamicDayNight: () => void
   onToggleWeather: () => void
   onToggleBloom: () => void
+  onToggleInkOutlines: () => void
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
 }) {
@@ -763,6 +777,29 @@ function MenuScreen({
         >
           <Sparkles aria-hidden="true" />
           <span>{bloomEnabled ? 'Свечение: вкл.' : 'Свечение: выкл.'}</span>
+        </button>
+        <button
+          className="ink-outlines-toggle secondary-button"
+          type="button"
+          onClick={onToggleInkOutlines}
+          aria-pressed={inkOutlinesEnabled}
+          aria-label={
+            inkOutlinesEnabled
+              ? 'Отключить чернильные контуры'
+              : 'Включить чернильные контуры'
+          }
+          title={
+            inkOutlinesEnabled
+              ? 'Отключить чернильные контуры'
+              : 'Включить чернильные контуры'
+          }
+        >
+          <Eye aria-hidden="true" />
+          <span>
+            {inkOutlinesEnabled
+              ? 'Чернильные контуры: вкл.'
+              : 'Чернильные контуры: выкл.'}
+          </span>
         </button>
         <button
           className="foliage-toggle secondary-button"
@@ -998,6 +1035,7 @@ function PauseModal({
   dynamicDayNight,
   weatherEnabled,
   bloomEnabled,
+  inkOutlinesEnabled,
   foliageQuality,
   screenShakeEnabled,
   onResume,
@@ -1007,6 +1045,7 @@ function PauseModal({
   onToggleDynamicDayNight,
   onToggleWeather,
   onToggleBloom,
+  onToggleInkOutlines,
   onCycleFoliageQuality,
   onToggleScreenShake,
 }: {
@@ -1014,6 +1053,7 @@ function PauseModal({
   dynamicDayNight: boolean
   weatherEnabled: boolean
   bloomEnabled: boolean
+  inkOutlinesEnabled: boolean
   foliageQuality: FoliageQuality
   screenShakeEnabled: boolean
   onResume: () => void
@@ -1023,6 +1063,7 @@ function PauseModal({
   onToggleDynamicDayNight: () => void
   onToggleWeather: () => void
   onToggleBloom: () => void
+  onToggleInkOutlines: () => void
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
 }) {
@@ -1077,6 +1118,16 @@ function PauseModal({
           <Sparkles aria-hidden="true" />
           <span>Свечение (bloom)</span>
           <strong>{bloomEnabled ? 'Вкл.' : 'Выкл.'}</strong>
+        </button>
+        <button
+          className="secondary-button pause-setting ink-outlines-setting"
+          type="button"
+          onClick={onToggleInkOutlines}
+          aria-pressed={inkOutlinesEnabled}
+        >
+          <Eye aria-hidden="true" />
+          <span>Чернильные контуры</span>
+          <strong>{inkOutlinesEnabled ? 'Вкл.' : 'Выкл.'}</strong>
         </button>
         <button
           className="secondary-button pause-setting foliage-setting"
@@ -1219,12 +1270,14 @@ function GameScreen({
   dynamicDayNight,
   weatherEnabled,
   bloomEnabled,
+  inkOutlinesEnabled,
   foliageQuality,
   screenShakeEnabled,
   onToggleMusic,
   onToggleDynamicDayNight,
   onToggleWeather,
   onToggleBloom,
+  onToggleInkOutlines,
   onCycleFoliageQuality,
   onToggleScreenShake,
 }: {
@@ -1255,12 +1308,14 @@ function GameScreen({
   dynamicDayNight: boolean
   weatherEnabled: boolean
   bloomEnabled: boolean
+  inkOutlinesEnabled: boolean
   foliageQuality: FoliageQuality
   screenShakeEnabled: boolean
   onToggleMusic: () => void
   onToggleDynamicDayNight: () => void
   onToggleWeather: () => void
   onToggleBloom: () => void
+  onToggleInkOutlines: () => void
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
 }) {
@@ -1530,6 +1585,7 @@ function GameScreen({
           dynamicDayNight={dynamicDayNight}
           weatherEnabled={weatherEnabled}
           bloomEnabled={bloomEnabled}
+          inkOutlinesEnabled={inkOutlinesEnabled}
           foliageQuality={foliageQuality}
           screenShakeEnabled={screenShakeEnabled}
           onResume={onResume}
@@ -1539,6 +1595,7 @@ function GameScreen({
           onToggleDynamicDayNight={onToggleDynamicDayNight}
           onToggleWeather={onToggleWeather}
           onToggleBloom={onToggleBloom}
+          onToggleInkOutlines={onToggleInkOutlines}
           onCycleFoliageQuality={onCycleFoliageQuality}
           onToggleScreenShake={onToggleScreenShake}
         />
@@ -1574,6 +1631,7 @@ function App() {
   const [endResult, setEndResult] = useState<'victory' | 'defeat' | null>(null)
   const [musicMuted, setMusicMuted] = useState(() => readMusicMuted())
   const [bloomEnabled, setBloomEnabled] = useState(() => readBloomEnabled())
+  const [inkOutlinesEnabled, setInkOutlinesEnabled] = useState(() => readInkOutlinesEnabled())
   const [foliageQuality, setFoliageQuality] = useState(() => readFoliageQuality())
   const [screenShakeEnabled, setScreenShakeEnabled] = useState(() => readScreenShakeEnabled())
   const [theme, setTheme] = useState<Theme>(() => readTheme())
@@ -1589,6 +1647,7 @@ function App() {
   const dynamicDayNightRef = useRef(dynamicDayNight)
   const weatherEnabledRef = useRef(weatherEnabled)
   const bloomEnabledRef = useRef(bloomEnabled)
+  const inkOutlinesEnabledRef = useRef(inkOutlinesEnabled)
   const foliageQualityRef = useRef(foliageQuality)
   const screenShakeEnabledRef = useRef(screenShakeEnabled)
   const achievementSummary = useMemo(
@@ -1679,6 +1738,7 @@ function App() {
         dynamicDayNight: dynamicDayNightRef.current,
         weatherEnabled: weatherEnabledRef.current,
         bloomEnabled: bloomEnabledRef.current,
+        inkOutlinesEnabled: inkOutlinesEnabledRef.current,
         foliageQuality: foliageQualityRef.current,
         screenShakeEnabled: screenShakeEnabledRef.current,
         achievementRunId: `${achievementSessionId}:${runId}`,
@@ -1785,6 +1845,22 @@ function App() {
     }
   }
 
+  const toggleInkOutlines = () => {
+    const next = !inkOutlinesEnabledRef.current
+    inkOutlinesEnabledRef.current = next
+    setInkOutlinesEnabled(next)
+    engineRef.current?.setInkOutlinesEnabled(next)
+    try {
+      localStorage.setItem(INK_OUTLINES_ENABLED_KEY, String(next))
+    } catch (error) {
+      console.warn('Korovany: ink-outline preference could not be saved.', error)
+    }
+    addNotice(
+      next ? 'Чернильные контуры включены.' : 'Чернильные контуры выключены.',
+      'info',
+    )
+  }
+
   const toggleWeather = () => {
     const next = !weatherEnabledRef.current
     weatherEnabledRef.current = next
@@ -1835,6 +1911,7 @@ function App() {
           dynamicDayNight={dynamicDayNight}
           weatherEnabled={weatherEnabled}
           bloomEnabled={bloomEnabled}
+          inkOutlinesEnabled={inkOutlinesEnabled}
           foliageQuality={foliageQuality}
           screenShakeEnabled={screenShakeEnabled}
           onStart={(selectedFaction) => startGame(selectedFaction)}
@@ -1846,6 +1923,7 @@ function App() {
           onToggleDynamicDayNight={toggleDynamicDayNight}
           onToggleWeather={toggleWeather}
           onToggleBloom={toggleBloom}
+          onToggleInkOutlines={toggleInkOutlines}
           onCycleFoliageQuality={cycleFoliageQuality}
           onToggleScreenShake={toggleScreenShake}
         />
@@ -1903,6 +1981,7 @@ function App() {
         onRestart={() => startGame(faction)}
         musicMuted={musicMuted}
         bloomEnabled={bloomEnabled}
+        inkOutlinesEnabled={inkOutlinesEnabled}
         weatherEnabled={weatherEnabled}
         foliageQuality={foliageQuality}
         screenShakeEnabled={screenShakeEnabled}
@@ -1911,6 +1990,7 @@ function App() {
         onToggleDynamicDayNight={toggleDynamicDayNight}
         onToggleWeather={toggleWeather}
         onToggleBloom={toggleBloom}
+        onToggleInkOutlines={toggleInkOutlines}
         onCycleFoliageQuality={cycleFoliageQuality}
         onToggleScreenShake={toggleScreenShake}
       />
