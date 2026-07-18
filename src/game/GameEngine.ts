@@ -493,6 +493,7 @@ interface CombatFeedbackChannels {
   ray?: boolean
   hitStop?: boolean
   camera?: boolean
+  sound?: boolean
 }
 
 interface BoxObstacle {
@@ -1165,7 +1166,6 @@ export class GameEngine {
   private readonly lootCollectionBursts: LootCollectionBurst[] = []
   private readonly lootTarget = new THREE.Vector3()
   private readonly lootDirection = new THREE.Vector3()
-  private readonly reducedMotion: boolean
   private readonly player: THREE.Group
   private readonly playerOutline: OutlineBinding
   private readonly weaponTrail: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>
@@ -1295,7 +1295,7 @@ export class GameEngine {
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     this.groundFoliageQuality = settings.foliageQuality ?? 'high'
     this.palette = createPalette()
-    this.lootRng = seededRandom(this.lootSeed(settings.achievementRunId ?? faction))
+    this.lootRng = seededRandom(this.stableSeed(settings.achievementRunId ?? faction))
     this.lootMaterials = this.createLootMaterials()
     this.zoneArtProfiles = createZoneArtProfiles(this.palette)
     this.comicMaterials = new ComicMaterialLibrary({
@@ -3080,7 +3080,7 @@ export class GameEngine {
             : 1.35
     actor.attackCooldown = this.actorAttackInterval(actor, cooldown)
     actor.velocity.set(0, 0, 0)
-    actor.action = {
+    const action: ActorAction = {
       kind,
       phase: 'windup',
       elapsed: 0,
@@ -3089,8 +3089,10 @@ export class GameEngine {
       targetPosition: targetPosition.clone(),
       contactRange,
     }
+    actor.action = action
     this.faceActorToward(actor, targetPosition, 1)
     this.acquireActorTelegraph(actor)
+    this.playActorActionSound(actor, action, 'attackTell')
   }
 
   private updateActorAction(actor: Actor, delta: number): void {
@@ -3140,7 +3142,9 @@ export class GameEngine {
 
   private resolveActorActionContact(actor: Actor, action: ActorAction): void {
     if (action.kind === 'arrow') {
-      this.fireActorArrow(actor, this.resolveActorActionTarget(actor, action) ?? action.targetPosition)
+      const livePosition = this.resolveActorActionTarget(actor, action)
+      if (!livePosition) this.playActorActionSound(actor, action, 'whiff')
+      this.fireActorArrow(actor, livePosition ?? action.targetPosition)
       return
     }
 
@@ -3150,6 +3154,7 @@ export class GameEngine {
       actor.mesh.position.distanceTo(livePosition) >
         action.contactRange + CONTACT_RANGE_FORGIVENESS
     ) {
+      this.playActorActionSound(actor, action, 'whiff')
       return
     }
     if (action.kind === 'meleePlayer') {
@@ -3168,6 +3173,25 @@ export class GameEngine {
       const target = this.eventPropTargets.get(action.target.id)
       if (target && target.hp > 0) this.actorAttackEventProp(actor, target)
     }
+  }
+
+  private playActorActionSound(
+    actor: Actor,
+    action: ActorAction,
+    cue: Extract<SoundCue, 'attackTell' | 'whiff'>,
+  ): void {
+    if (action.target.kind !== 'player') return
+    const intensity =
+      actor.role === 'champion' || actor.role === 'commander'
+        ? 1
+        : actor.role === 'brute'
+          ? 0.82
+          : 0.58
+    this.playSound(cue, {
+      position: actor.mesh.position,
+      intensity,
+      variantSeed: this.stableSeed(`${actor.id}:${action.kind}:${cue}`),
+    })
   }
 
   private faceActorToward(actor: Actor, position: THREE.Vector3, delta: number): void {
@@ -3469,7 +3493,7 @@ export class GameEngine {
         directPlayerAction: true,
       }
       feedbackEvents.push(event)
-      this.presentCombatFeedback(event, { callout: false, hitStop: false })
+      this.presentCombatFeedback(event, { callout: false, hitStop: false, sound: false })
     }
     if (feedbackEvents.length > 0) {
       this.addTrauma(TRAUMA_CLEAVE)
@@ -4937,7 +4961,6 @@ export class GameEngine {
       )
     }
     this.createHitParticles(this.player.position, this.faction)
-    this.playSound(frontalBlock ? 'block' : 'hurt')
     if (canInjure && !frontalBlock && Math.random() < 0.11 && this.health < 82) {
       this.injurePlayer()
     }
@@ -5042,13 +5065,6 @@ export class GameEngine {
     target.healthBarVisibleUntil = this.elapsed + 3.4
     this.drawActorHealthBar(target)
     this.createHitParticles(target.mesh.position, target.faction)
-    if (directPlayerKill && target.hp > 0) {
-      this.playSound(impact >= 0.55 ? 'hitHeavy' : 'hitLight', {
-        position: target.mesh.position,
-        intensity: impact,
-        variantSeed: this.actorSequence + target.id.length,
-      })
-    }
     if (
       target.role !== 'brute' &&
       options.detachChance &&
@@ -5221,11 +5237,13 @@ export class GameEngine {
     const ring = actor.mesh.getObjectByName('faction-ring')
     if (ring) ring.visible = false
     this.projectileSourcesToClear.add(actor.id)
-    this.playSound('down', {
-      position: deathPosition,
-      intensity: largeBody ? 1 : 0.65,
-      variantSeed: this.actorSequence + actor.id.length,
-    })
+    if (!directPlayerKill) {
+      this.playSound('down', {
+        position: deathPosition,
+        intensity: largeBody ? 1 : 0.65,
+        variantSeed: this.stableSeed(`${actor.id}:down`),
+      })
+    }
 
     const objectiveAdvanced =
       killerFaction === this.faction && this.creditFactionObjective(actor)
@@ -5645,7 +5663,7 @@ export class GameEngine {
     this.callbacks.onView(view)
   }
 
-  private lootSeed(value: string): number {
+  private stableSeed(value: string): number {
     let seed = 104729
     for (const character of value) {
       seed = (seed * 31 + character.charCodeAt(0)) % 2147483647
@@ -5997,6 +6015,11 @@ export class GameEngine {
     )
     pickup.root.visible = true
     this.configureLootVisual(pickup)
+    this.playSound('lootReveal', {
+      position: pickup.root.position,
+      intensity: (LOOT_RARITY_RANK[reward.rarity] + 1) / 4,
+      variantSeed: pickup.serial,
+    })
   }
 
   private acquireLootPickup(): LootPickup {
@@ -6202,7 +6225,11 @@ export class GameEngine {
     pickup.age = 0
     pickup.idleAge = 0
     const detail = this.applyLootReward(reward)
-    this.playSound('coin')
+    this.playSound('lootCollect', {
+      position: pickup.root.position,
+      intensity: (LOOT_RARITY_RANK[reward.rarity] + 1) / 4,
+      variantSeed: pickup.serial,
+    })
     this.lootToast = {
       id: ++this.lootToastSequence,
       rarity: reward.rarity,
@@ -9368,7 +9395,7 @@ uniform float uSwayAmplitude;`,
     magnitude: number,
     duration: number,
   ): void {
-    if (!this.screenShakeEnabled || this.paused || this.ended) return
+    if (!this.screenShakeEnabled || this.reducedMotion || this.paused || this.ended) return
     enqueueCameraAccent(this.cameraAccents, kind, magnitude, duration)
   }
 
@@ -9388,7 +9415,10 @@ uniform float uSwayAmplitude;`,
   }
 
   private updateCameraEffects(delta: number): void {
-    if (!this.screenShakeEnabled) return
+    if (!this.screenShakeEnabled || this.reducedMotion) {
+      this.resetCameraMotion()
+      return
+    }
     this.sprintFovBlend = dampValue(
       this.sprintFovBlend,
       this.isSprinting ? 1 : 0,
@@ -9411,7 +9441,13 @@ uniform float uSwayAmplitude;`,
   }
 
   private updateCameraFov(delta: number, immediate: boolean): void {
-    if (immediate || !this.screenShakeEnabled || this.paused || this.ended) {
+    if (
+      immediate ||
+      !this.screenShakeEnabled ||
+      this.reducedMotion ||
+      this.paused ||
+      this.ended
+    ) {
       this.resetCameraMotion()
       return
     }
@@ -9449,6 +9485,40 @@ uniform float uSwayAmplitude;`,
     if (channels.callout ?? true) this.spawnComicCallout(event)
     if (channels.hitStop ?? true) this.requestHitStop(this.hitStopForEvent(event))
     if (channels.camera ?? true) this.presentCameraFeedback(event)
+    if (channels.sound ?? true) this.presentCombatAudio(event)
+  }
+
+  private presentCombatAudio(event: CombatFeedbackEvent): void {
+    const intensity = THREE.MathUtils.clamp(
+      event.dealt / (event.targetId === 'player' ? 24 : 36),
+      0,
+      1,
+    )
+    const variantSeed = this.stableSeed(
+      `${event.targetId}:${event.attackKind}:${event.weight}`,
+    )
+    const impactCue: Extract<SoundCue, 'hitLight' | 'hitHeavy' | 'block'> =
+      event.weight === 'blocked'
+        ? 'block'
+        : event.weight === 'heavy' || event.weight === 'lethal'
+          ? 'hitHeavy'
+          : 'hitLight'
+    this.playSound(impactCue, {
+      position: event.position,
+      intensity,
+      variantSeed,
+    })
+    if (!event.killed) return
+    this.playSound('gore', {
+      position: event.position,
+      intensity,
+      variantSeed: variantSeed + 1,
+    })
+    this.playSound('down', {
+      position: event.position,
+      intensity,
+      variantSeed: variantSeed + 2,
+    })
   }
 
   private presentCleaveFeedback(events: CombatFeedbackEvent[]): void {
