@@ -1,9 +1,39 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import { AudioDirector, type SoundCue, type SoundRequest } from './AudioDirector'
 import { BloomPostProcessor } from './BloomPostProcessor'
+import {
+  AchievementTracker,
+  type AchievementSummary,
+  type AchievementView,
+} from './achievements'
+import {
+  ComicMaterialLibrary,
+  type OutlineBinding,
+  type OutlineKind,
+} from './ComicMaterialLibrary'
+import {
+  CAMERA_BASE_FOV,
+  CAMERA_FOLLOW_DAMPING,
+  CAMERA_FOV_DAMPING,
+  KILL_ACCENT_RANGE,
+  SPRINT_BLEND_DAMPING,
+  advanceAirborneState,
+  advanceCameraAccents,
+  advanceJumpAccentLatch,
+  composeCameraFov,
+  dampValue,
+  dampingAlpha,
+  queueCameraAccent as enqueueCameraAccent,
+  type CameraAccent,
+  type CameraAccentKind,
+} from './cameraAccents'
 import {
   ABILITY_INFO,
   FACTION_INFO,
+  MAX_HEALTH_PER_LEVEL,
+  MAX_STAMINA_PER_LEVEL,
+  MAX_THREAT_TIER,
   SAVE_KEY,
   type ActorRole,
   type BodyPart,
@@ -11,37 +41,92 @@ import {
   type Faction,
   type GameCallbacks,
   type GameView,
+  type LootRarity,
+  type LootReward,
+  type LootRewardKind,
+  type LootToastView,
+  type HatchMotif,
   type MapMarker,
   type NoticeTone,
   type Objective,
   type SavedGame,
   type ShopItem,
+  type UpgradeLevels,
   type WorldEventKind,
   type ZoneId,
   createAbilityView,
   createHealthyBody,
+  getMaxHealth,
+  getMaxStamina,
+  getShopItemPrice,
+  getThreatTier,
+  normalizeUpgradeLevels,
   restoreObjectives,
 } from './types'
+import {
+  ZONE_ART_IDS,
+  writeZoneVisualWeights,
+  type ZoneVisualWeights,
+} from './zoneArt'
 
 export type FoliageQuality = 'off' | 'low' | 'high'
 
 export interface GameEngineSettings {
   musicMuted: boolean
+  sfxVolume: number
   dynamicDayNight: boolean
   weatherEnabled: boolean
   bloomEnabled: boolean
+  inkOutlinesEnabled: boolean
   screenShakeEnabled: boolean
   foliageQuality: FoliageQuality
+  achievementRunId: string
 }
 
 type ActorAiMode = 'normal' | 'captive' | 'attackEventProp'
+type ActorActionKind = 'meleePlayer' | 'meleeActor' | 'eventProp' | 'arrow'
+type ActorActionPhase = 'windup' | 'recovery'
+type HitReactionKind = 'none' | 'flinch' | 'stagger'
+type DeathStyle = 'sideFall' | 'backFall' | 'spinFall' | 'launchFall'
+type TelegraphKind = 'tick' | 'aim' | 'commander' | 'wedge'
 
 interface EventPropTarget {
+  id: string
+  ownerId: string
   object: THREE.Object3D
   hp: number
   maxHp: number
   position: THREE.Vector3
   attackRange: number
+}
+
+interface ActorAction {
+  kind: ActorActionKind
+  phase: ActorActionPhase
+  elapsed: number
+  duration: number
+  target:
+    | { kind: 'player' }
+    | { kind: 'actor'; id: string }
+    | { kind: 'eventProp'; id: string }
+  targetPosition: THREE.Vector3
+  contactRange: number
+}
+
+interface CharacterPose {
+  stride: number
+  attack: number
+  anticipation: number
+  recovery: number
+  flinch: number
+  stagger: number
+}
+
+interface TelegraphEntry {
+  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>
+  ownerId: string | null
+  priority: number
+  kind: TelegraphKind
 }
 
 interface Actor {
@@ -65,7 +150,6 @@ interface Actor {
   visualSpeed: number
   motionBlend: number
   turnLean: number
-  attackAnimation: number
   idleTimer: number
   wanderPace: number
   retreatTimer: number
@@ -75,7 +159,7 @@ interface Actor {
   squadEligible: boolean
   aiMode: ActorAiMode
   eventOwnerId: string | null
-  eventPropTarget: EventPropTarget | null
+  eventPropTargetId: string | null
   ignoredTargetId: string | null
   playerAggro: boolean
   aggroMemory: number
@@ -87,6 +171,23 @@ interface Actor {
   healthBarCanvas: HTMLCanvasElement
   healthBarTexture: THREE.CanvasTexture
   healthBarVisibleUntil: number
+  outlineBinding: OutlineBinding
+  outlineUntil: number
+  action: ActorAction | null
+  reaction: HitReactionKind
+  reactionRemaining: number
+  poise: number
+  maxPoise: number
+  poiseRecoveryDelay: number
+  staggerImmunity: number
+  knockbackVelocity: THREE.Vector3
+  lastHitDirection: THREE.Vector3
+  deathStyle: DeathStyle | null
+  deathAge: number
+  deathStartPosition: THREE.Vector3
+  deathStartRotation: THREE.Euler
+  deathTravelled: number
+  deathAt: number | null
 }
 
 interface ActorSpawnOptions {
@@ -94,13 +195,18 @@ interface ActorSpawnOptions {
   squadEligible?: boolean
   aiMode?: ActorAiMode
   eventOwnerId?: string | null
-  eventPropTarget?: EventPropTarget | null
+  eventPropTargetId?: string | null
   ignoredTargetId?: string | null
 }
 
 interface ActorKillContext {
   killerFaction: Faction
   directPlayerKill: boolean
+}
+
+interface InteractableOutlineBinding {
+  binding: OutlineBinding
+  positionRoot: THREE.Object3D
 }
 
 interface WorldEvent {
@@ -187,6 +293,41 @@ interface GroundSurface {
   baseRoughness: number
 }
 
+interface SurfaceTextureOptions {
+  pattern: 'grass' | 'dirt' | 'stone' | 'scree' | 'wood' | 'roof'
+  repeatX: number
+  repeatY: number
+  hatch?: {
+    motif: HatchMotif
+    density: number
+    angle: number
+    opacity: number
+    color: THREE.Color
+  }
+}
+
+interface ZoneArtProfile {
+  id: ZoneId
+  primary: THREE.Color
+  secondary: THREE.Color
+  accent: THREE.Color
+  ink: THREE.Color
+  hatch: {
+    motif: HatchMotif
+    density: number
+    angle: number
+    opacity: number
+  }
+  fogTint: THREE.Color
+  fogWeight: number
+}
+
+interface ZoneDecorationSet {
+  mesh: THREE.InstancedMesh
+  zone: ZoneId
+  collidable: false
+}
+
 interface BuildingWindowGlow {
   material: THREE.MeshStandardMaterial
   legacyIntensity: number
@@ -209,6 +350,44 @@ interface Particle {
   pooled?: boolean
   eventId?: string
   mode?: 'smoke' | 'spark' | 'blood' | 'gib'
+}
+
+type LootPickupState = 'burst' | 'idle' | 'magnet'
+type LootCollectionReason = 'magnet' | 'save' | 'victory' | 'pool'
+
+interface LootRarityMaterials {
+  token: THREE.MeshBasicMaterial
+  beam: THREE.MeshBasicMaterial
+  ring: THREE.MeshBasicMaterial
+  star: THREE.SpriteMaterial
+}
+
+interface LootPickup {
+  root: THREE.Group
+  display: THREE.Group
+  tokenRoot: THREE.Group
+  tokens: Record<LootRewardKind, THREE.Group>
+  beams: [THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>, THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>]
+  smoothRing: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>
+  segmentedRing: THREE.Group
+  outerRing: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>
+  starburst: THREE.Sprite
+  reward: LootReward
+  state: LootPickupState
+  velocity: THREE.Vector3
+  age: number
+  idleAge: number
+  active: boolean
+  serial: number
+}
+
+interface LootCollectionBurst {
+  root: THREE.Group
+  shards: THREE.Mesh<THREE.OctahedronGeometry, THREE.MeshBasicMaterial>[]
+  directions: THREE.Vector3[]
+  active: boolean
+  age: number
+  serial: number
 }
 
 type DecalKind = 'blood' | 'scorch'
@@ -237,6 +416,84 @@ interface ProjectileHit {
   fraction: number
   actor: Actor | null
   player: boolean
+}
+
+type AttackKind = 'melee' | 'cleave' | 'arrow' | 'allyMelee' | 'actorArrow'
+type HitWeight = 'normal' | 'heavy' | 'lethal' | 'blocked'
+type ComicCallout = 'БАЦ!' | 'ХРЯСЬ!' | 'БУМ!' | 'БЛОК!'
+
+interface DamageResult {
+  applied: boolean
+  dealt: number
+  killed: boolean
+  weight: HitWeight
+  position: THREE.Vector3
+  direction: THREE.Vector3
+}
+
+interface CombatFeedbackEvent extends DamageResult {
+  attackKind: AttackKind
+  targetId: string | 'player'
+  directPlayerAction: boolean
+}
+
+interface DamageActorOptions {
+  attackKind: AttackKind
+  detachChance?: number
+  knockback?: number
+  sourceActorId?: string
+  deferFeedback?: boolean
+}
+
+interface DamagePlayerOptions {
+  attackKind: AttackKind
+}
+
+interface DamageNumberFx {
+  sprite: THREE.Sprite
+  canvas: HTMLCanvasElement
+  texture: THREE.CanvasTexture
+  material: THREE.SpriteMaterial
+  targetId: string | 'player' | null
+  attackKind: AttackKind | null
+  value: number
+  weight: HitWeight
+  age: number
+  mergeAge: number
+  lifetime: number
+  velocity: THREE.Vector3
+  active: boolean
+  priority: number
+}
+
+interface ComicCalloutFx {
+  sprite: THREE.Sprite
+  material: THREE.SpriteMaterial
+  word: ComicCallout | null
+  age: number
+  lifetime: number
+  velocity: THREE.Vector3
+  active: boolean
+  priority: number
+}
+
+interface ImpactRayFx {
+  sprite: THREE.Sprite
+  material: THREE.SpriteMaterial
+  age: number
+  lifetime: number
+  active: boolean
+  priority: number
+  weight: HitWeight
+}
+
+interface CombatFeedbackChannels {
+  number?: boolean
+  callout?: boolean
+  ray?: boolean
+  hitStop?: boolean
+  camera?: boolean
+  sound?: boolean
 }
 
 interface BoxObstacle {
@@ -314,10 +571,42 @@ const NPC_ACCELERATION_DAMPING = 6.5
 const NPC_BRAKING_DAMPING = 11
 const NPC_BLOCKED_SPEED_RATIO = 0.22
 const MAX_ACTORS = 25
-const FIRST_EVENT_AT = 50
-const EVENT_COOLDOWN_MIN = 60
-const EVENT_COOLDOWN_MAX = 90
+const LOOT_DROP_CHANCE = 0.3
+const LOOT_MAX_ACTIVE = 20
+const LOOT_BURST_TIME = 0.45
+const LOOT_FORCE_MAGNET_AGE = 15
+const LOOT_MAGNET_RADIUS = 5.5
+const LOOT_COLLECT_RADIUS = 0.8
+const LOOT_MAGNET_ACCEL = 34
+const LOOT_MAGNET_MAX_SPEED = 22
+const LOOT_TOAST_TIME = 2.4
+const LOOT_Y = 0.34
+const LOOT_DAMAGE_CAP = 60
+const LOOT_COLLECTION_BURST_COUNT = 8
+const LOOT_COLLECTION_BURST_TIME = 0.42
+const LOOT_RARITY_RANK: Record<LootRarity, number> = {
+  common: 0,
+  uncommon: 1,
+  rare: 2,
+  legendary: 3,
+}
+const LOOT_BEAM_HEIGHT: Record<LootRarity, number> = {
+  common: 1.6,
+  uncommon: 2.6,
+  rare: 4.2,
+  legendary: 6.5,
+}
+const OUTLINE_ACTOR_DISTANCE_SQ = 38 * 38
+const OUTLINE_INTERACTABLE_DISTANCE_SQ = 46 * 46
+const OUTLINE_CORPSE_SECONDS = 8
+const OUTLINE_PLAYER_HIDE_DISTANCE_SQ = 2.4 * 2.4
+const FIRST_EVENT_AT = 30
+const EVENT_COOLDOWN_MIN = 50
+const EVENT_COOLDOWN_MAX = 70
 const EVENT_RETRY = 10
+const THREAT_WAVE_FIRST_AT = 240
+const THREAT_WAVE_MIN_INTERVAL = 70
+const CORPSE_LIFETIME = 12
 const CHAMPION_DAMAGE_CAP = 18
 const BOW_DAMAGE = 18
 const BOW_MIN_DAMAGE = 10
@@ -356,6 +645,20 @@ const COMMANDER_REINFORCEMENT_INTERVAL = 25
 const COMMANDER_REINFORCEMENT_LIMIT = 4
 const BRUTE_FRONTAL_DAMAGE_MULTIPLIER = 0.5
 const BRUTE_FRONT_DOT = 0.2
+const FLINCH_TIME = 0.12
+const POISE_REGEN_DELAY = 0.75
+const POISE_RECOVERY_PER_SECOND = 22
+const STAGGER_IMMUNITY = 0.45
+const KNOCKBACK_DAMPING = 11
+const KNOCKBACK_MAX_SPEED = 11
+const KNOCKBACK_STEER_THRESHOLD = 0.8
+const LARGE_ROLE_KNOCKBACK_SCALE = 0.55
+const TELEGRAPH_MAX = 8
+const TELEGRAPH_Y = 0.055
+const CONTACT_RANGE_FORGIVENESS = 0.35
+const DEATH_POSE_TIME = 0.24
+const REDUCED_MOTION_COMBAT_SCALE = 0.6
+const HIGH_KNOCKBACK_THRESHOLD = 2.5
 const SHAKE_POSITION = 0.22
 const SHAKE_ROLL = 0.012
 const SHAKE_DECAY = 2.1
@@ -372,6 +675,36 @@ const SPARK_COUNT_BLOCK = 7
 const SPARK_COUNT_CLEAVE = 5
 const SPARK_LIFE = 0.24
 const SPARK_MAX_ACTIVE = 48
+const DAMAGE_NUMBER_MAX = 24
+const DAMAGE_NUMBER_LIFE = 0.72
+const DAMAGE_NUMBER_DISTANCE_SQ = 30 * 30
+const NUMBER_MERGE_WINDOW = 0.09
+const CALLOUT_MAX = 10
+const CALLOUT_LIFE = 0.46
+const CALLOUT_COOLDOWN = 0.12
+const IMPACT_RAY_MAX = 16
+const IMPACT_RAY_LIFE = 0.18
+const HIT_STOP_NORMAL = 0.028
+const HIT_STOP_HEAVY = 0.048
+const HIT_STOP_LETHAL = 0.064
+const HIT_STOP_CLEAVE = 0.058
+const HIT_STOP_BLOCK = 0.024
+const HIT_STOP_REDUCED_MAX = 0.02
+const HIT_WEIGHT_PRIORITY: Record<HitWeight, number> = {
+  normal: 0,
+  heavy: 1,
+  blocked: 2,
+  lethal: 3,
+}
+const COMIC_CALLOUTS: Record<
+  ComicCallout,
+  { points: number; innerRadius: number; rotation: number }
+> = {
+  'БАЦ!': { points: 11, innerRadius: 0.55, rotation: 0 },
+  'ХРЯСЬ!': { points: 15, innerRadius: 0.43, rotation: 0.08 },
+  'БУМ!': { points: 9, innerRadius: 0.62, rotation: -0.1 },
+  'БЛОК!': { points: 12, innerRadius: 0.7, rotation: Math.PI / 12 },
+}
 const GORE_HIT_MIN = 14
 const GORE_HIT_MAX = 30
 const GORE_PLAYER_HIT_MIN = 18
@@ -389,6 +722,14 @@ const SCORCH_DECAL_LIFE = 28
 const BLEED_FX_INTERVAL = 1.25
 const DAY_LENGTH = 240
 const DAY_START_OFFSET = 0.18
+const ZONE_BLEND_WIDTH = 8
+const ZONE_TINT_DAMPING = 3.5
+const ZONE_DECORATION_COUNTS: Record<ZoneId, number> = {
+  neutral: 24,
+  palace: 18,
+  forest: 20,
+  fort: 24,
+}
 const SUN_ARC_RADIUS = 90
 const SUN_ARC_HEIGHT = 70
 const SUN_ARC_DEPTH = 40
@@ -566,42 +907,9 @@ const EVENT_REQUIRED_SLOTS: Record<Exclude<WorldEventKind, 'bounty'>, number> = 
   rescue: 3,
 }
 
-const MUSIC_PATTERNS: Record<Faction, readonly number[]> = {
-  elf: [0, 4, 7, 12, 7, 4, 2, 4, 0, 4, 9, 12, 9, 4, 2, -1, 0, 4, 7, 11, 7, 4, 2, 4, 0, 5, 9, 12, 9, 5, 2, 4],
-  guard: [0, 7, 12, 7, 5, 9, 12, 9, 3, 7, 10, 15, 10, 7, 5, 3, 0, 7, 12, 14, 12, 7, 5, 7, 3, 7, 10, 12, 10, 7, 5, 2],
-  villain: [0, 3, 7, 10, 7, 3, -2, 3, 0, 3, 6, 10, 6, 3, -2, -5, 0, 3, 7, 12, 7, 3, 1, 3, 0, 5, 8, 12, 8, 5, 1, -2],
-}
-
-const MUSIC_ROOTS: Record<Faction, number> = {
-  elf: 57,
-  guard: 55,
-  villain: 52,
-}
-
-const MUSIC_TEMPOS: Record<Faction, number> = {
-  elf: 138,
-  guard: 128,
-  villain: 132,
-}
-
-const ZONE_MUSIC_SHIFTS: Record<ZoneId, number> = {
-  neutral: 2,
-  palace: 5,
-  forest: 0,
-  fort: -2,
-}
-
-function midiToFrequency(note: number): number {
-  return 440 * 2 ** ((note - 69) / 12)
-}
-
 function dampAngle(current: number, target: number, smoothing: number, delta: number): number {
   const difference = Math.atan2(Math.sin(target - current), Math.cos(target - current))
   return current + difference * (1 - Math.exp(-smoothing * delta))
-}
-
-type MusicWindow = Window & {
-  __korovanyStopMusic?: () => void
 }
 
 function readCssColor(token: string): THREE.Color {
@@ -640,6 +948,52 @@ function mix(a: THREE.Color, b: THREE.Color, amount: number): THREE.Color {
   return a.clone().lerp(b, amount)
 }
 
+function createZoneArtProfiles(palette: Palette): Record<ZoneId, ZoneArtProfile> {
+  const ink = mix(palette.text, palette.bg, 0.2)
+  return {
+    neutral: {
+      id: 'neutral',
+      primary: palette.worldNeutralGround.clone(),
+      secondary: mix(palette.warning, palette.success, 0.42),
+      accent: mix(palette.warning, palette.surface, 0.18),
+      ink: ink.clone(),
+      hatch: { motif: 'scrape', density: 7, angle: -0.08, opacity: 0.13 },
+      fogTint: mix(palette.worldFog, palette.warning, 0.35),
+      fogWeight: 0.055,
+    },
+    palace: {
+      id: 'palace',
+      primary: palette.worldPalaceGround.clone(),
+      secondary: mix(palette.link, palette.bg, 0.28),
+      accent: mix(palette.warning, palette.surface, 0.12),
+      ink: ink.clone(),
+      hatch: { motif: 'chevron', density: 8, angle: 0, opacity: 0.12 },
+      fogTint: mix(palette.worldFog, palette.link, 0.26),
+      fogWeight: 0.045,
+    },
+    forest: {
+      id: 'forest',
+      primary: palette.worldForestGround.clone(),
+      secondary: mix(palette.success, palette.warning, 0.18),
+      accent: mix(palette.warning, palette.danger, 0.12),
+      ink: ink.clone(),
+      hatch: { motif: 'organic', density: 9, angle: 0.18, opacity: 0.14 },
+      fogTint: mix(palette.worldFog, palette.success, 0.34),
+      fogWeight: 0.075,
+    },
+    fort: {
+      id: 'fort',
+      primary: palette.worldFortGround.clone(),
+      secondary: mix(palette.danger, palette.warning, 0.28),
+      accent: mix(palette.accent, palette.danger, 0.44),
+      ink: ink.clone(),
+      hatch: { motif: 'slash', density: 10, angle: -0.62, opacity: 0.16 },
+      fogTint: mix(palette.worldFog, palette.accent, 0.35),
+      fogWeight: 0.09,
+    },
+  }
+}
+
 function createDayNightKeyframes(palette: Palette): DayNightKeyframes {
   const white = new THREE.Color(1, 1, 1)
   return {
@@ -651,7 +1005,7 @@ function createDayNightKeyframes(palette: Palette): DayNightKeyframes {
       hemisphereGround: palette.worldAmbientGround.clone().multiplyScalar(0.52),
       skyTint: mix(palette.worldSky, palette.worldFog, 0.45).multiplyScalar(0.28),
       sunIntensity: 0.15,
-      hemisphereIntensity: 0.45,
+      hemisphereIntensity: 0.9,
     },
     twilight: {
       sun: mix(palette.worldSun, palette.danger, 0.35),
@@ -730,25 +1084,47 @@ export class GameEngine {
   private readonly container: HTMLElement
   private readonly callbacks: GameCallbacks
   private readonly faction: Faction
+  private readonly achievements: AchievementTracker
   private readonly palette: Palette
+  private readonly zoneArtProfiles: Record<ZoneId, ZoneArtProfile>
   private readonly scene = new THREE.Scene()
-  private readonly camera = new THREE.PerspectiveCamera(56, 1, 0.1, 240)
+  private readonly camera = new THREE.PerspectiveCamera(CAMERA_BASE_FOV, 1, 0.1, 240)
   private readonly renderer: THREE.WebGLRenderer
   private readonly postProcessor: BloomPostProcessor
+  private readonly comicMaterials: ComicMaterialLibrary
   private readonly clock = new THREE.Clock()
   private readonly keys = new Set<string>()
   private readonly actors: Actor[] = []
   private readonly particles: Particle[] = []
   private readonly decals: Decal[] = []
   private readonly projectiles: Projectile[] = []
+  private readonly eventPropTargets = new Map<string, EventPropTarget>()
+  private readonly telegraphPool: TelegraphEntry[] = []
+  private readonly telegraphGeometries = new Map<TelegraphKind, THREE.BufferGeometry>()
+  private readonly damageNumberFx: DamageNumberFx[] = []
+  private readonly comicCalloutFx: ComicCalloutFx[] = []
+  private readonly impactRayFx: ImpactRayFx[] = []
   private readonly projectileSourcesToClear = new Set<string>()
   private readonly generatedTextures = new Map<string, THREE.CanvasTexture>()
+  private readonly outlineBindings: OutlineBinding[] = []
+  private readonly interactableOutlineBindings: InteractableOutlineBinding[] = []
   private readonly clouds: Array<{ group: THREE.Group; speed: number }> = []
   private readonly flames: THREE.Mesh[] = []
   private readonly torchLights: THREE.PointLight[] = []
   private readonly buildingWindowGlows: BuildingWindowGlow[] = []
   private readonly villageHouses: THREE.Group[] = []
   private readonly backgroundColor = new THREE.Color()
+  private readonly zoneVisualWeights: ZoneVisualWeights = {
+    neutral: 1,
+    palace: 0,
+    forest: 0,
+    fort: 0,
+  }
+  private readonly zoneTintTarget = new THREE.Color()
+  private readonly zoneTintColor = new THREE.Color()
+  private zoneTintWeight = 0
+  private readonly zoneDecorationSets: ZoneDecorationSet[] = []
+  private readonly zoneArtMaterials = new Map<ZoneId, THREE.MeshStandardMaterial>()
   private readonly fog: THREE.Fog
   private readonly dayNightKeyframes: DayNightKeyframes
   private sun!: THREE.DirectionalLight
@@ -784,7 +1160,15 @@ export class GameEngine {
   private readonly navigationWaypoint = new THREE.Vector3()
   private readonly eventRng = seededRandom((Date.now() % 2147483646) + 1)
   private readonly weatherRng = seededRandom(((Date.now() + 7919) % 2147483646) + 1)
+  private readonly lootRng: () => number
+  private readonly lootMaterials: Record<LootRarity, LootRarityMaterials>
+  private readonly lootPickups: LootPickup[] = []
+  private readonly lootCollectionBursts: LootCollectionBurst[] = []
+  private readonly lootTarget = new THREE.Vector3()
+  private readonly lootDirection = new THREE.Vector3()
   private readonly player: THREE.Group
+  private readonly playerOutline: OutlineBinding
+  private readonly weaponTrail: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>
   private readonly caravan: THREE.Group
   private readonly vendorPosition = new THREE.Vector3(-46, 0, -39)
   private readonly commanderPosition = new THREE.Vector3(40, 0, -36)
@@ -792,17 +1176,31 @@ export class GameEngine {
   private objectives: Objective[]
   private body: BodyState
   private health = 100
+  private maxHealth = 100
   private stamina = 100
+  private maxStamina = 100
   private gold = 55
   private kills = 0
   private damage = 26
+  private upgrades: UpgradeLevels
   private elapsed = 0
+  private campaignCompleted = false
+  private campaignCompletedAt: number | undefined
+  private threatTier = 1
+  private nextThreatWaveAt = THREAT_WAVE_FIRST_AT
   private paused = false
   private ended = false
   private verticalVelocity = 0
   private onGround = true
+  private airborneTime = 0
+  private jumpAccentArmed = true
+  private isSprinting = false
   private cameraYaw = 0
   private cameraPitch = 0.38
+  private readonly cameraAccents: CameraAccent[] = []
+  private sprintFovBlend = 0
+  private cameraAccentOffset = 0
+  private currentFov = CAMERA_BASE_FOV
   private trauma = 0
   private shakeClock = 0
   private damageFlash = 0
@@ -812,6 +1210,7 @@ export class GameEngine {
   private decalSequence = 0
   private attackCooldown = 0
   private attackAnimation = 0
+  private activePlayerAttackKind: AttackKind = 'melee'
   private abilityCooldown = 0
   private shieldActive = false
   private lastViewAt = 0
@@ -837,22 +1236,28 @@ export class GameEngine {
   private championDamageBonus = 0
   private eventSequence = 0
   private actorSequence = 0
-  private audioContext: AudioContext | null = null
-  private musicGain: GainNode | null = null
-  private musicNoiseBuffer: AudioBuffer | null = null
-  private thunderNoiseBuffer: AudioBuffer | null = null
-  private musicTimer: number | null = null
-  private musicNextNoteTime = 0
-  private musicStep = 0
-  private musicMuted: boolean
+  private readonly audio: AudioDirector
+  private readonly audioListenerRight = new THREE.Vector3()
+  private lootSequence = 0
+  private lootBurstSequence = 0
+  private lootToastSequence = 0
+  private lootToast: LootToastView | null = null
+  private lootToastExpiresAt = 0
   private dynamicDayNight: boolean
   private weatherEnabled: boolean
+  private inkOutlinesEnabled: boolean
   private screenShakeEnabled: boolean
+  private readonly reducedMotion: boolean
   private groundFoliageQuality: FoliageQuality
   private nightFactor = 0
-  private readonly musicSources = new Set<AudioScheduledSourceNode>()
   private readonly inactiveGoreParticles: Particle[] = []
-  private readonly stopMusicOwner = () => this.stopMusic()
+  private hitStopRemaining = 0
+  private pendingCleaveHitStop = 0
+  private calloutCooldown = 0
+  private damageNumberSequence = 0
+  private readonly pageHideAudioOwner = (event: PageTransitionEvent) => {
+    if (!event.persisted) this.audio.destroy()
+  }
   private resizeObserver: ResizeObserver
   private boundKeyDown: (event: KeyboardEvent) => void
   private boundKeyUp: (event: KeyboardEvent) => void
@@ -875,26 +1280,65 @@ export class GameEngine {
     this.container = container
     this.callbacks = callbacks
     this.faction = faction
-    this.musicMuted = settings.musicMuted ?? false
+    this.audio = new AudioDirector({
+      musicMuted: settings.musicMuted ?? false,
+      sfxVolume: settings.sfxVolume,
+    })
+    this.achievements = new AchievementTracker((achievement) => {
+      this.callbacks.onAchievementUnlocked(achievement)
+      this.playSound('achievement')
+    })
     this.dynamicDayNight = settings.dynamicDayNight ?? true
     this.weatherEnabled = settings.weatherEnabled ?? true
+    this.inkOutlinesEnabled = settings.inkOutlinesEnabled ?? true
     this.screenShakeEnabled = settings.screenShakeEnabled ?? true
+    this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     this.groundFoliageQuality = settings.foliageQuality ?? 'high'
     this.palette = createPalette()
+    this.lootRng = seededRandom(this.stableSeed(settings.achievementRunId ?? faction))
+    this.lootMaterials = this.createLootMaterials()
+    this.zoneArtProfiles = createZoneArtProfiles(this.palette)
+    this.comicMaterials = new ComicMaterialLibrary({
+      player: mix(this.palette.bg, this.palette.accent, 0.16),
+      enemy: mix(this.palette.bg, this.palette.danger, 0.16),
+      interactable: mix(this.palette.bg, this.palette.warning, 0.18),
+    })
     this.dayNightKeyframes = createDayNightKeyframes(this.palette)
     this.weatherFrostColor
       .copy(this.palette.worldFog)
       .lerp(this.palette.worldSun, 0.58)
     this.objectives = restoreObjectives(faction, savedGame?.objectives)
     this.body = savedGame ? { ...savedGame.body } : createHealthyBody()
-    this.health = savedGame?.health ?? 100
-    this.stamina = savedGame?.stamina ?? 100
+    this.upgrades = normalizeUpgradeLevels(savedGame?.upgradeLevels)
+    this.maxHealth = getMaxHealth(this.upgrades)
+    this.maxStamina = getMaxStamina(this.upgrades)
+    this.health = Math.min(this.maxHealth, savedGame?.health ?? this.maxHealth)
+    this.stamina = Math.min(this.maxStamina, savedGame?.stamina ?? this.maxStamina)
     this.gold = savedGame?.gold ?? 55
     this.kills = savedGame?.kills ?? 0
     this.damage = savedGame?.damage ?? (faction === 'villain' ? 31 : faction === 'guard' ? 28 : 26)
     this.elapsed = savedGame?.elapsed ?? 0
+    this.campaignCompleted =
+      savedGame?.campaignCompleted === true ||
+      this.objectives.every((objective) => objective.done)
+    this.campaignCompletedAt = savedGame?.campaignCompletedAt
+    this.threatTier = getThreatTier(this.elapsed)
     this.eventCooldown =
-      savedGame?.eventCooldown ?? Math.max(0, FIRST_EVENT_AT - this.elapsed)
+      Math.min(
+        this.eventCooldownRange().max,
+        savedGame?.eventCooldown ?? Math.max(0, FIRST_EVENT_AT - this.elapsed),
+      )
+    const defaultNextWave =
+      this.elapsed < THREAT_WAVE_FIRST_AT
+        ? THREAT_WAVE_FIRST_AT
+        : this.elapsed + Math.min(45, this.threatWaveInterval())
+    this.nextThreatWaveAt = Math.max(
+      this.elapsed,
+      Math.min(
+        savedGame?.nextThreatWaveAt ?? defaultNextWave,
+        this.elapsed + this.threatWaveInterval(),
+      ),
+    )
     this.championDamageBonus = Math.min(
       CHAMPION_DAMAGE_CAP,
       Math.max(0, savedGame?.championDamageBonus ?? 0),
@@ -922,11 +1366,18 @@ export class GameEngine {
     this.fog = new THREE.Fog(this.palette.worldFog, 48, 132)
     this.scene.fog = this.fog
     this.player = this.createCharacter(faction, true)
+    this.weaponTrail = this.createWeaponTrail()
+    const weaponParent = this.player.getObjectByName('weapon') ?? this.player
+    weaponParent.add(this.weaponTrail)
     const spawn = savedGame?.position ?? [FACTION_INFO[faction].spawn[0], PLAYER_HEIGHT, FACTION_INFO[faction].spawn[1]]
     this.player.position.set(spawn[0], spawn[1], spawn[2])
     this.scene.add(this.player)
     this.applySavedBodyAppearance()
+    this.playerOutline = this.registerOutline(this.player, 'player')
     this.lastZone = zoneAt(this.player.position.x, this.player.position.z)
+    this.audio.setMusicContext(this.faction, this.lastZone)
+    // Loading a save starts a fresh achievement run; cumulative progress remains global.
+    this.achievements.beginRun(faction, this.lastZone, settings.achievementRunId)
     this.weatherZone = this.lastZone
     this.setWeatherTarget(
       this.weatherEnabled ? WEATHER_BY_ZONE[this.weatherZone] : 'clear',
@@ -943,11 +1394,13 @@ export class GameEngine {
     this.updateAtmosphere(0)
     this.resolveCharacterOverlaps(this.player.position, PLAYER_COLLIDER_RADIUS)
     this.collectCameraObstacles(this.scene.children.slice(worldRootIndex))
+    this.initializeLootPool()
     this.caravan = this.createCaravan()
     this.scene.add(this.caravan)
+    this.registerNamedInteractableOutline(this.caravan, 'cargo')
     this.spawnPopulation()
     this.cameraYaw = faction === 'elf' ? -0.8 : faction === 'guard' ? 2.4 : 0.8
-    this.updateCamera(true)
+    this.updateCamera(0, true)
 
     this.boundKeyDown = this.onKeyDown.bind(this)
     this.boundKeyUp = this.onKeyUp.bind(this)
@@ -967,8 +1420,7 @@ export class GameEngine {
     document.addEventListener('pointerlockchange', this.boundPointerLock)
     document.addEventListener('visibilitychange', this.boundVisibilityChange)
     window.addEventListener('blur', this.boundWindowBlur)
-    window.addEventListener('pagehide', this.stopMusicOwner)
-    window.addEventListener('beforeunload', this.stopMusicOwner)
+    window.addEventListener('pagehide', this.pageHideAudioOwner)
     this.resizeObserver = new ResizeObserver(() => this.resize())
     this.resizeObserver.observe(this.container)
     this.resize()
@@ -983,6 +1435,7 @@ export class GameEngine {
   destroy(): void {
     cancelAnimationFrame(this.frameHandle)
     this.cancelActiveEvent()
+    this.clearLootRuntime()
     this.resizeObserver.disconnect()
     window.removeEventListener('keydown', this.boundKeyDown)
     window.removeEventListener('keyup', this.boundKeyUp)
@@ -993,9 +1446,10 @@ export class GameEngine {
     document.removeEventListener('pointerlockchange', this.boundPointerLock)
     document.removeEventListener('visibilitychange', this.boundVisibilityChange)
     window.removeEventListener('blur', this.boundWindowBlur)
-    window.removeEventListener('pagehide', this.stopMusicOwner)
-    window.removeEventListener('beforeunload', this.stopMusicOwner)
+    window.removeEventListener('pagehide', this.pageHideAudioOwner)
     if (document.pointerLockElement === this.renderer.domElement) document.exitPointerLock()
+    const geometries = new Set<THREE.BufferGeometry>()
+    const materials = new Set<THREE.Material>()
     this.scene.traverse((object) => {
       if (
         !(object instanceof THREE.Mesh) &&
@@ -1011,21 +1465,35 @@ export class GameEngine {
         object instanceof THREE.Points ||
         object instanceof THREE.Line
       ) {
-        object.geometry.dispose()
+        geometries.add(object.geometry)
       }
       const material = object.material
-      if (Array.isArray(material)) material.forEach((entry) => entry.dispose())
-      else material.dispose()
+      if (Array.isArray(material)) material.forEach((entry) => materials.add(entry))
+      else materials.add(material)
+    })
+    this.telegraphGeometries.forEach((geometry) => geometries.add(geometry))
+    geometries.forEach((geometry) => geometry.dispose())
+    materials.forEach((material) => {
+      if (!ComicMaterialLibrary.isLibraryOwned(material)) material.dispose()
     })
     this.postProcessor.dispose()
+    this.comicMaterials.dispose()
     this.renderer.dispose()
     this.renderer.domElement.remove()
     this.actors.forEach((actor) => actor.healthBarTexture.dispose())
+    this.damageNumberFx.forEach((entry) => entry.texture.dispose())
     this.generatedTextures.forEach((texture) => texture.dispose())
     this.generatedTextures.clear()
+    this.zoneArtMaterials.clear()
+    this.zoneDecorationSets.length = 0
+    this.outlineBindings.length = 0
+    this.interactableOutlineBindings.length = 0
     this.projectiles.length = 0
     this.projectileSourcesToClear.clear()
-    this.stopMusic()
+    this.eventPropTargets.clear()
+    this.telegraphPool.length = 0
+    this.telegraphGeometries.clear()
+    this.audio.destroy()
   }
 
   setPaused(paused: boolean): void {
@@ -1036,7 +1504,7 @@ export class GameEngine {
     this.paused = paused
     this.keys.clear()
     if (paused && document.pointerLockElement === this.renderer.domElement) document.exitPointerLock()
-    this.updateMusicVolume()
+    this.audio.setPaused(paused)
     this.emitView(true)
   }
 
@@ -1057,9 +1525,12 @@ export class GameEngine {
   }
 
   setMusicMuted(muted: boolean): void {
-    this.musicMuted = muted
     if (!muted) this.resumeAudio()
-    this.updateMusicVolume()
+    this.audio.setMusicMuted(muted)
+  }
+
+  setSfxVolume(volume: number): void {
+    this.audio.setSfxVolume(volume)
   }
 
   setDynamicDayNight(enabled: boolean): void {
@@ -1092,6 +1563,14 @@ export class GameEngine {
     this.postProcessor.setEnabled(enabled)
   }
 
+  setInkOutlinesEnabled(enabled: boolean): void {
+    if (this.inkOutlinesEnabled === enabled) return
+    this.inkOutlinesEnabled = enabled
+    this.updatePlayerOutlineVisibility()
+    for (const actor of this.actors) this.updateActorOutlineVisibility(actor)
+    this.updateInteractableOutlines()
+  }
+
   setFoliageQuality(quality: FoliageQuality): void {
     if (this.groundFoliageQuality === quality) return
     this.groundFoliageQuality = quality
@@ -1100,11 +1579,26 @@ export class GameEngine {
 
   setScreenShakeEnabled(enabled: boolean): void {
     this.screenShakeEnabled = enabled
-    if (!enabled) this.trauma = 0
+    if (!enabled) {
+      this.resetCameraMotion()
+      this.hitStopRemaining = Math.min(this.hitStopRemaining, HIT_STOP_REDUCED_MAX)
+    }
   }
 
   stopAudio(): void {
-    this.stopMusic()
+    this.audio.destroy()
+  }
+
+  getAchievements(): AchievementView[] {
+    return this.achievements.getCatalogue()
+  }
+
+  getAchievementSummary(): AchievementSummary {
+    return this.achievements.getSummary()
+  }
+
+  getCurrentRunAchievements(): AchievementView[] {
+    return this.achievements.getCurrentRunUnlocks()
   }
 
   useAbility(): void {
@@ -1133,6 +1627,7 @@ export class GameEngine {
     this.abilityCooldown = ability.cooldownMax
     if (ability.id === 'bow') this.fireArrow()
     else this.cleave()
+    this.achievements.recordAbilityUse(ability.id)
     this.emitView(true)
   }
 
@@ -1155,6 +1650,7 @@ export class GameEngine {
     }
     this.resumeAudio()
     this.shieldActive = true
+    this.achievements.recordAbilityUse('shield')
     this.updateShieldPose()
     this.emitView(true)
   }
@@ -1164,6 +1660,7 @@ export class GameEngine {
     this.resumeAudio()
     this.attackCooldown = 0.52
     this.attackAnimation = 1
+    this.activePlayerAttackKind = 'melee'
 
     let target: Actor | null = null
     let bestDistance = 3.6
@@ -1187,6 +1684,7 @@ export class GameEngine {
       (this.body.leftArm === 'missing' ? 5 : 0) + (this.body.rightArm === 'missing' ? 9 : 0)
     const dealt = Math.max(8, this.damage - armPenalty + Math.floor(Math.random() * 7))
     this.damageActor(target, dealt, this.player.position, this.faction, true, {
+      attackKind: 'melee',
       detachChance: 0.45,
     })
   }
@@ -1233,6 +1731,7 @@ export class GameEngine {
           'success',
         )
         this.gold += 25
+        this.achievements.recordGoldEarned(25)
         this.playSound('coin')
       } else {
         this.callbacks.onNotice('Командир: «Приказ прежний. Не стой столбом!»', 'info')
@@ -1244,7 +1743,7 @@ export class GameEngine {
     if (playerPosition.distanceTo(this.caravan.position) < 7) {
       if (this.faction === 'guard') {
         this.callbacks.onNotice('Корован под охраной. Всё спокойно, гвардеец.', 'info')
-        this.health = Math.min(100, this.health + 8)
+        this.health = Math.min(this.maxHealth, this.health + 8)
         return
       }
       if (this.caravanCooldown > 0) {
@@ -1252,6 +1751,8 @@ export class GameEngine {
         return
       }
       this.gold += 95
+      this.achievements.recordGoldEarned(95)
+      this.achievements.recordCaravanRobbed(false)
       this.caravanCooldown = 40
       this.caravanRobbedFlash = 1
       this.completeObjective('raid')
@@ -1272,6 +1773,7 @@ export class GameEngine {
     if (this.paused || this.ended) return
     this.resumeAudio()
     this.squadFollowing = !this.squadFollowing
+    this.achievements.recordSquadCommand()
     if (this.faction === 'villain') this.completeObjective('rally')
     const message = this.squadFollowing
       ? this.faction === 'guard'
@@ -1284,7 +1786,12 @@ export class GameEngine {
   }
 
   purchase(item: ShopItem): { ok: boolean; message: string } {
-    if (this.gold < item.price) return { ok: false, message: 'Не хватает золота.' }
+    const currentLevel = item.upgrade ? this.upgrades[item.upgrade] : 0
+    if (item.upgrade && currentLevel >= (item.maxLevel ?? Number.POSITIVE_INFINITY)) {
+      return { ok: false, message: `${item.name}: достигнут максимальный уровень.` }
+    }
+    const price = getShopItemPrice(item, this.upgrades)
+    if (this.gold < price) return { ok: false, message: 'Не хватает золота.' }
 
     if (item.id === 'arm') {
       const part = this.firstPartWithStatus(['leftArm', 'rightArm'], 'missing')
@@ -1301,23 +1808,35 @@ export class GameEngine {
       if (!part) return { ok: false, message: 'Зрение в порядке. Хрустальный глаз не нужен.' }
       this.body[part] = 'prosthetic'
     } else if (item.id === 'medicine') {
-      if (this.health >= 100 && this.body.bleeding === 0 && !this.hasWounds()) {
+      if (this.health >= this.maxHealth && this.body.bleeding === 0 && !this.hasWounds()) {
         return { ok: false, message: 'Вы полностью здоровы.' }
       }
-      this.health = Math.min(100, this.health + 55)
+      this.health = Math.min(this.maxHealth, this.health + 55)
       this.body.bleeding = 0
       this.healWounds()
-    } else {
+    } else if (item.id === 'blade') {
       this.damage += 8
+      this.upgrades.blade += 1
+    } else if (item.id === 'vitality') {
+      this.upgrades.vitality += 1
+      this.maxHealth = getMaxHealth(this.upgrades)
+      this.health = Math.min(this.maxHealth, this.health + MAX_HEALTH_PER_LEVEL)
+    } else {
+      this.upgrades.endurance += 1
+      this.maxStamina = getMaxStamina(this.upgrades)
+      this.stamina = Math.min(this.maxStamina, this.stamina + MAX_STAMINA_PER_LEVEL)
     }
 
-    this.gold -= item.price
+    this.gold -= price
+    this.achievements.recordPurchase(item.id)
     this.playSound('coin')
     this.emitView(true)
-    return { ok: true, message: `${item.name}: покупка совершена.` }
+    const levelSuffix = item.upgrade ? ` Уровень ${this.upgrades[item.upgrade]}.` : ''
+    return { ok: true, message: `${item.name}: покупка совершена.${levelSuffix}` }
   }
 
   save(): SavedGame {
+    this.settleActiveLoot('save')
     const save: SavedGame = {
       version: 1,
       faction: this.faction,
@@ -1331,8 +1850,15 @@ export class GameEngine {
       objectives: this.objectives.map((objective) => ({ ...objective })),
       elapsed: this.elapsed,
       savedAt: new Date().toISOString(),
-      eventCooldown: this.activeEvent ? EVENT_COOLDOWN_MIN : this.eventCooldown,
+      eventCooldown: this.activeEvent ? this.eventCooldownRange().min : this.eventCooldown,
       championDamageBonus: this.championDamageBonus,
+      campaignCompleted: this.campaignCompleted,
+      ...(this.campaignCompletedAt === undefined
+        ? {}
+        : { campaignCompletedAt: this.campaignCompletedAt }),
+      threatTier: this.threatTier,
+      nextThreatWaveAt: this.nextThreatWaveAt,
+      upgradeLevels: { ...this.upgrades },
     }
     localStorage.setItem(SAVE_KEY, JSON.stringify(save))
     this.callbacks.onNotice('Игра сохранена. Корованы никуда не денутся.', 'success')
@@ -1341,15 +1867,32 @@ export class GameEngine {
   }
 
   private readonly loop = (): void => {
-    const delta = Math.min(this.clock.getDelta(), 0.05)
-    if (!this.paused && !this.ended) this.update(delta)
-    this.updateCamera(false)
+    const elapsedDelta = this.clock.getDelta()
+    const visualDelta = Math.min(elapsedDelta, 0.05)
+    let stopped = 0
+    if (!this.paused && !this.ended && this.hitStopRemaining > 0) {
+      stopped = Math.min(this.hitStopRemaining, elapsedDelta)
+      this.hitStopRemaining = Math.max(0, this.hitStopRemaining - stopped)
+    }
+    const gameplayDelta = Math.min(Math.max(0, elapsedDelta - stopped), 0.05)
+    if (!this.paused && !this.ended && gameplayDelta > 0) this.update(gameplayDelta)
+    if (!this.paused && !this.ended) this.updateCameraEffects(visualDelta)
+    this.updateCamera(visualDelta, false)
+    this.audioListenerRight.setFromMatrixColumn(this.camera.matrixWorld, 0)
+    this.audio.setListener(this.camera.position, this.audioListenerRight)
+    this.audio.setMusicContext(
+      this.faction,
+      zoneAt(this.player.position.x, this.player.position.z),
+    )
     this.postProcessor.render()
     this.frameHandle = requestAnimationFrame(this.loop)
   }
 
   private update(delta: number): void {
     this.elapsed += delta
+    this.updateLoot(delta)
+    this.updateThreat()
+    this.cleanupDeadActors()
     this.shakeClock += delta
     this.trauma = Math.max(0, this.trauma - SHAKE_DECAY * delta)
     this.damageFlash = Math.max(0, this.damageFlash - FLASH_DECAY * delta)
@@ -1360,9 +1903,11 @@ export class GameEngine {
     this.caravanRobbedFlash = Math.max(0, this.caravanRobbedFlash - delta * 2)
     this.updatePlayer(delta)
     this.updateCaravan(delta)
-    this.updateActors(delta)
     this.updateProjectiles(delta)
+    this.updateActors(delta)
+    this.updateInteractableOutlines()
     this.updateParticles(delta)
+    this.updateComicHitFx(delta)
     this.updateDecals(delta)
     this.updateDayNight()
     this.updateWeather(delta)
@@ -1379,7 +1924,10 @@ export class GameEngine {
     } else {
       this.bleedFxCooldown = 0
     }
-    if (this.health <= 0) this.endGame('defeat')
+    if (this.health <= 0) {
+      this.endGame('defeat')
+      return
+    }
     this.updateMission()
     this.updateEvents(delta)
     this.updatePrompt()
@@ -1844,6 +2392,7 @@ export class GameEngine {
   }
 
   private updatePlayer(delta: number): void {
+    const wasOnGround = this.onGround
     const forward = this.getAimDirection()
     const right = new THREE.Vector3(Math.cos(this.cameraYaw), 0, Math.sin(this.cameraYaw))
     const move = new THREE.Vector3()
@@ -1868,6 +2417,7 @@ export class GameEngine {
       this.stamina > 2 &&
       move.lengthSq() > 0 &&
       missingLegs === 0
+    this.isSprinting = sprinting
     const speed =
       8.2 *
       mobility *
@@ -1882,7 +2432,7 @@ export class GameEngine {
     } else if (sprinting) {
       this.stamina = Math.max(0, this.stamina - delta * 24)
     } else {
-      this.stamina = Math.min(100, this.stamina + delta * 16)
+      this.stamina = Math.min(this.maxStamina, this.stamina + delta * 16)
     }
 
     if (move.lengthSq() > 0) {
@@ -1897,33 +2447,65 @@ export class GameEngine {
         ? Math.atan2(forward.x, forward.z)
         : Math.atan2(move.x, move.z)
       const stride = Math.sin(this.elapsed * (sprinting ? 15 : 10)) * 0.62
-      this.animateCharacter(this.player, stride, this.attackAnimation)
+      this.animateCharacter(this.player, {
+        stride,
+        attack: this.attackAnimation,
+        anticipation: 0,
+        recovery: 0,
+        flinch: 0,
+        stagger: 0,
+      })
     } else {
       if (this.shieldActive) this.player.rotation.y = Math.atan2(forward.x, forward.z)
-      this.animateCharacter(this.player, 0, this.attackAnimation)
+      this.animateCharacter(this.player, {
+        stride: 0,
+        attack: this.attackAnimation,
+        anticipation: 0,
+        recovery: 0,
+        flinch: 0,
+        stagger: 0,
+      })
     }
 
-    if (this.keys.has('Space') && this.onGround && missingLegs < 2) {
+    const jumpHeld = this.keys.has('Space')
+    let tookOff = false
+    if (jumpHeld && this.onGround && missingLegs < 2) {
       this.verticalVelocity = missingLegs === 1 ? 6.2 : 8.5
       this.onGround = false
+      tookOff = true
       this.playSound('jump')
     }
+    const jumpLatch = advanceJumpAccentLatch(this.jumpAccentArmed, jumpHeld, tookOff)
+    this.jumpAccentArmed = jumpLatch.armed
+    if (jumpLatch.triggered) this.queueCameraAccent('jump', 1, 0.18)
     this.verticalVelocity -= 23 * delta
     this.player.position.y += this.verticalVelocity * delta
     if (this.player.position.y <= PLAYER_HEIGHT) {
+      const landed = !this.onGround && this.verticalVelocity < -2
       this.player.position.y = PLAYER_HEIGHT
       this.verticalVelocity = 0
       this.onGround = true
+      if (landed) this.playSound('land')
     }
+    const airborneUpdate = advanceAirborneState(
+      this.airborneTime,
+      wasOnGround,
+      this.onGround,
+      delta,
+    )
+    this.airborneTime = airborneUpdate.airborneTime
+    if (airborneUpdate.landed) this.queueCameraAccent('land', -1.4, 0.16)
 
   }
 
   private updateActors(delta: number): void {
     for (const actor of this.actors) {
       this.updateActorIndicators(actor)
-      if (!actor.alive) continue
+      if (!actor.alive) {
+        this.updateActorDeathMotion(actor, delta)
+        continue
+      }
       actor.attackCooldown = Math.max(0, actor.attackCooldown - delta)
-      actor.attackAnimation = Math.max(0, actor.attackAnimation - delta * 4.6)
       actor.wanderTimer = Math.max(0, actor.wanderTimer - delta)
       actor.idleTimer = Math.max(0, actor.idleTimer - delta)
       actor.retreatTimer = Math.max(0, actor.retreatTimer - delta)
@@ -1931,13 +2513,34 @@ export class GameEngine {
       actor.rageTimer = Math.max(0, actor.rageTimer - delta)
       actor.alertCooldown = Math.max(0, actor.alertCooldown - delta)
       actor.retaliationTimer = Math.max(0, actor.retaliationTimer - delta)
+      this.updateActorReaction(actor, delta)
+      const knockbackSpeed = this.updateActorKnockback(actor, delta)
+      if (actor.role === 'commander' && actor.reaction !== 'stagger') {
+        this.updateCommander(actor, delta)
+      }
+      if (actor.action) {
+        this.updateActorAction(actor, delta)
+        actor.velocity.set(0, 0, 0)
+        actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+        actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
+        this.animateActorCharacter(actor, delta, 0)
+        this.updateChampionAura(actor)
+        continue
+      }
+      if (actor.reaction === 'stagger' || knockbackSpeed > KNOCKBACK_STEER_THRESHOLD) {
+        actor.velocity.set(0, 0, 0)
+        actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+        actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
+        this.animateActorCharacter(actor, delta, 0)
+        this.updateChampionAura(actor)
+        continue
+      }
       if (actor.aiMode === 'captive') {
         actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
         actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
         this.animateActorCharacter(actor, delta, 0)
         continue
       }
-      if (actor.role === 'commander') this.updateCommander(actor, delta)
 
       const toPlayer = this.player.position.clone().sub(actor.mesh.position)
       toPlayer.y = 0
@@ -1992,19 +2595,22 @@ export class GameEngine {
           actor.targetId = null
         }
       }
+      const assignedEventProp = actor.eventPropTargetId
+        ? this.eventPropTargets.get(actor.eventPropTargetId)
+        : undefined
 
       if (retaliationTarget) {
         targetActor = retaliationTarget
         targetPosition = retaliationTarget.mesh.position
       } else if (
         actor.aiMode === 'attackEventProp' &&
-        actor.eventPropTarget &&
-        actor.eventPropTarget.hp > 0 &&
+        assignedEventProp &&
+        assignedEventProp.hp > 0 &&
         actor.rageTimer <= 0
       ) {
         actor.targetId = null
         actor.playerAggro = false
-        targetEventProp = actor.eventPropTarget
+        targetEventProp = assignedEventProp
         targetPosition = targetEventProp.position
       } else if (shouldPursuePlayer) {
         actor.targetId = null
@@ -2131,7 +2737,15 @@ export class GameEngine {
             moving = true
           }
           if (distance <= ARCHER_MAX_RANGE + 0.75 && actor.attackCooldown <= 0) {
-            this.fireActorArrow(actor, targetPosition)
+            this.startActorAction(
+              actor,
+              'arrow',
+              targetActor
+                ? { kind: 'actor', id: targetActor.id }
+                : { kind: 'player' },
+              targetPosition,
+              ARCHER_MAX_RANGE,
+            )
           }
         } else if (actor.retreatTimer > 0) {
           direction.copy(facingDirection).negate()
@@ -2146,11 +2760,42 @@ export class GameEngine {
             direction.copy(facingDirection)
             moving = true
           } else if (actor.attackCooldown <= 0) {
-            if (targetsPlayer) this.actorAttackPlayer(actor)
-            else if (targetActor) this.actorAttackActor(actor, targetActor)
-            else if (targetEventProp) this.actorAttackEventProp(actor, targetEventProp)
+            if (targetsPlayer) {
+              this.startActorAction(
+                actor,
+                'meleePlayer',
+                { kind: 'player' },
+                targetPosition,
+                stopDistance,
+              )
+            } else if (targetActor) {
+              this.startActorAction(
+                actor,
+                'meleeActor',
+                { kind: 'actor', id: targetActor.id },
+                targetPosition,
+                stopDistance,
+              )
+            } else if (targetEventProp) {
+              this.startActorAction(
+                actor,
+                'eventProp',
+                { kind: 'eventProp', id: targetEventProp.id },
+                targetPosition,
+                stopDistance,
+              )
+            }
           }
         }
+      }
+
+      if (actor.action) {
+        actor.velocity.set(0, 0, 0)
+        actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+        actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
+        this.animateActorCharacter(actor, delta, 0)
+        this.updateChampionAura(actor)
+        continue
       }
 
       if (actor.role !== 'commander') {
@@ -2248,13 +2893,7 @@ export class GameEngine {
         actor.turnLean = THREE.MathUtils.damp(actor.turnLean, 0, 8, delta)
       }
       this.animateActorCharacter(actor, delta, lookYaw)
-      if (actor.role === 'champion') {
-        const aura = actor.mesh.getObjectByName('champion-aura')
-        if (aura) {
-          const pulse = 1 + Math.sin(this.elapsed * 5 + actor.phase) * 0.12
-          aura.scale.setScalar(pulse)
-        }
-      }
+      this.updateChampionAura(actor)
     }
   }
 
@@ -2287,14 +2926,509 @@ export class GameEngine {
       hostile(actor.faction, this.faction) &&
       playerDistance < 34 &&
       (this.elapsed < actor.healthBarVisibleUntil || actor.rageTimer > 0)
+    this.updateActorOutlineVisibility(actor, playerDistance * playerDistance)
+  }
+
+  private updateActorOutlineVisibility(actor: Actor, playerDistanceSq?: number): void {
+    let distanceSq = playerDistanceSq
+    if (distanceSq === undefined) {
+      const dx = actor.mesh.position.x - this.player.position.x
+      const dy = actor.mesh.position.y - this.player.position.y
+      const dz = actor.mesh.position.z - this.player.position.z
+      distanceSq = dx * dx + dy * dy + dz * dz
+    }
+    this.setOutlineVisible(
+      actor.outlineBinding,
+      this.inkOutlinesEnabled &&
+        distanceSq <= OUTLINE_ACTOR_DISTANCE_SQ &&
+        (actor.alive || this.elapsed < actor.outlineUntil),
+    )
+  }
+
+  private registerOutline(root: THREE.Object3D, kind: OutlineKind): OutlineBinding {
+    const binding = this.comicMaterials.applyOutline(root, kind)
+    this.outlineBindings.push(binding)
+    this.setOutlineVisible(binding, false)
+    return binding
+  }
+
+  private registerInteractableOutline(
+    root: THREE.Object3D,
+    positionRoot: THREE.Object3D = root,
+  ): OutlineBinding {
+    const binding = this.registerOutline(root, 'interactable')
+    this.interactableOutlineBindings.push({ binding, positionRoot })
+    this.updateInteractableOutline(binding, positionRoot)
+    return binding
+  }
+
+  private registerNamedInteractableOutline(root: THREE.Object3D, name: string): OutlineBinding | null {
+    const target = root.getObjectByName(name)
+    return target ? this.registerInteractableOutline(target, root) : null
+  }
+
+  private updateInteractableOutlines(): void {
+    for (const entry of this.interactableOutlineBindings) {
+      this.updateInteractableOutline(entry.binding, entry.positionRoot)
+    }
+  }
+
+  private updateInteractableOutline(binding: OutlineBinding, positionRoot: THREE.Object3D): void {
+    const dx = positionRoot.position.x - this.player.position.x
+    const dy = positionRoot.position.y - this.player.position.y
+    const dz = positionRoot.position.z - this.player.position.z
+    this.setOutlineVisible(
+      binding,
+      this.inkOutlinesEnabled &&
+        dx * dx + dy * dy + dz * dz <= OUTLINE_INTERACTABLE_DISTANCE_SQ,
+    )
+  }
+
+  private updatePlayerOutlineVisibility(): void {
+    const distanceSq = this.camera.position.distanceToSquared(this.player.position)
+    this.setOutlineVisible(
+      this.playerOutline,
+      this.inkOutlinesEnabled && distanceSq >= OUTLINE_PLAYER_HIDE_DISTANCE_SQ,
+    )
+  }
+
+  private setOutlineVisible(binding: OutlineBinding, visible: boolean): void {
+    for (const shell of binding.shells) shell.visible = visible
+  }
+
+  private unregisterOutlineRoot(root: THREE.Object3D): void {
+    for (let index = this.interactableOutlineBindings.length - 1; index >= 0; index -= 1) {
+      const entry = this.interactableOutlineBindings[index]
+      if (
+        this.objectBelongsToRoot(root, entry.binding.root) ||
+        this.objectBelongsToRoot(root, entry.positionRoot)
+      ) {
+        this.interactableOutlineBindings.splice(index, 1)
+      }
+    }
+    for (let index = this.outlineBindings.length - 1; index >= 0; index -= 1) {
+      if (this.objectBelongsToRoot(root, this.outlineBindings[index].root)) {
+        this.outlineBindings.splice(index, 1)
+      }
+    }
+  }
+
+  private objectBelongsToRoot(root: THREE.Object3D, candidate: THREE.Object3D): boolean {
+    let current: THREE.Object3D | null = candidate
+    while (current) {
+      if (current === root) return true
+      current = current.parent
+    }
+    return false
   }
 
   private getAimDirection(): THREE.Vector3 {
     return new THREE.Vector3(Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw))
   }
 
+  private actorWindup(role: ActorRole): number {
+    if (role === 'scout' || role === 'minion') return 0.18
+    if (role === 'archer') return 0.32
+    if (role === 'commander') return 0.38
+    if (role === 'brute') return 0.56
+    if (role === 'champion') return 0.48
+    return 0.26
+  }
+
+  private actorRecovery(role: ActorRole): number {
+    if (role === 'scout' || role === 'minion') return 0.18
+    if (role === 'archer') return 0.2
+    if (role === 'commander') return 0.28
+    if (role === 'brute') return 0.42
+    if (role === 'champion') return 0.36
+    return 0.24
+  }
+
+  private actorMaxPoise(role: ActorRole): number {
+    if (role === 'scout' || role === 'minion' || role === 'archer') return 18
+    if (role === 'commander') return 46
+    if (role === 'brute') return 58
+    if (role === 'champion') return 72
+    return 28
+  }
+
+  private actorStaggerDuration(role: ActorRole): number {
+    if (role === 'scout' || role === 'minion' || role === 'archer') return 0.34
+    if (role === 'commander') return 0.24
+    if (role === 'brute') return 0.2
+    if (role === 'champion') return 0.18
+    return 0.3
+  }
+
+  private startActorAction(
+    actor: Actor,
+    kind: ActorActionKind,
+    target: ActorAction['target'],
+    targetPosition: THREE.Vector3,
+    contactRange: number,
+  ): void {
+    if (!actor.alive || actor.action || actor.reaction === 'stagger') return
+    const cooldown =
+      kind === 'arrow'
+        ? ARCHER_FIRE_COOLDOWN
+        : kind === 'meleePlayer'
+          ? actor.role === 'commander'
+            ? 0.8
+            : 1.15
+          : kind === 'meleeActor'
+            ? 1.3
+            : 1.35
+    actor.attackCooldown = this.actorAttackInterval(actor, cooldown)
+    actor.velocity.set(0, 0, 0)
+    const action: ActorAction = {
+      kind,
+      phase: 'windup',
+      elapsed: 0,
+      duration: this.actorWindup(actor.role),
+      target,
+      targetPosition: targetPosition.clone(),
+      contactRange,
+    }
+    actor.action = action
+    this.faceActorToward(actor, targetPosition, 1)
+    this.acquireActorTelegraph(actor)
+    this.playActorActionSound(actor, action, 'attackTell')
+  }
+
+  private updateActorAction(actor: Actor, delta: number): void {
+    const action = actor.action
+    if (!action) return
+    const livePosition = this.resolveActorActionTarget(actor, action)
+    if (livePosition) action.targetPosition.copy(livePosition)
+    this.faceActorToward(actor, action.targetPosition, delta)
+
+    action.elapsed += delta
+    if (action.phase === 'windup') {
+      this.acquireActorTelegraph(actor)
+      this.updateActorTelegraph(actor, action)
+      if (action.elapsed < action.duration) return
+      this.releaseActorTelegraph(actor.id)
+      this.resolveActorActionContact(actor, action)
+      if (!actor.alive || actor.reaction === 'stagger' || actor.action !== action) return
+      if (actor.role === 'scout') actor.retreatTimer = SCOUT_RETREAT_DURATION
+      action.phase = 'recovery'
+      action.elapsed = 0
+      action.duration = this.actorRecovery(actor.role)
+      return
+    }
+
+    if (action.elapsed >= action.duration) actor.action = null
+  }
+
+  private resolveActorActionTarget(
+    actor: Actor,
+    action: ActorAction,
+  ): THREE.Vector3 | null {
+    if (action.target.kind === 'player') {
+      return this.health > 0 && hostile(actor.faction, this.faction)
+        ? this.player.position
+        : null
+    }
+    if (action.target.kind === 'actor') {
+      const targetId = action.target.id
+      const target = this.actors.find((candidate) => candidate.id === targetId)
+      return target?.alive && hostile(actor.faction, target.faction)
+        ? target.mesh.position
+        : null
+    }
+    const target = this.eventPropTargets.get(action.target.id)
+    return target && target.hp > 0 ? target.position : null
+  }
+
+  private resolveActorActionContact(actor: Actor, action: ActorAction): void {
+    if (action.kind === 'arrow') {
+      const livePosition = this.resolveActorActionTarget(actor, action)
+      if (!livePosition) this.playActorActionSound(actor, action, 'whiff')
+      this.fireActorArrow(actor, livePosition ?? action.targetPosition)
+      return
+    }
+
+    const livePosition = this.resolveActorActionTarget(actor, action)
+    if (
+      !livePosition ||
+      actor.mesh.position.distanceTo(livePosition) >
+        action.contactRange + CONTACT_RANGE_FORGIVENESS
+    ) {
+      this.playActorActionSound(actor, action, 'whiff')
+      return
+    }
+    if (action.kind === 'meleePlayer') {
+      this.actorAttackPlayer(actor)
+      return
+    }
+    if (action.kind === 'meleeActor' && action.target.kind === 'actor') {
+      const targetId = action.target.id
+      const target = this.actors.find((candidate) => candidate.id === targetId)
+      if (target?.alive && hostile(actor.faction, target.faction)) {
+        this.actorAttackActor(actor, target)
+      }
+      return
+    }
+    if (action.kind === 'eventProp' && action.target.kind === 'eventProp') {
+      const target = this.eventPropTargets.get(action.target.id)
+      if (target && target.hp > 0) this.actorAttackEventProp(actor, target)
+    }
+  }
+
+  private playActorActionSound(
+    actor: Actor,
+    action: ActorAction,
+    cue: Extract<SoundCue, 'attackTell' | 'whiff'>,
+  ): void {
+    if (action.target.kind !== 'player') return
+    const intensity =
+      actor.role === 'champion' || actor.role === 'commander'
+        ? 1
+        : actor.role === 'brute'
+          ? 0.82
+          : 0.58
+    this.playSound(cue, {
+      position: actor.mesh.position,
+      intensity,
+      variantSeed: this.stableSeed(`${actor.id}:${action.kind}:${cue}`),
+    })
+  }
+
+  private faceActorToward(actor: Actor, position: THREE.Vector3, delta: number): void {
+    const offset = position.clone().sub(actor.mesh.position)
+    offset.y = 0
+    if (offset.lengthSq() <= 0.0001) return
+    const yaw = Math.atan2(offset.x, offset.z)
+    actor.mesh.rotation.y =
+      delta >= 1 ? yaw : dampAngle(actor.mesh.rotation.y, yaw, 13, delta)
+  }
+
+  private updateActorReaction(actor: Actor, delta: number): void {
+    actor.staggerImmunity = Math.max(0, actor.staggerImmunity - delta)
+    actor.poiseRecoveryDelay = Math.max(0, actor.poiseRecoveryDelay - delta)
+    if (actor.reaction !== 'none') {
+      const wasStaggered = actor.reaction === 'stagger'
+      actor.reactionRemaining = Math.max(0, actor.reactionRemaining - delta)
+      if (actor.reactionRemaining <= 0) {
+        actor.reaction = 'none'
+        if (wasStaggered) actor.poise = Math.max(actor.poise, actor.maxPoise * 0.7)
+      }
+    }
+    if (actor.reaction !== 'stagger' && actor.poiseRecoveryDelay <= 0) {
+      actor.poise = Math.min(
+        actor.maxPoise,
+        actor.poise + POISE_RECOVERY_PER_SECOND * delta,
+      )
+    }
+  }
+
+  private applyActorDamageReaction(
+    actor: Actor,
+    result: DamageResult,
+    attackKind: AttackKind,
+    requestedKnockback: number,
+  ): void {
+    if (!result.applied) return
+    actor.lastHitDirection.copy(result.direction)
+    actor.lastHitDirection.y = 0
+    if (actor.lastHitDirection.lengthSq() > 0.0001) actor.lastHitDirection.normalize()
+    if (requestedKnockback > 0 && !result.killed) {
+      const largeRole =
+        actor.role === 'brute' || actor.role === 'commander' || actor.role === 'champion'
+      const resistance = largeRole ? LARGE_ROLE_KNOCKBACK_SCALE : 1
+      const motionScale =
+        !this.screenShakeEnabled || this.reducedMotion ? REDUCED_MOTION_COMBAT_SCALE : 1
+      actor.knockbackVelocity.addScaledVector(
+        actor.lastHitDirection,
+        requestedKnockback * resistance * motionScale,
+      )
+      if (actor.knockbackVelocity.length() > KNOCKBACK_MAX_SPEED) {
+        actor.knockbackVelocity.setLength(KNOCKBACK_MAX_SPEED)
+      }
+    }
+    if (result.killed) return
+
+    if (actor.reaction !== 'stagger') {
+      actor.reaction = 'flinch'
+      actor.reactionRemaining = Math.max(actor.reactionRemaining, FLINCH_TIME)
+    }
+    actor.poiseRecoveryDelay = POISE_REGEN_DELAY
+    const poiseDamage = result.dealt * (attackKind === 'cleave' ? 1.45 : 0.75)
+    if (actor.staggerImmunity > 0) {
+      actor.poise = Math.max(actor.maxPoise * 0.7, actor.poise - poiseDamage)
+      return
+    }
+    actor.poise -= poiseDamage
+    if (actor.poise > 0) return
+
+    actor.reaction = 'stagger'
+    actor.reactionRemaining = this.actorStaggerDuration(actor.role)
+    actor.staggerImmunity = STAGGER_IMMUNITY
+    actor.poise = actor.maxPoise * 0.7
+    actor.retreatTimer = 0
+    actor.velocity.set(0, 0, 0)
+    actor.action = null
+    this.releaseActorTelegraph(actor.id)
+  }
+
+  private updateActorKnockback(actor: Actor, delta: number): number {
+    const speed = actor.knockbackVelocity.length()
+    if (speed <= 0.001) {
+      actor.knockbackVelocity.set(0, 0, 0)
+      return 0
+    }
+    const startX = actor.mesh.position.x
+    const startZ = actor.mesh.position.z
+    const requestedX = actor.knockbackVelocity.x * delta
+    const requestedZ = actor.knockbackVelocity.z * delta
+    this.moveCharacter(
+      actor.mesh.position,
+      requestedX,
+      requestedZ,
+      this.actorColliderRadiusForRole(actor.role),
+    )
+    const actualX = actor.mesh.position.x - startX
+    const actualZ = actor.mesh.position.z - startZ
+    if (Math.abs(actualX - requestedX) > 0.001) actor.knockbackVelocity.x = 0
+    if (Math.abs(actualZ - requestedZ) > 0.001) actor.knockbackVelocity.z = 0
+    actor.knockbackVelocity.multiplyScalar(Math.exp(-KNOCKBACK_DAMPING * delta))
+    if (actor.knockbackVelocity.lengthSq() < 0.0001) {
+      actor.knockbackVelocity.set(0, 0, 0)
+    }
+    return actor.knockbackVelocity.length()
+  }
+
+  private telegraphKindForRole(role: ActorRole): TelegraphKind | null {
+    if (role === 'archer') return 'aim'
+    if (role === 'commander') return 'commander'
+    if (role === 'brute' || role === 'champion') return 'wedge'
+    if (role === 'soldier' || role === 'captive') return 'tick'
+    return null
+  }
+
+  private telegraphPriorityForRole(role: ActorRole): number {
+    if (role === 'brute' || role === 'champion' || role === 'commander') return 3
+    if (role === 'archer') return 2
+    return 1
+  }
+
+  private acquireActorTelegraph(actor: Actor): void {
+    if (
+      actor.action?.phase !== 'windup' ||
+      this.paused ||
+      this.ended ||
+      document.hidden ||
+      !document.hasFocus()
+    ) {
+      return
+    }
+    const kind = this.telegraphKindForRole(actor.role)
+    if (!kind || this.telegraphPool.some((entry) => entry.ownerId === actor.id)) return
+    const priority = this.telegraphPriorityForRole(actor.role)
+    let entry = this.telegraphPool.find((candidate) => candidate.ownerId === null)
+    if (!entry && this.telegraphPool.length < TELEGRAPH_MAX) {
+      const material = new THREE.MeshBasicMaterial({
+        color: this.palette.warning,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      })
+      const mesh = new THREE.Mesh(this.telegraphGeometry(kind), material)
+      mesh.visible = false
+      mesh.renderOrder = 2
+      this.scene.add(mesh)
+      entry = { mesh, ownerId: null, priority: 0, kind }
+      this.telegraphPool.push(entry)
+    }
+    if (!entry) {
+      const lowest = this.telegraphPool.reduce((best, candidate) =>
+        candidate.priority < best.priority ? candidate : best,
+      )
+      if (lowest.priority >= priority) return
+      entry = lowest
+    }
+    entry.ownerId = actor.id
+    entry.priority = priority
+    entry.kind = kind
+    entry.mesh.geometry = this.telegraphGeometry(kind)
+    entry.mesh.material.color.copy(
+      actor.role === 'archer' ? this.palette.warning : this.palette.danger,
+    )
+    entry.mesh.visible = true
+  }
+
+  private updateActorTelegraph(actor: Actor, action: ActorAction): void {
+    const entry = this.telegraphPool.find((candidate) => candidate.ownerId === actor.id)
+    if (!entry) return
+    const progress = THREE.MathUtils.clamp(action.elapsed / action.duration, 0, 1)
+    const eased = 1 - (1 - progress) * (1 - progress)
+    const offset = action.targetPosition.clone().sub(actor.mesh.position)
+    offset.y = 0
+    const yaw = offset.lengthSq() > 0.0001 ? Math.atan2(offset.x, offset.z) : actor.mesh.rotation.y
+    const width =
+      entry.kind === 'aim'
+        ? 0.16
+        : entry.kind === 'tick'
+          ? 0.34
+          : entry.kind === 'commander'
+            ? 2.1
+            : actor.role === 'champion'
+              ? 2.8
+              : 2.5
+    entry.mesh.position.set(actor.mesh.position.x, TELEGRAPH_Y, actor.mesh.position.z)
+    entry.mesh.rotation.set(0, yaw, 0)
+    entry.mesh.scale.set(
+      width,
+      1,
+      Math.max(0.08, action.contactRange * (entry.kind === 'aim' ? 1 : eased)),
+    )
+    entry.mesh.material.opacity = 0.34 + eased * 0.48
+  }
+
+  private releaseActorTelegraph(actorId: string): void {
+    const entry = this.telegraphPool.find((candidate) => candidate.ownerId === actorId)
+    if (!entry) return
+    entry.ownerId = null
+    entry.priority = 0
+    entry.mesh.visible = false
+    entry.mesh.material.opacity = 0
+  }
+
+  private releaseAllTelegraphs(): void {
+    for (const entry of this.telegraphPool) {
+      entry.ownerId = null
+      entry.priority = 0
+      entry.mesh.visible = false
+      entry.mesh.material.opacity = 0
+    }
+  }
+
+  private telegraphGeometry(kind: TelegraphKind): THREE.BufferGeometry {
+    const existing = this.telegraphGeometries.get(kind)
+    if (existing) return existing
+    const geometry = new THREE.BufferGeometry()
+    const positions =
+      kind === 'wedge'
+        ? [-0.5, 0, 0, 0.5, 0, 0, 0, 0, 1]
+        : kind === 'commander'
+          ? [
+              -0.5, 0, 0.08, 0.5, 0, 0.08, 0, 0, 0.42,
+              -0.5, 0, 0.54, 0.5, 0, 0.54, 0, 0, 0.9,
+            ]
+          : [
+              -0.5, 0, 0, 0.5, 0, 0, 0.5, 0, 1,
+              -0.5, 0, 0, 0.5, 0, 1, -0.5, 0, 1,
+            ]
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    geometry.computeBoundingSphere()
+    this.telegraphGeometries.set(kind, geometry)
+    return geometry
+  }
+
   private fireArrow(): void {
     const direction = this.getAimDirection()
+    this.activePlayerAttackKind = 'arrow'
     this.player.rotation.y = Math.atan2(direction.x, direction.z)
     const origin = this.player.position
       .clone()
@@ -2315,6 +3449,7 @@ export class GameEngine {
 
   private cleave(): void {
     const direction = this.getAimDirection()
+    this.activePlayerAttackKind = 'cleave'
     this.player.rotation.y = Math.atan2(direction.x, direction.z)
     this.moveCharacter(
       this.player.position,
@@ -2328,7 +3463,7 @@ export class GameEngine {
       (this.body.leftArm === 'missing' ? 5 : 0) +
       (this.body.rightArm === 'missing' ? 9 : 0)
     const dealt = Math.max(8, this.damage - armPenalty) * CLEAVE_DAMAGE_MULTIPLIER
-    let didHit = false
+    const feedbackEvents: CombatFeedbackEvent[] = []
     for (const actor of this.actors) {
       if (!actor.alive || !hostile(this.faction, actor.faction)) continue
       const offset = actor.mesh.position.clone().sub(this.player.position)
@@ -2340,17 +3475,35 @@ export class GameEngine {
       ) {
         continue
       }
-      didHit = true
       const impactPosition = actor.mesh.position.clone().add(new THREE.Vector3(0, 1.25, 0))
       const incomingDirection = this.player.position.clone().sub(actor.mesh.position)
       incomingDirection.y = 0
       this.createSparks(impactPosition, incomingDirection, SPARK_COUNT_CLEAVE)
-      this.damageActor(actor, dealt, this.player.position, this.faction, true, {
+      const result = this.damageActor(actor, dealt, this.player.position, this.faction, true, {
+        attackKind: 'cleave',
         detachChance: 0.75,
         knockback: CLEAVE_KNOCKBACK_DISTANCE,
+        deferFeedback: true,
       })
+      if (!result.applied) continue
+      const event: CombatFeedbackEvent = {
+        ...result,
+        attackKind: 'cleave',
+        targetId: actor.id,
+        directPlayerAction: true,
+      }
+      feedbackEvents.push(event)
+      this.presentCombatFeedback(event, { callout: false, hitStop: false, sound: false })
     }
-    if (didHit) this.addTrauma(TRAUMA_CLEAVE)
+    if (feedbackEvents.length > 0) {
+      this.addTrauma(TRAUMA_CLEAVE)
+      this.presentCleaveFeedback(feedbackEvents)
+    }
+    this.queueCameraAccent(
+      'cleave',
+      feedbackEvents.length > 0 ? 5.5 : 2,
+      feedbackEvents.length > 0 ? 0.24 : 0.16,
+    )
     this.playSound('cleave')
   }
 
@@ -2365,13 +3518,17 @@ export class GameEngine {
       origin,
       direction.multiplyScalar(ACTOR_ARROW_SPEED),
       1.25,
-      this.actorDamageWithAura(actor, ACTOR_ARROW_DAMAGE),
+      this.actorDamageWithAura(actor, ACTOR_ARROW_DAMAGE) *
+        this.enemyDamageMultiplier(actor),
       actor.id,
       0,
     )
-    actor.attackCooldown = this.actorAttackInterval(actor, ARCHER_FIRE_COOLDOWN)
-    actor.attackAnimation = 1
-    if (actor.mesh.position.distanceTo(this.player.position) < 20) this.playSound('arrow')
+    if (actor.mesh.position.distanceTo(this.player.position) < 20) {
+      this.playSound('arrow', {
+        position: actor.mesh.position,
+        variantSeed: this.actorSequence + actor.id.length,
+      })
+    }
   }
 
   private spawnProjectile(
@@ -2447,6 +3604,7 @@ export class GameEngine {
         other !== actor &&
         other.alive &&
         other.role === 'commander' &&
+        other.reaction !== 'stagger' &&
         other.faction === actor.faction &&
         other.mesh.position.distanceToSquared(actor.mesh.position) <=
           COMMANDER_AURA_RANGE * COMMANDER_AURA_RANGE,
@@ -2571,7 +3729,9 @@ export class GameEngine {
         if (hit.player) {
           const incomingDirection = projectile.velocity.clone().negate()
           incomingDirection.y = 0
-          this.damagePlayer(projectile.damage, incomingDirection, false)
+          this.damagePlayer(projectile.damage, incomingDirection, false, {
+            attackKind: 'actorArrow',
+          })
         } else if (hit.actor) {
           const damage =
             projectile.owner === 'player'
@@ -2594,6 +3754,7 @@ export class GameEngine {
             projectile.faction,
             projectile.owner === 'player',
             {
+              attackKind: projectile.owner === 'player' ? 'arrow' : 'actorArrow',
               detachChance: projectile.detachChance,
               sourceActorId: projectile.sourceActorId ?? undefined,
             },
@@ -2822,6 +3983,7 @@ export class GameEngine {
     const currentZone = zoneAt(this.player.position.x, this.player.position.z)
     if (currentZone !== this.lastZone) {
       this.lastZone = currentZone
+      this.achievements.recordZone(currentZone)
       this.callbacks.onNotice(`Новая область: ${this.zoneName(currentZone)}`, 'info')
       if (this.faction === 'villain' && currentZone === 'palace') this.completeObjective('breach')
     }
@@ -2834,7 +3996,135 @@ export class GameEngine {
     ) {
       this.completeObjective('patrol')
     }
-    if (this.objectives.every((objective) => objective.done)) this.endGame('victory')
+    if (!this.campaignCompleted && this.objectives.every((objective) => objective.done)) {
+      this.settleActiveLoot('victory')
+      this.campaignCompleted = true
+      this.campaignCompletedAt = this.elapsed
+      this.gold += 250
+      this.eventCooldown = Math.min(this.eventCooldown, 12)
+      this.callbacks.onNotice(
+        'Кампания завершена! +250 золота. Мир остаётся открытым для свободной игры.',
+        'success',
+      )
+      this.playSound('victory')
+      this.emitView(true)
+    }
+  }
+
+  private updateThreat(): void {
+    const nextTier = getThreatTier(this.elapsed)
+    if (nextTier > this.threatTier) {
+      this.threatTier = nextTier
+      this.callbacks.onNotice(
+        `Угроза усилилась: уровень ${this.threatTier}/${MAX_THREAT_TIER}. Враги крепче, события и налёты чаще.`,
+        'warning',
+      )
+      this.playSound('event')
+      this.emitView(true)
+    }
+
+    if (
+      this.threatTier < 2 ||
+      this.elapsed < this.nextThreatWaveAt ||
+      this.activeEvent
+    ) {
+      return
+    }
+
+    const scheduledAt = this.nextThreatWaveAt
+    this.nextThreatWaveAt = this.elapsed + this.threatWaveInterval()
+    const spawned = this.spawnThreatWave(scheduledAt)
+    if (spawned > 0) {
+      this.callbacks.onNotice(
+        `Вражеский налёт: бойцов ${spawned}. Уровень угрозы ${this.threatTier}.`,
+        'warning',
+      )
+      this.playSound('event')
+    }
+  }
+
+  private eventCooldownRange(): { min: number; max: number } {
+    const tierOffset = this.threatTier - 1
+    return {
+      min: Math.max(30, EVENT_COOLDOWN_MIN - tierOffset * 5),
+      max: Math.max(42, EVENT_COOLDOWN_MAX - tierOffset * 7),
+    }
+  }
+
+  private threatWaveInterval(): number {
+    return Math.max(THREAT_WAVE_MIN_INTERVAL, 130 - this.threatTier * 12)
+  }
+
+  private enemyHealthMultiplier(faction: Faction): number {
+    return hostile(this.faction, faction) ? 1 + (this.threatTier - 1) * 0.12 : 1
+  }
+
+  private enemyDamageMultiplier(actor: Actor): number {
+    return hostile(this.faction, actor.faction) ? 1 + (this.threatTier - 1) * 0.09 : 1
+  }
+
+  private spawnThreatWave(scheduledAt: number): number {
+    const availableSlots = Math.max(0, MAX_ACTORS - this.actors.length)
+    const requested = Math.min(4, this.threatTier)
+    const count = Math.min(availableSlots, requested)
+    if (count === 0) return 0
+
+    const enemyFaction: Faction = this.faction === 'guard' ? 'villain' : 'guard'
+    let spawned = 0
+    const baseAngle = scheduledAt * 0.037 + this.threatTier * 1.7
+    for (let index = 0; index < count; index += 1) {
+      const role: ActorRole =
+        this.threatTier >= 4 && index === count - 1
+          ? 'brute'
+          : index % 3 === 2
+            ? 'archer'
+            : enemyFaction === 'villain'
+              ? 'minion'
+              : 'soldier'
+      const radius = 13 + index * 1.2
+      let spawnPosition: THREE.Vector3 | null = null
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const angle = baseAngle + index * 1.8 + attempt * 0.73
+        const x = THREE.MathUtils.clamp(
+          this.player.position.x + Math.sin(angle) * radius,
+          -WORLD_HALF + 3,
+          WORLD_HALF - 3,
+        )
+        const z = THREE.MathUtils.clamp(
+          this.player.position.z + Math.cos(angle) * radius,
+          -WORLD_HALF + 3,
+          WORLD_HALF - 3,
+        )
+        if (!this.isWalkablePosition(x, z, this.actorColliderRadiusForRole(role))) continue
+        spawnPosition = new THREE.Vector3(x, 0, z)
+        break
+      }
+      if (!spawnPosition) continue
+
+      const actor = this.spawnActor(
+        enemyFaction,
+        role,
+        spawnPosition.x,
+        spawnPosition.z,
+        this.actors.length + index,
+        { objectiveEligible: false, squadEligible: false },
+      )
+      actor.playerAggro = true
+      actor.aggroMemory = AGGRO_MEMORY_DURATION
+      actor.lastKnownTargetPos = this.player.position.clone()
+      spawned += 1
+    }
+    return spawned
+  }
+
+  private cleanupDeadActors(): void {
+    for (let index = this.actors.length - 1; index >= 0; index -= 1) {
+      const actor = this.actors[index]
+      if (this.activeEvent?.ownedActorIds.includes(actor.id)) continue
+      if (actor.deathAt !== null && this.elapsed - actor.deathAt >= CORPSE_LIFETIME) {
+        this.removeActorById(actor.id)
+      }
+    }
   }
 
   private updateEvents(delta: number): void {
@@ -2856,7 +4146,6 @@ export class GameEngine {
       return
     }
 
-    if (this.objectives.filter((objective) => !objective.done).length <= 1) return
     this.eventCooldown = Math.max(0, this.eventCooldown - delta)
     if (this.eventCooldown > 0) return
     if (!this.startRandomEvent()) this.eventCooldown = EVENT_RETRY
@@ -2922,15 +4211,20 @@ export class GameEngine {
 
     let message: string
     if (succeeded) {
+      this.achievements.recordWorldEvent(event.kind, true)
       if (event.kind === 'richCaravan') {
         this.gold += 180
+        this.achievements.recordGoldEarned(180)
+        this.achievements.recordCaravanRobbed(true)
         message = 'Богатый корован ограблен, а погоня отстала. +180 золота.'
       } else if (event.kind === 'defendHome') {
         this.gold += 90
-        this.health = Math.min(100, this.health + 8)
+        this.achievements.recordGoldEarned(90)
+        this.health = Math.min(this.maxHealth, this.health + 8)
         message = 'Дом отстояли! +90 золота и +8 здоровья.'
       } else if (event.kind === 'champion') {
         this.gold += 120
+        this.achievements.recordGoldEarned(120)
         const damageBonus = Math.min(
           6,
           Math.max(0, CHAMPION_DAMAGE_CAP - this.championDamageBonus),
@@ -2945,11 +4239,14 @@ export class GameEngine {
         message = 'Пленник спасён и присоединился к вашему отряду.'
       } else {
         this.gold += 70
+        this.achievements.recordGoldEarned(70)
         message = 'Награда за цель получена. +70 золота.'
       }
+      this.spawnEventLoot(event)
       this.callbacks.onNotice(message, 'success')
       this.playSound('eventWin')
     } else {
+      this.achievements.recordWorldEvent(event.kind, false)
       const failureMessages: Record<WorldEventKind, string> = {
         richCaravan: 'Богатый корован ушёл вместе с добычей.',
         defendHome: 'Дом не удалось защитить — огонь взял своё.',
@@ -2963,9 +4260,8 @@ export class GameEngine {
 
     event.cleanup()
     this.activeEvent = null
-    this.eventCooldown =
-      EVENT_COOLDOWN_MIN +
-      this.eventRng() * (EVENT_COOLDOWN_MAX - EVENT_COOLDOWN_MIN)
+    const cooldown = this.eventCooldownRange()
+    this.eventCooldown = cooldown.min + this.eventRng() * (cooldown.max - cooldown.min)
     this.emitView(true)
   }
 
@@ -2982,6 +4278,9 @@ export class GameEngine {
       cleanup: () => {
         if (cleaned) return
         cleaned = true
+        for (const [targetId, target] of this.eventPropTargets) {
+          if (target.ownerId === event.id) this.eventPropTargets.delete(targetId)
+        }
         this.removeEventParticles(event.id)
         for (const actorId of [...event.ownedActorIds]) this.removeActorById(actorId)
         event.ownedActorIds.length = 0
@@ -3000,6 +4299,7 @@ export class GameEngine {
     const roadX = this.pickEventRoadX()
     caravan.position.set(roadX, 0, -23)
     this.scene.add(caravan)
+    this.registerNamedInteractableOutline(caravan, 'cargo')
 
     const enemyFaction = this.pickEventEnemyFaction()
     const ownedActorIds: string[] = []
@@ -3106,12 +4406,15 @@ export class GameEngine {
     const house =
       this.villageHouses[Math.floor(this.eventRng() * this.villageHouses.length)]
     const target: EventPropTarget = {
+      id: `${id}-home`,
+      ownerId: id,
       object: house,
       hp: 100,
       maxHp: 100,
       position: house.position.clone(),
       attackRange: 5.2,
     }
+    this.eventPropTargets.set(target.id, target)
     const fire = this.createHouseFireEffect(target.position)
     this.scene.add(fire)
     this.spawnDecal(target.position, 'scorch', 4.8)
@@ -3140,7 +4443,7 @@ export class GameEngine {
           squadEligible: false,
           aiMode: 'attackEventProp',
           eventOwnerId: id,
-          eventPropTarget: target,
+          eventPropTargetId: target.id,
         },
       )
       ownedActorIds.push(attacker.id)
@@ -3516,6 +4819,7 @@ export class GameEngine {
   private removeActorById(actorId: string): void {
     const index = this.actors.findIndex((actor) => actor.id === actorId)
     if (index < 0) return
+    this.releaseActorTelegraph(actorId)
     for (let projectileIndex = this.projectiles.length - 1; projectileIndex >= 0; projectileIndex -= 1) {
       if (this.projectiles[projectileIndex].sourceActorId === actorId) {
         this.removeProjectile(projectileIndex)
@@ -3532,22 +4836,24 @@ export class GameEngine {
   }
 
   private removeAndDisposeObject(object: THREE.Object3D): void {
+    this.unregisterOutlineRoot(object)
     object.removeFromParent()
+    const geometries = new Set<THREE.BufferGeometry>()
+    const materials = new Set<THREE.Material>()
     object.traverse((child) => {
       if (!(child instanceof THREE.Mesh) && !(child instanceof THREE.Sprite)) return
-      if (child instanceof THREE.Mesh) child.geometry.dispose()
+      if (child instanceof THREE.Mesh) geometries.add(child.geometry)
       const material = child.material
-      if (Array.isArray(material)) material.forEach((entry) => entry.dispose())
-      else material.dispose()
+      if (Array.isArray(material)) material.forEach((entry) => materials.add(entry))
+      else materials.add(material)
+    })
+    geometries.forEach((geometry) => geometry.dispose())
+    materials.forEach((material) => {
+      if (!ComicMaterialLibrary.isLibraryOwned(material)) material.dispose()
     })
   }
 
   private actorAttackPlayer(actor: Actor): void {
-    actor.attackCooldown = this.actorAttackInterval(
-      actor,
-      actor.role === 'commander' ? 0.8 : 1.15,
-    )
-    actor.attackAnimation = 1
     const baseDamage =
       actor.role === 'commander'
         ? 10
@@ -3559,16 +4865,14 @@ export class GameEngine {
     const incomingDirection = actor.mesh.position.clone().sub(this.player.position)
     incomingDirection.y = 0
     this.damagePlayer(
-      this.actorDamageWithAura(actor, baseDamage),
+      this.actorDamageWithAura(actor, baseDamage) * this.enemyDamageMultiplier(actor),
       incomingDirection,
       true,
+      { attackKind: 'allyMelee' },
     )
-    if (actor.role === 'scout') actor.retreatTimer = SCOUT_RETREAT_DURATION
   }
 
   private actorAttackActor(attacker: Actor, target: Actor): void {
-    attacker.attackCooldown = this.actorAttackInterval(attacker, 1.3)
-    attacker.attackAnimation = 1
     const baseDamage =
       attacker.role === 'commander'
         ? 18
@@ -3583,24 +4887,39 @@ export class GameEngine {
       attacker.mesh.position,
       attacker.faction,
       false,
-      { sourceActorId: attacker.id },
+      { attackKind: 'allyMelee', sourceActorId: attacker.id },
     )
-    if (attacker.role === 'scout') attacker.retreatTimer = SCOUT_RETREAT_DURATION
   }
 
   private actorAttackEventProp(actor: Actor, target: EventPropTarget): void {
-    actor.attackCooldown = this.actorAttackInterval(actor, 1.35)
-    actor.attackAnimation = 1
     target.hp = Math.max(0, target.hp - (4 + this.eventRng() * 2))
     this.createHitParticles(target.position, actor.faction)
-    if (target.position.distanceTo(this.player.position) < 25) this.playSound('hit')
+    if (target.position.distanceTo(this.player.position) < 25) {
+      this.playSound('hitLight', {
+        position: target.position,
+        intensity: 0.35,
+        variantSeed: this.eventSequence,
+      })
+    }
   }
 
   private damagePlayer(
     baseDamage: number,
     incomingDirection: THREE.Vector3,
     canInjure: boolean,
-  ): void {
+    options: DamagePlayerOptions,
+  ): DamageResult {
+    const fallbackDirection = new THREE.Vector3(0, 0, 1)
+    if (this.health <= 0) {
+      return {
+        applied: false,
+        dealt: 0,
+        killed: false,
+        weight: 'normal',
+        position: this.player.position.clone().add(new THREE.Vector3(0, 1.3, 0)),
+        direction: fallbackDirection,
+      }
+    }
     const armor = this.faction === 'guard' ? 0.72 : 1
     const normalizedIncoming = incomingDirection.clone()
     normalizedIncoming.y = 0
@@ -3613,17 +4932,17 @@ export class GameEngine {
     const dealt =
       baseDamage * armor * (frontalBlock ? SHIELD_DAMAGE_MULTIPLIER : 1)
     const impact = THREE.MathUtils.clamp(dealt / 20, 0, 1)
-    this.health -= dealt
+    this.health = Math.max(0, this.health - dealt)
+    this.achievements.recordPlayerDamage(dealt, frontalBlock)
+    const contact = this.player.position.clone().add(new THREE.Vector3(0, 1.3, 0))
     if (frontalBlock) {
       this.addTrauma(TRAUMA_BLOCK)
       this.damageFlash = Math.max(
         this.damageFlash,
         Math.min(FLASH_BLOCK_MAX, dealt / 20),
       )
-      const contact = this.player.position
-        .clone()
-        .add(new THREE.Vector3(0, 1.35, 0))
-        .addScaledVector(normalizedIncoming, 0.72)
+      contact.y += 0.05
+      contact.addScaledVector(normalizedIncoming, 0.72)
       this.createSparks(contact, normalizedIncoming, SPARK_COUNT_BLOCK)
     } else {
       this.addTrauma(THREE.MathUtils.lerp(0.12, 0.35, impact))
@@ -3642,11 +4961,35 @@ export class GameEngine {
       )
     }
     this.createHitParticles(this.player.position, this.faction)
-    this.playSound(frontalBlock ? 'block' : 'hurt')
     if (canInjure && !frontalBlock && Math.random() < 0.11 && this.health < 82) {
       this.injurePlayer()
     }
+    const killed = this.health <= 0
+    const weight: HitWeight = frontalBlock
+      ? 'blocked'
+      : killed
+        ? 'lethal'
+        : dealt >= 22
+          ? 'heavy'
+          : 'normal'
+    const result: DamageResult = {
+      applied: true,
+      dealt,
+      killed,
+      weight,
+      position: contact,
+      direction: hasIncomingDirection
+        ? normalizedIncoming.clone().multiplyScalar(-1)
+        : fallbackDirection,
+    }
+    this.presentCombatFeedback({
+      ...result,
+      attackKind: options.attackKind,
+      targetId: 'player',
+      directPlayerAction: false,
+    })
     this.emitView(true)
+    return result
   }
 
   private damageActor(
@@ -3655,13 +4998,23 @@ export class GameEngine {
     sourcePosition: THREE.Vector3,
     killerFaction: Faction,
     directPlayerKill: boolean,
-    options: {
-      detachChance?: number
-      knockback?: number
-      sourceActorId?: string
-    } = {},
-  ): void {
-    if (!target.alive) return
+    options: DamageActorOptions,
+  ): DamageResult {
+    const position = target.mesh.position.clone().add(new THREE.Vector3(0, 1.3, 0))
+    const direction = target.mesh.position.clone().sub(sourcePosition)
+    direction.y = 0
+    if (direction.lengthSq() > 0.0001) direction.normalize()
+    else direction.set(0, 0, 1)
+    if (!target.alive) {
+      return {
+        applied: false,
+        dealt: 0,
+        killed: false,
+        weight: 'normal',
+        position,
+        direction,
+      }
+    }
     if (
       directPlayerKill &&
       target.aiMode !== 'captive' &&
@@ -3684,7 +5037,7 @@ export class GameEngine {
         target.retaliationTimer = NPC_RETALIATION_DURATION
       }
     }
-    let dealt = baseDamage
+    let dealt = Math.max(0, baseDamage)
     if (target.role === 'brute') {
       const facing = new THREE.Vector3(
         Math.sin(target.mesh.rotation.y),
@@ -3702,11 +5055,9 @@ export class GameEngine {
     }
 
     const impact = THREE.MathUtils.clamp(dealt / 36, 0, 1)
-    const sprayDirection = target.mesh.position.clone().sub(sourcePosition)
-    sprayDirection.y = 0
     this.createBloodBurst(
-      target.mesh.position.clone().add(new THREE.Vector3(0, 1.3, 0)),
-      sprayDirection,
+      position,
+      direction,
       Math.round(THREE.MathUtils.lerp(GORE_HIT_MIN, GORE_HIT_MAX, impact)),
       THREE.MathUtils.lerp(0.85, 2.35, impact),
     )
@@ -3714,7 +5065,6 @@ export class GameEngine {
     target.healthBarVisibleUntil = this.elapsed + 3.4
     this.drawActorHealthBar(target)
     this.createHitParticles(target.mesh.position, target.faction)
-    if (directPlayerKill) this.playSound('hit')
     if (
       target.role !== 'brute' &&
       options.detachChance &&
@@ -3722,20 +5072,45 @@ export class GameEngine {
     ) {
       this.detachActorLimb(target)
     }
-    if (options.knockback) {
-      const knockbackDirection = target.mesh.position.clone().sub(sourcePosition)
-      knockbackDirection.y = 0
-      if (knockbackDirection.lengthSq() > 0.0001) {
-        knockbackDirection.normalize()
-        this.moveCharacter(
-          target.mesh.position,
-          knockbackDirection.x * options.knockback,
-          knockbackDirection.z * options.knockback,
-          this.actorColliderRadiusForRole(target.role),
-        )
-      }
+    const killed = target.hp <= 0
+    const weight: HitWeight = killed
+      ? 'lethal'
+      : options.attackKind === 'cleave' || dealt >= target.maxHp * 0.22
+        ? 'heavy'
+        : 'normal'
+    const result: DamageResult = {
+      applied: true,
+      dealt,
+      killed,
+      weight,
+      position,
+      direction,
     }
-    if (target.hp <= 0) this.killActor(target, killerFaction, directPlayerKill, sourcePosition)
+    this.applyActorDamageReaction(
+      target,
+      result,
+      options.attackKind,
+      options.knockback ?? 0,
+    )
+    if (killed) {
+      this.killActor(
+        target,
+        killerFaction,
+        directPlayerKill,
+        result,
+        options.attackKind,
+        options.knockback ?? 0,
+      )
+    }
+    if (directPlayerKill && !options.deferFeedback) {
+      this.presentCombatFeedback({
+        ...result,
+        attackKind: options.attackKind,
+        targetId: target.id,
+        directPlayerAction: true,
+      })
+    }
+    return result
   }
 
   private alertNearbyAllies(source: Actor, targetPosition: THREE.Vector3): void {
@@ -3787,14 +5162,15 @@ export class GameEngine {
     actor: Actor,
     killerFaction: Faction,
     directPlayerKill: boolean,
-    sourcePosition: THREE.Vector3,
+    result: DamageResult,
+    attackKind: AttackKind,
+    requestedKnockback: number,
   ): void {
     if (!actor.alive) return
     const deathPosition = actor.mesh.position.clone()
     const largeBody =
       actor.role === 'brute' || actor.role === 'champion' || actor.role === 'commander'
-    const deathDirection = deathPosition.clone().sub(sourcePosition)
-    deathDirection.y = 0
+    const deathDirection = result.direction.clone()
     this.createBloodBurst(
       deathPosition.clone().add(new THREE.Vector3(0, 1.25, 0)),
       deathDirection,
@@ -3825,15 +5201,49 @@ export class GameEngine {
       }
     }
     actor.alive = false
+    actor.action = null
+    actor.reaction = 'none'
+    actor.reactionRemaining = 0
+    actor.poiseRecoveryDelay = 0
+    actor.staggerImmunity = 0
+    actor.attackCooldown = 0
+    actor.retreatTimer = 0
+    actor.velocity.set(0, 0, 0)
+    actor.knockbackVelocity.set(0, 0, 0)
+    this.releaseActorTelegraph(actor.id)
+    const forward = new THREE.Vector3(
+      Math.sin(actor.mesh.rotation.y),
+      0,
+      Math.cos(actor.mesh.rotation.y),
+    )
+    const right = new THREE.Vector3(forward.z, 0, -forward.x)
+    const lateralStrength = Math.abs(right.dot(actor.lastHitDirection))
+    const sourceInFront = forward.dot(actor.lastHitDirection.clone().negate()) > 0.2
+    actor.deathStyle =
+      attackKind === 'cleave' || requestedKnockback >= HIGH_KNOCKBACK_THRESHOLD
+        ? 'launchFall'
+        : lateralStrength > 0.68
+          ? 'spinFall'
+          : sourceInFront
+            ? 'backFall'
+            : 'sideFall'
+    actor.deathAge = 0
+    actor.deathStartPosition.copy(actor.mesh.position)
+    actor.deathStartRotation.copy(actor.mesh.rotation)
+    actor.deathTravelled = 0
+    actor.outlineUntil = this.elapsed + OUTLINE_CORPSE_SECONDS
+    actor.deathAt = this.elapsed
     actor.healthBar.visible = false
     const ring = actor.mesh.getObjectByName('faction-ring')
     if (ring) ring.visible = false
-    actor.mesh.rotation.z = actor.phase % 2 > 1 ? Math.PI / 2 : -Math.PI / 2
-    actor.mesh.position.y = 0.62
-    const weapon = actor.mesh.getObjectByName('weapon')
-    if (weapon) weapon.rotation.x = 1.4
     this.projectileSourcesToClear.add(actor.id)
-    this.playSound('down')
+    if (!directPlayerKill) {
+      this.playSound('down', {
+        position: deathPosition,
+        intensity: largeBody ? 1 : 0.65,
+        variantSeed: this.stableSeed(`${actor.id}:down`),
+      })
+    }
 
     const objectiveAdvanced =
       killerFaction === this.faction && this.creditFactionObjective(actor)
@@ -3843,21 +5253,86 @@ export class GameEngine {
         this.callbacks.onNotice('Союзник победил врага. Счётчик задачи обновлён.', 'info')
         this.emitView(true)
       }
+
       return
     }
 
     this.kills += 1
+    this.achievements.recordKill(actor.role, actor.faction)
     if (actor.eventOwnerId) {
       this.emitView(true)
       return
     }
     const reward = actor.role === 'commander' ? 55 : 12
     this.gold += reward
+    this.achievements.recordGoldEarned(reward)
+    this.trySpawnKillLoot(actor, deathPosition)
     this.callbacks.onNotice(
       actor.role === 'commander' ? 'Командир дворца повержен!' : `Враг повержен. +${reward} золота`,
       'success',
     )
     this.emitView(true)
+  }
+
+  private updateActorDeathMotion(actor: Actor, delta: number): void {
+    if (!actor.deathStyle || actor.deathAge >= DEATH_POSE_TIME) return
+    actor.deathAge = Math.min(DEATH_POSE_TIME, actor.deathAge + delta)
+    const progress = actor.deathAge / DEATH_POSE_TIME
+    const eased = 1 - Math.pow(1 - progress, 3)
+    const motionScale =
+      !this.screenShakeEnabled || this.reducedMotion ? REDUCED_MOTION_COMBAT_SCALE : 1
+    const side =
+      new THREE.Vector3(
+        Math.cos(actor.deathStartRotation.y),
+        0,
+        -Math.sin(actor.deathStartRotation.y),
+      ).dot(actor.lastHitDirection) >= 0
+        ? 1
+        : -1
+    const travel =
+      actor.deathStyle === 'launchFall'
+        ? 1.15 * motionScale
+        : actor.deathStyle === 'spinFall'
+          ? 0.35 * motionScale
+          : 0.2 * motionScale
+    const desiredTravel = travel * eased
+    const travelStep = desiredTravel - actor.deathTravelled
+    if (travelStep > 0.0001) {
+      this.moveCharacter(
+        actor.mesh.position,
+        actor.lastHitDirection.x * travelStep,
+        actor.lastHitDirection.z * travelStep,
+        this.actorColliderRadiusForRole(actor.role),
+      )
+      actor.deathTravelled = desiredTravel
+    }
+    actor.mesh.position.y = THREE.MathUtils.lerp(
+      actor.deathStartPosition.y,
+      0.62,
+      eased,
+    )
+    actor.mesh.rotation.x = actor.deathStartRotation.x
+    actor.mesh.rotation.y = actor.deathStartRotation.y
+    actor.mesh.rotation.z = actor.deathStartRotation.z
+    if (actor.deathStyle === 'backFall') {
+      actor.mesh.rotation.x -= (Math.PI / 2) * eased
+    } else if (actor.deathStyle === 'sideFall') {
+      actor.mesh.rotation.z -= side * (Math.PI / 2) * eased
+    } else if (actor.deathStyle === 'spinFall') {
+      actor.mesh.rotation.y += side * Math.PI * motionScale * eased
+      actor.mesh.rotation.z -= side * 1.08 * eased
+    } else {
+      actor.mesh.rotation.x -= 1.18 * eased
+      actor.mesh.rotation.z -= side * 0.44 * motionScale * eased
+    }
+    const weapon = actor.mesh.getObjectByName('weapon')
+    const leftArm = actor.mesh.getObjectByName('leftArm')
+    const rightArm = actor.mesh.getObjectByName('rightArm')
+    const head = actor.mesh.getObjectByName('head-pivot')
+    if (weapon) weapon.rotation.x = THREE.MathUtils.lerp(weapon.rotation.x, 1.4, eased)
+    if (leftArm) leftArm.rotation.z = -0.72 * eased
+    if (rightArm) rightArm.rotation.z = 0.72 * eased
+    if (head) head.rotation.z = side * 0.28 * eased
   }
 
   private injurePlayer(): void {
@@ -3876,6 +5351,7 @@ export class GameEngine {
     const severe = wasWounded || Math.random() < 0.4
     if (severe) {
       this.body[part] = 'missing'
+      this.achievements.recordInjury(part, true)
       if (!part.includes('Eye')) {
         this.body.bleeding = Math.min(2.1, this.body.bleeding + (part.includes('Leg') ? 0.48 : 0.34))
         this.hidePlayerLimb(part)
@@ -3888,6 +5364,7 @@ export class GameEngine {
       )
     } else {
       this.body[part] = 'wounded'
+      this.achievements.recordInjury(part, false)
       this.body.bleeding = Math.min(1.2, this.body.bleeding + 0.12)
       this.callbacks.onNotice(`Ранение: ${formatPart(part)}.`, 'warning')
     }
@@ -3907,9 +5384,9 @@ export class GameEngine {
     )
     const detached = new THREE.Mesh(
       new THREE.BoxGeometry(part.includes('Leg') ? 0.32 : 0.25, part.includes('Leg') ? 0.95 : 0.78, 0.3),
-      new THREE.MeshStandardMaterial({
+      this.comicMaterials.createToonMaterial({
         color: this.factionColor(this.faction),
-        roughness: 0.9,
+        surface: 'cloth',
       }),
     )
     detached.position.copy(this.player.position).add(new THREE.Vector3(part.startsWith('left') ? -0.6 : 0.6, 1.2, 0))
@@ -3928,11 +5405,12 @@ export class GameEngine {
     if (!limb) return
     limb.visible = true
     limb.traverse((object) => {
-      if (!(object instanceof THREE.Mesh)) return
-      object.material = new THREE.MeshStandardMaterial({
+      if (!(object instanceof THREE.Mesh) || object.userData.comicOutline === true) return
+      object.material = this.comicMaterials.createToonMaterial({
         color: this.palette.borderStrong,
-        metalness: 0.72,
-        roughness: 0.35,
+        surface: 'metal',
+        emissive: this.palette.borderStrong,
+        emissiveIntensity: 0.08,
       })
     })
   }
@@ -3964,7 +5442,10 @@ export class GameEngine {
     )
     const detached = new THREE.Mesh(
       new THREE.BoxGeometry(0.28, limb.name.includes('Leg') ? 0.92 : 0.72, 0.28),
-      new THREE.MeshStandardMaterial({ color: this.factionColor(actor.faction), roughness: 0.9 }),
+      this.comicMaterials.createToonMaterial({
+        color: this.factionColor(actor.faction),
+        surface: 'cloth',
+      }),
     )
     detached.position.copy(actor.mesh.position).add(new THREE.Vector3(0, 1.4, 0))
     detached.castShadow = true
@@ -4004,6 +5485,7 @@ export class GameEngine {
       this.eventCooldown = 0
     }
     this.callbacks.onNotice(`Задача выполнена: ${objective.text}`, 'success')
+    this.achievements.recordObjectiveCompleted()
     this.playSound('objective')
     this.emitView(true)
     return true
@@ -4056,12 +5538,18 @@ export class GameEngine {
     this.dropShield()
     this.cancelActiveEvent()
     this.clearTransientCombatFeedback()
+    if (result === 'victory') this.settleActiveLoot('victory')
+    else this.clearLootRuntime()
     this.ended = true
-    this.updateMusicVolume()
+    this.achievements.recordCampaignEnd(result, this.elapsed, Math.max(0, this.health))
     this.keys.clear()
     if (document.pointerLockElement === this.renderer.domElement) document.exitPointerLock()
     this.callbacks.onEnd(result)
-    this.playSound(result === 'victory' ? 'victory' : 'down')
+    this.playSound(result === 'victory' ? 'victory' : 'defeat', {
+      category: 'ui',
+      intensity: 1,
+    })
+    this.audio.setEnded(true)
     this.emitView(true)
   }
 
@@ -4129,9 +5617,10 @@ export class GameEngine {
     const view: GameView = {
       faction: this.faction,
       health: Math.max(0, this.health),
-      maxHealth: 100,
+      maxHealth: this.maxHealth,
       damageFlash: this.damageFlash,
       stamina: this.stamina,
+      maxStamina: this.maxStamina,
       gold: this.gold,
       kills: this.kills,
       damage: this.damage,
@@ -4152,6 +5641,10 @@ export class GameEngine {
       paused: this.paused,
       caravanCooldown: this.caravanCooldown,
       ability,
+      campaignCompleted: this.campaignCompleted,
+      threatTier: this.threatTier,
+      upgrades: { ...this.upgrades },
+      lootToast: this.lootToast ? { ...this.lootToast } : null,
       activeEvent: this.activeEvent
         ? {
             id: this.activeEvent.id,
@@ -4168,6 +5661,698 @@ export class GameEngine {
         : null,
     }
     this.callbacks.onView(view)
+  }
+
+  private stableSeed(value: string): number {
+    let seed = 104729
+    for (const character of value) {
+      seed = (seed * 31 + character.charCodeAt(0)) % 2147483647
+    }
+    return Math.max(1, seed)
+  }
+
+  private createLootMaterials(): Record<LootRarity, LootRarityMaterials> {
+    const canvas = document.createElement('canvas')
+    canvas.width = 64
+    canvas.height = 64
+    const context = canvas.getContext('2d')
+    if (context) {
+      context.translate(32, 32)
+      context.fillStyle = '#ffffff'
+      context.beginPath()
+      for (let point = 0; point < 16; point += 1) {
+        const angle = -Math.PI / 2 + (point * Math.PI) / 8
+        const radius = point % 2 === 0 ? 29 : 11
+        const x = Math.cos(angle) * radius
+        const y = Math.sin(angle) * radius
+        if (point === 0) context.moveTo(x, y)
+        else context.lineTo(x, y)
+      }
+      context.closePath()
+      context.fill()
+    }
+    const starTexture = new THREE.CanvasTexture(canvas)
+    starTexture.colorSpace = THREE.SRGBColorSpace
+    this.generatedTextures.set('loot-starburst', starTexture)
+
+    const colors: Record<LootRarity, THREE.Color> = {
+      common: this.palette.text.clone(),
+      uncommon: this.palette.success.clone(),
+      rare: this.palette.link.clone(),
+      legendary: this.palette.warning.clone(),
+    }
+    const create = (rarity: LootRarity): LootRarityMaterials => ({
+      token: new THREE.MeshBasicMaterial({
+        color: colors[rarity],
+        toneMapped: false,
+      }),
+      beam: new THREE.MeshBasicMaterial({
+        color: colors[rarity],
+        transparent: true,
+        opacity: 1,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        toneMapped: false,
+      }),
+      ring: new THREE.MeshBasicMaterial({
+        color: colors[rarity],
+        transparent: true,
+        opacity: 1,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+      }),
+      star: new THREE.SpriteMaterial({
+        color: colors[rarity],
+        map: starTexture,
+        transparent: true,
+        opacity: 1,
+        depthWrite: false,
+        toneMapped: false,
+      }),
+    })
+    return {
+      common: create('common'),
+      uncommon: create('uncommon'),
+      rare: create('rare'),
+      legendary: create('legendary'),
+    }
+  }
+
+  private initializeLootPool(): void {
+    const coinGeometry = new THREE.CylinderGeometry(0.28, 0.28, 0.12, 8)
+    const medicineGeometry = new THREE.OctahedronGeometry(0.34, 0)
+    const medicineCrossGeometry = new THREE.BoxGeometry(0.12, 0.5, 0.08)
+    const whetstoneGeometry = new THREE.DodecahedronGeometry(0.3, 0)
+    const beamGeometry = new THREE.PlaneGeometry(0.34, 1)
+    const ringGeometry = new THREE.RingGeometry(0.62, 0.78, 32)
+    const outerRingGeometry = new THREE.RingGeometry(0.94, 1.05, 32)
+    const ringSegmentGeometry = new THREE.BoxGeometry(0.46, 0.035, 0.11)
+    const burstGeometry = new THREE.OctahedronGeometry(0.09, 0)
+    const placeholderReward: LootReward = {
+      kind: 'coins',
+      rarity: 'common',
+      amount: 0,
+      label: 'Монеты',
+    }
+
+    for (let index = 0; index < LOOT_MAX_ACTIVE; index += 1) {
+      const root = new THREE.Group()
+      root.name = `loot-pickup-${index}`
+      root.visible = false
+      const display = new THREE.Group()
+      const tokenRoot = new THREE.Group()
+      tokenRoot.position.y = 0.24
+      display.add(tokenRoot)
+      root.add(display)
+
+      const coins = new THREE.Group()
+      const coin = new THREE.Mesh(coinGeometry, this.lootMaterials.common.token)
+      coin.rotation.z = Math.PI / 2
+      coins.add(coin)
+
+      const medicine = new THREE.Group()
+      const vial = new THREE.Mesh(medicineGeometry, this.lootMaterials.common.token)
+      const crossVertical = new THREE.Mesh(
+        medicineCrossGeometry,
+        this.lootMaterials.common.token,
+      )
+      const crossHorizontal = new THREE.Mesh(
+        medicineCrossGeometry,
+        this.lootMaterials.common.token,
+      )
+      crossVertical.position.z = 0.25
+      crossHorizontal.position.z = 0.25
+      crossHorizontal.rotation.z = Math.PI / 2
+      medicine.add(vial, crossVertical, crossHorizontal)
+
+      const whetstone = new THREE.Group()
+      const stone = new THREE.Mesh(whetstoneGeometry, this.lootMaterials.common.token)
+      stone.scale.set(1.65, 0.72, 0.72)
+      stone.rotation.z = -0.2
+      whetstone.add(stone)
+
+      const tokens: Record<LootRewardKind, THREE.Group> = {
+        coins,
+        medicine,
+        whetstone,
+      }
+      tokenRoot.add(coins, medicine, whetstone)
+
+      const beamA = new THREE.Mesh(beamGeometry, this.lootMaterials.common.beam)
+      const beamB = new THREE.Mesh(beamGeometry, this.lootMaterials.common.beam)
+      beamB.rotation.y = Math.PI / 2
+      this.bindLootOpacity(beamA)
+      this.bindLootOpacity(beamB)
+      display.add(beamA, beamB)
+
+      const smoothRing = new THREE.Mesh(
+        ringGeometry,
+        this.lootMaterials.common.ring,
+      )
+      smoothRing.rotation.x = -Math.PI / 2
+      smoothRing.position.y = -LOOT_Y + 0.04
+      this.bindLootOpacity(smoothRing)
+      display.add(smoothRing)
+
+      const segmentedRing = new THREE.Group()
+      segmentedRing.position.y = -LOOT_Y + 0.04
+      for (let segment = 0; segment < 8; segment += 1) {
+        const angle = (segment / 8) * TWO_PI
+        const mesh = new THREE.Mesh(
+          ringSegmentGeometry,
+          this.lootMaterials.common.ring,
+        )
+        mesh.position.set(Math.cos(angle) * 0.72, 0, Math.sin(angle) * 0.72)
+        mesh.rotation.y = -angle
+        this.bindLootOpacity(mesh)
+        segmentedRing.add(mesh)
+      }
+      display.add(segmentedRing)
+
+      const outerRing = new THREE.Mesh(
+        outerRingGeometry,
+        this.lootMaterials.common.ring,
+      )
+      outerRing.rotation.x = -Math.PI / 2
+      outerRing.position.y = -LOOT_Y + 0.045
+      this.bindLootOpacity(outerRing)
+      display.add(outerRing)
+
+      const starburst = new THREE.Sprite(this.lootMaterials.common.star)
+      this.bindLootOpacity(starburst)
+      display.add(starburst)
+
+      this.scene.add(root)
+      this.lootPickups.push({
+        root,
+        display,
+        tokenRoot,
+        tokens,
+        beams: [beamA, beamB],
+        smoothRing,
+        segmentedRing,
+        outerRing,
+        starburst,
+        reward: placeholderReward,
+        state: 'burst',
+        velocity: new THREE.Vector3(),
+        age: 0,
+        idleAge: 0,
+        active: false,
+        serial: 0,
+      })
+    }
+
+    for (let index = 0; index < LOOT_COLLECTION_BURST_COUNT; index += 1) {
+      const root = new THREE.Group()
+      root.name = `loot-collection-burst-${index}`
+      root.visible = false
+      const shards: THREE.Mesh<THREE.OctahedronGeometry, THREE.MeshBasicMaterial>[] = []
+      const directions: THREE.Vector3[] = []
+      for (let shardIndex = 0; shardIndex < 7; shardIndex += 1) {
+        const angle = (shardIndex / 7) * TWO_PI
+        const shard = new THREE.Mesh(
+          burstGeometry,
+          this.lootMaterials.common.ring,
+        )
+        this.bindLootOpacity(shard)
+        shards.push(shard)
+        directions.push(
+          new THREE.Vector3(
+            Math.cos(angle),
+            0.45 + (shardIndex % 2) * 0.28,
+            Math.sin(angle),
+          ).normalize(),
+        )
+        root.add(shard)
+      }
+      this.scene.add(root)
+      this.lootCollectionBursts.push({
+        root,
+        shards,
+        directions,
+        active: false,
+        age: 0,
+        serial: 0,
+      })
+    }
+  }
+
+  private bindLootOpacity(object: THREE.Object3D): void {
+    object.userData.lootOpacity = 1
+    object.onBeforeRender = (
+      _renderer,
+      _scene,
+      _camera,
+      _geometry,
+      material,
+    ) => {
+      if (
+        material instanceof THREE.MeshBasicMaterial ||
+        material instanceof THREE.SpriteMaterial
+      ) {
+        material.opacity = object.userData.lootOpacity as number
+      }
+    }
+  }
+
+  private trySpawnKillLoot(actor: Actor, deathPosition: THREE.Vector3): void {
+    if (actor.role !== 'commander' && this.lootRng() >= LOOT_DROP_CHANCE) return
+    const minimumRarity: LootRarity =
+      actor.role === 'commander' ? 'rare' : 'common'
+    this.spawnLoot(this.rollLootReward(minimumRarity), deathPosition)
+  }
+
+  private spawnEventLoot(event: WorldEvent): void {
+    const legendary = event.kind === 'champion'
+    const position = legendary ? event.markerPos : this.player.position
+    this.spawnLoot(
+      this.rollLootReward(legendary ? 'legendary' : 'uncommon'),
+      position,
+    )
+  }
+
+  private rollLootReward(minimumRarity: LootRarity): LootReward {
+    const rarity = this.rollLootRarity(minimumRarity)
+    let kinds: LootRewardKind[]
+    if (rarity === 'common') {
+      kinds = ['coins']
+    } else if (rarity === 'uncommon') {
+      kinds = ['coins', 'medicine']
+    } else {
+      kinds =
+        this.damage >= LOOT_DAMAGE_CAP
+          ? ['coins', 'medicine']
+          : ['coins', 'medicine', 'whetstone']
+    }
+    const kind = kinds[Math.floor(this.lootRng() * kinds.length)]
+    let amount: number
+    if (rarity === 'legendary') {
+      amount = kind === 'coins' ? 70 : kind === 'medicine' ? 45 : 2
+    } else if (rarity === 'rare') {
+      amount =
+        kind === 'coins'
+          ? this.rollLootInteger(28, 42)
+          : kind === 'medicine'
+            ? this.rollLootInteger(24, 32)
+            : 1
+    } else if (rarity === 'uncommon') {
+      amount =
+        kind === 'coins'
+          ? this.rollLootInteger(12, 20)
+          : this.rollLootInteger(12, 18)
+    } else {
+      amount = this.rollLootInteger(5, 10)
+    }
+    const labels: Record<LootRewardKind, string> = {
+      coins: 'Монеты',
+      medicine: 'Лекарство',
+      whetstone: 'Точильный камень',
+    }
+    return { kind, rarity, amount, label: labels[kind] }
+  }
+
+  private rollLootRarity(minimumRarity: LootRarity): LootRarity {
+    const roll = this.lootRng()
+    const rolled: LootRarity =
+      roll < 0.62
+        ? 'common'
+        : roll < 0.89
+          ? 'uncommon'
+          : roll < 0.98
+            ? 'rare'
+            : 'legendary'
+    return LOOT_RARITY_RANK[rolled] < LOOT_RARITY_RANK[minimumRarity]
+      ? minimumRarity
+      : rolled
+  }
+
+  private rollLootInteger(min: number, max: number): number {
+    return min + Math.floor(this.lootRng() * (max - min + 1))
+  }
+
+  private spawnLoot(reward: LootReward, position: THREE.Vector3): void {
+    const pickup = this.acquireLootPickup()
+    pickup.reward = reward
+    pickup.state = 'burst'
+    pickup.age = 0
+    pickup.idleAge = 0
+    pickup.active = true
+    pickup.serial = ++this.lootSequence
+    pickup.root.position.set(
+      position.x,
+      Math.max(LOOT_Y, position.y + 0.4),
+      position.z,
+    )
+    const angle = this.lootRng() * TWO_PI
+    const radialSpeed = 0.8 + this.lootRng() * 1.25
+    pickup.velocity.set(
+      Math.cos(angle) * radialSpeed,
+      2.4 + this.lootRng() * 1.2,
+      Math.sin(angle) * radialSpeed,
+    )
+    pickup.root.visible = true
+    this.configureLootVisual(pickup)
+    this.playSound('lootReveal', {
+      position: pickup.root.position,
+      intensity: (LOOT_RARITY_RANK[reward.rarity] + 1) / 4,
+      variantSeed: pickup.serial,
+    })
+  }
+
+  private acquireLootPickup(): LootPickup {
+    const inactive = this.lootPickups.find((pickup) => !pickup.active)
+    if (inactive) return inactive
+
+    let candidate: LootPickup | null = null
+    for (const pickup of this.lootPickups) {
+      if (
+        pickup.reward.rarity === 'common' &&
+        (!candidate ||
+          candidate.reward.rarity !== 'common' ||
+          pickup.serial < candidate.serial)
+      ) {
+        candidate = pickup
+      }
+    }
+    if (!candidate) {
+      for (const pickup of this.lootPickups) {
+        if (
+          !candidate ||
+          LOOT_RARITY_RANK[pickup.reward.rarity] <
+            LOOT_RARITY_RANK[candidate.reward.rarity] ||
+          (pickup.reward.rarity === candidate.reward.rarity &&
+            pickup.serial < candidate.serial)
+        ) {
+          candidate = pickup
+        }
+      }
+    }
+    if (!candidate) throw new Error('Korovany: loot pool is unexpectedly empty.')
+    this.collectLoot(candidate, 'pool')
+    return candidate
+  }
+
+  private configureLootVisual(pickup: LootPickup): void {
+    const { rarity, kind } = pickup.reward
+    const materials = this.lootMaterials[rarity]
+    const beamHeight = LOOT_BEAM_HEIGHT[rarity]
+    pickup.root.scale.setScalar(1)
+    pickup.display.scale.setScalar(1)
+    pickup.tokenRoot.position.y = 0.24
+    pickup.tokenRoot.rotation.set(0, 0, 0)
+    pickup.tokenRoot.scale.setScalar(0.2)
+    for (const [tokenKind, token] of Object.entries(pickup.tokens)) {
+      token.visible = tokenKind === kind
+      token.traverse((object) => {
+        if (object instanceof THREE.Mesh) object.material = materials.token
+      })
+    }
+    for (const beam of pickup.beams) {
+      beam.material = materials.beam
+      beam.position.y = beamHeight * 0.5
+      beam.scale.set(1, beamHeight, 1)
+      beam.userData.lootOpacity = 0
+      beam.visible = true
+    }
+    pickup.smoothRing.material = materials.ring
+    pickup.outerRing.material = materials.ring
+    pickup.segmentedRing.traverse((object) => {
+      if (object instanceof THREE.Mesh) object.material = materials.ring
+    })
+    pickup.smoothRing.visible = rarity !== 'uncommon'
+    pickup.segmentedRing.visible = rarity === 'uncommon'
+    pickup.outerRing.visible = rarity === 'rare' || rarity === 'legendary'
+    pickup.smoothRing.scale.setScalar(1)
+    pickup.segmentedRing.scale.setScalar(1)
+    pickup.outerRing.scale.setScalar(1)
+    this.setLootRingOpacity(pickup, 0)
+    pickup.starburst.material = materials.star
+    pickup.starburst.position.set(0, beamHeight + 0.45, 0)
+    pickup.starburst.scale.setScalar(rarity === 'legendary' ? 0.95 : 0)
+    pickup.starburst.visible = rarity === 'legendary'
+    pickup.starburst.userData.lootOpacity = 0
+  }
+
+  private updateLoot(delta: number): void {
+    if (this.lootToast && this.elapsed >= this.lootToastExpiresAt) {
+      this.lootToast = null
+      this.lootToastExpiresAt = 0
+      this.emitView(true)
+    }
+    this.updateLootCollectionBursts(delta)
+
+    for (const pickup of this.lootPickups) {
+      if (!pickup.active) continue
+      pickup.age += delta
+      const phase = pickup.serial * 2.399963229728653
+      const motion = this.reducedMotion ? 0 : Math.sin(this.elapsed * 2.7 + phase)
+      pickup.tokenRoot.position.y = 0.24 + motion * 0.07
+      if (!this.reducedMotion) pickup.tokenRoot.rotation.y += delta * 1.7
+
+      if (pickup.state === 'burst') {
+        pickup.velocity.y -= 9.5 * delta
+        pickup.root.position.addScaledVector(pickup.velocity, delta)
+        const burstProgress = THREE.MathUtils.clamp(
+          pickup.age / LOOT_BURST_TIME,
+          0,
+          1,
+        )
+        pickup.tokenRoot.scale.setScalar(
+          THREE.MathUtils.lerp(0.2, 1, smoothstep(0, 1, burstProgress)),
+        )
+        if (
+          pickup.root.position.y <= LOOT_Y ||
+          pickup.age >= LOOT_BURST_TIME
+        ) {
+          pickup.root.position.y = LOOT_Y
+          pickup.velocity.set(0, 0, 0)
+          pickup.state = 'idle'
+          pickup.idleAge = 0
+          pickup.tokenRoot.scale.setScalar(1)
+        }
+      } else {
+        pickup.tokenRoot.scale.setScalar(1)
+        pickup.idleAge += delta
+      }
+
+      const reveal =
+        pickup.state === 'burst'
+          ? 0
+          : THREE.MathUtils.clamp(pickup.idleAge / 0.12, 0, 1)
+      for (const beam of pickup.beams) beam.userData.lootOpacity = reveal * 0.32
+      this.setLootRingOpacity(pickup, reveal * 0.82)
+      pickup.starburst.userData.lootOpacity = reveal * 0.95
+      this.updateLootPulse(pickup, phase)
+
+      if (pickup.state === 'idle') {
+        const dx = pickup.root.position.x - this.player.position.x
+        const dz = pickup.root.position.z - this.player.position.z
+        if (
+          dx * dx + dz * dz <= LOOT_MAGNET_RADIUS * LOOT_MAGNET_RADIUS ||
+          pickup.age >= LOOT_FORCE_MAGNET_AGE
+        ) {
+          pickup.state = 'magnet'
+        }
+      }
+      if (pickup.state !== 'magnet' || this.health <= 0) continue
+
+      this.lootTarget.copy(this.player.position)
+      this.lootTarget.y += 1.25
+      this.lootDirection.copy(this.lootTarget).sub(pickup.root.position)
+      let distance = this.lootDirection.length()
+      if (distance <= LOOT_COLLECT_RADIUS) {
+        this.collectLoot(pickup, 'magnet')
+        continue
+      }
+      this.lootDirection.multiplyScalar(1 / Math.max(distance, 0.0001))
+      pickup.velocity.addScaledVector(
+        this.lootDirection,
+        LOOT_MAGNET_ACCEL * delta,
+      )
+      pickup.velocity.multiplyScalar(Math.exp(-3.2 * delta))
+      pickup.velocity.clampLength(0, LOOT_MAGNET_MAX_SPEED)
+      pickup.root.position.addScaledVector(pickup.velocity, delta)
+      this.lootDirection.copy(this.lootTarget).sub(pickup.root.position)
+      distance = this.lootDirection.length()
+      if (distance <= LOOT_COLLECT_RADIUS) this.collectLoot(pickup, 'magnet')
+    }
+  }
+
+  private updateLootPulse(pickup: LootPickup, phase: number): void {
+    pickup.display.scale.setScalar(1)
+    pickup.smoothRing.scale.setScalar(1)
+    pickup.segmentedRing.scale.setScalar(1)
+    pickup.outerRing.scale.setScalar(1)
+    for (const beam of pickup.beams) beam.scale.x = 1
+    if (this.reducedMotion || pickup.reward.rarity === 'common') return
+
+    const pulse = Math.sin(this.elapsed * 2.3 + phase)
+    if (pickup.reward.rarity === 'uncommon') {
+      pickup.segmentedRing.scale.setScalar(1 + pulse * 0.055)
+    } else if (pickup.reward.rarity === 'rare') {
+      pickup.smoothRing.scale.setScalar(1 + pulse * 0.07)
+      pickup.outerRing.scale.setScalar(1 - pulse * 0.07)
+    } else {
+      const strongPulse = 1 + Math.max(0, pulse) * 0.12
+      pickup.smoothRing.scale.setScalar(strongPulse)
+      pickup.outerRing.scale.setScalar(2 - strongPulse)
+      for (const beam of pickup.beams) beam.scale.x = strongPulse
+    }
+  }
+
+  private setLootRingOpacity(pickup: LootPickup, opacity: number): void {
+    pickup.smoothRing.userData.lootOpacity = opacity
+    pickup.outerRing.userData.lootOpacity = opacity
+    pickup.segmentedRing.traverse((object) => {
+      if (object instanceof THREE.Mesh) object.userData.lootOpacity = opacity
+    })
+  }
+
+  private collectLoot(
+    pickup: LootPickup,
+    reason: LootCollectionReason,
+  ): void {
+    if (!pickup.active) return
+    void reason
+    const reward = pickup.reward
+    pickup.active = false
+    this.spawnLootCollectionBurst(pickup.root.position, reward.rarity)
+    pickup.root.visible = false
+    pickup.velocity.set(0, 0, 0)
+    pickup.age = 0
+    pickup.idleAge = 0
+    const detail = this.applyLootReward(reward)
+    this.playSound('lootCollect', {
+      position: pickup.root.position,
+      intensity: (LOOT_RARITY_RANK[reward.rarity] + 1) / 4,
+      variantSeed: pickup.serial,
+    })
+    this.lootToast = {
+      id: ++this.lootToastSequence,
+      rarity: reward.rarity,
+      title: reward.label,
+      detail,
+    }
+    this.lootToastExpiresAt = this.elapsed + LOOT_TOAST_TIME
+    this.emitView(true)
+  }
+
+  private applyLootReward(reward: LootReward): string {
+    if (reward.kind === 'coins') {
+      this.gold += reward.amount
+      this.achievements.recordGoldEarned(reward.amount)
+      return `+${reward.amount} золота`
+    }
+    if (reward.kind === 'medicine') {
+      if (this.health >= this.maxHealth) {
+        const convertedGold = Math.ceil(reward.amount / 2)
+        this.gold += convertedGold
+        this.achievements.recordGoldEarned(convertedGold)
+        return `Полное здоровье: +${convertedGold} золота`
+      }
+      const before = Math.ceil(this.health)
+      this.health = Math.min(this.maxHealth, this.health + reward.amount)
+      return `Здоровье ${before} -> ${Math.ceil(this.health)}`
+    }
+
+    const before = this.damage
+    const usable = Math.min(
+      reward.amount,
+      Math.max(0, LOOT_DAMAGE_CAP - this.damage),
+    )
+    const unused = reward.amount - usable
+    this.damage += usable
+    const convertedGold = unused * 25
+    if (convertedGold > 0) {
+      this.gold += convertedGold
+      this.achievements.recordGoldEarned(convertedGold)
+    }
+    if (usable > 0 && convertedGold > 0) {
+      return `Урон ${before} -> ${this.damage}; излишек +${convertedGold} золота`
+    }
+    if (usable > 0) return `Урон ${before} -> ${this.damage}`
+    return `Предел урона ${this.damage}: +${convertedGold} золота`
+  }
+
+  private spawnLootCollectionBurst(
+    position: THREE.Vector3,
+    rarity: LootRarity,
+  ): void {
+    let burst = this.lootCollectionBursts.find((entry) => !entry.active)
+    if (!burst) {
+      burst = this.lootCollectionBursts.reduce((oldest, entry) =>
+        entry.serial < oldest.serial ? entry : oldest,
+      )
+    }
+    burst.active = true
+    burst.age = 0
+    burst.serial = ++this.lootBurstSequence
+    burst.root.position.copy(position)
+    burst.root.visible = true
+    const material = this.lootMaterials[rarity].ring
+    for (const shard of burst.shards) {
+      shard.material = material
+      shard.position.set(0, 0, 0)
+      shard.scale.setScalar(1)
+      shard.userData.lootOpacity = 1
+    }
+  }
+
+  private updateLootCollectionBursts(delta: number): void {
+    for (const burst of this.lootCollectionBursts) {
+      if (!burst.active) continue
+      burst.age += delta
+      if (burst.age >= LOOT_COLLECTION_BURST_TIME) {
+        burst.active = false
+        burst.root.visible = false
+        continue
+      }
+      const progress = burst.age / LOOT_COLLECTION_BURST_TIME
+      const distance = progress * 1.65
+      const scale = 1 - progress * 0.65
+      for (let index = 0; index < burst.shards.length; index += 1) {
+        const shard = burst.shards[index]
+        shard.position.copy(burst.directions[index]).multiplyScalar(distance)
+        shard.position.y -= progress * progress * 0.7
+        shard.rotation.x += delta * 5
+        shard.rotation.y += delta * 7
+        shard.scale.setScalar(scale)
+        shard.userData.lootOpacity = 1 - progress
+      }
+    }
+  }
+
+  private settleActiveLoot(reason: Extract<LootCollectionReason, 'save' | 'victory'>): void {
+    while (true) {
+      let oldest: LootPickup | null = null
+      for (const pickup of this.lootPickups) {
+        if (pickup.active && (!oldest || pickup.serial < oldest.serial)) {
+          oldest = pickup
+        }
+      }
+      if (!oldest) return
+      this.collectLoot(oldest, reason)
+    }
+  }
+
+  private clearLootRuntime(): void {
+    for (const pickup of this.lootPickups) {
+      pickup.active = false
+      pickup.root.visible = false
+      pickup.velocity.set(0, 0, 0)
+      pickup.age = 0
+      pickup.idleAge = 0
+    }
+    for (const burst of this.lootCollectionBursts) {
+      burst.active = false
+      burst.root.visible = false
+      burst.age = 0
+    }
+    this.lootToast = null
+    this.lootToastExpiresAt = 0
   }
 
   private setupLights(): void {
@@ -4277,11 +6462,19 @@ export class GameEngine {
     key: string,
     base: THREE.Color,
     detail: THREE.Color,
-    pattern: 'grass' | 'dirt' | 'stone' | 'scree' | 'wood' | 'roof',
-    repeatX: number,
-    repeatY: number,
+    options: SurfaceTextureOptions,
   ): THREE.CanvasTexture {
-    const cached = this.generatedTextures.get(key)
+    const hatchKey = options.hatch
+      ? [
+          options.hatch.motif,
+          options.hatch.density,
+          options.hatch.angle.toFixed(3),
+          options.hatch.opacity.toFixed(3),
+          options.hatch.color.getHexString(),
+        ].join('-')
+      : 'none'
+    const cacheKey = `${key}|${options.pattern}|${options.repeatX}x${options.repeatY}|${hatchKey}`
+    const cached = this.generatedTextures.get(cacheKey)
     if (cached) return cached
 
     const canvas = document.createElement('canvas')
@@ -4294,26 +6487,31 @@ export class GameEngine {
     context.fillRect(0, 0, canvas.width, canvas.height)
 
     let seed = 17
-    for (const character of key) seed = (seed * 31 + character.charCodeAt(0)) % 2147483647
+    for (const character of cacheKey) {
+      seed = (seed * 31 + character.charCodeAt(0)) % 2147483647
+    }
     const random = seededRandom(Math.max(1, seed))
     const light = mix(detail, this.palette.surface, 0.34)
     const dark = mix(detail, this.palette.text, 0.3)
 
-    if (pattern === 'grass') {
+    if (options.pattern === 'grass') {
       for (let index = 0; index < 210; index += 1) {
         context.fillStyle = (index % 5 === 0 ? light : index % 3 === 0 ? dark : detail).getStyle()
         const x = Math.floor(random() * 64)
         const y = Math.floor(random() * 64)
         context.fillRect(x, y, index % 7 === 0 ? 2 : 1, 1 + Math.floor(random() * 3))
       }
-    } else if (pattern === 'dirt' || pattern === 'scree') {
-      const count = pattern === 'scree' ? 175 : 130
+    } else if (options.pattern === 'dirt' || options.pattern === 'scree') {
+      const count = options.pattern === 'scree' ? 175 : 130
       for (let index = 0; index < count; index += 1) {
         context.fillStyle = (index % 4 === 0 ? light : index % 2 === 0 ? dark : detail).getStyle()
-        const size = pattern === 'scree' ? 1 + Math.floor(random() * 4) : 1 + Math.floor(random() * 2)
+        const size =
+          options.pattern === 'scree'
+            ? 1 + Math.floor(random() * 4)
+            : 1 + Math.floor(random() * 2)
         context.fillRect(Math.floor(random() * 64), Math.floor(random() * 64), size, size)
       }
-    } else if (pattern === 'stone') {
+    } else if (options.pattern === 'stone') {
       context.strokeStyle = detail.getStyle()
       context.lineWidth = 2
       for (let y = 0; y <= 64; y += 16) {
@@ -4335,7 +6533,7 @@ export class GameEngine {
         context.fillRect(Math.floor(random() * 64), Math.floor(random() * 64), 2, 1)
       }
       context.globalAlpha = 1
-    } else if (pattern === 'wood') {
+    } else if (options.pattern === 'wood') {
       context.fillStyle = detail.getStyle()
       for (let y = 0; y < 64; y += 8) context.fillRect(0, y, 64, 1)
       context.globalAlpha = 0.6
@@ -4360,16 +6558,87 @@ export class GameEngine {
       context.globalAlpha = 1
     }
 
+    if (options.hatch) {
+      this.drawSurfaceHatch(context, options.hatch, random)
+    }
+
     const texture = new THREE.CanvasTexture(canvas)
     texture.colorSpace = THREE.SRGBColorSpace
     texture.wrapS = THREE.RepeatWrapping
     texture.wrapT = THREE.RepeatWrapping
-    texture.repeat.set(repeatX, repeatY)
+    texture.repeat.set(options.repeatX, options.repeatY)
     texture.magFilter = THREE.NearestFilter
     texture.minFilter = THREE.LinearMipmapLinearFilter
     texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
-    this.generatedTextures.set(key, texture)
+    this.generatedTextures.set(cacheKey, texture)
     return texture
+  }
+
+  private drawSurfaceHatch(
+    context: CanvasRenderingContext2D,
+    hatch: NonNullable<SurfaceTextureOptions['hatch']>,
+    random: () => number,
+  ): void {
+    context.save()
+    context.translate(32, 32)
+    context.rotate(hatch.angle)
+    context.translate(-32, -32)
+    context.globalAlpha = hatch.opacity
+    context.strokeStyle = hatch.color.getStyle()
+    context.lineCap = 'round'
+    context.lineJoin = 'round'
+    context.lineWidth = 1.4
+
+    for (let index = 0; index < hatch.density; index += 1) {
+      const x = 5 + random() * 54
+      const y = 5 + random() * 54
+      context.beginPath()
+      if (hatch.motif === 'scrape') {
+        const length = 12 + random() * 18
+        const gap = 2 + random() * 4
+        context.moveTo(x - length * 0.5, y)
+        context.lineTo(x - gap, y + random() * 1.5)
+        context.moveTo(x + gap, y + random() * 1.5)
+        context.lineTo(x + length * 0.5, y)
+      } else if (hatch.motif === 'chevron') {
+        const width = 4 + random() * 3
+        const height = 3 + random() * 3
+        context.moveTo(x - width, y - height)
+        context.lineTo(x, y)
+        context.lineTo(x + width, y - height)
+        if (index % 2 === 0) {
+          context.moveTo(x, y)
+          context.lineTo(x, y + height + 3)
+        }
+      } else if (hatch.motif === 'organic') {
+        const width = 7 + random() * 6
+        const bend = 3 + random() * 4
+        context.moveTo(x - width * 0.5, y)
+        context.bezierCurveTo(
+          x - width * 0.2,
+          y - bend,
+          x + width * 0.2,
+          y + bend,
+          x + width * 0.5,
+          y,
+        )
+        if (index % 3 === 0) {
+          context.moveTo(x - width * 0.35, y + 3)
+          context.quadraticCurveTo(x, y + bend + 3, x + width * 0.35, y + 3)
+        }
+      } else {
+        const length = 8 + random() * 10
+        context.moveTo(x - length * 0.45, y + length * 0.5)
+        context.lineTo(x + length * 0.45, y - length * 0.5)
+        if (index % 2 === 0) {
+          context.moveTo(x + 4, y + length * 0.3)
+          context.lineTo(x + 4 + length * 0.55, y - length * 0.3)
+        }
+      }
+      context.stroke()
+    }
+
+    context.restore()
   }
 
   private createAtmosphere(): void {
@@ -5278,6 +7547,7 @@ uniform float uSwayAmplitude;`,
   }
 
   private updateAtmosphere(delta: number): void {
+    this.updateZoneTint(delta)
     this.groundFoliageUniforms.uTime.value = this.elapsed
     for (let index = 0; index < this.clouds.length; index += 1) {
       const { group, speed } = this.clouds[index]
@@ -5302,6 +7572,39 @@ uniform float uSwayAmplitude;`,
           baseIntensity + Math.sin(this.elapsed * 11 + index) * pulseIntensity
       }
     }
+  }
+
+  private updateZoneTint(delta: number): void {
+    writeZoneVisualWeights(
+      this.player.position.x,
+      this.player.position.z,
+      this.zoneVisualWeights,
+      ZONE_BLEND_WIDTH,
+    )
+    this.zoneTintTarget.setRGB(0, 0, 0)
+    let targetWeight = 0
+    for (let index = 0; index < ZONE_ART_IDS.length; index += 1) {
+      const zone = ZONE_ART_IDS[index]
+      const weight = this.zoneVisualWeights[zone]
+      const profile = this.zoneArtProfiles[zone]
+      this.zoneTintTarget.r += profile.fogTint.r * weight
+      this.zoneTintTarget.g += profile.fogTint.g * weight
+      this.zoneTintTarget.b += profile.fogTint.b * weight
+      targetWeight += profile.fogWeight * weight
+    }
+
+    if (delta <= 0) {
+      this.zoneTintColor.copy(this.zoneTintTarget)
+      this.zoneTintWeight = targetWeight
+    } else {
+      const response = 1 - Math.exp(-ZONE_TINT_DAMPING * delta)
+      this.zoneTintColor.lerp(this.zoneTintTarget, response)
+      this.zoneTintWeight += (targetWeight - this.zoneTintWeight) * response
+    }
+
+    this.backgroundColor.lerp(this.zoneTintColor, this.zoneTintWeight * 0.62)
+    this.fog.color.lerp(this.zoneTintColor, this.zoneTintWeight)
+    this.skyMaterial.color.lerp(this.zoneTintColor, this.zoneTintWeight * 0.28)
   }
 
   private updateDayNight(): void {
@@ -5414,6 +7717,8 @@ uniform float uSwayAmplitude;`,
     this.createPalace()
     this.createForest()
     this.createFort()
+    this.createZoneDecorations()
+    this.createZoneLandmarks()
     this.createBoundary()
     this.createGroundDetails()
   }
@@ -5449,9 +7754,15 @@ uniform float uSwayAmplitude;`,
           `ground-${zone}`,
           zoneColors[zone],
           details[zone],
-          patterns[zone],
-          zone === 'palace' ? 10 : 18,
-          zone === 'palace' ? 10 : 18,
+          {
+            pattern: patterns[zone],
+            repeatX: zone === 'palace' ? 10 : 18,
+            repeatY: zone === 'palace' ? 10 : 18,
+            hatch: {
+              ...this.zoneArtProfiles[zone].hatch,
+              color: this.zoneArtProfiles[zone].ink,
+            },
+          },
         ),
         roughness: 1,
       })
@@ -5484,9 +7795,7 @@ uniform float uSwayAmplitude;`,
         'road-dirt-horizontal',
         roadBase,
         roadDetail,
-        'dirt',
-        24,
-        2,
+        { pattern: 'dirt', repeatX: 24, repeatY: 2 },
       ),
       roughness: 1,
     })
@@ -5495,9 +7804,7 @@ uniform float uSwayAmplitude;`,
         'road-dirt-vertical',
         roadBase,
         roadDetail,
-        'dirt',
-        2,
-        24,
+        { pattern: 'dirt', repeatX: 2, repeatY: 24 },
       ),
       roughness: 1,
     })
@@ -5547,15 +7854,28 @@ uniform float uSwayAmplitude;`,
     this.scene.add(shop)
     const sign = this.createSign('ЛЕКАРЬ • ПРОТЕЗЫ', this.vendorPosition.x, 4.5, this.vendorPosition.z + 2.8)
     this.scene.add(sign)
+    const vendorBeacon = this.createBeacon(
+      this.vendorPosition.x,
+      this.vendorPosition.z + 3.8,
+      this.palette.warning,
+    )
+    this.scene.add(vendorBeacon)
+    this.registerInteractableOutline(vendorBeacon)
     const well = new THREE.Group()
     const stone = new THREE.MeshStandardMaterial({
       map: this.createSurfaceTexture(
         'well-stone',
         this.palette.borderStrong,
         this.palette.border,
-        'stone',
-        4,
-        2,
+        {
+          pattern: 'stone',
+          repeatX: 4,
+          repeatY: 2,
+          hatch: {
+            ...this.zoneArtProfiles.neutral.hatch,
+            color: this.zoneArtProfiles.neutral.ink,
+          },
+        },
       ),
       roughness: 1,
     })
@@ -5570,9 +7890,15 @@ uniform float uSwayAmplitude;`,
           'village-roof',
           this.palette.accent,
           mix(this.palette.accent, this.palette.text, 0.45),
-          'roof',
-          5,
-          3,
+          {
+            pattern: 'roof',
+            repeatX: 5,
+            repeatY: 3,
+            hatch: {
+              ...this.zoneArtProfiles.neutral.hatch,
+              color: this.zoneArtProfiles.neutral.ink,
+            },
+          },
         ),
         roughness: 0.9,
       }),
@@ -5593,9 +7919,15 @@ uniform float uSwayAmplitude;`,
         'palace-stone',
         palaceStone,
         mix(this.palette.link, this.palette.borderStrong, 0.68),
-        'stone',
-        6,
-        5,
+        {
+          pattern: 'stone',
+          repeatX: 6,
+          repeatY: 5,
+          hatch: {
+            ...this.zoneArtProfiles.palace.hatch,
+            color: this.zoneArtProfiles.palace.ink,
+          },
+        },
       ),
       roughness: 0.78,
     })
@@ -5604,9 +7936,15 @@ uniform float uSwayAmplitude;`,
         'palace-roof',
         this.palette.warning,
         mix(this.palette.warning, this.palette.text, 0.4),
-        'roof',
-        5,
-        4,
+        {
+          pattern: 'roof',
+          repeatX: 5,
+          repeatY: 4,
+          hatch: {
+            ...this.zoneArtProfiles.palace.hatch,
+            color: this.zoneArtProfiles.palace.ink,
+          },
+        },
       ),
       metalness: 0.22,
       roughness: 0.55,
@@ -5762,9 +8100,15 @@ uniform float uSwayAmplitude;`,
         'mountain-rock',
         mix(this.palette.accent, this.palette.borderStrong, 0.7),
         mix(this.palette.borderStrong, this.palette.text, 0.45),
-        'scree',
-        3,
-        3,
+        {
+          pattern: 'scree',
+          repeatX: 3,
+          repeatY: 3,
+          hatch: {
+            ...this.zoneArtProfiles.fort.hatch,
+            color: this.zoneArtProfiles.fort.ink,
+          },
+        },
       ),
       roughness: 1,
     })
@@ -5797,9 +8141,15 @@ uniform float uSwayAmplitude;`,
         'fort-stone',
         mix(this.palette.borderStrong, this.palette.bg, 0.32),
         mix(this.palette.accent, this.palette.border, 0.4),
-        'stone',
-        6,
-        4,
+        {
+          pattern: 'stone',
+          repeatX: 6,
+          repeatY: 4,
+          hatch: {
+            ...this.zoneArtProfiles.fort.hatch,
+            color: this.zoneArtProfiles.fort.ink,
+          },
+        },
       ),
       roughness: 1,
     })
@@ -5905,15 +8255,309 @@ uniform float uSwayAmplitude;`,
     this.scene.add(this.createBeacon(47, 45, this.palette.accent))
   }
 
+  private createZoneDecorations(): void {
+    let instanceTotal = 0
+    for (const zone of ZONE_ART_IDS) {
+      const placements = this.createZoneDecorationPlacements(
+        zone,
+        ZONE_DECORATION_COUNTS[zone],
+      )
+      const mesh = new THREE.InstancedMesh(
+        this.createZoneDecorationGeometry(zone),
+        this.getZoneArtMaterial(zone),
+        placements.length,
+      )
+      const profile = this.zoneArtProfiles[zone]
+      const dummy = new THREE.Object3D()
+      for (let index = 0; index < placements.length; index += 1) {
+        const [x, z, yaw, scale] = placements[index]
+        dummy.position.set(x, 0, z)
+        dummy.rotation.set(0, yaw, 0)
+        dummy.scale.setScalar(scale)
+        dummy.updateMatrix()
+        mesh.setMatrixAt(index, dummy.matrix)
+        mesh.setColorAt(index, index % 4 === 0 ? profile.accent : profile.primary)
+      }
+      mesh.name = `zone-decoration-${zone}`
+      mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage)
+      mesh.instanceMatrix.needsUpdate = true
+      if (mesh.instanceColor) {
+        mesh.instanceColor.setUsage(THREE.StaticDrawUsage)
+        mesh.instanceColor.needsUpdate = true
+      }
+      mesh.userData.zone = zone
+      mesh.userData.collidable = false
+      mesh.userData.cameraPassThrough = true
+      mesh.castShadow = false
+      mesh.receiveShadow = true
+      mesh.computeBoundingSphere()
+      this.zoneDecorationSets.push({ mesh, zone, collidable: false })
+      this.scene.add(mesh)
+      instanceTotal += placements.length
+    }
+    this.renderer.domElement.dataset.zoneDecorationInstances = String(instanceTotal)
+    this.renderer.domElement.dataset.zoneDecorationDrawCalls = String(
+      this.zoneDecorationSets.length,
+    )
+  }
+
+  private createZoneDecorationPlacements(
+    zone: ZoneId,
+    count: number,
+  ): Array<readonly [number, number, number, number]> {
+    const bounds: Record<ZoneId, readonly [number, number, number, number]> = {
+      neutral: [-73, -8, -73, -8],
+      palace: [8, 73, -73, -8],
+      forest: [-73, -8, 8, 73],
+      fort: [8, 73, 8, 73],
+    }
+    const seeds: Record<ZoneId, number> = {
+      neutral: 401,
+      palace: 809,
+      forest: 1217,
+      fort: 1621,
+    }
+    const [minX, maxX, minZ, maxZ] = bounds[zone]
+    const random = seededRandom(seeds[zone])
+    const placements: Array<readonly [number, number, number, number]> = []
+    const maxAttempts = count * 100
+    for (let attempt = 0; attempt < maxAttempts && placements.length < count; attempt += 1) {
+      const x = THREE.MathUtils.lerp(minX, maxX, random())
+      const z = THREE.MathUtils.lerp(minZ, maxZ, random())
+      if (!this.canPlaceZoneDecoration(zone, x, z)) continue
+      if (
+        placements.some(([placedX, placedZ]) => {
+          const dx = x - placedX
+          const dz = z - placedZ
+          return dx * dx + dz * dz < 10.24
+        })
+      ) {
+        continue
+      }
+      placements.push([x, z, random() * TWO_PI, 0.78 + random() * 0.38])
+    }
+    return placements
+  }
+
+  private canPlaceZoneDecoration(zone: ZoneId, x: number, z: number): boolean {
+    if (zoneAt(x, z) !== zone || Math.abs(x) > 74 || Math.abs(z) > 74) return false
+    if (Math.abs(x) < 6.5 || Math.abs(z + 23) < 6.5) return false
+    if (
+      (zone === 'palace' && x > 38 && x < 50 && z > -43 && z < -26) ||
+      (zone === 'fort' && x > 41 && x < 53 && z > 25 && z < 41)
+    ) {
+      return false
+    }
+
+    const exclusions: ReadonlyArray<readonly [number, number, number]> = [
+      [FACTION_INFO.elf.spawn[0], FACTION_INFO.elf.spawn[1], 7],
+      [FACTION_INFO.guard.spawn[0], FACTION_INFO.guard.spawn[1], 7],
+      [FACTION_INFO.villain.spawn[0], FACTION_INFO.villain.spawn[1], 7],
+      [this.vendorPosition.x, this.vendorPosition.z, 8],
+      [this.commanderPosition.x, this.commanderPosition.z, 7],
+      [this.elfHomePosition.x, this.elfHomePosition.z, 8],
+      [-54, -23, 8],
+    ]
+    for (const [centerX, centerZ, radius] of exclusions) {
+      const dx = x - centerX
+      const dz = z - centerZ
+      if (dx * dx + dz * dz < radius * radius) return false
+    }
+    return this.staticObstacles.every(
+      (obstacle) => !this.obstacleOverlapsCircle(obstacle, x, z, 1.35),
+    )
+  }
+
+  private createZoneDecorationGeometry(zone: ZoneId): THREE.BufferGeometry {
+    const parts: THREE.BufferGeometry[] = []
+    const addPart = (
+      geometry: THREE.BufferGeometry,
+      x: number,
+      y: number,
+      z: number,
+      rotationZ = 0,
+    ): void => {
+      const part = geometry.index ? geometry.toNonIndexed() : geometry
+      if (part !== geometry) geometry.dispose()
+      part.rotateZ(rotationZ)
+      part.translate(x, y, z)
+      parts.push(part)
+    }
+
+    if (zone === 'neutral') {
+      addPart(new THREE.BoxGeometry(0.18, 2.25, 0.18), 0, 1.12, 0, 0.08)
+      addPart(new THREE.BoxGeometry(1.5, 0.14, 0.14), 0, 1.05, 0, -0.12)
+      addPart(new THREE.ConeGeometry(0.32, 0.72, 3), 0.55, 1.55, 0, -Math.PI / 2)
+    } else if (zone === 'palace') {
+      addPart(new THREE.CylinderGeometry(0.09, 0.11, 2.8, 6), 0, 1.4, 0)
+      addPart(new THREE.BoxGeometry(0.95, 0.72, 0.16), 0, 1.58, 0)
+      addPart(new THREE.ConeGeometry(0.24, 0.58, 6), 0, 3.08, 0)
+    } else if (zone === 'forest') {
+      addPart(new THREE.TorusGeometry(0.84, 0.14, 6, 14, Math.PI), 0, 0.12, 0)
+      addPart(new THREE.CylinderGeometry(0.04, 0.05, 0.55, 5), 0, 0.78, 0)
+      addPart(new THREE.DodecahedronGeometry(0.2, 0), 0, 0.45, 0)
+    } else {
+      addPart(new THREE.ConeGeometry(0.24, 2.5, 6), 0, 1.12, 0, -0.55)
+      addPart(new THREE.TorusGeometry(0.58, 0.12, 6, 12, Math.PI * 1.58), 0.38, 0.78, 0)
+    }
+
+    const merged = mergeGeometries(parts, false)
+    parts.forEach((part) => part.dispose())
+    if (!merged) throw new Error(`Could not merge zone decoration geometry: ${zone}`)
+    merged.computeVertexNormals()
+    return merged
+  }
+
+  private getZoneArtMaterial(zone: ZoneId): THREE.MeshStandardMaterial {
+    const cached = this.zoneArtMaterials.get(zone)
+    if (cached) return cached
+    const profile = this.zoneArtProfiles[zone]
+    const patterns: Record<ZoneId, SurfaceTextureOptions['pattern']> = {
+      neutral: 'wood',
+      palace: 'stone',
+      forest: 'wood',
+      fort: 'scree',
+    }
+    const material = new THREE.MeshStandardMaterial({
+      map: this.createSurfaceTexture(
+        `zone-art-${zone}`,
+        profile.secondary,
+        profile.ink,
+        {
+          pattern: patterns[zone],
+          repeatX: 2,
+          repeatY: 2,
+          hatch: { ...profile.hatch, color: profile.ink },
+        },
+      ),
+      roughness: zone === 'palace' ? 0.72 : 0.96,
+      metalness: zone === 'palace' ? 0.12 : 0,
+    })
+    this.zoneArtMaterials.set(zone, material)
+    return material
+  }
+
+  private createZoneLandmarks(): void {
+    const landmarks = [
+      this.createNeutralLandmark(),
+      this.createPalaceLandmark(),
+      this.createForestLandmark(),
+      this.createFortLandmark(),
+    ]
+    let meshCount = 0
+    for (const landmark of landmarks) {
+      landmark.traverse((object) => {
+        if (object instanceof THREE.Mesh) meshCount += 1
+      })
+      this.scene.add(landmark)
+    }
+    this.renderer.domElement.dataset.zoneLandmarkMeshes = String(meshCount)
+  }
+
+  private createNeutralLandmark(): THREE.Group {
+    const group = new THREE.Group()
+    const material = this.getZoneArtMaterial('neutral')
+    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.2, 0.8, 8), material)
+    base.position.y = 0.4
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.55, 7.4, 0.55), material)
+    post.position.y = 4.1
+    post.rotation.z = 0.08
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.34, 0.34), material)
+    arm.position.set(1.8, 7.4, 0)
+    arm.rotation.z = -0.12
+    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.1, 5), material)
+    cable.position.set(3.55, 6.35, 0)
+    const notice = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.25, 0.22), material)
+    notice.position.set(-0.45, 4.4, 0.38)
+    notice.rotation.z = -0.08
+    group.add(base, post, arm, cable, notice)
+    group.position.set(-18, 0, -12)
+    group.rotation.y = 0.22
+    group.name = 'zone-landmark-neutral'
+    this.registerCircleObstacle(group.position.x, group.position.z, 1.1)
+    return group
+  }
+
+  private createPalaceLandmark(): THREE.Group {
+    const group = new THREE.Group()
+    const material = this.getZoneArtMaterial('palace')
+    for (const x of [-1.15, 1.15]) {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.17, 11, 7), material)
+      pole.position.set(x, 5.5, 0)
+      const banner = new THREE.Mesh(new THREE.BoxGeometry(1.65, 4.1, 0.18), material)
+      banner.position.set(x + Math.sign(x) * 0.78, 7.2, 0)
+      const finial = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.9, 7), material)
+      finial.position.set(x, 11.45, 0)
+      group.add(pole, banner, finial)
+    }
+    const crossbar = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.28, 0.28), material)
+    crossbar.position.y = 9.55
+    group.add(crossbar)
+    group.position.set(44, 0, -52)
+    group.name = 'zone-landmark-palace'
+    return group
+  }
+
+  private createForestLandmark(): THREE.Group {
+    const group = new THREE.Group()
+    const material = this.getZoneArtMaterial('forest')
+    const arch = new THREE.Mesh(new THREE.TorusGeometry(4.8, 0.48, 8, 24, Math.PI), material)
+    arch.position.y = 0.45
+    const leftRoot = new THREE.Mesh(new THREE.DodecahedronGeometry(0.9, 0), material)
+    leftRoot.position.set(-4.75, 0.55, 0)
+    leftRoot.scale.set(1, 1.5, 1)
+    const rightRoot = leftRoot.clone()
+    rightRoot.position.x = 4.75
+    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 1.7, 6), material)
+    stem.position.set(0, 4.1, 0)
+    const pod = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5, 1), material)
+    pod.position.set(0, 3.15, 0)
+    group.add(arch, leftRoot, rightRoot, stem, pod)
+    group.position.set(-48, 0, 49)
+    group.name = 'zone-landmark-forest'
+    group.traverse((object) => {
+      if (object instanceof THREE.Mesh) object.userData.cameraPassThrough = true
+    })
+    this.registerCircleObstacle(-52.75, 49, 0.8)
+    this.registerCircleObstacle(-43.25, 49, 0.8)
+    return group
+  }
+
+  private createFortLandmark(): THREE.Group {
+    const group = new THREE.Group()
+    const material = this.getZoneArtMaterial('fort')
+    const wheel = new THREE.Mesh(
+      new THREE.TorusGeometry(3.8, 0.42, 8, 26, Math.PI * 1.72),
+      material,
+    )
+    wheel.position.y = 4.1
+    wheel.rotation.z = 0.28
+    group.add(wheel)
+    for (const angle of [-0.7, 0.15, 0.95]) {
+      const spoke = new THREE.Mesh(new THREE.BoxGeometry(6.7, 0.3, 0.38), material)
+      spoke.position.y = 4.1
+      spoke.rotation.z = angle
+      group.add(spoke)
+    }
+    for (const x of [-2.6, 2.6]) {
+      const support = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.42, 4.2, 7), material)
+      support.position.set(x, 1.8, 0)
+      support.rotation.z = x < 0 ? -0.34 : 0.34
+      group.add(support)
+    }
+    group.position.set(47, 0, 65)
+    group.name = 'zone-landmark-fort'
+    this.registerBoxObstacle(group.position.x, group.position.z, 7.5, 1.5)
+    return group
+  }
+
   private createBoundary(): void {
     const material = new THREE.MeshStandardMaterial({
       map: this.createSurfaceTexture(
         'boundary-stone',
         mix(this.palette.borderStrong, this.palette.bg, 0.4),
         this.palette.border,
-        'scree',
-        2,
-        2,
+        { pattern: 'scree', repeatX: 2, repeatY: 2 },
       ),
       roughness: 1,
     })
@@ -5976,9 +8620,15 @@ uniform float uSwayAmplitude;`,
         shop ? 'shop-timber' : 'village-timber',
         woodBase,
         mix(this.palette.warning, this.palette.text, 0.52),
-        'wood',
-        4,
-        4,
+        {
+          pattern: 'wood',
+          repeatX: 4,
+          repeatY: 4,
+          hatch: {
+            ...this.zoneArtProfiles.neutral.hatch,
+            color: this.zoneArtProfiles.neutral.ink,
+          },
+        },
       ),
       roughness: 0.95,
     })
@@ -5994,9 +8644,15 @@ uniform float uSwayAmplitude;`,
           'house-shingles',
           this.palette.accent,
           mix(this.palette.accent, this.palette.text, 0.4),
-          'roof',
-          5,
-          4,
+          {
+            pattern: 'roof',
+            repeatX: 5,
+            repeatY: 4,
+            hatch: {
+              ...this.zoneArtProfiles.neutral.hatch,
+              color: this.zoneArtProfiles.neutral.ink,
+            },
+          },
         ),
         roughness: 1,
       }),
@@ -6040,9 +8696,15 @@ uniform float uSwayAmplitude;`,
         'elf-hut-bark',
         mix(this.palette.warning, this.palette.bg, 0.55),
         mix(this.palette.warning, this.palette.text, 0.55),
-        'wood',
-        5,
-        4,
+        {
+          pattern: 'wood',
+          repeatX: 5,
+          repeatY: 4,
+          hatch: {
+            ...this.zoneArtProfiles.forest.hatch,
+            color: this.zoneArtProfiles.forest.ink,
+          },
+        },
       ),
       roughness: 1,
     })
@@ -6057,9 +8719,15 @@ uniform float uSwayAmplitude;`,
           'elf-leaf-roof',
           mix(this.palette.success, this.palette.bg, 0.25),
           mix(this.palette.success, this.palette.text, 0.36),
-          'roof',
-          6,
-          4,
+          {
+            pattern: 'roof',
+            repeatX: 6,
+            repeatY: 4,
+            hatch: {
+              ...this.zoneArtProfiles.forest.hatch,
+              color: this.zoneArtProfiles.forest.ink,
+            },
+          },
         ),
         roughness: 1,
       }),
@@ -6085,9 +8753,7 @@ uniform float uSwayAmplitude;`,
           'tree-bark',
           mix(this.palette.warning, this.palette.bg, 0.45),
           mix(this.palette.warning, this.palette.text, 0.58),
-          'wood',
-          2,
-          5,
+          { pattern: 'wood', repeatX: 2, repeatY: 5 },
         ),
         roughness: 1,
       }),
@@ -6137,19 +8803,19 @@ uniform float uSwayAmplitude;`,
     const pelvisPivot = new THREE.Group()
     pelvisPivot.name = 'pelvis-pivot'
     bodyPivot.add(pelvisPivot)
-    const factionMaterial = new THREE.MeshStandardMaterial({
+    const factionMaterial = this.comicMaterials.createToonMaterial({
       color: this.factionColor(faction),
-      roughness: 0.72,
-      metalness: faction === 'guard' ? 0.35 : 0.08,
+      surface: faction === 'guard' ? 'metal' : 'cloth',
+      emissive: faction === 'guard' ? this.factionColor(faction) : undefined,
+      emissiveIntensity: faction === 'guard' ? 0.07 : undefined,
     })
-    const skinMaterial = new THREE.MeshStandardMaterial({
+    const skinMaterial = this.comicMaterials.createToonMaterial({
       color: mix(this.palette.warning, this.palette.surface, 0.7),
-      roughness: 0.86,
+      surface: 'skin',
     })
-    const darkMaterial = new THREE.MeshStandardMaterial({
+    const darkMaterial = this.comicMaterials.createToonMaterial({
       color: mix(this.palette.text, this.palette.bg, 0.28),
-      roughness: 0.8,
-      metalness: 0.24,
+      surface: 'dark',
     })
 
     const torso = new THREE.Mesh(new THREE.BoxGeometry(player ? 1.05 : 0.9, 1.3, 0.58), factionMaterial)
@@ -6278,7 +8944,7 @@ uniform float uSwayAmplitude;`,
       )
     }
     const torso = mesh.getObjectByName('torso')
-    if (torso instanceof THREE.Mesh && torso.material instanceof THREE.MeshStandardMaterial) {
+    if (torso instanceof THREE.Mesh && torso.material instanceof THREE.MeshToonMaterial) {
       torso.material.color.offsetHSL(variation * 0.012, variation * 0.03, variation * 0.025)
     }
   }
@@ -6344,9 +9010,7 @@ uniform float uSwayAmplitude;`,
         gilded
           ? mix(this.palette.warning, this.palette.text, 0.34)
           : mix(this.palette.warning, this.palette.text, 0.55),
-        'wood',
-        4,
-        3,
+        { pattern: 'wood', repeatX: 4, repeatY: 3 },
       ),
       roughness: 0.92,
     })
@@ -6366,9 +9030,7 @@ uniform float uSwayAmplitude;`,
           gilded ? 'rich-caravan-crate' : 'caravan-crate',
           gilded ? mix(this.palette.warning, this.palette.surface, 0.15) : this.palette.warning,
           mix(this.palette.warning, this.palette.text, 0.42),
-          'wood',
-          3,
-          3,
+          { pattern: 'wood', repeatX: 3, repeatY: 3 },
         ),
         roughness: 0.8,
         emissive: gilded ? this.palette.warning : this.palette.bg,
@@ -6546,9 +9208,9 @@ uniform float uSwayAmplitude;`,
         })
         const bow = new THREE.Mesh(
           new THREE.TorusGeometry(0.48, 0.045, 6, 14, Math.PI),
-          new THREE.MeshStandardMaterial({
+          this.comicMaterials.createToonMaterial({
             color: this.palette.warning,
-            roughness: 0.82,
+            surface: 'dark',
           }),
         )
         bow.rotation.x = Math.PI / 2
@@ -6562,6 +9224,7 @@ uniform float uSwayAmplitude;`,
       if (weapon) weapon.visible = false
     }
     this.applyActorVisualVariation(mesh, faction, role, index)
+    const outlineBinding = this.registerOutline(mesh, 'enemy')
     mesh.position.set(x, 0, z)
     this.resolveCharacterOverlaps(mesh.position, this.actorColliderRadiusForRole(role))
     this.scene.add(mesh)
@@ -6571,7 +9234,7 @@ uniform float uSwayAmplitude;`,
     const phase = index * 0.73
     const home = mesh.position.clone()
     const initialAngle = phase * 4.7
-    const hp =
+    const baseHp =
       role === 'commander'
         ? 150
         : role === 'champion'
@@ -6583,6 +9246,7 @@ uniform float uSwayAmplitude;`,
               : role === 'scout'
                 ? 55
                 : 70
+    const hp = Math.round(baseHp * this.enemyHealthMultiplier(faction))
     const speed =
       role === 'scout'
         ? 4.8
@@ -6618,7 +9282,6 @@ uniform float uSwayAmplitude;`,
       visualSpeed: 0,
       motionBlend: 0,
       turnLean: 0,
-      attackAnimation: 0,
       idleTimer: 0.2 + (index % 3) * 0.25,
       wanderPace: 0.82 + (Math.sin(phase * 2.7) + 1) * 0.08,
       retreatTimer: 0,
@@ -6628,7 +9291,7 @@ uniform float uSwayAmplitude;`,
       squadEligible: options.squadEligible ?? true,
       aiMode: options.aiMode ?? 'normal',
       eventOwnerId: options.eventOwnerId ?? null,
-      eventPropTarget: options.eventPropTarget ?? null,
+      eventPropTargetId: options.eventPropTargetId ?? null,
       ignoredTargetId: options.ignoredTargetId ?? null,
       playerAggro: false,
       aggroMemory: 0,
@@ -6640,6 +9303,23 @@ uniform float uSwayAmplitude;`,
       healthBarCanvas: healthBar.canvas,
       healthBarTexture: healthBar.texture,
       healthBarVisibleUntil: 0,
+      outlineBinding,
+      outlineUntil: Number.POSITIVE_INFINITY,
+      action: null,
+      reaction: 'none',
+      reactionRemaining: 0,
+      poise: this.actorMaxPoise(role),
+      maxPoise: this.actorMaxPoise(role),
+      poiseRecoveryDelay: 0,
+      staggerImmunity: 0,
+      knockbackVelocity: new THREE.Vector3(),
+      lastHitDirection: new THREE.Vector3(0, 0, 1),
+      deathStyle: null,
+      deathAge: 0,
+      deathStartPosition: new THREE.Vector3(),
+      deathStartRotation: new THREE.Euler(),
+      deathTravelled: 0,
+      deathAt: null,
     }
     if (
       !this.isWalkablePosition(
@@ -6651,6 +9331,7 @@ uniform float uSwayAmplitude;`,
       this.chooseWanderTarget(actor)
     }
     this.actors.push(actor)
+    this.updateActorOutlineVisibility(actor)
     return actor
   }
 
@@ -6709,9 +9390,768 @@ uniform float uSwayAmplitude;`,
     this.trauma = Math.min(1, this.trauma + amount)
   }
 
-  private clearTransientCombatFeedback(): void {
+  private queueCameraAccent(
+    kind: CameraAccentKind,
+    magnitude: number,
+    duration: number,
+  ): void {
+    if (!this.screenShakeEnabled || this.reducedMotion || this.paused || this.ended) return
+    enqueueCameraAccent(this.cameraAccents, kind, magnitude, duration)
+  }
+
+  private presentCameraFeedback(event: CombatFeedbackEvent): void {
+    if (event.targetId === 'player' && event.weight === 'blocked') {
+      this.queueCameraAccent('block', -0.8, 0.12)
+      return
+    }
+    if (!event.directPlayerAction || !event.killed || event.targetId === 'player') return
+
+    const distance = Math.hypot(
+      event.position.x - this.player.position.x,
+      event.position.z - this.player.position.z,
+    )
+    const strength = 1 - Math.min(1, distance / KILL_ACCENT_RANGE)
+    if (strength > 0) this.queueCameraAccent('kill', -2.4 * strength, 0.2)
+  }
+
+  private updateCameraEffects(delta: number): void {
+    if (!this.screenShakeEnabled || this.reducedMotion) {
+      this.resetCameraMotion()
+      return
+    }
+    this.sprintFovBlend = dampValue(
+      this.sprintFovBlend,
+      this.isSprinting ? 1 : 0,
+      SPRINT_BLEND_DAMPING,
+      delta,
+    )
+    this.cameraAccentOffset = advanceCameraAccents(this.cameraAccents, delta)
+  }
+
+  private resetCameraMotion(): void {
     this.trauma = 0
+    this.cameraAccents.length = 0
+    this.sprintFovBlend = 0
+    this.cameraAccentOffset = 0
+    this.isSprinting = false
+    this.currentFov = CAMERA_BASE_FOV
+    if (this.camera.fov === CAMERA_BASE_FOV) return
+    this.camera.fov = CAMERA_BASE_FOV
+    this.camera.updateProjectionMatrix()
+  }
+
+  private updateCameraFov(delta: number, immediate: boolean): void {
+    if (
+      immediate ||
+      !this.screenShakeEnabled ||
+      this.reducedMotion ||
+      this.paused ||
+      this.ended
+    ) {
+      this.resetCameraMotion()
+      return
+    }
+
+    const targetFov = composeCameraFov(this.sprintFovBlend, this.cameraAccentOffset)
+    this.currentFov = dampValue(this.currentFov, targetFov, CAMERA_FOV_DAMPING, delta)
+    if (Math.abs(this.camera.fov - this.currentFov) < 0.01) return
+    this.camera.fov = this.currentFov
+    this.camera.updateProjectionMatrix()
+  }
+
+  private clearTransientCombatFeedback(): void {
+    this.resetCameraMotion()
     this.damageFlash = 0
+    this.hitStopRemaining = 0
+    this.pendingCleaveHitStop = 0
+    this.calloutCooldown = 0
+    this.attackAnimation = 0
+    this.activePlayerAttackKind = 'melee'
+    this.damageNumberFx.forEach((entry) => this.releaseDamageNumberFx(entry))
+    this.comicCalloutFx.forEach((entry) => this.releaseComicCalloutFx(entry))
+    this.impactRayFx.forEach((entry) => this.releaseImpactRayFx(entry))
+    this.weaponTrail.visible = false
+    this.weaponTrail.material.opacity = 0
+    this.releaseAllTelegraphs()
+  }
+
+  private presentCombatFeedback(
+    event: CombatFeedbackEvent,
+    channels: CombatFeedbackChannels = {},
+  ): void {
+    if (!event.applied) return
+    if (channels.number ?? true) this.spawnDamageNumber(event)
+    if (channels.ray ?? true) this.spawnImpactRay(event)
+    if (channels.callout ?? true) this.spawnComicCallout(event)
+    if (channels.hitStop ?? true) this.requestHitStop(this.hitStopForEvent(event))
+    if (channels.camera ?? true) this.presentCameraFeedback(event)
+    if (channels.sound ?? true) this.presentCombatAudio(event)
+  }
+
+  private presentCombatAudio(event: CombatFeedbackEvent): void {
+    const intensity = THREE.MathUtils.clamp(
+      event.dealt / (event.targetId === 'player' ? 24 : 36),
+      0,
+      1,
+    )
+    const variantSeed = this.stableSeed(
+      `${event.targetId}:${event.attackKind}:${event.weight}`,
+    )
+    const impactCue: Extract<SoundCue, 'hitLight' | 'hitHeavy' | 'block'> =
+      event.weight === 'blocked'
+        ? 'block'
+        : event.weight === 'heavy' || event.weight === 'lethal'
+          ? 'hitHeavy'
+          : 'hitLight'
+    this.playSound(impactCue, {
+      position: event.position,
+      intensity,
+      variantSeed,
+    })
+    if (!event.killed) return
+    this.playSound('gore', {
+      position: event.position,
+      intensity,
+      variantSeed: variantSeed + 1,
+    })
+    this.playSound('down', {
+      position: event.position,
+      intensity,
+      variantSeed: variantSeed + 2,
+    })
+  }
+
+  private presentCleaveFeedback(events: CombatFeedbackEvent[]): void {
+    if (events.length === 0) return
+    const heaviest = events.reduce((best, event) =>
+      HIT_WEIGHT_PRIORITY[event.weight] > HIT_WEIGHT_PRIORITY[best.weight] ? event : best,
+    )
+    const position = events
+      .reduce((centroid, event) => centroid.add(event.position), new THREE.Vector3())
+      .multiplyScalar(1 / events.length)
+    const direction = events.reduce(
+      (average, event) => average.add(event.direction),
+      new THREE.Vector3(),
+    )
+    if (direction.lengthSq() > 0.0001) direction.normalize()
+    else direction.copy(heaviest.direction)
+    const summary: CombatFeedbackEvent = {
+      ...heaviest,
+      dealt: events.reduce((total, event) => total + event.dealt, 0),
+      killed: events.some((event) => event.killed),
+      position,
+      direction,
+    }
+    this.presentCombatFeedback(summary, {
+      number: false,
+      ray: false,
+      hitStop: false,
+      camera: false,
+    })
+    this.pendingCleaveHitStop = events.reduce(
+      (duration, event) =>
+        Math.max(duration, event.weight === 'lethal' ? HIT_STOP_LETHAL : HIT_STOP_CLEAVE),
+      0,
+    )
+    this.requestHitStop(this.pendingCleaveHitStop)
+    this.pendingCleaveHitStop = 0
+  }
+
+  private hitStopForEvent(event: CombatFeedbackEvent): number {
+    if (event.targetId === 'player' && event.weight === 'blocked') return HIT_STOP_BLOCK
+    if (!event.directPlayerAction) return 0
+    if (event.attackKind === 'cleave') {
+      return event.weight === 'lethal' ? HIT_STOP_LETHAL : HIT_STOP_CLEAVE
+    }
+    if (event.weight === 'lethal') return HIT_STOP_LETHAL
+    if (event.weight === 'heavy') return HIT_STOP_HEAVY
+    return HIT_STOP_NORMAL
+  }
+
+  private requestHitStop(seconds: number): void {
+    if (seconds <= 0 || this.paused || this.ended) return
+    const requested =
+      !this.screenShakeEnabled || this.reducedMotion
+        ? Math.min(seconds, HIT_STOP_REDUCED_MAX)
+        : seconds
+    this.hitStopRemaining = Math.max(this.hitStopRemaining, requested)
+  }
+
+  private updateComicHitFx(delta: number): void {
+    this.calloutCooldown = Math.max(0, this.calloutCooldown - delta)
+    this.updateDamageNumberFx(delta)
+    this.updateComicCalloutFx(delta)
+    this.updateImpactRayFx(delta)
+    this.updateWeaponTrail()
+  }
+
+  private spawnDamageNumber(event: CombatFeedbackEvent): void {
+    if (
+      (!event.directPlayerAction && event.targetId !== 'player') ||
+      (event.targetId !== 'player' &&
+        event.position.distanceToSquared(this.player.position) > DAMAGE_NUMBER_DISTANCE_SQ)
+    ) {
+      return
+    }
+    const value = event.dealt > 0 ? Math.max(1, Math.round(event.dealt)) : 0
+    if (value === 0) return
+    const priority = HIT_WEIGHT_PRIORITY[event.weight]
+    const merged = this.damageNumberFx.find(
+      (entry) =>
+        entry.active &&
+        entry.targetId === event.targetId &&
+        entry.attackKind === event.attackKind &&
+        entry.mergeAge <= NUMBER_MERGE_WINDOW,
+    )
+    if (merged) {
+      merged.value += value
+      merged.mergeAge = 0
+      merged.age = Math.min(merged.age, merged.lifetime * 0.3)
+      if (priority > merged.priority) {
+        merged.priority = priority
+        merged.weight = event.weight
+      }
+      this.drawDamageNumber(merged, event.targetId === 'player')
+      return
+    }
+
+    const entry = this.acquireDamageNumberFx(priority)
+    entry.targetId = event.targetId
+    entry.attackKind = event.attackKind
+    entry.value = value
+    entry.weight = event.weight
+    entry.age = 0
+    entry.mergeAge = 0
+    entry.lifetime = DAMAGE_NUMBER_LIFE
+    entry.active = true
+    entry.priority = priority
+    entry.sprite.visible = true
+    entry.material.opacity = 1
+    entry.sprite.position.copy(this.damageNumberSpawnPosition(event))
+
+    const lateral = new THREE.Vector3(-event.direction.z, 0, event.direction.x)
+    if (lateral.lengthSq() <= 0.0001) {
+      lateral.set(Math.cos(this.cameraYaw), 0, Math.sin(this.cameraYaw))
+    } else {
+      lateral.normalize()
+    }
+    const side = this.damageNumberSequence % 2 === 0 ? -1 : 1
+    const offset = 0.22 + (Math.floor(this.damageNumberSequence / 2) % 3) * 0.08
+    this.damageNumberSequence += 1
+    entry.sprite.position.addScaledVector(lateral, side * offset)
+    entry.velocity.set(0, 0, 0)
+    if (!this.reducedMotion) {
+      entry.velocity.copy(event.direction).multiplyScalar(0.26)
+      entry.velocity.y = 0.82
+    }
+    this.drawDamageNumber(entry, event.targetId === 'player')
+    const [width, height] = this.damageNumberScale(entry.weight)
+    entry.sprite.scale.set(width * 0.56, height * 0.56, 1)
+  }
+
+  private damageNumberSpawnPosition(event: CombatFeedbackEvent): THREE.Vector3 {
+    if (event.targetId === 'player') {
+      return this.player.position.clone().add(new THREE.Vector3(0, 3.18, 0))
+    }
+    const target = this.actors.find((actor) => actor.id === event.targetId)
+    if (target) {
+      return target.mesh.position
+        .clone()
+        .add(new THREE.Vector3(0, 3.2 * target.mesh.scale.y, 0))
+    }
+    return event.position.clone().add(new THREE.Vector3(0, 1.6, 0))
+  }
+
+  private acquireDamageNumberFx(priority: number): DamageNumberFx {
+    const inactive = this.damageNumberFx.find((entry) => !entry.active)
+    if (inactive) return inactive
+    if (this.damageNumberFx.length < DAMAGE_NUMBER_MAX) {
+      const entry = this.createDamageNumberFx()
+      this.damageNumberFx.push(entry)
+      return entry
+    }
+    const recycled = this.damageNumberFx.reduce((candidate, entry) => {
+      if (entry.priority !== candidate.priority) {
+        return entry.priority < candidate.priority ? entry : candidate
+      }
+      return entry.age > candidate.age ? entry : candidate
+    })
+    this.releaseDamageNumberFx(recycled)
+    recycled.priority = priority
+    return recycled
+  }
+
+  private createDamageNumberFx(): DamageNumberFx {
+    const canvas = document.createElement('canvas')
+    canvas.width = 256
+    canvas.height = 128
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.generateMipmaps = false
+    texture.minFilter = THREE.LinearFilter
+    texture.magFilter = THREE.LinearFilter
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    })
+    const sprite = new THREE.Sprite(material)
+    sprite.visible = false
+    sprite.renderOrder = 10
+    this.scene.add(sprite)
+    return {
+      sprite,
+      canvas,
+      texture,
+      material,
+      targetId: null,
+      attackKind: null,
+      value: 0,
+      weight: 'normal',
+      age: 0,
+      mergeAge: 0,
+      lifetime: DAMAGE_NUMBER_LIFE,
+      velocity: new THREE.Vector3(),
+      active: false,
+      priority: 0,
+    }
+  }
+
+  private drawDamageNumber(entry: DamageNumberFx, incomingPlayerDamage: boolean): void {
+    const context = entry.canvas.getContext('2d')
+    if (!context) throw new Error('Comic damage-number canvas context is unavailable.')
+    context.clearRect(0, 0, entry.canvas.width, entry.canvas.height)
+    context.textAlign = 'center'
+    context.textBaseline = 'middle'
+    context.lineJoin = 'round'
+    context.font = '900 82px "Segoe UI", Aptos, Calibri, sans-serif'
+    context.lineWidth = 18
+    context.strokeStyle = this.palette.bg.getStyle()
+    context.fillStyle = this.damageNumberColor(entry.weight, incomingPlayerDamage).getStyle()
+    const text = String(entry.value)
+    context.strokeText(text, 128, 70)
+    context.fillText(text, 128, 70)
+    entry.texture.needsUpdate = true
+  }
+
+  private damageNumberColor(weight: HitWeight, incomingPlayerDamage: boolean): THREE.Color {
+    if (weight === 'blocked') return this.palette.link
+    if (weight === 'lethal') return this.palette.danger
+    if (weight === 'heavy') return this.palette.warning
+    return incomingPlayerDamage ? this.palette.danger : this.palette.text
+  }
+
+  private damageNumberScale(weight: HitWeight): readonly [number, number] {
+    if (weight === 'lethal') return [2.35, 1.18]
+    if (weight === 'blocked') return [2.05, 1.03]
+    if (weight === 'heavy') return [2.15, 1.08]
+    return [1.85, 0.93]
+  }
+
+  private updateDamageNumberFx(delta: number): void {
+    for (const entry of this.damageNumberFx) {
+      if (!entry.active) continue
+      entry.age += delta
+      entry.mergeAge += delta
+      if (entry.age >= entry.lifetime) {
+        this.releaseDamageNumberFx(entry)
+        continue
+      }
+      if (!this.reducedMotion) entry.sprite.position.addScaledVector(entry.velocity, delta)
+      const pop = THREE.MathUtils.clamp(entry.age / 0.08, 0, 1)
+      const fade = THREE.MathUtils.clamp((entry.lifetime - entry.age) / 0.18, 0, 1)
+      const settle = entry.age < 0.08 ? THREE.MathUtils.lerp(0.56, 1.08, pop) : 1
+      const [width, height] = this.damageNumberScale(entry.weight)
+      entry.sprite.scale.set(width * settle, height * settle, 1)
+      entry.material.opacity = fade
+    }
+  }
+
+  private releaseDamageNumberFx(entry: DamageNumberFx): void {
+    entry.active = false
+    entry.sprite.visible = false
+    entry.material.opacity = 0
+    entry.targetId = null
+    entry.attackKind = null
+    entry.value = 0
+    entry.weight = 'normal'
+    entry.age = 0
+    entry.mergeAge = 0
+    entry.priority = 0
+    entry.velocity.set(0, 0, 0)
+    const context = entry.canvas.getContext('2d')
+    if (context) {
+      context.clearRect(0, 0, entry.canvas.width, entry.canvas.height)
+      entry.texture.needsUpdate = true
+    }
+  }
+
+  private spawnComicCallout(event: CombatFeedbackEvent): void {
+    if (
+      this.calloutCooldown > 0 ||
+      (!event.directPlayerAction && !(event.targetId === 'player' && event.weight === 'blocked'))
+    ) {
+      return
+    }
+    const chance =
+      event.weight === 'lethal'
+        ? 1
+        : event.weight === 'heavy'
+          ? 0.7
+          : event.weight === 'blocked'
+            ? 0.45
+            : event.attackKind === 'melee'
+              ? 0.22
+              : 0
+    if (Math.random() > chance) return
+    const word = this.chooseComicCallout(event)
+    const priority = HIT_WEIGHT_PRIORITY[event.weight]
+    const entry = this.acquireComicCalloutFx(priority)
+    entry.word = word
+    entry.age = 0
+    entry.lifetime = CALLOUT_LIFE
+    entry.active = true
+    entry.priority = priority
+    entry.material.map = this.getComicCalloutTexture(word)
+    entry.material.opacity = 1
+    entry.material.needsUpdate = true
+    entry.sprite.visible = true
+    entry.sprite.position.copy(event.position)
+    entry.sprite.position.y += 0.34
+    entry.material.rotation = (Math.random() - 0.5) * 0.22
+    entry.velocity.set(0, 0, 0)
+    if (!this.reducedMotion) entry.velocity.set(0, 0.48, 0)
+    const scale = 1.72 + priority * 0.18
+    entry.sprite.scale.set(scale * 0.62, scale * 0.47, 1)
+    this.calloutCooldown = CALLOUT_COOLDOWN
+  }
+
+  private chooseComicCallout(event: CombatFeedbackEvent): ComicCallout {
+    if (event.weight === 'blocked') return 'БЛОК!'
+    const candidates: readonly ComicCallout[] =
+      event.attackKind === 'cleave'
+        ? ['ХРЯСЬ!', 'БУМ!']
+        : event.attackKind === 'arrow' || event.attackKind === 'actorArrow'
+          ? ['БАЦ!', 'БУМ!']
+          : event.weight === 'lethal'
+            ? ['ХРЯСЬ!', 'БУМ!']
+            : ['БАЦ!', 'ХРЯСЬ!']
+    return candidates[Math.floor(Math.random() * candidates.length)]
+  }
+
+  private acquireComicCalloutFx(priority: number): ComicCalloutFx {
+    const inactive = this.comicCalloutFx.find((entry) => !entry.active)
+    if (inactive) return inactive
+    if (this.comicCalloutFx.length < CALLOUT_MAX) {
+      const entry = this.createComicCalloutFx()
+      this.comicCalloutFx.push(entry)
+      return entry
+    }
+    const recycled = this.comicCalloutFx.reduce((candidate, entry) => {
+      if (entry.priority !== candidate.priority) {
+        return entry.priority < candidate.priority ? entry : candidate
+      }
+      return entry.age > candidate.age ? entry : candidate
+    })
+    this.releaseComicCalloutFx(recycled)
+    recycled.priority = priority
+    return recycled
+  }
+
+  private createComicCalloutFx(): ComicCalloutFx {
+    const material = new THREE.SpriteMaterial({
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    })
+    const sprite = new THREE.Sprite(material)
+    sprite.visible = false
+    sprite.renderOrder = 11
+    this.scene.add(sprite)
+    return {
+      sprite,
+      material,
+      word: null,
+      age: 0,
+      lifetime: CALLOUT_LIFE,
+      velocity: new THREE.Vector3(),
+      active: false,
+      priority: 0,
+    }
+  }
+
+  private getComicCalloutTexture(word: ComicCallout): THREE.CanvasTexture {
+    const key = `comic-callout-${word}`
+    const cached = this.generatedTextures.get(key)
+    if (cached) return cached
+    const canvas = document.createElement('canvas')
+    canvas.width = 256
+    canvas.height = 192
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Comic callout canvas context is unavailable.')
+    const style = COMIC_CALLOUTS[word]
+    const fill =
+      word === 'БЛОК!'
+        ? this.palette.link
+        : word === 'ХРЯСЬ!'
+          ? this.palette.danger
+          : word === 'БУМ!'
+            ? this.palette.accent
+            : this.palette.warning
+    context.save()
+    context.translate(128, 96)
+    context.beginPath()
+    for (let index = 0; index < style.points * 2; index += 1) {
+      const angle = style.rotation + (index * Math.PI) / style.points
+      const radius = index % 2 === 0 ? 86 : 86 * style.innerRadius
+      const x = Math.cos(angle) * radius
+      const y = Math.sin(angle) * radius * (word === 'БЛОК!' ? 0.72 : 0.88)
+      if (index === 0) context.moveTo(x, y)
+      else context.lineTo(x, y)
+    }
+    context.closePath()
+    context.lineJoin = 'round'
+    context.lineWidth = 12
+    context.strokeStyle = this.palette.bg.getStyle()
+    context.fillStyle = fill.getStyle()
+    context.stroke()
+    context.fill()
+    context.restore()
+    context.textAlign = 'center'
+    context.textBaseline = 'middle'
+    context.lineJoin = 'round'
+    context.font = `900 ${word === 'ХРЯСЬ!' ? 44 : 52}px "Segoe UI", Aptos, Calibri, sans-serif`
+    context.lineWidth = 11
+    context.strokeStyle = this.palette.bg.getStyle()
+    context.fillStyle = this.palette.accentFg.getStyle()
+    context.strokeText(word, 128, 98)
+    context.fillText(word, 128, 98)
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.generateMipmaps = false
+    texture.minFilter = THREE.LinearFilter
+    texture.magFilter = THREE.LinearFilter
+    this.generatedTextures.set(key, texture)
+    return texture
+  }
+
+  private updateComicCalloutFx(delta: number): void {
+    for (const entry of this.comicCalloutFx) {
+      if (!entry.active) continue
+      entry.age += delta
+      if (entry.age >= entry.lifetime) {
+        this.releaseComicCalloutFx(entry)
+        continue
+      }
+      if (!this.reducedMotion) entry.sprite.position.addScaledVector(entry.velocity, delta)
+      const progress = entry.age / entry.lifetime
+      const pop = THREE.MathUtils.clamp(entry.age / 0.07, 0, 1)
+      const fade = THREE.MathUtils.clamp((1 - progress) / 0.32, 0, 1)
+      const scale = (1.72 + entry.priority * 0.18) * THREE.MathUtils.lerp(0.62, 1, pop)
+      entry.sprite.scale.set(scale, scale * 0.75, 1)
+      entry.material.opacity = fade
+    }
+  }
+
+  private releaseComicCalloutFx(entry: ComicCalloutFx): void {
+    entry.active = false
+    entry.sprite.visible = false
+    entry.material.opacity = 0
+    entry.word = null
+    entry.age = 0
+    entry.priority = 0
+    entry.velocity.set(0, 0, 0)
+  }
+
+  private spawnImpactRay(event: CombatFeedbackEvent): void {
+    if (!event.directPlayerAction && event.targetId !== 'player') return
+    const priority = HIT_WEIGHT_PRIORITY[event.weight]
+    const entry = this.acquireImpactRayFx(priority)
+    if (!entry) return
+    entry.age = 0
+    entry.lifetime = IMPACT_RAY_LIFE
+    entry.active = true
+    entry.priority = priority
+    entry.weight = event.weight
+    entry.sprite.visible = true
+    entry.sprite.position.copy(event.position)
+    entry.sprite.scale.setScalar(0.4)
+    entry.material.opacity = 1
+    entry.material.rotation = Math.random() * Math.PI
+    entry.material.color.copy(this.impactRayColor(event.weight))
+  }
+
+  private acquireImpactRayFx(priority: number): ImpactRayFx | null {
+    const inactive = this.impactRayFx.find((entry) => !entry.active)
+    if (inactive) return inactive
+    if (this.impactRayFx.length < IMPACT_RAY_MAX) {
+      const entry = this.createImpactRayFx()
+      this.impactRayFx.push(entry)
+      return entry
+    }
+    if (priority < HIT_WEIGHT_PRIORITY.heavy) return null
+    const recycled = this.impactRayFx
+      .filter((entry) => entry.priority === HIT_WEIGHT_PRIORITY.normal)
+      .sort((left, right) => right.age - left.age)[0]
+    if (!recycled) return null
+    this.releaseImpactRayFx(recycled)
+    return recycled
+  }
+
+  private createImpactRayFx(): ImpactRayFx {
+    const material = new THREE.SpriteMaterial({
+      map: this.getImpactRayTexture(),
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    })
+    const sprite = new THREE.Sprite(material)
+    sprite.visible = false
+    sprite.renderOrder = 9
+    this.scene.add(sprite)
+    return {
+      sprite,
+      material,
+      age: 0,
+      lifetime: IMPACT_RAY_LIFE,
+      active: false,
+      priority: 0,
+      weight: 'normal',
+    }
+  }
+
+  private getImpactRayTexture(): THREE.CanvasTexture {
+    const key = 'comic-impact-rays'
+    const cached = this.generatedTextures.get(key)
+    if (cached) return cached
+    const canvas = document.createElement('canvas')
+    canvas.width = 128
+    canvas.height = 128
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Comic impact-ray canvas context is unavailable.')
+    context.translate(64, 64)
+    context.lineCap = 'round'
+    for (let index = 0; index < 16; index += 1) {
+      const angle = (index / 16) * Math.PI * 2
+      const inner = index % 2 === 0 ? 17 : 24
+      const outer = index % 3 === 0 ? 57 : 48
+      context.beginPath()
+      context.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner)
+      context.lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer)
+      context.lineWidth = index % 2 === 0 ? 5 : 3
+      context.strokeStyle = '#ffffff'
+      context.stroke()
+    }
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.generateMipmaps = false
+    texture.minFilter = THREE.LinearFilter
+    texture.magFilter = THREE.LinearFilter
+    this.generatedTextures.set(key, texture)
+    return texture
+  }
+
+  private impactRayColor(weight: HitWeight): THREE.Color {
+    if (weight === 'blocked') return this.palette.link
+    if (weight === 'lethal') return this.palette.danger
+    if (weight === 'heavy') return this.palette.warning
+    return this.palette.text
+  }
+
+  private updateImpactRayFx(delta: number): void {
+    for (const entry of this.impactRayFx) {
+      if (!entry.active) continue
+      entry.age += delta
+      if (entry.age >= entry.lifetime) {
+        this.releaseImpactRayFx(entry)
+        continue
+      }
+      const progress = entry.age / entry.lifetime
+      entry.sprite.scale.setScalar(THREE.MathUtils.lerp(0.4, 1.8, progress))
+      entry.material.opacity = 1 - progress
+    }
+  }
+
+  private releaseImpactRayFx(entry: ImpactRayFx): void {
+    entry.active = false
+    entry.sprite.visible = false
+    entry.material.opacity = 0
+    entry.age = 0
+    entry.priority = 0
+    entry.weight = 'normal'
+  }
+
+  private createWeaponTrail(): THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial> {
+    const innerRadius = 0.42
+    const outerRadius = 1.08
+    const geometry = new THREE.RingGeometry(
+      innerRadius,
+      outerRadius,
+      28,
+      1,
+      -Math.PI * 0.42,
+      Math.PI * 0.94,
+    )
+    const positions = geometry.getAttribute('position')
+    const colors: number[] = []
+    const pale = this.palette.text.clone().lerp(this.palette.accentFg, 0.35)
+    const edge = this.factionColor(this.faction).clone().lerp(this.palette.text, 0.18)
+    for (let index = 0; index < positions.count; index += 1) {
+      const radius = Math.hypot(positions.getX(index), positions.getY(index))
+      const blend = THREE.MathUtils.clamp(
+        (radius - innerRadius) / (outerRadius - innerRadius),
+        0,
+        1,
+      )
+      const color = pale.clone().lerp(edge, blend)
+      colors.push(color.r, color.g, color.b)
+    }
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    const material = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      toneMapped: false,
+    })
+    const trail = new THREE.Mesh(geometry, material)
+    trail.name = 'weapon-trail'
+    trail.position.set(0, -0.18, 0.04)
+    trail.rotation.z = -0.72
+    trail.visible = false
+    trail.castShadow = false
+    trail.receiveShadow = false
+    trail.renderOrder = 7
+    trail.userData.noComicOutline = true
+    return trail
+  }
+
+  private updateWeaponTrail(): void {
+    if (
+      this.activePlayerAttackKind === 'arrow' ||
+      this.attackAnimation <= 0.1 ||
+      this.attackAnimation >= 0.96
+    ) {
+      this.weaponTrail.visible = false
+      this.weaponTrail.material.opacity = 0
+      return
+    }
+    const progress = THREE.MathUtils.clamp((0.96 - this.attackAnimation) / 0.86, 0, 1)
+    const envelope = Math.sin(progress * Math.PI)
+    const cleaveScale = this.activePlayerAttackKind === 'cleave' ? 1.36 : 1
+    this.weaponTrail.visible = envelope > 0.02
+    this.weaponTrail.material.opacity = envelope * 0.72
+    this.weaponTrail.scale.set(
+      cleaveScale * (0.82 + progress * 0.3),
+      cleaveScale * (0.76 + progress * 0.22),
+      1,
+    )
+    this.weaponTrail.rotation.z = -0.82 + progress * 0.42
   }
 
   private createSparks(
@@ -6937,17 +10377,40 @@ uniform float uSwayAmplitude;`,
     )
   }
 
-  private animateCharacter(group: THREE.Group, stride: number, attack: number): void {
+  private animateCharacter(group: THREE.Group, pose: CharacterPose): void {
     const leftArm = group.getObjectByName('leftArm')
     const rightArm = group.getObjectByName('rightArm')
     const leftLeg = group.getObjectByName('leftLeg')
     const rightLeg = group.getObjectByName('rightLeg')
     const weapon = group.getObjectByName('weapon')
-    if (leftArm) leftArm.rotation.x = -stride * 0.7
-    if (rightArm) rightArm.rotation.x = stride * 0.7 - attack * 1.15
-    if (leftLeg) leftLeg.rotation.x = stride
-    if (rightLeg) rightLeg.rotation.x = -stride
-    if (weapon) weapon.rotation.x = -attack * 1.3
+    if (leftArm) {
+      leftArm.rotation.set(
+        -pose.stride * 0.7 + pose.flinch * 0.3 + pose.stagger * 0.62,
+        0,
+        -pose.flinch * 0.18 - pose.stagger * 0.42,
+      )
+    }
+    if (rightArm) {
+      rightArm.rotation.set(
+        pose.stride * 0.7 -
+          pose.attack * 1.15 +
+          pose.anticipation * 0.86 -
+          pose.recovery * 0.2 -
+          pose.flinch * 0.3 +
+          pose.stagger * 0.62,
+        0,
+        pose.flinch * 0.18 + pose.stagger * 0.42,
+      )
+    }
+    if (leftLeg) leftLeg.rotation.set(pose.stride, 0, 0)
+    if (rightLeg) rightLeg.rotation.set(-pose.stride, 0, 0)
+    if (weapon) {
+      weapon.rotation.set(
+        pose.anticipation * 0.82 - pose.attack * 1.3 + pose.recovery * 0.25,
+        0,
+        0,
+      )
+    }
   }
 
   private actorGaitCadence(role: ActorRole): number {
@@ -6958,7 +10421,8 @@ uniform float uSwayAmplitude;`,
   }
 
   private animateActorCharacter(actor: Actor, delta: number, lookYaw: number): void {
-    this.animateCharacter(actor.mesh, actor.stride, actor.attackAnimation)
+    const pose = this.sampleActorPose(actor)
+    this.animateCharacter(actor.mesh, pose)
     const bodyPivot = actor.mesh.getObjectByName('body-pivot')
     const torsoPivot = actor.mesh.getObjectByName('torso-pivot')
     const pelvisPivot = actor.mesh.getObjectByName('pelvis-pivot')
@@ -6974,6 +10438,11 @@ uniform float uSwayAmplitude;`,
       0.065 *
       THREE.MathUtils.clamp(actor.motionBlend, 0, 1)
     const heavy = actor.role === 'brute' || actor.role === 'champion'
+    const hitRight = new THREE.Vector3(
+      Math.cos(actor.mesh.rotation.y),
+      0,
+      -Math.sin(actor.mesh.rotation.y),
+    ).dot(actor.lastHitDirection)
     const forwardLean =
       actor.role === 'scout'
         ? 0.075
@@ -6986,9 +10455,19 @@ uniform float uSwayAmplitude;`,
     if (bodyPivot) bodyPivot.position.y = breathing + stepBob
     if (torsoPivot) {
       torsoPivot.position.x = idleWeightShift
-      torsoPivot.rotation.x = forwardLean * actor.motionBlend
-      torsoPivot.rotation.y = -actor.stride * (heavy ? 0.08 : 0.12) + actor.attackAnimation * 0.16
-      torsoPivot.rotation.z = -actor.turnLean * 0.16 + idleWeightShift * 0.55
+      torsoPivot.rotation.x =
+        forwardLean * actor.motionBlend -
+        pose.anticipation * (heavy ? 0.11 : 0.16) +
+        pose.attack * 0.12 +
+        pose.stagger * 0.2
+      torsoPivot.rotation.y =
+        -actor.stride * (heavy ? 0.08 : 0.12) +
+        pose.attack * 0.16 -
+        pose.flinch * hitRight * 0.22
+      torsoPivot.rotation.z =
+        -actor.turnLean * 0.16 +
+        idleWeightShift * 0.55 -
+        pose.flinch * hitRight * 0.18
       torsoPivot.scale.y = 1 + breathing * 0.55
     }
     if (pelvisPivot) {
@@ -6997,12 +10476,16 @@ uniform float uSwayAmplitude;`,
     }
     if (headPivot) {
       headPivot.rotation.y = dampAngle(headPivot.rotation.y, lookYaw, 7, delta)
-      headPivot.rotation.x = -forwardLean * actor.motionBlend * 0.35
-      headPivot.rotation.z = actor.turnLean * 0.06 - idleWeightShift * 0.2
+      headPivot.rotation.x =
+        -forwardLean * actor.motionBlend * 0.35 + pose.stagger * 0.18
+      headPivot.rotation.z =
+        actor.turnLean * 0.06 -
+        idleWeightShift * 0.2 -
+        pose.flinch * hitRight * 0.3
     }
 
     if (actor.role === 'archer') {
-      const draw = actor.attackAnimation
+      const draw = Math.max(pose.anticipation, pose.attack * 0.8)
       if (leftArm) leftArm.rotation.x = -0.45 - draw * 0.62 - actor.stride * 0.15
       if (rightArm) {
         rightArm.rotation.x = -0.72 - draw * 0.85 + actor.stride * 0.1
@@ -7013,11 +10496,60 @@ uniform float uSwayAmplitude;`,
         weapon.rotation.z = 0.18 + draw * 0.16
       }
     } else if (rightArm) {
-      rightArm.rotation.z = -actor.attackAnimation * 0.16
+      rightArm.rotation.z -= pose.attack * 0.16
     }
   }
 
-  private updateCamera(immediate: boolean): void {
+  private sampleActorPose(actor: Actor): CharacterPose {
+    let attack = 0
+    let anticipation = 0
+    let recovery = 0
+    if (actor.action) {
+      const progress = THREE.MathUtils.clamp(
+        actor.action.elapsed / actor.action.duration,
+        0,
+        1,
+      )
+      if (actor.action.phase === 'windup') {
+        anticipation = 1 - (1 - progress) * (1 - progress)
+      } else {
+        attack = 1 - progress
+        recovery = Math.sin(progress * Math.PI)
+      }
+    }
+    return {
+      stride: actor.reaction === 'stagger' ? 0 : actor.stride,
+      attack,
+      anticipation,
+      recovery,
+      flinch:
+        actor.reaction === 'flinch'
+          ? THREE.MathUtils.clamp(actor.reactionRemaining / FLINCH_TIME, 0, 1)
+          : 0,
+      stagger:
+        actor.reaction === 'stagger'
+          ? THREE.MathUtils.clamp(
+              actor.reactionRemaining / this.actorStaggerDuration(actor.role),
+              0,
+              1,
+            )
+          : 0,
+    }
+  }
+
+  private updateChampionAura(actor: Actor): void {
+    if (actor.role !== 'champion') return
+    const aura = actor.mesh.getObjectByName('champion-aura')
+    if (!aura) return
+    const windupPulse =
+      actor.action?.phase === 'windup'
+        ? 0.22 * THREE.MathUtils.clamp(actor.action.elapsed / actor.action.duration, 0, 1)
+        : 0
+    const pulse = 1 + Math.sin(this.elapsed * 5 + actor.phase) * 0.12 + windupPulse
+    aura.scale.setScalar(pulse)
+  }
+
+  private updateCamera(delta: number, immediate: boolean): void {
     const forward = new THREE.Vector3(Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw))
     const target = this.player.position.clone().add(new THREE.Vector3(0, 1.65, 0))
     const desired = target
@@ -7026,7 +10558,7 @@ uniform float uSwayAmplitude;`,
       .add(new THREE.Vector3(0, 5.2 + this.cameraPitch * 3.5, 0))
     const resolved = this.resolveCameraPosition(target, desired)
     if (immediate) this.cameraFollowPosition.copy(resolved)
-    else this.cameraFollowPosition.lerp(resolved, 0.12)
+    else this.cameraFollowPosition.lerp(resolved, dampingAlpha(CAMERA_FOLLOW_DAMPING, delta))
 
     let cameraPosition = this.cameraFollowPosition
     let roll = 0
@@ -7053,6 +10585,8 @@ uniform float uSwayAmplitude;`,
     this.camera.position.copy(cameraPosition)
     this.camera.lookAt(target)
     if (roll !== 0) this.camera.rotateZ(roll)
+    this.updateCameraFov(delta, immediate)
+    this.updatePlayerOutlineVisibility()
     this.updateFoliageOcclusion(target, this.camera.position, immediate)
   }
 
@@ -7088,6 +10622,7 @@ uniform float uSwayAmplitude;`,
     if (
       !(object instanceof THREE.Mesh) ||
       object instanceof THREE.InstancedMesh ||
+      object.userData.comicOutline === true ||
       object.userData.cameraPassThrough === true ||
       object.geometry instanceof THREE.PlaneGeometry
     ) {
@@ -7166,7 +10701,7 @@ uniform float uSwayAmplitude;`,
     if (event.code === 'KeyE') this.interact()
     if (event.code === 'KeyQ') this.commandSquad()
     if (event.code === 'KeyP' || event.code === 'Escape') this.callbacks.onPauseRequest()
-    if (event.code === 'KeyF') this.callbacks.onSaveRequest()
+    if (event.code === 'KeyF' && !this.ended) this.callbacks.onSaveRequest()
     if (
       event.code === 'KeyR' &&
       document.pointerLockElement === this.renderer.domElement
@@ -7215,6 +10750,7 @@ uniform float uSwayAmplitude;`,
 
   private onWindowBlur(): void {
     this.keys.clear()
+    this.clearTransientCombatFeedback()
     if (this.shieldActive) {
       this.dropShield()
       this.emitView(true)
@@ -7234,304 +10770,23 @@ uniform float uSwayAmplitude;`,
   private onVisibilityChange(): void {
     if (document.hidden) {
       this.keys.clear()
+      this.clearTransientCombatFeedback()
       if (this.shieldActive) {
         this.dropShield()
         this.emitView(true)
       }
     }
-    this.updateMusicVolume()
+    this.audio.setHidden(document.hidden)
   }
 
   private resumeAudio(): void {
-    if (!this.audioContext) {
-      this.audioContext = new AudioContext()
-      this.startMusic()
-    }
-    if (this.audioContext.state === 'suspended') this.audioContext.resume().catch(() => undefined)
-  }
-
-  private startMusic(): void {
-    if (!this.audioContext || this.musicGain) return
-    const musicWindow = window as MusicWindow
-    if (
-      musicWindow.__korovanyStopMusic &&
-      musicWindow.__korovanyStopMusic !== this.stopMusicOwner
-    ) {
-      musicWindow.__korovanyStopMusic()
-    }
-    musicWindow.__korovanyStopMusic = this.stopMusicOwner
-
-    const context = this.audioContext
-    this.musicGain = context.createGain()
-    this.musicGain.connect(context.destination)
-
-    this.musicNoiseBuffer = context.createBuffer(
-      1,
-      Math.floor(context.sampleRate * 0.12),
-      context.sampleRate,
-    )
-    const noise = this.musicNoiseBuffer.getChannelData(0)
-    for (let index = 0; index < noise.length; index += 1) noise[index] = Math.random() * 2 - 1
-    this.thunderNoiseBuffer = context.createBuffer(
-      1,
-      Math.floor(context.sampleRate * 1.25),
-      context.sampleRate,
-    )
-    const thunderNoise = this.thunderNoiseBuffer.getChannelData(0)
-    const thunderRandom = seededRandom(8297)
-    for (let index = 0; index < thunderNoise.length; index += 1) {
-      thunderNoise[index] = thunderRandom() * 2 - 1
-    }
-
-    this.musicNextNoteTime = context.currentTime + 0.06
-    this.updateMusicVolume()
-    this.scheduleMusic()
-    this.musicTimer = window.setInterval(() => this.scheduleMusic(), 40)
-  }
-
-  private stopMusic(): void {
-    if (this.musicTimer !== null) {
-      window.clearInterval(this.musicTimer)
-      this.musicTimer = null
-    }
-
-    const context = this.audioContext
-    const gain = this.musicGain
-    if (context && gain) {
-      const now = context.currentTime
-      gain.gain.cancelScheduledValues(now)
-      gain.gain.setValueAtTime(0, now)
-      gain.disconnect()
-    }
-
-    for (const source of this.musicSources) {
-      try {
-        source.stop()
-      } catch (error) {
-        if (!(error instanceof DOMException && error.name === 'InvalidStateError')) {
-          console.warn('Korovany: scheduled music source could not be stopped.', error)
-        }
-      }
-      source.disconnect()
-    }
-    this.musicSources.clear()
-
-    this.audioContext = null
-    this.musicGain = null
-    this.musicNoiseBuffer = null
-    this.thunderNoiseBuffer = null
-    this.musicNextNoteTime = 0
-
-    const musicWindow = window as MusicWindow
-    if (musicWindow.__korovanyStopMusic === this.stopMusicOwner) {
-      delete musicWindow.__korovanyStopMusic
-    }
-    if (context?.state !== 'closed') {
-      context?.close().catch((error: unknown) => {
-        console.warn('Korovany: audio context could not be closed.', error)
-      })
-    }
-  }
-
-  private updateMusicVolume(): void {
-    if (!this.audioContext || !this.musicGain) return
-    const target = document.hidden || this.musicMuted ? 0 : this.ended ? 0.035 : this.paused ? 0.08 : 0.18
-    const now = this.audioContext.currentTime
-    this.musicGain.gain.cancelScheduledValues(now)
-    this.musicGain.gain.setTargetAtTime(target, now, 0.045)
-  }
-
-  private scheduleMusic(): void {
-    if (!this.audioContext || !this.musicGain) return
-    const context = this.audioContext
-    const stepDuration = 60 / MUSIC_TEMPOS[this.faction] / 4
-    if (this.musicNextNoteTime < context.currentTime - 0.5) {
-      this.musicNextNoteTime = context.currentTime + 0.04
-    }
-
-    while (this.musicNextNoteTime < context.currentTime + 0.16) {
-      if (!document.hidden && !this.musicMuted) this.scheduleMusicStep(this.musicNextNoteTime, stepDuration)
-      this.musicStep = (this.musicStep + 1) % 128
-      this.musicNextNoteTime += stepDuration
-    }
-  }
-
-  private scheduleMusicStep(time: number, stepDuration: number): void {
-    const zone = zoneAt(this.player.position.x, this.player.position.z)
-    const chordOffsets = [0, -4, 3, -2]
-    const chord = chordOffsets[Math.floor(this.musicStep / 16) % chordOffsets.length]
-    const root = MUSIC_ROOTS[this.faction] + ZONE_MUSIC_SHIFTS[zone] + chord
-    const pattern = MUSIC_PATTERNS[this.faction]
-    const melody = root + pattern[this.musicStep % pattern.length]
-
-    this.scheduleTone(melody, time, stepDuration * 0.82, 'square', 0.09)
-    if (this.musicStep % 4 === 0) {
-      this.scheduleTone(root - 12, time, stepDuration * 3.35, 'triangle', 0.12)
-      this.scheduleTone(root + 7, time, stepDuration * 2.6, 'square', 0.025)
-      this.scheduleKick(time)
-    }
-    if (this.musicStep % 8 === 4) this.scheduleNoise(time, 'snare')
-    if (this.musicStep % 2 === 1) this.scheduleNoise(time, 'hat')
-  }
-
-  private scheduleTone(
-    midi: number,
-    time: number,
-    duration: number,
-    type: OscillatorType,
-    volume: number,
-  ): void {
-    if (!this.audioContext || !this.musicGain) return
-    const oscillator = this.trackMusicSource(this.audioContext.createOscillator())
-    const envelope = this.audioContext.createGain()
-    oscillator.type = type
-    oscillator.frequency.setValueAtTime(midiToFrequency(midi), time)
-    envelope.gain.setValueAtTime(0.0001, time)
-    envelope.gain.exponentialRampToValueAtTime(volume, time + 0.008)
-    envelope.gain.setValueAtTime(volume * 0.72, time + duration * 0.55)
-    envelope.gain.exponentialRampToValueAtTime(0.0001, time + duration)
-    oscillator.connect(envelope)
-    envelope.connect(this.musicGain)
-    oscillator.start(time)
-    oscillator.stop(time + duration + 0.02)
-  }
-
-  private scheduleKick(time: number): void {
-    if (!this.audioContext || !this.musicGain) return
-    const oscillator = this.trackMusicSource(this.audioContext.createOscillator())
-    const envelope = this.audioContext.createGain()
-    oscillator.type = 'sine'
-    oscillator.frequency.setValueAtTime(125, time)
-    oscillator.frequency.exponentialRampToValueAtTime(42, time + 0.1)
-    envelope.gain.setValueAtTime(0.16, time)
-    envelope.gain.exponentialRampToValueAtTime(0.0001, time + 0.12)
-    oscillator.connect(envelope)
-    envelope.connect(this.musicGain)
-    oscillator.start(time)
-    oscillator.stop(time + 0.13)
-  }
-
-  private scheduleNoise(time: number, type: 'hat' | 'snare'): void {
-    if (!this.audioContext || !this.musicGain || !this.musicNoiseBuffer) return
-    const duration = type === 'hat' ? 0.035 : 0.1
-    const source = this.trackMusicSource(this.audioContext.createBufferSource())
-    const filter = this.audioContext.createBiquadFilter()
-    const envelope = this.audioContext.createGain()
-    source.buffer = this.musicNoiseBuffer
-    filter.type = type === 'hat' ? 'highpass' : 'bandpass'
-    filter.frequency.setValueAtTime(type === 'hat' ? 5200 : 1450, time)
-    filter.Q.setValueAtTime(type === 'hat' ? 0.7 : 0.9, time)
-    envelope.gain.setValueAtTime(type === 'hat' ? 0.035 : 0.08, time)
-    envelope.gain.exponentialRampToValueAtTime(0.0001, time + duration)
-    source.connect(filter)
-    filter.connect(envelope)
-    envelope.connect(this.musicGain)
-    source.start(time, 0, duration)
-    source.stop(time + duration)
-  }
-
-  private trackMusicSource<T extends AudioScheduledSourceNode>(source: T): T {
-    this.musicSources.add(source)
-    source.addEventListener('ended', () => this.musicSources.delete(source), { once: true })
-    return source
+    this.audio.resume()
   }
 
   private playSound(
-    type:
-      | 'swing'
-      | 'hit'
-      | 'hurt'
-      | 'coin'
-      | 'command'
-      | 'objective'
-      | 'jump'
-      | 'down'
-      | 'save'
-      | 'victory'
-      | 'bow'
-      | 'arrow'
-      | 'block'
-      | 'cleave'
-      | 'event'
-      | 'eventWin'
-      | 'eventFail'
-      | 'thunder',
+    cue: SoundCue,
+    options: Omit<SoundRequest, 'cue'> = {},
   ): void {
-    if (!this.audioContext) return
-    if (type === 'thunder') {
-      this.playThunder()
-      return
-    }
-    const frequencies: Record<typeof type, [number, number, number]> = {
-      swing: [180, 90, 0.08],
-      hit: [110, 55, 0.11],
-      hurt: [150, 75, 0.16],
-      coin: [660, 920, 0.14],
-      command: [240, 360, 0.18],
-      objective: [440, 880, 0.28],
-      jump: [220, 310, 0.09],
-      down: [120, 45, 0.32],
-      save: [520, 680, 0.2],
-      victory: [392, 784, 0.52],
-      bow: [360, 110, 0.16],
-      arrow: [280, 170, 0.1],
-      block: [95, 58, 0.12],
-      cleave: [210, 65, 0.22],
-      event: [330, 495, 0.22],
-      eventWin: [440, 990, 0.38],
-      eventFail: [180, 48, 0.34],
-    }
-    const [start, end, duration] = frequencies[type]
-    const oscillator = this.audioContext.createOscillator()
-    const gain = this.audioContext.createGain()
-    oscillator.type =
-      type === 'hit' || type === 'hurt' || type === 'block' || type === 'eventFail'
-        ? 'sawtooth'
-        : 'triangle'
-    oscillator.frequency.setValueAtTime(start, this.audioContext.currentTime)
-    oscillator.frequency.exponentialRampToValueAtTime(Math.max(1, end), this.audioContext.currentTime + duration)
-    gain.gain.setValueAtTime(0.0001, this.audioContext.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.08, this.audioContext.currentTime + 0.015)
-    gain.gain.exponentialRampToValueAtTime(0.0001, this.audioContext.currentTime + duration)
-    oscillator.connect(gain)
-    gain.connect(this.audioContext.destination)
-    oscillator.start()
-    oscillator.stop(this.audioContext.currentTime + duration)
-  }
-
-  private playThunder(): void {
-    const context = this.audioContext
-    const buffer = this.thunderNoiseBuffer
-    if (!context || !buffer) return
-
-    const now = context.currentTime
-    const duration = 1.2
-    const source = this.trackMusicSource(context.createBufferSource())
-    const filter = context.createBiquadFilter()
-    const gain = context.createGain()
-    source.buffer = buffer
-    source.playbackRate.setValueAtTime(0.82, now)
-    filter.type = 'lowpass'
-    filter.frequency.setValueAtTime(520, now)
-    filter.frequency.exponentialRampToValueAtTime(70, now + duration)
-    filter.Q.setValueAtTime(0.75, now)
-    gain.gain.setValueAtTime(0.0001, now)
-    gain.gain.exponentialRampToValueAtTime(0.16, now + 0.035)
-    gain.gain.exponentialRampToValueAtTime(0.055, now + 0.22)
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
-    source.connect(filter)
-    filter.connect(gain)
-    gain.connect(context.destination)
-    source.addEventListener(
-      'ended',
-      () => {
-        source.disconnect()
-        filter.disconnect()
-        gain.disconnect()
-      },
-      { once: true },
-    )
-    source.start(now)
-    source.stop(now + duration)
+    this.audio.play({ cue, ...options })
   }
 }

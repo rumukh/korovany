@@ -1,4 +1,5 @@
 import {
+  Award,
   Bone,
   Castle,
   Check,
@@ -25,29 +26,60 @@ import {
   Sword,
   Sun,
   Trees,
+  Trophy,
   UserRound,
   Vibrate,
   Volume2,
   VolumeX,
   X,
 } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react'
 import './App.css'
+import { SFX_VOLUME_DEFAULT, normalizeSfxVolume } from './game/AudioDirector'
 import { GameEngine, type FoliageQuality } from './game/GameEngine'
 import {
+  ACHIEVEMENT_CATEGORY_LABELS,
+  ACHIEVEMENT_CATEGORY_ORDER,
+  ACHIEVEMENT_RARITY_LABELS,
+  ACHIEVEMENT_RARITY_ORDER,
+  readAchievementCatalogue,
+  summarizeAchievements,
+  type AchievementSummary,
+  type AchievementUnlock,
+  type AchievementView,
+} from './game/achievements'
+import {
   FACTION_INFO,
+  MAX_HEALTH_PER_LEVEL,
+  MAX_STAMINA_PER_LEVEL,
+  MAX_THREAT_TIER,
   SAVE_KEY,
   SHOP_ITEMS,
   ZONE_INFO,
   type BodyPart,
   type Faction,
   type GameView,
+  type LootRarity,
   type PartStatus,
   type SavedGame,
   type ShopItem,
   type WorldEventView,
   createAbilityView,
   createHealthyBody,
+  getMaxHealth,
+  getMaxStamina,
+  getShopItemPrice,
+  getThreatTier,
+  normalizeSavedGame,
+  normalizeUpgradeLevels,
   restoreObjectives,
 } from './game/types'
 
@@ -60,10 +92,12 @@ interface Notice {
 type Theme = 'dark' | 'light'
 
 const MUSIC_MUTED_KEY = 'korovany-music-muted'
+const SFX_VOLUME_KEY = 'korovany-sfx-volume'
 const THEME_KEY = 'korovany-theme'
 const DYNAMIC_DAY_NIGHT_KEY = 'korovany-dynamic-day-night'
 const WEATHER_ENABLED_KEY = 'korovany-weather'
 const BLOOM_ENABLED_KEY = 'korovany-bloom'
+const INK_OUTLINES_ENABLED_KEY = 'korovany-ink-outlines'
 const SCREEN_SHAKE_ENABLED_KEY = 'korovany-screen-shake'
 const FOLIAGE_QUALITY_KEY = 'korovany-foliage'
 
@@ -91,6 +125,13 @@ const abilityIcons: Record<GameView['ability']['id'], ReactNode> = {
   cleave: <Sword aria-hidden="true" />,
 }
 
+const lootRarityLabels: Record<LootRarity, string> = {
+  common: 'Обычная',
+  uncommon: 'Необычная',
+  rare: 'Редкая',
+  legendary: 'Легендарная',
+}
+
 const bodyParts: Array<{ id: BodyPart; label: string; short: string; icon: ReactNode }> = [
   { id: 'leftEye', label: 'Левый глаз', short: 'Л. глаз', icon: <Eye aria-hidden="true" /> },
   { id: 'rightEye', label: 'Правый глаз', short: 'П. глаз', icon: <Eye aria-hidden="true" /> },
@@ -104,9 +145,17 @@ function readSavedGame(): SavedGame | null {
   const raw = localStorage.getItem(SAVE_KEY)
   if (!raw) return null
   try {
-    const value = JSON.parse(raw) as SavedGame
-    if (value.version !== 1 || !FACTION_INFO[value.faction]) {
+    const value = normalizeSavedGame(JSON.parse(raw))
+    if (!value) {
       console.warn('Korovany: incompatible saved game ignored.')
+      return null
+    }
+    if (
+      Array.isArray(value.objectives) &&
+      value.objectives.length > 0 &&
+      value.objectives.every((objective) => objective.done)
+    ) {
+      console.warn('Korovany: completed campaign save ignored.')
       return null
     }
     return value
@@ -125,6 +174,19 @@ function readMusicMuted(): boolean {
   }
 }
 
+function readSfxVolume(): number {
+  try {
+    const stored = localStorage.getItem(SFX_VOLUME_KEY)
+    if (stored === null) return SFX_VOLUME_DEFAULT
+    const volume = Number(stored)
+    if (Number.isFinite(volume) && volume >= 0 && volume <= 1) return volume
+    console.warn('Korovany: invalid SFX volume preference ignored.')
+  } catch (error) {
+    console.warn('Korovany: SFX volume preference could not be read.', error)
+  }
+  return SFX_VOLUME_DEFAULT
+}
+
 function defaultBloomEnabled(): boolean {
   return !window.matchMedia('(pointer: coarse)').matches
 }
@@ -137,6 +199,15 @@ function readBloomEnabled(): boolean {
     console.warn('Korovany: bloom preference could not be read.', error)
   }
   return defaultBloomEnabled()
+}
+
+function readInkOutlinesEnabled(): boolean {
+  try {
+    return localStorage.getItem(INK_OUTLINES_ENABLED_KEY) !== 'false'
+  } catch (error) {
+    console.warn('Korovany: ink-outline preference could not be read.', error)
+    return true
+  }
 }
 
 function readFoliageQuality(): FoliageQuality {
@@ -220,27 +291,40 @@ function createInitialView(faction: Faction, savedGame?: SavedGame): GameView {
           : 'fort'
   const body = savedGame ? { ...savedGame.body } : createHealthyBody()
   const stamina = savedGame?.stamina ?? 100
+  const upgrades = normalizeUpgradeLevels(savedGame?.upgradeLevels)
+  const objectives = restoreObjectives(faction, savedGame?.objectives)
+  const maxHealth = getMaxHealth(upgrades)
+  const maxStamina = getMaxStamina(upgrades)
+  const elapsed = savedGame?.elapsed ?? 0
+  const currentStamina = Math.min(maxStamina, stamina)
   return {
     faction,
-    health: savedGame?.health ?? 100,
-    maxHealth: 100,
+    health: Math.min(maxHealth, savedGame?.health ?? maxHealth),
+    maxHealth,
     damageFlash: 0,
-    stamina,
+    stamina: currentStamina,
+    maxStamina,
     gold: savedGame?.gold ?? 55,
     kills: savedGame?.kills ?? 0,
     damage: savedGame?.damage ?? (faction === 'villain' ? 31 : faction === 'guard' ? 28 : 26),
     zone,
     body,
-    objectives: restoreObjectives(faction, savedGame?.objectives),
+    objectives,
     prompt: '',
     markers: [],
     squad: 0,
-    elapsed: savedGame?.elapsed ?? 0,
+    elapsed,
     pointerLocked: false,
     paused: false,
     caravanCooldown: 0,
-    ability: createAbilityView(faction, stamina, body),
+    ability: createAbilityView(faction, currentStamina, body),
     activeEvent: null,
+    lootToast: null,
+    campaignCompleted:
+      savedGame?.campaignCompleted === true ||
+      objectives.every((objective) => objective.done),
+    threatTier: getThreatTier(elapsed),
+    upgrades,
   }
 }
 
@@ -268,19 +352,19 @@ function MiniMap({ view }: { view: GameView }) {
         <span className="zone-code">4 зоны</span>
       </header>
       <div className="minimap">
-        <div className="map-zone neutral">
+        <div className={`map-zone neutral${view.zone === 'neutral' ? ' current' : ''}`}>
           <Home aria-hidden="true" />
           <span>Люди</span>
         </div>
-        <div className="map-zone palace">
+        <div className={`map-zone palace${view.zone === 'palace' ? ' current' : ''}`}>
           <Castle aria-hidden="true" />
           <span>Дворец</span>
         </div>
-        <div className="map-zone forest">
+        <div className={`map-zone forest${view.zone === 'forest' ? ' current' : ''}`}>
           <Trees aria-hidden="true" />
           <span>Эльфы</span>
         </div>
-        <div className="map-zone fort">
+        <div className={`map-zone fort${view.zone === 'fort' ? ' current' : ''}`}>
           <Skull aria-hidden="true" />
           <span>Форт</span>
         </div>
@@ -433,6 +517,21 @@ function EventBanner({ event }: { event: WorldEventView | null }) {
   )
 }
 
+function CampaignBanner({ view }: { view: GameView }) {
+  if (!view.campaignCompleted) return null
+
+  return (
+    <section className="hud-card campaign-banner" aria-label="Кампания завершена">
+      <Flag aria-hidden="true" />
+      <div>
+        <span>Кампания завершена</span>
+        <strong>Свободная игра продолжается</strong>
+        <small>События, налёты и торговля остаются активны.</small>
+      </div>
+    </section>
+  )
+}
+
 function BodyPanel({ view }: { view: GameView }) {
   const healthy =
     view.body.bleeding <= 0 && bodyParts.every((part) => view.body[part.id] === 'healthy')
@@ -466,38 +565,255 @@ function BodyPanel({ view }: { view: GameView }) {
   )
 }
 
+function formatAchievementDate(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? 'дата неизвестна'
+    : new Intl.DateTimeFormat('ru', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      }).format(date)
+}
+
+function AchievementBanner({ achievement }: { achievement: AchievementUnlock | null }) {
+  if (!achievement) return null
+  return (
+    <aside
+      className={`achievement-banner rarity-${achievement.rarity}`}
+      aria-live="assertive"
+      aria-label="Достижение открыто"
+    >
+      <div className="achievement-banner-icon">
+        <Trophy aria-hidden="true" />
+      </div>
+      <div>
+        <span>Достижение открыто · {ACHIEVEMENT_RARITY_LABELS[achievement.rarity]}</span>
+        <strong>{achievement.name}</strong>
+        <p>{achievement.description}</p>
+      </div>
+    </aside>
+  )
+}
+
+function LootToast({ toast }: { toast: GameView['lootToast'] }) {
+  return (
+    <>
+      <span className="sr-only" role="status" aria-live="polite">
+        {toast
+          ? (
+              <span key={toast.id}>
+                {`${lootRarityLabels[toast.rarity]} награда. ${toast.title}. ${toast.detail}`}
+              </span>
+            )
+          : null}
+      </span>
+      {toast ? (
+        <aside
+          className={`loot-toast loot-${toast.rarity}`}
+          aria-hidden="true"
+          key={toast.id}
+        >
+          <span className="loot-rarity-shape">
+            <i />
+          </span>
+          <span className="loot-toast-copy">
+            <small>{lootRarityLabels[toast.rarity]} награда</small>
+            <strong>{toast.title}</strong>
+            <span>{toast.detail}</span>
+          </span>
+        </aside>
+      ) : null}
+    </>
+  )
+}
+
+function AchievementGallery({
+  achievements,
+  onClose,
+}: {
+  achievements: AchievementView[]
+  onClose: () => void
+}) {
+  const summary = summarizeAchievements(achievements)
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.code === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
+
+  return (
+    <div className="modal-backdrop achievement-backdrop" role="presentation">
+      <section
+        className="modal achievement-gallery"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="achievements-title"
+      >
+        <header className="modal-header achievement-gallery-header">
+          <div>
+            <span className="eyebrow">Летопись подвигов</span>
+            <h2 id="achievements-title">Достижения</h2>
+            <p>Никаких наград — только слава, редкость и право хвастаться.</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Закрыть достижения">
+            <X aria-hidden="true" />
+          </button>
+        </header>
+
+        <div className="achievement-overview">
+          <div className="achievement-total">
+            <div className="achievement-total-ring" style={{ '--completion': `${summary.percent}%` } as CSSProperties}>
+              <strong>{summary.percent}%</strong>
+            </div>
+            <div>
+              <span>Открыто</span>
+              <strong>
+                {summary.unlocked} / {summary.total}
+              </strong>
+              <p>Подвиги сохраняются между всеми кампаниями.</p>
+            </div>
+          </div>
+          <div className="achievement-rarity-breakdown" aria-label="Прогресс по редкости">
+            {ACHIEVEMENT_RARITY_ORDER.map((rarity) => (
+              <div className={`rarity-${rarity}`} key={rarity}>
+                <span>{ACHIEVEMENT_RARITY_LABELS[rarity]}</span>
+                <strong>
+                  {summary.byRarity[rarity].unlocked}/{summary.byRarity[rarity].total}
+                </strong>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="achievement-categories">
+          {ACHIEVEMENT_CATEGORY_ORDER.map((category) => {
+            const categoryAchievements = achievements.filter(
+              (achievement) => achievement.category === category,
+            )
+            if (categoryAchievements.length === 0) return null
+            const categoryUnlocked = categoryAchievements.filter(
+              (achievement) => achievement.unlocked,
+            ).length
+            return (
+              <section className="achievement-category" key={category}>
+                <header>
+                  <div>
+                    <Award aria-hidden="true" />
+                    <h3>{ACHIEVEMENT_CATEGORY_LABELS[category]}</h3>
+                  </div>
+                  <span>
+                    {categoryUnlocked}/{categoryAchievements.length}
+                  </span>
+                </header>
+                <div className="achievement-grid">
+                  {categoryAchievements.map((achievement) => {
+                    const concealed = achievement.hidden && !achievement.unlocked
+                    const progress = Math.min(
+                      100,
+                      (achievement.progress / achievement.target) * 100,
+                    )
+                    return (
+                      <article
+                        className={`achievement-card rarity-${achievement.rarity} ${
+                          achievement.unlocked ? 'unlocked' : 'locked'
+                        } ${concealed ? 'hidden-achievement' : ''}`}
+                        key={achievement.id}
+                      >
+                        <div className="achievement-card-icon">
+                          {achievement.unlocked ? (
+                            <Trophy aria-hidden="true" />
+                          ) : (
+                            <Award aria-hidden="true" />
+                          )}
+                        </div>
+                        <div className="achievement-card-copy">
+                          <span>{ACHIEVEMENT_RARITY_LABELS[achievement.rarity]}</span>
+                          <h4>{concealed ? '???' : achievement.name}</h4>
+                          <p>
+                            {concealed
+                              ? 'Условие этого достижения пока скрыто.'
+                              : achievement.description}
+                          </p>
+                        </div>
+                        {achievement.unlocked ? (
+                          <time dateTime={achievement.unlockedAt ?? undefined}>
+                            Открыто {formatAchievementDate(achievement.unlockedAt ?? '')}
+                          </time>
+                        ) : concealed ? (
+                          <div className="achievement-card-hidden-state">
+                            <span>Условие скрыто</span>
+                          </div>
+                        ) : (
+                          <div className="achievement-card-progress">
+                            <div>
+                              <i style={{ transform: `scaleX(${progress / 100})` }} />
+                            </div>
+                            <span>
+                              {Math.floor(achievement.progress)} / {achievement.target}
+                            </span>
+                          </div>
+                        )}
+                      </article>
+                    )
+                  })}
+                </div>
+              </section>
+            )
+          })}
+        </div>
+      </section>
+    </div>
+  )
+}
+
 function MenuScreen({
   savedGame,
+  achievementSummary,
   theme,
   dynamicDayNight,
   weatherEnabled,
   bloomEnabled,
+  inkOutlinesEnabled,
   foliageQuality,
   screenShakeEnabled,
+  sfxVolume,
   onStart,
   onLoad,
+  onAchievements,
   onToggleTheme,
   onToggleDynamicDayNight,
   onToggleWeather,
   onToggleBloom,
+  onToggleInkOutlines,
   onCycleFoliageQuality,
   onToggleScreenShake,
+  onSfxVolumeChange,
 }: {
   savedGame: SavedGame | null
+  achievementSummary: AchievementSummary
   theme: Theme
   dynamicDayNight: boolean
   weatherEnabled: boolean
   bloomEnabled: boolean
+  inkOutlinesEnabled: boolean
   foliageQuality: FoliageQuality
   screenShakeEnabled: boolean
+  sfxVolume: number
   onStart: (faction: Faction) => void
   onLoad: () => void
+  onAchievements: () => void
   onToggleTheme: () => void
   onToggleDynamicDayNight: () => void
   onToggleWeather: () => void
   onToggleBloom: () => void
+  onToggleInkOutlines: () => void
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
+  onSfxVolumeChange: (volume: number) => void
 }) {
   return (
     <main className="menu-screen">
@@ -559,6 +875,29 @@ function MenuScreen({
           <span>{bloomEnabled ? 'Свечение: вкл.' : 'Свечение: выкл.'}</span>
         </button>
         <button
+          className="ink-outlines-toggle secondary-button"
+          type="button"
+          onClick={onToggleInkOutlines}
+          aria-pressed={inkOutlinesEnabled}
+          aria-label={
+            inkOutlinesEnabled
+              ? 'Отключить чернильные контуры'
+              : 'Включить чернильные контуры'
+          }
+          title={
+            inkOutlinesEnabled
+              ? 'Отключить чернильные контуры'
+              : 'Включить чернильные контуры'
+          }
+        >
+          <Eye aria-hidden="true" />
+          <span>
+            {inkOutlinesEnabled
+              ? 'Чернильные контуры: вкл.'
+              : 'Чернильные контуры: выкл.'}
+          </span>
+        </button>
+        <button
           className="foliage-toggle secondary-button"
           type="button"
           onClick={onCycleFoliageQuality}
@@ -574,12 +913,26 @@ function MenuScreen({
           type="button"
           onClick={onToggleScreenShake}
           aria-pressed={screenShakeEnabled}
-          aria-label={screenShakeEnabled ? 'Отключить тряску экрана' : 'Включить тряску экрана'}
-          title={screenShakeEnabled ? 'Отключить тряску экрана' : 'Включить тряску экрана'}
+          aria-label={screenShakeEnabled ? 'Отключить эффекты камеры' : 'Включить эффекты камеры'}
+          title={screenShakeEnabled ? 'Отключить эффекты камеры' : 'Включить эффекты камеры'}
         >
           <Vibrate aria-hidden="true" />
-          <span>{screenShakeEnabled ? 'Тряска: вкл.' : 'Тряска: выкл.'}</span>
+          <span>{screenShakeEnabled ? 'Камера: вкл.' : 'Камера: выкл.'}</span>
         </button>
+        <label className="sfx-volume-control menu-sfx-volume">
+          <Volume2 aria-hidden="true" />
+          <span>Громкость эффектов</span>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={sfxVolume}
+            onChange={(event) => onSfxVolumeChange(Number(event.currentTarget.value))}
+            aria-label="Громкость эффектов"
+          />
+          <strong>{Math.round(sfxVolume * 100)}%</strong>
+        </label>
       </div>
       <header className="hero-header">
         <div className="hackathon-tag">
@@ -592,6 +945,10 @@ function MenuScreen({
           Четыре земли. Три стороны конфликта. Один корован, который совершенно точно можно
           ограбить.
         </p>
+        <button className="secondary-button achievement-menu-button" type="button" onClick={onAchievements}>
+          <Trophy aria-hidden="true" />
+          Достижения {achievementSummary.unlocked}/{achievementSummary.total}
+        </button>
       </header>
 
       <section className="faction-select" aria-labelledby="faction-title">
@@ -747,36 +1104,52 @@ function ShopModal({
           <strong>{view.gold}</strong>
         </div>
         <div className="shop-grid">
-          {SHOP_ITEMS.map((item) => (
-            <article className="shop-item" key={item.id}>
-              <div className="shop-item-icon">
-                {item.id === 'medicine' ? (
-                  <Heart aria-hidden="true" />
-                ) : item.id === 'blade' ? (
-                  <Sword aria-hidden="true" />
-                ) : item.id === 'eye' ? (
-                  <Eye aria-hidden="true" />
-                ) : item.id === 'arm' ? (
-                  <Hand aria-hidden="true" />
-                ) : (
-                  <Footprints aria-hidden="true" />
-                )}
-              </div>
-              <div>
-                <h3>{item.name}</h3>
-                <p>{item.description}</p>
-              </div>
-              <button
-                className="buy-button"
-                type="button"
-                disabled={view.gold < item.price}
-                onClick={() => onBuy(item)}
-              >
-                <Coins aria-hidden="true" />
-                {item.price}
-              </button>
-            </article>
-          ))}
+          {SHOP_ITEMS.map((item) => {
+            const level = item.upgrade ? view.upgrades[item.upgrade] : 0
+            const maxed = Boolean(item.upgrade && level >= (item.maxLevel ?? 0))
+            const price = getShopItemPrice(item, view.upgrades)
+            const nextState =
+              !item.upgrade
+                ? null
+                : maxed
+                  ? `Уровень ${level}/${item.maxLevel} • предел достигнут`
+                  : item.upgrade === 'blade'
+                    ? `Уровень ${level}/${item.maxLevel} • урон ${view.damage} → ${view.damage + 8}`
+                    : item.upgrade === 'vitality'
+                      ? `Уровень ${level}/${item.maxLevel} • здоровье ${view.maxHealth} → ${view.maxHealth + MAX_HEALTH_PER_LEVEL}`
+                      : `Уровень ${level}/${item.maxLevel} • выносливость ${view.maxStamina} → ${view.maxStamina + MAX_STAMINA_PER_LEVEL}`
+            return (
+              <article className="shop-item" key={item.id}>
+                <div className="shop-item-icon">
+                  {item.id === 'medicine' || item.id === 'vitality' ? (
+                    <Heart aria-hidden="true" />
+                  ) : item.id === 'blade' ? (
+                    <Sword aria-hidden="true" />
+                  ) : item.id === 'eye' ? (
+                    <Eye aria-hidden="true" />
+                  ) : item.id === 'arm' ? (
+                    <Hand aria-hidden="true" />
+                  ) : (
+                    <Footprints aria-hidden="true" />
+                  )}
+                </div>
+                <div>
+                  <h3>{item.name}</h3>
+                  <p>{item.description}</p>
+                  {nextState ? <span className="shop-level">{nextState}</span> : null}
+                </div>
+                <button
+                  className="buy-button"
+                  type="button"
+                  disabled={maxed || view.gold < price}
+                  onClick={() => onBuy(item)}
+                >
+                  {maxed ? null : <Coins aria-hidden="true" />}
+                  {maxed ? 'Макс.' : price}
+                </button>
+              </article>
+            )
+          })}
         </div>
       </section>
     </div>
@@ -785,34 +1158,44 @@ function ShopModal({
 
 function PauseModal({
   view,
+  sfxVolume,
   dynamicDayNight,
   weatherEnabled,
   bloomEnabled,
+  inkOutlinesEnabled,
   foliageQuality,
   screenShakeEnabled,
   onResume,
   onSave,
   onMenu,
+  onAchievements,
   onToggleDynamicDayNight,
   onToggleWeather,
   onToggleBloom,
+  onToggleInkOutlines,
   onCycleFoliageQuality,
   onToggleScreenShake,
+  onSfxVolumeChange,
 }: {
   view: GameView
+  sfxVolume: number
   dynamicDayNight: boolean
   weatherEnabled: boolean
   bloomEnabled: boolean
+  inkOutlinesEnabled: boolean
   foliageQuality: FoliageQuality
   screenShakeEnabled: boolean
   onResume: () => void
   onSave: () => void
   onMenu: () => void
+  onAchievements: () => void
   onToggleDynamicDayNight: () => void
   onToggleWeather: () => void
   onToggleBloom: () => void
+  onToggleInkOutlines: () => void
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
+  onSfxVolumeChange: (volume: number) => void
 }) {
   return (
     <div className="modal-backdrop" role="presentation">
@@ -867,6 +1250,16 @@ function PauseModal({
           <strong>{bloomEnabled ? 'Вкл.' : 'Выкл.'}</strong>
         </button>
         <button
+          className="secondary-button pause-setting ink-outlines-setting"
+          type="button"
+          onClick={onToggleInkOutlines}
+          aria-pressed={inkOutlinesEnabled}
+        >
+          <Eye aria-hidden="true" />
+          <span>Чернильные контуры</span>
+          <strong>{inkOutlinesEnabled ? 'Вкл.' : 'Выкл.'}</strong>
+        </button>
+        <button
           className="secondary-button pause-setting foliage-setting"
           type="button"
           onClick={onCycleFoliageQuality}
@@ -884,13 +1277,31 @@ function PauseModal({
           aria-pressed={screenShakeEnabled}
         >
           <Vibrate aria-hidden="true" />
-          <span>Тряска экрана</span>
+          <span>Эффекты камеры</span>
           <strong>{screenShakeEnabled ? 'Вкл.' : 'Выкл.'}</strong>
         </button>
+        <label className="pause-setting sfx-volume-control">
+          <Volume2 aria-hidden="true" />
+          <span>Громкость эффектов</span>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={sfxVolume}
+            onChange={(event) => onSfxVolumeChange(Number(event.currentTarget.value))}
+            aria-label="Громкость эффектов"
+          />
+          <strong>{Math.round(sfxVolume * 100)}%</strong>
+        </label>
         <div className="pause-actions">
           <button className="primary-button" type="button" onClick={onResume}>
             <Play aria-hidden="true" />
             Продолжить
+          </button>
+          <button className="secondary-button" type="button" onClick={onAchievements}>
+            <Trophy aria-hidden="true" />
+            Достижения
           </button>
           <button className="secondary-button" type="button" onClick={onSave}>
             <Save aria-hidden="true" />
@@ -909,11 +1320,13 @@ function PauseModal({
 function EndModal({
   result,
   view,
+  runAchievements,
   onRestart,
   onMenu,
 }: {
   result: 'victory' | 'defeat'
   view: GameView
+  runAchievements: AchievementView[]
   onRestart: () => void
   onMenu: () => void
 }) {
@@ -947,6 +1360,17 @@ function EndModal({
             золота
           </span>
         </div>
+        {runAchievements.length > 0 ? (
+          <div className="end-achievements">
+            <span className="eyebrow">Открыто за эту кампанию</span>
+            {runAchievements.map((achievement) => (
+              <div className={`rarity-${achievement.rarity}`} key={achievement.id}>
+                <Trophy aria-hidden="true" />
+                <span>{achievement.name}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <div className="pause-actions">
           <button className="primary-button" type="button" onClick={onRestart}>
             <RotateCcw aria-hidden="true" />
@@ -966,12 +1390,16 @@ function GameScreen({
   view,
   worldRef,
   notices,
+  achievementBanner,
+  runAchievements,
   paused,
+  simulationPaused,
   shopOpen,
   endResult,
   onResume,
   onPause,
   onSave,
+  onAchievements,
   onMenu,
   onBuy,
   onCloseShop,
@@ -984,27 +1412,35 @@ function GameScreen({
   onInput,
   onRestart,
   musicMuted,
+  sfxVolume,
   dynamicDayNight,
   weatherEnabled,
   bloomEnabled,
+  inkOutlinesEnabled,
   foliageQuality,
   screenShakeEnabled,
   onToggleMusic,
+  onSfxVolumeChange,
   onToggleDynamicDayNight,
   onToggleWeather,
   onToggleBloom,
+  onToggleInkOutlines,
   onCycleFoliageQuality,
   onToggleScreenShake,
 }: {
   view: GameView
   worldRef: React.RefObject<HTMLDivElement | null>
   notices: Notice[]
+  achievementBanner: AchievementUnlock | null
+  runAchievements: AchievementView[]
   paused: boolean
+  simulationPaused: boolean
   shopOpen: boolean
   endResult: 'victory' | 'defeat' | null
   onResume: () => void
   onPause: () => void
   onSave: () => void
+  onAchievements: () => void
   onMenu: () => void
   onBuy: (item: ShopItem) => void
   onCloseShop: () => void
@@ -1017,25 +1453,30 @@ function GameScreen({
   onInput: (code: string, active: boolean) => void
   onRestart: () => void
   musicMuted: boolean
+  sfxVolume: number
   dynamicDayNight: boolean
   weatherEnabled: boolean
   bloomEnabled: boolean
+  inkOutlinesEnabled: boolean
   foliageQuality: FoliageQuality
   screenShakeEnabled: boolean
   onToggleMusic: () => void
+  onSfxVolumeChange: (volume: number) => void
   onToggleDynamicDayNight: () => void
   onToggleWeather: () => void
   onToggleBloom: () => void
+  onToggleInkOutlines: () => void
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
 }) {
   const [controlsDismissed, setControlsDismissed] = useState(false)
   const info = FACTION_INFO[view.faction]
+  const zoneInfo = ZONE_INFO[view.zone]
   const eyeLoss =
     view.body.leftEye === 'missing' ? 'left' : view.body.rightEye === 'missing' ? 'right' : null
   const healthPercent = `${(view.health / view.maxHealth) * 100}%`
   const lowHealth = view.health > 0 && view.health / view.maxHealth <= 0.25
-  const staminaPercent = `${view.stamina}%`
+  const staminaPercent = `${(view.stamina / view.maxStamina) * 100}%`
   const abilityProgress = `${
     view.ability.cooldownMax > 0
       ? Math.max(
@@ -1079,7 +1520,11 @@ function GameScreen({
   })
 
   return (
-    <main className={`game-screen faction-${view.faction}${lowHealth ? ' low-health' : ''}`}>
+    <main
+      className={`game-screen faction-${view.faction}${lowHealth ? ' low-health' : ''}${simulationPaused ? ' simulation-paused' : ''}`}
+      data-zone={view.zone}
+      style={{ '--zone-accent': zoneInfo.accent } as CSSProperties}
+    >
       <div className="world-stage" ref={worldRef} />
       <div className="screen-vignette" aria-hidden="true" />
       <div className="low-health-vignette" aria-hidden="true" />
@@ -1093,10 +1538,24 @@ function GameScreen({
       <div className="top-hud">
         <div className="identity-panel hud-card">
           <div className="identity-icon">{factionIcons[view.faction]}</div>
-          <div>
-            <span className="eyebrow">{info.shortName}</span>
-            <h1>{ZONE_INFO[view.zone].name}</h1>
-            <p>{ZONE_INFO[view.zone].subtitle}</p>
+          <div className="zone-title" key={view.zone}>
+            <span
+              className="zone-motif"
+              data-motif={zoneInfo.motif}
+              aria-hidden="true"
+            />
+            <div>
+              <span className="eyebrow">{info.shortName}</span>
+              <h1>{zoneInfo.name}</h1>
+              <p>{zoneInfo.subtitle}</p>
+            </div>
+          </div>
+          <div className={`threat-chip tier-${view.threatTier}`}>
+            <Shield aria-hidden="true" />
+            <span>Угроза</span>
+            <strong>
+              {view.threatTier}/{MAX_THREAT_TIER}
+            </strong>
           </div>
           <div className="hud-actions">
             <button
@@ -1121,7 +1580,9 @@ function GameScreen({
           <div className="vital-row">
             <Heart aria-hidden="true" />
             <span>Здоровье</span>
-            <strong>{Math.ceil(view.health)}</strong>
+            <strong>
+              {Math.ceil(view.health)}/{view.maxHealth}
+            </strong>
           </div>
           <div className="meter health">
             <i style={{ width: healthPercent }} />
@@ -1129,7 +1590,9 @@ function GameScreen({
           <div className="vital-row compact">
             <Footprints aria-hidden="true" />
             <span>Выносливость</span>
-            <strong>{Math.ceil(view.stamina)}</strong>
+            <strong>
+              {Math.ceil(view.stamina)}/{view.maxStamina}
+            </strong>
           </div>
           <div className="meter stamina">
             <i style={{ width: staminaPercent }} />
@@ -1162,6 +1625,7 @@ function GameScreen({
             <i style={{ width: abilityProgress }} />
           </div>
         </div>
+        <CampaignBanner view={view} />
         <ObjectiveList view={view} />
         <EventBanner event={view.activeEvent} />
       </div>
@@ -1182,6 +1646,8 @@ function GameScreen({
           </div>
         ))}
       </div>
+      <LootToast toast={view.lootToast} />
+      <AchievementBanner achievement={achievementBanner} />
 
       <div className="crosshair" aria-hidden="true">
         <span />
@@ -1291,23 +1757,34 @@ function GameScreen({
       {paused && !shopOpen && !endResult ? (
         <PauseModal
           view={view}
+          sfxVolume={sfxVolume}
           dynamicDayNight={dynamicDayNight}
           weatherEnabled={weatherEnabled}
           bloomEnabled={bloomEnabled}
+          inkOutlinesEnabled={inkOutlinesEnabled}
           foliageQuality={foliageQuality}
           screenShakeEnabled={screenShakeEnabled}
           onResume={onResume}
           onSave={onSave}
           onMenu={onMenu}
+          onAchievements={onAchievements}
           onToggleDynamicDayNight={onToggleDynamicDayNight}
           onToggleWeather={onToggleWeather}
           onToggleBloom={onToggleBloom}
+          onToggleInkOutlines={onToggleInkOutlines}
           onCycleFoliageQuality={onCycleFoliageQuality}
           onToggleScreenShake={onToggleScreenShake}
+          onSfxVolumeChange={onSfxVolumeChange}
         />
       ) : null}
       {endResult ? (
-        <EndModal result={endResult} view={view} onRestart={onRestart} onMenu={onMenu} />
+        <EndModal
+          result={endResult}
+          view={view}
+          runAchievements={runAchievements}
+          onRestart={onRestart}
+          onMenu={onMenu}
+        />
       ) : null}
     </main>
   )
@@ -1320,26 +1797,42 @@ function App() {
   const [savedGame, setSavedGame] = useState<SavedGame | null>(() => readSavedGame())
   const [gameView, setGameView] = useState<GameView | null>(null)
   const [notices, setNotices] = useState<Notice[]>([])
+  const [achievementCatalogue, setAchievementCatalogue] = useState<AchievementView[]>(() =>
+    readAchievementCatalogue(),
+  )
+  const [achievementQueue, setAchievementQueue] = useState<AchievementUnlock[]>([])
+  const [runAchievements, setRunAchievements] = useState<AchievementView[]>([])
+  const [achievementsOpen, setAchievementsOpen] = useState(false)
   const [paused, setPaused] = useState(false)
   const [shopOpen, setShopOpen] = useState(false)
   const [endResult, setEndResult] = useState<'victory' | 'defeat' | null>(null)
   const [musicMuted, setMusicMuted] = useState(() => readMusicMuted())
+  const [sfxVolume, setSfxVolume] = useState(() => readSfxVolume())
   const [bloomEnabled, setBloomEnabled] = useState(() => readBloomEnabled())
+  const [inkOutlinesEnabled, setInkOutlinesEnabled] = useState(() => readInkOutlinesEnabled())
   const [foliageQuality, setFoliageQuality] = useState(() => readFoliageQuality())
   const [screenShakeEnabled, setScreenShakeEnabled] = useState(() => readScreenShakeEnabled())
   const [theme, setTheme] = useState<Theme>(() => readTheme())
   const [dynamicDayNight, setDynamicDayNight] = useState(() => readDynamicDayNight())
   const [weatherEnabled, setWeatherEnabled] = useState(() => readWeatherEnabled())
   const [runId, setRunId] = useState(0)
+  const [achievementSessionId] = useState(() => crypto.randomUUID())
   const worldRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<GameEngine | null>(null)
+  const achievementsOpenRef = useRef(false)
   const noticeCounter = useRef(0)
   const musicMutedRef = useRef(musicMuted)
+  const sfxVolumeRef = useRef(sfxVolume)
   const dynamicDayNightRef = useRef(dynamicDayNight)
   const weatherEnabledRef = useRef(weatherEnabled)
   const bloomEnabledRef = useRef(bloomEnabled)
+  const inkOutlinesEnabledRef = useRef(inkOutlinesEnabled)
   const foliageQualityRef = useRef(foliageQuality)
   const screenShakeEnabledRef = useRef(screenShakeEnabled)
+  const achievementSummary = useMemo(
+    () => summarizeAchievements(achievementCatalogue),
+    [achievementCatalogue],
+  )
 
   const addNotice = useMemo(
     () => (message: string, tone: Notice['tone'] = 'info') => {
@@ -1352,6 +1845,20 @@ function App() {
     [],
   )
 
+  const openAchievements = () => {
+    achievementsOpenRef.current = true
+    if (screen === 'game') setPaused(true)
+    setAchievementCatalogue(
+      engineRef.current?.getAchievements() ?? readAchievementCatalogue(),
+    )
+    setAchievementsOpen(true)
+  }
+
+  const closeAchievements = () => {
+    achievementsOpenRef.current = false
+    setAchievementsOpen(false)
+  }
+
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme
     try {
@@ -1362,6 +1869,14 @@ function App() {
   }, [theme])
 
   useEffect(() => {
+    if (achievementQueue.length === 0) return
+    const timer = window.setTimeout(() => {
+      setAchievementQueue((current) => current.slice(1))
+    }, 9000)
+    return () => window.clearTimeout(timer)
+  }, [achievementQueue])
+
+  useEffect(() => {
     if (screen !== 'game' || !worldRef.current) return
     const engine = new GameEngine(
       worldRef.current,
@@ -1370,24 +1885,48 @@ function App() {
         onView: setGameView,
         onNotice: addNotice,
         onShop: () => setShopOpen(true),
-        onPauseRequest: () => setPaused((current) => !current),
+        onPauseRequest: () => {
+          if (!achievementsOpenRef.current) setPaused((current) => !current)
+        },
         onSaveRequest: () => {
           const save = engineRef.current?.save()
           if (save) setSavedGame(save)
         },
-        onEnd: setEndResult,
+        onEnd: (result) => {
+          if (result === 'victory') {
+            try {
+              localStorage.removeItem(SAVE_KEY)
+              setSavedGame(null)
+            } catch (error) {
+              console.warn('Korovany: completed campaign save could not be removed.', error)
+            }
+          }
+          setEndResult(result)
+          setRunAchievements(engineRef.current?.getCurrentRunAchievements() ?? [])
+        },
+        onAchievementUnlocked: (achievement) => {
+          setAchievementQueue((current) => [...current, achievement])
+          setAchievementCatalogue(
+            engineRef.current?.getAchievements() ?? readAchievementCatalogue(),
+          )
+        },
       },
       pendingSave,
       {
         musicMuted: musicMutedRef.current,
+        sfxVolume: sfxVolumeRef.current,
         dynamicDayNight: dynamicDayNightRef.current,
         weatherEnabled: weatherEnabledRef.current,
         bloomEnabled: bloomEnabledRef.current,
+        inkOutlinesEnabled: inkOutlinesEnabledRef.current,
         foliageQuality: foliageQualityRef.current,
         screenShakeEnabled: screenShakeEnabledRef.current,
+        achievementRunId: `${achievementSessionId}:${runId}`,
       },
     )
     engineRef.current = engine
+    setAchievementCatalogue(engine.getAchievements())
+    setRunAchievements(engine.getCurrentRunAchievements())
     engine.start()
     addNotice(
       pendingSave ? 'Сохранение загружено.' : `${FACTION_INFO[faction].name}: кампания началась.`,
@@ -1397,11 +1936,13 @@ function App() {
       engine.destroy()
       if (engineRef.current === engine) engineRef.current = null
     }
-  }, [addNotice, faction, pendingSave, runId, screen])
+  }, [achievementSessionId, addNotice, faction, pendingSave, runId, screen])
 
   useEffect(() => {
-    engineRef.current?.setPaused(paused || shopOpen || Boolean(endResult))
-  }, [paused, shopOpen, endResult])
+    engineRef.current?.setPaused(
+      paused || shopOpen || achievementsOpen || Boolean(endResult),
+    )
+  }, [paused, shopOpen, achievementsOpen, endResult])
 
   const startGame = (selectedFaction: Faction, save?: SavedGame) => {
     engineRef.current?.stopAudio()
@@ -1409,6 +1950,10 @@ function App() {
     setPendingSave(save)
     setGameView(createInitialView(selectedFaction, save))
     setNotices([])
+    setAchievementQueue([])
+    setRunAchievements([])
+    achievementsOpenRef.current = false
+    setAchievementsOpen(false)
     setPaused(false)
     setShopOpen(false)
     setEndResult(null)
@@ -1424,6 +1969,9 @@ function App() {
     setShopOpen(false)
     setEndResult(null)
     setSavedGame(readSavedGame())
+    setAchievementCatalogue(readAchievementCatalogue())
+    achievementsOpenRef.current = false
+    setAchievementsOpen(false)
   }
 
   const saveGame = () => {
@@ -1447,6 +1995,18 @@ function App() {
       console.warn('Korovany: music preference could not be saved.', error)
     }
     addNotice(next ? '8-битная музыка выключена.' : '8-битная музыка включена.', 'info')
+  }
+
+  const changeSfxVolume = (volume: number) => {
+    const next = normalizeSfxVolume(volume)
+    sfxVolumeRef.current = next
+    setSfxVolume(next)
+    engineRef.current?.setSfxVolume(next)
+    try {
+      localStorage.setItem(SFX_VOLUME_KEY, String(next))
+    } catch (error) {
+      console.warn('Korovany: SFX volume preference could not be saved.', error)
+    }
   }
 
   const toggleDynamicDayNight = () => {
@@ -1475,6 +2035,22 @@ function App() {
     } catch (error) {
       console.warn('Korovany: bloom preference could not be saved.', error)
     }
+  }
+
+  const toggleInkOutlines = () => {
+    const next = !inkOutlinesEnabledRef.current
+    inkOutlinesEnabledRef.current = next
+    setInkOutlinesEnabled(next)
+    engineRef.current?.setInkOutlinesEnabled(next)
+    try {
+      localStorage.setItem(INK_OUTLINES_ENABLED_KEY, String(next))
+    } catch (error) {
+      console.warn('Korovany: ink-outline preference could not be saved.', error)
+    }
+    addNotice(
+      next ? 'Чернильные контуры включены.' : 'Чернильные контуры выключены.',
+      'info',
+    )
   }
 
   const toggleWeather = () => {
@@ -1519,25 +2095,39 @@ function App() {
 
   if (screen === 'menu') {
     return (
-      <MenuScreen
-        savedGame={savedGame}
-        theme={theme}
-        dynamicDayNight={dynamicDayNight}
-        weatherEnabled={weatherEnabled}
-        bloomEnabled={bloomEnabled}
-        foliageQuality={foliageQuality}
-        screenShakeEnabled={screenShakeEnabled}
-        onStart={(selectedFaction) => startGame(selectedFaction)}
-        onLoad={() => {
-          if (savedGame) startGame(savedGame.faction, savedGame)
-        }}
-        onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
-        onToggleDynamicDayNight={toggleDynamicDayNight}
-        onToggleWeather={toggleWeather}
-        onToggleBloom={toggleBloom}
-        onCycleFoliageQuality={cycleFoliageQuality}
-        onToggleScreenShake={toggleScreenShake}
-      />
+      <>
+        <MenuScreen
+          savedGame={savedGame}
+          achievementSummary={achievementSummary}
+          theme={theme}
+          dynamicDayNight={dynamicDayNight}
+          weatherEnabled={weatherEnabled}
+          bloomEnabled={bloomEnabled}
+          inkOutlinesEnabled={inkOutlinesEnabled}
+          foliageQuality={foliageQuality}
+          screenShakeEnabled={screenShakeEnabled}
+          sfxVolume={sfxVolume}
+          onStart={(selectedFaction) => startGame(selectedFaction)}
+          onLoad={() => {
+            if (savedGame) startGame(savedGame.faction, savedGame)
+          }}
+          onAchievements={openAchievements}
+          onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+          onToggleDynamicDayNight={toggleDynamicDayNight}
+          onToggleWeather={toggleWeather}
+          onToggleBloom={toggleBloom}
+          onToggleInkOutlines={toggleInkOutlines}
+          onCycleFoliageQuality={cycleFoliageQuality}
+          onToggleScreenShake={toggleScreenShake}
+          onSfxVolumeChange={changeSfxVolume}
+        />
+        {achievementsOpen ? (
+          <AchievementGallery
+            achievements={achievementCatalogue}
+            onClose={closeAchievements}
+          />
+        ) : null}
+      </>
     )
   }
 
@@ -1555,43 +2145,61 @@ function App() {
   }
 
   return (
-    <GameScreen
-      view={gameView}
-      worldRef={worldRef}
-      notices={notices}
-      paused={paused}
-      shopOpen={shopOpen}
-      endResult={endResult}
-      onResume={() => setPaused(false)}
-      onPause={() => setPaused(true)}
-      onSave={saveGame}
-      onMenu={returnToMenu}
-      onBuy={buyItem}
-      onCloseShop={() => setShopOpen(false)}
-      onAttack={() => engineRef.current?.attack()}
-      onAbilityDown={() => {
-        if (faction === 'guard') engineRef.current?.setShield(true)
-        else engineRef.current?.useAbility()
-      }}
-      onAbilityUp={() => engineRef.current?.setShield(false)}
-      onInteract={() => engineRef.current?.interact()}
-      onCommand={() => engineRef.current?.commandSquad()}
-      onPointerLock={() => engineRef.current?.requestPointerLock()}
-      onInput={(code, active) => engineRef.current?.setInput(code, active)}
-      onRestart={() => startGame(faction)}
-      musicMuted={musicMuted}
-      bloomEnabled={bloomEnabled}
-      weatherEnabled={weatherEnabled}
-      foliageQuality={foliageQuality}
-      screenShakeEnabled={screenShakeEnabled}
-      onToggleMusic={toggleMusic}
-      dynamicDayNight={dynamicDayNight}
-      onToggleDynamicDayNight={toggleDynamicDayNight}
-      onToggleWeather={toggleWeather}
-      onToggleBloom={toggleBloom}
-      onCycleFoliageQuality={cycleFoliageQuality}
-      onToggleScreenShake={toggleScreenShake}
-    />
+    <>
+      <GameScreen
+        view={gameView}
+        worldRef={worldRef}
+        notices={notices}
+        achievementBanner={achievementQueue[0] ?? null}
+        runAchievements={runAchievements}
+        paused={paused}
+        simulationPaused={
+          paused || shopOpen || achievementsOpen || Boolean(endResult)
+        }
+        shopOpen={shopOpen}
+        endResult={endResult}
+        onResume={() => setPaused(false)}
+        onPause={() => setPaused(true)}
+        onSave={saveGame}
+        onAchievements={openAchievements}
+        onMenu={returnToMenu}
+        onBuy={buyItem}
+        onCloseShop={() => setShopOpen(false)}
+        onAttack={() => engineRef.current?.attack()}
+        onAbilityDown={() => {
+          if (faction === 'guard') engineRef.current?.setShield(true)
+          else engineRef.current?.useAbility()
+        }}
+        onAbilityUp={() => engineRef.current?.setShield(false)}
+        onInteract={() => engineRef.current?.interact()}
+        onCommand={() => engineRef.current?.commandSquad()}
+        onPointerLock={() => engineRef.current?.requestPointerLock()}
+        onInput={(code, active) => engineRef.current?.setInput(code, active)}
+        onRestart={() => startGame(faction)}
+        musicMuted={musicMuted}
+        sfxVolume={sfxVolume}
+        bloomEnabled={bloomEnabled}
+        inkOutlinesEnabled={inkOutlinesEnabled}
+        weatherEnabled={weatherEnabled}
+        foliageQuality={foliageQuality}
+        screenShakeEnabled={screenShakeEnabled}
+        onToggleMusic={toggleMusic}
+        onSfxVolumeChange={changeSfxVolume}
+        dynamicDayNight={dynamicDayNight}
+        onToggleDynamicDayNight={toggleDynamicDayNight}
+        onToggleWeather={toggleWeather}
+        onToggleBloom={toggleBloom}
+        onToggleInkOutlines={toggleInkOutlines}
+        onCycleFoliageQuality={cycleFoliageQuality}
+        onToggleScreenShake={toggleScreenShake}
+      />
+      {achievementsOpen ? (
+        <AchievementGallery
+          achievements={achievementCatalogue}
+          onClose={closeAchievements}
+        />
+      ) : null}
+    </>
   )
 }
 
