@@ -1,0 +1,204 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-07-18T22:25:00Z",
+  "title": "Design System: КОРОВАНЫ",
+  "extensions": {
+    "colorMeta": {
+      "caravan-pink": {
+        "role": "primary",
+        "displayName": "Розовый корована",
+        "canonical": "#fd8ea1",
+        "tonalRamp": [
+          "#351c22",
+          "#542630",
+          "#74313f",
+          "#963d50",
+          "#b94b63",
+          "#dc607b",
+          "#fd8ea1",
+          "#ffe2e8"
+        ]
+      },
+      "camp-ground": {
+        "role": "neutral",
+        "displayName": "Земля лагеря",
+        "canonical": "#3d3b3a",
+        "tonalRamp": [
+          "#1a1919",
+          "#292827",
+          "#3d3b3a",
+          "#565351",
+          "#716d6a",
+          "#918b87",
+          "#b8b2ad",
+          "#eeeae7"
+        ]
+      },
+      "forest-signal": {
+        "role": "secondary",
+        "displayName": "Лесной сигнал",
+        "canonical": "#4ade80",
+        "tonalRamp": [
+          "#102d1a",
+          "#164528",
+          "#1d6137",
+          "#267e48",
+          "#319e5c",
+          "#3dbd6d",
+          "#4ade80",
+          "#d9fbe5"
+        ]
+      },
+      "palace-signal": {
+        "role": "secondary",
+        "displayName": "Дворцовый сигнал",
+        "canonical": "#4da6ff",
+        "tonalRamp": [
+          "#10263a",
+          "#163b59",
+          "#1d5279",
+          "#286b9c",
+          "#3485c0",
+          "#4199e2",
+          "#4da6ff",
+          "#dceeff"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Комиксный крик",
+        "purpose": "Название игры и единственная главная мысль."
+      },
+      "body": {
+        "displayName": "Походный рассказ",
+        "purpose": "Интерфейсные объяснения и длинный текст."
+      },
+      "label": {
+        "displayName": "Системная метка",
+        "purpose": "Короткие параметры, редкость, зоны и значения."
+      }
+    },
+    "shadows": [
+      {
+        "name": "Походная глубина",
+        "value": "0 18px 48px rgba(0, 0, 0, 0.32)",
+        "purpose": "Модальные окна, крупные панели и скриншоты."
+      },
+      {
+        "name": "Сигнальное кольцо",
+        "value": "0 0 0 3px rgba(253, 142, 161, 0.14)",
+        "purpose": "Фокус и выбранное состояние."
+      }
+    ],
+    "motion": [
+      {
+        "name": "Быстрый отклик",
+        "value": "160ms ease",
+        "purpose": "Наведение и обычная смена состояния."
+      },
+      {
+        "name": "Комиксное появление",
+        "value": "360ms cubic-bezier(0.2, 0.8, 0.2, 1)",
+        "purpose": "Достижения, названия зон и важные награды."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "mobile",
+        "value": "640px"
+      },
+      {
+        "name": "compact",
+        "value": "900px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Главное действие на экране.",
+      "html": "<button class=\"ds-btn-primary\">НАЧАТЬ ПОХОД</button>",
+      "css": ".ds-btn-primary { background: var(--cp-accent, #fd8ea1); border: 0; border-radius: 10px; color: var(--cp-accent-fg, #1a1a1a); cursor: pointer; font: 800 16px/1.2 \"Segoe UI\", sans-serif; min-height: 44px; padding: 11px 18px; transition: background 160ms ease, transform 160ms ease; } .ds-btn-primary:hover { background: var(--cp-accent-hover, #fb7b91); transform: translateY(-1px); } .ds-btn-primary:focus-visible { outline: 2px solid var(--cp-accent, #fd8ea1); outline-offset: 3px; }"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Дополнительное действие без конкуренции с главным.",
+      "html": "<button class=\"ds-btn-secondary\">ДОСТИЖЕНИЯ 12/58</button>",
+      "css": ".ds-btn-secondary { background: var(--cp-surface, #292929); border: 1px solid var(--cp-border, #474747); border-radius: 10px; color: var(--cp-text, #dedede); cursor: pointer; font: 700 16px/1.2 \"Segoe UI\", sans-serif; min-height: 44px; padding: 10px 16px; transition: background 160ms ease, border-color 160ms ease; } .ds-btn-secondary:hover { background: var(--cp-surface-soft, #2e2e2e); border-color: var(--cp-border-strong, #5f5f5f); } .ds-btn-secondary:focus-visible { outline: 2px solid var(--cp-accent, #fd8ea1); outline-offset: 3px; }"
+    },
+    {
+      "name": "Seed Input",
+      "kind": "input",
+      "description": "Поле для числового или текстового сида.",
+      "html": "<label class=\"ds-field\"><span>SEED МИРА</span><input value=\"korovany-blog\" /></label>",
+      "css": ".ds-field { color: var(--cp-text-soft, #b0b0b0); display: grid; font: 800 11px/1.2 Consolas, monospace; gap: 7px; letter-spacing: .08em; } .ds-field input { background: var(--cp-surface, #292929); border: 1px solid var(--cp-border, #474747); border-radius: 10px; color: var(--cp-text, #dedede); font: 600 16px/1.2 \"Segoe UI\", sans-serif; min-height: 44px; padding: 10px 12px; } .ds-field input:focus { border-color: var(--cp-accent, #fd8ea1); box-shadow: 0 0 0 3px rgba(253,142,161,.14); outline: 0; }"
+    },
+    {
+      "name": "System Chip",
+      "kind": "chip",
+      "description": "Короткая системная метка для карты, редкости или состояния.",
+      "html": "<span class=\"ds-chip\">25 РЕГИОНОВ</span>",
+      "css": ".ds-chip { background: rgba(253,142,161,.1); border: 1px solid rgba(253,142,161,.35); border-radius: 999px; color: var(--cp-accent, #fd8ea1); display: inline-flex; font: 800 11px/1 Consolas, monospace; letter-spacing: .08em; padding: 8px 10px; }"
+    },
+    {
+      "name": "Campaign Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Крупная поверхность для выбора фракции, карты или статьи.",
+      "html": "<section class=\"ds-panel\"><span>НОВЫЙ ЗАБЕГ</span><h3>Выберите сторону конфликта</h3><p>Один сид, три маршрута и конечная крепость.</p></section>",
+      "css": ".ds-panel { background: var(--cp-surface, #292929); border: 1px solid var(--cp-border, #474747); border-radius: 16px; color: var(--cp-text, #dedede); font-family: \"Segoe UI\", sans-serif; padding: 24px; } .ds-panel > span { color: var(--cp-accent, #fd8ea1); font: 800 11px/1.2 Consolas, monospace; letter-spacing: .1em; } .ds-panel h3 { font-size: 24px; margin: 10px 0 6px; } .ds-panel p { color: var(--cp-text-soft, #b0b0b0); line-height: 1.55; margin: 0; }"
+    },
+    {
+      "name": "Faction Card",
+      "kind": "custom",
+      "description": "Сигнатурная карточка стороны конфликта.",
+      "html": "<article class=\"ds-faction\"><span>ТЕНЬ ГУСТОГО ЛЕСА</span><h3>Лесные эльфы</h3><p>Быстрее в лесу, союзники отвечают на зов.</p><button>НАЧАТЬ</button></article>",
+      "css": ".ds-faction { background: var(--cp-surface, #292929); border: 1px solid var(--cp-border, #474747); border-radius: 16px; color: var(--cp-text, #dedede); font-family: \"Segoe UI\", sans-serif; overflow: hidden; padding: 24px; position: relative; } .ds-faction::before { background: var(--cp-success, #4ade80); content: \"\"; height: 3px; inset: 0 0 auto; position: absolute; } .ds-faction > span { color: var(--cp-success, #4ade80); font: 800 11px/1.2 Consolas, monospace; letter-spacing: .1em; } .ds-faction h3 { font-size: 22px; margin: 10px 0 8px; } .ds-faction p { color: var(--cp-text-soft, #b0b0b0); line-height: 1.55; } .ds-faction button { background: var(--cp-success, #4ade80); border: 0; border-radius: 10px; color: #1a1a1a; font-weight: 800; min-height: 44px; width: 100%; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Походный комикс, собранный кодом",
+    "overview": "Интерфейс выглядит как часть того же мира, что и процедурные персонажи, крепости и корованы: уверенные блоки, резкие фракционные цвета, немного игрушечная тактильность и комиксная энергия. Он не маскирует свою цифровую природу.",
+    "keyCharacteristics": [
+      "Крупная плотная типографика с короткими техническими подписями.",
+      "Тёмные походные поверхности и розовый акцент «КОРОВАНОВ».",
+      "Зелёный, синий и золотой как функциональные сигналы.",
+      "Тактильные контролы и панели с умеренным подъёмом.",
+      "Процедурные скриншоты и игровая геометрия вместо абстрактного декора."
+    ],
+    "rules": [
+      {
+        "name": "The One Flare Rule",
+        "body": "На одной поверхности должен доминировать один сигнальный цвет.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Shout Rule",
+        "body": "На экране только один заголовок имеет право кричать.",
+        "section": "typography"
+      },
+      {
+        "name": "The Earned Shadow Rule",
+        "body": "Тень означает реальное наложение или важность.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do продолжать игру в промо: использовать настоящие скриншоты, карту, HUD и язык похода.",
+      "Do сохранять роли caravan-pink, forest-signal, palace-signal и torch-gold.",
+      "Do держать основной текст в пределах 65–75 знаков на строку.",
+      "Do добавлять prefers-reduced-motion для каждого декоративного движения."
+    ],
+    "donts": [
+      "Don't превращать проект в безликий SaaS-лендинг.",
+      "Don't делать стерильный корпоративный сайт.",
+      "Don't имитировать глянцевое AAA-промо.",
+      "Don't строить мемную страницу, которая умеет только кричать."
+    ]
+  }
+}

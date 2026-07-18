@@ -1,12 +1,14 @@
 # From Four Zones to a Seeded Campaign
 
+**Language:** English | [Русский](from-four-zones-to-a-seeded-campaign.ru.md)
+
 *How Korovany grew from a compact 3D joke game into a deterministic action roguelite in four very busy days.*
 
 On July 14, 2026, the first public commit of **Korovany** already had the outline of a complete game: three factions, a seamless world, melee combat, quests, trading, injuries, saves, and a procedural soundtrack. It was small, direct, and recognizably inspired by the legendary Russian game-design meme.
 
 Four days later, the same project can build a reproducible 25-region campaign from any text or numeric seed, stream that world around the player, preserve an active run, track a persistent profile, and turn every fight into a tiny comic-book set piece.
 
-![A forest elf in a rainy generated region, with a 25-region campaign map and achievement banner](images/project-evolution/current-gameplay.png)
+![A forest elf in a rainy generated region, with a 25-region campaign map and achievement banner](../public/history/images/current-gameplay.png)
 
 *The current development build: a generated forest start during a storm. The minimap now represents one discovered region out of a 5x5 campaign.*
 
@@ -16,7 +18,7 @@ This is the story of what changed between commit `2005a27` and the current worki
 
 The initial game was not a blank prototype. Its single, handcrafted world connected four distinct lands without loading screens: the human village, imperial palace, elven forest, and villain's fort. Each of the three playable factions began in a different corner and followed its own three-part objective chain.
 
-![The initial Korovany menu with three factions and a four-zone campaign](images/project-evolution/initial-menu.png)
+![The initial Korovany menu with three factions and a four-zone campaign](../public/history/images/initial-menu.png)
 
 *The first menu presented the whole game at once: three factions, four lands, one campaign.*
 
@@ -31,7 +33,7 @@ The identity was already there:
 
 The original scale kept everything understandable. A four-quadrant minimap described the entire world, all major actors existed at once, and completing three objectives ended the campaign.
 
-![The original palace courtyard, HUD, objectives, and four-zone minimap](images/project-evolution/initial-gameplay.png)
+![The original palace courtyard, HUD, objectives, and four-zone minimap](../public/history/images/initial-gameplay.png)
 
 *The palace-guard start in the initial commit. The original four-zone map is visible in the upper-right corner.*
 
@@ -75,7 +77,7 @@ The fixed four-zone layout is now joined by a deterministic generator. A seed pr
 
 The text seed used for these screenshots, `korovany-blog`, resolves to canonical seed `2479175075`.
 
-![The current run setup with a text seed and persistent starting boons](images/project-evolution/current-menu.png)
+![The current run setup with a text seed and persistent starting boons](../public/history/images/current-menu.png)
 
 *Starting a run now means choosing a faction, a reproducible world seed, and a profile boon.*
 
@@ -87,7 +89,7 @@ Generation is only half of the solution. The runtime streams nearby regions rath
 - `CollisionWorld` provides spatial queries for terrain and obstacles;
 - `NavigationSystem` routes actors through a world that can change under them.
 
-![A preview of the deterministic 25-region world generated for the article seed](images/project-evolution/current-world-preview.png)
+![A preview of the deterministic 25-region world generated for the article seed](../public/history/images/current-world-preview.png)
 
 *The menu preview exposes the campaign structure before the run starts: territory, river, bridges, faction start, and finale.*
 
@@ -109,7 +111,7 @@ A persistent profile now sits above individual runs. Profile currency unlocks st
 
 Achievements provide the long-term scrapbook. There are 58 across campaign progress, combat, exploration, economy, injuries, faction play, and unusual challenges, with five rarity tiers and hidden entries.
 
-![The persistent achievement catalogue with rarity and category progress](images/project-evolution/current-achievements.png)
+![The persistent achievement catalogue with rarity and category progress](../public/history/images/current-achievements.png)
 
 *Achievements are deliberately bragging rights rather than mandatory power. Progress persists across campaigns.*
 

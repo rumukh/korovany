@@ -1,0 +1,805 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Как «КОРОВАНЫ» за четыре дня выросли из компактной 3D-игры в детерминированный экшен-рогалик с кампанией из 25 регионов."
+    />
+    <meta name="theme-color" content="#171716" />
+    <meta property="og:type" content="article" />
+    <meta property="og:locale" content="ru_RU" />
+    <meta property="og:site_name" content="КОРОВАНЫ" />
+    <meta property="og:title" content="От четырёх зон к кампании, собранной из seed" />
+    <meta
+      property="og:description"
+      content="Четыре очень насыщенных дня разработки: от компактного мира по мотивам мема до воспроизводимой кампании из 25 регионов."
+    />
+    <meta
+      property="og:image"
+      content="https://rumukh.github.io/korovany/history/images/current-gameplay.png"
+    />
+    <meta property="og:image:width" content="1440" />
+    <meta property="og:image:height" content="960" />
+    <meta
+      property="og:url"
+      content="https://rumukh.github.io/korovany/history/"
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="От четырёх зон к кампании, собранной из seed" />
+    <meta
+      name="twitter:description"
+      content="Как «КОРОВАНЫ» за четыре дня выросли в детерминированный экшен-рогалик."
+    />
+    <meta
+      name="twitter:image"
+      content="https://rumukh.github.io/korovany/history/images/current-gameplay.png"
+    />
+    <link rel="canonical" href="https://rumukh.github.io/korovany/history/" />
+    <title>От четырёх зон к кампании, собранной из seed — КОРОВАНЫ</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          "Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
+        --bg: #3d3b3a;
+        --bg-elevated: #343231;
+        --surface: #292929;
+        --surface-raised: #2e2e2e;
+        --text: #dedede;
+        --muted: #b0b0b0;
+        --border: #5f5f5f;
+        --accent: #fd8ea1;
+        --accent-warm: #fbbf24;
+        --green: #4ade80;
+        --blue: #4da6ff;
+        --content: 820px;
+        --wide: 1120px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        background:
+          radial-gradient(circle at 15% 5%, rgba(253, 142, 161, 0.14), transparent 28rem),
+          radial-gradient(circle at 88% 12%, rgba(74, 222, 128, 0.09), transparent 30rem),
+          var(--bg);
+        color: var(--text);
+        margin: 0;
+        min-width: 320px;
+      }
+
+      body::before {
+        background-image: repeating-linear-gradient(
+          115deg,
+          transparent 0,
+          transparent 16px,
+          rgba(255, 255, 255, 0.012) 16px,
+          rgba(255, 255, 255, 0.012) 17px
+        );
+        content: "";
+        inset: 0;
+        pointer-events: none;
+        position: fixed;
+        z-index: -1;
+      }
+
+      a {
+        color: var(--accent);
+      }
+
+      a:hover {
+        color: #ff9bb3;
+      }
+
+      .site-nav {
+        align-items: center;
+        background: var(--bg-elevated);
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        justify-content: space-between;
+        padding: 0.85rem max(1.25rem, calc((100vw - var(--wide)) / 2));
+        position: sticky;
+        top: 0;
+        z-index: 10;
+      }
+
+      .site-nav a {
+        align-items: center;
+        color: var(--text);
+        display: inline-flex;
+        font-size: 0.8rem;
+        font-weight: 800;
+        gap: 0.45rem;
+        letter-spacing: 0.08em;
+        text-decoration: none;
+        text-transform: uppercase;
+      }
+
+      .site-nav a:last-child {
+        color: var(--muted);
+      }
+
+      main {
+        overflow: hidden;
+      }
+
+      .hero {
+        margin: 0 auto;
+        max-width: var(--wide);
+        padding: clamp(4rem, 10vw, 8rem) 1.25rem 2.5rem;
+        text-align: center;
+      }
+
+      .eyebrow {
+        color: var(--accent);
+        font-size: 0.74rem;
+        font-weight: 900;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2 {
+        font-weight: 900;
+        letter-spacing: -0.025em;
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(3.3rem, 9vw, 6rem);
+        line-height: 0.9;
+        margin: 1.1rem auto 1.35rem;
+        max-width: 980px;
+        text-wrap: balance;
+      }
+
+      .lede {
+        color: var(--muted);
+        font-size: clamp(1.1rem, 2.2vw, 1.5rem);
+        line-height: 1.55;
+        margin: 0 auto;
+        max-width: 820px;
+        text-wrap: balance;
+      }
+
+      .meta {
+        align-items: center;
+        color: var(--muted);
+        display: flex;
+        flex-wrap: wrap;
+        font-size: 0.78rem;
+        font-weight: 750;
+        gap: 0.8rem;
+        justify-content: center;
+        letter-spacing: 0.08em;
+        margin-top: 1.7rem;
+        text-transform: uppercase;
+      }
+
+      .meta span {
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        padding: 0.5rem 0.75rem;
+      }
+
+      .wide-figure {
+        margin: 1rem auto clamp(4rem, 8vw, 7rem);
+        max-width: var(--wide);
+        padding: 0 1.25rem;
+      }
+
+      figure {
+        margin: 3rem 0;
+      }
+
+      figure img {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 1rem;
+        box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.32);
+        display: block;
+        height: auto;
+        width: 100%;
+      }
+
+      figcaption {
+        color: var(--muted);
+        font-size: 0.86rem;
+        line-height: 1.55;
+        margin: 0.8rem auto 0;
+        max-width: 720px;
+        text-align: center;
+      }
+
+      .story {
+        margin: 0 auto;
+        max-width: var(--content);
+        padding: 0 1.25rem 6rem;
+      }
+
+      .story > p,
+      .story li {
+        color: #ded7cc;
+        font-size: clamp(1.04rem, 1.7vw, 1.16rem);
+        line-height: 1.82;
+        text-wrap: pretty;
+      }
+
+      .story > p {
+        margin: 1.2rem 0;
+      }
+
+      .story h2 {
+        font-size: clamp(2.15rem, 5vw, 3.5rem);
+        line-height: 1;
+        margin: clamp(4.5rem, 9vw, 7rem) 0 1.5rem;
+      }
+
+      .story h2::before {
+        background: var(--accent);
+        content: "";
+        display: block;
+        height: 0.32rem;
+        margin-bottom: 1rem;
+        transform: skewX(-18deg);
+        width: 3.2rem;
+      }
+
+      .story ul,
+      .story ol {
+        padding-left: 1.4rem;
+      }
+
+      .story li {
+        margin: 0.45rem 0;
+        padding-left: 0.35rem;
+      }
+
+      .story li::marker {
+        color: var(--accent);
+        font-weight: 900;
+      }
+
+      code {
+        background: rgba(255, 118, 151, 0.1);
+        border: 1px solid rgba(255, 118, 151, 0.25);
+        border-radius: 0.35rem;
+        color: #ff9bb3;
+        font-size: 0.9em;
+        padding: 0.1rem 0.35rem;
+      }
+
+      .pullquote {
+        background:
+          linear-gradient(135deg, rgba(253, 142, 161, 0.12), transparent 55%),
+          var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 0.9rem;
+        box-shadow: inset 0 0 0 1px rgba(253, 142, 161, 0.18);
+        color: var(--text);
+        font-size: clamp(1.2rem, 2.5vw, 1.55rem);
+        font-weight: 750;
+        line-height: 1.55;
+        margin: 2.5rem 0;
+        padding: 1.5rem 1.7rem;
+      }
+
+      .table-wrap {
+        border: 1px solid var(--border);
+        border-radius: 0.9rem;
+        margin: 2rem 0;
+        overflow-x: auto;
+      }
+
+      table {
+        border-collapse: collapse;
+        min-width: 680px;
+        width: 100%;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--border);
+        padding: 1rem 1.1rem;
+        text-align: left;
+      }
+
+      th {
+        background: var(--surface-raised);
+        color: var(--muted);
+        font-size: 0.76rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      td:nth-child(n + 2),
+      th:nth-child(n + 2) {
+        text-align: right;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      .finale {
+        background:
+          radial-gradient(circle at 20% 20%, rgba(253, 142, 161, 0.17), transparent 22rem),
+          radial-gradient(circle at 80% 80%, rgba(74, 222, 128, 0.12), transparent 24rem),
+          var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 1.2rem;
+        margin-top: 5rem;
+        padding: clamp(2rem, 5vw, 4rem);
+        text-align: center;
+      }
+
+      .finale h2 {
+        margin-top: 0;
+      }
+
+      .finale h2::before {
+        margin-left: auto;
+        margin-right: auto;
+      }
+
+      .play-link {
+        background: var(--accent);
+        border-radius: 0.7rem;
+        color: #1a1013;
+        display: inline-flex;
+        font-weight: 900;
+        letter-spacing: 0.05em;
+        margin-top: 1rem;
+        padding: 0.9rem 1.25rem;
+        text-decoration: none;
+        text-transform: uppercase;
+      }
+
+      .play-link:hover {
+        background: #ff9bb3;
+        color: #1a1013;
+        transform: translateY(-1px);
+      }
+
+      footer {
+        border-top: 1px solid var(--border);
+        color: var(--muted);
+        font-size: 0.82rem;
+        padding: 1.5rem;
+        text-align: center;
+      }
+
+      @media (max-width: 640px) {
+        .site-nav {
+          padding-left: 1rem;
+          padding-right: 1rem;
+        }
+
+        .site-nav a {
+          font-size: 0.7rem;
+        }
+
+        h1 {
+          font-size: clamp(3rem, 16vw, 4.7rem);
+        }
+
+        .story h2 {
+          font-family: inherit;
+          font-weight: 900;
+          letter-spacing: -0.035em;
+        }
+
+        figure {
+          margin-left: -0.5rem;
+          margin-right: -0.5rem;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html {
+          scroll-behavior: auto;
+        }
+
+        * {
+          transition: none !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="site-nav" aria-label="Навигация">
+      <a href="../"><span aria-hidden="true">←</span> Вернуться в игру</a>
+      <a
+        href="https://github.com/rumukh/korovany/blob/main/docs/from-four-zones-to-a-seeded-campaign.md"
+      >
+        English
+      </a>
+    </nav>
+
+    <main>
+      <header class="hero">
+        <div class="eyebrow">Джва года в разработке · История проекта</div>
+        <h1>От четырёх зон к кампании, собранной из seed</h1>
+        <p class="lede">
+          Как «КОРОВАНЫ» за четыре очень насыщенных дня выросли из компактной 3D-игры по
+          мотивам мема в детерминированный экшен-рогалик.
+        </p>
+        <div class="meta">
+          <span><time datetime="2026-07-18">18 июля 2026</time></span>
+          <span>4 дня разработки</span>
+          <span>25 регионов</span>
+        </div>
+      </header>
+
+      <figure class="wide-figure">
+        <img
+          src="./images/current-gameplay.png"
+          alt="Лесной эльф в дождливом сгенерированном регионе, карта кампании из 25 регионов и уведомление о достижении"
+          width="1440"
+          height="960"
+          fetchpriority="high"
+        />
+        <figcaption>
+          Текущая версия в разработке: старт лесных эльфов в сгенерированном мире во время
+          грозы. На мини-карте открыт один регион из кампании 5x5.
+        </figcaption>
+      </figure>
+
+      <article class="story">
+        <p>
+          14 июля 2026 года в первом публичном коммите <strong>«КОРОВАНЫ»</strong> уже
+          угадывалась законченная игра: три фракции, бесшовный мир, ближний бой, задания,
+          торговля, травмы, сохранения и процедурный саундтрек. Она была небольшой,
+          прямолинейной и безошибочно узнаваемой как воплощение легендарного русскоязычного
+          геймдизайнерского мема.
+        </p>
+        <p>
+          Четыре дня спустя тот же проект умеет собирать воспроизводимую кампанию из 25
+          регионов по любому текстовому или числовому сиду, подгружать мир вокруг игрока,
+          сохранять активный забег, вести постоянный профиль и превращать каждую драку в
+          маленькую сцену из комикса.
+        </p>
+        <p>
+          Это рассказ о том, что изменилось между коммитом <code>2005a27</code> и текущей
+          рабочей версией.
+        </p>
+
+        <h2>Неожиданно законченная отправная точка</h2>
+        <p>
+          Первая версия не была пустым прототипом. Её единый, вручную спроектированный мир
+          без загрузочных экранов соединял четыре разные земли: человеческую деревню,
+          императорский дворец, эльфийский лес и форт злодея. Каждая из трёх игровых фракций
+          начинала в своём углу карты и проходила собственную цепочку из трёх заданий.
+        </p>
+
+        <figure>
+          <img
+            src="./images/initial-menu.png"
+            alt="Первоначальное меню «КОРОВАНОВ» с тремя фракциями и кампанией из четырёх зон"
+            width="1440"
+            height="960"
+            loading="lazy"
+          />
+          <figcaption>
+            Первое меню показывало всю игру сразу: три фракции, четыре земли, одна кампания.
+          </figcaption>
+        </figure>
+
+        <p>Характер игры уже сложился:</p>
+        <ul>
+          <li>угловатые персонажи и здания, целиком созданные кодом;</li>
+          <li>процедурные пиксельные текстуры, деревья, облака, дороги и факелы;</li>
+          <li>
+            ближний бой, отряды NPC, налёты на корованы, травмы, протезы, лечение и торговля;
+          </li>
+          <li>генерируемый 8-битный саундтрек с вариациями для фракций и зон;</li>
+          <li>локальные сохранения и загрузка;</li>
+          <li>никаких внешних графических или звуковых ресурсов.</li>
+        </ul>
+        <p>
+          Исходный масштаб помогал охватить игру целиком. Мини-карта из четырёх квадрантов
+          описывала весь мир, все важные персонажи существовали одновременно, а выполнение
+          трёх заданий завершало кампанию.
+        </p>
+
+        <figure>
+          <img
+            src="./images/initial-gameplay.png"
+            alt="Первоначальный двор дворца, интерфейс, задания и мини-карта из четырёх зон"
+            width="1440"
+            height="960"
+            loading="lazy"
+          />
+          <figcaption>
+            Старт дворцовой охраны в первом коммите. В правом верхнем углу видна
+            первоначальная карта из четырёх зон.
+          </figcaption>
+        </figure>
+
+        <p>
+          Но компактность была и главным ограничением. Забег можно было закончить очень
+          быстро, после перезапуска мир оставался прежним, а добавление новых территорий или
+          персонажей лишь увеличивало стоимость монолитной симуляции.
+        </p>
+
+        <h2>Сначала — сделать приятнее уже существующую игру</h2>
+        <p>
+          Первая волна изменений углубила исходный мир, а не заменила его. Фракционный бой
+          получил более выразительные способности, а цепочки заданий получили важные исправления.
+          Динамические события добавили спасательные операции, чемпионов, награды за головы,
+          оборонительные столкновения и более богатые корованы. Растущая угроза, повторяемые
+          улучшения и возможность продолжить игру после фракционного финала дали золоту и
+          сражениям смысл за пределами первых трёх задач.
+        </p>
+        <p>
+          Движение и бой тоже стали ощутимо физичнее. Коллизии больше не позволяли персонажам
+          проходить сквозь стены. Навигация с учётом ворот помогла NPC искать допустимые
+          маршруты. У противников появились замахи, восстановление после атак, вздрагивания,
+          оглушения, отбрасывание, стойкость, разные анимации смерти и более естественные
+          переходы между покоем и движением.
+        </p>
+        <p class="pullquote">
+          Результатом стали не просто «ещё враги». У тяжёлой атаки теперь есть подготовка,
+          момент удара и восстановление, а разные противники опасны по разным причинам.
+        </p>
+
+        <h2>Затем — вдохнуть в мир жизнь</h2>
+        <p>Вторая волна изменений занялась атмосферой:</p>
+        <ul>
+          <li>
+            полноценный цикл дня и ночи добавил движущиеся солнце и луну, звёзды, лунное
+            освещение геометрии, а также более яркие факелы и окна после заката;
+          </li>
+          <li>погода стала зависеть от зоны и принесла дождь и другие региональные условия;</li>
+          <li>трава, колышущаяся на ветру, оживила пустые участки земли;</li>
+          <li>bloom добавил сдержанное свечение эмиссивным деталям;</li>
+          <li>
+            далёкие плоские спрайты деревьев исчезли, поэтому мир сохраняет объёмный силуэт
+            на любой дистанции.
+          </li>
+        </ul>
+        <p>
+          Все эти системы остались настраиваемыми. Меню и экран паузы превратились в
+          практичную панель визуальных параметров: цикл дня и ночи, погода, bloom, чернильные
+          контуры, качество растительности, акценты камеры, тема и громкость звуковых
+          эффектов.
+        </p>
+        <p>
+          Это важно, потому что процедурной графике особенно нужна сильная арт-режиссура.
+          Случайность создаёт разнообразие, но именно свет, цвет, движение и силуэты
+          превращают это разнообразие в части одной игры.
+        </p>
+
+        <h2>Свой язык комикса</h2>
+        <p>
+          Следующий набор изменений подарил бою собственную визуальную грамматику.
+          Toon-шейдинг и выборочные контуры лучше отделили персонажей от окружения, не обводя
+          при этом каждый объект сцены. Удары получили вспышки, линии скорости, читаемые
+          предупреждения, текст в момент попадания и намеренно преувеличенные, но
+          ограниченные акценты камеры.
+        </p>
+        <p>
+          У добычи появились цвета редкости, эффектные выбросы и всплывающие карточки наград.
+          Боевой звук стал многослойным вместо набора одиночных эффектов. Арт-режиссура зон
+          ввела отдельные мотивы и акцентные цвета, поэтому лес, дворец, форт и нейтральные
+          земли теперь различаются не только геометрией.
+        </p>
+        <p>
+          Ключевое слово здесь: <em>ограниченные</em>. Тряска экрана, скачки угла обзора,
+          bloom, контуры и эффекты попаданий имеют настройки или пределы интенсивности. Игра
+          может быть громкой, не переставая быть читаемой.
+        </p>
+
+        <h2>Настоящее превращение: карта стала данными</h2>
+        <p>
+          Самое крупное изменение началось не с шейдера. Оно началось с разделения самого
+          понятия мира и мешей, которые прямо сейчас видны на экране.
+        </p>
+        <p>
+          К фиксированной карте из четырёх зон присоединился детерминированный генератор. Сид
+          создаёт <code>WorldBlueprint</code>: граф из 25 регионов с профилями рельефа,
+          биомами, территориями фракций, рекой, переправами, дорогами, мостами, локациями,
+          столкновениями и маршрутами заданий. Валидатор проверяет результат, а цифровой
+          отпечаток позволяет измерить детерминизм.
+        </p>
+        <p>
+          Текстовый сид из этих скриншотов, <code>korovany-blog</code>, превращается в
+          каноническое число <code>2479175075</code>.
+        </p>
+
+        <figure>
+          <img
+            src="./images/current-menu.png"
+            alt="Текущая настройка забега с текстовым сидом и постоянными стартовыми дарами"
+            width="1440"
+            height="960"
+            loading="lazy"
+          />
+          <figcaption>
+            Теперь перед забегом нужно выбрать фракцию, воспроизводимый сид мира и стартовый
+            дар из профиля.
+          </figcaption>
+        </figure>
+
+        <p>
+          Генерация решает лишь половину задачи. Во время игры движок подгружает соседние регионы,
+          а не пытается постоянно держать в памяти мир произвольного размера:
+        </p>
+        <ul>
+          <li><code>RegionManager</code> решает, что нужно загрузить вокруг игрока;</li>
+          <li>
+            <code>TerrainSystem</code> строит семплированную поверхность, холмы, дороги, реки
+            и переправы;
+          </li>
+          <li>
+            <code>GeneratedWorldRuntime</code> материализует регионы и применяет сохранённые
+            изменения;
+          </li>
+          <li>
+            <code>CollisionWorld</code> выполняет пространственные запросы к рельефу и
+            препятствиям;
+          </li>
+          <li>
+            <code>NavigationSystem</code> проводит персонажей через мир, способный меняться
+            прямо под ногами.
+          </li>
+        </ul>
+
+        <figure>
+          <img
+            src="./images/current-world-preview.png"
+            alt="Предпросмотр детерминированного мира из 25 регионов, созданного для сида из статьи"
+            width="872"
+            height="350"
+            loading="lazy"
+          />
+          <figcaption>
+            Ещё до старта меню показывает структуру кампании: территории, реку, мосты, начало
+            пути фракции и финал.
+          </figcaption>
+        </figure>
+
+        <p>
+          Эта архитектура меняет само значение реиграбельности. Новый забег больше не похож на тот же
+          уровень с заново расставленными врагами. Это конечная кампания, собранная по
+          стабильному сиду, со стартом, маршрутом, столкновениями и финальной крепостью для
+          выбранной фракции.
+        </p>
+        <p>
+          Отладка тоже получает более прочную основу. Если в игре встретится интересный мост,
+          непроходимый маршрут или ошибка в столкновении, сид станет компактным сценарием
+          воспроизведения.
+        </p>
+
+        <h2>Забеги стали путешествиями</h2>
+        <p>
+          Сгенерированному миру нужна другая модель сохранений. Сохранение первой версии
+          содержало одну позицию на одной фиксированной карте. Новый формат забега разделяет
+          три вида состояния:
+        </p>
+        <ol>
+          <li>
+            неизменяемую конфигурацию забега, включая сид, фракцию и версию генератора;
+          </li>
+          <li>сериализуемое состояние игрока и кампании;</li>
+          <li>изменения в отдельных регионах, оставленные игроком.</li>
+        </ol>
+        <p>
+          Активный забег можно приостановить и продолжить. Победа, поражение и отказ от похода
+          становятся окончательными записями в истории. У старого сохранения для четырёх зон
+          остался отдельный путь загрузки, поэтому архитектурный переход не стирает уже
+          начатую кампанию.
+        </p>
+        <p>
+          Над отдельными забегами теперь существует постоянный профиль. Валюта профиля
+          открывает стартовые дары, а сохранённый выбор фракции и дара позволяет быстрее
+          отправиться в следующее путешествие.
+        </p>
+        <p>
+          Достижения стали общей летописью подвигов. Всего их 58: за прогресс в кампании,
+          бой, исследование, экономику, травмы, игру за разные фракции и необычные испытания.
+          Есть пять уровней редкости и скрытые достижения.
+        </p>
+
+        <figure>
+          <img
+            src="./images/current-achievements.png"
+            alt="Постоянный каталог достижений с прогрессом по редкости и категориям"
+            width="1440"
+            height="960"
+            loading="lazy"
+          />
+          <figcaption>
+            Достижения дают право похвастаться, а не обязательное усиление. Прогресс
+            сохраняется между кампаниями.
+          </figcaption>
+        </figure>
+
+        <p>
+          Система подключена к настоящим игровым событиям, а не пытается угадать их по
+          интерфейсу: убийства по фракциям и ролям, покупки, корованы, задания, события мира,
+          урон, травмы, способности, победы, поражения и многое другое. Открытия выстраиваются
+          в очередь, поэтому всплеск прогресса не схлопывается в одно уведомление.
+        </p>
+
+        <h2>В цифрах</h2>
+        <p>Разницу видно не только на экране, но и в репозитории.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Показатель</th>
+                <th>Первый коммит</th>
+                <th>Текущая версия</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Исходные файлы</td>
+                <td>6</td>
+                <td>28</td>
+              </tr>
+              <tr>
+                <td>Строки исходного кода</td>
+                <td>5 265</td>
+                <td>31 882</td>
+              </tr>
+              <tr>
+                <td>География кампании</td>
+                <td>4 зоны</td>
+                <td>25 регионов</td>
+              </tr>
+              <tr>
+                <td>Постоянные достижения</td>
+                <td>0</td>
+                <td>58</td>
+              </tr>
+              <tr>
+                <td>Семейства сохранений</td>
+                <td>1</td>
+                <td>4</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Объём исходного кода вырос примерно в шесть раз, но важнее изменилась его форма.
+          Потоки случайных чисел, генерация мира, рельеф, коллизии, навигация, подгрузка
+          регионов, состояние профиля и хранение забега теперь живут в отдельных
+          специализированных модулях. Детерминированные тесты охватывают эти границы,
+          превращая сиды и сериализованное состояние в полезные инженерные инструменты, а не
+          просто слова для рекламного текста.
+        </p>
+
+        <section class="finale">
+          <h2>Что не изменилось</h2>
+          <p>
+            Несмотря на выросшую архитектуру, в основе «КОРОВАНОВ» остаётся то же обещание:
+            выбрать лесных эльфов, дворцовую охрану или злодея; пересечь странный low-poly
+            мир; драться, торговать, собирать отряд, терять части тела, заменять их
+            сомнительными механизмами и в конце концов что-нибудь сделать с корованом.
+          </p>
+          <p>
+            Первый коммит доказал жизнеспособность идеи. Текущая версия доказывает, что на
+            этой идее можно построить систему кампаний. Теперь главный вопрос не в том,
+            хватит ли для игры четырёх зон, а в том, сколько запоминающихся миров может
+            скрываться внутри одного сида.
+          </p>
+          <a class="play-link" href="../">Играть в «КОРОВАНЫ»</a>
+        </section>
+      </article>
+    </main>
+
+    <footer>
+      «КОРОВАНЫ» · Процедурная 3D-игра без внешних графических и звуковых ресурсов
+    </footer>
+  </body>
+</html>
