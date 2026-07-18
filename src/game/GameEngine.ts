@@ -14,6 +14,9 @@ import {
 import {
   ABILITY_INFO,
   FACTION_INFO,
+  MAX_HEALTH_PER_LEVEL,
+  MAX_STAMINA_PER_LEVEL,
+  MAX_THREAT_TIER,
   SAVE_KEY,
   type ActorRole,
   type BodyPart,
@@ -26,10 +29,16 @@ import {
   type Objective,
   type SavedGame,
   type ShopItem,
+  type UpgradeLevels,
   type WorldEventKind,
   type ZoneId,
   createAbilityView,
   createHealthyBody,
+  getMaxHealth,
+  getMaxStamina,
+  getShopItemPrice,
+  getThreatTier,
+  normalizeUpgradeLevels,
   restoreObjectives,
 } from './types'
 
@@ -101,6 +110,7 @@ interface Actor {
   healthBarVisibleUntil: number
   outlineBinding: OutlineBinding
   outlineUntil: number
+  deathAt: number | null
 }
 
 interface ActorSpawnOptions {
@@ -337,10 +347,13 @@ const OUTLINE_ACTOR_DISTANCE_SQ = 38 * 38
 const OUTLINE_INTERACTABLE_DISTANCE_SQ = 46 * 46
 const OUTLINE_CORPSE_SECONDS = 8
 const OUTLINE_PLAYER_HIDE_DISTANCE_SQ = 2.4 * 2.4
-const FIRST_EVENT_AT = 50
-const EVENT_COOLDOWN_MIN = 60
-const EVENT_COOLDOWN_MAX = 90
+const FIRST_EVENT_AT = 30
+const EVENT_COOLDOWN_MIN = 50
+const EVENT_COOLDOWN_MAX = 70
 const EVENT_RETRY = 10
+const THREAT_WAVE_FIRST_AT = 240
+const THREAT_WAVE_MIN_INTERVAL = 70
+const CORPSE_LIFETIME = 12
 const CHAMPION_DAMAGE_CAP = 18
 const BOW_DAMAGE = 18
 const BOW_MIN_DAMAGE = 10
@@ -820,11 +833,18 @@ export class GameEngine {
   private objectives: Objective[]
   private body: BodyState
   private health = 100
+  private maxHealth = 100
   private stamina = 100
+  private maxStamina = 100
   private gold = 55
   private kills = 0
   private damage = 26
+  private upgrades: UpgradeLevels
   private elapsed = 0
+  private campaignCompleted = false
+  private campaignCompletedAt: number | undefined
+  private threatTier = 1
+  private nextThreatWaveAt = THREAT_WAVE_FIRST_AT
   private paused = false
   private ended = false
   private verticalVelocity = 0
@@ -928,14 +948,36 @@ export class GameEngine {
       .lerp(this.palette.worldSun, 0.58)
     this.objectives = restoreObjectives(faction, savedGame?.objectives)
     this.body = savedGame ? { ...savedGame.body } : createHealthyBody()
-    this.health = savedGame?.health ?? 100
-    this.stamina = savedGame?.stamina ?? 100
+    this.upgrades = normalizeUpgradeLevels(savedGame?.upgradeLevels)
+    this.maxHealth = getMaxHealth(this.upgrades)
+    this.maxStamina = getMaxStamina(this.upgrades)
+    this.health = Math.min(this.maxHealth, savedGame?.health ?? this.maxHealth)
+    this.stamina = Math.min(this.maxStamina, savedGame?.stamina ?? this.maxStamina)
     this.gold = savedGame?.gold ?? 55
     this.kills = savedGame?.kills ?? 0
     this.damage = savedGame?.damage ?? (faction === 'villain' ? 31 : faction === 'guard' ? 28 : 26)
     this.elapsed = savedGame?.elapsed ?? 0
+    this.campaignCompleted =
+      savedGame?.campaignCompleted === true ||
+      this.objectives.every((objective) => objective.done)
+    this.campaignCompletedAt = savedGame?.campaignCompletedAt
+    this.threatTier = getThreatTier(this.elapsed)
     this.eventCooldown =
-      savedGame?.eventCooldown ?? Math.max(0, FIRST_EVENT_AT - this.elapsed)
+      Math.min(
+        this.eventCooldownRange().max,
+        savedGame?.eventCooldown ?? Math.max(0, FIRST_EVENT_AT - this.elapsed),
+      )
+    const defaultNextWave =
+      this.elapsed < THREAT_WAVE_FIRST_AT
+        ? THREAT_WAVE_FIRST_AT
+        : this.elapsed + Math.min(45, this.threatWaveInterval())
+    this.nextThreatWaveAt = Math.max(
+      this.elapsed,
+      Math.min(
+        savedGame?.nextThreatWaveAt ?? defaultNextWave,
+        this.elapsed + this.threatWaveInterval(),
+      ),
+    )
     this.championDamageBonus = Math.min(
       CHAMPION_DAMAGE_CAP,
       Math.max(0, savedGame?.championDamageBonus ?? 0),
@@ -1321,7 +1363,7 @@ export class GameEngine {
     if (playerPosition.distanceTo(this.caravan.position) < 7) {
       if (this.faction === 'guard') {
         this.callbacks.onNotice('Корован под охраной. Всё спокойно, гвардеец.', 'info')
-        this.health = Math.min(100, this.health + 8)
+        this.health = Math.min(this.maxHealth, this.health + 8)
         return
       }
       if (this.caravanCooldown > 0) {
@@ -1364,7 +1406,12 @@ export class GameEngine {
   }
 
   purchase(item: ShopItem): { ok: boolean; message: string } {
-    if (this.gold < item.price) return { ok: false, message: 'Не хватает золота.' }
+    const currentLevel = item.upgrade ? this.upgrades[item.upgrade] : 0
+    if (item.upgrade && currentLevel >= (item.maxLevel ?? Number.POSITIVE_INFINITY)) {
+      return { ok: false, message: `${item.name}: достигнут максимальный уровень.` }
+    }
+    const price = getShopItemPrice(item, this.upgrades)
+    if (this.gold < price) return { ok: false, message: 'Не хватает золота.' }
 
     if (item.id === 'arm') {
       const part = this.firstPartWithStatus(['leftArm', 'rightArm'], 'missing')
@@ -1381,21 +1428,31 @@ export class GameEngine {
       if (!part) return { ok: false, message: 'Зрение в порядке. Хрустальный глаз не нужен.' }
       this.body[part] = 'prosthetic'
     } else if (item.id === 'medicine') {
-      if (this.health >= 100 && this.body.bleeding === 0 && !this.hasWounds()) {
+      if (this.health >= this.maxHealth && this.body.bleeding === 0 && !this.hasWounds()) {
         return { ok: false, message: 'Вы полностью здоровы.' }
       }
-      this.health = Math.min(100, this.health + 55)
+      this.health = Math.min(this.maxHealth, this.health + 55)
       this.body.bleeding = 0
       this.healWounds()
-    } else {
+    } else if (item.id === 'blade') {
       this.damage += 8
+      this.upgrades.blade += 1
+    } else if (item.id === 'vitality') {
+      this.upgrades.vitality += 1
+      this.maxHealth = getMaxHealth(this.upgrades)
+      this.health = Math.min(this.maxHealth, this.health + MAX_HEALTH_PER_LEVEL)
+    } else {
+      this.upgrades.endurance += 1
+      this.maxStamina = getMaxStamina(this.upgrades)
+      this.stamina = Math.min(this.maxStamina, this.stamina + MAX_STAMINA_PER_LEVEL)
     }
 
-    this.gold -= item.price
+    this.gold -= price
     this.achievements.recordPurchase(item.id)
     this.playSound('coin')
     this.emitView(true)
-    return { ok: true, message: `${item.name}: покупка совершена.` }
+    const levelSuffix = item.upgrade ? ` Уровень ${this.upgrades[item.upgrade]}.` : ''
+    return { ok: true, message: `${item.name}: покупка совершена.${levelSuffix}` }
   }
 
   save(): SavedGame {
@@ -1412,8 +1469,15 @@ export class GameEngine {
       objectives: this.objectives.map((objective) => ({ ...objective })),
       elapsed: this.elapsed,
       savedAt: new Date().toISOString(),
-      eventCooldown: this.activeEvent ? EVENT_COOLDOWN_MIN : this.eventCooldown,
+      eventCooldown: this.activeEvent ? this.eventCooldownRange().min : this.eventCooldown,
       championDamageBonus: this.championDamageBonus,
+      campaignCompleted: this.campaignCompleted,
+      ...(this.campaignCompletedAt === undefined
+        ? {}
+        : { campaignCompletedAt: this.campaignCompletedAt }),
+      threatTier: this.threatTier,
+      nextThreatWaveAt: this.nextThreatWaveAt,
+      upgradeLevels: { ...this.upgrades },
     }
     localStorage.setItem(SAVE_KEY, JSON.stringify(save))
     this.callbacks.onNotice('Игра сохранена. Корованы никуда не денутся.', 'success')
@@ -1431,6 +1495,8 @@ export class GameEngine {
 
   private update(delta: number): void {
     this.elapsed += delta
+    this.updateThreat()
+    this.cleanupDeadActors()
     this.shakeClock += delta
     this.trauma = Math.max(0, this.trauma - SHAKE_DECAY * delta)
     this.damageFlash = Math.max(0, this.damageFlash - FLASH_DECAY * delta)
@@ -1461,7 +1527,10 @@ export class GameEngine {
     } else {
       this.bleedFxCooldown = 0
     }
-    if (this.health <= 0) this.endGame('defeat')
+    if (this.health <= 0) {
+      this.endGame('defeat')
+      return
+    }
     this.updateMission()
     this.updateEvents(delta)
     this.updatePrompt()
@@ -1964,7 +2033,7 @@ export class GameEngine {
     } else if (sprinting) {
       this.stamina = Math.max(0, this.stamina - delta * 24)
     } else {
-      this.stamina = Math.min(100, this.stamina + delta * 16)
+      this.stamina = Math.min(this.maxStamina, this.stamina + delta * 16)
     }
 
     if (move.lengthSq() > 0) {
@@ -2541,7 +2610,8 @@ export class GameEngine {
       origin,
       direction.multiplyScalar(ACTOR_ARROW_SPEED),
       1.25,
-      this.actorDamageWithAura(actor, ACTOR_ARROW_DAMAGE),
+      this.actorDamageWithAura(actor, ACTOR_ARROW_DAMAGE) *
+        this.enemyDamageMultiplier(actor),
       actor.id,
       0,
     )
@@ -3011,7 +3081,134 @@ export class GameEngine {
     ) {
       this.completeObjective('patrol')
     }
-    if (this.objectives.every((objective) => objective.done)) this.endGame('victory')
+    if (!this.campaignCompleted && this.objectives.every((objective) => objective.done)) {
+      this.campaignCompleted = true
+      this.campaignCompletedAt = this.elapsed
+      this.gold += 250
+      this.eventCooldown = Math.min(this.eventCooldown, 12)
+      this.callbacks.onNotice(
+        'Кампания завершена! +250 золота. Мир остаётся открытым для свободной игры.',
+        'success',
+      )
+      this.playSound('victory')
+      this.emitView(true)
+    }
+  }
+
+  private updateThreat(): void {
+    const nextTier = getThreatTier(this.elapsed)
+    if (nextTier > this.threatTier) {
+      this.threatTier = nextTier
+      this.callbacks.onNotice(
+        `Угроза усилилась: уровень ${this.threatTier}/${MAX_THREAT_TIER}. Враги крепче, события и налёты чаще.`,
+        'warning',
+      )
+      this.playSound('event')
+      this.emitView(true)
+    }
+
+    if (
+      this.threatTier < 2 ||
+      this.elapsed < this.nextThreatWaveAt ||
+      this.activeEvent
+    ) {
+      return
+    }
+
+    const scheduledAt = this.nextThreatWaveAt
+    this.nextThreatWaveAt = this.elapsed + this.threatWaveInterval()
+    const spawned = this.spawnThreatWave(scheduledAt)
+    if (spawned > 0) {
+      this.callbacks.onNotice(
+        `Вражеский налёт: бойцов ${spawned}. Уровень угрозы ${this.threatTier}.`,
+        'warning',
+      )
+      this.playSound('event')
+    }
+  }
+
+  private eventCooldownRange(): { min: number; max: number } {
+    const tierOffset = this.threatTier - 1
+    return {
+      min: Math.max(30, EVENT_COOLDOWN_MIN - tierOffset * 5),
+      max: Math.max(42, EVENT_COOLDOWN_MAX - tierOffset * 7),
+    }
+  }
+
+  private threatWaveInterval(): number {
+    return Math.max(THREAT_WAVE_MIN_INTERVAL, 130 - this.threatTier * 12)
+  }
+
+  private enemyHealthMultiplier(faction: Faction): number {
+    return hostile(this.faction, faction) ? 1 + (this.threatTier - 1) * 0.12 : 1
+  }
+
+  private enemyDamageMultiplier(actor: Actor): number {
+    return hostile(this.faction, actor.faction) ? 1 + (this.threatTier - 1) * 0.09 : 1
+  }
+
+  private spawnThreatWave(scheduledAt: number): number {
+    const availableSlots = Math.max(0, MAX_ACTORS - this.actors.length)
+    const requested = Math.min(4, this.threatTier)
+    const count = Math.min(availableSlots, requested)
+    if (count === 0) return 0
+
+    const enemyFaction: Faction = this.faction === 'guard' ? 'villain' : 'guard'
+    let spawned = 0
+    const baseAngle = scheduledAt * 0.037 + this.threatTier * 1.7
+    for (let index = 0; index < count; index += 1) {
+      const role: ActorRole =
+        this.threatTier >= 4 && index === count - 1
+          ? 'brute'
+          : index % 3 === 2
+            ? 'archer'
+            : enemyFaction === 'villain'
+              ? 'minion'
+              : 'soldier'
+      const radius = 13 + index * 1.2
+      let spawnPosition: THREE.Vector3 | null = null
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const angle = baseAngle + index * 1.8 + attempt * 0.73
+        const x = THREE.MathUtils.clamp(
+          this.player.position.x + Math.sin(angle) * radius,
+          -WORLD_HALF + 3,
+          WORLD_HALF - 3,
+        )
+        const z = THREE.MathUtils.clamp(
+          this.player.position.z + Math.cos(angle) * radius,
+          -WORLD_HALF + 3,
+          WORLD_HALF - 3,
+        )
+        if (!this.isWalkablePosition(x, z, this.actorColliderRadiusForRole(role))) continue
+        spawnPosition = new THREE.Vector3(x, 0, z)
+        break
+      }
+      if (!spawnPosition) continue
+
+      const actor = this.spawnActor(
+        enemyFaction,
+        role,
+        spawnPosition.x,
+        spawnPosition.z,
+        this.actors.length + index,
+        { objectiveEligible: false, squadEligible: false },
+      )
+      actor.playerAggro = true
+      actor.aggroMemory = AGGRO_MEMORY_DURATION
+      actor.lastKnownTargetPos = this.player.position.clone()
+      spawned += 1
+    }
+    return spawned
+  }
+
+  private cleanupDeadActors(): void {
+    for (let index = this.actors.length - 1; index >= 0; index -= 1) {
+      const actor = this.actors[index]
+      if (this.activeEvent?.ownedActorIds.includes(actor.id)) continue
+      if (actor.deathAt !== null && this.elapsed - actor.deathAt >= CORPSE_LIFETIME) {
+        this.removeActorById(actor.id)
+      }
+    }
   }
 
   private updateEvents(delta: number): void {
@@ -3033,7 +3230,6 @@ export class GameEngine {
       return
     }
 
-    if (this.objectives.filter((objective) => !objective.done).length <= 1) return
     this.eventCooldown = Math.max(0, this.eventCooldown - delta)
     if (this.eventCooldown > 0) return
     if (!this.startRandomEvent()) this.eventCooldown = EVENT_RETRY
@@ -3108,7 +3304,7 @@ export class GameEngine {
       } else if (event.kind === 'defendHome') {
         this.gold += 90
         this.achievements.recordGoldEarned(90)
-        this.health = Math.min(100, this.health + 8)
+        this.health = Math.min(this.maxHealth, this.health + 8)
         message = 'Дом отстояли! +90 золота и +8 здоровья.'
       } else if (event.kind === 'champion') {
         this.gold += 120
@@ -3147,9 +3343,8 @@ export class GameEngine {
 
     event.cleanup()
     this.activeEvent = null
-    this.eventCooldown =
-      EVENT_COOLDOWN_MIN +
-      this.eventRng() * (EVENT_COOLDOWN_MAX - EVENT_COOLDOWN_MIN)
+    const cooldown = this.eventCooldownRange()
+    this.eventCooldown = cooldown.min + this.eventRng() * (cooldown.max - cooldown.min)
     this.emitView(true)
   }
 
@@ -3751,7 +3946,7 @@ export class GameEngine {
     const incomingDirection = actor.mesh.position.clone().sub(this.player.position)
     incomingDirection.y = 0
     this.damagePlayer(
-      this.actorDamageWithAura(actor, baseDamage),
+      this.actorDamageWithAura(actor, baseDamage) * this.enemyDamageMultiplier(actor),
       incomingDirection,
       true,
     )
@@ -4019,6 +4214,7 @@ export class GameEngine {
     }
     actor.alive = false
     actor.outlineUntil = this.elapsed + OUTLINE_CORPSE_SECONDS
+    actor.deathAt = this.elapsed
     actor.healthBar.visible = false
     const ring = actor.mesh.getObjectByName('faction-ring')
     if (ring) ring.visible = false
@@ -4333,9 +4529,10 @@ export class GameEngine {
     const view: GameView = {
       faction: this.faction,
       health: Math.max(0, this.health),
-      maxHealth: 100,
+      maxHealth: this.maxHealth,
       damageFlash: this.damageFlash,
       stamina: this.stamina,
+      maxStamina: this.maxStamina,
       gold: this.gold,
       kills: this.kills,
       damage: this.damage,
@@ -4356,6 +4553,9 @@ export class GameEngine {
       paused: this.paused,
       caravanCooldown: this.caravanCooldown,
       ability,
+      campaignCompleted: this.campaignCompleted,
+      threatTier: this.threatTier,
+      upgrades: { ...this.upgrades },
       activeEvent: this.activeEvent
         ? {
             id: this.activeEvent.id,
@@ -6783,7 +6983,7 @@ uniform float uSwayAmplitude;`,
     const phase = index * 0.73
     const home = mesh.position.clone()
     const initialAngle = phase * 4.7
-    const hp =
+    const baseHp =
       role === 'commander'
         ? 150
         : role === 'champion'
@@ -6795,6 +6995,7 @@ uniform float uSwayAmplitude;`,
               : role === 'scout'
                 ? 55
                 : 70
+    const hp = Math.round(baseHp * this.enemyHealthMultiplier(faction))
     const speed =
       role === 'scout'
         ? 4.8
@@ -6854,6 +7055,7 @@ uniform float uSwayAmplitude;`,
       healthBarVisibleUntil: 0,
       outlineBinding,
       outlineUntil: Number.POSITIVE_INFINITY,
+      deathAt: null,
     }
     if (
       !this.isWalkablePosition(

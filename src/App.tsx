@@ -57,6 +57,9 @@ import {
 } from './game/achievements'
 import {
   FACTION_INFO,
+  MAX_HEALTH_PER_LEVEL,
+  MAX_STAMINA_PER_LEVEL,
+  MAX_THREAT_TIER,
   SAVE_KEY,
   SHOP_ITEMS,
   ZONE_INFO,
@@ -69,6 +72,12 @@ import {
   type WorldEventView,
   createAbilityView,
   createHealthyBody,
+  getMaxHealth,
+  getMaxStamina,
+  getShopItemPrice,
+  getThreatTier,
+  normalizeSavedGame,
+  normalizeUpgradeLevels,
   restoreObjectives,
 } from './game/types'
 
@@ -126,8 +135,8 @@ function readSavedGame(): SavedGame | null {
   const raw = localStorage.getItem(SAVE_KEY)
   if (!raw) return null
   try {
-    const value = JSON.parse(raw) as SavedGame
-    if (value.version !== 1 || !FACTION_INFO[value.faction]) {
+    const value = normalizeSavedGame(JSON.parse(raw))
+    if (!value) {
       console.warn('Korovany: incompatible saved game ignored.')
       return null
     }
@@ -259,27 +268,39 @@ function createInitialView(faction: Faction, savedGame?: SavedGame): GameView {
           : 'fort'
   const body = savedGame ? { ...savedGame.body } : createHealthyBody()
   const stamina = savedGame?.stamina ?? 100
+  const upgrades = normalizeUpgradeLevels(savedGame?.upgradeLevels)
+  const objectives = restoreObjectives(faction, savedGame?.objectives)
+  const maxHealth = getMaxHealth(upgrades)
+  const maxStamina = getMaxStamina(upgrades)
+  const elapsed = savedGame?.elapsed ?? 0
+  const currentStamina = Math.min(maxStamina, stamina)
   return {
     faction,
-    health: savedGame?.health ?? 100,
-    maxHealth: 100,
+    health: Math.min(maxHealth, savedGame?.health ?? maxHealth),
+    maxHealth,
     damageFlash: 0,
-    stamina,
+    stamina: currentStamina,
+    maxStamina,
     gold: savedGame?.gold ?? 55,
     kills: savedGame?.kills ?? 0,
     damage: savedGame?.damage ?? (faction === 'villain' ? 31 : faction === 'guard' ? 28 : 26),
     zone,
     body,
-    objectives: restoreObjectives(faction, savedGame?.objectives),
+    objectives,
     prompt: '',
     markers: [],
     squad: 0,
-    elapsed: savedGame?.elapsed ?? 0,
+    elapsed,
     pointerLocked: false,
     paused: false,
     caravanCooldown: 0,
-    ability: createAbilityView(faction, stamina, body),
+    ability: createAbilityView(faction, currentStamina, body),
     activeEvent: null,
+    campaignCompleted:
+      savedGame?.campaignCompleted === true ||
+      objectives.every((objective) => objective.done),
+    threatTier: getThreatTier(elapsed),
+    upgrades,
   }
 }
 
@@ -468,6 +489,21 @@ function EventBanner({ event }: { event: WorldEventView | null }) {
           </span>
         </div>
       ) : null}
+    </section>
+  )
+}
+
+function CampaignBanner({ view }: { view: GameView }) {
+  if (!view.campaignCompleted) return null
+
+  return (
+    <section className="hud-card campaign-banner" aria-label="Кампания завершена">
+      <Flag aria-hidden="true" />
+      <div>
+        <span>Кампания завершена</span>
+        <strong>Свободная игра продолжается</strong>
+        <small>События, налёты и торговля остаются активны.</small>
+      </div>
     </section>
   )
 }
@@ -994,36 +1030,52 @@ function ShopModal({
           <strong>{view.gold}</strong>
         </div>
         <div className="shop-grid">
-          {SHOP_ITEMS.map((item) => (
-            <article className="shop-item" key={item.id}>
-              <div className="shop-item-icon">
-                {item.id === 'medicine' ? (
-                  <Heart aria-hidden="true" />
-                ) : item.id === 'blade' ? (
-                  <Sword aria-hidden="true" />
-                ) : item.id === 'eye' ? (
-                  <Eye aria-hidden="true" />
-                ) : item.id === 'arm' ? (
-                  <Hand aria-hidden="true" />
-                ) : (
-                  <Footprints aria-hidden="true" />
-                )}
-              </div>
-              <div>
-                <h3>{item.name}</h3>
-                <p>{item.description}</p>
-              </div>
-              <button
-                className="buy-button"
-                type="button"
-                disabled={view.gold < item.price}
-                onClick={() => onBuy(item)}
-              >
-                <Coins aria-hidden="true" />
-                {item.price}
-              </button>
-            </article>
-          ))}
+          {SHOP_ITEMS.map((item) => {
+            const level = item.upgrade ? view.upgrades[item.upgrade] : 0
+            const maxed = Boolean(item.upgrade && level >= (item.maxLevel ?? 0))
+            const price = getShopItemPrice(item, view.upgrades)
+            const nextState =
+              !item.upgrade
+                ? null
+                : maxed
+                  ? `Уровень ${level}/${item.maxLevel} • предел достигнут`
+                  : item.upgrade === 'blade'
+                    ? `Уровень ${level}/${item.maxLevel} • урон ${view.damage} → ${view.damage + 8}`
+                    : item.upgrade === 'vitality'
+                      ? `Уровень ${level}/${item.maxLevel} • здоровье ${view.maxHealth} → ${view.maxHealth + MAX_HEALTH_PER_LEVEL}`
+                      : `Уровень ${level}/${item.maxLevel} • выносливость ${view.maxStamina} → ${view.maxStamina + MAX_STAMINA_PER_LEVEL}`
+            return (
+              <article className="shop-item" key={item.id}>
+                <div className="shop-item-icon">
+                  {item.id === 'medicine' || item.id === 'vitality' ? (
+                    <Heart aria-hidden="true" />
+                  ) : item.id === 'blade' ? (
+                    <Sword aria-hidden="true" />
+                  ) : item.id === 'eye' ? (
+                    <Eye aria-hidden="true" />
+                  ) : item.id === 'arm' ? (
+                    <Hand aria-hidden="true" />
+                  ) : (
+                    <Footprints aria-hidden="true" />
+                  )}
+                </div>
+                <div>
+                  <h3>{item.name}</h3>
+                  <p>{item.description}</p>
+                  {nextState ? <span className="shop-level">{nextState}</span> : null}
+                </div>
+                <button
+                  className="buy-button"
+                  type="button"
+                  disabled={maxed || view.gold < price}
+                  onClick={() => onBuy(item)}
+                >
+                  {maxed ? null : <Coins aria-hidden="true" />}
+                  {maxed ? 'Макс.' : price}
+                </button>
+              </article>
+            )
+          })}
         </div>
       </section>
     </div>
@@ -1325,7 +1377,7 @@ function GameScreen({
     view.body.leftEye === 'missing' ? 'left' : view.body.rightEye === 'missing' ? 'right' : null
   const healthPercent = `${(view.health / view.maxHealth) * 100}%`
   const lowHealth = view.health > 0 && view.health / view.maxHealth <= 0.25
-  const staminaPercent = `${view.stamina}%`
+  const staminaPercent = `${(view.stamina / view.maxStamina) * 100}%`
   const abilityProgress = `${
     view.ability.cooldownMax > 0
       ? Math.max(
@@ -1388,6 +1440,13 @@ function GameScreen({
             <h1>{ZONE_INFO[view.zone].name}</h1>
             <p>{ZONE_INFO[view.zone].subtitle}</p>
           </div>
+          <div className={`threat-chip tier-${view.threatTier}`}>
+            <Shield aria-hidden="true" />
+            <span>Угроза</span>
+            <strong>
+              {view.threatTier}/{MAX_THREAT_TIER}
+            </strong>
+          </div>
           <div className="hud-actions">
             <button
               className={`icon-button hud-music ${musicMuted ? 'muted' : 'playing'}`}
@@ -1411,7 +1470,9 @@ function GameScreen({
           <div className="vital-row">
             <Heart aria-hidden="true" />
             <span>Здоровье</span>
-            <strong>{Math.ceil(view.health)}</strong>
+            <strong>
+              {Math.ceil(view.health)}/{view.maxHealth}
+            </strong>
           </div>
           <div className="meter health">
             <i style={{ width: healthPercent }} />
@@ -1419,7 +1480,9 @@ function GameScreen({
           <div className="vital-row compact">
             <Footprints aria-hidden="true" />
             <span>Выносливость</span>
-            <strong>{Math.ceil(view.stamina)}</strong>
+            <strong>
+              {Math.ceil(view.stamina)}/{view.maxStamina}
+            </strong>
           </div>
           <div className="meter stamina">
             <i style={{ width: staminaPercent }} />
@@ -1452,6 +1515,7 @@ function GameScreen({
             <i style={{ width: abilityProgress }} />
           </div>
         </div>
+        <CampaignBanner view={view} />
         <ObjectiveList view={view} />
         <EventBanner event={view.activeEvent} />
       </div>

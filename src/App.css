@@ -970,10 +970,46 @@ button {
   margin-top: 0.08rem;
 }
 
+.threat-chip {
+  align-items: center;
+  background: color-mix(in srgb, var(--cp-warning) 9%, var(--cp-surface));
+  border: 1px solid color-mix(in srgb, var(--cp-warning) 32%, var(--cp-border));
+  border-radius: 0.5rem;
+  color: var(--cp-warning);
+  display: grid;
+  font-size: 0.54rem;
+  gap: 0.05rem 0.3rem;
+  grid-template-columns: auto auto;
+  margin-left: auto;
+  padding: 0.32rem 0.42rem;
+}
+
+.threat-chip svg {
+  grid-row: 1 / 3;
+  height: 0.85rem;
+  width: 0.85rem;
+}
+
+.threat-chip span {
+  color: var(--cp-text-muted);
+  text-transform: uppercase;
+}
+
+.threat-chip strong {
+  font-family: Consolas, "Courier New", Courier, monospace;
+  font-size: 0.68rem;
+}
+
+.threat-chip.tier-4,
+.threat-chip.tier-5 {
+  background: color-mix(in srgb, var(--cp-danger) 10%, var(--cp-surface));
+  border-color: color-mix(in srgb, var(--cp-danger) 38%, var(--cp-border));
+  color: var(--cp-danger);
+}
+
 .hud-actions {
   display: flex;
   gap: 0.35rem;
-  margin-left: auto;
 }
 
 .hud-music.playing {
@@ -1400,6 +1436,45 @@ button {
 
 .objectives-card {
   padding: 0.7rem;
+}
+
+.campaign-banner {
+  align-items: center;
+  background: color-mix(in srgb, var(--cp-success) 10%, var(--cp-panel));
+  border-color: color-mix(in srgb, var(--cp-success) 42%, var(--cp-border));
+  display: grid;
+  gap: 0.6rem;
+  grid-template-columns: auto 1fr;
+  padding: 0.7rem;
+}
+
+.campaign-banner > svg {
+  color: var(--cp-success);
+  height: 1.35rem;
+  width: 1.35rem;
+}
+
+.campaign-banner div {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.campaign-banner span {
+  color: var(--cp-success);
+  font-size: 0.55rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.campaign-banner strong {
+  color: var(--cp-text);
+  font-size: 0.7rem;
+}
+
+.campaign-banner small {
+  color: var(--cp-text-muted);
+  font-size: 0.57rem;
+  line-height: 1.35;
 }
 
 .objective-list {
@@ -2042,6 +2117,14 @@ kbd {
   font-size: 0.68rem;
   line-height: 1.4;
   margin-top: 0.2rem;
+}
+
+.shop-level {
+  color: var(--cp-accent);
+  display: block;
+  font-family: Consolas, "Courier New", Courier, monospace;
+  font-size: 0.62rem;
+  margin-top: 0.35rem;
 }
 
 .buy-button {
