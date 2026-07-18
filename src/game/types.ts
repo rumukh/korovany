@@ -1,3 +1,5 @@
+import type { AchievementUnlock } from './achievements'
+
 export type Faction = 'elf' | 'guard' | 'villain'
 
 export type ActorRole =
@@ -177,6 +179,7 @@ export interface GameCallbacks {
   onPauseRequest: () => void
   onSaveRequest: () => void
   onEnd: (result: 'victory' | 'defeat') => void
+  onAchievementUnlocked: (achievement: AchievementUnlock) => void
 }
 
 export interface ShopItem {

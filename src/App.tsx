@@ -1,4 +1,5 @@
 import {
+  Award,
   Bone,
   Castle,
   Check,
@@ -25,15 +26,35 @@ import {
   Sword,
   Sun,
   Trees,
+  Trophy,
   UserRound,
   Vibrate,
   Volume2,
   VolumeX,
   X,
 } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react'
 import './App.css'
 import { GameEngine, type FoliageQuality } from './game/GameEngine'
+import {
+  ACHIEVEMENT_CATEGORY_LABELS,
+  ACHIEVEMENT_CATEGORY_ORDER,
+  ACHIEVEMENT_RARITY_LABELS,
+  ACHIEVEMENT_RARITY_ORDER,
+  readAchievementCatalogue,
+  summarizeAchievements,
+  type AchievementSummary,
+  type AchievementUnlock,
+  type AchievementView,
+} from './game/achievements'
 import {
   FACTION_INFO,
   SAVE_KEY,
@@ -107,6 +128,14 @@ function readSavedGame(): SavedGame | null {
     const value = JSON.parse(raw) as SavedGame
     if (value.version !== 1 || !FACTION_INFO[value.faction]) {
       console.warn('Korovany: incompatible saved game ignored.')
+      return null
+    }
+    if (
+      Array.isArray(value.objectives) &&
+      value.objectives.length > 0 &&
+      value.objectives.every((objective) => objective.done)
+    ) {
+      console.warn('Korovany: completed campaign save ignored.')
       return null
     }
     return value
@@ -466,8 +495,182 @@ function BodyPanel({ view }: { view: GameView }) {
   )
 }
 
+function formatAchievementDate(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? 'дата неизвестна'
+    : new Intl.DateTimeFormat('ru', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      }).format(date)
+}
+
+function AchievementBanner({ achievement }: { achievement: AchievementUnlock | null }) {
+  if (!achievement) return null
+  return (
+    <aside
+      className={`achievement-banner rarity-${achievement.rarity}`}
+      aria-live="assertive"
+      aria-label="Достижение открыто"
+    >
+      <div className="achievement-banner-icon">
+        <Trophy aria-hidden="true" />
+      </div>
+      <div>
+        <span>Достижение открыто · {ACHIEVEMENT_RARITY_LABELS[achievement.rarity]}</span>
+        <strong>{achievement.name}</strong>
+        <p>{achievement.description}</p>
+      </div>
+    </aside>
+  )
+}
+
+function AchievementGallery({
+  achievements,
+  onClose,
+}: {
+  achievements: AchievementView[]
+  onClose: () => void
+}) {
+  const summary = summarizeAchievements(achievements)
+
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.code === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', closeOnEscape)
+    return () => window.removeEventListener('keydown', closeOnEscape)
+  }, [onClose])
+
+  return (
+    <div className="modal-backdrop achievement-backdrop" role="presentation">
+      <section
+        className="modal achievement-gallery"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="achievements-title"
+      >
+        <header className="modal-header achievement-gallery-header">
+          <div>
+            <span className="eyebrow">Летопись подвигов</span>
+            <h2 id="achievements-title">Достижения</h2>
+            <p>Никаких наград — только слава, редкость и право хвастаться.</p>
+          </div>
+          <button className="icon-button" type="button" onClick={onClose} aria-label="Закрыть достижения">
+            <X aria-hidden="true" />
+          </button>
+        </header>
+
+        <div className="achievement-overview">
+          <div className="achievement-total">
+            <div className="achievement-total-ring" style={{ '--completion': `${summary.percent}%` } as CSSProperties}>
+              <strong>{summary.percent}%</strong>
+            </div>
+            <div>
+              <span>Открыто</span>
+              <strong>
+                {summary.unlocked} / {summary.total}
+              </strong>
+              <p>Подвиги сохраняются между всеми кампаниями.</p>
+            </div>
+          </div>
+          <div className="achievement-rarity-breakdown" aria-label="Прогресс по редкости">
+            {ACHIEVEMENT_RARITY_ORDER.map((rarity) => (
+              <div className={`rarity-${rarity}`} key={rarity}>
+                <span>{ACHIEVEMENT_RARITY_LABELS[rarity]}</span>
+                <strong>
+                  {summary.byRarity[rarity].unlocked}/{summary.byRarity[rarity].total}
+                </strong>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="achievement-categories">
+          {ACHIEVEMENT_CATEGORY_ORDER.map((category) => {
+            const categoryAchievements = achievements.filter(
+              (achievement) => achievement.category === category,
+            )
+            if (categoryAchievements.length === 0) return null
+            const categoryUnlocked = categoryAchievements.filter(
+              (achievement) => achievement.unlocked,
+            ).length
+            return (
+              <section className="achievement-category" key={category}>
+                <header>
+                  <div>
+                    <Award aria-hidden="true" />
+                    <h3>{ACHIEVEMENT_CATEGORY_LABELS[category]}</h3>
+                  </div>
+                  <span>
+                    {categoryUnlocked}/{categoryAchievements.length}
+                  </span>
+                </header>
+                <div className="achievement-grid">
+                  {categoryAchievements.map((achievement) => {
+                    const concealed = achievement.hidden && !achievement.unlocked
+                    const progress = Math.min(
+                      100,
+                      (achievement.progress / achievement.target) * 100,
+                    )
+                    return (
+                      <article
+                        className={`achievement-card rarity-${achievement.rarity} ${
+                          achievement.unlocked ? 'unlocked' : 'locked'
+                        } ${concealed ? 'hidden-achievement' : ''}`}
+                        key={achievement.id}
+                      >
+                        <div className="achievement-card-icon">
+                          {achievement.unlocked ? (
+                            <Trophy aria-hidden="true" />
+                          ) : (
+                            <Award aria-hidden="true" />
+                          )}
+                        </div>
+                        <div className="achievement-card-copy">
+                          <span>{ACHIEVEMENT_RARITY_LABELS[achievement.rarity]}</span>
+                          <h4>{concealed ? '???' : achievement.name}</h4>
+                          <p>
+                            {concealed
+                              ? 'Условие этого достижения пока скрыто.'
+                              : achievement.description}
+                          </p>
+                        </div>
+                        {achievement.unlocked ? (
+                          <time dateTime={achievement.unlockedAt ?? undefined}>
+                            Открыто {formatAchievementDate(achievement.unlockedAt ?? '')}
+                          </time>
+                        ) : concealed ? (
+                          <div className="achievement-card-hidden-state">
+                            <span>Условие скрыто</span>
+                          </div>
+                        ) : (
+                          <div className="achievement-card-progress">
+                            <div>
+                              <i style={{ transform: `scaleX(${progress / 100})` }} />
+                            </div>
+                            <span>
+                              {Math.floor(achievement.progress)} / {achievement.target}
+                            </span>
+                          </div>
+                        )}
+                      </article>
+                    )
+                  })}
+                </div>
+              </section>
+            )
+          })}
+        </div>
+      </section>
+    </div>
+  )
+}
+
 function MenuScreen({
   savedGame,
+  achievementSummary,
   theme,
   dynamicDayNight,
   weatherEnabled,
@@ -476,6 +679,7 @@ function MenuScreen({
   screenShakeEnabled,
   onStart,
   onLoad,
+  onAchievements,
   onToggleTheme,
   onToggleDynamicDayNight,
   onToggleWeather,
@@ -484,6 +688,7 @@ function MenuScreen({
   onToggleScreenShake,
 }: {
   savedGame: SavedGame | null
+  achievementSummary: AchievementSummary
   theme: Theme
   dynamicDayNight: boolean
   weatherEnabled: boolean
@@ -492,6 +697,7 @@ function MenuScreen({
   screenShakeEnabled: boolean
   onStart: (faction: Faction) => void
   onLoad: () => void
+  onAchievements: () => void
   onToggleTheme: () => void
   onToggleDynamicDayNight: () => void
   onToggleWeather: () => void
@@ -592,6 +798,10 @@ function MenuScreen({
           Четыре земли. Три стороны конфликта. Один корован, который совершенно точно можно
           ограбить.
         </p>
+        <button className="secondary-button achievement-menu-button" type="button" onClick={onAchievements}>
+          <Trophy aria-hidden="true" />
+          Достижения {achievementSummary.unlocked}/{achievementSummary.total}
+        </button>
       </header>
 
       <section className="faction-select" aria-labelledby="faction-title">
@@ -793,6 +1003,7 @@ function PauseModal({
   onResume,
   onSave,
   onMenu,
+  onAchievements,
   onToggleDynamicDayNight,
   onToggleWeather,
   onToggleBloom,
@@ -808,6 +1019,7 @@ function PauseModal({
   onResume: () => void
   onSave: () => void
   onMenu: () => void
+  onAchievements: () => void
   onToggleDynamicDayNight: () => void
   onToggleWeather: () => void
   onToggleBloom: () => void
@@ -892,6 +1104,10 @@ function PauseModal({
             <Play aria-hidden="true" />
             Продолжить
           </button>
+          <button className="secondary-button" type="button" onClick={onAchievements}>
+            <Trophy aria-hidden="true" />
+            Достижения
+          </button>
           <button className="secondary-button" type="button" onClick={onSave}>
             <Save aria-hidden="true" />
             Сохранить
@@ -909,11 +1125,13 @@ function PauseModal({
 function EndModal({
   result,
   view,
+  runAchievements,
   onRestart,
   onMenu,
 }: {
   result: 'victory' | 'defeat'
   view: GameView
+  runAchievements: AchievementView[]
   onRestart: () => void
   onMenu: () => void
 }) {
@@ -947,6 +1165,17 @@ function EndModal({
             золота
           </span>
         </div>
+        {runAchievements.length > 0 ? (
+          <div className="end-achievements">
+            <span className="eyebrow">Открыто за эту кампанию</span>
+            {runAchievements.map((achievement) => (
+              <div className={`rarity-${achievement.rarity}`} key={achievement.id}>
+                <Trophy aria-hidden="true" />
+                <span>{achievement.name}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <div className="pause-actions">
           <button className="primary-button" type="button" onClick={onRestart}>
             <RotateCcw aria-hidden="true" />
@@ -966,12 +1195,15 @@ function GameScreen({
   view,
   worldRef,
   notices,
+  achievementBanner,
+  runAchievements,
   paused,
   shopOpen,
   endResult,
   onResume,
   onPause,
   onSave,
+  onAchievements,
   onMenu,
   onBuy,
   onCloseShop,
@@ -999,12 +1231,15 @@ function GameScreen({
   view: GameView
   worldRef: React.RefObject<HTMLDivElement | null>
   notices: Notice[]
+  achievementBanner: AchievementUnlock | null
+  runAchievements: AchievementView[]
   paused: boolean
   shopOpen: boolean
   endResult: 'victory' | 'defeat' | null
   onResume: () => void
   onPause: () => void
   onSave: () => void
+  onAchievements: () => void
   onMenu: () => void
   onBuy: (item: ShopItem) => void
   onCloseShop: () => void
@@ -1182,6 +1417,7 @@ function GameScreen({
           </div>
         ))}
       </div>
+      <AchievementBanner achievement={achievementBanner} />
 
       <div className="crosshair" aria-hidden="true">
         <span />
@@ -1299,6 +1535,7 @@ function GameScreen({
           onResume={onResume}
           onSave={onSave}
           onMenu={onMenu}
+          onAchievements={onAchievements}
           onToggleDynamicDayNight={onToggleDynamicDayNight}
           onToggleWeather={onToggleWeather}
           onToggleBloom={onToggleBloom}
@@ -1307,7 +1544,13 @@ function GameScreen({
         />
       ) : null}
       {endResult ? (
-        <EndModal result={endResult} view={view} onRestart={onRestart} onMenu={onMenu} />
+        <EndModal
+          result={endResult}
+          view={view}
+          runAchievements={runAchievements}
+          onRestart={onRestart}
+          onMenu={onMenu}
+        />
       ) : null}
     </main>
   )
@@ -1320,6 +1563,12 @@ function App() {
   const [savedGame, setSavedGame] = useState<SavedGame | null>(() => readSavedGame())
   const [gameView, setGameView] = useState<GameView | null>(null)
   const [notices, setNotices] = useState<Notice[]>([])
+  const [achievementCatalogue, setAchievementCatalogue] = useState<AchievementView[]>(() =>
+    readAchievementCatalogue(),
+  )
+  const [achievementQueue, setAchievementQueue] = useState<AchievementUnlock[]>([])
+  const [runAchievements, setRunAchievements] = useState<AchievementView[]>([])
+  const [achievementsOpen, setAchievementsOpen] = useState(false)
   const [paused, setPaused] = useState(false)
   const [shopOpen, setShopOpen] = useState(false)
   const [endResult, setEndResult] = useState<'victory' | 'defeat' | null>(null)
@@ -1331,8 +1580,10 @@ function App() {
   const [dynamicDayNight, setDynamicDayNight] = useState(() => readDynamicDayNight())
   const [weatherEnabled, setWeatherEnabled] = useState(() => readWeatherEnabled())
   const [runId, setRunId] = useState(0)
+  const [achievementSessionId] = useState(() => crypto.randomUUID())
   const worldRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<GameEngine | null>(null)
+  const achievementsOpenRef = useRef(false)
   const noticeCounter = useRef(0)
   const musicMutedRef = useRef(musicMuted)
   const dynamicDayNightRef = useRef(dynamicDayNight)
@@ -1340,6 +1591,10 @@ function App() {
   const bloomEnabledRef = useRef(bloomEnabled)
   const foliageQualityRef = useRef(foliageQuality)
   const screenShakeEnabledRef = useRef(screenShakeEnabled)
+  const achievementSummary = useMemo(
+    () => summarizeAchievements(achievementCatalogue),
+    [achievementCatalogue],
+  )
 
   const addNotice = useMemo(
     () => (message: string, tone: Notice['tone'] = 'info') => {
@@ -1352,6 +1607,20 @@ function App() {
     [],
   )
 
+  const openAchievements = () => {
+    achievementsOpenRef.current = true
+    if (screen === 'game') setPaused(true)
+    setAchievementCatalogue(
+      engineRef.current?.getAchievements() ?? readAchievementCatalogue(),
+    )
+    setAchievementsOpen(true)
+  }
+
+  const closeAchievements = () => {
+    achievementsOpenRef.current = false
+    setAchievementsOpen(false)
+  }
+
   useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme
     try {
@@ -1362,6 +1631,14 @@ function App() {
   }, [theme])
 
   useEffect(() => {
+    if (achievementQueue.length === 0) return
+    const timer = window.setTimeout(() => {
+      setAchievementQueue((current) => current.slice(1))
+    }, 9000)
+    return () => window.clearTimeout(timer)
+  }, [achievementQueue])
+
+  useEffect(() => {
     if (screen !== 'game' || !worldRef.current) return
     const engine = new GameEngine(
       worldRef.current,
@@ -1370,12 +1647,31 @@ function App() {
         onView: setGameView,
         onNotice: addNotice,
         onShop: () => setShopOpen(true),
-        onPauseRequest: () => setPaused((current) => !current),
+        onPauseRequest: () => {
+          if (!achievementsOpenRef.current) setPaused((current) => !current)
+        },
         onSaveRequest: () => {
           const save = engineRef.current?.save()
           if (save) setSavedGame(save)
         },
-        onEnd: setEndResult,
+        onEnd: (result) => {
+          if (result === 'victory') {
+            try {
+              localStorage.removeItem(SAVE_KEY)
+              setSavedGame(null)
+            } catch (error) {
+              console.warn('Korovany: completed campaign save could not be removed.', error)
+            }
+          }
+          setEndResult(result)
+          setRunAchievements(engineRef.current?.getCurrentRunAchievements() ?? [])
+        },
+        onAchievementUnlocked: (achievement) => {
+          setAchievementQueue((current) => [...current, achievement])
+          setAchievementCatalogue(
+            engineRef.current?.getAchievements() ?? readAchievementCatalogue(),
+          )
+        },
       },
       pendingSave,
       {
@@ -1385,9 +1681,12 @@ function App() {
         bloomEnabled: bloomEnabledRef.current,
         foliageQuality: foliageQualityRef.current,
         screenShakeEnabled: screenShakeEnabledRef.current,
+        achievementRunId: `${achievementSessionId}:${runId}`,
       },
     )
     engineRef.current = engine
+    setAchievementCatalogue(engine.getAchievements())
+    setRunAchievements(engine.getCurrentRunAchievements())
     engine.start()
     addNotice(
       pendingSave ? 'Сохранение загружено.' : `${FACTION_INFO[faction].name}: кампания началась.`,
@@ -1397,11 +1696,13 @@ function App() {
       engine.destroy()
       if (engineRef.current === engine) engineRef.current = null
     }
-  }, [addNotice, faction, pendingSave, runId, screen])
+  }, [achievementSessionId, addNotice, faction, pendingSave, runId, screen])
 
   useEffect(() => {
-    engineRef.current?.setPaused(paused || shopOpen || Boolean(endResult))
-  }, [paused, shopOpen, endResult])
+    engineRef.current?.setPaused(
+      paused || shopOpen || achievementsOpen || Boolean(endResult),
+    )
+  }, [paused, shopOpen, achievementsOpen, endResult])
 
   const startGame = (selectedFaction: Faction, save?: SavedGame) => {
     engineRef.current?.stopAudio()
@@ -1409,6 +1710,10 @@ function App() {
     setPendingSave(save)
     setGameView(createInitialView(selectedFaction, save))
     setNotices([])
+    setAchievementQueue([])
+    setRunAchievements([])
+    achievementsOpenRef.current = false
+    setAchievementsOpen(false)
     setPaused(false)
     setShopOpen(false)
     setEndResult(null)
@@ -1424,6 +1729,9 @@ function App() {
     setShopOpen(false)
     setEndResult(null)
     setSavedGame(readSavedGame())
+    setAchievementCatalogue(readAchievementCatalogue())
+    achievementsOpenRef.current = false
+    setAchievementsOpen(false)
   }
 
   const saveGame = () => {
@@ -1519,25 +1827,35 @@ function App() {
 
   if (screen === 'menu') {
     return (
-      <MenuScreen
-        savedGame={savedGame}
-        theme={theme}
-        dynamicDayNight={dynamicDayNight}
-        weatherEnabled={weatherEnabled}
-        bloomEnabled={bloomEnabled}
-        foliageQuality={foliageQuality}
-        screenShakeEnabled={screenShakeEnabled}
-        onStart={(selectedFaction) => startGame(selectedFaction)}
-        onLoad={() => {
-          if (savedGame) startGame(savedGame.faction, savedGame)
-        }}
-        onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
-        onToggleDynamicDayNight={toggleDynamicDayNight}
-        onToggleWeather={toggleWeather}
-        onToggleBloom={toggleBloom}
-        onCycleFoliageQuality={cycleFoliageQuality}
-        onToggleScreenShake={toggleScreenShake}
-      />
+      <>
+        <MenuScreen
+          savedGame={savedGame}
+          achievementSummary={achievementSummary}
+          theme={theme}
+          dynamicDayNight={dynamicDayNight}
+          weatherEnabled={weatherEnabled}
+          bloomEnabled={bloomEnabled}
+          foliageQuality={foliageQuality}
+          screenShakeEnabled={screenShakeEnabled}
+          onStart={(selectedFaction) => startGame(selectedFaction)}
+          onLoad={() => {
+            if (savedGame) startGame(savedGame.faction, savedGame)
+          }}
+          onAchievements={openAchievements}
+          onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
+          onToggleDynamicDayNight={toggleDynamicDayNight}
+          onToggleWeather={toggleWeather}
+          onToggleBloom={toggleBloom}
+          onCycleFoliageQuality={cycleFoliageQuality}
+          onToggleScreenShake={toggleScreenShake}
+        />
+        {achievementsOpen ? (
+          <AchievementGallery
+            achievements={achievementCatalogue}
+            onClose={closeAchievements}
+          />
+        ) : null}
+      </>
     )
   }
 
@@ -1555,43 +1873,54 @@ function App() {
   }
 
   return (
-    <GameScreen
-      view={gameView}
-      worldRef={worldRef}
-      notices={notices}
-      paused={paused}
-      shopOpen={shopOpen}
-      endResult={endResult}
-      onResume={() => setPaused(false)}
-      onPause={() => setPaused(true)}
-      onSave={saveGame}
-      onMenu={returnToMenu}
-      onBuy={buyItem}
-      onCloseShop={() => setShopOpen(false)}
-      onAttack={() => engineRef.current?.attack()}
-      onAbilityDown={() => {
-        if (faction === 'guard') engineRef.current?.setShield(true)
-        else engineRef.current?.useAbility()
-      }}
-      onAbilityUp={() => engineRef.current?.setShield(false)}
-      onInteract={() => engineRef.current?.interact()}
-      onCommand={() => engineRef.current?.commandSquad()}
-      onPointerLock={() => engineRef.current?.requestPointerLock()}
-      onInput={(code, active) => engineRef.current?.setInput(code, active)}
-      onRestart={() => startGame(faction)}
-      musicMuted={musicMuted}
-      bloomEnabled={bloomEnabled}
-      weatherEnabled={weatherEnabled}
-      foliageQuality={foliageQuality}
-      screenShakeEnabled={screenShakeEnabled}
-      onToggleMusic={toggleMusic}
-      dynamicDayNight={dynamicDayNight}
-      onToggleDynamicDayNight={toggleDynamicDayNight}
-      onToggleWeather={toggleWeather}
-      onToggleBloom={toggleBloom}
-      onCycleFoliageQuality={cycleFoliageQuality}
-      onToggleScreenShake={toggleScreenShake}
-    />
+    <>
+      <GameScreen
+        view={gameView}
+        worldRef={worldRef}
+        notices={notices}
+        achievementBanner={achievementQueue[0] ?? null}
+        runAchievements={runAchievements}
+        paused={paused}
+        shopOpen={shopOpen}
+        endResult={endResult}
+        onResume={() => setPaused(false)}
+        onPause={() => setPaused(true)}
+        onSave={saveGame}
+        onAchievements={openAchievements}
+        onMenu={returnToMenu}
+        onBuy={buyItem}
+        onCloseShop={() => setShopOpen(false)}
+        onAttack={() => engineRef.current?.attack()}
+        onAbilityDown={() => {
+          if (faction === 'guard') engineRef.current?.setShield(true)
+          else engineRef.current?.useAbility()
+        }}
+        onAbilityUp={() => engineRef.current?.setShield(false)}
+        onInteract={() => engineRef.current?.interact()}
+        onCommand={() => engineRef.current?.commandSquad()}
+        onPointerLock={() => engineRef.current?.requestPointerLock()}
+        onInput={(code, active) => engineRef.current?.setInput(code, active)}
+        onRestart={() => startGame(faction)}
+        musicMuted={musicMuted}
+        bloomEnabled={bloomEnabled}
+        weatherEnabled={weatherEnabled}
+        foliageQuality={foliageQuality}
+        screenShakeEnabled={screenShakeEnabled}
+        onToggleMusic={toggleMusic}
+        dynamicDayNight={dynamicDayNight}
+        onToggleDynamicDayNight={toggleDynamicDayNight}
+        onToggleWeather={toggleWeather}
+        onToggleBloom={toggleBloom}
+        onCycleFoliageQuality={cycleFoliageQuality}
+        onToggleScreenShake={toggleScreenShake}
+      />
+      {achievementsOpen ? (
+        <AchievementGallery
+          achievements={achievementCatalogue}
+          onClose={closeAchievements}
+        />
+      ) : null}
+    </>
   )
 }
 

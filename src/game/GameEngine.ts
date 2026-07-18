@@ -2,6 +2,11 @@ import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { BloomPostProcessor } from './BloomPostProcessor'
 import {
+  AchievementTracker,
+  type AchievementSummary,
+  type AchievementView,
+} from './achievements'
+import {
   ABILITY_INFO,
   FACTION_INFO,
   SAVE_KEY,
@@ -32,6 +37,7 @@ export interface GameEngineSettings {
   bloomEnabled: boolean
   screenShakeEnabled: boolean
   foliageQuality: FoliageQuality
+  achievementRunId: string
 }
 
 type ActorAiMode = 'normal' | 'captive' | 'attackEventProp'
@@ -719,6 +725,7 @@ export class GameEngine {
   private readonly container: HTMLElement
   private readonly callbacks: GameCallbacks
   private readonly faction: Faction
+  private readonly achievements: AchievementTracker
   private readonly palette: Palette
   private readonly scene = new THREE.Scene()
   private readonly camera = new THREE.PerspectiveCamera(56, 1, 0.1, 240)
@@ -833,6 +840,7 @@ export class GameEngine {
   private musicTimer: number | null = null
   private musicNextNoteTime = 0
   private musicStep = 0
+  private pendingAchievementChimes = 0
   private musicMuted: boolean
   private dynamicDayNight: boolean
   private weatherEnabled: boolean
@@ -864,6 +872,11 @@ export class GameEngine {
     this.container = container
     this.callbacks = callbacks
     this.faction = faction
+    this.achievements = new AchievementTracker((achievement) => {
+      this.callbacks.onAchievementUnlocked(achievement)
+      if (this.audioContext) this.playSound('achievement')
+      else this.pendingAchievementChimes += 1
+    })
     this.musicMuted = settings.musicMuted ?? false
     this.dynamicDayNight = settings.dynamicDayNight ?? true
     this.weatherEnabled = settings.weatherEnabled ?? true
@@ -916,6 +929,8 @@ export class GameEngine {
     this.scene.add(this.player)
     this.applySavedBodyAppearance()
     this.lastZone = zoneAt(this.player.position.x, this.player.position.z)
+    // Loading a save starts a fresh achievement run; cumulative progress remains global.
+    this.achievements.beginRun(faction, this.lastZone, settings.achievementRunId)
     this.weatherZone = this.lastZone
     this.setWeatherTarget(
       this.weatherEnabled ? WEATHER_BY_ZONE[this.weatherZone] : 'clear',
@@ -1096,6 +1111,18 @@ export class GameEngine {
     this.stopMusic()
   }
 
+  getAchievements(): AchievementView[] {
+    return this.achievements.getCatalogue()
+  }
+
+  getAchievementSummary(): AchievementSummary {
+    return this.achievements.getSummary()
+  }
+
+  getCurrentRunAchievements(): AchievementView[] {
+    return this.achievements.getCurrentRunUnlocks()
+  }
+
   useAbility(): void {
     if (this.faction === 'guard') {
       this.setShield(true)
@@ -1122,6 +1149,7 @@ export class GameEngine {
     this.abilityCooldown = ability.cooldownMax
     if (ability.id === 'bow') this.fireArrow()
     else this.cleave()
+    this.achievements.recordAbilityUse(ability.id)
     this.emitView(true)
   }
 
@@ -1144,6 +1172,7 @@ export class GameEngine {
     }
     this.resumeAudio()
     this.shieldActive = true
+    this.achievements.recordAbilityUse('shield')
     this.updateShieldPose()
     this.emitView(true)
   }
@@ -1222,6 +1251,7 @@ export class GameEngine {
           'success',
         )
         this.gold += 25
+        this.achievements.recordGoldEarned(25)
         this.playSound('coin')
       } else {
         this.callbacks.onNotice('Командир: «Приказ прежний. Не стой столбом!»', 'info')
@@ -1241,6 +1271,8 @@ export class GameEngine {
         return
       }
       this.gold += 95
+      this.achievements.recordGoldEarned(95)
+      this.achievements.recordCaravanRobbed(false)
       this.caravanCooldown = 40
       this.caravanRobbedFlash = 1
       this.completeObjective('raid')
@@ -1261,6 +1293,7 @@ export class GameEngine {
     if (this.paused || this.ended) return
     this.resumeAudio()
     this.squadFollowing = !this.squadFollowing
+    this.achievements.recordSquadCommand()
     if (this.faction === 'villain') this.completeObjective('rally')
     const message = this.squadFollowing
       ? this.faction === 'guard'
@@ -1301,6 +1334,7 @@ export class GameEngine {
     }
 
     this.gold -= item.price
+    this.achievements.recordPurchase(item.id)
     this.playSound('coin')
     this.emitView(true)
     return { ok: true, message: `${item.name}: покупка совершена.` }
@@ -2734,6 +2768,7 @@ export class GameEngine {
     const currentZone = zoneAt(this.player.position.x, this.player.position.z)
     if (currentZone !== this.lastZone) {
       this.lastZone = currentZone
+      this.achievements.recordZone(currentZone)
       this.callbacks.onNotice(`Новая область: ${this.zoneName(currentZone)}`, 'info')
       if (this.faction === 'villain' && currentZone === 'palace') this.completeObjective('breach')
     }
@@ -2834,15 +2869,20 @@ export class GameEngine {
 
     let message: string
     if (succeeded) {
+      this.achievements.recordWorldEvent(event.kind, true)
       if (event.kind === 'richCaravan') {
         this.gold += 180
+        this.achievements.recordGoldEarned(180)
+        this.achievements.recordCaravanRobbed(true)
         message = 'Богатый корован ограблен, а погоня отстала. +180 золота.'
       } else if (event.kind === 'defendHome') {
         this.gold += 90
+        this.achievements.recordGoldEarned(90)
         this.health = Math.min(100, this.health + 8)
         message = 'Дом отстояли! +90 золота и +8 здоровья.'
       } else if (event.kind === 'champion') {
         this.gold += 120
+        this.achievements.recordGoldEarned(120)
         const damageBonus = Math.min(
           6,
           Math.max(0, CHAMPION_DAMAGE_CAP - this.championDamageBonus),
@@ -2857,11 +2897,13 @@ export class GameEngine {
         message = 'Пленник спасён и присоединился к вашему отряду.'
       } else {
         this.gold += 70
+        this.achievements.recordGoldEarned(70)
         message = 'Награда за цель получена. +70 золота.'
       }
       this.callbacks.onNotice(message, 'success')
       this.playSound('eventWin')
     } else {
+      this.achievements.recordWorldEvent(event.kind, false)
       const failureMessages: Record<WorldEventKind, string> = {
         richCaravan: 'Богатый корован ушёл вместе с добычей.',
         defendHome: 'Дом не удалось защитить — огонь взял своё.',
@@ -3523,6 +3565,7 @@ export class GameEngine {
       baseDamage * armor * (frontalBlock ? SHIELD_DAMAGE_MULTIPLIER : 1)
     const impact = THREE.MathUtils.clamp(dealt / 20, 0, 1)
     this.health -= dealt
+    this.achievements.recordPlayerDamage(dealt, frontalBlock)
     if (frontalBlock) {
       this.addTrauma(TRAUMA_BLOCK)
       this.damageFlash = Math.max(
@@ -3756,12 +3799,14 @@ export class GameEngine {
     }
 
     this.kills += 1
+    this.achievements.recordKill(actor.role, actor.faction)
     if (actor.eventOwnerId) {
       this.emitView(true)
       return
     }
     const reward = actor.role === 'commander' ? 55 : 12
     this.gold += reward
+    this.achievements.recordGoldEarned(reward)
     this.callbacks.onNotice(
       actor.role === 'commander' ? 'Командир дворца повержен!' : `Враг повержен. +${reward} золота`,
       'success',
@@ -3785,6 +3830,7 @@ export class GameEngine {
     const severe = wasWounded || Math.random() < 0.4
     if (severe) {
       this.body[part] = 'missing'
+      this.achievements.recordInjury(part, true)
       if (!part.includes('Eye')) {
         this.body.bleeding = Math.min(2.1, this.body.bleeding + (part.includes('Leg') ? 0.48 : 0.34))
         this.hidePlayerLimb(part)
@@ -3797,6 +3843,7 @@ export class GameEngine {
       )
     } else {
       this.body[part] = 'wounded'
+      this.achievements.recordInjury(part, false)
       this.body.bleeding = Math.min(1.2, this.body.bleeding + 0.12)
       this.callbacks.onNotice(`Ранение: ${formatPart(part)}.`, 'warning')
     }
@@ -3913,6 +3960,7 @@ export class GameEngine {
       this.eventCooldown = 0
     }
     this.callbacks.onNotice(`Задача выполнена: ${objective.text}`, 'success')
+    this.achievements.recordObjectiveCompleted()
     this.playSound('objective')
     this.emitView(true)
     return true
@@ -3966,6 +4014,7 @@ export class GameEngine {
     this.cancelActiveEvent()
     this.clearTransientCombatFeedback()
     this.ended = true
+    this.achievements.recordCampaignEnd(result, this.elapsed, Math.max(0, this.health))
     this.updateMusicVolume()
     this.keys.clear()
     if (document.pointerLockElement === this.renderer.domElement) document.exitPointerLock()
@@ -6963,7 +7012,7 @@ uniform float uSwayAmplitude;`,
     if (event.code === 'KeyE') this.interact()
     if (event.code === 'KeyQ') this.commandSquad()
     if (event.code === 'KeyP' || event.code === 'Escape') this.callbacks.onPauseRequest()
-    if (event.code === 'KeyF') this.callbacks.onSaveRequest()
+    if (event.code === 'KeyF' && !this.ended) this.callbacks.onSaveRequest()
     if (
       event.code === 'KeyR' &&
       document.pointerLockElement === this.renderer.domElement
@@ -7045,6 +7094,13 @@ uniform float uSwayAmplitude;`,
       this.startMusic()
     }
     if (this.audioContext.state === 'suspended') this.audioContext.resume().catch(() => undefined)
+    if (this.pendingAchievementChimes > 0) {
+      const pending = this.pendingAchievementChimes
+      this.pendingAchievementChimes = 0
+      for (let index = 0; index < pending; index += 1) {
+        this.playAchievementChime(index * 0.34)
+      }
+    }
   }
 
   private startMusic(): void {
@@ -7252,11 +7308,16 @@ uniform float uSwayAmplitude;`,
       | 'event'
       | 'eventWin'
       | 'eventFail'
+      | 'achievement'
       | 'thunder',
   ): void {
     if (!this.audioContext) return
     if (type === 'thunder') {
       this.playThunder()
+      return
+    }
+    if (type === 'achievement') {
+      this.playAchievementChime()
       return
     }
     const frequencies: Record<typeof type, [number, number, number]> = {
@@ -7294,6 +7355,27 @@ uniform float uSwayAmplitude;`,
     gain.connect(this.audioContext.destination)
     oscillator.start()
     oscillator.stop(this.audioContext.currentTime + duration)
+  }
+
+  private playAchievementChime(delay = 0): void {
+    const context = this.audioContext
+    if (!context) return
+    const now = context.currentTime
+    const notes = [659.25, 880, 1174.66]
+    notes.forEach((frequency, index) => {
+      const start = now + delay + index * 0.085
+      const oscillator = context.createOscillator()
+      const gain = context.createGain()
+      oscillator.type = index === notes.length - 1 ? 'sine' : 'triangle'
+      oscillator.frequency.setValueAtTime(frequency, start)
+      gain.gain.setValueAtTime(0.0001, start)
+      gain.gain.exponentialRampToValueAtTime(0.075, start + 0.012)
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.32)
+      oscillator.connect(gain)
+      gain.connect(context.destination)
+      oscillator.start(start)
+      oscillator.stop(start + 0.34)
+    })
   }
 
   private playThunder(): void {
