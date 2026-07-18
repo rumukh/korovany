@@ -56,13 +56,49 @@ export interface GameEngineSettings {
 }
 
 type ActorAiMode = 'normal' | 'captive' | 'attackEventProp'
+type ActorActionKind = 'meleePlayer' | 'meleeActor' | 'eventProp' | 'arrow'
+type ActorActionPhase = 'windup' | 'recovery'
+type HitReactionKind = 'none' | 'flinch' | 'stagger'
+type DeathStyle = 'sideFall' | 'backFall' | 'spinFall' | 'launchFall'
+type TelegraphKind = 'tick' | 'aim' | 'commander' | 'wedge'
 
 interface EventPropTarget {
+  id: string
+  ownerId: string
   object: THREE.Object3D
   hp: number
   maxHp: number
   position: THREE.Vector3
   attackRange: number
+}
+
+interface ActorAction {
+  kind: ActorActionKind
+  phase: ActorActionPhase
+  elapsed: number
+  duration: number
+  target:
+    | { kind: 'player' }
+    | { kind: 'actor'; id: string }
+    | { kind: 'eventProp'; id: string }
+  targetPosition: THREE.Vector3
+  contactRange: number
+}
+
+interface CharacterPose {
+  stride: number
+  attack: number
+  anticipation: number
+  recovery: number
+  flinch: number
+  stagger: number
+}
+
+interface TelegraphEntry {
+  mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>
+  ownerId: string | null
+  priority: number
+  kind: TelegraphKind
 }
 
 interface Actor {
@@ -86,7 +122,6 @@ interface Actor {
   visualSpeed: number
   motionBlend: number
   turnLean: number
-  attackAnimation: number
   idleTimer: number
   wanderPace: number
   retreatTimer: number
@@ -96,7 +131,7 @@ interface Actor {
   squadEligible: boolean
   aiMode: ActorAiMode
   eventOwnerId: string | null
-  eventPropTarget: EventPropTarget | null
+  eventPropTargetId: string | null
   ignoredTargetId: string | null
   playerAggro: boolean
   aggroMemory: number
@@ -110,6 +145,20 @@ interface Actor {
   healthBarVisibleUntil: number
   outlineBinding: OutlineBinding
   outlineUntil: number
+  action: ActorAction | null
+  reaction: HitReactionKind
+  reactionRemaining: number
+  poise: number
+  maxPoise: number
+  poiseRecoveryDelay: number
+  staggerImmunity: number
+  knockbackVelocity: THREE.Vector3
+  lastHitDirection: THREE.Vector3
+  deathStyle: DeathStyle | null
+  deathAge: number
+  deathStartPosition: THREE.Vector3
+  deathStartRotation: THREE.Euler
+  deathTravelled: number
   deathAt: number | null
 }
 
@@ -118,7 +167,7 @@ interface ActorSpawnOptions {
   squadEligible?: boolean
   aiMode?: ActorAiMode
   eventOwnerId?: string | null
-  eventPropTarget?: EventPropTarget | null
+  eventPropTargetId?: string | null
   ignoredTargetId?: string | null
 }
 
@@ -468,6 +517,20 @@ const COMMANDER_REINFORCEMENT_INTERVAL = 25
 const COMMANDER_REINFORCEMENT_LIMIT = 4
 const BRUTE_FRONTAL_DAMAGE_MULTIPLIER = 0.5
 const BRUTE_FRONT_DOT = 0.2
+const FLINCH_TIME = 0.12
+const POISE_REGEN_DELAY = 0.75
+const POISE_RECOVERY_PER_SECOND = 22
+const STAGGER_IMMUNITY = 0.45
+const KNOCKBACK_DAMPING = 11
+const KNOCKBACK_MAX_SPEED = 11
+const KNOCKBACK_STEER_THRESHOLD = 0.8
+const LARGE_ROLE_KNOCKBACK_SCALE = 0.55
+const TELEGRAPH_MAX = 8
+const TELEGRAPH_Y = 0.055
+const CONTACT_RANGE_FORGIVENESS = 0.35
+const DEATH_POSE_TIME = 0.24
+const REDUCED_MOTION_COMBAT_SCALE = 0.6
+const HIGH_KNOCKBACK_THRESHOLD = 2.5
 const SHAKE_POSITION = 0.22
 const SHAKE_ROLL = 0.012
 const SHAKE_DECAY = 2.1
@@ -885,6 +948,9 @@ export class GameEngine {
   private readonly particles: Particle[] = []
   private readonly decals: Decal[] = []
   private readonly projectiles: Projectile[] = []
+  private readonly eventPropTargets = new Map<string, EventPropTarget>()
+  private readonly telegraphPool: TelegraphEntry[] = []
+  private readonly telegraphGeometries = new Map<TelegraphKind, THREE.BufferGeometry>()
   private readonly damageNumberFx: DamageNumberFx[] = []
   private readonly comicCalloutFx: ComicCalloutFx[] = []
   private readonly impactRayFx: ImpactRayFx[] = []
@@ -1226,6 +1292,7 @@ export class GameEngine {
       if (Array.isArray(material)) material.forEach((entry) => materials.add(entry))
       else materials.add(material)
     })
+    this.telegraphGeometries.forEach((geometry) => geometries.add(geometry))
     geometries.forEach((geometry) => geometry.dispose())
     materials.forEach((material) => {
       if (!ComicMaterialLibrary.isLibraryOwned(material)) material.dispose()
@@ -1242,6 +1309,9 @@ export class GameEngine {
     this.interactableOutlineBindings.length = 0
     this.projectiles.length = 0
     this.projectileSourcesToClear.clear()
+    this.eventPropTargets.clear()
+    this.telegraphPool.length = 0
+    this.telegraphGeometries.clear()
     this.stopMusic()
   }
 
@@ -1639,9 +1709,9 @@ export class GameEngine {
     this.caravanRobbedFlash = Math.max(0, this.caravanRobbedFlash - delta * 2)
     this.updatePlayer(delta)
     this.updateCaravan(delta)
+    this.updateProjectiles(delta)
     this.updateActors(delta)
     this.updateInteractableOutlines()
-    this.updateProjectiles(delta)
     this.updateParticles(delta)
     this.updateComicHitFx(delta)
     this.updateDecals(delta)
@@ -2181,10 +2251,24 @@ export class GameEngine {
         ? Math.atan2(forward.x, forward.z)
         : Math.atan2(move.x, move.z)
       const stride = Math.sin(this.elapsed * (sprinting ? 15 : 10)) * 0.62
-      this.animateCharacter(this.player, stride, this.attackAnimation)
+      this.animateCharacter(this.player, {
+        stride,
+        attack: this.attackAnimation,
+        anticipation: 0,
+        recovery: 0,
+        flinch: 0,
+        stagger: 0,
+      })
     } else {
       if (this.shieldActive) this.player.rotation.y = Math.atan2(forward.x, forward.z)
-      this.animateCharacter(this.player, 0, this.attackAnimation)
+      this.animateCharacter(this.player, {
+        stride: 0,
+        attack: this.attackAnimation,
+        anticipation: 0,
+        recovery: 0,
+        flinch: 0,
+        stagger: 0,
+      })
     }
 
     if (this.keys.has('Space') && this.onGround && missingLegs < 2) {
@@ -2205,9 +2289,11 @@ export class GameEngine {
   private updateActors(delta: number): void {
     for (const actor of this.actors) {
       this.updateActorIndicators(actor)
-      if (!actor.alive) continue
+      if (!actor.alive) {
+        this.updateActorDeathMotion(actor, delta)
+        continue
+      }
       actor.attackCooldown = Math.max(0, actor.attackCooldown - delta)
-      actor.attackAnimation = Math.max(0, actor.attackAnimation - delta * 4.6)
       actor.wanderTimer = Math.max(0, actor.wanderTimer - delta)
       actor.idleTimer = Math.max(0, actor.idleTimer - delta)
       actor.retreatTimer = Math.max(0, actor.retreatTimer - delta)
@@ -2215,13 +2301,34 @@ export class GameEngine {
       actor.rageTimer = Math.max(0, actor.rageTimer - delta)
       actor.alertCooldown = Math.max(0, actor.alertCooldown - delta)
       actor.retaliationTimer = Math.max(0, actor.retaliationTimer - delta)
+      this.updateActorReaction(actor, delta)
+      const knockbackSpeed = this.updateActorKnockback(actor, delta)
+      if (actor.role === 'commander' && actor.reaction !== 'stagger') {
+        this.updateCommander(actor, delta)
+      }
+      if (actor.action) {
+        this.updateActorAction(actor, delta)
+        actor.velocity.set(0, 0, 0)
+        actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+        actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
+        this.animateActorCharacter(actor, delta, 0)
+        this.updateChampionAura(actor)
+        continue
+      }
+      if (actor.reaction === 'stagger' || knockbackSpeed > KNOCKBACK_STEER_THRESHOLD) {
+        actor.velocity.set(0, 0, 0)
+        actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+        actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
+        this.animateActorCharacter(actor, delta, 0)
+        this.updateChampionAura(actor)
+        continue
+      }
       if (actor.aiMode === 'captive') {
         actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
         actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
         this.animateActorCharacter(actor, delta, 0)
         continue
       }
-      if (actor.role === 'commander') this.updateCommander(actor, delta)
 
       const toPlayer = this.player.position.clone().sub(actor.mesh.position)
       toPlayer.y = 0
@@ -2276,19 +2383,22 @@ export class GameEngine {
           actor.targetId = null
         }
       }
+      const assignedEventProp = actor.eventPropTargetId
+        ? this.eventPropTargets.get(actor.eventPropTargetId)
+        : undefined
 
       if (retaliationTarget) {
         targetActor = retaliationTarget
         targetPosition = retaliationTarget.mesh.position
       } else if (
         actor.aiMode === 'attackEventProp' &&
-        actor.eventPropTarget &&
-        actor.eventPropTarget.hp > 0 &&
+        assignedEventProp &&
+        assignedEventProp.hp > 0 &&
         actor.rageTimer <= 0
       ) {
         actor.targetId = null
         actor.playerAggro = false
-        targetEventProp = actor.eventPropTarget
+        targetEventProp = assignedEventProp
         targetPosition = targetEventProp.position
       } else if (shouldPursuePlayer) {
         actor.targetId = null
@@ -2415,7 +2525,15 @@ export class GameEngine {
             moving = true
           }
           if (distance <= ARCHER_MAX_RANGE + 0.75 && actor.attackCooldown <= 0) {
-            this.fireActorArrow(actor, targetPosition)
+            this.startActorAction(
+              actor,
+              'arrow',
+              targetActor
+                ? { kind: 'actor', id: targetActor.id }
+                : { kind: 'player' },
+              targetPosition,
+              ARCHER_MAX_RANGE,
+            )
           }
         } else if (actor.retreatTimer > 0) {
           direction.copy(facingDirection).negate()
@@ -2430,11 +2548,42 @@ export class GameEngine {
             direction.copy(facingDirection)
             moving = true
           } else if (actor.attackCooldown <= 0) {
-            if (targetsPlayer) this.actorAttackPlayer(actor)
-            else if (targetActor) this.actorAttackActor(actor, targetActor)
-            else if (targetEventProp) this.actorAttackEventProp(actor, targetEventProp)
+            if (targetsPlayer) {
+              this.startActorAction(
+                actor,
+                'meleePlayer',
+                { kind: 'player' },
+                targetPosition,
+                stopDistance,
+              )
+            } else if (targetActor) {
+              this.startActorAction(
+                actor,
+                'meleeActor',
+                { kind: 'actor', id: targetActor.id },
+                targetPosition,
+                stopDistance,
+              )
+            } else if (targetEventProp) {
+              this.startActorAction(
+                actor,
+                'eventProp',
+                { kind: 'eventProp', id: targetEventProp.id },
+                targetPosition,
+                stopDistance,
+              )
+            }
           }
         }
+      }
+
+      if (actor.action) {
+        actor.velocity.set(0, 0, 0)
+        actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+        actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
+        this.animateActorCharacter(actor, delta, 0)
+        this.updateChampionAura(actor)
+        continue
       }
 
       if (actor.role !== 'commander') {
@@ -2532,13 +2681,7 @@ export class GameEngine {
         actor.turnLean = THREE.MathUtils.damp(actor.turnLean, 0, 8, delta)
       }
       this.animateActorCharacter(actor, delta, lookYaw)
-      if (actor.role === 'champion') {
-        const aura = actor.mesh.getObjectByName('champion-aura')
-        if (aura) {
-          const pulse = 1 + Math.sin(this.elapsed * 5 + actor.phase) * 0.12
-          aura.scale.setScalar(pulse)
-        }
-      }
+      this.updateChampionAura(actor)
     }
   }
 
@@ -2671,6 +2814,382 @@ export class GameEngine {
     return new THREE.Vector3(Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw))
   }
 
+  private actorWindup(role: ActorRole): number {
+    if (role === 'scout' || role === 'minion') return 0.18
+    if (role === 'archer') return 0.32
+    if (role === 'commander') return 0.38
+    if (role === 'brute') return 0.56
+    if (role === 'champion') return 0.48
+    return 0.26
+  }
+
+  private actorRecovery(role: ActorRole): number {
+    if (role === 'scout' || role === 'minion') return 0.18
+    if (role === 'archer') return 0.2
+    if (role === 'commander') return 0.28
+    if (role === 'brute') return 0.42
+    if (role === 'champion') return 0.36
+    return 0.24
+  }
+
+  private actorMaxPoise(role: ActorRole): number {
+    if (role === 'scout' || role === 'minion' || role === 'archer') return 18
+    if (role === 'commander') return 46
+    if (role === 'brute') return 58
+    if (role === 'champion') return 72
+    return 28
+  }
+
+  private actorStaggerDuration(role: ActorRole): number {
+    if (role === 'scout' || role === 'minion' || role === 'archer') return 0.34
+    if (role === 'commander') return 0.24
+    if (role === 'brute') return 0.2
+    if (role === 'champion') return 0.18
+    return 0.3
+  }
+
+  private startActorAction(
+    actor: Actor,
+    kind: ActorActionKind,
+    target: ActorAction['target'],
+    targetPosition: THREE.Vector3,
+    contactRange: number,
+  ): void {
+    if (!actor.alive || actor.action || actor.reaction === 'stagger') return
+    const cooldown =
+      kind === 'arrow'
+        ? ARCHER_FIRE_COOLDOWN
+        : kind === 'meleePlayer'
+          ? actor.role === 'commander'
+            ? 0.8
+            : 1.15
+          : kind === 'meleeActor'
+            ? 1.3
+            : 1.35
+    actor.attackCooldown = this.actorAttackInterval(actor, cooldown)
+    actor.velocity.set(0, 0, 0)
+    actor.action = {
+      kind,
+      phase: 'windup',
+      elapsed: 0,
+      duration: this.actorWindup(actor.role),
+      target,
+      targetPosition: targetPosition.clone(),
+      contactRange,
+    }
+    this.faceActorToward(actor, targetPosition, 1)
+    this.acquireActorTelegraph(actor)
+  }
+
+  private updateActorAction(actor: Actor, delta: number): void {
+    const action = actor.action
+    if (!action) return
+    const livePosition = this.resolveActorActionTarget(actor, action)
+    if (livePosition) action.targetPosition.copy(livePosition)
+    this.faceActorToward(actor, action.targetPosition, delta)
+
+    action.elapsed += delta
+    if (action.phase === 'windup') {
+      this.acquireActorTelegraph(actor)
+      this.updateActorTelegraph(actor, action)
+      if (action.elapsed < action.duration) return
+      this.releaseActorTelegraph(actor.id)
+      this.resolveActorActionContact(actor, action)
+      if (!actor.alive || actor.reaction === 'stagger' || actor.action !== action) return
+      if (actor.role === 'scout') actor.retreatTimer = SCOUT_RETREAT_DURATION
+      action.phase = 'recovery'
+      action.elapsed = 0
+      action.duration = this.actorRecovery(actor.role)
+      return
+    }
+
+    if (action.elapsed >= action.duration) actor.action = null
+  }
+
+  private resolveActorActionTarget(
+    actor: Actor,
+    action: ActorAction,
+  ): THREE.Vector3 | null {
+    if (action.target.kind === 'player') {
+      return this.health > 0 && hostile(actor.faction, this.faction)
+        ? this.player.position
+        : null
+    }
+    if (action.target.kind === 'actor') {
+      const targetId = action.target.id
+      const target = this.actors.find((candidate) => candidate.id === targetId)
+      return target?.alive && hostile(actor.faction, target.faction)
+        ? target.mesh.position
+        : null
+    }
+    const target = this.eventPropTargets.get(action.target.id)
+    return target && target.hp > 0 ? target.position : null
+  }
+
+  private resolveActorActionContact(actor: Actor, action: ActorAction): void {
+    if (action.kind === 'arrow') {
+      this.fireActorArrow(actor, this.resolveActorActionTarget(actor, action) ?? action.targetPosition)
+      return
+    }
+
+    const livePosition = this.resolveActorActionTarget(actor, action)
+    if (
+      !livePosition ||
+      actor.mesh.position.distanceTo(livePosition) >
+        action.contactRange + CONTACT_RANGE_FORGIVENESS
+    ) {
+      return
+    }
+    if (action.kind === 'meleePlayer') {
+      this.actorAttackPlayer(actor)
+      return
+    }
+    if (action.kind === 'meleeActor' && action.target.kind === 'actor') {
+      const targetId = action.target.id
+      const target = this.actors.find((candidate) => candidate.id === targetId)
+      if (target?.alive && hostile(actor.faction, target.faction)) {
+        this.actorAttackActor(actor, target)
+      }
+      return
+    }
+    if (action.kind === 'eventProp' && action.target.kind === 'eventProp') {
+      const target = this.eventPropTargets.get(action.target.id)
+      if (target && target.hp > 0) this.actorAttackEventProp(actor, target)
+    }
+  }
+
+  private faceActorToward(actor: Actor, position: THREE.Vector3, delta: number): void {
+    const offset = position.clone().sub(actor.mesh.position)
+    offset.y = 0
+    if (offset.lengthSq() <= 0.0001) return
+    const yaw = Math.atan2(offset.x, offset.z)
+    actor.mesh.rotation.y =
+      delta >= 1 ? yaw : dampAngle(actor.mesh.rotation.y, yaw, 13, delta)
+  }
+
+  private updateActorReaction(actor: Actor, delta: number): void {
+    actor.staggerImmunity = Math.max(0, actor.staggerImmunity - delta)
+    actor.poiseRecoveryDelay = Math.max(0, actor.poiseRecoveryDelay - delta)
+    if (actor.reaction !== 'none') {
+      const wasStaggered = actor.reaction === 'stagger'
+      actor.reactionRemaining = Math.max(0, actor.reactionRemaining - delta)
+      if (actor.reactionRemaining <= 0) {
+        actor.reaction = 'none'
+        if (wasStaggered) actor.poise = Math.max(actor.poise, actor.maxPoise * 0.7)
+      }
+    }
+    if (actor.reaction !== 'stagger' && actor.poiseRecoveryDelay <= 0) {
+      actor.poise = Math.min(
+        actor.maxPoise,
+        actor.poise + POISE_RECOVERY_PER_SECOND * delta,
+      )
+    }
+  }
+
+  private applyActorDamageReaction(
+    actor: Actor,
+    result: DamageResult,
+    attackKind: AttackKind,
+    requestedKnockback: number,
+  ): void {
+    if (!result.applied) return
+    actor.lastHitDirection.copy(result.direction)
+    actor.lastHitDirection.y = 0
+    if (actor.lastHitDirection.lengthSq() > 0.0001) actor.lastHitDirection.normalize()
+    if (requestedKnockback > 0 && !result.killed) {
+      const largeRole =
+        actor.role === 'brute' || actor.role === 'commander' || actor.role === 'champion'
+      const resistance = largeRole ? LARGE_ROLE_KNOCKBACK_SCALE : 1
+      const motionScale =
+        !this.screenShakeEnabled || this.reducedMotion ? REDUCED_MOTION_COMBAT_SCALE : 1
+      actor.knockbackVelocity.addScaledVector(
+        actor.lastHitDirection,
+        requestedKnockback * resistance * motionScale,
+      )
+      if (actor.knockbackVelocity.length() > KNOCKBACK_MAX_SPEED) {
+        actor.knockbackVelocity.setLength(KNOCKBACK_MAX_SPEED)
+      }
+    }
+    if (result.killed) return
+
+    if (actor.reaction !== 'stagger') {
+      actor.reaction = 'flinch'
+      actor.reactionRemaining = Math.max(actor.reactionRemaining, FLINCH_TIME)
+    }
+    actor.poiseRecoveryDelay = POISE_REGEN_DELAY
+    const poiseDamage = result.dealt * (attackKind === 'cleave' ? 1.45 : 0.75)
+    if (actor.staggerImmunity > 0) {
+      actor.poise = Math.max(actor.maxPoise * 0.7, actor.poise - poiseDamage)
+      return
+    }
+    actor.poise -= poiseDamage
+    if (actor.poise > 0) return
+
+    actor.reaction = 'stagger'
+    actor.reactionRemaining = this.actorStaggerDuration(actor.role)
+    actor.staggerImmunity = STAGGER_IMMUNITY
+    actor.poise = actor.maxPoise * 0.7
+    actor.retreatTimer = 0
+    actor.velocity.set(0, 0, 0)
+    actor.action = null
+    this.releaseActorTelegraph(actor.id)
+  }
+
+  private updateActorKnockback(actor: Actor, delta: number): number {
+    const speed = actor.knockbackVelocity.length()
+    if (speed <= 0.001) {
+      actor.knockbackVelocity.set(0, 0, 0)
+      return 0
+    }
+    const startX = actor.mesh.position.x
+    const startZ = actor.mesh.position.z
+    const requestedX = actor.knockbackVelocity.x * delta
+    const requestedZ = actor.knockbackVelocity.z * delta
+    this.moveCharacter(
+      actor.mesh.position,
+      requestedX,
+      requestedZ,
+      this.actorColliderRadiusForRole(actor.role),
+    )
+    const actualX = actor.mesh.position.x - startX
+    const actualZ = actor.mesh.position.z - startZ
+    if (Math.abs(actualX - requestedX) > 0.001) actor.knockbackVelocity.x = 0
+    if (Math.abs(actualZ - requestedZ) > 0.001) actor.knockbackVelocity.z = 0
+    actor.knockbackVelocity.multiplyScalar(Math.exp(-KNOCKBACK_DAMPING * delta))
+    if (actor.knockbackVelocity.lengthSq() < 0.0001) {
+      actor.knockbackVelocity.set(0, 0, 0)
+    }
+    return actor.knockbackVelocity.length()
+  }
+
+  private telegraphKindForRole(role: ActorRole): TelegraphKind | null {
+    if (role === 'archer') return 'aim'
+    if (role === 'commander') return 'commander'
+    if (role === 'brute' || role === 'champion') return 'wedge'
+    if (role === 'soldier' || role === 'captive') return 'tick'
+    return null
+  }
+
+  private telegraphPriorityForRole(role: ActorRole): number {
+    if (role === 'brute' || role === 'champion' || role === 'commander') return 3
+    if (role === 'archer') return 2
+    return 1
+  }
+
+  private acquireActorTelegraph(actor: Actor): void {
+    if (
+      actor.action?.phase !== 'windup' ||
+      this.paused ||
+      this.ended ||
+      document.hidden ||
+      !document.hasFocus()
+    ) {
+      return
+    }
+    const kind = this.telegraphKindForRole(actor.role)
+    if (!kind || this.telegraphPool.some((entry) => entry.ownerId === actor.id)) return
+    const priority = this.telegraphPriorityForRole(actor.role)
+    let entry = this.telegraphPool.find((candidate) => candidate.ownerId === null)
+    if (!entry && this.telegraphPool.length < TELEGRAPH_MAX) {
+      const material = new THREE.MeshBasicMaterial({
+        color: this.palette.warning,
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      })
+      const mesh = new THREE.Mesh(this.telegraphGeometry(kind), material)
+      mesh.visible = false
+      mesh.renderOrder = 2
+      this.scene.add(mesh)
+      entry = { mesh, ownerId: null, priority: 0, kind }
+      this.telegraphPool.push(entry)
+    }
+    if (!entry) {
+      const lowest = this.telegraphPool.reduce((best, candidate) =>
+        candidate.priority < best.priority ? candidate : best,
+      )
+      if (lowest.priority >= priority) return
+      entry = lowest
+    }
+    entry.ownerId = actor.id
+    entry.priority = priority
+    entry.kind = kind
+    entry.mesh.geometry = this.telegraphGeometry(kind)
+    entry.mesh.material.color.copy(
+      actor.role === 'archer' ? this.palette.warning : this.palette.danger,
+    )
+    entry.mesh.visible = true
+  }
+
+  private updateActorTelegraph(actor: Actor, action: ActorAction): void {
+    const entry = this.telegraphPool.find((candidate) => candidate.ownerId === actor.id)
+    if (!entry) return
+    const progress = THREE.MathUtils.clamp(action.elapsed / action.duration, 0, 1)
+    const eased = 1 - (1 - progress) * (1 - progress)
+    const offset = action.targetPosition.clone().sub(actor.mesh.position)
+    offset.y = 0
+    const yaw = offset.lengthSq() > 0.0001 ? Math.atan2(offset.x, offset.z) : actor.mesh.rotation.y
+    const width =
+      entry.kind === 'aim'
+        ? 0.16
+        : entry.kind === 'tick'
+          ? 0.34
+          : entry.kind === 'commander'
+            ? 2.1
+            : actor.role === 'champion'
+              ? 2.8
+              : 2.5
+    entry.mesh.position.set(actor.mesh.position.x, TELEGRAPH_Y, actor.mesh.position.z)
+    entry.mesh.rotation.set(0, yaw, 0)
+    entry.mesh.scale.set(
+      width,
+      1,
+      Math.max(0.08, action.contactRange * (entry.kind === 'aim' ? 1 : eased)),
+    )
+    entry.mesh.material.opacity = 0.34 + eased * 0.48
+  }
+
+  private releaseActorTelegraph(actorId: string): void {
+    const entry = this.telegraphPool.find((candidate) => candidate.ownerId === actorId)
+    if (!entry) return
+    entry.ownerId = null
+    entry.priority = 0
+    entry.mesh.visible = false
+    entry.mesh.material.opacity = 0
+  }
+
+  private releaseAllTelegraphs(): void {
+    for (const entry of this.telegraphPool) {
+      entry.ownerId = null
+      entry.priority = 0
+      entry.mesh.visible = false
+      entry.mesh.material.opacity = 0
+    }
+  }
+
+  private telegraphGeometry(kind: TelegraphKind): THREE.BufferGeometry {
+    const existing = this.telegraphGeometries.get(kind)
+    if (existing) return existing
+    const geometry = new THREE.BufferGeometry()
+    const positions =
+      kind === 'wedge'
+        ? [-0.5, 0, 0, 0.5, 0, 0, 0, 0, 1]
+        : kind === 'commander'
+          ? [
+              -0.5, 0, 0.08, 0.5, 0, 0.08, 0, 0, 0.42,
+              -0.5, 0, 0.54, 0.5, 0, 0.54, 0, 0, 0.9,
+            ]
+          : [
+              -0.5, 0, 0, 0.5, 0, 0, 0.5, 0, 1,
+              -0.5, 0, 0, 0.5, 0, 1, -0.5, 0, 1,
+            ]
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    geometry.computeBoundingSphere()
+    this.telegraphGeometries.set(kind, geometry)
+    return geometry
+  }
+
   private fireArrow(): void {
     const direction = this.getAimDirection()
     this.activePlayerAttackKind = 'arrow'
@@ -2763,8 +3282,6 @@ export class GameEngine {
       actor.id,
       0,
     )
-    actor.attackCooldown = this.actorAttackInterval(actor, ARCHER_FIRE_COOLDOWN)
-    actor.attackAnimation = 1
     if (actor.mesh.position.distanceTo(this.player.position) < 20) this.playSound('arrow')
   }
 
@@ -2841,6 +3358,7 @@ export class GameEngine {
         other !== actor &&
         other.alive &&
         other.role === 'commander' &&
+        other.reaction !== 'stagger' &&
         other.faction === actor.faction &&
         other.mesh.position.distanceToSquared(actor.mesh.position) <=
           COMMANDER_AURA_RANGE * COMMANDER_AURA_RANGE,
@@ -3512,6 +4030,9 @@ export class GameEngine {
       cleanup: () => {
         if (cleaned) return
         cleaned = true
+        for (const [targetId, target] of this.eventPropTargets) {
+          if (target.ownerId === event.id) this.eventPropTargets.delete(targetId)
+        }
         this.removeEventParticles(event.id)
         for (const actorId of [...event.ownedActorIds]) this.removeActorById(actorId)
         event.ownedActorIds.length = 0
@@ -3637,12 +4158,15 @@ export class GameEngine {
     const house =
       this.villageHouses[Math.floor(this.eventRng() * this.villageHouses.length)]
     const target: EventPropTarget = {
+      id: `${id}-home`,
+      ownerId: id,
       object: house,
       hp: 100,
       maxHp: 100,
       position: house.position.clone(),
       attackRange: 5.2,
     }
+    this.eventPropTargets.set(target.id, target)
     const fire = this.createHouseFireEffect(target.position)
     this.scene.add(fire)
     this.spawnDecal(target.position, 'scorch', 4.8)
@@ -3671,7 +4195,7 @@ export class GameEngine {
           squadEligible: false,
           aiMode: 'attackEventProp',
           eventOwnerId: id,
-          eventPropTarget: target,
+          eventPropTargetId: target.id,
         },
       )
       ownedActorIds.push(attacker.id)
@@ -4047,6 +4571,7 @@ export class GameEngine {
   private removeActorById(actorId: string): void {
     const index = this.actors.findIndex((actor) => actor.id === actorId)
     if (index < 0) return
+    this.releaseActorTelegraph(actorId)
     for (let projectileIndex = this.projectiles.length - 1; projectileIndex >= 0; projectileIndex -= 1) {
       if (this.projectiles[projectileIndex].sourceActorId === actorId) {
         this.removeProjectile(projectileIndex)
@@ -4081,11 +4606,6 @@ export class GameEngine {
   }
 
   private actorAttackPlayer(actor: Actor): void {
-    actor.attackCooldown = this.actorAttackInterval(
-      actor,
-      actor.role === 'commander' ? 0.8 : 1.15,
-    )
-    actor.attackAnimation = 1
     const baseDamage =
       actor.role === 'commander'
         ? 10
@@ -4102,12 +4622,9 @@ export class GameEngine {
       true,
       { attackKind: 'allyMelee' },
     )
-    if (actor.role === 'scout') actor.retreatTimer = SCOUT_RETREAT_DURATION
   }
 
   private actorAttackActor(attacker: Actor, target: Actor): void {
-    attacker.attackCooldown = this.actorAttackInterval(attacker, 1.3)
-    attacker.attackAnimation = 1
     const baseDamage =
       attacker.role === 'commander'
         ? 18
@@ -4124,12 +4641,9 @@ export class GameEngine {
       false,
       { attackKind: 'allyMelee', sourceActorId: attacker.id },
     )
-    if (attacker.role === 'scout') attacker.retreatTimer = SCOUT_RETREAT_DURATION
   }
 
   private actorAttackEventProp(actor: Actor, target: EventPropTarget): void {
-    actor.attackCooldown = this.actorAttackInterval(actor, 1.35)
-    actor.attackAnimation = 1
     target.hp = Math.max(0, target.hp - (4 + this.eventRng() * 2))
     this.createHitParticles(target.position, actor.faction)
     if (target.position.distanceTo(this.player.position) < 25) this.playSound('hit')
@@ -4306,19 +4820,6 @@ export class GameEngine {
     ) {
       this.detachActorLimb(target)
     }
-    if (options.knockback) {
-      const knockbackDirection = target.mesh.position.clone().sub(sourcePosition)
-      knockbackDirection.y = 0
-      if (knockbackDirection.lengthSq() > 0.0001) {
-        knockbackDirection.normalize()
-        this.moveCharacter(
-          target.mesh.position,
-          knockbackDirection.x * options.knockback,
-          knockbackDirection.z * options.knockback,
-          this.actorColliderRadiusForRole(target.role),
-        )
-      }
-    }
     const killed = target.hp <= 0
     const weight: HitWeight = killed
       ? 'lethal'
@@ -4333,7 +4834,22 @@ export class GameEngine {
       position,
       direction,
     }
-    if (killed) this.killActor(target, killerFaction, directPlayerKill, sourcePosition)
+    this.applyActorDamageReaction(
+      target,
+      result,
+      options.attackKind,
+      options.knockback ?? 0,
+    )
+    if (killed) {
+      this.killActor(
+        target,
+        killerFaction,
+        directPlayerKill,
+        result,
+        options.attackKind,
+        options.knockback ?? 0,
+      )
+    }
     if (directPlayerKill && !options.deferFeedback) {
       this.presentCombatFeedback({
         ...result,
@@ -4394,14 +4910,15 @@ export class GameEngine {
     actor: Actor,
     killerFaction: Faction,
     directPlayerKill: boolean,
-    sourcePosition: THREE.Vector3,
+    result: DamageResult,
+    attackKind: AttackKind,
+    requestedKnockback: number,
   ): void {
     if (!actor.alive) return
     const deathPosition = actor.mesh.position.clone()
     const largeBody =
       actor.role === 'brute' || actor.role === 'champion' || actor.role === 'commander'
-    const deathDirection = deathPosition.clone().sub(sourcePosition)
-    deathDirection.y = 0
+    const deathDirection = result.direction.clone()
     this.createBloodBurst(
       deathPosition.clone().add(new THREE.Vector3(0, 1.25, 0)),
       deathDirection,
@@ -4432,15 +4949,41 @@ export class GameEngine {
       }
     }
     actor.alive = false
+    actor.action = null
+    actor.reaction = 'none'
+    actor.reactionRemaining = 0
+    actor.poiseRecoveryDelay = 0
+    actor.staggerImmunity = 0
+    actor.attackCooldown = 0
+    actor.retreatTimer = 0
+    actor.velocity.set(0, 0, 0)
+    actor.knockbackVelocity.set(0, 0, 0)
+    this.releaseActorTelegraph(actor.id)
+    const forward = new THREE.Vector3(
+      Math.sin(actor.mesh.rotation.y),
+      0,
+      Math.cos(actor.mesh.rotation.y),
+    )
+    const right = new THREE.Vector3(forward.z, 0, -forward.x)
+    const lateralStrength = Math.abs(right.dot(actor.lastHitDirection))
+    const sourceInFront = forward.dot(actor.lastHitDirection.clone().negate()) > 0.2
+    actor.deathStyle =
+      attackKind === 'cleave' || requestedKnockback >= HIGH_KNOCKBACK_THRESHOLD
+        ? 'launchFall'
+        : lateralStrength > 0.68
+          ? 'spinFall'
+          : sourceInFront
+            ? 'backFall'
+            : 'sideFall'
+    actor.deathAge = 0
+    actor.deathStartPosition.copy(actor.mesh.position)
+    actor.deathStartRotation.copy(actor.mesh.rotation)
+    actor.deathTravelled = 0
     actor.outlineUntil = this.elapsed + OUTLINE_CORPSE_SECONDS
     actor.deathAt = this.elapsed
     actor.healthBar.visible = false
     const ring = actor.mesh.getObjectByName('faction-ring')
     if (ring) ring.visible = false
-    actor.mesh.rotation.z = actor.phase % 2 > 1 ? Math.PI / 2 : -Math.PI / 2
-    actor.mesh.position.y = 0.62
-    const weapon = actor.mesh.getObjectByName('weapon')
-    if (weapon) weapon.rotation.x = 1.4
     this.projectileSourcesToClear.add(actor.id)
     this.playSound('down')
 
@@ -4452,6 +4995,7 @@ export class GameEngine {
         this.callbacks.onNotice('Союзник победил врага. Счётчик задачи обновлён.', 'info')
         this.emitView(true)
       }
+
       return
     }
 
@@ -4469,6 +5013,67 @@ export class GameEngine {
       'success',
     )
     this.emitView(true)
+  }
+
+  private updateActorDeathMotion(actor: Actor, delta: number): void {
+    if (!actor.deathStyle || actor.deathAge >= DEATH_POSE_TIME) return
+    actor.deathAge = Math.min(DEATH_POSE_TIME, actor.deathAge + delta)
+    const progress = actor.deathAge / DEATH_POSE_TIME
+    const eased = 1 - Math.pow(1 - progress, 3)
+    const motionScale =
+      !this.screenShakeEnabled || this.reducedMotion ? REDUCED_MOTION_COMBAT_SCALE : 1
+    const side =
+      new THREE.Vector3(
+        Math.cos(actor.deathStartRotation.y),
+        0,
+        -Math.sin(actor.deathStartRotation.y),
+      ).dot(actor.lastHitDirection) >= 0
+        ? 1
+        : -1
+    const travel =
+      actor.deathStyle === 'launchFall'
+        ? 1.15 * motionScale
+        : actor.deathStyle === 'spinFall'
+          ? 0.35 * motionScale
+          : 0.2 * motionScale
+    const desiredTravel = travel * eased
+    const travelStep = desiredTravel - actor.deathTravelled
+    if (travelStep > 0.0001) {
+      this.moveCharacter(
+        actor.mesh.position,
+        actor.lastHitDirection.x * travelStep,
+        actor.lastHitDirection.z * travelStep,
+        this.actorColliderRadiusForRole(actor.role),
+      )
+      actor.deathTravelled = desiredTravel
+    }
+    actor.mesh.position.y = THREE.MathUtils.lerp(
+      actor.deathStartPosition.y,
+      0.62,
+      eased,
+    )
+    actor.mesh.rotation.x = actor.deathStartRotation.x
+    actor.mesh.rotation.y = actor.deathStartRotation.y
+    actor.mesh.rotation.z = actor.deathStartRotation.z
+    if (actor.deathStyle === 'backFall') {
+      actor.mesh.rotation.x -= (Math.PI / 2) * eased
+    } else if (actor.deathStyle === 'sideFall') {
+      actor.mesh.rotation.z -= side * (Math.PI / 2) * eased
+    } else if (actor.deathStyle === 'spinFall') {
+      actor.mesh.rotation.y += side * Math.PI * motionScale * eased
+      actor.mesh.rotation.z -= side * 1.08 * eased
+    } else {
+      actor.mesh.rotation.x -= 1.18 * eased
+      actor.mesh.rotation.z -= side * 0.44 * motionScale * eased
+    }
+    const weapon = actor.mesh.getObjectByName('weapon')
+    const leftArm = actor.mesh.getObjectByName('leftArm')
+    const rightArm = actor.mesh.getObjectByName('rightArm')
+    const head = actor.mesh.getObjectByName('head-pivot')
+    if (weapon) weapon.rotation.x = THREE.MathUtils.lerp(weapon.rotation.x, 1.4, eased)
+    if (leftArm) leftArm.rotation.z = -0.72 * eased
+    if (rightArm) rightArm.rotation.z = 0.72 * eased
+    if (head) head.rotation.z = side * 0.28 * eased
   }
 
   private injurePlayer(): void {
@@ -7250,7 +7855,6 @@ uniform float uSwayAmplitude;`,
       visualSpeed: 0,
       motionBlend: 0,
       turnLean: 0,
-      attackAnimation: 0,
       idleTimer: 0.2 + (index % 3) * 0.25,
       wanderPace: 0.82 + (Math.sin(phase * 2.7) + 1) * 0.08,
       retreatTimer: 0,
@@ -7260,7 +7864,7 @@ uniform float uSwayAmplitude;`,
       squadEligible: options.squadEligible ?? true,
       aiMode: options.aiMode ?? 'normal',
       eventOwnerId: options.eventOwnerId ?? null,
-      eventPropTarget: options.eventPropTarget ?? null,
+      eventPropTargetId: options.eventPropTargetId ?? null,
       ignoredTargetId: options.ignoredTargetId ?? null,
       playerAggro: false,
       aggroMemory: 0,
@@ -7274,6 +7878,20 @@ uniform float uSwayAmplitude;`,
       healthBarVisibleUntil: 0,
       outlineBinding,
       outlineUntil: Number.POSITIVE_INFINITY,
+      action: null,
+      reaction: 'none',
+      reactionRemaining: 0,
+      poise: this.actorMaxPoise(role),
+      maxPoise: this.actorMaxPoise(role),
+      poiseRecoveryDelay: 0,
+      staggerImmunity: 0,
+      knockbackVelocity: new THREE.Vector3(),
+      lastHitDirection: new THREE.Vector3(0, 0, 1),
+      deathStyle: null,
+      deathAge: 0,
+      deathStartPosition: new THREE.Vector3(),
+      deathStartRotation: new THREE.Euler(),
+      deathTravelled: 0,
       deathAt: null,
     }
     if (
@@ -7358,6 +7976,7 @@ uniform float uSwayAmplitude;`,
     this.impactRayFx.forEach((entry) => this.releaseImpactRayFx(entry))
     this.weaponTrail.visible = false
     this.weaponTrail.material.opacity = 0
+    this.releaseAllTelegraphs()
   }
 
   private presentCombatFeedback(
@@ -8222,17 +8841,40 @@ uniform float uSwayAmplitude;`,
     )
   }
 
-  private animateCharacter(group: THREE.Group, stride: number, attack: number): void {
+  private animateCharacter(group: THREE.Group, pose: CharacterPose): void {
     const leftArm = group.getObjectByName('leftArm')
     const rightArm = group.getObjectByName('rightArm')
     const leftLeg = group.getObjectByName('leftLeg')
     const rightLeg = group.getObjectByName('rightLeg')
     const weapon = group.getObjectByName('weapon')
-    if (leftArm) leftArm.rotation.x = -stride * 0.7
-    if (rightArm) rightArm.rotation.x = stride * 0.7 - attack * 1.15
-    if (leftLeg) leftLeg.rotation.x = stride
-    if (rightLeg) rightLeg.rotation.x = -stride
-    if (weapon) weapon.rotation.x = -attack * 1.3
+    if (leftArm) {
+      leftArm.rotation.set(
+        -pose.stride * 0.7 + pose.flinch * 0.3 + pose.stagger * 0.62,
+        0,
+        -pose.flinch * 0.18 - pose.stagger * 0.42,
+      )
+    }
+    if (rightArm) {
+      rightArm.rotation.set(
+        pose.stride * 0.7 -
+          pose.attack * 1.15 +
+          pose.anticipation * 0.86 -
+          pose.recovery * 0.2 -
+          pose.flinch * 0.3 +
+          pose.stagger * 0.62,
+        0,
+        pose.flinch * 0.18 + pose.stagger * 0.42,
+      )
+    }
+    if (leftLeg) leftLeg.rotation.set(pose.stride, 0, 0)
+    if (rightLeg) rightLeg.rotation.set(-pose.stride, 0, 0)
+    if (weapon) {
+      weapon.rotation.set(
+        pose.anticipation * 0.82 - pose.attack * 1.3 + pose.recovery * 0.25,
+        0,
+        0,
+      )
+    }
   }
 
   private actorGaitCadence(role: ActorRole): number {
@@ -8243,7 +8885,8 @@ uniform float uSwayAmplitude;`,
   }
 
   private animateActorCharacter(actor: Actor, delta: number, lookYaw: number): void {
-    this.animateCharacter(actor.mesh, actor.stride, actor.attackAnimation)
+    const pose = this.sampleActorPose(actor)
+    this.animateCharacter(actor.mesh, pose)
     const bodyPivot = actor.mesh.getObjectByName('body-pivot')
     const torsoPivot = actor.mesh.getObjectByName('torso-pivot')
     const pelvisPivot = actor.mesh.getObjectByName('pelvis-pivot')
@@ -8259,6 +8902,11 @@ uniform float uSwayAmplitude;`,
       0.065 *
       THREE.MathUtils.clamp(actor.motionBlend, 0, 1)
     const heavy = actor.role === 'brute' || actor.role === 'champion'
+    const hitRight = new THREE.Vector3(
+      Math.cos(actor.mesh.rotation.y),
+      0,
+      -Math.sin(actor.mesh.rotation.y),
+    ).dot(actor.lastHitDirection)
     const forwardLean =
       actor.role === 'scout'
         ? 0.075
@@ -8271,9 +8919,19 @@ uniform float uSwayAmplitude;`,
     if (bodyPivot) bodyPivot.position.y = breathing + stepBob
     if (torsoPivot) {
       torsoPivot.position.x = idleWeightShift
-      torsoPivot.rotation.x = forwardLean * actor.motionBlend
-      torsoPivot.rotation.y = -actor.stride * (heavy ? 0.08 : 0.12) + actor.attackAnimation * 0.16
-      torsoPivot.rotation.z = -actor.turnLean * 0.16 + idleWeightShift * 0.55
+      torsoPivot.rotation.x =
+        forwardLean * actor.motionBlend -
+        pose.anticipation * (heavy ? 0.11 : 0.16) +
+        pose.attack * 0.12 +
+        pose.stagger * 0.2
+      torsoPivot.rotation.y =
+        -actor.stride * (heavy ? 0.08 : 0.12) +
+        pose.attack * 0.16 -
+        pose.flinch * hitRight * 0.22
+      torsoPivot.rotation.z =
+        -actor.turnLean * 0.16 +
+        idleWeightShift * 0.55 -
+        pose.flinch * hitRight * 0.18
       torsoPivot.scale.y = 1 + breathing * 0.55
     }
     if (pelvisPivot) {
@@ -8282,12 +8940,16 @@ uniform float uSwayAmplitude;`,
     }
     if (headPivot) {
       headPivot.rotation.y = dampAngle(headPivot.rotation.y, lookYaw, 7, delta)
-      headPivot.rotation.x = -forwardLean * actor.motionBlend * 0.35
-      headPivot.rotation.z = actor.turnLean * 0.06 - idleWeightShift * 0.2
+      headPivot.rotation.x =
+        -forwardLean * actor.motionBlend * 0.35 + pose.stagger * 0.18
+      headPivot.rotation.z =
+        actor.turnLean * 0.06 -
+        idleWeightShift * 0.2 -
+        pose.flinch * hitRight * 0.3
     }
 
     if (actor.role === 'archer') {
-      const draw = actor.attackAnimation
+      const draw = Math.max(pose.anticipation, pose.attack * 0.8)
       if (leftArm) leftArm.rotation.x = -0.45 - draw * 0.62 - actor.stride * 0.15
       if (rightArm) {
         rightArm.rotation.x = -0.72 - draw * 0.85 + actor.stride * 0.1
@@ -8298,8 +8960,57 @@ uniform float uSwayAmplitude;`,
         weapon.rotation.z = 0.18 + draw * 0.16
       }
     } else if (rightArm) {
-      rightArm.rotation.z = -actor.attackAnimation * 0.16
+      rightArm.rotation.z -= pose.attack * 0.16
     }
+  }
+
+  private sampleActorPose(actor: Actor): CharacterPose {
+    let attack = 0
+    let anticipation = 0
+    let recovery = 0
+    if (actor.action) {
+      const progress = THREE.MathUtils.clamp(
+        actor.action.elapsed / actor.action.duration,
+        0,
+        1,
+      )
+      if (actor.action.phase === 'windup') {
+        anticipation = 1 - (1 - progress) * (1 - progress)
+      } else {
+        attack = 1 - progress
+        recovery = Math.sin(progress * Math.PI)
+      }
+    }
+    return {
+      stride: actor.reaction === 'stagger' ? 0 : actor.stride,
+      attack,
+      anticipation,
+      recovery,
+      flinch:
+        actor.reaction === 'flinch'
+          ? THREE.MathUtils.clamp(actor.reactionRemaining / FLINCH_TIME, 0, 1)
+          : 0,
+      stagger:
+        actor.reaction === 'stagger'
+          ? THREE.MathUtils.clamp(
+              actor.reactionRemaining / this.actorStaggerDuration(actor.role),
+              0,
+              1,
+            )
+          : 0,
+    }
+  }
+
+  private updateChampionAura(actor: Actor): void {
+    if (actor.role !== 'champion') return
+    const aura = actor.mesh.getObjectByName('champion-aura')
+    if (!aura) return
+    const windupPulse =
+      actor.action?.phase === 'windup'
+        ? 0.22 * THREE.MathUtils.clamp(actor.action.elapsed / actor.action.duration, 0, 1)
+        : 0
+    const pulse = 1 + Math.sin(this.elapsed * 5 + actor.phase) * 0.12 + windupPulse
+    aura.scale.setScalar(pulse)
   }
 
   private updateCamera(immediate: boolean): void {
