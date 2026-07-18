@@ -268,6 +268,82 @@ interface ProjectileHit {
   player: boolean
 }
 
+type AttackKind = 'melee' | 'cleave' | 'arrow' | 'allyMelee' | 'actorArrow'
+type HitWeight = 'normal' | 'heavy' | 'lethal' | 'blocked'
+type ComicCallout = 'БАЦ!' | 'ХРЯСЬ!' | 'БУМ!' | 'БЛОК!'
+
+interface DamageResult {
+  applied: boolean
+  dealt: number
+  killed: boolean
+  weight: HitWeight
+  position: THREE.Vector3
+  direction: THREE.Vector3
+}
+
+interface CombatFeedbackEvent extends DamageResult {
+  attackKind: AttackKind
+  targetId: string | 'player'
+  directPlayerAction: boolean
+}
+
+interface DamageActorOptions {
+  attackKind: AttackKind
+  detachChance?: number
+  knockback?: number
+  sourceActorId?: string
+  deferFeedback?: boolean
+}
+
+interface DamagePlayerOptions {
+  attackKind: AttackKind
+}
+
+interface DamageNumberFx {
+  sprite: THREE.Sprite
+  canvas: HTMLCanvasElement
+  texture: THREE.CanvasTexture
+  material: THREE.SpriteMaterial
+  targetId: string | 'player' | null
+  attackKind: AttackKind | null
+  value: number
+  weight: HitWeight
+  age: number
+  mergeAge: number
+  lifetime: number
+  velocity: THREE.Vector3
+  active: boolean
+  priority: number
+}
+
+interface ComicCalloutFx {
+  sprite: THREE.Sprite
+  material: THREE.SpriteMaterial
+  word: ComicCallout | null
+  age: number
+  lifetime: number
+  velocity: THREE.Vector3
+  active: boolean
+  priority: number
+}
+
+interface ImpactRayFx {
+  sprite: THREE.Sprite
+  material: THREE.SpriteMaterial
+  age: number
+  lifetime: number
+  active: boolean
+  priority: number
+  weight: HitWeight
+}
+
+interface CombatFeedbackChannels {
+  number?: boolean
+  callout?: boolean
+  ray?: boolean
+  hitStop?: boolean
+}
+
 interface BoxObstacle {
   kind: 'box'
   x: number
@@ -408,6 +484,36 @@ const SPARK_COUNT_BLOCK = 7
 const SPARK_COUNT_CLEAVE = 5
 const SPARK_LIFE = 0.24
 const SPARK_MAX_ACTIVE = 48
+const DAMAGE_NUMBER_MAX = 24
+const DAMAGE_NUMBER_LIFE = 0.72
+const DAMAGE_NUMBER_DISTANCE_SQ = 30 * 30
+const NUMBER_MERGE_WINDOW = 0.09
+const CALLOUT_MAX = 10
+const CALLOUT_LIFE = 0.46
+const CALLOUT_COOLDOWN = 0.12
+const IMPACT_RAY_MAX = 16
+const IMPACT_RAY_LIFE = 0.18
+const HIT_STOP_NORMAL = 0.028
+const HIT_STOP_HEAVY = 0.048
+const HIT_STOP_LETHAL = 0.064
+const HIT_STOP_CLEAVE = 0.058
+const HIT_STOP_BLOCK = 0.024
+const HIT_STOP_REDUCED_MAX = 0.02
+const HIT_WEIGHT_PRIORITY: Record<HitWeight, number> = {
+  normal: 0,
+  heavy: 1,
+  blocked: 2,
+  lethal: 3,
+}
+const COMIC_CALLOUTS: Record<
+  ComicCallout,
+  { points: number; innerRadius: number; rotation: number }
+> = {
+  'БАЦ!': { points: 11, innerRadius: 0.55, rotation: 0 },
+  'ХРЯСЬ!': { points: 15, innerRadius: 0.43, rotation: 0.08 },
+  'БУМ!': { points: 9, innerRadius: 0.62, rotation: -0.1 },
+  'БЛОК!': { points: 12, innerRadius: 0.7, rotation: Math.PI / 12 },
+}
 const GORE_HIT_MIN = 14
 const GORE_HIT_MAX = 30
 const GORE_PLAYER_HIT_MIN = 18
@@ -779,6 +885,9 @@ export class GameEngine {
   private readonly particles: Particle[] = []
   private readonly decals: Decal[] = []
   private readonly projectiles: Projectile[] = []
+  private readonly damageNumberFx: DamageNumberFx[] = []
+  private readonly comicCalloutFx: ComicCalloutFx[] = []
+  private readonly impactRayFx: ImpactRayFx[] = []
   private readonly projectileSourcesToClear = new Set<string>()
   private readonly generatedTextures = new Map<string, THREE.CanvasTexture>()
   private readonly outlineBindings: OutlineBinding[] = []
@@ -826,6 +935,7 @@ export class GameEngine {
   private readonly weatherRng = seededRandom(((Date.now() + 7919) % 2147483646) + 1)
   private readonly player: THREE.Group
   private readonly playerOutline: OutlineBinding
+  private readonly weaponTrail: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>
   private readonly caravan: THREE.Group
   private readonly vendorPosition = new THREE.Vector3(-46, 0, -39)
   private readonly commanderPosition = new THREE.Vector3(40, 0, -36)
@@ -860,6 +970,7 @@ export class GameEngine {
   private decalSequence = 0
   private attackCooldown = 0
   private attackAnimation = 0
+  private activePlayerAttackKind: AttackKind = 'melee'
   private abilityCooldown = 0
   private shieldActive = false
   private lastViewAt = 0
@@ -898,10 +1009,15 @@ export class GameEngine {
   private weatherEnabled: boolean
   private inkOutlinesEnabled: boolean
   private screenShakeEnabled: boolean
+  private readonly reducedMotion: boolean
   private groundFoliageQuality: FoliageQuality
   private nightFactor = 0
   private readonly musicSources = new Set<AudioScheduledSourceNode>()
   private readonly inactiveGoreParticles: Particle[] = []
+  private hitStopRemaining = 0
+  private pendingCleaveHitStop = 0
+  private calloutCooldown = 0
+  private damageNumberSequence = 0
   private readonly stopMusicOwner = () => this.stopMusic()
   private resizeObserver: ResizeObserver
   private boundKeyDown: (event: KeyboardEvent) => void
@@ -935,6 +1051,7 @@ export class GameEngine {
     this.weatherEnabled = settings.weatherEnabled ?? true
     this.inkOutlinesEnabled = settings.inkOutlinesEnabled ?? true
     this.screenShakeEnabled = settings.screenShakeEnabled ?? true
+    this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     this.groundFoliageQuality = settings.foliageQuality ?? 'high'
     this.palette = createPalette()
     this.comicMaterials = new ComicMaterialLibrary({
@@ -1005,6 +1122,9 @@ export class GameEngine {
     this.fog = new THREE.Fog(this.palette.worldFog, 48, 132)
     this.scene.fog = this.fog
     this.player = this.createCharacter(faction, true)
+    this.weaponTrail = this.createWeaponTrail()
+    const weaponParent = this.player.getObjectByName('weapon') ?? this.player
+    weaponParent.add(this.weaponTrail)
     const spawn = savedGame?.position ?? [FACTION_INFO[faction].spawn[0], PLAYER_HEIGHT, FACTION_INFO[faction].spawn[1]]
     this.player.position.set(spawn[0], spawn[1], spawn[2])
     this.scene.add(this.player)
@@ -1115,6 +1235,7 @@ export class GameEngine {
     this.renderer.dispose()
     this.renderer.domElement.remove()
     this.actors.forEach((actor) => actor.healthBarTexture.dispose())
+    this.damageNumberFx.forEach((entry) => entry.texture.dispose())
     this.generatedTextures.forEach((texture) => texture.dispose())
     this.generatedTextures.clear()
     this.outlineBindings.length = 0
@@ -1204,7 +1325,10 @@ export class GameEngine {
 
   setScreenShakeEnabled(enabled: boolean): void {
     this.screenShakeEnabled = enabled
-    if (!enabled) this.trauma = 0
+    if (!enabled) {
+      this.trauma = 0
+      this.hitStopRemaining = Math.min(this.hitStopRemaining, HIT_STOP_REDUCED_MAX)
+    }
   }
 
   stopAudio(): void {
@@ -1282,6 +1406,7 @@ export class GameEngine {
     this.resumeAudio()
     this.attackCooldown = 0.52
     this.attackAnimation = 1
+    this.activePlayerAttackKind = 'melee'
 
     let target: Actor | null = null
     let bestDistance = 3.6
@@ -1305,6 +1430,7 @@ export class GameEngine {
       (this.body.leftArm === 'missing' ? 5 : 0) + (this.body.rightArm === 'missing' ? 9 : 0)
     const dealt = Math.max(8, this.damage - armPenalty + Math.floor(Math.random() * 7))
     this.damageActor(target, dealt, this.player.position, this.faction, true, {
+      attackKind: 'melee',
       detachChance: 0.45,
     })
   }
@@ -1486,8 +1612,14 @@ export class GameEngine {
   }
 
   private readonly loop = (): void => {
-    const delta = Math.min(this.clock.getDelta(), 0.05)
-    if (!this.paused && !this.ended) this.update(delta)
+    const elapsedDelta = this.clock.getDelta()
+    let stopped = 0
+    if (!this.paused && !this.ended && this.hitStopRemaining > 0) {
+      stopped = Math.min(this.hitStopRemaining, elapsedDelta)
+      this.hitStopRemaining = Math.max(0, this.hitStopRemaining - stopped)
+    }
+    const gameplayDelta = Math.min(Math.max(0, elapsedDelta - stopped), 0.05)
+    if (!this.paused && !this.ended && gameplayDelta > 0) this.update(gameplayDelta)
     this.updateCamera(false)
     this.postProcessor.render()
     this.frameHandle = requestAnimationFrame(this.loop)
@@ -1511,6 +1643,7 @@ export class GameEngine {
     this.updateInteractableOutlines()
     this.updateProjectiles(delta)
     this.updateParticles(delta)
+    this.updateComicHitFx(delta)
     this.updateDecals(delta)
     this.updateDayNight()
     this.updateWeather(delta)
@@ -2540,6 +2673,7 @@ export class GameEngine {
 
   private fireArrow(): void {
     const direction = this.getAimDirection()
+    this.activePlayerAttackKind = 'arrow'
     this.player.rotation.y = Math.atan2(direction.x, direction.z)
     const origin = this.player.position
       .clone()
@@ -2560,6 +2694,7 @@ export class GameEngine {
 
   private cleave(): void {
     const direction = this.getAimDirection()
+    this.activePlayerAttackKind = 'cleave'
     this.player.rotation.y = Math.atan2(direction.x, direction.z)
     this.moveCharacter(
       this.player.position,
@@ -2573,7 +2708,7 @@ export class GameEngine {
       (this.body.leftArm === 'missing' ? 5 : 0) +
       (this.body.rightArm === 'missing' ? 9 : 0)
     const dealt = Math.max(8, this.damage - armPenalty) * CLEAVE_DAMAGE_MULTIPLIER
-    let didHit = false
+    const feedbackEvents: CombatFeedbackEvent[] = []
     for (const actor of this.actors) {
       if (!actor.alive || !hostile(this.faction, actor.faction)) continue
       const offset = actor.mesh.position.clone().sub(this.player.position)
@@ -2585,17 +2720,30 @@ export class GameEngine {
       ) {
         continue
       }
-      didHit = true
       const impactPosition = actor.mesh.position.clone().add(new THREE.Vector3(0, 1.25, 0))
       const incomingDirection = this.player.position.clone().sub(actor.mesh.position)
       incomingDirection.y = 0
       this.createSparks(impactPosition, incomingDirection, SPARK_COUNT_CLEAVE)
-      this.damageActor(actor, dealt, this.player.position, this.faction, true, {
+      const result = this.damageActor(actor, dealt, this.player.position, this.faction, true, {
+        attackKind: 'cleave',
         detachChance: 0.75,
         knockback: CLEAVE_KNOCKBACK_DISTANCE,
+        deferFeedback: true,
       })
+      if (!result.applied) continue
+      const event: CombatFeedbackEvent = {
+        ...result,
+        attackKind: 'cleave',
+        targetId: actor.id,
+        directPlayerAction: true,
+      }
+      feedbackEvents.push(event)
+      this.presentCombatFeedback(event, { callout: false, hitStop: false })
     }
-    if (didHit) this.addTrauma(TRAUMA_CLEAVE)
+    if (feedbackEvents.length > 0) {
+      this.addTrauma(TRAUMA_CLEAVE)
+      this.presentCleaveFeedback(feedbackEvents)
+    }
     this.playSound('cleave')
   }
 
@@ -2817,7 +2965,9 @@ export class GameEngine {
         if (hit.player) {
           const incomingDirection = projectile.velocity.clone().negate()
           incomingDirection.y = 0
-          this.damagePlayer(projectile.damage, incomingDirection, false)
+          this.damagePlayer(projectile.damage, incomingDirection, false, {
+            attackKind: 'actorArrow',
+          })
         } else if (hit.actor) {
           const damage =
             projectile.owner === 'player'
@@ -2840,6 +2990,7 @@ export class GameEngine {
             projectile.faction,
             projectile.owner === 'player',
             {
+              attackKind: projectile.owner === 'player' ? 'arrow' : 'actorArrow',
               detachChance: projectile.detachChance,
               sourceActorId: projectile.sourceActorId ?? undefined,
             },
@@ -3949,6 +4100,7 @@ export class GameEngine {
       this.actorDamageWithAura(actor, baseDamage) * this.enemyDamageMultiplier(actor),
       incomingDirection,
       true,
+      { attackKind: 'allyMelee' },
     )
     if (actor.role === 'scout') actor.retreatTimer = SCOUT_RETREAT_DURATION
   }
@@ -3970,7 +4122,7 @@ export class GameEngine {
       attacker.mesh.position,
       attacker.faction,
       false,
-      { sourceActorId: attacker.id },
+      { attackKind: 'allyMelee', sourceActorId: attacker.id },
     )
     if (attacker.role === 'scout') attacker.retreatTimer = SCOUT_RETREAT_DURATION
   }
@@ -3987,7 +4139,19 @@ export class GameEngine {
     baseDamage: number,
     incomingDirection: THREE.Vector3,
     canInjure: boolean,
-  ): void {
+    options: DamagePlayerOptions,
+  ): DamageResult {
+    const fallbackDirection = new THREE.Vector3(0, 0, 1)
+    if (this.health <= 0) {
+      return {
+        applied: false,
+        dealt: 0,
+        killed: false,
+        weight: 'normal',
+        position: this.player.position.clone().add(new THREE.Vector3(0, 1.3, 0)),
+        direction: fallbackDirection,
+      }
+    }
     const armor = this.faction === 'guard' ? 0.72 : 1
     const normalizedIncoming = incomingDirection.clone()
     normalizedIncoming.y = 0
@@ -4000,18 +4164,17 @@ export class GameEngine {
     const dealt =
       baseDamage * armor * (frontalBlock ? SHIELD_DAMAGE_MULTIPLIER : 1)
     const impact = THREE.MathUtils.clamp(dealt / 20, 0, 1)
-    this.health -= dealt
+    this.health = Math.max(0, this.health - dealt)
     this.achievements.recordPlayerDamage(dealt, frontalBlock)
+    const contact = this.player.position.clone().add(new THREE.Vector3(0, 1.3, 0))
     if (frontalBlock) {
       this.addTrauma(TRAUMA_BLOCK)
       this.damageFlash = Math.max(
         this.damageFlash,
         Math.min(FLASH_BLOCK_MAX, dealt / 20),
       )
-      const contact = this.player.position
-        .clone()
-        .add(new THREE.Vector3(0, 1.35, 0))
-        .addScaledVector(normalizedIncoming, 0.72)
+      contact.y += 0.05
+      contact.addScaledVector(normalizedIncoming, 0.72)
       this.createSparks(contact, normalizedIncoming, SPARK_COUNT_BLOCK)
     } else {
       this.addTrauma(THREE.MathUtils.lerp(0.12, 0.35, impact))
@@ -4034,7 +4197,32 @@ export class GameEngine {
     if (canInjure && !frontalBlock && Math.random() < 0.11 && this.health < 82) {
       this.injurePlayer()
     }
+    const killed = this.health <= 0
+    const weight: HitWeight = frontalBlock
+      ? 'blocked'
+      : killed
+        ? 'lethal'
+        : dealt >= 22
+          ? 'heavy'
+          : 'normal'
+    const result: DamageResult = {
+      applied: true,
+      dealt,
+      killed,
+      weight,
+      position: contact,
+      direction: hasIncomingDirection
+        ? normalizedIncoming.clone().multiplyScalar(-1)
+        : fallbackDirection,
+    }
+    this.presentCombatFeedback({
+      ...result,
+      attackKind: options.attackKind,
+      targetId: 'player',
+      directPlayerAction: false,
+    })
     this.emitView(true)
+    return result
   }
 
   private damageActor(
@@ -4043,13 +4231,23 @@ export class GameEngine {
     sourcePosition: THREE.Vector3,
     killerFaction: Faction,
     directPlayerKill: boolean,
-    options: {
-      detachChance?: number
-      knockback?: number
-      sourceActorId?: string
-    } = {},
-  ): void {
-    if (!target.alive) return
+    options: DamageActorOptions,
+  ): DamageResult {
+    const position = target.mesh.position.clone().add(new THREE.Vector3(0, 1.3, 0))
+    const direction = target.mesh.position.clone().sub(sourcePosition)
+    direction.y = 0
+    if (direction.lengthSq() > 0.0001) direction.normalize()
+    else direction.set(0, 0, 1)
+    if (!target.alive) {
+      return {
+        applied: false,
+        dealt: 0,
+        killed: false,
+        weight: 'normal',
+        position,
+        direction,
+      }
+    }
     if (
       directPlayerKill &&
       target.aiMode !== 'captive' &&
@@ -4072,7 +4270,7 @@ export class GameEngine {
         target.retaliationTimer = NPC_RETALIATION_DURATION
       }
     }
-    let dealt = baseDamage
+    let dealt = Math.max(0, baseDamage)
     if (target.role === 'brute') {
       const facing = new THREE.Vector3(
         Math.sin(target.mesh.rotation.y),
@@ -4090,11 +4288,9 @@ export class GameEngine {
     }
 
     const impact = THREE.MathUtils.clamp(dealt / 36, 0, 1)
-    const sprayDirection = target.mesh.position.clone().sub(sourcePosition)
-    sprayDirection.y = 0
     this.createBloodBurst(
-      target.mesh.position.clone().add(new THREE.Vector3(0, 1.3, 0)),
-      sprayDirection,
+      position,
+      direction,
       Math.round(THREE.MathUtils.lerp(GORE_HIT_MIN, GORE_HIT_MAX, impact)),
       THREE.MathUtils.lerp(0.85, 2.35, impact),
     )
@@ -4123,7 +4319,30 @@ export class GameEngine {
         )
       }
     }
-    if (target.hp <= 0) this.killActor(target, killerFaction, directPlayerKill, sourcePosition)
+    const killed = target.hp <= 0
+    const weight: HitWeight = killed
+      ? 'lethal'
+      : options.attackKind === 'cleave' || dealt >= target.maxHp * 0.22
+        ? 'heavy'
+        : 'normal'
+    const result: DamageResult = {
+      applied: true,
+      dealt,
+      killed,
+      weight,
+      position,
+      direction,
+    }
+    if (killed) this.killActor(target, killerFaction, directPlayerKill, sourcePosition)
+    if (directPlayerKill && !options.deferFeedback) {
+      this.presentCombatFeedback({
+        ...result,
+        attackKind: options.attackKind,
+        targetId: target.id,
+        directPlayerAction: true,
+      })
+    }
+    return result
   }
 
   private alertNearbyAllies(source: Actor, targetPosition: THREE.Vector3): void {
@@ -7129,6 +7348,655 @@ uniform float uSwayAmplitude;`,
   private clearTransientCombatFeedback(): void {
     this.trauma = 0
     this.damageFlash = 0
+    this.hitStopRemaining = 0
+    this.pendingCleaveHitStop = 0
+    this.calloutCooldown = 0
+    this.attackAnimation = 0
+    this.activePlayerAttackKind = 'melee'
+    this.damageNumberFx.forEach((entry) => this.releaseDamageNumberFx(entry))
+    this.comicCalloutFx.forEach((entry) => this.releaseComicCalloutFx(entry))
+    this.impactRayFx.forEach((entry) => this.releaseImpactRayFx(entry))
+    this.weaponTrail.visible = false
+    this.weaponTrail.material.opacity = 0
+  }
+
+  private presentCombatFeedback(
+    event: CombatFeedbackEvent,
+    channels: CombatFeedbackChannels = {},
+  ): void {
+    if (!event.applied) return
+    if (channels.number ?? true) this.spawnDamageNumber(event)
+    if (channels.ray ?? true) this.spawnImpactRay(event)
+    if (channels.callout ?? true) this.spawnComicCallout(event)
+    if (channels.hitStop ?? true) this.requestHitStop(this.hitStopForEvent(event))
+  }
+
+  private presentCleaveFeedback(events: CombatFeedbackEvent[]): void {
+    if (events.length === 0) return
+    const heaviest = events.reduce((best, event) =>
+      HIT_WEIGHT_PRIORITY[event.weight] > HIT_WEIGHT_PRIORITY[best.weight] ? event : best,
+    )
+    const position = events
+      .reduce((centroid, event) => centroid.add(event.position), new THREE.Vector3())
+      .multiplyScalar(1 / events.length)
+    const direction = events.reduce(
+      (average, event) => average.add(event.direction),
+      new THREE.Vector3(),
+    )
+    if (direction.lengthSq() > 0.0001) direction.normalize()
+    else direction.copy(heaviest.direction)
+    const summary: CombatFeedbackEvent = {
+      ...heaviest,
+      dealt: events.reduce((total, event) => total + event.dealt, 0),
+      killed: events.some((event) => event.killed),
+      position,
+      direction,
+    }
+    this.presentCombatFeedback(summary, { number: false, ray: false, hitStop: false })
+    this.pendingCleaveHitStop = events.reduce(
+      (duration, event) =>
+        Math.max(duration, event.weight === 'lethal' ? HIT_STOP_LETHAL : HIT_STOP_CLEAVE),
+      0,
+    )
+    this.requestHitStop(this.pendingCleaveHitStop)
+    this.pendingCleaveHitStop = 0
+  }
+
+  private hitStopForEvent(event: CombatFeedbackEvent): number {
+    if (event.targetId === 'player' && event.weight === 'blocked') return HIT_STOP_BLOCK
+    if (!event.directPlayerAction) return 0
+    if (event.attackKind === 'cleave') {
+      return event.weight === 'lethal' ? HIT_STOP_LETHAL : HIT_STOP_CLEAVE
+    }
+    if (event.weight === 'lethal') return HIT_STOP_LETHAL
+    if (event.weight === 'heavy') return HIT_STOP_HEAVY
+    return HIT_STOP_NORMAL
+  }
+
+  private requestHitStop(seconds: number): void {
+    if (seconds <= 0 || this.paused || this.ended) return
+    const requested =
+      !this.screenShakeEnabled || this.reducedMotion
+        ? Math.min(seconds, HIT_STOP_REDUCED_MAX)
+        : seconds
+    this.hitStopRemaining = Math.max(this.hitStopRemaining, requested)
+  }
+
+  private updateComicHitFx(delta: number): void {
+    this.calloutCooldown = Math.max(0, this.calloutCooldown - delta)
+    this.updateDamageNumberFx(delta)
+    this.updateComicCalloutFx(delta)
+    this.updateImpactRayFx(delta)
+    this.updateWeaponTrail()
+  }
+
+  private spawnDamageNumber(event: CombatFeedbackEvent): void {
+    if (
+      (!event.directPlayerAction && event.targetId !== 'player') ||
+      (event.targetId !== 'player' &&
+        event.position.distanceToSquared(this.player.position) > DAMAGE_NUMBER_DISTANCE_SQ)
+    ) {
+      return
+    }
+    const value = event.dealt > 0 ? Math.max(1, Math.round(event.dealt)) : 0
+    if (value === 0) return
+    const priority = HIT_WEIGHT_PRIORITY[event.weight]
+    const merged = this.damageNumberFx.find(
+      (entry) =>
+        entry.active &&
+        entry.targetId === event.targetId &&
+        entry.attackKind === event.attackKind &&
+        entry.mergeAge <= NUMBER_MERGE_WINDOW,
+    )
+    if (merged) {
+      merged.value += value
+      merged.mergeAge = 0
+      merged.age = Math.min(merged.age, merged.lifetime * 0.3)
+      if (priority > merged.priority) {
+        merged.priority = priority
+        merged.weight = event.weight
+      }
+      this.drawDamageNumber(merged, event.targetId === 'player')
+      return
+    }
+
+    const entry = this.acquireDamageNumberFx(priority)
+    entry.targetId = event.targetId
+    entry.attackKind = event.attackKind
+    entry.value = value
+    entry.weight = event.weight
+    entry.age = 0
+    entry.mergeAge = 0
+    entry.lifetime = DAMAGE_NUMBER_LIFE
+    entry.active = true
+    entry.priority = priority
+    entry.sprite.visible = true
+    entry.material.opacity = 1
+    entry.sprite.position.copy(this.damageNumberSpawnPosition(event))
+
+    const lateral = new THREE.Vector3(-event.direction.z, 0, event.direction.x)
+    if (lateral.lengthSq() <= 0.0001) {
+      lateral.set(Math.cos(this.cameraYaw), 0, Math.sin(this.cameraYaw))
+    } else {
+      lateral.normalize()
+    }
+    const side = this.damageNumberSequence % 2 === 0 ? -1 : 1
+    const offset = 0.22 + (Math.floor(this.damageNumberSequence / 2) % 3) * 0.08
+    this.damageNumberSequence += 1
+    entry.sprite.position.addScaledVector(lateral, side * offset)
+    entry.velocity.set(0, 0, 0)
+    if (!this.reducedMotion) {
+      entry.velocity.copy(event.direction).multiplyScalar(0.26)
+      entry.velocity.y = 0.82
+    }
+    this.drawDamageNumber(entry, event.targetId === 'player')
+    const [width, height] = this.damageNumberScale(entry.weight)
+    entry.sprite.scale.set(width * 0.56, height * 0.56, 1)
+  }
+
+  private damageNumberSpawnPosition(event: CombatFeedbackEvent): THREE.Vector3 {
+    if (event.targetId === 'player') {
+      return this.player.position.clone().add(new THREE.Vector3(0, 3.18, 0))
+    }
+    const target = this.actors.find((actor) => actor.id === event.targetId)
+    if (target) {
+      return target.mesh.position
+        .clone()
+        .add(new THREE.Vector3(0, 3.2 * target.mesh.scale.y, 0))
+    }
+    return event.position.clone().add(new THREE.Vector3(0, 1.6, 0))
+  }
+
+  private acquireDamageNumberFx(priority: number): DamageNumberFx {
+    const inactive = this.damageNumberFx.find((entry) => !entry.active)
+    if (inactive) return inactive
+    if (this.damageNumberFx.length < DAMAGE_NUMBER_MAX) {
+      const entry = this.createDamageNumberFx()
+      this.damageNumberFx.push(entry)
+      return entry
+    }
+    const recycled = this.damageNumberFx.reduce((candidate, entry) => {
+      if (entry.priority !== candidate.priority) {
+        return entry.priority < candidate.priority ? entry : candidate
+      }
+      return entry.age > candidate.age ? entry : candidate
+    })
+    this.releaseDamageNumberFx(recycled)
+    recycled.priority = priority
+    return recycled
+  }
+
+  private createDamageNumberFx(): DamageNumberFx {
+    const canvas = document.createElement('canvas')
+    canvas.width = 256
+    canvas.height = 128
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.generateMipmaps = false
+    texture.minFilter = THREE.LinearFilter
+    texture.magFilter = THREE.LinearFilter
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    })
+    const sprite = new THREE.Sprite(material)
+    sprite.visible = false
+    sprite.renderOrder = 10
+    this.scene.add(sprite)
+    return {
+      sprite,
+      canvas,
+      texture,
+      material,
+      targetId: null,
+      attackKind: null,
+      value: 0,
+      weight: 'normal',
+      age: 0,
+      mergeAge: 0,
+      lifetime: DAMAGE_NUMBER_LIFE,
+      velocity: new THREE.Vector3(),
+      active: false,
+      priority: 0,
+    }
+  }
+
+  private drawDamageNumber(entry: DamageNumberFx, incomingPlayerDamage: boolean): void {
+    const context = entry.canvas.getContext('2d')
+    if (!context) throw new Error('Comic damage-number canvas context is unavailable.')
+    context.clearRect(0, 0, entry.canvas.width, entry.canvas.height)
+    context.textAlign = 'center'
+    context.textBaseline = 'middle'
+    context.lineJoin = 'round'
+    context.font = '900 82px "Segoe UI", Aptos, Calibri, sans-serif'
+    context.lineWidth = 18
+    context.strokeStyle = this.palette.bg.getStyle()
+    context.fillStyle = this.damageNumberColor(entry.weight, incomingPlayerDamage).getStyle()
+    const text = String(entry.value)
+    context.strokeText(text, 128, 70)
+    context.fillText(text, 128, 70)
+    entry.texture.needsUpdate = true
+  }
+
+  private damageNumberColor(weight: HitWeight, incomingPlayerDamage: boolean): THREE.Color {
+    if (weight === 'blocked') return this.palette.link
+    if (weight === 'lethal') return this.palette.danger
+    if (weight === 'heavy') return this.palette.warning
+    return incomingPlayerDamage ? this.palette.danger : this.palette.text
+  }
+
+  private damageNumberScale(weight: HitWeight): readonly [number, number] {
+    if (weight === 'lethal') return [2.35, 1.18]
+    if (weight === 'blocked') return [2.05, 1.03]
+    if (weight === 'heavy') return [2.15, 1.08]
+    return [1.85, 0.93]
+  }
+
+  private updateDamageNumberFx(delta: number): void {
+    for (const entry of this.damageNumberFx) {
+      if (!entry.active) continue
+      entry.age += delta
+      entry.mergeAge += delta
+      if (entry.age >= entry.lifetime) {
+        this.releaseDamageNumberFx(entry)
+        continue
+      }
+      if (!this.reducedMotion) entry.sprite.position.addScaledVector(entry.velocity, delta)
+      const pop = THREE.MathUtils.clamp(entry.age / 0.08, 0, 1)
+      const fade = THREE.MathUtils.clamp((entry.lifetime - entry.age) / 0.18, 0, 1)
+      const settle = entry.age < 0.08 ? THREE.MathUtils.lerp(0.56, 1.08, pop) : 1
+      const [width, height] = this.damageNumberScale(entry.weight)
+      entry.sprite.scale.set(width * settle, height * settle, 1)
+      entry.material.opacity = fade
+    }
+  }
+
+  private releaseDamageNumberFx(entry: DamageNumberFx): void {
+    entry.active = false
+    entry.sprite.visible = false
+    entry.material.opacity = 0
+    entry.targetId = null
+    entry.attackKind = null
+    entry.value = 0
+    entry.weight = 'normal'
+    entry.age = 0
+    entry.mergeAge = 0
+    entry.priority = 0
+    entry.velocity.set(0, 0, 0)
+    const context = entry.canvas.getContext('2d')
+    if (context) {
+      context.clearRect(0, 0, entry.canvas.width, entry.canvas.height)
+      entry.texture.needsUpdate = true
+    }
+  }
+
+  private spawnComicCallout(event: CombatFeedbackEvent): void {
+    if (
+      this.calloutCooldown > 0 ||
+      (!event.directPlayerAction && !(event.targetId === 'player' && event.weight === 'blocked'))
+    ) {
+      return
+    }
+    const chance =
+      event.weight === 'lethal'
+        ? 1
+        : event.weight === 'heavy'
+          ? 0.7
+          : event.weight === 'blocked'
+            ? 0.45
+            : event.attackKind === 'melee'
+              ? 0.22
+              : 0
+    if (Math.random() > chance) return
+    const word = this.chooseComicCallout(event)
+    const priority = HIT_WEIGHT_PRIORITY[event.weight]
+    const entry = this.acquireComicCalloutFx(priority)
+    entry.word = word
+    entry.age = 0
+    entry.lifetime = CALLOUT_LIFE
+    entry.active = true
+    entry.priority = priority
+    entry.material.map = this.getComicCalloutTexture(word)
+    entry.material.opacity = 1
+    entry.material.needsUpdate = true
+    entry.sprite.visible = true
+    entry.sprite.position.copy(event.position)
+    entry.sprite.position.y += 0.34
+    entry.material.rotation = (Math.random() - 0.5) * 0.22
+    entry.velocity.set(0, 0, 0)
+    if (!this.reducedMotion) entry.velocity.set(0, 0.48, 0)
+    const scale = 1.72 + priority * 0.18
+    entry.sprite.scale.set(scale * 0.62, scale * 0.47, 1)
+    this.calloutCooldown = CALLOUT_COOLDOWN
+  }
+
+  private chooseComicCallout(event: CombatFeedbackEvent): ComicCallout {
+    if (event.weight === 'blocked') return 'БЛОК!'
+    const candidates: readonly ComicCallout[] =
+      event.attackKind === 'cleave'
+        ? ['ХРЯСЬ!', 'БУМ!']
+        : event.attackKind === 'arrow' || event.attackKind === 'actorArrow'
+          ? ['БАЦ!', 'БУМ!']
+          : event.weight === 'lethal'
+            ? ['ХРЯСЬ!', 'БУМ!']
+            : ['БАЦ!', 'ХРЯСЬ!']
+    return candidates[Math.floor(Math.random() * candidates.length)]
+  }
+
+  private acquireComicCalloutFx(priority: number): ComicCalloutFx {
+    const inactive = this.comicCalloutFx.find((entry) => !entry.active)
+    if (inactive) return inactive
+    if (this.comicCalloutFx.length < CALLOUT_MAX) {
+      const entry = this.createComicCalloutFx()
+      this.comicCalloutFx.push(entry)
+      return entry
+    }
+    const recycled = this.comicCalloutFx.reduce((candidate, entry) => {
+      if (entry.priority !== candidate.priority) {
+        return entry.priority < candidate.priority ? entry : candidate
+      }
+      return entry.age > candidate.age ? entry : candidate
+    })
+    this.releaseComicCalloutFx(recycled)
+    recycled.priority = priority
+    return recycled
+  }
+
+  private createComicCalloutFx(): ComicCalloutFx {
+    const material = new THREE.SpriteMaterial({
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    })
+    const sprite = new THREE.Sprite(material)
+    sprite.visible = false
+    sprite.renderOrder = 11
+    this.scene.add(sprite)
+    return {
+      sprite,
+      material,
+      word: null,
+      age: 0,
+      lifetime: CALLOUT_LIFE,
+      velocity: new THREE.Vector3(),
+      active: false,
+      priority: 0,
+    }
+  }
+
+  private getComicCalloutTexture(word: ComicCallout): THREE.CanvasTexture {
+    const key = `comic-callout-${word}`
+    const cached = this.generatedTextures.get(key)
+    if (cached) return cached
+    const canvas = document.createElement('canvas')
+    canvas.width = 256
+    canvas.height = 192
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Comic callout canvas context is unavailable.')
+    const style = COMIC_CALLOUTS[word]
+    const fill =
+      word === 'БЛОК!'
+        ? this.palette.link
+        : word === 'ХРЯСЬ!'
+          ? this.palette.danger
+          : word === 'БУМ!'
+            ? this.palette.accent
+            : this.palette.warning
+    context.save()
+    context.translate(128, 96)
+    context.beginPath()
+    for (let index = 0; index < style.points * 2; index += 1) {
+      const angle = style.rotation + (index * Math.PI) / style.points
+      const radius = index % 2 === 0 ? 86 : 86 * style.innerRadius
+      const x = Math.cos(angle) * radius
+      const y = Math.sin(angle) * radius * (word === 'БЛОК!' ? 0.72 : 0.88)
+      if (index === 0) context.moveTo(x, y)
+      else context.lineTo(x, y)
+    }
+    context.closePath()
+    context.lineJoin = 'round'
+    context.lineWidth = 12
+    context.strokeStyle = this.palette.bg.getStyle()
+    context.fillStyle = fill.getStyle()
+    context.stroke()
+    context.fill()
+    context.restore()
+    context.textAlign = 'center'
+    context.textBaseline = 'middle'
+    context.lineJoin = 'round'
+    context.font = `900 ${word === 'ХРЯСЬ!' ? 44 : 52}px "Segoe UI", Aptos, Calibri, sans-serif`
+    context.lineWidth = 11
+    context.strokeStyle = this.palette.bg.getStyle()
+    context.fillStyle = this.palette.accentFg.getStyle()
+    context.strokeText(word, 128, 98)
+    context.fillText(word, 128, 98)
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.generateMipmaps = false
+    texture.minFilter = THREE.LinearFilter
+    texture.magFilter = THREE.LinearFilter
+    this.generatedTextures.set(key, texture)
+    return texture
+  }
+
+  private updateComicCalloutFx(delta: number): void {
+    for (const entry of this.comicCalloutFx) {
+      if (!entry.active) continue
+      entry.age += delta
+      if (entry.age >= entry.lifetime) {
+        this.releaseComicCalloutFx(entry)
+        continue
+      }
+      if (!this.reducedMotion) entry.sprite.position.addScaledVector(entry.velocity, delta)
+      const progress = entry.age / entry.lifetime
+      const pop = THREE.MathUtils.clamp(entry.age / 0.07, 0, 1)
+      const fade = THREE.MathUtils.clamp((1 - progress) / 0.32, 0, 1)
+      const scale = (1.72 + entry.priority * 0.18) * THREE.MathUtils.lerp(0.62, 1, pop)
+      entry.sprite.scale.set(scale, scale * 0.75, 1)
+      entry.material.opacity = fade
+    }
+  }
+
+  private releaseComicCalloutFx(entry: ComicCalloutFx): void {
+    entry.active = false
+    entry.sprite.visible = false
+    entry.material.opacity = 0
+    entry.word = null
+    entry.age = 0
+    entry.priority = 0
+    entry.velocity.set(0, 0, 0)
+  }
+
+  private spawnImpactRay(event: CombatFeedbackEvent): void {
+    if (!event.directPlayerAction && event.targetId !== 'player') return
+    const priority = HIT_WEIGHT_PRIORITY[event.weight]
+    const entry = this.acquireImpactRayFx(priority)
+    if (!entry) return
+    entry.age = 0
+    entry.lifetime = IMPACT_RAY_LIFE
+    entry.active = true
+    entry.priority = priority
+    entry.weight = event.weight
+    entry.sprite.visible = true
+    entry.sprite.position.copy(event.position)
+    entry.sprite.scale.setScalar(0.4)
+    entry.material.opacity = 1
+    entry.material.rotation = Math.random() * Math.PI
+    entry.material.color.copy(this.impactRayColor(event.weight))
+  }
+
+  private acquireImpactRayFx(priority: number): ImpactRayFx | null {
+    const inactive = this.impactRayFx.find((entry) => !entry.active)
+    if (inactive) return inactive
+    if (this.impactRayFx.length < IMPACT_RAY_MAX) {
+      const entry = this.createImpactRayFx()
+      this.impactRayFx.push(entry)
+      return entry
+    }
+    if (priority < HIT_WEIGHT_PRIORITY.heavy) return null
+    const recycled = this.impactRayFx
+      .filter((entry) => entry.priority === HIT_WEIGHT_PRIORITY.normal)
+      .sort((left, right) => right.age - left.age)[0]
+    if (!recycled) return null
+    this.releaseImpactRayFx(recycled)
+    return recycled
+  }
+
+  private createImpactRayFx(): ImpactRayFx {
+    const material = new THREE.SpriteMaterial({
+      map: this.getImpactRayTexture(),
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: false,
+    })
+    const sprite = new THREE.Sprite(material)
+    sprite.visible = false
+    sprite.renderOrder = 9
+    this.scene.add(sprite)
+    return {
+      sprite,
+      material,
+      age: 0,
+      lifetime: IMPACT_RAY_LIFE,
+      active: false,
+      priority: 0,
+      weight: 'normal',
+    }
+  }
+
+  private getImpactRayTexture(): THREE.CanvasTexture {
+    const key = 'comic-impact-rays'
+    const cached = this.generatedTextures.get(key)
+    if (cached) return cached
+    const canvas = document.createElement('canvas')
+    canvas.width = 128
+    canvas.height = 128
+    const context = canvas.getContext('2d')
+    if (!context) throw new Error('Comic impact-ray canvas context is unavailable.')
+    context.translate(64, 64)
+    context.lineCap = 'round'
+    for (let index = 0; index < 16; index += 1) {
+      const angle = (index / 16) * Math.PI * 2
+      const inner = index % 2 === 0 ? 17 : 24
+      const outer = index % 3 === 0 ? 57 : 48
+      context.beginPath()
+      context.moveTo(Math.cos(angle) * inner, Math.sin(angle) * inner)
+      context.lineTo(Math.cos(angle) * outer, Math.sin(angle) * outer)
+      context.lineWidth = index % 2 === 0 ? 5 : 3
+      context.strokeStyle = '#ffffff'
+      context.stroke()
+    }
+    const texture = new THREE.CanvasTexture(canvas)
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.generateMipmaps = false
+    texture.minFilter = THREE.LinearFilter
+    texture.magFilter = THREE.LinearFilter
+    this.generatedTextures.set(key, texture)
+    return texture
+  }
+
+  private impactRayColor(weight: HitWeight): THREE.Color {
+    if (weight === 'blocked') return this.palette.link
+    if (weight === 'lethal') return this.palette.danger
+    if (weight === 'heavy') return this.palette.warning
+    return this.palette.text
+  }
+
+  private updateImpactRayFx(delta: number): void {
+    for (const entry of this.impactRayFx) {
+      if (!entry.active) continue
+      entry.age += delta
+      if (entry.age >= entry.lifetime) {
+        this.releaseImpactRayFx(entry)
+        continue
+      }
+      const progress = entry.age / entry.lifetime
+      entry.sprite.scale.setScalar(THREE.MathUtils.lerp(0.4, 1.8, progress))
+      entry.material.opacity = 1 - progress
+    }
+  }
+
+  private releaseImpactRayFx(entry: ImpactRayFx): void {
+    entry.active = false
+    entry.sprite.visible = false
+    entry.material.opacity = 0
+    entry.age = 0
+    entry.priority = 0
+    entry.weight = 'normal'
+  }
+
+  private createWeaponTrail(): THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial> {
+    const innerRadius = 0.42
+    const outerRadius = 1.08
+    const geometry = new THREE.RingGeometry(
+      innerRadius,
+      outerRadius,
+      28,
+      1,
+      -Math.PI * 0.42,
+      Math.PI * 0.94,
+    )
+    const positions = geometry.getAttribute('position')
+    const colors: number[] = []
+    const pale = this.palette.text.clone().lerp(this.palette.accentFg, 0.35)
+    const edge = this.factionColor(this.faction).clone().lerp(this.palette.text, 0.18)
+    for (let index = 0; index < positions.count; index += 1) {
+      const radius = Math.hypot(positions.getX(index), positions.getY(index))
+      const blend = THREE.MathUtils.clamp(
+        (radius - innerRadius) / (outerRadius - innerRadius),
+        0,
+        1,
+      )
+      const color = pale.clone().lerp(edge, blend)
+      colors.push(color.r, color.g, color.b)
+    }
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    const material = new THREE.MeshBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+      toneMapped: false,
+    })
+    const trail = new THREE.Mesh(geometry, material)
+    trail.name = 'weapon-trail'
+    trail.position.set(0, -0.18, 0.04)
+    trail.rotation.z = -0.72
+    trail.visible = false
+    trail.castShadow = false
+    trail.receiveShadow = false
+    trail.renderOrder = 7
+    trail.userData.noComicOutline = true
+    return trail
+  }
+
+  private updateWeaponTrail(): void {
+    if (
+      this.activePlayerAttackKind === 'arrow' ||
+      this.attackAnimation <= 0.1 ||
+      this.attackAnimation >= 0.96
+    ) {
+      this.weaponTrail.visible = false
+      this.weaponTrail.material.opacity = 0
+      return
+    }
+    const progress = THREE.MathUtils.clamp((0.96 - this.attackAnimation) / 0.86, 0, 1)
+    const envelope = Math.sin(progress * Math.PI)
+    const cleaveScale = this.activePlayerAttackKind === 'cleave' ? 1.36 : 1
+    this.weaponTrail.visible = envelope > 0.02
+    this.weaponTrail.material.opacity = envelope * 0.72
+    this.weaponTrail.scale.set(
+      cleaveScale * (0.82 + progress * 0.3),
+      cleaveScale * (0.76 + progress * 0.22),
+      1,
+    )
+    this.weaponTrail.rotation.z = -0.82 + progress * 0.42
   }
 
   private createSparks(
@@ -7634,6 +8502,7 @@ uniform float uSwayAmplitude;`,
 
   private onWindowBlur(): void {
     this.keys.clear()
+    this.clearTransientCombatFeedback()
     if (this.shieldActive) {
       this.dropShield()
       this.emitView(true)
@@ -7653,6 +8522,7 @@ uniform float uSwayAmplitude;`,
   private onVisibilityChange(): void {
     if (document.hidden) {
       this.keys.clear()
+      this.clearTransientCombatFeedback()
       if (this.shieldActive) {
         this.dropShield()
         this.emitView(true)
