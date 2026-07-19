@@ -73,10 +73,9 @@ export interface WalkablePositionOptions extends CollisionQueryOptions {
   requireActiveBounds?: boolean
 }
 
-export interface ResolveMovementOptions extends CollisionQueryOptions {
+export interface ResolveMovementOptions extends WalkablePositionOptions {
   maxIterations?: number
   maxStep?: number
-  maxSlope?: number
   preventSteepTerrain?: boolean
 }
 
@@ -473,7 +472,12 @@ export class CollisionWorld {
     for (let step = 0; step < steps; step += 1) {
       const targetX = x + stepX
       const targetZ = z + stepZ
-      const bounded = this.clampToBounds(targetX, targetZ, safeRadius)
+      const bounded = this.clampToBounds(
+        targetX,
+        targetZ,
+        safeRadius,
+        options.requireActiveBounds !== false,
+      )
       const resolved = this.resolvePenetrations(
         bounded.x,
         bounded.z,
@@ -557,7 +561,12 @@ export class CollisionWorld {
         collisionIds.add(collider.id)
         moved = true
       }
-      const bounded = this.clampToBounds(x, z, radius)
+      const bounded = this.clampToBounds(
+        x,
+        z,
+        radius,
+        options.requireActiveBounds !== false,
+      )
       x = bounded.x
       z = bounded.z
       if (!moved) break
@@ -565,11 +574,17 @@ export class CollisionWorld {
     return { x, z, collisionIds: [...collisionIds] }
   }
 
-  private clampToBounds(x: number, z: number, radius: number): Point2 {
+  private clampToBounds(
+    x: number,
+    z: number,
+    radius: number,
+    requireActiveBounds: boolean,
+  ): Point2 {
     let clamped = { x, z }
     if (this.worldBounds) {
       clamped = clampCircleCenter(this.worldBounds, clamped.x, clamped.z, radius)
     }
+    if (!requireActiveBounds) return clamped
     if (this.activeBounds?.length === 1) {
       clamped = clampCircleCenter(
         this.activeBounds[0],

@@ -126,6 +126,36 @@ test('movement clamps a full actor circle inside adjacent active bounds', () => 
   assert.equal(collision.isWithinBounds(10, 5, 1), true)
 })
 
+test('movement can ignore streamed active bounds while respecting world bounds', () => {
+  const collision = new CollisionWorld(createFlatTerrain(), {
+    worldBounds: { minX: 0, maxX: 30, minZ: 0, maxZ: 10 },
+  })
+  collision.setActiveBounds({ minX: 0, maxX: 10, minZ: 0, maxZ: 10 })
+
+  const bounded = collision.resolveMovement(
+    { x: 8, z: 5 },
+    { x: 14, z: 5 },
+    1,
+  )
+  assert.equal(bounded.x, 9)
+
+  const unbounded = collision.resolveMovement(
+    { x: 8, z: 5 },
+    { x: 14, z: 5 },
+    1,
+    { requireActiveBounds: false },
+  )
+  assert.equal(unbounded.x, 14)
+
+  const worldBounded = collision.resolveMovement(
+    { x: 14, z: 5 },
+    { x: 35, z: 5 },
+    1,
+    { requireActiveBounds: false },
+  )
+  assert.equal(worldBounded.x, 29)
+})
+
 test('removing a region clears every collider and stale spatial bucket reference', () => {
   const collision = new CollisionWorld(createFlatTerrain(), { cellSize: 2 })
   collision.registerCircle({

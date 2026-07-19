@@ -70,6 +70,7 @@ import {
 import { RandomStream } from './random/RandomStream'
 import { deriveSeed } from './random/seed'
 import { getStartingBoonEffects } from './run/profile'
+import { getSquadFollowSpeed } from './squadMovement'
 import {
   ACTIVE_RUN_SAVE_VERSION,
   type ActiveRunSaveV2,
@@ -1613,6 +1614,7 @@ export class GameEngine {
         (boon?.startingDamageBonus ?? 0)
     const restoredDirector = restoredRun?.directorState
     const restoredEvent = restoredRun?.eventState
+    this.squadFollowing = restoredDirector?.squadFollowing === true
     this.elapsed = this.readSerializableNumber(
       restoredDirector,
       'elapsed',
@@ -2480,6 +2482,7 @@ export class GameEngine {
       regionDeltas: regionState.deltas,
       directorState: {
         elapsed: this.elapsed,
+        squadFollowing: this.squadFollowing,
         threatTier: this.threatTier,
         nextThreatWaveAt: this.nextThreatWaveAt,
         championDamageBonus: this.championDamageBonus,
@@ -3397,13 +3400,17 @@ export class GameEngine {
     movementX: number,
     movementZ: number,
     radius: number,
+    allowInactiveBounds = false,
   ): boolean {
     if (this.generatedWorld) {
       const resolved = this.generatedWorld.collision.resolveMovement(
         { x: position.x, z: position.z },
         { x: position.x + movementX, z: position.z + movementZ },
         radius,
-        { preventSteepTerrain: true },
+        {
+          preventSteepTerrain: true,
+          requireActiveBounds: !allowInactiveBounds,
+        },
       )
       position.x = resolved.x
       position.z = resolved.z
@@ -3761,6 +3768,7 @@ export class GameEngine {
     actor: Actor,
     desiredDirection: THREE.Vector3,
     distance: number,
+    allowInactiveBounds = false,
   ): number {
     const radius = this.actorColliderRadiusForRole(actor.role)
     const startX = actor.mesh.position.x
@@ -3782,6 +3790,7 @@ export class GameEngine {
         directionX * distance,
         directionZ * distance,
         radius,
+        allowInactiveBounds,
       )
       const movedX = this.collisionProbe.x - startX
       const movedZ = this.collisionProbe.z - startZ
@@ -3975,6 +3984,7 @@ export class GameEngine {
       let investigatesPlayer = false
       let targetPosition: THREE.Vector3 | null = null
       let wandering = false
+      let followingFormation = false
       const baseAggroRange = actor.role === 'archer' ? 18 : 15
       const enraged = actor.rageTimer > 0
       const senseRange = baseAggroRange + (enraged ? RAGE_RANGE_BONUS : 0)
@@ -4051,6 +4061,7 @@ export class GameEngine {
         if (targetActor) {
           targetPosition = targetActor.mesh.position
         } else {
+          followingFormation = true
           const formationAngle = actor.phase * 3.7
           const formationTarget = this.player.position
             .clone()
@@ -4227,8 +4238,11 @@ export class GameEngine {
 
       let desiredSpeed = 0
       if (moving && direction.lengthSq() > 0) {
+        const movementSpeed = followingFormation
+          ? getSquadFollowSpeed(actor.speed, playerDistance)
+          : actor.speed
         desiredSpeed =
-          actor.speed *
+          movementSpeed *
           (pursuesPlayer || retaliationTarget ? 1.25 : 1) *
           (enraged ? RAGE_SPEED_MULTIPLIER : 1) *
           (this.hasCommanderAura(actor) ? COMMANDER_SPEED_MULTIPLIER : 1) *
@@ -4257,7 +4271,12 @@ export class GameEngine {
       if (requestedSpeed > 0.02) {
         direction.set(actor.velocity.x / requestedSpeed, 0, actor.velocity.z / requestedSpeed)
         const requestedDistance = Math.min(requestedSpeed * delta, movementDistanceLimit)
-        travelled = this.moveActorWithSteering(actor, direction, requestedDistance)
+        travelled = this.moveActorWithSteering(
+          actor,
+          direction,
+          requestedDistance,
+          followingFormation,
+        )
         if (
           requestedDistance > 0.001 &&
           travelled / requestedDistance < NPC_BLOCKED_SPEED_RATIO
