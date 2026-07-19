@@ -20,7 +20,6 @@ import {
   RotateCcw,
   Save,
   Shield,
-  ShoppingBag,
   Skull,
   Sparkles,
   Sword,
@@ -34,6 +33,7 @@ import {
   X,
 } from 'lucide-react'
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -44,7 +44,11 @@ import {
 } from 'react'
 import './App.css'
 import { SFX_VOLUME_DEFAULT, normalizeSfxVolume } from './game/AudioDirector'
-import { GameEngine, type FoliageQuality } from './game/GameEngine'
+import {
+  GameEngine,
+  type FoliageQuality,
+  type GeneratedRunLaunch,
+} from './game/GameEngine'
 import {
   ACHIEVEMENT_CATEGORY_LABELS,
   ACHIEVEMENT_CATEGORY_ORDER,
@@ -72,6 +76,7 @@ import {
   type SavedGame,
   type ShopItem,
   type WorldEventView,
+  type WorldMapRegion,
   createAbilityView,
   createHealthyBody,
   getMaxHealth,
@@ -82,11 +87,49 @@ import {
   normalizeUpgradeLevels,
   restoreObjectives,
 } from './game/types'
+import { getSiteWorldPosition2D } from './game/content/registry'
+import { parseSeed } from './game/random/seed'
+import {
+  BOON_CATALOGUE,
+  getStartingBoonEffects,
+  isBoonUnlocked,
+  selectProfileBoon,
+  unlockBoon,
+  validateBoonSelection,
+} from './game/run/profile'
+import {
+  finalizeRunSnapshot,
+  loadActiveRun,
+  loadProfile,
+  saveActiveRun,
+  saveProfile,
+  type StorageWarning,
+} from './game/run/storage'
+import type {
+  ActiveRunSaveV2,
+  ProfileSaveV1,
+  RunConfig,
+  RunHistorySummary,
+} from './game/run/runTypes'
+import { generateWorld } from './game/world/WorldGenerator'
+import {
+  WORLD_GENERATOR_VERSION,
+  type SiteKind,
+  type WorldBlueprint,
+} from './game/world/worldTypes'
 
 interface Notice {
   id: number
   message: string
   tone: 'info' | 'success' | 'warning' | 'danger'
+}
+
+interface TerminalRunSummary {
+  runId: string
+  rewardGranted: number
+  summary: RunHistorySummary | null
+  profileCurrency: number
+  finalizationPending: boolean
 }
 
 type Theme = 'dark' | 'light'
@@ -100,6 +143,115 @@ const BLOOM_ENABLED_KEY = 'korovany-bloom'
 const INK_OUTLINES_ENABLED_KEY = 'korovany-ink-outlines'
 const SCREEN_SHAKE_ENABLED_KEY = 'korovany-screen-shake'
 const FOLIAGE_QUALITY_KEY = 'korovany-foliage'
+
+const generatedSiteLabels: Record<SiteKind, string> = {
+  'faction-start': 'лагерь фракции',
+  'final-stronghold': 'финальная крепость',
+  settlement: 'поселение у перепутья',
+  shop: 'дорожная лавка',
+  recovery: 'придорожное святилище',
+  event: 'место события',
+  treasure: 'тайник',
+  landmark: 'ориентир',
+}
+
+const generatedRunStatusLabels: Record<ActiveRunSaveV2['status'], string> = {
+  active: 'В пути',
+  victory: 'Победа',
+  defeat: 'Поражение',
+  abandoned: 'Оставлен',
+}
+
+const historyStatusLabels: Record<RunHistorySummary['status'], string> = {
+  victory: 'Победа',
+  defeat: 'Поражение',
+  abandoned: 'Оставлен',
+}
+
+const territoryLabels: Record<WorldMapRegion['territory'], string> = {
+  neutral: 'вольные земли',
+  elf: 'эльфы',
+  guard: 'гвардия',
+  villain: 'злодеи',
+}
+
+const warnRunStorage: StorageWarning = (message, error) => {
+  if (error === undefined) console.warn(message)
+  else console.warn(message, error)
+}
+
+function readActiveGeneratedRun(): ActiveRunSaveV2 | null {
+  try {
+    return loadActiveRun(window.localStorage, warnRunStorage)
+  } catch (error) {
+    console.warn('Korovany: generated run data could not be read.', error)
+    return null
+  }
+}
+
+function writeActiveGeneratedRun(value: ActiveRunSaveV2): boolean {
+  try {
+    return saveActiveRun(window.localStorage, value, warnRunStorage)
+  } catch (error) {
+    console.warn('Korovany: generated run data could not be saved.', error)
+    return false
+  }
+}
+
+function readPlayerProfile(): ProfileSaveV1 {
+  try {
+    return loadProfile(window.localStorage, warnRunStorage)
+  } catch (error) {
+    console.warn('Korovany: profile data could not be read.', error)
+    return {
+      version: 1,
+      profileCurrency: 0,
+      unlockedBoonIds: BOON_CATALOGUE.filter((boon) => boon.defaultUnlocked).map(
+        (boon) => boon.id,
+      ),
+      unlockedContentIds: [],
+      unlockedCosmeticIds: [],
+      selectedBoonId: BOON_CATALOGUE.find((boon) => boon.defaultUnlocked)?.id ?? null,
+      selectedFaction: null,
+      runHistory: [],
+      finalizedRunIds: [],
+    }
+  }
+}
+
+function writePlayerProfile(value: ProfileSaveV1): boolean {
+  try {
+    return saveProfile(window.localStorage, value, warnRunStorage)
+  } catch (error) {
+    console.warn('Korovany: profile data could not be saved.', error)
+    return false
+  }
+}
+
+function finalizeGeneratedRunSnapshot(snapshot: ActiveRunSaveV2) {
+  try {
+    return finalizeRunSnapshot(window.localStorage, snapshot, {
+      onWarning: warnRunStorage,
+    })
+  } catch (error) {
+    console.warn('Korovany: generated run could not be finalized.', error)
+    return null
+  }
+}
+
+function createRandomSeed(): number {
+  const values = new Uint32Array(1)
+  crypto.getRandomValues(values)
+  return parseSeed(values[0])
+}
+
+function selectedProfileBoon(profile: ProfileSaveV1): string {
+  return (
+    validateBoonSelection(profile) ??
+    profile.unlockedBoonIds.find((boonId) => isBoonUnlocked(profile, boonId)) ??
+    BOON_CATALOGUE[0].id
+  )
+}
 
 const foliageQualityLabels: Record<FoliageQuality, string> = {
   off: 'выкл.',
@@ -142,9 +294,9 @@ const bodyParts: Array<{ id: BodyPart; label: string; short: string; icon: React
 ]
 
 function readSavedGame(): SavedGame | null {
-  const raw = localStorage.getItem(SAVE_KEY)
-  if (!raw) return null
   try {
+    const raw = localStorage.getItem(SAVE_KEY)
+    if (!raw) return null
     const value = normalizeSavedGame(JSON.parse(raw))
     if (!value) {
       console.warn('Korovany: incompatible saved game ignored.')
@@ -275,6 +427,52 @@ function formatSaveDate(value: string): string {
       }).format(date)
 }
 
+function createLegacyWorldMap(zone: GameView['zone']): GameView['worldMap'] {
+  return {
+    mode: 'legacy',
+    bounds: { minX: -80, maxX: 80, minZ: -80, maxZ: 80 },
+    currentRegionId: zone,
+    regions: [
+      {
+        id: 'neutral',
+        gridX: 0,
+        gridZ: 0,
+        biome: 'neutral',
+        territory: 'neutral',
+        discovered: true,
+        current: zone === 'neutral',
+      },
+      {
+        id: 'palace',
+        gridX: 1,
+        gridZ: 0,
+        biome: 'palace',
+        territory: 'guard',
+        discovered: true,
+        current: zone === 'palace',
+      },
+      {
+        id: 'forest',
+        gridX: 0,
+        gridZ: 1,
+        biome: 'forest',
+        territory: 'elf',
+        discovered: true,
+        current: zone === 'forest',
+      },
+      {
+        id: 'fort',
+        gridX: 1,
+        gridZ: 1,
+        biome: 'fort',
+        territory: 'villain',
+        discovered: true,
+        current: zone === 'fort',
+      },
+    ],
+  }
+}
+
 function createInitialView(faction: Faction, savedGame?: SavedGame): GameView {
   const spawn = savedGame?.position ?? [
     FACTION_INFO[faction].spawn[0],
@@ -312,6 +510,7 @@ function createInitialView(faction: Faction, savedGame?: SavedGame): GameView {
     objectives,
     prompt: '',
     markers: [],
+    worldMap: createLegacyWorldMap(zone),
     squad: 0,
     elapsed,
     pointerLocked: false,
@@ -328,6 +527,135 @@ function createInitialView(faction: Faction, savedGame?: SavedGame): GameView {
   }
 }
 
+function createGeneratedObjectives(blueprint: WorldBlueprint, faction: Faction) {
+  return blueprint.objectives[faction].nodes.map((node) => {
+    const site = blueprint.sites.find((candidate) => candidate.id === node.siteId)
+    const label = site ? generatedSiteLabels[site.kind] : 'цель'
+    const text =
+      node.kind === 'arrive'
+        ? `Доберитесь до места «${label}»`
+        : node.kind === 'interact'
+          ? `Осмотрите место «${label}»`
+          : node.kind === 'claim'
+            ? `Заберите награду в месте «${label}»`
+            : `Одолейте противника у места «${label}»`
+    return { id: node.id, text, done: false }
+  })
+}
+
+function serializableNumber(value: unknown, fallback = 0): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+function createGeneratedInitialView(launch: GeneratedRunLaunch): GameView {
+  const blueprint = generateWorld(launch.config.seed)
+  const restored = launch.restored
+  const startSite = blueprint.sites.find(
+    (site) => site.id === blueprint.starts[launch.config.faction],
+  )
+  if (!startSite) throw new Error('Generated start site is missing')
+  const startPosition = getSiteWorldPosition2D(blueprint, startSite)
+  if (!startPosition) throw new Error('Generated start position is missing')
+
+  const position = restored?.currentLocation.worldPosition ?? [
+    startPosition.x,
+    0,
+    startPosition.z,
+  ]
+  const currentRegionId = restored?.currentLocation.regionId ?? startSite.regionId
+  const currentRegion =
+    blueprint.regions.find((region) => region.id === currentRegionId) ??
+    blueprint.regions.find((region) => region.id === startSite.regionId)
+  if (!currentRegion) throw new Error('Generated start region is missing')
+
+  const boon = getStartingBoonEffects(launch.config.selectedBoonId)
+  const upgrades = normalizeUpgradeLevels(restored?.player.upgrades)
+  const baseHealth = getMaxHealth(upgrades)
+  const baseStamina = getMaxStamina(upgrades)
+  const maxHealth =
+    restored?.player.maxHealth ?? baseHealth + boon.startingHealthBonus
+  const maxStamina =
+    restored?.player.maxStamina ?? baseStamina + boon.startingStaminaBonus
+  const health = Math.min(maxHealth, restored?.player.health ?? maxHealth)
+  const stamina = Math.min(maxStamina, restored?.player.stamina ?? maxStamina)
+  const body = restored ? { ...restored.player.body } : createHealthyBody()
+  const objectives =
+    restored?.player.objectives.map((objective) => ({ ...objective })) ??
+    createGeneratedObjectives(blueprint, launch.config.faction)
+  const elapsed = serializableNumber(restored?.directorState.elapsed)
+  const discovered = new Set(restored?.discoveredRegionIds ?? [])
+  discovered.add(currentRegion.id)
+
+  if (!restored && boon.revealAdjacentRegions) {
+    for (const region of blueprint.regions) {
+      if (
+        Math.abs(region.coordinate.x - currentRegion.coordinate.x) <= 1 &&
+        Math.abs(region.coordinate.y - currentRegion.coordinate.y) <= 1
+      ) {
+        discovered.add(region.id)
+      }
+    }
+  }
+
+  return {
+    faction: launch.config.faction,
+    health,
+    maxHealth,
+    damageFlash: 0,
+    stamina,
+    maxStamina,
+    gold: restored?.player.gold ?? 55 + boon.startingGoldBonus,
+    kills: restored?.player.kills ?? 0,
+    damage:
+      restored?.player.damage ??
+      (launch.config.faction === 'villain'
+        ? 31
+        : launch.config.faction === 'guard'
+          ? 28
+          : 26) + boon.startingDamageBonus,
+    zone: currentRegion.biome,
+    body,
+    objectives,
+    prompt: '',
+    markers: [
+      {
+        id: 'player',
+        x: position[0],
+        z: position[2],
+        kind: 'player',
+        heading: restored?.currentLocation.heading ?? 0,
+      },
+    ],
+    worldMap: {
+      mode: 'generated',
+      bounds: { ...blueprint.bounds },
+      currentRegionId: currentRegion.id,
+      seed: blueprint.seed,
+      generatorVersion: blueprint.generatorVersion,
+      regions: blueprint.regions.map((region) => ({
+        id: region.id,
+        gridX: region.coordinate.x,
+        gridZ: region.coordinate.y,
+        biome: region.biome,
+        territory: region.territory,
+        discovered: discovered.has(region.id),
+        current: region.id === currentRegion.id,
+      })),
+    },
+    squad: 0,
+    elapsed,
+    pointerLocked: false,
+    paused: false,
+    caravanCooldown: serializableNumber(restored?.directorState.caravanCooldown),
+    ability: createAbilityView(launch.config.faction, stamina, body),
+    activeEvent: null,
+    lootToast: null,
+    campaignCompleted: objectives.every((objective) => objective.done),
+    threatTier: getThreatTier(elapsed),
+    upgrades,
+  }
+}
+
 function StatusDot({ status }: { status: PartStatus }) {
   const labels: Record<PartStatus, string> = {
     healthy: 'цела',
@@ -338,45 +666,138 @@ function StatusDot({ status }: { status: PartStatus }) {
   return <span className={`part-state ${status}`}>{labels[status]}</span>
 }
 
+function projectMapMarker(
+  coordinate: number,
+  minimum: number,
+  maximum: number,
+): string {
+  const span = Math.max(1, maximum - minimum)
+  return `${Math.min(100, Math.max(0, ((coordinate - minimum) / span) * 100))}%`
+}
+
+function markerIsDiscovered(view: GameView, x: number, z: number): boolean {
+  if (view.worldMap.mode === 'legacy') return true
+  const { bounds, regions } = view.worldMap
+  const columns = Math.max(1, ...regions.map((region) => region.gridX + 1))
+  const rows = Math.max(1, ...regions.map((region) => region.gridZ + 1))
+  const gridX = Math.min(
+    columns - 1,
+    Math.max(0, Math.floor(((x - bounds.minX) / (bounds.maxX - bounds.minX)) * columns)),
+  )
+  const gridZ = Math.min(
+    rows - 1,
+    Math.max(0, Math.floor(((z - bounds.minZ) / (bounds.maxZ - bounds.minZ)) * rows)),
+  )
+  return Boolean(
+    regions.find((region) => region.gridX === gridX && region.gridZ === gridZ)
+      ?.discovered,
+  )
+}
+
+function RegionBiomeIcon({ biome }: { biome: GameView['zone'] }) {
+  if (biome === 'forest') return <Trees aria-hidden="true" />
+  if (biome === 'palace') return <Castle aria-hidden="true" />
+  if (biome === 'fort') return <Skull aria-hidden="true" />
+  return <Home aria-hidden="true" />
+}
+
 function MiniMap({ view }: { view: GameView }) {
   const hasObjectiveMarker = view.markers.some((marker) => marker.kind === 'objective')
   const hasEventMarker = view.markers.some((marker) => marker.kind === 'event')
+  const generated = view.worldMap.mode === 'generated'
+  const discoveredCount = view.worldMap.regions.filter((region) => region.discovered).length
+  const visibleMarkers = view.markers.filter(
+    (marker) =>
+      marker.kind === 'player' || markerIsDiscovered(view, marker.x, marker.z),
+  )
+  const mapLabel = generated
+    ? `Карта сгенерированного мира, открыто ${discoveredCount} из ${view.worldMap.regions.length} регионов`
+    : 'Карта четырёх зон'
+  const { bounds } = view.worldMap
 
   return (
-    <section className="hud-card minimap-card" aria-label="Карта четырёх зон">
+    <section
+      className={`hud-card minimap-card ${generated ? 'generated' : 'legacy'}`}
+      aria-label={mapLabel}
+    >
       <header className="hud-card-header">
         <span>
           <MapIcon aria-hidden="true" />
           Карта
         </span>
-        <span className="zone-code">4 зоны</span>
+        <span className="zone-code">
+          {generated
+            ? `${discoveredCount}/${view.worldMap.regions.length}`
+            : '4 зоны'}
+        </span>
       </header>
-      <div className="minimap">
-        <div className={`map-zone neutral${view.zone === 'neutral' ? ' current' : ''}`}>
-          <Home aria-hidden="true" />
-          <span>Люди</span>
+      {generated ? (
+        <div className="generated-map-meta">
+          <span>seed {view.worldMap.seed}</span>
+          <span>v{view.worldMap.generatorVersion}</span>
         </div>
-        <div className={`map-zone palace${view.zone === 'palace' ? ' current' : ''}`}>
-          <Castle aria-hidden="true" />
-          <span>Дворец</span>
-        </div>
-        <div className={`map-zone forest${view.zone === 'forest' ? ' current' : ''}`}>
-          <Trees aria-hidden="true" />
-          <span>Эльфы</span>
-        </div>
-        <div className={`map-zone fort${view.zone === 'fort' ? ' current' : ''}`}>
-          <Skull aria-hidden="true" />
-          <span>Форт</span>
-        </div>
-        <div className="map-road horizontal" />
-        <div className="map-road vertical" />
-        {view.markers.map((marker) => (
+      ) : null}
+      <div className={`minimap ${generated ? 'generated-world-map' : 'legacy-world-map'}`}>
+        {generated ? (
+          view.worldMap.regions.map((region) => {
+            const title = region.discovered
+              ? `${ZONE_INFO[region.biome].name} · ${territoryLabels[region.territory]}`
+              : 'Неизведанный регион'
+            return (
+              <div
+                className={`generated-map-region ${
+                  region.discovered
+                    ? `discovered biome-${region.biome} territory-${region.territory}`
+                    : 'fogged'
+                } ${region.current ? 'current' : ''}`}
+                key={region.id}
+                style={{
+                  gridColumn: region.gridX + 1,
+                  gridRow: region.gridZ + 1,
+                }}
+                title={title}
+                aria-label={title}
+              >
+                {region.discovered ? (
+                  <>
+                    <RegionBiomeIcon biome={region.biome} />
+                    <span>{territoryLabels[region.territory]}</span>
+                  </>
+                ) : (
+                  <span aria-hidden="true">?</span>
+                )}
+              </div>
+            )
+          })
+        ) : (
+          <>
+            <div className={`map-zone neutral${view.zone === 'neutral' ? ' current' : ''}`}>
+              <Home aria-hidden="true" />
+              <span>Люди</span>
+            </div>
+            <div className={`map-zone palace${view.zone === 'palace' ? ' current' : ''}`}>
+              <Castle aria-hidden="true" />
+              <span>Дворец</span>
+            </div>
+            <div className={`map-zone forest${view.zone === 'forest' ? ' current' : ''}`}>
+              <Trees aria-hidden="true" />
+              <span>Эльфы</span>
+            </div>
+            <div className={`map-zone fort${view.zone === 'fort' ? ' current' : ''}`}>
+              <Skull aria-hidden="true" />
+              <span>Форт</span>
+            </div>
+            <div className="map-road horizontal" />
+            <div className="map-road vertical" />
+          </>
+        )}
+        {visibleMarkers.map((marker) => (
           <span
             className={`map-marker ${marker.kind}`}
             key={marker.id}
             style={{
-              left: `${((marker.x + 80) / 160) * 100}%`,
-              top: `${((marker.z + 80) / 160) * 100}%`,
+              left: projectMapMarker(marker.x, bounds.minX, bounds.maxX),
+              top: projectMapMarker(marker.z, bounds.minZ, bounds.maxZ),
             }}
             title={marker.label ?? marker.kind}
           >
@@ -403,7 +824,7 @@ function MiniMap({ view }: { view: GameView }) {
         </span>
         {hasObjectiveMarker ? (
           <span>
-            <i className="legend-dot objective" /> сдача добычи
+            <i className="legend-dot objective" /> {generated ? 'цель' : 'сдача добычи'}
           </span>
         ) : null}
         {hasEventMarker ? (
@@ -518,7 +939,7 @@ function EventBanner({ event }: { event: WorldEventView | null }) {
 }
 
 function CampaignBanner({ view }: { view: GameView }) {
-  if (!view.campaignCompleted) return null
+  if (!view.campaignCompleted || view.worldMap.mode === 'generated') return null
 
   return (
     <section className="hud-card campaign-banner" aria-label="Кампания завершена">
@@ -772,6 +1193,11 @@ function AchievementGallery({
 
 function MenuScreen({
   savedGame,
+  activeRun,
+  activeRunError,
+  profile,
+  seedInput,
+  canonicalSeed,
   achievementSummary,
   theme,
   dynamicDayNight,
@@ -782,7 +1208,13 @@ function MenuScreen({
   screenShakeEnabled,
   sfxVolume,
   onStart,
-  onLoad,
+  onContinueGenerated,
+  onAbandonGenerated,
+  onLoadLegacy,
+  onSeedInput,
+  onRandomSeed,
+  onSelectBoon,
+  onUnlockBoon,
   onAchievements,
   onToggleTheme,
   onToggleDynamicDayNight,
@@ -794,6 +1226,11 @@ function MenuScreen({
   onSfxVolumeChange,
 }: {
   savedGame: SavedGame | null
+  activeRun: ActiveRunSaveV2 | null
+  activeRunError: string | null
+  profile: ProfileSaveV1
+  seedInput: string
+  canonicalSeed: number
   achievementSummary: AchievementSummary
   theme: Theme
   dynamicDayNight: boolean
@@ -804,7 +1241,13 @@ function MenuScreen({
   screenShakeEnabled: boolean
   sfxVolume: number
   onStart: (faction: Faction) => void
-  onLoad: () => void
+  onContinueGenerated: () => void
+  onAbandonGenerated: () => void
+  onLoadLegacy: () => void
+  onSeedInput: (value: string) => void
+  onRandomSeed: () => void
+  onSelectBoon: (boonId: string) => void
+  onUnlockBoon: (boonId: string) => void
   onAchievements: () => void
   onToggleTheme: () => void
   onToggleDynamicDayNight: () => void
@@ -815,6 +1258,16 @@ function MenuScreen({
   onToggleScreenShake: () => void
   onSfxVolumeChange: (volume: number) => void
 }) {
+  const selectedBoonId = selectedProfileBoon(profile)
+  const previewWorld = useMemo(() => generateWorld(canonicalSeed), [canonicalSeed])
+  const activeElapsed = serializableNumber(activeRun?.directorState.elapsed)
+  const recentRuns = profile.runHistory.slice(0, 4)
+  const compatibilityError =
+    activeRun &&
+    activeRun.config.generatorVersion !== WORLD_GENERATOR_VERSION
+      ? `Версия мира ${activeRun.config.generatorVersion} не поддерживается этой сборкой.`
+      : activeRunError
+
   return (
     <main className="menu-screen">
       <div className="menu-atmosphere" aria-hidden="true">
@@ -942,8 +1395,8 @@ function MenuScreen({
         <h1>КОРОВАНЫ</h1>
         <p className="hero-kicker">Джва года в разработке</p>
         <p className="hero-copy">
-          Четыре земли. Три стороны конфликта. Один корован, который совершенно точно можно
-          ограбить.
+          Конечный экшен-рогалик на 25 потоковых регионах. Каждый seed собирает новый путь
+          через холмы, реки и мосты для любой из трёх сторон конфликта.
         </p>
         <button className="secondary-button achievement-menu-button" type="button" onClick={onAchievements}>
           <Trophy aria-hidden="true" />
@@ -951,14 +1404,175 @@ function MenuScreen({
         </button>
       </header>
 
-      <section className="faction-select" aria-labelledby="faction-title">
+      {activeRun ? (
+        <section className="active-run-card" aria-labelledby="active-run-title">
+          <div className={`active-run-emblem faction-${activeRun.config.faction}`}>
+            {factionIcons[activeRun.config.faction]}
+          </div>
+          <div className="active-run-copy">
+            <span className="eyebrow">
+              {compatibilityError
+                ? 'Забег требует внимания'
+                : 'Активный сгенерированный забег'}
+            </span>
+            <h2 id="active-run-title">{FACTION_INFO[activeRun.config.faction].name}</h2>
+            <p>
+              Seed <strong>{activeRun.config.seed}</strong> · {formatTime(activeElapsed)} ·{' '}
+              {generatedRunStatusLabels[activeRun.status]} · открыто{' '}
+              {activeRun.discoveredRegionIds.length}/25
+            </p>
+            <small>Контрольная точка: {formatSaveDate(activeRun.updatedAt)}</small>
+            {compatibilityError ? (
+              <small className="active-run-error" role="alert">
+                {compatibilityError}
+              </small>
+            ) : null}
+          </div>
+          <div className="active-run-actions">
+            <button
+              className="primary-button"
+              type="button"
+              onClick={onContinueGenerated}
+              disabled={Boolean(compatibilityError)}
+            >
+              <Play aria-hidden="true" />
+              {compatibilityError ? 'Продолжение недоступно' : 'Продолжить забег'}
+            </button>
+            <button
+              className="secondary-button danger-button"
+              type="button"
+              onClick={onAbandonGenerated}
+            >
+              <X aria-hidden="true" />
+              Оставить забег
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      <section
+        className={`faction-select ${activeRun ? 'new-run-blocked' : ''}`}
+        aria-labelledby="faction-title"
+      >
         <div className="section-heading">
           <div>
-            <span className="eyebrow">Новая кампания</span>
+            <span className="eyebrow">Новый сгенерированный забег</span>
             <h2 id="faction-title">Выберите, за кого нагибать</h2>
           </div>
-          <p>Каждая сторона начинает в своей зоне и получает отдельную цепочку задач.</p>
+          <p>
+            Одна жизнь, уникальный мир и отдельный маршрут к финальной крепости для каждой
+            фракции.
+          </p>
         </div>
+
+        <div className="run-setup">
+          <div className="seed-panel">
+            <div className="run-setup-heading">
+              <div>
+                <span className="eyebrow">Seed мира</span>
+                <h3>Введите число или любой текст</h3>
+              </div>
+              <code aria-label={`Канонический seed ${canonicalSeed}`}>{canonicalSeed}</code>
+            </div>
+            <div className="seed-controls">
+              <label>
+                <span className="sr-only">Seed нового мира</span>
+                <input
+                  id="world-seed"
+                  name="world-seed"
+                  type="text"
+                  value={seedInput}
+                  onChange={(event) => onSeedInput(event.currentTarget.value)}
+                  spellCheck="false"
+                  autoComplete="off"
+                  placeholder="Например: два года"
+                />
+              </label>
+              <button className="secondary-button random-seed-button" type="button" onClick={onRandomSeed}>
+                <RotateCcw aria-hidden="true" />
+                Случайный seed
+              </button>
+            </div>
+            <p>
+              Канонический uint32: <strong>{canonicalSeed}</strong>. Одинаковый seed всегда
+              создаёт тот же мир версии {WORLD_GENERATOR_VERSION}.
+            </p>
+          </div>
+
+          <div className="boon-panel">
+            <div className="run-setup-heading">
+              <div>
+                <span className="eyebrow">Стартовый дар</span>
+                <h3>Один бонус на весь забег</h3>
+              </div>
+              <div className="profile-currency" title="Валюта профиля">
+                <Coins aria-hidden="true" />
+                <span>{profile.profileCurrency}</span>
+              </div>
+            </div>
+            <div className="boon-grid">
+              {BOON_CATALOGUE.map((boon) => {
+                const unlocked = isBoonUnlocked(profile, boon.id)
+                const selected = boon.id === selectedBoonId
+                const affordable = profile.profileCurrency >= boon.unlockCost
+                return (
+                  <article
+                    className={`boon-card ${unlocked ? 'unlocked' : 'locked'} ${
+                      selected ? 'selected' : ''
+                    }`}
+                    key={boon.id}
+                  >
+                    <button
+                      className="boon-select"
+                      type="button"
+                      disabled={!unlocked}
+                      aria-pressed={selected}
+                      onClick={() => onSelectBoon(boon.id)}
+                    >
+                      <span className="boon-state">
+                        {selected ? (
+                          <>
+                            <Check aria-hidden="true" /> Выбран
+                          </>
+                        ) : unlocked ? (
+                          'Доступен'
+                        ) : (
+                          'Закрыт'
+                        )}
+                      </span>
+                      <strong>{boon.name}</strong>
+                      <small>{boon.description}</small>
+                    </button>
+                    {!unlocked ? (
+                      <button
+                        className="boon-unlock"
+                        type="button"
+                        disabled={!affordable}
+                        onClick={() => onUnlockBoon(boon.id)}
+                        title={
+                          affordable
+                            ? `Открыть за ${boon.unlockCost}`
+                            : `Нужно ещё ${boon.unlockCost - profile.profileCurrency}`
+                        }
+                      >
+                        <Coins aria-hidden="true" />
+                        {boon.unlockCost}
+                      </button>
+                    ) : null}
+                  </article>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+
+        {activeRun ? (
+          <p className="new-run-blocked-note">
+            <Shield aria-hidden="true" />
+            Новый забег станет доступен после продолжения или явного отказа от активного.
+          </p>
+        ) : null}
+
         <div className="faction-grid">
           {(Object.keys(FACTION_INFO) as Faction[]).map((faction) => {
             const info = FACTION_INFO[faction]
@@ -977,9 +1591,14 @@ function MenuScreen({
                   <Sparkles aria-hidden="true" />
                   <span>{info.perk}</span>
                 </div>
-                <button className="primary-button" type="button" onClick={() => onStart(faction)}>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={Boolean(activeRun)}
+                  onClick={() => onStart(faction)}
+                >
                   <Play aria-hidden="true" />
-                  Начать
+                  {activeRun ? 'Есть активный забег' : `Начать · seed ${canonicalSeed}`}
                 </button>
               </article>
             )
@@ -990,80 +1609,128 @@ function MenuScreen({
       <section className="menu-lower">
         <div className="world-map-card">
           <div className="map-copy">
-            <span className="eyebrow">Открытая карта</span>
-            <h2>Четыре зоны без загрузок</h2>
+            <span className="eyebrow">Конечный сгенерированный мир</span>
+            <h2>25 регионов, собранных из seed</h2>
             <p>
-              Нейтральная деревня с лекарем, дворец императора, густой эльфийский лес и старый
-              форт в горах.
+              Регионы подгружаются вокруг героя. Холмы меняют рельеф, река пересекает карту,
+              а мосты связывают маршруты всех трёх фракций.
             </p>
             <div className="feature-pills">
               <span>
-                <Trees aria-hidden="true" /> LOD-деревья
+                <MapIcon aria-hidden="true" /> 5×5 регионов
               </span>
               <span>
-                <Sword aria-hidden="true" /> Бои и трупы 3D
+                <CloudRain aria-hidden="true" /> Холмы и река
               </span>
               <span>
-                <ShoppingBag aria-hidden="true" /> Торговля
+                <Castle aria-hidden="true" /> Дороги и мосты
               </span>
               <span>
-                <Save aria-hidden="true" /> Сохранения
+                <Sparkles aria-hidden="true" /> Уникальный seed
               </span>
             </div>
           </div>
-          <div className="menu-map" aria-label="Схема мира">
-            <div className="menu-zone neutral">
-              <Home aria-hidden="true" />
-              <strong>Вольные земли</strong>
-              <span>люди • лекарь</span>
-            </div>
-            <div className="menu-zone palace">
-              <Castle aria-hidden="true" />
-              <strong>Имперский удел</strong>
-              <span>дворец • командир</span>
-            </div>
-            <div className="menu-zone forest">
-              <Trees aria-hidden="true" />
-              <strong>Чаща Эленвуда</strong>
-              <span>лес • деревянные дома</span>
-            </div>
-            <div className="menu-zone fort">
-              <Skull aria-hidden="true" />
-              <strong>Чёрный кряж</strong>
-              <span>горы • старый форт</span>
-            </div>
-            <div className="caravan-route">
-              <span>КОРОВАН</span>
-            </div>
+          <div
+            className="menu-map generated-preview"
+            aria-label={`Предпросмотр мира seed ${canonicalSeed}`}
+          >
+            {previewWorld.regions.map((region) => {
+              const river = previewWorld.river.regionPath.includes(region.id)
+              const bridge = previewWorld.bridges.some(
+                (crossing) => crossing.regionId === region.id,
+              )
+              const startFaction = (Object.keys(previewWorld.starts) as Faction[]).find(
+                (candidate) =>
+                  previewWorld.sites.find(
+                    (site) => site.id === previewWorld.starts[candidate],
+                  )?.regionId === region.id,
+              )
+              return (
+                <div
+                  className={`menu-preview-region biome-${region.biome} ${
+                    river ? 'river' : ''
+                  } ${bridge ? 'bridge' : ''}`}
+                  key={region.id}
+                  style={{
+                    gridColumn: region.coordinate.x + 1,
+                    gridRow: region.coordinate.y + 1,
+                  }}
+                  title={`${ZONE_INFO[region.biome].name} · ${territoryLabels[region.territory]}`}
+                >
+                  {startFaction ? (
+                    <span className={`preview-start faction-${startFaction}`}>
+                      {factionIcons[startFaction]}
+                    </span>
+                  ) : null}
+                  {bridge ? <i className="preview-bridge" aria-hidden="true" /> : null}
+                </div>
+              )
+            })}
+            <code>seed {canonicalSeed}</code>
           </div>
         </div>
 
-        {savedGame ? (
-          <div className="continue-card">
-            <div className="continue-icon">{factionIcons[savedGame.faction]}</div>
-            <div className="continue-copy">
-              <span className="eyebrow">Последнее сохранение</span>
-              <h3>{FACTION_INFO[savedGame.faction].name}</h3>
-              <p>
-                {formatSaveDate(savedGame.savedAt)} • {savedGame.gold} золота • {savedGame.kills}{' '}
-                побед
-              </p>
+        <div className="menu-side-stack">
+          {savedGame ? (
+            <div className="continue-card legacy-save-card">
+              <div className="continue-icon">{factionIcons[savedGame.faction]}</div>
+              <div className="continue-copy">
+                <span className="eyebrow">Legacy campaign · v1</span>
+                <h3>{FACTION_INFO[savedGame.faction].name}</h3>
+                <p>
+                  {formatSaveDate(savedGame.savedAt)} • {savedGame.gold} золота •{' '}
+                  {savedGame.kills} побед
+                </p>
+              </div>
+              <button className="secondary-button" type="button" onClick={onLoadLegacy}>
+                <RotateCcw aria-hidden="true" />
+                Загрузить legacy campaign
+              </button>
             </div>
-            <button className="secondary-button" type="button" onClick={onLoad}>
-              <RotateCcw aria-hidden="true" />
-              Продолжить
-            </button>
-          </div>
-        ) : (
-          <div className="continue-card empty">
-            <Save aria-hidden="true" />
-            <div>
-              <span className="eyebrow">Сохранение</span>
-              <h3>Пока пусто</h3>
-              <p>Во время игры нажмите F или откройте паузу.</p>
+          ) : (
+            <div className="continue-card empty legacy-save-card">
+              <Save aria-hidden="true" />
+              <div>
+                <span className="eyebrow">Legacy campaign · v1</span>
+                <h3>Старого сохранения нет</h3>
+                <p>Формат v1 может сосуществовать с новым забегом.</p>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+
+          <section className="profile-card" aria-labelledby="profile-title">
+            <header>
+              <div>
+                <span className="eyebrow">Профиль</span>
+                <h3 id="profile-title">История забегов</h3>
+              </div>
+              <div className="profile-currency">
+                <Coins aria-hidden="true" />
+                <strong>{profile.profileCurrency}</strong>
+              </div>
+            </header>
+            {recentRuns.length > 0 ? (
+              <div className="run-history-list">
+                {recentRuns.map((run) => (
+                  <article className={`history-run status-${run.status}`} key={run.runId}>
+                    <span className="history-faction">{factionIcons[run.faction]}</span>
+                    <div>
+                      <strong>{historyStatusLabels[run.status]}</strong>
+                      <small>
+                        seed {run.seed} · {FACTION_INFO[run.faction].shortName}
+                      </small>
+                    </div>
+                    <span className="history-reward">
+                      <Coins aria-hidden="true" />+{run.profileCurrencyEarned}
+                    </span>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="empty-history">Завершённые забеги появятся здесь.</p>
+            )}
+          </section>
+        </div>
       </section>
       <footer className="menu-footer">
         <span>WASD — движение</span>
@@ -1320,29 +1987,53 @@ function PauseModal({
 function EndModal({
   result,
   view,
+  generated,
+  terminalRun,
   runAchievements,
+  onRetryFinalization,
   onRestart,
   onMenu,
 }: {
   result: 'victory' | 'defeat'
   view: GameView
+  generated: boolean
+  terminalRun: TerminalRunSummary | null
   runAchievements: AchievementView[]
+  onRetryFinalization: () => void
   onRestart: () => void
   onMenu: () => void
 }) {
+  const profileReward =
+    terminalRun?.summary?.profileCurrencyEarned ?? terminalRun?.rewardGranted ?? 0
+  const eyebrow = generated
+    ? result === 'victory'
+      ? 'Сгенерированный забег пройден'
+      : 'Сгенерированный забег завершён'
+    : result === 'victory'
+      ? 'Кампания завершена'
+      : 'Путешествие окончено'
+  const title =
+    result === 'victory'
+      ? 'Корованы ваши'
+      : generated
+        ? 'Этот мир вас пережил'
+        : 'Вы пали в бою'
+  const description =
+    result === 'victory'
+      ? 'Все задачи выполнены. Летописцы уже преувеличивают ваши подвиги.'
+      : generated
+        ? 'Павший забег закрыт и записан в историю. Следующая попытка начнётся в новом мире.'
+        : 'Загрузите legacy-сохранение или попробуйте ещё раз — желательно с целыми ногами.'
+
   return (
     <div className="modal-backdrop end-backdrop" role="presentation">
       <section className={`modal end-modal ${result}`} role="dialog" aria-modal="true">
         <div className="end-icon">
           {result === 'victory' ? <Flag aria-hidden="true" /> : <Skull aria-hidden="true" />}
         </div>
-        <span className="eyebrow">{result === 'victory' ? 'Кампания завершена' : 'Путешествие окончено'}</span>
-        <h2>{result === 'victory' ? 'Корованы ваши' : 'Вы пали в бою'}</h2>
-        <p>
-          {result === 'victory'
-            ? 'Все задачи выполнены. Летописцы уже преувеличивают ваши подвиги.'
-            : 'Загрузите сохранение или попробуйте ещё раз — желательно с целыми ногами.'}
-        </p>
+        <span className="eyebrow">{eyebrow}</span>
+        <h2>{title}</h2>
+        <p>{description}</p>
         <div className="end-score">
           <span>
             <Clock3 aria-hidden="true" />
@@ -1360,6 +2051,27 @@ function EndModal({
             золота
           </span>
         </div>
+        {generated && terminalRun && !terminalRun.finalizationPending ? (
+          <div className="terminal-reward" aria-label={`Получено ${profileReward} валюты профиля`}>
+            <span className="terminal-reward-icon">
+              <Coins aria-hidden="true" />
+            </span>
+            <div>
+              <span>Награда профиля</span>
+              <strong>+{profileReward}</strong>
+              <small>Новый баланс: {terminalRun.profileCurrency}</small>
+            </div>
+          </div>
+        ) : null}
+        {generated && terminalRun?.finalizationPending ? (
+          <div className="terminal-finalization-warning" role="alert">
+            <span>Итог забега пока не записан. Повторите сохранение перед выходом.</span>
+            <button className="secondary-button" type="button" onClick={onRetryFinalization}>
+              <Save aria-hidden="true" />
+              Повторить сохранение
+            </button>
+          </div>
+        ) : null}
         {runAchievements.length > 0 ? (
           <div className="end-achievements">
             <span className="eyebrow">Открыто за эту кампанию</span>
@@ -1374,7 +2086,7 @@ function EndModal({
         <div className="pause-actions">
           <button className="primary-button" type="button" onClick={onRestart}>
             <RotateCcw aria-hidden="true" />
-            Сыграть снова
+            {generated ? 'Новый мир' : 'Сыграть снова'}
           </button>
           <button className="text-button" type="button" onClick={onMenu}>
             <Home aria-hidden="true" />
@@ -1396,6 +2108,7 @@ function GameScreen({
   simulationPaused,
   shopOpen,
   endResult,
+  terminalRun,
   onResume,
   onPause,
   onSave,
@@ -1410,6 +2123,7 @@ function GameScreen({
   onCommand,
   onPointerLock,
   onInput,
+  onRetryFinalization,
   onRestart,
   musicMuted,
   sfxVolume,
@@ -1437,6 +2151,7 @@ function GameScreen({
   simulationPaused: boolean
   shopOpen: boolean
   endResult: 'victory' | 'defeat' | null
+  terminalRun: TerminalRunSummary | null
   onResume: () => void
   onPause: () => void
   onSave: () => void
@@ -1451,6 +2166,7 @@ function GameScreen({
   onCommand: () => void
   onPointerLock: () => void
   onInput: (code: string, active: boolean) => void
+  onRetryFinalization: () => void
   onRestart: () => void
   musicMuted: boolean
   sfxVolume: number
@@ -1719,7 +2435,11 @@ function GameScreen({
             type="button"
             onPointerDown={(event) => {
               event.preventDefault()
-              event.currentTarget.setPointerCapture(event.pointerId)
+              try {
+                event.currentTarget.setPointerCapture(event.pointerId)
+              } catch (error) {
+                if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error
+              }
               onAbilityDown()
             }}
             onPointerUp={(event) => {
@@ -1730,6 +2450,11 @@ function GameScreen({
             }}
             onPointerCancel={onAbilityUp}
             onPointerLeave={onAbilityUp}
+            onClick={(event) => {
+              if (event.detail !== 0) return
+              if (view.ability.active) onAbilityUp()
+              else onAbilityDown()
+            }}
             aria-label={view.ability.name}
           >
             {abilityIcons[view.ability.id]}
@@ -1781,7 +2506,10 @@ function GameScreen({
         <EndModal
           result={endResult}
           view={view}
+          generated={view.worldMap.mode === 'generated'}
+          terminalRun={terminalRun}
           runAchievements={runAchievements}
+          onRetryFinalization={onRetryFinalization}
           onRestart={onRestart}
           onMenu={onMenu}
         />
@@ -1792,9 +2520,17 @@ function GameScreen({
 
 function App() {
   const [screen, setScreen] = useState<'menu' | 'game'>('menu')
+  const [profile, setProfile] = useState<ProfileSaveV1>(() => readPlayerProfile())
+  const [activeRun, setActiveRun] = useState<ActiveRunSaveV2 | null>(() =>
+    readActiveGeneratedRun(),
+  )
+  const [activeRunError, setActiveRunError] = useState<string | null>(null)
   const [faction, setFaction] = useState<Faction>('elf')
   const [pendingSave, setPendingSave] = useState<SavedGame | undefined>()
+  const [pendingGeneratedLaunch, setPendingGeneratedLaunch] =
+    useState<GeneratedRunLaunch | null>(null)
   const [savedGame, setSavedGame] = useState<SavedGame | null>(() => readSavedGame())
+  const [seedInput, setSeedInput] = useState(() => String(createRandomSeed()))
   const [gameView, setGameView] = useState<GameView | null>(null)
   const [notices, setNotices] = useState<Notice[]>([])
   const [achievementCatalogue, setAchievementCatalogue] = useState<AchievementView[]>(() =>
@@ -1806,6 +2542,9 @@ function App() {
   const [paused, setPaused] = useState(false)
   const [shopOpen, setShopOpen] = useState(false)
   const [endResult, setEndResult] = useState<'victory' | 'defeat' | null>(null)
+  const [terminalRun, setTerminalRun] = useState<TerminalRunSummary | null>(null)
+  const [pendingTerminalSnapshot, setPendingTerminalSnapshot] =
+    useState<ActiveRunSaveV2 | null>(null)
   const [musicMuted, setMusicMuted] = useState(() => readMusicMuted())
   const [sfxVolume, setSfxVolume] = useState(() => readSfxVolume())
   const [bloomEnabled, setBloomEnabled] = useState(() => readBloomEnabled())
@@ -1829,10 +2568,15 @@ function App() {
   const inkOutlinesEnabledRef = useRef(inkOutlinesEnabled)
   const foliageQualityRef = useRef(foliageQuality)
   const screenShakeEnabledRef = useRef(screenShakeEnabled)
+  const lastGeneratedRegionRef = useRef<{
+    runId: string
+    regionId: string
+  } | null>(null)
   const achievementSummary = useMemo(
     () => summarizeAchievements(achievementCatalogue),
     [achievementCatalogue],
   )
+  const canonicalSeed = useMemo(() => parseSeed(seedInput), [seedInput])
 
   const addNotice = useMemo(
     () => (message: string, tone: Notice['tone'] = 'info') => {
@@ -1843,6 +2587,62 @@ function App() {
       }, 4300)
     },
     [],
+  )
+
+  const checkpointGeneratedRun = useCallback(
+    (
+      engine: GameEngine | null = engineRef.current,
+      announce = false,
+    ): ActiveRunSaveV2 | null => {
+      if (!engine) return null
+      let snapshot: ActiveRunSaveV2 | null
+      try {
+        snapshot = engine.saveGeneratedRun()
+      } catch (error) {
+        console.warn('Korovany: generated run checkpoint could not be created.', error)
+        if (announce) addNotice('Не удалось создать контрольную точку.', 'warning')
+        return null
+      }
+      if (!snapshot || snapshot.status !== 'active') return null
+      if (!writeActiveGeneratedRun(snapshot)) {
+        if (announce) addNotice('Не удалось сохранить контрольную точку.', 'warning')
+        return null
+      }
+      setActiveRun(snapshot)
+      if (announce) addNotice('Контрольная точка забега сохранена.', 'success')
+      return snapshot
+    },
+    [addNotice],
+  )
+
+  const recordTerminalRun = useCallback(
+    (snapshot: ActiveRunSaveV2): boolean => {
+      const finalized = finalizeGeneratedRunSnapshot(snapshot)
+      const refreshedProfile = finalized?.profile ?? readPlayerProfile()
+      const finalizedSafely =
+        finalized?.outcome === 'finalized' ||
+        finalized?.outcome === 'already-finalized'
+      setProfile(refreshedProfile)
+      setTerminalRun({
+        runId: snapshot.runId,
+        rewardGranted: finalized?.rewardGranted ?? 0,
+        summary: finalized?.summary ?? null,
+        profileCurrency: refreshedProfile.profileCurrency,
+        finalizationPending: !finalizedSafely,
+      })
+      setActiveRun(null)
+      if (finalizedSafely) {
+        setPendingTerminalSnapshot(null)
+      } else {
+        setPendingTerminalSnapshot(snapshot)
+        addNotice(
+          'Не удалось записать итог забега. Повторите сохранение перед выходом.',
+          'warning',
+        )
+      }
+      return finalizedSafely
+    },
+    [addNotice],
   )
 
   const openAchievements = () => {
@@ -1878,10 +2678,13 @@ function App() {
 
   useEffect(() => {
     if (screen !== 'game' || !worldRef.current) return
-    const engine = new GameEngine(
-      worldRef.current,
-      faction,
-      {
+    const launch = pendingGeneratedLaunch
+    let engine: GameEngine
+    try {
+      engine = new GameEngine(
+        worldRef.current,
+        faction,
+        {
         onView: setGameView,
         onNotice: addNotice,
         onShop: () => setShopOpen(true),
@@ -1889,11 +2692,43 @@ function App() {
           if (!achievementsOpenRef.current) setPaused((current) => !current)
         },
         onSaveRequest: () => {
-          const save = engineRef.current?.save()
+          const currentEngine = engineRef.current
+          if (launch) {
+            checkpointGeneratedRun(currentEngine, true)
+            return
+          }
+          const save = currentEngine?.save()
           if (save) setSavedGame(save)
         },
         onEnd: (result) => {
-          if (result === 'victory') {
+          const currentEngine = engineRef.current
+          if (launch) {
+            let terminalSnapshot: ActiveRunSaveV2 | null = null
+            try {
+              terminalSnapshot = currentEngine?.saveGeneratedRun() ?? null
+            } catch (error) {
+              console.warn('Korovany: terminal generated run snapshot could not be created.', error)
+            }
+
+            if (terminalSnapshot) {
+              recordTerminalRun(terminalSnapshot)
+            } else {
+              const refreshedProfile = readPlayerProfile()
+              setProfile(refreshedProfile)
+              setActiveRun(null)
+              setTerminalRun({
+                runId: launch.runId,
+                rewardGranted: 0,
+                summary: null,
+                profileCurrency: refreshedProfile.profileCurrency,
+                finalizationPending: true,
+              })
+              addNotice(
+                'Не удалось создать итоговый снимок забега. Повторите сохранение.',
+                'warning',
+              )
+            }
+          } else if (result === 'victory') {
             try {
               localStorage.removeItem(SAVE_KEY)
               setSavedGame(null)
@@ -1902,7 +2737,7 @@ function App() {
             }
           }
           setEndResult(result)
-          setRunAchievements(engineRef.current?.getCurrentRunAchievements() ?? [])
+          setRunAchievements(currentEngine?.getCurrentRunAchievements() ?? [])
         },
         onAchievementUnlocked: (achievement) => {
           setAchievementQueue((current) => [...current, achievement])
@@ -1910,33 +2745,88 @@ function App() {
             engineRef.current?.getAchievements() ?? readAchievementCatalogue(),
           )
         },
-      },
-      pendingSave,
-      {
-        musicMuted: musicMutedRef.current,
-        sfxVolume: sfxVolumeRef.current,
-        dynamicDayNight: dynamicDayNightRef.current,
-        weatherEnabled: weatherEnabledRef.current,
-        bloomEnabled: bloomEnabledRef.current,
-        inkOutlinesEnabled: inkOutlinesEnabledRef.current,
-        foliageQuality: foliageQualityRef.current,
-        screenShakeEnabled: screenShakeEnabledRef.current,
-        achievementRunId: `${achievementSessionId}:${runId}`,
-      },
-    )
+        },
+        launch ? undefined : pendingSave,
+        {
+          musicMuted: musicMutedRef.current,
+          sfxVolume: sfxVolumeRef.current,
+          dynamicDayNight: dynamicDayNightRef.current,
+          weatherEnabled: weatherEnabledRef.current,
+          bloomEnabled: bloomEnabledRef.current,
+          inkOutlinesEnabled: inkOutlinesEnabledRef.current,
+          foliageQuality: foliageQualityRef.current,
+          screenShakeEnabled: screenShakeEnabledRef.current,
+          achievementRunId: `${achievementSessionId}:${runId}`,
+          ...(launch ? { generatedRun: launch } : {}),
+        },
+      )
+    } catch (error) {
+      console.error('Korovany: game engine could not start.', error)
+      if (launch) {
+        const reason =
+          error instanceof Error ? error.message : 'неизвестная ошибка совместимости'
+        setActiveRunError(`Не удалось продолжить забег: ${reason}`)
+        setActiveRun(readActiveGeneratedRun())
+      }
+      setGameView(null)
+      setPendingSave(undefined)
+      setPendingGeneratedLaunch(null)
+      setPaused(false)
+      setScreen('menu')
+      return
+    }
     engineRef.current = engine
     setAchievementCatalogue(engine.getAchievements())
     setRunAchievements(engine.getCurrentRunAchievements())
     engine.start()
+    if (launch && !launch.restored) checkpointGeneratedRun(engine)
     addNotice(
-      pendingSave ? 'Сохранение загружено.' : `${FACTION_INFO[faction].name}: кампания началась.`,
+      launch?.restored
+        ? `Забег seed ${launch.config.seed} продолжен.`
+        : launch
+          ? `Мир seed ${launch.config.seed} собран.`
+          : pendingSave
+            ? 'Legacy-сохранение загружено.'
+            : `${FACTION_INFO[faction].name}: legacy-кампания началась.`,
       'success',
     )
     return () => {
-      engine.destroy()
+      try {
+        engine.destroy()
+      } catch (error) {
+        console.error('Korovany: game engine cleanup was incomplete.', error)
+      }
       if (engineRef.current === engine) engineRef.current = null
     }
-  }, [achievementSessionId, addNotice, faction, pendingSave, runId, screen])
+  }, [
+    achievementSessionId,
+    addNotice,
+    checkpointGeneratedRun,
+    faction,
+    pendingGeneratedLaunch,
+    pendingSave,
+    recordTerminalRun,
+    runId,
+    screen,
+  ])
+
+  const retryTerminalFinalization = (): boolean => {
+    let snapshot = pendingTerminalSnapshot
+    if (!snapshot) {
+      try {
+        snapshot = engineRef.current?.saveGeneratedRun() ?? null
+      } catch (error) {
+        console.warn('Korovany: terminal generated run retry failed.', error)
+      }
+    }
+    if (!snapshot) {
+      addNotice('Не удалось создать итоговый снимок забега.', 'warning')
+      return false
+    }
+    const finalized = recordTerminalRun(snapshot)
+    if (finalized) addNotice('Итог забега сохранён.', 'success')
+    return finalized
+  }
 
   useEffect(() => {
     engineRef.current?.setPaused(
@@ -1944,11 +2834,31 @@ function App() {
     )
   }, [paused, shopOpen, achievementsOpen, endResult])
 
-  const startGame = (selectedFaction: Faction, save?: SavedGame) => {
-    engineRef.current?.stopAudio()
-    setFaction(selectedFaction)
-    setPendingSave(save)
-    setGameView(createInitialView(selectedFaction, save))
+  useEffect(() => {
+    const launch = pendingGeneratedLaunch
+    const regionId =
+      gameView?.worldMap.mode === 'generated'
+        ? gameView.worldMap.currentRegionId
+        : undefined
+    if (screen !== 'game' || !launch || !regionId || endResult) return
+
+    const previous = lastGeneratedRegionRef.current
+    if (!previous || previous.runId !== launch.runId) {
+      lastGeneratedRegionRef.current = { runId: launch.runId, regionId }
+      return
+    }
+    if (previous.regionId === regionId) return
+    lastGeneratedRegionRef.current = { runId: launch.runId, regionId }
+    checkpointGeneratedRun()
+  }, [
+    checkpointGeneratedRun,
+    endResult,
+    gameView,
+    pendingGeneratedLaunch,
+    screen,
+  ])
+
+  const resetGameUi = () => {
     setNotices([])
     setAchievementQueue([])
     setRunAchievements([])
@@ -1957,24 +2867,123 @@ function App() {
     setPaused(false)
     setShopOpen(false)
     setEndResult(null)
+    setTerminalRun(null)
+    setPendingTerminalSnapshot(null)
     setRunId((current) => current + 1)
     setScreen('game')
   }
 
+  const startLegacyGame = (selectedFaction: Faction, save?: SavedGame) => {
+    engineRef.current?.stopAudio()
+    setFaction(selectedFaction)
+    setPendingSave(save)
+    setPendingGeneratedLaunch(null)
+    setGameView(createInitialView(selectedFaction, save))
+    lastGeneratedRegionRef.current = null
+    resetGameUi()
+  }
+
+  const launchGeneratedRun = (launch: GeneratedRunLaunch) => {
+    engineRef.current?.stopAudio()
+    setActiveRunError(null)
+    setFaction(launch.config.faction)
+    setPendingSave(undefined)
+    setPendingGeneratedLaunch(launch)
+    setGameView(createGeneratedInitialView(launch))
+    lastGeneratedRegionRef.current = null
+    resetGameUi()
+  }
+
+  const startGeneratedRun = (
+    selectedFaction: Faction,
+    seed = canonicalSeed,
+    boonId = selectedProfileBoon(profile),
+    allowRecoveredTerminalRun = false,
+  ) => {
+    if (
+      activeRun ||
+      (terminalRun?.finalizationPending && !allowRecoveredTerminalRun)
+    ) {
+      return
+    }
+    const config: RunConfig = {
+      seed: parseSeed(seed),
+      generatorVersion: WORLD_GENERATOR_VERSION,
+      faction: selectedFaction,
+      selectedBoonId: boonId,
+    }
+    const launch: GeneratedRunLaunch = {
+      runId: crypto.randomUUID(),
+      config,
+      startedAt: new Date().toISOString(),
+    }
+    const nextProfile: ProfileSaveV1 = {
+      ...profile,
+      selectedFaction,
+    }
+    if (writePlayerProfile(nextProfile)) setProfile(nextProfile)
+    setSeedInput(String(config.seed))
+    launchGeneratedRun(launch)
+  }
+
+  const continueGeneratedRun = () => {
+    if (!activeRun) return
+    if (activeRun.config.generatorVersion !== WORLD_GENERATOR_VERSION) {
+      setActiveRunError(
+        `Версия мира ${activeRun.config.generatorVersion} не поддерживается этой сборкой.`,
+      )
+      return
+    }
+    launchGeneratedRun({
+      runId: activeRun.runId,
+      config: {
+        ...activeRun.config,
+        ...(activeRun.config.modifiers
+          ? { modifiers: [...activeRun.config.modifiers] }
+          : {}),
+      },
+      startedAt: activeRun.startedAt,
+      restored: activeRun,
+    })
+  }
+
   const returnToMenu = () => {
+    if (
+      terminalRun?.finalizationPending &&
+      !retryTerminalFinalization()
+    ) {
+      return
+    }
+    if (
+      pendingGeneratedLaunch &&
+      !endResult &&
+      !checkpointGeneratedRun(engineRef.current, true)
+    ) {
+      return
+    }
     engineRef.current?.stopAudio()
     setScreen('menu')
     setGameView(null)
+    setPendingSave(undefined)
+    setPendingGeneratedLaunch(null)
     setPaused(false)
     setShopOpen(false)
     setEndResult(null)
+    setTerminalRun(null)
     setSavedGame(readSavedGame())
+    setActiveRun(readActiveGeneratedRun())
+    setProfile(readPlayerProfile())
     setAchievementCatalogue(readAchievementCatalogue())
     achievementsOpenRef.current = false
     setAchievementsOpen(false)
+    lastGeneratedRegionRef.current = null
   }
 
   const saveGame = () => {
+    if (pendingGeneratedLaunch) {
+      checkpointGeneratedRun(engineRef.current, true)
+      return
+    }
     const save = engineRef.current?.save()
     if (save) setSavedGame(save)
   }
@@ -1982,6 +2991,7 @@ function App() {
   const buyItem = (item: ShopItem) => {
     const result = engineRef.current?.purchase(item)
     if (result) addNotice(result.message, result.ok ? 'success' : 'warning')
+    if (result?.ok && pendingGeneratedLaunch) checkpointGeneratedRun()
   }
 
   const toggleMusic = () => {
@@ -2093,11 +3103,61 @@ function App() {
     }
   }
 
+  const selectBoon = (boonId: string) => {
+    const nextProfile = selectProfileBoon(profile, boonId)
+    if (nextProfile && writePlayerProfile(nextProfile)) setProfile(nextProfile)
+  }
+
+  const unlockProfileBoon = (boonId: string) => {
+    const result = unlockBoon(profile, boonId)
+    if (result.status === 'unlocked' && writePlayerProfile(result.profile)) {
+      setProfile(result.profile)
+    }
+  }
+
+  const abandonGeneratedRun = () => {
+    if (!activeRun) return
+    const finalized = finalizeGeneratedRunSnapshot({
+      ...activeRun,
+      status: 'abandoned',
+      updatedAt: new Date().toISOString(),
+    })
+    if (
+      finalized?.outcome === 'finalized' ||
+      finalized?.outcome === 'already-finalized'
+    ) {
+      setProfile(finalized.profile)
+      setActiveRun(null)
+      setActiveRunError(null)
+    }
+  }
+
+  const restartGame = () => {
+    const recoveredTerminalRun =
+      terminalRun?.finalizationPending === true
+    if (recoveredTerminalRun && !retryTerminalFinalization()) return
+    if (pendingGeneratedLaunch) {
+      startGeneratedRun(
+        faction,
+        createRandomSeed(),
+        pendingGeneratedLaunch.config.selectedBoonId,
+        recoveredTerminalRun,
+      )
+      return
+    }
+    startLegacyGame(faction)
+  }
+
   if (screen === 'menu') {
     return (
       <>
         <MenuScreen
           savedGame={savedGame}
+          activeRun={activeRun}
+          activeRunError={activeRunError}
+          profile={profile}
+          seedInput={seedInput}
+          canonicalSeed={canonicalSeed}
           achievementSummary={achievementSummary}
           theme={theme}
           dynamicDayNight={dynamicDayNight}
@@ -2107,10 +3167,16 @@ function App() {
           foliageQuality={foliageQuality}
           screenShakeEnabled={screenShakeEnabled}
           sfxVolume={sfxVolume}
-          onStart={(selectedFaction) => startGame(selectedFaction)}
-          onLoad={() => {
-            if (savedGame) startGame(savedGame.faction, savedGame)
+          onStart={(selectedFaction) => startGeneratedRun(selectedFaction)}
+          onContinueGenerated={continueGeneratedRun}
+          onAbandonGenerated={abandonGeneratedRun}
+          onLoadLegacy={() => {
+            if (savedGame) startLegacyGame(savedGame.faction, savedGame)
           }}
+          onSeedInput={setSeedInput}
+          onRandomSeed={() => setSeedInput(String(createRandomSeed()))}
+          onSelectBoon={selectBoon}
+          onUnlockBoon={unlockProfileBoon}
           onAchievements={openAchievements}
           onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
           onToggleDynamicDayNight={toggleDynamicDayNight}
@@ -2138,8 +3204,14 @@ function App() {
         <div className="loading-mark">
           <Trees aria-hidden="true" />
         </div>
-        <span className="eyebrow">Генерация мира</span>
-        <h1>Сажаем трёхмерные деревья…</h1>
+        <span className="eyebrow">
+          {pendingGeneratedLaunch ? 'Сборка сгенерированного мира' : 'Генерация мира'}
+        </span>
+        <h1>
+          {pendingGeneratedLaunch
+            ? 'Собираем и подгружаем 25 регионов…'
+            : 'Сажаем трёхмерные деревья…'}
+        </h1>
       </main>
     )
   }
@@ -2158,6 +3230,7 @@ function App() {
         }
         shopOpen={shopOpen}
         endResult={endResult}
+        terminalRun={terminalRun}
         onResume={() => setPaused(false)}
         onPause={() => setPaused(true)}
         onSave={saveGame}
@@ -2175,7 +3248,8 @@ function App() {
         onCommand={() => engineRef.current?.commandSquad()}
         onPointerLock={() => engineRef.current?.requestPointerLock()}
         onInput={(code, active) => engineRef.current?.setInput(code, active)}
-        onRestart={() => startGame(faction)}
+        onRetryFinalization={retryTerminalFinalization}
+        onRestart={restartGame}
         musicMuted={musicMuted}
         sfxVolume={sfxVolume}
         bloomEnabled={bloomEnabled}

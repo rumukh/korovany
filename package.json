@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "bundle": "tsc -b && vite build && node scripts/bundle.mjs",
     "lint": "oxlint",
+    "test": "node --experimental-strip-types --test scripts/AudioDirector.test.ts tests/*.test.ts",
     "test:audio": "node --experimental-strip-types --test scripts/AudioDirector.test.ts",
+    "test:world": "node --experimental-strip-types --test tests/random.test.ts tests/worldGenerator.test.ts tests/terrainSystem.test.ts tests/collisionWorld.test.ts tests/navigationSystem.test.ts tests/regionManager.test.ts tests/runStorage.test.ts tests/achievementsRunState.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {

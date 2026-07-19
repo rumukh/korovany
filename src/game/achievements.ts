@@ -802,6 +802,129 @@ function parseStringArray<Key extends string>(value: unknown, allowed: readonly 
   return [...new Set(value.filter((entry): entry is Key => allowed.includes(entry as Key)))]
 }
 
+function normalizeRunNumber(value: unknown, integer = false): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  const normalized = Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, value))
+  return integer ? Math.floor(normalized) : normalized
+}
+
+function normalizeRunStringArray<Key extends string>(
+  value: unknown,
+  allowed?: readonly Key[],
+): Key[] | null {
+  if (!Array.isArray(value) || value.length > 512) return null
+  const entries: Key[] = []
+  const seen = new Set<string>()
+  for (const entry of value) {
+    if (
+      typeof entry !== 'string' ||
+      entry.length === 0 ||
+      entry.length > 128 ||
+      (allowed && !allowed.includes(entry as Key))
+    ) {
+      return null
+    }
+    if (!seen.has(entry)) {
+      seen.add(entry)
+      entries.push(entry as Key)
+    }
+  }
+  return entries
+}
+
+export function normalizeAchievementRunState(value: unknown): AchievementRunState | null {
+  if (!isRecord(value)) return null
+  if (
+    typeof value.runId !== 'string' ||
+    value.runId.length === 0 ||
+    value.runId.length > 128 ||
+    !FACTIONS.includes(value.faction as Faction) ||
+    typeof value.startedAt !== 'string' ||
+    !Number.isFinite(Date.parse(value.startedAt))
+  ) {
+    return null
+  }
+
+  const kills = normalizeRunNumber(value.kills, true)
+  const killsSinceDamage = normalizeRunNumber(value.killsSinceDamage, true)
+  const bestKillStreak = normalizeRunNumber(value.bestKillStreak, true)
+  const damageTaken = normalizeRunNumber(value.damageTaken)
+  const injuries = normalizeRunNumber(value.injuries, true)
+  const limbsLost = normalizeRunNumber(value.limbsLost, true)
+  const goldEarned = normalizeRunNumber(value.goldEarned)
+  const purchases = normalizeRunNumber(value.purchases, true)
+  const objectivesCompleted = normalizeRunNumber(value.objectivesCompleted, true)
+  const eventsCompleted = normalizeRunNumber(value.eventsCompleted, true)
+  const abilitiesUsed = normalizeRunNumber(value.abilitiesUsed, true)
+  const shieldBlocks = normalizeRunNumber(value.shieldBlocks, true)
+  const squadCommands = normalizeRunNumber(value.squadCommands, true)
+  const caravansRobbed = normalizeRunNumber(value.caravansRobbed, true)
+  const elapsedAtEnd = normalizeRunNumber(value.elapsedAtEnd)
+  const healthAtEnd = normalizeRunNumber(value.healthAtEnd)
+  const zonesVisited = normalizeRunStringArray(value.zonesVisited, ZONES)
+  const eventKindsCompleted = normalizeRunStringArray(value.eventKindsCompleted, EVENT_KINDS)
+  const unlockedIds = normalizeRunStringArray<string>(value.unlockedIds)
+  const result =
+    value.result === null || value.result === 'victory' || value.result === 'defeat'
+      ? value.result
+      : undefined
+
+  if (
+    kills === null ||
+    killsSinceDamage === null ||
+    bestKillStreak === null ||
+    damageTaken === null ||
+    injuries === null ||
+    limbsLost === null ||
+    goldEarned === null ||
+    purchases === null ||
+    objectivesCompleted === null ||
+    eventsCompleted === null ||
+    abilitiesUsed === null ||
+    shieldBlocks === null ||
+    squadCommands === null ||
+    caravansRobbed === null ||
+    elapsedAtEnd === null ||
+    healthAtEnd === null ||
+    zonesVisited === null ||
+    eventKindsCompleted === null ||
+    unlockedIds === null ||
+    result === undefined
+  ) {
+    return null
+  }
+
+  return {
+    runId: value.runId,
+    faction: value.faction as Faction,
+    startedAt: value.startedAt,
+    kills,
+    killsSinceDamage,
+    bestKillStreak,
+    damageTaken,
+    injuries,
+    limbsLost,
+    goldEarned,
+    purchases,
+    objectivesCompleted,
+    eventsCompleted,
+    abilitiesUsed,
+    shieldBlocks,
+    squadCommands,
+    caravansRobbed,
+    zonesVisited,
+    eventKindsCompleted,
+    unlockedIds,
+    result,
+    elapsedAtEnd,
+    healthAtEnd,
+  }
+}
+
+export function cloneAchievementRunState(value: unknown): AchievementRunState | null {
+  return normalizeAchievementRunState(value)
+}
+
 function parseStats(value: unknown): AchievementStats {
   const source = isRecord(value) ? value : {}
   return {
@@ -1015,7 +1138,7 @@ export class AchievementTracker {
     elapsed: number,
     health: number,
   ): void {
-    if (!this.run) return
+    if (!this.run || this.run.result !== null) return
     this.run.result = result
     this.run.elapsedAtEnd = Math.max(0, elapsed)
     this.run.healthAtEnd = Math.max(0, health)
@@ -1027,6 +1150,25 @@ export class AchievementTracker {
       this.store.stats.defeats += 1
     }
     this.commit()
+  }
+
+  getRunState(): AchievementRunState | null {
+    return this.run ? cloneAchievementRunState(this.run) : null
+  }
+
+  restoreRun(state: AchievementRunState): boolean {
+    const restored = normalizeAchievementRunState(state)
+    if (!restored || restored.result !== null) return false
+    if (
+      this.run &&
+      (this.run.result !== null ||
+        this.run.runId !== restored.runId ||
+        this.run.faction !== restored.faction)
+    ) {
+      return false
+    }
+    this.run = restored
+    return true
   }
 
   getCatalogue(): AchievementView[] {

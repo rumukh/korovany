@@ -64,12 +64,50 @@ import {
   restoreObjectives,
 } from './types'
 import {
+  createGeneratedEncounterPlans,
+  type GeneratedEncounterPlan,
+} from './content/registry'
+import { RandomStream } from './random/RandomStream'
+import { deriveSeed } from './random/seed'
+import { getStartingBoonEffects } from './run/profile'
+import {
+  ACTIVE_RUN_SAVE_VERSION,
+  type ActiveRunSaveV2,
+  type RunCompanionState,
+  type RunConfig,
+  type RunStatus,
+  type SerializableState,
+} from './run/runTypes'
+import { normalizeActiveRunSaveV2 } from './run/storage'
+import {
+  GeneratedWorldRuntime,
+  type GeneratedWorldRuntimeDebugSnapshot,
+} from './world/GeneratedWorldRuntime'
+import { generateWorld } from './world/WorldGenerator'
+import {
+  REGION_DELTA_VERSION,
+  type RegionDelta,
+} from './world/RegionRuntime'
+import {
+  WORLD_GENERATOR_VERSION,
+  type FactionObjectiveNode,
+  type SiteKind,
+  type WorldBlueprint,
+} from './world/worldTypes'
+import {
   ZONE_ART_IDS,
   writeZoneVisualWeights,
   type ZoneVisualWeights,
 } from './zoneArt'
 
 export type FoliageQuality = 'off' | 'low' | 'high'
+
+export interface GeneratedRunLaunch {
+  runId: string
+  config: RunConfig
+  startedAt: string
+  restored?: ActiveRunSaveV2
+}
 
 export interface GameEngineSettings {
   musicMuted: boolean
@@ -81,6 +119,7 @@ export interface GameEngineSettings {
   screenShakeEnabled: boolean
   foliageQuality: FoliageQuality
   achievementRunId: string
+  generatedRun?: GeneratedRunLaunch
 }
 
 type ActorAiMode = 'normal' | 'captive' | 'attackEventProp'
@@ -188,6 +227,12 @@ interface Actor {
   deathStartRotation: THREE.Euler
   deathTravelled: number
   deathAt: number | null
+  generatedRegionId: string | null
+  generatedEncounterId: string | null
+  generatedSpawnId: string | null
+  generatedObjectiveId: string | null
+  generatedUnique: boolean
+  hostileToPlayer: boolean
 }
 
 interface ActorSpawnOptions {
@@ -197,6 +242,18 @@ interface ActorSpawnOptions {
   eventOwnerId?: string | null
   eventPropTargetId?: string | null
   ignoredTargetId?: string | null
+  generatedRegionId?: string | null
+  generatedEncounterId?: string | null
+  generatedSpawnId?: string | null
+  generatedObjectiveId?: string | null
+  generatedUnique?: boolean
+  hostileToPlayer?: boolean
+  healthScale?: number
+}
+
+interface GeneratedNavigationCacheEntry {
+  expiresAt: number
+  waypoints: ReadonlyArray<readonly [number, number]> | null
 }
 
 interface ActorKillContext {
@@ -570,6 +627,12 @@ const NPC_STEERING_ANGLES = [0, 0.55, -0.55, 1.05, -1.05, 1.55, -1.55] as const
 const NPC_ACCELERATION_DAMPING = 6.5
 const NPC_BRAKING_DAMPING = 11
 const NPC_BLOCKED_SPEED_RATIO = 0.22
+const GENERATED_NAVIGATION_CELL_SIZE = 2
+const GENERATED_NAVIGATION_CACHE_TTL = 0.45
+const GENERATED_NAVIGATION_CACHE_LIMIT = 96
+const GENERATED_CARAVAN_COLLIDER_RADIUS = 1.4
+const GENERATED_CARAVAN_PATROL_NEAR = 6
+const GENERATED_CARAVAN_PATROL_FAR = 28
 const MAX_ACTORS = 25
 const LOOT_DROP_CHANCE = 0.3
 const LOOT_MAX_ACTIVE = 20
@@ -1080,10 +1143,43 @@ function formatPart(part: BodyPart): string {
   return names[part]
 }
 
+function foliageQualityDensity(quality: FoliageQuality): number {
+  return quality === 'off' ? 0 : quality === 'low' ? 0.55 : 1
+}
+
+function generatedMaximumBonus(
+  savedMaximum: number | undefined,
+  baseMaximum: number,
+  configuredBonus: number,
+): number {
+  const maximum = savedMaximum ?? baseMaximum + configuredBonus
+  return Math.max(0, maximum - baseMaximum)
+}
+
 export class GameEngine {
   private readonly container: HTMLElement
   private readonly callbacks: GameCallbacks
   private readonly faction: Faction
+  private readonly generatedRun: GeneratedRunLaunch | null
+  private readonly generatedWorld: GeneratedWorldRuntime | null
+  private readonly generatedBlueprint: WorldBlueprint | null
+  private readonly generatedEncounterPlans = new Map<string, GeneratedEncounterPlan[]>()
+  private readonly generatedActivationSpawns = new Map<string, Set<string>>()
+  private readonly simulatedGeneratedRegions = new Set<string>()
+  private readonly generatedCaravanTravelDirection = new THREE.Vector2(1, 0)
+  private readonly generatedCaravanPatrolStart = new THREE.Vector3()
+  private readonly generatedCaravanPatrolEnd = new THREE.Vector3()
+  private readonly generatedNavigationCache = new Map<
+    string,
+    GeneratedNavigationCacheEntry
+  >()
+  private generatedCameraRegionSignature = ''
+  private generatedNavigationRegionSignature = ''
+  private generatedCaravanPatrolReady = false
+  private generatedRunStatus: RunStatus = 'active'
+  private generatedSupplyCount = 0
+  private generatedHealthBonus = 0
+  private generatedStaminaBonus = 0
   private readonly achievements: AchievementTracker
   private readonly palette: Palette
   private readonly zoneArtProfiles: Record<ZoneId, ZoneArtProfile>
@@ -1129,6 +1225,7 @@ export class GameEngine {
   private readonly dayNightKeyframes: DayNightKeyframes
   private sun!: THREE.DirectionalLight
   private hemisphere!: THREE.HemisphereLight
+  private atmosphereRoot!: THREE.Group
   private skyMaterial!: THREE.MeshBasicMaterial
   private sunDisc!: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
   private moonDisc!: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
@@ -1158,7 +1255,13 @@ export class GameEngine {
   private readonly navigationEnclosures: NavigationEnclosure[] = []
   private readonly collisionProbe = new THREE.Vector3()
   private readonly navigationWaypoint = new THREE.Vector3()
-  private readonly eventRng = seededRandom((Date.now() % 2147483646) + 1)
+  private readonly generatedRngStreams: Record<
+    'combat' | 'director' | 'event' | 'loot',
+    RandomStream
+  > | null
+  private readonly eventRng: () => number
+  private readonly directorRng: () => number
+  private readonly combatRng: () => number
   private readonly weatherRng = seededRandom(((Date.now() + 7919) % 2147483646) + 1)
   private readonly lootRng: () => number
   private readonly lootMaterials: Record<LootRarity, LootRarityMaterials>
@@ -1280,6 +1383,67 @@ export class GameEngine {
     this.container = container
     this.callbacks = callbacks
     this.faction = faction
+    const launch = settings.generatedRun
+    let restoredRun: ActiveRunSaveV2 | null = null
+    let blueprint: WorldBlueprint | null = null
+    if (launch) {
+      if (
+        launch.runId.trim().length === 0 ||
+        !Number.isFinite(Date.parse(launch.startedAt)) ||
+        !Number.isInteger(launch.config.seed) ||
+        launch.config.seed < 0 ||
+        launch.config.seed > 0xffffffff ||
+        launch.config.selectedBoonId.trim().length === 0
+      ) {
+        throw new Error('Generated run launch metadata is malformed')
+      }
+      if (launch.config.generatorVersion !== WORLD_GENERATOR_VERSION) {
+        throw new Error(
+          `Unsupported generated world version: ${launch.config.generatorVersion}`,
+        )
+      }
+      if (launch.config.faction !== faction) {
+        throw new Error('Generated run faction does not match the GameEngine faction')
+      }
+      blueprint = generateWorld(launch.config.seed)
+      if (launch.restored) {
+        restoredRun = normalizeActiveRunSaveV2(launch.restored)
+        if (!restoredRun) throw new Error('Generated run save is malformed')
+        if (restoredRun.status !== 'active') {
+          throw new Error('Only an active generated run can be restored')
+        }
+        const launchModifiers = launch.config.modifiers ?? []
+        const restoredModifiers = restoredRun.config.modifiers ?? []
+        const sameConfig =
+          restoredRun.runId === launch.runId &&
+          restoredRun.config.seed === launch.config.seed &&
+          restoredRun.config.generatorVersion === launch.config.generatorVersion &&
+          restoredRun.config.faction === launch.config.faction &&
+          restoredRun.config.selectedBoonId === launch.config.selectedBoonId &&
+          launchModifiers.length === restoredModifiers.length &&
+          launchModifiers.every(
+            (modifier, index) => modifier === restoredModifiers[index],
+          )
+        if (!sameConfig) throw new Error('Generated run save does not match its launch config')
+        if (restoredRun.blueprintFingerprint !== blueprint.fingerprint) {
+          throw new Error('Generated run save has an incompatible world fingerprint')
+        }
+      }
+    }
+    this.generatedRun = launch
+      ? {
+          runId: launch.runId,
+          config: {
+            ...launch.config,
+            ...(launch.config.modifiers
+              ? { modifiers: [...launch.config.modifiers] }
+              : {}),
+          },
+          startedAt: restoredRun?.startedAt ?? launch.startedAt,
+          ...(restoredRun ? { restored: restoredRun } : {}),
+        }
+      : null
+    this.generatedBlueprint = blueprint
     this.audio = new AudioDirector({
       musicMuted: settings.musicMuted ?? false,
       sfxVolume: settings.sfxVolume,
@@ -1288,6 +1452,12 @@ export class GameEngine {
       this.callbacks.onAchievementUnlocked(achievement)
       this.playSound('achievement')
     })
+    if (
+      restoredRun &&
+      !this.achievements.restoreRun(restoredRun.achievementRunState)
+    ) {
+      throw new Error('Generated run achievement state is incompatible')
+    }
     this.dynamicDayNight = settings.dynamicDayNight ?? true
     this.weatherEnabled = settings.weatherEnabled ?? true
     this.inkOutlinesEnabled = settings.inkOutlinesEnabled ?? true
@@ -1295,7 +1465,89 @@ export class GameEngine {
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     this.groundFoliageQuality = settings.foliageQuality ?? 'high'
     this.palette = createPalette()
-    this.lootRng = seededRandom(this.stableSeed(settings.achievementRunId ?? faction))
+    this.generatedWorld = blueprint
+      ? new GeneratedWorldRuntime(this.scene, blueprint, {
+          decorationDensity: foliageQualityDensity(this.groundFoliageQuality),
+          palette: {
+            terrain: {
+              neutral: this.palette.worldNeutralGround,
+              palace: this.palette.worldPalaceGround,
+              forest: this.palette.worldForestGround,
+              fort: this.palette.worldFortGround,
+            },
+            secondary: {
+              neutral: mix(this.palette.warning, this.palette.success, 0.42),
+              palace: mix(this.palette.accent, this.palette.warning, 0.3),
+              forest: mix(this.palette.success, this.palette.link, 0.25),
+              fort: mix(this.palette.danger, this.palette.muted, 0.42),
+            },
+            accent: {
+              neutral: this.palette.warning,
+              palace: this.palette.accent,
+              forest: this.palette.success,
+              fort: this.palette.danger,
+            },
+            road: mix(this.palette.worldNeutralGround, this.palette.text, 0.24),
+            water: this.palette.link,
+            bridge: mix(this.palette.warning, this.palette.text, 0.18),
+            structure: this.palette.surface,
+            roof: this.palette.elevated,
+          },
+        })
+      : null
+    if (restoredRun && this.generatedWorld) {
+      try {
+        const applied = this.generatedWorld.regions.applyState({
+          version: 1,
+          discoveredRegionIds: restoredRun.discoveredRegionIds,
+          deltas: restoredRun.regionDeltas,
+        })
+        if (!applied) throw new Error('Generated region state is incompatible')
+      } catch (error) {
+        try {
+          this.generatedWorld.dispose()
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            'Generated run preflight and cleanup failed',
+          )
+        }
+        throw error
+      }
+    }
+    if (blueprint) {
+      const streams = {
+        combat: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:combat')),
+        director: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:director')),
+        event: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:event')),
+        loot: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:loot')),
+      }
+      if (restoredRun) {
+        for (const key of Object.keys(streams) as Array<keyof typeof streams>) {
+          const state = restoredRun.rngStates[key]
+          if (Number.isInteger(state) && state >= 0 && state <= 0xffffffff) {
+            streams[key].setState(state)
+          }
+        }
+      }
+      this.generatedRngStreams = streams
+      this.eventRng = () => streams.event.next()
+      this.directorRng = () => streams.director.next()
+      this.combatRng = () => streams.combat.next()
+      this.lootRng = () => streams.loot.next()
+      for (const plan of Object.values(createGeneratedEncounterPlans(blueprint, faction))) {
+        const regionKey = String(plan.regionId)
+        const plans = this.generatedEncounterPlans.get(regionKey) ?? []
+        plans.push(plan)
+        this.generatedEncounterPlans.set(regionKey, plans)
+      }
+    } else {
+      this.generatedRngStreams = null
+      this.eventRng = seededRandom((Date.now() % 2147483646) + 1)
+      this.directorRng = Math.random
+      this.combatRng = Math.random
+      this.lootRng = seededRandom(this.stableSeed(settings.achievementRunId ?? faction))
+    }
     this.lootMaterials = this.createLootMaterials()
     this.zoneArtProfiles = createZoneArtProfiles(this.palette)
     this.comicMaterials = new ComicMaterialLibrary({
@@ -1307,27 +1559,107 @@ export class GameEngine {
     this.weatherFrostColor
       .copy(this.palette.worldFog)
       .lerp(this.palette.worldSun, 0.58)
-    this.objectives = restoreObjectives(faction, savedGame?.objectives)
-    this.body = savedGame ? { ...savedGame.body } : createHealthyBody()
-    this.upgrades = normalizeUpgradeLevels(savedGame?.upgradeLevels)
-    this.maxHealth = getMaxHealth(this.upgrades)
-    this.maxStamina = getMaxStamina(this.upgrades)
-    this.health = Math.min(this.maxHealth, savedGame?.health ?? this.maxHealth)
-    this.stamina = Math.min(this.maxStamina, savedGame?.stamina ?? this.maxStamina)
-    this.gold = savedGame?.gold ?? 55
-    this.kills = savedGame?.kills ?? 0
-    this.damage = savedGame?.damage ?? (faction === 'villain' ? 31 : faction === 'guard' ? 28 : 26)
-    this.elapsed = savedGame?.elapsed ?? 0
-    this.campaignCompleted =
-      savedGame?.campaignCompleted === true ||
-      this.objectives.every((objective) => objective.done)
-    this.campaignCompletedAt = savedGame?.campaignCompletedAt
-    this.threatTier = getThreatTier(this.elapsed)
+    const legacySave = blueprint ? undefined : savedGame
+    const generatedPlayer = restoredRun?.player
+    const configuredBoon = blueprint
+      ? getStartingBoonEffects(launch?.config.selectedBoonId)
+      : null
+    const boon = restoredRun ? null : configuredBoon
+    this.objectives = blueprint
+      ? generatedPlayer?.objectives.map((objective) => ({ ...objective })) ??
+        this.createGeneratedObjectives(blueprint.objectives[faction].nodes)
+      : restoreObjectives(faction, legacySave?.objectives)
+    this.body = generatedPlayer
+      ? { ...generatedPlayer.body }
+      : legacySave
+        ? { ...legacySave.body }
+        : createHealthyBody()
+    this.upgrades = normalizeUpgradeLevels(
+      generatedPlayer?.upgrades ?? legacySave?.upgradeLevels,
+    )
+    const baseMaxHealth = getMaxHealth(this.upgrades)
+    const baseMaxStamina = getMaxStamina(this.upgrades)
+    this.generatedHealthBonus = generatedMaximumBonus(
+      generatedPlayer?.maxHealth,
+      baseMaxHealth,
+      configuredBoon?.startingHealthBonus ?? 0,
+    )
+    this.generatedStaminaBonus = generatedMaximumBonus(
+      generatedPlayer?.maxStamina,
+      baseMaxStamina,
+      configuredBoon?.startingStaminaBonus ?? 0,
+    )
+    this.maxHealth = baseMaxHealth + this.generatedHealthBonus
+    this.maxStamina = baseMaxStamina + this.generatedStaminaBonus
+    this.health = Math.min(
+      this.maxHealth,
+      generatedPlayer?.health ??
+        legacySave?.health ??
+        this.maxHealth,
+    )
+    this.stamina = Math.min(
+      this.maxStamina,
+      generatedPlayer?.stamina ??
+        legacySave?.stamina ??
+        this.maxStamina,
+    )
+    this.gold =
+      generatedPlayer?.gold ?? legacySave?.gold ?? 55 + (boon?.startingGoldBonus ?? 0)
+    this.kills = generatedPlayer?.kills ?? legacySave?.kills ?? 0
+    this.damage =
+      generatedPlayer?.damage ??
+      legacySave?.damage ??
+      (faction === 'villain' ? 31 : faction === 'guard' ? 28 : 26) +
+        (boon?.startingDamageBonus ?? 0)
+    const restoredDirector = restoredRun?.directorState
+    const restoredEvent = restoredRun?.eventState
+    this.elapsed = this.readSerializableNumber(
+      restoredDirector,
+      'elapsed',
+      legacySave?.elapsed ?? 0,
+    )
+    this.generatedSupplyCount = Math.max(
+      0,
+      Math.floor(
+        this.readSerializableNumber(
+          restoredDirector,
+          'supplyCount',
+          boon?.startingSupplyCount ?? 0,
+        ),
+      ),
+    )
+    this.generatedRunStatus = restoredRun?.status ?? 'active'
+    this.campaignCompleted = blueprint
+      ? this.objectives.every((objective) => objective.done)
+      : legacySave?.campaignCompleted === true ||
+        this.objectives.every((objective) => objective.done)
+    this.campaignCompletedAt = blueprint
+      ? undefined
+      : legacySave?.campaignCompletedAt
+    this.threatTier = THREE.MathUtils.clamp(
+      Math.floor(
+        this.readSerializableNumber(
+          restoredDirector,
+          'threatTier',
+          getThreatTier(this.elapsed),
+        ),
+      ),
+      1,
+      MAX_THREAT_TIER,
+    )
     this.eventCooldown =
       Math.min(
         this.eventCooldownRange().max,
-        savedGame?.eventCooldown ?? Math.max(0, FIRST_EVENT_AT - this.elapsed),
+        this.readSerializableNumber(
+          restoredEvent,
+          'eventCooldown',
+          legacySave?.eventCooldown ?? Math.max(0, FIRST_EVENT_AT - this.elapsed),
+        ),
       )
+    this.eventSequence = Math.max(
+      0,
+      Math.floor(this.readSerializableNumber(restoredEvent, 'eventSequence', 0)),
+    )
     const defaultNextWave =
       this.elapsed < THREAT_WAVE_FIRST_AT
         ? THREAT_WAVE_FIRST_AT
@@ -1335,14 +1667,33 @@ export class GameEngine {
     this.nextThreatWaveAt = Math.max(
       this.elapsed,
       Math.min(
-        savedGame?.nextThreatWaveAt ?? defaultNextWave,
+        this.readSerializableNumber(
+          restoredDirector,
+          'nextThreatWaveAt',
+          legacySave?.nextThreatWaveAt ?? defaultNextWave,
+        ),
         this.elapsed + this.threatWaveInterval(),
       ),
     )
     this.championDamageBonus = Math.min(
       CHAMPION_DAMAGE_CAP,
-      Math.max(0, savedGame?.championDamageBonus ?? 0),
+      Math.max(
+        0,
+        this.readSerializableNumber(
+          restoredDirector,
+          'championDamageBonus',
+          legacySave?.championDamageBonus ?? 0,
+        ),
+      ),
     )
+    this.caravanCooldown = Math.max(
+      0,
+      this.readSerializableNumber(restoredDirector, 'caravanCooldown', 0),
+    )
+    this.caravanDirection =
+      this.readSerializableNumber(restoredDirector, 'caravanDirection', 1) < 0
+        ? -1
+        : 1
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
@@ -1369,15 +1720,44 @@ export class GameEngine {
     this.weaponTrail = this.createWeaponTrail()
     const weaponParent = this.player.getObjectByName('weapon') ?? this.player
     weaponParent.add(this.weaponTrail)
-    const spawn = savedGame?.position ?? [FACTION_INFO[faction].spawn[0], PLAYER_HEIGHT, FACTION_INFO[faction].spawn[1]]
+    const generatedStart = this.generatedWorld?.getStartPosition(faction)
+    const spawn =
+      restoredRun?.currentLocation.worldPosition ??
+      (generatedStart
+        ? [generatedStart.x, generatedStart.y, generatedStart.z]
+        : legacySave?.position ?? [
+            FACTION_INFO[faction].spawn[0],
+            PLAYER_HEIGHT,
+            FACTION_INFO[faction].spawn[1],
+          ])
     this.player.position.set(spawn[0], spawn[1], spawn[2])
+    const restoredHeading = restoredRun?.currentLocation.heading
+    if (typeof restoredHeading === 'number' && Number.isFinite(restoredHeading)) {
+      this.player.rotation.y = restoredHeading
+    }
+    if (this.generatedWorld) {
+      this.clampWorldPosition(this.player.position, PLAYER_COLLIDER_RADIUS)
+      const initialGround = this.groundHeightAt(
+        this.player.position.x,
+        this.player.position.z,
+      )
+      if (this.player.position.y < initialGround) {
+        this.player.position.y = initialGround
+      }
+    }
     this.scene.add(this.player)
     this.applySavedBodyAppearance()
     this.playerOutline = this.registerOutline(this.player, 'player')
-    this.lastZone = zoneAt(this.player.position.x, this.player.position.z)
+    this.lastZone = this.zoneAtPosition(this.player.position.x, this.player.position.z)
     this.audio.setMusicContext(this.faction, this.lastZone)
-    // Loading a save starts a fresh achievement run; cumulative progress remains global.
-    this.achievements.beginRun(faction, this.lastZone, settings.achievementRunId)
+    if (!restoredRun) {
+      // Legacy saves intentionally start a fresh achievement run.
+      this.achievements.beginRun(
+        faction,
+        this.lastZone,
+        launch?.runId ?? settings.achievementRunId,
+      )
+    }
     this.weatherZone = this.lastZone
     this.setWeatherTarget(
       this.weatherEnabled ? WEATHER_BY_ZONE[this.weatherZone] : 'clear',
@@ -1385,8 +1765,38 @@ export class GameEngine {
     )
 
     this.setupLights()
+    if (this.generatedWorld) this.createAtmosphere()
     const worldRootIndex = this.scene.children.length
-    this.buildWorld()
+    if (this.generatedWorld) {
+      if (!restoredRun && boon?.revealAdjacentRegions) {
+        const startRegionId = this.generatedWorld.getRegionIdAt(
+          this.player.position.x,
+          this.player.position.z,
+        )
+        const startRegion = blueprint?.regions.find(
+          (region) => region.id === startRegionId,
+        )
+        if (startRegion) {
+          for (const region of blueprint?.regions ?? []) {
+            if (
+              Math.abs(region.coordinate.x - startRegion.coordinate.x) <= 1 &&
+              Math.abs(region.coordinate.y - startRegion.coordinate.y) <= 1
+            ) {
+              this.generatedWorld.regions.markDiscovered(region.id)
+            }
+          }
+        }
+      }
+      this.generatedWorld.update({
+        focus: {
+          x: this.player.position.x,
+          z: this.player.position.z,
+        },
+        deltaSeconds: 0,
+      })
+    } else {
+      this.buildWorld()
+    }
     this.setupWeather()
     this.applyGroundWeather()
     this.updateDayNight()
@@ -1395,11 +1805,50 @@ export class GameEngine {
     this.resolveCharacterOverlaps(this.player.position, PLAYER_COLLIDER_RADIUS)
     this.collectCameraObstacles(this.scene.children.slice(worldRootIndex))
     this.initializeLootPool()
+    this.restoreGeneratedLoot(restoredDirector)
     this.caravan = this.createCaravan()
+    if (this.generatedWorld) {
+      this.placeGeneratedCaravan()
+      this.caravan.position.x = this.readSerializableNumber(
+        restoredDirector,
+        'caravanX',
+        this.caravan.position.x,
+      )
+      this.caravan.position.z = this.readSerializableNumber(
+        restoredDirector,
+        'caravanZ',
+        this.caravan.position.z,
+      )
+      this.projectGeneratedCaravanOntoPatrol()
+      this.clampWorldPosition(this.caravan.position, 3)
+      this.caravan.position.y = this.groundHeightAt(
+        this.caravan.position.x,
+        this.caravan.position.z,
+      )
+    }
     this.scene.add(this.caravan)
     this.registerNamedInteractableOutline(this.caravan, 'cargo')
-    this.spawnPopulation()
-    this.cameraYaw = faction === 'elf' ? -0.8 : faction === 'guard' ? 2.4 : 0.8
+    if (this.generatedWorld) {
+      this.restoreGeneratedCompanions(restoredRun?.companions ?? [])
+      this.syncGeneratedRegions()
+    } else {
+      this.spawnPopulation()
+    }
+    const generatedNextRegionId =
+      this.generatedBlueprint?.criticalPaths[faction].regionIds[1]
+    const generatedNextRegion = generatedNextRegionId
+      ? this.generatedWorld?.getRegionCenter(generatedNextRegionId)
+      : undefined
+    const generatedCameraYaw = generatedNextRegion
+      ? Math.atan2(
+          generatedNextRegion.x - this.player.position.x,
+          this.player.position.z - generatedNextRegion.z,
+        )
+      : undefined
+    this.cameraYaw =
+      restoredHeading ??
+      generatedCameraYaw ??
+      (faction === 'elf' ? -0.8 : faction === 'guard' ? 2.4 : 0.8)
     this.updateCamera(0, true)
 
     this.boundKeyDown = this.onKeyDown.bind(this)
@@ -1433,10 +1882,18 @@ export class GameEngine {
   }
 
   destroy(): void {
+    const errors: unknown[] = []
+    const attempt = (action: () => void): void => {
+      try {
+        action()
+      } catch (error) {
+        errors.push(error)
+      }
+    }
     cancelAnimationFrame(this.frameHandle)
-    this.cancelActiveEvent()
-    this.clearLootRuntime()
-    this.resizeObserver.disconnect()
+    attempt(() => this.cancelActiveEvent())
+    attempt(() => this.clearLootRuntime())
+    attempt(() => this.resizeObserver.disconnect())
     window.removeEventListener('keydown', this.boundKeyDown)
     window.removeEventListener('keyup', this.boundKeyUp)
     document.removeEventListener('mousemove', this.boundMouseMove)
@@ -1447,7 +1904,10 @@ export class GameEngine {
     document.removeEventListener('visibilitychange', this.boundVisibilityChange)
     window.removeEventListener('blur', this.boundWindowBlur)
     window.removeEventListener('pagehide', this.pageHideAudioOwner)
-    if (document.pointerLockElement === this.renderer.domElement) document.exitPointerLock()
+    if (document.pointerLockElement === this.renderer.domElement) {
+      attempt(() => document.exitPointerLock())
+    }
+    if (this.generatedWorld) attempt(() => this.generatedWorld?.dispose())
     const geometries = new Set<THREE.BufferGeometry>()
     const materials = new Set<THREE.Material>()
     this.scene.traverse((object) => {
@@ -1472,17 +1932,25 @@ export class GameEngine {
       else materials.add(material)
     })
     this.telegraphGeometries.forEach((geometry) => geometries.add(geometry))
-    geometries.forEach((geometry) => geometry.dispose())
+    geometries.forEach((geometry) => attempt(() => geometry.dispose()))
     materials.forEach((material) => {
-      if (!ComicMaterialLibrary.isLibraryOwned(material)) material.dispose()
+      if (!ComicMaterialLibrary.isLibraryOwned(material)) {
+        attempt(() => material.dispose())
+      }
     })
-    this.postProcessor.dispose()
-    this.comicMaterials.dispose()
-    this.renderer.dispose()
-    this.renderer.domElement.remove()
-    this.actors.forEach((actor) => actor.healthBarTexture.dispose())
-    this.damageNumberFx.forEach((entry) => entry.texture.dispose())
-    this.generatedTextures.forEach((texture) => texture.dispose())
+    attempt(() => this.postProcessor.dispose())
+    attempt(() => this.comicMaterials.dispose())
+    attempt(() => this.renderer.dispose())
+    attempt(() => this.renderer.domElement.remove())
+    this.actors.forEach((actor) =>
+      attempt(() => actor.healthBarTexture.dispose()),
+    )
+    this.damageNumberFx.forEach((entry) =>
+      attempt(() => entry.texture.dispose()),
+    )
+    this.generatedTextures.forEach((texture) =>
+      attempt(() => texture.dispose()),
+    )
     this.generatedTextures.clear()
     this.zoneArtMaterials.clear()
     this.zoneDecorationSets.length = 0
@@ -1491,9 +1959,15 @@ export class GameEngine {
     this.projectiles.length = 0
     this.projectileSourcesToClear.clear()
     this.eventPropTargets.clear()
+    this.generatedNavigationCache.clear()
+    this.generatedNavigationRegionSignature = ''
+    this.generatedCaravanPatrolReady = false
     this.telegraphPool.length = 0
     this.telegraphGeometries.clear()
-    this.audio.destroy()
+    attempt(() => this.audio.destroy())
+    if (errors.length > 0) {
+      throw new AggregateError(errors, 'Game engine cleanup was incomplete')
+    }
   }
 
   setPaused(paused: boolean): void {
@@ -1544,7 +2018,7 @@ export class GameEngine {
   setWeatherEnabled(enabled: boolean): void {
     if (this.weatherEnabled === enabled) return
     this.weatherEnabled = enabled
-    this.weatherZone = zoneAt(this.player.position.x, this.player.position.z)
+    this.weatherZone = this.zoneAtPosition(this.player.position.x, this.player.position.z)
     this.setWeatherTarget(
       enabled ? WEATHER_BY_ZONE[this.weatherZone] : 'clear',
       true,
@@ -1574,6 +2048,10 @@ export class GameEngine {
   setFoliageQuality(quality: FoliageQuality): void {
     if (this.groundFoliageQuality === quality) return
     this.groundFoliageQuality = quality
+    if (this.generatedWorld) {
+      this.generatedWorld.setDecorationDensity(foliageQualityDensity(quality))
+      return
+    }
     this.rebuildGroundFoliage()
   }
 
@@ -1599,6 +2077,33 @@ export class GameEngine {
 
   getCurrentRunAchievements(): AchievementView[] {
     return this.achievements.getCurrentRunUnlocks()
+  }
+
+  getWorldMode(): 'legacy' | 'generated' {
+    return this.generatedWorld ? 'generated' : 'legacy'
+  }
+
+  getGeneratedBlueprint(): WorldBlueprint | null {
+    return this.generatedBlueprint
+  }
+
+  getGeneratedWorldBlueprint(): WorldBlueprint | null {
+    return this.getGeneratedBlueprint()
+  }
+
+  getGeneratedWorldDebug(): GeneratedWorldRuntimeDebugSnapshot | null {
+    return this.generatedWorld?.getDebugSnapshot() ?? null
+  }
+
+  getGeneratedWorldDebugSnapshot(): GeneratedWorldRuntimeDebugSnapshot | null {
+    return this.getGeneratedWorldDebug()
+  }
+
+  getGeneratedRegionId(): string | null {
+    return this.generatedRegionIdAt(
+      this.player.position.x,
+      this.player.position.z,
+    )
   }
 
   useAbility(): void {
@@ -1665,7 +2170,7 @@ export class GameEngine {
     let target: Actor | null = null
     let bestDistance = 3.6
     for (const actor of this.actors) {
-      if (!actor.alive || !hostile(this.faction, actor.faction)) continue
+      if (!actor.alive || !actor.hostileToPlayer) continue
       const offset = actor.mesh.position.clone().sub(this.player.position)
       const distance = offset.length()
       if (distance >= bestDistance) continue
@@ -1682,7 +2187,10 @@ export class GameEngine {
     this.player.rotation.y = Math.atan2(targetDirection.x, targetDirection.z)
     const armPenalty =
       (this.body.leftArm === 'missing' ? 5 : 0) + (this.body.rightArm === 'missing' ? 9 : 0)
-    const dealt = Math.max(8, this.damage - armPenalty + Math.floor(Math.random() * 7))
+    const dealt = Math.max(
+      8,
+      this.damage - armPenalty + Math.floor(this.combatRng() * 7),
+    )
     this.damageActor(target, dealt, this.player.position, this.faction, true, {
       attackKind: 'melee',
       detachChance: 0.45,
@@ -1696,8 +2204,13 @@ export class GameEngine {
       this.emitView(true)
       return
     }
+    if (this.generatedWorld && this.handleGeneratedInteraction()) {
+      this.emitView(true)
+      return
+    }
     const playerPosition = this.player.position
     if (
+      !this.generatedWorld &&
       this.hasElfLoot() &&
       playerPosition.distanceTo(this.elfHomePosition) < 6
     ) {
@@ -1715,12 +2228,16 @@ export class GameEngine {
       return
     }
 
-    if (playerPosition.distanceTo(this.vendorPosition) < 6) {
+    if (
+      !this.generatedWorld &&
+      playerPosition.distanceTo(this.vendorPosition) < 6
+    ) {
       this.callbacks.onShop()
       return
     }
 
     if (
+      !this.generatedWorld &&
       this.faction === 'guard' &&
       playerPosition.distanceTo(this.commanderPosition) < 6 &&
       this.actors.some((actor) => actor.role === 'commander' && actor.alive)
@@ -1755,10 +2272,12 @@ export class GameEngine {
       this.achievements.recordCaravanRobbed(false)
       this.caravanCooldown = 40
       this.caravanRobbedFlash = 1
-      this.completeObjective('raid')
-      const lootGuidance = this.isObjectiveDone('guards')
-        ? 'Добыча при вас: сдайте её у зелёного маяка в лагере.'
-        : 'Добыча при вас: одолейте охрану и сдайте её у зелёного маяка в лагере.'
+      if (!this.generatedWorld) this.completeObjective('raid')
+      const lootGuidance = this.generatedWorld
+        ? 'Охрана уже идёт по следу.'
+        : this.isObjectiveDone('guards')
+          ? 'Добыча при вас: сдайте её у зелёного маяка в лагере.'
+          : 'Добыча при вас: одолейте охрану и сдайте её у зелёного маяка в лагере.'
       this.callbacks.onNotice(
         `Корован ограблен! +95 золота. ${lootGuidance}`,
         'success',
@@ -1774,7 +2293,9 @@ export class GameEngine {
     this.resumeAudio()
     this.squadFollowing = !this.squadFollowing
     this.achievements.recordSquadCommand()
-    if (this.faction === 'villain') this.completeObjective('rally')
+    if (!this.generatedWorld && this.faction === 'villain') {
+      this.completeObjective('rally')
+    }
     const message = this.squadFollowing
       ? this.faction === 'guard'
         ? 'Ближайшие гвардейцы держат строй за вами.'
@@ -1819,11 +2340,11 @@ export class GameEngine {
       this.upgrades.blade += 1
     } else if (item.id === 'vitality') {
       this.upgrades.vitality += 1
-      this.maxHealth = getMaxHealth(this.upgrades)
+      this.maxHealth = getMaxHealth(this.upgrades) + this.generatedHealthBonus
       this.health = Math.min(this.maxHealth, this.health + MAX_HEALTH_PER_LEVEL)
     } else {
       this.upgrades.endurance += 1
-      this.maxStamina = getMaxStamina(this.upgrades)
+      this.maxStamina = getMaxStamina(this.upgrades) + this.generatedStaminaBonus
       this.stamina = Math.min(this.maxStamina, this.stamina + MAX_STAMINA_PER_LEVEL)
     }
 
@@ -1866,6 +2387,137 @@ export class GameEngine {
     return save
   }
 
+  saveGeneratedRun(): ActiveRunSaveV2 | null {
+    if (
+      !this.generatedRun ||
+      !this.generatedWorld ||
+      !this.generatedBlueprint ||
+      !this.generatedRngStreams
+    ) {
+      return null
+    }
+    const savedEventCooldown = this.activeEvent
+      ? Math.max(this.eventCooldown, this.eventCooldownRange().min)
+      : this.eventCooldown
+    const regionState = this.generatedWorld.regions.saveState()
+    const startSiteId = this.generatedBlueprint.starts[this.faction]
+    const regionId =
+      this.generatedWorld.getRegionIdAt(
+        this.player.position.x,
+        this.player.position.z,
+      ) ??
+      this.generatedBlueprint.sites.find(
+        (site) => site.id === startSiteId,
+      )?.regionId
+    if (!regionId) throw new Error('Generated start site is missing')
+    const regionBounds = this.generatedWorld.getRegionBounds(regionId)
+    if (!regionBounds) throw new Error('Player is outside the generated world')
+    const achievementRunState = this.achievements.getRunState()
+    if (!achievementRunState) throw new Error('Generated achievement run state is missing')
+    const timestamp = new Date(
+      Math.max(Date.now(), Date.parse(this.generatedRun.startedAt)),
+    ).toISOString()
+    const save: ActiveRunSaveV2 = {
+      version: ACTIVE_RUN_SAVE_VERSION,
+      runId: this.generatedRun.runId,
+      config: {
+        ...this.generatedRun.config,
+        ...(this.generatedRun.config.modifiers
+          ? { modifiers: [...this.generatedRun.config.modifiers] }
+          : {}),
+      },
+      status: this.generatedRunStatus,
+      startedAt: this.generatedRun.startedAt,
+      updatedAt: timestamp,
+      blueprintFingerprint: this.generatedBlueprint.fingerprint,
+      currentLocation: {
+        regionId: String(regionId),
+        localPosition: [
+          this.player.position.x - regionBounds.minX,
+          this.player.position.y,
+          this.player.position.z - regionBounds.minZ,
+        ],
+        worldPosition: [
+          this.player.position.x,
+          this.player.position.y,
+          this.player.position.z,
+        ],
+        heading: this.cameraYaw,
+      },
+      player: {
+        health: this.health,
+        maxHealth: this.maxHealth,
+        stamina: this.stamina,
+        maxStamina: this.maxStamina,
+        gold: this.gold,
+        kills: this.kills,
+        damage: this.damage,
+        body: { ...this.body },
+        objectives: this.objectives.map((objective) => ({ ...objective })),
+        upgrades: { ...this.upgrades },
+      },
+      companions: this.actors
+        .filter(
+          (actor) =>
+            actor.alive &&
+            actor.faction === this.faction &&
+            actor.squadEligible &&
+            actor.role !== 'commander' &&
+            actor.eventOwnerId === null,
+        )
+        .map((actor) => ({
+          id: actor.id,
+          role: actor.role,
+          health: actor.hp,
+          maxHealth: actor.maxHp,
+          worldPosition: [
+            actor.mesh.position.x,
+            actor.mesh.position.y,
+            actor.mesh.position.z,
+          ],
+        })),
+      discoveredRegionIds: regionState.discoveredRegionIds.map(String),
+      regionDeltas: regionState.deltas,
+      directorState: {
+        elapsed: this.elapsed,
+        threatTier: this.threatTier,
+        nextThreatWaveAt: this.nextThreatWaveAt,
+        championDamageBonus: this.championDamageBonus,
+        supplyCount: this.generatedSupplyCount,
+        caravanCooldown: this.caravanCooldown,
+        caravanDirection: this.caravanDirection,
+        caravanX: this.caravan.position.x,
+        caravanZ: this.caravan.position.z,
+        pendingLoot: this.lootPickups
+          .filter((pickup) => pickup.active)
+          .sort((left, right) => left.serial - right.serial)
+          .map((pickup) => ({
+            reward: { ...pickup.reward },
+            position: [
+              pickup.root.position.x,
+              pickup.root.position.y,
+              pickup.root.position.z,
+            ],
+          })),
+      },
+      eventState: {
+        eventCooldown: savedEventCooldown,
+        eventSequence: this.eventSequence,
+        active: false,
+      },
+      rngStates: {
+        combat: this.generatedRngStreams.combat.getState(),
+        director: this.generatedRngStreams.director.getState(),
+        event: this.generatedRngStreams.event.getState(),
+        loot: this.generatedRngStreams.loot.getState(),
+      },
+      achievementRunState,
+    }
+    const normalized = normalizeActiveRunSaveV2(save)
+    if (!normalized) throw new Error('Generated run save failed validation')
+    return normalized
+  }
+
   private readonly loop = (): void => {
     const elapsedDelta = this.clock.getDelta()
     const visualDelta = Math.min(elapsedDelta, 0.05)
@@ -1882,7 +2534,7 @@ export class GameEngine {
     this.audio.setListener(this.camera.position, this.audioListenerRight)
     this.audio.setMusicContext(
       this.faction,
-      zoneAt(this.player.position.x, this.player.position.z),
+      this.zoneAtPosition(this.player.position.x, this.player.position.z),
     )
     this.postProcessor.render()
     this.frameHandle = requestAnimationFrame(this.loop)
@@ -1902,6 +2554,17 @@ export class GameEngine {
     this.caravanCooldown = Math.max(0, this.caravanCooldown - delta)
     this.caravanRobbedFlash = Math.max(0, this.caravanRobbedFlash - delta * 2)
     this.updatePlayer(delta)
+    if (this.generatedWorld) {
+      this.generatedWorld.update({
+        focus: {
+          x: this.player.position.x,
+          z: this.player.position.z,
+        },
+        deltaSeconds: delta,
+      })
+      this.syncGeneratedRegions()
+      this.refreshGeneratedCameraObstacles()
+    }
     this.updateCaravan(delta)
     this.updateProjectiles(delta)
     this.updateActors(delta)
@@ -1932,6 +2595,652 @@ export class GameEngine {
     this.updateEvents(delta)
     this.updatePrompt()
     this.emitView(false)
+  }
+
+  private readSerializableNumber(
+    state: SerializableState | undefined,
+    key: string,
+    fallback: number,
+  ): number {
+    const value = state?.[key]
+    return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+  }
+
+  private createGeneratedObjectives(
+    nodes: readonly FactionObjectiveNode[],
+  ): Objective[] {
+    return nodes.map((node) => {
+      const site = this.generatedBlueprint?.sites.find(
+        (candidate) => candidate.id === node.siteId,
+      )
+      const label = site ? this.generatedSiteLabel(site.kind) : 'цель'
+      const text =
+        node.kind === 'arrive'
+          ? `Доберитесь до места «${label}»`
+          : node.kind === 'interact'
+            ? `Осмотрите место «${label}»`
+            : node.kind === 'claim'
+              ? `Заберите награду в месте «${label}»`
+              : `Одолейте противника у места «${label}»`
+      return { id: node.id, text, done: false }
+    })
+  }
+
+  private generatedSiteLabel(kind: SiteKind): string {
+    switch (kind) {
+      case 'faction-start':
+        return 'лагерь фракции'
+      case 'final-stronghold':
+        return 'финальная крепость'
+      case 'settlement':
+        return 'поселение у перепутья'
+      case 'shop':
+        return 'дорожная лавка'
+      case 'recovery':
+        return 'придорожное святилище'
+      case 'event':
+        return 'место события'
+      case 'treasure':
+        return 'тайник'
+      case 'landmark':
+        return 'ориентир'
+    }
+  }
+
+  private zoneAtPosition(x: number, z: number): ZoneId {
+    const biome = this.generatedWorld?.getBiomeAt(x, z)
+    return biome === 'neutral' ||
+      biome === 'palace' ||
+      biome === 'forest' ||
+      biome === 'fort'
+      ? biome
+      : zoneAt(x, z)
+  }
+
+  private groundHeightAt(x: number, z: number): number {
+    return this.generatedWorld?.sampleHeight(x, z) ?? PLAYER_HEIGHT
+  }
+
+  private generatedRegionIdAt(x: number, z: number): string | null {
+    const regionId = this.generatedWorld?.getRegionIdAt(x, z)
+    return regionId === undefined ? null : String(regionId)
+  }
+
+  private clampWorldPosition(position: THREE.Vector3, radius = 0): void {
+    if (!this.generatedWorld) {
+      position.x = THREE.MathUtils.clamp(position.x, -WORLD_HALF, WORLD_HALF)
+      position.z = THREE.MathUtils.clamp(position.z, -WORLD_HALF, WORLD_HALF)
+      return
+    }
+    const bounds = this.generatedWorld.bounds
+    position.x = THREE.MathUtils.clamp(
+      position.x,
+      bounds.minX + radius,
+      bounds.maxX - radius,
+    )
+    position.z = THREE.MathUtils.clamp(
+      position.z,
+      bounds.minZ + radius,
+      bounds.maxZ - radius,
+    )
+  }
+
+  private isWithinWorldBounds(x: number, z: number, margin = 0): boolean {
+    if (!this.generatedWorld) {
+      return (
+        Math.abs(x) <= WORLD_HALF + margin &&
+        Math.abs(z) <= WORLD_HALF + margin
+      )
+    }
+    const bounds = this.generatedWorld.bounds
+    return (
+      x >= bounds.minX - margin &&
+      x <= bounds.maxX + margin &&
+      z >= bounds.minZ - margin &&
+      z <= bounds.maxZ + margin
+    )
+  }
+
+  private createRegionDelta(regionId: string): RegionDelta {
+    return {
+      version: REGION_DELTA_VERSION,
+      regionId,
+      revision: 0,
+      clearedEncounterIds: [],
+      defeatedActorIds: [],
+      removedPropIds: [],
+      collectedLootIds: [],
+      completedInteractionIds: [],
+      completedEventIds: [],
+      state: {},
+    }
+  }
+
+  private mutateGeneratedRegionDelta(
+    regionId: string,
+    mutation: (delta: RegionDelta) => void,
+  ): void {
+    if (!this.generatedWorld) return
+    const source =
+      this.generatedWorld.regions.getSavedDelta(regionId) ??
+      this.createRegionDelta(regionId)
+    const delta: RegionDelta = {
+      ...source,
+      clearedEncounterIds: [...source.clearedEncounterIds],
+      defeatedActorIds: [...source.defeatedActorIds],
+      removedPropIds: [...source.removedPropIds],
+      collectedLootIds: [...source.collectedLootIds],
+      completedInteractionIds: [...source.completedInteractionIds],
+      completedEventIds: [...source.completedEventIds],
+      state: { ...source.state },
+    }
+    mutation(delta)
+    delta.revision += 1
+    delta.clearedEncounterIds.sort()
+    delta.defeatedActorIds.sort()
+    delta.collectedLootIds.sort()
+    delta.completedInteractionIds.sort()
+    if (!this.generatedWorld.regions.applyRegionDelta(regionId, delta)) {
+      throw new Error(`Could not update generated region delta: ${regionId}`)
+    }
+  }
+
+  private recordGeneratedActorDeath(actor: Actor): void {
+    const regionId = actor.generatedRegionId
+    const encounterId = actor.generatedEncounterId
+    if (!regionId || !encounterId) return
+    const spawnId = actor.generatedSpawnId
+    if (actor.generatedUnique && spawnId) {
+      this.mutateGeneratedRegionDelta(regionId, (delta) => {
+        if (!delta.defeatedActorIds.includes(spawnId)) {
+          delta.defeatedActorIds.push(spawnId)
+        }
+      })
+    }
+    if (actor.generatedObjectiveId && this.generatedBlueprint) {
+      const node = this.generatedBlueprint.objectives[this.faction].nodes.find(
+        (candidate) => candidate.id === actor.generatedObjectiveId,
+      )
+      if (node) this.completeGeneratedObjective(node)
+    }
+    const hasLivingActor = this.actors.some(
+      (candidate) =>
+        candidate !== actor &&
+        candidate.alive &&
+        candidate.generatedRegionId === regionId &&
+        candidate.generatedEncounterId === encounterId,
+    )
+    if (hasLivingActor) return
+    const plan = (this.generatedEncounterPlans.get(regionId) ?? []).find(
+      (candidate) => candidate.encounterId === encounterId,
+    )
+    const activationSpawns = this.generatedActivationSpawns.get(regionId)
+    if (
+      plan &&
+      activationSpawns &&
+      !plan.spawns.every((spawn) => activationSpawns.has(spawn.id))
+    ) {
+      return
+    }
+    this.mutateGeneratedRegionDelta(regionId, (delta) => {
+      if (!delta.clearedEncounterIds.includes(encounterId)) {
+        delta.clearedEncounterIds.push(encounterId)
+      }
+    })
+  }
+
+  private syncGeneratedRegions(): void {
+    if (!this.generatedWorld || !this.generatedBlueprint) return
+    const nextRegions = new Set(
+      this.generatedWorld.regions.getSimulatedRegionIds().map(String),
+    )
+    const navigationSignature = `${this.generatedWorld.regions
+      .getVisibleRegionIds()
+      .map(String)
+      .sort()
+      .join('|')}::${[...nextRegions].sort().join('|')}`
+    if (navigationSignature !== this.generatedNavigationRegionSignature) {
+      this.generatedNavigationRegionSignature = navigationSignature
+      this.generatedNavigationCache.clear()
+    }
+    for (const regionId of this.simulatedGeneratedRegions) {
+      if (nextRegions.has(regionId)) continue
+      for (const actor of [...this.actors]) {
+        if (
+          actor.generatedRegionId === regionId &&
+          (actor.generatedEncounterId !== null || actor.eventOwnerId === null)
+        ) {
+          this.removeActorById(actor.id)
+        }
+      }
+      this.generatedActivationSpawns.delete(regionId)
+    }
+    this.simulatedGeneratedRegions.clear()
+    for (const regionId of nextRegions) {
+      this.simulatedGeneratedRegions.add(regionId)
+      if (!this.generatedActivationSpawns.has(regionId)) {
+        this.generatedActivationSpawns.set(regionId, new Set())
+      }
+      this.spawnGeneratedRegionEncounters(regionId)
+    }
+  }
+
+  private restoreGeneratedCompanions(
+    companions: readonly RunCompanionState[],
+  ): void {
+    for (const companion of companions) {
+      if (this.actors.length >= MAX_ACTORS) break
+      if (this.actors.some((actor) => actor.id === companion.id)) continue
+      const actor = this.spawnActor(
+        this.faction,
+        companion.role,
+        companion.worldPosition[0],
+        companion.worldPosition[2],
+        this.actorSequence,
+        {
+          objectiveEligible: false,
+          squadEligible: true,
+          generatedRegionId: null,
+          hostileToPlayer: false,
+        },
+      )
+      actor.id = companion.id
+      actor.maxHp = companion.maxHealth
+      actor.hp = Math.min(companion.maxHealth, companion.health)
+      actor.home.copy(actor.mesh.position)
+      actor.wanderTarget.copy(actor.mesh.position)
+      if (actor.role === 'captive') {
+        const weapon = actor.mesh.getObjectByName('weapon')
+        if (weapon) weapon.visible = true
+      }
+    }
+  }
+
+  private restoreGeneratedLoot(state: SerializableState | undefined): void {
+    const pendingLoot = state?.pendingLoot
+    if (!Array.isArray(pendingLoot)) return
+    const labels: Record<LootRewardKind, string> = {
+      coins: 'Монеты',
+      medicine: 'Лекарство',
+      whetstone: 'Точильный камень',
+    }
+    for (const value of pendingLoot.slice(0, LOOT_MAX_ACTIVE)) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) continue
+      const rewardValue = value.reward
+      const position = value.position
+      if (
+        !rewardValue ||
+        typeof rewardValue !== 'object' ||
+        Array.isArray(rewardValue) ||
+        !Array.isArray(position) ||
+        position.length !== 3
+      ) {
+        continue
+      }
+      const kind =
+        rewardValue.kind === 'coins' ||
+        rewardValue.kind === 'medicine' ||
+        rewardValue.kind === 'whetstone'
+          ? rewardValue.kind
+          : null
+      const rarity =
+        rewardValue.rarity === 'common' ||
+        rewardValue.rarity === 'uncommon' ||
+        rewardValue.rarity === 'rare' ||
+        rewardValue.rarity === 'legendary'
+          ? rewardValue.rarity
+          : null
+      const amount = rewardValue.amount
+      const [x, y, z] = position
+      if (
+        !kind ||
+        !rarity ||
+        typeof amount !== 'number' ||
+        !Number.isFinite(amount) ||
+        amount <= 0 ||
+        typeof x !== 'number' ||
+        !Number.isFinite(x) ||
+        typeof y !== 'number' ||
+        !Number.isFinite(y) ||
+        typeof z !== 'number' ||
+        !Number.isFinite(z)
+      ) {
+        continue
+      }
+      const pickup = this.lootPickups.find((candidate) => !candidate.active)
+      if (!pickup) break
+      pickup.reward = { kind, rarity, amount, label: labels[kind] }
+      pickup.state = 'idle'
+      pickup.velocity.set(0, 0, 0)
+      pickup.age = 0
+      pickup.idleAge = 0
+      pickup.active = true
+      pickup.serial = ++this.lootSequence
+      pickup.root.position.set(x, y, z)
+      pickup.root.visible = true
+      this.configureLootVisual(pickup)
+      pickup.tokenRoot.scale.setScalar(1)
+    }
+  }
+
+  private spawnGeneratedRegionEncounters(regionId: string): void {
+    if (!this.generatedWorld || !this.generatedBlueprint) return
+    const delta =
+      this.generatedWorld.regions.getSavedDelta(regionId) ??
+      this.createRegionDelta(regionId)
+    const activationSpawns = this.generatedActivationSpawns.get(regionId)
+    if (!activationSpawns) return
+    const graph = this.generatedBlueprint.objectives[this.faction]
+    const finalNode = graph.nodes.find((node) => node.id === graph.finalNodeId)
+    const finalReady = finalNode ? this.generatedPrerequisitesDone(finalNode) : true
+    const finaleSiteId = this.generatedBlueprint.finales[this.faction]
+    const startSiteId = this.generatedBlueprint.starts[this.faction]
+    const startRegionId = this.generatedBlueprint.sites.find(
+      (site) => site.id === startSiteId,
+    )?.regionId
+    const finalEncounterId = this.generatedBlueprint.encounters.find(
+      (encounter) =>
+        encounter.kind === 'boss' &&
+        encounter.siteId === finaleSiteId,
+    )?.id
+    for (const plan of this.generatedEncounterPlans.get(regionId) ?? []) {
+      if (delta.clearedEncounterIds.includes(plan.encounterId)) continue
+      if (regionId === startRegionId && plan.kind !== 'boss') continue
+      const isFinalEncounter = plan.encounterId === finalEncounterId
+      if (isFinalEncounter && !finalReady) continue
+      for (const spawn of plan.spawns) {
+        if (this.actors.length >= MAX_ACTORS) return
+        if (activationSpawns.has(spawn.id)) continue
+        if (spawn.unique && delta.defeatedActorIds.includes(spawn.id)) {
+          activationSpawns.add(spawn.id)
+          continue
+        }
+        const actor = this.spawnActor(
+          spawn.faction,
+          spawn.role,
+          spawn.worldX,
+          spawn.worldZ,
+          this.actorSequence++,
+          {
+            objectiveEligible: spawn.objectiveEligible,
+            squadEligible: false,
+            generatedRegionId: regionId,
+            generatedEncounterId: plan.encounterId,
+            generatedSpawnId: spawn.id,
+            generatedObjectiveId:
+              spawn.objective && isFinalEncounter ? graph.finalNodeId : null,
+            generatedUnique: spawn.unique,
+            hostileToPlayer: plan.hostileToPlayer,
+            healthScale: 1 + Math.max(0, plan.difficulty - 1) * 0.12,
+          },
+        )
+        actor.playerAggro = plan.hostileToPlayer
+        activationSpawns.add(spawn.id)
+      }
+    }
+  }
+
+  private refreshGeneratedCameraObstacles(): void {
+    if (!this.generatedWorld) return
+    const signature = this.generatedWorld.regions
+      .getVisibleRegionIds()
+      .map(String)
+      .sort()
+      .join('|')
+    if (signature === this.generatedCameraRegionSignature) return
+    this.generatedCameraRegionSignature = signature
+    this.cameraObstacles.length = 0
+    this.collectCameraObstacles(
+      this.scene.children.filter(
+        (child) => child.userData.generatedWorldRegionId !== undefined,
+      ),
+    )
+  }
+
+  private placeGeneratedCaravan(): void {
+    if (!this.generatedWorld || !this.generatedBlueprint) return
+    const path = this.generatedBlueprint.criticalPaths[this.faction]
+    const startRegion = this.generatedWorld.getRegionCenter(path.regionIds[0])
+    const destinationRegion = this.generatedWorld.getRegionCenter(
+      path.regionIds[1] ?? path.regionIds[0],
+    )
+    const fallback = this.generatedWorld.getStartPosition(this.faction)
+    const start = startRegion ?? fallback
+    const destination = destinationRegion ?? fallback
+    this.generatedCaravanTravelDirection
+      .set(destination.x - start.x, destination.z - start.z)
+      .normalize()
+    if (this.generatedCaravanTravelDirection.lengthSq() === 0) {
+      this.generatedCaravanTravelDirection.set(1, 0)
+    }
+    this.generatedCaravanPatrolStart.set(
+      start.x +
+        this.generatedCaravanTravelDirection.x * GENERATED_CARAVAN_PATROL_NEAR,
+      0,
+      start.z +
+        this.generatedCaravanTravelDirection.y * GENERATED_CARAVAN_PATROL_NEAR,
+    )
+    this.generatedCaravanPatrolEnd.set(
+      start.x +
+        this.generatedCaravanTravelDirection.x * GENERATED_CARAVAN_PATROL_FAR,
+      0,
+      start.z +
+        this.generatedCaravanTravelDirection.y * GENERATED_CARAVAN_PATROL_FAR,
+    )
+    this.clampWorldPosition(
+      this.generatedCaravanPatrolStart,
+      GENERATED_CARAVAN_COLLIDER_RADIUS,
+    )
+    this.clampWorldPosition(
+      this.generatedCaravanPatrolEnd,
+      GENERATED_CARAVAN_COLLIDER_RADIUS,
+    )
+    this.generatedCaravanPatrolStart.y = this.groundHeightAt(
+      this.generatedCaravanPatrolStart.x,
+      this.generatedCaravanPatrolStart.z,
+    )
+    this.generatedCaravanPatrolEnd.y = this.groundHeightAt(
+      this.generatedCaravanPatrolEnd.x,
+      this.generatedCaravanPatrolEnd.z,
+    )
+    this.generatedCaravanPatrolReady =
+      this.generatedCaravanPatrolStart.distanceToSquared(
+        this.generatedCaravanPatrolEnd,
+      ) > 1
+    this.caravan.position.copy(this.generatedCaravanPatrolStart)
+  }
+
+  private projectGeneratedCaravanOntoPatrol(): void {
+    if (!this.generatedCaravanPatrolReady) return
+    const segmentX =
+      this.generatedCaravanPatrolEnd.x - this.generatedCaravanPatrolStart.x
+    const segmentZ =
+      this.generatedCaravanPatrolEnd.z - this.generatedCaravanPatrolStart.z
+    const lengthSquared = segmentX * segmentX + segmentZ * segmentZ
+    if (lengthSquared <= 0.0001) return
+    const progress = THREE.MathUtils.clamp(
+      ((this.caravan.position.x - this.generatedCaravanPatrolStart.x) *
+        segmentX +
+        (this.caravan.position.z - this.generatedCaravanPatrolStart.z) *
+          segmentZ) /
+        lengthSquared,
+      0,
+      1,
+    )
+    this.caravan.position.x =
+      this.generatedCaravanPatrolStart.x + segmentX * progress
+    this.caravan.position.z =
+      this.generatedCaravanPatrolStart.z + segmentZ * progress
+  }
+
+  private generatedPrerequisitesDone(node: FactionObjectiveNode): boolean {
+    return node.prerequisiteIds.every((id) => this.isObjectiveDone(id))
+  }
+
+  private getActiveGeneratedObjective(): FactionObjectiveNode | null {
+    const graph = this.generatedBlueprint?.objectives[this.faction]
+    if (!graph) return null
+    return (
+      graph.nodes.find(
+        (node) =>
+          !this.isObjectiveDone(node.id) && this.generatedPrerequisitesDone(node),
+      ) ?? null
+    )
+  }
+
+  private completeGeneratedObjective(node: FactionObjectiveNode): boolean {
+    if (!this.generatedPrerequisitesDone(node)) return false
+    return this.completeObjective(node.id)
+  }
+
+  private handleGeneratedInteraction(): boolean {
+    if (!this.generatedWorld) return false
+    const site = this.generatedWorld.findNearbySite(
+      { x: this.player.position.x, z: this.player.position.z },
+      6,
+    )
+    if (!site) {
+      if (
+        this.generatedSupplyCount > 0 &&
+        this.health < this.maxHealth &&
+        this.player.position.distanceTo(this.caravan.position) >= 7
+      ) {
+        this.generatedSupplyCount -= 1
+        this.health = Math.min(this.maxHealth, this.health + 35)
+        this.body.bleeding = Math.max(0, this.body.bleeding - 0.35)
+        this.callbacks.onNotice('Дорожный паёк восстановил 35 здоровья.', 'success')
+        this.playSound('objective')
+        return true
+      }
+      return false
+    }
+    const node = this.getActiveGeneratedObjective()
+    const targetsNode =
+      node?.siteId === site.id &&
+      (node.kind === 'interact' || node.kind === 'claim')
+    if (
+      !targetsNode &&
+      site.kind !== 'shop' &&
+      site.kind !== 'recovery' &&
+      site.kind !== 'treasure'
+    ) {
+      return false
+    }
+
+    const delta =
+      this.generatedWorld.regions.getSavedDelta(site.regionId) ??
+      this.createRegionDelta(String(site.regionId))
+    const interacted = delta.completedInteractionIds.includes(site.id)
+    const collected = delta.collectedLootIds.includes(site.id)
+    if (site.kind === 'shop') {
+      this.callbacks.onShop()
+    } else if (site.kind === 'recovery') {
+      this.health = Math.min(this.maxHealth, this.health + 40)
+      this.stamina = this.maxStamina
+      this.body.bleeding = 0
+      this.healWounds()
+      this.callbacks.onNotice('Привал восстановил силы и остановил кровотечение.', 'success')
+      this.playSound('objective')
+    } else if (site.kind === 'treasure' || node?.kind === 'claim') {
+      if (collected) {
+        this.callbacks.onNotice('Здесь больше нечего забирать.', 'info')
+      } else {
+        const reward = 28 + Math.floor(this.lootRng() * 43)
+        this.gold += reward
+        this.achievements.recordGoldEarned(reward)
+        this.mutateGeneratedRegionDelta(String(site.regionId), (next) => {
+          if (!next.collectedLootIds.includes(site.id)) {
+            next.collectedLootIds.push(site.id)
+          }
+          if (!next.completedInteractionIds.includes(site.id)) {
+            next.completedInteractionIds.push(site.id)
+          }
+        })
+        this.callbacks.onNotice(`Найдены припасы и ${reward} золота.`, 'success')
+        this.playSound('coin')
+      }
+    } else if (!interacted) {
+      this.mutateGeneratedRegionDelta(String(site.regionId), (next) => {
+        if (!next.completedInteractionIds.includes(site.id)) {
+          next.completedInteractionIds.push(site.id)
+        }
+      })
+      this.callbacks.onNotice(
+        `Место «${this.generatedSiteLabel(site.kind)}» осмотрено.`,
+        'success',
+      )
+    }
+
+    if (targetsNode) {
+      if (!interacted) {
+        this.mutateGeneratedRegionDelta(String(site.regionId), (next) => {
+          if (!next.completedInteractionIds.includes(site.id)) {
+            next.completedInteractionIds.push(site.id)
+          }
+        })
+      }
+      this.completeGeneratedObjective(node)
+    }
+    return true
+  }
+
+  private getGeneratedPrompt(): string {
+    if (!this.generatedWorld) return ''
+    const node = this.getActiveGeneratedObjective()
+    const nearbySite = this.generatedWorld.findNearbySite(
+      { x: this.player.position.x, z: this.player.position.z },
+      6,
+    )
+    if (nearbySite) {
+      if (
+        node?.siteId === nearbySite.id &&
+        (node.kind === 'interact' || node.kind === 'claim')
+      ) {
+        return node.kind === 'claim'
+          ? `[E] Забрать награду: ${this.generatedSiteLabel(nearbySite.kind)}`
+          : `[E] Осмотреть: ${this.generatedSiteLabel(nearbySite.kind)}`
+      }
+      if (nearbySite.kind === 'shop') {
+        return `[E] Торговать: ${this.generatedSiteLabel(nearbySite.kind)}`
+      }
+      if (nearbySite.kind === 'recovery') {
+        return `[E] Отдохнуть: ${this.generatedSiteLabel(nearbySite.kind)}`
+      }
+      if (nearbySite.kind === 'treasure') {
+        const claimed = this.generatedWorld.regions
+          .getSavedDelta(nearbySite.regionId)
+          ?.collectedLootIds.includes(nearbySite.id)
+        return claimed
+          ? `${this.generatedSiteLabel(nearbySite.kind)}: уже осмотрено`
+          : `[E] Обыскать: ${this.generatedSiteLabel(nearbySite.kind)}`
+      }
+    }
+    if (this.player.position.distanceTo(this.caravan.position) < 7) {
+      return this.faction === 'guard'
+        ? '[E] Проверить корован'
+        : this.caravanCooldown > 0
+          ? 'Корован уже разграблен'
+          : '[E] ГРАБИТЬ КОРОВАН'
+    }
+    if (this.generatedSupplyCount > 0 && this.health < this.maxHealth) {
+      return `[E] Использовать дорожный паёк • ${this.generatedSupplyCount}`
+    }
+    if (node) {
+      const objective = this.objectives.find((entry) => entry.id === node.id)
+      const site = this.generatedWorld.getSitePosition(node.siteId)
+      const distance = site
+        ? Math.round(
+            Math.hypot(
+              site.x - this.player.position.x,
+              site.z - this.player.position.z,
+            ),
+          )
+        : 0
+      return `Цель: ${objective?.text ?? 'продолжить путь'} • ${distance} м`
+    }
+    return document.pointerLockElement === this.renderer.domElement
+      ? ''
+      : 'Нажмите на мир, чтобы управлять камерой'
   }
 
   private registerBoxObstacle(
@@ -1985,6 +3294,9 @@ export class GameEngine {
   }
 
   private isWalkablePosition(x: number, z: number, radius: number): boolean {
+    if (this.generatedWorld) {
+      return this.generatedWorld.collision.isWalkablePosition(x, z, radius)
+    }
     if (Math.abs(x) > WORLD_HALF || Math.abs(z) > WORLD_HALF) return false
     return !this.staticObstacles.some((obstacle) =>
       this.obstacleOverlapsCircle(obstacle, x, z, radius),
@@ -2046,6 +3358,18 @@ export class GameEngine {
   }
 
   private resolveCharacterOverlaps(position: THREE.Vector3, radius: number): boolean {
+    if (this.generatedWorld) {
+      const resolved = this.generatedWorld.collision.resolveMovement(
+        { x: position.x, z: position.z },
+        { x: position.x, z: position.z },
+        radius,
+        { preventSteepTerrain: true },
+      )
+      position.x = resolved.x
+      position.z = resolved.z
+      this.clampWorldPosition(position, radius)
+      return resolved.blocked
+    }
     let collided = false
     for (let pass = 0; pass < COLLISION_RESOLUTION_PASSES; pass += 1) {
       let adjusted = false
@@ -2074,6 +3398,17 @@ export class GameEngine {
     movementZ: number,
     radius: number,
   ): boolean {
+    if (this.generatedWorld) {
+      const resolved = this.generatedWorld.collision.resolveMovement(
+        { x: position.x, z: position.z },
+        { x: position.x + movementX, z: position.z + movementZ },
+        radius,
+        { preventSteepTerrain: true },
+      )
+      position.x = resolved.x
+      position.z = resolved.z
+      return resolved.blocked
+    }
     const distance = Math.hypot(movementX, movementZ)
     const steps = Math.max(1, Math.ceil(distance / COLLISION_MAX_STEP))
     const stepX = movementX / steps
@@ -2217,12 +3552,85 @@ export class GameEngine {
     return true
   }
 
+  private getGeneratedNavigationWaypoint(
+    position: THREE.Vector3,
+    destination: THREE.Vector3,
+    radius: number,
+  ): THREE.Vector3 | null {
+    if (!this.generatedWorld) return null
+    const bounds = this.generatedWorld.bounds
+    const cell = (value: number, minimum: number): number =>
+      Math.floor((value - minimum) / GENERATED_NAVIGATION_CELL_SIZE)
+    const key = [
+      cell(position.x, bounds.minX),
+      cell(position.z, bounds.minZ),
+      cell(destination.x, bounds.minX),
+      cell(destination.z, bounds.minZ),
+      Math.round(radius * 10),
+    ].join(':')
+    let entry = this.generatedNavigationCache.get(key)
+    if (entry && entry.expiresAt <= this.elapsed) {
+      this.generatedNavigationCache.delete(key)
+      entry = undefined
+    }
+    if (!entry) {
+      for (const [cachedKey, cached] of this.generatedNavigationCache) {
+        if (cached.expiresAt <= this.elapsed) {
+          this.generatedNavigationCache.delete(cachedKey)
+        }
+      }
+      if (this.generatedNavigationCache.size >= GENERATED_NAVIGATION_CACHE_LIMIT) {
+        const oldestKey = this.generatedNavigationCache.keys().next().value
+        if (oldestKey !== undefined) this.generatedNavigationCache.delete(oldestKey)
+      }
+      const path = this.generatedWorld.findPath(
+        { x: position.x, z: position.z },
+        { x: destination.x, z: destination.z },
+      )
+      entry = {
+        expiresAt: this.elapsed + GENERATED_NAVIGATION_CACHE_TTL,
+        waypoints:
+          path && path.length > 0
+            ? path.map((waypoint) => [waypoint.x, waypoint.z] as const)
+            : null,
+      }
+      this.generatedNavigationCache.set(key, entry)
+    }
+
+    const minimumDistance = Math.max(0.65, radius * 1.25)
+    const waypoint = entry.waypoints?.find(
+      ([x, z]) =>
+        Math.hypot(x - position.x, z - position.z) > minimumDistance,
+    )
+    if (!waypoint) return null
+    this.navigationWaypoint.set(
+      waypoint[0],
+      this.groundHeightAt(waypoint[0], waypoint[1]),
+      waypoint[1],
+    )
+    return this.navigationWaypoint
+  }
+
   private getNavigationWaypoint(
     position: THREE.Vector3,
     destination: THREE.Vector3,
     radius: number,
     preferredSign: number,
   ): THREE.Vector3 | null {
+    if (this.generatedWorld) {
+      if (
+        this.isMovementPathClear(
+          position.x,
+          position.z,
+          destination.x,
+          destination.z,
+          radius,
+        )
+      ) {
+        return null
+      }
+      return this.getGeneratedNavigationWaypoint(position, destination, radius)
+    }
     for (const enclosure of this.navigationEnclosures) {
       const positionInside = this.pointInsideEnclosure(position, enclosure)
       const destinationInside = this.pointInsideEnclosure(destination, enclosure)
@@ -2388,6 +3796,9 @@ export class GameEngine {
 
     actor.mesh.position.x = bestX
     actor.mesh.position.z = bestZ
+    if (this.generatedWorld) {
+      actor.mesh.position.y = this.groundHeightAt(bestX, bestZ)
+    }
     return Math.hypot(bestX - startX, bestZ - startZ)
   }
 
@@ -2407,7 +3818,10 @@ export class GameEngine {
       Number(this.body.leftLeg === 'prosthetic') + Number(this.body.rightLeg === 'prosthetic')
     let mobility = missingLegs === 2 ? 0.24 : missingLegs === 1 ? 0.53 : 1
     if (prostheticLegs > 0) mobility *= 0.9
-    if (this.faction === 'elf' && zoneAt(this.player.position.x, this.player.position.z) === 'forest') {
+    if (
+      this.faction === 'elf' &&
+      this.zoneAtPosition(this.player.position.x, this.player.position.z) === 'forest'
+    ) {
       mobility *= 1.14
     }
 
@@ -2478,11 +3892,16 @@ export class GameEngine {
     const jumpLatch = advanceJumpAccentLatch(this.jumpAccentArmed, jumpHeld, tookOff)
     this.jumpAccentArmed = jumpLatch.armed
     if (jumpLatch.triggered) this.queueCameraAccent('jump', 1, 0.18)
+    const groundHeight = this.groundHeightAt(
+      this.player.position.x,
+      this.player.position.z,
+    )
+    if (this.onGround) this.player.position.y = groundHeight
     this.verticalVelocity -= 23 * delta
     this.player.position.y += this.verticalVelocity * delta
-    if (this.player.position.y <= PLAYER_HEIGHT) {
+    if (this.player.position.y <= groundHeight) {
       const landed = !this.onGround && this.verticalVelocity < -2
-      this.player.position.y = PLAYER_HEIGHT
+      this.player.position.y = groundHeight
       this.verticalVelocity = 0
       this.onGround = true
       if (landed) this.playSound('land')
@@ -2562,7 +3981,7 @@ export class GameEngine {
       const leashRange = senseRange * 2.25
       const colliderRadius = this.actorColliderRadiusForRole(actor.role)
       const navigationSign = Math.sin(actor.phase * 3.17 + 0.4) >= 0 ? 1 : -1
-      const hostileToPlayer = hostile(actor.faction, this.faction)
+      const hostileToPlayer = actor.hostileToPlayer
       const canSensePlayer = hostileToPlayer && playerDistance < senseRange
       const canTrackPlayer =
         hostileToPlayer && actor.playerAggro && playerDistance < leashRange
@@ -2923,7 +4342,7 @@ export class GameEngine {
     )
     actor.healthBar.visible =
       actor.alive &&
-      hostile(actor.faction, this.faction) &&
+      actor.hostileToPlayer &&
       playerDistance < 34 &&
       (this.elapsed < actor.healthBarVisibleUntil || actor.rageTimer > 0)
     this.updateActorOutlineVisibility(actor, playerDistance * playerDistance)
@@ -3125,7 +4544,7 @@ export class GameEngine {
     action: ActorAction,
   ): THREE.Vector3 | null {
     if (action.target.kind === 'player') {
-      return this.health > 0 && hostile(actor.faction, this.faction)
+      return this.health > 0 && actor.hostileToPlayer
         ? this.player.position
         : null
     }
@@ -3287,6 +4706,12 @@ export class GameEngine {
       requestedZ,
       this.actorColliderRadiusForRole(actor.role),
     )
+    if (this.generatedWorld) {
+      actor.mesh.position.y = this.groundHeightAt(
+        actor.mesh.position.x,
+        actor.mesh.position.z,
+      )
+    }
     const actualX = actor.mesh.position.x - startX
     const actualZ = actor.mesh.position.z - startZ
     if (Math.abs(actualX - requestedX) > 0.001) actor.knockbackVelocity.x = 0
@@ -3376,7 +4801,12 @@ export class GameEngine {
             : actor.role === 'champion'
               ? 2.8
               : 2.5
-    entry.mesh.position.set(actor.mesh.position.x, TELEGRAPH_Y, actor.mesh.position.z)
+    entry.mesh.position.set(
+      actor.mesh.position.x,
+      this.groundHeightAt(actor.mesh.position.x, actor.mesh.position.z) +
+        TELEGRAPH_Y,
+      actor.mesh.position.z,
+    )
     entry.mesh.rotation.set(0, yaw, 0)
     entry.mesh.scale.set(
       width,
@@ -3465,7 +4895,7 @@ export class GameEngine {
     const dealt = Math.max(8, this.damage - armPenalty) * CLEAVE_DAMAGE_MULTIPLIER
     const feedbackEvents: CombatFeedbackEvent[] = []
     for (const actor of this.actors) {
-      if (!actor.alive || !hostile(this.faction, actor.faction)) continue
+      if (!actor.alive || !actor.hostileToPlayer) continue
       const offset = actor.mesh.position.clone().sub(this.player.position)
       offset.y = 0
       const distance = offset.length()
@@ -3585,12 +5015,21 @@ export class GameEngine {
     const position = actor.mesh.position.clone().add(
       new THREE.Vector3(Math.sin(angle) * 3.2, 0, Math.cos(angle) * 3.2),
     )
+    const generatedOptions: ActorSpawnOptions | undefined = actor.generatedRegionId
+      ? {
+          objectiveEligible: false,
+          squadEligible: false,
+          generatedRegionId: actor.generatedRegionId,
+          hostileToPlayer: actor.hostileToPlayer,
+        }
+      : undefined
     this.spawnActor(
       actor.faction,
       'soldier',
       position.x,
       position.z,
       this.actors.length,
+      generatedOptions,
     )
     actor.reinforcementsCalled += 1
     if (actor.mesh.position.distanceTo(this.player.position) < 35) {
@@ -3636,7 +5075,7 @@ export class GameEngine {
       const x = actor.home.x + Math.sin(candidateAngle) * candidateRadius
       const z = actor.home.z + Math.cos(candidateAngle) * candidateRadius
       if (!this.isWalkablePosition(x, z, colliderRadius)) continue
-      actor.wanderTarget.set(x, 0, z)
+      actor.wanderTarget.set(x, this.groundHeightAt(x, z), z)
       foundTarget = true
       break
     }
@@ -3673,12 +5112,75 @@ export class GameEngine {
   }
 
   private updateCaravan(delta: number): void {
-    this.caravan.position.x += this.caravanDirection * delta * 3.4
-    if (this.caravan.position.x > 58) this.caravanDirection = -1
-    if (this.caravan.position.x < -58) this.caravanDirection = 1
-    this.caravan.rotation.y = this.caravanDirection > 0 ? 0 : Math.PI
+    let wheelTravel = delta * 3.4
+    if (this.generatedWorld) {
+      wheelTravel = 0
+      const regionId = this.generatedRegionIdAt(
+        this.caravan.position.x,
+        this.caravan.position.z,
+      )
+      if (
+        this.generatedCaravanPatrolReady &&
+        regionId &&
+        this.simulatedGeneratedRegions.has(regionId)
+      ) {
+        let destination =
+          this.caravanDirection > 0
+            ? this.generatedCaravanPatrolEnd
+            : this.generatedCaravanPatrolStart
+        if (this.caravan.position.distanceTo(destination) <= 1.1) {
+          this.caravanDirection *= -1
+          destination =
+            this.caravanDirection > 0
+              ? this.generatedCaravanPatrolEnd
+              : this.generatedCaravanPatrolStart
+        }
+        const waypoint =
+          this.getNavigationWaypoint(
+            this.caravan.position,
+            destination,
+            GENERATED_CARAVAN_COLLIDER_RADIUS,
+            this.caravanDirection,
+          ) ?? destination
+        const direction = waypoint.clone().sub(this.caravan.position)
+        direction.y = 0
+        const distance = direction.length()
+        if (distance > 0.001) {
+          direction.multiplyScalar(1 / distance)
+          const previousX = this.caravan.position.x
+          const previousZ = this.caravan.position.z
+          const requestedTravel = Math.min(delta * 3.4, distance)
+          const blocked = this.moveCharacter(
+            this.caravan.position,
+            direction.x * requestedTravel,
+            direction.z * requestedTravel,
+            GENERATED_CARAVAN_COLLIDER_RADIUS,
+          )
+          const movedX = this.caravan.position.x - previousX
+          const movedZ = this.caravan.position.z - previousZ
+          wheelTravel = Math.hypot(movedX, movedZ)
+          if (
+            wheelTravel < 0.0001 ||
+            (blocked && wheelTravel < requestedTravel * 0.2)
+          ) {
+            this.caravanDirection *= -1
+          } else {
+            this.caravan.rotation.y = Math.atan2(-movedZ, movedX)
+          }
+        }
+        this.caravan.position.y = this.groundHeightAt(
+          this.caravan.position.x,
+          this.caravan.position.z,
+        )
+      }
+    } else {
+      this.caravan.position.x += this.caravanDirection * delta * 3.4
+      if (this.caravan.position.x > 58) this.caravanDirection = -1
+      if (this.caravan.position.x < -58) this.caravanDirection = 1
+      this.caravan.rotation.y = this.caravanDirection > 0 ? 0 : Math.PI
+    }
     const wheels = this.caravan.getObjectsByProperty('name', 'wheel')
-    for (const wheel of wheels) wheel.rotation.z -= delta * (3.4 / 0.9)
+    for (const wheel of wheels) wheel.rotation.z -= wheelTravel / 0.9
     const cargo = this.caravan.getObjectByName('cargo')
     if (cargo instanceof THREE.Mesh) {
       const scale = this.caravanCooldown > 0 ? 0.35 : 1
@@ -3775,9 +5277,8 @@ export class GameEngine {
       if (
         projectile.life <= 0 ||
         (projectile.owner === 'player' && projectile.travelled >= BOW_RANGE) ||
-        Math.abs(end.x) > WORLD_HALF + 4 ||
-        Math.abs(end.z) > WORLD_HALF + 4 ||
-        end.y < -1
+        !this.isWithinWorldBounds(end.x, end.z, 4) ||
+        end.y < this.groundHeightAt(end.x, end.z) - 1
       ) {
         this.removeProjectile(index)
       }
@@ -3805,14 +5306,25 @@ export class GameEngine {
     end: THREE.Vector3,
   ): ProjectileHit | null {
     let nearest: ProjectileHit | null = null
-    if (projectile.owner === 'actor' && hostile(projectile.faction, this.faction)) {
+    const sourceActor = projectile.sourceActorId
+      ? this.actors.find((actor) => actor.id === projectile.sourceActorId)
+      : undefined
+    if (
+      projectile.owner === 'actor' &&
+      (sourceActor?.hostileToPlayer ??
+        hostile(projectile.faction, this.faction))
+    ) {
       const playerCenter = this.player.position.clone().add(new THREE.Vector3(0, 1.45, 0))
       const fraction = this.segmentSphereHit(start, end, playerCenter, PROJECTILE_HIT_RADIUS)
       if (fraction !== null) nearest = { fraction, actor: null, player: true }
     }
 
     for (const actor of this.actors) {
-      if (!actor.alive || !hostile(projectile.faction, actor.faction)) continue
+      const canHit =
+        projectile.owner === 'player'
+          ? actor.hostileToPlayer
+          : hostile(projectile.faction, actor.faction)
+      if (!actor.alive || !canHit) continue
       const center = actor.mesh.position.clone().add(new THREE.Vector3(0, 1.45, 0))
       const radius = actor.role === 'brute' ? 1.1 : PROJECTILE_HIT_RADIUS
       const fraction = this.segmentSphereHit(start, end, center, radius)
@@ -3873,7 +5385,12 @@ export class GameEngine {
       particle.mesh.position.addScaledVector(particle.velocity, delta)
       if (
         (particle.mode === 'blood' || particle.mode === 'gib') &&
-        particle.mesh.position.y <= GORE_GROUND_Y &&
+        particle.mesh.position.y <=
+          this.groundHeightAt(
+            particle.mesh.position.x,
+            particle.mesh.position.z,
+          ) +
+            GORE_GROUND_Y &&
         particle.velocity.y < 0
       ) {
         if (particle.splatScale) {
@@ -3954,6 +5471,8 @@ export class GameEngine {
     const eventPrompt = this.activeEvent?.getPrompt?.()
     if (eventPrompt) {
       this.prompt = eventPrompt
+    } else if (this.generatedWorld) {
+      this.prompt = this.getGeneratedPrompt()
     } else if (this.hasElfLoot() && position.distanceTo(this.elfHomePosition) < 6) {
       const guards = this.objectives.find((objective) => objective.id === 'guards')
       this.prompt = this.isObjectiveDone('guards')
@@ -3980,12 +5499,43 @@ export class GameEngine {
   }
 
   private updateMission(): void {
-    const currentZone = zoneAt(this.player.position.x, this.player.position.z)
+    const currentZone = this.zoneAtPosition(
+      this.player.position.x,
+      this.player.position.z,
+    )
     if (currentZone !== this.lastZone) {
       this.lastZone = currentZone
       this.achievements.recordZone(currentZone)
       this.callbacks.onNotice(`Новая область: ${this.zoneName(currentZone)}`, 'info')
-      if (this.faction === 'villain' && currentZone === 'palace') this.completeObjective('breach')
+      if (
+        !this.generatedWorld &&
+        this.faction === 'villain' &&
+        currentZone === 'palace'
+      ) {
+        this.completeObjective('breach')
+      }
+    }
+
+    if (this.generatedWorld) {
+      const node = this.getActiveGeneratedObjective()
+      if (node?.kind === 'arrive') {
+        const site = this.generatedWorld.getSitePosition(node.siteId)
+        if (
+          site &&
+          Math.hypot(
+            site.x - this.player.position.x,
+            site.z - this.player.position.z,
+          ) <= 8
+        ) {
+          this.completeGeneratedObjective(node)
+        }
+      }
+      if (this.objectives.every((objective) => objective.done)) {
+        this.campaignCompleted = true
+        this.campaignCompletedAt = this.elapsed
+        this.endGame('victory')
+      }
+      return
     }
 
     if (
@@ -4060,7 +5610,7 @@ export class GameEngine {
   }
 
   private enemyDamageMultiplier(actor: Actor): number {
-    return hostile(this.faction, actor.faction) ? 1 + (this.threatTier - 1) * 0.09 : 1
+    return actor.hostileToPlayer ? 1 + (this.threatTier - 1) * 0.09 : 1
   }
 
   private spawnThreatWave(scheduledAt: number): number {
@@ -4071,7 +5621,13 @@ export class GameEngine {
 
     const enemyFaction: Faction = this.faction === 'guard' ? 'villain' : 'guard'
     let spawned = 0
-    const baseAngle = scheduledAt * 0.037 + this.threatTier * 1.7
+    const baseAngle = this.generatedWorld
+      ? this.directorRng() * TWO_PI
+      : scheduledAt * 0.037 + this.threatTier * 1.7
+    const generatedRegionId = this.generatedRegionIdAt(
+      this.player.position.x,
+      this.player.position.z,
+    )
     for (let index = 0; index < count; index += 1) {
       const role: ActorRole =
         this.threatTier >= 4 && index === count - 1
@@ -4085,16 +5641,16 @@ export class GameEngine {
       let spawnPosition: THREE.Vector3 | null = null
       for (let attempt = 0; attempt < 8; attempt += 1) {
         const angle = baseAngle + index * 1.8 + attempt * 0.73
-        const x = THREE.MathUtils.clamp(
+        const candidate = new THREE.Vector3(
           this.player.position.x + Math.sin(angle) * radius,
-          -WORLD_HALF + 3,
-          WORLD_HALF - 3,
-        )
-        const z = THREE.MathUtils.clamp(
+          0,
           this.player.position.z + Math.cos(angle) * radius,
-          -WORLD_HALF + 3,
-          WORLD_HALF - 3,
         )
+        this.clampWorldPosition(
+          candidate,
+          this.actorColliderRadiusForRole(role) + 1,
+        )
+        const { x, z } = candidate
         if (!this.isWalkablePosition(x, z, this.actorColliderRadiusForRole(role))) continue
         spawnPosition = new THREE.Vector3(x, 0, z)
         break
@@ -4107,7 +5663,11 @@ export class GameEngine {
         spawnPosition.x,
         spawnPosition.z,
         this.actors.length + index,
-        { objectiveEligible: false, squadEligible: false },
+        {
+          objectiveEligible: false,
+          squadEligible: false,
+          generatedRegionId,
+        },
       )
       actor.playerAggro = true
       actor.aggroMemory = AGGRO_MEMORY_DURATION
@@ -4198,9 +5758,15 @@ export class GameEngine {
     ]
     return kinds.filter((kind) => {
       if (kind === 'bounty') {
+        if (this.generatedWorld) return this.actors.length < MAX_ACTORS
         return this.getEligibleBountyTargets().length > 0 || this.actors.length < MAX_ACTORS
       }
-      if (kind === 'defendHome' && this.villageHouses.length === 0) return false
+      if (
+        kind === 'defendHome' &&
+        (this.generatedWorld || this.villageHouses.length === 0)
+      ) {
+        return false
+      }
       return this.actors.length + EVENT_REQUIRED_SLOTS[kind] <= MAX_ACTORS
     })
   }
@@ -4297,28 +5863,42 @@ export class GameEngine {
     const id = this.nextEventId('richCaravan')
     const caravan = this.createCaravan(true)
     const roadX = this.pickEventRoadX()
-    caravan.position.set(roadX, 0, -23)
+    const generatedPosition = this.generatedWorld ? this.pickEventPosition() : null
+    if (generatedPosition) caravan.position.copy(generatedPosition)
+    else caravan.position.set(roadX, 0, -23)
+    caravan.position.y = this.groundHeightAt(caravan.position.x, caravan.position.z)
     this.scene.add(caravan)
     this.registerNamedInteractableOutline(caravan, 'cargo')
 
     const enemyFaction = this.pickEventEnemyFaction()
     const ownedActorIds: string[] = []
+    const generatedRegionId = this.generatedRegionIdAt(
+      caravan.position.x,
+      caravan.position.z,
+    )
     const escortOffsets: Array<[number, number]> = [
       [-4.5, -4],
       [0, 4.5],
       [4.5, -4],
     ]
     escortOffsets.forEach(([x, z], index) => {
+      const escortPosition = new THREE.Vector3(
+        caravan.position.x + x,
+        0,
+        caravan.position.z + z,
+      )
+      this.clampWorldPosition(escortPosition, 3)
       const escort = this.spawnActor(
         enemyFaction,
         index === 1 ? 'brute' : 'soldier',
-        THREE.MathUtils.clamp(roadX + x, -WORLD_HALF + 3, WORLD_HALF - 3),
-        -23 + z,
+        escortPosition.x,
+        escortPosition.z,
         this.actors.length + index,
         {
           objectiveEligible: false,
           squadEligible: false,
           eventOwnerId: id,
+          generatedRegionId,
         },
       )
       ownedActorIds.push(escort.id)
@@ -4327,6 +5907,9 @@ export class GameEngine {
     let robbed = false
     let robberyPoint: THREE.Vector3 | null = null
     let direction = roadX > 0 ? -1 : 1
+    const travelDirection = this.generatedWorld
+      ? this.generatedCaravanTravelDirection
+      : new THREE.Vector2(1, 0)
     let event: WorldEvent
     event = this.createWorldEvent({
       id,
@@ -4344,10 +5927,31 @@ export class GameEngine {
       ownedProps: [caravan],
       update: (delta) => {
         if (!robbed) {
-          caravan.position.x += direction * delta * 2.8
-          if (caravan.position.x > 58) direction = -1
-          if (caravan.position.x < -58) direction = 1
-          caravan.rotation.y = direction > 0 ? 0 : Math.PI
+          const previousX = caravan.position.x
+          const previousZ = caravan.position.z
+          caravan.position.x += travelDirection.x * direction * delta * 2.8
+          caravan.position.z += travelDirection.y * direction * delta * 2.8
+          if (this.generatedWorld) {
+            this.clampWorldPosition(caravan.position, 3)
+            if (
+              Math.abs(caravan.position.x - previousX) < 0.0001 &&
+              Math.abs(caravan.position.z - previousZ) < 0.0001
+            ) {
+              direction *= -1
+            }
+            caravan.position.y = this.groundHeightAt(
+              caravan.position.x,
+              caravan.position.z,
+            )
+            caravan.rotation.y = Math.atan2(
+              -travelDirection.y * direction,
+              travelDirection.x * direction,
+            )
+          } else {
+            if (caravan.position.x > 58) direction = -1
+            if (caravan.position.x < -58) direction = 1
+            caravan.rotation.y = direction > 0 ? 0 : Math.PI
+          }
           for (const wheel of caravan.getObjectsByProperty('name', 'wheel')) {
             wheel.rotation.z -= delta * (2.8 / 0.9)
           }
@@ -4358,7 +5962,11 @@ export class GameEngine {
             (actor) => actor.id === ownedActorIds[index] && actor.alive,
           )
           if (!escort) return
-          escort.home.set(caravan.position.x + x, 0, caravan.position.z + z)
+          escort.home.set(
+            caravan.position.x + x,
+            this.groundHeightAt(caravan.position.x + x, caravan.position.z + z),
+            caravan.position.z + z,
+          )
           if (
             !escort.targetId &&
             escort.mesh.position.distanceTo(this.player.position) >= 15
@@ -4507,6 +6115,7 @@ export class GameEngine {
         objectiveEligible: false,
         squadEligible: false,
         eventOwnerId: id,
+        generatedRegionId: this.generatedRegionIdAt(position.x, position.z),
       },
     )
     let event: WorldEvent
@@ -4553,6 +6162,7 @@ export class GameEngine {
         squadEligible: false,
         aiMode: 'captive',
         eventOwnerId: id,
+        generatedRegionId: this.generatedRegionIdAt(position.x, position.z),
       },
     )
     const enemyFaction = this.pickEventEnemyFaction()
@@ -4568,6 +6178,7 @@ export class GameEngine {
           squadEligible: false,
           eventOwnerId: id,
           ignoredTargetId: captive.id,
+          generatedRegionId: this.generatedRegionIdAt(position.x, position.z),
         },
       ),
       this.spawnActor(
@@ -4581,6 +6192,7 @@ export class GameEngine {
           squadEligible: false,
           eventOwnerId: id,
           ignoredTargetId: captive.id,
+          generatedRegionId: this.generatedRegionIdAt(position.x, position.z),
         },
       ),
     ]
@@ -4592,6 +6204,7 @@ export class GameEngine {
       const ownedIndex = ownedActorIds.indexOf(captive.id)
       if (ownedIndex >= 0) ownedActorIds.splice(ownedIndex, 1)
       captive.eventOwnerId = null
+      captive.generatedRegionId = null
       captive.aiMode = 'normal'
       captive.squadEligible = true
       captive.home.copy(captive.mesh.position)
@@ -4645,7 +6258,7 @@ export class GameEngine {
 
   private startBountyEvent(): WorldEvent | null {
     const id = this.nextEventId('bounty')
-    const candidates = this.getEligibleBountyTargets()
+    const candidates = this.generatedWorld ? [] : this.getEligibleBountyTargets()
     let spawned = false
     let target =
       candidates.length > 0
@@ -4664,6 +6277,7 @@ export class GameEngine {
           objectiveEligible: false,
           squadEligible: false,
           eventOwnerId: id,
+          generatedRegionId: this.generatedRegionIdAt(position.x, position.z),
         },
       )
       spawned = true
@@ -4702,7 +6316,7 @@ export class GameEngine {
     return this.actors.filter(
       (actor) =>
         actor.alive &&
-        hostile(this.faction, actor.faction) &&
+        actor.hostileToPlayer &&
         actor.role !== 'commander' &&
         actor.role !== 'captive' &&
         !actor.eventOwnerId,
@@ -4722,6 +6336,27 @@ export class GameEngine {
   }
 
   private pickEventPosition(): THREE.Vector3 {
+    if (this.generatedWorld) {
+      for (let attempt = 0; attempt < 16; attempt += 1) {
+        const angle = this.eventRng() * TWO_PI
+        const radius = 22 + this.eventRng() * 16
+        const position = new THREE.Vector3(
+          this.player.position.x + Math.sin(angle) * radius,
+          0,
+          this.player.position.z + Math.cos(angle) * radius,
+        )
+        this.clampWorldPosition(position, 3)
+        if (!this.isWalkablePosition(position.x, position.z, 1)) continue
+        position.y = this.groundHeightAt(position.x, position.z)
+        return position
+      }
+      const fallback = this.player.position
+        .clone()
+        .add(new THREE.Vector3(12, 0, 12))
+      this.clampWorldPosition(fallback, 3)
+      fallback.y = this.groundHeightAt(fallback.x, fallback.z)
+      return fallback
+    }
     const candidates = [
       new THREE.Vector3(-54, 0, -13),
       new THREE.Vector3(-29, 0, 18),
@@ -4861,7 +6496,7 @@ export class GameEngine {
           ? 17
           : actor.role === 'brute'
             ? 14
-            : 6 + Math.random() * 3
+            : 6 + this.combatRng() * 3
     const incomingDirection = actor.mesh.position.clone().sub(this.player.position)
     incomingDirection.y = 0
     this.damagePlayer(
@@ -4961,7 +6596,12 @@ export class GameEngine {
       )
     }
     this.createHitParticles(this.player.position, this.faction)
-    if (canInjure && !frontalBlock && Math.random() < 0.11 && this.health < 82) {
+    if (
+      canInjure &&
+      !frontalBlock &&
+      this.combatRng() < 0.11 &&
+      this.health < 82
+    ) {
       this.injurePlayer()
     }
     const killed = this.health <= 0
@@ -5018,7 +6658,7 @@ export class GameEngine {
     if (
       directPlayerKill &&
       target.aiMode !== 'captive' &&
-      hostile(target.faction, this.faction)
+      target.hostileToPlayer
     ) {
       target.playerAggro = true
       target.aggroMemory = AGGRO_MEMORY_DURATION
@@ -5124,7 +6764,7 @@ export class GameEngine {
         !actor.alive ||
         actor.aiMode !== 'normal' ||
         actor.faction !== source.faction ||
-        !hostile(actor.faction, this.faction) ||
+        !actor.hostileToPlayer ||
         actor.mesh.position.distanceToSquared(source.mesh.position) > alertRadiusSq
       ) {
         continue
@@ -5237,6 +6877,7 @@ export class GameEngine {
     const ring = actor.mesh.getObjectByName('faction-ring')
     if (ring) ring.visible = false
     this.projectileSourcesToClear.add(actor.id)
+    this.recordGeneratedActorDeath(actor)
     if (!directPlayerKill) {
       this.playSound('down', {
         position: deathPosition,
@@ -5246,7 +6887,9 @@ export class GameEngine {
     }
 
     const objectiveAdvanced =
-      killerFaction === this.faction && this.creditFactionObjective(actor)
+      !this.generatedWorld &&
+      killerFaction === this.faction &&
+      this.creditFactionObjective(actor)
     this.activeEvent?.onKill?.(actor, { killerFaction, directPlayerKill })
     if (!directPlayerKill) {
       if (objectiveAdvanced) {
@@ -5308,7 +6951,7 @@ export class GameEngine {
     }
     actor.mesh.position.y = THREE.MathUtils.lerp(
       actor.deathStartPosition.y,
-      0.62,
+      this.groundHeightAt(actor.mesh.position.x, actor.mesh.position.z) + 0.62,
       eased,
     )
     actor.mesh.rotation.x = actor.deathStartRotation.x
@@ -5346,9 +6989,9 @@ export class GameEngine {
     ]
     const available = candidates.filter((part) => this.body[part] === 'healthy' || this.body[part] === 'wounded')
     if (available.length === 0) return
-    const part = available[Math.floor(Math.random() * available.length)]
+    const part = available[Math.floor(this.combatRng() * available.length)]
     const wasWounded = this.body[part] === 'wounded'
-    const severe = wasWounded || Math.random() < 0.4
+    const severe = wasWounded || this.combatRng() < 0.4
     if (severe) {
       this.body[part] = 'missing'
       this.achievements.recordInjury(part, true)
@@ -5480,6 +7123,7 @@ export class GameEngine {
     if (objective.target) objective.progress = objective.target
     if (
       !this.activeEvent &&
+      !this.generatedWorld &&
       this.objectives.filter((entry) => entry.done).length === 1
     ) {
       this.eventCooldown = 0
@@ -5540,6 +7184,11 @@ export class GameEngine {
     this.clearTransientCombatFeedback()
     if (result === 'victory') this.settleActiveLoot('victory')
     else this.clearLootRuntime()
+    if (this.generatedWorld) {
+      this.generatedRunStatus = result
+      this.campaignCompleted = result === 'victory'
+      if (result === 'victory') this.campaignCompletedAt = this.elapsed
+    }
     this.ended = true
     this.achievements.recordCampaignEnd(result, this.elapsed, Math.max(0, this.health))
     this.keys.clear()
@@ -5571,12 +7220,55 @@ export class GameEngine {
         z: this.caravan.position.z,
         kind: 'caravan',
       },
-      { id: 'village', x: -46, z: -39, kind: 'landmark' },
-      { id: 'palace', x: 42, z: -42, kind: 'landmark' },
-      { id: 'forest', x: -45, z: 42, kind: 'landmark' },
-      { id: 'fort', x: 45, z: 44, kind: 'landmark' },
     ]
-    if (this.hasElfLoot()) {
+    if (this.generatedWorld) {
+      const activeNode = this.getActiveGeneratedObjective()
+      const activeSite = activeNode
+        ? this.generatedWorld.getSitePosition(activeNode.siteId)
+        : undefined
+      for (const marker of this.generatedWorld.getMarkers()) {
+        const active = marker.id === `site:${activeNode?.siteId}`
+        const site = marker.id.startsWith('site:')
+          ? this.generatedBlueprint?.sites.find(
+              (candidate) => `site:${candidate.id}` === marker.id,
+            )
+          : undefined
+        const label = site
+          ? this.generatedSiteLabel(site.kind)
+          : marker.label
+        markers.push({
+          id: marker.id,
+          x: marker.x,
+          z: marker.z,
+          kind: active ? 'objective' : 'landmark',
+          ...(label ? { label } : {}),
+        })
+      }
+      if (
+        activeNode &&
+        activeSite &&
+        !markers.some((marker) => marker.id === `site:${activeNode.siteId}`)
+      ) {
+        const objective = this.objectives.find(
+          (entry) => entry.id === activeNode.id,
+        )
+        markers.push({
+          id: `site:${activeNode.siteId}`,
+          x: activeSite.x,
+          z: activeSite.z,
+          kind: 'objective',
+          label: objective?.text,
+        })
+      }
+    } else {
+      markers.push(
+        { id: 'village', x: -46, z: -39, kind: 'landmark' },
+        { id: 'palace', x: 42, z: -42, kind: 'landmark' },
+        { id: 'forest', x: -45, z: 42, kind: 'landmark' },
+        { id: 'fort', x: 45, z: 44, kind: 'landmark' },
+      )
+    }
+    if (!this.generatedWorld && this.hasElfLoot()) {
       markers.push({
         id: 'loot-turn-in',
         x: this.elfHomePosition.x,
@@ -5602,9 +7294,83 @@ export class GameEngine {
         id: actor.id,
         x: actor.mesh.position.x,
         z: actor.mesh.position.z,
-        kind: actor.faction === this.faction ? 'ally' : 'enemy',
+        kind: actor.hostileToPlayer ? 'enemy' : 'ally',
       })
     }
+    const generatedBounds = this.generatedWorld?.bounds
+    const generatedCurrentRegionId = this.generatedWorld?.getRegionIdAt(
+      this.player.position.x,
+      this.player.position.z,
+    )
+    const discoveredRegions = new Set(
+      this.generatedWorld?.discoveredRegionIds.map(String) ?? [],
+    )
+    const worldMap: GameView['worldMap'] =
+      generatedBounds && this.generatedBlueprint
+        ? {
+            mode: 'generated',
+            bounds: { ...generatedBounds },
+            ...(generatedCurrentRegionId === undefined
+              ? {}
+              : { currentRegionId: String(generatedCurrentRegionId) }),
+            seed: this.generatedBlueprint.seed,
+            generatorVersion: this.generatedBlueprint.generatorVersion,
+            regions: this.generatedBlueprint.regions.map((region) => ({
+              id: String(region.id),
+              gridX: region.coordinate.x,
+              gridZ: region.coordinate.y,
+              biome: region.biome,
+              territory: region.territory,
+              discovered: discoveredRegions.has(String(region.id)),
+              current: String(region.id) === String(generatedCurrentRegionId),
+            })),
+          }
+        : {
+            mode: 'legacy',
+            bounds: { minX: -80, maxX: 80, minZ: -80, maxZ: 80 },
+            currentRegionId: this.zoneAtPosition(
+              this.player.position.x,
+              this.player.position.z,
+            ),
+            regions: [
+              {
+                id: 'neutral',
+                gridX: 0,
+                gridZ: 0,
+                biome: 'neutral',
+                territory: 'neutral',
+                discovered: true,
+                current: this.lastZone === 'neutral',
+              },
+              {
+                id: 'palace',
+                gridX: 1,
+                gridZ: 0,
+                biome: 'palace',
+                territory: 'guard',
+                discovered: true,
+                current: this.lastZone === 'palace',
+              },
+              {
+                id: 'forest',
+                gridX: 0,
+                gridZ: 1,
+                biome: 'forest',
+                territory: 'elf',
+                discovered: true,
+                current: this.lastZone === 'forest',
+              },
+              {
+                id: 'fort',
+                gridX: 1,
+                gridZ: 1,
+                biome: 'fort',
+                territory: 'villain',
+                discovered: true,
+                current: this.lastZone === 'fort',
+              },
+            ],
+          }
     const ability = createAbilityView(this.faction, this.stamina, this.body)
     ability.active = this.shieldActive
     ability.cooldown = this.abilityCooldown
@@ -5624,11 +7390,12 @@ export class GameEngine {
       gold: this.gold,
       kills: this.kills,
       damage: this.damage,
-      zone: zoneAt(this.player.position.x, this.player.position.z),
+      zone: this.zoneAtPosition(this.player.position.x, this.player.position.z),
       body: { ...this.body },
       objectives: this.objectives.map((objective) => ({ ...objective })),
       prompt: this.prompt,
       markers,
+      worldMap,
       squad: this.actors.filter(
         (actor) =>
           actor.alive &&
@@ -6003,7 +7770,10 @@ export class GameEngine {
     pickup.serial = ++this.lootSequence
     pickup.root.position.set(
       position.x,
-      Math.max(LOOT_Y, position.y + 0.4),
+      Math.max(
+        this.groundHeightAt(position.x, position.z) + LOOT_Y,
+        position.y + 0.4,
+      ),
       position.z,
     )
     const angle = this.lootRng() * TWO_PI
@@ -6123,11 +7893,13 @@ export class GameEngine {
         pickup.tokenRoot.scale.setScalar(
           THREE.MathUtils.lerp(0.2, 1, smoothstep(0, 1, burstProgress)),
         )
-        if (
-          pickup.root.position.y <= LOOT_Y ||
-          pickup.age >= LOOT_BURST_TIME
-        ) {
-          pickup.root.position.y = LOOT_Y
+        const lootGround =
+          this.groundHeightAt(
+            pickup.root.position.x,
+            pickup.root.position.z,
+          ) + LOOT_Y
+        if (pickup.root.position.y <= lootGround || pickup.age >= LOOT_BURST_TIME) {
+          pickup.root.position.y = lootGround
           pickup.velocity.set(0, 0, 0)
           pickup.state = 'idle'
           pickup.idleAge = 0
@@ -6363,7 +8135,11 @@ export class GameEngine {
     )
     this.scene.add(this.hemisphere)
     this.sun = new THREE.DirectionalLight(this.palette.worldSun, 2.65)
-    this.sun.position.set(-35, 58, 24)
+    this.sun.position.set(
+      this.player.position.x - 35,
+      58,
+      this.player.position.z + 24,
+    )
     this.sun.castShadow = true
     this.sun.shadow.mapSize.set(2048, 2048)
     this.sun.shadow.camera.left = -85
@@ -6372,7 +8148,11 @@ export class GameEngine {
     this.sun.shadow.camera.bottom = -85
     this.sun.shadow.camera.near = 1
     this.sun.shadow.camera.far = 150
-    this.sun.target.position.set(0, 0, 0)
+    this.sun.target.position.set(
+      this.player.position.x,
+      0,
+      this.player.position.z,
+    )
     this.scene.add(this.sun, this.sun.target)
   }
 
@@ -6642,6 +8422,15 @@ export class GameEngine {
   }
 
   private createAtmosphere(): void {
+    this.atmosphereRoot = new THREE.Group()
+    this.atmosphereRoot.name = 'atmosphere'
+    this.atmosphereRoot.position.set(
+      this.player.position.x,
+      0,
+      this.player.position.z,
+    )
+    this.scene.add(this.atmosphereRoot)
+
     const canvas = document.createElement('canvas')
     canvas.width = 8
     canvas.height = 256
@@ -6670,7 +8459,7 @@ export class GameEngine {
       new THREE.SphereGeometry(178, 32, 18),
       this.skyMaterial,
     )
-    this.scene.add(sky)
+    this.atmosphereRoot.add(sky)
 
     this.sunDisc = new THREE.Mesh(
       new THREE.SphereGeometry(6, 16, 12),
@@ -6682,7 +8471,7 @@ export class GameEngine {
       }),
     )
     this.sunDisc.position.set(-88, 74, -112)
-    this.scene.add(this.sunDisc)
+    this.atmosphereRoot.add(this.sunDisc)
 
     this.moonDisc = new THREE.Mesh(
       new THREE.SphereGeometry(4.2, 16, 12),
@@ -6694,7 +8483,7 @@ export class GameEngine {
         fog: false,
       }),
     )
-    this.scene.add(this.moonDisc)
+    this.atmosphereRoot.add(this.moonDisc)
 
     const starPositions = new Float32Array(STAR_COUNT * 3)
     const starRandom = seededRandom(1947)
@@ -6722,7 +8511,7 @@ export class GameEngine {
       }),
     )
     this.stars.frustumCulled = false
-    this.scene.add(this.stars)
+    this.atmosphereRoot.add(this.stars)
 
     const random = seededRandom(731)
     const cloudGeometry = new THREE.DodecahedronGeometry(3.4, 1)
@@ -6745,7 +8534,7 @@ export class GameEngine {
       group.position.set(-105 + random() * 210, 30 + random() * 18, -90 + random() * 180)
       group.userData.baseY = group.position.y
       this.clouds.push({ group, speed: 0.7 + random() * 0.75 })
-      this.scene.add(group)
+      this.atmosphereRoot.add(group)
     }
   }
 
@@ -6888,13 +8677,14 @@ export class GameEngine {
   private resolveWeatherZone(): ZoneId {
     const x = this.player.position.x
     const z = this.player.position.z
+    if (this.generatedWorld) return this.zoneAtPosition(x, z)
     if (
       Math.abs(x) < WEATHER_ZONE_HYSTERESIS ||
       Math.abs(z) < WEATHER_ZONE_HYSTERESIS
     ) {
       return this.weatherZone
     }
-    return zoneAt(x, z)
+    return this.zoneAtPosition(x, z)
   }
 
   private updateWeatherWeights(delta: number): void {
@@ -7174,7 +8964,7 @@ export class GameEngine {
 
   private rebuildGroundFoliage(): void {
     this.clearGroundFoliage()
-    if (this.groundFoliageQuality === 'off') return
+    if (this.groundFoliageQuality === 'off' || this.generatedWorld) return
     this.createGrassFoliage()
     this.createFernFoliage()
     this.createFlowerFoliage()
@@ -7547,6 +9337,11 @@ uniform float uSwayAmplitude;`,
   }
 
   private updateAtmosphere(delta: number): void {
+    this.atmosphereRoot.position.set(
+      this.player.position.x,
+      0,
+      this.player.position.z,
+    )
     this.updateZoneTint(delta)
     this.groundFoliageUniforms.uTime.value = this.elapsed
     for (let index = 0; index < this.clouds.length; index += 1) {
@@ -7575,12 +9370,22 @@ uniform float uSwayAmplitude;`,
   }
 
   private updateZoneTint(delta: number): void {
-    writeZoneVisualWeights(
-      this.player.position.x,
-      this.player.position.z,
-      this.zoneVisualWeights,
-      ZONE_BLEND_WIDTH,
-    )
+    if (this.generatedWorld) {
+      const zone = this.zoneAtPosition(
+        this.player.position.x,
+        this.player.position.z,
+      )
+      for (const zoneId of ZONE_ART_IDS) {
+        this.zoneVisualWeights[zoneId] = zoneId === zone ? 1 : 0
+      }
+    } else {
+      writeZoneVisualWeights(
+        this.player.position.x,
+        this.player.position.z,
+        this.zoneVisualWeights,
+        ZONE_BLEND_WIDTH,
+      )
+    }
     this.zoneTintTarget.setRGB(0, 0, 0)
     let targetWeight = 0
     for (let index = 0; index < ZONE_ART_IDS.length; index += 1) {
@@ -7610,7 +9415,16 @@ uniform float uSwayAmplitude;`,
   private updateDayNight(): void {
     if (!this.dynamicDayNight) {
       this.nightFactor = 0
-      this.sun.position.set(-35, 58, 24)
+      this.sun.position.set(
+        this.player.position.x - 35,
+        58,
+        this.player.position.z + 24,
+      )
+      this.sun.target.position.set(
+        this.player.position.x,
+        0,
+        this.player.position.z,
+      )
       this.sun.color.copy(this.palette.worldSun)
       this.sun.intensity = 2.65
       this.hemisphere.color.copy(this.palette.worldSky)
@@ -7645,7 +9459,16 @@ uniform float uSwayAmplitude;`,
     const dayFactor = smoothstep(-0.08, 0.45, elevation)
     this.nightFactor = 1 - dayFactor
 
-    this.sun.position.set(orbitalX, Math.max(MIN_SHADOW_LIGHT_HEIGHT, orbitalY), orbitalZ)
+    this.sun.position.set(
+      this.player.position.x + orbitalX,
+      Math.max(MIN_SHADOW_LIGHT_HEIGHT, orbitalY),
+      this.player.position.z + orbitalZ,
+    )
+    this.sun.target.position.set(
+      this.player.position.x,
+      0,
+      this.player.position.z,
+    )
     this.sunDisc.position
       .set(orbitalX, orbitalY, orbitalZ)
       .normalize()
@@ -9225,11 +11048,18 @@ uniform float uSwayAmplitude;`,
     }
     this.applyActorVisualVariation(mesh, faction, role, index)
     const outlineBinding = this.registerOutline(mesh, 'enemy')
-    mesh.position.set(x, 0, z)
+    mesh.position.set(x, this.groundHeightAt(x, z), z)
     this.resolveCharacterOverlaps(mesh.position, this.actorColliderRadiusForRole(role))
+    if (this.generatedWorld) {
+      mesh.position.y = this.groundHeightAt(mesh.position.x, mesh.position.z)
+    }
     this.scene.add(mesh)
     const healthBar = this.createActorHealthBar(faction)
-    healthBar.sprite.position.set(mesh.position.x, 3.65 * mesh.scale.y, mesh.position.z)
+    healthBar.sprite.position.set(
+      mesh.position.x,
+      mesh.position.y + 3.65 * mesh.scale.y,
+      mesh.position.z,
+    )
     this.scene.add(healthBar.sprite)
     const phase = index * 0.73
     const home = mesh.position.clone()
@@ -9246,7 +11076,11 @@ uniform float uSwayAmplitude;`,
               : role === 'scout'
                 ? 55
                 : 70
-    const hp = Math.round(baseHp * this.enemyHealthMultiplier(faction))
+    const hp = Math.round(
+      baseHp *
+        this.enemyHealthMultiplier(faction) *
+        Math.max(0.1, options.healthScale ?? 1),
+    )
     const speed =
       role === 'scout'
         ? 4.8
@@ -9260,7 +11094,9 @@ uniform float uSwayAmplitude;`,
                 ? 0
                 : 3.7
     const actor: Actor = {
-      id: `${faction}-${role}-${this.actorSequence++}`,
+      id: options.generatedSpawnId
+        ? `generated:${options.generatedSpawnId}`
+        : `${faction}-${role}-${this.actorSequence++}`,
       faction,
       role,
       mesh,
@@ -9320,6 +11156,12 @@ uniform float uSwayAmplitude;`,
       deathStartRotation: new THREE.Euler(),
       deathTravelled: 0,
       deathAt: null,
+      generatedRegionId: options.generatedRegionId ?? null,
+      generatedEncounterId: options.generatedEncounterId ?? null,
+      generatedSpawnId: options.generatedSpawnId ?? null,
+      generatedObjectiveId: options.generatedObjectiveId ?? null,
+      generatedUnique: options.generatedUnique ?? false,
+      hostileToPlayer: options.hostileToPlayer ?? hostile(faction, this.faction),
     }
     if (
       !this.isWalkablePosition(
@@ -9339,11 +11181,32 @@ uniform float uSwayAmplitude;`,
     const x = this.caravan.position.x
     const z = this.caravan.position.z
     const availableSlots = Math.min(2, Math.max(0, MAX_ACTORS - this.actors.length))
+    const generatedOptions: ActorSpawnOptions | undefined = this.generatedWorld
+      ? {
+          objectiveEligible: false,
+          squadEligible: false,
+          generatedRegionId: this.generatedRegionIdAt(x, z),
+        }
+      : undefined
     if (availableSlots >= 1) {
-      this.spawnActor('guard', 'soldier', x - 5, z - 4, this.actors.length + 1)
+      this.spawnActor(
+        'guard',
+        'soldier',
+        x - 5,
+        z - 4,
+        this.actors.length + 1,
+        generatedOptions,
+      )
     }
     if (availableSlots >= 2) {
-      this.spawnActor('guard', 'soldier', x + 5, z + 4, this.actors.length + 2)
+      this.spawnActor(
+        'guard',
+        'soldier',
+        x + 5,
+        z + 4,
+        this.actors.length + 2,
+        generatedOptions,
+      )
     }
     if (availableSlots > 0) {
       this.callbacks.onNotice('Засада! Охрана корована вступает в бой.', 'warning')
@@ -10323,7 +12186,11 @@ uniform float uSwayAmplitude;`,
       decal.mesh.material.needsUpdate = true
     }
     decal.mesh.material.opacity = 1
-    decal.mesh.position.set(position.x, DECAL_Y, position.z)
+    decal.mesh.position.set(
+      position.x,
+      this.groundHeightAt(position.x, position.z) + DECAL_Y,
+      position.z,
+    )
     decal.mesh.rotation.set(-Math.PI / 2, 0, Math.random() * TWO_PI)
     decal.mesh.scale.set(
       scale * (0.82 + Math.random() * 0.36),

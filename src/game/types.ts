@@ -159,6 +159,32 @@ export interface MapMarker {
   heading?: number
 }
 
+export interface WorldMapBounds {
+  minX: number
+  maxX: number
+  minZ: number
+  maxZ: number
+}
+
+export interface WorldMapRegion {
+  id: string
+  gridX: number
+  gridZ: number
+  biome: ZoneId
+  territory: Faction | 'neutral'
+  discovered: boolean
+  current: boolean
+}
+
+export interface WorldMapView {
+  mode: 'legacy' | 'generated'
+  bounds: WorldMapBounds
+  currentRegionId?: string
+  seed?: number
+  generatorVersion?: number
+  regions: WorldMapRegion[]
+}
+
 export interface GameView {
   faction: Faction
   health: number
@@ -174,6 +200,7 @@ export interface GameView {
   objectives: Objective[]
   prompt: string
   markers: MapMarker[]
+  worldMap: WorldMapView
   squad: number
   elapsed: number
   pointerLocked: boolean
