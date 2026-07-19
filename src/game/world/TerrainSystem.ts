@@ -68,6 +68,7 @@ export interface TerrainTileData {
   resolution: number
   positions: Float32Array
   normals: Float32Array
+  uvs: Float32Array
   indices: Uint16Array | Uint32Array
   bounds: Bounds2D
 }
@@ -231,6 +232,7 @@ export class TerrainSystem {
     const vertexCount = side * side
     const positions = new Float32Array(vertexCount * 3)
     const normals = new Float32Array(vertexCount * 3)
+    const uvs = new Float32Array(vertexCount * 2)
     const indexCount = segments * segments * 6
     const indices =
       vertexCount > 65_535
@@ -240,6 +242,7 @@ export class TerrainSystem {
     const depth = region.bounds.maxZ - region.bounds.minZ
 
     let vertexOffset = 0
+    let uvOffset = 0
     for (let zIndex = 0; zIndex <= segments; zIndex += 1) {
       const z = region.bounds.minZ + (depth * zIndex) / segments
       for (let xIndex = 0; xIndex <= segments; xIndex += 1) {
@@ -252,7 +255,10 @@ export class TerrainSystem {
         normals[vertexOffset] = normal.x
         normals[vertexOffset + 1] = normal.y
         normals[vertexOffset + 2] = normal.z
+        uvs[uvOffset] = xIndex / segments
+        uvs[uvOffset + 1] = zIndex / segments
         vertexOffset += 3
+        uvOffset += 2
       }
     }
 
@@ -278,6 +284,7 @@ export class TerrainSystem {
       resolution: segments,
       positions,
       normals,
+      uvs,
       indices,
       bounds: { ...region.bounds },
     }
@@ -298,6 +305,7 @@ export class TerrainSystem {
     const geometry = new BufferGeometry()
     geometry.setAttribute('position', new Float32BufferAttribute(tile.positions, 3))
     geometry.setAttribute('normal', new Float32BufferAttribute(tile.normals, 3))
+    geometry.setAttribute('uv', new Float32BufferAttribute(tile.uvs, 2))
     geometry.setIndex(Array.from(tile.indices))
     geometry.computeBoundingBox()
     geometry.computeBoundingSphere()

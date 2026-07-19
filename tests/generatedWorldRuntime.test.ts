@@ -74,6 +74,24 @@ function cosmeticRenderCount(scene: THREE.Scene): number {
   return count
 }
 
+function regionRoot(
+  scene: THREE.Scene,
+  regionId: RegionId,
+): THREE.Group | undefined {
+  return sceneRegionRoots(scene).find(
+    (root) => root.userData.generatedWorldRegionId === regionId,
+  )
+}
+
+function materialMap(object: THREE.Object3D | undefined): THREE.Texture | null {
+  assert.ok(object instanceof THREE.Mesh)
+  const material = Array.isArray(object.material)
+    ? object.material[0]
+    : object.material
+  assert.ok(material instanceof THREE.MeshStandardMaterial)
+  return material.map
+}
+
 function expectedNeighborhood(
   blueprint: WorldBlueprint,
   focus: WorldRegion,
@@ -277,6 +295,83 @@ test('map markers reveal discovered sites and current region without global spoi
       .some((marker) => marker.id === `site:${elfStartId}`),
   )
   runtime.dispose()
+})
+
+test('streamed regions retain textured surfaces, composite trees, and ground cover', () => {
+  const { scene, blueprint, runtime } = createRuntime(
+    'runtime-surface-detail',
+    1,
+  )
+  const forestRegion = blueprint.regions.find(
+    (region) => region.biome === 'forest',
+  )
+  assert.ok(forestRegion)
+  const forestCenter = runtime.getRegionCenter(forestRegion.id)
+  assert.ok(forestCenter)
+  runtime.update({ deltaSeconds: 0, focus: forestCenter })
+
+  const forestRoot = regionRoot(scene, forestRegion.id)
+  assert.ok(forestRoot)
+  const terrain = forestRoot.getObjectByName(`terrain:${forestRegion.id}`)
+  assert.ok(terrain instanceof THREE.Mesh)
+  assert.ok(terrain.geometry.getAttribute('uv'))
+  const terrainTexture = materialMap(terrain)
+  assert.ok(terrainTexture instanceof THREE.DataTexture)
+  assert.equal(terrainTexture.wrapS, THREE.RepeatWrapping)
+  assert.equal(terrainTexture.wrapT, THREE.RepeatWrapping)
+  const textureBytes = terrainTexture.image.data as Uint8Array
+  assert.ok(new Set(textureBytes).size > 8)
+
+  const trees = forestRoot.getObjectByName(
+    `dressing-structural:${forestRegion.id}`,
+  )
+  assert.ok(trees instanceof THREE.InstancedMesh)
+  assert.ok(Array.isArray(trees.material))
+  assert.equal(trees.material.length, 4)
+  assert.ok(
+    trees.material.every(
+      (material) =>
+        material instanceof THREE.MeshStandardMaterial &&
+        material.map instanceof THREE.DataTexture,
+    ),
+  )
+
+  const grass = forestRoot.getObjectByName(
+    `dressing-cosmetic:ground-grass:${forestRegion.id}`,
+  )
+  const ferns = forestRoot.getObjectByName(
+    `dressing-cosmetic:ground-fern:${forestRegion.id}`,
+  )
+  assert.ok(grass instanceof THREE.InstancedMesh)
+  assert.ok(ferns instanceof THREE.InstancedMesh)
+  assert.ok(grass.count > 0)
+  assert.ok(ferns.count > 0)
+
+  const stronghold = blueprint.sites.find(
+    (site) => site.kind === 'final-stronghold',
+  )
+  assert.ok(stronghold)
+  const strongholdCenter = runtime.getRegionCenter(stronghold.regionId)
+  assert.ok(strongholdCenter)
+  runtime.update({ deltaSeconds: 0, focus: strongholdCenter })
+  const strongholdRoot = regionRoot(scene, stronghold.regionId)
+  assert.ok(strongholdRoot)
+  const bodyTexture = materialMap(
+    strongholdRoot.getObjectByName(`site-body:${stronghold.id}`),
+  )
+  const roofTexture = materialMap(
+    strongholdRoot.getObjectByName(`site-roof:${stronghold.id}`),
+  )
+  assert.ok(bodyTexture instanceof THREE.DataTexture)
+  assert.ok(roofTexture instanceof THREE.DataTexture)
+  assert.notEqual(bodyTexture, roofTexture)
+
+  let terrainTextureDisposed = false
+  terrainTexture.addEventListener('dispose', () => {
+    terrainTextureDisposed = true
+  })
+  runtime.dispose()
+  assert.equal(terrainTextureDisposed, true)
 })
 
 test('encounter plans are deterministic, serializable, and respect actor budgets', () => {

@@ -119,6 +119,9 @@ test('neighboring tile edges use identical positions, heights, and normals', () 
   const west = terrain.createRegionTileData('north-west' as never, resolution)
   const east = terrain.createRegionTileData('north-east' as never, resolution)
   const side = resolution + 1
+  assert.equal(west.uvs.length, side * side * 2)
+  assert.deepEqual([...west.uvs.slice(0, 2)], [0, 0])
+  assert.deepEqual([...west.uvs.slice(-2)], [1, 1])
 
   for (let row = 0; row < side; row += 1) {
     const westOffset = (row * side + resolution) * 3
@@ -139,6 +142,7 @@ test('neighboring tile edges use identical positions, heights, and normals', () 
   )
   assert.equal(geometry.getAttribute('position').count, side * side)
   assert.equal(geometry.getAttribute('normal').count, side * side)
+  assert.equal(geometry.getAttribute('uv').count, side * side)
   assert.equal(geometry.getIndex()?.count, resolution * resolution * 6)
   geometry.dispose()
 })

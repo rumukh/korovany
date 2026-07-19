@@ -1,4 +1,9 @@
 import * as THREE from 'three'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import {
+  createProceduralSurfaceTexture,
+  type ProceduralSurfacePattern,
+} from '../ProceduralSurfaceTexture.ts'
 import {
   BIOME_PROFILES,
   SITE_PRESENTATIONS,
@@ -123,9 +128,12 @@ interface SharedMaterials {
   road: THREE.MeshStandardMaterial
   water: THREE.MeshStandardMaterial
   bridge: THREE.MeshStandardMaterial
-  structure: THREE.MeshStandardMaterial
-  roof: THREE.MeshStandardMaterial
+  structure: Record<ZoneId, THREE.MeshStandardMaterial>
+  roof: Record<ZoneId, THREE.MeshStandardMaterial>
+  trunk: THREE.MeshStandardMaterial
+  groundCover: Record<ZoneId, THREE.MeshStandardMaterial>
   all: THREE.Material[]
+  textures: THREE.Texture[]
 }
 
 interface SceneRegionRuntimeContext {
@@ -579,6 +587,13 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
         errors.push(error)
       }
     }
+    for (const texture of this.materials.textures) {
+      try {
+        texture.dispose()
+      } catch (error) {
+        errors.push(error)
+      }
+    }
     if (errors.length > 0) {
       throw new AggregateError(errors, 'Failed to dispose the generated world')
     }
@@ -607,7 +622,10 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
   private readonly context: SceneRegionRuntimeContext
   private readonly runtime: RegionRuntime
   private readonly geometries = new Set<THREE.BufferGeometry>()
-  private cosmeticDressing: THREE.InstancedMesh | null = null
+  private readonly cosmeticDressing: Array<{
+    mesh: THREE.InstancedMesh
+    maximumCount: number
+  }> = []
   private structuralDecorationCount = 0
   private maxCosmeticDecorationCount = 0
   private resourcesDisposed = false
@@ -666,12 +684,12 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
   }
 
   setDecorationDensity(density: number): void {
-    if (!this.cosmeticDressing) return
-    const count = Math.floor(
-      this.maxCosmeticDecorationCount * normalizeDecorationDensity(density),
-    )
-    this.cosmeticDressing.count = count
-    this.cosmeticDressing.visible = count > 0
+    const normalized = normalizeDecorationDensity(density)
+    for (const dressing of this.cosmeticDressing) {
+      const count = Math.floor(dressing.maximumCount * normalized)
+      dressing.mesh.count = count
+      dressing.mesh.visible = count > 0
+    }
   }
 
   dispose(): void {
@@ -687,7 +705,10 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       geometryCount: this.geometries.size,
       colliderCount: this.runtime.colliderIds.size,
       structuralDecorationCount: this.structuralDecorationCount,
-      cosmeticDecorationCount: this.cosmeticDressing?.count ?? 0,
+      cosmeticDecorationCount: this.cosmeticDressing.reduce(
+        (total, dressing) => total + dressing.mesh.count,
+        0,
+      ),
       maxCosmeticDecorationCount: this.maxCosmeticDecorationCount,
     }
   }
@@ -710,6 +731,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     this.createBridges()
     this.createSites()
     this.createDressing()
+    this.createGroundCover()
   }
 
   private createTerrain(): void {
@@ -848,7 +870,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
         const rail = this.addMesh(
           group,
           railGeometry,
-          this.context.materials.structure,
+          this.context.materials.bridge,
           `bridge-rail:${bridge.id}:${side}`,
         )
         rail.position.set(
@@ -927,9 +949,9 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
   private addPrefabBody(group: THREE.Group, site: WorldSite): void {
     const prefab = SITE_PRESENTATIONS[site.kind].prefab
     const biome = this.blueprint.biome
-    const structure = this.context.materials.structure
+    const structure = this.context.materials.structure[biome]
     const accent = this.context.materials.accent[biome]
-    const roof = this.context.materials.roof
+    const roof = this.context.materials.roof[biome]
     const width = prefab.footprintWidth
     const depth = prefab.footprintDepth
     const height = prefab.wallHeight
@@ -1152,6 +1174,10 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
 
     const geometry = dressingGeometry(this.blueprint.biome)
     this.geometries.add(geometry)
+    const material = dressingMaterial(
+      this.blueprint.biome,
+      this.context.materials,
+    )
     const structuralPlacements = placements.filter((placement) =>
       isStructuralDressing(this.blueprint.biome, placement.index),
     )
@@ -1166,7 +1192,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       if (entries.length === 0) return null
       const mesh = new THREE.InstancedMesh(
         geometry,
-        this.context.materials.secondary[this.blueprint.biome],
+        material,
         entries.length,
       )
       mesh.name = name
@@ -1221,15 +1247,142 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       this.runtime.ownCollider(colliderId)
     }
 
-    this.cosmeticDressing = createMesh(
+    const cosmeticDressing = createMesh(
       cosmeticPlacements,
       `dressing-cosmetic:${String(this.id)}`,
     )
-    this.maxCosmeticDecorationCount = cosmeticPlacements.length
-    if (this.cosmeticDressing) {
+    if (cosmeticDressing) {
+      this.registerCosmeticDressing(
+        cosmeticDressing,
+        cosmeticPlacements.length,
+      )
       this.runtime.ownProp(`dressing-cosmetic:${String(this.id)}`)
-      this.setDecorationDensity(this.context.style.decorationDensity)
     }
+  }
+
+  private createGroundCover(): void {
+    const biome = this.blueprint.biome
+    const profile = GROUND_COVER_COUNTS[biome]
+    for (const kind of GROUND_COVER_KINDS) {
+      const placements = this.collectGroundCoverPlacements(
+        kind,
+        profile[kind],
+      )
+      if (placements.length === 0) continue
+
+      const geometry = groundCoverGeometry(kind)
+      this.geometries.add(geometry)
+      const material =
+        kind === 'flower'
+          ? this.context.materials.accent[biome]
+          : kind === 'pebble'
+            ? this.context.materials.secondary[biome]
+            : this.context.materials.groundCover[biome]
+      const mesh = new THREE.InstancedMesh(
+        geometry,
+        material,
+        placements.length,
+      )
+      const name = `dressing-cosmetic:ground-${kind}:${String(this.id)}`
+      mesh.name = name
+      mesh.userData.generatedGroundCoverRegionId = this.id
+      mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage)
+      const matrix = new THREE.Matrix4()
+      const quaternion = new THREE.Quaternion()
+      const scale = new THREE.Vector3()
+      const position = new THREE.Vector3()
+      const up = new THREE.Vector3(0, 1, 0)
+
+      for (let index = 0; index < placements.length; index += 1) {
+        const placement = placements[index]
+        quaternion.setFromAxisAngle(up, placement.rotation)
+        writeGroundCoverScale(kind, biome, placement, scale)
+        position.set(
+          placement.x,
+          this.context.terrain.sampleHeight(placement.x, placement.z) +
+            (kind === 'pebble' ? 0.08 : 0.015),
+          placement.z,
+        )
+        matrix.compose(position, quaternion, scale)
+        mesh.setMatrixAt(index, matrix)
+      }
+
+      mesh.instanceMatrix.needsUpdate = true
+      mesh.castShadow = false
+      mesh.receiveShadow = false
+      mesh.computeBoundingSphere()
+      this.root.add(mesh)
+      this.registerCosmeticDressing(mesh, placements.length)
+      this.runtime.ownProp(name)
+    }
+  }
+
+  private collectGroundCoverPlacements(
+    kind: GroundCoverKind,
+    maximumCount: number,
+  ): GroundCoverPlacement[] {
+    if (maximumCount <= 0) return []
+    const bounds = this.context.normalizedRegion.bounds
+    const stream = new RandomStream(
+      deriveSeed(
+        this.context.blueprint.seed,
+        `region-ground-cover:${String(this.id)}:${kind}`,
+      ),
+    )
+    const placements: GroundCoverPlacement[] = []
+    const margin = 2
+    const attempts = maximumCount * 12
+    for (
+      let attempt = 0;
+      attempt < attempts && placements.length < maximumCount;
+      attempt += 1
+    ) {
+      const x = stream.range(bounds.minX + margin, bounds.maxX - margin)
+      const z = stream.range(bounds.minZ + margin, bounds.maxZ - margin)
+      if (!this.canPlaceGroundCover(x, z)) continue
+      placements.push({
+        x,
+        z,
+        rotation: stream.range(0, Math.PI * 2),
+        width: stream.next(),
+        height: stream.next(),
+      })
+    }
+    return placements
+  }
+
+  private canPlaceGroundCover(x: number, z: number): boolean {
+    const center = boundsCenter(this.context.normalizedRegion.bounds)
+    const roadClearance = this.context.style.roadWidth / 2 + 1.1
+    if (
+      Math.abs(x - center.x) < roadClearance ||
+      Math.abs(z - center.z) < roadClearance
+    ) {
+      return false
+    }
+    if (
+      this.context.blueprint.river.regionPath.includes(this.id) &&
+      Math.abs(x - center.x) < this.context.style.riverWidth / 2 + 1.4
+    ) {
+      return false
+    }
+    for (const site of this.context.blueprint.sites) {
+      if (site.regionId !== this.id) continue
+      const position = getSiteWorldPosition2D(this.context.blueprint, site)
+      if (position && Math.hypot(position.x - x, position.z - z) < 11) {
+        return false
+      }
+    }
+    return this.context.terrain.isWalkableSlope(x, z)
+  }
+
+  private registerCosmeticDressing(
+    mesh: THREE.InstancedMesh,
+    maximumCount: number,
+  ): void {
+    this.cosmeticDressing.push({ mesh, maximumCount })
+    this.maxCosmeticDecorationCount += maximumCount
+    this.setDecorationDensity(this.context.style.decorationDensity)
   }
 
   private addProjectedStrip(
@@ -1333,7 +1486,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
         `Failed to release region ${String(this.id)} resources`,
       )
     }
-    this.cosmeticDressing = null
+    this.cosmeticDressing.length = 0
     this.structuralDecorationCount = 0
     this.maxCosmeticDecorationCount = 0
     this.root.clear()
@@ -1346,6 +1499,7 @@ function createSharedMaterials(
   palette: GeneratedWorldPalette = {},
 ): SharedMaterials {
   const all: THREE.Material[] = []
+  const textures: THREE.Texture[] = []
   const standard = (
     parameters: THREE.MeshStandardMaterialParameters,
   ): THREE.MeshStandardMaterial => {
@@ -1354,48 +1508,197 @@ function createSharedMaterials(
     all.push(material)
     return material
   }
+  const textured = (
+    key: string,
+    base: THREE.ColorRepresentation,
+    pattern: ProceduralSurfacePattern,
+    repeatX: number,
+    repeatY: number,
+    parameters: Omit<
+      THREE.MeshStandardMaterialParameters,
+      'color' | 'map'
+    > = {},
+    detail = shadeColor(base, -0.28),
+  ): THREE.MeshStandardMaterial => {
+    const map = createProceduralSurfaceTexture({
+      key,
+      base,
+      detail,
+      pattern,
+      repeatX,
+      repeatY,
+    })
+    map.anisotropy = 4
+    textures.push(map)
+    return standard({
+      ...parameters,
+      color: 0xffffff,
+      map,
+    })
+  }
+  const terrainPatterns: Record<ZoneId, ProceduralSurfacePattern> = {
+    neutral: 'grass',
+    palace: 'stone',
+    forest: 'grass',
+    fort: 'scree',
+  }
+  const secondaryPatterns: Record<ZoneId, ProceduralSurfacePattern> = {
+    neutral: 'leaves',
+    palace: 'stone',
+    forest: 'leaves',
+    fort: 'scree',
+  }
+  const accentPatterns: Record<ZoneId, ProceduralSurfacePattern> = {
+    neutral: 'roof',
+    palace: 'roof',
+    forest: 'leaves',
+    fort: 'scree',
+  }
+  const structurePatterns: Record<ZoneId, ProceduralSurfacePattern> = {
+    neutral: 'wood',
+    palace: 'stone',
+    forest: 'wood',
+    fort: 'stone',
+  }
+  const roofPatterns: Record<ZoneId, ProceduralSurfacePattern> = {
+    neutral: 'roof',
+    palace: 'roof',
+    forest: 'leaves',
+    fort: 'roof',
+  }
+  const terrainColors = createZoneMaterialRecord(
+    (zone) => palette.terrain?.[zone] ?? BIOME_PROFILES[zone].terrainColor,
+  )
+  const secondaryColors = createZoneMaterialRecord(
+    (zone) => palette.secondary?.[zone] ?? BIOME_PROFILES[zone].secondaryColor,
+  )
+  const accentColors = createZoneMaterialRecord(
+    (zone) => palette.accent?.[zone] ?? BIOME_PROFILES[zone].accentColor,
+  )
   const terrain = createZoneMaterialRecord((zone) =>
-    standard({
-      color: palette.terrain?.[zone] ?? BIOME_PROFILES[zone].terrainColor,
-      roughness: 0.95,
-      metalness: 0,
-    }),
+    textured(
+      `generated-terrain-${zone}`,
+      terrainColors[zone],
+      terrainPatterns[zone],
+      zone === 'palace' ? 10 : 16,
+      zone === 'palace' ? 10 : 16,
+      {
+        roughness: 0.95,
+        metalness: 0,
+      },
+    ),
   )
   const secondary = createZoneMaterialRecord((zone) =>
-    standard({
-      color: palette.secondary?.[zone] ?? BIOME_PROFILES[zone].secondaryColor,
-      roughness: 0.9,
-    }),
+    textured(
+      `generated-secondary-${zone}`,
+      secondaryColors[zone],
+      secondaryPatterns[zone],
+      3,
+      3,
+      {
+        roughness: 0.9,
+      },
+    ),
   )
   const accent = createZoneMaterialRecord((zone) =>
+    textured(
+      `generated-accent-${zone}`,
+      accentColors[zone],
+      accentPatterns[zone],
+      4,
+      4,
+      {
+        roughness: 0.72,
+      },
+    ),
+  )
+  const roadBase = palette.road ?? 0x70553b
+  const road = textured(
+    'generated-road',
+    roadBase,
+    'dirt',
+    5,
+    2,
+    {
+      roughness: 1,
+    },
+  )
+  const waterBase = palette.water ?? 0x2f7187
+  const water = textured(
+    'generated-water',
+    waterBase,
+    'water',
+    5,
+    2,
+    {
+      roughness: 0.28,
+      metalness: 0.05,
+      transparent: true,
+      opacity: 0.82,
+    },
+    shadeColor(waterBase, 0.25),
+  )
+  const bridgeBase = palette.bridge ?? 0x72543b
+  const bridge = textured(
+    'generated-bridge',
+    bridgeBase,
+    'wood',
+    5,
+    2,
+    {
+      roughness: 0.86,
+    },
+  )
+  const structureBase = palette.structure ?? 0x85817a
+  const structure = createZoneMaterialRecord((zone) => {
+    const color = mixColor(
+      structureBase,
+      secondaryColors[zone],
+      zone === 'palace' || zone === 'fort' ? 0.2 : 0.32,
+    )
+    return textured(
+      `generated-structure-${zone}`,
+      color,
+      structurePatterns[zone],
+      5,
+      4,
+      {
+        roughness: 0.9,
+      },
+    )
+  })
+  const roofBase = palette.roof ?? 0x4b3940
+  const roof = createZoneMaterialRecord((zone) => {
+    const color = mixColor(roofBase, accentColors[zone], 0.32)
+    return textured(
+      `generated-roof-${zone}`,
+      color,
+      roofPatterns[zone],
+      5,
+      4,
+      {
+        roughness: 0.82,
+      },
+    )
+  })
+  const trunk = textured(
+    'generated-tree-bark',
+    shadeColor(bridgeBase, -0.12),
+    'wood',
+    2,
+    5,
+    {
+      roughness: 0.95,
+    },
+  )
+  const groundCover = createZoneMaterialRecord((zone) =>
     standard({
-      color: palette.accent?.[zone] ?? BIOME_PROFILES[zone].accentColor,
-      roughness: 0.72,
+      color: mixColor(terrainColors[zone], secondaryColors[zone], 0.58),
+      flatShading: true,
+      roughness: 1,
+      side: THREE.DoubleSide,
     }),
   )
-  const road = standard({
-    color: palette.road ?? 0x70553b,
-    roughness: 1,
-  })
-  const water = standard({
-    color: palette.water ?? 0x2f7187,
-    roughness: 0.28,
-    metalness: 0.05,
-    transparent: true,
-    opacity: 0.82,
-  })
-  const bridge = standard({
-    color: palette.bridge ?? 0x72543b,
-    roughness: 0.86,
-  })
-  const structure = standard({
-    color: palette.structure ?? 0x85817a,
-    roughness: 0.9,
-  })
-  const roof = standard({
-    color: palette.roof ?? 0x4b3940,
-    roughness: 0.82,
-  })
   return {
     terrain,
     secondary,
@@ -1405,7 +1708,10 @@ function createSharedMaterials(
     bridge,
     structure,
     roof,
+    trunk,
+    groundCover,
     all,
+    textures,
   }
 }
 
@@ -1466,7 +1772,7 @@ function boundsCenter(bounds: Bounds2D): Point2 {
 }
 
 function dressingGeometry(zone: ZoneId): THREE.BufferGeometry {
-  if (zone === 'forest') return new THREE.ConeGeometry(1.25, 4.2, 6)
+  if (zone === 'forest') return forestTreeGeometry()
   if (zone === 'palace') {
     return new THREE.CylinderGeometry(0.45, 0.62, 2.8, 6)
   }
@@ -1474,11 +1780,197 @@ function dressingGeometry(zone: ZoneId): THREE.BufferGeometry {
   return new THREE.ConeGeometry(0.55, 1.35, 5)
 }
 
+function dressingMaterial(
+  zone: ZoneId,
+  materials: SharedMaterials,
+): THREE.Material | THREE.Material[] {
+  if (zone === 'forest') {
+    return [
+      materials.trunk,
+      materials.secondary.forest,
+      materials.secondary.forest,
+      materials.secondary.forest,
+    ]
+  }
+  return materials.secondary[zone]
+}
+
+function forestTreeGeometry(): THREE.BufferGeometry {
+  const parts = [
+    new THREE.CylinderGeometry(0.32, 0.58, 4.2, 7),
+    new THREE.ConeGeometry(1.75, 3.4, 8).translate(0, 1.6, 0),
+    new THREE.ConeGeometry(1.35, 3, 8).translate(0, 3, 0),
+    new THREE.ConeGeometry(0.9, 2.4, 8).translate(0, 4.2, 0),
+  ]
+  const geometry = mergeGeometries(parts, true)
+  parts.forEach((part) => part.dispose())
+  if (!geometry) {
+    throw new Error('Could not build generated forest tree geometry')
+  }
+  geometry.computeVertexNormals()
+  return geometry
+}
+
 function dressingBaseHeight(zone: ZoneId): number {
   if (zone === 'forest') return 2.1
   if (zone === 'palace') return 1.4
   if (zone === 'fort') return 0.75
   return 0.68
+}
+
+type GroundCoverKind = 'fern' | 'flower' | 'grass' | 'pebble'
+
+interface GroundCoverPlacement {
+  x: number
+  z: number
+  rotation: number
+  width: number
+  height: number
+}
+
+const GROUND_COVER_KINDS: readonly GroundCoverKind[] = [
+  'grass',
+  'fern',
+  'flower',
+  'pebble',
+]
+
+const GROUND_COVER_COUNTS: Record<
+  ZoneId,
+  Record<GroundCoverKind, number>
+> = {
+  neutral: { grass: 260, fern: 0, flower: 36, pebble: 18 },
+  palace: { grass: 45, fern: 0, flower: 0, pebble: 35 },
+  forest: { grass: 420, fern: 90, flower: 28, pebble: 12 },
+  fort: { grass: 70, fern: 0, flower: 0, pebble: 120 },
+}
+
+function groundCoverGeometry(kind: GroundCoverKind): THREE.BufferGeometry {
+  if (kind === 'grass') {
+    return new THREE.ConeGeometry(0.08, 0.62, 3).translate(0, 0.31, 0)
+  }
+  if (kind === 'fern') return fernGeometry()
+  if (kind === 'flower') return flowerGeometry()
+  return new THREE.DodecahedronGeometry(0.2, 0)
+}
+
+function fernGeometry(): THREE.BufferGeometry {
+  const vertices: number[] = []
+  for (let frond = 0; frond < 4; frond += 1) {
+    const angle = (frond / 4) * Math.PI * 2
+    const outwardX = Math.sin(angle)
+    const outwardZ = Math.cos(angle)
+    const sideX = Math.cos(angle)
+    const sideZ = -Math.sin(angle)
+    const point = (
+      side: number,
+      outward: number,
+      y: number,
+    ): [number, number, number] => [
+      sideX * side + outwardX * outward,
+      y,
+      sideZ * side + outwardZ * outward,
+    ]
+    const baseLeft = point(-0.025, 0, 0)
+    const baseRight = point(0.025, 0, 0)
+    const middleLeft = point(-0.1, 0.18, 0.34)
+    const middleRight = point(0.1, 0.18, 0.34)
+    const tip = point(0, 0.4, 0.62)
+    vertices.push(
+      ...baseLeft,
+      ...baseRight,
+      ...middleRight,
+      ...baseLeft,
+      ...middleRight,
+      ...middleLeft,
+      ...middleLeft,
+      ...middleRight,
+      ...tip,
+    )
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(vertices, 3),
+  )
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+function flowerGeometry(): THREE.BufferGeometry {
+  const stemSource = new THREE.CylinderGeometry(
+    0.025,
+    0.035,
+    0.52,
+    5,
+  ).translate(0, 0.26, 0)
+  const bloomSource = new THREE.OctahedronGeometry(0.12, 0).translate(
+    0,
+    0.6,
+    0,
+  )
+  const stem = stemSource.toNonIndexed()
+  const bloom = bloomSource.index ? bloomSource.toNonIndexed() : bloomSource
+  stemSource.dispose()
+  if (bloom !== bloomSource) bloomSource.dispose()
+  const geometry = mergeGeometries([stem, bloom])
+  stem.dispose()
+  bloom.dispose()
+  if (!geometry) {
+    throw new Error('Could not build generated flower geometry')
+  }
+  return geometry
+}
+
+function writeGroundCoverScale(
+  kind: GroundCoverKind,
+  zone: ZoneId,
+  placement: GroundCoverPlacement,
+  target: THREE.Vector3,
+): void {
+  if (kind === 'grass') {
+    const zoneScale: Record<ZoneId, number> = {
+      neutral: 1,
+      palace: 0.62,
+      forest: 1.18,
+      fort: 0.7,
+    }
+    const width = zoneScale[zone] * lerp(0.72, 1.35, placement.width)
+    const height = zoneScale[zone] * lerp(0.72, 1.58, placement.height)
+    target.set(width, height, width)
+    return
+  }
+  if (kind === 'fern') {
+    const width = lerp(0.76, 1.4, placement.width)
+    target.set(width, lerp(0.82, 1.5, placement.height), width)
+    return
+  }
+  if (kind === 'flower') {
+    const width = lerp(0.8, 1.25, placement.width)
+    target.set(width, lerp(0.82, 1.35, placement.height), width)
+    return
+  }
+  target.set(
+    lerp(0.55, 1.6, placement.width),
+    lerp(0.35, 0.9, placement.height),
+    lerp(0.55, 1.45, 1 - placement.width),
+  )
+}
+
+function shadeColor(
+  color: THREE.ColorRepresentation,
+  amount: number,
+): THREE.Color {
+  const target = amount >= 0 ? new THREE.Color(0xffffff) : new THREE.Color(0x08090b)
+  return new THREE.Color(color).lerp(target, Math.abs(clamp(amount, -1, 1)))
+}
+
+function mixColor(
+  first: THREE.ColorRepresentation,
+  second: THREE.ColorRepresentation,
+  amount: number,
+): THREE.Color {
+  return new THREE.Color(first).lerp(new THREE.Color(second), clamp(amount, 0, 1))
 }
 
 function isStructuralDressing(zone: ZoneId, index: number): boolean {
