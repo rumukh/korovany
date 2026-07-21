@@ -70,7 +70,13 @@ import {
 import { RandomStream } from './random/RandomStream'
 import { deriveSeed } from './random/seed'
 import { getStartingBoonEffects } from './run/profile'
-import { getSquadFollowSpeed } from './squadMovement'
+import {
+  STARTING_SQUAD_VERSION,
+  getSquadFollowSpeed,
+  getStartingSquad,
+  shouldInitializeStartingSquad,
+  shouldSquadRegroup,
+} from './squadMovement'
 import {
   ACTIVE_RUN_SAVE_VERSION,
   type ActiveRunSaveV2,
@@ -1614,6 +1620,9 @@ export class GameEngine {
         (boon?.startingDamageBonus ?? 0)
     const restoredDirector = restoredRun?.directorState
     const restoredEvent = restoredRun?.eventState
+    const initializeGeneratedStartingSquad = shouldInitializeStartingSquad(
+      restoredDirector?.startingSquadVersion,
+    )
     this.squadFollowing = restoredDirector?.squadFollowing === true
     this.elapsed = this.readSerializableNumber(
       restoredDirector,
@@ -1832,6 +1841,7 @@ export class GameEngine {
     this.registerNamedInteractableOutline(this.caravan, 'cargo')
     if (this.generatedWorld) {
       this.restoreGeneratedCompanions(restoredRun?.companions ?? [])
+      if (initializeGeneratedStartingSquad) this.spawnGeneratedStartingSquad()
       this.syncGeneratedRegions()
     } else {
       this.spawnPopulation()
@@ -2483,6 +2493,7 @@ export class GameEngine {
       directorState: {
         elapsed: this.elapsed,
         squadFollowing: this.squadFollowing,
+        startingSquadVersion: STARTING_SQUAD_VERSION,
         threatTier: this.threatTier,
         nextThreatWaveAt: this.nextThreatWaveAt,
         championDamageBonus: this.championDamageBonus,
@@ -2856,6 +2867,27 @@ export class GameEngine {
         const weapon = actor.mesh.getObjectByName('weapon')
         if (weapon) weapon.visible = true
       }
+    }
+  }
+
+  private spawnGeneratedStartingSquad(): void {
+    for (const member of getStartingSquad(this.faction)) {
+      if (this.actors.length >= MAX_ACTORS) break
+      const actor = this.spawnActor(
+        this.faction,
+        member.role,
+        this.player.position.x + member.offsetX,
+        this.player.position.z + member.offsetZ,
+        this.actorSequence,
+        {
+          objectiveEligible: false,
+          squadEligible: true,
+          generatedRegionId: null,
+          hostileToPlayer: false,
+        },
+      )
+      actor.home.copy(actor.mesh.position)
+      actor.wanderTarget.copy(actor.mesh.position)
     }
   }
 
@@ -3992,6 +4024,13 @@ export class GameEngine {
       const colliderRadius = this.actorColliderRadiusForRole(actor.role)
       const navigationSign = Math.sin(actor.phase * 3.17 + 0.4) >= 0 ? 1 : -1
       const hostileToPlayer = actor.hostileToPlayer
+      const commandedSquadMember =
+        actor.faction === this.faction &&
+        actor.squadEligible &&
+        this.squadFollowing &&
+        actor.role !== 'commander'
+      const regroupingWithSquad =
+        commandedSquadMember && shouldSquadRegroup(playerDistance)
       const canSensePlayer = hostileToPlayer && playerDistance < senseRange
       const canTrackPlayer =
         hostileToPlayer && actor.playerAggro && playerDistance < leashRange
@@ -4011,7 +4050,10 @@ export class GameEngine {
         actor.lastKnownTargetPos = null
       }
       let retaliationTarget: Actor | null = null
-      if (actor.retaliationTimer > 0 && actor.targetId) {
+      if (regroupingWithSquad) {
+        actor.retaliationTimer = 0
+        actor.targetId = null
+      } else if (actor.retaliationTimer > 0 && actor.targetId) {
         const candidate = this.actors.find((other) => other.id === actor.targetId)
         if (
           candidate?.alive &&
@@ -4051,13 +4093,10 @@ export class GameEngine {
           investigatesPlayer = true
           targetPosition = actor.lastKnownTargetPos
         }
-      } else if (
-        actor.faction === this.faction &&
-        actor.squadEligible &&
-        this.squadFollowing &&
-        actor.role !== 'commander'
-      ) {
-        targetActor = this.findNearestEnemy(actor, actor.role === 'archer' ? 15 : 9)
+      } else if (commandedSquadMember) {
+        targetActor = regroupingWithSquad
+          ? null
+          : this.findNearestEnemy(actor, actor.role === 'archer' ? 15 : 9)
         if (targetActor) {
           targetPosition = targetActor.mesh.position
         } else {
