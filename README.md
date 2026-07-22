@@ -13,10 +13,10 @@ A seeded 3D action roguelite inspired by the legendary Russian game-design meme.
 - Shareable text or numeric seeds with deterministic world validation and fingerprints
 - Melee combat, NPC squads, caravan raids, stylized injuries, prosthetics, healing, and trading
 - Dynamic events, escalating threat, pooled loot, run upgrades, achievements, and starting boons
-- Original procedural 8-bit soundtrack with faction and zone variations
+- Original vector faction emblems, caravan key art, and procedural 8-bit soundtrack
 - Suspend/continue, terminal victory or defeat, profile rewards, and run history
 - Backward-compatible loading for legacy version-1 four-zone saves
-- No external art or audio assets
+- Procedural 3D art with no external art, audio, or asset packs
 
 ## Controls
 

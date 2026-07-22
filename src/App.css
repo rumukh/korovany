@@ -11,6 +11,16 @@ svg {
   stroke-width: 1.8;
 }
 
+.faction-emblem {
+  display: block;
+  flex: 0 0 auto;
+  height: 1.5rem;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+  width: 1.5rem;
+}
+
 h1,
 h2,
 h3,
@@ -321,10 +331,10 @@ button {
 
 .hero-header h1 {
   color: var(--cp-text);
-  font-size: clamp(3.8rem, 10vw, 8.5rem);
+  font-size: clamp(3.8rem, 10vw, 6rem);
   font-weight: 900;
-  letter-spacing: -0.08em;
-  line-height: 0.8;
+  letter-spacing: -0.04em;
+  line-height: 0.9;
   margin-top: 1.3rem;
   text-shadow: 0.04em 0.04em 0 color-mix(in srgb, var(--cp-accent) 18%, transparent);
 }
@@ -337,6 +347,18 @@ button {
   letter-spacing: 0.2em;
   margin-top: 1.15rem;
   text-transform: uppercase;
+}
+
+.hero-key-art {
+  display: block;
+  filter: drop-shadow(0 0.8rem 1rem rgba(0, 0, 0, 0.18));
+  height: clamp(5.2rem, 9vw, 7.2rem);
+  margin: 0.7rem auto -0.15rem;
+  max-width: 60rem;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+  width: 100%;
 }
 
 .hero-copy {
@@ -388,9 +410,9 @@ button {
   color: var(--cp-link);
 }
 
-.active-run-emblem svg {
-  height: 1.75rem;
-  width: 1.75rem;
+.active-run-emblem .faction-emblem {
+  height: 2.55rem;
+  width: 2.55rem;
 }
 
 .active-run-copy h2 {
@@ -847,10 +869,10 @@ button {
   width: 3.25rem;
 }
 
-.faction-icon svg,
-.continue-icon svg {
-  height: 1.7rem;
-  width: 1.7rem;
+.faction-icon .faction-emblem,
+.continue-icon .faction-emblem {
+  height: 2.4rem;
+  width: 2.4rem;
 }
 
 .faction-card.elf .faction-icon {
@@ -1068,9 +1090,9 @@ button {
   color: var(--cp-link);
 }
 
-.preview-start svg {
-  height: 0.75rem;
-  width: 0.75rem;
+.preview-start .faction-emblem {
+  height: 1rem;
+  width: 1rem;
 }
 
 .generated-preview > code {
@@ -1287,6 +1309,11 @@ button {
   height: 2rem;
   justify-content: center;
   width: 2rem;
+}
+
+.history-faction .faction-emblem {
+  height: 1.65rem;
+  width: 1.65rem;
 }
 
 .history-run > div {
@@ -1627,9 +1654,9 @@ button {
   color: var(--cp-link);
 }
 
-.identity-icon svg {
-  height: 1.5rem;
-  width: 1.5rem;
+.identity-icon .faction-emblem {
+  height: 2.1rem;
+  width: 2.1rem;
 }
 
 .identity-panel h1 {
@@ -3832,7 +3859,12 @@ kbd {
   }
 
   .hero-header h1 {
-    font-size: clamp(3.4rem, 18vw, 5.5rem);
+    font-size: clamp(2.8rem, 15vw, 4rem);
+  }
+
+  .hero-key-art {
+    height: 5.4rem;
+    margin-top: 0.5rem;
   }
 
   .section-heading {

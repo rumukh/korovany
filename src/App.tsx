@@ -42,6 +42,10 @@ import {
   type CSSProperties,
   type ReactNode,
 } from 'react'
+import caravanKeyArt from './assets/caravan-key-art.svg'
+import elfEmblem from './assets/factions/elf-emblem.svg'
+import guardEmblem from './assets/factions/guard-emblem.svg'
+import villainEmblem from './assets/factions/villain-emblem.svg'
 import './App.css'
 import { SFX_VOLUME_DEFAULT, normalizeSfxVolume } from './game/AudioDirector'
 import {
@@ -265,10 +269,22 @@ function nextFoliageQuality(quality: FoliageQuality): FoliageQuality {
   return 'high'
 }
 
-const factionIcons: Record<Faction, ReactNode> = {
-  elf: <Trees aria-hidden="true" />,
-  guard: <Shield aria-hidden="true" />,
-  villain: <Skull aria-hidden="true" />,
+const factionEmblems: Record<Faction, string> = {
+  elf: elfEmblem,
+  guard: guardEmblem,
+  villain: villainEmblem,
+}
+
+function FactionEmblem({ faction }: { faction: Faction }) {
+  return (
+    <img
+      className="faction-emblem"
+      src={factionEmblems[faction]}
+      alt=""
+      aria-hidden="true"
+      draggable={false}
+    />
+  )
 }
 
 const abilityIcons: Record<GameView['ability']['id'], ReactNode> = {
@@ -1394,6 +1410,13 @@ function MenuScreen({
         </div>
         <h1>КОРОВАНЫ</h1>
         <p className="hero-kicker">Джва года в разработке</p>
+        <img
+          className="hero-key-art"
+          src={caravanKeyArt}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+        />
         <p className="hero-copy">
           Конечный экшен-рогалик на 25 потоковых регионах. Каждый seed собирает новый путь
           через холмы, реки и мосты для любой из трёх сторон конфликта.
@@ -1407,7 +1430,7 @@ function MenuScreen({
       {activeRun ? (
         <section className="active-run-card" aria-labelledby="active-run-title">
           <div className={`active-run-emblem faction-${activeRun.config.faction}`}>
-            {factionIcons[activeRun.config.faction]}
+            <FactionEmblem faction={activeRun.config.faction} />
           </div>
           <div className="active-run-copy">
             <span className="eyebrow">
@@ -1583,7 +1606,9 @@ function MenuScreen({
                   <i />
                   <i />
                 </div>
-                <div className="faction-icon">{factionIcons[faction]}</div>
+                <div className="faction-icon">
+                  <FactionEmblem faction={faction} />
+                </div>
                 <span className="faction-subtitle">{info.subtitle}</span>
                 <h3>{info.name}</h3>
                 <p>{info.description}</p>
@@ -1659,7 +1684,7 @@ function MenuScreen({
                 >
                   {startFaction ? (
                     <span className={`preview-start faction-${startFaction}`}>
-                      {factionIcons[startFaction]}
+                      <FactionEmblem faction={startFaction} />
                     </span>
                   ) : null}
                   {bridge ? <i className="preview-bridge" aria-hidden="true" /> : null}
@@ -1673,7 +1698,9 @@ function MenuScreen({
         <div className="menu-side-stack">
           {savedGame ? (
             <div className="continue-card legacy-save-card">
-              <div className="continue-icon">{factionIcons[savedGame.faction]}</div>
+              <div className="continue-icon">
+                <FactionEmblem faction={savedGame.faction} />
+              </div>
               <div className="continue-copy">
                 <span className="eyebrow">Legacy campaign · v1</span>
                 <h3>{FACTION_INFO[savedGame.faction].name}</h3>
@@ -1713,7 +1740,9 @@ function MenuScreen({
               <div className="run-history-list">
                 {recentRuns.map((run) => (
                   <article className={`history-run status-${run.status}`} key={run.runId}>
-                    <span className="history-faction">{factionIcons[run.faction]}</span>
+                    <span className="history-faction">
+                      <FactionEmblem faction={run.faction} />
+                    </span>
                     <div>
                       <strong>{historyStatusLabels[run.status]}</strong>
                       <small>
@@ -2253,7 +2282,9 @@ function GameScreen({
 
       <div className="top-hud">
         <div className="identity-panel hud-card">
-          <div className="identity-icon">{factionIcons[view.faction]}</div>
+          <div className="identity-icon">
+            <FactionEmblem faction={view.faction} />
+          </div>
           <div className="zone-title" key={view.zone}>
             <span
               className="zone-motif"
