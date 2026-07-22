@@ -2310,7 +2310,7 @@ function GameScreen({
               type="button"
               onClick={onToggleMusic}
               aria-label={musicMuted ? 'Включить музыку' : 'Выключить музыку'}
-              title={musicMuted ? 'Включить 8-битную музыку' : 'Выключить 8-битную музыку'}
+              title={musicMuted ? 'Включить адаптивную музыку' : 'Выключить адаптивную музыку'}
             >
               {musicMuted ? <VolumeX aria-hidden="true" /> : <Volume2 aria-hidden="true" />}
             </button>
@@ -3035,7 +3035,7 @@ function App() {
     } catch (error) {
       console.warn('Korovany: music preference could not be saved.', error)
     }
-    addNotice(next ? '8-битная музыка выключена.' : '8-битная музыка включена.', 'info')
+    addNotice(next ? 'Адаптивная музыка выключена.' : 'Адаптивная музыка включена.', 'info')
   }
 
   const changeSfxVolume = (volume: number) => {

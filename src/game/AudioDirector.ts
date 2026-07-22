@@ -1,5 +1,18 @@
 import type * as THREE from 'three'
 import type { Faction, ZoneId } from './types'
+import {
+  DEFAULT_MUSIC_CONTEXT,
+  MUSIC_CYCLE_STEPS,
+  getMusicTempo,
+  isMusicBarBoundary,
+  normalizeMusicContext,
+  planMusicStep,
+  type MusicContext,
+  type MusicDrum,
+  type MusicTonePart,
+} from './MusicScore.ts'
+
+export type { MusicContext, MusicIntensity } from './MusicScore.ts'
 
 export type SoundCue =
   | 'swing'
@@ -41,6 +54,7 @@ export interface SoundRequest {
 export interface AudioDirectorSettings {
   musicMuted: boolean
   sfxVolume: number
+  musicSeed: number
 }
 
 type FrequencyRange = readonly [number, number]
@@ -99,29 +113,207 @@ const MUSIC_ENDED_GAIN = 0.035
 const GAMEPLAY_GAIN = 0.62
 const UI_GAIN = 0.48
 
-const MUSIC_PATTERNS: Record<Faction, readonly number[]> = {
-  elf: [0, 4, 7, 12, 7, 4, 2, 4, 0, 4, 9, 12, 9, 4, 2, -1, 0, 4, 7, 11, 7, 4, 2, 4, 0, 5, 9, 12, 9, 5, 2, 4],
-  guard: [0, 7, 12, 7, 5, 9, 12, 9, 3, 7, 10, 15, 10, 7, 5, 3, 0, 7, 12, 14, 12, 7, 5, 7, 3, 7, 10, 12, 10, 7, 5, 2],
-  villain: [0, 3, 7, 10, 7, 3, -2, 3, 0, 3, 6, 10, 6, 3, -2, -5, 0, 3, 7, 12, 7, 3, 1, 3, 0, 5, 8, 12, 8, 5, 1, -2],
+type MusicInstrument =
+  | 'elfLead'
+  | 'guardLead'
+  | 'villainLead'
+  | 'elfPulse'
+  | 'guardPulse'
+  | 'villainPulse'
+  | 'warmBass'
+  | 'airPad'
+  | 'marchPad'
+  | 'darkPad'
+
+interface MusicInstrumentProfile {
+  harmonics: readonly number[]
+  attack: number
+  release: number
+  sustain: number
+  filterStart: number
+  filterEnd: number
+  reverb: number
+  echo: number
+  detune: number
+  gain: number
 }
 
-const MUSIC_ROOTS: Record<Faction, number> = {
-  elf: 57,
-  guard: 55,
-  villain: 52,
+const MUSIC_INSTRUMENTS: readonly MusicInstrument[] = [
+  'elfLead',
+  'guardLead',
+  'villainLead',
+  'elfPulse',
+  'guardPulse',
+  'villainPulse',
+  'warmBass',
+  'airPad',
+  'marchPad',
+  'darkPad',
+]
+
+const MUSIC_INSTRUMENT_PROFILES: Readonly<Record<MusicInstrument, MusicInstrumentProfile>> = {
+  elfLead: {
+    harmonics: [0, 1, 0.52, 0.2, 0.09, 0.045],
+    attack: 0.004,
+    release: 0.19,
+    sustain: 0.28,
+    filterStart: 5200,
+    filterEnd: 880,
+    reverb: 0.36,
+    echo: 0.13,
+    detune: 0,
+    gain: 0.078,
+  },
+  guardLead: {
+    harmonics: [0, 1, 0, 0.34, 0, 0.2, 0, 0.12],
+    attack: 0.018,
+    release: 0.17,
+    sustain: 0.68,
+    filterStart: 3400,
+    filterEnd: 1450,
+    reverb: 0.18,
+    echo: 0.05,
+    detune: 1.5,
+    gain: 0.072,
+  },
+  villainLead: {
+    harmonics: [0, 1, 0.48, 0.3, 0.21, 0.14, 0.1],
+    attack: 0.009,
+    release: 0.22,
+    sustain: 0.46,
+    filterStart: 2700,
+    filterEnd: 580,
+    reverb: 0.3,
+    echo: 0.16,
+    detune: -4,
+    gain: 0.071,
+  },
+  elfPulse: {
+    harmonics: [0, 1, 0.34, 0.12, 0.05],
+    attack: 0.003,
+    release: 0.11,
+    sustain: 0.2,
+    filterStart: 4100,
+    filterEnd: 1100,
+    reverb: 0.24,
+    echo: 0.16,
+    detune: 2,
+    gain: 0.046,
+  },
+  guardPulse: {
+    harmonics: [0, 1, 0, 0.28, 0, 0.12],
+    attack: 0.003,
+    release: 0.08,
+    sustain: 0.34,
+    filterStart: 3000,
+    filterEnd: 950,
+    reverb: 0.1,
+    echo: 0.06,
+    detune: -1,
+    gain: 0.044,
+  },
+  villainPulse: {
+    harmonics: [0, 1, 0.54, 0.2, 0.16, 0.08],
+    attack: 0.002,
+    release: 0.1,
+    sustain: 0.24,
+    filterStart: 2200,
+    filterEnd: 520,
+    reverb: 0.2,
+    echo: 0.18,
+    detune: -6,
+    gain: 0.043,
+  },
+  warmBass: {
+    harmonics: [0, 1, 0.08, 0.28, 0.03, 0.1],
+    attack: 0.006,
+    release: 0.16,
+    sustain: 0.62,
+    filterStart: 1200,
+    filterEnd: 310,
+    reverb: 0.05,
+    echo: 0,
+    detune: 0,
+    gain: 0.105,
+  },
+  airPad: {
+    harmonics: [0, 1, 0.12, 0.22, 0.04, 0.08],
+    attack: 0.22,
+    release: 0.42,
+    sustain: 0.72,
+    filterStart: 2100,
+    filterEnd: 1250,
+    reverb: 0.54,
+    echo: 0.04,
+    detune: 3,
+    gain: 0.047,
+  },
+  marchPad: {
+    harmonics: [0, 1, 0, 0.22, 0.08, 0.08],
+    attack: 0.14,
+    release: 0.32,
+    sustain: 0.74,
+    filterStart: 1700,
+    filterEnd: 1050,
+    reverb: 0.32,
+    echo: 0.02,
+    detune: -2,
+    gain: 0.044,
+  },
+  darkPad: {
+    harmonics: [0, 1, 0.32, 0.17, 0.12, 0.08, 0.05],
+    attack: 0.18,
+    release: 0.48,
+    sustain: 0.7,
+    filterStart: 1350,
+    filterEnd: 460,
+    reverb: 0.48,
+    echo: 0.08,
+    detune: -7,
+    gain: 0.043,
+  },
 }
 
-const MUSIC_TEMPOS: Record<Faction, number> = {
-  elf: 138,
-  guard: 128,
-  villain: 132,
+const MUSIC_PART_INSTRUMENTS: Readonly<
+  Record<Faction, Readonly<Record<MusicTonePart, MusicInstrument>>>
+> = {
+  elf: {
+    lead: 'elfLead',
+    bass: 'warmBass',
+    pad: 'airPad',
+    pulse: 'elfPulse',
+  },
+  guard: {
+    lead: 'guardLead',
+    bass: 'warmBass',
+    pad: 'marchPad',
+    pulse: 'guardPulse',
+  },
+  villain: {
+    lead: 'villainLead',
+    bass: 'warmBass',
+    pad: 'darkPad',
+    pulse: 'villainPulse',
+  },
 }
 
-const ZONE_MUSIC_SHIFTS: Record<ZoneId, number> = {
-  neutral: 2,
-  palace: 5,
-  forest: 0,
-  fort: -2,
+const MUSIC_ZONE_BRIGHTNESS: Readonly<Record<ZoneId, number>> = {
+  neutral: 1,
+  palace: 1.14,
+  forest: 0.92,
+  fort: 0.78,
+}
+
+const MUSIC_KICK_PITCH: Readonly<Record<Faction, number>> = {
+  elf: 112,
+  guard: 136,
+  villain: 94,
+}
+
+const MUSIC_TOM_PITCH: Readonly<Record<Faction, number>> = {
+  elf: 164,
+  guard: 148,
+  villain: 126,
 }
 
 const tone = (
@@ -495,23 +687,32 @@ const centeredWorldCues = new Set<SoundCue>(['swing', 'hurt', 'block', 'jump', '
 export class AudioDirector {
   private context: AudioContext | null = null
   private musicGain: GainNode | null = null
+  private musicReverbInput: GainNode | null = null
+  private musicConvolver: ConvolverNode | null = null
+  private musicReverbGain: GainNode | null = null
+  private musicEchoInput: GainNode | null = null
+  private musicDelay: DelayNode | null = null
+  private musicDelayFeedback: GainNode | null = null
+  private musicDelayGain: GainNode | null = null
   private sfxGain: GainNode | null = null
   private uiGain: GainNode | null = null
   private masterCompressor: DynamicsCompressorNode | null = null
   private masterGain: GainNode | null = null
   private sharedNoiseBuffer: AudioBuffer | null = null
+  private readonly musicWaves = new Map<MusicInstrument, PeriodicWave>()
   private musicTimer: number | null = null
   private musicNextNoteTime = 0
   private musicStep = 0
   private musicMuted: boolean
+  private readonly musicSeed: number
+  private activeMusicContext: MusicContext = DEFAULT_MUSIC_CONTEXT
+  private pendingMusicContext: MusicContext = DEFAULT_MUSIC_CONTEXT
   private sfxVolume: number
   private paused = false
   private ended = false
   private hidden = document.hidden
   private destroyed = false
   private closeRequested = false
-  private faction: Faction = 'elf'
-  private zone: ZoneId = 'forest'
   private listener = { x: 0, y: 0, z: 0 }
   private listenerRight = { x: 1, y: 0, z: 0 }
   private nextVoiceId = 1
@@ -531,6 +732,7 @@ export class AudioDirector {
   ) {
     this.contextFactory = contextFactory
     this.musicMuted = settings.musicMuted ?? false
+    this.musicSeed = normalizeSeed(settings.musicSeed)
     this.sfxVolume = normalizeSfxVolume(settings.sfxVolume ?? SFX_VOLUME_DEFAULT)
   }
 
@@ -674,9 +876,8 @@ export class AudioDirector {
     this.listenerRight.z = right.z
   }
 
-  setMusicContext(faction: Faction, zone: ZoneId): void {
-    this.faction = faction
-    this.zone = zone
+  setMusicContext(context: MusicContext): void {
+    this.pendingMusicContext = normalizeMusicContext(context)
   }
 
   getDiagnostics(): AudioDirectorDiagnostics {
@@ -713,6 +914,13 @@ export class AudioDirector {
 
     const context = this.context
     for (const node of [
+      this.musicReverbInput,
+      this.musicConvolver,
+      this.musicReverbGain,
+      this.musicEchoInput,
+      this.musicDelay,
+      this.musicDelayFeedback,
+      this.musicDelayGain,
       this.musicGain,
       this.sfxGain,
       this.uiGain,
@@ -721,12 +929,20 @@ export class AudioDirector {
     ]) {
       node?.disconnect()
     }
+    this.musicReverbInput = null
+    this.musicConvolver = null
+    this.musicReverbGain = null
+    this.musicEchoInput = null
+    this.musicDelay = null
+    this.musicDelayFeedback = null
+    this.musicDelayGain = null
     this.musicGain = null
     this.sfxGain = null
     this.uiGain = null
     this.masterCompressor = null
     this.masterGain = null
     this.sharedNoiseBuffer = null
+    this.musicWaves.clear()
     this.context = null
     this.musicNextNoteTime = 0
     context?.removeEventListener('statechange', this.contextStateOwner)
@@ -765,21 +981,42 @@ export class AudioDirector {
     this.context = context
     context.addEventListener('statechange', this.contextStateOwner)
     this.musicGain = context.createGain()
+    this.musicReverbInput = context.createGain()
+    this.musicConvolver = context.createConvolver()
+    this.musicReverbGain = context.createGain()
+    this.musicEchoInput = context.createGain()
+    this.musicDelay = context.createDelay(1)
+    this.musicDelayFeedback = context.createGain()
+    this.musicDelayGain = context.createGain()
     this.sfxGain = context.createGain()
     this.uiGain = context.createGain()
     this.masterCompressor = context.createDynamicsCompressor()
     this.masterGain = context.createGain()
+    this.musicConvolver.buffer = this.createMusicImpulse(context)
+    this.musicReverbGain.gain.value = 0.58
+    this.musicDelay.delayTime.value = this.musicEchoTime()
+    this.musicDelayFeedback.gain.value = 0.18
+    this.musicDelayGain.gain.value = 0.38
     this.masterCompressor.threshold.value = -18
     this.masterCompressor.knee.value = 12
     this.masterCompressor.ratio.value = 5
     this.masterCompressor.attack.value = 0.003
     this.masterCompressor.release.value = 0.18
+    this.musicReverbInput.connect(this.musicConvolver)
+    this.musicConvolver.connect(this.musicReverbGain)
+    this.musicReverbGain.connect(this.musicGain)
+    this.musicEchoInput.connect(this.musicDelay)
+    this.musicDelay.connect(this.musicDelayFeedback)
+    this.musicDelayFeedback.connect(this.musicDelay)
+    this.musicDelay.connect(this.musicDelayGain)
+    this.musicDelayGain.connect(this.musicGain)
     this.musicGain.connect(this.masterCompressor)
     this.sfxGain.connect(this.masterCompressor)
     this.uiGain.connect(this.masterCompressor)
     this.masterCompressor.connect(this.masterGain)
     this.masterGain.connect(context.destination)
     this.sharedNoiseBuffer = this.createNoiseBuffer(context)
+    this.createMusicWaves(context)
     this.musicNextNoteTime = context.currentTime + 0.06
     this.updateBusTargets()
     this.scheduleMusic()
@@ -792,6 +1029,35 @@ export class AudioDirector {
     const random = createRandom(8297)
     for (let index = 0; index < data.length; index += 1) data[index] = random() * 2 - 1
     return buffer
+  }
+
+  private createMusicImpulse(context: AudioContext): AudioBuffer {
+    const length = Math.floor(context.sampleRate * 1.45)
+    const buffer = context.createBuffer(2, length, context.sampleRate)
+    const random = createRandom(this.musicSeed ^ 0xa511e9b3)
+    for (let channel = 0; channel < buffer.numberOfChannels; channel += 1) {
+      const data = buffer.getChannelData(channel)
+      for (let index = 0; index < data.length; index += 1) {
+        const decay = (1 - index / data.length) ** 2.7
+        const diffusion = 0.72 + Math.sin(index * (channel === 0 ? 0.013 : 0.017)) * 0.08
+        data[index] = (random() * 2 - 1) * decay * diffusion
+      }
+    }
+    return buffer
+  }
+
+  private createMusicWaves(context: AudioContext): void {
+    this.musicWaves.clear()
+    for (const instrument of MUSIC_INSTRUMENTS) {
+      const harmonics = MUSIC_INSTRUMENT_PROFILES[instrument].harmonics
+      const real = new Float32Array(harmonics.length)
+      const imaginary = Float32Array.from(harmonics)
+      this.musicWaves.set(instrument, context.createPeriodicWave(real, imaginary))
+    }
+  }
+
+  private musicEchoTime(): number {
+    return (60 / getMusicTempo(this.activeMusicContext.faction)) * 0.75
   }
 
   private updateBusTargets(): void {
@@ -843,99 +1109,226 @@ export class AudioDirector {
   private scheduleMusic(): void {
     const context = this.context
     if (!context || !this.musicGain || context.state === 'closed') return
-    const stepDuration = 60 / MUSIC_TEMPOS[this.faction] / 4
     if (this.musicNextNoteTime < context.currentTime - 0.5) {
       this.musicNextNoteTime = context.currentTime + 0.04
     }
     while (this.musicNextNoteTime < context.currentTime + 0.16) {
+      if (isMusicBarBoundary(this.musicStep)) this.commitMusicContext()
+      const stepDuration = 60 / getMusicTempo(this.activeMusicContext.faction) / 4
       if (!this.hidden && !this.musicMuted) {
         this.scheduleMusicStep(this.musicNextNoteTime, stepDuration)
       }
-      this.musicStep = (this.musicStep + 1) % 128
+      this.musicStep = (this.musicStep + 1) % MUSIC_CYCLE_STEPS
       this.musicNextNoteTime += stepDuration
     }
   }
 
-  private scheduleMusicStep(time: number, stepDuration: number): void {
-    const chordOffsets = [0, -4, 3, -2]
-    const chord = chordOffsets[Math.floor(this.musicStep / 16) % chordOffsets.length]
-    const root = MUSIC_ROOTS[this.faction] + ZONE_MUSIC_SHIFTS[this.zone] + chord
-    const pattern = MUSIC_PATTERNS[this.faction]
-    const melody = root + pattern[this.musicStep % pattern.length]
-
-    this.scheduleMusicTone(melody, time, stepDuration * 0.82, 'square', 0.09)
-    if (this.musicStep % 4 === 0) {
-      this.scheduleMusicTone(root - 12, time, stepDuration * 3.35, 'triangle', 0.12)
-      this.scheduleMusicTone(root + 7, time, stepDuration * 2.6, 'square', 0.025)
-      this.scheduleKick(time)
+  private commitMusicContext(): void {
+    if (sameMusicContext(this.activeMusicContext, this.pendingMusicContext)) return
+    this.activeMusicContext = this.pendingMusicContext
+    const context = this.context
+    const delay = this.musicDelay
+    if (context && delay) {
+      rampParam(delay.delayTime, this.musicEchoTime(), context.currentTime, 0.08)
     }
-    if (this.musicStep % 8 === 4) this.scheduleMusicNoise(time, 'snare')
-    if (this.musicStep % 2 === 1) this.scheduleMusicNoise(time, 'hat')
+  }
+
+  private scheduleMusicStep(time: number, stepDuration: number): void {
+    const events = planMusicStep(this.activeMusicContext, this.musicStep, this.musicSeed)
+    for (const event of events) {
+      if (event.kind === 'tone') {
+        this.scheduleMusicTone(
+          event.midi,
+          time,
+          stepDuration * event.durationSteps,
+          event.part,
+          event.velocity,
+          event.pan,
+        )
+      } else {
+        this.scheduleMusicDrum(event.drum, time, event.velocity, event.pan)
+      }
+    }
   }
 
   private scheduleMusicTone(
     midi: number,
     time: number,
     duration: number,
-    waveform: OscillatorType,
-    volume: number,
+    part: MusicTonePart,
+    velocity: number,
+    pan: number,
+  ): void {
+    const context = this.context
+    const musicGain = this.musicGain
+    if (!context || !musicGain) return
+    const instrument = MUSIC_PART_INSTRUMENTS[this.activeMusicContext.faction][part]
+    const profile = MUSIC_INSTRUMENT_PROFILES[instrument]
+    const wave = this.musicWaves.get(instrument)
+    if (!wave) return
+
+    const oscillator = context.createOscillator()
+    const filter = context.createBiquadFilter()
+    const envelope = context.createGain()
+    const panner = context.createStereoPanner()
+    const trackedNodes: AudioNode[] = [filter, envelope, panner]
+    const peak = Math.max(MIN_GAIN, profile.gain * velocity)
+    const attack = Math.min(profile.attack, duration * 0.35)
+    const release = Math.min(profile.release, duration * 0.6)
+    const releaseStart = Math.max(time + attack, time + duration - release)
+    const brightness = MUSIC_ZONE_BRIGHTNESS[this.activeMusicContext.zone]
+
+    oscillator.setPeriodicWave(wave)
+    oscillator.frequency.setValueAtTime(midiToFrequency(midi), time)
+    oscillator.detune.setValueAtTime(profile.detune, time)
+    filter.type = 'lowpass'
+    filter.Q.setValueAtTime(part === 'bass' ? 0.72 : 1.1, time)
+    filter.frequency.setValueAtTime(Math.max(80, profile.filterStart * brightness), time)
+    filter.frequency.exponentialRampToValueAtTime(
+      Math.max(80, profile.filterEnd * brightness),
+      time + Math.max(0.02, duration * 0.82),
+    )
+    envelope.gain.setValueAtTime(MIN_GAIN, time)
+    envelope.gain.exponentialRampToValueAtTime(peak, time + Math.max(0.002, attack))
+    envelope.gain.exponentialRampToValueAtTime(
+      Math.max(MIN_GAIN, peak * profile.sustain),
+      releaseStart,
+    )
+    envelope.gain.exponentialRampToValueAtTime(MIN_GAIN, time + duration)
+    panner.pan.setValueAtTime(pan, time)
+
+    oscillator.connect(filter)
+    filter.connect(envelope)
+    envelope.connect(panner)
+    panner.connect(musicGain)
+    this.connectMusicSends(panner, profile.reverb, profile.echo, trackedNodes)
+    this.trackMusicSource(oscillator, trackedNodes)
+    oscillator.start(time)
+    oscillator.stop(time + duration + 0.03)
+  }
+
+  private connectMusicSends(
+    source: AudioNode,
+    reverbAmount: number,
+    echoAmount: number,
+    trackedNodes: AudioNode[],
+  ): void {
+    const context = this.context
+    if (!context) return
+    if (this.musicReverbInput && reverbAmount > 0) {
+      const send = context.createGain()
+      send.gain.value = reverbAmount
+      source.connect(send)
+      send.connect(this.musicReverbInput)
+      trackedNodes.push(send)
+    }
+    if (this.musicEchoInput && echoAmount > 0) {
+      const send = context.createGain()
+      send.gain.value = echoAmount
+      source.connect(send)
+      send.connect(this.musicEchoInput)
+      trackedNodes.push(send)
+    }
+  }
+
+  private scheduleMusicDrum(
+    drum: MusicDrum,
+    time: number,
+    velocity: number,
+    pan: number,
+  ): void {
+    if (drum === 'kick') {
+      this.scheduleMusicDrumTone(
+        time,
+        velocity,
+        pan,
+        MUSIC_KICK_PITCH[this.activeMusicContext.faction],
+        42,
+        0.14,
+      )
+      return
+    }
+    if (drum === 'tom') {
+      this.scheduleMusicDrumTone(
+        time,
+        velocity * 0.78,
+        pan,
+        MUSIC_TOM_PITCH[this.activeMusicContext.faction],
+        62,
+        0.19,
+        0.16,
+      )
+      return
+    }
+    this.scheduleMusicNoise(time, drum, velocity, pan)
+  }
+
+  private scheduleMusicDrumTone(
+    time: number,
+    velocity: number,
+    pan: number,
+    startFrequency: number,
+    endFrequency: number,
+    duration: number,
+    reverb = 0,
   ): void {
     const context = this.context
     const musicGain = this.musicGain
     if (!context || !musicGain) return
     const oscillator = context.createOscillator()
     const envelope = context.createGain()
-    oscillator.type = waveform
-    oscillator.frequency.setValueAtTime(midiToFrequency(midi), time)
-    envelope.gain.setValueAtTime(MIN_GAIN, time)
-    envelope.gain.exponentialRampToValueAtTime(volume, time + 0.008)
-    envelope.gain.setValueAtTime(volume * 0.72, time + duration * 0.55)
-    envelope.gain.exponentialRampToValueAtTime(MIN_GAIN, time + duration)
-    oscillator.connect(envelope)
-    envelope.connect(musicGain)
-    this.trackMusicSource(oscillator, [envelope])
-    oscillator.start(time)
-    oscillator.stop(time + duration + 0.02)
-  }
-
-  private scheduleKick(time: number): void {
-    const context = this.context
-    const musicGain = this.musicGain
-    if (!context || !musicGain) return
-    const oscillator = context.createOscillator()
-    const envelope = context.createGain()
+    const panner = context.createStereoPanner()
+    const trackedNodes: AudioNode[] = [envelope, panner]
     oscillator.type = 'sine'
-    oscillator.frequency.setValueAtTime(125, time)
-    oscillator.frequency.exponentialRampToValueAtTime(42, time + 0.1)
-    envelope.gain.setValueAtTime(0.16, time)
-    envelope.gain.exponentialRampToValueAtTime(MIN_GAIN, time + 0.12)
+    oscillator.frequency.setValueAtTime(startFrequency, time)
+    oscillator.frequency.exponentialRampToValueAtTime(endFrequency, time + duration * 0.78)
+    envelope.gain.setValueAtTime(Math.max(MIN_GAIN, 0.17 * velocity), time)
+    envelope.gain.exponentialRampToValueAtTime(MIN_GAIN, time + duration)
+    panner.pan.setValueAtTime(pan, time)
     oscillator.connect(envelope)
-    envelope.connect(musicGain)
-    this.trackMusicSource(oscillator, [envelope])
+    envelope.connect(panner)
+    panner.connect(musicGain)
+    this.connectMusicSends(panner, reverb, 0, trackedNodes)
+    this.trackMusicSource(oscillator, trackedNodes)
     oscillator.start(time)
-    oscillator.stop(time + 0.13)
+    oscillator.stop(time + duration + 0.01)
   }
 
-  private scheduleMusicNoise(time: number, type: 'hat' | 'snare'): void {
+  private scheduleMusicNoise(
+    time: number,
+    type: Exclude<MusicDrum, 'kick' | 'tom'>,
+    velocity: number,
+    pan: number,
+  ): void {
     const context = this.context
     const musicGain = this.musicGain
     const buffer = this.sharedNoiseBuffer
     if (!context || !musicGain || !buffer) return
-    const duration = type === 'hat' ? 0.035 : 0.1
+    const duration = type === 'hat' ? 0.045 : type === 'snare' ? 0.12 : 0.42
+    const gain = type === 'hat' ? 0.04 : type === 'snare' ? 0.085 : 0.058
+    const frequency = type === 'hat' ? 5600 : type === 'snare' ? 1550 : 3100
+    const reverb = type === 'hat' ? 0.05 : type === 'snare' ? 0.16 : 0.34
     const source = context.createBufferSource()
     const filter = context.createBiquadFilter()
     const envelope = context.createGain()
+    const panner = context.createStereoPanner()
+    const trackedNodes: AudioNode[] = [filter, envelope, panner]
     source.buffer = buffer
     filter.type = type === 'hat' ? 'highpass' : 'bandpass'
-    filter.frequency.setValueAtTime(type === 'hat' ? 5200 : 1450, time)
-    filter.Q.setValueAtTime(type === 'hat' ? 0.7 : 0.9, time)
-    envelope.gain.setValueAtTime(type === 'hat' ? 0.035 : 0.08, time)
+    filter.frequency.setValueAtTime(frequency, time)
+    filter.Q.setValueAtTime(type === 'crash' ? 0.45 : type === 'hat' ? 0.7 : 0.9, time)
+    envelope.gain.setValueAtTime(Math.max(MIN_GAIN, gain * velocity), time)
     envelope.gain.exponentialRampToValueAtTime(MIN_GAIN, time + duration)
+    panner.pan.setValueAtTime(pan, time)
     source.connect(filter)
     filter.connect(envelope)
-    envelope.connect(musicGain)
-    this.trackMusicSource(source, [filter, envelope])
-    source.start(time, 0, duration)
+    envelope.connect(panner)
+    panner.connect(musicGain)
+    this.connectMusicSends(panner, reverb, 0, trackedNodes)
+    this.trackMusicSource(source, trackedNodes)
+    const offsetRange = Math.max(0, buffer.duration - duration)
+    const offset = offsetRange > 0 ? ((this.musicStep * 0.137 + frequency) % offsetRange) : 0
+    source.start(time, offset, duration)
     source.stop(time + duration)
   }
 
@@ -1133,6 +1526,20 @@ interface Variation {
   seed: number
   pitchRatio: number
   gainRatio: number
+}
+
+function sameMusicContext(left: MusicContext, right: MusicContext): boolean {
+  return (
+    left.faction === right.faction &&
+    left.zone === right.zone &&
+    left.intensity === right.intensity &&
+    left.threatTier === right.threatTier
+  )
+}
+
+function normalizeSeed(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value)) return 0x6d2b79f5
+  return Math.trunc(value) >>> 0
 }
 
 function midiToFrequency(note: number): number {

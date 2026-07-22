@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { AudioDirector, type SoundCue, type SoundRequest } from './AudioDirector'
+import { musicIntensityRank, type MusicIntensity } from './MusicScore.ts'
 import { BloomPostProcessor } from './BloomPostProcessor'
 import {
   AchievementTracker,
@@ -708,6 +709,13 @@ const RAGE_RANGE_BONUS = 6
 const ALERT_RADIUS = 14
 const ALERT_COOLDOWN = 1.5
 const NPC_RETALIATION_DURATION = 4
+const MUSIC_STATE_SAMPLE_INTERVAL = 0.2
+const MUSIC_INTENSITY_HOLD: Readonly<Record<MusicIntensity, number>> = {
+  explore: 0,
+  alert: 3,
+  combat: 5,
+  boss: 8,
+}
 const COMMANDER_AURA_RANGE = 10
 const COMMANDER_SPEED_MULTIPLIER = 1.15
 const COMMANDER_DAMAGE_BONUS = 4
@@ -1348,6 +1356,9 @@ export class GameEngine {
   private actorSequence = 0
   private readonly audio: AudioDirector
   private readonly audioListenerRight = new THREE.Vector3()
+  private musicIntensity: MusicIntensity = 'explore'
+  private musicIntensityReleaseAt = 0
+  private nextMusicStateSampleAt = 0
   private lootSequence = 0
   private lootBurstSequence = 0
   private lootToastSequence = 0
@@ -1454,6 +1465,7 @@ export class GameEngine {
     this.audio = new AudioDirector({
       musicMuted: settings.musicMuted ?? false,
       sfxVolume: settings.sfxVolume,
+      musicSeed: deriveSeed(launch?.config.seed ?? 0x4b4f524f, `music:${faction}`),
     })
     this.achievements = new AchievementTracker((achievement) => {
       this.callbacks.onAchievementUnlocked(achievement)
@@ -1760,7 +1772,12 @@ export class GameEngine {
     this.applySavedBodyAppearance()
     this.playerOutline = this.registerOutline(this.player, 'player')
     this.lastZone = this.zoneAtPosition(this.player.position.x, this.player.position.z)
-    this.audio.setMusicContext(this.faction, this.lastZone)
+    this.audio.setMusicContext({
+      faction: this.faction,
+      zone: this.lastZone,
+      intensity: this.musicIntensity,
+      threatTier: this.threatTier,
+    })
     if (!restoredRun) {
       // Legacy saves intentionally start a fresh achievement run.
       this.achievements.beginRun(
@@ -2546,10 +2563,7 @@ export class GameEngine {
     this.updateCamera(visualDelta, false)
     this.audioListenerRight.setFromMatrixColumn(this.camera.matrixWorld, 0)
     this.audio.setListener(this.camera.position, this.audioListenerRight)
-    this.audio.setMusicContext(
-      this.faction,
-      this.zoneAtPosition(this.player.position.x, this.player.position.z),
-    )
+    this.updateMusicContext()
     this.postProcessor.render()
     this.frameHandle = requestAnimationFrame(this.loop)
   }
@@ -12702,6 +12716,56 @@ uniform float uSwayAmplitude;`,
       }
     }
     this.audio.setHidden(document.hidden)
+  }
+
+  private updateMusicContext(): void {
+    if (this.elapsed >= this.nextMusicStateSampleAt) {
+      this.nextMusicStateSampleAt = this.elapsed + MUSIC_STATE_SAMPLE_INTERVAL
+      const desired = this.desiredMusicIntensity()
+      const desiredRank = musicIntensityRank(desired)
+      const currentRank = musicIntensityRank(this.musicIntensity)
+
+      if (desiredRank > currentRank || this.elapsed >= this.musicIntensityReleaseAt) {
+        this.musicIntensity = desired
+      }
+      if (desiredRank >= musicIntensityRank(this.musicIntensity)) {
+        this.musicIntensityReleaseAt =
+          this.elapsed + MUSIC_INTENSITY_HOLD[this.musicIntensity]
+      }
+    }
+
+    this.audio.setMusicContext({
+      faction: this.faction,
+      zone: this.zoneAtPosition(this.player.position.x, this.player.position.z),
+      intensity: this.musicIntensity,
+      threatTier: this.threatTier,
+    })
+  }
+
+  private desiredMusicIntensity(): MusicIntensity {
+    let nearbyAggro = 0
+    let immediateThreat = false
+    let championEngaged = false
+    const alertRangeSq = 38 * 38
+    const combatRangeSq = 14 * 14
+
+    for (const actor of this.actors) {
+      if (!actor.alive || !actor.hostileToPlayer) continue
+      const distanceSq = actor.mesh.position.distanceToSquared(this.player.position)
+      if (distanceSq > alertRangeSq) continue
+      const targetsPlayer = actor.action?.target.kind === 'player'
+      const engaged = actor.playerAggro || targetsPlayer
+      if (!engaged) continue
+
+      nearbyAggro += 1
+      immediateThreat ||= targetsPlayer || actor.rageTimer > 0 || distanceSq <= combatRangeSq
+      championEngaged ||= actor.role === 'champion'
+    }
+
+    if (championEngaged) return 'boss'
+    if (immediateThreat || nearbyAggro >= 2) return 'combat'
+    if (nearbyAggro > 0 || this.activeEvent) return 'alert'
+    return 'explore'
   }
 
   private resumeAudio(): void {
