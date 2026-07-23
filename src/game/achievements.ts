@@ -246,7 +246,7 @@ function createRunState(
 const definitions: InternalAchievementDefinition[] = [
   {
     id: 'first-march',
-    name: 'Понеслась',
+    name: 'Суть такова',
     description: 'Начать первый забег.',
     rarity: 'common',
     category: 'journey',
@@ -255,7 +255,7 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'road-regular',
-    name: 'Заядлый',
+    name: 'Можно ещё раз',
     description: 'Начать 5 забегов.',
     rarity: 'common',
     category: 'journey',
@@ -264,7 +264,7 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'seasoned-wanderer',
-    name: 'Хроник',
+    name: 'Джва года спустя',
     description: 'Начать 15 забегов.',
     rarity: 'uncommon',
     category: 'journey',
@@ -274,7 +274,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'first-blood',
     name: 'Первая кровь',
-    description: 'Лично уронить первого врага.',
+    description: 'Лично победить первого врага.',
     rarity: 'common',
     category: 'combat',
     target: 1,
@@ -283,7 +283,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'warm-up',
     name: 'Размялся',
-    description: 'Лично уронить 5 врагов.',
+    description: 'Лично победить 5 врагов.',
     rarity: 'common',
     category: 'combat',
     target: 5,
@@ -291,8 +291,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'warrior',
-    name: 'Мясник',
-    description: 'Лично уронить 25 врагов.',
+    name: 'Труп тоже 3Д',
+    description: 'Лично победить 25 врагов.',
     rarity: 'uncommon',
     category: 'combat',
     target: 25,
@@ -301,7 +301,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'battlefield-terror',
     name: 'Гроза обочин',
-    description: 'Лично уронить 100 врагов.',
+    description: 'Лично победить 100 врагов.',
     rarity: 'rare',
     category: 'combat',
     target: 100,
@@ -310,7 +310,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'living-legend',
     name: 'Живая легенда',
-    description: 'Лично уронить 300 врагов.',
+    description: 'Лично победить 300 врагов.',
     rarity: 'legendary',
     category: 'combat',
     target: 300,
@@ -319,7 +319,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'elf-hunter',
     name: 'Лесоруб',
-    description: 'Уронить 20 ушастых из чащи.',
+    description: 'Победить 20 партизан эльфов.',
     rarity: 'uncommon',
     category: 'factions',
     target: 20,
@@ -327,8 +327,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'guard-breaker',
-    name: 'Смена не пришла',
-    description: 'Уронить 20 дворцовых вахтёров.',
+    name: 'Охрана не справилась',
+    description: 'Победить 20 солдат охраны дворца.',
     rarity: 'uncommon',
     category: 'factions',
     target: 20,
@@ -337,7 +337,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'villain-hunter',
     name: 'Злодею злодей',
-    description: 'Уронить 20 приспешников злодея.',
+    description: 'Победить 20 приспешников злодея.',
     rarity: 'uncommon',
     category: 'factions',
     target: 20,
@@ -346,7 +346,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'brute-force',
     name: 'Кто кого',
-    description: 'Уронить 5 громил.',
+    description: 'Победить 5 громил.',
     rarity: 'uncommon',
     category: 'combat',
     target: 5,
@@ -354,8 +354,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'chain-of-command',
-    name: 'Дерзость',
-    description: 'Уронить командира.',
+    name: 'Командир больше не командир',
+    description: 'Победить командира.',
     rarity: 'uncommon',
     category: 'combat',
     target: 1,
@@ -364,7 +364,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'commander-collector',
     name: 'Кадровый голод',
-    description: 'Уронить 5 командиров.',
+    description: 'Победить 5 командиров.',
     rarity: 'rare',
     category: 'combat',
     target: 5,
@@ -373,7 +373,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'champion-fallen',
     name: 'Трофейный шлем',
-    description: 'Уронить заезжего чемпиона.',
+    description: 'Победить странствующего чемпиона.',
     rarity: 'rare',
     category: 'combat',
     target: 1,
@@ -382,7 +382,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'champion-hunter',
     name: 'Гроза чемпионов',
-    description: 'Уронить 5 чемпионов.',
+    description: 'Победить 5 чемпионов.',
     rarity: 'epic',
     category: 'combat',
     target: 5,
@@ -391,7 +391,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'silence-archers',
     name: 'Тишина на стенах',
-    description: 'Уронить 10 лучников.',
+    description: 'Победить 10 лучников.',
     rarity: 'uncommon',
     category: 'combat',
     target: 10,
@@ -400,7 +400,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'ten-in-run',
     name: 'Разошёлся',
-    description: 'Лично уронить 10 врагов за один забег.',
+    description: 'Лично победить 10 врагов за один забег.',
     rarity: 'uncommon',
     category: 'mastery',
     target: 10,
@@ -409,7 +409,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'twenty-five-in-run',
     name: 'Берсерк',
-    description: 'Лично уронить 25 врагов за один забег.',
+    description: 'Лично победить 25 врагов за один забег.',
     rarity: 'epic',
     category: 'mastery',
     target: 25,
@@ -419,7 +419,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'untouched-streak',
     name: 'Неуловимый',
-    description: 'Уронить 10 врагов подряд без единой царапины.',
+    description: 'Победить 10 врагов подряд без единой царапины.',
     rarity: 'epic',
     category: 'mastery',
     target: 10,
@@ -429,7 +429,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'first-purse',
     name: 'Мелочь звенит',
-    description: 'Намародёрить 100 золота.',
+    description: 'Заработать 100 золота.',
     rarity: 'common',
     category: 'economy',
     target: 100,
@@ -438,7 +438,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'heavy-purse',
     name: 'Кошель пухнет',
-    description: 'Намародёрить 500 золота.',
+    description: 'Заработать 500 золота.',
     rarity: 'uncommon',
     category: 'economy',
     target: 500,
@@ -447,7 +447,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'gold-magnate',
     name: 'Корованный барон',
-    description: 'Намародёрить 2000 золота.',
+    description: 'Заработать 2000 золота.',
     rarity: 'rare',
     category: 'economy',
     target: 2000,
@@ -455,8 +455,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'first-purchase',
-    name: 'Клиент',
-    description: 'Отовариться у барыги впервые.',
+    name: 'Можно покупать',
+    description: 'Совершить первую покупку.',
     rarity: 'common',
     category: 'economy',
     target: 1,
@@ -464,8 +464,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'regular-customer',
-    name: 'Свой человек',
-    description: 'Отовариться у барыги 10 раз.',
+    name: 'Как в Daggerfall',
+    description: 'Совершить 10 покупок.',
     rarity: 'uncommon',
     category: 'economy',
     target: 10,
@@ -474,7 +474,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'tempered-steel',
     name: 'Заточка',
-    description: 'Прикупить кованый клинок.',
+    description: 'Купить кованый клинок.',
     rarity: 'common',
     category: 'economy',
     target: 1,
@@ -482,8 +482,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'field-medic',
-    name: 'Сам себе коновал',
-    description: 'Прикупить 3 полевые аптечки.',
+    name: 'Если пользователя не вылечат',
+    description: 'Купить 3 полевых набора.',
     rarity: 'uncommon',
     category: 'economy',
     target: 3,
@@ -491,8 +491,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'more-metal',
-    name: 'Киборг-корованщик',
-    description: 'Вкрутить 3 протеза.',
+    name: 'Самое хорошее — протез',
+    description: 'Установить 3 протеза.',
     rarity: 'rare',
     category: 'quirks',
     target: 3,
@@ -502,7 +502,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'caravan-robber',
     name: 'Грабить корованы',
-    description: 'Обнести первый корован.',
+    description: 'Ограбить первый корован.',
     rarity: 'common',
     category: 'caravans',
     target: 1,
@@ -511,7 +511,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'caravan-professional',
     name: 'Корованщик со стажем',
-    description: 'Обнести 10 корованов.',
+    description: 'Ограбить 10 корованов.',
     rarity: 'rare',
     category: 'caravans',
     target: 10,
@@ -520,7 +520,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'golden-road',
     name: 'Золотая жила',
-    description: 'Свалить от погони с 3 жирными корованами.',
+    description: 'Уйти от погони с 3 богатыми корованами.',
     rarity: 'epic',
     category: 'caravans',
     target: 3,
@@ -528,8 +528,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'first-objective',
-    name: 'Галочка',
-    description: 'Сделать первое делишко.',
+    name: 'Суть выполнена',
+    description: 'Выполнить первую задачу.',
     rarity: 'common',
     category: 'journey',
     target: 1,
@@ -538,7 +538,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'ten-objectives',
     name: 'Работяга',
-    description: 'Обтяпать 10 делишек.',
+    description: 'Выполнить 10 задач.',
     rarity: 'uncommon',
     category: 'journey',
     target: 10,
@@ -547,7 +547,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'thirty-objectives',
     name: 'Всё чётко',
-    description: 'Обтяпать 30 делишек.',
+    description: 'Выполнить 30 задач.',
     rarity: 'rare',
     category: 'journey',
     target: 30,
@@ -555,8 +555,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'first-event',
-    name: 'Влез в движуху',
-    description: 'Закрыть движуху в мире.',
+    name: 'Набег и т. п.',
+    description: 'Завершить первое событие мира.',
     rarity: 'common',
     category: 'events',
     target: 1,
@@ -564,8 +564,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'five-events',
-    name: 'Свой в движухе',
-    description: 'Закрыть 5 движух в мире.',
+    name: 'Мир не стоит',
+    description: 'Завершить 5 событий мира.',
     rarity: 'uncommon',
     category: 'events',
     target: 5,
@@ -573,8 +573,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'twenty-events',
-    name: 'Хронист угара',
-    description: 'Закрыть 20 движух в мире.',
+    name: 'Хронист набегов',
+    description: 'Завершить 20 событий мира.',
     rarity: 'rare',
     category: 'events',
     target: 20,
@@ -582,8 +582,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'event-rich-caravan',
-    name: 'Куш',
-    description: 'Закрыть движуху «Жирный корован».',
+    name: 'Богатая добыча',
+    description: 'Завершить событие «Богатый корован».',
     rarity: 'common',
     category: 'events',
     target: 1,
@@ -601,7 +601,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'event-champion',
     name: 'Принял вызов',
-    description: 'Закрыть движуху с заезжим чемпионом.',
+    description: 'Завершить событие со странствующим чемпионом.',
     rarity: 'uncommon',
     category: 'events',
     target: 1,
@@ -628,7 +628,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'all-events',
     name: 'Видал всякое',
-    description: 'Закрыть движухи всех пяти видов.',
+    description: 'Завершить события всех пяти видов.',
     rarity: 'rare',
     category: 'collection',
     target: EVENT_KINDS.length,
@@ -637,8 +637,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'four-zones-run',
-    name: 'Карта в сапоге',
-    description: 'Оббегать все четыре земли за один забег.',
+    name: 'Всего в игре 4 зоны',
+    description: 'Посетить все четыре зоны за один забег.',
     rarity: 'uncommon',
     category: 'journey',
     target: ZONES.length,
@@ -647,7 +647,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'four-zones-ever',
     name: 'Знаю тропки',
-    description: 'Открыть все земли мира.',
+    description: 'Открыть все четыре зоны мира.',
     rarity: 'common',
     category: 'collection',
     target: ZONES.length,
@@ -656,7 +656,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'first-victory',
     name: 'Корованы наши!',
-    description: 'Дожать забег до победы.',
+    description: 'Завершить кампанию победой.',
     rarity: 'uncommon',
     category: 'mastery',
     target: 1,
@@ -665,7 +665,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'three-banners',
     name: 'Три знамени',
-    description: 'Взять победу за каждую из трёх банд.',
+    description: 'Победить за каждую из трёх сторон.',
     rarity: 'legendary',
     category: 'collection',
     target: FACTIONS.length,
@@ -695,7 +695,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'flawless-victory',
     name: 'Ни царапины',
-    description: 'Победить, не словив ни разу.',
+    description: 'Победить, не получив урона.',
     rarity: 'legendary',
     category: 'mastery',
     target: 1,
@@ -716,8 +716,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'battle-scar',
-    name: 'Боевой шрам',
-    description: 'Словить первое ранение.',
+    name: 'Могут не только убить',
+    description: 'Получить первое ранение.',
     rarity: 'common',
     category: 'quirks',
     target: 1,
@@ -725,7 +725,7 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'parting-ways',
-    name: 'Расстались по-хорошему',
+    name: 'Либо ползать, либо протез',
     description: 'Лишиться части тела.',
     rarity: 'uncommon',
     category: 'quirks',
@@ -735,7 +735,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'ability-student',
     name: 'Коронный финт',
-    description: 'Пустить в ход способность банды 10 раз.',
+    description: 'Использовать фракционную способность 10 раз.',
     rarity: 'common',
     category: 'mastery',
     target: 10,
@@ -744,7 +744,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'ability-master',
     name: 'На автомате',
-    description: 'Пустить в ход способность банды 100 раз.',
+    description: 'Использовать фракционную способность 100 раз.',
     rarity: 'rare',
     category: 'mastery',
     target: 100,
@@ -761,8 +761,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'born-commander',
-    name: 'Пахан',
-    description: 'Скомандовать братве 10 раз.',
+    name: 'Сам себе командир',
+    description: 'Отдать отряду 10 приказов.',
     rarity: 'uncommon',
     category: 'mastery',
     target: 10,
@@ -770,8 +770,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'long-road',
-    name: 'Часовой на тропе',
-    description: 'Провести в законченных забегах целый час.',
+    name: 'Я джва года хочу',
+    description: 'Провести в завершённых кампаниях один час.',
     rarity: 'rare',
     category: 'journey',
     target: 3600,
