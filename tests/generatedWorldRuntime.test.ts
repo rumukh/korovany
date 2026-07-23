@@ -92,6 +92,89 @@ function materialMap(object: THREE.Object3D | undefined): THREE.Texture | null {
   return material.map
 }
 
+function renderedTerrainHeight(
+  terrain: THREE.Mesh,
+  x: number,
+  z: number,
+): number {
+  const position = terrain.geometry.getAttribute('position')
+  const index = terrain.geometry.getIndex()
+  assert.ok(index)
+  for (let offset = 0; offset < index.count; offset += 3) {
+    const first = index.getX(offset)
+    const second = index.getX(offset + 1)
+    const third = index.getX(offset + 2)
+    const ax = position.getX(first)
+    const az = position.getZ(first)
+    const bx = position.getX(second)
+    const bz = position.getZ(second)
+    const cx = position.getX(third)
+    const cz = position.getZ(third)
+    const denominator = (bz - cz) * (ax - cx) + (cx - bx) * (az - cz)
+    if (Math.abs(denominator) <= Number.EPSILON) continue
+    const firstWeight =
+      ((bz - cz) * (x - cx) + (cx - bx) * (z - cz)) / denominator
+    const secondWeight =
+      ((cz - az) * (x - cx) + (ax - cx) * (z - cz)) / denominator
+    const thirdWeight = 1 - firstWeight - secondWeight
+    if (
+      firstWeight < -0.0001 ||
+      secondWeight < -0.0001 ||
+      thirdWeight < -0.0001
+    ) {
+      continue
+    }
+    return (
+      position.getY(first) * firstWeight +
+      position.getY(second) * secondWeight +
+      position.getY(third) * thirdWeight
+    )
+  }
+  assert.fail(`Could not sample rendered terrain at (${x}, ${z})`)
+}
+
+function assertSurfaceFollowsRenderedTerrain(
+  surface: THREE.Mesh,
+  terrain: THREE.Mesh,
+  heightOffset: number,
+): void {
+  assert.equal(surface.geometry.type, 'BufferGeometry')
+  const position = surface.geometry.getAttribute('position')
+  const index = surface.geometry.getIndex()
+  assert.ok(position.count >= 6)
+  assert.ok(index)
+  assert.ok(index.count > 0)
+  const assertPoint = (x: number, y: number, z: number, label: string): void => {
+    assert.ok(
+      Math.abs(y - renderedTerrainHeight(terrain, x, z) - heightOffset) <
+        0.002,
+      `${surface.name} ${label} is not projected onto rendered terrain`,
+    )
+  }
+  for (let vertex = 0; vertex < position.count; vertex += 1) {
+    assertPoint(
+      position.getX(vertex),
+      position.getY(vertex),
+      position.getZ(vertex),
+      `vertex ${vertex}`,
+    )
+  }
+  for (let offset = 0; offset < index.count; offset += 3) {
+    const first = index.getX(offset)
+    const second = index.getX(offset + 1)
+    const third = index.getX(offset + 2)
+    assertPoint(
+      (position.getX(first) + position.getX(second) + position.getX(third)) /
+        3,
+      (position.getY(first) + position.getY(second) + position.getY(third)) /
+        3,
+      (position.getZ(first) + position.getZ(second) + position.getZ(third)) /
+        3,
+      `triangle ${offset / 3}`,
+    )
+  }
+}
+
 function expectedNeighborhood(
   blueprint: WorldBlueprint,
   focus: WorldRegion,
@@ -248,6 +331,129 @@ test('river water blocks ordinary crossings while bridge gaps remain traversable
   assert.equal(blockedCrossing.blocked, true)
   assert.ok(
     blockedCrossing.collisionIds.some((id) => id.startsWith('water:')),
+  )
+  runtime.dispose()
+})
+
+test('road and river surfaces form continuous terrain-projected ribbons', () => {
+  const { scene, blueprint, runtime } = createRuntime(3_427_774_947)
+  const northRegionId = blueprint.river.regionPath[2]
+  const southRegionId = blueprint.river.regionPath[3]
+  assert.ok(northRegionId)
+  assert.ok(southRegionId)
+  const focus = runtime.getRegionCenter(northRegionId)
+  assert.ok(focus)
+  runtime.update({ deltaSeconds: 0, focus })
+
+  const northRoot = regionRoot(scene, northRegionId)
+  const southRoot = regionRoot(scene, southRegionId)
+  assert.ok(northRoot)
+  assert.ok(southRoot)
+  const northRiver = northRoot.getObjectByName(`river:${northRegionId}`)
+  const southRiver = southRoot.getObjectByName(`river:${southRegionId}`)
+  assert.ok(northRiver instanceof THREE.Mesh)
+  assert.ok(southRiver instanceof THREE.Mesh)
+  const roadSurfaces = northRoot.children.filter(
+    (child): child is THREE.Mesh =>
+      child instanceof THREE.Mesh && child.name.startsWith(`road:${northRegionId}:`),
+  )
+  assert.ok(roadSurfaces.length > 0)
+  const roadHeights = roadSurfaces.flatMap((surface) => {
+    const position = surface.geometry.getAttribute('position')
+    return Array.from({ length: position.count }, (_, index) =>
+      position.getY(index),
+    )
+  })
+  assert.ok(Math.max(...roadHeights) - Math.min(...roadHeights) > 3)
+
+  const northTerrain = northRoot.getObjectByName(`terrain:${northRegionId}`)
+  const southTerrain = southRoot.getObjectByName(`terrain:${southRegionId}`)
+  assert.ok(northTerrain instanceof THREE.Mesh)
+  assert.ok(southTerrain instanceof THREE.Mesh)
+  for (const surface of [northRiver, ...roadSurfaces]) {
+    assertSurfaceFollowsRenderedTerrain(
+      surface,
+      northTerrain,
+      surface.name.startsWith('river:') ? 0.1 : 0.14,
+    )
+  }
+  assertSurfaceFollowsRenderedTerrain(southRiver, southTerrain, 0.1)
+
+  const northBounds = runtime.getRegionBounds(northRegionId)
+  assert.ok(northBounds)
+  const boundaryZ = northBounds.maxZ
+  const boundaryVertices = (
+    mesh: THREE.Mesh,
+    axis: 'x' | 'z',
+    boundary: number,
+  ): Array<[number, number]> => {
+    const position = mesh.geometry.getAttribute('position')
+    const vertices = new Map<string, [number, number]>()
+    for (let index = 0; index < position.count; index += 1) {
+      const boundaryCoordinate =
+        axis === 'x' ? position.getX(index) : position.getZ(index)
+      if (Math.abs(boundaryCoordinate - boundary) >= 0.001) continue
+      const vertex: [number, number] = [
+        Number(
+          (axis === 'x'
+            ? position.getZ(index)
+            : position.getX(index)
+          ).toFixed(4),
+        ),
+        Number(position.getY(index).toFixed(4)),
+      ]
+      vertices.set(vertex.join(':'), vertex)
+    }
+    return [...vertices.values()].sort((first, second) => first[0] - second[0])
+  }
+  assert.deepEqual(
+    boundaryVertices(northRiver, 'z', boundaryZ),
+    boundaryVertices(southRiver, 'z', boundaryZ),
+  )
+
+  const region = blueprint.regions.find(
+    (candidate) => candidate.id === northRegionId,
+  )
+  assert.ok(region)
+  const direction = roadSurfaces[0].name.split(':').at(-1)
+  assert.ok(direction)
+  const offsets: Record<string, [number, number]> = {
+    north: [0, -1],
+    south: [0, 1],
+    east: [1, 0],
+    west: [-1, 0],
+  }
+  const opposites: Record<string, string> = {
+    north: 'south',
+    south: 'north',
+    east: 'west',
+    west: 'east',
+  }
+  const offset = offsets[direction]
+  assert.ok(offset)
+  const adjacentRegion = regionAt(
+    blueprint,
+    region.coordinate.x + offset[0],
+    region.coordinate.y + offset[1],
+  )
+  const adjacentRoot = regionRoot(scene, adjacentRegion.id)
+  assert.ok(adjacentRoot)
+  const adjacentRoad = adjacentRoot.getObjectByName(
+    `road:${adjacentRegion.id}:${opposites[direction]}`,
+  )
+  assert.ok(adjacentRoad instanceof THREE.Mesh)
+  const roadAxis = direction === 'east' || direction === 'west' ? 'x' : 'z'
+  const roadBoundary =
+    direction === 'east'
+      ? northBounds.maxX
+      : direction === 'west'
+        ? northBounds.minX
+        : direction === 'north'
+          ? northBounds.minZ
+          : northBounds.maxZ
+  assert.deepEqual(
+    boundaryVertices(roadSurfaces[0], roadAxis, roadBoundary),
+    boundaryVertices(adjacentRoad, roadAxis, roadBoundary),
   )
   runtime.dispose()
 })

@@ -246,8 +246,8 @@ function createRunState(
 const definitions: InternalAchievementDefinition[] = [
   {
     id: 'first-march',
-    name: 'Первый поход',
-    description: 'Начать первую кампанию.',
+    name: 'Понеслась',
+    description: 'Начать первый забег.',
     rarity: 'common',
     category: 'journey',
     target: 1,
@@ -255,8 +255,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'road-regular',
-    name: 'Дорога зовёт',
-    description: 'Начать 5 кампаний.',
+    name: 'Заядлый',
+    description: 'Начать 5 забегов.',
     rarity: 'common',
     category: 'journey',
     target: 5,
@@ -264,8 +264,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'seasoned-wanderer',
-    name: 'Бывалый странник',
-    description: 'Начать 15 кампаний.',
+    name: 'Хроник',
+    description: 'Начать 15 забегов.',
     rarity: 'uncommon',
     category: 'journey',
     target: 15,
@@ -274,7 +274,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'first-blood',
     name: 'Первая кровь',
-    description: 'Лично победить первого врага.',
+    description: 'Лично уронить первого врага.',
     rarity: 'common',
     category: 'combat',
     target: 1,
@@ -282,8 +282,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'warm-up',
-    name: 'Разминка окончена',
-    description: 'Лично победить 5 врагов.',
+    name: 'Размялся',
+    description: 'Лично уронить 5 врагов.',
     rarity: 'common',
     category: 'combat',
     target: 5,
@@ -291,8 +291,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'warrior',
-    name: 'Ратник',
-    description: 'Лично победить 25 врагов.',
+    name: 'Мясник',
+    description: 'Лично уронить 25 врагов.',
     rarity: 'uncommon',
     category: 'combat',
     target: 25,
@@ -300,8 +300,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'battlefield-terror',
-    name: 'Гроза ратного поля',
-    description: 'Лично победить 100 врагов.',
+    name: 'Гроза обочин',
+    description: 'Лично уронить 100 врагов.',
     rarity: 'rare',
     category: 'combat',
     target: 100,
@@ -310,7 +310,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'living-legend',
     name: 'Живая легенда',
-    description: 'Лично победить 300 врагов.',
+    description: 'Лично уронить 300 врагов.',
     rarity: 'legendary',
     category: 'combat',
     target: 300,
@@ -319,7 +319,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'elf-hunter',
     name: 'Лесоруб',
-    description: 'Победить 20 лесных эльфов.',
+    description: 'Уронить 20 ушастых из чащи.',
     rarity: 'uncommon',
     category: 'factions',
     target: 20,
@@ -327,8 +327,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'guard-breaker',
-    name: 'Срыв караула',
-    description: 'Победить 20 дворцовых гвардейцев.',
+    name: 'Смена не пришла',
+    description: 'Уронить 20 дворцовых вахтёров.',
     rarity: 'uncommon',
     category: 'factions',
     target: 20,
@@ -337,7 +337,7 @@ const definitions: InternalAchievementDefinition[] = [
   {
     id: 'villain-hunter',
     name: 'Злодею злодей',
-    description: 'Победить 20 приспешников злодея.',
+    description: 'Уронить 20 приспешников злодея.',
     rarity: 'uncommon',
     category: 'factions',
     target: 20,
@@ -345,8 +345,8 @@ const definitions: InternalAchievementDefinition[] = [
   },
   {
     id: 'brute-force',
-    name: 'Сила против силы',
-    description: 'Победить 5 громил.',
+    name: 'Кто кого',
+    description: 'Уронить 5 громил.',
     rarity: 'uncommon',
     category: 'combat',
     target: 5,

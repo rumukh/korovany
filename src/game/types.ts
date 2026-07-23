@@ -103,19 +103,19 @@ export const ABILITY_INFO: Record<
 > = {
   elf: {
     id: 'bow',
-    name: 'Лесная стрела',
+    name: 'Стрела в спину',
     cooldownMax: 0.9,
     staminaCost: 15,
   },
   guard: {
     id: 'shield',
-    name: 'Стойка щита',
+    name: 'Стоять, бояться!',
     cooldownMax: 0.4,
     staminaCost: 0,
   },
   villain: {
     id: 'cleave',
-    name: 'Сокрушающий рывок',
+    name: 'Рывок с ноги',
     cooldownMax: 3.5,
     staminaCost: 30,
   },
@@ -285,27 +285,27 @@ export const FACTION_INFO: Record<
   }
 > = {
   elf: {
-    name: 'Лесные эльфы',
-    shortName: 'Эльф',
-    subtitle: 'Тень густого леса',
-    description: 'Защищайте деревянные дома, устраивайте засады и, разумеется, грабьте корованы.',
-    perk: 'Быстрее в лесу, союзники отвечают на зов.',
+    name: 'Лесная братва',
+    shortName: 'Ушастый',
+    subtitle: 'Лесная гопота с луками',
+    description: 'Сидите по кустам, стреляйте в спину и, ясное дело, грабьте корованы.',
+    perk: 'В лесу носитесь как угорелые, а свои сбегаются на свист.',
     spawn: [-48, 43],
   },
   guard: {
-    name: 'Охрана дворца',
-    shortName: 'Гвардеец',
-    subtitle: 'Приказ прежде всего',
-    description: 'Получайте приказы командира, держите оборону дворца и ходите в карательные рейды.',
-    perk: 'Тяжёлая броня и поддержка имперских солдат.',
+    name: 'Дворцовая вахта',
+    shortName: 'Вахтёр',
+    subtitle: 'Приказ — это святое',
+    description: 'Ловите приказы командира, держите дворец и от души зачищайте всех, на кого укажут.',
+    perk: 'Броня как у танка и толпа имперских солдат за спиной.',
     spawn: [43, -42],
   },
   villain: {
     name: 'Злодей',
     shortName: 'Злодей',
-    subtitle: 'Сам себе командир',
-    description: 'Соберите войско в старом форте и поведите его на дворец. Делайте что захотите.',
-    perk: 'Сильный удар и личный отряд приспешников.',
+    subtitle: 'Сам себе закон',
+    description: 'Сколотите банду в старом форте и ведите её на дворец. Творите дичь — вам можно.',
+    perk: 'Бьёте как молот и таскаете за собой личную свору приспешников.',
     spawn: [47, 45],
   },
 }
@@ -313,25 +313,25 @@ export const FACTION_INFO: Record<
 export const ZONE_INFO: Record<ZoneId, ZoneInfo> = {
   neutral: {
     name: 'Вольные земли',
-    subtitle: 'нейтральная зона людей',
+    subtitle: 'ничьё — значит, можно грабить',
     accent: '#c48742',
     motif: 'scrape',
   },
   palace: {
     name: 'Имперский удел',
-    subtitle: 'дворец и казармы',
+    subtitle: 'дворец, казарма и куча стражи',
     accent: '#547ac4',
     motif: 'chevron',
   },
   forest: {
     name: 'Чаща Эленвуда',
-    subtitle: 'земли лесных эльфов',
+    subtitle: 'вотчина лесной гопоты',
     accent: '#5b9d54',
     motif: 'organic',
   },
   fort: {
     name: 'Чёрный кряж',
-    subtitle: 'горы и старый форт',
+    subtitle: 'горы, форт и дурная слава',
     accent: '#b75b70',
     motif: 'slash',
   },
@@ -340,32 +340,32 @@ export const ZONE_INFO: Record<ZoneId, ZoneInfo> = {
 export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'medicine',
-    name: 'Полевой набор',
-    description: 'Восстанавливает здоровье, лечит раны и останавливает кровотечение.',
+    name: 'Полевая аптечка',
+    description: 'Штопает раны, глушит кровотечение и поднимает на ноги. Не спрашивайте, из чего.',
     price: 35,
   },
   {
     id: 'arm',
     name: 'Заводная рука',
-    description: 'Заменяет первую потерянную руку и возвращает силу удара.',
+    description: 'Прикручивается вместо оторванной руки. Бьёт даже злее родной.',
     price: 110,
   },
   {
     id: 'leg',
     name: 'Стальная нога',
-    description: 'Заменяет первую потерянную ногу и позволяет снова бегать.',
+    description: 'Ставится вместо потерянной ноги. Снова носитесь как раньше, только скрипите.',
     price: 125,
   },
   {
     id: 'eye',
     name: 'Хрустальный глаз',
-    description: 'Заменяет потерянный глаз и возвращает полный обзор.',
+    description: 'Вставляется в пустую глазницу. Видит всё, а моргать так и не научился.',
     price: 90,
   },
   {
     id: 'blade',
     name: 'Кованый клинок',
-    description: 'Навсегда увеличивает урон на 8. Каждая следующая закалка дороже.',
+    description: 'Точим железо: +8 к урону навсегда. Каждая заточка бьёт по кошельку больнее.',
     price: 140,
     priceStep: 90,
     maxLevel: 10,
@@ -374,7 +374,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'vitality',
     name: 'Крепкое сердце',
-    description: `Увеличивает максимум здоровья на ${MAX_HEALTH_PER_LEVEL} и сразу восстанавливает столько же.`,
+    description: `Раздувает максимум здоровья на ${MAX_HEALTH_PER_LEVEL} и тут же доливает столько же.`,
     price: 120,
     priceStep: 80,
     maxLevel: 8,
@@ -383,7 +383,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   {
     id: 'endurance',
     name: 'Походная выучка',
-    description: `Увеличивает максимум выносливости на ${MAX_STAMINA_PER_LEVEL} и сразу восполняет запас.`,
+    description: `Прибавляет ${MAX_STAMINA_PER_LEVEL} выносливости и сразу забивает шкалу под завязку.`,
     price: 100,
     priceStep: 65,
     maxLevel: 8,
@@ -433,24 +433,24 @@ export function createHealthyBody(): BodyState {
 export function createObjectives(faction: Faction): Objective[] {
   if (faction === 'elf') {
     return [
-      { id: 'raid', text: 'Ограбить имперский корован', done: false },
-      { id: 'guards', text: 'Победить дворцовую охрану', done: false, progress: 0, target: 4 },
-      { id: 'home', text: 'Сдать добычу у зелёного маяка в лагере', done: false },
+      { id: 'raid', text: 'Обнести имперский корован', done: false },
+      { id: 'guards', text: 'Раскидать дворцовую охрану', done: false, progress: 0, target: 4 },
+      { id: 'home', text: 'Дотащить хабар к зелёному маяку в лагере', done: false },
     ]
   }
 
   if (faction === 'guard') {
     return [
-      { id: 'orders', text: 'Получить приказ командира', done: false },
-      { id: 'defend', text: 'Разбить налётчиков', done: false, progress: 0, target: 4 },
-      { id: 'patrol', text: 'Дойти до старого форта', done: false },
+      { id: 'orders', text: 'Выслушать бухтёж командира', done: false },
+      { id: 'defend', text: 'Отметелить налётчиков', done: false, progress: 0, target: 4 },
+      { id: 'patrol', text: 'Доползти до старого форта', done: false },
     ]
   }
 
   return [
-    { id: 'rally', text: 'Собрать приспешников командой', done: false },
-    { id: 'breach', text: 'Войти в имперский удел', done: false },
-    { id: 'commander', text: 'Победить командира дворца', done: false },
+    { id: 'rally', text: 'Свистнуть приспешников в кучу', done: false },
+    { id: 'breach', text: 'Ввалиться в имперский удел', done: false },
+    { id: 'commander', text: 'Уложить командира дворца', done: false },
   ]
 }
 

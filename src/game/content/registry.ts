@@ -55,7 +55,7 @@ export interface BiomeProfile {
 export const BIOME_PROFILES = {
   neutral: {
     id: 'neutral',
-    label: 'Free Marches',
+    label: 'Вольные земли',
     terrainColor: 0x8d8357,
     secondaryColor: 0x5d6d3f,
     accentColor: 0xc48742,
@@ -67,7 +67,7 @@ export const BIOME_PROFILES = {
   },
   palace: {
     id: 'palace',
-    label: 'Imperial Demesne',
+    label: 'Имперский удел',
     terrainColor: 0x777d86,
     secondaryColor: 0xa4a8ad,
     accentColor: 0x547ac4,
@@ -79,7 +79,7 @@ export const BIOME_PROFILES = {
   },
   forest: {
     id: 'forest',
-    label: 'Elenwood',
+    label: 'Чаща Эленвуда',
     terrainColor: 0x45653d,
     secondaryColor: 0x284b31,
     accentColor: 0x75a862,
@@ -91,7 +91,7 @@ export const BIOME_PROFILES = {
   },
   fort: {
     id: 'fort',
-    label: 'Black Ridge',
+    label: 'Чёрный кряж',
     terrainColor: 0x554d50,
     secondaryColor: 0x312f35,
     accentColor: 0xb75b70,
@@ -134,8 +134,8 @@ export interface SitePresentation {
 export const SITE_PRESENTATIONS = {
   'faction-start': {
     kind: 'faction-start',
-    label: 'Faction Camp',
-    markerLabel: 'Camp',
+    label: 'Родная малина',
+    markerLabel: 'Малина',
     prefab: {
       shape: 'camp',
       footprintWidth: 7,
@@ -149,8 +149,8 @@ export const SITE_PRESENTATIONS = {
   },
   'final-stronghold': {
     kind: 'final-stronghold',
-    label: 'Final Stronghold',
-    markerLabel: 'Stronghold',
+    label: 'Логово главгада',
+    markerLabel: 'Логово',
     prefab: {
       shape: 'keep',
       footprintWidth: 12,
@@ -164,8 +164,8 @@ export const SITE_PRESENTATIONS = {
   },
   settlement: {
     kind: 'settlement',
-    label: 'Crossroads Settlement',
-    markerLabel: 'Settlement',
+    label: 'Деревенька зевак',
+    markerLabel: 'Зеваки',
     prefab: {
       shape: 'houses',
       footprintWidth: 9,
@@ -179,8 +179,8 @@ export const SITE_PRESENTATIONS = {
   },
   shop: {
     kind: 'shop',
-    label: 'Roadside Shop',
-    markerLabel: 'Shop',
+    label: 'Лавка барыги',
+    markerLabel: 'Барыга',
     prefab: {
       shape: 'stall',
       footprintWidth: 5.5,
@@ -194,8 +194,8 @@ export const SITE_PRESENTATIONS = {
   },
   recovery: {
     kind: 'recovery',
-    label: 'Wayside Sanctuary',
-    markerLabel: 'Recovery',
+    label: 'Знахарский закуток',
+    markerLabel: 'Знахарь',
     prefab: {
       shape: 'shrine',
       footprintWidth: 4,
@@ -209,8 +209,8 @@ export const SITE_PRESENTATIONS = {
   },
   event: {
     kind: 'event',
-    label: 'Event Site',
-    markerLabel: 'Event',
+    label: 'Точка движухи',
+    markerLabel: 'Движуха',
     prefab: {
       shape: 'obelisk',
       footprintWidth: 3,
@@ -224,8 +224,8 @@ export const SITE_PRESENTATIONS = {
   },
   treasure: {
     kind: 'treasure',
-    label: 'Hidden Cache',
-    markerLabel: 'Treasure',
+    label: 'Чужая заначка',
+    markerLabel: 'Заначка',
     prefab: {
       shape: 'chest',
       footprintWidth: 1.8,
@@ -239,8 +239,8 @@ export const SITE_PRESENTATIONS = {
   },
   landmark: {
     kind: 'landmark',
-    label: 'Old Landmark',
-    markerLabel: 'Landmark',
+    label: 'Приметный истукан',
+    markerLabel: 'Истукан',
     prefab: {
       shape: 'monument',
       footprintWidth: 4.5,

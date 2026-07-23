@@ -783,8 +783,6 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
         center,
         edge,
         this.context.style.roadWidth,
-        0.12,
-        5,
         this.context.materials.road,
         `road:${String(this.id)}:${direction}`,
         0.14,
@@ -800,8 +798,6 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       { x: center.x, z: bounds.minZ },
       { x: center.x, z: bounds.maxZ },
       this.context.style.riverWidth,
-      0.1,
-      8,
       this.context.materials.water,
       `river:${String(this.id)}`,
       0.1,
@@ -1389,37 +1385,21 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     start: Point2,
     end: Point2,
     width: number,
-    thickness: number,
-    segments: number,
     material: THREE.Material,
     name: string,
     heightOffset: number,
   ): void {
-    for (let index = 0; index < segments; index += 1) {
-      const startT = index / segments
-      const endT = (index + 1) / segments
-      const startX = lerp(start.x, end.x, startT)
-      const startZ = lerp(start.z, end.z, startT)
-      const endX = lerp(start.x, end.x, endT)
-      const endZ = lerp(start.z, end.z, endT)
-      const x = (startX + endX) / 2
-      const z = (startZ + endZ) / 2
-      const length = Math.hypot(endX - startX, endZ - startZ)
-      const geometry = new THREE.BoxGeometry(width, thickness, length + 0.04)
-      const mesh = this.addMesh(
-        this.root,
-        geometry,
-        material,
-        `${name}:${index}`,
-      )
-      mesh.position.set(
-        x,
-        this.context.terrain.sampleHeight(x, z) + heightOffset,
-        z,
-      )
-      mesh.rotation.y = Math.atan2(endX - startX, endZ - startZ)
-      mesh.receiveShadow = true
-    }
+    const geometry = createTerrainProjectedStripGeometry(
+      this.context.terrain,
+      this.context.normalizedRegion.bounds,
+      this.context.style.terrainResolution,
+      start,
+      end,
+      width,
+      heightOffset,
+    )
+    const mesh = this.addMesh(this.root, geometry, material, name)
+    mesh.receiveShadow = true
   }
 
   private registerWaterCollider(
@@ -1762,6 +1742,230 @@ function edgeCenter(
   if (direction === 'west') return { x: bounds.minX, z: center.z }
   if (direction === 'north') return { x: center.x, z: bounds.minZ }
   return { x: center.x, z: bounds.maxZ }
+}
+
+const PROJECTED_STRIP_UV_LENGTH = 8
+const PROJECTED_STRIP_EPSILON = 1e-6
+
+interface ProjectedStripVertex extends Point2 {
+  y: number
+}
+
+function createTerrainProjectedStripGeometry(
+  terrain: TerrainSystem,
+  terrainBounds: Bounds2D,
+  terrainResolution: number,
+  start: Point2,
+  end: Point2,
+  width: number,
+  heightOffset: number,
+): THREE.BufferGeometry {
+  const deltaX = end.x - start.x
+  const deltaZ = end.z - start.z
+  const length = Math.hypot(deltaX, deltaZ)
+  if (!Number.isFinite(length) || length <= Number.EPSILON) {
+    throw new Error('Projected strip requires two distinct finite points')
+  }
+  if (!Number.isFinite(width) || width <= PROJECTED_STRIP_EPSILON) {
+    throw new Error('Projected strip requires a positive finite width')
+  }
+
+  const segments = Math.max(1, Math.floor(terrainResolution))
+  const terrainWidth = terrainBounds.maxX - terrainBounds.minX
+  const terrainDepth = terrainBounds.maxZ - terrainBounds.minZ
+  const positions: number[] = []
+  const normals: number[] = []
+  const uvs: number[] = []
+  const indices: number[] = []
+  const directionX = deltaX / length
+  const directionZ = deltaZ / length
+  const sideX = directionZ
+  const sideZ = -directionX
+  const halfWidth = width / 2
+  const clipBounds: Point2[] = [
+    {
+      x: start.x - sideX * halfWidth,
+      z: start.z - sideZ * halfWidth,
+    },
+    {
+      x: start.x + sideX * halfWidth,
+      z: start.z + sideZ * halfWidth,
+    },
+    {
+      x: end.x + sideX * halfWidth,
+      z: end.z + sideZ * halfWidth,
+    },
+    {
+      x: end.x - sideX * halfWidth,
+      z: end.z - sideZ * halfWidth,
+    },
+  ]
+
+  const terrainVertex = (x: number, z: number): ProjectedStripVertex => ({
+    x,
+    y: terrain.sampleHeight(x, z),
+    z,
+  })
+  const appendPolygon = (polygon: readonly ProjectedStripVertex[]): void => {
+    const vertexOffset = positions.length / 3
+    for (const vertex of polygon) {
+      const normal = terrain.sampleNormal(vertex.x, vertex.z)
+      const relativeX = vertex.x - start.x
+      const relativeZ = vertex.z - start.z
+      positions.push(vertex.x, vertex.y + heightOffset, vertex.z)
+      normals.push(normal.x, normal.y, normal.z)
+      uvs.push(
+        THREE.MathUtils.clamp(
+          (relativeX * sideX + relativeZ * sideZ) / width + 0.5,
+          0,
+          1,
+        ),
+        (relativeX * directionX + relativeZ * directionZ) /
+          PROJECTED_STRIP_UV_LENGTH,
+      )
+    }
+    for (let index = 1; index < polygon.length - 1; index += 1) {
+      if (
+        Math.abs(
+          triangleArea2D(polygon[0], polygon[index], polygon[index + 1]),
+        ) <= PROJECTED_STRIP_EPSILON
+      ) {
+        continue
+      }
+      indices.push(vertexOffset, vertexOffset + index, vertexOffset + index + 1)
+    }
+  }
+
+  for (let zIndex = 0; zIndex < segments; zIndex += 1) {
+    const minZ = terrainBounds.minZ + (terrainDepth * zIndex) / segments
+    const maxZ =
+      terrainBounds.minZ + (terrainDepth * (zIndex + 1)) / segments
+    for (let xIndex = 0; xIndex < segments; xIndex += 1) {
+      const minX = terrainBounds.minX + (terrainWidth * xIndex) / segments
+      const maxX =
+        terrainBounds.minX + (terrainWidth * (xIndex + 1)) / segments
+      const topLeft = terrainVertex(minX, minZ)
+      const topRight = terrainVertex(maxX, minZ)
+      const bottomLeft = terrainVertex(minX, maxZ)
+      const bottomRight = terrainVertex(maxX, maxZ)
+      for (const triangle of [
+        [topLeft, bottomLeft, topRight],
+        [topRight, bottomLeft, bottomRight],
+      ]) {
+        const polygon = clipProjectedPolygon(triangle, clipBounds)
+        if (polygon.length >= 3) appendPolygon(polygon)
+      }
+    }
+  }
+
+  if (indices.length === 0) {
+    throw new Error('Projected strip does not overlap its terrain region')
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(positions, 3),
+  )
+  geometry.setAttribute(
+    'normal',
+    new THREE.Float32BufferAttribute(normals, 3),
+  )
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  geometry.setIndex(indices)
+  geometry.computeBoundingBox()
+  geometry.computeBoundingSphere()
+  return geometry
+}
+
+function clipProjectedPolygon(
+  polygon: readonly ProjectedStripVertex[],
+  clipBounds: readonly Point2[],
+): ProjectedStripVertex[] {
+  let output = [...polygon]
+  for (let edgeIndex = 0; edgeIndex < clipBounds.length; edgeIndex += 1) {
+    const edgeStart = clipBounds[edgeIndex]
+    const edgeEnd = clipBounds[(edgeIndex + 1) % clipBounds.length]
+    const input = output
+    output = []
+    if (input.length === 0) break
+
+    let previous = input[input.length - 1]
+    let previousDistance = projectedEdgeDistance(
+      edgeStart,
+      edgeEnd,
+      previous,
+    )
+    for (const current of input) {
+      const currentDistance = projectedEdgeDistance(
+        edgeStart,
+        edgeEnd,
+        current,
+      )
+      const previousInside = previousDistance >= -PROJECTED_STRIP_EPSILON
+      const currentInside = currentDistance >= -PROJECTED_STRIP_EPSILON
+      if (currentInside !== previousInside) {
+        const denominator = previousDistance - currentDistance
+        if (Math.abs(denominator) > PROJECTED_STRIP_EPSILON) {
+          const interpolation = previousDistance / denominator
+          output.push({
+            x: lerp(previous.x, current.x, interpolation),
+            y: lerp(previous.y, current.y, interpolation),
+            z: lerp(previous.z, current.z, interpolation),
+          })
+        }
+      }
+      if (currentInside) output.push(current)
+      previous = current
+      previousDistance = currentDistance
+    }
+  }
+
+  return removeDuplicateProjectedVertices(output)
+}
+
+function projectedEdgeDistance(
+  edgeStart: Point2,
+  edgeEnd: Point2,
+  point: Point2,
+): number {
+  return (
+    (edgeEnd.x - edgeStart.x) * (point.z - edgeStart.z) -
+    (edgeEnd.z - edgeStart.z) * (point.x - edgeStart.x)
+  )
+}
+
+function removeDuplicateProjectedVertices(
+  vertices: readonly ProjectedStripVertex[],
+): ProjectedStripVertex[] {
+  const unique: ProjectedStripVertex[] = []
+  for (const vertex of vertices) {
+    const previous = unique[unique.length - 1]
+    if (
+      previous &&
+      Math.abs(previous.x - vertex.x) <= PROJECTED_STRIP_EPSILON &&
+      Math.abs(previous.z - vertex.z) <= PROJECTED_STRIP_EPSILON
+    ) {
+      continue
+    }
+    unique.push(vertex)
+  }
+  if (
+    unique.length > 1 &&
+    Math.abs(unique[0].x - unique[unique.length - 1].x) <=
+      PROJECTED_STRIP_EPSILON &&
+    Math.abs(unique[0].z - unique[unique.length - 1].z) <=
+      PROJECTED_STRIP_EPSILON
+  ) {
+    unique.pop()
+  }
+  return unique
+}
+
+function triangleArea2D(first: Point2, second: Point2, third: Point2): number {
+  return (
+    (second.x - first.x) * (third.z - first.z) -
+    (second.z - first.z) * (third.x - first.x)
+  )
 }
 
 function boundsCenter(bounds: Bounds2D): Point2 {

@@ -2148,11 +2148,11 @@ export class GameEngine {
       this.body.leftArm === 'missing' &&
       this.body.rightArm === 'missing'
     ) {
-      this.callbacks.onNotice('Без рук натянуть лук невозможно.', 'warning')
+      this.callbacks.onNotice('Без рук лук не натянешь, гений.', 'warning')
       return
     }
     if (this.stamina < ability.staminaCost) {
-      this.callbacks.onNotice('Не хватает выносливости для способности.', 'warning')
+      this.callbacks.onNotice('Выносливость на нуле — не до фокусов.', 'warning')
       return
     }
 
@@ -2247,7 +2247,7 @@ export class GameEngine {
         const guards = this.objectives.find((objective) => objective.id === 'guards')
         const remaining = Math.max(0, (guards?.target ?? 4) - (guards?.progress ?? 0))
         this.callbacks.onNotice(
-          `Добыча при вас. Чтобы сдать её, одолейте ещё ${remaining} гвардейцев.`,
+          `Хабар при тебе. Хочешь сдать — уложи ещё ${remaining} гвардейцев.`,
           'warning',
         )
       } else {
@@ -2273,14 +2273,14 @@ export class GameEngine {
     ) {
       if (this.completeObjective('orders')) {
         this.callbacks.onNotice(
-          'Командир: «Налётчики уже близко. Защитить дворец, затем проверить старый форт!»',
+          'Командир: «Налётчики на носу. Отстоять дворец, потом протрясти старый форт. Живо!»',
           'success',
         )
         this.gold += 25
         this.achievements.recordGoldEarned(25)
         this.playSound('coin')
       } else {
-        this.callbacks.onNotice('Командир: «Приказ прежний. Не стой столбом!»', 'info')
+        this.callbacks.onNotice('Командир: «Приказ тот же. Хорош столбом стоять!»', 'info')
       }
       this.emitView(true)
       return
@@ -2288,12 +2288,12 @@ export class GameEngine {
 
     if (playerPosition.distanceTo(this.caravan.position) < 7) {
       if (this.faction === 'guard') {
-        this.callbacks.onNotice('Корован под охраной. Всё спокойно, гвардеец.', 'info')
+        this.callbacks.onNotice('Корован под охраной. Спи спокойно, служивый.', 'info')
         this.health = Math.min(this.maxHealth, this.health + 8)
         return
       }
       if (this.caravanCooldown > 0) {
-        this.callbacks.onNotice('Этот корован уже пуст. Ждите следующий обоз.', 'warning')
+        this.callbacks.onNotice('Этот корован уже выпотрошили. Ждём следующий обоз.', 'warning')
         return
       }
       this.gold += 95
@@ -2303,12 +2303,12 @@ export class GameEngine {
       this.caravanRobbedFlash = 1
       if (!this.generatedWorld) this.completeObjective('raid')
       const lootGuidance = this.generatedWorld
-        ? 'Охрана уже идёт по следу.'
+        ? 'Охрана уже топает по твою душу.'
         : this.isObjectiveDone('guards')
-          ? 'Добыча при вас: сдайте её у зелёного маяка в лагере.'
-          : 'Добыча при вас: одолейте охрану и сдайте её у зелёного маяка в лагере.'
+          ? 'Хабар при тебе: тащи его к зелёному маяку в лагере.'
+          : 'Хабар при тебе: раскидай охрану и тащи его к зелёному маяку в лагере.'
       this.callbacks.onNotice(
-        `Корован ограблен! +95 золота. ${lootGuidance}`,
+        `Корован обнесён! +95 золота. ${lootGuidance}`,
         'success',
       )
       this.playSound('coin')
@@ -2327,9 +2327,9 @@ export class GameEngine {
     }
     const message = this.squadFollowing
       ? this.faction === 'guard'
-        ? 'Ближайшие гвардейцы держат строй за вами.'
-        : 'Отряд следует за вами и атакует ваших врагов.'
-      : 'Отряд удерживает текущую позицию.'
+        ? 'Ближайшие гвардейцы пристроились в хвост за тобой.'
+        : 'Братва топает за тобой и мутузит твоих врагов.'
+      : 'Братва встала на месте и караулит.'
     this.callbacks.onNotice(message, this.squadFollowing ? 'success' : 'info')
     this.playSound('command')
     this.emitView(true)
@@ -2338,28 +2338,28 @@ export class GameEngine {
   purchase(item: ShopItem): { ok: boolean; message: string } {
     const currentLevel = item.upgrade ? this.upgrades[item.upgrade] : 0
     if (item.upgrade && currentLevel >= (item.maxLevel ?? Number.POSITIVE_INFINITY)) {
-      return { ok: false, message: `${item.name}: достигнут максимальный уровень.` }
+      return { ok: false, message: `${item.name}: дальше некуда, потолок.` }
     }
     const price = getShopItemPrice(item, this.upgrades)
-    if (this.gold < price) return { ok: false, message: 'Не хватает золота.' }
+    if (this.gold < price) return { ok: false, message: 'Золота не хватает, голь.' }
 
     if (item.id === 'arm') {
       const part = this.firstPartWithStatus(['leftArm', 'rightArm'], 'missing')
-      if (!part) return { ok: false, message: 'Обе руки на месте. Протез пока не нужен.' }
+      if (!part) return { ok: false, message: 'Обе руки на месте. Протез пока лишний.' }
       this.body[part] = 'prosthetic'
       this.restorePlayerLimb(part)
     } else if (item.id === 'leg') {
       const part = this.firstPartWithStatus(['leftLeg', 'rightLeg'], 'missing')
-      if (!part) return { ok: false, message: 'Обе ноги на месте. Протез пока не нужен.' }
+      if (!part) return { ok: false, message: 'Обе ноги на месте. Протез пока лишний.' }
       this.body[part] = 'prosthetic'
       this.restorePlayerLimb(part)
     } else if (item.id === 'eye') {
       const part = this.firstPartWithStatus(['leftEye', 'rightEye'], 'missing')
-      if (!part) return { ok: false, message: 'Зрение в порядке. Хрустальный глаз не нужен.' }
+      if (!part) return { ok: false, message: 'Зенки целы. Хрустальный глаз ни к чему.' }
       this.body[part] = 'prosthetic'
     } else if (item.id === 'medicine') {
       if (this.health >= this.maxHealth && this.body.bleeding === 0 && !this.hasWounds()) {
-        return { ok: false, message: 'Вы полностью здоровы.' }
+        return { ok: false, message: 'Ты здоров как бык. Лечить нечего.' }
       }
       this.health = Math.min(this.maxHealth, this.health + 55)
       this.body.bleeding = 0
@@ -2382,7 +2382,7 @@ export class GameEngine {
     this.playSound('coin')
     this.emitView(true)
     const levelSuffix = item.upgrade ? ` Уровень ${this.upgrades[item.upgrade]}.` : ''
-    return { ok: true, message: `${item.name}: покупка совершена.${levelSuffix}` }
+    return { ok: true, message: `${item.name}: в кармане.${levelSuffix}` }
   }
 
   save(): SavedGame {
@@ -2411,7 +2411,7 @@ export class GameEngine {
       upgradeLevels: { ...this.upgrades },
     }
     localStorage.setItem(SAVE_KEY, JSON.stringify(save))
-    this.callbacks.onNotice('Игра сохранена. Корованы никуда не денутся.', 'success')
+    this.callbacks.onNotice('Сохранено. Корованы подождут — никуда не денутся.', 'success')
     this.playSound('save')
     return save
   }
@@ -2644,12 +2644,12 @@ export class GameEngine {
       const label = site ? this.generatedSiteLabel(site.kind) : 'цель'
       const text =
         node.kind === 'arrive'
-          ? `Доберитесь до места «${label}»`
+          ? `Доволочься до «${label}»`
           : node.kind === 'interact'
-            ? `Осмотрите место «${label}»`
+            ? `Обшарить «${label}»`
             : node.kind === 'claim'
-              ? `Заберите награду в месте «${label}»`
-              : `Одолейте противника у места «${label}»`
+              ? `Хапнуть добро в «${label}»`
+              : `Начистить рыло всем у «${label}»`
       return { id: node.id, text, done: false }
     })
   }
@@ -2657,21 +2657,21 @@ export class GameEngine {
   private generatedSiteLabel(kind: SiteKind): string {
     switch (kind) {
       case 'faction-start':
-        return 'лагерь фракции'
+        return 'родная малина'
       case 'final-stronghold':
-        return 'финальная крепость'
+        return 'логово главгада'
       case 'settlement':
-        return 'поселение у перепутья'
+        return 'деревенька зевак'
       case 'shop':
-        return 'дорожная лавка'
+        return 'лавка барыги'
       case 'recovery':
-        return 'придорожное святилище'
+        return 'знахарский закуток'
       case 'event':
-        return 'место события'
+        return 'точка движухи'
       case 'treasure':
-        return 'тайник'
+        return 'чужая заначка'
       case 'landmark':
-        return 'ориентир'
+        return 'приметный истукан'
     }
   }
 
@@ -2909,8 +2909,8 @@ export class GameEngine {
     const pendingLoot = state?.pendingLoot
     if (!Array.isArray(pendingLoot)) return
     const labels: Record<LootRewardKind, string> = {
-      coins: 'Монеты',
-      medicine: 'Лекарство',
+      coins: 'Звонкая мелочь',
+      medicine: 'Пузырёк знахаря',
       whetstone: 'Точильный камень',
     }
     for (const value of pendingLoot.slice(0, LOOT_MAX_ACTIVE)) {
@@ -3157,7 +3157,7 @@ export class GameEngine {
         this.generatedSupplyCount -= 1
         this.health = Math.min(this.maxHealth, this.health + 35)
         this.body.bleeding = Math.max(0, this.body.bleeding - 0.35)
-        this.callbacks.onNotice('Дорожный паёк восстановил 35 здоровья.', 'success')
+        this.callbacks.onNotice('Дорожный паёк вернул 35 здоровья. Не спрашивай, из чего он.', 'success')
         this.playSound('objective')
         return true
       }
@@ -3188,11 +3188,11 @@ export class GameEngine {
       this.stamina = this.maxStamina
       this.body.bleeding = 0
       this.healWounds()
-      this.callbacks.onNotice('Привал восстановил силы и остановил кровотечение.', 'success')
+      this.callbacks.onNotice('Привал вправил силы и заткнул кровотечение.', 'success')
       this.playSound('objective')
     } else if (site.kind === 'treasure' || node?.kind === 'claim') {
       if (collected) {
-        this.callbacks.onNotice('Здесь больше нечего забирать.', 'info')
+        this.callbacks.onNotice('Тут уже всё вынесли до тебя.', 'info')
       } else {
         const reward = 28 + Math.floor(this.lootRng() * 43)
         this.gold += reward
@@ -3205,7 +3205,7 @@ export class GameEngine {
             next.completedInteractionIds.push(site.id)
           }
         })
-        this.callbacks.onNotice(`Найдены припасы и ${reward} золота.`, 'success')
+        this.callbacks.onNotice(`Нашлась заначка: припасы и ${reward} золота.`, 'success')
         this.playSound('coin')
       }
     } else if (!interacted) {
@@ -3215,7 +3215,7 @@ export class GameEngine {
         }
       })
       this.callbacks.onNotice(
-        `Место «${this.generatedSiteLabel(site.kind)}» осмотрено.`,
+        `Обнюхали «${this.generatedSiteLabel(site.kind)}» — вроде всё.`,
         'success',
       )
     }
@@ -3246,33 +3246,33 @@ export class GameEngine {
         (node.kind === 'interact' || node.kind === 'claim')
       ) {
         return node.kind === 'claim'
-          ? `[E] Забрать награду: ${this.generatedSiteLabel(nearbySite.kind)}`
-          : `[E] Осмотреть: ${this.generatedSiteLabel(nearbySite.kind)}`
+          ? `[E] Хапнуть добро: ${this.generatedSiteLabel(nearbySite.kind)}`
+          : `[E] Сунуть нос: ${this.generatedSiteLabel(nearbySite.kind)}`
       }
       if (nearbySite.kind === 'shop') {
-        return `[E] Торговать: ${this.generatedSiteLabel(nearbySite.kind)}`
+        return `[E] Затариться: ${this.generatedSiteLabel(nearbySite.kind)}`
       }
       if (nearbySite.kind === 'recovery') {
-        return `[E] Отдохнуть: ${this.generatedSiteLabel(nearbySite.kind)}`
+        return `[E] Отлежаться: ${this.generatedSiteLabel(nearbySite.kind)}`
       }
       if (nearbySite.kind === 'treasure') {
         const claimed = this.generatedWorld.regions
           .getSavedDelta(nearbySite.regionId)
           ?.collectedLootIds.includes(nearbySite.id)
         return claimed
-          ? `${this.generatedSiteLabel(nearbySite.kind)}: уже осмотрено`
-          : `[E] Обыскать: ${this.generatedSiteLabel(nearbySite.kind)}`
+          ? `${this.generatedSiteLabel(nearbySite.kind)}: тут уже пусто`
+          : `[E] Обшарить: ${this.generatedSiteLabel(nearbySite.kind)}`
       }
     }
     if (this.player.position.distanceTo(this.caravan.position) < 7) {
       return this.faction === 'guard'
-        ? '[E] Проверить корован'
+        ? '[E] Досмотреть корован'
         : this.caravanCooldown > 0
-          ? 'Корован уже разграблен'
+          ? 'Корован уже обчистили'
           : '[E] ГРАБИТЬ КОРОВАН'
     }
     if (this.generatedSupplyCount > 0 && this.health < this.maxHealth) {
-      return `[E] Использовать дорожный паёк • ${this.generatedSupplyCount}`
+      return `[E] Захомячить паёк • ${this.generatedSupplyCount}`
     }
     if (node) {
       const objective = this.objectives.find((entry) => entry.id === node.id)
@@ -3289,7 +3289,7 @@ export class GameEngine {
     }
     return document.pointerLockElement === this.renderer.domElement
       ? ''
-      : 'Нажмите на мир, чтобы управлять камерой'
+      : 'Клацни по миру, чтобы рулить камерой'
   }
 
   private registerBoxObstacle(
@@ -3896,7 +3896,7 @@ export class GameEngine {
       this.stamina = Math.max(0, this.stamina - delta * SHIELD_STAMINA_DRAIN)
       if (this.stamina === 0) {
         this.dropShield()
-        this.callbacks.onNotice('Выносливость иссякла — щит опущен.', 'warning')
+        this.callbacks.onNotice('Выносливость сдохла — щит вниз.', 'warning')
       }
     } else if (sprinting) {
       this.stamina = Math.max(0, this.stamina - delta * 24)
@@ -5105,7 +5105,7 @@ export class GameEngine {
     )
     actor.reinforcementsCalled += 1
     if (actor.mesh.position.distanceTo(this.player.position) < 35) {
-      this.callbacks.onNotice('Командир вызвал подкрепление!', 'warning')
+      this.callbacks.onNotice('Командир свистнул подкрепление!', 'warning')
     }
   }
 
@@ -5548,25 +5548,25 @@ export class GameEngine {
     } else if (this.hasElfLoot() && position.distanceTo(this.elfHomePosition) < 6) {
       const guards = this.objectives.find((objective) => objective.id === 'guards')
       this.prompt = this.isObjectiveDone('guards')
-        ? '[E] Сдать добычу'
-        : `[E] Проверить добычу • охрана ${guards?.progress ?? 0}/${guards?.target ?? 4}`
+        ? '[E] Сдать хабар'
+        : `[E] Пощупать хабар • охрана ${guards?.progress ?? 0}/${guards?.target ?? 4}`
     } else if (position.distanceTo(this.vendorPosition) < 6) {
-      this.prompt = '[E] Лавка лекаря и механика'
+      this.prompt = '[E] Лавка коновала и механика'
     } else if (
       this.faction === 'guard' &&
       position.distanceTo(this.commanderPosition) < 6 &&
       this.actors.some((actor) => actor.role === 'commander' && actor.alive)
     ) {
-      this.prompt = '[E] Выслушать командира'
+      this.prompt = '[E] Выслушать бухтёж командира'
     } else if (position.distanceTo(this.caravan.position) < 7) {
       this.prompt =
         this.faction === 'guard'
-          ? '[E] Проверить корован'
+          ? '[E] Досмотреть корован'
           : this.caravanCooldown > 0
-            ? 'Корован уже разграблен'
+            ? 'Корован уже обчистили'
             : '[E] ГРАБИТЬ КОРОВАН'
     } else {
-      this.prompt = document.pointerLockElement === this.renderer.domElement ? '' : 'Нажмите на мир, чтобы управлять камерой'
+      this.prompt = document.pointerLockElement === this.renderer.domElement ? '' : 'Клацни по миру, чтобы рулить камерой'
     }
   }
 
@@ -5578,7 +5578,7 @@ export class GameEngine {
     if (currentZone !== this.lastZone) {
       this.lastZone = currentZone
       this.achievements.recordZone(currentZone)
-      this.callbacks.onNotice(`Новая область: ${this.zoneName(currentZone)}`, 'info')
+      this.callbacks.onNotice(`Забрели в новые края: ${this.zoneName(currentZone)}`, 'info')
       if (
         !this.generatedWorld &&
         this.faction === 'villain' &&
@@ -5625,7 +5625,7 @@ export class GameEngine {
       this.gold += 250
       this.eventCooldown = Math.min(this.eventCooldown, 12)
       this.callbacks.onNotice(
-        'Кампания завершена! +250 золота. Мир остаётся открытым для свободной игры.',
+        'Кампания закрыта! +250 золота. Мир остаётся открытым — гуляй, рванина.',
         'success',
       )
       this.playSound('victory')
@@ -5638,7 +5638,7 @@ export class GameEngine {
     if (nextTier > this.threatTier) {
       this.threatTier = nextTier
       this.callbacks.onNotice(
-        `Угроза усилилась: уровень ${this.threatTier}/${MAX_THREAT_TIER}. Враги крепче, события и налёты чаще.`,
+        `Накал растёт: уровень ${this.threatTier}/${MAX_THREAT_TIER}. Враги злее, движухи и налётов больше.`,
         'warning',
       )
       this.playSound('event')
@@ -5658,7 +5658,7 @@ export class GameEngine {
     const spawned = this.spawnThreatWave(scheduledAt)
     if (spawned > 0) {
       this.callbacks.onNotice(
-        `Вражеский налёт: бойцов ${spawned}. Уровень угрозы ${this.threatTier}.`,
+        `Набежали гости: бойцов ${spawned}. Накал ${this.threatTier}.`,
         'warning',
       )
       this.playSound('event')
@@ -5814,7 +5814,7 @@ export class GameEngine {
     if (!event) return false
 
     this.activeEvent = event
-    this.callbacks.onNotice(`Событие: ${event.title}. ${event.description}`, event.tone)
+    this.callbacks.onNotice(`Движуха: ${event.title}. ${event.description}`, event.tone)
     this.playSound('event')
     this.emitView(true)
     return true
@@ -5854,12 +5854,12 @@ export class GameEngine {
         this.gold += 180
         this.achievements.recordGoldEarned(180)
         this.achievements.recordCaravanRobbed(true)
-        message = 'Богатый корован ограблен, а погоня отстала. +180 золота.'
+        message = 'Жирный корован обнесён, погоня в пыли. +180 золота.'
       } else if (event.kind === 'defendHome') {
         this.gold += 90
         this.achievements.recordGoldEarned(90)
         this.health = Math.min(this.maxHealth, this.health + 8)
-        message = 'Дом отстояли! +90 золота и +8 здоровья.'
+        message = 'Дом отбили! +90 золота и +8 здоровья.'
       } else if (event.kind === 'champion') {
         this.gold += 120
         this.achievements.recordGoldEarned(120)
@@ -5871,14 +5871,14 @@ export class GameEngine {
         this.damage += damageBonus
         message =
           damageBonus > 0
-            ? `Чемпион повержен! +120 золота и +${damageBonus} урона.`
-            : 'Чемпион повержен! +120 золота. Предел бонуса урона уже достигнут.'
+            ? `Чемпион уложен! +120 золота и +${damageBonus} к урону.`
+            : 'Чемпион уложен! +120 золота. Дамаг уже упёрся в потолок.'
       } else if (event.kind === 'rescue') {
-        message = 'Пленник спасён и присоединился к вашему отряду.'
+        message = 'Бедолагу отбили — теперь он в твоей братве.'
       } else {
         this.gold += 70
         this.achievements.recordGoldEarned(70)
-        message = 'Награда за цель получена. +70 золота.'
+        message = 'Заказ выполнен, награда в кармане. +70 золота.'
       }
       this.spawnEventLoot(event)
       this.callbacks.onNotice(message, 'success')
@@ -5886,11 +5886,11 @@ export class GameEngine {
     } else {
       this.achievements.recordWorldEvent(event.kind, false)
       const failureMessages: Record<WorldEventKind, string> = {
-        richCaravan: 'Богатый корован ушёл вместе с добычей.',
-        defendHome: 'Дом не удалось защитить — огонь взял своё.',
-        champion: 'Чемпион скрылся.',
-        rescue: 'Пленника спасти не удалось.',
-        bounty: 'Срок награды истёк. Цель больше не отмечена.',
+        richCaravan: 'Жирный корован смылся вместе с хабаром.',
+        defendHome: 'Дом не отстояли — огонь сожрал всё.',
+        champion: 'Чемпион слился по-тихому.',
+        rescue: 'Бедолагу не уберегли.',
+        bounty: 'Заказ протух. Цель больше не в розыске.',
       }
       this.callbacks.onNotice(failureMessages[event.kind], 'danger')
       this.playSound('eventFail')
@@ -5987,8 +5987,8 @@ export class GameEngine {
       id,
       kind: 'richCaravan',
       state: 'active',
-      title: 'Золотой корован',
-      description: 'Ограбьте обоз и оторвитесь от места налёта на 18 метров.',
+      title: 'Жирный корован',
+      description: 'Обнеси обоз и свали от места налёта на 18 метров.',
       tone: 'warning',
       timer: 25,
       progress: 0,
@@ -6057,18 +6057,18 @@ export class GameEngine {
         if (!robbed) {
           robbed = true
           robberyPoint = this.player.position.clone()
-          event.description = 'Уходите от места налёта на 18 метров до конца отсчёта.'
+          event.description = 'Рви когти от места налёта на 18 метров, пока идёт отсчёт.'
           event.markerPos.copy(robberyPoint)
           const cargo = caravan.getObjectByName('cargo')
           if (cargo instanceof THREE.Mesh) cargo.scale.y = 0.38
-          this.callbacks.onNotice('Добыча у вас. Теперь оторвитесь от погони!', 'warning')
+          this.callbacks.onNotice('Хабар у тебя. Теперь рви от погони!', 'warning')
           this.playSound('coin')
         }
         return true
       },
       getPrompt: () =>
         !robbed && this.player.position.distanceTo(caravan.position) < 7
-          ? '[E] Ограбить золотой корован'
+          ? '[E] Обнести жирный корован'
           : null,
     })
     return event
@@ -6136,7 +6136,7 @@ export class GameEngine {
       kind: 'defendHome',
       state: 'active',
       title: 'Дом в огне',
-      description: 'Уничтожьте четырёх налётчиков, пока дом ещё стоит.',
+      description: 'Завали четверых налётчиков, пока дом не сгорел дотла.',
       tone: 'danger',
       timer: 45,
       progress: 0,
@@ -6147,7 +6147,7 @@ export class GameEngine {
       ownedProps: [fire],
       update: (delta) => {
         event.markerPos.copy(target.position)
-        event.description = `Уничтожьте налётчиков. Прочность дома: ${Math.ceil(target.hp)}/${target.maxHp}.`
+        event.description = `Гаси налётчиков. Дом держится: ${Math.ceil(target.hp)}/${target.maxHp}.`
         smokeCooldown -= delta
         if (smokeCooldown <= 0) {
           smokeCooldown = 0.22 + this.eventRng() * 0.18
@@ -6195,8 +6195,8 @@ export class GameEngine {
       id,
       kind: 'champion',
       state: 'active',
-      title: 'Странствующий чемпион',
-      description: 'Отыщите и победите элитного бойца.',
+      title: 'Заезжий чемпион',
+      description: 'Найди залётного богатыря и урой его.',
       tone: 'warning',
       timer: null,
       progress: 0,
@@ -6289,8 +6289,8 @@ export class GameEngine {
       id,
       kind: 'rescue',
       state: 'active',
-      title: 'Пленник у дороги',
-      description: 'Убейте охрану или освободите живого пленника лично.',
+      title: 'Бедолага у дороги',
+      description: 'Положи охрану или лично распутай живого бедолагу.',
       tone: 'warning',
       timer: null,
       progress: 0,
@@ -6322,7 +6322,7 @@ export class GameEngine {
       },
       getPrompt: () =>
         captive.alive && this.player.position.distanceTo(captive.mesh.position) < 5.5
-          ? '[E] Освободить пленника'
+          ? '[E] Распутать бедолагу'
           : null,
     })
     return event
@@ -6362,7 +6362,7 @@ export class GameEngine {
       kind: 'bounty',
       state: 'active',
       title: 'Награда за голову',
-      description: 'Уничтожьте отмеченную цель за 40 секунд.',
+      description: 'Грохни меченую цель за 40 секунд.',
       tone: 'info',
       timer: 40,
       progress: 0,
@@ -6965,7 +6965,7 @@ export class GameEngine {
     this.activeEvent?.onKill?.(actor, { killerFaction, directPlayerKill })
     if (!directPlayerKill) {
       if (objectiveAdvanced) {
-        this.callbacks.onNotice('Союзник победил врага. Счётчик задачи обновлён.', 'info')
+        this.callbacks.onNotice('Свои завалили врага. Счётчик задачи капнул.', 'info')
         this.emitView(true)
       }
 
@@ -6983,7 +6983,7 @@ export class GameEngine {
     this.achievements.recordGoldEarned(reward)
     this.trySpawnKillLoot(actor, deathPosition)
     this.callbacks.onNotice(
-      actor.role === 'commander' ? 'Командир дворца повержен!' : `Враг повержен. +${reward} золота`,
+      actor.role === 'commander' ? 'Командир дворца отдал концы!' : `Минус один. +${reward} золота`,
       'success',
     )
     this.emitView(true)
@@ -7073,15 +7073,15 @@ export class GameEngine {
       }
       this.callbacks.onNotice(
         part.includes('Eye')
-          ? `Тяжёлая травма: потерян ${formatPart(part)}. Часть обзора закрыта.`
-          : `Тяжёлая травма: потеряна ${formatPart(part)}! Найдите лекаря, иначе истечёте кровью.`,
+          ? `Кранты: выбит ${formatPart(part)}. Полобзора как отрезало.`
+          : `Кранты: отвалилась ${formatPart(part)}! Ищи коновала, а то истечёшь кровью.`,
         'danger',
       )
     } else {
       this.body[part] = 'wounded'
       this.achievements.recordInjury(part, false)
       this.body.bleeding = Math.min(1.2, this.body.bleeding + 0.12)
-      this.callbacks.onNotice(`Ранение: ${formatPart(part)}.`, 'warning')
+      this.callbacks.onNotice(`Царапина, до свадьбы заживёт: ${formatPart(part)}.`, 'warning')
     }
     this.emitView(true)
   }
@@ -7200,7 +7200,7 @@ export class GameEngine {
     ) {
       this.eventCooldown = 0
     }
-    this.callbacks.onNotice(`Задача выполнена: ${objective.text}`, 'success')
+    this.callbacks.onNotice(`Дело сделано: ${objective.text}`, 'success')
     this.achievements.recordObjectiveCompleted()
     this.playSound('objective')
     this.emitView(true)
@@ -7215,7 +7215,7 @@ export class GameEngine {
       const completed = this.completeObjective(id)
       if (completed && this.faction === 'elf' && id === 'guards' && this.isObjectiveDone('raid')) {
         this.callbacks.onNotice(
-          'Путь свободен. Сдайте добычу у зелёного маяка в эльфийском лагере — цель отмечена на карте.',
+          'Путь чист. Тащи хабар к зелёному маяку в эльфийском лагере — цель на карте.',
           'info',
         )
       }
@@ -7347,8 +7347,8 @@ export class GameEngine {
         z: this.elfHomePosition.z,
         kind: 'objective',
         label: this.isObjectiveDone('guards')
-          ? 'Сдать добычу'
-          : 'Лагерь эльфов: сдача добычи',
+          ? 'Сдать хабар'
+          : 'Малина эльфов: сдать хабар',
       })
     }
     if (this.activeEvent) {
@@ -7593,7 +7593,7 @@ export class GameEngine {
       kind: 'coins',
       rarity: 'common',
       amount: 0,
-      label: 'Монеты',
+      label: 'Звонкая мелочь',
     }
 
     for (let index = 0; index < LOOT_MAX_ACTIVE; index += 1) {
@@ -7806,8 +7806,8 @@ export class GameEngine {
       amount = this.rollLootInteger(5, 10)
     }
     const labels: Record<LootRewardKind, string> = {
-      coins: 'Монеты',
-      medicine: 'Лекарство',
+      coins: 'Звонкая мелочь',
+      medicine: 'Пузырёк знахаря',
       whetstone: 'Точильный камень',
     }
     return { kind, rarity, amount, label: labels[kind] }
@@ -9747,7 +9747,7 @@ uniform float uSwayAmplitude;`,
     }
     const shop = this.createHouse(this.vendorPosition.x, this.vendorPosition.z, 0.08, true)
     this.scene.add(shop)
-    const sign = this.createSign('ЛЕКАРЬ • ПРОТЕЗЫ', this.vendorPosition.x, 4.5, this.vendorPosition.z + 2.8)
+    const sign = this.createSign('КОНОВАЛ • ПРОТЕЗЫ', this.vendorPosition.x, 4.5, this.vendorPosition.z + 2.8)
     this.scene.add(sign)
     const vendorBeacon = this.createBeacon(
       this.vendorPosition.x,
@@ -11281,7 +11281,7 @@ uniform float uSwayAmplitude;`,
       )
     }
     if (availableSlots > 0) {
-      this.callbacks.onNotice('Засада! Охрана корована вступает в бой.', 'warning')
+      this.callbacks.onNotice('Засада! Охрана корована лезет в драку.', 'warning')
     }
   }
 

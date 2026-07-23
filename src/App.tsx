@@ -149,33 +149,33 @@ const SCREEN_SHAKE_ENABLED_KEY = 'korovany-screen-shake'
 const FOLIAGE_QUALITY_KEY = 'korovany-foliage'
 
 const generatedSiteLabels: Record<SiteKind, string> = {
-  'faction-start': 'лагерь фракции',
-  'final-stronghold': 'финальная крепость',
-  settlement: 'поселение у перепутья',
-  shop: 'дорожная лавка',
-  recovery: 'придорожное святилище',
-  event: 'место события',
-  treasure: 'тайник',
-  landmark: 'ориентир',
+  'faction-start': 'родная малина',
+  'final-stronghold': 'логово главгада',
+  settlement: 'деревенька зевак',
+  shop: 'лавка барыги',
+  recovery: 'знахарский закуток',
+  event: 'точка движухи',
+  treasure: 'чужая заначка',
+  landmark: 'приметный истукан',
 }
 
 const generatedRunStatusLabels: Record<ActiveRunSaveV2['status'], string> = {
   active: 'В пути',
   victory: 'Победа',
   defeat: 'Поражение',
-  abandoned: 'Оставлен',
+  abandoned: 'Слился',
 }
 
 const historyStatusLabels: Record<RunHistorySummary['status'], string> = {
   victory: 'Победа',
   defeat: 'Поражение',
-  abandoned: 'Оставлен',
+  abandoned: 'Слился',
 }
 
 const territoryLabels: Record<WorldMapRegion['territory'], string> = {
-  neutral: 'вольные земли',
-  elf: 'эльфы',
-  guard: 'гвардия',
+  neutral: 'ничьё',
+  elf: 'ушастые',
+  guard: 'вахта',
   villain: 'злодеи',
 }
 
@@ -549,12 +549,12 @@ function createGeneratedObjectives(blueprint: WorldBlueprint, faction: Faction) 
     const label = site ? generatedSiteLabels[site.kind] : 'цель'
     const text =
       node.kind === 'arrive'
-        ? `Доберитесь до места «${label}»`
+        ? `Доволочься до «${label}»`
         : node.kind === 'interact'
-          ? `Осмотрите место «${label}»`
+          ? `Обшарить «${label}»`
           : node.kind === 'claim'
-            ? `Заберите награду в месте «${label}»`
-            : `Одолейте противника у места «${label}»`
+            ? `Хапнуть добро в «${label}»`
+            : `Начистить рыло всем у «${label}»`
     return { id: node.id, text, done: false }
   })
 }
@@ -758,7 +758,7 @@ function MiniMap({ view }: { view: GameView }) {
           view.worldMap.regions.map((region) => {
             const title = region.discovered
               ? `${ZONE_INFO[region.biome].name} · ${territoryLabels[region.territory]}`
-              : 'Неизведанный регион'
+              : 'Незнамо где'
             return (
               <div
                 className={`generated-map-region ${
@@ -840,12 +840,12 @@ function MiniMap({ view }: { view: GameView }) {
         </span>
         {hasObjectiveMarker ? (
           <span>
-            <i className="legend-dot objective" /> {generated ? 'цель' : 'сдача добычи'}
+            <i className="legend-dot objective" /> {generated ? 'цель' : 'сдать хабар'}
           </span>
         ) : null}
         {hasEventMarker ? (
           <span>
-            <i className="legend-dot event" /> событие
+            <i className="legend-dot event" /> движуха
           </span>
         ) : null}
       </div>
@@ -864,7 +864,7 @@ function ObjectiveList({ view }: { view: GameView }) {
       <header className="hud-card-header">
         <span>
           <Flag aria-hidden="true" />
-          Задачи
+          Делишки
         </span>
         <span className="zone-code">
           {completed}/{view.objectives.length}
@@ -876,10 +876,10 @@ function ObjectiveList({ view }: { view: GameView }) {
           const lootHint = !isLootTurnIn
             ? null
             : !raidDone
-              ? 'Сначала ограбьте корован'
+              ? 'Сперва обнеси корован'
               : !guards?.done
-                ? `Добыча при вас • охрана ${guards?.progress ?? 0}/${guards?.target ?? 4}`
-                : 'Цель отмечена на карте • нажмите E у маяка'
+                ? `Хабар при тебе • охрана ${guards?.progress ?? 0}/${guards?.target ?? 4}`
+                : 'Цель на карте • жми E у маяка'
 
           return (
             <div
@@ -931,7 +931,7 @@ function EventBanner({ event }: { event: WorldEventView | null }) {
       <header className="event-banner-header">
         <span>
           <Sparkles aria-hidden="true" />
-          Событие
+          Движуха
         </span>
         {event.timeRemaining !== undefined ? (
           <strong>
@@ -961,9 +961,9 @@ function CampaignBanner({ view }: { view: GameView }) {
     <section className="hud-card campaign-banner" aria-label="Кампания завершена">
       <Flag aria-hidden="true" />
       <div>
-        <span>Кампания завершена</span>
-        <strong>Свободная игра продолжается</strong>
-        <small>События, налёты и торговля остаются активны.</small>
+        <span>Кампания закрыта</span>
+        <strong>Гуляем дальше</strong>
+        <small>Движухи, налёты и торговля никуда не делись.</small>
       </div>
     </section>
   )
@@ -977,11 +977,11 @@ function BodyPanel({ view }: { view: GameView }) {
     <section className={`body-panel ${healthy ? 'healthy' : ''}`} aria-label="Состояние тела">
       <div className="body-title">
         <Bone aria-hidden="true" />
-        <span>Состояние</span>
+        <span>Тушка</span>
         {healthy ? (
           <strong className="body-healthy">
             <Check aria-hidden="true" />
-            Всё цело
+            Всё на месте
           </strong>
         ) : view.body.bleeding > 0 ? (
           <strong>Кровотечение {view.body.bleeding.toFixed(1)}</strong>
@@ -1025,7 +1025,7 @@ function AchievementBanner({ achievement }: { achievement: AchievementUnlock | n
         <Trophy aria-hidden="true" />
       </div>
       <div>
-        <span>Достижение открыто · {ACHIEVEMENT_RARITY_LABELS[achievement.rarity]}</span>
+        <span>Ачивка в кармане · {ACHIEVEMENT_RARITY_LABELS[achievement.rarity]}</span>
         <strong>{achievement.name}</strong>
         <p>{achievement.description}</p>
       </div>
@@ -1092,9 +1092,9 @@ function AchievementGallery({
       >
         <header className="modal-header achievement-gallery-header">
           <div>
-            <span className="eyebrow">Летопись подвигов</span>
+            <span className="eyebrow">Хроника дичи</span>
             <h2 id="achievements-title">Достижения</h2>
-            <p>Никаких наград — только слава, редкость и право хвастаться.</p>
+            <p>Никаких плюшек — только слава, редкость и право понтоваться.</p>
           </div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="Закрыть достижения">
             <X aria-hidden="true" />
@@ -1111,7 +1111,7 @@ function AchievementGallery({
               <strong>
                 {summary.unlocked} / {summary.total}
               </strong>
-              <p>Подвиги сохраняются между всеми кампаниями.</p>
+              <p>Подвиги копятся сквозь все забеги.</p>
             </div>
           </div>
           <div className="achievement-rarity-breakdown" aria-label="Прогресс по редкости">
@@ -1172,7 +1172,7 @@ function AchievementGallery({
                           <h4>{concealed ? '???' : achievement.name}</h4>
                           <p>
                             {concealed
-                              ? 'Условие этого достижения пока скрыто.'
+                              ? 'Что тут открывать — секрет.'
                               : achievement.description}
                           </p>
                         </div>
@@ -1182,7 +1182,7 @@ function AchievementGallery({
                           </time>
                         ) : concealed ? (
                           <div className="achievement-card-hidden-state">
-                            <span>Условие скрыто</span>
+                            <span>Секрет</span>
                           </div>
                         ) : (
                           <div className="achievement-card-progress">
@@ -1418,8 +1418,8 @@ function MenuScreen({
           draggable={false}
         />
         <p className="hero-copy">
-          Конечный экшен-рогалик на 25 потоковых регионах. Каждый seed собирает новый путь
-          через холмы, реки и мосты для любой из трёх сторон конфликта.
+          Экшен-рогалик на 25 потоковых регионах. Каждый seed лепит новый маршрут
+          через холмы, реки и мосты — для любой из трёх сторон замеса.
         </p>
         <button className="secondary-button achievement-menu-button" type="button" onClick={onAchievements}>
           <Trophy aria-hidden="true" />
@@ -1467,7 +1467,7 @@ function MenuScreen({
               onClick={onAbandonGenerated}
             >
               <X aria-hidden="true" />
-              Оставить забег
+              Бросить забег
             </button>
           </div>
         </section>
@@ -1483,8 +1483,8 @@ function MenuScreen({
             <h2 id="faction-title">Выберите, за кого нагибать</h2>
           </div>
           <p>
-            Одна жизнь, уникальный мир и отдельный маршрут к финальной крепости для каждой
-            фракции.
+            Одна жизнь, свой мир и свой маршрут к логову главгада для каждой
+            банды.
           </p>
         </div>
 
@@ -1508,7 +1508,7 @@ function MenuScreen({
                   onChange={(event) => onSeedInput(event.currentTarget.value)}
                   spellCheck="false"
                   autoComplete="off"
-                  placeholder="Например: два года"
+                  placeholder="Например: джва года"
                 />
               </label>
               <button className="secondary-button random-seed-button" type="button" onClick={onRandomSeed}>
@@ -1526,7 +1526,7 @@ function MenuScreen({
             <div className="run-setup-heading">
               <div>
                 <span className="eyebrow">Стартовый дар</span>
-                <h3>Один бонус на весь забег</h3>
+                <h3>Одна плюшка на весь забег</h3>
               </div>
               <div className="profile-currency" title="Валюта профиля">
                 <Coins aria-hidden="true" />
@@ -1756,7 +1756,7 @@ function MenuScreen({
                 ))}
               </div>
             ) : (
-              <p className="empty-history">Завершённые забеги появятся здесь.</p>
+              <p className="empty-history">Законченные забеги всплывут тут.</p>
             )}
           </section>
         </div>
@@ -1787,7 +1787,7 @@ function ShopModal({
         <header className="modal-header">
           <div>
             <span className="eyebrow">Вольные земли</span>
-            <h2 id="shop-title">Лекарь & механик</h2>
+            <h2 id="shop-title">Коновал & механик</h2>
             <p>«Пришить не обещаю, но протез поставлю надёжный».</p>
           </div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="Закрыть лавку">
@@ -1900,7 +1900,7 @@ function PauseModal({
           <Pause aria-hidden="true" />
         </div>
         <span className="eyebrow">Игра приостановлена</span>
-        <h2 id="pause-title">Передышка у костра</h2>
+        <h2 id="pause-title">Перекур у костра</h2>
         <p>
           {FACTION_INFO[view.faction].name} • {ZONE_INFO[view.zone].name} • {formatTime(view.elapsed)}
         </p>
@@ -2036,23 +2036,23 @@ function EndModal({
     terminalRun?.summary?.profileCurrencyEarned ?? terminalRun?.rewardGranted ?? 0
   const eyebrow = generated
     ? result === 'victory'
-      ? 'Сгенерированный забег пройден'
-      : 'Сгенерированный забег завершён'
+      ? 'Забег пройден, корованы в труху'
+      : 'Забег окончен, ты в труху'
     : result === 'victory'
-      ? 'Кампания завершена'
+      ? 'Кампания закрыта'
       : 'Путешествие окончено'
   const title =
     result === 'victory'
-      ? 'Корованы ваши'
+      ? 'Корованы наши!'
       : generated
-        ? 'Этот мир вас пережил'
-        : 'Вы пали в бою'
+        ? 'Этот мир тебя пережил'
+        : 'Ты пал смертью храбрых'
   const description =
     result === 'victory'
-      ? 'Все задачи выполнены. Летописцы уже преувеличивают ваши подвиги.'
+      ? 'Все делишки сделаны. Летописцы уже привирают про твои подвиги.'
       : generated
-        ? 'Павший забег закрыт и записан в историю. Следующая попытка начнётся в новом мире.'
-        : 'Загрузите legacy-сохранение или попробуйте ещё раз — желательно с целыми ногами.'
+        ? 'Павший забег закрыт и вписан в историю. Следующая попытка — уже в новом мире.'
+        : 'Грузи legacy-сохранение или пробуй снова — желательно с целыми ногами.'
 
   return (
     <div className="modal-backdrop end-backdrop" role="presentation">
@@ -2103,7 +2103,7 @@ function EndModal({
         ) : null}
         {runAchievements.length > 0 ? (
           <div className="end-achievements">
-            <span className="eyebrow">Открыто за эту кампанию</span>
+            <span className="eyebrow">Нахватано за забег</span>
             {runAchievements.map((achievement) => (
               <div className={`rarity-${achievement.rarity}`} key={achievement.id}>
                 <Trophy aria-hidden="true" />
@@ -2299,7 +2299,7 @@ function GameScreen({
           </div>
           <div className={`threat-chip tier-${view.threatTier}`}>
             <Shield aria-hidden="true" />
-            <span>Угроза</span>
+            <span>Накал</span>
             <strong>
               {view.threatTier}/{MAX_THREAT_TIER}
             </strong>
@@ -2403,7 +2403,7 @@ function GameScreen({
       {!view.pointerLocked && !paused && !shopOpen && !endResult ? (
         <button className="capture-prompt" type="button" onClick={onPointerLock}>
           <MousePointer2 aria-hidden="true" />
-          Нажмите, чтобы управлять камерой
+          Клацни, чтобы рулить камерой
         </button>
       ) : null}
 
@@ -2815,7 +2815,7 @@ function App() {
       launch?.restored
         ? `Забег seed ${launch.config.seed} продолжен.`
         : launch
-          ? `Мир seed ${launch.config.seed} собран.`
+          ? `Мир seed ${launch.config.seed} слеплен.`
           : pendingSave
             ? 'Legacy-сохранение загружено.'
             : `${FACTION_INFO[faction].name}: legacy-кампания началась.`,
