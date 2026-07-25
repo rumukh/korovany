@@ -148,11 +148,22 @@ whose state is persisted in `rngStates.chronicle` exactly like the four existing
 `tickChronicle()` is a pure function of `(blueprint, state, regions, rng, environment)`,
 so an identical seed and environment sequence always replays an identical history.
 
-> **Environment caveat.** `nightFactor` comes from `dayPhase`, which is derived from
-> `elapsed` and therefore deterministic. `stormFactor` comes from the live weather
-> system, which is seeded from `Date.now()` — a pre-existing property of the weather
-> system, not of the chronicle. The chronicle stream itself is fully deterministic and
-> is asserted as such in `tests/chronicle.test.ts`.
+> **Environment caveat.** Neither environment input is random. `nightFactor` is derived
+> from `dayPhase`, i.e. from `elapsed`. `stormFactor` is `weatherWeights.rain +
+> weatherWeights.snow`, and `weatherWeights` only ever lerps toward
+> `WEATHER_BY_ZONE[biome under the player]` — so weather kind is a pure function of the
+> seeded world and where the player is standing. (`weatherRng`, the one `Date.now()`
+> seed in `GameEngine`, feeds `randomWeatherRange` only, which times cosmetic lightning
+> flashes and thunder claps. It never touches `weatherWeights`.)
+>
+> What this does mean: both inputs track the player. `stormFactor` is a per-frame lerp,
+> so it depends on the route walked and on frame pacing, and each input is pinned flat
+> when its display setting is off — `dynamicDayNight: false` forces `nightFactor` to `0`,
+> and `weatherEnabled: false` snaps the weights to `clear`. So a chronicle history
+> replays exactly for a given seed *and* playthrough, not across arbitrary playthroughs
+> of the same seed. That is inherent to anything that reacts to where the player walks.
+> `tickChronicle()` itself is pure and is asserted to be bit-identical for a fixed seed
+> and environment sequence in `tests/chronicle.test.ts`.
 
 **1. Faction fronts.** Pressure grows toward `factionStrength[faction]` in regions a
 faction controls and decays elsewhere. For each road segment in `blueprint.roads` the
