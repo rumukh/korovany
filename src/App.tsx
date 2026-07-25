@@ -69,7 +69,6 @@ import {
   MAX_HEALTH_PER_LEVEL,
   MAX_STAMINA_PER_LEVEL,
   MAX_THREAT_TIER,
-  SAVE_KEY,
   SHOP_ITEMS,
   ZONE_INFO,
   type BodyPart,
@@ -77,7 +76,6 @@ import {
   type GameView,
   type LootRarity,
   type PartStatus,
-  type SavedGame,
   type ShopItem,
   type WorldEventView,
   type WorldMapRegion,
@@ -87,9 +85,7 @@ import {
   getMaxStamina,
   getShopItemPrice,
   getThreatTier,
-  normalizeSavedGame,
   normalizeUpgradeLevels,
-  restoreObjectives,
 } from './game/types'
 import { isMapMarkerVisible, projectMapMarker } from './game/mapMarkers'
 import {
@@ -302,30 +298,6 @@ const bodyParts: Array<{ id: BodyPart; label: string; short: string; icon: React
   { id: 'rightLeg', label: 'Правая нога', short: 'П. нога', icon: <Footprints aria-hidden="true" /> },
 ]
 
-function readSavedGame(): SavedGame | null {
-  try {
-    const raw = localStorage.getItem(SAVE_KEY)
-    if (!raw) return null
-    const value = normalizeSavedGame(JSON.parse(raw))
-    if (!value) {
-      console.warn('Korovany: incompatible saved game ignored.')
-      return null
-    }
-    if (
-      Array.isArray(value.objectives) &&
-      value.objectives.length > 0 &&
-      value.objectives.every((objective) => objective.done)
-    ) {
-      console.warn('Korovany: completed campaign save ignored.')
-      return null
-    }
-    return value
-  } catch (error) {
-    console.warn('Korovany: saved game could not be read.', error)
-    return null
-  }
-}
-
 function readMusicMuted(): boolean {
   try {
     return localStorage.getItem(MUSIC_MUTED_KEY) === 'true'
@@ -436,106 +408,6 @@ function formatSaveDate(value: string): string {
       }).format(date)
 }
 
-function createLegacyWorldMap(zone: GameView['zone']): GameView['worldMap'] {
-  return {
-    mode: 'legacy',
-    bounds: { minX: -80, maxX: 80, minZ: -80, maxZ: 80 },
-    currentRegionId: zone,
-    regions: [
-      {
-        id: 'neutral',
-        gridX: 0,
-        gridZ: 0,
-        biome: 'neutral',
-        territory: 'neutral',
-        discovered: true,
-        current: zone === 'neutral',
-      },
-      {
-        id: 'palace',
-        gridX: 1,
-        gridZ: 0,
-        biome: 'palace',
-        territory: 'guard',
-        discovered: true,
-        current: zone === 'palace',
-      },
-      {
-        id: 'forest',
-        gridX: 0,
-        gridZ: 1,
-        biome: 'forest',
-        territory: 'elf',
-        discovered: true,
-        current: zone === 'forest',
-      },
-      {
-        id: 'fort',
-        gridX: 1,
-        gridZ: 1,
-        biome: 'fort',
-        territory: 'villain',
-        discovered: true,
-        current: zone === 'fort',
-      },
-    ],
-  }
-}
-
-function createInitialView(faction: Faction, savedGame?: SavedGame): GameView {
-  const spawn = savedGame?.position ?? [
-    FACTION_INFO[faction].spawn[0],
-    0,
-    FACTION_INFO[faction].spawn[1],
-  ]
-  const zone =
-    spawn[0] < 0 && spawn[2] < 0
-      ? 'neutral'
-      : spawn[0] >= 0 && spawn[2] < 0
-        ? 'palace'
-        : spawn[0] < 0
-          ? 'forest'
-          : 'fort'
-  const body = savedGame ? { ...savedGame.body } : createHealthyBody()
-  const stamina = savedGame?.stamina ?? 100
-  const upgrades = normalizeUpgradeLevels(savedGame?.upgradeLevels)
-  const objectives = restoreObjectives(faction, savedGame?.objectives)
-  const maxHealth = getMaxHealth(upgrades)
-  const maxStamina = getMaxStamina(upgrades)
-  const elapsed = savedGame?.elapsed ?? 0
-  const currentStamina = Math.min(maxStamina, stamina)
-  return {
-    faction,
-    health: Math.min(maxHealth, savedGame?.health ?? maxHealth),
-    maxHealth,
-    damageFlash: 0,
-    stamina: currentStamina,
-    maxStamina,
-    gold: savedGame?.gold ?? 55,
-    kills: savedGame?.kills ?? 0,
-    damage: savedGame?.damage ?? (faction === 'villain' ? 31 : faction === 'guard' ? 28 : 26),
-    zone,
-    body,
-    objectives,
-    prompt: '',
-    markers: [],
-    worldMap: createLegacyWorldMap(zone),
-    squad: 0,
-    elapsed,
-    pointerLocked: false,
-    paused: false,
-    caravanCooldown: 0,
-    ability: createAbilityView(faction, currentStamina, body),
-    activeEvent: null,
-    lootToast: null,
-    campaignCompleted:
-      savedGame?.campaignCompleted === true ||
-      objectives.every((objective) => objective.done),
-    threatTier: getThreatTier(elapsed),
-    upgrades,
-  }
-}
-
 function createGeneratedObjectives(blueprint: WorldBlueprint, faction: Faction) {
   return blueprint.objectives[faction].nodes.map((node) => {
     const site = blueprint.sites.find((candidate) => candidate.id === node.siteId)
@@ -631,7 +503,6 @@ function createGeneratedInitialView(launch: GeneratedRunLaunch): GameView {
       },
     ],
     worldMap: {
-      mode: 'generated',
       bounds: { ...blueprint.bounds },
       currentRegionId: currentRegion.id,
       seed: blueprint.seed,
@@ -680,92 +551,59 @@ function RegionBiomeIcon({ biome }: { biome: GameView['zone'] }) {
 function MiniMap({ view }: { view: GameView }) {
   const hasObjectiveMarker = view.markers.some((marker) => marker.kind === 'objective')
   const hasEventMarker = view.markers.some((marker) => marker.kind === 'event')
-  const generated = view.worldMap.mode === 'generated'
   const discoveredCount = view.worldMap.regions.filter((region) => region.discovered).length
   const visibleMarkers = view.markers.filter((marker) =>
     isMapMarkerVisible(view.worldMap, marker),
   )
-  const mapLabel = generated
-    ? `Карта сгенерированного мира, открыто ${discoveredCount} из ${view.worldMap.regions.length} регионов`
-    : 'Карта четырёх зон'
+  const mapLabel = `Карта сгенерированного мира, открыто ${discoveredCount} из ${view.worldMap.regions.length} регионов`
   const { bounds } = view.worldMap
 
   return (
-    <section
-      className={`hud-card minimap-card ${generated ? 'generated' : 'legacy'}`}
-      aria-label={mapLabel}
-    >
+    <section className="hud-card minimap-card generated" aria-label={mapLabel}>
       <header className="hud-card-header">
         <span>
           <MapIcon aria-hidden="true" />
           Карта
         </span>
         <span className="zone-code">
-          {generated
-            ? `${discoveredCount}/${view.worldMap.regions.length}`
-            : '4 зоны'}
+          {discoveredCount}/{view.worldMap.regions.length}
         </span>
       </header>
-      {generated ? (
-        <div className="generated-map-meta">
-          <span>seed {view.worldMap.seed}</span>
-          <span>v{view.worldMap.generatorVersion}</span>
-        </div>
-      ) : null}
-      <div className={`minimap ${generated ? 'generated-world-map' : 'legacy-world-map'}`}>
-        {generated ? (
-          view.worldMap.regions.map((region) => {
-            const title = region.discovered
-              ? `${ZONE_INFO[region.biome].name} · ${territoryLabels[region.territory]}`
-              : 'Неизведанный регион'
-            return (
-              <div
-                className={`generated-map-region ${
-                  region.discovered
-                    ? `discovered biome-${region.biome} territory-${region.territory}`
-                    : 'fogged'
-                } ${region.current ? 'current' : ''}`}
-                key={region.id}
-                style={{
-                  gridColumn: region.gridX + 1,
-                  gridRow: region.gridZ + 1,
-                }}
-                title={title}
-                aria-label={title}
-              >
-                {region.discovered ? (
-                  <>
-                    <RegionBiomeIcon biome={region.biome} />
-                    <span>{territoryLabels[region.territory]}</span>
-                  </>
-                ) : (
-                  <span aria-hidden="true">?</span>
-                )}
-              </div>
-            )
-          })
-        ) : (
-          <>
-            <div className={`map-zone neutral${view.zone === 'neutral' ? ' current' : ''}`}>
-              <Home aria-hidden="true" />
-              <span>Люди</span>
+      <div className="generated-map-meta">
+        <span>seed {view.worldMap.seed}</span>
+        <span>v{view.worldMap.generatorVersion}</span>
+      </div>
+      <div className="minimap generated-world-map">
+        {view.worldMap.regions.map((region) => {
+          const title = region.discovered
+            ? `${ZONE_INFO[region.biome].name} · ${territoryLabels[region.territory]}`
+            : 'Неизведанный регион'
+          return (
+            <div
+              className={`generated-map-region ${
+                region.discovered
+                  ? `discovered biome-${region.biome} territory-${region.territory}`
+                  : 'fogged'
+              } ${region.current ? 'current' : ''}`}
+              key={region.id}
+              style={{
+                gridColumn: region.gridX + 1,
+                gridRow: region.gridZ + 1,
+              }}
+              title={title}
+              aria-label={title}
+            >
+              {region.discovered ? (
+                <>
+                  <RegionBiomeIcon biome={region.biome} />
+                  <span>{territoryLabels[region.territory]}</span>
+                </>
+              ) : (
+                <span aria-hidden="true">?</span>
+              )}
             </div>
-            <div className={`map-zone palace${view.zone === 'palace' ? ' current' : ''}`}>
-              <Castle aria-hidden="true" />
-              <span>Дворец</span>
-            </div>
-            <div className={`map-zone forest${view.zone === 'forest' ? ' current' : ''}`}>
-              <Trees aria-hidden="true" />
-              <span>Эльфы</span>
-            </div>
-            <div className={`map-zone fort${view.zone === 'fort' ? ' current' : ''}`}>
-              <Skull aria-hidden="true" />
-              <span>Форт</span>
-            </div>
-            <div className="map-road horizontal" />
-            <div className="map-road vertical" />
-          </>
-        )}
+          )
+        })}
         {visibleMarkers.map((marker) => (
           <span
             className={`map-marker ${marker.kind}`}
@@ -801,8 +639,7 @@ function MiniMap({ view }: { view: GameView }) {
         </span>
         {hasObjectiveMarker ? (
           <span>
-            <Flag className="legend-objective" aria-hidden="true" />{' '}
-            {generated ? 'цель' : 'сдать добычу'}
+            <Flag className="legend-objective" aria-hidden="true" /> цель
           </span>
         ) : null}
         {hasEventMarker ? (
@@ -912,21 +749,6 @@ function EventBanner({ event }: { event: WorldEventView | null }) {
           </span>
         </div>
       ) : null}
-    </section>
-  )
-}
-
-function CampaignBanner({ view }: { view: GameView }) {
-  if (!view.campaignCompleted || view.worldMap.mode === 'generated') return null
-
-  return (
-    <section className="hud-card campaign-banner" aria-label="Кампания завершена">
-      <Flag aria-hidden="true" />
-      <div>
-        <span>Кампания завершена</span>
-        <strong>Пользователь сам себе командир</strong>
-        <small>Можно делать что захочется: события, набеги и торговля остаются активны.</small>
-      </div>
     </section>
   )
 }
@@ -1170,7 +992,6 @@ function AchievementGallery({
 }
 
 function MenuScreen({
-  savedGame,
   activeRun,
   activeRunError,
   profile,
@@ -1188,7 +1009,6 @@ function MenuScreen({
   onStart,
   onContinueGenerated,
   onAbandonGenerated,
-  onLoadLegacy,
   onSeedInput,
   onRandomSeed,
   onSelectBoon,
@@ -1203,7 +1023,6 @@ function MenuScreen({
   onToggleScreenShake,
   onSfxVolumeChange,
 }: {
-  savedGame: SavedGame | null
   activeRun: ActiveRunSaveV2 | null
   activeRunError: string | null
   profile: ProfileSaveV1
@@ -1221,7 +1040,6 @@ function MenuScreen({
   onStart: (faction: Faction) => void
   onContinueGenerated: () => void
   onAbandonGenerated: () => void
-  onLoadLegacy: () => void
   onSeedInput: (value: string) => void
   onRandomSeed: () => void
   onSelectBoon: (boonId: string) => void
@@ -1658,35 +1476,6 @@ function MenuScreen({
         </div>
 
         <div className="menu-side-stack">
-          {savedGame ? (
-            <div className="continue-card legacy-save-card">
-              <div className="continue-icon">
-                <FactionEmblem faction={savedGame.faction} />
-              </div>
-              <div className="continue-copy">
-                <span className="eyebrow">Legacy campaign · v1</span>
-                <h3>{FACTION_INFO[savedGame.faction].name}</h3>
-                <p>
-                  {formatSaveDate(savedGame.savedAt)} • {savedGame.gold} золота •{' '}
-                  {savedGame.kills} побед
-                </p>
-              </div>
-              <button className="secondary-button" type="button" onClick={onLoadLegacy}>
-                <RotateCcw aria-hidden="true" />
-                Загрузить legacy campaign
-              </button>
-            </div>
-          ) : (
-            <div className="continue-card empty legacy-save-card">
-              <Save aria-hidden="true" />
-              <div>
-                <span className="eyebrow">Legacy campaign · v1</span>
-                <h3>Старого сохранения нет</h3>
-                <p>Формат v1 может сосуществовать с новым забегом.</p>
-              </div>
-            </div>
-          )}
-
           <section className="profile-card" aria-labelledby="profile-title">
             <header>
               <div>
@@ -1978,7 +1767,6 @@ function PauseModal({
 function EndModal({
   result,
   view,
-  generated,
   terminalRun,
   runAchievements,
   onRetryFinalization,
@@ -1987,7 +1775,6 @@ function EndModal({
 }: {
   result: 'victory' | 'defeat'
   view: GameView
-  generated: boolean
   terminalRun: TerminalRunSummary | null
   runAchievements: AchievementView[]
   onRetryFinalization: () => void
@@ -1996,25 +1783,13 @@ function EndModal({
 }) {
   const profileReward =
     terminalRun?.summary?.profileCurrencyEarned ?? terminalRun?.rewardGranted ?? 0
-  const eyebrow = generated
-    ? result === 'victory'
-      ? 'Суть выполнена: забег пройден'
-      : 'Пользователь не выжил'
-    : result === 'victory'
-      ? 'Кампания завершена'
-      : 'Путешествие окончено'
-  const title =
-    result === 'victory'
-      ? 'Можно грабить корованы!'
-      : generated
-        ? 'Труп тоже 3Д'
-        : 'Пользователь пал в бою'
+  const eyebrow =
+    result === 'victory' ? 'Суть выполнена: забег пройден' : 'Пользователь не выжил'
+  const title = result === 'victory' ? 'Можно грабить корованы!' : 'Труп тоже 3Д'
   const description =
     result === 'victory'
       ? 'Все задачи выполнены. Летописцы уже преувеличивают твои подвиги.'
-      : generated
-        ? 'Этот мир пережил пользователя. Следующая попытка начнётся в новом мире.'
-        : 'Можно загрузить legacy-сохранение или попробовать ещё раз — желательно с целыми ногами.'
+      : 'Этот мир пережил пользователя. Следующая попытка начнётся в новом мире.'
 
   return (
     <div className="modal-backdrop end-backdrop" role="presentation">
@@ -2042,7 +1817,7 @@ function EndModal({
             золота
           </span>
         </div>
-        {generated && terminalRun && !terminalRun.finalizationPending ? (
+        {terminalRun && !terminalRun.finalizationPending ? (
           <div
             className="terminal-reward"
             aria-label={`Получено: ${formatRussianCount(profileReward, [
@@ -2061,7 +1836,7 @@ function EndModal({
             </div>
           </div>
         ) : null}
-        {generated && terminalRun?.finalizationPending ? (
+        {terminalRun?.finalizationPending ? (
           <div className="terminal-finalization-warning" role="alert">
             <span>Итог забега пока не записан. Повторите сохранение перед выходом.</span>
             <button className="secondary-button" type="button" onClick={onRetryFinalization}>
@@ -2084,7 +1859,7 @@ function EndModal({
         <div className="pause-actions">
           <button className="primary-button" type="button" onClick={onRestart}>
             <RotateCcw aria-hidden="true" />
-            {generated ? 'Новый мир' : 'Сыграть снова'}
+            Новый мир
           </button>
           <button className="text-button" type="button" onClick={onMenu}>
             <Home aria-hidden="true" />
@@ -2341,7 +2116,6 @@ function GameScreen({
             <i style={{ width: abilityProgress }} />
           </div>
         </div>
-        <CampaignBanner view={view} />
         <ObjectiveList view={view} />
         <EventBanner event={view.activeEvent} />
       </div>
@@ -2506,7 +2280,6 @@ function GameScreen({
         <EndModal
           result={endResult}
           view={view}
-          generated={view.worldMap.mode === 'generated'}
           terminalRun={terminalRun}
           runAchievements={runAchievements}
           onRetryFinalization={onRetryFinalization}
@@ -2526,10 +2299,8 @@ function App() {
   )
   const [activeRunError, setActiveRunError] = useState<string | null>(null)
   const [faction, setFaction] = useState<Faction>('elf')
-  const [pendingSave, setPendingSave] = useState<SavedGame | undefined>()
   const [pendingGeneratedLaunch, setPendingGeneratedLaunch] =
     useState<GeneratedRunLaunch | null>(null)
-  const [savedGame, setSavedGame] = useState<SavedGame | null>(() => readSavedGame())
   const [seedInput, setSeedInput] = useState(() => String(createRandomSeed()))
   const [gameView, setGameView] = useState<GameView | null>(null)
   const [notices, setNotices] = useState<Notice[]>([])
@@ -2679,6 +2450,7 @@ function App() {
   useEffect(() => {
     if (screen !== 'game' || !worldRef.current) return
     const launch = pendingGeneratedLaunch
+    if (!launch) return
     let engine: GameEngine
     try {
       engine = new GameEngine(
@@ -2692,49 +2464,34 @@ function App() {
           if (!achievementsOpenRef.current) setPaused((current) => !current)
         },
         onSaveRequest: () => {
-          const currentEngine = engineRef.current
-          if (launch) {
-            checkpointGeneratedRun(currentEngine, true)
-            return
-          }
-          const save = currentEngine?.save()
-          if (save) setSavedGame(save)
+          checkpointGeneratedRun(engineRef.current, true)
         },
         onEnd: (result) => {
           const currentEngine = engineRef.current
-          if (launch) {
-            let terminalSnapshot: ActiveRunSaveV2 | null = null
-            try {
-              terminalSnapshot = currentEngine?.saveGeneratedRun() ?? null
-            } catch (error) {
-              console.warn('Korovany: terminal generated run snapshot could not be created.', error)
-            }
+          let terminalSnapshot: ActiveRunSaveV2 | null = null
+          try {
+            terminalSnapshot = currentEngine?.saveGeneratedRun() ?? null
+          } catch (error) {
+            console.warn('Korovany: terminal generated run snapshot could not be created.', error)
+          }
 
-            if (terminalSnapshot) {
-              recordTerminalRun(terminalSnapshot)
-            } else {
-              const refreshedProfile = readPlayerProfile()
-              setProfile(refreshedProfile)
-              setActiveRun(null)
-              setTerminalRun({
-                runId: launch.runId,
-                rewardGranted: 0,
-                summary: null,
-                profileCurrency: refreshedProfile.profileCurrency,
-                finalizationPending: true,
-              })
-              addNotice(
-                'Не удалось создать итоговый снимок забега. Повторите сохранение.',
-                'warning',
-              )
-            }
-          } else if (result === 'victory') {
-            try {
-              localStorage.removeItem(SAVE_KEY)
-              setSavedGame(null)
-            } catch (error) {
-              console.warn('Korovany: completed campaign save could not be removed.', error)
-            }
+          if (terminalSnapshot) {
+            recordTerminalRun(terminalSnapshot)
+          } else {
+            const refreshedProfile = readPlayerProfile()
+            setProfile(refreshedProfile)
+            setActiveRun(null)
+            setTerminalRun({
+              runId: launch.runId,
+              rewardGranted: 0,
+              summary: null,
+              profileCurrency: refreshedProfile.profileCurrency,
+              finalizationPending: true,
+            })
+            addNotice(
+              'Не удалось создать итоговый снимок забега. Повторите сохранение.',
+              'warning',
+            )
           }
           setEndResult(result)
           setRunAchievements(currentEngine?.getCurrentRunAchievements() ?? [])
@@ -2746,7 +2503,6 @@ function App() {
           )
         },
         },
-        launch ? undefined : pendingSave,
         {
           musicMuted: musicMutedRef.current,
           sfxVolume: sfxVolumeRef.current,
@@ -2757,19 +2513,16 @@ function App() {
           foliageQuality: foliageQualityRef.current,
           screenShakeEnabled: screenShakeEnabledRef.current,
           achievementRunId: `${achievementSessionId}:${runId}`,
-          ...(launch ? { generatedRun: launch } : {}),
+          generatedRun: launch,
         },
       )
     } catch (error) {
       console.error('Korovany: game engine could not start.', error)
-      if (launch) {
-        const reason =
-          error instanceof Error ? error.message : 'неизвестная ошибка совместимости'
-        setActiveRunError(`Не удалось продолжить забег: ${reason}`)
-        setActiveRun(readActiveGeneratedRun())
-      }
+      const reason =
+        error instanceof Error ? error.message : 'неизвестная ошибка совместимости'
+      setActiveRunError(`Не удалось продолжить забег: ${reason}`)
+      setActiveRun(readActiveGeneratedRun())
       setGameView(null)
-      setPendingSave(undefined)
       setPendingGeneratedLaunch(null)
       setPaused(false)
       setScreen('menu')
@@ -2779,15 +2532,11 @@ function App() {
     setAchievementCatalogue(engine.getAchievements())
     setRunAchievements(engine.getCurrentRunAchievements())
     engine.start()
-    if (launch && !launch.restored) checkpointGeneratedRun(engine)
+    if (!launch.restored) checkpointGeneratedRun(engine)
     addNotice(
-      launch?.restored
+      launch.restored
         ? `Забег seed ${launch.config.seed} продолжен.`
-        : launch
-          ? `Мир seed ${launch.config.seed} собран.`
-          : pendingSave
-            ? 'Legacy-сохранение загружено.'
-            : `Legacy-кампания началась. Сторона: ${FACTION_INFO[faction].name}.`,
+        : `Мир seed ${launch.config.seed} собран.`,
       'success',
     )
     return () => {
@@ -2804,7 +2553,6 @@ function App() {
     checkpointGeneratedRun,
     faction,
     pendingGeneratedLaunch,
-    pendingSave,
     recordTerminalRun,
     runId,
     screen,
@@ -2836,10 +2584,7 @@ function App() {
 
   useEffect(() => {
     const launch = pendingGeneratedLaunch
-    const regionId =
-      gameView?.worldMap.mode === 'generated'
-        ? gameView.worldMap.currentRegionId
-        : undefined
+    const regionId = gameView?.worldMap.currentRegionId
     if (screen !== 'game' || !launch || !regionId || endResult) return
 
     const previous = lastGeneratedRegionRef.current
@@ -2873,21 +2618,10 @@ function App() {
     setScreen('game')
   }
 
-  const startLegacyGame = (selectedFaction: Faction, save?: SavedGame) => {
-    engineRef.current?.stopAudio()
-    setFaction(selectedFaction)
-    setPendingSave(save)
-    setPendingGeneratedLaunch(null)
-    setGameView(createInitialView(selectedFaction, save))
-    lastGeneratedRegionRef.current = null
-    resetGameUi()
-  }
-
   const launchGeneratedRun = (launch: GeneratedRunLaunch) => {
     engineRef.current?.stopAudio()
     setActiveRunError(null)
     setFaction(launch.config.faction)
-    setPendingSave(undefined)
     setPendingGeneratedLaunch(launch)
     setGameView(createGeneratedInitialView(launch))
     lastGeneratedRegionRef.current = null
@@ -2964,13 +2698,11 @@ function App() {
     engineRef.current?.stopAudio()
     setScreen('menu')
     setGameView(null)
-    setPendingSave(undefined)
     setPendingGeneratedLaunch(null)
     setPaused(false)
     setShopOpen(false)
     setEndResult(null)
     setTerminalRun(null)
-    setSavedGame(readSavedGame())
     setActiveRun(readActiveGeneratedRun())
     setProfile(readPlayerProfile())
     setAchievementCatalogue(readAchievementCatalogue())
@@ -2980,12 +2712,7 @@ function App() {
   }
 
   const saveGame = () => {
-    if (pendingGeneratedLaunch) {
-      checkpointGeneratedRun(engineRef.current, true)
-      return
-    }
-    const save = engineRef.current?.save()
-    if (save) setSavedGame(save)
+    checkpointGeneratedRun(engineRef.current, true)
   }
 
   const buyItem = (item: ShopItem) => {
@@ -3136,23 +2863,18 @@ function App() {
     const recoveredTerminalRun =
       terminalRun?.finalizationPending === true
     if (recoveredTerminalRun && !retryTerminalFinalization()) return
-    if (pendingGeneratedLaunch) {
-      startGeneratedRun(
-        faction,
-        createRandomSeed(),
-        pendingGeneratedLaunch.config.selectedBoonId,
-        recoveredTerminalRun,
-      )
-      return
-    }
-    startLegacyGame(faction)
+    startGeneratedRun(
+      faction,
+      createRandomSeed(),
+      pendingGeneratedLaunch?.config.selectedBoonId,
+      recoveredTerminalRun,
+    )
   }
 
   if (screen === 'menu') {
     return (
       <>
         <MenuScreen
-          savedGame={savedGame}
           activeRun={activeRun}
           activeRunError={activeRunError}
           profile={profile}
@@ -3170,9 +2892,6 @@ function App() {
           onStart={(selectedFaction) => startGeneratedRun(selectedFaction)}
           onContinueGenerated={continueGeneratedRun}
           onAbandonGenerated={abandonGeneratedRun}
-          onLoadLegacy={() => {
-            if (savedGame) startLegacyGame(savedGame.faction, savedGame)
-          }}
           onSeedInput={setSeedInput}
           onRandomSeed={() => setSeedInput(String(createRandomSeed()))}
           onSelectBoon={selectBoon}

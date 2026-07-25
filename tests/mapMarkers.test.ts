@@ -4,7 +4,6 @@ import { isMapMarkerVisible, projectMapMarker } from '../src/game/mapMarkers.ts'
 import type { MapMarker, WorldMapView } from '../src/game/types.ts'
 
 const generatedMap = {
-  mode: 'generated',
   bounds: { minX: 0, maxX: 200, minZ: 0, maxZ: 100 },
   regions: [
     {

@@ -15,7 +15,6 @@ A seeded 3D action roguelite inspired by the legendary Russian game-design meme.
 - Dynamic events, escalating threat, pooled loot, run upgrades, achievements, and starting boons
 - Original vector faction emblems, caravan key art, and adaptive chip-folk soundtrack
 - Suspend/continue, terminal victory or defeat, profile rewards, and run history
-- Backward-compatible loading for legacy version-1 four-zone saves
 - Procedural 3D art and generated instruments with no external art, audio, or asset packs
 
 ## Controls
@@ -62,4 +61,4 @@ The `main` branch is deployed automatically to GitHub Pages through GitHub Actio
 
 ## Seeds and saves
 
-The same seed and generator version produce the same region graph, terrain profiles, roads, river crossings, sites, encounters, and faction objective graphs. Generated runs are stored separately from legacy saves, so an old `korovany-save-v1` campaign can coexist with a new active run.
+The same seed and generator version produce the same region graph, terrain profiles, roads, river crossings, sites, encounters, and faction objective graphs. A run is suspended and resumed through a single active-run record; when its version or world fingerprint no longer matches, it is discarded rather than migrated.

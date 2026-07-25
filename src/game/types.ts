@@ -177,7 +177,6 @@ export interface WorldMapRegion {
 }
 
 export interface WorldMapView {
-  mode: 'legacy' | 'generated'
   bounds: WorldMapBounds
   currentRegionId?: string
   seed?: number
@@ -214,28 +213,6 @@ export interface GameView {
   upgrades: UpgradeLevels
 }
 
-export interface SavedGame {
-  version: 1
-  faction: Faction
-  position: [number, number, number]
-  health: number
-  stamina: number
-  gold: number
-  kills: number
-  damage: number
-  body: BodyState
-  objectives: Objective[]
-  elapsed: number
-  savedAt: string
-  eventCooldown?: number
-  championDamageBonus?: number
-  campaignCompleted?: boolean
-  campaignCompletedAt?: number
-  threatTier?: number
-  nextThreatWaveAt?: number
-  upgradeLevels?: Partial<UpgradeLevels>
-}
-
 export interface GameCallbacks {
   onView: (view: GameView) => void
   onNotice: (message: string, tone?: NoticeTone) => void
@@ -270,8 +247,6 @@ export const MAX_HEALTH_PER_LEVEL = 15
 export const MAX_STAMINA_PER_LEVEL = 12
 export const MAX_THREAT_TIER = 5
 export const THREAT_TIER_SECONDS = 180
-
-export const SAVE_KEY = 'korovany-save-v1'
 
 export const FACTION_INFO: Record<
   Faction,
@@ -430,116 +405,6 @@ export function createHealthyBody(): BodyState {
   }
 }
 
-export function createObjectives(faction: Faction): Objective[] {
-  if (faction === 'elf') {
-    return [
-      { id: 'raid', text: 'Ограбить имперский корован', done: false },
-      { id: 'guards', text: 'Победить охрану дворца', done: false, progress: 0, target: 4 },
-      { id: 'home', text: 'Вернуть добычу в эльфийский лагерь', done: false },
-    ]
-  }
-
-  if (faction === 'guard') {
-    return [
-      { id: 'orders', text: 'Получить приказ командира', done: false },
-      { id: 'defend', text: 'Защитить дворец от налётчиков', done: false, progress: 0, target: 4 },
-      { id: 'patrol', text: 'Сходить в набег на старый форт', done: false },
-    ]
-  }
-
-  return [
-    { id: 'rally', text: 'Приказать войскам идти за собой', done: false },
-    { id: 'breach', text: 'Напасть на дворец', done: false },
-    { id: 'commander', text: 'Победить командира дворца', done: false },
-  ]
-}
-
-export function restoreObjectives(
-  faction: Faction,
-  savedObjectives?: Objective[],
-): Objective[] {
-  const currentObjectives = createObjectives(faction)
-  if (!savedObjectives) return currentObjectives
-
-  return currentObjectives.map((objective) => {
-    const saved = savedObjectives.find((entry) => entry.id === objective.id)
-    if (!saved) return objective
-
-    const progress =
-      objective.target === undefined
-        ? undefined
-        : saved.done
-          ? objective.target
-          : Math.min(objective.target, Math.max(0, saved.progress ?? 0))
-
-    return {
-      ...objective,
-      done: saved.done,
-      ...(progress === undefined ? {} : { progress }),
-    }
-  })
-}
-
-export function normalizeSavedGame(value: unknown): SavedGame | null {
-  if (!isRecord(value) || value.version !== 1 || !isFaction(value.faction)) return null
-  if (
-    !isPosition(value.position) ||
-    !isFiniteNumber(value.health) ||
-    !isFiniteNumber(value.stamina) ||
-    !isFiniteNumber(value.gold) ||
-    !isFiniteNumber(value.kills) ||
-    !isFiniteNumber(value.damage) ||
-    !isFiniteNumber(value.elapsed) ||
-    typeof value.savedAt !== 'string'
-  ) {
-    return null
-  }
-
-  const body = normalizeBody(value.body)
-  const objectives = normalizeObjectives(value.objectives)
-  if (!body || !objectives) return null
-  const championDamageBonus = isFiniteNumber(value.championDamageBonus)
-    ? Math.max(0, value.championDamageBonus)
-    : 0
-  const upgradeLevels =
-    value.upgradeLevels === undefined
-      ? inferLegacyUpgradeLevels(value.faction, value.damage, championDamageBonus)
-      : normalizeUpgradeLevels(value.upgradeLevels)
-
-  const save: SavedGame = {
-    version: 1,
-    faction: value.faction,
-    position: value.position,
-    health: Math.max(0, value.health),
-    stamina: Math.max(0, value.stamina),
-    gold: Math.max(0, Math.floor(value.gold)),
-    kills: Math.max(0, Math.floor(value.kills)),
-    damage: Math.max(0, value.damage),
-    body,
-    objectives,
-    elapsed: Math.max(0, value.elapsed),
-    savedAt: value.savedAt,
-    upgradeLevels,
-  }
-
-  if (isFiniteNumber(value.eventCooldown)) save.eventCooldown = Math.max(0, value.eventCooldown)
-  if (isFiniteNumber(value.championDamageBonus)) save.championDamageBonus = championDamageBonus
-  if (typeof value.campaignCompleted === 'boolean') {
-    save.campaignCompleted = value.campaignCompleted
-  }
-  if (isFiniteNumber(value.campaignCompletedAt)) {
-    save.campaignCompletedAt = Math.max(0, value.campaignCompletedAt)
-  }
-  if (isFiniteNumber(value.threatTier)) {
-    save.threatTier = Math.min(MAX_THREAT_TIER, Math.max(1, Math.floor(value.threatTier)))
-  }
-  if (isFiniteNumber(value.nextThreatWaveAt)) {
-    save.nextThreatWaveAt = Math.max(0, value.nextThreatWaveAt)
-  }
-
-  return save
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -548,88 +413,6 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
-function isFaction(value: unknown): value is Faction {
-  return value === 'elf' || value === 'guard' || value === 'villain'
-}
-
-function isPosition(value: unknown): value is [number, number, number] {
-  return (
-    Array.isArray(value) &&
-    value.length === 3 &&
-    value.every((entry) => isFiniteNumber(entry))
-  )
-}
-
-function isPartStatus(value: unknown): value is PartStatus {
-  return value === 'healthy' || value === 'wounded' || value === 'missing' || value === 'prosthetic'
-}
-
-function normalizeBody(value: unknown): BodyState | null {
-  if (!isRecord(value)) return null
-  const { leftArm, rightArm, leftLeg, rightLeg, leftEye, rightEye, bleeding } = value
-  if (
-    !isPartStatus(leftArm) ||
-    !isPartStatus(rightArm) ||
-    !isPartStatus(leftLeg) ||
-    !isPartStatus(rightLeg) ||
-    !isPartStatus(leftEye) ||
-    !isPartStatus(rightEye) ||
-    !isFiniteNumber(bleeding)
-  ) {
-    return null
-  }
-
-  return {
-    leftArm,
-    rightArm,
-    leftLeg,
-    rightLeg,
-    leftEye,
-    rightEye,
-    bleeding: Math.max(0, bleeding),
-  }
-}
-
-function normalizeObjectives(value: unknown): Objective[] | null {
-  if (!Array.isArray(value)) return null
-  const objectives: Objective[] = []
-  for (const entry of value) {
-    if (
-      !isRecord(entry) ||
-      typeof entry.id !== 'string' ||
-      typeof entry.text !== 'string' ||
-      typeof entry.done !== 'boolean'
-    ) {
-      return null
-    }
-    if (entry.progress !== undefined && !isFiniteNumber(entry.progress)) return null
-    if (entry.target !== undefined && !isFiniteNumber(entry.target)) return null
-    objectives.push({
-      id: entry.id,
-      text: entry.text,
-      done: entry.done,
-      ...(entry.progress === undefined ? {} : { progress: Math.max(0, entry.progress) }),
-      ...(entry.target === undefined ? {} : { target: Math.max(0, entry.target) }),
-    })
-  }
-  return objectives
-}
-
 function normalizeUpgradeLevel(value: unknown, maxLevel: number): number {
   return isFiniteNumber(value) ? Math.min(maxLevel, Math.max(0, Math.floor(value))) : 0
-}
-
-function inferLegacyUpgradeLevels(
-  faction: Faction,
-  damage: number,
-  championDamageBonus: number,
-): UpgradeLevels {
-  const baseDamage = faction === 'villain' ? 31 : faction === 'guard' ? 28 : 26
-  const bladeLevels = Math.floor(
-    Math.max(0, damage - baseDamage - championDamageBonus) / 8,
-  )
-  return {
-    ...DEFAULT_UPGRADE_LEVELS,
-    blade: normalizeUpgradeLevel(bladeLevels, 10),
-  }
 }

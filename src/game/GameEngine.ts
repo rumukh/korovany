@@ -1,5 +1,4 @@
 import * as THREE from 'three'
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { AudioDirector, type SoundCue, type SoundRequest } from './AudioDirector'
 import { musicIntensityRank, type MusicIntensity } from './MusicScore.ts'
 import { BloomPostProcessor } from './BloomPostProcessor'
@@ -31,11 +30,9 @@ import {
 } from './cameraAccents'
 import {
   ABILITY_INFO,
-  FACTION_INFO,
   MAX_HEALTH_PER_LEVEL,
   MAX_STAMINA_PER_LEVEL,
   MAX_THREAT_TIER,
-  SAVE_KEY,
   type ActorRole,
   type BodyPart,
   type BodyState,
@@ -50,7 +47,6 @@ import {
   type MapMarker,
   type NoticeTone,
   type Objective,
-  type SavedGame,
   type ShopItem,
   type UpgradeLevels,
   type WorldEventKind,
@@ -62,7 +58,6 @@ import {
   getShopItemPrice,
   getThreatTier,
   normalizeUpgradeLevels,
-  restoreObjectives,
 } from './types'
 import {
   createGeneratedEncounterPlans,
@@ -108,7 +103,6 @@ import {
 } from './world/worldTypes'
 import {
   ZONE_ART_IDS,
-  writeZoneVisualWeights,
   type ZoneVisualWeights,
 } from './zoneArt'
 
@@ -131,8 +125,12 @@ export interface GameEngineSettings {
   screenShakeEnabled: boolean
   foliageQuality: FoliageQuality
   achievementRunId: string
-  generatedRun?: GeneratedRunLaunch
+  generatedRun: GeneratedRunLaunch
 }
+
+export type GameEngineOptions = Partial<Omit<GameEngineSettings, 'generatedRun'>> &
+  Pick<GameEngineSettings, 'generatedRun'>
+
 
 type ActorAiMode = 'normal' | 'captive' | 'attackEventProp'
 type ActorActionKind = 'meleePlayer' | 'meleeActor' | 'eventProp' | 'arrow'
@@ -565,76 +563,15 @@ interface CombatFeedbackChannels {
   sound?: boolean
 }
 
-interface BoxObstacle {
-  kind: 'box'
-  x: number
-  z: number
-  halfWidth: number
-  halfDepth: number
-  cos: number
-  sin: number
+interface WindState {
+  direction: THREE.Vector2
+  strength: number
 }
 
-interface CircleObstacle {
-  kind: 'circle'
-  x: number
-  z: number
-  radius: number
-}
-
-type StaticObstacle = BoxObstacle | CircleObstacle
-
-interface NavigationEnclosure {
-  insideMinX: number
-  insideMaxX: number
-  insideMinZ: number
-  insideMaxZ: number
-  outerMinX: number
-  outerMaxX: number
-  outerMinZ: number
-  outerMaxZ: number
-  gateInside: readonly [number, number]
-  gateOutside: readonly [number, number]
-  gateHalfWidth: number
-  detours: ReadonlyArray<readonly [number, number]>
-}
-
-type GroundFoliageBucket = 'grass' | 'fern' | 'flower'
-
-interface GroundFoliageDensity {
-  low: number
-  high: number
-}
-
-interface GroundFoliagePlacement {
-  zone: ZoneId
-  x: number
-  z: number
-  yaw: number
-  width: number
-  height: number
-  tone: number
-}
-
-interface GroundFoliageUniforms {
-  uTime: { value: number }
-  uWindDirection: { value: THREE.Vector2 }
-  uWindStrength: { value: number }
-}
-
-interface GroundFoliageScaleRange {
-  width: readonly [number, number]
-  height: readonly [number, number]
-}
-
-const WORLD_HALF = 78
-const PLAYER_HEIGHT = 0
 const PLAYER_COLLIDER_RADIUS = 0.64
 const ACTOR_COLLIDER_RADIUS = 0.56
 const LARGE_ACTOR_COLLIDER_RADIUS = 0.72
-const COLLISION_SKIN = 0.025
 const COLLISION_MAX_STEP = 0.32
-const COLLISION_RESOLUTION_PASSES = 6
 const NPC_STEERING_ANGLES = [0, 0.55, -0.55, 1.05, -1.05, 1.55, -1.55] as const
 const NPC_ACCELERATION_DAMPING = 6.5
 const NPC_BRAKING_DAMPING = 11
@@ -683,6 +620,7 @@ const THREAT_WAVE_FIRST_AT = 240
 const THREAT_WAVE_MIN_INTERVAL = 70
 const CORPSE_LIFETIME = 12
 const CHAMPION_DAMAGE_CAP = 18
+const DEFEND_HOME_MAX_DISTANCE = 95
 const BOW_DAMAGE = 18
 const BOW_MIN_DAMAGE = 10
 const BOW_RANGE = 30
@@ -804,14 +742,7 @@ const SCORCH_DECAL_LIFE = 28
 const BLEED_FX_INTERVAL = 1.25
 const DAY_LENGTH = 240
 const DAY_START_OFFSET = 0.18
-const ZONE_BLEND_WIDTH = 8
 const ZONE_TINT_DAMPING = 3.5
-const ZONE_DECORATION_COUNTS: Record<ZoneId, number> = {
-  neutral: 24,
-  palace: 18,
-  forest: 20,
-  fort: 24,
-}
 const SUN_ARC_RADIUS = 90
 const SUN_ARC_HEIGHT = 70
 const SUN_ARC_DEPTH = 40
@@ -819,14 +750,8 @@ const CELESTIAL_DISC_DISTANCE = 150
 const MIN_SHADOW_LIGHT_HEIGHT = 8
 const STAR_COUNT = 180
 const TWO_PI = Math.PI * 2
-const GROUND_FOLIAGE_CLEARANCE = 0.35
-const GROUND_FOLIAGE_ROAD_CLEARANCE = 0.6
-const GROUND_FOLIAGE_EDGE_MARGIN = 0.8
-const GROUND_FOLIAGE_MAX_ATTEMPTS = 40
-const GROUND_FOLIAGE_WIND_SPEED = 1.6
-const GROUND_FOLIAGE_DEFAULT_WIND_STRENGTH = 0.25
-const GROUND_FOLIAGE_MAX_WIND_STRENGTH = 1.5
-const GROUND_FOLIAGE_WAVE_MAX = 1.35
+const DEFAULT_WIND_STRENGTH = 0.25
+const MAX_WIND_STRENGTH = 1.5
 const WEATHER_KINDS: readonly WeatherKind[] = ['clear', 'overcast', 'rain', 'snow']
 const WEATHER_BY_ZONE: Record<ZoneId, WeatherKind> = {
   neutral: 'overcast',
@@ -843,7 +768,7 @@ const WEATHER_PROFILES: Record<WeatherKind, WeatherProfile> = {
     cloudOpacity: 0.3,
     skyBrightness: 1,
     desaturation: 0,
-    windStrength: GROUND_FOLIAGE_DEFAULT_WIND_STRENGTH,
+    windStrength: DEFAULT_WIND_STRENGTH,
     celestialScale: 1,
   },
   overcast: {
@@ -881,7 +806,6 @@ const WEATHER_PROFILES: Record<WeatherKind, WeatherProfile> = {
   },
 }
 const WEATHER_RESPONSE_RATE = -Math.log(0.05) / 6
-const WEATHER_ZONE_HYSTERESIS = 1.5
 const BASE_CLOUD_OPACITY = 0.58
 const RAIN_DROP_COUNT = 420
 const SNOW_FLAKE_COUNT = 300
@@ -904,59 +828,6 @@ const THUNDER_MAX_DELAY = 1.1
 const GROUND_WET_DARKEN = 0.78
 const GROUND_WET_ROUGHNESS = 0.48
 const GROUND_FROST_BLEND = 0.24
-const GRASS_FOLIAGE_HEIGHT = 0.7
-const FERN_FOLIAGE_HEIGHT = 0.6
-const FLOWER_FOLIAGE_HEIGHT = 0.75
-const GRASS_FOLIAGE_SWAY = 0.12
-const FERN_FOLIAGE_SWAY = 0.09
-const FLOWER_FOLIAGE_SWAY = 0.1
-
-const GROUND_FOLIAGE_ZONES: readonly ZoneId[] = ['neutral', 'forest', 'fort', 'palace']
-
-const GROUND_FOLIAGE_COUNTS: Record<
-  GroundFoliageBucket,
-  Record<ZoneId, GroundFoliageDensity>
-> = {
-  grass: {
-    neutral: { low: 230, high: 700 },
-    forest: { low: 370, high: 1100 },
-    fort: { low: 150, high: 450 },
-    palace: { low: 60, high: 180 },
-  },
-  fern: {
-    neutral: { low: 0, high: 0 },
-    forest: { low: 90, high: 260 },
-    fort: { low: 0, high: 0 },
-    palace: { low: 0, high: 0 },
-  },
-  flower: {
-    neutral: { low: 55, high: 160 },
-    forest: { low: 45, high: 140 },
-    fort: { low: 0, high: 0 },
-    palace: { low: 0, high: 0 },
-  },
-}
-
-const GROUND_FOLIAGE_SEEDS: Record<GroundFoliageBucket, Record<ZoneId, number>> = {
-  grass: { neutral: 1249, forest: 1373, fort: 1481, palace: 1597 },
-  fern: { neutral: 2213, forest: 2333, fort: 2441, palace: 2557 },
-  flower: { neutral: 3251, forest: 3371, fort: 3469, palace: 3583 },
-}
-
-const GRASS_FOLIAGE_SCALES: Record<ZoneId, GroundFoliageScaleRange> = {
-  neutral: { width: [0.75, 1.25], height: [0.8, 1.45] },
-  forest: { width: [0.8, 1.4], height: [0.9, 1.6] },
-  fort: { width: [0.7, 1.2], height: [0.45, 0.9] },
-  palace: { width: [0.75, 1], height: [0.45, 0.72] },
-}
-
-const GROUND_FOLIAGE_CLEARINGS: ReadonlyArray<readonly [number, number, number]> = [
-  [FACTION_INFO.elf.spawn[0], FACTION_INFO.elf.spawn[1], 5],
-  [FACTION_INFO.guard.spawn[0], FACTION_INFO.guard.spawn[1], 5],
-  [FACTION_INFO.villain.spawn[0], FACTION_INFO.villain.spawn[1], 5],
-  [-46, -39, 5],
-  [40, -36, 5],
-]
 
 const EVENT_WEIGHTS: Record<Faction, Record<WorldEventKind, number>> = {
   elf: {
@@ -982,11 +853,12 @@ const EVENT_WEIGHTS: Record<Faction, Record<WorldEventKind, number>> = {
   },
 }
 
-const EVENT_REQUIRED_SLOTS: Record<Exclude<WorldEventKind, 'bounty'>, number> = {
+const EVENT_REQUIRED_SLOTS: Record<WorldEventKind, number> = {
   richCaravan: 3,
   defendHome: 4,
   champion: 1,
   rescue: 3,
+  bounty: 1,
 }
 
 function dampAngle(current: number, target: number, smoothing: number, delta: number): number {
@@ -1139,13 +1011,6 @@ function seededRandom(seed: number): () => number {
   }
 }
 
-function zoneAt(x: number, z: number): ZoneId {
-  if (x < 0 && z < 0) return 'neutral'
-  if (x >= 0 && z < 0) return 'palace'
-  if (x < 0 && z >= 0) return 'forest'
-  return 'fort'
-}
-
 function hostile(a: Faction, b: Faction): boolean {
   return a !== b
 }
@@ -1179,9 +1044,9 @@ export class GameEngine {
   private readonly container: HTMLElement
   private readonly callbacks: GameCallbacks
   private readonly faction: Faction
-  private readonly generatedRun: GeneratedRunLaunch | null
-  private readonly generatedWorld: GeneratedWorldRuntime | null
-  private readonly generatedBlueprint: WorldBlueprint | null
+  private readonly generatedRun: GeneratedRunLaunch
+  private readonly generatedWorld: GeneratedWorldRuntime
+  private readonly generatedBlueprint: WorldBlueprint
   private readonly generatedEncounterPlans = new Map<string, GeneratedEncounterPlan[]>()
   private readonly generatedActivationSpawns = new Map<string, Set<string>>()
   private readonly simulatedGeneratedRegions = new Set<string>()
@@ -1227,7 +1092,6 @@ export class GameEngine {
   private readonly flames: THREE.Mesh[] = []
   private readonly torchLights: THREE.PointLight[] = []
   private readonly buildingWindowGlows: BuildingWindowGlow[] = []
-  private readonly villageHouses: THREE.Group[] = []
   private readonly backgroundColor = new THREE.Color()
   private readonly zoneVisualWeights: ZoneVisualWeights = {
     neutral: 1,
@@ -1264,20 +1128,16 @@ export class GameEngine {
   private readonly cameraFollowPosition = new THREE.Vector3()
   private readonly cameraObstacles: THREE.Object3D[] = []
   private readonly foliageOccluders: FoliageOccluder[] = []
-  private readonly groundFoliageMeshes: THREE.InstancedMesh[] = []
-  private readonly groundFoliageUniforms: GroundFoliageUniforms = {
-    uTime: { value: 0 },
-    uWindDirection: { value: new THREE.Vector2(1, 0.2).normalize() },
-    uWindStrength: { value: GROUND_FOLIAGE_DEFAULT_WIND_STRENGTH },
+  private readonly wind: WindState = {
+    direction: new THREE.Vector2(1, 0.2).normalize(),
+    strength: DEFAULT_WIND_STRENGTH,
   }
-  private readonly staticObstacles: StaticObstacle[] = []
-  private readonly navigationEnclosures: NavigationEnclosure[] = []
   private readonly collisionProbe = new THREE.Vector3()
   private readonly navigationWaypoint = new THREE.Vector3()
   private readonly generatedRngStreams: Record<
     'combat' | 'director' | 'event' | 'loot',
     RandomStream
-  > | null
+  >
   private readonly eventRng: () => number
   private readonly directorRng: () => number
   private readonly combatRng: () => number
@@ -1292,9 +1152,6 @@ export class GameEngine {
   private readonly playerOutline: OutlineBinding
   private readonly weaponTrail: THREE.Mesh<THREE.RingGeometry, THREE.MeshBasicMaterial>
   private readonly caravan: THREE.Group
-  private readonly vendorPosition = new THREE.Vector3(-46, 0, -39)
-  private readonly commanderPosition = new THREE.Vector3(40, 0, -36)
-  private readonly elfHomePosition = new THREE.Vector3(-48, 0, 43)
   private objectives: Objective[]
   private body: BodyState
   private health = 100
@@ -1307,7 +1164,6 @@ export class GameEngine {
   private upgrades: UpgradeLevels
   private elapsed = 0
   private campaignCompleted = false
-  private campaignCompletedAt: number | undefined
   private threatTier = 1
   private nextThreatWaveAt = THREAT_WAVE_FIRST_AT
   private paused = false
@@ -1399,77 +1255,71 @@ export class GameEngine {
     container: HTMLElement,
     faction: Faction,
     callbacks: GameCallbacks,
-    savedGame?: SavedGame,
-    settings: Partial<GameEngineSettings> = {},
+    settings: GameEngineOptions,
   ) {
     this.container = container
     this.callbacks = callbacks
     this.faction = faction
     const launch = settings.generatedRun
     let restoredRun: ActiveRunSaveV2 | null = null
-    let blueprint: WorldBlueprint | null = null
-    if (launch) {
-      if (
-        launch.runId.trim().length === 0 ||
-        !Number.isFinite(Date.parse(launch.startedAt)) ||
-        !Number.isInteger(launch.config.seed) ||
-        launch.config.seed < 0 ||
-        launch.config.seed > 0xffffffff ||
-        launch.config.selectedBoonId.trim().length === 0
-      ) {
-        throw new Error('Generated run launch metadata is malformed')
+    if (
+      launch.runId.trim().length === 0 ||
+      !Number.isFinite(Date.parse(launch.startedAt)) ||
+      !Number.isInteger(launch.config.seed) ||
+      launch.config.seed < 0 ||
+      launch.config.seed > 0xffffffff ||
+      launch.config.selectedBoonId.trim().length === 0
+    ) {
+      throw new Error('Generated run launch metadata is malformed')
+    }
+    if (launch.config.generatorVersion !== WORLD_GENERATOR_VERSION) {
+      throw new Error(
+        `Unsupported generated world version: ${launch.config.generatorVersion}`,
+      )
+    }
+    if (launch.config.faction !== faction) {
+      throw new Error('Generated run faction does not match the GameEngine faction')
+    }
+    const blueprint = generateWorld(launch.config.seed)
+    if (launch.restored) {
+      restoredRun = normalizeActiveRunSaveV2(launch.restored)
+      if (!restoredRun) throw new Error('Generated run save is malformed')
+      if (restoredRun.status !== 'active') {
+        throw new Error('Only an active generated run can be restored')
       }
-      if (launch.config.generatorVersion !== WORLD_GENERATOR_VERSION) {
-        throw new Error(
-          `Unsupported generated world version: ${launch.config.generatorVersion}`,
+      const launchModifiers = launch.config.modifiers ?? []
+      const restoredModifiers = restoredRun.config.modifiers ?? []
+      const sameConfig =
+        restoredRun.runId === launch.runId &&
+        restoredRun.config.seed === launch.config.seed &&
+        restoredRun.config.generatorVersion === launch.config.generatorVersion &&
+        restoredRun.config.faction === launch.config.faction &&
+        restoredRun.config.selectedBoonId === launch.config.selectedBoonId &&
+        launchModifiers.length === restoredModifiers.length &&
+        launchModifiers.every(
+          (modifier, index) => modifier === restoredModifiers[index],
         )
-      }
-      if (launch.config.faction !== faction) {
-        throw new Error('Generated run faction does not match the GameEngine faction')
-      }
-      blueprint = generateWorld(launch.config.seed)
-      if (launch.restored) {
-        restoredRun = normalizeActiveRunSaveV2(launch.restored)
-        if (!restoredRun) throw new Error('Generated run save is malformed')
-        if (restoredRun.status !== 'active') {
-          throw new Error('Only an active generated run can be restored')
-        }
-        const launchModifiers = launch.config.modifiers ?? []
-        const restoredModifiers = restoredRun.config.modifiers ?? []
-        const sameConfig =
-          restoredRun.runId === launch.runId &&
-          restoredRun.config.seed === launch.config.seed &&
-          restoredRun.config.generatorVersion === launch.config.generatorVersion &&
-          restoredRun.config.faction === launch.config.faction &&
-          restoredRun.config.selectedBoonId === launch.config.selectedBoonId &&
-          launchModifiers.length === restoredModifiers.length &&
-          launchModifiers.every(
-            (modifier, index) => modifier === restoredModifiers[index],
-          )
-        if (!sameConfig) throw new Error('Generated run save does not match its launch config')
-        if (restoredRun.blueprintFingerprint !== blueprint.fingerprint) {
-          throw new Error('Generated run save has an incompatible world fingerprint')
-        }
+      if (!sameConfig) throw new Error('Generated run save does not match its launch config')
+      if (restoredRun.blueprintFingerprint !== blueprint.fingerprint) {
+        throw new Error('Generated run save has an incompatible world fingerprint')
       }
     }
-    this.generatedRun = launch
-      ? {
-          runId: launch.runId,
-          config: {
-            ...launch.config,
-            ...(launch.config.modifiers
-              ? { modifiers: [...launch.config.modifiers] }
-              : {}),
-          },
-          startedAt: restoredRun?.startedAt ?? launch.startedAt,
-          ...(restoredRun ? { restored: restoredRun } : {}),
-        }
-      : null
+    this.generatedRun = {
+      runId: launch.runId,
+      config: {
+        ...launch.config,
+        ...(launch.config.modifiers
+          ? { modifiers: [...launch.config.modifiers] }
+          : {}),
+      },
+      startedAt: restoredRun?.startedAt ?? launch.startedAt,
+      ...(restoredRun ? { restored: restoredRun } : {}),
+    }
     this.generatedBlueprint = blueprint
     this.audio = new AudioDirector({
       musicMuted: settings.musicMuted ?? false,
       sfxVolume: settings.sfxVolume,
-      musicSeed: deriveSeed(launch?.config.seed ?? 0x4b4f524f, `music:${faction}`),
+      musicSeed: deriveSeed(launch.config.seed, `music:${faction}`),
     })
     this.achievements = new AchievementTracker((achievement) => {
       this.callbacks.onAchievementUnlocked(achievement)
@@ -1488,37 +1338,35 @@ export class GameEngine {
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     this.groundFoliageQuality = settings.foliageQuality ?? 'high'
     this.palette = createPalette()
-    this.generatedWorld = blueprint
-      ? new GeneratedWorldRuntime(this.scene, blueprint, {
-          decorationDensity: foliageQualityDensity(this.groundFoliageQuality),
-          palette: {
-            terrain: {
-              neutral: this.palette.worldNeutralGround,
-              palace: this.palette.worldPalaceGround,
-              forest: this.palette.worldForestGround,
-              fort: this.palette.worldFortGround,
-            },
-            secondary: {
-              neutral: mix(this.palette.warning, this.palette.success, 0.42),
-              palace: mix(this.palette.accent, this.palette.warning, 0.3),
-              forest: mix(this.palette.success, this.palette.link, 0.25),
-              fort: mix(this.palette.danger, this.palette.muted, 0.42),
-            },
-            accent: {
-              neutral: this.palette.warning,
-              palace: this.palette.accent,
-              forest: this.palette.success,
-              fort: this.palette.danger,
-            },
-            road: mix(this.palette.worldNeutralGround, this.palette.text, 0.24),
-            water: this.palette.link,
-            bridge: mix(this.palette.warning, this.palette.text, 0.18),
-            structure: this.palette.surface,
-            roof: this.palette.elevated,
-          },
-        })
-      : null
-    if (restoredRun && this.generatedWorld) {
+    this.generatedWorld = new GeneratedWorldRuntime(this.scene, blueprint, {
+      decorationDensity: foliageQualityDensity(this.groundFoliageQuality),
+      palette: {
+        terrain: {
+          neutral: this.palette.worldNeutralGround,
+          palace: this.palette.worldPalaceGround,
+          forest: this.palette.worldForestGround,
+          fort: this.palette.worldFortGround,
+        },
+        secondary: {
+          neutral: mix(this.palette.warning, this.palette.success, 0.42),
+          palace: mix(this.palette.accent, this.palette.warning, 0.3),
+          forest: mix(this.palette.success, this.palette.link, 0.25),
+          fort: mix(this.palette.danger, this.palette.muted, 0.42),
+        },
+        accent: {
+          neutral: this.palette.warning,
+          palace: this.palette.accent,
+          forest: this.palette.success,
+          fort: this.palette.danger,
+        },
+        road: mix(this.palette.worldNeutralGround, this.palette.text, 0.24),
+        water: this.palette.link,
+        bridge: mix(this.palette.warning, this.palette.text, 0.18),
+        structure: this.palette.surface,
+        roof: this.palette.elevated,
+      },
+    })
+    if (restoredRun) {
       try {
         const applied = this.generatedWorld.regions.applyState({
           version: 1,
@@ -1538,38 +1386,30 @@ export class GameEngine {
         throw error
       }
     }
-    if (blueprint) {
-      const streams = {
-        combat: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:combat')),
-        director: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:director')),
-        event: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:event')),
-        loot: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:loot')),
-      }
-      if (restoredRun) {
-        for (const key of Object.keys(streams) as Array<keyof typeof streams>) {
-          const state = restoredRun.rngStates[key]
-          if (Number.isInteger(state) && state >= 0 && state <= 0xffffffff) {
-            streams[key].setState(state)
-          }
+    const streams = {
+      combat: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:combat')),
+      director: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:director')),
+      event: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:event')),
+      loot: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:loot')),
+    }
+    if (restoredRun) {
+      for (const key of Object.keys(streams) as Array<keyof typeof streams>) {
+        const state = restoredRun.rngStates[key]
+        if (Number.isInteger(state) && state >= 0 && state <= 0xffffffff) {
+          streams[key].setState(state)
         }
       }
-      this.generatedRngStreams = streams
-      this.eventRng = () => streams.event.next()
-      this.directorRng = () => streams.director.next()
-      this.combatRng = () => streams.combat.next()
-      this.lootRng = () => streams.loot.next()
-      for (const plan of Object.values(createGeneratedEncounterPlans(blueprint, faction))) {
-        const regionKey = String(plan.regionId)
-        const plans = this.generatedEncounterPlans.get(regionKey) ?? []
-        plans.push(plan)
-        this.generatedEncounterPlans.set(regionKey, plans)
-      }
-    } else {
-      this.generatedRngStreams = null
-      this.eventRng = seededRandom((Date.now() % 2147483646) + 1)
-      this.directorRng = Math.random
-      this.combatRng = Math.random
-      this.lootRng = seededRandom(this.stableSeed(settings.achievementRunId ?? faction))
+    }
+    this.generatedRngStreams = streams
+    this.eventRng = () => streams.event.next()
+    this.directorRng = () => streams.director.next()
+    this.combatRng = () => streams.combat.next()
+    this.lootRng = () => streams.loot.next()
+    for (const plan of Object.values(createGeneratedEncounterPlans(blueprint, faction))) {
+      const regionKey = String(plan.regionId)
+      const plans = this.generatedEncounterPlans.get(regionKey) ?? []
+      plans.push(plan)
+      this.generatedEncounterPlans.set(regionKey, plans)
     }
     this.lootMaterials = this.createLootMaterials()
     this.zoneArtProfiles = createZoneArtProfiles(this.palette)
@@ -1582,24 +1422,14 @@ export class GameEngine {
     this.weatherFrostColor
       .copy(this.palette.worldFog)
       .lerp(this.palette.worldSun, 0.58)
-    const legacySave = blueprint ? undefined : savedGame
     const generatedPlayer = restoredRun?.player
-    const configuredBoon = blueprint
-      ? getStartingBoonEffects(launch?.config.selectedBoonId)
-      : null
+    const configuredBoon = getStartingBoonEffects(launch.config.selectedBoonId)
     const boon = restoredRun ? null : configuredBoon
-    this.objectives = blueprint
-      ? generatedPlayer?.objectives.map((objective) => ({ ...objective })) ??
-        this.createGeneratedObjectives(blueprint.objectives[faction].nodes)
-      : restoreObjectives(faction, legacySave?.objectives)
-    this.body = generatedPlayer
-      ? { ...generatedPlayer.body }
-      : legacySave
-        ? { ...legacySave.body }
-        : createHealthyBody()
-    this.upgrades = normalizeUpgradeLevels(
-      generatedPlayer?.upgrades ?? legacySave?.upgradeLevels,
-    )
+    this.objectives =
+      generatedPlayer?.objectives.map((objective) => ({ ...objective })) ??
+      this.createGeneratedObjectives(blueprint.objectives[faction].nodes)
+    this.body = generatedPlayer ? { ...generatedPlayer.body } : createHealthyBody()
+    this.upgrades = normalizeUpgradeLevels(generatedPlayer?.upgrades)
     const baseMaxHealth = getMaxHealth(this.upgrades)
     const baseMaxStamina = getMaxStamina(this.upgrades)
     this.generatedHealthBonus = generatedMaximumBonus(
@@ -1616,22 +1446,16 @@ export class GameEngine {
     this.maxStamina = baseMaxStamina + this.generatedStaminaBonus
     this.health = Math.min(
       this.maxHealth,
-      generatedPlayer?.health ??
-        legacySave?.health ??
-        this.maxHealth,
+      generatedPlayer?.health ?? this.maxHealth,
     )
     this.stamina = Math.min(
       this.maxStamina,
-      generatedPlayer?.stamina ??
-        legacySave?.stamina ??
-        this.maxStamina,
+      generatedPlayer?.stamina ?? this.maxStamina,
     )
-    this.gold =
-      generatedPlayer?.gold ?? legacySave?.gold ?? 55 + (boon?.startingGoldBonus ?? 0)
-    this.kills = generatedPlayer?.kills ?? legacySave?.kills ?? 0
+    this.gold = generatedPlayer?.gold ?? 55 + (boon?.startingGoldBonus ?? 0)
+    this.kills = generatedPlayer?.kills ?? 0
     this.damage =
       generatedPlayer?.damage ??
-      legacySave?.damage ??
       (faction === 'villain' ? 31 : faction === 'guard' ? 28 : 26) +
         (boon?.startingDamageBonus ?? 0)
     const restoredDirector = restoredRun?.directorState
@@ -1640,11 +1464,7 @@ export class GameEngine {
       restoredDirector?.startingSquadVersion,
     )
     this.squadFollowing = restoredDirector?.squadFollowing === true
-    this.elapsed = this.readSerializableNumber(
-      restoredDirector,
-      'elapsed',
-      legacySave?.elapsed ?? 0,
-    )
+    this.elapsed = this.readSerializableNumber(restoredDirector, 'elapsed', 0)
     this.generatedSupplyCount = Math.max(
       0,
       Math.floor(
@@ -1656,13 +1476,7 @@ export class GameEngine {
       ),
     )
     this.generatedRunStatus = restoredRun?.status ?? 'active'
-    this.campaignCompleted = blueprint
-      ? this.objectives.every((objective) => objective.done)
-      : legacySave?.campaignCompleted === true ||
-        this.objectives.every((objective) => objective.done)
-    this.campaignCompletedAt = blueprint
-      ? undefined
-      : legacySave?.campaignCompletedAt
+    this.campaignCompleted = this.objectives.every((objective) => objective.done)
     this.threatTier = THREE.MathUtils.clamp(
       Math.floor(
         this.readSerializableNumber(
@@ -1680,7 +1494,7 @@ export class GameEngine {
         this.readSerializableNumber(
           restoredEvent,
           'eventCooldown',
-          legacySave?.eventCooldown ?? Math.max(0, FIRST_EVENT_AT - this.elapsed),
+          Math.max(0, FIRST_EVENT_AT - this.elapsed),
         ),
       )
     this.eventSequence = Math.max(
@@ -1697,7 +1511,7 @@ export class GameEngine {
         this.readSerializableNumber(
           restoredDirector,
           'nextThreatWaveAt',
-          legacySave?.nextThreatWaveAt ?? defaultNextWave,
+          defaultNextWave,
         ),
         this.elapsed + this.threatWaveInterval(),
       ),
@@ -1709,7 +1523,7 @@ export class GameEngine {
         this.readSerializableNumber(
           restoredDirector,
           'championDamageBonus',
-          legacySave?.championDamageBonus ?? 0,
+          0,
         ),
       ),
     )
@@ -1747,30 +1561,24 @@ export class GameEngine {
     this.weaponTrail = this.createWeaponTrail()
     const weaponParent = this.player.getObjectByName('weapon') ?? this.player
     weaponParent.add(this.weaponTrail)
-    const generatedStart = this.generatedWorld?.getStartPosition(faction)
-    const spawn =
-      restoredRun?.currentLocation.worldPosition ??
-      (generatedStart
-        ? [generatedStart.x, generatedStart.y, generatedStart.z]
-        : legacySave?.position ?? [
-            FACTION_INFO[faction].spawn[0],
-            PLAYER_HEIGHT,
-            FACTION_INFO[faction].spawn[1],
-          ])
+    const generatedStart = this.generatedWorld.getStartPosition(faction)
+    const spawn = restoredRun?.currentLocation.worldPosition ?? [
+      generatedStart.x,
+      generatedStart.y,
+      generatedStart.z,
+    ]
     this.player.position.set(spawn[0], spawn[1], spawn[2])
     const restoredHeading = restoredRun?.currentLocation.heading
     if (typeof restoredHeading === 'number' && Number.isFinite(restoredHeading)) {
       this.player.rotation.y = restoredHeading
     }
-    if (this.generatedWorld) {
-      this.clampWorldPosition(this.player.position, PLAYER_COLLIDER_RADIUS)
-      const initialGround = this.groundHeightAt(
-        this.player.position.x,
-        this.player.position.z,
-      )
-      if (this.player.position.y < initialGround) {
-        this.player.position.y = initialGround
-      }
+    this.clampWorldPosition(this.player.position, PLAYER_COLLIDER_RADIUS)
+    const initialGround = this.groundHeightAt(
+      this.player.position.x,
+      this.player.position.z,
+    )
+    if (this.player.position.y < initialGround) {
+      this.player.position.y = initialGround
     }
     this.scene.add(this.player)
     this.applySavedBodyAppearance()
@@ -1783,12 +1591,7 @@ export class GameEngine {
       threatTier: this.threatTier,
     })
     if (!restoredRun) {
-      // Legacy saves intentionally start a fresh achievement run.
-      this.achievements.beginRun(
-        faction,
-        this.lastZone,
-        launch?.runId ?? settings.achievementRunId,
-      )
+      this.achievements.beginRun(faction, this.lastZone, launch.runId)
     }
     this.weatherZone = this.lastZone
     this.setWeatherTarget(
@@ -1797,38 +1600,34 @@ export class GameEngine {
     )
 
     this.setupLights()
-    if (this.generatedWorld) this.createAtmosphere()
+    this.createAtmosphere()
     const worldRootIndex = this.scene.children.length
-    if (this.generatedWorld) {
-      if (!restoredRun && boon?.revealAdjacentRegions) {
-        const startRegionId = this.generatedWorld.getRegionIdAt(
-          this.player.position.x,
-          this.player.position.z,
-        )
-        const startRegion = blueprint?.regions.find(
-          (region) => region.id === startRegionId,
-        )
-        if (startRegion) {
-          for (const region of blueprint?.regions ?? []) {
-            if (
-              Math.abs(region.coordinate.x - startRegion.coordinate.x) <= 1 &&
-              Math.abs(region.coordinate.y - startRegion.coordinate.y) <= 1
-            ) {
-              this.generatedWorld.regions.markDiscovered(region.id)
-            }
+    if (!restoredRun && boon?.revealAdjacentRegions) {
+      const startRegionId = this.generatedWorld.getRegionIdAt(
+        this.player.position.x,
+        this.player.position.z,
+      )
+      const startRegion = blueprint.regions.find(
+        (region) => region.id === startRegionId,
+      )
+      if (startRegion) {
+        for (const region of blueprint.regions) {
+          if (
+            Math.abs(region.coordinate.x - startRegion.coordinate.x) <= 1 &&
+            Math.abs(region.coordinate.y - startRegion.coordinate.y) <= 1
+          ) {
+            this.generatedWorld.regions.markDiscovered(region.id)
           }
         }
       }
-      this.generatedWorld.update({
-        focus: {
-          x: this.player.position.x,
-          z: this.player.position.z,
-        },
-        deltaSeconds: 0,
-      })
-    } else {
-      this.buildWorld()
     }
+    this.generatedWorld.update({
+      focus: {
+        x: this.player.position.x,
+        z: this.player.position.z,
+      },
+      deltaSeconds: 0,
+    })
     this.setupWeather()
     this.applyGroundWeather()
     this.updateDayNight()
@@ -1839,38 +1638,32 @@ export class GameEngine {
     this.initializeLootPool()
     this.restoreGeneratedLoot(restoredDirector)
     this.caravan = this.createCaravan()
-    if (this.generatedWorld) {
-      this.placeGeneratedCaravan()
-      this.caravan.position.x = this.readSerializableNumber(
-        restoredDirector,
-        'caravanX',
-        this.caravan.position.x,
-      )
-      this.caravan.position.z = this.readSerializableNumber(
-        restoredDirector,
-        'caravanZ',
-        this.caravan.position.z,
-      )
-      this.projectGeneratedCaravanOntoPatrol()
-      this.clampWorldPosition(this.caravan.position, 3)
-      this.caravan.position.y = this.groundHeightAt(
-        this.caravan.position.x,
-        this.caravan.position.z,
-      )
-    }
+    this.placeGeneratedCaravan()
+    this.caravan.position.x = this.readSerializableNumber(
+      restoredDirector,
+      'caravanX',
+      this.caravan.position.x,
+    )
+    this.caravan.position.z = this.readSerializableNumber(
+      restoredDirector,
+      'caravanZ',
+      this.caravan.position.z,
+    )
+    this.projectGeneratedCaravanOntoPatrol()
+    this.clampWorldPosition(this.caravan.position, 3)
+    this.caravan.position.y = this.groundHeightAt(
+      this.caravan.position.x,
+      this.caravan.position.z,
+    )
     this.scene.add(this.caravan)
     this.registerNamedInteractableOutline(this.caravan, 'cargo')
-    if (this.generatedWorld) {
-      this.restoreGeneratedCompanions(restoredRun?.companions ?? [])
-      if (initializeGeneratedStartingSquad) this.spawnGeneratedStartingSquad()
-      this.syncGeneratedRegions()
-    } else {
-      this.spawnPopulation()
-    }
+    this.restoreGeneratedCompanions(restoredRun?.companions ?? [])
+    if (initializeGeneratedStartingSquad) this.spawnGeneratedStartingSquad()
+    this.syncGeneratedRegions()
     const generatedNextRegionId =
-      this.generatedBlueprint?.criticalPaths[faction].regionIds[1]
+      this.generatedBlueprint.criticalPaths[faction].regionIds[1]
     const generatedNextRegion = generatedNextRegionId
-      ? this.generatedWorld?.getRegionCenter(generatedNextRegionId)
+      ? this.generatedWorld.getRegionCenter(generatedNextRegionId)
       : undefined
     const generatedCameraYaw = generatedNextRegion
       ? Math.atan2(
@@ -1940,7 +1733,7 @@ export class GameEngine {
     if (document.pointerLockElement === this.renderer.domElement) {
       attempt(() => document.exitPointerLock())
     }
-    if (this.generatedWorld) attempt(() => this.generatedWorld?.dispose())
+    attempt(() => this.generatedWorld.dispose())
     const geometries = new Set<THREE.BufferGeometry>()
     const materials = new Set<THREE.Material>()
     this.scene.traverse((object) => {
@@ -2081,11 +1874,7 @@ export class GameEngine {
   setFoliageQuality(quality: FoliageQuality): void {
     if (this.groundFoliageQuality === quality) return
     this.groundFoliageQuality = quality
-    if (this.generatedWorld) {
-      this.generatedWorld.setDecorationDensity(foliageQualityDensity(quality))
-      return
-    }
-    this.rebuildGroundFoliage()
+    this.generatedWorld.setDecorationDensity(foliageQualityDensity(quality))
   }
 
   setScreenShakeEnabled(enabled: boolean): void {
@@ -2112,23 +1901,19 @@ export class GameEngine {
     return this.achievements.getCurrentRunUnlocks()
   }
 
-  getWorldMode(): 'legacy' | 'generated' {
-    return this.generatedWorld ? 'generated' : 'legacy'
-  }
-
-  getGeneratedBlueprint(): WorldBlueprint | null {
+  getGeneratedBlueprint(): WorldBlueprint {
     return this.generatedBlueprint
   }
 
-  getGeneratedWorldBlueprint(): WorldBlueprint | null {
+  getGeneratedWorldBlueprint(): WorldBlueprint {
     return this.getGeneratedBlueprint()
   }
 
-  getGeneratedWorldDebug(): GeneratedWorldRuntimeDebugSnapshot | null {
-    return this.generatedWorld?.getDebugSnapshot() ?? null
+  getGeneratedWorldDebug(): GeneratedWorldRuntimeDebugSnapshot {
+    return this.generatedWorld.getDebugSnapshot()
   }
 
-  getGeneratedWorldDebugSnapshot(): GeneratedWorldRuntimeDebugSnapshot | null {
+  getGeneratedWorldDebugSnapshot(): GeneratedWorldRuntimeDebugSnapshot {
     return this.getGeneratedWorldDebug()
   }
 
@@ -2240,62 +2025,11 @@ export class GameEngine {
       this.emitView(true)
       return
     }
-    if (this.generatedWorld && this.handleGeneratedInteraction()) {
+    if (this.handleGeneratedInteraction()) {
       this.emitView(true)
       return
     }
     const playerPosition = this.player.position
-    if (
-      !this.generatedWorld &&
-      this.hasElfLoot() &&
-      playerPosition.distanceTo(this.elfHomePosition) < 6
-    ) {
-      if (!this.isObjectiveDone('guards')) {
-        const guards = this.objectives.find((objective) => objective.id === 'guards')
-        const remaining = Math.max(0, (guards?.target ?? 4) - (guards?.progress ?? 0))
-        this.callbacks.onNotice(
-          `Добыча при тебе. Чтобы сдать её, победи охрану. Осталось: ${formatRussianCount(
-            remaining,
-            ['цель', 'цели', 'целей'],
-          )}.`,
-          'warning',
-        )
-      } else {
-        this.completeObjective('home')
-      }
-      this.emitView(true)
-      return
-    }
-
-    if (
-      !this.generatedWorld &&
-      playerPosition.distanceTo(this.vendorPosition) < 6
-    ) {
-      this.callbacks.onShop()
-      return
-    }
-
-    if (
-      !this.generatedWorld &&
-      this.faction === 'guard' &&
-      playerPosition.distanceTo(this.commanderPosition) < 6 &&
-      this.actors.some((actor) => actor.role === 'commander' && actor.alive)
-    ) {
-      if (this.completeObjective('orders')) {
-        this.callbacks.onNotice(
-          'Командир: «Надо слушаться командира. Защитить дворец, потом сходить в набег на старый форт!»',
-          'success',
-        )
-        this.gold += 25
-        this.achievements.recordGoldEarned(25)
-        this.playSound('coin')
-      } else {
-        this.callbacks.onNotice('Командир: «Приказ тот же. Дворец сам себя не защитит!»', 'info')
-      }
-      this.emitView(true)
-      return
-    }
-
     if (playerPosition.distanceTo(this.caravan.position) < 7) {
       if (this.faction === 'guard') {
         this.callbacks.onNotice(
@@ -2314,14 +2048,8 @@ export class GameEngine {
       this.achievements.recordCaravanRobbed(false)
       this.caravanCooldown = 40
       this.caravanRobbedFlash = 1
-      if (!this.generatedWorld) this.completeObjective('raid')
-      const lootGuidance = this.generatedWorld
-        ? 'Охрана уже набигает.'
-        : this.isObjectiveDone('guards')
-          ? 'Добыча при тебе: неси её к зелёному маяку в лагере.'
-          : 'Добыча при тебе: победи охрану и неси её к зелёному маяку в лагере.'
       this.callbacks.onNotice(
-        `Корован ограблен! +95 золота. ${lootGuidance}`,
+        'Корован ограблен! +95 золота. Охрана уже набигает.',
         'success',
       )
       this.playSound('coin')
@@ -2335,9 +2063,6 @@ export class GameEngine {
     this.resumeAudio()
     this.squadFollowing = !this.squadFollowing
     this.achievements.recordSquadCommand()
-    if (!this.generatedWorld && this.faction === 'villain') {
-      this.completeObjective('rally')
-    }
     const squadName =
       this.faction === 'guard'
         ? 'Солдаты охраны'
@@ -2402,46 +2127,7 @@ export class GameEngine {
     return { ok: true, message: `${item.name}: покупка завершена.${levelSuffix}` }
   }
 
-  save(): SavedGame {
-    this.settleActiveLoot('save')
-    const save: SavedGame = {
-      version: 1,
-      faction: this.faction,
-      position: [this.player.position.x, this.player.position.y, this.player.position.z],
-      health: this.health,
-      stamina: this.stamina,
-      gold: this.gold,
-      kills: this.kills,
-      damage: this.damage,
-      body: { ...this.body },
-      objectives: this.objectives.map((objective) => ({ ...objective })),
-      elapsed: this.elapsed,
-      savedAt: new Date().toISOString(),
-      eventCooldown: this.activeEvent ? this.eventCooldownRange().min : this.eventCooldown,
-      championDamageBonus: this.championDamageBonus,
-      campaignCompleted: this.campaignCompleted,
-      ...(this.campaignCompletedAt === undefined
-        ? {}
-        : { campaignCompletedAt: this.campaignCompletedAt }),
-      threatTier: this.threatTier,
-      nextThreatWaveAt: this.nextThreatWaveAt,
-      upgradeLevels: { ...this.upgrades },
-    }
-    localStorage.setItem(SAVE_KEY, JSON.stringify(save))
-    this.callbacks.onNotice('Сохраняться можно. Сохранение готово.', 'success')
-    this.playSound('save')
-    return save
-  }
-
-  saveGeneratedRun(): ActiveRunSaveV2 | null {
-    if (
-      !this.generatedRun ||
-      !this.generatedWorld ||
-      !this.generatedBlueprint ||
-      !this.generatedRngStreams
-    ) {
-      return null
-    }
+  saveGeneratedRun(): ActiveRunSaveV2 {
     const savedEventCooldown = this.activeEvent
       ? Math.max(this.eventCooldown, this.eventCooldownRange().min)
       : this.eventCooldown
@@ -2599,17 +2285,15 @@ export class GameEngine {
     this.caravanCooldown = Math.max(0, this.caravanCooldown - delta)
     this.caravanRobbedFlash = Math.max(0, this.caravanRobbedFlash - delta * 2)
     this.updatePlayer(delta)
-    if (this.generatedWorld) {
-      this.generatedWorld.update({
-        focus: {
-          x: this.player.position.x,
-          z: this.player.position.z,
-        },
-        deltaSeconds: delta,
-      })
-      this.syncGeneratedRegions()
-      this.refreshGeneratedCameraObstacles()
-    }
+    this.generatedWorld.update({
+      focus: {
+        x: this.player.position.x,
+        z: this.player.position.z,
+      },
+      deltaSeconds: delta,
+    })
+    this.syncGeneratedRegions()
+    this.refreshGeneratedCameraObstacles()
     this.updateCaravan(delta)
     this.updateProjectiles(delta)
     this.updateActors(delta)
@@ -2655,7 +2339,7 @@ export class GameEngine {
     nodes: readonly FactionObjectiveNode[],
   ): Objective[] {
     return nodes.map((node) => {
-      const site = this.generatedBlueprint?.sites.find(
+      const site = this.generatedBlueprint.sites.find(
         (candidate) => candidate.id === node.siteId,
       )
       return {
@@ -2667,30 +2351,25 @@ export class GameEngine {
   }
 
   private zoneAtPosition(x: number, z: number): ZoneId {
-    const biome = this.generatedWorld?.getBiomeAt(x, z)
+    const biome = this.generatedWorld.getBiomeAt(x, z)
     return biome === 'neutral' ||
       biome === 'palace' ||
       biome === 'forest' ||
       biome === 'fort'
       ? biome
-      : zoneAt(x, z)
+      : 'neutral'
   }
 
   private groundHeightAt(x: number, z: number): number {
-    return this.generatedWorld?.sampleHeight(x, z) ?? PLAYER_HEIGHT
+    return this.generatedWorld.sampleHeight(x, z)
   }
 
   private generatedRegionIdAt(x: number, z: number): string | null {
-    const regionId = this.generatedWorld?.getRegionIdAt(x, z)
+    const regionId = this.generatedWorld.getRegionIdAt(x, z)
     return regionId === undefined ? null : String(regionId)
   }
 
   private clampWorldPosition(position: THREE.Vector3, radius = 0): void {
-    if (!this.generatedWorld) {
-      position.x = THREE.MathUtils.clamp(position.x, -WORLD_HALF, WORLD_HALF)
-      position.z = THREE.MathUtils.clamp(position.z, -WORLD_HALF, WORLD_HALF)
-      return
-    }
     const bounds = this.generatedWorld.bounds
     position.x = THREE.MathUtils.clamp(
       position.x,
@@ -2705,12 +2384,6 @@ export class GameEngine {
   }
 
   private isWithinWorldBounds(x: number, z: number, margin = 0): boolean {
-    if (!this.generatedWorld) {
-      return (
-        Math.abs(x) <= WORLD_HALF + margin &&
-        Math.abs(z) <= WORLD_HALF + margin
-      )
-    }
     const bounds = this.generatedWorld.bounds
     return (
       x >= bounds.minX - margin &&
@@ -2739,7 +2412,6 @@ export class GameEngine {
     regionId: string,
     mutation: (delta: RegionDelta) => void,
   ): void {
-    if (!this.generatedWorld) return
     const source =
       this.generatedWorld.regions.getSavedDelta(regionId) ??
       this.createRegionDelta(regionId)
@@ -2776,7 +2448,7 @@ export class GameEngine {
         }
       })
     }
-    if (actor.generatedObjectiveId && this.generatedBlueprint) {
+    if (actor.generatedObjectiveId) {
       const node = this.generatedBlueprint.objectives[this.faction].nodes.find(
         (candidate) => candidate.id === actor.generatedObjectiveId,
       )
@@ -2809,7 +2481,6 @@ export class GameEngine {
   }
 
   private syncGeneratedRegions(): void {
-    if (!this.generatedWorld || !this.generatedBlueprint) return
     const nextRegions = new Set(
       this.generatedWorld.regions.getSimulatedRegionIds().map(String),
     )
@@ -2964,7 +2635,6 @@ export class GameEngine {
   }
 
   private spawnGeneratedRegionEncounters(regionId: string): void {
-    if (!this.generatedWorld || !this.generatedBlueprint) return
     const delta =
       this.generatedWorld.regions.getSavedDelta(regionId) ??
       this.createRegionDelta(regionId)
@@ -3021,7 +2691,6 @@ export class GameEngine {
   }
 
   private refreshGeneratedCameraObstacles(): void {
-    if (!this.generatedWorld) return
     const signature = this.generatedWorld.regions
       .getVisibleRegionIds()
       .map(String)
@@ -3038,7 +2707,6 @@ export class GameEngine {
   }
 
   private placeGeneratedCaravan(): void {
-    if (!this.generatedWorld || !this.generatedBlueprint) return
     const path = this.generatedBlueprint.criticalPaths[this.faction]
     const startRegion = this.generatedWorld.getRegionCenter(path.regionIds[0])
     const destinationRegion = this.generatedWorld.getRegionCenter(
@@ -3118,8 +2786,7 @@ export class GameEngine {
   }
 
   private getActiveGeneratedObjective(): FactionObjectiveNode | null {
-    const graph = this.generatedBlueprint?.objectives[this.faction]
-    if (!graph) return null
+    const graph = this.generatedBlueprint.objectives[this.faction]
     return (
       graph.nodes.find(
         (node) =>
@@ -3134,7 +2801,6 @@ export class GameEngine {
   }
 
   private handleGeneratedInteraction(): boolean {
-    if (!this.generatedWorld) return false
     const site = this.generatedWorld.findNearbySite(
       { x: this.player.position.x, z: this.player.position.z },
       6,
@@ -3228,7 +2894,6 @@ export class GameEngine {
   }
 
   private getGeneratedPrompt(): string {
-    if (!this.generatedWorld) return ''
     const node = this.getActiveGeneratedObjective()
     const nearbySite = this.generatedWorld.findNearbySite(
       { x: this.player.position.x, z: this.player.position.z },
@@ -3286,153 +2951,21 @@ export class GameEngine {
       : 'Нажми на мир, чтобы управлять камерой'
   }
 
-  private registerBoxObstacle(
-    x: number,
-    z: number,
-    width: number,
-    depth: number,
-    rotation = 0,
-  ): void {
-    this.staticObstacles.push({
-      kind: 'box',
-      x,
-      z,
-      halfWidth: width * 0.5,
-      halfDepth: depth * 0.5,
-      cos: Math.cos(rotation),
-      sin: Math.sin(rotation),
-    })
-  }
-
-  private registerCircleObstacle(x: number, z: number, radius: number): void {
-    this.staticObstacles.push({ kind: 'circle', x, z, radius })
-  }
-
-  private obstacleOverlapsCircle(
-    obstacle: StaticObstacle,
-    x: number,
-    z: number,
-    radius: number,
-  ): boolean {
-    const minimumDistance = radius + COLLISION_SKIN
-    if (obstacle.kind === 'circle') {
-      const dx = x - obstacle.x
-      const dz = z - obstacle.z
-      const combinedRadius = obstacle.radius + minimumDistance
-      return dx * dx + dz * dz < combinedRadius * combinedRadius
-    }
-
-    const dx = x - obstacle.x
-    const dz = z - obstacle.z
-    const localX = dx * obstacle.cos - dz * obstacle.sin
-    const localZ = dx * obstacle.sin + dz * obstacle.cos
-    const closestX = THREE.MathUtils.clamp(localX, -obstacle.halfWidth, obstacle.halfWidth)
-    const closestZ = THREE.MathUtils.clamp(localZ, -obstacle.halfDepth, obstacle.halfDepth)
-    const separationX = localX - closestX
-    const separationZ = localZ - closestZ
-    return (
-      separationX * separationX + separationZ * separationZ <
-      minimumDistance * minimumDistance
-    )
-  }
-
   private isWalkablePosition(x: number, z: number, radius: number): boolean {
-    if (this.generatedWorld) {
-      return this.generatedWorld.collision.isWalkablePosition(x, z, radius)
-    }
-    if (Math.abs(x) > WORLD_HALF || Math.abs(z) > WORLD_HALF) return false
-    return !this.staticObstacles.some((obstacle) =>
-      this.obstacleOverlapsCircle(obstacle, x, z, radius),
-    )
-  }
-
-  private pushCharacterOutOfObstacle(
-    position: THREE.Vector3,
-    radius: number,
-    obstacle: StaticObstacle,
-  ): boolean {
-    const minimumDistance = radius + COLLISION_SKIN
-    if (obstacle.kind === 'circle') {
-      const dx = position.x - obstacle.x
-      const dz = position.z - obstacle.z
-      const combinedRadius = obstacle.radius + minimumDistance
-      const distanceSquared = dx * dx + dz * dz
-      if (distanceSquared >= combinedRadius * combinedRadius) return false
-      if (distanceSquared < 0.000001) {
-        position.x += combinedRadius
-        return true
-      }
-
-      const distance = Math.sqrt(distanceSquared)
-      const pushScale = (combinedRadius - distance) / distance
-      position.x += dx * pushScale
-      position.z += dz * pushScale
-      return true
-    }
-
-    const dx = position.x - obstacle.x
-    const dz = position.z - obstacle.z
-    const localX = dx * obstacle.cos - dz * obstacle.sin
-    const localZ = dx * obstacle.sin + dz * obstacle.cos
-    const closestX = THREE.MathUtils.clamp(localX, -obstacle.halfWidth, obstacle.halfWidth)
-    const closestZ = THREE.MathUtils.clamp(localZ, -obstacle.halfDepth, obstacle.halfDepth)
-    const separationX = localX - closestX
-    const separationZ = localZ - closestZ
-    const distanceSquared = separationX * separationX + separationZ * separationZ
-    if (distanceSquared >= minimumDistance * minimumDistance) return false
-
-    let localPushX = 0
-    let localPushZ = 0
-    if (distanceSquared > 0.000001) {
-      const distance = Math.sqrt(distanceSquared)
-      const pushScale = (minimumDistance - distance) / distance
-      localPushX = separationX * pushScale
-      localPushZ = separationZ * pushScale
-    } else {
-      const pushX = obstacle.halfWidth + minimumDistance - Math.abs(localX)
-      const pushZ = obstacle.halfDepth + minimumDistance - Math.abs(localZ)
-      if (pushX < pushZ) localPushX = (localX >= 0 ? 1 : -1) * pushX
-      else localPushZ = (localZ >= 0 ? 1 : -1) * pushZ
-    }
-
-    position.x += localPushX * obstacle.cos + localPushZ * obstacle.sin
-    position.z += -localPushX * obstacle.sin + localPushZ * obstacle.cos
-    return true
+    return this.generatedWorld.collision.isWalkablePosition(x, z, radius)
   }
 
   private resolveCharacterOverlaps(position: THREE.Vector3, radius: number): boolean {
-    if (this.generatedWorld) {
-      const resolved = this.generatedWorld.collision.resolveMovement(
-        { x: position.x, z: position.z },
-        { x: position.x, z: position.z },
-        radius,
-        { preventSteepTerrain: true },
-      )
-      position.x = resolved.x
-      position.z = resolved.z
-      this.clampWorldPosition(position, radius)
-      return resolved.blocked
-    }
-    let collided = false
-    for (let pass = 0; pass < COLLISION_RESOLUTION_PASSES; pass += 1) {
-      let adjusted = false
-      for (const obstacle of this.staticObstacles) {
-        if (!this.pushCharacterOutOfObstacle(position, radius, obstacle)) continue
-        adjusted = true
-        collided = true
-      }
-
-      const clampedX = THREE.MathUtils.clamp(position.x, -WORLD_HALF, WORLD_HALF)
-      const clampedZ = THREE.MathUtils.clamp(position.z, -WORLD_HALF, WORLD_HALF)
-      if (clampedX !== position.x || clampedZ !== position.z) {
-        position.x = clampedX
-        position.z = clampedZ
-        adjusted = true
-        collided = true
-      }
-      if (!adjusted) break
-    }
-    return collided
+    const resolved = this.generatedWorld.collision.resolveMovement(
+      { x: position.x, z: position.z },
+      { x: position.x, z: position.z },
+      radius,
+      { preventSteepTerrain: true },
+    )
+    position.x = resolved.x
+    position.z = resolved.z
+    this.clampWorldPosition(position, radius)
+    return resolved.blocked
   }
 
   private moveCharacter(
@@ -3442,40 +2975,18 @@ export class GameEngine {
     radius: number,
     allowInactiveBounds = false,
   ): boolean {
-    if (this.generatedWorld) {
-      const resolved = this.generatedWorld.collision.resolveMovement(
-        { x: position.x, z: position.z },
-        { x: position.x + movementX, z: position.z + movementZ },
-        radius,
-        {
-          preventSteepTerrain: true,
-          requireActiveBounds: !allowInactiveBounds,
-        },
-      )
-      position.x = resolved.x
-      position.z = resolved.z
-      return resolved.blocked
-    }
-    const distance = Math.hypot(movementX, movementZ)
-    const steps = Math.max(1, Math.ceil(distance / COLLISION_MAX_STEP))
-    const stepX = movementX / steps
-    const stepZ = movementZ / steps
-    let collided = false
-
-    for (let step = 0; step < steps; step += 1) {
-      const intendedX = position.x + stepX
-      const intendedZ = position.z + stepZ
-      position.x = intendedX
-      position.z = intendedZ
-      if (this.resolveCharacterOverlaps(position, radius)) collided = true
-      if (
-        Math.abs(position.x - intendedX) > 0.000001 ||
-        Math.abs(position.z - intendedZ) > 0.000001
-      ) {
-        collided = true
-      }
-    }
-    return collided
+    const resolved = this.generatedWorld.collision.resolveMovement(
+      { x: position.x, z: position.z },
+      { x: position.x + movementX, z: position.z + movementZ },
+      radius,
+      {
+        preventSteepTerrain: true,
+        requireActiveBounds: !allowInactiveBounds,
+      },
+    )
+    position.x = resolved.x
+    position.z = resolved.z
+    return resolved.blocked
   }
 
   private isMovementPathClear(
@@ -3503,108 +3014,11 @@ export class GameEngine {
     return true
   }
 
-  private segmentIntersectsBounds(
-    startX: number,
-    startZ: number,
-    endX: number,
-    endZ: number,
-    minX: number,
-    maxX: number,
-    minZ: number,
-    maxZ: number,
-  ): boolean {
-    const dx = endX - startX
-    const dz = endZ - startZ
-    let near = 0
-    let far = 1
-    for (const [start, delta, minimum, maximum] of [
-      [startX, dx, minX, maxX],
-      [startZ, dz, minZ, maxZ],
-    ] as const) {
-      if (Math.abs(delta) < 0.000001) {
-        if (start < minimum || start > maximum) return false
-        continue
-      }
-      const first = (minimum - start) / delta
-      const second = (maximum - start) / delta
-      near = Math.max(near, Math.min(first, second))
-      far = Math.min(far, Math.max(first, second))
-      if (near > far) return false
-    }
-    return true
-  }
-
-  private pointInsideEnclosure(position: THREE.Vector3, enclosure: NavigationEnclosure): boolean {
-    return (
-      position.x > enclosure.insideMinX &&
-      position.x < enclosure.insideMaxX &&
-      position.z > enclosure.insideMinZ &&
-      position.z < enclosure.insideMaxZ
-    )
-  }
-
-  private findNavigationPathWaypoint(
-    position: THREE.Vector3,
-    destinationX: number,
-    destinationZ: number,
-    radius: number,
-    enclosure: NavigationEnclosure,
-    preferredSign: number,
-  ): boolean {
-    const [leftFront, rightFront, leftRear, rightRear] = enclosure.detours
-    const detours =
-      preferredSign > 0
-        ? [rightFront, leftFront, rightRear, leftRear]
-        : [leftFront, rightFront, leftRear, rightRear]
-    const points: Array<readonly [number, number]> = [
-      [position.x, position.z],
-      ...detours,
-      [destinationX, destinationZ],
-    ]
-    const destinationIndex = points.length - 1
-    const distances = points.map(() => Number.POSITIVE_INFINITY)
-    const previous = points.map(() => -1)
-    const visited = points.map(() => false)
-    distances[0] = 0
-
-    for (let iteration = 0; iteration < points.length; iteration += 1) {
-      let current = -1
-      for (let index = 0; index < points.length; index += 1) {
-        if (visited[index]) continue
-        if (current < 0 || distances[index] < distances[current]) current = index
-      }
-      if (current < 0 || !Number.isFinite(distances[current])) break
-      if (current === destinationIndex) break
-      visited[current] = true
-
-      for (let next = 1; next < points.length; next += 1) {
-        if (visited[next] || next === current) continue
-        const [currentX, currentZ] = points[current]
-        const [nextX, nextZ] = points[next]
-        if (!this.isMovementPathClear(currentX, currentZ, nextX, nextZ, radius)) continue
-        const distance = Math.hypot(nextX - currentX, nextZ - currentZ)
-        const candidateDistance = distances[current] + distance
-        if (candidateDistance >= distances[next]) continue
-        distances[next] = candidateDistance
-        previous[next] = current
-      }
-    }
-
-    if (!Number.isFinite(distances[destinationIndex])) return false
-    let waypointIndex = destinationIndex
-    while (previous[waypointIndex] > 0) waypointIndex = previous[waypointIndex]
-    if (previous[waypointIndex] !== 0) return false
-    const [waypointX, waypointZ] = points[waypointIndex]
-    this.navigationWaypoint.set(waypointX, 0, waypointZ)
-    return true
-  }
-
   private getGeneratedNavigationWaypoint(
     position: THREE.Vector3,
     destination: THREE.Vector3,
     radius: number,
   ): THREE.Vector3 | null {
-    if (!this.generatedWorld) return null
     const bounds = this.generatedWorld.bounds
     const cell = (value: number, minimum: number): number =>
       Math.floor((value - minimum) / GENERATED_NAVIGATION_CELL_SIZE)
@@ -3662,140 +3076,19 @@ export class GameEngine {
     position: THREE.Vector3,
     destination: THREE.Vector3,
     radius: number,
-    preferredSign: number,
   ): THREE.Vector3 | null {
-    if (this.generatedWorld) {
-      if (
-        this.isMovementPathClear(
-          position.x,
-          position.z,
-          destination.x,
-          destination.z,
-          radius,
-        )
-      ) {
-        return null
-      }
-      return this.getGeneratedNavigationWaypoint(position, destination, radius)
+    if (
+      this.isMovementPathClear(
+        position.x,
+        position.z,
+        destination.x,
+        destination.z,
+        radius,
+      )
+    ) {
+      return null
     }
-    for (const enclosure of this.navigationEnclosures) {
-      const positionInside = this.pointInsideEnclosure(position, enclosure)
-      const destinationInside = this.pointInsideEnclosure(destination, enclosure)
-      const gateSpan = enclosure.gateOutside[1] - enclosure.gateInside[1]
-      const gateProgress =
-        Math.abs(gateSpan) < 0.000001
-          ? 0
-          : (position.z - enclosure.gateInside[1]) / gateSpan
-      const inGatePassage =
-        Math.abs(position.x - enclosure.gateInside[0]) < enclosure.gateHalfWidth
-      if (
-        inGatePassage &&
-        destinationInside &&
-        gateProgress > 0.08 &&
-        gateProgress < 1.1
-      ) {
-        this.navigationWaypoint.set(
-          enclosure.gateInside[0],
-          0,
-          enclosure.gateInside[1],
-        )
-        return this.navigationWaypoint
-      }
-      if (
-        inGatePassage &&
-        !destinationInside &&
-        gateProgress > -0.1 &&
-        gateProgress < 0.92
-      ) {
-        this.navigationWaypoint.set(
-          enclosure.gateOutside[0],
-          0,
-          enclosure.gateOutside[1],
-        )
-        return this.navigationWaypoint
-      }
-      if (positionInside && destinationInside) continue
-
-      if (positionInside) {
-        const [outsideX, outsideZ] = enclosure.gateOutside
-        const waypoint = this.isMovementPathClear(
-          position.x,
-          position.z,
-          outsideX,
-          outsideZ,
-          radius,
-        )
-          ? enclosure.gateOutside
-          : enclosure.gateInside
-        this.navigationWaypoint.set(waypoint[0], 0, waypoint[1])
-        return this.navigationWaypoint
-      }
-
-      if (destinationInside) {
-        const [insideX, insideZ] = enclosure.gateInside
-        if (
-          this.isMovementPathClear(
-            position.x,
-            position.z,
-            insideX,
-            insideZ,
-            radius,
-          )
-        ) {
-          this.navigationWaypoint.set(insideX, 0, insideZ)
-          return this.navigationWaypoint
-        }
-        const [outsideX, outsideZ] = enclosure.gateOutside
-        if (
-          this.findNavigationPathWaypoint(
-            position,
-            outsideX,
-            outsideZ,
-            radius,
-            enclosure,
-            preferredSign,
-          )
-        ) {
-          return this.navigationWaypoint
-        }
-        continue
-      }
-
-      if (
-        !this.segmentIntersectsBounds(
-          position.x,
-          position.z,
-          destination.x,
-          destination.z,
-          enclosure.outerMinX,
-          enclosure.outerMaxX,
-          enclosure.outerMinZ,
-          enclosure.outerMaxZ,
-        ) ||
-        this.isMovementPathClear(
-          position.x,
-          position.z,
-          destination.x,
-          destination.z,
-          radius,
-        )
-      ) {
-        continue
-      }
-      if (
-        this.findNavigationPathWaypoint(
-          position,
-          destination.x,
-          destination.z,
-          radius,
-          enclosure,
-          preferredSign,
-        )
-      ) {
-        return this.navigationWaypoint
-      }
-    }
-    return null
+    return this.getGeneratedNavigationWaypoint(position, destination, radius)
   }
 
   private actorColliderRadiusForRole(role: ActorRole): number {
@@ -3845,9 +3138,7 @@ export class GameEngine {
 
     actor.mesh.position.x = bestX
     actor.mesh.position.z = bestZ
-    if (this.generatedWorld) {
-      actor.mesh.position.y = this.groundHeightAt(bestX, bestZ)
-    }
+    actor.mesh.position.y = this.groundHeightAt(bestX, bestZ)
     return Math.hypot(bestX - startX, bestZ - startZ)
   }
 
@@ -4030,7 +3321,6 @@ export class GameEngine {
       const senseRange = baseAggroRange + (enraged ? RAGE_RANGE_BONUS : 0)
       const leashRange = senseRange * 2.25
       const colliderRadius = this.actorColliderRadiusForRole(actor.role)
-      const navigationSign = Math.sin(actor.phase * 3.17 + 0.4) >= 0 ? 1 : -1
       const hostileToPlayer = actor.hostileToPlayer
       const commandedSquadMember =
         actor.faction === this.faction &&
@@ -4117,7 +3407,6 @@ export class GameEngine {
             actor.mesh.position,
             formationTarget,
             colliderRadius,
-            navigationSign,
           )
           const toFormation = (navigationTarget ?? formationTarget)
             .clone()
@@ -4143,7 +3432,6 @@ export class GameEngine {
             actor.mesh.position,
             actor.wanderTarget,
             colliderRadius,
-            navigationSign,
           )
           const toWaypoint = (navigationTarget ?? actor.wanderTarget)
             .clone()
@@ -4159,7 +3447,6 @@ export class GameEngine {
               actor.mesh.position,
               actor.wanderTarget,
               colliderRadius,
-              navigationSign,
             )
             toWaypoint
               .copy(navigationTarget ?? actor.wanderTarget)
@@ -4187,7 +3474,6 @@ export class GameEngine {
           actor.mesh.position,
           targetPosition,
           colliderRadius,
-          navigationSign,
         )
 
         if (navigationTarget) {
@@ -4772,12 +4058,10 @@ export class GameEngine {
       requestedZ,
       this.actorColliderRadiusForRole(actor.role),
     )
-    if (this.generatedWorld) {
-      actor.mesh.position.y = this.groundHeightAt(
-        actor.mesh.position.x,
-        actor.mesh.position.z,
-      )
-    }
+    actor.mesh.position.y = this.groundHeightAt(
+      actor.mesh.position.x,
+      actor.mesh.position.z,
+    )
     const actualX = actor.mesh.position.x - startX
     const actualZ = actor.mesh.position.z - startZ
     if (Math.abs(actualX - requestedX) > 0.001) actor.knockbackVelocity.x = 0
@@ -5178,72 +4462,63 @@ export class GameEngine {
   }
 
   private updateCaravan(delta: number): void {
-    let wheelTravel = delta * 3.4
-    if (this.generatedWorld) {
-      wheelTravel = 0
-      const regionId = this.generatedRegionIdAt(
-        this.caravan.position.x,
-        this.caravan.position.z,
-      )
-      if (
-        this.generatedCaravanPatrolReady &&
-        regionId &&
-        this.simulatedGeneratedRegions.has(regionId)
-      ) {
-        let destination =
+    let wheelTravel = 0
+    const regionId = this.generatedRegionIdAt(
+      this.caravan.position.x,
+      this.caravan.position.z,
+    )
+    if (
+      this.generatedCaravanPatrolReady &&
+      regionId &&
+      this.simulatedGeneratedRegions.has(regionId)
+    ) {
+      let destination =
+        this.caravanDirection > 0
+          ? this.generatedCaravanPatrolEnd
+          : this.generatedCaravanPatrolStart
+      if (this.caravan.position.distanceTo(destination) <= 1.1) {
+        this.caravanDirection *= -1
+        destination =
           this.caravanDirection > 0
             ? this.generatedCaravanPatrolEnd
             : this.generatedCaravanPatrolStart
-        if (this.caravan.position.distanceTo(destination) <= 1.1) {
-          this.caravanDirection *= -1
-          destination =
-            this.caravanDirection > 0
-              ? this.generatedCaravanPatrolEnd
-              : this.generatedCaravanPatrolStart
-        }
-        const waypoint =
-          this.getNavigationWaypoint(
-            this.caravan.position,
-            destination,
-            GENERATED_CARAVAN_COLLIDER_RADIUS,
-            this.caravanDirection,
-          ) ?? destination
-        const direction = waypoint.clone().sub(this.caravan.position)
-        direction.y = 0
-        const distance = direction.length()
-        if (distance > 0.001) {
-          direction.multiplyScalar(1 / distance)
-          const previousX = this.caravan.position.x
-          const previousZ = this.caravan.position.z
-          const requestedTravel = Math.min(delta * 3.4, distance)
-          const blocked = this.moveCharacter(
-            this.caravan.position,
-            direction.x * requestedTravel,
-            direction.z * requestedTravel,
-            GENERATED_CARAVAN_COLLIDER_RADIUS,
-          )
-          const movedX = this.caravan.position.x - previousX
-          const movedZ = this.caravan.position.z - previousZ
-          wheelTravel = Math.hypot(movedX, movedZ)
-          if (
-            wheelTravel < 0.0001 ||
-            (blocked && wheelTravel < requestedTravel * 0.2)
-          ) {
-            this.caravanDirection *= -1
-          } else {
-            this.caravan.rotation.y = Math.atan2(-movedZ, movedX)
-          }
-        }
-        this.caravan.position.y = this.groundHeightAt(
-          this.caravan.position.x,
-          this.caravan.position.z,
-        )
       }
-    } else {
-      this.caravan.position.x += this.caravanDirection * delta * 3.4
-      if (this.caravan.position.x > 58) this.caravanDirection = -1
-      if (this.caravan.position.x < -58) this.caravanDirection = 1
-      this.caravan.rotation.y = this.caravanDirection > 0 ? 0 : Math.PI
+      const waypoint =
+        this.getNavigationWaypoint(
+          this.caravan.position,
+          destination,
+          GENERATED_CARAVAN_COLLIDER_RADIUS,
+        ) ?? destination
+      const direction = waypoint.clone().sub(this.caravan.position)
+      direction.y = 0
+      const distance = direction.length()
+      if (distance > 0.001) {
+        direction.multiplyScalar(1 / distance)
+        const previousX = this.caravan.position.x
+        const previousZ = this.caravan.position.z
+        const requestedTravel = Math.min(delta * 3.4, distance)
+        const blocked = this.moveCharacter(
+          this.caravan.position,
+          direction.x * requestedTravel,
+          direction.z * requestedTravel,
+          GENERATED_CARAVAN_COLLIDER_RADIUS,
+        )
+        const movedX = this.caravan.position.x - previousX
+        const movedZ = this.caravan.position.z - previousZ
+        wheelTravel = Math.hypot(movedX, movedZ)
+        if (
+          wheelTravel < 0.0001 ||
+          (blocked && wheelTravel < requestedTravel * 0.2)
+        ) {
+          this.caravanDirection *= -1
+        } else {
+          this.caravan.rotation.y = Math.atan2(-movedZ, movedX)
+        }
+      }
+      this.caravan.position.y = this.groundHeightAt(
+        this.caravan.position.x,
+        this.caravan.position.z,
+      )
     }
     const wheels = this.caravan.getObjectsByProperty('name', 'wheel')
     for (const wheel of wheels) wheel.rotation.z -= wheelTravel / 0.9
@@ -5533,38 +4808,8 @@ export class GameEngine {
   }
 
   private updatePrompt(): void {
-    const position = this.player.position
     const eventPrompt = this.activeEvent?.getPrompt?.()
-    if (eventPrompt) {
-      this.prompt = eventPrompt
-    } else if (this.generatedWorld) {
-      this.prompt = this.getGeneratedPrompt()
-    } else if (this.hasElfLoot() && position.distanceTo(this.elfHomePosition) < 6) {
-      const guards = this.objectives.find((objective) => objective.id === 'guards')
-      this.prompt = this.isObjectiveDone('guards')
-        ? '[E] Сдать добычу'
-        : `[E] Добыча при тебе • охрана ${guards?.progress ?? 0}/${guards?.target ?? 4}`
-    } else if (position.distanceTo(this.vendorPosition) < 6) {
-      this.prompt = '[E] Лекарь, покупки и протезы'
-    } else if (
-      this.faction === 'guard' &&
-      position.distanceTo(this.commanderPosition) < 6 &&
-      this.actors.some((actor) => actor.role === 'commander' && actor.alive)
-    ) {
-      this.prompt = '[E] Получить приказ командира'
-    } else if (position.distanceTo(this.caravan.position) < 7) {
-      this.prompt =
-        this.faction === 'guard'
-          ? '[E] Досмотреть корован'
-          : this.caravanCooldown > 0
-            ? 'Корован уже ограбили'
-            : '[E] ГРАБИТЬ КОРОВАН'
-    } else {
-      this.prompt =
-        document.pointerLockElement === this.renderer.domElement
-          ? ''
-          : 'Нажми на мир, чтобы управлять камерой'
-    }
+    this.prompt = eventPrompt ?? this.getGeneratedPrompt()
   }
 
   private updateMission(): void {
@@ -5576,57 +4821,24 @@ export class GameEngine {
       this.lastZone = currentZone
       this.achievements.recordZone(currentZone)
       this.callbacks.onNotice(`Открыта область: «${this.zoneName(currentZone)}».`, 'info')
+    }
+
+    const node = this.getActiveGeneratedObjective()
+    if (node?.kind === 'arrive') {
+      const site = this.generatedWorld.getSitePosition(node.siteId)
       if (
-        !this.generatedWorld &&
-        this.faction === 'villain' &&
-        currentZone === 'palace'
+        site &&
+        Math.hypot(
+          site.x - this.player.position.x,
+          site.z - this.player.position.z,
+        ) <= 8
       ) {
-        this.completeObjective('breach')
+        this.completeGeneratedObjective(node)
       }
     }
-
-    if (this.generatedWorld) {
-      const node = this.getActiveGeneratedObjective()
-      if (node?.kind === 'arrive') {
-        const site = this.generatedWorld.getSitePosition(node.siteId)
-        if (
-          site &&
-          Math.hypot(
-            site.x - this.player.position.x,
-            site.z - this.player.position.z,
-          ) <= 8
-        ) {
-          this.completeGeneratedObjective(node)
-        }
-      }
-      if (this.objectives.every((objective) => objective.done)) {
-        this.campaignCompleted = true
-        this.campaignCompletedAt = this.elapsed
-        this.endGame('victory')
-      }
-      return
-    }
-
-    if (
-      this.faction === 'guard' &&
-      currentZone === 'fort' &&
-      this.isObjectiveDone('orders') &&
-      this.isObjectiveDone('defend')
-    ) {
-      this.completeObjective('patrol')
-    }
-    if (!this.campaignCompleted && this.objectives.every((objective) => objective.done)) {
-      this.settleActiveLoot('victory')
+    if (this.objectives.every((objective) => objective.done)) {
       this.campaignCompleted = true
-      this.campaignCompletedAt = this.elapsed
-      this.gold += 250
-      this.eventCooldown = Math.min(this.eventCooldown, 12)
-      this.callbacks.onNotice(
-        'Кампания завершена! +250 золота. Теперь можно делать что сам захочешь.',
-        'success',
-      )
-      this.playSound('victory')
-      this.emitView(true)
+      this.endGame('victory')
     }
   }
 
@@ -5830,17 +5042,9 @@ export class GameEngine {
       'bounty',
     ]
     return kinds.filter((kind) => {
-      if (kind === 'bounty') {
-        if (this.generatedWorld) return this.actors.length < MAX_ACTORS
-        return this.getEligibleBountyTargets().length > 0 || this.actors.length < MAX_ACTORS
-      }
-      if (
-        kind === 'defendHome' &&
-        (this.generatedWorld || this.villageHouses.length === 0)
-      ) {
-        return false
-      }
-      return this.actors.length + EVENT_REQUIRED_SLOTS[kind] <= MAX_ACTORS
+      if (this.actors.length + EVENT_REQUIRED_SLOTS[kind] > MAX_ACTORS) return false
+      if (kind === 'defendHome') return this.pickDefendHomePosition() !== null
+      return true
     })
   }
 
@@ -5935,10 +5139,8 @@ export class GameEngine {
 
     const id = this.nextEventId('richCaravan')
     const caravan = this.createCaravan(true)
-    const roadX = this.pickEventRoadX()
-    const generatedPosition = this.generatedWorld ? this.pickEventPosition() : null
-    if (generatedPosition) caravan.position.copy(generatedPosition)
-    else caravan.position.set(roadX, 0, -23)
+    const position = this.pickEventPosition()
+    caravan.position.copy(position)
     caravan.position.y = this.groundHeightAt(caravan.position.x, caravan.position.z)
     this.scene.add(caravan)
     this.registerNamedInteractableOutline(caravan, 'cargo')
@@ -5979,10 +5181,8 @@ export class GameEngine {
 
     let robbed = false
     let robberyPoint: THREE.Vector3 | null = null
-    let direction = roadX > 0 ? -1 : 1
-    const travelDirection = this.generatedWorld
-      ? this.generatedCaravanTravelDirection
-      : new THREE.Vector2(1, 0)
+    let direction = caravan.position.x > 0 ? -1 : 1
+    const travelDirection = this.generatedCaravanTravelDirection
     let event: WorldEvent
     event = this.createWorldEvent({
       id,
@@ -6004,27 +5204,21 @@ export class GameEngine {
           const previousZ = caravan.position.z
           caravan.position.x += travelDirection.x * direction * delta * 2.8
           caravan.position.z += travelDirection.y * direction * delta * 2.8
-          if (this.generatedWorld) {
-            this.clampWorldPosition(caravan.position, 3)
-            if (
-              Math.abs(caravan.position.x - previousX) < 0.0001 &&
-              Math.abs(caravan.position.z - previousZ) < 0.0001
-            ) {
-              direction *= -1
-            }
-            caravan.position.y = this.groundHeightAt(
-              caravan.position.x,
-              caravan.position.z,
-            )
-            caravan.rotation.y = Math.atan2(
-              -travelDirection.y * direction,
-              travelDirection.x * direction,
-            )
-          } else {
-            if (caravan.position.x > 58) direction = -1
-            if (caravan.position.x < -58) direction = 1
-            caravan.rotation.y = direction > 0 ? 0 : Math.PI
+          this.clampWorldPosition(caravan.position, 3)
+          if (
+            Math.abs(caravan.position.x - previousX) < 0.0001 &&
+            Math.abs(caravan.position.z - previousZ) < 0.0001
+          ) {
+            direction *= -1
           }
+          caravan.position.y = this.groundHeightAt(
+            caravan.position.x,
+            caravan.position.z,
+          )
+          caravan.rotation.y = Math.atan2(
+            -travelDirection.y * direction,
+            travelDirection.x * direction,
+          )
           for (const wheel of caravan.getObjectsByProperty('name', 'wheel')) {
             wheel.rotation.z -= delta * (2.8 / 0.9)
           }
@@ -6075,29 +5269,44 @@ export class GameEngine {
     return event
   }
 
+  private pickDefendHomePosition(): THREE.Vector3 | null {
+    let best: THREE.Vector3 | null = null
+    let bestDistance = Number.POSITIVE_INFINITY
+    for (const site of this.generatedBlueprint.sites) {
+      if (site.kind !== 'settlement') continue
+      const position = this.generatedWorld.getSitePosition(site.id)
+      if (!position) continue
+      const distance = Math.hypot(
+        position.x - this.player.position.x,
+        position.z - this.player.position.z,
+      )
+      if (distance > DEFEND_HOME_MAX_DISTANCE || distance >= bestDistance) continue
+      bestDistance = distance
+      best = new THREE.Vector3(position.x, position.y, position.z)
+    }
+    return best
+  }
+
   private startDefendHomeEvent(): WorldEvent | null {
-    if (
-      this.villageHouses.length === 0 ||
-      this.actors.length + EVENT_REQUIRED_SLOTS.defendHome > MAX_ACTORS
-    ) {
+    if (this.actors.length + EVENT_REQUIRED_SLOTS.defendHome > MAX_ACTORS) {
       return null
     }
+    const homePosition = this.pickDefendHomePosition()
+    if (!homePosition) return null
 
     const id = this.nextEventId('defendHome')
-    const house =
-      this.villageHouses[Math.floor(this.eventRng() * this.villageHouses.length)]
+    const fire = this.createHouseFireEffect(homePosition)
+    this.scene.add(fire)
     const target: EventPropTarget = {
       id: `${id}-home`,
       ownerId: id,
-      object: house,
+      object: fire,
       hp: 100,
       maxHp: 100,
-      position: house.position.clone(),
+      position: homePosition.clone(),
       attackRange: 5.2,
     }
     this.eventPropTargets.set(target.id, target)
-    const fire = this.createHouseFireEffect(target.position)
-    this.scene.add(fire)
     this.spawnDecal(target.position, 'scorch', 4.8)
 
     const enemyFaction = this.pickEventEnemyFaction()
@@ -6105,19 +5314,17 @@ export class GameEngine {
     for (let index = 0; index < 4; index += 1) {
       const angle = (index / 4) * Math.PI * 2 + this.eventRng() * 0.45
       const radius = 17 + this.eventRng() * 4
+      const spawnPosition = new THREE.Vector3(
+        target.position.x + Math.sin(angle) * radius,
+        0,
+        target.position.z + Math.cos(angle) * radius,
+      )
+      this.clampWorldPosition(spawnPosition, 3)
       const attacker = this.spawnActor(
         enemyFaction,
         index === 3 ? 'brute' : 'soldier',
-        THREE.MathUtils.clamp(
-          target.position.x + Math.sin(angle) * radius,
-          -WORLD_HALF + 3,
-          WORLD_HALF - 3,
-        ),
-        THREE.MathUtils.clamp(
-          target.position.z + Math.cos(angle) * radius,
-          -WORLD_HALF + 3,
-          WORLD_HALF - 3,
-        ),
+        spawnPosition.x,
+        spawnPosition.z,
         this.actors.length + index,
         {
           objectiveEligible: false,
@@ -6330,33 +5537,24 @@ export class GameEngine {
   }
 
   private startBountyEvent(): WorldEvent | null {
-    const id = this.nextEventId('bounty')
-    const candidates = this.generatedWorld ? [] : this.getEligibleBountyTargets()
-    let spawned = false
-    let target =
-      candidates.length > 0
-        ? candidates[Math.floor(this.eventRng() * candidates.length)]
-        : null
-    if (!target) {
-      if (this.actors.length >= MAX_ACTORS) return null
-      const position = this.pickEventPosition()
-      target = this.spawnActor(
-        this.pickEventEnemyFaction(),
-        'soldier',
-        position.x,
-        position.z,
-        this.actors.length,
-        {
-          objectiveEligible: false,
-          squadEligible: false,
-          eventOwnerId: id,
-          generatedRegionId: this.generatedRegionIdAt(position.x, position.z),
-        },
-      )
-      spawned = true
-    }
+    if (this.actors.length + EVENT_REQUIRED_SLOTS.bounty > MAX_ACTORS) return null
 
-    const bountyTarget = target
+    const id = this.nextEventId('bounty')
+    const position = this.pickEventPosition()
+    const bountyTarget = this.spawnActor(
+      this.pickEventEnemyFaction(),
+      'soldier',
+      position.x,
+      position.z,
+      this.actors.length,
+      {
+        objectiveEligible: false,
+        squadEligible: false,
+        eventOwnerId: id,
+        generatedRegionId: this.generatedRegionIdAt(position.x, position.z),
+      },
+    )
+
     let event: WorldEvent
     event = this.createWorldEvent({
       id,
@@ -6370,7 +5568,7 @@ export class GameEngine {
       target: 1,
       markerId: `${id}-marker`,
       markerPos: bountyTarget.mesh.position.clone(),
-      ownedActorIds: spawned ? [bountyTarget.id] : [],
+      ownedActorIds: [bountyTarget.id],
       ownedProps: [],
       update: () => {
         event.markerPos.copy(bountyTarget.mesh.position)
@@ -6383,17 +5581,6 @@ export class GameEngine {
       },
     })
     return event
-  }
-
-  private getEligibleBountyTargets(): Actor[] {
-    return this.actors.filter(
-      (actor) =>
-        actor.alive &&
-        actor.hostileToPlayer &&
-        actor.role !== 'commander' &&
-        actor.role !== 'captive' &&
-        !actor.eventOwnerId,
-    )
   }
 
   private nextEventId(kind: WorldEventKind): string {
@@ -6409,51 +5596,25 @@ export class GameEngine {
   }
 
   private pickEventPosition(): THREE.Vector3 {
-    if (this.generatedWorld) {
-      for (let attempt = 0; attempt < 16; attempt += 1) {
-        const angle = this.eventRng() * TWO_PI
-        const radius = 22 + this.eventRng() * 16
-        const position = new THREE.Vector3(
-          this.player.position.x + Math.sin(angle) * radius,
-          0,
-          this.player.position.z + Math.cos(angle) * radius,
-        )
-        this.clampWorldPosition(position, 3)
-        if (!this.isWalkablePosition(position.x, position.z, 1)) continue
-        position.y = this.groundHeightAt(position.x, position.z)
-        return position
-      }
-      const fallback = this.player.position
-        .clone()
-        .add(new THREE.Vector3(12, 0, 12))
-      this.clampWorldPosition(fallback, 3)
-      fallback.y = this.groundHeightAt(fallback.x, fallback.z)
-      return fallback
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const angle = this.eventRng() * TWO_PI
+      const radius = 22 + this.eventRng() * 16
+      const position = new THREE.Vector3(
+        this.player.position.x + Math.sin(angle) * radius,
+        0,
+        this.player.position.z + Math.cos(angle) * radius,
+      )
+      this.clampWorldPosition(position, 3)
+      if (!this.isWalkablePosition(position.x, position.z, 1)) continue
+      position.y = this.groundHeightAt(position.x, position.z)
+      return position
     }
-    const candidates = [
-      new THREE.Vector3(-54, 0, -13),
-      new THREE.Vector3(-29, 0, 18),
-      new THREE.Vector3(-12, 0, 55),
-      new THREE.Vector3(18, 0, -51),
-      new THREE.Vector3(39, 0, 13),
-      new THREE.Vector3(57, 0, 34),
-      new THREE.Vector3(13, 0, 57),
-      new THREE.Vector3(54, 0, -12),
-    ]
-    const distant = candidates.filter(
-      (position) => position.distanceTo(this.player.position) >= 22,
-    )
-    const pool = distant.length > 0 ? distant : candidates
-    return pool[Math.floor(this.eventRng() * pool.length)].clone()
-  }
-
-  private pickEventRoadX(): number {
-    const candidates = [-54, -30, -5, 24, 52]
-    const distant = candidates.filter(
-      (x) => this.player.position.distanceTo(new THREE.Vector3(x, 0, -23)) >= 20,
-    )
-    const pool = distant.length > 0 ? distant : candidates
-    return pool[Math.floor(this.eventRng() * pool.length)]
+    const fallback = this.player.position
+      .clone()
+      .add(new THREE.Vector3(12, 0, 12))
+    this.clampWorldPosition(fallback, 3)
+    fallback.y = this.groundHeightAt(fallback.x, fallback.z)
+    return fallback
   }
 
   private createHouseFireEffect(position: THREE.Vector3): THREE.Group {
@@ -6959,19 +6120,8 @@ export class GameEngine {
       })
     }
 
-    const objectiveAdvanced =
-      !this.generatedWorld &&
-      killerFaction === this.faction &&
-      this.creditFactionObjective(actor)
     this.activeEvent?.onKill?.(actor, { killerFaction, directPlayerKill })
-    if (!directPlayerKill) {
-      if (objectiveAdvanced) {
-        this.callbacks.onNotice('Союзники победили врага. Задача продвинулась.', 'info')
-        this.emitView(true)
-      }
-
-      return
-    }
+    if (!directPlayerKill) return
 
     this.kills += 1
     this.achievements.recordKill(actor.role, actor.faction)
@@ -7199,13 +6349,6 @@ export class GameEngine {
     if (!objective || objective.done) return false
     objective.done = true
     if (objective.target) objective.progress = objective.target
-    if (
-      !this.activeEvent &&
-      !this.generatedWorld &&
-      this.objectives.filter((entry) => entry.done).length === 1
-    ) {
-      this.eventCooldown = 0
-    }
     this.callbacks.onNotice(`Задача выполнена: ${objective.text}.`, 'success')
     this.achievements.recordObjectiveCompleted()
     this.playSound('objective')
@@ -7213,46 +6356,8 @@ export class GameEngine {
     return true
   }
 
-  private incrementObjective(id: string): boolean {
-    const objective = this.objectives.find((entry) => entry.id === id)
-    if (!objective || objective.done) return false
-    objective.progress = Math.min(objective.target ?? 1, (objective.progress ?? 0) + 1)
-    if (objective.progress >= (objective.target ?? 1)) {
-      const completed = this.completeObjective(id)
-      if (completed && this.faction === 'elf' && id === 'guards' && this.isObjectiveDone('raid')) {
-        this.callbacks.onNotice(
-          'Путь чист. Неси добычу к зелёному маяку в эльфийском лагере — цель на карте.',
-          'info',
-        )
-      }
-    }
-    return true
-  }
-
   private isObjectiveDone(id: string): boolean {
     return this.objectives.some((objective) => objective.id === id && objective.done)
-  }
-
-  private creditFactionObjective(actor: Actor): boolean {
-    if (!actor.objectiveEligible) return false
-    if (this.faction === 'elf' && actor.faction === 'guard') {
-      return this.incrementObjective('guards')
-    }
-    if (this.faction === 'guard' && actor.faction !== 'guard') {
-      return this.incrementObjective('defend')
-    }
-    if (this.faction === 'villain' && actor.role === 'commander') {
-      return this.completeObjective('commander')
-    }
-    return false
-  }
-
-  private hasElfLoot(): boolean {
-    return (
-      this.faction === 'elf' &&
-      this.isObjectiveDone('raid') &&
-      !this.isObjectiveDone('home')
-    )
   }
 
   private endGame(result: 'victory' | 'defeat'): void {
@@ -7262,11 +6367,8 @@ export class GameEngine {
     this.clearTransientCombatFeedback()
     if (result === 'victory') this.settleActiveLoot('victory')
     else this.clearLootRuntime()
-    if (this.generatedWorld) {
-      this.generatedRunStatus = result
-      this.campaignCompleted = result === 'victory'
-      if (result === 'victory') this.campaignCompletedAt = this.elapsed
-    }
+    this.generatedRunStatus = result
+    this.campaignCompleted = result === 'victory'
     this.ended = true
     this.achievements.recordCampaignEnd(result, this.elapsed, Math.max(0, this.health))
     this.keys.clear()
@@ -7299,62 +6401,40 @@ export class GameEngine {
         kind: 'caravan',
       },
     ]
-    if (this.generatedWorld) {
-      const activeNode = this.getActiveGeneratedObjective()
-      const activeSite = activeNode
-        ? this.generatedWorld.getSitePosition(activeNode.siteId)
+    const activeNode = this.getActiveGeneratedObjective()
+    const activeSite = activeNode
+      ? this.generatedWorld.getSitePosition(activeNode.siteId)
+      : undefined
+    for (const marker of this.generatedWorld.getMarkers()) {
+      const active = marker.id === `site:${activeNode?.siteId}`
+      const site = marker.id.startsWith('site:')
+        ? this.generatedBlueprint.sites.find(
+            (candidate) => `site:${candidate.id}` === marker.id,
+          )
         : undefined
-      for (const marker of this.generatedWorld.getMarkers()) {
-        const active = marker.id === `site:${activeNode?.siteId}`
-        const site = marker.id.startsWith('site:')
-          ? this.generatedBlueprint?.sites.find(
-              (candidate) => `site:${candidate.id}` === marker.id,
-            )
-          : undefined
-        const label = site
-          ? generatedSiteLabel(site.kind)
-          : marker.label
-        markers.push({
-          id: marker.id,
-          x: marker.x,
-          z: marker.z,
-          kind: active ? 'objective' : 'landmark',
-          ...(label ? { label } : {}),
-        })
-      }
-      if (
-        activeNode &&
-        activeSite &&
-        !markers.some((marker) => marker.id === `site:${activeNode.siteId}`)
-      ) {
-        const objective = this.objectives.find(
-          (entry) => entry.id === activeNode.id,
-        )
-        markers.push({
-          id: `site:${activeNode.siteId}`,
-          x: activeSite.x,
-          z: activeSite.z,
-          kind: 'objective',
-          label: objective?.text,
-        })
-      }
-    } else {
-      markers.push(
-        { id: 'village', x: -46, z: -39, kind: 'landmark' },
-        { id: 'palace', x: 42, z: -42, kind: 'landmark' },
-        { id: 'forest', x: -45, z: 42, kind: 'landmark' },
-        { id: 'fort', x: 45, z: 44, kind: 'landmark' },
-      )
-    }
-    if (!this.generatedWorld && this.hasElfLoot()) {
+      const label = site ? generatedSiteLabel(site.kind) : marker.label
       markers.push({
-        id: 'loot-turn-in',
-        x: this.elfHomePosition.x,
-        z: this.elfHomePosition.z,
+        id: marker.id,
+        x: marker.x,
+        z: marker.z,
+        kind: active ? 'objective' : 'landmark',
+        ...(label ? { label } : {}),
+      })
+    }
+    if (
+      activeNode &&
+      activeSite &&
+      !markers.some((marker) => marker.id === `site:${activeNode.siteId}`)
+    ) {
+      const objective = this.objectives.find(
+        (entry) => entry.id === activeNode.id,
+      )
+      markers.push({
+        id: `site:${activeNode.siteId}`,
+        x: activeSite.x,
+        z: activeSite.z,
         kind: 'objective',
-        label: this.isObjectiveDone('guards')
-          ? 'Сдать добычу'
-          : 'Эльфийский лагерь: сдать добычу',
+        label: objective?.text,
       })
     }
     if (this.activeEvent) {
@@ -7375,80 +6455,30 @@ export class GameEngine {
         kind: actor.hostileToPlayer ? 'enemy' : 'ally',
       })
     }
-    const generatedBounds = this.generatedWorld?.bounds
-    const generatedCurrentRegionId = this.generatedWorld?.getRegionIdAt(
+    const generatedCurrentRegionId = this.generatedWorld.getRegionIdAt(
       this.player.position.x,
       this.player.position.z,
     )
     const discoveredRegions = new Set(
-      this.generatedWorld?.discoveredRegionIds.map(String) ?? [],
+      this.generatedWorld.discoveredRegionIds.map(String),
     )
-    const worldMap: GameView['worldMap'] =
-      generatedBounds && this.generatedBlueprint
-        ? {
-            mode: 'generated',
-            bounds: { ...generatedBounds },
-            ...(generatedCurrentRegionId === undefined
-              ? {}
-              : { currentRegionId: String(generatedCurrentRegionId) }),
-            seed: this.generatedBlueprint.seed,
-            generatorVersion: this.generatedBlueprint.generatorVersion,
-            regions: this.generatedBlueprint.regions.map((region) => ({
-              id: String(region.id),
-              gridX: region.coordinate.x,
-              gridZ: region.coordinate.y,
-              biome: region.biome,
-              territory: region.territory,
-              discovered: discoveredRegions.has(String(region.id)),
-              current: String(region.id) === String(generatedCurrentRegionId),
-            })),
-          }
-        : {
-            mode: 'legacy',
-            bounds: { minX: -80, maxX: 80, minZ: -80, maxZ: 80 },
-            currentRegionId: this.zoneAtPosition(
-              this.player.position.x,
-              this.player.position.z,
-            ),
-            regions: [
-              {
-                id: 'neutral',
-                gridX: 0,
-                gridZ: 0,
-                biome: 'neutral',
-                territory: 'neutral',
-                discovered: true,
-                current: this.lastZone === 'neutral',
-              },
-              {
-                id: 'palace',
-                gridX: 1,
-                gridZ: 0,
-                biome: 'palace',
-                territory: 'guard',
-                discovered: true,
-                current: this.lastZone === 'palace',
-              },
-              {
-                id: 'forest',
-                gridX: 0,
-                gridZ: 1,
-                biome: 'forest',
-                territory: 'elf',
-                discovered: true,
-                current: this.lastZone === 'forest',
-              },
-              {
-                id: 'fort',
-                gridX: 1,
-                gridZ: 1,
-                biome: 'fort',
-                territory: 'villain',
-                discovered: true,
-                current: this.lastZone === 'fort',
-              },
-            ],
-          }
+    const worldMap: GameView['worldMap'] = {
+      bounds: { ...this.generatedWorld.bounds },
+      ...(generatedCurrentRegionId === undefined
+        ? {}
+        : { currentRegionId: String(generatedCurrentRegionId) }),
+      seed: this.generatedBlueprint.seed,
+      generatorVersion: this.generatedBlueprint.generatorVersion,
+      regions: this.generatedBlueprint.regions.map((region) => ({
+        id: String(region.id),
+        gridX: region.coordinate.x,
+        gridZ: region.coordinate.y,
+        biome: region.biome,
+        territory: region.territory,
+        discovered: discoveredRegions.has(String(region.id)),
+        current: String(region.id) === String(generatedCurrentRegionId),
+      })),
+    }
     const ability = createAbilityView(this.faction, this.stamina, this.body)
     ability.active = this.shieldActive
     ability.cooldown = this.abilityCooldown
@@ -8753,16 +7783,7 @@ export class GameEngine {
   }
 
   private resolveWeatherZone(): ZoneId {
-    const x = this.player.position.x
-    const z = this.player.position.z
-    if (this.generatedWorld) return this.zoneAtPosition(x, z)
-    if (
-      Math.abs(x) < WEATHER_ZONE_HYSTERESIS ||
-      Math.abs(z) < WEATHER_ZONE_HYSTERESIS
-    ) {
-      return this.weatherZone
-    }
-    return this.zoneAtPosition(x, z)
+    return this.zoneAtPosition(this.player.position.x, this.player.position.z)
   }
 
   private updateWeatherWeights(delta: number): void {
@@ -8812,8 +7833,8 @@ export class GameEngine {
       desaturation * 0.5,
       Math.min(1, skyBrightness + 0.08),
     )
-    this.groundFoliageUniforms.uWindStrength.value = Math.min(
-      GROUND_FOLIAGE_MAX_WIND_STRENGTH,
+    this.wind.strength = Math.min(
+      MAX_WIND_STRENGTH,
       this.weightedWeatherValue('windStrength'),
     )
   }
@@ -8833,8 +7854,7 @@ export class GameEngine {
     this.fog.far = WEATHER_PROFILES.clear.fogFar
     this.cloudMaterial.opacity = BASE_CLOUD_OPACITY
     this.cloudMaterial.color.copy(this.cloudBaseColor)
-    this.groundFoliageUniforms.uWindStrength.value =
-      GROUND_FOLIAGE_DEFAULT_WIND_STRENGTH
+    this.wind.strength = DEFAULT_WIND_STRENGTH
     this.rain.visible = false
     this.rain.material.opacity = 0
     this.snow.visible = false
@@ -8870,8 +7890,8 @@ export class GameEngine {
   }
 
   private updateRain(delta: number): void {
-    const wind = this.groundFoliageUniforms.uWindDirection.value
-    const windStrength = this.groundFoliageUniforms.uWindStrength.value
+    const wind = this.wind.direction
+    const windStrength = this.wind.strength
     const centerX = this.camera.position.x
     const centerZ = this.camera.position.z
     for (let index = 0; index < RAIN_DROP_COUNT; index += 1) {
@@ -8910,8 +7930,8 @@ export class GameEngine {
   }
 
   private updateSnow(delta: number): void {
-    const wind = this.groundFoliageUniforms.uWindDirection.value
-    const windStrength = this.groundFoliageUniforms.uWindStrength.value
+    const wind = this.wind.direction
+    const windStrength = this.wind.strength
     const centerX = this.camera.position.x
     const centerZ = this.camera.position.z
     for (let index = 0; index < SNOW_FLAKE_COUNT; index += 1) {
@@ -9002,418 +8022,6 @@ export class GameEngine {
     return min + (max - min) * this.weatherRng()
   }
 
-  private createGroundDetails(): void {
-    this.createPebbles()
-    this.rebuildGroundFoliage()
-  }
-
-  private createPebbles(): void {
-    const placements = this.createGroundDetailPlacements('fort', 110, 4871, 'pebbles')
-    const pebbles = new THREE.InstancedMesh(
-      new THREE.DodecahedronGeometry(0.26, 0),
-      new THREE.MeshStandardMaterial({
-        color: mix(this.palette.borderStrong, this.palette.accent, 0.22),
-        roughness: 1,
-      }),
-      placements.length,
-    )
-    const dummy = new THREE.Object3D()
-    for (let index = 0; index < placements.length; index += 1) {
-      const placement = placements[index]
-      dummy.position.set(placement.x, 0.14, placement.z)
-      dummy.rotation.set(
-        placement.width * TWO_PI,
-        placement.yaw,
-        placement.tone * TWO_PI,
-      )
-      dummy.scale.set(
-        0.45 + placement.width * 1.5,
-        0.4 + placement.height * 0.7,
-        0.45 + placement.tone * 1.5,
-      )
-      dummy.updateMatrix()
-      pebbles.setMatrixAt(index, dummy.matrix)
-    }
-    pebbles.instanceMatrix.setUsage(THREE.StaticDrawUsage)
-    pebbles.instanceMatrix.needsUpdate = true
-    pebbles.computeBoundingSphere()
-    this.scene.add(pebbles)
-  }
-
-  private rebuildGroundFoliage(): void {
-    this.clearGroundFoliage()
-    if (this.groundFoliageQuality === 'off' || this.generatedWorld) return
-    this.createGrassFoliage()
-    this.createFernFoliage()
-    this.createFlowerFoliage()
-  }
-
-  private clearGroundFoliage(): void {
-    for (const mesh of this.groundFoliageMeshes) {
-      mesh.removeFromParent()
-      mesh.dispose()
-      mesh.geometry.dispose()
-      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
-      materials.forEach((material) => material.dispose())
-    }
-    this.groundFoliageMeshes.length = 0
-  }
-
-  private createGrassFoliage(): void {
-    const placements = this.collectGroundFoliagePlacements('grass')
-    if (placements.length === 0) return
-
-    const geometry = new THREE.ConeGeometry(0.1, GRASS_FOLIAGE_HEIGHT, 3).translate(
-      0,
-      GRASS_FOLIAGE_HEIGHT * 0.5,
-      0,
-    )
-    const material = this.createGroundFoliageMaterial(
-      { color: 0xffffff, flatShading: true, roughness: 1 },
-      GRASS_FOLIAGE_HEIGHT,
-      GRASS_FOLIAGE_SWAY,
-    )
-    const mesh = new THREE.InstancedMesh(geometry, material, placements.length)
-    const dummy = new THREE.Object3D()
-    const color = new THREE.Color()
-    const zoneColors: Record<ZoneId, THREE.Color> = {
-      neutral: mix(this.palette.worldNeutralGround, this.palette.success, 0.52),
-      forest: mix(this.palette.worldForestGround, this.palette.success, 0.58),
-      fort: mix(this.palette.worldFortGround, this.palette.warning, 0.34),
-      palace: mix(this.palette.worldPalaceGround, this.palette.success, 0.32),
-    }
-
-    for (let index = 0; index < placements.length; index += 1) {
-      const placement = placements[index]
-      const scale = GRASS_FOLIAGE_SCALES[placement.zone]
-      const width = THREE.MathUtils.lerp(scale.width[0], scale.width[1], placement.width)
-      const height = THREE.MathUtils.lerp(scale.height[0], scale.height[1], placement.height)
-      dummy.position.set(placement.x, 0.02, placement.z)
-      dummy.rotation.set(0, placement.yaw, 0)
-      dummy.scale.set(width, height, width)
-      dummy.updateMatrix()
-      mesh.setMatrixAt(index, dummy.matrix)
-      color
-        .copy(zoneColors[placement.zone])
-        .lerp(this.palette.worldHorizon, placement.tone * 0.12)
-      mesh.setColorAt(index, color)
-    }
-
-    this.addGroundFoliageMesh(mesh, GRASS_FOLIAGE_SWAY)
-  }
-
-  private createFernFoliage(): void {
-    const placements = this.collectGroundFoliagePlacements('fern')
-    if (placements.length === 0) return
-
-    const material = this.createGroundFoliageMaterial(
-      { color: 0xffffff, flatShading: true, roughness: 1, side: THREE.DoubleSide },
-      FERN_FOLIAGE_HEIGHT,
-      FERN_FOLIAGE_SWAY,
-    )
-    const mesh = new THREE.InstancedMesh(
-      this.createFernGeometry(),
-      material,
-      placements.length,
-    )
-    const dummy = new THREE.Object3D()
-    const baseColor = mix(this.palette.worldForestGround, this.palette.success, 0.62)
-    const color = new THREE.Color()
-
-    for (let index = 0; index < placements.length; index += 1) {
-      const placement = placements[index]
-      const width = 0.78 + placement.width * 0.58
-      const height = 0.85 + placement.height * 0.55
-      dummy.position.set(placement.x, 0.02, placement.z)
-      dummy.rotation.set(0, placement.yaw, 0)
-      dummy.scale.set(width, height, width)
-      dummy.updateMatrix()
-      mesh.setMatrixAt(index, dummy.matrix)
-      color.copy(baseColor).lerp(this.palette.worldHorizon, placement.tone * 0.1)
-      mesh.setColorAt(index, color)
-    }
-
-    this.addGroundFoliageMesh(mesh, FERN_FOLIAGE_SWAY)
-  }
-
-  private createFlowerFoliage(): void {
-    const placements = this.collectGroundFoliagePlacements('flower')
-    if (placements.length === 0) return
-
-    const material = this.createGroundFoliageMaterial(
-      { color: 0xffffff, roughness: 0.86, vertexColors: true },
-      FLOWER_FOLIAGE_HEIGHT,
-      FLOWER_FOLIAGE_SWAY,
-    )
-    const mesh = new THREE.InstancedMesh(
-      this.createFlowerGeometry(),
-      material,
-      placements.length,
-    )
-    const dummy = new THREE.Object3D()
-    const color = new THREE.Color()
-
-    for (let index = 0; index < placements.length; index += 1) {
-      const placement = placements[index]
-      const width = 0.78 + placement.width * 0.42
-      const height = 0.82 + placement.height * 0.48
-      dummy.position.set(placement.x, 0.02, placement.z)
-      dummy.rotation.set(0, placement.yaw, 0)
-      dummy.scale.set(width, height, width)
-      dummy.updateMatrix()
-      mesh.setMatrixAt(index, dummy.matrix)
-      const tint = 0.9 + placement.tone * 0.1
-      color.setRGB(tint, tint, tint)
-      mesh.setColorAt(index, color)
-    }
-
-    this.addGroundFoliageMesh(mesh, FLOWER_FOLIAGE_SWAY)
-  }
-
-  private collectGroundFoliagePlacements(
-    bucket: GroundFoliageBucket,
-  ): GroundFoliagePlacement[] {
-    const placements: GroundFoliagePlacement[] = []
-    for (const zone of GROUND_FOLIAGE_ZONES) {
-      const count = this.groundFoliageCount(bucket, zone)
-      if (count === 0) continue
-      placements.push(
-        ...this.createGroundDetailPlacements(
-          zone,
-          count,
-          GROUND_FOLIAGE_SEEDS[bucket][zone],
-          bucket,
-        ),
-      )
-    }
-    return placements
-  }
-
-  private groundFoliageCount(bucket: GroundFoliageBucket, zone: ZoneId): number {
-    if (this.groundFoliageQuality === 'off') return 0
-    return GROUND_FOLIAGE_COUNTS[bucket][zone][this.groundFoliageQuality]
-  }
-
-  private createGroundDetailPlacements(
-    zone: ZoneId,
-    target: number,
-    seed: number,
-    label: string,
-  ): GroundFoliagePlacement[] {
-    const random = seededRandom(seed)
-    const placements: GroundFoliagePlacement[] = []
-    const negativeX = zone === 'neutral' || zone === 'forest'
-    const negativeZ = zone === 'neutral' || zone === 'palace'
-    const minX = negativeX ? -WORLD_HALF + GROUND_FOLIAGE_EDGE_MARGIN : GROUND_FOLIAGE_EDGE_MARGIN
-    const maxX = negativeX ? -GROUND_FOLIAGE_EDGE_MARGIN : WORLD_HALF - GROUND_FOLIAGE_EDGE_MARGIN
-    const minZ = negativeZ ? -WORLD_HALF + GROUND_FOLIAGE_EDGE_MARGIN : GROUND_FOLIAGE_EDGE_MARGIN
-    const maxZ = negativeZ ? -GROUND_FOLIAGE_EDGE_MARGIN : WORLD_HALF - GROUND_FOLIAGE_EDGE_MARGIN
-    const maxAttempts = Math.max(target * GROUND_FOLIAGE_MAX_ATTEMPTS, 1)
-
-    for (let attempt = 0; attempt < maxAttempts && placements.length < target; attempt += 1) {
-      const x = THREE.MathUtils.lerp(minX, maxX, random())
-      const z = THREE.MathUtils.lerp(minZ, maxZ, random())
-      if (zoneAt(x, z) !== zone || !this.canPlaceGroundFoliage(x, z)) continue
-      placements.push({
-        zone,
-        x,
-        z,
-        yaw: random() * TWO_PI,
-        width: random(),
-        height: random(),
-        tone: random(),
-      })
-    }
-
-    if (placements.length < target) {
-      console.warn(
-        `Korovany: ${label} placement in ${zone} produced ${placements.length}/${target} instances.`,
-      )
-    }
-    return placements
-  }
-
-  private canPlaceGroundFoliage(x: number, z: number): boolean {
-    const roadHalfWidth = 3 + GROUND_FOLIAGE_ROAD_CLEARANCE
-    const onHorizontalRoad =
-      Math.abs(z + 23) <= roadHalfWidth &&
-      Math.abs(x) <= 75 + GROUND_FOLIAGE_ROAD_CLEARANCE
-    const onVerticalRoad =
-      Math.abs(x) <= roadHalfWidth &&
-      z >= -67 - GROUND_FOLIAGE_ROAD_CLEARANCE &&
-      z <= 75 + GROUND_FOLIAGE_ROAD_CLEARANCE
-    if (onHorizontalRoad || onVerticalRoad) return false
-    if (!this.isWalkablePosition(x, z, GROUND_FOLIAGE_CLEARANCE)) return false
-
-    for (const enclosure of this.navigationEnclosures) {
-      if (
-        x >= enclosure.outerMinX &&
-        x <= enclosure.outerMaxX &&
-        z >= enclosure.outerMinZ &&
-        z <= enclosure.outerMaxZ
-      ) {
-        return false
-      }
-    }
-
-    for (const [clearX, clearZ, radius] of GROUND_FOLIAGE_CLEARINGS) {
-      const dx = x - clearX
-      const dz = z - clearZ
-      const clearance = radius + GROUND_FOLIAGE_CLEARANCE
-      if (dx * dx + dz * dz <= clearance * clearance) return false
-    }
-    return true
-  }
-
-  private createFernGeometry(): THREE.BufferGeometry {
-    const vertices: number[] = []
-    for (let frond = 0; frond < 4; frond += 1) {
-      const angle = (frond / 4) * TWO_PI
-      const outwardX = Math.sin(angle)
-      const outwardZ = Math.cos(angle)
-      const sideX = Math.cos(angle)
-      const sideZ = -Math.sin(angle)
-      const point = (side: number, outward: number, y: number): [number, number, number] => [
-        sideX * side + outwardX * outward,
-        y,
-        sideZ * side + outwardZ * outward,
-      ]
-      const baseLeft = point(-0.025, 0, 0)
-      const baseRight = point(0.025, 0, 0)
-      const middleLeft = point(-0.1, 0.18, 0.34)
-      const middleRight = point(0.1, 0.18, 0.34)
-      const tip = point(0, 0.4, FERN_FOLIAGE_HEIGHT)
-      vertices.push(
-        ...baseLeft,
-        ...baseRight,
-        ...middleRight,
-        ...baseLeft,
-        ...middleRight,
-        ...middleLeft,
-        ...middleLeft,
-        ...middleRight,
-        ...tip,
-      )
-    }
-    const geometry = new THREE.BufferGeometry()
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3))
-    geometry.computeVertexNormals()
-    return geometry
-  }
-
-  private createFlowerGeometry(): THREE.BufferGeometry {
-    const stemSource = new THREE.CylinderGeometry(0.024, 0.035, 0.58, 5).translate(
-      0,
-      0.29,
-      0,
-    )
-    const budSource = new THREE.OctahedronGeometry(0.15, 0).translate(0, 0.64, 0)
-    const stem = stemSource.index ? stemSource.toNonIndexed() : stemSource
-    const bud = budSource.index ? budSource.toNonIndexed() : budSource
-    if (stem !== stemSource) stemSource.dispose()
-    if (bud !== budSource) budSource.dispose()
-    stem.deleteAttribute('uv')
-    bud.deleteAttribute('uv')
-    this.setGeometryVertexColor(stem, mix(this.palette.success, this.palette.text, 0.18))
-    this.setGeometryVertexColor(bud, this.palette.warning)
-    const geometry = mergeGeometries([stem, bud])
-    stem.dispose()
-    bud.dispose()
-    return geometry
-  }
-
-  private setGeometryVertexColor(geometry: THREE.BufferGeometry, color: THREE.Color): void {
-    const count = geometry.getAttribute('position').count
-    const colors = new Float32Array(count * 3)
-    for (let index = 0; index < count; index += 1) {
-      const offset = index * 3
-      colors[offset] = color.r
-      colors[offset + 1] = color.g
-      colors[offset + 2] = color.b
-    }
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-  }
-
-  private createGroundFoliageMaterial(
-    parameters: THREE.MeshStandardMaterialParameters,
-    foliageHeight: number,
-    swayAmplitude: number,
-  ): THREE.MeshStandardMaterial {
-    const material = new THREE.MeshStandardMaterial(parameters)
-    const heightUniform = { value: foliageHeight }
-    const swayUniform = { value: swayAmplitude }
-    material.onBeforeCompile = (shader) => {
-      const commonMarker = '#include <common>'
-      const beginVertexMarker = '#include <begin_vertex>'
-      if (
-        !shader.vertexShader.includes(commonMarker) ||
-        !shader.vertexShader.includes(beginVertexMarker)
-      ) {
-        throw new Error('Korovany: Three.js foliage shader chunks changed.')
-      }
-      shader.uniforms.uTime = this.groundFoliageUniforms.uTime
-      shader.uniforms.uWindDirection = this.groundFoliageUniforms.uWindDirection
-      shader.uniforms.uWindStrength = this.groundFoliageUniforms.uWindStrength
-      shader.uniforms.uFoliageHeight = heightUniform
-      shader.uniforms.uSwayAmplitude = swayUniform
-      shader.vertexShader = shader.vertexShader
-        .replace(
-          commonMarker,
-          `${commonMarker}
-uniform float uTime;
-uniform vec2 uWindDirection;
-uniform float uWindStrength;
-uniform float uFoliageHeight;
-uniform float uSwayAmplitude;`,
-        )
-        .replace(
-          beginVertexMarker,
-          `${beginVertexMarker}
-#ifdef USE_INSTANCING
-  float groundFoliageHeight = smoothstep(0.0, uFoliageHeight, position.y);
-  vec2 groundFoliageRoot = (modelMatrix * instanceMatrix[3]).xz;
-  float groundFoliagePhase =
-    dot(groundFoliageRoot, vec2(0.31, 0.37)) + uTime * ${GROUND_FOLIAGE_WIND_SPEED.toFixed(1)};
-  float groundFoliageWave =
-    sin(groundFoliagePhase) + 0.35 * sin(groundFoliagePhase * 0.47 + 1.7);
-  vec2 groundFoliageAxisX =
-    (modelMatrix * vec4(instanceMatrix[0].xyz, 0.0)).xz;
-  vec2 groundFoliageAxisZ =
-    (modelMatrix * vec4(instanceMatrix[2].xyz, 0.0)).xz;
-  vec2 groundFoliageLocalWind = vec2(
-    dot(uWindDirection, normalize(groundFoliageAxisX)) /
-      max(length(groundFoliageAxisX), 0.0001),
-    dot(uWindDirection, normalize(groundFoliageAxisZ)) /
-      max(length(groundFoliageAxisZ), 0.0001)
-  );
-  transformed.xz += groundFoliageLocalWind *
-    (uWindStrength * uSwayAmplitude * groundFoliageHeight *
-      groundFoliageHeight * groundFoliageWave);
-#endif`,
-        )
-    }
-    material.customProgramCacheKey = () => 'ground-foliage-wind-v1'
-    return material
-  }
-
-  private addGroundFoliageMesh(mesh: THREE.InstancedMesh, swayAmplitude: number): void {
-    mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage)
-    mesh.instanceMatrix.needsUpdate = true
-    if (mesh.instanceColor) {
-      mesh.instanceColor.setUsage(THREE.StaticDrawUsage)
-      mesh.instanceColor.needsUpdate = true
-    }
-    mesh.castShadow = false
-    mesh.receiveShadow = false
-    mesh.computeBoundingSphere()
-    if (mesh.boundingSphere) {
-      mesh.boundingSphere.radius +=
-        swayAmplitude * GROUND_FOLIAGE_MAX_WIND_STRENGTH * GROUND_FOLIAGE_WAVE_MAX
-    }
-    this.groundFoliageMeshes.push(mesh)
-    this.scene.add(mesh)
-  }
-
   private updateAtmosphere(delta: number): void {
     this.atmosphereRoot.position.set(
       this.player.position.x,
@@ -9421,7 +8029,6 @@ uniform float uSwayAmplitude;`,
       this.player.position.z,
     )
     this.updateZoneTint(delta)
-    this.groundFoliageUniforms.uTime.value = this.elapsed
     for (let index = 0; index < this.clouds.length; index += 1) {
       const { group, speed } = this.clouds[index]
       group.position.x += speed * delta
@@ -9448,21 +8055,12 @@ uniform float uSwayAmplitude;`,
   }
 
   private updateZoneTint(delta: number): void {
-    if (this.generatedWorld) {
-      const zone = this.zoneAtPosition(
-        this.player.position.x,
-        this.player.position.z,
-      )
-      for (const zoneId of ZONE_ART_IDS) {
-        this.zoneVisualWeights[zoneId] = zoneId === zone ? 1 : 0
-      }
-    } else {
-      writeZoneVisualWeights(
-        this.player.position.x,
-        this.player.position.z,
-        this.zoneVisualWeights,
-        ZONE_BLEND_WIDTH,
-      )
+    const currentZone = this.zoneAtPosition(
+      this.player.position.x,
+      this.player.position.z,
+    )
+    for (const zoneId of ZONE_ART_IDS) {
+      this.zoneVisualWeights[zoneId] = zoneId === currentZone ? 1 : 0
     }
     this.zoneTintTarget.setRGB(0, 0, 0)
     let targetWeight = 0
@@ -9608,1086 +8206,6 @@ uniform float uSwayAmplitude;`,
         this.nightFactor,
       )
     }
-  }
-
-  private buildWorld(): void {
-    this.createAtmosphere()
-    this.createGround()
-    this.createRoads()
-    this.createVillage()
-    this.createPalace()
-    this.createForest()
-    this.createFort()
-    this.createZoneDecorations()
-    this.createZoneLandmarks()
-    this.createBoundary()
-    this.createGroundDetails()
-  }
-
-  private createGround(): void {
-    const zoneColors: Record<ZoneId, THREE.Color> = {
-      neutral: this.palette.worldNeutralGround,
-      palace: this.palette.worldPalaceGround,
-      forest: this.palette.worldForestGround,
-      fort: this.palette.worldFortGround,
-    }
-    const zones: Array<[ZoneId, number, number]> = [
-      ['neutral', -40, -40],
-      ['palace', 40, -40],
-      ['forest', -40, 40],
-      ['fort', 40, 40],
-    ]
-    for (const [zone, x, z] of zones) {
-      const details: Record<ZoneId, THREE.Color> = {
-        neutral: mix(this.palette.warning, this.palette.text, 0.36),
-        palace: this.palette.borderStrong,
-        forest: mix(this.palette.success, this.palette.text, 0.3),
-        fort: mix(this.palette.accent, this.palette.borderStrong, 0.62),
-      }
-      const patterns: Record<ZoneId, 'grass' | 'stone' | 'scree'> = {
-        neutral: 'grass',
-        palace: 'stone',
-        forest: 'grass',
-        fort: 'scree',
-      }
-      const material = new THREE.MeshStandardMaterial({
-        map: this.createSurfaceTexture(
-          `ground-${zone}`,
-          zoneColors[zone],
-          details[zone],
-          {
-            pattern: patterns[zone],
-            repeatX: zone === 'palace' ? 10 : 18,
-            repeatY: zone === 'palace' ? 10 : 18,
-            hatch: {
-              ...this.zoneArtProfiles[zone].hatch,
-              color: this.zoneArtProfiles[zone].ink,
-            },
-          },
-        ),
-        roughness: 1,
-      })
-      const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), material)
-      this.groundSurfaces.set(zone, {
-        material,
-        baseColor: material.color.clone(),
-        baseRoughness: material.roughness,
-      })
-      ground.rotation.x = -Math.PI / 2
-      ground.position.set(x, -0.04, z)
-      ground.receiveShadow = true
-      this.scene.add(ground)
-    }
-    const grid = new THREE.GridHelper(160, 32, this.palette.borderStrong, this.palette.border)
-    grid.position.y = 0.015
-    const materials = Array.isArray(grid.material) ? grid.material : [grid.material]
-    materials.forEach((material) => {
-      material.transparent = true
-      material.opacity = 0.09
-    })
-    this.scene.add(grid)
-  }
-
-  private createRoads(): void {
-    const roadBase = mix(this.palette.borderStrong, this.palette.soft, 0.45)
-    const roadDetail = mix(this.palette.warning, this.palette.text, 0.6)
-    const horizontalRoadMaterial = new THREE.MeshStandardMaterial({
-      map: this.createSurfaceTexture(
-        'road-dirt-horizontal',
-        roadBase,
-        roadDetail,
-        { pattern: 'dirt', repeatX: 24, repeatY: 2 },
-      ),
-      roughness: 1,
-    })
-    const verticalRoadMaterial = new THREE.MeshStandardMaterial({
-      map: this.createSurfaceTexture(
-        'road-dirt-vertical',
-        roadBase,
-        roadDetail,
-        { pattern: 'dirt', repeatX: 2, repeatY: 24 },
-      ),
-      roughness: 1,
-    })
-    const horizontal = new THREE.Mesh(new THREE.PlaneGeometry(150, 6), horizontalRoadMaterial)
-    horizontal.rotation.x = -Math.PI / 2
-    horizontal.position.set(0, 0.03, -23)
-    horizontal.receiveShadow = true
-    this.scene.add(horizontal)
-    const vertical = new THREE.Mesh(new THREE.PlaneGeometry(6, 142), verticalRoadMaterial)
-    vertical.rotation.x = -Math.PI / 2
-    vertical.position.set(0, 0.035, 4)
-    vertical.receiveShadow = true
-    this.scene.add(vertical)
-
-    const rutMaterial = new THREE.MeshStandardMaterial({
-      color: mix(this.palette.borderStrong, this.palette.text, 0.45),
-      roughness: 1,
-      transparent: true,
-      opacity: 0.34,
-    })
-    for (const offset of [-1.35, 1.35]) {
-      const horizontalRut = new THREE.Mesh(new THREE.PlaneGeometry(150, 0.22), rutMaterial)
-      horizontalRut.rotation.x = -Math.PI / 2
-      horizontalRut.position.set(0, 0.045, -23 + offset)
-      this.scene.add(horizontalRut)
-      const verticalRut = new THREE.Mesh(new THREE.PlaneGeometry(0.22, 142), rutMaterial)
-      verticalRut.rotation.x = -Math.PI / 2
-      verticalRut.position.set(offset, 0.05, 4)
-      this.scene.add(verticalRut)
-    }
-  }
-
-  private createVillage(): void {
-    this.scene.add(this.createZoneLabel('ВОЛЬНЫЕ ЗЕМЛИ', -43, -52))
-    const housePositions: Array<[number, number, number]> = [
-      [-58, -50, 0.2],
-      [-40, -55, -0.15],
-      [-58, -34, -0.25],
-      [-34, -37, 0.12],
-    ]
-    for (const [x, z, rotation] of housePositions) {
-      const house = this.createHouse(x, z, rotation, false)
-      this.villageHouses.push(house)
-      this.scene.add(house)
-    }
-    const shop = this.createHouse(this.vendorPosition.x, this.vendorPosition.z, 0.08, true)
-    this.scene.add(shop)
-    const sign = this.createSign('КОНОВАЛ • ПРОТЕЗЫ', this.vendorPosition.x, 4.5, this.vendorPosition.z + 2.8)
-    this.scene.add(sign)
-    const vendorBeacon = this.createBeacon(
-      this.vendorPosition.x,
-      this.vendorPosition.z + 3.8,
-      this.palette.warning,
-    )
-    this.scene.add(vendorBeacon)
-    this.registerInteractableOutline(vendorBeacon)
-    const well = new THREE.Group()
-    const stone = new THREE.MeshStandardMaterial({
-      map: this.createSurfaceTexture(
-        'well-stone',
-        this.palette.borderStrong,
-        this.palette.border,
-        {
-          pattern: 'stone',
-          repeatX: 4,
-          repeatY: 2,
-          hatch: {
-            ...this.zoneArtProfiles.neutral.hatch,
-            color: this.zoneArtProfiles.neutral.ink,
-          },
-        },
-      ),
-      roughness: 1,
-    })
-    const ring = new THREE.Mesh(new THREE.CylinderGeometry(2, 2, 1.2, 12, 1, true), stone)
-    ring.position.y = 0.6
-    ring.castShadow = true
-    well.add(ring)
-    const roof = new THREE.Mesh(
-      new THREE.ConeGeometry(2.6, 1.4, 8),
-      new THREE.MeshStandardMaterial({
-        map: this.createSurfaceTexture(
-          'village-roof',
-          this.palette.accent,
-          mix(this.palette.accent, this.palette.text, 0.45),
-          {
-            pattern: 'roof',
-            repeatX: 5,
-            repeatY: 3,
-            hatch: {
-              ...this.zoneArtProfiles.neutral.hatch,
-              color: this.zoneArtProfiles.neutral.ink,
-            },
-          },
-        ),
-        roughness: 0.9,
-      }),
-    )
-    roof.position.y = 3.4
-    roof.castShadow = true
-    well.add(roof)
-    well.position.set(-48, 0, -47)
-    this.registerCircleObstacle(well.position.x, well.position.z, 2)
-    this.scene.add(well)
-  }
-
-  private createPalace(): void {
-    this.scene.add(this.createZoneLabel('ИМПЕРСКИЙ УДЕЛ', 43, -55))
-    const palaceStone = mix(this.palette.link, this.palette.surface, 0.72)
-    const stone = new THREE.MeshStandardMaterial({
-      map: this.createSurfaceTexture(
-        'palace-stone',
-        palaceStone,
-        mix(this.palette.link, this.palette.borderStrong, 0.68),
-        {
-          pattern: 'stone',
-          repeatX: 6,
-          repeatY: 5,
-          hatch: {
-            ...this.zoneArtProfiles.palace.hatch,
-            color: this.zoneArtProfiles.palace.ink,
-          },
-        },
-      ),
-      roughness: 0.78,
-    })
-    const trim = new THREE.MeshStandardMaterial({
-      map: this.createSurfaceTexture(
-        'palace-roof',
-        this.palette.warning,
-        mix(this.palette.warning, this.palette.text, 0.4),
-        {
-          pattern: 'roof',
-          repeatX: 5,
-          repeatY: 4,
-          hatch: {
-            ...this.zoneArtProfiles.palace.hatch,
-            color: this.zoneArtProfiles.palace.ink,
-          },
-        },
-      ),
-      metalness: 0.22,
-      roughness: 0.55,
-    })
-    const palace = new THREE.Group()
-    const palaceX = 44
-    const palaceZ = -47
-    const wallWidth = 18
-    const wallDepth = 14
-    const wallHeight = 10
-    const wallThickness = 1.5
-    const gateWidth = 4.5
-    const gateHeight = 6.2
-    const sideX = wallWidth * 0.5 - wallThickness * 0.5
-    const frontZ = wallDepth * 0.5 - wallThickness * 0.5
-    const gateSegmentWidth = (wallWidth - gateWidth) * 0.5
-    const gateSegmentX = gateWidth * 0.5 + gateSegmentWidth * 0.5
-    const addPalaceWall = (
-      width: number,
-      height: number,
-      depth: number,
-      x: number,
-      y: number,
-      z: number,
-    ): void => {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), stone)
-      wall.position.set(x, y, z)
-      wall.castShadow = true
-      wall.receiveShadow = true
-      palace.add(wall)
-    }
-    addPalaceWall(wallWidth, wallHeight, wallThickness, 0, wallHeight * 0.5, -frontZ)
-    addPalaceWall(wallThickness, wallHeight, wallDepth, -sideX, wallHeight * 0.5, 0)
-    addPalaceWall(wallThickness, wallHeight, wallDepth, sideX, wallHeight * 0.5, 0)
-    addPalaceWall(
-      gateSegmentWidth,
-      wallHeight,
-      wallThickness,
-      -gateSegmentX,
-      wallHeight * 0.5,
-      frontZ,
-    )
-    addPalaceWall(
-      gateSegmentWidth,
-      wallHeight,
-      wallThickness,
-      gateSegmentX,
-      wallHeight * 0.5,
-      frontZ,
-    )
-    addPalaceWall(
-      gateWidth,
-      wallHeight - gateHeight,
-      wallThickness,
-      0,
-      gateHeight + (wallHeight - gateHeight) * 0.5,
-      frontZ,
-    )
-    this.registerBoxObstacle(palaceX, palaceZ - frontZ, wallWidth, wallThickness)
-    this.registerBoxObstacle(palaceX - sideX, palaceZ, wallThickness, wallDepth)
-    this.registerBoxObstacle(palaceX + sideX, palaceZ, wallThickness, wallDepth)
-    this.registerBoxObstacle(
-      palaceX - gateSegmentX,
-      palaceZ + frontZ,
-      gateSegmentWidth,
-      wallThickness,
-    )
-    this.registerBoxObstacle(
-      palaceX + gateSegmentX,
-      palaceZ + frontZ,
-      gateSegmentWidth,
-      wallThickness,
-    )
-    for (const x of [-10, 10]) {
-      for (const z of [-8, 8]) {
-        const tower = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.5, 13, 10), stone)
-        tower.position.set(x, 6.5, z)
-        tower.castShadow = true
-        palace.add(tower)
-        this.registerCircleObstacle(palaceX + x, palaceZ + z, 3.5)
-        const roof = new THREE.Mesh(new THREE.ConeGeometry(4.1, 4.5, 10), trim)
-        roof.position.set(x, 15, z)
-        roof.castShadow = true
-        palace.add(roof)
-      }
-    }
-    this.navigationEnclosures.push({
-      insideMinX: palaceX - sideX + wallThickness * 0.5,
-      insideMaxX: palaceX + sideX - wallThickness * 0.5,
-      insideMinZ: palaceZ - frontZ + wallThickness * 0.5,
-      insideMaxZ: palaceZ + frontZ - wallThickness * 0.5,
-      outerMinX: palaceX - 13.5,
-      outerMaxX: palaceX + 13.5,
-      outerMinZ: palaceZ - 11.5,
-      outerMaxZ: palaceZ + 11.5,
-      gateInside: [palaceX, palaceZ + 4],
-      gateOutside: [palaceX, palaceZ + 12.8],
-      gateHalfWidth: gateWidth * 0.5,
-      detours: [
-        [palaceX - 14.8, palaceZ + 12.8],
-        [palaceX + 14.8, palaceZ + 12.8],
-        [palaceX - 14.8, palaceZ - 12.8],
-        [palaceX + 14.8, palaceZ - 12.8],
-      ],
-    })
-    const banner = new THREE.Mesh(new THREE.BoxGeometry(2.2, 4.2, 0.15), new THREE.MeshStandardMaterial({ color: this.palette.accent }))
-    banner.position.set(0, 8.4, 7.62)
-    palace.add(banner)
-    const windowMaterial = new THREE.MeshStandardMaterial({
-      color: this.palette.warning,
-      emissive: this.palette.warning,
-      emissiveIntensity: 0.55,
-      roughness: 0.35,
-    })
-    this.buildingWindowGlows.push({ material: windowMaterial, legacyIntensity: 0.55 })
-    for (const x of [-5.5, 5.5]) {
-      for (const y of [3.5, 6.5]) {
-        const window = new THREE.Mesh(new THREE.BoxGeometry(1.4, 1.6, 0.18), windowMaterial)
-        window.position.set(x, y, 7.16)
-        palace.add(window)
-      }
-    }
-    palace.add(this.createTorch(-2.8, 2.7, 7.7), this.createTorch(2.8, 2.7, 7.7))
-    palace.position.set(palaceX, 0, palaceZ)
-    this.scene.add(palace)
-    this.scene.add(this.createBeacon(40, -36, this.palette.link))
-  }
-
-  private createForest(): void {
-    this.scene.add(this.createZoneLabel('ЧАЩА ЭЛЕНВУДА', -44, 53))
-    const random = seededRandom(217)
-    for (let index = 0; index < 74; index += 1) {
-      const x = -76 + random() * 70
-      const z = 5 + random() * 70
-      if (Math.hypot(x + 46, z - 43) < 12) continue
-      const scale = 0.72 + random() * 0.9
-      this.scene.add(this.createTreeLod(x, z, scale))
-    }
-    const huts: Array<[number, number]> = [
-      [-55, 40],
-      [-61, 50],
-      [-39, 34],
-    ]
-    for (const [x, z] of huts) this.scene.add(this.createElfHut(x, z))
-    this.scene.add(this.createBeacon(-48, 43, this.palette.success))
-  }
-
-  private createFort(): void {
-    this.scene.add(this.createZoneLabel('ЧЁРНЫЙ КРЯЖ', 46, 54))
-    const random = seededRandom(914)
-    const rockMaterial = new THREE.MeshStandardMaterial({
-      map: this.createSurfaceTexture(
-        'mountain-rock',
-        mix(this.palette.accent, this.palette.borderStrong, 0.7),
-        mix(this.palette.borderStrong, this.palette.text, 0.45),
-        {
-          pattern: 'scree',
-          repeatX: 3,
-          repeatY: 3,
-          hatch: {
-            ...this.zoneArtProfiles.fort.hatch,
-            color: this.zoneArtProfiles.fort.ink,
-          },
-        },
-      ),
-      roughness: 1,
-    })
-    for (let index = 0; index < 35; index += 1) {
-      const rock = new THREE.Mesh(
-        new THREE.DodecahedronGeometry(1.7 + random() * 3.2, 0),
-        rockMaterial,
-      )
-      rock.position.set(7 + random() * 69, 0.7 + random() * 1.4, 5 + random() * 70)
-      rock.scale.y = 0.7 + random() * 1.8
-      rock.rotation.set(random(), random(), random())
-      rock.castShadow = true
-      rock.receiveShadow = true
-      this.scene.add(rock)
-    }
-
-    const fort = new THREE.Group()
-    const fortX = 47
-    const fortZ = 45
-    const wallWidth = 22
-    const wallDepth = 18
-    const wallHeight = 7
-    const wallThickness = 2.5
-    const gateWidth = 5
-    const gateHeight = 5
-    const gateSegmentWidth = (wallWidth - gateWidth) * 0.5
-    const gateSegmentX = gateWidth * 0.5 + gateSegmentWidth * 0.5
-    const wallMaterial = new THREE.MeshStandardMaterial({
-      map: this.createSurfaceTexture(
-        'fort-stone',
-        mix(this.palette.borderStrong, this.palette.bg, 0.32),
-        mix(this.palette.accent, this.palette.border, 0.4),
-        {
-          pattern: 'stone',
-          repeatX: 6,
-          repeatY: 4,
-          hatch: {
-            ...this.zoneArtProfiles.fort.hatch,
-            color: this.zoneArtProfiles.fort.ink,
-          },
-        },
-      ),
-      roughness: 1,
-    })
-    const rearWall = new THREE.Mesh(
-      new THREE.BoxGeometry(wallWidth, wallHeight, wallThickness),
-      wallMaterial,
-    )
-    rearWall.position.set(0, wallHeight * 0.5, wallDepth * 0.5)
-    rearWall.castShadow = true
-    rearWall.receiveShadow = true
-    fort.add(rearWall)
-    const sideA = new THREE.Mesh(
-      new THREE.BoxGeometry(wallThickness, wallHeight, wallDepth),
-      wallMaterial,
-    )
-    sideA.position.set(-wallWidth * 0.5, wallHeight * 0.5, 0)
-    sideA.castShadow = true
-    sideA.receiveShadow = true
-    fort.add(sideA)
-    const sideB = sideA.clone()
-    sideB.position.x = wallWidth * 0.5
-    fort.add(sideB)
-    for (const x of [-gateSegmentX, gateSegmentX]) {
-      const gateWall = new THREE.Mesh(
-        new THREE.BoxGeometry(gateSegmentWidth, wallHeight, wallThickness),
-        wallMaterial,
-      )
-      gateWall.position.set(x, wallHeight * 0.5, -wallDepth * 0.5)
-      gateWall.castShadow = true
-      gateWall.receiveShadow = true
-      fort.add(gateWall)
-    }
-    const gateLintel = new THREE.Mesh(
-      new THREE.BoxGeometry(gateWidth, wallHeight - gateHeight, wallThickness),
-      wallMaterial,
-    )
-    gateLintel.position.set(
-      0,
-      gateHeight + (wallHeight - gateHeight) * 0.5,
-      -wallDepth * 0.5,
-    )
-    gateLintel.castShadow = true
-    fort.add(gateLintel)
-    this.registerBoxObstacle(fortX, fortZ + wallDepth * 0.5, wallWidth, wallThickness)
-    this.registerBoxObstacle(
-      fortX - wallWidth * 0.5,
-      fortZ,
-      wallThickness,
-      wallDepth,
-    )
-    this.registerBoxObstacle(
-      fortX + wallWidth * 0.5,
-      fortZ,
-      wallThickness,
-      wallDepth,
-    )
-    this.registerBoxObstacle(
-      fortX - gateSegmentX,
-      fortZ - wallDepth * 0.5,
-      gateSegmentWidth,
-      wallThickness,
-    )
-    this.registerBoxObstacle(
-      fortX + gateSegmentX,
-      fortZ - wallDepth * 0.5,
-      gateSegmentWidth,
-      wallThickness,
-    )
-    for (const x of [-wallWidth * 0.5, wallWidth * 0.5]) {
-      for (const z of [-wallDepth * 0.5, wallDepth * 0.5]) {
-        const tower = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.8, 10, 8), wallMaterial)
-        tower.position.set(x, 5, z)
-        tower.castShadow = true
-        fort.add(tower)
-        this.registerCircleObstacle(fortX + x, fortZ + z, 3.8)
-      }
-    }
-    this.navigationEnclosures.push({
-      insideMinX: fortX - wallWidth * 0.5 + wallThickness * 0.5,
-      insideMaxX: fortX + wallWidth * 0.5 - wallThickness * 0.5,
-      insideMinZ: fortZ - wallDepth * 0.5 + wallThickness * 0.5,
-      insideMaxZ: fortZ + wallDepth * 0.5 - wallThickness * 0.5,
-      outerMinX: fortX - wallWidth * 0.5 - 3.8,
-      outerMaxX: fortX + wallWidth * 0.5 + 3.8,
-      outerMinZ: fortZ - wallDepth * 0.5 - 3.8,
-      outerMaxZ: fortZ + wallDepth * 0.5 + 3.8,
-      gateInside: [fortX, fortZ - 5.8],
-      gateOutside: [fortX, fortZ - 14],
-      gateHalfWidth: gateWidth * 0.5,
-      detours: [
-        [fortX - 16, fortZ - 14],
-        [fortX + 16, fortZ - 14],
-        [fortX - 16, fortZ + 14],
-        [fortX + 16, fortZ + 14],
-      ],
-    })
-    const flag = new THREE.Mesh(new THREE.BoxGeometry(4, 2.4, 0.15), new THREE.MeshStandardMaterial({ color: this.palette.accent }))
-    flag.position.set(0, 12, 0)
-    fort.add(flag)
-    fort.add(this.createTorch(-3.4, 2.8, -10.1), this.createTorch(3.4, 2.8, -10.1))
-    fort.position.set(fortX, 0, fortZ)
-    this.scene.add(fort)
-    this.scene.add(this.createBeacon(47, 45, this.palette.accent))
-  }
-
-  private createZoneDecorations(): void {
-    let instanceTotal = 0
-    for (const zone of ZONE_ART_IDS) {
-      const placements = this.createZoneDecorationPlacements(
-        zone,
-        ZONE_DECORATION_COUNTS[zone],
-      )
-      const mesh = new THREE.InstancedMesh(
-        this.createZoneDecorationGeometry(zone),
-        this.getZoneArtMaterial(zone),
-        placements.length,
-      )
-      const profile = this.zoneArtProfiles[zone]
-      const dummy = new THREE.Object3D()
-      for (let index = 0; index < placements.length; index += 1) {
-        const [x, z, yaw, scale] = placements[index]
-        dummy.position.set(x, 0, z)
-        dummy.rotation.set(0, yaw, 0)
-        dummy.scale.setScalar(scale)
-        dummy.updateMatrix()
-        mesh.setMatrixAt(index, dummy.matrix)
-        mesh.setColorAt(index, index % 4 === 0 ? profile.accent : profile.primary)
-      }
-      mesh.name = `zone-decoration-${zone}`
-      mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage)
-      mesh.instanceMatrix.needsUpdate = true
-      if (mesh.instanceColor) {
-        mesh.instanceColor.setUsage(THREE.StaticDrawUsage)
-        mesh.instanceColor.needsUpdate = true
-      }
-      mesh.userData.zone = zone
-      mesh.userData.collidable = false
-      mesh.userData.cameraPassThrough = true
-      mesh.castShadow = false
-      mesh.receiveShadow = true
-      mesh.computeBoundingSphere()
-      this.zoneDecorationSets.push({ mesh, zone, collidable: false })
-      this.scene.add(mesh)
-      instanceTotal += placements.length
-    }
-    this.renderer.domElement.dataset.zoneDecorationInstances = String(instanceTotal)
-    this.renderer.domElement.dataset.zoneDecorationDrawCalls = String(
-      this.zoneDecorationSets.length,
-    )
-  }
-
-  private createZoneDecorationPlacements(
-    zone: ZoneId,
-    count: number,
-  ): Array<readonly [number, number, number, number]> {
-    const bounds: Record<ZoneId, readonly [number, number, number, number]> = {
-      neutral: [-73, -8, -73, -8],
-      palace: [8, 73, -73, -8],
-      forest: [-73, -8, 8, 73],
-      fort: [8, 73, 8, 73],
-    }
-    const seeds: Record<ZoneId, number> = {
-      neutral: 401,
-      palace: 809,
-      forest: 1217,
-      fort: 1621,
-    }
-    const [minX, maxX, minZ, maxZ] = bounds[zone]
-    const random = seededRandom(seeds[zone])
-    const placements: Array<readonly [number, number, number, number]> = []
-    const maxAttempts = count * 100
-    for (let attempt = 0; attempt < maxAttempts && placements.length < count; attempt += 1) {
-      const x = THREE.MathUtils.lerp(minX, maxX, random())
-      const z = THREE.MathUtils.lerp(minZ, maxZ, random())
-      if (!this.canPlaceZoneDecoration(zone, x, z)) continue
-      if (
-        placements.some(([placedX, placedZ]) => {
-          const dx = x - placedX
-          const dz = z - placedZ
-          return dx * dx + dz * dz < 10.24
-        })
-      ) {
-        continue
-      }
-      placements.push([x, z, random() * TWO_PI, 0.78 + random() * 0.38])
-    }
-    return placements
-  }
-
-  private canPlaceZoneDecoration(zone: ZoneId, x: number, z: number): boolean {
-    if (zoneAt(x, z) !== zone || Math.abs(x) > 74 || Math.abs(z) > 74) return false
-    if (Math.abs(x) < 6.5 || Math.abs(z + 23) < 6.5) return false
-    if (
-      (zone === 'palace' && x > 38 && x < 50 && z > -43 && z < -26) ||
-      (zone === 'fort' && x > 41 && x < 53 && z > 25 && z < 41)
-    ) {
-      return false
-    }
-
-    const exclusions: ReadonlyArray<readonly [number, number, number]> = [
-      [FACTION_INFO.elf.spawn[0], FACTION_INFO.elf.spawn[1], 7],
-      [FACTION_INFO.guard.spawn[0], FACTION_INFO.guard.spawn[1], 7],
-      [FACTION_INFO.villain.spawn[0], FACTION_INFO.villain.spawn[1], 7],
-      [this.vendorPosition.x, this.vendorPosition.z, 8],
-      [this.commanderPosition.x, this.commanderPosition.z, 7],
-      [this.elfHomePosition.x, this.elfHomePosition.z, 8],
-      [-54, -23, 8],
-    ]
-    for (const [centerX, centerZ, radius] of exclusions) {
-      const dx = x - centerX
-      const dz = z - centerZ
-      if (dx * dx + dz * dz < radius * radius) return false
-    }
-    return this.staticObstacles.every(
-      (obstacle) => !this.obstacleOverlapsCircle(obstacle, x, z, 1.35),
-    )
-  }
-
-  private createZoneDecorationGeometry(zone: ZoneId): THREE.BufferGeometry {
-    const parts: THREE.BufferGeometry[] = []
-    const addPart = (
-      geometry: THREE.BufferGeometry,
-      x: number,
-      y: number,
-      z: number,
-      rotationZ = 0,
-    ): void => {
-      const part = geometry.index ? geometry.toNonIndexed() : geometry
-      if (part !== geometry) geometry.dispose()
-      part.rotateZ(rotationZ)
-      part.translate(x, y, z)
-      parts.push(part)
-    }
-
-    if (zone === 'neutral') {
-      addPart(new THREE.BoxGeometry(0.18, 2.25, 0.18), 0, 1.12, 0, 0.08)
-      addPart(new THREE.BoxGeometry(1.5, 0.14, 0.14), 0, 1.05, 0, -0.12)
-      addPart(new THREE.ConeGeometry(0.32, 0.72, 3), 0.55, 1.55, 0, -Math.PI / 2)
-    } else if (zone === 'palace') {
-      addPart(new THREE.CylinderGeometry(0.09, 0.11, 2.8, 6), 0, 1.4, 0)
-      addPart(new THREE.BoxGeometry(0.95, 0.72, 0.16), 0, 1.58, 0)
-      addPart(new THREE.ConeGeometry(0.24, 0.58, 6), 0, 3.08, 0)
-    } else if (zone === 'forest') {
-      addPart(new THREE.TorusGeometry(0.84, 0.14, 6, 14, Math.PI), 0, 0.12, 0)
-      addPart(new THREE.CylinderGeometry(0.04, 0.05, 0.55, 5), 0, 0.78, 0)
-      addPart(new THREE.DodecahedronGeometry(0.2, 0), 0, 0.45, 0)
-    } else {
-      addPart(new THREE.ConeGeometry(0.24, 2.5, 6), 0, 1.12, 0, -0.55)
-      addPart(new THREE.TorusGeometry(0.58, 0.12, 6, 12, Math.PI * 1.58), 0.38, 0.78, 0)
-    }
-
-    const merged = mergeGeometries(parts, false)
-    parts.forEach((part) => part.dispose())
-    if (!merged) throw new Error(`Could not merge zone decoration geometry: ${zone}`)
-    merged.computeVertexNormals()
-    return merged
-  }
-
-  private getZoneArtMaterial(zone: ZoneId): THREE.MeshStandardMaterial {
-    const cached = this.zoneArtMaterials.get(zone)
-    if (cached) return cached
-    const profile = this.zoneArtProfiles[zone]
-    const patterns: Record<ZoneId, SurfaceTextureOptions['pattern']> = {
-      neutral: 'wood',
-      palace: 'stone',
-      forest: 'wood',
-      fort: 'scree',
-    }
-    const material = new THREE.MeshStandardMaterial({
-      map: this.createSurfaceTexture(
-        `zone-art-${zone}`,
-        profile.secondary,
-        profile.ink,
-        {
-          pattern: patterns[zone],
-          repeatX: 2,
-          repeatY: 2,
-          hatch: { ...profile.hatch, color: profile.ink },
-        },
-      ),
-      roughness: zone === 'palace' ? 0.72 : 0.96,
-      metalness: zone === 'palace' ? 0.12 : 0,
-    })
-    this.zoneArtMaterials.set(zone, material)
-    return material
-  }
-
-  private createZoneLandmarks(): void {
-    const landmarks = [
-      this.createNeutralLandmark(),
-      this.createPalaceLandmark(),
-      this.createForestLandmark(),
-      this.createFortLandmark(),
-    ]
-    let meshCount = 0
-    for (const landmark of landmarks) {
-      landmark.traverse((object) => {
-        if (object instanceof THREE.Mesh) meshCount += 1
-      })
-      this.scene.add(landmark)
-    }
-    this.renderer.domElement.dataset.zoneLandmarkMeshes = String(meshCount)
-  }
-
-  private createNeutralLandmark(): THREE.Group {
-    const group = new THREE.Group()
-    const material = this.getZoneArtMaterial('neutral')
-    const base = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.2, 0.8, 8), material)
-    base.position.y = 0.4
-    const post = new THREE.Mesh(new THREE.BoxGeometry(0.55, 7.4, 0.55), material)
-    post.position.y = 4.1
-    post.rotation.z = 0.08
-    const arm = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.34, 0.34), material)
-    arm.position.set(1.8, 7.4, 0)
-    arm.rotation.z = -0.12
-    const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 2.1, 5), material)
-    cable.position.set(3.55, 6.35, 0)
-    const notice = new THREE.Mesh(new THREE.BoxGeometry(1.9, 1.25, 0.22), material)
-    notice.position.set(-0.45, 4.4, 0.38)
-    notice.rotation.z = -0.08
-    group.add(base, post, arm, cable, notice)
-    group.position.set(-18, 0, -12)
-    group.rotation.y = 0.22
-    group.name = 'zone-landmark-neutral'
-    this.registerCircleObstacle(group.position.x, group.position.z, 1.1)
-    return group
-  }
-
-  private createPalaceLandmark(): THREE.Group {
-    const group = new THREE.Group()
-    const material = this.getZoneArtMaterial('palace')
-    for (const x of [-1.15, 1.15]) {
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.17, 11, 7), material)
-      pole.position.set(x, 5.5, 0)
-      const banner = new THREE.Mesh(new THREE.BoxGeometry(1.65, 4.1, 0.18), material)
-      banner.position.set(x + Math.sign(x) * 0.78, 7.2, 0)
-      const finial = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.9, 7), material)
-      finial.position.set(x, 11.45, 0)
-      group.add(pole, banner, finial)
-    }
-    const crossbar = new THREE.Mesh(new THREE.BoxGeometry(4.8, 0.28, 0.28), material)
-    crossbar.position.y = 9.55
-    group.add(crossbar)
-    group.position.set(44, 0, -52)
-    group.name = 'zone-landmark-palace'
-    return group
-  }
-
-  private createForestLandmark(): THREE.Group {
-    const group = new THREE.Group()
-    const material = this.getZoneArtMaterial('forest')
-    const arch = new THREE.Mesh(new THREE.TorusGeometry(4.8, 0.48, 8, 24, Math.PI), material)
-    arch.position.y = 0.45
-    const leftRoot = new THREE.Mesh(new THREE.DodecahedronGeometry(0.9, 0), material)
-    leftRoot.position.set(-4.75, 0.55, 0)
-    leftRoot.scale.set(1, 1.5, 1)
-    const rightRoot = leftRoot.clone()
-    rightRoot.position.x = 4.75
-    const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 1.7, 6), material)
-    stem.position.set(0, 4.1, 0)
-    const pod = new THREE.Mesh(new THREE.DodecahedronGeometry(0.5, 1), material)
-    pod.position.set(0, 3.15, 0)
-    group.add(arch, leftRoot, rightRoot, stem, pod)
-    group.position.set(-48, 0, 49)
-    group.name = 'zone-landmark-forest'
-    group.traverse((object) => {
-      if (object instanceof THREE.Mesh) object.userData.cameraPassThrough = true
-    })
-    this.registerCircleObstacle(-52.75, 49, 0.8)
-    this.registerCircleObstacle(-43.25, 49, 0.8)
-    return group
-  }
-
-  private createFortLandmark(): THREE.Group {
-    const group = new THREE.Group()
-    const material = this.getZoneArtMaterial('fort')
-    const wheel = new THREE.Mesh(
-      new THREE.TorusGeometry(3.8, 0.42, 8, 26, Math.PI * 1.72),
-      material,
-    )
-    wheel.position.y = 4.1
-    wheel.rotation.z = 0.28
-    group.add(wheel)
-    for (const angle of [-0.7, 0.15, 0.95]) {
-      const spoke = new THREE.Mesh(new THREE.BoxGeometry(6.7, 0.3, 0.38), material)
-      spoke.position.y = 4.1
-      spoke.rotation.z = angle
-      group.add(spoke)
-    }
-    for (const x of [-2.6, 2.6]) {
-      const support = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.42, 4.2, 7), material)
-      support.position.set(x, 1.8, 0)
-      support.rotation.z = x < 0 ? -0.34 : 0.34
-      group.add(support)
-    }
-    group.position.set(47, 0, 65)
-    group.name = 'zone-landmark-fort'
-    this.registerBoxObstacle(group.position.x, group.position.z, 7.5, 1.5)
-    return group
-  }
-
-  private createBoundary(): void {
-    const material = new THREE.MeshStandardMaterial({
-      map: this.createSurfaceTexture(
-        'boundary-stone',
-        mix(this.palette.borderStrong, this.palette.bg, 0.4),
-        this.palette.border,
-        { pattern: 'scree', repeatX: 2, repeatY: 2 },
-      ),
-      roughness: 1,
-    })
-    for (let index = -76; index <= 76; index += 8) {
-      for (const [x, z] of [
-        [index, -79],
-        [index, 79],
-        [-79, index],
-        [79, index],
-      ]) {
-        const stone = new THREE.Mesh(new THREE.DodecahedronGeometry(1.2, 0), material)
-        stone.position.set(x, 0.65, z)
-        stone.scale.y = 1.6
-        stone.rotation.y = index
-        stone.castShadow = true
-        this.scene.add(stone)
-      }
-    }
-  }
-
-  private createTorch(x: number, y: number, z: number): THREE.Group {
-    const group = new THREE.Group()
-    const bracket = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.08, 0.1, 1.5, 6),
-      new THREE.MeshStandardMaterial({
-        color: this.palette.borderStrong,
-        metalness: 0.6,
-        roughness: 0.4,
-      }),
-    )
-    bracket.position.y = -0.72
-    bracket.castShadow = true
-    group.add(bracket)
-    const flameMaterial = new THREE.MeshStandardMaterial({
-      color: this.palette.warning,
-      emissive: this.palette.warning,
-      emissiveIntensity: 1.3,
-      roughness: 0.3,
-    })
-    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.8, 7), flameMaterial)
-    flame.position.y = 0.25
-    flame.userData.baseScale = 1
-    this.flames.push(flame)
-    group.add(flame)
-    const light = new THREE.PointLight(this.palette.warning, 1.4, 11, 2)
-    light.position.y = 0.35
-    this.torchLights.push(light)
-    group.add(light)
-    group.position.set(x, y, z)
-    return group
-  }
-
-  private createHouse(x: number, z: number, rotation: number, shop: boolean): THREE.Group {
-    const group = new THREE.Group()
-    const woodBase = shop
-      ? mix(this.palette.warning, this.palette.soft, 0.55)
-      : mix(this.palette.accent, this.palette.soft, 0.72)
-    const wood = new THREE.MeshStandardMaterial({
-      map: this.createSurfaceTexture(
-        shop ? 'shop-timber' : 'village-timber',
-        woodBase,
-        mix(this.palette.warning, this.palette.text, 0.52),
-        {
-          pattern: 'wood',
-          repeatX: 4,
-          repeatY: 4,
-          hatch: {
-            ...this.zoneArtProfiles.neutral.hatch,
-            color: this.zoneArtProfiles.neutral.ink,
-          },
-        },
-      ),
-      roughness: 0.95,
-    })
-    const body = new THREE.Mesh(new THREE.BoxGeometry(shop ? 9 : 7, 4.8, shop ? 7 : 6), wood)
-    body.position.y = 2.4
-    body.castShadow = true
-    body.receiveShadow = true
-    group.add(body)
-    const roof = new THREE.Mesh(
-      new THREE.ConeGeometry(shop ? 7 : 5.7, 3.5, 4),
-      new THREE.MeshStandardMaterial({
-        map: this.createSurfaceTexture(
-          'house-shingles',
-          this.palette.accent,
-          mix(this.palette.accent, this.palette.text, 0.4),
-          {
-            pattern: 'roof',
-            repeatX: 5,
-            repeatY: 4,
-            hatch: {
-              ...this.zoneArtProfiles.neutral.hatch,
-              color: this.zoneArtProfiles.neutral.ink,
-            },
-          },
-        ),
-        roughness: 1,
-      }),
-    )
-    roof.position.y = 6.5
-    roof.rotation.y = Math.PI / 4
-    roof.castShadow = true
-    group.add(roof)
-    const door = new THREE.Mesh(
-      new THREE.BoxGeometry(1.6, 2.8, 0.3),
-      new THREE.MeshStandardMaterial({ color: this.palette.bg, roughness: 1 }),
-    )
-    door.position.set(0, 1.4, (shop ? 3.5 : 3) + 0.16)
-    group.add(door)
-    const windowMaterial = new THREE.MeshStandardMaterial({
-      color: this.palette.warning,
-      emissive: this.palette.warning,
-      emissiveIntensity: shop ? 0.75 : 0.38,
-      roughness: 0.4,
-    })
-    this.buildingWindowGlows.push({
-      material: windowMaterial,
-      legacyIntensity: shop ? 0.75 : 0.38,
-    })
-    const windowOffset = shop ? 2.7 : 2.1
-    for (const windowX of [-windowOffset, windowOffset]) {
-      const window = new THREE.Mesh(new THREE.BoxGeometry(1.15, 1.15, 0.18), windowMaterial)
-      window.position.set(windowX, 2.75, (shop ? 3.5 : 3) + 0.18)
-      group.add(window)
-    }
-    group.position.set(x, 0, z)
-    group.rotation.y = rotation
-    this.registerBoxObstacle(x, z, shop ? 9 : 7, shop ? 7 : 6, rotation)
-    return group
-  }
-
-  private createElfHut(x: number, z: number): THREE.Group {
-    const group = new THREE.Group()
-    const wood = new THREE.MeshStandardMaterial({
-      map: this.createSurfaceTexture(
-        'elf-hut-bark',
-        mix(this.palette.warning, this.palette.bg, 0.55),
-        mix(this.palette.warning, this.palette.text, 0.55),
-        {
-          pattern: 'wood',
-          repeatX: 5,
-          repeatY: 4,
-          hatch: {
-            ...this.zoneArtProfiles.forest.hatch,
-            color: this.zoneArtProfiles.forest.ink,
-          },
-        },
-      ),
-      roughness: 1,
-    })
-    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 3.3, 5.5, 9), wood)
-    trunk.position.y = 2.75
-    trunk.castShadow = true
-    group.add(trunk)
-    const roof = new THREE.Mesh(
-      new THREE.ConeGeometry(4.8, 4, 9),
-      new THREE.MeshStandardMaterial({
-        map: this.createSurfaceTexture(
-          'elf-leaf-roof',
-          mix(this.palette.success, this.palette.bg, 0.25),
-          mix(this.palette.success, this.palette.text, 0.36),
-          {
-            pattern: 'roof',
-            repeatX: 6,
-            repeatY: 4,
-            hatch: {
-              ...this.zoneArtProfiles.forest.hatch,
-              color: this.zoneArtProfiles.forest.ink,
-            },
-          },
-        ),
-        roughness: 1,
-      }),
-    )
-    roof.position.y = 7
-    roof.castShadow = true
-    group.add(roof)
-    const door = new THREE.Mesh(new THREE.BoxGeometry(1.2, 2.6, 0.25), new THREE.MeshStandardMaterial({ color: this.palette.bg }))
-    door.position.set(0, 1.3, 3.05)
-    group.add(door)
-    group.position.set(x, 0, z)
-    this.registerCircleObstacle(x, z, 3.3)
-    return group
-  }
-
-  private createTreeLod(x: number, z: number, scale: number): THREE.LOD {
-    const lod = new THREE.LOD()
-    const near = new THREE.Group()
-    const trunk = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.36, 0.62, 4.5, 7),
-      new THREE.MeshStandardMaterial({
-        map: this.createSurfaceTexture(
-          'tree-bark',
-          mix(this.palette.warning, this.palette.bg, 0.45),
-          mix(this.palette.warning, this.palette.text, 0.58),
-          { pattern: 'wood', repeatX: 2, repeatY: 5 },
-        ),
-        roughness: 1,
-      }),
-    )
-    trunk.position.y = 2.25
-    trunk.castShadow = true
-    near.add(trunk)
-    const foliageMaterial = new THREE.MeshStandardMaterial({
-      color: mix(this.palette.worldForestGround, this.palette.worldHorizon, 0.16),
-      roughness: 1,
-      transparent: true,
-    })
-    for (const [height, radius] of [
-      [4.4, 2.6],
-      [6.1, 2.1],
-      [7.6, 1.45],
-    ]) {
-      const foliage = new THREE.Mesh(new THREE.ConeGeometry(radius, 3.4, 8), foliageMaterial)
-      foliage.userData.cameraPassThrough = true
-      foliage.position.y = height
-      foliage.castShadow = true
-      near.add(foliage)
-    }
-    near.scale.setScalar(scale)
-    lod.addLevel(near, 0)
-    lod.position.set(x, 0, z)
-    this.foliageOccluders.push({
-      root: lod,
-      material: foliageMaterial,
-      radius: 2.7 * scale,
-      centerY: 5.8 * scale,
-    })
-    return lod
   }
 
   private createCharacter(faction: Faction, player: boolean): THREE.Group {
@@ -10992,86 +8510,6 @@ uniform float uSwayAmplitude;`,
     return group
   }
 
-  private createZoneLabel(text: string, x: number, z: number): THREE.Sprite {
-    return this.createSign(text, x, 9, z, 17, 3.2)
-  }
-
-  private createSign(
-    text: string,
-    x: number,
-    y: number,
-    z: number,
-    width = 12,
-    height = 2.5,
-  ): THREE.Sprite {
-    const canvas = document.createElement('canvas')
-    canvas.width = 512
-    canvas.height = 96
-    const context = canvas.getContext('2d')
-    if (context) {
-      context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--cp-panel-strong').trim()
-      context.fillRect(0, 0, canvas.width, canvas.height)
-      context.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--cp-accent').trim()
-      context.lineWidth = 7
-      context.strokeRect(3.5, 3.5, canvas.width - 7, canvas.height - 7)
-      context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--cp-text').trim()
-      context.font = '700 31px "Segoe UI", Aptos, Calibri, sans-serif'
-      context.textAlign = 'center'
-      context.textBaseline = 'middle'
-      context.fillText(text, canvas.width / 2, canvas.height / 2)
-    }
-    const texture = new THREE.CanvasTexture(canvas)
-    texture.colorSpace = THREE.SRGBColorSpace
-    texture.magFilter = THREE.LinearFilter
-    this.generatedTextures.set(`sign-${text}`, texture)
-    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false }))
-    sprite.position.set(x, y, z)
-    sprite.scale.set(width, height, 1)
-    sprite.renderOrder = 5
-    return sprite
-  }
-
-  private createBeacon(x: number, z: number, color: THREE.Color): THREE.Group {
-    const group = new THREE.Group()
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(2.1, 0.16, 8, 24),
-      new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.7 }),
-    )
-    ring.rotation.x = Math.PI / 2
-    ring.position.y = 0.22
-    group.add(ring)
-    const column = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.12, 0.4, 5, 8),
-      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.22 }),
-    )
-    column.position.y = 2.5
-    group.add(column)
-    group.position.set(x, 0, z)
-    return group
-  }
-
-  private spawnPopulation(): void {
-    const spawns: Array<[Faction, ActorRole, number, number]> = [
-      ['guard', 'commander', 40, -36],
-      ['guard', 'soldier', 32, -38],
-      ['guard', 'archer', 50, -33],
-      ['guard', 'brute', 56, -52],
-      ['guard', 'soldier', 23, -24],
-      ['guard', 'archer', 8, -25],
-      ['elf', 'scout', -48, 38],
-      ['elf', 'archer', -38, 45],
-      ['elf', 'scout', -56, 52],
-      ['elf', 'archer', -27, 28],
-      ['elf', 'scout', -12, 15],
-      ['villain', 'minion', 43, 39],
-      ['villain', 'brute', 53, 48],
-      ['villain', 'archer', 37, 53],
-      ['villain', 'minion', 27, 30],
-      ['villain', 'brute', 12, 18],
-    ]
-    spawns.forEach(([faction, role, x, z], index) => this.spawnActor(faction, role, x, z, index))
-  }
-
   private spawnActor(
     faction: Faction,
     role: ActorRole,
@@ -11128,9 +8566,7 @@ uniform float uSwayAmplitude;`,
     const outlineBinding = this.registerOutline(mesh, 'enemy')
     mesh.position.set(x, this.groundHeightAt(x, z), z)
     this.resolveCharacterOverlaps(mesh.position, this.actorColliderRadiusForRole(role))
-    if (this.generatedWorld) {
-      mesh.position.y = this.groundHeightAt(mesh.position.x, mesh.position.z)
-    }
+    mesh.position.y = this.groundHeightAt(mesh.position.x, mesh.position.z)
     this.scene.add(mesh)
     const healthBar = this.createActorHealthBar(faction)
     healthBar.sprite.position.set(

@@ -85,7 +85,7 @@ test('achievement run snapshots restore local progress without restarting the ru
   })
 })
 
-test('a generated run remains restorable after a legacy run starts', () => {
+test('a generated run remains restorable after another run starts', () => {
   const storage = new MemoryLocalStorage()
   withLocalStorage(storage, () => {
     const generated = new AchievementTracker()
@@ -94,8 +94,8 @@ test('a generated run remains restorable after a legacy run starts', () => {
     const snapshot = generated.getRunState()
     assert.ok(snapshot)
 
-    const legacy = new AchievementTracker()
-    legacy.beginRun('guard', 'palace', 'legacy-run')
+    const other = new AchievementTracker()
+    other.beginRun('guard', 'palace', 'other-run')
     assert.equal(readAchievementStore(storage).stats.runsStarted, 2)
 
     const resumed = new AchievementTracker()
@@ -172,7 +172,7 @@ test('duplicate campaign end callbacks do not double-count cumulative results', 
   })
 })
 
-test('legacy cumulative achievement data and unlock timestamps remain readable', () => {
+test('partial cumulative achievement data and unlock timestamps remain readable', () => {
   const storage = new MemoryLocalStorage()
   storage.setItem(
     ACHIEVEMENTS_STORAGE_KEY,
@@ -189,7 +189,7 @@ test('legacy cumulative achievement data and unlock timestamps remain readable',
     const firstMarch = tracker.getCatalogue().find((achievement) => achievement.id === 'first-march')
     assert.equal(firstMarch?.unlocked, true)
     assert.equal(firstMarch?.unlockedAt, '2020-01-02T03:04:05.000Z')
-    tracker.beginRun('elf', 'forest', 'legacy-compatible')
+    tracker.beginRun('elf', 'forest', 'partial-store')
     const persisted = readAchievementStore(storage)
     assert.equal(persisted.stats.runsStarted, 8)
     assert.equal(persisted.stats.kills, 11)

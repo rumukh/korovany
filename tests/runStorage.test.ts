@@ -213,9 +213,8 @@ function makeSummary(index: number): RunHistorySummary {
   }
 }
 
-test('active runs and profiles round-trip without touching legacy storage', () => {
+test('active runs and profiles round-trip without touching unrelated storage', () => {
   const storage = new MemoryStorage()
-  storage.setItem('korovany-save-v1', '{"legacy":true}')
   storage.setItem('korovany-achievements-v1', '{"version":1}')
   const run = makeRun()
   const profile: ProfileSaveV1 = {
@@ -231,7 +230,6 @@ test('active runs and profiles round-trip without touching legacy storage', () =
   assert.deepEqual(loadActiveRun(storage), run)
   assert.equal(saveProfile(storage, profile), true)
   assert.deepEqual(loadProfile(storage), profile)
-  assert.equal(storage.getItem('korovany-save-v1'), '{"legacy":true}')
   assert.equal(storage.getItem('korovany-achievements-v1'), '{"version":1}')
 
   assert.equal(removeProfile(storage), true)

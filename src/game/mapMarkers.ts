@@ -14,8 +14,6 @@ function markerIsDiscovered(
   x: number,
   z: number,
 ): boolean {
-  if (worldMap.mode === 'legacy') return true
-
   const { bounds, regions } = worldMap
   const columns = Math.max(1, ...regions.map((region) => region.gridX + 1))
   const rows = Math.max(1, ...regions.map((region) => region.gridZ + 1))

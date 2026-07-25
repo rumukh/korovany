@@ -16,8 +16,6 @@ import type {
   TerrainSystem,
 } from './TerrainSystem.ts'
 
-export type WorldRuntimeMode = 'legacy' | 'generated'
-
 export interface WorldMarker {
   id: string
   x: number
@@ -40,8 +38,7 @@ export interface WorldRuntimeState {
 }
 
 export interface WorldRuntime {
-  readonly mode: WorldRuntimeMode
-  readonly blueprint?: WorldBlueprint
+  readonly blueprint: WorldBlueprint
   readonly bounds: Bounds2D
   readonly collision: CollisionWorld
   readonly navigation: NavigationSystem
@@ -63,13 +60,7 @@ export interface WorldRuntime {
 }
 
 export interface GeneratedWorldRuntime extends WorldRuntime {
-  readonly mode: 'generated'
   readonly blueprint: WorldBlueprint
   readonly terrain: TerrainSystem
   readonly regions: RegionManager
-}
-
-export interface LegacyWorldRuntime extends WorldRuntime {
-  readonly mode: 'legacy'
-  readonly blueprint?: undefined
 }
