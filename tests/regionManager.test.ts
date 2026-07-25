@@ -453,3 +453,53 @@ test('manager state application atomically replaces newer and omitted deltas', (
 
   manager.dispose()
 })
+
+test('region chronicle state round-trips through the manager and its runtimes', () => {
+  const world = createFiveByFiveWorld()
+  world.regions[0].territory = 'elf'
+  const manager = new RegionManager(world as never)
+  manager.update('0,0' as never)
+
+  const seeded = manager.getRegionChronicle('0,0' as never)
+  assert.equal(seeded?.control, 'elf')
+  assert.equal(seeded?.settlementIntegrity, 100)
+  assert.equal(manager.getRegionChronicle('missing' as never), undefined)
+
+  assert.equal(
+    manager.setRegionChronicle('0,0' as never, {
+      control: 'villain',
+      pressure: { elf: 0.1, guard: 0, villain: 0.8 },
+      beastPressure: 0.42,
+      settlementIntegrity: 0,
+      supply: 0.2,
+      lastEventTick: 12,
+    }),
+    true,
+  )
+  const updated = manager.getRegionChronicle('0,0' as never)
+  assert.equal(updated?.control, 'villain')
+  assert.equal(updated?.settlementIntegrity, 0)
+
+  const runtime = manager.getRuntime('0,0' as never) as RegionRuntime
+  assert.equal(runtime.extractDelta().chronicle.control, 'villain')
+  assert.equal(runtime.getChronicleState().beastPressure, 0.42)
+
+  const save = manager.saveState()
+  assert.equal(save.deltas['0,0'].version, 2)
+  assert.equal(save.deltas['0,0'].chronicle.control, 'villain')
+
+  const restored = new RegionManager(world as never)
+  assert.equal(restored.applyState(save), true)
+  restored.update('0,0' as never)
+  assert.deepEqual(
+    restored.getRegionChronicle('0,0' as never),
+    manager.getRegionChronicle('0,0' as never),
+  )
+  assert.equal(restored.getRegionChronicle('1,0' as never)?.control, 'neutral')
+
+  assert.equal(runtime.setChronicleState({ control: 'wolves' }), false)
+  assert.equal(runtime.getChronicleState().control, 'villain')
+
+  manager.dispose()
+  restored.dispose()
+})

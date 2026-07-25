@@ -36,6 +36,7 @@ import {
   type ActorRole,
   type BodyPart,
   type BodyState,
+  type ChronicleEntryView,
   type Faction,
   type GameCallbacks,
   type GameView,
@@ -61,10 +62,14 @@ import {
 } from './types'
 import {
   createGeneratedEncounterPlans,
+  createGeneratedEncounterPlan,
   type GeneratedEncounterPlan,
 } from './content/registry'
 import {
+  chronicleEventTone,
   createGeneratedObjectiveText,
+  describeChronicleEvent,
+  formatRegionGridLabel,
   formatRussianCount,
   generatedSiteLabel,
 } from './content/gameCopy'
@@ -80,18 +85,36 @@ import {
 } from './squadMovement'
 import {
   ACTIVE_RUN_SAVE_VERSION,
-  type ActiveRunSaveV2,
+  type ActiveRunSaveV3,
   type RunCompanionState,
   type RunConfig,
   type RunStatus,
   type SerializableState,
 } from './run/runTypes'
-import { normalizeActiveRunSaveV2 } from './run/storage'
+import { normalizeActiveRunSaveV3 } from './run/storage'
 import {
   GeneratedWorldRuntime,
   type GeneratedWorldRuntimeDebugSnapshot,
 } from './world/GeneratedWorldRuntime'
 import { generateWorld } from './world/WorldGenerator'
+import {
+  CHRONICLE_TICK_SECONDS,
+  cloneChronicleState,
+  cloneRegionChronicleState,
+  createChronicleRegions,
+  createChronicleState,
+  createRegionChronicleState,
+  getChronicleProtectedRegionIds,
+  getContestedRegionIds,
+  getSupplyPriceMultiplier,
+  isProtectedSite,
+  isRegionRazed,
+  isSettlementSite,
+  tickChronicle,
+  type ChronicleEvent,
+  type ChronicleState,
+  type RegionChronicleState,
+} from './world/Chronicle'
 import {
   REGION_DELTA_VERSION,
   type RegionDelta,
@@ -99,6 +122,7 @@ import {
 import {
   WORLD_GENERATOR_VERSION,
   type FactionObjectiveNode,
+  type Territory,
   type WorldBlueprint,
 } from './world/worldTypes'
 import {
@@ -112,7 +136,7 @@ export interface GeneratedRunLaunch {
   runId: string
   config: RunConfig
   startedAt: string
-  restored?: ActiveRunSaveV2
+  restored?: ActiveRunSaveV3
 }
 
 export interface GameEngineSettings {
@@ -583,6 +607,8 @@ const GENERATED_CARAVAN_COLLIDER_RADIUS = 1.4
 const GENERATED_CARAVAN_PATROL_NEAR = 6
 const GENERATED_CARAVAN_PATROL_FAR = 28
 const MAX_ACTORS = 25
+const CHRONICLE_MAX_CATCHUP_TICKS = 8
+const CHRONICLE_FEED_LIMIT = 8
 const LOOT_DROP_CHANCE = 0.3
 const LOOT_MAX_ACTIVE = 20
 const LOOT_BURST_TIME = 0.45
@@ -1057,6 +1083,21 @@ export class GameEngine {
     string,
     GeneratedNavigationCacheEntry
   >()
+  private readonly chronicleRegions: Map<string, RegionChronicleState>
+  private readonly chronicleProtectedRegionIds: ReadonlySet<string>
+  private readonly chronicleEncounterPlanControl = new Map<string, Territory>()
+  private readonly chronicleRazedSiteIds = new Set<string>()
+  private chronicleContestedRegionIds: ReadonlySet<string> = new Set<string>()
+  private readonly scorchedMaterial = new THREE.MeshStandardMaterial({
+    color: 0x2a2320,
+    roughness: 0.95,
+    metalness: 0,
+  })
+  private chronicleState: ChronicleState
+  private chronicleAccumulator = 0
+  private chronicleFeedSignature = ''
+  private chronicleFeed: ChronicleEntryView[] = []
+  private activeShopPriceMultiplier = 1
   private generatedCameraRegionSignature = ''
   private generatedNavigationRegionSignature = ''
   private generatedCaravanPatrolReady = false
@@ -1135,7 +1176,7 @@ export class GameEngine {
   private readonly collisionProbe = new THREE.Vector3()
   private readonly navigationWaypoint = new THREE.Vector3()
   private readonly generatedRngStreams: Record<
-    'combat' | 'director' | 'event' | 'loot',
+    'combat' | 'director' | 'event' | 'loot' | 'chronicle',
     RandomStream
   >
   private readonly eventRng: () => number
@@ -1261,7 +1302,7 @@ export class GameEngine {
     this.callbacks = callbacks
     this.faction = faction
     const launch = settings.generatedRun
-    let restoredRun: ActiveRunSaveV2 | null = null
+    let restoredRun: ActiveRunSaveV3 | null = null
     if (
       launch.runId.trim().length === 0 ||
       !Number.isFinite(Date.parse(launch.startedAt)) ||
@@ -1282,7 +1323,7 @@ export class GameEngine {
     }
     const blueprint = generateWorld(launch.config.seed)
     if (launch.restored) {
-      restoredRun = normalizeActiveRunSaveV2(launch.restored)
+      restoredRun = normalizeActiveRunSaveV3(launch.restored)
       if (!restoredRun) throw new Error('Generated run save is malformed')
       if (restoredRun.status !== 'active') {
         throw new Error('Only an active generated run can be restored')
@@ -1391,6 +1432,7 @@ export class GameEngine {
       director: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:director')),
       event: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:event')),
       loot: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:loot')),
+      chronicle: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:chronicle')),
     }
     if (restoredRun) {
       for (const key of Object.keys(streams) as Array<keyof typeof streams>) {
@@ -1401,6 +1443,22 @@ export class GameEngine {
       }
     }
     this.generatedRngStreams = streams
+    this.chronicleProtectedRegionIds = getChronicleProtectedRegionIds(blueprint)
+    this.chronicleState = restoredRun
+      ? cloneChronicleState(restoredRun.chronicleState)
+      : createChronicleState()
+    this.chronicleRegions = createChronicleRegions(blueprint)
+    for (const region of blueprint.regions) {
+      const regionId = String(region.id)
+      const restoredChronicle =
+        this.generatedWorld.regions.getRegionChronicle(regionId)
+      if (restoredChronicle) this.chronicleRegions.set(regionId, restoredChronicle)
+    }
+    this.refreshChronicleRazedSites()
+    this.chronicleContestedRegionIds = getContestedRegionIds(
+      blueprint,
+      this.chronicleRegions,
+    )
     this.eventRng = () => streams.event.next()
     this.directorRng = () => streams.director.next()
     this.combatRng = () => streams.combat.next()
@@ -1410,6 +1468,10 @@ export class GameEngine {
       const plans = this.generatedEncounterPlans.get(regionKey) ?? []
       plans.push(plan)
       this.generatedEncounterPlans.set(regionKey, plans)
+    }
+    for (const region of blueprint.regions) {
+      this.chronicleEncounterPlanControl.set(String(region.id), region.territory)
+      this.refreshChronicleEncounterPlans(String(region.id))
     }
     this.lootMaterials = this.createLootMaterials()
     this.zoneArtProfiles = createZoneArtProfiles(this.palette)
@@ -2082,7 +2144,7 @@ export class GameEngine {
     if (item.upgrade && currentLevel >= (item.maxLevel ?? Number.POSITIVE_INFINITY)) {
       return { ok: false, message: `${item.name}: достигнут максимальный уровень.` }
     }
-    const price = getShopItemPrice(item, this.upgrades)
+    const price = getShopItemPrice(item, this.upgrades, this.activeShopPriceMultiplier)
     if (this.gold < price) return { ok: false, message: 'Золота не хватает.' }
 
     if (item.id === 'arm') {
@@ -2127,10 +2189,11 @@ export class GameEngine {
     return { ok: true, message: `${item.name}: покупка завершена.${levelSuffix}` }
   }
 
-  saveGeneratedRun(): ActiveRunSaveV2 {
+  saveGeneratedRun(): ActiveRunSaveV3 {
     const savedEventCooldown = this.activeEvent
       ? Math.max(this.eventCooldown, this.eventCooldownRange().min)
       : this.eventCooldown
+    this.syncChronicleToRegionDeltas()
     const regionState = this.generatedWorld.regions.saveState()
     const startSiteId = this.generatedBlueprint.starts[this.faction]
     const regionId =
@@ -2149,7 +2212,7 @@ export class GameEngine {
     const timestamp = new Date(
       Math.max(Date.now(), Date.parse(this.generatedRun.startedAt)),
     ).toISOString()
-    const save: ActiveRunSaveV2 = {
+    const save: ActiveRunSaveV3 = {
       version: ACTIVE_RUN_SAVE_VERSION,
       runId: this.generatedRun.runId,
       config: {
@@ -2239,15 +2302,17 @@ export class GameEngine {
         eventSequence: this.eventSequence,
         active: false,
       },
+      chronicleState: cloneChronicleState(this.chronicleState),
       rngStates: {
         combat: this.generatedRngStreams.combat.getState(),
         director: this.generatedRngStreams.director.getState(),
         event: this.generatedRngStreams.event.getState(),
         loot: this.generatedRngStreams.loot.getState(),
+        chronicle: this.generatedRngStreams.chronicle.getState(),
       },
       achievementRunState,
     }
-    const normalized = normalizeActiveRunSaveV2(save)
+    const normalized = normalizeActiveRunSaveV3(save)
     if (!normalized) throw new Error('Generated run save failed validation')
     return normalized
   }
@@ -2275,6 +2340,7 @@ export class GameEngine {
     this.elapsed += delta
     this.updateLoot(delta)
     this.updateThreat()
+    this.updateChronicle(delta)
     this.cleanupDeadActors()
     this.shakeClock += delta
     this.trauma = Math.max(0, this.trauma - SHAKE_DECAY * delta)
@@ -2404,6 +2470,13 @@ export class GameEngine {
       collectedLootIds: [],
       completedInteractionIds: [],
       completedEventIds: [],
+      chronicle:
+        this.chronicleRegions.get(regionId) ??
+        createRegionChronicleState(
+          this.generatedBlueprint.regions.find(
+            (region) => String(region.id) === regionId,
+          )?.territory ?? 'neutral',
+        ),
       state: {},
     }
   }
@@ -2423,6 +2496,7 @@ export class GameEngine {
       collectedLootIds: [...source.collectedLootIds],
       completedInteractionIds: [...source.completedInteractionIds],
       completedEventIds: [...source.completedEventIds],
+      chronicle: cloneRegionChronicleState(source.chronicle),
       state: { ...source.state },
     }
     mutation(delta)
@@ -2704,6 +2778,7 @@ export class GameEngine {
         (child) => child.userData.generatedWorldRegionId !== undefined,
       ),
     )
+    this.applyChronicleRazedVisuals()
   }
 
   private placeGeneratedCaravan(): void {
@@ -2838,7 +2913,22 @@ export class GameEngine {
       this.createRegionDelta(String(site.regionId))
     const interacted = delta.completedInteractionIds.includes(site.id)
     const collected = delta.collectedLootIds.includes(site.id)
+    if (
+      (site.kind === 'shop' || site.kind === 'recovery') &&
+      this.isChronicleSiteRazed(site.id)
+    ) {
+      this.callbacks.onNotice(
+        site.kind === 'shop'
+          ? 'Лавка сгорела вместе с домиками деревяными. Торговать не с кем.'
+          : 'Лечить некому: знахаря вынесли вперёд ногами, а избу — по брёвнышку.',
+        'warning',
+      )
+      return true
+    }
     if (site.kind === 'shop') {
+      this.activeShopPriceMultiplier = getSupplyPriceMultiplier(
+        this.chronicleRegions.get(String(site.regionId)),
+      )
       this.callbacks.onShop()
     } else if (site.kind === 'recovery') {
       this.health = Math.min(this.maxHealth, this.health + 40)
@@ -4878,8 +4968,204 @@ export class GameEngine {
     }
   }
 
-  private eventCooldownRange(): { min: number; max: number } {
-    const tierOffset = this.threatTier - 1
+  private updateChronicle(delta: number): void {
+    if (this.ended) return
+    this.chronicleAccumulator += delta
+    if (this.chronicleAccumulator < CHRONICLE_TICK_SECONDS) return
+
+    const frozenRegionIds = new Set(
+      this.generatedWorld.regions.getSimulatedRegionIds().map(String),
+    )
+    const playerObjectiveRatio =
+      this.objectives.length === 0
+        ? 0
+        : this.objectives.filter((objective) => objective.done).length /
+          this.objectives.length
+    const environment = {
+      nightFactor: this.nightFactor,
+      stormFactor: Math.min(
+        1,
+        Math.max(0, this.weatherWeights.rain + this.weatherWeights.snow),
+      ),
+    }
+    const events: ChronicleEvent[] = []
+    let ticks = 0
+    while (
+      this.chronicleAccumulator >= CHRONICLE_TICK_SECONDS &&
+      ticks < CHRONICLE_MAX_CATCHUP_TICKS
+    ) {
+      this.chronicleAccumulator -= CHRONICLE_TICK_SECONDS
+      ticks += 1
+      events.push(
+        ...tickChronicle({
+          blueprint: this.generatedBlueprint,
+          state: this.chronicleState,
+          regions: this.chronicleRegions,
+          rng: this.generatedRngStreams.chronicle,
+          environment,
+          playerFaction: this.faction,
+          playerObjectiveRatio,
+          protectedRegionIds: this.chronicleProtectedRegionIds,
+          frozenRegionIds,
+        }),
+      )
+    }
+    if (this.chronicleAccumulator >= CHRONICLE_TICK_SECONDS) {
+      this.chronicleAccumulator = 0
+    }
+    this.chronicleContestedRegionIds = getContestedRegionIds(
+      this.generatedBlueprint,
+      this.chronicleRegions,
+    )
+    if (events.length > 0) this.handleChronicleEvents(events)
+  }
+
+  private handleChronicleEvents(events: readonly ChronicleEvent[]): void {
+    const discovered = new Set(
+      this.generatedWorld.discoveredRegionIds.map(String),
+    )
+    let announced = 0
+    for (const event of events) {
+      const regionId = String(event.regionId)
+      if (event.kind === 'regionCaptured') {
+        this.refreshChronicleEncounterPlans(regionId)
+      }
+      if (event.kind === 'settlementBurned') {
+        this.refreshChronicleRazedSites()
+      }
+      const salient =
+        event.kind === 'settlementBurned' ||
+        event.kind === 'regionCaptured' ||
+        event.kind === 'caravanLost'
+      if (!salient || announced >= 2 || !discovered.has(regionId)) continue
+      announced += 1
+      this.callbacks.onNotice(
+        this.describeChronicleEntry(event),
+        chronicleEventTone(event.kind),
+      )
+    }
+    this.emitView(true)
+  }
+
+  private describeChronicleEntry(event: ChronicleEvent): string {
+    const region = this.generatedBlueprint.regions.find(
+      (candidate) => String(candidate.id) === String(event.regionId),
+    )
+    const site = event.siteId
+      ? this.generatedBlueprint.sites.find(
+          (candidate) => candidate.id === event.siteId,
+        )
+      : undefined
+    return describeChronicleEvent(
+      {
+        kind: event.kind,
+        regionLabel: region
+          ? formatRegionGridLabel(region.coordinate.x, region.coordinate.y)
+          : '??',
+        faction: event.faction,
+        siteLabel: site ? generatedSiteLabel(site.kind) : null,
+      },
+      event.id,
+    )
+  }
+
+  private buildChronicleFeed(): ChronicleEntryView[] {
+    const discovered = new Set(
+      this.generatedWorld.discoveredRegionIds.map(String),
+    )
+    const log = this.chronicleState.log
+    const signature = `${this.chronicleState.tick}:${discovered.size}:${log.length}:${log[log.length - 1]?.id ?? ''}`
+    if (signature === this.chronicleFeedSignature) return this.chronicleFeed
+    this.chronicleFeedSignature = signature
+    this.chronicleFeed = log
+      .filter((event) => discovered.has(String(event.regionId)))
+      .slice(-CHRONICLE_FEED_LIMIT)
+      .reverse()
+      .map((event) => {
+        const region = this.generatedBlueprint.regions.find(
+          (candidate) => String(candidate.id) === String(event.regionId),
+        )
+        return {
+          id: event.id,
+          tick: event.tick,
+          regionLabel: region
+            ? formatRegionGridLabel(region.coordinate.x, region.coordinate.y)
+            : '??',
+          text: this.describeChronicleEntry(event),
+          tone: chronicleEventTone(event.kind),
+        }
+      })
+    return this.chronicleFeed
+  }
+
+  private refreshChronicleEncounterPlans(regionId: string): void {
+    const control = this.chronicleRegions.get(regionId)?.control ?? 'neutral'
+    if (this.chronicleEncounterPlanControl.get(regionId) === control) return
+    this.chronicleEncounterPlanControl.set(regionId, control)
+    const slots = this.generatedBlueprint.encounters.filter(
+      (slot) => String(slot.regionId) === regionId,
+    )
+    if (slots.length === 0) return
+    const overlay = this.createChronicleBlueprintOverlay(regionId, control)
+    this.generatedEncounterPlans.set(
+      regionId,
+      slots.map((slot) =>
+        createGeneratedEncounterPlan(overlay, slot, this.faction),
+      ),
+    )
+  }
+
+  private createChronicleBlueprintOverlay(
+    regionId: string,
+    control: Territory,
+  ): WorldBlueprint {
+    return {
+      ...this.generatedBlueprint,
+      regions: this.generatedBlueprint.regions.map((region) =>
+        String(region.id) === regionId ? { ...region, territory: control } : region,
+      ),
+      sites: this.generatedBlueprint.sites.map((site) =>
+        String(site.regionId) === regionId && !isProtectedSite(site)
+          ? { ...site, owner: control }
+          : site,
+      ),
+    }
+  }
+
+  private refreshChronicleRazedSites(): void {
+    this.chronicleRazedSiteIds.clear()
+    for (const site of this.generatedBlueprint.sites) {
+      if (!isSettlementSite(site)) continue
+      if (isRegionRazed(this.chronicleRegions.get(String(site.regionId)))) {
+        this.chronicleRazedSiteIds.add(site.id)
+      }
+    }
+    this.applyChronicleRazedVisuals()
+  }
+
+  private isChronicleSiteRazed(siteId: string): boolean {
+    return this.chronicleRazedSiteIds.has(siteId)
+  }
+
+  private applyChronicleRazedVisuals(): void {
+    for (const siteId of this.chronicleRazedSiteIds) {
+      const group = this.scene.getObjectByName(`site:${siteId}`)
+      if (!group || group.userData.chronicleRazed === true) continue
+      group.userData.chronicleRazed = true
+      group.scale.set(1, 0.68, 1)
+      group.traverse((child) => {
+        if (child instanceof THREE.Mesh) child.material = this.scorchedMaterial
+      })
+    }
+  }
+
+  private syncChronicleToRegionDeltas(): void {
+    for (const [regionId, chronicle] of this.chronicleRegions) {
+      this.generatedWorld.regions.setRegionChronicle(regionId, chronicle)
+    }
+  }
+
+  private eventCooldownRange(): { min: number; max: number } {    const tierOffset = this.threatTier - 1
     return {
       min: Math.max(30, EVENT_COOLDOWN_MIN - tierOffset * 5),
       max: Math.max(42, EVENT_COOLDOWN_MAX - tierOffset * 7),
@@ -6469,15 +6755,20 @@ export class GameEngine {
         : { currentRegionId: String(generatedCurrentRegionId) }),
       seed: this.generatedBlueprint.seed,
       generatorVersion: this.generatedBlueprint.generatorVersion,
-      regions: this.generatedBlueprint.regions.map((region) => ({
-        id: String(region.id),
-        gridX: region.coordinate.x,
-        gridZ: region.coordinate.y,
-        biome: region.biome,
-        territory: region.territory,
-        discovered: discoveredRegions.has(String(region.id)),
-        current: String(region.id) === String(generatedCurrentRegionId),
-      })),
+      regions: this.generatedBlueprint.regions.map((region) => {
+        const chronicle = this.chronicleRegions.get(String(region.id))
+        return {
+          id: String(region.id),
+          gridX: region.coordinate.x,
+          gridZ: region.coordinate.y,
+          biome: region.biome,
+          territory: chronicle?.control ?? region.territory,
+          discovered: discoveredRegions.has(String(region.id)),
+          current: String(region.id) === String(generatedCurrentRegionId),
+          contested: this.chronicleContestedRegionIds.has(String(region.id)),
+          razed: isRegionRazed(chronicle),
+        }
+      }),
     }
     const ability = createAbilityView(this.faction, this.stamina, this.body)
     ability.active = this.shieldActive
@@ -6504,6 +6795,8 @@ export class GameEngine {
       prompt: this.prompt,
       markers,
       worldMap,
+      chronicle: this.buildChronicleFeed(),
+      shopPriceMultiplier: this.activeShopPriceMultiplier,
       squad: this.actors.filter(
         (actor) =>
           actor.alive &&

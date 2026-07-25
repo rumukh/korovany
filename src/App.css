@@ -1830,6 +1830,24 @@ button {
   z-index: 2;
 }
 
+.generated-map-region.contested::after {
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 3px,
+    color-mix(in srgb, var(--cp-danger) 45%, transparent) 3px 4px
+  );
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 1;
+}
+
+.generated-map-region.razed {
+  background: color-mix(in srgb, var(--cp-bg) 62%, var(--cp-danger));
+  color: color-mix(in srgb, var(--cp-text) 70%, var(--cp-danger));
+}
+
 .generated-map-region svg {
   height: 0.65rem;
   width: 0.65rem;
@@ -2016,6 +2034,106 @@ button {
   top: 6.3rem;
   width: 19rem;
   z-index: 20;
+}
+
+.top-hud-side {
+  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.chronicle-card {
+  padding: 0.65rem;
+  width: 16rem;
+}
+
+.chronicle-toggle {
+  align-items: center;
+  background: none;
+  border: 0;
+  color: var(--cp-text-muted);
+  cursor: pointer;
+  display: flex;
+  gap: 0.3rem;
+  padding: 0;
+  pointer-events: auto;
+}
+
+.chronicle-toggle:hover {
+  color: var(--cp-text);
+}
+
+.chronicle-toggle svg {
+  height: 0.8rem;
+  width: 0.8rem;
+}
+
+.chronicle-card.collapsed .hud-card-header {
+  margin-bottom: 0;
+}
+
+.chronicle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 13rem;
+  overflow-y: auto;
+  pointer-events: auto;
+}
+
+.chronicle-empty {
+  color: var(--cp-text-muted);
+  font-size: 0.62rem;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.chronicle-entry {
+  background: var(--cp-surface-soft);
+  border: 1px solid var(--cp-border);
+  border-radius: 0.35rem;
+  display: flex;
+  gap: 0.4rem;
+  padding: 0.35rem 0.4rem;
+}
+
+.chronicle-entry p {
+  color: var(--cp-text);
+  font-size: 0.62rem;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.chronicle-entry.warning {
+  border-color: color-mix(in srgb, var(--cp-warning) 45%, var(--cp-border));
+}
+
+.chronicle-entry.danger {
+  border-color: color-mix(in srgb, var(--cp-danger) 45%, var(--cp-border));
+}
+
+.chronicle-square {
+  color: var(--cp-text-muted);
+  flex: none;
+  font-family: Consolas, "Courier New", Courier, monospace;
+  font-size: 0.58rem;
+  font-weight: 700;
+  padding-top: 0.05rem;
+}
+
+.chronicle-entry.warning .chronicle-square {
+  color: var(--cp-warning);
+}
+
+.chronicle-entry.danger .chronicle-square {
+  color: var(--cp-danger);
+}
+
+.shop-supply-note {
+  color: var(--cp-warning);
+  font-size: 0.78rem;
+  margin: 0.6rem 0 0;
 }
 
 .vitals {
@@ -3862,6 +3980,10 @@ kbd {
 
   .minimap-card .hud-card-header,
   .map-legend {
+    display: none;
+  }
+
+  .chronicle-card {
     display: none;
   }
 

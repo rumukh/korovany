@@ -13,7 +13,7 @@ import {
   PROFILE_SAVE_KEY,
 } from '../src/game/run/runTypes.ts'
 import type {
-  ActiveRunSaveV2,
+  ActiveRunSaveV3,
   ProfileSaveV1,
   RunHistorySummary,
 } from '../src/game/run/runTypes.ts'
@@ -24,9 +24,9 @@ import {
   finalizeRunSnapshot,
   loadActiveRun,
   loadProfile,
-  normalizeActiveRunSaveV2,
+  normalizeActiveRunSaveV3,
   normalizeProfileSaveV1,
-  parseActiveRunSaveV2,
+  parseActiveRunSaveV3,
   removeProfile,
   saveActiveRun,
   saveProfile,
@@ -81,9 +81,9 @@ function createSingleRegionWorld(regionId = 'forest-1') {
   }
 }
 
-function makeRun(runId = 'run-alpha'): ActiveRunSaveV2 {
+function makeRun(runId = 'run-alpha'): ActiveRunSaveV3 {
   return {
-    version: 2,
+    version: 3,
     runId,
     config: {
       seed: 0x1234_abcd,
@@ -128,7 +128,7 @@ function makeRun(runId = 'run-alpha'): ActiveRunSaveV2 {
     discoveredRegionIds: ['forest-1', 'forest-2'],
     regionDeltas: {
       'forest-1': {
-        version: 1,
+        version: 2,
         regionId: 'forest-1',
         revision: 5,
         clearedEncounterIds: ['ambush-1'],
@@ -137,6 +137,14 @@ function makeRun(runId = 'run-alpha'): ActiveRunSaveV2 {
         collectedLootIds: ['chest-1'],
         completedInteractionIds: ['shrine-1'],
         completedEventIds: ['rescue-1'],
+        chronicle: {
+          control: 'elf',
+          pressure: { elf: 0.42, guard: 0.1, villain: 0 },
+          beastPressure: 0.31,
+          settlementIntegrity: 74,
+          supply: 0.55,
+          lastEventTick: 6,
+        },
         state: {
           weather: 'rain',
           encounter: { phase: 2, reinforcements: [1, 3] },
@@ -151,10 +159,36 @@ function makeRun(runId = 'run-alpha'): ActiveRunSaveV2 {
       activeEventId: null,
       completedEventIds: ['rescue-1'],
     },
+    chronicleState: {
+      tick: 12,
+      factionStrength: { elf: 0.5, guard: 0.4, villain: 0.3 },
+      caravans: [
+        {
+          id: 'caravan-12-1',
+          ownerFaction: 'guard',
+          fromSiteId: 'site-shop-riverside',
+          toSiteId: 'site-settlement-crossroads',
+          regionPath: ['forest-1', 'forest-2'],
+          progress: 0.4,
+          intact: true,
+        },
+      ],
+      log: [
+        {
+          id: 'chronicle-11-1',
+          tick: 11,
+          kind: 'beastRaid',
+          regionId: 'forest-1',
+          faction: null,
+          siteId: 'site-settlement-crossroads',
+        },
+      ],
+    },
     rngStates: {
       world: 123,
       encounters: 456,
       loot: 789,
+      chronicle: 4242,
     },
     achievementRunState: {
       runId,
@@ -187,7 +221,7 @@ function makeRun(runId = 'run-alpha'): ActiveRunSaveV2 {
 function makeTerminalRun(
   runId = 'run-alpha',
   status: 'victory' | 'defeat' = 'victory',
-): ActiveRunSaveV2 {
+): ActiveRunSaveV3 {
   const run = makeRun(runId)
   run.status = status
   run.updatedAt = '2026-01-02T04:00:00.000Z'
@@ -259,7 +293,7 @@ test('runtime region deltas survive manager extraction, active-run storage, and 
 
   const run = makeRun()
   run.regionDeltas = managerState.deltas
-  const normalized = normalizeActiveRunSaveV2(run)
+  const normalized = normalizeActiveRunSaveV3(run)
   assert.ok(normalized)
   assert.deepEqual(normalized.regionDeltas['forest-1'], expected)
 
@@ -314,14 +348,56 @@ test('active-run normalization rejects mismatched region keys and malformed delt
     ...mismatched.regionDeltas['forest-1'],
     regionId: 'forest-2',
   }
-  assert.equal(normalizeActiveRunSaveV2(mismatched), null)
+  assert.equal(normalizeActiveRunSaveV3(mismatched), null)
   assert.equal(saveActiveRun(new MemoryStorage(), mismatched), false)
 
   const malformed = structuredClone(makeRun()) as unknown as {
     regionDeltas: Record<string, { completedEventIds?: string[] }>
   }
   delete malformed.regionDeltas['forest-1'].completedEventIds
-  assert.equal(normalizeActiveRunSaveV2(malformed), null)
+  assert.equal(normalizeActiveRunSaveV3(malformed), null)
+})
+
+test('active-run normalization discards saves without chronicle state instead of migrating', () => {
+  const withoutChronicleState = structuredClone(makeRun()) as unknown as {
+    chronicleState?: unknown
+  }
+  delete withoutChronicleState.chronicleState
+  assert.equal(normalizeActiveRunSaveV3(withoutChronicleState), null)
+
+  const withoutRegionChronicle = structuredClone(makeRun()) as unknown as {
+    regionDeltas: Record<string, { chronicle?: unknown }>
+  }
+  delete withoutRegionChronicle.regionDeltas['forest-1'].chronicle
+  assert.equal(normalizeActiveRunSaveV3(withoutRegionChronicle), null)
+
+  const legacyDeltaVersion = structuredClone(makeRun()) as unknown as {
+    regionDeltas: Record<string, { version: number }>
+  }
+  legacyDeltaVersion.regionDeltas['forest-1'].version = 1
+  assert.equal(normalizeActiveRunSaveV3(legacyDeltaVersion), null)
+
+  const legacyRun = structuredClone(makeRun()) as unknown as { version: number }
+  legacyRun.version = 2
+  assert.equal(normalizeActiveRunSaveV3(legacyRun), null)
+
+  const storage = new MemoryStorage()
+  storage.setItem(ACTIVE_RUN_SAVE_KEY, JSON.stringify(legacyRun))
+  const warnings: string[] = []
+  assert.equal(
+    loadActiveRun(storage, (message) => warnings.push(message)),
+    null,
+  )
+  assert.ok(warnings.some((message) => message.includes('incompatible')))
+
+  const roundTripped = normalizeActiveRunSaveV3(makeRun())
+  assert.ok(roundTripped)
+  assert.deepEqual(roundTripped.chronicleState, makeRun().chronicleState)
+  assert.equal(roundTripped.rngStates.chronicle, 4242)
+  assert.deepEqual(
+    roundTripped.regionDeltas['forest-1'].chronicle,
+    makeRun().regionDeltas['forest-1'].chronicle,
+  )
 })
 
 test('active-run normalization preserves bounded rescued companions defensively', () => {
@@ -335,14 +411,14 @@ test('active-run normalization preserves bounded rescued companions defensively'
       worldPosition: [112, 2, 204],
     },
   ]
-  const normalized = normalizeActiveRunSaveV2(run)
+  const normalized = normalizeActiveRunSaveV3(run)
   assert.ok(normalized)
   assert.deepEqual(normalized.companions, run.companions)
 
   run.companions[0].worldPosition[0] = 999
   assert.deepEqual(normalized.companions?.[0].worldPosition, [112, 2, 204])
   assert.equal(
-    normalizeActiveRunSaveV2({
+    normalizeActiveRunSaveV3({
       ...makeRun(),
       companions: [
         {
@@ -365,9 +441,9 @@ test('malformed and incompatible versions are rejected with optional warnings', 
     warnings.push(message)
   }
 
-  assert.equal(parseActiveRunSaveV2('{broken', onWarning), null)
+  assert.equal(parseActiveRunSaveV3('{broken', onWarning), null)
   assert.equal(
-    normalizeActiveRunSaveV2({ ...makeRun(), version: 1 }),
+    normalizeActiveRunSaveV3({ ...makeRun(), version: 1 }),
     null,
   )
   storage.setItem(ACTIVE_RUN_SAVE_KEY, JSON.stringify({ ...makeRun(), player: null }))
@@ -405,7 +481,7 @@ test('normalizers clamp numbers and deduplicate bounded collections', () => {
   run.achievementRunState.kills = -2
   run.achievementRunState.zonesVisited = ['forest', 'forest']
 
-  const normalized = normalizeActiveRunSaveV2(run)
+  const normalized = normalizeActiveRunSaveV3(run)
   assert.ok(normalized)
   assert.equal(normalized.config.seed, 0)
   assert.equal(normalized.config.generatorVersion, 3)

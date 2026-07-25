@@ -1,4 +1,12 @@
-import type { RegionBlueprint, RegionId } from './worldTypes.ts'
+import type { RegionBlueprint, RegionId, Territory } from './worldTypes.ts'
+import {
+  cloneRegionChronicleState,
+  createRegionChronicleState,
+  normalizeRegionChronicleState,
+  type RegionChronicleState,
+} from './Chronicle.ts'
+
+export type { RegionChronicleState }
 
 export type RegionLifecycleState =
   | 'blueprint-only'
@@ -25,7 +33,7 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue }
 
-export const REGION_DELTA_VERSION = 1 as const
+export const REGION_DELTA_VERSION = 2 as const
 
 export interface RegionDelta {
   version: typeof REGION_DELTA_VERSION
@@ -37,6 +45,7 @@ export interface RegionDelta {
   collectedLootIds: string[]
   completedInteractionIds: string[]
   completedEventIds: string[]
+  chronicle: RegionChronicleState
   state: Record<string, JsonValue>
 }
 
@@ -89,6 +98,7 @@ export class RegionRuntime {
   private readonly completedInteractionIds = new Set<string>()
   private readonly completedEventIds = new Set<string>()
   private deltaState: Record<string, JsonValue> = {}
+  private chronicleState: RegionChronicleState
   private nextDisposableId = 1
   private lifecycleState: RegionLifecycleState = 'blueprint-only'
   private deltaRevision = 0
@@ -102,6 +112,7 @@ export class RegionRuntime {
     this.blueprint = blueprint
     this.id = regionId ?? readRegionId(blueprint)
     this.hooks = hooks
+    this.chronicleState = createRegionChronicleState(readTerritory(blueprint))
   }
 
   get state(): RegionLifecycleState {
@@ -286,6 +297,18 @@ export class RegionRuntime {
     return value === undefined ? undefined : cloneJson(value)
   }
 
+  getChronicleState(): RegionChronicleState {
+    return cloneRegionChronicleState(this.chronicleState)
+  }
+
+  setChronicleState(value: unknown): boolean {
+    const chronicle = normalizeRegionChronicleState(value)
+    if (this.disposed || !chronicle) return false
+    this.chronicleState = chronicle
+    this.deltaRevision += 1
+    return true
+  }
+
   extractDelta(): RegionDelta {
     return {
       version: REGION_DELTA_VERSION,
@@ -297,6 +320,7 @@ export class RegionRuntime {
       collectedLootIds: sorted(this.collectedLootIds),
       completedInteractionIds: sorted(this.completedInteractionIds),
       completedEventIds: sorted(this.completedEventIds),
+      chronicle: cloneRegionChronicleState(this.chronicleState),
       state: cloneJson(this.deltaState),
     }
   }
@@ -310,6 +334,7 @@ export class RegionRuntime {
     replaceSet(this.collectedLootIds, delta.collectedLootIds)
     replaceSet(this.completedInteractionIds, delta.completedInteractionIds)
     replaceSet(this.completedEventIds, delta.completedEventIds)
+    this.chronicleState = cloneRegionChronicleState(delta.chronicle)
     this.deltaState = cloneJson(delta.state)
     this.deltaRevision = Math.max(this.deltaRevision, delta.revision)
     return true
@@ -437,6 +462,7 @@ export function normalizeRegionDelta(
     record.completedInteractionIds,
   )
   const completedEventIds = sanitizeIdList(record.completedEventIds)
+  const chronicle = normalizeRegionChronicleState(record.chronicle)
   const state = sanitizeState(record.state)
   if (
     revision === null ||
@@ -446,6 +472,7 @@ export function normalizeRegionDelta(
     !collectedLootIds ||
     !completedInteractionIds ||
     !completedEventIds ||
+    !chronicle ||
     !state
   ) {
     return null
@@ -461,8 +488,16 @@ export function normalizeRegionDelta(
     collectedLootIds,
     completedInteractionIds,
     completedEventIds,
+    chronicle,
     state,
   }
+}
+
+function readTerritory(blueprint: RegionBlueprint): Territory {
+  const territory = asRecord(blueprint)?.territory
+  return territory === 'elf' || territory === 'guard' || territory === 'villain'
+    ? territory
+    : 'neutral'
 }
 
 function readRegionId(blueprint: RegionBlueprint): RegionId {

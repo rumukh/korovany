@@ -1,5 +1,10 @@
 import { normalizeAchievementRunState } from '../achievements.ts'
 import {
+  normalizeChronicleState,
+  normalizeRegionChronicleState,
+} from '../world/Chronicle.ts'
+import { REGION_DELTA_VERSION } from '../world/RegionRuntime.ts'
+import {
   DEFAULT_STARTING_BOON_IDS,
   computeRunCompletionReward,
   isBoonId,
@@ -11,7 +16,7 @@ import {
   PROFILE_SAVE_VERSION,
 } from './runTypes.ts'
 import type {
-  ActiveRunSaveV2,
+  ActiveRunSaveV3,
   JsonValue,
   ProfileSaveV1,
   RegionDelta,
@@ -92,7 +97,7 @@ function normalizeUint32(value: unknown): number | null {
   return normalizeNonNegative(value, UINT32_MAX, true)
 }
 
-function normalizeFaction(value: unknown): ActiveRunSaveV2['config']['faction'] | null {
+function normalizeFaction(value: unknown): ActiveRunSaveV3['config']['faction'] | null {
   return value === 'elf' || value === 'guard' || value === 'villain' ? value : null
 }
 
@@ -350,10 +355,10 @@ function normalizeCompanionRole(value: unknown): RunCompanionState['role'] | nul
 
 function normalizeCompanions(
   value: unknown,
-): ActiveRunSaveV2['companions'] | null {
+): ActiveRunSaveV3['companions'] | null {
   if (value === undefined) return undefined
   if (!Array.isArray(value)) return null
-  const companions: NonNullable<ActiveRunSaveV2['companions']> = []
+  const companions: NonNullable<ActiveRunSaveV3['companions']> = []
   const seen = new Set<string>()
   for (const entry of value) {
     if (!isRecord(entry)) return null
@@ -415,8 +420,9 @@ function normalizeStoredRegionDelta(
   const collectedLootIds = normalizeStringArray(value.collectedLootIds)
   const completedInteractionIds = normalizeStringArray(value.completedInteractionIds)
   const completedEventIds = normalizeStringArray(value.completedEventIds)
+  const chronicle = normalizeRegionChronicleState(value.chronicle)
   const state = normalizeSerializableState(value.state)
-  return value.version !== 1 ||
+  return value.version !== REGION_DELTA_VERSION ||
     !regionId ||
     regionId !== expectedRegionId ||
     revision === null ||
@@ -426,10 +432,11 @@ function normalizeStoredRegionDelta(
     !collectedLootIds ||
     !completedInteractionIds ||
     !completedEventIds ||
+    !chronicle ||
     !state
     ? null
     : {
-        version: 1,
+        version: REGION_DELTA_VERSION,
         regionId,
         revision,
         clearedEncounterIds,
@@ -438,13 +445,14 @@ function normalizeStoredRegionDelta(
         collectedLootIds,
         completedInteractionIds,
         completedEventIds,
+        chronicle,
         state,
       }
 }
 
 function normalizeRegionDeltas(
   value: unknown,
-): ActiveRunSaveV2['regionDeltas'] | null {
+): ActiveRunSaveV3['regionDeltas'] | null {
   if (!isRecord(value)) return null
   const entries: [string, RegionDelta][] = []
   for (const [regionKey, deltaValue] of Object.entries(value)) {
@@ -458,7 +466,7 @@ function normalizeRegionDeltas(
   return Object.fromEntries(entries)
 }
 
-function normalizeRngStates(value: unknown): ActiveRunSaveV2['rngStates'] | null {
+function normalizeRngStates(value: unknown): ActiveRunSaveV3['rngStates'] | null {
   if (!isRecord(value)) return null
   const entries: [string, number][] = []
   for (const [streamKey, stateValue] of Object.entries(value)) {
@@ -470,7 +478,7 @@ function normalizeRngStates(value: unknown): ActiveRunSaveV2['rngStates'] | null
   return Object.fromEntries(entries)
 }
 
-export function normalizeActiveRunSaveV2(value: unknown): ActiveRunSaveV2 | null {
+export function normalizeActiveRunSaveV3(value: unknown): ActiveRunSaveV3 | null {
   if (!isRecord(value) || value.version !== ACTIVE_RUN_SAVE_VERSION) return null
   const runId = normalizeId(value.runId)
   const config = normalizeConfig(value.config)
@@ -485,6 +493,7 @@ export function normalizeActiveRunSaveV2(value: unknown): ActiveRunSaveV2 | null
   const regionDeltas = normalizeRegionDeltas(value.regionDeltas)
   const directorState = normalizeSerializableState(value.directorState)
   const eventState = normalizeSerializableState(value.eventState)
+  const chronicleState = normalizeChronicleState(value.chronicleState)
   const rngStates = normalizeRngStates(value.rngStates)
   const achievementRunState = normalizeAchievementRunState(value.achievementRunState)
   if (
@@ -502,6 +511,7 @@ export function normalizeActiveRunSaveV2(value: unknown): ActiveRunSaveV2 | null
     !regionDeltas ||
     !directorState ||
     !eventState ||
+    !chronicleState ||
     !rngStates ||
     !achievementRunState ||
     achievementRunState.runId !== runId ||
@@ -529,6 +539,7 @@ export function normalizeActiveRunSaveV2(value: unknown): ActiveRunSaveV2 | null
     regionDeltas,
     directorState,
     eventState,
+    chronicleState,
     rngStates,
     achievementRunState,
   }
@@ -676,10 +687,10 @@ export function createDefaultProfile(): ProfileSaveV1 {
 
 export const createDefaultProfileSave = createDefaultProfile
 
-export function parseActiveRunSaveV2(
+export function parseActiveRunSaveV3(
   raw: string,
   onWarning?: StorageWarning,
-): ActiveRunSaveV2 | null {
+): ActiveRunSaveV3 | null {
   let value: unknown
   try {
     value = JSON.parse(raw)
@@ -687,7 +698,7 @@ export function parseActiveRunSaveV2(
     warn(onWarning, 'Korovany: generated run data could not be parsed.', error)
     return null
   }
-  const normalized = normalizeActiveRunSaveV2(value)
+  const normalized = normalizeActiveRunSaveV3(value)
   if (!normalized) warn(onWarning, 'Korovany: generated run data is incompatible or malformed.')
   return normalized
 }
@@ -708,9 +719,9 @@ export function parseProfileSaveV1(
   return normalized
 }
 
-export const normalizeActiveRunSave = normalizeActiveRunSaveV2
+export const normalizeActiveRunSave = normalizeActiveRunSaveV3
 export const normalizeProfileSave = normalizeProfileSaveV1
-export const parseActiveRunSave = parseActiveRunSaveV2
+export const parseActiveRunSave = parseActiveRunSaveV3
 export const parseProfileSave = parseProfileSaveV1
 
 function readProfileFromStorage(
@@ -730,7 +741,7 @@ function readProfileFromStorage(
 function readActiveRunFromStorage(
   storage: StorageLike,
   onWarning?: StorageWarning,
-): ActiveRunSaveV2 | null {
+): ActiveRunSaveV3 | null {
   let raw: string | null
   try {
     raw = storage.getItem(ACTIVE_RUN_SAVE_KEY)
@@ -738,7 +749,7 @@ function readActiveRunFromStorage(
     warn(onWarning, 'Korovany: generated run data could not be read.', error)
     return null
   }
-  return raw === null ? null : parseActiveRunSaveV2(raw, onWarning)
+  return raw === null ? null : parseActiveRunSaveV3(raw, onWarning)
 }
 
 function profileHasFinalizedRun(profile: ProfileSaveV1, runId: string): boolean {
@@ -760,7 +771,7 @@ function removeStoredRunIfMatching(
 export function loadActiveRun(
   storage: StorageLike,
   onWarning?: StorageWarning,
-): ActiveRunSaveV2 | null {
+): ActiveRunSaveV3 | null {
   const activeRun = readActiveRunFromStorage(storage, onWarning)
   if (!activeRun) return null
   if (activeRun.status !== 'active') {
@@ -777,10 +788,10 @@ export function loadActiveRun(
 
 export function saveActiveRun(
   storage: StorageLike,
-  value: ActiveRunSaveV2,
+  value: ActiveRunSaveV3,
   onWarning?: StorageWarning,
 ): boolean {
-  const normalized = normalizeActiveRunSaveV2(value)
+  const normalized = normalizeActiveRunSaveV3(value)
   if (!normalized || normalized.status !== 'active') {
     warn(onWarning, 'Korovany: refused to save malformed or closed generated run data.')
     return false
@@ -856,9 +867,9 @@ export function removeProfile(
 export const loadActiveRunSave = loadActiveRun
 export const saveActiveRunSave = saveActiveRun
 export const removeActiveRunSave = removeActiveRun
-export const loadActiveRunSaveV2 = loadActiveRun
-export const saveActiveRunSaveV2 = saveActiveRun
-export const removeActiveRunSaveV2 = removeActiveRun
+export const loadActiveRunSaveV3 = loadActiveRun
+export const saveActiveRunSaveV3 = saveActiveRun
+export const removeActiveRunSaveV3 = removeActiveRun
 export const loadProfileSave = loadProfile
 export const saveProfileSave = saveProfile
 export const removeProfileSave = removeProfile
@@ -909,7 +920,7 @@ function finalizationResult(
 }
 
 function buildRunHistorySummary(
-  terminalSnapshot: ActiveRunSaveV2,
+  terminalSnapshot: ActiveRunSaveV3,
   options: FinalizeRunSnapshotOptions,
 ): { summary: RunHistorySummary; reward: number } {
   const endedDate = options.now?.()
@@ -950,7 +961,7 @@ function buildRunHistorySummary(
 
 export function finalizeRunSnapshot(
   storage: StorageLike,
-  terminalSnapshot: ActiveRunSaveV2,
+  terminalSnapshot: ActiveRunSaveV3,
   options: FinalizeRunSnapshotOptions = {},
 ): FinalizeRunSnapshotResult {
   const profile = readProfileFromStorage(storage, options.onWarning)
@@ -958,7 +969,7 @@ export function finalizeRunSnapshot(
     return finalizationResult('storage-error', createDefaultProfile())
   }
 
-  const normalized = normalizeActiveRunSaveV2(terminalSnapshot)
+  const normalized = normalizeActiveRunSaveV3(terminalSnapshot)
   if (!normalized) {
     warn(options.onWarning, 'Korovany: refused malformed generated run finalization data.')
     return finalizationResult('invalid-input', profile)

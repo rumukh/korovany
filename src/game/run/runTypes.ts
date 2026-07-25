@@ -6,11 +6,14 @@ import type {
   Objective,
   UpgradeLevels,
 } from '../types'
+import type { ChronicleState } from '../world/Chronicle.ts'
 import type { RegionDelta } from '../world/RegionRuntime.ts'
 
-export type { RegionDelta }
+export type { ChronicleState, RegionDelta }
 
-export const ACTIVE_RUN_SAVE_VERSION = 2 as const
+export const ACTIVE_RUN_SAVE_VERSION = 3 as const
+// The key deliberately does not track the format version: keeping one slot means a
+// stale save is read, rejected by normalization, and reported — not silently orphaned.
 export const ACTIVE_RUN_SAVE_KEY = 'korovany-generated-run-v2'
 export const ACTIVE_RUN_STORAGE_KEY = ACTIVE_RUN_SAVE_KEY
 export const ACTIVE_GENERATED_RUN_SAVE_KEY = ACTIVE_RUN_SAVE_KEY
@@ -71,8 +74,8 @@ export interface RunCompanionState {
 export type RegionDeltaMap = Record<string, RegionDelta>
 export type RuntimeRngStateMap = Record<string, number>
 
-export interface ActiveRunSaveV2 {
-  version: 2
+export interface ActiveRunSaveV3 {
+  version: 3
   runId: string
   config: RunConfig
   status: RunStatus
@@ -86,6 +89,7 @@ export interface ActiveRunSaveV2 {
   regionDeltas: RegionDeltaMap
   directorState: SerializableState
   eventState: SerializableState
+  chronicleState: ChronicleState
   rngStates: RuntimeRngStateMap
   achievementRunState: AchievementRunState
 }

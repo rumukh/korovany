@@ -18,7 +18,7 @@ Five layers, each independently shippable:
 
 | Layer | Name | Summary |
 | --- | --- | --- |
-| 1 | **Хроника** (Chronicle) | Data-only tick over all 25 regions. No meshes, no actors. |
+| 1 | **Хроника** (Chronicle) | Data-only tick over all 25 regions. No meshes, no actors. **Implemented.** |
 | 2 | **Materialization** | Chronicle events become 3D only when the player is near. |
 | 3 | **Fauna** | Beasts and civilians as non-playable allegiances. |
 | 4 | **NPC AI** | Perception, morale, threat scoring, flanking, commander orders. |
@@ -42,8 +42,8 @@ Layers 2–5 build on.
 | Actor AI | `updateActors` | Sense range 15 m (18 m archers); NPC-vs-NPC hunt radius 6.5 m (15 m archers); no morale. |
 | Hostility | `hostile(a, b) => a !== b` | Any two different factions are hostile. Three factions only. |
 | Caravan | `updateCaravan` | Patrols the generated road network between two patrol anchors. |
-| Determinism | `RandomStream` + `deriveSeed` | Four gameplay streams: `combat`, `director`, `event`, `loot`. |
-| Save | `ActiveRunSaveV2` (`run/runTypes.ts:74-91`) | Includes `regionDeltas`, `directorState`, `eventState`, `rngStates`. |
+| Determinism | `RandomStream` + `deriveSeed` | Five gameplay streams: `combat`, `director`, `event`, `loot`, `chronicle`. |
+| Save | `ActiveRunSaveV3` (`run/runTypes.ts`) | Includes `regionDeltas`, `directorState`, `eventState`, `chronicleState`, `rngStates`. |
 
 ## 3. Design rules
 
@@ -78,12 +78,12 @@ on `RegionDelta`, not an untyped entry in `deltaState`. `REGION_DELTA_VERSION` i
 bumped to `2`; saves that fail normalization are discarded, not migrated.
 
 ```ts
-// world/RegionRuntime.ts
+// world/Chronicle.ts, re-exported from world/RegionRuntime.ts
 export interface RegionChronicleState {
   control: Territory                  // mutable; seeded from blueprint.territory
   pressure: Record<Faction, number>   // 0..1 military pressure
   beastPressure: number               // 0..1
-  settlementIntegrity: number         // 0..100, per settlement site in the region
+  settlementIntegrity: number         // 0..100, aggregate over the region's settlement sites
   supply: number                      // 0..1, drives shop stock and prices
   lastEventTick: number
 }
@@ -95,10 +95,19 @@ export interface RegionDelta {
 }
 ```
 
+`settlementIntegrity` covers every civilian site in the region —
+`CHRONICLE_SETTLEMENT_SITE_KINDS = ['settlement', 'shop', 'recovery']`. A generated
+world contains exactly one of each, so a region without one simply stays at `100`.
+
+`RegionManager.getRegionChronicle` / `setRegionChronicle` are the read/write seam; the
+engine keeps the live map and flushes it into the deltas inside `saveGeneratedRun()`.
+
 ### 4.3 World-level state
 
 Cross-region data that belongs to no single region lives in a new `chronicleState`
-block on the run save, alongside `directorState` and `eventState`:
+block on the run save, alongside `directorState` and `eventState`. The run save becomes
+`ActiveRunSaveV3` (`ACTIVE_RUN_SAVE_VERSION = 3`); the storage key is unchanged so a
+stale v2 blob is read, rejected, and reported rather than silently orphaned.
 
 ```ts
 export interface ChronicleCaravan {
@@ -111,6 +120,15 @@ export interface ChronicleCaravan {
   intact: boolean
 }
 
+export interface ChronicleEvent {
+  id: string
+  tick: number
+  kind: 'regionCaptured' | 'beastRaid' | 'settlementBurned' | 'caravanLost' | 'caravanArrived'
+  regionId: RegionId
+  faction: Faction | null
+  siteId: SiteId | null
+}
+
 export interface ChronicleState {
   tick: number
   factionStrength: Record<Faction, number>   // 0..1
@@ -119,59 +137,78 @@ export interface ChronicleState {
 }
 ```
 
-`log` is capped at `CHRONICLE_LOG_LIMIT = 40` entries so the save stays bounded.
+`log` is capped at `CHRONICLE_LOG_LIMIT = 40` entries so the save stays bounded. The log
+stores **structured** events, not sentences: the Russian copy is rendered from
+`content/gameCopy.ts` when the view is built, so wording can change without a save bump.
 
 ### 4.4 Tick rules
 
 All rolls use `chronicleRng = new RandomStream(deriveSeed(blueprint.seed, 'gameplay:chronicle'))`,
 whose state is persisted in `rngStates.chronicle` exactly like the four existing streams.
+`tickChronicle()` is a pure function of `(blueprint, state, regions, rng, environment)`,
+so an identical seed and environment sequence always replays an identical history.
 
-**1. Faction fronts.** For each road connection in `blueprint.roads`, compare the
-attacker's `pressure` in the source region against the defender's in the target region.
-Pressure grows toward `factionStrength[faction]` in regions a faction controls and
-decays elsewhere. When attacker pressure exceeds defender pressure by
-`CONTROL_FLIP_MARGIN`, `control` flips and a `regionCaptured` event is logged.
+> **Environment caveat.** `nightFactor` comes from `dayPhase`, which is derived from
+> `elapsed` and therefore deterministic. `stormFactor` comes from the live weather
+> system, which is seeded from `Date.now()` — a pre-existing property of the weather
+> system, not of the chronicle. The chronicle stream itself is fully deterministic and
+> is asserted as such in `tests/chronicle.test.ts`.
 
-The player's own faction gains strength from completed objectives, so the campaign and
-the chronicle reinforce each other rather than running in parallel.
+**1. Faction fronts.** Pressure grows toward `factionStrength[faction]` in regions a
+faction controls and decays elsewhere. For each road segment in `blueprint.roads` the
+attacker's `pressure` in the source region is compared against the defender's in the
+target region; the defender also loses `PRESSURE_ATTRITION` per hostile neighbour, so a
+region surrounded by enemies is ground down rather than deadlocked. When attacker
+pressure exceeds defender pressure by `CONTROL_FLIP_MARGIN` a weighted roll flips
+`control` and logs `regionCaptured`. A region that just changed hands or was raided is
+immune for `CONTROL_FLIP_COOLDOWN_TICKS`, which also prevents a region flipping twice in
+one tick. `factionStrength` is `STRENGTH_BASE` plus a share of the map held plus, for
+the player's faction, a share of completed objectives — so the campaign and the
+chronicle reinforce each other rather than running in parallel.
 
 **2. Beast pressure.** Grows per tick in `forest` and `fort` biomes, scaled up at night
-(`dayPhase`) and during `rain` / `snow` weather, and decays in regions under faction
-control. Above `BEAST_RAID_THRESHOLD` it triggers a `beastRaid` against a settlement in
-that region and resets to a partial value.
+(`dayPhase`) and during `rain` / `snow` weather, and decays by `BEAST_CONTROL_DECAY` in
+regions under faction control. Above `BEAST_RAID_THRESHOLD` it triggers a `beastRaid`
+against a settlement in that region and resets to `BEAST_RAID_RESET`.
 
 **3. Settlement integrity.** A raid — faction or beast — drops
 `settlementIntegrity`. At `0` the settlement is `разорено`: its shop and recovery
-functions go offline, its marker changes, and `settlementBurned` is logged. Integrity
-regenerates slowly while the region is uncontested.
+functions go offline, its prefab reads as burned, and `settlementBurned` is logged.
+Integrity regenerates slowly after `SETTLEMENT_CALM_TICKS` without an event, but a
+region that reached `0` stays razed for the rest of the run.
 
 **4. Caravans.** Each tick, caravans advance `progress` along their `regionPath`.
-Traversing a region whose `control` is hostile to the caravan's owner, or whose
-`beastPressure` is high, rolls an interception. A lost caravan sets `intact = false`
-and reduces the destination region's `supply`. Arrivals raise it. New caravans spawn
-between settlement sites when fewer than `CHRONICLE_CARAVAN_LIMIT` are in transit.
+**Entering** a region whose `control` is hostile to the caravan's owner, or whose
+`beastPressure` is at least `CARAVAN_BEAST_THRESHOLD`, rolls an interception — a quiet
+friendly corridor is simply safe. A lost caravan sets `intact = false` and reduces the
+destination region's `supply`; arrivals raise it. New caravans spawn along road
+connections that touch a trading site (settlement, shop, healer) when fewer than
+`CHRONICLE_CARAVAN_LIMIT` are in transit.
 
 ### 4.5 Effects the player can feel
 
 | Chronicle state | Player-visible effect |
 | --- | --- |
-| `control` | Minimap territory colour; `WorldMapRegion.territory` now reads chronicle control instead of blueprint territory. |
-| `control` | Encounter faction composition when a region is next simulated. |
-| `beastPressure` | Frequency of beast encounters (Layer 3) and ambient growls. |
-| `settlementIntegrity` | Scorched prefab, offline shop/recovery, aftermath props. |
-| `supply` | Shop prices scale by `1 + (1 - supply) * SUPPLY_PRICE_SWING`. |
-| `log` | News feed entries and map overlays. |
+| `control` | Minimap territory colour; `WorldMapRegion.territory` reads chronicle control instead of blueprint territory. |
+| `control` | Encounter faction composition: a flipped region's encounter plans are rebuilt against its new owner before it is next simulated. |
+| `beastPressure` | Frequency of beast encounters (Layer 3), caravan interception risk. |
+| `settlementIntegrity` | Scorched prefab, offline shop/recovery, hatched map tile. |
+| `supply` | Shop prices scale by `1 + (1 - supply) * SUPPLY_PRICE_SWING`, surfaced as `GameView.shopPriceMultiplier`. |
+| `log` | «Хроника» feed entries, notices, and map overlays. |
 
 ### 4.6 UI
 
-- **News feed.** `App.tsx` currently has only transient `Notice` toasts that expire
-  after 4.3 s and no history. Add a compact, collapsible **«Хроника»** panel fed by
-  `GameView.chronicle`, showing the most recent entries with region coordinates. Only
-  events in **discovered** regions are shown, so it doubles as a fog-of-war reward.
-- **Map overlays.** Contested regions get a hatched overlay; burned settlements get a
-  distinct marker. Reuse the existing `generated-map-region` grid.
-- **Notices.** High-salience chronicle events (a region the player has visited flipping
-  control, a settlement they traded at burning) also raise a normal `onNotice`.
+- **News feed.** `App.tsx` previously had only transient `Notice` toasts that expire
+  after 4.3 s and no history. A compact, collapsible **«Хроника»** panel now sits under
+  the minimap, fed by `GameView.chronicle`, showing the most recent entries with their
+  map square. Only events in **discovered** regions are shown, so it doubles as a
+  fog-of-war reward — an unexplored world starts with an empty feed by design.
+- **Map overlays.** Regions on a front line — control differing from a road-connected
+  neighbour — get a hatched overlay and crossed swords; razed regions get a scorched
+  tint and a flame. Both reuse the existing `generated-map-region` grid.
+- **Notices.** High-salience chronicle events (a region flipping control, a settlement
+  burning, a caravan lost) in a discovered region also raise a normal `onNotice`,
+  capped at two per tick batch.
 
 ### 4.7 Copy
 
@@ -182,17 +219,21 @@ absurd, censored. Anchored in original spec motifs — «корованы», «�
 Examples:
 
 ```
-Гвардия выжгла эльфийский лагерь в квадрате C3. Домики деревяные больше не деревяные.
-Корован из Лавки не доехал. Кто-то ограбил корован раньше пользователя.
+Квадрат C3 отжали: теперь там охрана дворца. Местным объяснили, что надо слушаться нового командира.
+Корован до точки «Лавка» не доехал: в квадрате D2 его ограбили раньше пользователя.
 В квадрате B2 зверьё осмелело. Местные предпочитают не выходить.
 ```
 
 Chronicle copy lives in `content/gameCopy.ts` next to `createGeneratedObjectiveText`,
 not hardcoded in `GameEngine.ts` the way the five existing event builders are.
+`describeChronicleEvent` picks between phrasings using a stable hash of the event id, so
+a given seeded history always reads the same way.
 
 ## 5. Contracts fixed now for Layers 2–5
 
-These are small changes that unblock later layers and should land with Layer 1.
+> **Status: not implemented.** Layer 1 is pure data and does not need any of this, so
+> §5 was deliberately deferred rather than landing alongside it. Everything below is
+> still outstanding.
 
 ### 5.1 Actor budget allocator
 
@@ -239,6 +280,8 @@ those tables.
 
 ## 6. Tuning constants
 
+Spec constants, unchanged from the design pass:
+
 ```
 CHRONICLE_TICK_SECONDS=8        CHRONICLE_LOG_LIMIT=40
 CONTROL_FLIP_MARGIN=0.18        PRESSURE_GROWTH=0.06     PRESSURE_DECAY=0.03
@@ -249,16 +292,39 @@ CHRONICLE_CARAVAN_LIMIT=3       CARAVAN_INTERCEPT_BASE=0.12
 DEFEND_HOME_MAX_DISTANCE=95
 ```
 
+Constants added while implementing Layer 1, because the design pass left the rules
+underspecified once real numbers were plugged in:
+
+```
+PRESSURE_ATTRITION=0.015        CONTROL_FLIP_COOLDOWN_TICKS=3
+STRENGTH_BASE=0.25              STRENGTH_TERRITORY_SHARE=0.45
+STRENGTH_OBJECTIVE_SHARE=0.3
+BEAST_CONTROL_DECAY=0.02        BEAST_RAID_RESET=0.35
+SETTLEMENT_CALM_TICKS=4
+SUPPLY_BASELINE=0.6             SUPPLY_DRIFT=0.04
+SUPPLY_CARAVAN_GAIN=0.14        SUPPLY_CARAVAN_LOSS=0.19
+CARAVAN_HOSTILE_RISK=0.18       CARAVAN_BEAST_RISK=0.2
+CARAVAN_BEAST_THRESHOLD=0.5     CARAVAN_PROGRESS_PER_TICK=0.18
+CHRONICLE_MAX_CATCHUP_TICKS=8   CHRONICLE_FEED_LIMIT=8
+```
+
+Without `PRESSURE_ATTRITION` the fronts deadlock: every faction's pressure converges on
+its own `factionStrength`, so the gap never reaches `CONTROL_FLIP_MARGIN` and no region
+ever changes hands until the player has completed most of the campaign.
+
 ## 7. Edge cases
 
 - **Fog of war.** Chronicle events in undiscovered regions still happen; they are just
   not shown. Discovering a region reveals its current state, not its history.
-- **Player's own region.** The chronicle never flips control of, or burns, a settlement
-  in a region that is currently simulated — Layer 2 materializes that as a real fight
-  instead, so the player never watches a building change state from thin air.
+- **Player's own region.** The chronicle never flips control of, or burns a settlement
+  in, a region that is currently simulated — Layer 2 materializes that as a real fight
+  instead, so the player never watches a building change state from thin air. Beast
+  pressure still accumulates there, so the reckoning waits for them to leave.
 - **Campaign safety.** `faction-start` and `final-stronghold` sites are never destroyed
   and their regions never flip, so a generated campaign always remains completable.
-  `WorldValidator` gains an assertion for this.
+  `WorldValidator` asserts that every mapped start and finale region is in
+  `getChronicleProtectedRegionIds`, so weakening the protection list breaks the
+  500-seed campaign test rather than shipping silently.
 - **Victory / defeat.** The chronicle stops ticking when the run ends.
 - **Save during a chronicle tick.** Ticks are atomic within one `update()` call, so a
   save always captures a coherent state.
@@ -270,25 +336,28 @@ DEFEND_HOME_MAX_DISTANCE=95
 
 ## 8. Acceptance criteria
 
-- [ ] The chronicle ticks over all 25 regions regardless of player position, at a
+- [x] The chronicle ticks over all 25 regions regardless of player position, at a
       measured cost under 1 ms per tick, with no per-frame cost.
-- [ ] Region control changes hands over a long run; the minimap reflects it; encounter
+- [x] Region control changes hands over a long run; the minimap reflects it; encounter
       composition in a flipped region matches its new owner.
-- [ ] Beast pressure rises at night and in storms and falls under faction control.
-- [ ] A settlement can be reduced to `разорено`; its shop and recovery go offline and
+- [x] Beast pressure rises at night and in storms and falls under faction control.
+- [x] A settlement can be reduced to `разорено`; its shop and recovery go offline and
       its prefab reads as burned.
-- [ ] Losing caravans raises prices at the destination settlement.
-- [ ] The «Хроника» feed shows recent events for discovered regions only.
-- [ ] The same seed produces an identical chronicle history over a fixed tick count.
-- [ ] Chronicle state survives save → load through `RegionDelta.chronicle` and
+- [x] Losing caravans raises prices at the destination settlement.
+- [x] The «Хроника» feed shows recent events for discovered regions only.
+- [x] The same seed produces an identical chronicle history over a fixed tick count.
+- [x] Chronicle state survives save → load through `RegionDelta.chronicle` and
       `ChronicleState`; malformed saves are rejected, not migrated.
-- [ ] Campaign start and finale regions never flip and their sites are never destroyed;
-      500 seeded campaigns remain completable.
+- [x] Campaign start and finale regions never flip and their sites are never destroyed;
+      500 seeded campaigns remain completable. `WorldValidator` asserts that every
+      campaign anchor region is chronicle-protected.
 - [ ] Actor count never exceeds `MAX_ACTORS`; ambient actors yield first.
-- [ ] `npm run build`, `npm run lint`, and `npm test` pass.
+      *(Deferred with §5.1 — Layer 1 spawns no actors.)*
+- [x] `npm run build`, `npm run lint`, and `npm test` pass.
 
 ## 9. Effort
 
-**Layer 1: ~2–3 days.** The tick rules and the save/versioning work are the bulk; the
-feed and map overlays are the fiddly bits.
+**Layer 1: shipped.** The tick rules and the save/versioning work were the bulk; the
+feed and map overlays were the fiddly bits.
 Layer 2 ~2 days, Layer 3 ~3 days (new meshes and AI), Layer 4 ~3 days, Layer 5 ~1 day.
+§5's contracts remain outstanding and should land with Layer 2.

@@ -1,5 +1,6 @@
 import { hashString32 } from '../random/seed.ts'
 import type { Faction, ZoneId } from '../types.ts'
+import { getChronicleProtectedRegionIds } from './Chronicle.ts'
 import {
   DEFAULT_REGION_SIZE,
   WORLD_BIOMES,
@@ -622,6 +623,7 @@ function validateSites(
 
   const mappedStarts = new Set<string>()
   const mappedFinales = new Set<string>()
+  const chronicleAnchorRegionIds = getChronicleProtectedRegionIds(blueprint)
   for (const faction of WORLD_FACTIONS) {
     const startId = blueprint.starts?.[faction]
     const finaleId = blueprint.finales?.[faction]
@@ -698,6 +700,22 @@ function validateSites(
         'site.finaleTerritory',
         `finales.${faction}`,
         'Faction finale must be in hostile non-neutral territory',
+      )
+    }
+    // The chronicle may never capture or raze a campaign anchor, or a generated
+    // campaign could become uncompletable once the world starts simulating.
+    if (start && !chronicleAnchorRegionIds.has(String(start.regionId))) {
+      context.add(
+        'site.startChronicleAnchor',
+        `starts.${faction}`,
+        'Faction start region must be protected from chronicle capture',
+      )
+    }
+    if (finale && !chronicleAnchorRegionIds.has(String(finale.regionId))) {
+      context.add(
+        'site.finaleChronicleAnchor',
+        `finales.${faction}`,
+        'Faction finale region must be protected from chronicle capture',
       )
     }
   }

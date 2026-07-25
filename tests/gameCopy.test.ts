@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  chronicleEventTone,
   createGeneratedObjectiveText,
+  describeChronicleEvent,
+  formatRegionGridLabel,
   formatRussianCount,
 } from '../src/game/content/gameCopy.ts'
 import { SITE_PRESENTATIONS } from '../src/game/content/registry.ts'
+import type { ChronicleEventKind } from '../src/game/world/Chronicle.ts'
 import type {
   ObjectiveKind,
   SiteKind,
@@ -70,4 +74,70 @@ test('Russian count forms handle singular, paucal, plural, and teen endings', ()
       '112 врагов',
     ],
   )
+})
+
+const chronicleKinds = [
+  'regionCaptured',
+  'beastRaid',
+  'settlementBurned',
+  'caravanLost',
+  'caravanArrived',
+] as const satisfies readonly ChronicleEventKind[]
+
+test('region grid labels read as map squares', () => {
+  assert.deepEqual(
+    [
+      formatRegionGridLabel(0, 0),
+      formatRegionGridLabel(2, 2),
+      formatRegionGridLabel(1, 1),
+      formatRegionGridLabel(4, 4),
+    ],
+    ['A1', 'C3', 'B2', 'E5'],
+  )
+})
+
+test('chronicle copy is deterministic, censored, and names the map square', () => {
+  const banned = /\b(бля|хер|нах|сука)/i
+  for (const kind of chronicleKinds) {
+    for (const variant of ['alpha', 'beta', 'gamma', 'delta', 'epsilon']) {
+      const context = {
+        kind,
+        regionLabel: 'C3',
+        faction: 'guard' as const,
+        siteLabel: 'Домики деревяные',
+      }
+      const text = describeChronicleEvent(context, variant)
+      assert.equal(describeChronicleEvent(context, variant), text)
+      assert.ok(text.length > 20, `${kind}/${variant} is too terse: ${text}`)
+      assert.equal(banned.test(text), false, `${kind}/${variant} is not censored`)
+      assert.ok(/[.!?]$/.test(text), `${kind}/${variant} is not a full sentence`)
+    }
+  }
+
+  const squares = chronicleKinds.map((kind) =>
+    describeChronicleEvent(
+      { kind, regionLabel: 'B2', faction: 'elf', siteLabel: 'Лавка' },
+      'square-check',
+    ),
+  )
+  assert.ok(squares.every((text) => text.includes('B2') || text.includes('Лавка')))
+})
+
+test('chronicle copy survives missing faction and site metadata', () => {
+  for (const kind of chronicleKinds) {
+    const text = describeChronicleEvent(
+      { kind, regionLabel: 'A1', faction: null, siteLabel: null },
+      `${kind}:bare`,
+    )
+    assert.equal(text.includes('null'), false)
+    assert.equal(text.includes('undefined'), false)
+  }
+})
+
+test('chronicle tones escalate with how much the news hurts', () => {
+  assert.equal(chronicleEventTone('caravanArrived'), 'info')
+  assert.equal(chronicleEventTone('regionCaptured'), 'warning')
+  assert.equal(chronicleEventTone('beastRaid'), 'warning')
+  assert.equal(chronicleEventTone('settlementBurned'), 'danger')
+  assert.equal(chronicleEventTone('caravanLost'), 'danger')
 })

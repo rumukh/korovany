@@ -1,6 +1,7 @@
 import type {
   RegionBlueprint,
   RegionId,
+  Territory,
   WorldBlueprint,
 } from './worldTypes.ts'
 import {
@@ -12,6 +13,12 @@ import {
   type WorldLayout,
 } from './TerrainSystem.ts'
 import {
+  cloneRegionChronicleState,
+  createRegionChronicleState,
+  type RegionChronicleState,
+} from './Chronicle.ts'
+import {
+  REGION_DELTA_VERSION,
   RegionRuntime,
   normalizeRegionDelta,
   type RegionDelta,
@@ -383,6 +390,25 @@ export class RegionManager {
     return true
   }
 
+  getRegionChronicle(regionId: RegionId): RegionChronicleState | undefined {
+    const region = this.resolveRegion(regionId)
+    if (!region) return undefined
+    const delta = this.readCurrentDelta(region)
+    return cloneRegionChronicleState(delta.chronicle)
+  }
+
+  setRegionChronicle(
+    regionId: RegionId,
+    chronicle: RegionChronicleState,
+  ): boolean {
+    const region = this.resolveRegion(regionId)
+    if (!region || this.disposed) return false
+    const next = cloneDelta(this.readCurrentDelta(region))
+    next.chronicle = cloneRegionChronicleState(chronicle)
+    next.revision += 1
+    return this.applyRegionDelta(region.id, next)
+  }
+
   saveState(): RegionManagerSave {
     for (const [, runtime] of this.sortedRuntimeEntries()) {
       this.saveRuntimeDelta(runtime)
@@ -454,9 +480,11 @@ export class RegionManager {
       }
     }
     for (const [regionId, runtime] of this.sortedRuntimeEntries()) {
+      const region = this.resolveRegion(regionId)
       const replacement =
-        replacementDeltas.get(regionId) ?? createEmptyDelta(regionId)
-      runtime.applyDelta(cloneDelta(replacement))
+        replacementDeltas.get(regionId) ??
+        (region ? createEmptyDelta(region) : undefined)
+      if (replacement) runtime.applyDelta(cloneDelta(replacement))
     }
 
     if (current) this.currentRegion = current.id
@@ -549,6 +577,14 @@ export class RegionManager {
     if (delta) this.deltas.set(region.id, cloneDelta(delta))
   }
 
+  private readCurrentDelta(region: NormalizedRegion): RegionDelta {
+    const runtime = this.runtimes.get(region.id)
+    const live = runtime
+      ? normalizeRegionDelta(runtime.extractDelta(), region.id)
+      : null
+    return live ?? this.deltas.get(region.id) ?? createEmptyDelta(region)
+  }
+
   private getUpdateSnapshot(): RegionManagerUpdate {
     return {
       ...(this.currentRegion === undefined
@@ -629,14 +665,15 @@ function cloneDelta(delta: RegionDelta): RegionDelta {
     collectedLootIds: [...delta.collectedLootIds],
     completedInteractionIds: [...delta.completedInteractionIds],
     completedEventIds: [...delta.completedEventIds],
+    chronicle: cloneRegionChronicleState(delta.chronicle),
     state: JSON.parse(JSON.stringify(delta.state)) as RegionDelta['state'],
   }
 }
 
-function createEmptyDelta(regionId: RegionId): RegionDelta {
+function createEmptyDelta(region: NormalizedRegion): RegionDelta {
   return {
-    version: 1,
-    regionId,
+    version: REGION_DELTA_VERSION,
+    regionId: region.id,
     revision: 0,
     clearedEncounterIds: [],
     defeatedActorIds: [],
@@ -644,8 +681,16 @@ function createEmptyDelta(regionId: RegionId): RegionDelta {
     collectedLootIds: [],
     completedInteractionIds: [],
     completedEventIds: [],
+    chronicle: createRegionChronicleState(readRegionTerritory(region)),
     state: {},
   }
+}
+
+function readRegionTerritory(region: NormalizedRegion): Territory {
+  const territory = (region.blueprint as { territory?: unknown } | undefined)?.territory
+  return territory === 'elf' || territory === 'guard' || territory === 'villain'
+    ? territory
+    : 'neutral'
 }
 
 function asRecord(value: unknown): UnknownRecord | undefined {

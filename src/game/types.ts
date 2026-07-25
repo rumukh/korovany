@@ -174,6 +174,16 @@ export interface WorldMapRegion {
   territory: Faction | 'neutral'
   discovered: boolean
   current: boolean
+  contested: boolean
+  razed: boolean
+}
+
+export interface ChronicleEntryView {
+  id: string
+  tick: number
+  regionLabel: string
+  text: string
+  tone: NoticeTone
 }
 
 export interface WorldMapView {
@@ -200,6 +210,8 @@ export interface GameView {
   prompt: string
   markers: MapMarker[]
   worldMap: WorldMapView
+  chronicle: ChronicleEntryView[]
+  shopPriceMultiplier: number
   squad: number
   elapsed: number
   pointerLocked: boolean
@@ -376,9 +388,17 @@ export function normalizeUpgradeLevels(value?: unknown): UpgradeLevels {
   }
 }
 
-export function getShopItemPrice(item: ShopItem, levels: UpgradeLevels): number {
-  if (!item.upgrade) return item.price
-  return item.price + (item.priceStep ?? 0) * levels[item.upgrade]
+export function getShopItemPrice(
+  item: ShopItem,
+  levels: UpgradeLevels,
+  priceMultiplier = 1,
+): number {
+  const base = item.upgrade
+    ? item.price + (item.priceStep ?? 0) * levels[item.upgrade]
+    : item.price
+  const multiplier =
+    Number.isFinite(priceMultiplier) && priceMultiplier > 0 ? priceMultiplier : 1
+  return Math.max(1, Math.round(base * multiplier))
 }
 
 export function getMaxHealth(levels: UpgradeLevels): number {

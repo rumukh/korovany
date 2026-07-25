@@ -3,11 +3,14 @@ import {
   Bone,
   Castle,
   Check,
+  ChevronDown,
+  ChevronUp,
   Clock3,
   CloudRain,
   Coins,
   Eye,
   Flag,
+  Flame,
   Footprints,
   Hand,
   Heart,
@@ -19,11 +22,13 @@ import {
   Play,
   RotateCcw,
   Save,
+  ScrollText,
   Shield,
   Skull,
   Sparkles,
   Sword,
   Sun,
+  Swords,
   Trees,
   Trophy,
   UserRound,
@@ -87,6 +92,11 @@ import {
   getThreatTier,
   normalizeUpgradeLevels,
 } from './game/types'
+import {
+  getContestedRegionIds,
+  isRegionRazed,
+  type RegionChronicleState,
+} from './game/world/Chronicle'
 import { isMapMarkerVisible, projectMapMarker } from './game/mapMarkers'
 import {
   createGeneratedObjectiveText,
@@ -111,7 +121,7 @@ import {
   type StorageWarning,
 } from './game/run/storage'
 import type {
-  ActiveRunSaveV2,
+  ActiveRunSaveV3,
   ProfileSaveV1,
   RunConfig,
   RunHistorySummary,
@@ -148,7 +158,7 @@ const INK_OUTLINES_ENABLED_KEY = 'korovany-ink-outlines'
 const SCREEN_SHAKE_ENABLED_KEY = 'korovany-screen-shake'
 const FOLIAGE_QUALITY_KEY = 'korovany-foliage'
 
-const generatedRunStatusLabels: Record<ActiveRunSaveV2['status'], string> = {
+const generatedRunStatusLabels: Record<ActiveRunSaveV3['status'], string> = {
   active: 'В пути',
   victory: 'Победа',
   defeat: 'Поражение',
@@ -173,7 +183,7 @@ const warnRunStorage: StorageWarning = (message, error) => {
   else console.warn(message, error)
 }
 
-function readActiveGeneratedRun(): ActiveRunSaveV2 | null {
+function readActiveGeneratedRun(): ActiveRunSaveV3 | null {
   try {
     return loadActiveRun(window.localStorage, warnRunStorage)
   } catch (error) {
@@ -182,7 +192,7 @@ function readActiveGeneratedRun(): ActiveRunSaveV2 | null {
   }
 }
 
-function writeActiveGeneratedRun(value: ActiveRunSaveV2): boolean {
+function writeActiveGeneratedRun(value: ActiveRunSaveV3): boolean {
   try {
     return saveActiveRun(window.localStorage, value, warnRunStorage)
   } catch (error) {
@@ -221,7 +231,7 @@ function writePlayerProfile(value: ProfileSaveV1): boolean {
   }
 }
 
-function finalizeGeneratedRunSnapshot(snapshot: ActiveRunSaveV2) {
+function finalizeGeneratedRunSnapshot(snapshot: ActiveRunSaveV3) {
   try {
     return finalizeRunSnapshot(window.localStorage, snapshot, {
       onWarning: warnRunStorage,
@@ -461,6 +471,11 @@ function createGeneratedInitialView(launch: GeneratedRunLaunch): GameView {
   const elapsed = serializableNumber(restored?.directorState.elapsed)
   const discovered = new Set(restored?.discoveredRegionIds ?? [])
   discovered.add(currentRegion.id)
+  const chronicleRegions = new Map<string, RegionChronicleState>()
+  for (const [regionId, delta] of Object.entries(restored?.regionDeltas ?? {})) {
+    chronicleRegions.set(regionId, delta.chronicle)
+  }
+  const contestedRegionIds = getContestedRegionIds(blueprint, chronicleRegions)
 
   if (!restored && boon.revealAdjacentRegions) {
     for (const region of blueprint.regions) {
@@ -507,16 +522,23 @@ function createGeneratedInitialView(launch: GeneratedRunLaunch): GameView {
       currentRegionId: currentRegion.id,
       seed: blueprint.seed,
       generatorVersion: blueprint.generatorVersion,
-      regions: blueprint.regions.map((region) => ({
-        id: region.id,
-        gridX: region.coordinate.x,
-        gridZ: region.coordinate.y,
-        biome: region.biome,
-        territory: region.territory,
-        discovered: discovered.has(region.id),
-        current: region.id === currentRegion.id,
-      })),
+      regions: blueprint.regions.map((region) => {
+        const chronicle = restored?.regionDeltas[region.id]?.chronicle
+        return {
+          id: region.id,
+          gridX: region.coordinate.x,
+          gridZ: region.coordinate.y,
+          biome: region.biome,
+          territory: chronicle?.control ?? region.territory,
+          discovered: discovered.has(region.id),
+          current: region.id === currentRegion.id,
+          contested: contestedRegionIds.has(region.id),
+          razed: isRegionRazed(chronicle),
+        }
+      }),
     },
+    chronicle: [],
+    shopPriceMultiplier: 1,
     squad: 0,
     elapsed,
     pointerLocked: false,
@@ -575,8 +597,15 @@ function MiniMap({ view }: { view: GameView }) {
       </div>
       <div className="minimap generated-world-map">
         {view.worldMap.regions.map((region) => {
+          const stateNote = !region.discovered
+            ? ''
+            : region.razed
+              ? ' · разорено'
+              : region.contested
+                ? ' · спорный'
+                : ''
           const title = region.discovered
-            ? `${ZONE_INFO[region.biome].name} · ${territoryLabels[region.territory]}`
+            ? `${ZONE_INFO[region.biome].name} · ${territoryLabels[region.territory]}${stateNote}`
             : 'Неизведанный регион'
           return (
             <div
@@ -584,7 +613,9 @@ function MiniMap({ view }: { view: GameView }) {
                 region.discovered
                   ? `discovered biome-${region.biome} territory-${region.territory}`
                   : 'fogged'
-              } ${region.current ? 'current' : ''}`}
+              } ${region.current ? 'current' : ''} ${
+                region.discovered && region.contested ? 'contested' : ''
+              } ${region.discovered && region.razed ? 'razed' : ''}`}
               key={region.id}
               style={{
                 gridColumn: region.gridX + 1,
@@ -595,7 +626,13 @@ function MiniMap({ view }: { view: GameView }) {
             >
               {region.discovered ? (
                 <>
-                  <RegionBiomeIcon biome={region.biome} />
+                  {region.razed ? (
+                    <Flame aria-hidden="true" />
+                  ) : region.contested ? (
+                    <Swords aria-hidden="true" />
+                  ) : (
+                    <RegionBiomeIcon biome={region.biome} />
+                  )}
                   <span>{territoryLabels[region.territory]}</span>
                 </>
               ) : (
@@ -648,6 +685,55 @@ function MiniMap({ view }: { view: GameView }) {
           </span>
         ) : null}
       </div>
+    </section>
+  )
+}
+
+function ChronicleFeed({ view }: { view: GameView }) {
+  const [collapsed, setCollapsed] = useState(false)
+  const entries = view.chronicle
+
+  return (
+    <section
+      className={`hud-card chronicle-card ${collapsed ? 'collapsed' : ''}`}
+      aria-label="Хроника мира"
+    >
+      <header className="hud-card-header">
+        <span>
+          <ScrollText aria-hidden="true" />
+          Хроника
+        </span>
+        <button
+          className="chronicle-toggle"
+          type="button"
+          onClick={() => setCollapsed((current) => !current)}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? 'Развернуть хронику' : 'Свернуть хронику'}
+        >
+          <span className="zone-code">{entries.length}</span>
+          {collapsed ? (
+            <ChevronDown aria-hidden="true" />
+          ) : (
+            <ChevronUp aria-hidden="true" />
+          )}
+        </button>
+      </header>
+      {collapsed ? null : (
+        <div className="chronicle-list" aria-live="polite">
+          {entries.length === 0 ? (
+            <p className="chronicle-empty">
+              Пока тихо. Разведай карту — узнаешь, кого уже грабят.
+            </p>
+          ) : (
+            entries.map((entry) => (
+              <article className={`chronicle-entry ${entry.tone}`} key={entry.id}>
+                <span className="chronicle-square">{entry.regionLabel}</span>
+                <p>{entry.text}</p>
+              </article>
+            ))
+          )}
+        </div>
+      )}
     </section>
   )
 }
@@ -1023,7 +1109,7 @@ function MenuScreen({
   onToggleScreenShake,
   onSfxVolumeChange,
 }: {
-  activeRun: ActiveRunSaveV2 | null
+  activeRun: ActiveRunSaveV3 | null
   activeRunError: string | null
   profile: ProfileSaveV1
   seedInput: string
@@ -1550,11 +1636,17 @@ function ShopModal({
           <span>Ваш кошель</span>
           <strong>{view.gold}</strong>
         </div>
+        {view.shopPriceMultiplier > 1.02 ? (
+          <p className="shop-supply-note">
+            Корованы сюда не доезжают, товара мало — накрутка{' '}
+            {Math.round((view.shopPriceMultiplier - 1) * 100)}%.
+          </p>
+        ) : null}
         <div className="shop-grid">
           {SHOP_ITEMS.map((item) => {
             const level = item.upgrade ? view.upgrades[item.upgrade] : 0
             const maxed = Boolean(item.upgrade && level >= (item.maxLevel ?? 0))
-            const price = getShopItemPrice(item, view.upgrades)
+            const price = getShopItemPrice(item, view.upgrades, view.shopPriceMultiplier)
             const nextState =
               !item.upgrade
                 ? null
@@ -2063,7 +2155,10 @@ function GameScreen({
             </button>
           </div>
         </div>
-        <MiniMap view={view} />
+        <div className="top-hud-side">
+          <MiniMap view={view} />
+          <ChronicleFeed view={view} />
+        </div>
       </div>
 
       <div className="left-hud">
@@ -2294,7 +2389,7 @@ function GameScreen({
 function App() {
   const [screen, setScreen] = useState<'menu' | 'game'>('menu')
   const [profile, setProfile] = useState<ProfileSaveV1>(() => readPlayerProfile())
-  const [activeRun, setActiveRun] = useState<ActiveRunSaveV2 | null>(() =>
+  const [activeRun, setActiveRun] = useState<ActiveRunSaveV3 | null>(() =>
     readActiveGeneratedRun(),
   )
   const [activeRunError, setActiveRunError] = useState<string | null>(null)
@@ -2315,7 +2410,7 @@ function App() {
   const [endResult, setEndResult] = useState<'victory' | 'defeat' | null>(null)
   const [terminalRun, setTerminalRun] = useState<TerminalRunSummary | null>(null)
   const [pendingTerminalSnapshot, setPendingTerminalSnapshot] =
-    useState<ActiveRunSaveV2 | null>(null)
+    useState<ActiveRunSaveV3 | null>(null)
   const [musicMuted, setMusicMuted] = useState(() => readMusicMuted())
   const [sfxVolume, setSfxVolume] = useState(() => readSfxVolume())
   const [bloomEnabled, setBloomEnabled] = useState(() => readBloomEnabled())
@@ -2364,9 +2459,9 @@ function App() {
     (
       engine: GameEngine | null = engineRef.current,
       announce = false,
-    ): ActiveRunSaveV2 | null => {
+    ): ActiveRunSaveV3 | null => {
       if (!engine) return null
-      let snapshot: ActiveRunSaveV2 | null
+      let snapshot: ActiveRunSaveV3 | null
       try {
         snapshot = engine.saveGeneratedRun()
       } catch (error) {
@@ -2387,7 +2482,7 @@ function App() {
   )
 
   const recordTerminalRun = useCallback(
-    (snapshot: ActiveRunSaveV2): boolean => {
+    (snapshot: ActiveRunSaveV3): boolean => {
       const finalized = finalizeGeneratedRunSnapshot(snapshot)
       const refreshedProfile = finalized?.profile ?? readPlayerProfile()
       const finalizedSafely =
@@ -2468,7 +2563,7 @@ function App() {
         },
         onEnd: (result) => {
           const currentEngine = engineRef.current
-          let terminalSnapshot: ActiveRunSaveV2 | null = null
+          let terminalSnapshot: ActiveRunSaveV3 | null = null
           try {
             terminalSnapshot = currentEngine?.saveGeneratedRun() ?? null
           } catch (error) {
