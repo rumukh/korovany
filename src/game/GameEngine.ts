@@ -50,14 +50,18 @@ import {
   type Objective,
   type ShopItem,
   type UpgradeLevels,
+  type ChronicleWorldEventKind,
+  type RandomWorldEventKind,
   type WorldEventKind,
   type ZoneId,
+  RANDOM_WORLD_EVENT_KINDS,
   createAbilityView,
   createHealthyBody,
   getMaxHealth,
   getMaxStamina,
   getShopItemPrice,
   getThreatTier,
+  isRandomWorldEventKind,
   normalizeUpgradeLevels,
 } from './types'
 import {
@@ -69,9 +73,15 @@ import {
   chronicleEventTone,
   createGeneratedObjectiveText,
   describeChronicleEvent,
+  describeEventHandback,
+  describeLocatedEvent,
+  describeLocatedEventOutcome,
+  describeLocatedEventStart,
   formatRegionGridLabel,
   formatRussianCount,
   generatedSiteLabel,
+  WORLD_EVENT_FAILURE_MESSAGES,
+  type LocatedEventCopyContext,
 } from './content/gameCopy'
 import { RandomStream } from './random/RandomStream'
 import { deriveSeed } from './random/seed'
@@ -98,6 +108,14 @@ import {
 } from './world/GeneratedWorldRuntime'
 import { generateWorld } from './world/WorldGenerator'
 import {
+  ACTOR_BUDGET_PRIORITY,
+  ActorBudget,
+  MAX_ACTORS,
+  createActorBudgetUsage,
+  type ActorBudgetCategory,
+  type ActorBudgetUsage,
+} from './world/ActorBudget'
+import {
   CHRONICLE_TICK_SECONDS,
   cloneChronicleState,
   cloneRegionChronicleState,
@@ -110,11 +128,18 @@ import {
   isProtectedSite,
   isRegionRazed,
   isSettlementSite,
+  resolveMaterializedCaravan,
+  resolveMaterializedRaid,
+  resolveMaterializedWarband,
   tickChronicle,
   type ChronicleEvent,
   type ChronicleState,
   type RegionChronicleState,
 } from './world/Chronicle'
+import {
+  findPendingMaterializations,
+  type PendingMaterialization,
+} from './world/Materialization'
 import {
   REGION_DELTA_VERSION,
   type RegionDelta,
@@ -267,9 +292,12 @@ interface Actor {
   generatedObjectiveId: string | null
   generatedUnique: boolean
   hostileToPlayer: boolean
+  budgetCategory: ActorBudgetCategory
 }
 
 interface ActorSpawnOptions {
+  /** §5.1 — which reserved slice of `MAX_ACTORS` this actor is charged against. */
+  budget: ActorBudgetCategory
   objectiveEligible?: boolean
   squadEligible?: boolean
   aiMode?: ActorAiMode
@@ -303,6 +331,16 @@ interface InteractableOutlineBinding {
 interface WorldEvent {
   id: string
   kind: WorldEventKind
+  /**
+   * §5.2 — `player` events sit in a ring around the player, `located` ones belong to a
+   * site or region and are handed back to the chronicle when that region streams out.
+   */
+  anchor: 'player' | 'located'
+  regionId: string | null
+  /** Pending-materialization id, so one chronicle situation runs one event. */
+  situationId: string | null
+  /** Chronicle actor slots this event holds. */
+  slots: number
   state: 'active' | 'succeeded' | 'failed'
   title: string
   description: string
@@ -318,8 +356,16 @@ interface WorldEvent {
   onKill?(actor: Actor, context: ActorKillContext): void
   onInteract?(): boolean
   getPrompt?(): string | null
+  /** Folds the live fight back into chronicle state instead of cancelling it. */
+  handBack?(): ChronicleEvent[]
   cleanup(): void
 }
+
+type WorldEventConfig = Omit<
+  WorldEvent,
+  'cleanup' | 'anchor' | 'regionId' | 'situationId' | 'slots'
+> &
+  Partial<Pick<WorldEvent, 'anchor' | 'regionId' | 'situationId' | 'slots'>>
 
 interface Palette {
   bg: THREE.Color
@@ -606,7 +652,6 @@ const GENERATED_NAVIGATION_CACHE_LIMIT = 96
 const GENERATED_CARAVAN_COLLIDER_RADIUS = 1.4
 const GENERATED_CARAVAN_PATROL_NEAR = 6
 const GENERATED_CARAVAN_PATROL_FAR = 28
-const MAX_ACTORS = 25
 const CHRONICLE_MAX_CATCHUP_TICKS = 8
 const CHRONICLE_FEED_LIMIT = 8
 const LOOT_DROP_CHANCE = 0.3
@@ -855,7 +900,7 @@ const GROUND_WET_DARKEN = 0.78
 const GROUND_WET_ROUGHNESS = 0.48
 const GROUND_FROST_BLEND = 0.24
 
-const EVENT_WEIGHTS: Record<Faction, Record<WorldEventKind, number>> = {
+const EVENT_WEIGHTS: Record<Faction, Record<RandomWorldEventKind, number>> = {
   elf: {
     richCaravan: 5,
     defendHome: 1,
@@ -885,6 +930,29 @@ const EVENT_REQUIRED_SLOTS: Record<WorldEventKind, number> = {
   champion: 1,
   rescue: 3,
   bounty: 1,
+  factionRaid: 5,
+  caravanAmbush: 4,
+  warband: 3,
+  aftermath: 2,
+}
+
+/** How many located chronicle events may run alongside the player-anchored one. */
+const MAX_LOCATED_EVENTS = 2
+/** A located event stays put once placed; this is how far from the player it may start. */
+const LOCATED_EVENT_MAX_DISTANCE = 150
+const LOCATED_EVENT_MIN_DISTANCE = 26
+const LOCATED_EVENT_SCATTER = 9
+/** A stalled located fight is handed back to the chronicle rather than left standing. */
+const LOCATED_EVENT_TIMEOUT = 150
+const MATERIALIZE_INTERVAL = 6
+/** A located fight this close to the player counts as "the player's problem". */
+const THREAT_WAVE_EVENT_RADIUS = 45
+
+const LOCATED_EVENT_REWARDS: Record<ChronicleWorldEventKind, number> = {
+  factionRaid: 110,
+  caravanAmbush: 140,
+  warband: 80,
+  aftermath: 45,
 }
 
 function dampAngle(current: number, target: number, smoothing: number, delta: number): number {
@@ -1076,6 +1144,10 @@ export class GameEngine {
   private readonly generatedEncounterPlans = new Map<string, GeneratedEncounterPlan[]>()
   private readonly generatedActivationSpawns = new Map<string, Set<string>>()
   private readonly simulatedGeneratedRegions = new Set<string>()
+  /** §5.1 — the single gate every actor spawn passes through. */
+  private readonly actorBudget = new ActorBudget((category, count) =>
+    this.yieldActorSlots(category, count),
+  )
   private readonly generatedCaravanTravelDirection = new THREE.Vector2(1, 0)
   private readonly generatedCaravanPatrolStart = new THREE.Vector3()
   private readonly generatedCaravanPatrolEnd = new THREE.Vector3()
@@ -1250,7 +1322,13 @@ export class GameEngine {
   private caravanDirection = 1
   private caravanCooldown = 0
   private caravanRobbedFlash = 0
-  private activeEvent: WorldEvent | null = null
+  private readonly activeEvents: WorldEvent[] = []
+  /** Copy context per located event, so its outcome line matches the one that opened it. */
+  private readonly locatedEventCopy = new Map<string, LocatedEventCopyContext>()
+  /** Chronicle situations already standing in 3D, so one never starts twice. */
+  private readonly materializedSituationIds = new Set<string>()
+  private readonly seenAftermathRegionIds = new Set<string>()
+  private materializeCooldown = MATERIALIZE_INTERVAL
   private eventCooldown = FIRST_EVENT_AT
   private championDamageBonus = 0
   private eventSequence = 0
@@ -1779,7 +1857,7 @@ export class GameEngine {
       }
     }
     cancelAnimationFrame(this.frameHandle)
-    attempt(() => this.cancelActiveEvent())
+    attempt(() => this.cancelActiveEvents())
     attempt(() => this.clearLootRuntime())
     attempt(() => this.resizeObserver.disconnect())
     window.removeEventListener('keydown', this.boundKeyDown)
@@ -2083,7 +2161,7 @@ export class GameEngine {
   interact(): void {
     if (this.paused || this.ended) return
     this.resumeAudio()
-    if (this.activeEvent?.onInteract?.()) {
+    if (this.activeEvents.some((event) => event.onInteract?.() === true)) {
       this.emitView(true)
       return
     }
@@ -2190,7 +2268,7 @@ export class GameEngine {
   }
 
   saveGeneratedRun(): ActiveRunSaveV3 {
-    const savedEventCooldown = this.activeEvent
+    const savedEventCooldown = this.playerAnchoredEvent
       ? Math.max(this.eventCooldown, this.eventCooldownRange().min)
       : this.eventCooldown
     this.syncChronicleToRegionDeltas()
@@ -2593,7 +2671,7 @@ export class GameEngine {
     companions: readonly RunCompanionState[],
   ): void {
     for (const companion of companions) {
-      if (this.actors.length >= MAX_ACTORS) break
+      if (!this.reserveActorSlots('squad', 1)) break
       if (this.actors.some((actor) => actor.id === companion.id)) continue
       const actor = this.spawnActor(
         this.faction,
@@ -2602,6 +2680,7 @@ export class GameEngine {
         companion.worldPosition[2],
         this.actorSequence,
         {
+          budget: 'squad',
           objectiveEligible: false,
           squadEligible: true,
           generatedRegionId: null,
@@ -2622,7 +2701,7 @@ export class GameEngine {
 
   private spawnGeneratedStartingSquad(): void {
     for (const member of getStartingSquad(this.faction)) {
-      if (this.actors.length >= MAX_ACTORS) break
+      if (!this.reserveActorSlots('squad', 1)) break
       const actor = this.spawnActor(
         this.faction,
         member.role,
@@ -2630,6 +2709,7 @@ export class GameEngine {
         this.player.position.z + member.offsetZ,
         this.actorSequence,
         {
+          budget: 'squad',
           objectiveEligible: false,
           squadEligible: true,
           generatedRegionId: null,
@@ -2733,12 +2813,15 @@ export class GameEngine {
       const isFinalEncounter = plan.encounterId === finalEncounterId
       if (isFinalEncounter && !finalReady) continue
       for (const spawn of plan.spawns) {
-        if (this.actors.length >= MAX_ACTORS) return
         if (activationSpawns.has(spawn.id)) continue
         if (spawn.unique && delta.defeatedActorIds.includes(spawn.id)) {
           activationSpawns.add(spawn.id)
           continue
         }
+        // Reserve only once this spawn is actually going to happen: reserving can make
+        // lower-priority categories give up actors, and nothing should die for a slot
+        // that is then skipped.
+        if (!this.reserveActorSlots('campaign', 1)) return
         const actor = this.spawnActor(
           spawn.faction,
           spawn.role,
@@ -2746,6 +2829,7 @@ export class GameEngine {
           spawn.worldZ,
           this.actorSequence++,
           {
+            budget: 'campaign',
             objectiveEligible: spawn.objectiveEligible,
             squadEligible: false,
             generatedRegionId: regionId,
@@ -4446,7 +4530,7 @@ export class GameEngine {
     actor.reinforcementTimer += COMMANDER_REINFORCEMENT_INTERVAL
     if (
       actor.reinforcementsCalled >= COMMANDER_REINFORCEMENT_LIMIT ||
-      this.actors.length >= MAX_ACTORS
+      !this.reserveActorSlots(actor.budgetCategory, 1)
     ) {
       return
     }
@@ -4455,21 +4539,19 @@ export class GameEngine {
     const position = actor.mesh.position.clone().add(
       new THREE.Vector3(Math.sin(angle) * 3.2, 0, Math.cos(angle) * 3.2),
     )
-    const generatedOptions: ActorSpawnOptions | undefined = actor.generatedRegionId
-      ? {
-          objectiveEligible: false,
-          squadEligible: false,
-          generatedRegionId: actor.generatedRegionId,
-          hostileToPlayer: actor.hostileToPlayer,
-        }
-      : undefined
     this.spawnActor(
       actor.faction,
       'soldier',
       position.x,
       position.z,
       this.actors.length,
-      generatedOptions,
+      {
+        budget: actor.budgetCategory,
+        objectiveEligible: false,
+        squadEligible: false,
+        generatedRegionId: actor.generatedRegionId,
+        hostileToPlayer: actor.hostileToPlayer,
+      },
     )
     actor.reinforcementsCalled += 1
     if (actor.mesh.position.distanceTo(this.player.position) < 35) {
@@ -4898,7 +4980,11 @@ export class GameEngine {
   }
 
   private updatePrompt(): void {
-    const eventPrompt = this.activeEvent?.getPrompt?.()
+    let eventPrompt: string | null = null
+    for (const event of this.activeEvents) {
+      eventPrompt = event.getPrompt?.() ?? null
+      if (eventPrompt) break
+    }
     this.prompt = eventPrompt ?? this.getGeneratedPrompt()
   }
 
@@ -4947,7 +5033,7 @@ export class GameEngine {
     if (
       this.threatTier < 2 ||
       this.elapsed < this.nextThreatWaveAt ||
-      this.activeEvent
+      this.hasNearbyEvent(THREAT_WAVE_EVENT_RADIUS)
     ) {
       return
     }
@@ -5185,9 +5271,8 @@ export class GameEngine {
   }
 
   private spawnThreatWave(scheduledAt: number): number {
-    const availableSlots = Math.max(0, MAX_ACTORS - this.actors.length)
     const requested = Math.min(4, this.threatTier)
-    const count = Math.min(availableSlots, requested)
+    const count = this.reserveActorSlotsUpTo('campaign', requested)
     if (count === 0) return 0
 
     const enemyFaction: Faction = this.faction === 'guard' ? 'villain' : 'guard'
@@ -5235,6 +5320,7 @@ export class GameEngine {
         spawnPosition.z,
         this.actors.length + index,
         {
+          budget: 'campaign',
           objectiveEligible: false,
           squadEligible: false,
           generatedRegionId,
@@ -5248,39 +5334,313 @@ export class GameEngine {
     return spawned
   }
 
+  private actorUsageByCategory(): ActorBudgetUsage {
+    const usage = createActorBudgetUsage()
+    for (const actor of this.actors) usage[actor.budgetCategory] += 1
+    return usage
+  }
+
+  /**
+   * §5.1 — the one reservation seam. The ledger is re-derived from the live actors on
+   * every call, so it can never drift away from the scene the way the old scattered
+   * `actors.length + n <= MAX_ACTORS` checks did.
+   */
+  private reserveActorSlots(category: ActorBudgetCategory, count: number): boolean {
+    this.actorBudget.sync(this.actorUsageByCategory())
+    return this.actorBudget.reserve(category, count)
+  }
+
+  private reserveActorSlotsUpTo(
+    category: ActorBudgetCategory,
+    count: number,
+  ): number {
+    this.actorBudget.sync(this.actorUsageByCategory())
+    return this.actorBudget.reserveUpTo(category, count)
+  }
+
+  /** Frees room for a higher-priority category. Ambient is asked first, by design. */
+  private yieldActorSlots(category: ActorBudgetCategory, count: number): number {
+    let freed = 0
+    if (category === 'chronicle') {
+      // Half a raid is worse than no raid: hand whole located events back to the
+      // chronicle before plucking individual fighters out of one.
+      for (const event of this.locatedEventsByDistance()) {
+        if (freed >= count) break
+        const owned = event.ownedActorIds.filter((actorId) =>
+          this.actors.some((actor) => actor.id === actorId),
+        ).length
+        if (owned === 0) continue
+        this.dematerializeEvent(event)
+        freed += owned
+      }
+    }
+    for (const actor of this.yieldOrderedActors(category)) {
+      if (freed >= count) break
+      this.removeActorById(actor.id)
+      freed += 1
+    }
+    return freed
+  }
+
+  private yieldOrderedActors(category: ActorBudgetCategory): Actor[] {
+    return this.actors
+      .filter((actor) => actor.budgetCategory === category)
+      .sort((left, right) => this.actorYieldRank(left) - this.actorYieldRank(right))
+  }
+
+  /** Lower ranks are given up first: corpses, then bystanders, then the far away. */
+  private actorYieldRank(actor: Actor): number {
+    if (!actor.alive) return -1_000_000
+    return (
+      (actor.objectiveEligible ? 400 : 0) +
+      (actor.generatedUnique ? 400 : 0) +
+      (actor.generatedObjectiveId ? 800 : 0) -
+      actor.mesh.position.distanceTo(this.player.position)
+    )
+  }
+
+  /**
+   * Charges one slot to `category`. Callers reserve up front, but this is the hard
+   * gate: nothing reaches the scene without a slot, so `this.actors.length` can never
+   * pass `MAX_ACTORS` no matter which spawn path is taken.
+   */
+  private claimActorSlot(category: ActorBudgetCategory): void {
+    if (this.reserveActorSlots(category, 1)) return
+    while (this.actors.length >= MAX_ACTORS) {
+      const victim = this.pickEvictableActor(category)
+      if (!victim) break
+      this.removeActorById(victim.id)
+    }
+  }
+
+  private pickEvictableActor(category: ActorBudgetCategory): Actor | null {
+    const claimant = ACTOR_BUDGET_PRIORITY.indexOf(category)
+    let victim: Actor | null = null
+    let bestScore = Number.POSITIVE_INFINITY
+    for (const actor of this.actors) {
+      const priority = ACTOR_BUDGET_PRIORITY.indexOf(actor.budgetCategory)
+      if (priority < claimant) continue
+      const score = -priority * 10_000_000 + this.actorYieldRank(actor)
+      if (score >= bestScore) continue
+      bestScore = score
+      victim = actor
+    }
+    return victim
+  }
+
   private cleanupDeadActors(): void {
     for (let index = this.actors.length - 1; index >= 0; index -= 1) {
       const actor = this.actors[index]
-      if (this.activeEvent?.ownedActorIds.includes(actor.id)) continue
+      if (this.isEventOwnedActor(actor.id)) continue
       if (actor.deathAt !== null && this.elapsed - actor.deathAt >= CORPSE_LIFETIME) {
         this.removeActorById(actor.id)
       }
     }
   }
 
+  private isEventOwnedActor(actorId: string): boolean {
+    return this.activeEvents.some((event) => event.ownedActorIds.includes(actorId))
+  }
+
+  /** The event the HUD banner shows: the player's own, else the nearest located one. */
+  private get primaryEvent(): WorldEvent | null {
+    const anchored = this.playerAnchoredEvent
+    if (anchored) return anchored
+    let best: WorldEvent | null = null
+    let bestDistance = Number.POSITIVE_INFINITY
+    for (const event of this.activeEvents) {
+      const distance = event.markerPos.distanceToSquared(this.player.position)
+      if (distance >= bestDistance) continue
+      bestDistance = distance
+      best = event
+    }
+    return best
+  }
+
+  private get playerAnchoredEvent(): WorldEvent | null {
+    return this.activeEvents.find((event) => event.anchor === 'player') ?? null
+  }
+
+  private get locatedEvents(): WorldEvent[] {
+    return this.activeEvents.filter((event) => event.anchor === 'located')
+  }
+
+  /** Farthest first: the event the player cares least about gives up its slots first. */
+  private locatedEventsByDistance(): WorldEvent[] {
+    return this.locatedEvents.sort(
+      (left, right) =>
+        right.markerPos.distanceToSquared(this.player.position) -
+        left.markerPos.distanceToSquared(this.player.position),
+    )
+  }
+
+  private isRegionSimulated(regionId: string | null): boolean {
+    return regionId !== null && this.simulatedGeneratedRegions.has(regionId)
+  }
+
   private updateEvents(delta: number): void {
     if (this.ended) {
-      this.cancelActiveEvent()
+      this.cancelActiveEvents()
       return
     }
 
-    const event = this.activeEvent
-    if (event) {
+    for (const event of [...this.activeEvents]) {
       if (event.state === 'active') {
+        // Layer 2: a located event whose region streamed out is not cancelled — it is
+        // handed back to the chronicle, which resolves it and records who won.
+        if (event.anchor === 'located' && !this.isRegionSimulated(event.regionId)) {
+          this.dematerializeEvent(event)
+          continue
+        }
         event.update?.(delta)
         if (event.state === 'active' && event.timer !== null) {
           event.timer = Math.max(0, event.timer - delta)
-          if (event.timer <= 0) event.state = 'failed'
+          if (event.timer <= 0) {
+            if (event.anchor === 'located') {
+              this.dematerializeEvent(event)
+              continue
+            }
+            event.state = 'failed'
+          }
         }
       }
-      if (event.state !== 'active') this.finishEvent(event.state === 'succeeded')
-      return
+      if (event.state !== 'active') this.finishEvent(event, event.state === 'succeeded')
     }
 
+    this.updateMaterialization(delta)
+
+    if (this.playerAnchoredEvent) return
     this.eventCooldown = Math.max(0, this.eventCooldown - delta)
     if (this.eventCooldown > 0) return
     if (!this.startRandomEvent()) this.eventCooldown = EVENT_RETRY
   }
+
+  /**
+   * §5.2 — turns what the chronicle is holding back in simulated regions into a real
+   * fight. One per interval, so the world stays legible instead of erupting at once.
+   */
+  private updateMaterialization(delta: number): void {
+    this.materializeCooldown -= delta
+    if (this.materializeCooldown > 0) return
+    this.materializeCooldown = MATERIALIZE_INTERVAL
+    if (this.locatedEvents.length >= MAX_LOCATED_EVENTS) return
+
+    const pending = findPendingMaterializations({
+      blueprint: this.generatedBlueprint,
+      regions: this.chronicleRegions,
+      chronicle: this.chronicleState,
+      simulatedRegionIds: this.simulatedGeneratedRegions,
+      protectedRegionIds: this.chronicleProtectedRegionIds,
+      playerFaction: this.faction,
+      seenAftermathRegionIds: this.seenAftermathRegionIds,
+    })
+    for (const situation of pending) {
+      if (this.materializedSituationIds.has(situation.id)) continue
+      if (this.activeEvents.some((event) => event.regionId === situation.regionId)) {
+        continue
+      }
+      const event = this.materializeSituation(situation)
+      if (!event) continue
+      this.activeEvents.push(event)
+      this.materializedSituationIds.add(situation.id)
+      if (situation.kind === 'aftermath') {
+        this.seenAftermathRegionIds.add(situation.regionId)
+      }
+      this.callbacks.onNotice(
+        describeLocatedEventStart(situation.kind, this.locatedCopyContext(situation)),
+        'warning',
+      )
+      this.playSound('event')
+      this.emitView(true)
+      return
+    }
+  }
+
+  private materializeSituation(
+    situation: PendingMaterialization,
+  ): WorldEvent | null {
+    switch (situation.kind) {
+      case 'factionRaid':
+        return this.startFactionRaidEvent(situation)
+      case 'caravanAmbush':
+        return this.startCaravanAmbushEvent(situation)
+      case 'warband':
+        return this.startWarbandEvent(situation)
+      case 'aftermath':
+        return this.startAftermathEvent(situation)
+    }
+  }
+
+  private locatedCopyContext(
+    situation: PendingMaterialization,
+  ): LocatedEventCopyContext {
+    const region = this.generatedBlueprint.regions.find(
+      (candidate) => String(candidate.id) === situation.regionId,
+    )
+    const site = situation.siteId
+      ? this.generatedBlueprint.sites.find(
+          (candidate) => candidate.id === situation.siteId,
+        )
+      : undefined
+    return {
+      regionLabel: region
+        ? formatRegionGridLabel(region.coordinate.x, region.coordinate.y)
+        : '??',
+      siteLabel: site ? generatedSiteLabel(site.kind) : null,
+      faction: situation.faction,
+      defender:
+        situation.defender === null || situation.defender === 'neutral'
+          ? null
+          : situation.defender,
+    }
+  }
+
+  private regionGridLabel(regionId: string | null): string {
+    const region = this.generatedBlueprint.regions.find(
+      (candidate) => String(candidate.id) === regionId,
+    )
+    return region
+      ? formatRegionGridLabel(region.coordinate.x, region.coordinate.y)
+      : '??'
+  }
+
+  /** Hands a live fight back to the chronicle rather than deleting it. */
+  private dematerializeEvent(event: WorldEvent): void {
+    if (!this.activeEvents.includes(event)) return
+    const chronicleEvents = event.handBack?.() ?? []
+    this.releaseEvent(event)
+    this.callbacks.onNotice(
+      describeEventHandback(this.regionGridLabel(event.regionId)),
+      'info',
+    )
+    if (chronicleEvents.length > 0) this.handleChronicleEvents(chronicleEvents)
+    else this.emitView(true)
+  }
+
+  private releaseEvent(event: WorldEvent): void {
+    event.cleanup()
+    const index = this.activeEvents.indexOf(event)
+    if (index >= 0) this.activeEvents.splice(index, 1)
+    if (event.situationId) this.materializedSituationIds.delete(event.situationId)
+    this.locatedEventCopy.delete(event.id)
+  }
+
+  /** True while a fight the player can actually see is running. */
+  private hasNearbyEvent(radius: number): boolean {
+    return this.activeEvents.some(
+      (event) =>
+        event.anchor === 'player' ||
+        event.markerPos.distanceTo(this.player.position) <= radius,
+    )
+  }
+
+  private countAliveActors(actorIds: readonly string[]): number {
+    return actorIds.reduce((count, actorId) => {
+      const actor = this.actors.find((candidate) => candidate.id === actorId)
+      return count + (actor && actor.alive ? 1 : 0)
+    }, 0)
+  }
+
 
   private startRandomEvent(): boolean {
     const eligibleKinds = this.getEligibleEventKinds()
@@ -5312,97 +5672,130 @@ export class GameEngine {
               : this.startBountyEvent()
     if (!event) return false
 
-    this.activeEvent = event
+    this.activeEvents.push(event)
     this.callbacks.onNotice(`Событие: ${event.title}. ${event.description}`, event.tone)
     this.playSound('event')
     this.emitView(true)
     return true
   }
 
-  private getEligibleEventKinds(): WorldEventKind[] {
-    const kinds: WorldEventKind[] = [
-      'richCaravan',
-      'defendHome',
-      'champion',
-      'rescue',
-      'bounty',
-    ]
-    return kinds.filter((kind) => {
-      if (this.actors.length + EVENT_REQUIRED_SLOTS[kind] > MAX_ACTORS) return false
+  private getEligibleEventKinds(): RandomWorldEventKind[] {
+    return RANDOM_WORLD_EVENT_KINDS.filter((kind) => {
+      if (!this.canAffordEvent(kind)) return false
       if (kind === 'defendHome') return this.pickDefendHomePosition() !== null
       return true
     })
   }
 
-  private finishEvent(succeeded: boolean): void {
-    const event = this.activeEvent
-    if (!event) return
+  private canAffordEvent(kind: WorldEventKind): boolean {
+    this.actorBudget.sync(this.actorUsageByCategory())
+    return this.actorBudget.availableFor('chronicle') >= EVENT_REQUIRED_SLOTS[kind]
+  }
 
-    let message: string
+  private finishEvent(event: WorldEvent, succeeded: boolean): void {
+    if (!this.activeEvents.includes(event)) return
+    this.achievements.recordWorldEvent(event.kind, succeeded)
+    const message = isRandomWorldEventKind(event.kind)
+      ? this.resolveRandomEventOutcome(event.kind, succeeded)
+      : this.resolveLocatedEventOutcome(event, succeeded)
     if (succeeded) {
-      this.achievements.recordWorldEvent(event.kind, true)
-      if (event.kind === 'richCaravan') {
-        this.gold += 180
-        this.achievements.recordGoldEarned(180)
-        this.achievements.recordCaravanRobbed(true)
-        message = 'Богатый корован ограблен, погоня позади. +180 золота.'
-      } else if (event.kind === 'defendHome') {
-        this.gold += 90
-        this.achievements.recordGoldEarned(90)
-        this.health = Math.min(this.maxHealth, this.health + 8)
-        message = 'Дом отбили! +90 золота и +8 здоровья.'
-      } else if (event.kind === 'champion') {
-        this.gold += 120
-        this.achievements.recordGoldEarned(120)
-        const damageBonus = Math.min(
-          6,
-          Math.max(0, CHAMPION_DAMAGE_CAP - this.championDamageBonus),
-        )
-        this.championDamageBonus += damageBonus
-        this.damage += damageBonus
-        message =
-          damageBonus > 0
-            ? `Чемпион побеждён! +120 золота и +${damageBonus} к урону.`
-            : 'Чемпион побеждён! +120 золота. Урон уже достиг предела.'
-      } else if (event.kind === 'rescue') {
-        message = 'Пленник спасён и теперь идёт в твоём отряде.'
-      } else {
-        this.gold += 70
-        this.achievements.recordGoldEarned(70)
-        message = 'Заказ выполнен, награда в кармане. +70 золота.'
-      }
       this.spawnEventLoot(event)
       this.callbacks.onNotice(message, 'success')
       this.playSound('eventWin')
     } else {
-      this.achievements.recordWorldEvent(event.kind, false)
-      const failureMessages: Record<WorldEventKind, string> = {
-        richCaravan: 'Богатый корован ушёл вместе с добычей.',
-        defendHome: 'Дом не отстояли — огонь сожрал всё.',
-        champion: 'Чемпион ушёл непобеждённым.',
-        rescue: 'Пленника не удалось спасти.',
-        bounty: 'Время вышло. Цель больше не в розыске.',
-      }
-      this.callbacks.onNotice(failureMessages[event.kind], 'danger')
+      this.callbacks.onNotice(message, 'danger')
       this.playSound('eventFail')
     }
 
-    event.cleanup()
-    this.activeEvent = null
-    const cooldown = this.eventCooldownRange()
-    this.eventCooldown = cooldown.min + this.eventRng() * (cooldown.max - cooldown.min)
+    this.releaseEvent(event)
+    if (event.anchor === 'player') {
+      const cooldown = this.eventCooldownRange()
+      this.eventCooldown = cooldown.min + this.eventRng() * (cooldown.max - cooldown.min)
+    }
     this.emitView(true)
   }
 
-  private cancelActiveEvent(): void {
-    if (!this.activeEvent) return
-    this.activeEvent.cleanup()
-    this.activeEvent = null
+  private resolveRandomEventOutcome(
+    kind: RandomWorldEventKind,
+    succeeded: boolean,
+  ): string {
+    if (!succeeded) return WORLD_EVENT_FAILURE_MESSAGES[kind]
+    if (kind === 'richCaravan') {
+      this.gold += 180
+      this.achievements.recordGoldEarned(180)
+      this.achievements.recordCaravanRobbed(true)
+      return 'Богатый корован ограблен, погоня позади. +180 золота.'
+    }
+    if (kind === 'defendHome') {
+      this.gold += 90
+      this.achievements.recordGoldEarned(90)
+      this.health = Math.min(this.maxHealth, this.health + 8)
+      return 'Дом отбили! +90 золота и +8 здоровья.'
+    }
+    if (kind === 'champion') {
+      this.gold += 120
+      this.achievements.recordGoldEarned(120)
+      const damageBonus = Math.min(
+        6,
+        Math.max(0, CHAMPION_DAMAGE_CAP - this.championDamageBonus),
+      )
+      this.championDamageBonus += damageBonus
+      this.damage += damageBonus
+      return damageBonus > 0
+        ? `Чемпион побеждён! +120 золота и +${damageBonus} к урону.`
+        : 'Чемпион побеждён! +120 золота. Урон уже достиг предела.'
+    }
+    if (kind === 'rescue') return 'Пленник спасён и теперь идёт в твоём отряде.'
+    this.gold += 70
+    this.achievements.recordGoldEarned(70)
+    return 'Заказ выполнен, награда в кармане. +70 золота.'
   }
 
-  private createWorldEvent(config: Omit<WorldEvent, 'cleanup'>): WorldEvent {
+  /**
+   * A materialized event that ends with the player present still folds its result into
+   * the chronicle — the difference is only that they were there to see it.
+   */
+  private resolveLocatedEventOutcome(
+    event: WorldEvent,
+    succeeded: boolean,
+  ): string {
+    const chronicleEvents = event.handBack?.() ?? []
+    if (succeeded) {
+      const reward = LOCATED_EVENT_REWARDS[event.kind as ChronicleWorldEventKind]
+      this.gold += reward
+      this.achievements.recordGoldEarned(reward)
+    }
+    const context = this.locatedEventCopy.get(event.id) ?? {
+      regionLabel: this.regionGridLabel(event.regionId),
+      siteLabel: null,
+      faction: null,
+      defender: null,
+    }
+    if (chronicleEvents.length > 0) this.handleChronicleEvents(chronicleEvents)
+    return describeLocatedEventOutcome(
+      event.kind as ChronicleWorldEventKind,
+      succeeded,
+      context,
+    )
+  }
+
+
+  private cancelActiveEvents(): void {
+    for (const event of [...this.activeEvents]) {
+      event.cleanup()
+      if (event.situationId) this.materializedSituationIds.delete(event.situationId)
+      this.locatedEventCopy.delete(event.id)
+    }
+    this.activeEvents.length = 0
+  }
+
+  private createWorldEvent(config: WorldEventConfig): WorldEvent {
     let cleaned = false
     const event: WorldEvent = {
+      anchor: 'player',
+      regionId: null,
+      situationId: null,
+      slots: EVENT_REQUIRED_SLOTS[config.kind],
       ...config,
       cleanup: () => {
         if (cleaned) return
@@ -5421,7 +5814,9 @@ export class GameEngine {
   }
 
   private startRichCaravanEvent(): WorldEvent | null {
-    if (this.actors.length + EVENT_REQUIRED_SLOTS.richCaravan > MAX_ACTORS) return null
+    if (!this.reserveActorSlots('chronicle', EVENT_REQUIRED_SLOTS.richCaravan)) {
+      return null
+    }
 
     const id = this.nextEventId('richCaravan')
     const caravan = this.createCaravan(true)
@@ -5458,6 +5853,7 @@ export class GameEngine {
         {
           objectiveEligible: false,
           squadEligible: false,
+          budget: 'chronicle',
           eventOwnerId: id,
           generatedRegionId,
         },
@@ -5574,7 +5970,7 @@ export class GameEngine {
   }
 
   private startDefendHomeEvent(): WorldEvent | null {
-    if (this.actors.length + EVENT_REQUIRED_SLOTS.defendHome > MAX_ACTORS) {
+    if (!this.reserveActorSlots('chronicle', EVENT_REQUIRED_SLOTS.defendHome)) {
       return null
     }
     const homePosition = this.pickDefendHomePosition()
@@ -5616,6 +6012,7 @@ export class GameEngine {
           objectiveEligible: false,
           squadEligible: false,
           aiMode: 'attackEventProp',
+          budget: 'chronicle',
           eventOwnerId: id,
           eventPropTargetId: target.id,
         },
@@ -5667,7 +6064,9 @@ export class GameEngine {
   }
 
   private startChampionEvent(): WorldEvent | null {
-    if (this.actors.length + EVENT_REQUIRED_SLOTS.champion > MAX_ACTORS) return null
+    if (!this.reserveActorSlots('chronicle', EVENT_REQUIRED_SLOTS.champion)) {
+      return null
+    }
 
     const id = this.nextEventId('champion')
     const position = this.pickEventPosition()
@@ -5680,6 +6079,7 @@ export class GameEngine {
       {
         objectiveEligible: false,
         squadEligible: false,
+        budget: 'chronicle',
         eventOwnerId: id,
         generatedRegionId: this.generatedRegionIdAt(position.x, position.z),
       },
@@ -5713,7 +6113,7 @@ export class GameEngine {
   }
 
   private startRescueEvent(): WorldEvent | null {
-    if (this.actors.length + EVENT_REQUIRED_SLOTS.rescue > MAX_ACTORS) return null
+    if (!this.reserveActorSlots('chronicle', EVENT_REQUIRED_SLOTS.rescue)) return null
 
     const id = this.nextEventId('rescue')
     const position = this.pickEventPosition()
@@ -5727,6 +6127,7 @@ export class GameEngine {
         objectiveEligible: false,
         squadEligible: false,
         aiMode: 'captive',
+        budget: 'chronicle',
         eventOwnerId: id,
         generatedRegionId: this.generatedRegionIdAt(position.x, position.z),
       },
@@ -5742,6 +6143,7 @@ export class GameEngine {
         {
           objectiveEligible: false,
           squadEligible: false,
+          budget: 'chronicle',
           eventOwnerId: id,
           ignoredTargetId: captive.id,
           generatedRegionId: this.generatedRegionIdAt(position.x, position.z),
@@ -5756,6 +6158,7 @@ export class GameEngine {
         {
           objectiveEligible: false,
           squadEligible: false,
+          budget: 'chronicle',
           eventOwnerId: id,
           ignoredTargetId: captive.id,
           generatedRegionId: this.generatedRegionIdAt(position.x, position.z),
@@ -5773,6 +6176,9 @@ export class GameEngine {
       captive.generatedRegionId = null
       captive.aiMode = 'normal'
       captive.squadEligible = true
+      // They belong to the player now, not to the event that produced them: without
+      // this the freed captive would keep eating a chronicle slot for the whole run.
+      captive.budgetCategory = 'squad'
       captive.home.copy(captive.mesh.position)
       captive.wanderTarget.copy(captive.mesh.position)
       const weapon = captive.mesh.getObjectByName('weapon')
@@ -5823,7 +6229,7 @@ export class GameEngine {
   }
 
   private startBountyEvent(): WorldEvent | null {
-    if (this.actors.length + EVENT_REQUIRED_SLOTS.bounty > MAX_ACTORS) return null
+    if (!this.reserveActorSlots('chronicle', EVENT_REQUIRED_SLOTS.bounty)) return null
 
     const id = this.nextEventId('bounty')
     const position = this.pickEventPosition()
@@ -5836,6 +6242,7 @@ export class GameEngine {
       {
         objectiveEligible: false,
         squadEligible: false,
+        budget: 'chronicle',
         eventOwnerId: id,
         generatedRegionId: this.generatedRegionIdAt(position.x, position.z),
       },
@@ -5901,6 +6308,445 @@ export class GameEngine {
     this.clampWorldPosition(fallback, 3)
     fallback.y = this.groundHeightAt(fallback.x, fallback.z)
     return fallback
+  }
+
+  /**
+   * §5.2 — the located variant of `pickEventPosition`. The player-ring version above
+   * stays: `champion`, `rescue`, `bounty`, and `richCaravan` are still meant to happen
+   * wherever the player is standing. This one puts an event where the world says it
+   * belongs — at a site, or failing that, in the middle of its region.
+   */
+  private pickLocatedEventPosition(
+    siteId: string | null,
+    regionId: string,
+  ): THREE.Vector3 | null {
+    const anchor = this.locatedEventAnchor(siteId, regionId)
+    if (!anchor) return null
+    if (anchor.distanceTo(this.player.position) > LOCATED_EVENT_MAX_DISTANCE) return null
+    for (let attempt = 0; attempt < 16; attempt += 1) {
+      const angle = this.eventRng() * TWO_PI
+      const radius = this.eventRng() * LOCATED_EVENT_SCATTER
+      const position = new THREE.Vector3(
+        anchor.x + Math.sin(angle) * radius,
+        0,
+        anchor.z + Math.cos(angle) * radius,
+      )
+      this.clampWorldPosition(position, 3)
+      if (!this.isWalkablePosition(position.x, position.z, 1)) continue
+      // Keep the first attempts away from the player so the world visibly acts on its
+      // own; if the site really is underfoot, the fight simply comes to them.
+      if (
+        attempt < 12 &&
+        position.distanceTo(this.player.position) < LOCATED_EVENT_MIN_DISTANCE
+      ) {
+        continue
+      }
+      position.y = this.groundHeightAt(position.x, position.z)
+      return position
+    }
+    return null
+  }
+
+  private locatedEventAnchor(
+    siteId: string | null,
+    regionId: string,
+  ): THREE.Vector3 | null {
+    const site = siteId ? this.generatedWorld.getSitePosition(siteId) : undefined
+    const anchor = site ?? this.generatedWorld.getRegionCenter(regionId)
+    return anchor ? new THREE.Vector3(anchor.x, anchor.y, anchor.z) : null
+  }
+
+  private spawnLocatedActor(
+    situation: PendingMaterialization,
+    eventId: string,
+    faction: Faction,
+    role: ActorRole,
+    position: THREE.Vector3,
+    offsetX: number,
+    offsetZ: number,
+  ): Actor {
+    const spawn = new THREE.Vector3(position.x + offsetX, 0, position.z + offsetZ)
+    this.clampWorldPosition(spawn, 3)
+    const actor = this.spawnActor(faction, role, spawn.x, spawn.z, this.actorSequence++, {
+      budget: 'chronicle',
+      objectiveEligible: false,
+      squadEligible: false,
+      eventOwnerId: eventId,
+      generatedRegionId: situation.regionId,
+    })
+    actor.home.copy(actor.mesh.position)
+    actor.wanderTarget.copy(actor.mesh.position)
+    return actor
+  }
+
+  /** The side holding the ground. A neutral square is defended by the player's own. */
+  private locatedDefenderFaction(attacker: Faction, defender: Territory | null): Faction {
+    if (defender && defender !== 'neutral' && defender !== attacker) return defender
+    if (this.faction !== attacker) return this.faction
+    const options = (['elf', 'guard', 'villain'] as Faction[]).filter(
+      (faction) => faction !== attacker,
+    )
+    return options[Math.floor(this.eventRng() * options.length)]
+  }
+
+  private startFactionRaidEvent(
+    situation: PendingMaterialization,
+  ): WorldEvent | null {
+    const attacker = situation.faction
+    if (!attacker) return null
+    const position = this.pickLocatedEventPosition(situation.siteId, situation.regionId)
+    if (!position) return null
+    if (!this.reserveActorSlots('chronicle', EVENT_REQUIRED_SLOTS.factionRaid)) {
+      return null
+    }
+
+    const id = this.nextEventId('factionRaid')
+    const defenderFaction = this.locatedDefenderFaction(attacker, situation.defender)
+    const attackerIds: string[] = []
+    const defenderIds: string[] = []
+    const attackerOffsets: Array<[number, number, ActorRole]> = [
+      [-8.5, -7, 'soldier'],
+      [8.5, -6, 'soldier'],
+      [0, 9.5, 'brute'],
+    ]
+    for (const [offsetX, offsetZ, role] of attackerOffsets) {
+      const raider = this.spawnLocatedActor(
+        situation,
+        id,
+        attacker,
+        role,
+        position,
+        offsetX,
+        offsetZ,
+      )
+      raider.playerAggro = raider.hostileToPlayer
+      attackerIds.push(raider.id)
+    }
+    for (const [offsetX, offsetZ] of [
+      [-2.6, 1.8],
+      [2.6, -1.8],
+    ] as const) {
+      defenderIds.push(
+        this.spawnLocatedActor(
+          situation,
+          id,
+          defenderFaction,
+          'soldier',
+          position,
+          offsetX,
+          offsetZ,
+        ).id,
+      )
+    }
+
+    const copyContext = this.locatedCopyContext(situation)
+    this.locatedEventCopy.set(id, copyContext)
+    const copy = describeLocatedEvent('factionRaid', copyContext)
+    let event: WorldEvent
+    event = this.createWorldEvent({
+      id,
+      kind: 'factionRaid',
+      anchor: 'located',
+      regionId: situation.regionId,
+      situationId: situation.id,
+      state: 'active',
+      title: copy.title,
+      description: copy.description,
+      tone: 'danger',
+      timer: LOCATED_EVENT_TIMEOUT,
+      progress: 0,
+      target: attackerIds.length,
+      markerId: `${id}-marker`,
+      markerPos: position.clone(),
+      ownedActorIds: [...attackerIds, ...defenderIds],
+      ownedProps: [],
+      update: () => {
+        const attackersAlive = this.countAliveActors(attackerIds)
+        event.progress = attackerIds.length - attackersAlive
+        if (attackersAlive === 0) {
+          event.state = 'succeeded'
+          return
+        }
+        if (this.countAliveActors(defenderIds) === 0) event.state = 'failed'
+      },
+      handBack: () =>
+        this.handBackRaid(
+          situation,
+          attacker,
+          this.countAliveActors(attackerIds) / Math.max(1, attackerIds.length),
+          this.countAliveActors(defenderIds) / Math.max(1, defenderIds.length),
+        ),
+    })
+    return event
+  }
+
+  private handBackRaid(
+    situation: PendingMaterialization,
+    attacker: Faction,
+    attackerStrength: number,
+    defenderStrength: number,
+  ): ChronicleEvent[] {
+    const resolution = resolveMaterializedRaid({
+      state: this.chronicleState,
+      regions: this.chronicleRegions,
+      rng: this.generatedRngStreams.event,
+      protectedRegionIds: this.chronicleProtectedRegionIds,
+      idPrefix: `handback-${situation.id}-${this.chronicleState.tick}-${this.eventSequence}`,
+      outcome: {
+        regionId: situation.regionId,
+        sourceRegionId: situation.sourceRegionId,
+        siteId: situation.siteId,
+        attacker,
+        attackerStrength,
+        defenderStrength,
+      },
+    })
+    return resolution.events
+  }
+
+  private startCaravanAmbushEvent(
+    situation: PendingMaterialization,
+  ): WorldEvent | null {
+    const owner = situation.faction
+    if (!owner || !situation.caravanId) return null
+    const position = this.pickLocatedEventPosition(null, situation.regionId)
+    if (!position) return null
+    if (!this.reserveActorSlots('chronicle', EVENT_REQUIRED_SLOTS.caravanAmbush)) {
+      return null
+    }
+
+    const id = this.nextEventId('caravanAmbush')
+    const raiderFaction = this.locatedDefenderFaction(owner, situation.defender)
+    const cart = this.createCaravan(false)
+    cart.position.copy(position)
+    cart.position.y = this.groundHeightAt(cart.position.x, cart.position.z)
+    this.scene.add(cart)
+    this.registerNamedInteractableOutline(cart, 'cargo')
+
+    const escortIds: string[] = []
+    const raiderIds: string[] = []
+    for (const [offsetX, offsetZ] of [
+      [-3.4, 2.2],
+      [3.4, -2.2],
+    ] as const) {
+      escortIds.push(
+        this.spawnLocatedActor(situation, id, owner, 'soldier', position, offsetX, offsetZ)
+          .id,
+      )
+    }
+    for (const [offsetX, offsetZ] of [
+      [-7.5, -6.5],
+      [7.5, 6.5],
+    ] as const) {
+      const raider = this.spawnLocatedActor(
+        situation,
+        id,
+        raiderFaction,
+        'soldier',
+        position,
+        offsetX,
+        offsetZ,
+      )
+      raider.playerAggro = raider.hostileToPlayer
+      raiderIds.push(raider.id)
+    }
+
+    const copyContext = this.locatedCopyContext(situation)
+    this.locatedEventCopy.set(id, copyContext)
+    const copy = describeLocatedEvent('caravanAmbush', copyContext)
+    let robbed = false
+    let event: WorldEvent
+    event = this.createWorldEvent({
+      id,
+      kind: 'caravanAmbush',
+      anchor: 'located',
+      regionId: situation.regionId,
+      situationId: situation.id,
+      state: 'active',
+      title: copy.title,
+      description: copy.description,
+      tone: 'warning',
+      timer: LOCATED_EVENT_TIMEOUT,
+      progress: 0,
+      target: 1,
+      markerId: `${id}-marker`,
+      markerPos: cart.position.clone(),
+      ownedActorIds: [...escortIds, ...raiderIds],
+      ownedProps: [cart],
+      update: () => {
+        event.markerPos.copy(cart.position)
+        // A caravan whose escort is gone is a caravan somebody else is taking.
+        if (
+          !robbed &&
+          this.countAliveActors(escortIds) === 0 &&
+          this.countAliveActors(raiderIds) > 0
+        ) {
+          event.state = 'failed'
+        }
+      },
+      onInteract: () => {
+        if (robbed) return false
+        if (this.player.position.distanceTo(cart.position) >= 7) return false
+        robbed = true
+        event.progress = 1
+        const cargo = cart.getObjectByName('cargo')
+        if (cargo instanceof THREE.Mesh) cargo.scale.y = 0.38
+        this.playSound('coin')
+        event.state = 'succeeded'
+        return true
+      },
+      getPrompt: () =>
+        !robbed && this.player.position.distanceTo(cart.position) < 7
+          ? '[E] Забрать груз корована'
+          : null,
+      handBack: () =>
+        resolveMaterializedCaravan({
+          state: this.chronicleState,
+          regions: this.chronicleRegions,
+          idPrefix: `handback-${situation.id}-${this.chronicleState.tick}-${this.eventSequence}`,
+          outcome: {
+            caravanId: situation.caravanId ?? '',
+            regionId: situation.regionId,
+            intact: !robbed && this.countAliveActors(escortIds) > 0,
+          },
+        }),
+    })
+    return event
+  }
+
+  private startWarbandEvent(situation: PendingMaterialization): WorldEvent | null {
+    const faction = situation.faction
+    if (!faction) return null
+    const position = this.pickLocatedEventPosition(situation.siteId, situation.regionId)
+    if (!position) return null
+    if (!this.reserveActorSlots('chronicle', EVENT_REQUIRED_SLOTS.warband)) return null
+
+    const id = this.nextEventId('warband')
+    const memberIds: string[] = []
+    const offsets: Array<[number, number, ActorRole]> = [
+      [-3.2, -2.4, 'soldier'],
+      [3.2, -1.6, 'archer'],
+      [0, 3.4, 'brute'],
+    ]
+    for (const [offsetX, offsetZ, role] of offsets) {
+      const member = this.spawnLocatedActor(
+        situation,
+        id,
+        faction,
+        role,
+        position,
+        offsetX,
+        offsetZ,
+      )
+      member.playerAggro = member.hostileToPlayer
+      memberIds.push(member.id)
+    }
+
+    const copyContext = this.locatedCopyContext(situation)
+    this.locatedEventCopy.set(id, copyContext)
+    const copy = describeLocatedEvent('warband', copyContext)
+    let event: WorldEvent
+    event = this.createWorldEvent({
+      id,
+      kind: 'warband',
+      anchor: 'located',
+      regionId: situation.regionId,
+      situationId: situation.id,
+      state: 'active',
+      title: copy.title,
+      description: copy.description,
+      tone: 'warning',
+      timer: LOCATED_EVENT_TIMEOUT,
+      progress: 0,
+      target: memberIds.length,
+      markerId: `${id}-marker`,
+      markerPos: position.clone(),
+      ownedActorIds: memberIds,
+      ownedProps: [],
+      update: () => {
+        const alive = this.countAliveActors(memberIds)
+        event.progress = memberIds.length - alive
+        if (alive === 0) event.state = 'succeeded'
+      },
+      handBack: () => {
+        resolveMaterializedWarband({
+          regions: this.chronicleRegions,
+          outcome: {
+            regionId: situation.regionId,
+            faction,
+            survivorShare:
+              this.countAliveActors(memberIds) / Math.max(1, memberIds.length),
+          },
+        })
+        return []
+      },
+    })
+    return event
+  }
+
+  private startAftermathEvent(
+    situation: PendingMaterialization,
+  ): WorldEvent | null {
+    const position = this.pickLocatedEventPosition(situation.siteId, situation.regionId)
+    if (!position) return null
+    if (!this.reserveActorSlots('chronicle', EVENT_REQUIRED_SLOTS.aftermath)) return null
+
+    const id = this.nextEventId('aftermath')
+    const looterFaction =
+      situation.faction ?? this.locatedDefenderFaction(this.faction, null)
+    this.spawnDecal(position, 'scorch', 5.4)
+    const looterIds: string[] = []
+    for (const [offsetX, offsetZ] of [
+      [-2.2, 1.4],
+      [2.2, -1.4],
+    ] as const) {
+      const looter = this.spawnLocatedActor(
+        situation,
+        id,
+        looterFaction,
+        'minion',
+        position,
+        offsetX,
+        offsetZ,
+      )
+      looter.playerAggro = looter.hostileToPlayer
+      looterIds.push(looter.id)
+    }
+
+    const copyContext = this.locatedCopyContext(situation)
+    this.locatedEventCopy.set(id, copyContext)
+    const copy = describeLocatedEvent('aftermath', copyContext)
+    let smokeCooldown = 0
+    let event: WorldEvent
+    event = this.createWorldEvent({
+      id,
+      kind: 'aftermath',
+      anchor: 'located',
+      regionId: situation.regionId,
+      situationId: situation.id,
+      state: 'active',
+      title: copy.title,
+      description: copy.description,
+      tone: 'info',
+      timer: LOCATED_EVENT_TIMEOUT,
+      progress: 0,
+      target: looterIds.length,
+      markerId: `${id}-marker`,
+      markerPos: position.clone(),
+      ownedActorIds: looterIds,
+      ownedProps: [],
+      update: (delta) => {
+        smokeCooldown -= delta
+        if (smokeCooldown <= 0) {
+          smokeCooldown = 0.7 + this.eventRng() * 0.6
+          this.spawnSmokeParticle(position, id)
+        }
+        const alive = this.countAliveActors(looterIds)
+        event.progress = looterIds.length - alive
+        if (alive === 0) event.state = 'succeeded'
+      },
+    })
+    return event
   }
 
   private createHouseFireEffect(position: THREE.Vector3): THREE.Group {
@@ -6406,7 +7252,9 @@ export class GameEngine {
       })
     }
 
-    this.activeEvent?.onKill?.(actor, { killerFaction, directPlayerKill })
+    for (const event of this.activeEvents) {
+      event.onKill?.(actor, { killerFaction, directPlayerKill })
+    }
     if (!directPlayerKill) return
 
     this.kills += 1
@@ -6649,7 +7497,7 @@ export class GameEngine {
   private endGame(result: 'victory' | 'defeat'): void {
     if (this.ended) return
     this.dropShield()
-    this.cancelActiveEvent()
+    this.cancelActiveEvents()
     this.clearTransientCombatFeedback()
     if (result === 'victory') this.settleActiveLoot('victory')
     else this.clearLootRuntime()
@@ -6723,13 +7571,13 @@ export class GameEngine {
         label: objective?.text,
       })
     }
-    if (this.activeEvent) {
+    for (const event of this.activeEvents) {
       markers.push({
-        id: this.activeEvent.markerId,
-        x: this.activeEvent.markerPos.x,
-        z: this.activeEvent.markerPos.z,
+        id: event.markerId,
+        x: event.markerPos.x,
+        z: event.markerPos.z,
         kind: 'event',
-        label: this.activeEvent.title,
+        label: event.title,
       })
     }
     for (const actor of this.actors) {
@@ -6813,18 +7661,18 @@ export class GameEngine {
       threatTier: this.threatTier,
       upgrades: { ...this.upgrades },
       lootToast: this.lootToast ? { ...this.lootToast } : null,
-      activeEvent: this.activeEvent
+      activeEvent: this.primaryEvent
         ? {
-            id: this.activeEvent.id,
-            kind: this.activeEvent.kind,
-            title: this.activeEvent.title,
-            description: this.activeEvent.description,
-            tone: this.activeEvent.tone,
-            progress: this.activeEvent.progress,
-            target: this.activeEvent.target,
-            ...(this.activeEvent.timer === null
+            id: this.primaryEvent.id,
+            kind: this.primaryEvent.kind,
+            title: this.primaryEvent.title,
+            description: this.primaryEvent.description,
+            tone: this.primaryEvent.tone,
+            progress: this.primaryEvent.progress,
+            target: this.primaryEvent.target,
+            ...(this.primaryEvent.timer === null
               ? {}
-              : { timeRemaining: Math.max(0, this.activeEvent.timer) }),
+              : { timeRemaining: Math.max(0, this.primaryEvent.timer) }),
           }
         : null,
     }
@@ -7095,7 +7943,9 @@ export class GameEngine {
 
   private spawnEventLoot(event: WorldEvent): void {
     const legendary = event.kind === 'champion'
-    const position = legendary ? event.markerPos : this.player.position
+    // A located event was won where it stood, so its spoils stay there.
+    const position =
+      legendary || event.anchor === 'located' ? event.markerPos : this.player.position
     this.spawnLoot(
       this.rollLootReward(legendary ? 'legendary' : 'uncommon'),
       position,
@@ -8809,8 +9659,9 @@ export class GameEngine {
     x: number,
     z: number,
     index: number,
-    options: ActorSpawnOptions = {},
+    options: ActorSpawnOptions,
   ): Actor {
+    this.claimActorSlot(options.budget)
     const mesh = this.createCharacter(faction, false)
     if (role === 'brute') mesh.scale.set(1.28, 1.12, 1.28)
     if (role === 'champion') {
@@ -8969,6 +9820,7 @@ export class GameEngine {
       generatedObjectiveId: options.generatedObjectiveId ?? null,
       generatedUnique: options.generatedUnique ?? false,
       hostileToPlayer: options.hostileToPlayer ?? hostile(faction, this.faction),
+      budgetCategory: options.budget,
     }
     if (
       !this.isWalkablePosition(
@@ -8987,14 +9839,13 @@ export class GameEngine {
   private spawnAmbush(): void {
     const x = this.caravan.position.x
     const z = this.caravan.position.z
-    const availableSlots = Math.min(2, Math.max(0, MAX_ACTORS - this.actors.length))
-    const generatedOptions: ActorSpawnOptions | undefined = this.generatedWorld
-      ? {
-          objectiveEligible: false,
-          squadEligible: false,
-          generatedRegionId: this.generatedRegionIdAt(x, z),
-        }
-      : undefined
+    const availableSlots = this.reserveActorSlotsUpTo('campaign', 2)
+    const generatedOptions: ActorSpawnOptions = {
+      budget: 'campaign',
+      objectiveEligible: false,
+      squadEligible: false,
+      generatedRegionId: this.generatedRegionIdAt(x, z),
+    }
     if (availableSlots >= 1) {
       this.spawnActor(
         'guard',
@@ -10499,7 +11350,7 @@ export class GameEngine {
 
     if (championEngaged) return 'boss'
     if (immediateThreat || nearbyAggro >= 2) return 'combat'
-    if (nearbyAggro > 0 || this.activeEvent) return 'alert'
+    if (nearbyAggro > 0 || this.hasNearbyEvent(THREAT_WAVE_EVENT_RADIUS)) return 'alert'
     return 'explore'
   }
 

@@ -19,13 +19,13 @@ Five layers, each independently shippable:
 | Layer | Name | Summary |
 | --- | --- | --- |
 | 1 | **Хроника** (Chronicle) | Data-only tick over all 25 regions. No meshes, no actors. **Implemented.** |
-| 2 | **Materialization** | Chronicle events become 3D only when the player is near. |
+| 2 | **Materialization** | Chronicle events become 3D only when the player is near. **Implemented.** |
 | 3 | **Fauna** | Beasts and civilians as non-playable allegiances. |
 | 4 | **NPC AI** | Perception, morale, threat scoring, flanking, commander orders. |
 | 5 | **Ambient life** | Civilians, wildlife, campfires — cheap, highly visible. |
 
-This spec covers **Layer 1 in implementation detail** and fixes the contracts that
-Layers 2–5 build on.
+This spec covers **Layers 1 and 2 in implementation detail** and fixes the contracts that
+Layers 3–5 build on.
 
 ## 2. Current baseline (reference)
 
@@ -35,9 +35,9 @@ Layers 2–5 build on.
 | Region state | `RegionRuntime` (`world/RegionRuntime.ts:69-95`) | Owns runtime ids and a `deltaState` JSON bag; `extractDelta` / `applyDelta` persist it. |
 | Territory | `WorldRegion.territory` (`world/worldTypes.ts:58-67`) | Written once by `WorldGenerator`; nothing writes it at runtime. |
 | Site ownership | `WorldSite.owner` (`world/worldTypes.ts:88-94`) | Same — static blueprint data, no runtime entity. |
-| Actor budget | `MAX_ACTORS = 25` (`GameEngine.ts`) | Checked ad hoc at every spawn site rather than centrally. |
-| Events | `updateEvents` / `startRandomEvent` / `finishEvent` | One active event; player-anchored; `eventCooldown` 50–70 s scaled by threat tier. |
-| Event placement | `pickEventPosition()` | Always a 22–38 m ring around the player. |
+| Actor budget | `ActorBudget` (`world/ActorBudget.ts`) | `MAX_ACTORS = 25` split into reserved categories and enforced in one place. Was checked ad hoc at every spawn site. |
+| Events | `updateEvents` / `startRandomEvent` / `finishEvent` | One player-anchored event plus `MAX_LOCATED_EVENTS` located ones; `eventCooldown` 50–70 s scaled by threat tier. |
+| Event placement | `pickEventPosition()` / `pickLocatedEventPosition()` | Player-ring placement, plus a site- or region-anchored variant for chronicle events. |
 | Threat waves | `updateThreat` / `spawnThreatWave` | Spawns hostiles in a 13 m ring around the player. |
 | Actor AI | `updateActors` | Sense range 15 m (18 m archers); NPC-vs-NPC hunt radius 6.5 m (15 m archers); no morale. |
 | Hostility | `hostile(a, b) => a !== b` | Any two different factions are hostile. Three factions only. |
@@ -50,7 +50,8 @@ Layers 2–5 build on.
 1. **The chronicle is data, not objects.** It never touches `THREE`, the scene graph,
    the navmesh, or the actor list. This is what makes simulating all 25 regions free.
 2. **The player is an observer, not a trigger.** A raid resolves whether or not the
-   player shows up. Arriving late means finding the aftermath.
+   player shows up. Arriving late means finding the aftermath — literally: `aftermath`
+   is a Layer 2 event kind.
 3. **Determinism is not negotiable.** Shareable seeds are a headline feature. The
    chronicle uses its own derived stream and is asserted in tests.
 4. **Consequences must be legible.** Every chronicle outcome maps to something the
@@ -203,7 +204,7 @@ connections that touch a trading site (settlement, shop, healer) when fewer than
 | `control` | Minimap territory colour; `WorldMapRegion.territory` reads chronicle control instead of blueprint territory. |
 | `control` | Encounter faction composition: a flipped region's encounter plans are rebuilt against its new owner before it is next simulated. |
 | `beastPressure` | Frequency of beast encounters (Layer 3), caravan interception risk. |
-| `settlementIntegrity` | Scorched prefab, offline shop/recovery, hatched map tile. |
+| `settlementIntegrity` | Scorched prefab, offline shop/recovery, hatched map tile, Layer 2 `aftermath`. |
 | `supply` | Shop prices scale by `1 + (1 - supply) * SUPPLY_PRICE_SWING`, surfaced as `GameView.shopPriceMultiplier`. |
 | `log` | «Хроника» feed entries, notices, and map overlays. |
 
@@ -242,14 +243,13 @@ a given seeded history always reads the same way.
 
 ## 5. Contracts fixed now for Layers 2–5
 
-> **Status: not implemented.** Layer 1 is pure data and does not need any of this, so
-> §5 was deliberately deferred rather than landing alongside it. Everything below is
-> still outstanding.
+> **Status.** §5.1 and §5.2 landed with Layer 2. §5.3 is still outstanding and is what
+> Layer 3 needs before beasts can exist.
 
 ### 5.1 Actor budget allocator
 
-Replace the ad-hoc `actors.length + n <= MAX_ACTORS` checks scattered across the engine
-with one allocator:
+The ad-hoc `actors.length + n <= MAX_ACTORS` checks scattered across the engine are gone.
+`world/ActorBudget.ts` owns the cap:
 
 ```ts
 type ActorBudgetCategory = 'squad' | 'campaign' | 'chronicle' | 'ambient'
@@ -260,18 +260,113 @@ const ACTOR_BUDGET: Record<ActorBudgetCategory, number> = {
   chronicle: 8,
   ambient: 6,
 }
+
+const ACTOR_BUDGET_PRIORITY = ['squad', 'campaign', 'chronicle', 'ambient'] // high → low
 ```
 
-`reserveActorSlots(category, count)` returns whether the reservation succeeded and
-never lets the total exceed `MAX_ACTORS`. `ambient` yields its slots first when a
-higher-priority category needs room.
+The four reserves add up to `MAX_ACTORS` exactly, and that is asserted in
+`tests/actorBudget.test.ts`.
+
+- `reserve(category, count)` is all-or-nothing and returns whether it succeeded;
+  `reserveUpTo` grants a partial reservation for callers that can scale down (threat
+  waves, caravan ambushes).
+- **A category may only borrow from the spare capacity of *lower*-priority ones.** That
+  single rule is what makes `ambient` yield its slots first: it is last in priority, so
+  it has nothing to hide behind, while `squad` and `campaign` keep a guaranteed floor.
+- When free capacity is not enough, the allocator calls back into the engine
+  (`yieldActorSlots`) asking the lowest-priority categories, in order, to give actors up.
+  The engine hands whole located events back to the chronicle before plucking individual
+  fighters out of one — half a raid is worse than no raid.
+- `GameEngine` re-derives the ledger from the live actor list on every reservation
+  (`actorUsageByCategory`), so it cannot drift out of sync with the scene.
+- `spawnActor` is the hard gate. `ActorSpawnOptions.budget` is **required**, so the
+  compiler refuses an uncategorised spawn, and `claimActorSlot` evicts the least
+  important actor rather than let `actors.length` pass `MAX_ACTORS`.
 
 ### 5.2 Located events
 
-`pickEventPosition()` gains a variant that places an event **at a site or region**
-rather than in a ring around the player, and `MAX_ACTIVE` becomes one player-anchored
-event plus N ambient ones. An event whose region stops being simulated de-materializes
-back into chronicle state instead of being cancelled.
+`pickEventPosition()` — the 22–38 m player ring — is unchanged and still used by
+`richCaravan`, `champion`, `rescue`, and `bounty`: those events are *about* the player.
+`pickLocatedEventPosition(siteId, regionId)` is the new variant. It anchors on a site,
+falls back to the region centre, scatters within `LOCATED_EVENT_SCATTER`, and refuses a
+spot closer than `LOCATED_EVENT_MIN_DISTANCE` for its first twelve attempts, so the world
+visibly acts somewhere other than underfoot. If the site really is underfoot, the fight
+simply comes to the player. `defendHome` was already site-placed and stays that way.
+
+`MAX_ACTIVE` is now **one player-anchored event plus `MAX_LOCATED_EVENTS` located ones**.
+`WorldEvent` gained `anchor`, `regionId`, `situationId`, `slots`, and an optional
+`handBack()`. The engine keeps `activeEvents[]`; kills, prompts, interactions, and map
+markers fan out across all of them, while the HUD banner shows the player-anchored event
+if there is one and otherwise the nearest located one.
+
+## 5A. Layer 2 — Materialization
+
+### 5A.1 What the chronicle holds back
+
+The chronicle already refuses to act in a simulated region (`frozenRegionIds`), because
+the player must never watch a building change state from thin air. `world/Materialization.ts`
+names what that leaves pending. It is pure — no `THREE`, no scene, no actors, no RNG — so
+the dependency runs one way: materialization consumes chronicle output, never the reverse.
+
+`findPendingMaterializations()` returns situations sorted by urgency, ties broken on a
+stable id so the same world state always yields the same order:
+
+| Kind | Fires when | Becomes |
+| --- | --- | --- |
+| `factionRaid` | A road-connected neighbour's pressure beats the simulated region's by `MATERIALIZE_RAID_MARGIN`, the region is not a campaign anchor, and it still has a settlement. | Three attackers assaulting the settlement, two defenders on it. |
+| `caravanAmbush` | A chronicle caravan is rolling through a simulated region that is hostile ground or above `CARAVAN_BEAST_THRESHOLD`. | A cart, two escorts, two raiders. The player can rob it. |
+| `warband` | A simulated region held by a faction hostile to the player sits above `MATERIALIZE_WARBAND_PRESSURE`. | A three-strong patrol holding the square. |
+| `aftermath` | A simulated region is already razed and its aftermath has not been shown this run. | Scorch, smoke, and two looters picking over the ashes. |
+
+`beastRaid` is **deliberately not materialized.** It needs beasts, and beasts need §5.3's
+`Allegiance` matrix — a wolf is not a faction. Re-skinning a faction squad as "beasts"
+would be a lie in the save, in the minimap colours, and in `hostile()`. Beast raids
+therefore stay chronicle-only until Layer 3, and `tests/materialization.test.ts` asserts
+that Layer 2 never produces one.
+
+### 5A.2 De-materialization is not cancellation
+
+A located event whose region stops being simulated — or whose `LOCATED_EVENT_TIMEOUT`
+expires — is **handed back**, not deleted. `handBack()` folds whatever was still standing
+into chronicle state through pure functions in `Chronicle.ts`:
+
+- `resolveMaterializedRaid` rolls the winner from the surviving share of each side, flips
+  control (never for a campaign anchor), damages the settlement, and logs `regionCaptured`
+  — or, if the attackers are spent, `raidRepelled`. Wiping out one side skips the roll
+  entirely, so a fight the player finished resolves deterministically. Either way the
+  assault force is paid for out of the **source** region's pressure
+  (`RAID_SOURCE_SPEND_WON` / `RAID_SOURCE_SPEND_REPELLED`) — that is the number the front
+  is measured on, so winning a raid actually pushes the front back instead of putting the
+  same fight straight back on the board.
+- `resolveMaterializedCaravan` writes off a caravan whose escort is gone and logs
+  `caravanLost`; an intact one simply rejoins its route in `state.caravans`.
+- `resolveMaterializedWarband` scales the faction's pressure in the square by how much of
+  the warband survived. Nothing is logged: nothing happened that the chronicle would have
+  written down on its own.
+
+`findFactionRaids` also honours `lastEventTick` / `CONTROL_FLIP_COOLDOWN_TICKS`, exactly
+as `resolveFronts` does, so a square that was just fought over gets the same breathing
+room whether the chronicle or the player settled it.
+
+The same functions run when the player *does* finish the fight, so a raid resolves the
+same way whether or not anybody watched. `ChronicleEventKind` gains `raidRepelled`; the
+«Хроника» feed and the map overlays pick it up with no further work.
+
+The hand-back roll uses the seeded `event` stream, not `Math.random()`, so materialization
+and its outcome replay identically for a given seed and route.
+
+### 5A.3 Copy
+
+Layer 2 copy lives in `content/gameCopy.ts` alongside the chronicle phrasings —
+`describeLocatedEvent`, `describeLocatedEventStart`, `describeLocatedEventOutcome`,
+`describeEventHandback`, and `WORLD_EVENT_FAILURE_MESSAGES`, which moved out of
+`GameEngine.ts`. Same register as Layer 1:
+
+```
+В квадрате C3 набигают: охрана дворца пришли за домиками.
+Корован до точки «Лавка» не доедет. Забери груз сам, пока это делают за тебя.
+Пользователь ушёл из квадрата C3. Чем там кончилось — прочитаешь в хронике.
+```
 
 ### 5.3 Allegiance
 
@@ -323,6 +418,27 @@ Without `PRESSURE_ATTRITION` the fronts deadlock: every faction's pressure conve
 its own `factionStrength`, so the gap never reaches `CONTROL_FLIP_MARGIN` and no region
 ever changes hands until the player has completed most of the campaign.
 
+Constants added by Layer 2:
+
+```
+ACTOR_BUDGET={squad:3,campaign:8,chronicle:8,ambient:6}   MAX_ACTORS=25
+MAX_LOCATED_EVENTS=2            MATERIALIZE_INTERVAL=6
+LOCATED_EVENT_MIN_DISTANCE=26   LOCATED_EVENT_MAX_DISTANCE=150
+LOCATED_EVENT_SCATTER=9         LOCATED_EVENT_TIMEOUT=150
+THREAT_WAVE_EVENT_RADIUS=45
+MATERIALIZE_RAID_MARGIN=CONTROL_FLIP_MARGIN*0.6           MATERIALIZE_WARBAND_PRESSURE=0.32
+RAID_SOURCE_SPEND_WON=0.5       RAID_SOURCE_SPEND_REPELLED=0.35
+EVENT_REQUIRED_SLOTS={factionRaid:5,caravanAmbush:4,warband:3,aftermath:2}
+LOCATED_EVENT_REWARDS={factionRaid:110,caravanAmbush:140,warband:80,aftermath:45}
+```
+
+`MATERIALIZE_RAID_MARGIN` is deliberately *below* `CONTROL_FLIP_MARGIN`: the player should
+meet the fight, not the result of it. `MATERIALIZE_WARBAND_PRESSURE` sits just under the
+`0.35` a faction starts with in a region it controls, so walking into hostile territory
+reliably produces a patrol — and `resolveMaterializedWarband` cuts a wiped warband's
+pressure to `0.3×`, well below the threshold, so it takes the chronicle a dozen ticks to
+put another one there.
+
 ## 7. Edge cases
 
 - **Fog of war.** Chronicle events in undiscovered regions still happen; they are just
@@ -343,7 +459,25 @@ ever changes hands until the player has completed most of the campaign.
   generated mode: it selected from `villageHouses`, which only the deleted legacy world
   builder ever populated, and the eligibility filter excluded it outright. It now
   targets the nearest generated `settlement` site within `DEFEND_HOME_MAX_DISTANCE`.
-  Layer 2 supersedes it with chronicle-driven `factionRaid` / `beastRaid`.
+  Layer 2 supersedes it with chronicle-driven `factionRaid`; `beastRaid` waits for §5.3.
+- **Walking out mid-fight.** A located event is handed back, not cancelled, and the
+  chronicle logs who won. The player sees «Пользователь ушёл из квадрата C3…» and finds
+  the consequence in the feed and on the map.
+- **Save during a materialized fight.** Events are not persisted; the save keeps only the
+  cooldown, exactly as before. On load the chronicle state still describes the same
+  pending situation, so the fight simply materializes again rather than being lost.
+- **Budget starvation.** A located raid holding all eight chronicle slots blocks a
+  player-anchored event until it resolves; `getEligibleEventKinds` reports this honestly
+  instead of spawning a half-populated event. The director's threat waves are suppressed
+  only while a fight is within `THREAT_WAVE_EVENT_RADIUS`, so distant world events do not
+  starve it.
+- **Reservations have side effects.** `reserveActorSlots` can make lower-priority
+  categories give actors up, so it must only be called once a spawn is definitely going
+  to happen — never as a cheap pre-filter in a loop that may skip the spawn.
+- **Actors that change hands.** A rescued captive joins the squad permanently, so
+  `rescueCaptive` moves it to the `squad` category. An actor that outlives the event that
+  spawned it must be re-categorised, or it eats that event's budget for the rest of the
+  run and stays evictable as if it were still a bystander.
 
 ## 8. Acceptance criteria
 
@@ -362,13 +496,22 @@ ever changes hands until the player has completed most of the campaign.
 - [x] Campaign start and finale regions never flip and their sites are never destroyed;
       500 seeded campaigns remain completable. `WorldValidator` asserts that every
       campaign anchor region is chronicle-protected.
-- [ ] Actor count never exceeds `MAX_ACTORS`; ambient actors yield first.
-      *(Deferred with §5.1 — Layer 1 spawns no actors.)*
+- [x] Actor count never exceeds `MAX_ACTORS`; ambient actors yield first.
+- [x] Chronicle events materialize only in simulated regions, at a site or region rather
+      than in a ring around the player.
+- [x] A player-anchored event and up to `MAX_LOCATED_EVENTS` located ones coexist without
+      breaching the actor cap.
+- [x] Leaving a region de-materializes its event back into chronicle state instead of
+      cancelling it, and the chronicle records who won.
+- [x] Materialization and its outcomes are seeded, so they replay for a given seed and
+      route.
 - [x] `npm run build`, `npm run lint`, and `npm test` pass.
 
 ## 9. Effort
 
-**Layer 1: shipped.** The tick rules and the save/versioning work were the bulk; the
-feed and map overlays were the fiddly bits.
-Layer 2 ~2 days, Layer 3 ~3 days (new meshes and AI), Layer 4 ~3 days, Layer 5 ~1 day.
-§5's contracts remain outstanding and should land with Layer 2.
+**Layers 1 and 2: shipped.** In Layer 1 the tick rules and the save/versioning work were
+the bulk; the feed and map overlays were the fiddly bits. In Layer 2 the actor budget and
+the hand-back contract were the substance; unpicking the single-`activeEvent` assumption
+threaded through the engine was the tedious part.
+Layer 3 ~3 days (new meshes and AI), Layer 4 ~3 days, Layer 5 ~1 day. §5.3 remains
+outstanding and blocks Layer 3 — and with it `beastRaid` materialization.

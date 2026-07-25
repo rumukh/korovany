@@ -42,6 +42,13 @@ export const STRENGTH_BASE = 0.25
 export const STRENGTH_TERRITORY_SHARE = 0.45
 export const STRENGTH_OBJECTIVE_SHARE = 0.3
 
+/**
+ * How much of the attacker's pressure survives a materialized raid, measured in the
+ * region the assault marched from. A repelled raid costs more than a won one.
+ */
+export const RAID_SOURCE_SPEND_WON = 0.5
+export const RAID_SOURCE_SPEND_REPELLED = 0.35
+
 /** Site kinds that host civilians, trade, and healing — the things a raid can ruin. */
 export const CHRONICLE_SETTLEMENT_SITE_KINDS = [
   'settlement',
@@ -57,6 +64,7 @@ export const CHRONICLE_PROTECTED_SITE_KINDS = [
 
 export type ChronicleEventKind =
   | 'regionCaptured'
+  | 'raidRepelled'
   | 'beastRaid'
   | 'settlementBurned'
   | 'caravanLost'
@@ -247,19 +255,16 @@ export function tickChronicle(context: ChronicleTickContext): ChronicleEvent[] {
     siteId: SiteId | null,
   ): void => {
     sequence += 1
-    const event: ChronicleEvent = {
-      id: `chronicle-${state.tick}-${sequence}`,
-      tick: state.tick,
-      kind,
-      regionId,
-      faction,
-      siteId,
-    }
-    events.push(event)
-    state.log.push(event)
-    if (state.log.length > CHRONICLE_LOG_LIMIT) {
-      state.log.splice(0, state.log.length - CHRONICLE_LOG_LIMIT)
-    }
+    events.push(
+      appendChronicleEvent(
+        state,
+        `chronicle-${state.tick}-${sequence}`,
+        kind,
+        regionId,
+        faction,
+        siteId,
+      ),
+    )
   }
 
   updateFactionStrength(context)
@@ -272,6 +277,205 @@ export function tickChronicle(context: ChronicleTickContext): ChronicleEvent[] {
   advanceSettlements(context)
   advanceCaravans(context, index, record)
   return events
+}
+
+function appendChronicleEvent(
+  state: ChronicleState,
+  id: string,
+  kind: ChronicleEventKind,
+  regionId: RegionId,
+  faction: Faction | null,
+  siteId: SiteId | null,
+): ChronicleEvent {
+  const event: ChronicleEvent = { id, tick: state.tick, kind, regionId, faction, siteId }
+  state.log.push(event)
+  if (state.log.length > CHRONICLE_LOG_LIMIT) {
+    state.log.splice(0, state.log.length - CHRONICLE_LOG_LIMIT)
+  }
+  return event
+}
+
+/* ------------------------------------------------------------------------------- *
+ * Layer 2 hand-back.
+ *
+ * The chronicle refuses to act in a simulated region — Layer 2 materializes the fight
+ * instead. When the player walks away, the fight is not cancelled: whatever was still
+ * standing is folded back in here and the chronicle writes down who won. These stay
+ * pure (state, regions, rng only) so the materialization layer remains the consumer.
+ * ------------------------------------------------------------------------------- */
+
+export interface MaterializedRaidOutcome {
+  regionId: RegionId
+  /** Region the attackers marched from; their losses are paid out of its pressure. */
+  sourceRegionId: RegionId | null
+  /** Settlement site under attack, if the raid had one. */
+  siteId: SiteId | null
+  attacker: Faction
+  /** 0..1 — share of the attacking force still standing when the player left. */
+  attackerStrength: number
+  /** 0..1 — share of the defending force still standing. */
+  defenderStrength: number
+}
+
+export interface MaterializedRaidResolution {
+  events: ChronicleEvent[]
+  attackerWon: boolean
+}
+
+export interface MaterializedRaidContext {
+  state: ChronicleState
+  regions: Map<string, RegionChronicleState>
+  rng: RandomStream
+  protectedRegionIds: ReadonlySet<string>
+  /** Unique prefix for the log entries this resolution writes. */
+  idPrefix: string
+  outcome: MaterializedRaidOutcome
+}
+
+/** Settles a raid the player abandoned mid-fight, weighted by who was still alive. */
+export function resolveMaterializedRaid(
+  context: MaterializedRaidContext,
+): MaterializedRaidResolution {
+  const { state, regions, rng, outcome } = context
+  const region = regions.get(String(outcome.regionId))
+  const events: ChronicleEvent[] = []
+  if (!region) return { events, attackerWon: false }
+
+  let sequence = 0
+  const record = (
+    kind: ChronicleEventKind,
+    faction: Faction | null,
+    siteId: SiteId | null,
+  ): void => {
+    sequence += 1
+    events.push(
+      appendChronicleEvent(
+        state,
+        `${context.idPrefix}-${sequence}`,
+        kind,
+        outcome.regionId,
+        faction,
+        siteId,
+      ),
+    )
+  }
+
+  const attackerStrength = clamp01(outcome.attackerStrength)
+  const defenderStrength = clamp01(outcome.defenderStrength)
+  const total = attackerStrength + defenderStrength
+  // No attackers left is a raid the defenders survived, no roll needed.
+  const attackerWon =
+    attackerStrength <= 0
+      ? false
+      : total <= 0
+        ? true
+        : rng.chance(clamp01(attackerStrength / total))
+  region.lastEventTick = state.tick
+
+  // The assault force is spent out of the region it marched from — that is the pressure
+  // the front is measured on, so this is what stops the same raid re-forming at once.
+  const source =
+    outcome.sourceRegionId === null
+      ? undefined
+      : regions.get(String(outcome.sourceRegionId))
+  if (source) {
+    source.pressure[outcome.attacker] = clamp01(
+      source.pressure[outcome.attacker] *
+        (attackerWon ? RAID_SOURCE_SPEND_WON : RAID_SOURCE_SPEND_REPELLED),
+    )
+    source.lastEventTick = state.tick
+  }
+
+  if (!attackerWon) {
+    region.pressure[outcome.attacker] = clamp01(
+      region.pressure[outcome.attacker] * 0.4,
+    )
+    record('raidRepelled', outcome.attacker, outcome.siteId)
+    return { events, attackerWon }
+  }
+
+  const defender = region.control
+  if (
+    !context.protectedRegionIds.has(String(outcome.regionId)) &&
+    defender !== outcome.attacker
+  ) {
+    region.control = outcome.attacker
+    region.pressure[outcome.attacker] = clamp01(
+      Math.max(region.pressure[outcome.attacker], attackerStrength * 0.6 + 0.2),
+    )
+    if (defender !== 'neutral') {
+      region.pressure[defender] = clamp01(region.pressure[defender] * 0.3)
+    }
+    record('regionCaptured', outcome.attacker, null)
+  }
+  if (outcome.siteId !== null && region.settlementIntegrity > 0) {
+    const damage = rng.range(SETTLEMENT_RAID_DAMAGE[0], SETTLEMENT_RAID_DAMAGE[1])
+    region.settlementIntegrity = Math.max(0, region.settlementIntegrity - damage)
+    region.supply = clamp01(region.supply - 0.08)
+    if (region.settlementIntegrity <= 0) {
+      record('settlementBurned', null, outcome.siteId)
+    }
+  }
+  return { events, attackerWon }
+}
+
+export interface MaterializedCaravanOutcome {
+  caravanId: string
+  regionId: RegionId
+  /** True when the caravan was still rolling as the player walked away. */
+  intact: boolean
+}
+
+/** Settles an ambushed caravan: an intact one simply rejoins the chronicle's route. */
+export function resolveMaterializedCaravan(context: {
+  state: ChronicleState
+  regions: Map<string, RegionChronicleState>
+  idPrefix: string
+  outcome: MaterializedCaravanOutcome
+}): ChronicleEvent[] {
+  const { state, regions, outcome } = context
+  const caravan = state.caravans.find((entry) => entry.id === outcome.caravanId)
+  if (!caravan || outcome.intact) return []
+  state.caravans = state.caravans.filter((entry) => entry.id !== outcome.caravanId)
+  const destination = regions.get(
+    String(caravan.regionPath[caravan.regionPath.length - 1]),
+  )
+  if (destination) {
+    destination.supply = clamp01(destination.supply - SUPPLY_CARAVAN_LOSS)
+  }
+  return [
+    appendChronicleEvent(
+      state,
+      `${context.idPrefix}-1`,
+      'caravanLost',
+      outcome.regionId,
+      caravan.ownerFaction,
+      caravan.toSiteId,
+    ),
+  ]
+}
+
+export interface MaterializedWarbandOutcome {
+  regionId: RegionId
+  faction: Faction
+  /** 0..1 — share of the warband still standing when the player left. */
+  survivorShare: number
+}
+
+/**
+ * A warband the player thinned out loosens its faction's grip on the region. No log
+ * entry: nothing happened that the chronicle would have written down on its own.
+ */
+export function resolveMaterializedWarband(context: {
+  regions: Map<string, RegionChronicleState>
+  outcome: MaterializedWarbandOutcome
+}): void {
+  const region = context.regions.get(String(context.outcome.regionId))
+  if (!region) return
+  const survivors = clamp01(context.outcome.survivorShare)
+  region.pressure[context.outcome.faction] = clamp01(
+    region.pressure[context.outcome.faction] * (0.3 + 0.7 * survivors),
+  )
 }
 
 function updateFactionStrength(context: ChronicleTickContext): void {
@@ -545,6 +749,12 @@ function regionIndexAt(caravan: ChronicleCaravan): number {
   )
 }
 
+/** The region a caravan is currently rolling through. */
+export function getCaravanRegionId(caravan: ChronicleCaravan): RegionId | null {
+  if (caravan.regionPath.length === 0) return null
+  return caravan.regionPath[regionIndexAt(caravan)]
+}
+
 const blueprintIndexCache = new WeakMap<WorldBlueprint, ChronicleSiteIndex>()
 
 function indexBlueprint(blueprint: WorldBlueprint): ChronicleSiteIndex {
@@ -735,6 +945,7 @@ function normalizeChronicleEvent(value: unknown): ChronicleEvent | null {
 
 const CHRONICLE_EVENT_KINDS: readonly ChronicleEventKind[] = [
   'regionCaptured',
+  'raidRepelled',
   'beastRaid',
   'settlementBurned',
   'caravanLost',

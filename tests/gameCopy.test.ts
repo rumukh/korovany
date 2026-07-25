@@ -4,10 +4,19 @@ import {
   chronicleEventTone,
   createGeneratedObjectiveText,
   describeChronicleEvent,
+  describeEventHandback,
+  describeLocatedEvent,
+  describeLocatedEventOutcome,
+  describeLocatedEventStart,
   formatRegionGridLabel,
   formatRussianCount,
+  WORLD_EVENT_FAILURE_MESSAGES,
 } from '../src/game/content/gameCopy.ts'
 import { SITE_PRESENTATIONS } from '../src/game/content/registry.ts'
+import {
+  CHRONICLE_WORLD_EVENT_KINDS,
+  RANDOM_WORLD_EVENT_KINDS,
+} from '../src/game/types.ts'
 import type { ChronicleEventKind } from '../src/game/world/Chronicle.ts'
 import type {
   ObjectiveKind,
@@ -137,7 +146,70 @@ test('chronicle copy survives missing faction and site metadata', () => {
 test('chronicle tones escalate with how much the news hurts', () => {
   assert.equal(chronicleEventTone('caravanArrived'), 'info')
   assert.equal(chronicleEventTone('regionCaptured'), 'warning')
+  assert.equal(chronicleEventTone('raidRepelled'), 'success')
   assert.equal(chronicleEventTone('beastRaid'), 'warning')
   assert.equal(chronicleEventTone('settlementBurned'), 'danger')
   assert.equal(chronicleEventTone('caravanLost'), 'danger')
+})
+
+test('every located event kind has a full set of censored Russian copy', () => {
+  const banned = /\b(бля|хер|нах|сука)/i
+  const context = {
+    regionLabel: 'C3',
+    siteLabel: 'Домики деревяные',
+    faction: 'villain' as const,
+    defender: 'guard' as const,
+  }
+  for (const kind of CHRONICLE_WORLD_EVENT_KINDS) {
+    const copy = describeLocatedEvent(kind, context)
+    const lines = [
+      copy.title,
+      copy.description,
+      describeLocatedEventStart(kind, context),
+      describeLocatedEventOutcome(kind, true, context),
+      describeLocatedEventOutcome(kind, false, context),
+    ]
+    for (const line of lines) {
+      assert.ok(line.length > 0, `${kind} has an empty line`)
+      assert.equal(line.includes('null'), false, `${kind}: ${line}`)
+      assert.equal(line.includes('undefined'), false, `${kind}: ${line}`)
+      assert.equal(banned.test(line), false, `${kind} is not censored: ${line}`)
+    }
+    assert.ok(/[.!?]$/.test(copy.description), `${kind} description is not a sentence`)
+    assert.ok(copy.title.length <= 24, `${kind} title is too long for the banner`)
+  }
+})
+
+test('located event copy survives missing faction and site metadata', () => {
+  const bare = {
+    regionLabel: 'A1',
+    siteLabel: null,
+    faction: null,
+    defender: null,
+  }
+  for (const kind of CHRONICLE_WORLD_EVENT_KINDS) {
+    for (const line of [
+      describeLocatedEvent(kind, bare).description,
+      describeLocatedEventStart(kind, bare),
+      describeLocatedEventOutcome(kind, true, bare),
+      describeLocatedEventOutcome(kind, false, bare),
+    ]) {
+      assert.equal(line.includes('null'), false, `${kind}: ${line}`)
+      assert.equal(line.includes('undefined'), false, `${kind}: ${line}`)
+    }
+  }
+})
+
+test('walking away from a materialized fight points at the chronicle, not a cancel', () => {
+  const text = describeEventHandback('D4')
+  assert.ok(text.includes('D4'))
+  assert.ok(text.includes('хроник'))
+})
+
+test('every player-anchored event kind has a failure line', () => {
+  for (const kind of RANDOM_WORLD_EVENT_KINDS) {
+    const line = WORLD_EVENT_FAILURE_MESSAGES[kind]
+    assert.ok(line && line.length > 10, `${kind} has no failure line`)
+    assert.ok(/[.!?]$/.test(line), `${kind} failure line is not a sentence`)
+  }
 })

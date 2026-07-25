@@ -1,9 +1,11 @@
+import { RANDOM_WORLD_EVENT_KINDS, isRandomWorldEventKind } from './types.ts'
 import type {
   AbilityId,
   ActorRole,
   BodyPart,
   Faction,
   ShopItem,
+  RandomWorldEventKind,
   WorldEventKind,
   ZoneId,
 } from './types'
@@ -70,7 +72,7 @@ export interface AchievementStats {
   objectivesCompleted: number
   eventsCompleted: number
   eventsFailed: number
-  eventsByKind: NumericMap<WorldEventKind>
+  eventsByKind: NumericMap<RandomWorldEventKind>
   victories: number
   defeats: number
   factionVictories: NumericMap<Faction>
@@ -102,7 +104,7 @@ export interface AchievementRunState {
   squadCommands: number
   caravansRobbed: number
   zonesVisited: ZoneId[]
-  eventKindsCompleted: WorldEventKind[]
+  eventKindsCompleted: RandomWorldEventKind[]
   unlockedIds: string[]
   result: 'victory' | 'defeat' | null
   elapsedAtEnd: number
@@ -137,7 +139,7 @@ const ACTOR_ROLES: ActorRole[] = [
 ]
 const FACTIONS: Faction[] = ['elf', 'guard', 'villain']
 const SHOP_ITEM_IDS: ShopItem['id'][] = ['medicine', 'arm', 'leg', 'eye', 'blade']
-const EVENT_KINDS: WorldEventKind[] = ['richCaravan', 'defendHome', 'champion', 'rescue', 'bounty']
+const EVENT_KINDS = RANDOM_WORLD_EVENT_KINDS
 const ZONES: ZoneId[] = ['neutral', 'palace', 'forest', 'fort']
 
 export const ACHIEVEMENT_RARITY_LABELS: Record<AchievementRarity, string> = {
@@ -1111,8 +1113,13 @@ export class AchievementTracker {
     if (succeeded) {
       this.run.eventsCompleted += 1
       this.store.stats.eventsCompleted += 1
-      this.store.stats.eventsByKind[kind] += 1
-      if (!this.run.eventKindsCompleted.includes(kind)) this.run.eventKindsCompleted.push(kind)
+      // Chronicle-driven events count toward the totals but not the five-kind set.
+      if (isRandomWorldEventKind(kind)) {
+        this.store.stats.eventsByKind[kind] += 1
+        if (!this.run.eventKindsCompleted.includes(kind)) {
+          this.run.eventKindsCompleted.push(kind)
+        }
+      }
     } else {
       this.store.stats.eventsFailed += 1
     }

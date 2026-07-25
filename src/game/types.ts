@@ -45,12 +45,43 @@ export interface LootToastView {
   detail: string
 }
 
-export type WorldEventKind =
+export type RandomWorldEventKind =
   | 'richCaravan'
   | 'defendHome'
   | 'champion'
   | 'rescue'
   | 'bounty'
+
+/** Layer 2 — chronicle situations that materialize at a site or region. */
+export type ChronicleWorldEventKind =
+  | 'factionRaid'
+  | 'caravanAmbush'
+  | 'warband'
+  | 'aftermath'
+
+export type WorldEventKind = RandomWorldEventKind | ChronicleWorldEventKind
+
+/** The five the director rolls for; the chronicle kinds are placed, not rolled. */
+export const RANDOM_WORLD_EVENT_KINDS: readonly RandomWorldEventKind[] = [
+  'richCaravan',
+  'defendHome',
+  'champion',
+  'rescue',
+  'bounty',
+]
+
+export const CHRONICLE_WORLD_EVENT_KINDS: readonly ChronicleWorldEventKind[] = [
+  'factionRaid',
+  'caravanAmbush',
+  'warband',
+  'aftermath',
+]
+
+export function isRandomWorldEventKind(
+  kind: WorldEventKind,
+): kind is RandomWorldEventKind {
+  return (RANDOM_WORLD_EVENT_KINDS as readonly string[]).includes(kind)
+}
 
 export interface WorldEventView {
   id: string

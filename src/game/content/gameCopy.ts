@@ -1,5 +1,5 @@
 import { SITE_PRESENTATIONS } from './registry.ts'
-import type { Faction, NoticeTone } from '../types.ts'
+import type { ChronicleWorldEventKind, Faction, NoticeTone, RandomWorldEventKind } from '../types.ts'
 import type { ChronicleEventKind } from '../world/Chronicle.ts'
 import type { ObjectiveKind, SiteKind } from '../world/worldTypes.ts'
 
@@ -93,6 +93,14 @@ const CHRONICLE_PHRASES: Record<
     ({ regionLabel, faction }) =>
       `Квадрат ${regionLabel} перешёл под ${factionGenitive(faction)}. Пользователя, как обычно, спросить забыли.`,
   ],
+  raidRepelled: [
+    ({ regionLabel, faction }) =>
+      `Набег на квадрат ${regionLabel} отбили. ${capitalize(factionName(faction))} ушли считать потери.`,
+    ({ regionLabel }) =>
+      `В квадрате ${regionLabel} налётчиков сложили прямо у забора. Домики деревяные устояли.`,
+    ({ regionLabel }) =>
+      `Квадрат ${regionLabel} не отдали. Значит, кто-то там всё-таки слушался командира.`,
+  ],
   beastRaid: [
     ({ regionLabel }) =>
       `В квадрате ${regionLabel} зверьё осмелело. Местные предпочитают не выходить.`,
@@ -129,6 +137,7 @@ const CHRONICLE_PHRASES: Record<
 
 const CHRONICLE_TONES: Record<ChronicleEventKind, NoticeTone> = {
   regionCaptured: 'warning',
+  raidRepelled: 'success',
   beastRaid: 'warning',
   settlementBurned: 'danger',
   caravanLost: 'danger',
@@ -162,6 +171,10 @@ function factionGenitive(faction: Faction | null): string {
   return 'ничью руку'
 }
 
+function capitalize(value: string): string {
+  return value.length === 0 ? value : value[0].toUpperCase() + value.slice(1)
+}
+
 function stableIndex(value: string, length: number): number {
   if (length <= 1) return 0
   let hash = 2166136261
@@ -170,5 +183,120 @@ function stableIndex(value: string, length: number): number {
     hash = Math.imul(hash, 16777619)
   }
   return (hash >>> 0) % length
+}
+
+/** Failure lines for the five player-anchored events the director rolls for. */
+export const WORLD_EVENT_FAILURE_MESSAGES: Record<RandomWorldEventKind, string> = {
+  richCaravan: 'Богатый корован ушёл вместе с добычей.',
+  defendHome: 'Дом не отстояли — огонь сожрал всё.',
+  champion: 'Чемпион ушёл непобеждённым.',
+  rescue: 'Пленника не удалось спасти.',
+  bounty: 'Время вышло. Цель больше не в розыске.',
+}
+
+/** Layer 2 — copy for events the chronicle places at a site instead of at the player. */
+export interface LocatedEventCopyContext {
+  /** Map square label, e.g. `C3`. */
+  regionLabel: string
+  siteLabel: string | null
+  /** Attacker, caravan owner, or warband owner. */
+  faction: Faction | null
+  /** Whoever holds the ground. */
+  defender: Faction | null
+}
+
+export interface LocatedEventCopy {
+  title: string
+  description: string
+}
+
+const DEFAULT_SITE_LABEL = 'Домики деревяные'
+
+const LOCATED_EVENT_COPY: Record<
+  ChronicleWorldEventKind,
+  (context: LocatedEventCopyContext) => LocatedEventCopy
+> = {
+  factionRaid: ({ faction, siteLabel }) => ({
+    title: 'Набег на домики',
+    description: `${capitalize(factionName(faction))} пришли за точкой «${siteLabel ?? DEFAULT_SITE_LABEL}». Положи налётчиков, пока домики ещё деревяные.`,
+  }),
+  caravanAmbush: ({ siteLabel }) => ({
+    title: 'Корован под ножом',
+    description: `Корован до точки «${siteLabel ?? 'склад'}» не доедет. Забери груз сам, пока это делают за тебя.`,
+  }),
+  warband: ({ faction, regionLabel }) => ({
+    title: 'Чужая ватага',
+    description: `По квадрату ${regionLabel} ходит ватага (${factionName(faction)}) и смотрит нехорошо. Проредить.`,
+  }),
+  aftermath: ({ siteLabel }) => ({
+    title: 'Что осталось',
+    description: `На пепелище точки «${siteLabel ?? DEFAULT_SITE_LABEL}» кто-то шарит по углям. Объясни, что это чужие угли.`,
+  }),
+}
+
+const LOCATED_EVENT_START: Record<
+  ChronicleWorldEventKind,
+  (context: LocatedEventCopyContext) => string
+> = {
+  factionRaid: ({ regionLabel, faction }) =>
+    `В квадрате ${regionLabel} набигают: ${factionName(faction)} пришли за домиками.`,
+  caravanAmbush: ({ regionLabel }) =>
+    `В квадрате ${regionLabel} режут корован. Успей — там ещё осталось.`,
+  warband: ({ regionLabel, faction }) =>
+    `По квадрату ${regionLabel} ходит ватага (${factionName(faction)}). Дорогу лучше не уступать.`,
+  aftermath: ({ regionLabel }) =>
+    `Квадрат ${regionLabel} догорел без пользователя. На пепелище уже кто-то шарит.`,
+}
+
+const LOCATED_EVENT_OUTCOME: Record<
+  ChronicleWorldEventKind,
+  (succeeded: boolean, context: LocatedEventCopyContext) => string
+> = {
+  factionRaid: (succeeded, { regionLabel, faction }) =>
+    succeeded
+      ? 'Набег отбит. Домики деревяные пока деревяные, местные снова слушаются командира.'
+      : `Домики догорели. В квадрате ${regionLabel} теперь ${factionName(faction)} и новые правила.`,
+  caravanAmbush: (succeeded, { regionLabel }) =>
+    succeeded
+      ? 'Корован ограблен по всем правилам. Конкуренты остались с пустой телегой.'
+      : `Корован увели прямо из-под носа. В квадрате ${regionLabel} кто-то оказался шустрее.`,
+  warband: (succeeded, { regionLabel }) =>
+    succeeded
+      ? `Ватагу проредили. В квадрате ${regionLabel} стало заметно тише.`
+      : 'Ватага ушла своей дорогой. Ну и пусть идёт, пока идётся.',
+  aftermath: (succeeded, { siteLabel }) =>
+    succeeded
+      ? 'Мародёров с пепелища прогнали. Углям это, конечно, уже не поможет.'
+      : `С точки «${siteLabel ?? DEFAULT_SITE_LABEL}» вынесли даже угли. Пользователь опоздал, как обычно.`,
+}
+
+export function describeLocatedEvent(
+  kind: ChronicleWorldEventKind,
+  context: LocatedEventCopyContext,
+): LocatedEventCopy {
+  return LOCATED_EVENT_COPY[kind](context)
+}
+
+export function describeLocatedEventStart(
+  kind: ChronicleWorldEventKind,
+  context: LocatedEventCopyContext,
+): string {
+  return LOCATED_EVENT_START[kind](context)
+}
+
+export function describeLocatedEventOutcome(
+  kind: ChronicleWorldEventKind,
+  succeeded: boolean,
+  context: LocatedEventCopyContext,
+): string {
+  return LOCATED_EVENT_OUTCOME[kind](succeeded, context)
+}
+
+/**
+ * Shown when the player walks out of a materialized event's region: the fight is not
+ * cancelled, it is handed back to the chronicle, which will write down who won.
+ */
+export function describeEventHandback(regionLabel: string): string {
+  return `Пользователь ушёл из квадрата ${regionLabel}. Чем там кончилось — прочитаешь в хронике.`
 }
 
