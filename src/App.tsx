@@ -91,6 +91,7 @@ import {
   normalizeUpgradeLevels,
   restoreObjectives,
 } from './game/types'
+import { isMapMarkerVisible, projectMapMarker } from './game/mapMarkers'
 import {
   createGeneratedObjectiveText,
   formatRussianCount,
@@ -669,34 +670,6 @@ function StatusDot({ status }: { status: PartStatus }) {
   return <span className={`part-state ${status}`}>{labels[status]}</span>
 }
 
-function projectMapMarker(
-  coordinate: number,
-  minimum: number,
-  maximum: number,
-): string {
-  const span = Math.max(1, maximum - minimum)
-  return `${Math.min(100, Math.max(0, ((coordinate - minimum) / span) * 100))}%`
-}
-
-function markerIsDiscovered(view: GameView, x: number, z: number): boolean {
-  if (view.worldMap.mode === 'legacy') return true
-  const { bounds, regions } = view.worldMap
-  const columns = Math.max(1, ...regions.map((region) => region.gridX + 1))
-  const rows = Math.max(1, ...regions.map((region) => region.gridZ + 1))
-  const gridX = Math.min(
-    columns - 1,
-    Math.max(0, Math.floor(((x - bounds.minX) / (bounds.maxX - bounds.minX)) * columns)),
-  )
-  const gridZ = Math.min(
-    rows - 1,
-    Math.max(0, Math.floor(((z - bounds.minZ) / (bounds.maxZ - bounds.minZ)) * rows)),
-  )
-  return Boolean(
-    regions.find((region) => region.gridX === gridX && region.gridZ === gridZ)
-      ?.discovered,
-  )
-}
-
 function RegionBiomeIcon({ biome }: { biome: GameView['zone'] }) {
   if (biome === 'forest') return <Trees aria-hidden="true" />
   if (biome === 'palace') return <Castle aria-hidden="true" />
@@ -709,9 +682,8 @@ function MiniMap({ view }: { view: GameView }) {
   const hasEventMarker = view.markers.some((marker) => marker.kind === 'event')
   const generated = view.worldMap.mode === 'generated'
   const discoveredCount = view.worldMap.regions.filter((region) => region.discovered).length
-  const visibleMarkers = view.markers.filter(
-    (marker) =>
-      marker.kind === 'player' || markerIsDiscovered(view, marker.x, marker.z),
+  const visibleMarkers = view.markers.filter((marker) =>
+    isMapMarkerVisible(view.worldMap, marker),
   )
   const mapLabel = generated
     ? `Карта сгенерированного мира, открыто ${discoveredCount} из ${view.worldMap.regions.length} регионов`
@@ -809,6 +781,8 @@ function MiniMap({ view }: { view: GameView }) {
                 className="player-heading"
                 style={{ transform: `rotate(${marker.heading ?? 0}rad)` }}
               />
+            ) : marker.kind === 'objective' ? (
+              <Flag aria-hidden="true" />
             ) : marker.kind === 'event' ? (
               <Sparkles aria-hidden="true" />
             ) : null}
@@ -827,7 +801,8 @@ function MiniMap({ view }: { view: GameView }) {
         </span>
         {hasObjectiveMarker ? (
           <span>
-            <i className="legend-dot objective" /> {generated ? 'цель' : 'сдать добычу'}
+            <Flag className="legend-objective" aria-hidden="true" />{' '}
+            {generated ? 'цель' : 'сдать добычу'}
           </span>
         ) : null}
         {hasEventMarker ? (
@@ -870,7 +845,7 @@ function ObjectiveList({ view }: { view: GameView }) {
 
           return (
             <div
-              className={`objective ${objective.done ? 'done' : ''} ${
+              className={`objective-item ${objective.done ? 'done' : ''} ${
                 isLootTurnIn && lootTurnInReady ? 'ready' : ''
               }`}
               key={objective.id}

@@ -1983,14 +1983,23 @@ button {
 }
 
 .map-marker.objective {
+  align-items: center;
   background: var(--cp-panel-strong);
-  border: 2px solid var(--cp-success);
-  border-radius: 0.12rem;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--cp-success) 22%, transparent);
-  height: 0.62rem;
-  transform: translate(-50%, -50%) rotate(45deg);
-  width: 0.62rem;
+  border: 1px solid var(--cp-warning);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--cp-warning) 24%, transparent);
+  color: var(--cp-warning);
+  display: flex;
+  height: 0.8rem;
+  justify-content: center;
+  width: 0.8rem;
   z-index: 6;
+}
+
+.map-marker.objective svg {
+  height: 0.48rem;
+  stroke-width: 3;
+  width: 0.48rem;
 }
 
 .map-marker.event {
@@ -2047,11 +2056,11 @@ button {
   background: var(--cp-warning);
 }
 
-.legend-dot.objective {
-  background: var(--cp-panel-strong);
-  border: 2px solid var(--cp-success);
-  border-radius: 0.08rem;
-  transform: rotate(45deg);
+.legend-objective {
+  color: var(--cp-warning);
+  height: 0.58rem;
+  stroke-width: 3;
+  width: 0.58rem;
 }
 
 .legend-dot.event {
@@ -2279,7 +2288,7 @@ button {
   gap: 0.28rem;
 }
 
-.objective {
+.objective-item {
   align-items: start;
   background: var(--cp-surface-soft);
   border: 1px solid transparent;
@@ -2291,12 +2300,12 @@ button {
   padding: 0.48rem;
 }
 
-.objective.done {
+.objective-item.done {
   background: color-mix(in srgb, var(--cp-success) 8%, var(--cp-surface));
   color: var(--cp-text-muted);
 }
 
-.objective.ready {
+.objective-item.ready {
   border-color: var(--cp-success);
   box-shadow: inset 3px 0 0 var(--cp-success);
 }
@@ -2312,7 +2321,7 @@ button {
   width: 0.95rem;
 }
 
-.objective.done .objective-check {
+.objective-item.done .objective-check {
   background: var(--cp-success);
   border-color: var(--cp-success);
   color: var(--cp-surface);
@@ -2324,13 +2333,13 @@ button {
   width: 0.65rem;
 }
 
-.objective p {
+.objective-item p {
   color: var(--cp-text);
   font-size: 0.66rem;
   line-height: 1.32;
 }
 
-.objective.done p {
+.objective-item.done p {
   color: var(--cp-text-muted);
   text-decoration: line-through;
 }
@@ -2343,7 +2352,7 @@ button {
   margin-top: 0.2rem;
 }
 
-.objective.ready .objective-hint {
+.objective-item.ready .objective-hint {
   color: var(--cp-success);
   font-weight: 700;
 }
@@ -4129,13 +4138,13 @@ kbd {
     gap: 0.2rem;
   }
 
-  .objective {
+  .objective-item {
     gap: 0.35rem;
     min-height: 0;
     padding: 0.35rem;
   }
 
-  .objective p {
+  .objective-item p {
     font-size: 0.6rem;
     line-height: 1.22;
   }
