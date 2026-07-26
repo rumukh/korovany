@@ -34,6 +34,8 @@ import {
   MAX_STAMINA_PER_LEVEL,
   MAX_THREAT_TIER,
   type ActorRole,
+  type Allegiance,
+  type BeastRole,
   type BodyPart,
   type BodyState,
   type ChronicleEntryView,
@@ -55,12 +57,16 @@ import {
   type WorldEventKind,
   type ZoneId,
   RANDOM_WORLD_EVENT_KINDS,
+  allegianceRelation,
+  areAllegiancesHostile,
   createAbilityView,
   createHealthyBody,
   getMaxHealth,
   getMaxStamina,
   getShopItemPrice,
   getThreatTier,
+  isBeastRole,
+  isFactionAllegiance,
   isRandomWorldEventKind,
   normalizeUpgradeLevels,
 } from './types'
@@ -72,6 +78,7 @@ import {
 import {
   chronicleEventTone,
   createGeneratedObjectiveText,
+  describeBeastProwler,
   describeChronicleEvent,
   describeEventHandback,
   describeLocatedEvent,
@@ -128,6 +135,7 @@ import {
   isProtectedSite,
   isRegionRazed,
   isSettlementSite,
+  resolveMaterializedBeastRaid,
   resolveMaterializedCaravan,
   resolveMaterializedRaid,
   resolveMaterializedWarband,
@@ -140,6 +148,24 @@ import {
   findPendingMaterializations,
   type PendingMaterialization,
 } from './world/Materialization'
+import {
+  AMBIENT_BEAST_LIMIT,
+  AMBIENT_BEAST_PRESSURE,
+  BEAST_LEASH_RANGE,
+  BEAST_PROFILES,
+  BEAST_ROUT_SECONDS,
+  BEAST_SENSE_RANGE,
+  BOAR_CHARGE_COOLDOWN,
+  BOAR_CHARGE_DAMAGE,
+  BOAR_CHARGE_DURATION,
+  BOAR_CHARGE_RANGE,
+  BOAR_CHARGE_SPEED,
+  BOAR_CHARGE_WINDUP,
+  WOLF_PACK_RADIUS,
+  planAmbientBeast,
+  planBeastPack,
+  shouldBeastRout,
+} from './world/Fauna'
 import {
   REGION_DELTA_VERSION,
   type RegionDelta,
@@ -242,7 +268,11 @@ interface TelegraphEntry {
 
 interface Actor {
   id: string
-  faction: Faction
+  /**
+   * §5.3 — the side this actor is on, which is not always a faction. Every hostility
+   * decision reads this, never a faction comparison.
+   */
+  allegiance: Allegiance
   role: ActorRole
   mesh: THREE.Group
   hp: number
@@ -306,6 +336,17 @@ interface Actor {
   generatedUnique: boolean
   hostileToPlayer: boolean
   budgetCategory: ActorBudgetCategory
+  /** Layer 3 — set on beasts that belong to one pack, so they can break together. */
+  packId: string | null
+  /** Original pack size, so `shouldBeastRout` measures against what set out. */
+  packSize: number
+  /** Seconds of running left before a routed beast is willing to look back. */
+  routTimer: number
+  /** Boar charge state machine: wind-up, then a committed straight line. */
+  chargeWindup: number
+  chargeTimer: number
+  chargeCooldown: number
+  chargeDirection: THREE.Vector3
 }
 
 interface ActorSpawnOptions {
@@ -324,6 +365,8 @@ interface ActorSpawnOptions {
   generatedUnique?: boolean
   hostileToPlayer?: boolean
   healthScale?: number
+  packId?: string | null
+  packSize?: number
 }
 
 interface GeneratedNavigationCacheEntry {
@@ -332,7 +375,7 @@ interface GeneratedNavigationCacheEntry {
 }
 
 interface ActorKillContext {
-  killerFaction: Faction
+  killerAllegiance: Allegiance
   directPlayerKill: boolean
 }
 
@@ -553,7 +596,7 @@ interface Projectile {
   velocity: THREE.Vector3
   life: number
   owner: 'player' | 'actor'
-  faction: Faction
+  allegiance: Allegiance
   damage: number
   sourceActorId: string | null
   travelled: number
@@ -935,6 +978,7 @@ const EVENT_REQUIRED_SLOTS: Record<WorldEventKind, number> = {
   caravanAmbush: 4,
   warband: 3,
   aftermath: 2,
+  beastRaid: 5,
 }
 
 /** How many located chronicle events may run alongside the player-anchored one. */
@@ -954,7 +998,15 @@ const LOCATED_EVENT_REWARDS: Record<ChronicleWorldEventKind, number> = {
   caravanAmbush: 140,
   warband: 80,
   aftermath: 45,
+  beastRaid: 95,
 }
+
+/** Layer 3 — how many of a beast raid's slots go to the settlement's own garrison. */
+const BEAST_RAID_DEFENDERS = 2
+/** Ambient prowlers are only worth spawning within this radius of the player. */
+const AMBIENT_BEAST_RADIUS = 62
+/** Seconds between ambient-prowler considerations. Cheap, but not per frame. */
+const AMBIENT_BEAST_INTERVAL = 11
 
 function dampAngle(current: number, target: number, smoothing: number, delta: number): number {
   const difference = Math.atan2(Math.sin(target - current), Math.cos(target - current))
@@ -1101,8 +1153,12 @@ function seededRandom(seed: number): () => number {
   }
 }
 
-function hostile(a: Faction, b: Faction): boolean {
-  return a !== b
+/**
+ * §5.3 — the one hostility question in the engine. `hostile(a, b) => a !== b` could not
+ * express wildlife, civilians, or truces; the matrix can.
+ */
+function hostile(a: Allegiance, b: Allegiance): boolean {
+  return areAllegiancesHostile(a, b)
 }
 
 function formatPart(part: BodyPart): string {
@@ -1323,6 +1379,11 @@ export class GameEngine {
   private readonly materializedSituationIds = new Set<string>()
   private readonly seenAftermathRegionIds = new Set<string>()
   private materializeCooldown = MATERIALIZE_INTERVAL
+  /** Layer 3 — throttles the ambient prowler check and remembers where one was seen. */
+  private ambientBeastCooldown = AMBIENT_BEAST_INTERVAL
+  private readonly announcedProwlerRegionIds = new Set<string>()
+  /** Routed beasts that left the field this frame; removed after the actor loop. */
+  private readonly fledBeastIds: string[] = []
   private eventCooldown = FIRST_EVENT_AT
   private championDamageBonus = 0
   private eventSequence = 0
@@ -2322,7 +2383,7 @@ export class GameEngine {
         .filter(
           (actor) =>
             actor.alive &&
-            actor.faction === this.faction &&
+            actor.allegiance === this.faction &&
             actor.squadEligible &&
             actor.role !== 'commander' &&
             actor.eventOwnerId === null,
@@ -2408,6 +2469,7 @@ export class GameEngine {
     this.updateLoot(delta)
     this.updateThreat()
     this.updateChronicle(delta)
+    this.updateAmbientBeasts(delta)
     this.cleanupDeadActors()
     this.shakeClock += delta
     this.trauma = Math.max(0, this.trauma - SHAKE_DECAY * delta)
@@ -3255,6 +3317,7 @@ export class GameEngine {
   }
 
   private actorColliderRadiusForRole(role: ActorRole): number {
+    if (isBeastRole(role)) return BEAST_PROFILES[role].colliderRadius
     return role === 'brute' || role === 'champion'
       ? LARGE_ACTOR_COLLIDER_RADIUS
       : ACTOR_COLLIDER_RADIUS
@@ -3421,8 +3484,7 @@ export class GameEngine {
   }
 
   private updateActors(delta: number): void {
-    for (const actor of this.actors) {
-      this.updateActorIndicators(actor)
+    for (const actor of this.actors) {      this.updateActorIndicators(actor)
       if (!actor.alive) {
         this.updateActorDeathMotion(actor, delta)
         continue
@@ -3435,10 +3497,16 @@ export class GameEngine {
       actor.rageTimer = Math.max(0, actor.rageTimer - delta)
       actor.alertCooldown = Math.max(0, actor.alertCooldown - delta)
       actor.retaliationTimer = Math.max(0, actor.retaliationTimer - delta)
+      actor.routTimer = Math.max(0, actor.routTimer - delta)
+      actor.chargeCooldown = Math.max(0, actor.chargeCooldown - delta)
       this.updateActorReaction(actor, delta)
       const knockbackSpeed = this.updateActorKnockback(actor, delta)
       if (actor.role === 'commander' && actor.reaction !== 'stagger') {
         this.updateCommander(actor, delta)
+      }
+      if (isBeastRole(actor.role)) {
+        this.updateBeastMorale(actor)
+        if (this.updateBeastCharge(actor, delta)) continue
       }
       if (actor.action) {
         this.updateActorAction(actor, delta)
@@ -3463,6 +3531,11 @@ export class GameEngine {
         this.animateActorCharacter(actor, delta, 0)
         continue
       }
+      // A broken pack does not negotiate: it runs, and it does not stop to bite.
+      if (actor.routTimer > 0) {
+        this.updateRoutingBeast(actor, delta)
+        continue
+      }
 
       const toPlayer = this.player.position.clone().sub(actor.mesh.position)
       toPlayer.y = 0
@@ -3479,14 +3552,20 @@ export class GameEngine {
       let targetPosition: THREE.Vector3 | null = null
       let wandering = false
       let followingFormation = false
-      const baseAggroRange = actor.role === 'archer' ? 18 : 15
+      const baseAggroRange = isBeastRole(actor.role)
+        ? BEAST_SENSE_RANGE
+        : actor.role === 'archer'
+          ? 18
+          : 15
       const enraged = actor.rageTimer > 0
       const senseRange = baseAggroRange + (enraged ? RAGE_RANGE_BONUS : 0)
-      const leashRange = senseRange * 2.25
+      const leashRange = isBeastRole(actor.role)
+        ? BEAST_LEASH_RANGE
+        : senseRange * 2.25
       const colliderRadius = this.actorColliderRadiusForRole(actor.role)
       const hostileToPlayer = actor.hostileToPlayer
       const commandedSquadMember =
-        actor.faction === this.faction &&
+        actor.allegiance === this.faction &&
         actor.squadEligible &&
         this.squadFollowing &&
         actor.role !== 'commander'
@@ -3519,7 +3598,7 @@ export class GameEngine {
         if (
           candidate?.alive &&
           candidate.id !== actor.ignoredTargetId &&
-          hostile(actor.faction, candidate.faction)
+          hostile(actor.allegiance, candidate.allegiance)
         ) {
           retaliationTarget = candidate
         } else {
@@ -3583,9 +3662,17 @@ export class GameEngine {
           }
         }
       } else if (actor.role !== 'commander') {
+        // Beasts hunt by scent: they pick fights across the whole square rather than
+        // waiting for someone to walk into them, which is what lets a raid actually
+        // reach the settlement's garrison.
+        const huntRadius = isBeastRole(actor.role)
+          ? BEAST_SENSE_RANGE
+          : actor.role === 'archer'
+            ? 15
+            : 6.5
         targetActor =
-          playerDistance < 32
-            ? this.findNearestEnemy(actor, actor.role === 'archer' ? 15 : 6.5)
+          playerDistance < 32 || isBeastRole(actor.role)
+            ? this.findNearestEnemy(actor, huntRadius)
             : null
         if (targetActor) {
           targetPosition = targetActor.mesh.position
@@ -3676,6 +3763,18 @@ export class GameEngine {
         } else if (actor.retreatTimer > 0) {
           direction.copy(facingDirection).negate()
           moving = true
+        } else if (
+          actor.role === 'boar' &&
+          !targetEventProp &&
+          actor.chargeCooldown <= 0 &&
+          distance > 3.4 &&
+          distance < BOAR_CHARGE_RANGE
+        ) {
+          // A boar does not close the distance, it commits to it. The wind-up is the
+          // tell; after that it cannot steer, so it can be side-stepped.
+          actor.chargeWindup = BOAR_CHARGE_WINDUP
+          actor.chargeDirection.copy(facingDirection)
+          actor.velocity.set(0, 0, 0)
         } else {
           const stopDistance = targetEventProp
             ? targetEventProp.attackRange
@@ -3829,16 +3928,183 @@ export class GameEngine {
       this.animateActorCharacter(actor, delta, lookYaw)
       this.updateChampionAura(actor)
     }
+    // A beast that ran clear of the field is gone, not standing at the map edge running
+    // on the spot: this is what makes breaking a pack a way to actually end a raid.
+    for (const actorId of this.fledBeastIds) this.removeActorById(actorId)
+    this.fledBeastIds.length = 0
   }
 
-  private updateActorIndicators(actor: Actor): void {
-    const playerDistance = actor.mesh.position.distanceTo(this.player.position)
+  /**
+   * Layer 3 — the wolf rule. A pack hunter that has lost most of its pack stops being a
+   * hunter: `Fauna.shouldBeastRout` owns the threshold, this only counts who is left and
+   * starts the clock. Boars, bears and trolls have no rout threshold and never break.
+   */
+  private updateBeastMorale(actor: Actor): void {
+    if (!isBeastRole(actor.role) || actor.routTimer > 0) return
+    const share = this.beastPackShare(actor)
+    if (!shouldBeastRout(actor.role, share)) return
+    actor.routTimer = BEAST_ROUT_SECONDS
+    actor.action = null
+    actor.targetId = null
+    actor.playerAggro = false
+    actor.aggroMemory = 0
+    actor.lastKnownTargetPos = null
+  }
+
+  /**
+   * Share of this beast's original pack still standing *and still nearby*. Distance
+   * matters: a wolf that has been drawn away from the pack is as alone as one whose
+   * pack is dead, which is why chasing a single wolf off is a viable tactic.
+   */
+  private beastPackShare(actor: Actor): number {
+    if (!actor.packId) return 1
+    let alive = 0
+    const radiusSquared = WOLF_PACK_RADIUS * WOLF_PACK_RADIUS
+    for (const other of this.actors) {
+      if (other.packId !== actor.packId || !other.alive) continue
+      if (
+        other !== actor &&
+        other.mesh.position.distanceToSquared(actor.mesh.position) > radiusSquared
+      ) {
+        continue
+      }
+      alive += 1
+    }
+    return alive / Math.max(1, actor.packSize)
+  }
+
+  /** A routed beast runs from whatever broke it, and animates while it does. */
+  private updateRoutingBeast(actor: Actor, delta: number): void {
+    const threat = this.nearestThreatPosition(actor)
+    const away = actor.mesh.position.clone().sub(threat)
+    away.y = 0
+    if (away.lengthSq() < 0.0001) away.set(Math.sin(actor.phase), 0, Math.cos(actor.phase))
+    away.normalize()
+    const travelled = this.moveActorWithSteering(actor, away, actor.speed * 1.15 * delta)
+    actor.velocity.set(away.x * actor.speed, 0, away.z * actor.speed)
+    const yaw = Math.atan2(away.x, away.z)
+    actor.mesh.rotation.y = dampAngle(actor.mesh.rotation.y, yaw, 9, delta)
+    actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 1, 9, delta)
+    actor.gaitPhase += travelled * this.actorGaitCadence(actor.role)
+    actor.stride = THREE.MathUtils.damp(
+      actor.stride,
+      Math.sin(actor.gaitPhase) * 0.62 * actor.motionBlend,
+      15,
+      delta,
+    )
+    this.animateActorCharacter(actor, delta, 0)
+    if (actor.mesh.position.distanceTo(this.player.position) > BEAST_LEASH_RANGE) {
+      this.fledBeastIds.push(actor.id)
+    }
+  }
+
+  /** Nearest thing this actor is at war with — the player counts as one of them. */
+  private nearestThreatPosition(actor: Actor): THREE.Vector3 {
+    let nearest = this.player.position
+    let bestDistance = actor.hostileToPlayer
+      ? actor.mesh.position.distanceToSquared(this.player.position)
+      : Number.POSITIVE_INFINITY
+    for (const other of this.actors) {
+      if (!other.alive || other === actor) continue
+      if (!hostile(actor.allegiance, other.allegiance)) continue
+      const distance = actor.mesh.position.distanceToSquared(other.mesh.position)
+      if (distance >= bestDistance) continue
+      bestDistance = distance
+      nearest = other.mesh.position
+    }
+    return nearest
+  }
+
+  /**
+   * The boar's committed charge. Returns true while the charge owns the actor, so the
+   * normal steering, targeting and separation code is skipped for its duration.
+   */
+  private updateBeastCharge(actor: Actor, delta: number): boolean {
+    if (actor.role !== 'boar') return false
+    if (actor.chargeWindup > 0) {
+      actor.chargeWindup = Math.max(0, actor.chargeWindup - delta)
+      actor.velocity.set(0, 0, 0)
+      actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+      actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
+      this.animateActorCharacter(actor, delta, 0)
+      if (actor.chargeWindup <= 0) actor.chargeTimer = BOAR_CHARGE_DURATION
+      return true
+    }
+    if (actor.chargeTimer <= 0) return false
+
+    actor.chargeTimer = Math.max(0, actor.chargeTimer - delta)
+    const step = BOAR_CHARGE_SPEED * delta
+    const travelled = this.moveActorWithSteering(actor, actor.chargeDirection, step)
+    actor.mesh.rotation.y = Math.atan2(actor.chargeDirection.x, actor.chargeDirection.z)
+    actor.motionBlend = 1.18
+    actor.gaitPhase += travelled * this.actorGaitCadence(actor.role)
+    actor.stride = Math.sin(actor.gaitPhase) * 0.62
+    this.animateActorCharacter(actor, delta, 0)
+    this.resolveBoarChargeContact(actor)
+    // A charge that hits a wall ends there rather than grinding along it.
+    if (actor.chargeTimer <= 0 || travelled < step * 0.25) {
+      actor.chargeTimer = 0
+      actor.chargeCooldown = BOAR_CHARGE_COOLDOWN
+    }
+    return true
+  }
+
+  private resolveBoarChargeContact(actor: Actor): void {
+    const reach = this.actorColliderRadiusForRole(actor.role) + 1.5
+    if (
+      actor.hostileToPlayer &&
+      this.health > 0 &&
+      actor.mesh.position.distanceTo(this.player.position) <= reach
+    ) {
+      const incoming = actor.mesh.position.clone().sub(this.player.position)
+      incoming.y = 0
+      this.damagePlayer(BOAR_CHARGE_DAMAGE * this.enemyDamageMultiplier(actor), incoming, true, {
+        attackKind: 'allyMelee',
+      })
+      actor.chargeTimer = 0
+      actor.chargeCooldown = BOAR_CHARGE_COOLDOWN
+      return
+    }
+    for (const other of this.actors) {
+      if (
+        !other.alive ||
+        other === actor ||
+        !hostile(actor.allegiance, other.allegiance) ||
+        actor.mesh.position.distanceTo(other.mesh.position) > reach
+      ) {
+        continue
+      }
+      this.damageActor(
+        other,
+        BOAR_CHARGE_DAMAGE,
+        actor.mesh.position,
+        actor.allegiance,
+        false,
+        { attackKind: 'allyMelee', sourceActorId: actor.id, knockback: 5 },
+      )
+      actor.chargeTimer = 0
+      actor.chargeCooldown = BOAR_CHARGE_COOLDOWN
+      return
+    }
+  }
+
+  /**
+   * Where a health bar floats. A quadruped's back is barely a metre off the ground, so
+   * the humanoid offset would leave the bar hanging in the air above it. `spawnActor`
+   * and the per-frame reposition must agree, or the spawn-time value is overwritten on
+   * the very first frame.
+   */
+  private actorHealthBarHeight(role: ActorRole): number {
+    return isBeastRole(role) ? 2.1 : 3.65
+  }
+
+  private updateActorIndicators(actor: Actor): void {    const playerDistance = actor.mesh.position.distanceTo(this.player.position)
     const ring = actor.mesh.getObjectByName('faction-ring')
     if (ring) {
       ring.visible = actor.alive && playerDistance < 42
       if (ring instanceof THREE.Mesh && ring.material instanceof THREE.MeshBasicMaterial) {
         const ragePulse = (Math.sin(this.elapsed * 14 + actor.phase) + 1) * 0.5
-        ring.material.color.copy(this.factionColor(actor.faction))
+        ring.material.color.copy(this.allegianceColor(actor.allegiance))
         if (actor.rageTimer > 0) {
           ring.material.color.lerp(this.palette.danger, 0.55 + ragePulse * 0.35)
           ring.material.opacity = 0.66 + ragePulse * 0.22
@@ -3852,7 +4118,7 @@ export class GameEngine {
 
     actor.healthBar.position.set(
       actor.mesh.position.x,
-      actor.mesh.position.y + 3.65 * actor.mesh.scale.y,
+      actor.mesh.position.y + this.actorHealthBarHeight(actor.role) * actor.mesh.scale.y,
       actor.mesh.position.z,
     )
     actor.healthBar.visible =
@@ -3979,6 +4245,7 @@ export class GameEngine {
   }
 
   private actorMaxPoise(role: ActorRole): number {
+    if (isBeastRole(role)) return BEAST_PROFILES[role].poise
     if (role === 'scout' || role === 'minion' || role === 'archer') return 18
     if (role === 'commander') return 46
     if (role === 'brute') return 58
@@ -4066,7 +4333,7 @@ export class GameEngine {
     if (action.target.kind === 'actor') {
       const targetId = action.target.id
       const target = this.actors.find((candidate) => candidate.id === targetId)
-      return target?.alive && hostile(actor.faction, target.faction)
+      return target?.alive && hostile(actor.allegiance, target.allegiance)
         ? target.mesh.position
         : null
     }
@@ -4098,7 +4365,7 @@ export class GameEngine {
     if (action.kind === 'meleeActor' && action.target.kind === 'actor') {
       const targetId = action.target.id
       const target = this.actors.find((candidate) => candidate.id === targetId)
-      if (target?.alive && hostile(actor.faction, target.faction)) {
+      if (target?.alive && hostile(actor.allegiance, target.allegiance)) {
         this.actorAttackActor(actor, target)
       }
       return
@@ -4457,7 +4724,7 @@ export class GameEngine {
     origin.addScaledVector(direction, 0.85)
     this.spawnProjectile(
       'actor',
-      actor.faction,
+      actor.allegiance,
       origin,
       direction.multiplyScalar(ACTOR_ARROW_SPEED),
       1.25,
@@ -4476,7 +4743,7 @@ export class GameEngine {
 
   private spawnProjectile(
     owner: Projectile['owner'],
-    faction: Faction,
+    allegiance: Allegiance,
     position: THREE.Vector3,
     velocity: THREE.Vector3,
     life: number,
@@ -4487,8 +4754,8 @@ export class GameEngine {
     const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(0.12, 0.12, 0.9),
       new THREE.MeshStandardMaterial({
-        color: this.factionColor(faction),
-        emissive: this.factionColor(faction),
+        color: this.allegianceColor(allegiance),
+        emissive: this.allegianceColor(allegiance),
         emissiveIntensity: 0.35,
         roughness: 0.55,
       }),
@@ -4505,7 +4772,7 @@ export class GameEngine {
       velocity,
       life,
       owner,
-      faction,
+      allegiance,
       damage,
       sourceActorId,
       travelled: 0,
@@ -4529,7 +4796,7 @@ export class GameEngine {
       new THREE.Vector3(Math.sin(angle) * 3.2, 0, Math.cos(angle) * 3.2),
     )
     this.spawnActor(
-      actor.faction,
+      actor.allegiance,
       'soldier',
       position.x,
       position.z,
@@ -4555,7 +4822,7 @@ export class GameEngine {
         other.alive &&
         other.role === 'commander' &&
         other.reaction !== 'stagger' &&
-        other.faction === actor.faction &&
+        other.allegiance === actor.allegiance &&
         other.mesh.position.distanceToSquared(actor.mesh.position) <=
           COMMANDER_AURA_RANGE * COMMANDER_AURA_RANGE,
     )
@@ -4609,7 +4876,7 @@ export class GameEngine {
       const offset = actor.mesh.position.clone().sub(other.mesh.position)
       offset.y = 0
       const distanceSquared = offset.lengthSq()
-      const minimumDistance = actor.faction === other.faction ? 1.45 : 1.15
+      const minimumDistance = actor.allegiance === other.allegiance ? 1.45 : 1.15
       if (distanceSquared >= minimumDistance * minimumDistance) continue
       if (distanceSquared < 0.0001) {
         offset.set(Math.sin(actor.phase * 9.1), 0, Math.cos(actor.phase * 9.1))
@@ -4755,7 +5022,7 @@ export class GameEngine {
             hit.actor,
             damage,
             sourcePosition,
-            projectile.faction,
+            projectile.allegiance,
             projectile.owner === 'player',
             {
               attackKind: projectile.owner === 'player' ? 'arrow' : 'actorArrow',
@@ -4814,7 +5081,7 @@ export class GameEngine {
     if (
       projectile.owner === 'actor' &&
       (sourceActor?.hostileToPlayer ??
-        hostile(projectile.faction, this.faction))
+        hostile(projectile.allegiance, this.faction))
     ) {
       const playerCenter = this.player.position.clone().add(new THREE.Vector3(0, 1.45, 0))
       const fraction = this.segmentSphereHit(start, end, playerCenter, PROJECTILE_HIT_RADIUS)
@@ -4825,7 +5092,7 @@ export class GameEngine {
       const canHit =
         projectile.owner === 'player'
           ? actor.hostileToPlayer
-          : hostile(projectile.faction, actor.faction)
+          : hostile(projectile.allegiance, actor.allegiance)
       if (!actor.alive || !canHit) continue
       const center = actor.mesh.position.clone().add(new THREE.Vector3(0, 1.45, 0))
       const radius = actor.role === 'brute' ? 1.1 : PROJECTILE_HIT_RADIUS
@@ -5043,8 +5310,85 @@ export class GameEngine {
     }
   }
 
-  private updateChronicle(delta: number): void {
+  /**
+   * Layer 3 — one prowler at a time in a square the chronicle says is loud. This is the
+   * cheap, always-on half of the fauna: `ambient` budget, so it yields its slot the
+   * moment a real fight needs the room, and it despawns when its region streams out.
+   */
+  private updateAmbientBeasts(delta: number): void {
     if (this.ended) return
+    this.ambientBeastCooldown -= delta
+    if (this.ambientBeastCooldown > 0) return
+    this.ambientBeastCooldown = AMBIENT_BEAST_INTERVAL
+
+    for (let index = this.actors.length - 1; index >= 0; index -= 1) {
+      const actor = this.actors[index]
+      if (actor.budgetCategory !== 'ambient' || !isBeastRole(actor.role)) continue
+      if (!this.isRegionSimulated(actor.generatedRegionId)) {
+        this.removeActorById(actor.id)
+      }
+    }
+
+    const prowlers = this.actors.filter(
+      (actor) => actor.budgetCategory === 'ambient' && isBeastRole(actor.role),
+    ).length
+    if (prowlers >= AMBIENT_BEAST_LIMIT) return
+
+    const regionId = this.generatedRegionIdAt(
+      this.player.position.x,
+      this.player.position.z,
+    )
+    if (!regionId) return
+    const chronicle = this.chronicleRegions.get(regionId)
+    if (!chronicle || chronicle.beastPressure < AMBIENT_BEAST_PRESSURE) return
+    // A materialized raid already put beasts on the board; two sources at once reads as
+    // an infestation rather than a world.
+    if (this.activeEvents.some((event) => event.kind === 'beastRaid')) return
+
+    const spawn = this.pickAmbientBeastPosition()
+    if (!spawn) return
+    if (this.reserveActorSlotsUpTo('ambient', 1) < 1) return
+    const role = planAmbientBeast(chronicle.beastPressure, this.generatedRngStreams.event)
+    const beast = this.spawnActor(
+      'beast',
+      role,
+      spawn.x,
+      spawn.z,
+      this.actorSequence++,
+      {
+        budget: 'ambient',
+        objectiveEligible: false,
+        squadEligible: false,
+        generatedRegionId: regionId,
+      },
+    )
+    beast.home.copy(beast.mesh.position)
+    beast.wanderTarget.copy(beast.mesh.position)
+    if (!this.announcedProwlerRegionIds.has(regionId)) {
+      this.announcedProwlerRegionIds.add(regionId)
+      this.callbacks.onNotice(describeBeastProwler(this.regionGridLabel(regionId)), 'info')
+    }
+  }
+
+  /** Out of sight but within earshot: a prowler should be met, not spawned on top of. */
+  private pickAmbientBeastPosition(): THREE.Vector3 | null {
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const angle = this.eventRng() * TWO_PI
+      const radius = 30 + this.eventRng() * (AMBIENT_BEAST_RADIUS - 30)
+      const position = new THREE.Vector3(
+        this.player.position.x + Math.sin(angle) * radius,
+        0,
+        this.player.position.z + Math.cos(angle) * radius,
+      )
+      this.clampWorldPosition(position, 3)
+      if (!this.isWalkablePosition(position.x, position.z, 1)) continue
+      position.y = this.groundHeightAt(position.x, position.z)
+      return position
+    }
+    return null
+  }
+
+  private updateChronicle(delta: number): void {    if (this.ended) return
     this.chronicleAccumulator += delta
     if (this.chronicleAccumulator < CHRONICLE_TICK_SECONDS) return
 
@@ -5248,8 +5592,8 @@ export class GameEngine {
     return Math.max(THREAT_WAVE_MIN_INTERVAL, 130 - this.threatTier * 12)
   }
 
-  private enemyHealthMultiplier(faction: Faction): number {
-    return hostile(this.faction, faction) ? 1 + (this.threatTier - 1) * 0.12 : 1
+  private enemyHealthMultiplier(allegiance: Allegiance): number {
+    return hostile(this.faction, allegiance) ? 1 + (this.threatTier - 1) * 0.12 : 1
   }
 
   private enemyDamageMultiplier(actor: Actor): number {
@@ -5554,6 +5898,8 @@ export class GameEngine {
         return this.startWarbandEvent(situation)
       case 'aftermath':
         return this.startAftermathEvent(situation)
+      case 'beastRaid':
+        return this.startBeastRaidEvent(situation)
     }
   }
 
@@ -6345,20 +6691,25 @@ export class GameEngine {
   private spawnLocatedActor(
     situation: PendingMaterialization,
     eventId: string,
-    faction: Faction,
+    allegiance: Allegiance,
     role: ActorRole,
     position: THREE.Vector3,
     offsetX: number,
     offsetZ: number,
+    extra: Pick<
+      ActorSpawnOptions,
+      'packId' | 'packSize' | 'aiMode' | 'eventPropTargetId'
+    > = {},
   ): Actor {
     const spawn = new THREE.Vector3(position.x + offsetX, 0, position.z + offsetZ)
     this.clampWorldPosition(spawn, 3)
-    const actor = this.spawnActor(faction, role, spawn.x, spawn.z, this.actorSequence++, {
+    const actor = this.spawnActor(allegiance, role, spawn.x, spawn.z, this.actorSequence++, {
       budget: 'chronicle',
       objectiveEligible: false,
       squadEligible: false,
       eventOwnerId: eventId,
       generatedRegionId: situation.regionId,
+      ...extra,
     })
     actor.home.copy(actor.mesh.position)
     actor.wanderTarget.copy(actor.mesh.position)
@@ -6373,6 +6724,14 @@ export class GameEngine {
       (faction) => faction !== attacker,
     )
     return options[Math.floor(this.eventRng() * options.length)]
+  }
+
+  /**
+   * Who turns out to defend a settlement when there is no attacking faction to react to.
+   * A beast raid has no attacker, so `locatedDefenderFaction` has nothing to work with.
+   */
+  private settlementGarrisonFaction(defender: Territory | null): Faction {
+    return defender && defender !== 'neutral' ? defender : this.faction
   }
 
   private startFactionRaidEvent(
@@ -6670,8 +7029,182 @@ export class GameEngine {
     return event
   }
 
-  private startAftermathEvent(
+  /**
+   * Layer 3 — `beastRaid`, the situation Layer 2 deliberately refused to fake. The pack
+   * comes for the settlement itself: the wrecker is pointed at a prop, the escorts at
+   * whoever is standing in front of it. Nobody's territory changes hands, because beasts
+   * do not hold ground.
+   */
+  private startBeastRaidEvent(
     situation: PendingMaterialization,
+  ): WorldEvent | null {
+    const position = this.pickLocatedEventPosition(situation.siteId, situation.regionId)
+    if (!position) return null
+    if (!this.reserveActorSlots('chronicle', EVENT_REQUIRED_SLOTS.beastRaid)) return null
+
+    const region = this.generatedBlueprint.regions.find(
+      (candidate) => String(candidate.id) === situation.regionId,
+    )
+    const pack = planBeastPack({
+      beastPressure: situation.beastPressure,
+      biome: region?.biome ?? 'forest',
+      rng: this.generatedRngStreams.event,
+      maxCount: EVENT_REQUIRED_SLOTS.beastRaid - BEAST_RAID_DEFENDERS,
+    })
+    if (pack.roles.length === 0) return null
+
+    const id = this.nextEventId('beastRaid')
+    const lair = this.createBeastLairEffect(position)
+    this.scene.add(lair)
+    const prop: EventPropTarget = {
+      id: `${id}-homestead`,
+      ownerId: id,
+      object: lair,
+      hp: 100,
+      maxHp: 100,
+      position: position.clone(),
+      attackRange: 5,
+    }
+    this.eventPropTargets.set(prop.id, prop)
+
+    const packId = `${id}-pack`
+    const beastIds: string[] = []
+    pack.roles.forEach((role, index) => {
+      const angle = (index / pack.roles.length) * TWO_PI + 0.4
+      const radius = 11 + index * 1.6
+      const beast = this.spawnLocatedActor(
+        situation,
+        id,
+        'beast',
+        role,
+        position,
+        Math.sin(angle) * radius,
+        Math.cos(angle) * radius,
+        {
+          packId,
+          packSize: pack.roles.length,
+          // Only the wrecker is here for the buildings; the rest hunt whatever moves.
+          aiMode: index === 0 ? 'attackEventProp' : 'normal',
+          eventPropTargetId: index === 0 ? prop.id : null,
+        },
+      )
+      beast.playerAggro = beast.hostileToPlayer && index !== 0
+      beastIds.push(beast.id)
+    })
+
+    // The garrison: whoever holds the square, or the player's own side on neutral ground.
+    const defenderFaction = this.settlementGarrisonFaction(situation.defender)
+    const defenderIds: string[] = []
+    for (const [offsetX, offsetZ] of [
+      [-2.8, 1.9],
+      [2.8, -1.9],
+    ] as const) {
+      defenderIds.push(
+        this.spawnLocatedActor(
+          situation,
+          id,
+          defenderFaction,
+          'soldier',
+          position,
+          offsetX,
+          offsetZ,
+        ).id,
+      )
+    }
+
+    const copyContext = this.locatedCopyContext(situation)
+    this.locatedEventCopy.set(id, copyContext)
+    const copy = describeLocatedEvent('beastRaid', copyContext)
+    let event: WorldEvent
+    event = this.createWorldEvent({
+      id,
+      kind: 'beastRaid',
+      anchor: 'located',
+      regionId: situation.regionId,
+      situationId: situation.id,
+      state: 'active',
+      title: copy.title,
+      description: copy.description,
+      tone: 'danger',
+      timer: LOCATED_EVENT_TIMEOUT,
+      progress: 0,
+      target: beastIds.length,
+      markerId: `${id}-marker`,
+      markerPos: position.clone(),
+      ownedActorIds: [...beastIds, ...defenderIds],
+      ownedProps: [lair],
+      update: () => {
+        const beastsAlive = this.countAliveActors(beastIds)
+        event.progress = beastIds.length - beastsAlive
+        event.description = `${copy.description} Прочность домиков: ${Math.ceil(prop.hp)}/${prop.maxHp}.`
+        if (beastsAlive === 0) {
+          event.state = 'succeeded'
+          return
+        }
+        if (prop.hp <= 0) event.state = 'failed'
+      },
+      handBack: () => {
+        // The stake of a beast raid is the settlement, not the garrison's lives. Once
+        // the homestead is down the defenders have lost however many of them are still
+        // upright, so the hand-back must not re-roll a fight the player just watched
+        // end — unlike `factionRaid`, whose failure condition already implies a wiped
+        // defence, this one can fail with soldiers standing.
+        const settlementLost = prop.hp <= 0
+        return this.handBackBeastRaid(
+          situation,
+          this.countAliveActors(beastIds) / Math.max(1, beastIds.length),
+          settlementLost
+            ? 0
+            : this.countAliveActors(defenderIds) / Math.max(1, defenderIds.length),
+        )
+      },
+    })
+    return event
+  }
+
+  private handBackBeastRaid(
+    situation: PendingMaterialization,
+    beastStrength: number,
+    defenderStrength: number,
+  ): ChronicleEvent[] {
+    return resolveMaterializedBeastRaid({
+      state: this.chronicleState,
+      regions: this.chronicleRegions,
+      rng: this.generatedRngStreams.event,
+      idPrefix: `handback-${situation.id}-${this.chronicleState.tick}-${this.eventSequence}`,
+      outcome: {
+        regionId: situation.regionId,
+        siteId: situation.siteId,
+        beastStrength,
+        defenderStrength,
+      },
+    }).events
+  }
+
+  /** Torn fencing and a churned-up yard: what a pack leaves before it gets inside. */
+  private createBeastLairEffect(position: THREE.Vector3): THREE.Group {
+    const group = new THREE.Group()
+    const timber = this.comicMaterials.createToonMaterial({
+      color: mix(this.palette.warning, this.palette.bg, 0.55),
+      surface: 'cloth',
+    })
+    for (let index = 0; index < 6; index += 1) {
+      const angle = (index / 6) * TWO_PI
+      const plank = new THREE.Mesh(new THREE.BoxGeometry(0.24, 1.9, 0.24), timber)
+      plank.position.set(Math.sin(angle) * 3.1, 0.95, Math.cos(angle) * 3.1)
+      plank.rotation.z = Math.sin(angle * 2.3) * 0.42
+      plank.castShadow = true
+      group.add(plank)
+    }
+    const trough = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.7, 1.5), timber)
+    trough.position.y = 0.35
+    trough.castShadow = true
+    group.add(trough)
+    group.position.copy(position)
+    return group
+  }
+
+  private startAftermathEvent(    situation: PendingMaterialization,
   ): WorldEvent | null {
     const position = this.pickLocatedEventPosition(situation.siteId, situation.regionId)
     if (!position) return null
@@ -6841,8 +7374,9 @@ export class GameEngine {
   }
 
   private actorAttackPlayer(actor: Actor): void {
-    const baseDamage =
-      actor.role === 'commander'
+    const baseDamage = isBeastRole(actor.role)
+      ? BEAST_PROFILES[actor.role].meleeDamage
+      : actor.role === 'commander'
         ? 10
         : actor.role === 'champion'
           ? 17
@@ -6860,8 +7394,9 @@ export class GameEngine {
   }
 
   private actorAttackActor(attacker: Actor, target: Actor): void {
-    const baseDamage =
-      attacker.role === 'commander'
+    const baseDamage = isBeastRole(attacker.role)
+      ? BEAST_PROFILES[attacker.role].meleeDamage
+      : attacker.role === 'commander'
         ? 18
         : attacker.role === 'champion'
           ? 17
@@ -6872,15 +7407,18 @@ export class GameEngine {
       target,
       this.actorDamageWithAura(attacker, baseDamage),
       attacker.mesh.position,
-      attacker.faction,
+      attacker.allegiance,
       false,
       { attackKind: 'allyMelee', sourceActorId: attacker.id },
     )
   }
 
   private actorAttackEventProp(actor: Actor, target: EventPropTarget): void {
-    target.hp = Math.max(0, target.hp - (4 + this.eventRng() * 2))
-    this.createHitParticles(target.position, actor.faction)
+    // A troll is a prop-wrecker: it is on the settlement to take it apart, and it does
+    // that roughly twice as fast as a raider with a torch.
+    const bite = actor.role === 'troll' ? 9 + this.eventRng() * 4 : 4 + this.eventRng() * 2
+    target.hp = Math.max(0, target.hp - bite)
+    this.createHitParticles(target.position, actor.allegiance)
     if (target.position.distanceTo(this.player.position) < 25) {
       this.playSound('hitLight', {
         position: target.position,
@@ -6988,7 +7526,7 @@ export class GameEngine {
     target: Actor,
     baseDamage: number,
     sourcePosition: THREE.Vector3,
-    killerFaction: Faction,
+    killerAllegiance: Allegiance,
     directPlayerKill: boolean,
     options: DamageActorOptions,
   ): DamageResult {
@@ -7023,7 +7561,7 @@ export class GameEngine {
       if (
         sourceActor?.alive &&
         sourceActor !== target &&
-        hostile(target.faction, sourceActor.faction)
+        hostile(target.allegiance, sourceActor.allegiance)
       ) {
         target.targetId = sourceActor.id
         target.retaliationTimer = NPC_RETALIATION_DURATION
@@ -7056,7 +7594,7 @@ export class GameEngine {
     target.hp = Math.max(0, target.hp - dealt)
     target.healthBarVisibleUntil = this.elapsed + 3.4
     this.drawActorHealthBar(target)
-    this.createHitParticles(target.mesh.position, target.faction)
+    this.createHitParticles(target.mesh.position, target.allegiance)
     if (
       target.role !== 'brute' &&
       options.detachChance &&
@@ -7087,7 +7625,7 @@ export class GameEngine {
     if (killed) {
       this.killActor(
         target,
-        killerFaction,
+        killerAllegiance,
         directPlayerKill,
         result,
         options.attackKind,
@@ -7115,7 +7653,7 @@ export class GameEngine {
         actor === source ||
         !actor.alive ||
         actor.aiMode !== 'normal' ||
-        actor.faction !== source.faction ||
+        allegianceRelation(actor.allegiance, source.allegiance) !== 'friendly' ||
         !actor.hostileToPlayer ||
         actor.mesh.position.distanceToSquared(source.mesh.position) > alertRadiusSq
       ) {
@@ -7152,7 +7690,7 @@ export class GameEngine {
 
   private killActor(
     actor: Actor,
-    killerFaction: Faction,
+    killerAllegiance: Allegiance,
     directPlayerKill: boolean,
     result: DamageResult,
     attackKind: AttackKind,
@@ -7239,12 +7777,15 @@ export class GameEngine {
     }
 
     for (const event of this.activeEvents) {
-      event.onKill?.(actor, { killerFaction, directPlayerKill })
+      event.onKill?.(actor, { killerAllegiance, directPlayerKill })
     }
     if (!directPlayerKill) return
 
     this.kills += 1
-    this.achievements.recordKill(actor.role, actor.faction)
+    this.achievements.recordKill(
+      actor.role,
+      isFactionAllegiance(actor.allegiance) ? actor.allegiance : null,
+    )
     if (actor.eventOwnerId) {
       this.emitView(true)
       return
@@ -7254,9 +7795,11 @@ export class GameEngine {
     this.achievements.recordGoldEarned(reward)
     this.trySpawnKillLoot(actor, deathPosition)
     this.callbacks.onNotice(
-      actor.role === 'commander'
-        ? 'Командир дворца больше не командир.'
-        : `Враг побеждён. Труп тоже 3Д. +${reward} золота.`,
+      actor.allegiance === 'beast'
+        ? `Зверьё стало на одну штуку тише. Шкура, конечно, тоже 3Д. +${reward} золота.`
+        : actor.role === 'commander'
+          ? 'Командир дворца больше не командир.'
+          : `Враг побеждён. Труп тоже 3Д. +${reward} золота.`,
       'success',
     )
     this.emitView(true)
@@ -7434,7 +7977,7 @@ export class GameEngine {
     const detached = new THREE.Mesh(
       new THREE.BoxGeometry(0.28, limb.name.includes('Leg') ? 0.92 : 0.72, 0.28),
       this.comicMaterials.createToonMaterial({
-        color: this.factionColor(actor.faction),
+        color: this.allegianceColor(actor.allegiance),
         surface: 'cloth',
       }),
     )
@@ -7572,7 +8115,16 @@ export class GameEngine {
         id: actor.id,
         x: actor.mesh.position.x,
         z: actor.mesh.position.z,
-        kind: actor.hostileToPlayer ? 'enemy' : 'ally',
+        // §5.3 — the matrix decides the colour. Beasts get their own so a pack never
+        // reads as somebody's soldiers, and anything we have no quarrel with is neutral.
+        kind:
+          actor.allegiance === 'beast'
+            ? 'beast'
+            : this.playerRelationTo(actor) === 'hostile'
+              ? 'enemy'
+              : this.playerRelationTo(actor) === 'friendly'
+                ? 'ally'
+                : 'neutral',
       })
     }
     const generatedCurrentRegionId = this.generatedWorld.getRegionIdAt(
@@ -7634,7 +8186,7 @@ export class GameEngine {
       squad: this.actors.filter(
         (actor) =>
           actor.alive &&
-          actor.faction === this.faction &&
+          actor.allegiance === this.faction &&
           actor.squadEligible &&
           actor.role !== 'commander',
       ).length,
@@ -9467,11 +10019,11 @@ export class GameEngine {
 
   private applyActorVisualVariation(
     mesh: THREE.Group,
-    faction: Faction,
+    allegiance: Allegiance,
     role: ActorRole,
     index: number,
   ): void {
-    const variation = Math.sin((index + 1) * 12.9898 + faction.length * 7.23)
+    const variation = Math.sin((index + 1) * 12.9898 + allegiance.length * 7.23)
     const bodyPivot = mesh.getObjectByName('body-pivot')
     if (bodyPivot) {
       const roleWidth = role === 'brute' || role === 'champion' ? 1.025 : 1
@@ -9487,7 +10039,7 @@ export class GameEngine {
     }
   }
 
-  private createActorHealthBar(faction: Faction): {
+  private createActorHealthBar(allegiance: Allegiance): {
     sprite: THREE.Sprite
     canvas: HTMLCanvasElement
     texture: THREE.CanvasTexture
@@ -9516,7 +10068,7 @@ export class GameEngine {
     if (!context) throw new Error('Could not create actor health bar')
     context.fillStyle = 'rgba(24, 24, 24, 0.82)'
     context.fillRect(0, 0, canvas.width, canvas.height)
-    context.fillStyle = this.factionColor(faction).getStyle()
+    context.fillStyle = this.allegianceColor(allegiance).getStyle()
     context.fillRect(3, 3, canvas.width - 6, canvas.height - 6)
     texture.needsUpdate = true
     return { sprite, canvas, texture }
@@ -9532,7 +10084,7 @@ export class GameEngine {
     context.fillRect(0, 0, actor.healthBarCanvas.width, actor.healthBarCanvas.height)
     context.fillStyle = 'rgba(255, 255, 255, 0.22)'
     context.fillRect(3, 3, innerWidth, actor.healthBarCanvas.height - 6)
-    context.fillStyle = this.factionColor(actor.faction).getStyle()
+    context.fillStyle = this.allegianceColor(actor.allegiance).getStyle()
     context.fillRect(3, 3, innerWidth * ratio, actor.healthBarCanvas.height - 6)
     actor.healthBarTexture.needsUpdate = true
   }
@@ -9629,8 +10181,168 @@ export class GameEngine {
     return group
   }
 
+  /**
+   * Layer 3 — a quadruped built from the same boxes and cones the humanoids use, with
+   * the *same pivot names*. That is deliberate: `animateCharacter`, the death motion,
+   * the outline pass, and the health bar all keep working with no beast branch, and the
+   * stride that swings a soldier's arms swings a wolf's legs in diagonal pairs instead.
+   */
+  private createBeast(role: BeastRole): THREE.Group {
+    const group = new THREE.Group()
+    const bodyPivot = new THREE.Group()
+    bodyPivot.name = 'body-pivot'
+    group.add(bodyPivot)
+    const torsoPivot = new THREE.Group()
+    torsoPivot.name = 'torso-pivot'
+    bodyPivot.add(torsoPivot)
+    const headPivot = new THREE.Group()
+    headPivot.name = 'head-pivot'
+    bodyPivot.add(headPivot)
+    const pelvisPivot = new THREE.Group()
+    pelvisPivot.name = 'pelvis-pivot'
+    bodyPivot.add(pelvisPivot)
+
+    const pelt = this.beastPeltColor(role)
+    const hideMaterial = this.comicMaterials.createToonMaterial({
+      color: pelt,
+      surface: 'cloth',
+    })
+    const darkMaterial = this.comicMaterials.createToonMaterial({
+      color: mix(pelt, this.palette.bg, 0.55),
+      surface: 'dark',
+    })
+    const boneMaterial = this.comicMaterials.createToonMaterial({
+      color: mix(this.palette.text, this.palette.surface, 0.35),
+      surface: 'skin',
+    })
+
+    const bulk = role === 'wolf' ? 0.86 : role === 'boar' ? 1 : 1.2
+    const backHeight = role === 'troll' ? 1.85 : role === 'bear' ? 1.5 : 1.2
+    const torso = new THREE.Mesh(
+      new THREE.BoxGeometry(0.86 * bulk, 0.82 * bulk, 1.95 * bulk),
+      hideMaterial,
+    )
+    torso.name = 'torso'
+    torso.position.y = backHeight
+    torsoPivot.add(torso)
+
+    // Shoulder hump: a boar's is its silhouette, a troll's is most of its mass.
+    const humpHeight = role === 'boar' ? 0.42 : role === 'troll' ? 0.62 : 0.26
+    const hump = new THREE.Mesh(
+      new THREE.BoxGeometry(0.78 * bulk, humpHeight, 0.86 * bulk),
+      hideMaterial,
+    )
+    hump.position.set(0, backHeight + 0.5 * bulk, 0.52 * bulk)
+    torsoPivot.add(hump)
+
+    const head = new THREE.Mesh(
+      new THREE.BoxGeometry(0.62 * bulk, 0.58 * bulk, 0.7 * bulk),
+      hideMaterial,
+    )
+    head.name = 'head'
+    head.position.set(0, backHeight + (role === 'troll' ? 0.5 : 0.18), 1.28 * bulk)
+    headPivot.add(head)
+
+    const snoutLength = role === 'wolf' ? 0.72 : role === 'boar' ? 0.6 : 0.44
+    const snout = new THREE.Mesh(
+      new THREE.ConeGeometry(0.24 * bulk, snoutLength, 6),
+      darkMaterial,
+    )
+    snout.position.set(0, head.position.y - 0.08, head.position.z + 0.42 * bulk)
+    snout.rotation.x = Math.PI / 2
+    headPivot.add(snout)
+
+    if (role === 'wolf') {
+      for (const side of [-1, 1]) {
+        const ear = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.4, 5), darkMaterial)
+        ear.position.set(side * 0.22 * bulk, head.position.y + 0.42, head.position.z - 0.1)
+        ear.rotation.z = side * 0.18
+        headPivot.add(ear)
+      }
+    } else if (role === 'bear' || role === 'troll') {
+      for (const side of [-1, 1]) {
+        const ear = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.22, 0.12), darkMaterial)
+        ear.position.set(side * 0.28 * bulk, head.position.y + 0.36, head.position.z - 0.16)
+        headPivot.add(ear)
+      }
+    }
+    if (role === 'boar' || role === 'troll') {
+      for (const side of [-1, 1]) {
+        const tusk = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.42, 5), boneMaterial)
+        tusk.position.set(
+          side * 0.2 * bulk,
+          head.position.y - 0.12,
+          head.position.z + 0.34 * bulk,
+        )
+        tusk.rotation.set(-0.9, 0, side * 0.22)
+        headPivot.add(tusk)
+      }
+    }
+
+    // Front legs answer to `leftArm` / `rightArm`, hind legs to `leftLeg` / `rightLeg`,
+    // so the shared stride pose already produces a diagonal quadruped gait.
+    const legLength = backHeight - 0.32 * bulk
+    const legGeometry = new THREE.BoxGeometry(0.26 * bulk, legLength, 0.3 * bulk)
+    for (const [name, x, z, parent] of [
+      ['leftArm', -0.32, 0.72, torsoPivot],
+      ['rightArm', 0.32, 0.72, torsoPivot],
+      ['leftLeg', -0.32, -0.72, pelvisPivot],
+      ['rightLeg', 0.32, -0.72, pelvisPivot],
+    ] as const) {
+      const pivot = new THREE.Group()
+      pivot.name = name
+      pivot.position.set(x * bulk, backHeight - 0.3 * bulk, z * bulk)
+      const leg = new THREE.Mesh(legGeometry, darkMaterial)
+      leg.position.y = -legLength / 2
+      pivot.add(leg)
+      parent.add(pivot)
+    }
+
+    const tail = new THREE.Mesh(
+      new THREE.ConeGeometry(0.14 * bulk, role === 'wolf' ? 1.05 : 0.5, 6),
+      darkMaterial,
+    )
+    tail.position.set(0, backHeight + 0.18, -1.1 * bulk)
+    tail.rotation.x = -1.15
+    pelvisPivot.add(tail)
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.72, 0.9, 24),
+      new THREE.MeshBasicMaterial({
+        color: this.allegianceColor('beast'),
+        transparent: true,
+        opacity: 0.48,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+      }),
+    )
+    ring.name = 'faction-ring'
+    ring.position.y = 0.05
+    ring.rotation.x = -Math.PI / 2
+    ring.renderOrder = 2
+    group.add(ring)
+
+    group.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        if (object.name === 'faction-ring') return
+        object.castShadow = true
+        object.receiveShadow = true
+      }
+    })
+    return group
+  }
+
+  private beastPeltColor(role: BeastRole): THREE.Color {
+    const base = this.allegianceColor('beast')
+    if (role === 'wolf') return mix(base, this.palette.borderStrong, 0.42)
+    if (role === 'boar') return mix(base, this.palette.text, 0.3)
+    if (role === 'bear') return mix(base, this.palette.bg, 0.22)
+    return mix(base, this.palette.success, 0.32)
+  }
+
   private spawnActor(
-    faction: Faction,
+    allegiance: Allegiance,
     role: ActorRole,
     x: number,
     z: number,
@@ -9638,7 +10350,14 @@ export class GameEngine {
     options: ActorSpawnOptions,
   ): Actor {
     this.claimActorSlot(options.budget)
-    const mesh = this.createCharacter(faction, false)
+    const beast = isBeastRole(role) ? BEAST_PROFILES[role] : null
+    const mesh = beast
+      ? this.createBeast(role as BeastRole)
+      : this.createCharacter(
+          isFactionAllegiance(allegiance) ? allegiance : 'guard',
+          false,
+        )
+    if (beast) mesh.scale.setScalar(beast.scale)
     if (role === 'brute') mesh.scale.set(1.28, 1.12, 1.28)
     if (role === 'champion') {
       mesh.scale.set(1.3, 1.18, 1.3)
@@ -9682,16 +10401,16 @@ export class GameEngine {
       const weapon = mesh.getObjectByName('weapon')
       if (weapon) weapon.visible = false
     }
-    this.applyActorVisualVariation(mesh, faction, role, index)
+    this.applyActorVisualVariation(mesh, allegiance, role, index)
     const outlineBinding = this.registerOutline(mesh, 'enemy')
     mesh.position.set(x, this.groundHeightAt(x, z), z)
     this.resolveCharacterOverlaps(mesh.position, this.actorColliderRadiusForRole(role))
     mesh.position.y = this.groundHeightAt(mesh.position.x, mesh.position.z)
     this.scene.add(mesh)
-    const healthBar = this.createActorHealthBar(faction)
+    const healthBar = this.createActorHealthBar(allegiance)
     healthBar.sprite.position.set(
       mesh.position.x,
-      mesh.position.y + 3.65 * mesh.scale.y,
+      mesh.position.y + this.actorHealthBarHeight(role) * mesh.scale.y,
       mesh.position.z,
     )
     this.scene.add(healthBar.sprite)
@@ -9699,7 +10418,8 @@ export class GameEngine {
     const home = mesh.position.clone()
     const initialAngle = phase * 4.7
     const baseHp =
-      role === 'commander'
+      beast?.hp ??
+      (role === 'commander'
         ? 150
         : role === 'champion'
           ? 260
@@ -9709,14 +10429,15 @@ export class GameEngine {
               ? 45
               : role === 'scout'
                 ? 55
-                : 70
+                : 70)
     const hp = Math.round(
       baseHp *
-        this.enemyHealthMultiplier(faction) *
+        this.enemyHealthMultiplier(allegiance) *
         Math.max(0.1, options.healthScale ?? 1),
     )
     const speed =
-      role === 'scout'
+      beast?.speed ??
+      (role === 'scout'
         ? 4.8
         : role === 'champion'
           ? 4.15
@@ -9726,12 +10447,12 @@ export class GameEngine {
               ? 2.6
               : role === 'commander'
                 ? 0
-                : 3.7
+                : 3.7)
     const actor: Actor = {
       id: options.generatedSpawnId
         ? `generated:${options.generatedSpawnId}`
-        : `${faction}-${role}-${this.actorSequence++}`,
-      faction,
+        : `${allegiance}-${role}-${this.actorSequence++}`,
+      allegiance,
       role,
       mesh,
       hp,
@@ -9795,8 +10516,15 @@ export class GameEngine {
       generatedSpawnId: options.generatedSpawnId ?? null,
       generatedObjectiveId: options.generatedObjectiveId ?? null,
       generatedUnique: options.generatedUnique ?? false,
-      hostileToPlayer: options.hostileToPlayer ?? hostile(faction, this.faction),
+      hostileToPlayer: options.hostileToPlayer ?? hostile(allegiance, this.faction),
       budgetCategory: options.budget,
+      packId: options.packId ?? null,
+      packSize: Math.max(1, options.packSize ?? 1),
+      routTimer: 0,
+      chargeWindup: 0,
+      chargeTimer: 0,
+      chargeCooldown: 0,
+      chargeDirection: new THREE.Vector3(0, 0, 1),
     }
     if (
       !this.isWalkablePosition(
@@ -9854,7 +10582,7 @@ export class GameEngine {
     if (
       locked?.alive &&
       locked.id !== actor.ignoredTargetId &&
-      hostile(actor.faction, locked.faction) &&
+      hostile(actor.allegiance, locked.allegiance) &&
       actor.mesh.position.distanceTo(locked.mesh.position) < range * 1.35
     ) {
       return locked
@@ -9868,7 +10596,7 @@ export class GameEngine {
         !other.alive ||
         other === actor ||
         other.id === actor.ignoredTargetId ||
-        !hostile(actor.faction, other.faction)
+        !hostile(actor.allegiance, other.allegiance)
       ) {
         continue
       }
@@ -10853,11 +11581,11 @@ export class GameEngine {
     }
   }
 
-  private createHitParticles(position: THREE.Vector3, faction: Faction): void {
+  private createHitParticles(position: THREE.Vector3, allegiance: Allegiance): void {
     for (let index = 0; index < 7; index += 1) {
       const mesh = new THREE.Mesh(
         new THREE.OctahedronGeometry(0.12, 0),
-        new THREE.MeshBasicMaterial({ color: this.factionColor(faction) }),
+        new THREE.MeshBasicMaterial({ color: this.allegianceColor(allegiance) }),
       )
       mesh.position.copy(position).add(new THREE.Vector3(0, 1.6, 0))
       this.scene.add(mesh)
@@ -10915,6 +11643,7 @@ export class GameEngine {
   }
 
   private actorGaitCadence(role: ActorRole): number {
+    if (isBeastRole(role)) return role === 'wolf' ? 9.6 : role === 'boar' ? 8.8 : 5.2
     if (role === 'scout') return 8.4
     if (role === 'brute' || role === 'champion') return 5.8
     if (role === 'archer') return 7.2
@@ -11167,6 +11896,21 @@ export class GameEngine {
     if (faction === 'elf') return this.palette.success
     if (faction === 'guard') return this.palette.link
     return this.palette.accent
+  }
+
+  /**
+   * §5.3 — brand colour by allegiance, so a wolf never wears a faction's livery on the
+   * minimap, in its ring, or in the sparks it throws off when hit.
+   */
+  private allegianceColor(allegiance: Allegiance): THREE.Color {
+    if (allegiance === 'beast') return mix(this.palette.warning, this.palette.bg, 0.42)
+    if (allegiance === 'civilian') return this.palette.muted
+    return this.factionColor(allegiance)
+  }
+
+  /** How the player's own side regards this actor, straight out of the matrix. */
+  private playerRelationTo(actor: Actor): ReturnType<typeof allegianceRelation> {
+    return allegianceRelation(this.faction, actor.allegiance)
   }
 
   private zoneName(zone: ZoneId): string {

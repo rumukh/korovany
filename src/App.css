@@ -1925,6 +1925,19 @@ button {
   background: var(--cp-danger);
 }
 
+/* §5.3 — beasts are hostile to every faction, so they get their own tint rather than
+   borrowing the colour of whoever the player happens to be fighting. */
+.map-marker.beast {
+  background: color-mix(in srgb, var(--cp-warning) 62%, var(--cp-bg));
+  border-radius: 0.1rem;
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.map-marker.neutral {
+  background: var(--cp-muted);
+  opacity: 0.75;
+}
+
 .map-marker.caravan {
   background: var(--cp-warning);
   border-radius: 0.12rem;
@@ -2006,6 +2019,10 @@ button {
 
 .legend-dot.enemy {
   background: var(--cp-danger);
+}
+
+.legend-dot.beast {
+  background: color-mix(in srgb, var(--cp-warning) 62%, var(--cp-bg));
 }
 
 .legend-dot.caravan {

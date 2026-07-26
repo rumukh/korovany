@@ -15,6 +15,7 @@
 
 import type { Faction } from '../types.ts'
 import {
+  BEAST_RAID_THRESHOLD,
   CARAVAN_BEAST_THRESHOLD,
   CONTROL_FLIP_COOLDOWN_TICKS,
   CONTROL_FLIP_MARGIN,
@@ -31,6 +32,7 @@ export type MaterializedEventKind =
   | 'caravanAmbush'
   | 'warband'
   | 'aftermath'
+  | 'beastRaid'
 
 /**
  * Raids materialize a little earlier than the chronicle would flip a region on its own,
@@ -39,11 +41,17 @@ export type MaterializedEventKind =
 export const MATERIALIZE_RAID_MARGIN = CONTROL_FLIP_MARGIN * 0.6
 /** Below this, a faction is holding a square rather than patrolling it. */
 export const MATERIALIZE_WARBAND_PRESSURE = 0.32
+/**
+ * Layer 3 — same rule for the forest: the pack shows up a little before the chronicle
+ * would have written the raid down, so the player meets the wolves and not the wreckage.
+ */
+export const MATERIALIZE_BEAST_PRESSURE = BEAST_RAID_THRESHOLD - 0.12
 
 const RAID_URGENCY_BASE = 0.6
 const AMBUSH_URGENCY_BASE = 0.45
 const WARBAND_URGENCY_SCALE = 0.35
 const AFTERMATH_URGENCY = 0.3
+const BEAST_RAID_URGENCY_BASE = 0.5
 
 export interface PendingMaterialization {
   /** Stable across ticks, so one situation never starts two events. */
@@ -53,12 +61,14 @@ export interface PendingMaterialization {
   /** For `factionRaid`: the region the attackers march from. */
   sourceRegionId: string | null
   siteId: string | null
-  /** Attacker, caravan owner, or warband owner. */
+  /** Attacker, caravan owner, or warband owner. Beasts have none — that is the point. */
   faction: Faction | null
   /** Whoever holds the ground. */
   defender: Territory | null
   /** Set for `caravanAmbush`, so the hand-back can find the chronicle's caravan. */
   caravanId: string | null
+  /** For `beastRaid`: chronicle beast pressure, which sizes the pack. */
+  beastPressure: number
   /** 0..1 — how badly the chronicle wants this to happen. Highest wins. */
   urgency: number
 }
@@ -85,6 +95,7 @@ export function findPendingMaterializations(
 ): PendingMaterialization[] {
   const pending: PendingMaterialization[] = [
     ...findFactionRaids(context),
+    ...findBeastRaids(context),
     ...findCaravanAmbushes(context),
     ...findWarbands(context),
     ...findAftermaths(context),
@@ -138,6 +149,7 @@ function findFactionRaids(
         faction: attacker,
         defender: defenderState.control,
         caravanId: null,
+        beastPressure: 0,
         urgency: clamp01(RAID_URGENCY_BASE + advantage),
       }
       const existing = best.get(target)
@@ -145,6 +157,41 @@ function findFactionRaids(
     }
   }
   return [...best.values()]
+}
+
+/**
+ * Layer 3 — the forest coming for a settlement. Unlike a faction raid this has no
+ * source region and no attacker faction: `beastPressure` is the whole cause, and the
+ * pack is sized from it. A razed square is skipped for the same reason the chronicle
+ * skips it — there is nothing left to eat.
+ */
+function findBeastRaids(context: MaterializationContext): PendingMaterialization[] {
+  const pending: PendingMaterialization[] = []
+  for (const key of context.simulatedRegionIds) {
+    const region = context.regions.get(key)
+    if (!region) continue
+    if (region.beastPressure < MATERIALIZE_BEAST_PRESSURE) continue
+    if (isRegionRazed(region)) continue
+    // Same breathing room a square gets after any other fight.
+    if (context.chronicle.tick - region.lastEventTick < CONTROL_FLIP_COOLDOWN_TICKS) {
+      continue
+    }
+    const siteId = pickSettlementSiteId(context, key)
+    if (!siteId) continue
+    pending.push({
+      id: `beasts:${key}`,
+      kind: 'beastRaid',
+      regionId: key,
+      sourceRegionId: null,
+      siteId,
+      faction: null,
+      defender: region.control,
+      caravanId: null,
+      beastPressure: region.beastPressure,
+      urgency: clamp01(BEAST_RAID_URGENCY_BASE + region.beastPressure * 0.3),
+    })
+  }
+  return pending
 }
 
 function findCaravanAmbushes(
@@ -172,6 +219,7 @@ function findCaravanAmbushes(
       faction: caravan.ownerFaction,
       defender: region.control,
       caravanId: caravan.id,
+      beastPressure: region.beastPressure,
       urgency: clamp01(AMBUSH_URGENCY_BASE + (hostileGround ? 0.15 : 0)),
     })
   }
@@ -195,6 +243,7 @@ function findWarbands(context: MaterializationContext): PendingMaterialization[]
       faction: region.control,
       defender: region.control,
       caravanId: null,
+      beastPressure: region.beastPressure,
       urgency: clamp01(pressure * WARBAND_URGENCY_SCALE),
     })
   }
@@ -216,6 +265,7 @@ function findAftermaths(context: MaterializationContext): PendingMaterialization
       faction: region.control === 'neutral' ? null : region.control,
       defender: region.control,
       caravanId: null,
+      beastPressure: region.beastPressure,
       urgency: AFTERMATH_URGENCY,
     })
   }

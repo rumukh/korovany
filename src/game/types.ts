@@ -2,6 +2,94 @@ import type { AchievementUnlock } from './achievements'
 
 export type Faction = 'elf' | 'guard' | 'villain'
 
+/**
+ * §5.3 — who counts as "us" in a fight. `Faction` deliberately stays the three playable
+ * sides: it carries a spawn point, a signature ability, an objective graph, event
+ * weights, and a brand colour. A wolf has none of those, so widening `Faction` would
+ * force meaningless rows into `FACTION_INFO`, `ABILITY_INFO`, and `EVENT_WEIGHTS`
+ * forever. Beasts and civilians are allegiances instead.
+ */
+export type Allegiance = Faction | 'beast' | 'civilian'
+
+export const ALLEGIANCES: readonly Allegiance[] = [
+  'elf',
+  'guard',
+  'villain',
+  'beast',
+  'civilian',
+]
+
+export type AllegianceRelation = 'hostile' | 'neutral' | 'friendly'
+
+/**
+ * Every hostility decision — targeting, projectile eligibility, friendly fire, map
+ * marker colour, kill attribution — reads this table rather than comparing factions.
+ *
+ * Read it as "row *regards* column". It happens to be symmetric today: one-sided
+ * aggression (a civilian that flees rather than fights) is Layer 4/5 behaviour, not a
+ * relation, so nothing here needs to be lopsided yet.
+ */
+export const ALLEGIANCE_RELATIONS: Record<
+  Allegiance,
+  Record<Allegiance, AllegianceRelation>
+> = {
+  elf: {
+    elf: 'friendly',
+    guard: 'hostile',
+    villain: 'hostile',
+    beast: 'hostile',
+    civilian: 'neutral',
+  },
+  guard: {
+    elf: 'hostile',
+    guard: 'friendly',
+    villain: 'hostile',
+    beast: 'hostile',
+    civilian: 'neutral',
+  },
+  villain: {
+    elf: 'hostile',
+    guard: 'hostile',
+    villain: 'friendly',
+    beast: 'hostile',
+    civilian: 'neutral',
+  },
+  // Wildlife does not take sides: everything with two legs is either food or a threat,
+  // and other beasts are neither.
+  beast: {
+    elf: 'hostile',
+    guard: 'hostile',
+    villain: 'hostile',
+    beast: 'friendly',
+    civilian: 'hostile',
+  },
+  // Civilians are nobody's enemy until something comes out of the forest for them.
+  civilian: {
+    elf: 'neutral',
+    guard: 'neutral',
+    villain: 'neutral',
+    beast: 'hostile',
+    civilian: 'friendly',
+  },
+}
+
+export function allegianceRelation(a: Allegiance, b: Allegiance): AllegianceRelation {
+  return ALLEGIANCE_RELATIONS[a][b]
+}
+
+export function areAllegiancesHostile(a: Allegiance, b: Allegiance): boolean {
+  return ALLEGIANCE_RELATIONS[a][b] === 'hostile'
+}
+
+export function isFactionAllegiance(value: Allegiance): value is Faction {
+  return value !== 'beast' && value !== 'civilian'
+}
+
+/** Layer 3 — the four things that come out of the forest. */
+export type BeastRole = 'wolf' | 'boar' | 'bear' | 'troll'
+
+export const BEAST_ROLES: readonly BeastRole[] = ['wolf', 'boar', 'bear', 'troll']
+
 export type ActorRole =
   | 'soldier'
   | 'scout'
@@ -11,6 +99,11 @@ export type ActorRole =
   | 'brute'
   | 'champion'
   | 'captive'
+  | BeastRole
+
+export function isBeastRole(role: ActorRole): role is BeastRole {
+  return (BEAST_ROLES as readonly string[]).includes(role)
+}
 
 export type ZoneId = 'neutral' | 'palace' | 'forest' | 'fort'
 
@@ -58,6 +151,7 @@ export type ChronicleWorldEventKind =
   | 'caravanAmbush'
   | 'warband'
   | 'aftermath'
+  | 'beastRaid'
 
 export type WorldEventKind = RandomWorldEventKind | ChronicleWorldEventKind
 
@@ -75,6 +169,7 @@ export const CHRONICLE_WORLD_EVENT_KINDS: readonly ChronicleWorldEventKind[] = [
   'caravanAmbush',
   'warband',
   'aftermath',
+  'beastRaid',
 ]
 
 export function isRandomWorldEventKind(
@@ -185,7 +280,20 @@ export interface MapMarker {
   id: string
   x: number
   z: number
-  kind: 'player' | 'ally' | 'enemy' | 'caravan' | 'landmark' | 'objective' | 'event'
+  /**
+   * §5.3 — colour follows the allegiance matrix, not the faction: `beast` is hostile to
+   * everyone and gets its own tint, `neutral` is anything the player has no quarrel with.
+   */
+  kind:
+    | 'player'
+    | 'ally'
+    | 'enemy'
+    | 'beast'
+    | 'neutral'
+    | 'caravan'
+    | 'landmark'
+    | 'objective'
+    | 'event'
   label?: string
   heading?: number
 }

@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
+  BEAST_RAID_REPELLED_RESET,
+  BEAST_RAID_RESET,
   BEAST_RAID_THRESHOLD,
   CARAVAN_BEAST_THRESHOLD,
   CONTROL_FLIP_COOLDOWN_TICKS,
@@ -9,6 +11,7 @@ import {
   getCaravanRegionId,
   getChronicleProtectedRegionIds,
   getChronicleSettlementSiteIds,
+  resolveMaterializedBeastRaid,
   resolveMaterializedCaravan,
   resolveMaterializedRaid,
   resolveMaterializedWarband,
@@ -16,6 +19,7 @@ import {
   type RegionChronicleState,
 } from '../src/game/world/Chronicle.ts'
 import {
+  MATERIALIZE_BEAST_PRESSURE,
   MATERIALIZE_RAID_MARGIN,
   MATERIALIZE_WARBAND_PRESSURE,
   findPendingMaterializations,
@@ -539,18 +543,249 @@ test('a thinned warband loosens its faction grip on the square', () => {
   assert.ok(after < MATERIALIZE_WARBAND_PRESSURE, `expected ${after} to drop below the threshold`)
 })
 
-test('beast raids are still chronicle-only: Layer 2 never materializes them', () => {
+/**
+ * Layer 3 replaced the Layer 2 assertion that this could never happen. Layer 2 refused
+ * to fake a beast raid with a re-skinned faction squad; now that beasts exist, the
+ * situation must actually be produced — and only under the conditions that justify it.
+ */
+test('a loud square with a settlement materializes a beast raid', () => {
   const scenario = harness()
-  const regionId = String(scenario.blueprint.regions[8].id)
+  const regionId = beastRaidRegionId(scenario)
+  assert.ok(regionId, 'expected a region with a settlement')
   const region = scenario.regions.get(regionId)
   assert.ok(region)
-  region.beastPressure = BEAST_RAID_THRESHOLD + 0.2
-  region.control = 'neutral'
+  armBeasts(scenario, region)
+
   const pending = findPendingMaterializations(
     scenario.context({ simulatedRegionIds: new Set([regionId]) }),
   )
+  const raid = pending.find((entry) => entry.kind === 'beastRaid')
+  assert.ok(raid, 'expected a beastRaid')
+  assert.equal(raid.regionId, regionId)
+  assert.equal(raid.id, `beasts:${regionId}`)
+  // Beasts belong to no faction and march from nowhere — that is the whole point of
+  // §5.3, and the reason a re-skinned faction squad would have been a lie.
+  assert.equal(raid.faction, null)
+  assert.equal(raid.sourceRegionId, null)
   assert.equal(
-    pending.some((entry) => String(entry.kind) === 'beastRaid'),
-    false,
+    raid.siteId,
+    String(getChronicleSettlementSiteIds(scenario.blueprint, regionId)[0]),
   )
+  assert.ok(raid.beastPressure >= MATERIALIZE_BEAST_PRESSURE)
 })
+
+test('a beast raid materializes before the chronicle would write one down', () => {
+  const scenario = harness()
+  const regionId = beastRaidRegionId(scenario)
+  assert.ok(regionId)
+  const region = scenario.regions.get(regionId)
+  assert.ok(region)
+  assert.ok(
+    MATERIALIZE_BEAST_PRESSURE < BEAST_RAID_THRESHOLD,
+    'the player should meet the pack, not the wreckage',
+  )
+  armBeasts(scenario, region)
+  // Deliberately between the two thresholds: the chronicle would not fire here yet.
+  region.beastPressure = (MATERIALIZE_BEAST_PRESSURE + BEAST_RAID_THRESHOLD) / 2
+  const pending = findPendingMaterializations(
+    scenario.context({ simulatedRegionIds: new Set([regionId]) }),
+  )
+  assert.ok(pending.some((entry) => entry.kind === 'beastRaid'))
+})
+
+test('a quiet, razed, or freshly fought-over square produces no beast raid', () => {
+  const scenario = harness()
+  const regionId = beastRaidRegionId(scenario)
+  assert.ok(regionId)
+  const region = scenario.regions.get(regionId)
+  assert.ok(region)
+  const beastRaids = (): boolean =>
+    findPendingMaterializations(
+      scenario.context({ simulatedRegionIds: new Set([regionId]) }),
+    ).some((entry) => entry.kind === 'beastRaid')
+
+  // Negative control: the positive case must be reachable from this exact setup, or
+  // every assertion below would pass for the wrong reason.
+  armBeasts(scenario, region)
+  assert.equal(beastRaids(), true, 'the armed scenario must produce a raid')
+
+  region.beastPressure = MATERIALIZE_BEAST_PRESSURE - 0.01
+  assert.equal(beastRaids(), false, 'quiet forest')
+
+  armBeasts(scenario, region)
+  region.settlementIntegrity = 0
+  assert.equal(beastRaids(), false, 'nothing left to eat')
+
+  armBeasts(scenario, region)
+  region.lastEventTick = scenario.chronicle.tick
+  assert.equal(beastRaids(), false, 'a square that was just fought over')
+})
+
+test('beasts are hostile to whoever holds the ground, whichever side that is', () => {
+  const scenario = harness()
+  const regionId = beastRaidRegionId(scenario)
+  assert.ok(regionId)
+  const region = scenario.regions.get(regionId)
+  assert.ok(region)
+  for (const control of ['elf', 'guard', 'villain', 'neutral'] as const) {
+    armBeasts(scenario, region)
+    region.control = control
+    if (control !== 'neutral') region.beastPressure = BEAST_RAID_THRESHOLD
+    const pending = findPendingMaterializations(
+      scenario.context({
+        simulatedRegionIds: new Set([regionId]),
+        playerFaction: control === 'elf' ? 'elf' : 'guard',
+      }),
+    )
+    const raid = pending.find((entry) => entry.kind === 'beastRaid')
+    assert.ok(raid, `expected a beastRaid on ${control} ground`)
+    assert.equal(raid.defender, control)
+  }
+})
+
+test('a beast raid the player wins thins the forest; one they lose feeds it', () => {
+  const scenario = harness()
+  const regionId = beastRaidRegionId(scenario)
+  assert.ok(regionId)
+  const region = scenario.regions.get(regionId)
+  assert.ok(region)
+  const siteId = String(getChronicleSettlementSiteIds(scenario.blueprint, regionId)[0])
+
+  armBeasts(scenario, region)
+  const integrityBefore = region.settlementIntegrity
+  const repelled = resolveMaterializedBeastRaid({
+    state: scenario.chronicle,
+    regions: scenario.regions,
+    rng: new RandomStream(deriveSeed(SEED, 'beasts:repelled')),
+    idPrefix: 'test-repelled',
+    outcome: { regionId, siteId, beastStrength: 0, defenderStrength: 1 },
+  })
+  assert.equal(repelled.beastsWon, false)
+  assert.deepEqual(
+    repelled.events.map((entry) => entry.kind),
+    ['beastsRepelled'],
+  )
+  assert.equal(region.beastPressure, BEAST_RAID_REPELLED_RESET)
+  assert.equal(region.settlementIntegrity, integrityBefore)
+
+  armBeasts(scenario, region)
+  const won = resolveMaterializedBeastRaid({
+    state: scenario.chronicle,
+    regions: scenario.regions,
+    rng: new RandomStream(deriveSeed(SEED, 'beasts:won')),
+    idPrefix: 'test-won',
+    outcome: { regionId, siteId, beastStrength: 1, defenderStrength: 0 },
+  })
+  assert.equal(won.beastsWon, true)
+  assert.equal(won.events[0]?.kind, 'beastRaid')
+  assert.equal(won.events[0]?.faction, null)
+  assert.equal(region.beastPressure, BEAST_RAID_RESET)
+  assert.ok(region.settlementIntegrity < 100, 'the settlement should have been chewed on')
+})
+
+/**
+ * The engine's `beastRaid` event can fail with defenders still standing — the homestead
+ * burns while the garrison is chasing wolves — so it hands back `defenderStrength: 0` to
+ * say "the settlement is already lost". That must resolve deterministically, or the
+ * chronicle re-rolls a fight the player watched end and logs the opposite outcome.
+ */
+test('a decided beast raid is not re-rolled by the hand-back', () => {
+  const scenario = harness()
+  const regionId = beastRaidRegionId(scenario)
+  assert.ok(regionId)
+  const region = scenario.regions.get(regionId)
+  assert.ok(region)
+  const siteId = String(getChronicleSettlementSiteIds(scenario.blueprint, regionId)[0])
+
+  // Every rng state, so this cannot pass by luck of the stream.
+  for (let seed = 0; seed < 24; seed += 1) {
+    armBeasts(scenario, region)
+    const lost = resolveMaterializedBeastRaid({
+      state: scenario.chronicle,
+      regions: scenario.regions,
+      rng: new RandomStream(deriveSeed(SEED, `decided-lost-${seed}`)),
+      idPrefix: `decided-lost-${seed}`,
+      // One beast of three left, but the settlement is already down.
+      outcome: { regionId, siteId, beastStrength: 1 / 3, defenderStrength: 0 },
+    })
+    assert.equal(lost.beastsWon, true, `settlement lost must stay lost (seed ${seed})`)
+    assert.ok(
+      region.settlementIntegrity < 100,
+      'a lost settlement must actually take the damage',
+    )
+
+    armBeasts(scenario, region)
+    const won = resolveMaterializedBeastRaid({
+      state: scenario.chronicle,
+      regions: scenario.regions,
+      rng: new RandomStream(deriveSeed(SEED, `decided-won-${seed}`)),
+      idPrefix: `decided-won-${seed}`,
+      outcome: { regionId, siteId, beastStrength: 0, defenderStrength: 1 / 2 },
+    })
+    assert.equal(won.beastsWon, false, `a wiped pack must stay wiped (seed ${seed})`)
+  }
+
+  // Negative control: an *undecided* hand-back — the player walked out mid-fight — must
+  // still be a roll, otherwise the assertions above would hold for the wrong reason.
+  const outcomes = new Set<boolean>()
+  for (let seed = 0; seed < 40; seed += 1) {
+    armBeasts(scenario, region)
+    outcomes.add(
+      resolveMaterializedBeastRaid({
+        state: scenario.chronicle,
+        regions: scenario.regions,
+        rng: new RandomStream(deriveSeed(SEED, `undecided-${seed}`)),
+        idPrefix: `undecided-${seed}`,
+        outcome: { regionId, siteId, beastStrength: 1 / 3, defenderStrength: 1 },
+      }).beastsWon,
+    )
+  }
+  assert.equal(outcomes.size, 2, 'an abandoned beast raid should still be rolled')
+})
+
+test('a beast raid never flips control: beasts do not hold ground', () => {  const scenario = harness()
+  const regionId = beastRaidRegionId(scenario)
+  assert.ok(regionId)
+  const region = scenario.regions.get(regionId)
+  assert.ok(region)
+  armBeasts(scenario, region)
+  region.control = 'guard'
+  region.pressure = { elf: 0.1, guard: 0.7, villain: 0.2 }
+  const pressureBefore = { ...region.pressure }
+  resolveMaterializedBeastRaid({
+    state: scenario.chronicle,
+    regions: scenario.regions,
+    rng: new RandomStream(deriveSeed(SEED, 'beasts:control')),
+    idPrefix: 'test-control',
+    outcome: {
+      regionId,
+      siteId: String(getChronicleSettlementSiteIds(scenario.blueprint, regionId)[0]),
+      beastStrength: 1,
+      defenderStrength: 0,
+    },
+  })
+  assert.equal(region.control, 'guard')
+  assert.deepEqual(region.pressure, pressureBefore)
+})
+
+/** First region that actually has something for a pack to come for. */
+function beastRaidRegionId(scenario: Harness): string | null {
+  for (const region of scenario.blueprint.regions) {
+    const regionId = String(region.id)
+    if (getChronicleSettlementSiteIds(scenario.blueprint, regionId).length > 0) {
+      return regionId
+    }
+  }
+  return null
+}
+
+/** Loud forest, intact settlement, past the post-event breathing room. */
+function armBeasts(scenario: Harness, region: RegionChronicleState): void {
+  scenario.chronicle.tick = Math.max(
+    scenario.chronicle.tick,
+    CONTROL_FLIP_COOLDOWN_TICKS,
+  )
+  region.beastPressure = BEAST_RAID_THRESHOLD + 0.2
+  region.settlementIntegrity = 100
+  region.lastEventTick = 0
+}

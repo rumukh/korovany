@@ -1,4 +1,8 @@
-import { RANDOM_WORLD_EVENT_KINDS, isRandomWorldEventKind } from './types.ts'
+import {
+  BEAST_ROLES,
+  RANDOM_WORLD_EVENT_KINDS,
+  isRandomWorldEventKind,
+} from './types.ts'
 import type {
   AbilityId,
   ActorRole,
@@ -136,6 +140,7 @@ const ACTOR_ROLES: ActorRole[] = [
   'brute',
   'champion',
   'captive',
+  ...BEAST_ROLES,
 ]
 const FACTIONS: Faction[] = ['elf', 'guard', 'villain']
 const SHOP_ITEM_IDS: ShopItem['id'][] = ['medicine', 'arm', 'leg', 'eye', 'blade']
@@ -1039,11 +1044,13 @@ export class AchievementTracker {
     this.commit()
   }
 
-  recordKill(role: ActorRole, faction: Faction): void {
+  recordKill(role: ActorRole, faction: Faction | null): void {
     if (!this.run) return
     this.store.stats.kills += 1
     this.store.stats.killsByRole[role] += 1
-    this.store.stats.killsByFaction[faction] += 1
+    // §5.3 — a wolf belongs to no faction, so it counts as a kill but not as a tally
+    // against one of the three sides.
+    if (faction) this.store.stats.killsByFaction[faction] += 1
     this.run.kills += 1
     this.run.killsSinceDamage += 1
     this.run.bestKillStreak = Math.max(this.run.bestKillStreak, this.run.killsSinceDamage)

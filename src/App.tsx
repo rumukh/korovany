@@ -573,6 +573,7 @@ function RegionBiomeIcon({ biome }: { biome: GameView['zone'] }) {
 function MiniMap({ view }: { view: GameView }) {
   const hasObjectiveMarker = view.markers.some((marker) => marker.kind === 'objective')
   const hasEventMarker = view.markers.some((marker) => marker.kind === 'event')
+  const hasBeastMarker = view.markers.some((marker) => marker.kind === 'beast')
   const discoveredCount = view.worldMap.regions.filter((region) => region.discovered).length
   const visibleMarkers = view.markers.filter((marker) =>
     isMapMarkerVisible(view.worldMap, marker),
@@ -674,6 +675,11 @@ function MiniMap({ view }: { view: GameView }) {
         <span>
           <i className="legend-dot caravan" /> корован
         </span>
+        {hasBeastMarker ? (
+          <span>
+            <i className="legend-dot beast" /> зверьё
+          </span>
+        ) : null}
         {hasObjectiveMarker ? (
           <span>
             <Flag className="legend-objective" aria-hidden="true" /> цель

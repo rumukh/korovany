@@ -20,12 +20,12 @@ Five layers, each independently shippable:
 | --- | --- | --- |
 | 1 | **Хроника** (Chronicle) | Data-only tick over all 25 regions. No meshes, no actors. **Implemented.** |
 | 2 | **Materialization** | Chronicle events become 3D only when the player is near. **Implemented.** |
-| 3 | **Fauna** | Beasts and civilians as non-playable allegiances. |
+| 3 | **Fauna** | Beasts and civilians as non-playable allegiances. **Implemented.** |
 | 4 | **NPC AI** | Perception, morale, threat scoring, flanking, commander orders. |
 | 5 | **Ambient life** | Civilians, wildlife, campfires — cheap, highly visible. |
 
-This spec covers **Layers 1 and 2 in implementation detail** and fixes the contracts that
-Layers 3–5 build on.
+This spec covers **Layers 1, 2 and 3 in implementation detail** and fixes the contracts
+that Layers 4–5 build on.
 
 ## 2. Current baseline (reference)
 
@@ -40,7 +40,7 @@ Layers 3–5 build on.
 | Event placement | `pickEventPosition()` / `pickLocatedEventPosition()` | Player-ring placement, plus a site- or region-anchored variant for chronicle events. |
 | Threat waves | `updateThreat` / `spawnThreatWave` | Spawns hostiles in a 13 m ring around the player. |
 | Actor AI | `updateActors` | Sense range 15 m (18 m archers); NPC-vs-NPC hunt radius 6.5 m (15 m archers); no morale. |
-| Hostility | `hostile(a, b) => a !== b` | Any two different factions are hostile. Three factions only. |
+| Hostility | `ALLEGIANCE_RELATIONS` (`types.ts`) | A 5×5 matrix over `Faction | 'beast' | 'civilian'`. Replaced `hostile(a, b) => a !== b`. |
 | Caravan | `updateCaravan` | Patrols the generated road network between two patrol anchors. |
 | Determinism | `RandomStream` + `deriveSeed` | Five gameplay streams: `combat`, `director`, `event`, `loot`, `chronicle`. |
 | Save | `ActiveRunSaveV3` (`run/runTypes.ts`) | Includes `regionDeltas`, `directorState`, `eventState`, `chronicleState`, `rngStates`. |
@@ -209,7 +209,7 @@ connections that touch a trading site (settlement, shop, healer) when fewer than
 | --- | --- |
 | `control` | Minimap territory colour; `WorldMapRegion.territory` reads chronicle control instead of blueprint territory. |
 | `control` | Encounter faction composition: a flipped region's encounter plans are rebuilt against its new owner before it is next simulated. |
-| `beastPressure` | Frequency of beast encounters (Layer 3), caravan interception risk. |
+| `beastPressure` | Frequency of beast encounters (Layer 3) — ambient prowlers above `AMBIENT_BEAST_PRESSURE`, raid packs above `MATERIALIZE_BEAST_PRESSURE` — and caravan interception risk. |
 | `settlementIntegrity` | Scorched prefab, offline shop/recovery, hatched map tile, Layer 2 `aftermath`. |
 | `supply` | Shop prices scale by `1 + (1 - supply) * SUPPLY_PRICE_SWING`, surfaced as `GameView.shopPriceMultiplier`. |
 | `log` | «Хроника» feed entries, notices, and map overlays. |
@@ -249,8 +249,7 @@ a given seeded history always reads the same way.
 
 ## 5. Contracts fixed now for Layers 2–5
 
-> **Status.** §5.1 and §5.2 landed with Layer 2. §5.3 is still outstanding and is what
-> Layer 3 needs before beasts can exist.
+> **Status.** §5.1 and §5.2 landed with Layer 2. §5.3 landed with Layer 3.
 
 ### 5.1 Actor budget allocator
 
@@ -323,12 +322,14 @@ stable id so the same world state always yields the same order:
 | `caravanAmbush` | A chronicle caravan is rolling through a simulated region that is hostile ground or above `CARAVAN_BEAST_THRESHOLD`. | A cart, two escorts, two raiders. The player can rob it. |
 | `warband` | A simulated region held by a faction hostile to the player sits above `MATERIALIZE_WARBAND_PRESSURE`. | A three-strong patrol holding the square. |
 | `aftermath` | A simulated region is already razed and its aftermath has not been shown this run. | Scorch, smoke, and two looters picking over the ashes. |
+| `beastRaid` | Layer 3. A simulated region's `beastPressure` is above `MATERIALIZE_BEAST_PRESSURE`, it still has an intact settlement, and it is past the post-event cooldown. | A wrecker and its escorts against the settlement's two-strong garrison. |
 
-`beastRaid` is **deliberately not materialized.** It needs beasts, and beasts need §5.3's
-`Allegiance` matrix — a wolf is not a faction. Re-skinning a faction squad as "beasts"
-would be a lie in the save, in the minimap colours, and in `hostile()`. Beast raids
-therefore stay chronicle-only until Layer 3, and `tests/materialization.test.ts` asserts
-that Layer 2 never produces one.
+`beastRaid` was **deliberately not materialized in Layer 2.** It needed beasts, and
+beasts needed §5.3's `Allegiance` matrix — a wolf is not a faction. Re-skinning a faction
+squad as "beasts" would have been a lie in the save, in the minimap colours, and in
+`hostile()`. Beast raids therefore stayed chronicle-only until Layer 3, which added them
+as a fifth kind (§5B.3); the Layer 2 test that asserted one could never appear now asserts
+that one does.
 
 ### 5A.2 De-materialization is not cancellation
 
@@ -390,6 +391,106 @@ signature ability, an objective graph, event weights, and a brand colour — a w
 none of those, and widening `Faction` would force meaningless rows in every one of
 those tables.
 
+**Implemented, with one amendment.** The design pass said `Actor` would *gain*
+`allegiance`, defaulting to its `faction`. In the code `Actor.faction` was **replaced**
+by `Actor.allegiance` instead. Keeping both would have left every wolf carrying a
+faction it does not belong to, which is exactly the lie §5.3 exists to prevent, and two
+fields that must agree are two fields that can drift. Every one of the twenty-one call
+sites that read `actor.faction` wanted the allegiance; the two that genuinely need a
+`Faction` — achievement kill stats and the faction brand colour — narrow with
+`isFactionAllegiance()`. `achievements.recordKill` now takes `Faction | null` so a beast
+counts as a kill without being tallied against one of the three sides.
+
+The matrix is symmetric today. One-sided aggression — a civilian that flees rather than
+fights — is Layer 4/5 *behaviour*, not a relation, so nothing here needs to be lopsided
+yet. `tests/allegiance.test.ts` asserts the matrix is total, symmetric, self-friendly,
+and that the three factions still regard each other exactly as `a !== b` did.
+
+Everything hostility-shaped routes through it: targeting (`findNearestEnemy`,
+retaliation, NPC-vs-NPC hunting), projectile eligibility, friendly fire, ally alerting,
+actor separation spacing, minimap marker colour and the `faction-ring` under each actor,
+kill attribution and rewards.
+
+`civilian` exists in the matrix and is wired through it, but Layer 3 spawns none: the
+ambient civilians that make it visible are Layer 5's job.
+
+## 5B. Layer 3 — Fauna
+
+### 5B.1 What a beast is
+
+Beast *species* are `ActorRole`s, not allegiances: `wolf | boar | bear | troll`. A role
+is what a thing does in a fight, which is exactly the axis they differ on, and it means
+they inherit the whole existing actor pipeline — poise, stagger, knockback, hit
+reactions, corpses, gore, health bars, outlines — without a parallel system.
+
+`world/Fauna.ts` is the pure half, the same shape as `Chronicle.ts` and
+`Materialization.ts`: no `THREE`, no scene, no actor list, every roll on a seeded
+`RandomStream`.
+
+| Role | Profile | Behaviour |
+| --- | --- | --- |
+| `wolf` | 42 hp, fastest, lowest poise | Pack hunter. **Routs** when less than half its pack is still standing *and nearby* — pulling one wolf away from the pack breaks it as surely as killing the pack does. |
+| `boar` | 70 hp, mid poise | **Charger.** Winds up for `BOAR_CHARGE_WINDUP`, then commits to a straight line it cannot steer, so it can be side-stepped. Never routs. |
+| `bear` | 135 hp, 74 poise | The brute profile with fur: slow, heavy, and the wrecker a forest raid leads with. |
+| `troll` | 165 hp, 88 poise | **Prop-wrecker.** Spawns in `attackEventProp` mode and takes the settlement apart at roughly twice a raider's rate. Leads a raid in `fort` biomes. |
+
+`planBeastPack()` sizes the party from `beastPressure`: a wrecker always leads (a beast
+raid that cannot hurt the settlement is just wildlife), escorts are wolves until the
+forest is loud enough to send boars, and the plan is **trimmed to fit** the actor budget
+rather than refused.
+
+### 5B.2 Meshes
+
+Procedural quadrupeds from the same `BoxGeometry` / `ConeGeometry` primitives and
+`ComicMaterialLibrary.createToonMaterial` the humanoids use — no external assets, no new
+art pipeline. `createBeast()` reuses the humanoid **pivot names** (`body-pivot`,
+`torso-pivot`, `head-pivot`, `pelvis-pivot`, `leftArm` / `rightArm` for the front legs,
+`leftLeg` / `rightLeg` for the hind ones, `faction-ring`). That is what lets
+`animateCharacter`, the death motion, limb detachment, the outline pass and the health
+bar keep working with no beast branch: the stride that swings a soldier's arms swings a
+wolf's legs, and because front-left shares a sign with hind-right it comes out as a
+diagonal quadruped gait rather than a hopping one.
+
+### 5B.3 `beastRaid` materializes
+
+`beastRaid` was the one situation Layer 2 deliberately refused to fake, and
+`tests/materialization.test.ts` asserted it never appeared. That assertion is now
+inverted rather than deleted: Layer 3 must produce it, and only under the conditions
+that justify it.
+
+`findBeastRaids()` fires in a simulated region above `MATERIALIZE_BEAST_PRESSURE` that
+still has an intact settlement and is past the usual post-event cooldown. The margin
+below `BEAST_RAID_THRESHOLD` is the same idea as `MATERIALIZE_RAID_MARGIN`: the player
+should meet the pack, not the wreckage. Unlike a faction raid it has no attacker faction
+and no source region — beasts march from nowhere and hold no ground.
+
+`resolveMaterializedBeastRaid()` is the hand-back, and runs whether the player walked
+out or finished the fight. Beasts that win chew the settlement and reset pressure to
+`BEAST_RAID_RESET`; beasts that are driven off drop it to `BEAST_RAID_REPELLED_RESET` —
+lower, because a raid the chronicle resolved on its own only fed them. Control never
+changes and no faction's pressure moves, because beasts do not hold ground.
+`ChronicleEventKind` gains `beastsRepelled`; the «Хроника» feed and map overlays pick it
+up with no further work.
+
+### 5B.4 Ambient prowlers
+
+The cheap, always-on half: one beast at a time in a square the chronicle says is loud
+(`AMBIENT_BEAST_PRESSURE`), on the **`ambient`** budget so it yields its slot the moment
+a real fight needs the room, and removed when its region streams out. Suppressed while a
+`beastRaid` is running — two sources of beasts at once reads as an infestation rather
+than a world. Raid packs are charged to **`chronicle`**, like every other located event.
+
+### 5B.5 Copy
+
+`describeLocatedEvent('beastRaid')`, the `beastsRepelled` chronicle phrasings, and
+`describeBeastProwler()` live in `content/gameCopy.ts` with everything else:
+
+```
+Из леса в квадрате B2 полезло зверьё. Домики деревяные пока стоят.
+Зверьё из квадрата B2 погнали обратно в лес. Домики деревяные пока деревяные.
+В квадрате C4 что-то ходит по кустам и не платит за проход.
+```
+
 ## 6. Tuning constants
 
 Spec constants, unchanged from the design pass:
@@ -445,6 +546,31 @@ reliably produces a patrol — and `resolveMaterializedWarband` cuts a wiped war
 pressure to `0.3×`, well below the threshold, so it takes the chronicle a dozen ticks to
 put another one there.
 
+Constants added by Layer 3:
+
+```
+BEAST_PROFILES={wolf:{hp:42,speed:5.4,poise:26,dmg:9,rout:0.5},
+                boar:{hp:70,speed:4.6,poise:46,dmg:14},
+                bear:{hp:135,speed:3.4,poise:74,dmg:21},
+                troll:{hp:165,speed:2.9,poise:88,dmg:24}}
+BEAST_SENSE_RANGE=21            BEAST_LEASH_RANGE=52
+WOLF_PACK_RADIUS=16             BEAST_ROUT_SECONDS=9
+BOAR_CHARGE_RANGE=14            BOAR_CHARGE_WINDUP=0.55
+BOAR_CHARGE_SPEED=11.5          BOAR_CHARGE_DURATION=1.05
+BOAR_CHARGE_COOLDOWN=4.5        BOAR_CHARGE_DAMAGE=22
+MATERIALIZE_BEAST_PRESSURE=BEAST_RAID_THRESHOLD-0.12                 (=0.63)
+BEAST_RAID_REPELLED_RESET=0.18  BEAST_RAID_DEFENDERS=2
+EVENT_REQUIRED_SLOTS.beastRaid=5    LOCATED_EVENT_REWARDS.beastRaid=95
+AMBIENT_BEAST_PRESSURE=0.45     AMBIENT_BEAST_LIMIT=2
+AMBIENT_BEAST_RADIUS=62         AMBIENT_BEAST_INTERVAL=11
+```
+
+Beasts sense further than soldiers look (21 m against 15) and hunt across the whole
+square rather than waiting to be walked into — without that a raid pack mills around the
+settlement instead of reaching its garrison. `MATERIALIZE_BEAST_PRESSURE` sits below
+`BEAST_RAID_THRESHOLD` for the same reason `MATERIALIZE_RAID_MARGIN` sits below
+`CONTROL_FLIP_MARGIN`.
+
 ## 7. Edge cases
 
 - **Fog of war.** Chronicle events in undiscovered regions still happen; they are just
@@ -465,7 +591,8 @@ put another one there.
   generated mode: it selected from `villageHouses`, which only the deleted legacy world
   builder ever populated, and the eligibility filter excluded it outright. It now
   targets the nearest generated `settlement` site within `DEFEND_HOME_MAX_DISTANCE`.
-  Layer 2 supersedes it with chronicle-driven `factionRaid`; `beastRaid` waits for §5.3.
+  Layer 2 supersedes it with chronicle-driven `factionRaid`; Layer 3 adds `beastRaid`
+  alongside it.
 - **Walking out mid-fight.** A located event is handed back, not cancelled, and the
   chronicle logs who won. The player sees «Пользователь ушёл из квадрата C3…» and finds
   the consequence in the feed and on the map.
@@ -484,6 +611,20 @@ put another one there.
   `rescueCaptive` moves it to the `squad` category. An actor that outlives the event that
   spawned it must be re-categorised, or it eats that event's budget for the rest of the
   run and stays evictable as if it were still a bystander.
+- **Beasts and the campaign.** A beast raid never flips control and never touches faction
+  pressure, so no amount of wildlife can make a generated campaign uncompletable. Campaign
+  anchors are chronicle-protected against beast raids exactly as they are against faction
+  ones, and `tests/beastEncounters.test.ts` replays 150 chronicle ticks across five seeds
+  asserting no anchor is ever razed.
+- **A pack that will not fit.** `planBeastPack` is trimmed to whatever the actor budget
+  granted rather than refusing to spawn, but the wrecker is always first in the list, so a
+  squeezed raid is a smaller raid and not a toothless one.
+- **A wolf pulled away from its pack.** `beastPackShare` counts only pack-mates within
+  `WOLF_PACK_RADIUS`, so a wolf that chased the player 20 m from its pack breaks as
+  readily as one whose pack is dead. That is deliberate: it makes kiting a real tactic
+  rather than a way to fight the pack one at a time for free.
+- **A charge into scenery.** The boar cannot steer mid-charge, so a charge that stops
+  making progress ends there and goes on cooldown instead of grinding along the wall.
 
 ## 8. Acceptance criteria
 
@@ -512,13 +653,48 @@ put another one there.
       cancelling it, and the chronicle records who won.
 - [x] Materialization and its outcomes are seeded, so they replay for a given seed and
       route.
+- [x] Hostility is decided by `ALLEGIANCE_RELATIONS`, not by comparing factions: beasts
+      are hostile to all three sides and to civilians by the matrix rather than by
+      accident, and civilians are hostile to nothing but the forest.
+- [x] Beasts exist as `wolf` / `boar` / `bear` / `troll` with procedural quadruped meshes
+      built from the existing primitives and `ComicMaterialLibrary` — no new assets.
+- [x] A wolf pack routs when it breaks; a boar charges and cannot steer; a troll takes a
+      settlement apart instead of fighting people.
+- [x] `beastRaid` materializes and resolves back into chronicle state, and the Layer 2
+      test that asserted it never could now asserts that it does.
+- [x] Beasts never change who holds a square, and 500 seeded campaigns remain completable.
+- [x] Beasts respect `MAX_ACTORS`: raid packs are charged to `chronicle`, prowlers to
+      `ambient`, and both go through `claimActorSlot` like everything else.
 - [x] `npm run build`, `npm run lint`, and `npm test` pass.
 
 ## 9. Effort
 
-**Layers 1 and 2: shipped.** In Layer 1 the tick rules and the save/versioning work were
-the bulk; the feed and map overlays were the fiddly bits. In Layer 2 the actor budget and
-the hand-back contract were the substance; unpicking the single-`activeEvent` assumption
-threaded through the engine was the tedious part.
-Layer 3 ~3 days (new meshes and AI), Layer 4 ~3 days, Layer 5 ~1 day. §5.3 remains
-outstanding and blocks Layer 3 — and with it `beastRaid` materialization.
+**Layers 1, 2 and 3: shipped.** In Layer 1 the tick rules and the save/versioning work
+were the bulk; the feed and map overlays were the fiddly bits. In Layer 2 the actor budget
+and the hand-back contract were the substance; unpicking the single-`activeEvent`
+assumption threaded through the engine was the tedious part. In Layer 3 the §5.3 matrix
+was a day's mechanical work across twenty-one call sites, and reusing the humanoid pivot
+names for the quadrupeds saved the entire animation, death, gore and outline pipeline from
+needing a beast branch.
+Layer 4 ~3 days, Layer 5 ~1 day.
+
+### Measured effect of Layer 3
+
+Five seeds, 150 chronicle ticks each (~20 minutes of play), player walking a fixed loop of
+settlement squares, night environment:
+
+| Seed | Beast raids the player is offered (Layer 2 → Layer 3) | Raids resolved off-screen | Faction raids offered |
+| --- | --- | --- | --- |
+| fauna-1 | 0 → 9 | 11 | 0 → 0 |
+| fauna-2 | 0 → 3 | 6 | 12 → 12 |
+| fauna-3 | 0 → 7 | 13 | 0 → 0 |
+| fauna-4 | 0 → 6 | 10 | 0 → 0 |
+| fauna-5 | 0 → 3 | 5 | 0 → 0 |
+
+Zero to 28. The Layer 2 column is a negative control, not a rhetorical one: it runs the
+identical simulation with `beastRaid` situations discarded the way
+`findPendingMaterializations` used to discard them, so if the measurement were picking up
+anything other than the new code path it would score above zero too. Faction raids are
+unchanged, which is the point — the two mechanisms are not coupled. Razed squares moved by
+at most one, in the direction of *fewer*, because a beast raid the player wins is a
+settlement that survives.

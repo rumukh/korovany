@@ -109,6 +109,14 @@ const CHRONICLE_PHRASES: Record<
     ({ regionLabel }) =>
       `Квадрат ${regionLabel}: кто-то большой ходит вокруг и точит когти о заборы.`,
   ],
+  beastsRepelled: [
+    ({ regionLabel }) =>
+      `Зверьё из квадрата ${regionLabel} погнали обратно в лес. Домики деревяные пока деревяные.`,
+    ({ regionLabel }) =>
+      `В квадрате ${regionLabel} мохнатым объяснили, что домики — не еда, а корованы — не буфет.`,
+    ({ siteLabel }) =>
+      `Точку «${siteLabel ?? 'Домики деревяные'}» отстояли: стая ушла в лес считать, кого недосчиталась.`,
+  ],
   settlementBurned: [
     ({ regionLabel, siteLabel }) =>
       `Точка «${siteLabel ?? 'Домики деревяные'}» в квадрате ${regionLabel} разорена. Домики деревяные больше не деревяные.`,
@@ -139,6 +147,7 @@ const CHRONICLE_TONES: Record<ChronicleEventKind, NoticeTone> = {
   regionCaptured: 'warning',
   raidRepelled: 'success',
   beastRaid: 'warning',
+  beastsRepelled: 'success',
   settlementBurned: 'danger',
   caravanLost: 'danger',
   caravanArrived: 'info',
@@ -232,6 +241,10 @@ const LOCATED_EVENT_COPY: Record<
     title: 'Что осталось',
     description: `На пепелище точки «${siteLabel ?? DEFAULT_SITE_LABEL}» кто-то шарит по углям. Объясни, что это чужие угли.`,
   }),
+  beastRaid: ({ siteLabel }) => ({
+    title: 'Зверьё у домиков',
+    description: `Из леса пришли за точкой «${siteLabel ?? DEFAULT_SITE_LABEL}». Положи стаю, пока домики деревяные ещё деревяные.`,
+  }),
 }
 
 const LOCATED_EVENT_START: Record<
@@ -246,6 +259,8 @@ const LOCATED_EVENT_START: Record<
     `По квадрату ${regionLabel} ходит ватага (${factionName(faction)}). Дорогу лучше не уступать.`,
   aftermath: ({ regionLabel }) =>
     `Квадрат ${regionLabel} догорел без пользователя. На пепелище уже кто-то шарит.`,
+  beastRaid: ({ regionLabel }) =>
+    `Из леса в квадрате ${regionLabel} полезло зверьё. Домики деревяные пока стоят.`,
 }
 
 const LOCATED_EVENT_OUTCOME: Record<
@@ -268,6 +283,18 @@ const LOCATED_EVENT_OUTCOME: Record<
     succeeded
       ? 'Мародёров с пепелища прогнали. Углям это, конечно, уже не поможет.'
       : `С точки «${siteLabel ?? DEFAULT_SITE_LABEL}» вынесли даже угли. Пользователь опоздал, как обычно.`,
+  beastRaid: (succeeded, { regionLabel, siteLabel }) =>
+    succeeded
+      ? 'Стаю положили прямо у забора. Шкуры остались, домики тоже.'
+      : `Зверьё доело точку «${siteLabel ?? DEFAULT_SITE_LABEL}» и ушло обратно в лес квадрата ${regionLabel}. Отсыпаться.`,
+}
+
+/**
+ * Layer 3 — one wandering beast, not a raid. Shown once per square so the forest reads
+ * as inhabited without turning the notice feed into a nature documentary.
+ */
+export function describeBeastProwler(regionLabel: string): string {
+  return `В квадрате ${regionLabel} что-то ходит по кустам и не платит за проход.`
 }
 
 export function describeLocatedEvent(

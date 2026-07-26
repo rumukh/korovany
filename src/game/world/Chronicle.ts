@@ -24,6 +24,12 @@ export const BEAST_STORM_MULTIPLIER = 1.3
 export const BEAST_RAID_THRESHOLD = 0.75
 export const BEAST_CONTROL_DECAY = 0.02
 export const BEAST_RAID_RESET = 0.35
+/**
+ * Layer 3 — beast pressure left behind after the player physically drove a pack off.
+ * Lower than `BEAST_RAID_RESET`: a raid the chronicle resolved on its own only fed the
+ * beasts, one the player broke actually thinned them out.
+ */
+export const BEAST_RAID_REPELLED_RESET = 0.18
 export const SETTLEMENT_RAID_DAMAGE: readonly [number, number] = [18, 34]
 export const SETTLEMENT_REGEN = 1.5
 export const SETTLEMENT_CALM_TICKS = 4
@@ -66,6 +72,7 @@ export type ChronicleEventKind =
   | 'regionCaptured'
   | 'raidRepelled'
   | 'beastRaid'
+  | 'beastsRepelled'
   | 'settlementBurned'
   | 'caravanLost'
   | 'caravanArrived'
@@ -461,7 +468,6 @@ export interface MaterializedWarbandOutcome {
   /** 0..1 — share of the warband still standing when the player left. */
   survivorShare: number
 }
-
 /**
  * A warband the player thinned out loosens its faction's grip on the region. No log
  * entry: nothing happened that the chronicle would have written down on its own.
@@ -476,6 +482,83 @@ export function resolveMaterializedWarband(context: {
   region.pressure[context.outcome.faction] = clamp01(
     region.pressure[context.outcome.faction] * (0.3 + 0.7 * survivors),
   )
+}
+
+export interface MaterializedBeastRaidOutcome {
+  regionId: RegionId
+  /** Settlement the pack came for. */
+  siteId: SiteId | null
+  /** 0..1 — share of the pack still standing when the player left. */
+  beastStrength: number
+  /** 0..1 — share of the settlement's defenders still standing. */
+  defenderStrength: number
+}
+
+export interface MaterializedBeastRaidResolution {
+  events: ChronicleEvent[]
+  beastsWon: boolean
+}
+
+/**
+ * Layer 3 — settles a beast raid the player abandoned or finished. Beasts hold no
+ * territory, so unlike a faction raid nothing changes hands: the only stakes are the
+ * settlement and how much fight the forest has left.
+ */
+export function resolveMaterializedBeastRaid(context: {
+  state: ChronicleState
+  regions: Map<string, RegionChronicleState>
+  rng: RandomStream
+  idPrefix: string
+  outcome: MaterializedBeastRaidOutcome
+}): MaterializedBeastRaidResolution {
+  const { state, regions, rng, outcome } = context
+  const region = regions.get(String(outcome.regionId))
+  const events: ChronicleEvent[] = []
+  if (!region) return { events, beastsWon: false }
+
+  let sequence = 0
+  const record = (kind: ChronicleEventKind, siteId: SiteId | null): void => {
+    sequence += 1
+    events.push(
+      appendChronicleEvent(
+        state,
+        `${context.idPrefix}-${sequence}`,
+        kind,
+        outcome.regionId,
+        null,
+        siteId,
+      ),
+    )
+  }
+
+  const beastStrength = clamp01(outcome.beastStrength)
+  const defenderStrength = clamp01(outcome.defenderStrength)
+  const total = beastStrength + defenderStrength
+  // A pack that is already dead does not get a roll, and neither does one that ate
+  // every defender: a fight the player finished resolves deterministically.
+  const beastsWon =
+    beastStrength <= 0
+      ? false
+      : total <= 0
+        ? true
+        : rng.chance(clamp01(beastStrength / total))
+  region.lastEventTick = state.tick
+
+  if (!beastsWon) {
+    region.beastPressure = Math.min(region.beastPressure, BEAST_RAID_REPELLED_RESET)
+    record('beastsRepelled', outcome.siteId)
+    return { events, beastsWon }
+  }
+
+  region.beastPressure = BEAST_RAID_RESET
+  record('beastRaid', outcome.siteId)
+  if (outcome.siteId !== null && region.settlementIntegrity > 0) {
+    const damage = rng.range(SETTLEMENT_RAID_DAMAGE[0], SETTLEMENT_RAID_DAMAGE[1])
+    region.settlementIntegrity = Math.max(0, region.settlementIntegrity - damage)
+    region.supply = clamp01(region.supply - 0.08)
+    if (region.settlementIntegrity <= 0) record('settlementBurned', outcome.siteId)
+  }
+  return { events, beastsWon }
 }
 
 function updateFactionStrength(context: ChronicleTickContext): void {
@@ -947,6 +1030,7 @@ const CHRONICLE_EVENT_KINDS: readonly ChronicleEventKind[] = [
   'regionCaptured',
   'raidRepelled',
   'beastRaid',
+  'beastsRepelled',
   'settlementBurned',
   'caravanLost',
   'caravanArrived',
