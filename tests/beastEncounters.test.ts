@@ -39,19 +39,27 @@ interface Measurement {
   chronicleOnly: number
   /** Faction raids offered over the same run, for scale. */
   factionRaids: number
+  /** Regions that changed hands over the run — the sensitive front-line metric. */
+  regionCaptured: number
   /** Squares that ended the run razed. */
   razed: number
 }
 
 /**
- * One run. `beastsMaterialize` is the switch that reproduces the Layer 2 world: with it
- * off, `beastRaid` situations are discarded exactly as `findPendingMaterializations`
- * used to discard them, so the two runs are otherwise identical.
+ * One run.
+ *
+ * `beastsMaterialize` is the switch that reproduces the Layer 2 world: with it off,
+ * `beastRaid` situations are discarded exactly as `findPendingMaterializations` used to
+ * discard them, so the two runs are otherwise identical.
+ *
+ * `handBack` additionally separates *offering* a raid from *resolving* one, which is how
+ * the front-line coupling below is attributed to a specific write rather than guessed at.
  */
 function measure(
   seed: string,
   playerFaction: Faction,
   beastsMaterialize: boolean,
+  handBack = true,
 ): Measurement {
   const blueprint = generateWorld(seed)
   const regions = createChronicleRegions(blueprint)
@@ -71,6 +79,7 @@ function measure(
     materialized: 0,
     chronicleOnly: 0,
     factionRaids: 0,
+    regionCaptured: 0,
     razed: 0,
   }
   const handled = new Set<string>()
@@ -92,6 +101,9 @@ function measure(
     })
     measurement.chronicleOnly += events.filter(
       (event) => event.kind === 'beastRaid',
+    ).length
+    measurement.regionCaptured += events.filter(
+      (event) => event.kind === 'regionCaptured',
     ).length
 
     const pending = findPendingMaterializations({
@@ -115,6 +127,7 @@ function measure(
     if (beastRaid && !handled.has(`${beastRaid.id}:${state.tick}`)) {
       handled.add(`${beastRaid.id}:${state.tick}`)
       measurement.materialized += 1
+      if (!handBack) continue
       // The player fights it: they win two out of three, and the hand-back settles the
       // square either way so the run keeps moving.
       const won = eventRng.chance(0.66)
@@ -173,18 +186,68 @@ test('beasts reach the player: Layer 3 turns zero beast encounters into several'
   )
 })
 
-test('materializing beast raids does not change how the fronts behave', () => {
-  // The fronts are a separate mechanism; if adding beasts moved faction raids around,
-  // the two layers would be coupled in a way the spec says they are not.
+/**
+ * This test replaces one that asserted the opposite.
+ *
+ * I originally claimed the two layers were uncoupled, on the evidence that the number of
+ * faction raids *offered* did not move (12 → 12 across five seeds). That metric was too
+ * sparse to see anything — only one of the five seeds produces faction raids at all.
+ * Counting `regionCaptured`, which fires 128 times over the same runs, shows the fronts
+ * do slow down: **128 → 114, about 11% fewer captures**.
+ *
+ * It is not a bug. `resolveMaterializedBeastRaid` writes `region.lastEventTick`, and
+ * `resolveFronts` (Chronicle.ts) refuses to flip a square within
+ * `CONTROL_FLIP_COOLDOWN_TICKS` of its last event — the same breathing room §5A.2 already
+ * grants a square the player fought over. A settlement that has just driven off a wolf
+ * pack is not overrun by an army in the same breath. But it is a real coupling, and the
+ * previous test asserted it away.
+ *
+ * The third arm is what turns the explanation from a story into a measurement: raids are
+ * still offered but never handed back, and captures land back on the Layer 2 number
+ * exactly. That pins the effect to the hand-back's write rather than to the raid existing.
+ */
+test('beast raids damp the faction fronts, through the hand-back and nothing else', () => {
+  let layer2Captures = 0
+  let layer3Captures = 0
+  let unresolvedCaptures = 0
+  let layer2Offscreen = 0
+  let layer3Offscreen = 0
+
   for (const seed of SEEDS) {
-    const layer2 = measure(seed, 'guard', false)
-    const layer3 = measure(seed, 'guard', true)
-    assert.ok(
-      Math.abs(layer3.factionRaids - layer2.factionRaids) <=
-        Math.max(2, layer2.factionRaids * 0.35),
-      `faction raids moved too far for ${seed}: ${layer2.factionRaids} → ${layer3.factionRaids}`,
-    )
+    const layer2 = measure(seed, 'elf', false)
+    const layer3 = measure(seed, 'elf', true)
+    const offeredOnly = measure(seed, 'elf', true, false)
+    layer2Captures += layer2.regionCaptured
+    layer3Captures += layer3.regionCaptured
+    unresolvedCaptures += offeredOnly.regionCaptured
+    layer2Offscreen += layer2.chronicleOnly
+    layer3Offscreen += layer3.chronicleOnly
+    assert.ok(layer3.materialized > 0, `expected beast raids for ${seed}`)
   }
+
+  assert.ok(layer2Captures > 0, 'the fronts must actually move, or this measures nothing')
+  assert.ok(
+    layer3Captures < layer2Captures,
+    `beast raids should damp the fronts: ${layer2Captures} → ${layer3Captures}`,
+  )
+  // Damped, not frozen. If this ever trips, beasts have started running the war.
+  assert.ok(
+    layer3Captures > layer2Captures * 0.75,
+    `beast raids should not stall the war: ${layer2Captures} → ${layer3Captures}`,
+  )
+  // The whole effect is the hand-back writing `lastEventTick`; merely offering a raid
+  // changes nothing at all.
+  assert.equal(
+    unresolvedCaptures,
+    layer2Captures,
+    'offering a raid without resolving it must not touch the fronts',
+  )
+  // Same channel, same direction: a square that was just settled does not re-raid as
+  // soon, so fewer beast raids are logged off-screen too.
+  assert.ok(
+    layer3Offscreen < layer2Offscreen,
+    `off-screen beast raids should fall too: ${layer2Offscreen} → ${layer3Offscreen}`,
+  )
 })
 
 test('beasts alone never wipe a generated campaign off the map', () => {

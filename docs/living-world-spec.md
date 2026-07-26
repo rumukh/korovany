@@ -616,6 +616,12 @@ settlement instead of reaching its garrison. `MATERIALIZE_BEAST_PRESSURE` sits b
   anchors are chronicle-protected against beast raids exactly as they are against faction
   ones, and `tests/beastEncounters.test.ts` replays 150 chronicle ticks across five seeds
   asserting no anchor is ever razed.
+- **Beasts do, however, slow the war down.** Not through pressure but through
+  `lastEventTick`: a settled beast raid gives its square the same
+  `CONTROL_FLIP_COOLDOWN_TICKS` of immunity any other fight does, which measures out at
+  about 11% fewer region captures over a long run (§9). This was not predicted — it was
+  found by counting — and it is kept because a square that has just fought off a pack
+  should not change hands in the same breath.
 - **A pack that will not fit.** `planBeastPack` is trimmed to whatever the actor budget
   granted rather than refusing to spawn, but the wrecker is always first in the list, so a
   squeezed raid is a smaller raid and not a toothless one.
@@ -681,20 +687,43 @@ Layer 4 ~3 days, Layer 5 ~1 day.
 ### Measured effect of Layer 3
 
 Five seeds, 150 chronicle ticks each (~20 minutes of play), player walking a fixed loop of
-settlement squares, night environment:
+settlement squares, night environment. Counted side by side rather than reasoned forward
+from the rules — Layer 2 (`beastRaid` discarded) → Layer 3:
 
-| Seed | Beast raids the player is offered (Layer 2 → Layer 3) | Raids resolved off-screen | Faction raids offered |
-| --- | --- | --- | --- |
-| fauna-1 | 0 → 9 | 11 | 0 → 0 |
-| fauna-2 | 0 → 3 | 6 | 12 → 12 |
-| fauna-3 | 0 → 7 | 13 | 0 → 0 |
-| fauna-4 | 0 → 6 | 10 | 0 → 0 |
-| fauna-5 | 0 → 3 | 5 | 0 → 0 |
+| Seed | Beast raids met | Raids off-screen | Settlements burned | Regions captured | Razed |
+| --- | --- | --- | --- | --- | --- |
+| fauna-1 | 0 → 9 | 13 → 11 | 2 → 1 | 22 → 20 | 2 → 1 |
+| fauna-2 | 0 → 3 | 7 → 6 | 2 → 2 | 46 → 39 | 2 → 2 |
+| fauna-3 | 0 → 7 | 12 → 13 | 2 → 2 | 28 → 25 | 2 → 2 |
+| fauna-4 | 0 → 6 | 15 → 10 | 2 → 2 | 18 → 16 | 2 → 2 |
+| fauna-5 | 0 → 3 | 6 → 5 | 1 → 1 | 14 → 14 | 1 → 1 |
+| **total** | **0 → 28** | **53 → 45** | **9 → 8** | **128 → 114** | **9 → 8** |
 
 Zero to 28. The Layer 2 column is a negative control, not a rhetorical one: it runs the
 identical simulation with `beastRaid` situations discarded the way
 `findPendingMaterializations` used to discard them, so if the measurement were picking up
-anything other than the new code path it would score above zero too. Faction raids are
-unchanged, which is the point — the two mechanisms are not coupled. Razed squares moved by
-at most one, in the direction of *fewer*, because a beast raid the player wins is a
-settlement that survives.
+anything other than the new code path it would score above zero too.
+
+**Two of these numbers contradict what this section claimed before it was measured.**
+
+The first draft asserted the two layers were uncoupled, on the evidence that faction raids
+*offered* did not move (12 → 12). That metric was far too sparse — only one of the five
+seeds produces faction raids at all. `regionCaptured`, which fires 128 times over the same
+runs, shows the fronts measurably slow down: **128 → 114, about 11% fewer captures.** The
+channel is `resolveMaterializedBeastRaid` writing `region.lastEventTick`, which
+`resolveFronts` gates on through `CONTROL_FLIP_COOLDOWN_TICKS` — the same breathing room
+§5A.2 already grants a square the player fought over. That is defensible design (a
+settlement that just drove off a wolf pack is not overrun by an army in the same breath)
+but it is a coupling, and the earlier text denied it.
+
+Off-screen beast raids fall the same way, **53 → 45**, for the same reason: a square the
+player settled does not come back up to the raid threshold as soon. Note `fauna-3` moves
+the *other* way (12 → 13), so this is a tendency, not a law.
+
+`tests/beastEncounters.test.ts` pins the explanation rather than asserting it, with a
+third arm in which raids are offered but never handed back: captures then land on **128,
+exactly the Layer 2 number**. That attributes the whole effect to the hand-back's write
+rather than to the raid existing, and it will fail if anyone adds a second channel.
+
+What did hold: settlements burned and squares razed both drift *down* (9 → 8), because a
+beast raid the player wins is a settlement that survives.
