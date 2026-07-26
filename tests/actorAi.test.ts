@@ -18,7 +18,15 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { RandomStream } from '../src/game/random/RandomStream.ts'
 import { deriveSeed } from '../src/game/random/seed.ts'
-import { ALLEGIANCES, areAllegiancesHostile, type Allegiance } from '../src/game/types.ts'
+import {
+  ALLEGIANCES,
+  areAllegiancesHostile,
+  BEAST_ROLES,
+  type ActorRole,
+  type Allegiance,
+  type BeastRole,
+} from '../src/game/types.ts'
+import { shouldBeastRout } from '../src/game/world/Fauna.ts'
 import {
   aiDistance,
   beastPackShare,
@@ -72,8 +80,11 @@ function legacyFindNearestEnemy(
   return nearest
 }
 
-/** Exactly what `GameEngine.beastPackShare` did before the extraction. */
-function legacyPackShare(
+/**
+ * What `GameEngine.beastPackShare` did before Layer 3's morale rework: share of the whole
+ * pack, regardless of species. Kept as the "before" side of a deliberate change.
+ */
+function packRelativeShare(
   actor: Sample,
   actors: readonly Sample[],
   radius: number,
@@ -91,19 +102,23 @@ function legacyPackShare(
     }
     alive += 1
   }
-  return alive / Math.max(1, actor.packSize)
+  return alive / Math.max(1, actor.packKinSize)
 }
 
 function buildCrowd(rng: RandomStream, count: number): Sample[] {
   const packs = [null, 'pack-a', 'pack-b']
+  const roles = [...BEAST_ROLES, 'soldier'] as ActorRole[]
   return Array.from({ length: count }, (_, index) => ({
     id: `actor-${index}`,
     allegiance: rng.pick(ALLEGIANCES as readonly Allegiance[]),
+    // Role matters now that morale is kin-relative; without it every actor would look
+    // like the same species and the kin filter would silently do nothing.
+    role: rng.pick(roles),
     alive: rng.chance(0.82),
     ignoredTargetId: rng.chance(0.15) ? `actor-${rng.integer(0, count)}` : null,
     targetId: rng.chance(0.4) ? `actor-${rng.integer(0, count)}` : null,
     packId: rng.pick(packs),
-    packSize: rng.integer(1, 5),
+    packKinSize: rng.integer(1, 5),
     position: {
       x: rng.range(-40, 40),
       y: rng.range(0, 3),
@@ -148,20 +163,43 @@ test('the extracted target selection matches the engine code it replaced', () =>
   )
 })
 
-test('the extracted pack share matches the engine code it replaced', () => {
+test('pack share is kin-relative, which is a deliberate change from pack-relative', () => {
+  // Layer 3 shipped with morale measured over the whole pack. Measured across 120 fights
+  // that never once let a wolf break, because a wrecker always outlived its escorts and
+  // the survivor was the one role that cannot rout (§9). Morale is now measured over a
+  // beast's own kind. This pins the new semantics *and* asserts the two genuinely differ,
+  // so the change cannot silently revert.
   let comparisons = 0
   let partialShares = 0
+  let divergences = 0
 
   for (let trial = 0; trial < 500; trial += 1) {
     const rng = new RandomStream(deriveSeed('actor-ai', `pack-${trial}`))
     const crowd = buildCrowd(rng, rng.integer(2, 14))
     for (const radius of [4, 16, 40]) {
       for (const actor of crowd) {
-        const expected = legacyPackShare(actor, crowd, radius)
-        const actual = beastPackShare(actor, crowd, radius, positionOf)
-        assert.equal(actual, expected, `trial ${trial}, radius ${radius}, ${actor.id}`)
+        const kinRelative = beastPackShare(actor, crowd, radius, positionOf)
+        // Recomputed here so the assertion is about the rule, not about the call.
+        const expected =
+          actor.packId === null
+            ? 1
+            : crowd.filter(
+                (other) =>
+                  other.packId === actor.packId &&
+                  other.role === actor.role &&
+                  other.alive &&
+                  (other === actor ||
+                    aiDistance(other.position, actor.position) <= radius),
+              ).length / Math.max(1, actor.packKinSize)
+        assert.ok(
+          Math.abs(kinRelative - expected) < 1e-9,
+          `trial ${trial}, radius ${radius}, ${actor.id}: ${kinRelative} vs ${expected}`,
+        )
         comparisons += 1
-        if (actual > 0 && actual < 1) partialShares += 1
+        if (kinRelative > 0 && kinRelative < 1) partialShares += 1
+        if (Math.abs(kinRelative - packRelativeShare(actor, crowd, radius)) > 1e-9) {
+          divergences += 1
+        }
       }
     }
   }
@@ -172,6 +210,25 @@ test('the extracted pack share matches the engine code it replaced', () => {
     partialShares > 200,
     `expected broken packs in the sample, got ${partialShares}`,
   )
+  // And the change must be real: if kin-relative and pack-relative agreed everywhere,
+  // the rework would have been a no-op and the §9 numbers would be inexplicable.
+  assert.ok(
+    divergences > 200,
+    `kin-relative morale must actually differ from pack-relative, got ${divergences}`,
+  )
+})
+
+test('a mixed pack can break, which strict inequality made impossible', () => {
+  // The arithmetic that kept the rule dead: a shipped raid escorts its wrecker with
+  // exactly two wolves, so losing one leaves a share of exactly one half.
+  assert.equal(shouldBeastRout('wolf', 0.5), true, 'half its kin down is a broken pack')
+  assert.equal(shouldBeastRout('wolf', 0.51), false)
+  assert.equal(shouldBeastRout('wolf', 1), false, 'an intact pack never breaks')
+  // A lone wolf escorting a bear has a kin size of one, so its share is always 1: it
+  // never had a pack to lose, and correctly never routs.
+  for (const role of ['boar', 'bear', 'troll'] as BeastRole[]) {
+    assert.equal(shouldBeastRout(role, 0), false, `${role} must never rout`)
+  }
 })
 
 test('a deliberately wrong implementation is caught by the same comparison', () => {
@@ -192,7 +249,7 @@ test('a deliberately wrong implementation is caught by the same comparison', () 
       ignoredTargetId: null,
       targetId: null,
       packId: null,
-      packSize: 1,
+      packKinSize: 1,
       position: { x: rng.range(-9, 9), y: rng.range(0, 22), z: rng.range(-9, 9) },
     }))
     for (const actor of crowd) {

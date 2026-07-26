@@ -449,15 +449,17 @@ reactions, corpses, gore, health bars, outlines — without a parallel system.
 
 | Role | Profile | Behaviour |
 | --- | --- | --- |
-| `wolf` | 42 hp, fastest, lowest poise | Pack hunter. **Routs** when less than half its pack is still standing *and nearby* — pulling one wolf away from the pack breaks it as surely as killing the pack does. |
+| `wolf` | 42 hp, fastest, lowest poise | Pack hunter. **Routs** when half or fewer of its *own kind* in the pack are still standing and nearby — kin, not pack, because a wolf takes courage from wolves and not from the troll beside it. Pulling one wolf away from the others breaks it as surely as killing them does. |
 | `boar` | 70 hp, mid poise | **Charger.** Winds up for `BOAR_CHARGE_WINDUP`, then commits to a straight line it cannot steer, so it can be side-stepped. Never routs. |
 | `bear` | 135 hp, 74 poise | The brute profile with fur: slow, heavy, and the wrecker a forest raid leads with. |
 | `troll` | 165 hp, 88 poise | **Prop-wrecker.** Spawns in `attackEventProp` mode and takes the settlement apart at roughly twice a raider's rate. Leads a raid in `fort` biomes. |
 
-`planBeastPack()` sizes the party from `beastPressure`: a wrecker always leads (a beast
-raid that cannot hurt the settlement is just wildlife), escorts are wolves until the
+`planBeastPack()` sizes the party from `beastPressure`: most raids lead with a wrecker (a
+beast raid that cannot hurt the settlement is just wildlife), escorts are wolves until the
 forest is loud enough to send boars, and the plan is **trimmed to fit** the actor budget
-rather than refused.
+rather than refused. A `WOLF_PACK_CHANCE` share of raids arrive instead as a pure wolf
+pack — all teeth, no siege engine — which reads differently and is where pack cohesion
+matters most.
 
 ### 5B.2 Meshes
 
@@ -592,6 +594,7 @@ BEAST_PROFILES={wolf:{hp:42,speed:5.4,poise:26,dmg:9,rout:0.5},
                 troll:{hp:165,speed:2.9,poise:88,dmg:24}}
 BEAST_SENSE_RANGE=21            BEAST_LEASH_RANGE=52
 WOLF_PACK_RADIUS=16             BEAST_ROUT_SECONDS=9
+WOLF_PACK_CHANCE=0.3
 BOAR_CHARGE_RANGE=14            BOAR_CHARGE_WINDUP=0.55
 BOAR_CHARGE_SPEED=11.5          BOAR_CHARGE_DURATION=1.05
 BOAR_CHARGE_COOLDOWN=4.5        BOAR_CHARGE_DAMAGE=22
@@ -668,14 +671,14 @@ settlement instead of reaching its garrison. `MATERIALIZE_BEAST_PRESSURE` sits b
   rather than a way to fight the pack one at a time for free.
 - **A charge into scenery.** The boar cannot steer mid-charge, so a charge that stops
   making progress ends there and goes on cooldown instead of grinding along the wall.
-- **The wolf rout rule is currently unreachable in shipped content.** Measured at zero
-  routs across 120 fights of the two compositions `planBeastPack` builds (§9). The rule is
-  correct and fires reliably in an all-wolf pack; it is the *content* that never presents
-  one, because every pack leads with a wrecker that outlives its escorts and cannot break.
-  Making it reachable is a balance decision, not a bug fix, so it is recorded here rather
-  than changed unilaterally: the candidates are letting a wolf measure its pack share over
-  wolves alone, relaxing `routThreshold` to fire at exactly half, or building packs that
-  are sometimes wolves-only.
+- **A wolf with no kin never breaks.** Morale is measured over a beast's own species, so a
+  lone wolf escorting a bear has a kin size of one and a share that is always `1`. That is
+  deliberate: the rule is about pack cohesion, not about being outnumbered. Ambient
+  prowlers carry no `packId` at all and are likewise never routed.
+- **Beast targeting is a step function, not a preference.** `updateActors` evaluates
+  player pursuit before `findNearestEnemy`, so inside `BEAST_SENSE_RANGE` every beast
+  attack goes to the player and outside it none do (§9). Left as-is on purpose: it is what
+  Layer 4's threat scoring is for, and it is better handed over measured than vague.
 
 ## 8. Acceptance criteria
 
@@ -790,29 +793,53 @@ terrain, wind-up, poise or stagger. Its numbers describe what the decision logic
 what a player experiences. All three answers came out differently from the prediction
 written before the measurement.
 
-**Q1 — does the wolf rout rule change how encounters end?** It works, and **it never fires
-in either shipped raid composition.** Zero routs across 60 fights of `bear+wolf+wolf` and
-60 of `troll+wolf+wolf`. The cause is a collision of two local rules: a wrecker has
-135–165 hp against a wolf's 42, so it always outlives its escorts, and `routThreshold` is
-`0` for bears and trolls — by the time half the pack is down, the only survivor is the one
-role that cannot break. In an all-wolf pack the rule fires in **60 of 60** fights and
-matters: beast deaths 180 → 120, one wolf escaping per fight, and the garrison losing 60 →
-53 of its own because the fight ends sooner. But `planBeastPack` always leads with a
-wrecker, so **the shipped game never routs a wolf.** `tests/aiQuestions.test.ts` pins the
-zero, so if a composition change makes it fire, that test fails and this paragraph gets
-revisited rather than silently rotting.
+**Q1 — does the wolf rout rule change how encounters end?** As shipped it did not, because
+it **never fired**: zero routs across 60 fights of `bear+wolf+wolf` and 60 of
+`troll+wolf+wolf`. Two local rules collided. A wrecker has 135–165 hp against a wolf's 42,
+so it always outlived its escorts and the last one standing was the one role with
+`routThreshold: 0`; and morale measured over the *whole* pack could not reach the
+threshold anyway, since a mixed pack escorts its wrecker with exactly two wolves and
+losing one leaves a share of exactly `0.5`, which strict `<` rejects.
+
+Layer 3's headline beast behaviour was therefore dead content. Three changes make it
+reachable, and all three are needed — the first two were measured together and still
+produced 0 routs until the third landed:
+
+1. **Morale is kin-relative.** A wolf counts the wolves, not the troll beside it. This is
+   the principled form as well as the effective one.
+2. **`planBeastPack` sometimes builds pure wolf packs** (`WOLF_PACK_CHANCE = 0.3`) — all
+   teeth and no siege engine, which reads differently and gives cohesion somewhere to
+   matter.
+3. **`shouldBeastRout` fires at `<=`, not `<`.** Load-bearing, not a rounding preference:
+   without it a two-wolf escort can never break.
+
+Measured after, 60 fights per arm, rout off → on:
+
+| Composition | Routs | Defender deaths | Beast attacks |
+| --- | --- | --- | --- |
+| `bear+wolf+wolf` | 0 → 60 | 178 → 117 | 912 → 597 |
+| `troll+wolf+wolf` | 0 → 60 | 180 → 106 | 835 → 590 |
+| `wolf×3` | 0 → 60 | 60 → 53 | 642 → 586 |
+| `wolf×4` | 0 → 120 | 119 → 60 | 1237 → 720 |
+| `bear+wolf+boar` | 0 → 0 | 180 → 180 | 899 → 896 |
+
+A raid that breaks up costs the settlement's defenders roughly a third fewer lives. The
+last row is not a failure: that pack contains a single wolf, whose kin size is one and
+whose share is therefore always `1`. It never had a pack to lose and correctly never
+breaks — the rule is about cohesion, not about being outnumbered.
 
 **Q2 — do beasts spend themselves on faction NPCs instead of the player?** No, and it is
-not a tendency but a switch. `updateActors` evaluates player pursuit *before*
+not a tendency but a **step function**. `updateActors` evaluates player pursuit *before*
 `findNearestEnemy`, so a beast that can sense the player ignores every NPC in the square.
 Standing in the raid, **100% of beast attacks land on the player and zero on the
 garrison**; beyond `BEAST_SENSE_RANGE`, **zero land on the player and 100% on the
-garrison**. There is no middle. The prediction that beasts would divide their attention
-was simply wrong.
+garrison**. There is no middle. This is recorded as a finding rather than patched: it is
+precisely what Layer 4's threat scoring exists to replace, and a measured "the current
+rule is a step function at 21 m" is a better handover than "targeting could be smarter".
 
-**Q3 — what does beasts-being-hostile-to-all-three do?** It is what lets a beast raid end.
-With the two arms identical in count, position and pack — only the matrix entry differing
-— a garrison beasts are willing to fight destroys the pack and resolves the raid, while
-one they ignore leaves the player as the only thing worth biting: **player damage 130,881
-→ 6,658, a 20× reduction**, and beast deaths 0 → 180. Hostile-to-all-three is not flavour
-in the table; without it a raid is an unbounded siege on the player alone.
+**Q3 — what does beasts-being-hostile-to-all-three do?** It is what lets a beast raid
+*end*, and it looks like flavour while being load-bearing. With the two arms identical in
+count, position and pack — only the matrix entry differing — a garrison beasts are willing
+to fight destroys the pack and resolves the raid, while one they ignore leaves the player
+as the only thing worth biting: **player damage 130,881 → 6,658, a 20× reduction**, and
+beast deaths **0 → 180**. Without it a raid is an unbounded siege on the player alone.

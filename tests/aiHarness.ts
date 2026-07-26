@@ -109,7 +109,7 @@ export function makeFighter(
     ignoredTargetId: null,
     targetId: null,
     packId: null,
-    packSize: 1,
+    packKinSize: 1,
     position: { x, y: 0, z },
     hp,
     maxHp: hp,

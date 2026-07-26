@@ -19,7 +19,7 @@
  * outcomes of the full simulation.
  */
 
-import { areAllegiancesHostile, type Allegiance } from '../types.ts'
+import { areAllegiancesHostile, type ActorRole, type Allegiance } from '../types.ts'
 
 export interface AiPoint {
   x: number
@@ -31,6 +31,7 @@ export interface AiPoint {
 export interface AiActor {
   id: string
   allegiance: Allegiance
+  role: ActorRole
   alive: boolean
   /** A protected target, e.g. the captive in a rescue event. */
   ignoredTargetId: string | null
@@ -38,7 +39,8 @@ export interface AiActor {
   targetId: string | null
   /** Layer 3 — which pack this beast set out with. */
   packId: string | null
-  packSize: number
+  /** How many of this beast's *own kind* set out in that pack. */
+  packKinSize: number
 }
 
 export type AiPositionOf<T> = (actor: T) => AiPoint
@@ -104,9 +106,14 @@ export function selectCombatTarget<T extends AiActor>(
 }
 
 /**
- * Layer 3 — share of a beast's original pack still standing *and still nearby*. Distance
- * counts: a wolf drawn away from its pack is as alone as one whose pack is dead, which is
- * what makes separating a pack a real tactic rather than a way to fight it for free.
+ * Layer 3 — share of a beast's own kind in its pack still standing *and still nearby*.
+ *
+ * Kind, not pack: a wolf takes courage from the other wolves, not from the troll standing
+ * next to it. Measuring over the whole pack made the rule unreachable in shipped content,
+ * because a wrecker with three times a wolf's health always outlived its escorts and the
+ * last one standing was the one role that cannot break (see §9). Distance counts too: a
+ * wolf drawn away from its kin is as alone as one whose kin are dead, which is what makes
+ * separating a pack a real tactic rather than a way to fight it for free.
  */
 export function beastPackShare<T extends AiActor>(
   actor: T,
@@ -119,7 +126,9 @@ export function beastPackShare<T extends AiActor>(
   const radiusSquared = radius * radius
   let alive = 0
   for (const other of actors) {
-    if (other.packId !== actor.packId || !other.alive) continue
+    if (other.packId !== actor.packId || other.role !== actor.role || !other.alive) {
+      continue
+    }
     if (other !== actor) {
       const offset = positionOf(other)
       const dx = offset.x - origin.x
@@ -129,7 +138,7 @@ export function beastPackShare<T extends AiActor>(
     }
     alive += 1
   }
-  return alive / Math.max(1, actor.packSize)
+  return alive / Math.max(1, actor.packKinSize)
 }
 
 export interface PlayerPursuitInput {

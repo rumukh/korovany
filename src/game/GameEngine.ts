@@ -343,7 +343,7 @@ interface Actor {
   /** Layer 3 — set on beasts that belong to one pack, so they can break together. */
   packId: string | null
   /** Original pack size, so `shouldBeastRout` measures against what set out. */
-  packSize: number
+  packKinSize: number
   /** Seconds of running left before a routed beast is willing to look back. */
   routTimer: number
   /** Boar charge state machine: wind-up, then a committed straight line. */
@@ -370,7 +370,7 @@ interface ActorSpawnOptions {
   hostileToPlayer?: boolean
   healthScale?: number
   packId?: string | null
-  packSize?: number
+  packKinSize?: number
 }
 
 interface GeneratedNavigationCacheEntry {
@@ -6694,7 +6694,7 @@ export class GameEngine {
     offsetZ: number,
     extra: Pick<
       ActorSpawnOptions,
-      'packId' | 'packSize' | 'aiMode' | 'eventPropTargetId'
+      'packId' | 'packKinSize' | 'aiMode' | 'eventPropTargetId'
     > = {},
   ): Actor {
     const spawn = new THREE.Vector3(position.x + offsetX, 0, position.z + offsetZ)
@@ -7065,6 +7065,11 @@ export class GameEngine {
 
     const packId = `${id}-pack`
     const beastIds: string[] = []
+    // Morale is measured against a beast's own kind, so each one needs to know how many
+    // of its kind set out — not how big the pack was. A lone wolf escorting a bear has
+    // nobody to lose its nerve over.
+    const kinSize = new Map<BeastRole, number>()
+    for (const role of pack.roles) kinSize.set(role, (kinSize.get(role) ?? 0) + 1)
     pack.roles.forEach((role, index) => {
       const angle = (index / pack.roles.length) * TWO_PI + 0.4
       const radius = 11 + index * 1.6
@@ -7078,13 +7083,14 @@ export class GameEngine {
         Math.cos(angle) * radius,
         {
           packId,
-          packSize: pack.roles.length,
+          packKinSize: kinSize.get(role) ?? 1,
           // Only the wrecker is here for the buildings; the rest hunt whatever moves.
-          aiMode: index === 0 ? 'attackEventProp' : 'normal',
-          eventPropTargetId: index === 0 ? prop.id : null,
+          // A pure wolf pack has no wrecker, so every one of them hunts.
+          aiMode: index === 0 && role !== 'wolf' ? 'attackEventProp' : 'normal',
+          eventPropTargetId: index === 0 && role !== 'wolf' ? prop.id : null,
         },
       )
-      beast.playerAggro = beast.hostileToPlayer && index !== 0
+      beast.playerAggro = beast.hostileToPlayer && !(index === 0 && role !== 'wolf')
       beastIds.push(beast.id)
     })
 
@@ -10515,7 +10521,7 @@ export class GameEngine {
       hostileToPlayer: options.hostileToPlayer ?? hostile(allegiance, this.faction),
       budgetCategory: options.budget,
       packId: options.packId ?? null,
-      packSize: Math.max(1, options.packSize ?? 1),
+      packKinSize: Math.max(1, options.packKinSize ?? 1),
       routTimer: 0,
       chargeWindup: 0,
       chargeTimer: 0,

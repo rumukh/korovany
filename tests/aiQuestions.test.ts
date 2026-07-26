@@ -39,11 +39,14 @@ const TRIALS = 60
 
 /** A pack arriving together, the way `planBeastPack`'s roles converge on a settlement. */
 function pack(roles: readonly BeastRole[], centreZ: number): HarnessFighter[] {
+  // Morale is kin-relative, so each beast counts how many of its own kind set out.
+  const kin = new Map<BeastRole, number>()
+  for (const role of roles) kin.set(role, (kin.get(role) ?? 0) + 1)
   return roles.map((role, index) => {
     const angle = (index / roles.length) * Math.PI * 2
     return makeFighter('beast', role, Math.sin(angle) * 3, centreZ + Math.cos(angle) * 3, {
       packId: 'pack',
-      packSize: roles.length,
+      packKinSize: kin.get(role) ?? 1,
       id: `beast-${index}`,
     })
   })
@@ -57,7 +60,7 @@ function garrison(count: number, allegiance: Allegiance = 'guard'): HarnessFight
       id: `bystander-${index}`,
       hostileToPlayer: false,
       packId: null,
-      packSize: 1,
+      packKinSize: 1,
     })
   })
 }
@@ -77,34 +80,48 @@ function batch(
 
 const tally = (record: Record<string, number>, key: string): number => record[key] ?? 0
 
-test('Q1: the rout rule works, and never once fires in a shipped raid', () => {
-  // Prediction before measuring: routing would cut beast losses in a normal raid.
-  // Measured: it does — but only for a pack that is mostly wolves, which is not a pack
-  // `planBeastPack` ever builds.
+test('Q1: the rout rule now fires in shipped raids, and thins them when it does', () => {
+  // History: measured at **0 routs in 120 fights** of these same compositions when Layer 3
+  // shipped. Two local rules collided — a wrecker has 135-165 hp against a wolf's 42 and
+  // `routThreshold` 0, so it always outlived its escorts and the survivor was the one role
+  // that cannot break — and morale measured over the whole pack could never reach the
+  // threshold anyway. Morale is now kin-relative and fires at exactly half, and packs are
+  // sometimes wolves-only. This test pins the fix: if a future change makes routs stop
+  // firing, Layer 3's headline behaviour is dead content again and this fails.
   const shipped: Array<[string, BeastRole[]]> = [
     ['forest raid', ['bear', 'wolf', 'wolf']],
     ['fort raid', ['troll', 'wolf', 'wolf']],
   ]
   for (const [label, roles] of shipped) {
-    const armed = batch(`q1-${label}`, () => [...pack(roles, 15), ...garrison(3)], {
+    const armed = batch(`q1-${label}-on`, () => [...pack(roles, 15), ...garrison(3)], {
       packRoutEnabled: true,
+    })
+    const control = batch(`q1-${label}-off`, () => [...pack(roles, 15), ...garrison(3)], {
+      packRoutEnabled: false,
     })
     assert.ok(
       tally(armed.deathsBy, 'beast') > 60,
       `${label} must be a real fight, got ${tally(armed.deathsBy, 'beast')} beast deaths`,
     )
-    // The finding. A wrecker has 135-165 hp against a wolf's 42, so it always outlives
-    // its escorts — and `routThreshold` is 0 for bears and trolls. By the time half the
-    // pack is down, the only survivor is the one role that cannot break.
-    assert.equal(
-      armed.routs,
-      0,
-      `${label} routed ${armed.routs} times — if this now fires, the finding in §9 is stale`,
+    assert.ok(
+      armed.routs >= TRIALS,
+      `${label} should break a wolf in every fight, got ${armed.routs} routs`,
+    )
+    assert.equal(control.routs, 0, `${label} control arm must never rout`)
+    assert.ok(
+      tally(armed.fledBy, 'beast') > 0,
+      'a broken wolf must leave the field, not stand and be killed',
+    )
+    // The consequence that matters: a raid that breaks up costs the settlement's
+    // defenders far fewer lives. Measured ~178 → ~117 and ~180 → ~106 across 60 fights.
+    assert.ok(
+      tally(armed.deathsBy, 'guard') < tally(control.deathsBy, 'guard') * 0.8,
+      `${label} should cost defenders fewer lives: ${tally(control.deathsBy, 'guard')} → ${tally(armed.deathsBy, 'guard')}`,
     )
   }
 
-  // The rule itself is not broken; it is unreachable. A pack that is mostly wolves
-  // breaks in every single fight.
+  // A pure wolf pack — the composition `planBeastPack` now sometimes builds — breaks
+  // hardest, because every member is kin to every other.
   const purePack: BeastRole[] = ['wolf', 'wolf', 'wolf']
   const withRout = batch('q1-pure-on', () => [...pack(purePack, 15), ...garrison(3)], {
     packRoutEnabled: true,
@@ -112,23 +129,22 @@ test('Q1: the rout rule works, and never once fires in a shipped raid', () => {
   const withoutRout = batch('q1-pure-off', () => [...pack(purePack, 15), ...garrison(3)], {
     packRoutEnabled: false,
   })
-
   assert.ok(withRout.routs >= TRIALS, `expected a rout per fight, got ${withRout.routs}`)
   assert.equal(withoutRout.routs, 0, 'the control arm must never rout')
-  assert.ok(
-    tally(withRout.fledBy, 'beast') > 0,
-    'a broken wolf must actually leave the field, not stand and be killed',
-  )
-  // And when it fires it matters: a third of the pack walks away alive, and the garrison
-  // loses fewer of its own because the fight ends sooner.
   assert.ok(
     tally(withRout.deathsBy, 'beast') < tally(withoutRout.deathsBy, 'beast'),
     `routing should save wolves: ${tally(withoutRout.deathsBy, 'beast')} → ${tally(withRout.deathsBy, 'beast')}`,
   )
-  assert.ok(
-    tally(withRout.deathsBy, 'guard') <= tally(withoutRout.deathsBy, 'guard'),
-    `routing should not cost defenders: ${tally(withoutRout.deathsBy, 'guard')} → ${tally(withRout.deathsBy, 'guard')}`,
+
+  // A single wolf escorting a wrecker has a kin size of one, so its share is always 1.
+  // It never had a pack to lose and correctly never breaks — the rule is about cohesion,
+  // not about being outnumbered.
+  const loneWolf = batch(
+    'q1-lone',
+    () => [...pack(['bear', 'wolf', 'boar'], 15), ...garrison(3)],
+    { packRoutEnabled: true },
   )
+  assert.equal(loneWolf.routs, 0, 'a wolf with no kin has no pack to break')
 })
 
 test('Q2: beasts do not split their attention — the player is all-or-nothing', () => {

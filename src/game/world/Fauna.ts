@@ -78,8 +78,10 @@ export const BEAST_PROFILES: Record<BeastRole, BeastProfile> = {
   },
 }
 
-/** Wolves only keep their nerve while the pack is around them. */
+/** Wolves only keep their nerve while their own kind are around them. */
 export const WOLF_PACK_RADIUS = 16
+/** Share of raids that arrive as a pure wolf pack, with no wrecker leading. */
+export const WOLF_PACK_CHANCE = 0.3
 /** How long a routed wolf keeps running before it is willing to look back. */
 export const BEAST_ROUT_SECONDS = 9
 /** A boar winds up, then commits: it cannot steer once the charge starts. */
@@ -117,24 +119,36 @@ export interface BeastPackContext {
 /**
  * What comes out of the forest, given how loud the forest has got.
  *
- * A raid always opens with a wrecker (troll in the mountains, bear in the woods) because
- * a beast raid that cannot hurt the settlement is just wildlife. Everything after that is
+ * Most raids lead with a wrecker (troll in the mountains, bear in the woods), because a
+ * beast raid that cannot hurt the settlement is just wildlife. Everything after that is
  * escort, and the pack grows with pressure.
+ *
+ * Some raids are **all teeth and no siege engine**: a pure wolf pack reads completely
+ * differently, it is the only composition where the pack can break and run, and without
+ * it the rout rule was measured firing in 0 of 120 shipped fights (§9). The roll is on
+ * the seeded stream, so a given raid always arrives the same way.
  */
 export function planBeastPack(context: BeastPackContext): BeastPackPlan {
   const pressure = clamp01(context.beastPressure)
   const limit = Math.max(0, Math.trunc(context.maxCount))
   const roles: BeastRole[] = []
-  const wrecker: BeastRole = context.biome === 'fort' ? 'troll' : 'bear'
   const escorts = pressure >= BEAST_RAID_THRESHOLD ? 3 : 2
-  let wanted = 1 + escorts
+  const wanted = limit <= 0 ? 0 : 1 + escorts
+
+  if (context.rng.chance(WOLF_PACK_CHANCE)) {
+    for (let index = 0; index < wanted && roles.length < limit; index += 1) {
+      roles.push('wolf')
+    }
+    return { roles, trimmed: roles.length < wanted }
+  }
+
+  const wrecker: BeastRole = context.biome === 'fort' ? 'troll' : 'bear'
   if (limit > 0) roles.push(wrecker)
   for (let index = 0; index < escorts; index += 1) {
     if (roles.length >= limit) break
     // Boars come out when the forest is really up; otherwise it is wolves.
     roles.push(index > 0 && context.rng.chance(pressure * 0.45) ? 'boar' : 'wolf')
   }
-  if (limit <= 0) wanted = 0
   return { roles, trimmed: roles.length < wanted }
 }
 
@@ -147,13 +161,20 @@ export function planAmbientBeast(
 }
 
 /**
- * The wolf rule: a pack hunter that has lost most of its pack stops being a hunter.
- * `packShare` is the share of the *original* pack still standing.
+ * The wolf rule: a pack hunter that has lost most of its kind stops being a hunter.
+ * `packShare` is the share of the beast's *own kind* in the pack still standing.
+ *
+ * The comparison is `<=`, not `<`, and that is load-bearing rather than a rounding
+ * preference. A shipped mixed pack carries exactly two wolves, so losing one leaves a
+ * share of exactly `0.5`; under strict inequality the rule could never fire for the
+ * compositions the game actually builds, which is what measured out at 0 routs in 120
+ * fights (§9). "Half or fewer of my kind left" is also the more natural reading of a
+ * pack breaking.
  */
 export function shouldBeastRout(role: BeastRole, packShare: number): boolean {
   const threshold = BEAST_PROFILES[role].routThreshold
   if (threshold <= 0) return false
-  return clamp01(packShare) < threshold
+  return clamp01(packShare) <= threshold
 }
 
 export function isBeastProfileRole(value: string): value is BeastRole {

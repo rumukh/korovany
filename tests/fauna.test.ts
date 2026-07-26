@@ -45,18 +45,35 @@ test('only the wolf breaks: it is the one role with a rout threshold', () => {
   }
 })
 
-test('a raid always brings something that can wreck a building', () => {
+test('most raids bring something that can wreck a building, some are all teeth', () => {
   for (const biome of ['forest', 'fort', 'palace', 'neutral'] as const) {
-    const plan = planBeastPack({
-      beastPressure: BEAST_RAID_THRESHOLD,
-      biome,
-      rng: rng(`wrecker:${biome}`),
-      maxCount: 3,
-    })
-    assert.ok(plan.roles.length > 0)
-    // A troll haunts the mountains, a bear the woods; either way something with a
-    // building-sized appetite leads.
-    assert.equal(plan.roles[0], biome === 'fort' ? 'troll' : 'bear')
+    let wreckerLed = 0
+    let wolvesOnly = 0
+    for (let index = 0; index < 200; index += 1) {
+      const plan = planBeastPack({
+        beastPressure: BEAST_RAID_THRESHOLD,
+        biome,
+        rng: rng(`wrecker-${biome}-${index}`),
+        maxCount: 3,
+      })
+      assert.ok(plan.roles.length > 0)
+      // A troll haunts the mountains, a bear the woods.
+      if (plan.roles[0] === (biome === 'fort' ? 'troll' : 'bear')) wreckerLed += 1
+      else {
+        // The only other shape is a pure wolf pack, which is the composition that lets
+        // the rout rule reach the shipped game at all (§9).
+        assert.ok(
+          plan.roles.every((role) => role === 'wolf'),
+          `unexpected pack for ${biome}: ${plan.roles.join(',')}`,
+        )
+        wolvesOnly += 1
+      }
+    }
+    assert.ok(wreckerLed > wolvesOnly, `${biome}: wreckers should lead the majority`)
+    assert.ok(
+      wolvesOnly > 20,
+      `${biome}: pure wolf packs must actually occur, got ${wolvesOnly}/200`,
+    )
   }
 })
 
@@ -154,9 +171,10 @@ test('boars join in proportion to how loud the forest is', () => {
   const calm = boarShare(0.2)
   const loud = boarShare(1)
   // Measured, not asserted by vibes: at 0.2 pressure the boar roll is 9%, at 1.0 it is
-  // 45%, over the escorts that are eligible for one.
+  // 45%, over the escorts eligible for one — diluted by the ~30% of packs that arrive as
+  // pure wolves and contain no boars at all.
   assert.ok(calm < 0.06, `a calm forest should be mostly wolves, boar share ${calm}`)
-  assert.ok(loud > 0.2, `a loud forest should send boars, boar share ${loud}`)
+  assert.ok(loud > 0.12, `a loud forest should send boars, boar share ${loud}`)
   assert.ok(loud > calm * 3, `expected a strong gradient, got ${calm} → ${loud}`)
 })
 
