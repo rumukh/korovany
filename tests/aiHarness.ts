@@ -7,9 +7,11 @@
  * real code over many simulated frames so questions about behaviour can be *counted*
  * rather than reasoned about.
  *
- * WHAT IT IS: the game's actual target selection (`selectCombatTarget`), pack morale
- * (`beastPackShare` + `shouldBeastRout`), player-pursuit gating (`evaluatePlayerPursuit`),
- * and the real `BEAST_PROFILES` numbers, run on a fixed frame delta with a seeded stream.
+ * WHAT IT IS: the game's actual target selection (`selectCombatTarget` for the Layer 3
+ * arm, `selectThreat` for the Layer 4 one), morale (`beastPackShare` + `shouldBeastRout`,
+ * or the unified `evaluateMorale` + `localGroupShare`), player-pursuit gating
+ * (`evaluatePlayerPursuit`), and the real `BEAST_PROFILES` numbers, run on a fixed frame
+ * delta with a seeded stream.
  *
  * WHAT IT IS NOT: the full simulation. Movement here is a straight line at role speed with
  * no navmesh, no collision, no steering, no separation, and no terrain. Attacks land at
@@ -17,6 +19,15 @@
  * from this harness describes **what the decision logic does**, not what a player would
  * experience. Where that distinction could change a conclusion, it is called out at the
  * assertion.
+ *
+ * **It cannot say anything at all about flanking.** Flanking is an approach path, and an
+ * approach path needs the steering, separation and collision this file does not have.
+ * The flanking rules are tested directly as geometry in `tests/actorAi.test.ts` and
+ * checked by eye in the browser; no number here is about them.
+ *
+ * Both Layer 4 arms are off by default. That is deliberate: it keeps every pre-existing
+ * measurement in `tests/aiQuestions.test.ts` running the code it originally ran, which is
+ * the check that this file's Layer 4 extension did not quietly change the Layer 3 answers.
  */
 
 import {
@@ -29,10 +40,15 @@ import {
 import {
   aiDistance,
   beastPackShare,
+  evaluateMorale,
   evaluatePlayerPursuit,
+  localGroupShare,
   selectCombatTarget,
+  selectThreat,
+  THREAT_PLAYER,
   type AiActor,
   type AiPoint,
+  type MoraleBreak,
 } from '../src/game/world/ActorAi.ts'
 import { isBeastRole, areAllegiancesHostile, type ActorRole, type Allegiance } from '../src/game/types.ts'
 import type { RandomStream } from '../src/game/random/RandomStream.ts'
@@ -43,6 +59,26 @@ export const HARNESS_FRAME = 0.05
 export const HARNESS_CONTACT_RANGE = 2.45
 /** Seconds between melee swings, matching the engine's `meleeActor` cooldown. */
 export const HARNESS_ATTACK_COOLDOWN = 1.3
+/**
+ * How long a body stays countable for morale, matching the engine's `CORPSE_LIFETIME`.
+ *
+ * This one number is why the harness can say anything about morale at all. `localGroupShare`
+ * counts standing allies against fallen ones, and the engine drops a corpse from the actor
+ * list after twelve seconds — so morale there is a memory of *recent* losses. Leaving
+ * corpses in the harness forever would depress `groupShare` permanently and manufacture
+ * routs that the game would never produce.
+ */
+export const HARNESS_CORPSE_LIFETIME = 12
+/** Matches the engine's `MORALE_GROUP_RADIUS`. */
+export const HARNESS_MORALE_RADIUS = 14
+/** Matches the engine's `MORALE_ROUT_SECONDS` for anything that is not a beast. */
+export const HARNESS_ROUT_SECONDS = 7
+/** Matches the engine's `MORALE_RALLY_POINT_TOLERANCE`. */
+export const HARNESS_RALLY_TOLERANCE = 3
+/** Matches the engine's `MORALE_LAST_STAND_SECONDS`. */
+export const HARNESS_LAST_STAND_SECONDS = 2
+/** Matches the engine's `MORALE_RALLY_SECONDS`. */
+export const HARNESS_RALLY_SECONDS = 12
 
 export interface HarnessFighter extends AiActor {
   role: ActorRole
@@ -58,11 +94,31 @@ export interface HarnessFighter extends AiActor {
   routTimer: number
   /** Set once when this fighter breaks, so routs can be counted rather than sampled. */
   routed: boolean
+  /** Layer 4 — why it is running, and the latch that grants rally immunity when it stops. */
+  routReason: MoraleBreak
+  /** Layer 4 — where a broken non-beast falls back to, matching `Actor.home`. */
+  home: { x: number; y: number; z: number }
+  /** Layer 4 — seconds of morale immunity after recovering or being rallied. */
+  rallyTimer: number
+  /** Layer 4 — elapsed seconds at death, so corpses age out of the morale count. */
+  deathAt: number | null
 }
 
 export interface HarnessOptions {
   /** Layer 3's wolf rule. Turning it off is the A/B arm for "does routing matter?". */
   packRoutEnabled?: boolean
+  /**
+   * Layer 4 — the individual half of `evaluateMorale`. Off leaves exactly Layer 3's
+   * cohesion rule, which is what makes this a real A/B rather than a re-run.
+   */
+  individualMorale?: boolean
+  /**
+   * Layer 4 — score the player in the same pass as every NPC (`selectThreat`) instead of
+   * Layer 3's "player first, then nearest" (`evaluatePlayerPursuit` + `selectCombatTarget`).
+   * The off arm calls the real Layer 3 functions, which are still exported for exactly
+   * this reason, so both arms are shipped code rather than a re-implementation.
+   */
+  threatScoring?: boolean
   /** Player stands still and fights back; omit for an NPC-only brawl. */
   player?: { x: number; z: number; hp: number; damage: number } | null
   /** Frames to run before giving up on a stalemate. */
@@ -75,6 +131,8 @@ export interface HarnessResult {
   attacksBy: Record<string, number>
   /** Melee connections, by what was hit: an allegiance, or `player`. */
   attacksAgainst: Record<string, number>
+  /** Melee connections, by the *role* that was hit — the metric role preference moves. */
+  attacksAgainstRole: Record<string, number>
   /** Damage dealt, by attacker allegiance. */
   damageBy: Record<string, number>
   /** Damage taken, by victim allegiance or `player`. */
@@ -83,7 +141,15 @@ export interface HarnessResult {
   /** Beasts that broke and cleared the field. Alive, but no longer in the fight. */
   fledBy: Record<string, number>
   survivorsBy: Record<string, number>
+  /**
+   * Rout *events*, not distinct fighters. Layer 4 lets a rallied actor break a second
+   * time, so counting fighters would silently stop rising once everybody had broken once.
+   */
   routs: number
+  /** Layer 4 — routs by reason, so cohesion and individual morale can be told apart. */
+  routsByReason: Record<string, number>
+  /** Layer 4 — routs by the role that broke, which is how "never routs" is checked. */
+  routsByRole: Record<string, number>
   playerHp: number
   /** True when one side was wiped out rather than the frame budget running out. */
   resolved: boolean
@@ -111,6 +177,7 @@ export function makeFighter(
     packId: null,
     packKinSize: 1,
     position: { x, y: 0, z },
+    home: { x, y: 0, z },
     hp,
     maxHp: hp,
     speed: beast?.speed ?? (role === 'brute' ? 2.6 : 3.7),
@@ -121,6 +188,9 @@ export function makeFighter(
     attackCooldown: 0,
     routTimer: 0,
     routed: false,
+    routReason: 'none',
+    rallyTimer: 0,
+    deathAt: null,
     ...options,
   }
 }
@@ -183,30 +253,51 @@ export function runFight(
   options: HarnessOptions = {},
 ): HarnessResult {
   const packRoutEnabled = options.packRoutEnabled ?? true
+  const individualMorale = options.individualMorale ?? false
+  const threatScoring = options.threatScoring ?? false
   const maxFrames = options.maxFrames ?? 3_000
   const player = options.player ? { ...options.player, alive: true } : null
+  const playerMaxHp = player?.hp ?? 1
 
   const result: HarnessResult = {
     frames: 0,
     attacksBy: {},
     attacksAgainst: {},
+    attacksAgainstRole: {},
     damageBy: {},
     damageAgainst: {},
     deathsBy: {},
     fledBy: {},
     survivorsBy: {},
     routs: 0,
+    routsByReason: {},
+    routsByRole: {},
     playerHp: player?.hp ?? 0,
     resolved: false,
   }
 
+  let now = 0
   const kill = (fighter: HarnessFighter): void => {
     fighter.alive = false
+    fighter.deathAt = now
     bump(result.deathsBy, fighter.allegiance)
   }
 
+  /**
+   * Everything still worth counting for morale: the living, plus bodies that have not
+   * yet aged out. The engine's actor list has exactly this shape because corpses linger
+   * for `CORPSE_LIFETIME` and are then removed.
+   */
+  const moraleView = (): HarnessFighter[] =>
+    fighters.filter(
+      (fighter) =>
+        fighter.alive ||
+        (fighter.deathAt !== null && now - fighter.deathAt < HARNESS_CORPSE_LIFETIME),
+    )
+
   for (let frame = 0; frame < maxFrames; frame += 1) {
     result.frames = frame + 1
+    now = frame * HARNESS_FRAME
     const living = fighters.filter((fighter) => fighter.alive)
     const sides = new Set(living.map((fighter) => fighter.allegiance))
     // Over when nothing left can fight anything else.
@@ -229,50 +320,115 @@ export function runFight(
       break
     }
 
+    const morale = individualMorale ? moraleView() : living
+
     for (const fighter of living) {
       fighter.attackCooldown = Math.max(0, fighter.attackCooldown - HARNESS_FRAME)
       fighter.aggroMemory = Math.max(0, fighter.aggroMemory - HARNESS_FRAME)
       fighter.routTimer = Math.max(0, fighter.routTimer - HARNESS_FRAME)
+      fighter.rallyTimer = Math.max(0, fighter.rallyTimer - HARNESS_FRAME)
 
-      // Layer 3 morale, using the real rule.
-      if (packRoutEnabled && isBeastRole(fighter.role) && fighter.routTimer <= 0) {
-        const share = beastPackShare(fighter, living, WOLF_PACK_RADIUS, positionOf)
-        if (shouldBeastRout(fighter.role as never, share)) {
-          fighter.routTimer = 9
+      // Morale, using the real rule. Layer 3's arm is cohesion only; Layer 4's is the
+      // unified `evaluateMorale`, whose second half can break things cohesion cannot.
+      //
+      // Mirrors the engine's ordering exactly: a rout whose clock has run out grants
+      // rally immunity *before* the next check rather than re-breaking on the same
+      // frame. Getting that wrong in the engine made a broken soldier run forever.
+      if (fighter.routTimer <= 0 && fighter.routReason !== 'none') {
+        fighter.routReason = 'none'
+        fighter.rallyTimer = HARNESS_RALLY_SECONDS
+      } else if (packRoutEnabled && fighter.routTimer <= 0 && fighter.rallyTimer <= 0) {
+        const packShare = beastPackShare(fighter, living, WOLF_PACK_RADIUS, positionOf)
+        const broke = individualMorale
+          ? evaluateMorale(fighter.role, {
+              hpFraction: fighter.maxHp > 0 ? fighter.hp / fighter.maxHp : 1,
+              groupShare: localGroupShare(
+                fighter,
+                morale,
+                HARNESS_MORALE_RADIUS,
+                positionOf,
+              ),
+              packShare,
+              commanderNearby: false,
+              commanderLost: false,
+            })
+          : isBeastRole(fighter.role) && shouldBeastRout(fighter.role, packShare)
+            ? 'cohesion'
+            : 'none'
+        if (broke !== 'none') {
+          fighter.routTimer = isBeastRole(fighter.role) ? 9 : HARNESS_ROUT_SECONDS
+          fighter.routReason = broke
           fighter.targetId = null
           fighter.playerAggro = false
           if (!fighter.routed) {
             fighter.routed = true
-            result.routs += 1
           }
+          result.routs += 1
+          bump(result.routsByReason, broke)
+          bump(result.routsByRole, fighter.role)
         }
       }
-      // A routed beast runs, exactly as `GameEngine.updateRoutingBeast` does — it does
+      // A routed fighter runs, exactly as `GameEngine.updateRoutingActor` does — it does
       // not stand there absorbing hits. Modelling the rout as "skip your turn" inverted
       // the first measurement taken with this harness, so the flee is not optional.
+      //
+      // A beast runs from whatever broke it and is gone past the leash. Anything else
+      // falls back on its rally point and stays in the world, which is what keeps a
+      // campaign objective from walking off the map because it lost a morale check.
       if (packRoutEnabled && fighter.routTimer > 0) {
-        const threat = nearestThreat(fighter, living, player)
-        if (threat) {
-          const away = {
-            x: fighter.position.x * 2 - threat.x,
-            y: 0,
-            z: fighter.position.z * 2 - threat.z,
+        if (isBeastRole(fighter.role)) {
+          const threat = nearestThreat(fighter, living, player)
+          if (threat) {
+            const away = {
+              x: fighter.position.x * 2 - threat.x,
+              y: 0,
+              z: fighter.position.z * 2 - threat.z,
+            }
+            step(fighter.position, away, fighter.speed * 1.15 * HARNESS_FRAME)
+            // Cleared the field: gone, not dead. The engine removes it the same way.
+            if (aiDistance(fighter.position, threat) > BEAST_LEASH_RANGE) {
+              fighter.alive = false
+              fighter.deathAt = now
+              bump(result.fledBy, fighter.allegiance)
+            }
           }
-          step(fighter.position, away, fighter.speed * 1.15 * HARNESS_FRAME)
-          // Cleared the field: gone, not dead. The engine removes it the same way.
-          if (aiDistance(fighter.position, threat) > BEAST_LEASH_RANGE) {
-            fighter.alive = false
-            bump(result.fledBy, fighter.allegiance)
+        } else {
+          // Mirrors `GameEngine.updateRoutingActor`: fall back on the rally point, or —
+          // when the rally point is already underfoot — give ground to whatever is doing
+          // the killing. Modelling this as "stand still and skip your turn" is the exact
+          // mistake that inverted this harness's first measurement.
+          const toHome = aiDistance(fighter.position, fighter.home)
+          if (toHome > HARNESS_RALLY_TOLERANCE) {
+            step(fighter.position, fighter.home, fighter.speed * 1.15 * HARNESS_FRAME)
+          } else {
+            const threat = nearestThreat(fighter, living, player)
+            if (threat) {
+              step(
+                fighter.position,
+                {
+                  x: fighter.position.x * 2 - threat.x,
+                  y: 0,
+                  z: fighter.position.z * 2 - threat.z,
+                },
+                fighter.speed * 1.15 * HARNESS_FRAME,
+              )
+            }
+            fighter.routTimer = Math.min(fighter.routTimer, HARNESS_LAST_STAND_SECONDS)
           }
         }
         continue
+      }
+      // Back in the line with its nerve restored, so it does not break again instantly.
+      if (fighter.routed && fighter.routTimer <= 0 && fighter.rallyTimer <= 0) {
+        fighter.rallyTimer = 12
       }
 
       // The player, if present and worth chasing.
       let targetPosition: AiPoint | null = null
       let targetFighter: HarnessFighter | null = null
-      if (player?.alive) {
-        const playerPoint = { x: player.x, y: 0, z: player.z }
+      const playerPoint = player?.alive ? { x: player.x, y: 0, z: player.z } : null
+      let pursuesPlayer = false
+      if (player?.alive && playerPoint) {
         const pursuit = evaluatePlayerPursuit({
           hostileToPlayer: fighter.hostileToPlayer,
           playerAggro: fighter.playerAggro,
@@ -285,11 +441,39 @@ export function runFight(
           fighter.playerAggro = true
           fighter.aggroMemory = 6
         }
-        if (pursuit.shouldPursue) targetPosition = playerPoint
+        pursuesPlayer = pursuit.shouldPursue && (pursuit.canSense || pursuit.canTrack)
+        // Layer 3: the player short-circuits everything else. That ordering is what §9
+        // measured as a step function at `BEAST_SENSE_RANGE`.
+        if (!threatScoring && pursuit.shouldPursue) targetPosition = playerPoint
       }
 
-      // Otherwise the nearest hostile actor, chosen by the game's own selector.
-      if (!targetPosition) {
+      if (threatScoring) {
+        // Layer 4: one scored pass over the hostiles *and* the player.
+        const choice = selectThreat(
+          fighter,
+          living,
+          senseRangeFor(fighter),
+          positionOf,
+          pursuesPlayer && playerPoint
+            ? {
+                position: playerPoint,
+                hpFraction: Math.max(0, player!.hp) / playerMaxHp,
+                provoked: fighter.playerAggro,
+              }
+            : null,
+        )
+        if (choice === THREAT_PLAYER && playerPoint) {
+          targetPosition = playerPoint
+          fighter.targetId = null
+        } else if (choice && choice !== THREAT_PLAYER) {
+          targetFighter = choice
+          fighter.targetId = choice.id
+          targetPosition = choice.position
+        } else {
+          fighter.targetId = null
+        }
+      } else if (!targetPosition) {
+        // Otherwise the nearest hostile actor, chosen by the Layer 3 selector.
         targetFighter = selectCombatTarget(
           fighter,
           living,
@@ -314,11 +498,13 @@ export function runFight(
       bump(result.damageBy, fighter.allegiance, dealt)
       if (targetFighter) {
         bump(result.attacksAgainst, targetFighter.allegiance)
+        bump(result.attacksAgainstRole, targetFighter.role)
         bump(result.damageAgainst, targetFighter.allegiance, dealt)
         targetFighter.hp -= dealt
         if (targetFighter.hp <= 0) kill(targetFighter)
       } else if (player?.alive) {
         bump(result.attacksAgainst, 'player')
+        bump(result.attacksAgainstRole, 'player')
         bump(result.damageAgainst, 'player', dealt)
         player.hp -= dealt
         if (player.hp <= 0) player.alive = false
@@ -339,12 +525,15 @@ export function accumulate(results: readonly HarnessResult[]): HarnessResult {
     frames: 0,
     attacksBy: {},
     attacksAgainst: {},
+    attacksAgainstRole: {},
     damageBy: {},
     damageAgainst: {},
     deathsBy: {},
     fledBy: {},
     survivorsBy: {},
     routs: 0,
+    routsByReason: {},
+    routsByRole: {},
     playerHp: 0,
     resolved: true,
   }
@@ -353,7 +542,7 @@ export function accumulate(results: readonly HarnessResult[]): HarnessResult {
     total.routs += result.routs
     total.playerHp += result.playerHp
     total.resolved = total.resolved && result.resolved
-    for (const key of ['attacksBy', 'attacksAgainst', 'damageBy', 'damageAgainst', 'deathsBy', 'fledBy', 'survivorsBy'] as const) {
+    for (const key of ['attacksBy', 'attacksAgainst', 'attacksAgainstRole', 'damageBy', 'damageAgainst', 'deathsBy', 'fledBy', 'survivorsBy', 'routsByReason', 'routsByRole'] as const) {
       for (const [name, value] of Object.entries(result[key])) {
         bump(total[key], name, value)
       }

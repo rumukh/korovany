@@ -79,14 +79,17 @@ import {
   chronicleEventTone,
   createGeneratedObjectiveText,
   describeBeastProwler,
+  describeCaravanPlundered,
   describeChronicleEvent,
   describeEventHandback,
   describeLocatedEvent,
   describeLocatedEventOutcome,
   describeLocatedEventStart,
+  describeRout,
   formatRegionGridLabel,
   formatRussianCount,
   generatedSiteLabel,
+  RALLY_NOTICE,
   WORLD_EVENT_FAILURE_MESSAGES,
   type LocatedEventCopyContext,
 } from './content/gameCopy'
@@ -163,12 +166,23 @@ import {
   WOLF_PACK_RADIUS,
   planAmbientBeast,
   planBeastPack,
-  shouldBeastRout,
 } from './world/Fauna'
 import {
+  THREAT_PLAYER,
+  acceptsAlert,
   beastPackShare,
-  selectCombatTarget,
+  engagementRank,
+  evaluateMorale,
+  evaluatePlayerPursuit,
+  flankApproachAngle,
+  flankBlend,
+  localGroupShare,
+  playerEngagementRank,
+  selectThreat,
+  type AiAlert,
   type AiPoint,
+  type MoraleBreak,
+  type PlayerThreat,
 } from './world/ActorAi'
 import {
   REGION_DELTA_VERSION,
@@ -230,6 +244,21 @@ type ActorActionPhase = 'windup' | 'recovery'
 type HitReactionKind = 'none' | 'flinch' | 'stagger'
 type DeathStyle = 'sideFall' | 'backFall' | 'spinFall' | 'launchFall'
 type TelegraphKind = 'tick' | 'aim' | 'commander' | 'wedge'
+
+/**
+ * Layer 4 — what a commander tells the people around him to do. `hold` keeps a garrison
+ * on its site instead of drifting off after wander targets, `assault` walks a raid onto
+ * the thing it came for, and `escort` sticks to a moving caravan.
+ */
+type SquadOrderKind = 'hold' | 'assault' | 'escort'
+
+interface SquadOrder {
+  kind: SquadOrderKind
+  /** Where the order points. A live object for `escort`, a fixed point otherwise. */
+  position: THREE.Vector3
+  /** Seconds left before an unrefreshed order lapses. */
+  timer: number
+}
 
 interface EventPropTarget {
   id: string
@@ -346,6 +375,26 @@ interface Actor {
   packKinSize: number
   /** Seconds of running left before a routed beast is willing to look back. */
   routTimer: number
+  /** Layer 4 — why it broke, so a rout reads differently from a rally. */
+  routReason: MoraleBreak
+  /** Layer 4 — morale immunity after a commander steadies it, or after it recovers. */
+  rallyTimer: number
+  /** Layer 4 — seconds left of the shock of watching its commander fall. */
+  commanderLostTimer: number
+  /** Layer 4 — staggered so morale is not recomputed for 25 actors every frame. */
+  moraleTimer: number
+  /** Layer 4 — the standing order from a nearby commander, if any. */
+  order: SquadOrder | null
+  /**
+   * Layer 4 — where an ally said it saw something, and how long that is worth walking to.
+   *
+   * Deliberately **not** `lastKnownTargetPos`. That field is the player's breadcrumb and
+   * is wiped every frame an actor is not pursuing the player, which is exactly the state
+   * an alerted bystander is in — writing an alert there made the whole mechanism inert,
+   * and in the one case it survived it corrupted a pursuer's memory of the player.
+   */
+  alertPos: THREE.Vector3 | null
+  alertTimer: number
   /** Boar charge state machine: wind-up, then a committed straight line. */
   chargeWindup: number
   chargeTimer: number
@@ -779,6 +828,18 @@ const RAGE_COOLDOWN_MULTIPLIER = 0.7
 const RAGE_RANGE_BONUS = 6
 const ALERT_RADIUS = 14
 const ALERT_COOLDOWN = 1.5
+/** Yaw axis, shared so flanking does not allocate a vector per actor per frame. */
+const WORLD_UP = new THREE.Vector3(0, 1, 0)
+/**
+ * Layer 4 — how far a sighting of *any* hostile carries. Wider than `ALERT_RADIUS`,
+ * which only ever covered "the player just hit me": a fight starting on the far side of
+ * a settlement should reach the garrison, and 20 m is about one square's courtyard.
+ */
+const ALERT_SIGHTING_RADIUS = 20
+/** How long an actor will keep walking toward a place an ally shouted about. */
+const ALERT_INVESTIGATE_SECONDS = 12
+/** Close enough to see for itself; the alert has done its job and is dropped. */
+const ALERT_ARRIVAL_DISTANCE = 3
 const NPC_RETALIATION_DURATION = 4
 const MUSIC_STATE_SAMPLE_INTERVAL = 0.2
 const MUSIC_INTENSITY_HOLD: Readonly<Record<MusicIntensity, number>> = {
@@ -792,6 +853,51 @@ const COMMANDER_SPEED_MULTIPLIER = 1.15
 const COMMANDER_DAMAGE_BONUS = 4
 const COMMANDER_REINFORCEMENT_INTERVAL = 25
 const COMMANDER_REINFORCEMENT_LIMIT = 4
+/** Layer 4 — how far a commander's standing order and his rally reach. */
+const COMMANDER_ORDER_RANGE = 18
+/** How long an order survives without being renewed, so a dead commander stops giving them. */
+const COMMANDER_ORDER_DURATION = 6
+/** Close enough to the order post; beyond this the ally walks back to it. */
+const COMMANDER_ORDER_TOLERANCE = 3.5
+/** Seconds an ally is steadied for after being rallied or after recovering on its own. */
+const MORALE_RALLY_SECONDS = 12
+/** How long the shock of a commander going down lasts. */
+const MORALE_COMMANDER_SHOCK_SECONDS = 10
+/** Seconds a broken faction actor runs before it turns round and fights again. */
+const MORALE_ROUT_SECONDS = 7
+/** How far an actor looks for the friends and bodies that decide its morale. */
+const MORALE_GROUP_RADIUS = 14
+/** Morale is a decision, not an animation: 25 actors do not need it every frame. */
+const MORALE_CHECK_INTERVAL = 0.35
+/** How close a broken faction actor has to get to its rally point to feel safe again. */
+const MORALE_RALLY_POINT_TOLERANCE = 3
+/** With the rally point already overrun there is nowhere to fall back to: turn quickly. */
+const MORALE_LAST_STAND_SECONDS = 2
+/** Morale notices are for what the player can see; past this it is just bookkeeping. */
+const MORALE_NOTICE_RANGE = 45
+const MORALE_NOTICE_COOLDOWN = 9
+/**
+ * §5C.6 — the caravan belongs to the palace guard, which is why the guard faction cannot
+ * rob it and everyone else can. Naming it once keeps the hostility question a matrix
+ * lookup instead of three separate faction comparisons.
+ */
+const CARAVAN_ALLEGIANCE: Allegiance = 'guard'
+/** Guards that walk with the cart. Two: enough to lose, few enough to be lost. */
+const CARAVAN_ESCORT_COUNT = 2
+/** How long a dead guard stays dead before the road office sends another. */
+const CARAVAN_ESCORT_RESPAWN_DELAY = 25
+/** Beyond this the escort is despawned — nobody is there to see it. */
+const CARAVAN_ESCORT_RANGE = 90
+/** How close something hostile has to get before the driver whips the horses. */
+const CARAVAN_PANIC_RANGE = 16
+const CARAVAN_PANIC_SECONDS = 4
+const CARAVAN_PANIC_SPEED_MULTIPLIER = 1.7
+/** A guard this close to the cart is still guarding it. */
+const CARAVAN_GUARDED_RANGE = 7
+/** A raider this close to an unguarded cart takes it. */
+const CARAVAN_PLUNDER_RANGE = 3.4
+/** How long a plundered cart stays empty. Longer than a player robbery: it was taken. */
+const CARAVAN_PLUNDER_COOLDOWN = 55
 const BRUTE_FRONTAL_DAMAGE_MULTIPLIER = 0.5
 const BRUTE_FRONT_DOT = 0.2
 const FLINCH_TIME = 0.12
@@ -1381,6 +1487,14 @@ export class GameEngine {
   private caravanDirection = 1
   private caravanCooldown = 0
   private caravanRobbedFlash = 0
+  /** §5C.6 — the guards walking with the cart, on the `ambient` reserve. */
+  private caravanEscortIds: string[] = []
+  /** Seconds of bolting left after something hostile came near the road. */
+  private caravanPanicTimer = 0
+  /** Elapsed time before which a killed escort is not replaced. */
+  private caravanEscortRespawnAt = 0
+  /** Rate limit for rout and rally notices, so a squad breaking is one line, not five. */
+  private moraleNoticeCooldown = 0
   private readonly activeEvents: WorldEvent[] = []
   /** Copy context per located event, so its outcome line matches the one that opened it. */
   private readonly locatedEventCopy = new Map<string, LocatedEventCopyContext>()
@@ -2488,6 +2602,7 @@ export class GameEngine {
     this.abilityCooldown = Math.max(0, this.abilityCooldown - delta)
     this.caravanCooldown = Math.max(0, this.caravanCooldown - delta)
     this.caravanRobbedFlash = Math.max(0, this.caravanRobbedFlash - delta * 2)
+    this.moraleNoticeCooldown = Math.max(0, this.moraleNoticeCooldown - delta)
     this.updatePlayer(delta)
     this.generatedWorld.update({
       focus: {
@@ -3507,16 +3622,22 @@ export class GameEngine {
       actor.alertCooldown = Math.max(0, actor.alertCooldown - delta)
       actor.retaliationTimer = Math.max(0, actor.retaliationTimer - delta)
       actor.routTimer = Math.max(0, actor.routTimer - delta)
+      actor.rallyTimer = Math.max(0, actor.rallyTimer - delta)
+      actor.commanderLostTimer = Math.max(0, actor.commanderLostTimer - delta)
+      actor.alertTimer = Math.max(0, actor.alertTimer - delta)
+      if (actor.alertTimer <= 0) actor.alertPos = null
       actor.chargeCooldown = Math.max(0, actor.chargeCooldown - delta)
+      if (actor.order) {
+        actor.order.timer -= delta
+        if (actor.order.timer <= 0) actor.order = null
+      }
       this.updateActorReaction(actor, delta)
       const knockbackSpeed = this.updateActorKnockback(actor, delta)
       if (actor.role === 'commander' && actor.reaction !== 'stagger') {
         this.updateCommander(actor, delta)
       }
-      if (isBeastRole(actor.role)) {
-        this.updateBeastMorale(actor)
-        if (this.updateBeastCharge(actor, delta)) continue
-      }
+      this.updateActorMorale(actor, delta)
+      if (isBeastRole(actor.role) && this.updateBeastCharge(actor, delta)) continue
       if (actor.action) {
         this.updateActorAction(actor, delta)
         actor.velocity.set(0, 0, 0)
@@ -3540,9 +3661,10 @@ export class GameEngine {
         this.animateActorCharacter(actor, delta, 0)
         continue
       }
-      // A broken pack does not negotiate: it runs, and it does not stop to bite.
+      // Broken: it runs, and it does not stop to fight. A pack clears the square; a
+      // soldier falls back on his rally point and can be talked round.
       if (actor.routTimer > 0) {
-        this.updateRoutingBeast(actor, delta)
+        this.updateRoutingActor(actor, delta)
         continue
       }
 
@@ -3557,7 +3679,8 @@ export class GameEngine {
       let targetEventProp: EventPropTarget | null = null
       let targetsPlayer = false
       let pursuesPlayer = false
-      let investigatesPlayer = false
+      /** Walking to a remembered or reported position rather than at something visible. */
+      let investigating = false
       let targetPosition: THREE.Vector3 | null = null
       let wandering = false
       let followingFormation = false
@@ -3583,16 +3706,24 @@ export class GameEngine {
       const canSensePlayer = hostileToPlayer && playerDistance < senseRange
       const canTrackPlayer =
         hostileToPlayer && actor.playerAggro && playerDistance < leashRange
+      // Captured before the sense block writes it, so "spotted the player just now" can
+      // be told apart from "has been chasing them for a while" and only the first shouts.
+      const wasPursuingPlayer = actor.playerAggro
       if (canSensePlayer || canTrackPlayer) {
         actor.playerAggro = true
         actor.aggroMemory = AGGRO_MEMORY_DURATION
         if (actor.lastKnownTargetPos) actor.lastKnownTargetPos.copy(this.player.position)
         else actor.lastKnownTargetPos = this.player.position.clone()
       }
-      const shouldPursuePlayer =
-        hostileToPlayer &&
-        actor.playerAggro &&
-        (canSensePlayer || canTrackPlayer || actor.aggroMemory > 0)
+      const pursuit = evaluatePlayerPursuit({
+        hostileToPlayer,
+        playerAggro: actor.playerAggro,
+        aggroMemory: actor.aggroMemory,
+        playerDistance,
+        senseRange,
+        leashRange,
+      })
+      const shouldPursuePlayer = pursuit.shouldPursue
       if (!shouldPursuePlayer) {
         actor.playerAggro = false
         actor.aggroMemory = 0
@@ -3632,94 +3763,155 @@ export class GameEngine {
         actor.playerAggro = false
         targetEventProp = assignedEventProp
         targetPosition = targetEventProp.position
-      } else if (shouldPursuePlayer) {
-        actor.targetId = null
-        pursuesPlayer = true
-        if (canSensePlayer || canTrackPlayer) {
+      } else {
+        // §5C.1 — one scored pass over every hostile *and* the player, rather than the
+        // Layer 3 order of "can I see the player? then nothing else exists". That
+        // ordering measured out as a step function at 21 m (§9 Q2); scoring them
+        // together is what removes it.
+        //
+        // The ranges are unchanged: a soldier still only picks NPC fights within 6.5 m
+        // and only while the player is close enough to see it happen, because NPCs
+        // converging across a whole square was never the problem.
+        const huntRadius = commandedSquadMember
+          ? actor.role === 'archer'
+            ? 15
+            : 9
+          : isBeastRole(actor.role)
+            ? BEAST_SENSE_RANGE
+            : actor.role === 'archer'
+              ? 15
+              : 6.5
+        const canHunt =
+          actor.role !== 'commander' &&
+          !regroupingWithSquad &&
+          (commandedSquadMember || playerDistance < 32 || isBeastRole(actor.role))
+        const playerThreat: PlayerThreat | null =
+          shouldPursuePlayer && (pursuit.canSense || pursuit.canTrack)
+            ? {
+                position: this.player.position,
+                hpFraction: this.maxHealth > 0 ? this.health / this.maxHealth : 1,
+                provoked: actor.playerAggro,
+              }
+            : null
+        const previousTargetId = actor.targetId
+        const choice =
+          canHunt || playerThreat
+            ? selectThreat(
+                actor,
+                this.actors,
+                canHunt ? huntRadius : 0,
+                actorPosition,
+                playerThreat,
+              )
+            : null
+
+        if (choice === THREAT_PLAYER) {
+          actor.targetId = null
+          pursuesPlayer = true
           targetsPlayer = true
           targetPosition = this.player.position
-        } else if (actor.lastKnownTargetPos) {
-          investigatesPlayer = true
-          targetPosition = actor.lastKnownTargetPos
-        }
-      } else if (commandedSquadMember) {
-        targetActor = regroupingWithSquad
-          ? null
-          : this.findNearestEnemy(actor, actor.role === 'archer' ? 15 : 9)
-        if (targetActor) {
-          targetPosition = targetActor.mesh.position
-        } else {
-          followingFormation = true
-          const formationAngle = actor.phase * 3.7
-          const formationTarget = this.player.position
-            .clone()
-            .add(new THREE.Vector3(Math.sin(formationAngle) * 3.2, 0, Math.cos(formationAngle) * 3.2))
-          const navigationTarget = this.getNavigationWaypoint(
-            actor.mesh.position,
-            formationTarget,
-            colliderRadius,
-          )
-          const toFormation = (navigationTarget ?? formationTarget)
-            .clone()
-            .sub(actor.mesh.position)
-          toFormation.y = 0
-          const formationDistance = toFormation.length()
-          if (formationDistance > (navigationTarget ? 0.005 : 1.1)) {
-            direction.copy(toFormation).normalize()
-            moving = true
-            if (navigationTarget) movementDistanceLimit = formationDistance
+          // Something to fight outranks a report of something to fight.
+          actor.alertTimer = 0
+          actor.alertPos = null
+          // §5C.3 — a beast that has just caught the player's scent tells the pack.
+          if (!wasPursuingPlayer) {
+            this.announceSighting(actor, null, this.player.position)
           }
-        }
-      } else if (actor.role !== 'commander') {
-        // Beasts hunt by scent: they pick fights across the whole square rather than
-        // waiting for someone to walk into them, which is what lets a raid actually
-        // reach the settlement's garrison.
-        const huntRadius = isBeastRole(actor.role)
-          ? BEAST_SENSE_RANGE
-          : actor.role === 'archer'
-            ? 15
-            : 6.5
-        targetActor =
-          playerDistance < 32 || isBeastRole(actor.role)
-            ? this.findNearestEnemy(actor, huntRadius)
-            : null
-        if (targetActor) {
-          targetPosition = targetActor.mesh.position
+        } else if (choice) {
+          targetActor = choice
+          actor.targetId = choice.id
+          targetPosition = choice.mesh.position
+          actor.alertTimer = 0
+          actor.alertPos = null
+          // §5C.3 — first sight of something new is worth shouting about. Re-shouting at
+          // the same target every 1.5 s would just be noise.
+          if (choice.id !== previousTargetId) {
+            this.announceSighting(actor, choice.id, choice.mesh.position)
+          }
         } else {
-          wandering = true
-          let navigationTarget = this.getNavigationWaypoint(
-            actor.mesh.position,
-            actor.wanderTarget,
-            colliderRadius,
-          )
-          const toWaypoint = (navigationTarget ?? actor.wanderTarget)
-            .clone()
-            .sub(actor.mesh.position)
-          toWaypoint.y = 0
-          if (
-            actor.wanderTimer <= 0 ||
-            toWaypoint.length() < 0.65 ||
-            actor.mesh.position.distanceTo(actor.home) > 10
-          ) {
-            this.chooseWanderTarget(actor)
-            navigationTarget = this.getNavigationWaypoint(
+          actor.targetId = null
+          if (shouldPursuePlayer && actor.lastKnownTargetPos) {
+            pursuesPlayer = true
+            investigating = true
+            targetPosition = actor.lastKnownTargetPos
+          } else if (actor.alertTimer > 0 && actor.alertPos) {
+            // §5C.3 — an ally shouted. Go and look, then decide for yourself: the alert
+            // carries a place, not an order, so the scoring above runs again on arrival.
+            if (
+              actor.mesh.position.distanceToSquared(actor.alertPos) <=
+              ALERT_ARRIVAL_DISTANCE * ALERT_ARRIVAL_DISTANCE
+            ) {
+              actor.alertTimer = 0
+              actor.alertPos = null
+            } else {
+              investigating = true
+              targetPosition = actor.alertPos
+            }
+          } else if (commandedSquadMember) {
+            followingFormation = true
+            const formationAngle = actor.phase * 3.7
+            const formationTarget = this.player.position
+              .clone()
+              .add(new THREE.Vector3(Math.sin(formationAngle) * 3.2, 0, Math.cos(formationAngle) * 3.2))
+            const navigationTarget = this.getNavigationWaypoint(
               actor.mesh.position,
-              actor.wanderTarget,
+              formationTarget,
               colliderRadius,
             )
-            toWaypoint
-              .copy(navigationTarget ?? actor.wanderTarget)
+            const toFormation = (navigationTarget ?? formationTarget)
+              .clone()
               .sub(actor.mesh.position)
-            toWaypoint.y = 0
-          }
-          const waypointDistance = toWaypoint.length()
-          if (
-            actor.idleTimer <= 0 &&
-            waypointDistance > (navigationTarget ? 0.005 : 0.3)
-          ) {
-            direction.copy(toWaypoint).normalize()
-            moving = true
-            if (navigationTarget) movementDistanceLimit = waypointDistance
+            toFormation.y = 0
+            const formationDistance = toFormation.length()
+            if (formationDistance > (navigationTarget ? 0.005 : 1.1)) {
+              direction.copy(toFormation).normalize()
+              moving = true
+              if (navigationTarget) movementDistanceLimit = formationDistance
+            }
+          } else if (actor.role !== 'commander') {
+            const postDistance = this.moveToOrderPost(actor, direction, colliderRadius)
+            if (postDistance > 0) {
+              // §5C.4 — a standing order beats wandering: a garrison holds its site
+              // instead of drifting, and a raid walks onto what it came for.
+              moving = true
+              movementDistanceLimit = postDistance
+            } else {
+              wandering = true
+              let navigationTarget = this.getNavigationWaypoint(
+                actor.mesh.position,
+                actor.wanderTarget,
+                colliderRadius,
+              )
+              const toWaypoint = (navigationTarget ?? actor.wanderTarget)
+                .clone()
+                .sub(actor.mesh.position)
+              toWaypoint.y = 0
+              if (
+                actor.wanderTimer <= 0 ||
+                toWaypoint.length() < 0.65 ||
+                actor.mesh.position.distanceTo(actor.home) > 10
+              ) {
+                this.chooseWanderTarget(actor)
+                navigationTarget = this.getNavigationWaypoint(
+                  actor.mesh.position,
+                  actor.wanderTarget,
+                  colliderRadius,
+                )
+                toWaypoint
+                  .copy(navigationTarget ?? actor.wanderTarget)
+                  .sub(actor.mesh.position)
+                toWaypoint.y = 0
+              }
+              const waypointDistance = toWaypoint.length()
+              if (
+                actor.idleTimer <= 0 &&
+                waypointDistance > (navigationTarget ? 0.005 : 0.3)
+              ) {
+                direction.copy(toWaypoint).normalize()
+                moving = true
+                if (navigationTarget) movementDistanceLimit = waypointDistance
+              }
+            }
           }
         }
       }
@@ -3745,7 +3937,7 @@ export class GameEngine {
             moving = true
             movementDistanceLimit = navigationDistance
           }
-        } else if (investigatesPlayer) {
+        } else if (investigating) {
           if (distance > 0.75) {
             direction.copy(facingDirection)
             moving = true
@@ -3792,6 +3984,18 @@ export class GameEngine {
               : 2.45
           if (distance > stopDistance) {
             direction.copy(facingDirection)
+            // §5C.5 — secondary attackers come in off the line instead of queueing on
+            // the primary's approach. The offset fades to nothing over the last few
+            // metres, or the offset point would rotate as fast as the attacker moves
+            // and it would orbit the target forever.
+            const flank = this.flankApproachOffset(
+              actor,
+              targetActor,
+              targetsPlayer,
+              distance,
+              stopDistance,
+            )
+            if (flank !== 0) direction.applyAxisAngle(WORLD_UP, flank)
             moving = true
           } else if (actor.attackCooldown <= 0) {
             if (targetsPlayer) {
@@ -3944,20 +4148,98 @@ export class GameEngine {
   }
 
   /**
-   * Layer 3 — the wolf rule. A pack hunter that has lost most of its pack stops being a
-   * hunter: `Fauna.shouldBeastRout` owns the threshold, this only counts who is left and
-   * starts the clock. Boars, bears and trolls have no rout threshold and never break.
+   * §5C.2 — morale, for everything on the field. One entry point, two reasons.
+   *
+   * `ActorAi.evaluateMorale` owns the rule; this counts the inputs and starts the clock.
+   * The two halves are deliberately not two systems: cohesion breaks a pack that has
+   * lost its own kind, individual morale breaks anything that is hurt, alone, or has
+   * just watched its commander go down. A wolf whose kin size is one falls through the
+   * first and is caught by the second, which is exactly the `bear+wolf+boar` case §9
+   * measured at 0 routs and correctly refused to call a bug.
+   *
+   * Roles whose `actorResolve` is `null` never get here at all. That is where campaign
+   * safety lives: a commander cannot rout, so an objective that requires killing him can
+   * never be stranded by one.
    */
-  private updateBeastMorale(actor: Actor): void {
-    if (!isBeastRole(actor.role) || actor.routTimer > 0) return
-    const share = this.beastPackShare(actor)
-    if (!shouldBeastRout(actor.role, share)) return
-    actor.routTimer = BEAST_ROUT_SECONDS
+  private updateActorMorale(actor: Actor, delta: number): void {
+    actor.moraleTimer -= delta
+    if (actor.moraleTimer > 0) return
+    actor.moraleTimer += MORALE_CHECK_INTERVAL
+    if (actor.aiMode === 'captive' || actor.rallyTimer > 0) return
+
+    // A commander in earshot is both a morale bonus and, for someone already running,
+    // the thing that turns them round.
+    const commander = this.nearbyCommander(actor)
+    if (actor.routTimer > 0) {
+      if (commander) this.rallyActor(actor)
+      return
+    }
+    // The rout timer ran out. Recovery has to happen *here* rather than in
+    // `updateRoutingActor`, because the frame the timer reaches zero skips the routing
+    // branch entirely — putting it there left it unreachable, and an actor that had run
+    // its clock out simply re-broke on the same frame and ran forever.
+    if (actor.routReason !== 'none') {
+      actor.routReason = 'none'
+      actor.rallyTimer = MORALE_RALLY_SECONDS
+      return
+    }
+
+    const broke = evaluateMorale(actor.role, {
+      hpFraction: actor.maxHp > 0 ? actor.hp / actor.maxHp : 1,
+      groupShare: localGroupShare(actor, this.actors, MORALE_GROUP_RADIUS, actorPosition),
+      packShare: this.beastPackShare(actor),
+      commanderNearby: commander !== null,
+      commanderLost: actor.commanderLostTimer > 0,
+    })
+    if (broke === 'none') return
+
+    actor.routTimer = isBeastRole(actor.role) ? BEAST_ROUT_SECONDS : MORALE_ROUT_SECONDS
+    actor.routReason = broke
     actor.action = null
     actor.targetId = null
     actor.playerAggro = false
     actor.aggroMemory = 0
     actor.lastKnownTargetPos = null
+    this.announceMoraleEvent(actor, describeRout(broke === 'cohesion'))
+  }
+
+  /**
+   * A rout the player cannot see is a number; one they can see is a moment. Rate-limited
+   * because a squad breaking together would otherwise fill the feed with the same line.
+   */
+  private announceMoraleEvent(actor: Actor, message: string): void {
+    if (this.moraleNoticeCooldown > 0) return
+    if (actor.mesh.position.distanceTo(this.player.position) > MORALE_NOTICE_RANGE) return
+    this.moraleNoticeCooldown = MORALE_NOTICE_COOLDOWN
+    this.callbacks.onNotice(message, 'info')
+  }
+
+  /** A living commander of this actor's own side, close enough to be heard. */
+  private nearbyCommander(actor: Actor): Actor | null {
+    if (actor.role === 'commander') return null
+    for (const other of this.actors) {
+      if (
+        other.alive &&
+        other.role === 'commander' &&
+        other.reaction !== 'stagger' &&
+        allegianceRelation(other.allegiance, actor.allegiance) === 'friendly' &&
+        other.mesh.position.distanceToSquared(actor.mesh.position) <=
+          COMMANDER_ORDER_RANGE * COMMANDER_ORDER_RANGE
+      ) {
+        return other
+      }
+    }
+    return null
+  }
+
+  /** Back in the line, and steadied long enough that it does not break again instantly. */
+  private rallyActor(actor: Actor): void {
+    if (actor.routTimer <= 0) return
+    actor.routTimer = 0
+    actor.routReason = 'none'
+    actor.rallyTimer = MORALE_RALLY_SECONDS
+    actor.commanderLostTimer = 0
+    this.announceMoraleEvent(actor, RALLY_NOTICE)
   }
 
   /**
@@ -3969,10 +4251,33 @@ export class GameEngine {
     return beastPackShare(actor, this.actors, WOLF_PACK_RADIUS, actorPosition)
   }
 
-  /** A routed beast runs from whatever broke it, and animates while it does. */
-  private updateRoutingBeast(actor: Actor, delta: number): void {
-    const threat = this.nearestThreatPosition(actor)
-    const away = actor.mesh.position.clone().sub(threat)
+  /**
+   * A broken actor runs, and animates while it does. Where it runs is the difference
+   * between the two halves of §5C.2:
+   *
+   * - **A beast runs from whatever broke it** and, past the leash, is gone. That is what
+   *   makes breaking a pack a way to end a raid.
+   * - **A soldier falls back on his rally point** — `home`, which for a garrison is the
+   *   site it spawned on — and stays in the world the whole time. He can be chased down,
+   *   he can be rallied, and he comes back when he has got his nerve back. Nothing that
+   *   an objective might need ever leaves the map because it lost a morale check.
+   */
+  private updateRoutingActor(actor: Actor, delta: number): void {
+    const away = new THREE.Vector3()
+    if (isBeastRole(actor.role)) {
+      away.copy(actor.mesh.position).sub(this.nearestThreatPosition(actor))
+    } else {
+      away.copy(actor.home).sub(actor.mesh.position)
+      away.y = 0
+      // The rally point is already underfoot: falling back on it is not an option, so
+      // give ground to whatever is doing the killing instead. Without this a soldier who
+      // breaks while standing on his post just stands there being hit — the "rout as
+      // skip your turn" failure that inverted the first measurement this harness took.
+      if (away.lengthSq() <= MORALE_RALLY_POINT_TOLERANCE * MORALE_RALLY_POINT_TOLERANCE) {
+        away.copy(actor.mesh.position).sub(this.nearestThreatPosition(actor))
+        actor.routTimer = Math.min(actor.routTimer, MORALE_LAST_STAND_SECONDS)
+      }
+    }
     away.y = 0
     if (away.lengthSq() < 0.0001) away.set(Math.sin(actor.phase), 0, Math.cos(actor.phase))
     away.normalize()
@@ -3989,7 +4294,10 @@ export class GameEngine {
       delta,
     )
     this.animateActorCharacter(actor, delta, 0)
-    if (actor.mesh.position.distanceTo(this.player.position) > BEAST_LEASH_RANGE) {
+    if (
+      isBeastRole(actor.role) &&
+      actor.mesh.position.distanceTo(this.player.position) > BEAST_LEASH_RANGE
+    ) {
       this.fledBeastIds.push(actor.id)
     }
   }
@@ -4777,6 +5085,7 @@ export class GameEngine {
   }
 
   private updateCommander(actor: Actor, delta: number): void {
+    this.broadcastCommanderOrder(actor)
     actor.reinforcementTimer -= delta
     if (actor.reinforcementTimer > 0) return
     actor.reinforcementTimer += COMMANDER_REINFORCEMENT_INTERVAL
@@ -4808,6 +5117,98 @@ export class GameEngine {
     actor.reinforcementsCalled += 1
     if (actor.mesh.position.distanceTo(this.player.position) < 35) {
       this.callbacks.onNotice('Командир приказал подкреплению вступить в бой!', 'warning')
+    }
+  }
+
+  /**
+   * §5C.4 — a commander stops being furniture with an aura attached.
+   *
+   * Before Layer 4 a commander was a stationary damage buff that occasionally called
+   * reinforcements; the actors around him made every decision alone. Now he hands out a
+   * standing order, and the order is what an ally does when it has nothing to fight —
+   * instead of wandering in a circle around wherever it happened to spawn.
+   *
+   * He picks the order from what is in front of him, not from a script: a prop his side
+   * is taking apart means `assault`, otherwise he holds the ground he is on. The order
+   * carries a timer rather than being cleared on his death, so a squad keeps its last
+   * orders for a few seconds after the commander falls — which is both true to life and
+   * how it avoids a frame where everyone forgets what they were doing at once.
+   *
+   * He himself keeps `speed: 0`. That is deliberate and stays: he is the fixed point the
+   * rally is measured from, and a commander who chases has to be able to lose an
+   * objective site, which is the one thing §7 says must not happen.
+   */
+  private broadcastCommanderOrder(commander: Actor): void {
+    const assaultTarget = this.commanderAssaultTarget(commander)
+    const kind: SquadOrderKind = assaultTarget ? 'assault' : 'hold'
+    const position = assaultTarget ?? commander.mesh.position
+    const rangeSq = COMMANDER_ORDER_RANGE * COMMANDER_ORDER_RANGE
+    for (const actor of this.actors) {
+      if (
+        actor === commander ||
+        !actor.alive ||
+        actor.aiMode === 'captive' ||
+        // A commander has his own post and cannot be sent to somebody else's.
+        actor.role === 'commander' ||
+        allegianceRelation(actor.allegiance, commander.allegiance) !== 'friendly' ||
+        actor.mesh.position.distanceToSquared(commander.mesh.position) > rangeSq
+      ) {
+        continue
+      }
+      // An escort order comes from the caravan and outranks a commander standing near
+      // the road: whoever is guarding the cart keeps guarding the cart.
+      if (actor.order?.kind === 'escort') continue
+      if (actor.order) {
+        actor.order.kind = kind
+        actor.order.position.copy(position)
+        actor.order.timer = COMMANDER_ORDER_DURATION
+      } else {
+        actor.order = {
+          kind,
+          position: position.clone(),
+          timer: COMMANDER_ORDER_DURATION,
+        }
+      }
+    }
+  }
+
+  /** Whatever this commander's side has come to knock down, if anything. */
+  private commanderAssaultTarget(commander: Actor): THREE.Vector3 | null {
+    for (const actor of this.actors) {
+      if (
+        !actor.alive ||
+        actor.aiMode !== 'attackEventProp' ||
+        allegianceRelation(actor.allegiance, commander.allegiance) !== 'friendly' ||
+        !actor.eventPropTargetId
+      ) {
+        continue
+      }
+      const prop = this.eventPropTargets.get(actor.eventPropTargetId)
+      if (prop && prop.hp > 0) return prop.position
+    }
+    return null
+  }
+
+  /**
+   * §5C.2 — the shock of watching the commander fall, applied to everyone who could see
+   * it. On its own it is worth less than a light wound; on top of a bad fight it is what
+   * turns a losing squad into a broken one.
+   */
+  private applyCommanderLossShock(commander: Actor): void {
+    const rangeSq = COMMANDER_ORDER_RANGE * COMMANDER_ORDER_RANGE
+    for (const actor of this.actors) {
+      if (
+        actor === commander ||
+        !actor.alive ||
+        allegianceRelation(actor.allegiance, commander.allegiance) !== 'friendly' ||
+        actor.mesh.position.distanceToSquared(commander.mesh.position) > rangeSq
+      ) {
+        continue
+      }
+      actor.commanderLostTimer = MORALE_COMMANDER_SHOCK_SECONDS
+      // The shock outranks a rally he handed out a moment ago: he is not there any more.
+      actor.rallyTimer = 0
+      actor.moraleTimer = 0
     }
   }
 
@@ -4891,11 +5292,12 @@ export class GameEngine {
       this.caravan.position.x,
       this.caravan.position.z,
     )
-    if (
+    const streaming =
       this.generatedCaravanPatrolReady &&
-      regionId &&
+      regionId !== null &&
       this.simulatedGeneratedRegions.has(regionId)
-    ) {
+    const panic = this.updateCaravanEscort(delta, regionId, streaming)
+    if (streaming) {
       let destination =
         this.caravanDirection > 0
           ? this.generatedCaravanPatrolEnd
@@ -4920,7 +5322,10 @@ export class GameEngine {
         direction.multiplyScalar(1 / distance)
         const previousX = this.caravan.position.x
         const previousZ = this.caravan.position.z
-        const requestedTravel = Math.min(delta * 3.4, distance)
+        // §5C.6 — a spooked driver whips the horses. It still has to stay on the road,
+        // so panic is speed, not a new path: the cart cannot leave the road network.
+        const speed = 3.4 * (panic ? CARAVAN_PANIC_SPEED_MULTIPLIER : 1)
+        const requestedTravel = Math.min(delta * speed, distance)
         const blocked = this.moveCharacter(
           this.caravan.position,
           direction.x * requestedTravel,
@@ -4955,6 +5360,161 @@ export class GameEngine {
         material.emissive.copy(this.caravanRobbedFlash > 0 ? this.palette.warning : this.palette.bg)
         material.emissiveIntensity = this.caravanRobbedFlash
       }
+    }
+  }
+
+  /**
+   * §5C.6 — the caravan stops being a moving prop and becomes something with an interest
+   * in its own survival: two guards who walk with it, a driver who bolts when something
+   * comes out of the treeline, and a cart that is genuinely lost if the guards lose.
+   *
+   * **Escorts are charged to `ambient`, deliberately.** They are the lowest-priority
+   * reserve, so the moment a materialized raid or a threat wave needs the slots the
+   * guards are the first thing given up (§5.1) — and a cart losing its escort because a
+   * settlement three hundred metres away is burning is a better failure than a raid
+   * arriving two beasts short. It also means the escort costs nothing when the player is
+   * nowhere near the road.
+   *
+   * Returns whether the cart is currently panicking, so the caller can move it faster.
+   */
+  private updateCaravanEscort(
+    delta: number,
+    regionId: string | null,
+    streaming: boolean,
+  ): boolean {
+    this.caravanPanicTimer = Math.max(0, this.caravanPanicTimer - delta)
+    const before = this.caravanEscortIds.length
+    this.caravanEscortIds = this.caravanEscortIds.filter((id) =>
+      this.actors.some((actor) => actor.id === id && actor.alive),
+    )
+    // A guard that has just died leaves a real gap. Without the delay the replacement
+    // spawned in the same frame, 2.6 m from the cart and therefore already "guarding" —
+    // which made the escort-down plunder path unreachable through combat, and popped a
+    // fresh soldier out of thin air next to the player who had just killed one.
+    if (this.caravanEscortIds.length < before) {
+      this.caravanEscortRespawnAt = this.elapsed + CARAVAN_ESCORT_RESPAWN_DELAY
+    }
+
+    // Off-screen or in an unsimulated square: no guards, no panic, no cost.
+    if (!streaming || this.player.position.distanceTo(this.caravan.position) > CARAVAN_ESCORT_RANGE) {
+      for (const id of this.caravanEscortIds) this.removeActorById(id)
+      this.caravanEscortIds = []
+      return false
+    }
+
+    if (
+      this.caravanEscortIds.length < CARAVAN_ESCORT_COUNT &&
+      this.elapsed >= this.caravanEscortRespawnAt
+    ) {
+      this.spawnCaravanEscort(regionId)
+    }
+
+    // Guards walk with the cart rather than holding a post, which is what `escort` is.
+    for (const guard of this.livingCaravanEscorts()) {
+      guard.home.copy(this.caravan.position)
+      if (guard.order) {
+        guard.order.kind = 'escort'
+        guard.order.position.copy(this.caravan.position)
+        guard.order.timer = COMMANDER_ORDER_DURATION
+      } else {
+        guard.order = {
+          kind: 'escort',
+          position: this.caravan.position.clone(),
+          timer: COMMANDER_ORDER_DURATION,
+        }
+      }
+    }
+
+    const raider = this.nearestCaravanThreat()
+    if (raider) {
+      this.caravanPanicTimer = CARAVAN_PANIC_SECONDS
+      const guarding = this.livingCaravanEscorts()
+      // The shout has to come from a *guard*, not from the raider: `acceptsAlert` sends
+      // it to allies of whoever shouted, so raising it on the raider would have told the
+      // wolves where the cart was.
+      if (guarding.length > 0) {
+        this.announceSighting(guarding[0], raider.id, raider.mesh.position)
+      }
+      const escortGuarding = guarding.some(
+        (guard) =>
+          guard.routTimer <= 0 &&
+          guard.mesh.position.distanceToSquared(this.caravan.position) <=
+            CARAVAN_GUARDED_RANGE * CARAVAN_GUARDED_RANGE,
+      )
+      if (
+        !escortGuarding &&
+        this.caravanCooldown <= 0 &&
+        raider.mesh.position.distanceToSquared(this.caravan.position) <=
+          CARAVAN_PLUNDER_RANGE * CARAVAN_PLUNDER_RANGE
+      ) {
+        this.plunderCaravan(raider)
+      }
+    }
+    return this.caravanPanicTimer > 0
+  }
+
+  private livingCaravanEscorts(): Actor[] {
+    const escorts: Actor[] = []
+    for (const actor of this.actors) {
+      if (actor.alive && this.caravanEscortIds.includes(actor.id)) escorts.push(actor)
+    }
+    return escorts
+  }
+
+  /** The nearest thing that would happily take the cart, beast or raider alike. */
+  private nearestCaravanThreat(): Actor | null {
+    let nearest: Actor | null = null
+    let bestDistance = CARAVAN_PANIC_RANGE * CARAVAN_PANIC_RANGE
+    for (const actor of this.actors) {
+      if (!actor.alive || actor.routTimer > 0) continue
+      if (this.caravanEscortIds.includes(actor.id)) continue
+      if (!hostile(actor.allegiance, CARAVAN_ALLEGIANCE)) continue
+      const distance = actor.mesh.position.distanceToSquared(this.caravan.position)
+      if (distance >= bestDistance) continue
+      bestDistance = distance
+      nearest = actor
+    }
+    return nearest
+  }
+
+  private spawnCaravanEscort(regionId: string | null): void {
+    if (this.reserveActorSlotsUpTo('ambient', 1) < 1) return
+    const angle = this.caravan.rotation.y + (this.caravanEscortIds.length ? 2.1 : -2.1)
+    const spawn = new THREE.Vector3(
+      this.caravan.position.x + Math.sin(angle) * 2.6,
+      0,
+      this.caravan.position.z + Math.cos(angle) * 2.6,
+    )
+    this.clampWorldPosition(spawn, 3)
+    if (!this.isWalkablePosition(spawn.x, spawn.z, 1)) return
+    const guard = this.spawnActor(
+      CARAVAN_ALLEGIANCE,
+      'soldier',
+      spawn.x,
+      spawn.z,
+      this.actorSequence++,
+      {
+        budget: 'ambient',
+        objectiveEligible: false,
+        squadEligible: false,
+        generatedRegionId: regionId,
+      },
+    )
+    guard.home.copy(this.caravan.position)
+    guard.wanderTarget.copy(guard.mesh.position)
+    this.caravanEscortIds.push(guard.id)
+  }
+
+  /** Escort down, raider at the tailgate: the cart is gone whoever the player is. */
+  private plunderCaravan(raider: Actor): void {
+    this.caravanCooldown = CARAVAN_PLUNDER_COOLDOWN
+    this.caravanRobbedFlash = 1
+    this.playSound('event')
+    if (this.player.position.distanceTo(this.caravan.position) < 60) {
+      this.callbacks.onNotice(
+        describeCaravanPlundered(isBeastRole(raider.role)),
+        'warning',
+      )
     }
   }
 
@@ -7669,6 +8229,113 @@ export class GameEngine {
     }
   }
 
+  /**
+   * §5C.3 — alert propagation for a sighting of *anything*, not just the player.
+   *
+   * `alertCooldown` and `alertNearbyAllies` above have been on `Actor` since long before
+   * this layer, and only ever carried "the player just hit me" — which is why a wolf
+   * walking into a garrison woke exactly the soldier it walked into. This shares any
+   * first sighting with the allies in earshot, and `ActorAi.acceptsAlert` decides who
+   * takes it: notably **not** an ally already holding a target of its own, or one shout
+   * re-aims a whole square onto one wolf.
+   *
+   * The alert hands over the sighted position rather than the target id, because the
+   * recipient re-runs its own threat scoring when it gets there; being told where to look
+   * is realistic, being told what to attack is not.
+   */
+  private announceSighting(
+    source: Actor,
+    hostileId: string | null,
+    position: THREE.Vector3,
+  ): void {
+    if (source.alertCooldown > 0 || source.aiMode !== 'normal') return
+    source.alertCooldown = ALERT_COOLDOWN
+    const alert: AiAlert = {
+      sourceId: source.id,
+      allegiance: source.allegiance,
+      origin: source.mesh.position,
+      target: position,
+      hostileId,
+    }
+    for (const actor of this.actors) {
+      if (actor.aiMode !== 'normal' || actor.routTimer > 0) continue
+      if (!acceptsAlert(actor, alert, ALERT_SIGHTING_RADIUS, actorPosition)) continue
+      // Its own field, on purpose: `lastKnownTargetPos` belongs to player pursuit and is
+      // cleared every frame an actor is not chasing the player, which is precisely the
+      // state a bystander being shouted at is in.
+      if (actor.alertPos) actor.alertPos.copy(position)
+      else actor.alertPos = position.clone()
+      actor.alertTimer = ALERT_INVESTIGATE_SECONDS
+      if (hostileId === null && actor.hostileToPlayer) {
+        actor.playerAggro = true
+        actor.aggroMemory = Math.max(actor.aggroMemory, AGGRO_MEMORY_DURATION)
+        if (actor.lastKnownTargetPos) actor.lastKnownTargetPos.copy(position)
+        else actor.lastKnownTargetPos = position.clone()
+      }
+      // An idling ally stops idling: being told there is something out there is the
+      // whole point of the shout.
+      actor.idleTimer = 0
+      actor.wanderTimer = 0
+    }
+  }
+
+  /**
+   * §5C.5 — how far off the direct line this attacker comes in, in radians.
+   *
+   * The rank and the angle are decisions and live in `ActorAi`; the blend is geometry
+   * and lives here. **This is the one Layer 4 mechanic the headless harness cannot
+   * measure** — it has no steering, no collision and no separation, so it can tell you
+   * which slot an attacker claimed but nothing about whether the approach reads well.
+   */
+  private flankApproachOffset(
+    actor: Actor,
+    target: Actor | null,
+    targetsPlayer: boolean,
+    distance: number,
+    stopDistance: number,
+  ): number {
+    if (actor.role === 'archer' || actor.retreatTimer > 0) return 0
+    // An event prop is neither: nothing queues on a barricade, and falling through to
+    // the player's queue ranked a raider against allies fighting something else entirely.
+    const rank = target
+      ? engagementRank(actor, target.id, this.actors)
+      : targetsPlayer
+        ? playerEngagementRank(actor, this.actors)
+        : 0
+    if (rank <= 0) return 0
+    return flankApproachAngle(rank) * flankBlend(distance, stopDistance)
+  }
+
+  /**
+   * §5C.4 — walk back to the post the commander put this actor on. Returns the distance
+   * still to cover, or `0` when it has nowhere to be, so the caller can both cap the
+   * step and fall through to wandering.
+   */
+  private moveToOrderPost(
+    actor: Actor,
+    direction: THREE.Vector3,
+    colliderRadius: number,
+  ): number {
+    const order = actor.order
+    if (!order) return 0
+    const toPost = order.position.clone().sub(actor.mesh.position)
+    toPost.y = 0
+    if (toPost.length() <= COMMANDER_ORDER_TOLERANCE) return 0
+    const navigationTarget = this.getNavigationWaypoint(
+      actor.mesh.position,
+      order.position,
+      colliderRadius,
+    )
+    if (navigationTarget) {
+      toPost.copy(navigationTarget).sub(actor.mesh.position)
+      toPost.y = 0
+    }
+    const distance = toPost.length()
+    if (distance < 0.005) return 0
+    direction.copy(toPost).multiplyScalar(1 / distance)
+    return distance
+  }
+
   private dropShield(): void {
     if (!this.shieldActive) return
     this.shieldActive = false
@@ -7770,6 +8437,9 @@ export class GameEngine {
     if (ring) ring.visible = false
     this.projectileSourcesToClear.add(actor.id)
     this.recordGeneratedActorDeath(actor)
+    // §5C.2 — losing the commander is a morale event for everyone who watched it, and
+    // it must land before any of them takes their next check.
+    if (actor.role === 'commander') this.applyCommanderLossShock(actor)
     if (!directPlayerKill) {
       this.playSound('down', {
         position: deathPosition,
@@ -10523,6 +11193,14 @@ export class GameEngine {
       packId: options.packId ?? null,
       packKinSize: Math.max(1, options.packKinSize ?? 1),
       routTimer: 0,
+      routReason: 'none',
+      rallyTimer: 0,
+      commanderLostTimer: 0,
+      // Staggered by spawn index so a whole squad does not check morale on one frame.
+      moraleTimer: (index % 7) * (MORALE_CHECK_INTERVAL / 7),
+      order: null,
+      alertPos: null,
+      alertTimer: 0,
       chargeWindup: 0,
       chargeTimer: 0,
       chargeCooldown: 0,
@@ -10575,15 +11253,6 @@ export class GameEngine {
     if (availableSlots > 0) {
       this.callbacks.onNotice('Засада! Охрана корована набигает.', 'warning')
     }
-  }
-
-  private findNearestEnemy(actor: Actor, range: number): Actor | null {
-    // §Layer 4 prep — the decision itself lives in the pure `world/ActorAi.ts`, so a
-    // headless harness can exercise the same code the game runs. The `targetId` write
-    // stays here, because mutating the actor is the engine's job, not the decision's.
-    const nearest = selectCombatTarget(actor, this.actors, range, actorPosition)
-    actor.targetId = nearest?.id ?? null
-    return nearest
   }
 
   private addTrauma(amount: number): void {

@@ -297,6 +297,31 @@ export function describeBeastProwler(regionLabel: string): string {
   return `В квадрате ${regionLabel} что-то ходит по кустам и не платит за проход.`
 }
 
+/**
+ * Layer 4 §5C.6 — the cart was taken by somebody who is not the player. Beasts and
+ * raiders get different lines because "кто-то съел груз" and "кто-то увёл груз" are
+ * genuinely different disappointments.
+ */
+export function describeCaravanPlundered(byBeast: boolean): string {
+  return byBeast
+    ? 'Корован обглодали без пользователя. Охрана лежит, груз в кустах, телега пустая.'
+    : 'Корован увели без пользователя. Охрану положили, груз растащили — приходи в следующий раз пораньше.'
+}
+
+/**
+ * Layer 4 §5C.2 — somebody on the field decided this was not their fight after all.
+ * Shown for the squares the player can actually see, so a rout reads as a thing that
+ * happened rather than a thing the numbers did.
+ */
+export function describeRout(byCohesion: boolean): string {
+  return byCohesion
+    ? 'Стая посыпалась и ломанулась в лес. Договориться не вышло.'
+    : 'У кого-то сдали нервы: бежит и не оборачивается.'
+}
+
+/** Layer 4 §5C.2 — the commander talked somebody back into the line. */
+export const RALLY_NOTICE = 'Командир наорал — беглец вернулся в строй. Дисциплина, чтоб её.'
+
 export function describeLocatedEvent(
   kind: ChronicleWorldEventKind,
   context: LocatedEventCopyContext,

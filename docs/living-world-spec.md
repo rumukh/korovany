@@ -21,11 +21,11 @@ Five layers, each independently shippable:
 | 1 | **Хроника** (Chronicle) | Data-only tick over all 25 regions. No meshes, no actors. **Implemented.** |
 | 2 | **Materialization** | Chronicle events become 3D only when the player is near. **Implemented.** |
 | 3 | **Fauna** | Beasts and civilians as non-playable allegiances. **Implemented.** |
-| 4 | **NPC AI** | Perception, morale, threat scoring, flanking, commander orders. |
+| 4 | **NPC AI** | Perception, morale, threat scoring, flanking, commander orders. **Implemented.** |
 | 5 | **Ambient life** | Civilians, wildlife, campfires — cheap, highly visible. |
 
-This spec covers **Layers 1, 2 and 3 in implementation detail** and fixes the contracts
-that Layers 4–5 build on.
+This spec covers **Layers 1, 2, 3 and 4 in implementation detail** and fixes the contracts
+that Layer 5 builds on.
 
 ## 2. Current baseline (reference)
 
@@ -40,7 +40,7 @@ that Layers 4–5 build on.
 | Event placement | `pickEventPosition()` / `pickLocatedEventPosition()` | Player-ring placement, plus a site- or region-anchored variant for chronicle events. |
 | Threat waves | `updateThreat` / `spawnThreatWave` | Spawns hostiles in a 13 m ring around the player. |
 | Actor AI | `updateActors` | Sense range 15 m (18 m archers); NPC-vs-NPC hunt radius 6.5 m (15 m archers); no morale. |
-| Actor AI (decisions) | `ActorAi` (`world/ActorAi.ts`) | Target selection, pack morale and player-pursuit gating as pure functions, so a headless harness can exercise the code the game runs. Movement and collision stay in `GameEngine`. |
+| Actor AI (decisions) | `ActorAi` (`world/ActorAi.ts`) | Target selection, morale, alert acceptance and flanking ranks as pure functions, so a headless harness can exercise the code the game runs. Movement and collision stay in `GameEngine`. |
 | Hostility | `ALLEGIANCE_RELATIONS` (`types.ts`) | A 5×5 matrix over `Faction | 'beast' | 'civilian'`. Replaced `hostile(a, b) => a !== b`. |
 | Caravan | `updateCaravan` | Patrols the generated road network between two patrol anchors. |
 | Determinism | `RandomStream` + `deriveSeed` | Five gameplay streams: `combat`, `director`, `event`, `loot`, `chronicle`. |
@@ -530,6 +530,219 @@ than a world. Raid packs are charged to **`chronicle`**, like every other locate
 В квадрате C4 что-то ходит по кустам и не платит за проход.
 ```
 
+## 5C. Layer 4 — NPC AI
+
+### 5C.1 Threat scoring replaces two rules at once
+
+`world/ActorAi.ts` gains `selectThreat`, and the engine calls it instead of the pair it
+used before. It replaces:
+
+1. **Nearest-wins.** `selectCombatTarget` took the closest hostile and nothing else.
+2. **The player override.** `updateActors` asked "can I see the player?" *before* it asked
+   "is there anything to fight?", which §9 measured as a **step function at 21 m**: 100%
+   of beast attacks on the player inside `BEAST_SENSE_RANGE`, 100% on the garrison outside
+   it, nothing in between.
+
+Both are now one scored pass over every hostile **and the player**. Cost is expressed in
+metres, so each weight reads as "treats it as if it were this much closer"; lowest cost
+wins:
+
+```
+cost = distance
+     × (1 − wounded × (1 − hpFraction))     // finish what is nearly finished
+     × (1 + crowd × alliesAlreadyOnIt)      // do not stack six deep on one target
+     × rolePreference                        // player / backline / heavy
+     × (locked ? THREAT_LOCK_BONUS : 1)      // hysteresis, so nobody dithers
+```
+
+`ThreatStyle` is the per-role table, and the deviations are the whole content of
+role-aware targeting:
+
+| Role | Behaviour |
+| --- | --- |
+| `archer`, `scout` | Shoot past the front rank at whoever is doing the damage; treat a brute walking up as a bad trade. |
+| `brute`, `champion`, `bear`, `troll` | `wounded: 0`, `crowd: 0`, no preferences at all. "Prefers whatever blocks it" is the *absence* of the other terms, not an extra one. |
+| `wolf` | The only **negative** `crowd` in the table: a pack piles onto one animal rather than spreading out. |
+| everything else | Defaults. |
+
+The player is deliberately **not** range-gated inside `selectThreat`.
+`evaluatePlayerPursuit` has already decided whether they are a legal candidate at all, so
+a tracked player 40 m away simply loses on cost to a soldier 4 m away — and beyond sense
+range they are not a candidate, which is sight rather than targeting and is a different
+thing from the step function. Retaliation still hard-overrides everything: hit an actor
+and it comes for you regardless of what the scoring thinks.
+
+`selectCombatTarget` is **kept and still exported.** A negative control that
+re-implements the old rule only proves the re-implementation right; keeping the real
+function callable means both arms of the Layer 4 measurements are shipped code.
+
+### 5C.2 One morale rule, two doors
+
+Layer 3 shipped pack cohesion for beasts; Layer 4 was asked for individual morale. Two
+independent "should I run" systems on the same actor would fight each other, so
+`evaluateMorale` is the single entry point and the two rules are two **reasons** rather
+than two mechanisms:
+
+- **Cohesion governs packs.** Unchanged, delegated to `shouldBeastRout`. A wolf counts
+  wolves; losing half of them breaks it however healthy it is.
+- **Individual morale governs individuals** — including a beast whose cohesion rule can
+  never fire. The measured case is `bear+wolf+boar`: one wolf, kin size 1, share
+  permanently 1, so cohesion correctly never breaks it (§9 measured 0 routs in 60 fights,
+  and that was the right answer for a *cohesion* rule). Breaking a lone wolf standing over
+  its dead bear is this half's job, and §9 now measures it doing so.
+
+```
+morale = 1 + resolve(role)
+       − MORALE_WOUND × (1 − hpFraction)²          // superlinear: decides things at the end
+       − MORALE_LOSSES × (1 − groupShare)
+       − (commanderLost ? MORALE_COMMANDER_LOSS : 0)
+       + (commanderNearby ? MORALE_COMMANDER_RALLY : 0)
+break when morale ≤ 0
+```
+
+Solved against the threshold, a soldier with its group intact breaks just under **21%
+hp** — the spec's "~25%" expressed as a curve rather than a cliff — or at half health
+with half the local group on the ground.
+
+**`groupShare` counts the bodies, not a remembered roster.** `localGroupShare` is
+standing allies over standing plus fallen, within `MORALE_GROUP_RADIUS`. That needs no
+state in the save, works for an actor however it was spawned, and measures exactly what
+the player can see. The engine keeps corpses in the actor list for `CORPSE_LIFETIME`, so
+it is a memory of *recent* losses — an hour-old battlefield should not still be breaking
+people.
+
+**`actorResolve` returning `null` is a hard gate, checked before either door.** It is
+where campaign safety lives:
+
+| Role | Why it can never break |
+| --- | --- |
+| `commander` | He is what rallies everyone else, and a campaign objective can require killing him. §7's rule that an objective must stay completable is enforced here, by construction. |
+| `champion` | A boss that flees is not a boss. |
+| `captive` | Not a combatant; the rescue event owns its behaviour. |
+| `boar`, `bear`, `troll` | Layer 3 said "never routs" and that is still true. The answer comes from `BEAST_PROFILES[role].routThreshold`, not from a second copy of it here. |
+
+**Where it runs to.** A broken **beast** runs from whatever broke it and, past the leash,
+is gone — that is what makes breaking a pack a way to end a raid, and it is unchanged.
+Anything else **falls back on `home`** and stays in the world the whole time: it can be
+chased down, it can be rallied, and it comes back when its nerve returns. Nothing an
+objective might need ever leaves the map because it lost a morale check. If the rally
+point is already underfoot it gives ground to the nearest threat instead, because
+standing still is not a rout.
+
+**Rally.** A commander within `COMMANDER_ORDER_RANGE` clears a rout and grants
+`MORALE_RALLY_SECONDS` of immunity. A rout that simply runs its clock out grants the same
+immunity, and that recovery lives in `updateActorMorale` rather than in
+`updateRoutingActor` — see §9, where putting it in the obvious place made it unreachable.
+
+### 5C.3 Alert propagation
+
+`alertCooldown` has been on `Actor` since long before this layer and only ever carried
+"the player just hit me", which is why a wolf walking into a garrison woke exactly the
+soldier it walked into. `announceSighting` now shares any *first* sighting with allies
+within `ALERT_SIGHTING_RADIUS`, and `ActorAi.acceptsAlert` decides who takes it.
+
+The one rule with substance: **an ally already holding a target of its own does not drop
+it for hearsay.** Without it, one shout re-aims a whole square onto a single sighting and
+every fight in earshot dissolves. The alert hands over the sighted *position*, not the
+target id — being told where to look is realistic, being told what to attack is not, and
+the recipient re-runs its own scoring when it gets there.
+
+**The sighting lands in `alertPos` / `alertTimer`, not in `lastKnownTargetPos`.** That
+distinction is the whole mechanism working rather than not: `lastKnownTargetPos` and
+`aggroMemory` are the *player's* breadcrumb, and `updateActors` clears both on every frame
+an actor is not pursuing the player — which is precisely the state a bystander being
+shouted at is in. Writing the alert there left the entire feature inert except for
+cancelling an idle timer, and in the one case the write survived (an actor already chasing
+the player) it overwrote that actor's memory of where the player went. See §9.
+
+### 5C.4 Commander orders
+
+A commander stops being a stationary damage buff. He broadcasts a `SquadOrder` —
+`hold` / `assault` / `escort` — to allies within `COMMANDER_ORDER_RANGE`, and the order is
+what an ally does when it has nothing to fight, instead of wandering in a circle around
+wherever it spawned. He picks it from what is in front of him: a prop his side is taking
+apart means `assault`, otherwise he holds the ground he is on. Orders carry a timer rather
+than being cleared on his death, so a squad keeps its last orders for a few seconds after
+he falls.
+
+His death applies `MORALE_COMMANDER_LOSS` to everyone who could see it and cancels any
+rally he had just handed out.
+
+**He keeps `speed: 0`, and that is a deviation from the prompt's sketch rather than an
+oversight.** A commander who can move can walk off an objective site, and §7 says a
+campaign objective must stay completable; he is also the fixed point a rally is measured
+from. What made him furniture was the aura being his only output, not his feet. An
+`escort` order from the caravan outranks a `hold` from a commander who happens to be
+standing near the road.
+
+### 5C.5 Flanking
+
+With two or more allies on one target, the secondary attackers claim offset approach
+angles instead of queueing on the same stop-distance ring. `engagementRank` gives a stable
+rank by actor id — so it does not churn frame to frame, and a flanker dying promotes
+everyone behind it — and `flankApproachAngle` maps rank to a slot.
+
+**Every slot is inside ±66°, and that bound is load-bearing.** The offset rotates the
+approach *direction*, so anything past a right angle gives a negative radial component:
+the attacker walks away, the distance grows, the blend stays pinned at full, and it never
+converges. The first draft of the ladder ran to ±135° and π; see §9.
+
+`flankBlend` folds the offset away over the last few metres. Without it the offset point
+rotates as fast as the attacker moves and the attacker orbits the target forever, which is
+what a naive implementation does.
+
+An event prop has no queue — nothing ranks itself against a barricade — so a prop attacker
+takes rank 0 and comes straight in.
+
+**This is the one Layer 4 mechanic the headless harness cannot measure.** Flanking is an
+approach path, and an approach path needs the steering, separation and collision
+`tests/aiHarness.ts` does not have. Its rules are tested as geometry in
+`tests/actorAi.test.ts` and checked by eye in the browser; no number in §9 is about them.
+
+### 5C.6 The caravan as an agent
+
+The caravan stops being a moving prop:
+
+- **Escort.** Two guards walk with the cart on a permanent `escort` order.
+- **Panic.** Anything hostile within `CARAVAN_PANIC_RANGE` makes the driver whip the
+  horses — `CARAVAN_PANIC_SPEED_MULTIPLIER` on the existing road path. Panic is speed, not
+  a new route: the cart cannot leave the road network.
+- **Vulnerability.** A hostile that reaches an unguarded cart takes it. That is a
+  `caravanLost` for everyone, the player included: the cargo shrinks, the cooldown starts,
+  and the notice says who ate it. A killed guard is not replaced for
+  `CARAVAN_ESCORT_RESPAWN_DELAY`, or the replacement spawns inside the guard radius on the
+  same frame and the cart can never actually be lost — see §9.
+
+**Escorts are charged to `ambient`, deliberately.** It is the lowest-priority reserve, so
+the moment a materialized raid or a threat wave needs the slots the guards are the first
+thing given up (§5.1) — and a cart losing its escort because a settlement three hundred
+metres away is burning is a better failure than a raid arriving two beasts short. It also
+means the escort costs nothing at all when the player is nowhere near the road: the guards
+are despawned outside `CARAVAN_ESCORT_RANGE` or when the cart's region stops being
+simulated.
+
+### 5C.7 What Layer 4 does *not* persist
+Nothing here reaches the save. Morale timers, rout state, commander orders and the caravan
+escort are all per-actor or per-frame combat state, and actors are not persisted — they
+are respawned from chronicle and event state on load. `ACTIVE_RUN_SAVE_VERSION` and
+`REGION_DELTA_VERSION` are therefore **unchanged at 3 and 2**. Bumping them for state that
+is not written would be noise, and discarding everyone's run for it would be worse.
+
+### 5C.8 Copy
+
+`describeRout()`, `RALLY_NOTICE` and `describeCaravanPlundered()` live in
+`content/gameCopy.ts` with everything else. Rout and rally notices are rate-limited to one
+line per `MORALE_NOTICE_COOLDOWN` and only shown for what is within
+`MORALE_NOTICE_RANGE` — a rout the player cannot see is a number, not a moment.
+
+```
+Стая посыпалась и ломанулась в лес. Договориться не вышло.
+У кого-то сдали нервы: бежит и не оборачивается.
+Командир наорал — беглец вернулся в строй. Дисциплина, чтоб её.
+Корован обглодали без пользователя. Охрана лежит, груз в кустах, телега пустая.
+Корован увели без пользователя. Охрану положили, груз растащили — приходи в следующий раз пораньше.
+```
+
 ## 6. Tuning constants
 
 Spec constants, unchanged from the design pass:
@@ -611,6 +824,46 @@ settlement instead of reaching its garrison. `MATERIALIZE_BEAST_PRESSURE` sits b
 `BEAST_RAID_THRESHOLD` for the same reason `MATERIALIZE_RAID_MARGIN` sits below
 `CONTROL_FLIP_MARGIN`.
 
+Constants added by Layer 4:
+
+```
+THREAT_PROVOKED_BIAS=0.55       THREAT_LOCK_BONUS=0.8     THREAT_CROWD_FLOOR=0.35
+THREAT_STYLES.archer={wounded:0.5,crowd:0.4,player:0.7,backline:0.7,heavy:1.45}
+THREAT_STYLES.scout ={wounded:0.7,crowd:0.45,player:0.85,backline:0.8,heavy:1.2}
+THREAT_STYLES.wolf  ={wounded:0.72,crowd:-0.22,player:1,backline:0.95,heavy:1.15}
+THREAT_STYLES.boar  ={wounded:0.2,crowd:0.15,player:1,backline:1,heavy:1}
+THREAT_STYLES.{brute,champion,bear,troll}={wounded:0,crowd:0,player:1,backline:1,heavy:1}
+MORALE_WOUND=1.6                MORALE_LOSSES=0.7         MORALE_BREAK=0
+MORALE_COMMANDER_LOSS=0.35      MORALE_COMMANDER_RALLY=0.45
+ROLE_RESOLVE={commander:null,champion:null,captive:null,
+              brute:0.45,soldier:0,minion:-0.1,archer:-0.12,scout:-0.18}
+MORALE_GROUP_RADIUS=14          MORALE_CHECK_INTERVAL=0.35
+MORALE_ROUT_SECONDS=7           MORALE_RALLY_SECONDS=12
+MORALE_COMMANDER_SHOCK_SECONDS=10
+MORALE_RALLY_POINT_TOLERANCE=3  MORALE_LAST_STAND_SECONDS=2
+MORALE_NOTICE_RANGE=45          MORALE_NOTICE_COOLDOWN=9
+ALERT_SIGHTING_RADIUS=20        (ALERT_COOLDOWN=1.5 unchanged)
+ALERT_INVESTIGATE_SECONDS=12    ALERT_ARRIVAL_DISTANCE=3
+FLANK_OFFSETS=[0,1.15,-1.15,0.62,-0.62,0.95]              FLANK_BLEND_DISTANCE=7
+FLANK_MAX_ANGLE=1.2
+COMMANDER_ORDER_RANGE=18        COMMANDER_ORDER_DURATION=6
+COMMANDER_ORDER_TOLERANCE=3.5
+CARAVAN_ESCORT_COUNT=2          CARAVAN_ESCORT_RANGE=90
+CARAVAN_ESCORT_RESPAWN_DELAY=25
+CARAVAN_PANIC_RANGE=16          CARAVAN_PANIC_SECONDS=4
+CARAVAN_PANIC_SPEED_MULTIPLIER=1.7
+CARAVAN_GUARDED_RANGE=7         CARAVAN_PLUNDER_RANGE=3.4
+CARAVAN_PLUNDER_COOLDOWN=55
+```
+
+`MORALE_WOUND=1.6` is solved, not chosen: with the group intact and no commander either
+way, `1 − 1.6 × (1 − h)² ≤ 0` at `h ≈ 0.21`, which is the "own hp below ~25%" the spec
+asks for. `MORALE_LOSSES=0.7` then puts "half your health gone *and* your mates are dead"
+just over the line while leaving a healthy actor standing over corpses in the fight.
+
+`THREAT_CROWD_FLOOR` exists for `wolf`'s negative `crowd`: without a floor a large enough
+pack would drive the multiplier to zero and every wolf would fixate on one animal forever.
+
 ## 7. Edge cases
 
 - **Fog of war.** Chronicle events in undiscovered regions still happen; they are just
@@ -671,14 +924,26 @@ settlement instead of reaching its garrison. `MATERIALIZE_BEAST_PRESSURE` sits b
   rather than a way to fight the pack one at a time for free.
 - **A charge into scenery.** The boar cannot steer mid-charge, so a charge that stops
   making progress ends there and goes on cooldown instead of grinding along the wall.
-- **A wolf with no kin never breaks.** Morale is measured over a beast's own species, so a
-  lone wolf escorting a bear has a kin size of one and a share that is always `1`. That is
-  deliberate: the rule is about pack cohesion, not about being outnumbered. Ambient
-  prowlers carry no `packId` at all and are likewise never routed.
-- **Beast targeting is a step function, not a preference.** `updateActors` evaluates
-  player pursuit before `findNearestEnemy`, so inside `BEAST_SENSE_RANGE` every beast
-  attack goes to the player and outside it none do (§9). Left as-is on purpose: it is what
-  Layer 4's threat scoring is for, and it is better handed over measured than vague.
+- **A wolf with no kin never breaks *by cohesion*.** Cohesion is measured over a beast's
+  own species, so a lone wolf escorting a bear has a kin size of one and a share that is
+  always `1`. That is deliberate: the rule is about pack cohesion, not about being
+  outnumbered. Layer 4's individual morale is what breaks it instead (§5C.2), and §9
+  measures that happening in every fight of the composition that used to produce zero.
+  Ambient prowlers carry no `packId` at all and so answer only to the individual half.
+- **Beast targeting was a step function, not a preference.** Layer 3's `updateActors`
+  evaluated player pursuit before `findNearestEnemy`, so inside `BEAST_SENSE_RANGE` every
+  beast attack went to the player and outside it none did (§9). Layer 4's `selectThreat`
+  replaced it: the player is scored in the same pass as every NPC, and §9 measures the
+  garrison's share going from zero to real.
+- **A commander who breaks would strand the run.** A generated campaign objective can
+  require killing a specific commander, so `actorResolve('commander')` is `null` and he
+  cannot rout at all — enforced in the pure rule rather than by a check at the call site.
+  Everything else that is not a beast falls back on `home` and stays in the world, so no
+  actor an objective might need ever leaves the map because of a morale check.
+- **A caravan escort that eats a raid's slots.** Escorts are charged to `ambient`, the
+  lowest-priority reserve, so a materialized raid takes their slots rather than arriving
+  short (§5.1). Losing the guards may well cost the cart — that is the intended trade, not
+  a failure.
 
 ## 8. Acceptance criteria
 
@@ -719,6 +984,26 @@ settlement instead of reaching its garrison. `MATERIALIZE_BEAST_PRESSURE` sits b
 - [x] Beasts never change who holds a square, and 500 seeded campaigns remain completable.
 - [x] Beasts respect `MAX_ACTORS`: raid packs are charged to `chronicle`, prowlers to
       `ambient`, and both go through `claimActorSlot` like everything else.
+- [x] Targeting weighs distance, target health, role and how many allies are already on a
+      target, and the §9 Q2 step function at `BEAST_SENSE_RANGE` is gone: inside sense
+      range the split is a mix, and outside it the player is not a candidate at all.
+- [x] One morale rule covers packs and individuals. Cohesion breaks a pack that has lost
+      its own kind; individual morale breaks the lone wolf cohesion cannot, and anything
+      hurt, alone, or that has just watched its commander fall.
+- [x] Commanders and champions never rout, so an objective that requires killing one can
+      never be stranded; a broken non-beast falls back on its rally point and stays in the
+      world, where it can be run down or rallied.
+- [x] A commander broadcasts a squad objective to nearby allies and his death is a morale
+      event, rather than the aura being his only output.
+- [x] A sighting of any hostile — not just the player — carries to allies in earshot, and
+      an ally already fighting something does not drop it for hearsay.
+- [x] Secondary attackers claim offset approach angles instead of queueing on one ring,
+      and the offset folds away at contact so they converge rather than orbit.
+- [x] The caravan has an escort that fights for it, bolts when something comes out of the
+      treeline, and loses the cart when the escort loses. Escorts are charged to `ambient`
+      and yield their slots first.
+- [x] Layer 4 adds no persisted state, so no save or delta version changes.
+- [x] 500 seeded campaigns remain completable.
 - [x] `npm run build`, `npm run lint`, and `npm test` pass.
 
 ## 9. Effort
@@ -730,7 +1015,7 @@ assumption threaded through the engine was the tedious part. In Layer 3 the §5.
 was a day's mechanical work across twenty-one call sites, and reusing the humanoid pivot
 names for the quadrupeds saved the entire animation, death, gore and outline pipeline from
 needing a beast branch.
-Layer 4 ~3 days, Layer 5 ~1 day.
+Layer 5 ~1 day.
 
 ### Measured effect of Layer 3
 
@@ -843,3 +1128,155 @@ count, position and pack — only the matrix entry differing — a garrison beas
 to fight destroys the pack and resolves the raid, while one they ignore leaves the player
 as the only thing worth biting: **player damage 130,881 → 6,658, a 20× reduction**, and
 beast deaths **0 → 180**. Without it a raid is an unbounded siege on the player alone.
+
+### Measured effect of Layer 4
+
+**Layer 4: shipped.** Threat scoring and morale were the substance; the tedious part was
+that both live in `updateActors`, where the ordering of five branches *was* the behaviour.
+
+Same harness, same caveat, sharpened: `tests/aiHarness.ts` runs the game's real decision
+code but models movement and contact — no navmesh, collision, steering, separation,
+terrain, wind-up, poise or stagger. **Every number below describes what the decision logic
+does, not what a player experiences.** Both arms are shipped code: the Layer 3 arm calls
+`selectCombatTarget` and the cohesion-only rout, which are still exported for exactly this
+reason, and the Layer 4 arm calls `selectThreat` and `evaluateMorale`. 60 fights per arm.
+
+**Nothing here is about flanking.** Flanking is an approach path and the harness has no
+steering; §5C.5 says so at the mechanic and `tests/layer4Ai.test.ts` says so at the top.
+
+#### The step function is gone
+
+`bear+wolf+wolf` raiding a three-strong garrison, player standing in it, attacks by what
+they landed on:
+
+| Arm | On the player | On the garrison |
+| --- | --- | --- |
+| Layer 3 (`selectCombatTarget`, player first) | 358 | **0** |
+| Layer 4 (`selectThreat`) | 3,000 | **600** |
+
+Zero to six hundred. The Layer 3 column is kept as a live control rather than a memory: if
+it ever stops being exactly zero, the two arms are no longer measuring what they claim to.
+
+Beyond `BEAST_SENSE_RANGE` the player still takes **0** attacks in both arms, and that is
+*not* the step function surviving — it is `evaluatePlayerPursuit` saying the player cannot
+be seen. Sight and targeting are different rules and only the second one changed.
+
+#### What that does to a fight
+
+Same raid, player watching from six metres away instead of standing in it:
+
+| Metric | Layer 3 | Layer 4 |
+| --- | --- | --- |
+| Damage taken by the player | 73,286 | **6,284** |
+| Attacks on the garrison | 0 | 183 |
+| Beast deaths | 60 | **116** |
+
+**An 11.7× reduction in damage taken, and the raid now resolves.** The second number is
+the cause of the first: under Layer 3 the beasts could not be killed by the garrison
+because they never engaged it, so a player who stood aside watched an unbounded siege.
+This was predicted before measurement as "beasts will divide their attention", which is
+the same prediction §9 Q2 recorded as *wrong* for Layer 3 — it is right now only because
+the rule it was wrong about has been replaced.
+
+#### Morale
+
+`bear+wolf+boar` — the composition §9 named above, whose single wolf has kin size 1 and
+whose cohesion share is therefore permanently 1:
+
+| Arm | Routs | By role | Beast deaths | Defender deaths |
+| --- | --- | --- | --- | --- |
+| Cohesion only (Layer 3) | **0** | — | 117 | 180 |
+| Unified (Layer 4) | 240 | wolf 84, soldier 156 | 32 | 156 |
+
+The wolf breaks in every fight, all of it through the individual door and none through
+cohesion, and the boar and bear never break at all. Layer 3's 0 was the right answer for a
+cohesion rule and stays the control; §5C.2's second half is what was missing.
+
+Compositions with real kin still break by cohesion after the unification —
+`bear+wolf+wolf` records 166 cohesion routs alongside 208 individual ones — which is the
+assertion that would catch individual morale having quietly *replaced* Layer 3's rule
+rather than joining it.
+
+**Morale makes a fight decisive instead of mutually annihilating.** Two identical ranks of
+four soldiers, 12 m apart:
+
+| Arm | Survivors across 60 fights | Routs |
+| --- | --- | --- |
+| No morale | 2 (one man a side) | 0 |
+| Morale | **240** (one side walks away whole) | 242 |
+
+**Which** side wins is an artefact and is recorded as one. Fighters act in array order, so
+whoever is listed first lands the first blow of each frame, and morale converts that
+consistent half-frame edge into a rout. Swapping the listing order flips the winner
+completely — 240 elf deaths and 0 guard deaths becomes 0 and 240 — so the claim is
+decisiveness, not an advantage for anybody. `tests/layer4Ai.test.ts` asserts the swap.
+
+#### Role preference and finishing the wounded
+
+Three archers behind a brute that is standing in front of an enemy archer, attacks by the
+role that took them:
+
+| Arm | On the archer | On the brute | Ratio |
+| --- | --- | --- | --- |
+| Nearest-wins | 780 | 600 | 1.30 |
+| Threat scoring | 959 | 478 | **2.01** |
+
+And a healthy enemy beside a nearly-dead one at almost the same distance: both arms finish
+the same two enemies on near-identical attack volume (423 vs 425 swings), but defender
+deaths fall **60 → 5**. Killing the wounded one first removes an incoming attacker for the
+rest of the fight — a change in outcome with no change in effort.
+
+#### Two defects the measurements found
+
+Both were implemented exactly as designed, passed a reading, and were wrong.
+
+1. **`ROLE_RESOLVE` was a `Partial` read with `?? 0`.** `??` fires on `null`, so every
+   "never breaks" entry became "breaks like a soldier": commanders and champions routed in
+   **60 fights out of 60**, which would have stranded any objective that requires killing
+   one. The table is now exhaustive over every non-beast role, so the compiler refuses a
+   role with no answer, and `tests/actorAi.test.ts` asserts the `null` roles hold under
+   inputs that break everything else — with a positive control that those same inputs do
+   break everything else.
+2. **The rally-recovery branch was unreachable.** It lived in `updateRoutingActor`, which
+   the frame `routTimer` reaches zero does not run — so an actor that ran its clock out
+   never got its immunity and simply re-broke on the same frame, running forever. Visible
+   in the harness only as a fight that stopped resolving. Recovery now lives in
+   `updateActorMorale`, latched on `routReason`.
+
+#### Three more the review pass found, which the harness could not
+
+The harness drives `ActorAi` directly and never touches `GameEngine`, so none of these
+could show up as a number. All three were found by reading the diff against the engine.
+
+3. **Alert propagation was inert.** `announceSighting` wrote its payload into
+   `aggroMemory` and `lastKnownTargetPos` — both of which `updateActors` clears on every
+   frame an actor is not pursuing the player, which is exactly the state of the bystander
+   being shouted at. The whole §5C.3 mechanism reduced to cancelling an idle timer, and in
+   the one case the write survived — an actor already chasing the player — the alert
+   *overwrote* that actor's memory of where the player went, sending it to investigate an
+   unrelated wolf. Alerts now have their own `alertPos` / `alertTimer`.
+4. **Flanking ranks three and up walked away from the target.** The ladder ran to ±135°
+   and π, and the offset rotates the approach *direction*: `cos(135°) ≈ −0.71`, so the
+   radial component is negative. Distance grows, `flankBlend` stays pinned at 1, the rank
+   is stable, and the actor recedes forever. It surfaced through a related defect — a prop
+   attacker had no queue to rank against and fell through to the *player's* queue, so a
+   raider sent to knock down a barricade could be ranked against allies fighting the
+   player and walk away from the barricade — but the divergence was general. The ladder is
+   now bounded to ±66° and `tests/actorAi.test.ts` asserts every slot has a positive
+   closing component, which is the assertion that would have caught it.
+5. **A killed caravan escort was replaced in the same frame.** `updateCaravanEscort`
+   filtered the dead out, respawned, and *then* asked "is anyone guarding the cart?" — and
+   the replacement spawns 2.6 m from it, well inside the 7 m guard radius. The documented
+   "cart that is genuinely lost if the guards lose" was therefore unreachable through
+   combat. `CARAVAN_ESCORT_RESPAWN_DELAY` leaves a real gap.
+
+The harness needed two corrections of its own before any of this counted. Corpses were
+never aged out, so `groupShare` stayed permanently depressed and manufactured routs the
+game would not produce — it now expires bodies at `CORPSE_LIFETIME`, matching the engine.
+And a broken non-beast "ran home" from a rally point it was already standing on, which is
+the *exact* "rout as skip your turn" model that inverted this harness's first measurement
+back in Layer 3; both the engine and the harness now give ground to the nearest threat
+when the rally point is overrun.
+
+The check that the extension did not quietly change the old answers is that **Q1, Q2 and
+Q3 all still pass unchanged** with both Layer 4 arms off, which is why they default to off.

@@ -150,8 +150,16 @@ test('Q1: the rout rule now fires in shipped raids, and thins them when it does'
 test('Q2: beasts do not split their attention — the player is all-or-nothing', () => {
   // Prediction before measuring: beasts would spend themselves on the garrison and take
   // pressure off the player. Measured: the opposite, and it is not a tendency but a
-  // switch. `updateActors` evaluates player pursuit *before* `findNearestEnemy`, so a
-  // beast that can sense the player ignores every NPC in the square.
+  // switch. `updateActors` evaluated player pursuit *before* `findNearestEnemy`, so a
+  // beast that could sense the player ignored every NPC in the square.
+  //
+  // **This is now the historical record, not current behaviour.** Layer 4 replaced that
+  // ordering with `selectThreat`, which scores the player in the same pass as every NPC;
+  // `tests/layer4Ai.test.ts` measures the removal against this arm. The test is kept
+  // rather than deleted because a negative control is only worth anything if the "before"
+  // side is real code — and the harness's Layer 3 arm still calls the real Layer 3
+  // functions. If this ever stops being a clean step, the two arms of that comparison are
+  // no longer measuring what they claim to.
   const build = (): HarnessFighter[] => [
     ...pack(['bear', 'wolf', 'wolf'], 15),
     ...garrison(3),
