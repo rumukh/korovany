@@ -40,6 +40,7 @@ that Layers 4–5 build on.
 | Event placement | `pickEventPosition()` / `pickLocatedEventPosition()` | Player-ring placement, plus a site- or region-anchored variant for chronicle events. |
 | Threat waves | `updateThreat` / `spawnThreatWave` | Spawns hostiles in a 13 m ring around the player. |
 | Actor AI | `updateActors` | Sense range 15 m (18 m archers); NPC-vs-NPC hunt radius 6.5 m (15 m archers); no morale. |
+| Actor AI (decisions) | `ActorAi` (`world/ActorAi.ts`) | Target selection, pack morale and player-pursuit gating as pure functions, so a headless harness can exercise the code the game runs. Movement and collision stay in `GameEngine`. |
 | Hostility | `ALLEGIANCE_RELATIONS` (`types.ts`) | A 5×5 matrix over `Faction | 'beast' | 'civilian'`. Replaced `hostile(a, b) => a !== b`. |
 | Caravan | `updateCaravan` | Patrols the generated road network between two patrol anchors. |
 | Determinism | `RandomStream` + `deriveSeed` | Five gameplay streams: `combat`, `director`, `event`, `loot`, `chronicle`. |
@@ -667,6 +668,14 @@ settlement instead of reaching its garrison. `MATERIALIZE_BEAST_PRESSURE` sits b
   rather than a way to fight the pack one at a time for free.
 - **A charge into scenery.** The boar cannot steer mid-charge, so a charge that stops
   making progress ends there and goes on cooldown instead of grinding along the wall.
+- **The wolf rout rule is currently unreachable in shipped content.** Measured at zero
+  routs across 120 fights of the two compositions `planBeastPack` builds (§9). The rule is
+  correct and fires reliably in an all-wolf pack; it is the *content* that never presents
+  one, because every pack leads with a wrecker that outlives its escorts and cannot break.
+  Making it reachable is a balance decision, not a bug fix, so it is recorded here rather
+  than changed unilaterally: the candidates are letting a wolf measure its pack share over
+  wolves alone, relaxing `routThreshold` to fire at exactly half, or building packs that
+  are sometimes wolves-only.
 
 ## 8. Acceptance criteria
 
@@ -763,3 +772,47 @@ rather than to the raid existing, and it will fail if anyone adds a second chann
 
 What did hold: settlements burned and squares razed both drift *down* (9 → 8), because a
 beast raid the player wins is a settlement that survives.
+
+### Measured effect of the per-frame AI
+
+Layer 3 shipped with three claims about behaviour deliberately left unmeasured, because
+they live in `GameEngine`'s per-frame AI and neither the chronicle harness nor browser
+observation can reach them. `world/ActorAi.ts` now holds the decision half of that AI as
+pure functions — target selection, pack morale, player-pursuit gating — with an
+equivalence control in `tests/actorAi.test.ts` that re-implements the pre-extraction
+engine code and asserts agreement over ~14,000 comparisons, plus a negative control
+proving the comparison can detect a changed implementation. `tests/aiHarness.ts` drives
+those real functions over seeded fights; `tests/aiQuestions.test.ts` answers the three
+questions with 60 fights per arm.
+
+**The harness models movement and contact.** No navmesh, collision, steering, separation,
+terrain, wind-up, poise or stagger. Its numbers describe what the decision logic does, not
+what a player experiences. All three answers came out differently from the prediction
+written before the measurement.
+
+**Q1 — does the wolf rout rule change how encounters end?** It works, and **it never fires
+in either shipped raid composition.** Zero routs across 60 fights of `bear+wolf+wolf` and
+60 of `troll+wolf+wolf`. The cause is a collision of two local rules: a wrecker has
+135–165 hp against a wolf's 42, so it always outlives its escorts, and `routThreshold` is
+`0` for bears and trolls — by the time half the pack is down, the only survivor is the one
+role that cannot break. In an all-wolf pack the rule fires in **60 of 60** fights and
+matters: beast deaths 180 → 120, one wolf escaping per fight, and the garrison losing 60 →
+53 of its own because the fight ends sooner. But `planBeastPack` always leads with a
+wrecker, so **the shipped game never routs a wolf.** `tests/aiQuestions.test.ts` pins the
+zero, so if a composition change makes it fire, that test fails and this paragraph gets
+revisited rather than silently rotting.
+
+**Q2 — do beasts spend themselves on faction NPCs instead of the player?** No, and it is
+not a tendency but a switch. `updateActors` evaluates player pursuit *before*
+`findNearestEnemy`, so a beast that can sense the player ignores every NPC in the square.
+Standing in the raid, **100% of beast attacks land on the player and zero on the
+garrison**; beyond `BEAST_SENSE_RANGE`, **zero land on the player and 100% on the
+garrison**. There is no middle. The prediction that beasts would divide their attention
+was simply wrong.
+
+**Q3 — what does beasts-being-hostile-to-all-three do?** It is what lets a beast raid end.
+With the two arms identical in count, position and pack — only the matrix entry differing
+— a garrison beasts are willing to fight destroys the pack and resolves the raid, while
+one they ignore leaves the player as the only thing worth biting: **player damage 130,881
+→ 6,658, a 20× reduction**, and beast deaths 0 → 180. Hostile-to-all-three is not flavour
+in the table; without it a raid is an unbounded siege on the player alone.

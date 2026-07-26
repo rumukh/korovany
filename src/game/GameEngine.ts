@@ -149,8 +149,7 @@ import {
   type PendingMaterialization,
 } from './world/Materialization'
 import {
-  AMBIENT_BEAST_LIMIT,
-  AMBIENT_BEAST_PRESSURE,
+  AMBIENT_BEAST_LIMIT,  AMBIENT_BEAST_PRESSURE,
   BEAST_LEASH_RANGE,
   BEAST_PROFILES,
   BEAST_ROUT_SECONDS,
@@ -166,6 +165,11 @@ import {
   planBeastPack,
   shouldBeastRout,
 } from './world/Fauna'
+import {
+  beastPackShare,
+  selectCombatTarget,
+  type AiPoint,
+} from './world/ActorAi'
 import {
   REGION_DELTA_VERSION,
   type RegionDelta,
@@ -1159,6 +1163,11 @@ function seededRandom(seed: number): () => number {
  */
 function hostile(a: Allegiance, b: Allegiance): boolean {
   return areAllegiancesHostile(a, b)
+}
+
+/** Where `world/ActorAi.ts` reads an actor's position from. `Vector3` is an `AiPoint`. */
+function actorPosition(actor: Actor): AiPoint {
+  return actor.mesh.position
 }
 
 function formatPart(part: BodyPart): string {
@@ -3957,20 +3966,7 @@ export class GameEngine {
    * pack is dead, which is why chasing a single wolf off is a viable tactic.
    */
   private beastPackShare(actor: Actor): number {
-    if (!actor.packId) return 1
-    let alive = 0
-    const radiusSquared = WOLF_PACK_RADIUS * WOLF_PACK_RADIUS
-    for (const other of this.actors) {
-      if (other.packId !== actor.packId || !other.alive) continue
-      if (
-        other !== actor &&
-        other.mesh.position.distanceToSquared(actor.mesh.position) > radiusSquared
-      ) {
-        continue
-      }
-      alive += 1
-    }
-    return alive / Math.max(1, actor.packSize)
+    return beastPackShare(actor, this.actors, WOLF_PACK_RADIUS, actorPosition)
   }
 
   /** A routed beast runs from whatever broke it, and animates while it does. */
@@ -10576,36 +10572,10 @@ export class GameEngine {
   }
 
   private findNearestEnemy(actor: Actor, range: number): Actor | null {
-    const locked = actor.targetId
-      ? this.actors.find((other) => other.id === actor.targetId)
-      : undefined
-    if (
-      locked?.alive &&
-      locked.id !== actor.ignoredTargetId &&
-      hostile(actor.allegiance, locked.allegiance) &&
-      actor.mesh.position.distanceTo(locked.mesh.position) < range * 1.35
-    ) {
-      return locked
-    }
-
-    actor.targetId = null
-    let nearest: Actor | null = null
-    let bestDistance = range
-    for (const other of this.actors) {
-      if (
-        !other.alive ||
-        other === actor ||
-        other.id === actor.ignoredTargetId ||
-        !hostile(actor.allegiance, other.allegiance)
-      ) {
-        continue
-      }
-      const distance = actor.mesh.position.distanceTo(other.mesh.position)
-      if (distance < bestDistance) {
-        nearest = other
-        bestDistance = distance
-      }
-    }
+    // §Layer 4 prep — the decision itself lives in the pure `world/ActorAi.ts`, so a
+    // headless harness can exercise the same code the game runs. The `targetId` write
+    // stays here, because mutating the actor is the engine's job, not the decision's.
+    const nearest = selectCombatTarget(actor, this.actors, range, actorPosition)
     actor.targetId = nearest?.id ?? null
     return nearest
   }
