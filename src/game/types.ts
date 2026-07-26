@@ -99,6 +99,12 @@ export type ActorRole =
   | 'brute'
   | 'champion'
   | 'captive'
+  /**
+   * Layer 5 — a villager. Named for what it does rather than for its allegiance, so it
+   * does not collide with `Allegiance`'s `civilian`: the role is how it behaves in a
+   * fight (badly), the allegiance is whose side it is on (nobody's).
+   */
+  | 'peasant'
   | BeastRole
 
 export function isBeastRole(role: ActorRole): role is BeastRole {

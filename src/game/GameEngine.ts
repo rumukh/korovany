@@ -81,11 +81,13 @@ import {
   describeBeastProwler,
   describeCaravanPlundered,
   describeChronicleEvent,
+  describeCivilianDeath,
   describeEventHandback,
   describeLocatedEvent,
   describeLocatedEventOutcome,
   describeLocatedEventStart,
   describeRout,
+  describeVillageLife,
   formatRegionGridLabel,
   formatRussianCount,
   generatedSiteLabel,
@@ -174,16 +176,61 @@ import {
   engagementRank,
   evaluateMorale,
   evaluatePlayerPursuit,
+  findCivilianAlarm,
   flankApproachAngle,
   flankBlend,
+  isPacifistRole,
   localGroupShare,
   playerEngagementRank,
   selectThreat,
   type AiAlert,
   type AiPoint,
+  type CivilianAlarm,
   type MoraleBreak,
   type PlayerThreat,
 } from './world/ActorAi'
+import {
+  AMBIENT_CIVILIAN_LIMIT,
+  BIRD_CLIMB_SPEED,
+  BIRD_CRUISE_SPEED,
+  BIRD_FLIGHT_SECONDS,
+  BIRD_SPRINT_STARTLE_BONUS,
+  BIRD_STARTLE_RADIUS,
+  CAMPFIRE_GATHER_RADIUS,
+  CAMPFIRE_LIMIT,
+  CAMPFIRE_NIGHT_THRESHOLD,
+  CAMPFIRE_SEARCH_INTERVAL,
+  CAMPFIRE_SMOKE_INTERVAL,
+  CIVILIAN_ALARM_RADIUS,
+  CIVILIAN_HOME_RADIUS,
+  CIVILIAN_INTERVAL,
+  CIVILIAN_MENACE_SECONDS,
+  CIVILIAN_PANIC_RECOVERY,
+  CIVILIAN_PANIC_SECONDS,
+  CIVILIAN_PANIC_SPEED_MULTIPLIER,
+  CIVILIAN_SPAWN_RADIUS,
+  CROW_CORPSE_DELAY,
+  CROW_CORPSE_RADIUS,
+  DEER_BOLT_SECONDS,
+  DEER_BOLT_SPEED,
+  DEER_GRAZE_SPEED,
+  DEER_SPRINT_STARTLE_BONUS,
+  DEER_STARTLE_RADIUS,
+  WILDLIFE_BIRD_LIMIT,
+  WILDLIFE_DEER_LIMIT,
+  WILDLIFE_DESPAWN_RADIUS,
+  WILDLIFE_INTERVAL,
+  WILDLIFE_SPAWN_MAX_RADIUS,
+  WILDLIFE_SPAWN_MIN_RADIUS,
+  civilianRoutine,
+  fleeDirection,
+  planCivilianCount,
+  planWildlife,
+  shouldStartle,
+  weatherHunch,
+  weatherPaceMultiplier,
+  type WildlifeKind,
+} from './world/AmbientLife'
 import {
   REGION_DELTA_VERSION,
   type RegionDelta,
@@ -199,6 +246,7 @@ import {
   WEATHER_KINDS,
   advanceWeatherMix,
   computeNightFactor,
+  computeStormFactor,
   computeSunAngle,
   createChronicleEnvironment,
   createWeatherMix,
@@ -395,11 +443,56 @@ interface Actor {
    */
   alertPos: THREE.Vector3 | null
   alertTimer: number
+  /**
+   * Layer 5 — where the thing a bystander is running from was standing.
+   *
+   * Separate from `alertPos` for the same reason `alertPos` is separate from
+   * `lastKnownTargetPos`: an alert is a place worth *walking to*, and this is a place
+   * worth putting your back to. Sharing one field would have the villager investigate
+   * the wolf.
+   */
+  alarmPos: THREE.Vector3 | null
   /** Boar charge state machine: wind-up, then a committed straight line. */
   chargeWindup: number
   chargeTimer: number
   chargeCooldown: number
   chargeDirection: THREE.Vector3
+}
+
+/**
+ * Layer 5 — a deer or a bird. **Deliberately not an `Actor`.**
+ *
+ * The design list called this "non-combat wildlife", and a thing that cannot be fought
+ * does not need hit points, an allegiance, a health bar, a morale check, a threat score
+ * or — the expensive one — a slot out of `MAX_ACTORS`. It needs a mesh and a reason to
+ * run away. Keeping it off the actor list is what lets Layer 5 add visible life to every
+ * square without ever taking a slot a raid might have wanted.
+ */
+interface WildlifeProp {
+  kind: WildlifeKind
+  mesh: THREE.Group
+  velocity: THREE.Vector3
+  /** Seconds of bolting or flying left. Zero means grazing or perched. */
+  panicTimer: number
+  wanderTimer: number
+  /** Deterministic per-prop offset for gait and flap, seeded at spawn. */
+  phase: number
+  regionId: string | null
+  /** A crow that came for this body, so it leaves when the body does. */
+  perchActorId: string | null
+  /** Set when the prop has taken itself out of play — a bird that flew off. */
+  strayed: boolean
+  home: THREE.Vector3
+}
+
+/** Layer 5 — a lit fire and the light it throws. A prop: no actor, no budget. */
+interface Campfire {
+  group: THREE.Group
+  light: THREE.PointLight
+  flame: THREE.Mesh<THREE.ConeGeometry, THREE.MeshStandardMaterial>
+  position: THREE.Vector3
+  siteId: string
+  smokeTimer: number
 }
 
 interface ActorSpawnOptions {
@@ -1271,6 +1364,22 @@ function hostile(a: Allegiance, b: Allegiance): boolean {
   return areAllegiancesHostile(a, b)
 }
 
+/** §5D — how far the shared torch light reaches, and where on the bearer it sits. */
+const TORCH_LIGHT_RANGE = 26
+const TORCH_LIGHT_OFFSET = new THREE.Vector3(0, 1.7, 0)
+
+/**
+ * §5D — who is out at night with a light in their hand.
+ *
+ * The rank and file of the three sides, and nobody else: a commander has both hands on
+ * his authority, a brute or a champion would look absurd holding a candle, a beast has
+ * no hands, and a villager is standing at the fire rather than walking away from it.
+ */
+function carriesTorch(role: ActorRole, allegiance: Allegiance): boolean {
+  if (!isFactionAllegiance(allegiance)) return false
+  return role === 'soldier' || role === 'scout' || role === 'minion'
+}
+
 /** Where `world/ActorAi.ts` reads an actor's position from. `Vector3` is an `AiPoint`. */
 function actorPosition(actor: Actor): AiPoint {
   return actor.mesh.position
@@ -1505,6 +1614,32 @@ export class GameEngine {
   /** Layer 3 — throttles the ambient prowler check and remembers where one was seen. */
   private ambientBeastCooldown = AMBIENT_BEAST_INTERVAL
   private readonly announcedProwlerRegionIds = new Set<string>()
+  /** Layer 5 — throttles the civilian headcount and remembers where one was announced. */
+  private ambientCivilianCooldown = CIVILIAN_INTERVAL
+  private readonly announcedVillageRegionIds = new Set<string>()
+  /** Layer 5 — throttles the wildlife headcount. Props, not actors: no budget involved. */
+  private ambientWildlifeCooldown = WILDLIFE_INTERVAL
+  private readonly wildlife: WildlifeProp[] = []
+  private readonly campfires: Campfire[] = []
+  /** Layer 5 — throttles the campfire site search. See `updateCampfires`. */
+  private campfireCooldown = 0
+  /**
+   * Layer 5 — how long the player stays frightening after swinging at something. This is
+   * the only channel through which the *player* alarms a village, so walking through one
+   * is safe and drawing steel in the square is not.
+   */
+  private civilianMenaceUntil = 0
+  /**
+   * Layer 5 — this frame's storm response, read once per frame from the simulation's
+   * weather mix and never from `weatherEnabled`. Cached because the actor loop would
+   * otherwise recompute it twenty-five times a frame for one number.
+   */
+  private ambientStormPace = 1
+  private ambientStormHunch = 0
+  /** Layer 5 — the simulation's night, which is not the renderer's. See `updateDayNight`. */
+  private ambientNightFactor = 0
+  /** Layer 5 — the single shared torch light. See `updateTorches`. */
+  private torchLight: THREE.PointLight | null = null
   /** Routed beasts that left the field this frame; removed after the actor loop. */
   private readonly fledBeastIds: string[] = []
   private eventCooldown = FIRST_EVENT_AT
@@ -2033,6 +2168,7 @@ export class GameEngine {
     }
     cancelAnimationFrame(this.frameHandle)
     attempt(() => this.cancelActiveEvents())
+    attempt(() => this.clearAmbientLife())
     attempt(() => this.clearLootRuntime())
     attempt(() => this.resizeObserver.disconnect())
     window.removeEventListener('keydown', this.boundKeyDown)
@@ -2264,10 +2400,23 @@ export class GameEngine {
     this.resumeAudio()
     this.stamina -= ability.staminaCost
     this.abilityCooldown = ability.cooldownMax
+    this.menacePlayer()
     if (ability.id === 'bow') this.fireArrow()
     else this.cleave()
     this.achievements.recordAbilityUse(ability.id)
     this.emitView(true)
+  }
+
+  /**
+   * §5D — the player has just drawn steel, and stays frightening for a few seconds.
+   *
+   * This is the only channel through which the *player* alarms a village, and it is
+   * deliberately an action rather than proximity: villagers who scattered from anybody
+   * walking past would make a village unapproachable, and walking in and *then* swinging
+   * is the whole joke.
+   */
+  private menacePlayer(): void {
+    this.civilianMenaceUntil = this.elapsed + CIVILIAN_MENACE_SECONDS
   }
 
   setShield(active: boolean): void {
@@ -2300,17 +2449,30 @@ export class GameEngine {
     this.attackCooldown = 0.52
     this.attackAnimation = 1
     this.activePlayerAttackKind = 'melee'
+    this.menacePlayer()
 
+    // §5D — hostiles first, always. A villager is only a legal target when there is
+    // nothing to fight, so walking into a village mid-raid cannot make the swing meant
+    // for the wolf land on the man running away from it. Being *able* to whack a peasant
+    // is the joke; having the auto-target do it for you is a bug.
     let target: Actor | null = null
     let bestDistance = 3.6
+    let bystander: Actor | null = null
+    let bestBystanderDistance = 3.6
     for (const actor of this.actors) {
-      if (!actor.alive || !actor.hostileToPlayer) continue
-      const offset = actor.mesh.position.clone().sub(this.player.position)
-      const distance = offset.length()
-      if (distance >= bestDistance) continue
-      target = actor
-      bestDistance = distance
+      if (!actor.alive) continue
+      const distance = actor.mesh.position.distanceTo(this.player.position)
+      if (actor.hostileToPlayer) {
+        if (distance >= bestDistance) continue
+        target = actor
+        bestDistance = distance
+      } else if (actor.allegiance === 'civilian') {
+        if (distance >= bestBystanderDistance) continue
+        bystander = actor
+        bestBystanderDistance = distance
+      }
     }
+    target = target ?? bystander
 
     if (!target) {
       this.playSound('swing')
@@ -2589,10 +2751,20 @@ export class GameEngine {
 
   private update(delta: number): void {
     this.elapsed += delta
+    // Layer 5 — the world's night and the world's weather, read once per frame from
+    // `WorldEnvironment` rather than from the renderer. `this.nightFactor` is pinned to
+    // zero whenever the day/night cycle is switched off for performance and
+    // `this.weatherEnabled` gates the precipitation, so neither may be read by anything
+    // that decides what the world *does*.
+    this.ambientNightFactor = computeNightFactor(this.elapsed)
+    const storm = computeStormFactor(this.weatherWeights)
+    this.ambientStormPace = weatherPaceMultiplier(storm)
+    this.ambientStormHunch = weatherHunch(storm)
     this.updateLoot(delta)
     this.updateThreat()
     this.updateChronicle(delta)
     this.updateAmbientBeasts(delta)
+    this.updateAmbientCivilians(delta)
     this.cleanupDeadActors()
     this.shakeClock += delta
     this.trauma = Math.max(0, this.trauma - SHAKE_DECAY * delta)
@@ -2616,6 +2788,9 @@ export class GameEngine {
     this.updateCaravan(delta)
     this.updateProjectiles(delta)
     this.updateActors(delta)
+    this.updateTorches()
+    this.updateCampfires(delta)
+    this.updateWildlife(delta)
     this.updateInteractableOutlines()
     this.updateParticles(delta)
     this.updateComicHitFx(delta)
@@ -3637,6 +3812,9 @@ export class GameEngine {
         this.updateCommander(actor, delta)
       }
       this.updateActorMorale(actor, delta)
+      // §5D — where a villager is heading next: another spot in the village by day, the
+      // fire by night. Run before the movement block so the routine is what `home` says.
+      if (actor.allegiance === 'civilian') this.updateCivilianRoutine(actor)
       if (isBeastRole(actor.role) && this.updateBeastCharge(actor, delta)) continue
       if (actor.action) {
         this.updateActorAction(actor, delta)
@@ -4049,12 +4227,22 @@ export class GameEngine {
         const movementSpeed = followingFormation
           ? getSquadFollowSpeed(actor.speed, playerDistance)
           : actor.speed
+        // §5D — a storm slows the *walking*, never the fighting. Trudging through sleet
+        // is what weather looks like; a 22% combat penalty in the rain would be a balance
+        // change nobody asked for, and it comes from `WorldEnvironment`'s mix rather than
+        // from `weatherEnabled`, so switching precipitation off cannot change it.
+        const inCombat =
+          targetsPlayer ||
+          targetActor !== null ||
+          targetEventProp !== null ||
+          retaliationTarget !== null
         desiredSpeed =
           movementSpeed *
           (pursuesPlayer || retaliationTarget ? 1.25 : 1) *
           (enraged ? RAGE_SPEED_MULTIPLIER : 1) *
           (this.hasCommanderAura(actor) ? COMMANDER_SPEED_MULTIPLIER : 1) *
-          (wandering ? actor.wanderPace : 1)
+          (wandering ? actor.wanderPace : 1) *
+          (inCombat || isBeastRole(actor.role) ? 1 : this.ambientStormPace)
         direction.normalize()
       }
 
@@ -4171,6 +4359,27 @@ export class GameEngine {
     // the thing that turns them round.
     const commander = this.nearbyCommander(actor)
     if (actor.routTimer > 0) {
+      // §5D — panic tracks. A villager already running re-measures what frightened it on
+      // every check, which does two things the frozen version got wrong: it keeps running
+      // while the wolf is still there instead of stopping every four seconds to be
+      // caught, and it runs from where the wolf *is* rather than from where it was when
+      // the panic started — a stale `alarmPos` curves the villager back into it.
+      if (actor.routReason === 'panic') {
+        const chasing = this.findCivilianAlarmFor(actor)
+        if (chasing) {
+          actor.routTimer = CIVILIAN_PANIC_SECONDS
+          if (actor.alarmPos) {
+            actor.alarmPos.set(chasing.source.x, chasing.source.y, chasing.source.z)
+          } else {
+            actor.alarmPos = new THREE.Vector3(
+              chasing.source.x,
+              chasing.source.y,
+              chasing.source.z,
+            )
+          }
+        }
+        return
+      }
       if (commander) this.rallyActor(actor)
       return
     }
@@ -4179,36 +4388,76 @@ export class GameEngine {
     // branch entirely — putting it there left it unreachable, and an actor that had run
     // its clock out simply re-broke on the same frame and ran forever.
     if (actor.routReason !== 'none') {
+      const panicked = actor.routReason === 'panic'
       actor.routReason = 'none'
-      actor.rallyTimer = MORALE_RALLY_SECONDS
+      actor.alarmPos = null
+      actor.rallyTimer = panicked ? CIVILIAN_PANIC_RECOVERY : MORALE_RALLY_SECONDS
       return
     }
 
+    const alarm = this.findCivilianAlarmFor(actor)
     const broke = evaluateMorale(actor.role, {
       hpFraction: actor.maxHp > 0 ? actor.hp / actor.maxHp : 1,
       groupShare: localGroupShare(actor, this.actors, MORALE_GROUP_RADIUS, actorPosition),
       packShare: this.beastPackShare(actor),
       commanderNearby: commander !== null,
       commanderLost: actor.commanderLostTimer > 0,
+      alarmDistance: alarm ? alarm.distance : Number.POSITIVE_INFINITY,
     })
     if (broke === 'none') return
 
-    actor.routTimer = isBeastRole(actor.role) ? BEAST_ROUT_SECONDS : MORALE_ROUT_SECONDS
+    // §5D — panic is shorter and shallower than a rout on purpose. A villager keeps its
+    // back to whatever frightened it rather than falling back on a rally point it does
+    // not have, and its nerve returns in a second and a half so that a wolf still
+    // standing over it starts the reflex again instead of leaving it standing there for
+    // the full twelve seconds of rally immunity.
+    if (broke === 'panic') {
+      actor.routTimer = CIVILIAN_PANIC_SECONDS
+      if (alarm) {
+        if (actor.alarmPos) {
+          actor.alarmPos.set(alarm.source.x, alarm.source.y, alarm.source.z)
+        } else {
+          actor.alarmPos = new THREE.Vector3(
+            alarm.source.x,
+            alarm.source.y,
+            alarm.source.z,
+          )
+        }
+      }
+    } else {
+      actor.routTimer = isBeastRole(actor.role) ? BEAST_ROUT_SECONDS : MORALE_ROUT_SECONDS
+    }
     actor.routReason = broke
     actor.action = null
     actor.targetId = null
     actor.playerAggro = false
     actor.aggroMemory = 0
     actor.lastKnownTargetPos = null
-    this.announceMoraleEvent(actor, describeRout(broke === 'cohesion'))
+    this.announceMoraleEvent(actor, describeRout(broke))
+  }
+
+  /**
+   * §5D — what this actor would run from, or `null`. Non-bystanders never have one, and
+   * the player only counts for a few seconds after they swing at something.
+   */
+  private findCivilianAlarmFor(actor: Actor): CivilianAlarm | null {
+    if (!isPacifistRole(actor.role)) return null
+    return findCivilianAlarm(
+      actor,
+      this.actors,
+      CIVILIAN_ALARM_RADIUS,
+      actorPosition,
+      this.elapsed < this.civilianMenaceUntil
+        ? { position: this.player.position, menacing: true }
+        : null,
+    )
   }
 
   /**
    * A rout the player cannot see is a number; one they can see is a moment. Rate-limited
    * because a squad breaking together would otherwise fill the feed with the same line.
    */
-  private announceMoraleEvent(actor: Actor, message: string): void {
-    if (this.moraleNoticeCooldown > 0) return
+  private announceMoraleEvent(actor: Actor, message: string): void {    if (this.moraleNoticeCooldown > 0) return
     if (actor.mesh.position.distanceTo(this.player.position) > MORALE_NOTICE_RANGE) return
     this.moraleNoticeCooldown = MORALE_NOTICE_COOLDOWN
     this.callbacks.onNotice(message, 'info')
@@ -4264,7 +4513,16 @@ export class GameEngine {
    */
   private updateRoutingActor(actor: Actor, delta: number): void {
     const away = new THREE.Vector3()
-    if (isBeastRole(actor.role)) {
+    if (actor.routReason === 'panic') {
+      // §5D — a villager has no rally point to fall back on, so it simply puts the thing
+      // that frightened it behind itself. `alarmPos` rather than `nearestThreatPosition`
+      // because the frightening thing is very often not hostile to the villager at all:
+      // two soldiers fighting each other are `neutral` to it by the matrix and would not
+      // be found by a hostility search.
+      away
+        .copy(actor.mesh.position)
+        .sub(actor.alarmPos ?? this.nearestThreatPosition(actor))
+    } else if (isBeastRole(actor.role)) {
       away.copy(actor.mesh.position).sub(this.nearestThreatPosition(actor))
     } else {
       away.copy(actor.home).sub(actor.mesh.position)
@@ -4281,7 +4539,13 @@ export class GameEngine {
     away.y = 0
     if (away.lengthSq() < 0.0001) away.set(Math.sin(actor.phase), 0, Math.cos(actor.phase))
     away.normalize()
-    const travelled = this.moveActorWithSteering(actor, away, actor.speed * 1.15 * delta)
+    // §5D — a villager runs harder than a soldier giving ground. Measured, not chosen:
+    // at the ordinary 1.15× a villager cannot outpace a wolf and scattering saved zero
+    // lives in 60 fights, which is dead content. See `CIVILIAN_PANIC_SPEED_MULTIPLIER`.
+    const flightSpeed =
+      actor.speed *
+      (actor.routReason === 'panic' ? CIVILIAN_PANIC_SPEED_MULTIPLIER : 1.15)
+    const travelled = this.moveActorWithSteering(actor, away, flightSpeed * delta)
     actor.velocity.set(away.x * actor.speed, 0, away.z * actor.speed)
     const yaw = Math.atan2(away.x, away.z)
     actor.mesh.rotation.y = dampAngle(actor.mesh.rotation.y, yaw, 9, delta)
@@ -4979,7 +5243,11 @@ export class GameEngine {
     const dealt = Math.max(8, this.damage - armPenalty) * CLEAVE_DAMAGE_MULTIPLIER
     const feedbackEvents: CombatFeedbackEvent[] = []
     for (const actor of this.actors) {
-      if (!actor.alive || !actor.hostileToPlayer) continue
+      // §5D — the arc takes whoever is standing in it, villagers included. Unlike the
+      // melee auto-target this is aimed by hand, so there is nothing to protect the
+      // player from.
+      if (!actor.alive) continue
+      if (!actor.hostileToPlayer && actor.allegiance !== 'civilian') continue
       const offset = actor.mesh.position.clone().sub(this.player.position)
       offset.y = 0
       const distance = offset.length()
@@ -5647,7 +5915,10 @@ export class GameEngine {
     for (const actor of this.actors) {
       const canHit =
         projectile.owner === 'player'
-          ? actor.hostileToPlayer
+          ? // §5D — a player arrow can hit a villager. Nothing auto-aims it, so this is
+            // a decision the player made with the mouse rather than one the game made
+            // for them, which is the same line the melee auto-target draws.
+            actor.hostileToPlayer || actor.allegiance === 'civilian'
           : hostile(projectile.allegiance, actor.allegiance)
       if (!actor.alive || !canHit) continue
       const center = actor.mesh.position.clone().add(new THREE.Vector3(0, 1.45, 0))
@@ -5942,6 +6213,787 @@ export class GameEngine {
       return position
     }
     return null
+  }
+
+  // -------------------------------------------------------------------------
+  // Layer 5 — ambient life
+  // -------------------------------------------------------------------------
+
+  /**
+   * §5D — the villagers.
+   *
+   * They are the only part of Layer 5 that costs an actor slot, and they are charged to
+   * `ambient` like the prowlers, so a materialized raid takes their slots before it
+   * arrives short. That is the intended trade: a village that empties because something
+   * is burning three hundred metres away is a better failure than a raid two beasts down.
+   *
+   * How many there are comes from the chronicle's `settlementIntegrity`, which is the
+   * cheapest way to make a number the player has never seen legible on the ground — a
+   * square that got raided last night is visibly quieter than one that did not.
+   */
+  private updateAmbientCivilians(delta: number): void {
+    if (this.ended) return
+    this.ambientCivilianCooldown -= delta
+    if (this.ambientCivilianCooldown > 0) return
+    this.ambientCivilianCooldown = CIVILIAN_INTERVAL
+
+    const settlement = this.generatedWorld.findNearbySite(
+      this.player.position.x,
+      this.player.position.z,
+      CIVILIAN_SPAWN_RADIUS,
+      ['settlement', 'shop', 'recovery'],
+    )
+    const regionId = settlement ? String(settlement.regionId) : null
+    const chronicle = regionId ? this.chronicleRegions.get(regionId) : undefined
+    const wanted =
+      settlement && regionId && chronicle && this.isRegionSimulated(regionId)
+        ? planCivilianCount(chronicle.settlementIntegrity)
+        : 0
+
+    const civilians = this.actors.filter(
+      (actor) => actor.allegiance === 'civilian' && actor.alive,
+    )
+    // Anyone whose village is behind them — a different square, or too far to be theirs.
+    for (const civilian of civilians) {
+      if (
+        wanted > 0 &&
+        settlement &&
+        civilian.generatedRegionId === regionId &&
+        civilian.mesh.position.distanceTo(this.player.position) <=
+          CIVILIAN_SPAWN_RADIUS + CIVILIAN_HOME_RADIUS
+      ) {
+        continue
+      }
+      this.removeActorById(civilian.id)
+    }
+
+    const living = this.actors.filter(
+      (actor) => actor.allegiance === 'civilian' && actor.alive,
+    )
+    if (!settlement || !regionId || living.length >= wanted) return
+
+    const missing = Math.min(AMBIENT_CIVILIAN_LIMIT, wanted) - living.length
+    if (missing <= 0) return
+    // The reservation is a question, not a lease: `reserveActorSlotsUpTo` re-derives the
+    // ledger from the live actor list, and so does the `claimActorSlot` inside every
+    // `spawnActor` below, so a spot the ground refuses costs nothing.
+    const granted = this.reserveActorSlotsUpTo('ambient', missing)
+    if (granted <= 0) return
+
+    const anchor = new THREE.Vector3(
+      settlement.position.x,
+      settlement.position.y,
+      settlement.position.z,
+    )
+    let spawned = 0
+    for (let index = 0; index < granted; index += 1) {
+      const spot = this.pickVillagePosition(anchor)
+      if (!spot) continue
+      const civilian = this.spawnActor(
+        'civilian',
+        'peasant',
+        spot.x,
+        spot.z,
+        this.actorSequence++,
+        {
+          budget: 'ambient',
+          objectiveEligible: false,
+          squadEligible: false,
+          hostileToPlayer: false,
+          generatedRegionId: regionId,
+        },
+      )
+      civilian.home.copy(civilian.mesh.position)
+      civilian.wanderTarget.copy(civilian.mesh.position)
+      spawned += 1
+    }
+    if (spawned > 0 && !this.announcedVillageRegionIds.has(regionId)) {
+      this.announcedVillageRegionIds.add(regionId)
+      this.callbacks.onNotice(
+        describeVillageLife(this.regionGridLabel(regionId), living.length + spawned),
+        'info',
+      )
+    }
+  }
+
+  /** Somewhere in the village that is not on top of a house or another villager. */
+  private pickVillagePosition(anchor: THREE.Vector3): THREE.Vector3 | null {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const angle = this.eventRng() * TWO_PI
+      const radius = 4 + this.eventRng() * (CIVILIAN_HOME_RADIUS - 4)
+      const position = new THREE.Vector3(
+        anchor.x + Math.sin(angle) * radius,
+        0,
+        anchor.z + Math.cos(angle) * radius,
+      )
+      this.clampWorldPosition(position, 3)
+      if (!this.isWalkablePosition(position.x, position.z, 0.6)) continue
+      position.y = this.groundHeightAt(position.x, position.z)
+      return position
+    }
+    return null
+  }
+
+  /**
+   * §5D — where a villager is heading next.
+   *
+   * By day it is another spot in the village, which is what makes them read as walking
+   * *between the houses* rather than pacing in a circle around one: `chooseWanderTarget`
+   * already scatters an actor within a few metres of its `home`, so moving `home` is all
+   * that is needed. At night it is the fire.
+   *
+   * The routine is decided by `computeNightFactor(this.elapsed)` — the simulation's
+   * night — and never by the renderer's `this.nightFactor`, which is pinned to zero
+   * whenever the day/night cycle is switched off for performance. Turning the cycle off
+   * must not empty the campfires.
+   */
+  private updateCivilianRoutine(actor: Actor): void {
+    if (actor.routTimer > 0) return
+    const routine = civilianRoutine(this.ambientNightFactor)
+    const fire = routine === 'gather' ? this.nearestCampfire(actor.mesh.position) : null
+    if (fire) {
+      const angle = actor.phase * 5.3
+      const post = new THREE.Vector3(
+        fire.position.x + Math.sin(angle) * CAMPFIRE_GATHER_RADIUS,
+        0,
+        fire.position.z + Math.cos(angle) * CAMPFIRE_GATHER_RADIUS,
+      )
+      if (this.isWalkablePosition(post.x, post.z, 0.6)) {
+        post.y = this.groundHeightAt(post.x, post.z)
+        actor.home.copy(post)
+        return
+      }
+    }
+    if (actor.mesh.position.distanceToSquared(actor.home) > 9) return
+    // Same determinism requirement as `updateCampfires`: `pickVillagePosition` draws from
+    // the shared seeded `event` stream, so it must not be reachable once per frame. A
+    // villager standing on its `home` would otherwise re-roll a destination every frame
+    // and make the stream's position depend on frame rate. `wanderTimer` is the natural
+    // gate — it is exactly the clock that already says "time to go somewhere else", and
+    // this runs before the movement block, so `chooseWanderTarget` picks its target
+    // around the new `home` on the same frame.
+    if (actor.wanderTimer > 0) return
+    const anchor = this.generatedWorld.findNearbySite(
+      actor.mesh.position.x,
+      actor.mesh.position.z,
+      CIVILIAN_HOME_RADIUS * 2,
+      ['settlement', 'shop', 'recovery'],
+    )
+    if (!anchor) return
+    const next = this.pickVillagePosition(
+      new THREE.Vector3(anchor.position.x, anchor.position.y, anchor.position.z),
+    )
+    if (next) actor.home.copy(next)
+  }
+
+  private nearestCampfire(position: THREE.Vector3): Campfire | null {
+    let best: Campfire | null = null
+    let bestDistance = Number.POSITIVE_INFINITY
+    for (const fire of this.campfires) {
+      const distance = fire.position.distanceToSquared(position)
+      if (distance >= bestDistance) continue
+      bestDistance = distance
+      best = fire
+    }
+    return best
+  }
+
+  /**
+   * §5D — campfires. Props with a light, not actors, so they cost nothing but a draw.
+   *
+   * Lit from `computeNightFactor(this.elapsed)`, which is the world's night rather than
+   * the one being drawn; the *brightness* below follows the rendered `this.nightFactor`,
+   * because that one genuinely is a display value. That split is the whole point of
+   * `WorldEnvironment` and it is what keeps the villagers gathering at the fire whether
+   * or not anybody switched the day/night cycle on.
+   */
+  private updateCampfires(delta: number): void {
+    const lit = civilianRoutine(this.ambientNightFactor) === 'gather'
+    if (!lit || this.ended) {
+      for (const fire of this.campfires) this.removeAndDisposeObject(fire.group)
+      this.campfires.length = 0
+      return
+    }
+
+    for (let index = this.campfires.length - 1; index >= 0; index -= 1) {
+      const fire = this.campfires[index]
+      if (fire.position.distanceTo(this.player.position) <= CIVILIAN_SPAWN_RADIUS + 24) {
+        continue
+      }
+      this.removeAndDisposeObject(fire.group)
+      this.campfires.splice(index, 1)
+    }
+
+    // **The search is throttled, and that is a determinism requirement rather than a
+    // performance one.** `pickVillagePosition` draws from the shared seeded `event`
+    // stream — the same stream that picks world events — and returns `null` when the
+    // ground refuses every attempt. Retrying that every frame would make the number of
+    // draws a function of *frame rate*, so two players on one seed doing the same things
+    // at 30 and 144 fps would desynchronise and get different world events. Every other
+    // ambient spawner is throttled for the same reason; this one was not, and it is the
+    // only consumer of that stream in the engine whose rate is not already bounded by a
+    // timer or an event.
+    this.campfireCooldown -= delta
+    if (this.campfireCooldown <= 0) {
+      this.campfireCooldown = CAMPFIRE_SEARCH_INTERVAL
+      if (this.campfires.length < CAMPFIRE_LIMIT) {
+        const site = this.generatedWorld.findNearbySite(
+          this.player.position.x,
+          this.player.position.z,
+          CIVILIAN_SPAWN_RADIUS,
+          // Anywhere people gather, which includes a faction camp — the villagers are
+          // only at the settlements, but a camp with nobody's fire lit at midnight reads
+          // as abandoned rather than as a camp.
+          ['settlement', 'shop', 'recovery', 'landmark', 'faction-start'],
+        )
+        if (
+          site &&
+          this.isRegionSimulated(String(site.regionId)) &&
+          !this.isChronicleSiteRazed(site.id) &&
+          !this.campfires.some((fire) => fire.siteId === site.id)
+        ) {
+          const spot = this.pickVillagePosition(
+            new THREE.Vector3(site.position.x, site.position.y, site.position.z),
+          )
+          if (spot) this.campfires.push(this.createCampfire(site.id, spot))
+        }
+      }
+    }
+
+    for (const fire of this.campfires) {
+      // Flicker is unseeded per-frame jitter and is deliberately the only such thing in
+      // Layer 5: nothing in the simulation reads a flame's brightness.
+      const flicker = 0.82 + Math.sin(this.elapsed * 9.3 + fire.position.x) * 0.12
+      fire.light.intensity = 2.2 * flicker * (0.35 + this.nightFactor * 0.65)
+      fire.flame.scale.setScalar(0.9 + flicker * 0.16)
+      fire.flame.rotation.y += delta * 2.4
+      fire.smokeTimer -= delta
+      if (fire.smokeTimer <= 0) {
+        fire.smokeTimer = CAMPFIRE_SMOKE_INTERVAL
+        this.spawnCampfireSmoke(fire.position)
+      }
+    }
+  }
+
+  private createCampfire(siteId: string, position: THREE.Vector3): Campfire {
+    const group = new THREE.Group()
+    const stoneMaterial = this.comicMaterials.createToonMaterial({
+      color: mix(this.palette.borderStrong, this.palette.bg, 0.3),
+      surface: 'dark',
+    })
+    for (let index = 0; index < 6; index += 1) {
+      const angle = (index / 6) * TWO_PI
+      const stone = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.3), stoneMaterial)
+      stone.position.set(Math.sin(angle) * 0.72, 0.11, Math.cos(angle) * 0.72)
+      stone.rotation.y = angle
+      stone.castShadow = true
+      group.add(stone)
+    }
+    const logMaterial = this.comicMaterials.createToonMaterial({
+      color: mix(this.palette.warning, this.palette.bg, 0.62),
+      surface: 'cloth',
+    })
+    for (const tilt of [0.6, -0.6]) {
+      const log = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 1.25), logMaterial)
+      log.position.y = 0.22
+      log.rotation.set(0.28, tilt, 0)
+      log.castShadow = true
+      group.add(log)
+    }
+    const flame = new THREE.Mesh(
+      new THREE.ConeGeometry(0.4, 1.05, 6),
+      new THREE.MeshStandardMaterial({
+        color: this.palette.warning,
+        emissive: this.palette.warning,
+        emissiveIntensity: 2.1,
+        transparent: true,
+        opacity: 0.9,
+      }),
+    )
+    flame.position.y = 0.72
+    group.add(flame)
+    const light = new THREE.PointLight(this.palette.warning, 2.2, 14, 2)
+    light.position.y = 1.1
+    group.add(light)
+    group.position.copy(position)
+    this.scene.add(group)
+    return {
+      group,
+      light,
+      flame,
+      position: position.clone(),
+      siteId,
+      smokeTimer: CAMPFIRE_SMOKE_INTERVAL,
+    }
+  }
+
+  private spawnCampfireSmoke(position: THREE.Vector3): void {
+    const mesh = new THREE.Mesh(
+      new THREE.DodecahedronGeometry(0.2 + this.eventRng() * 0.12, 0),
+      new THREE.MeshBasicMaterial({
+        color: mix(this.palette.borderStrong, this.palette.bg, 0.5),
+        transparent: true,
+        opacity: 0.3,
+        depthWrite: false,
+      }),
+    )
+    mesh.position.copy(position).add(new THREE.Vector3(0, 1.3, 0))
+    this.scene.add(mesh)
+    this.particles.push({
+      mesh,
+      velocity: new THREE.Vector3(
+        (this.eventRng() - 0.5) * 0.25,
+        0.85 + this.eventRng() * 0.35,
+        (this.eventRng() - 0.5) * 0.25,
+      ),
+      life: 1.6 + this.eventRng() * 0.6,
+      eventId: 'campfire',
+      mode: 'smoke',
+    })
+  }
+
+  /**
+   * §5D — deer and birds. **Props, not actors.**
+   *
+   * This is the part of Layer 5 that pays for itself twice: it costs no slot out of
+   * `MAX_ACTORS`, so it can never crowd out a raid, and it needs none of the actor
+   * pipeline — no health bar, no morale, no threat score, no navmesh. What it needs is a
+   * mesh and a reason to run, and "non-combat wildlife" is exactly the brief that makes
+   * that legal.
+   */
+  private updateWildlife(delta: number): void {
+    for (let index = this.wildlife.length - 1; index >= 0; index -= 1) {
+      const prop = this.wildlife[index]
+      const perch = prop.perchActorId
+        ? this.actors.find((actor) => actor.id === prop.perchActorId)
+        : undefined
+      const strayed =
+        prop.strayed ||
+        prop.mesh.position.distanceTo(this.player.position) > WILDLIFE_DESPAWN_RADIUS ||
+        !this.isRegionSimulated(prop.regionId) ||
+        (prop.perchActorId !== null && (!perch || perch.alive))
+      if (strayed || this.ended) {
+        this.removeAndDisposeObject(prop.mesh)
+        this.wildlife.splice(index, 1)
+        continue
+      }
+      this.updateWildlifeProp(prop, delta)
+    }
+    if (this.ended) return
+
+    this.ambientWildlifeCooldown -= delta
+    if (this.ambientWildlifeCooldown > 0) return
+    this.ambientWildlifeCooldown = WILDLIFE_INTERVAL
+
+    // A body draws crows before anything else does. It reads as the aftermath of a fight
+    // rather than as wildlife, which is why it gets first refusal on the bird budget.
+    const corpse = this.actors.find(
+      (actor) =>
+        !actor.alive &&
+        actor.deathAt !== null &&
+        this.elapsed - actor.deathAt >= CROW_CORPSE_DELAY &&
+        !this.wildlife.some((prop) => prop.perchActorId === actor.id) &&
+        actor.mesh.position.distanceTo(this.player.position) < WILDLIFE_SPAWN_MAX_RADIUS,
+    )
+    if (corpse && this.countWildlife('bird') < WILDLIFE_BIRD_LIMIT) {
+      const spot = corpse.mesh.position
+        .clone()
+        .add(
+          new THREE.Vector3(
+            (this.eventRng() - 0.5) * CROW_CORPSE_RADIUS * 2,
+            0,
+            (this.eventRng() - 0.5) * CROW_CORPSE_RADIUS * 2,
+          ),
+        )
+      if (this.isWalkablePosition(spot.x, spot.z, 0.4)) {
+        spot.y = this.groundHeightAt(spot.x, spot.z)
+        // The crow's region comes from where the crow *is*, not from the body it came
+        // for. `Actor.generatedRegionId` is `null` for whole classes of actor — the
+        // starting squad, companions, `defendHome` attackers — and the per-frame despawn
+        // tests `isRegionSimulated(prop.regionId)`, which is false for `null`. Inheriting
+        // it built and destroyed a bird every four seconds over any such corpse while
+        // suppressing the ordinary wildlife spawn.
+        this.spawnWildlife('bird', spot, this.generatedRegionIdAt(spot.x, spot.z), corpse.id)
+        return
+      }
+    }
+
+    const biome = this.zoneAtPosition(this.player.position.x, this.player.position.z)
+    const kind = planWildlife(
+      this.generatedRngStreams.event,
+      biome === 'forest' || biome === 'neutral',
+    )
+    const limit = kind === 'deer' ? WILDLIFE_DEER_LIMIT : WILDLIFE_BIRD_LIMIT
+    if (this.countWildlife(kind) >= limit) return
+    const spot = this.pickWildlifePosition()
+    if (!spot) return
+    this.spawnWildlife(kind, spot, this.generatedRegionIdAt(spot.x, spot.z), null)
+  }
+
+  private countWildlife(kind: WildlifeKind): number {
+    let count = 0
+    for (const prop of this.wildlife) if (prop.kind === kind) count += 1
+    return count
+  }
+
+  private pickWildlifePosition(): THREE.Vector3 | null {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const angle = this.eventRng() * TWO_PI
+      const radius =
+        WILDLIFE_SPAWN_MIN_RADIUS +
+        this.eventRng() * (WILDLIFE_SPAWN_MAX_RADIUS - WILDLIFE_SPAWN_MIN_RADIUS)
+      const position = new THREE.Vector3(
+        this.player.position.x + Math.sin(angle) * radius,
+        0,
+        this.player.position.z + Math.cos(angle) * radius,
+      )
+      this.clampWorldPosition(position, 3)
+      if (!this.isWalkablePosition(position.x, position.z, 0.8)) continue
+      const regionId = this.generatedRegionIdAt(position.x, position.z)
+      if (!this.isRegionSimulated(regionId)) continue
+      position.y = this.groundHeightAt(position.x, position.z)
+      return position
+    }
+    return null
+  }
+
+  private spawnWildlife(
+    kind: WildlifeKind,
+    position: THREE.Vector3,
+    regionId: string | null,
+    perchActorId: string | null,
+  ): void {
+    const mesh = kind === 'deer' ? this.createDeer() : this.createBird()
+    mesh.position.copy(position)
+    mesh.rotation.y = this.eventRng() * TWO_PI
+    this.scene.add(mesh)
+    this.wildlife.push({
+      kind,
+      mesh,
+      velocity: new THREE.Vector3(),
+      panicTimer: 0,
+      wanderTimer: 1 + this.eventRng() * 3,
+      phase: this.eventRng() * TWO_PI,
+      regionId,
+      perchActorId,
+      strayed: false,
+      home: position.clone(),
+    })
+  }
+
+  /**
+   * One prop's frame. Grazing or perched until something comes too close, then a bolt in
+   * a straight line away from it — the same `fleeDirection` a panicking villager uses, so
+   * "run away" has one implementation in this layer rather than three.
+   */
+  private updateWildlifeProp(prop: WildlifeProp, delta: number): void {
+    const startle = this.nearestWildlifeThreat(prop)
+    const radius = prop.kind === 'deer' ? DEER_STARTLE_RADIUS : BIRD_STARTLE_RADIUS
+    const bonus =
+      prop.kind === 'deer' ? DEER_SPRINT_STARTLE_BONUS : BIRD_SPRINT_STARTLE_BONUS
+    if (
+      startle &&
+      prop.panicTimer <= 0 &&
+      shouldStartle(startle.distance, radius, bonus, this.isSprinting)
+    ) {
+      prop.panicTimer = prop.kind === 'deer' ? DEER_BOLT_SECONDS : BIRD_FLIGHT_SECONDS
+      const away = fleeDirection(
+        prop.mesh.position.x,
+        prop.mesh.position.z,
+        startle.position.x,
+        startle.position.z,
+        prop.phase,
+      )
+      prop.velocity.set(
+        away.x * (prop.kind === 'deer' ? DEER_BOLT_SPEED : BIRD_CRUISE_SPEED),
+        prop.kind === 'deer' ? 0 : BIRD_CLIMB_SPEED,
+        away.z * (prop.kind === 'deer' ? DEER_BOLT_SPEED : BIRD_CRUISE_SPEED),
+      )
+      // A bird that took off has nothing to come back to; it flies out and is collected.
+      if (prop.kind === 'bird') prop.perchActorId = null
+    }
+
+    if (prop.panicTimer > 0) {
+      prop.panicTimer = Math.max(0, prop.panicTimer - delta)
+      prop.mesh.position.addScaledVector(prop.velocity, delta)
+      if (prop.kind === 'deer') {
+        this.clampWorldPosition(prop.mesh.position, 2)
+        prop.mesh.position.y = this.groundHeightAt(
+          prop.mesh.position.x,
+          prop.mesh.position.z,
+        )
+      }
+      if (prop.velocity.lengthSq() > 0.001) {
+        prop.mesh.rotation.y = Math.atan2(prop.velocity.x, prop.velocity.z)
+      }
+      this.animateWildlife(prop, true)
+      // A bird that has finished climbing is ~19 m up and 27 m out, which is nowhere near
+      // `WILDLIFE_DESPAWN_RADIUS`. Letting it fall through to the landed branch below
+      // would hard-assign its `y` to ground height and teleport it straight down in one
+      // frame, in plain sight. It is gone instead — which is what "flies off" means.
+      if (prop.kind === 'bird' && prop.panicTimer <= 0) prop.strayed = true
+      return
+    }
+
+    if (prop.kind === 'bird') {
+      // Landed: hop about, and do it on the spot rather than wandering off a body.
+      prop.mesh.position.y =
+        this.groundHeightAt(prop.mesh.position.x, prop.mesh.position.z) +
+        Math.max(0, Math.sin(this.elapsed * 6 + prop.phase)) * 0.16
+      this.animateWildlife(prop, false)
+      return
+    }
+
+    prop.wanderTimer -= delta
+    if (prop.wanderTimer <= 0) {
+      prop.wanderTimer = 2.5 + this.eventRng() * 4
+      const angle = this.eventRng() * TWO_PI
+      prop.velocity.set(
+        Math.sin(angle) * DEER_GRAZE_SPEED,
+        0,
+        Math.cos(angle) * DEER_GRAZE_SPEED,
+      )
+    }
+    const next = prop.mesh.position.clone().addScaledVector(prop.velocity, delta)
+    if (
+      next.distanceToSquared(prop.home) < 18 * 18 &&
+      this.isWalkablePosition(next.x, next.z, 0.8)
+    ) {
+      prop.mesh.position.copy(next)
+      prop.mesh.position.y = this.groundHeightAt(next.x, next.z)
+      if (prop.velocity.lengthSq() > 0.001) {
+        prop.mesh.rotation.y = Math.atan2(prop.velocity.x, prop.velocity.z)
+      }
+    } else {
+      prop.wanderTimer = 0
+    }
+    this.animateWildlife(prop, false)
+  }
+
+  /** Closest thing worth running from: the player, or anything on the actor list. */
+  private nearestWildlifeThreat(prop: WildlifeProp): {
+    position: THREE.Vector3
+    distance: number
+  } {
+    let position = this.player.position
+    let best = prop.mesh.position.distanceTo(this.player.position)
+    for (const actor of this.actors) {
+      if (!actor.alive) continue
+      const distance = prop.mesh.position.distanceTo(actor.mesh.position)
+      if (distance >= best) continue
+      best = distance
+      position = actor.mesh.position
+    }
+    return { position, distance: best }
+  }
+
+  private animateWildlife(prop: WildlifeProp, panicking: boolean): void {
+    if (prop.kind === 'bird') {
+      const wings = prop.mesh.getObjectByName('wings')
+      if (wings) {
+        // Wing flap is per-frame visual jitter with no simulation reader, so the run
+        // clock is fine here — nothing replays a wingbeat.
+        wings.rotation.z = panicking
+          ? Math.sin(this.elapsed * 26 + prop.phase) * 0.95
+          : Math.sin(this.elapsed * 3 + prop.phase) * 0.12
+      }
+      return
+    }
+    const legs = prop.mesh.getObjectByName('legs')
+    if (legs) {
+      const cadence = panicking ? 12 : 2.4
+      legs.rotation.x =
+        Math.sin(this.elapsed * cadence + prop.phase) * (panicking ? 0.6 : 0.16)
+    }
+    const body = prop.mesh.getObjectByName('deer-body')
+    if (body) {
+      const cadence = panicking ? 12 : 2.4
+      body.position.y =
+        0.9 +
+        Math.abs(Math.sin(this.elapsed * cadence + prop.phase)) * (panicking ? 0.1 : 0.02)
+    }
+  }
+
+  /** A deer: the beast primitives, longer in the leg and with antlers instead of tusks. */
+  private createDeer(): THREE.Group {
+    const group = new THREE.Group()
+    const coat = mix(this.palette.warning, this.palette.text, 0.42)
+    const hide = this.comicMaterials.createToonMaterial({ color: coat, surface: 'cloth' })
+    const dark = this.comicMaterials.createToonMaterial({
+      color: mix(coat, this.palette.bg, 0.5),
+      surface: 'dark',
+    })
+    const body = new THREE.Group()
+    body.name = 'deer-body'
+    body.position.y = 0.9
+    group.add(body)
+
+    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.6, 1.5), hide)
+    body.add(torso)
+    const neck = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.72, 0.32), hide)
+    neck.position.set(0, 0.44, 0.66)
+    neck.rotation.x = -0.32
+    body.add(neck)
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.52), hide)
+    head.position.set(0, 0.82, 0.95)
+    body.add(head)
+    const muzzle = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.32, 5), dark)
+    muzzle.position.set(0, 0.76, 1.24)
+    muzzle.rotation.x = Math.PI / 2
+    body.add(muzzle)
+    for (const side of [-1, 1]) {
+      const antler = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.62, 4), dark)
+      antler.position.set(side * 0.13, 1.16, 0.86)
+      antler.rotation.set(-0.35, 0, side * 0.5)
+      body.add(antler)
+      const ear = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.24, 4), dark)
+      ear.position.set(side * 0.19, 0.94, 0.86)
+      ear.rotation.z = side * 0.6
+      body.add(ear)
+    }
+    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.26, 4), dark)
+    tail.position.set(0, 0.3, -0.78)
+    tail.rotation.x = -2.2
+    body.add(tail)
+
+    const legs = new THREE.Group()
+    legs.name = 'legs'
+    legs.position.y = 0.9
+    group.add(legs)
+    for (const [x, z] of [
+      [-0.2, 0.54],
+      [0.2, 0.54],
+      [-0.2, -0.54],
+      [0.2, -0.54],
+    ] as const) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.9, 0.16), dark)
+      leg.position.set(x, -0.45, z)
+      legs.add(leg)
+    }
+
+    group.traverse((object) => {
+      if (object instanceof THREE.Mesh) {
+        object.castShadow = true
+        object.receiveShadow = true
+      }
+    })
+    return group
+  }
+
+  /** A bird: a body, a beak and one wing bar that flaps. Cheap on purpose. */
+  private createBird(): THREE.Group {
+    const group = new THREE.Group()
+    const feather = this.comicMaterials.createToonMaterial({
+      color: mix(this.palette.text, this.palette.bg, 0.24),
+      surface: 'dark',
+    })
+    const beakMaterial = this.comicMaterials.createToonMaterial({
+      color: this.palette.warning,
+      surface: 'skin',
+    })
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.34), feather)
+    body.position.y = 0.18
+    group.add(body)
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.16), feather)
+    head.position.set(0, 0.32, 0.16)
+    group.add(head)
+    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 4), beakMaterial)
+    beak.position.set(0, 0.3, 0.29)
+    beak.rotation.x = Math.PI / 2
+    group.add(beak)
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 0.26), feather)
+    tail.position.set(0, 0.19, -0.28)
+    group.add(tail)
+    const wings = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.04, 0.2), feather)
+    wings.name = 'wings'
+    wings.position.y = 0.24
+    group.add(wings)
+    group.traverse((object) => {
+      if (object instanceof THREE.Mesh) object.castShadow = true
+    })
+    return group
+  }
+
+  private clearAmbientLife(): void {
+    for (const prop of this.wildlife) this.removeAndDisposeObject(prop.mesh)
+    this.wildlife.length = 0
+    for (const fire of this.campfires) this.removeAndDisposeObject(fire.group)
+    this.campfires.length = 0
+    if (this.torchLight) {
+      this.torchLight.visible = false
+      this.torchLight.intensity = 0
+    }
+  }
+
+  /**
+   * §5D — torches after dark.
+   *
+   * A patrol that walks past at night carrying a light is the cheapest ambient beat in
+   * the layer: it is a child mesh on an actor that already exists, so it costs no slot,
+   * no draw call worth counting and no update. The **light** is the expensive part, so
+   * there is exactly one of them and it follows the nearest torch-bearer; a point light
+   * per soldier would put twenty of them in the scene and is the one thing this layer is
+   * not allowed to do.
+   *
+   * Lit from `computeNightFactor(this.elapsed)` — the world's night, not the renderer's —
+   * for the same reason the campfires are, so switching the day/night cycle off does not
+   * put out every torch in the world.
+   */
+  private updateTorches(): void {
+    const lit = this.ambientNightFactor >= CAMPFIRE_NIGHT_THRESHOLD && !this.ended
+    let nearest: Actor | null = null
+    let bestDistance = Number.POSITIVE_INFINITY
+    for (const actor of this.actors) {
+      const wants = lit && actor.alive && carriesTorch(actor.role, actor.allegiance)
+      const torch = actor.mesh.getObjectByName('torch')
+      if (wants && !torch) this.attachTorch(actor)
+      else if (!wants && torch) this.removeAndDisposeObject(torch)
+      if (!wants) continue
+      const distance = actor.mesh.position.distanceToSquared(this.player.position)
+      if (distance >= bestDistance) continue
+      bestDistance = distance
+      nearest = actor
+    }
+
+    if (!this.torchLight) return
+    if (!nearest || bestDistance > TORCH_LIGHT_RANGE * TORCH_LIGHT_RANGE) {
+      this.torchLight.visible = false
+      return
+    }
+    this.torchLight.visible = true
+    this.torchLight.position.copy(nearest.mesh.position).add(TORCH_LIGHT_OFFSET)
+    // Unseeded per-frame flicker, like the campfire's: nothing reads a torch's brightness.
+    this.torchLight.intensity =
+      2.4 * (0.85 + Math.sin(this.elapsed * 11.7 + nearest.phase) * 0.15)
+  }
+
+  private attachTorch(actor: Actor): void {
+    const hand = actor.mesh.getObjectByName('weapon') ?? actor.mesh
+    const torch = new THREE.Group()
+    torch.name = 'torch'
+    const shaft = new THREE.Mesh(
+      new THREE.BoxGeometry(0.07, 0.62, 0.07),
+      this.comicMaterials.createToonMaterial({
+        color: mix(this.palette.warning, this.palette.bg, 0.68),
+        surface: 'cloth',
+      }),
+    )
+    shaft.position.y = 0.31
+    torch.add(shaft)
+    const flame = new THREE.Mesh(
+      new THREE.ConeGeometry(0.13, 0.34, 5),
+      new THREE.MeshStandardMaterial({
+        color: this.palette.warning,
+        emissive: this.palette.warning,
+        emissiveIntensity: 2.4,
+        transparent: true,
+        opacity: 0.92,
+      }),
+    )
+    flame.position.y = 0.78
+    torch.add(flame)
+    torch.position.set(0.12, 0.1, 0.1)
+    hand.add(torch)
   }
 
   private updateChronicle(delta: number): void {    if (this.ended) return
@@ -8123,6 +9175,11 @@ export class GameEngine {
       if (
         sourceActor?.alive &&
         sourceActor !== target &&
+        // §5D — a bystander does not swing back. `isPacifistRole` is the same gate
+        // `selectThreat` uses, so "who starts a fight" has one answer rather than two
+        // that can drift: without it a villager bitten by a wolf turns round and
+        // charges it, which is the opposite of the behaviour this layer is for.
+        !isPacifistRole(target.role) &&
         hostile(target.allegiance, sourceActor.allegiance)
       ) {
         target.targetId = sourceActor.id
@@ -8450,6 +9507,18 @@ export class GameEngine {
 
     for (const event of this.activeEvents) {
       event.onKill?.(actor, { killerAllegiance, directPlayerKill })
+    }
+    // §5D — a villager going down is worth a line whoever did it, and worth nothing
+    // else: no gold, no loot, no kill on the counter, and `recordKill` is never reached
+    // so it cannot be tallied against one of the three sides. The line is the reward.
+    if (actor.allegiance === 'civilian') {
+      if (directPlayerKill) {
+        this.callbacks.onNotice(describeCivilianDeath(true), 'warning')
+        this.emitView(true)
+      } else {
+        this.announceMoraleEvent(actor, describeCivilianDeath(false))
+      }
+      return
     }
     if (!directPlayerKill) return
 
@@ -9615,6 +10684,11 @@ export class GameEngine {
       this.player.position.z,
     )
     this.scene.add(this.sun, this.sun.target)
+    // §5D — one light for every torch in the world, which is the whole reason torches
+    // are affordable. It follows the nearest bearer; see `updateTorches`.
+    this.torchLight = new THREE.PointLight(this.palette.warning, 0, TORCH_LIGHT_RANGE, 2)
+    this.torchLight.visible = false
+    this.scene.add(this.torchLight)
   }
 
   private createDecalTexture(kind: DecalKind): THREE.CanvasTexture {
@@ -11073,6 +12147,22 @@ export class GameEngine {
       const weapon = mesh.getObjectByName('weapon')
       if (weapon) weapon.visible = false
     }
+    // §5D — a villager is smaller, unarmed and wears nobody's colours. Reusing
+    // `createCharacter` with a recoloured torso is the whole art budget for the role: the
+    // silhouette that matters is "not carrying a sword", and the muted `civilian` ring
+    // under it already says whose side it is on.
+    if (role === 'peasant') {
+      mesh.scale.setScalar(0.9)
+      const weapon = mesh.getObjectByName('weapon')
+      if (weapon) weapon.visible = false
+      const torso = mesh.getObjectByName('torso')
+      if (torso instanceof THREE.Mesh && torso.material instanceof THREE.MeshToonMaterial) {
+        torso.material = this.comicMaterials.createToonMaterial({
+          color: mix(this.palette.muted, this.palette.bg, 0.28),
+          surface: 'cloth',
+        })
+      }
+    }
     this.applyActorVisualVariation(mesh, allegiance, role, index)
     const outlineBinding = this.registerOutline(mesh, 'enemy')
     mesh.position.set(x, this.groundHeightAt(x, z), z)
@@ -11101,7 +12191,12 @@ export class GameEngine {
               ? 45
               : role === 'scout'
                 ? 55
-                : 70)
+                : // §5D — a villager dies to two hits and is meant to. It is not a
+                  // difficulty knob: a peasant with a soldier's health bar would turn
+                  // every raid into a chore and make hitting one feel like a fight.
+                  role === 'peasant'
+                  ? 26
+                  : 70)
     const hp = Math.round(
       baseHp *
         this.enemyHealthMultiplier(allegiance) *
@@ -11119,7 +12214,12 @@ export class GameEngine {
               ? 2.6
               : role === 'commander'
                 ? 0
-                : 3.7)
+                : // Slower than a soldier at a walk, faster than one in a panic — the
+                  // 1.15× every routing actor gets makes a bolting villager outrun a
+                  // strolling one, which is the read.
+                  role === 'peasant'
+                  ? 3.1
+                  : 3.7)
     const actor: Actor = {
       id: options.generatedSpawnId
         ? `generated:${options.generatedSpawnId}`
@@ -11201,6 +12301,7 @@ export class GameEngine {
       order: null,
       alertPos: null,
       alertTimer: 0,
+      alarmPos: null,
       chargeWindup: 0,
       chargeTimer: 0,
       chargeCooldown: 0,
@@ -12334,7 +13435,12 @@ export class GameEngine {
         forwardLean * actor.motionBlend -
         pose.anticipation * (heavy ? 0.11 : 0.16) +
         pose.attack * 0.12 +
-        pose.stagger * 0.2
+        pose.stagger * 0.2 +
+        // §5D — shoulders up against the weather. Cosmetic only, but it is driven by the
+        // simulation's storm factor so it reads the same whether or not precipitation is
+        // being drawn. Beasts are excluded: the pivot bends a biped's spine, and bending
+        // a quadruped's back at the shoulders makes it look broken rather than cold.
+        (isBeastRole(actor.role) ? 0 : this.ambientStormHunch)
       torsoPivot.rotation.y =
         -actor.stride * (heavy ? 0.08 : 0.12) +
         pose.attack * 0.16 -

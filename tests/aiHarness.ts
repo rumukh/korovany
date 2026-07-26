@@ -48,8 +48,15 @@
  *
  * So: when you model a behaviour here, check that the actor's **position actually
  * changes** in the direction the behaviour claims, and prove the arm against something
- * known before you trust it. `nearestThreat` and the two flee branches in `runFight` are
- * the load-bearing part of this file; they are not incidental plumbing.
+ * known before you trust it. `nearestThreat` and the three flee branches in `runFight`
+ * are the load-bearing part of this file; they are not incidental plumbing.
+ *
+ * **Layer 5's civilian panic is the third such behaviour and was written against this
+ * warning.** A villager that panicked but stood still would be a bystander taking hits
+ * without fighting — the exact degenerate case above — and it would make scattering look
+ * like it *increases* civilian deaths. `tests/ambientLife.test.ts` therefore asserts the
+ * displacement directly: that a panicking villager's distance from what frightened it
+ * grows, with a control that the same villager standing still does not.
  *
  * ---
  *
@@ -70,6 +77,8 @@ import {
   beastPackShare,
   evaluateMorale,
   evaluatePlayerPursuit,
+  findCivilianAlarm,
+  isPacifistRole,
   localGroupShare,
   selectCombatTarget,
   selectThreat,
@@ -78,6 +87,12 @@ import {
   type AiPoint,
   type MoraleBreak,
 } from '../src/game/world/ActorAi.ts'
+import {
+  CIVILIAN_ALARM_RADIUS,
+  CIVILIAN_PANIC_RECOVERY,
+  CIVILIAN_PANIC_SECONDS,
+  CIVILIAN_PANIC_SPEED_MULTIPLIER,
+} from '../src/game/world/AmbientLife.ts'
 import { isBeastRole, areAllegiancesHostile, type ActorRole, type Allegiance } from '../src/game/types.ts'
 import type { RandomStream } from '../src/game/random/RandomStream.ts'
 
@@ -107,6 +122,16 @@ export const HARNESS_RALLY_TOLERANCE = 3
 export const HARNESS_LAST_STAND_SECONDS = 2
 /** Matches the engine's `MORALE_RALLY_SECONDS`. */
 export const HARNESS_RALLY_SECONDS = 12
+/**
+ * How far a bystander gets from home before the harness treats it as gone.
+ *
+ * The engine despawns a villager that strays past `CIVILIAN_SPAWN_RADIUS +
+ * CIVILIAN_HOME_RADIUS` from the player, so a chase does not run to the map edge. Without
+ * an equivalent here a panicking villager and the wolf behind it run forever, no fight
+ * ever resolves, and — worse — "got away" is invisible, which is the single most
+ * interesting thing about the behaviour under test.
+ */
+export const HARNESS_ESCAPE_DISTANCE = 74
 
 export interface HarnessFighter extends AiActor {
   role: ActorRole
@@ -130,6 +155,10 @@ export interface HarnessFighter extends AiActor {
   rallyTimer: number
   /** Layer 4 — elapsed seconds at death, so corpses age out of the morale count. */
   deathAt: number | null
+  /** Layer 5 — what a panicking bystander is running from, matching `Actor.alarmPos`. */
+  alarmPos: AiPoint | null
+  /** Layer 5 — how far this fighter has been displaced by fleeing, for the disengage check. */
+  fledDistance: number
 }
 
 export interface HarnessOptions {
@@ -147,6 +176,16 @@ export interface HarnessOptions {
    * this reason, so both arms are shipped code rather than a re-implementation.
    */
   threatScoring?: boolean
+  /**
+   * Layer 5 — bystanders scatter from a fight rather than standing in it.
+   *
+   * Off is the arm *without* the mechanism, and off must mean "carries on with its day",
+   * not "stands still": a villager frozen in the fight not fighting is the degenerate
+   * model the file header warns about, and it would make scattering look like it
+   * increases civilian deaths. With the arm off a villager keeps walking its route, which
+   * is exactly what the engine does when nothing has frightened it.
+   */
+  civilianPanic?: boolean
   /** Player stands still and fights back; omit for an NPC-only brawl. */
   player?: { x: number; z: number; hp: number; damage: number } | null
   /** Frames to run before giving up on a stalemate. */
@@ -178,6 +217,16 @@ export interface HarnessResult {
   routsByReason: Record<string, number>
   /** Layer 4 — routs by the role that broke, which is how "never routs" is checked. */
   routsByRole: Record<string, number>
+  /**
+   * Layer 5 — metres of displacement produced by the flee branches, **by rout reason**.
+   *
+   * The disengage check the file header demands, as a number rather than a promise: a
+   * behaviour whose point is leaving must move somebody, and this is what a test asserts
+   * against. By reason rather than by role on purpose — a villager can leave through the
+   * ordinary individual door too, and lumping the two together would let a broken
+   * `panic` branch hide behind displacement it did not cause.
+   */
+  fledDistanceByReason: Record<string, number>
   playerHp: number
   /** True when one side was wiped out rather than the frame budget running out. */
   resolved: boolean
@@ -193,7 +242,8 @@ export function makeFighter(
   options: Partial<HarnessFighter> = {},
 ): HarnessFighter {
   const beast = isBeastRole(role) ? BEAST_PROFILES[role] : null
-  const hp = beast?.hp ?? (role === 'brute' ? 130 : role === 'archer' ? 45 : 70)
+  const hp =
+    beast?.hp ?? (role === 'brute' ? 130 : role === 'archer' ? 45 : role === 'peasant' ? 26 : 70)
   nextId += 1
   return {
     id: options.id ?? `${allegiance}-${role}-${nextId}`,
@@ -208,7 +258,7 @@ export function makeFighter(
     home: { x, y: 0, z },
     hp,
     maxHp: hp,
-    speed: beast?.speed ?? (role === 'brute' ? 2.6 : 3.7),
+    speed: beast?.speed ?? (role === 'brute' ? 2.6 : role === 'peasant' ? 3.1 : 3.7),
     damage: beast?.meleeDamage ?? (role === 'brute' ? 14 : 13),
     hostileToPlayer: true,
     playerAggro: false,
@@ -219,6 +269,8 @@ export function makeFighter(
     routReason: 'none',
     rallyTimer: 0,
     deathAt: null,
+    alarmPos: null,
+    fledDistance: 0,
     ...options,
   }
 }
@@ -283,6 +335,7 @@ export function runFight(
   const packRoutEnabled = options.packRoutEnabled ?? true
   const individualMorale = options.individualMorale ?? false
   const threatScoring = options.threatScoring ?? false
+  const civilianPanic = options.civilianPanic ?? false
   const maxFrames = options.maxFrames ?? 3_000
   const player = options.player ? { ...options.player, alive: true } : null
   const playerMaxHp = player?.hp ?? 1
@@ -300,6 +353,7 @@ export function runFight(
     routs: 0,
     routsByReason: {},
     routsByRole: {},
+    fledDistanceByReason: {},
     playerHp: player?.hp ?? 0,
     resolved: false,
   }
@@ -363,10 +417,39 @@ export function runFight(
       // rally immunity *before* the next check rather than re-breaking on the same
       // frame. Getting that wrong in the engine made a broken soldier run forever.
       if (fighter.routTimer <= 0 && fighter.routReason !== 'none') {
+        const panicked = fighter.routReason === 'panic'
         fighter.routReason = 'none'
-        fighter.rallyTimer = HARNESS_RALLY_SECONDS
+        fighter.alarmPos = null
+        fighter.rallyTimer = panicked ? CIVILIAN_PANIC_RECOVERY : HARNESS_RALLY_SECONDS
+      } else if (fighter.routTimer > 0 && fighter.routReason === 'panic') {
+        // §5D — panic tracks, exactly as `GameEngine.updateActorMorale` does. A villager
+        // that stopped every four seconds would be caught by anything, and one running
+        // from a frozen `alarmPos` curves back into what is chasing it.
+        const chasing = findCivilianAlarm(
+          fighter,
+          morale,
+          CIVILIAN_ALARM_RADIUS,
+          positionOf,
+          null,
+        )
+        if (chasing) {
+          fighter.routTimer = CIVILIAN_PANIC_SECONDS
+          fighter.alarmPos = chasing.source
+        }
       } else if (packRoutEnabled && fighter.routTimer <= 0 && fighter.rallyTimer <= 0) {
         const packShare = beastPackShare(fighter, living, WOLF_PACK_RADIUS, positionOf)
+        // Layer 5 — the alarm search only runs for bystanders, and only in the arm that
+        // has the mechanism. With it off `alarmDistance` is `Infinity`, which is the
+        // honest "nothing measured" value rather than a `??` default (see `MoraleInput`).
+        //
+        // It scans `morale`, not `living`, because the engine scans `this.actors` — which
+        // keeps corpses for `CORPSE_LIFETIME` — and a body in the road is one of the three
+        // things §5D.3 says is alarming. Scanning the living only would model a village
+        // that stops caring the instant somebody stops moving.
+        const alarm =
+          civilianPanic && isPacifistRole(fighter.role)
+            ? findCivilianAlarm(fighter, morale, CIVILIAN_ALARM_RADIUS, positionOf, null)
+            : null
         const broke = individualMorale
           ? evaluateMorale(fighter.role, {
               hpFraction: fighter.maxHp > 0 ? fighter.hp / fighter.maxHp : 1,
@@ -379,12 +462,19 @@ export function runFight(
               packShare,
               commanderNearby: false,
               commanderLost: false,
+              alarmDistance: alarm ? alarm.distance : Number.POSITIVE_INFINITY,
             })
           : isBeastRole(fighter.role) && shouldBeastRout(fighter.role, packShare)
             ? 'cohesion'
             : 'none'
         if (broke !== 'none') {
-          fighter.routTimer = isBeastRole(fighter.role) ? 9 : HARNESS_ROUT_SECONDS
+          fighter.routTimer =
+            broke === 'panic'
+              ? CIVILIAN_PANIC_SECONDS
+              : isBeastRole(fighter.role)
+                ? 9
+                : HARNESS_ROUT_SECONDS
+          if (broke === 'panic' && alarm) fighter.alarmPos = alarm.source
           fighter.routReason = broke
           fighter.targetId = null
           fighter.playerAggro = false
@@ -404,7 +494,30 @@ export function runFight(
       // falls back on its rally point and stays in the world, which is what keeps a
       // campaign objective from walking off the map because it lost a morale check.
       if (packRoutEnabled && fighter.routTimer > 0) {
-        if (isBeastRole(fighter.role)) {
+        const before = { ...fighter.position }
+        if (fighter.routReason === 'panic') {
+          // §5D — a villager puts the thing that frightened it behind itself. It has no
+          // rally point, and `alarmPos` rather than `nearestThreat` because what
+          // frightened it is very often not hostile to it: two soldiers fighting each
+          // other are `neutral` to a villager and a hostility search would miss them.
+          //
+          // **This step is the load-bearing line of the Layer 5 measurement.** Model it
+          // as "skip your turn" and a panicking villager stands in the fight not
+          // fighting, which is strictly worse than either real outcome and would make
+          // the arm *with* scattering look lethal. See the file header.
+          const source = fighter.alarmPos ?? nearestThreat(fighter, living, player)
+          if (source) {
+            step(
+              fighter.position,
+              {
+                x: fighter.position.x * 2 - source.x,
+                y: 0,
+                z: fighter.position.z * 2 - source.z,
+              },
+              fighter.speed * CIVILIAN_PANIC_SPEED_MULTIPLIER * HARNESS_FRAME,
+            )
+          }
+        } else if (isBeastRole(fighter.role)) {
           const threat = nearestThreat(fighter, living, player)
           if (threat) {
             const away = {
@@ -444,6 +557,24 @@ export function runFight(
             fighter.routTimer = Math.min(fighter.routTimer, HARNESS_LAST_STAND_SECONDS)
           }
         }
+        // The disengage check, recorded rather than assumed: every flee branch above is
+        // supposed to move somebody, and a test can now assert that it did — attributed
+        // to the reason that caused it, so a broken branch cannot hide behind another's
+        // displacement.
+        const moved = aiDistance(before, fighter.position)
+        fighter.fledDistance += moved
+        bump(result.fledDistanceByReason, fighter.routReason, moved)
+        // Out of the square and away: gone, not dead. The engine despawns a villager
+        // that strays this far, and counting it here is what makes "got away" a number
+        // rather than an absence of one.
+        if (
+          isPacifistRole(fighter.role) &&
+          aiDistance(fighter.position, fighter.home) > HARNESS_ESCAPE_DISTANCE
+        ) {
+          fighter.alive = false
+          fighter.deathAt = now
+          bump(result.fledBy, fighter.allegiance)
+        }
         continue
       }
       // Back in the line with its nerve restored, so it does not break again instantly.
@@ -456,6 +587,27 @@ export function runFight(
       let targetFighter: HarnessFighter | null = null
       const playerPoint = player?.alive ? { x: player.x, y: 0, z: player.z } : null
       let pursuesPlayer = false
+
+      // §5D — a bystander that is not running is *going about its day*, in both arms.
+      // This matters more than it looks: if the arm without panic left villagers standing
+      // motionless, the two arms would differ in "moves at all" rather than in the
+      // mechanism under test, and the file header's failure class would be reintroduced
+      // from the other side. In the engine an unfrightened villager walks between the
+      // houses; here it circles its `home`, which is the same thing without a navmesh.
+      if (isPacifistRole(fighter.role)) {
+        const orbit = now * 0.6 + fighter.position.x
+        step(
+          fighter.position,
+          {
+            x: fighter.home.x + Math.sin(orbit) * 4,
+            y: 0,
+            z: fighter.home.z + Math.cos(orbit) * 4,
+          },
+          fighter.speed * 0.35 * HARNESS_FRAME,
+        )
+        continue
+      }
+
       if (player?.alive && playerPoint) {
         const pursuit = evaluatePlayerPursuit({
           hostileToPlayer: fighter.hostileToPlayer,
@@ -562,6 +714,7 @@ export function accumulate(results: readonly HarnessResult[]): HarnessResult {
     routs: 0,
     routsByReason: {},
     routsByRole: {},
+    fledDistanceByReason: {},
     playerHp: 0,
     resolved: true,
   }
@@ -570,7 +723,7 @@ export function accumulate(results: readonly HarnessResult[]): HarnessResult {
     total.routs += result.routs
     total.playerHp += result.playerHp
     total.resolved = total.resolved && result.resolved
-    for (const key of ['attacksBy', 'attacksAgainst', 'attacksAgainstRole', 'damageBy', 'damageAgainst', 'deathsBy', 'fledBy', 'survivorsBy', 'routsByReason', 'routsByRole'] as const) {
+    for (const key of ['attacksBy', 'attacksAgainst', 'attacksAgainstRole', 'damageBy', 'damageAgainst', 'deathsBy', 'fledBy', 'survivorsBy', 'routsByReason', 'routsByRole', 'fledDistanceByReason'] as const) {
       for (const [name, value] of Object.entries(result[key])) {
         bump(total[key], name, value)
       }

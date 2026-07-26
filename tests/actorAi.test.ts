@@ -506,6 +506,12 @@ test('morale is one rule with two doors, and some roles have neither', () => {
     packShare: 1,
     commanderNearby: false,
     commanderLost: false,
+    // Layer 5 added a third door and a required field to feed it. `Infinity` is the
+    // honest "measured, and nothing is there" — spelled out rather than left off, because
+    // `tests/` is not typechecked and a missing field here would silently become
+    // `undefined`, which compares false against every threshold and would quietly make
+    // this fixture stop testing what it says it tests.
+    alarmDistance: Number.POSITIVE_INFINITY,
   }
   assert.equal(evaluateMorale('soldier', steady), 'none', 'a fresh soldier does not run')
 
@@ -560,6 +566,9 @@ test('morale is one rule with two doors, and some roles have neither', () => {
     packShare: 0,
     commanderNearby: false,
     commanderLost: true,
+    // Nothing frightening nearby, so `panic` cannot account for any of the breaks below
+    // and the positive control is genuinely about the individual and cohesion doors.
+    alarmDistance: Number.POSITIVE_INFINITY,
   }
   for (const role of ['commander', 'champion', 'captive'] as ActorRole[]) {
     assert.equal(actorResolve(role), null, `${role} must be marked as never breaking`)
@@ -571,7 +580,7 @@ test('morale is one rule with two doors, and some roles have neither', () => {
   }
   // Positive control: the same inputs break everything that *can* break, so the four
   // `none`s above are about the role and not about the inputs being too mild.
-  for (const role of ['soldier', 'archer', 'scout', 'minion', 'brute', 'wolf'] as ActorRole[]) {
+  for (const role of ['soldier', 'archer', 'scout', 'minion', 'brute', 'wolf', 'peasant'] as ActorRole[]) {
     assert.notEqual(
       evaluateMorale(role, desperate),
       'none',

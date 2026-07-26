@@ -24,6 +24,12 @@
  * that proves the rule about this module: the *rank and angle* are a decision and live
  * here, but whether a flank reads well is a movement question no pure function and no
  * headless harness can answer.
+ *
+ * Layer 5 adds one more decision and no new mechanism: a bystander's panic is a third
+ * *reason* inside `evaluateMorale` rather than a second "should I run" system beside it,
+ * and `findCivilianAlarm` is what measures its input. Everything else Layer 5 ships —
+ * deer, crows, campfires, the storm hunch — is scenery with no decision in it at all,
+ * and lives in `AmbientLife.ts` and `GameEngine` instead.
  */
 
 import {
@@ -34,6 +40,7 @@ import {
   type Allegiance,
   type BeastRole,
 } from '../types.ts'
+import { CIVILIAN_ALARM_RADIUS } from './AmbientLife.ts'
 import { BEAST_PROFILES, shouldBeastRout } from './Fauna.ts'
 
 export interface AiPoint {
@@ -366,6 +373,11 @@ export function selectThreat<T extends AiActor>(
   positionOf: AiPositionOf<T>,
   player: PlayerThreat | null = null,
 ): ThreatChoice<T> {
+  // Layer 5 — a bystander picks no fights at all. Gated here rather than at the call
+  // site because "who do I attack" has exactly one answer in this codebase, and the
+  // Layer 4 measurements are a standing reminder of what happens when the ordering of
+  // branches around this question *is* the behaviour.
+  if (isPacifistRole(actor.role)) return null
   const origin = positionOf(actor)
   const style = threatStyle(actor.role)
   let best: ThreatChoice<T> = null
@@ -421,7 +433,32 @@ export function selectThreat<T extends AiActor>(
 // Layer 4 — morale
 // ---------------------------------------------------------------------------
 
-export type MoraleBreak = 'none' | 'cohesion' | 'individual'
+export type MoraleBreak = 'none' | 'cohesion' | 'individual' | 'panic'
+
+/**
+ * Layer 5 — roles that never pick a fight, whatever the matrix says they are allowed to
+ * hate. A villager is hostile to beasts by `ALLEGIANCE_RELATIONS` (a wolf will eat it),
+ * but hostility is a relation and *starting a fight* is a behaviour: without this a
+ * peasant scores the wolf like any other target and walks over to be eaten, which is
+ * both funnier and much worse than it running.
+ *
+ * **`captive` is deliberately not in here, and the reason is a bug this nearly shipped
+ * with.** A captive looks like the obvious second entry, but `role` is not a captive's
+ * state — `aiMode` is. `rescueCaptive` frees the prisoner by flipping `aiMode` to
+ * `normal`, moving it to the `squad` budget and handing its weapon back; it never
+ * changes `role`, which stays `captive` for the rest of the run. Listing the role here
+ * would therefore have left every rescued companion permanently unable to fight or even
+ * retaliate, for the whole run, with no test covering it. A caged captive needs no entry
+ * anyway: `GameEngine.updateActors` short-circuits on `aiMode === 'captive'` before it
+ * ever reaches targeting, and `evaluateMorale`'s `actorResolve === null` gate keeps it
+ * from panicking.
+ *
+ * The rule this leaves is: **pacifism that follows the role goes here; pacifism that
+ * follows a state belongs to the state.**
+ */
+export function isPacifistRole(role: ActorRole): boolean {
+  return role === 'peasant'
+}
 
 /**
  * How steady a role is before anything happens to it. `null` means it cannot break at
@@ -431,6 +468,10 @@ export type MoraleBreak = 'none' | 'cohesion' | 'individual'
  *   can require killing him. A commander who runs off the map strands the run.
  * - `champion` — a boss that flees is not a boss.
  * - `captive` — not a combatant; the rescue event owns its behaviour.
+ *
+ * `peasant` is Layer 5 and is the opposite end of the same table: at `-0.6` a villager
+ * with nothing scary in sight still breaks at half health, which is the number solved
+ * from `MORALE_WOUND` rather than picked. Its usual door is `panic` below, not this one.
  *
  * The table is **exhaustive over every non-beast role on purpose**, so the compiler
  * refuses a new role with no answer. The first draft was a `Partial` read with
@@ -449,6 +490,7 @@ const ROLE_RESOLVE: Record<Exclude<ActorRole, BeastRole>, number | null> = {
   minion: -0.1,
   archer: -0.12,
   scout: -0.18,
+  peasant: -0.6,
 }
 
 /** Steadiness of a role, or `null` when it never breaks. */
@@ -486,16 +528,32 @@ export interface MoraleInput {
   commanderNearby: boolean
   /** A commander of this actor's side went down recently. */
   commanderLost: boolean
+  /**
+   * Layer 5 — metres to the nearest thing worth running from, or `Infinity` when there
+   * is nothing. See `findCivilianAlarm`.
+   *
+   * **Required, not optional with a default.** An optional field read through `??` is
+   * how `ROLE_RESOLVE` shipped broken in Layer 4: the sentinel here is meaningful
+   * (`Infinity` is "measured, and nothing is there"), and a call site that forgot to
+   * measure would silently become one that measured nothing. `tests/` is not
+   * typechecked, so the compiler can only protect the engine — which is exactly why the
+   * field is required rather than defaulted.
+   */
+  alarmDistance: number
 }
 
 /**
- * Layer 4 — **one** morale rule, which is the point.
+ * Layer 4/5 — **one** morale rule, which is the point.
  *
  * Layer 3 shipped pack cohesion for beasts, and Layer 4 was asked for individual morale.
  * Two independent "should I run" systems on the same actor would fight each other, so
- * this is the single entry point and the two rules are two *reasons* it can return a
- * break rather than two mechanisms:
+ * this is the single entry point and the reasons it can return a break are *reasons*
+ * rather than separate mechanisms:
  *
+ * - **panic** governs bystanders. A villager runs from the fight itself — from swords
+ *   drawn nearby, from a body in the road — rather than from anything that has happened
+ *   to it. Layer 5's whole scatter behaviour is this door and nothing else, which is why
+ *   it is a third reason here and not a second system beside this one.
  * - **cohesion** governs packs. A wolf counts wolves; losing half of them breaks it
  *   however healthy it is. Unchanged from Layer 3, delegated to `shouldBeastRout`.
  * - **individual morale** governs everything else, including a beast whose cohesion rule
@@ -504,12 +562,15 @@ export interface MoraleInput {
  *   breaks it (§9 measured 0 routs in 60 fights, and that was the right answer for a
  *   *cohesion* rule). Breaking a lone wolf standing over its dead bear is this half's job.
  *
- * `actorResolve` returning `null` is a hard gate checked before either: a boar that
- * "never routs" must not acquire a back door through the individual score.
+ * `actorResolve` returning `null` is a hard gate checked before any of them: a boar that
+ * "never routs" must not acquire a back door through the individual score, and a captive
+ * must not acquire one through panic — which is also why `isPacifistRole` does not need
+ * to name it.
  */
 export function evaluateMorale(role: ActorRole, input: MoraleInput): MoraleBreak {
   const resolve = actorResolve(role)
   if (resolve === null) return 'none'
+  if (isPacifistRole(role) && input.alarmDistance <= CIVILIAN_ALARM_RADIUS) return 'panic'
   if (isBeastRole(role) && shouldBeastRout(role, input.packShare)) return 'cohesion'
 
   const wound = 1 - clamp01(input.hpFraction)
@@ -521,6 +582,67 @@ export function evaluateMorale(role: ActorRole, input: MoraleInput): MoraleBreak
     (input.commanderLost ? MORALE_COMMANDER_LOSS : 0) +
     (input.commanderNearby ? MORALE_COMMANDER_RALLY : 0)
   return morale <= MORALE_BREAK ? 'individual' : 'none'
+}
+
+export interface CivilianAlarm {
+  /** Where the frightening thing is, so the engine can put its back to it. */
+  source: AiPoint
+  distance: number
+}
+
+/**
+ * Layer 5 — the nearest thing a bystander would run from, or `null`.
+ *
+ * Three kinds of alarming, and none of them is "something hostile to me":
+ *
+ * 1. **Anything at war with this actor.** A wolf is coming for the villager personally.
+ * 2. **Anything already in a fight** — an actor holding a target, or one chasing the
+ *    player. Soldiers are `neutral` to villagers by the matrix and always will be
+ *    (making the three sides hostile to civilians would turn every patrol in the world
+ *    into a peasant hunt), so without this rule a faction raid would sweep through a
+ *    village that carried on walking between the houses.
+ * 3. **A body.** The engine keeps corpses in the actor list for `CORPSE_LIFETIME`, so
+ *    this is free, and it keeps a square that has just been fought over frightening for
+ *    as long as the evidence is lying in it.
+ *
+ * The player is passed separately and only counts while `menacing` — the engine sets
+ * that for a few seconds after they swing at something. Villagers who bolted from
+ * anybody walking past would be unapproachable, and being able to walk into a village
+ * and *then* draw steel is the joke.
+ */
+export function findCivilianAlarm<T extends AiActor>(
+  actor: T,
+  actors: readonly T[],
+  radius: number,
+  positionOf: AiPositionOf<T>,
+  player: { position: AiPoint; menacing: boolean } | null = null,
+): CivilianAlarm | null {
+  const origin = positionOf(actor)
+  let source: AiPoint | null = null
+  let best = radius
+
+  if (player?.menacing) {
+    const distance = aiDistance(origin, player.position)
+    if (distance <= best) {
+      best = distance
+      source = player.position
+    }
+  }
+  for (const other of actors) {
+    if (other === actor) continue
+    const alarming =
+      !other.alive ||
+      areAllegiancesHostile(actor.allegiance, other.allegiance) ||
+      other.targetId !== null ||
+      other.playerAggro
+    if (!alarming) continue
+    const position = positionOf(other)
+    const distance = aiDistance(origin, position)
+    if (distance > best) continue
+    best = distance
+    source = position
+  }
+  return source === null ? null : { source, distance: best }
 }
 
 /**

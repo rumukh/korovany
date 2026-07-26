@@ -309,18 +309,47 @@ export function describeCaravanPlundered(byBeast: boolean): string {
 }
 
 /**
- * Layer 4 §5C.2 — somebody on the field decided this was not their fight after all.
- * Shown for the squares the player can actually see, so a rout reads as a thing that
- * happened rather than a thing the numbers did.
+ * Layer 4 §5C.2, extended by Layer 5 — somebody on the field decided this was not their
+ * fight after all. Shown for the squares the player can actually see, so a rout reads as
+ * a thing that happened rather than a thing the numbers did.
+ *
+ * Takes the reason rather than a boolean because Layer 5 added a third one and a
+ * two-valued flag would have had to lie about it.
  */
-export function describeRout(byCohesion: boolean): string {
-  return byCohesion
-    ? 'Стая посыпалась и ломанулась в лес. Договориться не вышло.'
-    : 'У кого-то сдали нервы: бежит и не оборачивается.'
+export function describeRout(reason: 'cohesion' | 'individual' | 'panic'): string {
+  if (reason === 'cohesion') return 'Стая посыпалась и ломанулась в лес. Договориться не вышло.'
+  if (reason === 'panic') {
+    return 'Местные разбежались по кустам. Домики деревяные постоят и без них.'
+  }
+  return 'У кого-то сдали нервы: бежит и не оборачивается.'
 }
 
-/** Layer 4 §5C.2 — the commander talked somebody back into the line. */
+/**
+ * Layer 4 §5C.2 — the commander talked somebody back into the line.
+ */
 export const RALLY_NOTICE = 'Командир наорал — беглец вернулся в строй. Дисциплина, чтоб её.'
+
+/**
+ * Layer 5 — the village is inhabited. Shown once per square, like the prowler line, so
+ * the feed reads as a world and not as a headcount.
+ */
+export function describeVillageLife(regionLabel: string, count: number): string {
+  if (count <= 1) {
+    return `В квадрате ${regionLabel} у домиков кто-то один шевелится. Остальные, видимо, уже нашевелились.`
+  }
+  return `В квадрате ${regionLabel} местные ходят от домика к домику и делают вид, что заняты.`
+}
+
+/**
+ * Layer 5 — a civilian went down. `byPlayer` is the interesting one: the game's whole
+ * register lives in the gap between "wolves ate a villager" and "you did that on
+ * purpose". No gold, no achievement — the line is the entire reward.
+ */
+export function describeCivilianDeath(byPlayer: boolean): string {
+  return byPlayer
+    ? 'Мирный житель прилёг. Он вам ничего не сделал, но домики деревяные уже никто не достроит. +0 золота.'
+    : 'Местного не стало. Он хотел дойти до домика, а дошёл только до середины.'
+}
 
 export function describeLocatedEvent(
   kind: ChronicleWorldEventKind,
