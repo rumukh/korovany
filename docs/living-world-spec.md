@@ -149,20 +149,25 @@ whose state is persisted in `rngStates.chronicle` exactly like the four existing
 `tickChronicle()` is a pure function of `(blueprint, state, regions, rng, environment)`,
 so an identical seed and environment sequence always replays an identical history.
 
-> **Environment caveat.** Neither environment input is random. `nightFactor` is derived
-> from `dayPhase`, i.e. from `elapsed`. `stormFactor` is `weatherWeights.rain +
-> weatherWeights.snow`, and `weatherWeights` only ever lerps toward
-> `WEATHER_BY_ZONE[biome under the player]` — so weather kind is a pure function of the
-> seeded world and where the player is standing. (`weatherRng`, the one `Date.now()`
-> seed in `GameEngine`, feeds `randomWeatherRange` only, which times cosmetic lightning
-> flashes and thunder claps. It never touches `weatherWeights`.)
+> **Environment caveat.** Neither environment input is random, and neither depends on a
+> display setting. `nightFactor` is `computeNightFactor(elapsed)`; `stormFactor` is the
+> rain + snow share of a weather mix that always lerps toward
+> `WEATHER_BY_ZONE[biome under the player]`. Both live in `world/WorldEnvironment.ts`,
+> which `GameEngine` also uses to drive rendering, so simulation and visuals cannot
+> drift apart. `dynamicDayNight` and `weatherEnabled` gate **rendering only** — turning
+> either off for performance leaves beast pressure, raids, and every other chronicle
+> outcome exactly as they were. `tests/worldEnvironment.test.ts` asserts a byte-identical
+> chronicle history across all four toggle combinations, with a negative control so the
+> assertion cannot pass vacuously.
 >
-> What this does mean: both inputs track the player. `stormFactor` is a per-frame lerp,
-> so it depends on the route walked and on frame pacing, and each input is pinned flat
-> when its display setting is off — `dynamicDayNight: false` forces `nightFactor` to `0`,
-> and `weatherEnabled: false` snaps the weights to `clear`. So a chronicle history
-> replays exactly for a given seed *and* playthrough, not across arbitrary playthroughs
-> of the same seed. That is inherent to anything that reacts to where the player walks.
+> (`weatherRng`, the one `Date.now()` seed in `GameEngine`, feeds `randomWeatherRange`
+> only, which times cosmetic lightning flashes and thunder claps. It never reaches the
+> weather mix or the chronicle.)
+>
+> What does still track the player: the weather mix is a per-frame lerp, so `stormFactor`
+> depends on the route walked and on frame pacing. A chronicle history therefore replays
+> exactly for a given seed *and* playthrough, not across arbitrary playthroughs of the
+> same seed. That is inherent to anything that reacts to where the player walks.
 > `tickChronicle()` itself is pure and is asserted to be bit-identical for a fixed seed
 > and environment sequence in `tests/chronicle.test.ts`.
 
@@ -179,9 +184,10 @@ the player's faction, a share of completed objectives — so the campaign and th
 chronicle reinforce each other rather than running in parallel.
 
 **2. Beast pressure.** Grows per tick in `forest` and `fort` biomes, scaled up at night
-(`dayPhase`) and during `rain` / `snow` weather, and decays by `BEAST_CONTROL_DECAY` in
-regions under faction control. Above `BEAST_RAID_THRESHOLD` it triggers a `beastRaid`
-against a settlement in that region and resets to `BEAST_RAID_RESET`.
+(`computeNightFactor(elapsed)`) and during `rain` / `snow` weather, and decays by
+`BEAST_CONTROL_DECAY` in regions under faction control. Above `BEAST_RAID_THRESHOLD` it
+triggers a `beastRaid` against a settlement in that region and resets to
+`BEAST_RAID_RESET`.
 
 **3. Settlement integrity.** A raid — faction or beast — drops
 `settlementIntegrity`. At `0` the settlement is `разорено`: its shop and recovery
@@ -485,7 +491,8 @@ put another one there.
       measured cost under 1 ms per tick, with no per-frame cost.
 - [x] Region control changes hands over a long run; the minimap reflects it; encounter
       composition in a flipped region matches its new owner.
-- [x] Beast pressure rises at night and in storms and falls under faction control.
+- [x] Beast pressure rises at night and in storms and falls under faction control, and
+      does so identically whether or not day/night and weather are being rendered.
 - [x] A settlement can be reduced to `разорено`; its shop and recovery go offline and
       its prefab reads as burned.
 - [x] Losing caravans raises prices at the destination settlement.

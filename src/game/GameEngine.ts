@@ -151,6 +151,19 @@ import {
   type WorldBlueprint,
 } from './world/worldTypes'
 import {
+  WEATHER_BY_ZONE,
+  WEATHER_KINDS,
+  advanceWeatherMix,
+  computeNightFactor,
+  computeSunAngle,
+  createChronicleEnvironment,
+  createWeatherMix,
+  smoothstep,
+  snapWeatherMix,
+  type WeatherKind,
+  type WeatherMix,
+} from './world/WorldEnvironment'
+import {
   ZONE_ART_IDS,
   type ZoneVisualWeights,
 } from './zoneArt'
@@ -409,8 +422,6 @@ interface DayNightKeyframes {
   twilight: DayNightKeyframe
   day: DayNightKeyframe
 }
-
-type WeatherKind = 'clear' | 'overcast' | 'rain' | 'snow'
 
 interface WeatherProfile {
   fogNear: number
@@ -811,8 +822,6 @@ const DECAL_FADE = 6
 const BLOOD_DECAL_LIFE = 34
 const SCORCH_DECAL_LIFE = 28
 const BLEED_FX_INTERVAL = 1.25
-const DAY_LENGTH = 240
-const DAY_START_OFFSET = 0.18
 const ZONE_TINT_DAMPING = 3.5
 const SUN_ARC_RADIUS = 90
 const SUN_ARC_HEIGHT = 70
@@ -823,13 +832,6 @@ const STAR_COUNT = 180
 const TWO_PI = Math.PI * 2
 const DEFAULT_WIND_STRENGTH = 0.25
 const MAX_WIND_STRENGTH = 1.5
-const WEATHER_KINDS: readonly WeatherKind[] = ['clear', 'overcast', 'rain', 'snow']
-const WEATHER_BY_ZONE: Record<ZoneId, WeatherKind> = {
-  neutral: 'overcast',
-  palace: 'clear',
-  forest: 'rain',
-  fort: 'snow',
-}
 const WEATHER_PROFILES: Record<WeatherKind, WeatherProfile> = {
   clear: {
     fogNear: 48,
@@ -876,7 +878,6 @@ const WEATHER_PROFILES: Record<WeatherKind, WeatherProfile> = {
     celestialScale: 0.26,
   },
 }
-const WEATHER_RESPONSE_RATE = -Math.log(0.05) / 6
 const BASE_CLOUD_OPACITY = 0.58
 const RAIN_DROP_COUNT = 420
 const SNOW_FLAKE_COUNT = 300
@@ -1076,11 +1077,6 @@ function createDayNightKeyframes(palette: Palette): DayNightKeyframes {
       hemisphereIntensity: 1.65,
     },
   }
-}
-
-function smoothstep(min: number, max: number, value: number): number {
-  const amount = THREE.MathUtils.clamp((value - min) / (max - min), 0, 1)
-  return amount * amount * (3 - 2 * amount)
 }
 
 function interpolateKeyframes(
@@ -1308,12 +1304,10 @@ export class GameEngine {
   private lastZone: ZoneId
   private weatherZone: ZoneId
   private weatherTarget: WeatherKind = 'clear'
-  private readonly weatherWeights: Record<WeatherKind, number> = {
-    clear: 1,
-    overcast: 0,
-    rain: 0,
-    snow: 0,
-  }
+  // Simulation state, not a render buffer: it keeps tracking the biome under the player
+  // even while weather rendering is switched off, so the chronicle sees the same world
+  // either way. Only the visuals are gated on `weatherEnabled`.
+  private readonly weatherWeights: WeatherMix = createWeatherMix('clear')
   private lightningCooldown = LIGHTNING_MIN_INTERVAL
   private lightningFlash = 0
   private thunderDelay = -1
@@ -1734,10 +1728,7 @@ export class GameEngine {
       this.achievements.beginRun(faction, this.lastZone, launch.runId)
     }
     this.weatherZone = this.lastZone
-    this.setWeatherTarget(
-      this.weatherEnabled ? WEATHER_BY_ZONE[this.weatherZone] : 'clear',
-      true,
-    )
+    this.setWeatherTarget(WEATHER_BY_ZONE[this.weatherZone], true)
 
     this.setupLights()
     this.createAtmosphere()
@@ -1985,10 +1976,8 @@ export class GameEngine {
     if (this.weatherEnabled === enabled) return
     this.weatherEnabled = enabled
     this.weatherZone = this.zoneAtPosition(this.player.position.x, this.player.position.z)
-    this.setWeatherTarget(
-      enabled ? WEATHER_BY_ZONE[this.weatherZone] : 'clear',
-      true,
-    )
+    // The target always follows the biome; `enabled` only decides whether it is drawn.
+    this.setWeatherTarget(WEATHER_BY_ZONE[this.weatherZone], true)
     this.applyGroundWeather()
     if (!enabled) {
       this.lightningFlash = 0
@@ -5067,13 +5056,10 @@ export class GameEngine {
         ? 0
         : this.objectives.filter((objective) => objective.done).length /
           this.objectives.length
-    const environment = {
-      nightFactor: this.nightFactor,
-      stormFactor: Math.min(
-        1,
-        Math.max(0, this.weatherWeights.rain + this.weatherWeights.snow),
-      ),
-    }
+    const environment = createChronicleEnvironment(
+      this.elapsed,
+      this.weatherWeights,
+    )
     const events: ChronicleEvent[] = []
     let ticks = 0
     while (
@@ -8903,23 +8889,25 @@ export class GameEngine {
     this.weatherTarget = kind
     this.renderer.domElement.dataset.weather = this.weatherEnabled ? kind : 'disabled'
     if (!immediate) return
-    for (const weatherKind of WEATHER_KINDS) {
-      this.weatherWeights[weatherKind] = weatherKind === kind ? 1 : 0
-    }
+    snapWeatherMix(this.weatherWeights, kind)
   }
 
   private updateWeather(delta: number): void {
-    if (!this.weatherEnabled) {
-      this.restoreWeatherVisuals()
-      return
-    }
-
+    // The weather the world *has* is simulation state: it tracks the biome under the
+    // player whether or not it is being drawn, so switching weather off for performance
+    // cannot change chronicle outcomes.
     const nextZone = this.resolveWeatherZone()
     if (nextZone !== this.weatherZone) {
       this.weatherZone = nextZone
       this.setWeatherTarget(WEATHER_BY_ZONE[nextZone])
     }
     this.updateWeatherWeights(delta)
+
+    if (!this.weatherEnabled) {
+      this.restoreWeatherVisuals()
+      return
+    }
+
     this.applyWeatherEnvironment()
     this.updatePrecipitation(delta)
     this.updateLightning(delta)
@@ -8930,19 +8918,7 @@ export class GameEngine {
   }
 
   private updateWeatherWeights(delta: number): void {
-    if (delta <= 0) return
-    const response = 1 - Math.exp(-WEATHER_RESPONSE_RATE * delta)
-    let total = 0
-    for (const kind of WEATHER_KINDS) {
-      const target = kind === this.weatherTarget ? 1 : 0
-      this.weatherWeights[kind] +=
-        (target - this.weatherWeights[kind]) * response
-      total += this.weatherWeights[kind]
-    }
-    if (total <= 0) return
-    for (const kind of WEATHER_KINDS) {
-      this.weatherWeights[kind] /= total
-    }
+    advanceWeatherMix(this.weatherWeights, this.weatherTarget, delta)
   }
 
   private weightedWeatherValue(key: keyof WeatherProfile): number {
@@ -9233,6 +9209,8 @@ export class GameEngine {
 
   private updateDayNight(): void {
     if (!this.dynamicDayNight) {
+      // Static lighting is a rendering choice only — `computeNightFactor(elapsed)` still
+      // drives the chronicle, so the world keeps its nights either way.
       this.nightFactor = 0
       this.sun.position.set(
         this.player.position.x - 35,
@@ -9267,16 +9245,14 @@ export class GameEngine {
       return
     }
 
-    const dayPhase = (this.elapsed / DAY_LENGTH + DAY_START_OFFSET) % 1
-    const sunAngle = dayPhase * TWO_PI
+    const sunAngle = computeSunAngle(this.elapsed)
     const elevation = Math.sin(sunAngle)
     const orbitalX = Math.cos(sunAngle) * SUN_ARC_RADIUS
     const orbitalY = elevation * SUN_ARC_HEIGHT
     const orbitalZ = Math.sin(sunAngle) * SUN_ARC_DEPTH
     const nightToTwilight = smoothstep(-0.18, 0.08, elevation)
     const twilightToDay = smoothstep(0.08, 0.6, elevation)
-    const dayFactor = smoothstep(-0.08, 0.45, elevation)
-    this.nightFactor = 1 - dayFactor
+    this.nightFactor = computeNightFactor(this.elapsed)
 
     this.sun.position.set(
       this.player.position.x + orbitalX,
