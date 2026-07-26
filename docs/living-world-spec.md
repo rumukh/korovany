@@ -359,6 +359,25 @@ The same functions run when the player *does* finish the fight, so a raid resolv
 same way whether or not anybody watched. `ChronicleEventKind` gains `raidRepelled`; the
 «Хроника» feed and the map overlays pick it up with no further work.
 
+> **A hand-back must not re-decide a fight the player watched end.** `resolveLocatedEventOutcome`
+> calls `handBack()` **unconditionally**, on success and on failure alike, and the
+> resolvers roll a winner from the surviving share of each side. That is only safe while
+> an event's failure condition already implies the outcome the roll would produce.
+>
+> `factionRaid` satisfies that **by construction, not by design**: it fails when
+> `defenderStrength === 0`, so `resolveMaterializedRaid` rolls `chance(1)` and cannot
+> disagree. Nothing enforces the property — **change `factionRaid`'s failure condition to
+> anything that does not imply a wiped defence and this bug reappears silently.**
+>
+> Layer 3 hit exactly that. `beastRaid` fails when the *settlement* falls, which is
+> decoupled from the garrison's survival — the homestead can burn while the soldiers are
+> off chasing wolves — so the hand-back re-rolled and, measured across the realistic
+> configuration, contradicted the player about three times in four. The failure is worse
+> than a silent state bug because the symptom is *narrative*: the feed congratulated the
+> player on holding a settlement they had just watched burn, which teaches them the
+> chronicle lies. The fix is §5B.3's rule that a decided outcome is passed as a decided
+> outcome, never as live survivor counts.
+
 The hand-back roll uses the seeded `event` stream, not `Math.random()`, so materialization
 and its outcome replay identically for a given seed and route.
 
@@ -471,6 +490,23 @@ lower, because a raid the chronicle resolved on its own only fed them. Control n
 changes and no faction's pressure moves, because beasts do not hold ground.
 `ChronicleEventKind` gains `beastsRepelled`; the «Хроника» feed and map overlays pick it
 up with no further work.
+
+**A settlement that has already fallen is handed back as `defenderStrength: 0`, not as a
+live survivor count.** This is the rule the §5A.2 warning exists for: `beastRaid` fails
+when the homestead is destroyed, which says nothing about how many of the garrison are
+still upright, so passing the live count let the chronicle roll a *different* winner than
+the one the player just watched. The stake of a beast raid is the settlement, not the
+garrison's lives — once it is down the defence has lost however many soldiers survived.
+`tests/materialization.test.ts` hammers 24 rng states to prove a decided outcome cannot be
+overturned, with a control asserting that an *abandoned* raid — the one case where nobody
+decided anything — is still genuinely rolled.
+
+**The guard `findFactionRaids` has and `findBeastRaids` deliberately does not.**
+`findFactionRaids` skips chronicle-protected regions because a faction raid can *flip
+control*. A beast raid cannot: `resolveMaterializedBeastRaid` never touches `control` or
+any faction's pressure, and campaign completability is protected by `isProtectedSite`
+shielding the anchor sites themselves, not by the region list. The guard would therefore
+be unreachable code implying a coverage it does not provide.
 
 ### 5B.4 Ambient prowlers
 

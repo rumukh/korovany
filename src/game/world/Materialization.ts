@@ -164,6 +164,15 @@ function findFactionRaids(
  * source region and no attacker faction: `beastPressure` is the whole cause, and the
  * pack is sized from it. A razed square is skipped for the same reason the chronicle
  * skips it — there is nothing left to eat.
+ *
+ * The `protectedRegionIds` guard in `findFactionRaids` above is deliberately absent
+ * here, and is not an oversight. That guard exists because a faction raid can *flip
+ * control* of a campaign anchor; a beast raid cannot — `resolveMaterializedBeastRaid`
+ * never writes `control` or any faction's pressure. Completability is protected by
+ * `isProtectedSite` shielding the anchor sites themselves, never by this list, so do not
+ * weaken `isProtectedSite` on the strength of a guard here. Adding one would be
+ * unreachable in practice as well: no chronicle-protected region in a generated world
+ * holds a settlement site, so `pickSettlementSiteId` already returns null for them.
  */
 function findBeastRaids(context: MaterializationContext): PendingMaterialization[] {
   const pending: PendingMaterialization[] = []

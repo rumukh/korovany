@@ -339,7 +339,17 @@ export interface MaterializedRaidContext {
   outcome: MaterializedRaidOutcome
 }
 
-/** Settles a raid the player abandoned mid-fight, weighted by who was still alive. */
+/**
+ * Settles a raid the player abandoned mid-fight, weighted by who was still alive.
+ *
+ * Callers must not hand back live survivor counts for an outcome the event has already
+ * decided — see `resolveMaterializedBeastRaid` and §5A.2. This function is safe for
+ * `factionRaid` only *by construction*: that event fails when `defenderStrength` reaches
+ * zero, so the roll below degenerates to `chance(1)` and cannot contradict it. Nothing
+ * enforces that. Change `factionRaid`'s failure condition to anything that does not imply
+ * a wiped defence and the chronicle will start logging the opposite of what the player
+ * watched happen.
+ */
 export function resolveMaterializedRaid(
   context: MaterializedRaidContext,
 ): MaterializedRaidResolution {
@@ -503,6 +513,12 @@ export interface MaterializedBeastRaidResolution {
  * Layer 3 — settles a beast raid the player abandoned or finished. Beasts hold no
  * territory, so unlike a faction raid nothing changes hands: the only stakes are the
  * settlement and how much fight the forest has left.
+ *
+ * `defenderStrength: 0` is how the engine says *the settlement has already fallen* —
+ * `beastRaid` fails when the homestead is destroyed, which is decoupled from whether the
+ * garrison is still standing, so handing back live survivor counts would let this roll a
+ * different winner than the player just watched. Pass a decided outcome as a decided
+ * outcome; only a genuinely abandoned fight should reach the roll below.
  */
 export function resolveMaterializedBeastRaid(context: {
   state: ChronicleState
