@@ -1237,6 +1237,21 @@ Both were implemented exactly as designed, passed a reading, and were wrong.
    role with no answer, and `tests/actorAi.test.ts` asserts the `null` roles hold under
    inputs that break everything else — with a positive control that those same inputs do
    break everything else.
+
+   **The general rule, which matters more than the bug.** `??` cannot distinguish *absent*
+   from *deliberately null*, so **a `Partial` lookup read with `??` is a trap wherever the
+   sentinel value carries meaning.** It collapses the two cases into the default and does
+   it silently: the types are satisfied, the reading looks right, and the only symptom is
+   behaviour nobody counted. This one had teeth because the sentinel encoded a safety
+   constraint — "this actor may never leave the field" — so the failure was not a balance
+   wobble but a campaign that cannot be completed. Where a table's `null` means something,
+   make the table exhaustive (`Record<K, V | null>`, not `Partial<Record<K, V | null>>`) and
+   let the compiler demand an answer per key. Where a default genuinely is wanted, `??` is
+   fine — but then no value in the table should ever legitimately be `null`.
+
+   This applies beyond `ROLE_RESOLVE`. `ALLEGIANCE_RELATIONS`, `BEAST_PROFILES` and
+   `ACTOR_BUDGET` are all exhaustive `Record`s for the same reason, and any future table
+   that encodes an opt-out — "no threshold", "never spawns", "not eligible" — should be too.
 2. **The rally-recovery branch was unreachable.** It lived in `updateRoutingActor`, which
    the frame `routTimer` reaches zero does not run — so an actor that ran its clock out
    never got its immunity and simply re-broke on the same frame, running forever. Visible
@@ -1277,6 +1292,18 @@ And a broken non-beast "ran home" from a rally point it was already standing on,
 the *exact* "rout as skip your turn" model that inverted this harness's first measurement
 back in Layer 3; both the engine and the harness now give ground to the nearest threat
 when the rally point is overrun.
+
+**That second one recurring is the interesting part, and it is a warning about the seam
+rather than a one-off.** Both times the decision code was right and the harness's idea of
+what an actor *does* with that decision was wrong, and both times the failure took the
+same shape: **a behaviour whose whole point is disengaging degenerated into standing in
+the fight not fighting** — strictly worse than either real outcome, so it biases the
+comparison hard and in a direction that flatters the arm without the mechanism. The
+movement model is where this class of error lives, it will keep arriving in new clothes
+for anything that leaves, retreats, avoids or keeps distance, and it does not announce
+itself: it looks like a plausible number. `tests/aiHarness.ts`'s header now says so
+specifically, and names the two occurrences, rather than relying on the general
+"models decisions, not outcomes" caveat to cover it.
 
 The check that the extension did not quietly change the old answers is that **Q1, Q2 and
 Q3 all still pass unchanged** with both Layer 4 arms off, which is why they default to off.

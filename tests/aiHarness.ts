@@ -25,6 +25,34 @@
  * The flanking rules are tested directly as geometry in `tests/actorAi.test.ts` and
  * checked by eye in the browser; no number here is about them.
  *
+ * ---
+ *
+ * **READ THIS BEFORE YOU MODEL A NEW BEHAVIOUR: the movement model is where this file's
+ * errors come from, and they come back in new clothes.**
+ *
+ * Twice now the same mistake has inverted a measurement, and both times the *decision*
+ * code was correct and the harness's idea of what an actor does with that decision was
+ * not:
+ *
+ * 1. Layer 3 modelled a routed wolf as "skip your turn". Broken wolves stood still and
+ *    were killed where they stood, so routing looked like it made things *worse*.
+ * 2. Layer 4 modelled a broken non-beast as "run home" — from a rally point it was
+ *    already standing on. Same failure, different disguise: a no-op step, an actor
+ *    absorbing hits without fighting, and numbers that flattered the arm without morale.
+ *
+ * The pattern is that a behaviour whose whole point is **disengaging** degenerates into
+ * standing in the fight not fighting, which is strictly worse than either real outcome
+ * and therefore biases the comparison hard. Anything you add whose purpose is to leave,
+ * avoid, retreat, take cover or keep distance is a candidate for exactly this, and it
+ * will not announce itself — it looks like a plausible number.
+ *
+ * So: when you model a behaviour here, check that the actor's **position actually
+ * changes** in the direction the behaviour claims, and prove the arm against something
+ * known before you trust it. `nearestThreat` and the two flee branches in `runFight` are
+ * the load-bearing part of this file; they are not incidental plumbing.
+ *
+ * ---
+ *
  * Both Layer 4 arms are off by default. That is deliberate: it keeps every pre-existing
  * measurement in `tests/aiQuestions.test.ts` running the code it originally ran, which is
  * the check that this file's Layer 4 extension did not quietly change the Layer 3 answers.
