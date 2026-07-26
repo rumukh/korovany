@@ -196,3 +196,67 @@ test('partial cumulative achievement data and unlock timestamps remain readable'
     assert.equal(persisted.unlocked['first-march'], '2020-01-02T03:04:05.000Z')
   })
 })
+
+
+/**
+ * Layer 3 widened `ActorRole`, and `killsByRole` is a `NumericMap<ActorRole>` written to
+ * the achievements profile — the one persisted shape this change actually touched. There
+ * is no version bump because `parseNumericMap` is key-driven: it reads the current key
+ * list and defaults anything absent to 0. This pins that, so a pre-Layer-3 profile keeps
+ * its counts instead of turning into `NaN`.
+ */
+test('a pre-Layer-3 profile gains the beast tallies without losing or corrupting its own', () => {
+  const storage = new MemoryLocalStorage()
+  storage.setItem(
+    ACHIEVEMENTS_STORAGE_KEY,
+    JSON.stringify({
+      version: 1,
+      unlocked: {},
+      stats: {
+        runsStarted: 4,
+        kills: 37,
+        // Exactly the eight roles that existed before beasts.
+        killsByRole: {
+          soldier: 12,
+          scout: 5,
+          commander: 2,
+          minion: 9,
+          archer: 6,
+          brute: 2,
+          champion: 1,
+          captive: 0,
+        },
+        killsByFaction: { elf: 10, guard: 15, villain: 12 },
+        goldEarned: 900,
+      },
+    }),
+  )
+
+  withLocalStorage(storage, () => {
+    const tracker = new AchievementTracker()
+    tracker.beginRun('elf', 'forest', 'legacy-profile')
+    tracker.recordKill('wolf', null)
+    tracker.recordKill('soldier', 'guard')
+  })
+
+  const raw = storage.getItem(ACHIEVEMENTS_STORAGE_KEY)
+  assert.ok(raw)
+  const stats = JSON.parse(raw).stats
+
+  for (const [role, value] of Object.entries(stats.killsByRole)) {
+    assert.ok(Number.isFinite(value), `${role} normalized to ${value}`)
+  }
+  assert.equal(stats.killsByRole.soldier, 13, 'a legacy tally must survive and increment')
+  assert.equal(stats.killsByRole.wolf, 1, 'a beast kill is counted by role')
+  assert.equal(stats.killsByRole.boar, 0, 'an absent beast key defaults to zero')
+
+  // §5.3 — a wolf belongs to no faction, so it counts as a kill but is not tallied
+  // against one of the three sides.
+  assert.equal(stats.kills, 39, 'both kills counted')
+  assert.equal(stats.killsByFaction.guard, 16)
+  assert.equal(
+    stats.killsByFaction.elf + stats.killsByFaction.guard + stats.killsByFaction.villain,
+    38,
+    'the beast kill must not leak into the faction tallies',
+  )
+})

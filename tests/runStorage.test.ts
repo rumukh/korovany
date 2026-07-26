@@ -32,6 +32,7 @@ import {
   saveProfile,
 } from '../src/game/run/storage.ts'
 import type { StorageLike } from '../src/game/run/storage.ts'
+import { BEAST_ROLES } from '../src/game/types.ts'
 import { RegionManager } from '../src/game/world/RegionManager.ts'
 import { RegionRuntime } from '../src/game/world/RegionRuntime.ts'
 
@@ -431,6 +432,50 @@ test('active-run normalization preserves bounded rescued companions defensively'
       ],
     }),
     null,
+  )
+})
+
+/**
+ * Layer 3 widened `ActorRole` with `wolf | boar | bear | troll`. `RunCompanionState.role`
+ * is that same type, so the only thing standing between a hand-edited `localStorage` blob
+ * and a wolf in the player's squad is `normalizeCompanionRole` being an explicit
+ * allow-list rather than a cast. This pins that: adding a role to the union must not
+ * silently make it loadable as a companion.
+ */
+test('a beast cannot be smuggled into the squad through a saved companion', () => {
+  for (const role of BEAST_ROLES) {
+    assert.equal(
+      normalizeActiveRunSaveV3({
+        ...makeRun(),
+        companions: [
+          {
+            id: `smuggled-${role}`,
+            role,
+            health: 40,
+            maxHealth: 40,
+            worldPosition: [0, 0, 0],
+          },
+        ],
+      }),
+      null,
+      `a saved ${role} companion must be rejected`,
+    )
+  }
+  // Control: the same shape with a legitimate role still loads, so the rejections above
+  // are about the role and not about the surrounding blob being malformed.
+  assert.ok(
+    normalizeActiveRunSaveV3({
+      ...makeRun(),
+      companions: [
+        {
+          id: 'legitimate',
+          role: 'soldier',
+          health: 40,
+          maxHealth: 40,
+          worldPosition: [0, 0, 0],
+        },
+      ],
+    }),
   )
 })
 
