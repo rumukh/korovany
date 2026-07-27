@@ -135,7 +135,13 @@ const SPELLING = [
   [/travell/g, 'travel'], [/signall/g, 'signal'], [/levell/g, 'level'],
 ]
 const normalise = (s) => {
-  let out = s.replace(/\u2212/g, '-')
+  // CRLF first. This file is checked out with `LF will be replaced by CRLF` on
+  // Windows, so a multi-line mutation anchor written with `\n` silently fails to
+  // match in a CRLF working copy — and a mutant that cannot find its anchor
+  // reports UNTESTABLE rather than failing loudly at the point of the bug. An
+  // audit hit exactly that: the same commit was 18/18 in one checkout and
+  // 17 + 1-untestable in another.
+  let out = s.replace(/\r\n/g, '\n').replace(/\u2212/g, '-')
   for (const [re, to] of SPELLING) out = out.replace(re, to)
   return out
 }
