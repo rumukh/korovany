@@ -823,9 +823,11 @@ function audit() {
  * in `strategy-facts.contradictions.json` rather than suppressed silently.
  */
 function findContradictions(docLines) {
-  const allowed = new Set(
-    JSON.parse(readFileSync(CONTRADICTIONS, 'utf8')).allowed ?? [],
-  )
+  const cfg = JSON.parse(readFileSync(CONTRADICTIONS, 'utf8'))
+  const allowed = new Set(cfg.allowed ?? [])
+  const out = []
+
+  // (a) A named constant bound to two different NUMBERS.
   const values = new Map()
   for (const line of docLines) {
     // A ternary's `:` is not a binder — `(commanderLost ? MORALE_COMMANDER_LOSS : 0)`
@@ -839,10 +841,34 @@ function findContradictions(docLines) {
       values.get(name).add(value)
     }
   }
-  const out = []
   for (const [name, set] of [...values].sort()) {
     if (set.size < 2 || allowed.has(name)) continue
     out.push(`${name} is bound to ${[...set].sort().join(' and ')}`)
+  }
+
+  // (b) A name bound to two different EXPRESSIONS.
+  //
+  // This exists because the numeric check missed a real one. The document said
+  // `eventRng = seededRandom((Date.now() % 2147483646) + 1)` as current
+  // behaviour in one place and `this.eventRng = () => streams.event.next()` in
+  // another — a name bound to two incompatible right-hand sides, which is
+  // exactly what this check is for, but neither side is a number so it slipped
+  // through. A human found it. The machine should have.
+  const exprs = new Map()
+  for (const line of docLines) {
+    for (const m of line.matchAll(/`?\b(?:this\.)?([a-zA-Z_][a-zA-Z0-9_]{3,})\s*=\s*([^`\n;,]{4,60}?)\s*`/g)) {
+      const [, name, rhs] = m
+      const expr = rhs.trim()
+      // numbers are handled by (a); a bare value is not an expression
+      if (/^-?\d+(\.\d+)?$/.test(expr)) continue
+      if (!/[(){}=>.]/.test(expr)) continue
+      if (!exprs.has(name)) exprs.set(name, new Map())
+      exprs.get(name).set(expr.replace(/\s+/g, ' '), true)
+    }
+  }
+  for (const [name, set] of [...exprs].sort()) {
+    if (set.size < 2 || allowed.has(name)) continue
+    out.push(`${name} is bound to ${set.size} different expressions: ${[...set.keys()].join('  |  ')}`)
   }
   return out
 }

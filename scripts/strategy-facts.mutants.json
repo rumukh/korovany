@@ -12,6 +12,7 @@
     "became inconvenient: a surviving mutant is a real hole in the checker, not a broken test."
   ],
   "mutants": [
+    { "id": "expression-contradiction", "why": "bind one name to two incompatible expressions — the shape that slipped past the numeric-only check", "find": "`this.eventRng = () => streams.event.next()`\n(`GameEngine.ts:1853`)", "replace": "`this.dropRng = () => streams.event.next()` and elsewhere `dropRng = seededRandom(Date.now())`\n(`GameEngine.ts:1853`)" },
     { "id": "sequence-archer-range", "why": "reverse an ordered array; both values still present", "find": "ARCHER_RANGE=[8,12]", "replace": "ARCHER_RANGE=[12,8]" },
     { "id": "row-tail-swap",         "why": "swap row values past the fourth column", "find": "| `rain` | 30 / 95 | 0.62 | 0.78 | 0.90 | 0.78 | 1 | 0 | 0.85 |", "replace": "| `rain` | 30 / 95 | 0.62 | 0.78 | 0.90 | 0.78 | 0 | 1 | 0.85 |" },
     { "id": "ordering-operand-swap", "why": "reverse the operands while keeping the marker word", "find": "clears the old canvas before drawing", "replace": "draws before clearing the old canvas" },

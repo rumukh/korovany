@@ -217,17 +217,25 @@ would pass a green run:
 
 - A rule preserved correctly but **attributed to the wrong subsystem** inside the same section.
 - A number preserved with the **wrong unit** — `0.12` seconds written as `0.12` metres.
-- A rule preserved in one place and **contradicted in another** part of the same document. This one
-  has a real worked example rather than an invented one, because it happened. §14 asserted, as
-  current behaviour, that event randomness came from
-  `eventRng = seededRandom((Date.now() % 2147483646) + 1)` — while the supersession table **34 lines
-  earlier in the same section** correctly recorded that it is now a derived stream,
+- A rule preserved in one place and **contradicted in another** part of the same document — for
+  anything the consistency check does not model. This one has a real worked example rather than an
+  invented one, because it happened. §14 asserted, as current behaviour, that event randomness came
+  from `eventRng = seededRandom((Date.now() % 2147483646) + 1)` — while the supersession table **34
+  lines earlier in the same section** correctly recorded that it is now a derived stream,
   `this.eventRng = () => streams.event.next()`, and that no `Date.now()` seeding remains in the event
   path. `GameEngine.ts:1853` settles it; only `weatherRng` is date-seeded, deliberately. Two
   sentences, individually well-formed, every token present, both inside the owning section — and the
   document stated something false about shipped code. **No check in this file caught it**; an
-  adversarial reader did. It is fixed, and it is left here as the standing example of what
-  "validates presence and binding, not meaning" costs in practice.
+  adversarial reader did.
+
+  It is fixed, and the gap it exposed is **closed rather than declared**: the consistency check
+  compared only *numeric* bindings, so a name bound to two incompatible **expressions** slipped
+  through. It now checks those too — `eventRng` bound to both `seededRandom(Date.now()…)` and
+  `() => streams.event.next()` is exactly the shape it exists to find — and that pairing is now on
+  the declared allowlist as a recorded supersession, with the reason written down. A control
+  (`expression-contradiction`) fails the run if the check stops seeing it. What remains genuinely
+  unmodelled is contradiction that is neither a value nor an expression binding: two prose sentences
+  asserting incompatible behaviour in words.
 - A negation expressed **without a negation token** — "bloom owns outlines" carries the opposite of
   "outlines must not depend on bloom", but contains no `not` for the polarity check to find.
 - A paraphrase that **inverts meaning while keeping the rare words**, since the signature is a bag.
