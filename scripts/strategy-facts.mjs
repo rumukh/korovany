@@ -234,6 +234,17 @@ function extractRelations(lines, push) {
     const line = raw.trim()
     if (!line) continue
 
+    // Enum / union member sets: `WeatherKind = 'clear' | 'overcast' | 'rain' | 'snow'`.
+    // The fact is the WHOLE set — dropping one member leaves every other token
+    // present and the binding intact, so nothing else notices.
+    for (const m of line.matchAll(/\b([A-Za-z_][A-Za-z0-9_]{2,})\s*=\s*((?:'[^']+'|"[^"]+")(?:\s*\|\s*(?:'[^']+'|"[^"]+")){1,12})/g)) {
+      const [, name, body] = m
+      const members = [...body.matchAll(/'([^']+)'|"([^"]+)"/g)].map((x) => x[1] ?? x[2])
+      if (members.length >= 2) {
+        push('relation', `enum:${name}:${members.join('|')}`, { kind: 'enumSet', name, values: members })
+      }
+    }
+
     // NAME = [a, b, c] — an ORDERED list. `ARCHER_RANGE=[8,12]` is not the same
     // fact as `[12,8]`, and matching the numbers independently cannot tell them
     // apart, so the order is part of the probe.
@@ -358,6 +369,14 @@ function relationPresent(probe, windows, lines) {
       const re = new RegExp(`${name}[^0-9\\n]{0,24}${esc(v)}(?![\\w.])`)
       return windows.some(({ text }) => re.test(text))
     })
+  }
+  if (kind === 'enumSet') {
+    // Every member, alongside the type name, in one line. A union missing a
+    // member is a different type, and no other class can tell.
+    const name = probe.name.toLowerCase()
+    return lines.some(
+      (l) => l.includes(name) && probe.values.every((v) => l.includes(String(v).toLowerCase())),
+    )
   }
   if (kind === 'sequence') {
     // Ordered list: the values must appear in this order, close together, so

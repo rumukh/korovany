@@ -2071,6 +2071,20 @@
       },
       {
         "cls": "relation",
+        "id": "enum:ActorBudgetCategory:squad|campaign|chronicle|ambient",
+        "probe": {
+          "kind": "enumSet",
+          "name": "ActorBudgetCategory",
+          "values": [
+            "squad",
+            "campaign",
+            "chronicle",
+            "ambient"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
         "id": "ActorBudgetCategory='squad'",
         "probe": {
           "kind": "binding",
@@ -8368,12 +8382,38 @@
       },
       {
         "cls": "relation",
+        "id": "enum:ActorActionKind:meleePlayer|meleeActor|eventProp|arrow",
+        "probe": {
+          "kind": "enumSet",
+          "name": "ActorActionKind",
+          "values": [
+            "meleePlayer",
+            "meleeActor",
+            "eventProp",
+            "arrow"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
         "id": "ActorActionKind='meleePlayer'",
         "probe": {
           "kind": "binding",
           "name": "ActorActionKind",
           "values": [
             "'meleePlayer'"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "enum:ActorActionPhase:windup|recovery",
+        "probe": {
+          "kind": "enumSet",
+          "name": "ActorActionPhase",
+          "values": [
+            "windup",
+            "recovery"
           ]
         }
       },
@@ -8390,12 +8430,39 @@
       },
       {
         "cls": "relation",
+        "id": "enum:HitReactionKind:none|flinch|stagger",
+        "probe": {
+          "kind": "enumSet",
+          "name": "HitReactionKind",
+          "values": [
+            "none",
+            "flinch",
+            "stagger"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
         "id": "HitReactionKind='none'",
         "probe": {
           "kind": "binding",
           "name": "HitReactionKind",
           "values": [
             "'none'"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "enum:DeathStyle:sideFall|backFall|spinFall|launchFall",
+        "probe": {
+          "kind": "enumSet",
+          "name": "DeathStyle",
+          "values": [
+            "sideFall",
+            "backFall",
+            "spinFall",
+            "launchFall"
           ]
         }
       },
@@ -9612,12 +9679,41 @@
       },
       {
         "cls": "relation",
+        "id": "enum:AttackKind:melee|cleave|arrow|allyMelee|actorArrow",
+        "probe": {
+          "kind": "enumSet",
+          "name": "AttackKind",
+          "values": [
+            "melee",
+            "cleave",
+            "arrow",
+            "allyMelee",
+            "actorArrow"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
         "id": "AttackKind='melee'",
         "probe": {
           "kind": "binding",
           "name": "AttackKind",
           "values": [
             "'melee'"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "enum:HitWeight:normal|heavy|lethal|blocked",
+        "probe": {
+          "kind": "enumSet",
+          "name": "HitWeight",
+          "values": [
+            "normal",
+            "heavy",
+            "lethal",
+            "blocked"
           ]
         }
       },
@@ -9673,6 +9769,20 @@
           "name": "toneMapped",
           "values": [
             "false"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "enum:ComicCallout:БАЦ!|ХРЯСЬ!|БУМ!|БЛОК!",
+        "probe": {
+          "kind": "enumSet",
+          "name": "ComicCallout",
+          "values": [
+            "БАЦ!",
+            "ХРЯСЬ!",
+            "БУМ!",
+            "БЛОК!"
           ]
         }
       },
@@ -11167,6 +11277,18 @@
       },
       {
         "cls": "relation",
+        "id": "enum:DecalKind:blood|scorch",
+        "probe": {
+          "kind": "enumSet",
+          "name": "DecalKind",
+          "values": [
+            "blood",
+            "scorch"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
         "id": "DecalKind='blood'",
         "probe": {
           "kind": "binding",
@@ -12602,6 +12724,21 @@
       },
       {
         "cls": "relation",
+        "id": "enum:CameraAccentKind:cleave|jump|land|block|kill",
+        "probe": {
+          "kind": "enumSet",
+          "name": "CameraAccentKind",
+          "values": [
+            "cleave",
+            "jump",
+            "land",
+            "block",
+            "kill"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
         "id": "CameraAccentKind='cleave'",
         "probe": {
           "kind": "binding",
@@ -13624,6 +13761,20 @@
       },
       {
         "cls": "relation",
+        "id": "enum:LootRarity:common|uncommon|rare|legendary",
+        "probe": {
+          "kind": "enumSet",
+          "name": "LootRarity",
+          "values": [
+            "common",
+            "uncommon",
+            "rare",
+            "legendary"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
         "id": "LootRarity='common'",
         "probe": {
           "kind": "binding",
@@ -13635,12 +13786,38 @@
       },
       {
         "cls": "relation",
+        "id": "enum:LootRewardKind:coins|medicine|whetstone",
+        "probe": {
+          "kind": "enumSet",
+          "name": "LootRewardKind",
+          "values": [
+            "coins",
+            "medicine",
+            "whetstone"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
         "id": "LootRewardKind='coins'",
         "probe": {
           "kind": "binding",
           "name": "LootRewardKind",
           "values": [
             "'coins'"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "enum:LootPickupState:burst|idle|magnet",
+        "probe": {
+          "kind": "enumSet",
+          "name": "LootPickupState",
+          "values": [
+            "burst",
+            "idle",
+            "magnet"
           ]
         }
       },
@@ -14716,6 +14893,20 @@
       },
       {
         "cls": "relation",
+        "id": "enum:ComicSurface:cloth|skin|metal|dark",
+        "probe": {
+          "kind": "enumSet",
+          "name": "ComicSurface",
+          "values": [
+            "cloth",
+            "skin",
+            "metal",
+            "dark"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
         "id": "ComicSurface='cloth'",
         "probe": {
           "kind": "binding",
@@ -15507,6 +15698,20 @@
           "name": "Forest",
           "values": [
             "74"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "enum:HatchMotif:scrape|chevron|organic|slash",
+        "probe": {
+          "kind": "enumSet",
+          "name": "HatchMotif",
+          "values": [
+            "scrape",
+            "chevron",
+            "organic",
+            "slash"
           ]
         }
       },
@@ -16944,6 +17149,19 @@
           "name": "castShadow",
           "values": [
             "false"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "enum:FoliageQuality:off|low|high",
+        "probe": {
+          "kind": "enumSet",
+          "name": "FoliageQuality",
+          "values": [
+            "off",
+            "low",
+            "high"
           ]
         }
       },
@@ -18531,6 +18749,20 @@
       },
       {
         "cls": "relation",
+        "id": "enum:WeatherKind:clear|overcast|rain|snow",
+        "probe": {
+          "kind": "enumSet",
+          "name": "WeatherKind",
+          "values": [
+            "clear",
+            "overcast",
+            "rain",
+            "snow"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
         "id": "WeatherKind='clear'",
         "probe": {
           "kind": "binding",
@@ -19731,6 +19963,20 @@
           "values": [
             "40",
             "70"
+          ]
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "enum:NoticeTone:info|success|warning|danger",
+        "probe": {
+          "kind": "enumSet",
+          "name": "NoticeTone",
+          "values": [
+            "info",
+            "success",
+            "warning",
+            "danger"
           ]
         }
       },

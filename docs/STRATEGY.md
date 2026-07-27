@@ -114,7 +114,7 @@ document (`do not → do`, `must not → must`, `never → always`), flips a com
 (`shorter than → longer than`), reverses a phase ordering (`after → before`), and corrupts bound
 values including single digits (`BLOOM_LAYER 1→9`, `ARCHER_DAMAGE 7→9`, `MAX_ACTORS 25→35`,
 `MAX_ACTIVE_VOICES 24→42`, `DAY_LENGTH 240→420`, `CIVILIAN_ALARM_RADIUS 12→21`) and swaps a role's
-hit points. All twelve are caught. Inverting all 202 occurrences of `never` produces 63 new misses;
+hit points. All twelve are caught. Inverting all 203 occurrences of `never` produces 63 new misses;
 it used to produce none, because `never` was a stop word — the single most load-bearing word in a
 repo whose culture is negative controls was being discarded before the probe was built.
 
@@ -142,6 +142,7 @@ value it is not. Corrected.
 | `relation` — binding | the value follows the name **with no other number in between** |
 | `relation` — row | the name and **all** of that row's values appear in **one line** |
 | `relation` — comparison | the name and its comparative marker (`shorter`, `below`, `above` …) appear in one line |
+| `relation` — enum set | the type name and **every** member of the union appear in one line |
 | `formula`, and the five rule classes | the three rarest words of the source sentence **all** appear, verbatim, inside one three-line window |
 | a rule that was **negated** | additionally, some **single sentence** contains those words **and** a negation |
 | a rule that carried an **ordering** marker | additionally, some single sentence contains those words **and** that marker |
@@ -176,7 +177,7 @@ printed, and it drifted again as the document grew. The checker now reads
 back the headline result and the residue count stated below and **fails if either disagrees** with
 what it just computed.
 
-**Result: 2,295 facts across the fifteen pairings, 91.9% present in the owning section.**
+**Result: 2,313 facts across the fifteen pairings, 91.9% present in the owning section.**
 
 | Class | Facts | Preserved | | Class | Facts | Preserved |
 | --- | ---: | ---: | --- | --- | ---: | ---: |
@@ -185,7 +186,7 @@ what it just computed.
 | accessibility rule | 23 | 100% | | edge-case rule | 101 | 82.2% |
 | storage key | 12, from `src` | 100% | | design rule | 251 | 78.9% |
 | relation (binding, row, sequence, comparison) | 652 | 92.8% | | | | |
-| formula | 76 | 97.4% | | **total** | **2,295** | **91.9%** |
+| formula | 76 | 97.4% | | **total** | **2,313** | **91.9%** |
 
 **The residue is 187 facts, and none of it is lost content.** Every entry is enumerated in
 `scripts/strategy-facts.accepted.json` with its spec, class, source sentence **and the reason it is
@@ -1693,6 +1694,11 @@ Bound values: `Animation` → 0 · `Death` → 90 · `ActorActionKind = meleePla
 wording because for a normative rule the wording *is* the fact — a paraphrase that drops
 `not`, or separates a rule's terms across three paragraphs, has not preserved it.
 
+**The type surface, in full, because a union missing a member is a different type.**
+`ActorActionKind = 'meleePlayer' | 'meleeActor' | 'eventProp' | 'arrow'` ·
+`ActorActionPhase = 'windup' | 'recovery'` · `HitReactionKind = 'none' | 'flinch' | 'stagger'` ·
+`DeathStyle = 'sideFall' | 'backFall' | 'spinFall' | 'launchFall'`.
+
 
 
 
@@ -1887,6 +1893,10 @@ the object would resurrect it. Legibility was specified to be checked against th
 backgrounds this game produces: **snow-bright palace stone, dark forest, red gore and the night
 sky**.
 
+The callout vocabulary is a closed set: `ComicCallout = 'БАЦ!' | 'ХРЯСЬ!' | 'БУМ!' | 'БЛОК!'` —
+four words, one per weight, and the block callout is the one that must never be dropped because it
+carries information the number does not.
+
 
 
 
@@ -2076,6 +2086,8 @@ Bleed FX emit **no more than once per `BLEED_FX_INTERVAL = 1.25`** — more than
 actor becomes a fountain — while health drain remains unchanged. Decal lifetimes are
 `BLOOD_DECAL_LIFE = 34` and `SCORCH_DECAL_LIFE = 28`.
 
+`DecalKind = 'blood' | 'scorch'` — two kinds, sharing one pool and one texture path.
+
 
 
 
@@ -2248,6 +2260,9 @@ speed-line art belongs here, but the **sibling** spec owns impact-line language 
 spec; that sibling also **supplies weighted direct-hit results and hit stop** and this spec **must
 not duplicate** accent behaviour on top of them; and the same sibling owns the **centralized damage
 result and feedback contract** together with pooled hit visuals.
+
+`CameraAccentKind = 'cleave' | 'jump' | 'land' | 'block' | 'kill'` — five accents, and the list is
+closed: a sixth would need its own clamp budget rather than borrowing one.
 
 
 
@@ -2427,6 +2442,11 @@ Bound values: `Kill reward` → 12 / 55 · `Population` → 25 · `LootRarity = 
 wording because for a normative rule the wording *is* the fact — a paraphrase that drops
 `not`, or separates a rule's terms across three paragraphs, has not preserved it.
 
+Three closed sets carry the feature's whole vocabulary:
+`LootRarity = 'common' | 'uncommon' | 'rare' | 'legendary'` ·
+`LootRewardKind = 'coins' | 'medicine' | 'whetstone'` ·
+`LootPickupState = 'burst' | 'idle' | 'magnet'` — burst, then idle, then magnet, in that order.
+
 
 
 
@@ -2583,6 +2603,10 @@ Bound values: `Renderer` → 0.92 / 1.75.
 wording because for a normative rule the wording *is* the fact — a paraphrase that drops
 `not`, or separates a rule's terms across three paragraphs, has not preserved it.
 
+`ComicSurface = 'cloth' | 'skin' | 'metal' | 'dark'` — four surface classes, each mapping to a ramp
+treatment, and `dark` exists so that outlines stay legible against the material rather than being
+special-cased per mesh.
+
 
 
 
@@ -2733,6 +2757,10 @@ wording because for a normative rule the wording *is* the fact — a paraphrase 
 These are original shape and palette rules: **do not reproduce proprietary iconography, fonts** or
 logos. The zone identity is built from primitives this project generates, which is the same
 constraint that governs every other asset in the game.
+
+`HatchMotif = 'scrape' | 'chevron' | 'organic' | 'slash'` — one motif per zone, and the four are the
+whole set; a zone without a motif would fall back to a flat tint, which is what the spec exists to
+avoid.
 
 
 
@@ -3367,6 +3395,10 @@ Two precipitation bounds where the comparison is the rule: update only a rendere
 `PRECIP_VISIBLE_EPSILON`; and wrap any particle whose Y falls below `PRECIP_TOP = 26` — specifically from below world ground
 (`y < 0`) — back up to the top of the column.
 
+`WeatherKind = 'clear' | 'overcast' | 'rain' | 'snow'` (`world/WorldEnvironment.ts`) — four profiles,
+blended by weight rather than switched, which is why all four must exist even when only one has
+non-zero weight.
+
 
 
 
@@ -3527,6 +3559,9 @@ and smoke FX, and spawn **4** event attackers, a small budget by design, with th
 event target with **100 hp**. Win by killing all **attackers** within **45 s** while house hp remains above 0 for the **+90 gold**
 and 8 health, capped at 100; fail when house hp reaches 0 or the timer **expires**, and the house
 then "burns" as **flavor** with no reward.
+
+`NoticeTone = 'info' | 'success' | 'warning' | 'danger'` — four tones for event notices, so an event
+result reads as success or danger without depending on the wording.
 
 
 
