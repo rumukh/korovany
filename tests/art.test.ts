@@ -1586,9 +1586,65 @@ const NORMAL_DERIVED_CASES = [
   'extrude', 'displaced', 'faceted', 'merged', 'composed prop',
 ] as const
 
+/**
+ * Edges used by exactly one triangle. Zero means the surface is closed.
+ *
+ * Welded by quantised position rather than by index, because most of the kit's output
+ * is non-indexed by the time it reaches here -- `facetGeometry` and `displaceGeometry`
+ * both hard-edge their result, so an index-based count would call every shape open.
+ */
+const boundaryEdgeCount = (geometry: THREE.BufferGeometry): number => {
+  const position = geometry.getAttribute('position')
+  const index = geometry.getIndex()
+  const count = index ? index.count : position.count
+  const round = (value: number) => Math.round(value * 1e4) / 1e4
+  const key = (slot: number) => {
+    const vertex = index ? index.getX(slot) : slot
+    return `${round(position.getX(vertex))},${round(position.getY(vertex))},${round(position.getZ(vertex))}`
+  }
+  const edges = new Map<string, number>()
+  for (let triangle = 0; triangle + 2 < count; triangle += 3) {
+    const a = key(triangle)
+    const b = key(triangle + 1)
+    const c = key(triangle + 2)
+    if (a === b || b === c || a === c) continue
+    for (const [from, to] of [[a, b], [b, c], [c, a]] as const) {
+      const edge = from < to ? `${from}|${to}` : `${to}|${from}`
+      edges.set(edge, (edges.get(edge) ?? 0) + 1)
+    }
+  }
+  let boundary = 0
+  for (const uses of edges.values()) if (uses === 1) boundary += 1
+  return boundary
+}
+
+/**
+ * The laundered cases that are *open* surfaces, measured by `boundaryEdgeCount` and
+ * asserted below rather than trusted. `displaced` tears along its hard edges because
+ * `displaceGeometry` pushes each vertex along its own normal and coincident vertices
+ * at a crease do not share one; the two composites are open because `latheProfile`
+ * with non-zero start and end radii revolves a tube rather than a solid.
+ */
+const OPEN_NORMAL_DERIVED_CASES = ['displaced', 'merged', 'composed prop'] as const
+
+/**
+ * Signed volume about the geometry's own bounding-box centre.
+ *
+ * The recentring is load-bearing, not tidiness. The divergence sum is translation-
+ * invariant only for a *closed* surface; for an open one it measures the cone from the
+ * origin out to the surface, so it drifts with position and eventually changes sign
+ * with the winding untouched. Measured on `composed prop`, which is open: +0.22255 at
+ * the authored position, negative once moved +4 in y -- an offset any prop placement
+ * exceeds, so the un-centred form was a false failure waiting for someone to move a
+ * rock. About the shape's own centre all five sit at +0.23578 to +1.17084 and none
+ * flips at any offset, so the assertion is about winding rather than placement.
+ */
 const signedVolume = (geometry: THREE.BufferGeometry): { volume: number, judged: number } => {
   const source = geometry.index ? geometry.toNonIndexed() : geometry
   const position = source.getAttribute('position')
+  const centre = new THREE.Box3().setFromBufferAttribute(
+    position as THREE.BufferAttribute,
+  ).getCenter(new THREE.Vector3())
   const a = new THREE.Vector3()
   const b = new THREE.Vector3()
   const c = new THREE.Vector3()
@@ -1596,9 +1652,9 @@ const signedVolume = (geometry: THREE.BufferGeometry): { volume: number, judged:
   let volume = 0
   let judged = 0
   for (let triangle = 0; triangle + 2 < position.count; triangle += 3) {
-    a.fromBufferAttribute(position, triangle)
-    b.fromBufferAttribute(position, triangle + 1)
-    c.fromBufferAttribute(position, triangle + 2)
+    a.fromBufferAttribute(position, triangle).sub(centre)
+    b.fromBufferAttribute(position, triangle + 1).sub(centre)
+    c.fromBufferAttribute(position, triangle + 2).sub(centre)
     cross.crossVectors(b, c)
     if (!Number.isFinite(cross.lengthSq())) continue
     judged += 1
@@ -1639,9 +1695,23 @@ const reverseWinding = (geometry: THREE.BufferGeometry): THREE.BufferGeometry =>
  *
  * A trunk with limbs is not star-convex, and neither is a bent tube — the exact shapes
  * the NPC pass needs for horns and tails and the world pass needs for branches. Signed
- * volume is the complement: it does not care whether the body is convex, only that it
- * is closed, and it never reads the normal attribute either, so `computeVertexNormals()`
- * downstream cannot make it tautological.
+ * volume is the complement: it does not care whether the body is convex, and it never
+ * reads the normal attribute either, so `computeVertexNormals()` downstream cannot make
+ * it tautological.
+ *
+ * What it *does* care about was asserted in this test's own title and never measured.
+ * None of these four is closed:
+ *
+ *     bare trunk             5 boundary edges
+ *     one level of limbs    25
+ *     two levels of limbs   85
+ *     bent tube             12
+ *
+ * `branchStructure` leaves the limb sockets open and `tubeAlongPoints` does not cap its
+ * ends. For an open surface the divergence sum is not an enclosed volume and drifts with
+ * position, so `signedVolume` measures about each shape's own centre — see its docblock.
+ * That is what makes the sign below a statement about winding rather than about placement.
+ * The split is re-measured on every run so this block cannot quietly go stale.
  *
  * It is a much blunter tool and that is stated here rather than discovered later. It is
  * a *sum*, so partial inversions cancel. Measured on a fully-formed capsule, reversing
@@ -1656,7 +1726,7 @@ const reverseWinding = (geometry: THREE.BufferGeometry): THREE.BufferGeometry =>
  * So volume detects a global flip and nothing subtler. It is here to cover the shapes
  * the centroid test must refuse, not to second-guess it where it already speaks.
  */
-test('closed builders enclose positive volume, including the ones the centroid test must decline', () => {
+test('branch and tube builders wind outward by volume, where the centroid test must decline', () => {
   const variation = artVariation('art-test-winding', 'branch')
   const cases: [builder: string, label: string, geometry: THREE.BufferGeometry][] = [
     ['branchStructure', 'bare trunk', branchStructure({
@@ -1678,13 +1748,15 @@ test('closed builders enclose positive volume, including the ones the centroid t
   ]
 
   let totalJudged = 0
+  const openness: [string, number][] = []
   for (const [, label, geometry] of cases) {
+    openness.push([label, boundaryEdgeCount(geometry)])
     const { volume, judged } = signedVolume(geometry)
     assert.ok(judged > 0, `${label} judged no faces at all`)
     assert.ok(volume > 0, `${label} encloses non-positive volume ${volume.toFixed(6)}`)
 
-    // Prove the measure can fail on this very geometry before believing that it passed.
-    // Without this the assertion above is only ever shown agreeing with correct input.
+    // Reversal negates the sum exactly, so this is arithmetic and not a per-shape
+    // proof. It is kept for the one thing it does catch: a measure that lost its sign.
     const flipped = reverseWinding(geometry)
     const reversed = signedVolume(flipped)
     assert.ok(
@@ -1697,6 +1769,14 @@ test('closed builders enclose positive volume, including the ones the centroid t
     totalJudged += judged
     geometry.dispose()
   }
+
+  // Every one of these is open, which is why `signedVolume` recentres. If a builder
+  // starts capping its ends the block above needs rewriting, so notice it here.
+  assert.deepEqual(
+    openness.filter(([, edges]) => edges === 0).map(([label]) => label),
+    [],
+    'a builder here became closed; the volume reasoning above was written for open surfaces',
+  )
 
   // 1601 faces today across the four cases; the floor is a guard against an
   // enumeration that stops producing, not a pin on the exact geometry.
@@ -1739,8 +1819,23 @@ test('closed builders enclose positive volume, including the ones the centroid t
  *     merged                     2/52   <- false   1.15821
  *     composed prop              2/64   <- false   0.22255
  *
- * So asserting `inward === 0` here would fail on correct geometry. All five are closed,
- * so volume speaks about all five, and every one goes negative when reversed.
+ * So asserting `inward === 0` here would fail on correct geometry.
+ *
+ * What is *not* true, and was asserted here in prose until it was measured: that all
+ * five are closed. Boundary-edge counts say only two are, which matters because the
+ * divergence sum is a volume only for a closed surface:
+ *
+ *     case              boundary edges   volume    un-centred sign flips at +y
+ *     extrude                 0          0.27650      never    <- closed
+ *     faceted                 0          0.45055      never    <- closed
+ *     displaced              40          1.17084      never
+ *     merged                 20          1.16336      +256
+ *     composed prop          20          0.23578      +4
+ *
+ * `signedVolume` therefore measures about each shape's own centre, which makes the
+ * result independent of where the caller placed it and the sign a statement about
+ * winding for open and closed alike. The open three are pinned by name in
+ * `OPEN_NORMAL_DERIVED_CASES` and the split is re-measured on every run.
  */
 test('normal-derived geometry is checked by volume, because agreement is vacuous there', () => {
   const cases: [label: string, geometry: THREE.BufferGeometry][] = [
@@ -1785,25 +1880,56 @@ test('normal-derived geometry is checked by volume, because agreement is vacuous
   ]
 
   let totalJudged = 0
+  const open: string[] = []
   for (const [label, geometry] of cases) {
+    if (boundaryEdgeCount(geometry) > 0) open.push(label)
     const { volume, judged } = signedVolume(geometry)
     assert.ok(judged > 0, `${label} was judged on no triangles, so its result means nothing`)
     assert.ok(volume > 0, `${label} encloses ${volume.toFixed(5)}, so it is wound inside out`)
 
-    // The detector must be shown capable of failing on this exact case before its
-    // positive result is believed -- the whole point of the test is that the *other*
-    // detector silently cannot.
+    // Reversal negates this sum *exactly* -- swapping two vertices negates the scalar
+    // triple product term by term, measured at 0.00e+0 residual on all five. So this
+    // is arithmetic rather than a detection, and it says nothing about whether this
+    // particular case is a fair subject for the measure. Kept because it still bites
+    // the one substitution that would fake a pass everywhere at once: a detector that
+    // returns a magnitude instead of a signed sum.
     const flipped = reverseWinding(geometry)
     const caught = signedVolume(flipped)
     assert.ok(
       caught.volume < 0,
-      `reversing ${label} left volume at ${caught.volume.toFixed(5)}, so this case proves nothing`,
+      `reversing ${label} left volume at ${caught.volume.toFixed(5)}, so the measure is unsigned`,
     )
     flipped.dispose()
+
+    // The property the recentring buys, asserted rather than described. The sign is what
+    // the check above consumes, and for an open surface it is not translation-invariant:
+    // un-centred, `composed prop` reads +0.22255 where it is authored and goes negative
+    // once moved +4 in y, `merged` at +256, both with their winding untouched. Without
+    // this the suite would have gone red on correct geometry the first time a sibling
+    // repositioned a prop. Sign rather than magnitude, because summing large coordinates
+    // loses precision by cancellation and that is not the defect being pinned.
+    const moved = geometry.clone()
+    moved.translate(0, 311, -177)
+    const shifted = signedVolume(moved)
+    assert.ok(
+      shifted.volume > 0,
+      `${label} volume went from ${volume.toFixed(5)} to ${shifted.volume.toFixed(5)} under a `
+      + 'pure translation, so the measure is about placement rather than winding',
+    )
+    moved.dispose()
 
     totalJudged += judged
     geometry.dispose()
   }
+
+  // Measured, not assumed. If a kit change closes one of these or opens one of the
+  // closed pair, the comment block above stops being true and the recentring becomes
+  // load-bearing for a different set -- so it reports here rather than going quiet.
+  assert.deepEqual(
+    open,
+    [...OPEN_NORMAL_DERIVED_CASES],
+    'the closed/open split of the laundered family changed; re-check the block above this test',
+  )
 
   // Actual total is 252. A floor stops an enumeration that quietly stops producing
   // geometry from passing by producing none.
