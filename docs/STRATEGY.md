@@ -60,9 +60,16 @@ and deleted in the same commit. It covers 6,047 lines and 296 KB of `docs/*-spec
 
 **What was kept:** every named constant and its value, every threshold, timing, probability,
 role table, formula, design rule, negative control, self-correction, and every measured result.
-**What was dropped:** restated context, motivational prose, "current baseline" tables that only
-described code that already existed, and file-by-file change lists that the git history now
-holds better than prose can.
+**What was dropped**, and deliberately: restated context, motivational prose, "current baseline"
+tables that only described code that already existed, file-by-file change lists that git history
+now holds better than prose, spec section numbering, and the specs' own **effort estimates** —
+planning artifacts for work that is finished, carrying nothing a future implementer needs.
+
+Coverage was checked mechanically rather than asserted. Extracting every named constant, storage
+key and identifier from the recovered specs gives **850 fact-bearing tokens**, of which the
+consolidated text carries all but the code identifiers it deliberately drops; extracting every
+distinct numeric literal gives **732 values at 93.4% coverage**, the residue being spec section
+numbers, effort estimates, and line-number citations into files that no longer exist.
 
 Two documents in `docs/` were deliberately **not** folded:
 `from-four-zones-to-a-seeded-campaign.md` and its `.ru.md` translation. They are published
@@ -113,7 +120,8 @@ These four rules governed every layer and are worth keeping as standing constrai
 #### Layer 1 — Chronicle
 
 Fixed-step accumulator in `update()`, after `updateThreat()`. Each tick is
-O(regions + roadConnections) ≈ 25 + 40 iterations of scalar arithmetic; never per-frame.
+O(regions + roadConnections) ≈ 25 + 40 iterations of scalar arithmetic; never per-frame. The
+acceptance bar was **under 1 ms per tick with no per-frame cost**, and it was met.
 
 ```ts
 interface RegionChronicleState {
@@ -201,8 +209,9 @@ control (never a campaign anchor), damages the settlement and logs `regionCaptur
 `raidRepelled`; wiping out one side skips the roll. The assault force is paid out of the
 **source** region's pressure. `resolveMaterializedCaravan` writes off a caravan whose escort is
 gone; an intact one rejoins `state.caravans`. `resolveMaterializedWarband` scales the faction's
-pressure by warband survival and logs nothing. The hand-back roll uses the seeded `event`
-stream, never `Math.random()`.
+pressure by warband survival and logs nothing — a **wiped warband cuts its region's pressure to
+`0.3×`**, which "takes the chronicle a dozen ticks to put another one there". The hand-back roll
+uses the seeded `event` stream, never `Math.random()`.
 
 `pickLocatedEventPosition(siteId, regionId)` anchors on a site, falls back to the region centre,
 scatters within `LOCATED_EVENT_SCATTER`, and refuses a spot closer than
@@ -732,6 +741,17 @@ a rally point it was already standing on — the recurrence being the interestin
 > error lives, it will keep arriving in new clothes for anything that leaves, retreats, avoids or
 > keeps distance, and it does not announce itself: it looks like a plausible number.
 
+A third harness correction is the most transferable result in the section, because it is a
+**negative control on the measurement itself**. The harness searched for civilian alarms over the
+*living* actors while the engine searches `this.actors`, which retains corpses for
+`CORPSE_LIFETIME`. Fixing that fidelity gap **raised panic events from 214 to 320 and total
+villager displacement from 2,580 m to 8,020 m** — and:
+
+> **The outcome numbers in the tables above did not move at all**, which is the useful part: the
+> conclusion did not depend on the fidelity gap.
+
+That is what distinguishes a measurement you can act on from one that merely produced numbers.
+
 #### The determinism caveat
 
 Neither environment input is random and neither depends on a display setting. `nightFactor` is
@@ -892,11 +912,16 @@ delayed contact and therefore changes combat timing."*
 | Role | Windup | Recovery | Max poise | Stagger | Telegraph |
 | --- | ---: | ---: | ---: | ---: | --- |
 | Scout / minion | 0.18 s | 0.18 s | 18 | 0.34 s | weapon pullback only |
-| Soldier | 0.26 s | 0.24 s | 28 | 0.30 s | pullback + short ground tick |
+| Soldier / captive attacker | 0.26 s | 0.24 s | 28 | 0.30 s | pullback + short ground tick |
 | Archer | 0.32 s | 0.20 s | 18 | 0.34 s | bow raise + thin aim line |
 | Commander | 0.38 s | 0.28 s | 46 | 0.24 s | double-chevron ground wedge |
 | Brute | 0.56 s | 0.42 s | 58 | 0.20 s | large expanding wedge |
 | Champion | 0.48 s | 0.36 s | 72 | 0.18 s | aura pulse + large wedge |
+
+The cadence bar was explicit and is the reason this was not treated as an animation pass:
+**contact-to-contact time for an uninterrupted soldier must stay within 10% of the previous
+behaviour** — *"dodgeability comes from moving contact inside that cadence, not simply lowering
+enemy DPS."*
 
 ```text
 FLINCH_TIME=0.12           POISE_REGEN_DELAY=0.75    POISE_RECOVERY_PER_SECOND=22
@@ -925,6 +950,26 @@ Death style is chosen once in `killActor()` from copied hit context: cleave or h
 `sideFall`. The root animates over `DEATH_POSE_TIME` with easing and then freezes — *"This is an
 authored procedural collapse, not a ragdoll."*
 
+**Knockback is velocity, not translation.** `actor.knockbackVelocity.addScaledVector(hitDirection,
+requestedKnockback × roleScale)`, integrated on X/Z **through `moveCharacter()` using the actor's
+own collider**, with frame-rate-independent exponential damping, a clamp to
+`KNOCKBACK_MAX_SPEED`, no steering while velocity exceeds `KNOCKBACK_STEER_THRESHOLD`, and blocked
+components zeroed on collision. It therefore cannot move an actor outside world bounds or through
+a registered wall, and a knockback into a wall damps at the wall rather than accumulating velocity
+for a later launch.
+
+**Pose rules**, sampled from the authoritative action timer rather than driving it: anticipation
+pulls the weapon arm back and leans the torso away; contact snaps the weapon arm forward; recovery
+overshoots slightly and returns; flinch offsets both arms and the head opposite the hit; stagger
+lowers the torso and opens the arms. **Role scale changes amplitude, not state semantics.** Poses
+use named pivots — head and torso are named in `createCharacter()` rather than found by child
+index.
+
+`updateActors()` updates death motion, reaction timers, poise, knockback and the active action
+*before* anything continues into targeting and steering, and resolves **at most one contact per
+actor per update even if the frame's delta crosses both phase boundaries**. Pause freezes action,
+reaction, poise, knockback and death timers.
+
 Ground telegraphs are at most eight pooled flat wedge/ring meshes just above ground, transparent
 with depth-write off, whose length equals the validated melee range; the wedge grows during
 windup and disappears at contact. Under pool pressure, brute, champion and commander telegraphs
@@ -941,7 +986,7 @@ only telegraph."*
 Reduced motion shortens root translation, spin and knockback visual travel by 40% but never
 removes windup timing or the ground warning.
 
-**Status: shipped, criteria now resolved as 6 verified / 4 unverifiable-by-inspection.** All six
+**Status: shipped, criteria now resolved as 4 verified / 4 partial / 2 unverifiable.** All six
 role tables match code exactly (`actorWindup:4797-4804`, `actorRecovery:4806-4813`,
 `actorMaxPoise:4815-4822`, `actorStaggerDuration:4824-4830`); the action lifecycle is at
 `:4832-4926`; the telegraph pool at `:1471`/`:5088` with teardown at `:2242`. Cadence tolerance,
@@ -1064,6 +1109,20 @@ inactive with **no removal or dispose**. `killActor()` spawns one blood decal fr
 *before* the corpse Y adjustment, and bleeding emits at most one particle and one small decal per
 `BLEED_FX_INTERVAL`.
 
+**The damage flash takes the maximum, never the sum**: `damageFlash = max(current, newIntensity)`,
+scaled from post-mitigation `dealt` — normal hits lerp `0.25..0.85`, a block chip is capped at
+`0.12` — and one `emitView(true)` is forced after damage and injury state is final, so the flash
+survives the 90 ms view throttle. It decays at `FLASH_DECAY` per second. The vignette renders
+**after** `screen-vignette` and **before** HUD and modals, with explicit z-indices so the tint sits
+above WebGL but below readable UI.
+
+**Gore composition** is specified rather than left to taste: an ordinary actor hit throws `14..30`
+droplets scaled by post-mitigation damage, a player hit `18..36`; a death throws **52 particles
+plus 6 chunks**, or **72 plus 10** for large bodies. Every death also lays **one oversized central
+pool plus 5–8 satellite splats**, and **one third of airborne droplets and every chunk create a
+ground splat on landing**. Deaths throw two or three remaining limbs. Detachment stays cosmetic —
+it never alters AI damage, speed, targeting or objectives.
+
 Design corrections: *"Do not add random offsets directly to `camera.position`."* (the next frame's
 lerp would feed noise back into follow and drift) · *"Do not use frame-by-frame `Math.random()` for
 shake. White noise reads as camera buzz."* · *"Do not claim weapon-clash sparks. No clash event
@@ -1081,7 +1140,9 @@ and bridges out of scope. The shipped code has moved past it — decals now use
 and a reduced-motion override at `App.css:4257`; `GameEngineSettings` at `GameEngine.ts:272-286`.
 Gore burst counts (14..30 / 18..36 / 52 / 72) exist as behaviour but not as named constants, and
 `LOW_HEALTH_RATIO` is likewise unnamed. The second camera collision resolve could not be confirmed
-by inspection, and the 25-actor frame-time budget is a measurement nobody has taken.
+by inspection, and two acceptance bars are measurements nobody has taken: the 25-actor frame-time
+budget, and **that the shaken camera settles in a comparable duration at 30, 60 and 120 fps
+without crossing tested walls or large props**.
 
 ---
 
@@ -1342,7 +1403,8 @@ RenderPass(scene, camera)  →  UnrealBloomPass(resolution, strength, radius, th
 ```
 
 Threshold bloom ships first; masked selective bloom via a dedicated layer is an optional follow-up
-to be used *"only if threshold bloom bleeds into bright ground textures."*
+to be used *"only if threshold bloom bleeds into bright ground textures."* The spec noted that
+`three@0.185` already ships every module needed, so no dependency change was required.
 
 The teardown rule is the one that catches people: *"`EffectComposer.dispose()` does not dispose its
 pass list"* — each pass must be disposed explicitly first. Composer calls must also be guarded when
@@ -1417,17 +1479,62 @@ the bucket's maximum sway, since shader displacement is invisible to Three.js cu
 `cameraObstacles` must **not** be used for placement: *"it is collected later, contains render
 objects rather than 2D footprints, and intentionally excludes planes and instanced meshes."*
 
-**Status: the setting shipped; the feature did not. This is the largest gap in the archive — 1
-verified, 11 unverified, of which most are unverified because the code does not exist.** There is
-no `onBeforeCompile`, no `uWindDirection`, `uWindStrength`, `uSwayAmplitude`, `uFoliageHeight` or
-`customProgramCacheKey` anywhere in `src`; no `FOLIAGE_CLEARANCE` or `ROAD_CLEARANCE`; no
-`createGroundDetails`, `rebuildGroundFoliage` or `createPebbles`. What shipped is the
-`off / low / high` **setting** (`FoliageQuality` at `GameEngine.ts:263`, `setFoliageQuality` at
-`:2323`, key `korovany-foliage` at `App.tsx:159`, cycling UI in menu and pause), and it maps to a
-single scalar `decorationDensity` of `0 / 0.55 / 1` (`foliageQualityDensity()` at `:1400-1402`)
-delegated to `generatedWorld.setDecorationDensity`. Instancing lives in
-`world/GeneratedWorldRuntime.ts:1187-1277` under the region streamer, not in the spec's bucket
-model. The unrelated `RAIN_WIND_SPEED` and `SNOW_WIND_SPEED` constants are precipitation-only.
+**Status: static deterministic instanced ground cover and quality shipped under the region
+streamer; shader wind and the specified global bucket/budget model did not.**
+
+*An earlier revision of this document claimed "the setting shipped; the feature did not". That was
+wrong, and the correction is recorded here rather than quietly swapped, because the original claim
+was published in this repository's pull request.*
+
+What **did** ship, in `world/GeneratedWorldRuntime.ts` rather than in `GameEngine`:
+
+- **Four procedural cover kinds**, matching the spec's four buckets one for one —
+  `type GroundCoverKind = 'fern' | 'flower' | 'grass' | 'pebble'` (`:2025`), with real geometry
+  per kind (`groundCoverGeometry:2052`: grass is a translated 3-segment `ConeGeometry(0.08, 0.62)`,
+  fern and flower are merged multi-part geometries, pebble is a `DodecahedronGeometry(0.2)`).
+- **Per-biome counts**, the shipped equivalent of the spec's density table
+  (`GROUND_COVER_COUNTS:2042`):
+
+  | Biome | grass | fern | flower | pebble |
+  | --- | ---: | ---: | ---: | ---: |
+  | neutral | 260 | 0 | 36 | 18 |
+  | palace | 45 | 0 | 0 | 35 |
+  | forest | 420 | 90 | 28 | 12 |
+  | fort | 70 | 0 | 0 | 120 |
+
+  The forest/fern relationship the spec asked for survives exactly: ferns exist only in forest, and
+  flowers only in neutral and forest.
+- **One `InstancedMesh` per kind per region** (`createGroundCover:1259-1290`), with
+  `StaticDrawUsage`, named `dressing-cosmetic:ground-<kind>:<regionId>` and materials shared from
+  the region's palette — instanced, not per-plant meshes.
+- **Real clearance logic** (`canPlaceGroundCover:1350-1373`): road corridors at
+  `style.roadWidth / 2 + 1.1`, river corridors at `style.riverWidth / 2 + 1.4` in regions the river
+  passes through, an 11 u exclusion around every site in the region, and a final
+  `terrain.isWalkableSlope(x, z)` test. Placement is bounded rejection sampling at
+  `maximumCount * 12` attempts (`:1330`) from a seeded stream — the spec's `target × 40` with a
+  different budget.
+- **Deterministic prefix-truncation quality** (`setDecorationDensity:686-693`):
+  `mesh.count = floor(maximumCount * normalized)`, which is precisely the spec's requirement that
+  `low` be an exact prefix of `high` — lowering quality truncates the instance list rather than
+  re-rolling it, so retained plants never move.
+- **The `off / low / high` setting**, mapping to density `0 / 0.55 / 1`
+  (`foliageQualityDensity:1400`), persisted under `korovany-foliage`, with cycling controls in both
+  the menu and the pause modal.
+
+What did **not** ship: **the vertex-shader wind**. There is no `onBeforeCompile`, no
+`uWindDirection`, `uWindStrength`, `uSwayAmplitude` or `uFoliageHeight`, and no
+`customProgramCacheKey` anywhere in `src`. Ground cover is static. Nor did the spec's **global
+four-draw-call bucket model** ship: meshes are per-region under the streamer, so the draw-call
+count scales with loaded regions rather than being globally fixed at four, and there are no
+`FOLIAGE_CLEARANCE` / `ROAD_CLEARANCE` named constants — clearance is derived from the region
+style instead. `DEFAULT_WIND_STRENGTH = 0.25` and `DEFAULT_WIND_DIRECTION` do exist
+(`GameEngine.ts:1079`) but drive precipitation, not foliage.
+
+**Ledger effect: 6 of 12 criteria verified, 1 partial, 5 unverified** — not the 1/12 an earlier
+revision recorded. Determinism, subset-quality, zone-varying density, clearance, the draw-call
+question (partial: instanced, but per-region rather than four globally) and the persisted setting
+are all satisfied by the shipped implementation. The wind criteria (1, 2, 7, 10) and the frame-rate
+checks are the genuine misses.
 
 ---
 
@@ -1464,7 +1571,16 @@ flame emissive ramp 0.9 → 2.15
 | Day | ≥ 0.60 | 2.65 | `worldSky` | `worldFog` | 1.65 |
 
 Only the light's **Y** is clamped to `MIN_SHADOW_LIGHT_HEIGHT` for stable shadows; the visible sun
-disc follows the true arc at 150 m, with the moon opposite. Two ownership caveats: the gradient sky
+disc follows the true arc at 150 m, with the moon opposite.
+
+The pre-implementation baseline is recorded because **the disable branch has to restore it
+exactly**: `DirectionalLight(worldSun, 2.65)` at `(-35, 58, 24)` with a 2048 shadow map and an
+orthographic frustum of ±85 (covering roughly 160 m of world); `HemisphereLight(worldSky,
+worldAmbientGround, 1.65)`; a sky sphere of radius 178 with its sun mesh at `(-88, 74, -112)`; ten
+cloud groups; `THREE.Fog(worldFog, 48, 132)`; and `PointLight(warning, 1.4, 11, 2)` per torch,
+under ACES filmic tone mapping at exposure 0.92.
+
+Two ownership caveats: the gradient sky
 texture is *multiplicatively* tinted, so its day keyframe must be neutral white or the baseline
 texture is darkened twice; and a dedicated `backgroundColor` must be kept, because *"assigning
 `scene.background = palette.worldSky` and then mutating it would corrupt the palette source colour
@@ -1552,10 +1668,26 @@ drifted:
 | `THUNDER_DELAY=[0.3, 1.6]` | `[0.35, 1.1]` |
 | rain fog `30/95`, sun `0.62` | rain fog `18/72`, sun `0.22` |
 
-All four shipped profiles differ from the table and additionally gained `desaturation` and
-`celestialScale` fields the spec never had (`GameEngine.ts:1081-1126`). **`WEATHER_ZONE_HYSTERESIS`
-and `PRECIP_VISIBLE_EPSILON` do not exist** — the hysteresis is unimplemented, and
-`GameEngine.ts:11198` is a plain zone comparison.
+All four shipped profiles differ from the specified table and additionally gained `desaturation`
+and `celestialScale` fields the spec never had. **These are the authoritative values**
+(`GameEngine.ts:1081-1126`), and the spec table above is retained only as the historical design
+intent:
+
+| Kind | Fog near/far | Sun | Hemi | Cloud | Sky | Desat | Wind | Celestial |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `clear` | 48 / 132 | 1.00 | 1.00 | 0.30 | 1.00 | 0 | 0.25 | 1.00 |
+| `overcast` | 32 / 96 | 0.48 | 0.78 | 0.76 | 0.82 | 0.42 | 0.58 | 0.40 |
+| `rain` | 18 / 72 | 0.22 | 0.62 | 0.94 | 0.70 | 0.62 | 1.15 | 0.12 |
+| `snow` | 24 / 82 | 0.42 | 0.76 | 0.86 | 0.88 | 0.50 | 0.78 | 0.26 |
+
+`clear.windStrength` is `DEFAULT_WIND_STRENGTH = 0.25` (`:1079`); `BASE_CLOUD_OPACITY = 0.58`
+(`:1127`). The setting is persisted under **`WEATHER_ENABLED_KEY = 'korovany-weather'`**
+(`App.tsx:155`), read with a guarded `localStorage` accessor that **defaults to enabled**
+(`:386`), surfaced as `Погода` in both the menu and the pause modal with matching ARIA state, and
+applied live through `engine.setWeatherEnabled(next)` even while paused.
+
+**`WEATHER_ZONE_HYSTERESIS` and `PRECIP_VISIBLE_EPSILON` do not exist** — the hysteresis is
+unimplemented, and `GameEngine.ts:11198` is a plain zone comparison.
 
 ---
 
@@ -1652,11 +1784,48 @@ gain = lerp(1, 0.35, clamp(distance / 42, 0, 1))
 ```
 
 **No recipe exceeds three source layers**, and one request is one voice even with three source
-nodes. Admission runs in a fixed order: reject if the cue's cooldown is active unless the recipe
+nodes. The 14 cue recipes:
+
+| Cue | Layers |
+| --- | --- |
+| `swing` | band-pass noise whoosh + quiet descending triangle |
+| `hitLight` | short noise crack + low triangle body |
+| `hitHeavy` | sharper crack + lower sine thump + short saw texture |
+| `block` | high metallic square ping + low impact + high-pass noise tick |
+| `hurt` | descending saw body + filtered noise breath |
+| `gore` | low-pass noise splat + short irregular triangle drop |
+| `down` | heavy sine fall + noise body + short accent tone |
+| `bow` | high-pass noise string + triangle twang |
+| `arrow` | narrow-band noise pass-by; **no low thump** |
+| `cleave` | broad whoosh + low sweep; impact layers arrive from hit events |
+| `attackTell` | role-pitched short pulse, one layer |
+| `whiff` | quiet high-pass whoosh |
+| `lootReveal` | two- or three-note rarity arpeggio |
+| `lootCollect` | short upward triangle + sparkle tick |
+
+Intensity is clamped `0..1` and never multiplies total output without that clamp: it varies the
+body layer's gain by **at most 6 dB**, moves the low-frequency endpoint, changes noise duration by
+**at most 35%**, and may gate an optional third layer above a threshold.
+
+Admission runs in a fixed order: reject if the cue's cooldown is active unless the recipe
 allows coalescing; reject if its per-cue concurrent cap is reached and it is not higher priority;
 at global capacity, stop the oldest lowest-priority voice **only when the new voice has strictly
 higher priority**; otherwise suppress. Every source's `ended` handler removes itself, and when the
 last source ends the voice's nodes are disconnected and the record dropped.
+
+Three spatial and lifecycle rules that are easy to lose: **player-owned and UI cues are always
+centred**, never panned; **pan is copied at request time and does not track** for a transient
+under 100 ms; and the SFX bus **ramps down over 100 ms** at end rather than cutting. A same-frame
+multi-target cleave coalesces to **one heavy impact body plus at most two spatial crack voices**,
+never one full stack per target. A shield block suppresses blood and gore audio entirely and uses
+block layers even when chip damage is positive. Pool pressure may suppress decorative gore or
+swing, but **never** player hurt or a result/UI confirmation.
+
+`sfxVolume` persists under **`korovany-sfx-volume`** as a finite value clamped to `0..1`,
+defaulting to `0.8`, exposed as a range input labelled `Громкость эффектов` in both the menu and
+the pause settings and displayed as a rounded percentage. **`0` is mute — there is deliberately no
+second SFX boolean.** Volume parsing rejects `NaN`, infinity and out-of-range values and falls back
+to the default.
 
 The design corrections are unusually transferable: *"Do not make impact louder by starting
 unlimited oscillators."* · *"Do not connect SFX directly to destination."* · *"Do not create
@@ -1704,7 +1873,7 @@ every criterion was re-checked against the code at `b6f94ad`. The result:
 | Toon shading & outlines | 9 | 4 | 1 | 4 | — |
 | Zone art direction | 9 | 2 | — | 6 | **1** |
 | Bloom | 6 | 3 | 1 | 2 | — |
-| Ground foliage & wind | 12 | 1 | — | 1 | **10** |
+| Ground foliage & wind | 12 | 6 | 1 | 5 | — |
 | Day/night cycle | 6 | 4 | 2 | — | — |
 | Weather | 9 | 5 | 1 | 3 | — |
 | Dynamic world events | 7 | 4 | 2 | — | **1 superseded** |
@@ -1722,9 +1891,11 @@ rather than assumed.
 **Three findings are genuine gaps between specification and code**, and they are the reason this
 ledger exists:
 
-1. **Ground foliage wind was never implemented.** The `off / low / high` setting shipped and works,
-   but there is no wind shader, no bucket model and no clearance logic. Ten of its twelve criteria
-   describe code that does not exist.
+1. **Ground foliage *wind* was never implemented**, though the ground cover it was meant to
+   animate was. Four procedural cover kinds, per-biome counts, per-region instanced meshes,
+   road/river/site clearance and deterministic prefix-truncation quality all ship under the region
+   streamer. What is absent is the vertex-shader sway and the spec's global four-draw-call bucket
+   model. Four of its twelve criteria describe code that does not exist.
 2. **Zone border blending was never implemented.** `writeZoneVisualWeights` and `ZONE_BLEND_WIDTH`
    are absent; zone visual weights are a hard 1/0 switch. The fog tint, damping and per-zone
    profiles *did* ship, so the feature is partly real — but its headline criterion, smooth
