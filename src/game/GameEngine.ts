@@ -2019,6 +2019,11 @@ export class GameEngine {
       decorationDensity: foliageQualityDensity(this.groundFoliageQuality),
       art: this.artLibrary,
       outlineDressing: this.inkOutlinesEnabled,
+      // Buildings, props, vegetation and rock take their colour from the world
+      // object palettes in `WorldPropLibrary`, baked into vertices per biome and
+      // territory. Only the surfaces that are still textured — terrain, road and
+      // water — read the UI palette, plus the secondary tint that keeps ground
+      // cover sitting inside its biome. See `docs/10-world-objects-and-props-spec.md`.
       palette: {
         terrain: {
           neutral: this.palette.worldNeutralGround,
@@ -2032,17 +2037,8 @@ export class GameEngine {
           forest: mix(this.palette.success, this.palette.link, 0.25),
           fort: mix(this.palette.danger, this.palette.muted, 0.42),
         },
-        accent: {
-          neutral: this.palette.warning,
-          palace: this.palette.accent,
-          forest: this.palette.success,
-          fort: this.palette.danger,
-        },
         road: mix(this.palette.worldNeutralGround, this.palette.text, 0.24),
         water: this.palette.link,
-        bridge: mix(this.palette.warning, this.palette.text, 0.18),
-        structure: this.palette.surface,
-        roof: this.palette.elevated,
       },
     })
     if (restoredRun) {
