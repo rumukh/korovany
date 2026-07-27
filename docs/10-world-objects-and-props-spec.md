@@ -593,6 +593,8 @@ diligence right up until someone measured the instrument instead of the code.
 | ink budget charged per `applyOutline` call | the library builds one shell per *mesh*; test and code disagreed and the **code** was wrong |
 | exact-set barrel assertion | the drifts it cites are type-only exports, erased before `Object.keys` runs |
 | sign-only winding test | a normal can be 125° wrong and still be on the correct side |
+| signed volume alone | it is a **sum**: reversed faces cancel against correct ones, so a *partial* inversion passes. Measured on this pass's own builders — 5% missed on every prop tried, 25% missed on a fort rock |
+| normal agreement after displacement | `computeVertexNormals` derives normals **from** winding, so a reversed prop's normals reverse with it. Measured: misses at every fraction **including 100%** — blind, not weak |
 | `referenceCount === 0` double-release detector | the dangerous case leaves the count at 1, so the release *succeeds* and steals another holder's reference |
 
 Four rules fall out of them, in rough order of how much they would have saved:
@@ -610,6 +612,23 @@ Four rules fall out of them, in rough order of how much they would have saved:
    doing exactly what they said, where what they said was narrower than the reader assumed.
 4. **When a test and the code disagree about how to count something, suspect the code
    too.** The ink budget looked like a test over-counting. The counter was wrong.
+
+**Orientation needs three instruments, because each is blind where the others see.**
+This pass reached that conclusion twice, the second time after a sibling session measured
+that the first two were insufficient — an entry above that was itself written into this
+table by being wrong:
+
+| Instrument | Sees | Blind to |
+| --- | --- | --- |
+| normal agreement | a builder that stored a normal against its winding | anything displaced — `computeVertexNormals` makes the two agree by construction |
+| signed volume | a whole prop turned inside out | partial inversion, because it sums and the faces cancel |
+| centroid winding | one bad face in ninety-two, and *where* it is | faces orthogonal to the centroid ray, and concave props, which have a legitimate non-zero baseline |
+
+`tests/worldArt.test.ts` carries all three. The centroid check is used for **sensitivity**
+rather than an absolute zero, because these props are not star-convex — a building's
+porch recesses and window reveals give it a healthy 300 inward faces of 844 — and the
+test asserts that reversing 2% of a prop's faces *raises* that count, which is a fault
+neither of the other two instruments can see at all.
 
 The corollary for anything with a reference count: `release(key)` cannot detect a double
 release because a key has no holder identity, so the fault is invisible at that boundary.
