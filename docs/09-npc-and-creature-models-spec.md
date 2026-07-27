@@ -300,8 +300,10 @@ materials; they now share at most a few dozen for the whole game.
 
 | Key shape | Surface | Count |
 | --- | --- | --- |
-| `char:cloth:{faction}:{tint}` | `cloth` | 3 × 4 |
-| `char:armour:{faction}` | `metal` | 3 |
+| `char:cloth:{elf\|villain}:{tint}` | `cloth` / `leather` | 2 × 3 |
+| `char:armour:guard:{tint}` | `metal` | 3 |
+| `char:limb:{faction}` | `metal` / `leather` | 3 |
+| `char:shield:{faction}` | `metal` / `bark` | 3 |
 | `char:skin:{tone}` | `skin` | 4 |
 | `char:hair:{tone}` | `cloth` | 4 |
 | `char:leather` / `char:dark` / `char:steel` / `char:bone` | `leather`/`dark`/`metal`/`skin` | 4 |
@@ -309,6 +311,15 @@ materials; they now share at most a few dozen for the whole game.
 | `char:civil:{tint}` | `cloth` | 3 |
 | `beast:{role}:{part}` | `cloth`/`dark`/`skin` | 12 |
 | `caravan:{part}` | `bark`/`metal`/`cloth` | 5 |
+
+Enumerating the whole plan space reaches **33** character keys, against a budget of 48.
+
+Three values per figure is a hard requirement, not a nicety. The torso sits at the
+faction colour, `char:limb:*` sits a step darker and `char:shield:*` a step lighter.
+When limbs and shield shared the torso material — which is how the first cut of this
+pass shipped — elves and villains read as one flat slab of colour and the offhand
+vanished into the tabard it was held in front of. Only the palace guard escaped,
+because its limbs were already steel.
 
 Nothing in the character path calls `createMaterial` any more except the faction ring,
 which needs a `MeshBasicMaterial` anyway. Nothing mutates a shared material.
@@ -385,7 +396,10 @@ The game's title object. It gets built like a cart:
   than the front pair, which is what makes a cart look like a cart.
 - A plank **bed** with a visible board seam and a raised tail-board.
 - **Cargo**: roped barrels, crates and a sack pile, gilded variant included.
-- A **tilt**: five bows and a stretched canvas with a scalloped hem and a rolled front.
+- A **tilt**: four bows and a stretched canvas with a scalloped hem and a rolled front.
+  It covers only the front of the bed. A full-length canopy hides `cargo`, which is
+  the mesh the robbery interaction outlines — the player has to be able to see what
+  they are stealing.
 - A **harness**: yoke, traces, and two draft oxen with horns, a dewlap and a plodding
   head-down stance.
 
@@ -413,13 +427,14 @@ against a nine-mesh placeholder and cannot express three factions × nine kits.
 
 ```text
 CHARACTER_GEOMETRY_KEYS<=180          was 9. The theoretical ceiling across all
-                                      3 factions x 10 roles x 3 variants, measured
-                                      at 170. Built lazily, so a typical run holds
+                                      3 factions x 9 roles x 3 variants, measured
+                                      at 167. Built lazily, so a typical run holds
                                       60-80 of them.
 GEOMETRY_CACHE_ENTRIES_MAX=220        was 64. One engine-side cache now holds
                                       humanoid parts, beasts, fauna and the caravan.
 CHARACTER_SHARED_MATERIALS<=48        new. acquireMaterial entries, down from 75
-                                      caller-owned materials at 25 actors.
+                                      caller-owned materials at 25 actors. The
+                                      whole taxonomy enumerates to 33 keys.
 CHARACTER_VARIANTS=3                  headgear/hair/weapon/tint variants per kit
 CHARACTER_DETAIL_DISTANCE=26          LOD cutoff for face, hair, trim and bare hands
 CHARACTER_MESHES_NEAR<=16             per actor, ink excluded
@@ -492,26 +507,26 @@ Targets:
 
 ## 13. Acceptance criteria
 
-- [ ] A blind silhouette test distinguishes elf, guard and villain, and distinguishes
+- [x] A blind silhouette test distinguishes elf, guard and villain, and distinguishes
       brute, scout, commander, archer and peasant, with colour removed.
-- [ ] Every humanoid has a neck, shoulders, hands, feet and a face with a brow, a nose
+- [x] Every humanoid has a neck, shoulders, hands, feet and a face with a brow, a nose
       and a jaw that read at gameplay camera distance.
-- [ ] Gear layering is present: cloak or cape, tabard or coat, belt, pouches, pack or
+- [x] Gear layering is present: cloak or cape, tabard or coat, belt, pouches, pack or
       quiver, pauldrons, bracers, greaves and a real helmet shape.
-- [ ] Twelve soldiers of one faction are twelve different people without a second
+- [x] Twelve soldiers of one faction are twelve different people without a second
       geometry being built.
-- [ ] Each faction fields at least three weapon shapes; archers carry bows.
-- [ ] Wolf, boar, bear and troll are distinguishable from each other and from a
+- [x] Each faction fields at least three weapon shapes; archers carry bows.
+- [x] Wolf, boar, bear and troll are distinguishable from each other and from a
       humanoid at 30 m.
-- [ ] The caravan has a frame, spoked wheels, an axle, a bed, cargo, a tilt, a harness
+- [x] The caravan has a frame, spoked wheels, an axle, a bed, cargo, a tilt, a harness
       and draft animals.
-- [ ] The rig names in §5.5 all still resolve, and dismemberment, prosthetics, gore,
+- [x] The rig names in §5.5 all still resolve, and dismemberment, prosthetics, gore,
       the torch, the weapon trail and the shield pose all still work.
-- [ ] No `Math.random()` in any construction path this spec touches.
-- [ ] No per-frame allocation in the animation paths this spec touches.
-- [ ] Geometry-cache reference counts balance and no shared material is mutated.
-- [ ] `npm run build`, `npm run lint` and `npm test` are green.
-- [ ] Verified visually in a headless capture: day and night, bloom on and off, all
+- [x] No `Math.random()` in any construction path this spec touches.
+- [x] No per-frame allocation in the animation paths this spec touches.
+- [x] Geometry-cache reference counts balance and no shared material is mutated.
+- [x] `npm run build`, `npm run lint` and `npm test` are green.
+- [x] Verified visually in a headless capture: day and night, bloom on and off, all
       three factions.
 
 ## 14. Effort
