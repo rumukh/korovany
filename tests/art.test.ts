@@ -990,7 +990,41 @@ test('every geometry-kit builder winds to agree with its normals', () => {
         { y: 1, scaleX: 0.5 },
       ],
     })],
+
+    // Composition, not construction. Every case above is one builder's output; a
+    // real prop is several merged together, and `mergeAll` normalises attributes
+    // and concatenates buffers across parts that need not agree with each other.
+    // Adopted from the world-object session, which reaches a case none of the
+    // builder-level entries do.
+    ['composed prop (lathe + loft + tapered box)', mergeAll([
+      latheProfile([
+        { x: 0.05, y: 0 },
+        { x: 0.4, y: 0.3 },
+        { x: 0.25, y: 0.7 },
+      ], { segments: 10 }),
+      loftProfile({
+        profile: rectProfile(0.4, 0.4),
+        sections: [
+          { y: 0, scaleX: 1 },
+          { y: 0.6, scaleX: 0.5, scaleZ: 0.5 },
+        ],
+      }),
+      taperedBox({ width: 0.3, height: 0.5, depth: 0.3, topScale: 0.6 }),
+    ], { name: 'composed-prop' })],
   ]
+
+  // Pins that this kit's own case list keeps an indexed member. Every builder here
+  // emits non-indexed geometry except `latheProfile`, which passes through
+  // `THREE.LatheGeometry`. The `BoxGeometry` control above happens to be indexed too,
+  // so the helper's index dereference is already covered — but a checker that walks
+  // raw position triples and ignores the index buffer reads `latheProfile` as
+  // *partially* reversed (7 of 15 pseudo-triangles here) while reading the loft
+  // family correctly, which looks like a builder bug and is not one. Keep an indexed
+  // case so that asymmetry stays visible in the builder list, not just the controls.
+  assert.ok(
+    cases.some(([, geometry]) => geometry.getIndex() !== null),
+    'at least one case must be indexed, or the index path is never tested',
+  )
 
   for (const [label, geometry] of cases) {
     assert.equal(
