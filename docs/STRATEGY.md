@@ -312,6 +312,18 @@ Fixed-step accumulator in `update()`, after `updateThreat()`. Each tick is
 O(regions + roadConnections) ≈ 25 + 40 iterations of scalar arithmetic; never per-frame. The
 acceptance bar was **under 1 ms per tick with no per-frame cost**, and it was met.
 
+**A note on how that bar is enforced, because it is the one criterion in the archive that was
+mechanised and it is flaky.** `tests/chronicle.test.ts:90-101` asserts `microsecondsPerTick < 1000`
+over 200 ticks using `process.hrtime`. Measured on this machine at commit `6442e96`: **15 of 15 runs
+pass when the file is run alone**, but the full `npm test` fails it in roughly one run in four, worst
+observed **1,214 µs** — 21% over. Node's test runner executes files concurrently, so a wall-clock
+budget competes with every other test file for CPU. The budget is not wrong and the code is not slow;
+**a wall-clock assertion inside a concurrent runner measures the machine as much as the code.** This
+is the same class of problem the acceptance ledger calls "unverifiable by inspection" — except here
+somebody did mechanise it, and mechanising it is what made it non-deterministic. If it is worth
+keeping, it wants an explicit serial marker or a budget with headroom rather than a bar set at
+roughly the observed value; that is a code change and therefore outside this document's remit.
+
 ```ts
 interface RegionChronicleState {
   control: Territory                  // mutable; seeded from blueprint.territory
