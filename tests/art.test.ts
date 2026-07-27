@@ -1105,6 +1105,25 @@ test('closed builders wind outward, independently of their normals', () => {
     ['tapered box', taperedBox({ width: 1, height: 1, depth: 1 })],
     ['bevelled box', taperedBox({ width: 1, height: 1, depth: 1, bevel: 0.15 })],
     ['stylized capsule', stylizedCapsule({ radius: 0.4, height: 1 })],
+    // `latheProfile` belongs here specifically, and its absence was a real gap:
+    // it is the only *indexed* builder in the kit, so it is the only case that
+    // exercises this helper's `toNonIndexed()` branch. Both a closed profile
+    // (touches the axis at both ends, so the body seals itself) and an open one
+    // (a skirt with no caps) — the closed case is the star-convex solid this
+    // test is written for, the open one pins that the side walls alone still
+    // face outward.
+    ['lathe closed profile', latheProfile([
+      { x: 0, y: 0 },
+      { x: 0.35, y: 0.15 },
+      { x: 0.5, y: 0.45 },
+      { x: 0.3, y: 0.8 },
+      { x: 0, y: 1 },
+    ], { segments: 16 })],
+    ['lathe open profile', latheProfile([
+      { x: 0.2, y: 0 },
+      { x: 0.45, y: 0.35 },
+      { x: 0.3, y: 0.75 },
+    ], { segments: 16 })],
     ['tube upward', tubeAlongPoints(
       [{ x: 0, y: -0.5, z: 0 }, { x: 0, y: 0, z: 0 }, { x: 0, y: 0.5, z: 0 }],
       { radius: 0.2 },
