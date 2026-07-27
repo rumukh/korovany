@@ -613,6 +613,14 @@ Four rules fall out of them, in rough order of how much they would have saved:
 4. **When a test and the code disagree about how to count something, suspect the code
    too.** The ink budget looked like a test over-counting. The counter was wrong.
 
+   A reviewer sharpened this into the more useful form: *the side that got the domain
+   wrong is usually the side that never had to look at the domain.* The test counted
+   scene objects because objects are what a graph traversal hands you; the production
+   counter counted `applyOutline` calls because calls are what the budget code had in
+   scope. **Neither was counting draws, which is the only thing the budget is about.**
+   Both were wrong in the same direction for the same reason, and the mistake was
+   assuming the production side had the better vantage point.
+
 **Orientation needs three instruments, because each is blind where the others see.**
 This pass reached that conclusion twice, the second time after a sibling session measured
 that the first two were insufficient — an entry above that was itself written into this
