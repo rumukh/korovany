@@ -135,13 +135,17 @@ const SPELLING = [
   [/travell/g, 'travel'], [/signall/g, 'signal'], [/levell/g, 'level'],
 ]
 const normalise = (s) => {
-  // CRLF first. This file is checked out with `LF will be replaced by CRLF` on
-  // Windows, so a multi-line mutation anchor written with `\n` silently fails to
-  // match in a CRLF working copy — and a mutant that cannot find its anchor
-  // reports UNTESTABLE rather than failing loudly at the point of the bug. An
-  // audit hit exactly that: the same commit was 18/18 in one checkout and
-  // 17 + 1-untestable in another.
-  let out = s.replace(/\r\n/g, '\n').replace(/\u2212/g, '-')
+  // Line endings first — and `\r\n?` rather than `\r\n`, so a lone CR is handled
+  // too. That refinement is Agent SOL's, from the audit that found this.
+  //
+  // This file is checked out with `LF will be replaced by CRLF` on Windows, so a
+  // multi-line mutation anchor written with `\n` silently fails to match in a
+  // CRLF working copy — and a mutant that cannot find its anchor reports
+  // UNTESTABLE rather than failing loudly at the point of the bug. The same
+  // commit was 18/18 in one checkout and 17 + 1-untestable in another, which is
+  // how it surfaced: identical bytes, different result, so the difference had to
+  // be the working copy rather than the tree.
+  let out = s.replace(/\r\n?/g, '\n').replace(/\u2212/g, '-')
   for (const [re, to] of SPELLING) out = out.replace(re, to)
   return out
 }
