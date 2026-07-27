@@ -142,27 +142,38 @@ value it is not. Corrected.
 | `relation` — binding | the value follows the name **with no other number in between** |
 | `relation` — row | the name and **all** of that row's values appear in **one line** |
 | `relation` — comparison | the name and its comparative marker (`shorter`, `below`, `above` …) appear in one line |
-| `formula`, and the five rule classes | the three rarest words of the source sentence **all** appear inside one three-line window |
+| `formula`, and the five rule classes | the three rarest words of the source sentence **all** appear, verbatim, inside one three-line window |
 | a rule that was **negated** | additionally, some **single sentence** contains those words **and** a negation |
 | a rule that carried an **ordering** marker | additionally, some single sentence contains those words **and** that marker |
 
 Signature words are the three **rarest** in the corpus, by document frequency across all fifteen
 specs — not the three longest, which is what an earlier version used and which selected `therefore`,
 `controls` and `create` as often as `combatMotion`, `rain-to-snow` or `faction-start`. Rarity makes
-the discriminating token mandatory. Light inflection normalisation and British/American spelling
-normalisation apply on both sides, consistently in every check, because `callout`/`callouts` and
-`behaviour`/`behavior` are the same fact and a checker that says otherwise is measuring morphology.
+the discriminating token mandatory. **Matching is exact-form.** British/American spelling
+normalisation applies on both sides — `behaviour`/`behavior` is one lexeme rewritten to one lexeme,
+which cannot merge two distinct words.
 
-**The normaliser is itself tested, because an earlier version of it was quietly wrong.** It used to
-strip `ly` and collapse final doubled letters, which meant `clear`, `clears` and `clearly` all became
-`clear` — so an adverb in *"incoming damage reads clearly"* satisfied a probe for a rule about
-`setScreenShakeEnabled(false)` **clearing existing trauma**, and hid the fact that the rule was
-missing. It also collapsed `apply`, `applies` and `app` to `ap`, so React's `App` could stand in for
-a lifecycle verb. And the worked example this document gave for it was false: that stemmer did **not**
-equate `reserve` with `reserved`. `STEM_TESTS` now asserts required equivalences *and* required
-distinctions — `clear`/`clearly`, `apply`/`app`, `car`/`care` must stay apart — and the run aborts if
-any fails. **A normaliser without negative tests is the same failure as a metric without a control**,
-which is the mistake this whole methodology note exists to record.
+**Inflection normalisation was tried and removed, and this records why rather than deleting the
+evidence.** A stemmer collapsed `flash`/`flashes` and `callout`/`callouts`, which is legitimate. It
+also collapsed `clear`, `clears` and `clearly` to `clear`, and `apply`, `applies` and `app` to `ap`.
+The first of those produced a **false positive on a genuinely absent fact**: the rule that
+`setScreenShakeEnabled(false)` **also clears existing trauma** was missing from §5, and the adverb in
+*"incoming damage reads clearly"* satisfied its probe. The worked example the note gave for the
+stemmer was false as well — it did not in fact equate `reserve` with `reserved`.
+
+Hardening it — dropping those two rules and adding required-distinction tests — fixed the known
+collisions but not the shape of the problem. **A global many-to-one collapse lets any word in a
+section satisfy any probe that normalises to the same token, and a false positive is worse than a
+miss: a miss is a gap, a false positive is the tool certifying something that is not there.** So it
+is gone. Removing it exposed **twelve** facts it had been covering, all now restored and listed in
+the commit that removed it. If inflection tolerance is wanted later it must be probe-scoped — a
+curated map attached to one specific fact — never a global normaliser.
+
+**The tool verifies this document's own arithmetic.** Hand-maintaining a figure inside a note whose
+subject is not trusting hand-maintained figures is self-refuting, and it had already drifted once:
+the `--break=chronicle` count was written as 106 while the tool printed 113. The checker now reads
+back the headline result and the residue count stated below and **fails if either disagrees** with
+what it just computed.
 
 **Result: 2,287 facts across the fifteen pairings, 94.6% present in the owning section.**
 
@@ -1038,7 +1049,7 @@ be given an explicit timer.
 is what curves the flight path instead of producing a straight line. Victory or defeat **stops the
 chronicle ticking**; it does not keep simulating a world the player has left.
 `findPendingMaterializations` used to *discard* pending entries — picking from a smaller set — which is why an early measurement
-looked cleaner than it was. If a site really is underfoot the actor must visibly act somewhere other
+looked cleaner than it was. If a site really is underfoot, the actor acts somewhere other
 than directly under the player.
 
 **The invariants, stated as invariants.** *The dependency runs one way: materialization consumes
@@ -1066,9 +1077,10 @@ puts the effect back: **0 against the empty-square baseline**.
 
 **Alarm and morale constants, written out.** `ALERT_SIGHTING_RADIUS = 20` with `ALERT_COOLDOWN = 1.5`
 unchanged; `CIVILIAN_ALARM_RADIUS = 12` is **shorter** than a soldier's 15 on purpose, so civilians
-raise alarms later and less reliably than trained troops. `MORALE_LOSSES = 0.7` is what the design asks for, and it puts "half
-your health gone" into morale terms. Saves are `ActiveRunSaveV3` at `ACTIVE_RUN_SAVE_VERSION = 3`, and the storage entry is versioned
-with it.
+raise alarms later and less reliably than trained troops. `MORALE_LOSSES = 0.7` is what the design asks for, and it is what puts a hurt squad's state into
+morale terms rather than leaving it to teammates' guesswork, and it puts "half
+your health gone" into morale terms. Saves are `ActiveRunSaveV3` (`ACTIVE_RUN_SAVE_VERSION = 3`); the storage key is
+unchanged and the storage shape is versioned with it.
 `WorldSite.owner` is static blueprint data: site ownership has no runtime entity behind it, which
 is why the chronicle had to invent one. Of the implementation work, the simulation layers **were the
 bulk; the feed and map overlays were
@@ -1548,8 +1560,8 @@ die or events end; event cleanup hides and releases telegraphs owned by removed 
 become invalid during cleanup: an invalid prop action becomes a **whiff and cannot damage a
 replacement target**.
 
-Two consequences worth stating plainly, because they are the point of the feature: the player can
-**escape a melee windup by moving out of range** during the telegraph — that is the readability
+Two consequences worth stating plainly, because they are the point of the feature: the player can **escape a melee windup by moving out of range**, or by putting an obstacle between
+themselves and the attacker, during the telegraph — that is the readability
 payoff — and brutes, commanders and champions apply role resistance, so **knockback cannot be
 stacked** into a chain-launch. The spec's own scaling note: if the role timing tables grow further,
 extract pure config and types into a separate module rather than widening `GameEngine`.
@@ -1710,22 +1722,24 @@ unverified.
 **Negative controls the spec fixed.** *"Do not allocate a new canvas or texture for every number"* —
 pool a fixed set. *"Do not show text through the whole map"*: local-player feedback is local.
 *"Do not sample historical blade positions or allocate trail segments per frame."* *"Do not create a
-generic effect framework"* — extract `ComicHitFx.ts` only after the behaviour works. Extend the
+generic effect framework"* — extract `ComicHitFx.ts` only after the behaviour is working. Extend the
 existing `damageActor` options with `attackKind` rather than adding a parallel path. **Never spawn
 more than one callout in `CALLOUT_COOLDOWN = 0.12` seconds.** Numbers display **rounded
 post-mitigation** damage, never pre-mitigation. If a target dies during cleave iteration, later logic
 must not acquire a second effect for it.
 
-**Pools and their pressure rules.** Pool **ten** impact-ray sprites sharing one cached transparent
+**Pools and their pressure rules.** Pooled impact-ray sprites and one player weapon-trail visual: pool **ten** impact-ray sprites
+sharing one cached transparent
 radial-line `CanvasTexture` and material configuration, plus one player weapon-trail visual. Reuse
 the **lowest-priority oldest active entry only when the pool is exhausted**, and a reused entry
 **restarts at no more than 70% of full lifetime** so a recycled sprite cannot look newer than a live
 one. If the same target receives another eligible hit inside `NUMBER_MERGE_WINDOW`, the numbers merge
-rather than stacking. After pool warm-up, a **25-actor fight must create no new meshes**. Under the
+rather than stacking. After pool warm-up, a **25-actor fight must create no new meshes**. A kill produces one lethal result, one number, and at
+most one callout. Under the
 existing screen-shake-off or reduced-motion preference, **cap all stops at 20 ms**; a later dedicated
 `combatMotion` setting may supersede that. `damageActor` returns a **non-applied result when the
-target is already dead**. **Callouts are decorative**: missing one under pool pressure cannot hide
-information the player needs. And the scope check the spec set on itself: if the implementation makes
+target is already dead**. **Callouts are decorative.** Missing one due to pool pressure **cannot** hide information the player
+needs. And the scope check the spec set on itself: if the implementation makes
 `GameEngine.ts` materially harder to navigate, extract `ComicHitFx.ts` — *after* the behaviour works.
 
 **Eight remaining rules.** Damage numbers are **engine-owned**, pooled and world-space, not React
@@ -2917,7 +2931,8 @@ it elsewhere*. Rebuild disposes geometry and materials once: *do not also call t
 path* and dispose the same resources twice. Dispose temporary source geometries **after** the merged
 fern and flower geometries are created. The settings control reads
 `Растительность: выкл. / низк. / высок.`, and the pause control calls the same engine setter as the
-menu one. Default breeze must work **without weather**, and weather coupling is verified only when
+menu one. Default breeze works **without weather**, and weather coupling is **not** verified until the weather
+system exists, and weather coupling is verified only when
 the weather system exists — which, since wind never shipped, it never was.
 
 **Rules and values this distillation had compressed too far**, restored in the spec's own
@@ -3166,8 +3181,8 @@ unimplemented, and `GameEngine.ts:11198` is a plain zone comparison.
 their ARIA state convention, rather than being hidden in a separate panel — one row of world-look
 switches, all keyboard reachable and all announcing their pressed state.
 
-**Lifecycle and disposal.** `setWeatherEnabled(enabled)` **applies immediately, including while
-paused**, and does not wait for the next frame; enabling restores all visible state and disabling
+**Lifecycle and disposal.** `setWeatherEnabled(enabled)` must **apply immediately, including while paused** — enabling and
+disabling both take effect at once, and does not wait for the next frame; enabling restores all visible state and disabling
 removes it, so a toggle from the pause menu is visible behind the modal. Pause uses the normal
 update gate, which freezes precipitation, lightning and thunder **together**. `destroy()` had to be
 extended to `THREE.Line` / `THREE.LineSegments` — the existing `destroy()` helper handles `Mesh`, `Sprite` and `Points` but not lines, which is what rain is — or to dispose rain explicitly; either way **disposal
@@ -3350,7 +3365,8 @@ except `bounty`, which is 1 in code rather than 0-for-a-borrowed-target. The loa
 
 **Lifecycle invariants — the ones that keep events from corrupting the campaign.** `cleanup(): void` is **idempotent**, and there is an idempotent `removeActorById()` that also removes projectiles.
 Victory or defeat mid-event forces cleanup with **no reward**. **Killing event-spawned actors never
-advances campaign objectives**; a borrowed bounty target is *borrowed* — not owned, not despawned —
+advances campaign objectives**; cleanup removes only `ownedActorIds`; borrowed bounty targets and rescued allies remain. A borrowed
+bounty target is *borrowed* — not owned, not despawned —
 while spawned fallback targets are **objective-ineligible and removable**. The champion damage bonus
 stacks to **+18 per run** and stays capped **across save and load**; v1 saves default it to `0`.
 Randomness comes from a dedicated `eventRng = seededRandom(seed)` — concretely
@@ -3551,7 +3567,7 @@ and licensed audio — the no-external-assets constraint applies to sound exactl
 Also explicitly rejected: *"suspending the `AudioContext` as ordinary pause behaviour"* — pause
 lowers music gain targets instead, because suspension breaks scheduler time. The SFX slider is an **accessible range input** added to the menu **and pause settings**, labelled
 `Громкость эффектов`, persisted under **`korovany-sfx-volume`**; the music mute toggle beside it
-persists under **`korovany-music-muted`**. Teardown ignores only `InvalidStateError`; other teardown errors are surfaced consistently, and a start → menu → start
+persists under **`korovany-music-muted`**. Teardown: `InvalidStateError` is ignored; other teardown errors are surfaced consistently, and a start → menu → start
 cycle must leave **no delayed burst, click loop, orphan interval, node leak or overlapping music**.
 
 **Spatialisation, written out.** Panning and attenuation are computed from the listener-relative

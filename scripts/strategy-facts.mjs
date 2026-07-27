@@ -292,7 +292,7 @@ export function sectionWindows(section) {
   const out = []
   for (let i = 0; i < lines.length; i += 1) {
     const text = lines.slice(i, i + 3).join(' ').toLowerCase()
-    out.push({ text, stems: sectionStems(text) })
+    out.push({ text })
   }
   return out
 }
@@ -310,7 +310,7 @@ function sectionSentences(section) {
     .split(/(?<=[.;:!?])\s+/)
     .map((s) => {
       const text = s.toLowerCase()
-      return { text, stems: sectionStems(text) }
+      return { text }
     })
 }
 
@@ -399,54 +399,25 @@ export function extractFacts(spec) {
 }
 
 /**
- * Light inflection normalisation so `flash` and `flashes`, `reserve` and
- * `reserved` are the same fact. An inflection is not a different fact, and a
- * checker that says otherwise is measuring morphology.
+ * Inflection normalisation was REMOVED after audit, and this note records why
+ * rather than deleting the evidence.
  *
- * An earlier version of this also stripped `ly` and collapsed final doubled
- * letters. Both were unsound and an audit caught them: `clear`/`clears` and
- * `clearly` all collapsed to `clear`, which let an adverb stand in for a verb
- * and hid a genuinely missing rule; and `apply`, `applies` and `app` all
- * collapsed to `ap`, so React's `App` could satisfy a lifecycle probe. The
- * document's own worked example was false as well — that stemmer did *not*
- * equate `reserve` with `reserved`.
+ * It stripped `ly` and collapsed final doubled letters, so `clear`, `clears`
+ * and `clearly` all became `clear`, and `apply`, `applies` and `app` all became
+ * `ap`. Hardening it — dropping those two rules and adding required-distinction
+ * tests — fixed the two known collisions but not the shape of the problem: a
+ * global many-to-one collapse lets ANY word in a section satisfy ANY probe that
+ * normalises to the same token. A miss is a gap; a false positive is the tool
+ * certifying something that is not there, which is strictly worse.
  *
- * So this one is guarded by `STEM_TESTS`, which asserts required equivalences
- * AND required distinctions, and aborts the run if any fails. A normaliser
- * without negative tests is the same failure as a metric without a control.
+ * Matching is now exact-form. If inflection tolerance is wanted later it must be
+ * probe-scoped — a curated map attached to one specific fact — never a global
+ * normaliser.
+ *
+ * British/American spelling normalisation is kept, and it is a different thing:
+ * `behaviour` -> `behavior` rewrites one lexeme to one lexeme. It cannot merge
+ * two distinct words, so it cannot produce this class of false positive.
  */
-const stem = (w) => w
-  .replace(/(ies)$/, 'y')
-  .replace(/(ations|ation)$/, 'at')
-  .replace(/(ings|ing)$/, '')
-  .replace(/(eds|ed)$/, '')
-  .replace(/(es|s)$/, '')
-  // Trailing `e` only on long words, so `reserve`/`reserved` unify while
-  // `car`/`care` and `cap`/`cape` stay distinct.
-  .replace(/(?<=.{5})e$/, '')
-
-const STEM_TESTS = {
-  equivalent: [
-    ['reserve', 'reserved'], ['flash', 'flashes'], ['disable', 'disabled'],
-    ['policy', 'policies'], ['callout', 'callouts'], ['rotate', 'rotates'],
-    ['clear', 'clears'],
-  ],
-  distinct: [
-    ['clear', 'clearly'], ['clears', 'clearly'], ['apply', 'app'],
-    ['applies', 'app'], ['car', 'care'], ['cap', 'cape'],
-  ],
-}
-
-function runStemTests() {
-  const failures = []
-  for (const [a, b] of STEM_TESTS.equivalent) {
-    if (stem(a) !== stem(b)) failures.push(`stemmer: "${a}" and "${b}" should be one fact but stem to "${stem(a)}" and "${stem(b)}"`)
-  }
-  for (const [a, b] of STEM_TESTS.distinct) {
-    if (stem(a) === stem(b)) failures.push(`stemmer: "${a}" and "${b}" are different words but both stem to "${stem(a)}"`)
-  }
-  return failures
-}
 
 /**
  * Is this fact present in the section that owns it?
@@ -455,7 +426,7 @@ function runStemTests() {
  * be present. An earlier revision accepted three of four, which meant deleting a
  * rule's single most discriminating token still scored it preserved — a lenient
  * matcher on exactly the classes where every real loss was found. "Preserved"
- * here means: every probe word, or its stem, appears in the owning section.
+ * here means: every probe word appears verbatim in the owning section.
  */
 export function present(fact, section, ctx) {
   const c = ctx ?? buildContext(section)
@@ -465,7 +436,7 @@ export function present(fact, section, ctx) {
   if (Array.isArray(fact.probe)) {
     // formula signatures: window-scoped co-occurrence
     return c.windows.some(
-      ({ text, stems }) => fact.probe.every((w) => text.includes(w) || stems.has(stem(w))),
+      ({ text }) => fact.probe.every((w) => text.includes(w)),
     )
   }
   if (fact.probe && typeof fact.probe === 'object') {
@@ -473,15 +444,13 @@ export function present(fact, section, ctx) {
     // Window-scoped: the probe words must CO-OCCUR, not merely both exist
     // somewhere in a two-hundred-line section.
     const co = c.windows.some(
-      ({ text, stems }) => sig.every((w) => text.includes(w) || stems.has(stem(w))),
+      ({ text }) => sig.every((w) => text.includes(w)),
     )
     if (!co) return false
     // Polarity and ordering are checked at SENTENCE scope. A window wide enough
     // to survive hard wrapping is also wide enough to contain a different
-    // sentence's `not`, which would let an inverted prohibition pass. Stemming
-    // applies here exactly as it does in the window check — `callout` and
-    // `callouts` are the same rule.
-    const has = (s) => sig.every((w) => s.text.includes(w) || s.stems.has(stem(w)))
+    // sentence's `not`, which would let an inverted prohibition pass.
+    const has = (s) => sig.every((w) => s.text.includes(w))
     if (neg && !c.sentences.some((s) => has(s) && NEGATION.test(s.text))) return false
     if (order && !c.sentences.some((s) => has(s) && s.text.includes(order))) return false
     return true
@@ -501,12 +470,6 @@ export function buildContext(section) {
     sentences: sectionSentences(section),
     lines: section.split('\n').map((l) => l.toLowerCase()),
   }
-}
-
-export function sectionStems(section) {
-  return new Set(
-    section.toLowerCase().split(/[^a-z-]+/).filter(Boolean).map(stem),
-  )
 }
 
 function sectionText(docLines, heading) {  const start = docLines.findIndex((l) => l.startsWith(heading))
@@ -653,14 +616,6 @@ function audit() {
   }
   const docLines = normalise(raw).split('\n')
 
-  const stemFailures = runStemTests()
-  if (stemFailures.length > 0) {
-    console.error('STEMMER TESTS FAILED — the normaliser conflates or splits words it must not:')
-    for (const f of stemFailures) console.error(`  ${f}`)
-    process.exitCode = 1
-    return
-  }
-
   const controlFailures = process.argv.includes('--no-controls')
     ? []
     : runControls(fixtures, docLines)
@@ -742,7 +697,10 @@ function audit() {
   console.log(`\ndeclared residue: ${accepted.size} accepted, ${unaccepted.length} NOT accepted${fixed > 0 ? `, ${fixed} previously accepted now preserved` : ''}`)
   for (const m of unaccepted.slice(0, 40)) console.log(`  NEW MISS: ${m.name} [${m.cls}] ${m.id}`)
 
-  if (keyMisses.length > 0 || unaccepted.length > 0) process.exitCode = 1
+  const numberFailures = verifyDocumentNumbers(docLines.join('\n'), total, missing)
+  for (const f of numberFailures) console.error(` DOCUMENT NUMBER MISMATCH: ${f}`)
+
+  if (keyMisses.length > 0 || unaccepted.length > 0 || numberFailures.length > 0) process.exitCode = 1
 }
 
 /**
@@ -838,7 +796,29 @@ function runMutants() {
   }
 }
 
-/** `--accept` rewrites the declared-residue list from the current run. */function acceptResidue() {
+/**
+ * The methodology note quotes figures. Hand-maintaining a number inside a note
+ * whose entire subject is not trusting hand-maintained numbers is self-refuting,
+ * and it had already drifted once — the `--break=chronicle` count was written as
+ * 106 when the tool printed 108, then 113. So the tool now reads the document's
+ * own claims back and fails if they disagree with what it just computed.
+ */
+function verifyDocumentNumbers(docBody, total, missing) {
+  const failures = []
+  const pct = (100 * (1 - missing / total)).toFixed(1)
+  const claim = docBody.match(/\*\*Result: ([\d,]+) facts across the fifteen pairings, ([\d.]+)% present/)
+  if (!claim) failures.push('the document no longer states a headline result; the checker cannot verify it')
+  else {
+    if (claim[1].replace(/,/g, '') !== String(total)) failures.push(`document claims ${claim[1]} facts, tool counts ${total}`)
+    if (claim[2] !== pct) failures.push(`document claims ${claim[2]}%, tool computes ${pct}%`)
+  }
+  const residue = docBody.match(/\*\*The residue is ([\d,]+) facts/)
+  if (!residue) failures.push('the document no longer states a residue count')
+  else if (residue[1].replace(/,/g, '') !== String(missing)) {
+    failures.push(`document claims a residue of ${residue[1]}, tool counts ${missing}`)
+  }
+  return failures
+}function acceptResidue() {
   const fixtures = JSON.parse(readFileSync(FIXTURES, 'utf8'))
   const docLines = normalise(readFileSync(DOC, 'utf8')).split('\n')
   const out = []
