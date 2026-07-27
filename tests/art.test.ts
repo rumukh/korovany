@@ -1469,6 +1469,7 @@ test('transformed carries baked outline normals through a rotation', () => {
 test('the public barrel exports exactly the documented surface', async () => {
   const art = await import('../src/game/art/index.ts')
   const expected = [
+    // --- foundation (docs/08 §5) ---
     'GeometryCache',
     'OUTLINE_NORMAL_ATTRIBUTE',
     'StylizedArtLibrary',
@@ -1505,11 +1506,53 @@ test('the public barrel exports exactly the documented surface', async () => {
     'tubeAlongPoints',
     'valueNoise3',
     'wrapArtVariation',
+    // --- CharacterKit, wave 2A (docs/09 §5.1) ---
+    'BEAST_RIG',
+    'CHARACTER_DETAIL_DISTANCE',
+    'CHARACTER_VARIANTS',
+    'WAGON_RIG',
+    'buildBeastBody',
+    'buildBeastHead',
+    'buildBeastLimb',
+    'buildBeastTail',
+    'buildBirdBody',
+    'buildBirdWing',
+    'buildCloak',
+    'buildDeerBody',
+    'buildDeerCrown',
+    'buildDeerLeg',
+    'buildFace',
+    'buildForearm',
+    'buildHair',
+    'buildHand',
+    'buildHarness',
+    'buildHead',
+    'buildHeadgear',
+    'buildOffhand',
+    'buildOxBody',
+    'buildOxHead',
+    'buildShin',
+    'buildThigh',
+    'buildTorso',
+    'buildTorsoTrim',
+    'buildUpperArm',
+    'buildWagonAxle',
+    'buildWagonBed',
+    'buildWagonCargo',
+    'buildWagonFrame',
+    'buildWagonTilt',
+    'buildWagonWheel',
+    'buildWeaponGrip',
+    'buildWeaponHead',
+    'characterKitForRole',
+    'characterPartKeys',
+    'resolveCharacterPlan',
+    'solveHandOffset',
   ]
   assert.deepEqual(
     Object.keys(art).sort(),
-    expected,
-    'update docs/08 §5 and this list together when the art surface changes',
+    [...expected].sort(),
+    'update docs/08 §5 or docs/09 §5.1 and this list together when the art surface changes',
   )
 })
 
