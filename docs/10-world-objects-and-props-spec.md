@@ -369,6 +369,23 @@ one extra draw call for the whole region — and they are released **before** th
 its source and tracks its `count` per frame, so the decoration-quality slider thins the
 ink along with the trees.
 
+**The 8 is per region, and nine regions are visible.** `GeneratedWorldRuntime` sets
+`visibleRadius: 1`, and `RegionManager` selects on Chebyshev distance
+(`max(|dx|, |dz|) <= visibleRadius`), so **3x3 = 9** regions are resident and drawing at
+once. The per-region cap therefore admits up to **72** simultaneous ink draws; the
+measured mean of 3.99 puts the realistic figure near **36**, worst case near 63. Spec 08
+states the 8 without the multiplier, which is a hole in the budget rather than in the
+accounting — Wave 4 should either declare a global `OUTLINE_WORLD_DRAWS_TOTAL` or
+restate the 8 as a per-region share of one.
+
+**The unit also changed, and that matters more than the count.** Spec 08 sized the 8 for
+*instanced* silhouettes, where one draw inks a whole forest. This pass spends most of it
+on **unique** meshes — a building LOD, a bridge, a merged clutter mesh — where one draw
+inks one object. Seven of eight spent on unique props leaves a single slot for the
+instanced case the number was originally written for. That is a deliberate trade, not an
+oversight: a settlement roofline is the silhouette a player navigates by. It is recorded
+here so Wave 4 prices it knowingly.
+
 ## 6. Budgets
 
 Existing budgets from spec 08 are unchanged. This pass declares three new numbers and
@@ -377,7 +394,7 @@ raises one:
 ```text
 PROP_SURFACES=4                      hard, foliage, cloth, glow
 PROP_RETENTION_KEYS=128              distinct recently released keys, one slot each
-PROP_CACHE_ENTRIES_MAX=176           live entries incl. retention; measured peak 125
+PROP_CACHE_ENTRIES_MAX=176           live entries incl. retention; measured peak 130
 BUILDING_LOD_DISTANCE=46             camera units; bridges swap at 1.6x that
 OUTLINE_SITE_DRAWS_MAX=4             of the 8 a region may spend
 DRESSING_KINDS_MAX=6                 instanced dressing meshes per region
@@ -391,9 +408,27 @@ BUILDING_TRIANGLES=750-1800 near, 120-260 far
 `GEOMETRY_CACHE_ENTRIES_MAX` in spec 08 is 64 and describes the whole game. This pass
 needs more, because the catalogue is much larger and the retention window deliberately
 holds geometry past its last reference. **Requested: 176**, justified by a measured
-peak of 115 live entries while streaming a whole 5x5 map, and asserted in
-`tests/worldArt.test.ts`. Memory cost is bounded by the window: most entries are small
-props, and the largest — a merged settlement — is roughly 340 KB.
+peak of **130** live entries and asserted in `tests/worldArt.test.ts`.
+
+The peak depends on how the player moves, and the intuition here is backwards, so it is
+worth recording. A 128-key window inside a 176 cap leaves 48 for the live set, which
+only works because retained and live keys overlap — and one might expect a straight run
+across the map to minimise that overlap and blow the cap. Measured over three seeds, two
+warm laps each:
+
+```text
+full sweep    130      diagonal     101
+zigzag        130      straight run  92     <- the caravan case, the cheapest
+```
+
+Straight-line travel is the **least** expensive, not the most. Overlap is not the
+dominant term: how many *distinct* keys a route demands is. One row of the map asks for
+a fraction of the catalogue, while a full sweep asks for all of it. The worst case is
+therefore the exhaustive traversal a test performs, not the route a player takes — which
+is the comfortable direction for a budget to be wrong in.
+
+Memory cost is bounded by the window: most entries are small props, and the largest — a
+merged settlement — is roughly 340 KB.
 
 Targets:
 
@@ -541,7 +576,48 @@ Targets:
       for vertex across region boundaries.
 - [x] `npm run build`, `npm run lint` and `npm test` are green.
 
-## 13. Effort
+## 13. Tests that could not fail
+
+Nine defects on this programme were the same defect: **a check whose answer did not
+depend on the thing it claimed to measure.** They are collected here because the pattern
+cost more time than any bug in the geometry, and because every one of them read as
+diligence right up until someone measured the instrument instead of the code.
+
+| The check | What it could not see |
+| --- | --- |
+| `ART_LIBRARY_MATERIALS === 12` | never acquired a material, so the ceiling was never exercised |
+| axis-radial winding invariant | cylinder caps face along the axis; the invariant does not apply to them |
+| `conformWinding` inside the builders | corrected geometry before any assertion saw it — the family-wide check could not fail |
+| index-blind winding checker | returned **6** for a correct sphere and **6** for a fully reversed one |
+| tests reading `userData.comicOutline` | one rename from silently counting zero ink shells |
+| ink budget charged per `applyOutline` call | the library builds one shell per *mesh*; test and code disagreed and the **code** was wrong |
+| exact-set barrel assertion | the drifts it cites are type-only exports, erased before `Object.keys` runs |
+| sign-only winding test | a normal can be 125° wrong and still be on the correct side |
+| `referenceCount === 0` double-release detector | the dangerous case leaves the count at 1, so the release *succeeds* and steals another holder's reference |
+
+Four rules fall out of them, in rough order of how much they would have saved:
+
+1. **A silent runtime fixup does not protect an invariant — it destroys the evidence
+   that the invariant broke.** `conformWinding` was well-intentioned, idempotent and
+   load-bearing-looking, and it made a 560-geometry assertion incapable of failing.
+2. **Validate the instrument before trusting the reading.** Every orientation check here
+   now proves it catches a deliberately corrupted control *before* it is believed about
+   real geometry — and the control must be corrupted in the way that matters: a
+   *correctly wound indexed* geometry is what exposes index-blindness, not a reversed one.
+3. **State what a check cannot detect, next to what it asserts.** Sign and magnitude are
+   different questions; relative and absolute orientation are different questions; a
+   closed-solid invariant says nothing about an open sheet. Most of these checks were
+   doing exactly what they said, where what they said was narrower than the reader assumed.
+4. **When a test and the code disagree about how to count something, suspect the code
+   too.** The ink budget looked like a test over-counting. The counter was wrong.
+
+The corollary for anything with a reference count: `release(key)` cannot detect a double
+release because a key has no holder identity, so the fault is invisible at that boundary.
+`WorldPropLibrary.release(asset)` takes a **receipt**, which does have identity, and
+refuses one it has already accepted. Where an API can be receipt-shaped, the class closes
+by construction and needs no test at all.
+
+## 14. Effort
 
 **2.5-3 days.** The vocabulary is mechanical. The time went into composition that
 reads as places rather than as prop soup, into the cache lifetime being provably

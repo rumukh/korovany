@@ -258,7 +258,25 @@ export class WorldPropLibrary {
     pending.clear()
   }
 
+  /**
+   * Receipts already handed back.
+   *
+   * `GeometryCache.release(key)` cannot detect a double release, because a key has no
+   * holder identity: A releasing twice while B is still drawing leaves the reference
+   * count at 1, so the release is *effective* and steals B's reference silently. A
+   * receipt does have identity, so the fault is exactly "this asset came back twice"
+   * and it can be caught at the boundary rather than inferred from a count later.
+   */
+  private readonly returned = new WeakSet<PropAsset>()
+
   release(asset: PropAsset): void {
+    if (this.returned.has(asset)) {
+      throw new Error(
+        `Prop asset ${asset.key} was released twice; the second release takes a `
+        + 'reference belonging to another holder, which frees a buffer still in use',
+      )
+    }
+    this.returned.add(asset)
     for (const surface of asset.surfaces) this.retain(surface.key)
   }
 

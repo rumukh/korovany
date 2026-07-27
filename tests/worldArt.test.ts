@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import * as THREE from 'three'
 import { artVariation } from '../src/game/art/ArtRandom.ts'
+import { GeometryCache } from '../src/game/art/GeometryCache.ts'
 import {
   bridgeParts,
   buildingParts,
@@ -199,6 +200,65 @@ function everyPropRequest(): Array<[string, PropRequest]> {
     }
   }
   return requests
+}
+
+/**
+ * Worst angle, in degrees, between a face's geometric normal and the shading normal
+ * its vertices carry.
+ *
+ * `windingDisagreements` is a **sign** test, so it is blind to a normal that points
+ * the roughly-right way but is badly wrong in magnitude. That is exactly the shape of
+ * the collapsed-section defect: a loft section that pinches to zero takes its normal
+ * from a zeroed edge and falls back to straight up, so a downward spike shades as
+ * though it points at the sky — measured upstream at 104-125 degrees, and passing a
+ * sign test cleanly the whole time.
+ *
+ * Smooth-shaded revolved solids legitimately run high here (a healthy capsule is
+ * about 21 degrees, the coarse pillar lathe about 73), so this is not a tight bound.
+ * It exists to catch the >90 degree signature, where a normal has diverged so far
+ * from its face that it is no longer describing the same surface.
+ */
+function worstNormalError(geometry: THREE.BufferGeometry): number {
+  const position = geometry.getAttribute('position')
+  const normal = geometry.getAttribute('normal')
+  if (!position || !normal) return 0
+  const index = geometry.index
+  const triangles = index ? index.count / 3 : position.count / 3
+  const a = new THREE.Vector3()
+  const b = new THREE.Vector3()
+  const c = new THREE.Vector3()
+  const edgeA = new THREE.Vector3()
+  const edgeB = new THREE.Vector3()
+  const geometric = new THREE.Vector3()
+  const shading = new THREE.Vector3()
+  let worst = 0
+  for (let triangle = 0; triangle < triangles; triangle += 1) {
+    const offset = triangle * 3
+    const first = index ? index.getX(offset) : offset
+    const second = index ? index.getX(offset + 1) : offset + 1
+    const third = index ? index.getX(offset + 2) : offset + 2
+    a.fromBufferAttribute(position, first)
+    b.fromBufferAttribute(position, second)
+    c.fromBufferAttribute(position, third)
+    edgeA.subVectors(b, a)
+    edgeB.subVectors(c, a)
+    geometric.crossVectors(edgeA, edgeB)
+    if (geometric.lengthSq() < 1e-12) continue
+    geometric.normalize()
+    shading.set(0, 0, 0)
+    for (const vertex of [first, second, third]) {
+      shading.x += normal.getX(vertex)
+      shading.y += normal.getY(vertex)
+      shading.z += normal.getZ(vertex)
+    }
+    // A zeroed shading normal is the collapsed-section failure in its purest form.
+    if (shading.lengthSq() < 1e-12) return 180
+    shading.normalize()
+    const degrees =
+      (Math.acos(Math.max(-1, Math.min(1, geometric.dot(shading)))) * 180) / Math.PI
+    if (degrees > worst) worst = degrees
+  }
+  return worst
 }
 
 /** Triangles whose vertex order disagrees with the normal the builder stored. */
@@ -563,6 +623,15 @@ test('every prop the world can build is oriented outwards', () => {
         const disagree = windingDisagreements(part.geometry)
         if (disagree > 0) {
           failures.push(`${label}#${part.surface}: ${String(disagree)} triangles`)
+        }
+        // Magnitude, not just sign — see `worstNormalError`. A collapsed loft section
+        // shades a downward spike as though it pointed at the sky, which a sign test
+        // waves through.
+        const error = worstNormalError(part.geometry)
+        if (error > 90) {
+          failures.push(
+            `${label}#${part.surface}: normal ${error.toFixed(1)}deg from its face`,
+          )
         }
         // Both metrics in one pass. Building the whole request space is the most
         // expensive thing in this file, and `generatedWorldRuntime.test.ts` is
@@ -1049,6 +1118,155 @@ test('region streaming returns every borrowed prop reference', () => {
   assert.equal(runtime.retainedPropCount, 0)
 })
 
+test('every prop acquire is matched by exactly one release, on every path', () => {
+  // `GeometryCache.release(key)` carries no holder identity and returns silently for a
+  // key nobody holds, so one holder releasing twice is indistinguishable *inside the
+  // cache* from two holders releasing once each — the second holder simply loses a
+  // buffer it is still drawing from. No guard within the cache can close that.
+  //
+  // It is detectable from outside: a release against a key whose reference count is
+  // already zero is exactly the double-release signature. This drives a full region
+  // lifecycle — load, unload, reload, a lap that forces retention eviction, then
+  // teardown — and watches every call.
+  const overReleases: string[] = []
+  const acquiredKeys = new Set<string>()
+  let acquires = 0
+  let releases = 0
+  const realAcquire = GeometryCache.prototype.acquire
+  const realRelease = GeometryCache.prototype.release
+  GeometryCache.prototype.acquire = function patchedAcquire(
+    this: GeometryCache,
+    key: string,
+    build: () => THREE.BufferGeometry,
+  ): THREE.BufferGeometry {
+    acquires += 1
+    acquiredKeys.add(key)
+    return realAcquire.call(this, key, build)
+  }
+  GeometryCache.prototype.release = function patchedRelease(
+    this: GeometryCache,
+    key: string,
+  ): void {
+    releases += 1
+    if (this.referenceCount(key) === 0) overReleases.push(key)
+    realRelease.call(this, key)
+  }
+
+  try {
+    const { blueprint, runtime } = createRuntime('release-accounting')
+    const regions = blueprint.regions
+    const focusOn = (index: number): void => {
+      const center = runtime.getRegionCenter(regions[index].id)
+      assert.ok(center)
+      runtime.update({ deltaSeconds: 0, focus: center })
+    }
+
+    focusOn(0)
+    const liveAfterLoad = runtime.propCacheSize
+    assert.ok(liveAfterLoad > 0, 'a loaded region must borrow shared geometry')
+
+    // Unload it by moving to the far corner, then come back: the returning region must
+    // be served by the retention window, not by a rebuild of geometry it never released.
+    focusOn(regions.length - 1)
+    focusOn(0)
+
+    // A full lap pushes far more distinct keys through the window than it can hold,
+    // which is the only way to exercise the eviction release path.
+    for (let index = 0; index < regions.length; index += 1) focusOn(index)
+
+    assert.deepEqual(
+      overReleases,
+      [],
+      'a key was released while nobody held it, which frees a live buffer',
+    )
+
+    // The exact fault this test exists for, driven rather than inferred. A review
+    // showed the `referenceCount === 0` check above is blind to the dangerous case:
+    // when A releases twice while B still holds the key, the count is still 1 at the
+    // moment of the fault, so the second release *succeeds* and quietly takes B's
+    // reference. Only holder identity can see that, which is why `release` takes a
+    // receipt and refuses one it has already accepted.
+    const library = new WorldPropLibrary({ retention: 0 })
+    const request = { kind: 'tree', biome: 'forest', slot: 0, detail: 'near' } as const
+    const holderA = library.acquire(request)
+    const holderB = library.acquire(request)
+    const shared = holderB.surfaces[0].geometry
+    let freed = false
+    shared.addEventListener('dispose', () => {
+      freed = true
+    })
+    library.release(holderA)
+    assert.throws(
+      () => {
+        library.release(holderA)
+      },
+      /released twice/,
+      'a receipt returned twice must be refused, not silently applied',
+    )
+    assert.equal(freed, false, "B's buffer was freed while B still held it")
+    library.release(holderB)
+    library.dispose()
+
+    // An accounting test that observed nothing would pass every assertion above, so
+    // pin that it actually watched a meaningful amount of traffic.
+    assert.ok(
+      acquires >= 200,
+      `only ${String(acquires)} acquires observed; the lifecycle did not run`,
+    )
+    assert.ok(
+      acquiredKeys.size >= 40,
+      `only ${String(acquiredKeys.size)} distinct keys observed`,
+    )
+    assert.ok(releases > 0, 'no releases observed; the unload path did not run')
+
+    // `dispose()` frees the retention window wholesale rather than through `release`,
+    // so the totals deliberately do not have to converge — what must hold is that
+    // nothing survives it.
+    runtime.dispose()
+    assert.equal(runtime.propCacheSize, 0, 'teardown must return every borrowed key')
+    assert.equal(runtime.retainedPropCount, 0)
+    assert.deepEqual(overReleases, [], 'teardown over-released a key')
+  } finally {
+    GeometryCache.prototype.acquire = realAcquire
+    GeometryCache.prototype.release = realRelease
+  }
+})
+
+test('the retention window never releases a key a live region still holds', () => {
+  // The window takes over a *released* reference. If it ever evicted a key that a
+  // resident region were still using, the region would keep drawing a disposed buffer.
+  const library = new WorldPropLibrary({ retention: 2 })
+  const request = { kind: 'tree', biome: 'forest', slot: 0, detail: 'near' } as const
+
+  const live = library.acquire(request)
+  const key = live.surfaces[0].key
+  let disposed = false
+  live.surfaces[0].geometry.addEventListener('dispose', () => {
+    disposed = true
+  })
+
+  // A second holder takes the same key, then releases it into the window.
+  library.release(library.acquire(request))
+  // Now flood the window well past its limit so the key is evicted from it.
+  for (const filler of [
+    { kind: 'undergrowth', biome: 'forest', slot: 0 },
+    { kind: 'undergrowth', biome: 'forest', slot: 1 },
+    { kind: 'undergrowth', biome: 'forest', slot: 2 },
+    { kind: 'groundCover', biome: 'forest', cover: 'grass' },
+    { kind: 'groundCover', biome: 'forest', cover: 'fern' },
+  ] as const) {
+    library.release(library.acquire(filler))
+  }
+
+  assert.equal(disposed, false, 'eviction freed a buffer a live holder still borrows')
+  assert.ok(
+    library.referenceCount(key) >= 1,
+    'the live holder lost its reference to an evicted key',
+  )
+  library.release(live)
+  library.dispose()
+})
+
 test('the retention window hands a returning region the same buffer', () => {
   const library = new WorldPropLibrary({ retention: 8 })
   const request = { kind: 'tree', biome: 'forest', slot: 1, detail: 'near' } as const
@@ -1380,3 +1598,4 @@ test('reloading a region rebuilds the same world objects', () => {
   assert.deepEqual(snapshot(), before)
   runtime.dispose()
 })
+

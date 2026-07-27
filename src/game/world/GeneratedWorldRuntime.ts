@@ -1967,7 +1967,6 @@ function createSharedMaterials(
     parameters: StylizedWorldParameters,
   ): THREE.MeshStandardMaterial => {
     const material = art.createMaterial({ ...parameters, surface })
-    material.userData.generatedWorldShared = true
     all.push(material)
     return material
   }
