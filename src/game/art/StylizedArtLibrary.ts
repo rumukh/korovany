@@ -410,7 +410,10 @@ export class StylizedArtLibrary {
       depthWrite: options.depthWrite ?? true,
     })
     material.name = options.name ?? `stylized-${options.surface}`
-    material.userData.stylizedSurface = options.surface
+    // A preset *label*, for debugging and inspection. Never an injection marker:
+    // `Material.clone()` deep-copies userData through JSON, so a clone keeps this
+    // string while losing the shader entirely. Ask `hasStylizedShader(material)`.
+    material.userData.stylizedSurfacePreset = options.surface
     applyStylizedShader(material, this.sharedUniforms, {
       bandStrength: options.bandStrength ?? preset.bandStrength,
       rimStrength: options.rimStrength ?? preset.rimStrength,
@@ -458,13 +461,13 @@ export class StylizedArtLibrary {
     if (this.disposed) {
       throw new Error('Cannot adopt a material into a disposed art library')
     }
-    // Keyed off the injection itself, not `userData.stylizedSurface`: a clone
-    // inherits the marker through the userData copy while losing the shader, so
-    // trusting userData here would refuse to repair exactly the case that needs it.
+    // Keyed off the injection itself, not the userData label: a clone inherits the
+    // label through the userData copy while losing the shader, so trusting userData
+    // here would refuse to repair exactly the case that needs it.
     if (hasStylizedShader(material)) return material
     const surface = options.surface ?? 'cloth'
     const preset = SURFACE_PRESETS[surface]
-    material.userData.stylizedSurface = surface
+    material.userData.stylizedSurfacePreset = surface
     applyStylizedShader(material, this.sharedUniforms, {
       bandStrength: options.bandStrength ?? preset.bandStrength,
       rimStrength: options.rimStrength ?? preset.rimStrength,

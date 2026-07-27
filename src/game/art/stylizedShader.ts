@@ -242,9 +242,15 @@ export function applyStylizedShader(
       STYLIZED_FRAGMENT_BODY,
     )
   }
-  // Without this every plain MeshStandardMaterial in the scene would be eligible to
-  // reuse our compiled program, and vice versa: three's cache key does not include
-  // `onBeforeCompile`.
+  // three's default cache key is `onBeforeCompile.toString()`, so it would in fact
+  // already separate stylized materials from stock ones and collapse ours onto a
+  // single program. The override earns its place for two other reasons: it avoids
+  // stringifying a closure inside `getParameters` on every material, and — the
+  // load-bearing one — the source text is not always enough to tell two variants
+  // apart. See `applyOutlineShader`, where smooth and flat share identical closure
+  // source and differ only by a captured boolean; keying on the text alone would
+  // collide them onto one program and render one of the two with the wrong shader.
+  // Do not delete this on the grounds that three already handles it.
   material.customProgramCacheKey = () => STYLIZED_PROGRAM_KEY
   material.needsUpdate = true
 }
@@ -271,6 +277,9 @@ export function applyOutlineShader(
       outlineProjection(smooth),
     )
   }
+  // Captured, not written out: `smooth` never appears in this closure's source
+  // text, so three's default `onBeforeCompile.toString()` key cannot tell the two
+  // variants apart and would hand both the same compiled program.
   material.customProgramCacheKey = () =>
     `${OUTLINE_PROGRAM_KEY}:${smooth ? 'smooth' : 'flat'}`
   material.needsUpdate = true

@@ -12,6 +12,7 @@ import {
   branchStructure,
   createLod,
   displaceGeometry,
+  extrudeProfile,
   facetGeometry,
   fbm3,
   hasOutlineNormals,
@@ -668,14 +669,18 @@ test('adoptMaterial styles a caller-owned material without taking ownership', ()
   const material = new THREE.MeshStandardMaterial({ color: 0x884422 })
   const adopted = library.adoptMaterial(material, { surface: 'metal' })
   assert.equal(adopted, material)
-  assert.equal(material.userData.stylizedSurface, 'metal')
+  assert.equal(material.userData.stylizedSurfacePreset, 'metal')
   // Ownership must not move, or the engine's teardown predicate would skip a material
   // nobody else disposes.
   assert.equal(StylizedArtLibrary.isLibraryOwned(material), false)
 
   const before = material.onBeforeCompile
   library.adoptMaterial(material, { surface: 'stone' })
-  assert.equal(material.userData.stylizedSurface, 'metal', 'adopting twice is a no-op')
+  assert.equal(
+    material.userData.stylizedSurfacePreset,
+    'metal',
+    'adopting twice is a no-op',
+  )
   assert.equal(material.onBeforeCompile, before)
 
   material.dispose()
@@ -822,6 +827,112 @@ test('every geometry-kit builder winds to agree with its normals', () => {
       { x: 0.5, y: 0.5 },
       { x: 0.3, y: 1 },
     ])],
+
+    // The rest of the family. The invariant is only worth what it covers, and the
+    // sibling sessions have a standing instruction to add their builders here — so
+    // every producer in the kit must already be represented, or the instruction
+    // reads as "add yours to this list of six".
+    ['extrude', extrudeProfile(
+      [
+        { x: -0.5, y: -0.3 },
+        { x: 0.5, y: -0.3 },
+        { x: 0.6, y: 0.2 },
+        { x: 0, y: 0.6 },
+        { x: -0.6, y: 0.2 },
+      ],
+      { depth: 0.35, centered: true },
+    )],
+    ['tube body faceted', tubeAlongPoints(
+      [
+        { x: 0, y: 0, z: 0 },
+        { x: 0.3, y: 0.7, z: 0.15 },
+        { x: 0.1, y: 1.5, z: -0.25 },
+      ],
+      { radius: 0.18, radialSegments: 6, caps: true },
+    )],
+    ['tube body smooth', tubeAlongPoints(
+      [
+        { x: 0, y: 0, z: 0 },
+        { x: -0.4, y: 0.6, z: 0.2 },
+        { x: 0.2, y: 1.3, z: 0.4 },
+      ],
+      { radius: (t) => 0.2 * (1 - t) + 0.04, radialSegments: 7, smooth: true },
+    )],
+    // The one most likely to be extended by someone who is not me: the spec points
+    // both sibling sessions at this for trees, roots, driftwood, antlers and tails.
+    ['branch structure', branchStructure({
+      variation: artVariation(20260727, 'winding:branch'),
+      height: 2.4,
+      baseRadius: 0.2,
+      branchCount: 3,
+      depth: 2,
+      radialSegments: 5,
+    })],
+    ['displaced', displaceGeometry(
+      taperedBox({ width: 1, height: 1.4, depth: 1, topScale: 0.8, segments: 3 }),
+      { seed: 7, amplitude: 0.12, frequency: 1.7 },
+    )],
+    ['faceted', facetGeometry(stylizedCapsule({ radius: 0.35, height: 0.9 }))],
+    ['transformed', transformed(
+      taperedBox({ width: 0.8, height: 1.6, depth: 0.6, topScale: 0.5 }),
+      { rotation: { x: 0.6, y: -1.1, z: 0.35 }, scale: { x: 1.3, y: 0.7, z: 1 } },
+    )],
+    ['merged', mergeAll([
+      taperedBox({ width: 1, height: 1, depth: 1 }),
+      transformed(latheProfile([
+        { x: 0.05, y: 0 },
+        { x: 0.4, y: 0.4 },
+        { x: 0.1, y: 0.9 },
+      ]), { position: { x: 0, y: 1, z: 0 } }),
+    ])],
+
+    // Adversarial loft parameters none of the shape cases above reach. A twist or a
+    // shear is exactly where a naive side-quad diagonal flips sign.
+    ['loft twisted', loftProfile({
+      profile: polygonProfile(0.6, 7),
+      sections: [
+        { y: 0, scaleX: 1 },
+        { y: 0.8, scaleX: 0.9, rotation: 0.9 },
+        { y: 1.6, scaleX: 0.7, rotation: 1.8 },
+      ],
+    })],
+    ['loft sheared', loftProfile({
+      profile: rectProfile(0.8, 0.8),
+      sections: [
+        { y: 0, scaleX: 1 },
+        { y: 1, scaleX: 0.9, offsetX: 0.5, offsetZ: -0.35 },
+      ],
+    })],
+    ['loft tapered to a point', loftProfile({
+      profile: polygonProfile(0.7, 9),
+      sections: [
+        { y: 0, scaleX: 1 },
+        { y: 1.2, scaleX: 0.02 },
+      ],
+    })],
+    ['loft anisotropic', loftProfile({
+      profile: polygonProfile(0.5, 8),
+      sections: [
+        { y: 0, scaleX: 1.4, scaleZ: 0.5 },
+        { y: 1, scaleX: 0.4, scaleZ: 1.5 },
+      ],
+    })],
+    ['loft uncapped', loftProfile({
+      profile: polygonProfile(0.5, 6),
+      sections: [
+        { y: 0, scaleX: 1 },
+        { y: 1, scaleX: 0.8 },
+      ],
+      capBottom: false,
+      capTop: false,
+    })],
+    ['loft triangular', loftProfile({
+      profile: polygonProfile(0.6, 3),
+      sections: [
+        { y: 0, scaleX: 1 },
+        { y: 1, scaleX: 0.5 },
+      ],
+    })],
   ]
 
   for (const [label, geometry] of cases) {
@@ -1052,6 +1163,13 @@ test('a cloned stylized material is repairable and cannot forge ownership', () =
     false,
     'a clone must not inherit library ownership or teardown would skip it forever',
   )
+
+  // The preset label *does* survive, because userData is deep-copied through JSON.
+  // That is the trap: a clone advertises `stylizedSurfacePreset: 'cloth'` while
+  // carrying no injection at all. The label is for humans reading a debugger; the
+  // only sound question is hasStylizedShader().
+  assert.equal(clone.userData.stylizedSurfacePreset, 'cloth')
+  assert.equal(hasStylizedShader(clone), false)
 
   library.adoptMaterial(clone, { surface: 'cloth' })
   assert.equal(hasStylizedShader(clone), true, 'adoptMaterial must repair a clone')

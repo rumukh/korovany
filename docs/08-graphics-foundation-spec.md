@@ -241,6 +241,16 @@ Rules the kit enforces so siblings cannot get them wrong:
   survives silhouette inspection because most kit shapes are symmetric. `art.test.ts`
   asserts the invariant over every builder against three.js primitives as controls; any
   new builder must be added to that list.
+
+  Note the invariant is deliberately **relative** — winding against the geometry's own
+  stored normal — and not "faces point away from the centroid". The absolute form is
+  stronger where it applies but false-fails on anything not star-convex; a twisted loft
+  reports phantom errors under it. A second test applies the absolute check to the
+  closed, convex builders only, which closes the one blind spot the relative form has:
+  a builder that inverted its normals *and* its winding together would agree with
+  itself. Together they pin orientation absolutely without rejecting valid shapes. If
+  you add a twisted, shelled or otherwise non-convex builder, add it to the relative
+  test only.
 - `facetGeometry` is **non-destructive**: it returns a hard-edged copy and leaves the
   input untouched, so it is safe on a cached buffer. Pass `{ dispose: true }` only when
   you own the input and want move semantics. `mergeAll` is the one helper that consumes
@@ -281,6 +291,13 @@ ground-cover buffers per region, so identical forest regions currently hold dupl
 copies. Wiring the runtime onto this cache, keyed by biome and cover kind with
 `release` on region unload, belongs to the world-object pass and is listed as a
 dependency in §12.
+
+Be aware there is **no in-repo example of the release path** to copy. `GameEngine`
+only ever calls `acquire`, because its cache lives as long as the process and is torn
+down wholesale by `dispose()`. The world-object pass writes the first real
+`acquire`/`release` pair, so the ref-counting above is specification rather than
+precedent — worth extra care, and worth a test that streams a region in and out twice
+and asserts `referenceCount` returns to its starting value rather than drifting up.
 
 `createLod` is for streamed regions: a near level with displacement and an outline
 normal, a far level built from the same profile at lower segment counts. Instanced
@@ -376,6 +393,12 @@ Ownership, stated once and enforced everywhere:
   `hasStylizedShader() === false` (so it can be repaired). Pass a clone through
   `adoptMaterial()` to reinstate the injection, or prefer `acquireMaterial()` with a
   distinct key over cloning in the first place.
+- `userData.stylizedSurfacePreset` is a **human-readable label, never a marker**. It
+  records which preset was applied, for debuggers and scene dumps. Because `userData`
+  *is* deep-copied through JSON, a clone happily reports
+  `stylizedSurfacePreset: 'cloth'` while carrying no injection whatsoever — which is
+  precisely the wrong inference. The only sound question is `hasStylizedShader()`.
+  `adoptMaterial` deliberately ignores the label for the same reason.
 - Disposal is **terminal**. Every factory — `createMaterial`, `acquireMaterial`,
   `adoptMaterial`, `getOutlineMaterial`, `applyOutline`, `createContactShadow` —
   throws after `dispose()`. `dispose()` itself stays idempotent.
