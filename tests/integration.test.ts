@@ -59,6 +59,10 @@ function simultaneousInkDraws(object: THREE.Object3D): number {
  *
  * Nothing was wrong with either half — the per-region counter does exactly what it
  * says. The gap is that no one number described what the frame actually submits.
+ *
+ * Mutation-verified: lowering `OUTLINE_WORLD_VISIBLE_DRAWS_MAX` to 20 turns this red
+ * and reports `focus region-1-0 draws 24 ink shells across 6 visible regions`, so the
+ * failure names the position, the sum and how many regions paid it.
  */
 test('the whole visible set has an ink budget, not just each region in it', () => {
   const { scene, blueprint, runtime } = createRuntime('integration-ink')
@@ -145,6 +149,18 @@ test('the whole visible set has an ink budget, not just each region in it', () =
  *
  * S3's pre-merge baseline was 476 merged surfaces, 0 missing a `color` attribute, 0
  * fully white. This re-runs the same question against the assembled world.
+ *
+ * Mutation-verified, because a "no offenders" assertion is the exact shape that passes
+ * by looking at nothing. Whitening every geometry on its way out of `mergeAll` turns
+ * this red at **62 of 126 judged**, and names them (`site-body:site-start-elf:hut:0`
+ * and friends). It reads exactly 0 on the real tree. Both halves matter: a detector
+ * that can fail is not enough, and neither is one that only ever reports zero.
+ *
+ * Two earlier mutations did NOT turn it red, and that is not a gap: painting `piece()`
+ * white, and filling `ensureVertexColors`' default white, are both overwritten by
+ * `shade()` and `mottle()` further down the same builder, so nothing white ever
+ * reaches a frame. The 64 judged geometries the successful mutation did not reach take
+ * `mergeAll`'s single-part early return and are coloured before it.
  */
 test('nothing in the assembled world renders as blown-out white', () => {
   const { scene, blueprint, runtime } = createRuntime('integration-white')
@@ -225,6 +241,10 @@ test('nothing in the assembled world renders as blown-out white', () => {
  * leave it holding by luck: if `CharacterKit` started emitting colours on some parts
  * and not others, the world would still look right until the first list that mixed
  * them, and the previous test would still pass.
+ *
+ * Mutation-verified: adding `ensureVertexColors` to `CharacterKit`'s `finish()` — a
+ * one-line change a future pass could plausibly make — turns this red immediately,
+ * while both tests above stay green. That gap between them is the point.
  */
 test('each art kit is uniform about vertex colours, so a merge can never mix them', async () => {
   const character = await import('../src/game/art/CharacterKit.ts')
