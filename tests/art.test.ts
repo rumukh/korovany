@@ -1142,11 +1142,23 @@ test('closed builders wind outward, independently of their normals', () => {
   // every one of these is star-convex about its own centroid, so "away from the
   // centroid" is well defined for each. A box alone would leave the fan caps and
   // curved walls this test's real cases are made of entirely uncalibrated.
+  //
+  // The last entry is an *open* indexed surface built by three.js, and it is here
+  // to pin what the two lathe cases below rely on: that `measure` handles an open
+  // profile and an index buffer correctly. Note what it cannot do — `latheProfile`
+  // is a thin passthrough to `THREE.LatheGeometry`, so this control validates the
+  // checker, not the builder. Absolute validation of `latheProfile` comes from the
+  // axis-radial test, whose control is a cylinder built by a different code path.
   const controls: [string, THREE.BufferGeometry][] = [
     ['BoxGeometry', new THREE.BoxGeometry(1, 1, 1)],
     ['ConeGeometry', new THREE.ConeGeometry(0.5, 1, 8)],
     ['SphereGeometry', new THREE.SphereGeometry(0.5, 12, 8)],
     ['CylinderGeometry', new THREE.CylinderGeometry(0.5, 0.7, 1, 8)],
+    ['LatheGeometry (open profile)', new THREE.LatheGeometry([
+      new THREE.Vector2(0.2, 0),
+      new THREE.Vector2(0.45, 0.35),
+      new THREE.Vector2(0.3, 0.75),
+    ], 16)],
   ]
   for (const [name, control] of controls) {
     assert.equal(measure(control).inward, 0, `${name} control must wind outward`)
