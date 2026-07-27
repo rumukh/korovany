@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
 import * as THREE from 'three'
 import {
@@ -1820,6 +1820,73 @@ test('every type the spec names is exported by the barrel', () => {
     [],
     'docs/08 names these types but the art barrel does not export them, so code '
     + 'copied from the spec will not compile',
+  )
+})
+
+/**
+ * A bulk material assignment by scene traversal is safe right up until someone
+ * downstream parents an ink shell inside the group being swept, and then it
+ * silently destroys the silhouette. `applyOutline` parents shells to their source,
+ * so any group holding an outlined mesh holds shells too.
+ *
+ * The failure is invisible: the shell keeps its geometry and its transform and
+ * simply stops extruding, so it renders as an exact duplicate of its source at the
+ * same depth — a wasted draw, not a flicker. And nothing ever reassigns a shell's
+ * material, so toggling ink off and on cannot repair it.
+ *
+ * S3 hit this on razed sites, where 12 of 12 sites lost their ink. Three of the
+ * four material sweeps in `GameEngine.ts` were unguarded at the time. This is the
+ * cheapest thing that stops a fourth: `isOutlineShell` is public and documented for
+ * exactly this, but two sessions have now had to be told about it rather than being
+ * stopped by anything.
+ *
+ * Deliberately repo-wide rather than scoped to one file, and deliberately not a list
+ * to maintain: a sweep that trips this has a real bug and the fix is the guard, not
+ * an entry in a table.
+ */
+test('every bulk material sweep by traversal excludes outline shells', () => {
+  const root = new URL('../src/game/', import.meta.url)
+  const files = readdirSync(root, { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith('.ts'))
+
+  const sweeps: string[] = []
+  const unguarded: string[] = []
+
+  for (const name of files) {
+    const source = readFileSync(new URL(name.split('\\').join('/'), root), 'utf8')
+    for (const match of source.matchAll(/\.traverse\s*\(/g)) {
+      // Walk from the traverse call's own paren to its match, so nested calls and
+      // multi-line arrow bodies are captured whole.
+      const open = match.index + match[0].length - 1
+      let depth = 0
+      let end = open
+      for (let i = open; i < source.length; i += 1) {
+        if (source[i] === '(') depth += 1
+        else if (source[i] === ')') {
+          depth -= 1
+          if (depth === 0) { end = i; break }
+        }
+      }
+      const body = source.slice(open, end)
+      if (!/\.material\s*=(?!=)/.test(body)) continue
+      const line = source.slice(0, match.index).split('\n').length
+      const label = `${name}:${String(line)}`
+      sweeps.push(label)
+      if (!body.includes('isOutlineShell')) unguarded.push(label)
+    }
+  }
+
+  // Without this the whole test passes by finding nothing — if the scan breaks, or
+  // the sweeps move to a helper, an empty `unguarded` would look like a clean bill.
+  assert.ok(
+    sweeps.length >= 3,
+    `expected the known material sweeps, found ${String(sweeps.length)}: ${sweeps.join(', ')}`,
+  )
+  assert.deepEqual(
+    unguarded,
+    [],
+    'these traversals reassign Mesh.material without excluding ink shells; add '
+    + '`StylizedArtLibrary.isOutlineShell(object)` to the guard',
   )
 })
 

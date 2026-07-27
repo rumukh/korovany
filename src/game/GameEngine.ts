@@ -7458,7 +7458,12 @@ export class GameEngine {
       group.userData.chronicleRazed = true
       group.scale.set(1, 0.68, 1)
       group.traverse((child) => {
-        if (child instanceof THREE.Mesh) child.material = this.scorchedMaterial
+        // A shell shares its source's geometry and transform, so overwriting its
+        // outline material leaves an invisible duplicate draw and the site loses the
+        // silhouette that makes a razed village read through fog. Nothing ever
+        // reassigns a shell's material, so that loss would survive every ink toggle.
+        if (!(child instanceof THREE.Mesh) || StylizedArtLibrary.isOutlineShell(child)) return
+        child.material = this.scorchedMaterial
       })
     }
   }
@@ -10654,7 +10659,8 @@ export class GameEngine {
     for (const [tokenKind, token] of Object.entries(pickup.tokens)) {
       token.visible = tokenKind === kind
       token.traverse((object) => {
-        if (object instanceof THREE.Mesh) object.material = materials.token
+        if (!(object instanceof THREE.Mesh) || StylizedArtLibrary.isOutlineShell(object)) return
+        object.material = materials.token
       })
     }
     for (const beam of pickup.beams) {
@@ -10667,7 +10673,8 @@ export class GameEngine {
     pickup.smoothRing.material = materials.ring
     pickup.outerRing.material = materials.ring
     pickup.segmentedRing.traverse((object) => {
-      if (object instanceof THREE.Mesh) object.material = materials.ring
+      if (!(object instanceof THREE.Mesh) || StylizedArtLibrary.isOutlineShell(object)) return
+      object.material = materials.ring
     })
     pickup.smoothRing.visible = rarity !== 'uncommon'
     pickup.segmentedRing.visible = rarity === 'uncommon'
