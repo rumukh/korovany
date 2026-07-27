@@ -1,9 +1,14 @@
-# КОРОВАНЫ — Strategy
+# КОРОВАНЫ — Strategy and systems record
 
-> Owned and written by **Agent OPUS** (Claude Opus 5), adversarially reviewed across three
-> full rounds by **Agent SOL** (GPT-5.6 Sol). Both sign-offs are at the bottom; SOL's is
-> pasted verbatim from SOL's own message and was not written by OPUS. Nothing in this work
-> changed gameplay code — the document is the deliverable.
+> **Two documents in one.** §*What shipped* is the systems record: fifteen design
+> specifications distilled and folded in, then deleted from `docs/`. Everything from
+> §*Current-state assessment* onward is the strategy — an assessment of where the project stands
+> and a prioritised plan for what to build next.
+>
+> The strategy half was owned and written by **Agent OPUS** (Claude Opus 5), adversarially
+> reviewed across three full rounds by **Agent SOL** (GPT-5.6 Sol). Both sign-offs are at the
+> bottom; SOL's is pasted verbatim from SOL's own message and was not written by OPUS. Nothing
+> in this work changed gameplay code — the document is the deliverable.
 >
 > Every claim below is cited to a file and line, or to a benchmark that was run. Where a
 > claim was made and then found wrong, it was withdrawn rather than quietly dropped; those
@@ -45,8 +50,1695 @@ we did not are recorded at the bottom rather than smoothed over.
    Macro-archetypes only if the epilogues show seeds still feel interchangeable.
 
 This project has already shipped a headline feature that did nothing and only found out by
-measuring it (`living-world-spec.md:1343-1349`). That is why the harness comes first and why
+measuring it (§What shipped → Living world → Measured findings, Q1). That is why the harness comes first and why
 almost every initiative below names the number that would prove it worked.
+
+## What shipped: the systems record
+
+This part is the surviving record of fifteen design specifications, folded into this document
+and deleted in the same commit. It covers 6,047 lines and 296 KB of `docs/*-spec.md`.
+
+**What was kept:** every named constant and its value, every threshold, timing, probability,
+role table, formula, design rule, negative control, self-correction, and every measured result.
+**What was dropped:** restated context, motivational prose, "current baseline" tables that only
+described code that already existed, and file-by-file change lists that the git history now
+holds better than prose can.
+
+Two documents in `docs/` were deliberately **not** folded:
+`from-four-zones-to-a-seeded-campaign.md` and its `.ru.md` translation. They are published
+bilingual articles, not specifications — a different genre, and `PRODUCT.md` treats promo
+writing as a pillar rather than as engineering debt.
+
+Each entry below states what the feature is, what actually shipped, where it lives in code, and
+an honest status. **Status is not copied from the spec's own checkboxes.** The 164 acceptance
+criteria across those fifteen files carried 113 unchecked boxes for features that demonstrably
+shipped, which made the archive actively misleading. Every criterion has been re-checked against
+the code at `b6f94ad`, and the result is recorded in the ledger at the end of this part —
+including, in several cases, "specified but never implemented".
+
+---
+
+### 1. Living world — five layers
+
+*Formerly `living-world-spec.md`, 1,761 lines, the largest spec in the project and the only one
+whose acceptance criteria were all already checked.*
+
+A world that keeps running without the player: factions push front lines, beasts raid
+settlements, caravans travel real roads and get intercepted, NPCs fight, break and rally on
+their own. Fully client-side, no new art assets. Five layers, each independently shippable, all
+five shipped.
+
+| Layer | Name | What it does |
+| --- | --- | --- |
+| 1 | **Хроника** (Chronicle) | Data-only tick over all 25 regions. No meshes, no actors. |
+| 2 | **Materialization** | Chronicle situations become 3D only when the player is near. |
+| 3 | **Fauna** | Beasts and civilians as non-playable allegiances. |
+| 4 | **NPC AI** | Perception, morale, threat scoring, flanking, commander orders. |
+| 5 | **Ambient life** | Civilians, wildlife, campfires — cheap, highly visible. |
+
+#### Design rules
+
+These four rules governed every layer and are worth keeping as standing constraints:
+
+1. **The chronicle is data, not objects.** It never touches `THREE`, the scene graph, the
+   navmesh or the actor list. This is what makes simulating all 25 regions free.
+2. **The player is an observer, not a trigger.** A raid resolves whether or not the player shows
+   up. Arriving late means finding the aftermath — literally: `aftermath` is a Layer 2 event kind.
+3. **Determinism is not negotiable.** Shareable seeds are a headline feature. The chronicle uses
+   its own derived stream and is asserted in tests.
+4. **Consequences must be legible.** Every chronicle outcome maps to something the player can
+   see: a recoloured map region, a burned settlement, shop prices, or the composition of the
+   next encounter.
+
+#### Layer 1 — Chronicle
+
+Fixed-step accumulator in `update()`, after `updateThreat()`. Each tick is
+O(regions + roadConnections) ≈ 25 + 40 iterations of scalar arithmetic; never per-frame.
+
+```ts
+interface RegionChronicleState {
+  control: Territory                  // mutable; seeded from blueprint.territory
+  pressure: Record<Faction, number>   // 0..1 military pressure
+  beastPressure: number               // 0..1
+  settlementIntegrity: number         // 0..100, aggregate over the region's settlement sites
+  supply: number                      // 0..1, drives shop stock and prices
+  lastEventTick: number
+}
+interface ChronicleCaravan {
+  id: string; ownerFaction: Faction; fromSiteId: SiteId; toSiteId: SiteId
+  regionPath: RegionId[]; progress: number; intact: boolean
+}
+interface ChronicleState {
+  tick: number; factionStrength: Record<Faction, number>
+  caravans: ChronicleCaravan[]; log: ChronicleEvent[]   // bounded ring buffer, newest last
+}
+```
+
+`ChronicleEventKind` = `regionCaptured | beastRaid | settlementBurned | caravanLost |
+caravanArrived | raidRepelled | beastsRepelled`. The log stores **structured** events, not
+sentences; Russian copy is rendered from `content/gameCopy.ts` by stable hash of the event id,
+so wording changes need no save bump and a seeded history always reads the same.
+
+`RegionChronicleState` is a first-class typed field on `RegionDelta`, not an untyped
+`deltaState` entry. `REGION_DELTA_VERSION = 2`, `ACTIVE_RUN_SAVE_VERSION = 3`; saves that fail
+normalization are discarded, not migrated. Read/write seam is
+`RegionManager.getRegionChronicle` / `setRegionChronicle`; the engine keeps the live map and
+flushes it into deltas inside `saveGeneratedRun()`.
+
+**Tick rules**, in order — `tickChronicle()` is pure over `(blueprint, state, regions, rng,
+environment)`, with `chronicleRng = new RandomStream(deriveSeed(blueprint.seed,
+'gameplay:chronicle'))` persisted in `rngStates.chronicle`:
+
+1. **Faction fronts.** Pressure grows toward `factionStrength[faction]` in controlled regions and
+   decays elsewhere. For each road segment, attacker pressure (source region) is compared against
+   defender; the defender also loses `PRESSURE_ATTRITION` per hostile neighbour. When the
+   attacker exceeds the defender by `CONTROL_FLIP_MARGIN`, a weighted roll flips `control` and
+   logs `regionCaptured`. A region that just changed hands or was raided is immune for
+   `CONTROL_FLIP_COOLDOWN_TICKS`.
+   `factionStrength = STRENGTH_BASE + share of map held + (player's faction) share of completed
+   objectives`.
+2. **Beast pressure.** Grows per tick in `forest` and `fort` biomes, scaled up at night and in
+   rain/snow, decaying by `BEAST_CONTROL_DECAY` under faction control. Above
+   `BEAST_RAID_THRESHOLD` it triggers a raid on a settlement and resets to `BEAST_RAID_RESET`.
+3. **Settlement integrity.** A raid drops it; at `0` the settlement is `разорено` — shop and
+   recovery go offline, the prefab reads as burned, `settlementBurned` is logged. It regenerates
+   after `SETTLEMENT_CALM_TICKS` without an event, but **a region that reached `0` stays razed
+   for the rest of the run.**
+4. **Caravans.** Advance `progress` along `regionPath`. Entering a region hostile to the owner,
+   or one whose `beastPressure ≥ CARAVAN_BEAST_THRESHOLD`, rolls an interception — "a quiet
+   friendly corridor is simply safe". Loss sets `intact = false` and reduces destination
+   `supply`; arrival raises it. New caravans spawn along road connections touching a trading
+   site when fewer than `CHRONICLE_CARAVAN_LIMIT` are in transit.
+
+`CHRONICLE_SETTLEMENT_SITE_KINDS = ['settlement', 'shop', 'recovery']`. A generated world
+contains exactly one of each, so a region without one simply stays at `100`.
+Shop price multiplier is `1 + (1 - supply) * SUPPLY_PRICE_SWING`.
+
+**UI.** A collapsible «Хроника» panel under the minimap, fed by `GameView.chronicle`, showing
+**discovered regions only** — an empty feed is by design and a fog-of-war reward. Front-line
+regions (control differing from a road-connected neighbour) get hatch and crossed swords; razed
+regions get a scorched tint and flame. Notices for high-salience events are capped at two per
+tick batch.
+
+#### Layer 2 — Materialization
+
+`world/Materialization.ts` is pure: no `THREE`, no scene, no actors, **no RNG**.
+`findPendingMaterializations()` returns situations sorted by urgency, ties broken on a stable id.
+The chronicle refuses to act in a simulated region (`frozenRegionIds`).
+
+| Kind | Fires when | Becomes |
+| --- | --- | --- |
+| `factionRaid` | Road-connected neighbour's pressure beats the simulated region's by `MATERIALIZE_RAID_MARGIN`; region is not a campaign anchor and still has a settlement | 3 attackers assaulting the settlement, 2 defenders on it |
+| `caravanAmbush` | A chronicle caravan rolls through a simulated region that is hostile ground or above `CARAVAN_BEAST_THRESHOLD` | A cart, 2 escorts, 2 raiders; the player can rob it |
+| `warband` | Simulated region held by a faction hostile to the player, above `MATERIALIZE_WARBAND_PRESSURE` | A 3-strong patrol |
+| `aftermath` | Simulated region already razed and aftermath not yet shown this run | Scorch, smoke, 2 looters |
+| `beastRaid` | Simulated region above `MATERIALIZE_BEAST_PRESSURE`, intact settlement, past post-event cooldown | A wrecker plus escorts against the settlement's 2-strong garrison |
+
+**De-materialization is not cancellation.** A located event whose region stops being simulated,
+or whose `LOCATED_EVENT_TIMEOUT` expires, is handed back through pure functions in
+`Chronicle.ts`: `resolveMaterializedRaid` rolls a winner from each side's surviving share, flips
+control (never a campaign anchor), damages the settlement and logs `regionCaptured` or
+`raidRepelled`; wiping out one side skips the roll. The assault force is paid out of the
+**source** region's pressure. `resolveMaterializedCaravan` writes off a caravan whose escort is
+gone; an intact one rejoins `state.caravans`. `resolveMaterializedWarband` scales the faction's
+pressure by warband survival and logs nothing. The hand-back roll uses the seeded `event`
+stream, never `Math.random()`.
+
+`pickLocatedEventPosition(siteId, regionId)` anchors on a site, falls back to the region centre,
+scatters within `LOCATED_EVENT_SCATTER`, and refuses a spot closer than
+`LOCATED_EVENT_MIN_DISTANCE` for its first twelve attempts. The older
+`pickEventPosition()` — a 22–38 m ring around the player — is retained for `richCaravan`,
+`champion`, `rescue` and `bounty`.
+
+**An unenforced invariant, recorded because it bit once and can bite again.**
+`resolveLocatedEventOutcome` calls `handBack()` unconditionally, on success and failure alike.
+That is only safe while an event's failure condition already implies the outcome the roll would
+produce. `factionRaid` satisfies it **by construction, not by design**: it fails when
+`defenderStrength === 0`, so the roll is `chance(1)` and cannot disagree. In the spec's own
+words: *"Nothing enforces the property — change `factionRaid`'s failure condition to anything
+that does not imply a wiped defence and this bug reappears silently."* Layer 3 hit exactly that:
+`beastRaid` fails when the *settlement* falls, which is decoupled from the garrison's survival,
+so the hand-back re-rolled and **contradicted the player about three times in four**. The
+symptom was narrative rather than mechanical — the feed congratulated the player on holding a
+settlement they had just watched burn, "which teaches them the chronicle lies".
+
+#### Layer 3 — Fauna
+
+Species are `ActorRole`s, not allegiances. `world/Fauna.ts` is the pure half; every roll is on a
+seeded stream.
+
+| Role | hp / speed / poise / dmg | Behaviour |
+| --- | --- | --- |
+| `wolf` | 42 / 5.4 / 26 / 9, `routThreshold 0.5` | Pack hunter. **Routs** when half or fewer of its *own kind* in the pack are standing and nearby — kin, not pack. Pulling one wolf away breaks it as surely as killing them. |
+| `boar` | 70 / 4.6 / 46 / 14 | **Charger.** Winds up, then commits to a straight line it cannot steer. Never routs. |
+| `bear` | 135 / 3.4 / 74 / 21 | Brute profile with fur; the wrecker a forest raid leads with. |
+| `troll` | 165 / 2.9 / 88 / 24 | **Prop-wrecker.** Spawns in `attackEventProp` mode and takes a settlement apart at roughly twice a raider's rate. Leads raids in `fort` biomes. |
+
+`planBeastPack()` sizes the party from `beastPressure`; most raids lead with a wrecker, escorts
+are wolves until the forest is loud enough for boars, and a pack too large for the budget is
+**trimmed rather than refused** (the wrecker is always first in the list, so a squeezed raid is
+smaller but not toothless). `WOLF_PACK_CHANCE = 0.3` of raids arrive as a pure wolf pack.
+
+**Meshes.** Procedural quadrupeds from the same `BoxGeometry`/`ConeGeometry` primitives and
+`ComicMaterialLibrary.createToonMaterial`. `createBeast()` deliberately reuses the humanoid
+**pivot names** — `body-pivot`, `torso-pivot`, `head-pivot`, `pelvis-pivot`, `leftArm`/`rightArm`
+as front legs, `leftLeg`/`rightLeg` as hind legs, `faction-ring` — so `animateCharacter`, death
+motion, limb detachment, the outline pass and health bars all work with **no beast branch**.
+Front-left shares a sign with hind-right, producing a diagonal quadruped gait.
+
+`resolveMaterializedBeastRaid()`: beasts that win chew the settlement and reset pressure to
+`BEAST_RAID_RESET`; driven off, it resets to `BEAST_RAID_REPELLED_RESET`. **Control never
+changes and no faction's pressure moves.** A fallen settlement is handed back as
+`defenderStrength: 0`, not a live survivor count. `tests/materialization.test.ts` hammers 24 rng
+states to prove a decided outcome cannot be overturned, with a control asserting that an
+*abandoned* raid is still genuinely rolled.
+
+Ambient prowlers: one beast at a time in a square above `AMBIENT_BEAST_PRESSURE`, charged to the
+`ambient` budget, removed when its region streams out, and suppressed while a `beastRaid` runs.
+Raid packs are charged to `chronicle`.
+
+#### Layer 4 — NPC AI
+
+`selectThreat` replaced two rules at once: nearest-wins targeting, and a player override that
+ran *before* target selection. Cost is in metres, lowest cost wins:
+
+```
+cost = distance
+     × (1 − wounded × (1 − hpFraction))     // finish what is nearly finished
+     × (1 + crowd × alliesAlreadyOnIt)      // do not stack six deep on one target
+     × rolePreference                        // player / backline / heavy
+     × (locked ? THREAT_LOCK_BONUS : 1)      // hysteresis, so nobody dithers
+```
+
+Archers and scouts shoot past the front rank; brute, champion, bear and troll have
+`wounded: 0, crowd: 0` and no preferences — their style is "the *absence* of the other terms";
+`wolf` is the only negative `crowd`, which is why `THREAT_CROWD_FLOOR` exists at all (without a
+floor, a large enough pack would drive the multiplier to zero and every wolf would fixate on one
+animal forever). The player is deliberately **not** range-gated inside `selectThreat` —
+`evaluatePlayerPursuit` has already decided candidacy. Retaliation hard-overrides everything.
+`selectCombatTarget` is kept and still exported so both measurement arms are shipped code.
+
+**Morale** — one rule, two doors:
+
+```
+morale = 1 + resolve(role)
+       − MORALE_WOUND × (1 − hpFraction)²          // superlinear: decides things at the end
+       − MORALE_LOSSES × (1 − groupShare)
+       − (commanderLost ? MORALE_COMMANDER_LOSS : 0)
+       + (commanderNearby ? MORALE_COMMANDER_RALLY : 0)
+break when morale ≤ 0
+```
+
+`MORALE_WOUND = 1.6` is **solved, not chosen**: with the group intact and no commander either
+way, `1 − 1.6 × (1 − h)² ≤ 0` at `h ≈ 0.21`, which is the "own hp below ~25%" the design asked
+for. `MORALE_LOSSES = 0.7` then puts "half your health gone *and* your mates are dead" just over
+the line while leaving a healthy actor standing over corpses in the fight.
+
+`groupShare` counts **bodies, not a remembered roster** — standing allies over standing plus
+fallen within `MORALE_GROUP_RADIUS`, with corpses persisting `CORPSE_LIFETIME`, so it is a
+memory of *recent* losses and needs no save state. `actorResolve` returning `null` is a hard
+gate checked before either door: `commander` (a campaign objective may require killing him),
+`champion` ("a boss that flees is not a boss"), `captive`, and `boar`/`bear`/`troll` (whose
+answer comes from `BEAST_PROFILES`). A broken **beast** runs from what broke it and is gone past
+the leash; anything else falls back on its rally point and stays in the world, where it can be
+run down or rallied. A commander within `COMMANDER_ORDER_RANGE` clears a rout and grants
+`MORALE_RALLY_SECONDS` of immunity.
+
+**Alerts.** `announceSighting` shares any *first* sighting with allies within
+`ALERT_SIGHTING_RADIUS`; `acceptsAlert` decides who takes it. The rule with substance: **an ally
+already holding a target does not drop it for hearsay.** The alert hands over the sighted
+*position*, not the target id, and the recipient re-runs its own scoring on arrival. It lands in
+`alertPos`/`alertTimer`, deliberately not `lastKnownTargetPos`, which `updateActors` clears every
+frame an actor is not pursuing the player.
+
+**Commander orders.** Broadcasts a `SquadOrder` — `hold` / `assault` / `escort` — to allies
+within `COMMANDER_ORDER_RANGE`. Orders carry a timer rather than clearing on death, so a squad
+keeps its last orders for a few seconds; his death applies `MORALE_COMMANDER_LOSS` to everyone
+who could see it and cancels any rally. He keeps `speed: 0`. An `escort` order from the caravan
+outranks a `hold`.
+
+**Flanking.** With two or more allies on one target, secondaries claim offset approach angles.
+`engagementRank` is a stable rank by actor id, so a flanker dying promotes everyone behind it.
+**Every slot is inside ±66°, and that bound is load-bearing** — past a right angle the radial
+component goes negative and the actor never converges. `flankBlend` folds the offset away over
+the last few metres, otherwise attackers orbit forever. An event prop has no queue, so a prop
+attacker takes rank 0 and comes straight in.
+
+**The caravan as an agent.** Two guards on a permanent `escort` order; anything hostile within
+`CARAVAN_PANIC_RANGE` triggers `CARAVAN_PANIC_SPEED_MULTIPLIER` on the existing road path —
+panic is speed, not a new route, because the cart cannot leave the road network. A hostile
+reaching an unguarded cart takes it, which is `caravanLost` for everyone. A killed guard is not
+replaced for `CARAVAN_ESCORT_RESPAWN_DELAY`. Escorts are charged to `ambient` deliberately, so
+they yield their slots first.
+
+Layer 4 adds **no persisted state**; save and delta versions stayed at 3 and 2.
+
+#### Layer 5 — Ambient life
+
+The decision the whole layer turns on is what needs an actor slot:
+
+| Thing | Cost | Why |
+| --- | --- | --- |
+| Villagers | `ambient` slots | They can be killed, beasts hunt them, they need morale and a place in the actor list |
+| Deer, birds, crows | **props, 0 slots** | Non-combat: no hp, allegiance, health bar, threat score or slot |
+| Campfires | **props, 0 slots** | The idle NPCs at the fire are the villagers, already paid for |
+| Torches | **child mesh on an existing actor, 0 slots** | Plus exactly one shared light for all of them |
+| Storm hunch and slow | **0 slots** | A pose offset and a speed multiplier |
+
+The consequence is the point: **nothing Layer 5 adds can ever crowd out a raid.**
+
+`ActorRole` gained `peasant` (hp 26, speed 3.1). `planCivilianCount(settlementIntegrity)` gives
+**three villagers in an intact square, one in a scarred one, none in a razed one**, so how busy a
+village looks follows the chronicle directly. `isPacifistRole` gates both `selectThreat` and the
+retaliation branch in `damageActor`.
+
+**Panic** is a third `MoraleBreak` reason, checked after the `actorResolve === null` gate and
+before cohesion. `findCivilianAlarm` counts three things: anything at war with the villager;
+anything already in a fight (an actor holding a target or chasing the player — the three sides
+stay `neutral` to civilians); and **a body**. The player is passed separately and counts only
+while *menacing*, for `CIVILIAN_MENACE_SECONDS` after swinging. Panic **tracks** — it is
+re-measured every morale check, and `alarmPos` is deliberately not `alertPos`, because "an alert
+is a place worth walking *to*, an alarm is a place worth putting your back to".
+
+Deer and birds use the same `fleeDirection` a panicking villager uses; `shouldStartle` folds
+"birds startled by sprinting" into one rule over both species; crows land on bodies down for
+`CROW_CORPSE_DELAY` and leave when the body does. Campfires are lit when the **simulation's**
+night factor passes `CAMPFIRE_NIGHT_THRESHOLD`, while their *brightness* follows the rendered
+night factor — so the day/night display toggle cannot put them out. Torches are child meshes on
+soldiers, scouts and minions after dark, with **exactly one point light in the world** following
+the nearest bearer.
+
+`weatherPaceMultiplier(stormFactor)` costs an NPC `AMBIENT_STORM_SLOW` of pace and `weatherHunch`
+bends the torso pivot forward. Both read `computeStormFactor`, never `weatherEnabled`. The slow
+applies to **non-combat movement only** — wandering, holding an order, walking to an alert —
+never a pursuit, an attack approach, or a beast, because "fighting 22% slower in it is a balance
+change nobody asked for".
+
+Killing a villager pays **no gold, no loot and no kill on the counter**; `recordKill` is never
+reached.
+
+#### Tuning constants
+
+```text
+# Layer 1 — chronicle
+CHRONICLE_TICK_SECONDS=8        CHRONICLE_LOG_LIMIT=40
+CHRONICLE_MAX_CATCHUP_TICKS=8   CHRONICLE_FEED_LIMIT=8
+CONTROL_FLIP_MARGIN=0.18        CONTROL_FLIP_COOLDOWN_TICKS=3
+PRESSURE_GROWTH=0.06            PRESSURE_DECAY=0.03      PRESSURE_ATTRITION=0.015
+STRENGTH_BASE=0.25              STRENGTH_TERRITORY_SHARE=0.45  STRENGTH_OBJECTIVE_SHARE=0.3
+BEAST_GROWTH_FOREST=0.05        BEAST_GROWTH_FORT=0.04
+BEAST_NIGHT_MULTIPLIER=1.6      BEAST_STORM_MULTIPLIER=1.3
+BEAST_RAID_THRESHOLD=0.75       BEAST_RAID_RESET=0.35    BEAST_CONTROL_DECAY=0.02
+SETTLEMENT_RAID_DAMAGE=[18,34]  SETTLEMENT_REGEN=1.5     SETTLEMENT_CALM_TICKS=4
+SUPPLY_BASELINE=0.6             SUPPLY_DRIFT=0.04        SUPPLY_PRICE_SWING=0.45
+SUPPLY_CARAVAN_GAIN=0.14        SUPPLY_CARAVAN_LOSS=0.19
+CHRONICLE_CARAVAN_LIMIT=3       CARAVAN_INTERCEPT_BASE=0.12
+CARAVAN_HOSTILE_RISK=0.18       CARAVAN_BEAST_RISK=0.2
+CARAVAN_BEAST_THRESHOLD=0.5     CARAVAN_PROGRESS_PER_TICK=0.18
+DEFEND_HOME_MAX_DISTANCE=95
+
+# Layer 2 — materialization
+ACTOR_BUDGET={squad:3, campaign:8, chronicle:8, ambient:6}      MAX_ACTORS=25
+MAX_LOCATED_EVENTS=2            MATERIALIZE_INTERVAL=6
+LOCATED_EVENT_MIN_DISTANCE=26   LOCATED_EVENT_MAX_DISTANCE=150
+LOCATED_EVENT_SCATTER=9         LOCATED_EVENT_TIMEOUT=150
+THREAT_WAVE_EVENT_RADIUS=45
+MATERIALIZE_RAID_MARGIN=CONTROL_FLIP_MARGIN*0.6                 (=0.108)
+MATERIALIZE_WARBAND_PRESSURE=0.32
+RAID_SOURCE_SPEND_WON=0.5       RAID_SOURCE_SPEND_REPELLED=0.35
+EVENT_REQUIRED_SLOTS={factionRaid:5, caravanAmbush:4, warband:3, aftermath:2, beastRaid:5}
+LOCATED_EVENT_REWARDS={factionRaid:110, caravanAmbush:140, warband:80, aftermath:45, beastRaid:95}
+
+# Layer 3 — fauna
+BEAST_PROFILES={wolf:{hp:42,speed:5.4,poise:26,dmg:9,rout:0.5},
+                boar:{hp:70,speed:4.6,poise:46,dmg:14},
+                bear:{hp:135,speed:3.4,poise:74,dmg:21},
+                troll:{hp:165,speed:2.9,poise:88,dmg:24}}
+BEAST_SENSE_RANGE=21            BEAST_LEASH_RANGE=52
+WOLF_PACK_RADIUS=16             WOLF_PACK_CHANCE=0.3     BEAST_ROUT_SECONDS=9
+BOAR_CHARGE_RANGE=14            BOAR_CHARGE_WINDUP=0.55  BOAR_CHARGE_SPEED=11.5
+BOAR_CHARGE_DURATION=1.05       BOAR_CHARGE_COOLDOWN=4.5 BOAR_CHARGE_DAMAGE=22
+MATERIALIZE_BEAST_PRESSURE=BEAST_RAID_THRESHOLD-0.12             (=0.63)
+BEAST_RAID_REPELLED_RESET=0.18  BEAST_RAID_DEFENDERS=2
+AMBIENT_BEAST_PRESSURE=0.45     AMBIENT_BEAST_LIMIT=2
+AMBIENT_BEAST_RADIUS=62         AMBIENT_BEAST_INTERVAL=11
+
+# Layer 4 — NPC AI
+THREAT_PROVOKED_BIAS=0.55       THREAT_LOCK_BONUS=0.8    THREAT_CROWD_FLOOR=0.35
+THREAT_STYLES.archer={wounded:0.5, crowd:0.4,  player:0.7,  backline:0.7,  heavy:1.45}
+THREAT_STYLES.scout ={wounded:0.7, crowd:0.45, player:0.85, backline:0.8,  heavy:1.2}
+THREAT_STYLES.wolf  ={wounded:0.72,crowd:-0.22,player:1,    backline:0.95, heavy:1.15}
+THREAT_STYLES.boar  ={wounded:0.2, crowd:0.15, player:1,    backline:1,    heavy:1}
+THREAT_STYLES.{brute,champion,bear,troll}={wounded:0, crowd:0, player:1, backline:1, heavy:1}
+MORALE_WOUND=1.6                MORALE_LOSSES=0.7        MORALE_BREAK=0
+MORALE_COMMANDER_LOSS=0.35      MORALE_COMMANDER_RALLY=0.45
+ROLE_RESOLVE={commander:null, champion:null, captive:null,
+              brute:0.45, soldier:0, minion:-0.1, archer:-0.12, scout:-0.18, peasant:-0.6}
+MORALE_GROUP_RADIUS=14          MORALE_CHECK_INTERVAL=0.35
+MORALE_ROUT_SECONDS=7           MORALE_RALLY_SECONDS=12
+MORALE_COMMANDER_SHOCK_SECONDS=10                        MORALE_LAST_STAND_SECONDS=2
+MORALE_RALLY_POINT_TOLERANCE=3  MORALE_NOTICE_RANGE=45   MORALE_NOTICE_COOLDOWN=9
+ALERT_SIGHTING_RADIUS=20        ALERT_COOLDOWN=1.5
+ALERT_INVESTIGATE_SECONDS=12    ALERT_ARRIVAL_DISTANCE=3
+FLANK_OFFSETS=[0, 1.15, -1.15, 0.62, -0.62, 0.95]
+FLANK_BLEND_DISTANCE=7          FLANK_MAX_ANGLE=1.2
+COMMANDER_ORDER_RANGE=18        COMMANDER_ORDER_DURATION=6  COMMANDER_ORDER_TOLERANCE=3.5
+CARAVAN_ESCORT_COUNT=2          CARAVAN_ESCORT_RANGE=90     CARAVAN_ESCORT_RESPAWN_DELAY=25
+CARAVAN_PANIC_RANGE=16          CARAVAN_PANIC_SECONDS=4     CARAVAN_PANIC_SPEED_MULTIPLIER=1.7
+CARAVAN_GUARDED_RANGE=7         CARAVAN_PLUNDER_RANGE=3.4   CARAVAN_PLUNDER_COOLDOWN=55
+
+# Layer 5 — ambient life
+AMBIENT_CIVILIAN_LIMIT=3        CIVILIAN_SPAWN_RADIUS=58  CIVILIAN_HOME_RADIUS=16
+CIVILIAN_INTERVAL=5             CIVILIAN_MIN_INTEGRITY=25 CIVILIAN_ALARM_RADIUS=12
+CIVILIAN_PANIC_SECONDS=4        CIVILIAN_PANIC_RECOVERY=1.5
+CIVILIAN_PANIC_SPEED_MULTIPLIER=1.55                     CIVILIAN_MENACE_SECONDS=6
+peasant hp=26, speed=3.1
+CAMPFIRE_NIGHT_THRESHOLD=0.45   CAMPFIRE_LIMIT=2          CAMPFIRE_GATHER_RADIUS=3.2
+CAMPFIRE_SMOKE_INTERVAL=1.4     CAMPFIRE_SEARCH_INTERVAL=3
+TORCH_LIGHT_RANGE=26
+WILDLIFE_DEER_LIMIT=3           WILDLIFE_BIRD_LIMIT=9
+WILDLIFE_SPAWN_MIN_RADIUS=22    WILDLIFE_SPAWN_MAX_RADIUS=54
+WILDLIFE_DESPAWN_RADIUS=78      WILDLIFE_INTERVAL=4
+DEER_STARTLE_RADIUS=14          DEER_SPRINT_STARTLE_BONUS=7
+DEER_BOLT_SECONDS=2.6           DEER_BOLT_SPEED=11        DEER_GRAZE_SPEED=1.5
+BIRD_STARTLE_RADIUS=7           BIRD_SPRINT_STARTLE_BONUS=5
+BIRD_FLIGHT_SECONDS=3.4         BIRD_CLIMB_SPEED=5.5      BIRD_CRUISE_SPEED=8
+CROW_CORPSE_RADIUS=2.6          CROW_CORPSE_DELAY=2.5
+AMBIENT_STORM_SLOW=0.22         AMBIENT_STORM_HUNCH=0.22
+```
+
+Three of these are worth their rationale. **`PRESSURE_ATTRITION`**: without it the fronts
+deadlock — every faction's pressure converges on its own `factionStrength`, so the gap never
+reaches `CONTROL_FLIP_MARGIN` and no region ever changes hands until the player has completed
+most of the campaign. **`MATERIALIZE_RAID_MARGIN`** is deliberately *below* `CONTROL_FLIP_MARGIN`
+so "the player should meet the fight, not the result of it". **`CAMPFIRE_SEARCH_INTERVAL`** is a
+determinism bound rather than a performance one, and the only constant here that exists for that
+reason: `pickVillagePosition` draws from the shared seeded `event` stream and can fail, so
+unthrottled, the draw count would be a function of frame rate.
+
+`AMBIENT_CIVILIAN_LIMIT = 3` sits deliberately under the six-slot `ambient` reserve, because
+prowlers and caravan escorts are charged there too. `CIVILIAN_ALARM_RADIUS = 12` is deliberately
+*shorter* than a soldier's 15 m sense range, so "a raid arrives before the village empties".
+`CIVILIAN_PANIC_RECOVERY = 1.5` is far shorter than `MORALE_RALLY_SECONDS = 12` because "panic
+is a reflex, not nerve".
+
+#### The actor budget
+
+```ts
+type ActorBudgetCategory = 'squad' | 'campaign' | 'chronicle' | 'ambient'
+const ACTOR_BUDGET = { squad: 3, campaign: 8, chronicle: 8, ambient: 6 }
+const ACTOR_BUDGET_PRIORITY = ['squad', 'campaign', 'chronicle', 'ambient']  // high → low
+```
+
+The four reserves add to `MAX_ACTORS = 25` exactly, asserted in `tests/actorBudget.test.ts`.
+`reserve()` is all-or-nothing; `reserveUpTo` grants partial (threat waves, caravan ambushes). **A
+category may only borrow from the spare capacity of lower-priority ones.** On shortfall the
+allocator calls back into the engine asking lowest-priority categories in order, and the engine
+**hands whole located events back to the chronicle before plucking individual fighters out of
+one — half a raid is worse than no raid.** `spawnActor` is the hard gate: the `budget` option is
+required, and `claimActorSlot` evicts the least important actor rather than let `actors.length`
+pass the cap.
+
+A warning attached to this contract: **reservations have side effects.** `reserveActorSlots` can
+make lower-priority categories give actors up, so it must be called only once a spawn is
+definitely going to happen — never as a cheap pre-filter in a loop.
+
+#### The allegiance matrix
+
+```ts
+type Allegiance = Faction | 'beast' | 'civilian'
+const ALLEGIANCE_RELATIONS: Record<Allegiance, Record<Allegiance, 'hostile' | 'neutral' | 'friendly'>>
+```
+
+A 5×5 matrix that replaced `hostile(a, b) => a !== b`. Implemented with one amendment: the design
+said `Actor` would *gain* `allegiance`; in code `Actor.faction` was **replaced** by
+`Actor.allegiance` across twenty-one call sites, and the two that need a real `Faction`
+(achievement kill stats, faction brand colour) narrow with `isFactionAllegiance()`. The matrix is
+symmetric today; a villager is hostile to beasts by the table and still never attacks one,
+because `isPacifistRole` gates *behaviour* rather than the table. `tests/allegiance.test.ts`
+asserts it is total, symmetric, self-friendly, and that the three factions regard each other
+exactly as `a !== b` did. It routes targeting, projectile eligibility, friendly fire, ally
+alerting, actor separation, minimap marker colour, the faction ring, and kill attribution.
+
+#### Measured findings
+
+This is the most valuable content in the original spec, and the reason its measurement culture is
+called out as an asset elsewhere in this document. Every table below was **counted, not reasoned
+forward from the rules**, and in two places the measurement contradicted what the spec's own
+earlier draft had claimed.
+
+**Layer 3.** Five seeds, 150 chronicle ticks each (~20 minutes of play), player walking a fixed
+loop of settlement squares, night environment. The Layer 2 column is a **negative control** — the
+identical simulation with `beastRaid` situations discarded:
+
+| Seed | Beast raids met | Raids off-screen | Settlements burned | Regions captured | Razed |
+| --- | --- | --- | --- | --- | --- |
+| fauna-1 | 0 → 9 | 13 → 11 | 2 → 1 | 22 → 20 | 2 → 1 |
+| fauna-2 | 0 → 3 | 7 → 6 | 2 → 2 | 46 → 39 | 2 → 2 |
+| fauna-3 | 0 → 7 | 12 → 13 | 2 → 2 | 28 → 25 | 2 → 2 |
+| fauna-4 | 0 → 6 | 15 → 10 | 2 → 2 | 18 → 16 | 2 → 2 |
+| fauna-5 | 0 → 3 | 6 → 5 | 1 → 1 | 14 → 14 | 1 → 1 |
+| **total** | **0 → 28** | **53 → 45** | **9 → 8** | **128 → 114** | **9 → 8** |
+
+> **"Two of these numbers contradict what this section claimed before it was measured."**
+
+The first draft asserted the two layers were uncoupled, on the evidence that faction raids
+*offered* did not move (12 → 12) — a metric far too sparse, since only one of the five seeds
+produces faction raids at all. `regionCaptured`, which fires 128 times over the same runs, shows
+the fronts measurably slow down: **128 → 114, about 11% fewer captures.** The channel is
+`resolveMaterializedBeastRaid` writing `region.lastEventTick`, which `resolveFronts` gates on
+through `CONTROL_FLIP_COOLDOWN_TICKS`. That is defensible design — a settlement that just drove
+off a wolf pack is not overrun by an army in the same breath — "but it is a coupling, and the
+earlier text denied it". Off-screen raids fall the same way, 53 → 45, for the same reason; note
+`fauna-3` moves the *other* way, "so this is a tendency, not a law". A third arm in
+`tests/beastEncounters.test.ts` offers raids but never hands them back: captures then land on
+**128, exactly the Layer 2 number**, attributing the whole effect to the hand-back's write.
+
+**The per-frame AI.** `tests/actorAi.test.ts` re-implements the pre-extraction engine code and
+asserts agreement over **~14,000 comparisons**, plus a negative control proving the comparison can
+detect a changed implementation. The standing caveat, which applies to every number in this
+section:
+
+> **The harness models movement and contact.** No navmesh, collision, steering, separation,
+> terrain, wind-up, poise or stagger. Its numbers describe what the decision logic does, not what
+> a player experiences. All three answers came out differently from the prediction written before
+> the measurement.
+
+**Q1 — does the wolf rout rule change how encounters end?** As shipped it did not, because it
+**never fired**: zero routs across 60 fights of `bear+wolf+wolf` and 60 of `troll+wolf+wolf`. Two
+local rules collided. A wrecker has 135–165 hp against a wolf's 42, so it always outlived its
+escorts and the last one standing was the one role with `routThreshold: 0`; and morale measured
+over the *whole* pack could not reach the threshold anyway, since a mixed pack escorts its
+wrecker with exactly two wolves and losing one leaves a share of exactly `0.5`, which strict `<`
+rejects. **Layer 3's headline beast behaviour was dead content.** Three changes were needed, and
+all three: morale became kin-relative; `planBeastPack` sometimes builds pure wolf packs; and
+`shouldBeastRout` fires at `<=`, not `<` — "load-bearing, not a rounding preference: without it a
+two-wolf escort can never break."
+
+| Composition | Routs | Defender deaths | Beast attacks |
+| --- | --- | --- | --- |
+| `bear+wolf+wolf` | 0 → 60 | 178 → 117 | 912 → 597 |
+| `troll+wolf+wolf` | 0 → 60 | 180 → 106 | 835 → 590 |
+| `wolf×3` | 0 → 60 | 60 → 53 | 642 → 586 |
+| `wolf×4` | 0 → 120 | 119 → 60 | 1237 → 720 |
+| `bear+wolf+boar` | 0 → 0 | 180 → 180 | 899 → 896 |
+
+The last row is not a failure: that pack contains a single wolf, whose kin size is one and whose
+share is therefore always `1`. It never had a pack to lose and correctly never breaks.
+
+**Q2 — do beasts spend themselves on faction NPCs instead of the player?** No — "and it is not a
+tendency but a **step function**". Standing in the raid, 100% of beast attacks landed on the
+player and zero on the garrison; beyond `BEAST_SENSE_RANGE`, zero on the player and 100% on the
+garrison. There was no middle. This was recorded as a finding rather than patched, on the grounds
+that "a measured 'the current rule is a step function at 21 m' is a better handover than
+'targeting could be smarter'."
+
+**Q3 — what does beasts-being-hostile-to-all-three do?** With both arms identical in count,
+position and pack and only the matrix entry differing: **player damage 130,881 → 6,658, a 20×
+reduction**, and beast deaths 0 → 180. "Without it a raid is an unbounded siege on the player
+alone."
+
+**Layer 4.** Both arms are shipped code, 60 fights per arm. The step function is gone —
+`bear+wolf+wolf` against a three-strong garrison, player standing in it:
+
+| Arm | On the player | On the garrison |
+| --- | --- | --- |
+| Layer 3 (`selectCombatTarget`, player first) | 358 | **0** |
+| Layer 4 (`selectThreat`) | 3,000 | **600** |
+
+The Layer 3 column is kept as a live control rather than a memory: if it ever stops being exactly
+zero, the two arms are no longer measuring what they claim to. With the player watching from six
+metres away instead of standing in it:
+
+| Metric | Layer 3 | Layer 4 |
+| --- | --- | --- |
+| Damage taken by the player | 73,286 | **6,284** |
+| Attacks on the garrison | 0 | 183 |
+| Beast deaths | 60 | **116** |
+
+**An 11.7× reduction in damage taken, and the raid now resolves.** The second number causes the
+first: under Layer 3 the beasts could not be killed by the garrison because they never engaged
+it, so a player who stood aside watched an unbounded siege.
+
+Morale on `bear+wolf+boar`, whose single wolf has kin size 1 and cohesion share permanently 1:
+
+| Arm | Routs | By role | Beast deaths | Defender deaths |
+| --- | --- | --- | --- | --- |
+| Cohesion only (Layer 3) | **0** | — | 117 | 180 |
+| Unified (Layer 4) | 240 | wolf 84, soldier 156 | 32 | 156 |
+
+Compositions with real kin still break by cohesion after unification — `bear+wolf+wolf` records
+166 cohesion routs alongside 208 individual ones, which is the assertion that would catch
+individual morale having quietly *replaced* the Layer 3 rule rather than joining it.
+
+Morale also makes a fight decisive instead of mutually annihilating. Two identical ranks of four
+soldiers, 12 m apart: without morale, 2 survivors across 60 fights and 0 routs; with morale, 240
+survivors and 242 routs. **Which** side wins is an artefact and is recorded as one — fighters act
+in array order, so whoever is listed first lands the first blow of each frame, and swapping the
+order flips the result completely (240 elf deaths and 0 guard deaths becomes 0 and 240).
+`tests/layer4Ai.test.ts` asserts the swap.
+
+Role preference, three archers behind a brute: nearest-wins put 780 attacks on the archer and 600
+on the brute (ratio 1.30); threat scoring put 959 and 478 (**2.01**). Finishing the wounded: both
+arms finish the same two enemies on near-identical attack volume (423 vs 425 swings), but
+defender deaths fall **60 → 5**.
+
+**Layer 5.** The panic mechanic shipped correct, visible, and completely inert:
+
+| Arm | Attacks on villagers | Villagers killed (of 180) | Lived |
+| --- | --- | --- | --- |
+| Panic off | 420 | **180** | 0 |
+| Panic on, at the shared 1.15× rout speed | 434 | **180** | 0 |
+
+Attacks went *up*. A villager at `3.1 × 1.15 = 3.57 m/s` cannot outrun a wolf at `5.4`. In the
+spec's own words: **"This is Layer 3's rout rule again in different clothing"** — a headline
+behaviour implemented to spec, reading correctly in the code, firing in every fight and changing
+nothing. Three fixes were required: panic had to *track* rather than freeze an `alarmPos`;
+`CIVILIAN_PANIC_SPEED_MULTIPLIER` became `1.55`, giving `4.8 m/s`, which loses to a wolf slowly
+and beats a bear outright; and the harness needed a despawn. After:
+
+| Metric | Off | On |
+| --- | --- | --- |
+| Attacks landed on villagers | 420 | **190** |
+| Villagers killed (of 180) | 180 | **60** |
+| Villagers that escaped the square | 0 | 60 |
+| **Villagers that lived, total** | **0 of 180** | **120 of 180** |
+
+**And the finding nobody predicted: scenery was deciding fights.** Three arms, same seeds:
+
+| Arm | Attacks on the garrison | Attacks on beasts | **Beasts killed** |
+| --- | --- | --- | --- |
+| No villagers in the square at all | 664 | 408 | **1** |
+| Villagers, panic off (they stand still) | 649 | 758 | **49** |
+| Villagers, panic on (they scatter) | 549 | 618 | **0** |
+
+**Stationary villagers are bait** — 49 beasts killed against 1 in a square with no villagers in
+it. "That is scenery deciding who wins a raid, which is precisely what ambient life must not do."
+So the strongest argument for civilian panic turns out **not** to be that it saves villagers, but
+that without it, adding decoration to a square measurably changes the outcome of the fight in it.
+
+**Browser observations** (non-headless Chrome on `dist/index.html` over `file://`): the world
+boots with 25 regions and **no console or page errors in any run**; **58–60 fps** with ambient
+life in play at every sample; three `neutral` markers in 60 of 60 samples over 90 seconds,
+matching `AMBIENT_CIVILIAN_LIMIT` exactly; villager markers moving 0.46–1.85 map per cent between
+samples 1.2 s apart; and **at most 16 actor-bearing markers across every run, against a cap of
+25**.
+
+#### Defects the measurements found
+
+Recorded because the pattern is more useful than the individual bugs. Every one of these was
+implemented exactly as designed, passed a reading, and was wrong.
+
+1. **`ROLE_RESOLVE` was a `Partial` read with `?? 0`.** `??` fires on `null`, so every "never
+   breaks" entry became "breaks like a soldier": commanders and champions routed in 60 fights out
+   of 60. The general rule extracted from it — worth keeping — is that **a `Partial` lookup read
+   with `??` is a trap wherever the sentinel value carries meaning.** Make the table exhaustive:
+   `Record<K, V | null>`, not `Partial<Record<K, V | null>>`. The same shape applies to
+   `ALLEGIANCE_RELATIONS`, `BEAST_PROFILES` and `ACTOR_BUDGET`.
+2. **The rally-recovery branch was unreachable.** It lived in `updateRoutingActor`, which does not
+   run on the frame `routTimer` reaches zero, so an actor that ran its clock out re-broke on the
+   same frame and ran forever.
+3. **Alert propagation was inert.** `announceSighting` wrote into `aggroMemory` /
+   `lastKnownTargetPos`, which is cleared every frame an actor is not pursuing the player — and in
+   the one surviving case it *overwrote* that actor's memory of where the player went.
+4. **Flanking ranks three and up walked away from the target.** The ladder ran to ±135° and π;
+   `cos(135°) ≈ −0.71` gives a negative radial component, so distance grows, `flankBlend` pins at
+   1, and the actor recedes forever.
+5. **A killed caravan escort was replaced in the same frame**, spawning 2.6 m from the cart and
+   inside the 7 m guard radius, so "a cart that is genuinely lost if the guards lose" was
+   unreachable through combat.
+6. **A rescued captive could never fight again.** `isPacifistRole` listed `captive`, and
+   `rescueCaptive` flips `aiMode`, never `role`. Every rescued companion was permanently unable to
+   select a target, occupied a squad slot, and soaked damage for the rest of the run. **No test
+   covered it, and the 208-test suite passed throughout.** Rule: *pacifism that follows the role
+   goes in the role table; pacifism that follows a state belongs to the state.*
+7. **Crows built and destroyed themselves every four seconds**, because a crow inherited its
+   region from the corpse and `Actor.generatedRegionId` is `null` for the starting squad,
+   companions and `defendHome` attackers — suppressing ordinary wildlife spawning the whole time.
+8. **A bird that finished fleeing teleported nineteen metres straight down** — flight has no
+   ground clamp and the landed branch hard-assigns `y` in one frame.
+9. **An unthrottled seeded draw** — `updateCampfires` ran every frame and `pickVillagePosition`
+   draws up to twenty values from the shared seeded `event` stream, so **two players on the same
+   seed doing the same things at 30 and 144 fps would have desynchronised and got different world
+   events.** A determinism bug rather than a cost one.
+
+Two harness corrections are worth keeping for the same reason. Corpses were never aged out, which
+permanently depressed `groupShare` and manufactured routs. And a broken non-beast "ran home" from
+a rally point it was already standing on — the recurrence being the interesting part:
+
+> **A behaviour whose whole point is disengaging degenerated into standing in the fight not
+> fighting** — strictly worse than either real outcome, so it biases the comparison hard and in a
+> direction that flatters the arm without the mechanism. The movement model is where this class of
+> error lives, it will keep arriving in new clothes for anything that leaves, retreats, avoids or
+> keeps distance, and it does not announce itself: it looks like a plausible number.
+
+#### The determinism caveat
+
+Neither environment input is random and neither depends on a display setting. `nightFactor` is
+`computeNightFactor(elapsed)`; `stormFactor` is the rain-plus-snow share of a weather mix that
+always lerps toward the biome under the player. `dynamicDayNight` and `weatherEnabled` gate
+**rendering only**, and `tests/worldEnvironment.test.ts` asserts a byte-identical chronicle
+history across all four toggle combinations, with a negative control so the assertion cannot pass
+vacuously. `weatherRng` — the one `Date.now()` seed in `GameEngine` — feeds `randomWeatherRange`
+only, which times cosmetic lightning and thunder, and never reaches the weather mix or the
+chronicle.
+
+What does still track the player, quoted because the strategy sections below depend on it:
+
+> **The weather mix is a per-frame lerp, so `stormFactor` depends on the route walked and on frame
+> pacing. A chronicle history therefore replays exactly for a given seed *and* playthrough, not
+> across arbitrary playthroughs of the same seed.** That is inherent to anything that reacts to
+> where the player walks. `tickChronicle()` itself is pure and is asserted to be bit-identical for
+> a fixed seed and environment sequence in `tests/chronicle.test.ts`.
+
+#### Edge cases worth keeping
+
+Fog of war hides events in undiscovered regions but does not stop them; discovering a region
+reveals its current state, not its history. The chronicle never flips control of, or burns a
+settlement in, a currently-simulated region — Layer 2 materializes it instead — though beast
+pressure still accumulates there. Campaign anchors are protected: `faction-start` and
+`final-stronghold` sites are never destroyed and their regions never flip, and `WorldValidator`
+asserts every mapped start and finale region is in `getChronicleProtectedRegionIds`, so weakening
+the list breaks the 500-seed campaign test. The chronicle stops ticking when the run ends, and
+ticks are atomic within one `update()` call.
+
+`defendHome` had a regression worth remembering: it could never fire in generated mode, because
+it selected from `villageHouses`, which only the deleted legacy builder populated. It now targets
+the nearest generated `settlement` site within `DEFEND_HOME_MAX_DISTANCE`.
+
+A wolf pulled 20 m from its pack breaks as readily as one whose pack is dead, because
+`beastPackShare` counts only pack-mates within `WOLF_PACK_RADIUS` — **which makes kiting a real
+tactic**. A charge that stops making progress ends there and goes on cooldown. A civilian can
+never block an objective: villagers spawn `objectiveEligible: false`, `squadEligible: false`,
+hold no site, and `killActor` returns before the reward path. A villager caught between two armies
+is alarming but never targeted, because the three sides are `neutral` to civilians — "only beasts
+and the player can actually kill one … the meme's factions rob korovans, they do not hunt
+peasants". Panic terminates three ways: the alarm walks away, the villager is killed, or it
+strays past `CIVILIAN_SPAWN_RADIUS + CIVILIAN_HOME_RADIUS` from the player and is despawned by the
+next headcount.
+
+#### Deliberately left undone
+
+Quoted verbatim, "so a reader does not go looking for them":
+
+- **Villagers have no dialogue, no shop, and no interaction prompt.** They are scenery that
+  bleeds, not NPCs. Giving them a prompt would make every village a menu.
+- **Wildlife cannot be hunted.** Deer and birds are props with no hp, which is exactly what makes
+  them free. Making them killable would mean making them actors, and the six-slot reserve would
+  then be spent on scenery rather than on the villagers.
+- **Villagers are not persisted and do not remember the player.** A village repopulates from
+  `settlementIntegrity` on the next visit whatever happened last time.
+- **No civilian reputation or crime system.** Killing villagers costs nothing but the line.
+- **Feel is not measured.** Whether a village reads as inhabited is the entire point of this layer
+  and no number is about it; it was checked by eye in the browser and the spec said so rather than
+  inventing a metric.
+
+Two further gaps the spec flagged against itself: **flanking is the one Layer 4 mechanic the
+headless harness cannot measure**, so it is asserted as geometry and eye-checked; and **a campfire
+was never caught in frame**, because lighting one needs the player alive at night and within
+`CIVILIAN_SPAWN_RADIUS` of a site, and five runs died between 54 and 110 seconds. What survives is
+an argument rather than a sighting — fires are gated on the same threshold as the torches, which
+*were* observed lighting on schedule — "That is weaker evidence than the rest of this list and is
+recorded as such."
+
+**Status: shipped, and the only spec in the archive whose 37 acceptance criteria were all checked
+before this consolidation.** Independent verification of a sample against the code found no
+contradictions; the layer boundaries, budget arithmetic and determinism assertions are pinned by
+`tests/chronicle.test.ts`, `tests/materialization.test.ts`, `tests/actorBudget.test.ts`,
+`tests/actorAi.test.ts`, `tests/layer4Ai.test.ts`, `tests/aiQuestions.test.ts`,
+`tests/beastEncounters.test.ts`, `tests/fauna.test.ts`, `tests/ambientLife.test.ts`,
+`tests/allegiance.test.ts` and `tests/worldEnvironment.test.ts`.
+---
+
+### 2. Combat depth — faction abilities and enemy roles
+
+*Formerly `combat-depth-spec.md`. All 8 acceptance criteria were already checked.*
+
+Turns the single-button melee loop into two layers: keep the primary melee attack, add one
+signature secondary per faction on RMB / `KeyR` / touch, and differentiate enemy roles so fights
+read differently by zone.
+
+| Faction | Ability | Effect | Cost / cooldown |
+| --- | --- | --- | --- |
+| Elf | **Лесная стрела** | 24 u/s projectile up to 30 u. Damage falls linearly 18 → 10 over travelled distance. The nearest hostile intersected by the swept 0.9 u hit volume is struck; non-brutes have a 25% limb-detach chance. | 15 stamina, 0.9 s |
+| Guard | **Стойка щита** *(hold)* | Frontal hits (`dot > 0.2`) deal ×0.15 damage after armour and cannot injure. Movement ×0.5, sprint disabled, stamina regeneration suppressed while 18/s drains. | Requires stamina, 0.4 s after lowering |
+| Villain | **Сокрушающий рывок** | Lunges 3 u along aim, then hits every hostile within 4.5 u and a 120° forward arc for `max(damage − arm penalty, 8) × 1.1`; each target knocked back 3 u. | 30 stamina, 3.5 s |
+
+| Role | hp | speed | Behaviour |
+| --- | ---: | ---: | --- |
+| `scout` | 55 | 4.8 | Melee hit-and-run; retreats for 0.62 s after attacking |
+| `soldier` | 70 | 3.7 | Baseline melee |
+| `minion` | 70 | 3.7 | Baseline melee, villain faction |
+| `archer` | 45 | 3.2 | Maintains 8–12 u, fires every 1.8 s for 7 damage, can target the player or hostile actors |
+| `brute` | 130 | 2.6 | 14 damage, takes ×0.5 from frontal hits (`dot > 0.2`), cannot lose limbs |
+| `commander` | 150 | 0 | Allies within 10 u get speed ×1.15 and damage +4. Calls one soldier every 25 s, up to four total |
+
+```text
+BOW_DAMAGE=18          BOW_MIN_DAMAGE=10     BOW_SPEED=24
+BOW_RANGE=30           BOW_COOLDOWN=0.9      BOW_COST=15
+SHIELD_MULTIPLIER=0.15 SHIELD_DRAIN=18/s     SHIELD_SLOW=0.5
+SHIELD_FRONT_DOT=0.2   SHIELD_RERAISE=0.4
+CLEAVE_MULTIPLIER=1.1  CLEAVE_RADIUS=4.5     CLEAVE_ARC=120°  (dot 0.5)
+CLEAVE_DASH=3          CLEAVE_KNOCKBACK=3    CLEAVE_COOLDOWN=3.5   CLEAVE_COST=30
+ARCHER_RANGE=[8,12]    ARCHER_DAMAGE=7       ARCHER_SPEED=3.2
+ARCHER_PROJECTILE=16   ARCHER_FIRE_COOLDOWN=1.8
+COMMANDER_AURA=10      COMMANDER_SPEED=1.15  COMMANDER_DAMAGE=+4
+REINFORCEMENT_TIME=25  REINFORCEMENT_LIMIT=4                  MAX_ACTORS=25
+PROJECTILE_HIT_RADIUS=0.9   guard armour ×0.72   injury chance 11%
+```
+
+All directional combat uses **one canonical aim vector derived from `cameraYaw`**, so the
+crosshair, bow, cleave and raised shield agree even while the player is standing still.
+All actor damage goes through `damageActor()`, which applies the brute's frontal modifier for
+melee, arrows, cleave and actor-vs-actor combat, prevents limb detachment from brutes regardless
+of source, applies optional knockback and the world clamp, and routes deaths through
+`killActor()` so rewards and objective credit keep their existing attribution. Incoming player
+damage goes through `damagePlayer()`, applying guard armour first and then the frontal shield
+modifier; melee may injure, archer projectiles never do. The elf ability is unavailable when both
+arms are missing, and failed activations spend no stamina and start no cooldown.
+
+Projectiles use light gravity and swept segment/sphere collision to prevent tunnelling; the
+nearest eligible hit along each frame segment wins; eligibility is symmetric and faction-based;
+friendly fire is disabled; actor projectiles store `sourceActorId` and outstanding shots are
+removed when that actor dies.
+
+`spawnPopulation()` **replaces** baseline actors rather than adding an unbounded second set —
+guards receive archers and a brute, elves two archers, villains an archer and two brutes; the
+initial population stays 16. Reinforcements are limited to four *total* per commander, not four
+currently alive.
+
+Desktop RMB and `KeyR` activate only while the canvas owns pointer lock, but the public
+`useAbility()` / `setShield()` methods deliberately do **not** require it, so the coarse-pointer
+touch overlay works. Guard release is handled by mouseup, keyup, touch pointerup/cancel/leave,
+pause, pointer-lock loss, window blur, visibility loss, stamina exhaustion and game end — the
+brace cannot become stuck active.
+
+**Status: shipped and verified.** Every constant found in code at `GameEngine.ts:895-948`; role
+tables match; `AbilityView` and `createAbilityView()` at `types.ts:218-256`; `MAX_ACTORS` has
+since moved to `world/ActorBudget.ts:15`. `SHIELD_RERAISE = 0.4` exists as behaviour but not as a
+named constant.
+
+---
+
+### 3. Enemy reactions — telegraphs, poise, death motion
+
+*Formerly `04-enemy-reactions-spec.md`. 10 criteria, all unchecked in the archive.*
+
+Gives every hostile action a readable beginning, contact moment and recovery, plus role-scaled
+flinch, poise and stagger, velocity-based knockback, and directional authored death poses. The
+spec was explicit that this is **not** only an animation pass: *"readable anticipation requires
+delayed contact and therefore changes combat timing."*
+
+| Role | Windup | Recovery | Max poise | Stagger | Telegraph |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Scout / minion | 0.18 s | 0.18 s | 18 | 0.34 s | weapon pullback only |
+| Soldier | 0.26 s | 0.24 s | 28 | 0.30 s | pullback + short ground tick |
+| Archer | 0.32 s | 0.20 s | 18 | 0.34 s | bow raise + thin aim line |
+| Commander | 0.38 s | 0.28 s | 46 | 0.24 s | double-chevron ground wedge |
+| Brute | 0.56 s | 0.42 s | 58 | 0.20 s | large expanding wedge |
+| Champion | 0.48 s | 0.36 s | 72 | 0.18 s | aura pulse + large wedge |
+
+```text
+FLINCH_TIME=0.12           POISE_REGEN_DELAY=0.75    POISE_RECOVERY_PER_SECOND=22
+STAGGER_IMMUNITY=0.45      KNOCKBACK_DAMPING=11      KNOCKBACK_MAX_SPEED=11
+KNOCKBACK_STEER_THRESHOLD=0.8                        LARGE_ROLE_KNOCKBACK_SCALE=0.55
+TELEGRAPH_MAX=8            TELEGRAPH_Y=0.055         CONTACT_RANGE_FORGIVENESS=0.35
+DEATH_POSE_TIME=0.24       attack cooldowns preserved at 0.8 / 1.15 / 1.3 / 1.35 s
+poise damage: normal melee or arrow = dealt × 0.75, cleave = dealt × 1.45
+poise reset to maxPoise × 0.7 after stagger
+```
+
+**State priority is `dead > stagger > action > flinch overlay > locomotion`.** Flinch may overlay
+locomotion or an action pose without stopping their timers; stagger cancels the current action
+and movement; death clears everything else.
+
+Starting an action creates an `ActorAction` instead of resolving damage: the role's attack
+cooldown is set immediately (measured from action start, with recovery inside it), movement stops,
+the actor faces the target, and the anticipation pose and telegraph appear. Contact resolves
+**exactly once**: the actor target is re-found by id and must be alive, and must be inside
+role-specific contact range plus 0.35 forgiveness; arrows use the live target position if valid,
+otherwise the copied one. A failed validation produces a whiff visual and no damage, and the
+action transitions to recovery either way.
+
+Death style is chosen once in `killActor()` from copied hit context: cleave or high knockback →
+`launchFall`; strong lateral hit → `spinFall`; source in front → `backFall`; otherwise
+`sideFall`. The root animates over `DEATH_POSE_TIME` with easing and then freezes — *"This is an
+authored procedural collapse, not a ragdoll."*
+
+Ground telegraphs are at most eight pooled flat wedge/ring meshes just above ground, transparent
+with depth-write off, whose length equals the validated melee range; the wedge grows during
+windup and disappears at contact. Under pool pressure, brute, champion and commander telegraphs
+are retained before soldier ticks — **and the pose is always present even when no ground entry is
+available**, so the warning never disappears entirely. Archers get one thin line inside the
+existing ranged window only: *"It is an aim warning, not a guaranteed projectile trajectory."*
+
+The design corrections are the most reusable part: *"A telegraph with immediate damage is false
+information."* · *"Do not let every hit cancel every windup. That creates permanent stun-lock with
+the current attack speed."* · *"Do not teleport for knockback."* · *"Do not infer contact from
+animation pose. The action timer is authoritative; visuals sample it."* · *"Do not make colour the
+only telegraph."*
+
+Reduced motion shortens root translation, spin and knockback visual travel by 40% but never
+removes windup timing or the ground warning.
+
+**Status: shipped, criteria now resolved as 6 verified / 4 unverifiable-by-inspection.** All six
+role tables match code exactly (`actorWindup:4797-4804`, `actorRecovery:4806-4813`,
+`actorMaxPoise:4815-4822`, `actorStaggerDuration:4824-4830`); the action lifecycle is at
+`:4832-4926`; the telegraph pool at `:1471`/`:5088` with teardown at `:2242`. Cadence tolerance,
+wall-pop guarantees, death-hook exactly-once and the browser captures are behavioural claims that
+inspection cannot settle. **One deviation found:** the spec says stagger immunity simply blocks a
+second break, but `GameEngine.ts:5027` also floors poise at `maxPoise × 0.7` *during* immunity —
+an implementation detail that was never in the spec.
+
+---
+
+### 4. Comic hit language
+
+*Formerly `02-comic-hit-language-spec.md`. 10 criteria, all unchecked in the archive.*
+
+Every successful player attack communicates where contact occurred, how much damage landed,
+whether it was ordinary, heavy, blocked or lethal, and which attack produced it — through pooled
+world-space damage numbers, cached Russian onomatopoeia callouts, pooled impact rays, one weapon
+trail and tightly bounded hit stop. No DOM update per hit.
+
+```text
+DAMAGE_NUMBER_MAX=24     DAMAGE_NUMBER_LIFE=0.72   DAMAGE_NUMBER_DISTANCE=30
+NUMBER_MERGE_WINDOW=0.09 CALLOUT_MAX=10            CALLOUT_LIFE=0.46
+CALLOUT_COOLDOWN=0.12    IMPACT_RAY_MAX=16         IMPACT_RAY_LIFE=0.18
+HIT_STOP_NORMAL=0.028    HIT_STOP_HEAVY=0.048      HIT_STOP_LETHAL=0.064
+HIT_STOP_CLEAVE=0.058    HIT_STOP_BLOCK=0.024      HIT_STOP_REDUCED_MAX=0.020
+canvas 256×128, number scale-up 80 ms, rays expand 0.4 → 1.8 u and fade in 180 ms
+callout chances: normal melee 22%, heavy 70%, lethal 100%, blocks 45%
+```
+
+Weight is `blocked` for a shield block, `lethal` for a kill, `heavy` for a cleave **or** damage
+≥ 22% of the target's max HP, otherwise `normal`; priority runs `lethal > blocked > heavy >
+normal`. Callout words are `'БАЦ!' | 'ХРЯСЬ!' | 'БУМ!' | 'БЛОК!'`.
+
+```ts
+type AttackKind = 'melee' | 'cleave' | 'arrow' | 'allyMelee' | 'actorArrow'
+type HitWeight  = 'normal' | 'heavy' | 'lethal' | 'blocked'
+interface DamageResult {
+  applied: boolean; dealt: number; killed: boolean; weight: HitWeight
+  position: THREE.Vector3; direction: THREE.Vector3
+}
+interface CombatFeedbackEvent extends DamageResult {
+  attackKind: AttackKind; targetId: string | 'player'; directPlayerAction: boolean
+}
+```
+
+`presentCombatFeedback(event)` is the single fan-out point for numbers, callouts, rays, audio
+requests and camera accents — *"an internal method, not a general event bus."* Classification
+changes presentation only and must never increase damage, detach chance, rewards or objective
+credit.
+
+Two rules carry most of the polish. **Coalescing:** the same target hit again inside
+`NUMBER_MERGE_WINDOW` merges **only when the attack kind is the same** — damage adds to the
+displayed value, lifetime restarts at ≤70%, and weight upgrades but never downgrades. Cleave
+targets stay separate because their positions differ, and projectile and melee impacts never
+merge. **Hit stop takes the maximum, never the sum:** for a cleave, every `DamageResult` is
+collected and presented, then **one** stop is requested using the highest weight. A missed attack
+produces a trail but no stop, number, callout or ray.
+
+The loop reads and clamps raw delta, consumes up to that much from `hitStopRemaining`, passes only
+the remainder to gameplay `update()`, always updates the camera and renders, and ages hit text
+only with gameplay time so the contact frame stays visually frozen.
+
+Design corrections worth keeping: *"Do not call a high random damage roll a gameplay critical hit.
+There is no crit system."* · *"Do not put damage-number state in `GameView`. A cleave can hit
+several actors inside one 90 ms UI throttle window."* · *"Do not freeze the `AudioContext` for hit
+stop."* · *"Do not add stop time once per cleave target."* · *"Never call `setTimeout` for effect
+expiry."*
+
+Accessibility: weight is encoded by size, backing silhouette, word and colour — never colour
+alone. Reduced motion caps every stop at `HIT_STOP_REDUCED_MAX`, removes lateral drift and uses
+scale and fade only. Numbers bias away from the central 8% of the viewport so they cannot cover
+the crosshair.
+
+**Status: shipped, criteria now 8 verified / 2 unverifiable.** All eleven constants at
+`GameEngine.ts:1026-1041`; the type set at `:758-773`; cleave's single-stop path at `:5244-5278`
+→ `presentCleaveFeedback:12495` → `requestHitStop:12527`; callout probabilities at `:12769-12776`;
+weapon trail at `:1542`/`:2014`. Frame-rate stability and the browser stress check remain
+unverified.
+
+---
+
+### 5. Combat juice — shake, vignette, sparks, decals, gore
+
+*Formerly `combat-juice-spec.md`. 13 criteria, all unchecked in the archive — the largest single
+block of the 113.*
+
+Five bounded feedback layers: short camera impulses on meaningful local impacts, a red damage
+flash with a low-health edge treatment, sparks on blocks and cleaves, recycled blood and scorch
+ground decals, and deliberately excessive low-poly gore. Arcade-cartoon, not realism.
+
+```text
+SHAKE_POS=0.22        SHAKE_ROLL=0.012      SHAKE_DECAY=2.1      SHAKE_FREQUENCY=24
+TRAUMA_CLEAVE=0.42    TRAUMA_BLOCK=0.08     TRAUMA_DEATH_MAX=0.16  TRAUMA_DEATH_RANGE=12
+FLASH_MIN=0.25        FLASH_MAX=0.85        FLASH_BLOCK_MAX=0.12   FLASH_DECAY=2.4
+LOW_HEALTH_RATIO=0.25
+SPARK_COUNT_BLOCK=7   SPARK_COUNT_CLEAVE=5  SPARK_LIFE=0.24        SPARK_MAX_ACTIVE=48
+GORE_HIT=14..30       GORE_PLAYER_HIT=18..36  GORE_DEATH=52/72
+GORE_MAX_ACTIVE=180   GORE_GROUND_Y=0.08
+DECAL_MAX=72          DECAL_Y=0.025         DECAL_FADE=6
+BLOOD_DECAL_LIFE=34   SCORCH_DECAL_LIFE=28  BLEED_FX_INTERVAL=1.25
+```
+
+Trauma sources: normal player damage lerps `0.12..0.35` from `clamp(dealt / 20, 0, 1)`; a frontal
+shield block is a flat `0.08` and does *not* also apply normal-hit trauma; a cleave that hits at
+least one actor is `0.42` **once per activation, not per target**; a nearby direct player kill is
+up to `0.08` fading linearly to zero at 12 units; AI-vs-AI kills and cleave misses produce none.
+*(The spec is internally inconsistent here — the trigger table says "up to 0.08" for the kill
+accent while the constants block says `TRAUMA_DEATH_MAX = 0.16`. Preserved as found rather than
+silently reconciled.)* All incoming-hit intensity uses post-mitigation `dealt`, never `baseDamage`.
+
+The camera rule is the load-bearing one. `updateCamera` computes the normal collision-resolved
+destination, lerps it into an **unshaken** `cameraFollowPosition`, samples smooth signed noise
+from `shakeClock`, scales by `trauma²`, adds the offset — and then passes the shaken candidate
+through `resolveCameraPosition` **a second time**, because *"'Keep the offset small' alone cannot
+support the no-camera-clipping acceptance criterion."*
+
+Decals use a genuine pool: `spawnDecal` reuses an inactive entry, allocates while below
+`DECAL_MAX`, and otherwise recycles the oldest active one; at expiry the mesh is hidden and marked
+inactive with **no removal or dispose**. `killActor()` spawns one blood decal from the actor's X/Z
+*before* the corpse Y adjustment, and bleeding emits at most one particle and one small decal per
+`BLEED_FX_INTERVAL`.
+
+Design corrections: *"Do not add random offsets directly to `camera.position`."* (the next frame's
+lerp would feed noise back into follow and drift) · *"Do not use frame-by-frame `Math.random()` for
+shake. White noise reads as camera buzz."* · *"Do not claim weapon-clash sparks. No clash event
+exists."* · *"Use a real decal pool. Removing and disposing the oldest decal at the cap is a
+bounded collection, not pooling."* · *"Do not freeze transient screen feedback on pause. Because
+the camera still updates while paused, frozen trauma would shake forever."*
+
+One documented limitation has since been overtaken by the code: the spec noted that *"the current
+world navigation surface is flat, so absolute `DECAL_Y` is sufficient"*, and explicitly put slopes
+and bridges out of scope. The shipped code has moved past it — decals now use
+`groundHeightAt(x, z) + DECAL_Y` (`GameEngine.ts:13299`).
+
+**Status: shipped, criteria now 8 verified / 3 partial / 2 unverifiable.** Constants at
+`GameEngine.ts:1010-1070`; low-health treatment at `App.tsx:2111-2117` with `App.css:1477-1492`
+and a reduced-motion override at `App.css:4257`; `GameEngineSettings` at `GameEngine.ts:272-286`.
+Gore burst counts (14..30 / 18..36 / 52 / 72) exist as behaviour but not as named constants, and
+`LOW_HEALTH_RATIO` is likewise unnamed. The second camera collision resolve could not be confirmed
+by inspection, and the 25-actor frame-time budget is a measurement nobody has taken.
+
+---
+
+### 6. Camera accents
+
+*Formerly `07-camera-accents-spec.md`. 9 criteria, all unchecked in the archive.*
+
+Restrained FOV envelopes and frame-rate-independent follow damping on top of the existing trauma
+shake: a wider view while sprinting, an outward punch on cleave, a small release on jump and
+compression on landing, and a short inward emphasis on a nearby direct kill.
+
+```text
+CAMERA_BASE_FOV=56     CAMERA_FOV_MIN=52      CAMERA_FOV_MAX=65
+SPRINT_FOV_BONUS=4.5   SPRINT_BLEND_DAMPING=6.5
+CAMERA_FOV_DAMPING=13  CAMERA_FOLLOW_DAMPING=7.7
+CAMERA_ACCENT_MIN=-3.5 CAMERA_ACCENT_MAX=7    CAMERA_ACCENT_MAX_ENTRIES=4
+LANDING_MIN_AIR_TIME=0.22                     KILL_ACCENT_RANGE=14
+```
+
+| Event | Magnitude | Duration | Notes |
+| --- | ---: | ---: | --- |
+| Cleave with at least one hit | +5.5 | 0.24 s | One event, not per target |
+| Cleave miss | +2.0 | 0.16 s | Swing commitment only |
+| Jump takeoff | +1.0 | 0.18 s | Very subtle |
+| Landing after ≥ 0.22 s airborne | −1.4 | 0.16 s | Skips tiny curb and frame contacts |
+| Shield block | −0.8 | 0.12 s | Complements block trauma |
+| Nearby direct player kill | −2.4 max | 0.20 s | Distance-fades to zero at 14 units |
+
+Each one-shot uses `pulse = Math.sin(Math.PI * t)` over `t ∈ 0..1`, and normal melee hits
+deliberately do **not** change FOV — hit stop and trauma already cover them.
+
+```
+targetFov  = CAMERA_BASE_FOV + SPRINT_FOV_BONUS × sprintFovBlend
+           + clamp(Σ sampleAccent(entry), CAMERA_ACCENT_MIN, CAMERA_ACCENT_MAX)
+currentFov = damp(currentFov, targetFov, CAMERA_FOV_DAMPING, visualDelta)   clamped 52..65
+```
+
+`camera.fov` is assigned only when the value changes by at least `0.01`. Sprint promotes the
+**authoritative gameplay sprint decision** rather than recomputing it from keys, so shift held
+without movement, empty stamina, an active shield or a leg injury all correctly suppress it.
+
+The follow refactor matters as much as the accents: the old fixed `lerp(resolved, 0.12)` is
+frame-rate dependent, and *"an equivalent damping constant for `0.12` per 60 Hz frame is
+approximately `7.7`; tune by capture rather than retaining a frame-dependent special case."*
+Accents are aged with **raw** delta, not simulation delta, because the camera renders while hit
+stop is active.
+
+Design corrections: *"Do not set FOV directly at event call sites."* · *"Do not add FOV impulses
+cumulatively without a clamp."* · *"Do not gate only translation shake."* · *"Do not modify camera
+distance to simulate zoom."* · and an explicit ownership note that specs 02 and 07 must not both
+queue the same cleave or kill event.
+
+**Status: shipped, criteria now 5 verified / 3 partial / 1 unverifiable.** This is the only spec
+in the archive whose logic was extracted into its own module: every constant lives in
+`src/game/cameraAccents.ts:1-12`, with `sampleCameraAccent:85`, `advanceCameraAccents:91` and
+`composeCameraFov:107-111`. Every accent magnitude and duration matches the table exactly
+(`GameEngine.ts:5284-5288`, `:3759`, `:3781`, `:12375`, `:12384`). The settings label became
+`Эффекты камеры` while **retaining the `korovany-screen-shake` storage key** for compatibility,
+exactly as specified.
+
+---
+
+### 7. Loot spectacle
+
+*Formerly `03-loot-spectacle-spec.md`. 9 criteria, all unchecked in the archive.*
+
+Bonus consumable drops with rarity-coded beams, rings, magnet pickup and a React reward card,
+layered on top of unchanged base kill and event rewards. **No inventory, no equipment, no save
+migration** — it reuses the version-1 `gold` / `health` / `damage` fields.
+
+```text
+LOOT_DROP_CHANCE=0.30   LOOT_MAX_ACTIVE=20      LOOT_BURST_TIME=0.45
+LOOT_FORCE_MAGNET_AGE=15  LOOT_MAGNET_RADIUS=5.5  LOOT_COLLECT_RADIUS=0.8
+LOOT_MAGNET_ACCEL=34    LOOT_MAGNET_MAX_SPEED=22  LOOT_TOAST_TIME=2.4
+LOOT_Y=0.34             LOOT_DAMAGE_CAP=60
+rarity split: common 62% · uncommon 27% · rare 9% · legendary 2%
+```
+
+| Rarity | Rewards | Beam | Rings |
+| --- | --- | ---: | --- |
+| Common | Coins 5..10 | 1.6 u | one smooth ring |
+| Uncommon | Coins 12..20 or medicine 12..18 | 2.6 u | one broken ring, slow pulse |
+| Rare | Coins 28..42, medicine 24..32, or whetstone +1 | 4.2 u | two rings, alternating scale |
+| Legendary | Coins 70, medicine 45, or whetstone +2 | 6.5 u | two rings + starburst |
+
+Eligibility: an ordinary direct-player kill rolls at 30%; a commander direct-player kill is
+guaranteed and at least `rare`; champion event success is one guaranteed `legendary` at the event
+marker; other event successes give one guaranteed `uncommon` or better. **AI-vs-AI kills never
+roll.** Rewards are fixed at spawn and cannot be re-rolled while active, and a dedicated `lootRng`
+is used — "do not reuse event RNG sequencing or texture RNG".
+
+Reward application: coins add to gold; medicine heals capped at `maxHealth`, and **at full health
+converts to half the amount in gold, rounded up**; whetstone adds damage capped at
+`LOOT_DAMAGE_CAP`, with excess converting at **25 gold per unused point**. If damage is already at
+the cap, whetstones are excluded from the roll entirely rather than rolled and wasted.
+
+The state machine is `burst → idle → magnet → collected`. Burst spawns at the pre-corpse death
+position plus 0.4 Y with a small radial velocity and scales the token 0.2 → 1; idle bobs on a
+deterministic phase and **forces magnet at age 15 s regardless of distance**; magnet accelerates
+toward the player's chest with a max speed — *"Do not use teleporting lerp coefficients that vary
+by frame rate."*
+
+**Pool pressure never discards a reward.** At 20 active, the oldest active common is settled
+immediately and its entry recycled; if no common exists, the oldest lowest-rarity entry is
+settled; either way a compact collection card is shown for the settled reward.
+`collectLoot(pickup, reason)` applies the reward exactly once by marking the pickup inactive
+*before* invoking callbacks, which is what makes collection and save-settlement racing in one
+frame safe.
+
+Save behaviour is asymmetric by design: `save()` settles all active pickups first, victory settles
+before the final view, but **defeat does not settle** — uncollected bonuses are run-local risk.
+
+The card reports the exact result (`Урон 31 -> 32`, `+18 золота`, `Здоровье 62 -> 80`), takes no
+input, and is timed by **engine time** via `lootToastExpiresAt`, because *"Do not schedule React
+timeouts that can outlive an engine instance."*
+
+The spec also set an explicit threshold for ever growing this into a real inventory: item identity
+and deterministic generation, capacity, comparison UX, shop and salvage economics, a `SavedGame`
+v1 → v2 migration with rollback, and stat ownership beyond the current scalar `damage` — *"Do not
+smuggle a partial inventory into optional fields on version 1."*
+
+**Status: shipped and among the most faithfully implemented in the archive — 6 verified / 2
+partial / 1 unverifiable.** Every constant matches at `GameEngine.ts:857-867`; the rarity split is
+exact at `:10275-10283` (`<0.62`, `<0.89`, `<0.98`, else legendary); the four types are unchanged
+at `types.ts:129-143`; the dedicated RNG at `:1534`. The `settleActiveLoot('save')` call site
+could not be confirmed by inspection, and "never discards a reward" is an invariant no test
+asserts.
+
+---
+
+### 8. Toon shading and selective outlines
+
+*Formerly `01-toon-shading-and-outlines-spec.md`. 9 criteria, all unchecked in the archive.*
+
+Four-band toon lighting on opaque character surfaces plus inverted-hull silhouette shells on
+selected meshes. Explicitly **not** a full-screen edge pass — selective, distance-culled and
+toggleable.
+
+```text
+TOON_RAMP_LEVELS=4               gradient ramp 0.00→0.28, 0.33→0.52, 0.66→0.78, 1.00→1.00
+OUTLINE_CHARACTER_SCALE=1.045    OUTLINE_INTERACTABLE_SCALE=1.035
+OUTLINE_ACTOR_DISTANCE=38        OUTLINE_INTERACTABLE_DISTANCE=46
+OUTLINE_CORPSE_SECONDS=8         MAX_OUTLINED_ACTORS=25
+player shell hides when the collision-resolved camera is closer than 2.4 u
+regression gate: 2 ms sustained frame time
+```
+
+The ramp is a 4-texel `DataTexture` with `NearestFilter`, no mipmaps and `NoColorSpace`. Shells
+share source geometry, are parented to the source mesh, and use a shared `MeshBasicMaterial` with
+`BackSide`, `depthTest: true`, `depthWrite: false`, `toneMapped: false`. Because they are
+parented, limb animation, hiding, corpse poses and weapon animation move the outline with no
+per-frame transform-copy pass.
+
+Exclusions are extensive and deliberate: transparent materials, the `faction-ring`,
+`userData.noComicOutline`, sprites, points, lines, LOD proxy foliage, particles, gore, decals,
+flames, sky and health bars — and a transparent entry anywhere in a material array excludes the
+whole mesh. Back-side shells give external silhouettes only, because *"dense internal edge lines …
+would become noise."*
+
+The toon ramp deliberately **stays on when outlines are off**: *"The setting is an ink/performance
+control, not a full material hot-swap."*
+
+Caveats worth keeping: *"Do not replace every `MeshStandardMaterial` in the scene."* · *"Do not
+make bloom responsible for outlines."* · *"Do not add an `OutlinePass` only for this milestone."*
+· *"Do not assume a fixed black works in both themes and at night."* · and the performance escape
+hatch: *"If the actor stress scene regresses sustained frame time by more than 2 ms on the target
+device, first lower outline distance. Do not silently remove the player outline or reduce gameplay
+actor count."*
+
+Night must retain at least two visible ramp bands, fixed via night hemisphere intensity or base
+colours — **not** per-character lights.
+
+**Status: shipped, criteria now 4 verified / 1 partial / 4 unverifiable.** The ramp is
+`Uint8Array([71, 133, 199, 255])` = 0.278 / 0.522 / 0.780 / 1.00 at
+`ComicMaterialLibrary.ts:51-63`; the eligibility filter with its `InstancedMesh` and transparency
+exclusions at `:86-102`; distances as squared constants at `GameEngine.ts:882-885`. The named
+constants `TOON_RAMP_LEVELS` and `MAX_OUTLINED_ACTORS` do not exist — their values are inlined.
+Bloom-interaction parity, resource-leak freedom and the stress capture are all unverified.
+
+---
+
+### 9. Zone art direction
+
+*Formerly `05-zone-art-direction-spec.md`. 9 criteria, all unchecked in the archive.*
+
+A per-zone visual grammar — two dominant hues plus one accent, a hatch motif, a silhouette prop
+vocabulary, one landmark, restrained fog tint and a UI accent — so a screenshot is identifiable
+before the zone title is read.
+
+| Zone | Palette | Hatch motif | Silhouettes | Composition |
+| --- | --- | --- | --- | --- |
+| Neutral | Dusty ochre, muted teal, cream | Broad horizontal scrapes | leaning signs, carts, fences, pennants, crates | low, open, irregular skyline |
+| Palace | Ivory stone, navy, restrained gold | Orderly chevrons and vertical ticks | standards, shield plaques, clipped pillars, braziers | tall, symmetric, axial to the gate |
+| Forest | Deep teal, acid green, warm amber | Curved organic strokes | root arches, hanging pods, carved stumps, crescent lanterns | layered, asymmetrical, framed paths |
+| Fort | Charcoal, rust red, bruised magenta | Sharp diagonal slashes | spikes, broken wheels, chains, skull-like notches | heavy, top-loaded, hostile diagonals |
+
+```text
+ZONE_BLEND_WIDTH=8       ZONE_TINT_DAMPING=3.5      ZONE_FOG_WEIGHT=0.04..0.10
+ZONE_DECORATION_INSTANCES_MAX=94 total (neutral 26, palace 20, forest 22, fort 26)
+ZONE_LANDMARK_MESHES_MAX=8 per landmark, ≤32 total landmark draws
+HATCH_TEXTURE_SIZE=64    ≤8 new instanced draw calls, no dynamic lights
+```
+
+Hatching draws deterministic ink marks into the **same** 64×64 canvas as the base pattern, so
+there is no second material and no extra draw call; the seed derives from the texture key, and
+shared texture keys must include the profile and motif so two surfaces cannot collide on one cache
+entry. Ground, major walls, roofs and signature props are hatched; skin, UI, gore, sky, particles
+and transparent effects are not.
+
+The composition order is fixed: `base semantic palette → day/night lighting and sky → weather
+modulation → restrained local zone tint → material tone mapping and post-processing`. Zone tint
+enters `updateAtmosphere()` only after the day/night colours are computed, is weighted by each
+profile's `fogWeight`, damped over `ZONE_TINT_DAMPING`, and **never mutates the day/night
+keyframes**.
+
+Decorations avoid roads, spawn circles, beacons, event markers, the palace gate passage, shop
+interaction radii and common combat lanes, are non-colliding, and are built once with world
+generation rather than created on zone entry.
+
+Caveats: *"Do not solve zone identity by saturating ground colours."* · *"Do not add four
+independent fog systems."* · *"Do not change gameplay `zoneAt()` to make visual transitions
+smooth."* · *"Zone tint is supporting glue, not a full-screen filter."*
+
+**Status: partially shipped — and this is one of two places where the archive was actively
+misleading.** The profiles, fog tint and damping are real: `createZoneArtProfiles` at
+`GameEngine.ts:1255-1296`, `ZONE_TINT_DAMPING = 3.5` at `:1071` used at `:11498`, and per-zone
+`fogWeight` values of 0.055 / 0.045 / 0.075 / 0.09 all inside the specified 0.04–0.10 band. The
+per-zone UI accents and motifs shipped in `types.ts:449-468`
+(`#c48742`/`scrape`, `#547ac4`/`chevron`, `#5b9d54`/`organic`, `#b75b70`/`slash` — note these hex
+values are code decisions; the spec named no hexes).
+
+**But border blending was never implemented.** `writeZoneVisualWeights()`, `ZONE_BLEND_WIDTH` and
+the `blendWidth = 8` default do not exist anywhere in `src`; `GameEngine.ts:11480` assigns
+`zoneVisualWeights[zoneId] = zoneId === currentZone ? 1 : 0`, a hard 1/0 switch. `src/game/zoneArt.ts`
+contains only the `ZoneVisualWeights` interface and `ZONE_ART_IDS` — eleven lines. Nor does
+`ZONE_DECORATION_INSTANCES_MAX` (94) exist as an enforced budget. So of nine criteria: 2 verified,
+**1 contradicted**, 6 unverifiable.
+
+---
+
+### 10. Bloom post-processing
+
+*Formerly `bloom-post-processing-spec.md`. 6 criteria, all unchecked in the archive — the smallest
+spec in it.*
+
+Wraps the render loop in an `EffectComposer` so existing emissive elements glow, with tone mapping
+moved to `OutputPass` so bloom runs in linear HDR.
+
+```text
+BLOOM_STRENGTH=0.55   BLOOM_RADIUS=0.4   BLOOM_THRESHOLD=0.85
+BLOOM_NIGHT_BOOST=0.4 (optional)         BLOOM_LAYER=1 (optional, selective mode only)
+presets: Medium → strength 0.4, half-res · High → strength 0.55, full-res (DPR-capped)
+renderer stays ACESFilmicToneMapping, exposure 0.92, SRGBColorSpace; DPR cap min(dpr, 1.75)
+```
+
+```text
+RenderPass(scene, camera)  →  UnrealBloomPass(resolution, strength, radius, threshold)  →  OutputPass()
+```
+
+Threshold bloom ships first; masked selective bloom via a dedicated layer is an optional follow-up
+to be used *"only if threshold bloom bleeds into bright ground textures."*
+
+The teardown rule is the one that catches people: *"`EffectComposer.dispose()` does not dispose its
+pass list"* — each pass must be disposed explicitly first. Composer calls must also be guarded when
+width or height is zero (a minimised window) to avoid zero-sized render targets, and resize must
+use **logical** pixels via `composer.setSize` rather than separately mutating `bloomPass.resolution`.
+
+**Status: shipped as threshold bloom; both optional extensions absent. 3 verified / 1 partial / 2
+unverifiable.** `BLOOM_STRENGTH`, `BLOOM_RADIUS` and `BLOOM_THRESHOLD` all match at
+`BloomPostProcessor.ts:7-9`; `OutputPass` is added last at `:49` with a comment recording that it
+reads the renderer's ACES and exposure settings at render time; disposal is correct at `:70-73`
+(`passes.forEach(pass => pass.dispose())` **then** `composer.dispose()`). The **Off/Medium/High
+quality preset was never implemented** — only the boolean toggle — and neither `BLOOM_NIGHT_BOOST`
+nor `BLOOM_LAYER` exists. The explicit zero-size guard could not be confirmed.
+
+---
+
+### 11. Ground foliage and wind
+
+*Formerly `ground-foliage-wind-spec.md`. 12 criteria, all unchecked in the archive.*
+
+Deterministic instanced grass, ferns, flowers and static pebbles varying by zone, swaying via a
+vertex-shader wind injected through `MeshStandardMaterial.onBeforeCompile` — no per-instance CPU
+animation — with a user-selectable off / low / high quality.
+
+```text
+WIND_SPEED=1.6          DEFAULT_WIND_DIRECTION=normalize(1.0, 0.2)   DEFAULT_WIND_STRENGTH=0.25
+GRASS_SWAY=0.12   FERN_SWAY=0.09   FLOWER_SWAY=0.10
+GRASS_HEIGHT=0.70 FERN_HEIGHT=0.60 FLOWER_HEIGHT=0.75
+FOLIAGE_CLEARANCE=0.35  ROAD_CLEARANCE=0.60   MAX_PLACEMENT_ATTEMPTS=target×40
+castShadow=false        receiveShadow=false   program cache key 'ground-foliage-wind-v1'
+organic totals: 1,000 at low · 2,990 at high · four total draw calls
+```
+
+| Bucket | Low (N/F/Ft/P) | High (N/F/Ft/P) | Wind |
+| --- | ---: | ---: | :---: |
+| grass / tufts | 230 / 370 / 150 / 60 | 700 / 1100 / 450 / 180 | yes |
+| ferns | 0 / 90 / 0 / 0 | 0 / 260 / 0 / 0 | yes |
+| flowers | 55 / 45 / 0 / 0 | 160 / 140 / 0 / 0 | yes |
+| pebbles | 0 / 0 / 110 / 0 | 0 / 0 / 110 / 0 | no |
+
+Buckets group by **render bucket, not zone**, with zone colour applied through
+`InstancedMesh.setColorAt()`. Placement generates the `high` sequence and uses its prefix for
+`low`, so changing quality never reshuffles retained plants.
+
+The shader is the substance:
+
+```glsl
+float h = smoothstep(0.0, uFoliageHeight, position.y);
+vec2 root = (modelMatrix * instanceMatrix[3]).xz;
+float phase = dot(root, vec2(0.31, 0.37)) + uTime * 1.6;
+float wave = sin(phase) + 0.35 * sin(phase * 0.47 + 1.7);
+vec2 axisX = (modelMatrix * vec4(instanceMatrix[0].xyz, 0.0)).xz;
+vec2 axisZ = (modelMatrix * vec4(instanceMatrix[2].xyz, 0.0)).xz;
+vec2 localWind = vec2(
+  dot(uWindDirection, normalize(axisX)) / max(length(axisX), 0.0001),
+  dot(uWindDirection, normalize(axisZ)) / max(length(axisZ), 0.0001)
+);
+transformed.xz += localWind * (uWindStrength * uSwayAmplitude * h * h * wave);
+```
+
+That per-instance basis transform exists because of a self-correction worth preserving: *"The
+original draft added a world-space wind vector directly to instance-local coordinates. Random
+instance yaw would therefore rotate the wind differently for every plant, and instance scale would
+also distort its magnitude."* Two more: animating a separately translated bud by local vertex
+height *"would make the bud detach from its stem"* (hence merged stem-and-bud geometry with vertex
+colours), and wind must keep direction normalised with strength separate so *"weather gusts have
+one scalar to change."*
+
+Both shader chunk markers must be validated and the injection must **throw** if Three.js changes
+them, because *"A silent no-op would ship static foliage."* Bounding spheres must be expanded by
+the bucket's maximum sway, since shader displacement is invisible to Three.js culling. And
+`cameraObstacles` must **not** be used for placement: *"it is collected later, contains render
+objects rather than 2D footprints, and intentionally excludes planes and instanced meshes."*
+
+**Status: the setting shipped; the feature did not. This is the largest gap in the archive — 1
+verified, 11 unverified, of which most are unverified because the code does not exist.** There is
+no `onBeforeCompile`, no `uWindDirection`, `uWindStrength`, `uSwayAmplitude`, `uFoliageHeight` or
+`customProgramCacheKey` anywhere in `src`; no `FOLIAGE_CLEARANCE` or `ROAD_CLEARANCE`; no
+`createGroundDetails`, `rebuildGroundFoliage` or `createPebbles`. What shipped is the
+`off / low / high` **setting** (`FoliageQuality` at `GameEngine.ts:263`, `setFoliageQuality` at
+`:2323`, key `korovany-foliage` at `App.tsx:159`, cycling UI in menu and pause), and it maps to a
+single scalar `decorationDensity` of `0 / 0.55 / 1` (`foliageQualityDensity()` at `:1400-1402`)
+delegated to `generatedWorld.setDecorationDensity`. Instancing lives in
+`world/GeneratedWorldRuntime.ts:1187-1277` under the region streamer, not in the spec's bucket
+model. The unrelated `RAIN_WIND_SPEED` and `SNOW_WIND_SPEED` constants are precipitation-only.
+
+---
+
+### 12. Day/night cycle
+
+*Formerly `day-night-cycle-spec.md`. All 6 acceptance criteria were already checked.*
+
+A looping day→night cycle: the sun arcs the sky and recolours dome, fog, ambient and sun through
+dawn, noon, dusk and night, with torches and building windows glowing after dark. Purely cosmetic.
+
+```text
+DAY_LENGTH=240              DAY_START_OFFSET=0.18
+SUN_ARC_RADIUS=90           SUN_ARC_HEIGHT=70        SUN_ARC_DEPTH=40
+CELESTIAL_DISC_DISTANCE=150 MIN_SHADOW_LIGHT_HEIGHT=8
+SUN_INTENSITY=[0.15, 2.65]  HEMI_INTENSITY=[0.45, 1.65]
+TORCH_INTENSITY=[1.4, 2.6]  FOG_NIGHT_SCALE=0.35     STAR_COUNT=180
+TWILIGHT_BLEND=[-0.18, 0.08]                         DAY_BLEND=[0.08, 0.60]
+```
+
+```
+dayPhase        = (elapsed / DAY_LENGTH + DAY_START_OFFSET) % 1   // 0 dawn, 0.25 noon, 0.5 dusk
+elevation       = sin(dayPhase × 2π)
+dayFactor       = smoothstep(-0.08, 0.45, elevation)
+nightFactor     = 1 − dayFactor
+star opacity    = nightFactor² × 0.88
+night sky tint  = mix(worldSky, worldFog, 0.45) × 0.28
+flame emissive ramp 0.9 → 2.15
+```
+
+| Stop | elevation | Sun | Background | Fog | Hemisphere |
+| --- | --- | ---: | --- | --- | ---: |
+| Night | ≤ −0.18 | 0.15 | `mix(worldSky, worldFog, 0.45) × 0.22` | `worldFog × 0.35` | 0.45 |
+| Dawn / dusk | 0.08 | 1.4 | `mix(worldSky, warning, 0.4)` | `mix(worldFog, warning, 0.3)` | 1.0 |
+| Day | ≥ 0.60 | 2.65 | `worldSky` | `worldFog` | 1.65 |
+
+Only the light's **Y** is clamped to `MIN_SHADOW_LIGHT_HEIGHT` for stable shadows; the visible sun
+disc follows the true arc at 150 m, with the moon opposite. Two ownership caveats: the gradient sky
+texture is *multiplicatively* tinted, so its day keyframe must be neutral white or the baseline
+texture is darkened twice; and a dedicated `backgroundColor` must be kept, because *"assigning
+`scene.background = palette.worldSky` and then mutating it would corrupt the palette source colour
+by reference."*
+
+Disabling restores every pre-implementation light, colour, celestial position, torch intensity and
+window emissive explicitly, because *"merely forcing `dayPhase = 0.25` would move the light/disc
+and would not reproduce the old scene exactly."* Time of day is derived from the persisted
+`elapsed`, so it reconstructs on load with **zero migration and no new save fields**.
+
+**Status: shipped, 4 verified / 2 partial. One numeric drift found.** `DAY_LENGTH = 240` and
+`DAY_START_OFFSET = 0.18` at `world/WorldEnvironment.ts:31-33` with the phase formula at `:47`;
+arc constants at `GameEngine.ts:1072-1077`; `updateDayNight()` at `:11508` with arc, clamp and disc
+placement at `:11548-11568`. Twilight (1.4 / 1.0) and day (2.65 / 1.65) match exactly, and night
+sun intensity is `0.15` as specified — **but night hemisphere intensity is `0.9` in code
+(`GameEngine.ts:1312`) against `0.45` in the spec.** The torch and window emissive ramp exists as
+behaviour but not as the named `TORCH_INTENSITY` constant; only `TORCH_LIGHT_RANGE = 26` is named.
+
+---
+
+### 13. Weather
+
+*Formerly `weather-system-spec.md`. 9 criteria, all unchecked in the archive.*
+
+Zone-driven, player-local weather: forest → rain, fort → snow, neutral → overcast, palace → clear,
+settling over about six seconds at boundaries. Cosmetic only — no movement, combat, AI, objective,
+save or determinism effect.
+
+The four locked decisions are worth more than the numbers, because each is a rejected alternative:
+ship **zone-driven weather only** (*"a global scheduler can be a later feature"*); keep atmosphere
+**camera-local** rather than four regional sims (*"fog and sky are scene-global, while
+precipitation is camera-centred"*); blend **four profile weights** rather than one `intensity`
+scalar (*"one scalar cannot represent an interrupted transition or a rain-to-snow cross-fade
+without a hard mode swap"*); and render rain as `LineSegments` with snow as `Points`, because
+*"WebGL points have a square screen-space footprint and cannot produce true stretched streaks with
+`PointsMaterial`."* Weather is applied **after** day/night every frame, so it modifies the current
+dawn/day/dusk/night result and never blends back toward fixed daytime colours.
+
+```text
+WEATHER_BLEND=6            WEATHER_ZONE_HYSTERESIS=2      PRECIP_VISIBLE_EPSILON=0.01
+RAIN_COUNT=1600  RAIN_SPEED=30  RAIN_LENGTH=0.9
+SNOW_COUNT=1200  SNOW_SPEED=2.8 SNOW_DRIFT=0.7
+PRECIP_HALF_EXTENT=22      PRECIP_TOP=26
+GROUND_WET_ROUGHNESS=0.58  GROUND_WET_DARKEN=0.22        GROUND_FROST_TINT=0.24
+LIGHTNING_MIN=8  LIGHTNING_MAX=22  LIGHTNING_FLASH=0.12
+THUNDER_DELAY_MIN=0.3      THUNDER_DELAY_MAX=1.6
+response = 1 − exp(−3 × delta / WEATHER_BLEND)      // ~95% in six seconds, weights sum to 1
+```
+
+| Kind | Fog near/far | Sun | Hemisphere | Cloud opacity | Sky | Wet | Frost | Wind |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `clear` | 48 / 132 | 1.00 | 1.00 | 0.58 | 1.00 | 0 | 0 | 0.20 |
+| `overcast` | 40 / 112 | 0.78 | 0.90 | 0.78 | 0.90 | 0 | 0 | 0.35 |
+| `rain` | 30 / 95 | 0.62 | 0.78 | 0.90 | 0.78 | 1 | 0 | 0.85 |
+| `snow` | 34 / 105 | 0.82 | 0.96 | 0.82 | 0.94 | 0 | 1 | 0.45 |
+
+Lightning is eligible only while `rain ≥ 0.7`, uses one dedicated normally-dark `HemisphereLight`
+to avoid ownership conflicts, and a **dedicated `weatherRng`** — *"never reuse `eventRng`."*
+Thunder is queued on an engine timer, because *"Do not use `setTimeout`, which would outlive pause
+or destroy."* Leaving the rain zone after a flash still plays the queued thunder; disabling weather
+or destroying the engine cancels both. `thunder` needed its own procedural-noise branch because
+*"the existing oscillator frequency table is suitable for short cues, not thunder."*
+
+`destroy()` had to be extended to dispose `THREE.Line` / `LineSegments`, which the baseline
+traversal (Mesh, Sprite, Points) did not cover. One limitation was accepted openly: *"Under cover:
+precipitation can pass through roofs. This is accepted for v1 and documented as a local-atmosphere
+limitation."*
+
+**Status: shipped, but with the largest numeric drift in the archive — 5 verified / 1 partial / 3
+unverifiable, and the shipped values should be treated as authoritative over the table above.**
+The zone mapping is exact (`WEATHER_BY_ZONE` at `world/WorldEnvironment.ts:23-28`, renamed from
+`ZONE_WEATHER`), and the blend is equivalent: `WEATHER_RESPONSE_RATE = -Math.log(0.05)/6` at `:35`
+with `1 - exp(-rate × delta)` at `:89` — numerically the same 95%-in-six-seconds curve. What
+drifted:
+
+| Spec | Code |
+| --- | --- |
+| `RAIN_COUNT=1600` | `RAIN_DROP_COUNT=420` |
+| `SNOW_COUNT=1200` | `SNOW_FLAKE_COUNT=300` |
+| `RAIN_SPEED=30`, `RAIN_LENGTH=0.9` | `RAIN_FALL_SPEED=34`, `RAIN_STREAK_LENGTH=2.2` |
+| `SNOW_SPEED=2.8`, `SNOW_DRIFT=0.7` | `SNOW_FALL_SPEED=5.4`, `SNOW_DRIFT_SPEED=0.65` |
+| `PRECIP_HALF_EXTENT=22`, `PRECIP_TOP=26` | `HALF_WIDTH=24` / `HALF_DEPTH=20`, `TOP=25` |
+| `GROUND_WET_ROUGHNESS=0.58` | `0.48` |
+| `LIGHTNING_FLASH=0.12` | `LIGHTNING_FLASH_DURATION=0.18`, plus new `LIGHTNING_INTENSITY=5.5` |
+| `THUNDER_DELAY=[0.3, 1.6]` | `[0.35, 1.1]` |
+| rain fog `30/95`, sun `0.62` | rain fog `18/72`, sun `0.22` |
+
+All four shipped profiles differ from the table and additionally gained `desaturation` and
+`celestialScale` fields the spec never had (`GameEngine.ts:1081-1126`). **`WEATHER_ZONE_HYSTERESIS`
+and `PRECIP_VISIBLE_EPSILON` do not exist** — the hysteresis is unimplemented, and
+`GameEngine.ts:11198` is a plain zone comparison.
+
+---
+
+### 14. Dynamic world events
+
+*Formerly `dynamic-world-events-spec.md`. 7 criteria, all unchecked — and the only spec in the
+archive that was **partly superseded** by a later one.*
+
+An optional, time-boxed event layer on top of the fixed objective chain. Events spawn as the
+player roams, grant gold, loot or buffs, and never touch the win condition.
+
+| Kind | Setup | Success | Reward | Fail |
+| --- | --- | --- | --- | --- |
+| `richCaravan` | Gilded caravan + 3-enemy escort; marker | Rob via proximity `interact`, then move ≥ 18 m from the robbery point before the 25 s timer expires | +180 gold | Defeat or timer — the caravan escapes |
+| `defendHome` | A tracked village house with fire/smoke FX and 4 attackers targeting it; the house is an event target with 100 hp | Kill all attackers within 45 s while house hp > 0 | +90 gold, +8 health capped at 100 | House hp hits 0, or timer |
+| `champion` | 1 elite roaming actor, hp 260, aura | Kill the champion | +120 gold and +6 damage, to a cumulative **+18 per run**; at the cap, gold only | None; persists until killed |
+| `rescue` | A captive ally guarded by 2 enemies; combat disabled, not squad-eligible | Kill both guards **or** `interact` beside the living captive | Captive transfers out of event ownership, gains normal ally AI and squad eligibility | Captive killed |
+| `bounty` | Mark a living hostile non-critical actor, excluding commanders, captives and other events' actors; spawn one if none eligible | Kill the marked enemy within 40 s, **regardless of killer** | +70 gold | Timer — a spawned target despawns, a borrowed one is only unmarked |
+
+```text
+FIRST_EVENT_AT=50   EVENT_COOLDOWN_MIN=60   EVENT_COOLDOWN_MAX=90   EVENT_RETRY=10
+MAX_ACTIVE=1        CHAMPION_DAMAGE_CAP=18  MAX_ACTORS=25
+durations: richCaravan 25 · defendHome 45 · bounty 40 · champion ∞
+required slots: richCaravan 3 · defendHome 4 · champion 1 · rescue 3 · bounty 0 or 1
+```
+
+Kind selection is faction-weighted — guards see more `defendHome`, elves more `richCaravan`,
+villains more `champion`. If no kind is eligible the scheduler retries after 10 s **instead of
+consuming the normal cooldown**.
+
+Two ownership rules did real work. Event callbacks only update event state and never remove actors
+inline, *"so cleanup cannot mutate `actors` during combat iteration."* And the `defendHome` house
+is **borrowed, never added to `ownedProps`, and never disposed** — only attached event FX are
+owned. Campaign isolation is enforced by `creditFactionObjective` ignoring
+`objectiveEligible: false` actors, while a borrowed bounty target keeps its original eligibility,
+so killing it may still advance a main objective exactly as it would have without the event.
+
+Events are transient and not persisted. Saving during an active event stores
+`EVENT_COOLDOWN_MIN` instead of the live value, so reloading cannot immediately replace an
+abandoned event; `championDamageBonus` **is** persisted so the +18 cap survives.
+
+**Superseded content, flagged rather than deleted.** Three of this spec's decisions were replaced
+by the living-world spec and no longer describe the game:
+
+- **`MAX_ACTIVE = 1`** → one player-anchored event plus up to `MAX_LOCATED_EVENTS = 2` located
+  ones (`GameEngine.ts:1188`, guard at `:7464`).
+- **`eventRng = seededRandom((Date.now() % 2147483646) + 1)`** → a derived stream,
+  `this.eventRng = () => streams.event.next()` (`:1853`), one of `combat | director | event | loot
+  | chronicle` (`:1527`). **No `Date.now()` seeding remains in the event path.**
+- **`WorldEventKind`** → split into `RandomWorldEventKind | ChronicleWorldEventKind`
+  (`types.ts:147-162`), the latter adding `factionRaid`, `caravanAmbush`, `warband`, `aftermath`
+  and `beastRaid`.
+
+**Status: shipped and then partly superseded — 4 verified / 2 partial / 1 superseded.** All five
+rewards match (`GameEngine.ts:7664-7689`), as do all four timers, the 100 hp house and the
+`CHAMPION_DAMAGE_CAP` at `:893`. Scheduler constants **drifted**: `FIRST_EVENT_AT` is 30 in code
+(spec 50), `EVENT_COOLDOWN_MIN` is 50 (spec 60), `EVENT_COOLDOWN_MAX` is 70 (spec 90), and the
+cooldown is now additionally threat-tier-scaled (`:7194-7195`). `EVENT_REQUIRED_SLOTS` matches
+except `bounty`, which is 1 in code rather than 0-for-a-borrowed-target. The load-time formula
+`eventCooldown = savedGame?.eventCooldown ?? max(0, FIRST_EVENT_AT − elapsed)` survives exactly
+(`:1950`).
+
+---
+
+### 15. Layered procedural audio
+
+*Formerly `06-layered-audio-spec.md`. 10 criteria, all unchecked in the archive.*
+
+Extracts an `AudioDirector` that replaces one-oscillator SFX with bounded layered cues, explicit
+buses, per-cue variation, priority/cooldown/concurrency admission, cheap camera-relative stereo and
+deterministic teardown — while keeping everything procedural and autoplay-compliant.
+
+```text
+masterGain=0.85    musicGain: active 0.18 / paused 0.08 / ended 0.035
+sfxGain=0.62 × userSfxVolume        uiGain=0.48 × userSfxVolume
+compressor: threshold −18 dB, knee 12 dB, ratio 5:1, attack 0.003 s, release 0.18 s
+MAX_ACTIVE_VOICES=24   MAX_ACTIVE_SOURCES=48
+SFX_DISTANCE_MAX=42    PAN_MAX=0.85    SFX_VOLUME_DEFAULT=0.8
+per-cue caps: hitLight 6 · hitHeavy 3 · gore 3 · swing 2 · block 2
+              attackTell 4 · arrow 4 · lootCollect 2 · UI/event 2
+priority: victory/eventFail/UI 100 · hurt/block/down 90 · heavy hit/legendary loot 75
+          ordinary hit/attack tell 55 · swing/gore/arrow 40 · ambient detail 20
+variation: pitch 0.94..1.06 ordinary, 0.90..1.04 gore/down; gain ±1.5 dB
+intensity: body-layer gain varies by at most 6 dB, noise duration by at most 35%
+```
+
+```
+music voices -> musicGain ----\
+game voices  -> sfxGain -------+-> masterCompressor -> masterGain -> destination
+UI voices    -> uiGain --------/
+
+pan  = clamp(dot(normalizeXZ(source − listener), cameraRight) × distanceFactor, −0.85, 0.85)
+gain = lerp(1, 0.35, clamp(distance / 42, 0, 1))
+```
+
+**No recipe exceeds three source layers**, and one request is one voice even with three source
+nodes. Admission runs in a fixed order: reject if the cue's cooldown is active unless the recipe
+allows coalescing; reject if its per-cue concurrent cap is reached and it is not higher priority;
+at global capacity, stop the oldest lowest-priority voice **only when the new voice has strictly
+higher priority**; otherwise suppress. Every source's `ended` handler removes itself, and when the
+last source ends the voice's nodes are disconnected and the record dropped.
+
+The design corrections are unusually transferable: *"Do not make impact louder by starting
+unlimited oscillators."* · *"Do not connect SFX directly to destination."* · *"Do not create
+white-noise buffers per cue"* — one reusable buffer per context. · *"Do not use
+`AudioContext.suspend()` for pause or tab hide"*, because resuming can require a new user gesture;
+ramp buses instead. · *"Do not play one wet splat per gore particle."* · *"Do not randomize beyond
+recognition."* · *"Do not make SFX depend on React state timing."*
+
+Music migration was explicitly a *move*, not a rewrite: faction roots, tempo, patterns, zone shift
+source and step sequencing all unchanged, with zone passed in via `setMusicContext` because
+*"AudioDirector must not import GameEngine."*
+
+**Status: shipped, and the most faithfully implemented spec in the archive — 6 verified / 2 partial
+/ 2 unverifiable.** The bus graph is exact at `AudioDirector.ts:983-1017`, ending
+`masterCompressor → masterGain → context.destination`, with compressor values
+`−18 / 12 / 5 / 0.003 / 0.18` matching to the digit at `:1000-1004`. The spatial formulas match
+exactly at `:661-662`. Every per-cue cap and priority band matches. Pitch ranges `[0.94, 1.06]` and
+`[0.90, 1.04]` are exactly as specified.
+
+Two divergences, both **beyond** the spec rather than short of it. The shipped cue set is 27, not
+24: `defeat`, `achievement` and `thunder` were added. And the music system is materially richer
+than "migrate without changing composition" — `MusicScore.ts` adds four intensity tiers
+(`explore | alert | combat | boss`), a 16-step / 32-bar cycle, per-faction tempo and a per-seed
+arrangement, with reverb and echo sends in the director. `SFX_GAIN` and `MUSIC_GAIN` are not named
+constants, so the 0.62 and 0.18 values are unverified.
+
+---
+
+### Acceptance-criteria ledger
+
+The archive contained **164 acceptance criteria across 15 specs, of which 113 were unchecked** —
+including criteria for features that had demonstrably shipped and are advertised in `README.md`.
+Leaving those boxes unchecked in a consolidated document would have preserved a falsehood, so
+every criterion was re-checked against the code at `b6f94ad`. The result:
+
+| Spec | Criteria | Verified | Partial | Unverifiable by inspection | Contradicted / absent |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Living world | 37 | 37 | — | — | — |
+| Combat depth | 8 | 6 | 2 | 1* | — |
+| Enemy reactions | 10 | 4 | 4 | 2 | — |
+| Comic hit language | 10 | 6 | 3 | 1 | — |
+| Combat juice | 13 | 8 | 3 | 2 | — |
+| Camera accents | 9 | 5 | 3 | 1 | — |
+| Loot spectacle | 9 | 6 | 2 | 1 | — |
+| Toon shading & outlines | 9 | 4 | 1 | 4 | — |
+| Zone art direction | 9 | 2 | — | 6 | **1** |
+| Bloom | 6 | 3 | 1 | 2 | — |
+| Ground foliage & wind | 12 | 1 | — | 1 | **10** |
+| Day/night cycle | 6 | 4 | 2 | — | — |
+| Weather | 9 | 5 | 1 | 3 | — |
+| Dynamic world events | 7 | 4 | 2 | — | **1 superseded** |
+| Layered audio | 10 | 6 | 2 | 2 | — |
+
+\* rows may overlap where one criterion is partly verified and partly not; the columns record the
+strongest honest statement available per criterion rather than a strict partition.
+
+**"Unverifiable by inspection" is not a euphemism for "broken".** It covers claims that only a
+running browser, a profiler or a stopwatch can settle — frame-time budgets, "no allocation after
+pool warm-up", "60 fps on mid-range hardware", visual legibility, and every `npm run build` /
+`oxlint` line that a criterion listed as its own acceptance step. Those are recorded as unknown
+rather than assumed.
+
+**Three findings are genuine gaps between specification and code**, and they are the reason this
+ledger exists:
+
+1. **Ground foliage wind was never implemented.** The `off / low / high` setting shipped and works,
+   but there is no wind shader, no bucket model and no clearance logic. Ten of its twelve criteria
+   describe code that does not exist.
+2. **Zone border blending was never implemented.** `writeZoneVisualWeights` and `ZONE_BLEND_WIDTH`
+   are absent; zone visual weights are a hard 1/0 switch. The fog tint, damping and per-zone
+   profiles *did* ship, so the feature is partly real — but its headline criterion, smooth
+   blending near quadrant borders, is contradicted by the code.
+3. **Bloom's quality preset was never implemented** — only the on/off toggle. `BLOOM_NIGHT_BOOST`
+   and `BLOOM_LAYER` are likewise absent, though both were optional in the spec.
+
+Two further classes of drift are recorded in the sections above rather than repeated here: **weather
+constants drifted substantially** from the spec (rain and snow counts, fall speeds, precipitation
+volume, fog ranges and all four profiles), and several **named constants were inlined** rather than
+named (`TOON_RAMP_LEVELS`, `MAX_OUTLINED_ACTORS`, `HATCH_TEXTURE_SIZE`,
+`ZONE_DECORATION_INSTANCES_MAX`, `LOW_HEALTH_RATIO`, `TORCH_INTENSITY`, `SHIELD_RERAISE`,
+`SFX_GAIN`, `MUSIC_GAIN`). In every such case the shipped value is authoritative and this document
+records both.
 
 ## Current-state assessment
 
@@ -71,10 +1763,10 @@ All line counts are `git grep -c ""`, not editor estimates.
 This is not a sloppy codebase. Three things are better than the norm for a project of this
 age and should be protected as assets rather than treated as neutral ground.
 
-**The measurement culture.** `docs/living-world-spec.md` §9 does not assert its results, it
+**The measurement culture.** The living-world spec did not assert its results, it
 *measures* them, with negative controls, and then corrects itself in public: "Two of these
 numbers contradict what this section claimed before it was measured"
-(`living-world-spec.md:1302`). `tests/actorAi.test.ts` re-implements the pre-extraction
+(§What shipped → Living world → Measured findings). `tests/actorAi.test.ts` re-implements the pre-extraction
 engine code and asserts agreement over ~14,000 comparisons, *plus* a negative control proving
 the comparison can detect a changed implementation. `tests/worldEnvironment.test.ts:153`
 asserts chronicle output is byte-identical across all four day/night × weather toggle
@@ -131,7 +1823,7 @@ of walking, finishing objectives and winning fights they happened to stand near.
 the HUD attributes an outcome to a choice, and `RunPlayerState` (`run/runTypes.ts:51-62`) —
 `health, stamina, gold, kills, damage, body, objectives, upgrades` — carries no strategic
 state at all. Design rule 4 of the living-world spec is "Consequences must be legible"
-(`living-world-spec.md:59`); legibility was delivered, and *agency over* those consequences
+(§What shipped → Living world → Design rules, rule 4); legibility was delivered, and *agency over* those consequences
 was never in scope.
 
 That is a better problem than the one this document originally described, because the plumbing
@@ -146,7 +1838,7 @@ then enters recovery; `applyActorDamageReaction:4994` applies a 0.12 s flinch, p
 `dealt × (cleave ? 1.45 : 0.75)`, stagger at zero poise with `STAGGER_IMMUNITY = 0.45`, and
 cancels the in-flight action. Max poise runs 18/28/46/58/72 by role (`:4815`). On top of
 that sit five hit-stop tiers (`:1035-1039`), screen shake, damage numbers, comic callouts
-and impact rays (`:12359-13354`). `docs/04-enemy-reactions-spec.md` delivered all of it.
+and impact rays (`:12359-13354`). §What shipped → Enemy reactions records all of it.
 
 The player's answer to all of that is `attack()` (`GameEngine.ts:2446-2494`):
 
@@ -237,7 +1929,7 @@ The costs are already visible in the repository, not hypothetical:
 - **The project says so itself.** "Layer 3 shipped with three claims about behaviour
   deliberately left unmeasured, because they live in `GameEngine`'s per-frame AI and neither
   the chronicle harness nor browser observation can reach them"
-  (`living-world-spec.md:1328-1330`). And: "the tedious part was that both live in
+  (§What shipped → Living world → Measured findings). And: "the tedious part was that both live in
   `updateActors`, where the ordering of five branches *was* the behaviour" (`:1397`).
 
 The cure is already invented here: extract the decision half as pure functions and pin it
@@ -258,8 +1950,8 @@ lerp mechanically implies different beast pressure at 30 fps and 144 fps.
 What can diverge, for the same scripted input and route, is *when the weather target changes*
 and where the player is standing when it does, which then reaches `advanceBeasts`
 (`Chronicle.ts:683`) at the next chronicle tick — plus ordinary floating-point accumulation
-across hundreds of ticks. The spec flags the general risk at `living-world-spec.md:168-172`;
-**no test guards it**, and the honest statement is "same-seed runs can diverge at different
+across hundreds of ticks. The general risk is recorded in §What shipped → Living world → The
+determinism caveat; **no test guards it**, and the honest statement is "same-seed runs can diverge at different
 frame schedules and nothing currently proves whether they do". The 30/60/144 Hz test in 0.2
 exists to settle it. Relatedly, the article's claim that "the seed is a compact reproduction
 case" holds for generation bugs and not for gameplay bugs.
@@ -335,20 +2027,20 @@ real hardware**, and **where GPU time goes**. No browser was available in the an
 environment, and headless WebGL is software-rendered, so any number would have been a
 fiction. It is worth recording that the project cannot answer them either — its only
 performance acceptance criterion, "60 fps with events active"
-(`dynamic-world-events-spec.md:247`), is an unchecked box.
+(§What shipped → Dynamic world events), was an unchecked box.
 
 **The spec archive understates the project.** Twelve of the seventeen documents in `docs/`
 carry 113 acceptance-criteria boxes that are **all unchecked** — bloom, ink outlines,
 weather, ground foliage, camera accents, loot spectacle, layered audio, comic hits, enemy
 reactions, zone art — for features that demonstrably shipped and are listed in the README.
-None has been touched since 2026-07-17. `dynamic-world-events-spec.md` still documents
+None had been touched since 2026-07-17. The dynamic-world-events spec still documented
 `MAX_ACTIVE = 1` and `eventRng = seededRandom((Date.now() % 2147483646) + 1)`, both
 superseded by the living-world spec. For a product whose second design principle
 is «Показывать сделанное кодом», the public evidence of the engineering currently
 under-reports it.
 
 One apparent contradiction in that archive is **not** one, and is recorded here so nobody
-"fixes" it: `weather-system-spec.md` names four profiles and `content/registry.ts:16-22` lists
+"fixes" it: the weather spec named four profiles while `content/registry.ts:16-22` lists
 six affinities, but these are different types with different jobs.
 `WeatherKind = 'clear' | 'overcast' | 'rain' | 'snow'` (`world/WorldEnvironment.ts:14`) is the
 runtime simulation and render profile; `WeatherAffinity` (`clear/breeze/rain/mist/storm/ash`)
@@ -381,10 +2073,10 @@ currently protects nothing that reaches a player.
 
 *Problem.* `tests/aiHarness.ts` exists but, in its own words, "models movement and contact. No
 navmesh, collision, steering, separation, terrain, wind-up, poise or stagger"
-(`living-world-spec.md:1338`). There is no run-level balance harness at all, and
+(§What shipped → Living world → Measured findings). There is no run-level balance harness at all, and
 `GameEngine.ts` + `App.tsx` are 45.6 % of source with zero direct tests. The consequence is
 already in the record: Layer 3's headline beast behaviour shipped as **dead content** — "zero
-routs across 60 fights" (`living-world-spec.md:1343-1349`) — because three individually
+routs across 60 fights" (§What shipped → Living world → Measured findings, Q1) — because three individually
 correct rules were collectively inert, and nothing but a harness could have found it. Layer 4's
 flanking is in the same position today: shipped, and explicitly unmeasurable in the current
 harness (`:1406`).
@@ -416,12 +2108,12 @@ general test: the **weather-target transition**. `advanceWeatherMix`
 (`world/WorldEnvironment.ts:83-97`) composes exactly across sub-steps for a fixed target, so
 the mix itself is not the hazard; *when* the target changes and where the player is standing
 when it does is, and it reaches `advanceBeasts` (`Chronicle.ts:683`) at the next chronicle
-tick. The spec flags the general risk at `living-world-spec.md:168-174` and nothing guards it.
+tick. §What shipped → Living world → The determinism caveat records the risk; nothing guards it.
 This test is what decides whether a fixed-step conversion is needed at all — it is not
 assumed either way.
 
 *Effort:* 4–6 d. *Risk:* over-refactoring, or false confidence from a harness that models less
-than it appears to — mitigated by stating its limits in the file, as `living-world-spec.md` §9
+than it appears to — mitigated by stating its limits in the file, as the living-world measurements
 already does for its own. *Signal:* a stable run report for a seed; the 144 Hz and 30 Hz arms
 agree on chronicle history.
 
@@ -457,7 +2149,7 @@ borders (`tests/terrainSystem.test.ts`). *Signal:* max synchronous grid build un
 off the main thread entirely — then confirmed with a real region-boundary frame trace once
 browser hardware is available, because **no frame-rate measurement exists anywhere in this
 project**; its only performance acceptance criterion, "60 fps with events active"
-(`dynamic-world-events-spec.md:247`), is an unchecked box.
+(§What shipped → Dynamic world events), was an unchecked box.
 
 **This is a release gate for 1.1, not merely a predecessor.** The melee rework may be
 prototyped in parallel, but the committed combat model must not ship to players while a region
@@ -578,7 +2270,7 @@ campaign graphs for every seed that will ever exist. The complete verb set is
 *Why it is a pilot and not a rewrite.* The honest pricing came out of the debate in two steps.
 Writing nine new campaign verbs from scratch is 13–18 days at this project's own precedent —
 `defendHome`, a single such behaviour with prop target, hp, attackers, timer, fail state and
-cleanup, was scoped at 1.5–2 days alone (`dynamic-world-events-spec.md:251`). But the
+cleanup, was scoped at 1.5–2 days alone (§What shipped → Dynamic world events). But the
 behaviours already exist as **ten shipped event builders**:
 
 ```
@@ -809,7 +2501,8 @@ freeze copy in every file at precisely the moment the game most needs new copy (
 Revisit when the copy stops moving.
 
 **Villager dialogue, a reputation or crime system, and huntable wildlife.** Already rejected by
-`living-world-spec.md` §8 with reasons this document endorses: an interaction prompt "would
+the living-world spec with reasons this document endorses (§What shipped → Living world →
+Deliberately left undone): an interaction prompt "would
 make every village a menu", and making wildlife killable would convert free props into actor
 slots that then compete with raids for the six-slot ambient reserve.
 
@@ -901,6 +2594,29 @@ choice at all — and that with every branch required, the choice is an ordering
 1.4 and its success signal were rewritten accordingly. **OPUS conceded.**
 
 ## Sign-off
+
+> **Provenance note, added after signing.** Both sign-offs below were given on 2026-07-27
+> against a document that ended at §*Open disagreements* and contained no §*What shipped*. That
+> part was added afterwards, when fifteen design specifications were folded into this file and
+> deleted from `docs/`.
+>
+> **The signed material is unchanged.** No claim, number, initiative, effort figure, risk,
+> success signal, rejected idea or open disagreement was altered. A line-by-line diff against
+> commit `d854a75` shows **37 changed lines, every one of them a citation retarget**. Three
+> mechanical edits were made to signed text and nothing else: the title and header note now
+> describe a two-part document; **eighteen citations that pointed at spec files by line number
+> were retargeted to internal sections of §What shipped**, keeping the surrounding claim and
+> every quoted phrase identical, because the files they pointed at no longer exist; and this
+> note was inserted. In two of those sentences the verb tense also moved from present to past
+> ("still documents" → "still documented"), because the subject is a file this commit deletes.
+>
+> One consequence is worth stating plainly rather than editing away. The signed assessment says
+> «17 documents in `docs/`» and «twelve of the seventeen documents carry 113 acceptance-criteria
+> boxes that are all unchecked». That was true when it was written and verified. After this
+> consolidation `docs/` holds three files — this one and the two bilingual articles — and the
+> 113 boxes have been resolved into the ledger at the end of §What shipped. **The signed
+> sentences were deliberately left as written**, because they are a dated observation that the
+> consolidation acted on, not a claim about the repository as it stands today.
 
 **Agent OPUS — Claude Opus 5.**
 
