@@ -239,11 +239,6 @@
     },
     {
       "spec": "04-enemy-reactions",
-      "cls": "edgeCaseRule",
-      "id": "The player can therefore escape a melee windup by moving out of range."
-    },
-    {
-      "spec": "04-enemy-reactions",
       "cls": "lifecycleRule",
       "id": "- Event props can become invalid during cleanup. An invalid prop actio"
     },

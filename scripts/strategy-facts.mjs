@@ -130,6 +130,9 @@ const SPELLING = [
   [/recognis/g, 'recogniz'], [/initialis/g, 'initializ'], [/visualis/g, 'visualiz'],
   [/analys/g, 'analyz'], [/centre/g, 'center'], [/defence/g, 'defense'],
   [/grey/g, 'gray'], [/catalogue/g, 'catalog'], [/summaris/g, 'summariz'],
+  // doubled-consonant British forms
+  [/labell/g, 'label'], [/cancell/g, 'cancel'], [/modell/g, 'model'],
+  [/travell/g, 'travel'], [/signall/g, 'signal'], [/levell/g, 'level'],
 ]
 const normalise = (s) => {
   let out = s.replace(/\u2212/g, '-')
@@ -396,11 +399,21 @@ export function extractFacts(spec) {
 }
 
 /**
- * Light suffix stripping so `reserve` and `reserved`, `flash` and `flashes` are
- * the same fact. This is the same justification as the spelling normalisation:
- * an inflection is not a different fact, and a checker that says otherwise is
- * measuring morphology. It is deliberately conservative — it does not conflate
- * distinct roots.
+ * Light inflection normalisation so `flash` and `flashes`, `reserve` and
+ * `reserved` are the same fact. An inflection is not a different fact, and a
+ * checker that says otherwise is measuring morphology.
+ *
+ * An earlier version of this also stripped `ly` and collapsed final doubled
+ * letters. Both were unsound and an audit caught them: `clear`/`clears` and
+ * `clearly` all collapsed to `clear`, which let an adverb stand in for a verb
+ * and hid a genuinely missing rule; and `apply`, `applies` and `app` all
+ * collapsed to `ap`, so React's `App` could satisfy a lifecycle probe. The
+ * document's own worked example was false as well — that stemmer did *not*
+ * equate `reserve` with `reserved`.
+ *
+ * So this one is guarded by `STEM_TESTS`, which asserts required equivalences
+ * AND required distinctions, and aborts the run if any fails. A normaliser
+ * without negative tests is the same failure as a metric without a control.
  */
 const stem = (w) => w
   .replace(/(ies)$/, 'y')
@@ -408,8 +421,32 @@ const stem = (w) => w
   .replace(/(ings|ing)$/, '')
   .replace(/(eds|ed)$/, '')
   .replace(/(es|s)$/, '')
-  .replace(/(ly)$/, '')
-  .replace(/(.)\1$/, '$1')
+  // Trailing `e` only on long words, so `reserve`/`reserved` unify while
+  // `car`/`care` and `cap`/`cape` stay distinct.
+  .replace(/(?<=.{5})e$/, '')
+
+const STEM_TESTS = {
+  equivalent: [
+    ['reserve', 'reserved'], ['flash', 'flashes'], ['disable', 'disabled'],
+    ['policy', 'policies'], ['callout', 'callouts'], ['rotate', 'rotates'],
+    ['clear', 'clears'],
+  ],
+  distinct: [
+    ['clear', 'clearly'], ['clears', 'clearly'], ['apply', 'app'],
+    ['applies', 'app'], ['car', 'care'], ['cap', 'cape'],
+  ],
+}
+
+function runStemTests() {
+  const failures = []
+  for (const [a, b] of STEM_TESTS.equivalent) {
+    if (stem(a) !== stem(b)) failures.push(`stemmer: "${a}" and "${b}" should be one fact but stem to "${stem(a)}" and "${stem(b)}"`)
+  }
+  for (const [a, b] of STEM_TESTS.distinct) {
+    if (stem(a) === stem(b)) failures.push(`stemmer: "${a}" and "${b}" are different words but both stem to "${stem(a)}"`)
+  }
+  return failures
+}
 
 /**
  * Is this fact present in the section that owns it?
@@ -615,6 +652,14 @@ function audit() {
     console.log(`--break=${word}: removed ${before} occurrences before auditing\n`)
   }
   const docLines = normalise(raw).split('\n')
+
+  const stemFailures = runStemTests()
+  if (stemFailures.length > 0) {
+    console.error('STEMMER TESTS FAILED — the normaliser conflates or splits words it must not:')
+    for (const f of stemFailures) console.error(`  ${f}`)
+    process.exitCode = 1
+    return
+  }
 
   const controlFailures = process.argv.includes('--no-controls')
     ? []

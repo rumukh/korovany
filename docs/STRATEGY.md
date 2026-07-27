@@ -149,9 +149,20 @@ value it is not. Corrected.
 Signature words are the three **rarest** in the corpus, by document frequency across all fifteen
 specs — not the three longest, which is what an earlier version used and which selected `therefore`,
 `controls` and `create` as often as `combatMotion`, `rain-to-snow` or `faction-start`. Rarity makes
-the discriminating token mandatory. Light suffix stripping and British/American normalisation apply
-on both sides, consistently in every check, because `callout`/`callouts` and `behaviour`/`behavior`
-are the same fact and a checker that says otherwise is measuring morphology.
+the discriminating token mandatory. Light inflection normalisation and British/American spelling
+normalisation apply on both sides, consistently in every check, because `callout`/`callouts` and
+`behaviour`/`behavior` are the same fact and a checker that says otherwise is measuring morphology.
+
+**The normaliser is itself tested, because an earlier version of it was quietly wrong.** It used to
+strip `ly` and collapse final doubled letters, which meant `clear`, `clears` and `clearly` all became
+`clear` — so an adverb in *"incoming damage reads clearly"* satisfied a probe for a rule about
+`setScreenShakeEnabled(false)` **clearing existing trauma**, and hid the fact that the rule was
+missing. It also collapsed `apply`, `applies` and `app` to `ap`, so React's `App` could stand in for
+a lifecycle verb. And the worked example this document gave for it was false: that stemmer did **not**
+equate `reserve` with `reserved`. `STEM_TESTS` now asserts required equivalences *and* required
+distinctions — `clear`/`clearly`, `apply`/`app`, `car`/`care` must stay apart — and the run aborts if
+any fails. **A normaliser without negative tests is the same failure as a metric without a control**,
+which is the mistake this whole methodology note exists to record.
 
 **Result: 2,287 facts across the fifteen pairings, 94.6% present in the owning section.**
 
@@ -164,9 +175,9 @@ are the same fact and a checker that says otherwise is measuring morphology.
 | relation (binding, row, comparison) | 644 | 98.9% | | | | |
 | formula | 76 | 98.7% | | **total** | **2,287** | **94.6%** |
 
-**The residue is 124 facts, and it is not rounded away.** Every one is enumerated in
+**The residue is 123 facts, and it is not rounded away.** Every one is enumerated in
 `scripts/strategy-facts.accepted.json` with its spec, class and source sentence, so the gap is
-auditable entry by entry: 53 design rules, 24 lifecycle rules, 18 edge cases, 14 budget rules, 14
+auditable entry by entry: 53 design rules, 24 lifecycle rules, 17 edge cases, 14 budget rules, 14
 relations and 1 formula. The gate is a **ratchet, not a threshold**: the run fails if a miss appears
 that is *not* on that list, so preservation can only improve and a green `npm run docs:facts` means
 "nothing regressed" — a claim it can actually support. Removing `AMBIENT_BEAST_LIMIT` from §1, for
@@ -1923,7 +1934,11 @@ actors.
 chunks and splats never affect simulation. `updateCamera()` lerps toward a collision-resolved
 destination **including** the second resolve, which *is* **required**: "keep the offset small" alone
 does not prevent clipping. The pattern is **copy**-or-lerp that destination into
-`cameraFollowPosition`, never the source. Shake is scaled by `trauma²` so **repeated** hits do not
+`cameraFollowPosition`, never the source. `addTrauma(amount)` clamps accumulated trauma to `1` and is a no-op when shake is disabled,
+paused or ended; **`setScreenShakeEnabled(false)` also clears existing trauma**, so turning shake off
+mid-fight stops the camera immediately rather than letting the remainder decay. During active
+gameplay `shakeClock` advances and trauma decays by `SHAKE_DECAY * delta`. Shake is scaled by
+`trauma²` so **repeated** hits do not
 drift the camera. `newIntensity` scales from post-mitigation `dealt` with the **shield-block** case
 capped separately. The decal pool allocates while below `DECAL_MAX` or **immediately** recycles the
 oldest active entry — a **hard** active budget plus an inactive mesh pool. Settings mirror bloom:
@@ -3534,7 +3549,7 @@ overlapping music when engine instances change.
 Explicitly out of scope: downloaded samples, speech, voice acting, convolution reverb impulse files
 and licensed audio — the no-external-assets constraint applies to sound exactly as it does to art.
 Also explicitly rejected: *"suspending the `AudioContext` as ordinary pause behaviour"* — pause
-lowers music gain targets instead, because suspension breaks scheduler time. The SFX slider is an accessible range input in both menu and pause settings labelled
+lowers music gain targets instead, because suspension breaks scheduler time. The SFX slider is an **accessible range input** added to the menu **and pause settings**, labelled
 `Громкость эффектов`, persisted under **`korovany-sfx-volume`**; the music mute toggle beside it
 persists under **`korovany-music-muted`**. Teardown ignores only `InvalidStateError`; other teardown errors are surfaced consistently, and a start → menu → start
 cycle must leave **no delayed burst, click loop, orphan interval, node leak or overlapping music**.
