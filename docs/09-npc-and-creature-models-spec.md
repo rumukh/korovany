@@ -412,11 +412,11 @@ numbers; the justification is that spec 08's `CHARACTER_GEOMETRY_KEYS=9` was wri
 against a nine-mesh placeholder and cannot express three factions × nine kits.
 
 ```text
-CHARACTER_GEOMETRY_KEYS<=140          was 9. The theoretical ceiling across all
+CHARACTER_GEOMETRY_KEYS<=180          was 9. The theoretical ceiling across all
                                       3 factions x 10 roles x 3 variants, measured
-                                      at 134. Built lazily, so a typical run holds
-                                      30-45 of them.
-GEOMETRY_CACHE_ENTRIES_MAX=160        was 64. One engine-side cache now holds
+                                      at 170. Built lazily, so a typical run holds
+                                      60-80 of them.
+GEOMETRY_CACHE_ENTRIES_MAX=220        was 64. One engine-side cache now holds
                                       humanoid parts, beasts, fauna and the caravan.
 CHARACTER_SHARED_MATERIALS<=48        new. acquireMaterial entries, down from 75
                                       caller-owned materials at 25 actors.

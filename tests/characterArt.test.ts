@@ -182,8 +182,8 @@ test('every person the game can build actually builds', () => {
     }
   }
   // §8 — the cache has to hold every distinct part the game can ask for. This is
-  // the theoretical ceiling; a real run touches thirty to forty-five of them.
-  assert.ok(keys.size <= 140, `character geometry keys grew to ${String(keys.size)}`)
+  // the theoretical ceiling; a real run touches sixty to eighty of them.
+  assert.ok(keys.size <= 180, `character geometry keys grew to ${String(keys.size)}`)
   assert.ok(worst <= 3600, `one actor reached ${String(worst)} triangles`)
 })
 
@@ -353,9 +353,63 @@ test('roles read as roles before they read as stat blocks', () => {
 })
 
 test('cache keys name exactly what they build', () => {
-  // Two plans that differ only in something a key does not encode must produce the
-  // same key *and* the same geometry; two that differ in something it does encode
-  // must produce different keys.
+  // The contract of a shared cache: one key, one buffer. This is the check that
+  // catches the subtle direction — two *different* shapes handed the same key,
+  // where whichever actor spawns first silently decides what the other looks like.
+  // It caught `torsoClass` collapsing `line` with `hero`, and the limb builders
+  // taking a length that varies by kit even when faction and armour agree.
+  const built = new Map<string, string>()
+  const fingerprint = (geometry: THREE.BufferGeometry): string => {
+    const position = geometry.getAttribute('position')
+    const values = position.array as ArrayLike<number>
+    let hash = 2166136261
+    for (let index = 0; index < position.count * 3; index += 1) {
+      hash ^= Math.round(values[index] * 4096)
+      hash = Math.imul(hash, 16777619)
+    }
+    return `${String(position.count)}:${String(hash >>> 0)}`
+  }
+  const record = (key: string | null, geometry: THREE.BufferGeometry): void => {
+    if (!key) {
+      geometry.dispose()
+      return
+    }
+    const print = fingerprint(geometry)
+    const seen = built.get(key)
+    if (seen === undefined) built.set(key, print)
+    else assert.equal(print, seen, `two different shapes share the key "${key}"`)
+    geometry.dispose()
+  }
+  for (const faction of FACTIONS) {
+    for (const role of [...ROLES, 'player']) {
+      for (let variant = 0; variant < CHARACTER_VARIANTS; variant += 1) {
+        const plan = resolveCharacterPlan(faction, role, variant, role === 'player')
+        const keys = characterPartKeys(plan)
+        const p = plan.proportions
+        record(keys.torso, buildTorso(plan))
+        record(keys.head, buildHead(plan.faction))
+        record(keys.face, buildFace(plan.faction))
+        if (keys.hair) record(keys.hair, buildHair(plan.hair))
+        record(keys.upperArm, buildUpperArm(plan.faction, plan.armour, p.upperArm))
+        record(
+          keys.forearm,
+          buildForearm(plan.faction, plan.armour, plan.gloved, p.forearm),
+        )
+        if (keys.hand) record(keys.hand, buildHand())
+        record(keys.thigh, buildThigh(plan.faction, plan.armour, p.thigh))
+        record(keys.shin, buildShin(plan.faction, plan.armour, p.shin))
+        if (keys.trim) record(keys.trim, buildTorsoTrim(plan.trim))
+        if (keys.cloak) record(keys.cloak, buildCloak(plan.faction, plan.cloak))
+        if (keys.headgear) record(keys.headgear, buildHeadgear(plan.headgear))
+        if (keys.weaponHead) record(keys.weaponHead, buildWeaponHead(plan.weapon))
+        if (keys.weaponGrip) record(keys.weaponGrip, buildWeaponGrip(plan.weapon))
+        if (keys.offhand) record(keys.offhand, buildOffhand(plan.offhand))
+      }
+    }
+  }
+
+  // And the other direction: shapes that genuinely differ must not be forced to
+  // share, or the cache is doing nothing.
   const lightGuard = resolveCharacterPlan('guard', 'scout', 0)
   const heavyGuard = resolveCharacterPlan('guard', 'brute', 0)
   assert.notEqual(

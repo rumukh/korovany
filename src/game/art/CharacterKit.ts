@@ -649,19 +649,32 @@ export function resolveCharacterPlan(
   }
 }
 
-/** The cache keys a plan needs. Each key fully determines its geometry. */
+/**
+ * The cache keys a plan needs. **Each key fully determines its geometry.**
+ *
+ * That is the whole contract of a shared cache and it is easy to get subtly wrong:
+ * `torsoClass` collapses `line` with `hero` and `heavy` with `elite`, but those
+ * pairs have different chest widths, and the limb builders take a *length* that
+ * varies by kit even when the faction and the armour weight agree. So anything a
+ * builder reads that is not already spelled out in the key gets spelled out —
+ * the torso keys by kit rather than by class, and each limb carries its own length.
+ */
 export function characterPartKeys(plan: CharacterPlan): CharacterPartKeys {
   const armour = plan.armour
+  const p = plan.proportions
+  const size = (value: number): string => value.toFixed(3)
   return {
-    torso: `char-torso:${plan.faction}:${plan.torsoClass}`,
+    torso: `char-torso:${plan.faction}:${plan.kit}`,
     head: `char-head:${plan.faction}`,
     face: `char-face:${plan.faction}`,
     hair: plan.hair === 'none' ? null : `char-hair:${plan.hair}`,
-    upperArm: `char-upper-arm:${plan.faction}:${armour}`,
-    forearm: `char-forearm:${plan.faction}:${armour}:${plan.gloved ? 'glove' : 'bare'}`,
+    upperArm: `char-upper-arm:${plan.faction}:${armour}:${size(p.upperArm)}`,
+    forearm: `char-forearm:${plan.faction}:${armour}:${
+      plan.gloved ? 'glove' : 'bare'
+    }:${size(p.forearm)}`,
     hand: plan.gloved ? null : 'char-hand',
-    thigh: `char-thigh:${plan.faction}:${armour}`,
-    shin: `char-shin:${plan.faction}:${armour}`,
+    thigh: `char-thigh:${plan.faction}:${armour}:${size(p.thigh)}`,
+    shin: `char-shin:${plan.faction}:${armour}:${size(p.shin)}`,
     trim: plan.trim === 'none' ? null : `char-trim:${plan.trim}`,
     cloak: plan.cloak === 'none' ? null : `char-cloak:${plan.faction}:${plan.cloak}`,
     headgear: plan.headgear === 'none' ? null : `char-headgear:${plan.headgear}`,
