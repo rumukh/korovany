@@ -62,6 +62,7 @@ import type {
   WorldMarker,
   WorldRuntimeUpdate,
 } from './WorldRuntime.ts'
+import { WORLD_FACTIONS } from './worldTypes.ts'
 import type {
   BridgeCrossing,
   EncounterSlot,
@@ -1403,9 +1404,23 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     }
 
     let primaryStructural = true
+    const spawnAnchors = this.spawnKeepOutPoints()
     for (let index = 0; index < buckets.length; index += 1) {
       const bucket = buckets[index]
-      const entries = grouped[index]
+      // A colliding decoration standing on a spawn point traps whatever spawns there.
+      // Drop the placement rather than the collider, so there is no invisible boulder
+      // and no visible one you can walk through. Only structural buckets collide, so
+      // only they need filtering.
+      const entries = bucket.structural
+        ? grouped[index].filter(
+            (placement) =>
+              !this.blocksSpawn(
+                placement,
+                bucket.colliderRadius * placement.scale,
+                spawnAnchors,
+              ),
+          )
+        : grouped[index]
       if (entries.length === 0) continue
       const asset = this.acquireProp(bucket.request)
       const name = bucket.structural
@@ -1444,6 +1459,54 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
         this.registerCosmeticDressing(mesh, entries.length)
       }
     }
+  }
+
+  /**
+   * Points in this region that something will be placed at and must be able to stand.
+   *
+   * Faction starts and encounter actors are positioned by world generation, which knows
+   * nothing about decoration. Before this pass every decoration collider was a
+   * sapling-sized 0.55 and the overlap went unnoticed; a fort boulder is 0.85, which is
+   * correct for a boulder and enough to trap a spawn. Measured by a reviewer across
+   * twelve seeds: decoration colliders newly blocked seven positions the previous
+   * collision model left clear.
+   *
+   * Shrinking the boulder back is not the fix — at 0.55 the same spawn cleared by 0.012
+   * units, so the old result was luck rather than safety.
+   */
+  private spawnKeepOutPoints(): readonly { x: number; z: number }[] {
+    const points: { x: number; z: number }[] = []
+    for (const faction of WORLD_FACTIONS) {
+      for (const slot of this.context.blueprint.encounters) {
+        if (slot.regionId !== this.id) continue
+        const plan = createGeneratedEncounterPlan(
+          this.context.blueprint,
+          slot,
+          faction,
+        )
+        for (const spawn of plan.spawns) {
+          points.push({ x: spawn.worldX, z: spawn.worldZ })
+        }
+      }
+    }
+    return points
+  }
+
+  /** True when a decoration of this radius would stop an actor standing on a spawn. */
+  private blocksSpawn(
+    placement: DressingPlacement,
+    radius: number,
+    anchors: readonly { x: number; z: number }[],
+  ): boolean {
+    // The agent radius the collision world is queried with, plus a little daylight so a
+    // spawn is comfortably clear rather than clear by twelve thousandths.
+    const clearance = radius + 0.45 + 0.2
+    for (const anchor of anchors) {
+      if (Math.hypot(placement.x - anchor.x, placement.z - anchor.z) < clearance) {
+        return true
+      }
+    }
+    return false
   }
 
   private createDressingMesh(
