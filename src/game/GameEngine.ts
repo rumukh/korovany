@@ -8,21 +8,53 @@ import {
   type AchievementView,
 } from './achievements'
 import {
+  BEAST_RIG,
+  CHARACTER_DETAIL_DISTANCE,
+  CHARACTER_VARIANTS,
   GeometryCache,
   StylizedArtLibrary,
-  bakeOutlineNormals,
-  extrudeProfile,
-  hashUnit,
-  latheProfile,
-  loftProfile,
-  mergeAll,
-  rectProfile,
-  taperedBox,
-  transformed,
-  tubeAlongPoints,
+  WAGON_RIG,
+  artVariation,
+  buildBeastBody,
+  buildBeastHead,
+  buildBeastLimb,
+  buildBeastTail,
+  buildBirdBody,
+  buildBirdWing,
+  buildCloak,
+  buildDeerBody,
+  buildDeerCrown,
+  buildDeerLeg,
+  buildFace,
+  buildForearm,
+  buildHair,
+  buildHand,
+  buildHarness,
+  buildHead,
+  buildHeadgear,
+  buildOffhand,
+  buildOxBody,
+  buildOxHead,
+  buildShin,
+  buildThigh,
+  buildTorso,
+  buildTorsoTrim,
+  buildUpperArm,
+  buildWagonAxle,
+  buildWagonBed,
+  buildWagonCargo,
+  buildWagonFrame,
+  buildWagonTilt,
+  buildWagonWheel,
+  buildWeaponGrip,
+  buildWeaponHead,
+  characterPartKeys,
+  resolveCharacterPlan,
+  solveHandOffset,
+  type BeastKind,
+  type CharacterPlan,
   type OutlineBinding,
   type OutlineKind,
-  type StylizedSurface,
 } from './art/index.ts'
 import {
   CAMERA_BASE_FOV,
@@ -640,19 +672,6 @@ interface GroundSurface {
   material: THREE.MeshStandardMaterial
   baseColor: THREE.Color
   baseRoughness: number
-}
-
-interface SurfaceTextureOptions {
-  pattern: 'grass' | 'dirt' | 'stone' | 'scree' | 'wood' | 'roof'
-  repeatX: number
-  repeatY: number
-  hatch?: {
-    motif: HatchMotif
-    density: number
-    angle: number
-    opacity: number
-    color: THREE.Color
-  }
 }
 
 interface ZoneArtProfile {
@@ -1364,214 +1383,38 @@ function interpolateKeyframes(
   )
 }
 
+
 /**
- * Character shapes.
+ * Everything the animation needs to pose a body, resolved once at construction.
  *
- * Each of these is built once and shared by every actor that needs it. Gloves and
- * boots are lofted into the arm and leg rather than parented as extra meshes, so a
- * person still costs the same number of draw calls it did when it was seven boxes.
- * Every part gets welded outline normals, because the ink shells extrude along them
- * and a merged hard-edged prop cracks open without them.
+ * The rig used to be re-discovered every frame with `getObjectByName`, which walks
+ * the whole subtree per limb per actor. With the new bodies that subtree is three
+ * times bigger, so the pivots are cached here instead and the per-frame cost drops
+ * to a property read. The names themselves stay load-bearing for dismemberment,
+ * prosthetics, gore and the torch, and are still resolvable by name.
  */
-function buildCharacterTorso(player: boolean): THREE.BufferGeometry {
-  const width = player ? 1.05 : 0.9
-  const geometry = loftProfile({
-    profile: rectProfile(width, 0.58, 0.11),
-    sections: [
-      { y: -0.65, scaleX: 0.82, scaleZ: 0.86 },
-      { y: -0.42, scaleX: 0.88, scaleZ: 0.9 },
-      // A slight bulge at the waist reads as a belt once the bands land on it.
-      { y: -0.3, scaleX: 0.96, scaleZ: 0.98 },
-      { y: -0.19, scaleX: 0.9, scaleZ: 0.92 },
-      { y: 0.22, scaleX: 1, scaleZ: 1 },
-      { y: 0.5, scaleX: 1.03, scaleZ: 0.94 },
-      { y: 0.65, scaleX: 0.7, scaleZ: 0.68 },
-    ],
-    name: 'character-torso',
-  })
-  return bakeOutlineNormals(geometry)
-}
-
-function buildCharacterHead(): THREE.BufferGeometry {
-  const geometry = loftProfile({
-    profile: rectProfile(0.72, 0.68, 0.17),
-    sections: [
-      { y: -0.43, scaleX: 0.4, scaleZ: 0.46 },
-      { y: -0.3, scaleX: 0.74, scaleZ: 0.82 },
-      { y: -0.04, scaleX: 1, scaleZ: 1 },
-      { y: 0.24, scaleX: 0.97, scaleZ: 0.95 },
-      { y: 0.43, scaleX: 0.56, scaleZ: 0.58 },
-    ],
-    name: 'character-head',
-  })
-  return bakeOutlineNormals(geometry)
-}
-
-function buildHoodedHead(): THREE.BufferGeometry {
-  const geometry = latheProfile(
-    [
-      { x: 0.001, y: -0.46 },
-      { x: 0.34, y: -0.46 },
-      { x: 0.44, y: -0.34 },
-      { x: 0.45, y: -0.05 },
-      { x: 0.38, y: 0.18 },
-      { x: 0.22, y: 0.36 },
-      { x: 0.06, y: 0.5 },
-      { x: 0.001, y: 0.54 },
-    ],
-    { segments: 9, name: 'character-hood' },
-  )
-  return bakeOutlineNormals(geometry)
-}
-
-function buildCharacterArm(): THREE.BufferGeometry {
-  const geometry = loftProfile({
-    profile: rectProfile(0.28, 0.3, 0.055),
-    sections: [
-      { y: -0.59, scaleX: 0.95, scaleZ: 1.02 },
-      { y: -0.45, scaleX: 1.02, scaleZ: 1.16 },
-      { y: -0.34, scaleX: 0.6, scaleZ: 0.62 },
-      { y: -0.1, scaleX: 0.8, scaleZ: 0.82 },
-      { y: 0.16, scaleX: 0.88, scaleZ: 0.9 },
-      { y: 0.45, scaleX: 1.02, scaleZ: 1.02 },
-      { y: 0.59, scaleX: 0.9, scaleZ: 0.9 },
-    ],
-    name: 'character-arm',
-  })
-  return bakeOutlineNormals(geometry)
-}
-
-function buildCharacterLeg(): THREE.BufferGeometry {
-  const geometry = loftProfile({
-    profile: rectProfile(0.36, 0.42, 0.06),
-    sections: [
-      { y: -0.56, scaleX: 0.9, scaleZ: 1, offsetZ: 0.06 },
-      { y: -0.46, scaleX: 1, scaleZ: 1.14, offsetZ: 0.05 },
-      { y: -0.33, scaleX: 0.86, scaleZ: 0.8 },
-      { y: -0.05, scaleX: 0.78, scaleZ: 0.76 },
-      { y: 0.2, scaleX: 0.88, scaleZ: 0.86 },
-      { y: 0.56, scaleX: 1, scaleZ: 0.98 },
-    ],
-    name: 'character-leg',
-  })
-  return bakeOutlineNormals(geometry)
-}
-
-function buildCharacterBlade(): THREE.BufferGeometry {
-  const blade = extrudeProfile(
-    [
-      { x: 0, y: 0.82 },
-      { x: -0.075, y: 0.58 },
-      { x: -0.07, y: -0.18 },
-      { x: -0.05, y: -0.3 },
-      { x: 0.05, y: -0.3 },
-      { x: 0.07, y: -0.18 },
-      { x: 0.075, y: 0.58 },
-    ],
-    { depth: 0.1, bevelSize: 0.015, name: 'blade' },
-  )
-  const guard = transformed(
-    taperedBox({
-      width: 0.36,
-      height: 0.09,
-      depth: 0.15,
-      topScale: 0.82,
-      bevel: 0.025,
-    }),
-    { position: { x: 0, y: -0.32, z: 0 } },
-  )
-  const grip = transformed(
-    taperedBox({ width: 0.08, height: 0.32, depth: 0.095, bevel: 0.02 }),
-    { position: { x: 0, y: -0.52, z: 0 } },
-  )
-  const pommel = transformed(
-    taperedBox({
-      width: 0.14,
-      height: 0.12,
-      depth: 0.13,
-      topScale: 0.6,
-      bottomScale: 0.6,
-      bevel: 0.03,
-    }),
-    { position: { x: 0, y: -0.72, z: 0 } },
-  )
-  return bakeOutlineNormals(
-    mergeAll([blade, guard, grip, pommel], { name: 'character-blade' }),
-  )
-}
-
-function buildCharacterHelmet(): THREE.BufferGeometry {
-  const dome = latheProfile(
-    [
-      { x: 0.001, y: -0.26 },
-      { x: 0.4, y: -0.26 },
-      { x: 0.56, y: -0.22 },
-      { x: 0.5, y: -0.16 },
-      { x: 0.42, y: -0.03 },
-      { x: 0.3, y: 0.11 },
-      { x: 0.14, y: 0.2 },
-      { x: 0.001, y: 0.25 },
-    ],
-    { segments: 8, name: 'helmet-dome' },
-  )
-  const nasal = transformed(
-    taperedBox({
-      width: 0.09,
-      height: 0.3,
-      depth: 0.1,
-      topScale: 1.4,
-      bevel: 0.02,
-    }),
-    { position: { x: 0, y: -0.2, z: 0.42 } },
-  )
-  return bakeOutlineNormals(mergeAll([dome, nasal], { name: 'character-helmet' }))
-}
-
-function buildCharacterHorn(): THREE.BufferGeometry {
-  const geometry = tubeAlongPoints(
-    [
-      { x: 0, y: -0.32, z: 0 },
-      { x: 0.05, y: -0.08, z: 0.02 },
-      { x: 0.15, y: 0.14, z: 0.02 },
-      { x: 0.3, y: 0.3, z: -0.03 },
-    ],
-    {
-      radius: (t) => 0.115 * (1 - t) + 0.012,
-      radialSegments: 6,
-      tubularSegments: 9,
-      capStart: true,
-      name: 'character-horn',
-    },
-  )
-  return bakeOutlineNormals(geometry)
-}
-
-function buildCharacterShield(): THREE.BufferGeometry {
-  const board = extrudeProfile(
-    [
-      { x: -0.39, y: 0.575 },
-      { x: -0.39, y: 0.1 },
-      { x: -0.3, y: -0.2 },
-      { x: 0, y: -0.575 },
-      { x: 0.3, y: -0.2 },
-      { x: 0.39, y: 0.1 },
-      { x: 0.39, y: 0.575 },
-    ],
-    { depth: 0.12, bevelSize: 0.028, name: 'shield-board' },
-  )
-  const boss = transformed(
-    latheProfile(
-      [
-        { x: 0.001, y: 0 },
-        { x: 0.16, y: 0.01 },
-        { x: 0.13, y: 0.07 },
-        { x: 0.001, y: 0.1 },
-      ],
-      { segments: 8, name: 'shield-boss' },
-    ),
-    { rotation: { x: -Math.PI / 2, y: 0, z: 0 }, position: { x: 0, y: 0.06, z: 0.08 } },
-  )
-  return bakeOutlineNormals(mergeAll([board, boss], { name: 'character-shield' }))
+interface CharacterRig {
+  leftArm: THREE.Object3D | null
+  rightArm: THREE.Object3D | null
+  leftElbow: THREE.Object3D | null
+  rightElbow: THREE.Object3D | null
+  leftLeg: THREE.Object3D | null
+  rightLeg: THREE.Object3D | null
+  leftKnee: THREE.Object3D | null
+  rightKnee: THREE.Object3D | null
+  weapon: THREE.Object3D | null
+  cloak: THREE.Object3D | null
+  shoulderY: number
+  upperArm: number
+  forearm: number
+  elbowRest: number
+  armSplay: number
+  legSplay: number
+  /** `+1` when the weapon is in the right hand, `-1` when it is in the left. */
+  mainHand: number
+  beast: BeastKind | null
+  /** A captive's arms are roped together and never swing. */
+  boundArms: boolean
 }
 
 function seededRandom(seed: number): () => number {
@@ -1690,6 +1533,8 @@ export class GameEngine {
   private readonly artLibrary: StylizedArtLibrary
   /** Shape cache shared by every actor: one buffer per shape, not one per actor. */
   private readonly artGeometry = new GeometryCache()
+  /** Scratch vector for the arm-chain solve. Reused so the pose never allocates. */
+  private readonly handOffset = new THREE.Vector3()
   private readonly clock = new THREE.Clock()
   private readonly keys = new Set<string>()
   private readonly actors: Actor[] = []
@@ -7087,100 +6932,84 @@ export class GameEngine {
         Math.abs(Math.sin(this.elapsed * cadence + prop.phase)) * (panicking ? 0.1 : 0.02)
     }
   }
-
-  /** A deer: the beast primitives, longer in the leg and with antlers instead of tusks. */
+  /**
+   * A deer.
+   *
+   * The `deer-body` and `legs` group names are what `animateWildlife` drives, so
+   * they stay; underneath them the animal now has a curved neck, a wedge skull,
+   * branched antlers and legs with hocks instead of nine boxes and six cones.
+   */
   private createDeer(): THREE.Group {
     const group = new THREE.Group()
     const coat = mix(this.palette.warning, this.palette.text, 0.42)
-    const hide = this.artLibrary.createMaterial({ color: coat, surface: 'cloth' })
-    const dark = this.artLibrary.createMaterial({
+    const hide = this.artLibrary.acquireMaterial('fauna:deer:hide', {
+      color: coat,
+      surface: 'cloth',
+    })
+    const dark = this.artLibrary.acquireMaterial('fauna:deer:dark', {
       color: mix(coat, this.palette.bg, 0.5),
       surface: 'dark',
     })
+    const build = (key: string, factory: () => THREE.BufferGeometry) =>
+      this.acquireArtGeometry(key, factory)
+
     const body = new THREE.Group()
     body.name = 'deer-body'
     body.position.y = 0.9
     group.add(body)
-
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.6, 1.5), hide)
-    body.add(torso)
-    const neck = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.72, 0.32), hide)
-    neck.position.set(0, 0.44, 0.66)
-    neck.rotation.x = -0.32
-    body.add(neck)
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.52), hide)
-    head.position.set(0, 0.82, 0.95)
-    body.add(head)
-    const muzzle = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.32, 5), dark)
-    muzzle.position.set(0, 0.76, 1.24)
-    muzzle.rotation.x = Math.PI / 2
-    body.add(muzzle)
-    for (const side of [-1, 1]) {
-      const antler = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.62, 4), dark)
-      antler.position.set(side * 0.13, 1.16, 0.86)
-      antler.rotation.set(-0.35, 0, side * 0.5)
-      body.add(antler)
-      const ear = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.24, 4), dark)
-      ear.position.set(side * 0.19, 0.94, 0.86)
-      ear.rotation.z = side * 0.6
-      body.add(ear)
-    }
-    const tail = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.26, 4), dark)
-    tail.position.set(0, 0.3, -0.78)
-    tail.rotation.x = -2.2
-    body.add(tail)
+    body.add(new THREE.Mesh(build('deer-body', () => buildDeerBody()), hide))
+    body.add(new THREE.Mesh(build('deer-crown', () => buildDeerCrown()), dark))
 
     const legs = new THREE.Group()
     legs.name = 'legs'
     legs.position.y = 0.9
     group.add(legs)
-    for (const [x, z] of [
-      [-0.2, 0.54],
-      [0.2, 0.54],
-      [-0.2, -0.54],
-      [0.2, -0.54],
+    for (const [x, z, front] of [
+      [-0.19, 0.52, true],
+      [0.19, 0.52, true],
+      [-0.19, -0.52, false],
+      [0.19, -0.52, false],
     ] as const) {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.9, 0.16), dark)
-      leg.position.set(x, -0.45, z)
+      const leg = new THREE.Mesh(
+        build(`deer-leg:${front ? 'front' : 'hind'}`, () => buildDeerLeg(front)),
+        dark,
+      )
+      leg.position.set(x, 0, z)
       legs.add(leg)
     }
 
-    group.traverse((object) => {
-      if (object instanceof THREE.Mesh) {
-        object.castShadow = true
-        object.receiveShadow = true
-      }
-    })
+    group.add(this.artLibrary.createContactShadow({ radius: 0.72 }))
+    this.markCharacterShadows(group)
     return group
   }
 
-  /** A bird: a body, a beak and one wing bar that flaps. Cheap on purpose. */
+  /** A bird: a tapered body, a fanned tail and one wing bar that flaps. */
   private createBird(): THREE.Group {
     const group = new THREE.Group()
-    const feather = this.artLibrary.createMaterial({
+    const feather = this.artLibrary.acquireMaterial('fauna:bird:feather', {
       color: mix(this.palette.text, this.palette.bg, 0.24),
       surface: 'dark',
     })
-    const beakMaterial = this.artLibrary.createMaterial({
+    const beakMaterial = this.artLibrary.acquireMaterial('fauna:bird:beak', {
       color: this.palette.warning,
       surface: 'skin',
     })
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.34), feather)
-    body.position.y = 0.18
+    const build = (key: string, factory: () => THREE.BufferGeometry) =>
+      this.acquireArtGeometry(key, factory)
+
+    const body = new THREE.Mesh(build('bird-body', () => buildBirdBody()), feather)
+    body.position.y = 0.2
     group.add(body)
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.15, 0.16), feather)
-    head.position.set(0, 0.32, 0.16)
-    group.add(head)
-    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.16, 4), beakMaterial)
-    beak.position.set(0, 0.3, 0.29)
+    const beak = new THREE.Mesh(
+      build('bird-beak', () => new THREE.ConeGeometry(0.045, 0.15, 4)),
+      beakMaterial,
+    )
+    beak.position.set(0, 0.32, 0.29)
     beak.rotation.x = Math.PI / 2
     group.add(beak)
-    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 0.26), feather)
-    tail.position.set(0, 0.19, -0.28)
-    group.add(tail)
-    const wings = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.04, 0.2), feather)
+    const wings = new THREE.Mesh(build('bird-wing', () => buildBirdWing()), feather)
     wings.name = 'wings'
-    wings.position.y = 0.24
+    wings.position.y = 0.25
     group.add(wings)
     group.traverse((object) => {
       if (object instanceof THREE.Mesh) object.castShadow = true
@@ -9841,11 +9670,9 @@ export class GameEngine {
     const motionScale =
       !this.screenShakeEnabled || this.reducedMotion ? REDUCED_MOTION_COMBAT_SCALE : 1
     const side =
-      new THREE.Vector3(
-        Math.cos(actor.deathStartRotation.y),
-        0,
-        -Math.sin(actor.deathStartRotation.y),
-      ).dot(actor.lastHitDirection) >= 0
+      Math.cos(actor.deathStartRotation.y) * actor.lastHitDirection.x -
+        Math.sin(actor.deathStartRotation.y) * actor.lastHitDirection.z >=
+      0
         ? 1
         : -1
     const travel =
@@ -9884,13 +9711,32 @@ export class GameEngine {
       actor.mesh.rotation.x -= 1.18 * eased
       actor.mesh.rotation.z -= side * 0.44 * motionScale * eased
     }
-    const weapon = actor.mesh.getObjectByName('weapon')
-    const leftArm = actor.mesh.getObjectByName('leftArm')
-    const rightArm = actor.mesh.getObjectByName('rightArm')
+    // A body collapses; it does not tip over like a plank. The limbs go slack from
+    // the shoulders and hips down, which is what the elbows and knees are for.
+    const rig = actor.mesh.userData.rig as CharacterRig | undefined
+    const weapon = rig?.weapon ?? actor.mesh.getObjectByName('weapon')
+    const leftArm = rig?.leftArm ?? actor.mesh.getObjectByName('leftArm')
+    const rightArm = rig?.rightArm ?? actor.mesh.getObjectByName('rightArm')
     const head = actor.mesh.getObjectByName('head-pivot')
     if (weapon) weapon.rotation.x = THREE.MathUtils.lerp(weapon.rotation.x, 1.4, eased)
-    if (leftArm) leftArm.rotation.z = -0.72 * eased
-    if (rightArm) rightArm.rotation.z = 0.72 * eased
+    if (leftArm) {
+      leftArm.rotation.z = -0.72 * eased
+      leftArm.rotation.x = THREE.MathUtils.lerp(leftArm.rotation.x, 0.34 * side, eased)
+    }
+    if (rightArm) {
+      rightArm.rotation.z = 0.72 * eased
+      rightArm.rotation.x = THREE.MathUtils.lerp(rightArm.rotation.x, -0.34 * side, eased)
+    }
+    if (rig) {
+      for (const elbow of [rig.leftElbow, rig.rightElbow]) {
+        if (elbow) elbow.rotation.x = THREE.MathUtils.lerp(elbow.rotation.x, 0.9, eased)
+      }
+      if (rig.leftLeg) rig.leftLeg.rotation.x = -0.5 * eased
+      if (rig.rightLeg) rig.rightLeg.rotation.x = -0.16 * eased
+      if (rig.leftKnee) rig.leftKnee.rotation.x = 1.15 * eased
+      if (rig.rightKnee) rig.rightKnee.rotation.x = 0.42 * eased
+      if (rig.cloak) rig.cloak.rotation.x = THREE.MathUtils.lerp(rig.cloak.rotation.x, 0.3, eased)
+    }
     if (head) head.rotation.z = side * 0.28 * eased
   }
 
@@ -11086,188 +10932,6 @@ export class GameEngine {
     return texture
   }
 
-  private createSurfaceTexture(
-    key: string,
-    base: THREE.Color,
-    detail: THREE.Color,
-    options: SurfaceTextureOptions,
-  ): THREE.CanvasTexture {
-    const hatchKey = options.hatch
-      ? [
-          options.hatch.motif,
-          options.hatch.density,
-          options.hatch.angle.toFixed(3),
-          options.hatch.opacity.toFixed(3),
-          options.hatch.color.getHexString(),
-        ].join('-')
-      : 'none'
-    const cacheKey = `${key}|${options.pattern}|${options.repeatX}x${options.repeatY}|${hatchKey}`
-    const cached = this.generatedTextures.get(cacheKey)
-    if (cached) return cached
-
-    const canvas = document.createElement('canvas')
-    canvas.width = 64
-    canvas.height = 64
-    const context = canvas.getContext('2d')
-    if (!context) throw new Error(`Could not create procedural texture: ${key}`)
-    context.imageSmoothingEnabled = false
-    context.fillStyle = base.getStyle()
-    context.fillRect(0, 0, canvas.width, canvas.height)
-
-    let seed = 17
-    for (const character of cacheKey) {
-      seed = (seed * 31 + character.charCodeAt(0)) % 2147483647
-    }
-    const random = seededRandom(Math.max(1, seed))
-    const light = mix(detail, this.palette.surface, 0.34)
-    const dark = mix(detail, this.palette.text, 0.3)
-
-    if (options.pattern === 'grass') {
-      for (let index = 0; index < 210; index += 1) {
-        context.fillStyle = (index % 5 === 0 ? light : index % 3 === 0 ? dark : detail).getStyle()
-        const x = Math.floor(random() * 64)
-        const y = Math.floor(random() * 64)
-        context.fillRect(x, y, index % 7 === 0 ? 2 : 1, 1 + Math.floor(random() * 3))
-      }
-    } else if (options.pattern === 'dirt' || options.pattern === 'scree') {
-      const count = options.pattern === 'scree' ? 175 : 130
-      for (let index = 0; index < count; index += 1) {
-        context.fillStyle = (index % 4 === 0 ? light : index % 2 === 0 ? dark : detail).getStyle()
-        const size =
-          options.pattern === 'scree'
-            ? 1 + Math.floor(random() * 4)
-            : 1 + Math.floor(random() * 2)
-        context.fillRect(Math.floor(random() * 64), Math.floor(random() * 64), size, size)
-      }
-    } else if (options.pattern === 'stone') {
-      context.strokeStyle = detail.getStyle()
-      context.lineWidth = 2
-      for (let y = 0; y <= 64; y += 16) {
-        context.beginPath()
-        context.moveTo(0, y)
-        context.lineTo(64, y)
-        context.stroke()
-        const offset = (y / 16) % 2 === 0 ? 0 : 12
-        for (let x = offset; x <= 64; x += 24) {
-          context.beginPath()
-          context.moveTo(x, y)
-          context.lineTo(x, Math.min(64, y + 16))
-          context.stroke()
-        }
-      }
-      context.globalAlpha = 0.35
-      for (let index = 0; index < 48; index += 1) {
-        context.fillStyle = (index % 2 === 0 ? light : dark).getStyle()
-        context.fillRect(Math.floor(random() * 64), Math.floor(random() * 64), 2, 1)
-      }
-      context.globalAlpha = 1
-    } else if (options.pattern === 'wood') {
-      context.fillStyle = detail.getStyle()
-      for (let y = 0; y < 64; y += 8) context.fillRect(0, y, 64, 1)
-      context.globalAlpha = 0.6
-      for (let index = 0; index < 36; index += 1) {
-        context.fillStyle = (index % 3 === 0 ? light : dark).getStyle()
-        const y = Math.floor(random() * 8) * 8 + 3
-        context.fillRect(Math.floor(random() * 60), y, 2 + Math.floor(random() * 5), 1)
-      }
-      context.globalAlpha = 1
-    } else {
-      context.fillStyle = detail.getStyle()
-      for (let y = 0; y < 64; y += 10) {
-        context.fillRect(0, y, 64, 2)
-        const offset = (y / 10) % 2 === 0 ? 0 : 8
-        for (let x = offset; x < 64; x += 16) context.fillRect(x, y, 2, 10)
-      }
-      context.globalAlpha = 0.35
-      context.fillStyle = light.getStyle()
-      for (let index = 0; index < 42; index += 1) {
-        context.fillRect(Math.floor(random() * 64), Math.floor(random() * 64), 2, 1)
-      }
-      context.globalAlpha = 1
-    }
-
-    if (options.hatch) {
-      this.drawSurfaceHatch(context, options.hatch, random)
-    }
-
-    const texture = new THREE.CanvasTexture(canvas)
-    texture.colorSpace = THREE.SRGBColorSpace
-    texture.wrapS = THREE.RepeatWrapping
-    texture.wrapT = THREE.RepeatWrapping
-    texture.repeat.set(options.repeatX, options.repeatY)
-    texture.magFilter = THREE.NearestFilter
-    texture.minFilter = THREE.LinearMipmapLinearFilter
-    texture.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy())
-    this.generatedTextures.set(cacheKey, texture)
-    return texture
-  }
-
-  private drawSurfaceHatch(
-    context: CanvasRenderingContext2D,
-    hatch: NonNullable<SurfaceTextureOptions['hatch']>,
-    random: () => number,
-  ): void {
-    context.save()
-    context.translate(32, 32)
-    context.rotate(hatch.angle)
-    context.translate(-32, -32)
-    context.globalAlpha = hatch.opacity
-    context.strokeStyle = hatch.color.getStyle()
-    context.lineCap = 'round'
-    context.lineJoin = 'round'
-    context.lineWidth = 1.4
-
-    for (let index = 0; index < hatch.density; index += 1) {
-      const x = 5 + random() * 54
-      const y = 5 + random() * 54
-      context.beginPath()
-      if (hatch.motif === 'scrape') {
-        const length = 12 + random() * 18
-        const gap = 2 + random() * 4
-        context.moveTo(x - length * 0.5, y)
-        context.lineTo(x - gap, y + random() * 1.5)
-        context.moveTo(x + gap, y + random() * 1.5)
-        context.lineTo(x + length * 0.5, y)
-      } else if (hatch.motif === 'chevron') {
-        const width = 4 + random() * 3
-        const height = 3 + random() * 3
-        context.moveTo(x - width, y - height)
-        context.lineTo(x, y)
-        context.lineTo(x + width, y - height)
-        if (index % 2 === 0) {
-          context.moveTo(x, y)
-          context.lineTo(x, y + height + 3)
-        }
-      } else if (hatch.motif === 'organic') {
-        const width = 7 + random() * 6
-        const bend = 3 + random() * 4
-        context.moveTo(x - width * 0.5, y)
-        context.bezierCurveTo(
-          x - width * 0.2,
-          y - bend,
-          x + width * 0.2,
-          y + bend,
-          x + width * 0.5,
-          y,
-        )
-        if (index % 3 === 0) {
-          context.moveTo(x - width * 0.35, y + 3)
-          context.quadraticCurveTo(x, y + bend + 3, x + width * 0.35, y + 3)
-        }
-      } else {
-        const length = 8 + random() * 10
-        context.moveTo(x - length * 0.45, y + length * 0.5)
-        context.lineTo(x + length * 0.45, y - length * 0.5)
-        if (index % 2 === 0) {
-          context.moveTo(x + 4, y + length * 0.3)
-          context.lineTo(x + 4 + length * 0.55, y - length * 0.3)
-        }
-      }
-      context.stroke()
-    }
-
-    context.restore()
-  }
 
   private createAtmosphere(): void {
     this.atmosphereRoot = new THREE.Group()
@@ -12019,17 +11683,31 @@ export class GameEngine {
   /**
    * Builds one person.
    *
-   * The rig — every pivot and mesh name below — is load-bearing. Animation,
-   * dismemberment, prosthetics, gore and the weapon trail all address it by name,
-   * so the names and pivot offsets are frozen; only the shapes underneath them
-   * changed. Gloves, boots and a proper blade are folded into their parent's
-   * geometry rather than added as children, which keeps the draw-call count per
-   * actor exactly where it was.
+   * The rig — every pivot and mesh name marked below — is load-bearing. Animation,
+   * dismemberment, prosthetics, gore, the torch and the weapon trail all address it
+   * by name, so `body-pivot`, `torso-pivot`, `head-pivot`, `pelvis-pivot`, `torso`,
+   * `head`, `leftArm`, `rightArm`, `leftLeg`, `rightLeg`, `weapon`, `shield` and
+   * `faction-ring` are frozen. Elbows, knees, cloak, trim, face, hair and headgear
+   * are new children of those, which is additive and safe: hiding a limb still
+   * hides its whole chain, and a prosthetic still recolours all of it.
    *
-   * Geometry is cached per shape and shared by every actor of a faction: 25 actors
-   * used to mean 200 unique buffers, and now means about ten.
+   * Shape comes from `resolveCharacterPlan`, which turns a faction, a role and one
+   * integer into a complete description of a person. Geometry is cached per plan
+   * part and shared by every actor that resolves to the same part, so twenty-five
+   * actors still build a few dozen buffers rather than a few hundred.
    */
-  private createCharacter(faction: Faction, player: boolean): THREE.Group {
+  private createCharacter(
+    faction: Faction,
+    player: boolean,
+    role: ActorRole = 'soldier',
+    variant = 0,
+  ): THREE.Group {
+    const plan = resolveCharacterPlan(faction, player ? 'player' : role, variant, player)
+    const keys = characterPartKeys(plan)
+    const p = plan.proportions
+    const build = (key: string, factory: () => THREE.BufferGeometry) =>
+      this.acquireArtGeometry(key, factory)
+
     const group = new THREE.Group()
     const bodyPivot = new THREE.Group()
     bodyPivot.name = 'body-pivot'
@@ -12043,123 +11721,192 @@ export class GameEngine {
     const pelvisPivot = new THREE.Group()
     pelvisPivot.name = 'pelvis-pivot'
     bodyPivot.add(pelvisPivot)
-    const factionMaterial = this.artLibrary.createMaterial({
-      color: this.factionColor(faction),
-      surface: faction === 'guard' ? 'metal' : 'cloth',
-      emissive: faction === 'guard' ? this.factionColor(faction) : undefined,
-      emissiveIntensity: faction === 'guard' ? 0.07 : undefined,
-    })
-    const skinMaterial = this.artLibrary.createMaterial({
-      color: mix(this.palette.warning, this.palette.surface, 0.7),
-      surface: 'skin',
-    })
-    const darkMaterial = this.artLibrary.createMaterial({
-      color: mix(this.palette.text, this.palette.bg, 0.28),
-      surface: 'dark',
-    })
 
-    const build = (key: string, factory: () => THREE.BufferGeometry) =>
-      this.acquireArtGeometry(key, factory)
+    const bodyMaterial = this.characterBodyMaterial(plan)
+    const limbMaterial = this.characterLimbMaterial(plan)
+    const skinMaterial = this.characterSkinMaterial(plan.skinTone)
+    const leatherMaterial = this.characterSharedMaterial('leather')
+    const darkMaterial = this.characterSharedMaterial('dark')
+    const steelMaterial = this.characterSharedMaterial('steel')
 
-    const torso = new THREE.Mesh(
-      build(`character-torso:${player ? 'player' : 'actor'}`, () =>
-        buildCharacterTorso(player),
-      ),
-      factionMaterial,
-    )
+    const torso = new THREE.Mesh(build(keys.torso, () => buildTorso(plan)), bodyMaterial)
     torso.name = 'torso'
-    torso.position.y = 1.72
-    torso.castShadow = true
+    torso.position.y = p.torsoY
     torsoPivot.add(torso)
 
-    const head = new THREE.Mesh(
-      build(`character-head:${faction === 'elf' ? 'hood' : 'bare'}`, () =>
-        faction === 'elf' ? buildHoodedHead() : buildCharacterHead(),
-      ),
-      skinMaterial,
-    )
+    if (keys.trim) {
+      const trimKind = plan.trim
+      const trim = new THREE.Mesh(
+        build(keys.trim, () => buildTorsoTrim(trimKind)),
+        leatherMaterial,
+      )
+      trim.name = 'torso-trim'
+      trim.position.y = p.torsoY
+      this.attachCharacterDetail(torsoPivot, trim)
+    }
+
+    let cloakPivot: THREE.Object3D | null = null
+    if (keys.cloak) {
+      const cloakKind = plan.cloak
+      cloakPivot = new THREE.Group()
+      cloakPivot.name = 'cloak-pivot'
+      cloakPivot.position.set(0, p.shoulderY + 0.06, 0)
+      const cloak = new THREE.Mesh(
+        build(keys.cloak, () => buildCloak(plan.faction, cloakKind)),
+        this.characterCloakMaterial(plan),
+      )
+      cloak.name = 'cloak'
+      cloakPivot.add(cloak)
+      torsoPivot.add(cloakPivot)
+    }
+
+    const head = new THREE.Mesh(build(keys.head, () => buildHead(plan.faction)), skinMaterial)
     head.name = 'head'
-    head.position.y = 2.72
-    head.castShadow = true
+    head.position.y = p.headY
+    head.scale.setScalar(p.headScale)
     headPivot.add(head)
 
-    for (const [name, x] of [
-      ['leftArm', -0.68],
-      ['rightArm', 0.68],
+    const face = new THREE.Mesh(build(keys.face, () => buildFace(plan.faction)), darkMaterial)
+    face.name = 'face'
+    face.position.y = p.headY
+    face.scale.setScalar(p.headScale)
+    this.attachCharacterDetail(headPivot, face)
+
+    if (keys.hair) {
+      const hairKind = plan.hair
+      const hair = new THREE.Mesh(
+        build(keys.hair, () => buildHair(hairKind)),
+        this.characterHairMaterial(plan.hairTone),
+      )
+      hair.name = 'hair'
+      hair.position.y = p.headY
+      hair.scale.setScalar(p.headScale)
+      this.attachCharacterDetail(headPivot, hair)
+    }
+
+    if (keys.headgear) {
+      const headgearKind = plan.headgear
+      const headgear = new THREE.Mesh(
+        build(keys.headgear, () => buildHeadgear(headgearKind)),
+        headgearKind === 'hood' || headgearKind === 'ragHood' || headgearKind === 'cap'
+          ? bodyMaterial
+          : headgearKind === 'strap'
+            ? leatherMaterial
+            : steelMaterial,
+      )
+      headgear.name = 'headgear'
+      headgear.position.y = p.headY
+      headgear.scale.setScalar(p.headScale)
+      headPivot.add(headgear)
+    }
+
+    for (const [name, side] of [
+      ['leftArm', -1],
+      ['rightArm', 1],
     ] as const) {
       const pivot = new THREE.Group()
       pivot.name = name
-      pivot.position.set(x, 2.2, 0)
-      const arm = new THREE.Mesh(
-        build('character-arm', () => buildCharacterArm()),
-        factionMaterial,
+      pivot.position.set(side * p.shoulderX, p.shoulderY, 0)
+      pivot.rotation.z = side * p.armSplay
+      const upper = new THREE.Mesh(
+        build(keys.upperArm, () => buildUpperArm(plan.faction, plan.armour, p.upperArm)),
+        limbMaterial,
       )
-      arm.position.y = -0.52
-      arm.castShadow = true
-      pivot.add(arm)
+      upper.name = `${name}-upper`
+      pivot.add(upper)
+
+      const elbow = new THREE.Group()
+      elbow.name = name === 'leftArm' ? 'leftElbow' : 'rightElbow'
+      elbow.position.y = -p.upperArm
+      elbow.rotation.x = p.elbowRest
+      const forearm = new THREE.Mesh(
+        build(keys.forearm, () =>
+          buildForearm(plan.faction, plan.armour, plan.gloved, p.forearm),
+        ),
+        limbMaterial,
+      )
+      forearm.name = `${name}-forearm`
+      elbow.add(forearm)
+      if (keys.hand) {
+        const hand = new THREE.Mesh(build(keys.hand, () => buildHand()), skinMaterial)
+        hand.name = `${name}-hand`
+        hand.position.y = -p.forearm
+        this.attachCharacterDetail(elbow, hand)
+      }
+      pivot.add(elbow)
       torsoPivot.add(pivot)
     }
-    for (const [name, x] of [
-      ['leftLeg', -0.28],
-      ['rightLeg', 0.28],
+
+    for (const [name, side] of [
+      ['leftLeg', -1],
+      ['rightLeg', 1],
     ] as const) {
       const pivot = new THREE.Group()
       pivot.name = name
-      pivot.position.set(x, 1.08, 0)
-      const leg = new THREE.Mesh(
-        build('character-leg', () => buildCharacterLeg()),
+      pivot.position.set(side * p.hipX, p.hipY, 0)
+      pivot.rotation.z = side * p.legSplay
+      const thigh = new THREE.Mesh(
+        build(keys.thigh, () => buildThigh(plan.faction, plan.armour, p.thigh)),
+        limbMaterial === bodyMaterial && plan.armour === 'none' ? bodyMaterial : darkMaterial,
+      )
+      thigh.name = `${name}-thigh`
+      pivot.add(thigh)
+      const knee = new THREE.Group()
+      knee.name = name === 'leftLeg' ? 'leftKnee' : 'rightKnee'
+      knee.position.y = -p.thigh
+      const shin = new THREE.Mesh(
+        build(keys.shin, () => buildShin(plan.faction, plan.armour, p.shin)),
         darkMaterial,
       )
-      leg.position.y = -0.5
-      leg.castShadow = true
-      pivot.add(leg)
+      shin.name = `${name}-shin`
+      knee.add(shin)
+      pivot.add(knee)
       pelvisPivot.add(pivot)
     }
 
+    // `weapon` stays a direct child of `torso-pivot` whose origin is the hand:
+    // `attachTorch` parents a torch to it and the player's weapon trail is one of
+    // its children, and both expect hand height in torso space. The animation
+    // writes its position from the arm chain so the grip never leaves the fist.
     const weaponPivot = new THREE.Group()
     weaponPivot.name = 'weapon'
-    weaponPivot.position.set(0.88, 1.75, 0.1)
-    const blade = new THREE.Mesh(
-      build('character-blade', () => buildCharacterBlade()),
-      darkMaterial,
+    const mainHand = plan.mainHand === 'right' ? 1 : -1
+    weaponPivot.position.set(
+      mainHand * p.shoulderX,
+      p.shoulderY - p.upperArm - p.forearm,
+      0,
     )
-    blade.position.y = -0.15
-    blade.rotation.z = -0.2
-    blade.castShadow = true
-    weaponPivot.add(blade)
+    if (keys.weaponHead) {
+      const weaponKind = plan.weapon
+      const head2 = new THREE.Mesh(
+        build(keys.weaponHead, () => buildWeaponHead(weaponKind)),
+        weaponKind === 'bow' ? leatherMaterial : steelMaterial,
+      )
+      head2.name = 'weapon-head'
+      weaponPivot.add(head2)
+      if (keys.weaponGrip) {
+        const grip = new THREE.Mesh(
+          build(keys.weaponGrip, () => buildWeaponGrip(weaponKind)),
+          leatherMaterial,
+        )
+        grip.name = 'weapon-grip'
+        weaponPivot.add(grip)
+      }
+    }
     torsoPivot.add(weaponPivot)
 
-    if (faction === 'guard') {
-      const helmet = new THREE.Mesh(
-        build('character-helmet', () => buildCharacterHelmet()),
-        darkMaterial,
+    if (keys.offhand) {
+      const offhandKind = plan.offhand
+      // `shield` keeps its rest transform because `updateShieldPose` writes absolute
+      // local coordinates into it when the player raises guard.
+      const shield = new THREE.Mesh(
+        build(keys.offhand, () => buildOffhand(offhandKind)),
+        offhandKind === 'bundle' ? leatherMaterial : steelMaterial,
       )
-      helmet.position.y = 3.02
-      helmet.castShadow = true
-      headPivot.add(helmet)
-      if (player) {
-        const shield = new THREE.Mesh(
-          build('character-shield', () => buildCharacterShield()),
-          darkMaterial,
-        )
-        shield.name = 'shield'
-        shield.position.set(-0.82, 1.85, 0.08)
-        shield.rotation.z = 0.12
-        shield.castShadow = true
-        torsoPivot.add(shield)
-      }
-    } else if (faction === 'villain') {
-      for (const x of [-0.28, 0.28]) {
-        const horn = new THREE.Mesh(
-          build('character-horn', () => buildCharacterHorn()),
-          darkMaterial,
-        )
-        horn.position.set(x, 3.25, 0)
-        horn.rotation.z = x > 0 ? -0.3 : 0.3
-        horn.scale.x = x > 0 ? 1 : -1
-        horn.castShadow = true
-        headPivot.add(horn)
-      }
+      shield.name = 'shield'
+      shield.position.set(-0.82, 1.85, 0.08)
+      shield.rotation.z = 0.12
+      torsoPivot.add(shield)
     }
 
     if (!player) {
@@ -12189,15 +11936,154 @@ export class GameEngine {
     })
     group.add(contactShadow)
 
-    group.traverse((object) => {
-      if (object instanceof THREE.Mesh) {
-        if (object.name === 'faction-ring') return
-        if (object.userData.noComicOutline === true) return
-        object.castShadow = true
-        object.receiveShadow = true
-      }
-    })
+    this.markCharacterShadows(group)
+    const rig: CharacterRig = {
+      leftArm: group.getObjectByName('leftArm') ?? null,
+      rightArm: group.getObjectByName('rightArm') ?? null,
+      leftElbow: group.getObjectByName('leftElbow') ?? null,
+      rightElbow: group.getObjectByName('rightElbow') ?? null,
+      leftLeg: group.getObjectByName('leftLeg') ?? null,
+      rightLeg: group.getObjectByName('rightLeg') ?? null,
+      leftKnee: group.getObjectByName('leftKnee') ?? null,
+      rightKnee: group.getObjectByName('rightKnee') ?? null,
+      weapon: weaponPivot,
+      cloak: cloakPivot,
+      shoulderY: p.shoulderY,
+      upperArm: p.upperArm,
+      forearm: p.forearm,
+      elbowRest: p.elbowRest,
+      armSplay: p.armSplay,
+      legSplay: p.legSplay,
+      mainHand,
+      beast: null,
+      boundArms: plan.boundArms,
+    }
+    group.userData.rig = rig
+    group.userData.characterPlan = plan
     return group
+  }
+
+  /**
+   * Detail that only reads up close: face, hair, trim and bare hands.
+   *
+   * A `THREE.LOD` with the mesh at zero and an empty node past the detail distance
+   * costs no engine code — the renderer's own scene walk updates it — and takes the
+   * mesh's ink shell with it, so a distant actor draws fewer calls than it did
+   * before this pass while a near one draws more.
+   */
+  private attachCharacterDetail(parent: THREE.Object3D, mesh: THREE.Mesh): void {
+    const lod = new THREE.LOD()
+    lod.name = `${mesh.name}-detail`
+    lod.addLevel(mesh, 0)
+    lod.addLevel(new THREE.Object3D(), CHARACTER_DETAIL_DISTANCE)
+    parent.add(lod)
+  }
+
+  private markCharacterShadows(root: THREE.Object3D): void {
+    root.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return
+      if (object.name === 'faction-ring') return
+      if (object.userData.noComicOutline === true) return
+      object.castShadow = true
+      object.receiveShadow = true
+    })
+  }
+
+  /**
+   * Character materials are shared, not per-actor.
+   *
+   * Twenty-five actors used to build seventy-five materials between them. They now
+   * draw from a couple of dozen library-owned entries, which is why per-actor tint
+   * variation is *selected* from four pre-mixed cloths rather than applied with
+   * `offsetHSL` — mutating one of these would recolour every actor wearing it.
+   */
+  private characterBodyMaterial(plan: CharacterPlan): THREE.MeshStandardMaterial {
+    const tint = plan.tint
+    if (plan.armour === 'none') {
+      return this.artLibrary.acquireMaterial(`char:civil:${String(tint)}`, {
+        color: mix(
+          mix(this.palette.muted, this.palette.bg, 0.24),
+          this.palette.warning,
+          tint * 0.09,
+        ),
+        surface: 'cloth',
+      })
+    }
+    const base = this.factionColor(plan.faction)
+    const shade = mix(base, tint % 2 === 0 ? this.palette.bg : this.palette.surface, 0.06 + tint * 0.05)
+    if (plan.faction === 'guard') {
+      return this.artLibrary.acquireMaterial(`char:armour:guard:${String(tint)}`, {
+        color: shade,
+        surface: 'metal',
+        emissive: base,
+        emissiveIntensity: 0.07,
+      })
+    }
+    return this.artLibrary.acquireMaterial(`char:cloth:${plan.faction}:${String(tint)}`, {
+      color: shade,
+      surface: plan.faction === 'villain' ? 'leather' : 'cloth',
+    })
+  }
+
+  private characterLimbMaterial(plan: CharacterPlan): THREE.MeshStandardMaterial {
+    if (plan.armour === 'none') return this.characterBodyMaterial(plan)
+    if (plan.faction === 'guard') {
+      return this.artLibrary.acquireMaterial('char:limb:guard', {
+        color: mix(this.palette.borderStrong, this.palette.link, 0.3),
+        surface: 'metal',
+      })
+    }
+    return this.characterBodyMaterial(plan)
+  }
+
+  private characterCloakMaterial(plan: CharacterPlan): THREE.MeshStandardMaterial {
+    return this.artLibrary.acquireMaterial(`char:cloak:${plan.faction}`, {
+      color: mix(this.factionColor(plan.faction), this.palette.bg, 0.46),
+      surface: 'cloth',
+    })
+  }
+
+  private characterSkinMaterial(tone: number): THREE.MeshStandardMaterial {
+    const base = mix(this.palette.warning, this.palette.surface, 0.7)
+    return this.artLibrary.acquireMaterial(`char:skin:${String(tone)}`, {
+      color: mix(base, tone < 2 ? this.palette.bg : this.palette.text, 0.06 + tone * 0.07),
+      surface: 'skin',
+    })
+  }
+
+  private characterHairMaterial(tone: number): THREE.MeshStandardMaterial {
+    const base = mix(this.palette.text, this.palette.bg, 0.3)
+    return this.artLibrary.acquireMaterial(`char:hair:${String(tone)}`, {
+      color: mix(base, tone < 2 ? this.palette.warning : this.palette.bg, 0.12 + tone * 0.12),
+      surface: 'cloth',
+    })
+  }
+
+  private characterSharedMaterial(
+    kind: 'leather' | 'dark' | 'steel' | 'bone',
+  ): THREE.MeshStandardMaterial {
+    if (kind === 'leather') {
+      return this.artLibrary.acquireMaterial('char:leather', {
+        color: mix(this.palette.warning, this.palette.bg, 0.66),
+        surface: 'leather',
+      })
+    }
+    if (kind === 'steel') {
+      return this.artLibrary.acquireMaterial('char:steel', {
+        color: mix(this.palette.borderStrong, this.palette.text, 0.24),
+        surface: 'metal',
+      })
+    }
+    if (kind === 'bone') {
+      return this.artLibrary.acquireMaterial('char:bone', {
+        color: mix(this.palette.text, this.palette.surface, 0.35),
+        surface: 'skin',
+      })
+    }
+    return this.artLibrary.acquireMaterial('char:dark', {
+      color: mix(this.palette.text, this.palette.bg, 0.28),
+      surface: 'dark',
+    })
   }
 
   /**
@@ -12218,33 +12104,68 @@ export class GameEngine {
     })
   }
 
+  /**
+   * Makes twelve soldiers twelve people without building a second geometry.
+   *
+   * The old version scaled `body-pivot` by a hash and pushed the torso's hue, which
+   * made every actor the same doll seen through a lens — and, now that character
+   * materials are shared, would recolour the whole faction at once. This one moves
+   * the *pivots*: height, shoulder width, limb length, bulk, stance and head. Scale
+   * on a pivot lengthens a bone without thickening it, which is the whole trick.
+   *
+   * Deterministic by construction: an `art:`-namespaced stream derived from the
+   * world seed and this actor's identity. Never `Math.random()`, never a gameplay
+   * stream, so the same actor is the same person on reload.
+   */
   private applyActorVisualVariation(
     mesh: THREE.Group,
     allegiance: Allegiance,
     role: ActorRole,
     index: number,
   ): void {
-    // Deterministic by construction: a hash of the actor's index and side, never a
-    // gameplay stream and never `Math.random()`.
-    const variation = hashUnit(index + 1, allegiance.length * 7919 + 31) * 2 - 1
+    const variation = artVariation(
+      this.generatedBlueprint.seed,
+      `npc:actor:${allegiance}:${role}:${String(index)}`,
+    )
+    const height = variation.around(1, 0.055)
+    const bulk = variation.around(1, 0.05)
+    const shoulders = variation.around(1, 0.07)
+    const limb = variation.around(1, 0.06)
+    const stance = variation.signed(0.055)
+
     const bodyPivot = mesh.getObjectByName('body-pivot')
-    if (bodyPivot) {
-      const roleWidth = role === 'brute' || role === 'champion' ? 1.05 : 1
-      bodyPivot.scale.set(
-        roleWidth * (1 + variation * 0.055),
-        1 - variation * 0.042,
-        roleWidth * (1 + variation * 0.035),
-      )
+    if (bodyPivot) bodyPivot.scale.set(bulk, height, bulk * variation.around(1, 0.03))
+    const torsoPivot = mesh.getObjectByName('torso-pivot')
+    // Widening the torso pivot moves the shoulder joints with it, so the arms stay
+    // attached where they should be instead of floating away from a broader chest.
+    // Its `scale.y` is left alone because the breathing pass writes it every frame.
+    if (torsoPivot) torsoPivot.scale.x = shoulders
+    const pelvisPivot = mesh.getObjectByName('pelvis-pivot')
+    if (pelvisPivot) pelvisPivot.rotation.z = stance * 0.4
+
+    const rig = mesh.userData.rig as CharacterRig | undefined
+    if (rig) {
+      const armLength = variation.around(1, 0.05)
+      for (const leg of [rig.leftLeg, rig.rightLeg]) {
+        if (leg) leg.scale.set(1, limb, 1)
+      }
+      for (const arm of [rig.leftArm, rig.rightArm]) {
+        if (arm) arm.scale.set(1, armLength, 1)
+      }
+      if (rig.leftLeg) rig.leftLeg.rotation.z = -rig.legSplay - stance
+      if (rig.rightLeg) rig.rightLeg.rotation.z = rig.legSplay + stance
+      // The hand moved, so the rest pose of the weapon has to move with it.
+      rig.upperArm *= armLength
+      rig.forearm *= armLength
     }
-    const torso = mesh.getObjectByName('torso')
-    if (torso instanceof THREE.Mesh && torso.material instanceof THREE.MeshStandardMaterial) {
-      torso.material.color.offsetHSL(variation * 0.018, variation * 0.04, variation * 0.03)
+
+    const headScale = variation.around(1, 0.06)
+    for (const name of ['head', 'face', 'hair', 'headgear']) {
+      const part = mesh.getObjectByName(name)
+      if (part instanceof THREE.Mesh) part.scale.multiplyScalar(headScale)
     }
-    const head = mesh.getObjectByName('head')
-    if (head instanceof THREE.Mesh) {
-      head.rotation.y = variation * 0.16
-      head.scale.setScalar(1 + variation * 0.05)
-    }
+    const headPivot = mesh.getObjectByName('head-pivot')
+    if (headPivot) headPivot.rotation.y = variation.signed(0.12)
   }
 
   private createActorHealthBar(allegiance: Allegiance): {
@@ -12297,111 +12218,114 @@ export class GameEngine {
     actor.healthBarTexture.needsUpdate = true
   }
 
+  /**
+   * The caravan — the thing the game is named after — built like a cart.
+   *
+   * A ladder frame, a swivelling front axle, four spoked wheels with the rear pair
+   * larger than the front, a plank bed with a driver's bench, a load lashed down
+   * under a tilt on five bows, and a team of oxen in harness. Length runs along +X,
+   * which is the direction it travels, and each wheel group keeps the name `wheel`
+   * so the existing rolling animation still finds it. `cargo` keeps its name and
+   * its caller-owned material, because the robbery code squashes it and flashes
+   * its emissive — neither of which a shared material may suffer.
+   */
   private createCaravan(gilded = false): THREE.Group {
     const group = new THREE.Group()
-    const adopt = (
-      material: THREE.MeshStandardMaterial,
-      surface: StylizedSurface,
-    ): THREE.MeshStandardMaterial => this.artLibrary.adoptMaterial(material, { surface })
-    const wood = adopt(
-      new THREE.MeshStandardMaterial({
-        map: this.createSurfaceTexture(
-          gilded ? 'rich-caravan-wood' : 'caravan-wood',
-          gilded
-            ? mix(this.palette.warning, this.palette.surface, 0.22)
-            : mix(this.palette.warning, this.palette.bg, 0.48),
-          gilded
-            ? mix(this.palette.warning, this.palette.text, 0.34)
-            : mix(this.palette.warning, this.palette.text, 0.55),
-          { pattern: 'wood', repeatX: 4, repeatY: 3 },
-        ),
-        roughness: 0.92,
-      }),
-      'bark',
-    )
-    const metal = adopt(
-      new THREE.MeshStandardMaterial({
-        color: gilded ? this.palette.warning : this.palette.borderStrong,
-        roughness: 0.55,
-        metalness: gilded ? 0.76 : 0.45,
-      }),
-      'metal',
-    )
-    const build = (key: string, factory: () => THREE.BufferGeometry) =>
-      this.acquireArtGeometry(key, () => bakeOutlineNormals(factory()))
-    const base = new THREE.Mesh(
-      build('caravan-base', () => new THREE.BoxGeometry(5, 0.65, 3.1)),
-      wood,
-    )
-    base.position.y = 1.6
-    base.castShadow = true
-    group.add(base)
+    const key = gilded ? 'gilded' : 'plain'
+    const timber = this.artLibrary.acquireMaterial(`caravan:timber:${key}`, {
+      color: gilded
+        ? mix(this.palette.warning, this.palette.surface, 0.3)
+        : mix(this.palette.warning, this.palette.bg, 0.52),
+      surface: 'bark',
+    })
+    const ironwork = this.artLibrary.acquireMaterial(`caravan:iron:${key}`, {
+      color: gilded ? this.palette.warning : this.palette.borderStrong,
+      surface: 'metal',
+      metalness: gilded ? 0.76 : 0.45,
+      roughness: 0.55,
+    })
+    const canvas = this.artLibrary.acquireMaterial(`caravan:canvas:${key}`, {
+      color: gilded
+        ? mix(this.palette.warning, this.palette.surface, 0.62)
+        : mix(this.palette.surface, this.palette.warning, 0.22),
+      surface: 'cloth',
+    })
+    const hide = this.artLibrary.acquireMaterial('caravan:hide', {
+      color: mix(this.palette.warning, this.palette.text, 0.56),
+      surface: 'cloth',
+    })
+    const leather = this.artLibrary.acquireMaterial('caravan:leather', {
+      color: mix(this.palette.warning, this.palette.bg, 0.7),
+      surface: 'leather',
+    })
+
+    const build = (k: string, factory: () => THREE.BufferGeometry) =>
+      this.acquireArtGeometry(k, factory)
+
+    group.add(new THREE.Mesh(build('wagon-frame', () => buildWagonFrame()), timber))
+    group.add(new THREE.Mesh(build('wagon-bed', () => buildWagonBed()), timber))
+    group.add(new THREE.Mesh(build('wagon-tilt', () => buildWagonTilt()), canvas))
+
     const cargo = new THREE.Mesh(
-      build('caravan-cargo', () => new THREE.BoxGeometry(3.6, 2.5, 2.5)),
-      adopt(
-        new THREE.MeshStandardMaterial({
-          map: this.createSurfaceTexture(
-            gilded ? 'rich-caravan-crate' : 'caravan-crate',
-            gilded ? mix(this.palette.warning, this.palette.surface, 0.15) : this.palette.warning,
-            mix(this.palette.warning, this.palette.text, 0.42),
-            { pattern: 'wood', repeatX: 3, repeatY: 3 },
-          ),
-          roughness: 0.8,
-          emissive: gilded ? this.palette.warning : this.palette.bg,
-          emissiveIntensity: gilded ? 0.32 : 0,
-        }),
-        'bark',
-      ),
+      build(`wagon-cargo:${key}`, () => buildWagonCargo(gilded)),
+      // Caller-owned on purpose: `updateCaravan` writes this material's emissive
+      // when the load is robbed, and there are at most three carts in a run.
+      this.artLibrary.createMaterial({
+        color: gilded
+          ? mix(this.palette.warning, this.palette.surface, 0.16)
+          : mix(this.palette.warning, this.palette.text, 0.28),
+        surface: 'bark',
+        emissive: gilded ? this.palette.warning : this.palette.bg,
+        emissiveIntensity: gilded ? 0.32 : 0,
+      }),
     )
     cargo.name = 'cargo'
-    cargo.position.y = 3
-    cargo.castShadow = true
+    cargo.position.y = 2.45
     group.add(cargo)
-    const wheelGeometry = build('caravan-wheel', () => {
-      const geometry = new THREE.CylinderGeometry(0.9, 0.9, 0.32, 12)
-      geometry.rotateX(Math.PI / 2)
-      return geometry
-    })
-    const spokeGeometry = build('caravan-spoke', () =>
-      new THREE.BoxGeometry(1.45, 0.12, 0.38),
-    )
-    const spokeMaterial = adopt(
-      new THREE.MeshStandardMaterial({
-        color: mix(this.palette.warning, this.palette.borderStrong, 0.55),
-        metalness: 0.22,
-        roughness: 0.62,
-      }),
-      'metal',
-    )
-    for (const x of [-1.7, 1.7]) {
-      for (const z of [-1.72, 1.72]) {
+
+    for (const [x, radius] of [
+      [WAGON_RIG.rearAxleX, WAGON_RIG.rearWheelRadius],
+      [WAGON_RIG.frontAxleX, WAGON_RIG.frontWheelRadius],
+    ] as const) {
+      const axle = new THREE.Mesh(
+        build('wagon-axle', () => buildWagonAxle(WAGON_RIG.axleWidth)),
+        ironwork,
+      )
+      axle.position.set(x, radius, 0)
+      group.add(axle)
+      for (const side of [-1, 1]) {
         const wheel = new THREE.Group()
         wheel.name = 'wheel'
-        wheel.position.set(x, 1.05, z)
-        const tire = new THREE.Mesh(wheelGeometry, metal)
-        tire.castShadow = true
-        wheel.add(tire)
-        const horizontalSpoke = new THREE.Mesh(spokeGeometry, spokeMaterial)
-        const verticalSpoke = new THREE.Mesh(spokeGeometry, spokeMaterial)
-        verticalSpoke.rotation.z = Math.PI / 2
-        wheel.add(horizontalSpoke, verticalSpoke)
+        wheel.position.set(x, radius, side * WAGON_RIG.wheelZ)
+        const tyre = new THREE.Mesh(
+          build(`wagon-wheel:${radius.toFixed(2)}`, () => buildWagonWheel(radius)),
+          ironwork,
+        )
+        wheel.add(tyre)
         group.add(wheel)
       }
     }
-    const horse = new THREE.Mesh(
-      build('caravan-horse-body', () => new THREE.BoxGeometry(2.2, 1.6, 1)),
-      wood,
-    )
-    horse.position.set(4.2, 1.9, 0)
-    horse.castShadow = true
-    group.add(horse)
-    const horseHead = new THREE.Mesh(
-      build('caravan-horse-head', () => new THREE.BoxGeometry(0.9, 1.1, 0.8)),
-      wood,
-    )
-    horseHead.position.set(5.15, 2.7, 0)
-    horseHead.castShadow = true
-    group.add(horseHead)
+
+    group.add(new THREE.Mesh(build('wagon-harness', () => buildHarness()), leather))
+    for (const side of [-1, 1]) {
+      const ox = new THREE.Group()
+      ox.name = 'draft-ox'
+      ox.position.set(WAGON_RIG.oxX, 0, side * WAGON_RIG.oxZ)
+      const body = new THREE.Mesh(build('ox-body', () => buildOxBody()), hide)
+      ox.add(body)
+      const head = new THREE.Mesh(build('ox-head', () => buildOxHead()), hide)
+      head.name = 'ox-head'
+      head.position.set(0, WAGON_RIG.oxHeadY, WAGON_RIG.oxHeadZ)
+      head.rotation.x = 0.22
+      ox.add(head)
+      // The team faces the way the cart travels, which is +X.
+      ox.rotation.y = Math.PI / 2
+      group.add(ox)
+      const shadow = this.artLibrary.createContactShadow({ radius: 1.05 })
+      shadow.position.set(WAGON_RIG.oxX, 0, side * WAGON_RIG.oxZ)
+      group.add(shadow)
+    }
+
     if (gilded) {
       const beacon = new THREE.Mesh(
         new THREE.TorusGeometry(2.4, 0.12, 8, 28),
@@ -12415,17 +12339,25 @@ export class GameEngine {
       beacon.rotation.x = Math.PI / 2
       group.add(beacon)
     }
+
+    this.markCharacterShadows(group)
     group.position.set(-54, 0, -23)
     return group
   }
 
   /**
-   * Layer 3 — a quadruped built from the same boxes and cones the humanoids use, with
-   * the *same pivot names*. That is deliberate: `animateCharacter`, the death motion,
-   * the outline pass, and the health bar all keep working with no beast branch, and the
-   * stride that swings a soldier's arms swings a wolf's legs in diagonal pairs instead.
+   * Layer 3 — the four things that come out of the forest.
+   *
+   * They keep the humanoid pivot names on purpose: `animateCharacter`, the death
+   * motion, the outline pass and the health bar all keep working with no beast
+   * branch, and the stride that swings a soldier's arms swings a wolf's front legs
+   * in diagonal pairs instead. What changed is that each animal now has its own
+   * body, skull, limbs and tail rather than four scalars over a shared box, and its
+   * own joint table in `BEAST_RIG` so the legs start where the ribs end.
    */
   private createBeast(role: BeastRole): THREE.Group {
+    const kind = role as BeastKind
+    const rig = BEAST_RIG[kind]
     const group = new THREE.Group()
     const bodyPivot = new THREE.Group()
     bodyPivot.name = 'body-pivot'
@@ -12441,141 +12373,71 @@ export class GameEngine {
     bodyPivot.add(pelvisPivot)
 
     const pelt = this.beastPeltColor(role)
-    const hideMaterial = this.artLibrary.createMaterial({
+    const hideMaterial = this.artLibrary.acquireMaterial(`beast:hide:${role}`, {
       color: pelt,
       surface: 'cloth',
     })
-    const darkMaterial = this.artLibrary.createMaterial({
+    const darkMaterial = this.artLibrary.acquireMaterial(`beast:dark:${role}`, {
       color: mix(pelt, this.palette.bg, 0.55),
       surface: 'dark',
     })
-    const boneMaterial = this.artLibrary.createMaterial({
-      color: mix(this.palette.text, this.palette.surface, 0.35),
-      surface: 'skin',
-    })
-
-    const bulk = role === 'wolf' ? 0.86 : role === 'boar' ? 1 : 1.2
-    const backHeight = role === 'troll' ? 1.85 : role === 'bear' ? 1.5 : 1.2
-    // Beast parts are shared exactly like character parts: keyed by the dimensions
-    // that actually vary, so the four roles collapse onto a handful of buffers
-    // instead of allocating a fresh set per spawn. Every part is outline-baked, or
-    // hard-edged boxes and cones push their inverted hull apart at the seams.
-    const bulkKey = bulk.toFixed(2)
     const build = (key: string, factory: () => THREE.BufferGeometry) =>
-      this.acquireArtGeometry(key, () => bakeOutlineNormals(factory()))
+      this.acquireArtGeometry(key, factory)
 
     const torso = new THREE.Mesh(
-      build(`beast-torso:${bulkKey}`, () =>
-        new THREE.BoxGeometry(0.86 * bulk, 0.82 * bulk, 1.95 * bulk),
-      ),
+      build(`beast-body:${role}`, () => buildBeastBody(kind)),
       hideMaterial,
     )
     torso.name = 'torso'
-    torso.position.y = backHeight
+    torso.position.y = rig.backHeight
     torsoPivot.add(torso)
 
-    // Shoulder hump: a boar's is its silhouette, a troll's is most of its mass.
-    const humpHeight = role === 'boar' ? 0.42 : role === 'troll' ? 0.62 : 0.26
-    const hump = new THREE.Mesh(
-      build(`beast-hump:${bulkKey}:${humpHeight.toFixed(2)}`, () =>
-        new THREE.BoxGeometry(0.78 * bulk, humpHeight, 0.86 * bulk),
-      ),
-      hideMaterial,
-    )
-    hump.position.set(0, backHeight + 0.5 * bulk, 0.52 * bulk)
-    torsoPivot.add(hump)
-
     const head = new THREE.Mesh(
-      build(`beast-head:${bulkKey}`, () =>
-        new THREE.BoxGeometry(0.62 * bulk, 0.58 * bulk, 0.7 * bulk),
-      ),
+      build(`beast-head:${role}`, () => buildBeastHead(kind)),
       hideMaterial,
     )
     head.name = 'head'
-    head.position.set(0, backHeight + (role === 'troll' ? 0.5 : 0.18), 1.28 * bulk)
+    head.position.set(0, rig.headY, rig.headZ)
     headPivot.add(head)
 
-    const snoutLength = role === 'wolf' ? 0.72 : role === 'boar' ? 0.6 : 0.44
-    const snout = new THREE.Mesh(
-      build(`beast-snout:${bulkKey}:${snoutLength.toFixed(2)}`, () =>
-        new THREE.ConeGeometry(0.24 * bulk, snoutLength, 6),
-      ),
-      darkMaterial,
-    )
-    snout.position.set(0, head.position.y - 0.08, head.position.z + 0.42 * bulk)
-    snout.rotation.x = Math.PI / 2
-    headPivot.add(snout)
-
-    if (role === 'wolf') {
-      for (const side of [-1, 1]) {
-        const ear = new THREE.Mesh(
-          build('beast-ear-pointed', () => new THREE.ConeGeometry(0.13, 0.4, 5)),
-          darkMaterial,
-        )
-        ear.position.set(side * 0.22 * bulk, head.position.y + 0.42, head.position.z - 0.1)
-        ear.rotation.z = side * 0.18
-        headPivot.add(ear)
-      }
-    } else if (role === 'bear' || role === 'troll') {
-      for (const side of [-1, 1]) {
-        const ear = new THREE.Mesh(
-          build('beast-ear-round', () => new THREE.BoxGeometry(0.2, 0.22, 0.12)),
-          darkMaterial,
-        )
-        ear.position.set(side * 0.28 * bulk, head.position.y + 0.36, head.position.z - 0.16)
-        headPivot.add(ear)
-      }
-    }
-    if (role === 'boar' || role === 'troll') {
-      for (const side of [-1, 1]) {
-        const tusk = new THREE.Mesh(
-          build('beast-tusk', () => new THREE.ConeGeometry(0.07, 0.42, 5)),
-          boneMaterial,
-        )
-        tusk.position.set(
-          side * 0.2 * bulk,
-          head.position.y - 0.12,
-          head.position.z + 0.34 * bulk,
-        )
-        tusk.rotation.set(-0.9, 0, side * 0.22)
-        headPivot.add(tusk)
-      }
-    }
-
-    // Front legs answer to `leftArm` / `rightArm`, hind legs to `leftLeg` / `rightLeg`,
-    // so the shared stride pose already produces a diagonal quadruped gait.
-    const legLength = backHeight - 0.32 * bulk
-    const legGeometry = build(`beast-leg:${bulkKey}:${legLength.toFixed(3)}`, () =>
-      new THREE.BoxGeometry(0.26 * bulk, legLength, 0.3 * bulk),
-    )
-    for (const [name, x, z, parent] of [
-      ['leftArm', -0.32, 0.72, torsoPivot],
-      ['rightArm', 0.32, 0.72, torsoPivot],
-      ['leftLeg', -0.32, -0.72, pelvisPivot],
-      ['rightLeg', 0.32, -0.72, pelvisPivot],
+    // Front limbs answer to `leftArm` / `rightArm`, hind limbs to `leftLeg` /
+    // `rightLeg`, so the shared stride already produces a diagonal gait.
+    for (const [name, side, front] of [
+      ['leftArm', -1, true],
+      ['rightArm', 1, true],
+      ['leftLeg', -1, false],
+      ['rightLeg', 1, false],
     ] as const) {
       const pivot = new THREE.Group()
       pivot.name = name
-      pivot.position.set(x * bulk, backHeight - 0.3 * bulk, z * bulk)
-      const leg = new THREE.Mesh(legGeometry, darkMaterial)
-      leg.position.y = -legLength / 2
-      pivot.add(leg)
-      parent.add(pivot)
+      pivot.position.set(
+        side * (front ? rig.frontX : rig.hindX),
+        front ? rig.frontJointY : rig.hindJointY,
+        front ? rig.frontZ : rig.hindZ,
+      )
+      const length = front ? rig.frontLimb : rig.hindLimb
+      const limb = new THREE.Mesh(
+        build(`beast-limb:${role}:${front ? 'front' : 'hind'}`, () =>
+          buildBeastLimb(kind, front, length),
+        ),
+        darkMaterial,
+      )
+      pivot.add(limb)
+      ;(front ? torsoPivot : pelvisPivot).add(pivot)
     }
 
-    const tailLength = role === 'wolf' ? 1.05 : 0.5
+    const tailPivot = new THREE.Group()
+    tailPivot.name = 'tail-pivot'
+    tailPivot.position.set(0, rig.tailY, rig.tailZ)
     const tail = new THREE.Mesh(
-      build(`beast-tail:${bulkKey}:${tailLength.toFixed(2)}`, () =>
-        new THREE.ConeGeometry(0.14 * bulk, tailLength, 6),
-      ),
+      build(`beast-tail:${role}`, () => buildBeastTail(kind)),
       darkMaterial,
     )
-    tail.position.set(0, backHeight + 0.18, -1.1 * bulk)
-    tail.rotation.x = -1.15
-    pelvisPivot.add(tail)
+    tailPivot.add(tail)
+    pelvisPivot.add(tailPivot)
 
     const ring = new THREE.Mesh(
-      this.acquireArtGeometry('faction-ring', () => new THREE.RingGeometry(0.72, 0.9, 24)),
+      build('faction-ring', () => new THREE.RingGeometry(0.72, 0.9, 24)),
       new THREE.MeshBasicMaterial({
         color: this.allegianceColor('beast'),
         transparent: true,
@@ -12590,18 +12452,31 @@ export class GameEngine {
     ring.rotation.x = -Math.PI / 2
     ring.renderOrder = 2
     group.add(ring)
+    group.add(this.artLibrary.createContactShadow({ radius: rig.footprint }))
 
-    // Same grounding pool the humanoids get, widened for a quadruped's footprint.
-    group.add(this.artLibrary.createContactShadow({ radius: 0.78 * bulk }))
-
-    group.traverse((object) => {
-      if (object instanceof THREE.Mesh) {
-        if (object.name === 'faction-ring') return
-        if (object.userData.noComicOutline === true) return
-        object.castShadow = true
-        object.receiveShadow = true
-      }
-    })
+    this.markCharacterShadows(group)
+    const beastRig: CharacterRig = {
+      leftArm: group.getObjectByName('leftArm') ?? null,
+      rightArm: group.getObjectByName('rightArm') ?? null,
+      leftElbow: null,
+      rightElbow: null,
+      leftLeg: group.getObjectByName('leftLeg') ?? null,
+      rightLeg: group.getObjectByName('rightLeg') ?? null,
+      leftKnee: null,
+      rightKnee: null,
+      weapon: null,
+      cloak: tailPivot,
+      shoulderY: rig.frontJointY,
+      upperArm: rig.frontLimb * 0.5,
+      forearm: rig.frontLimb * 0.5,
+      elbowRest: 0,
+      armSplay: 0,
+      legSplay: 0,
+      mainHand: 1,
+      beast: kind,
+      boundArms: false,
+    }
+    group.userData.rig = beastRig
     return group
   }
 
@@ -12623,12 +12498,25 @@ export class GameEngine {
   ): Actor {
     this.claimActorSlot(options.budget)
     const beast = isBeastRole(role) ? BEAST_PROFILES[role] : null
+    // The variant picks headgear, hair, weapon and cloth tint out of the kit's own
+    // sets. It is an integer rather than a float so every person the game can build
+    // stays enumerable, which is what keeps the geometry cache bounded.
+    const variant = artVariation(
+      this.generatedBlueprint.seed,
+      `npc:variant:${allegiance}:${role}:${String(index)}`,
+    ).integer(0, CHARACTER_VARIANTS)
     const mesh = beast
       ? this.createBeast(role as BeastRole)
       : this.createCharacter(
           isFactionAllegiance(allegiance) ? allegiance : 'guard',
           false,
+          role,
+          variant,
         )
+    // Scale stays here rather than in the geometry because
+    // `actorColliderRadiusForRole` and `actorHealthBarHeight` are calibrated against
+    // it. Shape differences live in the plan; size differences live where the
+    // collision code can see them.
     if (beast) mesh.scale.setScalar(beast.scale)
     if (role === 'brute') mesh.scale.set(1.28, 1.12, 1.28)
     if (role === 'champion') {
@@ -12649,46 +12537,18 @@ export class GameEngine {
       auraLight.position.y = 1.4
       mesh.add(auraLight)
     }
-    if (role === 'archer') {
-      mesh.scale.setScalar(0.94)
-      const weapon = mesh.getObjectByName('weapon')
-      if (weapon) {
-        weapon.children.forEach((child) => {
-          child.visible = false
-        })
-        const bow = new THREE.Mesh(
-          new THREE.TorusGeometry(0.48, 0.045, 6, 14, Math.PI),
-          this.artLibrary.createMaterial({
-            color: this.palette.warning,
-            surface: 'dark',
-          }),
-        )
-        bow.rotation.x = Math.PI / 2
-        bow.castShadow = true
-        weapon.add(bow)
-      }
-    }
+    if (role === 'archer') mesh.scale.setScalar(0.94)
+    // §5D — a villager is smaller and unarmed, and a captive is roped. Both come
+    // out of `resolveCharacterPlan` that way now: a peasant has no weapon geometry
+    // at all rather than one built and then hidden, and the civil kit already wears
+    // nobody's colours. A captive keeps a hidden dagger, because rescuing one hands
+    // it back at `adoptCompanion`.
     if (role === 'captive') {
       mesh.scale.setScalar(0.94)
       const weapon = mesh.getObjectByName('weapon')
       if (weapon) weapon.visible = false
     }
-    // §5D — a villager is smaller, unarmed and wears nobody's colours. Reusing
-    // `createCharacter` with a recoloured torso is the whole art budget for the role: the
-    // silhouette that matters is "not carrying a sword", and the muted `civilian` ring
-    // under it already says whose side it is on.
-    if (role === 'peasant') {
-      mesh.scale.setScalar(0.9)
-      const weapon = mesh.getObjectByName('weapon')
-      if (weapon) weapon.visible = false
-      const torso = mesh.getObjectByName('torso')
-      if (torso instanceof THREE.Mesh && torso.material instanceof THREE.MeshStandardMaterial) {
-        torso.material = this.artLibrary.createMaterial({
-          color: mix(this.palette.muted, this.palette.bg, 0.28),
-          surface: 'cloth',
-        })
-      }
-    }
+    if (role === 'peasant') mesh.scale.setScalar(0.9)
     this.applyActorVisualVariation(mesh, allegiance, role, index)
     const outlineBinding = this.registerOutline(mesh, 'enemy')
     mesh.position.set(x, this.groundHeightAt(x, z), z)
@@ -13878,39 +13738,160 @@ export class GameEngine {
     )
   }
 
+  /**
+   * Poses a body from one `CharacterPose`.
+   *
+   * Everything here is a trig expression over the pose and the cached rig, so it
+   * allocates nothing and runs the same for the player and for twenty-five actors.
+   *
+   * The weapon is the interesting part. `weapon` has to stay a direct child of
+   * `torso-pivot` — `attachTorch` and the player's weapon trail both parent to it —
+   * so instead of reparenting it into the fist, the pose *solves* the arm chain and
+   * writes the resulting hand position into the pivot. The grip is therefore in the
+   * hand in every frame of every state, and the blade angle stays authored rather
+   * than inherited, which is what stops a sword from lying along its owner's arm.
+   */
   private animateCharacter(group: THREE.Group, pose: CharacterPose): void {
-    const leftArm = group.getObjectByName('leftArm')
-    const rightArm = group.getObjectByName('rightArm')
-    const leftLeg = group.getObjectByName('leftLeg')
-    const rightLeg = group.getObjectByName('rightLeg')
-    const weapon = group.getObjectByName('weapon')
-    if (leftArm) {
-      leftArm.rotation.set(
-        -pose.stride * 0.7 + pose.flinch * 0.3 + pose.stagger * 0.62,
-        0,
-        -pose.flinch * 0.18 - pose.stagger * 0.42,
+    const rig = group.userData.rig as CharacterRig | undefined
+    if (!rig) return
+    if (rig.beast) {
+      this.animateBeastRig(rig, pose)
+      return
+    }
+    const stride = rig.boundArms ? 0 : pose.stride
+    const swing = pose.stride
+    const main = rig.mainHand > 0 ? rig.rightArm : rig.leftArm
+    const mainElbow = rig.mainHand > 0 ? rig.rightElbow : rig.leftElbow
+    const off = rig.mainHand > 0 ? rig.leftArm : rig.rightArm
+    const offElbow = rig.mainHand > 0 ? rig.leftElbow : rig.rightElbow
+
+    // The weapon arm drives the attack; the free arm counterbalances it.
+    const mainX =
+      stride * 0.62 -
+      pose.attack * 0.95 +
+      pose.anticipation * 0.7 -
+      pose.recovery * 0.18 -
+      pose.flinch * 0.3 +
+      pose.stagger * 0.62
+    const mainZ =
+      rig.mainHand * (rig.armSplay + pose.flinch * 0.18 + pose.stagger * 0.42) -
+      pose.attack * 0.2
+    const offX =
+      -stride * 0.62 + pose.flinch * 0.3 + pose.stagger * 0.62 - pose.attack * 0.16
+    const offZ = -rig.mainHand * (rig.armSplay + pose.flinch * 0.18 + pose.stagger * 0.42)
+
+    if (main) main.rotation.set(mainX, 0, mainZ)
+    if (off) off.rotation.set(offX, 0, offZ)
+
+    // Elbows carry the arm's rest flex, deepen when the arm swings forward, cock
+    // through the windup and snap through the strike.
+    const mainElbowX = rig.boundArms
+      ? rig.elbowRest
+      : rig.elbowRest +
+        Math.max(0, -mainX) * 0.55 +
+        pose.anticipation * 0.95 -
+        pose.attack * 0.42 +
+        pose.recovery * 0.2 +
+        pose.stagger * 0.5
+    const offElbowX = rig.elbowRest + Math.max(0, -offX) * 0.55 + pose.stagger * 0.5
+    if (mainElbow) mainElbow.rotation.x = mainElbowX
+    if (offElbow) offElbow.rotation.x = offElbowX
+
+    // Legs. A knee only bends one way, and it bends on the leg that is swinging
+    // forward, which is the difference between walking and skating.
+    const leftX = stride
+    const rightX = -stride
+    if (rig.leftLeg) rig.leftLeg.rotation.x = leftX
+    if (rig.rightLeg) rig.rightLeg.rotation.x = rightX
+    if (rig.leftKnee) {
+      rig.leftKnee.rotation.x = 0.04 + Math.max(0, -leftX) * 1.15 + pose.stagger * 0.5
+    }
+    if (rig.rightKnee) {
+      rig.rightKnee.rotation.x = 0.04 + Math.max(0, -rightX) * 1.15 + pose.stagger * 0.5
+    }
+
+    if (rig.weapon) {
+      this.placeWeaponInHand(
+        rig,
+        main,
+        mainX,
+        mainZ,
+        mainElbowX,
+        -0.18 +
+          mainX * 0.4 +
+          pose.anticipation * 0.95 -
+          pose.attack * 1.55 +
+          pose.recovery * 0.28,
+        rig.mainHand * 0.2 + mainZ * 0.5,
       )
     }
-    if (rightArm) {
-      rightArm.rotation.set(
-        pose.stride * 0.7 -
-          pose.attack * 1.15 +
-          pose.anticipation * 0.86 -
-          pose.recovery * 0.2 -
-          pose.flinch * 0.3 +
-          pose.stagger * 0.62,
-        0,
-        pose.flinch * 0.18 + pose.stagger * 0.42,
-      )
+
+    if (rig.cloak) {
+      // Cloth lags the body and lifts with speed. One expression, no damping state.
+      rig.cloak.rotation.x =
+        -0.05 -
+        Math.abs(swing) * 0.42 -
+        pose.attack * 0.2 +
+        Math.sin(this.elapsed * 1.6) * 0.02
+      rig.cloak.rotation.z = swing * 0.12
     }
-    if (leftLeg) leftLeg.rotation.set(pose.stride, 0, 0)
-    if (rightLeg) rightLeg.rotation.set(-pose.stride, 0, 0)
-    if (weapon) {
-      weapon.rotation.set(
-        pose.anticipation * 0.82 - pose.attack * 1.3 + pose.recovery * 0.25,
-        0,
-        0,
-      )
+  }
+
+  /**
+   * Solves the two-bone arm chain and drops the weapon pivot on the hand.
+   *
+   * Shared by the melee pose and the archer's draw so the two can never disagree
+   * about where the fist is. Writes into one reused vector; allocates nothing.
+   */
+  private placeWeaponInHand(
+    rig: CharacterRig,
+    arm: THREE.Object3D | null,
+    armX: number,
+    armZ: number,
+    elbowX: number,
+    wristX: number,
+    wristZ: number,
+  ): void {
+    if (!rig.weapon) return
+    const hand = solveHandOffset(
+      this.handOffset,
+      rig.upperArm,
+      rig.forearm,
+      armX,
+      armZ,
+      elbowX,
+    )
+    rig.weapon.position.set(
+      (arm ? arm.position.x : rig.mainHand * 0.6) + hand.x,
+      (arm ? arm.position.y : rig.shoulderY) + hand.y,
+      hand.z,
+    )
+    rig.weapon.rotation.set(wristX, 0, wristZ)
+  }
+
+  /** The same pose, remapped for something that walks on four legs. */
+  private animateBeastRig(rig: CharacterRig, pose: CharacterPose): void {
+    const kind = rig.beast
+    if (!kind) return
+    const reach =
+      kind === 'wolf' ? 1.05 : kind === 'boar' ? 0.9 : kind === 'bear' ? 0.78 : 0.62
+    const stride = pose.stride * reach
+    const lunge = pose.attack * (kind === 'troll' ? 1.15 : 0.7)
+    const rear = pose.anticipation * (kind === 'troll' ? 0.8 : 0.35)
+    // Diagonal pairs: the front-left limb travels with the hind-right one.
+    if (rig.leftArm) {
+      rig.leftArm.rotation.set(-stride - lunge + rear + pose.stagger * 0.5, 0, 0)
+    }
+    if (rig.rightArm) {
+      rig.rightArm.rotation.set(stride - lunge + rear + pose.stagger * 0.5, 0, 0)
+    }
+    if (rig.leftLeg) rig.leftLeg.rotation.set(stride * 0.88 - pose.stagger * 0.3, 0, 0)
+    if (rig.rightLeg) rig.rightLeg.rotation.set(-stride * 0.88 - pose.stagger * 0.3, 0, 0)
+    if (rig.cloak) {
+      // `cloak` holds the tail on a beast: it lifts with speed and tucks when hit.
+      rig.cloak.rotation.x =
+        -0.1 - Math.abs(stride) * 0.4 + pose.flinch * 0.9 + pose.stagger * 0.7
+      rig.cloak.rotation.z = Math.sin(this.elapsed * 5.5 + stride * 3) * 0.16
     }
   }
 
@@ -13925,13 +13906,11 @@ export class GameEngine {
   private animateActorCharacter(actor: Actor, delta: number, lookYaw: number): void {
     const pose = this.sampleActorPose(actor)
     this.animateCharacter(actor.mesh, pose)
+    const rig = actor.mesh.userData.rig as CharacterRig | undefined
     const bodyPivot = actor.mesh.getObjectByName('body-pivot')
     const torsoPivot = actor.mesh.getObjectByName('torso-pivot')
     const pelvisPivot = actor.mesh.getObjectByName('pelvis-pivot')
     const headPivot = actor.mesh.getObjectByName('head-pivot')
-    const leftArm = actor.mesh.getObjectByName('leftArm')
-    const rightArm = actor.mesh.getObjectByName('rightArm')
-    const weapon = actor.mesh.getObjectByName('weapon')
     const breathing = Math.sin(this.elapsed * 1.75 + actor.phase) * 0.018
     const idleWeightShift =
       Math.sin(this.elapsed * 0.7 + actor.phase * 1.9) * 0.035 * (1 - actor.motionBlend)
@@ -13940,11 +13919,11 @@ export class GameEngine {
       0.065 *
       THREE.MathUtils.clamp(actor.motionBlend, 0, 1)
     const heavy = actor.role === 'brute' || actor.role === 'champion'
-    const hitRight = new THREE.Vector3(
-      Math.cos(actor.mesh.rotation.y),
-      0,
-      -Math.sin(actor.mesh.rotation.y),
-    ).dot(actor.lastHitDirection)
+    // The dot of the actor's own right vector with the direction it was hit from,
+    // written out rather than built from a `Vector3` — this runs 25 times a frame.
+    const yaw = actor.mesh.rotation.y
+    const hitRight =
+      Math.cos(yaw) * actor.lastHitDirection.x - Math.sin(yaw) * actor.lastHitDirection.z
     const forwardLean =
       actor.role === 'scout'
         ? 0.075
@@ -13991,19 +13970,31 @@ export class GameEngine {
         pose.flinch * hitRight * 0.3
     }
 
+    if (!rig || rig.beast) return
     if (actor.role === 'archer') {
+      // The bow is in the bow hand and the string hand pulls back past the jaw. The
+      // weapon pivot is re-solved afterwards so the riser stays in the fist.
       const draw = Math.max(pose.anticipation, pose.attack * 0.8)
-      if (leftArm) leftArm.rotation.x = -0.45 - draw * 0.62 - actor.stride * 0.15
-      if (rightArm) {
-        rightArm.rotation.x = -0.72 - draw * 0.85 + actor.stride * 0.1
-        rightArm.rotation.z = -draw * 0.18
-      }
-      if (weapon) {
-        weapon.rotation.x = -0.2 - draw * 0.72
-        weapon.rotation.z = 0.18 + draw * 0.16
-      }
-    } else if (rightArm) {
-      rightArm.rotation.z -= pose.attack * 0.16
+      const bowArm = rig.mainHand > 0 ? rig.rightArm : rig.leftArm
+      const bowElbow = rig.mainHand > 0 ? rig.rightElbow : rig.leftElbow
+      const drawArm = rig.mainHand > 0 ? rig.leftArm : rig.rightArm
+      const drawElbow = rig.mainHand > 0 ? rig.leftElbow : rig.rightElbow
+      const bowX = -1.22 - actor.stride * 0.08
+      const bowZ = rig.mainHand * (0.12 + draw * 0.06)
+      const bowElbowX = 0.12
+      if (bowArm) bowArm.rotation.set(bowX, 0, bowZ)
+      if (bowElbow) bowElbow.rotation.x = bowElbowX
+      if (drawArm) drawArm.rotation.set(-1.05 - draw * 0.18, 0, -rig.mainHand * 0.34)
+      if (drawElbow) drawElbow.rotation.x = 0.5 + draw * 1.25
+      this.placeWeaponInHand(
+        rig,
+        bowArm,
+        bowX,
+        bowZ,
+        bowElbowX,
+        Math.PI / 2 + 0.06,
+        rig.mainHand * -1.35,
+      )
     }
   }
 
