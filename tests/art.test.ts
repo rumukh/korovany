@@ -1508,10 +1508,27 @@ test('closed builders wind outward, independently of their normals', () => {
   let totalJudged = 0
   for (const [, label, geometry] of cases) {
     const { inward, weakest, judged } = measure(geometry)
-    // Prove the invariant applies before trusting what it says. 0.2 is far below
-    // every real case (the weakest shipped is the closed lathe at 0.93) and far
-    // above the degenerate one (a flat lathe at 0.000000), so it separates "this
-    // geometry is inverted" from "this test cannot speak about this geometry".
+    // Prove the invariant applies before trusting what it says. 0.2 is a TRIPWIRE on
+    // this test's own cases, not a correctness threshold on geometry in general, and
+    // the difference is not academic. Measured, `probe-inventory2.mts`:
+    //
+    //   this test's cases       min 0.3527 (tube up/down), NOT the closed lathe at
+    //                           0.9255 — an earlier revision of this comment said the
+    //                           lathe and it was stale the moment the tubes were added.
+    //                           Real headroom over the guard is 1.76x, not 4.6x.
+    //   shipped game art        Box(0.78, 0.04, 0.2) at GameEngine.ts:7181 scores
+    //                           0.1474 and winds perfectly correctly — it would FAIL
+    //                           this guard. Cone(0.06, 0.62, 4) at :7119 scores 0.3292.
+    //
+    // So a control or case shaped like this game's own art can sit below 0.2 while
+    // being entirely well formed: the margin falls with aspect ratio and with coarse
+    // tessellation, and thin slabs and slender spikes are exactly what the art uses.
+    // Two whole families are degenerate rather than merely tight, and both are already
+    // in `src`: flat open surfaces (Circle/Plane/Ring, 7 sites — one of them this
+    // library's own contact shadow) score exactly 0 because their centroid lies in
+    // their own plane, and non-star-convex solids (Torus, 2 sites) score 0.28-0.34
+    // with roughly half their faces spuriously inward. Neither is a winding fault.
+    // Anything in either family belongs in the signed-volume test below, not here.
     assert.ok(
       weakest > 0.2,
       `${label} is too flat for the centroid invariant to classify `
