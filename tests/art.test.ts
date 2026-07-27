@@ -1148,6 +1148,7 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
   // deviation at all is a defect.
   const worstDegrees = (
     geometry: THREE.BufferGeometry,
+    keep?: (midY: number) => boolean,
   ): { worst: number, judged: number } => {
     const position = geometry.getAttribute('position')
     const normal = geometry.getAttribute('normal')
@@ -1169,6 +1170,9 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
       a.fromBufferAttribute(position, indices[0])
       b.fromBufferAttribute(position, indices[1])
       c.fromBufferAttribute(position, indices[2])
+      // Region filter, applied before anything is judged so `judged` reports the
+      // population of the region rather than of the whole shape.
+      if (keep && !keep((a.y + b.y + c.y) / 3)) continue
       wind.crossVectors(edge1.subVectors(b, a), edge2.subVectors(c, a))
       if (wind.lengthSq() < 1e-14) continue
       wind.normalize()
@@ -1235,10 +1239,32 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
   // — so the honest assertion is differential: collapsing a section must not make a
   // capsule any worse than the healthy one of the same tessellation. Before the fix
   // this read 72.14 against 20.97 while the sign test called both clean.
+  //
+  // Measured on the LOWER HALF only, because whole-shape this was not measuring the
+  // parameter at all. `bottomScale` perturbs the bottom cap, the capsule is mirror
+  // symmetric, and the deviation peaks at the cap either way — so the healthy shape's
+  // worst triangle sits at y = -0.95 and the spiked shape's worst sits at its own
+  // untouched mirror image, y = +0.95. Equal to the bit:
+  //
+  //     region    healthy worst       spiked worst       margin
+  //     whole     20.969619 @ -0.95   20.969619 @ +0.95  0.000e+0   <- symmetry
+  //     y < 0     20.969619 @ -0.95    7.861194 @ -0.74  13.1084
+  //
+  // So the assertion was passing on capsule symmetry rather than on the repair, with
+  // the 1e-6 epsilon absorbing nothing and a float nudge anywhere in the top cap
+  // enough to fail a healthy build. Not a coincidence to be re-tuned: the extremum
+  // had relocated out of the region under test, which is the second way to lose an
+  // assertion's subject and leaves exactly as little trace as the first.
+  //
+  // This fixes the region and the exact-tie flake. It does NOT make the assertion
+  // sensitive to a downward-only regression — a spike that got worse but stayed under
+  // the healthy cap's 20.97 would still pass, and catching that needs a directional
+  // measure rather than a worst-of.
   const healthy = stylizedCapsule({ radius: 0.5, height: 1 })
   const spiked = stylizedCapsule({ radius: 0.5, height: 1, bottomScale: 0 })
-  const healthyMeasure = worstDegrees(healthy)
-  const spikedMeasure = worstDegrees(spiked)
+  const lowerHalf = (midY: number): boolean => midY < 0
+  const healthyMeasure = worstDegrees(healthy, lowerHalf)
+  const spikedMeasure = worstDegrees(spiked, lowerHalf)
   assert.ok(healthyMeasure.judged > 0, 'healthy capsule judged no triangles')
   assert.ok(
     spikedMeasure.worst <= healthyMeasure.worst + 1e-6,
@@ -1247,7 +1273,8 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
   )
   // The collapse also used to delete half the judgeable faces — 46 against 92 — so
   // even a magnitude test could have been fooled by measuring fewer things. The
-  // floor keeps the population identical.
+  // floor keeps the population identical: 46 each under the region filter, and the
+  // pairing rather than the value is what carries the guarantee.
   assert.equal(
     spikedMeasure.judged,
     healthyMeasure.judged,
@@ -1256,12 +1283,18 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
   healthy.dispose()
   spiked.dispose()
 
-  // The capsule pair above no longer reaches the repaired code path at all, and
-  // that is the point of the block below. The floor stops its bottom ring at
-  // radius 0.02, so `loftProfile`'s collapsed-ring branch never fires for it —
-  // fixing the floor removed the input that the loft assertion depended on. Two
-  // fixes in one commit, and the second neutralised the first one's only smooth
-  // test. So a direct smooth loft has to carry that coverage.
+  // The capsule pair above no longer *covers* the repaired code path, which is not
+  // the same as the path being unreachable — worth correcting, because the stronger
+  // claim invites deleting a branch that production still enters. The floor applies
+  // to the bottom ring only. Measured: `bottomScale: 0` is floored to radius 0.02000
+  // and yields 92 non-degenerate triangles, identical to the plain capsule, so
+  // `loftProfile`'s collapsed-ring branch never fires for it. `topScale: 0` is
+  // unfloored — min ring radius 0.00000, 76 non-degenerate triangles — so the
+  // repaired path is still live, just not exercised by this pair.
+  //
+  // Fixing the floor removed the input the loft assertion depended on. Two fixes in
+  // one commit, and the second neutralised the first one's only smooth test. So a
+  // direct smooth loft has to carry that coverage.
   //
   // It has to be a TALL one. The sign test's blindness here is not a blind spot
   // but a blind *zone* with an exact boundary. In smooth mode `normalFor` takes X
@@ -2682,6 +2715,24 @@ test('every type the spec names is exported by the barrel', () => {
  * Deliberately repo-wide rather than scoped to one file, and deliberately not a list
  * to maintain: a sweep that trips this has a real bug and the fix is the guard, not
  * an entry in a table.
+ *
+ * **Wave 4 is authorised to narrow or delete this test rather than contort code to
+ * satisfy it, and must delete it if shells become siblings of their source rather
+ * than children** — that removes the class structurally and leaves this scanning for
+ * a bug that can no longer exist. It parses TypeScript by paren balance over source
+ * text, which is a heuristic scanner wearing a test's clothes, and merging three trees
+ * will churn traversals heavily. Blocking integration on a parsing artifact costs more
+ * than this test is worth.
+ *
+ * One self-defeat to know about before then, found by reading these assertions rather
+ * than recalling them, and then measured. The `sweeps.length >= 3` floor is there so a
+ * broken scan cannot pass by finding nothing — but it also encodes "at least three
+ * *separate* sweeps exist". The scan currently finds **4** (`GameEngine.ts` `:7460`,
+ * `:9974`, `:10661`, `:10675`, all guarded), so the margin is **1**: removing any two
+ * turns this red. Consolidating them into one guarded helper — the fix this docblock
+ * argues for — drops the count to 1 and fails on a success. Lower the floor to 1, which
+ * still catches a scan that finds nothing, or delete the test. Do not keep four
+ * traversals alive to keep it green.
  */
 test('every bulk material sweep by traversal excludes outline shells', () => {
   const root = new URL('../src/game/', import.meta.url)
