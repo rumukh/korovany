@@ -987,6 +987,39 @@ test('every geometry-kit builder winds to agree with its normals', () => {
         { y: 1.2, scaleX: 0.02 },
       ],
     })],
+    // Fully collapsed sections, which `loft tapered to a point` above only
+    // approaches. The lower-ring cases shipped with wrong normals: the face normal
+    // was crossed against the LOWER ring's tangential edge, so collapsing that ring
+    // zeroed it and every face above fell through to a fixed (0,1,0). Upward spikes
+    // were always fine, which is why this needs both directions to say anything —
+    // one of them passes on the broken code.
+    ['loft collapsed lower ring (spike down)', loftProfile({
+      profile: polygonProfile(0.6, 8),
+      sections: [
+        { y: 0, scaleX: 0 },
+        { y: 1, scaleX: 1 },
+      ],
+    })],
+    ['loft collapsed upper ring (spike up)', loftProfile({
+      profile: polygonProfile(0.6, 8),
+      sections: [
+        { y: 0, scaleX: 1 },
+        { y: 1, scaleX: 0 },
+      ],
+    })],
+    // Position-independent: a pinch in the middle of the list fires it on the faces
+    // immediately above, so this is not a "first section" special case.
+    ['loft mid-list pinch (hourglass)', loftProfile({
+      profile: polygonProfile(0.6, 8),
+      sections: [
+        { y: 0, scaleX: 1 },
+        { y: 1, scaleX: 0 },
+        { y: 2, scaleX: 1 },
+      ],
+    })],
+    ['tapered box bottomScale 0', taperedBox({
+      width: 1, height: 2, depth: 1, bottomScale: 0,
+    })],
     ['loft anisotropic', loftProfile({
       profile: polygonProfile(0.5, 8),
       sections: [
@@ -1077,6 +1110,164 @@ test('every geometry-kit builder winds to agree with its normals', () => {
       `${label} must wind to agree with its normals`,
     )
     geometry.dispose()
+  }
+})
+
+/**
+ * The test above is a SIGN test: it asks which side of zero `wind · normal` falls
+ * on. That is enough to catch a full inversion and blind to everything short of
+ * one — a normal can be 72 degrees wrong and still have a positive dot product.
+ *
+ * That is not hypothetical. `loftProfile` crossed its face normal against the
+ * LOWER ring's tangential edge, so any collapsed lower section zeroed it and every
+ * face above took the `(0, 1, 0)` fallback. On faceted output that reads as a
+ * 104-125 degree error and the sign test does catch it. On *smooth* output the
+ * radial normal blends the fallback away into a 72 degree tilt, and the sign test
+ * reported 0 disagreements — clean — on a downward spike lit as though it pointed
+ * at the sky, ink shell and all. Measured, before and after the fix:
+ *
+ *     taperedBox bottomScale 0      worst 104.04 deg -> 0.00    sign test 4 -> 0
+ *     loft mid-list pinch           worst 125.26 deg -> 0.00    sign test 4 -> 0
+ *     stylizedCapsule bottomScale 0 worst  72.14 deg -> 20.97   sign test 0 -> 0
+ *
+ * The third row is the reason this test exists. So: measure the angle, not the
+ * sign.
+ */
+test('collapsed sections keep their normals, in magnitude not just in sign', () => {
+  // Worst angle between a triangle's own winding normal and the normal actually
+  // stored on it, plus how many triangles were solid enough to judge. Faceted
+  // lofts write the exact face normal, so for them the answer is 0 and any
+  // deviation at all is a defect.
+  const worstDegrees = (
+    geometry: THREE.BufferGeometry,
+  ): { worst: number, judged: number } => {
+    const position = geometry.getAttribute('position')
+    const normal = geometry.getAttribute('normal')
+    const index = geometry.getIndex()
+    const count = index ? index.count : position.count
+    const at = (i: number): number => (index ? index.getX(i) : i)
+    const a = new THREE.Vector3()
+    const b = new THREE.Vector3()
+    const c = new THREE.Vector3()
+    const edge1 = new THREE.Vector3()
+    const edge2 = new THREE.Vector3()
+    const wind = new THREE.Vector3()
+    const stored = new THREE.Vector3()
+    const corner = new THREE.Vector3()
+    let worst = 0
+    let judged = 0
+    for (let triangle = 0; triangle + 2 < count; triangle += 3) {
+      const indices = [at(triangle), at(triangle + 1), at(triangle + 2)]
+      a.fromBufferAttribute(position, indices[0])
+      b.fromBufferAttribute(position, indices[1])
+      c.fromBufferAttribute(position, indices[2])
+      wind.crossVectors(edge1.subVectors(b, a), edge2.subVectors(c, a))
+      if (wind.lengthSq() < 1e-14) continue
+      wind.normalize()
+      stored.set(0, 0, 0)
+      for (const i of indices) {
+        corner.fromBufferAttribute(normal, i)
+        stored.add(corner)
+      }
+      if (stored.lengthSq() < 1e-14) continue
+      stored.normalize()
+      judged += 1
+      const cos = Math.min(1, Math.max(-1, wind.dot(stored)))
+      worst = Math.max(worst, (Math.acos(cos) * 180) / Math.PI)
+    }
+    return { worst, judged }
+  }
+
+  // Faceted lofts store the face normal verbatim, so exact agreement is the real
+  // contract and a loose threshold would let the 20-degree band back in.
+  const faceted: [string, THREE.BufferGeometry][] = [
+    ['collapsed lower ring', loftProfile({
+      profile: polygonProfile(0.6, 8),
+      sections: [{ y: 0, scaleX: 0 }, { y: 1, scaleX: 1 }],
+    })],
+    ['collapsed upper ring', loftProfile({
+      profile: polygonProfile(0.6, 8),
+      sections: [{ y: 0, scaleX: 1 }, { y: 1, scaleX: 0 }],
+    })],
+    ['mid-list pinch', loftProfile({
+      profile: polygonProfile(0.6, 8),
+      sections: [{ y: 0, scaleX: 1 }, { y: 1, scaleX: 0 }, { y: 2, scaleX: 1 }],
+    })],
+    ['anisotropic collapse', loftProfile({
+      profile: polygonProfile(0.6, 8),
+      sections: [{ y: 0, scaleX: 0, scaleZ: 0 }, { y: 1, scaleX: 1, scaleZ: 0.4 }],
+    })],
+    ['tapered box bottomScale 0', taperedBox({
+      width: 1, height: 2, depth: 1, bottomScale: 0,
+    })],
+    // Healthy controls: if the assertion is wrong these fail too, which is how we
+    // know a pass means something.
+    ['tapered box plain', taperedBox({
+      width: 1, height: 2, depth: 1, topScale: 0.6,
+    })],
+  ]
+  for (const [label, geometry] of faceted) {
+    const { worst, judged } = worstDegrees(geometry)
+    // Vacuity guard: a shape whose triangles were all skipped reports worst 0 and
+    // is indistinguishable from a perfect one.
+    assert.ok(judged > 0, `${label} judged no triangles at all`)
+    // 1e-3 deg, not 0. Positions and normals are Float32Array, so recomputing the
+    // winding normal from stored positions and comparing it to the stored normal
+    // costs ~3e-6 deg of rounding on a polygon profile (0 on an axis-aligned rect
+    // one, which stores its components exactly). Measured floor 4.2e-6, defect
+    // 104-125, so this sits two orders above the noise and five below the bug.
+    assert.ok(
+      worst < 1e-3,
+      `${label} stores normals up to ${worst.toFixed(2)} deg off its own winding`,
+    )
+    geometry.dispose()
+  }
+
+  // Smooth output legitimately deviates — the radial normal is not the face normal
+  // — so the honest assertion is differential: collapsing a section must not make a
+  // capsule any worse than the healthy one of the same tessellation. Before the fix
+  // this read 72.14 against 20.97 while the sign test called both clean.
+  const healthy = stylizedCapsule({ radius: 0.5, height: 1 })
+  const spiked = stylizedCapsule({ radius: 0.5, height: 1, bottomScale: 0 })
+  const healthyMeasure = worstDegrees(healthy)
+  const spikedMeasure = worstDegrees(spiked)
+  assert.ok(healthyMeasure.judged > 0, 'healthy capsule judged no triangles')
+  assert.ok(
+    spikedMeasure.worst <= healthyMeasure.worst + 1e-6,
+    `bottomScale 0 capsule deviates ${spikedMeasure.worst.toFixed(2)} deg vs `
+      + `${healthyMeasure.worst.toFixed(2)} deg for the healthy one`,
+  )
+  // The collapse also used to delete half the judgeable faces — 46 against 92 — so
+  // even a magnitude test could have been fooled by measuring fewer things. The
+  // floor keeps the population identical.
+  assert.equal(
+    spikedMeasure.judged,
+    healthyMeasure.judged,
+    'a collapsed cap must not silently remove faces from judgement',
+  )
+  healthy.dispose()
+  spiked.dispose()
+
+  // The floor exists to stop a cap ring reaching zero. It used to be applied to
+  // `sin(angle)` and then multiplied by `bottomScale`, so it protected exactly the
+  // default capsule and nothing else: 0.5 -> 0.010, 0.1 -> 0.002, 0 -> 0.000.
+  for (const bottomScale of [1, 0.5, 0.1, 0.001, 0]) {
+    const capsule = stylizedCapsule({ radius: 0.5, height: 1, bottomScale })
+    const position = capsule.getAttribute('position')
+    let lowest = Infinity
+    for (let i = 0; i < position.count; i += 1) {
+      lowest = Math.min(lowest, position.getY(i))
+    }
+    let smallest = Infinity
+    for (let i = 0; i < position.count; i += 1) {
+      if (Math.abs(position.getY(i) - lowest) > 1e-9) continue
+      smallest = Math.min(smallest, Math.hypot(position.getX(i), position.getZ(i)))
+    }
+    assert.ok(
+      smallest > 1e-3,
+      `bottomScale ${bottomScale} collapses the bottom ring to ${smallest}`,
+    )
+    capsule.dispose()
   }
 })
 

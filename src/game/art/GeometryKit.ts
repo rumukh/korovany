@@ -156,6 +156,22 @@ export function loftProfile(options: LoftOptions): THREE.BufferGeometry {
         topLeft[lowerOffset + 2] - bottomLeft[lowerOffset + 2],
       )
       faceNormal.crossVectors(edgeB, edgeA)
+      if (faceNormal.lengthSq() < 1e-12) {
+        // A collapsed ring zeroes its own tangential edge, and `edgeA` is taken
+        // from the LOWER one -- so a downward spike (a `bottomScale: 0` taper, a
+        // hanging horn, a mid-list pinch) used to fall through to the fixed
+        // up-vector below and shade as though it pointed at the sky, ink shell
+        // included. The opposite ring still has a tangential edge running the
+        // same way round, so re-crossing against it keeps the orientation
+        // instead of inventing one. Upward spikes never hit this path, which is
+        // why the bug was asymmetric: the guard was, not the geometry.
+        edgeA.set(
+          topLeft[nextOffset] - topLeft[lowerOffset],
+          topLeft[nextOffset + 1] - topLeft[lowerOffset + 1],
+          topLeft[nextOffset + 2] - topLeft[lowerOffset + 2],
+        )
+        faceNormal.crossVectors(edgeB, edgeA)
+      }
       if (faceNormal.lengthSq() < 1e-12) faceNormal.set(0, 1, 0)
       else faceNormal.normalize()
 
@@ -343,14 +359,19 @@ export function stylizedCapsule(
   const totalHeight = options.height + options.radius * 2
   const baseY = options.anchor === 'base' ? 0 : -totalHeight / 2
 
+  // Floor the finished ring scale, not just the sine. `max(0.04, sin) * scale`
+  // still collapses to zero whenever the caller passes `bottomScale: 0`, so the
+  // guard only ever protected the default capsule -- the one shape that did not
+  // need it.
   const sections: LoftSection[] = []
   for (let index = 0; index <= capSegments; index += 1) {
     const amount = index / capSegments
     const angle = (amount * Math.PI) / 2
+    const ringScale = Math.max(0.04, Math.sin(angle) * bottomScale)
     sections.push({
       y: baseY + options.radius * (1 - Math.cos(angle)),
-      scaleX: Math.max(0.04, Math.sin(angle)) * bottomScale,
-      scaleZ: Math.max(0.04, Math.sin(angle)) * bottomScale * depthScale,
+      scaleX: ringScale,
+      scaleZ: ringScale * depthScale,
     })
   }
   sections.push({
@@ -361,10 +382,11 @@ export function stylizedCapsule(
   for (let index = 1; index <= capSegments; index += 1) {
     const amount = index / capSegments
     const angle = (amount * Math.PI) / 2
+    const ringScale = Math.max(0.04, Math.cos(angle) * topScale)
     sections.push({
       y: baseY + options.radius + options.height + options.radius * Math.sin(angle),
-      scaleX: Math.max(0.04, Math.cos(angle)) * topScale,
-      scaleZ: Math.max(0.04, Math.cos(angle)) * topScale * depthScale,
+      scaleX: ringScale,
+      scaleZ: ringScale * depthScale,
     })
   }
 
