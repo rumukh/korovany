@@ -1687,6 +1687,15 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
    * wrong by a factor of four on exactly the props the budget exists to protect —
    * a building LOD is a group of surface meshes and `applyOutline` shells every
    * one of them.
+   *
+   * An LOD is charged its most expensive level rather than the sum, and that rests on
+   * a renderer detail worth naming: `applyOutline` traverses, so shells exist on
+   * *every* level at once, and the charge is only honest if a shell under a hidden
+   * level is free. It is. `WebGLRenderer.projectObject` early-`return`s on
+   * `object.visible === false` rather than continuing, so it never recurses into an
+   * invisible level's children; `LOD.update()` sets `visible` per level and a shell is
+   * a child of its level's mesh. Exactly one level's shells are ever projected, and
+   * that stays true if a level later gains meshes. Confirmed independently by review.
    */
   private tryOutline(
     object: THREE.Object3D,
