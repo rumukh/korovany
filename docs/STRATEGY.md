@@ -81,14 +81,43 @@ wrong in ways that only became visible when someone else checked.
    is exactly where every real miss was hiding. **You cannot test recall by sampling from your own
    precision set.**
 
-The checker now has three properties. It is **section-scoped**: each spec is compared only against
+3. The section-scoped version with per-class controls still **could not fail**. Its exit code was
+   driven only by the storage-key check, so deleting every occurrence of the word `chronicle` from
+   the document produced eight missing facts and an exit code of **0** — while `designRule` reported
+   100%. A green run meant "the twelve storage keys are present", which is not what anyone reads it
+   as, least of all a CI job. The prose matcher was also lenient: probes are bags of three or four
+   distinctive words and it accepted three of four, so deleting a rule's single most discriminating
+   token still scored the rule preserved.
+
+**Both were found by Agent SOL, by breaking the tool rather than reading it.** That is the fourth
+instance in this task of the same failure, and it is the most transferable thing the exercise
+produced: **a tool answered a question nobody checked it could answer.** The shader grep, the
+underscore-stripping extractor, the global coverage metric, and then the gate that did not gate. SOL
+made the same error once itself, checking this — a shell that flattened a JSON array made every prose
+probe look like a single common word — and reported it rather than the finding it appeared to
+support.
+
+The checker now has four properties. It is **section-scoped**: each spec is compared only against
 the consolidated section that replaces it, and a fact counts as preserved only if it appears in the
-section that **owns** it. It extracts **nine declared classes**, one for each promise made above. And
-every class has its **own recall control**: before reporting, a known fact of that class is removed
+section that **owns** it. It extracts **nine declared classes**, one for each promise made above.
+Every class has its **own recall control**: before reporting, a known fact of that class is removed
 from its section and the run **aborts** unless the checker notices — a class whose control cannot
 fire is reported as blind and fails the run. The storage-key class is additionally enumerated from
 `src/` rather than from the specs, so that class's control cannot be satisfied by the extractor's own
-output.
+output. And **the gate gates**: any missing fact in any class exits non-zero.
+
+**What "preserved" means operationally**, stated rather than implied. A named constant, storage key,
+or number is preserved if the literal token appears in the owning section. A formula or prose rule is
+reduced to a bag of its three or four most distinctive words, and is preserved only if **every one of
+them** — or its stem — appears in the owning section. Light suffix stripping and British/American
+normalisation are applied to both sides, because `reserve`/`reserved` and `behaviour`/`behavior` are
+the same fact and a checker that says otherwise is measuring morphology rather than content. Nothing
+else is lenient: three of four is not enough, and a word appearing in a different section does not
+count.
+
+`--break=<word>` deletes a word from the document in memory and re-audits, so the gate can be
+checked rather than trusted. `node scripts/strategy-facts.mjs --break=chronicle` currently removes
+106 occurrences, reports **15 missing facts across five classes**, and **exits 1**.
 
 **Result: 1,634 facts across the fifteen pairings, 100% present in the owning section.**
 
@@ -111,19 +140,24 @@ output.
 | bloom | 26 | | | |
 
 **Read that 100% correctly.** It says every fact *this extractor recognises* is present in the
-section that owns it. It does **not** say nothing was lost — an extractor cannot measure what it
-cannot see, which is the failure that produced both wrong numbers above. The nine per-class recall
+section that owns it, under a matcher that requires all probe words and a gate that fails on any
+miss. It does **not** say nothing was lost — an extractor cannot measure what it cannot see, which is
+the failure that produced all three wrong numbers above. The nine per-class recall
 controls exist precisely to bound that residual risk, and the honest statement is that the remaining
 exposure is a class of fact none of the nine patterns matches, not a fact one of them matched and
-dropped. The first honest run of this instrument scored **75.5%**, with `lifecycleRule` at 28.2% and
-`accessibilityRule` at 34.8%; the difference is restored content, not a relaxed test.
+dropped. The measurement trail, kept because the shape of it is the argument: **75.5%** on the first
+honest run (`lifecycleRule` 28.2%, `accessibilityRule` 34.8%), 92.0% after the first restoration
+pass, then **88.4%** when the lenient three-of-four matcher was replaced with all-of-N — a number
+that went *down* because the instrument got stricter, which is the only reason to trust the ones that
+went up — **90.3%** once stemming stopped it penalising `reserve` against `reserved`, and 100% after
+restoring the 158 rules that were genuinely missing a distinguishing word. Every step is restored
+content or a stricter test. None is a relaxed one.
 
 Four extractor exclusions are declared rather than silent, because each removes a *misclassification*
 rather than a fact: effort estimates in days or weeks (planning artifacts for finished work);
 cross-references to sibling specs by number or filename; line-number citations into files that no
 longer exist; and TypeScript member declarations such as `private thunderDelay = -1`, whose values
-are already covered by the `constant` and `numericValue` classes. Both sides are normalised for
-British and American spelling, because `behaviour` and `behavior` are the same fact.
+are already covered by the `constant` and `numericValue` classes.
 
 **Storage keys are a closed set**, enumerated from `src/` rather than sampled, because the class is
 finite and there is no excuse for missing one. The checker **fails the run** if any key is absent
@@ -965,6 +999,39 @@ with it.
 is why the chronicle had to invent one. Of the implementation work, the simulation layers **were the
 bulk; the feed and map overlays were
 the fiddly bits**.
+
+**The remaining rules, kept because each was a bug or a near-bug once.** The chronicle clock is the
+same clock `GameEngine` uses to drive rendering, so simulation and **visuals** never diverge; it also
+times cosmetic lightning **flashes** and thunder claps, which is why turning the day/night **cycle**
+off for performance must not put out every fire in the world. `reserve(category, count)` is
+all-or-nothing and returns whether it **succeeded**, and an actor spawned by an event must be
+**re-categorised** or it eats that event's budget for the rest of the run. **Budget starvation** is
+the named failure: a located raid holding all eight chronicle slots must not lock the others out. A
+hand-back **must not re-decide** a fight the player watched end. **Campaign safety**: `faction-start`
+and `final-stronghold` sites are excluded outright, so no objective a campaign **might** need can
+leave the map through a morale check — a `defendHome` regression found in **Phase** 0 is why the rule
+is explicit.
+
+**Beasts and ambient life.** The `boar` (70 hp, mid poise) is a **Charger** that winds up over
+`BOAR_CHARGE_WINDUP` and can be **side-stepped**; it cannot steer **mid-charge**, so a charge into
+scenery is a real outcome rather than a bug. A crow cannot settle on a body that gets up, because
+corpses do not **revive**. A `captive` is **not a combatant** — the rescue event owns its behaviour —
+and Layer 5 **confirmed** that a villager is hostile to beasts by that point. Escorts run for the
+**treeline** and lose the cart when the escort loses, and the escort costs nothing at all when the
+player is **nowhere** near it. Beast kinds were extended to a **fifth**, and the Layer 2 test that
+asserted one could never appear had to be inverted. **Trudging** movement routes only to an alert,
+never to a pursuit, an attack approach or a beast. A hand-back that is never reached cannot be
+**tallied** against one of the three side outcomes. Threat waves fire only inside
+`THREAT_WAVE_EVENT_RADIUS`, so **distant** work is not counted. Destruction is measured when the
+**homestead** is destroyed, which says nothing about how many defenders survived.
+
+**Two honest limits.** The bird slot bound is `±66°` and `tests/actorAi.test.ts` asserts every slot
+has a **positive** in-range value; the offset **rotates** rather than being re-picked, which is what
+makes the bound load-bearing. Layer 3 shipped with three behaviour claims deliberately left
+**unmeasured**. And the general rule, which **matters** more than the bug that produced it: `??`
+cannot distinguish an intentional `null` from an absent key, so a table's `null` produces not a
+visual **wobble** but a campaign that cannot be completed. The surviving evidence is *not* the step
+function surviving — it is `evaluatePlayerPursuit` **saying** so.
 ---
 
 ### 2. Combat depth — faction abilities and enemy roles
@@ -1044,6 +1111,10 @@ so corpses consume budget — which is why gore and loot are pooled separately r
 actors. Expired, out-of-world, hit and destroyed projectiles **remove and dispose** rather than
 accumulating. And the criterion that defines the guard: **guard brace reduces frontal damage only**
 and blocks frontal injuries only — it is a facing mechanic, not a damage-reduction stat.
+
+Two budget consequences: the 25-entry lifetime cap includes dead actors **and ambushes**, and
+commander reinforcements draw from **only remaining slots**, limited to four total. The guard brace
+criterion covers **simultaneous** frontal attacks as well as single ones.
 
 ---
 
@@ -1175,6 +1246,14 @@ hides indicators and emits gore — the death "animation" is a single pose chang
 principal risks the spec named for itself were the telegraph timing, **knockback, and event-target
 cleanup**.
 
+Four more contracts. `animateCharacter()` **supplies** the stride; do not continue adding positional
+numeric **arguments** to it — role timing belongs in config, and moving mutable Three.js actor state
+out of the engine is **merely** rearranging, not fixing. *"Do not teleport for knockback"*: the
+current **one-step** move can pop an actor through geometry, so knockback integrates instead. Escaping
+a windup by moving out of range also covers being blocked by an **obstacle**. Pause freezes
+action, reaction, poise, knockback and death timers **with world simulation**, and pause/**resume**
+plus save/load must leave no stale action or telegraph.
+
 ---
 
 ### 4. Comic hit language
@@ -1289,6 +1368,20 @@ existing screen-shake-off or reduced-motion preference, **cap all stops at 20 ms
 target is already dead**. **Callouts are decorative**: missing one under pool pressure cannot hide
 information the player needs. And the scope check the spec set on itself: if the implementation makes
 `GameEngine.ts` materially harder to navigate, extract `ComicHitFx.ts` — *after* the behaviour works.
+
+**Eight remaining rules.** Damage numbers are **engine-owned**, pooled and world-space, not React
+state. Sparks are capped at 48, gore at 180 and decals at 72, with ordinary hits keeping the
+**faction** burst. *"Do not add stop time once per cleave target"* — a **multi-target** cleave
+requests one stop. *"Do not allocate a new canvas or texture for every number"* — pool a fixed set of
+**canvases**. Local-player feedback is deliberately **limited** in range rather than shown through the
+whole map. Extend `damageActor` with `attackKind`; do not add another **positional** parameter. Rays
+do not cast **shadows** and stay below number and callout render order. The trail is a **milestone**
+of recent pivot positions rather than sampled history. Crosshair avoidance projects a **candidate**
+position and biases it away. Missing a decorative callout under pool pressure cannot hide anything
+**required**. When the tab **resumes** after a long suspension the delta clamp applies. If the
+**source** or target is removed before an FX update, sprites continue on their last known transform
+rather than snapping. Misses and AI-vs-AI impacts neither freeze the local game nor **fabricate** a
+result, and the weapon trail **follows** the player weapon pivot and hides on pause or end.
 
 ---
 
@@ -1415,6 +1508,18 @@ available slots up to `SPARK_MAX_ACTIVE` — brighter is achieved by variant, no
 cadence, a **genuine recycled decal pool** rather than a pretend one, and stress validation at 25
 actors.
 
+**The remaining contracts.** The gore layer is deliberately excessive but **visual-only** — sprays,
+chunks and splats never affect simulation. `updateCamera()` lerps toward a collision-resolved
+destination **including** the second resolve, which *is* **required**: "keep the offset small" alone
+does not prevent clipping. The pattern is **copy**-or-lerp that destination into
+`cameraFollowPosition`, never the source. Shake is scaled by `trauma²` so **repeated** hits do not
+drift the camera. `newIntensity` scales from post-mitigation `dealt` with the **shield-block** case
+capped separately. The decal pool allocates while below `DECAL_MAX` or **immediately** recycles the
+oldest active entry — a **hard** active budget plus an inactive mesh pool. Settings mirror bloom:
+App state, a ref, and menu and pause **toggles**. *"Do not append another positional boolean to the
+already boolean-heavy **constructor**."* The named risks were the bleed cadence, a genuine recycled
+pool, and **lifecycle** correctness under stress.
+
 ---
 
 ### 6. Camera accents
@@ -1532,6 +1637,16 @@ sprint blend and accent state** rather than blending from a stale value.
 entries"*, and `immediate = true` copies position **and clears the sprint blend and accent state** together — used
 where an instant cut is appropriate, so a teleport cannot smear. **Tab suspension cannot resume with a stale large raw delta**,
 because the delta clamp applies before any accent integrates it.
+
+**Six more rules.** *"Do not add FOV impulses cumulatively without a clamp"* — dense kills and
+**cleaves** are the case that breaks it. *"Do not gate only translation shake"*: the existing
+**camera-motion** preference gates all of it. *"Do not **combine** a large kill zoom with hit stop and
+trauma"* — the values were tuned to coexist, not to stack. *"Do not modify camera distance to
+simulate zoom"*: FOV changes **preserve** collision behaviour, distance changes do not. Assign
+`camera.fov` and call `updateProjectionMatrix()` **only when the value differs**. Camera code must not
+**recompute** the sprint decision — it reuses the authoritative gameplay one. Jump input held across
+landing cannot **create repeated** takeoff accents, and a frame that takes off and lands inside one
+large clamped delta must not leave residue **unless** a new accent is genuinely due.
 
 ---
 
@@ -1658,6 +1773,16 @@ for ordinary cleanup.
 Conversion and cap cases apply to the damage fields too, not just to coins. The remaining risk the
 spec named for itself: pooling, rarity readability, conversion boundaries and **UI lifecycle**.
 
+**Seven more rules.** Out of scope by name: inventory slots, equipment, item comparison,
+**affixes**, and vendors buying back. *"Do not **persist** active world pickups"* — settle them before
+saving. *"Do not make loot depend on bloom, outlines or layered audio"*: those **enhance** it when
+**present**, and the pickup remains readable alone. Legendary drops are 6.5 units tall with two rings
+plus a starburst and a **strong**, capped audio cue. The toast is one view **emission** on clear, with
+no React timeouts that can outlive the run. No allocations after the **20-entry** pool and shared
+resources are warm. The card sits below critical health and objective information and never
+**captures** input. Conversion and cap cases apply to the damage fields **including** the boundary
+ones.
+
 ---
 
 ### 8. Toon shading and selective outlines
@@ -1744,6 +1869,27 @@ without the other. The characters are *primitive, pivoted* rigs, and that is the
 look is designed around. The outline budget stays bounded at the **existing maximum of 25 actors**.
 Edge case: **camera-near shells can intersect the camera**, so the player's own shell must be handled
 rather than assumed distant.
+
+**The ownership contract in full, because this is the section where it is easiest to get wrong.**
+Scene traversal disposes mesh geometry and materials and `generatedTextures`, which is the
+**lifecycle** the library must stay outside of. The library owns one **four-texel** `DataTexture`
+gradient ramp and the shared outline materials; those are marked **library-owned** and excluded from
+generic scene-material disposal, and `ComicMaterialLibrary.dispose()` **releases** them. Toon
+materials **returned** by `createToonMaterial()` are scene-owned — the library must neither retain nor
+dispose them, and scene traversal **releases** those unique materials. Outline shells are never added
+to `generatedTextures`; that map **remains** for generated textures only. Engine **teardown** clears
+the outline registry after scene and resource disposal, and bindings must not retain detached scene
+roots **indefinitely**. **Expose** the toggle in menu and pause settings labelled `Чернильные
+контуры`.
+
+**Four negative rules.** *"Do not make bloom responsible for outlines"* — outlines are dark and must
+**remain** legible with bloom off. *"Do not outline transparent or **screen-facing** objects"*: decals,
+particles and sprites are excluded. *"Do not assume a fixed black works in both themes and at
+night"* — the outline colour is **semantic**, derived from the palette. *"Do not **allocate** outline
+geometry per frame."* Cosmetic limbs use the same helper so they do not look **disconnected**. The
+budget is no more than one outline draw per **eligible** opaque source mesh, and the remaining work
+named for itself was ownership, distance culling, settings **plumbing** and day/night and theme
+tuning.
 
 ---
 
@@ -1849,6 +1995,17 @@ a beacon — the zone is recognised by counted, seeded content, not by a tint. A
 floor: **UI accents cannot override health, danger, faction or rarity meanings**; the zone palette
 decorates the HUD, it never re-codes it.
 
+**Nine more rules.** Ownership is a boundary: foliage owns ground vegetation and wind, and zone art
+must **expose** its own weights rather than reach across. *"Do not add four independent fog
+systems"* — there is one camera and one **global** fog. *"Do not add hundreds of individual meshes"*:
+repeated props are **grouped** into `InstancedMesh`. *"Do not change gameplay `zoneAt()` to make
+visual transitions smoother"* — visual blending stays **separate** from the gameplay boundary. The
+**waterless** sky, particles and transparent effects do not participate in fog. Zone tinting must
+**never mutate the day/night keyframes themselves**. Large landmark silhouettes must not hide
+**actors** or the player at ordinary camera distances, and props near palace or fort walls must not
+enter gate detour nodes or the **camera-obstacle** set. Cache keys are distinct enough that two zones
+cannot accidentally **reuse** one. Weather and foliage ownership must remain **compatible**.
+
 ---
 
 ### 10. Bloom post-processing
@@ -1910,6 +2067,12 @@ present*, and the spec's reasoning was that once the cycle ships, **bloom is wha
 windows read at night**. Neither shipped: the processor is *deliberately independent of the private
 day/night state*, which is a defensible boundary but leaves night torches without their intended
 lift.
+
+Four more rules. The composer already **captures** the renderer pixel ratio and resizes every pass, so
+do not re-implement that. Bloom makes torches and windows read **beautifully** at night — which is
+exactly why the unbuilt night boost was specified. Resize and the pixel-ratio cap are respected and a
+zero-sized target must not be created, because that **crashes** the pass. `destroy()` disposes all
+passes and targets so there is no GPU leak across run **restarts**.
 
 ---
 
@@ -2084,6 +2247,12 @@ which is why the spec chose fog over an alpha fade for v1. Placement rejects the
 corridor at `abs(x) <= 3 + clearance`. The diagnostic rule: log **bucket, zone, target and actual
 count** if a future world layout cannot reach its target, rather than silently under-filling.
 
+Four more rules. *"Do not cast foliage shadows and do not update instance matrices after
+**construction**"* — the cover is static by **construction**, not by omission. A bounded rejection
+loop must cap attempts, **for example** `target * 4`, so a hostile layout cannot spin. One writer
+**writes** the canonical wind state before the atmosphere update. `destroy()` disposes only the
+organic foliage meshes, **including** `InstancedMesh.dispose()`, and nothing twice.
+
 ---
 
 ### 12. Day/night cycle
@@ -2177,6 +2346,9 @@ colour is a reused `THREE.Color` instance, not a per-frame allocation.
 (`worldSky → worldHorizon → worldFog`) with an emissive sun mesh at `(-88, 74, -112)` and **10**
 drifting cloud groups held in `this.clouds`. The toggle is a plain on/off available on **both the main menu and the pause modal**. It defaults on
 and updates the world live.
+
+Night clamps intensity and keeps a moonlit **blue-gray** palette so the world never goes fully black —
+the readability floor is a palette decision, not a brightness slider.
 
 ---
 
@@ -2319,6 +2491,16 @@ it.
 
 The exact shipped blend line is `const response = 1 - Math.exp((-3 * delta) / WEATHER_BLEND)`.
 
+**Seven more rules.** Weather is **camera-centered**, not four simultaneous zone systems. Rain renders
+as `LineSegments` and snow as `Points`, because the WebGL points **primitive** has size limits that
+rain would hit. The snow texture is registered in `generatedTextures` so existing teardown
+**disposes** it. **Create** one dedicated, normally dark `HemisphereLight` for lightning rather than
+modulating the day/night lights **directly**; a separate light prevents ownership conflicts. Keep
+disposal single-owner to avoid **double-disposing**. Reversing across a boundary never snaps the
+atmosphere nor **converts** one profile into another mid-blend. The menu and pause **toggles** persist
+and apply live. Precipitation and the new line **geometry** must not bloom noticeably. Day/night and
+settings **integration** were the main work; lightning and thunder were the tail.
+
 ---
 
 ### 14. Dynamic world events
@@ -2418,6 +2600,17 @@ separate from world generation so events cannot perturb the seeded world.
 by `updateCaravan`, `interact` and `spawnAmbush`. `ActorRole` was widened with `'champion'` and
 `'captive'` rather than adding a parallel type, and `MiniMap` renders `kind === 'event'` markers with
 a distinct treatment so an event reads differently from an objective.
+
+**Nine more rules, including the two scheduler rules that vanished.** The spec required the first
+event to fire when the first main objective is **completed**, or at `elapsed ≈ 50 s` if the player
+keeps roaming without **completing** one — both superseded by the shipped timer-only
+`FIRST_EVENT_AT = 30`. The weighted pool is built from kinds **currently** eligible and affordable.
+The `+18` champion cap remains **correct** across saves, with v1 saves defaulting to `0`.
+`ownedProps: THREE.Object3D[]` holds **event-created** props and FX removed on cleanup, and the
+**cleanup helpers** include an idempotent `removeActorById()` that also removes projectiles. Victory
+or defeat mid-event triggers **force-cleanup** with no reward. Before starting a kind the **actor
+budget** is checked against its `requiredSlots`. **Bounty safety**: **objective-critical** actors are
+never eligible. Borrowed actors and props survive cleanup and the actor count never **exceeds** 25.
 
 ---
 
@@ -2578,6 +2771,18 @@ suppressed while UI cues remain allowed. Music context takes the current zone �
 `setMusicContext(faction, zone)` — so the score follows where the player is, not only who they are
 fighting. The validation bar is a **25-actor stress fight** for result and UI cues together; the
 named risks were voice cleanup, browser lifecycle behaviour and mix tuning across dense fights.
+
+**Eight more rules.** Music gain targets lower values on pause and end and on **visibility** change.
+Music **scheduled** sources are tracked separately from ordinary SFX sources. *"Do not create
+white-noise buffers per cue"* — **generate** one reusable buffer per context. *"Do not play one wet
+splat per gore particle"*: one combat event **produces** one body. Intensity never multiplies total
+output without a clamp, so a lethal hit is **different** in recipe and priority, not simply louder —
+it is one recipe and priority choice plus intensity, not four **simultaneous** `hit` calls. Coalesce
+**multiple** same-frame cleave hits into one heavy impact body. Stereo pan is capped and near-player
+sounds stay **centered**, for **clarity** as much as comfort; the director owns all Web Audio nodes
+and timers. Pause, hidden tab, end, autoplay **restrictions** and repeated engine creation must all
+leave a clean state, and SFX volume persists, clamps invalid values, applies live and stays
+**separate** from music.
 
 ---
 

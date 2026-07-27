@@ -20,8 +20,12 @@
  *      of what the specs happened to say.
  *
  * Usage:
- *   node scripts/strategy-facts.mjs              # audit
+ *   node scripts/strategy-facts.mjs              # audit; exits 1 on ANY missing fact
  *   node scripts/strategy-facts.mjs --generate   # rebuild fixtures from git
+ *   node scripts/strategy-facts.mjs --verbose    # list every miss
+ *   node scripts/strategy-facts.mjs --break=word # delete a word from the document
+ *                                                # in memory and re-audit, to check
+ *                                                # that the gate actually gates
  */
 import { readFileSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
@@ -204,12 +208,36 @@ export function extractFacts(spec) {
   return facts
 }
 
-/** Is this fact present in the section that owns it? */
-export function present(fact, section) {
+/**
+ * Light suffix stripping so `reserve` and `reserved`, `flash` and `flashes` are
+ * the same fact. This is the same justification as the spelling normalisation:
+ * an inflection is not a different fact, and a checker that says otherwise is
+ * measuring morphology. It is deliberately conservative — it does not conflate
+ * distinct roots.
+ */
+const stem = (w) => w
+  .replace(/(ies)$/, 'y')
+  .replace(/(ations|ation)$/, 'at')
+  .replace(/(ings|ing)$/, '')
+  .replace(/(eds|ed)$/, '')
+  .replace(/(es|s)$/, '')
+  .replace(/(ly)$/, '')
+  .replace(/(.)\1$/, '$1')
+
+/**
+ * Is this fact present in the section that owns it?
+ *
+ * Prose rules are matched as a bag of distinctive words, and **every** word must
+ * be present. An earlier revision accepted three of four, which meant deleting a
+ * rule's single most discriminating token still scored it preserved — a lenient
+ * matcher on exactly the classes where every real loss was found. "Preserved"
+ * here means: every probe word, or its stem, appears in the owning section.
+ */
+export function present(fact, section, stems) {
   if (Array.isArray(fact.probe)) {
     const hay = section.toLowerCase()
-    const hits = fact.probe.filter((w) => hay.includes(w)).length
-    return hits >= Math.min(3, fact.probe.length)
+    const known = stems ?? sectionStems(section)
+    return fact.probe.every((w) => hay.includes(w) || known.has(stem(w)))
   }
   if (fact.cls === 'numericValue') {
     const escaped = fact.probe.replace('.', '\\.')
@@ -220,8 +248,13 @@ export function present(fact, section) {
   return section.includes(fact.probe)
 }
 
-function sectionText(docLines, heading) {
-  const start = docLines.findIndex((l) => l.startsWith(heading))
+export function sectionStems(section) {
+  return new Set(
+    section.toLowerCase().split(/[^a-z-]+/).filter(Boolean).map(stem),
+  )
+}
+
+function sectionText(docLines, heading) {  const start = docLines.findIndex((l) => l.startsWith(heading))
   if (start === -1) throw new Error(`section not found: ${heading}`)
   let end = docLines.length
   for (let i = start + 1; i < docLines.length; i += 1) {
@@ -315,7 +348,18 @@ function runControls(fixtures, docLines) {
 
 function audit() {
   const fixtures = JSON.parse(readFileSync(FIXTURES, 'utf8'))
-  const docLines = normalise(readFileSync(DOC, 'utf8')).split('\n')
+  let raw = readFileSync(DOC, 'utf8')
+  // `--break=word` removes a word from the document in memory before auditing.
+  // It is how you check that a green run means something: if deleting a
+  // load-bearing term does not turn the run red, the gate does not gate.
+  const brk = process.argv.find((a) => a.startsWith('--break='))
+  if (brk) {
+    const word = brk.slice('--break='.length)
+    const before = (raw.match(new RegExp(word, 'gi')) ?? []).length
+    raw = raw.replace(new RegExp(word, 'gi'), '')
+    console.log(`--break=${word}: removed ${before} occurrences before auditing\n`)
+  }
+  const docLines = normalise(raw).split('\n')
 
   const controlFailures = runControls(fixtures, docLines)
   if (controlFailures.length > 0) {
@@ -383,7 +427,10 @@ function audit() {
     console.log('\nmisses:')
     for (const m of missingDetail) console.log(`  ${m.name} [${m.cls}] ${m.id}`)
   }
-  if (keyMisses.length > 0) process.exitCode = 1
+  // The gate must gate. Any missing fact in any class fails the run, not just a
+  // missing storage key — otherwise a green `npm run docs:facts` means only that
+  // the twelve keys are present, which is not what anyone will read it as.
+  if (keyMisses.length > 0 || missing > 0) process.exitCode = 1
 }
 
 if (process.argv.includes('--generate')) generate()
