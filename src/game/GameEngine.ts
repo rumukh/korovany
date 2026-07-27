@@ -9967,7 +9967,7 @@ export class GameEngine {
     if (!limb) return
     limb.visible = true
     limb.traverse((object) => {
-      if (!(object instanceof THREE.Mesh) || object.userData.comicOutline === true) return
+      if (!(object instanceof THREE.Mesh) || StylizedArtLibrary.isOutlineShell(object)) return
       object.material = this.artLibrary.createMaterial({
         color: this.palette.borderStrong,
         surface: 'metal',
@@ -14129,7 +14129,7 @@ export class GameEngine {
     if (
       !(object instanceof THREE.Mesh) ||
       object instanceof THREE.InstancedMesh ||
-      object.userData.comicOutline === true ||
+      StylizedArtLibrary.isOutlineShell(object) ||
       object.userData.cameraPassThrough === true ||
       object.geometry instanceof THREE.PlaneGeometry
     ) {

@@ -519,7 +519,7 @@ export class StylizedArtLibrary {
     root.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return
       if (object instanceof THREE.InstancedMesh && options.instanced !== true) return
-      if (object.userData[OUTLINE_MARKER] === true) return
+      if (StylizedArtLibrary.isOutlineShell(object)) return
       if (object.userData.noComicOutline === true) return
       if (object.name === 'faction-ring') return
       if (!isOpaqueMaterial(object.material)) return
@@ -680,7 +680,7 @@ export class StylizedArtLibrary {
   }
 
   /**
-   * True for an inverted-hull shell the library built and still owns.
+   * True for an inverted-hull outline shell — including a clone of one.
    *
    * Scene-traversal teardown must not dispose these directly. A shell borrows its
    * source's geometry and, when instanced, the source's `instanceMatrix` — so a
@@ -688,6 +688,21 @@ export class StylizedArtLibrary {
    * drawing from. Release the binding through `releaseOutline` instead; this
    * predicate exists so a sweep that cannot know about bindings can at least
    * decline to touch a shell, turning silent corruption into a bounded leak.
+   *
+   * This marker is a plain `userData` string, deliberately, and the opposite of
+   * the symbol rule that governs `isLibraryOwned`. The two predicates answer
+   * different questions. Ownership is a *relationship* to the library, so it must
+   * not survive a copy — a cloned material the library never built must report
+   * `isLibraryOwned() === false` or teardown skips it forever. Shell-ness is an
+   * *intrinsic* property of the object, and `Object3D.copy` deep-copies
+   * `userData`, so it travels. That is required, not tolerated:
+   * `Mesh.copy` assigns `geometry` by reference, so a cloned shell shares the
+   * very buffer the original was borrowing, and disposing the clone frees the
+   * source's geometry exactly as disposing the original would. A sweep that
+   * failed to recognise the clone would commit the corruption this predicate
+   * exists to prevent. Promoting this to a symbol would therefore be a
+   * regression, not a hardening — `outline shells survive cloning` in
+   * `tests/art.test.ts` pins it.
    */
   static isOutlineShell(object: THREE.Object3D): boolean {
     return object.userData[OUTLINE_MARKER] === true

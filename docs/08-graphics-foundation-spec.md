@@ -402,6 +402,16 @@ Ownership, stated once and enforced everywhere:
   `hasStylizedShader() === false` (so it can be repaired). Pass a clone through
   `adoptMaterial()` to reinstate the injection, or prefer `acquireMaterial()` with a
   distinct key over cloning in the first place.
+- **`isOutlineShell()` deliberately does the opposite, and is not a missed hardening.**
+  Its marker is a plain `userData` string, so it *does* survive `Object3D.clone()`.
+  The two predicates answer different questions. Ownership is a relationship to the
+  library and must not survive a copy, or teardown skips a clone forever. Shell-ness
+  is an intrinsic property of the object, and it must survive a copy for a concrete
+  reason: `Mesh.copy` assigns `geometry` **by reference**, so a cloned shell shares
+  the same borrowed buffer, and disposing the clone frees the source's geometry just
+  as disposing the original would. A sweep that did not recognise the clone would
+  commit exactly the corruption the predicate exists to prevent. Promoting this
+  marker to a symbol is a regression; `outline shells survive cloning` pins it.
 - `userData.stylizedSurfacePreset` is a **human-readable label, never a marker**. It
   records which preset was applied, for debuggers and scene dumps. Because `userData`
   *is* deep-copied through JSON, a clone happily reports

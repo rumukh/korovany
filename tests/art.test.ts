@@ -1666,6 +1666,77 @@ test('a cloned stylized material is repairable and cannot forge ownership', () =
   library.dispose()
 })
 
+/**
+ * The deliberate counterpart to the test above, and the reason the two markers
+ * are not symmetrical.
+ *
+ * A reviewer reading `isLibraryOwned` (symbol, must not survive a copy) beside
+ * `isOutlineShell` (userData string, does survive a copy) will read the second
+ * as a missed hardening and "fix" it. That would be a regression, and this test
+ * is here to make it a loud one.
+ *
+ * The asymmetry follows from what each predicate claims. Ownership is a
+ * *relationship* to the library: a clone the library never built must report
+ * false, or teardown skips it forever. Shell-ness is an *intrinsic* property of
+ * the object, and it has to survive cloning for a concrete reason that this test
+ * pins directly — `Mesh.copy` assigns `geometry` by reference, so a cloned shell
+ * shares the same borrowed buffer as the original. Disposing the clone frees the
+ * source's geometry exactly as disposing the original would. A sweep that failed
+ * to recognise the clone would commit the corruption the predicate exists to
+ * prevent.
+ */
+test('outline shells survive cloning, because a clone shares the borrowed buffer', () => {
+  const library = createLibrary()
+  const root = new THREE.Group()
+  const source = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    new THREE.MeshStandardMaterial(),
+  )
+  root.add(source)
+  const binding = library.applyOutline(root, 'enemy')
+  const shell = binding.shells[0]
+  assert.ok(shell, 'the fixture must actually produce a shell')
+  assert.equal(StylizedArtLibrary.isOutlineShell(shell), true)
+
+  const clone = shell.clone()
+
+  // The premise. If three.js ever stopped sharing geometry across a clone, the
+  // reasoning below would no longer hold and the marker rule should be revisited.
+  assert.equal(
+    clone.geometry,
+    shell.geometry,
+    'Mesh.copy assigns geometry by reference — this is why the marker must travel',
+  )
+  assert.equal(
+    clone.geometry,
+    source.geometry,
+    'the shell borrows its source geometry, so the clone borrows it too',
+  )
+
+  // The consequence, measured rather than argued: disposing the clone fires
+  // `dispose` on the buffer the source is still drawing from.
+  let sourceBufferFreed = false
+  source.geometry.addEventListener('dispose', () => {
+    sourceBufferFreed = true
+  })
+  clone.geometry.dispose()
+  assert.equal(
+    sourceBufferFreed,
+    true,
+    'disposing a cloned shell frees the source buffer, so a sweep must decline it',
+  )
+
+  // The rule itself. Promote OUTLINE_MARKER to a symbol and this line fails.
+  assert.equal(
+    StylizedArtLibrary.isOutlineShell(clone),
+    true,
+    'a cloned shell is exactly as dangerous to dispose, so it must still be identifiable',
+  )
+
+  library.releaseOutline(binding)
+  library.dispose()
+})
+
 test('every factory refuses to produce resources after disposal', () => {
   const library = createLibrary()
   library.dispose()
