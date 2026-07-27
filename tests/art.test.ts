@@ -1705,95 +1705,226 @@ test('transformed carries baked outline normals through a rotation', () => {
 })
 
 /**
- * `docs/08` is the contract two sibling sessions code against, and it has already
- * drifted from the barrel twice. This does not prove the prose is right, but it
- * does make any change to the public surface a deliberate, reviewable act.
+ * Three frozen surfaces, one per wave, each checked as a SUBSET of what the barrel
+ * actually exports.
+ *
+ * This replaced an exact-set `deepEqual`. That assertion advertised itself as the
+ * thing catching spec-vs-barrel drift, and it never was: all three drifts it is
+ * credited with were **type-only** exports, erased before `Object.keys` runs, and
+ * every one of them was caught by `every type the spec names is exported by the
+ * barrel` below, which reads `index.ts` as text. The exact-set version's only
+ * unique behaviour was going red when a sibling session *added* an export — which
+ * is not a defect, and which forced both Wave 2 sessions to edit a list inside a
+ * file the foundation owns. That is what produced the merge conflict this replaces.
+ *
+ * A subset check keeps the property that actually matters — an export cannot
+ * silently DISAPPEAR — and drops the one that only generated conflicts.
+ *
+ * ⚠️ DOWNSTREAM SESSIONS: do not edit another wave's list. Adding an export to the
+ * barrel requires no change here at all. Add a list of your own if you own a new
+ * module, and change an existing list only when you are deliberately removing a
+ * symbol from the surface its owner published.
  */
-test('the public barrel exports exactly the documented surface', async () => {
+const FOUNDATION_SURFACE = [
+  'GeometryCache',
+  'OUTLINE_NORMAL_ATTRIBUTE',
+  'StylizedArtLibrary',
+  'artNoiseSeed',
+  'artVariation',
+  'bakeOutlineNormals',
+  'bakeSkyOcclusion',
+  'bakeVerticalOcclusion',
+  'branchStructure',
+  'clearLod',
+  'createArtStream',
+  'createLod',
+  'displaceGeometry',
+  'ensureVertexColors',
+  'extrudeProfile',
+  'facetGeometry',
+  'fbm3',
+  'gradientVertexColors',
+  'hasOutlineNormals',
+  'hasStylizedShader',
+  'hashInt3',
+  'hashUnit',
+  'hashUnit3',
+  'latheProfile',
+  'loftProfile',
+  'mergeAll',
+  'paintVertexColors',
+  'polygonProfile',
+  'rectProfile',
+  'ridgeNoise3',
+  'stylizedCapsule',
+  'taperedBox',
+  'transformed',
+  'tubeAlongPoints',
+  'valueNoise3',
+  'wrapArtVariation',
+]
+
+const CHARACTER_KIT_SURFACE = [
+  'BEAST_RIG',
+  'CHARACTER_DETAIL_DISTANCE',
+  'CHARACTER_VARIANTS',
+  'WAGON_RIG',
+  'buildBeastBody',
+  'buildBeastHead',
+  'buildBeastLimb',
+  'buildBeastTail',
+  'buildBirdBody',
+  'buildBirdWing',
+  'buildCloak',
+  'buildDeerBody',
+  'buildDeerCrown',
+  'buildDeerLeg',
+  'buildFace',
+  'buildForearm',
+  'buildHair',
+  'buildHand',
+  'buildHarness',
+  'buildHead',
+  'buildHeadgear',
+  'buildOffhand',
+  'buildOxBody',
+  'buildOxHead',
+  'buildShin',
+  'buildThigh',
+  'buildTorso',
+  'buildTorsoTrim',
+  'buildUpperArm',
+  'buildWagonAxle',
+  'buildWagonBed',
+  'buildWagonCargo',
+  'buildWagonFrame',
+  'buildWagonTilt',
+  'buildWagonWheel',
+  'buildWeaponGrip',
+  'buildWeaponHead',
+  'buildWristRope',
+  'characterKitForRole',
+  'characterPartKeys',
+  'cloakVariant',
+  'forearmVariant',
+  'resolveCharacterPlan',
+  'shinVariant',
+  'solveHandOffset',
+  'thighVariant',
+  'upperArmVariant',
+]
+
+const PROP_KIT_SURFACE = [
+  'PROP_SURFACES',
+  'bannerParts',
+  'barrelGeometry',
+  'brazierParts',
+  'bridgeParts',
+  'buildingParts',
+  'bushGeometry',
+  'cairnGeometry',
+  'cartParts',
+  'chestParts',
+  'crateGeometry',
+  'curtainWallParts',
+  'deadfallGeometry',
+  'fencePanelParts',
+  'gateParts',
+  'groundCoverGeometry',
+  'haystackParts',
+  'lanternPostParts',
+  'marketStallParts',
+  'mergePropParts',
+  'monumentParts',
+  'obeliskParts',
+  'outcropGeometry',
+  'pillarParts',
+  'propPart',
+  'reedClusterGeometry',
+  'screeGeometry',
+  'shrineParts',
+  'signboardParts',
+  'strataRockGeometry',
+  'stumpGeometry',
+  'tentParts',
+  'towerParts',
+  'transformParts',
+  'treeGeometry',
+  'washingLineParts',
+  'waystoneParts',
+  'wellParts',
+  'woodpileGeometry',
+]
+
+/**
+ * The counts are pinned separately from the lists themselves.
+ *
+ * A subset check is exactly the shape that passes by measuring nothing: empty the
+ * array and every name in it is trivially present. `assert.deepEqual(missing, [])`
+ * cannot tell "nothing is missing" from "nothing was looked for", so the sizes are
+ * asserted before the membership is, and the test reports how many names each
+ * assertion actually classified.
+ */
+const SURFACE_SIZES = { foundation: 36, characterKit: 47, propKit: 39 }
+
+test('the art barrel still exports every surface its owners published', async () => {
   const art = await import('../src/game/art/index.ts')
-  // The foundation surface, plus the block each Wave 2 pass appends to the barrel.
-  // Keep this list, the barrel and `docs/08` §5 in step.
-  const expected = [
-    'GeometryCache',
-    'OUTLINE_NORMAL_ATTRIBUTE',
-    'PROP_SURFACES',
-    'StylizedArtLibrary',
-    'artNoiseSeed',
-    'artVariation',
-    'bakeOutlineNormals',
-    'bakeSkyOcclusion',
-    'bakeVerticalOcclusion',
-    'bannerParts',
-    'barrelGeometry',
-    'branchStructure',
-    'brazierParts',
-    'bridgeParts',
-    'buildingParts',
-    'bushGeometry',
-    'cairnGeometry',
-    'cartParts',
-    'chestParts',
-    'clearLod',
-    'crateGeometry',
-    'createArtStream',
-    'createLod',
-    'curtainWallParts',
-    'deadfallGeometry',
-    'displaceGeometry',
-    'ensureVertexColors',
-    'extrudeProfile',
-    'facetGeometry',
-    'fbm3',
-    'fencePanelParts',
-    'gateParts',
-    'gradientVertexColors',
-    'groundCoverGeometry',
-    'hasOutlineNormals',
-    'hasStylizedShader',
-    'hashInt3',
-    'hashUnit',
-    'hashUnit3',
-    'haystackParts',
-    'lanternPostParts',
-    'latheProfile',
-    'loftProfile',
-    'marketStallParts',
-    'mergeAll',
-    'mergePropParts',
-    'monumentParts',
-    'obeliskParts',
-    'outcropGeometry',
-    'paintVertexColors',
-    'pillarParts',
-    'polygonProfile',
-    'propPart',
-    'rectProfile',
-    'reedClusterGeometry',
-    'ridgeNoise3',
-    'screeGeometry',
-    'shrineParts',
-    'signboardParts',
-    'strataRockGeometry',
-    'stumpGeometry',
-    'stylizedCapsule',
-    'taperedBox',
-    'tentParts',
-    'towerParts',
-    'transformParts',
-    'transformed',
-    'treeGeometry',
-    'tubeAlongPoints',
-    'valueNoise3',
-    'washingLineParts',
-    'waystoneParts',
-    'wellParts',
-    'woodpileGeometry',
-    'wrapArtVariation',
-  ]
-  assert.deepEqual(
-    Object.keys(art).sort(),
-    expected,
-    'update docs/08 §5 and this list together when the art surface changes',
+  const actual = new Set(Object.keys(art))
+
+  const surfaces = [
+    ['foundation (docs/08 §5)', FOUNDATION_SURFACE, SURFACE_SIZES.foundation],
+    ['CharacterKit (docs/09 §5.1)', CHARACTER_KIT_SURFACE, SURFACE_SIZES.characterKit],
+    ['PropKit (docs/10 §5)', PROP_KIT_SURFACE, SURFACE_SIZES.propKit],
+  ] as const
+
+  let classified = 0
+  for (const [label, surface, size] of surfaces) {
+    assert.equal(
+      surface.length,
+      size,
+      `${label}: the frozen list is ${String(surface.length)} names but is pinned at `
+      + `${String(size)}. A subset check over a shortened list passes by looking at `
+      + 'less, so the size is asserted before the membership. Change both together, '
+      + 'and only when deliberately removing a symbol from this surface.',
+    )
+    assert.equal(
+      new Set(surface).size,
+      surface.length,
+      `${label}: the frozen list repeats a name, which inflates its size past a real removal`,
+    )
+    const missing = surface.filter((name) => !actual.has(name))
+    assert.deepEqual(
+      missing,
+      [],
+      `${label}: the barrel no longer exports these, so anything importing them from `
+      + "`src/game/art` is broken. Restore the export, or remove it here and from the "
+      + 'spec section named above in the same commit.',
+    )
+    classified += surface.length
+  }
+
+  // The three lists must together account for the barrel's whole runtime surface, or
+  // a module could be dropped from `index.ts` entirely and every subset check above
+  // would still pass — none of them looks at what is present but unlisted.
+  assert.ok(
+    actual.size >= classified,
+    `the barrel exports ${String(actual.size)} runtime names but ${String(classified)} `
+    + 'are pinned; the lists have drifted past the surface they describe',
+  )
+  const unlisted = [...actual].filter(
+    (name) => !FOUNDATION_SURFACE.includes(name)
+      && !CHARACTER_KIT_SURFACE.includes(name)
+      && !PROP_KIT_SURFACE.includes(name),
+  )
+  // Deliberately NOT an assertion. A new export is not a defect, and making it one is
+  // what forced two sibling sessions to edit this file and collide in it.
+  if (unlisted.length > 0) {
+    console.log(`note: art barrel exports ${String(unlisted.length)} unpinned names: ${unlisted.join(', ')}`)
+  }
+  assert.equal(
+    classified,
+    122,
+    `expected to classify 122 published names, classified ${String(classified)}`,
   )
 })
 
