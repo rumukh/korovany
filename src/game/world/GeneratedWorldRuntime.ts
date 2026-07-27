@@ -2197,8 +2197,10 @@ function dressingMaterial(
  *
  * Tapered trunk with a root flare, three staggered canopy tiers each rotated off
  * axis, seeded noise on the trunk for bark, and a baked vertical gradient from deep
- * shadow at the roots to lit needles at the crown. Shared by every forest region, so
- * the seed is a constant: this is one buffer for the entire world.
+ * shadow at the roots to lit needles at the crown. The seed is a constant, so every
+ * forest region builds an identical buffer — but each region currently builds and
+ * disposes its own copy. Routing this through a runtime-level `GeometryCache` so
+ * resident regions genuinely share one buffer is left to the world-object pass.
  */
 function forestTreeGeometry(): THREE.BufferGeometry {
   const trunk = loftProfile({

@@ -11559,16 +11559,6 @@ export class GameEngine {
   }
 
   /**
-   * Anchors the lighting ramp to the light rig as it actually ends up.
-   *
-   * This has to run *after* weather, which multiplies the sun down to 22% in rain,
-   * and it has to run on the weather-disabled path too. Reading the pre-weather
-   * intensity puts every surface in the lowest band the moment it starts raining;
-   * skipping the call entirely leaves the ramp anchored to whatever the last storm
-   * left behind. Either way the world goes black, which is exactly what happened
-   * the first time round.
-   */
-  /**
    * Reused across frames: this runs once per frame from the weather pass, and the
    * library only ever reads and copies out of it.
    */
@@ -11578,6 +11568,16 @@ export class GameEngine {
     shadowTint: THREE.Color | undefined
   } = { keyIntensity: 0, rimColor: undefined, shadowTint: undefined }
 
+  /**
+   * Anchors the lighting ramp to the light rig as it actually ends up.
+   *
+   * This has to run *after* weather, which multiplies the sun down to 22% in rain,
+   * and it has to run on the weather-disabled path too. Reading the pre-weather
+   * intensity puts every surface in the lowest band the moment it starts raining;
+   * skipping the call entirely leaves the ramp anchored to whatever the last storm
+   * left behind. Either way the world goes black, which is exactly what happened
+   * the first time round.
+   */
   private updateStylizedLighting(): void {
     const reference = this.stylizedLightingRef
     reference.keyIntensity = this.sun.intensity + this.rimLight.intensity * 0.4

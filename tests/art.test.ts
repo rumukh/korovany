@@ -23,6 +23,7 @@ import {
   rectProfile,
   stylizedCapsule,
   taperedBox,
+  transformed,
   tubeAlongPoints,
 } from '../src/game/art/index.ts'
 
@@ -522,6 +523,10 @@ test('instanced outline shells release without freeing the source matrix buffer'
   // source's shared buffer goes with it.
   assert.notEqual(shell.instanceMatrix, source.instanceMatrix)
   assert.equal(sourceMatrixDisposed, false)
+  // The restored buffer is the shell's own, and it is deliberately one instance
+  // rather than capacity: it never reaches the draw path, so sizing it to capacity
+  // would identity-fill and discard `capacity * 16` floats per region load.
+  assert.equal(shell.instanceMatrix.count, 1)
   assert.equal(shell.parent, null)
   assert.equal(root.children.length, 1)
 
@@ -743,6 +748,202 @@ test('every geometry-kit builder winds to agree with its normals', () => {
     )
     geometry.dispose()
   }
+})
+
+/**
+ * The test above compares winding against the geometry's own stored normals, which
+ * is exactly the check that caught the shipped loft inversion. It has one blind
+ * spot: a builder that flipped its normals *and* its winding together would agree
+ * with itself and pass. This one never reads the normal attribute — for a closed
+ * body every face must point away from the centroid — so the two together pin the
+ * absolute orientation rather than merely internal consistency.
+ */
+test('closed builders wind outward, independently of their normals', () => {
+  const inwardFaces = (geometry: THREE.BufferGeometry): number => {
+    const source = geometry.index ? geometry.toNonIndexed() : geometry
+    const position = source.getAttribute('position')
+    const centroid = new THREE.Vector3()
+    for (let i = 0; i < position.count; i += 1) {
+      centroid.x += position.getX(i)
+      centroid.y += position.getY(i)
+      centroid.z += position.getZ(i)
+    }
+    centroid.divideScalar(position.count)
+
+    const a = new THREE.Vector3()
+    const b = new THREE.Vector3()
+    const c = new THREE.Vector3()
+    const edge1 = new THREE.Vector3()
+    const edge2 = new THREE.Vector3()
+    const wind = new THREE.Vector3()
+    const outward = new THREE.Vector3()
+    let inward = 0
+    for (let triangle = 0; triangle + 2 < position.count; triangle += 3) {
+      a.fromBufferAttribute(position, triangle)
+      b.fromBufferAttribute(position, triangle + 1)
+      c.fromBufferAttribute(position, triangle + 2)
+      wind.crossVectors(edge1.subVectors(b, a), edge2.subVectors(c, a))
+      if (wind.lengthSq() < 1e-14) continue
+      outward.copy(a).add(b).add(c).divideScalar(3).sub(centroid)
+      if (outward.lengthSq() < 1e-14) continue
+      if (wind.dot(outward) <= 0) inward += 1
+    }
+    if (source !== geometry) source.dispose()
+    return inward
+  }
+
+  const control = new THREE.BoxGeometry(1, 1, 1)
+  assert.equal(inwardFaces(control), 0, 'BoxGeometry control must wind outward')
+  control.dispose()
+
+  const cases: [string, THREE.BufferGeometry][] = [
+    ['loft rect', loftProfile({
+      profile: rectProfile(1, 1),
+      sections: [{ y: -0.5 }, { y: 0.5 }],
+    })],
+    ['loft polygon', loftProfile({
+      profile: polygonProfile(0.5, 8),
+      sections: [{ y: -0.5 }, { y: 0.5 }],
+    })],
+    ['tapered box', taperedBox({ width: 1, height: 1, depth: 1 })],
+    ['bevelled box', taperedBox({ width: 1, height: 1, depth: 1, bevel: 0.15 })],
+    ['stylized capsule', stylizedCapsule({ radius: 0.4, height: 1 })],
+    ['tube upward', tubeAlongPoints(
+      [{ x: 0, y: -0.5, z: 0 }, { x: 0, y: 0, z: 0 }, { x: 0, y: 0.5, z: 0 }],
+      { radius: 0.2 },
+    )],
+    ['tube downward', tubeAlongPoints(
+      [{ x: 0, y: 0.5, z: 0 }, { x: 0, y: 0, z: 0 }, { x: 0, y: -0.5, z: 0 }],
+      { radius: 0.2 },
+    )],
+  ]
+
+  for (const [label, geometry] of cases) {
+    assert.equal(inwardFaces(geometry), 0, `${label} must wind outward`)
+    geometry.dispose()
+  }
+})
+
+/**
+ * `dispose: false` promises the inputs survive. It used to mean "survive, modified":
+ * a non-indexed part was passed through by reference and then had a white `color`
+ * or a synthesised `outlineNormal` written onto it, which renders the caller's
+ * geometry white and changes which outline material it resolves to.
+ */
+test('mergeAll with dispose:false leaves the caller geometries untouched', () => {
+  const coloured = taperedBox({ width: 1, height: 1, depth: 1 })
+  const vertexCount = coloured.getAttribute('position').count
+  coloured.setAttribute(
+    'color',
+    new THREE.Float32BufferAttribute(new Float32Array(vertexCount * 3).fill(0.25), 3),
+  )
+  const plain = taperedBox({ width: 1, height: 1, depth: 1 })
+
+  const merged = mergeAll([coloured, plain], { dispose: false })
+
+  assert.equal(
+    plain.getAttribute('color'),
+    undefined,
+    'a kept input must not be given a colour attribute',
+  )
+  assert.equal(
+    hasOutlineNormals(plain),
+    false,
+    'a kept input must not be given outline normals',
+  )
+  assert.ok(plain.getAttribute('position'), 'a kept input must not be disposed')
+  assert.ok(merged.getAttribute('color'), 'the merge itself still reconciles colour')
+
+  const single = mergeAll([plain], { dispose: false })
+  assert.notEqual(single, plain, 'a kept single part must come back as a copy')
+
+  single.dispose()
+  merged.dispose()
+  plain.dispose()
+  coloured.dispose()
+})
+
+/**
+ * `applyMatrix4` transforms `position`, `normal` and `tangent`. Baked ink normals
+ * are a custom attribute, so a rotated part used to keep them in the old frame and
+ * extrude its shell sideways into the mesh it should be haloing.
+ */
+test('transformed carries baked outline normals through a rotation', () => {
+  const geometry = taperedBox({ width: 1, height: 2, depth: 1 })
+  bakeOutlineNormals(geometry)
+
+  const before = new THREE.Vector3().fromBufferAttribute(
+    geometry.getAttribute(OUTLINE_NORMAL_ATTRIBUTE) as THREE.BufferAttribute,
+    0,
+  )
+  const expected = before
+    .clone()
+    .applyEuler(new THREE.Euler(0, Math.PI / 2, 0))
+    .normalize()
+
+  transformed(geometry, { rotation: { x: 0, y: Math.PI / 2, z: 0 } })
+
+  const after = new THREE.Vector3().fromBufferAttribute(
+    geometry.getAttribute(OUTLINE_NORMAL_ATTRIBUTE) as THREE.BufferAttribute,
+    0,
+  )
+  assert.ok(
+    after.distanceTo(expected) < 1e-5,
+    `outline normal must follow the rotation: ${after.toArray().join(',')} vs ${expected.toArray().join(',')}`,
+  )
+  geometry.dispose()
+})
+
+/**
+ * `docs/08` is the contract two sibling sessions code against, and it has already
+ * drifted from the barrel twice. This does not prove the prose is right, but it
+ * does make any change to the public surface a deliberate, reviewable act.
+ */
+test('the public barrel exports exactly the documented surface', async () => {
+  const art = await import('../src/game/art/index.ts')
+  const expected = [
+    'GeometryCache',
+    'OUTLINE_NORMAL_ATTRIBUTE',
+    'StylizedArtLibrary',
+    'artNoiseSeed',
+    'artVariation',
+    'bakeOutlineNormals',
+    'bakeSkyOcclusion',
+    'bakeVerticalOcclusion',
+    'branchStructure',
+    'clearLod',
+    'createArtStream',
+    'createLod',
+    'displaceGeometry',
+    'ensureVertexColors',
+    'extrudeProfile',
+    'facetGeometry',
+    'fbm3',
+    'gradientVertexColors',
+    'hasOutlineNormals',
+    'hasStylizedShader',
+    'hashInt3',
+    'hashUnit',
+    'hashUnit3',
+    'latheProfile',
+    'loftProfile',
+    'mergeAll',
+    'paintVertexColors',
+    'polygonProfile',
+    'rectProfile',
+    'ridgeNoise3',
+    'stylizedCapsule',
+    'taperedBox',
+    'transformed',
+    'tubeAlongPoints',
+    'valueNoise3',
+    'wrapArtVariation',
+  ]
+  assert.deepEqual(
+    Object.keys(art).sort(),
+    expected,
+    'update docs/08 §5 and this list together when the art surface changes',
+  )
 })
 
 test('a cloned stylized material is repairable and cannot forge ownership', () => {

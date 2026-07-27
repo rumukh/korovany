@@ -142,14 +142,19 @@ Dependency rule: `GeometryKit` may use `ArtNoise`/`ArtRandom`; `GeometryCache` m
 ```ts
 function createArtStream(seed: SeedInput, label: string): RandomStream
 function artVariation(seed: SeedInput, label: string): ArtVariation
+function wrapArtVariation(stream: RandomStream): ArtVariation
+function artNoiseSeed(seed: SeedInput, label: string): number
 
 interface ArtVariation {
   unit(): number                       // [0,1)
-  signed(spread: number): number       // [-spread, +spread]
+  signed(spread: number): number       // [-spread, +spread)
   around(base: number, spread: number): number
+  range(minimum: number, maximum: number): number
+  integer(minInclusive: number, maxExclusive: number): number
   pick<T>(values: readonly T[]): T
   chance(probability: number): boolean
   angle(): number                      // [0, 2π)
+  readonly stream: RandomStream        // for snapshots and cloning
 }
 ```
 
@@ -165,7 +170,7 @@ function hashInt3(x: number, y: number, z: number, seed: number): number   // ui
 function hashUnit3(x: number, y: number, z: number, seed: number): number  // [0,1)
 function hashUnit(index: number, seed: number): number                     // [0,1)
 function valueNoise3(x: number, y: number, z: number, seed: number): number  // [-1,1]
-function fbm3(x, y, z, seed, octaves = 3, lacunarity = 2, gain = 0.5): number
+function fbm3(x, y, z, seed, octaves = 3, lacunarity = 2.03, gain = 0.5): number
 function ridgeNoise3(x, y, z, seed, octaves = 3): number
 ```
 
@@ -248,6 +253,7 @@ class GeometryCache {
   acquire(key: string, build: () => THREE.BufferGeometry): THREE.BufferGeometry
   release(key: string): void
   has(key: string): boolean
+  referenceCount(key: string): number
   readonly size: number
   dispose(): void
 }
@@ -257,13 +263,24 @@ function createLod(options: {
   material: THREE.Material | THREE.Material[]
   castShadow?: boolean
   receiveShadow?: boolean
+  name?: string
 }): THREE.LOD
+
+/** Removes and disposes every level of an LOD built by `createLod`. */
+function clearLod(lod: THREE.LOD): void
 ```
 
 The cache is ref-counted: `acquire` on an existing key increments, `release`
 decrements and disposes at zero. One region streaming out must not dispose a tree
 another region is still drawing. `dispose()` releases everything unconditionally and
 is idempotent.
+
+**Status:** the engine uses this for actor and caravan geometry. The streamed world
+does not yet — `GeneratedWorldRuntime` still builds and disposes its own dressing and
+ground-cover buffers per region, so identical forest regions currently hold duplicate
+copies. Wiring the runtime onto this cache, keyed by biome and cover kind with
+`release` on region unload, belongs to the world-object pass and is listed as a
+dependency in §12.
 
 `createLod` is for streamed regions: a near level with displacement and an outline
 normal, a far level built from the same profile at lower segment counts. Instanced
@@ -307,15 +324,25 @@ class StylizedArtLibrary {
   adoptMaterial(material: THREE.MeshStandardMaterial, options?: StylizedAdoptOptions): THREE.MeshStandardMaterial
   getOutlineMaterial(kind: OutlineKind, smooth: boolean): THREE.Material
   applyOutline(root: THREE.Object3D, kind: OutlineKind, options?: OutlineOptions): OutlineBinding
+  releaseOutline(binding: OutlineBinding): void
   createContactShadow(options?: ContactShadowOptions): THREE.Mesh
+  setLightingReference(reference: {
+    keyIntensity: number
+    rimColor?: THREE.Color
+    shadowTint?: THREE.Color
+  }): void
   readonly rampTexture: THREE.DataTexture
+  readonly sharedMaterialCount: number
   dispose(): void
   static isLibraryOwned(resource: THREE.Material | THREE.BufferGeometry | THREE.Texture): boolean
-static markLibraryOwned(resource: THREE.Material | THREE.BufferGeometry | THREE.Texture): void
-
-// from ./stylizedShader.ts, re-exported by the barrel
-function hasStylizedShader(material: THREE.Material): boolean
+  static markLibraryOwned(resource: THREE.Material | THREE.BufferGeometry | THREE.Texture): void
 }
+
+// from ./stylizedShader.ts, re-exported by the barrel — a free function, not a method
+function hasStylizedShader(material: THREE.Material): boolean
+
+// from ./GeometryKit.ts, re-exported by the barrel
+const OUTLINE_NORMAL_ATTRIBUTE = 'outlineNormal'
 ```
 
 Ownership, stated once and enforced everywhere:
@@ -357,7 +384,10 @@ not a shader permutation. All surfaces compile the same program.
 
 #### Shading injection
 
-Injected before `#include <opaque_fragment>` in the standard fragment shader:
+Injected by replacing `#include <lights_fragment_end>` in the standard fragment
+shader. That exact point matters: it is after all light accumulation, so the shader
+sees aggregate direct diffuse with shadows already folded in, and it is before
+`aomap_fragment` folds ambient occlusion into `indirectDiffuse`:
 
 1. Recover the aggregate direct-light term as a **scalar luminance ratio**:
    `luminance(reflectedLight.directDiffuse) * PI / luminance(diffuseColor)`. Dividing
@@ -462,7 +492,9 @@ of colour and intensity over time):
 
 Shadow quality: the frustum tightens from ±85 to ±52 at the same 2048² map, roughly
 2.7x the texel density; `bias = -0.0006`, `normalBias = 0.028` to kill the acne that
-tightening exposes; `shadow.camera.far` follows the tighter frustum.
+tightening exposes. `shadow.camera.far` goes the other way — 150 to 160 — because the
+tighter lateral extent lets the light sit closer without clipping tall silhouettes out
+of the far plane.
 
 Sky: the gradient gains stops for zenith, upper sky, horizon glow and ground haze,
 plus a deterministic dither so the 256-pixel gradient does not band on wide screens.
@@ -506,7 +538,11 @@ the following as stable:
   reinstate the injection. `hasStylizedShader(material)` reports whether a material
   actually carries the injection, which is what `adoptMaterial` now keys off.
 - `GeometryCache` is ref-counted, so both passes can key by shape parameters and let
-  streaming handle lifetime.
+  streaming handle lifetime. The world-object pass inherits `src/game/world/` with no
+  existing example of this — the streamed runtime still builds per-region buffers (§5.4).
+- `transformed` carries baked outline normals through the rotation, and `mergeAll`
+  with `dispose: false` works on copies, so neither can quietly corrupt a geometry you
+  still hold.
 - `bakeOutlineNormals` before `applyOutline` for anything with hard edges.
 - Deterministic variation comes from `artVariation(worldSeed, label)`; labels are
   namespaced by the caller (`npc:torso`, `props:cart`).
@@ -597,9 +633,13 @@ Targets:
   itself remains idempotent.
 - Outline shells share their source geometry and a shared material. They add nothing
   to dispose; removing the source removes them.
-- Instanced outline shells share `instanceMatrix` with their source. They must be
-  removed before the source `InstancedMesh` is disposed, and must not call
-  `InstancedMesh.dispose()` themselves — that would free the shared buffer.
+- Instanced outline shells borrow their source's `instanceMatrix`. Release them
+  through `library.releaseOutline(binding)`, which restores the shell's own
+  never-uploaded matrix before calling `InstancedMesh.dispose()`. Calling `dispose()`
+  is **required**, not forbidden: it is the only path to three.js's
+  `releaseStatesOfObject`, and skipping it leaks one vertex array object per shell
+  per region load. What you must never do is dispose a shell while it still holds
+  the borrowed attribute, or dispose the source before releasing the shell.
 - `GeometryCache.acquire/release` is the only correct way to share a geometry across
   streamed regions. Disposing a cached geometry directly is a bug.
 - `GeneratedWorldRuntime` keeps ownership of `materials.all` and `materials.textures`.

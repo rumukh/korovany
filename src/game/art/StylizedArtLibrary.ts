@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import { OUTLINE_NORMAL_ATTRIBUTE, hasOutlineNormals } from './GeometryKit.ts'
+import { hasOutlineNormals } from './GeometryKit.ts'
 import {
   applyOutlineShader,
   applyStylizedShader,
@@ -651,16 +651,18 @@ function createInstancedShell(
   source: THREE.InstancedMesh,
   material: THREE.Material,
 ): THREE.InstancedMesh {
-  // Capacity, not the live draw count: `source.count` can be lowered by a density
-  // or LOD pass, and allocating to the buffer means raising it again later never
-  // overruns the shell.
-  const capacity = source.instanceMatrix.count
-  const shell = new THREE.InstancedMesh(source.geometry, material, capacity)
+  // Allocated at one instance, not at the source's capacity. The shell never draws
+  // from its own buffer — the next line replaces it with the source's, and that is
+  // the one the renderer uploads and `count` indexes into. Sizing this to capacity
+  // would identity-fill `capacity * 16` floats per shell per region load and throw
+  // them away immediately, which on the streaming path is pure garbage.
+  const shell = new THREE.InstancedMesh(source.geometry, material, 1)
   // Sharing the matrix buffer is what keeps an outlined forest at one extra draw
   // call. But three.js frees a per-`InstancedMesh` VAO only from the `dispose`
   // event, and that same handler removes `instanceMatrix` — which is now the
   // source's. So park the shell's own buffer here and swap it back before
-  // disposing, and the VAO is released without touching the source.
+  // disposing, and the VAO is released without touching the source. The parked
+  // buffer was never uploaded, so removing it is a no-op rather than a free.
   shell.userData[SHELL_OWN_MATRIX] = shell.instanceMatrix
   shell.instanceMatrix = source.instanceMatrix
   shell.count = source.count
@@ -743,5 +745,3 @@ function createContactShadowTexture(): THREE.DataTexture {
   texture.needsUpdate = true
   return texture
 }
-
-export { OUTLINE_NORMAL_ATTRIBUTE }

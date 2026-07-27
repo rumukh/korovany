@@ -880,7 +880,12 @@ export function facetGeometry(
 // ---------------------------------------------------------------------------
 
 export interface MergeOptions {
-  /** Disposes the source geometries. On by default; merging is a move, not a copy. */
+  /**
+   * Disposes the source geometries. On by default; merging is a move, not a copy.
+   *
+   * With `false` the inputs are left untouched — the merge works on copies, and a
+   * single-part merge returns a clone rather than the input itself.
+   */
   dispose?: boolean
   /** Keeps per-part draw groups so a merged mesh can use a material array. */
   useGroups?: boolean
@@ -905,7 +910,8 @@ export function mergeAll(
   }
   const dispose = options.dispose !== false
   if (parts.length === 1) {
-    const single = parts[0]
+    // Move semantics hand the input straight back; a copy must not be mutated.
+    const single = dispose ? parts[0] : parts[0].clone()
     if (!single.getAttribute('normal')) single.computeVertexNormals()
     if (options.name) single.name = options.name
     return single
@@ -913,13 +919,23 @@ export function mergeAll(
 
   const prepared = parts.map((part) => {
     let geometry = part
-    if (!geometry.getAttribute('normal')) geometry.computeVertexNormals()
     if (geometry.index) {
       const nonIndexed = geometry.toNonIndexed()
       nonIndexed.name = geometry.name
       if (dispose) geometry.dispose()
       geometry = nonIndexed
+    } else if (!dispose) {
+      // A non-indexed part would otherwise still be the caller's object here, and
+      // everything below may add attributes to it. Handing back a geometry we
+      // quietly gave a white `color` renders it white under any `vertexColors`
+      // material, and a synthesised `outlineNormal` changes which outline material
+      // `applyOutline` picks for it. `dispose: false` promises the inputs survive
+      // unchanged, so detach before the normalisation pass rather than after.
+      const copy = geometry.clone()
+      copy.name = geometry.name
+      geometry = copy
     }
+    if (!geometry.getAttribute('normal')) geometry.computeVertexNormals()
     return geometry
   })
 
@@ -972,7 +988,12 @@ export interface TransformOptions {
   scale?: Vec3Like | number
 }
 
-/** Bakes a transform into a geometry. Returns the same geometry for chaining. */
+/**
+ * Bakes a transform into a geometry. Returns the same geometry for chaining.
+ *
+ * Baked outline normals are carried through the rotation as well, so the order of
+ * `transformed` and `bakeOutlineNormals` does not matter.
+ */
 export function transformed(
   geometry: THREE.BufferGeometry,
   options: TransformOptions,
@@ -1002,6 +1023,23 @@ export function transformed(
     scale,
   )
   geometry.applyMatrix4(matrix)
+  // `applyMatrix4` knows about `position`, `normal` and `tangent`. Baked ink
+  // normals are a custom attribute, so without this they stay in the pre-transform
+  // frame and the inverted hull extrudes sideways into the mesh it should halo.
+  const outlineNormals = geometry.getAttribute(OUTLINE_NORMAL_ATTRIBUTE)
+  if (outlineNormals) {
+    const normalMatrix = new THREE.Matrix3().getNormalMatrix(matrix)
+    const carried = new THREE.Vector3()
+    for (let index = 0; index < outlineNormals.count; index += 1) {
+      carried
+        .fromBufferAttribute(outlineNormals as THREE.BufferAttribute, index)
+        .applyMatrix3(normalMatrix)
+      if (carried.lengthSq() < 1e-12) continue
+      carried.normalize()
+      outlineNormals.setXYZ(index, carried.x, carried.y, carried.z)
+    }
+    outlineNormals.needsUpdate = true
+  }
   return geometry
 }
 
