@@ -24,6 +24,8 @@
  *   node scripts/strategy-facts.mjs --generate   # rebuild fixtures from git
  *   node scripts/strategy-facts.mjs --verbose    # list every miss
  *   node scripts/strategy-facts.mjs --accept     # re-declare the residue (deliberate only)
+ *   node scripts/strategy-facts.mjs --mutate     # semantic mutation testing; every mutant
+ *                                                # must be caught or the run fails
  *   node scripts/strategy-facts.mjs --break=word # delete a word from the document
  *                                                # in memory and re-audit, to check
  *                                                # that the gate actually gates
@@ -38,6 +40,8 @@ const DOC = join(ROOT, 'docs', 'STRATEGY.md')
 const FIXTURES = join(ROOT, 'scripts', 'strategy-facts.fixtures.json')
 const CONTROLS = join(ROOT, 'scripts', 'strategy-facts.controls.json')
 const ACCEPTED = join(ROOT, 'scripts', 'strategy-facts.accepted.json')
+const MUTANTS = join(ROOT, 'scripts', 'strategy-facts.mutants.json')
+const CONTRADICTIONS = join(ROOT, 'scripts', 'strategy-facts.contradictions.json')
 const SPEC_COMMIT = 'd854a75'
 
 /**
@@ -251,6 +255,20 @@ function extractRelations(lines, push) {
         }
       }
     }
+    // Comparisons, where the RELATION is the fact. `CIVILIAN_ALARM_RADIUS = 12`
+    // being *shorter* than a soldier's 15 on purpose is not captured by the
+    // binding (which only says 12) nor by any rule pattern (the sentence is not
+    // a prohibition). Flipping `shorter` to `longer` would otherwise leave the
+    // document scoring perfect while asserting the opposite of the design.
+    const cmp = line.match(/\b(shorter|longer|higher|lower|larger|smaller|earlier|later|faster|slower|above|below|more than|less than|greater than)\b/i)
+    if (cmp) {
+      for (const nm of line.matchAll(/\b([A-Z][A-Z0-9_]{3,})\b/g)) {
+        if (nm[1] === 'THREE') continue
+        push('relation', `cmp:${nm[1]}:${cmp[1].toLowerCase()}`, {
+          kind: 'comparison', name: nm[1], marker: cmp[1].toLowerCase(),
+        })
+      }
+    }
   }
 }
 
@@ -318,6 +336,11 @@ function relationPresent(probe, windows, lines) {
       const re = new RegExp(`${name}[^0-9\\n]{0,24}${esc(v)}(?![\\w.])`)
       return windows.some(({ text }) => re.test(text))
     })
+  }
+  if (kind === 'comparison') {
+    // The relation must survive in the same sentence as the thing it is about.
+    const name = probe.name.toLowerCase()
+    return lines.some((l) => l.includes(name) && l.includes(probe.marker))
   }
   return false
 }
@@ -677,8 +700,100 @@ function audit() {
   if (keyMisses.length > 0 || unaccepted.length > 0) process.exitCode = 1
 }
 
-/** `--accept` rewrites the declared-residue list from the current run. */
-function acceptResidue() {
+/**
+ * Internal consistency: is any named constant bound to two different values?
+ *
+ * Mutation testing exposed the hole this closes. Corrupting `MAX_ACTORS = 25` to
+ * `35` at two of its three sites left the third intact, so every per-spec fact
+ * still had a window that satisfied it and the run stayed green — while the
+ * document now said both 25 and 35. Partial corruption is the realistic failure
+ * of a bad merge, and preservation checking alone cannot see it: each fact is
+ * still present *somewhere*.
+ *
+ * A constant bound to two values is wrong regardless of which value is right, so
+ * this is checkable without knowing the truth. Deliberate divergences — where
+ * the document records what a spec asked for *and* what shipped — are declared
+ * in `strategy-facts.contradictions.json` rather than suppressed silently.
+ */
+function findContradictions(docLines) {
+  const allowed = new Set(
+    JSON.parse(readFileSync(CONTRADICTIONS, 'utf8')).allowed ?? [],
+  )
+  const values = new Map()
+  for (const line of docLines) {
+    // A ternary's `:` is not a binder — `(commanderLost ? MORALE_COMMANDER_LOSS : 0)`
+    // binds nothing, and reading it as a binding invented three contradictions
+    // that were artifacts of this regex rather than facts about the document.
+    const ternary = line.includes('?')
+    for (const m of line.matchAll(/\b([A-Z][A-Z0-9_]{3,})\s*(=|:)\s*(-?\d+(?:\.\d+)?)\b/g)) {
+      const [, name, op, value] = m
+      if (op === ':' && ternary) continue
+      if (!values.has(name)) values.set(name, new Set())
+      values.get(name).add(value)
+    }
+  }
+  const out = []
+  for (const [name, set] of [...values].sort()) {
+    if (set.size < 2 || allowed.has(name)) continue
+    out.push(`${name} is bound to ${[...set].sort().join(' and ')}`)
+  }
+  return out
+}
+
+/**
+ * `--mutate` — semantic mutation testing against a committed table.
+ *
+ * `--break` deletes a word, which is the easy mutation. This corrupts meaning
+ * while leaving the vocabulary intact: it inverts prohibitions, flips
+ * comparisons and swaps bound values. A dropped rule is a gap; an inverted rule
+ * is a lie that reads as authoritative, so these are the mutations that matter.
+ *
+ * Every mutant must be caught. A survivor is a hole in the checker and fails the
+ * run.
+ */
+function runMutants() {
+  const fixtures = JSON.parse(readFileSync(FIXTURES, 'utf8'))
+  const docLines = normalise(readFileSync(DOC, 'utf8')).split('\n')
+  const baseline = countMisses(fixtures, docLines)
+  const baseContradictions = findContradictions(docLines).length
+  const body = docLines.join('\n')
+  const { mutants } = JSON.parse(readFileSync(MUTANTS, 'utf8'))
+  console.log(`baseline: ${baseline} misses, ${baseContradictions} contradictions\n`)
+
+  let survivors = 0
+  let untestable = 0
+  for (const m of mutants) {
+    const muts = m.mutations ?? [{ find: m.find, replace: m.replace }]
+    const applicable = muts.filter((x) => body.includes(x.find))
+    if (applicable.length === 0) {
+      console.log(`  UNTESTABLE  ${m.id.padEnd(22)} anchor "${muts[0].find}" not in the document`)
+      untestable += 1
+      continue
+    }
+    let text = body
+    let hits = 0
+    for (const x of applicable) {
+      hits += text.split(x.find).length - 1
+      text = text.split(x.find).join(x.replace)
+    }
+    const lines = text.split('\n')
+    const misses = countMisses(fixtures, lines) - baseline
+    const contra = findContradictions(lines).length - baseContradictions
+    const caught = misses > 0 || contra > 0
+    if (!caught) survivors += 1
+    const how = misses > 0 && contra > 0 ? 'both' : misses > 0 ? 'misses' : contra > 0 ? 'contradiction' : '—'
+    console.log(
+      `  ${(caught ? 'CAUGHT' : 'SURVIVED').padEnd(8)}  ${m.id.padEnd(22)} +${String(misses).padStart(3)} misses  +${String(contra).padStart(2)} contradictions  via ${how.padEnd(13)} over ${String(hits).padStart(3)} sites`,
+    )
+  }
+  console.log(`\n${mutants.length} mutants, ${survivors} survived, ${untestable} untestable`)
+  if (survivors > 0 || untestable > 0) {
+    console.error('\nA surviving mutant is a hole in the checker, not a broken test.')
+    process.exitCode = 1
+  }
+}
+
+/** `--accept` rewrites the declared-residue list from the current run. */function acceptResidue() {
   const fixtures = JSON.parse(readFileSync(FIXTURES, 'utf8'))
   const docLines = normalise(readFileSync(DOC, 'utf8')).split('\n')
   const out = []
@@ -704,4 +819,5 @@ function acceptResidue() {
 
 if (process.argv.includes('--generate')) generate()
 else if (process.argv.includes('--accept')) acceptResidue()
+else if (process.argv.includes('--mutate')) runMutants()
 else audit()

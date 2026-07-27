@@ -103,7 +103,35 @@ consolidated section that replaces it. It extracts **ten declared classes**. Its
 **hand-authored corpus** in `strategy-facts.controls.json`, written against the specs and never
 produced by the extractor, so a class the extractor cannot see still has a control that fails. Each
 control mutates the document and must raise the miss count; one that does not fire names its class
-and aborts the run. **The gate gates**: any missing fact in any class exits non-zero.
+and aborts the run. **The gate gates**: any miss not on the declared list exits non-zero.
+
+Two capabilities exist because deletion turned out to be the easy mutation, and corruption the one
+that matters. **A dropped rule is a gap; an inverted rule is a lie that reads as authoritative.**
+
+**`npm run docs:mutate`** applies a committed table of *semantic* mutations —
+`strategy-facts.mutants.json` — and fails if any survives. It inverts every prohibition in the
+document (`do not → do`, `must not → must`, `never → always`), flips a comparison
+(`shorter than → longer than`), reverses a phase ordering (`after → before`), and corrupts bound
+values including single digits (`BLOOM_LAYER 1→9`, `ARCHER_DAMAGE 7→9`, `MAX_ACTORS 25→35`,
+`MAX_ACTIVE_VOICES 24→42`, `DAY_LENGTH 240→420`, `CIVILIAN_ALARM_RADIUS 12→21`) and swaps a role's
+hit points. All twelve are caught. Inverting all 190 occurrences of `never` produces 57 new misses;
+it used to produce none, because `never` was a stop word — the single most load-bearing word in a
+repo whose culture is negative controls was being discarded before the probe was built.
+
+**An internal-consistency check** answers what preservation checking structurally cannot see.
+Corrupting `MAX_ACTORS = 25` to `35` at two of its three sites leaves the third intact, so every
+per-spec fact still has a window that satisfies it and the run stays green — while the document now
+says both 25 and 35. Partial corruption is the realistic shape of a bad merge. A constant bound to
+two different values is wrong *regardless of which is right*, so this is checkable without knowing
+the truth. Four of the twelve mutants are caught only this way. Deliberate divergences, where the
+document records both what a spec asked for and what shipped, are declared in
+`strategy-facts.contradictions.json` with a reason — currently one entry, `FIRST_EVENT_AT`, which is
+50 in the spec and 30 in the code.
+
+The check found a **real error in this document** the first time it ran: `CAMERA_ACCENT_MAX` was
+being used for the four-entry list cap, when the spec binds `CAMERA_ACCENT_MAX = 7` as the FOV clamp
+bound and `CAMERA_ACCENT_MAX_ENTRIES = 4` as the cap. Two sentences asserted a constant equal to a
+value it is not. Corrected.
 
 **What "preserved" means operationally**, stated rather than implied:
 
@@ -113,6 +141,7 @@ and aborts the run. **The gate gates**: any missing fact in any class exits non-
 | `numericValue` | the number appears in the owning section, not inside a longer number |
 | `relation` — binding | the value follows the name **with no other number in between** |
 | `relation` — row | the name and **all** of that row's values appear in **one line** |
+| `relation` — comparison | the name and its comparative marker (`shorter`, `below`, `above` …) appear in one line |
 | `formula`, and the five rule classes | the three rarest words of the source sentence **all** appear inside one three-line window |
 | a rule that was **negated** | additionally, some **single sentence** contains those words **and** a negation |
 | a rule that carried an **ordering** marker | additionally, some single sentence contains those words **and** that marker |
@@ -124,7 +153,7 @@ the discriminating token mandatory. Light suffix stripping and British/American 
 on both sides, consistently in every check, because `callout`/`callouts` and `behaviour`/`behavior`
 are the same fact and a checker that says otherwise is measuring morphology.
 
-**Result: 2,269 facts across the fifteen pairings, 94.8% present in the owning section.**
+**Result: 2,287 facts across the fifteen pairings, 94.6% present in the owning section.**
 
 | Class | Facts | Preserved | | Class | Facts | Preserved |
 | --- | ---: | ---: | --- | --- | ---: | ---: |
@@ -132,12 +161,12 @@ are the same fact and a checker that says otherwise is measuring morphology.
 | named constant | 342 | 100% | | lifecycle / ownership rule | 145 | 83.4% |
 | accessibility rule | 23 | 100% | | edge-case rule | 101 | 82.2% |
 | storage key | 12, from `src` | 100% | | design rule | 251 | 78.9% |
-| relation (binding, row) | 626 | 98.9% | | | | |
-| formula | 76 | 98.7% | | **total** | **2,269** | **94.8%** |
+| relation (binding, row, comparison) | 644 | 98.9% | | | | |
+| formula | 76 | 98.7% | | **total** | **2,287** | **94.6%** |
 
-**The residue is 117 facts, and it is not rounded away.** Every one is enumerated in
+**The residue is 124 facts, and it is not rounded away.** Every one is enumerated in
 `scripts/strategy-facts.accepted.json` with its spec, class and source sentence, so the gap is
-auditable entry by entry: 53 design rules, 24 lifecycle rules, 18 edge cases, 14 budget rules, 7
+auditable entry by entry: 53 design rules, 24 lifecycle rules, 18 edge cases, 14 budget rules, 14
 relations and 1 formula. The gate is a **ratchet, not a threshold**: the run fails if a miss appears
 that is *not* on that list, so preservation can only improve and a green `npm run docs:facts` means
 "nothing regressed" — a claim it can actually support. Removing `AMBIENT_BEAST_LIMIT` from §1, for
@@ -181,8 +210,8 @@ classes you thought of and says nothing about the ones you did not. What the too
 specific, enumerated set of regressions cannot happen silently — and that the residue is written
 down rather than rounded away.
 
-That an earlier revision of this document scored **100%** and this one scores **94.8%** is the point.
-The instrument got stricter five times; the score went 93.4 → 100 → 88.4 → 100 → 68.6 → **94.8**, and only
+That an earlier revision of this document scored **100%** and this one scores **94.6%** is the point.
+The instrument got stricter five times; the score went 93.4 → 100 → 88.4 → 100 → 68.6 → **94.6**, and only
 the falls are informative. A number that cannot go down is not a measurement.
 
 Four extractor exclusions are declared rather than silent, because each removes a *misclassification*
@@ -2055,11 +2084,12 @@ behaviour"* — the shipped form is frame-rate independent:
 currentFov = THREE.MathUtils.damp(currentFov, targetFov, CAMERA_FOV_LAMBDA, delta)
 ```
 
-At most **`CAMERA_ACCENT_MAX = 4`** one-shot entries are kept. A frame that takes off and lands due
+At most **`CAMERA_ACCENT_MAX_ENTRIES = 4`** one-shot entries are kept, clamped between
+`CAMERA_ACCENT_MIN = -3.5` and `CAMERA_ACCENT_MAX = 7`. A frame that takes off and lands due
 to a large clamped delta must not leave residue. `immediate = true` copies position and **clears the
 sprint blend and accent state** rather than blending from a stale value.
 
-**Two remaining contracts.** The accent list *"keeps at most `CAMERA_ACCENT_MAX = 4` one-shot
+**Two remaining contracts.** The accent list *"keeps at most `CAMERA_ACCENT_MAX_ENTRIES = 4` one-shot
 entries"*, and `immediate = true` copies position **and clears the sprint blend and accent state** together — used
 where an instant cut is appropriate, so a teleport cannot smear. **Tab suspension cannot resume with a stale large raw delta**,
 because the delta clamp applies before any accent integrates it.

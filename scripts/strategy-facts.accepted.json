@@ -9,6 +9,26 @@
   "accepted": [
     {
       "spec": "living-world",
+      "cls": "relation",
+      "id": "cmp:BEAST_RAID_THRESHOLD:above"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "cmp:BEAST_RAID_THRESHOLD:below"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "cmp:MATERIALIZE_BEAST_PRESSURE:below"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "cmp:CAMPFIRE_SEARCH_INTERVAL:below"
+    },
+    {
+      "spec": "living-world",
       "cls": "lifecycleRule",
       "id": "| Region state | `RegionRuntime` (` `) | Owns runtime ids and a `delta"
     },
@@ -279,6 +299,11 @@
     },
     {
       "spec": "combat-juice",
+      "cls": "relation",
+      "id": "cmp:BLEED_FX_INTERVAL:more than"
+    },
+    {
+      "spec": "combat-juice",
       "cls": "designRule",
       "id": "- **Do not claim weapon-clash sparks.** No clash event exists. Ship sp"
     },
@@ -451,6 +476,16 @@
       "spec": "day-night-cycle",
       "cls": "formula",
       "id": "(`opacity = nightFactor² × 0.88`, `fog:false`). Push each to"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "relation",
+      "id": "cmp:PRECIP_VISIBLE_EPSILON:below"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "relation",
+      "id": "cmp:PRECIP_TOP:below"
     },
     {
       "spec": "weather-system",

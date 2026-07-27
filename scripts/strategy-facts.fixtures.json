@@ -1990,6 +1990,24 @@
       },
       {
         "cls": "relation",
+        "id": "cmp:BEAST_CONTROL_DECAY:above",
+        "probe": {
+          "kind": "comparison",
+          "name": "BEAST_CONTROL_DECAY",
+          "marker": "above"
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "cmp:BEAST_RAID_THRESHOLD:above",
+        "probe": {
+          "kind": "comparison",
+          "name": "BEAST_RAID_THRESHOLD",
+          "marker": "above"
+        }
+      },
+      {
+        "cls": "relation",
         "id": "intact=false",
         "probe": {
           "kind": "binding",
@@ -2008,6 +2026,24 @@
           "values": [
             "3"
           ]
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "cmp:AMBIENT_BEAST_PRESSURE:above",
+        "probe": {
+          "kind": "comparison",
+          "name": "AMBIENT_BEAST_PRESSURE",
+          "marker": "above"
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "cmp:MATERIALIZE_BEAST_PRESSURE:above",
+        "probe": {
+          "kind": "comparison",
+          "name": "MATERIALIZE_BEAST_PRESSURE",
+          "marker": "above"
         }
       },
       {
@@ -2090,6 +2126,24 @@
       },
       {
         "cls": "relation",
+        "id": "cmp:CARAVAN_BEAST_THRESHOLD:above",
+        "probe": {
+          "kind": "comparison",
+          "name": "CARAVAN_BEAST_THRESHOLD",
+          "marker": "above"
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "cmp:MATERIALIZE_WARBAND_PRESSURE:above",
+        "probe": {
+          "kind": "comparison",
+          "name": "MATERIALIZE_WARBAND_PRESSURE",
+          "marker": "above"
+        }
+      },
+      {
+        "cls": "relation",
         "id": "row:wolf:42",
         "probe": {
           "kind": "row",
@@ -2132,6 +2186,24 @@
             "165",
             "88"
           ]
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "cmp:BEAST_RAID_THRESHOLD:below",
+        "probe": {
+          "kind": "comparison",
+          "name": "BEAST_RAID_THRESHOLD",
+          "marker": "below"
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "cmp:MATERIALIZE_RAID_MARGIN:below",
+        "probe": {
+          "kind": "comparison",
+          "name": "MATERIALIZE_RAID_MARGIN",
+          "marker": "below"
         }
       },
       {
@@ -2807,6 +2879,15 @@
       },
       {
         "cls": "relation",
+        "id": "cmp:CONTROL_FLIP_MARGIN:below",
+        "probe": {
+          "kind": "comparison",
+          "name": "CONTROL_FLIP_MARGIN",
+          "marker": "below"
+        }
+      },
+      {
+        "cls": "relation",
         "id": "speed=5.4",
         "probe": {
           "kind": "binding",
@@ -3155,6 +3236,15 @@
           "values": [
             "11"
           ]
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "cmp:MATERIALIZE_BEAST_PRESSURE:below",
+        "probe": {
+          "kind": "comparison",
+          "name": "MATERIALIZE_BEAST_PRESSURE",
+          "marker": "below"
         }
       },
       {
@@ -4017,6 +4107,15 @@
       },
       {
         "cls": "relation",
+        "id": "cmp:CAMPFIRE_SEARCH_INTERVAL:below",
+        "probe": {
+          "kind": "comparison",
+          "name": "CAMPFIRE_SEARCH_INTERVAL",
+          "marker": "below"
+        }
+      },
+      {
+        "cls": "relation",
         "id": "TORCH_LIGHT_RANGE=26",
         "probe": {
           "kind": "binding",
@@ -4244,6 +4343,24 @@
           "values": [
             "0.22"
           ]
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "cmp:CIVILIAN_ALARM_RADIUS:shorter",
+        "probe": {
+          "kind": "comparison",
+          "name": "CIVILIAN_ALARM_RADIUS",
+          "marker": "shorter"
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "cmp:MORALE_RALLY_SECONDS:shorter",
+        "probe": {
+          "kind": "comparison",
+          "name": "MORALE_RALLY_SECONDS",
+          "marker": "shorter"
         }
       },
       {
@@ -8950,6 +9067,15 @@
       },
       {
         "cls": "relation",
+        "id": "cmp:CALLOUT_COOLDOWN:more than",
+        "probe": {
+          "kind": "comparison",
+          "name": "CALLOUT_COOLDOWN",
+          "marker": "more than"
+        }
+      },
+      {
+        "cls": "relation",
         "id": "NUMBER_MERGE_WINDOW=0.09",
         "probe": {
           "kind": "binding",
@@ -10256,6 +10382,15 @@
       },
       {
         "cls": "relation",
+        "id": "cmp:DECAL_MAX:below",
+        "probe": {
+          "kind": "comparison",
+          "name": "DECAL_MAX",
+          "marker": "below"
+        }
+      },
+      {
+        "cls": "relation",
         "id": "transparent=true",
         "probe": {
           "kind": "binding",
@@ -10615,6 +10750,15 @@
           "values": [
             "1.25"
           ]
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "cmp:BLEED_FX_INTERVAL:more than",
+        "probe": {
+          "kind": "comparison",
+          "name": "BLEED_FX_INTERVAL",
+          "marker": "more than"
         }
       },
       {
@@ -17064,6 +17208,15 @@
       },
       {
         "cls": "relation",
+        "id": "cmp:PRECIP_VISIBLE_EPSILON:below",
+        "probe": {
+          "kind": "comparison",
+          "name": "PRECIP_VISIBLE_EPSILON",
+          "marker": "below"
+        }
+      },
+      {
+        "cls": "relation",
         "id": "depthWrite=false",
         "probe": {
           "kind": "binding",
@@ -17082,6 +17235,15 @@
           "values": [
             "true"
           ]
+        }
+      },
+      {
+        "cls": "relation",
+        "id": "cmp:PRECIP_TOP:below",
+        "probe": {
+          "kind": "comparison",
+          "name": "PRECIP_TOP",
+          "marker": "below"
         }
       },
       {
