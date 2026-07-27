@@ -90,13 +90,18 @@ function fingerprint(result: RunResult): string {
 test('the chronicle tick is data only and runs at a fixed 8 second step', () => {
   assert.equal(CHRONICLE_TICK_SECONDS, 8)
   const blueprint = generateWorld('chronicle-cadence')
-  const before = process.hrtime.bigint()
+  // CPU time rather than wall clock. `node --test` runs suites concurrently, so
+  // elapsed time here also counts every other suite competing for a core, which
+  // made this budget fail on a busy machine without the tick doing any more work.
+  // `process.cpuUsage` already reports microseconds and only counts this process.
+  const before = process.cpuUsage()
   const result = runChronicle(blueprint, { ticks: 200 })
-  const microsecondsPerTick = Number(process.hrtime.bigint() - before) / 1000 / 200
+  const spent = process.cpuUsage(before)
+  const microsecondsPerTick = (spent.user + spent.system) / 200
   assert.equal(result.state.tick, 200)
   assert.ok(
     microsecondsPerTick < 1000,
-    `chronicle tick took ${microsecondsPerTick.toFixed(1)}µs, budget is 1000µs`,
+    `chronicle tick took ${microsecondsPerTick.toFixed(1)}µs of CPU, budget is 1000µs`,
   )
 })
 
