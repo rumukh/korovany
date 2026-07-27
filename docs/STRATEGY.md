@@ -65,11 +65,38 @@ tables that only described code that already existed, file-by-file change lists 
 now holds better than prose, spec section numbering, and the specs' own **effort estimates** —
 planning artifacts for work that is finished, carrying nothing a future implementer needs.
 
-Coverage was checked mechanically rather than asserted. Extracting every named constant, storage
-key and identifier from the recovered specs gives **850 fact-bearing tokens**, of which the
-consolidated text carries all but the code identifiers it deliberately drops; extracting every
-distinct numeric literal gives **732 values at 93.4% coverage**, the residue being spec section
-numbers, effort estimates, and line-number citations into files that no longer exist.
+Coverage was checked mechanically, and the check has a negative control. An earlier revision of
+this document reported "93.4% numeric coverage" from a **document-wide** token set, which was not
+a measurement of anything useful: a number counted as preserved if it occurred *anywhere* in a
+2,800-line file, so loot's 120 ms beam reveal registered as present because `120` appears in the
+weather table. **Global presence is not contextual preservation.**
+
+The check is now **section-scoped**: each spec is compared only against the consolidated section
+that replaces it, and a fact counts as preserved only if it appears in the section that owns it.
+The instrument is verified by deleting two facts that *are* present from a section and confirming
+the miss count rises — without that control it would be a metric rather than a check. Result:
+**952 fact-bearing tokens across the fifteen pairings, 93.4% preserved in the owning section.**
+
+| Spec → section | Facts | In-section |
+| --- | ---: | ---: |
+| day/night cycle | 60 | 100.0% |
+| combat depth | 67 | 98.5% |
+| weather | 59 | 96.6% |
+| living world | 331 | 95.5% |
+| combat juice | 61 | 93.4% |
+| bloom | 14 | 92.9% |
+| ground foliage | 55 | 92.7% |
+| enemy reactions | 49 | 91.8% |
+| loot spectacle | 48 | 91.7% |
+| layered audio | 37 | 89.2% |
+| comic hit language | 55 | 89.1% |
+| dynamic world events | 22 | 86.4% |
+| camera accents | 50 | 86.0% |
+| zone art direction | 19 | 84.2% |
+| toon shading | 25 | 80.0% |
+
+The residue is the `THREE` namespace, cross-references to other specs by number, effort estimates,
+and line-number citations into files that no longer exist.
 
 Two documents in `docs/` were deliberately **not** folded:
 `from-four-zones-to-a-seeded-campaign.md` and its `.ru.md` translation. They are published
@@ -867,6 +894,10 @@ REINFORCEMENT_TIME=25  REINFORCEMENT_LIMIT=4                  MAX_ACTORS=25
 PROJECTILE_HIT_RADIUS=0.9   guard armour ×0.72   injury chance 11%
 ```
 
+The primary attack this layered on top of is unchanged and is the baseline every number here is
+relative to: **0.52 s cooldown, range 3.6, base damage 26 / 28 / 31 by faction, 13% limb-detach
+chance**, with enemy melee at 6–9 damage (commander 10).
+
 All directional combat uses **one canonical aim vector derived from `cameraYaw`**, so the
 crosshair, bow, cleave and raised shield agree even while the player is standing still.
 All actor damage goes through `damageActor()`, which applies the brute's frontal modifier for
@@ -1015,6 +1046,14 @@ HIT_STOP_CLEAVE=0.058    HIT_STOP_BLOCK=0.024      HIT_STOP_REDUCED_MAX=0.020
 canvas 256×128, number scale-up 80 ms, rays expand 0.4 → 1.8 u and fade in 180 ms
 callout chances: normal melee 22%, heavy 70%, lethal 100%, blocks 45%
 ```
+
+The stop table in milliseconds, which is how the spec expressed it: normal direct-player
+melee or arrow **28 ms**, heavy **48 ms**, lethal **64 ms**, cleave **58 ms once**, shield block
+on the player **24 ms**, and AI-vs-AI or a miss **0 ms**. The combined text and ray systems are
+budgeted at **≤50 visible sprites**, and `loop()` clamps raw delta at **0.05 s** before any of it
+is consumed. The reduced-motion cap is **20 ms**. Existing budgets it has to coexist with are
+sparks 48, gore 180 and decals 72. The acceptance bar was that hit-stop duration stay stable at
+**30 / 60 / 120 fps** while camera rendering and audio continue.
 
 Weight is `blocked` for a shield block, `lethal` for a kill, `heavy` for a cleave **or** damage
 ≥ 22% of the target's max HP, otherwise `normal`; priority runs `lethal > blocked > heavy >
@@ -1180,6 +1219,10 @@ targetFov  = CAMERA_BASE_FOV + SPRINT_FOV_BONUS × sprintFovBlend
 currentFov = damp(currentFov, targetFov, CAMERA_FOV_DAMPING, visualDelta)   clamped 52..65
 ```
 
+The clamp bounds are also named `FOV_ACCENT_MIN` / `FOV_ACCENT_MAX` where the spec discusses the
+sum. The camera itself is unchanged: `PerspectiveCamera(CAMERA_BASE_FOV, 1, 0.1, 240)`. The
+acceptance bar for the follow refactor was **comparable settling at 30 / 60 / 120 fps** with no
+drift and no change to collision or foliage behaviour.
 `camera.fov` is assigned only when the value changes by at least `0.01`. Sprint promotes the
 **authoritative gameplay sprint decision** rather than recomputing it from keys, so shift held
 without movement, empty stamina, an active shield or a leg injury all correctly suppress it.
@@ -1228,6 +1271,10 @@ rarity split: common 62% · uncommon 27% · rare 9% · legendary 2%
 | Rare | Coins 28..42, medicine 24..32, or whetstone +1 | 4.2 u | two rings, alternating scale |
 | Legendary | Coins 70, medicine 45, or whetstone +2 | 6.5 u | two rings + starburst |
 
+This is **bonus** loot layered on top of the unchanged base reward — a direct player kill still
+grants `12` gold immediately in `killActor()`, or `55` for a commander, and the spec was emphatic:
+*"Do not convert mandatory kill gold into missable pickups."*
+
 Eligibility: an ordinary direct-player kill rolls at 30%; a commander direct-player kill is
 guaranteed and at least `rare`; champion event success is one guaranteed `legendary` at the event
 marker; other event successes give one guaranteed `uncommon` or better. **AI-vs-AI kills never
@@ -1241,9 +1288,17 @@ the cap, whetstones are excluded from the roll entirely rather than rolled and w
 
 The state machine is `burst → idle → magnet → collected`. Burst spawns at the pre-corpse death
 position plus 0.4 Y with a small radial velocity and scales the token 0.2 → 1; idle bobs on a
-deterministic phase and **forces magnet at age 15 s regardless of distance**; magnet accelerates
-toward the player's chest with a max speed — *"Do not use teleporting lerp coefficients that vary
-by frame rate."*
+deterministic phase, **fades the beam in over 120 ms** (`reveal = clamp(idleAge / 0.12, 0, 1)`,
+shipped at `GameEngine.ts:10443-10449`, driving beam opacity ×0.32, ring ×0.82 and starburst
+×0.95), and **forces magnet at age 15 s regardless of distance**; magnet accelerates toward the
+player's chest with a max speed — *"Do not use teleporting lerp coefficients that vary by frame
+rate."*
+
+Each pickup is **one vertical beam-plane pair crossed at 90°**, one ground ring, an optional
+second ring for rare and legendary, and a small starburst sprite above legendary. Beams and rings
+are `MeshBasicMaterial`, `transparent`, `depthWrite: false`, `toneMapped: false`, with geometry
+and materials **shared by kind and rarity** — *"Do not create one light per beam."* There is no
+per-pickup light and no per-pickup canvas texture.
 
 **Pool pressure never discards a reward.** At 20 active, the oldest active common is settled
 immediately and its entry recycled; if no common exists, the oldest lowest-rarity entry is
@@ -1254,6 +1309,14 @@ frame safe.
 
 Save behaviour is asymmetric by design: `save()` settles all active pickups first, victory settles
 before the final view, but **defeat does not settle** — uncollected bonuses are run-local risk.
+**Pause freezes burst, bob, magnet and toast expiry but does not hide beams**; returning to the
+menu or destroying the engine clears pickups **without** invoking reward callbacks; and no pickup
+or toast is ever serialized.
+
+Reduced motion removes bobbing, rotation and card translation **while leaving beam and ring
+opacity and the static shapes intact**, so rarity stays readable without movement. Every rarity
+carries a text label and a distinct ring/beam silhouette, so none of it depends on colour or on
+bloom being enabled.
 
 The card reports the exact result (`Урон 31 -> 32`, `+18 золота`, `Здоровье 62 -> 80`), takes no
 input, and is timed by **engine time** via `lootToastExpiresAt`, because *"Do not schedule React
@@ -1370,7 +1433,8 @@ smooth."* · *"Zone tint is supporting glue, not a full-screen filter."*
 misleading.** The profiles, fog tint and damping are real: `createZoneArtProfiles` at
 `GameEngine.ts:1255-1296`, `ZONE_TINT_DAMPING = 3.5` at `:1071` used at `:11498`, and per-zone
 `fogWeight` values of 0.055 / 0.045 / 0.075 / 0.09 all inside the specified 0.04–0.10 band. The
-per-zone UI accents and motifs shipped in `types.ts:449-468`
+per-zone UI accents and motifs shipped as an expanded `ZONE_INFO` metadata type in
+`types.ts:449-468`
 (`#c48742`/`scrape`, `#547ac4`/`chevron`, `#5b9d54`/`organic`, `#b75b70`/`slash` — note these hex
 values are code decisions; the spec named no hexes).
 
@@ -1404,7 +1468,9 @@ RenderPass(scene, camera)  →  UnrealBloomPass(resolution, strength, radius, th
 
 Threshold bloom ships first; masked selective bloom via a dedicated layer is an optional follow-up
 to be used *"only if threshold bloom bleeds into bright ground textures."* The spec noted that
-`three@0.185` already ships every module needed, so no dependency change was required.
+`three@0.185` already ships every module needed, so no dependency change was required. Flame
+`emissiveIntensity` reaches ~1.55, which is what carries the torches over the threshold, and the
+acceptance bar was 60 fps on mid-range hardware at the `High` preset.
 
 The teardown rule is the one that catches people: *"`EffectComposer.dispose()` does not dispose its
 pass list"* — each pass must be disposed explicitly first. Composer calls must also be guarded when
@@ -1446,7 +1512,10 @@ organic totals: 1,000 at low · 2,990 at high · four total draw calls
 | pebbles | 0 / 0 / 110 / 0 | 0 / 0 / 110 / 0 | no |
 
 Buckets group by **render bucket, not zone**, with zone colour applied through
-`InstancedMesh.setColorAt()`. Placement generates the `high` sequence and uses its prefix for
+`InstancedMesh.setColorAt()`. Placement samples within `WORLD_HALF`, confirms the zone with
+`zoneAt(x, z)`, and rejects the road corridors `abs(x) <= 3 + clearance` and
+`abs(z + 23) <= 3 + clearance` around the 6-unit road geometry. It generates the `high` sequence
+and uses its prefix for
 `low`, so changing quality never reshuffles retained plants.
 
 The shader is the substance:
@@ -1524,17 +1593,35 @@ What **did** ship, in `world/GeneratedWorldRuntime.ts` rather than in `GameEngin
 What did **not** ship: **the vertex-shader wind**. There is no `onBeforeCompile`, no
 `uWindDirection`, `uWindStrength`, `uSwayAmplitude` or `uFoliageHeight`, and no
 `customProgramCacheKey` anywhere in `src`. Ground cover is static. Nor did the spec's **global
-four-draw-call bucket model** ship: meshes are per-region under the streamer, so the draw-call
-count scales with loaded regions rather than being globally fixed at four, and there are no
-`FOLIAGE_CLEARANCE` / `ROAD_CLEARANCE` named constants — clearance is derived from the region
-style instead. `DEFAULT_WIND_STRENGTH = 0.25` and `DEFAULT_WIND_DIRECTION` do exist
-(`GameEngine.ts:1079`) but drive precipitation, not foliage.
+four-draw-call bucket model** ship: meshes are per kind *per streamed region*, so the number of
+ground-cover draws scales with loaded regions and exceeds four whenever more than one region is
+loaded. Clearance is derived from the region style rather than from named constants, so
+`FOLIAGE_CLEARANCE` and `ROAD_CLEARANCE` do not exist.
 
-**Ledger effect: 6 of 12 criteria verified, 1 partial, 5 unverified** — not the 1/12 an earlier
-revision recorded. Determinism, subset-quality, zone-varying density, clearance, the draw-call
-question (partial: instanced, but per-region rather than four globally) and the persisted setting
-are all satisfied by the shipped implementation. The wind criteria (1, 2, 7, 10) and the frame-rate
-checks are the genuine misses.
+A wind vector does exist but is **inline and unnamed**: `direction: new THREE.Vector2(1, 0.2)
+.normalize()` inside the `WindState` initialiser at `GameEngine.ts:1521`, with
+`strength: DEFAULT_WIND_STRENGTH` (`= 0.25`, `:1079`). It drives precipitation, not foliage.
+**There is no `DEFAULT_WIND_DIRECTION` constant** — an earlier revision of this section claimed
+there was, and that was wrong.
+
+**Ledger: 4 verified / 3 partial / 1 unverifiable / 4 absent or contradicted.** Recounted
+criterion by criterion, because an earlier revision let "unverifiable" absorb things that are
+simply not there:
+
+| # | Criterion | Result |
+| ---: | --- | --- |
+| 1 | Grass, ferns, complete flowers sway; random yaw does not rotate apparent wind | **absent** — no wind |
+| 2 | No per-frame instance buffer upload; atmosphere updates only shared uniforms | **absent** — no uniforms; but `StaticDrawUsage` means no per-frame upload either |
+| 3 | Neutral, forest, fort, palace visibly distinct in density, scale, tint | **verified** — `GROUND_COVER_COUNTS` differs per biome; materials per biome |
+| 4 | Layout deterministic; `low` an exact subset of `high` | **verified** — seeded placement + `mesh.count` truncation |
+| 5 | Avoids roads, structures, compounds, spawns, quest clearings | **partial** — roads, river, an 11 u site radius and slope are covered; registered-structure footprints, authored compounds, faction spawns and quest clearings are not |
+| 6 | Foliage disappears into fog without sorting artifacts | **unverifiable** — visual |
+| 7 | Wind-displaced vertices do not clip at frustum edges | **absent** — no displacement to clip |
+| 8 | Ground detail stays within four draw calls | **contradicted** — four kinds *per loaded region* |
+| 9 | `off / low / high` persists and rebuilds cleanly from menu and pause | **verified** |
+| 10 | Default breeze works without weather; weather coupling verified when weather exists | **absent** for foliage; the wind state exists but is precipitation-only |
+| 11 | Build and lint pass; no WebGL shader errors | **partial** — build and lint pass; there is no shader to fail |
+| 12 | `high` holds 60 fps on reference desktop; `low` measured on a coarse-pointer device | **unverifiable** — not measured |
 
 ---
 
@@ -1555,8 +1642,9 @@ TWILIGHT_BLEND=[-0.18, 0.08]                         DAY_BLEND=[0.08, 0.60]
 ```
 
 ```
-dayPhase        = (elapsed / DAY_LENGTH + DAY_START_OFFSET) % 1   // 0 dawn, 0.25 noon, 0.5 dusk
-elevation       = sin(dayPhase × 2π)
+dayPhase        = (elapsed / DAY_LENGTH + DAY_START_OFFSET) % 1   // 0 dawn, 0.25 noon, 0.5 dusk, 0.75 midnight
+sunAngle        = dayPhase * TWO_PI
+elevation       = sin(sunAngle)
 dayFactor       = smoothstep(-0.08, 0.45, elevation)
 nightFactor     = 1 − dayFactor
 star opacity    = nightFactor² × 0.88
@@ -1566,7 +1654,7 @@ flame emissive ramp 0.9 → 2.15
 
 | Stop | elevation | Sun | Background | Fog | Hemisphere |
 | --- | --- | ---: | --- | --- | ---: |
-| Night | ≤ −0.18 | 0.15 | `mix(worldSky, worldFog, 0.45) × 0.22` | `worldFog × 0.35` | 0.45 |
+| Night | ≤ −0.18 | 0.15, colour `mix(worldSun, worldFog, 0.7)` | `mix(worldSky, worldFog, 0.45) × 0.22` | `worldFog × 0.35` | 0.45 |
 | Dawn / dusk | 0.08 | 1.4 | `mix(worldSky, warning, 0.4)` | `mix(worldFog, warning, 0.3)` | 1.0 |
 | Day | ≥ 0.60 | 2.65 | `worldSky` | `worldFog` | 1.65 |
 
@@ -1628,6 +1716,7 @@ GROUND_WET_ROUGHNESS=0.58  GROUND_WET_DARKEN=0.22        GROUND_FROST_TINT=0.24
 LIGHTNING_MIN=8  LIGHTNING_MAX=22  LIGHTNING_FLASH=0.12
 THUNDER_DELAY_MIN=0.3      THUNDER_DELAY_MAX=1.6
 response = 1 − exp(−3 × delta / WEATHER_BLEND)      // ~95% in six seconds, weights sum to 1
+baseline wind: THREE.Vector2(1, 0.2).normalize(), windStrength = 0.2
 ```
 
 | Kind | Fog near/far | Sun | Hemisphere | Cloud opacity | Sky | Wet | Frost | Wind |
@@ -1729,17 +1818,41 @@ Events are transient and not persisted. Saving during an active event stores
 `EVENT_COOLDOWN_MIN` instead of the live value, so reloading cannot immediately replace an
 abandoned event; `championDamageBonus` **is** persisted so the +18 cap survives.
 
-**Superseded content, flagged rather than deleted.** Three of this spec's decisions were replaced
-by the living-world spec and no longer describe the game:
+**Superseded content, flagged rather than deleted.** Four of this spec's decisions were replaced
+and no longer describe the game. The first is behavioural and was under-reported as constant drift
+in an earlier revision of this document:
 
+- **Both objective-dependent scheduler rules vanished.** The spec required the first event to fire
+  **on completion of the first main objective**, or at ~50 s if the player kept roaming, and
+  **prohibited starting a new event when only the final main objective remained**. Shipped
+  `updateEvents` (`GameEngine.ts:7419-7453`) is **purely timer-driven**: it decrements
+  `eventCooldown`, calls `startRandomEvent()`, and falls back to `EVENT_RETRY` — there is no
+  objective-count gate anywhere in the path, and `FIRST_EVENT_AT = 30` is a timer, not a trigger.
+  So the campaign no longer paces events against progress, and an event can begin while the player
+  is walking into the finale. That is a real behavioural change, not a tuning change.
 - **`MAX_ACTIVE = 1`** → one player-anchored event plus up to `MAX_LOCATED_EVENTS = 2` located
-  ones (`GameEngine.ts:1188`, guard at `:7464`).
+  ones (`:1188`, guard at `:7464`).
 - **`eventRng = seededRandom((Date.now() % 2147483646) + 1)`** → a derived stream,
   `this.eventRng = () => streams.event.next()` (`:1853`), one of `combat | director | event | loot
   | chronicle` (`:1527`). **No `Date.now()` seeding remains in the event path.**
 - **`WorldEventKind`** → split into `RandomWorldEventKind | ChronicleWorldEventKind`
   (`types.ts:147-162`), the latter adding `factionRaid`, `caravanAmbush`, `warband`, `aftermath`
   and `beastRaid`.
+
+**Lifecycle invariants**, which are the part most easily lost. Cleanup runs through an idempotent
+`removeActorById()` that removes projectiles sourced by that actor, clears other actors'
+`targetId` references, removes and disposes the mesh and splices it from `actors`. It is applied
+**only to `ownedActorIds`**: a borrowed bounty target and a rescued ally both survive event
+cleanup. Every `ownedProps` entry is removed and disposed, but the `defendHome` house is borrowed,
+never added to `ownedProps`, and never disposed. Active-event cleanup is called from `destroy()`
+**before** the final scene traversal. An event target killed by a **third faction** still resolves
+the event: `onKill` runs after normal objective-credit evaluation but before the indirect-kill
+early return, and success is never gated on `directPlayerKill`.
+
+The HUD contract: `EventBanner` shows title, description, a countdown from `timeRemaining` and a
+progress bar of `progress / target`, coloured by `tone`, and **pulses when `timeRemaining < 10`**
+(`App.tsx:809-843`). The minimap renders `kind === 'event'` with a distinct colour and star/flag
+glyph plus a legend entry.
 
 **Status: shipped and then partly superseded — 4 verified / 2 partial / 1 superseded.** All five
 rewards match (`GameEngine.ts:7664-7689`), as do all four timers, the 100 hp house and the
@@ -1763,7 +1876,7 @@ deterministic teardown — while keeping everything procedural and autoplay-comp
 ```text
 masterGain=0.85    musicGain: active 0.18 / paused 0.08 / ended 0.035
 sfxGain=0.62 × userSfxVolume        uiGain=0.48 × userSfxVolume
-compressor: threshold −18 dB, knee 12 dB, ratio 5:1, attack 0.003 s, release 0.18 s
+MASTER_COMPRESSOR_THRESHOLD=−18 dB   knee 12 dB, ratio 5:1, attack 0.003 s, release 0.18 s
 MAX_ACTIVE_VOICES=24   MAX_ACTIVE_SOURCES=48
 SFX_DISTANCE_MAX=42    PAN_MAX=0.85    SFX_VOLUME_DEFAULT=0.8
 per-cue caps: hitLight 6 · hitHeavy 3 · gore 3 · swing 2 · block 2
