@@ -1713,6 +1713,26 @@ test('decoration never blocks a spawn point', () => {
     [],
     'decoration colliders are standing on spawn points',
   )
+
+  // Faction starts are the other population, and the one that hurts most: the engine
+  // writes this position into the player verbatim, and `findPath` returns null when the
+  // *start* is unwalkable, so the first click-to-move of the run silently does nothing.
+  // The start is offset ~20 units back along the critical path, which puts it outside
+  // the site clearing, so no other keep-out covers it.
+  const unwalkableStarts: string[] = []
+  for (const faction of ['elf', 'guard', 'villain'] as const) {
+    const approximate = runtime.getStartPosition(faction)
+    runtime.update({ deltaSeconds: 0, focus: approximate })
+    const start = runtime.getStartPosition(faction)
+    if (!runtime.collision.isWalkablePosition(start.x, start.z, 0.45)) {
+      unwalkableStarts.push(faction)
+    }
+  }
+  assert.deepEqual(
+    unwalkableStarts,
+    [],
+    'a faction starts the run unable to move',
+  )
   runtime.dispose()
 })
 
