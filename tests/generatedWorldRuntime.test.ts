@@ -543,6 +543,28 @@ test('streamed regions retain textured surfaces, composite trees, and ground cov
   assert.ok(trees.geometry.getAttribute('color'))
   assert.ok(trees.geometry.getAttribute('outlineNormal'))
 
+  // §10 — a forest is no longer one repeated silhouette. The primary species is the
+  // structural, colliding, inked one; the rest are cosmetic instanced kinds drawn
+  // from the same per-biome dressing plan.
+  const dressingKinds = forestRoot.children.filter(
+    (child): child is THREE.InstancedMesh =>
+      child instanceof THREE.InstancedMesh &&
+      (child.name.startsWith('dressing-structural:') ||
+        child.name.startsWith('dressing-cosmetic:tree-') ||
+        child.name.startsWith('dressing-cosmetic:under-')),
+  )
+  assert.ok(dressingKinds.length >= 3)
+  assert.equal(
+    new Set(dressingKinds.map((mesh) => mesh.geometry.uuid)).size,
+    dressingKinds.length,
+  )
+  for (const mesh of dressingKinds) {
+    assert.ok(
+      mesh.geometry.getAttribute('color'),
+      `${mesh.name} is drawn with a vertex-coloured material and would render black`,
+    )
+  }
+
   const grass = forestRoot.getObjectByName(
     `dressing-cosmetic:ground-grass:${forestRegion.id}`,
   )
@@ -563,15 +585,34 @@ test('streamed regions retain textured surfaces, composite trees, and ground cov
   runtime.update({ deltaSeconds: 0, focus: strongholdCenter })
   const strongholdRoot = regionRoot(scene, stronghold.regionId)
   assert.ok(strongholdRoot)
-  const bodyTexture = materialMap(
-    strongholdRoot.getObjectByName(`site-body:${stronghold.id}`),
+
+  // §10 — a site is a composed place, not a box with a roof. The keep is a two-level
+  // LOD over shared geometry, and the towers, gate, banners and braziers around it
+  // merge into one mesh per surface.
+  const siteGroup = strongholdRoot.getObjectByName(`site:${stronghold.id}`)
+  assert.ok(siteGroup)
+  const keep = siteGroup.getObjectByName(`site-body:${stronghold.id}:keep`)
+  assert.ok(keep instanceof THREE.LOD)
+  assert.equal(keep.levels.length, 2)
+  assert.ok(keep.levels[1].distance > keep.levels[0].distance)
+  const nearLevel = keep.levels[0].object
+  const farLevel = keep.levels[1].object
+  assert.ok(nearLevel instanceof THREE.Mesh)
+  assert.ok(farLevel instanceof THREE.Mesh)
+  assert.ok(
+    farLevel.geometry.getAttribute('position').count <
+      nearLevel.geometry.getAttribute('position').count,
+    'the far building level must be cheaper than the near one',
   )
-  const roofTexture = materialMap(
-    strongholdRoot.getObjectByName(`site-roof:${stronghold.id}`),
+  assert.ok(nearLevel.geometry.getAttribute('color'))
+  assert.ok(nearLevel.geometry.getAttribute('outlineNormal'))
+
+  const siteProps = siteGroup.getObjectByName(
+    `site-props:${stronghold.id}:hard`,
   )
-  assert.ok(bodyTexture instanceof THREE.DataTexture)
-  assert.ok(roofTexture instanceof THREE.DataTexture)
-  assert.notEqual(bodyTexture, roofTexture)
+  assert.ok(siteProps instanceof THREE.Mesh)
+  assert.ok(siteProps.geometry.getAttribute('color'))
+  assert.ok(siteProps.geometry.getAttribute('position').count > 0)
 
   let terrainTextureDisposed = false
   terrainTexture.addEventListener('dispose', () => {
