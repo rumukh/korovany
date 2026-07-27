@@ -189,7 +189,28 @@ const ZONE_IDS: readonly ZoneId[] = ['neutral', 'palace', 'forest', 'fort']
  * other seven sat idle. They are spent here on the silhouettes that carry a frame:
  * settlement buildings, the props around them, and the tallest tree species.
  */
-const OUTLINE_WORLD_DRAWS_MAX = 8
+export const OUTLINE_WORLD_DRAWS_MAX = 8
+
+/**
+ * Ink draws the whole VISIBLE SET may spend. There was no such number, and that was
+ * the gap: `OUTLINE_WORLD_DRAWS_MAX` is written per region, `visibleRadius` below is
+ * 1, and `RegionManager` selects with Chebyshev distance — so **nine** regions are
+ * visible at once and nothing capped their sum. The structural worst case is 9 x 8 =
+ * 72 simultaneous ink draws behind a spec whose only number is 8.
+ *
+ * A frame pays the sum, not the per-region figure, so the sum is what needs a budget.
+ * Measured across 10 seeds and 250 focus positions on the merged tree: peak 43, mean
+ * 27.1, per-region peak exactly 8 — the per-region budget is fully spent and never
+ * exceeded, so the per-region counter is doing its job and is not the thing at fault.
+ * 48 is that peak plus about 12%: a real ceiling, well under the structural 72, so a
+ * future pass that raises per-region spend again trips this instead of shipping.
+ *
+ * The unit drifted too. The spec line read "instanced world silhouettes per visible
+ * region", sized when an outlined forest cost one draw for the whole forest; these are
+ * now largely non-instanced per-building meshes, so the same 8 buys far less than it
+ * was written to buy. Recorded in `docs/08` §7.1 rather than silently repriced.
+ */
+export const OUTLINE_WORLD_VISIBLE_DRAWS_MAX = 48
 
 /**
  * How many of those a single site may take, so the trees are never starved.

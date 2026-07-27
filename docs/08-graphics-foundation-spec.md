@@ -636,7 +636,8 @@ OUTLINE_MAX_DEPTH=42.0
 OUTLINE_CHARACTER_SCALE (retired)    replaced by normal extrusion
 OUTLINE_ACTOR_DISTANCE=38            unchanged from spec 01
 OUTLINE_INTERACTABLE_DISTANCE=46     unchanged from spec 01
-OUTLINE_WORLD_DRAWS_MAX=8            instanced world silhouettes per visible region
+OUTLINE_WORLD_DRAWS_MAX=8            world silhouettes per visible region
+OUTLINE_WORLD_VISIBLE_DRAWS_MAX=48   the same silhouettes summed over the 3x3 visible set
 CONTACT_SHADOW_TEXELS=64x64          one shared DataTexture
 CONTACT_SHADOW_MATERIALS<=4          one shared material per distinct opacity
 CONTACT_SHADOW_DRAWS_MAX=26          25 actors plus the player
@@ -687,6 +688,44 @@ stays small enough to reason about.
 The other three budgets in this section sit behind `GameEngine` and need WebGL and
 a DOM to measure, so they remain prose rather than tests. Saying so plainly is
 better than implying they are enforced.
+
+### 7.1 `OUTLINE_WORLD_DRAWS_MAX` — the multiplier, and the unit that changed
+
+Two corrections, both found at Wave 4 integration by measuring rather than by
+reading. Neither is a defect in what shipped; both are the spec describing less than
+the code does.
+
+**The multiplier was never stated.** `OUTLINE_WORLD_DRAWS_MAX=8` is written *per
+visible region*. `GeneratedWorldRuntime` sets `visibleRadius: 1` and `RegionManager`
+selects by Chebyshev distance, so the visible set is **3x3 = nine regions**, and
+nothing anywhere capped their sum. A frame pays the sum. Read literally, the spec
+promised 8 and the structural worst case was **72**.
+
+Measured on the merged tree, 10 seeds x 25 focus positions = 250 samples:
+
+```text
+                        main    foundation   merged
+per-region ink, max        0          1         7      budget 8
+per-region ink, mean       0       0.51      4.05
+visible-set ink, max       0          8        43      <- the number nobody had
+visible-set ink, mean      0       3.44     27.05
+visible regions            9          9         9
+world draw calls, max    104        107       176
+```
+
+Per-region spend never exceeds 8 across any sample, so the documented budget is
+correct and fully spent. The visible-set peak is 43. `OUTLINE_WORLD_VISIBLE_DRAWS_MAX`
+is therefore **48** — the measured peak plus about 12%, a real ceiling well under the
+structural 72 — and `tests/integration.test.ts` enforces it. Setting it at 72 would
+have been a cap nothing could ever trip.
+
+**The unit changed underneath the number.** The line used to read "instanced world
+silhouettes", and it was sized when an outlined forest cost one draw for the whole
+forest. Wave 2B spends it largely on non-instanced per-building meshes, so the same
+8 buys far fewer objects than it was written to buy. That is a defensible trade — a
+settlement's roofline is what makes it read as a place — but it is a different
+currency, and the word "instanced" has been removed rather than left to mislead the
+next reader.
 
 ## 8. Resource and lifecycle rules
 
