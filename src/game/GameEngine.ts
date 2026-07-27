@@ -11847,7 +11847,7 @@ export class GameEngine {
       pivot.rotation.z = side * p.legSplay
       const thigh = new THREE.Mesh(
         build(keys.thigh, () => buildThigh(plan.faction, plan.armour, p.thigh)),
-        limbMaterial === bodyMaterial && plan.armour === 'none' ? bodyMaterial : darkMaterial,
+        plan.armour === 'none' ? bodyMaterial : darkMaterial,
       )
       thigh.name = `${name}-thigh`
       pivot.add(thigh)
@@ -11901,7 +11901,7 @@ export class GameEngine {
       // local coordinates into it when the player raises guard.
       const shield = new THREE.Mesh(
         build(keys.offhand, () => buildOffhand(offhandKind)),
-        offhandKind === 'bundle' ? leatherMaterial : bodyMaterial,
+        offhandKind === 'bundle' ? leatherMaterial : this.characterShieldMaterial(plan),
       )
       shield.name = 'shield'
       shield.position.set(-0.82, 1.85, 0.08)
@@ -12027,13 +12027,41 @@ export class GameEngine {
 
   private characterLimbMaterial(plan: CharacterPlan): THREE.MeshStandardMaterial {
     if (plan.armour === 'none') return this.characterBodyMaterial(plan)
+    // Sleeves have to sit a step darker than the chest or the whole figure reads as
+    // one flat slab of faction colour — which is exactly what the elves and the
+    // villains looked like when limbs shared the torso material.
     if (plan.faction === 'guard') {
       return this.artLibrary.acquireMaterial('char:limb:guard', {
         color: mix(this.palette.borderStrong, this.palette.link, 0.3),
         surface: 'metal',
       })
     }
-    return this.characterBodyMaterial(plan)
+    if (plan.faction === 'villain') {
+      return this.artLibrary.acquireMaterial('char:limb:villain', {
+        color: mix(this.palette.borderStrong, this.palette.danger, 0.22),
+        surface: 'metal',
+      })
+    }
+    return this.artLibrary.acquireMaterial('char:limb:elf', {
+      color: mix(this.factionColor('elf'), this.palette.bg, 0.5),
+      surface: 'leather',
+    })
+  }
+
+  /**
+   * A shield is a painted board, not more of the same coat.
+   *
+   * Sharing `bodyMaterial` made the elf's leaf shield disappear into the tabard it
+   * was held in front of, so the face sits a step *lighter* than the chest while the
+   * limbs sit a step darker. Three values across one silhouette is what makes the
+   * offhand read at thirty metres.
+   */
+  private characterShieldMaterial(plan: CharacterPlan): THREE.MeshStandardMaterial {
+    if (plan.armour === 'none') return this.characterBodyMaterial(plan)
+    return this.artLibrary.acquireMaterial(`char:shield:${plan.faction}`, {
+      color: mix(this.factionColor(plan.faction), this.palette.surface, 0.26),
+      surface: plan.faction === 'elf' ? 'bark' : 'metal',
+    })
   }
 
   private characterCloakMaterial(plan: CharacterPlan): THREE.MeshStandardMaterial {
