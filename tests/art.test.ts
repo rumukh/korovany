@@ -51,8 +51,15 @@ function createLibrary(): StylizedArtLibrary {
  * shader-program churn, and "one material per surface, never per mesh" already
  * prevents that. If the combined total ever approaches 24, treat it as a design
  * smell to review rather than a number to raise again.
+ *
+ * The ceiling appears once, below. It used to be spelled out three times and one
+ * of the three was missed when the number changed, which is exactly the failure
+ * this binding prevents.
  */
 test('the library stays inside its documented material budget', () => {
+  // Single source of truth, and it must match `docs/08` §7.
+  const ART_LIBRARY_MATERIALS = 24
+
   const library = createLibrary()
   const kinds = ['player', 'enemy', 'interactable', 'landmark'] as const
 
@@ -70,8 +77,9 @@ test('the library stays inside its documented material budget', () => {
     'eight outline materials plus one shared contact shadow',
   )
   assert.ok(
-    worstCase <= 24,
-    `ART_LIBRARY_MATERIALS is 24; the library itself uses ${String(worstCase)}`,
+    worstCase <= ART_LIBRARY_MATERIALS,
+    `ART_LIBRARY_MATERIALS is ${String(ART_LIBRARY_MATERIALS)}; `
+    + `the library itself uses ${String(worstCase)}`,
   )
 
   // Contact shadows share one material per distinct opacity, and the world only
@@ -80,15 +88,19 @@ test('the library stays inside its documented material budget', () => {
   assert.equal(second.material, shadow.material, 'contact shadows share a material')
   assert.equal(library.libraryOwnedMaterialCount, worstCase)
 
-  // Shared surfaces count against the same ceiling. This is the arbitration point:
-  // Wave 2 has three slots before the budget in docs/08 has to be renegotiated.
-  for (let index = 0; index < 3; index += 1) {
+  // Shared surfaces count against the same ceiling. Spending the headroom exactly
+  // proves the number the spec advertises to Wave 2 is really available, rather
+  // than trusting the subtraction: fill every remaining slot and land on the
+  // ceiling precisely.
+  const headroom = ART_LIBRARY_MATERIALS - worstCase
+  assert.equal(headroom, 15, 'the spec promises Wave 2 fifteen shared slots')
+  for (let index = 0; index < headroom; index += 1) {
     library.acquireMaterial(`wave2-${String(index)}`, {
       color: 0x808080,
       surface: 'cloth',
     })
   }
-  assert.equal(library.libraryOwnedMaterialCount, 12)
+  assert.equal(library.libraryOwnedMaterialCount, ART_LIBRARY_MATERIALS)
 
   library.dispose()
   assert.equal(library.libraryOwnedMaterialCount, 0, 'teardown clears every map')
