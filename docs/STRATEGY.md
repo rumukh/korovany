@@ -114,7 +114,7 @@ document (`do not → do`, `must not → must`, `never → always`), flips a com
 (`shorter than → longer than`), reverses a phase ordering (`after → before`), and corrupts bound
 values including single digits (`BLOOM_LAYER 1→9`, `ARCHER_DAMAGE 7→9`, `MAX_ACTORS 25→35`,
 `MAX_ACTIVE_VOICES 24→42`, `DAY_LENGTH 240→420`, `CIVILIAN_ALARM_RADIUS 12→21`) and swaps a role's
-hit points. All twelve are caught. Inverting all 199 occurrences of `never` produces 60 new misses;
+hit points. All twelve are caught. Inverting all 200 occurrences of `never` produces 63 new misses;
 it used to produce none, because `never` was a stop word — the single most load-bearing word in a
 repo whose culture is negative controls was being discarded before the probe was built.
 
@@ -176,7 +176,7 @@ printed, and it drifted again as the document grew. The checker now reads
 back the headline result and the residue count stated below and **fails if either disagrees** with
 what it just computed.
 
-**Result: 2,287 facts across the fifteen pairings, 94.6% present in the owning section.**
+**Result: 2,295 facts across the fifteen pairings, 91.2% present in the owning section.**
 
 | Class | Facts | Preserved | | Class | Facts | Preserved |
 | --- | ---: | ---: | --- | --- | ---: | ---: |
@@ -184,13 +184,13 @@ what it just computed.
 | named constant | 342 | 100% | | lifecycle / ownership rule | 145 | 83.4% |
 | accessibility rule | 23 | 100% | | edge-case rule | 101 | 82.2% |
 | storage key | 12, from `src` | 100% | | design rule | 251 | 78.9% |
-| relation (binding, row, comparison) | 644 | 98.9% | | | | |
-| formula | 76 | 98.7% | | **total** | **2,287** | **94.6%** |
+| relation (binding, row, sequence, comparison) | 652 | 92.8% | | | | |
+| formula | 76 | 97.4% | | **total** | **2,295** | **91.2%** |
 
-**The residue is 123 facts, and it is not rounded away.** Every one is enumerated in
+**The residue is 201 facts, and it is not rounded away.** Every one is enumerated in
 `scripts/strategy-facts.accepted.json` with its spec, class and source sentence, so the gap is
-auditable entry by entry: 53 design rules, 24 lifecycle rules, 17 edge cases, 14 budget rules, 14
-relations and 1 formula. The gate is a **ratchet, not a threshold**: the run fails if a miss appears
+auditable entry by entry: 72 design rules, 47 relations, 31 lifecycle rules, 27 edge cases, 22
+budget rules and 2 formulas. The gate is a **ratchet, not a threshold**: the run fails if a miss appears
 that is *not* on that list, so preservation can only improve and a green `npm run docs:facts` means
 "nothing regressed" — a claim it can actually support. Removing `AMBIENT_BEAST_LIMIT` from §1, for
 instance, produces `NEW MISS: living-world [constant] AMBIENT_BEAST_LIMIT` and exit 1.
@@ -245,8 +245,8 @@ classes you thought of and says nothing about the ones you did not. What the too
 specific, enumerated set of regressions cannot happen silently — and that the residue is written
 down rather than rounded away.
 
-That an earlier revision of this document scored **100%** and this one scores **94.6%** is the point.
-The instrument got stricter five times; the score went 93.4 → 100 → 88.4 → 100 → 68.6 → **94.6**, and only
+That an earlier revision of this document scored **100%** and this one scores **91.2%** is the point.
+The instrument got stricter six times; the score went 93.4 → 100 → 88.4 → 100 → 68.6 → 94.6 → **91.2**, and only
 the falls are informative. A number that cannot go down is not a measurement.
 
 Four extractor exclusions are declared rather than silent, because each removes a *misclassification*
@@ -3126,7 +3126,9 @@ precipitation is camera-centred"*); blend **four profile weights** rather than o
 scalar (*"one scalar cannot represent an interrupted transition or a rain-to-snow cross-fade
 without a hard mode swap"*); and render rain as `LineSegments` with snow as `Points`, because
 *"WebGL points have a square screen-space footprint and cannot produce true stretched streaks with
-`PointsMaterial`."* Weather is applied **after** day/night every frame so that it can modify the
+`PointsMaterial`."* Apply weather **after** day/night every frame — weather must modify the current
+dawn/day/dusk/night result and never restore or blend toward fixed daytime colours. Weather is
+applied after day/night every frame so that it can modify the
 current dawn/day/dusk/night result and never restore or blend toward fixed daytime colours. It
 modifies the current
 dawn/day/dusk/night result and never blends back toward fixed daytime colours.

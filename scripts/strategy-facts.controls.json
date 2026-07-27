@@ -44,7 +44,7 @@
       "replace": "BLOOM_LAYER=9"
     },
     {
-      "cls": "relation",
+      "cls": "designRule",
       "kind": "polarity",
       "name": "invert the bloom/outline prohibition",
       "find": "Do not make bloom responsible for outlines",
@@ -62,7 +62,7 @@
       ]
     },
     {
-      "cls": "designRule",
+      "cls": "relation",
       "kind": "comparison",
       "name": "invert the civilian/soldier alarm-radius comparison",
       "mutations": [
@@ -115,16 +115,16 @@
     {
       "cls": "budgetRule",
       "kind": "cap",
-      "name": "remove a pool cap",
-      "find": "MAX_ACTIVE_VOICES",
-      "replace": "the voice cap"
+      "name": "remove a bounded-log budget rule",
+      "find": "is capped at `CHRONICLE_LOG_LIMIT = 40` entries so the save stays bounded",
+      "replace": "holds recent chronicle output"
     },
     {
       "cls": "accessibilityRule",
       "kind": "comfort",
-      "name": "remove an accessibility rule",
-      "find": "FOV never encodes required gameplay information",
-      "replace": "FOV is decorative"
+      "name": "remove a readability rule",
+      "find": "Telegraph opacity must remain readable **in all four zone ground textures and at night**",
+      "replace": "Telegraphs are drawn on the ground"
     },
     {
       "cls": "edgeCaseRule",

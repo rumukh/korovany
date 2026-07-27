@@ -12,7 +12,14 @@
     "became inconvenient: a surviving mutant is a real hole in the checker, not a broken test."
   ],
   "mutants": [
-    { "id": "polarity-do-not",      "why": "invert every prohibition in the document", "find": "do not ", "replace": "do " },
+    { "id": "sequence-archer-range", "why": "reverse an ordered array; both values still present", "find": "ARCHER_RANGE=[8,12]", "replace": "ARCHER_RANGE=[12,8]" },
+    { "id": "row-tail-swap",         "why": "swap row values past the fourth column", "find": "| `rain` | 30 / 95 | 0.62 | 0.78 | 0.90 | 0.78 | 1 | 0 | 0.85 |", "replace": "| `rain` | 30 / 95 | 0.62 | 0.78 | 0.90 | 0.78 | 0 | 1 | 0.85 |" },
+    { "id": "ordering-operand-swap", "why": "reverse the operands while keeping the marker word", "find": "clears the old canvas before drawing", "replace": "draws before clearing the old canvas" },
+    { "id": "negation-scope-move", "why": "move the negation to the other clause of one sentence",
+      "mutations": [
+        { "find": "**Callouts are decorative.** Missing one due to pool pressure **cannot** hide", "replace": "**Callouts are not decorative.** Missing one due to pool pressure can hide" },
+        { "find": "Callouts are decorative. Missing one due to pool pressure cannot hide", "replace": "Callouts are not decorative. Missing one due to pool pressure can hide" }
+      ] },    { "id": "polarity-do-not",      "why": "invert every prohibition in the document", "find": "do not ", "replace": "do " },
     { "id": "polarity-must-not",    "why": "invert every requirement-negation",        "find": "must not ", "replace": "must " },
     { "id": "polarity-never",       "why": "invert every absolute prohibition",        "find": "never", "replace": "always" },
     { "id": "ordering-shorter", "why": "invert a comparison where the relation IS the fact",

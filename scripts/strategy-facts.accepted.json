@@ -10,12 +10,42 @@
     {
       "spec": "living-world",
       "cls": "relation",
+      "id": "row:Actor AI:15,18,6.5,15"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:Hostility:5,5"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
       "id": "cmp:BEAST_RAID_THRESHOLD:above"
     },
     {
       "spec": "living-world",
       "cls": "relation",
+      "id": "row:settlementIntegrity:2"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:bear:135,74"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:troll:165,88"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
       "id": "cmp:BEAST_RAID_THRESHOLD:below"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:The storm hunch and slow:0"
     },
     {
       "spec": "living-world",
@@ -26,6 +56,26 @@
       "spec": "living-world",
       "cls": "relation",
       "id": "cmp:CAMPFIRE_SEARCH_INTERVAL:below"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:No morale:2,0"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:Morale:240,242"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:Threat scoring:959,478,2.01"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "| 2 | **Materialization** | Chronicle events become 3D only when the p"
     },
     {
       "spec": "living-world",
@@ -45,7 +95,7 @@
     {
       "spec": "living-world",
       "cls": "designRule",
-      "id": "the dependency runs one way: materialization consumes chronicle output"
+      "id": "as a fifth kind ( ); the Layer 2 test that asserted one could never ap"
     },
     {
       "spec": "living-world",
@@ -75,12 +125,12 @@
     {
       "spec": "living-world",
       "cls": "designRule",
-      "id": "control*. A beast raid cannot: `resolveMaterializedBeastRaid` never to"
+      "id": "changes and no faction's pressure moves, because beasts do not hold gr"
     },
     {
       "spec": "living-world",
       "cls": "edgeCaseRule",
-      "id": "control*. A beast raid cannot: `resolveMaterializedBeastRaid` never to"
+      "id": "when the homestead is destroyed, which says nothing about how many of "
     },
     {
       "spec": "living-world",
@@ -91,6 +141,26 @@
       "spec": "living-world",
       "cls": "designRule",
       "id": "| `boar`, `bear`, `troll` | Layer 3 said \"never routs\" and that is sti"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "objective might need ever leaves the map because it lost a morale chec"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "**This is the one Layer 4 mechanic the headless harness cannot measure"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "a new route: the cart cannot leave the road network."
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "same frame and the cart can never actually be lost — see  ."
     },
     {
       "spec": "living-world",
@@ -135,12 +205,27 @@
     {
       "spec": "living-world",
       "cls": "designRule",
-      "id": "stay that way; a faction raid is alarming (  rule 2) but never *target"
+      "id": "instead, so the player never watches a building change state from thin"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "and their regions never flip, so a generated campaign always remains c"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "- **A charge into scenery.** The boar cannot steer mid-charge, so a ch"
     },
     {
       "spec": "living-world",
       "cls": "designRule",
       "id": "and is despawned by the next headcount. The one thing it must not do i"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "- [x] Campaign start and finale regions never flip and their sites are"
     },
     {
       "spec": "living-world",
@@ -164,6 +249,11 @@
     },
     {
       "spec": "living-world",
+      "cls": "budgetRule",
+      "id": "actor slot**, so none of it can crowd out a raid."
+    },
+    {
+      "spec": "living-world",
       "cls": "edgeCaseRule",
       "id": "day/night toggle cannot put them out. *(Torches observed in the browse"
     },
@@ -184,8 +274,13 @@
     },
     {
       "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "*not* the step function surviving — it is `evaluatePlayerPursuit` sayi"
+    },
+    {
+      "spec": "living-world",
       "cls": "designRule",
-      "id": "whose share is therefore always `1`. It never had a pack to lose and c"
+      "id": "cohesion, and the boar and bear never break at all. Layer 3's 0 was th"
     },
     {
       "spec": "living-world",
@@ -205,6 +300,11 @@
     {
       "spec": "living-world",
       "cls": "edgeCaseRule",
+      "id": "**most of what this layer is for cannot be measured at all.** Whether "
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
       "id": "Attacks went *up*. A villager at `3.1 × 1.15 = 3.57 m/s` cannot outrun"
     },
     {
@@ -214,8 +314,18 @@
     },
     {
       "spec": "living-world",
+      "cls": "budgetRule",
+      "id": "- **Not resolved fights.** The panic arm exhausts its frame budget, be"
+    },
+    {
+      "spec": "living-world",
       "cls": "edgeCaseRule",
       "id": "climbs ~19 m over `BIRD_FLIGHT_SECONDS`. When the timer expired it fel"
+    },
+    {
+      "spec": "combat-depth",
+      "cls": "relation",
+      "id": "row:Primary attack:0.52,3.6,26,28,31,13"
     },
     {
       "spec": "combat-depth",
@@ -228,6 +338,36 @@
       "id": "| **Guard** | **Стойка щита** *(hold)* | RMB / `KeyR` / touch hold | F"
     },
     {
+      "spec": "combat-depth",
+      "cls": "designRule",
+      "id": "The elf ability is unavailable when both arms are missing. Failed acti"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "relation",
+      "id": "row:Death:90"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "relation",
+      "id": "row:Soldier:28"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "relation",
+      "id": "row:Commander:46"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "relation",
+      "id": "row:Brute:58"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "relation",
+      "id": "row:Champion:72"
+    },
+    {
       "spec": "04-enemy-reactions",
       "cls": "designRule",
       "id": "| Animation | Actors receive stride animation only; `animateCharacter("
@@ -235,7 +375,12 @@
     {
       "spec": "04-enemy-reactions",
       "cls": "designRule",
-      "id": "- **Do not infer contact from animation pose.** The action timer is au"
+      "id": "Repeated flinches take the maximum remaining duration; they do not add"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "budgetRule",
+      "id": "At pool pressure, retain brute/champion/commander telegraphs before so"
     },
     {
       "spec": "04-enemy-reactions",
@@ -260,12 +405,87 @@
     {
       "spec": "02-comic-hit-language",
       "cls": "relation",
+      "id": "row:UI cadence:90"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "relation",
+      "id": "row:Combat FX:48,180,72"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "relation",
+      "id": "row:Heavy direct-player hit:48"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "relation",
+      "id": "row:Lethal direct-player hit:64"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "relation",
+      "id": "row:Shield block on player:24"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "relation",
       "id": "row:AI-vs-AI or miss:0"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "budgetRule",
+      "id": "| Combat FX | Sparks are capped at 48, gore at 180, decals at 72; ordi"
     },
     {
       "spec": "02-comic-hit-language",
       "cls": "designRule",
       "id": "Extend the existing `damageActor` options with `attackKind`; do not ad"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "designRule",
+      "id": "This classification changes presentation only. It must not increase da"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "designRule",
+      "id": "- upgrade weight/priority but never downgrade it."
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "designRule",
+      "id": "- Rays do not cast shadows and remain below number/callout render orde"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "designRule",
+      "id": "`requestHitStop(seconds)` takes the maximum of current and requested d"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "budgetRule",
+      "id": "`requestHitStop(seconds)` takes the maximum of current and requested d"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "budgetRule",
+      "id": "cap all stops at 20 ms. A later dedicated `combatMotion` setting may s"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "designRule",
+      "id": "`ComicHitFx.ts` after behavior is working. Do not create a generic eff"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "budgetRule",
+      "id": "mesh exists. After pool warm-up, a 25-actor fight must create no new s"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "designRule",
+      "id": "- Numbers display rounded post-mitigation damage, never pre-mitigation"
     },
     {
       "spec": "02-comic-hit-language",
@@ -276,6 +496,11 @@
       "spec": "02-comic-hit-language",
       "cls": "designRule",
       "id": "- A target killed by the same hit still produces one result; do not em"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "lifecycleRule",
+      "id": "- [ ] Weapon trail follows the player weapon pivot, hides on pause/end"
     },
     {
       "spec": "02-comic-hit-language",
@@ -295,12 +520,17 @@
     {
       "spec": "combat-juice",
       "cls": "relation",
+      "id": "row:Nearby direct player kill:0.08,12"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "relation",
       "id": "cmp:BLEED_FX_INTERVAL:more than"
     },
     {
       "spec": "combat-juice",
-      "cls": "designRule",
-      "id": "- **Do not claim weapon-clash sparks.** No clash event exists. Ship sp"
+      "cls": "lifecycleRule",
+      "id": "| Camera | `updateCamera()` lerps `camera.position` toward a collision"
     },
     {
       "spec": "combat-juice",
@@ -344,6 +574,11 @@
     },
     {
       "spec": "combat-juice",
+      "cls": "edgeCaseRule",
+      "id": "emission if needed. Resuming cannot reveal a stale red frame or restar"
+    },
+    {
+      "spec": "combat-juice",
       "cls": "lifecycleRule",
       "id": "paused consistently with actors and projectiles. Landed gore returns t"
     },
@@ -351,6 +586,11 @@
       "spec": "combat-juice",
       "cls": "designRule",
       "id": "Tune constants together in a 25-actor stress fight. Do not increase co"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "designRule",
+      "id": "nonexistent weapon clashes do not emit impact feedback."
     },
     {
       "spec": "07-camera-accents",
@@ -365,17 +605,22 @@
     {
       "spec": "07-camera-accents",
       "cls": "designRule",
-      "id": "Normal melee hits do not change FOV. the sibling spec hit stop and exi"
+      "id": "This reuses the authoritative gameplay sprint decision; camera code mu"
     },
     {
       "spec": "07-camera-accents",
       "cls": "designRule",
-      "id": "in a dedicated accessibility change. Do not add two nearly identical b"
+      "id": "Normal melee hits do not change FOV. the sibling spec hit stop and exi"
     },
     {
       "spec": "07-camera-accents",
-      "cls": "edgeCaseRule",
-      "id": "- Jump input held across landing cannot create repeated takeoff accent"
+      "cls": "lifecycleRule",
+      "id": "- Pause displays base FOV immediately rather than freezing halfway thr"
+    },
+    {
+      "spec": "07-camera-accents",
+      "cls": "lifecycleRule",
+      "id": "- Trauma and FOV reset happen before the paused/end frame renders."
     },
     {
       "spec": "07-camera-accents",
@@ -399,13 +644,28 @@
     },
     {
       "spec": "03-loot-spectacle",
+      "cls": "relation",
+      "id": "row:Rare:4.2"
+    },
+    {
+      "spec": "03-loot-spectacle",
       "cls": "lifecycleRule",
       "id": "| Kill reward | A direct player kill grants `12` gold or `55` for a co"
     },
     {
       "spec": "03-loot-spectacle",
+      "cls": "designRule",
+      "id": "Use a dedicated runtime `lootRng`; do not reuse event RNG sequencing o"
+    },
+    {
+      "spec": "03-loot-spectacle",
       "cls": "budgetRule",
       "id": "changed. If current damage is already at or above the cap, exclude whe"
+    },
+    {
+      "spec": "03-loot-spectacle",
+      "cls": "designRule",
+      "id": "one view emission on clear. Do not schedule React timeouts that can ou"
     },
     {
       "spec": "03-loot-spectacle",
@@ -420,7 +680,22 @@
     {
       "spec": "01-toon-shading-and-outlines",
       "cls": "designRule",
+      "id": "- is marked `userData.comicOutline = true` so later traversal never ou"
+    },
+    {
+      "spec": "01-toon-shading-and-outlines",
+      "cls": "lifecycleRule",
+      "id": "geometries and materials in `Set`s before disposal so shared resources"
+    },
+    {
+      "spec": "01-toon-shading-and-outlines",
+      "cls": "designRule",
       "id": "- Do not add outline shells to `generatedTextures`; that map remains f"
+    },
+    {
+      "spec": "01-toon-shading-and-outlines",
+      "cls": "lifecycleRule",
+      "id": "- Engine teardown clears the outline registry after scene/resource dis"
     },
     {
       "spec": "01-toon-shading-and-outlines",
@@ -429,13 +704,58 @@
     },
     {
       "spec": "01-toon-shading-and-outlines",
-      "cls": "edgeCaseRule",
-      "id": "- Camera-near shells can intersect the camera. The player shell should"
+      "cls": "designRule",
+      "id": "resources are each disposed once; repeated game start/return-to-menu c"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "relation",
+      "id": "row:Neutral:26"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "relation",
+      "id": "row:Palace:20"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "relation",
+      "id": "row:Forest:22"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "relation",
+      "id": "row:Fort:26"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "designRule",
+      "id": "- **Do not duplicate tree/grass work.** Forest identity additions are "
     },
     {
       "spec": "05-zone-art-direction",
       "cls": "designRule",
       "id": "These are original shape/palette rules. Do not reproduce proprietary i"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "designRule",
+      "id": "- do not recolor health, danger, success, rarity, or faction semantics"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "designRule",
+      "id": "- Procedural marks must not cover transparent canvas pixels on signs/d"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "edgeCaseRule",
+      "id": "cannot accidentally reuse one cache key."
+    },
+    {
+      "spec": "bloom-post-processing",
+      "cls": "relation",
+      "id": "row:Pixel ratio:1.75"
     },
     {
       "spec": "bloom-post-processing",
@@ -444,8 +764,8 @@
     },
     {
       "spec": "ground-foliage-wind",
-      "cls": "designRule",
-      "id": "3. Use the existing linear fog for v1. Do not introduce transparent in"
+      "cls": "relation",
+      "id": "row:ferns:3,4,0,90,0,0,0,260,0,0"
     },
     {
       "spec": "ground-foliage-wind",
@@ -468,9 +788,39 @@
       "id": "before disposing geometry/materials. Do not also call the rebuild clea"
     },
     {
+      "spec": "ground-foliage-wind",
+      "cls": "lifecycleRule",
+      "id": "- Dispose temporary source geometries after merged fern/flower geometr"
+    },
+    {
+      "spec": "ground-foliage-wind",
+      "cls": "designRule",
+      "id": "- [ ] Wind-displaced vertices do not clip at frustum edges."
+    },
+    {
       "spec": "day-night-cycle",
       "cls": "formula",
       "id": "(`opacity = nightFactor² × 0.88`, `fog:false`). Push each to"
+    },
+    {
+      "spec": "day-night-cycle",
+      "cls": "relation",
+      "id": "row:Sun light:2.65,35,58,24,2048"
+    },
+    {
+      "spec": "day-night-cycle",
+      "cls": "relation",
+      "id": "row:Sky dome:178,88,74,112,10"
+    },
+    {
+      "spec": "day-night-cycle",
+      "cls": "relation",
+      "id": "row:Torch flames:1.4,11,2"
+    },
+    {
+      "spec": "day-night-cycle",
+      "cls": "relation",
+      "id": "row:Tone mapping:0.92"
     },
     {
       "spec": "weather-system",
@@ -514,8 +864,33 @@
     },
     {
       "spec": "weather-system",
+      "cls": "lifecycleRule",
+      "id": "day/night lights directly; a separate light prevents ownership conflic"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "designRule",
+      "id": "Do not use `setTimeout`, which would outlive pause/destroy."
+    },
+    {
+      "spec": "weather-system",
+      "cls": "lifecycleRule",
+      "id": "Do not use `setTimeout`, which would outlive pause/destroy."
+    },
+    {
+      "spec": "weather-system",
+      "cls": "edgeCaseRule",
+      "id": "- If the player leaves the rain zone after a flash, already queued thu"
+    },
+    {
+      "spec": "weather-system",
       "cls": "designRule",
       "id": "- Persist only the preference. Do not add weather to `SavedGame` or `G"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "budgetRule",
+      "id": "- [ ] Steady precipitation costs one draw call, a rain-to-snow blend c"
     },
     {
       "spec": "weather-system",
@@ -523,9 +898,14 @@
       "id": "- [ ] Rain/snow do not bloom noticeably; precipitation and new line ge"
     },
     {
-      "spec": "weather-system",
-      "cls": "lifecycleRule",
-      "id": "day/night/settings integration are the main work. Lightning/thunder an"
+      "spec": "dynamic-world-events",
+      "cls": "formula",
+      "id": "- **`MiniMap`**: render `kind === 'event'` markers with a di"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "relation",
+      "id": "row:defendHome:4,100,45,90,8,0"
     },
     {
       "spec": "dynamic-world-events",
@@ -555,22 +935,22 @@
     {
       "spec": "dynamic-world-events",
       "cls": "lifecycleRule",
-      "id": "ownedActorIds: string[]       // event-spawned actors removed on clean"
-    },
-    {
-      "spec": "dynamic-world-events",
-      "cls": "lifecycleRule",
       "id": "idempotent cleanup, clear `activeEvent`, and set cooldown. When idle a"
     },
     {
       "spec": "dynamic-world-events",
       "cls": "lifecycleRule",
-      "id": "damage `EventPropTarget.hp` on their attack cooldown. The house itself"
+      "id": "actors inline, so cleanup cannot mutate `actors` during combat iterati"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "edgeCaseRule",
+      "id": "actors inline, so cleanup cannot mutate `actors` during combat iterati"
     },
     {
       "spec": "dynamic-world-events",
       "cls": "lifecycleRule",
-      "id": "the mesh, and splices the actor from `actors`. Event cleanup applies i"
+      "id": "damage `EventPropTarget.hp` on their attack cooldown. The house itself"
     },
     {
       "spec": "dynamic-world-events",
@@ -591,6 +971,16 @@
       "spec": "06-layered-audio",
       "cls": "lifecycleRule",
       "id": "| Lifecycle | Music scheduled sources are tracked; ordinary SFX source"
+    },
+    {
+      "spec": "06-layered-audio",
+      "cls": "designRule",
+      "id": "- **Do not connect SFX directly to destination.** Every source routes "
+    },
+    {
+      "spec": "06-layered-audio",
+      "cls": "edgeCaseRule",
+      "id": "recipe/priority choice plus intensity, not four simultaneous `hit` cal"
     },
     {
       "spec": "06-layered-audio",

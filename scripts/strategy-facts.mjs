@@ -177,7 +177,9 @@ function factLines(spec) {
  */
 let DF = null
 export function setDocumentFrequencies(df) { DF = df }
-function rarity(w) { return DF ? (DF[w] ?? 0) : 0 }
+// Object.hasOwn rather than DF[w]: a plain-object fixture read back from JSON
+// still answers constructor with an inherited Function.
+function rarity(w) { return DF && Object.hasOwn(DF, w) ? DF[w] : 0 }
 
 /** Distinctive content words, used as the signature of a prose rule. */
 function signature(sentence, count = 3) {
@@ -232,6 +234,17 @@ function extractRelations(lines, push) {
     const line = raw.trim()
     if (!line) continue
 
+    // NAME = [a, b, c] — an ORDERED list. `ARCHER_RANGE=[8,12]` is not the same
+    // fact as `[12,8]`, and matching the numbers independently cannot tell them
+    // apart, so the order is part of the probe.
+    for (const m of line.matchAll(/\b([A-Za-z_][A-Za-z0-9_]{2,})\s*[:=]\s*\[([^\]]{1,80})\]/g)) {
+      const [, name, inner] = m
+      const values = inner.split(',').map((v) => v.trim()).filter((v) => /^-?\d+(\.\d+)?$/.test(v))
+      if (values.length >= 2) {
+        push('relation', `${name}=[${values.join(',')}]`, { kind: 'sequence', name, values })
+      }
+    }
+
     // NAME = value, including single digits and negative sentinels. This is also
     // where TypeScript member declarations land: `private thunderDelay = -1` is
     // a binding, and -1 is a fact no other class captures.
@@ -244,7 +257,9 @@ function extractRelations(lines, push) {
     }
 
     // Markdown role rows: `| \`archer\` | 30 hp | 7 damage |` — the row binds a
-    // named role to every number in it.
+    // named role to every number in it. All of them: an earlier version kept
+    // only the first four, so a table's fifth column onward was unbound and
+    // could be swapped freely.
     if (/^\|/.test(line)) {
       const cells = line.split('|').map((c) => c.trim()).filter(Boolean)
       const name = (cells[0] ?? '').replace(/`/g, '').trim()
@@ -252,7 +267,7 @@ function extractRelations(lines, push) {
         const values = [...line.matchAll(/(?<![\w.])(\d+(?:\.\d+)?)(?![\w.])/g)]
           .map((v) => v[1])
           .filter((v) => v.length > 0)
-          .slice(0, 4)
+          .slice(0, 12)
         if (values.length > 0) {
           push('relation', `row:${name}:${values.join(',')}`, { kind: 'row', name, values })
         }
@@ -318,15 +333,19 @@ function relationPresent(probe, windows, lines) {
   const { kind } = probe
   const esc = (s) => String(s).toLowerCase().replace(/['"]/g, '').replace(/[.\\+*?[^\]$(){}|/-]/g, '\\$&')
   if (kind === 'row') {
-    // A table row binds one name to the set of values IN THAT ROW. The correct
-    // scope is therefore a single line: a three-line window would let the
-    // neighbouring row's numbers satisfy this row, which is exactly the swap
-    // that must be caught.
+    // A table row binds one name to the ordered list of values IN THAT ROW. The
+    // scope is a single line — a three-line window would let the neighbouring
+    // row satisfy this one — and the comparison is against the line's numbers
+    // extracted the same way, in order. A loose ordered chain is not enough:
+    // when a row repeats a value, a swap of two later columns can re-match the
+    // earlier copy and slip through.
     const name = probe.name.toLowerCase()
-    return lines.some(
-      (l) => l.includes(name)
-        && probe.values.every((v) => new RegExp(`(?<!\\w)${esc(v)}(?![\\w.])`).test(l)),
-    )
+    const want = probe.values.map((v) => String(v))
+    return lines.some((l) => {
+      if (!l.includes(name)) return false
+      const got = [...l.matchAll(/(?<![\w.])(\d+(?:\.\d+)?)(?![\w.])/g)].map((m) => m[1]).slice(0, 12)
+      return want.length <= got.length && want.every((v, i) => got[i] === v)
+    })
   }
   if (kind === 'binding') {
     const name = esc(probe.name)
@@ -339,6 +358,13 @@ function relationPresent(probe, windows, lines) {
       const re = new RegExp(`${name}[^0-9\\n]{0,24}${esc(v)}(?![\\w.])`)
       return windows.some(({ text }) => re.test(text))
     })
+  }
+  if (kind === 'sequence') {
+    // Ordered list: the values must appear in this order, close together, so
+    // `[8,12]` cannot be satisfied by `[12,8]`.
+    const seq = probe.values.map((v) => String(v).replace(/[.\\+*?[^\]$(){}|/-]/g, '\\$&')).join('[^0-9\\n]{0,6}')
+    const re = new RegExp(`${probe.name.toLowerCase().replace(/[.\\+*?[^\]$(){}|/-]/g, '\\$&')}[^0-9\\n]{0,12}${seq}`)
+    return lines.some((l) => re.test(l))
   }
   if (kind === 'comparison') {
     // The relation must survive in the same sentence as the thing it is about.
@@ -387,11 +413,35 @@ export function extractFacts(spec) {
       // parallel class. `STOP_WORDS` strips `not`, `never`, `before` and `after`
       // from the signature — necessary, because they are everywhere — so without
       // this an inverted prohibition would score identically to the original.
+      //
+      // Both record SCOPE, not just presence. `A after B` and `B after A` share
+      // a marker and a word bag; what distinguishes them is which words fall on
+      // which side of the marker. Same for negation: "must not do A and must do
+      // B" and "must do A and must not do B" differ only in which words follow
+      // the `not`.
       const ord = trimmed.match(ORDERING)
+      const neg = trimmed.match(NEGATION)
+      const lower = trimmed.toLowerCase()
+      const sideOf = (m) => (m ? sig.filter((w) => lower.indexOf(w) > lower.indexOf(m[0].toLowerCase())) : undefined)
+      // The operands immediately either side of an ordering marker. "A after B"
+      // and "B after A" share a marker, a word bag and even the same signature
+      // when the signature words live elsewhere in the sentence; the pair that
+      // distinguishes them is the one the marker sits between.
+      const operands = ord
+        ? (() => {
+          const at = lower.indexOf(ord[0].toLowerCase())
+          const before = lower.slice(0, at).match(/([a-z][a-z/-]{3,})[^a-z]*$/)
+          const after = lower.slice(at + ord[0].length).match(/^[^a-z]*([a-z][a-z/-]{3,})/)
+          return before && after ? [before[1], after[1]] : undefined
+        })()
+        : undefined
       push(cls, trimmed.slice(0, 70), {
         sig,
-        neg: NEGATION.test(trimmed) || undefined,
+        neg: neg ? true : undefined,
+        negAfter: neg ? sideOf(neg) : undefined,
         order: ord ? ord[0].toLowerCase() : undefined,
+        orderAfter: ord ? sideOf(ord) : undefined,
+        operands,
       })
     }
   }
@@ -451,8 +501,32 @@ export function present(fact, section, ctx) {
     // to survive hard wrapping is also wide enough to contain a different
     // sentence's `not`, which would let an inverted prohibition pass.
     const has = (s) => sig.every((w) => s.text.includes(w))
-    if (neg && !c.sentences.some((s) => has(s) && NEGATION.test(s.text))) return false
-    if (order && !c.sentences.some((s) => has(s) && s.text.includes(order))) return false
+    // Scope, not just presence: the same words must fall on the same side of the
+    // operator. Otherwise "A after B" is satisfied by "B after A", and "must not
+    // do A and must do B" by "must do A and must not do B".
+    const sameSide = (s, marker, expected) => {
+      if (!expected) return true
+      const at = s.text.indexOf(marker)
+      if (at === -1) return false
+      const actual = sig.filter((w) => s.text.indexOf(w) > at)
+      return expected.length === actual.length && expected.every((w) => actual.includes(w))
+    }
+    const sameOperands = (s, marker, expected) => {
+      if (!expected) return true
+      const at = s.text.indexOf(marker)
+      if (at === -1) return false
+      const before = s.text.slice(0, at).match(/([a-z][a-z/-]{3,})[^a-z]*$/)
+      const after = s.text.slice(at + marker.length).match(/^[^a-z]*([a-z][a-z/-]{3,})/)
+      return Boolean(before && after && before[1] === expected[0] && after[1] === expected[1])
+    }
+    if (neg && !c.sentences.some((s) => {
+      if (!has(s)) return false
+      const m = s.text.match(NEGATION)
+      return m !== null && sameSide(s, m[0].toLowerCase(), fact.probe.negAfter)
+    })) return false
+    if (order && !c.sentences.some((s) => has(s) && s.text.includes(order)
+      && sameSide(s, order, fact.probe.orderAfter)
+      && sameOperands(s, order, fact.probe.operands))) return false
     return true
   }
   if (fact.cls === 'numericValue') {
@@ -504,15 +578,18 @@ function storageKeysFromSource() {
 
 function generate() {
   const fixtures = { specCommit: SPEC_COMMIT, generatedFrom: 'docs/*-spec.md', specs: {} }
-  // Document frequencies come from the whole corpus, so signature selection is
-  // a property of the fifteen specs rather than of any one sentence.
-  const df = {}
+  // True DOCUMENT frequency: the number of specs a word appears in, not the
+  // number of occurrences. An earlier version counted every occurrence and
+  // called it document frequency, which is term frequency — a word repeated
+  // forty times in one spec looked as common as one spread across all fifteen.
+  // The counter is a null-prototype object because `df['constructor']` on a
+  // plain object returns the inherited Function, and `Function + 1` is a string.
+  const df = Object.create(null)
   const sources = {}
   for (const name of Object.keys(SECTION_MAP)) {
     sources[name] = readSpec(name)
-    for (const w of normalise(sources[name]).toLowerCase().match(/[a-z][a-z-]{3,}/g) ?? []) {
-      df[w] = (df[w] ?? 0) + 1
-    }
+    const seenInThisSpec = new Set(normalise(sources[name]).toLowerCase().match(/[a-z][a-z-]{3,}/g) ?? [])
+    for (const w of seenInThisSpec) df[w] = (df[w] ?? 0) + 1
   }
   setDocumentFrequencies(df)
   fixtures.documentFrequencies = df
@@ -541,16 +618,24 @@ function countKeyMisses(fixtures, docLines) {
   return misses
 }
 
+/** Misses per class, plus storage-key misses, for a given document body. */
 function countMisses(fixtures, docLines) {
+  const byClass = Object.fromEntries(CLASSES.map((c) => [c, 0]))
   let missing = 0
   for (const [name, heading] of Object.entries(SECTION_MAP)) {
     const section = sectionText(docLines, heading)
     const ctx = buildContext(section)
     for (const fact of fixtures.specs[name] ?? []) {
-      if (!present(fact, section, ctx)) missing += 1
+      if (!present(fact, section, ctx)) {
+        missing += 1
+        byClass[fact.cls] += 1
+      }
     }
   }
-  return missing + countKeyMisses(fixtures, docLines).length
+  const keys = countKeyMisses(fixtures, docLines).length
+  byClass.storageKey += keys
+  const total = missing + keys
+  return Object.assign([total], { total, byClass, valueOf: () => total })
 }
 
 /**
@@ -588,11 +673,16 @@ function runControls(fixtures, docLines) {
     let text = body
     for (const m of muts) text = text.split(m.find).join(m.replace)
     const after = countMisses(fixtures, text.split('\n'))
+    // The delta must land in the class the control CLAIMS to test. Comparing
+    // totals let a control labelled `budgetRule` pass because its mutation
+    // happened to break a `constant` — so it proved the checker noticed
+    // something, not that the class it names is protected.
+    const classDelta = after.byClass[c.cls] - baseline.byClass[c.cls]
     if (report) {
-      console.log(`  ${after > baseline ? 'CAUGHT ' : 'PASSED '} ${String(after - baseline).padStart(4)}  ${c.cls}/${c.kind} — ${c.name}`)
+      console.log(`  ${classDelta > 0 ? 'CAUGHT ' : 'PASSED '} ${String(classDelta).padStart(4)} in ${c.cls.padEnd(18)} (${String(after.total - baseline.total).padStart(3)} total)  ${c.kind} — ${c.name}`)
     }
-    if (after <= baseline) {
-      failures.push(`${c.cls}/${c.kind}: CONTROL DID NOT FIRE — "${c.name}" changed the document without changing the score`)
+    if (classDelta <= 0) {
+      failures.push(`${c.cls}/${c.kind}: CONTROL DID NOT FIRE IN ITS OWN CLASS — "${c.name}" moved ${after.total - baseline.total} total misses but ${classDelta} in ${c.cls}`)
     }
   }
   for (const cls of CLASSES) {
@@ -693,9 +783,18 @@ function audit() {
   const unaccepted = missingDetail.filter(
     (m) => !accepted.has(`${m.name}\u0000${m.cls}\u0000${m.id}`),
   )
-  const fixed = accepted.size - (missingDetail.length - unaccepted.length)
-  console.log(`\ndeclared residue: ${accepted.size} accepted, ${unaccepted.length} NOT accepted${fixed > 0 ? `, ${fixed} previously accepted now preserved` : ''}`)
+  // A true ratchet, not an allowlist. An accepted entry that is now SATISFIED
+  // must be removed, otherwise the fact can be restored and then regress again
+  // while the run stays green — the list would permanently license a gap that
+  // has already been closed.
+  const currentlyMissing = new Set(missingDetail.map((m) => `${m.name}\u0000${m.cls}\u0000${m.id}`))
+  const stale = [...accepted].filter((k) => !currentlyMissing.has(k))
+  console.log(`\ndeclared residue: ${accepted.size} accepted, ${unaccepted.length} NOT accepted${stale.length > 0 ? `, ${stale.length} stale (now preserved — run --accept to drop them)` : ''}`)
   for (const m of unaccepted.slice(0, 40)) console.log(`  NEW MISS: ${m.name} [${m.cls}] ${m.id}`)
+  for (const k of stale.slice(0, 20)) {
+    const [spec, cls, id] = k.split('\u0000')
+    console.log(`  STALE ACCEPTANCE: ${spec} [${cls}] ${id}`)
+  }
 
   // Recompute the `never` inversion the note quotes, so its figures are the
   // tool's rather than the author's.
@@ -705,7 +804,7 @@ function audit() {
   const numberFailures = verifyDocumentNumbers(body, total, missing, { neverSites, neverMisses })
   for (const f of numberFailures) console.error(` DOCUMENT NUMBER MISMATCH: ${f}`)
 
-  if (keyMisses.length > 0 || unaccepted.length > 0 || numberFailures.length > 0) process.exitCode = 1
+  if (keyMisses.length > 0 || unaccepted.length > 0 || stale.length > 0 || numberFailures.length > 0) process.exitCode = 1
 }
 
 /**
@@ -785,7 +884,7 @@ function runMutants() {
       text = text.split(x.find).join(x.replace)
     }
     const lines = text.split('\n')
-    const misses = countMisses(fixtures, lines) - baseline
+    const misses = countMisses(fixtures, lines).total - baseline.total
     const contra = findContradictions(lines).length - baseContradictions
     const caught = misses > 0 || contra > 0
     if (!caught) survivors += 1
