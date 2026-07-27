@@ -782,10 +782,23 @@ test('every geometry-kit builder winds to agree with its normals', () => {
   }
 
   // Pins the convention: three.js's own builders are correct by definition, so
-  // if this control ever fails the assertion is wrong, not the geometry kit.
-  const control = new THREE.BoxGeometry(1, 1, 1)
-  assert.equal(disagreements(control), 0, 'BoxGeometry control must agree')
-  control.dispose()
+  // if a control ever fails the assertion is wrong, not the geometry kit.
+  // A box alone is the weakest possible control — every face is an axis-aligned
+  // plane, so it exercises none of the curved walls, tapered sides or triangle-fan
+  // caps this kit actually emits. The cone contributes a fan cap and a tapered
+  // wall, the sphere curved quads and degenerate pole triangles, the cylinder fan
+  // caps at both ends. Between them they cover every topology the builders below
+  // produce, so a convention error cannot hide in a shape three.js does not make.
+  const controls: [string, THREE.BufferGeometry][] = [
+    ['BoxGeometry', new THREE.BoxGeometry(1, 1, 1)],
+    ['ConeGeometry', new THREE.ConeGeometry(0.5, 1, 8)],
+    ['SphereGeometry', new THREE.SphereGeometry(0.5, 12, 8)],
+    ['CylinderGeometry', new THREE.CylinderGeometry(0.5, 0.7, 1, 8)],
+  ]
+  for (const [name, control] of controls) {
+    assert.equal(disagreements(control), 0, `${name} control must agree`)
+    control.dispose()
+  }
 
   const cases: [string, THREE.BufferGeometry][] = [
     [
@@ -987,9 +1000,20 @@ test('closed builders wind outward, independently of their normals', () => {
     return inward
   }
 
-  const control = new THREE.BoxGeometry(1, 1, 1)
-  assert.equal(inwardFaces(control), 0, 'BoxGeometry control must wind outward')
-  control.dispose()
+  // Same control set as the relative test, and valid here for the same reason:
+  // every one of these is star-convex about its own centroid, so "away from the
+  // centroid" is well defined for each. A box alone would leave the fan caps and
+  // curved walls this test's real cases are made of entirely uncalibrated.
+  const controls: [string, THREE.BufferGeometry][] = [
+    ['BoxGeometry', new THREE.BoxGeometry(1, 1, 1)],
+    ['ConeGeometry', new THREE.ConeGeometry(0.5, 1, 8)],
+    ['SphereGeometry', new THREE.SphereGeometry(0.5, 12, 8)],
+    ['CylinderGeometry', new THREE.CylinderGeometry(0.5, 0.7, 1, 8)],
+  ]
+  for (const [name, control] of controls) {
+    assert.equal(inwardFaces(control), 0, `${name} control must wind outward`)
+    control.dispose()
+  }
 
   const cases: [string, THREE.BufferGeometry][] = [
     ['loft rect', loftProfile({
