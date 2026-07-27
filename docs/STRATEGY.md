@@ -256,15 +256,29 @@ would pass a green run:
   and there would be a twelfth after it. **A known limit that is written down is worth more than
   another epicycle.**
 
-**Two limits that were on this list and are now closed**, recorded because the difference between a
+**Three limits that were on this list and are now closed**, recorded because the difference between a
 declared limit and an unfixed bug matters. *Operand order within a preserved relation* — `A after B`
 against `B after A` — and *negation scope moved to another clause of one sentence* were both
 undetectable, and both are now caught: ordering and polarity facts record which signature words fall
-either side of the operator, and which two operands the marker sits between. A third, a table row's
-values past the fourth column, was not a limit at all but a bug in the extractor's `slice(0, 4)`.
-The general lesson is worth more than the three fixes: **"the checker cannot see that" and "the
-checker has a bug there" look identical from the outside**, and only trying to break it tells them
-apart.
+either side of the operator, and which two operands the marker sits between. *Enum and union
+membership* was the third: removing `'snow'` from
+`WeatherKind = 'clear' | 'overcast' | 'rain' | 'snow'` left the run green, because relation
+extraction bound only the first member — the same defect as a table row truncated at four values,
+and neither was a limit, both were bugs.
+
+**That third one is the one worth learning from.** It was reported as *non-blocking*, and by the
+letter of the rule it was: no mutant of that shape was likely, and the class could simply have been
+written into this list. Closing it anyway found **fourteen unions whose full member lists were
+absent from this document** — `ActorActionKind`, `HitReactionKind`, `DeathStyle`, `ComicCallout`,
+`LootRarity`, `HatchMotif`, `WeatherKind` and seven more — sitting behind the blind spot through six
+audit rounds by two reviewers. §4 already carried the rule about the block callout while lacking the
+vocabulary that rule refers to.
+
+So: **a class the checker cannot see is not only a hole where future corruption hides; it is a place
+where content is already missing, unnoticed.** When a new class turns up, the first question is not
+"how likely is corruption of that shape" but "what is already missing there". The general lesson
+about the other two stands as well: **"the checker cannot see that" and "the checker has a bug
+there" look identical from the outside**, and only trying to break it tells them apart.
 
 **On the controls themselves.** Every control is now hand-authored against the specs rather than
 drawn from the extractor's own output, which removes the circularity an earlier version had — where
