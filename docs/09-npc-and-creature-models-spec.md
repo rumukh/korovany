@@ -113,6 +113,31 @@ no new dependencies.
 - **Do not allocate in the animation path.** No `new THREE.Vector3()` per frame, no
   `getObjectByName` walks that were not already there, no closures.
 
+### 4.1 Two foundation bugs this pass works around
+
+Both were found by putting the models in front of a headless camera rather than by
+reading the code. Neither is fixed here, because `src/game/art/GeometryKit.ts`
+belongs to the foundation pass; both are reported upstream and repaired locally in
+`CharacterKit.ts` in a way that costs nothing once the kit itself is corrected.
+
+- **`loftProfile` winds its triangles the opposite way round from the normals it
+  writes.** Measured: a plain lofted box reports 0 triangles in agreement and 28 in
+  disagreement, against 12/0 for `THREE.BoxGeometry`. A `FrontSide` material
+  therefore draws the *inside* of the far wall and — far more visibly — the
+  `BackSide` ink shell lands in front of its own source and paints the entire
+  silhouette solid ink. Since `loftProfile` also backs `taperedBox` and
+  `stylizedCapsule`, this affects almost every part in this module.
+  `ensureOutwardWinding` measures each part against its own normals and reverses the
+  winding only when they disagree, so it is idempotent and becomes a no-op the day
+  the kit is corrected.
+- **A mirror baked into a buffer is not a mirror.** three.js flips the face winding
+  for a *mesh* whose world matrix has a negative determinant, but
+  `transformed(geometry, { scale: { x: -1 } })` leaves the object matrix positive, so
+  every mirrored horn, ear, tusk, antler, cheek plate and pauldron would render
+  hollow. `mirrorX` applies the matrix and then reverses the winding by hand;
+  `applyMatrix4` already handles the normals, because the normal matrix of a pure
+  mirror is the mirror itself.
+
 ## 5. Architecture
 
 ### 5.1 `src/game/art/CharacterKit.ts`
@@ -375,21 +400,22 @@ numbers; the justification is that spec 08's `CHARACTER_GEOMETRY_KEYS=9` was wri
 against a nine-mesh placeholder and cannot express three factions × nine kits.
 
 ```text
-CHARACTER_GEOMETRY_KEYS<=64          was 9. Bounded by faction(3) x kit(9) collapsed
-                                     onto shared part families, plus 12 weapons,
-                                     12 headgear shapes and 4 shields. Built lazily,
-                                     so a typical run holds 25-40.
-GEOMETRY_CACHE_ENTRIES_MAX=128       was 64. One engine-side cache now holds humanoid
-                                     parts, beasts, fauna and the caravan.
-CHARACTER_SHARED_MATERIALS<=48       new. acquireMaterial entries, down from 75
-                                     caller-owned materials at 25 actors.
-CHARACTER_VARIANTS=3                 headgear/hair/weapon/tint variants per kit
-CHARACTER_DETAIL_DISTANCE=26         LOD cutoff for face, hair, trim and bare hands
-CHARACTER_MESHES_NEAR<=16            per actor, ink excluded
-CHARACTER_MESHES_FAR<=11             per actor, ink excluded
-CHARACTER_TRIANGLES_NEAR<=2600       per actor, ink excluded
+CHARACTER_GEOMETRY_KEYS<=140          was 9. The theoretical ceiling across all
+                                      3 factions x 10 roles x 3 variants, measured
+                                      at 134. Built lazily, so a typical run holds
+                                      30-45 of them.
+GEOMETRY_CACHE_ENTRIES_MAX=160        was 64. One engine-side cache now holds
+                                      humanoid parts, beasts, fauna and the caravan.
+CHARACTER_SHARED_MATERIALS<=48        new. acquireMaterial entries, down from 75
+                                      caller-owned materials at 25 actors.
+CHARACTER_VARIANTS=3                  headgear/hair/weapon/tint variants per kit
+CHARACTER_DETAIL_DISTANCE=26          LOD cutoff for face, hair, trim and bare hands
+CHARACTER_MESHES_NEAR<=16             per actor, ink excluded
+CHARACTER_MESHES_FAR<=11              per actor, ink excluded
+CHARACTER_TRIANGLES_NEAR<=3600        per actor, ink excluded. Measured worst case
+                                      is 3136, a villain champion at variant 0.
 BEAST_MESHES<=11
-CARAVAN_MESHES<=26                   including two draft oxen
+CARAVAN_MESHES<=26                    including two draft oxen
 ```
 
 Targets:

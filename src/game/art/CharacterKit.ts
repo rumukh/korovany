@@ -680,7 +680,7 @@ function block(
   options: TaperedBoxOptions,
   place: TransformOptions = {},
 ): THREE.BufferGeometry {
-  return transformed(ensureOutwardWinding(taperedBox(options)), place)
+  return transformed(taperedBox(options), place)
 }
 
 /** A wedge: a box whose top face has collapsed to a ridge along X. */
@@ -723,10 +723,7 @@ function plate(
   place: TransformOptions = {},
   bevel = 0.012,
 ): THREE.BufferGeometry {
-  return transformed(
-    ensureOutwardWinding(extrudeProfile(points, { depth, bevelSize: bevel })),
-    place,
-  )
+  return transformed(extrudeProfile(points, { depth, bevelSize: bevel }), place)
 }
 
 function mirroredPair(
@@ -745,39 +742,48 @@ const WIND_EDGE_TWO = new THREE.Vector3()
 const WIND_FACE = new THREE.Vector3()
 const WIND_VERTEX = new THREE.Vector3()
 
-/** Reverses every triangle's winding in place, indexed or not. */
-function reverseWinding(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+/** Reverses one triangle's winding in place, indexed or not. */
+function reverseTriangle(geometry: THREE.BufferGeometry, triangle: number): void {
   const index = geometry.getIndex()
   if (index) {
     const array = index.array
-    for (let offset = 0; offset + 2 < array.length; offset += 3) {
-      const swap = array[offset + 1]
-      array[offset + 1] = array[offset + 2]
-      array[offset + 2] = swap
-    }
-    index.needsUpdate = true
-    return geometry
+    const swap = array[triangle + 1]
+    array[triangle + 1] = array[triangle + 2]
+    array[triangle + 2] = swap
+    return
   }
   for (const name of Object.keys(geometry.attributes)) {
     const attribute = geometry.getAttribute(name)
     const array = attribute.array as unknown as { [key: number]: number }
     const size = attribute.itemSize
-    for (let triangle = 0; triangle + 2 < attribute.count; triangle += 3) {
-      for (let component = 0; component < size; component += 1) {
-        const a = (triangle + 1) * size + component
-        const b = (triangle + 2) * size + component
-        const swap = array[a]
-        array[a] = array[b]
-        array[b] = swap
-      }
+    for (let component = 0; component < size; component += 1) {
+      const a = (triangle + 1) * size + component
+      const b = (triangle + 2) * size + component
+      const swap = array[a]
+      array[a] = array[b]
+      array[b] = swap
     }
-    attribute.needsUpdate = true
+  }
+}
+
+/** Reverses every triangle's winding in place, indexed or not. */
+function reverseWinding(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  const index = geometry.getIndex()
+  const count = index ? index.count : geometry.getAttribute('position').count
+  for (let triangle = 0; triangle + 2 < count; triangle += 3) {
+    reverseTriangle(geometry, triangle)
+  }
+  if (index) index.needsUpdate = true
+  else {
+    for (const name of Object.keys(geometry.attributes)) {
+      geometry.getAttribute(name).needsUpdate = true
+    }
   }
   return geometry
 }
 
 /**
- * Makes a part's triangle winding agree with its own normals.
+ * Makes every triangle's winding agree with its own normals.
  *
  * `loftProfile` — which is most of this module, directly or through `taperedBox` —
  * emits triangles wound the opposite way round from the normals it writes. A
@@ -786,9 +792,11 @@ function reverseWinding(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
  * the whole silhouette solid ink.
  *
  * The repair belongs here rather than in `GeometryKit`, which this pass does not
- * own. It is a measurement rather than a blanket flip, so it is idempotent and
- * costs nothing once the kit itself is corrected: a geometry that already agrees is
- * returned untouched.
+ * own. It works triangle by triangle rather than flipping whole geometries,
+ * because a merged part routinely mixes builders that disagree with each other —
+ * `tubeAlongPoints` winds its walls one way and its caps the other — and a
+ * majority vote would fix one and break the other. It is a measurement, so it is
+ * idempotent and becomes a no-op the day the kit itself is corrected.
  */
 function ensureOutwardWinding(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
   const position = geometry.getAttribute('position')
@@ -796,8 +804,7 @@ function ensureOutwardWinding(geometry: THREE.BufferGeometry): THREE.BufferGeome
   if (!position || !normal) return geometry
   const index = geometry.getIndex()
   const count = index ? index.count : position.count
-  let agree = 0
-  let disagree = 0
+  let reversed = 0
   for (let triangle = 0; triangle + 2 < count; triangle += 3) {
     const first = index ? index.getX(triangle) : triangle
     const second = index ? index.getX(triangle + 1) : triangle + 1
@@ -810,11 +817,18 @@ function ensureOutwardWinding(geometry: THREE.BufferGeometry): THREE.BufferGeome
     WIND_FACE.crossVectors(WIND_EDGE_ONE, WIND_EDGE_TWO)
     if (WIND_FACE.lengthSq() < 1e-14) continue
     WIND_VERTEX.fromBufferAttribute(normal, first)
-    if (WIND_FACE.dot(WIND_VERTEX) >= 0) agree += 1
-    else disagree += 1
+    if (WIND_FACE.dot(WIND_VERTEX) >= 0) continue
+    reverseTriangle(geometry, triangle)
+    reversed += 1
   }
-  if (disagree <= agree) return geometry
-  return reverseWinding(geometry)
+  if (reversed === 0) return geometry
+  if (index) index.needsUpdate = true
+  else {
+    for (const name of Object.keys(geometry.attributes)) {
+      geometry.getAttribute(name).needsUpdate = true
+    }
+  }
+  return geometry
 }
 
 /**
@@ -832,7 +846,13 @@ function mirrorX(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
   return reverseWinding(geometry)
 }
 
-/** `loftProfile` with its winding corrected. Use this, never the kit's directly. */
+/**
+ * `loftProfile` with its winding corrected at the source.
+ *
+ * Use this, never the kit's `loftProfile` directly. `finish` repairs the merged
+ * result too, but a loft that is already self-consistent is far easier to reason
+ * about when it is going to be transformed or mirrored before it gets there.
+ */
 function loft(options: LoftOptions): THREE.BufferGeometry {
   return ensureOutwardWinding(loftProfile(options))
 }
@@ -853,7 +873,11 @@ function finish(
   parts: readonly THREE.BufferGeometry[],
   name: string,
 ): THREE.BufferGeometry {
-  return bakeOutlineNormals(mergeAll(parts, { name }))
+  // The winding repair runs once, on the finished part, because a merge routinely
+  // combines builders that disagree with each other about which way round a
+  // triangle goes. Outline normals are baked afterwards so the ink shell reads the
+  // corrected geometry.
+  return bakeOutlineNormals(ensureOutwardWinding(mergeAll(parts, { name })))
 }
 
 // ---------------------------------------------------------------------------
@@ -2346,11 +2370,13 @@ function bladeProfile(
   }
   return loft({
     // A diamond cross-section: a fuller ridge down the middle of a flat blade.
+    // Wound the same way round as `rectProfile`, or the walls and the caps end up
+    // facing opposite directions and no whole-geometry repair can save it.
     profile: [
       { x: -width / 2, y: 0 },
-      { x: 0, y: 0.05 },
-      { x: width / 2, y: 0 },
       { x: 0, y: -0.05 },
+      { x: width / 2, y: 0 },
+      { x: 0, y: 0.05 },
     ],
     sections: [{ y: ricasso - 0.06, scaleX: 0.86, scaleZ: 0.9 }, ...sections],
     name: 'blade',

@@ -75,6 +75,47 @@ const ROLES = [
 ] as const
 const BEASTS: readonly BeastKind[] = ['wolf', 'boar', 'bear', 'troll']
 
+const WIND_A = new THREE.Vector3()
+const WIND_B = new THREE.Vector3()
+const WIND_C = new THREE.Vector3()
+const WIND_EDGE_ONE = new THREE.Vector3()
+const WIND_EDGE_TWO = new THREE.Vector3()
+const WIND_FACE = new THREE.Vector3()
+const WIND_VERTEX = new THREE.Vector3()
+
+/**
+ * Counts triangles whose winding disagrees with their own normals.
+ *
+ * The foundation's `loftProfile` emits triangles wound opposite to the normals it
+ * writes, so a `FrontSide` material draws the inside of the far wall and — far more
+ * visibly — the `BackSide` ink shell lands in front of its own source and paints
+ * the whole silhouette solid ink. `CharacterKit` repairs that per part; this is the
+ * guard that it keeps doing so.
+ */
+function insideOutTriangles(geometry: THREE.BufferGeometry): number {
+  const position = geometry.getAttribute('position')
+  const normal = geometry.getAttribute('normal')
+  if (!position || !normal) return 0
+  const index = geometry.getIndex()
+  const count = index ? index.count : position.count
+  let disagree = 0
+  for (let triangle = 0; triangle + 2 < count; triangle += 3) {
+    const first = index ? index.getX(triangle) : triangle
+    const second = index ? index.getX(triangle + 1) : triangle + 1
+    const third = index ? index.getX(triangle + 2) : triangle + 2
+    WIND_A.fromBufferAttribute(position, first)
+    WIND_B.fromBufferAttribute(position, second)
+    WIND_C.fromBufferAttribute(position, third)
+    WIND_EDGE_ONE.subVectors(WIND_B, WIND_A)
+    WIND_EDGE_TWO.subVectors(WIND_C, WIND_A)
+    WIND_FACE.crossVectors(WIND_EDGE_ONE, WIND_EDGE_TWO)
+    if (WIND_FACE.lengthSq() < 1e-14) continue
+    WIND_VERTEX.fromBufferAttribute(normal, first)
+    if (WIND_FACE.dot(WIND_VERTEX) < 0) disagree += 1
+  }
+  return disagree
+}
+
 function assertSolid(geometry: THREE.BufferGeometry, label: string): number {
   const position = geometry.getAttribute('position')
   assert.ok(position, `${label} has no position attribute`)
@@ -85,6 +126,11 @@ function assertSolid(geometry: THREE.BufferGeometry, label: string): number {
   }
   assert.ok(geometry.getAttribute('normal'), `${label} has no normals`)
   assert.ok(hasOutlineNormals(geometry), `${label} has no welded outline normals`)
+  assert.equal(
+    insideOutTriangles(geometry),
+    0,
+    `${label} has inside-out triangles; its ink shell would cover it`,
+  )
   return position.count / 3
 }
 
@@ -475,6 +521,74 @@ test('the fauna and the caravan build', () => {
   assert.ok(wheelSize.z < wheelSize.x * 0.4, 'a wheel must be flat along its axle')
   assert.ok(Math.abs(wheelSize.x - wheelSize.y) < 0.1, 'a wheel must be round')
   for (const geometry of wagon) geometry.dispose()
+})
+
+test('every part is wound the right way round', () => {
+  // `assertSolid` already checks this for every humanoid part of every plan; this
+  // covers the builders that no character plan reaches — headgear and weapons the
+  // tables happen not to use, the wagon, and the mirrored pairs, where a baked
+  // mirror also reverses the winding and has to be undone by hand.
+  const check = (geometry: THREE.BufferGeometry, label: string): void => {
+    assert.equal(
+      insideOutTriangles(geometry),
+      0,
+      `${label} has inside-out triangles; its ink shell would cover it`,
+    )
+    geometry.dispose()
+  }
+  for (const kind of [
+    'circlet',
+    'crown',
+    'hood',
+    'kettle',
+    'nasal',
+    'crested',
+    'greathelm',
+    'hornedHelm',
+    'boneMask',
+    'ragHood',
+    'cap',
+    'strap',
+  ] as const) {
+    check(buildHeadgear(kind), `headgear ${kind}`)
+  }
+  for (const kind of [
+    'sword',
+    'greatsword',
+    'sabre',
+    'dagger',
+    'axe',
+    'cleaver',
+    'spear',
+    'glaive',
+    'mace',
+    'maul',
+    'bow',
+    'staff',
+  ] as const) {
+    check(buildWeaponHead(kind), `weapon ${kind}`)
+    check(buildWeaponGrip(kind), `grip ${kind}`)
+  }
+  for (const kind of BEASTS) {
+    check(buildBeastBody(kind), `${kind} body`)
+    check(buildBeastHead(kind), `${kind} head`)
+    check(buildBeastLimb(kind, true, BEAST_RIG[kind].frontLimb), `${kind} front limb`)
+    check(buildBeastTail(kind), `${kind} tail`)
+  }
+  check(buildDeerBody(), 'deer body')
+  check(buildDeerCrown(), 'deer crown')
+  check(buildDeerLeg(true), 'deer leg')
+  check(buildBirdBody(), 'bird body')
+  check(buildBirdWing(), 'bird wing')
+  check(buildOxBody(), 'ox body')
+  check(buildOxHead(), 'ox head')
+  check(buildHarness(), 'harness')
+  check(buildWagonFrame(), 'wagon frame')
+  check(buildWagonAxle(3.1), 'wagon axle')
+  check(buildWagonWheel(1.02), 'wagon wheel')
+  check(buildWagonBed(), 'wagon bed')
+  check(buildWagonTilt(), 'wagon tilt')
+  check(buildWagonCargo(true), 'wagon cargo')
 })
 
 test('the load-bearing rig names are still assigned', () => {
