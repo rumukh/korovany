@@ -678,6 +678,20 @@ export class StylizedArtLibrary {
   ): void {
     markOwned(resource)
   }
+
+  /**
+   * True for an inverted-hull shell the library built and still owns.
+   *
+   * Scene-traversal teardown must not dispose these directly. A shell borrows its
+   * source's geometry and, when instanced, the source's `instanceMatrix` — so a
+   * bare `InstancedMesh.dispose()` on one frees a buffer the source is still
+   * drawing from. Release the binding through `releaseOutline` instead; this
+   * predicate exists so a sweep that cannot know about bindings can at least
+   * decline to touch a shell, turning silent corruption into a bounded leak.
+   */
+  static isOutlineShell(object: THREE.Object3D): boolean {
+    return object.userData[OUTLINE_MARKER] === true
+  }
 }
 
 function createInstancedShell(
@@ -708,6 +722,13 @@ function createInstancedShell(
  *
  * Streamed regions build and drop these constantly; skipping this leaks one vertex
  * array object per shell per region load, for the lifetime of the page.
+ *
+ * The `InstancedMesh` guard below is not merely "a plain `Mesh` has no `dispose()`".
+ * three.js keys binding state by `object.isInstancedMesh === true ? object.id : 0`
+ * (`WebGLBindingStates.js`), so *every* non-instanced mesh shares bucket `0`.
+ * Routing a plain shell through the dispose event would therefore call
+ * `releaseStatesOfObject` against that shared bucket and drop the binding state of
+ * every non-instanced mesh in the scene, for every geometry. Do not "simplify" it.
  */
 function disposeShell(shell: THREE.Mesh): void {
   shell.removeFromParent()

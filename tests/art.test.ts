@@ -538,6 +538,50 @@ test('releasing an outline twice is safe and detaches every shell', () => {
   library.dispose()
 })
 
+test('a teardown sweep can identify a shell without knowing its binding', () => {
+  const library = createLibrary()
+  const root = new THREE.Group()
+  const source = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    library.acquireMaterial('sweep-probe', { surface: 'stone', color: 0x445566 }),
+    6,
+  )
+  root.add(source)
+
+  const binding = library.applyOutline(root, 'landmark', { instanced: true })
+  assert.equal(binding.shells.length, 1)
+  const shell = binding.shells[0]
+
+  // The hazard this guards: an instanced shell's `instanceMatrix` IS the source's,
+  // so a sweep that calls `InstancedMesh.dispose()` on it frees a buffer the source
+  // still draws from — silent corruption, not a throw. A sweep cannot see bindings,
+  // so it needs a way to recognise a shell and decline.
+  assert.equal(shell instanceof THREE.InstancedMesh, true)
+  assert.equal(
+    (shell as THREE.InstancedMesh).instanceMatrix,
+    source.instanceMatrix,
+    'the shell borrows the source matrix, which is what makes a bare dispose unsafe',
+  )
+  assert.equal(StylizedArtLibrary.isOutlineShell(shell), true, 'shells are identifiable')
+  assert.equal(
+    StylizedArtLibrary.isOutlineShell(source),
+    false,
+    'a source must stay sweepable',
+  )
+  assert.equal(StylizedArtLibrary.isOutlineShell(root), false)
+
+  library.releaseOutline(binding)
+  assert.equal(
+    source.instanceMatrix.count > 0,
+    true,
+    'releasing the shell leaves the source buffer intact',
+  )
+
+  source.geometry.dispose()
+  source.dispose()
+  library.dispose()
+})
+
 test('contact shadows share one geometry, material and texture', () => {
   const library = createLibrary()
   const first = library.createContactShadow({ radius: 0.7 })

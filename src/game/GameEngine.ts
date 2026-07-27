@@ -2434,6 +2434,11 @@ export class GameEngine {
     // free buffers the source still owns; `releaseOutline` is the only path that
     // returns a shell's own renderer state and nothing else. docs/08 section 8
     // makes this mandatory for callers, so the engine had better do it too.
+    // The traversal is guarded independently as well: today every outline here is
+    // tracked in one of these lists, but the moment an instanced batch is outlined
+    // through some path that forgets to register, an unguarded `dispose()` on the
+    // shell would free the source's shared `instanceMatrix`. Belt and braces,
+    // because that failure renders garbage rather than throwing.
     this.outlineBindings.forEach((binding) =>
       attempt(() => this.artLibrary.releaseOutline(binding)),
     )
@@ -2451,7 +2456,9 @@ export class GameEngine {
       ) {
         return
       }
-      if (object instanceof THREE.InstancedMesh) object.dispose()
+      if (object instanceof THREE.InstancedMesh && !StylizedArtLibrary.isOutlineShell(object)) {
+        object.dispose()
+      }
       if (
         object instanceof THREE.Mesh ||
         object instanceof THREE.Points ||

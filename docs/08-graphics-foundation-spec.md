@@ -292,6 +292,13 @@ copies. Wiring the runtime onto this cache, keyed by biome and cover kind with
 `release` on region unload, belongs to the world-object pass and is listed as a
 dependency in §12.
 
+The cost that buys is measured, not assumed. An instrumented `A → B → A` region cycle
+rebuilds **225 procedural geometries per load/unload/reload**, each one a
+loft/displace/vertex-colour/merge/`bakeOutlineNormals` chain. The ledger balances
+exactly — net geometry growth per cycle is `0`, nothing is double-disposed, and no
+library-owned resource is freed by streaming — so this is recurring construction cost,
+not a leak. 225 rebuilds per cycle is the number the runtime-level cache removes.
+
 Be aware there is **no in-repo example of the release path** to copy. `GameEngine`
 only ever calls `acquire`, because its cache lives as long as the process and is torn
 down wholesale by `dispose()`. The world-object pass writes the first real
@@ -354,6 +361,7 @@ class StylizedArtLibrary {
   dispose(): void
   static isLibraryOwned(resource: THREE.Material | THREE.BufferGeometry | THREE.Texture): boolean
   static markLibraryOwned(resource: THREE.Material | THREE.BufferGeometry | THREE.Texture): void
+  static isOutlineShell(object: THREE.Object3D): boolean
 }
 
 // from ./stylizedShader.ts, re-exported by the barrel — a free function, not a method
@@ -444,7 +452,11 @@ The shared four-band ramp:
 term, which already has the shadow-map factor folded in. Spec 01's ramp started at
 `0.28` because `MeshToonMaterial` ramps `dotNL` before the shadow factor is applied;
 here the same floor would lift every shadowed fragment back to 28% of full key light
-and erase cast shadows entirely. Direct light bands down to nothing and the
+and erase cast shadows entirely. Measured on the shipped ramp, a `0.28` first stop
+makes the band scale `ramp(k) / max(k, 1e-3)` reach **278x** at `k = 0` — a fully
+shadowed fragment would be amplified by two and a half orders of magnitude. With the
+shipped zero stop the multiplier below the first band edge is exactly `0`, so a
+shadowed fragment stays black. Direct light bands down to nothing and the
 hemisphere ambient carries the dark side.
 
 `NearestFilter`, no mipmaps, `NoColorSpace`, one `DataTexture` for the whole game.

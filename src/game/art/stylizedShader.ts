@@ -77,11 +77,14 @@ const STYLIZED_FRAGMENT_BODY = /* glsl */ `
 {
   // reflectedLight.directDiffuse == sum( N.L * lightColor ) * diffuseColor / PI,
   // so the aggregate lighting term only comes back by dividing the albedo out.
-  // Doing that per channel makes the band depend on hue rather than on light: a
-  // saturated red surface has no green or blue to divide back, so its luminance
-  // collapses onto the 0.2126 red weight and it bands several stops darker than a
-  // white surface under identical light. Faction colours would each sit in a
-  // different band. One scalar ratio of luminances cancels the weights instead.
+  // Doing that per channel is exact only while every channel has something to
+  // divide back. It is not hue that breaks it: a faction green (0.15, 0.55, 0.25)
+  // recovers the light exactly, because all three channels are lit. It breaks where
+  // a channel reaches zero and the guard clamp takes over — a saturated red keeps
+  // only the 0.2126 weight and reads 21% of the light a white surface sees under
+  // identical key, and a saturated blue keeps 0.0722 and reads 7%. Those surfaces
+  // band several stops too dark. One scalar ratio of luminances cancels the
+  // weights instead, and is exact for every albedo.
   vec3 kAlbedo = material.diffuseColor;
   float kAlbedoLuma = max( kStylizedLuminance( kAlbedo ), 1e-4 );
   float kLit = kStylizedLuminance( reflectedLight.directDiffuse ) * PI / kAlbedoLuma;
