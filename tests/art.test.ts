@@ -1248,6 +1248,58 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
   healthy.dispose()
   spiked.dispose()
 
+  // The capsule pair above no longer reaches the repaired code path at all, and
+  // that is the point of the block below. The floor stops its bottom ring at
+  // radius 0.02, so `loftProfile`'s collapsed-ring branch never fires for it —
+  // fixing the floor removed the input that the loft assertion depended on. Two
+  // fixes in one commit, and the second neutralised the first one's only smooth
+  // test. So a direct smooth loft has to carry that coverage.
+  //
+  // It has to be a TALL one. The sign test's blindness here is not a blind spot
+  // but a blind *zone* with an exact boundary. In smooth mode `normalFor` takes X
+  // and Z from the profile — always the true radial — and only Y from the
+  // corrupted face normal, so the stored normal was `normalize((r, 1))` while the
+  // truth is `normalize((h * r, -h_r))`; their dot is proportional to `(h - r)`.
+  // Measured on the broken builder, radius 1, sweeping height:
+  //
+  //     h = 4.0    sign test 0 bad    worst  60.41 deg   <- blind
+  //     h = 2.0    sign test 0 bad    worst  72.14 deg   <- blind
+  //     h = 1.0    sign test 0 bad    worst  90.00 deg   <- the boundary, h = r
+  //     h = 0.9999 sign test 8 bad    worst  90.00 deg   <- caught
+  //     h = 0.5    sign test 8 bad    worst 108.76 deg   <- caught
+  //
+  // The blindness is aligned with use rather than orthogonal to it: every shape
+  // anyone builds with a collapsed bottom ring — icicle, stalactite, spear tip,
+  // hanging horn, tail — is tall relative to its radius. The sign test catches the
+  // squat cone nobody builds and misses the tall spike the parameter exists for,
+  // so the squat regime needs no assertion here and the tall one needs this.
+  const tallLoft = (bottomScale: number, height: number): THREE.BufferGeometry =>
+    loftProfile({
+      profile: polygonProfile(1, 8),
+      sections: [{ y: 0, scaleX: bottomScale }, { y: height, scaleX: 1 }],
+      smooth: true,
+    })
+  for (const height of [4, 2]) {
+    // Not paired on `judged`: unlike the floored capsule, a genuinely collapsed
+    // loft ring produces degenerate triangles by construction, so its skipped
+    // count is geometry rather than defect.
+    const spike = worstDegrees(tallLoft(0, height))
+    const blunt = worstDegrees(tallLoft(0.04, height))
+    assert.ok(spike.judged > 0, `tall smooth spike h=${height} judged nothing`)
+    // 0.5 deg of slack: a collapsed cone and a near-collapsed frustum are not the
+    // same shape, and the gap between them widens as the shape squats. Measured
+    // post-fix the spike is marginally *better* than the blunt one (7.67 vs 7.69
+    // at h=4, 7.18 vs 7.21 at h=2); pre-fix it was 60.41 and 72.14 against the
+    // same baselines. So this sits 25x above the observed difference and 100x
+    // below the defect.
+    assert.ok(
+      spike.worst <= blunt.worst + 0.5,
+      `tall smooth spike h=${height} deviates ${spike.worst.toFixed(2)} deg vs `
+        + `${blunt.worst.toFixed(2)} deg for the blunt one — and the sign test `
+        + 'cannot see this, which is why the assertion is on magnitude',
+    )
+  }
+
   // The floor exists to stop a cap ring reaching zero. It used to be applied to
   // `sin(angle)` and then multiplied by `bottomScale`, so it protected exactly the
   // default capsule and nothing else: 0.5 -> 0.010, 0.1 -> 0.002, 0 -> 0.000.
