@@ -864,6 +864,14 @@ test('every geometry-kit builder winds to agree with its normals', () => {
     control.dispose()
   }
 
+  // Five entries below cannot fail this assertion, and are kept anyway because this
+  // list doubles as the "every producer is represented" roster the siblings extend.
+  // `extrude`, `displaced`, `faceted`, `merged` and `composed prop` all end in
+  // `computeVertexNormals()`, which derives the normals *from* the winding, so the two
+  // sides of this comparison stop being independent and agree by construction.
+  // Measured: reversing a capsule gives 236 disagreements, and a bare
+  // `computeVertexNormals()` — no displacement needed — launders it straight back to 0.
+  // Their real coverage is `NORMAL_DERIVED_CASES` in the signed-volume test below.
   const cases: [string, THREE.BufferGeometry][] = [
     [
       'loft faceted',
@@ -1345,8 +1353,15 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
 test('closed builders wind outward, independently of their normals', () => {
   // `weakest` is the smallest |cos| between a face's winding and its centroid ray:
   // how decisively the invariant classified the least clear-cut face. `inward` is
-  // meaningful only when `weakest` is comfortably above zero.
-  const measure = (geometry: THREE.BufferGeometry): { inward: number, weakest: number } => {
+  // meaningful only when `weakest` is comfortably above zero. `judged` is the number
+  // of faces that survived both degeneracy guards — without it a geometry whose every
+  // triangle is skipped returns `inward 0, weakest Infinity` and passes both
+  // assertions while having been measured not at all.
+  const measure = (geometry: THREE.BufferGeometry): {
+    inward: number
+    weakest: number
+    judged: number
+  } => {
     const source = geometry.index ? geometry.toNonIndexed() : geometry
     const position = source.getAttribute('position')
     const centroid = new THREE.Vector3()
@@ -1366,6 +1381,7 @@ test('closed builders wind outward, independently of their normals', () => {
     const outward = new THREE.Vector3()
     let inward = 0
     let weakest = Infinity
+    let judged = 0
     for (let triangle = 0; triangle + 2 < position.count; triangle += 3) {
       a.fromBufferAttribute(position, triangle)
       b.fromBufferAttribute(position, triangle + 1)
@@ -1374,11 +1390,12 @@ test('closed builders wind outward, independently of their normals', () => {
       if (wind.lengthSq() < 1e-14) continue
       outward.copy(a).add(b).add(c).divideScalar(3).sub(centroid)
       if (outward.lengthSq() < 1e-14) continue
+      judged += 1
       if (wind.dot(outward) <= 0) inward += 1
       weakest = Math.min(weakest, Math.abs(wind.normalize().dot(outward.normalize())))
     }
     if (source !== geometry) source.dispose()
-    return { inward, weakest }
+    return { inward, weakest, judged }
   }
 
   // Same control set as the relative test, and valid here for the same reason:
@@ -1404,22 +1421,52 @@ test('closed builders wind outward, independently of their normals', () => {
     ], 16)],
   ]
   for (const [name, control] of controls) {
-    assert.equal(measure(control).inward, 0, `${name} control must wind outward`)
+    const { inward, judged } = measure(control)
+    assert.ok(judged > 0, `${name} control judged no faces at all`)
+    assert.equal(inward, 0, `${name} control must wind outward`)
     control.dispose()
   }
 
-  const cases: [string, THREE.BufferGeometry][] = [
-    ['loft rect', loftProfile({
+  // The controls only ever show `measure` agreeing with correct input, which says
+  // nothing about whether it can disagree. Reverse every face of one and require it
+  // to be caught — and recompute normals first, because that is what `displaceGeometry`
+  // does downstream and it is exactly the step that makes a *normal-agreement* check
+  // tautological. This check never reads the normal attribute, so recomputing them
+  // changes nothing here; the assertion below is what proves that rather than asserts it.
+  const reversed = new THREE.BoxGeometry(1, 1, 1).toNonIndexed()
+  const reversedPosition = reversed.getAttribute('position')
+  for (let triangle = 0; triangle + 2 < reversedPosition.count; triangle += 3) {
+    for (const axis of ['X', 'Y', 'Z'] as const) {
+      const second = reversedPosition[`get${axis}`](triangle + 1)
+      const third = reversedPosition[`get${axis}`](triangle + 2)
+      reversedPosition[`set${axis}`](triangle + 1, third)
+      reversedPosition[`set${axis}`](triangle + 2, second)
+    }
+  }
+  reversedPosition.needsUpdate = true
+  reversed.computeVertexNormals()
+  const caught = measure(reversed)
+  assert.equal(
+    caught.inward,
+    caught.judged,
+    'a fully reversed box must be reported inward on every judged face, even after '
+    + 'computeVertexNormals() has rewritten its normals to agree with the new winding',
+  )
+  assert.ok(caught.judged > 0, 'the reversed control judged no faces at all')
+  reversed.dispose()
+
+  const cases: [builder: string, label: string, geometry: THREE.BufferGeometry][] = [
+    ['loftProfile', 'loft rect', loftProfile({
       profile: rectProfile(1, 1),
       sections: [{ y: -0.5 }, { y: 0.5 }],
     })],
-    ['loft polygon', loftProfile({
+    ['loftProfile', 'loft polygon', loftProfile({
       profile: polygonProfile(0.5, 8),
       sections: [{ y: -0.5 }, { y: 0.5 }],
     })],
-    ['tapered box', taperedBox({ width: 1, height: 1, depth: 1 })],
-    ['bevelled box', taperedBox({ width: 1, height: 1, depth: 1, bevel: 0.15 })],
-    ['stylized capsule', stylizedCapsule({ radius: 0.4, height: 1 })],
+    ['taperedBox', 'tapered box', taperedBox({ width: 1, height: 1, depth: 1 })],
+    ['taperedBox', 'bevelled box', taperedBox({ width: 1, height: 1, depth: 1, bevel: 0.15 })],
+    ['stylizedCapsule', 'stylized capsule', stylizedCapsule({ radius: 0.4, height: 1 })],
     // `latheProfile` belongs here specifically, and its absence was a real gap:
     // it is the only *indexed* builder in the kit, so it is the only case that
     // exercises this helper's `toNonIndexed()` branch. Both a closed profile
@@ -1429,43 +1476,393 @@ test('closed builders wind outward, independently of their normals', () => {
     // 0.93), because a skirt's side walls do face away from the mesh centroid.
     // What it needs is that faces are not orthogonal to the centroid ray, which
     // the guard at the bottom of this test now enforces for every case.
-    ['lathe closed profile', latheProfile([
+    ['latheProfile', 'lathe closed profile', latheProfile([
       { x: 0, y: 0 },
       { x: 0.35, y: 0.15 },
       { x: 0.5, y: 0.45 },
       { x: 0.3, y: 0.8 },
       { x: 0, y: 1 },
     ], { segments: 16 })],
-    ['lathe open profile', latheProfile([
+    ['latheProfile', 'lathe open profile', latheProfile([
       { x: 0.2, y: 0 },
       { x: 0.45, y: 0.35 },
       { x: 0.3, y: 0.75 },
     ], { segments: 16 })],
-    ['tube upward', tubeAlongPoints(
+    ['tubeAlongPoints', 'tube upward', tubeAlongPoints(
       [{ x: 0, y: -0.5, z: 0 }, { x: 0, y: 0, z: 0 }, { x: 0, y: 0.5, z: 0 }],
       { radius: 0.2 },
     )],
-    ['tube downward', tubeAlongPoints(
+    ['tubeAlongPoints', 'tube downward', tubeAlongPoints(
       [{ x: 0, y: 0.5, z: 0 }, { x: 0, y: 0, z: 0 }, { x: 0, y: -0.5, z: 0 }],
       { radius: 0.2 },
     )],
+    // `extrudeProfile` was missing entirely, and its absence was found by asking which
+    // builders the case list covers rather than by review. It is the only builder whose
+    // geometry three.js generates from a `Shape`, so it is the only one whose winding
+    // this kit does not itself decide.
+    ['extrudeProfile', 'extrude square', extrudeProfile(
+      [{ x: -0.4, y: -0.4 }, { x: 0.4, y: -0.4 }, { x: 0.4, y: 0.4 }, { x: -0.4, y: 0.4 }],
+      { depth: 0.6 },
+    )],
+    ['extrudeProfile', 'extrude hexagon', extrudeProfile(
+      Array.from({ length: 6 }, (_, corner) => ({
+        x: 0.4 * Math.cos((corner / 6) * Math.PI * 2),
+        y: 0.4 * Math.sin((corner / 6) * Math.PI * 2),
+      })),
+      { depth: 0.5 },
+    )],
   ]
 
-  for (const [label, geometry] of cases) {
-    const { inward, weakest } = measure(geometry)
-    // Prove the invariant applies before trusting what it says. 0.2 is far below
-    // every real case (the weakest shipped is the closed lathe at 0.93) and far
-    // above the degenerate one (a flat lathe at 0.000000), so it separates "this
-    // geometry is inverted" from "this test cannot speak about this geometry".
+  let totalJudged = 0
+  for (const [, label, geometry] of cases) {
+    const { inward, weakest, judged } = measure(geometry)
+    // Prove the invariant applies before trusting what it says. 0.2 is a TRIPWIRE on
+    // this test's own cases, not a correctness threshold on geometry in general, and
+    // the difference is not academic. Measured, `probe-inventory2.mts`:
+    //
+    //   this test's cases       min 0.3527 (tube up/down), NOT the closed lathe at
+    //                           0.9255 — an earlier revision of this comment said the
+    //                           lathe and it was stale the moment the tubes were added.
+    //                           Real headroom over the guard is 1.76x, not 4.6x.
+    //   shipped game art        Box(0.78, 0.04, 0.2) at GameEngine.ts:7181 scores
+    //                           0.1474 and winds perfectly correctly — it would FAIL
+    //                           this guard. Cone(0.06, 0.62, 4) at :7119 scores 0.3292.
+    //
+    // So a control or case shaped like this game's own art can sit below 0.2 while
+    // being entirely well formed: the margin falls with aspect ratio and with coarse
+    // tessellation, and thin slabs and slender spikes are exactly what the art uses.
+    // Two whole families are degenerate rather than merely tight, and both are already
+    // in `src`: flat open surfaces (Circle/Plane/Ring, 7 sites — one of them this
+    // library's own contact shadow) score exactly 0 because their centroid lies in
+    // their own plane, and non-star-convex solids (Torus, 2 sites) score 0.28-0.34
+    // with roughly half their faces spuriously inward. Neither is a winding fault.
+    // Anything in either family belongs in the signed-volume test below, not here.
     assert.ok(
       weakest > 0.2,
       `${label} is too flat for the centroid invariant to classify `
       + `(weakest |cos| ${weakest.toFixed(6)}) — its faces are near-orthogonal to `
       + 'the centroid ray, so any verdict here is floating-point noise, not winding',
     )
+    // `weakest` alone cannot catch an empty measurement: with no judged face it stays
+    // at its `Infinity` seed and sails past the guard above.
+    assert.ok(judged > 0, `${label} judged no faces at all`)
     assert.equal(inward, 0, `${label} must wind outward`)
+    totalJudged += judged
     geometry.dispose()
   }
+
+  // A floor on the population, so an enumeration that quietly stops producing cases
+  // cannot pass by measuring nothing. These cases judge 588 faces today; the floor
+  // sits below that but far above anything a truncated list would reach.
+  assert.ok(
+    totalJudged > 400,
+    `the centroid sweep judged only ${totalJudged} faces across ${cases.length} cases`,
+  )
+  assert.deepEqual(
+    [...new Set(cases.map(([builder]) => builder))].sort(),
+    [...CENTROID_WINDING_BUILDERS].sort(),
+    'the centroid case list no longer covers the builders it claims to',
+  )
+})
+
+/**
+ * Which builders each winding test speaks for. The coverage test below checks the
+ * union against the builders it derives from `GeometryKit.ts`, and each test checks
+ * its own cases against its own entry here, so neither list can drift from the other.
+ */
+const CENTROID_WINDING_BUILDERS = [
+  'loftProfile', 'taperedBox', 'stylizedCapsule',
+  'latheProfile', 'tubeAlongPoints', 'extrudeProfile',
+] as const
+const VOLUME_WINDING_BUILDERS = ['branchStructure', 'tubeAlongPoints'] as const
+
+/**
+ * The cases in the normal-agreement test above that it cannot possibly fail, because
+ * the geometry's normals are derived from its own winding by `computeVertexNormals()`.
+ * Pinned by name rather than skipped: if one of these stops being normal-derived it
+ * fails here and should move back, and a new laundered case has somewhere to go.
+ */
+const NORMAL_DERIVED_CASES = [
+  'extrude', 'displaced', 'faceted', 'merged', 'composed prop',
+] as const
+
+const signedVolume = (geometry: THREE.BufferGeometry): { volume: number, judged: number } => {
+  const source = geometry.index ? geometry.toNonIndexed() : geometry
+  const position = source.getAttribute('position')
+  const a = new THREE.Vector3()
+  const b = new THREE.Vector3()
+  const c = new THREE.Vector3()
+  const cross = new THREE.Vector3()
+  let volume = 0
+  let judged = 0
+  for (let triangle = 0; triangle + 2 < position.count; triangle += 3) {
+    a.fromBufferAttribute(position, triangle)
+    b.fromBufferAttribute(position, triangle + 1)
+    c.fromBufferAttribute(position, triangle + 2)
+    cross.crossVectors(b, c)
+    if (!Number.isFinite(cross.lengthSq())) continue
+    judged += 1
+    volume += a.dot(cross) / 6
+  }
+  if (source !== geometry) source.dispose()
+  return { volume, judged }
+}
+
+const reverseWinding = (geometry: THREE.BufferGeometry): THREE.BufferGeometry => {
+  const flipped = geometry.index ? geometry.toNonIndexed() : geometry.clone()
+  const position = flipped.getAttribute('position')
+  for (let triangle = 0; triangle + 2 < position.count; triangle += 3) {
+    for (const axis of ['X', 'Y', 'Z'] as const) {
+      const second = position[`get${axis}`](triangle + 1)
+      const third = position[`get${axis}`](triangle + 2)
+      position[`set${axis}`](triangle + 1, third)
+      position[`set${axis}`](triangle + 2, second)
+    }
+  }
+  position.needsUpdate = true
+  // Exactly what `displaceGeometry` does downstream, and the step that would make a
+  // normal-agreement check agree with itself. This measure never reads normals.
+  flipped.computeVertexNormals()
+  return flipped
+}
+
+/**
+ * The centroid test is the sharper instrument — it catches a *single* reversed face —
+ * but it only speaks about shapes that are star-convex about their own centroid, and
+ * its `weakest > 0.2` guard makes it decline rather than lie when they are not. That
+ * leaves a real hole, because two things the kit actually builds fall in it. Measured:
+ *
+ *     branchStructure depth 0    weakest 0.066479   declines
+ *     branchStructure depth 1    weakest 0.007099   declines, 116 of 335 spuriously inward
+ *     branchStructure depth 2    weakest 0.000031   declines, 488 of 1085 spuriously inward
+ *     tubeAlongPoints, bent      weakest 0.024843   declines,  24 of  96 spuriously inward
+ *
+ * A trunk with limbs is not star-convex, and neither is a bent tube — the exact shapes
+ * the NPC pass needs for horns and tails and the world pass needs for branches. Signed
+ * volume is the complement: it does not care whether the body is convex, only that it
+ * is closed, and it never reads the normal attribute either, so `computeVertexNormals()`
+ * downstream cannot make it tautological.
+ *
+ * It is a much blunter tool and that is stated here rather than discovered later. It is
+ * a *sum*, so partial inversions cancel. Measured on a fully-formed capsule, reversing
+ * a fraction of faces and recomputing normals:
+ *
+ *     reversed   centroid           signed volume
+ *      2%        1 of 92  caught     0.6587  missed
+ *     10%        9 of 92  caught     0.5905  missed
+ *     25%       23 of 92  caught     0.4289  missed
+ *     50%       46 of 92  caught    -0.2258  caught
+ *
+ * So volume detects a global flip and nothing subtler. It is here to cover the shapes
+ * the centroid test must refuse, not to second-guess it where it already speaks.
+ */
+test('closed builders enclose positive volume, including the ones the centroid test must decline', () => {
+  const variation = artVariation('art-test-winding', 'branch')
+  const cases: [builder: string, label: string, geometry: THREE.BufferGeometry][] = [
+    ['branchStructure', 'bare trunk', branchStructure({
+      variation, height: 1, baseRadius: 0.1, depth: 0,
+    })],
+    ['branchStructure', 'one level of limbs', branchStructure({
+      variation, height: 1, baseRadius: 0.1, depth: 1,
+    })],
+    ['branchStructure', 'two levels of limbs', branchStructure({
+      variation, height: 1, baseRadius: 0.1, depth: 2,
+    })],
+    ['tubeAlongPoints', 'bent tube', tubeAlongPoints(
+      [
+        { x: 0, y: 0, z: 0 }, { x: 0, y: 0.5, z: 0 },
+        { x: 0.5, y: 0.6, z: 0 }, { x: 1, y: 0.6, z: 0 },
+      ],
+      { radius: 0.12 },
+    )],
+  ]
+
+  let totalJudged = 0
+  for (const [, label, geometry] of cases) {
+    const { volume, judged } = signedVolume(geometry)
+    assert.ok(judged > 0, `${label} judged no faces at all`)
+    assert.ok(volume > 0, `${label} encloses non-positive volume ${volume.toFixed(6)}`)
+
+    // Prove the measure can fail on this very geometry before believing that it passed.
+    // Without this the assertion above is only ever shown agreeing with correct input.
+    const flipped = reverseWinding(geometry)
+    const reversed = signedVolume(flipped)
+    assert.ok(
+      reversed.volume < 0,
+      `${label} reversed must enclose negative volume, got ${reversed.volume.toFixed(6)} `
+      + '— the measure cannot distinguish this shape from its own inversion',
+    )
+    flipped.dispose()
+
+    totalJudged += judged
+    geometry.dispose()
+  }
+
+  // 1601 faces today across the four cases; the floor is a guard against an
+  // enumeration that stops producing, not a pin on the exact geometry.
+  assert.ok(
+    totalJudged > 1200,
+    `the volume sweep judged only ${totalJudged} faces across ${cases.length} cases`,
+  )
+  assert.deepEqual(
+    [...new Set(cases.map(([builder]) => builder))].sort(),
+    [...VOLUME_WINDING_BUILDERS].sort(),
+    'the volume case list no longer covers the builders it claims to',
+  )
+})
+
+/**
+ * The complement of the test above: not "which builders does the centroid test decline"
+ * but "which geometry can the *normal-agreement* test never speak about at all".
+ *
+ * `computeVertexNormals()` derives normals from winding, so anything that ends in it
+ * agrees with itself no matter how it is wound. Five cases in the agreement test are in
+ * that state, and displacement is not the cause — a bare recompute is enough:
+ *
+ *     reversed stylizedCapsule   disagreements 236 -> 0 after computeVertexNormals()
+ *     reversed taperedBox        disagreements  12 -> 0
+ *
+ * Five kit functions launder, and one of them is a *builder*, so no downstream transform
+ * is needed for the hole to open:
+ *
+ *     extrudeProfile :475   displaceGeometry :819 :857   facetGeometry :894
+ *     mergeAll :937 :960    bakeOutlineNormals :1301
+ *
+ * Volume rather than centroid, and that is measured rather than assumed — the centroid
+ * test reports false positives on both merged composites, because a lathe stacked on a
+ * box is not star-convex about the merged centroid:
+ *
+ *     case              centroid inward/judged   signed volume
+ *     extrude                    0/16              0.27650
+ *     displaced                  0/28              1.17080
+ *     faceted                    0/92              0.45055
+ *     merged                     2/52   <- false   1.15821
+ *     composed prop              2/64   <- false   0.22255
+ *
+ * So asserting `inward === 0` here would fail on correct geometry. All five are closed,
+ * so volume speaks about all five, and every one goes negative when reversed.
+ */
+test('normal-derived geometry is checked by volume, because agreement is vacuous there', () => {
+  const cases: [label: string, geometry: THREE.BufferGeometry][] = [
+    ['extrude', extrudeProfile(
+      [
+        { x: -0.5, y: -0.3 },
+        { x: 0.5, y: -0.3 },
+        { x: 0.6, y: 0.2 },
+        { x: 0, y: 0.6 },
+        { x: -0.6, y: 0.2 },
+      ],
+      { depth: 0.35, centered: true },
+    )],
+    ['displaced', displaceGeometry(
+      taperedBox({ width: 1, height: 1.4, depth: 1, topScale: 0.8, segments: 3 }),
+      { seed: 7, amplitude: 0.12, frequency: 1.7 },
+    )],
+    ['faceted', facetGeometry(stylizedCapsule({ radius: 0.35, height: 0.9 }))],
+    ['merged', mergeAll([
+      taperedBox({ width: 1, height: 1, depth: 1 }),
+      transformed(latheProfile([
+        { x: 0.05, y: 0 },
+        { x: 0.4, y: 0.4 },
+        { x: 0.1, y: 0.9 },
+      ]), { position: { x: 0, y: 1, z: 0 } }),
+    ])],
+    ['composed prop', mergeAll([
+      latheProfile([
+        { x: 0.05, y: 0 },
+        { x: 0.4, y: 0.3 },
+        { x: 0.25, y: 0.7 },
+      ], { segments: 10 }),
+      loftProfile({
+        profile: rectProfile(0.4, 0.4),
+        sections: [
+          { y: 0, scaleX: 1 },
+          { y: 0.6, scaleX: 0.5, scaleZ: 0.5 },
+        ],
+      }),
+      taperedBox({ width: 0.3, height: 0.5, depth: 0.3, topScale: 0.6 }),
+    ], { name: 'composed-prop' })],
+  ]
+
+  let totalJudged = 0
+  for (const [label, geometry] of cases) {
+    const { volume, judged } = signedVolume(geometry)
+    assert.ok(judged > 0, `${label} was judged on no triangles, so its result means nothing`)
+    assert.ok(volume > 0, `${label} encloses ${volume.toFixed(5)}, so it is wound inside out`)
+
+    // The detector must be shown capable of failing on this exact case before its
+    // positive result is believed -- the whole point of the test is that the *other*
+    // detector silently cannot.
+    const flipped = reverseWinding(geometry)
+    const caught = signedVolume(flipped)
+    assert.ok(
+      caught.volume < 0,
+      `reversing ${label} left volume at ${caught.volume.toFixed(5)}, so this case proves nothing`,
+    )
+    flipped.dispose()
+
+    totalJudged += judged
+    geometry.dispose()
+  }
+
+  // Actual total is 252. A floor stops an enumeration that quietly stops producing
+  // geometry from passing by producing none.
+  assert.ok(totalJudged > 200, `only ${String(totalJudged)} triangles judged across the family`)
+
+  assert.deepEqual(
+    cases.map(([label]) => label),
+    [...NORMAL_DERIVED_CASES],
+    'the laundered-case roster drifted from the cases actually checked here',
+  )
+})
+
+/**
+ * The three winding tests above are only as good as the set of builders they are pointed
+ * at, and a hand-written list is exactly the thing that silently stops covering the kit
+ * the first time someone adds a builder. So derive the set from the source instead: a
+ * builder is a function that *returns* a `THREE.BufferGeometry` without *taking* one.
+ * Everything that takes one is a transform (`displaceGeometry`, `mergeAll`, the vertex
+ * colour and occlusion bakers) and its winding is inherited, not decided.
+ */
+test('every geometry builder in the kit is covered by a winding test', () => {
+  const source = readFileSync(new URL('../src/game/art/GeometryKit.ts', import.meta.url), 'utf8')
+  const builders: string[] = []
+  const transforms: string[] = []
+  for (const chunk of source.split('export function ').slice(1)) {
+    const name = chunk.slice(0, chunk.indexOf('('))
+    // Match the *closing* paren of the signature via its return type. Parameter lists
+    // span many lines and contain `{}` in option defaults, so anything simpler either
+    // stops at the first brace or runs past the function body.
+    const header = /\)\s*:\s*THREE\.BufferGeometry\s*\{/.exec(chunk.slice(0, 900))
+    if (!header) continue
+    const parameters = chunk.slice(chunk.indexOf('('), header.index)
+    if (parameters.includes('THREE.BufferGeometry')) transforms.push(name)
+    else builders.push(name)
+  }
+
+  // Guard the derivation itself: if the parse silently matched nothing, every
+  // assertion below would hold vacuously.
+  assert.ok(builders.length > 0, 'derived no builders at all from GeometryKit.ts')
+  assert.ok(transforms.length > 0, 'derived no transforms at all — the partition is not working')
+
+  const covered = new Set<string>([...CENTROID_WINDING_BUILDERS, ...VOLUME_WINDING_BUILDERS])
+  const uncovered = builders.filter((name) => !covered.has(name)).sort()
+  assert.deepEqual(
+    uncovered,
+    [],
+    'these builders create geometry but no winding test measures them — add a case to '
+    + 'the centroid test if the shape is star-convex about its centroid, or to the '
+    + 'volume test if it is not',
+  )
+
+  // And the reverse, so a builder that is renamed or removed does not leave a stale
+  // claim of coverage behind.
+  const derived = new Set(builders)
+  assert.deepEqual(
+    [...covered].filter((name) => !derived.has(name)).sort(),
+    [],
+    'a winding test claims to cover a builder that GeometryKit.ts no longer exports',
+  )
 })
 
 /**
