@@ -8,10 +8,21 @@ import {
   type AchievementView,
 } from './achievements'
 import {
-  ComicMaterialLibrary,
+  GeometryCache,
+  StylizedArtLibrary,
+  bakeOutlineNormals,
+  extrudeProfile,
+  hashUnit,
+  latheProfile,
+  loftProfile,
+  mergeAll,
+  rectProfile,
+  taperedBox,
+  transformed,
+  tubeAlongPoints,
   type OutlineBinding,
   type OutlineKind,
-} from './ComicMaterialLibrary'
+} from './art/index.ts'
 import {
   CAMERA_BASE_FOV,
   CAMERA_FOLLOW_DAMPING,
@@ -881,6 +892,10 @@ const LOOT_BEAM_HEIGHT: Record<LootRarity, number> = {
 }
 const OUTLINE_ACTOR_DISTANCE_SQ = 38 * 38
 const OUTLINE_INTERACTABLE_DISTANCE_SQ = 46 * 46
+/** §08 — shadow and rim budget. See `docs/08-graphics-foundation-spec.md`. */
+const SHADOW_MAP_SIZE = 2048
+const SHADOW_FRUSTUM_HALF_EXTENT = 52
+const RIM_LIGHT_BASE = 0.92
 const OUTLINE_CORPSE_SECONDS = 8
 const OUTLINE_PLAYER_HIDE_DISTANCE_SQ = 2.4 * 2.4
 const FIRST_EVENT_AT = 30
@@ -1348,6 +1363,216 @@ function interpolateKeyframes(
   )
 }
 
+/**
+ * Character shapes.
+ *
+ * Each of these is built once and shared by every actor that needs it. Gloves and
+ * boots are lofted into the arm and leg rather than parented as extra meshes, so a
+ * person still costs the same number of draw calls it did when it was seven boxes.
+ * Every part gets welded outline normals, because the ink shells extrude along them
+ * and a merged hard-edged prop cracks open without them.
+ */
+function buildCharacterTorso(player: boolean): THREE.BufferGeometry {
+  const width = player ? 1.05 : 0.9
+  const geometry = loftProfile({
+    profile: rectProfile(width, 0.58, 0.11),
+    sections: [
+      { y: -0.65, scaleX: 0.82, scaleZ: 0.86 },
+      { y: -0.42, scaleX: 0.88, scaleZ: 0.9 },
+      // A slight bulge at the waist reads as a belt once the bands land on it.
+      { y: -0.3, scaleX: 0.96, scaleZ: 0.98 },
+      { y: -0.19, scaleX: 0.9, scaleZ: 0.92 },
+      { y: 0.22, scaleX: 1, scaleZ: 1 },
+      { y: 0.5, scaleX: 1.03, scaleZ: 0.94 },
+      { y: 0.65, scaleX: 0.7, scaleZ: 0.68 },
+    ],
+    name: 'character-torso',
+  })
+  return bakeOutlineNormals(geometry)
+}
+
+function buildCharacterHead(): THREE.BufferGeometry {
+  const geometry = loftProfile({
+    profile: rectProfile(0.72, 0.68, 0.17),
+    sections: [
+      { y: -0.43, scaleX: 0.4, scaleZ: 0.46 },
+      { y: -0.3, scaleX: 0.74, scaleZ: 0.82 },
+      { y: -0.04, scaleX: 1, scaleZ: 1 },
+      { y: 0.24, scaleX: 0.97, scaleZ: 0.95 },
+      { y: 0.43, scaleX: 0.56, scaleZ: 0.58 },
+    ],
+    name: 'character-head',
+  })
+  return bakeOutlineNormals(geometry)
+}
+
+function buildHoodedHead(): THREE.BufferGeometry {
+  const geometry = latheProfile(
+    [
+      { x: 0.001, y: -0.46 },
+      { x: 0.34, y: -0.46 },
+      { x: 0.44, y: -0.34 },
+      { x: 0.45, y: -0.05 },
+      { x: 0.38, y: 0.18 },
+      { x: 0.22, y: 0.36 },
+      { x: 0.06, y: 0.5 },
+      { x: 0.001, y: 0.54 },
+    ],
+    { segments: 9, name: 'character-hood' },
+  )
+  return bakeOutlineNormals(geometry)
+}
+
+function buildCharacterArm(): THREE.BufferGeometry {
+  const geometry = loftProfile({
+    profile: rectProfile(0.28, 0.3, 0.055),
+    sections: [
+      { y: -0.59, scaleX: 0.95, scaleZ: 1.02 },
+      { y: -0.45, scaleX: 1.02, scaleZ: 1.16 },
+      { y: -0.34, scaleX: 0.6, scaleZ: 0.62 },
+      { y: -0.1, scaleX: 0.8, scaleZ: 0.82 },
+      { y: 0.16, scaleX: 0.88, scaleZ: 0.9 },
+      { y: 0.45, scaleX: 1.02, scaleZ: 1.02 },
+      { y: 0.59, scaleX: 0.9, scaleZ: 0.9 },
+    ],
+    name: 'character-arm',
+  })
+  return bakeOutlineNormals(geometry)
+}
+
+function buildCharacterLeg(): THREE.BufferGeometry {
+  const geometry = loftProfile({
+    profile: rectProfile(0.36, 0.42, 0.06),
+    sections: [
+      { y: -0.56, scaleX: 0.9, scaleZ: 1, offsetZ: 0.06 },
+      { y: -0.46, scaleX: 1, scaleZ: 1.14, offsetZ: 0.05 },
+      { y: -0.33, scaleX: 0.86, scaleZ: 0.8 },
+      { y: -0.05, scaleX: 0.78, scaleZ: 0.76 },
+      { y: 0.2, scaleX: 0.88, scaleZ: 0.86 },
+      { y: 0.56, scaleX: 1, scaleZ: 0.98 },
+    ],
+    name: 'character-leg',
+  })
+  return bakeOutlineNormals(geometry)
+}
+
+function buildCharacterBlade(): THREE.BufferGeometry {
+  const blade = extrudeProfile(
+    [
+      { x: 0, y: 0.82 },
+      { x: -0.075, y: 0.58 },
+      { x: -0.07, y: -0.18 },
+      { x: -0.05, y: -0.3 },
+      { x: 0.05, y: -0.3 },
+      { x: 0.07, y: -0.18 },
+      { x: 0.075, y: 0.58 },
+    ],
+    { depth: 0.1, bevelSize: 0.015, name: 'blade' },
+  )
+  const guard = transformed(
+    taperedBox({
+      width: 0.36,
+      height: 0.09,
+      depth: 0.15,
+      topScale: 0.82,
+      bevel: 0.025,
+    }),
+    { position: { x: 0, y: -0.32, z: 0 } },
+  )
+  const grip = transformed(
+    taperedBox({ width: 0.08, height: 0.32, depth: 0.095, bevel: 0.02 }),
+    { position: { x: 0, y: -0.52, z: 0 } },
+  )
+  const pommel = transformed(
+    taperedBox({
+      width: 0.14,
+      height: 0.12,
+      depth: 0.13,
+      topScale: 0.6,
+      bottomScale: 0.6,
+      bevel: 0.03,
+    }),
+    { position: { x: 0, y: -0.72, z: 0 } },
+  )
+  return bakeOutlineNormals(
+    mergeAll([blade, guard, grip, pommel], { name: 'character-blade' }),
+  )
+}
+
+function buildCharacterHelmet(): THREE.BufferGeometry {
+  const dome = latheProfile(
+    [
+      { x: 0.001, y: -0.26 },
+      { x: 0.4, y: -0.26 },
+      { x: 0.56, y: -0.22 },
+      { x: 0.5, y: -0.16 },
+      { x: 0.42, y: -0.03 },
+      { x: 0.3, y: 0.11 },
+      { x: 0.14, y: 0.2 },
+      { x: 0.001, y: 0.25 },
+    ],
+    { segments: 8, name: 'helmet-dome' },
+  )
+  const nasal = transformed(
+    taperedBox({
+      width: 0.09,
+      height: 0.3,
+      depth: 0.1,
+      topScale: 1.4,
+      bevel: 0.02,
+    }),
+    { position: { x: 0, y: -0.2, z: 0.42 } },
+  )
+  return bakeOutlineNormals(mergeAll([dome, nasal], { name: 'character-helmet' }))
+}
+
+function buildCharacterHorn(): THREE.BufferGeometry {
+  const geometry = tubeAlongPoints(
+    [
+      { x: 0, y: -0.32, z: 0 },
+      { x: 0.05, y: -0.08, z: 0.02 },
+      { x: 0.15, y: 0.14, z: 0.02 },
+      { x: 0.3, y: 0.3, z: -0.03 },
+    ],
+    {
+      radius: (t) => 0.115 * (1 - t) + 0.012,
+      radialSegments: 6,
+      tubularSegments: 9,
+      capStart: true,
+      name: 'character-horn',
+    },
+  )
+  return bakeOutlineNormals(geometry)
+}
+
+function buildCharacterShield(): THREE.BufferGeometry {
+  const board = extrudeProfile(
+    [
+      { x: -0.39, y: 0.575 },
+      { x: -0.39, y: 0.1 },
+      { x: -0.3, y: -0.2 },
+      { x: 0, y: -0.575 },
+      { x: 0.3, y: -0.2 },
+      { x: 0.39, y: 0.1 },
+      { x: 0.39, y: 0.575 },
+    ],
+    { depth: 0.12, bevelSize: 0.028, name: 'shield-board' },
+  )
+  const boss = transformed(
+    latheProfile(
+      [
+        { x: 0.001, y: 0 },
+        { x: 0.16, y: 0.01 },
+        { x: 0.13, y: 0.07 },
+        { x: 0.001, y: 0.1 },
+      ],
+      { segments: 8, name: 'shield-boss' },
+    ),
+    { rotation: { x: -Math.PI / 2, y: 0, z: 0 }, position: { x: 0, y: 0.06, z: 0.08 } },
+  )
+  return bakeOutlineNormals(mergeAll([board, boss], { name: 'character-shield' }))
+}
+
 function seededRandom(seed: number): () => number {
   let value = seed
   return () => {
@@ -1460,7 +1685,9 @@ export class GameEngine {
   private readonly camera = new THREE.PerspectiveCamera(CAMERA_BASE_FOV, 1, 0.1, 240)
   private readonly renderer: THREE.WebGLRenderer
   private readonly postProcessor: BloomPostProcessor
-  private readonly comicMaterials: ComicMaterialLibrary
+  private readonly artLibrary: StylizedArtLibrary
+  /** Shape cache shared by every actor: one buffer per shape, not one per actor. */
+  private readonly artGeometry = new GeometryCache()
   private readonly clock = new THREE.Clock()
   private readonly keys = new Set<string>()
   private readonly actors: Actor[] = []
@@ -1496,6 +1723,8 @@ export class GameEngine {
   private readonly fog: THREE.Fog
   private readonly dayNightKeyframes: DayNightKeyframes
   private sun!: THREE.DirectionalLight
+  /** Non-shadowing back-rim. Follows the sun's opposite; see `setupLights`. */
+  private rimLight!: THREE.DirectionalLight
   private hemisphere!: THREE.HemisphereLight
   private atmosphereRoot!: THREE.Group
   private skyMaterial!: THREE.MeshBasicMaterial
@@ -1770,8 +1999,24 @@ export class GameEngine {
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     this.groundFoliageQuality = settings.foliageQuality ?? 'high'
     this.palette = createPalette()
+    // The art library has to exist before the world does: the generated world draws
+    // its surfaces from the same material family as everything else, and handing it
+    // this instance is what keeps one screenshot looking like one drawing.
+    this.artLibrary = new StylizedArtLibrary({
+      ink: {
+        player: mix(this.palette.bg, this.palette.accent, 0.16),
+        enemy: mix(this.palette.bg, this.palette.danger, 0.16),
+        interactable: mix(this.palette.bg, this.palette.warning, 0.18),
+        landmark: mix(this.palette.bg, this.palette.worldFog, 0.14),
+      },
+      rimColor: this.palette.worldSky,
+      shadowTint: mix(this.palette.worldAmbientGround, this.palette.worldSky, 0.55),
+      keyIntensity: 2.65,
+    })
     this.generatedWorld = new GeneratedWorldRuntime(this.scene, blueprint, {
       decorationDensity: foliageQualityDensity(this.groundFoliageQuality),
+      art: this.artLibrary,
+      outlineDressing: this.inkOutlinesEnabled,
       palette: {
         terrain: {
           neutral: this.palette.worldNeutralGround,
@@ -1866,11 +2111,6 @@ export class GameEngine {
     }
     this.lootMaterials = this.createLootMaterials()
     this.zoneArtProfiles = createZoneArtProfiles(this.palette)
-    this.comicMaterials = new ComicMaterialLibrary({
-      player: mix(this.palette.bg, this.palette.accent, 0.16),
-      enemy: mix(this.palette.bg, this.palette.danger, 0.16),
-      interactable: mix(this.palette.bg, this.palette.warning, 0.18),
-    })
     this.dayNightKeyframes = createDayNightKeyframes(this.palette)
     this.weatherFrostColor
       .copy(this.palette.worldFog)
@@ -1994,8 +2234,10 @@ export class GameEngine {
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 0.92
+    // ACES rolls saturated faction colour towards white and lifts blacks — exactly
+    // wrong for ink. Neutral keeps hue and keeps outlines black.
+    this.renderer.toneMapping = THREE.NeutralToneMapping
+    this.renderer.toneMappingExposure = 1
     this.renderer.domElement.className = 'game-canvas'
     this.renderer.domElement.setAttribute('aria-label', 'Трёхмерный игровой мир')
     this.container.appendChild(this.renderer.domElement)
@@ -2209,14 +2451,19 @@ export class GameEngine {
       else materials.add(material)
     })
     this.telegraphGeometries.forEach((geometry) => geometries.add(geometry))
-    geometries.forEach((geometry) => attempt(() => geometry.dispose()))
+    geometries.forEach((geometry) => {
+      if (!StylizedArtLibrary.isLibraryOwned(geometry)) {
+        attempt(() => geometry.dispose())
+      }
+    })
     materials.forEach((material) => {
-      if (!ComicMaterialLibrary.isLibraryOwned(material)) {
+      if (!StylizedArtLibrary.isLibraryOwned(material)) {
         attempt(() => material.dispose())
       }
     })
     attempt(() => this.postProcessor.dispose())
-    attempt(() => this.comicMaterials.dispose())
+    attempt(() => this.artGeometry.dispose())
+    attempt(() => this.artLibrary.dispose())
     attempt(() => this.renderer.dispose())
     attempt(() => this.renderer.domElement.remove())
     this.actors.forEach((actor) =>
@@ -4714,7 +4961,7 @@ export class GameEngine {
   }
 
   private registerOutline(root: THREE.Object3D, kind: OutlineKind): OutlineBinding {
-    const binding = this.comicMaterials.applyOutline(root, kind)
+    const binding = this.artLibrary.applyOutline(root, kind)
     this.outlineBindings.push(binding)
     this.setOutlineVisible(binding, false)
     return binding
@@ -6477,7 +6724,7 @@ export class GameEngine {
 
   private createCampfire(siteId: string, position: THREE.Vector3): Campfire {
     const group = new THREE.Group()
-    const stoneMaterial = this.comicMaterials.createToonMaterial({
+    const stoneMaterial = this.artLibrary.createMaterial({
       color: mix(this.palette.borderStrong, this.palette.bg, 0.3),
       surface: 'dark',
     })
@@ -6489,7 +6736,7 @@ export class GameEngine {
       stone.castShadow = true
       group.add(stone)
     }
-    const logMaterial = this.comicMaterials.createToonMaterial({
+    const logMaterial = this.artLibrary.createMaterial({
       color: mix(this.palette.warning, this.palette.bg, 0.62),
       surface: 'cloth',
     })
@@ -6818,8 +7065,8 @@ export class GameEngine {
   private createDeer(): THREE.Group {
     const group = new THREE.Group()
     const coat = mix(this.palette.warning, this.palette.text, 0.42)
-    const hide = this.comicMaterials.createToonMaterial({ color: coat, surface: 'cloth' })
-    const dark = this.comicMaterials.createToonMaterial({
+    const hide = this.artLibrary.createMaterial({ color: coat, surface: 'cloth' })
+    const dark = this.artLibrary.createMaterial({
       color: mix(coat, this.palette.bg, 0.5),
       surface: 'dark',
     })
@@ -6883,11 +7130,11 @@ export class GameEngine {
   /** A bird: a body, a beak and one wing bar that flaps. Cheap on purpose. */
   private createBird(): THREE.Group {
     const group = new THREE.Group()
-    const feather = this.comicMaterials.createToonMaterial({
+    const feather = this.artLibrary.createMaterial({
       color: mix(this.palette.text, this.palette.bg, 0.24),
       surface: 'dark',
     })
-    const beakMaterial = this.comicMaterials.createToonMaterial({
+    const beakMaterial = this.artLibrary.createMaterial({
       color: this.palette.warning,
       surface: 'skin',
     })
@@ -6973,7 +7220,7 @@ export class GameEngine {
     torch.name = 'torch'
     const shaft = new THREE.Mesh(
       new THREE.BoxGeometry(0.07, 0.62, 0.07),
-      this.comicMaterials.createToonMaterial({
+      this.artLibrary.createMaterial({
         color: mix(this.palette.warning, this.palette.bg, 0.68),
         surface: 'cloth',
       }),
@@ -8798,7 +9045,7 @@ export class GameEngine {
   /** Torn fencing and a churned-up yard: what a pack leaves before it gets inside. */
   private createBeastLairEffect(position: THREE.Vector3): THREE.Group {
     const group = new THREE.Group()
-    const timber = this.comicMaterials.createToonMaterial({
+    const timber = this.artLibrary.createMaterial({
       color: mix(this.palette.warning, this.palette.bg, 0.55),
       surface: 'cloth',
     })
@@ -8981,9 +9228,11 @@ export class GameEngine {
       if (Array.isArray(material)) material.forEach((entry) => materials.add(entry))
       else materials.add(material)
     })
-    geometries.forEach((geometry) => geometry.dispose())
+    geometries.forEach((geometry) => {
+      if (!StylizedArtLibrary.isLibraryOwned(geometry)) geometry.dispose()
+    })
     materials.forEach((material) => {
-      if (!ComicMaterialLibrary.isLibraryOwned(material)) material.dispose()
+      if (!StylizedArtLibrary.isLibraryOwned(material)) material.dispose()
     })
   }
 
@@ -9659,7 +9908,7 @@ export class GameEngine {
     )
     const detached = new THREE.Mesh(
       new THREE.BoxGeometry(part.includes('Leg') ? 0.32 : 0.25, part.includes('Leg') ? 0.95 : 0.78, 0.3),
-      this.comicMaterials.createToonMaterial({
+      this.artLibrary.createMaterial({
         color: this.factionColor(this.faction),
         surface: 'cloth',
       }),
@@ -9681,7 +9930,7 @@ export class GameEngine {
     limb.visible = true
     limb.traverse((object) => {
       if (!(object instanceof THREE.Mesh) || object.userData.comicOutline === true) return
-      object.material = this.comicMaterials.createToonMaterial({
+      object.material = this.artLibrary.createMaterial({
         color: this.palette.borderStrong,
         surface: 'metal',
         emissive: this.palette.borderStrong,
@@ -9717,7 +9966,7 @@ export class GameEngine {
     )
     const detached = new THREE.Mesh(
       new THREE.BoxGeometry(0.28, limb.name.includes('Leg') ? 0.92 : 0.72, 0.28),
-      this.comicMaterials.createToonMaterial({
+      this.artLibrary.createMaterial({
         color: this.allegianceColor(actor.allegiance),
         surface: 'cloth',
       }),
@@ -10671,19 +10920,45 @@ export class GameEngine {
       this.player.position.z + 24,
     )
     this.sun.castShadow = true
-    this.sun.shadow.mapSize.set(2048, 2048)
-    this.sun.shadow.camera.left = -85
-    this.sun.shadow.camera.right = 85
-    this.sun.shadow.camera.top = 85
-    this.sun.shadow.camera.bottom = -85
+    this.sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE)
+    // The old frustum was +/-85 at the same map size. Nothing outside the streamed
+    // neighbourhood ever needed a shadow, and halving the extent roughly triples the
+    // texel density on the things that do.
+    this.sun.shadow.camera.left = -SHADOW_FRUSTUM_HALF_EXTENT
+    this.sun.shadow.camera.right = SHADOW_FRUSTUM_HALF_EXTENT
+    this.sun.shadow.camera.top = SHADOW_FRUSTUM_HALF_EXTENT
+    this.sun.shadow.camera.bottom = -SHADOW_FRUSTUM_HALF_EXTENT
     this.sun.shadow.camera.near = 1
-    this.sun.shadow.camera.far = 150
+    this.sun.shadow.camera.far = 160
+    // Tighter texels expose acne; a normal-space bias fixes it without the peter
+    // panning a large constant depth bias would cause.
+    this.sun.shadow.bias = -0.0006
+    this.sun.shadow.normalBias = 0.028
     this.sun.target.position.set(
       this.player.position.x,
       0,
       this.player.position.z,
     )
     this.scene.add(this.sun, this.sun.target)
+
+    // A back-rim light is what separates a silhouette from the sky it stands
+    // against. It never casts shadows and it never moves independently: it is the
+    // sun's opposite, cooled towards the sky, so the day/night keyframes stay the
+    // single authority over what time it is.
+    this.rimLight = new THREE.DirectionalLight(this.palette.worldSky, RIM_LIGHT_BASE)
+    this.rimLight.castShadow = false
+    this.rimLight.position.set(
+      this.player.position.x + 30,
+      34,
+      this.player.position.z - 26,
+    )
+    this.rimLight.target.position.set(
+      this.player.position.x,
+      0,
+      this.player.position.z,
+    )
+    this.scene.add(this.rimLight, this.rimLight.target)
+
     // §5D — one light for every torch in the world, which is the whole reason torches
     // are affordable. It follows the nearest bearer; see `updateTorches`.
     this.torchLight = new THREE.PointLight(this.palette.warning, 0, TORCH_LIGHT_RANGE, 2)
@@ -10972,11 +11247,27 @@ export class GameEngine {
     const context = canvas.getContext('2d')
     if (!context) throw new Error('Could not create sky texture')
     const gradient = context.createLinearGradient(0, 0, 0, canvas.height)
-    gradient.addColorStop(0, this.palette.worldSky.getStyle())
-    gradient.addColorStop(0.58, this.palette.worldHorizon.getStyle())
+    // Four stops instead of three: zenith, upper sky, a horizon glow that carries the
+    // sun colour, and the fog band the world dissolves into. The glow stop is what
+    // makes the sky read as painted rather than as a flat vertical wash.
+    const zenith = mix(this.palette.worldSky, this.palette.bg, 0.24)
+    const horizonGlow = mix(this.palette.worldHorizon, this.palette.worldSun, 0.34)
+    gradient.addColorStop(0, zenith.getStyle())
+    gradient.addColorStop(0.42, this.palette.worldSky.getStyle())
+    gradient.addColorStop(0.7, this.palette.worldHorizon.getStyle())
+    gradient.addColorStop(0.86, horizonGlow.getStyle())
     gradient.addColorStop(1, this.palette.worldFog.getStyle())
     context.fillStyle = gradient
     context.fillRect(0, 0, canvas.width, canvas.height)
+    // A one-value dither across the 256-pixel ramp. Without it a smooth sky bands
+    // into visible stripes on a wide display, which no amount of tone mapping hides.
+    const skyDither = seededRandom(4177)
+    context.globalAlpha = 0.05
+    for (let row = 0; row < canvas.height; row += 1) {
+      context.fillStyle = skyDither() > 0.5 ? '#ffffff' : '#000000'
+      context.fillRect(0, row, canvas.width, 1)
+    }
+    context.globalAlpha = 1
     const skyTexture = new THREE.CanvasTexture(canvas)
     skyTexture.colorSpace = THREE.SRGBColorSpace
     skyTexture.minFilter = THREE.LinearFilter
@@ -11203,10 +11494,12 @@ export class GameEngine {
 
     if (!this.weatherEnabled) {
       this.restoreWeatherVisuals()
+      this.updateStylizedLighting()
       return
     }
 
     this.applyWeatherEnvironment()
+    this.updateStylizedLighting()
     this.updatePrecipitation(delta)
     this.updateLightning(delta)
   }
@@ -11254,6 +11547,24 @@ export class GameEngine {
       MAX_WIND_STRENGTH,
       this.weightedWeatherValue('windStrength'),
     )
+  }
+
+  /**
+   * Anchors the lighting ramp to the light rig as it actually ends up.
+   *
+   * This has to run *after* weather, which multiplies the sun down to 22% in rain,
+   * and it has to run on the weather-disabled path too. Reading the pre-weather
+   * intensity puts every surface in the lowest band the moment it starts raining;
+   * skipping the call entirely leaves the ramp anchored to whatever the last storm
+   * left behind. Either way the world goes black, which is exactly what happened
+   * the first time round.
+   */
+  private updateStylizedLighting(): void {
+    this.artLibrary.setLightingReference({
+      keyIntensity: this.sun.intensity + this.rimLight.intensity * 0.4,
+      rimColor: this.rimLight.color,
+      shadowTint: this.hemisphere.groundColor,
+    })
   }
 
   private applyWeatherColor(
@@ -11525,6 +11836,7 @@ export class GameEngine {
       this.hemisphere.color.copy(this.palette.worldSky)
       this.hemisphere.groundColor.copy(this.palette.worldAmbientGround)
       this.hemisphere.intensity = 1.65
+      this.updateRimLight(this.palette.worldSky, RIM_LIGHT_BASE)
       this.backgroundColor.copy(this.palette.worldSky)
       this.fog.color.copy(this.palette.worldFog)
       this.skyMaterial.color.copy(this.dayNightKeyframes.day.skyTint)
@@ -11599,6 +11911,11 @@ export class GameEngine {
       .copy(night.sky)
       .lerp(twilight.sky, nightToTwilight)
       .lerp(day.sky, twilightToDay)
+    this.updateRimLight(
+      this.hemisphere.color,
+      RIM_LIGHT_BASE *
+        interpolateKeyframes(0.55, 1.15, 1, nightToTwilight, twilightToDay),
+    )
     this.fog.color
       .copy(night.fog)
       .lerp(twilight.fog, nightToTwilight)
@@ -11625,6 +11942,42 @@ export class GameEngine {
     }
   }
 
+  /**
+   * Points the back-rim at the player from the sun's opposite side.
+   *
+   * The ramp anchor is not set here: weather scales the sun after the day/night
+   * pass, so `updateStylizedLighting()` runs later and reads the final rig.
+   */
+  private updateRimLight(color: THREE.Color, intensity: number): void {
+    this.rimLight.color.copy(color)
+    this.rimLight.intensity = intensity
+    const toSunX = this.sun.position.x - this.player.position.x
+    const toSunZ = this.sun.position.z - this.player.position.z
+    this.rimLight.position.set(
+      this.player.position.x - toSunX * 0.85,
+      Math.max(14, this.sun.position.y * 0.55),
+      this.player.position.z - toSunZ * 0.85,
+    )
+    this.rimLight.target.position.set(
+      this.player.position.x,
+      0,
+      this.player.position.z,
+    )
+  }
+
+  /**
+   * Builds one person.
+   *
+   * The rig — every pivot and mesh name below — is load-bearing. Animation,
+   * dismemberment, prosthetics, gore and the weapon trail all address it by name,
+   * so the names and pivot offsets are frozen; only the shapes underneath them
+   * changed. Gloves, boots and a proper blade are folded into their parent's
+   * geometry rather than added as children, which keeps the draw-call count per
+   * actor exactly where it was.
+   *
+   * Geometry is cached per shape and shared by every actor of a faction: 25 actors
+   * used to mean 200 unique buffers, and now means about ten.
+   */
   private createCharacter(faction: Faction, player: boolean): THREE.Group {
     const group = new THREE.Group()
     const bodyPivot = new THREE.Group()
@@ -11639,34 +11992,43 @@ export class GameEngine {
     const pelvisPivot = new THREE.Group()
     pelvisPivot.name = 'pelvis-pivot'
     bodyPivot.add(pelvisPivot)
-    const factionMaterial = this.comicMaterials.createToonMaterial({
+    const factionMaterial = this.artLibrary.createMaterial({
       color: this.factionColor(faction),
       surface: faction === 'guard' ? 'metal' : 'cloth',
       emissive: faction === 'guard' ? this.factionColor(faction) : undefined,
       emissiveIntensity: faction === 'guard' ? 0.07 : undefined,
     })
-    const skinMaterial = this.comicMaterials.createToonMaterial({
+    const skinMaterial = this.artLibrary.createMaterial({
       color: mix(this.palette.warning, this.palette.surface, 0.7),
       surface: 'skin',
     })
-    const darkMaterial = this.comicMaterials.createToonMaterial({
+    const darkMaterial = this.artLibrary.createMaterial({
       color: mix(this.palette.text, this.palette.bg, 0.28),
       surface: 'dark',
     })
 
-    const torso = new THREE.Mesh(new THREE.BoxGeometry(player ? 1.05 : 0.9, 1.3, 0.58), factionMaterial)
+    const build = (key: string, factory: () => THREE.BufferGeometry) =>
+      this.acquireArtGeometry(key, factory)
+
+    const torso = new THREE.Mesh(
+      build(`character-torso:${player ? 'player' : 'actor'}`, () =>
+        buildCharacterTorso(player),
+      ),
+      factionMaterial,
+    )
     torso.name = 'torso'
     torso.position.y = 1.72
     torso.castShadow = true
     torsoPivot.add(torso)
 
     const head = new THREE.Mesh(
-      faction === 'elf' ? new THREE.ConeGeometry(0.44, 0.88, 8) : new THREE.SphereGeometry(0.43, 10, 8),
+      build(`character-head:${faction === 'elf' ? 'hood' : 'bare'}`, () =>
+        faction === 'elf' ? buildHoodedHead() : buildCharacterHead(),
+      ),
       skinMaterial,
     )
     head.name = 'head'
     head.position.y = 2.72
-    if (faction === 'elf') head.rotation.z = Math.PI
     head.castShadow = true
     headPivot.add(head)
 
@@ -11677,7 +12039,10 @@ export class GameEngine {
       const pivot = new THREE.Group()
       pivot.name = name
       pivot.position.set(x, 2.2, 0)
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.28, 1.18, 0.3), factionMaterial)
+      const arm = new THREE.Mesh(
+        build('character-arm', () => buildCharacterArm()),
+        factionMaterial,
+      )
       arm.position.y = -0.52
       arm.castShadow = true
       pivot.add(arm)
@@ -11690,7 +12055,10 @@ export class GameEngine {
       const pivot = new THREE.Group()
       pivot.name = name
       pivot.position.set(x, 1.08, 0)
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.36, 1.12, 0.42), darkMaterial)
+      const leg = new THREE.Mesh(
+        build('character-leg', () => buildCharacterLeg()),
+        darkMaterial,
+      )
       leg.position.y = -0.5
       leg.castShadow = true
       pivot.add(leg)
@@ -11700,7 +12068,10 @@ export class GameEngine {
     const weaponPivot = new THREE.Group()
     weaponPivot.name = 'weapon'
     weaponPivot.position.set(0.88, 1.75, 0.1)
-    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.12, 1.65, 0.24), darkMaterial)
+    const blade = new THREE.Mesh(
+      build('character-blade', () => buildCharacterBlade()),
+      darkMaterial,
+    )
     blade.position.y = -0.15
     blade.rotation.z = -0.2
     blade.castShadow = true
@@ -11708,13 +12079,16 @@ export class GameEngine {
     torsoPivot.add(weaponPivot)
 
     if (faction === 'guard') {
-      const helmet = new THREE.Mesh(new THREE.CylinderGeometry(0.48, 0.53, 0.48, 8), darkMaterial)
+      const helmet = new THREE.Mesh(
+        build('character-helmet', () => buildCharacterHelmet()),
+        darkMaterial,
+      )
       helmet.position.y = 3.02
       helmet.castShadow = true
       headPivot.add(helmet)
       if (player) {
         const shield = new THREE.Mesh(
-          new THREE.BoxGeometry(0.78, 1.15, 0.16),
+          build('character-shield', () => buildCharacterShield()),
           darkMaterial,
         )
         shield.name = 'shield'
@@ -11724,19 +12098,22 @@ export class GameEngine {
         torsoPivot.add(shield)
       }
     } else if (faction === 'villain') {
-      const horns = [-0.28, 0.28].map((x) => {
-        const horn = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.65, 7), darkMaterial)
+      for (const x of [-0.28, 0.28]) {
+        const horn = new THREE.Mesh(
+          build('character-horn', () => buildCharacterHorn()),
+          darkMaterial,
+        )
         horn.position.set(x, 3.25, 0)
         horn.rotation.z = x > 0 ? -0.3 : 0.3
+        horn.scale.x = x > 0 ? 1 : -1
         horn.castShadow = true
-        return horn
-      })
-      horns.forEach((horn) => headPivot.add(horn))
+        headPivot.add(horn)
+      }
     }
 
     if (!player) {
       const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.72, 0.9, 24),
+        build('faction-ring', () => new THREE.RingGeometry(0.72, 0.9, 24)),
         new THREE.MeshBasicMaterial({
           color: this.factionColor(faction),
           transparent: true,
@@ -11753,14 +12130,41 @@ export class GameEngine {
       group.add(ring)
     }
 
+    // Real shadow maps are tight and can be switched off; a soft ink pool costs one
+    // shared geometry and one shared material for the whole game and is the
+    // difference between standing on the ground and hovering above it.
+    const contactShadow = this.artLibrary.createContactShadow({
+      radius: player ? 0.66 : 0.58,
+    })
+    group.add(contactShadow)
+
     group.traverse((object) => {
       if (object instanceof THREE.Mesh) {
         if (object.name === 'faction-ring') return
+        if (object.userData.noComicOutline === true) return
         object.castShadow = true
         object.receiveShadow = true
       }
     })
     return group
+  }
+
+  /**
+   * Shared, engine-owned geometry.
+   *
+   * Marked library-owned so neither `destroy()` nor `removeAndDisposeObject()`
+   * frees a buffer that twenty other actors are still drawing from; the cache
+   * releases everything exactly once at teardown.
+   */
+  private acquireArtGeometry(
+    key: string,
+    factory: () => THREE.BufferGeometry,
+  ): THREE.BufferGeometry {
+    return this.artGeometry.acquire(key, () => {
+      const geometry = factory()
+      geometry.userData.artLibraryOwned = true
+      return geometry
+    })
   }
 
   private applyActorVisualVariation(
@@ -11769,19 +12173,26 @@ export class GameEngine {
     role: ActorRole,
     index: number,
   ): void {
-    const variation = Math.sin((index + 1) * 12.9898 + allegiance.length * 7.23)
+    // Deterministic by construction: a hash of the actor's index and side, never a
+    // gameplay stream and never `Math.random()`.
+    const variation = hashUnit(index + 1, allegiance.length * 7919 + 31) * 2 - 1
     const bodyPivot = mesh.getObjectByName('body-pivot')
     if (bodyPivot) {
-      const roleWidth = role === 'brute' || role === 'champion' ? 1.025 : 1
+      const roleWidth = role === 'brute' || role === 'champion' ? 1.05 : 1
       bodyPivot.scale.set(
+        roleWidth * (1 + variation * 0.055),
+        1 - variation * 0.042,
         roleWidth * (1 + variation * 0.035),
-        1 - variation * 0.025,
-        roleWidth * (1 + variation * 0.02),
       )
     }
     const torso = mesh.getObjectByName('torso')
-    if (torso instanceof THREE.Mesh && torso.material instanceof THREE.MeshToonMaterial) {
-      torso.material.color.offsetHSL(variation * 0.012, variation * 0.03, variation * 0.025)
+    if (torso instanceof THREE.Mesh && torso.material instanceof THREE.MeshStandardMaterial) {
+      torso.material.color.offsetHSL(variation * 0.018, variation * 0.04, variation * 0.03)
+    }
+    const head = mesh.getObjectByName('head')
+    if (head instanceof THREE.Mesh) {
+      head.rotation.y = variation * 0.16
+      head.scale.setScalar(1 + variation * 0.05)
     }
   }
 
@@ -11949,15 +12360,15 @@ export class GameEngine {
     bodyPivot.add(pelvisPivot)
 
     const pelt = this.beastPeltColor(role)
-    const hideMaterial = this.comicMaterials.createToonMaterial({
+    const hideMaterial = this.artLibrary.createMaterial({
       color: pelt,
       surface: 'cloth',
     })
-    const darkMaterial = this.comicMaterials.createToonMaterial({
+    const darkMaterial = this.artLibrary.createMaterial({
       color: mix(pelt, this.palette.bg, 0.55),
       surface: 'dark',
     })
-    const boneMaterial = this.comicMaterials.createToonMaterial({
+    const boneMaterial = this.artLibrary.createMaterial({
       color: mix(this.palette.text, this.palette.surface, 0.35),
       surface: 'skin',
     })
@@ -12132,7 +12543,7 @@ export class GameEngine {
         })
         const bow = new THREE.Mesh(
           new THREE.TorusGeometry(0.48, 0.045, 6, 14, Math.PI),
-          this.comicMaterials.createToonMaterial({
+          this.artLibrary.createMaterial({
             color: this.palette.warning,
             surface: 'dark',
           }),
@@ -12156,8 +12567,8 @@ export class GameEngine {
       const weapon = mesh.getObjectByName('weapon')
       if (weapon) weapon.visible = false
       const torso = mesh.getObjectByName('torso')
-      if (torso instanceof THREE.Mesh && torso.material instanceof THREE.MeshToonMaterial) {
-        torso.material = this.comicMaterials.createToonMaterial({
+      if (torso instanceof THREE.Mesh && torso.material instanceof THREE.MeshStandardMaterial) {
+        torso.material = this.artLibrary.createMaterial({
           color: mix(this.palette.muted, this.palette.bg, 0.28),
           surface: 'cloth',
         })

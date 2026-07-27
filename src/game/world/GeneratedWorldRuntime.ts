@@ -1,5 +1,20 @@
 import * as THREE from 'three'
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
+import {
+  StylizedArtLibrary,
+  bakeOutlineNormals,
+  bakeSkyOcclusion,
+  bakeVerticalOcclusion,
+  displaceGeometry,
+  gradientVertexColors,
+  latheProfile,
+  loftProfile,
+  mergeAll,
+  polygonProfile,
+  rectProfile,
+  taperedBox,
+  transformed,
+  type OutlineBinding,
+} from '../art/index.ts'
 import {
   createProceduralSurfaceTexture,
   type ProceduralSurfacePattern,
@@ -71,6 +86,14 @@ export interface GeneratedWorldRuntimeOptions {
   bridgeWidth?: number
   decorationDensity?: number
   castShadows?: boolean
+  /**
+   * The engine's art library, so world surfaces share the game's one material
+   * family. When omitted the runtime builds and disposes its own, which is what
+   * keeps the Node tests working without a renderer.
+   */
+  art?: StylizedArtLibrary
+  /** Ink silhouettes on structural dressing. Off by default. */
+  outlineDressing?: boolean
 }
 
 export interface GeneratedSitePlacement extends WorldSite {
@@ -119,6 +142,7 @@ interface RuntimeStyle {
   bridgeWidth: number
   decorationDensity: number
   castShadows: boolean
+  outlineDressing: boolean
 }
 
 interface SharedMaterials {
@@ -131,6 +155,8 @@ interface SharedMaterials {
   structure: Record<ZoneId, THREE.MeshStandardMaterial>
   roof: Record<ZoneId, THREE.MeshStandardMaterial>
   trunk: THREE.MeshStandardMaterial
+  /** Vertex-coloured, used only by geometry this module builds with colours. */
+  dressing: Record<ZoneId, THREE.MeshStandardMaterial>
   groundCover: Record<ZoneId, THREE.MeshStandardMaterial>
   all: THREE.Material[]
   textures: THREE.Texture[]
@@ -143,6 +169,7 @@ interface SceneRegionRuntimeContext {
   terrain: TerrainSystem
   collision: CollisionWorld
   materials: SharedMaterials
+  art: StylizedArtLibrary
   style: RuntimeStyle
   onDisposed: (regionId: RegionId) => void
 }
@@ -161,6 +188,9 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
   private readonly scene: THREE.Scene
   private readonly style: RuntimeStyle
   private readonly materials: SharedMaterials
+  private readonly art: StylizedArtLibrary
+  /** True when this runtime built its own library and therefore has to free it. */
+  private readonly ownsArt: boolean
   private readonly sceneRegions = new Map<RegionId, SceneRegionRuntime>()
   private readonly sitePositions = new Map<string, Point3>()
   private disposedMaterialCount = 0
@@ -174,7 +204,9 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
     this.scene = scene
     this.blueprint = blueprint
     this.style = normalizeStyle(options)
-    this.materials = createSharedMaterials(options.palette)
+    this.ownsArt = options.art === undefined
+    this.art = options.art ?? createDefaultArtLibrary()
+    this.materials = createSharedMaterials(this.art, options.palette)
     this.terrain = new TerrainSystem(blueprint, {
       tileResolution: this.style.terrainResolution,
     })
@@ -204,6 +236,7 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
           terrain: this.terrain,
           collision: this.collision,
           materials: this.materials,
+          art: this.art,
           style: this.style,
           onDisposed: (regionId) => {
             this.sceneRegions.delete(regionId)
@@ -594,6 +627,13 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
         errors.push(error)
       }
     }
+    if (this.ownsArt) {
+      try {
+        this.art.dispose()
+      } catch (error) {
+        errors.push(error)
+      }
+    }
     if (errors.length > 0) {
       throw new AggregateError(errors, 'Failed to dispose the generated world')
     }
@@ -628,6 +668,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
   }> = []
   private structuralDecorationCount = 0
   private maxCosmeticDecorationCount = 0
+  private dressingOutline: OutlineBinding | null = null
   private resourcesDisposed = false
 
   constructor(
@@ -956,7 +997,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       for (const x of [-width * 0.32, width * 0.32]) {
         const pillar = this.addMesh(
           group,
-          new THREE.CylinderGeometry(0.22, 0.3, height, 6),
+          prismGeometry(0.3, 0.73, height, 6),
           structure,
           `site-pillar:${site.id}`,
         )
@@ -964,7 +1005,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       }
       const canopy = this.addMesh(
         group,
-        new THREE.ConeGeometry(width * 0.55, prefab.roofHeight, 6),
+        prismGeometry(width * 0.55, 0.06, prefab.roofHeight, 6),
         accent,
         `site-canopy:${site.id}`,
       )
@@ -972,28 +1013,22 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     } else if (prefab.shape === 'obelisk') {
       const obelisk = this.addMesh(
         group,
-        new THREE.ConeGeometry(width * 0.34, height, 4),
+        prismGeometry(width * 0.34, 0.08, height, 4, Math.PI / 4),
         accent,
         `site-obelisk:${site.id}`,
       )
       obelisk.position.y = height / 2
-      obelisk.rotation.y = Math.PI / 4
     } else if (prefab.shape === 'monument') {
       const column = this.addMesh(
         group,
-        new THREE.CylinderGeometry(
-          width * 0.2,
-          width * 0.34,
-          height,
-          7,
-        ),
+        prismGeometry(width * 0.34, 0.59, height, 7),
         structure,
         `site-monument:${site.id}`,
       )
       column.position.y = height / 2
       const cap = this.addMesh(
         group,
-        new THREE.ConeGeometry(width * 0.4, prefab.roofHeight + 0.6, 7),
+        prismGeometry(width * 0.4, 0.05, prefab.roofHeight + 0.6, 7),
         accent,
         `site-monument-cap:${site.id}`,
       )
@@ -1001,14 +1036,26 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     } else if (prefab.shape === 'chest') {
       const chest = this.addMesh(
         group,
-        new THREE.BoxGeometry(width, height, depth),
+        taperedBox({
+          width,
+          height,
+          depth,
+          topScale: 0.97,
+          bevel: 0.06,
+        }),
         structure,
         `site-chest:${site.id}`,
       )
       chest.position.y = height / 2
       const lid = this.addMesh(
         group,
-        new THREE.BoxGeometry(width + 0.08, prefab.roofHeight, depth + 0.08),
+        taperedBox({
+          width: width + 0.08,
+          height: prefab.roofHeight,
+          depth: depth + 0.08,
+          topScale: 0.88,
+          bevel: 0.05,
+        }),
         accent,
         `site-chest-lid:${site.id}`,
       )
@@ -1016,31 +1063,44 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     } else if (prefab.shape === 'camp') {
       const tent = this.addMesh(
         group,
-        new THREE.ConeGeometry(width * 0.52, height + prefab.roofHeight, 4),
+        prismGeometry(width * 0.52, 0.04, height + prefab.roofHeight, 4, Math.PI / 4),
         accent,
         `site-tent:${site.id}`,
       )
       tent.position.y = (height + prefab.roofHeight) / 2
-      tent.rotation.y = Math.PI / 4
     } else {
       const body = this.addMesh(
         group,
-        new THREE.BoxGeometry(width, height, depth),
+        // A slight batter towards the eaves is what stops a wall reading as a
+        // primitive; the chamfer gives the band edges something to catch on.
+        taperedBox({
+          width,
+          height,
+          depth,
+          topScale: 0.94,
+          bevel: 0.1,
+        }),
         structure,
         `site-body:${site.id}`,
       )
       body.position.y = height / 2
+      const roofHeight =
+        prefab.shape === 'stall'
+          ? Math.max(0.3, prefab.roofHeight)
+          : Math.max(0.6, prefab.roofHeight)
       const roofGeometry =
         prefab.shape === 'stall'
-          ? new THREE.BoxGeometry(
-              width + 0.8,
-              Math.max(0.3, prefab.roofHeight),
-              depth + 0.8,
-            )
-          : new THREE.ConeGeometry(
-              Math.max(width, depth) * 0.7,
-              Math.max(0.6, prefab.roofHeight),
-              4,
+          ? taperedBox({
+              width: width + 0.8,
+              height: roofHeight,
+              depth: depth + 0.8,
+              topScale: 0.9,
+              bevel: 0.08,
+            })
+          : hipRoofGeometry(
+              Math.max(width, depth) * 1.06,
+              Math.max(width, depth) * 1.06,
+              roofHeight,
             )
       const roofMesh = this.addMesh(
         group,
@@ -1048,13 +1108,21 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
         roof,
         `site-roof:${site.id}`,
       )
-      roofMesh.position.y = height + Math.max(0.3, prefab.roofHeight) / 2
-      if (prefab.shape !== 'stall') roofMesh.rotation.y = Math.PI / 4
+      // The roof geometry is centred, so it has to be lifted by half of its own
+      // height — the previous code lifted every roof by half of the *stall* height
+      // and left pitched roofs sunk into their walls.
+      roofMesh.position.y = height + roofHeight / 2
 
       if (prefab.shape === 'houses') {
         const annex = this.addMesh(
           group,
-          new THREE.BoxGeometry(width * 0.42, height * 0.72, depth * 0.55),
+          taperedBox({
+            width: width * 0.42,
+            height: height * 0.72,
+            depth: depth * 0.55,
+            topScale: 0.95,
+            bevel: 0.07,
+          }),
           accent,
           `site-annex:${site.id}`,
         )
@@ -1071,7 +1139,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       const towerHeight = height + 2
       const tower = this.addMesh(
         group,
-        new THREE.CylinderGeometry(1.35, 1.55, towerHeight, 7),
+        prismGeometry(1.55, 0.87, towerHeight, 7),
         structure,
         `site-tower:${site.id}:${index}`,
       )
@@ -1086,7 +1154,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       const side = index % 2 === 0 ? -1 : 1
       const pole = this.addMesh(
         group,
-        new THREE.CylinderGeometry(0.08, 0.1, 2.2, 5),
+        prismGeometry(0.1, 0.8, 2.2, 5),
         accent,
         `site-detail:${site.id}:${index}`,
       )
@@ -1229,6 +1297,17 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     this.structuralDecorationCount = structuralPlacements.length
     if (structuralMesh) {
       this.runtime.ownProp(`dressing-structural:${String(this.id)}`)
+      // Structural dressing is the only world silhouette that gets ink: it is the
+      // tall, readable stuff, its instance count never changes, and one instanced
+      // shell sharing the source matrix buffer costs a single extra draw call for a
+      // whole region's worth of trees.
+      if (this.context.style.outlineDressing) {
+        this.dressingOutline = this.context.art.applyOutline(
+          structuralMesh,
+          'landmark',
+          { instanced: true },
+        )
+      }
     }
     for (const placement of structuralPlacements) {
       const colliderId = `dressing-solid:${String(this.id)}:${placement.index}`
@@ -1268,12 +1347,10 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
 
       const geometry = groundCoverGeometry(kind)
       this.geometries.add(geometry)
-      const material =
-        kind === 'flower'
-          ? this.context.materials.accent[biome]
-          : kind === 'pebble'
-            ? this.context.materials.secondary[biome]
-            : this.context.materials.groundCover[biome]
+      // All four kinds share the biome's vertex-coloured cover material: the colour
+      // that distinguishes a flower from a pebble is baked into the geometry, which
+      // is one material and one draw setup instead of three.
+      const material = this.context.materials.groundCover[biome]
       const mesh = new THREE.InstancedMesh(
         geometry,
         material,
@@ -1438,6 +1515,16 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     if (this.resourcesDisposed) return
     const errors: unknown[] = []
     if (this.root.parent) this.root.removeFromParent()
+    // Detach the ink shells first: they share `instanceMatrix` with their source, so
+    // they have to be gone before the source instanced mesh is disposed.
+    if (this.dressingOutline) {
+      try {
+        this.context.art.releaseOutline(this.dressingOutline)
+      } catch (error) {
+        errors.push(error)
+      }
+      this.dressingOutline = null
+    }
     try {
       this.context.collision.removeRegion(this.id)
     } catch (error) {
@@ -1475,15 +1562,28 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
   }
 }
 
+function createDefaultArtLibrary(): StylizedArtLibrary {
+  return new StylizedArtLibrary({
+    ink: {
+      player: 0x1b2436,
+      enemy: 0x3a1420,
+      interactable: 0x33280f,
+      landmark: 0x1a2028,
+    },
+  })
+}
+
 function createSharedMaterials(
+  art: StylizedArtLibrary,
   palette: GeneratedWorldPalette = {},
 ): SharedMaterials {
   const all: THREE.Material[] = []
   const textures: THREE.Texture[] = []
-  const standard = (
-    parameters: THREE.MeshStandardMaterialParameters,
+  const stylized = (
+    surface: StylizedWorldSurface,
+    parameters: StylizedWorldParameters,
   ): THREE.MeshStandardMaterial => {
-    const material = new THREE.MeshStandardMaterial(parameters)
+    const material = art.createMaterial({ ...parameters, surface })
     material.userData.generatedWorldShared = true
     all.push(material)
     return material
@@ -1494,10 +1594,8 @@ function createSharedMaterials(
     pattern: ProceduralSurfacePattern,
     repeatX: number,
     repeatY: number,
-    parameters: Omit<
-      THREE.MeshStandardMaterialParameters,
-      'color' | 'map'
-    > = {},
+    surface: StylizedWorldSurface,
+    parameters: Omit<StylizedWorldParameters, 'color' | 'map'> = {},
     detail = shadeColor(base, -0.28),
   ): THREE.MeshStandardMaterial => {
     const map = createProceduralSurfaceTexture({
@@ -1510,10 +1608,11 @@ function createSharedMaterials(
     })
     map.anisotropy = 4
     textures.push(map)
-    return standard({
+    return stylized(surface, {
       ...parameters,
       color: 0xffffff,
       map,
+      name: key,
     })
   }
   const terrainPatterns: Record<ZoneId, ProceduralSurfacePattern> = {
@@ -1562,6 +1661,7 @@ function createSharedMaterials(
       terrainPatterns[zone],
       zone === 'palace' ? 10 : 16,
       zone === 'palace' ? 10 : 16,
+      'ground',
       {
         roughness: 0.95,
         metalness: 0,
@@ -1575,6 +1675,7 @@ function createSharedMaterials(
       secondaryPatterns[zone],
       3,
       3,
+      zone === 'forest' ? 'foliage' : 'stone',
       {
         roughness: 0.9,
       },
@@ -1587,6 +1688,7 @@ function createSharedMaterials(
       accentPatterns[zone],
       4,
       4,
+      zone === 'forest' ? 'foliage' : 'leather',
       {
         roughness: 0.72,
       },
@@ -1599,6 +1701,7 @@ function createSharedMaterials(
     'dirt',
     5,
     2,
+    'ground',
     {
       roughness: 1,
     },
@@ -1610,6 +1713,7 @@ function createSharedMaterials(
     'water',
     5,
     2,
+    'water',
     {
       roughness: 0.28,
       metalness: 0.05,
@@ -1625,6 +1729,7 @@ function createSharedMaterials(
     'wood',
     5,
     2,
+    'bark',
     {
       roughness: 0.86,
     },
@@ -1642,6 +1747,7 @@ function createSharedMaterials(
       structurePatterns[zone],
       5,
       4,
+      zone === 'neutral' || zone === 'forest' ? 'bark' : 'stone',
       {
         roughness: 0.9,
       },
@@ -1656,6 +1762,7 @@ function createSharedMaterials(
       roofPatterns[zone],
       5,
       4,
+      zone === 'forest' ? 'foliage' : 'leather',
       {
         roughness: 0.82,
       },
@@ -1667,16 +1774,31 @@ function createSharedMaterials(
     'wood',
     2,
     5,
+    'bark',
     {
       roughness: 0.95,
     },
   )
+  // Vertex-coloured surfaces. Every mesh that uses these is built by the geometry
+  // helpers below, which always bake a `color` attribute — a vertex-coloured
+  // material on geometry without one renders black, so this pairing is not
+  // optional.
+  const dressing = createZoneMaterialRecord((zone) =>
+    stylized(zone === 'forest' ? 'bark' : 'stone', {
+      color: 0xffffff,
+      vertexColors: true,
+      flatShading: false,
+      name: `generated-dressing-${zone}`,
+    }),
+  )
   const groundCover = createZoneMaterialRecord((zone) =>
-    standard({
+    stylized('foliage', {
       color: mixColor(terrainColors[zone], secondaryColors[zone], 0.58),
+      vertexColors: true,
       flatShading: true,
       roughness: 1,
       side: THREE.DoubleSide,
+      name: `generated-ground-cover-${zone}`,
     }),
   )
   return {
@@ -1689,11 +1811,21 @@ function createSharedMaterials(
     structure,
     roof,
     trunk,
+    dressing,
     groundCover,
     all,
     textures,
   }
 }
+
+type StylizedWorldSurface = Parameters<
+  StylizedArtLibrary['createMaterial']
+>[0]['surface']
+
+type StylizedWorldParameters = Omit<
+  Parameters<StylizedArtLibrary['createMaterial']>[0],
+  'surface'
+>
 
 function createZoneMaterialRecord<T>(
   create: (zone: ZoneId) => T,
@@ -1717,6 +1849,7 @@ function normalizeStyle(options: GeneratedWorldRuntimeOptions): RuntimeStyle {
     bridgeWidth: positiveOr(options.bridgeWidth, 6),
     decorationDensity: normalizeDecorationDensity(options.decorationDensity),
     castShadows: options.castShadows === true,
+    outlineDressing: options.outlineDressing === true,
   }
 }
 
@@ -1975,51 +2108,204 @@ function boundsCenter(bounds: Bounds2D): Point2 {
   }
 }
 
-function dressingGeometry(zone: ZoneId): THREE.BufferGeometry {
-  if (zone === 'forest') return forestTreeGeometry()
-  if (zone === 'palace') {
-    return new THREE.CylinderGeometry(0.45, 0.62, 2.8, 6)
-  }
-  if (zone === 'fort') return new THREE.DodecahedronGeometry(1.15, 0)
-  return new THREE.ConeGeometry(0.55, 1.35, 5)
+/**
+ * A centred N-sided prism that may taper.
+ *
+ * Replaces the `CylinderGeometry`/`ConeGeometry` pairs the site prefabs used to
+ * reach for: same silhouette family, but faceted by construction and with UVs that
+ * survive the procedural surface textures.
+ */
+function prismGeometry(
+  radius: number,
+  topScale: number,
+  height: number,
+  sides: number,
+  phase = 0,
+): THREE.BufferGeometry {
+  return loftProfile({
+    profile: polygonProfile(radius, sides, phase),
+    sections: [
+      { y: -height / 2, scaleX: 1 },
+      { y: height / 2, scaleX: Math.max(0.02, topScale) },
+    ],
+    name: 'generated-prism',
+  })
 }
 
+/** A truncated hip roof: a pyramid with a ridge instead of a needle point. */
+function hipRoofGeometry(
+  width: number,
+  depth: number,
+  height: number,
+): THREE.BufferGeometry {
+  return loftProfile({
+    profile: rectProfile(width, depth, Math.min(width, depth) * 0.08),
+    sections: [
+      { y: -height / 2, scaleX: 1, scaleZ: 1 },
+      { y: -height / 2 + height * 0.16, scaleX: 0.92, scaleZ: 0.92 },
+      { y: height / 2, scaleX: 0.14, scaleZ: 0.14 },
+    ],
+    name: 'generated-hip-roof',
+  })
+}
+
+function dressingGeometry(zone: ZoneId): THREE.BufferGeometry {
+  if (zone === 'forest') return forestTreeGeometry()
+  if (zone === 'palace') return palacePillarGeometry()
+  if (zone === 'fort') return fortBoulderGeometry()
+  return neutralHaystackGeometry()
+}
+
+/**
+ * Dressing is drawn with one vertex-coloured material per biome, so every builder
+ * below has to bake a `color` attribute. It also bakes welded outline normals,
+ * because these are the world silhouettes that get ink.
+ */
 function dressingMaterial(
   zone: ZoneId,
   materials: SharedMaterials,
 ): THREE.Material | THREE.Material[] {
-  if (zone === 'forest') {
-    return [
-      materials.trunk,
-      materials.secondary.forest,
-      materials.secondary.forest,
-      materials.secondary.forest,
-    ]
-  }
-  return materials.secondary[zone]
+  return materials.dressing[zone]
 }
 
+/**
+ * A tree that is no longer a cylinder wearing three cones.
+ *
+ * Tapered trunk with a root flare, three staggered canopy tiers each rotated off
+ * axis, seeded noise on the trunk for bark, and a baked vertical gradient from deep
+ * shadow at the roots to lit needles at the crown. Shared by every forest region, so
+ * the seed is a constant: this is one buffer for the entire world.
+ */
 function forestTreeGeometry(): THREE.BufferGeometry {
-  const parts = [
-    new THREE.CylinderGeometry(0.32, 0.58, 4.2, 7),
-    new THREE.ConeGeometry(1.75, 3.4, 8).translate(0, 1.6, 0),
-    new THREE.ConeGeometry(1.35, 3, 8).translate(0, 3, 0),
-    new THREE.ConeGeometry(0.9, 2.4, 8).translate(0, 4.2, 0),
+  const trunk = loftProfile({
+    profile: polygonProfile(0.5, 7),
+    sections: [
+      { y: 0, scaleX: 1.18 },
+      { y: 0.35, scaleX: 0.86 },
+      { y: 1.6, scaleX: 0.72 },
+      { y: 3.2, scaleX: 0.6 },
+      { y: 4.4, scaleX: 0.46 },
+    ],
+    name: 'tree-trunk',
+  })
+  displaceGeometry(trunk, {
+    seed: 0x5eed7e,
+    amplitude: 0.07,
+    frequency: 1.9,
+    octaves: 2,
+    flatBase: 0.2,
+  })
+  gradientVertexColors(trunk, { bottom: 0x4a3524, top: 0x8a6b48, bias: 0.8 })
+
+  const tiers: THREE.BufferGeometry[] = []
+  const tierProfile: readonly [number, number, number, number][] = [
+    [1.85, 2.2, 1.55, 0.5],
+    [1.45, 2, 2.9, 1.9],
+    [0.95, 1.9, 4.1, 3.6],
   ]
-  const geometry = mergeGeometries(parts, true)
-  parts.forEach((part) => part.dispose())
-  if (!geometry) {
-    throw new Error('Could not build generated forest tree geometry')
+  for (let index = 0; index < tierProfile.length; index += 1) {
+    const [radius, height, base, rotation] = tierProfile[index]
+    const tier = loftProfile({
+      profile: polygonProfile(radius, 8, rotation),
+      sections: [
+        { y: 0, scaleX: 0.36 },
+        { y: height * 0.14, scaleX: 1 },
+        { y: height * 0.62, scaleX: 0.66 },
+        { y: height, scaleX: 0.04 },
+      ],
+      name: `tree-tier-${String(index)}`,
+    })
+    transformed(tier, { position: { x: 0, y: base, z: 0 } })
+    gradientVertexColors(tier, {
+      bottom: 0x1d3a2a,
+      top: 0x5f9a52,
+      bias: 0.85,
+    })
+    tiers.push(tier)
   }
-  geometry.computeVertexNormals()
-  return geometry
+
+  const geometry = mergeAll([trunk, ...tiers], { name: 'generated-forest-tree' })
+  bakeSkyOcclusion(geometry, { strength: 0.26 })
+  return bakeOutlineNormals(geometry)
+}
+
+/** A cracked boulder rather than a dodecahedron. */
+function fortBoulderGeometry(): THREE.BufferGeometry {
+  const base = new THREE.IcosahedronGeometry(1.15, 1)
+  const geometry = base.index ? base.toNonIndexed() : base
+  if (geometry !== base) base.dispose()
+  displaceGeometry(geometry, {
+    seed: 0xb0d1e,
+    amplitude: 0.34,
+    frequency: 1.15,
+    octaves: 3,
+    mode: 'ridge',
+    flatBase: 0.35,
+    axisScale: { x: 1.1, y: 0.7, z: 1.05 },
+  })
+  geometry.name = 'generated-fort-boulder'
+  gradientVertexColors(geometry, { bottom: 0x2e3138, top: 0x767f88, bias: 0.9 })
+  bakeSkyOcclusion(geometry, { strength: 0.3 })
+  bakeVerticalOcclusion(geometry, { strength: 0.3, falloff: 0.9 })
+  return bakeOutlineNormals(geometry)
+}
+
+/** A carved standing pillar with a flared base and a capital. */
+function palacePillarGeometry(): THREE.BufferGeometry {
+  const shaft = latheProfile(
+    [
+      { x: 0.001, y: 0 },
+      { x: 0.72, y: 0 },
+      { x: 0.66, y: 0.16 },
+      { x: 0.48, y: 0.3 },
+      { x: 0.42, y: 1.9 },
+      { x: 0.56, y: 2.24 },
+      { x: 0.66, y: 2.42 },
+      { x: 0.62, y: 2.62 },
+      { x: 0.001, y: 2.7 },
+    ],
+    { segments: 8, name: 'palace-pillar' },
+  )
+  gradientVertexColors(shaft, { bottom: 0x6c6a63, top: 0xc9c4b4, bias: 0.75 })
+  bakeVerticalOcclusion(shaft, { strength: 0.28, falloff: 0.7 })
+  bakeSkyOcclusion(shaft, { strength: 0.2 })
+  return bakeOutlineNormals(shaft)
+}
+
+/** A leaning thatched stack — the neutral lands' rural silhouette. */
+function neutralHaystackGeometry(): THREE.BufferGeometry {
+  const stack = loftProfile({
+    profile: polygonProfile(0.72, 6, 0.35),
+    sections: [
+      { y: 0, scaleX: 0.86 },
+      { y: 0.3, scaleX: 1 },
+      { y: 0.95, scaleX: 0.78, offsetX: 0.06 },
+      { y: 1.5, scaleX: 0.3, offsetX: 0.12 },
+    ],
+    name: 'neutral-haystack',
+  })
+  const pole = transformed(
+    taperedBox({
+      width: 0.09,
+      height: 1.95,
+      depth: 0.09,
+      topScale: 0.5,
+      anchor: 'base',
+    }),
+    { position: { x: 0.12, y: 0, z: 0 } },
+  )
+  gradientVertexColors(stack, { bottom: 0x6a5324, top: 0xd8b45c, bias: 0.8 })
+  gradientVertexColors(pole, { bottom: 0x4a3a24, top: 0x7c6440, bias: 1 })
+  const geometry = mergeAll([stack, pole], { name: 'generated-neutral-stack' })
+  bakeVerticalOcclusion(geometry, { strength: 0.3, falloff: 0.45 })
+  return bakeOutlineNormals(geometry)
 }
 
 function dressingBaseHeight(zone: ZoneId): number {
-  if (zone === 'forest') return 2.1
-  if (zone === 'palace') return 1.4
-  if (zone === 'fort') return 0.75
-  return 0.68
+  // Every dressing geometry above is anchored at its own base except the boulder,
+  // which is centred and deliberately half-buried.
+  if (zone === 'fort') return 0.55
+  return 0
 }
 
 type GroundCoverKind = 'fern' | 'flower' | 'grass' | 'pebble'
@@ -2049,19 +2335,53 @@ const GROUND_COVER_COUNTS: Record<
   fort: { grass: 70, fern: 0, flower: 0, pebble: 120 },
 }
 
+/**
+ * Ground cover.
+ *
+ * All four kinds share one vertex-coloured material per biome, so each builder
+ * bakes its own colour ramp — a tuft that is dark at the root and bright at the tip
+ * costs nothing at runtime and does more for readability than any texture would at
+ * this size.
+ */
 function groundCoverGeometry(kind: GroundCoverKind): THREE.BufferGeometry {
-  if (kind === 'grass') {
-    return new THREE.ConeGeometry(0.08, 0.62, 3).translate(0, 0.31, 0)
-  }
+  if (kind === 'grass') return grassTuftGeometry()
   if (kind === 'fern') return fernGeometry()
   if (kind === 'flower') return flowerGeometry()
-  return new THREE.DodecahedronGeometry(0.2, 0)
+  return pebbleGeometry()
+}
+
+function grassTuftGeometry(): THREE.BufferGeometry {
+  const blades: THREE.BufferGeometry[] = []
+  const layout: readonly [number, number, number, number][] = [
+    [0, 0.68, 0, 0],
+    [0.9, 0.52, 0.05, 0.22],
+    [-1.05, 0.44, -0.04, -0.18],
+  ]
+  for (let index = 0; index < layout.length; index += 1) {
+    const [rotation, height, offsetX, lean] = layout[index]
+    const blade = loftProfile({
+      profile: rectProfile(0.075, 0.02),
+      sections: [
+        { y: 0, scaleX: 1, scaleZ: 1 },
+        { y: height * 0.45, scaleX: 0.72, offsetX: lean * 0.4 },
+        { y: height, scaleX: 0.1, offsetX: lean },
+      ],
+      name: `grass-blade-${String(index)}`,
+    })
+    transformed(blade, {
+      rotation: { x: 0, y: rotation, z: 0 },
+      position: { x: offsetX, y: 0, z: 0 },
+    })
+    gradientVertexColors(blade, { bottom: 0x2f4a1e, top: 0xa8c85c, bias: 0.7 })
+    blades.push(blade)
+  }
+  return mergeAll(blades, { name: 'generated-grass-tuft' })
 }
 
 function fernGeometry(): THREE.BufferGeometry {
   const vertices: number[] = []
-  for (let frond = 0; frond < 4; frond += 1) {
-    const angle = (frond / 4) * Math.PI * 2
+  for (let frond = 0; frond < 5; frond += 1) {
+    const angle = (frond / 5) * Math.PI * 2
     const outwardX = Math.sin(angle)
     const outwardZ = Math.cos(angle)
     const sideX = Math.cos(angle)
@@ -2077,9 +2397,11 @@ function fernGeometry(): THREE.BufferGeometry {
     ]
     const baseLeft = point(-0.025, 0, 0)
     const baseRight = point(0.025, 0, 0)
-    const middleLeft = point(-0.1, 0.18, 0.34)
-    const middleRight = point(0.1, 0.18, 0.34)
-    const tip = point(0, 0.4, 0.62)
+    const middleLeft = point(-0.11, 0.2, 0.32)
+    const middleRight = point(0.11, 0.2, 0.32)
+    const outerLeft = point(-0.06, 0.34, 0.5)
+    const outerRight = point(0.06, 0.34, 0.5)
+    const tip = point(0, 0.42, 0.68)
     vertices.push(
       ...baseLeft,
       ...baseRight,
@@ -2089,6 +2411,12 @@ function fernGeometry(): THREE.BufferGeometry {
       ...middleLeft,
       ...middleLeft,
       ...middleRight,
+      ...outerRight,
+      ...middleLeft,
+      ...outerRight,
+      ...outerLeft,
+      ...outerLeft,
+      ...outerRight,
       ...tip,
     )
   }
@@ -2098,32 +2426,59 @@ function fernGeometry(): THREE.BufferGeometry {
     new THREE.Float32BufferAttribute(vertices, 3),
   )
   geometry.computeVertexNormals()
-  return geometry
+  geometry.name = 'generated-fern'
+  return gradientVertexColors(geometry, {
+    bottom: 0x21401f,
+    top: 0x76a648,
+    bias: 0.65,
+  })
 }
 
 function flowerGeometry(): THREE.BufferGeometry {
-  const stemSource = new THREE.CylinderGeometry(
-    0.025,
-    0.035,
-    0.52,
-    5,
-  ).translate(0, 0.26, 0)
-  const bloomSource = new THREE.OctahedronGeometry(0.12, 0).translate(
-    0,
-    0.6,
-    0,
+  const stem = loftProfile({
+    profile: polygonProfile(0.03, 5),
+    sections: [
+      { y: 0, scaleX: 1.2 },
+      { y: 0.3, scaleX: 0.85, offsetX: 0.02 },
+      { y: 0.54, scaleX: 0.7, offsetX: 0.03 },
+    ],
+    name: 'flower-stem',
+  })
+  gradientVertexColors(stem, { bottom: 0x2c4720, top: 0x5f8c3a })
+  const petals = transformed(
+    loftProfile({
+      profile: polygonProfile(0.13, 6),
+      sections: [
+        { y: 0, scaleX: 0.2 },
+        { y: 0.05, scaleX: 1 },
+        { y: 0.11, scaleX: 0.55 },
+      ],
+      name: 'flower-bloom',
+    }),
+    { position: { x: 0.03, y: 0.54, z: 0 } },
   )
-  const stem = stemSource.toNonIndexed()
-  const bloom = bloomSource.index ? bloomSource.toNonIndexed() : bloomSource
-  stemSource.dispose()
-  if (bloom !== bloomSource) bloomSource.dispose()
-  const geometry = mergeGeometries([stem, bloom])
-  stem.dispose()
-  bloom.dispose()
-  if (!geometry) {
-    throw new Error('Could not build generated flower geometry')
-  }
-  return geometry
+  gradientVertexColors(petals, { bottom: 0xd8b23c, top: 0xf2e2a0, bias: 0.6 })
+  return mergeAll([stem, petals], { name: 'generated-flower' })
+}
+
+function pebbleGeometry(): THREE.BufferGeometry {
+  const source = new THREE.IcosahedronGeometry(0.2, 0)
+  const geometry = source.index ? source.toNonIndexed() : source
+  if (geometry !== source) source.dispose()
+  displaceGeometry(geometry, {
+    seed: 0x9eb61e,
+    amplitude: 0.055,
+    frequency: 6,
+    octaves: 2,
+    mode: 'ridge',
+    axisScale: { x: 1.2, y: 0.6, z: 1.1 },
+  })
+  geometry.name = 'generated-pebble'
+  return gradientVertexColors(geometry, {
+    bottom: 0x35383c,
+    top: 0x8b8f92,
+    bias: 0.8,
+  })
 }
 
 function writeGroundCoverScale(

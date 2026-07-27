@@ -528,19 +528,20 @@ test('streamed regions retain textured surfaces, composite trees, and ground cov
   const textureBytes = terrainTexture.image.data as Uint8Array
   assert.ok(new Set(textureBytes).size > 8)
 
+  // §08 — dressing moved from a four-slot material array with a bark texture to one
+  // shared vertex-coloured material per biome. The colour that used to come from a
+  // 64x64 canvas is baked into the geometry now: no sampler, no texture memory, and
+  // it survives instancing. The ink shell shares the source instance matrix, so an
+  // outlined forest is still one extra draw call.
   const trees = forestRoot.getObjectByName(
     `dressing-structural:${forestRegion.id}`,
   )
   assert.ok(trees instanceof THREE.InstancedMesh)
-  assert.ok(Array.isArray(trees.material))
-  assert.equal(trees.material.length, 4)
-  assert.ok(
-    trees.material.every(
-      (material) =>
-        material instanceof THREE.MeshStandardMaterial &&
-        material.map instanceof THREE.DataTexture,
-    ),
-  )
+  assert.ok(!Array.isArray(trees.material))
+  assert.ok(trees.material instanceof THREE.MeshStandardMaterial)
+  assert.equal(trees.material.vertexColors, true)
+  assert.ok(trees.geometry.getAttribute('color'))
+  assert.ok(trees.geometry.getAttribute('outlineNormal'))
 
   const grass = forestRoot.getObjectByName(
     `dressing-cosmetic:ground-grass:${forestRegion.id}`,

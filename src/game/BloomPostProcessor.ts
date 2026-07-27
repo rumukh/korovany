@@ -2,12 +2,85 @@ import * as THREE from 'three'
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 
-const BLOOM_STRENGTH = 0.55
-const BLOOM_RADIUS = 0.4
-const BLOOM_THRESHOLD = 0.85
+// §08 — retuned so emissive FX still bloom but ink lines and dark cloth do not get
+// eaten. The old 0.55 / 0.4 / 0.85 washed out every outline it touched.
+const BLOOM_STRENGTH = 0.42
+const BLOOM_RADIUS = 0.55
+const BLOOM_THRESHOLD = 0.9
 
+const VIGNETTE_STRENGTH = 0.22
+const SATURATION_LIFT = 1.08
+const SHADOW_TINT_AMOUNT = 0.16
+const HIGHLIGHT_TINT_AMOUNT = 0.1
+
+/**
+ * One fullscreen shader that finishes the drawing.
+ *
+ * A comic page is not evenly exposed: the edges fall off, the shadows drift cool and
+ * the lights drift warm. Doing it here rather than in every material means it costs
+ * one pass and it applies to particles, sprites and the sky as well as to lit
+ * geometry.
+ */
+const ComicGradeShader = {
+  name: 'ComicGradeShader',
+  uniforms: {
+    tDiffuse: { value: null as THREE.Texture | null },
+    uVignette: { value: VIGNETTE_STRENGTH },
+    uSaturation: { value: SATURATION_LIFT },
+    uShadowTint: { value: new THREE.Color(0x2c3c58) },
+    uHighlightTint: { value: new THREE.Color(0xffe2b0) },
+    uShadowAmount: { value: SHADOW_TINT_AMOUNT },
+    uHighlightAmount: { value: HIGHLIGHT_TINT_AMOUNT },
+  },
+  vertexShader: /* glsl */ `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform sampler2D tDiffuse;
+    uniform float uVignette;
+    uniform float uSaturation;
+    uniform vec3 uShadowTint;
+    uniform vec3 uHighlightTint;
+    uniform float uShadowAmount;
+    uniform float uHighlightAmount;
+    varying vec2 vUv;
+
+    void main() {
+      vec4 texel = texture2D( tDiffuse, vUv );
+      vec3 color = texel.rgb;
+
+      float lum = dot( color, vec3( 0.2126, 0.7152, 0.0722 ) );
+      color = mix( vec3( lum ), color, uSaturation );
+
+      float shadowMask = 1.0 - smoothstep( 0.0, 0.45, lum );
+      float highlightMask = smoothstep( 0.55, 1.0, lum );
+      color = mix( color, color * uShadowTint * 2.0, shadowMask * uShadowAmount );
+      color = mix( color, color * uHighlightTint * 1.6, highlightMask * uHighlightAmount );
+
+      vec2 offset = vUv - 0.5;
+      float vignette = 1.0 - uVignette * dot( offset, offset ) * 1.6;
+      color *= clamp( vignette, 0.0, 1.0 );
+
+      gl_FragColor = vec4( max( color, vec3( 0.0 ) ), texel.a );
+    }
+  `,
+}
+
+/**
+ * The optional post chain.
+ *
+ * When bloom is on: `RenderPass -> UnrealBloomPass -> ComicGradePass -> OutputPass`.
+ * When bloom is off there is no composer at all and the renderer draws straight to
+ * the canvas — that path stays real and supported, so the art has to read without
+ * any of this. Grade and bloom are a finish, not a crutch.
+ */
 export class BloomPostProcessor {
   private readonly renderer: THREE.WebGLRenderer
   private readonly scene: THREE.Scene
@@ -45,7 +118,9 @@ export class BloomPostProcessor {
         BLOOM_THRESHOLD,
       ),
     )
-    // OutputPass reads the renderer's ACES and exposure settings at render time.
+    composer.addPass(new ShaderPass(ComicGradeShader))
+    // OutputPass reads the renderer's tone mapping and exposure settings at render
+    // time, so it has to stay last.
     composer.addPass(new OutputPass())
     composer.setSize(this.width, this.height)
     this.composer = composer
