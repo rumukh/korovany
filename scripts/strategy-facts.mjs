@@ -697,7 +697,12 @@ function audit() {
   console.log(`\ndeclared residue: ${accepted.size} accepted, ${unaccepted.length} NOT accepted${fixed > 0 ? `, ${fixed} previously accepted now preserved` : ''}`)
   for (const m of unaccepted.slice(0, 40)) console.log(`  NEW MISS: ${m.name} [${m.cls}] ${m.id}`)
 
-  const numberFailures = verifyDocumentNumbers(docLines.join('\n'), total, missing)
+  // Recompute the `never` inversion the note quotes, so its figures are the
+  // tool's rather than the author's.
+  const body = docLines.join('\n')
+  const neverSites = (body.match(/never/gi) ?? []).length
+  const neverMisses = countMisses(fixtures, body.replace(/never/gi, 'always').split('\n')) - missing
+  const numberFailures = verifyDocumentNumbers(body, total, missing, { neverSites, neverMisses })
   for (const f of numberFailures) console.error(` DOCUMENT NUMBER MISMATCH: ${f}`)
 
   if (keyMisses.length > 0 || unaccepted.length > 0 || numberFailures.length > 0) process.exitCode = 1
@@ -803,7 +808,7 @@ function runMutants() {
  * 106 when the tool printed 108, then 113. So the tool now reads the document's
  * own claims back and fails if they disagree with what it just computed.
  */
-function verifyDocumentNumbers(docBody, total, missing) {
+function verifyDocumentNumbers(docBody, total, missing, extra = {}) {
   const failures = []
   const pct = (100 * (1 - missing / total)).toFixed(1)
   const claim = docBody.match(/\*\*Result: ([\d,]+) facts across the fifteen pairings, ([\d.]+)% present/)
@@ -816,6 +821,14 @@ function verifyDocumentNumbers(docBody, total, missing) {
   if (!residue) failures.push('the document no longer states a residue count')
   else if (residue[1].replace(/,/g, '') !== String(missing)) {
     failures.push(`document claims a residue of ${residue[1]}, tool counts ${missing}`)
+  }
+  // The `never` mutation figures are quoted in the note as evidence that polarity
+  // is protected. They are recomputed here so they cannot drift either — this is
+  // the class of number that was hand-carried as 106 when the tool printed 113.
+  const never = docBody.match(/Inverting all ([\d,]+) occurrences of `never` produces ([\d,]+) new misses/)
+  if (never && extra.neverSites !== undefined) {
+    if (never[1].replace(/,/g, '') !== String(extra.neverSites)) failures.push(`document claims ${never[1]} \`never\` sites, tool counts ${extra.neverSites}`)
+    if (never[2].replace(/,/g, '') !== String(extra.neverMisses)) failures.push(`document claims ${never[2]} new misses from the \`never\` inversion, tool computes ${extra.neverMisses}`)
   }
   return failures
 }function acceptResidue() {

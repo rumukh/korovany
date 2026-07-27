@@ -114,7 +114,7 @@ document (`do not → do`, `must not → must`, `never → always`), flips a com
 (`shorter than → longer than`), reverses a phase ordering (`after → before`), and corrupts bound
 values including single digits (`BLOOM_LAYER 1→9`, `ARCHER_DAMAGE 7→9`, `MAX_ACTORS 25→35`,
 `MAX_ACTIVE_VOICES 24→42`, `DAY_LENGTH 240→420`, `CIVILIAN_ALARM_RADIUS 12→21`) and swaps a role's
-hit points. All twelve are caught. Inverting all 190 occurrences of `never` produces 57 new misses;
+hit points. All twelve are caught. Inverting all 199 occurrences of `never` produces 60 new misses;
 it used to produce none, because `never` was a stop word — the single most load-bearing word in a
 repo whose culture is negative controls was being discarded before the probe was built.
 
@@ -171,7 +171,8 @@ curated map attached to one specific fact — never a global normaliser.
 
 **The tool verifies this document's own arithmetic.** Hand-maintaining a figure inside a note whose
 subject is not trusting hand-maintained figures is self-refuting, and it had already drifted once:
-the `--break=chronicle` count was written as 106 while the tool printed 113. The checker now reads
+a `--break` occurrence count was hand-written into this note and disagreed with what the tool
+printed, and it drifted again as the document grew. The checker now reads
 back the headline result and the residue count stated below and **fails if either disagrees** with
 what it just computed.
 
@@ -216,6 +217,18 @@ would pass a green run:
 - Anything about whether a preserved claim is **true of the code**. The acceptance ledgers below were
   checked by reading `src/`, by hand; no part of that is mechanical, and two of its rows were wrong
   until an adversarial reviewer checked them in source.
+- **A comparative relation asserted once in prose between two constants that are each correctly
+  bound.** This one has a worked example, because it survived the mutation table and is being left
+  in rather than chased. §1 says:
+
+  > `CIVILIAN_PANIC_RECOVERY = 1.5` is far shorter than `MORALE_RALLY_SECONDS = 12`
+
+  Flip `shorter` to `longer` and nothing fails. Both constants are present, both values are bound to
+  the right names, and the `relation`/comparison kind attaches a marker to a *named* constant on the
+  same line — but the claim here is about the **pair**, and the pair is not a tracked fact. Catching
+  it means encoding pairwise comparisons between arbitrary constants, which is an eleventh class,
+  and there would be a twelfth after it. **A known limit that is written down is worth more than
+  another epicycle.**
 
 **On the controls themselves.** Every control is now hand-authored against the specs rather than
 drawn from the extractor's own output, which removes the circularity an earlier version had — where
