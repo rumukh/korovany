@@ -62,6 +62,15 @@
       ]
     },
     {
+      "cls": "designRule",
+      "kind": "comparison",
+      "name": "invert the civilian/soldier alarm-radius comparison",
+      "mutations": [
+        { "find": "is **shorter** than a soldier's 15 on purpose", "replace": "matches a soldier's 15" },
+        { "find": "is *shorter* than a soldier's 15", "replace": "matches a soldier's 15" }
+      ]
+    },
+    {
       "cls": "constant",
       "kind": "name",
       "name": "remove a named constant",

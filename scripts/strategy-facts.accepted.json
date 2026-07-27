@@ -384,6 +384,11 @@
     },
     {
       "spec": "03-loot-spectacle",
+      "cls": "budgetRule",
+      "id": "changed. If current damage is already at or above the cap, exclude whe"
+    },
+    {
+      "spec": "03-loot-spectacle",
       "cls": "edgeCaseRule",
       "id": "- Collection and save settlement can race in one frame; marking inacti"
     },

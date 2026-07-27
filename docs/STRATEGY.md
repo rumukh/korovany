@@ -124,7 +124,7 @@ the discriminating token mandatory. Light suffix stripping and British/American 
 on both sides, consistently in every check, because `callout`/`callouts` and `behaviour`/`behavior`
 are the same fact and a checker that says otherwise is measuring morphology.
 
-**Result: 2,269 facts across the fifteen pairings, 94.9% present in the owning section.**
+**Result: 2,269 facts across the fifteen pairings, 94.8% present in the owning section.**
 
 | Class | Facts | Preserved | | Class | Facts | Preserved |
 | --- | ---: | ---: | --- | --- | ---: | ---: |
@@ -133,25 +133,56 @@ are the same fact and a checker that says otherwise is measuring morphology.
 | accessibility rule | 23 | 100% | | edge-case rule | 101 | 82.2% |
 | storage key | 12, from `src` | 100% | | design rule | 251 | 78.9% |
 | relation (binding, row) | 626 | 98.9% | | | | |
-| formula | 76 | 98.7% | | **total** | **2,269** | **94.9%** |
+| formula | 76 | 98.7% | | **total** | **2,269** | **94.8%** |
 
-**The residue is 116 facts, and it is not rounded away.** Every one is enumerated in
+**The residue is 117 facts, and it is not rounded away.** Every one is enumerated in
 `scripts/strategy-facts.accepted.json` with its spec, class and source sentence, so the gap is
-auditable entry by entry. The gate is a **ratchet, not a threshold**: the run fails if a miss appears
+auditable entry by entry: 53 design rules, 24 lifecycle rules, 18 edge cases, 14 budget rules, 7
+relations and 1 formula. The gate is a **ratchet, not a threshold**: the run fails if a miss appears
 that is *not* on that list, so preservation can only improve and a green `npm run docs:facts` means
 "nothing regressed" — a claim it can actually support. Removing `AMBIENT_BEAST_LIMIT` from §1, for
 instance, produces `NEW MISS: living-world [constant] AMBIENT_BEAST_LIMIT` and exit 1.
 
-The residue is concentrated in the four prose-rule classes and is of two kinds. Forty-six are
-**co-occurrence** failures: the rule is in the document but its three rarest words do not fall inside
-one three-line window, usually because the distillation split one spec sentence into two. Sixty-seven
-are **polarity** failures: the rule is present and stated affirmatively where the spec stated it as a
-prohibition. Both are real fidelity gaps for normative text, and neither is a missing number — every
-constant, storage key, numeric value and name→value binding in all fifteen specs is present in its
-owning section.
+Two kinds. Most are **co-occurrence** failures: the rule is in the document but its three rarest
+words do not fall inside one three-line window, usually because the distillation split one spec
+sentence into two. The rest are **polarity** failures: the rule is present and stated affirmatively
+where the spec stated it as a prohibition. Both are real fidelity gaps for normative text, and
+neither is a missing number — **every constant, storage key, numeric value and name→value binding in
+all fifteen specs is present in its owning section.**
 
-That an earlier revision of this document scored **100%** and this one scores **94.9%** is the point.
-The instrument got stricter four times; the score went 93.4 → 100 → 88.4 → 100 → **94.9**, and only
+**What this instrument cannot detect — stated because an undeclared limit is the failure this whole
+thread has been about.**
+
+It validates **presence and binding. It does not validate meaning.** Concretely, all of the following
+would pass a green run:
+
+- A rule preserved correctly but **attributed to the wrong subsystem** inside the same section.
+- A number preserved with the **wrong unit** — `0.12` seconds written as `0.12` metres.
+- A rule preserved in one place and **contradicted in another** part of the same document.
+- A negation expressed **without a negation token** — "bloom owns outlines" carries the opposite of
+  "outlines must not depend on bloom", but contains no `not` for the polarity check to find.
+- A paraphrase that **inverts meaning while keeping the rare words**, since the signature is a bag.
+- Anything about whether a preserved claim is **true of the code**. The acceptance ledgers below were
+  checked by reading `src/`, by hand; no part of that is mechanical, and two of its rows were wrong
+  until an adversarial reviewer checked them in source.
+
+**On the controls themselves.** Every control is now hand-authored against the specs rather than
+drawn from the extractor's own output, which removes the circularity an earlier version had — where
+eight of nine controls sampled fixtures produced by the same extractor under test, and only the
+storage-key class, enumerated from `src/`, was genuinely independent. But independence of the
+*controls* does not make the *extractor* complete. A control can only mutate a fact some class
+already models. **A class the extractor does not model has no control, and cannot have one** — the
+`relation` class exists at all because a human read the specs and noticed that `BLOOM_LAYER` and `1`
+were being counted separately, not because any control fired.
+
+So the honest general statement, which this document should make once rather than keep
+rediscovering: **no mechanical checker of this kind is complete.** Mutation testing bounds the
+classes you thought of and says nothing about the ones you did not. What the tool buys is that a
+specific, enumerated set of regressions cannot happen silently — and that the residue is written
+down rather than rounded away.
+
+That an earlier revision of this document scored **100%** and this one scores **94.8%** is the point.
+The instrument got stricter five times; the score went 93.4 → 100 → 88.4 → 100 → 68.6 → **94.8**, and only
 the falls are informative. A number that cannot go down is not a measurement.
 
 Four extractor exclusions are declared rather than silent, because each removes a *misclassification*
@@ -1355,6 +1386,19 @@ Bound values: `Primary attack` → 0.52 / 3.6 / 26 / 28 · `scout` → 55 / 4.8 
 wording because for a normative rule the wording *is* the fact — a paraphrase that drops
 `not`, or separates a rule's terms across three paragraphs, has not preserved it.
 
+**Input, UI and save contracts.** Ability and actor combat state are **runtime-derived and not
+persisted**, so old saves load unchanged and no migration was needed. Desktop RMB and `KeyR` activate
+only while the game canvas owns pointer lock, but the public `useAbility()` / `setShield()` methods
+do **not** require it, so the coarse-pointer touch overlay works normally. **RMB context-menu
+prevention is scoped to the game container or active pointer lock** — not the whole page — and every
+added browser listener is removed on teardown. Guard release is handled by mouseup, keyup, touch
+pointerup/cancel/leave, pause, pointer-lock loss, window blur, visibility loss, stamina exhaustion
+and game end; the fifth touch action uses **pointer down/up** so the brace is hold-based. The HUD
+chip shows **ready / active / cooldown** with a linear meter, and the control ribbon displays
+**`ПКМ/R`** plus the faction-specific ability name. Activating a directional ability **rotates the
+player mesh toward the canonical aim vector** so the animation and the hit test agree. Bow, arrow,
+block and cleave all have distinct audio cues.
+
 
 
 
@@ -1704,6 +1748,21 @@ false` · `depthWrite = false` · `toneMapped = false` · `ComicCallout = БАЦ
 **Rules and values this distillation had compressed too far**, restored in the spec's own
 wording because for a normative rule the wording *is* the fact — a paraphrase that drops
 `not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+**Visual and motion contracts.** Pooled sprites use `depthTest: false`, `depthWrite: false` and
+`toneMapped: false`, on a device-independent **256×128** canvas texture so text is identical across
+pixel ratios. Numbers spawn at a **role-scaled head offset** with a **deterministic alternating**
+left/right displacement — not random — so two simultaneous hits never stack. Motion is
+**float, drift, hold, then shrink**, aged on gameplay time. Callouts get a **starburst backing**, and
+a cleave callout is placed at the **centroid** of the attack rather than on one victim. Impact rays
+take their tint from the damage kind, cast no shadows, and sit **below** number and callout render
+order. The weapon trail is a **pale centre with a faction-coloured edge**.
+
+If the source or target is removed before an FX update, the sprite **continues from its copied
+position and retains no reference to the removed object** — the copy is the point, because holding
+the object would resurrect it. Legibility was specified to be checked against the four hardest
+backgrounds this game produces: **snow-bright palace stone, dark forest, red gore and the night
+sky**.
 
 
 
@@ -2611,6 +2670,15 @@ disable, **explicitly dispose each added pass, then dispose the composer render 
 renderer pixel ratio and resizes every pass, so **do not separately** re-implement that. And the
 coupling that was specified but never built: if the day/night cycle ships, bloom makes torches and
 windows **read beautifully after** dark.
+
+**Three acceptance facts that are relational, not numeric.** With bloom disabled, the composer path
+and the direct render must be **visually identical** — same exposure, same tone mapping, same colour
+space — so the toggle changes only glow and never brightness. The **sky sun**
+(`MeshBasicMaterial`, `fog: false`) *should* bloom while **bright fog and horizon bands must not**;
+the threshold is tuned to separate them, or selective layers are used. And transparent smoke and
+particles must **retain their sort order through `RenderPass`** — a post-processing stage is exactly
+where transparency ordering silently breaks. Torch flames, the sky sun, projectiles and faction
+beacons visibly bloom; flat surfaces do not.
 
 ---
 

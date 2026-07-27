@@ -4961,7 +4961,8 @@
             "lower",
             "control"
           ],
-          "neg": true
+          "neg": true,
+          "order": "lower"
         }
       },
       {
@@ -5539,7 +5540,8 @@
             "deliberately",
             "below",
             "player"
-          ]
+          ],
+          "order": "below"
         }
       },
       {
@@ -9475,7 +9477,8 @@
             "rays",
             "shadows"
           ],
-          "neg": true
+          "neg": true,
+          "order": "below"
         }
       },
       {
@@ -9544,7 +9547,8 @@
             "these",
             "dedicated",
             "split"
-          ]
+          ],
+          "order": "later"
         }
       },
       {
@@ -9732,7 +9736,8 @@
             "iteration",
             "dies"
           ],
-          "neg": true
+          "neg": true,
+          "order": "later"
         }
       },
       {
@@ -10850,7 +10855,8 @@
             "z-indices",
             "modal",
             "sits"
-          ]
+          ],
+          "order": "above"
         }
       },
       {
@@ -10930,7 +10936,8 @@
             "recycles",
             "array",
             "oldest"
-          ]
+          ],
+          "order": "below"
         }
       },
       {
@@ -11197,7 +11204,7 @@
             "allocation",
             "texture"
           ],
-          "order": "after"
+          "order": "below"
         }
       },
       {
@@ -11208,7 +11215,8 @@
             "chunk",
             "inactive",
             "return"
-          ]
+          ],
+          "order": "below"
         }
       },
       {
@@ -13039,7 +13047,8 @@
             "whetstones",
             "exclude",
             "changed"
-          ]
+          ],
+          "order": "above"
         }
       },
       {
@@ -13085,7 +13094,8 @@
             "outlive",
             "schedule"
           ],
-          "neg": true
+          "neg": true,
+          "order": "outlive"
         }
       },
       {
@@ -13132,7 +13142,8 @@
             "appears",
             "information"
           ],
-          "neg": true
+          "neg": true,
+          "order": "below"
         }
       },
       {
@@ -13732,7 +13743,8 @@
             "traversal",
             "shell"
           ],
-          "neg": true
+          "neg": true,
+          "order": "later"
         }
       },
       {
@@ -17509,7 +17521,8 @@
             "destroy",
             "pause"
           ],
-          "neg": true
+          "neg": true,
+          "order": "outlive"
         }
       },
       {
@@ -17521,7 +17534,8 @@
             "destroy",
             "pause"
           ],
-          "neg": true
+          "neg": true,
+          "order": "outlive"
         }
       },
       {
@@ -18200,7 +18214,8 @@
             "flavor",
             "attach",
             "burns"
-          ]
+          ],
+          "order": "above"
         }
       },
       {
@@ -19289,7 +19304,8 @@
             "muted",
             "lower",
             "hidden"
-          ]
+          ],
+          "order": "lower"
         }
       },
       {
@@ -19500,7 +19516,8 @@
             "reached",
             "higher"
           ],
-          "neg": true
+          "neg": true,
+          "order": "higher"
         }
       },
       {

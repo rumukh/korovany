@@ -203,7 +203,7 @@ const RULE_PATTERNS = {
  * is the same rule with the opposite meaning.
  */
 const NEGATION = /\b(not|never|cannot|must not|no longer|neither|nor|without|none|prohibited)\b/i
-const ORDERING = /\b(before|after|then|first|last|precede[sd]?|follow[sedt]*|prior to|once)\b/i
+const ORDERING = /\b(before|after|then|first|last|precede[sd]?|follow[sedt]*|prior to|once|above|below|shorter|longer|higher|lower|earlier|later|outlives?|outlast[sedt]*)\b/i
 
 /**
  * Relations are bindings and mappings — the facts that a bag of independent
@@ -551,6 +551,8 @@ function runControls(fixtures, docLines) {
   const body = docLines.join('\n')
   const { controls } = JSON.parse(readFileSync(CONTROLS, 'utf8'))
   const seen = new Set()
+  const report = process.argv.includes('--controls')
+  if (report) console.log(`baseline misses: ${baseline}\n`)
 
   for (const c of controls) {
     seen.add(c.cls)
@@ -562,7 +564,11 @@ function runControls(fixtures, docLines) {
     }
     let text = body
     for (const m of muts) text = text.split(m.find).join(m.replace)
-    if (countMisses(fixtures, text.split('\n')) <= baseline) {
+    const after = countMisses(fixtures, text.split('\n'))
+    if (report) {
+      console.log(`  ${after > baseline ? 'CAUGHT ' : 'PASSED '} ${String(after - baseline).padStart(4)}  ${c.cls}/${c.kind} — ${c.name}`)
+    }
+    if (after <= baseline) {
       failures.push(`${c.cls}/${c.kind}: CONTROL DID NOT FIRE — "${c.name}" changed the document without changing the score`)
     }
   }
