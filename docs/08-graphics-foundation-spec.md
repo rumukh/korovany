@@ -161,7 +161,9 @@ never from `Math.random()`.
 `ArtNoise` provides pure functions with no state:
 
 ```ts
-function hashUnit(x: number, y: number, z: number, seed: number): number
+function hashInt3(x: number, y: number, z: number, seed: number): number   // uint32
+function hashUnit3(x: number, y: number, z: number, seed: number): number  // [0,1)
+function hashUnit(index: number, seed: number): number                     // [0,1)
 function valueNoise3(x: number, y: number, z: number, seed: number): number  // [-1,1]
 function fbm3(x, y, z, seed, octaves = 3, lacunarity = 2, gain = 0.5): number
 function ridgeNoise3(x, y, z, seed, octaves = 3): number
@@ -173,12 +175,15 @@ displaced rock is byte-identical for a given seed.
 ### 5.3 Geometry construction kit
 
 ```ts
-// Angular bodies
+// Angular bodies. `taperedBox` takes an optional `bevel` — there is no separate
+// bevelBox; one builder covers the plain, tapered and bevelled cases.
 function taperedBox(options: TaperedBoxOptions): THREE.BufferGeometry
-function bevelBox(options: BevelBoxOptions): THREE.BufferGeometry
 function stylizedCapsule(options: StylizedCapsuleOptions): THREE.BufferGeometry
 
 // Profile-driven bodies
+function rectProfile(width: number, depth: number, corner?: number): Vec2[]
+function polygonProfile(radius: number, sides: number, rotation?: number): Vec2[]
+function loftProfile(options: LoftOptions): THREE.BufferGeometry
 function latheProfile(points: readonly Vec2[], options?): THREE.BufferGeometry
 function extrudeProfile(points: readonly Vec2[], options?): THREE.BufferGeometry
 
@@ -186,7 +191,7 @@ function extrudeProfile(points: readonly Vec2[], options?): THREE.BufferGeometry
 function tubeAlongPoints(points: readonly Vec3Like[], options?): THREE.BufferGeometry
 function branchStructure(options: BranchStructureOptions): THREE.BufferGeometry
 
-// Organic surfaces
+// Organic surfaces — both mutate and return the geometry passed in
 function displaceGeometry(geometry, options: DisplaceOptions): THREE.BufferGeometry
 function facetGeometry(geometry): THREE.BufferGeometry           // hard-edged look
 
@@ -194,12 +199,14 @@ function facetGeometry(geometry): THREE.BufferGeometry           // hard-edged l
 function mergeAll(parts, options?): THREE.BufferGeometry          // disposes sources
 function transformed(geometry, transform): THREE.BufferGeometry
 
-// Shading data
+// Shading data — all mutate and return the geometry passed in
+function ensureVertexColors(geometry, fill?): THREE.BufferGeometry
 function paintVertexColors(geometry, paint: VertexPaint): THREE.BufferGeometry
 function gradientVertexColors(geometry, options): THREE.BufferGeometry
 function bakeVerticalOcclusion(geometry, options?): THREE.BufferGeometry
-function bakeCavityOcclusion(geometry, options?): THREE.BufferGeometry
+function bakeSkyOcclusion(geometry, options?): THREE.BufferGeometry
 function bakeOutlineNormals(geometry, options?): THREE.BufferGeometry
+function hasOutlineNormals(geometry): boolean
 ```
 
 Rules the kit enforces so siblings cannot get them wrong:
@@ -211,9 +218,14 @@ Rules the kit enforces so siblings cannot get them wrong:
   common way this codebase leaks a half-built prop.
 - Merge requires matching attribute sets; the kit normalizes `color` presence across
   parts so a vertex-coloured leaf can merge with an uncoloured trunk.
-- `displaceGeometry` is seeded, mutates a copy, and re-welds normals afterwards.
+- `displaceGeometry` is seeded and **mutates the geometry in place**, recomputing
+  shading normals and re-baking `outlineNormal` if the attribute is already there.
+  Like every other `bake*`/`paint*` helper it returns the same object it was given, so
+  it must never be applied to a geometry obtained from `GeometryCache.acquire` — that
+  buffer belongs to every other mesh sharing the key. Displace first, cache after.
 - `bakeVerticalOcclusion` darkens vertex colour towards the geometry's own minimum Y,
-  which is the cheap "this object touches the ground" cue.
+  which is the cheap "this object touches the ground" cue. `bakeSkyOcclusion` is the
+  same idea driven by upward-facing normals rather than height.
 - `bakeOutlineNormals` welds by quantized position and writes an `outlineNormal`
   attribute; the outline material picks the smooth variant automatically.
 
@@ -243,7 +255,10 @@ is idempotent.
 
 `createLod` is for streamed regions: a near level with displacement and an outline
 normal, a far level built from the same profile at lower segment counts. Instanced
-props do not use `LOD`; they use the cheap level directly.
+props do not use `LOD`; they use the cheap level directly. Distances must be finite,
+non-negative and **strictly** increasing — `THREE.LOD` takes `Math.abs()` of what it is
+given and silently reorders, and equal distances make the earlier level unreachable, so
+`createLod` throws rather than shipping a level that never draws.
 
 ### 5.5 Stylized material family
 
@@ -277,7 +292,7 @@ class StylizedArtLibrary {
   constructor(options: StylizedArtLibraryOptions)
   createMaterial(options: StylizedMaterialOptions): THREE.MeshStandardMaterial
   acquireMaterial(key: string, options: StylizedMaterialOptions): THREE.MeshStandardMaterial
-  adoptMaterial(material: THREE.Material, options?): THREE.Material
+  adoptMaterial(material: THREE.MeshStandardMaterial, options?: StylizedAdoptOptions): THREE.MeshStandardMaterial
   getOutlineMaterial(kind: OutlineKind, smooth: boolean): THREE.Material
   applyOutline(root: THREE.Object3D, kind: OutlineKind, options?: OutlineOptions): OutlineBinding
   createContactShadow(options?: ContactShadowOptions): THREE.Mesh
@@ -294,8 +309,17 @@ Ownership, stated once and enforced everywhere:
 - `acquireMaterial(key, …)` returns a **library-owned** shared instance, tagged with
   `userData.artLibraryOwned = true`. Callers must never dispose it; the library does,
   exactly once. Use it for anything drawn more than a handful of times.
-- The ramp texture, the outline materials, and the contact-shadow geometry/material
+- The ramp texture, the outline materials, and the contact-shadow geometry/materials
   are library-owned.
+- `adoptMaterial(material, options?)` injects the stylized shading into a material the
+  caller already built, in place. **Ownership does not move** — `isLibraryOwned()` stays
+  false and the caller still disposes it. Adopting the same material twice is a no-op.
+  Use it for one-off meshes that must match the look but do not warrant a shared
+  instance; use `acquireMaterial` for anything drawn repeatedly.
+- `createContactShadow({ opacity })` shares one material per distinct opacity, rounded
+  to 1/100. Opacity is therefore a cache key, not a per-mesh property: two calls with
+  the same value get the same material, and mutating one mesh's `material.opacity`
+  changes every mesh sharing that value.
 - `StylizedArtLibrary.isLibraryOwned()` accepts materials, geometries and textures so
   every teardown traversal in the codebase can use one predicate.
 
@@ -306,8 +330,12 @@ not a shader permutation. All surfaces compile the same program.
 
 Injected before `#include <opaque_fragment>` in the standard fragment shader:
 
-1. Recover the aggregate direct-light term by dividing `reflectedLight.directDiffuse`
-   by the material's own diffuse colour.
+1. Recover the aggregate direct-light term as a **scalar luminance ratio**:
+   `luminance(reflectedLight.directDiffuse) * PI / luminance(diffuseColor)`. Dividing
+   per RGB channel would make band selection depend on albedo hue — a saturated red
+   surface has no green or blue to divide back, so it would land several stops darker
+   than a white one under identical light and every faction colour would band
+   differently.
 2. Sample the shared ramp with the luminance of that term, normalized by
    `uBandReference` — the current key intensity, so the bands sit in the same place
    at noon and at midnight.
@@ -476,7 +504,7 @@ Constraints they must respect:
 ```text
 ART_RAMP_TEXELS=4                    one shared DataTexture for the whole game
 ART_RAMP_STOPS=0, 0.42, 0.72, 1.0
-ART_LIBRARY_MATERIALS<=10            outlines (4 kinds x 2 variants) + contact shadow
+ART_LIBRARY_MATERIALS<=12            outlines (4 kinds x 2 variants) + contact shadows
 OUTLINE_THICKNESS=0.0042             view-space units per unit of depth, ~0.36% of frame height
 OUTLINE_MIN_DEPTH=2.0
 OUTLINE_MAX_DEPTH=42.0
@@ -485,6 +513,7 @@ OUTLINE_ACTOR_DISTANCE=38            unchanged from spec 01
 OUTLINE_INTERACTABLE_DISTANCE=46     unchanged from spec 01
 OUTLINE_WORLD_DRAWS_MAX=8            instanced world silhouettes per visible region
 CONTACT_SHADOW_TEXELS=64x64          one shared DataTexture
+CONTACT_SHADOW_MATERIALS<=4          one shared material per distinct opacity
 CONTACT_SHADOW_DRAWS_MAX=26          25 actors plus the player
 SHADOW_MAP=2048                      unchanged
 SHADOW_FRUSTUM=52                    down from 85
@@ -494,6 +523,8 @@ GRADE_VIGNETTE=0.22
 POST_PASSES=4                        render, bloom, grade, output
 GEOMETRY_CACHE_ENTRIES_MAX=64
 CHARACTER_GEOMETRY_KEYS=9            shared by all 25 actors, not one set each
+BEAST_GEOMETRY_KEYS<=26              keyed by bulk/length, shared across the four roles
+CARAVAN_GEOMETRY_KEYS=6              shared by every caravan in the run
 ```
 
 Targets:
@@ -563,16 +594,19 @@ Targets:
 - Non-uniformly scaled parents scale the extruded outline anisotropically again.
   Extrusion happens in view space after `modelViewMatrix`, so parent scale is already
   baked in; a heavily squashed parent still needs a smaller `thickness`.
-- `InstancedMesh` outline shells must be created after `instanceMatrix` is filled and
-  must set `count` from the source every time the source's `count` changes — the
-  decoration-density control mutates it.
+- `InstancedMesh` outline shells must be created after `instanceMatrix` is filled. The
+  shell allocates from `instanceMatrix.count` (capacity) and re-reads the source's live
+  `count` in `onBeforeRender`, so the decoration-density control needs no manual sync.
+- An instanced shell offsets along the instance-space inverse-transpose normal, not
+  `mat3(instanceMatrix) * normal`; non-uniformly scaled dressing would otherwise get
+  uneven ink that creeps inside the source.
 - Transparent materials in a material array exclude the whole mesh from outlining, as
   in spec 01.
 - A geometry with zero-length normals (degenerate triangles from a bad merge) would
   produce NaN offsets; `bakeOutlineNormals` normalizes and falls back to the shading
   normal.
-- The banded injection divides by `material.diffuseColor`; a pure-black albedo would
-  divide by zero, so it is clamped.
+- The banded injection divides by the luminance of `material.diffuseColor`; a pure-black
+  albedo would divide by zero, so it is clamped.
 - `NeutralToneMapping` changes the perceived brightness of every existing emissive
   tuning. Torch, window-glow and beacon intensities are re-checked, not left to drift.
 - Contact shadows on steep terrain will clip; they are small, unlit, depth-tested and

@@ -459,3 +459,184 @@ test('contact shadows share one geometry, material and texture', () => {
   library.dispose()
   assert.throws(() => library.createContactShadow())
 })
+
+test('contact shadow opacity is a cache key, not a per-mesh property', () => {
+  const library = createLibrary()
+  const defaultShadow = library.createContactShadow()
+  const sameOpacity = library.createContactShadow({ opacity: 0.34 })
+  const faint = library.createContactShadow({ opacity: 0.12 })
+  assert.equal(defaultShadow.material, sameOpacity.material)
+  assert.notEqual(defaultShadow.material, faint.material)
+  const faintMaterial = faint.material as THREE.MeshBasicMaterial
+  // The bug this guards: a single shared material meant the first caller's opacity
+  // silently won and every later `opacity` option was discarded.
+  assert.equal(faintMaterial.opacity, 0.12)
+  assert.equal((defaultShadow.material as THREE.MeshBasicMaterial).opacity, 0.34)
+  library.dispose()
+  assert.equal(faintMaterial.opacity, 0.12)
+})
+
+test('instanced outline shells release without freeing the source matrix buffer', () => {
+  const library = createLibrary()
+  const source = new THREE.InstancedMesh(
+    bakeOutlineNormals(taperedBox({ width: 1, height: 2, depth: 1 })),
+    library.createMaterial({ color: 0x556677, surface: 'bark' }),
+    6,
+  )
+  source.count = 4
+  const root = new THREE.Group()
+  root.add(source)
+
+  const binding = library.applyOutline(root, 'landmark', { instanced: true })
+  const shell = binding.shells.find((entry) => entry instanceof THREE.InstancedMesh)
+  assert.ok(shell instanceof THREE.InstancedMesh)
+  // Capacity, not the live count: a density control that raises `count` later must
+  // still have matrices to draw from.
+  assert.equal(shell.instanceMatrix.count, source.instanceMatrix.count)
+  assert.equal(shell.instanceMatrix, source.instanceMatrix)
+
+  // `onBeforeRender` is what keeps a density/LOD change from drawing stale instances.
+  source.count = 2
+  shell.onBeforeRender(
+    null as never,
+    null as never,
+    null as never,
+    null as never,
+    null as never,
+    null as never,
+  )
+  assert.equal(shell.count, 2)
+
+  let sourceMatrixDisposed = false
+  source.instanceMatrix.addEventListener?.('dispose', () => {
+    sourceMatrixDisposed = true
+  })
+  library.releaseOutline(binding)
+  // three.js only frees an InstancedMesh's per-object VAO from `dispose()`, so the
+  // shell has to be disposed — but with its own matrix restored first, or the
+  // source's shared buffer goes with it.
+  assert.notEqual(shell.instanceMatrix, source.instanceMatrix)
+  assert.equal(sourceMatrixDisposed, false)
+  assert.equal(shell.parent, null)
+  assert.equal(root.children.length, 1)
+
+  source.geometry.dispose()
+  library.dispose()
+})
+
+test('createLod rejects distances that would make a level unreachable', () => {
+  const material = new THREE.MeshBasicMaterial()
+  const level = () => new THREE.BoxGeometry(1, 1, 1)
+  const near = level()
+  const far = level()
+  assert.throws(() =>
+    createLod({
+      levels: [
+        { geometry: near, distance: 12 },
+        { geometry: far, distance: 12 },
+      ],
+      material,
+    }),
+  )
+  assert.throws(() =>
+    createLod({
+      levels: [
+        { geometry: near, distance: 0 },
+        { geometry: far, distance: -20 },
+      ],
+      material,
+    }),
+  )
+  assert.throws(() =>
+    createLod({
+      levels: [
+        { geometry: near, distance: 0 },
+        { geometry: far, distance: Number.NaN },
+      ],
+      material,
+    }),
+  )
+  const lod = createLod({
+    levels: [
+      { geometry: near, distance: 0 },
+      { geometry: far, distance: 30 },
+    ],
+    material,
+  })
+  assert.equal(lod.levels.length, 2)
+  near.dispose()
+  far.dispose()
+  material.dispose()
+})
+
+test('adoptMaterial styles a caller-owned material without taking ownership', () => {
+  const library = createLibrary()
+  const material = new THREE.MeshStandardMaterial({ color: 0x884422 })
+  const adopted = library.adoptMaterial(material, { surface: 'metal' })
+  assert.equal(adopted, material)
+  assert.equal(material.userData.stylizedSurface, 'metal')
+  // Ownership must not move, or the engine's teardown predicate would skip a material
+  // nobody else disposes.
+  assert.equal(StylizedArtLibrary.isLibraryOwned(material), false)
+
+  const before = material.onBeforeCompile
+  library.adoptMaterial(material, { surface: 'stone' })
+  assert.equal(material.userData.stylizedSurface, 'metal', 'adopting twice is a no-op')
+  assert.equal(material.onBeforeCompile, before)
+
+  material.dispose()
+  library.dispose()
+  assert.throws(() => library.adoptMaterial(new THREE.MeshStandardMaterial()))
+})
+
+test('tube caps wind outward regardless of tube direction', () => {
+  // Downward and horizontal tubes used to get reversed caps, which `FrontSide` culls.
+  for (const points of [
+    [
+      [0, 4, 0],
+      [0, 2, 0],
+      [0, 0, 0],
+    ],
+    [
+      [0, 1, 0],
+      [2, 1, 0],
+      [4, 1, 0],
+    ],
+  ] as const) {
+    const geometry = tubeAlongPoints(
+      points.map(([x, y, z]) => new THREE.Vector3(x, y, z)),
+      { radius: 0.4, radialSegments: 6, caps: true },
+    )
+    const position = geometry.getAttribute('position')
+    const normal = geometry.getAttribute('normal')
+    const index = geometry.getIndex()
+    assert.ok(index === null || index.count > 0)
+    const a = new THREE.Vector3()
+    const b = new THREE.Vector3()
+    const c = new THREE.Vector3()
+    const stored = new THREE.Vector3()
+    const edge1 = new THREE.Vector3()
+    const edge2 = new THREE.Vector3()
+    const face = new THREE.Vector3()
+    const triangles = index ? index.count / 3 : position.count / 3
+    for (let triangle = 0; triangle < triangles; triangle += 1) {
+      const i0 = index ? index.getX(triangle * 3) : triangle * 3
+      const i1 = index ? index.getX(triangle * 3 + 1) : triangle * 3 + 1
+      const i2 = index ? index.getX(triangle * 3 + 2) : triangle * 3 + 2
+      a.fromBufferAttribute(position, i0)
+      b.fromBufferAttribute(position, i1)
+      c.fromBufferAttribute(position, i2)
+      face.copy(edge1.subVectors(b, a)).cross(edge2.subVectors(c, a))
+      if (face.lengthSq() < 1e-12) continue
+      face.normalize()
+      stored.fromBufferAttribute(normal, i0)
+      if (stored.lengthSq() < 1e-12) continue
+      assert.ok(
+        face.dot(stored.normalize()) > 0,
+        'every triangle must wind to agree with its own vertex normal',
+      )
+    }
+    geometry.dispose()
+  }
+})
+

@@ -154,7 +154,6 @@ interface SharedMaterials {
   bridge: THREE.MeshStandardMaterial
   structure: Record<ZoneId, THREE.MeshStandardMaterial>
   roof: Record<ZoneId, THREE.MeshStandardMaterial>
-  trunk: THREE.MeshStandardMaterial
   /** Vertex-coloured, used only by geometry this module builds with colours. */
   dressing: Record<ZoneId, THREE.MeshStandardMaterial>
   groundCover: Record<ZoneId, THREE.MeshStandardMaterial>
@@ -510,6 +509,21 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
     }
   }
 
+  /**
+   * Turns world ink on or off at runtime.
+   *
+   * Mutating `style` is what makes regions streamed in later agree with regions
+   * already on screen — they read the same record when they build their dressing.
+   */
+  setOutlineDressing(enabled: boolean): void {
+    if (this.disposed) return
+    if (this.style.outlineDressing === enabled) return
+    this.style.outlineDressing = enabled
+    for (const runtime of this.sceneRegions.values()) {
+      runtime.setOutlineDressing(enabled)
+    }
+  }
+
   update(update: WorldRuntimeUpdate): void {
     if (this.disposed) return
     const deltaSeconds =
@@ -669,6 +683,8 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
   private structuralDecorationCount = 0
   private maxCosmeticDecorationCount = 0
   private dressingOutline: OutlineBinding | null = null
+  /** Kept so ink can be added back after a runtime toggle. Not owned here. */
+  private structuralDressing: THREE.InstancedMesh | null = null
   private resourcesDisposed = false
 
   constructor(
@@ -731,6 +747,23 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       dressing.mesh.count = count
       dressing.mesh.visible = count > 0
     }
+  }
+
+  /** Adds or removes this region's ink without rebuilding its dressing. */
+  setOutlineDressing(enabled: boolean): void {
+    if (this.resourcesDisposed) return
+    if (enabled) {
+      if (this.dressingOutline || !this.structuralDressing) return
+      this.dressingOutline = this.context.art.applyOutline(
+        this.structuralDressing,
+        'landmark',
+        { instanced: true },
+      )
+      return
+    }
+    if (!this.dressingOutline) return
+    this.context.art.releaseOutline(this.dressingOutline)
+    this.dressingOutline = null
   }
 
   dispose(): void {
@@ -1297,17 +1330,11 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     this.structuralDecorationCount = structuralPlacements.length
     if (structuralMesh) {
       this.runtime.ownProp(`dressing-structural:${String(this.id)}`)
+      this.structuralDressing = structuralMesh
       // Structural dressing is the only world silhouette that gets ink: it is the
-      // tall, readable stuff, its instance count never changes, and one instanced
-      // shell sharing the source matrix buffer costs a single extra draw call for a
-      // whole region's worth of trees.
-      if (this.context.style.outlineDressing) {
-        this.dressingOutline = this.context.art.applyOutline(
-          structuralMesh,
-          'landmark',
-          { instanced: true },
-        )
-      }
+      // tall, readable stuff, and one instanced shell sharing the source matrix
+      // buffer costs a single extra draw call for a whole region's worth of trees.
+      if (this.context.style.outlineDressing) this.setOutlineDressing(true)
     }
     for (const placement of structuralPlacements) {
       const colliderId = `dressing-solid:${String(this.id)}:${placement.index}`
@@ -1525,6 +1552,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       }
       this.dressingOutline = null
     }
+    this.structuralDressing = null
     try {
       this.context.collision.removeRegion(this.id)
     } catch (error) {
@@ -1768,17 +1796,6 @@ function createSharedMaterials(
       },
     )
   })
-  const trunk = textured(
-    'generated-tree-bark',
-    shadeColor(bridgeBase, -0.12),
-    'wood',
-    2,
-    5,
-    'bark',
-    {
-      roughness: 0.95,
-    },
-  )
   // Vertex-coloured surfaces. Every mesh that uses these is built by the geometry
   // helpers below, which always bake a `color` attribute — a vertex-coloured
   // material on geometry without one renders black, so this pairing is not
@@ -1810,7 +1827,6 @@ function createSharedMaterials(
     bridge,
     structure,
     roof,
-    trunk,
     dressing,
     groundCover,
     all,

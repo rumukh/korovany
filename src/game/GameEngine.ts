@@ -22,6 +22,7 @@ import {
   tubeAlongPoints,
   type OutlineBinding,
   type OutlineKind,
+  type StylizedSurface,
 } from './art/index.ts'
 import {
   CAMERA_BASE_FOV,
@@ -1666,6 +1667,7 @@ export class GameEngine {
     roughness: 0.95,
     metalness: 0,
   })
+  private scorchedMaterialAdopted = false
   private chronicleState: ChronicleState
   private chronicleAccumulator = 0
   private chronicleFeedSignature = ''
@@ -2565,6 +2567,7 @@ export class GameEngine {
     this.updatePlayerOutlineVisibility()
     for (const actor of this.actors) this.updateActorOutlineVisibility(actor)
     this.updateInteractableOutlines()
+    this.generatedWorld.setOutlineDressing(enabled)
   }
 
   setFoliageQuality(quality: FoliageQuality): void {
@@ -7419,6 +7422,12 @@ export class GameEngine {
   }
 
   private applyChronicleRazedVisuals(): void {
+    if (!this.scorchedMaterialAdopted) {
+      // Lazily adopted: the field initialiser runs before `artLibrary` exists, and a
+      // razed site that still shades like plain PBR reads as a different game.
+      this.artLibrary.adoptMaterial(this.scorchedMaterial, { surface: 'dark' })
+      this.scorchedMaterialAdopted = true
+    }
     for (const siteId of this.chronicleRazedSiteIds) {
       const group = this.scene.getObjectByName(`site:${siteId}`)
       if (!group || group.userData.chronicleRazed === true) continue
@@ -11559,12 +11568,25 @@ export class GameEngine {
    * left behind. Either way the world goes black, which is exactly what happened
    * the first time round.
    */
+  /**
+   * Reused across frames: this runs once per frame from the weather pass, and the
+   * library only ever reads and copies out of it.
+   */
+  private readonly stylizedLightingRef: {
+    keyIntensity: number
+    rimColor: THREE.Color | undefined
+    shadowTint: THREE.Color | undefined
+  } = { keyIntensity: 0, rimColor: undefined, shadowTint: undefined }
+
   private updateStylizedLighting(): void {
-    this.artLibrary.setLightingReference({
-      keyIntensity: this.sun.intensity + this.rimLight.intensity * 0.4,
-      rimColor: this.rimLight.color,
-      shadowTint: this.hemisphere.groundColor,
-    })
+    const reference = this.stylizedLightingRef
+    reference.keyIntensity = this.sun.intensity + this.rimLight.intensity * 0.4
+    reference.rimColor = this.rimLight.color
+    reference.shadowTint = this.hemisphere.groundColor
+    this.artLibrary.setLightingReference(reference)
+    // Shadows drift towards the fog, highlights towards the sun. Only the hue is
+    // taken; the post processor keeps the grade's own strength.
+    this.postProcessor.setGradeTints(this.fog.color, this.sun.color)
   }
 
   private applyWeatherColor(
@@ -12248,53 +12270,80 @@ export class GameEngine {
 
   private createCaravan(gilded = false): THREE.Group {
     const group = new THREE.Group()
-    const wood = new THREE.MeshStandardMaterial({
-      map: this.createSurfaceTexture(
-        gilded ? 'rich-caravan-wood' : 'caravan-wood',
-        gilded
-          ? mix(this.palette.warning, this.palette.surface, 0.22)
-          : mix(this.palette.warning, this.palette.bg, 0.48),
-        gilded
-          ? mix(this.palette.warning, this.palette.text, 0.34)
-          : mix(this.palette.warning, this.palette.text, 0.55),
-        { pattern: 'wood', repeatX: 4, repeatY: 3 },
-      ),
-      roughness: 0.92,
-    })
-    const metal = new THREE.MeshStandardMaterial({
-      color: gilded ? this.palette.warning : this.palette.borderStrong,
-      roughness: 0.55,
-      metalness: gilded ? 0.76 : 0.45,
-    })
-    const base = new THREE.Mesh(new THREE.BoxGeometry(5, 0.65, 3.1), wood)
+    const adopt = (
+      material: THREE.MeshStandardMaterial,
+      surface: StylizedSurface,
+    ): THREE.MeshStandardMaterial => this.artLibrary.adoptMaterial(material, { surface })
+    const wood = adopt(
+      new THREE.MeshStandardMaterial({
+        map: this.createSurfaceTexture(
+          gilded ? 'rich-caravan-wood' : 'caravan-wood',
+          gilded
+            ? mix(this.palette.warning, this.palette.surface, 0.22)
+            : mix(this.palette.warning, this.palette.bg, 0.48),
+          gilded
+            ? mix(this.palette.warning, this.palette.text, 0.34)
+            : mix(this.palette.warning, this.palette.text, 0.55),
+          { pattern: 'wood', repeatX: 4, repeatY: 3 },
+        ),
+        roughness: 0.92,
+      }),
+      'bark',
+    )
+    const metal = adopt(
+      new THREE.MeshStandardMaterial({
+        color: gilded ? this.palette.warning : this.palette.borderStrong,
+        roughness: 0.55,
+        metalness: gilded ? 0.76 : 0.45,
+      }),
+      'metal',
+    )
+    const build = (key: string, factory: () => THREE.BufferGeometry) =>
+      this.acquireArtGeometry(key, () => bakeOutlineNormals(factory()))
+    const base = new THREE.Mesh(
+      build('caravan-base', () => new THREE.BoxGeometry(5, 0.65, 3.1)),
+      wood,
+    )
     base.position.y = 1.6
     base.castShadow = true
     group.add(base)
     const cargo = new THREE.Mesh(
-      new THREE.BoxGeometry(3.6, 2.5, 2.5),
-      new THREE.MeshStandardMaterial({
-        map: this.createSurfaceTexture(
-          gilded ? 'rich-caravan-crate' : 'caravan-crate',
-          gilded ? mix(this.palette.warning, this.palette.surface, 0.15) : this.palette.warning,
-          mix(this.palette.warning, this.palette.text, 0.42),
-          { pattern: 'wood', repeatX: 3, repeatY: 3 },
-        ),
-        roughness: 0.8,
-        emissive: gilded ? this.palette.warning : this.palette.bg,
-        emissiveIntensity: gilded ? 0.32 : 0,
-      }),
+      build('caravan-cargo', () => new THREE.BoxGeometry(3.6, 2.5, 2.5)),
+      adopt(
+        new THREE.MeshStandardMaterial({
+          map: this.createSurfaceTexture(
+            gilded ? 'rich-caravan-crate' : 'caravan-crate',
+            gilded ? mix(this.palette.warning, this.palette.surface, 0.15) : this.palette.warning,
+            mix(this.palette.warning, this.palette.text, 0.42),
+            { pattern: 'wood', repeatX: 3, repeatY: 3 },
+          ),
+          roughness: 0.8,
+          emissive: gilded ? this.palette.warning : this.palette.bg,
+          emissiveIntensity: gilded ? 0.32 : 0,
+        }),
+        'bark',
+      ),
     )
     cargo.name = 'cargo'
     cargo.position.y = 3
     cargo.castShadow = true
     group.add(cargo)
-    const wheelGeometry = new THREE.CylinderGeometry(0.9, 0.9, 0.32, 12)
-    wheelGeometry.rotateX(Math.PI / 2)
-    const spokeMaterial = new THREE.MeshStandardMaterial({
-      color: mix(this.palette.warning, this.palette.borderStrong, 0.55),
-      metalness: 0.22,
-      roughness: 0.62,
+    const wheelGeometry = build('caravan-wheel', () => {
+      const geometry = new THREE.CylinderGeometry(0.9, 0.9, 0.32, 12)
+      geometry.rotateX(Math.PI / 2)
+      return geometry
     })
+    const spokeGeometry = build('caravan-spoke', () =>
+      new THREE.BoxGeometry(1.45, 0.12, 0.38),
+    )
+    const spokeMaterial = adopt(
+      new THREE.MeshStandardMaterial({
+        color: mix(this.palette.warning, this.palette.borderStrong, 0.55),
+        metalness: 0.22,
+        roughness: 0.62,
+      }),
+      'metal',
+    )
     for (const x of [-1.7, 1.7]) {
       for (const z of [-1.72, 1.72]) {
         const wheel = new THREE.Group()
@@ -12303,21 +12352,24 @@ export class GameEngine {
         const tire = new THREE.Mesh(wheelGeometry, metal)
         tire.castShadow = true
         wheel.add(tire)
-        const horizontalSpoke = new THREE.Mesh(
-          new THREE.BoxGeometry(1.45, 0.12, 0.38),
-          spokeMaterial,
-        )
-        const verticalSpoke = horizontalSpoke.clone()
+        const horizontalSpoke = new THREE.Mesh(spokeGeometry, spokeMaterial)
+        const verticalSpoke = new THREE.Mesh(spokeGeometry, spokeMaterial)
         verticalSpoke.rotation.z = Math.PI / 2
         wheel.add(horizontalSpoke, verticalSpoke)
         group.add(wheel)
       }
     }
-    const horse = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.6, 1), wood)
+    const horse = new THREE.Mesh(
+      build('caravan-horse-body', () => new THREE.BoxGeometry(2.2, 1.6, 1)),
+      wood,
+    )
     horse.position.set(4.2, 1.9, 0)
     horse.castShadow = true
     group.add(horse)
-    const horseHead = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.1, 0.8), wood)
+    const horseHead = new THREE.Mesh(
+      build('caravan-horse-head', () => new THREE.BoxGeometry(0.9, 1.1, 0.8)),
+      wood,
+    )
     horseHead.position.set(5.15, 2.7, 0)
     horseHead.castShadow = true
     group.add(horseHead)
@@ -12375,8 +12427,18 @@ export class GameEngine {
 
     const bulk = role === 'wolf' ? 0.86 : role === 'boar' ? 1 : 1.2
     const backHeight = role === 'troll' ? 1.85 : role === 'bear' ? 1.5 : 1.2
+    // Beast parts are shared exactly like character parts: keyed by the dimensions
+    // that actually vary, so the four roles collapse onto a handful of buffers
+    // instead of allocating a fresh set per spawn. Every part is outline-baked, or
+    // hard-edged boxes and cones push their inverted hull apart at the seams.
+    const bulkKey = bulk.toFixed(2)
+    const build = (key: string, factory: () => THREE.BufferGeometry) =>
+      this.acquireArtGeometry(key, () => bakeOutlineNormals(factory()))
+
     const torso = new THREE.Mesh(
-      new THREE.BoxGeometry(0.86 * bulk, 0.82 * bulk, 1.95 * bulk),
+      build(`beast-torso:${bulkKey}`, () =>
+        new THREE.BoxGeometry(0.86 * bulk, 0.82 * bulk, 1.95 * bulk),
+      ),
       hideMaterial,
     )
     torso.name = 'torso'
@@ -12386,14 +12448,18 @@ export class GameEngine {
     // Shoulder hump: a boar's is its silhouette, a troll's is most of its mass.
     const humpHeight = role === 'boar' ? 0.42 : role === 'troll' ? 0.62 : 0.26
     const hump = new THREE.Mesh(
-      new THREE.BoxGeometry(0.78 * bulk, humpHeight, 0.86 * bulk),
+      build(`beast-hump:${bulkKey}:${humpHeight.toFixed(2)}`, () =>
+        new THREE.BoxGeometry(0.78 * bulk, humpHeight, 0.86 * bulk),
+      ),
       hideMaterial,
     )
     hump.position.set(0, backHeight + 0.5 * bulk, 0.52 * bulk)
     torsoPivot.add(hump)
 
     const head = new THREE.Mesh(
-      new THREE.BoxGeometry(0.62 * bulk, 0.58 * bulk, 0.7 * bulk),
+      build(`beast-head:${bulkKey}`, () =>
+        new THREE.BoxGeometry(0.62 * bulk, 0.58 * bulk, 0.7 * bulk),
+      ),
       hideMaterial,
     )
     head.name = 'head'
@@ -12402,7 +12468,9 @@ export class GameEngine {
 
     const snoutLength = role === 'wolf' ? 0.72 : role === 'boar' ? 0.6 : 0.44
     const snout = new THREE.Mesh(
-      new THREE.ConeGeometry(0.24 * bulk, snoutLength, 6),
+      build(`beast-snout:${bulkKey}:${snoutLength.toFixed(2)}`, () =>
+        new THREE.ConeGeometry(0.24 * bulk, snoutLength, 6),
+      ),
       darkMaterial,
     )
     snout.position.set(0, head.position.y - 0.08, head.position.z + 0.42 * bulk)
@@ -12411,21 +12479,30 @@ export class GameEngine {
 
     if (role === 'wolf') {
       for (const side of [-1, 1]) {
-        const ear = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.4, 5), darkMaterial)
+        const ear = new THREE.Mesh(
+          build('beast-ear-pointed', () => new THREE.ConeGeometry(0.13, 0.4, 5)),
+          darkMaterial,
+        )
         ear.position.set(side * 0.22 * bulk, head.position.y + 0.42, head.position.z - 0.1)
         ear.rotation.z = side * 0.18
         headPivot.add(ear)
       }
     } else if (role === 'bear' || role === 'troll') {
       for (const side of [-1, 1]) {
-        const ear = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.22, 0.12), darkMaterial)
+        const ear = new THREE.Mesh(
+          build('beast-ear-round', () => new THREE.BoxGeometry(0.2, 0.22, 0.12)),
+          darkMaterial,
+        )
         ear.position.set(side * 0.28 * bulk, head.position.y + 0.36, head.position.z - 0.16)
         headPivot.add(ear)
       }
     }
     if (role === 'boar' || role === 'troll') {
       for (const side of [-1, 1]) {
-        const tusk = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.42, 5), boneMaterial)
+        const tusk = new THREE.Mesh(
+          build('beast-tusk', () => new THREE.ConeGeometry(0.07, 0.42, 5)),
+          boneMaterial,
+        )
         tusk.position.set(
           side * 0.2 * bulk,
           head.position.y - 0.12,
@@ -12439,7 +12516,9 @@ export class GameEngine {
     // Front legs answer to `leftArm` / `rightArm`, hind legs to `leftLeg` / `rightLeg`,
     // so the shared stride pose already produces a diagonal quadruped gait.
     const legLength = backHeight - 0.32 * bulk
-    const legGeometry = new THREE.BoxGeometry(0.26 * bulk, legLength, 0.3 * bulk)
+    const legGeometry = build(`beast-leg:${bulkKey}:${legLength.toFixed(3)}`, () =>
+      new THREE.BoxGeometry(0.26 * bulk, legLength, 0.3 * bulk),
+    )
     for (const [name, x, z, parent] of [
       ['leftArm', -0.32, 0.72, torsoPivot],
       ['rightArm', 0.32, 0.72, torsoPivot],
@@ -12455,8 +12534,11 @@ export class GameEngine {
       parent.add(pivot)
     }
 
+    const tailLength = role === 'wolf' ? 1.05 : 0.5
     const tail = new THREE.Mesh(
-      new THREE.ConeGeometry(0.14 * bulk, role === 'wolf' ? 1.05 : 0.5, 6),
+      build(`beast-tail:${bulkKey}:${tailLength.toFixed(2)}`, () =>
+        new THREE.ConeGeometry(0.14 * bulk, tailLength, 6),
+      ),
       darkMaterial,
     )
     tail.position.set(0, backHeight + 0.18, -1.1 * bulk)
@@ -12464,7 +12546,7 @@ export class GameEngine {
     pelvisPivot.add(tail)
 
     const ring = new THREE.Mesh(
-      new THREE.RingGeometry(0.72, 0.9, 24),
+      this.acquireArtGeometry('faction-ring', () => new THREE.RingGeometry(0.72, 0.9, 24)),
       new THREE.MeshBasicMaterial({
         color: this.allegianceColor('beast'),
         transparent: true,
@@ -12480,9 +12562,13 @@ export class GameEngine {
     ring.renderOrder = 2
     group.add(ring)
 
+    // Same grounding pool the humanoids get, widened for a quadruped's footprint.
+    group.add(this.artLibrary.createContactShadow({ radius: 0.78 * bulk }))
+
     group.traverse((object) => {
       if (object instanceof THREE.Mesh) {
         if (object.name === 'faction-ring') return
+        if (object.userData.noComicOutline === true) return
         object.castShadow = true
         object.receiveShadow = true
       }

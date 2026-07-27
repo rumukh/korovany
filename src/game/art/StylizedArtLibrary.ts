@@ -98,9 +98,17 @@ export interface OutlineBinding {
   kind: OutlineKind
 }
 
+export interface StylizedAdoptOptions {
+  /** Surface preset whose banding, rim and roughness feel the material inherits. */
+  surface?: StylizedSurface
+  bandStrength?: number
+  rimStrength?: number
+}
+
 export interface ContactShadowOptions {
   /** World radius of the ink pool. */
   radius?: number
+  /** Shared per value, quantized to 1/100. Each distinct value is one material. */
   opacity?: number
   name?: string
 }
@@ -116,6 +124,8 @@ interface SurfacePreset {
 
 const ART_LIBRARY_OWNED = 'artLibraryOwned'
 const OUTLINE_MARKER = 'comicOutline'
+/** Holds a shell's own instance buffer while it borrows its source's. */
+const SHELL_OWN_MATRIX = 'comicOutlineOwnMatrix'
 /**
  * The first stop is zero on purpose.
  *
@@ -270,7 +280,7 @@ export class StylizedArtLibrary {
   private readonly outlineMaterials = new Map<string, THREE.MeshBasicMaterial>()
   private readonly sharedMaterials = new Map<string, THREE.MeshStandardMaterial>()
   private contactShadowGeometry: THREE.BufferGeometry | null = null
-  private contactShadowMaterial: THREE.MeshBasicMaterial | null = null
+  private readonly contactShadowMaterials = new Map<string, THREE.MeshBasicMaterial>()
   private contactShadowTexture: THREE.DataTexture | null = null
   private disposed = false
 
@@ -383,6 +393,32 @@ export class StylizedArtLibrary {
     return material
   }
 
+  /**
+   * Applies the stylized look to a material the caller already built.
+   *
+   * For meshes constructed elsewhere in the engine that still have to band, catch
+   * the rim and follow the shadow tint. **Ownership does not move** — the caller
+   * disposes it, and `isLibraryOwned` stays false. Adopting twice is a no-op.
+   */
+  adoptMaterial(
+    material: THREE.MeshStandardMaterial,
+    options: StylizedAdoptOptions = {},
+  ): THREE.MeshStandardMaterial {
+    if (this.disposed) {
+      throw new Error('Cannot adopt a material into a disposed art library')
+    }
+    if (material.userData.stylizedSurface !== undefined) return material
+    const surface = options.surface ?? 'cloth'
+    const preset = SURFACE_PRESETS[surface]
+    material.userData.stylizedSurface = surface
+    applyStylizedShader(material, this.sharedUniforms, {
+      bandStrength: options.bandStrength ?? preset.bandStrength,
+      rimStrength: options.rimStrength ?? preset.rimStrength,
+      rimPower: preset.rimPower,
+    })
+    return material
+  }
+
   getOutlineMaterial(kind: OutlineKind, smooth: boolean): THREE.MeshBasicMaterial {
     const key = `${kind}:${smooth ? 'smooth' : 'flat'}`
     const existing = this.outlineMaterials.get(key)
@@ -440,6 +476,14 @@ export class StylizedArtLibrary {
       shell.frustumCulled = source.frustumCulled
       shell.renderOrder = source.renderOrder - 1
       shell.userData[OUTLINE_MARKER] = true
+      if (source instanceof THREE.InstancedMesh && shell instanceof THREE.InstancedMesh) {
+        // `count` is mutable: density and LOD passes lower it at runtime. Tracking
+        // it here rather than snapshotting means a shell can never draw instances
+        // its source has hidden, and callers cannot forget to resync.
+        shell.onBeforeRender = () => {
+          shell.count = source.count
+        }
+      }
       source.add(shell)
       return shell
     })
@@ -448,14 +492,14 @@ export class StylizedArtLibrary {
   }
 
   /**
-   * Detaches shells without touching shared resources.
+   * Detaches shells and releases the renderer state they own.
    *
-   * Instanced shells share `instanceMatrix` with their source, so calling
-   * `InstancedMesh.dispose()` on one would free a buffer the source still draws
-   * from. Removing them is the whole cleanup.
+   * Shells share `geometry`, `material` and (when instanced) `instanceMatrix` with
+   * their source, so none of those are freed here — but an instanced shell still
+   * holds a vertex array object of its own, and that has to go.
    */
   releaseOutline(binding: OutlineBinding): void {
-    for (const shell of binding.shells) shell.removeFromParent()
+    for (const shell of binding.shells) disposeShell(shell)
     binding.shells.length = 0
   }
 
@@ -463,9 +507,13 @@ export class StylizedArtLibrary {
    * An ink pool that grounds an object.
    *
    * Shadow maps are tight, cheap and sometimes off; a soft dark ellipse under a
-   * thing costs one shared geometry, one shared material and one 64x64 texture for
-   * the entire game, and it is the difference between an actor standing on the
-   * ground and an actor hovering a centimetre above it.
+   * thing costs one shared geometry and one shared 64x64 texture for the entire
+   * game, and it is the difference between an actor standing on the ground and an
+   * actor hovering a centimetre above it.
+   *
+   * Materials are shared per opacity, so asking for a lighter pool really gets one
+   * — but every distinct opacity is another material against the library budget.
+   * Quantized to 1/100 so near-identical requests still collapse onto one.
    */
   createContactShadow(options: ContactShadowOptions = {}): THREE.Mesh {
     if (this.disposed) {
@@ -478,25 +526,30 @@ export class StylizedArtLibrary {
       geometry.userData[ART_LIBRARY_OWNED] = true
       this.contactShadowGeometry = geometry
     }
-    if (!this.contactShadowMaterial) {
+    if (!this.contactShadowTexture) {
       const texture = createContactShadowTexture()
       texture.userData[ART_LIBRARY_OWNED] = true
       this.contactShadowTexture = texture
-      const material = new THREE.MeshBasicMaterial({
-        map: texture,
+    }
+    const opacity = THREE.MathUtils.clamp(options.opacity ?? 0.34, 0, 1)
+    const key = (Math.round(opacity * 100) / 100).toFixed(2)
+    let material = this.contactShadowMaterials.get(key)
+    if (!material) {
+      material = new THREE.MeshBasicMaterial({
+        map: this.contactShadowTexture,
         color: this.inkColors.player,
         transparent: true,
-        opacity: options.opacity ?? 0.34,
+        opacity: Number(key),
         depthWrite: false,
         toneMapped: false,
         fog: true,
       })
-      material.name = 'contact-shadow'
+      material.name = `contact-shadow:${key}`
       material.userData[ART_LIBRARY_OWNED] = true
       material.userData.noComicOutline = true
-      this.contactShadowMaterial = material
+      this.contactShadowMaterials.set(key, material)
     }
-    const mesh = new THREE.Mesh(this.contactShadowGeometry, this.contactShadowMaterial)
+    const mesh = new THREE.Mesh(this.contactShadowGeometry, material)
     mesh.name = options.name ?? 'contact-shadow'
     mesh.scale.setScalar(options.radius ?? 0.8)
     mesh.position.y = 0.02
@@ -516,10 +569,10 @@ export class StylizedArtLibrary {
     for (const material of this.sharedMaterials.values()) material.dispose()
     this.sharedMaterials.clear()
     this.contactShadowGeometry?.dispose()
-    this.contactShadowMaterial?.dispose()
+    for (const material of this.contactShadowMaterials.values()) material.dispose()
+    this.contactShadowMaterials.clear()
     this.contactShadowTexture?.dispose()
     this.contactShadowGeometry = null
-    this.contactShadowMaterial = null
     this.contactShadowTexture = null
   }
 
@@ -540,13 +593,38 @@ function createInstancedShell(
   source: THREE.InstancedMesh,
   material: THREE.Material,
 ): THREE.InstancedMesh {
-  const shell = new THREE.InstancedMesh(source.geometry, material, source.count)
+  // Capacity, not the live draw count: `source.count` can be lowered by a density
+  // or LOD pass, and allocating to the buffer means raising it again later never
+  // overruns the shell.
+  const capacity = source.instanceMatrix.count
+  const shell = new THREE.InstancedMesh(source.geometry, material, capacity)
   // Sharing the matrix buffer is what keeps an outlined forest at one extra draw
-  // call. The shell must never be disposed: that would free the source's buffer.
+  // call. But three.js frees a per-`InstancedMesh` VAO only from the `dispose`
+  // event, and that same handler removes `instanceMatrix` — which is now the
+  // source's. So park the shell's own buffer here and swap it back before
+  // disposing, and the VAO is released without touching the source.
+  shell.userData[SHELL_OWN_MATRIX] = shell.instanceMatrix
   shell.instanceMatrix = source.instanceMatrix
   shell.count = source.count
   shell.instanceColor = null
   return shell
+}
+
+/**
+ * Frees a shell's renderer state without freeing anything it borrowed.
+ *
+ * Streamed regions build and drop these constantly; skipping this leaks one vertex
+ * array object per shell per region load, for the lifetime of the page.
+ */
+function disposeShell(shell: THREE.Mesh): void {
+  shell.removeFromParent()
+  if (!(shell instanceof THREE.InstancedMesh)) return
+  const own = shell.userData[SHELL_OWN_MATRIX] as THREE.InstancedBufferAttribute | undefined
+  if (own) {
+    shell.instanceMatrix = own
+    delete shell.userData[SHELL_OWN_MATRIX]
+  }
+  shell.dispose()
 }
 
 function createRampTexture(

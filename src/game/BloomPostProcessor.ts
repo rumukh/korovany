@@ -16,6 +16,23 @@ const SATURATION_LIFT = 1.08
 const SHADOW_TINT_AMOUNT = 0.16
 const HIGHLIGHT_TINT_AMOUNT = 0.1
 
+// The grade multiplies by these, so their *magnitude* is the strength of the effect
+// and only their hue should follow the scene. A raw daylight fog colour dropped in
+// here would brighten shadows instead of cooling them.
+const DEFAULT_SHADOW_TINT = new THREE.Color(0x2c3c58)
+const DEFAULT_HIGHLIGHT_TINT = new THREE.Color(0xffe2b0)
+
+/** Takes `source`'s hue at `reference`'s magnitude. Allocation-free. */
+function retint(
+  source: THREE.Color,
+  reference: THREE.Color,
+  target: THREE.Color,
+): void {
+  const peak = Math.max(source.r, source.g, source.b, 1e-4)
+  const scale = Math.max(reference.r, reference.g, reference.b) / peak
+  target.setRGB(source.r * scale, source.g * scale, source.b * scale)
+}
+
 /**
  * One fullscreen shader that finishes the drawing.
  *
@@ -30,8 +47,8 @@ const ComicGradeShader = {
     tDiffuse: { value: null as THREE.Texture | null },
     uVignette: { value: VIGNETTE_STRENGTH },
     uSaturation: { value: SATURATION_LIFT },
-    uShadowTint: { value: new THREE.Color(0x2c3c58) },
-    uHighlightTint: { value: new THREE.Color(0xffe2b0) },
+    uShadowTint: { value: DEFAULT_SHADOW_TINT.clone() },
+    uHighlightTint: { value: DEFAULT_HIGHLIGHT_TINT.clone() },
     uShadowAmount: { value: SHADOW_TINT_AMOUNT },
     uHighlightAmount: { value: HIGHLIGHT_TINT_AMOUNT },
   },
@@ -86,6 +103,9 @@ export class BloomPostProcessor {
   private readonly scene: THREE.Scene
   private readonly camera: THREE.Camera
   private composer: EffectComposer | null = null
+  private gradePass: ShaderPass | null = null
+  private readonly shadowTint = DEFAULT_SHADOW_TINT.clone()
+  private readonly highlightTint = DEFAULT_HIGHLIGHT_TINT.clone()
   private width = 1
   private height = 1
 
@@ -118,12 +138,37 @@ export class BloomPostProcessor {
         BLOOM_THRESHOLD,
       ),
     )
-    composer.addPass(new ShaderPass(ComicGradeShader))
+    const gradePass = new ShaderPass(ComicGradeShader)
+    composer.addPass(gradePass)
     // OutputPass reads the renderer's tone mapping and exposure settings at render
     // time, so it has to stay last.
     composer.addPass(new OutputPass())
     composer.setSize(this.width, this.height)
     this.composer = composer
+    this.gradePass = gradePass
+    // Bloom can be toggled at any time; replay whatever the atmosphere last asked
+    // for so a fresh chain does not snap back to the noon defaults.
+    this.writeGradeTints()
+  }
+
+  /**
+   * Points the grade at the current atmosphere.
+   *
+   * Only the hue of each colour is taken — the magnitudes are what set the strength
+   * of the grade and they stay fixed. Safe to call every frame: nothing allocates,
+   * and it is a no-op while bloom is off.
+   */
+  setGradeTints(shadow: THREE.Color, highlight: THREE.Color): void {
+    retint(shadow, DEFAULT_SHADOW_TINT, this.shadowTint)
+    retint(highlight, DEFAULT_HIGHLIGHT_TINT, this.highlightTint)
+    this.writeGradeTints()
+  }
+
+  private writeGradeTints(): void {
+    const uniforms = this.gradePass?.uniforms
+    if (!uniforms) return
+    ;(uniforms.uShadowTint.value as THREE.Color).copy(this.shadowTint)
+    ;(uniforms.uHighlightTint.value as THREE.Color).copy(this.highlightTint)
   }
 
   render(): void {
@@ -146,5 +191,6 @@ export class BloomPostProcessor {
     this.composer.passes.forEach((pass) => pass.dispose())
     this.composer.dispose()
     this.composer = null
+    this.gradePass = null
   }
 }

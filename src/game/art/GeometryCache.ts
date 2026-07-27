@@ -94,7 +94,13 @@ export function createLod(options: CreateLodOptions): THREE.LOD {
   lod.name = options.name ?? 'art-lod'
   let previousDistance = -Infinity
   for (const level of options.levels) {
-    if (level.distance < previousDistance) {
+    // three.js stores `Math.abs( distance )`, so a negative slips through and then
+    // reorders itself; equal distances make the earlier level permanently
+    // unreachable; NaN fails every comparison and silently disables selection.
+    if (!Number.isFinite(level.distance) || level.distance < 0) {
+      throw new RangeError('LOD distances must be finite and non-negative')
+    }
+    if (level.distance <= previousDistance) {
       throw new RangeError('LOD levels must be ordered from nearest to farthest')
     }
     previousDistance = level.distance

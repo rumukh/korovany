@@ -76,10 +76,15 @@ const STYLIZED_FRAGMENT_BODY = /* glsl */ `
 #include <lights_fragment_end>
 {
   // reflectedLight.directDiffuse == sum( N.L * lightColor ) * diffuseColor / PI,
-  // so dividing the albedo back out recovers the aggregate lighting term.
-  vec3 kAlbedo = max( material.diffuseColor, vec3( 1e-4 ) );
-  vec3 kLightTerm = reflectedLight.directDiffuse / kAlbedo * PI;
-  float kLit = kStylizedLuminance( kLightTerm );
+  // so the aggregate lighting term only comes back by dividing the albedo out.
+  // Doing that per channel makes the band depend on hue rather than on light: a
+  // saturated red surface has no green or blue to divide back, so its luminance
+  // collapses onto the 0.2126 red weight and it bands several stops darker than a
+  // white surface under identical light. Faction colours would each sit in a
+  // different band. One scalar ratio of luminances cancels the weights instead.
+  vec3 kAlbedo = material.diffuseColor;
+  float kAlbedoLuma = max( kStylizedLuminance( kAlbedo ), 1e-4 );
+  float kLit = kStylizedLuminance( reflectedLight.directDiffuse ) * PI / kAlbedoLuma;
   float kNormalized = clamp( kLit / max( uBandReference, 1e-3 ), 0.0, 1.0 );
   float kBanded = texture2D( uToonRamp, vec2( kNormalized, 0.5 ) ).r;
   float kScale = kBanded / max( kNormalized, 1e-3 );
@@ -135,7 +140,17 @@ vec4 mvPosition = vec4( transformed, 1.0 );
 vec3 kOutlineNormal = ${source};
 #ifdef USE_INSTANCING
   mvPosition = instanceMatrix * mvPosition;
-  kOutlineNormal = mat3( instanceMatrix ) * kOutlineNormal;
+  // Not mat3( instanceMatrix ) * normal: that is the vertex transform, not the
+  // inverse transpose, so a non-uniformly scaled instance skews its own ink and the
+  // hull creeps inside the source. Mirrors three.js defaultnormal_vertex, which
+  // divides by the squared basis lengths first. Shear is not supported either way.
+  mat3 kInstanceBasis = mat3( instanceMatrix );
+  vec3 kInstanceScaleSq = vec3(
+    dot( kInstanceBasis[ 0 ], kInstanceBasis[ 0 ] ),
+    dot( kInstanceBasis[ 1 ], kInstanceBasis[ 1 ] ),
+    dot( kInstanceBasis[ 2 ], kInstanceBasis[ 2 ] )
+  );
+  kOutlineNormal = kInstanceBasis * ( kOutlineNormal / max( kInstanceScaleSq, vec3( 1e-8 ) ) );
 #endif
 mvPosition = modelViewMatrix * mvPosition;
 vec3 kOutlineViewNormal = normalMatrix * kOutlineNormal;

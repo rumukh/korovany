@@ -598,10 +598,19 @@ export function tubeAlongPoints(
     const middle = new THREE.Vector3()
     for (const point of positionRing) middle.add(point)
     middle.multiplyScalar(1 / positionRing.length)
+    // Winding has to follow the requested outward direction, not the world up axis:
+    // a horizontal or descending tube would otherwise get a back-facing cap, which
+    // `FrontSide` culls into a hole. Test the first triangle and flip if it faces in.
+    const edgeA = new THREE.Vector3().subVectors(positionRing[0], middle)
+    const edgeB = new THREE.Vector3().subVectors(
+      positionRing[1 % positionRing.length],
+      middle,
+    )
+    const flip = edgeA.cross(edgeB).dot(outward) < 0
     for (let segment = 0; segment < radialSegments; segment += 1) {
       const next = (segment + 1) % radialSegments
-      const first = outward.y >= 0 ? positionRing[segment] : positionRing[next]
-      const second = outward.y >= 0 ? positionRing[next] : positionRing[segment]
+      const first = flip ? positionRing[next] : positionRing[segment]
+      const second = flip ? positionRing[segment] : positionRing[next]
       for (const point of [middle, first, second]) {
         positions.push(point.x, point.y, point.z)
         normals.push(outward.x, outward.y, outward.z)
@@ -819,6 +828,13 @@ export function displaceGeometry(
   }
   position.needsUpdate = true
   if (options.recomputeNormals !== false) geometry.computeVertexNormals()
+  // Ink normals were welded against the *undisplaced* surface, so leaving them
+  // alone makes the hull drift off the silhouette exactly where displacement is
+  // strongest. Re-weld whenever the attribute is present.
+  if (geometry.getAttribute(OUTLINE_NORMAL_ATTRIBUTE)) {
+    geometry.deleteAttribute(OUTLINE_NORMAL_ATTRIBUTE)
+    bakeOutlineNormals(geometry)
+  }
   geometry.computeBoundingSphere()
   geometry.computeBoundingBox()
   return geometry

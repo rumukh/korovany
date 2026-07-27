@@ -84,6 +84,7 @@ export {
   type OutlineBinding,
   type OutlineKind,
   type OutlineOptions,
+  type StylizedAdoptOptions,
   type StylizedArtLibraryOptions,
   type StylizedInkPalette,
   type StylizedMaterialOptions,
