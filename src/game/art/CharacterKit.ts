@@ -11,6 +11,7 @@ import {
   transformed,
   tubeAlongPoints,
   type LoftSection,
+  type LoftOptions,
   type TaperedBoxOptions,
   type TransformOptions,
   type Vec2Like,
@@ -394,16 +395,16 @@ const TWO_HANDED: ReadonlySet<WeaponKind> = new Set<WeaponKind>([
  * and camera framing all still land where gameplay expects them.
  */
 const BASE_PROPORTIONS: CharacterProportions = {
-  shoulderY: 2.2,
+  shoulderY: 2.24,
   shoulderX: 0.62,
-  hipY: 1.08,
+  hipY: 1.26,
   hipX: 0.28,
-  torsoY: 1.72,
-  headY: 2.74,
+  torsoY: 1.84,
+  headY: 2.78,
   upperArm: 0.58,
   forearm: 0.54,
-  thigh: 0.52,
-  shin: 0.52,
+  thigh: 0.61,
+  shin: 0.61,
   chestWidth: 0.9,
   chestDepth: 0.58,
   waistScale: 0.88,
@@ -420,15 +421,15 @@ const FACTION_PROPORTIONS: Record<CharacterFaction, ProportionPatch> = {
   // Tallest and narrowest. The height comes from the legs and the neck, not from
   // a uniform scale, so an elf reads as long rather than as large.
   elf: {
-    shoulderY: 2.28,
+    shoulderY: 2.34,
     shoulderX: 0.58,
-    hipY: 1.14,
-    torsoY: 1.76,
-    headY: 2.84,
+    hipY: 1.34,
+    torsoY: 1.92,
+    headY: 2.9,
     upperArm: 0.6,
     forearm: 0.58,
-    thigh: 0.56,
-    shin: 0.56,
+    thigh: 0.65,
+    shin: 0.65,
     chestWidth: 0.82,
     chestDepth: 0.54,
     waistScale: 0.82,
@@ -437,12 +438,14 @@ const FACTION_PROPORTIONS: Record<CharacterFaction, ProportionPatch> = {
   },
   // Squarest. Wide shoulders, short neck, low waist, feet planted.
   guard: {
-    shoulderY: 2.16,
+    shoulderY: 2.2,
     shoulderX: 0.68,
-    hipY: 1.06,
+    hipY: 1.24,
     hipX: 0.3,
-    torsoY: 1.7,
-    headY: 2.68,
+    torsoY: 1.82,
+    headY: 2.72,
+    thigh: 0.6,
+    shin: 0.6,
     chestWidth: 0.98,
     chestDepth: 0.62,
     waistScale: 0.92,
@@ -452,15 +455,15 @@ const FACTION_PROPORTIONS: Record<CharacterFaction, ProportionPatch> = {
   },
   // Hunched and long-armed, head carried forward of the shoulders.
   villain: {
-    shoulderY: 2.14,
+    shoulderY: 2.16,
     shoulderX: 0.66,
-    hipY: 1.04,
-    torsoY: 1.66,
-    headY: 2.62,
+    hipY: 1.2,
+    torsoY: 1.78,
+    headY: 2.64,
     upperArm: 0.62,
     forearm: 0.6,
-    thigh: 0.48,
-    shin: 0.5,
+    thigh: 0.58,
+    shin: 0.58,
     chestWidth: 0.94,
     chestDepth: 0.6,
     waistScale: 0.9,
@@ -494,13 +497,14 @@ const KIT_PROPORTIONS: Record<CharacterKitId, ProportionPatch> = {
   heavy: {
     shoulderY: 2.12,
     shoulderX: 0.82,
+    hipY: 1.16,
     hipX: 0.34,
-    torsoY: 1.66,
+    torsoY: 1.74,
     headY: 2.5,
     upperArm: 0.66,
     forearm: 0.64,
-    thigh: 0.46,
-    shin: 0.46,
+    thigh: 0.56,
+    shin: 0.56,
     chestWidth: 1.16,
     chestDepth: 0.74,
     waistScale: 1.02,
@@ -512,19 +516,25 @@ const KIT_PROPORTIONS: Record<CharacterKitId, ProportionPatch> = {
   },
   // Rank stands up straight and keeps its hands away from its body.
   officer: {
-    shoulderY: 2.26,
-    torsoY: 1.75,
-    headY: 2.82,
+    shoulderY: 2.32,
+    hipY: 1.32,
+    torsoY: 1.9,
+    headY: 2.88,
+    thigh: 0.64,
+    shin: 0.64,
     chestWidth: 0.92,
     waistScale: 0.84,
     lean: -0.04,
     armSplay: 0.14,
   },
   elite: {
-    shoulderY: 2.24,
+    shoulderY: 2.3,
     shoulderX: 0.76,
-    torsoY: 1.72,
-    headY: 2.76,
+    hipY: 1.28,
+    torsoY: 1.88,
+    headY: 2.84,
+    thigh: 0.63,
+    shin: 0.63,
     chestWidth: 1.08,
     chestDepth: 0.7,
     waistScale: 0.96,
@@ -532,13 +542,15 @@ const KIT_PROPORTIONS: Record<CharacterKitId, ProportionPatch> = {
   },
   // Small, round-shouldered, and standing slightly bow-legged from the work.
   civil: {
-    shoulderY: 2.1,
+    shoulderY: 2.14,
     shoulderX: 0.55,
-    hipY: 1.02,
-    torsoY: 1.64,
-    headY: 2.6,
+    hipY: 1.2,
+    torsoY: 1.74,
+    headY: 2.64,
     upperArm: 0.54,
     forearm: 0.5,
+    thigh: 0.58,
+    shin: 0.58,
     chestWidth: 0.84,
     chestDepth: 0.56,
     waistScale: 0.94,
@@ -549,10 +561,13 @@ const KIT_PROPORTIONS: Record<CharacterKitId, ProportionPatch> = {
     elbowRest: 0.2,
   },
   bound: {
-    shoulderY: 2.08,
+    shoulderY: 2.12,
     shoulderX: 0.54,
-    torsoY: 1.62,
-    headY: 2.58,
+    hipY: 1.2,
+    torsoY: 1.72,
+    headY: 2.62,
+    thigh: 0.58,
+    shin: 0.58,
     chestWidth: 0.82,
     waistScale: 0.9,
     lean: 0.18,
@@ -665,7 +680,7 @@ function block(
   options: TaperedBoxOptions,
   place: TransformOptions = {},
 ): THREE.BufferGeometry {
-  return transformed(taperedBox(options), place)
+  return transformed(ensureOutwardWinding(taperedBox(options)), place)
 }
 
 /** A wedge: a box whose top face has collapsed to a ridge along X. */
@@ -688,7 +703,7 @@ function spike(
   place: TransformOptions = {},
 ): THREE.BufferGeometry {
   return transformed(
-    loftProfile({
+    loft({
       profile: polygonProfile(radius, 4, Math.PI / 4),
       sections: [
         { y: 0, scaleX: 1 },
@@ -708,7 +723,10 @@ function plate(
   place: TransformOptions = {},
   bevel = 0.012,
 ): THREE.BufferGeometry {
-  return transformed(extrudeProfile(points, { depth, bevelSize: bevel }), place)
+  return transformed(
+    ensureOutwardWinding(extrudeProfile(points, { depth, bevelSize: bevel })),
+    place,
+  )
 }
 
 function mirroredPair(
@@ -718,6 +736,86 @@ function mirroredPair(
 }
 
 const MIRROR_X = new THREE.Matrix4().makeScale(-1, 1, 1)
+
+const WIND_A = new THREE.Vector3()
+const WIND_B = new THREE.Vector3()
+const WIND_C = new THREE.Vector3()
+const WIND_EDGE_ONE = new THREE.Vector3()
+const WIND_EDGE_TWO = new THREE.Vector3()
+const WIND_FACE = new THREE.Vector3()
+const WIND_VERTEX = new THREE.Vector3()
+
+/** Reverses every triangle's winding in place, indexed or not. */
+function reverseWinding(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  const index = geometry.getIndex()
+  if (index) {
+    const array = index.array
+    for (let offset = 0; offset + 2 < array.length; offset += 3) {
+      const swap = array[offset + 1]
+      array[offset + 1] = array[offset + 2]
+      array[offset + 2] = swap
+    }
+    index.needsUpdate = true
+    return geometry
+  }
+  for (const name of Object.keys(geometry.attributes)) {
+    const attribute = geometry.getAttribute(name)
+    const array = attribute.array as unknown as { [key: number]: number }
+    const size = attribute.itemSize
+    for (let triangle = 0; triangle + 2 < attribute.count; triangle += 3) {
+      for (let component = 0; component < size; component += 1) {
+        const a = (triangle + 1) * size + component
+        const b = (triangle + 2) * size + component
+        const swap = array[a]
+        array[a] = array[b]
+        array[b] = swap
+      }
+    }
+    attribute.needsUpdate = true
+  }
+  return geometry
+}
+
+/**
+ * Makes a part's triangle winding agree with its own normals.
+ *
+ * `loftProfile` — which is most of this module, directly or through `taperedBox` —
+ * emits triangles wound the opposite way round from the normals it writes. A
+ * `FrontSide` material then draws the *inside* of the far wall, and, far more
+ * visibly, the `BackSide` ink shell ends up in front of its own source and paints
+ * the whole silhouette solid ink.
+ *
+ * The repair belongs here rather than in `GeometryKit`, which this pass does not
+ * own. It is a measurement rather than a blanket flip, so it is idempotent and
+ * costs nothing once the kit itself is corrected: a geometry that already agrees is
+ * returned untouched.
+ */
+function ensureOutwardWinding(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  const position = geometry.getAttribute('position')
+  const normal = geometry.getAttribute('normal')
+  if (!position || !normal) return geometry
+  const index = geometry.getIndex()
+  const count = index ? index.count : position.count
+  let agree = 0
+  let disagree = 0
+  for (let triangle = 0; triangle + 2 < count; triangle += 3) {
+    const first = index ? index.getX(triangle) : triangle
+    const second = index ? index.getX(triangle + 1) : triangle + 1
+    const third = index ? index.getX(triangle + 2) : triangle + 2
+    WIND_A.fromBufferAttribute(position, first)
+    WIND_B.fromBufferAttribute(position, second)
+    WIND_C.fromBufferAttribute(position, third)
+    WIND_EDGE_ONE.subVectors(WIND_B, WIND_A)
+    WIND_EDGE_TWO.subVectors(WIND_C, WIND_A)
+    WIND_FACE.crossVectors(WIND_EDGE_ONE, WIND_EDGE_TWO)
+    if (WIND_FACE.lengthSq() < 1e-14) continue
+    WIND_VERTEX.fromBufferAttribute(normal, first)
+    if (WIND_FACE.dot(WIND_VERTEX) >= 0) agree += 1
+    else disagree += 1
+  }
+  if (disagree <= agree) return geometry
+  return reverseWinding(geometry)
+}
 
 /**
  * Mirrors a finished part across X, winding and all.
@@ -731,33 +829,12 @@ const MIRROR_X = new THREE.Matrix4().makeScale(-1, 1, 1)
  */
 function mirrorX(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
   geometry.applyMatrix4(MIRROR_X)
-  const index = geometry.getIndex()
-  if (index) {
-    const array = index.array
-    for (let offset = 0; offset + 2 < array.length; offset += 3) {
-      const swap = array[offset + 1]
-      array[offset + 1] = array[offset + 2]
-      array[offset + 2] = swap
-    }
-    index.needsUpdate = true
-  } else {
-    for (const name of Object.keys(geometry.attributes)) {
-      const attribute = geometry.getAttribute(name)
-      const array = attribute.array as unknown as { [key: number]: number }
-      const size = attribute.itemSize
-      for (let triangle = 0; triangle + 2 < attribute.count; triangle += 3) {
-        for (let component = 0; component < size; component += 1) {
-          const a = (triangle + 1) * size + component
-          const b = (triangle + 2) * size + component
-          const swap = array[a]
-          array[a] = array[b]
-          array[b] = swap
-        }
-      }
-      attribute.needsUpdate = true
-    }
-  }
-  return geometry
+  return reverseWinding(geometry)
+}
+
+/** `loftProfile` with its winding corrected. Use this, never the kit's directly. */
+function loft(options: LoftOptions): THREE.BufferGeometry {
+  return ensureOutwardWinding(loftProfile(options))
 }
 
 /**
@@ -1073,7 +1150,7 @@ function torsoChestPiece(plan: CharacterPlan): THREE.BufferGeometry[] {
 export function buildTorso(plan: CharacterPlan): THREE.BufferGeometry {
   const p = plan.proportions
   const bevel = plan.faction === 'guard' ? 0.09 : plan.faction === 'elf' ? 0.14 : 0.11
-  const core = loftProfile({
+  const core = loft({
     profile: rectProfile(p.chestWidth, p.chestDepth, bevel),
     sections: torsoCoreSections(plan),
     name: 'torso-core',
@@ -1148,7 +1225,7 @@ export function buildTorsoTrim(trim: TrimKind): THREE.BufferGeometry {
   }
   if (trim === 'quiver') {
     const tube = transformed(
-      loftProfile({
+      loft({
         profile: polygonProfile(0.11, 7),
         sections: [
           { y: -0.3, scaleX: 0.86 },
@@ -1203,7 +1280,7 @@ export function buildTorsoTrim(trim: TrimKind): THREE.BufferGeometry {
       ),
       // A bedroll lashed across the top of the pack.
       transformed(
-        loftProfile({
+        loft({
           profile: polygonProfile(0.09, 6),
           sections: [
             { y: -0.26, scaleX: 0.9 },
@@ -1278,7 +1355,7 @@ export function buildHead(faction: CharacterFaction): THREE.BufferGeometry {
   const villain = faction === 'villain'
   const width = elf ? 0.6 : villain ? 0.68 : 0.66
   const depth = elf ? 0.62 : 0.66
-  const skull = loftProfile({
+  const skull = loft({
     profile: rectProfile(width, depth, elf ? 0.16 : 0.13),
     sections: [
       // Neck. Short on a guard, long on an elf, thick on a villain.
@@ -1577,8 +1654,8 @@ export function buildHeadgear(kind: HeadgearKind): THREE.BufferGeometry {
         latheProfile(
           [
             { x: 0.3, y: 0.05 },
-            { x: 0.64, y: -0.02 },
-            { x: 0.64, y: -0.08 },
+            { x: 0.52, y: -0.03 },
+            { x: 0.52, y: -0.09 },
             { x: 0.3, y: -0.03 },
           ],
           { segments: 12, name: 'kettle-brim' },
@@ -1792,7 +1869,7 @@ export function buildUpperArm(
   const heavy = armour === 'heavy'
   const width = heavy ? 0.32 : armour === 'none' ? 0.24 : 0.28
   const parts: THREE.BufferGeometry[] = [
-    loftProfile({
+    loft({
       profile: rectProfile(width, width * 1.06, 0.06),
       sections: [
         // Deltoid cap. Shoulders are a volume, not a hinge.
@@ -1858,7 +1935,7 @@ export function buildForearm(
   const heavy = armour === 'heavy'
   const width = heavy ? 0.29 : armour === 'none' ? 0.21 : 0.25
   const parts: THREE.BufferGeometry[] = [
-    loftProfile({
+    loft({
       profile: rectProfile(width, width * 1.04, 0.05),
       sections: [
         { y: 0.06, scaleX: 0.9, scaleZ: 0.94 },
@@ -1904,7 +1981,7 @@ export function buildThigh(
 ): THREE.BufferGeometry {
   const width = armour === 'heavy' ? 0.38 : armour === 'none' ? 0.3 : 0.34
   const parts: THREE.BufferGeometry[] = [
-    loftProfile({
+    loft({
       profile: rectProfile(width, width * 1.1, 0.06),
       sections: [
         { y: 0.1, scaleX: 0.9, scaleZ: 0.92 },
@@ -1937,7 +2014,7 @@ export function buildShin(
   const width = armour === 'heavy' ? 0.32 : armour === 'none' ? 0.25 : 0.28
   const bootTop = -length + 0.2
   const parts: THREE.BufferGeometry[] = [
-    loftProfile({
+    loft({
       profile: rectProfile(width, width * 1.12, 0.05),
       sections: [
         { y: 0.06, scaleX: 0.94, scaleZ: 0.96 },
@@ -2211,7 +2288,7 @@ export function buildOffhand(kind: OffhandKind): THREE.BufferGeometry {
     return finish([board, grip], 'character-offhand:buckler')
   }
   // 'bundle' — a sack of somebody's belongings, carried rather than fought with.
-  const sack = loftProfile({
+  const sack = loft({
     profile: polygonProfile(0.26, 7),
     sections: [
       { y: -0.3, scaleX: 0.5 },
@@ -2267,7 +2344,7 @@ function bladeProfile(
       offsetX: curve * t * t,
     })
   }
-  return loftProfile({
+  return loft({
     // A diamond cross-section: a fuller ridge down the middle of a flat blade.
     profile: [
       { x: -width / 2, y: 0 },
@@ -2570,7 +2647,7 @@ export function buildWeaponGrip(kind: WeaponKind): THREE.BufferGeometry {
     ridges: number,
   ): void => {
     parts.push(
-      loftProfile({
+      loft({
         profile: polygonProfile(radius, 6),
         sections: [
           { y: centre - height / 2, scaleX: 0.9 },
@@ -2604,7 +2681,7 @@ export function buildWeaponGrip(kind: WeaponKind): THREE.BufferGeometry {
   else if (kind === 'sabre') wrap(0.36, 0.045, -0.08, 4)
   else if (kind === 'axe') {
     parts.push(
-      loftProfile({
+      loft({
         profile: polygonProfile(0.05, 6),
         sections: [
           { y: -0.52, scaleX: 0.92 },
@@ -2630,7 +2707,7 @@ export function buildWeaponGrip(kind: WeaponKind): THREE.BufferGeometry {
   } else if (kind === 'spear' || kind === 'glaive') {
     const top = kind === 'glaive' ? 0.92 : 1.2
     parts.push(
-      loftProfile({
+      loft({
         profile: polygonProfile(0.048, 7),
         sections: [
           { y: -0.9, scaleX: 0.86 },
@@ -2659,7 +2736,7 @@ export function buildWeaponGrip(kind: WeaponKind): THREE.BufferGeometry {
   } else if (kind === 'mace' || kind === 'maul') {
     const top = kind === 'maul' ? 0.74 : 0.54
     parts.push(
-      loftProfile({
+      loft({
         profile: polygonProfile(kind === 'maul' ? 0.055 : 0.045, 6),
         sections: [
           { y: kind === 'maul' ? -0.58 : -0.38, scaleX: 0.9 },
@@ -2702,7 +2779,7 @@ export function buildWeaponGrip(kind: WeaponKind): THREE.BufferGeometry {
     )
   } else {
     parts.push(
-      loftProfile({
+      loft({
         profile: polygonProfile(0.045, 7),
         sections: [
           { y: -0.98, scaleX: 0.8 },
@@ -2789,74 +2866,97 @@ export interface BeastRig {
  *
  * Shared with the engine rather than duplicated there, because a geometry built at
  * one shoulder height and a pivot placed at another is the single easiest way to
- * end up with a wolf whose legs start inside its ribs.
+ * end up with a wolf whose legs start inside its ribs. Everything is authored at
+ * unit size; `BEAST_PROFILES.scale` sizes the animal in the world.
+ *
+ * The frame is the same for every creature in this module: **+X is right, +Y is
+ * up, +Z is the way it is facing.**
  */
 export const BEAST_RIG: Record<BeastKind, BeastRig> = {
   wolf: {
-    backHeight: 1.16,
-    frontZ: 0.62,
-    hindZ: -0.66,
+    backHeight: 1.06,
+    frontZ: 0.6,
+    hindZ: -0.62,
     frontX: 0.24,
     hindX: 0.26,
-    frontJointY: 1.06,
-    hindJointY: 1.04,
-    frontLimb: 0.84,
-    hindLimb: 0.86,
-    headY: 1.24,
-    headZ: 1.24,
-    tailY: 1.06,
-    tailZ: -1.02,
-    footprint: 0.78,
-  },
-  boar: {
-    backHeight: 1.02,
-    frontZ: 0.56,
-    hindZ: -0.6,
-    frontX: 0.26,
-    hindX: 0.24,
-    frontJointY: 0.96,
-    hindJointY: 0.9,
-    frontLimb: 0.72,
-    hindLimb: 0.68,
-    headY: 0.98,
-    headZ: 1.12,
-    tailY: 0.98,
-    tailZ: -0.94,
+    frontJointY: 0.94,
+    hindJointY: 0.92,
+    frontLimb: 0.9,
+    hindLimb: 0.88,
+    headY: 1.28,
+    headZ: 1.32,
+    tailY: 1.16,
+    tailZ: -1.04,
     footprint: 0.8,
   },
+  boar: {
+    backHeight: 0.94,
+    frontZ: 0.5,
+    hindZ: -0.58,
+    frontX: 0.26,
+    hindX: 0.24,
+    frontJointY: 0.82,
+    hindJointY: 0.8,
+    frontLimb: 0.78,
+    hindLimb: 0.76,
+    headY: 0.86,
+    headZ: 1.16,
+    tailY: 1.02,
+    tailZ: -0.96,
+    footprint: 0.82,
+  },
   bear: {
-    backHeight: 1.42,
-    frontZ: 0.66,
-    hindZ: -0.7,
+    backHeight: 1.32,
+    frontZ: 0.6,
+    hindZ: -0.66,
     frontX: 0.36,
     hindX: 0.36,
-    frontJointY: 1.34,
-    hindJointY: 1.24,
-    frontLimb: 1.1,
-    hindLimb: 1.02,
-    headY: 1.42,
-    headZ: 1.24,
-    tailY: 1.28,
-    tailZ: -1.02,
-    footprint: 1.02,
+    frontJointY: 1.2,
+    hindJointY: 1.14,
+    frontLimb: 1.16,
+    hindLimb: 1.1,
+    headY: 1.44,
+    headZ: 1.2,
+    tailY: 1.3,
+    tailZ: -0.96,
+    footprint: 1.05,
   },
   troll: {
-    // Barely a quadruped: it walks on its legs and swings its arms at you.
-    backHeight: 1.94,
-    frontZ: 0.3,
-    hindZ: -0.24,
-    frontX: 0.56,
-    hindX: 0.36,
-    frontJointY: 2.32,
-    hindJointY: 1.5,
+    // Barely a quadruped: it stands on its legs and swings its arms at you, so its
+    // body is lofted upright and its "front limbs" are arms.
+    backHeight: 1.95,
+    frontZ: 0.06,
+    hindZ: -0.02,
+    frontX: 0.62,
+    hindX: 0.34,
+    frontJointY: 2.36,
+    hindJointY: 1.36,
     frontLimb: 1.5,
-    hindLimb: 1.44,
-    headY: 2.24,
-    headZ: 0.56,
-    tailY: 1.6,
-    tailZ: -0.6,
+    hindLimb: 1.32,
+    headY: 2.3,
+    headZ: 0.42,
+    tailY: 1.5,
+    tailZ: -0.52,
     footprint: 1.15,
   },
+}
+
+/**
+ * Lofts a body along **Z** rather than Y.
+ *
+ * A quadruped's length runs forward, not upward. Building the loft on its own axis
+ * and then standing it down is far easier to read than trying to think in a rotated
+ * frame: a section's `y` is how far along the animal it sits, `scaleX` is its width
+ * and `scaleZ` is its height.
+ */
+function bodyAlongZ(
+  profile: readonly Vec2Like[],
+  sections: readonly LoftSection[],
+  name: string,
+): THREE.BufferGeometry {
+  return transformed(loft({ profile, sections, name }), {
+    rotation: { x: Math.PI / 2, y: 0, z: 0 },
+  })
 }
 
 export function buildBeastBody(kind: BeastKind): THREE.BufferGeometry {
@@ -2864,96 +2964,110 @@ export function buildBeastBody(kind: BeastKind): THREE.BufferGeometry {
   if (kind === 'wolf') {
     // Deep chest, tucked belly, long back. Predator proportions.
     parts.push(
-      loftProfile({
-        profile: rectProfile(0.62, 0.78, 0.16),
-        sections: [
-          { y: -1.02, scaleX: 0.5, scaleZ: 0.42 },
-          { y: -0.72, scaleX: 0.78, scaleZ: 0.7 },
-          { y: -0.3, scaleX: 0.9, scaleZ: 0.78 },
-          { y: 0.16, scaleX: 0.82, scaleZ: 0.7 },
+      bodyAlongZ(
+        rectProfile(0.6, 0.78, 0.16),
+        [
+          { y: -1.04, scaleX: 0.46, scaleZ: 0.4 },
+          { y: -0.74, scaleX: 0.84, scaleZ: 0.8 },
+          { y: -0.3, scaleX: 0.8, scaleZ: 0.64 },
+          { y: 0.18, scaleX: 0.82, scaleZ: 0.74 },
           { y: 0.6, scaleX: 1, scaleZ: 1 },
-          { y: 0.92, scaleX: 0.86, scaleZ: 0.88 },
-          { y: 1.12, scaleX: 0.6, scaleZ: 0.66 },
+          { y: 0.94, scaleX: 0.86, scaleZ: 0.88 },
+          { y: 1.1, scaleX: 0.58, scaleZ: 0.6 },
         ],
-        name: 'wolf-body',
-      }),
-    )
-    // The neck comes out of the chest low and forward, not off the top.
-    parts.push(
+        'wolf-body',
+      ),
+      // The neck leaves the chest low and forward, so the head is carried below the
+      // shoulders. That line is most of what says "wolf" at thirty metres.
       block(
-        { width: 0.4, height: 0.5, depth: 0.44, topScale: 0.82, bevel: 0.08 },
-        { position: { x: 0, y: 0.12, z: 1.16 }, rotation: { x: 1.32, y: 0, z: 0 } },
+        { width: 0.38, height: 0.52, depth: 0.42, topScale: 0.84, bevel: 0.08 },
+        { position: { x: 0, y: 0.16, z: 1.02 }, rotation: { x: 1.18, y: 0, z: 0 } },
       ),
     )
-    // Ruff and hackles.
-    for (const z of [0.72, 0.9]) {
+    // Ruff and hackles along the shoulders.
+    for (const z of [0.5, 0.72, 0.9]) {
       parts.push(
         block(
-          { width: 0.5, height: 0.14, depth: 0.28, topScale: 0.4, bevel: 0.03 },
-          { position: { x: 0, y: 0.4, z }, rotation: { x: -0.3, y: 0, z: 0 } },
+          { width: 0.46, height: 0.16, depth: 0.24, topScale: 0.35, bevel: 0.03 },
+          { position: { x: 0, y: 0.34, z }, rotation: { x: -0.5, y: 0, z: 0 } },
         ),
       )
     }
   } else if (kind === 'boar') {
     parts.push(
-      loftProfile({
-        profile: rectProfile(0.68, 0.72, 0.15),
-        sections: [
-          { y: -0.94, scaleX: 0.46, scaleZ: 0.4 },
-          { y: -0.6, scaleX: 0.78, scaleZ: 0.66 },
-          { y: -0.2, scaleX: 0.86, scaleZ: 0.76 },
-          { y: 0.3, scaleX: 1.02, scaleZ: 0.94 },
-          // The hump: a boar's shoulders are taller than its hips and that is the
-          // entire silhouette.
-          { y: 0.62, scaleX: 1.1, scaleZ: 1.16 },
-          { y: 0.9, scaleX: 0.88, scaleZ: 0.96 },
-          { y: 1.06, scaleX: 0.6, scaleZ: 0.6 },
+      bodyAlongZ(
+        rectProfile(0.66, 0.7, 0.15),
+        [
+          { y: -0.96, scaleX: 0.42, scaleZ: 0.38 },
+          { y: -0.6, scaleX: 0.76, scaleZ: 0.66 },
+          { y: -0.2, scaleX: 0.86, scaleZ: 0.78 },
+          { y: 0.28, scaleX: 1, scaleZ: 0.96 },
+          { y: 0.6, scaleX: 1.06, scaleZ: 1 },
+          { y: 0.9, scaleX: 0.82, scaleZ: 0.82 },
+          { y: 1.04, scaleX: 0.56, scaleZ: 0.54 },
         ],
-        name: 'boar-body',
-      }),
+        'boar-body',
+      ),
+      // The hump. A boar's shoulders stand taller than its hips and that is the
+      // entire silhouette; it is a separate mass rather than a fatter section so it
+      // sits proud of the back instead of inflating the ribs.
+      block(
+        { width: 0.6, height: 0.34, depth: 0.72, topScale: 0.62, bevel: 0.1 },
+        { position: { x: 0, y: 0.4, z: 0.38 } },
+      ),
+      block(
+        { width: 0.4, height: 0.46, depth: 0.4, topScale: 0.86, bevel: 0.07 },
+        { position: { x: 0, y: 0.06, z: 0.94 }, rotation: { x: 1.32, y: 0, z: 0 } },
+      ),
     )
     // Bristle ridge down the spine.
     for (let index = 0; index < 5; index += 1) {
-      const z = -0.5 + index * 0.34
       parts.push(
         block(
-          { width: 0.1, height: 0.2 + Math.sin((index / 4) * Math.PI) * 0.14, depth: 0.16, topScale: 0.2 },
-          { position: { x: 0, y: 0.36 + index * 0.012, z }, rotation: { x: -0.35, y: 0, z: 0 } },
+          {
+            width: 0.09,
+            height: 0.2 + Math.cos((index / 4) * Math.PI * 0.5) * 0.16,
+            depth: 0.14,
+            topScale: 0.2,
+          },
+          {
+            position: { x: 0, y: 0.44 - index * 0.05, z: 0.5 - index * 0.3 },
+            rotation: { x: -0.4, y: 0, z: 0 },
+          },
         ),
       )
     }
-    parts.push(
-      block(
-        { width: 0.44, height: 0.3, depth: 0.4, topScale: 0.86, bevel: 0.07 },
-        { position: { x: 0, y: 0.16, z: 1.0 }, rotation: { x: 1.2, y: 0, z: 0 } },
-      ),
-    )
   } else if (kind === 'bear') {
     parts.push(
-      loftProfile({
-        profile: rectProfile(0.86, 0.9, 0.2),
-        sections: [
-          { y: -0.98, scaleX: 0.62, scaleZ: 0.62 },
-          { y: -0.6, scaleX: 0.92, scaleZ: 0.9 },
-          { y: -0.1, scaleX: 0.94, scaleZ: 0.92 },
-          { y: 0.4, scaleX: 1.02, scaleZ: 1.02 },
-          // Shoulder mass, the bear's answer to the boar's hump.
-          { y: 0.72, scaleX: 1.08, scaleZ: 1.1 },
-          { y: 1.0, scaleX: 0.84, scaleZ: 0.9 },
-          { y: 1.16, scaleX: 0.58, scaleZ: 0.62 },
+      bodyAlongZ(
+        rectProfile(0.84, 0.9, 0.2),
+        [
+          { y: -0.98, scaleX: 0.6, scaleZ: 0.62 },
+          { y: -0.6, scaleX: 0.94, scaleZ: 0.94 },
+          { y: -0.1, scaleX: 0.94, scaleZ: 0.9 },
+          { y: 0.4, scaleX: 1.02, scaleZ: 1 },
+          { y: 0.72, scaleX: 1, scaleZ: 1.02 },
+          { y: 0.98, scaleX: 0.82, scaleZ: 0.86 },
+          { y: 1.12, scaleX: 0.56, scaleZ: 0.58 },
         ],
-        name: 'bear-body',
-      }),
+        'bear-body',
+      ),
+      // Shoulder mass, the bear's answer to the boar's hump.
       block(
-        { width: 0.56, height: 0.4, depth: 0.5, topScale: 0.9, bevel: 0.1 },
-        { position: { x: 0, y: 0.24, z: 1.06 }, rotation: { x: 1.24, y: 0, z: 0 } },
+        { width: 0.76, height: 0.3, depth: 0.84, topScale: 0.72, bevel: 0.12 },
+        { position: { x: 0, y: 0.38, z: 0.42 } },
+      ),
+      block(
+        { width: 0.56, height: 0.42, depth: 0.52, topScale: 0.9, bevel: 0.1 },
+        { position: { x: 0, y: 0.12, z: 1.02 }, rotation: { x: 1.24, y: 0, z: 0 } },
       ),
     )
   } else {
-    // Troll: a hunched back with a stone ridge, a barrel chest and no waist.
+    // Troll: an upright hunched torso with a stone ridge down its spine. It is not
+    // lofted along Z, because it does not walk on its hands.
     parts.push(
-      loftProfile({
-        profile: rectProfile(1.02, 0.86, 0.18),
+      loft({
+        profile: rectProfile(1, 0.84, 0.18),
         sections: [
           { y: -0.86, scaleX: 0.82, scaleZ: 0.86 },
           { y: -0.5, scaleX: 0.94, scaleZ: 0.94 },
@@ -2976,7 +3090,7 @@ export function buildBeastBody(kind: BeastKind): THREE.BufferGeometry {
     parts.push(
       block(
         { width: 0.62, height: 0.34, depth: 0.56, topScale: 0.88, bevel: 0.1 },
-        { position: { x: 0, y: 0.62, z: 0.28 }, rotation: { x: 0.9, y: 0, z: 0 } },
+        { position: { x: 0, y: 0.62, z: 0.2 }, rotation: { x: 0.75, y: 0, z: 0 } },
       ),
     )
   }
@@ -2987,26 +3101,24 @@ export function buildBeastHead(kind: BeastKind): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = []
   if (kind === 'wolf') {
     parts.push(
-      loftProfile({
-        profile: rectProfile(0.42, 0.4, 0.11),
-        sections: [
-          { y: -0.42, scaleX: 0.9, scaleZ: 0.92 },
+      bodyAlongZ(
+        rectProfile(0.4, 0.4, 0.11),
+        [
+          { y: -0.42, scaleX: 0.86, scaleZ: 0.9 },
           { y: -0.1, scaleX: 1, scaleZ: 1 },
-          { y: 0.16, scaleX: 0.82, scaleZ: 0.86 },
-          { y: 0.44, scaleX: 0.5, scaleZ: 0.56 },
-          { y: 0.72, scaleX: 0.38, scaleZ: 0.42 },
+          { y: 0.16, scaleX: 0.78, scaleZ: 0.82 },
+          { y: 0.5, scaleX: 0.5, scaleZ: 0.52 },
+          { y: 0.78, scaleX: 0.4, scaleZ: 0.4 },
         ],
-        name: 'wolf-skull',
-      }),
-    )
-    // The muzzle is the animal. Long, narrow, and dropping at the tip.
-    parts.push(
+        'wolf-skull',
+      ),
+      // The muzzle drops at the tip, which is what makes it a snout and not a cone.
       block(
-        { width: 0.2, height: 0.34, depth: 0.2, topScale: 0.82, topDepthScale: 0.7, bevel: 0.04 },
-        { position: { x: 0, y: 0.78, z: 0.02 }, rotation: { x: -0.1, y: 0, z: 0 } },
+        { width: 0.2, height: 0.2, depth: 0.34, topScale: 0.8, bevel: 0.04 },
+        { position: { x: 0, y: -0.06, z: 0.68 }, rotation: { x: 0.1, y: 0, z: 0 } },
       ),
       // Pricked ears, set well back.
-      ...mirroredPair((side) =>
+      ...mirroredPairX(() =>
         plate(
           [
             { x: -0.09, y: -0.1 },
@@ -3014,37 +3126,34 @@ export function buildBeastHead(kind: BeastKind): THREE.BufferGeometry {
             { x: 0.02, y: 0.26 },
           ],
           0.05,
-          {
-            position: { x: side * 0.17, y: 0.16, z: -0.12 },
-            rotation: { x: -0.24, y: 0, z: side * 0.22 },
-          },
+          { position: { x: 0.15, y: 0.24, z: -0.16 }, rotation: { x: -0.24, y: 0, z: 0.2 } },
         ),
       ),
     )
   } else if (kind === 'boar') {
     parts.push(
-      loftProfile({
-        profile: rectProfile(0.44, 0.44, 0.12),
-        sections: [
+      bodyAlongZ(
+        rectProfile(0.44, 0.44, 0.12),
+        [
           { y: -0.34, scaleX: 1, scaleZ: 1 },
-          { y: 0, scaleX: 0.92, scaleZ: 0.92 },
-          { y: 0.34, scaleX: 0.6, scaleZ: 0.62 },
-          { y: 0.6, scaleX: 0.46, scaleZ: 0.5 },
+          { y: 0.02, scaleX: 0.9, scaleZ: 0.92 },
+          { y: 0.36, scaleX: 0.58, scaleZ: 0.6 },
+          { y: 0.6, scaleX: 0.46, scaleZ: 0.48 },
         ],
-        name: 'boar-skull',
-      }),
+        'boar-skull',
+      ),
       // A blunt disc snout.
       block(
-        { width: 0.28, height: 0.12, depth: 0.26, bevel: 0.05 },
-        { position: { x: 0, y: 0.66, z: 0 } },
+        { width: 0.26, height: 0.24, depth: 0.1, bevel: 0.05 },
+        { position: { x: 0, y: -0.02, z: 0.64 } },
       ),
       ...mirroredPairX(() =>
         transformed(
           tubeAlongPoints(
             [
               { x: 0, y: 0, z: 0 },
-              { x: 0.04, y: 0.14, z: 0.02 },
-              { x: 0.02, y: 0.28, z: -0.06 },
+              { x: 0.03, y: 0.16, z: 0.03 },
+              { x: 0.01, y: 0.3, z: -0.06 },
             ],
             {
               radius: (t) => 0.045 * (1 - t) + 0.008,
@@ -3054,10 +3163,10 @@ export function buildBeastHead(kind: BeastKind): THREE.BufferGeometry {
               name: 'tusk',
             },
           ),
-          { position: { x: 0.14, y: 0.5, z: 0.1 } },
+          { position: { x: 0.13, y: -0.1, z: 0.5 } },
         ),
       ),
-      ...mirroredPair((side) =>
+      ...mirroredPairX(() =>
         plate(
           [
             { x: -0.07, y: -0.08 },
@@ -3065,28 +3174,28 @@ export function buildBeastHead(kind: BeastKind): THREE.BufferGeometry {
             { x: 0.03, y: 0.16 },
           ],
           0.04,
-          { position: { x: side * 0.19, y: 0.12, z: -0.1 }, rotation: { x: -0.3, y: 0, z: side * 0.4 } },
+          { position: { x: 0.17, y: 0.16, z: -0.14 }, rotation: { x: -0.3, y: 0, z: 0.4 } },
         ),
       ),
     )
   } else if (kind === 'bear') {
     parts.push(
-      loftProfile({
-        profile: rectProfile(0.5, 0.5, 0.14),
-        sections: [
+      bodyAlongZ(
+        rectProfile(0.5, 0.5, 0.14),
+        [
           { y: -0.32, scaleX: 0.96, scaleZ: 0.96 },
           { y: 0.02, scaleX: 1, scaleZ: 1 },
-          { y: 0.28, scaleX: 0.72, scaleZ: 0.76 },
-          { y: 0.56, scaleX: 0.54, scaleZ: 0.6 },
+          { y: 0.3, scaleX: 0.7, scaleZ: 0.72 },
+          { y: 0.56, scaleX: 0.52, scaleZ: 0.54 },
         ],
-        name: 'bear-skull',
-      }),
+        'bear-skull',
+      ),
       block(
-        { width: 0.24, height: 0.14, depth: 0.22, bevel: 0.05 },
-        { position: { x: 0, y: 0.62, z: 0.02 } },
+        { width: 0.24, height: 0.2, depth: 0.14, bevel: 0.05 },
+        { position: { x: 0, y: -0.04, z: 0.6 } },
       ),
       // Small round ears, high and wide. A bear's ears are its tell.
-      ...mirroredPair((side) =>
+      ...mirroredPairX(() =>
         transformed(
           latheProfile(
             [
@@ -3097,42 +3206,42 @@ export function buildBeastHead(kind: BeastKind): THREE.BufferGeometry {
             ],
             { segments: 7, name: 'bear-ear' },
           ),
-          { position: { x: side * 0.24, y: 0.28, z: -0.08 }, rotation: { x: Math.PI / 2, y: 0, z: 0 } },
+          { position: { x: 0.22, y: 0.24, z: -0.1 }, rotation: { x: 0, y: 0, z: Math.PI / 2 } },
         ),
       ),
     )
   } else {
     parts.push(
-      loftProfile({
-        profile: rectProfile(0.6, 0.56, 0.14),
-        sections: [
-          { y: -0.36, scaleX: 1.04, scaleZ: 0.96 },
-          { y: -0.06, scaleX: 1, scaleZ: 1 },
-          { y: 0.24, scaleX: 0.78, scaleZ: 0.82 },
-          { y: 0.44, scaleX: 0.5, scaleZ: 0.56 },
+      bodyAlongZ(
+        rectProfile(0.58, 0.54, 0.14),
+        [
+          { y: -0.34, scaleX: 1.04, scaleZ: 0.96 },
+          { y: -0.04, scaleX: 1, scaleZ: 1 },
+          { y: 0.24, scaleX: 0.8, scaleZ: 0.84 },
+          { y: 0.42, scaleX: 0.52, scaleZ: 0.56 },
         ],
-        name: 'troll-skull',
-      }),
+        'troll-skull',
+      ),
       // A jaw that juts past the brow, with a lower tooth row.
       block(
-        { width: 0.5, height: 0.22, depth: 0.34, topScale: 0.86, bevel: 0.05 },
-        { position: { x: 0, y: -0.28, z: 0.16 } },
+        { width: 0.48, height: 0.2, depth: 0.32, topScale: 0.86, bevel: 0.05 },
+        { position: { x: 0, y: -0.2, z: 0.24 } },
       ),
-      ...mirroredPair((side) =>
+      ...mirroredPairX(() =>
         spike(0.05, 0.18, {
-          position: { x: side * 0.16, y: -0.2, z: 0.28 },
-          rotation: { x: 0.2, y: 0, z: side * 0.1 },
+          position: { x: 0.15, y: -0.12, z: 0.34 },
+          rotation: { x: 0.25, y: 0, z: 0.1 },
         }),
       ),
       // Brow shelf.
       block(
-        { width: 0.58, height: 0.12, depth: 0.2, topScale: 0.8, bevel: 0.03 },
-        { position: { x: 0, y: 0.12, z: 0.2 }, rotation: { x: -0.24, y: 0, z: 0 } },
+        { width: 0.54, height: 0.11, depth: 0.18, topScale: 0.8, bevel: 0.03 },
+        { position: { x: 0, y: 0.14, z: 0.24 }, rotation: { x: -0.28, y: 0, z: 0 } },
       ),
-      ...mirroredPair((side) =>
+      ...mirroredPairX(() =>
         spike(0.06, 0.22, {
-          position: { x: side * 0.24, y: 0.24, z: -0.02 },
-          rotation: { x: -0.2, y: 0, z: side * 0.42 },
+          position: { x: 0.22, y: 0.22, z: -0.04 },
+          rotation: { x: -0.2, y: 0, z: 0.42 },
         }),
       ),
     )
@@ -3151,7 +3260,7 @@ export function buildBeastLimb(
     kind === 'wolf' ? 0.17 : kind === 'boar' ? 0.19 : kind === 'bear' ? 0.26 : 0.3
   const upper = length * 0.52
   parts.push(
-    loftProfile({
+    loft({
       profile: rectProfile(thickness, thickness * 1.15, 0.04),
       sections: [
         { y: 0.06, scaleX: 1.2, scaleZ: 1.24 },
@@ -3166,7 +3275,7 @@ export function buildBeastLimb(
   const hock = kind === 'wolf' || kind === 'boar' ? (front ? 0.06 : -0.12) : 0
   parts.push(
     transformed(
-      loftProfile({
+      loft({
         profile: rectProfile(thickness * 0.82, thickness * 0.94, 0.04),
         sections: [
           { y: 0.04, scaleX: 1, scaleZ: 1.04 },
@@ -3271,9 +3380,9 @@ export function buildBeastTail(kind: BeastKind): THREE.BufferGeometry {
 /** Deer torso, neck, head and tail, merged. Origin at the body centre. */
 export function buildDeerBody(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [
-    loftProfile({
-      profile: rectProfile(0.46, 0.54, 0.13),
-      sections: [
+    bodyAlongZ(
+      rectProfile(0.46, 0.54, 0.13),
+      [
         { y: -0.82, scaleX: 0.54, scaleZ: 0.5 },
         { y: -0.54, scaleX: 0.92, scaleZ: 0.86 },
         { y: -0.16, scaleX: 0.94, scaleZ: 0.8 },
@@ -3281,15 +3390,15 @@ export function buildDeerBody(): THREE.BufferGeometry {
         { y: 0.58, scaleX: 1, scaleZ: 1 },
         { y: 0.8, scaleX: 0.74, scaleZ: 0.78 },
       ],
-      name: 'deer-torso',
-    }),
+      'deer-torso',
+    ),
     // The neck is a curve, not a stick: it leaves the chest forward and rises.
     tubeAlongPoints(
       [
-        { x: 0, y: 0.5, z: 0.66 },
-        { x: 0, y: 0.74, z: 0.82 },
-        { x: 0, y: 0.98, z: 0.94 },
-        { x: 0, y: 1.08, z: 1.06 },
+        { x: 0, y: 0.12, z: 0.72 },
+        { x: 0, y: 0.36, z: 0.88 },
+        { x: 0, y: 0.6, z: 1.0 },
+        { x: 0, y: 0.7, z: 1.12 },
       ],
       {
         radius: (t) => 0.17 - t * 0.06,
@@ -3301,9 +3410,9 @@ export function buildDeerBody(): THREE.BufferGeometry {
     ),
     block(
       { width: 0.24, height: 0.24, depth: 0.42, topScale: 0.8, bevel: 0.05, shearZ: 0.06 },
-      { position: { x: 0, y: 1.14, z: 1.22 }, rotation: { x: 0.34, y: 0, z: 0 } },
+      { position: { x: 0, y: 0.76, z: 1.28 }, rotation: { x: 0.34, y: 0, z: 0 } },
     ),
-    ...mirroredPair((side) =>
+    ...mirroredPairX(() =>
       plate(
         [
           { x: -0.06, y: -0.1 },
@@ -3311,12 +3420,12 @@ export function buildDeerBody(): THREE.BufferGeometry {
           { x: 0.01, y: 0.2 },
         ],
         0.04,
-        { position: { x: side * 0.15, y: 1.2, z: 1.1 }, rotation: { x: -0.2, y: 0, z: side * 0.66 } },
+        { position: { x: 0.15, y: 0.82, z: 1.16 }, rotation: { x: -0.2, y: 0, z: 0.66 } },
       ),
     ),
     block(
       { width: 0.14, height: 0.2, depth: 0.1, topScale: 0.5, bevel: 0.03 },
-      { position: { x: 0, y: 0.6, z: -0.84 }, rotation: { x: 0.8, y: 0, z: 0 } },
+      { position: { x: 0, y: 0.22, z: -0.84 }, rotation: { x: 0.8, y: 0, z: 0 } },
     ),
   ]
   return finish(parts, 'deer-body')
@@ -3327,7 +3436,7 @@ export function buildDeerCrown(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [
     block(
       { width: 0.15, height: 0.14, depth: 0.16, topScale: 0.72, bevel: 0.03 },
-      { position: { x: 0, y: 1.08, z: 1.42 } },
+      { position: { x: 0, y: 0.7, z: 1.48 } },
     ),
   ]
   const antlerSide = (): THREE.BufferGeometry[] => {
@@ -3348,7 +3457,7 @@ export function buildDeerCrown(): THREE.BufferGeometry {
             name: 'antler-beam',
           },
         ),
-        { position: { x: 0.1, y: 1.26, z: 1.06 } },
+        { position: { x: 0.1, y: 0.9, z: 1.12 } },
       ),
     ]
     for (const [t, lift] of [
@@ -3371,7 +3480,7 @@ export function buildDeerCrown(): THREE.BufferGeometry {
               name: 'antler-tine',
             },
           ),
-          { position: { x: 0.1 + t * 0.22, y: 1.26 + t * 0.5, z: 1.06 - t * 0.3 } },
+          { position: { x: 0.1 + t * 0.22, y: 0.9 + t * 0.5, z: 1.12 - t * 0.3 } },
         ),
       )
     }
@@ -3384,7 +3493,7 @@ export function buildDeerCrown(): THREE.BufferGeometry {
 /** One deer leg, hanging from the hip at the origin. */
 export function buildDeerLeg(front: boolean): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [
-    loftProfile({
+    loft({
       profile: rectProfile(0.14, 0.16, 0.03),
       sections: [
         { y: 0.06, scaleX: 1.3, scaleZ: 1.3 },
@@ -3394,7 +3503,7 @@ export function buildDeerLeg(front: boolean): THREE.BufferGeometry {
       name: 'deer-upper-leg',
     }),
     transformed(
-      loftProfile({
+      loft({
         profile: rectProfile(0.09, 0.1, 0.02),
         sections: [
           { y: 0.04, scaleX: 1, scaleZ: 1 },
@@ -3414,7 +3523,7 @@ export function buildDeerLeg(front: boolean): THREE.BufferGeometry {
 
 export function buildBirdBody(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [
-    loftProfile({
+    loft({
       profile: rectProfile(0.19, 0.19, 0.06),
       sections: [
         { y: -0.2, scaleX: 0.34, scaleZ: 0.3 },
@@ -3470,37 +3579,40 @@ export function buildBirdWing(): THREE.BufferGeometry {
  */
 export function buildWagonFrame(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = []
+  // Two side rails running the length of the cart...
   for (const z of [-1.24, 1.24]) {
     parts.push(
       block(
         { width: 5.1, height: 0.22, depth: 0.24, bevel: 0.04 },
-        { position: { x: 0, y: 1.5, z }, rotation: { x: 0, y: 0, z: Math.PI / 2 } },
+        { position: { x: 0, y: 1.5, z } },
       ),
     )
   }
+  // ...and five cross members between them. A ladder frame, which is what a cart
+  // that carries anything heavier than hay actually needs.
   for (const x of [-2.1, -1.05, 0, 1.05, 2.1]) {
     parts.push(
       block(
-        { width: 2.7, height: 0.16, depth: 0.2, bevel: 0.03 },
-        { position: { x, y: 1.46, z: 0 }, rotation: { x: Math.PI / 2, y: 0, z: 0 } },
+        { width: 0.2, height: 0.16, depth: 2.7, bevel: 0.03 },
+        { position: { x, y: 1.46, z: 0 } },
       ),
     )
   }
-  // The draw pole and its bolster.
   parts.push(
+    // The draw pole and the bolster the front axle swivels on.
     block(
       { width: 2.9, height: 0.18, depth: 0.18, topScale: 0.7, bevel: 0.03 },
-      { position: { x: 3.6, y: 1.12, z: 0 }, rotation: { x: 0, y: 0, z: Math.PI / 2 - 0.06 } },
+      { position: { x: 3.6, y: 1.16, z: 0 }, rotation: { x: 0, y: 0, z: -0.06 } },
     ),
     block(
-      { width: 1.6, height: 0.2, depth: 0.36, bevel: 0.04 },
-      { position: { x: 2.1, y: 1.3, z: 0 }, rotation: { x: Math.PI / 2, y: 0, z: 0 } },
+      { width: 0.36, height: 0.2, depth: 1.6, bevel: 0.04 },
+      { position: { x: 2.1, y: 1.3, z: 0 } },
     ),
     // Two braces from the pole up to the frame.
-    ...mirroredPair((side) =>
+    ...mirroredPairX(() =>
       block(
         { width: 1.5, height: 0.11, depth: 0.11 },
-        { position: { x: 2.9, y: 1.3, z: side * 0.34 }, rotation: { x: 0, y: side * 0.28, z: 1.44 } },
+        { position: { x: 2.9, y: 1.3, z: 0.34 }, rotation: { x: 0, y: -0.28, z: 0.12 } },
       ),
     ),
   )
@@ -3511,13 +3623,13 @@ export function buildWagonAxle(width: number): THREE.BufferGeometry {
   return finish(
     [
       block(
-        { width, height: 0.17, depth: 0.17, bevel: 0.03 },
-        { rotation: { x: Math.PI / 2, y: 0, z: 0 } },
+        { width: 0.17, height: 0.17, depth: width, bevel: 0.03 },
+        {},
       ),
-      ...mirroredPair((side) =>
+      ...mirroredPairX(() =>
         block(
-          { width: 0.24, height: 0.22, depth: 0.24, topScale: 0.7, bevel: 0.03 },
-          { position: { x: 0, y: 0, z: side * (width / 2 - 0.16) }, rotation: { x: Math.PI / 2, y: 0, z: 0 } },
+          { width: 0.24, height: 0.24, depth: 0.22, bevel: 0.03 },
+          { position: { x: 0, y: 0, z: width / 2 - 0.16 } },
         ),
       ),
     ],
@@ -3739,7 +3851,7 @@ export function buildWagonCargo(gilded: boolean): THREE.BufferGeometry {
   ] as const) {
     parts.push(
       transformed(
-        loftProfile({
+        loft({
           profile: polygonProfile(0.34, 7),
           sections: [
             { y: -0.3, scaleX: 0.66 },
@@ -3781,21 +3893,18 @@ export function buildWagonCargo(gilded: boolean): THREE.BufferGeometry {
 /** A draft ox: heavy at the shoulder, head carried low. Origin between its feet. */
 export function buildOxBody(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [
-    transformed(
-      loftProfile({
-        profile: rectProfile(0.86, 0.92, 0.18),
-        sections: [
-          { y: -1.0, scaleX: 0.66, scaleZ: 0.66 },
-          { y: -0.6, scaleX: 0.96, scaleZ: 0.92 },
-          { y: -0.1, scaleX: 1, scaleZ: 0.98 },
-          { y: 0.44, scaleX: 1.04, scaleZ: 1.06 },
-          { y: 0.78, scaleX: 0.9, scaleZ: 0.96 },
-          { y: 0.98, scaleX: 0.6, scaleZ: 0.66 },
-        ],
-        name: 'ox-torso',
-      }),
-      { position: { x: 0, y: 1.44, z: 0 }, rotation: { x: Math.PI / 2, y: 0, z: 0 } },
-    ),
+    bodyAlongZ(
+      rectProfile(0.86, 0.92, 0.18),
+      [
+        { y: -1.0, scaleX: 0.66, scaleZ: 0.66 },
+        { y: -0.6, scaleX: 0.96, scaleZ: 0.92 },
+        { y: -0.1, scaleX: 1, scaleZ: 0.98 },
+        { y: 0.44, scaleX: 1.04, scaleZ: 1.06 },
+        { y: 0.78, scaleX: 0.9, scaleZ: 0.96 },
+        { y: 0.98, scaleX: 0.6, scaleZ: 0.66 },
+      ],
+      'ox-torso',
+    ).translate(0, 1.44, 0),
     // Withers hump, the mark of a draft animal.
     block(
       { width: 0.6, height: 0.32, depth: 0.7, topScale: 0.7, bevel: 0.1 },
@@ -3823,7 +3932,7 @@ export function buildOxBody(): THREE.BufferGeometry {
     [0.34, -0.6],
   ] as const) {
     parts.push(
-      loftProfile({
+      loft({
         profile: rectProfile(0.24, 0.26, 0.05),
         sections: [
           { y: 0.1, scaleX: 1.3, scaleZ: 1.3 },
@@ -3843,44 +3952,45 @@ export function buildOxBody(): THREE.BufferGeometry {
 
 export function buildOxHead(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [
-    loftProfile({
-      profile: rectProfile(0.42, 0.44, 0.1),
-      sections: [
-        { y: -0.3, scaleX: 0.98, scaleZ: 0.98 },
-        { y: 0.02, scaleX: 1, scaleZ: 1 },
-        { y: 0.3, scaleX: 0.66, scaleZ: 0.72 },
-        { y: 0.56, scaleX: 0.56, scaleZ: 0.6 },
+    bodyAlongZ(
+      rectProfile(0.34, 0.38, 0.09),
+      [
+        { y: -0.28, scaleX: 1, scaleZ: 1 },
+        { y: 0.04, scaleX: 0.92, scaleZ: 0.94 },
+        { y: 0.34, scaleX: 0.6, scaleZ: 0.66 },
+        { y: 0.62, scaleX: 0.52, scaleZ: 0.56 },
       ],
-      name: 'ox-skull',
-    }),
+      'ox-skull',
+    ),
+    // A long blunt muzzle, so the head reads as a head and not as a disc.
     block(
-      { width: 0.26, height: 0.16, depth: 0.24, bevel: 0.05 },
-      { position: { x: 0, y: 0.62, z: 0.02 } },
+      { width: 0.22, height: 0.2, depth: 0.26, topScale: 0.9, bevel: 0.05 },
+      { position: { x: 0, y: -0.05, z: 0.72 } },
     ),
     ...mirroredPairX(() =>
       transformed(
         tubeAlongPoints(
           [
             { x: 0, y: 0, z: 0 },
-            { x: 0.16, y: 0.1, z: -0.02 },
-            { x: 0.3, y: 0.2, z: -0.08 },
-            { x: 0.38, y: 0.34, z: -0.06 },
+            { x: 0.14, y: 0.08, z: -0.02 },
+            { x: 0.26, y: 0.17, z: -0.08 },
+            { x: 0.33, y: 0.29, z: -0.06 },
           ],
           {
-            radius: (t) => 0.07 * (1 - t) + 0.012,
+            radius: (t) => 0.06 * (1 - t) + 0.012,
             radialSegments: 5,
             tubularSegments: 8,
             capStart: true,
             name: 'ox-horn',
           },
         ),
-        { position: { x: 0.15, y: 0.24, z: -0.04 } },
+        { position: { x: 0.13, y: 0.16, z: -0.06 } },
       ),
     ),
-    ...mirroredPair((side) =>
+    ...mirroredPairX(() =>
       block(
-        { width: 0.08, height: 0.2, depth: 0.14, topScale: 0.6, bevel: 0.03 },
-        { position: { x: side * 0.24, y: 0.1, z: -0.06 }, rotation: { x: 0, y: 0, z: side * 0.7 } },
+        { width: 0.07, height: 0.17, depth: 0.12, topScale: 0.6, bevel: 0.03 },
+        { position: { x: 0.2, y: 0.03, z: -0.1 }, rotation: { x: 0, y: 0, z: 0.7 } },
       ),
     ),
   ]
@@ -3889,10 +3999,11 @@ export function buildOxHead(): THREE.BufferGeometry {
 
 /** Yoke, traces and collar bars linking the team to the draw pole. */
 export function buildHarness(): THREE.BufferGeometry {
+  const yokeX = 5.62
   const parts: THREE.BufferGeometry[] = [
     block(
       { width: 0.22, height: 2.5, depth: 0.22, bevel: 0.04 },
-      { position: { x: 5.35, y: 2.16, z: 0 }, rotation: { x: Math.PI / 2, y: 0, z: 0 } },
+      { position: { x: yokeX, y: 2.16, z: 0 }, rotation: { x: Math.PI / 2, y: 0, z: 0 } },
     ),
   ]
   for (const side of [-1, 1]) {
@@ -3909,12 +4020,12 @@ export function buildHarness(): THREE.BufferGeometry {
           ],
           { radius: 0.055, radialSegments: 5, tubularSegments: 10, name: 'yoke-bow' },
         ),
-        { position: { x: 5.35, y: 2.16, z: side * 0.78 } },
+        { position: { x: yokeX, y: 2.16, z: side * WAGON_RIG.oxZ } },
       ),
       // Traces running back to the pole.
       block(
-        { width: 2.3, height: 0.07, depth: 0.07 },
-        { position: { x: 4.3, y: 1.92, z: side * 0.62 }, rotation: { x: 0, y: side * 0.14, z: 0.12 } },
+        { width: 2.6, height: 0.07, depth: 0.07 },
+        { position: { x: 4.4, y: 1.9, z: side * 0.62 }, rotation: { x: 0, y: side * 0.14, z: 0.14 } },
       ),
     )
   }
@@ -3930,9 +4041,9 @@ export const WAGON_RIG = {
   wheelZ: 1.42,
   axleWidth: 3.1,
   oxZ: 0.78,
-  oxX: 6.6,
-  oxHeadY: 1.86,
-  oxHeadZ: 1.2,
+  oxX: 4.72,
+  oxHeadY: 1.74,
+  oxHeadZ: 1.24,
 } as const
 
 

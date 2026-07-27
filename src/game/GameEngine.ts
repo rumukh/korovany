@@ -11901,7 +11901,7 @@ export class GameEngine {
       // local coordinates into it when the player raises guard.
       const shield = new THREE.Mesh(
         build(keys.offhand, () => buildOffhand(offhandKind)),
-        offhandKind === 'bundle' ? leatherMaterial : steelMaterial,
+        offhandKind === 'bundle' ? leatherMaterial : bodyMaterial,
       )
       shield.name = 'shield'
       shield.position.set(-0.82, 1.85, 0.08)
@@ -12044,9 +12044,11 @@ export class GameEngine {
   }
 
   private characterSkinMaterial(tone: number): THREE.MeshStandardMaterial {
-    const base = mix(this.palette.warning, this.palette.surface, 0.7)
+    // Skin has to stay light enough that a brow, a nose and a jaw still separate
+    // under a helmet's shadow at night, which is where faces are lost first.
+    const base = mix(this.palette.warning, this.palette.surface, 0.42)
     return this.artLibrary.acquireMaterial(`char:skin:${String(tone)}`, {
-      color: mix(base, tone < 2 ? this.palette.bg : this.palette.text, 0.06 + tone * 0.07),
+      color: mix(base, tone < 2 ? this.palette.text : this.palette.warning, 0.05 + tone * 0.06),
       surface: 'skin',
     })
   }
@@ -13811,18 +13813,22 @@ export class GameEngine {
     }
 
     if (rig.weapon) {
+      // The rest pose points the blade up, forward and away from the body. Held
+      // straight up it disappears inside its owner's own arm, which is exactly
+      // what the old rig did and exactly why nobody could tell what anyone was
+      // carrying.
       this.placeWeaponInHand(
         rig,
         main,
         mainX,
         mainZ,
         mainElbowX,
-        -0.18 +
-          mainX * 0.4 +
-          pose.anticipation * 0.95 -
-          pose.attack * 1.55 +
-          pose.recovery * 0.28,
-        rig.mainHand * 0.2 + mainZ * 0.5,
+        0.34 -
+          pose.anticipation * 1.45 +
+          pose.attack * 1.85 -
+          pose.recovery * 0.32 +
+          mainX * 0.35,
+        -rig.mainHand * (0.44 + pose.attack * 0.22) + mainZ * 0.4,
       )
     }
 
@@ -13992,8 +13998,8 @@ export class GameEngine {
         bowX,
         bowZ,
         bowElbowX,
-        Math.PI / 2 + 0.06,
-        rig.mainHand * -1.35,
+        0.06,
+        -rig.mainHand * 0.12,
       )
     }
   }
