@@ -172,6 +172,27 @@ function requireInjectionPoint(source: string, token: string, label: string): vo
   }
 }
 
+/**
+ * Marks a material as carrying the injection.
+ *
+ * Deliberately a symbol on the material itself rather than a `userData` entry:
+ * `Material.copy()` deep-clones `userData` through JSON but copies neither
+ * symbols nor `onBeforeCompile`. A clone therefore correctly reports "not
+ * stylized" and can be repaired, instead of claiming a shader it does not have.
+ */
+const STYLIZED_APPLIED = Symbol('stylizedShaderApplied')
+
+function markStylizedShader(material: THREE.Material): void {
+  ;(material as unknown as Record<symbol, boolean>)[STYLIZED_APPLIED] = true
+}
+
+/** True when this exact material instance carries the stylized injection. */
+export function hasStylizedShader(material: THREE.Material): boolean {
+  return (
+    (material as unknown as Record<symbol, boolean>)[STYLIZED_APPLIED] === true
+  )
+}
+
 /** Installs the banded-toon injection on a standard material. */
 export function applyStylizedShader(
   material: THREE.MeshStandardMaterial,
@@ -182,6 +203,7 @@ export function applyStylizedShader(
     rimPower: number
   },
 ): void {
+  markStylizedShader(material)
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uToonRamp = shared.uToonRamp
     shader.uniforms.uBandReference = shared.uBandReference

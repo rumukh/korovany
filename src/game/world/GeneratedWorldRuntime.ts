@@ -1480,6 +1480,14 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     mesh: THREE.InstancedMesh,
     maximumCount: number,
   ): void {
+    // three.js computes an instanced bounding sphere lazily, over whatever
+    // `count` happens to be at first render, and never invalidates it when the
+    // count grows again. `setDecorationDensity` below immediately reduces the
+    // count, so the sphere has to be taken here at full capacity — otherwise
+    // raising quality later puts live instances outside a stale sphere and
+    // frustum culling drops the entire batch.
+    mesh.count = Math.min(maximumCount, mesh.instanceMatrix.count)
+    if (!mesh.boundingSphere) mesh.computeBoundingSphere()
     this.cosmeticDressing.push({ mesh, maximumCount })
     this.maxCosmeticDecorationCount += maximumCount
     this.setDecorationDensity(this.context.style.decorationDensity)

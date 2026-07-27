@@ -12184,7 +12184,7 @@ export class GameEngine {
   ): THREE.BufferGeometry {
     return this.artGeometry.acquire(key, () => {
       const geometry = factory()
-      geometry.userData.artLibraryOwned = true
+      StylizedArtLibrary.markLibraryOwned(geometry)
       return geometry
     })
   }

@@ -191,9 +191,9 @@ function extrudeProfile(points: readonly Vec2[], options?): THREE.BufferGeometry
 function tubeAlongPoints(points: readonly Vec3Like[], options?): THREE.BufferGeometry
 function branchStructure(options: BranchStructureOptions): THREE.BufferGeometry
 
-// Organic surfaces — both mutate and return the geometry passed in
-function displaceGeometry(geometry, options: DisplaceOptions): THREE.BufferGeometry
-function facetGeometry(geometry): THREE.BufferGeometry           // hard-edged look
+// Organic surfaces
+function displaceGeometry(geometry, options: DisplaceOptions): THREE.BufferGeometry  // mutates in place
+function facetGeometry(geometry, options?: FacetOptions): THREE.BufferGeometry       // returns a copy
 
 // Composition
 function mergeAll(parts, options?): THREE.BufferGeometry          // disposes sources
@@ -228,6 +228,18 @@ Rules the kit enforces so siblings cannot get them wrong:
   same idea driven by upward-facing normals rather than height.
 - `bakeOutlineNormals` welds by quantized position and writes an `outlineNormal`
   attribute; the outline material picks the smooth variant automatically.
+- **Winding invariant.** Every builder emits triangles whose vertex order agrees with
+  the normal it stores: for each non-degenerate triangle,
+  `cross(b - a, c - a) · n > 0`. Base surfaces render `FrontSide` and ink shells render
+  `BackSide`, so a builder that gets this backwards draws the far wall of every solid
+  and flips its outline in front of the object instead of behind it — a defect that
+  survives silhouette inspection because most kit shapes are symmetric. `art.test.ts`
+  asserts the invariant over every builder against three.js primitives as controls; any
+  new builder must be added to that list.
+- `facetGeometry` is **non-destructive**: it returns a hard-edged copy and leaves the
+  input untouched, so it is safe on a cached buffer. Pass `{ dispose: true }` only when
+  you own the input and want move semantics. `mergeAll` is the one helper that consumes
+  its inputs by default.
 
 ### 5.4 Geometry cache and LOD
 
@@ -299,6 +311,10 @@ class StylizedArtLibrary {
   readonly rampTexture: THREE.DataTexture
   dispose(): void
   static isLibraryOwned(resource: THREE.Material | THREE.BufferGeometry | THREE.Texture): boolean
+static markLibraryOwned(resource: THREE.Material | THREE.BufferGeometry | THREE.Texture): void
+
+// from ./stylizedShader.ts, re-exported by the barrel
+function hasStylizedShader(material: THREE.Material): boolean
 }
 ```
 
@@ -307,7 +323,7 @@ Ownership, stated once and enforced everywhere:
 - `createMaterial()` returns a **caller-owned** material. Whoever creates it disposes
   it. This matches today's `createToonMaterial()` contract.
 - `acquireMaterial(key, …)` returns a **library-owned** shared instance, tagged with
-  `userData.artLibraryOwned = true`. Callers must never dispose it; the library does,
+  a module-private ownership symbol. Callers must never dispose it; the library does,
   exactly once. Use it for anything drawn more than a handful of times.
 - The ramp texture, the outline materials, and the contact-shadow geometry/materials
   are library-owned.
@@ -321,7 +337,20 @@ Ownership, stated once and enforced everywhere:
   the same value get the same material, and mutating one mesh's `material.opacity`
   changes every mesh sharing that value.
 - `StylizedArtLibrary.isLibraryOwned()` accepts materials, geometries and textures so
-  every teardown traversal in the codebase can use one predicate.
+  every teardown traversal in the codebase can use one predicate. Hand a resource you
+  built to the library's teardown with `markLibraryOwned()`; never write the marker
+  yourself.
+- **Never `.clone()` a stylized material and expect it to stay stylized.**
+  `Material.clone()` copies `userData` but copies neither `onBeforeCompile` nor the
+  ownership/injection symbols, so the clone renders as a plain standard material.
+  This is why both markers are symbols rather than `userData` keys: a clone correctly
+  reports `isLibraryOwned() === false` (so teardown cannot skip it forever) and
+  `hasStylizedShader() === false` (so it can be repaired). Pass a clone through
+  `adoptMaterial()` to reinstate the injection, or prefer `acquireMaterial()` with a
+  distinct key over cloning in the first place.
+- Disposal is **terminal**. Every factory — `createMaterial`, `acquireMaterial`,
+  `adoptMaterial`, `getOutlineMaterial`, `applyOutline`, `createContactShadow` —
+  throws after `dispose()`. `dispose()` itself stays idempotent.
 
 The `surface` id chooses roughness/metalness/band/rim defaults; it is a preset name,
 not a shader permutation. All surfaces compile the same program.
@@ -470,6 +499,12 @@ the following as stable:
 - `import { … } from '../art/index.ts'` — every helper named in §5.3–§5.5.
 - `createMaterial` is caller-owned, `acquireMaterial` is library-owned. This is the
   only ownership question either pass has to answer.
+- **Do not `.clone()` a stylized material.** `Material.clone()` copies neither the
+  `onBeforeCompile` injection nor `customProgramCacheKey`, so the clone silently
+  renders as a plain unbanded standard material. Use `acquireMaterial` with a distinct
+  key for a variant; if a clone is unavoidable, run it through `adoptMaterial` to
+  reinstate the injection. `hasStylizedShader(material)` reports whether a material
+  actually carries the injection, which is what `adoptMaterial` now keys off.
 - `GeometryCache` is ref-counted, so both passes can key by shape parameters and let
   streaming handle lifetime.
 - `bakeOutlineNormals` before `applyOutline` for anything with hard edges.
@@ -498,6 +533,10 @@ Constraints they must respect:
 - No new textures unless a vertex colour genuinely cannot express it.
 - Every geometry they build is either owned by a `GeometryCache`, tracked in a
   region's geometry set, or disposed by the object that created it.
+- Only `mergeAll` consumes its inputs. Every other kit helper either mutates in place
+  and returns the same object (`displaceGeometry`, all `paint*`/`bake*`) or returns a
+  copy (`facetGeometry`, `transformed`). Never apply an in-place helper to a buffer
+  obtained from `GeometryCache.acquire`.
 
 ## 7. Budgets
 
@@ -543,9 +582,19 @@ Targets:
 - `StylizedArtLibrary` owns: the ramp `DataTexture`, the outline materials, the
   contact-shadow geometry, material and texture, and every `acquireMaterial` entry.
   `dispose()` releases each exactly once and is idempotent.
-- Everything the library owns is tagged `userData.artLibraryOwned = true`, on
+- Everything the library owns is marked with a module-private symbol, on
   materials, geometries *and* textures, so scene-traversal teardown can skip it with
   one predicate. `GameEngine.destroy()` and `removeAndDisposeObject()` both use it.
+  A symbol rather than a `userData` key is deliberate: `Material.copy()` deep-copies
+  `userData` through JSON but drops symbols, so a clone correctly reports
+  `isLibraryOwned() === false` instead of forging library ownership and being skipped
+  by every teardown path forever. Call `StylizedArtLibrary.markLibraryOwned()` to hand
+  the library a resource you built; never write the marker by hand.
+- **Disposal is terminal.** Every resource-producing entry point — `createMaterial`,
+  `acquireMaterial`, `adoptMaterial`, `getOutlineMaterial`, `applyOutline` and
+  `createContactShadow` — throws after `dispose()`, so a late caller cannot resurrect a
+  library-owned material that the now-cleared maps will never release. `dispose()`
+  itself remains idempotent.
 - Outline shells share their source geometry and a shared material. They add nothing
   to dispose; removing the source removes them.
 - Instanced outline shells share `instanceMatrix` with their source. They must be
@@ -611,6 +660,14 @@ Targets:
   tuning. Torch, window-glow and beacon intensities are re-checked, not left to drift.
 - Contact shadows on steep terrain will clip; they are small, unlit, depth-tested and
   fade with distance, which is cheaper than projecting them.
+- A geometry builder whose triangle winding disagrees with its stored normals renders
+  the far wall under `FrontSide` and pushes the `BackSide` ink shell in front of the
+  object. On a symmetric solid the silhouette is unchanged, so this cannot be caught by
+  eye and must be caught by the winding assertion in `tests/art.test.ts`.
+- An `InstancedMesh` caches its bounding sphere lazily over the `count` at first render.
+  Raising `count` afterwards does not invalidate it, so instances enabled later can fall
+  outside the stale sphere and frustum-cull the entire batch. Cosmetic dressing computes
+  bounds at full capacity before the density control reduces `count`.
 
 ## 12. File-level changes
 
@@ -639,6 +696,8 @@ Targets:
       survive shadow-map-off and distant camera.
 - [ ] Every geometry, material and texture the library owns is disposed exactly once;
       repeated start/return-to-menu cycles do not grow WebGL resource counts.
+- [ ] Every geometry-kit builder satisfies the winding invariant
+      (`cross(b - a, c - a) · n > 0`), verified against three.js primitives as controls.
 - [ ] No `Math.random()` anywhere under `src/game/art/`, `createCharacter()` or the
       world construction path.
 - [ ] `tests/worldGenerator.test.ts` determinism and fingerprint assertions pass

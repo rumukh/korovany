@@ -171,13 +171,17 @@ export function loftProfile(options: LoftOptions): THREE.BufferGeometry {
         return radialNormal
       }
 
+      // Counter-clockwise seen from outside, so the winding agrees with the
+      // outward normals written above. Reversing these six pushes turns every
+      // loft inside out: `FrontSide` would draw the far wall and the `BackSide`
+      // ink shell would cover the mesh instead of haloing it.
       pushVertex(ring, point, normalFor(point), u0)
-      pushVertex(ring, next, normalFor(next), u1)
       pushVertex(ring + 1, next, normalFor(next), u1)
+      pushVertex(ring, next, normalFor(next), u1)
 
       pushVertex(ring, point, normalFor(point), u0)
-      pushVertex(ring + 1, next, normalFor(next), u1)
       pushVertex(ring + 1, point, normalFor(point), u0)
+      pushVertex(ring + 1, next, normalFor(next), u1)
     }
   }
 
@@ -186,7 +190,8 @@ export function loftProfile(options: LoftOptions): THREE.BufferGeometry {
     const coordinates = rings[ring]
     capNormal.set(0, upward ? 1 : -1, 0)
     for (let point = 1; point < pointCount - 1; point += 1) {
-      const order = upward ? [0, point, point + 1] : [0, point + 1, point]
+      // Fan winding has to match the cap normal, same reasoning as the walls.
+      const order = upward ? [0, point + 1, point] : [0, point, point + 1]
       for (const index of order) {
         const offset = index * 3
         positions.push(
@@ -841,13 +846,32 @@ export function displaceGeometry(
 }
 
 /** Hard-edges a geometry so every triangle keeps its own normal. */
+export interface FacetOptions {
+  /**
+   * Consumes the input instead of leaving it untouched. Off by default —
+   * opt in only when you built the input purely to facet it.
+   */
+  dispose?: boolean
+  name?: string
+}
+
+/**
+ * Returns a hard-edged copy: every triangle gets its own flat normal.
+ *
+ * **Non-destructive by default.** This is exported to the model passes, and the
+ * two ways to break a shared buffer here are disposing a cached input and
+ * recomputing normals in place on a geometry other meshes still reference — so
+ * neither happens unless `dispose` is set. Never pass a `GeometryCache.acquire`
+ * result with `dispose: true`.
+ */
 export function facetGeometry(
   geometry: THREE.BufferGeometry,
+  options: FacetOptions = {},
 ): THREE.BufferGeometry {
-  const faceted = geometry.index ? geometry.toNonIndexed() : geometry
+  const faceted = geometry.index ? geometry.toNonIndexed() : geometry.clone()
   faceted.computeVertexNormals()
-  faceted.name = geometry.name
-  if (faceted !== geometry) geometry.dispose()
+  faceted.name = options.name ?? geometry.name
+  if (options.dispose === true) geometry.dispose()
   return faceted
 }
 

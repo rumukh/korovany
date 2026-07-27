@@ -467,8 +467,8 @@ matters most.
 
 ### 5B.2 Meshes
 
-Procedural quadrupeds from the same `BoxGeometry` / `ConeGeometry` primitives and
-`ComicMaterialLibrary.createToonMaterial` the humanoids use — no external assets, no new
+Procedural quadrupeds from the same geometry-kit builders and
+`StylizedArtLibrary` materials (see `src/game/art/`) the humanoids use — no external assets, no new
 art pipeline. `createBeast()` reuses the humanoid **pivot names** (`body-pivot`,
 `torso-pivot`, `head-pivot`, `pelvis-pivot`, `leftArm` / `rightArm` for the front legs,
 `leftLeg` / `rightLeg` for the hind ones, `faction-ring`). That is what lets
@@ -1203,7 +1203,7 @@ is bounded the same way, on the `wanderTimer` a villager already carries.
       are hostile to all three sides and to civilians by the matrix rather than by
       accident, and civilians are hostile to nothing but the forest.
 - [x] Beasts exist as `wolf` / `boar` / `bear` / `troll` with procedural quadruped meshes
-      built from the existing primitives and `ComicMaterialLibrary` — no new assets.
+      built from the shared geometry kit and `StylizedArtLibrary` — no new assets.
 - [x] A wolf pack routs when it breaks; a boar charges and cannot steer; a troll takes a
       settlement apart instead of fighting people.
 - [x] `beastRaid` materializes and resolves back into chronicle state, and the Layer 2

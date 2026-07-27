@@ -12,10 +12,15 @@ import {
   branchStructure,
   createLod,
   displaceGeometry,
+  facetGeometry,
   fbm3,
   hasOutlineNormals,
+  hasStylizedShader,
   latheProfile,
+  loftProfile,
   mergeAll,
+  polygonProfile,
+  rectProfile,
   stylizedCapsule,
   taperedBox,
   tubeAlongPoints,
@@ -640,3 +645,169 @@ test('tube caps wind outward regardless of tube direction', () => {
   }
 })
 
+
+/**
+ * The tube test above only ever covered `tubeAlongPoints`. `loftProfile` is the
+ * workhorse under tapered boxes, capsules, trunks, roofs and most actor parts,
+ * and it shipped wound inside-out: every triangle's winding opposed its own
+ * outward normal, so `FrontSide` drew the far wall of every solid and the
+ * `BackSide` ink shell drew in front of the mesh instead of behind it.
+ */
+test('every geometry-kit builder winds to agree with its normals', () => {
+  const disagreements = (geometry: THREE.BufferGeometry): number => {
+    const position = geometry.getAttribute('position')
+    const normal = geometry.getAttribute('normal')
+    const index = geometry.getIndex()
+    const count = index ? index.count : position.count
+    const at = (i: number): number => (index ? index.getX(i) : i)
+    const a = new THREE.Vector3()
+    const b = new THREE.Vector3()
+    const c = new THREE.Vector3()
+    const edge1 = new THREE.Vector3()
+    const edge2 = new THREE.Vector3()
+    const wind = new THREE.Vector3()
+    const stored = new THREE.Vector3()
+    const corner = new THREE.Vector3()
+    let bad = 0
+    for (let triangle = 0; triangle + 2 < count; triangle += 3) {
+      const indices = [at(triangle), at(triangle + 1), at(triangle + 2)]
+      a.fromBufferAttribute(position, indices[0])
+      b.fromBufferAttribute(position, indices[1])
+      c.fromBufferAttribute(position, indices[2])
+      wind.crossVectors(edge1.subVectors(b, a), edge2.subVectors(c, a))
+      if (wind.lengthSq() < 1e-14) continue
+      stored.set(0, 0, 0)
+      for (const i of indices) {
+        corner.fromBufferAttribute(normal, i)
+        stored.add(corner)
+      }
+      if (stored.lengthSq() < 1e-14) continue
+      if (wind.dot(stored) <= 0) bad += 1
+    }
+    return bad
+  }
+
+  // Pins the convention: three.js's own builders are correct by definition, so
+  // if this control ever fails the assertion is wrong, not the geometry kit.
+  const control = new THREE.BoxGeometry(1, 1, 1)
+  assert.equal(disagreements(control), 0, 'BoxGeometry control must agree')
+  control.dispose()
+
+  const cases: [string, THREE.BufferGeometry][] = [
+    [
+      'loft faceted',
+      loftProfile({
+        profile: polygonProfile(1, 12),
+        sections: [
+          { y: 0, scaleX: 1 },
+          { y: 1, scaleX: 0.8 },
+          { y: 2, scaleX: 0.3 },
+        ],
+      }),
+    ],
+    [
+      'loft smooth',
+      loftProfile({
+        profile: polygonProfile(1, 10),
+        sections: [
+          { y: 0, scaleX: 1 },
+          { y: 1.5, scaleX: 0.6 },
+        ],
+        smooth: true,
+      }),
+    ],
+    [
+      'loft rect bevelled',
+      loftProfile({
+        profile: rectProfile(1, 1, 0.15),
+        sections: [
+          { y: 0, scaleX: 1 },
+          { y: 1, scaleX: 0.7 },
+        ],
+      }),
+    ],
+    ['tapered box', taperedBox({ width: 1, height: 2, depth: 1, topScale: 0.6 })],
+    ['stylized capsule', stylizedCapsule({ radius: 0.4, height: 1.2 })],
+    ['lathe', latheProfile([
+      { x: 0.05, y: 0 },
+      { x: 0.5, y: 0.5 },
+      { x: 0.3, y: 1 },
+    ])],
+  ]
+
+  for (const [label, geometry] of cases) {
+    assert.equal(
+      disagreements(geometry),
+      0,
+      `${label} must wind to agree with its normals`,
+    )
+    geometry.dispose()
+  }
+})
+
+test('a cloned stylized material is repairable and cannot forge ownership', () => {
+  const library = createLibrary()
+  const shared = library.acquireMaterial('clone-source', {
+    surface: 'cloth',
+    color: 0x884422,
+  })
+  assert.equal(hasStylizedShader(shared), true)
+  assert.equal(StylizedArtLibrary.isLibraryOwned(shared), true)
+
+  // `Material.copy()` deep-clones userData through JSON but copies neither the
+  // ownership symbol nor `onBeforeCompile`.
+  const clone = shared.clone()
+  assert.equal(
+    hasStylizedShader(clone),
+    false,
+    'a clone loses the injection, so it must not claim to have it',
+  )
+  assert.equal(
+    StylizedArtLibrary.isLibraryOwned(clone),
+    false,
+    'a clone must not inherit library ownership or teardown would skip it forever',
+  )
+
+  library.adoptMaterial(clone, { surface: 'cloth' })
+  assert.equal(hasStylizedShader(clone), true, 'adoptMaterial must repair a clone')
+  assert.equal(
+    StylizedArtLibrary.isLibraryOwned(clone),
+    false,
+    'repairing does not transfer ownership',
+  )
+
+  clone.dispose()
+  library.dispose()
+})
+
+test('every factory refuses to produce resources after disposal', () => {
+  const library = createLibrary()
+  library.dispose()
+  assert.throws(() => library.createMaterial({ surface: 'cloth', color: 0x112233 }))
+  assert.throws(() => library.acquireMaterial('late', { surface: 'cloth', color: 0x112233 }))
+  assert.throws(() => library.adoptMaterial(new THREE.MeshStandardMaterial()))
+  assert.throws(() => library.getOutlineMaterial('player', false))
+  assert.throws(() => library.applyOutline(new THREE.Group(), 'player'))
+  // Idempotent second dispose must stay a no-op.
+  library.dispose()
+})
+
+test('facetGeometry leaves its input alone unless asked to consume it', () => {
+  const source = taperedBox({ width: 1, height: 1, depth: 1 })
+  const sourceNormals = source.getAttribute('normal').array.slice()
+  const faceted = facetGeometry(source)
+  assert.notEqual(faceted, source, 'a faceted result must be a separate geometry')
+  assert.deepEqual(
+    Array.from(source.getAttribute('normal').array),
+    Array.from(sourceNormals),
+    'the input normals must not be recomputed in place',
+  )
+  assert.ok(source.getAttribute('position').count > 0, 'the input must stay usable')
+  faceted.dispose()
+
+  const consumed = taperedBox({ width: 1, height: 1, depth: 1 })
+  const moved = facetGeometry(consumed, { dispose: true })
+  assert.notEqual(moved, consumed)
+  moved.dispose()
+  source.dispose()
+})

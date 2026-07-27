@@ -3,6 +3,7 @@ import { OUTLINE_NORMAL_ATTRIBUTE, hasOutlineNormals } from './GeometryKit.ts'
 import {
   applyOutlineShader,
   applyStylizedShader,
+  hasStylizedShader,
   type OutlineSharedUniforms,
   type StylizedSharedUniforms,
 } from './stylizedShader.ts'
@@ -22,9 +23,11 @@ import {
  * - `acquireMaterial()` hands back a **library-owned** shared instance. Callers
  *   must never dispose it; `dispose()` here releases it exactly once.
  *
- * Anything the library owns is tagged `userData.artLibraryOwned`, on materials,
+ * Anything the library owns is marked with a module-private symbol, on materials,
  * geometries and textures alike, so every teardown path in the codebase can use one
- * predicate instead of guessing.
+ * predicate (`isLibraryOwned`) instead of guessing. Use `markLibraryOwned()` to hand
+ * a caller-built resource over; the marker is deliberately not a `userData` key, so
+ * cloning a shared resource cannot forge ownership.
  */
 
 export type StylizedSurface =
@@ -122,7 +125,22 @@ interface SurfacePreset {
   flatShading: boolean
 }
 
-const ART_LIBRARY_OWNED = 'artLibraryOwned'
+/**
+ * Ownership marker.
+ *
+ * A symbol on the resource, not a `userData` key: `Material.copy()` deep-clones
+ * `userData` through JSON, so a string key would make every clone of a shared
+ * material falsely claim library ownership — and the engine's teardown paths
+ * skip disposing anything that claims it, leaking the clone forever.
+ */
+const ART_LIBRARY_OWNED = Symbol('artLibraryOwned')
+
+type OwnableResource = THREE.Material | THREE.BufferGeometry | THREE.Texture
+
+function markOwned(resource: OwnableResource): void {
+  ;(resource as unknown as Record<symbol, boolean>)[ART_LIBRARY_OWNED] = true
+}
+
 const OUTLINE_MARKER = 'comicOutline'
 /** Holds a shell's own instance buffer while it borrows its source's. */
 const SHELL_OWN_MATRIX = 'comicOutlineOwnMatrix'
@@ -347,6 +365,7 @@ export class StylizedArtLibrary {
 
   /** Creates a **caller-owned** stylized material. */
   createMaterial(options: StylizedMaterialOptions): THREE.MeshStandardMaterial {
+    this.assertActive('create a material')
     const preset = SURFACE_PRESETS[options.surface]
     const material = new THREE.MeshStandardMaterial({
       color: options.color,
@@ -388,7 +407,7 @@ export class StylizedArtLibrary {
     const existing = this.sharedMaterials.get(key)
     if (existing) return existing
     const material = this.createMaterial({ ...options, name: options.name ?? key })
-    material.userData[ART_LIBRARY_OWNED] = true
+    markOwned(material)
     this.sharedMaterials.set(key, material)
     return material
   }
@@ -399,6 +418,10 @@ export class StylizedArtLibrary {
    * For meshes constructed elsewhere in the engine that still have to band, catch
    * the rim and follow the shadow tint. **Ownership does not move** — the caller
    * disposes it, and `isLibraryOwned` stays false. Adopting twice is a no-op.
+   *
+   * This is also the repair path for a cloned material. `Material.clone()` copies
+   * `userData` but not `onBeforeCompile`, so a clone of a stylized material
+   * renders unstyled; passing it here reinstates the injection.
    */
   adoptMaterial(
     material: THREE.MeshStandardMaterial,
@@ -407,7 +430,10 @@ export class StylizedArtLibrary {
     if (this.disposed) {
       throw new Error('Cannot adopt a material into a disposed art library')
     }
-    if (material.userData.stylizedSurface !== undefined) return material
+    // Keyed off the injection itself, not `userData.stylizedSurface`: a clone
+    // inherits the marker through the userData copy while losing the shader, so
+    // trusting userData here would refuse to repair exactly the case that needs it.
+    if (hasStylizedShader(material)) return material
     const surface = options.surface ?? 'cloth'
     const preset = SURFACE_PRESETS[surface]
     material.userData.stylizedSurface = surface
@@ -416,10 +442,16 @@ export class StylizedArtLibrary {
       rimStrength: options.rimStrength ?? preset.rimStrength,
       rimPower: preset.rimPower,
     })
+    // A repaired clone already has a compiled program; force the recompile.
+    material.needsUpdate = true
     return material
   }
 
   getOutlineMaterial(kind: OutlineKind, smooth: boolean): THREE.MeshBasicMaterial {
+    // Without this guard a post-dispose call would repopulate the cleared map
+    // with a fresh library-owned material, and the idempotent second `dispose()`
+    // returns early — so that material would never be freed.
+    this.assertActive('build an outline material')
     const key = `${kind}:${smooth ? 'smooth' : 'flat'}`
     const existing = this.outlineMaterials.get(key)
     if (existing) return existing
@@ -434,7 +466,7 @@ export class StylizedArtLibrary {
       fog: true,
     })
     material.name = `ink-outline:${key}`
-    material.userData[ART_LIBRARY_OWNED] = true
+    markOwned(material)
     applyOutlineShader(material, this.outlineUniforms, smooth)
     this.outlineMaterials.set(key, material)
     return material
@@ -451,6 +483,7 @@ export class StylizedArtLibrary {
     kind: OutlineKind,
     options: OutlineOptions = {},
   ): OutlineBinding {
+    this.assertActive('apply an outline')
     const sources: THREE.Mesh[] = []
     root.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return
@@ -523,12 +556,12 @@ export class StylizedArtLibrary {
       const geometry = new THREE.CircleGeometry(1, 18)
       geometry.rotateX(-Math.PI / 2)
       geometry.name = 'contact-shadow'
-      geometry.userData[ART_LIBRARY_OWNED] = true
+      markOwned(geometry)
       this.contactShadowGeometry = geometry
     }
     if (!this.contactShadowTexture) {
       const texture = createContactShadowTexture()
-      texture.userData[ART_LIBRARY_OWNED] = true
+      markOwned(texture)
       this.contactShadowTexture = texture
     }
     const opacity = THREE.MathUtils.clamp(options.opacity ?? 0.34, 0, 1)
@@ -545,7 +578,7 @@ export class StylizedArtLibrary {
         fog: true,
       })
       material.name = `contact-shadow:${key}`
-      material.userData[ART_LIBRARY_OWNED] = true
+      markOwned(material)
       material.userData.noComicOutline = true
       this.contactShadowMaterials.set(key, material)
     }
@@ -558,6 +591,19 @@ export class StylizedArtLibrary {
     mesh.renderOrder = 1
     mesh.userData.noComicOutline = true
     return mesh
+  }
+
+  /**
+   * Disposal is terminal for every factory on this library.
+   *
+   * Producing a resource after `dispose()` would attach the disposed ramp
+   * texture and, for the cached maps, re-add a library-owned material that the
+   * idempotent second `dispose()` would never free.
+   */
+  private assertActive(action: string): void {
+    if (this.disposed) {
+      throw new Error(`Cannot ${action} on a disposed art library`)
+    }
   }
 
   dispose(): void {
@@ -585,7 +631,19 @@ export class StylizedArtLibrary {
   static isLibraryOwned(
     resource: THREE.Material | THREE.BufferGeometry | THREE.Texture,
   ): boolean {
-    return resource.userData[ART_LIBRARY_OWNED] === true
+    return (resource as unknown as Record<symbol, boolean>)[ART_LIBRARY_OWNED] === true
+  }
+
+  /**
+   * Transfers ownership of a caller-built resource to the library's teardown.
+   *
+   * Use this instead of writing the marker by hand: the marker is a module-private
+   * symbol precisely so it cannot be forged, inherited by a clone, or drift.
+   */
+  static markLibraryOwned(
+    resource: THREE.Material | THREE.BufferGeometry | THREE.Texture,
+  ): void {
+    markOwned(resource)
   }
 }
 
@@ -646,7 +704,7 @@ function createRampTexture(
   texture.generateMipmaps = false
   // The ramp is a lighting intensity curve, not a display colour.
   texture.colorSpace = THREE.NoColorSpace
-  texture.userData[ART_LIBRARY_OWNED] = true
+  markOwned(texture)
   texture.needsUpdate = true
   return texture
 }

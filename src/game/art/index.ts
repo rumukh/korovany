@@ -52,6 +52,7 @@ export {
   type BranchStructureOptions,
   type DisplaceOptions,
   type ExtrudeProfileOptions,
+  type FacetOptions,
   type GradientColorOptions,
   type LatheProfileOptions,
   type LoftOptions,
@@ -90,3 +91,5 @@ export {
   type StylizedMaterialOptions,
   type StylizedSurface,
 } from './StylizedArtLibrary.ts'
+
+export { hasStylizedShader } from './stylizedShader.ts'
