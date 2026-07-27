@@ -65,38 +65,81 @@ tables that only described code that already existed, file-by-file change lists 
 now holds better than prose, spec section numbering, and the specs' own **effort estimates** —
 planning artifacts for work that is finished, carrying nothing a future implementer needs.
 
-Coverage was checked mechanically, and the check has a negative control. An earlier revision of
-this document reported "93.4% numeric coverage" from a **document-wide** token set, which was not
-a measurement of anything useful: a number counted as preserved if it occurred *anywhere* in a
-2,800-line file, so loot's 120 ms beam reveal registered as present because `120` appears in the
-weather table. **Global presence is not contextual preservation.**
+Coverage is checked mechanically by a tool **that is in this repository**: `scripts/strategy-facts.mjs`,
+run as `npm run docs:facts`, with its extracted fact set in `scripts/strategy-facts.fixtures.json`.
+Anyone can regenerate the numbers below with `node scripts/strategy-facts.mjs --generate` (which reads
+the deleted specs back out of commit `d854a75`) and then `node scripts/strategy-facts.mjs`. A figure
+only its author can reproduce is not evidence, and two earlier versions of this measurement were
+wrong in ways that only became visible when someone else checked.
 
-The check is now **section-scoped**: each spec is compared only against the consolidated section
-that replaces it, and a fact counts as preserved only if it appears in the section that owns it.
-The instrument is verified by deleting two facts that *are* present from a section and confirming
-the miss count rises — without that control it would be a metric rather than a check. Result:
-**952 fact-bearing tokens across the fifteen pairings, 93.4% preserved in the owning section.**
+1. **A document-wide token set** reported "93.4% numeric coverage". It counted a number as preserved
+   if it occurred *anywhere* in a 2,800-line file, so loot's 120 ms beam reveal registered as present
+   because `120` appears in the weather table. **Global presence is not contextual preservation.**
+2. The replacement was section-scoped but its control **sampled from its own output**: it deleted
+   facts the extractor had already selected and confirmed the miss count rose. That tests the
+   *matcher*. It says nothing about whether the extractor recognises a class of fact at all — which
+   is exactly where every real miss was hiding. **You cannot test recall by sampling from your own
+   precision set.**
 
-| Spec → section | Facts | In-section |
-| --- | ---: | ---: |
-| day/night cycle | 60 | 100.0% |
-| combat depth | 67 | 98.5% |
-| weather | 59 | 96.6% |
-| living world | 331 | 95.5% |
-| combat juice | 61 | 93.4% |
-| bloom | 14 | 92.9% |
-| ground foliage | 55 | 92.7% |
-| enemy reactions | 49 | 91.8% |
-| loot spectacle | 48 | 91.7% |
-| layered audio | 37 | 89.2% |
-| comic hit language | 55 | 89.1% |
-| dynamic world events | 22 | 86.4% |
-| camera accents | 50 | 86.0% |
-| zone art direction | 19 | 84.2% |
-| toon shading | 25 | 80.0% |
+The checker now has three properties. It is **section-scoped**: each spec is compared only against
+the consolidated section that replaces it, and a fact counts as preserved only if it appears in the
+section that **owns** it. It extracts **nine declared classes**, one for each promise made above. And
+every class has its **own recall control**: before reporting, a known fact of that class is removed
+from its section and the run **aborts** unless the checker notices — a class whose control cannot
+fire is reported as blind and fails the run. The storage-key class is additionally enumerated from
+`src/` rather than from the specs, so that class's control cannot be satisfied by the extractor's own
+output.
 
-The residue is the `THREE` namespace, cross-references to other specs by number, effort estimates,
-and line-number citations into files that no longer exist.
+**Result: 1,634 facts across the fifteen pairings, 100% present in the owning section.**
+
+| Spec → section | Facts | | Class | Facts |
+| --- | ---: | --- | --- | ---: |
+| living world | 524 | | numeric value | 576 |
+| combat juice | 118 | | named constant | 342 |
+| comic hit language | 107 | | design rule | 249 |
+| weather | 91 | | lifecycle / ownership rule | 139 |
+| loot spectacle | 91 | | budget rule | 127 |
+| layered audio | 91 | | edge-case rule | 101 |
+| enemy reactions | 88 | | formula | 76 |
+| ground foliage | 86 | | accessibility rule | 23 |
+| combat depth | 79 | | storage key | 12, from `src` |
+| day/night cycle | 78 | | | |
+| camera accents | 77 | | | |
+| dynamic world events | 67 | | | |
+| toon shading | 61 | | | |
+| zone art direction | 50 | | | |
+| bloom | 26 | | | |
+
+**Read that 100% correctly.** It says every fact *this extractor recognises* is present in the
+section that owns it. It does **not** say nothing was lost — an extractor cannot measure what it
+cannot see, which is the failure that produced both wrong numbers above. The nine per-class recall
+controls exist precisely to bound that residual risk, and the honest statement is that the remaining
+exposure is a class of fact none of the nine patterns matches, not a fact one of them matched and
+dropped. The first honest run of this instrument scored **75.5%**, with `lifecycleRule` at 28.2% and
+`accessibilityRule` at 34.8%; the difference is restored content, not a relaxed test.
+
+Four extractor exclusions are declared rather than silent, because each removes a *misclassification*
+rather than a fact: effort estimates in days or weeks (planning artifacts for finished work);
+cross-references to sibling specs by number or filename; line-number citations into files that no
+longer exist; and TypeScript member declarations such as `private thunderDelay = -1`, whose values
+are already covered by the `constant` and `numericValue` classes. Both sides are normalised for
+British and American spelling, because `behaviour` and `behavior` are the same fact.
+
+**Storage keys are a closed set**, enumerated from `src/` rather than sampled, because the class is
+finite and there is no excuse for missing one. The checker **fails the run** if any key is absent
+from the section that owns it:
+
+| Key | Owned by |
+| --- | --- |
+| `korovany-ink-outlines` | §8 toon shading |
+| `korovany-bloom` | §10 bloom |
+| `korovany-foliage` | §11 ground foliage |
+| `korovany-dynamic-day-night` | §12 day/night |
+| `korovany-weather` | §13 weather |
+| `korovany-sfx-volume`, `korovany-music-muted` | §15 layered audio |
+| `korovany-theme`, `korovany-screen-shake` | UI theme and comfort settings — no folded spec |
+| `korovany-profile-v1`, `korovany-achievements-v1` | meta-progression — no folded spec |
+| `korovany-generated-run-v2` | active-run save — no folded spec |
 
 Two documents in `docs/` were deliberately **not** folded:
 `from-four-zones-to-a-seeded-campaign.md` and its `.ru.md` translation. They are published
@@ -855,6 +898,73 @@ contradictions; the layer boundaries, budget arithmetic and determinism assertio
 `tests/actorAi.test.ts`, `tests/layer4Ai.test.ts`, `tests/aiQuestions.test.ts`,
 `tests/beastEncounters.test.ts`, `tests/fauna.test.ts`, `tests/ambientLife.test.ts`,
 `tests/allegiance.test.ts` and `tests/worldEnvironment.test.ts`.
+
+**Residual constants, budgets and edge rules the layers depend on.** `MAX_ACTIVE` is now *"one
+player-anchored event plus `MAX_LOCATED_EVENTS` located ones"*, with `eventCooldown` at **50–70 s**
+scaled by threat tier. `WEATHER_BY_ZONE[biome under the player]` and its sibling live in
+`world/WorldEnvironment.ts`. Chronicle prose lives in named tables — `WORLD_EVENT_FAILURE_MESSAGES`
+moved out of `describeEventHandback`, and `describeRout()`, `RALLY_NOTICE` and
+`describeCaravanPlundered()` live beside it — so the feed's wording is data, not string literals
+buried in the engine. Feed toasts clear after **4.3 s** with no history, which is why the collapsible
+«Хроника» panel exists at all. NPC-vs-NPC hunt radius is **6.5 m** (15 m for archers). Ambient
+prowlers appear above `AMBIENT_BEAST_PRESSURE = 0.45` with `AMBIENT_BEAST_LIMIT = 2`, and raid packs
+above `MATERIALIZE_BEAST_PRESSURE`.
+
+**The budget split is the design, not an optimisation.** Ambient life sits on the **`ambient`**
+budget so it yields its slot the moment anything real needs it; ambient prowlers are **evicted when a
+raid materialises** rather than the cap being breached. Layer 5 was scoped as *the cheapest perceived
+value per actor slot* — and the cheapest possible is **zero slots**, which is what four of its five
+parts cost: they allocate no actor at all and their props are capped separately. A converted captive
+becomes `normal`, moving **from the `ambient` to the `squad` budget** and getting its weapon back.
+The panic arm exhausts its frame budget before resolved fights are handled — *"not resolved fights"*
+is the deliberate ordering.
+
+**Measured residue.** Menacing ambience came out at **0.60** map per cent per sample against **0.46**
+calm. Corpse-aware alarms cost about a **17%** drop against baseline — *"the price of three villagers
+running through a fight"*. Birds climb **~19 m** over `BIRD_FLIGHT_SECONDS = 3.4`
+(`BIRD_CLIMB_SPEED = 5.5`, `BIRD_CRUISE_SPEED = 8`), and **27 m** of horizontal flight cannot reach a
+78 m despawn radius from a 22–54 m spawn — so a bird could never despawn by flying away, and had to
+be given an explicit timer.
+
+**Edge rules.** A frozen `alarmPos` — remembering where the villager was when the panic *started* —
+is what curves the flight path instead of producing a straight line. Victory or defeat **stops the
+chronicle ticking**; it does not keep simulating a world the player has left.
+`findPendingMaterializations` used to *discard* pending entries — picking from a smaller set — which is why an early measurement
+looked cleaner than it was. If a site really is underfoot the actor must visibly act somewhere other
+than directly under the player.
+
+**The invariants, stated as invariants.** *The dependency runs one way: materialization consumes
+chronicle output, never the reverse* — `world/Materialization.ts` reads the chronicle and the
+chronicle never reads it back. *The player must never watch a building change state from thin air*,
+so materialization happens outside view and the player never watches a building change state from
+thin air. Ambient actors are invisible to the campaign: *the objectives do not know they exist —
+killing one advances nothing and strands nothing*, enforced through `killActor`. A crow **can never
+end up circling an id nobody holds**. And the two acceptance criteria that bound the whole layer:
+**beasts never change who holds a square, and 500 seeded campaigns remain completable**; *a civilian
+can never block or strand a campaign objective*, again across 500 seeded campaigns, with
+`WorldValidator` asserting it.
+
+**Named failure modes, kept because they were found the hard way.** *"Panic that never ends"* — a
+villager re-panics while its own alarm is still present, a feedback loop rather than a bug in the
+panic itself. An attacker with **no queue to rank against fell through to the *player's* queue**,
+which is how a bird's expired timer produced a wrong result. And `tests/materialization.test.ts`
+once **asserted a thing never appeared** — an assertion that had to be inverted once it did.
+
+**Two rules about rules.** Any config value that encodes an opt-out — *"no threshold", "never
+spawns", "not eligible"* — should be expressed that way in the table rather than as a magic
+sentinel. And the counterfactual discipline: *the counterfactual was written to check that villagers
+do not **defuse** a raid* — that is, to test for the thing ambient life must **not** do. Scattering
+puts the effect back: **0 against the empty-square baseline**.
+
+**Alarm and morale constants, written out.** `ALERT_SIGHTING_RADIUS = 20` with `ALERT_COOLDOWN = 1.5`
+unchanged; `CIVILIAN_ALARM_RADIUS = 12` is **shorter** than a soldier's 15 on purpose, so civilians
+raise alarms later and less reliably than trained troops. `MORALE_LOSSES = 0.7` is what the design asks for, and it puts "half
+your health gone" into morale terms. Saves are `ActiveRunSaveV3` at `ACTIVE_RUN_SAVE_VERSION = 3`, and the storage entry is versioned
+with it.
+`WorldSite.owner` is static blueprint data: site ownership has no runtime entity behind it, which
+is why the chronicle had to invent one. Of the implementation work, the simulation layers **were the
+bulk; the feed and map overlays were
+the fiddly bits**.
 ---
 
 ### 2. Combat depth — faction abilities and enemy roles
@@ -928,6 +1038,12 @@ brace cannot become stuck active.
 tables match; `AbilityView` and `createAbilityView()` at `types.ts:218-256`; `MAX_ACTORS` has
 since moved to `world/ActorBudget.ts:15`. `SHIELD_RERAISE = 0.4` exists as behaviour but not as a
 named constant.
+
+**Two bounding rules.** The actor array has a **lifetime cap of 25 entries including dead actors**,
+so corpses consume budget — which is why gore and loot are pooled separately rather than spawned as
+actors. Expired, out-of-world, hit and destroyed projectiles **remove and dispose** rather than
+accumulating. And the criterion that defines the guard: **guard brace reduces frontal damage only**
+and blocks frontal injuries only — it is a facing mechanic, not a damage-reduction stat.
 
 ---
 
@@ -1014,7 +1130,8 @@ the current attack speed."* · *"Do not teleport for knockback."* · *"Do not in
 animation pose. The action timer is authoritative; visuals sample it."* · *"Do not make colour the
 only telegraph."*
 
-Reduced motion shortens root translation, spin and knockback visual travel by 40% but never
+Telegraph opacity must remain readable **in all four zone ground textures and at night**. Reduced
+motion shortens root translation, spin and knockback visual travel by 40% but never
 removes windup timing or the ground warning.
 
 **Status: shipped, criteria now resolved as 4 verified / 4 partial / 2 unverifiable.** All six
@@ -1025,6 +1142,38 @@ wall-pop guarantees, death-hook exactly-once and the browser captures are behavi
 inspection cannot settle. **One deviation found:** the spec says stagger immunity simply blocks a
 second break, but `GameEngine.ts:5027` also floors poise at `maxPoise × 0.7` *during* immunity —
 an implementation detail that was never in the spec.
+
+**Ownership, pooling and edge cases.** Telegraph targets are held as a `Map<string,
+EventPropTarget>` keyed by stable id while an event owns attackable props — deliberately, so nothing
+keeps a direct `Actor` or event-prop reference that could become **stale** after removal. AI-vs-AI
+targets are likewise looked up by stable actor id, so array removal or reordering cannot repoint an
+in-flight attack. The **telegraph pool never exceeds eight** entries and releases them when actors
+die or events end; event cleanup hides and releases telegraphs owned by removed actors, and
+`destroy()` disposes the pool **through scene ownership** rather than a bespoke pass. Event props can
+become invalid during cleanup: an invalid prop action becomes a **whiff and cannot damage a
+replacement target**.
+
+Two consequences worth stating plainly, because they are the point of the feature: the player can
+**escape a melee windup by moving out of range** during the telegraph — that is the readability
+payoff — and brutes, commanders and champions apply role resistance, so **knockback cannot be
+stacked** into a chain-launch. The spec's own scaling note: if the role timing tables grow further,
+extract pure config and types into a separate module rather than widening `GameEngine`.
+
+**Negative controls the spec fixed.** *"Do not add a full actor state machine that replaces
+targeting."* · *"Do not use unbounded additive timers"* — action and reaction state are bounded, and
+repeated flinches take the **maximum remaining duration** rather than accumulating. Actors receive
+stride animation through `animateActorCharacter(actor)`; *do not continue adding positional numeric
+parameters* to it, and role timing tables belong in `src/game/combatConfig.ts` — *do not move mutable
+Three.js actor state out of the engine*. *"Do not flash the entire screen for enemy windups"* — the
+telegraph is local to the attacker. A **captive never starts an attack until its existing AI mode
+changes**. The death animation **must not call reward, objective or event kill hooks more than
+once**. And the criterion that binds the whole feature: light hits visibly flinch but **do not
+cancel attacks**; only a poise break does.
+
+`killActor()` instantly rotates the whole character to **±90 degrees**, lowers Y, rotates the weapon,
+hides indicators and emits gore — the death "animation" is a single pose change, not a clip. The
+principal risks the spec named for itself were the telegraph timing, **knockback, and event-target
+cleanup**.
 
 ---
 
@@ -1094,7 +1243,22 @@ several actors inside one 90 ms UI throttle window."* · *"Do not freeze the `Au
 stop."* · *"Do not add stop time once per cleave target."* · *"Never call `setTimeout` for effect
 expiry."*
 
-Accessibility: weight is encoded by size, backing silhouette, word and colour — never colour
+**Lifecycle and edge cases.** `updateComicHitFx(delta)` runs inside the active simulation update,
+after particles. Pausing, ending, returning to the menu or losing focus sets `hitStopRemaining = 0`
+and hides every active number, callout, ray and trail; **world FX do not age while paused**.
+Acquiring a pooled number clears the old canvas before drawing and resets texture, opacity, scale,
+rotation, velocity, priority and timers. Pool objects stay in the scene until teardown; canvas
+textures are disposed once, and the shared callout and ray textures live in `generatedTextures`. A
+target killed by the same hit produces **one** result, not a separate death event; a brute's frontal
+mitigation is reflected in the number and weight shown; a block shows `БЛОК!` with block colour,
+chip damage and no blood callout; damage rounding below one displays `1` only if positive, and zero
+damage displays `БЛОК` rather than a fake number; if a target dies mid-cleave, later logic must not
+acquire a second effect for it; and after a long tab suspension the delta clamp applies so hit stop
+cannot exceed its requested wall-clock duration.
+
+Accessibility: **when the existing screen-shake preference is disabled or reduced motion is
+preferred**, hit stop is capped and drift removed rather than the whole language being switched off.
+Weight is encoded by size, backing silhouette, word and colour — never colour
 alone. Reduced motion caps every stop at `HIT_STOP_REDUCED_MAX`, removes lateral drift and uses
 scale and fade only. Numbers bias away from the central 8% of the viewport so they cannot cover
 the crosshair.
@@ -1104,6 +1268,27 @@ the crosshair.
 → `presentCleaveFeedback:12495` → `requestHitStop:12527`; callout probabilities at `:12769-12776`;
 weapon trail at `:1542`/`:2014`. Frame-rate stability and the browser stress check remain
 unverified.
+
+**Negative controls the spec fixed.** *"Do not allocate a new canvas or texture for every number"* —
+pool a fixed set. *"Do not show text through the whole map"*: local-player feedback is local.
+*"Do not sample historical blade positions or allocate trail segments per frame."* *"Do not create a
+generic effect framework"* — extract `ComicHitFx.ts` only after the behaviour works. Extend the
+existing `damageActor` options with `attackKind` rather than adding a parallel path. **Never spawn
+more than one callout in `CALLOUT_COOLDOWN = 0.12` seconds.** Numbers display **rounded
+post-mitigation** damage, never pre-mitigation. If a target dies during cleave iteration, later logic
+must not acquire a second effect for it.
+
+**Pools and their pressure rules.** Pool **ten** impact-ray sprites sharing one cached transparent
+radial-line `CanvasTexture` and material configuration, plus one player weapon-trail visual. Reuse
+the **lowest-priority oldest active entry only when the pool is exhausted**, and a reused entry
+**restarts at no more than 70% of full lifetime** so a recycled sprite cannot look newer than a live
+one. If the same target receives another eligible hit inside `NUMBER_MERGE_WINDOW`, the numbers merge
+rather than stacking. After pool warm-up, a **25-actor fight must create no new meshes**. Under the
+existing screen-shake-off or reduced-motion preference, **cap all stops at 20 ms**; a later dedicated
+`combatMotion` setting may supersede that. `damageActor` returns a **non-applied result when the
+target is already dead**. **Callouts are decorative**: missing one under pool pressure cannot hide
+information the player needs. And the scope check the spec set on itself: if the implementation makes
+`GameEngine.ts` materially harder to navigate, extract `ComicHitFx.ts` — *after* the behaviour works.
 
 ---
 
@@ -1183,6 +1368,53 @@ by inspection, and two acceptance bars are measurements nobody has taken: the 25
 budget, and **that the shaken camera settles in a comparable duration at 30, 60 and 120 fps
 without crossing tested walls or large props**.
 
+**Accessibility and readability.** The stated goal was to make combat feel more readable and **absurdly impactful** with five bounded
+feedback layers. The five layers are deliberately *bounded* rather than
+unlimited: shake, vignette, sparks, decals and gore each have a cap, so "more juice" cannot
+degrade into unreadability. Under `prefers-reduced-motion: reduce` the low-health pulse animation
+is disabled and a static state is shown instead. Spark and gore colours must **remain readable
+without bloom** and cross the bloom threshold when bloom is enabled — the effect must not depend on
+the post-processing stage being on. Modal layers carry explicit z-indices so the damage tint sits
+above the WebGL canvas but below readable UI.
+
+**Pools, budgets and teardown — the numbers the spec bound.** Sparks are emitted for each cleave
+target actually hit, subject to a **global active-spark cap** (`SPARK_MAX_ACTIVE`); `createSparks`
+only fills available slots rather than overflowing. Blood and chunk meshes stay **at or below 180
+active entries** and return to the pool after landing or expiry; decals stay **below 72**, with **no
+geometry, material or texture allocation after pool warm-up**. Pool meshes stay in the scene until
+engine teardown — a landed gore mesh returns to the pool and is *not* removed from the scene or
+disposed during play. The existing scene traversal disposes shared textures once: *"do not add a
+second decal-disposal pass"*, and `destroy()` relies on that traversal for pooled decal resources.
+Generated canvas textures already live in `generatedTextures`, and `App.tsx` owns the persisted
+settings — the juice settings **mirror the bloom pattern**: App state plus a ref, a menu toggle and a
+pause toggle, and an engine setter for live changes.
+
+Edge cases: an overlapping weaker hit **cannot dim a stronger flash** (hence `max(current, new)`);
+gore is paused consistently with actors and projectiles; and resuming from pause **cannot reveal a
+stale red frame or restart a finished emission**. `Particle.mode` was previously only `'smoke'`, so
+every particle path had to learn the new variants rather than assuming one.
+
+**Negative controls the spec fixed.** Ordinary hits retain the existing faction-coloured burst — *do
+not add a second parallel spark system*. Decal variation comes from `seededRandom`; *do not add
+separate texture fields or per-decal textures*. Active decal count must **never exceed `DECAL_MAX`**,
+and fire *does not continuously create scorch marks*. *"Do not append another positional boolean to
+the already boolean-heavy signature."* Nonexistent weapon clashes **do not emit impact feedback**.
+Camera-involved motion **must not create unbounded GPU objects**. And the tuning instruction, which
+is really a warning about compounding: *"tune constants together in a 25-actor stress fight; do not
+increase them one at a time."*
+
+**The remaining numbers.** Normal player damage lerps the flash **0.12..0.35** from
+`clamp(dealt / 20, 0, 1)`. Player hits emit **18..36** droplets (`GORE_PLAYER_HIT`) against
+`GORE_HIT = 14..30`, so incoming damage reads clearly in third person. Camera follow state is a
+reused `cameraFollowPosition` vector and `trauma` is a plain `0..1` scalar — no allocation per frame,
+and `lowHealth` is derived from `view.health / view.maxHealth` rather than stored. `App.tsx` owns the
+persisted **music, day/night and bloom** settings and the juice settings join that set through engine setters, so a change applies live; generated
+canvas textures already live in `generatedTextures`, so the existing teardown traverses the scene and no separately maintained decal-disposal pass is
+needed. Sparks fill only
+available slots up to `SPARK_MAX_ACTIVE` — brighter is achieved by variant, not by count — and pools **stop allocating once the pool reaches its observed maximum**. The genuinely risky parts were named in advance: the corrected bleed
+cadence, a **genuine recycled decal pool** rather than a pretend one, and stress validation at 25
+actors.
+
 ---
 
 ### 6. Camera accents
@@ -1233,6 +1465,25 @@ approximately `7.7`; tune by capture rather than retaining a frame-dependent spe
 Accents are aged with **raw** delta, not simulation delta, because the camera renders while hit
 stop is active.
 
+**Settings, ownership and accessibility.** Camera motion reuses `screenShakeEnabled` as its single
+preference — the label became `Эффекты камеры` with helper text covering both shake and zoom while
+**retaining the `korovany-screen-shake` storage key** for compatibility, so existing stored values
+keep working. Disabling clears trauma and all FOV state, sets exactly `56`, and updates the
+projection immediately; **enabling replays nothing**. The reduced-motion default stays off. Damage
+flash, the static low-health treatment, damage numbers, toon shading, loot and audio all remain
+enabled — this toggle is camera-only. *"If user feedback later demands separate controls, migrate to
+a structured camera setting in a dedicated accessibility change. Do not add two nearly identical
+booleans now."* Lifecycle: `setPaused(true)`, `endGame()`, `onWindowBlur()` and disabling all clear
+one-shot accents and reset sprint state, and **pause shows base FOV immediately rather than freezing
+half-way through a zoom**, with the reset happening *before* the paused frame renders. `destroy()`
+needs no camera-specific GPU disposal. The queue is bounded at four entries with an explicit
+replacement policy: a new accent of the same kind replaces an active one **only when its magnitude
+is larger**, and at capacity the lowest-magnitude oldest entry is replaced **only** by something
+stronger. Comfort rules: FOV never encodes required gameplay information, no effect oscillates
+continuously except the smooth sprint blend, no camera roll is added beyond the existing trauma
+shake, and the HUD stays screen-fixed and must not scale with the WebGL camera FOV at any aspect
+ratio.
+
 Design corrections: *"Do not set FOV directly at event call sites."* · *"Do not add FOV impulses
 cumulatively without a clamp."* · *"Do not gate only translation shake."* · *"Do not modify camera
 distance to simulate zoom."* · and an explicit ownership note that specs 02 and 07 must not both
@@ -1246,13 +1497,50 @@ in the archive whose logic was extracted into its own module: every constant liv
 `Эффекты камеры` while **retaining the `korovany-screen-shake` storage key** for compatibility,
 exactly as specified.
 
+**Accessibility and comfort — the whole list, because this is the class most easily lost.** The
+existing reduced-motion default disables *all* new camera motion. The maximum FOV change is bounded
+and no effect oscillates continuously except the smooth sprint blend. No camera roll is added beyond
+the current trauma shake. **FOV never encodes required gameplay information.** Sprint FOV stops
+promptly when shield, stamina, injury or input ends the sprint. Peripheral distortion is to be
+tested at narrow and wide viewport aspect ratios, and the **HUD remains screen-fixed and readable at
+minimum and maximum FOV and at common aspect ratios** — it must not scale with the WebGL camera FOV.
+
+Edge cases the spec called out: multiple kills inside one cleave **replace or merge** the same-kind
+kill accent and stay inside the negative clamp — they do not zoom once per corpse.
+
+**Lifecycle.** Camera accents must leave **no accumulated drift, no stale pause effect and no
+motion when camera effects are disabled** — every accent no-ops when screen shake or camera effects
+are off, when paused, or when the run has ended. Pause displays the **base FOV immediately** rather
+than freezing halfway through a blend. Pause, end, blur, visibility change and hit stop must not be
+able to leave the camera in an accented state. `destroy()` requires **no camera-specific GPU
+disposal** — the accents own no textures or targets.
+
+**Negative controls and the damping formula.** *"Do not add FOV impulses cumulatively without a
+clamp"* — dense kills would otherwise walk the FOV out of range; multi-target attacks and rapid
+kills must never push FOV outside the envelope. *"Do not use fixed per-frame lerp for new camera
+behaviour"* — the shipped form is frame-rate independent:
+
+```
+currentFov = THREE.MathUtils.damp(currentFov, targetFov, CAMERA_FOV_LAMBDA, delta)
+```
+
+At most **`CAMERA_ACCENT_MAX = 4`** one-shot entries are kept. A frame that takes off and lands due
+to a large clamped delta must not leave residue. `immediate = true` copies position and **clears the
+sprint blend and accent state** rather than blending from a stale value.
+
+**Two remaining contracts.** The accent list *"keeps at most `CAMERA_ACCENT_MAX = 4` one-shot
+entries"*, and `immediate = true` copies position **and clears the sprint blend and accent state** together — used
+where an instant cut is appropriate, so a teleport cannot smear. **Tab suspension cannot resume with a stale large raw delta**,
+because the delta clamp applies before any accent integrates it.
+
 ---
 
 ### 7. Loot spectacle
 
 *Formerly `03-loot-spectacle-spec.md`. 9 criteria, all unchecked in the archive.*
 
-Bonus consumable drops with rarity-coded beams, rings, magnet pickup and a React reward card,
+Bonus consumable drops — rarity-coded beams, magnet pickups and reward cards, added while
+deliberately preserving the current economy — with beams, rings, magnet pickup and a React reward card,
 layered on top of unchanged base kill and event rewards. **No inventory, no equipment, no save
 migration** — it reuses the version-1 `gold` / `health` / `damage` fields.
 
@@ -1334,6 +1622,42 @@ at `types.ts:129-143`; the dedicated RNG at `:1534`. The `settleActiveLoot('save
 could not be confirmed by inspection, and "never discards a reward" is an invariant no test
 asserts.
 
+**Accessibility.** *"Do not use rarity colour alone."* Beam height, ring count, star points, the
+label and the audio cue all carry rarity independently, so the tier survives colour blindness and a
+desaturated display. Where an icon accompanies a pickup the pickup **remains readable alone** if the
+icon is absent. The reward toast uses the same high-contrast panel primitives as existing notices
+rather than inventing its own. Reduced motion removes bobbing, rotation and card translation while
+keeping beam and ring opacity — the drop stays visible, it simply stops moving.
+
+**Pooling, ownership and the boundary cases.** A **capped runtime pool of 20** physical reward
+pickups backs the feature, with **no allocations after the pool and shared resources are warm**. Pool
+recycling must settle **before** overwriting `reward`, and the exact reward is fixed when the pickup
+spawns and **cannot reroll while the pickup is alive**. Actor count is capped at 25, but corpses and
+event objects are not — which is why drops are pooled rather than spawned freely. Event-owned
+ordinary enemies **do not independently roll** drops; they follow the event's explicit drop policy,
+specifically to prevent an event turning into a loot fountain.
+
+**Engine time owns toast visibility:** store `lootToastExpiresAt` and clear it in the engine, rather
+than letting a React timer own it. If the player is dead while a pickup is magnetising, movement
+stops and the pickup is left in the world. If a whetstone would partially exceed the bonus cap, the
+**usable portion is applied** rather than the whole thing being discarded. Defeat, victory, pause,
+return-to-menu and repeated engine creation must all leave no orphaned pickup, toast or pooled
+entry.
+
+**Negative controls the spec fixed.** *"Do not create one light per beam"* — emissive/basic meshes
+provide the glow, and there is no per-pickup light or texture. *"Do not make loot depend on bloom,
+outlines or layered audio"*: the drop must read with every optional visual system off. The reward
+card appears **below** critical health and objective information and never occludes them. A direct
+player kill already grants base gold, so bonus coins **must not duplicate or replace it** — no double-pay for the same kill. And
+the scope fence: *do not extend this system into equipment* until all of the following specified conditions hold.
+
+**The reward tables, since they are the feature's actual content.** Common drops give coins **5..10**; rare gives coins **28..42**, medicine `24..32`, or a whetstone `+1`. Actor count is
+capped at 25 **but corpses and event objects are not**, which is the population fact that forces
+pooling. A direct player kill already grants base gold, so bonus coins **must not duplicate or replace it** — no double-pay. If the player is dead while a pickup magnetizes, movement stops and the pickup is left in the world
+for ordinary cleanup.
+Conversion and cap cases apply to the damage fields too, not just to coins. The remaining risk the
+spec named for itself: pooling, rarity readability, conversion boundaries and **UI lifecycle**.
+
 ---
 
 ### 8. Toon shading and selective outlines
@@ -1378,12 +1702,48 @@ actor count."*
 Night must retain at least two visible ramp bands, fixed via night hemisphere intensity or base
 colours — **not** per-character lights.
 
+**Settings, ownership and accessibility.** The toggle is `Чернильные контуры` in both the menu and
+the pause modal, persisted under **`korovany-ink-outlines`**, defaulting to `true` including on
+coarse pointers, with `setInkOutlinesEnabled(false)` hiding every shell immediately and live. It is
+not part of `SavedGame`. Ownership is split deliberately: the library owns the gradient texture and
+the shared outline materials and is **excluded from generic scene-material disposal**, while toon
+materials from `createToonMaterial()` are scene-owned and released by the ordinary traversal;
+`destroy()` collects unique geometries and materials into `Set`s first so shared resources are
+disposed exactly once, and the outline registry is cleared **after** scene disposal. Shells are
+**never** added to `generatedTextures`, never enter raycast or collision lists, and are ignored by
+camera-obstacle collection; detached cosmetic limbs must not inherit a second shell from a cloned
+mesh; and bindings must not retain detached scene roots. Runtime event props register and
+unregister themselves. The budget is the existing **25-actor** population, at most three shared
+outline materials and one shared gradient texture, with **zero per-frame allocation** — shells are
+created when a binding is made, not per frame. Accessibility: the goal is to give characters and important interactables a bold, readable comic silhouette, so
+combatants stay readable against every zone and every time
+of day**; faction recognition must never depend
+on outline colour, the toggle carries visible text and `aria-pressed`, and reduced motion does not
+disable outlines or toon shading. The renderer keeps antialiasing, ACES filmic tone mapping and
+exposure `0.92` under a `min(dpr, 1.75)` cap; `setPaused()` does not hide outlines.
+
 **Status: shipped, criteria now 4 verified / 1 partial / 4 unverifiable.** The ramp is
 `Uint8Array([71, 133, 199, 255])` = 0.278 / 0.522 / 0.780 / 1.00 at
 `ComicMaterialLibrary.ts:51-63`; the eligibility filter with its `InstancedMesh` and transparency
 exclusions at `:86-102`; distances as squared constants at `GameEngine.ts:882-885`. The named
 constants `TOON_RAMP_LEVELS` and `MAX_OUTLINED_ACTORS` do not exist — their values are inlined.
 Bloom-interaction parity, resource-leak freedom and the stress capture are all unverified.
+
+**Negative controls the spec fixed.** *"Do not replace every `MeshStandardMaterial` in the scene"* —
+a global swap would flatten terrain and architecture that are deliberately not toon-shaded. Every
+shell is marked `userData.comicOutline = true` so later traversal **never outlines an outline**.
+Cosmetic actor limbs use the same material helper so they do not look detached from the body.
+Shared resources are each disposed exactly once, so repeated start → return-to-menu cycles cannot
+double-dispose. The originality rule is explicit and belongs to the project's whole premise: the
+look is built from procedural textures and **must not reproduce another game's characters or
+proprietary iconography**.
+
+**Two boundary facts.** `BloomPostProcessor` owns the post-processing chain — `RenderPass → UnrealBloomPass`, pass ordering
+and resize/disposal — and when bloom is disabled the renderer does a direct render — toon shading does **not** reach into the composer, which is what lets either ship
+without the other. The characters are *primitive, pivoted* rigs, and that is the constraint the whole
+look is designed around. The outline budget stays bounded at the **existing maximum of 25 actors**.
+Edge case: **camera-near shells can intersect the camera**, so the player's own shell must be handled
+rather than assumed distant.
 
 ---
 
@@ -1425,6 +1785,19 @@ Decorations avoid roads, spawn circles, beacons, event markers, the palace gate 
 interaction radii and common combat lanes, are non-colliding, and are built once with world
 generation rather than created on zone entry.
 
+**Settings, ownership and accessibility.** Zone art has **no user-facing toggle** — it is
+unconditional art direction, not a quality setting. On a `view.zone` change the zone-title panel is
+keyed by zone so its entrance restarts, `--zone-accent` and `data-zone` are set, and a small CSS
+motif rule renders; only the map, current-zone border and prompt accents are tinted. **Health,
+danger, success, rarity and faction semantics are never recoloured.** Reduced motion uses a static
+fade with no translation. Ownership: the profile factory is built once per engine after the runtime
+palette is known, `uiAccent` is a CSS-safe string because *"do not pass `THREE.Color` through
+`GameView`"*, `GameEngine` owns one reusable `ZoneVisualWeights` that the writer overwrites in place
+so nothing is allocated per frame, and all four decoration sets are built with world generation —
+nothing is created or removed on zone entry. Teardown clears `zoneDecorationSets`. Version-1 saves
+load unchanged. Budgets: **≤94 decorative instances total**, ≤8 new instanced draw calls, ≤32
+landmark mesh draws, at most one medium landmark per zone, and **no dynamic lights**.
+
 Caveats: *"Do not solve zone identity by saturating ground colours."* · *"Do not add four
 independent fog systems."* · *"Do not change gameplay `zoneAt()` to make visual transitions
 smooth."* · *"Zone tint is supporting glue, not a full-screen filter."*
@@ -1444,6 +1817,37 @@ the `blendWidth = 8` default do not exist anywhere in `src`; `GameEngine.ts:1148
 contains only the `ZoneVisualWeights` interface and `ZONE_ART_IDS` — eleven lines. Nor does
 `ZONE_DECORATION_INSTANCES_MAX` (94) exist as an enforced budget. So of nine criteria: 2 verified,
 **1 contradicted**, 6 unverifiable.
+
+**Accessibility and comfort.** Light and dark themes must both preserve contrast for **all** zone
+titles. Reduced motion uses a static fade with no translation and removes the animated motif sweeps;
+the zone title stays informative without any animation at all. The three hatch motif primitives are
+`scrape` (broken near-horizontal strokes with variable gaps), plus its siblings — the motif is a
+CSS/`data-*` treatment in `src/App.tsx`, not a WebGL layer, so it inherits the page's contrast
+settings rather than fighting them.
+
+**Ownership, stated as a boundary.** Zone art direction adds accents **without duplicating
+day/night, weather or foliage-wind ownership**: day/night owns time-of-day light and sky, weather
+owns climate and precipitation, foliage owns ground vegetation and wind motion, and toon shading
+owns character lighting and outlines. Zone art owns only palette, hatch motif and title treatment,
+baked into cached surface textures. `GameEngine` owns **one reusable `ZoneVisualWeights` object**
+that the blend function writes into rather than allocating per frame. Hatch textures live in the
+existing `generatedTextures` cache and are disposed by the existing teardown; instanced decoration
+geometry and materials are shared and **scene-owned**, so the ordinary traversal releases them and
+nothing is disposed twice.
+
+**Negative controls the spec fixed.** *"Do not add four independent fog systems"* — the scene has one
+camera and one fog. *"Do not add decorative collision accidentally"*: most new props are visual only.
+*"Do not add hundreds of individual meshes"* — repeated props use `InstancedMesh`. *"Do not duplicate
+tree/grass work"*: forest identity additions extend existing generation rather than paralleling it.
+The shape and palette rules are **original** — *do not reproduce proprietary iconography*. Never draw
+high-frequency one-pixel grids that shimmer at camera distance. Added props near palace or fort
+walls **must not enter gate detour nodes**, and procedural marks must not cover transparent canvas
+pixels on signs and doors. At the origin (`X = 0`, `Z = 0`) the normalized visual weights prevent a four-color overbright tint — the blend is normalised, not summed.
+
+**Two remaining facts.** Forest identity is carried by **74 deterministic tree LODs**, three huts and
+a beacon — the zone is recognised by counted, seeded content, not by a tint. And the accessibility
+floor: **UI accents cannot override health, danger, faction or rarity meanings**; the zone palette
+decorates the HUD, it never re-codes it.
 
 ---
 
@@ -1472,6 +1876,15 @@ to be used *"only if threshold bloom bleeds into bright ground textures."* The s
 `emissiveIntensity` reaches ~1.55, which is what carries the torches over the threshold, and the
 acceptance bar was 60 fps on mid-range hardware at the `High` preset.
 
+**Settings and lifecycle.** The toggle is `Свечение (bloom)` persisted under
+**`korovany-bloom`**, mirroring the `korovany-theme` and `korovany-music-muted` pattern, defaulting
+**on** for fine pointers and **off** for coarse ones. The optional three-step `Off / Medium / High`
+quality select was specified but never built; `Off` would have doubled as the low-end performance
+escape hatch. The composer must be built **after** the renderer's pixel ratio and output settings
+are configured, and when bloom is disabled its render targets must not be retained. Both paths leave
+`renderer.toneMapping`, `toneMappingExposure` and `outputColorSpace` untouched. No `GameView` or
+`SavedGame` change — it is a render setting, not game state.
+
 The teardown rule is the one that catches people: *"`EffectComposer.dispose()` does not dispose its
 pass list"* — each pass must be disposed explicitly first. Composer calls must also be guarded when
 width or height is zero (a minimised window) to avoid zero-sized render targets, and resize must
@@ -1484,6 +1897,19 @@ reads the renderer's ACES and exposure settings at render time; disposal is corr
 (`passes.forEach(pass => pass.dispose())` **then** `composer.dispose()`). The **Off/Medium/High
 quality preset was never implemented** — only the boolean toggle — and neither `BLOOM_NIGHT_BOOST`
 nor `BLOOM_LAYER` exists. The explicit zero-size guard could not be confirmed.
+
+**Ownership and teardown.** The composer lives in a focused `BloomPostProcessor` helper so its
+lifecycle is isolated from the gameplay engine, and **`App` owns the persisted preference** — the
+engine never reads `localStorage`. `destroy()` cancels the rAF, disposes the renderer and scene, and
+must dispose **all passes and targets** so nothing leaks across runs. Resize and the pixel-ratio cap
+are respected and a **zero-sized render target must never be created** — a minimised window or a
+zero-height container is the case that produces one.
+
+**Two specified-but-unbuilt couplings.** `BLOOM_NIGHT_BOOST = 0.4` was to apply *only if day/night is
+present*, and the spec's reasoning was that once the cycle ships, **bloom is what makes torches and
+windows read at night**. Neither shipped: the processor is *deliberately independent of the private
+day/night state*, which is a defensible boundary but leaves night torches without their intended
+lift.
 
 ---
 
@@ -1604,9 +2030,10 @@ A wind vector does exist but is **inline and unnamed**: `direction: new THREE.Ve
 **There is no `DEFAULT_WIND_DIRECTION` constant** — an earlier revision of this section claimed
 there was, and that was wrong.
 
-**Ledger: 4 verified / 3 partial / 1 unverifiable / 4 absent or contradicted.** Recounted
+**Ledger: 3 verified / 2 partial / 2 unverifiable / 5 absent or contradicted.** Recounted
 criterion by criterion, because an earlier revision let "unverifiable" absorb things that are
-simply not there:
+simply not there — and because two earlier revisions of this row disagreed with each other and with
+the criteria beneath it. The tally below is derived from the table, not the other way round:
 
 | # | Criterion | Result |
 | ---: | --- | --- |
@@ -1622,6 +2049,40 @@ simply not there:
 | 10 | Default breeze works without weather; weather coupling verified when weather exists | **absent** for foliage; the wind state exists but is precipitation-only |
 | 11 | Build and lint pass; no WebGL shader errors | **partial** — build and lint pass; there is no shader to fail |
 | 12 | `high` holds 60 fps on reference desktop; `low` measured on a coarse-pointer device | **unverifiable** — not measured |
+
+**Settings ownership and disposal, per the spec's stated contract.** `App.tsx` owns persisted
+visual settings, passes initial values into `GameEngine`, and calls engine setters for live changes —
+*"foliage should follow this pattern rather than read `localStorage` inside the engine"*. Concretely
+`App.tsx` owns `readFoliageQuality()`, the state and a ref, following the bloom setting, and exposes
+a **three-state cycling button** in both the menu settings and the pause settings. During
+`destroy()`, `InstancedMesh.dispose()` is called from the existing scene traversal, which disposes
+only the organic foliage meshes and must **not dispose the same resources twice**; temporary source
+geometries are disposed after the merged fern and flower geometries are built.
+
+**The budget rule, stated as the spec stated it:** *"the replacement keeps the current
+four-draw-call ground-detail budget."* This is the criterion the shipped implementation
+**contradicts** — see the ledger below — because meshes are per kind *per streamed region*, so the
+number of ground-cover draws scales with loaded regions rather than being globally bounded at four.
+
+**Negative controls and placement rejections.** Per-zone tinting uses
+`InstancedMesh.setColorAt()` so **four zones do not multiply draw calls**. *"Use the existing linear
+fog for v1; do not introduce transparent instanced fade."* *"Do not cast foliage shadows and do not
+update instance matrices after build"* — the cover is static by design, which is exactly why the
+absent wind shader does not degrade it. *"Do not add `uFade` alpha in v1; if fog is ever removed,
+prefer a dithered or opaque cutoff."* Placement rejects the vertical road corridor (`abs(x) <= 3 + clearance`) **and the horizontal one**
+(`abs(z + 23) <= 3 + clearance`), matching the actual 6-unit road geometry, plus palace/fort compound
+interiors — **walls alone do not exclude their courtyards**, which has to be
+done deliberately. One writer establishes the canonical wind state **before** the atmosphere update,
+so wind is not written twice per frame from two places.
+
+**The baseline being replaced, and the reporting rule.** `createGroundScatter()` created **four**
+`InstancedMesh` draw calls — **420** grass blades, **64** flower stems, **64** flower buds and **110**
+pebbles — with instance matrices uploaded once and a bounding sphere computed per mesh. That is the
+four-draw-call figure the budget rule refers to. `MeshStandardMaterial` participates in
+`THREE.Fog(worldFog, 48, 132)` by default, and culling is mesh-level rather than a distance fade —
+which is why the spec chose fog over an alpha fade for v1. Placement rejects the vertical road
+corridor at `abs(x) <= 3 + clearance`. The diagnostic rule: log **bucket, zone, target and actual
+count** if a future world layout cannot reach its target, rather than silently under-filling.
 
 ---
 
@@ -1674,6 +2135,16 @@ texture is darkened twice; and a dedicated `backgroundColor` must be kept, becau
 `scene.background = palette.worldSky` and then mutating it would corrupt the palette source colour
 by reference."*
 
+**Settings and readability.** The toggle is `Динамическое время суток` in both the menu and the
+pause modal, persisted under **`korovany-dynamic-day-night`**, defaulting to **on**, and applied to
+a live engine immediately — *including while paused*. **Night must stay legible**: the clamped
+minimums exist so there are no fully black frames, the moonlit floor stays readable, and no HUD tint
+is required to compensate. Ownership: the per-frame driver allocates **no new geometry, colours,
+vectors, arrays or materials**, indexed loops keep it O(torches + clouds) with no per-frame
+callbacks, and disposal must include the `THREE.Points` star field so its geometry and material are
+released. `this.palette` is captured at construction, and a live theme change already requires
+re-initialisation, so no extra handling is needed.
+
 Disabling restores every pre-implementation light, colour, celestial position, torch intensity and
 window emissive explicitly, because *"merely forcing `dayPhase = 0.25` would move the light/disc
 and would not reproduce the old scene exactly."* Time of day is derived from the persisted
@@ -1686,6 +2157,26 @@ placement at `:11548-11568`. Twilight (1.4 / 1.0) and day (2.65 / 1.65) match ex
 sun intensity is `0.15` as specified — **but night hemisphere intensity is `0.9` in code
 (`GameEngine.ts:1312`) against `0.45` in the spec.** The torch and window emissive ramp exists as
 behaviour but not as the named `TORCH_INTENSITY` constant; only `TORCH_LIGHT_RANGE = 26` is named.
+
+**The curve, written out.** `DAY_LENGTH = 240` seconds for a full 24 h loop (tunable) and
+`DAY_START_OFFSET = 0.18`, so new campaigns begin in mid-morning; the offset applies **equally to new
+and loaded games**, so `elapsed = 0` starts in mid-morning rather than at midnight. From the sun
+angle:
+
+```
+elevation       = sin(sunAngle)                  // -1..1; > 0 means above the horizon
+nightToTwilight = smoothstep(-0.18, 0.08, elevation)
+twilightToDay   = smoothstep( 0.08, 0.60, elevation)
+```
+
+Colours are computed **relative to `this.palette`** and never hard-coded, which is what lets the
+zone palettes and the weather profiles compose with the cycle instead of fighting it. The background
+colour is a reused `THREE.Color` instance, not a per-frame allocation.
+
+**Two remaining facts.** The sky dome is a gradient sphere of radius 178
+(`worldSky → worldHorizon → worldFog`) with an emissive sun mesh at `(-88, 74, -112)` and **10**
+drifting cloud groups held in `this.clouds`. The toggle is a plain on/off available on **both the main menu and the pause modal**. It defaults on
+and updates the world live.
 
 ---
 
@@ -1778,6 +2269,56 @@ applied live through `engine.setWeatherEnabled(next)` even while paused.
 **`WEATHER_ZONE_HYSTERESIS` and `PRECIP_VISIBLE_EPSILON` do not exist** — the hysteresis is
 unimplemented, and `GameEngine.ts:11198` is a plain zone comparison.
 
+**Settings placement.** The weather toggle sits **with the day/night and bloom controls**, sharing
+their ARIA state convention, rather than being hidden in a separate panel — one row of world-look
+switches, all keyboard reachable and all announcing their pressed state.
+
+**Lifecycle and disposal.** `setWeatherEnabled(enabled)` **applies immediately, including while
+paused**, and does not wait for the next frame; enabling restores all visible state and disabling
+removes it, so a toggle from the pause menu is visible behind the modal. Pause uses the normal
+update gate, which freezes precipitation, lightning and thunder **together**. `destroy()` had to be
+extended to `THREE.Line` / `THREE.LineSegments` — the existing `destroy()` helper handles `Mesh`, `Sprite` and `Points` but not lines, which is what rain is — or to dispose rain explicitly; either way **disposal
+stays single-owner** so no object is disposed twice, and the snow texture is registered in
+`generatedTextures` so the existing teardown releases it.
+
+**Draw-call budget.** Steady rain or snow costs **one draw call**; a rain-to-snow transition costs
+**two**, for at most the blend window — *"which is preferable to an incorrect hard material swap"*.
+Rain uses a transparent `LineBasicMaterial` with `NormalBlending` and `depthWrite: false` in a
+palette-derived blue-grey; snow uses `NormalBlending`, `transparent: true`, `depthWrite: false` and a
+near-white sprite. **Additive blending is prohibited for precipitation** precisely so it does not
+cross the bloom threshold and glow.
+
+Two design rules the spec fixed and the code kept: *blend four profile weights instead of using one
+`intensity` scalar*, because one scalar cannot represent an interrupted transition or a rain-to-snow
+cross-fade without a hard mode swap; and *apply weather **after** day/night every frame*, so weather
+modifies the current dawn/day/dusk/night result and never restores or blends toward fixed daytime
+colours.
+
+**The blend, written out.** Weights approach their target profile exponentially rather than
+linearly, so an interrupted transition stays continuous:
+
+```
+response = 1 - Math.exp((-3 * delta) / WEATHER_BLEND)   // WEATHER_BLEND = 6
+weight  += (targetWeight - weight) * response
+```
+
+The director keeps `groundSurfaces` as a `Map<ZoneId, GroundSurface>`, a `windDir` of
+`new THREE.Vector2(1, 0.2).normalize()`, and `thunderDelay = -1` as the inactive sentinel.
+
+**Negative controls.** *"Do not lerp weather toward absolute daytime colours — that would brighten
+night."* Ground darkening is a **multiplier**; *do not regenerate or edit textures*. **Persist only
+the preference**: weather goes into neither `SavedGame` nor `GameView` state. Reversing across a zone
+boundary must never snap the atmosphere, and rain and snow must **not bloom noticeably**.
+
+**Three remaining facts.** The framing rule is that weather is a **camera-local atmosphere, not four
+simultaneous zone weather systems** — one player, one sky. Lightning uses a **time-based flash with a
+delayed procedural thunder**, and if the player leaves the rain zone after a flash the **already
+queued thunder still plays** rather than being cancelled mid-air. The performance bar is the
+existing **60 fps target on the project's baseline machine at the DPR cap** — weather must not spend
+it.
+
+The exact shipped blend line is `const response = 1 - Math.exp((-3 * delta) / WEATHER_BLEND)`.
+
 ---
 
 ### 14. Dynamic world events
@@ -1863,6 +2404,21 @@ except `bounty`, which is 1 in code rather than 0-for-a-borrowed-target. The loa
 `eventCooldown = savedGame?.eventCooldown ?? max(0, FIRST_EVENT_AT − elapsed)` survives exactly
 (`:1950`).
 
+**Lifecycle invariants — the ones that keep events from corrupting the campaign.** `cleanup(): void` is **idempotent**, and there is an idempotent `removeActorById()` that also removes projectiles.
+Victory or defeat mid-event forces cleanup with **no reward**. **Killing event-spawned actors never
+advances campaign objectives**; a borrowed bounty target is *borrowed* — not owned, not despawned —
+while spawned fallback targets are **objective-ineligible and removable**. The champion damage bonus
+stacks to **+18 per run** and stays capped **across save and load**; v1 saves default it to `0`.
+Randomness comes from a dedicated `eventRng = seededRandom(seed)` — concretely
+`seededRandom((Date.now() % 2147483646) + 1)`, so if the seed derives from the date it still varies —
+kept
+separate from world generation so events cannot perturb the seeded world.
+
+**Two remaining facts.** The caravan is a single mover worth **+95 gold** on a 40 s cooldown, handled
+by `updateCaravan`, `interact` and `spawnAmbush`. `ActorRole` was widened with `'champion'` and
+`'captive'` rather than adding a parallel type, and `MiniMap` renders `kind === 'event'` markers with
+a distinct treatment so an event reads differently from an objective.
+
 ---
 
 ### 15. Layered procedural audio
@@ -1947,6 +2503,25 @@ white-noise buffers per cue"* — one reusable buffer per context. · *"Do not u
 ramp buses instead. · *"Do not play one wet splat per gore particle."* · *"Do not randomize beyond
 recognition."* · *"Do not make SFX depend on React state timing."*
 
+**Lifecycle, in four states.** Pause suppresses gameplay SFX while allowing UI cues, lets active
+transients finish, and holds music at its paused target. End suppresses new gameplay cues after the
+result cue and ramps the SFX bus down over 100 ms. Hidden ramps master to zero quickly while
+keeping scheduler time coherent. Visible restores buses **only if the context is running** — and
+*"never call `resume()` without a user gesture after browser suspension"*. Destroy stops every
+tracked source **ignoring only `InvalidStateError`**, disconnects all nodes, clears the interval and
+scheduler state, removes the global ownership guard and closes the context exactly once. All
+transitions use short linear or exponential ramps to avoid clicks, and repeated start/menu/start
+cycles must not leave an interval or context from the previous engine. Autoplay: the context is
+created or resumed only after an existing pointer or keyboard interaction, and *"a sound request
+before context creation may be dropped; do not queue stale combat sounds to play after the next
+gesture."*
+
+Accessibility: music and SFX controls stay independent; a UI confirmation must be audible at low
+non-zero SFX volume **and** duplicated visually; important gameplay information is never audio-only
+— attack telegraphs, damage state, block sparks and loot cards all stay visual; pan is capped and
+near-player sounds are centred; and the mix avoids very high sustained tones, extreme sub-bass and
+repeated urgent notification patterns.
+
 Music migration was explicitly a *move*, not a rewrite: faction roots, tempo, patterns, zone shift
 source and step sequencing all unchanged, with zone passed in via `setMusicContext` because
 *"AudioDirector must not import GameEngine."*
@@ -1964,6 +2539,45 @@ than "migrate without changing composition" — `MusicScore.ts` adds four intens
 (`explore | alert | combat | boss`), a 16-step / 32-bar cycle, per-faction tempo and a per-seed
 arrangement, with reverb and echo sends in the director. `SFX_GAIN` and `MUSIC_GAIN` are not named
 constants, so the 0.62 and 0.18 values are unverified.
+
+**Routing, caps and ownership.** Every source routes through a voice gain — *"do not connect SFX
+directly to destination"* — into `musicGain` / `sfxGain` / `uiGain`, then
+`masterCompressor → masterGain → destination`. All sources in one request share a parent voice gain
+and an optional `StereoPannerNode`, and the request is **tracked as one voice even when it has three
+source nodes**. `MAX_ACTIVE_VOICES = 24`: at global capacity the oldest lowest-priority voice is
+stopped or faded, and only when the new voice outranks it. *"Do not make impact louder by starting
+unlimited oscillators"* — **layer count and voice count are both capped, and priority determines
+what survives**. A multi-target cleave cannot submit one full heavy/gore stack per target. The
+director owns **all** Web Audio nodes and timers, and a **window-level stop owner** prevents
+overlapping music when engine instances change.
+
+Explicitly out of scope: downloaded samples, speech, voice acting, convolution reverb impulse files
+and licensed audio — the no-external-assets constraint applies to sound exactly as it does to art.
+Also explicitly rejected: *"suspending the `AudioContext` as ordinary pause behaviour"* — pause
+lowers music gain targets instead, because suspension breaks scheduler time. The SFX slider is an accessible range input in both menu and pause settings labelled
+`Громкость эффектов`, persisted under **`korovany-sfx-volume`**; the music mute toggle beside it
+persists under **`korovany-music-muted`**. Teardown ignores only `InvalidStateError`; other teardown errors are surfaced consistently, and a start → menu → start
+cycle must leave **no delayed burst, click loop, orphan interval, node leak or overlapping music**.
+
+**Spatialisation, written out.** Panning and attenuation are computed from the listener-relative
+offset rather than from a full HRTF panner:
+
+```
+offset           = sourcePosition - listenerPosition
+gain attenuation = lerp(1, 0.35, clamp(distance / 42, 0, 1))
+```
+
+The safety defaults — the compressor, the caps, the pan limit — are *"safety/tone defaults, not a
+substitute for reasonable layer design"*. Music context is set through
+`setMusicContext(faction, zone)`, or a callback that provides it, so the score follows the world
+rather than sampling it.
+
+**Three remaining facts.** The mix targets **nominal musical balance in the active, paused and ended
+states** — three balances, not one with ducking bolted on. On pause, gameplay SFX requests are
+suppressed while UI cues remain allowed. Music context takes the current zone —
+`setMusicContext(faction, zone)` — so the score follows where the player is, not only who they are
+fighting. The validation bar is a **25-actor stress fight** for result and UI cues together; the
+named risks were voice cleanup, browser lifecycle behaviour and mix tuning across dense fights.
 
 ---
 
@@ -1986,7 +2600,7 @@ every criterion was re-checked against the code at `b6f94ad`. The result:
 | Toon shading & outlines | 9 | 4 | 1 | 4 | — |
 | Zone art direction | 9 | 2 | — | 6 | **1** |
 | Bloom | 6 | 3 | 1 | 2 | — |
-| Ground foliage & wind | 12 | 6 | 1 | 5 | — |
+| Ground foliage & wind | 12 | 3 | 2 | 2 | **5** |
 | Day/night cycle | 6 | 4 | 2 | — | — |
 | Weather | 9 | 5 | 1 | 3 | — |
 | Dynamic world events | 7 | 4 | 2 | — | **1 superseded** |
@@ -2893,6 +3507,10 @@ choice at all — and that with every branch required, the choice is an ordering
 > every quoted phrase identical, because the files they pointed at no longer exist; and this
 > note was inserted. In two of those sentences the verb tense also moved from present to past
 > ("still documents" → "still documented"), because the subject is a file this commit deletes.
+>
+> Everything added since — the fact-preservation checker in `scripts/strategy-facts.mjs`, its
+> fixtures, four rounds of restored facts, and the recounted acceptance ledgers — lands entirely
+> inside §*What shipped*. The signed sections remain byte-identical apart from the 37 lines above.
 >
 > One consequence is worth stating plainly rather than editing away. The signed assessment says
 > «17 documents in `docs/`» and «twelve of the seventeen documents carry 113 acceptance-criteria
