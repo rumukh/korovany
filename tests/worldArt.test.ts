@@ -370,11 +370,23 @@ function reverseFaceFraction(
   return copy
 }
 
-/** Triangles whose vertex order disagrees with the normal the builder stored. */
-function windingDisagreements(geometry: THREE.BufferGeometry): number {
+/**
+ * Triangles whose vertex order disagrees with the normal the builder stored, and how
+ * many triangles the question could be asked of at all.
+ *
+ * The second number exists because a sibling session found the hole it closes: an
+ * all-degenerate geometry disagrees zero times, so `=== 0` passes having judged
+ * nothing. Worse, the same hole sits inside a mutation proof — a degenerate *reversed*
+ * control also reports zero, so the assertion whose whole job is proving the detector
+ * can fail would itself pass on an empty measurement.
+ */
+function windingDisagreements(geometry: THREE.BufferGeometry): {
+  disagreeing: number
+  judged: number
+} {
   const position = geometry.getAttribute('position')
   const normal = geometry.getAttribute('normal')
-  if (!position || !normal) return 0
+  if (!position || !normal) return { disagreeing: 0, judged: 0 }
   const index = geometry.index
   const triangles = index ? index.count / 3 : position.count / 3
   const a = new THREE.Vector3()
@@ -384,7 +396,8 @@ function windingDisagreements(geometry: THREE.BufferGeometry): number {
   const edgeB = new THREE.Vector3()
   const geometric = new THREE.Vector3()
   const shading = new THREE.Vector3()
-  let disagree = 0
+  let disagreeing = 0
+  let judged = 0
   for (let triangle = 0; triangle < triangles; triangle += 1) {
     const offset = triangle * 3
     const first = index ? index.getX(offset) : offset
@@ -404,9 +417,10 @@ function windingDisagreements(geometry: THREE.BufferGeometry): number {
       shading.y += normal.getY(vertex)
       shading.z += normal.getZ(vertex)
     }
-    if (geometric.dot(shading) < 0) disagree += 1
+    judged += 1
+    if (geometric.dot(shading) < 0) disagreeing += 1
   }
-  return disagree
+  return { disagreeing, judged }
 }
 
 const RUNTIME_OPTIONS = {
@@ -738,7 +752,9 @@ test('every prop the world can build is oriented outwards', () => {
   // report zero across 500-odd geometries. A check that cannot fail is worse than no
   // check, because it reads as evidence.
   const control = new THREE.BoxGeometry(1, 1, 1)
-  assert.equal(windingDisagreements(control), 0, 'a stock box is wound correctly')
+  const controlReading = windingDisagreements(control)
+  assert.ok(controlReading.judged > 0, 'the control judged no faces at all')
+  assert.equal(controlReading.disagreeing, 0, 'a stock box is wound correctly')
   const reversed = control.toNonIndexed()
   const position = reversed.getAttribute('position')
   for (let triangle = 0; triangle < position.count / 3; triangle += 1) {
@@ -753,9 +769,15 @@ test('every prop the world can build is oriented outwards', () => {
       }
     }
   }
-  assert.ok(
-    windingDisagreements(reversed) > 0,
-    'the detector must notice a deliberately reversed box',
+  // The mutation proof needs its own non-empty guard, or a degenerate control makes
+  // *this* assertion — the one whose job is proving the detector can fail — pass on
+  // nothing. Every face must be caught, not merely one.
+  const reversedReading = windingDisagreements(reversed)
+  assert.ok(reversedReading.judged > 0, 'the reversed control judged no faces at all')
+  assert.equal(
+    reversedReading.disagreeing,
+    reversedReading.judged,
+    'the detector must notice every face of a deliberately reversed box',
   )
   control.dispose()
   reversed.dispose()
@@ -771,8 +793,10 @@ test('every prop the world can build is oriented outwards', () => {
   // it claims to measure. That is how a reversed lathe once read as a partial flip.
   const indexed = new THREE.SphereGeometry(1, 8, 6)
   assert.ok(indexed.index, 'the indexed control must actually be indexed')
+  const indexedReading = windingDisagreements(indexed)
+  assert.ok(indexedReading.judged > 0, 'the indexed control judged no faces at all')
   assert.equal(
-    windingDisagreements(indexed),
+    indexedReading.disagreeing,
     0,
     'the detector is index-blind: a correctly wound indexed sphere must report zero',
   )
@@ -787,9 +811,12 @@ test('every prop the world can build is oriented outwards', () => {
   }
   // Reversed purely through the index buffer: every position byte is untouched, so
   // this is invisible to anything that reads positions in raw triples.
-  assert.ok(
-    windingDisagreements(flipped) > flippedIndex.count / 6,
-    'reversing every triangle must make most of them disagree',
+  const flippedReading = windingDisagreements(flipped)
+  assert.ok(flippedReading.judged > 0, 'the flipped control judged no faces at all')
+  assert.equal(
+    flippedReading.disagreeing,
+    flippedReading.judged,
+    'reversing every triangle must make every judged face disagree',
   )
   indexed.dispose()
   flipped.dispose()
@@ -797,15 +824,19 @@ test('every prop the world can build is oriented outwards', () => {
   const library = new WorldPropLibrary({ retention: 0 })
   const requests = everyPropRequest()
   let geometries = 0
+  let judgedFaces = 0
   const failures: string[] = []
   const open: string[] = []
   try {
     for (const [label, request] of requests) {
       for (const part of library.build(request)) {
         geometries += 1
-        const disagree = windingDisagreements(part.geometry)
-        if (disagree > 0) {
-          failures.push(`${label}#${part.surface}: ${String(disagree)} triangles`)
+        const reading = windingDisagreements(part.geometry)
+        judgedFaces += reading.judged
+        if (reading.disagreeing > 0) {
+          failures.push(
+            `${label}#${part.surface}: ${String(reading.disagreeing)} triangles`,
+          )
         }
         // Magnitude, not just sign — see `worstNormalError`. A collapsed loft section
         // shades a downward spike as though it pointed at the sky, which a sign test
@@ -839,10 +870,15 @@ test('every prop the world can build is oriented outwards', () => {
     'an unexpected prop encloses no volume, which usually means it is inside out',
   )
   // Guards the enumeration itself: a request space that quietly stopped producing
-  // anything would otherwise pass this test with flying colours.
+  // anything would otherwise pass this test with flying colours. Faces, not just
+  // geometries — a population of degenerate slivers judges nothing and reports clean.
   assert.ok(
     geometries >= 500,
     `only ${String(geometries)} geometries were checked; the enumeration has holes`,
+  )
+  assert.ok(
+    judgedFaces >= 20000,
+    `only ${String(judgedFaces)} faces carried an orientation to judge`,
   )
 })
 
@@ -910,10 +946,10 @@ test('every prop winds its triangles to agree with its shading normals', () => {
   // that were never a triangle. `latheProfile` is the kit's only indexed builder, so
   // that blindness had exactly one victim and it looked like a builder bug.
   for (const [label, geometry] of cases) {
-    const position = geometry.getAttribute('position')
-    assert.ok(position.count > 0, `${label} produced no triangles`)
+    const reading = windingDisagreements(geometry)
+    assert.ok(reading.judged > 0, `${label} carried no face with an orientation`)
     assert.equal(
-      windingDisagreements(geometry),
+      reading.disagreeing,
       0,
       `${label} has triangles wound against their shading normals`,
     )
