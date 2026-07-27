@@ -6,7 +6,7 @@
     "NOT on this list, and also if an entry here is no longer missing, so the list can only shrink.",
     "Regenerate with `node scripts/strategy-facts.mjs --accept`, and do that deliberately: it is",
     "the one operation in this tool that can hide a regression.",
-    "Currently 185 entries, of which 0 are content rather than matcher limits."
+    "Currently 187 entries, of which 0 are content rather than matcher limits."
   ],
   "accepted": [
     {
@@ -1014,6 +1014,12 @@
     {
       "spec": "dynamic-world-events",
       "cls": "formula",
+      "id": "- Uses a dedicated `eventRng = seededRandom(seed)`. If the s",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "formula",
       "id": "- **`MiniMap`**: render `kind === 'event'` markers with a di",
       "why": "matcher: all terms present in the file but not co-occurring in the owning section"
     },
@@ -1051,6 +1057,12 @@
       "spec": "dynamic-world-events",
       "cls": "budgetRule",
       "id": "| `bounty` | Mark a living hostile non-critical actor, excluding comma",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "edgeCaseRule",
+      "id": "- Uses a dedicated `eventRng = seededRandom(seed)`. If the seed derive",
       "why": "matcher: all terms present in the file but not co-occurring in the owning section"
     },
     {

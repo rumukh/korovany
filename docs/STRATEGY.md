@@ -114,7 +114,7 @@ document (`do not → do`, `must not → must`, `never → always`), flips a com
 (`shorter than → longer than`), reverses a phase ordering (`after → before`), and corrupts bound
 values including single digits (`BLOOM_LAYER 1→9`, `ARCHER_DAMAGE 7→9`, `MAX_ACTORS 25→35`,
 `MAX_ACTIVE_VOICES 24→42`, `DAY_LENGTH 240→420`, `CIVILIAN_ALARM_RADIUS 12→21`) and swaps a role's
-hit points. All twelve are caught. Inverting all 201 occurrences of `never` produces 63 new misses;
+hit points. All twelve are caught. Inverting all 202 occurrences of `never` produces 63 new misses;
 it used to produce none, because `never` was a stop word — the single most load-bearing word in a
 repo whose culture is negative controls was being discarded before the probe was built.
 
@@ -187,7 +187,7 @@ what it just computed.
 | relation (binding, row, sequence, comparison) | 652 | 92.8% | | | | |
 | formula | 76 | 97.4% | | **total** | **2,295** | **91.9%** |
 
-**The residue is 185 facts, and none of it is lost content.** Every entry is enumerated in
+**The residue is 187 facts, and none of it is lost content.** Every entry is enumerated in
 `scripts/strategy-facts.accepted.json` with its spec, class, source sentence **and the reason it is
 there** — the file distinguishes a *matcher* limitation (every term of the probe appears in the
 document, just not co-occurring inside the owning section) from *content* (a term is absent from the
@@ -217,7 +217,17 @@ would pass a green run:
 
 - A rule preserved correctly but **attributed to the wrong subsystem** inside the same section.
 - A number preserved with the **wrong unit** — `0.12` seconds written as `0.12` metres.
-- A rule preserved in one place and **contradicted in another** part of the same document.
+- A rule preserved in one place and **contradicted in another** part of the same document. This one
+  has a real worked example rather than an invented one, because it happened. §14 asserted, as
+  current behaviour, that event randomness came from
+  `eventRng = seededRandom((Date.now() % 2147483646) + 1)` — while the supersession table **34 lines
+  earlier in the same section** correctly recorded that it is now a derived stream,
+  `this.eventRng = () => streams.event.next()`, and that no `Date.now()` seeding remains in the event
+  path. `GameEngine.ts:1853` settles it; only `weatherRng` is date-seeded, deliberately. Two
+  sentences, individually well-formed, every token present, both inside the owning section — and the
+  document stated something false about shipped code. **No check in this file caught it**; an
+  adversarial reader did. It is fixed, and it is left here as the standing example of what
+  "validates presence and binding, not meaning" costs in practice.
 - A negation expressed **without a negation token** — "bloom owns outlines" carries the opposite of
   "outlines must not depend on bloom", but contains no `not` for the polarity check to find.
 - A paraphrase that **inverts meaning while keeping the rare words**, since the signature is a bag.
@@ -3441,10 +3451,13 @@ advances campaign objectives**; cleanup removes only `ownedActorIds`; borrowed b
 bounty target is *borrowed* — not owned, not despawned —
 while spawned fallback targets are **objective-ineligible and removable**. The champion damage bonus
 stacks to **+18 per run** and stays capped **across save and load**; v1 saves default it to `0`.
-Randomness comes from a dedicated `eventRng = seededRandom(seed)` — concretely
-`seededRandom((Date.now() % 2147483646) + 1)`, so if the seed derives from the date it still varies —
-kept
-separate from world generation so events cannot perturb the seeded world.
+Randomness comes from a **dedicated `event` stream** — `this.eventRng = () => streams.event.next()`
+(`GameEngine.ts:1853`), one of `combat | director | event | loot | chronicle` — kept separate from
+world generation so events cannot perturb the seeded world. The spec's form was
+`eventRng = seededRandom((Date.now() % 2147483646) + 1)`, reasoning that if the seed derived from the
+date the stream would still vary; that is **superseded**. No `Date.now()` seeding remains in the
+event path. The only date-seeded stream left in the engine is `weatherRng`
+(`GameEngine.ts:1533`), which is deliberate and which §13 records as *"never reuse `eventRng`."*
 
 **Two remaining facts.** The caravan is a single mover worth **+95 gold** on a 40 s cooldown, handled
 by `updateCaravan`, `interact` and `spawnAmbush`. `ActorRole` was widened with `'champion'` and
