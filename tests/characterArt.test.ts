@@ -116,6 +116,46 @@ function insideOutTriangles(geometry: THREE.BufferGeometry): number {
   return disagree
 }
 
+/**
+ * The share of triangles whose normal points away from the part's own centroid.
+ *
+ * `insideOutTriangles` cannot see a part that has been flipped *whole* — reversed
+ * normals and reversed winding agree with each other perfectly. That is exactly
+ * what happens when a loft is handed its sections top-to-bottom, or when a lathe
+ * profile runs downwards, and the result lights from the inside and loses its ink
+ * shell without ever failing a winding check. This catches it.
+ *
+ * The measure is meaningless for genuinely concave assemblies — an antler, a
+ * canvas tilt, a harness — so the guard is a floor rather than a demand for 100%.
+ * A correctly built part measures 57% at worst; a flipped one measures 0-40%.
+ */
+function outwardShare(geometry: THREE.BufferGeometry): number {
+  const position = geometry.getAttribute('position')
+  const normal = geometry.getAttribute('normal')
+  const index = geometry.getIndex()
+  const count = index ? index.count : position.count
+  const centre = new THREE.Vector3()
+  const vertex = new THREE.Vector3()
+  for (let point = 0; point < position.count; point += 1) {
+    vertex.fromBufferAttribute(position, point)
+    centre.add(vertex)
+  }
+  centre.multiplyScalar(1 / position.count)
+  const away = new THREE.Vector3()
+  let outward = 0
+  let total = 0
+  for (let triangle = 0; triangle + 2 < count; triangle += 3) {
+    const first = index ? index.getX(triangle) : triangle
+    vertex.fromBufferAttribute(position, first)
+    away.subVectors(vertex, centre)
+    if (away.lengthSq() < 1e-9) continue
+    WIND_VERTEX.fromBufferAttribute(normal, first)
+    total += 1
+    if (WIND_VERTEX.dot(away) >= 0) outward += 1
+  }
+  return total === 0 ? 1 : outward / total
+}
+
 function assertSolid(geometry: THREE.BufferGeometry, label: string): number {
   const position = geometry.getAttribute('position')
   assert.ok(position, `${label} has no position attribute`)
@@ -130,6 +170,12 @@ function assertSolid(geometry: THREE.BufferGeometry, label: string): number {
     insideOutTriangles(geometry),
     0,
     `${label} has inside-out triangles; its ink shell would cover it`,
+  )
+  assert.ok(
+    outwardShare(geometry) >= 0.5,
+    `${label} is inverted whole: only ${(outwardShare(geometry) * 100).toFixed(
+      0,
+    )}% of its normals face outwards, so it lights from the inside and loses its ink`,
   )
   return position.count / 3
 }
@@ -587,6 +633,12 @@ test('every part is wound the right way round', () => {
       insideOutTriangles(geometry),
       0,
       `${label} has inside-out triangles; its ink shell would cover it`,
+    )
+    assert.ok(
+      outwardShare(geometry) >= 0.5,
+      `${label} is inverted whole: only ${(outwardShare(geometry) * 100).toFixed(
+        0,
+      )}% of its normals face outwards`,
     )
     geometry.dispose()
   }

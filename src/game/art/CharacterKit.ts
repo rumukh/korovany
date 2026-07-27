@@ -746,6 +746,7 @@ function mirroredPair(
 }
 
 const MIRROR_X = new THREE.Matrix4().makeScale(-1, 1, 1)
+const MIRROR_Z = new THREE.Matrix4().makeScale(1, 1, -1)
 
 const WIND_A = new THREE.Vector3()
 const WIND_B = new THREE.Vector3()
@@ -859,15 +860,37 @@ function mirrorX(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
   return reverseWinding(geometry)
 }
 
+/** The same, across Z. For anything whose two copies sit fore and aft. */
+function mirrorZ(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  geometry.applyMatrix4(MIRROR_Z)
+  return reverseWinding(geometry)
+}
+
 /**
- * `loftProfile` with its winding corrected at the source.
+ * `loftProfile` with its section order and its winding both made safe.
  *
- * Use this, never the kit's `loftProfile` directly. `finish` repairs the merged
- * result too, but a loft that is already self-consistent is far easier to reason
- * about when it is going to be transformed or mirrored before it gets there.
+ * Two traps, and the limbs fell into the first one. `loftProfile` takes its
+ * sections **bottom to top**: hand a hanging limb its sections in the order they
+ * are read — shoulder first, wrist last — and the whole part comes out with its
+ * normals *and* its winding reversed. It then lights from the inside and its ink
+ * shell extrudes inward and vanishes, which is subtle enough to survive a
+ * screenshot. Reversing a descending list is unambiguous, so this does it rather
+ * than making every call site remember.
+ *
+ * The second trap is the kit's own winding, which `ensureOutwardWinding` measures
+ * and repairs. `finish` repairs the merged result too, but a part that is already
+ * self-consistent is far easier to reason about when it is going to be transformed
+ * or mirrored before it gets there.
  */
 function loft(options: LoftOptions): THREE.BufferGeometry {
-  return ensureOutwardWinding(loftProfile(options))
+  const sections = options.sections
+  const descending =
+    sections.length > 1 && sections[0].y > sections[sections.length - 1].y
+  return ensureOutwardWinding(
+    loftProfile(
+      descending ? { ...options, sections: [...sections].reverse() } : options,
+    ),
+  )
 }
 
 /**
@@ -880,6 +903,19 @@ function mirroredPairX(
   build: () => THREE.BufferGeometry,
 ): THREE.BufferGeometry[] {
   return [mirrorX(build()), build()]
+}
+
+/**
+ * A fore/aft pair from one +Z builder.
+ *
+ * The wagon runs along X, so its two sides are separated on **Z**, not on X.
+ * Mirroring those across X moves a part to the other end of the cart instead of
+ * to the other side of it, and mirrors an X-centred part onto itself.
+ */
+function mirroredPairZ(
+  build: () => THREE.BufferGeometry,
+): THREE.BufferGeometry[] {
+  return [mirrorZ(build()), build()]
 }
 
 function finish(
@@ -1690,10 +1726,10 @@ export function buildHeadgear(kind: HeadgearKind): THREE.BufferGeometry {
       transformed(
         latheProfile(
           [
-            { x: 0.3, y: 0.05 },
-            { x: 0.52, y: -0.03 },
-            { x: 0.52, y: -0.09 },
             { x: 0.3, y: -0.03 },
+            { x: 0.52, y: -0.09 },
+            { x: 0.52, y: -0.03 },
+            { x: 0.3, y: 0.05 },
           ],
           { segments: 12, name: 'kettle-brim' },
         ),
@@ -1852,14 +1888,16 @@ export function buildHeadgear(kind: HeadgearKind): THREE.BufferGeometry {
     )
   } else if (kind === 'cap') {
     parts.push(
+      // Lathe profiles run bottom to top. Reversed, `LatheGeometry` writes its
+      // normals and its winding inside out and the whole cap vanishes.
       latheProfile(
         [
-          { x: 0.001, y: 0.3 },
-          { x: 0.24, y: 0.24 },
-          { x: 0.4, y: 0.08 },
-          { x: 0.43, y: -0.02 },
-          { x: 0.36, y: -0.06 },
           { x: 0.001, y: -0.05 },
+          { x: 0.36, y: -0.06 },
+          { x: 0.43, y: -0.02 },
+          { x: 0.4, y: 0.08 },
+          { x: 0.24, y: 0.24 },
+          { x: 0.001, y: 0.3 },
         ],
         { segments: 9, name: 'cap' },
       ),
@@ -2225,7 +2263,9 @@ export function buildOffhand(kind: OffhandKind): THREE.BufferGeometry {
         ],
         { segments: 8, name: 'shield-boss' },
       ),
-      { rotation: { x: -Math.PI / 2, y: 0, z: 0 }, position: { x: 0, y: 0.08, z: 0.06 } },
+      // +π/2 about X, not −π/2: the dome has to face the enemy, and the face a
+      // shield presents to the enemy is +Z, where the rim and the boss live.
+      { rotation: { x: Math.PI / 2, y: 0, z: 0 }, position: { x: 0, y: 0.08, z: 0.06 } },
     )
     const rib = block(
       { width: 0.08, height: 1.14, depth: 0.05 },
@@ -2279,21 +2319,22 @@ export function buildOffhand(kind: OffhandKind): THREE.BufferGeometry {
         ],
         { segments: 9, name: 'round-shield' },
       ),
-      { rotation: { x: -Math.PI / 2, y: 0, z: 0 } },
+      { rotation: { x: Math.PI / 2, y: 0, z: 0 } },
     )
     const spikes: THREE.BufferGeometry[] = []
     for (let index = 0; index < 6; index += 1) {
       const angle = (index / 6) * Math.PI * 2
       spikes.push(
+        // +π/2 points the tip along +Z, away from the arm behind the straps.
         spike(0.05, 0.19, {
           position: { x: Math.cos(angle) * 0.3, y: Math.sin(angle) * 0.3, z: 0.07 },
-          rotation: { x: -Math.PI / 2, y: 0, z: 0 },
+          rotation: { x: Math.PI / 2, y: 0, z: 0 },
         }),
       )
     }
     const hubSpike = spike(0.09, 0.3, {
       position: { x: 0, y: 0, z: 0.07 },
-      rotation: { x: -Math.PI / 2, y: 0, z: 0 },
+      rotation: { x: Math.PI / 2, y: 0, z: 0 },
     })
     const straps = mirroredPair((side) =>
       block(
@@ -2316,7 +2357,7 @@ export function buildOffhand(kind: OffhandKind): THREE.BufferGeometry {
         ],
         { segments: 10, name: 'buckler' },
       ),
-      { rotation: { x: -Math.PI / 2, y: 0, z: 0 } },
+      { rotation: { x: Math.PI / 2, y: 0, z: 0 } },
     )
     const grip = block(
       { width: 0.07, height: 0.24, depth: 0.05 },
@@ -3561,32 +3602,34 @@ export function buildDeerLeg(front: boolean): THREE.BufferGeometry {
 }
 
 export function buildBirdBody(): THREE.BufferGeometry {
+  // Authored nose-forward in the shared frame rather than lofted upright and
+  // rotated afterwards: `BufferGeometry.rotateX` transforms position and normal
+  // but not custom attributes, so rotating after `finish` would leave the baked
+  // `outlineNormal` pointing along the old axes and crack the ink.
   const parts: THREE.BufferGeometry[] = [
-    loft({
-      profile: rectProfile(0.19, 0.19, 0.06),
-      sections: [
+    bodyAlongZ(
+      rectProfile(0.19, 0.19, 0.06),
+      [
         { y: -0.2, scaleX: 0.34, scaleZ: 0.3 },
         { y: -0.06, scaleX: 0.86, scaleZ: 0.86 },
         { y: 0.1, scaleX: 1, scaleZ: 1 },
         { y: 0.24, scaleX: 0.72, scaleZ: 0.74 },
       ],
-      name: 'bird-torso',
-    }),
+      'bird-torso',
+    ),
     block(
       { width: 0.14, height: 0.13, depth: 0.15, bevel: 0.04 },
-      { position: { x: 0, y: 0.16, z: 0.18 } },
+      { position: { x: 0, y: 0.08, z: 0.18 } },
     ),
     // A tail fan, three vanes rather than one bar.
     ...[-0.22, 0, 0.22].map((angle) =>
       block(
         { width: 0.06, height: 0.03, depth: 0.24, bottomScale: 0.6 },
-        { position: { x: 0, y: -0.02, z: -0.28 }, rotation: { x: 0.12, y: angle, z: 0 } },
+        { position: { x: 0, y: 0.02, z: -0.28 }, rotation: { x: 0.12, y: angle, z: 0 } },
       ),
     ),
   ]
-  const geometry = finish(parts, 'bird-body')
-  geometry.rotateX(-Math.PI / 2)
-  return geometry
+  return finish(parts, 'bird-body')
 }
 
 /** Both wings in one buffer, so a single `rotation.z` flaps them in opposition. */
@@ -3647,8 +3690,9 @@ export function buildWagonFrame(): THREE.BufferGeometry {
       { width: 0.36, height: 0.2, depth: 1.6, bevel: 0.04 },
       { position: { x: 2.1, y: 1.3, z: 0 } },
     ),
-    // Two braces from the pole up to the frame.
-    ...mirroredPairX(() =>
+    // Two braces from the pole up to the frame. They sit on either side of the
+    // cart, which is a separation on Z — the wagon runs along X.
+    ...mirroredPairZ(() =>
       block(
         { width: 1.5, height: 0.11, depth: 0.11 },
         { position: { x: 2.9, y: 1.3, z: 0.34 }, rotation: { x: 0, y: -0.28, z: 0.12 } },
@@ -3665,7 +3709,7 @@ export function buildWagonAxle(width: number): THREE.BufferGeometry {
         { width: 0.17, height: 0.17, depth: width, bevel: 0.03 },
         {},
       ),
-      ...mirroredPairX(() =>
+      ...mirroredPairZ(() =>
         block(
           { width: 0.24, height: 0.24, depth: 0.22, bevel: 0.03 },
           { position: { x: 0, y: 0, z: width / 2 - 0.16 } },
@@ -3775,10 +3819,14 @@ export function buildWagonBed(): THREE.BufferGeometry {
   return finish(parts, 'wagon-bed')
 }
 
-/** The tilt: five bows and the canvas stretched over them. */
+/** The tilt: four bows over the front of the bed and the canvas stretched on them. */
 export function buildWagonTilt(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = []
-  const bowXs = [-2.0, -1.0, 0, 1.0, 1.85]
+  // The tilt covers the front of the bed and stops short of the tail, so the load
+  // stays visible. That is also the shape the interaction code needs: `cargo` is
+  // what the player robs, and a canopy over the whole bed hides both the crates
+  // and the interactable ink that marks them.
+  const bowXs = [-0.15, 0.55, 1.25, 1.9]
   for (const x of bowXs) {
     parts.push(
       transformed(
@@ -3816,10 +3864,14 @@ export function buildWagonTilt(): THREE.BufferGeometry {
     const span = Math.hypot(z1 - z0, y1 - y0)
     parts.push(
       block(
-        { width: 3.95, height: 0.05, depth: span * 1.04, bevel: 0.01 },
+        { width: 2.35, height: 0.05, depth: span * 1.04, bevel: 0.01 },
         {
-          position: { x: -0.08, y: 2.16 + midY, z: midZ },
-          rotation: { x: Math.atan2(y1 - y0, z1 - z0), y: 0, z: 0 },
+          position: { x: 0.88, y: 2.16 + midY, z: midZ },
+          // A box's depth axis is +Z; rotating it by θ about X sends that axis to
+          // (0, −sinθ, cosθ). Aligning it with the arc segment (0, Δy, Δz) is
+          // therefore `atan2(−Δy, Δz)`, and the unnegated version lays every
+          // panel across its own bow instead of along it.
+          rotation: { x: Math.atan2(-(y1 - y0), z1 - z0), y: 0, z: 0 },
         },
       ),
     )
@@ -3846,7 +3898,7 @@ export function buildWagonTilt(): THREE.BufferGeometry {
     parts.push(
       block(
         { width: 0.05, height: 0.2, depth: 0.4, bottomScale: 0.4 },
-        { position: { x: -1.96, y: 2.08 - 0.06, z: -1.0 + index * 0.5 } },
+        { position: { x: -0.24, y: 2.02, z: -1.0 + index * 0.5 } },
       ),
     )
   }
