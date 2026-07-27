@@ -2198,9 +2198,11 @@ function dressingMaterial(
  * Tapered trunk with a root flare, three staggered canopy tiers each rotated off
  * axis, seeded noise on the trunk for bark, and a baked vertical gradient from deep
  * shadow at the roots to lit needles at the crown. The seed is a constant, so every
- * forest region builds an identical buffer — but each region currently builds and
+ * forest region builds an identical buffer — but each region on this branch builds and
  * disposes its own copy. Routing this through a runtime-level `GeometryCache` so
- * resident regions genuinely share one buffer is left to the world-object pass.
+ * resident regions genuinely share one buffer belongs to the world-object pass, which
+ * has since done it in `src/game/world/WorldPropLibrary.ts` — see docs/08 §5.4 for the
+ * three lifetime rules that come with it.
  */
 function forestTreeGeometry(): THREE.BufferGeometry {
   const trunk = loftProfile({

@@ -286,12 +286,16 @@ decrements and disposes at zero. One region streaming out must not dispose a tre
 another region is still drawing. `dispose()` releases everything unconditionally and
 is idempotent.
 
-**Status:** the engine uses this for actor and caravan geometry. The streamed world
-does not yet — `GeneratedWorldRuntime` still builds and disposes its own dressing and
-ground-cover buffers per region, so identical forest regions currently hold duplicate
-copies. Wiring the runtime onto this cache, keyed by biome and cover kind with
-`release` on region unload, belongs to the world-object pass and is listed as a
-dependency in §12.
+**Status:** the engine uses this for actor and caravan geometry. *On this branch* the
+streamed world does not — `GeneratedWorldRuntime` still builds and disposes its own
+dressing and ground-cover buffers per region, so identical forest regions currently hold
+duplicate copies. **That gap is closed on the world-object branch.** Verified from here:
+`src/game/world/WorldPropLibrary.ts` imports `GeometryCache` at `:3` and holds one at
+`:135`, keyed `acquire`/`release` with the region tracking receipts rather than geometry
+objects. Reported by that pass and not independently measured here: a 128-key retention
+window, peak 125 live entries streaming a full 5x5 map, 0 after dispose, balanced over
+three load/unload/reload laps. Read this paragraph as describing the foundation branch
+only; once the trees merge, `WorldPropLibrary` is the implementation and §12 is done.
 
 The cost that buys is measured, not assumed. An instrumented `A → B → A` region cycle
 rebuilds **225 procedural geometries per load/unload/reload**, each one a
@@ -300,12 +304,43 @@ exactly — net geometry growth per cycle is `0`, nothing is double-disposed, an
 library-owned resource is freed by streaming — so this is recurring construction cost,
 not a leak. 225 rebuilds per cycle is the number the runtime-level cache removes.
 
-Be aware there is **no in-repo example of the release path** to copy. `GameEngine`
+*On this branch* there is **no in-repo example of the release path** to copy. `GameEngine`
 only ever calls `acquire`, because its cache lives as long as the process and is torn
-down wholesale by `dispose()`. The world-object pass writes the first real
-`acquire`/`release` pair, so the ref-counting above is specification rather than
-precedent — worth extra care, and worth a test that streams a region in and out twice
-and asserts `referenceCount` returns to its starting value rather than drifting up.
+down wholesale by `dispose()`. **Do not read that as "nobody has written one"** — the
+world-object pass has, in `src/game/world/WorldPropLibrary.ts`, and once merged that file
+rather than this section is the precedent to copy.
+
+Three lifetime rules, none of which the API enforces. The first two were paid for by that
+pass; the third was found reviewing it and has no known instance:
+
+1. **Re-acquire before you unretain.** If a retention window is holding the last reference
+   to a key, `acquire` it *before* dropping the window's reference. `release` deletes the
+   entry and disposes at zero, so the other order frees the exact buffer the window exists
+   to preserve and silently rebuilds it on the next line.
+2. **A retention window must collapse duplicate keys.** One shared geometry released by
+   three unloading regions otherwise spends three slots on one entry, and the window covers
+   a fraction of the keys it advertises. Surplus references go straight back to the cache;
+   the entry already pinned keeps the count above zero.
+3. **One key, one geometry object.** Two keys must never receive the same buffer. Each
+   entry counts references independently, so releasing one key to zero disposes a buffer
+   the other key still hands out — and every per-key count is correct at every step, so a
+   `referenceCount` invariant cannot see it. Measured on this cache: two keys sharing one
+   `BoxGeometry`, release one, and the survivor still returns the disposed geometry with
+   its 24 vertices readable, because `dispose()` frees the GPU resource and leaves the JS
+   object intact. The check that catches it belongs to the caller, which holds the
+   receipts: distinct geometry objects must equal live entries.
+
+   The reachable route to it is worth naming, because it is a *tempting* thing to write
+   rather than an obscure one. `mergeAll` moves rather than copies when handed a single
+   part — `dispose: true` returns `parts[0]` itself — so a builder that tags one geometry
+   under two surfaces to get it drawn in two passes ("the lantern body, and the same body
+   again in `glow`") yields that one object as the merged result for *both* surfaces, and
+   a per-surface cache then keys it twice. With two or more parts on either surface the
+   same mistake instead merges a geometry the other surface's merge already disposed. One
+   `Set` of seen geometries at the top of a surface-partitioning merge rules out both.
+
+Worth a test that streams a region in and out twice and asserts `referenceCount` returns
+to its starting value rather than drifting up.
 
 `createLod` is for streamed regions: a near level with displacement and an outline
 normal, a far level built from the same profile at lower segment counts. Instanced
@@ -585,8 +620,9 @@ the following as stable:
   reinstate the injection. `hasStylizedShader(material)` reports whether a material
   actually carries the injection, which is what `adoptMaterial` now keys off.
 - `GeometryCache` is ref-counted, so both passes can key by shape parameters and let
-  streaming handle lifetime. The world-object pass inherits `src/game/world/` with no
-  existing example of this — the streamed runtime still builds per-region buffers (§5.4).
+  streaming handle lifetime. On this branch `src/game/world/` has no example of it; the
+  world-object pass has since written one in `WorldPropLibrary.ts`, and §5.4 lists the
+  three lifetime rules the API does not enforce.
 - `transformed` carries baked outline normals through the rotation, and `mergeAll`
   with `dispose: false` works on copies, so neither can quietly corrupt a geometry you
   still hold.
