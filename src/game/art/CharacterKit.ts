@@ -851,19 +851,24 @@ function ensureOutwardWinding(geometry: THREE.BufferGeometry): THREE.BufferGeome
 /**
  * Mirrors a finished part across X, winding and all.
  *
- * `transformed(geometry, { scale: { x: -1 } })` is a trap: three.js flips the face
- * winding for a *mesh* whose world matrix has a negative determinant, but baking
- * the mirror into the buffer leaves the object matrix positive, so every triangle
- * ends up back-facing and the part renders hollow. Reversing the winding by hand
- * is the whole fix — `applyMatrix4` already handles the normals, because the
- * normal matrix of a pure mirror is the mirror itself.
+ * Baking a mirror into a buffer is a trap: three.js flips the face winding for a
+ * *mesh* whose world matrix has a negative determinant, but a baked mirror leaves
+ * the object matrix positive, so every triangle ends up back-facing and the part
+ * renders hollow. Reversing the winding by hand is the whole fix — `applyMatrix4`
+ * already handles the normals, because the normal matrix of a pure mirror is the
+ * mirror itself.
+ *
+ * `transformed()` has since grown the same repair for a negative scale, but this is
+ * a raw `applyMatrix4` and is not routed through it, so the reversal below is still
+ * load-bearing. Do not delete it on the strength of that fix; either keep this as
+ * it is, or replace the whole body with a `transformed()` call.
  */
 function mirrorX(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
   geometry.applyMatrix4(MIRROR_X)
   return reverseWinding(geometry)
 }
 
-/** The same, across Z. For anything whose two copies sit fore and aft. */
+/** The same, across Z, and with the same warning. For fore-and-aft pairs. */
 function mirrorZ(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
   geometry.applyMatrix4(MIRROR_Z)
   return reverseWinding(geometry)
