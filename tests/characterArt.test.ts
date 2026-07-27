@@ -801,10 +801,31 @@ test('the load-bearing rig names are still assigned', () => {
       `the rig no longer assigns the name "${name}"`,
     )
   }
-  // Fauna names the wildlife animation drives.
-  for (const name of ['deer-body', 'legs', 'wings', 'cargo', 'wheel']) {
+  // Fauna names the wildlife animation drives, plus the captive's rope, which
+  // `unbindActorArms` looks up by name when the ropes come off.
+  for (const name of ['deer-body', 'legs', 'wings', 'cargo', 'wheel', 'wrist-rope']) {
     assert.ok(source.includes(`.name = '${name}'`), `"${name}" is no longer assigned`)
   }
+  // Freeing a captive has to do both halves: clear the flag that pins the arms and
+  // hide the cord that says why. One without the other is worse than neither.
+  const unbind = source.slice(
+    source.indexOf('private unbindActorArms('),
+    source.indexOf('private markCharacterShadows('),
+  )
+  assert.ok(unbind.includes('boundArms = false'), 'rescue must clear boundArms')
+  assert.ok(unbind.includes("'wrist-rope'"), 'rescue must drop the rope')
+  assert.equal(
+    (source.match(/this\.unbindActorArms\(/g) ?? []).length,
+    2,
+    'both the rescue path and the companion restore must free a captive',
+  )
+  // Per-frame allocation: the pose sampler feeds a reused buffer, never a literal.
+  const sampler = source.slice(
+    source.indexOf('private sampleActorPose('),
+    source.indexOf('private updateChampionAura('),
+  )
+  assert.ok(sampler.includes('this.scratchPose'), 'the actor pose must reuse its buffer')
+  assert.ok(!/return\s*\{/.test(sampler), 'the actor pose must not allocate per frame')
   // Character construction must never reach for chance or the wall clock. Comments
   // are stripped first, because the docs above the code say the words too.
   const construction = source
