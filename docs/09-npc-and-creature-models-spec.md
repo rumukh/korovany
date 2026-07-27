@@ -121,15 +121,20 @@ belongs to the foundation pass; both are reported upstream and repaired locally 
 `CharacterKit.ts` in a way that costs nothing once the kit itself is corrected.
 
 - **`loftProfile` winds its triangles the opposite way round from the normals it
-  writes.** Measured: a plain lofted box reports 0 triangles in agreement and 28 in
+  writes.** Measured: a plain lofted box reported 0 triangles in agreement and 28 in
   disagreement, against 12/0 for `THREE.BoxGeometry`. A `FrontSide` material
-  therefore draws the *inside* of the far wall and — far more visibly — the
-  `BackSide` ink shell lands in front of its own source and paints the entire
+  therefore drew the *inside* of the far wall and — far more visibly — the
+  `BackSide` ink shell landed in front of its own source and painted the entire
   silhouette solid ink. Since `loftProfile` also backs `taperedBox` and
-  `stylizedCapsule`, this affects almost every part in this module.
-  `ensureOutwardWinding` measures each part against its own normals and reverses the
-  winding only when they disagree, so it is idempotent and becomes a no-op the day
-  the kit is corrected.
+  `stylizedCapsule`, this affected almost every part in this module.
+  `ensureOutwardWinding` measures each triangle against its own normal and reverses
+  only the ones that disagree. It is per triangle rather than per geometry because a
+  merged part routinely mixes builders that disagree with *each other* —
+  `tubeAlongPoints` winds its walls one way and its caps the other — and a majority
+  vote fixes one and breaks the other. It is a measurement, so it is idempotent and
+  becomes a no-op for anything the kit already gets right. **The foundation has since
+  fixed `loftProfile` upstream (`3499e27`), which is exactly the outcome the repair
+  was written to survive.**
 - **A mirror baked into a buffer is not a mirror.** three.js flips the face winding
   for a *mesh* whose world matrix has a negative determinant, but
   `transformed(geometry, { scale: { x: -1 } })` leaves the object matrix positive, so
@@ -148,23 +153,30 @@ and it never creates a material — geometry in, geometry out.
 
 ```text
 CharacterKit.ts
+  ── winding repair ───────────────────────────────────────────
+  ensureOutwardWinding, reverseWinding, mirrorX, loft, bodyAlongZ
   ── plan resolution ──────────────────────────────────────────
   resolveCharacterPlan(faction, role, variant)   -> CharacterPlan
-  characterVariantCount                          -> number
+  characterKitForRole, characterPartKeys, CHARACTER_VARIANTS
   ── humanoid parts ───────────────────────────────────────────
   buildTorso, buildTorsoTrim, buildHead, buildFace, buildHair,
-  buildArm, buildForearm, buildHand, buildThigh, buildShin,
-  buildHeadgear, buildCloak, buildShield
+  buildUpperArm, buildForearm, buildHand, buildThigh, buildShin,
+  buildHeadgear, buildCloak, buildOffhand
   ── weapons ──────────────────────────────────────────────────
-  buildWeapon(kind)            sword | greatsword | sabre | axe | cleaver
-                               | spear | glaive | mace | maul | bow
-                               | staff | dagger
+  buildWeaponHead / buildWeaponGrip
+      sword | greatsword | sabre | dagger | axe | cleaver
+      | spear | glaive | mace | maul | bow | staff
+  ── rig maths ────────────────────────────────────────────────
+  solveHandOffset(target, upperArm, forearm, armX, armZ, elbowX)
   ── creatures ────────────────────────────────────────────────
-  buildBeastBody, buildBeastHead, buildBeastLimb, buildBeastTail
-  buildDeerBody, buildDeerLeg, buildBirdBody, buildBirdWing
+  BEAST_RIG, buildBeastBody, buildBeastHead, buildBeastLimb,
+  buildBeastTail
+  buildDeerBody, buildDeerCrown, buildDeerLeg,
+  buildBirdBody, buildBirdWing
   ── caravan ──────────────────────────────────────────────────
-  buildWagonBed, buildWagonWheel, buildWagonAxle, buildWagonTilt,
-  buildWagonCargo, buildOxBody, buildOxHead, buildHarness
+  WAGON_RIG, buildWagonFrame, buildWagonAxle, buildWagonWheel,
+  buildWagonBed, buildWagonTilt, buildWagonCargo,
+  buildOxBody, buildOxHead, buildHarness
 ```
 
 Every builder returns a fresh `BufferGeometry` with normals, a name, and — for
@@ -474,7 +486,8 @@ Targets:
 | `src/game/art/CharacterKit.ts` | New. Plan resolution and every geometry builder this pass needs. |
 | `src/game/art/index.ts` | One added export block, `// --- CharacterKit ---`. |
 | `src/game/GameEngine.ts` | Character, beast, fauna and caravan construction; actor variation; role kit selection moved out of `spawnActor`; animation. |
-| `tests/characterArt.test.ts` | New. Plan coverage, determinism, rig-name contract, cache-key bounds, geometry sanity. |
+| `tests/characterArt.test.ts` | New. Plan coverage, determinism, rig-name contract, cache-key bounds, winding, geometry sanity. |
+| `tests/art.test.ts` | The foundation's barrel-surface pin gains the names the new export block adds, in its own labelled section. That test asks in its own failure message to be updated when the surface changes; this is the only file this pass touches that it does not own. |
 | `docs/09-npc-and-creature-models-spec.md` | This document. |
 
 ## 13. Acceptance criteria
