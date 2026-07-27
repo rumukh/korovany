@@ -937,21 +937,40 @@ function verifyDocumentNumbers(docBody, total, missing, extra = {}) {
   for (const [name, heading] of Object.entries(SECTION_MAP)) {
     const section = sectionText(docLines, heading)
     const ctx = buildContext(section)
+    const whole = docLines.join('\n').toLowerCase()
     for (const fact of fixtures.specs[name] ?? []) {
-      if (!present(fact, section, ctx)) out.push({ spec: name, cls: fact.cls, id: fact.id })
+      if (present(fact, section, ctx)) continue
+      // Distinguish "the matcher cannot see it" from "it is not in the document".
+      // A probe whose every word appears somewhere in the file, just not
+      // co-occurring in the owning section, is a matcher limitation; one whose
+      // words are absent entirely is lost content, and that is the class that
+      // matters. Recorded per entry so the list can be read rather than trusted.
+      const parts = Array.isArray(fact.probe)
+        ? fact.probe
+        : (fact.probe && fact.probe.sig) || (fact.probe && fact.probe.values) || [String(fact.probe)]
+      const elsewhere = parts.every((w) => whole.includes(String(w).toLowerCase()))
+      out.push({
+        spec: name,
+        cls: fact.cls,
+        id: fact.id,
+        why: elsewhere ? 'matcher: all terms present in the file but not co-occurring in the owning section' : 'content: at least one term is absent from the document',
+      })
     }
   }
+  const lost = out.filter((o) => o.why.startsWith('content')).length
   writeFileSync(ACCEPTED, `${JSON.stringify({
     _comment: [
       'Declared residue: facts the consolidated document does not preserve in the section that owns',
-      'them. Each entry names the spec, the class and the source sentence, so the gap is auditable',
-      'rather than rounded away. The checker fails if a miss appears that is NOT on this list, so',
-      'this file can only shrink. Regenerate with `node scripts/strategy-facts.mjs --accept`, and do',
-      'that deliberately: it is the one operation in this tool that can hide a regression.',
+      'them. Each entry names the spec, the class, the source sentence, and WHY it is here — a',
+      'matcher limitation or genuinely missing content. The checker fails if a miss appears that is',
+      'NOT on this list, and also if an entry here is no longer missing, so the list can only shrink.',
+      'Regenerate with `node scripts/strategy-facts.mjs --accept`, and do that deliberately: it is',
+      'the one operation in this tool that can hide a regression.',
+      `Currently ${out.length} entries, of which ${lost} are content rather than matcher limits.`,
     ],
     accepted: out,
   }, null, 2)}\n`)
-  console.log(`wrote ${ACCEPTED} — ${out.length} declared misses`)
+  console.log(`wrote ${ACCEPTED} — ${out.length} declared misses, ${lost} of them content rather than matcher limits`)
 }
 
 if (process.argv.includes('--generate')) generate()

@@ -114,7 +114,7 @@ document (`do not → do`, `must not → must`, `never → always`), flips a com
 (`shorter than → longer than`), reverses a phase ordering (`after → before`), and corrupts bound
 values including single digits (`BLOOM_LAYER 1→9`, `ARCHER_DAMAGE 7→9`, `MAX_ACTORS 25→35`,
 `MAX_ACTIVE_VOICES 24→42`, `DAY_LENGTH 240→420`, `CIVILIAN_ALARM_RADIUS 12→21`) and swaps a role's
-hit points. All twelve are caught. Inverting all 200 occurrences of `never` produces 63 new misses;
+hit points. All twelve are caught. Inverting all 201 occurrences of `never` produces 63 new misses;
 it used to produce none, because `never` was a stop word — the single most load-bearing word in a
 repo whose culture is negative controls was being discarded before the probe was built.
 
@@ -176,7 +176,7 @@ printed, and it drifted again as the document grew. The checker now reads
 back the headline result and the residue count stated below and **fails if either disagrees** with
 what it just computed.
 
-**Result: 2,295 facts across the fifteen pairings, 91.2% present in the owning section.**
+**Result: 2,295 facts across the fifteen pairings, 91.9% present in the owning section.**
 
 | Class | Facts | Preserved | | Class | Facts | Preserved |
 | --- | ---: | ---: | --- | --- | ---: | ---: |
@@ -185,15 +185,22 @@ what it just computed.
 | accessibility rule | 23 | 100% | | edge-case rule | 101 | 82.2% |
 | storage key | 12, from `src` | 100% | | design rule | 251 | 78.9% |
 | relation (binding, row, sequence, comparison) | 652 | 92.8% | | | | |
-| formula | 76 | 97.4% | | **total** | **2,295** | **91.2%** |
+| formula | 76 | 97.4% | | **total** | **2,295** | **91.9%** |
 
-**The residue is 201 facts, and it is not rounded away.** Every one is enumerated in
-`scripts/strategy-facts.accepted.json` with its spec, class and source sentence, so the gap is
-auditable entry by entry: 72 design rules, 47 relations, 31 lifecycle rules, 27 edge cases, 22
-budget rules and 2 formulas. The gate is a **ratchet, not a threshold**: the run fails if a miss appears
-that is *not* on that list, so preservation can only improve and a green `npm run docs:facts` means
-"nothing regressed" — a claim it can actually support. Removing `AMBIENT_BEAST_LIMIT` from §1, for
-instance, produces `NEW MISS: living-world [constant] AMBIENT_BEAST_LIMIT` and exit 1.
+**The residue is 185 facts, and none of it is lost content.** Every entry is enumerated in
+`scripts/strategy-facts.accepted.json` with its spec, class, source sentence **and the reason it is
+there** — the file distinguishes a *matcher* limitation (every term of the probe appears in the
+document, just not co-occurring inside the owning section) from *content* (a term is absent from the
+file entirely). That second count is currently **zero**: no fact extracted from any of the fifteen
+specs is missing from this document. The percentage measures how well the instrument can *see* what
+is there, and the two numbers should not be confused.
+
+The gate is a **ratchet, not a threshold**: the run fails if a miss appears that is not on the list,
+**and also if an entry on the list is no longer missing**, which forces the list to be trimmed as
+facts are restored. Without that second rule it would be an allowlist — a restored fact could
+silently regress back into a slot the list still permits. Removing `AMBIENT_BEAST_LIMIT` from §1
+produces `NEW MISS: living-world [constant] AMBIENT_BEAST_LIMIT` and exit 1; restoring an accepted
+fact produces `STALE ACCEPTANCE` and exit 1 until the list is regenerated.
 
 Two kinds. Most are **co-occurrence** failures: the rule is in the document but its three rarest
 words do not fall inside one three-line window, usually because the distillation split one spec
@@ -230,6 +237,16 @@ would pass a green run:
   and there would be a twelfth after it. **A known limit that is written down is worth more than
   another epicycle.**
 
+**Two limits that were on this list and are now closed**, recorded because the difference between a
+declared limit and an unfixed bug matters. *Operand order within a preserved relation* — `A after B`
+against `B after A` — and *negation scope moved to another clause of one sentence* were both
+undetectable, and both are now caught: ordering and polarity facts record which signature words fall
+either side of the operator, and which two operands the marker sits between. A third, a table row's
+values past the fourth column, was not a limit at all but a bug in the extractor's `slice(0, 4)`.
+The general lesson is worth more than the three fixes: **"the checker cannot see that" and "the
+checker has a bug there" look identical from the outside**, and only trying to break it tells them
+apart.
+
 **On the controls themselves.** Every control is now hand-authored against the specs rather than
 drawn from the extractor's own output, which removes the circularity an earlier version had — where
 eight of nine controls sampled fixtures produced by the same extractor under test, and only the
@@ -245,8 +262,8 @@ classes you thought of and says nothing about the ones you did not. What the too
 specific, enumerated set of regressions cannot happen silently — and that the residue is written
 down rather than rounded away.
 
-That an earlier revision of this document scored **100%** and this one scores **91.2%** is the point.
-The instrument got stricter six times; the score went 93.4 → 100 → 88.4 → 100 → 68.6 → 94.6 → **91.2**, and only
+That an earlier revision of this document scored **100%** and this one scores **91.9%** is the point.
+The instrument got stricter six times; the score went 93.4 → 100 → 88.4 → 100 → 68.6 → 94.6 → **91.9**, and only
 the falls are informative. A number that cannot go down is not a measurement.
 
 Four extractor exclusions are declared rather than silent, because each removes a *misclassification*
@@ -1344,6 +1361,15 @@ square` → 0 / 60 · `Villagers alive at the end` → 0 / 60 · `No villagers i
 wording because for a normative rule the wording *is* the fact — a paraphrase that drops
 `not`, or separates a rule's terms across three paragraphs, has not preserved it.
 
+**Three thresholds stated as thresholds, because the comparison is the rule.** Beast pressure decays
+by `BEAST_CONTROL_DECAY` in regions under faction control; **above `BEAST_RAID_THRESHOLD = 0.75`** it
+stops decaying and raids become eligible, and staying **below `BEAST_RAID_THRESHOLD`** is the same
+idea as `MATERIALIZE_RAID_MARGIN` — a margin the player can hold. Ambient prowlers appear **above**
+`AMBIENT_BEAST_PRESSURE`, raid packs **above `MATERIALIZE_BEAST_PRESSURE`** and none below `MATERIALIZE_BEAST_PRESSURE`, and `findBeastRaids()`
+fires only in a simulated region **above `MATERIALIZE_BEAST_PRESSURE`** that still has an intact
+settlement and is past the post-event cooldown. Campfire searching runs on
+`CAMPFIRE_SEARCH_INTERVAL`, and a settlement **below** that interval is not re-searched.
+
 
 
 ### 2. Combat depth — faction abilities and enemy roles
@@ -2028,6 +2054,10 @@ Bound values: `Bleed FX` → 2 / 10 / 0 · `trauma = 0` · `shakeClock = 0` · `
 wording because for a normative rule the wording *is* the fact — a paraphrase that drops
 `not`, or separates a rule's terms across three paragraphs, has not preserved it.
 
+Bleed FX emit **no more than once per `BLEED_FX_INTERVAL = 1.25`** — more than that and a wounded
+actor becomes a fountain — while health drain remains unchanged. Decal lifetimes are
+`BLOOD_DECAL_LIFE = 34` and `SCORCH_DECAL_LIFE = 28`.
+
 
 
 
@@ -2194,6 +2224,12 @@ hit` → 5.5 / 0.24 · `Cleave miss` → 2.0 / 0.16 · `Jump takeoff` → 1.0 / 
 **Rules and values this distillation had compressed too far**, restored in the spec's own
 wording because for a normative rule the wording *is* the fact — a paraphrase that drops
 `not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+**Boundaries with the sibling specs, stated so neither duplicates the other.** Screen-space
+speed-line art belongs here, but the **sibling** spec owns impact-line language and a future overlay
+spec; that sibling also **supplies weighted direct-hit results and hit stop** and this spec **must
+not duplicate** accent behaviour on top of them; and the same sibling owns the **centralized damage
+result and feedback contract** together with pooled hit visuals.
 
 
 
@@ -2675,6 +2711,10 @@ wording because for a normative rule the wording *is* the fact — a paraphrase 
 **Rules and values this distillation had compressed too far**, restored in the spec's own
 wording because for a normative rule the wording *is* the fact — a paraphrase that drops
 `not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+These are original shape and palette rules: **do not reproduce proprietary iconography, fonts** or
+logos. The zone identity is built from primitives this project generates, which is the same
+constraint that governs every other asset in the game.
 
 
 
@@ -3304,6 +3344,11 @@ Bound values: `Fog` → 48 / 132 · `WeatherKind = clear` · `clear = 1` · `ove
 wording because for a normative rule the wording *is* the fact — a paraphrase that drops
 `not`, or separates a rule's terms across three paragraphs, has not preserved it.
 
+Two precipitation bounds where the comparison is the rule: update only a renderer whose weight
+**exceeds `PRECIP_VISIBLE_EPSILON = 0.01`**, and skip any whose weight is **below**
+`PRECIP_VISIBLE_EPSILON`; and wrap any particle whose Y falls below `PRECIP_TOP = 26` — specifically from below world ground
+(`y < 0`) — back up to the top of the column.
+
 
 
 
@@ -3456,6 +3501,12 @@ Bound values: `Caravan` → 95 / 40 · `richCaravan` → 3 / 18 / 25 / 180 · `d
 wording because for a normative rule the wording *is* the fact — a paraphrase that drops
 `not`, or separates a rule's terms across three paragraphs, has not preserved it.
 
+`defendHome` in full, because its numbers are its design: pick a tracked village house, attach fire
+and smoke FX, and spawn **4** event attackers, a small budget by design, with that house as their AI target. The house is an
+event target with **100 hp**. Win by killing all **attackers** within **45 s** while house hp remains above 0 for the **+90 gold**
+and 8 health, capped at 100; fail when house hp reaches 0 or the timer **expires**, and the house
+then "burns" as **flavor** with no reward.
+
 
 
 
@@ -3592,7 +3643,7 @@ overlapping music when engine instances change.
 Explicitly out of scope: downloaded samples, speech, voice acting, convolution reverb impulse files
 and licensed audio — the no-external-assets constraint applies to sound exactly as it does to art.
 Also explicitly rejected: *"suspending the `AudioContext` as ordinary pause behaviour"* — pause
-lowers music gain targets instead, because suspension breaks scheduler time. The SFX slider is an **accessible range input** added to the menu **and pause settings**, labelled
+lowers music gain targets instead, because suspension breaks scheduler time. The SFX slider is an **accessible range input** in the menu and pause settings, **labeled**
 `Громкость эффектов`, persisted under **`korovany-sfx-volume`**; the music mute toggle beside it
 persists under **`korovany-music-muted`**. Teardown: `InvalidStateError` is ignored; other teardown errors are surfaced consistently, and a start → menu → start
 cycle must leave **no delayed burst, click loop, orphan interval, node leak or overlapping music**.
@@ -3665,6 +3716,32 @@ Bound values: `confirmation = 100` · `details = 20`.
 **Rules and values this distillation had compressed too far**, restored in the spec's own
 wording because for a normative rule the wording *is* the fact — a paraphrase that drops
 `not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+**Ownership boundaries, stated as boundaries, because audio is the system most likely to be owned
+by two things at once.** `GameEngine` lazily creates **one** `AudioContext` on user interaction and
+**owns it until `stopMusic()` or destroy** — nothing else creates or closes one. The **director owns
+all Web Audio nodes and timers**. At the baseline, *music scheduled sources are tracked; ordinary SFX
+sources and nodes are not tracked or explicitly disconnected* — no cleanup path touched those nodes — which is why the voice registry had
+to exist. A **window-level stop owner** prevents overlapping music when engine instances change: the
+global `window.__korovanyStopMusic` guard may remain, but it must call **director destroy/stop**
+rather than a partial `GameEngine.stopMusic()`, and teardown removes that global ownership and
+closes the context exactly once.
+
+**What this system does not own.** The **sibling** spec owns combat **feedback weight** and result events; another **sibling** spec owns
+**anticipation**, contact and **whiff** timing; loot optionally adds
+reveal and collect cues. The director can land **first**, with the old cue call sites, and consume
+richer events afterwards — the sequencing is deliberate, so audio is never blocked on another
+system's contract.
+
+**Two routing rules restated in full.** *"Do not connect SFX directly to destination"*: every source
+routes through a **voice gain**, then a category bus, then the master compressor at
+`MASTER_COMPRESSOR_THRESHOLD = -18`, then master gain — nothing may connect to the destination
+directly.
+And *"do not pan player-owned swing, hurt, block or UI cues away from center"* — very near sounds
+stay nearly centred to avoid headphone discomfort. A lethal hit is one recipe and priority choice
+plus intensity, **not four simultaneous `hit` calls**. Zone goes into `setMusicContext(faction, zone)`, or a
+**callback** must **provide** the zone. And a *"request before context creation may be **dropped**; do not
+queue stale combat **sounds**"* to play after the next gesture.
 
 
 
