@@ -40,10 +40,17 @@ function createLibrary(): StylizedArtLibrary {
 }
 
 /**
- * `docs/08` §7 sets `ART_LIBRARY_MATERIALS<=12`, and until now nothing checked it.
+ * `docs/08` §7 sets `ART_LIBRARY_MATERIALS<=24`, and until now nothing checked it.
  * Two sibling sessions are adding surfaces against that ceiling, so this pins both
  * the limit and the headroom: the library's own worst case is every outline kind in
  * both variants plus a contact shadow, and whatever is left is Wave 2's to spend.
+ *
+ * The ceiling was 12 and left 3 shared slots for two sessions, which is not a
+ * budget either could live inside. The number is not the valuable half of this
+ * test — the enforcement is. What actually costs frames is per-mesh materials and
+ * shader-program churn, and "one material per surface, never per mesh" already
+ * prevents that. If the combined total ever approaches 24, treat it as a design
+ * smell to review rather than a number to raise again.
  */
 test('the library stays inside its documented material budget', () => {
   const library = createLibrary()
@@ -63,8 +70,8 @@ test('the library stays inside its documented material budget', () => {
     'eight outline materials plus one shared contact shadow',
   )
   assert.ok(
-    worstCase <= 12,
-    `ART_LIBRARY_MATERIALS is 12; the library itself uses ${String(worstCase)}`,
+    worstCase <= 24,
+    `ART_LIBRARY_MATERIALS is 24; the library itself uses ${String(worstCase)}`,
   )
 
   // Contact shadows share one material per distinct opacity, and the world only
@@ -1011,6 +1018,30 @@ test('every geometry-kit builder winds to agree with its normals', () => {
       }),
       taperedBox({ width: 0.3, height: 0.5, depth: 0.3, topScale: 0.6 }),
     ], { name: 'composed-prop' })],
+
+    // A mirror reflects positions but leaves vertex order alone, so without an
+    // explicit reversal `transformed` turns any part inside-out — 100% of
+    // triangles, not a subtle few. Both storage paths, because `reverseWinding`
+    // reorders an index buffer but has to swap every attribute in step when there
+    // is none. Making a left/right pair this way is the obvious thing to reach for.
+    ['mirrored tapered box (non-indexed)', transformed(
+      taperedBox({ width: 0.6, height: 1, depth: 0.4, topScale: 0.7 }),
+      { scale: { x: -1, y: 1, z: 1 } },
+    )],
+    ['mirrored lathe (indexed)', transformed(
+      latheProfile([
+        { x: 0.05, y: 0 },
+        { x: 0.4, y: 0.3 },
+        { x: 0.25, y: 0.7 },
+      ], { segments: 12 }),
+      { scale: { x: -1, y: 1, z: 1 } },
+    )],
+    // Determinant, not "any negative component": two mirrored axes compose back
+    // into a rotation and must NOT be reversed.
+    ['doubly mirrored tapered box (det > 0)', transformed(
+      taperedBox({ width: 0.6, height: 1, depth: 0.4 }),
+      { scale: { x: -1, y: -1, z: 1 } },
+    )],
   ]
 
   // Pins that this kit's own case list keeps an indexed member. Every builder here
@@ -1043,9 +1074,23 @@ test('every geometry-kit builder winds to agree with its normals', () => {
  * with itself and pass. This one never reads the normal attribute — for a closed
  * body every face must point away from the centroid — so the two together pin the
  * absolute orientation rather than merely internal consistency.
+ *
+ * The invariant is not universal, and the guard below is what keeps that honest.
+ * It holds for any shape that is star-convex about its own centroid; it says
+ * nothing at all about one whose faces are *orthogonal* to the centroid ray. A
+ * flat lathe — a disc annulus, every point at the same `y` — is the reachable
+ * example: its faces point along +/-Y while "away from the centroid" is purely
+ * radial, so `wind · outward` is 0 to floating-point and the sign that falls out
+ * is noise. Measured, that case reports 32 of 32 faces "inward" at |cos| = 0.000000
+ * while being perfectly well formed. So each case must also prove the invariant
+ * *applies* to it, or a future addition gets a confident, entirely spurious
+ * inversion report and someone "fixes" a builder that was never broken.
  */
 test('closed builders wind outward, independently of their normals', () => {
-  const inwardFaces = (geometry: THREE.BufferGeometry): number => {
+  // `weakest` is the smallest |cos| between a face's winding and its centroid ray:
+  // how decisively the invariant classified the least clear-cut face. `inward` is
+  // meaningful only when `weakest` is comfortably above zero.
+  const measure = (geometry: THREE.BufferGeometry): { inward: number, weakest: number } => {
     const source = geometry.index ? geometry.toNonIndexed() : geometry
     const position = source.getAttribute('position')
     const centroid = new THREE.Vector3()
@@ -1064,6 +1109,7 @@ test('closed builders wind outward, independently of their normals', () => {
     const wind = new THREE.Vector3()
     const outward = new THREE.Vector3()
     let inward = 0
+    let weakest = Infinity
     for (let triangle = 0; triangle + 2 < position.count; triangle += 3) {
       a.fromBufferAttribute(position, triangle)
       b.fromBufferAttribute(position, triangle + 1)
@@ -1073,9 +1119,10 @@ test('closed builders wind outward, independently of their normals', () => {
       outward.copy(a).add(b).add(c).divideScalar(3).sub(centroid)
       if (outward.lengthSq() < 1e-14) continue
       if (wind.dot(outward) <= 0) inward += 1
+      weakest = Math.min(weakest, Math.abs(wind.normalize().dot(outward.normalize())))
     }
     if (source !== geometry) source.dispose()
-    return inward
+    return { inward, weakest }
   }
 
   // Same control set as the relative test, and valid here for the same reason:
@@ -1089,7 +1136,7 @@ test('closed builders wind outward, independently of their normals', () => {
     ['CylinderGeometry', new THREE.CylinderGeometry(0.5, 0.7, 1, 8)],
   ]
   for (const [name, control] of controls) {
-    assert.equal(inwardFaces(control), 0, `${name} control must wind outward`)
+    assert.equal(measure(control).inward, 0, `${name} control must wind outward`)
     control.dispose()
   }
 
@@ -1109,9 +1156,11 @@ test('closed builders wind outward, independently of their normals', () => {
     // it is the only *indexed* builder in the kit, so it is the only case that
     // exercises this helper's `toNonIndexed()` branch. Both a closed profile
     // (touches the axis at both ends, so the body seals itself) and an open one
-    // (a skirt with no caps) — the closed case is the star-convex solid this
-    // test is written for, the open one pins that the side walls alone still
-    // face outward.
+    // (a skirt with no caps). Closure is not what this invariant needs — the open
+    // skirt classifies more decisively than the closed solid (|cos| 0.96 against
+    // 0.93), because a skirt's side walls do face away from the mesh centroid.
+    // What it needs is that faces are not orthogonal to the centroid ray, which
+    // the guard at the bottom of this test now enforces for every case.
     ['lathe closed profile', latheProfile([
       { x: 0, y: 0 },
       { x: 0.35, y: 0.15 },
@@ -1135,9 +1184,71 @@ test('closed builders wind outward, independently of their normals', () => {
   ]
 
   for (const [label, geometry] of cases) {
-    assert.equal(inwardFaces(geometry), 0, `${label} must wind outward`)
+    const { inward, weakest } = measure(geometry)
+    // Prove the invariant applies before trusting what it says. 0.2 is far below
+    // every real case (the weakest shipped is the closed lathe at 0.93) and far
+    // above the degenerate one (a flat lathe at 0.000000), so it separates "this
+    // geometry is inverted" from "this test cannot speak about this geometry".
+    assert.ok(
+      weakest > 0.2,
+      `${label} is too flat for the centroid invariant to classify `
+      + `(weakest |cos| ${weakest.toFixed(6)}) — its faces are near-orthogonal to `
+      + 'the centroid ray, so any verdict here is floating-point noise, not winding',
+    )
+    assert.equal(inward, 0, `${label} must wind outward`)
     geometry.dispose()
   }
+})
+
+/**
+ * Reversing a mirrored part's winding is only correct if every attribute moves
+ * with it. The winding assertions above would catch a desynchronised `normal`,
+ * because they compare winding against it — but not a desynchronised `color`,
+ * `uv` or `outlineNormal`, which would silently smear vertex data across the
+ * wrong corners. This pins the correspondence directly.
+ */
+test('a mirrored geometry keeps every attribute aligned to its vertex', () => {
+  const geometry = bakeOutlineNormals(taperedBox({ width: 0.8, height: 1, depth: 0.5 }))
+  const count = geometry.getAttribute('position').count
+
+  // A colour derived from each vertex's own position, so the pairing is checkable
+  // after the mirror without depending on vertex order.
+  const colors = new Float32Array(count * 3)
+  const position = geometry.getAttribute('position')
+  for (let i = 0; i < count; i += 1) {
+    colors[i * 3] = position.getX(i) + 5
+    colors[i * 3 + 1] = position.getY(i) + 5
+    colors[i * 3 + 2] = position.getZ(i) + 5
+  }
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+
+  transformed(geometry, { scale: { x: -1, y: 1, z: 1 } })
+
+  const mirroredPosition = geometry.getAttribute('position')
+  const mirroredColor = geometry.getAttribute('color')
+  const outlineNormal = geometry.getAttribute('outlineNormal')
+  for (let i = 0; i < count; i += 1) {
+    // The colour still encodes the vertex's *original* position, so mirroring x
+    // means the stored red channel must be the negation of the new x.
+    assert.ok(
+      Math.abs(mirroredColor.getX(i) - 5 + mirroredPosition.getX(i)) < 1e-6,
+      `vertex ${i} lost its colour pairing under the mirror`,
+    )
+    assert.ok(
+      Math.abs(mirroredColor.getY(i) - 5 - mirroredPosition.getY(i)) < 1e-6,
+      `vertex ${i} lost its colour pairing on an unmirrored axis`,
+    )
+    const ink = new THREE.Vector3().fromBufferAttribute(
+      outlineNormal as THREE.BufferAttribute,
+      i,
+    )
+    assert.ok(
+      Number.isFinite(ink.length()) && Math.abs(ink.length() - 1) < 1e-4,
+      `vertex ${i} ink normal must stay unit length, got ${ink.length()}`,
+    )
+  }
+
+  geometry.dispose()
 })
 
 /**

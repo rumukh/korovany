@@ -184,14 +184,28 @@ function requireInjectionPoint(source: string, token: string, label: string): vo
  * stylized" and can be repaired, instead of claiming a shader it does not have.
  *
  * Left **enumerable**, unlike the library's ownership marker, and the difference
- * is load-bearing. This flag tracks `onBeforeCompile`, which is an own enumerable
- * property, so the two propagate under exactly the same rule: `Object.assign` and
- * spread copy both, `clone()` copies neither. The flag can therefore never
- * disagree with the material it describes. Hiding it would produce a material that
- * carries the injection but reports none, and `adoptMaterial` would inject a
- * second time on top of the first. Ownership is the opposite case — it must never
- * propagate to a resource the library did not create — which is why that marker is
- * non-enumerable and this one is not.
+ * is load-bearing. The general rule, which is what should stop anyone
+ * symmetrising these two later: *ownership describes a relationship to the
+ * library, so it must never travel; this flag describes an intrinsic property of
+ * the material, so it must travel with the property it describes.* Enumerable and
+ * non-enumerable fall straight out of that, and it generalises to any marker a
+ * downstream session adds.
+ *
+ * Concretely, this flag tracks `onBeforeCompile`, which `applyStylizedShader`
+ * makes an own enumerable property. The two therefore propagate under identical
+ * rules — `Object.assign` and spread copy both, `clone()` copies neither — so the
+ * flag can never disagree with the material it describes.
+ *
+ * Hiding it would produce a material that carries the injection but reports none.
+ * The damage that follows is quieter than a doubled shader: `applyStylizedShader`
+ * *assigns* `onBeforeCompile` rather than composing onto it, so a re-adopt swaps
+ * the closure for an equivalent one and the GLSL is unchanged. What actually
+ * breaks is that `adoptMaterial` re-derives band, rim and rim-power from
+ * `options.surface ?? 'cloth'` and overwrites `userData.stylizedSurface` — so an
+ * assign-derived `metal` would silently retune to `cloth` (rim 0.62 -> 0.34,
+ * power 3.2 -> 2.6, and band identical at 1, so it is invisible on the banding
+ * axis entirely). A silent retune is harder to spot than a crash, which makes
+ * keeping this flag honest more valuable, not less.
  */
 const STYLIZED_APPLIED = Symbol('stylizedShaderApplied')
 

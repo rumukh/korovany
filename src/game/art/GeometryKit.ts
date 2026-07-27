@@ -994,6 +994,37 @@ export interface TransformOptions {
  * Baked outline normals are carried through the rotation as well, so the order of
  * `transformed` and `bakeOutlineNormals` does not matter.
  */
+/**
+ * Swaps the second and third vertex of every triangle, reversing the facing of the
+ * whole geometry. Indexed geometry only needs its index triples reordered; a
+ * non-indexed one has to swap every attribute in step, or positions and normals
+ * would end up describing different vertices.
+ */
+function reverseWinding(geometry: THREE.BufferGeometry): void {
+  const index = geometry.getIndex()
+  if (index) {
+    for (let triangle = 0; triangle + 2 < index.count; triangle += 3) {
+      const swap = index.getX(triangle + 1)
+      index.setX(triangle + 1, index.getX(triangle + 2))
+      index.setX(triangle + 2, swap)
+    }
+    index.needsUpdate = true
+    return
+  }
+  for (const attribute of Object.values(geometry.attributes)) {
+    const { itemSize } = attribute
+    for (let triangle = 0; triangle + 2 < attribute.count; triangle += 3) {
+      for (let component = 0; component < itemSize; component += 1) {
+        const b = attribute.array[(triangle + 1) * itemSize + component]
+        attribute.array[(triangle + 1) * itemSize + component] =
+          attribute.array[(triangle + 2) * itemSize + component]
+        attribute.array[(triangle + 2) * itemSize + component] = b as number
+      }
+    }
+    attribute.needsUpdate = true
+  }
+}
+
 export function transformed(
   geometry: THREE.BufferGeometry,
   options: TransformOptions,
@@ -1023,6 +1054,12 @@ export function transformed(
     scale,
   )
   geometry.applyMatrix4(matrix)
+  // A mirror (negative determinant) reflects positions but leaves vertex order
+  // alone, so the result is inside-out: every triangle winds against its own
+  // normal and against the outward direction. `applyMatrix4` will not do this for
+  // us, and §5.3 publishes outward winding as an invariant the kit guarantees, so
+  // reversing here is what keeps a mirrored left/right pair honest.
+  if (matrix.determinant() < 0) reverseWinding(geometry)
   // `applyMatrix4` knows about `position`, `normal` and `tangent`. Baked ink
   // normals are a custom attribute, so without this they stay in the pre-transform
   // frame and the inverted hull extrudes sideways into the mesh it should halo.

@@ -615,7 +615,7 @@ Constraints they must respect:
 ```text
 ART_RAMP_TEXELS=4                    one shared DataTexture for the whole game
 ART_RAMP_STOPS=0, 0.42, 0.72, 1.0
-ART_LIBRARY_MATERIALS<=12            shared + outline (4 kinds x 2 variants) + contact shadow
+ART_LIBRARY_MATERIALS<=24            shared + outline (4 kinds x 2 variants) + contact shadow
 OUTLINE_THICKNESS=0.0042             view-space units per unit of depth, ~0.36% of frame height
 OUTLINE_MIN_DEPTH=2.0
 OUTLINE_MAX_DEPTH=42.0
@@ -652,12 +652,27 @@ Targets:
 `ART_LIBRARY_MATERIALS` is the only budget here that a downstream session can blow
 without noticing, so it is the one that is enforced rather than asserted: read
 `library.libraryOwnedMaterialCount`, and `tests/art.test.ts` fails if the library's
-own worst case plus three shared surfaces exceeds it. The library itself uses **9**
-— eight outline materials and one contact shadow — leaving **three** shared slots
-for the NPC and world-object passes combined. That is deliberately tight. Needing a
-fourth is a reason to come and renegotiate this number, not to quietly raise it: the
-whole point of one shared material family is that it stays small enough to reason
-about.
+own worst case plus the shared surfaces exceeds it. The library itself uses **9** —
+eight outline materials and one contact shadow — leaving **fifteen** shared slots
+for the NPC and world-object passes combined.
+
+This number was 12, which left three slots for two sessions to share across three
+factions and every biome's bark, foliage and stone. That was not a budget either
+session could work inside; they would have collided within the hour. The rationale
+for 24: what actually costs frames is per-mesh materials and shader-program churn,
+and the "one material per surface, never per mesh" rule already prevents both. Two
+dozen shared materials across an entire world plus all characters is modest for a
+browser target and well inside what three.js batches comfortably.
+
+The enforcement is the valuable half, not the number. Both Wave 2 sessions must
+declare their material keys at integration so Wave 4 sees the real total. If that
+total approaches 24, treat it as a design smell worth reviewing rather than a
+number to raise again — the whole point of one shared material family is that it
+stays small enough to reason about.
+
+The other three budgets in this section sit behind `GameEngine` and need WebGL and
+a DOM to measure, so they remain prose rather than tests. Saying so plainly is
+better than implying they are enforced.
 
 ## 8. Resource and lifecycle rules
 
