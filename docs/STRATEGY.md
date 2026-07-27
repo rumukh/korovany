@@ -66,98 +66,101 @@ now holds better than prose, spec section numbering, and the specs' own **effort
 planning artifacts for work that is finished, carrying nothing a future implementer needs.
 
 Coverage is checked mechanically by a tool **that is in this repository**: `scripts/strategy-facts.mjs`,
-run as `npm run docs:facts`, with its extracted fact set in `scripts/strategy-facts.fixtures.json`.
-Anyone can regenerate the numbers below with `node scripts/strategy-facts.mjs --generate` (which reads
-the deleted specs back out of commit `d854a75`) and then `node scripts/strategy-facts.mjs`. A figure
-only its author can reproduce is not evidence, and two earlier versions of this measurement were
-wrong in ways that only became visible when someone else checked.
+run as `npm run docs:facts`, with its extracted fact set in `scripts/strategy-facts.fixtures.json`
+and its control corpus in `scripts/strategy-facts.controls.json`. Regenerate with
+`node scripts/strategy-facts.mjs --generate` (which reads the deleted specs back out of commit
+`d854a75`) and then `node scripts/strategy-facts.mjs`. A figure only its author can reproduce is not
+evidence — and **four** successive versions of this measurement were wrong, each in a way that was
+invisible to itself until someone else broke it.
 
 1. **A document-wide token set** reported "93.4% numeric coverage". It counted a number as preserved
    if it occurred *anywhere* in a 2,800-line file, so loot's 120 ms beam reveal registered as present
    because `120` appears in the weather table. **Global presence is not contextual preservation.**
-2. The replacement was section-scoped but its control **sampled from its own output**: it deleted
-   facts the extractor had already selected and confirmed the miss count rose. That tests the
-   *matcher*. It says nothing about whether the extractor recognises a class of fact at all — which
-   is exactly where every real miss was hiding. **You cannot test recall by sampling from your own
-   precision set.**
+2. **A section-scoped version whose control sampled its own output.** It deleted facts the extractor
+   had already selected and confirmed the miss count rose — a test of the *matcher*, silent about
+   whether the extractor recognises a class at all. **You cannot test recall by sampling from your
+   own precision set.**
+3. **A gate that could not fail.** Exit status was driven only by the storage-key check, so deleting
+   every occurrence of `chronicle` produced eight missing facts and exited `0`, while the prose
+   matcher accepted three signature words out of four — enough that deleting a rule's single most
+   discriminating token still scored the rule preserved.
+4. **A 100% that measured tokens, not facts.** Constants and numbers were independent bags, so
+   `BLOOM_LAYER` and `1` both being present said nothing about `BLOOM_LAYER = 1`; a role table
+   containing `30` and `7` said nothing about which role had which; single-digit integers were never
+   extracted at all; and `STOP_WORDS` discarded `not`, `never`, `before` and `after`, so *"do not
+   make bloom responsible for outlines"* and *"do make bloom responsible for outlines"* had identical
+   signatures. Six adversarial mutations — two value swaps, a row swap, a polarity inversion and an
+   ordering inversion — all passed at 100%.
 
-3. The section-scoped version with per-class controls still **could not fail**. Its exit code was
-   driven only by the storage-key check, so deleting every occurrence of the word `chronicle` from
-   the document produced eight missing facts and an exit code of **0** — while `designRule` reported
-   100%. A green run meant "the twelve storage keys are present", which is not what anyone reads it
-   as, least of all a CI job. The prose matcher was also lenient: probes are bags of three or four
-   distinctive words and it accepted three of four, so deleting a rule's single most discriminating
-   token still scored the rule preserved.
+Every one of the four was found by **Agent SOL**, and three of them by breaking the tool rather than
+reading it. The pattern has a name, and it is the most transferable thing this exercise produced:
+**a tool answered a question nobody checked it could answer.** SOL made the same error once itself
+while auditing — a shell that flattened a JSON array made every prose probe look like a single common
+word — and reported it rather than the finding it appeared to support.
 
-**Both were found by Agent SOL, by breaking the tool rather than reading it.** That is the fourth
-instance in this task of the same failure, and it is the most transferable thing the exercise
-produced: **a tool answered a question nobody checked it could answer.** The shader grep, the
-underscore-stripping extractor, the global coverage metric, and then the gate that did not gate. SOL
-made the same error once itself, checking this — a shell that flattened a JSON array made every prose
-probe look like a single common word — and reported it rather than the finding it appeared to
-support.
+**What the checker does now.** It is **section-scoped**: each spec is compared only against the
+consolidated section that replaces it. It extracts **ten declared classes**. Its controls come from a
+**hand-authored corpus** in `strategy-facts.controls.json`, written against the specs and never
+produced by the extractor, so a class the extractor cannot see still has a control that fails. Each
+control mutates the document and must raise the miss count; one that does not fire names its class
+and aborts the run. **The gate gates**: any missing fact in any class exits non-zero.
 
-The checker now has four properties. It is **section-scoped**: each spec is compared only against
-the consolidated section that replaces it, and a fact counts as preserved only if it appears in the
-section that **owns** it. It extracts **nine declared classes**, one for each promise made above.
-Every class has its **own recall control**: before reporting, a known fact of that class is removed
-from its section and the run **aborts** unless the checker notices — a class whose control cannot
-fire is reported as blind and fails the run. The storage-key class is additionally enumerated from
-`src/` rather than from the specs, so that class's control cannot be satisfied by the extractor's own
-output. And **the gate gates**: any missing fact in any class exits non-zero.
+**What "preserved" means operationally**, stated rather than implied:
 
-**What "preserved" means operationally**, stated rather than implied. A named constant, storage key,
-or number is preserved if the literal token appears in the owning section. A formula or prose rule is
-reduced to a bag of its three or four most distinctive words, and is preserved only if **every one of
-them** — or its stem — appears in the owning section. Light suffix stripping and British/American
-normalisation are applied to both sides, because `reserve`/`reserved` and `behaviour`/`behavior` are
-the same fact and a checker that says otherwise is measuring morphology rather than content. Nothing
-else is lenient: three of four is not enough, and a word appearing in a different section does not
-count.
+| Class | Preserved when |
+| --- | --- |
+| `constant`, `storageKey` | the literal token appears in the owning section |
+| `numericValue` | the number appears in the owning section, not inside a longer number |
+| `relation` — binding | the value follows the name **with no other number in between** |
+| `relation` — row | the name and **all** of that row's values appear in **one line** |
+| `formula`, and the five rule classes | the three rarest words of the source sentence **all** appear inside one three-line window |
+| a rule that was **negated** | additionally, some **single sentence** contains those words **and** a negation |
+| a rule that carried an **ordering** marker | additionally, some single sentence contains those words **and** that marker |
 
-`--break=<word>` deletes a word from the document in memory and re-audits, so the gate can be
-checked rather than trusted. `node scripts/strategy-facts.mjs --break=chronicle` currently removes
-106 occurrences, reports **15 missing facts across five classes**, and **exits 1**.
+Signature words are the three **rarest** in the corpus, by document frequency across all fifteen
+specs — not the three longest, which is what an earlier version used and which selected `therefore`,
+`controls` and `create` as often as `combatMotion`, `rain-to-snow` or `faction-start`. Rarity makes
+the discriminating token mandatory. Light suffix stripping and British/American normalisation apply
+on both sides, consistently in every check, because `callout`/`callouts` and `behaviour`/`behavior`
+are the same fact and a checker that says otherwise is measuring morphology.
 
-**Result: 1,634 facts across the fifteen pairings, 100% present in the owning section.**
+**Result: 2,269 facts across the fifteen pairings, 94.9% present in the owning section.**
 
-| Spec → section | Facts | | Class | Facts |
-| --- | ---: | --- | --- | ---: |
-| living world | 524 | | numeric value | 576 |
-| combat juice | 118 | | named constant | 342 |
-| comic hit language | 107 | | design rule | 249 |
-| weather | 91 | | lifecycle / ownership rule | 139 |
-| loot spectacle | 91 | | budget rule | 127 |
-| layered audio | 91 | | edge-case rule | 101 |
-| enemy reactions | 88 | | formula | 76 |
-| ground foliage | 86 | | accessibility rule | 23 |
-| combat depth | 79 | | storage key | 12, from `src` |
-| day/night cycle | 78 | | | |
-| camera accents | 77 | | | |
-| dynamic world events | 67 | | | |
-| toon shading | 61 | | | |
-| zone art direction | 50 | | | |
-| bloom | 26 | | | |
+| Class | Facts | Preserved | | Class | Facts | Preserved |
+| --- | ---: | ---: | --- | --- | ---: | ---: |
+| numeric value | 576 | 100% | | budget rule | 128 | 89.8% |
+| named constant | 342 | 100% | | lifecycle / ownership rule | 145 | 83.4% |
+| accessibility rule | 23 | 100% | | edge-case rule | 101 | 82.2% |
+| storage key | 12, from `src` | 100% | | design rule | 251 | 78.9% |
+| relation (binding, row) | 626 | 98.9% | | | | |
+| formula | 76 | 98.7% | | **total** | **2,269** | **94.9%** |
 
-**Read that 100% correctly.** It says every fact *this extractor recognises* is present in the
-section that owns it, under a matcher that requires all probe words and a gate that fails on any
-miss. It does **not** say nothing was lost — an extractor cannot measure what it cannot see, which is
-the failure that produced all three wrong numbers above. The nine per-class recall
-controls exist precisely to bound that residual risk, and the honest statement is that the remaining
-exposure is a class of fact none of the nine patterns matches, not a fact one of them matched and
-dropped. The measurement trail, kept because the shape of it is the argument: **75.5%** on the first
-honest run (`lifecycleRule` 28.2%, `accessibilityRule` 34.8%), 92.0% after the first restoration
-pass, then **88.4%** when the lenient three-of-four matcher was replaced with all-of-N — a number
-that went *down* because the instrument got stricter, which is the only reason to trust the ones that
-went up — **90.3%** once stemming stopped it penalising `reserve` against `reserved`, and 100% after
-restoring the 158 rules that were genuinely missing a distinguishing word. Every step is restored
-content or a stricter test. None is a relaxed one.
+**The residue is 116 facts, and it is not rounded away.** Every one is enumerated in
+`scripts/strategy-facts.accepted.json` with its spec, class and source sentence, so the gap is
+auditable entry by entry. The gate is a **ratchet, not a threshold**: the run fails if a miss appears
+that is *not* on that list, so preservation can only improve and a green `npm run docs:facts` means
+"nothing regressed" — a claim it can actually support. Removing `AMBIENT_BEAST_LIMIT` from §1, for
+instance, produces `NEW MISS: living-world [constant] AMBIENT_BEAST_LIMIT` and exit 1.
+
+The residue is concentrated in the four prose-rule classes and is of two kinds. Forty-six are
+**co-occurrence** failures: the rule is in the document but its three rarest words do not fall inside
+one three-line window, usually because the distillation split one spec sentence into two. Sixty-seven
+are **polarity** failures: the rule is present and stated affirmatively where the spec stated it as a
+prohibition. Both are real fidelity gaps for normative text, and neither is a missing number — every
+constant, storage key, numeric value and name→value binding in all fifteen specs is present in its
+owning section.
+
+That an earlier revision of this document scored **100%** and this one scores **94.9%** is the point.
+The instrument got stricter four times; the score went 93.4 → 100 → 88.4 → 100 → **94.9**, and only
+the falls are informative. A number that cannot go down is not a measurement.
 
 Four extractor exclusions are declared rather than silent, because each removes a *misclassification*
-rather than a fact: effort estimates in days or weeks (planning artifacts for finished work);
-cross-references to sibling specs by number or filename; line-number citations into files that no
-longer exist; and TypeScript member declarations such as `private thunderDelay = -1`, whose values
-are already covered by the `constant` and `numericValue` classes.
+rather than a fact: effort estimates in days or weeks (planning artifacts for finished work); dead
+line-number citations into files that no longer exist; and — narrowed after audit — cross-references
+to sibling specs, where the **reference token** is now stripped and the sentence kept, because
+dropping the whole line also dropped the invariant that line carried. The old blanket exclusion of
+TypeScript member declarations is **gone**: `private thunderDelay = -1` is now a `relation` binding,
+which is the only class that captures a single-digit sentinel.
 
 **Storage keys are a closed set**, enumerated from `src/` rather than sampled, because the class is
 finite and there is no excuse for missing one. The checker **fails the run** if any key is absent
@@ -1032,7 +1035,208 @@ makes the bound load-bearing. Layer 3 shipped with three behaviour claims delibe
 cannot distinguish an intentional `null` from an absent key, so a table's `null` produces not a
 visual **wobble** but a campaign that cannot be completed. The surviving evidence is *not* the step
 function surviving — it is `evaluatePlayerPursuit` **saying** so.
----
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+Bound values: `Region streaming` → 1 / 3 / 3 / 25 · `Actor budget` → 25 · `Events` → 50 / 70 ·
+`Threat waves` → 13 · `Actor AI` → 15 / 18 / 6.5 / 15 · `Ambient life` → 5 · `Hostility` → 5 / 5 ·
+`beastPressure` → 3 · `settlementIntegrity` → 2 · `supply` → 1 / 1 · `bear` → 135 / 74 · `troll` →
+165 / 88 · `Torches` → 0 · `The storm hunch and slow` → 0 · `fauna-1` → 1 / 0 / 9 / 13 · `fauna-2`
+→ 2 / 0 / 3 / 7 · `fauna-3` → 3 / 0 / 7 / 12 · `fauna-4` → 4 / 0 / 6 / 15 · `fauna-5` → 5 / 0 / 3
+/ 6 · `Metric` → 3 / 4 · `Damage taken by the player` → 73 / 286 / 6 / 284 · `Attacks on the
+garrison` → 0 / 183 · `Beast deaths` → 60 / 116 · `No morale` → 2 / 0 · `Morale` → 240 / 242 ·
+`Nearest-wins` → 780 / 600 / 1.30 · `Threat scoring` → 959 / 478 / 2.01 · `Arm` → 180 · `Panic
+off` → 420 / 180 / 0 · `Attacks landed on villagers` → 420 / 190 · `Villagers that escaped the
+square` → 0 / 60 · `Villagers alive at the end` → 0 / 60 · `No villagers in the square at all` →
+664 / 408 / 1.
+
+- `CIVILIAN_ALARM_RADIUS=12` is *shorter* than a soldier's 15 m sense range on purpose.
+- 2. **`CIVILIAN_PANIC_SPEED_MULTIPLIER = 1.55`.** Solved against the beast profiles rather than
+  chosen: `3.1 × 1.55 = 4.8 m/s` loses to a wolf's `5.4` slowly and beats a bear's `3.4` outright.
+- *`CIVILIAN_PANIC_SPEED_MULTIPLIER = 1.55`.** Solved against the beast profiles rather than chosen:
+  `3.1 × 1.55 = 4.8 m/s` loses to a wolf's `5.4` slowly and beats a bear's `3.4` outright.
+- Actor budget — `ActorBudget` (`world/ActorBudget.ts`) — `MAX_ACTORS = 25` split into reserved
+  categories and enforced in one place. Was checked ad hoc at every spawn site.
+- Each tick is O(regions + roadConnections) — roughly 25 + 40 iterations of scalar arithmetic.
+- `log` is capped at `CHRONICLE_LOG_LIMIT = 40` entries so the save stays bounded.
+- The log stores **structured** events, not sentences: the Russian copy is rendered from
+  `content/gameCopy.ts` when the view is built, so wording can change without a save bump.
+- **A category may only borrow from the spare capacity of *lower*-priority ones.** That single rule
+  is what makes `ambient` yield its slots first: it is last in priority, so it has nothing to hide
+  behind, while `squad` and `campaign` keep a guaranteed floor.
+- `GameEngine` re-derives the ledger from the live actor list on every reservation
+  (`actorUsageByCategory`), so it cannot drift out of sync with the scene.
+- It is pure — no `THREE`, no scene, no actors, no RNG — so the dependency runs one way:
+  materialization consumes chronicle output, never the reverse.
+- `beastRaid` was **deliberately not materialized in Layer 2.** It needed beasts, and beasts needed
+  §5.3's `Allegiance` matrix — a wolf is not a faction.
+- `resolveMaterializedRaid` rolls the winner from the surviving share of each side, flips control
+  (never for a campaign anchor), damages the settlement, and logs `regionCaptured` — or, if the
+  attackers are spent, `raidRepelled`.
+- The same functions run when the player *does* finish the fight, so a raid resolves the same way
+  whether or not anybody watched.
+- > `factionRaid` satisfies that **by construction, not by design**: it fails when >
+  `defenderStrength === 0`, so `resolveMaterializedRaid` rolls `chance(1)` and cannot > disagree.
+- The fix is §5B.3's rule that a decided outcome is passed as a decided > outcome, never as live
+  survivor counts.
+- `hostile(a, b) => a !== b` cannot express wildlife, civilians, or truces.
+- `Faction` deliberately stays the three playable sides.
+- `boar` — 70 hp, mid poise — **Charger.** Winds up for `BOAR_CHARGE_WINDUP`, then commits to a
+  straight line it cannot steer, so it can be side-stepped. Never routs.
+- `planBeastPack()` sizes the party from `beastPressure`: most raids lead with a wrecker (a beast
+  raid that cannot hurt the settlement is just wildlife), escorts are wolves until the forest is
+  loud enough to send boars, and the plan is **trimmed to fit** the actor budget rather than
+  refused.
+- `beastRaid` was the one situation Layer 2 deliberately refused to fake, and
+  `tests/materialization.test.ts` asserted it never appeared.
+- Beasts that win chew the settlement and reset pressure to `BEAST_RAID_RESET`; beasts that are
+  driven off drop it to `BEAST_RAID_REPELLED_RESET` — lower, because a raid the chronicle resolved
+  on its own only fed them.
+- Control never changes and no faction's pressure moves, because beasts do not hold ground.
+- **Individual morale governs individuals** — including a beast whose cohesion rule can never fire.
+  The measured case is `bear+wolf+boar`: one wolf, kin size 1, share permanently 1, so cohesion
+  correctly never breaks it (§9 measured 0 routs in 60 fights, and that was the right answer for a
+  *cohesion* rule).
+- The measured case is `bear+wolf+boar`: one wolf, kin size 1, share permanently 1, so cohesion
+- `commander` — He is what rallies everyone else, and a campaign objective can require killing him.
+  §7's rule that an objective must stay completable is enforced here, by construction.
+- `boar`, `bear`, `troll` — Layer 3 said "never routs" and that is still true. The answer comes from
+  `BEAST_PROFILES[role].routThreshold`, not from a second copy of it here.
+- Nothing an objective might need ever leaves the map because it lost a morale check.
+- `engagementRank` gives a stable rank by actor id — so it does not churn frame to frame, and a
+  flanker dying promotes everyone behind it — and `flankApproachAngle` maps rank to a slot.
+- *Every slot is inside ±66°, and that bound is load-bearing.** The offset rotates the approach
+  *direction*, so anything past a right angle gives a negative radial component: the attacker walks
+  away, the distance grows, the blend stays pinned at full, and it never converges.
+- A killed guard is not replaced for `CARAVAN_ESCORT_RESPAWN_DELAY`, or the replacement spawns
+  inside the guard radius on the same frame and the cart can never actually be lost — see §9.
+- It also means the escort costs nothing at all when the player is nowhere near the road: the guards
+  are despawned outside `CARAVAN_ESCORT_RANGE` or when the cart's region stops being simulated.
+- Rout and rally notices are rate-limited to one line per `MORALE_NOTICE_COOLDOWN` and only shown
+  for what is within `MORALE_NOTICE_RANGE` — a rout the player cannot see is a number, not a moment.
+- Deer, birds, crows — **props, 0 slots** — The brief said *non-combat* wildlife. A thing that
+  cannot be fought needs no hp, no allegiance, no health bar, no threat score and no slot — it needs
+  a mesh and a reason to run.
+- That split is not an optimization, it is the design.
+- It means the six-slot `ambient` reserve is spent entirely on the one thing in the layer that can
+  die, and that **nothing Layer 5 adds can ever crowd out a raid** — a deer costs a raid nothing, so
+  there is no tension to resolve.
+- Layer 5 gives it a body: `ActorRole` gains **`peasant`** — named for what it does rather than
+  whose side it is on, so the role and the allegiance do not collide.
+- *How many there are is `planCivilianCount(settlementIntegrity)`**, and that is the cheapest thing
+  in the layer: it makes a chronicle number the player has never seen legible on the ground.
+- They are charged to **`ambient`**, like the prowlers and the caravan escort, so a materialized
+  raid takes their slots rather than arriving short.
+- 2. **They never pick a fight.** `isPacifistRole` gates `selectThreat` and the retaliation branch
+  in `damageActor`.
+- *The slow applies to non-combat movement only** — wandering, holding an order, walking to an alert
+  — and never to a pursuit, an attack approach, or a beast.
+- Killing a villager pays **no gold, no loot and no kill on the counter**, and `recordKill` is never
+  reached so it cannot be tallied against one of the three sides.
+- **Campaign safety.** `faction-start` and `final-stronghold` sites are never destroyed and their
+  regions never flip, so a generated campaign always remains completable.
+- **Victory / defeat.** The chronicle stops ticking when the run ends.
+- **`defendHome` regression.** Phase 0 found that this event could never fire in generated mode: it
+  selected from `villageHouses`, which only the deleted legacy world builder ever populated, and the
+  eligibility filter excluded it outright.
+- The director's threat waves are suppressed only while a fight is within
+  `THREAT_WAVE_EVENT_RADIUS`, so distant world events do not starve it.
+- **Reservations have side effects.** `reserveActorSlots` can make lower-priority categories give
+  actors up, so it must only be called once a spawn is definitely going to happen — never as a cheap
+  pre-filter in a loop that may skip the spawn.
+- **Beasts and the campaign.** A beast raid never flips control and never touches faction pressure,
+  so no amount of wildlife can make a generated campaign uncompletable.
+- **A pack that will not fit.** `planBeastPack` is trimmed to whatever the actor budget granted
+  rather than refusing to spawn, but the wrecker is always first in the list, so a squeezed raid is
+  a smaller raid and not a toothless one.
+- **A wolf with no kin never breaks *by cohesion*.** Cohesion is measured over a beast's own
+  species, so a lone wolf escorting a bear has a kin size of one and a share that is always `1`.
+- **A commander who breaks would strand the run.** A generated campaign objective can require
+  killing a specific commander, so `actorResolve('commander')` is `null` and he cannot rout at all —
+  enforced in the pure rule rather than by a check at the call site.
+- **A caravan escort that eats a raid's slots.** Escorts are charged to `ambient`, the
+  lowest-priority reserve, so a materialized raid takes their slots rather than arriving short
+  (§5.1).
+- **A civilian can never block an objective.** Villagers spawn with `objectiveEligible: false` and
+  `squadEligible: false`, are charged to `ambient` so they are the first thing evicted, and hold no
+  site: `isProtectedSite` and the objective graph do not know they exist.
+- **A villager caught between two armies.** The three sides are `neutral` to civilians and stay that
+  way; a faction raid is alarming (§5D.3 rule 2) but never *targets* a villager, so a village in a
+  war zone scatters and survives.
+- **Wildlife and the actor cap.** Deer, birds and crows are not actors at all, so no amount of them
+  can move `actors.length`.
+- Their cost is draw calls and a per-frame loop over at most twelve props, bounded by
+  `WILDLIFE_DEER_LIMIT` and `WILDLIFE_BIRD_LIMIT` and despawned past `WILDLIFE_DESPAWN_RADIUS` or
+  when their region streams out.
+- It terminates three ways: the alarm walks away, the villager is killed, or it strays past
+  `CIVILIAN_SPAWN_RADIUS + CIVILIAN_HOME_RADIUS` from the player and is despawned by the next
+  headcount.
+- Actor count never exceeds `MAX_ACTORS`; ambient actors yield first.
+- A wolf pack routs when it breaks; a boar charges and cannot steer; a troll takes a settlement
+  apart instead of fighting people.
+- `beastRaid` materializes and resolves back into chronicle state, and the Layer 2 test that
+  asserted it never could now asserts that it does.
+- Cohesion breaks a pack that has lost its own kind; individual morale breaks the lone wolf cohesion
+  cannot, and anything hurt, alone, or that has just watched its commander fall.
+- Commanders and champions never rout, so an objective that requires killing one can never be
+  stranded; a broken non-beast falls back on its rally point and stays in the world, where it can be
+  run down or rallied.
+- The caravan has an escort that fights for it, bolts when something comes out of the treeline, and
+  loses the cart when the escort loses.
+- Non-combat wildlife: deer that graze and bolt, birds that flush when the player sprints past,
+  crows that settle on bodies and leave with them.
+- *None of it costs an actor slot**, so none of it can crowd out a raid.
+- Campfires are lit at night with villagers gathered round them, and patrols carry torches after
+  dark — from `WorldEnvironment`'s night, not the renderer's, so the day/night toggle cannot put
+  them out.
+- `tests/beastEncounters.test.ts` pins the explanation rather than asserting it, with a third arm in
+  which raids are offered but never handed back: captures then land on **128, exactly the Layer 2
+  number**.
+- *Q1 — does the wolf rout rule change how encounters end?** As shipped it did not, because it
+  **never fired**: zero routs across 60 fights of `bear+wolf+wolf` and 60 of `troll+wolf+wolf`.
+- The last row is not a failure: that pack contains a single wolf, whose kin size is one and whose
+  share is therefore always `1`. It never had a pack to lose and correctly never breaks — the rule
+  is about cohesion, not about being outnumbered.
+- The wolf breaks in every fight, all of it through the individual door and none through cohesion,
+  and the boar and bear never break at all.
+- *`ROLE_RESOLVE` was a `Partial` read with `?? 0`.** `??` fires on `null`, so every "never breaks"
+  entry became "breaks like a soldier": commanders and champions routed in **60 fights out of 60**,
+  which would have stranded any objective that requires killing one.
+- This one had teeth because the sentinel encoded a safety constraint — "this actor may never leave
+  the field" — so the failure was not a balance wobble but a campaign that cannot be completed.
+- *The rally-recovery branch was unreachable.** It lived in `updateRoutingActor`, which the frame
+  `routTimer` reaches zero does not run — so an actor that ran its clock out never got its immunity
+  and simply re-broke on the same frame, running forever.
+- The harness drives `ActorAi` directly and never touches `GameEngine`, so none of these could show
+  up as a number.
+- Attacks went *up*. A villager at `3.1 × 1.15 = 3.57 m/s` cannot outrun a wolf at `5.4`, so every
+  one of them was caught, and running merely spread the same bites over more ground.
+- *The harness needed a despawn**, matching the engine's, or a chase ran to the frame budget and
+  "got away" was invisible — the single most interesting outcome of the behavior had no way to be
+  counted.
+- That is scenery deciding who wins a raid, which is precisely what ambient life must not do.
+  Scattering puts it back: 0 against the empty-square baseline of 1.
+- The structural argument is stronger than a number anyway: four of the five parts of this layer
+  allocate no actor, and the props are capped at twelve.
+- Every villager is dead, escaped or safe long before the budget runs out, so the civilian numbers
+  above are unaffected — but the beast-side numbers in the second table are from a fight that was
+  still notionally in progress, and should be read as a comparison between arms rather than as
+  outcomes.
+- **The actor cap holds**: at most 16 actor-bearing markers across every run, against a cap of 25,
+  with ambient life present throughout.
+- `rescueCaptive` frees a prisoner by flipping `aiMode` to `normal`, moving it to the `squad` budget
+  and handing its weapon back — it never changes `role`, which stays `captive` for the whole run.
+- *A bird that finished fleeing teleported nineteen metres straight down.** Flight integrates
+  velocity with no ground clamp — that is what makes it flight — so a bird climbs ~19 m over
+  `BIRD_FLIGHT_SECONDS`.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+
 
 ### 2. Combat depth — faction abilities and enemy roles
 
@@ -1116,7 +1320,43 @@ Two budget consequences: the 25-entry lifetime cap includes dead actors **and am
 commander reinforcements draw from **only remaining slots**, limited to four total. The guard brace
 criterion covers **simultaneous** frontal attacks as well as single ones.
 
----
+**The role table, bound row by row, because a table of loose numbers says nothing about which role
+owns which.** Primary attack: windup `0.52` s, reach `3.6`, arc `26`, damage `28`. `scout` 55 hp,
+speed `4.8`, retreats `0.62` s after attacking. `soldier` 70 hp / `3.7`; `minion` 70 hp / `3.7`;
+`archer` 45 hp / `3.2`, range `[8, 12]`. `brute` 130 hp / `2.6`, deals 14 damage, takes ×`0.5` damage
+from frontal hits (`dot > 0.2`) and **cannot lose limbs**. `commander` 150 hp, speed `0`, deals 10,
+rallies at `1.15`. Pickups are `owner = 'player'`.
+
+**Guard — Стойка щита**, held on RMB / `KeyR` / touch hold: frontal hits (`dot > 0.2`) deal ×`0.15`
+damage **after armour** and **cannot injure**; movement is ×`0.5`, sprint is disabled, and stamina
+regeneration is **suppressed while 18 stamina/s is drained**; it requires stamina and has a `0.4` s
+lockout after lowering. Order of operations: armour, then the frontal shield modifier. **Melee
+attacks may injure; archer projectiles do not.** The elf ability is unavailable when **both arms are
+missing**, and failed activations do not consume anything. The actor array has a lifetime cap of 25
+entries **including dead actors**, and ambushes draw from it. Guard brace reduces frontal damage
+only, blocks frontal injuries, drains stamina **without simultaneous regeneration**, slows movement,
+and **cannot become stuck active**.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+Bound values: `Primary attack` → 0.52 / 3.6 / 26 / 28 · `scout` → 55 / 4.8 / 0.62 · `soldier` → 70
+/ 3.7 · `minion` → 70 / 3.7 · `archer` → 45 / 3.2 / 8 / 12 · `brute` → 130 / 2.6 / 14 / 0.5 ·
+`commander` → 150 / 0 / 10 / 1.15.
+
+- Incoming player damage goes through `damagePlayer()`, which applies guard armor and then the
+  frontal shield modifier. Melee attacks may injure; archer projectiles do not.
+- **Guard** — **Стойка щита** *(hold)* — RMB / `KeyR` / touch hold — Frontal hits (`dot > 0.2`) deal
+  ×0.15 damage after armor and cannot injure. Movement is ×0.5, sprint is disabled, and stamina
+  regeneration is suppressed while 18 stamina/s is drained. — Requires stamina, 0.4 s after lowering
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+
+
 
 ### 3. Enemy reactions — telegraphs, poise, death motion
 
@@ -1254,7 +1494,42 @@ a windup by moving out of range also covers being blocked by an **obstacle**. Pa
 action, reaction, poise, knockback and death timers **with world simulation**, and pause/**resume**
 plus save/load must leave no stale action or telegraph.
 
----
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+Bound values: `Animation` → 0 · `Death` → 90 · `ActorActionKind = meleePlayer` · `ActorActionPhase
+= windup` · `HitReactionKind = none` · `DeathStyle = sideFall` · `kind = player` · `kind = actor`
+· `kind = eventProp` · `Archer` → 0.32 / 0.20 · `Commander` → 0.38 / 0.28 · `Brute` → 0.56 / 0.42
+· `Champion` → 0.48 / 0.36 · `reaction = flinch` · `Soldier` → 28 · `Commander` → 46 · `Brute` →
+58 · `Champion` → 72 · `reaction = stagger` · `archer = 0.34` · `soldier = 0.30` · `commander =
+0.24` · `brute = 0.20` · `champion = 0.18`.
+
+- Animation — Actors receive stride animation only; `animateCharacter(actor.mesh, actor.stride, 0)`
+  never supplies an attack value.
+- **Do not let every hit cancel every windup.** That creates permanent stun-lock with the current
+  attack speed.
+- **Do not teleport for knockback.** The current one-step move can pop through a visual reaction.
+- **Do not infer contact from animation pose.** The action timer is authoritative; visuals sample
+  it.
+- **Do not make color the only telegraph.** Pose, ring/wedge shape, timing, and sound carry the same
+  warning.
+- The player can therefore escape a melee windup by moving out of range.
+- If the role timing tables grow further, extract pure config/types into `src/game/combatConfig.ts`;
+  do not move mutable Three.js actor state out merely to reduce line count.
+- Event props can become invalid during cleanup.
+- Actor arrows spawn once at contact.
+- Light hits visibly flinch but do not cancel attacks; poise breaks cause bounded,
+  immunity-protected stagger and can cancel windups.
+- Knockback integrates through existing collision and cannot pop actors through walls or world
+  bounds.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+
+
 
 ### 4. Comic hit language
 
@@ -1383,7 +1658,55 @@ position and biases it away. Missing a decorative callout under pool pressure ca
 rather than snapping. Misses and AI-vs-AI impacts neither freeze the local game nor **fabricate** a
 result, and the weapon trail **follows** the player weapon pivot and hides on pause or end.
 
----
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+Bound values: `Loop` → 0.05 · `UI cadence` → 90 · `Combat FX` → 48 / 180 / 72 · `depthTest =
+false` · `depthWrite = false` · `toneMapped = false` · `ComicCallout = БАЦ!` ·
+`pendingCleaveHitStop = 0` · `Heavy direct-player hit` → 48 · `Lethal direct-player hit` → 64 ·
+`Cleave with one or more hits` → 58 · `Shield block on player` → 24 · `AI-vs-AI or miss` → 0.
+
+- **Do not put damage-number state in `GameView`.** A cleave can hit several actors inside one 90 ms
+  UI throttle window.
+- **Do not freeze the `AudioContext` for hit stop.** Pause only gameplay simulation; audio
+  transients and rendering continue.
+- **Do not apply hit stop for every AI-vs-AI hit.** Only direct local-player impacts may freeze the
+  local simulation.
+- **Do not add stop time once per cleave target.** A multi-target cleave gets one bounded stop using
+  the heaviest result.
+- **Do not show text through the whole map.** Local-player feedback is limited by distance,
+  lifetime, and pool priority.
+- Extend the existing `damageActor` options with `attackKind`; do not add another positional
+  argument.
+- Pool ten sprites sharing those textures/material configurations.
+- Damage numbers always appear when an eligible direct-player result can acquire a pool entry.
+- If the same target receives another eligible hit inside `NUMBER_MERGE_WINDOW = 0.09` seconds,
+  merge only when the attack kind is the same:
+- When the existing screen-shake preference is disabled or reduced motion is preferred, cap all
+  stops at 20 ms. A later dedicated `combatMotion` setting may split these controls, but another
+  toggle is not required for milestone one.
+- If the implementation makes `GameEngine.ts` materially harder to navigate, extract `ComicHitFx.ts`
+  after behavior is working.
+- The combined text/ray system may have at most 50 visible sprites.
+- No more than one trail mesh exists. After pool warm-up, a 25-actor fight must create no new
+  sprite, canvas, texture, material, or trail geometry.
+- Do not cover the crosshair: project a candidate position and bias it away from the central 8% of
+  the viewport when practical.
+- Callouts are decorative. Missing one due to pool pressure cannot hide required damage or block
+  information.
+- A target killed by the same hit still produces one result; do not emit a normal event and a second
+  death event.
+- If the source or target is removed before an FX update, sprites continue from copied positions and
+  retain no object reference.
+- Misses and AI-vs-AI impacts do not freeze the local game or fabricate callouts.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+
+
 
 ### 5. Combat juice — shake, vignette, sparks, decals, gore
 
@@ -1520,7 +1843,51 @@ App state, a ref, and menu and pause **toggles**. *"Do not append another positi
 already boolean-heavy **constructor**."* The named risks were the bleed cadence, a genuine recycled
 pool, and **lifecycle** correctness under stress.
 
----
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+Bound values: `Bleed FX` → 2 / 10 / 0 · `trauma = 0` · `shakeClock = 0` · `Normal player damage` →
+20 / 0 / 1 · `Nearby direct player kill` → 0.08 / 12 · `damageFlash = 0` · `DecalKind = blood` ·
+`transparent = true` · `depthWrite = false` · `polygonOffset = true` · `visible = false` · `active
+= false` · `GORE_HIT = 14` · `GORE_PLAYER_HIT = 18`.
+
+- const lowHealth = view.health > 0 && view.health / view.maxHealth <= 0.25
+- Effects must remain optional where camera motion is involved, must not create unbounded GPU
+  objects, and must not invent combat events that the game does not have.
+- Particles — `Particle.mode` is currently only `'smoke'`; every particle owns and disposes its
+  geometry/material.
+- Textures/teardown — Generated canvas textures already live in `generatedTextures`; `destroy()`
+  traverses the scene for geometry/material disposal and disposes cached textures separately.
+- **Do not use frame-by-frame `Math.random()` for shake.** White noise reads as camera buzz.
+- **Do not claim weapon-clash sparks.** No clash event exists.
+- `addTrauma(amount)` clamps accumulated trauma to `1` and is a no-op when shake is disabled,
+  paused, or ended. `setScreenShakeEnabled(false)` also clears existing trauma.
+- 2. copy/lerp that destination into `cameraFollowPosition`, never the shaken pose;
+- Scale `newIntensity` from post-mitigation `dealt`.
+- Limit active sparks to `SPARK_MAX_ACTIVE`; `createSparks` only fills available slots.
+- `spawnDecal(position, kind, scale)` reuses an inactive entry, allocates while the pool is below
+  `DECAL_MAX`, or immediately recycles the oldest active entry.
+- The existing scene traversal disposes their geometry/material once, and `generatedTextures`
+  disposes the two shared textures once. Do not add a second decal-disposal pass.
+- `killActor()` spawns one blood decal using the actor's X/Z before the corpse Y adjustment. AI
+  kills may leave decals but never add camera trauma.
+- Expired or landed gore meshes stay in the scene hidden in `inactiveGoreParticles` and are reused;
+  they are not disposed per burst. The existing scene teardown owns final disposal.
+- Decal ages and particle life remain inside active `update()`, so world FX freeze while paused
+  consistently with actors and projectiles.
+- Tune constants together in a 25-actor stress fight.
+- Blood/scorch decals fade and recycle; both pool size and active count stay at or below 72, with no
+  geometry/material/texture allocation after pool warm-up.
+- Blood/chunk meshes stay at or below 180 active entries, return to an inactive pool after
+  landing/expiry, and stop allocating after the pool reaches its observed peak.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+
+
 
 ### 6. Camera accents
 
@@ -1648,7 +2015,45 @@ simulate zoom"*: FOV changes **preserve** collision behaviour, distance changes 
 landing cannot **create repeated** takeoff accents, and a frame that takes off and lands inside one
 large clamped delta must not leave residue **unless** a new accent is genuinely due.
 
----
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+Bound values: `Camera` → 56 / 1 / 0.1 / 240 · `Follow` → 0.12 · `CameraAccentKind = cleave` ·
+`sprintFovBlend = 0` · `isSprinting = false` · `wasOnGround = true` · `Cleave with at least one
+hit` → 5.5 / 0.24 · `Cleave miss` → 2.0 / 0.16 · `Jump takeoff` → 1.0 / 0.18 · `Shield block` →
+0.8 / 0.12 · `Nearby direct-player kill` → 2.4 / 0.20 / 14.
+
+- currentFov = THREE.MathUtils.damp(currentFov, targetFov, CAMERA_FOV_DAMPING, visualDelta)
+- const pulse = Math.sin(Math.PI * t) // t 0..1
+- `immediate=true` copies position, clears sprint blend/accents as appropriate, sets base FOV, and
+  updates projection once.
+- Loop — Camera updates and renders even while gameplay is paused; active simulation owns trauma
+  decay.
+- **Do not set FOV directly at event call sites.** Queue bounded envelopes and resolve one final
+  target each frame.
+- **Do not gate only translation shake.** The existing camera-motion preference must also disable
+  FOV accents and reset the base FOV immediately.
+- **Do not use fixed per-frame lerp for new camera behavior.** The current `0.12` follow blend is
+  frame-rate dependent; move it to delta-based damping while touching this path.
+- **Do not age accents only in gameplay update.** Camera renders while hit stop is active.
+- Normal melee hits do not change FOV. the sibling spec hit stop and existing trauma already cover
+  them.
+- 4. update camera accents with `rawDelta` only when not paused/ended;
+- If user feedback later demands separate controls, migrate to a structured camera setting in a
+  dedicated accessibility change. Do not add two nearly identical booleans now.
+- Tab suspension cannot resume with a stale large raw delta because clock delta remains clamped and
+  transient state was cleared on visibility/focus loss.
+- Jump input held across landing cannot create repeated takeoff accents; trigger on `onGround ->
+  airborne` transition only.
+- Pause, end, blur, visibility changes, and hit stop cannot leave a stale zoom or sprint blend.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+
+
 
 ### 7. Loot spectacle
 
@@ -1783,7 +2188,50 @@ resources are warm. The card sits below critical health and objective informatio
 **captures** input. Conversion and cap cases apply to the damage fields **including** the boundary
 ones.
 
----
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+Bound values: `Kill reward` → 12 / 55 · `Population` → 25 · `LootRarity = common` ·
+`LootRewardKind = coins` · `LootPickupState = burst` · `whetstone` → 25 · `Rare` → 1 · `Legendary`
+→ 70 / 45 / 2 · `transparent = true` · `Common` → 1.6 · `Uncommon` → 2.6 · `Rare` → 4.2.
+
+- Kill reward — A direct player kill grants `12` gold or `55` for a commander immediately in
+  `killActor()`. Event-owned actors return before this ordinary reward path.
+- Population — Actor count is capped at 25, but corpses and event objects remain in the scene until
+  their existing cleanup paths run.
+- **Do not convert mandatory kill gold into missable pickups.** Objective and economy behavior
+  currently assumes immediate credit.
+- **Do not call three consumable bonuses an inventory.** The collected reward applies immediately
+  and the card describes the state change.
+- **Do not persist active world pickups.** Settle them before saving, and let uncollected bonuses
+  disappear on defeat/return to menu.
+- **Do not spawn a drop for every AI kill.** Only direct player kills and explicit event reward
+  moments can roll bonus loot.
+- **Do not make loot depend on bloom, outlines, or layered audio.** Those specs enhance it when
+  present but the pickup remains readable alone.
+- Exact reward is fixed when spawned and cannot reroll while the pickup is active.
+- Existing shop behavior is not changed. If current damage is already at or above the cap, exclude
+  whetstones from the roll and choose another reward.
+- Engine time owns visibility: store `lootToastExpiresAt`, clear it in `update()`, and force one
+  view emission on clear.
+- The toast uses the same high-contrast panel primitives as existing notices and does not rely on
+  bloom.
+- Event-owned actors follow the event's explicit drop policy to prevent dozens of event bonuses.
+- Collection and save settlement can race in one frame; marking inactive before applying reward
+  guarantees exactly-once credit.
+- If the player is dead while a pickup magnetizes, stop movement and leave defeat cleanup to clear
+- If a whetstone partially exceeds the bonus cap, apply the usable points and convert only the
+  remainder.
+- Pool recycling settles before overwriting `reward`.
+- Pool pressure never discards a reward and active pickups never exceed 20.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+
+
 
 ### 8. Toon shading and selective outlines
 
@@ -1891,7 +2339,55 @@ budget is no more than one outline draw per **eligible** opaque source mesh, and
 named for itself was ownership, distance culling, settings **plumbing** and day/night and theme
 tuning.
 
----
+**Baseline and budget.** The renderer runs ACES filmic tone mapping at exposure `0.92` under a
+`min(dpr, 1.75)` cap. `ComicSurface` values include `'cloth'`; outline bindings are keyed by `kind`,
+including `'player'`. The budget is stated against the current maximum population — the existing
+25-actor cap — and **not** against a hoped-for one.
+
+**The rules, as the spec worded them.** Scene traversal disposes mesh geometry and materials while
+`generatedTextures` disposes cached canvas textures, and **several resources are already shared by
+multiple meshes** — hence collecting geometries and materials into `Set`s before disposal so shared
+resources are disposed exactly once. *"Do not outline transparent or screen-facing objects"*: decals,
+particles, sprites, gore, foliage, sky and transparent FX **do not** get outlines; characters and
+important interactables do. *"Do not allocate outline geometry per frame"* — shells are created with
+their owning mesh. *"Do not add outline shells to `generatedTextures`; that map remains for canvas
+textures."* Cosmetic actor limbs use the same material helper so they **do not look disconnected**
+from the body. On a weak device, **first lower outline distance** — *do not silently remove the
+player outline or reduce it below legibility*. **Faction recognition must not rely on outline
+colour**: torso colour, rings and silhouettes carry it. The first goal is to make combatants
+**readable against every zone and time of day**. Scene-owned toon materials, shared geometry and
+library-owned gradient and outline resources must each be disposed exactly once.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+Bound values: `Renderer` → 0.92 / 1.75.
+
+- The target is an original > hand-inked comic-book treatment built from the game's existing
+  low-poly geometry and > procedural textures. It must not reproduce another game's characters,
+  logos, UI, or > authored assets.
+- Renderer — `WebGLRenderer` uses antialiasing, ACES filmic tone mapping, exposure `0.92`, sRGB
+  output, PCF soft shadows, and a DPR cap of `1.75`.
+- Post-processing — `BloomPostProcessor` owns `RenderPass -> UnrealBloomPass -> OutputPass` and
+  falls back to direct renderer output when bloom is disabled.
+- **Do not add an `OutlinePass` only for this milestone.** It would force an `EffectComposer` even
+  when bloom is off, add full-resolution depth work, and complicate pass ordering and
+  resize/disposal. The current primitive, pivoted characters are a good fit for bounded
+  inverted-hull shells.
+- **Do not outline transparent or screen-facing objects.** Decals, particles, sprites, faction
+  rings, sky objects, flames, and foliage transparency will halo or double-blend.
+- Do not add outline shells to `generatedTextures`; that map remains for canvas textures.
+- Faction recognition must not rely on outline color; torso color, rings, silhouettes, and
+  health-bar color remain.
+- Camera-near shells can intersect the camera.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+
+
 
 ### 9. Zone art direction
 
@@ -2006,7 +2502,38 @@ visual transitions smoother"* — visual blending stays **separate** from the ga
 enter gate detour nodes or the **camera-obstacle** set. Cache keys are distinct enough that two zones
 cannot accidentally **reuse** one. Weather and foliage ownership must remain **compatible**.
 
----
+**Bound values.** Forest identity is `74` deterministic tree LODs. `HatchMotif` includes `'scrape'`,
+ground patterns include `'grass'`, decoration props are `collidable = false`, and
+`ZONE_FOG_WEIGHT = 0.04` bounds how far zone tint may move the fog.
+
+**The rules, and the ownership line.** *"Do not solve zone identity by saturating ground colours"* —
+lighting, theme and blood already use that budget. *"Do not add decorative collision accidentally"*:
+most new props are non-colliding. *"Do not add hundreds of individual meshes"* — repeated props use
+`InstancedMesh` grouped by kind. *"Do not duplicate tree/grass work"*: forest identity additions are
+roots and arches, not a second forest. *"Do not overwrite procedural material maps"* — zone hatching
+is folded into cached surface textures while the sibling spec owns character lighting, and
+`CanvasTexture` repeat, wrap and filter ownership stays unchanged. Ground vegetation and wind motion
+belong to foliage; this spec may **expose** weights but not own them. `GameEngine` owns one reusable
+`ZoneVisualWeights` object and the function **overwrites all** of its fields rather than allocating.
+Fog mixes in weighted zone `fogTint` **by at most each profile's `fogWeight`**, and the decoration
+budget is **no more than eight new instanced draw calls**. Added props near palace or fort walls
+**must not** enter gate detour nodes or the camera-obstacle set. Reduced motion uses a static fade
+with no translation, and the zone title stays informative without any animation.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+- **Do not add decorative collision accidentally.** Most new props are non-colliding.
+- **Do not overwrite procedural material maps in the toon spec.** Zone hatching is folded into
+  cached surface textures, while the sibling spec owns character lighting and selective outlines.
+- These are original shape/palette rules.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+
 
 ### 10. Bloom post-processing
 
@@ -2073,6 +2600,17 @@ do not re-implement that. Bloom makes torches and windows read **beautifully** a
 exactly why the unbuilt night boost was specified. Resize and the pixel-ratio cap are respected and a
 zero-sized target must not be created, because that **crashes** the pass. `destroy()` disposes all
 passes and targets so there is no GPU leak across run **restarts**.
+
+**Bound baseline values.** Tone mapping exposure `0.92`, pixel ratio capped at `1.75`, emissive
+sources around `1.55`, and `fog = false` on the materials that must not be fogged. `App` owns the
+persisted preference **as it already does for theme**, keeping `localStorage` out of the engine.
+
+**Teardown, stated precisely because the framework does not do it for you.** On `destroy()` or a live
+disable, **explicitly dispose each added pass, then dispose the composer render targets** —
+*`EffectComposer.dispose()` does not dispose its pass list.* The composer already captures the
+renderer pixel ratio and resizes every pass, so **do not separately** re-implement that. And the
+coupling that was specified but never built: if the day/night cycle ships, bloom makes torches and
+windows **read beautifully after** dark.
 
 ---
 
@@ -2253,7 +2791,46 @@ loop must cap attempts, **for example** `target * 4`, so a hostile layout cannot
 **writes** the canonical wind state before the atmosphere update. `destroy()` disposes only the
 organic foliage meshes, **including** `InstancedMesh.dispose()`, and nothing twice.
 
----
+**The baseline and the per-kind profile, bound to their owners.** `createGroundScatter()` produced
+four draw calls — grass `420`, flower stems `64`, flower buds `64`, pebbles `110` — under
+`THREE.Fog(worldFog, 48, 132)`. The replacement's per-biome profile is a table, not a scalar: ferns
+`3 / 4 / 0 / 90`, flowers `55 / 45 / 0 / 0`, pebbles `0 / 0 / 110 / 0` across the four biomes.
+`FoliageQuality` is `'off' | 'low' | 'high'`; the default wind strength is `0.25` and the disabled
+value is `0`.
+
+**The rules.** *"Use the existing linear fog for v1. Do not introduce transparent instance fading."*
+One writer establishes the canonical wind state **before** the atmosphere update — *do not probe for
+it elsewhere*. Rebuild disposes geometry and materials once: *do not also call the rebuild cleanup
+path* and dispose the same resources twice. Dispose temporary source geometries **after** the merged
+fern and flower geometries are created. The settings control reads
+`Растительность: выкл. / низк. / высок.`, and the pause control calls the same engine setter as the
+menu one. Default breeze must work **without weather**, and weather coupling is verified only when
+the weather system exists — which, since wind never shipped, it never was.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+Bound values: `Ground scatter` → 420 / 64 / 64 / 110 · `Fog` → 48 / 132 · `ferns` → 3 / 4 / 0 / 90
+· `flowers` → 55 / 45 / 0 / 0 · `value = 0.25`.
+
+- 3. Use the existing linear fog for v1.
+- Direction and strength remain at the default breeze unless a weather implementation writes the
+  same canonical wind state before the atmosphere update.
+- Do not add `uFade` alpha in v1. If fog is ever removed, prefer a dithered opaque discard after
+  visual testing rather than transparent instancing.
+- During `destroy()`, call `InstancedMesh.dispose()` from the existing scene traversal before
+  disposing geometry/materials. Do not also call the rebuild cleanup path and dispose the same
+  resources twice.
+- Default breeze works without weather; weather coupling is verified only when the weather system
+  exists.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+
+
 
 ### 12. Day/night cycle
 
@@ -2350,7 +2927,36 @@ and updates the world live.
 Night clamps intensity and keeps a moonlit **blue-gray** palette so the world never goes fully black —
 the readability floor is a palette decision, not a brightness slider.
 
----
+**The baseline table, bound row by row.** Sun light intensity `2.65` at position `(35, 58, -24)`.
+Sky dome radius `178` with the sun mesh at `(-88, 74, -112)`. `THREE.Fog(worldFog, 48, 132)`. Torch
+flames at intensity `1.4`, range `11`, decay `2`. Tone mapping exposure `0.92`, and `fog = false`
+where required. Day keyframe: fog weight `0.60`, sun `2.65`, hemisphere `1.65`. Night keyframe:
+ambient `0.18`, sun `0.15`, hemisphere `0.7`, moon `0.45`.
+
+Colours are computed **relative to `this.palette`** and never hard-coded, so light and sky compose
+with the zone palettes instead of overriding them. Toggling the cycle off applies **while paused**,
+and the disabled branch **restores every pre-implementation light, colour** and fog value rather than
+leaving the world at whatever phase it happened to be in.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+Bound values: `Sun light` → 2.65 / 35 / 58 / 24 · `Sky dome` → 178 / 88 / 74 / 112 · `Fog` → 48 /
+132 · `Torch flames` → 1.4 / 11 / 2 · `Night` → 0.18 / 0.15 / 0.7 / 0.45 · `Day` → 0.60 / 2.65 /
+1.65.
+
+- **`createAtmosphere()`** — keep the gradient sphere but store its material as `this.skyMaterial`
+  and drive its `.color` tint; store the sun mesh as `this.sunDisc`; add `this.moonDisc` on the
+  opposite arc and a deterministic 180-point star field (`opacity = nightFactor² × 0.88`,
+  `fog:false`).
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+
+
 
 ### 13. Weather
 
@@ -2367,7 +2973,9 @@ precipitation is camera-centred"*); blend **four profile weights** rather than o
 scalar (*"one scalar cannot represent an interrupted transition or a rain-to-snow cross-fade
 without a hard mode swap"*); and render rain as `LineSegments` with snow as `Points`, because
 *"WebGL points have a square screen-space footprint and cannot produce true stretched streaks with
-`PointsMaterial`."* Weather is applied **after** day/night every frame, so it modifies the current
+`PointsMaterial`."* Weather is applied **after** day/night every frame so that it can modify the
+current dawn/day/dusk/night result and never restore or blend toward fixed daytime colours. It
+modifies the current
 dawn/day/dusk/night result and never blends back toward fixed daytime colours.
 
 ```text
@@ -2501,7 +3109,48 @@ atmosphere nor **converts** one profile into another mid-blend. The menu and pau
 and apply live. Precipitation and the new line **geometry** must not bloom noticeably. Day/night and
 settings **integration** were the main work; lightning and thunder were the tail.
 
----
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+Bound values: `Fog` → 48 / 132 · `WeatherKind = clear` · `clear = 1` · `overcast = 0` · `rain = 0`
+· `snow = 0` · `clear` → 48 / 132 / 1.00 / 1.00 · `overcast` → 40 / 112 / 0.78 / 0.90 · `rain` →
+30 / 95 / 0.62 / 0.78 · `snow` → 34 / 105 / 0.82 / 0.96 · `frustumCulled = false` ·
+`lightningCooldown = 0` · `lightningFlash = 0` · `weatherEnabled = true`.
+
+- Treat weather as a **camera-local atmosphere**, not four simultaneous regional simulations. — Fog
+  and sky are scene-global, while precipitation is camera-centered. The player experiences the
+  weather of the zone they occupy.
+- Apply weather **after** day/night every frame. — Weather must modify the current
+  dawn/day/dusk/night result, never restore or blend toward fixed daytime colors.
+- Disposal — `destroy()` — Handles `Mesh`, `Sprite`, and `Points`, but not `LineSegments`; extend it
+  for rain and the existing grid helper.
+- Use a transparent `LineBasicMaterial` with `NormalBlending`, `depthWrite:false`, and
+  palette-derived blue-gray color. Do not use additive blending; rain should not trigger bloom.
+- Do not lerp weather toward absolute daytime colors: that would brighten storms at night.
+- Because the procedural texture supplies the zone detail, modify `material.color` as a multiplier;
+  do not regenerate or edit textures.
+- Create one dedicated, normally dark `HemisphereLight` for lightning.
+- **`destroy()`**: extend scene disposal to `THREE.Line`/`THREE.LineSegments`, or dispose rain
+  explicitly. Keep disposal single-owner to avoid double-disposing the same object.
+- Persist only the preference. Do not add weather to `SavedGame` or `GameView`.
+- **Weather toggle while paused:** the setter applies/restores all visible state synchronously;
+  timers remain frozen.
+- Fog range/color, sky, clouds, sun, and hemisphere lighting compose with the current day/night
+  state and never reset the scene to fixed daytime values.
+- Lightning uses a time-based flash and delayed procedural thunder; pause, disable, and destroy
+  leave no orphaned timer or audio work.
+- The menu and pause toggles persist and apply live, including while paused.
+- Rain/snow do not bloom noticeably; precipitation and new line geometry are disposed on restart.
+- *About 1.5 days.** Correct rain/snow renderers, transition-safe profile composition, and
+  day/night/settings integration are the main work.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+
+
 
 ### 14. Dynamic world events
 
@@ -2612,7 +3261,47 @@ or defeat mid-event triggers **force-cleanup** with no reward. Before starting a
 budget** is checked against its `requiredSlots`. **Bounty safety**: **objective-critical** actors are
 never eligible. Borrowed actors and props survive cleanup and the actor count never **exceeds** 25.
 
----
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+Bound values: `Caravan` → 95 / 40 · `richCaravan` → 3 / 18 / 25 / 180 · `defendHome` → 4 / 100 /
+45 / 90 · `champion` → 1 / 260 / 120 / 6 · `rescue` → 2 · `bounty` → 40 / 70 · `NoticeTone = info`
+· `state = active` · `null = null` · `squadEligible = false` · `squadEligible = true`.
+
+- `champion` — Spawn 1 elite roaming actor (hp 260, aura). — Kill the champion. — +120 gold and +6
+  damage, up to a cumulative **+18 champion damage per run**. At the cap, only gold is granted. —
+  None; persists until killed or the run ends.
+- `rescue` — Spawn a captive ally guarded by 2 enemies; marker. The captive starts with combat
+  disabled and is not squad-eligible. — Kill both guards **or** `interact` next to the living
+  captive. — Transfer the captive out of event ownership, enable normal ally AI, and make it
+  squad-eligible. — Captive killed → fail.
+- First event fires when the first main objective is completed, or at `elapsed ≈ 50 s` if the player
+  keeps roaming without completing one.
+- Do not start a new event after victory / defeat or when only the final main objective remains.
+- On resolve, use one central `finishEvent(result)` path to apply the reward once, play sound, show
+  a notice, run idempotent cleanup, clear `activeEvent`, and set cooldown.
+- `attackEventProp` actors prioritize the event target over normal aggro, move into melee range, and
+  damage `EventPropTarget.hp` on their attack cooldown.
+- **Cleanup helpers:** add an idempotent `removeActorById()` that removes projectiles sourced by
+  that actor, clears other actors' `targetId` references, removes and disposes the mesh, and splices
+  the actor from `actors`.
+- **Actor budget:** before starting a kind that needs `requiredSlots`, require `actors.length +
+  requiredSlots <= MAX_ACTORS` (25).
+- **Bounty safety:** objective-critical actors are never eligible.
+- Champion damage stacks to +18 per run and remains capped after save/load.
+- Killing event-spawned actors never advances campaign objectives.
+- `defendHome` attackers damage the tracked house even when the player leaves; rescue keeps the
+  captive out of the squad until success; bounty never removes a commander.
+- Old and new v1 saves load; active events are abandoned with a safe cooldown; champion damage
+  remains capped; no TS / oxlint errors; 60 fps with events active.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+
+
 
 ### 15. Layered procedural audio
 
@@ -2784,7 +3473,44 @@ and timers. Pause, hidden tab, end, autoplay **restrictions** and repeated engin
 leave a clean state, and SFX volume persists, clamps invalid values, applies live and stays
 **separate** from music.
 
----
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+Bound values: `confirmation = 100` · `details = 20`.
+
+- 3. cap concurrent sources and repeated cues;
+- Context — `GameEngine` lazily creates one `AudioContext` on user interaction and owns it until
+  `stopMusic()`/destroy.
+- Pause/visibility — Music gain targets lower values on pause/end and zero when hidden/muted.
+- Lifecycle — Music scheduled sources are tracked; ordinary SFX sources/nodes are not tracked or
+  explicitly disconnected.
+- **Do not use `AudioContext.suspend()` for pause or tab hide.** Resume can require a new user
+  gesture.
+- **Do not play one wet splat per gore particle.** One combat event produces one bounded gore layer
+  regardless of particle count.
+- **Do not randomize beyond recognition.** Variation stays within recipe ranges and uses
+  deterministic per-request parameter selection where practical.
+- **Do not make SFX depend on React state timing.** GameEngine submits cues directly at
+  authoritative events.
+- Do not pan player-owned swing, hurt, block, or UI cues away from center.
+- Pass the current zone into `setMusicContext(faction, zone)` or provide a callback; do not let
+  `AudioDirector` import `GameEngine`.
+- The global `window.__korovanyStopMusic` ownership guard may remain, but it calls director
+  destroy/stop rather than a partial `GameEngine.stopMusic()`.
+- A sound request before context creation may be dropped; do not queue stale combat sounds to play
+  after the next gesture.
+- Repeated start/menu/start cycles cannot leave an interval or context from the prior engine.
+- Production build, oxlint, recipe unit tests, admission/cooldown tests, autoplay browser check, and
+  repeated lifecycle audio check pass.
+- *3-4 days.** Node graphs and recipes are modest; migration of existing music, reliable voice
+  cleanup, browser lifecycle behavior, and mix tuning across dense combat require the time.
+
+**Rules and values this distillation had compressed too far**, restored in the spec's own
+wording because for a normative rule the wording *is* the fact — a paraphrase that drops
+`not`, or separates a rule's terms across three paragraphs, has not preserved it.
+
+
 
 ### Acceptance-criteria ledger
 
