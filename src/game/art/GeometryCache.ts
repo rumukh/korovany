@@ -114,10 +114,14 @@ export function createLod(options: CreateLodOptions): THREE.LOD {
 }
 
 /**
- * Disposes the meshes of an LOD without touching its geometries or materials.
+ * Detaches every level of an LOD, freeing nothing.
  *
- * LOD levels routinely share cached geometry and library-owned materials, so the
- * caller decides what actually gets freed.
+ * It removes the meshes and empties `lod.levels`; it does not dispose anything,
+ * and `THREE.Mesh` has no `dispose()` to call in any case. LOD levels routinely
+ * share cached geometry and library-owned materials, so the caller decides what
+ * actually gets freed — which in practice means a matching `release(key)` for
+ * every `acquire(key)` that fed a level. Believing this frees them leaks every
+ * level for the life of the page.
  */
 export function clearLod(lod: THREE.LOD): void {
   for (const level of [...lod.levels]) {

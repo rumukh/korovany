@@ -186,11 +186,11 @@ function taperedBox(options: TaperedBoxOptions): THREE.BufferGeometry
 function stylizedCapsule(options: StylizedCapsuleOptions): THREE.BufferGeometry
 
 // Profile-driven bodies
-function rectProfile(width: number, depth: number, corner?: number): Vec2[]
-function polygonProfile(radius: number, sides: number, rotation?: number): Vec2[]
+function rectProfile(width: number, depth: number, bevel?: number): Vec2Like[]
+function polygonProfile(radius: number, sides: number, phase?: number): Vec2Like[]
 function loftProfile(options: LoftOptions): THREE.BufferGeometry
-function latheProfile(points: readonly Vec2[], options?): THREE.BufferGeometry
-function extrudeProfile(points: readonly Vec2[], options?): THREE.BufferGeometry
+function latheProfile(points: readonly Vec2Like[], options?): THREE.BufferGeometry
+function extrudeProfile(points: readonly Vec2Like[], options?): THREE.BufferGeometry
 
 // Curve-driven bodies
 function tubeAlongPoints(points: readonly Vec3Like[], options?): THREE.BufferGeometry
@@ -202,10 +202,10 @@ function facetGeometry(geometry, options?: FacetOptions): THREE.BufferGeometry  
 
 // Composition
 function mergeAll(parts, options?): THREE.BufferGeometry          // disposes sources
-function transformed(geometry, transform): THREE.BufferGeometry
+function transformed(geometry, transform): THREE.BufferGeometry   // mutates in place
 
 // Shading data — all mutate and return the geometry passed in
-function ensureVertexColors(geometry, fill?): THREE.BufferGeometry
+function ensureVertexColors(geometry, base?): THREE.BufferGeometry
 function paintVertexColors(geometry, paint: VertexPaint): THREE.BufferGeometry
 function gradientVertexColors(geometry, options): THREE.BufferGeometry
 function bakeVerticalOcclusion(geometry, options?): THREE.BufferGeometry
@@ -276,7 +276,8 @@ function createLod(options: {
   name?: string
 }): THREE.LOD
 
-/** Removes and disposes every level of an LOD built by `createLod`. */
+/** Detaches every level of an LOD built by `createLod`. Frees nothing — the
+    caller still owes a `release` for each cached geometry that fed a level. */
 function clearLod(lod: THREE.LOD): void
 ```
 
@@ -351,7 +352,7 @@ class StylizedArtLibrary {
   releaseOutline(binding: OutlineBinding): void
   createContactShadow(options?: ContactShadowOptions): THREE.Mesh
   setLightingReference(reference: {
-    keyIntensity: number
+    keyIntensity?: number
     rimColor?: THREE.Color
     shadowTint?: THREE.Color
   }): void
@@ -606,9 +607,12 @@ Constraints they must respect:
 - Every geometry they build is either owned by a `GeometryCache`, tracked in a
   region's geometry set, or disposed by the object that created it.
 - Only `mergeAll` consumes its inputs. Every other kit helper either mutates in place
-  and returns the same object (`displaceGeometry`, all `paint*`/`bake*`) or returns a
-  copy (`facetGeometry`, `transformed`). Never apply an in-place helper to a buffer
-  obtained from `GeometryCache.acquire`.
+  and returns the same object (`displaceGeometry`, `transformed`, all `paint*`/`bake*`)
+  or returns a copy (`facetGeometry`). Never apply an in-place helper to a buffer
+  obtained from `GeometryCache.acquire` — `transformed(cache.acquire(key), …)` rotates
+  the buffer every other holder of that key is sharing, and the result stays valid and
+  correctly normalled, so nothing downstream will notice. Transform the *mesh*, or
+  `facetGeometry` first and transform the copy.
 
 ## 7. Budgets
 
@@ -633,7 +637,7 @@ BLOOM=0.42 strength / 0.55 radius / 0.9 threshold
 GRADE_VIGNETTE=0.22
 POST_PASSES=4                        render, bloom, grade, output
 GEOMETRY_CACHE_ENTRIES_MAX=64
-CHARACTER_GEOMETRY_KEYS=9            shared by all 25 actors, not one set each
+CHARACTER_GEOMETRY_KEYS<=11          9 build sites, two keyed by player/faction
 BEAST_GEOMETRY_KEYS<=26              keyed by bulk/length, shared across the four roles
 CARAVAN_GEOMETRY_KEYS=6              shared by every caravan in the run
 ```

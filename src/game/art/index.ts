@@ -27,6 +27,14 @@ export {
   type ArtVariation,
 } from './ArtRandom.ts'
 
+// `RandomStream` and `SeedInput` appear in the signatures above and in §5.2 of the
+// spec, so a caller following the documented surface must be able to name them
+// from here. Exported as types only, deliberately: `createArtStream` stays the way
+// to obtain a stream, and re-exporting the class as a value would invite callers
+// to construct one directly and bypass the art namespace.
+export type { RandomStream } from '../random/RandomStream.ts'
+export type { SeedInput } from '../random/seed.ts'
+
 export {
   OUTLINE_NORMAL_ATTRIBUTE,
   bakeOutlineNormals,

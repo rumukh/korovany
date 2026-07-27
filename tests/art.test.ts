@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import * as THREE from 'three'
 import {
@@ -1497,6 +1498,73 @@ test('the public barrel exports exactly the documented surface', async () => {
     Object.keys(art).sort(),
     expected,
     'update docs/08 §5 and this list together when the art surface changes',
+  )
+})
+
+/**
+ * The test above pins the barrel's *runtime* surface, and it cannot see two
+ * things: type-only exports, which are erased before it runs, and — the reason
+ * this exists — a spec that names a type the barrel never exported at all. That
+ * second gap shipped twice. The spec said `Vec2[]` where the export is
+ * `Vec2Like`, and it used `RandomStream` and `SeedInput` in four signatures that
+ * the barrel did not re-export, so a sibling importing exactly what §5.2
+ * documents got a compile error rather than a wrong result.
+ *
+ * So this reads the spec's own TypeScript blocks and requires every type they
+ * name to be reachable from the barrel. It parses `index.ts` as text rather than
+ * importing it, because a type-only export is invisible to `Object.keys`.
+ */
+test('every type the spec names is exported by the barrel', () => {
+  const spec = readFileSync(
+    new URL('../docs/08-graphics-foundation-spec.md', import.meta.url),
+    'utf8',
+  )
+  const barrelSource = readFileSync(
+    new URL('../src/game/art/index.ts', import.meta.url),
+    'utf8',
+  )
+
+  const exported = new Set<string>()
+  for (const match of barrelSource.matchAll(/^\s{2}(?:type\s+)?(\w+),\s*$/gm)) {
+    exported.add(match[1]!)
+  }
+  for (const match of barrelSource.matchAll(/^export type \{\s*(\w+)\s*\}/gm)) {
+    exported.add(match[1]!)
+  }
+  assert.ok(exported.size > 40, `barrel parse found only ${String(exported.size)} names`)
+
+  // Only the ts-tagged fences. Prose names types loosely and would be noise.
+  const fences = [...spec.matchAll(/```(?:ts|typescript)\r?\n([\s\S]*?)```/g)]
+    .map((match) => match[1]!)
+  assert.ok(fences.length >= 4, `expected the spec's API blocks, found ${String(fences.length)}`)
+  const code = fences.join('\n')
+
+  // Names the spec declares itself are not expected to come from the barrel.
+  const declared = new Set<string>()
+  for (const match of code.matchAll(/\b(?:interface|type|class|enum)\s+(\w+)/g)) {
+    declared.add(match[1]!)
+  }
+
+  const referenced = new Set<string>()
+  for (const match of code.matchAll(/:\s*(?:readonly\s+)?([A-Z]\w*)/g)) {
+    referenced.add(match[1]!)
+  }
+  for (const match of code.matchAll(/\breadonly\s+([A-Z]\w*)\[\]/g)) {
+    referenced.add(match[1]!)
+  }
+
+  // `THREE.*` is qualified and resolves through three itself; `T` is a generic
+  // parameter; the rest are ambient built-ins the spec uses in passing.
+  const ambient = new Set(['THREE', 'T', 'Record', 'Partial', 'Readonly', 'Map', 'Set', 'Promise'])
+  const unresolved = [...referenced]
+    .filter((name) => !declared.has(name) && !exported.has(name) && !ambient.has(name))
+    .sort()
+
+  assert.deepEqual(
+    unresolved,
+    [],
+    'docs/08 names these types but the art barrel does not export them, so code '
+    + 'copied from the spec will not compile',
   )
 })
 
