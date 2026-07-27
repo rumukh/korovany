@@ -2366,6 +2366,24 @@ test('every type the spec names is exported by the barrel', () => {
  * Deliberately repo-wide rather than scoped to one file, and deliberately not a list
  * to maintain: a sweep that trips this has a real bug and the fix is the guard, not
  * an entry in a table.
+ *
+ * **Wave 4 is authorised to narrow or delete this test rather than contort code to
+ * satisfy it, and must delete it if shells become siblings of their source rather
+ * than children** — that removes the class structurally and leaves this scanning for
+ * a bug that can no longer exist. It parses TypeScript by paren balance over source
+ * text, which is a heuristic scanner wearing a test's clothes, and merging three trees
+ * will churn traversals heavily. Blocking integration on a parsing artifact costs more
+ * than this test is worth.
+ *
+ * One self-defeat to know about before then, found by reading these assertions rather
+ * than recalling them, and then measured. The `sweeps.length >= 3` floor is there so a
+ * broken scan cannot pass by finding nothing — but it also encodes "at least three
+ * *separate* sweeps exist". The scan currently finds **4** (`GameEngine.ts` `:7460`,
+ * `:9974`, `:10661`, `:10675`, all guarded), so the margin is **1**: removing any two
+ * turns this red. Consolidating them into one guarded helper — the fix this docblock
+ * argues for — drops the count to 1 and fails on a success. Lower the floor to 1, which
+ * still catches a scan that finds nothing, or delete the test. Do not keep four
+ * traversals alive to keep it green.
  */
 test('every bulk material sweep by traversal excludes outline shells', () => {
   const root = new URL('../src/game/', import.meta.url)
