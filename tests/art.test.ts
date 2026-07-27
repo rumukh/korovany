@@ -514,6 +514,13 @@ test('releasing an outline twice is safe and detaches every shell', () => {
   assert.equal(binding.shells.length, 1)
   const shell = binding.shells[0]
 
+  // This is the invariant that makes releasing before the scene sweep safe in
+  // GameEngine.destroy(): a shell never owns geometry, it borrows its source's and
+  // parents itself to it. Detaching a shell early therefore cannot hide a geometry
+  // from the sweep — the source still carries it.
+  assert.equal(shell.geometry, opaque.geometry, 'shells borrow, never own, geometry')
+  assert.equal(shell.parent, opaque, 'shells parent to their source')
+
   library.releaseOutline(binding)
   assert.equal(shell.parent, null, 'the shell leaves the scene graph')
   assert.equal(binding.shells.length, 0, 'the binding is emptied, not left dangling')
