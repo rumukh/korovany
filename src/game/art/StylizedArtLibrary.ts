@@ -132,13 +132,25 @@ interface SurfacePreset {
  * `userData` through JSON, so a string key would make every clone of a shared
  * material falsely claim library ownership — and the engine's teardown paths
  * skip disposing anything that claims it, leaking the clone forever.
+ *
+ * Non-enumerable for the same reason one step further out. A symbol survives
+ * `Object.assign` and object spread, both of which copy own *enumerable* symbol
+ * keys; `Object.assign(new MeshStandardMaterial(), shared)` is an ordinary way to
+ * derive a variant, and it would have carried the marker onto a material the
+ * library never disposes. Hiding the key from enumeration closes every copy path
+ * three.js or a caller can reach, so ownership is only ever granted deliberately.
  */
 const ART_LIBRARY_OWNED = Symbol('artLibraryOwned')
 
 type OwnableResource = THREE.Material | THREE.BufferGeometry | THREE.Texture
 
 function markOwned(resource: OwnableResource): void {
-  ;(resource as unknown as Record<symbol, boolean>)[ART_LIBRARY_OWNED] = true
+  Object.defineProperty(resource, ART_LIBRARY_OWNED, {
+    value: true,
+    enumerable: false,
+    writable: false,
+    configurable: true,
+  })
 }
 
 const OUTLINE_MARKER = 'comicOutline'
@@ -654,7 +666,9 @@ export class StylizedArtLibrary {
    * Transfers ownership of a caller-built resource to the library's teardown.
    *
    * Use this instead of writing the marker by hand: the marker is a module-private
-   * symbol precisely so it cannot be forged, inherited by a clone, or drift.
+   * non-enumerable symbol, so it cannot be named from outside this file, and it is
+   * not carried by `clone()`, `copy()`, `Object.assign` or spread. Ownership is
+   * therefore always an explicit act, never something a resource inherits.
    */
   static markLibraryOwned(
     resource: THREE.Material | THREE.BufferGeometry | THREE.Texture,

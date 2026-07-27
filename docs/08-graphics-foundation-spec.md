@@ -635,8 +635,17 @@ about.
   A symbol rather than a `userData` key is deliberate: `Material.copy()` deep-copies
   `userData` through JSON but drops symbols, so a clone correctly reports
   `isLibraryOwned() === false` instead of forging library ownership and being skipped
-  by every teardown path forever. Call `StylizedArtLibrary.markLibraryOwned()` to hand
-  the library a resource you built; never write the marker by hand.
+  by every teardown path forever. The marker is also **non-enumerable**, which closes
+  the other copy route: `Object.assign(new MeshStandardMaterial(), shared)` and object
+  spread both copy own *enumerable* symbol keys, and either would otherwise hand
+  ownership to a material the library never disposes. Call
+  `StylizedArtLibrary.markLibraryOwned()` to hand the library a resource you built;
+  never write the marker by hand.
+- The stylized-shader flag is enumerable and that asymmetry is intentional. It tracks
+  `onBeforeCompile`, itself an own enumerable property, so the flag and the injection
+  propagate under identical rules and cannot disagree. Do not "harden" it to match the
+  ownership marker: an assign-derived material would then carry the injection while
+  reporting none, and `adoptMaterial` would inject a second time over the first.
 - **Disposal is terminal.** Every resource-producing entry point — `createMaterial`,
   `acquireMaterial`, `adoptMaterial`, `getOutlineMaterial`, `applyOutline` and
   `createContactShadow` — throws after `dispose()`, so a late caller cannot resurrect a
@@ -651,6 +660,12 @@ about.
   `releaseStatesOfObject`, and skipping it leaks one vertex array object per shell
   per region load. What you must never do is dispose a shell while it still holds
   the borrowed attribute, or dispose the source before releasing the shell.
+- Every path that drops an outline binding calls `releaseOutline` first — dropping the
+  reference detaches nothing and frees nothing. In the engine that means
+  `unregisterOutlineRoot` (which runs on every actor death and interactable removal)
+  and `destroy()`, which releases before the scene sweep so shells are gone by the time
+  the traversal judges what to free. `releaseOutline` empties the binding, so releasing
+  twice is a no-op and the two paths are safe to overlap.
 - `GeometryCache.acquire/release` is the only correct way to share a geometry across
   streamed regions. Disposing a cached geometry directly is a bug.
 - `GeneratedWorldRuntime` keeps ownership of `materials.all` and `materials.textures`.

@@ -2429,6 +2429,17 @@ export class GameEngine {
       attempt(() => document.exitPointerLock())
     }
     attempt(() => this.generatedWorld.dispose())
+    // Before the sweep, not during it. A shell borrows its source's geometry,
+    // material and instance matrix, so the traversal below would either skip it or
+    // free buffers the source still owns; `releaseOutline` is the only path that
+    // returns a shell's own renderer state and nothing else. docs/08 section 8
+    // makes this mandatory for callers, so the engine had better do it too.
+    this.outlineBindings.forEach((binding) =>
+      attempt(() => this.artLibrary.releaseOutline(binding)),
+    )
+    this.interactableOutlineBindings.forEach((entry) =>
+      attempt(() => this.artLibrary.releaseOutline(entry.binding)),
+    )
     const geometries = new Set<THREE.BufferGeometry>()
     const materials = new Set<THREE.Material>()
     this.scene.traverse((object) => {
@@ -5021,11 +5032,17 @@ export class GameEngine {
         this.objectBelongsToRoot(root, entry.binding.root) ||
         this.objectBelongsToRoot(root, entry.positionRoot)
       ) {
+        // Release, don't just forget. Dropping the reference detaches nothing and
+        // frees nothing: an instanced shell owns a vertex array object that only
+        // its own dispose event returns, and this runs every time an actor dies.
+        this.artLibrary.releaseOutline(entry.binding)
         this.interactableOutlineBindings.splice(index, 1)
       }
     }
     for (let index = this.outlineBindings.length - 1; index >= 0; index -= 1) {
-      if (this.objectBelongsToRoot(root, this.outlineBindings[index].root)) {
+      const binding = this.outlineBindings[index]
+      if (this.objectBelongsToRoot(root, binding.root)) {
+        this.artLibrary.releaseOutline(binding)
         this.outlineBindings.splice(index, 1)
       }
     }
@@ -9232,6 +9249,11 @@ export class GameEngine {
     const materials = new Set<THREE.Material>()
     object.traverse((child) => {
       if (!(child instanceof THREE.Mesh) && !(child instanceof THREE.Sprite)) return
+      // Shells are already detached by the release above, so anything instanced
+      // still here owns its matrix buffer and its vertex array object outright.
+      // `dispose()` is the only call that returns either, and it leaves the shared
+      // geometry and material alone for the two sweeps below to judge.
+      if (child instanceof THREE.InstancedMesh) child.dispose()
       if (child instanceof THREE.Mesh) geometries.add(child.geometry)
       const material = child.material
       if (Array.isArray(material)) material.forEach((entry) => materials.add(entry))

@@ -179,6 +179,16 @@ function requireInjectionPoint(source: string, token: string, label: string): vo
  * `Material.copy()` deep-clones `userData` through JSON but copies neither
  * symbols nor `onBeforeCompile`. A clone therefore correctly reports "not
  * stylized" and can be repaired, instead of claiming a shader it does not have.
+ *
+ * Left **enumerable**, unlike the library's ownership marker, and the difference
+ * is load-bearing. This flag tracks `onBeforeCompile`, which is an own enumerable
+ * property, so the two propagate under exactly the same rule: `Object.assign` and
+ * spread copy both, `clone()` copies neither. The flag can therefore never
+ * disagree with the material it describes. Hiding it would produce a material that
+ * carries the injection but reports none, and `adoptMaterial` would inject a
+ * second time on top of the first. Ownership is the opposite case — it must never
+ * propagate to a resource the library did not create — which is why that marker is
+ * non-enumerable and this one is not.
  */
 const STYLIZED_APPLIED = Symbol('stylizedShaderApplied')
 

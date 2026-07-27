@@ -501,6 +501,35 @@ test('outlines skip transparent, marked and instanced meshes by default', () => 
   library.dispose()
 })
 
+test('releasing an outline twice is safe and detaches every shell', () => {
+  const library = createLibrary()
+  const root = new THREE.Group()
+  const opaque = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    library.acquireMaterial('release-probe', { surface: 'cloth', color: 0x223344 }),
+  )
+  root.add(opaque)
+
+  const binding = library.applyOutline(root, 'enemy')
+  assert.equal(binding.shells.length, 1)
+  const shell = binding.shells[0]
+
+  library.releaseOutline(binding)
+  assert.equal(shell.parent, null, 'the shell leaves the scene graph')
+  assert.equal(binding.shells.length, 0, 'the binding is emptied, not left dangling')
+
+  // GameEngine.destroy() releases bindings it may already have released via
+  // unregisterOutlineRoot; the second pass must be a no-op rather than a throw.
+  library.releaseOutline(binding)
+
+  // The source keeps everything it lent out.
+  assert.equal(opaque.geometry.attributes.position.count > 0, true)
+  assert.equal((opaque.material as THREE.Material).userData.disposed, undefined)
+
+  opaque.geometry.dispose()
+  library.dispose()
+})
+
 test('contact shadows share one geometry, material and texture', () => {
   const library = createLibrary()
   const first = library.createContactShadow({ radius: 0.7 })
@@ -1024,6 +1053,50 @@ test('a cloned stylized material is repairable and cannot forge ownership', () =
     false,
     'repairing does not transfer ownership',
   )
+
+  // `clone()` and `copy()` are not the only ways to derive a material. Both copy
+  // own *enumerable* symbol keys, so the ownership marker has to be hidden from
+  // enumeration rather than merely un-nameable — otherwise the derivative claims
+  // ownership, teardown skips it, and it leaks silently for the life of the page.
+  const assigned = Object.assign(new THREE.MeshStandardMaterial(), shared)
+  const spread = Object.assign(
+    new THREE.MeshStandardMaterial(),
+    { ...(shared as unknown as Record<string, unknown>) },
+  )
+  for (const [name, derived] of [
+    ['Object.assign', assigned],
+    ['spread', spread],
+  ] as const) {
+    assert.equal(
+      StylizedArtLibrary.isLibraryOwned(derived),
+      false,
+      `${name} must not inherit library ownership`,
+    )
+  }
+
+  // The shader flag is deliberately the opposite: it stays enumerable because the
+  // thing it tracks, `onBeforeCompile`, is an own enumerable property too. Both
+  // travel under Object.assign and neither survives clone(), so the flag never
+  // disagrees with reality. Hiding it would leave assign-derived materials carrying
+  // the injection while reporting none, and adoptMaterial would inject twice.
+  for (const [name, derived] of [
+    ['Object.assign', assigned],
+    ['spread', spread],
+  ] as const) {
+    assert.equal(
+      hasStylizedShader(derived),
+      derived.onBeforeCompile !== THREE.Material.prototype.onBeforeCompile,
+      `${name} must keep the shader flag and the injection in agreement`,
+    )
+    derived.dispose()
+  }
+
+  // Granting ownership deliberately still works, and stays idempotent.
+  const adopted = new THREE.MeshStandardMaterial()
+  StylizedArtLibrary.markLibraryOwned(adopted)
+  StylizedArtLibrary.markLibraryOwned(adopted)
+  assert.equal(StylizedArtLibrary.isLibraryOwned(adopted), true)
+  adopted.dispose()
 
   clone.dispose()
   library.dispose()
