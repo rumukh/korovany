@@ -38,6 +38,54 @@ function createLibrary(): StylizedArtLibrary {
   return new StylizedArtLibrary({ ink: INK })
 }
 
+/**
+ * `docs/08` §7 sets `ART_LIBRARY_MATERIALS<=12`, and until now nothing checked it.
+ * Two sibling sessions are adding surfaces against that ceiling, so this pins both
+ * the limit and the headroom: the library's own worst case is every outline kind in
+ * both variants plus a contact shadow, and whatever is left is Wave 2's to spend.
+ */
+test('the library stays inside its documented material budget', () => {
+  const library = createLibrary()
+  const kinds = ['player', 'enemy', 'interactable', 'landmark'] as const
+
+  for (const kind of kinds) {
+    for (const smooth of [false, true]) {
+      library.getOutlineMaterial(kind, smooth)
+    }
+  }
+  const shadow = library.createContactShadow()
+
+  const worstCase = library.libraryOwnedMaterialCount
+  assert.equal(
+    worstCase,
+    9,
+    'eight outline materials plus one shared contact shadow',
+  )
+  assert.ok(
+    worstCase <= 12,
+    `ART_LIBRARY_MATERIALS is 12; the library itself uses ${String(worstCase)}`,
+  )
+
+  // Contact shadows share one material per distinct opacity, and the world only
+  // ever asks for the default — CONTACT_SHADOW_MATERIALS<=4 has room to spare.
+  const second = library.createContactShadow()
+  assert.equal(second.material, shadow.material, 'contact shadows share a material')
+  assert.equal(library.libraryOwnedMaterialCount, worstCase)
+
+  // Shared surfaces count against the same ceiling. This is the arbitration point:
+  // Wave 2 has three slots before the budget in docs/08 has to be renegotiated.
+  for (let index = 0; index < 3; index += 1) {
+    library.acquireMaterial(`wave2-${String(index)}`, {
+      color: 0x808080,
+      surface: 'cloth',
+    })
+  }
+  assert.equal(library.libraryOwnedMaterialCount, 12)
+
+  library.dispose()
+  assert.equal(library.libraryOwnedMaterialCount, 0, 'teardown clears every map')
+})
+
 test('art noise is deterministic and bounded', () => {
   for (let index = 0; index < 64; index += 1) {
     const x = index * 0.37

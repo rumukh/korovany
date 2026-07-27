@@ -343,6 +343,22 @@ export class StylizedArtLibrary {
   }
 
   /**
+   * Every material this library will dispose: shared, outline and contact shadow.
+   *
+   * This is the quantity `ART_LIBRARY_MATERIALS` in `docs/08` bounds. It exists so
+   * the budget is observable rather than merely asserted in prose — two sibling
+   * sessions are adding surfaces against a frozen ceiling, and an unenforced budget
+   * is one that has already drifted.
+   */
+  get libraryOwnedMaterialCount(): number {
+    return (
+      this.sharedMaterials.size +
+      this.outlineMaterials.size +
+      this.contactShadowMaterials.size
+    )
+  }
+
+  /**
    * Keeps the look anchored to the current lighting.
    *
    * All stylized materials point at the same uniform objects, so this is one write
