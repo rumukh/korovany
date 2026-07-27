@@ -652,12 +652,15 @@ export function resolveCharacterPlan(
 /**
  * The cache keys a plan needs. **Each key fully determines its geometry.**
  *
- * That is the whole contract of a shared cache and it is easy to get subtly wrong:
- * `torsoClass` collapses `line` with `hero` and `heavy` with `elite`, but those
- * pairs have different chest widths, and the limb builders take a *length* that
- * varies by kit even when the faction and the armour weight agree. So anything a
- * builder reads that is not already spelled out in the key gets spelled out —
- * the torso keys by kit rather than by class, and each limb carries its own length.
+ * That is the whole contract of a shared cache and it is easy to get subtly wrong in
+ * both directions. Too coarse and two different shapes share a buffer: `torsoClass`
+ * collapses `line` with `hero` and `heavy` with `elite`, but those pairs have
+ * different chest widths, and the limb builders take a *length* that varies by kit
+ * even when the faction and the armour weight agree — so the torso keys by kit and
+ * each limb carries its own length. Too fine and one shape gets several buffers:
+ * a guard and a villain in light armour build byte-identical arms, so limbs and
+ * cloaks key by the discriminant their builder actually reads, published by the
+ * builder itself as a `*Variant` function rather than restated here.
  */
 export function characterPartKeys(plan: CharacterPlan): CharacterPartKeys {
   const armour = plan.armour
@@ -668,15 +671,15 @@ export function characterPartKeys(plan: CharacterPlan): CharacterPartKeys {
     head: `char-head:${plan.faction}`,
     face: `char-face:${plan.faction}`,
     hair: plan.hair === 'none' ? null : `char-hair:${plan.hair}`,
-    upperArm: `char-upper-arm:${plan.faction}:${armour}:${size(p.upperArm)}`,
-    forearm: `char-forearm:${plan.faction}:${armour}:${
-      plan.gloved ? 'glove' : 'bare'
-    }:${size(p.forearm)}`,
+    upperArm: `char-upper-arm:${upperArmVariant(plan.faction, armour)}:${size(p.upperArm)}`,
+    forearm: `char-forearm:${forearmVariant(plan.faction, armour, plan.gloved)}:${size(
+      p.forearm,
+    )}`,
     hand: plan.gloved ? null : 'char-hand',
-    thigh: `char-thigh:${plan.faction}:${armour}:${size(p.thigh)}`,
-    shin: `char-shin:${plan.faction}:${armour}:${size(p.shin)}`,
+    thigh: `char-thigh:${thighVariant(plan.faction, armour)}:${size(p.thigh)}`,
+    shin: `char-shin:${shinVariant(plan.faction, armour)}:${size(p.shin)}`,
     trim: plan.trim === 'none' ? null : `char-trim:${plan.trim}`,
-    cloak: plan.cloak === 'none' ? null : `char-cloak:${plan.faction}:${plan.cloak}`,
+    cloak: plan.cloak === 'none' ? null : `char-cloak:${cloakVariant(plan.faction, plan.cloak)}`,
     headgear: plan.headgear === 'none' ? null : `char-headgear:${plan.headgear}`,
     weaponHead: plan.armed ? `char-weapon:${plan.weapon}:head` : null,
     weaponGrip: plan.armed ? `char-weapon:${plan.weapon}:grip` : null,
@@ -1411,6 +1414,46 @@ export function buildTorsoTrim(trim: TrimKind): THREE.BufferGeometry {
   return finish(parts, `character-trim:${trim}`)
 }
 
+/**
+ * The cord between a captive's wrists.
+ *
+ * Built at a half-width of `0.5` and scaled to the wearer's shoulders on attach, so
+ * one buffer serves every body type. The two loops are what read at distance — a
+ * bare cord between two fists is invisible against a torso — and the slack between
+ * them is what says the hands are tied *together* rather than merely held low.
+ */
+export function buildWristRope(): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = []
+  for (const side of [-1, 1]) {
+    parts.push(
+      transformed(
+        latheProfile(
+          [
+            { x: 0.12, y: -0.04 },
+            { x: 0.155, y: 0 },
+            { x: 0.12, y: 0.04 },
+          ],
+          { segments: 9, name: 'wrist-loop' },
+        ),
+        { position: { x: side * 0.5, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 0.86 } },
+      ),
+    )
+  }
+  // The cord itself, sagging a little between the wrists.
+  parts.push(
+    tubeAlongPoints(
+      [
+        { x: -0.44, y: 0, z: 0.02 },
+        { x: -0.18, y: -0.07, z: 0.05 },
+        { x: 0.18, y: -0.07, z: 0.05 },
+        { x: 0.44, y: 0, z: 0.02 },
+      ],
+      { radius: 0.036, radialSegments: 4, tubularSegments: 8, name: 'wrist-cord' },
+    ),
+  )
+  return finish(parts, 'wrist-rope')
+}
+
 // ---------------------------------------------------------------------------
 // Head, face, hair
 // ---------------------------------------------------------------------------
@@ -1936,6 +1979,32 @@ export function buildHeadgear(kind: HeadgearKind): THREE.BufferGeometry {
 // ---------------------------------------------------------------------------
 
 /** Upper arm, hanging from the shoulder joint at the origin. */
+/**
+ * The only thing a limb's silhouette takes from the armour weight: its bulk.
+ *
+ * `light` and `medium` build the same width, so keying a limb by the raw armour
+ * weight buys two buffers for one shape.
+ */
+function limbBulk(armour: ArmourWeight): string {
+  return armour === 'heavy' ? 'heavy' : armour === 'none' ? 'bare' : 'clad'
+}
+
+/**
+ * The part of a plan an upper arm actually looks at.
+ *
+ * Cache keys have to be injective on geometry, but they must not be *finer* than
+ * the geometry either: `guard` and `villain` in light armour build byte-identical
+ * arms, and keying by faction bought two buffers for one shape. The builder names
+ * itself with this same token, so a predicate can never drift away from the key
+ * that is supposed to describe it — and the fingerprint test would catch it if it
+ * ever did, in both directions.
+ */
+export function upperArmVariant(faction: CharacterFaction, armour: ArmourWeight): string {
+  const lame = armour === 'heavy' || (armour === 'medium' && faction === 'guard')
+  const wrap = faction === 'villain' && armour !== 'none'
+  return `${limbBulk(armour)}${lame ? '+lame' : ''}${wrap ? '+wrap' : ''}`
+}
+
 export function buildUpperArm(
   faction: CharacterFaction,
   armour: ArmourWeight,
@@ -1975,7 +2044,7 @@ export function buildUpperArm(
       ),
     )
   }
-  return finish(parts, `character-upper-arm:${faction}:${armour}`)
+  return finish(parts, `character-upper-arm:${upperArmVariant(faction, armour)}`)
 }
 
 function fistParts(scale: number, offsetY: number): THREE.BufferGeometry[] {
@@ -1998,6 +2067,16 @@ function fistParts(scale: number, offsetY: number): THREE.BufferGeometry[] {
       },
     ),
   ]
+}
+
+/** The part of a plan a forearm actually looks at. See `upperArmVariant`. */
+export function forearmVariant(
+  faction: CharacterFaction,
+  armour: ArmourWeight,
+  gloved: boolean,
+): string {
+  const lame = armour !== 'none' && (faction === 'guard' || armour === 'heavy')
+  return `${limbBulk(armour)}${lame ? '+lame' : ''}${gloved ? '+glove' : ''}`
 }
 
 /** Forearm, hanging from the elbow at the origin. Gloved kits get a fist. */
@@ -2040,12 +2119,18 @@ export function buildForearm(
     }
   }
   if (gloved) parts.push(...fistParts(1, -length - 0.11))
-  return finish(parts, `character-forearm:${faction}:${armour}:${gloved ? 'glove' : 'bare'}`)
+  return finish(parts, `character-forearm:${forearmVariant(faction, armour, gloved)}`)
 }
 
 /** A bare hand, hanging from the wrist at the origin. Skin material. */
 export function buildHand(): THREE.BufferGeometry {
   return finish(fistParts(0.94, -0.09), 'character-hand')
+}
+
+/** The part of a plan a thigh actually looks at. See `upperArmVariant`. */
+export function thighVariant(faction: CharacterFaction, armour: ArmourWeight): string {
+  const cop = armour === 'heavy' || (armour === 'medium' && faction === 'guard')
+  return `${limbBulk(armour)}${cop ? '+cop' : ''}`
 }
 
 /** Thigh, hanging from the hip joint at the origin. */
@@ -2077,7 +2162,14 @@ export function buildThigh(
       ),
     )
   }
-  return finish(parts, `character-thigh:${faction}:${armour}`)
+  return finish(parts, `character-thigh:${thighVariant(faction, armour)}`)
+}
+
+/** The part of a plan a shin actually looks at. See `upperArmVariant`. */
+export function shinVariant(faction: CharacterFaction, armour: ArmourWeight): string {
+  const greave = armour === 'heavy' || (armour === 'medium' && faction !== 'elf')
+  const wrap = faction === 'elf'
+  return `${limbBulk(armour)}${greave ? '+greave' : ''}${wrap ? '+wrap' : ''}`
 }
 
 /** Shin and foot, hanging from the knee at the origin. */
@@ -2148,12 +2240,17 @@ export function buildShin(
       )
     }
   }
-  return finish(parts, `character-shin:${faction}:${armour}`)
+  return finish(parts, `character-shin:${shinVariant(faction, armour)}`)
 }
 
 // ---------------------------------------------------------------------------
 // Cloaks
 // ---------------------------------------------------------------------------
+
+/** The part of a plan a cloak actually looks at: the yoke width and the kind. */
+export function cloakVariant(faction: CharacterFaction, kind: CloakKind): string {
+  return `${kind}:${faction === 'guard' ? 'wide' : 'narrow'}`
+}
 
 /**
  * Cloth, resolved as folds.
@@ -2230,7 +2327,7 @@ export function buildCloak(
       ),
     )
   }
-  return finish(parts, `character-cloak:${faction}:${kind}`)
+  return finish(parts, `character-cloak:${cloakVariant(faction, kind)}`)
 }
 
 // ---------------------------------------------------------------------------

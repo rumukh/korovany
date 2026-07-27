@@ -106,12 +106,26 @@ no new dependencies.
 - **Do not add a joint the animation cannot use.** Elbow and knee pivots are added
   because the walk, the attack and the death pose all drive them. Fingers are not.
 - **Do not let a quadruped inherit a biped's spine.** The beasts share the rig names on
-  purpose, but `createBeast` now builds its own limb geometry per role and the shared
-  stride is remapped, rather than a wolf borrowing a soldier's arm.
+  purpose, but `createBeast` builds its own limb geometry per role and the shared
+  stride is remapped, rather than a wolf borrowing a soldier's arm. The secondary
+  pass is split the same way: `animateBeastPosture` replaces the biped shoulder
+  bend, hip counter-rotation and head yaw, all of which pull an animal apart at the
+  joints when applied to a body whose skull sits a metre forward of its own pivot.
+- **Do not derive a look from a spawn counter.** Appearance hangs off the most
+  durable identity a caller can offer — a generated spawn slot, a persisted
+  companion id, a deterministic event id — so the same person comes back the same
+  person after a region reload or a save. `index` is a monotonic counter and is only
+  a fallback for actors that genuinely have no other name.
+- **Do not let a cache key be finer than the shape it names.** Injectivity is the
+  obvious half; the other half is that two keys for one buffer means the cache built
+  and holds the same geometry twice. Limbs and cloaks key by the discriminant their
+  builder actually reads, published by the builder itself as a `*Variant` function
+  so a predicate cannot drift away from the key describing it.
 - **Do not texture the caravan.** It was the last user of `createSurfaceTexture()` in
   the actor path; it moves onto the stylized family like everything else.
 - **Do not allocate in the animation path.** No `new THREE.Vector3()` per frame, no
-  `getObjectByName` walks that were not already there, no closures.
+  object literals per actor per frame, no `getObjectByName` walks that were not
+  already there, no closures.
 
 ### 4.1 Two foundation bugs this pass works around
 
@@ -239,7 +253,7 @@ The blind-silhouette contract. Colour is a redundant cue, never the cue.
 | `commander` | Tallest upright. Full-length cloak, tall crested headgear, a sash, an ornate one-handed weapon, hands away from the body. |
 | `champion` | Heavy *and* tall. Full helm, mantle, spiked pauldrons, a two-handed greatsword or glaive. Keeps its existing aura ring. |
 | `peasant` | Small, round-shouldered, no armour, apron and headscarf, a bundle on the back, empty hands. |
-| `captive` | Ragged, hunched, bare head, wrists roped together in front, arms locked to a single pose. |
+| `captive` | Ragged, hunched, bare head, arms locked to a single pose, and a `wrist-rope` cord tying the fists together. `unbindActorArms` hides the cord and clears `boundArms` on rescue and on companion restore, so a freed captive walks and swings like anyone else. |
 | player (`hero`) | A shade taller and broader than a soldier of the same faction, better-finished gear, always armed. |
 
 ### 5.5 The rig
@@ -326,22 +340,28 @@ which needs a `MeshBasicMaterial` anyway. Nothing mutates a shared material.
 
 ### 5.7 Detail LOD
 
-Four meshes per actor exist only to be read up close: `face`, `hair`, `torso-trim` and
-the bare `hand` meshes. Each is placed under a `THREE.LOD` with the mesh at distance
-`0` and an empty `Object3D` at `CHARACTER_DETAIL_DISTANCE = 26`. `LOD.update()` runs
-inside the renderer's own scene walk, so this costs no engine code and no allocation,
-and the ink shells parented to the detail meshes disappear with them.
+Five kinds of mesh per actor exist only to be read up close: `face`, `hair`,
+`torso-trim`, the bare `hand` meshes and `weapon-grip`. Each is placed under a
+`THREE.LOD` with the mesh at distance `0` and an empty `Object3D` at
+`CHARACTER_DETAIL_DISTANCE = 26`. `LOD.update()` runs inside the renderer's own scene
+walk, so this costs no engine code and no allocation, and the ink shells parented to
+the detail meshes disappear with them.
 
-Net draw calls per actor, ink included:
+Net draw calls per actor, ink included, from the counts pinned in
+`tests/characterArt.test.ts`:
 
 | | before | near (<26 m) | far (>26 m) | outline-culled (>38 m) |
 | --- | --- | --- | --- | --- |
-| meshes | 8–9 | 14–16 | 9–11 | 9–11 |
-| shells | 7–8 | 14–16 | 9–11 | 0 |
-| total | 17–19 | 30–34 | 20–24 | 11–13 |
+| meshes | 8–9 | 15–19 | 11–14 | 11–14 |
+| shells | 7–8 | 15–19 | 11–14 | 0 |
+| total | 17–19 | 32–40 | 24–30 | 13–16 |
 
-At most a handful of actors are ever inside 26 m, and the far and culled bands are at
-or below the old cost, so the sustained 25-actor budget improves rather than regresses.
+This is more expensive than the placeholder it replaces, and honestly so: hands,
+faces, gear layering and a weapon you can identify are the mandate, and they cost
+draw calls. The mitigation is that the near band is small — at most a handful of
+actors are ever inside 26 m — and that the far band, where a crowd actually lives,
+carries the silhouette and nothing else. Everything is shared: 25 actors of the same
+faction and role draw from one set of buffers and one set of materials.
 
 ### 5.8 Animation
 
@@ -427,23 +447,33 @@ against a nine-mesh placeholder and cannot express three factions × nine kits.
 
 ```text
 CHARACTER_GEOMETRY_KEYS<=180          was 9. The theoretical ceiling across all
-                                      3 factions x 9 roles x 3 variants, measured
-                                      at 167. Built lazily, so a typical run holds
-                                      60-80 of them.
+                                      3 factions x 9 roles x 3 variants plus the
+                                      player, measured at 140. Built lazily, so a
+                                      typical run holds 50-70 of them.
 GEOMETRY_CACHE_ENTRIES_MAX=220        was 64. One engine-side cache now holds
                                       humanoid parts, beasts, fauna and the caravan.
 CHARACTER_SHARED_MATERIALS<=48        new. acquireMaterial entries, down from 75
                                       caller-owned materials at 25 actors. The
                                       whole taxonomy enumerates to 33 keys.
 CHARACTER_VARIANTS=3                  headgear/hair/weapon/tint variants per kit
-CHARACTER_DETAIL_DISTANCE=26          LOD cutoff for face, hair, trim and bare hands
-CHARACTER_MESHES_NEAR<=16             per actor, ink excluded
-CHARACTER_MESHES_FAR<=11              per actor, ink excluded
+CHARACTER_DETAIL_DISTANCE=26          LOD cutoff for face, hair, trim, bare hands
+                                      and the weapon grip
+CHARACTER_MESHES_NEAR<=19             per actor, ink excluded. Measured worst case
+                                      is 19, an elf captive at variant 0 — the
+                                      wrist rope is the nineteenth. A guard
+                                      commander is 18.
+CHARACTER_MESHES_FAR<=14              per actor, ink excluded. The detail LOD
+                                      removes five.
 CHARACTER_TRIANGLES_NEAR<=3600        per actor, ink excluded. Measured worst case
                                       is 3136, a villain champion at variant 0.
 BEAST_MESHES<=11
 CARAVAN_MESHES<=26                    including two draft oxen
 ```
+
+Both mesh figures are pinned by `tests/characterArt.test.ts`, which recomputes them
+from the resolved plans rather than trusting this table. The first draft of this
+document guessed 16/11 and was wrong in both columns; a number nothing checks is a
+number that drifts.
 
 Targets:
 

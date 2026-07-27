@@ -48,6 +48,7 @@ import {
   buildWagonWheel,
   buildWeaponGrip,
   buildWeaponHead,
+  buildWristRope,
   characterPartKeys,
   resolveCharacterPlan,
   solveHandOffset,
@@ -551,6 +552,15 @@ interface ActorSpawnOptions {
   generatedRegionId?: string | null
   generatedEncounterId?: string | null
   generatedSpawnId?: string | null
+  /**
+   * A stable identity for appearance, when the caller has one.
+   *
+   * `index` is a monotonic spawn counter, so deriving a look from it means the same
+   * person comes back as someone else after a region reload or a save. Callers that
+   * own a durable id — a generated spawn slot, a persisted companion — pass it here
+   * and get the same body, kit and colours every time.
+   */
+  appearanceId?: string | null
   generatedObjectiveId?: string | null
   generatedUnique?: boolean
   hostileToPlayer?: boolean
@@ -1415,10 +1425,21 @@ interface CharacterRig {
   beast: BeastKind | null
   /** A captive's arms are roped together and never swing. */
   boundArms: boolean
+  /**
+   * Resting spine pitch from the plan's proportions: a villain stoops, an officer
+   * stands up straight. Added to the idle lean so posture is part of the silhouette
+   * rather than a number the table resolves and nothing reads.
+   */
+  lean: number
 }
 
-function seededRandom(seed: number): () => number {
-  let value = seed
+/** A wheel rolls at its own radius, not at the average of the two the cart carries. */
+function wheelRadiusOf(wheel: THREE.Object3D): number {
+  const radius = wheel.userData.wheelRadius
+  return typeof radius === 'number' && radius > 0 ? radius : WAGON_RIG.rearWheelRadius
+}
+
+function seededRandom(seed: number): () => number {  let value = seed
   return () => {
     value = (value * 16807) % 2147483647
     return (value - 1) / 2147483646
@@ -1535,6 +1556,29 @@ export class GameEngine {
   private readonly artGeometry = new GeometryCache()
   /** Scratch vector for the arm-chain solve. Reused so the pose never allocates. */
   private readonly handOffset = new THREE.Vector3()
+  /**
+   * Scratch pose buffers. One for the actor sampler, one for the player.
+   *
+   * Both are filled and consumed inside a single synchronous call, so a buffer each
+   * is enough — and it keeps the promise spec 09 makes about this path, which a
+   * fresh object literal per actor per frame was quietly breaking.
+   */
+  private readonly scratchPose: CharacterPose = {
+    stride: 0,
+    attack: 0,
+    anticipation: 0,
+    recovery: 0,
+    flinch: 0,
+    stagger: 0,
+  }
+  private readonly playerPose: CharacterPose = {
+    stride: 0,
+    attack: 0,
+    anticipation: 0,
+    recovery: 0,
+    flinch: 0,
+    stagger: 0,
+  }
   private readonly clock = new THREE.Clock()
   private readonly keys = new Set<string>()
   private readonly actors: Actor[] = []
@@ -3148,6 +3192,7 @@ export class GameEngine {
           squadEligible: true,
           generatedRegionId: null,
           hostileToPlayer: false,
+          appearanceId: companion.id,
         },
       )
       actor.id = companion.id
@@ -3158,6 +3203,9 @@ export class GameEngine {
       if (actor.role === 'captive') {
         const weapon = actor.mesh.getObjectByName('weapon')
         if (weapon) weapon.visible = true
+        // A restored companion was rescued before the save was written, so it must
+        // come back armed *and* untied.
+        this.unbindActorArms(actor)
       }
     }
   }
@@ -3839,24 +3887,10 @@ export class GameEngine {
         ? Math.atan2(forward.x, forward.z)
         : Math.atan2(move.x, move.z)
       const stride = Math.sin(this.elapsed * (sprinting ? 15 : 10)) * 0.62
-      this.animateCharacter(this.player, {
-        stride,
-        attack: this.attackAnimation,
-        anticipation: 0,
-        recovery: 0,
-        flinch: 0,
-        stagger: 0,
-      })
+      this.animateCharacter(this.player, this.samplePlayerPose(stride))
     } else {
       if (this.shieldActive) this.player.rotation.y = Math.atan2(forward.x, forward.z)
-      this.animateCharacter(this.player, {
-        stride: 0,
-        attack: this.attackAnimation,
-        anticipation: 0,
-        recovery: 0,
-        flinch: 0,
-        stagger: 0,
-      })
+      this.animateCharacter(this.player, this.samplePlayerPose(0))
     }
 
     const jumpHeld = this.keys.has('Space')
@@ -4776,10 +4810,16 @@ export class GameEngine {
    * the very first frame.
    */
   private actorHealthBarHeight(role: ActorRole): number {
-    return isBeastRole(role) ? 2.1 : 3.65
+    if (!isBeastRole(role)) return 3.65
+    // One number for four animals put the troll's bar through its own chest. The
+    // bar renders with the depth test off, so "roughly above it" is not good enough
+    // — clear the skull, which is the tallest thing on any of them.
+    const rig = BEAST_RIG[role as BeastKind]
+    return (rig ? Math.max(rig.backHeight, rig.headY) : 1.4) + 0.86
   }
 
-  private updateActorIndicators(actor: Actor): void {    const playerDistance = actor.mesh.position.distanceTo(this.player.position)
+  private updateActorIndicators(actor: Actor): void {
+    const playerDistance = actor.mesh.position.distanceTo(this.player.position)
     const ring = actor.mesh.getObjectByName('faction-ring')
     if (ring) {
       ring.visible = actor.alive && playerDistance < 42
@@ -5737,7 +5777,7 @@ export class GameEngine {
       )
     }
     const wheels = this.caravan.getObjectsByProperty('name', 'wheel')
-    for (const wheel of wheels) wheel.rotation.z -= wheelTravel / 0.9
+    for (const wheel of wheels) wheel.rotation.z -= wheelTravel / wheelRadiusOf(wheel)
     const cargo = this.caravan.getObjectByName('cargo')
     if (cargo instanceof THREE.Mesh) {
       const scale = this.caravanCooldown > 0 ? 0.35 : 1
@@ -7951,7 +7991,7 @@ export class GameEngine {
             travelDirection.x * direction,
           )
           for (const wheel of caravan.getObjectsByProperty('name', 'wheel')) {
-            wheel.rotation.z -= delta * (2.8 / 0.9)
+            wheel.rotation.z -= (delta * 2.8) / wheelRadiusOf(wheel)
           }
           event.markerPos.copy(caravan.position)
         }
@@ -8178,6 +8218,10 @@ export class GameEngine {
         aiMode: 'captive',
         budget: 'chronicle',
         eventOwnerId: id,
+        // The event id is deterministic, so the prisoner you walked away from is
+        // the prisoner you come back to rather than a different person in the
+        // same ropes.
+        appearanceId: `${id}:captive`,
         generatedRegionId: this.generatedRegionIdAt(position.x, position.z),
       },
     )
@@ -8195,6 +8239,7 @@ export class GameEngine {
           budget: 'chronicle',
           eventOwnerId: id,
           ignoredTargetId: captive.id,
+          appearanceId: `${id}:guard:0`,
           generatedRegionId: this.generatedRegionIdAt(position.x, position.z),
         },
       ),
@@ -8210,6 +8255,7 @@ export class GameEngine {
           budget: 'chronicle',
           eventOwnerId: id,
           ignoredTargetId: captive.id,
+          appearanceId: `${id}:guard:1`,
           generatedRegionId: this.generatedRegionIdAt(position.x, position.z),
         },
       ),
@@ -8232,6 +8278,10 @@ export class GameEngine {
       captive.wanderTarget.copy(captive.mesh.position)
       const weapon = captive.mesh.getObjectByName('weapon')
       if (weapon) weapon.visible = true
+      // Cut the ropes too. `boundArms` pins the arms to the ribs and zeroes the
+      // stride swing; handing someone their sword back while they still walk like
+      // a prisoner is worse than not freeing them at all.
+      this.unbindActorArms(captive)
       event.state = 'succeeded'
     }
     event = this.createWorldEvent({
@@ -9728,14 +9778,37 @@ export class GameEngine {
       rightArm.rotation.x = THREE.MathUtils.lerp(rightArm.rotation.x, -0.34 * side, eased)
     }
     if (rig) {
-      for (const elbow of [rig.leftElbow, rig.rightElbow]) {
-        if (elbow) elbow.rotation.x = THREE.MathUtils.lerp(elbow.rotation.x, 0.9, eased)
-      }
+      const leftElbowX = rig.leftElbow
+        ? THREE.MathUtils.lerp(rig.leftElbow.rotation.x, 0.9, eased)
+        : 0
+      const rightElbowX = rig.rightElbow
+        ? THREE.MathUtils.lerp(rig.rightElbow.rotation.x, 0.9, eased)
+        : 0
+      if (rig.leftElbow) rig.leftElbow.rotation.x = leftElbowX
+      if (rig.rightElbow) rig.rightElbow.rotation.x = rightElbowX
       if (rig.leftLeg) rig.leftLeg.rotation.x = -0.5 * eased
       if (rig.rightLeg) rig.rightLeg.rotation.x = -0.16 * eased
       if (rig.leftKnee) rig.leftKnee.rotation.x = 1.15 * eased
       if (rig.rightKnee) rig.rightKnee.rotation.x = 0.42 * eased
       if (rig.cloak) rig.cloak.rotation.x = THREE.MathUtils.lerp(rig.cloak.rotation.x, 0.3, eased)
+      // `weapon` is a sibling of the arms, not a child, so slackening the shoulder
+      // and elbow moves the fist out from under a grip that would otherwise hang in
+      // the air where the hand used to be. Re-solve the chain, exactly as the living
+      // pose does, and keep the authored blade angle.
+      if (weapon) {
+        const mainArm = rig.mainHand > 0 ? rightArm : leftArm
+        const mainX = mainArm ? mainArm.rotation.x : 0
+        const mainZ = mainArm ? mainArm.rotation.z : 0
+        this.placeWeaponInHand(
+          rig,
+          mainArm ?? null,
+          mainX,
+          mainZ,
+          rig.mainHand > 0 ? rightElbowX : leftElbowX,
+          weapon.rotation.x,
+          weapon.rotation.z,
+        )
+      }
     }
     if (head) head.rotation.z = side * 0.28 * eased
   }
@@ -11786,13 +11859,21 @@ export class GameEngine {
 
     if (keys.headgear) {
       const headgearKind = plan.headgear
-      const headgear = new THREE.Mesh(
-        build(keys.headgear, () => buildHeadgear(headgearKind)),
+      // Cloth headgear takes the wearer's own cloth, a strap takes leather, a bone
+      // mask takes bone, and everything else is a helmet. `boneMask` used to fall
+      // through to steel, which rendered a villain's trophy skull as polished metal
+      // and left the bone surface as dead code.
+      const headgearMaterial =
         headgearKind === 'hood' || headgearKind === 'ragHood' || headgearKind === 'cap'
           ? bodyMaterial
           : headgearKind === 'strap'
             ? leatherMaterial
-            : steelMaterial,
+            : headgearKind === 'boneMask'
+              ? this.characterSharedMaterial('bone')
+              : steelMaterial
+      const headgear = new THREE.Mesh(
+        build(keys.headgear, () => buildHeadgear(headgearKind)),
+        headgearMaterial,
       )
       headgear.name = 'headgear'
       headgear.position.y = p.headY
@@ -11864,6 +11945,18 @@ export class GameEngine {
       pelvisPivot.add(pivot)
     }
 
+    if (plan.boundArms) {
+      // §4 — a captive has to read as tied from behind as well as in front, and the
+      // waist loop alone does not do that. The cord spans both wrists; it is scaled
+      // to the wearer rather than rebuilt per body type, and `unbindActorArms` hides
+      // it the moment the ropes come off.
+      const rope = new THREE.Mesh(build('wrist-rope', () => buildWristRope()), leatherMaterial)
+      rope.name = 'wrist-rope'
+      rope.position.set(0, p.shoulderY - p.upperArm - p.forearm, 0.2)
+      rope.scale.x = p.shoulderX / 0.5
+      torsoPivot.add(rope)
+    }
+
     // `weapon` stays a direct child of `torso-pivot` whose origin is the hand:
     // `attachTorch` parents a torch to it and the player's weapon trail is one of
     // its children, and both expect hand height in torso space. The animation
@@ -11890,7 +11983,9 @@ export class GameEngine {
           leatherMaterial,
         )
         grip.name = 'weapon-grip'
-        weaponPivot.add(grip)
+        // A grip is a hand's width of leather. Past the detail distance it is one
+        // draw call for something nobody can resolve, so it goes with the face.
+        this.attachCharacterDetail(weaponPivot, grip)
       }
     }
     torsoPivot.add(weaponPivot)
@@ -11957,6 +12052,7 @@ export class GameEngine {
       mainHand,
       beast: null,
       boundArms: plan.boundArms,
+      lean: p.lean,
     }
     group.userData.rig = rig
     group.userData.characterPlan = plan
@@ -11979,8 +12075,26 @@ export class GameEngine {
     parent.add(lod)
   }
 
-  private markCharacterShadows(root: THREE.Object3D): void {
-    root.traverse((object) => {
+  /**
+   * Frees a bound actor: drops the rope and lets the arms swing again.
+   *
+   * Both halves matter. `boundArms` is what zeroes the stride in `animateCharacter`,
+   * and `wrist-rope` is the mesh that says why. Rescue and companion restoration
+   * both go through here so the two can never disagree.
+   *
+   * The rope is hidden rather than removed. Its geometry is cache-owned, so taking
+   * it out of the scene would free nothing, and its ink shell is parented to it —
+   * hiding the source hides the shell for free and leaves the outline binding it is
+   * registered under intact for teardown.
+   */
+  private unbindActorArms(actor: Actor): void {
+    const rig = actor.mesh.userData.rig as CharacterRig | undefined
+    if (rig) rig.boundArms = false
+    const rope = actor.mesh.getObjectByName('wrist-rope')
+    if (rope) rope.visible = false
+  }
+
+  private markCharacterShadows(root: THREE.Object3D): void {    root.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return
       if (object.name === 'faction-ring') return
       if (object.userData.noComicOutline === true) return
@@ -12144,18 +12258,20 @@ export class GameEngine {
    * on a pivot lengthens a bone without thickening it, which is the whole trick.
    *
    * Deterministic by construction: an `art:`-namespaced stream derived from the
-   * world seed and this actor's identity. Never `Math.random()`, never a gameplay
-   * stream, so the same actor is the same person on reload.
+   * world seed and this actor's durable identity — a generated spawn slot or a
+   * persisted companion id where one exists, not the spawn counter. Never
+   * `Math.random()`, never a gameplay stream, so the same actor is the same person
+   * after a region reload and after a save.
    */
   private applyActorVisualVariation(
     mesh: THREE.Group,
     allegiance: Allegiance,
     role: ActorRole,
-    index: number,
+    identity: string,
   ): void {
     const variation = artVariation(
       this.generatedBlueprint.seed,
-      `npc:actor:${allegiance}:${role}:${String(index)}`,
+      `npc:actor:${allegiance}:${role}:${identity}`,
     )
     const height = variation.around(1, 0.055)
     const bulk = variation.around(1, 0.05)
@@ -12327,6 +12443,11 @@ export class GameEngine {
         const wheel = new THREE.Group()
         wheel.name = 'wheel'
         wheel.position.set(x, radius, side * WAGON_RIG.wheelZ)
+        // The two axles carry different wheels, so they cannot share one rolling
+        // constant: a rear wheel turns 0.78/1.02 as fast as a front one over the
+        // same ground. Carrying the radius on the object is what stops the animation
+        // from having to guess.
+        wheel.userData.wheelRadius = radius
         const tyre = new THREE.Mesh(
           build(`wagon-wheel:${radius.toFixed(2)}`, () => buildWagonWheel(radius)),
           ironwork,
@@ -12505,6 +12626,7 @@ export class GameEngine {
       mainHand: 1,
       beast: kind,
       boundArms: false,
+      lean: 0,
     }
     group.userData.rig = beastRig
     return group
@@ -12528,12 +12650,17 @@ export class GameEngine {
   ): Actor {
     this.claimActorSlot(options.budget)
     const beast = isBeastRole(role) ? BEAST_PROFILES[role] : null
+    // Appearance hangs off the most durable identity the caller can offer, falling
+    // back to the spawn counter only for actors that genuinely have no other name.
+    // Anything keyed on the counter alone changes face after a reload.
+    const identity =
+      options.appearanceId ?? options.generatedSpawnId ?? `seq:${String(index)}`
     // The variant picks headgear, hair, weapon and cloth tint out of the kit's own
     // sets. It is an integer rather than a float so every person the game can build
     // stays enumerable, which is what keeps the geometry cache bounded.
     const variant = artVariation(
       this.generatedBlueprint.seed,
-      `npc:variant:${allegiance}:${role}:${String(index)}`,
+      `npc:variant:${allegiance}:${role}:${identity}`,
     ).integer(0, CHARACTER_VARIANTS)
     const mesh = beast
       ? this.createBeast(role as BeastRole)
@@ -12579,7 +12706,7 @@ export class GameEngine {
       if (weapon) weapon.visible = false
     }
     if (role === 'peasant') mesh.scale.setScalar(0.9)
-    this.applyActorVisualVariation(mesh, allegiance, role, index)
+    this.applyActorVisualVariation(mesh, allegiance, role, identity)
     const outlineBinding = this.registerOutline(mesh, 'enemy')
     mesh.position.set(x, this.groundHeightAt(x, z), z)
     this.resolveCharacterOverlaps(mesh.position, this.actorColliderRadiusForRole(role))
@@ -13952,22 +14079,31 @@ export class GameEngine {
       Math.abs(Math.sin(actor.gaitPhase)) *
       0.065 *
       THREE.MathUtils.clamp(actor.motionBlend, 0, 1)
+    if (bodyPivot) bodyPivot.position.y = breathing + stepBob
+
+    // A quadruped's spine is not a biped's. `torso-pivot` on a beast carries the
+    // whole ribcage, `pelvis-pivot` the hindquarters and `head-pivot` a skull that
+    // sits a long way forward of its own origin — so the biped pass below, which
+    // bends at the shoulders, twists the hips against the ribs and yaws the head
+    // about the body centre, pulls the animal apart at every joint. Beasts get
+    // their own, much quieter version.
+    if (rig?.beast) {
+      this.animateBeastPosture(rig, actor, pose, breathing, delta, lookYaw, {
+        torsoPivot,
+        pelvisPivot,
+        headPivot,
+      })
+      return
+    }
+
     const heavy = actor.role === 'brute' || actor.role === 'champion'
     // The dot of the actor's own right vector with the direction it was hit from,
     // written out rather than built from a `Vector3` — this runs 25 times a frame.
     const yaw = actor.mesh.rotation.y
     const hitRight =
       Math.cos(yaw) * actor.lastHitDirection.x - Math.sin(yaw) * actor.lastHitDirection.z
-    const forwardLean =
-      actor.role === 'scout'
-        ? 0.075
-        : heavy
-          ? 0.055
-          : actor.role === 'archer'
-            ? 0.025
-            : 0.04
+    const forwardLean = this.actorForwardLean(actor.role)
 
-    if (bodyPivot) bodyPivot.position.y = breathing + stepBob
     if (torsoPivot) {
       torsoPivot.position.x = idleWeightShift
       torsoPivot.rotation.x =
@@ -13977,9 +14113,12 @@ export class GameEngine {
         pose.stagger * 0.2 +
         // §5D — shoulders up against the weather. Cosmetic only, but it is driven by the
         // simulation's storm factor so it reads the same whether or not precipitation is
-        // being drawn. Beasts are excluded: the pivot bends a biped's spine, and bending
-        // a quadruped's back at the shoulders makes it look broken rather than cold.
-        (isBeastRole(actor.role) ? 0 : this.ambientStormHunch)
+        // being drawn.
+        this.ambientStormHunch +
+        // §4 — the plan's own posture. A villain stoops, a scout runs light and an
+        // officer stands up straight; without this the proportion table resolves a
+        // lean that nothing ever reads.
+        (rig?.lean ?? 0)
       torsoPivot.rotation.y =
         -actor.stride * (heavy ? 0.08 : 0.12) +
         pose.attack * 0.16 -
@@ -14004,7 +14143,7 @@ export class GameEngine {
         pose.flinch * hitRight * 0.3
     }
 
-    if (!rig || rig.beast) return
+    if (!rig) return
     if (actor.role === 'archer') {
       // The bow is in the bow hand and the string hand pulls back past the jaw. The
       // weapon pivot is re-solved afterwards so the riser stays in the fist.
@@ -14032,6 +14171,80 @@ export class GameEngine {
     }
   }
 
+  /** The player's pose, in the same reused-buffer style as the actor sampler. */
+  private samplePlayerPose(stride: number): CharacterPose {
+    const pose = this.playerPose
+    pose.stride = stride
+    pose.attack = this.attackAnimation
+    pose.anticipation = 0
+    pose.recovery = 0
+    pose.flinch = 0
+    pose.stagger = 0
+    return pose
+  }
+
+  private actorForwardLean(role: ActorRole): number {    if (role === 'scout') return 0.075
+    if (role === 'brute' || role === 'champion') return 0.055
+    if (role === 'archer') return 0.025
+    return 0.04
+  }
+
+  /**
+   * The secondary pass for something that walks on four legs.
+   *
+   * Everything here is deliberately an order of magnitude smaller than the biped
+   * version. A quadruped reads as one solid animal, so the ribs may pitch a little
+   * into a lunge and the flank may breathe, but the hips must stay with the ribs
+   * and the skull must not swing on the end of its own neck offset. The head still
+   * tracks, just over a narrow arc and about the neck rather than the body centre.
+   */
+  private animateBeastPosture(
+    rig: CharacterRig,
+    actor: Actor,
+    pose: CharacterPose,
+    breathing: number,
+    delta: number,
+    lookYaw: number,
+    pivots: {
+      torsoPivot: THREE.Object3D | undefined
+      pelvisPivot: THREE.Object3D | undefined
+      headPivot: THREE.Object3D | undefined
+    },
+  ): void {
+    const upright = rig.beast === 'troll'
+    const { torsoPivot, pelvisPivot, headPivot } = pivots
+    if (torsoPivot) {
+      torsoPivot.position.x = 0
+      torsoPivot.rotation.x =
+        -pose.anticipation * (upright ? 0.16 : 0.1) +
+        pose.attack * (upright ? 0.2 : 0.14) +
+        pose.stagger * 0.14
+      torsoPivot.rotation.y = -actor.stride * 0.03
+      torsoPivot.rotation.z = -actor.turnLean * 0.06
+      torsoPivot.scale.y = 1 + breathing * 0.3
+    }
+    if (pelvisPivot) {
+      // The hindquarters follow the ribs rather than counter-rotating against them.
+      pelvisPivot.rotation.y = actor.stride * 0.02
+      pelvisPivot.rotation.z = actor.turnLean * 0.03
+    }
+    if (headPivot) {
+      const clamped = THREE.MathUtils.clamp(lookYaw, -0.45, 0.45)
+      headPivot.rotation.y = dampAngle(headPivot.rotation.y, clamped, 5, delta)
+      headPivot.rotation.x = pose.attack * 0.16 - pose.flinch * 0.2
+      headPivot.rotation.z = actor.turnLean * 0.04
+    }
+  }
+
+  /**
+   * One reused pose per engine, filled in place.
+   *
+   * This runs once for the player and once for every living actor, every frame.
+   * Returning a fresh literal made twenty-six short-lived objects a frame — about
+   * sixteen hundred a second at the twenty-five-actor target — in the one code path
+   * spec 09 promises allocates nothing. The value is consumed synchronously by
+   * `animateCharacter` and never retained, so a single buffer is safe.
+   */
   private sampleActorPose(actor: Actor): CharacterPose {
     let attack = 0
     let anticipation = 0
@@ -14049,24 +14262,24 @@ export class GameEngine {
         recovery = Math.sin(progress * Math.PI)
       }
     }
-    return {
-      stride: actor.reaction === 'stagger' ? 0 : actor.stride,
-      attack,
-      anticipation,
-      recovery,
-      flinch:
-        actor.reaction === 'flinch'
-          ? THREE.MathUtils.clamp(actor.reactionRemaining / FLINCH_TIME, 0, 1)
-          : 0,
-      stagger:
-        actor.reaction === 'stagger'
-          ? THREE.MathUtils.clamp(
-              actor.reactionRemaining / this.actorStaggerDuration(actor.role),
-              0,
-              1,
-            )
-          : 0,
-    }
+    const pose = this.scratchPose
+    pose.stride = actor.reaction === 'stagger' ? 0 : actor.stride
+    pose.attack = attack
+    pose.anticipation = anticipation
+    pose.recovery = recovery
+    pose.flinch =
+      actor.reaction === 'flinch'
+        ? THREE.MathUtils.clamp(actor.reactionRemaining / FLINCH_TIME, 0, 1)
+        : 0
+    pose.stagger =
+      actor.reaction === 'stagger'
+        ? THREE.MathUtils.clamp(
+            actor.reactionRemaining / this.actorStaggerDuration(actor.role),
+            0,
+            1,
+          )
+        : 0
+    return pose
   }
 
   private updateChampionAura(actor: Actor): void {

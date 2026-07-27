@@ -1544,10 +1544,16 @@ test('the public barrel exports exactly the documented surface', async () => {
     'buildWagonWheel',
     'buildWeaponGrip',
     'buildWeaponHead',
+    'buildWristRope',
     'characterKitForRole',
     'characterPartKeys',
+    'cloakVariant',
+    'forearmVariant',
     'resolveCharacterPlan',
+    'shinVariant',
     'solveHandOffset',
+    'thighVariant',
+    'upperArmVariant',
   ]
   assert.deepEqual(
     Object.keys(art).sort(),

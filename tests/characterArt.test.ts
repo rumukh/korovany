@@ -41,6 +41,7 @@ import {
   buildWagonWheel,
   buildWeaponGrip,
   buildWeaponHead,
+  buildWristRope,
   characterPartKeys,
   hasOutlineNormals,
   resolveCharacterPlan,
@@ -50,6 +51,10 @@ import {
   type CharacterPartKeys,
   type CharacterPlan,
 } from '../src/game/art/index.ts'
+
+/** Spec 09 §8. Kept here so the numbers in the doc are measured, not asserted. */
+const CHARACTER_MESHES_NEAR = 19
+const CHARACTER_MESHES_FAR = 14
 
 /**
  * Wave 2A — NPC, creature and caravan models.
@@ -228,9 +233,11 @@ test('every person the game can build actually builds', () => {
     }
   }
   // §8 — the cache has to hold every distinct part the game can ask for. This is
-  // the theoretical ceiling; a real run touches sixty to eighty of them.
+  // the theoretical ceiling; a real run touches fifty to seventy of them.
   assert.ok(keys.size <= 180, `character geometry keys grew to ${String(keys.size)}`)
   assert.ok(worst <= 3600, `one actor reached ${String(worst)} triangles`)
+  // The captive's rope is built outside the plan's key set, under a fixed key.
+  assertSolid(buildWristRope(), 'wrist-rope')
 })
 
 test('a plan is a pure function of faction, role and variant', () => {
@@ -470,6 +477,19 @@ test('cache keys name exactly what they build', () => {
   const guardSoldier = resolveCharacterPlan('guard', 'soldier', 0)
   assert.notEqual(characterPartKeys(elfSoldier).head, characterPartKeys(guardSoldier).head)
 
+  // Third direction, and the one a naive key gets wrong: a key must not be *finer*
+  // than the geometry either. Two keys for one buffer means the cache built and
+  // holds the same shape twice, which is a leak dressed up as a lookup.
+  const shapes = new Map<string, string>()
+  for (const [key, print] of built) {
+    const owner = shapes.get(print)
+    if (owner === undefined) shapes.set(print, key)
+    else
+      assert.fail(
+        `keys "${owner}" and "${key}" name the same buffer — the key is finer than the shape`,
+      )
+  }
+
   // A weapon key must be enough to rebuild the weapon byte for byte.
   const first = buildWeaponHead('sabre')
   const second = buildWeaponHead('sabre')
@@ -480,6 +500,59 @@ test('cache keys name exactly what they build', () => {
   )
   first.dispose()
   second.dispose()
+})
+
+test('a crowd stays inside the draw budget it documents', () => {
+  // Spec 09 §8 publishes near/far mesh counts. They were written from a sketch and
+  // were wrong; measuring them here is what stops them going stale again. The
+  // counts mirror `createCharacter`: every key that resolves becomes one mesh, and
+  // `attachCharacterDetail` is what the far column drops.
+  let worstNear = 0
+  let worstFar = 0
+  let worstLabel = ''
+  for (const faction of FACTIONS) {
+    for (const role of [...ROLES, 'player']) {
+      for (let variant = 0; variant < CHARACTER_VARIANTS; variant += 1) {
+        const plan = resolveCharacterPlan(faction, role, variant, role === 'player')
+        const keys = characterPartKeys(plan)
+        const on = (key: string | null, count = 1): number => (key ? count : 0)
+        // Detail meshes: trim, face, hair, both bare hands and the weapon grip.
+        const detail =
+          on(keys.trim) + 1 + on(keys.hair) + on(keys.hand, 2) + on(keys.weaponGrip)
+        const near =
+          1 + // torso
+          on(keys.cloak) +
+          1 + // head
+          on(keys.headgear) +
+          4 + // upper arms and forearms
+          4 + // thighs and shins
+          on(keys.weaponHead) +
+          on(keys.offhand) +
+          (plan.boundArms ? 1 : 0) +
+          detail
+        if (near > worstNear) {
+          worstNear = near
+          worstLabel = `${faction}/${role}/${String(variant)}`
+        }
+        worstFar = Math.max(worstFar, near - detail)
+      }
+    }
+  }
+  assert.ok(
+    worstNear <= CHARACTER_MESHES_NEAR,
+    `worst near-field actor is ${worstLabel} at ${String(worstNear)} meshes, budget ${String(
+      CHARACTER_MESHES_NEAR,
+    )}`,
+  )
+  assert.ok(
+    worstFar <= CHARACTER_MESHES_FAR,
+    `worst far-field actor is ${String(worstFar)} meshes, budget ${String(CHARACTER_MESHES_FAR)}`,
+  )
+  // And the LOD has to be doing real work, or the budget is a formality.
+  assert.ok(
+    worstFar <= worstNear - 4,
+    'the detail LOD must remove at least four meshes from a distant actor',
+  )
 })
 
 test('the geometry cache balances across a crowd', () => {
