@@ -1213,6 +1213,121 @@ test('closed builders wind outward, independently of their normals', () => {
 })
 
 /**
+ * A third, independent absolute check, and the one that settles `latheProfile`.
+ *
+ * The centroid test above needs a body that is star-convex about its own
+ * centroid. That holds for every case it lists — including the open lathe, which
+ * classifies more decisively than the closed one (|cos| 0.96 against 0.93),
+ * because a skirt's side walls do face away from the mesh centroid. But "is this
+ * shape star-convex" is a judgement call made per case, and for a surface of
+ * revolution there is a stronger invariant available that needs no such call:
+ * every face must wind away from the **axis of revolution**, whatever the profile
+ * does, open or closed.
+ *
+ * This reads no normals, so it cannot be fooled by a builder that flipped its
+ * winding and its normals together, and it does not depend on closure. It is also
+ * genuinely independent rather than a restatement — note that a
+ * `THREE.LatheGeometry` control would *not* be, because `latheProfile` is a thin
+ * passthrough to `THREE.LatheGeometry` plus a radius clamp. Comparing the two
+ * compares a thing to itself and would agree even if both were inside-out, which
+ * is why the control here is a `CylinderGeometry` built without the kit.
+ *
+ * The one shape this cannot speak about is a *flat* lathe — a disc annulus, every
+ * point at one `y` — whose faces point along the axis rather than away from it.
+ * That is the same degeneracy the centroid guard rejects, for the same reason.
+ */
+test('lathe surfaces wind away from their axis of revolution', () => {
+  const axialInwardFaces = (geometry: THREE.BufferGeometry): { inward: number, classified: number } => {
+    const source = geometry.index ? geometry.toNonIndexed() : geometry
+    const position = source.getAttribute('position')
+    const a = new THREE.Vector3()
+    const b = new THREE.Vector3()
+    const c = new THREE.Vector3()
+    const edge1 = new THREE.Vector3()
+    const edge2 = new THREE.Vector3()
+    const wind = new THREE.Vector3()
+    const radial = new THREE.Vector3()
+    let inward = 0
+    let classified = 0
+    for (let triangle = 0; triangle + 2 < position.count; triangle += 3) {
+      a.fromBufferAttribute(position, triangle)
+      b.fromBufferAttribute(position, triangle + 1)
+      c.fromBufferAttribute(position, triangle + 2)
+      wind.crossVectors(edge1.subVectors(b, a), edge2.subVectors(c, a))
+      if (wind.lengthSq() < 1e-14) continue
+      // Radial direction from the Y axis to the face centre, with the axial
+      // component discarded — this is what "outward" means for a solid of
+      // revolution, and it is defined whether or not the profile closes.
+      radial.copy(a).add(b).add(c).divideScalar(3)
+      radial.y = 0
+      if (radial.lengthSq() < 1e-8) continue
+      // A cap faces *along* the axis, not away from it, so the radial invariant
+      // says nothing about it — skip rather than guess. This is the same
+      // degeneracy the centroid guard rejects, and the CylinderGeometry control
+      // is what forced it to be stated: its two flat caps are 24 of its 48
+      // triangles and were being scored as inverted.
+      if (Math.abs(wind.normalize().dot(radial.normalize())) < 0.2) continue
+      classified += 1
+      if (wind.dot(radial) <= 0) inward += 1
+    }
+    if (source !== geometry) source.dispose()
+    return { inward, classified }
+  }
+
+  // Deliberately not a `THREE.LatheGeometry` control: `latheProfile` is a thin
+  // passthrough to it, so that comparison would be circular and would agree even
+  // if both were inside-out. A cylinder is a surface of revolution built by a
+  // different code path, which is what makes it a real control.
+  const control = new THREE.CylinderGeometry(0.5, 0.7, 1, 12)
+  const controlResult = axialInwardFaces(control)
+  assert.equal(controlResult.inward, 0, 'CylinderGeometry control must wind outward')
+  assert.equal(controlResult.classified, 24, 'the control\'s 24 side faces must be classified, its 24 cap faces skipped')
+  control.dispose()
+
+  const cases: [string, THREE.BufferGeometry, number][] = [
+    ['closed profile', latheProfile([
+      { x: 0, y: 0 },
+      { x: 0.35, y: 0.15 },
+      { x: 0.5, y: 0.45 },
+      { x: 0.3, y: 0.8 },
+      { x: 0, y: 1 },
+    ], { segments: 16 }), 128],
+    ['open profile', latheProfile([
+      { x: 0.2, y: 0 },
+      { x: 0.45, y: 0.35 },
+      { x: 0.3, y: 0.75 },
+    ], { segments: 16 }), 64],
+    // The shape S3 measured at 6 agree / 9 disagree. A lathe emits
+    // segments * (points - 1) * 2 triangles, which is always even, so 15 was
+    // never a triangle count: this is the kit's only *indexed* builder, and an
+    // index-blind reader sees floor(45 / 3) = 15 pseudo-triangles stitched from
+    // unrelated vertices.
+    ['S3-shaped profile', latheProfile([
+      { x: 0.05, y: 0 },
+      { x: 0.5, y: 0.5 },
+      { x: 0.3, y: 1 },
+    ], { segments: 14 }), 56],
+  ]
+
+  for (const [label, geometry, expectedClassified] of cases) {
+    const { inward, classified } = axialInwardFaces(geometry)
+    // Pin how many faces the invariant actually spoke about, so the assertion
+    // below cannot pass by classifying nothing.
+    assert.equal(
+      classified,
+      expectedClassified,
+      `lathe ${label} must classify ${String(expectedClassified)} faces`,
+    )
+    assert.equal(
+      inward,
+      0,
+      `lathe ${label} must wind away from its axis`,
+    )
+    geometry.dispose()
+  }
+})
+
+/**
  * Reversing a mirrored part's winding is only correct if every attribute moves
  * with it. The winding assertions above would catch a desynchronised `normal`,
  * because they compare winding against it — but not a desynchronised `color`,
