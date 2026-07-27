@@ -2909,8 +2909,8 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
     hindJointY: 0.92,
     frontLimb: 0.9,
     hindLimb: 0.88,
-    headY: 1.28,
-    headZ: 1.32,
+    headY: 1.24,
+    headZ: 1.08,
     tailY: 1.16,
     tailZ: -1.04,
     footprint: 0.8,
@@ -3133,15 +3133,15 @@ export function buildBeastHead(kind: BeastKind): THREE.BufferGeometry {
           { y: -0.42, scaleX: 0.86, scaleZ: 0.9 },
           { y: -0.1, scaleX: 1, scaleZ: 1 },
           { y: 0.16, scaleX: 0.78, scaleZ: 0.82 },
-          { y: 0.5, scaleX: 0.5, scaleZ: 0.52 },
-          { y: 0.78, scaleX: 0.4, scaleZ: 0.4 },
+          { y: 0.42, scaleX: 0.5, scaleZ: 0.52 },
+          { y: 0.62, scaleX: 0.4, scaleZ: 0.4 },
         ],
         'wolf-skull',
       ),
       // The muzzle drops at the tip, which is what makes it a snout and not a cone.
       block(
-        { width: 0.2, height: 0.2, depth: 0.34, topScale: 0.8, bevel: 0.04 },
-        { position: { x: 0, y: -0.06, z: 0.68 }, rotation: { x: 0.1, y: 0, z: 0 } },
+        { width: 0.2, height: 0.2, depth: 0.28, topScale: 0.8, bevel: 0.04 },
+        { position: { x: 0, y: -0.06, z: 0.56 }, rotation: { x: 0.1, y: 0, z: 0 } },
       ),
       // Pricked ears, set well back.
       ...mirroredPairX(() =>
