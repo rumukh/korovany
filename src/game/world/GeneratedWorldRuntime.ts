@@ -1,19 +1,14 @@
 import * as THREE from 'three'
 import {
   StylizedArtLibrary,
-  bakeOutlineNormals,
-  bakeSkyOcclusion,
-  bakeVerticalOcclusion,
-  displaceGeometry,
-  gradientVertexColors,
-  latheProfile,
-  loftProfile,
-  mergeAll,
-  polygonProfile,
-  rectProfile,
-  taperedBox,
-  transformed,
+  clearLod,
+  createLod,
+  hashUnit,
+  transformParts,
   type OutlineBinding,
+  type OutlineKind,
+  type PropPart,
+  type PropSurface,
 } from '../art/index.ts'
 import {
   createProceduralSurfaceTexture,
@@ -46,17 +41,28 @@ import {
   type RegionLifecycleState,
 } from './RegionRuntime.ts'
 import {
+  composeSiteLayout,
+  type SiteLayout,
+} from './SiteComposition.ts'
+import {
   TerrainSystem,
   type Bounds2D,
   type NormalizedRegion,
   type Point2,
   type Point3,
 } from './TerrainSystem.ts'
+import {
+  WorldPropLibrary,
+  sitePropSurfaces,
+  type PropAsset,
+  type PropRequest,
+} from './WorldPropLibrary.ts'
 import type {
   GeneratedWorldRuntime as GeneratedWorldRuntimeContract,
   WorldMarker,
   WorldRuntimeUpdate,
 } from './WorldRuntime.ts'
+import { WORLD_FACTIONS } from './worldTypes.ts'
 import type {
   BridgeCrossing,
   EncounterSlot,
@@ -69,13 +75,10 @@ import type {
 
 export interface GeneratedWorldPalette {
   terrain?: Partial<Record<ZoneId, THREE.ColorRepresentation>>
+  /** Blended into the ground-cover tint so foliage sits inside its biome. */
   secondary?: Partial<Record<ZoneId, THREE.ColorRepresentation>>
-  accent?: Partial<Record<ZoneId, THREE.ColorRepresentation>>
   road?: THREE.ColorRepresentation
   water?: THREE.ColorRepresentation
-  bridge?: THREE.ColorRepresentation
-  structure?: THREE.ColorRepresentation
-  roof?: THREE.ColorRepresentation
 }
 
 export interface GeneratedWorldRuntimeOptions {
@@ -110,6 +113,8 @@ export interface GeneratedRegionRootDebugSnapshot {
   structuralDecorationCount: number
   cosmeticDecorationCount: number
   maxCosmeticDecorationCount: number
+  /** Extra draws per frame this region charged itself for ink outlines. */
+  inkDraws: number
 }
 
 export interface GeneratedWorldRuntimeDebugSnapshot {
@@ -147,15 +152,17 @@ interface RuntimeStyle {
 
 interface SharedMaterials {
   terrain: Record<ZoneId, THREE.MeshStandardMaterial>
-  secondary: Record<ZoneId, THREE.MeshStandardMaterial>
-  accent: Record<ZoneId, THREE.MeshStandardMaterial>
   road: THREE.MeshStandardMaterial
   water: THREE.MeshStandardMaterial
-  bridge: THREE.MeshStandardMaterial
-  structure: Record<ZoneId, THREE.MeshStandardMaterial>
-  roof: Record<ZoneId, THREE.MeshStandardMaterial>
-  /** Vertex-coloured, used only by geometry this module builds with colours. */
-  dressing: Record<ZoneId, THREE.MeshStandardMaterial>
+  /**
+   * The prop family. Every world object built by `PropKit` bakes its colour into
+   * the vertices, so one material per *surface* covers the whole world instead of
+   * one per biome, per prop or — worst of all — per mesh.
+   */
+  prop: THREE.MeshStandardMaterial
+  propFoliage: THREE.MeshStandardMaterial
+  propCloth: THREE.MeshStandardMaterial
+  propGlow: THREE.MeshStandardMaterial
   groundCover: Record<ZoneId, THREE.MeshStandardMaterial>
   all: THREE.Material[]
   textures: THREE.Texture[]
@@ -169,11 +176,34 @@ interface SceneRegionRuntimeContext {
   collision: CollisionWorld
   materials: SharedMaterials
   art: StylizedArtLibrary
+  props: WorldPropLibrary
   style: RuntimeStyle
   onDisposed: (regionId: RegionId) => void
 }
 
 const ZONE_IDS: readonly ZoneId[] = ['neutral', 'palace', 'forest', 'fort']
+
+/**
+ * Ink draws a visible region may spend, from `docs/08-graphics-foundation-spec.md`.
+ *
+ * Before this pass exactly one was used — the structural dressing mesh — and the
+ * other seven sat idle. They are spent here on the silhouettes that carry a frame:
+ * settlement buildings, the props around them, and the tallest tree species.
+ */
+const OUTLINE_WORLD_DRAWS_MAX = 8
+
+/**
+ * How many of those a single site may take, so the trees are never starved.
+ *
+ * Counted in draws, and a composed site is worth more than one: its tallest
+ * building is an LOD over several surface meshes and the ink shells all of them.
+ * Four buys the roofline and the clutter around it and still leaves half the
+ * region's budget for vegetation.
+ */
+const OUTLINE_SITE_DRAWS_MAX = 4
+
+/** Camera distance at which a building swaps to its cheap level. */
+const BUILDING_LOD_DISTANCE = 46
 
 export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
   readonly mode = 'generated' as const
@@ -188,6 +218,8 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
   private readonly style: RuntimeStyle
   private readonly materials: SharedMaterials
   private readonly art: StylizedArtLibrary
+  /** Shared, reference-counted prop geometry for every streamed region. */
+  private readonly props: WorldPropLibrary
   /** True when this runtime built its own library and therefore has to free it. */
   private readonly ownsArt: boolean
   private readonly sceneRegions = new Map<RegionId, SceneRegionRuntime>()
@@ -206,6 +238,7 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
     this.ownsArt = options.art === undefined
     this.art = options.art ?? createDefaultArtLibrary()
     this.materials = createSharedMaterials(this.art, options.palette)
+    this.props = new WorldPropLibrary()
     this.terrain = new TerrainSystem(blueprint, {
       tileResolution: this.style.terrainResolution,
     })
@@ -236,6 +269,7 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
           collision: this.collision,
           materials: this.materials,
           art: this.art,
+          props: this.props,
           style: this.style,
           onDisposed: (regionId) => {
             this.sceneRegions.delete(regionId)
@@ -250,6 +284,16 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
         discoverVisibleRegions: false,
       },
     )
+  }
+
+  /** Live shared prop geometry entries. Exposed for the streaming budget test. */
+  get propCacheSize(): number {
+    return this.props.size
+  }
+
+  /** Entries the prop cache is holding only so a returning region can reuse them. */
+  get retainedPropCount(): number {
+    return this.props.retainedCount
   }
 
   get currentRegionId(): RegionId | undefined {
@@ -641,6 +685,14 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
         errors.push(error)
       }
     }
+    // The prop cache goes last of the geometry owners: every region has already
+    // released its references by now, so this only frees what a partially torn-down
+    // region would otherwise strand.
+    try {
+      this.props.dispose()
+    } catch (error) {
+      errors.push(error)
+    }
     if (this.ownsArt) {
       try {
         this.art.dispose()
@@ -675,16 +727,27 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
 
   private readonly context: SceneRegionRuntimeContext
   private readonly runtime: RegionRuntime
+  /** Geometry this region built for itself and must dispose. */
   private readonly geometries = new Set<THREE.BufferGeometry>()
+  /** Shared geometry this region borrowed and must release, never dispose. */
+  private readonly propAssets: PropAsset[] = []
+  private readonly lods: THREE.LOD[] = []
+  private readonly outlines: OutlineBinding[] = []
+  private readonly siteClearings: Array<{ x: number; z: number; radius: number }> = []
   private readonly cosmeticDressing: Array<{
     mesh: THREE.InstancedMesh
     maximumCount: number
   }> = []
   private structuralDecorationCount = 0
   private maxCosmeticDecorationCount = 0
-  private dressingOutline: OutlineBinding | null = null
-  /** Kept so ink can be added back after a runtime toggle. Not owned here. */
-  private structuralDressing: THREE.InstancedMesh | null = null
+  /**
+   * Every object whose ink can be toggled at runtime, with the kind it was inked
+   * with. Kept so the display setting can add the shells back without rebuilding a
+   * region's dressing. None of these are owned here.
+   */
+  private readonly inkable: Array<{ object: THREE.Object3D; kind: OutlineKind }> = []
+  private inkBudget = OUTLINE_WORLD_DRAWS_MAX
+  private siteInkSpent = 0
   private resourcesDisposed = false
 
   constructor(
@@ -749,26 +812,35 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     }
   }
 
-  /** Adds or removes this region's ink without rebuilding its dressing. */
-  setOutlineDressing(enabled: boolean): void {
-    if (this.resourcesDisposed) return
-    if (enabled) {
-      if (this.dressingOutline || !this.structuralDressing) return
-      this.dressingOutline = this.context.art.applyOutline(
-        this.structuralDressing,
-        'landmark',
-        { instanced: true },
-      )
-      return
-    }
-    if (!this.dressingOutline) return
-    this.context.art.releaseOutline(this.dressingOutline)
-    this.dressingOutline = null
-  }
-
   dispose(): void {
     this.runtime.dispose()
     this.releaseResources()
+  }
+
+  /**
+   * Adds or removes this region's ink without rebuilding anything.
+   *
+   * The list of inkable objects and the budget already spent are decided at build
+   * time, so a toggle replays exactly the same choices — a region that only had ink
+   * for its trees does not quietly acquire an outlined stronghold on the way back.
+   */
+  setOutlineDressing(enabled: boolean): void {
+    if (this.resourcesDisposed) return
+    if (enabled) {
+      if (this.outlines.length > 0) return
+      for (const entry of this.inkable) {
+        this.outlines.push(
+          this.context.art.applyOutline(entry.object, entry.kind, {
+            instanced: entry.object instanceof THREE.InstancedMesh,
+          }),
+        )
+      }
+      return
+    }
+    for (const binding of this.outlines) {
+      this.context.art.releaseOutline(binding)
+    }
+    this.outlines.length = 0
   }
 
   getDebugSnapshot(): GeneratedRegionRootDebugSnapshot {
@@ -784,6 +856,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
         0,
       ),
       maxCosmeticDecorationCount: this.maxCosmeticDecorationCount,
+      inkDraws: OUTLINE_WORLD_DRAWS_MAX - this.inkBudget,
     }
   }
 
@@ -802,8 +875,13 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     this.createTerrain()
     this.createRoads()
     this.createRiver()
-    this.createBridges()
+    // Sites come before dressing so a settlement can claim its clearing, and before
+    // the ink budget is spent, because a village is the most valuable silhouette in
+    // any frame that contains one.
     this.createSites()
+    this.createBridges()
+    this.createRoadDressing()
+    this.createRiverDressing()
     this.createDressing()
     this.createGroundCover()
   }
@@ -908,6 +986,8 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       .sort((first, second) => first.id.localeCompare(second.id))
     if (bridges.length === 0) return
     const center = boundsCenter(this.context.normalizedRegion.bounds)
+    const span = this.context.style.riverWidth + 4
+    const width = this.context.style.bridgeWidth
     for (let index = 0; index < bridges.length; index += 1) {
       const bridge = bridges[index]
       const group = new THREE.Group()
@@ -915,41 +995,40 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       group.userData.generatedBridgeId = bridge.id
       const y = this.context.terrain.sampleHeight(center.x, center.z)
       group.position.set(center.x, y + index * 0.025, center.z)
-
-      const deckGeometry = new THREE.BoxGeometry(
-        this.context.style.riverWidth + 4,
-        0.42,
-        this.context.style.bridgeWidth,
-      )
-      const deck = this.addMesh(
-        group,
-        deckGeometry,
-        this.context.materials.bridge,
-        `bridge-deck:${bridge.id}`,
-      )
-      deck.position.y = 0.28
-      deck.castShadow = this.context.style.castShadows
-      deck.receiveShadow = true
-
-      for (const side of [-1, 1]) {
-        const railGeometry = new THREE.BoxGeometry(
-          this.context.style.riverWidth + 4,
-          0.5,
-          0.18,
-        )
-        const rail = this.addMesh(
-          group,
-          railGeometry,
-          this.context.materials.bridge,
-          `bridge-rail:${bridge.id}:${side}`,
-        )
-        rail.position.set(
-          0,
-          0.68,
-          side * (this.context.style.bridgeWidth / 2 - 0.18),
-        )
-      }
       this.root.add(group)
+
+      // A crossing is a landmark and a choke point, so it gets a real LOD: a planked,
+      // trestled, railed deck up close and a five-plank version once it is a shape on
+      // the horizon. It is a unique mesh, which is the only kind `createLod` is for.
+      const near = this.acquireProp({
+        kind: 'bridge',
+        biome: this.blueprint.biome,
+        owner: this.blueprint.territory,
+        span,
+        width,
+        detail: 'near',
+      })
+      const far = this.acquireProp({
+        kind: 'bridge',
+        biome: this.blueprint.biome,
+        owner: this.blueprint.territory,
+        span,
+        width,
+        detail: 'far',
+      })
+      const lod = createLod({
+        levels: [
+          { geometry: near.surfaces[0].geometry, distance: 0 },
+          { geometry: far.surfaces[0].geometry, distance: BUILDING_LOD_DISTANCE * 1.6 },
+        ],
+        material: this.context.materials.prop,
+        castShadow: this.context.style.castShadows,
+        receiveShadow: true,
+        name: `bridge-deck:${bridge.id}`,
+      })
+      group.add(lod)
+      this.lods.push(lod)
+      this.tryOutline(lod, 'landmark')
       this.runtime.ownProp(bridge.id)
     }
   }
@@ -993,227 +1072,257 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     group.position.set(x, y, z)
     group.rotation.y = rotation
     this.root.add(group)
+    // Per *site*, not per region: the sub-budget exists so one site cannot starve the
+    // trees, not so the first site can starve the second. The region-wide `inkBudget`
+    // is still the hard cap either way.
+    this.siteInkSpent = 0
 
-    this.addPrefabBody(group, site)
-    if (
-      prefab.solid &&
-      Math.max(prefab.footprintWidth, prefab.footprintDepth) >= 3
-    ) {
-      const colliderId = `site-solid:${site.id}`
-      this.context.collision.registerBox({
-        id: colliderId,
-        regionId: this.id,
-        x,
-        z,
-        halfWidth: prefab.footprintWidth / 2,
-        halfDepth: prefab.footprintDepth / 2,
-        rotation,
-        tags: ['site', site.kind],
-      })
-      this.runtime.ownCollider(colliderId)
-    }
+    const layout = composeSiteLayout({
+      siteId: site.id,
+      kind: site.kind,
+      owner: site.owner,
+      biome: this.blueprint.biome,
+      seed: this.context.blueprint.seed,
+    })
+    this.addSiteLayout(group, site, layout, { x, y, z, rotation })
+    // Dressing and ground cover both read this, so a village square stays a square
+    // instead of growing a forest through the well.
+    this.siteClearings.push({ x, z, radius: layout.clearingRadius })
     this.runtime.ownProp(site.id)
     this.runtime.ownMarker(`site:${site.id}`)
   }
 
-  private addPrefabBody(group: THREE.Group, site: WorldSite): void {
-    const prefab = SITE_PRESENTATIONS[site.kind].prefab
+  /**
+   * Turns a composed layout into meshes.
+   *
+   * Three shapes of geometry come out of a site and each is handled differently:
+   * buildings are unique, expensive and worth a real LOD; fences repeat, so they are
+   * instanced; everything else is small and merges into one mesh per surface, which
+   * is what keeps a village at four draw calls instead of forty.
+   */
+  private addSiteLayout(
+    group: THREE.Group,
+    site: WorldSite,
+    layout: SiteLayout,
+    origin: { x: number; y: number; z: number; rotation: number },
+  ): void {
     const biome = this.blueprint.biome
-    const structure = this.context.materials.structure[biome]
-    const accent = this.context.materials.accent[biome]
-    const roof = this.context.materials.roof[biome]
-    const width = prefab.footprintWidth
-    const depth = prefab.footprintDepth
-    const height = prefab.wallHeight
-
-    if (prefab.shape === 'shrine') {
-      for (const x of [-width * 0.32, width * 0.32]) {
-        const pillar = this.addMesh(
-          group,
-          prismGeometry(0.3, 0.73, height, 6),
-          structure,
-          `site-pillar:${site.id}`,
-        )
-        pillar.position.set(x, height / 2, 0)
-      }
-      const canopy = this.addMesh(
-        group,
-        prismGeometry(width * 0.55, 0.06, prefab.roofHeight, 6),
-        accent,
-        `site-canopy:${site.id}`,
-      )
-      canopy.position.y = height + prefab.roofHeight / 2
-    } else if (prefab.shape === 'obelisk') {
-      const obelisk = this.addMesh(
-        group,
-        prismGeometry(width * 0.34, 0.08, height, 4, Math.PI / 4),
-        accent,
-        `site-obelisk:${site.id}`,
-      )
-      obelisk.position.y = height / 2
-    } else if (prefab.shape === 'monument') {
-      const column = this.addMesh(
-        group,
-        prismGeometry(width * 0.34, 0.59, height, 7),
-        structure,
-        `site-monument:${site.id}`,
-      )
-      column.position.y = height / 2
-      const cap = this.addMesh(
-        group,
-        prismGeometry(width * 0.4, 0.05, prefab.roofHeight + 0.6, 7),
-        accent,
-        `site-monument-cap:${site.id}`,
-      )
-      cap.position.y = height + (prefab.roofHeight + 0.6) / 2
-    } else if (prefab.shape === 'chest') {
-      const chest = this.addMesh(
-        group,
-        taperedBox({
-          width,
-          height,
-          depth,
-          topScale: 0.97,
-          bevel: 0.06,
-        }),
-        structure,
-        `site-chest:${site.id}`,
-      )
-      chest.position.y = height / 2
-      const lid = this.addMesh(
-        group,
-        taperedBox({
-          width: width + 0.08,
-          height: prefab.roofHeight,
-          depth: depth + 0.08,
-          topScale: 0.88,
-          bevel: 0.05,
-        }),
-        accent,
-        `site-chest-lid:${site.id}`,
-      )
-      lid.position.y = height + prefab.roofHeight / 2
-    } else if (prefab.shape === 'camp') {
-      const tent = this.addMesh(
-        group,
-        prismGeometry(width * 0.52, 0.04, height + prefab.roofHeight, 4, Math.PI / 4),
-        accent,
-        `site-tent:${site.id}`,
-      )
-      tent.position.y = (height + prefab.roofHeight) / 2
-    } else {
-      const body = this.addMesh(
-        group,
-        // A slight batter towards the eaves is what stops a wall reading as a
-        // primitive; the chamfer gives the band edges something to catch on.
-        taperedBox({
-          width,
-          height,
-          depth,
-          topScale: 0.94,
-          bevel: 0.1,
-        }),
-        structure,
-        `site-body:${site.id}`,
-      )
-      body.position.y = height / 2
-      const roofHeight =
-        prefab.shape === 'stall'
-          ? Math.max(0.3, prefab.roofHeight)
-          : Math.max(0.6, prefab.roofHeight)
-      const roofGeometry =
-        prefab.shape === 'stall'
-          ? taperedBox({
-              width: width + 0.8,
-              height: roofHeight,
-              depth: depth + 0.8,
-              topScale: 0.9,
-              bevel: 0.08,
-            })
-          : hipRoofGeometry(
-              Math.max(width, depth) * 1.06,
-              Math.max(width, depth) * 1.06,
-              roofHeight,
-            )
-      const roofMesh = this.addMesh(
-        group,
-        roofGeometry,
-        roof,
-        `site-roof:${site.id}`,
-      )
-      // The roof geometry is centred, so it has to be lifted by half of its own
-      // height — the previous code lifted every roof by half of the *stall* height
-      // and left pitched roofs sunk into their walls.
-      roofMesh.position.y = height + roofHeight / 2
-
-      if (prefab.shape === 'houses') {
-        const annex = this.addMesh(
-          group,
-          taperedBox({
-            width: width * 0.42,
-            height: height * 0.72,
-            depth: depth * 0.55,
-            topScale: 0.95,
-            bevel: 0.07,
-          }),
-          accent,
-          `site-annex:${site.id}`,
-        )
-        annex.position.set(
-          -width * 0.55,
-          (height * 0.72) / 2,
-          depth * 0.12,
-        )
-      }
-    }
-
-    for (let index = 0; index < prefab.towerCount; index += 1) {
-      const side = index % 2 === 0 ? -1 : 1
-      const towerHeight = height + 2
-      const tower = this.addMesh(
-        group,
-        prismGeometry(1.55, 0.87, towerHeight, 7),
-        structure,
-        `site-tower:${site.id}:${index}`,
-      )
-      tower.position.set(
-        side * (width / 2 - 0.8),
-        towerHeight / 2,
-        depth * 0.28,
-      )
-    }
-
-    for (let index = 0; index < prefab.detailCount; index += 1) {
-      const side = index % 2 === 0 ? -1 : 1
-      const pole = this.addMesh(
-        group,
-        prismGeometry(0.1, 0.8, 2.2, 5),
-        accent,
-        `site-detail:${site.id}:${index}`,
-      )
-      pole.position.set(
-        side * (width / 2 + 0.55),
-        1.1,
-        -depth / 2 + 0.7 + index * 0.55,
-      )
-    }
-
-    group.traverse((object) => {
-      if (!(object instanceof THREE.Mesh)) return
-      object.castShadow = this.context.style.castShadows
-      object.receiveShadow = true
+    const owner = site.owner
+    const cos = Math.cos(origin.rotation)
+    const sin = Math.sin(origin.rotation)
+    const toWorld = (localX: number, localZ: number): Point2 => ({
+      x: origin.x + localX * cos + localZ * sin,
+      z: origin.z - localX * sin + localZ * cos,
     })
+    const groundAt = (localX: number, localZ: number): number => {
+      const world = toWorld(localX, localZ)
+      return this.context.terrain.sampleHeight(world.x, world.z) - origin.y
+    }
+
+    let tallest: THREE.Object3D | null = null
+    let tallestHeight = 0
+
+    for (const placement of layout.buildings) {
+      const request = {
+        kind: 'building',
+        spec: placement.spec,
+        biome,
+        owner,
+      } as const
+      const near = this.acquireProp({ ...request, detail: 'near' })
+      const far = this.acquireProp({ ...request, detail: 'far' })
+      const buildingGroup = new THREE.Group()
+      buildingGroup.name = `site-building:${site.id}:${placement.id}`
+      buildingGroup.position.set(
+        placement.x,
+        groundAt(placement.x, placement.z),
+        placement.z,
+      )
+      buildingGroup.rotation.y = placement.rotation
+      const lod = createLod({
+        levels: [
+          { geometry: near.surfaces[0].geometry, distance: 0 },
+          { geometry: far.surfaces[0].geometry, distance: BUILDING_LOD_DISTANCE },
+        ],
+        material: this.context.materials.prop,
+        castShadow: this.context.style.castShadows,
+        receiveShadow: true,
+        name: `site-body:${site.id}:${placement.id}`,
+      })
+      buildingGroup.add(lod)
+      this.lods.push(lod)
+      const glow = near.surfaces.find((entry) => entry.surface === 'glow')
+      if (glow) {
+        const windows = new THREE.Mesh(glow.geometry, this.context.materials.propGlow)
+        windows.name = `site-windows:${site.id}:${placement.id}`
+        windows.castShadow = false
+        windows.receiveShadow = false
+        windows.userData.noComicOutline = true
+        // Parented to the *near* level, not to the building group. The far level has
+        // no openings, so a sibling glow mesh would leave lit windows hanging in the
+        // air once the LOD swapped.
+        lod.levels[0].object.add(windows)
+      }
+      group.add(buildingGroup)
+
+      const storeyHeight = placement.spec.wallHeight * placement.spec.storeys
+      if (storeyHeight > tallestHeight) {
+        tallestHeight = storeyHeight
+        tallest = lod
+      }
+      if (placement.radius > 0) {
+        const world = toWorld(placement.x, placement.z)
+        const colliderId = `site-building:${site.id}:${placement.id}`
+        this.context.collision.registerCircle({
+          id: colliderId,
+          regionId: this.id,
+          x: world.x,
+          z: world.z,
+          radius: placement.radius,
+          tags: ['site', site.kind, 'building'],
+        })
+        this.runtime.ownCollider(colliderId)
+      }
+    }
+
+    // Fences repeat by construction — a perimeter is the same panel eight times — so
+    // they are the one part of a site that earns an instanced mesh.
+    const fenceBatches = new Map<
+      string,
+      { asset: PropAsset; placements: typeof layout.fences }
+    >()
+    for (const placement of layout.fences) {
+      const asset = this.acquireProp({
+        kind: 'fence',
+        style: placement.style,
+        biome,
+        owner,
+        length: placement.length,
+      })
+      const batch = fenceBatches.get(asset.key)
+      if (batch) batch.placements.push(placement)
+      else fenceBatches.set(asset.key, { asset, placements: [placement] })
+    }
+    let fenceIndex = 0
+    for (const batch of [...fenceBatches.values()]) {
+      const mesh = new THREE.InstancedMesh(
+        batch.asset.surfaces[0].geometry,
+        this.context.materials.prop,
+        batch.placements.length,
+      )
+      mesh.name = `site-fence:${site.id}:${String(fenceIndex)}`
+      fenceIndex += 1
+      mesh.castShadow = this.context.style.castShadows
+      mesh.receiveShadow = true
+      const matrix = new THREE.Matrix4()
+      const quaternion = new THREE.Quaternion()
+      const scale = new THREE.Vector3(1, 1, 1)
+      const position = new THREE.Vector3()
+      const up = new THREE.Vector3(0, 1, 0)
+      for (let index = 0; index < batch.placements.length; index += 1) {
+        const placement = batch.placements[index]
+        quaternion.setFromAxisAngle(up, placement.rotation)
+        position.set(
+          placement.x,
+          groundAt(placement.x, placement.z) - 0.06,
+          placement.z,
+        )
+        matrix.compose(position, quaternion, scale)
+        mesh.setMatrixAt(index, matrix)
+      }
+      mesh.instanceMatrix.needsUpdate = true
+      mesh.computeBoundingSphere()
+      group.add(mesh)
+    }
+
+    // Everything else — the well, the stalls, the crates, the banners, the braziers —
+    // is composed once per site and shared by every later load of this region. A
+    // settlement is the most expensive thing a streamed region builds, and the player
+    // crosses the same boundary in both directions constantly.
+    let propsMesh: THREE.Mesh | null = null
+    if (layout.props.length > 0) {
+      const asset = this.acquireComposite(
+        `site-props:${site.id}`,
+        sitePropSurfaces(layout.props.map((placement) => placement.kind)),
+        () => {
+          const parts: PropPart[] = []
+          for (const placement of layout.props) {
+            const built = this.context.props.build({
+              kind: 'siteProp',
+              prop: placement.kind,
+              biome,
+              owner,
+              variant: placement.variant,
+              ...(placement.length === undefined ? {} : { length: placement.length }),
+            })
+            transformParts(built, {
+              position: {
+                x: placement.x,
+                y: groundAt(placement.x, placement.z),
+                z: placement.z,
+              },
+              rotation: { x: 0, y: placement.rotation, z: 0 },
+              scale: placement.scale,
+            })
+            parts.push(...built)
+          }
+          return parts
+        },
+      )
+      for (const entry of asset.surfaces) {
+        const mesh = new THREE.Mesh(
+          entry.geometry,
+          this.propSurfaceMaterial(entry.surface),
+        )
+        mesh.name = `site-props:${site.id}:${entry.surface}`
+        mesh.castShadow =
+          entry.surface !== 'glow' && this.context.style.castShadows
+        mesh.receiveShadow = entry.surface !== 'glow'
+        if (entry.surface === 'glow') mesh.userData.noComicOutline = true
+        if (entry.surface === 'hard') propsMesh = mesh
+        group.add(mesh)
+      }
+    }
+    for (const placement of layout.props) {
+      if (placement.radius < 0.5) continue
+      const world = toWorld(placement.x, placement.z)
+      const colliderId = `site-prop:${site.id}:${placement.id}`
+      this.context.collision.registerCircle({
+        id: colliderId,
+        regionId: this.id,
+        x: world.x,
+        z: world.z,
+        radius: placement.radius * placement.scale,
+        tags: ['site', site.kind, 'prop'],
+      })
+      this.runtime.ownCollider(colliderId)
+    }
+
+    // Two ink draws per site at most: the tallest roofline and the clutter around it.
+    // Those are the two shapes that tell a player at a distance that this is a place.
+    if (tallest) this.trySiteOutline(tallest)
+    if (propsMesh) this.trySiteOutline(propsMesh)
   }
 
+  /**
+   * Vegetation, undergrowth and rock, instanced per kind.
+   *
+   * A region used to draw one prop repeated at three scales, which is why a forest
+   * read as wallpaper. It now draws up to six kinds from a per-biome plan: the tall
+   * species that sets the skyline, a second and third canopy shape, undergrowth that
+   * fills the middle distance, and rock that gives the ground somewhere to break.
+   */
   private createDressing(): void {
-    const profile = BIOME_PROFILES[this.blueprint.biome]
+    const biome = this.blueprint.biome
+    const profile = BIOME_PROFILES[biome]
     const maximumCount = Math.max(
       0,
-      Math.floor(
-        8 + profile.foliageDensity * 20 + profile.decorationDensity * 8,
-      ),
+      Math.floor(10 + profile.foliageDensity * 26 + profile.decorationDensity * 10),
     )
     if (maximumCount === 0) return
+    const buckets = dressingPlan(biome)
+    if (buckets.length === 0) return
+
     const bounds = this.context.normalizedRegion.bounds
     const center = boundsCenter(bounds)
     const stream = new RandomStream(
@@ -1222,17 +1331,11 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
         `region-dressing:${String(this.id)}`,
       ),
     )
-    const sites = this.context.blueprint.sites
-      .filter((site) => site.regionId === this.id)
-      .map((site) => getSiteWorldPosition2D(this.context.blueprint, site))
-      .filter((position): position is Point2 => position !== undefined)
-    const placements: Array<{
-      index: number
-      x: number
-      z: number
-      scale: number
-      rotation: number
-    }> = []
+    const jitterSeed = deriveSeed(
+      this.context.blueprint.seed,
+      `region-dressing-kind:${String(this.id)}`,
+    )
+    const placements: DressingPlacement[] = []
     const margin = 6
     const attempts = maximumCount * 10
     for (
@@ -1242,6 +1345,8 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     ) {
       const x = stream.range(bounds.minX + margin, bounds.maxX - margin)
       const z = stream.range(bounds.minZ + margin, bounds.maxZ - margin)
+      const scale = stream.range(0.72, 1.42)
+      const rotation = stream.range(0, Math.PI * 2)
       if (
         Math.abs(x - center.x) < this.context.style.roadWidth + 2 ||
         Math.abs(z - center.z) < this.context.style.roadWidth + 2
@@ -1254,112 +1359,336 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       ) {
         continue
       }
-      if (
-        sites.some((site) => Math.hypot(site.x - x, site.z - z) < 12)
-      ) {
-        continue
+      if (this.isInsideSiteClearing(x, z)) continue
+      placements.push({ index: placements.length, x, z, scale, rotation })
+    }
+    if (placements.length === 0) return
+
+    // Which kind a placement gets is a hash of its index, not another draw from the
+    // stream: the placement list stays byte-identical to what a single-species build
+    // would have produced, so decoration density and collision are unchanged.
+    const totalWeight = buckets.reduce((total, bucket) => total + bucket.weight, 0)
+    const grouped = buckets.map(() => [] as DressingPlacement[])
+    for (const placement of placements) {
+      let roll = hashUnit(placement.index, jitterSeed) * totalWeight
+      let chosen = buckets.length - 1
+      for (let index = 0; index < buckets.length; index += 1) {
+        roll -= buckets[index].weight
+        if (roll <= 0) {
+          chosen = index
+          break
+        }
       }
+      grouped[chosen].push(placement)
+    }
+
+    let primaryStructural = true
+    const spawnAnchors = this.spawnKeepOutPoints()
+    for (let index = 0; index < buckets.length; index += 1) {
+      const bucket = buckets[index]
+      // A colliding decoration standing on a spawn point traps whatever spawns there.
+      // Drop the placement rather than the collider, so there is no invisible boulder
+      // and no visible one you can walk through. Only structural buckets collide, so
+      // only they need filtering.
+      const entries = bucket.structural
+        ? grouped[index].filter(
+            (placement) =>
+              !this.blocksSpawn(
+                placement,
+                bucket.colliderRadius * placement.scale,
+                spawnAnchors,
+              ),
+          )
+        : grouped[index]
+      if (entries.length === 0) continue
+      const asset = this.acquireProp(bucket.request)
+      const name = bucket.structural
+        ? primaryStructural
+          ? `dressing-structural:${String(this.id)}`
+          : `dressing-structural:${String(this.id)}:${bucket.id}`
+        : `dressing-cosmetic:${bucket.id}:${String(this.id)}`
+      const mesh = this.createDressingMesh(bucket, asset, entries, name)
+      this.root.add(mesh)
+      this.runtime.ownProp(name)
+
+      if (bucket.ink) {
+        // One instanced shell sharing the source matrix buffer inks an entire
+        // region's worth of trees for a single extra draw call. The shell is a child
+        // of its source and tracks its `count`, so the decoration slider thins the
+        // ink along with the trees.
+        this.tryOutline(mesh, 'landmark', { instanced: true })
+      }
+
+      if (bucket.structural) {
+        this.structuralDecorationCount += entries.length
+        if (primaryStructural) primaryStructural = false
+        for (const placement of entries) {
+          const colliderId = `dressing-solid:${String(this.id)}:${String(placement.index)}`
+          this.context.collision.registerCircle({
+            id: colliderId,
+            regionId: this.id,
+            x: placement.x,
+            z: placement.z,
+            radius: bucket.colliderRadius * placement.scale,
+            tags: ['decoration', biome],
+          })
+          this.runtime.ownCollider(colliderId)
+        }
+      } else {
+        this.registerCosmeticDressing(mesh, entries.length)
+      }
+    }
+  }
+
+  /**
+   * Points in this region that something will be placed at and must be able to stand.
+   *
+   * Faction starts and encounter actors are positioned by world generation, which knows
+   * nothing about decoration. Before this pass every decoration collider was a
+   * sapling-sized 0.55 and the overlap went unnoticed; a fort boulder is 0.85, which is
+   * correct for a boulder and enough to trap a spawn. Measured by a reviewer across
+   * twelve seeds: decoration colliders newly blocked seven positions the previous
+   * collision model left clear.
+   *
+   * Shrinking the boulder back is not the fix — at 0.55 the same spawn cleared by 0.012
+   * units, so the old result was luck rather than safety.
+   */
+  private spawnKeepOutPoints(): readonly { x: number; z: number }[] {
+    const points: { x: number; z: number }[] = []
+    for (const faction of WORLD_FACTIONS) {
+      for (const slot of this.context.blueprint.encounters) {
+        if (slot.regionId !== this.id) continue
+        const plan = createGeneratedEncounterPlan(
+          this.context.blueprint,
+          slot,
+          faction,
+        )
+        for (const spawn of plan.spawns) {
+          points.push({ x: spawn.worldX, z: spawn.worldZ })
+        }
+      }
+    }
+    return points
+  }
+
+  /** True when a decoration of this radius would stop an actor standing on a spawn. */
+  private blocksSpawn(
+    placement: DressingPlacement,
+    radius: number,
+    anchors: readonly { x: number; z: number }[],
+  ): boolean {
+    // The agent radius the collision world is queried with, plus a little daylight so a
+    // spawn is comfortably clear rather than clear by twelve thousandths.
+    const clearance = radius + 0.45 + 0.2
+    for (const anchor of anchors) {
+      if (Math.hypot(placement.x - anchor.x, placement.z - anchor.z) < clearance) {
+        return true
+      }
+    }
+    return false
+  }
+
+  private createDressingMesh(
+    placement: DressingPlacementStyle,
+    asset: PropAsset,
+    entries: readonly DressingPlacement[],
+    name: string,
+  ): THREE.InstancedMesh {
+    const mesh = new THREE.InstancedMesh(
+      asset.surfaces[0].geometry,
+      this.propSurfaceMaterial(asset.surfaces[0].surface),
+      entries.length,
+    )
+    mesh.name = name
+    mesh.userData.generatedDressingRegionId = this.id
+    mesh.castShadow = this.context.style.castShadows
+    mesh.receiveShadow = true
+    mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage)
+    const matrix = new THREE.Matrix4()
+    const quaternion = new THREE.Quaternion()
+    const scale = new THREE.Vector3()
+    const position = new THREE.Vector3()
+    const up = new THREE.Vector3(0, 1, 0)
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index]
+      quaternion.setFromAxisAngle(up, entry.rotation)
+      const uniform = entry.scale * placement.scale
+      const vertical = uniform * placement.verticalStretch
+      scale.set(uniform, vertical, uniform)
+      position.set(
+        entry.x,
+        this.context.terrain.sampleHeight(entry.x, entry.z) +
+          placement.baseLift * vertical,
+        entry.z,
+      )
+      matrix.compose(position, quaternion, scale)
+      mesh.setMatrixAt(index, matrix)
+    }
+    mesh.instanceMatrix.needsUpdate = true
+    mesh.computeBoundingSphere()
+    return mesh
+  }
+
+  /** A waystone where roads meet, and rock along the verge. */
+  private createRoadDressing(): void {
+    const bounds = this.context.normalizedRegion.bounds
+    const center = boundsCenter(bounds)
+    if (this.siteClearings.some((clearing) => clearing.radius > 0)) return
+    if (!this.hasRoad()) return
+    const offset = this.context.style.roadWidth / 2 + 1.6
+    const asset = this.acquireComposite(
+      `road-props:${String(this.id)}`,
+      ['hard'],
+      () => {
+        const waystone = this.context.props.build({
+          kind: 'siteProp',
+          prop: 'waystone',
+          biome: this.blueprint.biome,
+          owner: this.blueprint.territory,
+          variant: 0,
+        })
+        transformParts(waystone, {
+          position: {
+            x: center.x + offset,
+            y: this.context.terrain.sampleHeight(center.x + offset, center.z + offset),
+            z: center.z + offset,
+          },
+          rotation: { x: 0, y: hashUnit(1, this.regionSeed()) * Math.PI * 2, z: 0 },
+        })
+        return waystone
+      },
+    )
+    for (const entry of asset.surfaces) {
+      const mesh = new THREE.Mesh(
+        entry.geometry,
+        this.propSurfaceMaterial(entry.surface),
+      )
+      mesh.name = `road-dressing:${String(this.id)}:${entry.surface}`
+      mesh.castShadow = this.context.style.castShadows
+      mesh.receiveShadow = true
+      this.root.add(mesh)
+      this.runtime.ownProp(mesh.name)
+    }
+  }
+
+  /** Reeds along both banks, instanced and density-scaled. */
+  private createRiverDressing(): void {
+    if (!this.context.blueprint.river.regionPath.includes(this.id)) return
+    const bounds = this.context.normalizedRegion.bounds
+    const center = boundsCenter(bounds)
+    const stream = new RandomStream(
+      deriveSeed(
+        this.context.blueprint.seed,
+        `region-river-dressing:${String(this.id)}`,
+      ),
+    )
+    const half = this.context.style.riverWidth / 2
+    const placements: DressingPlacement[] = []
+    const attempts = 96
+    for (let attempt = 0; attempt < attempts && placements.length < 42; attempt += 1) {
+      const side = attempt % 2 === 0 ? -1 : 1
+      const x = center.x + side * stream.range(half - 0.6, half + 2.4)
+      const z = stream.range(bounds.minZ + 1, bounds.maxZ - 1)
+      if (this.isInsideSiteClearing(x, z)) continue
       placements.push({
         index: placements.length,
         x,
         z,
-        scale: stream.range(0.72, 1.42),
+        scale: stream.range(0.7, 1.35),
         rotation: stream.range(0, Math.PI * 2),
       })
     }
     if (placements.length === 0) return
+    const asset = this.acquireProp({ kind: 'reeds', biome: this.blueprint.biome })
+    const name = `dressing-cosmetic:reeds:${String(this.id)}`
+    const mesh = this.createDressingMesh(
+      { scale: 1, verticalStretch: 1, baseLift: 0 },
+      asset,
+      placements,
+      name,
+    )
+    mesh.castShadow = false
+    this.root.add(mesh)
+    this.registerCosmeticDressing(mesh, placements.length)
+    this.runtime.ownProp(name)
+  }
 
-    const geometry = dressingGeometry(this.blueprint.biome)
-    this.geometries.add(geometry)
-    const material = dressingMaterial(
-      this.blueprint.biome,
-      this.context.materials,
+  private hasRoad(): boolean {
+    return this.context.blueprint.roads.segments.some(
+      (segment) =>
+        segment.fromRegionId === this.id || segment.toRegionId === this.id,
     )
-    const structuralPlacements = placements.filter((placement) =>
-      isStructuralDressing(this.blueprint.biome, placement.index),
-    )
-    const cosmeticPlacements = placements.filter(
-      (placement) =>
-        !isStructuralDressing(this.blueprint.biome, placement.index),
-    )
-    const createMesh = (
-      entries: typeof placements,
-      name: string,
-    ): THREE.InstancedMesh | null => {
-      if (entries.length === 0) return null
-      const mesh = new THREE.InstancedMesh(
-        geometry,
-        material,
-        entries.length,
-      )
-      mesh.name = name
-      mesh.userData.generatedDressingRegionId = this.id
-      mesh.castShadow = this.context.style.castShadows
-      mesh.receiveShadow = true
-      const matrix = new THREE.Matrix4()
-      const quaternion = new THREE.Quaternion()
-      const scale = new THREE.Vector3()
-      const position = new THREE.Vector3()
-      const up = new THREE.Vector3(0, 1, 0)
-      for (let index = 0; index < entries.length; index += 1) {
-        const placement = entries[index]
-        quaternion.setFromAxisAngle(up, placement.rotation)
-        const verticalScale =
-          this.blueprint.biome === 'forest'
-            ? placement.scale * 1.25
-            : placement.scale
-        scale.set(placement.scale, verticalScale, placement.scale)
-        position.set(
-          placement.x,
-          this.context.terrain.sampleHeight(placement.x, placement.z) +
-            dressingBaseHeight(this.blueprint.biome) * verticalScale,
-          placement.z,
-        )
-        matrix.compose(position, quaternion, scale)
-        mesh.setMatrixAt(index, matrix)
-      }
-      mesh.instanceMatrix.needsUpdate = true
-      this.root.add(mesh)
-      return mesh
-    }
+  }
 
-    const structuralMesh = createMesh(
-      structuralPlacements,
-      `dressing-structural:${String(this.id)}`,
-    )
-    this.structuralDecorationCount = structuralPlacements.length
-    if (structuralMesh) {
-      this.runtime.ownProp(`dressing-structural:${String(this.id)}`)
-      this.structuralDressing = structuralMesh
-      // Structural dressing is the only world silhouette that gets ink: it is the
-      // tall, readable stuff, and one instanced shell sharing the source matrix
-      // buffer costs a single extra draw call for a whole region's worth of trees.
-      if (this.context.style.outlineDressing) this.setOutlineDressing(true)
-    }
-    for (const placement of structuralPlacements) {
-      const colliderId = `dressing-solid:${String(this.id)}:${placement.index}`
-      this.context.collision.registerCircle({
-        id: colliderId,
-        regionId: this.id,
-        x: placement.x,
-        z: placement.z,
-        radius: 0.55 * placement.scale,
-        tags: ['decoration', this.blueprint.biome],
-      })
-      this.runtime.ownCollider(colliderId)
-    }
+  private regionSeed(): number {
+    return deriveSeed(this.context.blueprint.seed, `region-prop:${String(this.id)}`)
+  }
 
-    const cosmeticDressing = createMesh(
-      cosmeticPlacements,
-      `dressing-cosmetic:${String(this.id)}`,
+  private isInsideSiteClearing(x: number, z: number): boolean {
+    return this.siteClearings.some(
+      (clearing) => Math.hypot(clearing.x - x, clearing.z - z) < clearing.radius,
     )
-    if (cosmeticDressing) {
-      this.registerCosmeticDressing(
-        cosmeticDressing,
-        cosmeticPlacements.length,
-      )
-      this.runtime.ownProp(`dressing-cosmetic:${String(this.id)}`)
-    }
+  }
+
+  private propSurfaceMaterial(surface: PropSurface): THREE.MeshStandardMaterial {
+    if (surface === 'foliage') return this.context.materials.propFoliage
+    if (surface === 'cloth') return this.context.materials.propCloth
+    if (surface === 'glow') return this.context.materials.propGlow
+    return this.context.materials.prop
+  }
+
+  /** Borrows shared geometry and records the reference for teardown. */
+  private acquireProp(request: PropRequest): PropAsset {
+    const asset = this.context.props.acquire(request)
+    this.propAssets.push(asset)
+    return asset
+  }
+
+  /** Borrows a shared one-off composition — a settlement, a region's road furniture. */
+  private acquireComposite(
+    key: string,
+    surfaces: readonly PropSurface[],
+    build: () => PropPart[],
+  ): PropAsset {
+    const asset = this.context.props.acquireComposite(key, surfaces, build)
+    this.propAssets.push(asset)
+    return asset
+  }
+
+  /**
+   * Spends the region's ink draws on an object, if enough are left.
+   *
+   * The budget is a hard cap rather than a guideline because inverted-hull outlines
+   * are a whole extra draw of the source geometry: eight is what the frame can pay
+   * for, and a region with a stronghold, a bridge and a dense forest wants twenty.
+   *
+   * The charge is {@link inkDrawCost}, not one per call. Billing per call was
+   * wrong by a factor of four on exactly the props the budget exists to protect —
+   * a building LOD is a group of surface meshes and `applyOutline` shells every
+   * one of them.
+   */
+  private tryOutline(
+    object: THREE.Object3D,
+    kind: OutlineKind,
+    options: { instanced?: boolean } = {},
+  ): boolean {
+    const cost = inkDrawCost(object, options.instanced === true)
+    if (cost <= 0 || cost > this.inkBudget) return false
+    this.inkBudget -= cost
+    // Recorded whether or not ink is on right now, so the display toggle can add the
+    // shells later without re-deciding who deserved a draw.
+    this.inkable.push({ object, kind })
+    if (!this.context.style.outlineDressing) return true
+    this.outlines.push(this.context.art.applyOutline(object, kind, options))
+    return true
+  }
+
+  private trySiteOutline(object: THREE.Object3D): boolean {
+    const cost = inkDrawCost(object, false)
+    if (this.siteInkSpent + cost > OUTLINE_SITE_DRAWS_MAX) return false
+    if (!this.tryOutline(object, 'landmark')) return false
+    this.siteInkSpent += cost
+    return true
   }
 
   private createGroundCover(): void {
@@ -1372,14 +1701,15 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       )
       if (placements.length === 0) continue
 
-      const geometry = groundCoverGeometry(kind)
-      this.geometries.add(geometry)
+      // Ground cover is shared across every region that uses the same biome, so a
+      // grass tuft is one buffer for the whole world instead of one per region root.
+      const asset = this.acquireProp({ kind: 'groundCover', biome, cover: kind })
       // All four kinds share the biome's vertex-coloured cover material: the colour
       // that distinguishes a flower from a pebble is baked into the geometry, which
       // is one material and one draw setup instead of three.
       const material = this.context.materials.groundCover[biome]
       const mesh = new THREE.InstancedMesh(
-        geometry,
+        asset.surfaces[0].geometry,
         material,
         placements.length,
       )
@@ -1400,7 +1730,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
         position.set(
           placement.x,
           this.context.terrain.sampleHeight(placement.x, placement.z) +
-            (kind === 'pebble' ? 0.08 : 0.015),
+            (kind === 'pebble' ? 0.02 : 0.015),
           placement.z,
         )
         matrix.compose(position, quaternion, scale)
@@ -1466,13 +1796,9 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     ) {
       return false
     }
-    for (const site of this.context.blueprint.sites) {
-      if (site.regionId !== this.id) continue
-      const position = getSiteWorldPosition2D(this.context.blueprint, site)
-      if (position && Math.hypot(position.x - x, position.z - z) < 11) {
-        return false
-      }
-    }
+    // Sites now claim a composed clearing rather than a fixed radius: a village with
+    // a fenced perimeter needs more room than a treasure chest does.
+    if (this.isInsideSiteClearing(x, z)) return false
     return this.context.terrain.isWalkableSlope(x, z)
   }
 
@@ -1550,17 +1876,28 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     if (this.resourcesDisposed) return
     const errors: unknown[] = []
     if (this.root.parent) this.root.removeFromParent()
-    // Detach the ink shells first: they share `instanceMatrix` with their source, so
-    // they have to be gone before the source instanced mesh is disposed.
-    if (this.dressingOutline) {
+    // Detach the ink shells first: instanced shells share `instanceMatrix` with their
+    // source, so they have to be gone before the source instanced mesh is disposed or
+    // one frees the other's buffer.
+    for (const binding of this.outlines) {
       try {
-        this.context.art.releaseOutline(this.dressingOutline)
+        this.context.art.releaseOutline(binding)
       } catch (error) {
         errors.push(error)
       }
-      this.dressingOutline = null
     }
-    this.structuralDressing = null
+    this.outlines.length = 0
+    this.inkable.length = 0
+    // LOD levels reference shared cached geometry. Dropping the level meshes frees
+    // nothing, by design — the cache reference below is what actually releases them.
+    for (const lod of this.lods) {
+      try {
+        clearLod(lod)
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+    this.lods.length = 0
     try {
       this.context.collision.removeRegion(this.id)
     } catch (error) {
@@ -1583,6 +1920,16 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
         errors.push(error)
       }
     }
+    // Shared props are released, never disposed: a forest tree is very likely still
+    // being drawn by the two regions either side of this one.
+    for (const asset of this.propAssets) {
+      try {
+        this.context.props.release(asset)
+      } catch (error) {
+        errors.push(error)
+      }
+    }
+    this.propAssets.length = 0
     if (errors.length > 0) {
       throw new AggregateError(
         errors,
@@ -1590,12 +1937,54 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       )
     }
     this.cosmeticDressing.length = 0
+    this.siteClearings.length = 0
     this.structuralDecorationCount = 0
     this.maxCosmeticDecorationCount = 0
+    this.inkBudget = OUTLINE_WORLD_DRAWS_MAX
+    this.siteInkSpent = 0
     this.root.clear()
     this.context.onDisposed(this.id)
     this.resourcesDisposed = true
   }
+}
+
+/**
+ * Extra draws per frame an ink outline on this object would cost.
+ *
+ * `applyOutline` builds one shell per qualifying mesh, so a budget that counted
+ * calls rather than shells under-charged precisely the props it exists to protect:
+ * a building is an LOD whose near level is a group of surface meshes, and one
+ * `tryOutline` on it was billed as a single draw while adding four.
+ *
+ * An LOD is charged its most expensive level rather than the sum, because only one
+ * level is ever rendered. Billing the sum would price a building at double what it
+ * draws and push the vegetation out of the budget for nothing.
+ *
+ * Deliberately conservative where it cannot be exact: the library also declines
+ * transparent materials, which this does not model, so the estimate may run high by
+ * a draw. Over-charging costs a silhouette; under-charging costs frame time, and
+ * `tests/worldArt.test.ts` pins the estimate against the shells actually built.
+ */
+function inkDrawCost(object: THREE.Object3D, instanced: boolean): number {
+  if (object instanceof THREE.LOD) {
+    let worst = 0
+    for (const level of object.levels) {
+      worst = Math.max(worst, inkDrawCost(level.object, instanced))
+    }
+    return worst
+  }
+  let cost = takesInkShell(object, instanced) ? 1 : 0
+  for (const child of object.children) cost += inkDrawCost(child, instanced)
+  return cost
+}
+
+/** Mirrors the mesh filter inside `StylizedArtLibrary.applyOutline`. */
+function takesInkShell(object: THREE.Object3D, instanced: boolean): boolean {
+  if (!(object instanceof THREE.Mesh)) return false
+  if (object instanceof THREE.InstancedMesh && !instanced) return false
+  if (StylizedArtLibrary.isOutlineShell(object)) return false
+  if (object.userData.noComicOutline === true) return false
+  return object.name !== 'faction-ring'
 }
 
 function createDefaultArtLibrary(): StylizedArtLibrary {
@@ -1620,7 +2009,6 @@ function createSharedMaterials(
     parameters: StylizedWorldParameters,
   ): THREE.MeshStandardMaterial => {
     const material = art.createMaterial({ ...parameters, surface })
-    material.userData.generatedWorldShared = true
     all.push(material)
     return material
   }
@@ -1657,38 +2045,11 @@ function createSharedMaterials(
     forest: 'grass',
     fort: 'scree',
   }
-  const secondaryPatterns: Record<ZoneId, ProceduralSurfacePattern> = {
-    neutral: 'leaves',
-    palace: 'stone',
-    forest: 'leaves',
-    fort: 'scree',
-  }
-  const accentPatterns: Record<ZoneId, ProceduralSurfacePattern> = {
-    neutral: 'roof',
-    palace: 'roof',
-    forest: 'leaves',
-    fort: 'scree',
-  }
-  const structurePatterns: Record<ZoneId, ProceduralSurfacePattern> = {
-    neutral: 'wood',
-    palace: 'stone',
-    forest: 'wood',
-    fort: 'stone',
-  }
-  const roofPatterns: Record<ZoneId, ProceduralSurfacePattern> = {
-    neutral: 'roof',
-    palace: 'roof',
-    forest: 'leaves',
-    fort: 'roof',
-  }
   const terrainColors = createZoneMaterialRecord(
     (zone) => palette.terrain?.[zone] ?? BIOME_PROFILES[zone].terrainColor,
   )
   const secondaryColors = createZoneMaterialRecord(
     (zone) => palette.secondary?.[zone] ?? BIOME_PROFILES[zone].secondaryColor,
-  )
-  const accentColors = createZoneMaterialRecord(
-    (zone) => palette.accent?.[zone] ?? BIOME_PROFILES[zone].accentColor,
   )
   const terrain = createZoneMaterialRecord((zone) =>
     textured(
@@ -1701,32 +2062,6 @@ function createSharedMaterials(
       {
         roughness: 0.95,
         metalness: 0,
-      },
-    ),
-  )
-  const secondary = createZoneMaterialRecord((zone) =>
-    textured(
-      `generated-secondary-${zone}`,
-      secondaryColors[zone],
-      secondaryPatterns[zone],
-      3,
-      3,
-      zone === 'forest' ? 'foliage' : 'stone',
-      {
-        roughness: 0.9,
-      },
-    ),
-  )
-  const accent = createZoneMaterialRecord((zone) =>
-    textured(
-      `generated-accent-${zone}`,
-      accentColors[zone],
-      accentPatterns[zone],
-      4,
-      4,
-      zone === 'forest' ? 'foliage' : 'leather',
-      {
-        roughness: 0.72,
       },
     ),
   )
@@ -1758,64 +2093,40 @@ function createSharedMaterials(
     },
     shadeColor(waterBase, 0.25),
   )
-  const bridgeBase = palette.bridge ?? 0x72543b
-  const bridge = textured(
-    'generated-bridge',
-    bridgeBase,
-    'wood',
-    5,
-    2,
-    'bark',
-    {
-      roughness: 0.86,
-    },
-  )
-  const structureBase = palette.structure ?? 0x85817a
-  const structure = createZoneMaterialRecord((zone) => {
-    const color = mixColor(
-      structureBase,
-      secondaryColors[zone],
-      zone === 'palace' || zone === 'fort' ? 0.2 : 0.32,
-    )
-    return textured(
-      `generated-structure-${zone}`,
-      color,
-      structurePatterns[zone],
-      5,
-      4,
-      zone === 'neutral' || zone === 'forest' ? 'bark' : 'stone',
-      {
-        roughness: 0.9,
-      },
-    )
+  // The prop family. Four materials cover every world object in the game because
+  // `PropKit` bakes colour, contact darkening and sky occlusion into the vertices —
+  // a vertex-coloured material on geometry without a `color` attribute renders
+  // black, so this pairing is not optional, and it is also what lets a whole village
+  // merge into one draw call per surface.
+  const prop = stylized('stone', {
+    color: 0xffffff,
+    vertexColors: true,
+    flatShading: false,
+    name: 'generated-prop',
   })
-  const roofBase = palette.roof ?? 0x4b3940
-  const roof = createZoneMaterialRecord((zone) => {
-    const color = mixColor(roofBase, accentColors[zone], 0.32)
-    return textured(
-      `generated-roof-${zone}`,
-      color,
-      roofPatterns[zone],
-      5,
-      4,
-      zone === 'forest' ? 'foliage' : 'leather',
-      {
-        roughness: 0.82,
-      },
-    )
+  const propFoliage = stylized('foliage', {
+    color: 0xffffff,
+    vertexColors: true,
+    flatShading: false,
+    name: 'generated-prop-foliage',
   })
-  // Vertex-coloured surfaces. Every mesh that uses these is built by the geometry
-  // helpers below, which always bake a `color` attribute — a vertex-coloured
-  // material on geometry without one renders black, so this pairing is not
-  // optional.
-  const dressing = createZoneMaterialRecord((zone) =>
-    stylized(zone === 'forest' ? 'bark' : 'stone', {
-      color: 0xffffff,
-      vertexColors: true,
-      flatShading: false,
-      name: `generated-dressing-${zone}`,
-    }),
-  )
+  const propCloth = stylized('cloth', {
+    color: 0xffffff,
+    vertexColors: true,
+    side: THREE.DoubleSide,
+    name: 'generated-prop-cloth',
+  })
+  // Lit windows, lantern panes, brazier coals and rune bands. Emissive rather than
+  // merely bright, so bloom picks them up and a settlement reads as inhabited from
+  // across a region at night — but kept below the point where a window on a small
+  // hut becomes the brightest thing in a daylit frame.
+  const propGlow = stylized('glow', {
+    color: 0xffffff,
+    vertexColors: true,
+    emissive: 0xffb066,
+    emissiveIntensity: 0.6,
+    name: 'generated-prop-glow',
+  })
   const groundCover = createZoneMaterialRecord((zone) =>
     stylized('foliage', {
       color: mixColor(terrainColors[zone], secondaryColors[zone], 0.58),
@@ -1828,14 +2139,12 @@ function createSharedMaterials(
   )
   return {
     terrain,
-    secondary,
-    accent,
     road,
     water,
-    bridge,
-    structure,
-    roof,
-    dressing,
+    prop,
+    propFoliage,
+    propCloth,
+    propGlow,
     groundCover,
     all,
     textures,
@@ -2132,208 +2441,249 @@ function boundsCenter(bounds: Bounds2D): Point2 {
   }
 }
 
+interface DressingPlacement {
+  index: number
+  x: number
+  z: number
+  scale: number
+  rotation: number
+}
+
 /**
- * A centred N-sided prism that may taper.
+ * How an instanced kind sits on the ground.
  *
- * Replaces the `CylinderGeometry`/`ConeGeometry` pairs the site prefabs used to
- * reach for: same silhouette family, but faceted by construction and with UVs that
- * survive the procedural surface textures.
+ * Split out from {@link DressingBucket} because river reeds want the same placement
+ * maths without pretending to be part of the biome's dressing plan.
  */
-function prismGeometry(
-  radius: number,
-  topScale: number,
-  height: number,
-  sides: number,
-  phase = 0,
-): THREE.BufferGeometry {
-  return loftProfile({
-    profile: polygonProfile(radius, sides, phase),
-    sections: [
-      { y: -height / 2, scaleX: 1 },
-      { y: height / 2, scaleX: Math.max(0.02, topScale) },
-    ],
-    name: 'generated-prism',
-  })
-}
-
-/** A truncated hip roof: a pyramid with a ridge instead of a needle point. */
-function hipRoofGeometry(
-  width: number,
-  depth: number,
-  height: number,
-): THREE.BufferGeometry {
-  return loftProfile({
-    profile: rectProfile(width, depth, Math.min(width, depth) * 0.08),
-    sections: [
-      { y: -height / 2, scaleX: 1, scaleZ: 1 },
-      { y: -height / 2 + height * 0.16, scaleX: 0.92, scaleZ: 0.92 },
-      { y: height / 2, scaleX: 0.14, scaleZ: 0.14 },
-    ],
-    name: 'generated-hip-roof',
-  })
-}
-
-function dressingGeometry(zone: ZoneId): THREE.BufferGeometry {
-  if (zone === 'forest') return forestTreeGeometry()
-  if (zone === 'palace') return palacePillarGeometry()
-  if (zone === 'fort') return fortBoulderGeometry()
-  return neutralHaystackGeometry()
+interface DressingPlacementStyle {
+  scale: number
+  verticalStretch: number
+  /** Fraction of the instance height to sink into, or lift off, the terrain. */
+  baseLift: number
 }
 
 /**
- * Dressing is drawn with one vertex-coloured material per biome, so every builder
- * below has to bake a `color` attribute. It also bakes welded outline normals,
- * because these are the world silhouettes that get ink.
- */
-function dressingMaterial(
-  zone: ZoneId,
-  materials: SharedMaterials,
-): THREE.Material | THREE.Material[] {
-  return materials.dressing[zone]
-}
-
-/**
- * A tree that is no longer a cylinder wearing three cones.
+ * One instanced kind inside a region's dressing.
  *
- * Tapered trunk with a root flare, three staggered canopy tiers each rotated off
- * axis, seeded noise on the trunk for bark, and a baked vertical gradient from deep
- * shadow at the roots to lit needles at the crown. The seed is a constant, so every
- * forest region builds an identical buffer — but each region on this branch builds and
- * disposes its own copy. Routing this through a runtime-level `GeometryCache` so
- * resident regions genuinely share one buffer belongs to the world-object pass, which
- * has since done it in `src/game/world/WorldPropLibrary.ts` — see docs/08 §5.4 for the
- * three lifetime rules that come with it.
+ * A bucket is the whole story for a species: which shared geometry it borrows, how
+ * often it appears, whether it blocks movement and takes ink, and how it sits on the
+ * ground. Adding a species to a biome is one entry in {@link DRESSING_PLANS}.
  */
-function forestTreeGeometry(): THREE.BufferGeometry {
-  const trunk = loftProfile({
-    profile: polygonProfile(0.5, 7),
-    sections: [
-      { y: 0, scaleX: 1.18 },
-      { y: 0.35, scaleX: 0.86 },
-      { y: 1.6, scaleX: 0.72 },
-      { y: 3.2, scaleX: 0.6 },
-      { y: 4.4, scaleX: 0.46 },
-    ],
-    name: 'tree-trunk',
-  })
-  displaceGeometry(trunk, {
-    seed: 0x5eed7e,
-    amplitude: 0.07,
-    frequency: 1.9,
-    octaves: 2,
-    flatBase: 0.2,
-  })
-  gradientVertexColors(trunk, { bottom: 0x4a3524, top: 0x8a6b48, bias: 0.8 })
-
-  const tiers: THREE.BufferGeometry[] = []
-  const tierProfile: readonly [number, number, number, number][] = [
-    [1.85, 2.2, 1.55, 0.5],
-    [1.45, 2, 2.9, 1.9],
-    [0.95, 1.9, 4.1, 3.6],
-  ]
-  for (let index = 0; index < tierProfile.length; index += 1) {
-    const [radius, height, base, rotation] = tierProfile[index]
-    const tier = loftProfile({
-      profile: polygonProfile(radius, 8, rotation),
-      sections: [
-        { y: 0, scaleX: 0.36 },
-        { y: height * 0.14, scaleX: 1 },
-        { y: height * 0.62, scaleX: 0.66 },
-        { y: height, scaleX: 0.04 },
-      ],
-      name: `tree-tier-${String(index)}`,
-    })
-    transformed(tier, { position: { x: 0, y: base, z: 0 } })
-    gradientVertexColors(tier, {
-      bottom: 0x1d3a2a,
-      top: 0x5f9a52,
-      bias: 0.85,
-    })
-    tiers.push(tier)
-  }
-
-  const geometry = mergeAll([trunk, ...tiers], { name: 'generated-forest-tree' })
-  bakeSkyOcclusion(geometry, { strength: 0.26 })
-  return bakeOutlineNormals(geometry)
+interface DressingBucket extends DressingPlacementStyle {
+  id: string
+  request: PropRequest
+  /** Structural kinds collide and ignore the decoration-quality slider. */
+  structural: boolean
+  /** Ink-worthy kinds get an inverted-hull silhouette if the region can pay. */
+  ink: boolean
+  weight: number
+  colliderRadius: number
 }
 
-/** A cracked boulder rather than a dodecahedron. */
-function fortBoulderGeometry(): THREE.BufferGeometry {
-  const base = new THREE.IcosahedronGeometry(1.15, 1)
-  const geometry = base.index ? base.toNonIndexed() : base
-  if (geometry !== base) base.dispose()
-  displaceGeometry(geometry, {
-    seed: 0xb0d1e,
-    amplitude: 0.34,
-    frequency: 1.15,
-    octaves: 3,
-    mode: 'ridge',
-    flatBase: 0.35,
-    axisScale: { x: 1.1, y: 0.7, z: 1.05 },
-  })
-  geometry.name = 'generated-fort-boulder'
-  gradientVertexColors(geometry, { bottom: 0x2e3138, top: 0x767f88, bias: 0.9 })
-  bakeSkyOcclusion(geometry, { strength: 0.3 })
-  bakeVerticalOcclusion(geometry, { strength: 0.3, falloff: 0.9 })
-  return bakeOutlineNormals(geometry)
+interface DressingBucketPlan {
+  id: string
+  request: PropRequest
+  structural?: boolean
+  ink?: boolean
+  weight: number
+  colliderRadius?: number
+  scale?: number
+  verticalStretch?: number
+  baseLift?: number
 }
 
-/** A carved standing pillar with a flared base and a capital. */
-function palacePillarGeometry(): THREE.BufferGeometry {
-  const shaft = latheProfile(
-    [
-      { x: 0.001, y: 0 },
-      { x: 0.72, y: 0 },
-      { x: 0.66, y: 0.16 },
-      { x: 0.48, y: 0.3 },
-      { x: 0.42, y: 1.9 },
-      { x: 0.56, y: 2.24 },
-      { x: 0.66, y: 2.42 },
-      { x: 0.62, y: 2.62 },
-      { x: 0.001, y: 2.7 },
-    ],
-    { segments: 8, name: 'palace-pillar' },
-  )
-  gradientVertexColors(shaft, { bottom: 0x6c6a63, top: 0xc9c4b4, bias: 0.75 })
-  bakeVerticalOcclusion(shaft, { strength: 0.28, falloff: 0.7 })
-  bakeSkyOcclusion(shaft, { strength: 0.2 })
-  return bakeOutlineNormals(shaft)
+/**
+ * What grows where.
+ *
+ * Six kinds is the ceiling: each one is an instanced draw call, and a region already
+ * spends four on ground cover. The weights are what actually shape a biome — the
+ * forest is mostly canopy, the fort is mostly rock, and the neutral lands are the
+ * only place with as much undergrowth as timber.
+ *
+ * Plan order is ink priority. Ink is charged per bucket, the region's budget is
+ * finite, and the buckets are listed tallest first so that a region which cannot
+ * afford every silhouette keeps the ones that carry the horizon.
+ */
+function dressingPlan(biome: ZoneId): DressingBucket[] {
+  return DRESSING_PLANS[biome].map((plan) => ({
+    id: plan.id,
+    request: plan.request,
+    structural: plan.structural === true,
+    // Anything tall enough to read as a landmark earns ink whether or not it
+    // blocks movement. Tying the two together left seven of the eight draws idle:
+    // only one bucket per biome collides, so only one was ever outlined.
+    ink: plan.ink ?? plan.structural === true,
+    weight: plan.weight,
+    colliderRadius: plan.colliderRadius ?? 0.55,
+    scale: plan.scale ?? 1,
+    verticalStretch: plan.verticalStretch ?? 1,
+    baseLift: plan.baseLift ?? 0,
+  }))
 }
 
-/** A leaning thatched stack — the neutral lands' rural silhouette. */
-function neutralHaystackGeometry(): THREE.BufferGeometry {
-  const stack = loftProfile({
-    profile: polygonProfile(0.72, 6, 0.35),
-    sections: [
-      { y: 0, scaleX: 0.86 },
-      { y: 0.3, scaleX: 1 },
-      { y: 0.95, scaleX: 0.78, offsetX: 0.06 },
-      { y: 1.5, scaleX: 0.3, offsetX: 0.12 },
-    ],
-    name: 'neutral-haystack',
-  })
-  const pole = transformed(
-    taperedBox({
-      width: 0.09,
-      height: 1.95,
-      depth: 0.09,
-      topScale: 0.5,
-      anchor: 'base',
-    }),
-    { position: { x: 0.12, y: 0, z: 0 } },
-  )
-  gradientVertexColors(stack, { bottom: 0x6a5324, top: 0xd8b45c, bias: 0.8 })
-  gradientVertexColors(pole, { bottom: 0x4a3a24, top: 0x7c6440, bias: 1 })
-  const geometry = mergeAll([stack, pole], { name: 'generated-neutral-stack' })
-  bakeVerticalOcclusion(geometry, { strength: 0.3, falloff: 0.45 })
-  return bakeOutlineNormals(geometry)
-}
-
-function dressingBaseHeight(zone: ZoneId): number {
-  // Every dressing geometry above is anchored at its own base except the boulder,
-  // which is centred and deliberately half-buried.
-  if (zone === 'fort') return 0.55
-  return 0
+const DRESSING_PLANS: Record<ZoneId, readonly DressingBucketPlan[]> = {
+  forest: [
+    {
+      id: 'tree-0',
+      request: { kind: 'tree', biome: 'forest', slot: 0, detail: 'near' },
+      structural: true,
+      weight: 0.3,
+      colliderRadius: 0.55,
+      verticalStretch: 1.2,
+    },
+    {
+      id: 'tree-1',
+      request: { kind: 'tree', biome: 'forest', slot: 1, detail: 'near' },
+      ink: true,
+      weight: 0.18,
+      verticalStretch: 1.1,
+    },
+    {
+      id: 'tree-2',
+      request: { kind: 'tree', biome: 'forest', slot: 2, detail: 'near' },
+      ink: true,
+      weight: 0.12,
+      verticalStretch: 1.15,
+    },
+    {
+      id: 'under-0',
+      request: { kind: 'undergrowth', biome: 'forest', slot: 0 },
+      weight: 0.2,
+      scale: 1.1,
+    },
+    {
+      id: 'under-1',
+      request: { kind: 'undergrowth', biome: 'forest', slot: 1 },
+      weight: 0.1,
+    },
+    {
+      id: 'under-2',
+      request: { kind: 'undergrowth', biome: 'forest', slot: 2 },
+      weight: 0.1,
+      baseLift: 0.1,
+    },
+  ],
+  neutral: [
+    {
+      id: 'tree-0',
+      request: { kind: 'tree', biome: 'neutral', slot: 0, detail: 'near' },
+      structural: true,
+      weight: 0.22,
+      colliderRadius: 0.6,
+    },
+    {
+      id: 'tree-1',
+      request: { kind: 'tree', biome: 'neutral', slot: 1, detail: 'near' },
+      ink: true,
+      weight: 0.14,
+      verticalStretch: 1.1,
+    },
+    {
+      id: 'under-0',
+      request: { kind: 'undergrowth', biome: 'neutral', slot: 0 },
+      weight: 0.24,
+    },
+    {
+      id: 'under-1',
+      request: { kind: 'undergrowth', biome: 'neutral', slot: 1 },
+      weight: 0.2,
+      scale: 0.9,
+    },
+    {
+      id: 'rock-0',
+      request: { kind: 'rock', biome: 'neutral', slot: 0, detail: 'near' },
+      weight: 0.12,
+      scale: 0.7,
+      baseLift: -0.16,
+    },
+    {
+      id: 'rock-1',
+      request: { kind: 'rock', biome: 'neutral', slot: 1, detail: 'near' },
+      weight: 0.08,
+      scale: 0.8,
+    },
+  ],
+  palace: [
+    {
+      id: 'tree-0',
+      request: { kind: 'tree', biome: 'palace', slot: 0, detail: 'near' },
+      ink: true,
+      weight: 0.26,
+      scale: 1.1,
+    },
+    {
+      id: 'tree-1',
+      request: { kind: 'tree', biome: 'palace', slot: 1, detail: 'near' },
+      structural: true,
+      weight: 0.18,
+      colliderRadius: 0.45,
+      verticalStretch: 1.15,
+    },
+    {
+      id: 'under-0',
+      request: { kind: 'undergrowth', biome: 'palace', slot: 0 },
+      weight: 0.18,
+      scale: 0.95,
+    },
+    {
+      id: 'rock-0',
+      request: { kind: 'rock', biome: 'palace', slot: 0, detail: 'near' },
+      weight: 0.2,
+      scale: 0.8,
+      baseLift: -0.14,
+    },
+    {
+      id: 'rock-1',
+      request: { kind: 'rock', biome: 'palace', slot: 1, detail: 'near' },
+      ink: true,
+      weight: 0.18,
+      scale: 1,
+    },
+  ],
+  fort: [
+    {
+      id: 'tree-0',
+      request: { kind: 'tree', biome: 'fort', slot: 0, detail: 'near' },
+      structural: true,
+      weight: 0.2,
+      colliderRadius: 0.5,
+      verticalStretch: 1.1,
+    },
+    {
+      id: 'tree-1',
+      request: { kind: 'tree', biome: 'fort', slot: 1, detail: 'near' },
+      ink: true,
+      weight: 0.16,
+      scale: 1.1,
+    },
+    {
+      id: 'rock-0',
+      request: { kind: 'rock', biome: 'fort', slot: 0, detail: 'near' },
+      structural: true,
+      weight: 0.24,
+      colliderRadius: 0.85,
+      baseLift: -0.18,
+    },
+    {
+      id: 'rock-1',
+      request: { kind: 'rock', biome: 'fort', slot: 1, detail: 'near' },
+      weight: 0.16,
+      scale: 0.9,
+      baseLift: -0.12,
+    },
+    {
+      id: 'rock-2',
+      request: { kind: 'rock', biome: 'fort', slot: 2, detail: 'near' },
+      ink: true,
+      weight: 0.14,
+    },
+    {
+      id: 'under-0',
+      request: { kind: 'undergrowth', biome: 'fort', slot: 0 },
+      weight: 0.1,
+      scale: 0.85,
+    },
+  ],
 }
 
 type GroundCoverKind = 'fern' | 'flower' | 'grass' | 'pebble'
@@ -2371,143 +2721,6 @@ const GROUND_COVER_COUNTS: Record<
  * costs nothing at runtime and does more for readability than any texture would at
  * this size.
  */
-function groundCoverGeometry(kind: GroundCoverKind): THREE.BufferGeometry {
-  if (kind === 'grass') return grassTuftGeometry()
-  if (kind === 'fern') return fernGeometry()
-  if (kind === 'flower') return flowerGeometry()
-  return pebbleGeometry()
-}
-
-function grassTuftGeometry(): THREE.BufferGeometry {
-  const blades: THREE.BufferGeometry[] = []
-  const layout: readonly [number, number, number, number][] = [
-    [0, 0.68, 0, 0],
-    [0.9, 0.52, 0.05, 0.22],
-    [-1.05, 0.44, -0.04, -0.18],
-  ]
-  for (let index = 0; index < layout.length; index += 1) {
-    const [rotation, height, offsetX, lean] = layout[index]
-    const blade = loftProfile({
-      profile: rectProfile(0.075, 0.02),
-      sections: [
-        { y: 0, scaleX: 1, scaleZ: 1 },
-        { y: height * 0.45, scaleX: 0.72, offsetX: lean * 0.4 },
-        { y: height, scaleX: 0.1, offsetX: lean },
-      ],
-      name: `grass-blade-${String(index)}`,
-    })
-    transformed(blade, {
-      rotation: { x: 0, y: rotation, z: 0 },
-      position: { x: offsetX, y: 0, z: 0 },
-    })
-    gradientVertexColors(blade, { bottom: 0x2f4a1e, top: 0xa8c85c, bias: 0.7 })
-    blades.push(blade)
-  }
-  return mergeAll(blades, { name: 'generated-grass-tuft' })
-}
-
-function fernGeometry(): THREE.BufferGeometry {
-  const vertices: number[] = []
-  for (let frond = 0; frond < 5; frond += 1) {
-    const angle = (frond / 5) * Math.PI * 2
-    const outwardX = Math.sin(angle)
-    const outwardZ = Math.cos(angle)
-    const sideX = Math.cos(angle)
-    const sideZ = -Math.sin(angle)
-    const point = (
-      side: number,
-      outward: number,
-      y: number,
-    ): [number, number, number] => [
-      sideX * side + outwardX * outward,
-      y,
-      sideZ * side + outwardZ * outward,
-    ]
-    const baseLeft = point(-0.025, 0, 0)
-    const baseRight = point(0.025, 0, 0)
-    const middleLeft = point(-0.11, 0.2, 0.32)
-    const middleRight = point(0.11, 0.2, 0.32)
-    const outerLeft = point(-0.06, 0.34, 0.5)
-    const outerRight = point(0.06, 0.34, 0.5)
-    const tip = point(0, 0.42, 0.68)
-    vertices.push(
-      ...baseLeft,
-      ...baseRight,
-      ...middleRight,
-      ...baseLeft,
-      ...middleRight,
-      ...middleLeft,
-      ...middleLeft,
-      ...middleRight,
-      ...outerRight,
-      ...middleLeft,
-      ...outerRight,
-      ...outerLeft,
-      ...outerLeft,
-      ...outerRight,
-      ...tip,
-    )
-  }
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute(
-    'position',
-    new THREE.Float32BufferAttribute(vertices, 3),
-  )
-  geometry.computeVertexNormals()
-  geometry.name = 'generated-fern'
-  return gradientVertexColors(geometry, {
-    bottom: 0x21401f,
-    top: 0x76a648,
-    bias: 0.65,
-  })
-}
-
-function flowerGeometry(): THREE.BufferGeometry {
-  const stem = loftProfile({
-    profile: polygonProfile(0.03, 5),
-    sections: [
-      { y: 0, scaleX: 1.2 },
-      { y: 0.3, scaleX: 0.85, offsetX: 0.02 },
-      { y: 0.54, scaleX: 0.7, offsetX: 0.03 },
-    ],
-    name: 'flower-stem',
-  })
-  gradientVertexColors(stem, { bottom: 0x2c4720, top: 0x5f8c3a })
-  const petals = transformed(
-    loftProfile({
-      profile: polygonProfile(0.13, 6),
-      sections: [
-        { y: 0, scaleX: 0.2 },
-        { y: 0.05, scaleX: 1 },
-        { y: 0.11, scaleX: 0.55 },
-      ],
-      name: 'flower-bloom',
-    }),
-    { position: { x: 0.03, y: 0.54, z: 0 } },
-  )
-  gradientVertexColors(petals, { bottom: 0xd8b23c, top: 0xf2e2a0, bias: 0.6 })
-  return mergeAll([stem, petals], { name: 'generated-flower' })
-}
-
-function pebbleGeometry(): THREE.BufferGeometry {
-  const source = new THREE.IcosahedronGeometry(0.2, 0)
-  const geometry = source.index ? source.toNonIndexed() : source
-  if (geometry !== source) source.dispose()
-  displaceGeometry(geometry, {
-    seed: 0x9eb61e,
-    amplitude: 0.055,
-    frequency: 6,
-    octaves: 2,
-    mode: 'ridge',
-    axisScale: { x: 1.2, y: 0.6, z: 1.1 },
-  })
-  geometry.name = 'generated-pebble'
-  return gradientVertexColors(geometry, {
-    bottom: 0x35383c,
-    top: 0x8b8f92,
-    bias: 0.8,
-  })
-}
 
 function writeGroundCoverScale(
   kind: GroundCoverKind,
@@ -2558,13 +2771,6 @@ function mixColor(
   amount: number,
 ): THREE.Color {
   return new THREE.Color(first).lerp(new THREE.Color(second), clamp(amount, 0, 1))
-}
-
-function isStructuralDressing(zone: ZoneId, index: number): boolean {
-  return (
-    (zone === 'forest' && index % 4 === 0) ||
-    (zone === 'fort' && index % 7 === 0)
-  )
 }
 
 function normalizeDecorationDensity(value: number | undefined): number {
