@@ -2107,6 +2107,150 @@ test('lathe surfaces wind away from their axis of revolution', () => {
 })
 
 /**
+ * `latheProfile` must hand back unit normals, and the reason is a `THREE`
+ * quirk rather than anything this kit does.
+ *
+ * `LatheGeometry` builds each profile point's normal from the segment ahead of it,
+ * carries it forward in `prevNormal`, and — for the **last** point only — pushes
+ * `prevNormal` straight into the buffer. It copies that vector *before* it
+ * normalises the working one, so the final ring's normals come out scaled by the
+ * length of the last profile segment. Nothing downstream re-normalises them.
+ *
+ * This is asserted here rather than trusted because the failure has the worst
+ * possible distribution: `transformed()` calls `applyMatrix4`, which runs
+ * `applyNormalMatrix` and normalises as a side effect, so every lathe that is
+ * *positioned* comes out clean and only the ones used at the origin carry it.
+ * Measured before the fix, `buildHeadgear` was the only caller that reached the
+ * origin: `cap` 27 vertices at |n| = 0.246416, `hood` 27 at 0.088549, `ragHood`
+ * 21 at 0.088549 — and in every case the value equalled the length of the last
+ * profile segment exactly, which is how the mechanism was confirmed rather than
+ * inferred. The other nine headgear kinds measured a clean 1.000000 purely
+ * because their lathes happened to be placed.
+ *
+ * The cost is not shading — three.js normalises `vNormal` in the fragment shader.
+ * It is `bakeOutlineNormals`, which averages normals per welded position: a normal
+ * 11x short is 11x under-weighted, so the ink shell extrudes the wrong way at the
+ * peak of a hood, the single vertex where the silhouette is a point.
+ */
+test('lathe normals are unit length, including the last profile ring', () => {
+  // Two profiles whose last segment is short, which is what makes the defect
+  // visible: the shortfall IS the segment length, so a long final segment hides it.
+  const cases: [label: string, points: { x: number, y: number }[]][] = [
+    ['cap', [
+      { x: 0.001, y: -0.05 },
+      { x: 0.36, y: -0.06 },
+      { x: 0.43, y: -0.02 },
+      { x: 0.4, y: 0.08 },
+      { x: 0.24, y: 0.24 },
+      { x: 0.001, y: 0.3 },
+    ]],
+    ['hood', [
+      { x: 0.001, y: -0.44 },
+      { x: 0.4, y: -0.46 },
+      { x: 0.47, y: -0.3 },
+      { x: 0.47, y: -0.02 },
+      { x: 0.4, y: 0.2 },
+      { x: 0.22, y: 0.38 },
+      { x: 0.08, y: 0.5 },
+      { x: 0.001, y: 0.54 },
+    ]],
+    ['kettle brim', [
+      { x: 0.3, y: -0.03 },
+      { x: 0.52, y: -0.09 },
+      { x: 0.52, y: -0.03 },
+      { x: 0.3, y: 0.05 },
+    ]],
+  ]
+
+  let judged = 0
+  for (const [label, points] of cases) {
+    const geometry = latheProfile(points, { segments: 9 })
+    const normal = geometry.getAttribute('normal')
+    assert.ok(normal, `lathe ${label} has no normals`)
+    let worst = 0
+    for (let index = 0; index < normal.count; index += 1) {
+      const length = Math.hypot(
+        normal.getX(index),
+        normal.getY(index),
+        normal.getZ(index),
+      )
+      worst = Math.max(worst, Math.abs(length - 1))
+      judged += 1
+    }
+    // 1e-6 rather than a round number: `normalizeNormals` divides Float32 values by
+    // a Float64 hypot and writes back to Float32, so the residual is bounded by one
+    // Float32 ulp near 1, which is 6e-8. Measured worst across these three profiles
+    // after the fix: 5.96e-8. The guard is 16x that, and 4 million times below the
+    // 0.911451 the hood measured before it.
+    assert.ok(
+      worst < 1e-6,
+      `lathe ${label} has a normal off unit length by ${worst.toExponential(6)}; `
+      + 'LatheGeometry pushes the last profile point\'s normal from an unnormalised '
+      + '`prevNormal`, so the final ring is scaled by the last segment\'s length',
+    )
+    geometry.dispose()
+  }
+
+  // Domain guard. A loop over an empty case list, or over geometry with no normal
+  // attribute, would report a clean bill having compared nothing. Pinned exactly
+  // rather than as a floor, because the count is derivable and a drift means the
+  // cases changed: `LatheGeometry` emits `(segments + 1) * points` vertices, so
+  // 10x6 + 10x8 + 10x4 = 180.
+  assert.equal(
+    judged,
+    180,
+    `measured ${String(judged)} normals across ${String(cases.length)} profiles, expected 180`,
+  )
+
+  // And prove the check can fail, because "worst < 1e-6" over correct input says
+  // nothing about whether it would notice incorrect input. This reproduces exactly
+  // what LatheGeometry does — scale the last ring by the last segment's length —
+  // and requires the assertion above to reject it.
+  const control = latheProfile(cases[1][1], { segments: 9 })
+  const controlNormals = control.getAttribute('normal')
+  const ringSize = controlNormals.count / cases[1][1].length
+  const scale = Math.hypot(0.001 - 0.08, 0.54 - 0.5)
+  let scaled = 0
+  for (let index = controlNormals.count - ringSize; index < controlNormals.count; index += 1) {
+    controlNormals.setXYZ(
+      index,
+      controlNormals.getX(index) * scale,
+      controlNormals.getY(index) * scale,
+      controlNormals.getZ(index) * scale,
+    )
+    scaled += 1
+  }
+  assert.ok(scaled > 0, 'the planted defect scaled no normals, so it proves nothing')
+  let plantedWorst = 0
+  for (let index = 0; index < controlNormals.count; index += 1) {
+    plantedWorst = Math.max(
+      plantedWorst,
+      Math.abs(
+        Math.hypot(
+          controlNormals.getX(index),
+          controlNormals.getY(index),
+          controlNormals.getZ(index),
+        ) - 1,
+      ),
+    )
+  }
+  assert.ok(
+    plantedWorst > 1e-6,
+    `the planted defect measured ${plantedWorst.toExponential(6)}, which the guard `
+    + 'above would accept — so a green result on the real profiles means nothing',
+  )
+  // Pinned rather than merely "> guard": this is the exact figure the hood carried
+  // before the fix, so if LatheGeometry's behaviour ever changes the reproduction
+  // stops matching and this says so instead of quietly testing something else.
+  assert.ok(
+    Math.abs(plantedWorst - 0.911451) < 1e-5,
+    `the reproduction measured ${plantedWorst.toFixed(6)}, not the 0.911451 the hood `
+    + 'carried before the fix; LatheGeometry may no longer behave as this test assumes',
+  )
+  control.dispose()
+})
+
+/**
  * Reversing a mirrored part's winding is only correct if every attribute moves
  * with it. The winding assertions above would catch a desynchronised `normal`,
  * because they compare winding against it — but not a desynchronised `color`,

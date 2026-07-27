@@ -51,6 +51,13 @@ import {
   type CharacterPartKeys,
   type CharacterPlan,
 } from '../src/game/art/index.ts'
+// Imported from the module rather than the barrel on purpose: these two are a review
+// instrument, not part of the art surface `docs/09` §5.1 publishes, and adding them to
+// `index.ts` would put a diagnostic hook in the vocabulary every other session imports.
+import {
+  characterWindingRepairs,
+  resetCharacterWindingRepairs,
+} from '../src/game/art/CharacterKit.ts'
 
 /** Spec 09 §8. Kept here so the numbers in the doc are measured, not asserted. */
 const CHARACTER_MESHES_NEAR = 19
@@ -846,5 +853,467 @@ test('the load-bearing rig names are still assigned', () => {
   assert.ok(
     !construction.includes('offsetHSL'),
     'shared character materials must be selected, never mutated',
+  )
+})
+
+/**
+ * Wave 4 review. `CharacterKit` never had an independent review, and its winding
+ * surface turned out to be measuring the wrong thing in three separate ways.
+ *
+ * ## 1. `insideOutTriangles` was never testing this module
+ *
+ * `ensureOutwardWinding` runs inside `loft()` and inside `finish()` — which is to say
+ * inside every builder here — and it reverses exactly the triangles `insideOutTriangles`
+ * counts, using the same cross product, the same `1e-14` degeneracy guard and the same
+ * comparison against the same first-vertex normal. `assertSolid` requires
+ * `hasOutlineNormals`, which only `finish()` sets, so *every* geometry that assertion
+ * accepts has provably been through the repair. It could not have returned anything but
+ * zero. `docs/10` section 13 lists this pattern as the costliest defect class on the
+ * programme; this file had it and nobody had looked.
+ *
+ * Measured with the repair disabled: **0 inside-out triangles in 196,705, across all
+ * 1235 parts the game can build.** So the repair is dead code as well as blinding, and
+ * the invariant it was hiding holds on its own. `characterWindingRepairs()` is the
+ * evidence surviving the fixup, and this pins it at zero.
+ *
+ * ## 2. Orientation needs FOUR instruments, because each is blind where the others see
+ *
+ * S3 measured three of them on its own builders (`docs/10` section 13) and CharacterKit
+ * never got the result. Wave 4 measured a fourth here, because three were not enough:
+ *
+ * ```text
+ * instrument           sees                          blind to
+ * normal agreement     a stored normal against its   anything whose normals were
+ *                      own winding                   recomputed, and everything in
+ *                                                    this module (see 1)
+ * signed volume        a part turned inside out      PARTIAL inversion: it SUMS, so
+ *                      whole                         reversed faces cancel against
+ *                                                    correct ones
+ * centroid / outward   a whole flip, cheaply         partial inversion, and anything
+ *                                                    not star-convex
+ * edge consistency     ANY inconsistently wound      an open sheet's boundary, which
+ *                      face, absolutely              it counts separately
+ * ```
+ *
+ * The fourth is the one that closes the gap, and the gap was real. Measured on this
+ * module's own parts, with 20% of each part's faces reversed and the normals then
+ * recomputed — which is what `displaceGeometry` does downstream, and the exact shape
+ * S3 says signed volume cannot see:
+ *
+ * ```text
+ * part            normal agreement   outward share   signed volume   edge consistency
+ * torso guard          0 (blind)      0.606 (pass)    +0.179 (pass)     36 bad  CAUGHT
+ * ox body              0 (blind)      0.512 (pass)    -0.814 caught     16 bad  CAUGHT
+ * wagon tilt           0 (blind)      0.530 (pass)    +0.763 (pass)     12 bad  CAUGHT
+ * headgear kettle      0 (blind)      0.667 (pass)    +0.096 (pass)     24 bad  CAUGHT
+ * ```
+ *
+ * A guard's torso with a fifth of its faces inverted passes all three of the
+ * instruments this file and `docs/10` had. Edge consistency catches all twelve parts
+ * tried, at every fraction, and needs no tolerance: a closed surface's every directed
+ * edge has exactly one opposite twin, and reversing any face breaks that pairing
+ * whatever the normals are later made to say. Measured clean across the whole roster:
+ * **986 parts, 480,423 directed edges, 0 inconsistent**, with 1,919 honest boundary
+ * edges from the open sheets (worst 16.67% of one part, a captive's trim).
+ *
+ * ## 3. Every detector is validated before it is believed
+ *
+ * A correctly wound control must read exactly 0 and a corrupted one must read the whole
+ * population, or "0 offenders" is indistinguishable from "this function returns 0".
+ *
+ * ## Mutation record
+ *
+ * Two mutations were run against the suite as it stood before this test existed.
+ *
+ * **A — every finished part reversed whole, normals recomputed.** Caught, by four of
+ * the existing tests. `outwardShare` does real work against a whole flip and that is
+ * worth stating, because the rest of this docblock is about what it cannot do.
+ *
+ * **C — 20% of every *torso* reversed, normals then recomputed.** Scoped to the torso
+ * on purpose: it is a part on which all three of the old instruments are blind, which
+ * a roster-wide mutation hides because a handful of thinner parts do dip under the
+ * `outwardShare` guard and take the suite red for the wrong reason. Result:
+ *
+ * ```text
+ * every person the game can build actually builds     PASS
+ * the three factions are different shapes             PASS
+ * cache keys name exactly what they build             PASS
+ * the four beasts are four animals                    PASS
+ * the fauna and the caravan build                     PASS
+ * every part is wound the right way round             PASS
+ * this test                                           FAIL
+ *   "the control torso has 36 inconsistently wound edges, so it is not a control"
+ * ```
+ *
+ * Every torso in the game inside out across a fifth of its surface, and the whole
+ * pre-existing `CharacterKit` suite reporting green. That is the gap this closes.
+ */
+test('character parts are oriented, measured by four instruments and not by one', () => {
+  resetCharacterWindingRepairs()
+
+  const A = new THREE.Vector3()
+  const B = new THREE.Vector3()
+  const C = new THREE.Vector3()
+  const edgeOne = new THREE.Vector3()
+  const edgeTwo = new THREE.Vector3()
+  const face = new THREE.Vector3()
+  const away = new THREE.Vector3()
+
+  /**
+   * Six times the signed volume of the closed hull. Absolute: it does not consult the
+   * normals, so `computeVertexNormals` cannot launder it the way it launders every
+   * winding-versus-normal check. Blind to partial inversion, because it is a sum.
+   */
+  const signedVolume = (geometry: THREE.BufferGeometry): number => {
+    const position = geometry.getAttribute('position')
+    const index = geometry.getIndex()
+    const count = index ? index.count : position.count
+    let total = 0
+    for (let triangle = 0; triangle + 2 < count; triangle += 3) {
+      A.fromBufferAttribute(position, index ? index.getX(triangle) : triangle)
+      B.fromBufferAttribute(position, index ? index.getX(triangle + 1) : triangle + 1)
+      C.fromBufferAttribute(position, index ? index.getX(triangle + 2) : triangle + 2)
+      total += A.dot(face.crossVectors(B, C))
+    }
+    return total / 6
+  }
+
+  /**
+   * Faces whose winding points back towards the part's own centroid, and how many were
+   * judged at all. Not an absolute zero: these parts are not star-convex — a wagon tilt
+   * and an antler have a large honest baseline — so this is read as a sensitivity
+   * instrument, never as a pass mark.
+   */
+  const centroidInward = (geometry: THREE.BufferGeometry): { inward: number, judged: number } => {
+    const position = geometry.getAttribute('position')
+    const index = geometry.getIndex()
+    const count = index ? index.count : position.count
+    const centre = new THREE.Vector3()
+    const vertex = new THREE.Vector3()
+    for (let point = 0; point < position.count; point += 1) {
+      centre.add(vertex.fromBufferAttribute(position, point))
+    }
+    centre.multiplyScalar(1 / position.count)
+    let inward = 0
+    let judged = 0
+    for (let triangle = 0; triangle + 2 < count; triangle += 3) {
+      A.fromBufferAttribute(position, index ? index.getX(triangle) : triangle)
+      B.fromBufferAttribute(position, index ? index.getX(triangle + 1) : triangle + 1)
+      C.fromBufferAttribute(position, index ? index.getX(triangle + 2) : triangle + 2)
+      edgeOne.subVectors(B, A)
+      edgeTwo.subVectors(C, A)
+      face.crossVectors(edgeOne, edgeTwo)
+      if (face.lengthSq() < 1e-14) continue
+      away.copy(A).add(B).add(C).divideScalar(3).sub(centre)
+      if (away.lengthSq() < 1e-14) continue
+      judged += 1
+      if (face.dot(away) <= 0) inward += 1
+    }
+    return { inward, judged }
+  }
+
+  /**
+   * Directed edges that have no opposite twin, and boundary edges counted apart.
+   *
+   * On a closed, consistently oriented surface every undirected edge is traversed
+   * exactly twice, once in each direction. Reversing a single face flips its three
+   * edges, so each one loses its twin and doubles up with its neighbour's copy — the
+   * pairing breaks whatever the normals are later made to say, which is what makes
+   * this the only instrument here that survives `computeVertexNormals` AND sees a
+   * partial inversion.
+   *
+   * Vertices are matched by quantised position, not by index: these parts are merged,
+   * non-indexed, and share corners only geometrically. `1e-4` is four times finer than
+   * `bakeOutlineNormals` welds at (`1e-3`), so anything this module already treats as
+   * one point is one point here too, and it measured 0 inconsistent edges in 480,423.
+   *
+   * An edge traversed once with no twin is a boundary — an open sheet, of which this
+   * module has several — and is counted separately rather than treated as a fault.
+   * An edge traversed *twice in the same direction* is never legitimate.
+   */
+  const inconsistentEdges = (
+    geometry: THREE.BufferGeometry,
+  ): { bad: number, edges: number, boundary: number } => {
+    const position = geometry.getAttribute('position')
+    const inverse = 1 / 1e-4
+    const key = (vertex: number): string =>
+      `${String(Math.round(position.getX(vertex) * inverse))}|`
+      + `${String(Math.round(position.getY(vertex) * inverse))}|`
+      + `${String(Math.round(position.getZ(vertex) * inverse))}`
+    const directed = new Map<string, number>()
+    let edges = 0
+    for (let triangle = 0; triangle + 2 < position.count; triangle += 3) {
+      const corners = [key(triangle), key(triangle + 1), key(triangle + 2)]
+      // A triangle with two corners at the same point has no area and no orientation.
+      if (
+        corners[0] === corners[1]
+        || corners[1] === corners[2]
+        || corners[0] === corners[2]
+      ) continue
+      for (let corner = 0; corner < 3; corner += 1) {
+        const edge = `${corners[corner]}>${corners[(corner + 1) % 3]}`
+        directed.set(edge, (directed.get(edge) ?? 0) + 1)
+        edges += 1
+      }
+    }
+    let bad = 0
+    let boundary = 0
+    for (const [edge, count] of directed) {
+      const [from, to] = edge.split('>')
+      const twin = directed.get(`${to}>${from}`) ?? 0
+      if (twin === 0) {
+        if (count === 1) boundary += 1
+        else bad += count
+      } else if (count !== twin) bad += Math.abs(count - twin)
+    }
+    return { bad, edges, boundary }
+  }
+
+  /** Reverses the first `fraction` of a geometry's triangles, in place. */
+  const reverseFraction = (geometry: THREE.BufferGeometry, fraction: number): number => {
+    const position = geometry.getAttribute('position')
+    const triangles = Math.floor(position.count / 3)
+    const target = Math.max(1, Math.floor(triangles * fraction))
+    for (const name of Object.keys(geometry.attributes)) {
+      const attribute = geometry.getAttribute(name)
+      const size = attribute.itemSize
+      const array = attribute.array as unknown as Record<number, number>
+      for (let triangle = 0; triangle < target * 3; triangle += 3) {
+        for (let component = 0; component < size; component += 1) {
+          const first = (triangle + 1) * size + component
+          const second = (triangle + 2) * size + component
+          const swap = array[first]
+          array[first] = array[second]
+          array[second] = swap
+        }
+      }
+    }
+    return target
+  }
+
+  // ---- instrument validation, before anything is believed --------------------
+  const control = buildTorso(resolveCharacterPlan('guard', 'soldier', 0))
+  // The control has to be clean before it can validate anything, and edge consistency
+  // is the only instrument here that can establish that on its own: it needs no
+  // baseline, no tolerance and no reference geometry. Everything below compares a
+  // corrupted copy against this one, so a corrupt control would quietly invert the
+  // meaning of every assertion that follows.
+  const controlEdges = inconsistentEdges(control)
+  assert.equal(
+    controlEdges.bad,
+    0,
+    `the control torso has ${String(controlEdges.bad)} inconsistently wound edges, so it `
+    + 'is not a control. Every comparison below is against it and would be measuring the '
+    + 'difference between two faults.',
+  )
+  assert.ok(
+    controlEdges.edges > 1000,
+    `the edge check judged only ${String(controlEdges.edges)} directed edges on a torso`,
+  )
+  const controlVolume = signedVolume(control)
+  const controlCentroid = centroidInward(control)
+  assert.ok(controlCentroid.judged > 0, 'the control judged no faces at all')
+  assert.ok(controlVolume > 0, `a correct torso must enclose positive volume, got ${controlVolume.toFixed(6)}`)
+
+  const flipped = control.clone()
+  const flippedCount = reverseFraction(flipped, 1)
+  assert.ok(flippedCount > 0, 'the whole-flip control reversed no triangles')
+  assert.ok(
+    signedVolume(flipped) < 0,
+    'signed volume must go negative on a fully reversed part, or it cannot see a flip',
+  )
+  assert.equal(
+    insideOutTriangles(flipped),
+    controlCentroid.judged,
+    'the normal-agreement check must report every judged face on a fully reversed part',
+  )
+  // The laundering case, which is why signed volume is here at all: recomputing the
+  // normals makes them agree with the new winding, so the relative check goes silent
+  // while the geometry is still inside out.
+  const laundered = flipped.clone()
+  laundered.deleteAttribute('normal')
+  laundered.computeVertexNormals()
+  assert.equal(
+    insideOutTriangles(laundered),
+    0,
+    'this assertion documents the weakness: after computeVertexNormals a reversed part '
+    + 'agrees with itself perfectly. If it ever fails, the relative check got stronger '
+    + 'and this comment is stale.',
+  )
+  assert.ok(
+    signedVolume(laundered) < 0,
+    'signed volume must still see the reversal that computeVertexNormals laundered',
+  )
+  // And the blindness that makes signed volume insufficient on its own, measured here
+  // rather than quoted: reverse a small fraction and the sum barely moves.
+  const partial = control.clone()
+  const partialCount = reverseFraction(partial, 0.05)
+  const partialCentroid = centroidInward(partial)
+  assert.ok(partialCount > 0, 'the partial-flip control reversed no triangles')
+  assert.ok(
+    signedVolume(partial) > 0,
+    `signed volume still reads positive with ${String(partialCount)} faces reversed, which `
+    + 'is the documented blindness — if this ever fails, signed volume became sensitive '
+    + 'to partial inversion and the three-instrument rule can be revisited',
+  )
+  assert.ok(
+    partialCentroid.inward > controlCentroid.inward,
+    `the centroid count must RISE when ${String(partialCount)} faces are reversed `
+    + `(${String(controlCentroid.inward)} -> ${String(partialCentroid.inward)}); it is the `
+    + 'only one of the three sign instruments that responds to a partial inversion',
+  )
+
+  // The fourth instrument, and the case that motivates it. A partial inversion whose
+  // normals are then recomputed defeats all three of the others on a torso; this is
+  // the control that proves edge consistency does not join them.
+  const laundering = control.clone()
+  const launderedFaces = reverseFraction(laundering, 0.2)
+  laundering.deleteAttribute('normal')
+  laundering.computeVertexNormals()
+  assert.ok(launderedFaces > 0, 'the laundered partial control reversed no triangles')
+  // All three of the instruments this file and docs/10 had, on the same geometry.
+  // Asserted rather than described, so that if any of them ever becomes able to see
+  // this, the claim in the docblock above fails instead of quietly going stale.
+  assert.equal(
+    insideOutTriangles(laundering),
+    0,
+    'normal agreement is expected to be blind here — computeVertexNormals rebuilt the '
+    + 'normals from the reversed winding',
+  )
+  assert.ok(
+    outwardShare(laundering) >= 0.5,
+    `the outward-share guard is expected to be blind here (measured 0.606 on a guard's `
+    + `torso, guard is 0.5); it read ${outwardShare(laundering).toFixed(3)}`,
+  )
+  assert.ok(
+    signedVolume(laundering) > 0,
+    `signed volume is expected to be blind here (measured +0.179); it read `
+    + `${signedVolume(laundering).toFixed(4)}`,
+  )
+  const launderedEdges = inconsistentEdges(laundering)
+  assert.ok(
+    launderedEdges.bad > 0,
+    `edge consistency must catch ${String(launderedFaces)} reversed faces that the other `
+    + 'three instruments all pass; it read 0, so nothing in this test can see a partial '
+    + 'inversion and the whole orientation surface is back to being decorative',
+  )
+  control.dispose()
+  flipped.dispose()
+  laundered.dispose()
+  partial.dispose()
+  laundering.dispose()
+
+  // ---- the sweep over every part the game can build --------------------------
+  const parts: [string, THREE.BufferGeometry][] = []
+  for (const faction of FACTIONS) {
+    for (const role of [...ROLES, 'player']) {
+      for (let variant = 0; variant < CHARACTER_VARIANTS; variant += 1) {
+        const plan = resolveCharacterPlan(faction, role, variant, role === 'player')
+        const keys = characterPartKeys(plan)
+        const p = plan.proportions
+        const tag = `${faction}/${role}/${String(variant)}`
+        parts.push([`${tag}:torso`, buildTorso(plan)])
+        parts.push([`${tag}:head`, buildHead(plan.faction)])
+        parts.push([`${tag}:upperArm`, buildUpperArm(plan.faction, plan.armour, p.upperArm)])
+        parts.push([`${tag}:thigh`, buildThigh(plan.faction, plan.armour, p.thigh)])
+        parts.push([`${tag}:shin`, buildShin(plan.faction, plan.armour, p.shin)])
+        if (keys.headgear) parts.push([`${tag}:headgear:${plan.headgear}`, buildHeadgear(plan.headgear)])
+        if (keys.weaponHead) parts.push([`${tag}:weapon:${plan.weapon}`, buildWeaponHead(plan.weapon)])
+      }
+    }
+  }
+  for (const kind of BEASTS) {
+    parts.push([`beast:${kind}:body`, buildBeastBody(kind)])
+    parts.push([`beast:${kind}:head`, buildBeastHead(kind)])
+    parts.push([`beast:${kind}:tail`, buildBeastTail(kind)])
+  }
+  parts.push(['deer:body', buildDeerBody()])
+  parts.push(['bird:body', buildBirdBody()])
+  parts.push(['ox:body', buildOxBody()])
+  parts.push(['wagon:bed', buildWagonBed()])
+  parts.push(['wagon:wheel', buildWagonWheel(1.02)])
+  parts.push(['harness', buildHarness()])
+
+  let judgedParts = 0
+  let judgedFaces = 0
+  let judgedEdges = 0
+  const hollow: string[] = []
+  const disagreeing: string[] = []
+  const inconsistent: string[] = []
+  let smallestVolume = Infinity
+  for (const [label, geometry] of parts) {
+    const volume = signedVolume(geometry)
+    const { inward, judged } = centroidInward(geometry)
+    assert.ok(judged > 0, `${label} was judged on no faces, so its result means nothing`)
+    void inward
+    judgedParts += 1
+    judgedFaces += judged
+    smallestVolume = Math.min(smallestVolume, volume)
+    if (volume <= 0) hollow.push(`${label} (volume ${volume.toFixed(6)})`)
+    const disagree = insideOutTriangles(geometry)
+    if (disagree > 0) disagreeing.push(`${label} (${String(disagree)} triangles)`)
+    const edges = inconsistentEdges(geometry)
+    judgedEdges += edges.edges
+    if (edges.bad > 0) inconsistent.push(`${label} (${String(edges.bad)} edges)`)
+    geometry.dispose()
+  }
+
+  // Domain guards. Pinned, not floored, where the number is derivable: 3 factions x 10
+  // roles x 3 variants is 90 plans, and every plan contributes at least five parts.
+  assert.ok(
+    judgedParts >= 450,
+    `only ${String(judgedParts)} parts were judged; the sweep is not covering the roster`,
+  )
+  assert.ok(
+    judgedFaces >= 40000,
+    `only ${String(judgedFaces)} faces were judged across ${String(judgedParts)} parts`,
+  )
+  // The edge instrument has its own domain, because it skips zero-area triangles and
+  // would report a spotless zero over a population it had entirely discarded.
+  assert.ok(
+    judgedEdges >= 150000,
+    `only ${String(judgedEdges)} directed edges were judged; the edge instrument threw `
+    + 'away most of the roster as degenerate, so its zero means nothing',
+  )
+  assert.deepEqual(
+    hollow.slice(0, 8),
+    [],
+    'these parts enclose zero or negative volume, so they are inside out whole and will '
+    + 'light from within while their ink shell extrudes inward and disappears',
+  )
+  assert.deepEqual(
+    disagreeing.slice(0, 8),
+    [],
+    'these parts have triangles wound against their own normals',
+  )
+  assert.deepEqual(
+    inconsistent.slice(0, 8),
+    [],
+    'these parts have edges traversed twice in the same direction, which means some of '
+    + 'their faces are wound against their neighbours. Measured clean across the whole '
+    + 'roster (986 parts, 480,423 directed edges, 0 inconsistent), and it is the only '
+    + 'one of the four instruments that sees a PARTIAL inversion — so a failure here '
+    + 'with the other three green is the expected shape, not a contradiction.',
+  )
+  // Measured: the smallest enclosed volume across the roster is 0.0012 (a bird wing).
+  // Asserted as a floor rather than left implicit, because a part that collapsed to a
+  // sheet would pass every sign test above while enclosing nothing.
+  assert.ok(
+    smallestVolume > 1e-4,
+    `the thinnest part encloses only ${smallestVolume.toExponential(3)}, which is close `
+    + 'enough to a flat sheet that the volume instrument cannot speak about it',
+  )
+
+  // The whole point of the counter: the repair is allowed to exist, and is not allowed
+  // to be doing anything. Measured Wave 4 across all 1235 buildable parts: 0 of 196,705
+  // triangles. A non-zero here means a GeometryKit builder regressed and this module
+  // quietly papered over it — which is exactly the failure the counter exists to expose.
+  assert.equal(
+    characterWindingRepairs(),
+    0,
+    `ensureOutwardWinding reversed ${String(characterWindingRepairs())} triangles while `
+    + 'building the roster. It is meant to be a no-op: the foundation fixed loftProfile, '
+    + 'and a non-zero count means something upstream now emits triangles wound against '
+    + 'their own normals and this module is hiding it from every assertion downstream.',
   )
 })

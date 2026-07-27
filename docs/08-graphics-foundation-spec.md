@@ -189,7 +189,7 @@ function stylizedCapsule(options: StylizedCapsuleOptions): THREE.BufferGeometry
 function rectProfile(width: number, depth: number, bevel?: number): Vec2Like[]
 function polygonProfile(radius: number, sides: number, phase?: number): Vec2Like[]
 function loftProfile(options: LoftOptions): THREE.BufferGeometry
-function latheProfile(points: readonly Vec2Like[], options?): THREE.BufferGeometry
+function latheProfile(points: readonly Vec2Like[], options?): THREE.BufferGeometry  // unit normals, incl. the last ring
 function extrudeProfile(points: readonly Vec2Like[], options?): THREE.BufferGeometry
 
 // Curve-driven bodies
