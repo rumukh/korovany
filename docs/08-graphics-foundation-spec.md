@@ -1067,6 +1067,74 @@ expensive; both are follow-ups rather than blockers, because the defect being fi
 arithmetic and the arithmetic is checked by the chunk pin in `tests/art.test.ts`, which
 fails loudly if a three.js upgrade moves the accumulation the fix depends on.
 
+### 7.0.6 The follow-up above, run: count bands, not brightness
+
+§7.0.5 left the question open and named what would close it. This is that measurement.
+
+**Ask the question the ramp actually answers.** `kScale = kBanded / kNormalized` and
+`directDiffuse` is proportional to `kNormalized`, so the banded result is proportional to
+`kBanded` **alone** — flat within a band, whatever the geometry is doing. A scan line
+across a lit sphere is therefore a staircase, and **the number of steps is the number of
+ramp stops that surface can reach.** That is a small integer, not a distribution, and it
+does not care what fraction of the viewport is metal.
+
+Two spheres, one directional key, `paperStrength: 0`, `rimStrength: 0`, `roughness: 1`.
+The second sphere differs from the first **in `metalness` and in nothing else** — same
+preset, colour, geometry, band strength, light. Light intensity is the library's own
+`keyIntensity`, which is defined as the luminance that maps to the top of the ramp.
+
+```text
+                          bands   luminance plateaus        plateau widths (px, of 98 lit)
+metal 0.35   pre-fix        3     4-35, 100-105, 130-135     36, 39, 23
+metal 0.35   shipped        4     4-29, 82-86, 106-110,      23, 25, 26, 24
+                                  124-130
+control 0    pre-fix        4     3-12, 95-96, 122-123,      19, 26, 31, 54
+                                  142-144
+control 0    shipped        4     3-12, 95-96, 122-123,      19, 26, 31, 54
+```
+
+**The control is identical in both builds** — same four plateaus, same luminances, same
+pixel counts, no tolerance applied. That is the shader comment's *"metalness 0 is
+unaffected, exactly"* as a measurement, and it is what makes the metal row mean anything:
+the two builds differ in one line, and everything not downstream of that line is bitwise
+unmoved. A control that reads exactly zero is the discriminator; a control that merely
+reads *small* would have left driver noise and AA as live explanations.
+
+**Metal loses its brightest band entirely.** Pre-fix it reaches three stops where the
+otherwise-identical non-metal sphere reaches four. Post-fix it reaches four. So a quarter
+of every lit metal surface — 24 of 98 scan pixels — was rendering one stop below where the
+ramp says it should.
+
+**And the bands that did survive sat in the wrong places.** Post-fix the widths are
+23/25/26/24, near-equal quarters, which is what a four-stop ramp over a uniform driver
+must produce. Pre-fix they are 36/39/23: the dark band is **1.57× too wide** and eats the
+terminator. That is the *"every band boundary is crossed 53.8% late"* claim measured as
+geometry coverage rather than inferred from arithmetic — the fix is not a brightness
+change, it is the band boundaries returning to the geometry they belong on.
+
+#### The calibration trap in this probe, which caught me
+
+The first run used light intensity **3.2**, chosen as "bright enough to saturate". That is
+1.208× `keyIntensity`, so the pre-fix driver — 0.65× — reached 0.785 and **cleared the
+0.75 boundary into the top stop**. The probe duly reported **four bands for both builds**
+and the defect looked absent. Only the plateau *width* hinted otherwise: 4 pixels against
+38.
+
+Nothing about that run looked malformed. It had a clean control, a well-formed staircase,
+and a plausible answer. **The sensitivity of the instrument was set by a parameter I chose
+for unrelated reasons, and the wrong choice put the defect just inside the passing side of
+a boundary.** Calibrating the key to the one intensity the library actually defines —
+the value that maps to the top of the ramp — is what made the measurement discriminating,
+and it is defensible for a reason that has nothing to do with getting the answer I wanted.
+
+> **An instrument with a free parameter has a sensitivity, and the experimenter sets it.**
+> Pick that parameter from the system's own definitions, not from convenience, or the
+> measurement silently becomes a test of the parameter instead of a test of the code.
+
+This belongs to the same family as §13's other entries and is the sixth shape in it: not
+*"the assertion never saw the input"* and not *"two questions share an answer set"*, but
+**"the assertion saw the input at a setting where the defect does not express."**
+
 ### 7.1 `OUTLINE_WORLD_DRAWS_MAX` — the multiplier, and the unit that changed
 
 

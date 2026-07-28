@@ -676,6 +676,7 @@ Two were in this document's own advice rather than in any test.
 | the ink budget system test | every object this world outlines is a single mesh, so `inkDrawCost` is numerically identical to `return 1` and the assertion has **zero power** over the regression it documents. Found by mutation, not by reading |
 | teardown's instanced-shell ordering | spec 08 invariant 4 was tested where `disposeShell` is *implemented* and nowhere it is *relied on*; skipping the release entirely left 13 shells freeing their sources' buffers, suite green |
 | `referenceCount === 0` double-release detector | the dangerous case leaves the count at 1, so the release *succeeds* and steals another holder's reference |
+| the metal band probe at key intensity **3.2** | 1.208× `keyIntensity`, so the pre-fix band driver reached 0.785 and cleared the 0.75 stop boundary. The probe reported **four bands in both builds** and the defect looked absent — clean control, well-formed staircase, plausible answer. Only the plateau *width* dissented: 4 pixels against 38 |
 
 Four rules fall out of them, in rough order of how much they would have saved:
 
@@ -1574,6 +1575,44 @@ defect in the table above was found by a measurement someone could re-run, and e
 diagnosis died the same way. A catalogue of checks that could not fail is only possible in a
 process where checking is cheaper than arguing — so if one practice from this document
 survives into another programme, it should be that one, and the rules are downstream of it.
+
+### 13.1 The last entry, added after the merge: a free parameter is a sensitivity
+
+The final row of the table is not a test in the suite. It is the probe written to settle
+whether the `kLit` metalness fix changes what metal looks like, and it earns its place
+because it failed in a shape the other entries do not cover. Full treatment in spec 08
+§7.0.6; the transferable part is here.
+
+The probe was sound. It counted **toon bands** rather than brightness — a small integer
+that does not care what fraction of the viewport is metal, which is precisely what the
+full-frame histogram in §7.0.5 got wrong. It carried a control that differed from the
+subject **in one material property and nothing else**, and that control read *bit-identical*
+across the two builds: same four plateaus, same luminances, same pixel counts, no tolerance.
+By every rule in this section it was a good instrument.
+
+It still reported the defect as absent, because the key light was set to an intensity
+picked for being "bright enough" rather than derived from anything. At 1.208× the
+library's own `keyIntensity`, the pre-fix driver — 0.65× — still cleared the top stop's
+0.75 boundary, and both builds showed four bands. Recalibrating the key to the one value
+the library actually defines, *the luminance that maps to the top of the ramp*, separated
+them immediately: **3 bands pre-fix against 4**, with the pre-fix dark band 1.57× too wide.
+
+> **An instrument with a free parameter has a sensitivity, and whoever runs it sets that
+> sensitivity — usually without noticing they have.** Derive the parameter from the
+> system's own definitions, or the measurement quietly becomes a test of the parameter.
+
+This is the sixth distinct shape in the catalogue, and it is the one that is hardest to
+see from the inside. The others fail structurally: the assertion never saw the input, or
+the fixup removed it, or two questions shared an answer set. This one saw the right input,
+through a validated instrument, with a control that proved the instrument clean — and gave
+the wrong answer **because the defect does not express at that setting.** Rule 2 says
+validate the instrument before trusting the reading. This adds: validating the instrument
+does not validate the operating point you chose to run it at.
+
+The practical defence is the one that has worked all night and needs no insight: the
+parameter had a defensible value available, defined by the system, for reasons unrelated
+to the outcome. Preferring it over a convenient one costs nothing at the time and is the
+difference between a measurement and a coincidence.
 
 
 ## 14. Effort
