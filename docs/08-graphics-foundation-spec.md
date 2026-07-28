@@ -1064,7 +1064,54 @@ settlement's roofline is what makes it read as a place — but it is a different
 currency, and the word "instanced" has been removed rather than left to mislead the
 next reader.
 
+### 7.1.1 Is the visible-set cap a test or a definition? Measured, and it is a budget
+
+The programme lead's closing rule, arrived at after a sibling retracted an invariant that
+was preserved by construction:
+
+> **An identity preserved by construction is not evidence, however exact it looks.** After
+> deriving one, ask what it forbids — then build the forbidden state and watch it fail. If
+> you cannot construct a failure, you have a definition, not a test.
+
+Applied to `OUTLINE_WORLD_VISIBLE_DRAWS_MAX = 48`, which this pass introduced. The
+forbidden state is a focus position whose nine visible regions draw more than 48 ink
+shells between them. Three attempts to construct it:
+
+```text
+lever                                                per-region peak   visible peak
+baseline                                                           7             41
+OUTLINE_WORLD_DRAWS_MAX raised 8 -> 64                             7             41
+takesInkShell loosened to ink instanced meshes too                 7             41
+both together                                                      7             41
+```
+
+**None of them moves it.** The peak is bound by *content* — the number of ink-worthy
+objects a region actually contains — not by either budget or by the filter. The
+per-region budget of 8 is itself never reached; the busiest region spends 7.
+
+So the honest classification is: **48 is a budget, not an assertion about a reachable
+state.** It cannot fail on this content, and the mutation that does make it fail —
+lowering the constant to 20 — changes the number rather than producing the state. That is
+what a budget *should* be, because its job is to catch growth that has not happened yet;
+but recording it as a test that could fail today would be exactly the overclaim §7.2
+exists to name.
+
+This also sharpens the split in §7.2.1. That section distinguishes an assertion that goes
+red because the code got better from a budget that goes red because a constant needs
+updating. The visible-set cap sits firmly on the budget side, and now it says so.
+
+**What would make it a test again** is content growth: more ink-worthy objects per region.
+That is precisely the change it guards, so the day it fires is the day it was worth
+having — and the measurement above tells the next person how much headroom there is
+before that day arrives, which is 48 against a content ceiling of 41–43.
+
+The `charged == built` reconciliation beside it is a different case and survives the rule:
+dropping one clause from the mirrored `takesInkShell` filter makes prediction and reality
+diverge, and it is caught by name. That forbidden state is constructible with a one-line
+code change, so that one is a test.
+
 ### 7.2 Why every budget above names a population
+
 
 `OUTLINE_WORLD_DRAWS_MAX` was not a one-off. Three budgets in this programme were sized
 against one population and later spent on another, and in every case **the number was

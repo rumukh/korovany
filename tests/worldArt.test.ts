@@ -1006,7 +1006,14 @@ test('every prop the world can build is oriented outwards', () => {
   const library = new WorldPropLibrary({ retention: 0 })
   const requests = everyPropRequest()
   let geometries = 0
-  let judgedFaces = 0
+  // Labels of geometries that produced nothing to judge. This replaces a `judgedFaces >=
+  // 20000` floor, which asserted the *magnitude* of what the sweep found rather than that
+  // the sweep found anything per item — so reducing tessellation, adding a far LOD or any
+  // other legitimate win would have failed it. The integrator named the tell: **a floor
+  // that fails when the codebase improves is asserting the shape of the thing measured.**
+  // This form is true at any magnitude and false in exactly the case the floor was for, a
+  // population of degenerate slivers that judges nothing and reports clean.
+  const hollow: string[] = []
   const failures: string[] = []
   const undetectable: string[] = []
   const open: string[] = []
@@ -1068,7 +1075,8 @@ test('every prop the world can build is oriented outwards', () => {
         // that comparison stop being independent. Measured across this exact loop, a
         // fully reversed prop produced 0 disagreements in 560 of 560 cases — the check
         // that used to sit here could not have failed for any prop the world builds.
-        judgedFaces += windingDisagreements(part.geometry).judged
+        const judgedHere = windingDisagreements(part.geometry).judged
+        if (judgedHere === 0) hollow.push(`${label}#${part.surface}`)
         // Magnitude, not just sign — see `worstNormalError`. A collapsed loft section
         // shades a downward spike as though it pointed at the sky, which a sign test
         // waves through.
@@ -1150,9 +1158,11 @@ test('every prop the world can build is oriented outwards', () => {
     geometries >= 500,
     `only ${String(geometries)} geometries were checked; the enumeration has holes`,
   )
-  assert.ok(
-    judgedFaces >= 20000,
-    `only ${String(judgedFaces)} faces carried an orientation to judge`,
+  assert.deepEqual(
+    hollow.sort(),
+    [],
+    'these geometries were enumerated but carried no face an orientation instrument could '
+      + 'judge, so their clean result is not evidence of anything',
   )
   // Headroom, not just correctness. Measured tightest is the fort tree at 0.033; the
   // floor sits below it so ordinary art variation does not trip, but a prop drifting to

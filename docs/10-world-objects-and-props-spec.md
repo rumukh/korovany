@@ -1472,6 +1472,60 @@ Worth pairing with the Markdown entry below, because they are the same hole in t
 types: the artefacts a build does not parse are the ones with no tests, whatever the suite
 count says. Here the suite count was 294.
 
+**A merge can keep a fix and drop the test that guards it, and the commit still reads as
+merged.** Checking a coordinator's "everything of yours is in", this pass diffed its test
+names against the integration branch and found three missing. `git merge-base --is-ancestor`
+said the commit that added them **was** an ancestor — so nothing was un-merged; conflict
+resolution had dropped the content while the history stayed intact. Ancestry is a claim
+about commits, not about lines, and the two come apart exactly where someone resolved a
+conflict by hand.
+
+The one that mattered: `retentionIsIntact` was **byte-identical** in both trees, and the
+test injecting a single phantom was absent from one. Measured rather than argued —
+mutating the predicate to `return true`:
+
+```
+integration tree   38 pass / 0 fail   green, entirely unguarded
+this branch        39 pass / 1 fail   "one phantom pin must be detected"
+```
+
+A correct, shipped fix with no power over its own regression, which is the shape this whole
+section is about, arriving through version control rather than through test design. **The
+strongest form of "is it merged?" is not ancestry and not a content grep — it is running
+the mutation on their tree.**
+
+Two method notes, both of which changed the finding:
+
+- **The name diff produced one false finding out of three.** A receipt test also looked
+  lost; the integration tree had replaced it with a better guard — `PROP_RECEIPT`,
+  provenance before identity — with its own test. Reported as loss it would have been
+  wrong, and the check that caught it was reading what the *other* tree had instead of
+  only what it lacked.
+- **"No test covers it" is a negative claim** and got a probe before it got asserted: the
+  integration tree's four `phantom` mentions were three comments and one assertion message,
+  and its count of `retained.push` — the injection itself — was zero. Even then the absence
+  of a test is not the absence of coverage, which is why the mutation still had to be run.
+
+**A negative claim has a shelf life; a positive one does not.** The programme lead added
+this after carrying a stale absence across several messages, and it is the sharper half of
+the negative-claim rule. Content is *added* to a live integration branch and essentially
+never removed, so **a "presence" claim only becomes truer with time and an "absence" claim
+only becomes falser.** They decay in opposite directions, which means a negative is not
+established by one probe — on a moving branch it needs re-probing at the moment it is
+restated, every time.
+
+This pass then had to apply it to its own open finding. Having measured two of its tests
+missing from the integration branch at one tip, the honest form of restating it was to
+re-run the probe against the tip at the moment of writing — three tips later, and the
+absence still held. **The version that makes this cheap is blob identity**: where
+`git rev-parse <tip>:<path>` matches the tree a mutation was measured on, the measurement
+carries exactly and needs no re-run; where it differs, nothing carries. That is the same
+instrument that survived every other staleness question on this programme, used to decide
+whether a *result* is still current rather than whether a file is.
+
+The pairing with the earlier entry is the useful shape: **a negative claim needs a probe
+more than a positive one, and it needs that probe again every time it is repeated.**
+
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
 state that no check could see. Ten lines were mangled — five entries whose opening sentence
