@@ -451,6 +451,26 @@ no new dependencies.
   carried into a computation it was not produced by. **A value borrowed into a fresh
   context reads as fresh**, inheriting the credibility of its neighbours rather than
   carrying its own.
+  A third member arrived while one party was verifying the second: a diff taken over
+  `A..B` where the claim concerned one commit and the range held **seven**. The output was
+  real repository content, freshly produced, correct — and about a different subject
+  entirely, which is the only reason it was caught. Had the intervening commits touched
+  the same block, it would have read exactly like the answer. So the family is **a range,
+  a block or a context wider than the claim returns a superset that reads as the
+  answer**, and all three instances produced output that was true and answered a question
+  nobody asked.
+- **The guards this work produced all check things that are free to check.** Six
+  mechanical forms came out of eighteen review passes — confirm the mutation applied,
+  confirm it compiled, confirm the query matched, dope the detector before believing its
+  silence, emit the timestamp from the measuring command, verify a spliced seam where the
+  methods must differ. Every one of them audits the author's own instrument, where being
+  wrong costs nothing socially. **Not one guards a claim whose checking is awkward** —
+  a credit, a hedge, a compliment, another party's figure — and those are precisely the
+  three classes this programme found unaudited, on both sides, repeatedly.
+  The predictor is better than the list, because it generates rather than enumerates:
+  **a check with a social cost and no epistemic reward is a check nobody runs**, and the
+  next unaudited class will be whatever else has that shape. Recording it here does not
+  fix it — no guard in this repository addresses it, which is itself the evidence.
 - **A rule stored without its trigger is a guard with no call site.** It exists, it is
   correct, and nothing invokes it — which is the same object as an assertion that cannot
   fail for the defect it names, one level up and in prose instead of a test. The evidence
