@@ -109,9 +109,9 @@ no new dependencies.
   *sibling* of `torso-pivot`, both at the actor's origin — the ground between the
   feet. At rest that is indistinguishable from a neck, so it passed review and every
   test in the file. Under the plan's own `lean` the chest swings forward through the
-  2.1–2.3 m from the ground to the shoulders and the head, on a pivot that never got
+  2.12-2.34 m from the ground to the shoulders and the head, on a pivot that never got
   that rotation, stays where it was: measured at **0.4992 m** on a standing brute and
-  **0.6358 m** walking, against a head 0.66 m deep. Only actors showed it, because
+  **0.6603 m** walking, against a head 0.66 m deep. Only actors showed it, because
   `animateCharacter` — the player's only pose pass — never writes `torso-pivot`. The
   head now hangs off the chest at `shoulderY`, which also makes six existing terms
   mean what they say: `head-pivot`'s rotations are written as the opposite sign of
@@ -152,7 +152,7 @@ no new dependencies.
   of the shoulders and not of the neck, and `headScale` is already the one thing that
   sizes a skull. Anatomy is the discriminator here, not a magnitude — deciding by
   "how big is the artifact" would have kept the wrong one and dropped the right one,
-  since both are around a percent. Measured across all 30 plans and the whole look
+  since both are around a percent. Measured across all 30 faction x role plans (21 distinct proportion sets) and the whole look
   envelope: **7.00%** head anisotropy with the width uncancelled, **0.99%** with it
   cancelled, and that 0.99% is the breath to ten decimal places.
 - **Cancel a scale above every rotation, never below one.** A scale and a rotation do
@@ -208,6 +208,14 @@ no new dependencies.
   pass is split the same way: `animateBeastPosture` replaces the biped shoulder
   bend, hip counter-rotation and head yaw, all of which pull an animal apart at the
   joints when applied to a body whose skull sits a metre forward of its own pivot.
+  Note what that buys and what it does not: it *reduces* the sliding, it does not
+  remove it. `createBeast` still roots `head-pivot` at the animal rather than on its
+  ribs, so the skull slides against the ribcage under attack and stagger — 0.296
+  authored units on a wolf, 0.368 on a bear, **0.660 on a troll**, before
+  `BEAST_PROFILES.scale` turns that into world units, where a troll's head travels
+  over a metre. That is worse than the 0.66 m humanoid case that was reported.
+  Deferred deliberately — a quadruped's neck is not at `shoulderY` and guessing at
+  one is how a fix becomes a second regression — but filed, not called solved.
 - **Do not derive a look from a spawn counter.** Appearance hangs off the most
   durable identity a caller can offer — a generated spawn slot, a persisted
   companion id, a deterministic event id — so the same person comes back the same
@@ -396,7 +404,7 @@ carries scale as well as rotation — the actor's shoulder width on `scale.x` an
 breath on `scale.y` — and the head has to divide the shoulder width back out in the
 same axis-aligned frame it was applied in. `neck-pivot` never rotates, so it can;
 `head-pivot` does, so on it the correction only cancels while the actor faces
-forward. Measured across all 30 plans and the whole look envelope: **7.00%** head
+forward. Measured across all 30 faction x role plans (21 distinct proportion sets) and the whole look envelope: **7.00%** head
 anisotropy with no correction, **5.34%** with it on `head-pivot`, **0.99%** with it
 on `neck-pivot`, that last being the chest's breath and nothing else.
 

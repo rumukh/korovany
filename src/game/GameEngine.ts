@@ -11784,11 +11784,15 @@ export class GameEngine {
    *
    * The rig — every pivot and mesh name marked below — is load-bearing. Animation,
    * dismemberment, prosthetics, gore, the torch and the weapon trail all address it
-   * by name, so `body-pivot`, `torso-pivot`, `head-pivot`, `pelvis-pivot`, `torso`,
-   * `head`, `leftArm`, `rightArm`, `leftLeg`, `rightLeg`, `weapon`, `shield` and
-   * `faction-ring` are frozen. Elbows, knees, cloak, trim, face, hair and headgear
-   * are new children of those, which is additive and safe: hiding a limb still
-   * hides its whole chain, and a prosthetic still recolours all of it.
+   * by name, so `body-pivot`, `torso-pivot`, `neck-pivot`, `head-pivot`,
+   * `pelvis-pivot`, `torso`, `head`, `leftArm`, `rightArm`, `leftLeg`, `rightLeg`,
+   * `weapon`, `shield` and `faction-ring` are frozen. `neck-pivot` is newer than the
+   * rest and is not bold in docs/09's tree, but it is just as load-bearing:
+   * `applyActorVisualVariation` finds it by name to divide the chest's shoulder width
+   * back out, and a rename makes that silently stop. Elbows, knees, cloak, trim,
+   * face, hair and headgear are new children of those, which is additive and safe:
+   * hiding a limb still hides its whole chain, and a prosthetic still recolours all
+   * of it.
    *
    * Shape comes from `resolveCharacterPlan`, which turns a faction, a role and one
    * integer into a complete description of a person. Geometry is cached per plan

@@ -705,14 +705,16 @@ export function characterPartKeys(plan: CharacterPlan): CharacterPartKeys {
  *
  * It comes apart the moment anything rotates. `animateActorCharacter` writes the
  * plan's own `lean` into `torso-pivot.rotation.x`, which swings the collar forward
- * through the whole 2.1–2.3 m lever arm from the ground to the shoulders, while a
+ * through the whole 2.12-2.34 m lever arm from the ground to the shoulders, while a
  * head rooted at the feet on a *different* pivot does not move at all. Measured on
  * the sibling rig, as the distance between the head and where `torso-pivot` puts
  * it — a brute standing still, `lean` 0.20: **0.4992 m**. A captive: 0.4710. Any
  * villain, whose faction leans: 0.3430. A peasant: 0.2639. A head is 0.66 m deep,
  * so a standing brute wore its skull three-quarters of a head behind its own neck.
- * Walking takes the worst case to **0.6358 m**, and **0.6849 m** at the deepest
- * pitch the simulation can actually reach.
+ * Walking takes the worst case to **0.6603 m** at the 1.18 cap `motionBlend` is
+ * clamped to, and the deepest pose the simulation can actually reach — attack and
+ * stagger cannot co-occur, because the stagger branch clears `actor.action` — is
+ * worth **1.7189 m** on a villain champion.
  *
  * The roles whose `lean` is zero — an elf or guard soldier, minion, archer or
  * champion — measured 0.0000 standing and came apart only once they moved, which
@@ -748,12 +750,19 @@ export interface CharacterSkeleton {
    * on its `scale.x` and the breathing pass writes its `scale.y` every frame, and
    * a head is not a pair of shoulders. Dividing that width back out has to happen
    * in the *same* axis-aligned frame it was applied in, which means above the head's
-   * rotation, not on it. Measured across all 30 plans and the whole look envelope:
+   * rotation, not on it. Measured across all 30 faction x role plans (21 distinct proportion sets) and the whole look envelope:
    * no correction at all leaves the head **7.00%** anisotropic; the correction on
    * the rotated pivot leaves it **5.34%**, because a shrink along the head's local x
    * and a stretch along the world's X stop cancelling once the two frames differ; on
-   * this node it is **0.99%**, and that residue is the chest's breath — a chest
-   * lifting a head as it inhales, which is correct.
+   * this node it is **0.99%**, and that residue is the chest's breath. What is being
+   * accepted there is a **0.99% vertical stretch of the skull mesh itself** — not,
+   * as an earlier draft of this docblock said, merely "a chest lifting a head as it
+   * inhales". The lift is a translation and the head keeps it either way, because
+   * the neck's *position* rides the chest's scale; cancelling `scale.y` would not
+   * cost it. A reviewer caught that the sentence was naming a benefit the decision
+   * was not buying. The stretch is kept because it is a hundredth of the shoulder
+   * problem and a chest that breathes without moving its head is worse, but the
+   * honest statement is the stretch, not the lift.
    */
   neckPivot: THREE.Group
   /** The head's own rotation: look, counter-pitch, counter-roll. */

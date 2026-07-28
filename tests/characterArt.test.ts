@@ -923,10 +923,18 @@ test('the load-bearing rig names are still assigned', () => {
  *
  * It comes apart the moment anything rotates. `animateActorCharacter` writes the
  * plan's own `lean` into `torso-pivot.rotation.x`, swinging the collar forward
- * through the entire 2.1–2.3 m lever arm from the ground to the shoulders, while a
+ * through the entire 2.12-2.34 m lever arm from the ground to the shoulders, while a
  * head rooted at the feet on a different pivot does not move at all.
  *
- * ## Measured, on the sibling rig, over the 27 faction x role proportion sets
+ * ## Measured, on the sibling rig, over the 21 distinct proportion sets
+ *
+ * 27 faction × role pairs, but only **21 distinct** sets of proportions: the `heavy`
+ * kit patches all 18 fields, so the three factions' brutes are byte-identical;
+ * `civil` patches 17 of 18 and the one it omits is set only by `guard`, so the elf
+ * and villain peasants are too; and `soldier` and `minion` share the `line` kit
+ * within each faction. Both reviewers and I first quoted this as 27 or 24 by counting
+ * pairs and reasoning about the patch tables; 21 is what enumerating and comparing
+ * them actually returns.
  *
  * Distance between the head and where `torso-pivot` puts it — the same quantity
  * assertion 1 below measures, with the head's own rotation held at zero so that
@@ -936,9 +944,8 @@ test('the load-bearing rig names are still assigned', () => {
  * | --- | --- |
  * | rest, nothing posed | **0.0000** |
  * | standing, plan `lean` only | **0.4992** (brute, `lean` 0.20) |
- * | walking, `lean` + gait lean at full blend | **0.6358** (elf brute) |
- * | walking at the 1.18 motion-blend cap | **0.6603** |
- * | deepest *reachable* pitch | **0.6849** (brute) |
+ * | walking, at the 1.18 motion-blend cap | **0.6603** (elf brute) |
+ * | deepest *reachable* pose | **1.7189** (villain champion, 0.6149 rad) |
  * | synthetic 0.83 rad, used by the sweep below | **2.3385** |
  *
  * A head is 0.66 m deep. Three-quarters of a head, backwards, standing still.
@@ -947,12 +954,20 @@ test('the load-bearing rig names are still assigned', () => {
  * both are the kind of mistake that survives if only the conclusion is recorded.
  * The walking figure was first given as **0.6835**, which is arithmetically right but
  * measures a different thing: it lets the head's own counter-pitch move the head on
- * the "before" side while the "after" side holds it at zero. Like for like it is
- * 0.6358. And the 0.83 rad pose was labelled *reachable*; it is not — it sums
- * role-incompatible maxima and adds attack to stagger, and `stagger` clears
- * `actor.action`. The deepest pose the simulation can actually reach is 0.6849 on a
- * brute. The 0.83 pose stays in the sweep, because the invariant holds for any
- * transform and a wider net is free, but it is labelled synthetic.
+ * the "before" side while the "after" side holds it at zero. Like for like, at the
+ * 1.18 cap `motionBlend` is clamped to, it is 0.6603. And the 0.83 rad pose was
+ * labelled *reachable*; it is not — it sums role-incompatible maxima and adds attack
+ * to stagger, and `GameEngine.ts`'s stagger branch sets `actor.action = null`, so a
+ * staggering actor has no attack to add. Respecting that exclusivity, the deepest
+ * pose the simulation can reach is **0.6149 rad**, worth **1.7189 m** on a villain
+ * champion — not the brute, whose bigger angle rides a shorter lever arm. The 0.83
+ * pose stays in the sweep, because the invariant holds for any transform and a wider
+ * net is free, but it is labelled synthetic.
+ *
+ * A third correction was needed on the corrections: a second reviewer put the
+ * reachable worst at 2.0405 m by letting attack and stagger co-occur. The source
+ * forbids it. Two reviewers disagreed by 19% on this number and the tie-breaker was
+ * reading the line that clears the field, not averaging the estimates.
  *
  * The roles whose `lean` is zero — elf and guard soldier, minion, archer, champion
  * — measured 0.0000 standing and only came apart once they walked, which is how a
@@ -971,6 +986,19 @@ test('the load-bearing rig names are still assigned', () => {
  *    Exact — to 1e-12 — for every transform the engine can write.
  * 2. **Hinged at the neck.** Turning the head moves it on an arc whose radius is
  *    the neck-to-head distance, ~0.5 m, not the ground-to-head distance, ~2.7 m.
+ *
+ * **Know what assertion 1 does and does not prove.** Its expected value is
+ * `restLocal · torsoPivot.matrixWorld`, and `restLocal` is captured from the same
+ * tree — so on *any* tree where the head descends from `torso-pivot` it is zero by
+ * construction, wherever under it the head sits. It is a hierarchy test. A reviewer
+ * pointed this out and it is worth keeping in view: the *placement* is carried by
+ * the rest-pose check above it, which pins the head at exactly `p.headY` off the
+ * ground, and by assertion 2, which pins the hinge radius. The same reviewer
+ * verified both fire independently — mutating `neckPivot.position.y` to 0 while
+ * fixing `headY` back to `p.headY` keeps the head rigid *and* correctly placed at
+ * rest, so assertions 1 and the rest check both pass, and assertion 2 alone catches
+ * it at 1.3795 m against its 0.4872 m bound. Three assertions, three distinct
+ * failures; none of them is dead code behind another.
  *
  * ## Mutation proof
  *
@@ -1136,7 +1164,7 @@ test('the head is rigid with the chest and hinges at the neck', () => {
  * animation rotates by up to 0.65 rad of look yaw — and a shrink along the head's
  * local x does not cancel a stretch along the world's X once those two frames differ.
  * Measured over the whole look envelope below, with the widest shoulders and a full
- * inhale, across all 30 faction x role plans:
+ * inhale, across all 30 faction x role plans (21 distinct proportion sets):
  *
  * | correction | worst head anisotropy |
  * | --- | --- |
@@ -1277,11 +1305,16 @@ test('the chest lends the head its breath but not its shoulders', () => {
 
   assert.ok(
     worst <= BOUND,
-    `the head came out ${(worst * 100).toFixed(4)}% anisotropic at ${worstAt}, over the `
-    + `${(BOUND * 100).toFixed(4)}% the chest's breath accounts for. Something other than `
-    + 'the breath has reached the skull — most likely the shoulder width, which must be '
-    + 'divided out on `neck-pivot`. It does not rotate; `head-pivot` does, and a scale '
-    + 'correction downstream of a rotation only cancels in the rest pose.',
+    `the head came out ${(worst * 100).toFixed(4)}% anisotropic **through the chest** at `
+    + `${worstAt}, over the ${(BOUND * 100).toFixed(4)}% the chest's breath accounts for. `
+    + 'This is scoped to `torso-pivot` and `neck-pivot` on purpose — it is not the total '
+    + 'a rendered head carries, because `body-pivot` adds its own non-uniform variation '
+    + 'on top and a reviewer measures the real in-game figure at 13.32%. That part is '
+    + 'pre-existing, identical before and after this rig change, and filed separately. '
+    + 'What this bound owns is the chest: something other than the breath has reached '
+    + 'the skull, most likely the shoulder width, which must be divided out on '
+    + '`neck-pivot`. It does not rotate; `head-pivot` does, and a scale correction '
+    + 'downstream of a rotation only cancels in the rest pose.',
   )
 })
 
@@ -1474,18 +1507,21 @@ test('the head holds its target while the chest twists under it', () => {
  * head, and guessing at a wolf's neck joint to fix a bug that was reported about
  * people is how one regression becomes two.
  *
- * What makes it survivable is a workaround rather than a joint, and docs/09 §4 says
- * so: `animateBeastPosture` "replaces the biped shoulder bend, hip counter-rotation
- * and head yaw, all of which pull an animal apart at the joints when applied to a
- * body whose skull sits a metre forward of its own pivot". Measured on `BEAST_RIG`:
- * a wolf's skull sits **1.08 of its own units forward** of the pivot it yaws about,
- * so the clamped 0.45 rad look already sweeps it **0.48 units sideways**, and the
- * biped pass — which reaches 0.83 rad of hunch on a lever arm of 1.64 — would move
- * it **1.3**.
+ * What makes it *tolerable* — not survivable, and the distinction matters — is a
+ * workaround rather than a joint. docs/09 §4 says `animateBeastPosture` "replaces
+ * the biped shoulder bend, hip counter-rotation and head yaw, all of which pull an
+ * animal apart at the joints when applied to a body whose skull sits a metre forward
+ * of its own pivot". True, but it *reduces* the defect rather than removing it: the
+ * skull still slides against the ribcage, measured in authored units at 0.296 on a
+ * wolf, 0.368 on a bear and **0.660 on a troll** under attack plus stagger, before
+ * `BEAST_PROFILES.scale` multiplies it into world units. A reviewer measures the
+ * troll at over a metre in the world — worse than the 0.66 m humanoid case that got
+ * reported. Filed separately rather than guessed at here.
  *
- * So the two premises are the early return that keeps a beast out of the biped pass
- * and the clamp on the beast's own yaw. Both are load-bearing, both are one line,
- * and both are invisible to every other test in this file.
+ * So the two premises this test pins are the early return that keeps a beast out of
+ * the biped pass and the clamp on the beast's own yaw. Both are load-bearing, both
+ * are one line, and both are invisible to every other test in this file. Neither
+ * makes the beast rig correct; they keep it inside the arc it can hide.
  */
 test('a beast never reaches the biped posture pass, and its own yaw stays clamped', () => {
   // The clamp `animateBeastPosture` puts on the beast's look. Named once and used
