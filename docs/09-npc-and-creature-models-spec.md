@@ -618,9 +618,10 @@ no new dependencies.
   is at the moment they measure it — which is the staleness this section concerns. An
   author's own branch against `main` is a different quantity and a less relevant one.
   Two observations in the same direction, published as a
-
- pattern, refuted by a third measurement the observer had  no particular reason to take, and oscillating within `{0, 1}` across two more. **That is  a direction read off a two-point sample, in a claim about the defect of reading
-  directions off samples**, and it is the fourth wrong answer to this question by the third
+ pattern, refuted by a third measurement the observer had no particular reason to take,
+ and oscillating within `{0, 1}` across two more. **That is a direction read off a
+ two-point sample, in a claim about the defect of reading
+ directions off samples**, and it is the fourth wrong answer to this question by the third
   party to attempt it. Anything sharper than *review-caused, non-monotonic* has been wrong
   every time it was stated; the six points support only *small, bounded, non-zero on
   average*.
@@ -725,7 +726,8 @@ no new dependencies.
 - **The guards this work produced almost all check things that are free to check.** Six
   mechanical forms came out of eighteen review passes — confirm the mutation applied,
   confirm it compiled, confirm the query matched, dope the detector before believing its
-  silence, emit the timestamp from the measuring command, verify a spliced seam where the  methods must differ. Every one audits the author's own instrument, where being wrong
+  silence, emit the timestamp from the measuring command, verify a spliced seam where the
+  methods must differ. Every one audits the author's own instrument, where being wrong
   costs nothing socially, and the classes this programme repeatedly found unaudited — a
   credit, a hedge, a compliment, another party's figure — have none of them.
   The predictor is better than the list, because it generates rather than enumerates:
