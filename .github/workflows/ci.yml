@@ -10,7 +10,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Pull-request runs group by ref so a new push supersedes the previous run.
+  # Pushes to main get a unique group instead: with a shared group the default
+  # queue is `single`, so a third push cancels the *pending* second run and a
+  # main commit silently never gets a verdict.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
