@@ -648,7 +648,7 @@ one row further in.
 | normal agreement after displacement | `computeVertexNormals` derives normals **from** winding, so a reversed prop's normals reverse with it. Measured: misses at every fraction **including 100%** — blind, not weak |
 | the family-wide winding assertion | every prop is merged, so the above applies to all of it: **560 of 560** reversals undetected |
 | its stock-box mutation control | reversed *without* rebaking, proving detection of stale normals — a defect the pipeline cannot produce |
-| `git fetch` in the review checklist | the branch is local-only, so it reports "already up to date" whether you are current or six commits behind |
+| `git fetch` in the review checklist | the branch was local-only when written, so it reported "already up to date" whether you were current or six commits behind — and the advice then inverted when the branch was published, silently, because a method carries a status claim |
 | a `retained.length <= retentionLimit` bound | the window evicts at its own limit, so this holds even when every slot pins the same key — the duplicate-pin fault it was written for. Written *while fixing* a finding about vacuous checks, and caught before it shipped only because the habit was fresh |
 | the ink budget system test | every object this world outlines is a single mesh, so `inkDrawCost` is numerically identical to `return 1` and the assertion has **zero power** over the regression it documents. Found by mutation, not by reading |
 | teardown's instanced-shell ordering | spec 08 invariant 4 was tested where `disposeShell` is *implemented* and nowhere it is *relied on*; skipping the release entirely left 13 shells freeing their sources' buffers, suite green |
@@ -1458,11 +1458,28 @@ grep for something the stale tree contains and the current one does not. A negat
 Two refinements from reviewers who had to use that checklist, both correcting guidance
 this pass wrote:
 
-- **`git fetch` is a no-op for a session branch.** These branches are local-only — they
-  live in the shared object store and are reachable through worktrees, with no
-  `refs/remotes/origin/...` counterpart. A reviewer who fetches, sees "already up to
-  date", and concludes they are current has learned nothing. Use
-  `git rev-parse <branch>` at the start of **every** pass instead.
+- **`git fetch` was a no-op for this branch, and is not any more — which is the point.**
+  For most of the programme these branches were local-only: they lived in the shared object
+  store, reachable through worktrees, with no `refs/remotes/origin/...` counterpart, so a
+  reviewer who fetched, saw "already up to date" and concluded they were current had learned
+  nothing. **That is no longer true.** The branch is on origin, so `git fetch` followed by
+  `git ls-remote origin refs/heads/<branch>` is now the *better* check, because it sees the
+  branch as another machine sees it — and `git rev-parse <local-ref>` is the one that cannot
+  report being stale.
+
+  The instruction inverted, and it did so silently. Which is the entry worth keeping over
+  either version of the advice, contributed by the integrator on finding this paragraph
+  still telling readers the old thing:
+
+  > **A "how to verify X" instruction is a status claim about the repository, and status
+  > claims expire.**
+
+  It is strictly worse than a stale sentence in a spec. A stale description reads oddly and
+  invites checking; **a stale method produces confident wrong answers and invites nothing.**
+  The remedy is not to keep this paragraph current — it will rot again — but to prefer
+  instruments whose correctness does not depend on repository state: `git ls-remote` is
+  right whether or not the branch is published, and the blob hash is right regardless of
+  how anything was published.
 - **`git reflog show <branch>` is what detects an amended-past SHA**, in seconds and
   without needing to know what changed. If you were handed a SHA, that is the check that
   tells you it has been superseded — nothing else will, because the orphaned commit
@@ -1795,6 +1812,37 @@ next reader banks a guarantee nobody added.
 The tally for this defect is at least five across three sessions in a single night, and
 none of them was noticed while being written. Every one felt like rigour at the moment of
 writing, which is the only thing they reliably have in common.
+
+**A test name discriminates only for a test that never existed before, and the grep cannot
+tell you which case you are in.** This spec records that a test's name is the nearest token
+to a fix and therefore the worst probe — the integrator then tested its own discriminator
+table against two earlier states of its own tree and found the rule biting harder than
+written. Two of its five survivors were test names, and they held *only* because those
+tests were new: no earlier body had worn the title. It had also renamed one rewritten test,
+so a grep for the old name would have reported **present on both stale trees**.
+
+So the rule needs its second clause: a test name is a valid discriminator exactly when the
+test is new, that is invisible from the grep result, and **a rename converts a valid
+discriminator into an invalid one without changing the mechanism at all.**
+
+The same exercise struck one of its own five outright. `OUTLINE_WORLD_VISIBLE_DRAWS_MAX`
+read **3 in both stale trees** — it is the constant the ink work is *about*, present since
+the cap landed, so grepping for it reports a tree current when it may be six rounds behind.
+Advice given about how to avoid that failure, containing that failure.
+
+**And `--ours` / `--theirs` are file-scoped verbs answering a hunk-scoped question.** The
+integrator hit a docs conflict displaying as one-sided — `<<<<<<< HEAD` immediately followed
+by `=======` — which makes `--theirs` look obviously right. It is a whole-file operation:
+it silently dropped a population column, a call-sites-versus-keys correction and a 102-key
+measurement, producing 165 insertions against 83 deletions where the real change was 71
+insertions and nothing removed. **The deletions it causes do not appear in the conflict you
+are reading**, so the resolution looks correct at exactly the moment it is destroying work.
+Caught only by grepping for its own markers *after* resolving, which is the general remedy:
+after any whole-file resolution, probe for content you know should have survived.
+
+This pass used `git checkout --ours` on the same file class during a merge experiment, in a
+throwaway worktree where nothing could be lost. That it was harmless was luck of setting,
+not judgement.
 
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
