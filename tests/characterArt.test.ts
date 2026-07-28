@@ -2712,8 +2712,8 @@ const FOOT_ROOTED_SKULL: Record<
  *
  * `updateActorDeathMotion` writes `head-pivot.rotation.z = side * 0.28 * eased` — a
  * skull lolling as the body goes down — and on a pivot at the feet that swings it
- * through the entire ground-to-skull lever arm. On a troll: **0.8503 authored units,
- * 1.1395 m in the world, on every single death**, covered by no assertion at all. The
+ * through the entire ground-to-skull lever arm. On a troll: **1.0040 authored units,
+ * 1.3453 m in the world, on every single death**, covered by no assertion at all. The
  * humanoid rig had the identical hole. A pose that only happens after the health bar
  * disappears is still a pose.
  *
@@ -3020,7 +3020,150 @@ test("a beast's skull turns with its chest and keeps its own proportions", () =>
 })
 
 /**
- * The magnitude of the defect this rig no longer has, measured rather than remembered.
+ * A beast's head tracks its target through its own chest, not past it.
+ *
+ * The beast half of `the head tracks its target through the chest, not past it`, and it
+ * exists because hanging the skull off the ribs **creates** this problem. `lookYaw` is
+ * measured by `updateActors` from the animal's own facing, so it is a *body*-space
+ * angle; `head-pivot` was a body-space node and is now a chest-space one. Written raw it
+ * is simply wrong, by exactly the chest's own contribution.
+ *
+ * Three rules, all evaluated here rather than two of them being described:
+ *
+ * - **none** — write `lookYaw` straight onto the pivot.
+ * - **scalar** — `lookYaw - chestYaw`, the obvious correction, which cancels only while
+ *   the chest's other two axes are zero. A beast's chest pitches into its lunge and
+ *   rolls with its turn, so they are not.
+ * - **solve** — `solveHeadYaw`, which is exact.
+ *
+ * The figures are small: a beast's chest barely moves next to a person's, and the same
+ * mistake on a humanoid is worth 43.64°. Saying so is the point. The numbers are pinned
+ * anyway, because **the reason to correct it is that the reparenting introduced it**,
+ * not that it is large — and because a figure quoted in prose on this project has decayed
+ * every single time it was not computed by the run that quotes it.
+ *
+ * The sweep is `beastPoses`, the same box every other beast measurement uses, so the
+ * chest envelope here cannot drift away from the one the rig is asserted over.
+ */
+test("a beast's head tracks its target through its own chest", () => {
+  // Produced by this run. Equalities against recorded constants, not bounds derived from
+  // anything the defect moves; each failure message names the new value.
+  const RECORDED = {
+    none: 2.5583,
+    scalar: 1.2799,
+    trollNone: 3.0334,
+    trollScalar: 1.7368,
+    scalarWorseShare: 9.068,
+  }
+  const forward = new THREE.Vector3()
+  const chestMatrix = new THREE.Matrix4()
+  const headMatrix = new THREE.Matrix4()
+  const euler = new THREE.Euler()
+
+  const heading = (
+    chest: readonly [number, number, number],
+    pitch: number,
+    yaw: number,
+    roll: number,
+  ): number => {
+    chestMatrix.makeRotationFromEuler(euler.set(chest[0], chest[1], chest[2], 'XYZ'))
+    headMatrix.makeRotationFromEuler(euler.set(pitch, yaw, roll, 'XYZ'))
+    forward.set(0, 0, 1).applyMatrix4(chestMatrix.multiply(headMatrix))
+    return Math.atan2(forward.x, forward.z)
+  }
+  const missBy = (
+    chest: readonly [number, number, number],
+    pitch: number,
+    yaw: number,
+    roll: number,
+    look: number,
+  ): number => {
+    const got = heading(chest, pitch, yaw, roll)
+    return Math.abs(Math.atan2(Math.sin(got - look), Math.cos(got - look))) * (180 / Math.PI)
+  }
+
+  let worstNone = 0
+  let worstScalar = 0
+  let worstSolve = 0
+  let trollNone = 0
+  let trollScalar = 0
+  let scalarWorse = 0
+  let states = 0
+  let worstSolveAt = ''
+
+  for (const kind of BEAST_KINDS) {
+    for (const pose of beastPoses(kind === 'troll')) {
+      const [pitch, look, roll] = pose.head
+      states += 1
+      const none = missBy(pose.chest, pitch, look, roll, look)
+      const scalar = missBy(pose.chest, pitch, look - pose.chest[1], roll, look)
+      const solved = solveHeadYaw(pose.chest[0], pose.chest[1], pose.chest[2], pitch, look)
+      const solve = missBy(pose.chest, pitch, solved, roll, look)
+      if (solve > worstSolve) {
+        worstSolve = solve
+        worstSolveAt = `${kind} in "${pose.name}"`
+      }
+      if (kind === 'troll') {
+        trollNone = Math.max(trollNone, none)
+        trollScalar = Math.max(trollScalar, scalar)
+        } else {
+          // The three quadrupeds share a chest envelope exactly — the only term that
+          // differs by animal is the `upright` pitch gain, which only the troll takes.
+          worstNone = Math.max(worstNone, none)
+          worstScalar = Math.max(worstScalar, scalar)
+        }
+        if (scalar > none + 1e-12) scalarWorse += 1
+    }
+  }
+
+  assert.equal(states, BEAST_KINDS.length * BEAST_POSE_COUNT, 'the gaze sweep did not run')
+  assert.ok(
+    worstSolve < 1e-9,
+    `\`solveHeadYaw\` left a beast's gaze ${worstSolve.toFixed(6)} degrees off at `
+    + `${worstSolveAt}. It is meant to be exact wherever the chest's forward axis still `
+    + 'points forward, and a beast\'s chest never comes close to turning that far.',
+  )
+  for (const [what, got, was] of [
+    ['no correction at all', worstNone, RECORDED.none],
+    ['the scalar subtraction', worstScalar, RECORDED.scalar],
+    ['no correction, on a troll', trollNone, RECORDED.trollNone],
+    ['the scalar subtraction, on a troll', trollScalar, RECORDED.trollScalar],
+  ] as const) {
+    assert.ok(
+      Math.abs(got - was) < 0.00005,
+      `${what} now costs a beast ${got.toFixed(4)} degrees of gaze, not the `
+      + `${was.toFixed(4)} recorded beside it. Nothing is necessarily broken — the chest `
+      + 'envelope or the pose box has moved — but the figures in `buildBeastSkeleton`\'s '
+      + 'docblock, in `animateBeastPosture`\'s, and in docs/09 §4 are now wrong. Correct '
+      + 'them to the value in this message.',
+    )
+  }
+  const share = (100 * scalarWorse) / states
+  assert.ok(
+    Math.abs(share - RECORDED.scalarWorseShare) < 0.005,
+    `the scalar rule is now worse than doing nothing in ${share.toFixed(4)}% of the `
+    + `${String(states)} swept states, not the `
+    + `${RECORDED.scalarWorseShare.toFixed(4)}% recorded. Same correction as above.`,
+  )
+  // And the rejected rules have to be rejectable: if the chest stopped moving at all,
+  // every rule above would be exact and this test would pass while measuring nothing.
+  // The floor is a tenth of a degree — an absolute angle, not a fraction of any figure
+  // this test produces.
+  assert.ok(
+    worstNone > 0.1,
+    `writing \`lookYaw\` raw onto a beast's head now costs only ${worstNone.toFixed(4)} `
+    + 'degrees. The chest envelope has collapsed, so this test is no longer '
+    + 'distinguishing the three rules from each other.',
+  )
+  assert.ok(
+    worstScalar < worstNone,
+    `the scalar rule (${worstScalar.toFixed(4)}) is no longer better in the worst case `
+    + `than no correction (${worstNone.toFixed(4)}). That would make the ordering this `
+    + 'test records meaningless; re-derive it before touching the numbers.',
+  )
+})
+
+/**
  *
  * Separate from the invariants above on purpose. Those are the regression gate and are
  * exact; this is a *record*, and a record nothing evaluates is what produced the
@@ -3407,7 +3550,7 @@ test('the engine poses a beast through the rig these tests measure', () => {
     + 'a yaw solved against the chest\'s full rotation *and* that same pitch, and the '
     + 'turn-lean roll. `lookYaw` is a body-space angle and `head-pivot` is a chest-space '
     + 'node now: written raw it costs 3.0334 degrees on a troll, and the obvious '
-    + '`lookYaw - chestYaw` leaves 1.7368 and is worse than doing nothing in 6.84% of '
+    + '`lookYaw - chestYaw` leaves 1.7368 and is worse than doing nothing in 9.0680% of '
     + 'swept states. Every argument is checked because on the humanoid call two of them '
     + 'were not, and a reviewer passed `0` for the roll with the suite still green.',
   )

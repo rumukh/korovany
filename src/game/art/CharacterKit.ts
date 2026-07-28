@@ -3597,23 +3597,27 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
  * The reachable box is not the product of the terms. `pose.attack` and
  * `pose.anticipation` come from the same `actor.action` and exclude each other;
  * `pose.flinch` and `pose.stagger` are one `reaction` field; and the stagger branch
- * sets `actor.action = null`, so a staggering animal has no attack to add. Distance
- * between the skull and where `torso-pivot` puts it, in authored units and then
- * multiplied by `BEAST_PROFILES.scale` into the world:
+ * sets `actor.action = null`, so a staggering animal has no attack to add. Three
+ * quantities, because the defect had two halves that peak in different poses: `slip` is
+ * the skull against where its own chest would carry it, with the head's rotation held at
+ * zero on both sides; `walking` and `dying` are how far the fix **moves** the skull at an
+ * identical pose, which also catches the second half — a head rotation about a pivot at
+ * the feet swings the skull through the whole ground-to-skull arm instead of the neck's.
+ * Authored units, then multiplied by `BEAST_PROFILES.scale` into the world:
  *
- * | kind | walking, posed | in the world | on death | in the world |
- * | --- | --- | --- | --- | --- |
- * | wolf | 0.2414 | 0.2076 m | 0.4218 | 0.3627 m |
- * | boar | 0.2116 | 0.2010 m | 0.3632 | 0.3451 m |
- * | bear | 0.2751 | 0.3301 m | 0.5061 | 0.6073 m |
- * | troll | 0.4732 | **0.6341 m** | 0.8503 | **1.1395 m** |
+ * | kind | slip | walking | dying | dying, in the world | skull vs its own chest |
+ * | --- | --- | --- | --- | --- | --- |
+ * | wolf | 0.2414 | 0.4697 | 0.6255 | 0.5379 m | 8.3171° |
+ * | boar | 0.2116 | 0.3927 | 0.5353 | 0.5085 m | 8.3171° |
+ * | bear | 0.2751 | 0.5102 | 0.7165 | 0.8598 m | 8.3171° |
+ * | troll | 0.4732 | 0.6055 | **1.0040** | **1.3453 m** | **11.6733°** |
  *
- * The death column is the one nothing was watching. `updateActorDeathMotion` writes
- * `head-pivot.rotation.z = side * 0.28 * eased` — a skull lolling as the body goes
- * down — and on a pivot at the feet that swings it through the entire ground-to-skull
- * lever arm, 2.34 authored units on a troll. It is not a pose the animation reaches by
- * accident; it happens on **every** death, and the humanoid rig had exactly the same
- * hole covered by exactly as many assertions.
+ * The death column is the one nothing was watching, and it is the worst on all four.
+ * `updateActorDeathMotion` writes `head-pivot.rotation.z = side * 0.28 * eased` — a
+ * skull lolling as the body goes down — and on a pivot at the feet that swings it
+ * through the entire ground-to-skull lever arm, 2.34 authored units on a troll. It is
+ * not a pose the animation reaches by accident; it happens on **every** death, and the
+ * humanoid rig had exactly the same hole covered by exactly as many assertions.
  *
  * The figures previously recorded for this defect — 0.296 on a wolf, 0.368 on a bear,
  * 0.660 on a troll, "under attack plus stagger" — **do not reproduce.** Driven at that
@@ -3658,8 +3662,10 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
  * so `animateBeastPosture` has to convert it with `solveHeadYaw`. That is small here —
  * a beast's chest barely turns — but it is a *new* error the reparenting introduces, so
  * it is not optional: uncorrected it is worth 2.5583° on a quadruped and 3.0334° on a
- * troll, and the obvious scalar `lookYaw - chestYaw` leaves 1.2799°/1.7368° and is
- * worse than doing nothing in 5.37%/6.84% of the swept states.
+ * troll, and the obvious scalar `lookYaw - chestYaw` leaves 1.2799°/1.7368° and is worse
+ * than doing nothing in **9.0680%** of the swept states. `a beast's head tracks its
+ * target through its own chest` computes all five figures, including the two rules it
+ * rejects, rather than describing them.
  *
  * ## What the skull now inherits that it did not, stated rather than glossed
  *

@@ -14280,7 +14280,7 @@ export class GameEngine {
    * the animal's own facing, so it is a *body*-space angle, and `head-pivot` is a
    * chest-space node: writing it raw would leave the gaze out by 2.5583° on a
    * quadruped and 3.0334° on a troll, and the obvious `lookYaw - chestYaw` leaves
-   * 1.2799°/1.7368° and is worse than doing nothing in 5.37%/6.84% of swept states.
+   * 1.2799°/1.7368° and is worse than doing nothing in 9.0680% of swept states.
    * Those are small next to the 43.64° the same mistake was worth on a person —
    * a beast's chest barely turns — but they are an error the reparenting *introduces*,
    * so they are not optional, and `solveHeadYaw` answers them exactly.
