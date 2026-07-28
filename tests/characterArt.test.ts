@@ -1684,6 +1684,33 @@ test('the head tracks its target through the chest, not past it', () => {
   // one further axis was free. Both files name chest roll as the dominant demonstrated
   // contributor and stop there.
   //
+  // ## Two figures in this table are disputed and the dispute is unresolved
+  //
+  // A reviewer measured the same decomposition and reports two disagreements, with the
+  // mechanism for each. Recorded here rather than reconciled, because reconciling it
+  // would mean re-deriving the table late in a long session with fresh confidence —
+  // which is the exact profile of every defect this file has caught since the rig
+  // itself was correct, and it would be the fourth cause offered for this family.
+  //
+  // 1. **The baseline still is not fully joint.** `decayStrideOnStagger` runs before
+  //    `animateActorCharacter`, so a staggering actor's stride has already been damped
+  //    by `e^(-13/60)` when the posture pass reads it. This sweep pairs `stagger = 1`
+  //    with the full pre-stagger stride. Applying the retention gives **4.8119** joint
+  //    and **4.8795** idle-decoupled, against the 4.8203 and 4.9199 below.
+  // 2. **The chest-roll row underreports.** Within the same six-target grid, a
+  //    stationary storm-hunched brute at chest `[0.62, 0, 0.30]`, head pitch 0.18,
+  //    target 0.39 gives **6.1569**; optimising the reachable target interval gives
+  //    **6.1925**, against the 6.0420 below.
+  //
+  // Neither changes the ordering or the head-roll conclusion. Both make the table's
+  // figures lower bounds rather than maxima — which is the safe direction for anything
+  // reading them as a guard, and the wrong direction for anything quoting them as what
+  // the geometry does.
+  //
+  // **The disagreement is the record.** Stating both figures with both methods named is
+  // this file's own rule for exactly this situation, and it is preferable to a third
+  // number produced at the hour when the previous two were produced.
+  //
   // Three causes were offered for one number and all three were wrong, by three
   // different people, while the number itself survived every attack. That pattern has a
   // sharper reading than "verify your causes", and it is the one worth keeping: **a
