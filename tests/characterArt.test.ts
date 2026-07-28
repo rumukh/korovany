@@ -3037,16 +3037,32 @@ test('the engine wires the rig the way these tests measure it', () => {
   // would close it is a test that runs a frame and reads the pivot, which needs a
   // constructible `GameEngine` — the architectural gap this file has recorded throughout
   // and cannot fix from here.
+  // No Euler order is written anywhere in `GameEngine.ts` — not "not in the posture
+  // pass". `applyHeadPose` and `applyChestPose` pass the order to `Euler.set` and are
+  // the only two places in `src/game` that write one; production has no legitimate
+  // reason to touch it.
+  //
+  // This was scoped to `actorPosture` for one commit, and a reviewer walked out of the
+  // scope rather than around the pattern: `updateChampionAura` runs immediately after
+  // `animateActorCharacter` at five sites, so an order write there survives to render
+  // and the ban never saw it. **Third instance of one placement standing in for the
+  // population of placements**, this time at function granularity rather than statement
+  // granularity — and the fix is shorter than the version it replaces, which is usually
+  // the sign that the narrower assertion was carrying an assumption rather than a
+  // constraint.
+  //
+  // *"No order writes in the posture pass"* and *"no order writes"* are different
+  // claims, and the second is the one actually wanted.
   assert.equal(
-    (actorPosture.match(/rotation\.order\s*=/g) ?? []).length,
+    (source.match(/rotation\.order\s*=/g) ?? []).length,
     0,
-    'something in the actor posture pass assigns `rotation.order`. `applyHeadPose` and '
+    'something in `GameEngine.ts` assigns `rotation.order`. `applyHeadPose` and '
     + '`applyChestPose` reassert XYZ on every write, but **that only beats a write they '
     + 'run after** — a reviewer set the order on the line following the call and it '
-    + 'survived, because `Euler`\'s order setter recomputes the quaternion on its own. '
-    + 'Nothing here has any business setting an Euler order: the two pose functions own '
-    + 'it, and this assertion says so for both placements rather than the one that '
-    + 'happened to be measured.',
+    + 'survived, because `Euler`\'s order setter recomputes the quaternion on its own, '
+    + 'and set it in a method that runs after the posture pass entirely. `solveHeadYaw` '
+    + 'reads the columns of `Rx·Ry·Rz` by hand from both pivots, so a foreign order '
+    + 'silently answers a different question — worth up to 30 degrees.',
   )
   assert.equal(
     (actorPosture.match(/applyChestPose\(/g) ?? []).length,
