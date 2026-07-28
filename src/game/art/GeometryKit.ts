@@ -1005,11 +1005,75 @@ export interface MergeOptions {
 const MERGE_ATTRIBUTES = ['uv', 'color', OUTLINE_NORMAL_ATTRIBUTE] as const
 
 /**
+ * Geometries a previous `mergeAll` has taken ownership of and disposed.
+ *
+ * Merging is a move. Re-using a moved-from geometry is silent in a way nothing else
+ * here is: `dispose()` frees the GPU buffer but leaves the JS object fully readable,
+ * so the second merge succeeds, produces correct-looking vertex data, and the fault
+ * only surfaces when a draw reads a buffer that was freed underneath it. Measured:
+ * after `dispose()` a geometry still reports its full attribute counts and still
+ * merges without throwing.
+ *
+ * Two shapes of the same mistake, both caught here:
+ *
+ *   - the same geometry twice in one call — `mergeAll([g, g])` silently double-counts
+ *     (72 vertices from a 24-vertex box) and disposes `g` twice;
+ *   - the same geometry across two calls — and because a single-part merge hands the
+ *     input straight back, `mergeAll([g])` twice returns *one object* under two names,
+ *     so releasing either disposes the other.
+ *
+ * The passthrough is why membership is recorded for every input **except** the one
+ * returned: ownership of that object goes back to the caller, so composing merges
+ * (`mergeAll([mergeAll([a]), b])`) stays legal. `dispose: false` consumes nothing and
+ * records nothing.
+ *
+ * **What this cannot catch, and why the caller must.** A single-part merge returns its
+ * input, so `mergeAll([g])` twice and `mergeAll([mergeAll([g]), h])` pass the identical
+ * object to a second merge. One is the bug, the other is composition, and no identity
+ * here separates them — reusing the *result* and reusing the *source* are the same
+ * operation on the same object. Recording the passthrough would reject both.
+ *
+ * That information exists one layer up: a caller holding a parts list can see one
+ * geometry tagged under two surfaces *before* any merge happens, which is what
+ * `mergePropParts` checks. Same shape as `GeometryCache.release` — a guard belongs
+ * where the identity is, and a foundation guard is not a substitute for it.
+ */
+const mergedAway = new WeakSet<THREE.BufferGeometry>()
+
+function assertNotAlreadyMerged(
+  parts: readonly THREE.BufferGeometry[],
+  name: string | undefined,
+): void {
+  const label = name ?? 'art-merged'
+  const withinCall = new Set<THREE.BufferGeometry>()
+  for (const part of parts) {
+    if (withinCall.has(part)) {
+      throw new Error(
+        `Cannot merge ${label}: the same geometry appears twice in one merge, which `
+        + 'would double its vertices and dispose it twice. Clone it, or pass '
+        + '`dispose: false` if the source must survive.',
+      )
+    }
+    if (mergedAway.has(part)) {
+      throw new Error(
+        `Cannot merge ${label}: this geometry was already consumed by an earlier `
+        + 'merge, so its buffer is disposed and belongs to another geometry now. '
+        + 'Merging is a move — clone it, or pass `dispose: false` at the first merge.',
+      )
+    }
+    withinCall.add(part)
+  }
+}
+
+/**
  * Merges parts into one geometry, reconciling attribute sets first.
  *
  * `mergeGeometries` returns `null` when the parts disagree about attributes or
  * indexing, and a silent `null` here is the single most common way this codebase
  * used to leak a half-built prop. So: normalize, merge, and throw loudly.
+ *
+ * Sources are consumed unless `dispose: false`; re-using one afterwards throws rather
+ * than corrupting a frame later. See `mergedAway`.
  */
 export function mergeAll(
   parts: readonly THREE.BufferGeometry[],
@@ -1019,6 +1083,7 @@ export function mergeAll(
     throw new RangeError('Cannot merge an empty geometry list')
   }
   const dispose = options.dispose !== false
+  if (dispose) assertNotAlreadyMerged(parts, options.name)
   if (parts.length === 1) {
     // Move semantics hand the input straight back; a copy must not be mutated.
     const single = dispose ? parts[0] : parts[0].clone()
@@ -1083,6 +1148,10 @@ export function mergeAll(
     const isOriginal = parts.includes(geometry)
     if (dispose || !isOriginal) geometry.dispose()
   }
+  // Every source is gone now. Record them so a later merge reports a use-after-move
+  // instead of quietly reading a freed buffer. The single-part path above returns its
+  // input and so records nothing — see `mergedAway`.
+  if (dispose) for (const part of parts) mergedAway.add(part)
   if (!merged) {
     throw new Error(
       `Could not merge ${String(parts.length)} geometries: attribute sets disagree`,
