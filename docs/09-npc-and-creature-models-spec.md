@@ -512,6 +512,11 @@ no new dependencies.
   What survives is sharper than what was claimed: **the only guard here that checks
   something awkward is the only one that was never written down.** The awkward class is
   not merely unguarded — it goes unrecorded even when it is guarded.
+  And the reason that join was available at all is worth the next reader's attention:
+  both halves were already in this file, written twenty minutes apart, and neither author
+  saw the connection while writing either. **A catalogue with enough members starts
+  containing its own generalisations before anyone states them**, which is a cheaper place
+  to look than the code — and nobody looked there until the supply of new members ran out.
 - **A rule stored without its trigger is a guard with no call site.** It exists, it is
   correct, and nothing invokes it — which is the same object as an assertion that cannot
   fail for the defect it names, one level up and in prose instead of a test. The evidence
