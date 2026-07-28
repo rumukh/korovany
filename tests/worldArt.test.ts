@@ -10,6 +10,7 @@ import {
   displaceSeamless,
   ensureVertexColors,
   fencePanelParts,
+  hasStylizedShader,
   latheProfile,
   mergeAll,
   mergePropParts,
@@ -3465,4 +3466,80 @@ test('the seam repair reunites vertices that displacement would pull apart', () 
       + 'was called and did nothing — routing without efficacy',
   )
   displaced.dispose()
+})
+
+/**
+ * Every distinct material reachable from `scene` that advertises a stylized preset but
+ * cannot honour it. Outline shells are `MeshBasicMaterial` and never carry a preset, so
+ * they are outside the domain rather than skipped. Materials are de-duplicated because
+ * the library shares instances by design; the count of liars is a count of materials,
+ * not of meshes.
+ *
+ * This cannot detect a material that lost its injection *and* its `userData` — that
+ * forgery is indistinguishable from an ordinary standard material, and nothing in the
+ * scene claims otherwise.
+ */
+function presetLiars(scene: THREE.Scene, honest?: THREE.Material[]): string[] {
+  const liars: string[] = []
+  const seen = new Set<THREE.Material>()
+  scene.traverse((object) => {
+    const material = (object as Partial<THREE.Mesh>).material
+    if (!material) return
+    for (const entry of Array.isArray(material) ? material : [material]) {
+      if (seen.has(entry)) continue
+      seen.add(entry)
+      if (entry.userData.stylizedSurfacePreset === undefined) continue
+      if (hasStylizedShader(entry)) {
+        honest?.push(entry)
+        continue
+      }
+      liars.push(object.name.length > 0 ? object.name : object.type)
+    }
+  })
+  return liars.sort()
+}
+
+test('no material in a live scene advertises a stylized preset it cannot honour', () => {
+  // Spec 08 §6.1. `Material.clone()` deep-copies `userData` through JSON but copies
+  // neither the `onBeforeCompile` injection nor `customProgramCacheKey`, so a clone keeps
+  // `stylizedSurfacePreset` while rendering as a plain unbanded standard material —
+  // silently, at runtime, as exactly the flat look this programme exists to remove.
+  //
+  // `tests/art.test.ts` proves that about `clone()` with five assertions, and
+  // `StylizedArtLibrary.ts:416` documents it at the assignment. Not one of those fires
+  // when a *caller* clones and never adopts. This is the same invariant guarded where it
+  // is relied on rather than where it is implemented.
+  const { scene, blueprint, runtime } = createRuntime('stylized-preset-honesty')
+  const region = blueprint.regions[Math.floor(blueprint.regions.length / 2)]
+  const center = runtime.getRegionCenter(region.id)
+  assert.ok(center)
+  runtime.update({ deltaSeconds: 0, focus: center })
+
+  const honest: THREE.Material[] = []
+  assert.deepEqual(presetLiars(scene, honest), [])
+
+  // `0` is the normal value both for "nothing is wrong" and for "the detector cannot see
+  // it", and it is the most common output of any check — so this one is shown to fire on
+  // a planted forgery before its clean result above is believed. Without this half, the
+  // assertion passes just as readily on a traversal that visits nothing.
+  assert.ok(honest.length > 0, 'the scene must contain stylized materials to check')
+  const forgery = honest[0].clone()
+  assert.equal(
+    forgery.userData.stylizedSurfacePreset,
+    honest[0].userData.stylizedSurfacePreset,
+    'the clone must keep the label, or the control is not reproducing the real hazard',
+  )
+  const probe = new THREE.Mesh(new THREE.BufferGeometry(), forgery)
+  probe.name = 'positive-control'
+  scene.add(probe)
+  assert.deepEqual(
+    presetLiars(scene),
+    ['positive-control'],
+    'the detector returned clean on a scene containing a known forgery',
+  )
+
+  scene.remove(probe)
+  probe.geometry.dispose()
+  forgery.dispose()
+  runtime.dispose()
 })

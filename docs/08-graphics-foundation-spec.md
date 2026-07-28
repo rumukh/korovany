@@ -715,6 +715,106 @@ Verifying what they build — four rules, each learned the expensive way:
   one member vanish unremarked. One line of "this cannot see X" next to the assertion is
   the entire fix, and it is what makes the next reader's rediscovery a read instead.
 
+### 6.1 Which of these rules will stop you, and which depend on care
+
+This spec makes **61 normative statements** (`MUST` / `NEVER` / `never`). They are not
+uniformly backed, and nothing in the prose distinguishes the two kinds. Measured against
+`tests/` and `.oxlintrc.json`:
+
+| Rule | Instrument | Fails how |
+| --- | --- | --- |
+| `ART_LIBRARY_MATERIALS <= 24` | `tests/art.test.ts` | red test |
+| Library owns 9, Wave 2 headroom 15 | `tests/art.test.ts` — *acquires all 15* | red test |
+| Outline eligibility, budget, distance cull | `tests/art.test.ts` | red test |
+| LOD thresholds and swap behaviour | `tests/art.test.ts` | red test |
+| Disposal exactly once, ref-count balance | `tests/art.test.ts`, `tests/mergeOwnership.test.ts` | red test |
+| Vertex-colour attribute presence | `tests/art.test.ts` | red test |
+| Instanced-mesh material sharing | `tests/art.test.ts` | red test |
+| Determinism from `artVariation` | `tests/art.test.ts` | red test |
+| **Export block ordering in `art/index.ts`** | **enforced.** `tests/art.test.ts` parses the barrel and fails on any block whose values run or types run leaves ordinal order, naming the pair; a companion test rejects a name exported twice. Both prove their detector on doped input *before* believing its verdict on the file | **silently**, until this test |
+| **Label namespacing (`npc:`, `props:`)** | tests *use* `npc:torso` / `props:cart`; **none asserts a caller namespaced anything** | **silently** |
+| **"Do not `.clone()` a stylized material"** | **partly enforced.** `tests/worldArt.test.ts` walks a streamed scene and fails any material advertising `stylizedSurfacePreset` without the injection — proven red by mutation, naming all 5 affected meshes. **Covers the world scene only**; `GameEngine`'s character, fauna and caravan materials are not in that scene | silently, at runtime, as unbanded shading |
+
+The quantitative contract is genuinely enforced — every budget in §7 has a test that
+*spends* it, not merely one that compares it. **The conventions were not**, and the first
+was violated within hours of the first sibling branch: `applyHeadPose` landed at line 121
+of `src/game/art/index.ts` where its sorted position is 115, and all four CI gates
+reported success on two successive commits carrying it. That is correct behaviour by every
+instrument involved. It is also the entire point.
+
+That row now has an instrument, and building it is the clearest argument in this document
+for building them. Getting one cosmetic two-line fix reviewed produced, between two
+sessions: a first pass that reported the whole export list unsorted — sorting across module
+groups, when the convention is per block; a verification anchored on a name absent from the
+run, which measured an empty slice and printed `sorted: true`; an edit that duplicated one
+name and dropped another, which `tsc` accepts in a barrel without complaint; a first draft
+of the detector itself that used `localeCompare` **and** `>=` joined by `||`, two
+comparators for one question, in the function whose own comment forbade exactly that; and
+finally a case-insensitive `Group-Object`, PowerShell's default, reporting three duplicate
+exports that do not exist — `artVariation` is a value and `ArtVariation` is its options
+type. **Five instrument failures around a change that moved two lines.** The rule had been
+kept by care for the whole of Wave 1, and care had already missed `bridgeParts` sitting
+ahead of `brazierParts` in the `PropKit` run, which no reviewer ever saw and the new test
+found in its first run.
+
+**Treat any remaining unbacked row as advisory and the backed rows as load-bearing.** If you
+need an advisory rule to hold, the cheapest correct move is to add its instrument in the same
+PR as the reliance. A rule whose only enforcement is that someone remembers it has a
+half-life, and this table exists so that the half-life is visible rather than discovered.
+
+The three convention rows shared a shape worth naming, because it is easy to mistake for
+coverage: **a rule can be tested at its mechanism and unenforced at its call sites.** The
+clone hazard had five assertions behind it and not one fired when a caller cloned and forgot
+to adopt — `tests/worldArt.test.ts` now closes that for the world scene, and the character
+path is still open. Export ordering is now closed outright. **Label namespacing is the one
+left**, and it is the purest example of the shape: the tests are full of `npc:torso` and
+`props:cart`, and not one of them asserts that a caller namespaced anything. Two of these
+rows were written as a flat "none" in the first draft of this table and were wrong —
+grepping the tests finds hits for all three. The hits are *uses*, not *assertions*, and the
+difference is the whole of what this section is for.
+
+A note on the instrument that closed it, because it is the cheapest habit in this document.
+A check that has never been observed failing is indistinguishable from a check that cannot
+fail: **`0` is the normal output both for *nothing is wrong* and for *my pattern cannot see
+it*.** So the new test plants a forgery in the scene and asserts the detector reports exactly
+that one, and the detector was additionally proven red by mutating `createMaterial` to skip
+the injection for one surface. The first mutation attempted was inert — it gated on
+`'bark'`, which is a valid surface that this scene does not contain — and the test passed,
+which said nothing about the test. **A mutation that perturbs nothing observable is not a
+control**, and the pass it produces is the same green as a real one.
+
+### 6.2 Known residue: sign-only assertions guarding loops
+
+Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
+`mergeOwnership`) take the form `assert.ok(x > 0)` or `assert.ok(xs.length >= n)` with no
+message; the same shape appears **46 times across the whole `tests/` suite**, so this is a
+house habit rather than a foundation defect. Most are fixture guards and harmless. A few are
+**floors standing in front of the loop that does the actual testing** — `worldArt.test.ts`'s
+prop-colour check asserts `parts.length >= 1` and then iterates, so a builder that silently
+returned fewer parts would shrink the covered population without failing anything. This is
+§6's own rule (*prefer magnitudes and exact counts to signs and inequalities*) unapplied to
+the tests that enforce §6.
+
+They are listed as a class rather than by line number, because line numbers rot and the
+detection is one command. Note the leading `\s*`: assertions inside a `test()` body are
+indented, and the same pattern anchored at `^assert` returns **zero** on this repository
+while thirteen of them sit in the files it names.
+
+```powershell
+Select-String -Path tests\*.test.ts -Pattern '^\s*assert\.ok\([^,]*[><]=?\s*\d+\)$'
+```
+
+That anchoring bug is not hypothetical — it is the first form this section shipped with,
+caught only by running the published command instead of trusting the measurement it was
+derived from. The measurement had trimmed each line; the command could not. **A count and
+the command that is supposed to reproduce it are two different instruments, and agreeing
+about a number is not the same as measuring the same population** — the count above is
+thirteen for four files and forty-six for the suite, from one pattern.
+
+Not fixed here: converting a floor to an exact count requires knowing each true population,
+and two of the four files are open in sibling pull requests. **Whoever narrows one should
+assert the count, not the sign, and should watch it fail once first.**
+
 ## 7. Budgets
 
 Every line names the **population it governs**, not only its value. Three budgets in this
