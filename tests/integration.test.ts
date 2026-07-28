@@ -1371,6 +1371,87 @@ test('neither spec contains a mangled paragraph join', () => {
 
 
 /**
+ * No tracked text file may contain a merge-conflict marker.
+ *
+ * This programme lost a test to a merge conflict resolution, and spent a day proving the
+ * loss was invisible to `--is-ancestor`, to blob hashes and to the test count. The
+ * sharper version of that came out of reviewing the restoration: **a tree with
+ * `<<<<<<<`, `=======` and `>>>>>>>` still sitting in `docs/10` passes every gate in this
+ * repository.** Measured, not supposed — full suite green, `lint` exit 0, `docs:facts`
+ * exit 0, and the join gate above passes too, because marker lines are short, start no
+ * paragraph and duplicate nothing.
+ *
+ * A conflict marker in a `.ts` file is caught by `tsc`. Everything the compiler never
+ * reads has nothing looking at it at all, which is precisely where the last loss happened.
+ *
+ * The domain is every tracked text file rather than the two specs, because the guard three
+ * tests down had to be widened twice for exactly that reason and the lesson is written
+ * there: a check that is *correct* and *too narrow* looks identical to a sufficient one
+ * until the day it doesn't.
+ *
+ * The scan carries its own positive control. A detector that has only ever returned zero
+ * is indistinguishable from one that cannot fire, so the same predicate is run over a
+ * constructed conflict block first and asserted to catch all three markers.
+ */
+test('no tracked text file contains a merge-conflict marker', () => {
+  const isMarker = (line: string): boolean => /^(?:<{7}|={7}|>{7})(?: |$)/.test(line)
+
+  // Positive control, built rather than written, so this file does not trip its own scan.
+  const control = [
+    `${'<'.repeat(7)} HEAD`,
+    'one side of the merge',
+    '='.repeat(7),
+    'the other side',
+    `${'>'.repeat(7)} some-branch`,
+  ]
+  assert.equal(
+    control.filter(isMarker).length,
+    3,
+    'the marker predicate does not fire on a constructed conflict block, so a clean '
+    + 'result from the repository scan below would mean nothing',
+  )
+
+  const root = new URL('../', import.meta.url)
+  const SKIP = new Set(['node_modules', 'dist', 'coverage', '.git'])
+  const TEXT = ['.md', '.ts', '.tsx', '.js', '.mjs', '.cjs', '.json', '.css', '.html']
+  const files: string[] = []
+  const walk = (prefix: string): void => {
+    for (const entry of readdirSync(new URL(prefix, root), { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (!SKIP.has(entry.name)) walk(`${prefix}${entry.name}/`)
+      } else if (TEXT.some((extension) => entry.name.endsWith(extension))) {
+        files.push(`${prefix}${entry.name}`)
+      }
+    }
+  }
+  walk('')
+  files.sort()
+
+  assert.ok(
+    files.length >= 50,
+    `only ${String(files.length)} text files were found; this scan is the whole point of `
+    + 'the test, so a tiny listing means it broke rather than passed',
+  )
+
+  const conflicted: string[] = []
+  for (const file of files) {
+    const lines = readFileSync(new URL(file, root), 'utf8').replace(/\r\n?/g, '\n').split('\n')
+    lines.forEach((line, index) => {
+      if (isMarker(line)) conflicted.push(`${file}:${String(index + 1)}: ${line.slice(0, 40)}`)
+    })
+  }
+
+  assert.deepEqual(
+    conflicted,
+    [],
+    'a merge-conflict marker was committed. Both sides of that hunk are still in the '
+    + 'file and one of them is not meant to be — which is the same mechanism that lost a '
+    + 'test here once already, and nothing else in this repository can see it.',
+  )
+})
+
+
+/**
  * The barrel assertion must stay a subset check, and this is why it needs its own test.
  *
  * `tests/art.test.ts` is edited by every session. The world-objects branch still carries

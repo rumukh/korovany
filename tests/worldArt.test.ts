@@ -923,6 +923,96 @@ test('a partial inversion is detectable, which volume and normals alone cannot m
   }
 })
 
+/**
+ * The blindness above is documented in prose and, until this, nothing read it.
+ *
+ * `centroidInwardFaces`' docblock states a measured curve — *"`signedVolume` … misses 5%
+ * on every prop tried and 25% on a fort rock"* — and that is the justification for the
+ * third instrument existing at all. **A measured claim in prose rots exactly like a stale
+ * SHA:** the builders move, the number stops being true, and nobody is told. The claim is
+ * load-bearing and unread, which is the same shape as the phantom-pin predicate further
+ * down this file, one level up.
+ *
+ * So it is asserted in **both directions**, and the second is the one that matters:
+ *
+ *   - the job: a wholly reversed solid must flip its signed volume, or the instrument has
+ *     stopped measuring orientation at all
+ *   - the floor: the documented blindness must still be there, so the prose cannot drift
+ *     without something going red
+ *
+ * **If the floor fails because the numbers improved, that is good news and not a bug.**
+ * Update the docblock and this test together; do not delete the assertion, or the next
+ * reader inherits a guarantee nobody measured.
+ *
+ * This changes detection not at all. It is deliberately not a coverage improvement.
+ *
+ * Lost in the same merge conflict resolution that dropped the phantom-pin test, and found
+ * by the review of restoring that one. The fractions here are measured on this tree rather
+ * than carried over from the branch it came from, because a ported constant is the very
+ * thing this test exists to refuse.
+ */
+test('the volume instrument is still blind below a quarter and still works at full', () => {
+  const library = new WorldPropLibrary({ retention: 0 })
+  let surfaces = 0
+  let missedAtFivePercent = 0
+  let missedAtAQuarter = 0
+  let missedAtFull = 0
+  try {
+    for (const [, request] of everyPropRequest()) {
+      for (const part of library.build(request)) {
+        if (part.surface !== 'hard') {
+          part.geometry.dispose()
+          continue
+        }
+        surfaces += 1
+        const baseline = Math.sign(signedVolume(part.geometry))
+        for (const fraction of [0.05, 0.25, 1] as const) {
+          const damaged = reverseFaceFraction(part.geometry, fraction)
+          if (Math.sign(signedVolume(damaged)) === baseline) {
+            if (fraction === 0.05) missedAtFivePercent += 1
+            if (fraction === 0.25) missedAtAQuarter += 1
+            if (fraction === 1) missedAtFull += 1
+          }
+          damaged.dispose()
+        }
+        part.geometry.dispose()
+      }
+    }
+  } finally {
+    library.dispose()
+  }
+
+  // Domain guard: an empty sweep reports zero misses and reads identical to a clean one.
+  assert.ok(surfaces >= 100, `only ${String(surfaces)} hard surfaces were swept`)
+
+  assert.equal(
+    missedAtFull,
+    0,
+    `signed volume missed a FULL reversal on ${String(missedAtFull)} of `
+    + `${String(surfaces)} surfaces, so it has stopped detecting orientation on those `
+    + 'shapes and the third instrument is now the only one working',
+  )
+
+  // "misses 5% on every prop tried" — asserted as the exact claim the docblock makes,
+  // not as a threshold, so it cannot drift in either direction unnoticed.
+  assert.equal(
+    missedAtFivePercent,
+    surfaces,
+    `the docblock on centroidInwardFaces says signed volume misses a 5% reversal on every `
+    + `prop; it now catches it on ${String(surfaces - missedAtFivePercent)} of `
+    + `${String(surfaces)}. If the instrument improved, that is good news — update the `
+    + 'measured curve and this assertion together rather than deleting either',
+  )
+
+  // "and 25% on a fort rock" — sensitivity, because the claim is about some props.
+  assert.ok(
+    missedAtAQuarter > 0,
+    'signed volume now catches a 25% contiguous reversal on every surface, which the '
+    + 'measured curve says it cannot. Either the instrument improved — update the curve '
+    + 'and this floor together — or the damage model stopped producing partial inversions',
+  )
+})
+
 test('every prop the world can build is oriented outwards', () => {
   // The family-wide version of the check above, measured two ways because each is
   // blind where the other sees. `loftProfile` wound every triangle against its
