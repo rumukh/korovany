@@ -678,6 +678,20 @@ no new dependencies.
   least four instances and is neither structural nor recallable. It is the category this
   document has twice had to mark unguardable, and a summary that folds it into structure
   claims a coverage nothing here has.
+  **Unguardable does not mean unpredictable, and its failures cluster.** Four
+  noticing-failures from this work share one shape: a cheap summary existed, was read, and
+  was wrong about the detail beneath it. An **exit code** read while the one unread line
+  said `ERR_MODULE_NOT_FOUND` — not an assertion failure at all. **Totals** that matched
+  while the contradicting line went to stderr, after the last line of stdout. A **rollup**
+  reporting success while the perturbation had never applied, because an empty pipeline
+  into `Set-Content` leaves the file untouched. A **clean-merge check** published as a
+  control, on a merge that is clean whether or not the tool can detect anything.
+  So noticing cannot be mandated, but its weak point can be pointed at in advance:
+  **wherever a summary is cheaper to read than the thing it summarises.** Which yields the
+  one form of this category that is not a request to remember — **you cannot make yourself
+  notice, but you can refuse to ship an instrument whose summary can disagree with its own
+  detail.** The `APPLIED:` print is exactly that: it does not ask anyone to look past the
+  verdict, it removes the verdict's monopoly.
   A fourth arrived from the author's side, in prose rather than in a query. A pull request
   opened as evidence-only, grew three source extractions during review, and merged with a
   header still reading *"evidence and test hardening only — plus one docblock line"* over
