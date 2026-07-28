@@ -3067,6 +3067,25 @@ test('the engine wires the rig the way these tests measure it', () => {
     + 'every assignment operator, because the previous assertion of this shape looked '
     + 'for `=` and was walked past with `*=`.',
   )
+  // The same for the head, which had no equivalent. A reviewer added
+  // `headPivot.rotation.x *= 0.5` **after** the `applyHeadPose` call and the file stayed
+  // 22/0: the call assertion checks what goes in, the gaze test drives the helper
+  // directly, and neither can see a later write to the pivot the helper just set.
+  //
+  // The order case was already covered — `rotation.order` is asserted absent from this
+  // pass — and that difference is the point. **The head's order had been demonstrated
+  // vulnerable and got a guard; the head's components had not and did not**, even though
+  // `applyChestPose` had taught exactly this lesson for the chest one commit earlier.
+  // Twelfth instance of enumerating only what was shown.
+  assert.equal(
+    (actorPosture.match(/headPivot\.rotation\.[xyz]\s*(?:[-+*/]?=)/g) ?? []).length,
+    0,
+    'a component of the head\'s rotation is assigned directly in the actor posture '
+    + 'pass. Everything the gaze depends on goes through `applyHeadPose` so that the '
+    + 'Euler order is reasserted and the pitch the solve was given is the pitch the head '
+    + 'wears; a later write wins the rendered frame and repeats every frame, and both '
+    + 'the call assertion and the helper sweep are blind to it.',
+  )
 })
 
 
