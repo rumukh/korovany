@@ -425,10 +425,19 @@ test('each art kit is uniform about vertex colours, so a merge can never mix the
  * of which a synthesised white attribute satisfies perfectly.
  *
  * Baseline on S3's branch before the merge: **476 merged surfaces, 0 missing a colour
- * attribute, 0 fully white**. This tree reproduces it exactly, at 352 requests.
+ * attribute, 0 fully white**. This tree reproduces it exactly, at 352 requests, and
+ * tightens it: **0 white vertices out of 351,636**.
  *
- * Detector proven before its zero is trusted, per the programme's rule — absence of a
- * pattern is not absence of the behaviour, a working detector reporting zero is:
+ * The tightening was forced by a mutation. Asking "is this surface entirely white"
+ * missed a planted bare part completely, because `mergeAll` whitens only the inputs
+ * that lacked colours — so a multi-part building comes back *partly* white, which is a
+ * blown-out patch on an otherwise correct mesh and is exactly the shipping defect. The
+ * surface-level question was an instrument answering something adjacent to what was
+ * being asked. Counting vertices catches it, and needs no tolerance, because the art
+ * emits no pure white of its own.
+ *
+ * Detector proven before its zero is trusted, because absence of a pattern is not
+ * absence of the behaviour — a working detector reporting zero is:
  *
  *     mixed merge (one coloured input, one bare)   36 of 72 vertices white  DETECTED
  *     planted all-white geometry                   fully white: true        DETECTED
@@ -443,15 +452,34 @@ test('every prop the game can ask for comes back coloured, and none of it white'
 
   const isFullyWhite = (
     attribute: THREE.BufferAttribute | THREE.InterleavedBufferAttribute,
-  ): boolean => {
+  ): boolean => countWhiteVertices(attribute) === attribute.count
+
+  /**
+   * Counts vertices at exactly white.
+   *
+   * Surface granularity is the wrong instrument, and a mutation proved it: planting one
+   * uncoloured part into a multi-part merge makes `mergeAll` whiten **that part only**,
+   * so the merged surface is partly white and "is the whole surface white" answers no.
+   * The game renders that as a blown-out patch on an otherwise correct building. The
+   * question has to be asked per vertex, which is where the defect actually lives.
+   *
+   * No tolerance is needed and none is used: measured across the whole request space,
+   * this tree has **0 white vertices out of 351,636**. Not a threshold chosen to pass —
+   * a floor the art never touches, because a stylized palette has no reason to emit
+   * pure white and `mergeAll`'s synthesized fill is the only thing that does.
+   */
+  const countWhiteVertices = (
+    attribute: THREE.BufferAttribute | THREE.InterleavedBufferAttribute,
+  ): number => {
+    let white = 0
     for (let index = 0; index < attribute.count; index += 1) {
       if (
-        attribute.getX(index) < 0.999
-        || attribute.getY(index) < 0.999
-        || attribute.getZ(index) < 0.999
-      ) return false
+        attribute.getX(index) >= 0.999
+        && attribute.getY(index) >= 0.999
+        && attribute.getZ(index) >= 0.999
+      ) white += 1
     }
-    return true
+    return white
   }
 
   // --- controls, before the sweep ---
@@ -459,19 +487,14 @@ test('every prop the game can ask for comes back coloured, and none of it white'
   const bare = new THREE.BoxGeometry(1, 1, 1).toNonIndexed()
   const mixed = mergeAll([coloured.clone(), bare], { name: 'control-mixed' })
   const mixedColour = mixed.getAttribute('color')
-  let whiteVertices = 0
-  for (let index = 0; index < mixedColour.count; index += 1) {
-    if (
-      mixedColour.getX(index) >= 0.999
-      && mixedColour.getY(index) >= 0.999
-      && mixedColour.getZ(index) >= 0.999
-    ) whiteVertices += 1
-  }
+  // Uses the same counter the sweep uses, so the control validates the instrument
+  // rather than a second implementation of it that could drift from the real one.
+  const controlWhite = countWhiteVertices(mixedColour)
   assert.equal(
-    whiteVertices,
+    controlWhite,
     mixedColour.count / 2,
     `mergeAll should whiten exactly the uncoloured half of a mixed list; it whitened `
-    + `${String(whiteVertices)} of ${String(mixedColour.count)}. If this is 0 the hazard `
+    + `${String(controlWhite)} of ${String(mixedColour.count)}. If this is 0 the hazard `
     + 'this test exists for has changed shape and the sweep below proves nothing.',
   )
   const planted = ensureVertexColors(new THREE.BoxGeometry(1, 1, 1).toNonIndexed(), 0xffffff)
@@ -553,6 +576,8 @@ test('every prop the game can ask for comes back coloured, and none of it white'
 
   const library = new WorldPropLibrary({ retention: 0 })
   let surfaces = 0
+  let vertices = 0
+  let whiteVertices = 0
   const offenders: string[] = []
   for (const { label, request } of requests) {
     const acquired = library.acquire(request as never)
@@ -567,15 +592,21 @@ test('every prop the game can ask for comes back coloured, and none of it white'
       if (colour.count !== position.count) {
         offenders.push(`${label}#${String(surface.surface)}: colour count mismatch`)
       }
-      if (isFullyWhite(colour)) {
-        offenders.push(`${label}#${String(surface.surface)}: every vertex is white`)
+      vertices += colour.count
+      const white = countWhiteVertices(colour)
+      if (white > 0) {
+        whiteVertices += white
+        offenders.push(
+          `${label}#${String(surface.surface)}: ${String(white)} of ${String(colour.count)} vertices are white`,
+        )
       }
     }
     library.release(acquired)
   }
 
-  // The population is pinned in both directions. A sweep that quietly stopped enumerating
-  // would report zero offenders and look identical to a clean one.
+  // The population is pinned in every direction it can shrink in. A sweep that quietly
+  // stopped enumerating, or one judging surfaces that had lost their vertices, would
+  // report zero offenders and look identical to a clean run.
   assert.equal(
     requests.length,
     352,
@@ -587,12 +618,18 @@ test('every prop the game can ask for comes back coloured, and none of it white'
     `only ${String(surfaces)} merged surfaces were judged; S3's pre-merge baseline was 476, `
     + 'so the enumeration has shrunk and this is measuring less than it did',
   )
+  assert.ok(
+    vertices >= 350_000,
+    `only ${String(vertices)} vertices were examined, against 351,636 measured on this tree`,
+  )
   assert.deepEqual(
     offenders.slice(0, 10),
     [],
-    `${String(offenders.length)} of ${String(surfaces)} merged surfaces are miscoloured. `
-    + '`mergeAll` writes WHITE into inputs that lack colours when any sibling input has '
-    + 'them, so the usual cause is a parts list that mixes a coloured builder with a bare one.',
+    `${String(whiteVertices)} white vertices across ${String(offenders.length)} of `
+    + `${String(surfaces)} merged surfaces. \`mergeAll\` writes WHITE into inputs that lack `
+    + 'colours when any sibling input has them, so the usual cause is a parts list that '
+    + 'mixes a coloured builder with a bare one — and it whitens only that part, which is '
+    + 'why this counts vertices rather than asking whether a whole surface went white.',
   )
   library.dispose()
 })
