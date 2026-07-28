@@ -4253,8 +4253,10 @@ test('the beast pose pass puts the skull where it says it does', () => {
   assert.ok(
     worstTwist < 1e-9,
     `\`poseBeast\` left the skull's axes ${worstTwist.toFixed(4)} degrees off the chest's. `
-    + 'This is the assertion an alias cannot walk past: it does not care what the head is '
-    + 'called or which method turned it, only where it ended up.',
+    + 'This is the assertion an alias *inside `poseBeast`* cannot walk past: it does not '
+    + 'care what the head is called or which syntax turned it, only where it ended up. '
+    + 'It says nothing about the engine, which this cannot execute — that half is held '
+    + 'by bounded spelling pins and is labelled as such.',
   )
   assert.ok(
     worstGaze < 1e-9,
@@ -4330,7 +4332,9 @@ test('the engine poses a beast through the rig these tests measure', () => {
   // hierarchy and may add meshes *into* it, but may never move one of its pivots.
   for (const pivot of ['bodyPivot', 'torsoPivot', 'neckPivot', 'headPivot', 'pelvisPivot']) {
     assert.equal(
-      (beast.match(new RegExp(`\\.(?:add|attach)\\(${pivot}\\)`, 'g')) ?? []).length,
+      (beast.match(
+        new RegExp(`(?:\\.|\\[\\s*['"\`])(?:add|attach)(?:['"\`]\\s*\\])?\\(${pivot}\\)`, 'g'),
+      ) ?? []).length,
       0,
       `createBeast re-parents \`${pivot}\`. \`buildBeastSkeleton\` owns the hierarchy; a `
       + 'second parent assigned here is invisible to every measurement in this file, '
@@ -4338,15 +4342,24 @@ test('the engine poses a beast through the rig these tests measure', () => {
       + 'and then only that animal comes apart.',
     )
   }
-  // And the same claim made alias-proof, by allow-list rather than by ban.
+  // And the same claim made harder to walk around, by allow-list rather than by ban.
   //
   // The line above forbids `.add(headPivot)`. A reviewer wrote
   // `const skullRoot = headPivot; group.add(skullRoot)` and it saw nothing — the alias is
   // an identifier the ban had never heard of. **A ban is bounded by the spellings you
-  // imagined; an allow-list is bounded by the code that exists.** Whatever an alias is
-  // called, it shows up here as an argument name that is not on the list.
+  // imagined; an allow-list is bounded by the code that exists**, so whatever an alias is
+  // called it shows up here as an argument name that is not on the list.
+  //
+  // I called that alias-proof. The same reviewer then wrote `group['add'](skullRoot)` and
+  // walked past it, because the extraction matched dotted calls only. Bracket calls are
+  // matched now, which closes the spellings anybody would write — but a computed member
+  // defeats any source scan, and `createBeast` cannot be executed in Node because it needs
+  // a DOM. So this is a **bounded spelling pin over an allow-list**, which is stronger
+  // than a ban and is still not a proof. Said plainly, because the previous two sentences
+  // in this position were not true.
   const added = [...new Set(
-    [...beast.matchAll(/\.(?:add|attach)\(([^),]*)\)/g)].map((match) => match[1].trim()),
+    [...beast.matchAll(/(?:\.|\[\s*['"`])(?:add|attach)(?:['"`]\s*\])?\(([^),]*)\)/g)]
+      .map((match) => match[1].trim()),
   )].sort()
   assert.deepEqual(
     added,
@@ -4391,20 +4404,30 @@ test('the engine poses a beast through the rig these tests measure', () => {
     source.indexOf('private sampleActorPose('),
   )
   assert.ok(pass.length > 600, 'could not isolate the beast posture pass')
-  // What the pass may touch, expressed as **members rather than objects**.
+  // What the pass may touch, expressed as **members rather than objects** — and bounded,
+  // which the first version of this comment was not.
   //
-  // The previous version extracted `headPivot.<member>` and asserted the set was empty.
-  // A reviewer wrote `const skull = headPivot; skull.rotateY(0.2)` and it saw nothing:
-  // the alias is an identifier it had never heard of, and so are `skull.parent` and an
-  // alias planted in `pivots` before the call. **A source regex cannot generalise across
-  // object identity** — you can ban the spellings you imagined, and an alias is by
-  // definition one you did not.
+  // The version before that extracted `headPivot.<member>` and asserted the set was
+  // empty. A reviewer wrote `const skull = headPivot; skull.rotateY(0.2)` and it saw
+  // nothing: the alias is an identifier it had never heard of, and so are `skull.parent`
+  // and an alias planted in `pivots` before the call. **A source regex cannot generalise
+  // across object identity.**
   //
-  // The behaviour moved to `poseBeast`, which a test executes; what is left here is a
-  // struct fill and one call, and it may touch no Object3D state at all. That is checked
-  // by banning the *member names*, which is the one thing an alias cannot change: however
-  // the head is renamed, moving it still costs a `rotation`, a `quaternion`, a
-  // `rotate*`, a `matrix`, a `position`, a `scale`, an `add` or an `attach`.
+  // So the behaviour moved to `poseBeast`, which a test executes, and what is left here
+  // is a struct fill and one call that may touch no Object3D state at all. I then called
+  // this ban on member *names* "the one thing an alias cannot change" and "alias-proof".
+  // **Both were false, and the same reviewer showed it in one line**:
+  //
+  // ```ts
+  // skull?.['rotateY'](0.2)
+  // ```
+  //
+  // An alias cannot change the member's name; it can change the *syntax used to reach
+  // it*, and a computed member — `const m = 'rotateY'; skull[m](0.2)` — defeats any
+  // scan of source text whatsoever. Dotted and bracket access are both matched below,
+  // which closes the spellings anybody would write. It is a **bounded spelling pin**,
+  // it is labelled as one, and the guarantee that the pose itself is right comes from
+  // `poseBeast` being executed rather than from here.
   for (const member of [
     'rotation', 'quaternion', 'matrix', 'position', 'scale',
     'rotateX', 'rotateY', 'rotateZ', 'rotateOnAxis', 'rotateOnWorldAxis',
@@ -4412,11 +4435,13 @@ test('the engine poses a beast through the rig these tests measure', () => {
     'applyQuaternion', 'lookAt', 'add', 'attach', 'remove', 'removeFromParent', 'parent',
   ]) {
     assert.ok(
-      !new RegExp(`\\.${member}\\b`).test(pass),
-      `the beast pass touches \`.${member}\`. It fills a struct and calls \`poseBeast\`; `
+      !new RegExp(`\\.${member}\\b|\\[\\s*['"\`]${member}['"\`]\\s*\\]`).test(pass),
+      `the beast pass touches \`${member}\`. It fills a struct and calls \`poseBeast\`; `
       + 'every transform it used to write moved there so that a test could execute it. '
-      + 'Touching a pivot here is invisible to that test, and banning the member rather '
-      + 'than the identifier is what an alias cannot walk around.',
+      + 'Touching a pivot here is invisible to that test. Dotted and bracket access are '
+      + 'both checked — a reviewer defeated the dotted-only version with '
+      + '`skull?.[\'rotateY\'](0.2)` — but a computed member name defeats any source '
+      + 'scan, so this is a bounded pin and not a proof.',
     )
   }
   assert.ok(
