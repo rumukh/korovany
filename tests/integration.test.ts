@@ -1277,6 +1277,18 @@ test('an ink shell under a hidden LOD level is free, which is why max beats sum'
  * the hard way: a `docs/10` edit welded `…into composition thatreads as places…` at 161
  * columns, and the three detectors above passed over it.
  *
+ * **Why 100 and not something roomier.** Review argued for 140 to buy false-positive
+ * margin, then measured what that costs and withdrew it. Taking every adjacent prose pair
+ * in both specs as a candidate weld site — 1961 of them — and asking whether the welded
+ * line would fire:
+ *
+ *   >100 catches 96.3%   >120 catches 88.6%   >140 catches 78.9%
+ *
+ * Seventeen points of detection for margin the measurement says is not needed: the longest
+ * legitimate line in either spec is **92**, and **0** exceed 100. The threshold is a
+ * measured point on a curve, not a taste, and it should be moved only against the same
+ * two numbers.
+ *
  * Fenced code blocks are excluded from (1): indented lines inside them are correct, and a
  * detector that fires on the spec's own `text` fences would be silenced within a day.
  *
@@ -1284,9 +1296,21 @@ test('an ink shell under a hidden LOD level is free, which is why max beats sum'
  * was reported to it. This covers both specs, because `docs/08` has the same exposure and
  * only this branch edits both.
  *
- * What it cannot detect: a splice that lands on a paragraph boundary, where the duplicated
- * fragment is a whole line and the join needs no concatenation. None of the four instances
- * had that shape, but nothing rules it out.
+ * What it cannot detect, in two parts:
+ *
+ *   - A splice that lands on a paragraph boundary, where the duplicated fragment is a
+ *     whole line and the join needs no concatenation. Note this is the *inverse* of the
+ *     weld that restored rule (4): that one is a concatenation with no duplicate. They are
+ *     two different gaps and neither implies the other.
+ *   - **A weld of two short lines.** Rule (4) is a length proxy, so a pair summing to 100
+ *     or less is invisible to it: 72 of the 1961 candidate sites, **3.7%**, the shortest
+ *     summing to 21 columns. Not closable by lowering the threshold — 92 is legitimate, so
+ *     anything under ~93 starts firing on real prose. It closes the common case and the
+ *     one observed instance, not the class.
+ *
+ * Since prose here sits within 8 columns of the limit, this also enforces the ~95 wrap
+ * convention as a side effect. That is intended and worth knowing before it surprises
+ * someone: 224 lines currently sit in the 90–100 band.
  */
 test('neither spec contains a mangled paragraph join', () => {
   const specs = [
@@ -1315,7 +1339,10 @@ test('neither spec contains a mangled paragraph join', () => {
       if (/[a-z]\*\*[A-Z]/.test(line)) {
         jammed.push(`${spec}:${String(index + 1)}: ${line.trim().slice(0, 70)}`)
       }
-      if (line.length > 100 && !line.startsWith('|')) {
+      // Table rows are excluded by what they are, not by where they start: an indented
+      // row is still a table row. None exist in either spec today, so this is latent
+      // rather than live — which is exactly when it is cheap to get right.
+      if (line.length > 100 && !line.trimStart().startsWith('|')) {
         overlong.push(
           `${spec}:${String(index + 1)}: [${String(line.length)}] ${line.trim().slice(0, 60)}`,
         )
