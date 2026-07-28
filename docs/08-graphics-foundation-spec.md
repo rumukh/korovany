@@ -735,8 +735,8 @@ RIM_LIGHT_COUNT                      1       whole scene, non-shadowing
 BLOOM                                0.42 strength / 0.55 radius / 0.9 threshold
 GRADE_VIGNETTE                       0.22
 POST_PASSES                          4       per frame: render, bloom, grade, output
-DRAW_CALLS_PER_FRAME_MAX             507     per frame at a faction start (measured max 453 + ~12%)
-VERTICES_PER_FRAME_MAX               1170k   per frame at a faction start (measured max 1,044k + ~12%)
+DRAW_CALLS_PER_FRAME_MAX             507     per frame at a faction start (re-measured max 479; headroom 6%)
+VERTICES_PER_FRAME_MAX               1170k   per frame at a faction start (re-measured max 1,078k; headroom 9%)
 CHARACTER_GEOMETRY_KEYS             <=180    distinct keys across every faction x role x variant
 BEAST_GEOMETRY_KEYS                 <=26     keyed by bulk/length, shared across the four roles
 CARAVAN_GEOMETRY_KEYS                6       shared by every caravan in the run
@@ -854,7 +854,6 @@ a DOM to measure, so they remain prose rather than tests. Saying so plainly is
 better than implying they are enforced.
 
 ### 7.0 Open follow-ups, with the reasoning that makes them actionable
-
 1. **No real-GPU frame-time measurement exists.** Checked, not assumed: no GPU is
    reachable from headless Chromium on the machine these numbers were taken on. Needs
    different hardware, not more effort.
@@ -957,6 +956,38 @@ The general point is the sampling one. Three sites suggested a conditional hazar
 watching; eleven showed a universal one already fixed. Neither conclusion was available
 from the other sample, and the difference is which sites happened to be in reach.
 
+### 7.0.3 The visual-QA requirement, discharged by a control rather than by looking
+
+*"No prop or character may render as a solid ink fill"* is the one QA requirement that
+sounds subjective and is not. An ink shell that swallows its source draws the object as a
+flat silhouette, which replaces shaded pixels rather than adding to them — so it shows up
+as a large near-black fraction with a collapsed mid-tone band. Measured over ten captures
+by decoding each frame and binning luma:
+
+```text
+nine scenarios                     1.6 - 4.6 % near-black,  95 - 98 % mid-tone
+villain-fort-night-rain               21.6 %                     77.8 %
+```
+
+The outlier is the interesting part, and the naive reading — *ink is filling the fort* —
+is wrong. Isolating each toggle:
+
+```text
+villain-fort day-clear      4.60      night-clear             4.14
+             day-rain      23.59      night-rain             21.65
+                                      night-rain, INK OFF    22.23   <- unchanged
+```
+
+**Night is not the cause; rain is; and turning ink off leaves it where it was.** The fort
+is already the darkest biome (mean luma 51.9 against the palace's 79.7), so a uniform wet
+darkening pushes a population that was sitting just above the threshold below it — the
+mean falls 22% while the count across a fixed cut multiplies fivefold. A threshold effect
+on the darkest start, not a fill.
+
+Worth keeping as a method note: **the discriminating measurement was the ink-off control,
+not the outlier.** Nine clean scenarios and one bad number cannot distinguish "ink is
+broken here" from "this scene is dark", and no amount of staring at the capture settles
+it either. One more capture with the suspected cause removed settles it in one comparison.
 ### 7.1 `OUTLINE_WORLD_DRAWS_MAX` — the multiplier, and the unit that changed
 
 Two corrections, both found at Wave 4 integration by measuring rather than by
