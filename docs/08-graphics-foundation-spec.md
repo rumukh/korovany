@@ -1125,8 +1125,8 @@ Deferred to Wave 4 because it could only be answered with both kits merged. Answ
 
 There are seven traversals in `src/game/` that either assign `Mesh.material` or call
 `dispose()`. Four assign material and all four carry the `isOutlineShell` guard — those
-are what the scan enforces. Three dispose, and **two of those carry no guard at all**:
-`GameEngine.ts:9137` and `GeneratedWorldRuntime.ts:1992`.
+are what the scan enforces. Three dispose, and **two of those carry no `isOutlineShell`
+guard**: `GameEngine.ts:9137` and `GeneratedWorldRuntime.ts:1992`.
 
 Both are correct anyway, because they reach safety a different way. They **release the
 shells first, then traverse**, so by the time the traversal runs there is no shell left
@@ -1140,6 +1140,32 @@ false**, and the natural way to silence it would be to add a predicate that is r
 given the ordering — which quietly suggests the ordering is optional. It is not: for
 instanced sources the shell shares `instanceMatrix` with its source, and ordering is the
 only thing that makes disposal safe.
+
+**Widened to all twelve traversals rather than the seven, the false-positive rate gets
+worse, and the extra cases name two more blindnesses a token scan has.** The foundation
+session classified all twelve and flagged **five as unguarded — all five false**. Four
+were the ordering case above, generalised: builders that are safe purely because they run
+*before* anything outlines their output. The fifth is new and is the sharpest of the
+three:
+
+**A guard can be spelled differently.** `removeAndDisposeObject` does carry a predicate —
+`StylizedArtLibrary.isLibraryOwned` at `GameEngine.ts:9150` and `:9153` — it simply
+answers a *different question*: who owns this resource, not is this a shell. A scan
+searching for the token `isOutlineShell` calls that site bare; a scan searching for "some
+guard" calls it covered and would miss a genuinely unguarded sweep that happened to
+mention any predicate. So the three failure modes are:
+
+| the guard is… | a token scan says |
+|---|---|
+| the token it looks for | correct |
+| a *different* predicate answering a different question | false positive, or false negative if the scan is loosened |
+| an **ordering fact with no line of code at all** | false positive, always |
+
+The third has no textual form to search for, which is why widening the scan cannot fix
+it. The remedy is the other direction: **convert an ordering guard into an asserted one.**
+`GeneratedWorldRuntime`'s dispose ordering was written only in a comment until a mutation
+moved the release below the sweep and the suite stayed green; it is now asserted directly
+— the test records the dispose sequence and requires each shell to precede its source.
 
 The material sweeps need a *predicate* because they run while shells are attached. The
 disposal sweeps need an *ordering* because they run to tear the shells down. One scan

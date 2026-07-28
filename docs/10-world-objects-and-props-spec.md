@@ -855,13 +855,107 @@ of the assertion.** Streaming a region, seeding a cache, constructing an input b
 each one moves the test into a world that may not exist, and the more careful the setup
 looks, the less likely anyone is to question it.
 
+**But that rule is too broad as first written, and the refinement is the usable part.**
+Warming is *usually* correct — a probe that queries collision without streaming a region
+passes on an empty world and proves nothing, so most setup is not merely allowed but
+required. The distinction is **who owns the ordering**:
+
+- Where residency, seeding or construction is *incidental* to what is under test, do it.
+  The test needs a world to ask questions of.
+- Where the ordering **is** the contract — "can the player move on the first click" is a
+  question about a specific moment in `GameEngine`'s sequence — the test must reproduce
+  production's ordering rather than a convenient one.
+
+Contributed by the reviewer who had praised the offending warm-up by name as rigour, then
+named its own error precisely: *"I validated it by reading it. I saw focus-then-measure,
+recognised the shape of a good habit, and stopped — without asking what the test would do
+if the code were broken."* Which is the same rule it had given this pass one message
+earlier — measure the detection threshold, not the pass or fail — applied to an assertion
+and not to a test, because the test looked careful and the assertion looked plain.
+
+**Appearance of rigour is not evidence of rigour**, and it is a worse proxy than no proxy,
+because it is anti-correlated with scrutiny. The question that would have caught it is one
+`grep`: *what ordering does production use?*
+
+**A guard you can grep for is a guard you can keep; a guard made of ordering is one a
+refactor is entitled to break.** Contributed by the foundation session after it tested a
+generalisation of this pass's finding rather than agreeing with it — twelve traversals
+classified, five flagged as unguarded, and **all five false positives**. Two guard
+mechanisms, neither of them the token it searched for: one exemption spelled
+`isLibraryOwned` instead of `isOutlineShell`, and four builders safe purely because they
+run *before* anything outlines their output.
+
+The second kind is the dangerous one. The exemption is written down and holds whenever it
+runs. The ordering guard is written down **nowhere** — nothing in those builders says
+"must run before outlining" — so co-locating outline application into the builder, a
+reasonable refactor that puts the silhouette decision next to the geometry, would silently
+start marking every inverted hull as shadow-casting. Four builders at once, no test
+failing, and the diff that breaks it touches a different function from the one that
+becomes unsafe.
+
+This file has exactly one bulk traversal, the teardown dispose sweep, and it rests on
+exactly this kind of guard: `releaseOutline` must run before it or shells are freed while
+borrowing their source's `instanceMatrix`. That ordering was written only in a comment
+until a reviewer's mutation moved the release below the sweep and 283 tests stayed green.
+It is now greppable — the test records the dispose sequence and asserts each shell
+precedes its source — which is the general remedy: **convert an ordering guard into an
+asserted one, or accept that a refactor may take it.**
+
+The scanner that produced the five false positives is its own entry: it tested for *the
+presence of one guard token* rather than *"can this traversal see a shell?"*, so it was
+blind to a guard spelled differently and blind to a guard that is an ordering fact with no
+line of code at all. That is rule 3 firing on the first check written after the rule
+landed, against its own author. **Landing a rule does not install it.**
+
+**Measure adopted fixes at least as hard as original code, precisely because they feel
+settled.** The last entry, and the one that explains why several of the others survived
+so long. **A check inherited from review carries borrowed authority**: it arrives already
+argued for, by someone who was right about something else, which is exactly the condition
+under which nobody measures it again.
+
+Two of the three worst vacuous checks in this file were adopted from reviews. The ledger
+identity was derived here, praised by the programme lead, recorded as programme guidance
+and propagated to the integrator before anyone asked what it forbade. The phantom-pin
+guard had **a reviewer's name on the reasoning and this pass's name on the
+implementation**, and neither party tested it — it was caught only because the reviewer
+went back to check its own suggestion rather than admire it, and found the weakened form
+blind until 29 simultaneous phantoms.
+
+That division is the mechanism worth naming: when the proposer and the implementer are
+different people, each can reasonably believe the other validated it. An original check
+has one owner and one conscience; an adopted one has two owners and, absent care, none.
+
+**Severity is a property of callers, not of code — and an unreachable measurement can
+become another session's calibration constant.** Contributed by the foundation session
+about its own work, and it is the only entry here where the fault propagated *between*
+trees. It characterised a shading defect by its worst reachable-in-principle magnitude —
+104–125° — without asking who calls the builder. The answer was nobody: the only
+production route into that path has zero call sites in any of the four trees.
+
+Those synthetic figures then became the calibration for `worstNormalError`'s 90°
+threshold in this file. Measured properly, the defect runs **0–9°** in production, the
+anisotropy branch asymptotes at **80.08°** and so can never trigger at any parameter
+value, and correct *faceted* geometry — the default — produces false positives from
+**81.3°**, opening a lying band below the useful one.
+
+Two things to take from it. **Reproducibility is not reachability**: a defect that
+reproduces on demand feels verified, and the ninety minutes it takes to ask "who calls
+this?" is the cheapest step in the whole exercise. And a number quoted as a reference
+point in one session arrives in another as a *constant*, stripped of the conditions that
+produced it — so state the parameters a measurement was taken at, or it will be reused
+where they do not hold.
+
+The check here is now moot rather than merely tolerable — `smooth: true` appears zero
+times in `src/`, so every `loftProfile` call takes the faceted path — but the limit is
+written at the assertion, because that is the only place it is recoverable from.
+
 **A check can fire eventually and still be blind, and that is a different failure from
-one that cannot fire at all.** The phantom-pin guard is the case.
-A phantom is a key in the retention window with no cache entry behind it: it holds a slot,
-pins nothing, releases nothing on eviction, and — worse than inert — retaining one at the
-limit evicts a real key, so the fault destroys exactly what the window exists to preserve.
-The guard adopted for it asserted `propCacheSize >= retainedPropCount`, on the sound
-premise that every real pin has an entry.
+one that cannot fire at all.** The phantom-pin guard is the case. A phantom is a key in
+the retention window with no cache entry behind it: it holds a slot, pins nothing,
+releases nothing on eviction, and — worse than inert — retaining one at the limit evicts
+a real key, so the fault destroys exactly what the window exists to preserve. The guard
+adopted for it asserted `propCacheSize >= retainedPropCount`, on the sound premise that
+every real pin has an entry.
 
 The premise is true and the assertion still doesn't test it. `propCacheSize` also counts
 entries held only by live borrowers, and those mask the deficit one for one: with `B`
