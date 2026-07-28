@@ -1016,6 +1016,58 @@ bare `NAME=value` line carries no scope, so the scope survives only in whoever w
 Hence the second column, and hence the rule that a budget with no nameable population is
 the next instance.
 
+### 7.2.1 A floor can assert a shape nobody meant to, and there are two kinds
+
+Every budget above is enforced by a test, and every one of those tests needs a floor
+proving it measured something — an assertion whose domain is empty passes by looking at
+nothing, which is this programme's single defect class. But a floor can do a second job
+nobody asked it for:
+
+> **A floor that exists to prove the measurement ran can accidentally assert the shape of
+> the thing measured. The tell is that the codebase improving makes it fail. Any
+> assertion that goes red when the code gets better is asserting something nobody meant
+> to.** The smallest value that still separates "ran" from "found nothing" is almost
+> always 1.
+
+Found in the material-sweep scanner, whose floor of `>= 3` also claimed *"at least three
+separate material sweeps exist"* — so consolidating them into one guarded helper, the fix
+that test's own docblock argues for, would have turned it red on a success. Applied to
+the floors this wave added, it found three more, and **all three would have been tripped
+by the LOD and instancing follow-up recommended in §7.0**:
+
+| floor | value once ink is 4× cheaper | what it demanded |
+|---|---|---|
+| `perRegionPeak >= 5` | fires at 2 | spend more ink |
+| `visibleSetPeak >= 40` | fires at 11 | spend more ink |
+| `surfaces >= 476` | fires when two surfaces merge | draw more calls |
+
+Replaced with claims that survive the improvement: what separates this tree from `main`
+is **zero** world ink, so the floor is 1; the multiplier is a claim about **simultaneity**
+rather than magnitude, true at 43 draws and equally true at 3; and the whole-request-space
+sweep pins that **every request it enumerated produced something to judge**, which holds
+however the surfaces are arranged. Measured maxima moved into failure messages and into
+this document, where changing them is an edit rather than a test failure.
+
+**And the corollary needs a split, because two of the replacements still go red on an
+improvement and that is correct.** Under the same 4× simulation:
+
+```text
+old   "the busiest single region spent only 2 of 8 ink draws"
+new   "the peak was 11 against a cap of 48 ... lower the cap rather than this floor"
+```
+
+Both fail. They demand opposite things.
+
+> **The question that separates the bug from the budget: does the failure demand you
+> change the code back, or that you update the constant describing the code?** The first
+> is what the corollary names. The second is a budget tracking reality — and deleting it
+> is exactly how a cap silently stops bounding anything, which is the failure this
+> programme hit eight times.
+
+So `visibleSetPeak * 2 >= OUTLINE_WORLD_VISIBLE_DRAWS_MAX` stays. If instancing takes the
+peak to 12, the cap must come to 24 or below. That is the correct consequence, not a test
+to silence.
+
 ### 7.3 Should the repo-wide sweep scan cover disposal and occlusion too?
 
 Deferred to Wave 4 because it could only be answered with both kits merged. Answer:
