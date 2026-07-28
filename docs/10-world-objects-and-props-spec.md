@@ -620,14 +620,19 @@ Targets:
 
 ## 13. Tests that could not fail
 
-Nine defects on this programme were the same defect: **a check whose answer did not
+Every defect in the table below is the same defect: **a check whose answer did not
 depend on the thing it claimed to measure.** They are collected here because the pattern
 cost more time than any bug in the geometry, and because every one of them read as
 diligence right up until someone measured the instrument instead of the code.
 
-Twelve, by the end. The last three arrived *after* this section was written, which is the
-most useful thing about them: knowing the pattern by name does not stop you shipping it.
-Two were in this document's own advice rather than in any test.
+The table kept growing *after* this section was written, which is the most useful thing
+about it: knowing the pattern by name does not stop you shipping it — it only shortens the
+time to the next one. Several entries are in this document's own advice rather than in any
+test, and one is in this section's own prose. It opened by counting its entries in words;
+the count said nine, then twelve, while the table said seventeen. **A census restated
+beside the thing it counts is a second copy that nobody updates**, so the count is gone and
+the table is the only authority. Same reasoning as citing symbols rather than line numbers,
+one row further in.
 
 | The check | What it could not see |
 | --- | --- |
@@ -649,20 +654,30 @@ Two were in this document's own advice rather than in any test.
 | teardown's instanced-shell ordering | spec 08 invariant 4 was tested where `disposeShell` is *implemented* and nowhere it is *relied on*; skipping the release entirely left 13 shells freeing their sources' buffers, suite green |
 | `referenceCount === 0` double-release detector | the dangerous case leaves the count at 1, so the release *succeeds* and steals another holder's reference |
 
-Four rules fall out of them, in rough order of how much they would have saved:
+The rules that fall out of them, in rough order of how much they would have saved:
 
-1. **A silent runtime fixup does not protect an invariant — it destroys the evidence
+1. **Disable the fix and confirm the test goes red.** This is first because it is the only
+   rule here that requires no insight — every other one asks you to *notice* something, and
+   the record shows noticing is exactly what fails. The spawn regression is the proof: its
+   mechanism was diagnosed correctly and fixed, its ordering was then diagnosed correctly
+   and fixed, and after both corrections the test was *still* green at 284 with the fix
+   entirely disabled, because it ran one seed that never contained the fault. **The failure
+   survived being correctly understood twice.** One line, applied at iteration one, would
+   have caught all three layers; it also caught the vacuous ledger identity, the phantom-pin
+   threshold, the ink-budget system test and this document's own corruption, at one run each.
+   Ranked first by the programme lead, and the cost-to-benefit is not close.
+2. **A silent runtime fixup does not protect an invariant — it destroys the evidence
    that the invariant broke.** `conformWinding` was well-intentioned, idempotent and
    load-bearing-looking, and it made a 560-geometry assertion incapable of failing.
-2. **Validate the instrument before trusting the reading.** Every orientation check here
+3. **Validate the instrument before trusting the reading.** Every orientation check here
    now proves it catches a deliberately corrupted control *before* it is believed about
    real geometry — and the control must be corrupted in the way that matters: a
    *correctly wound indexed* geometry is what exposes index-blindness, not a reversed one.
-3. **State what a check cannot detect, next to what it asserts.** Sign and magnitude are
+4. **State what a check cannot detect, next to what it asserts.** Sign and magnitude are
    different questions; relative and absolute orientation are different questions; a
    closed-solid invariant says nothing about an open sheet. Most of these checks were
    doing exactly what they said, where what they said was narrower than the reader assumed.
-4. **When a test and the code disagree about how to count something, suspect the code
+5. **When a test and the code disagree about how to count something, suspect the code
    too.** The ink budget looked like a test over-counting. The counter was wrong.
 
    A reviewer sharpened this into the more useful form: *the side that got the domain
@@ -672,14 +687,14 @@ Four rules fall out of them, in rough order of how much they would have saved:
    scope. **Neither was counting draws, which is the only thing the budget is about.**
    Both were wrong in the same direction for the same reason, and the mistake was
    assuming the production side had the better vantage point.
-5. **A mutation proof only licenses an assertion if the mutation is drawn from the damage
+6. **A mutation proof only licenses an assertion if the mutation is drawn from the damage
    model the assertion actually faces.** Rule 2 says validate the instrument before
    trusting the reading, and that is not enough on its own: a control can be corrupted in
    a way that is *detectable but impossible*, which passes while proving nothing about the
    real input. Prefer mutating the real subject over a stand-in — a proof carried per
    geometry costs a clone and removes the entire question of whether the control resembles
    the thing it vouches for.
-6. **Reading a suite cannot find these; mutating the source can.** Every entry above was
+7. **Reading a suite cannot find these; mutating the source can.** Every entry above was
    found by argument, one at a time, over six review rounds — and a reviewer then found
    two more in an afternoon by injecting the defects the suite claims to guard and seeing
    which survived. **10 mutations, 8 caught, 2 survived**, and both survivors were
@@ -736,7 +751,7 @@ Four rules fall out of them, in rough order of how much they would have saved:
    equivalent mutation against a guard whose only caller already checks. The gates are not
    optional overhead; they are what makes the results mean anything.
 
-7. **A regression test needs a seed that reproduced the bug.** Ordering, mechanism and
+8. **A regression test needs a seed that reproduced the bug.** Ordering, mechanism and
    assertion can all be correct and the test still prove nothing if its input never
    carried the defect. The spawn regression is the case, and it survived *three* rounds
    of correct fixes: the mechanism moved from snap to keep-out, the test's call order
@@ -1282,6 +1297,27 @@ hour, and none of the rest of this subsection would have been needed.**
 The reason it was skipped is worth naming too: the shared object store makes an unpushed
 branch *look* shareable. Colleagues could read it through worktrees, so the cost of not
 pushing was invisible from the inside and paid entirely by everyone else.
+
+**A test's name is vocabulary, not mechanism — so "is the test there?" answers yes on a
+tree where it cannot catch the bug.** This pass claimed one of its fixes had reached the
+integration branch and probed for it with `teardown`, `disposeShell` and `releaseOutline`.
+Measured across three trees: `disposeShell` appears in **3 files in every one of them**,
+including the tree that lacked the fix — zero discriminating power. The programme lead
+caught it with the token this pass had recommended *to the programme lead* one message
+earlier: pick the string that only exists after the fix. Here that was `patchedDispose`,
+0 files before and 1 after.
+
+The sharper half emerged on re-measuring. The test's **exact name** —
+*"teardown detaches every instanced ink shell before its source is disposed"* — is present
+in the tree without the fix, because the upgrade rewrote the body from 61 lines to 100 and
+left the title alone. A grep for the test name, which is the most natural probe anyone
+would reach for, reports **present** on a tree where the test asserts post-hoc state and
+cannot see ordering at all.
+
+So the general form is stronger than "avoid topic words": **the tokens nearest a fix are
+the ones most likely to predate it, and a test's name is the nearest token of all.** A fix
+adds a mechanism, rarely a vocabulary. Probe for the mechanism — `patchedDispose`,
+`startAnchors`, `displaceSeamless` — never for what the thing is *about*.
 
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
