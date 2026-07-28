@@ -783,8 +783,16 @@ no new dependencies.
   of them require the person most likely to be wrong to remember to be careful, which is
   precisely the thing this section records failing at least six times. This one **a reader
   can apply to someone else's prose with no access to the author's process.** It is the
-  only entry in the file that survives its author not co-operating, and on the evidence
-  gathered here that is the property worth optimising for.
+  only entry in the file that survives its author not co-operating.
+  **The asymmetry is the finding; what to do about it is not.** Fourteen rules that ask an
+  author to remember something, one that does not, in a section documenting at least six
+  occasions when a rule failed against the person who had just written it — both of those
+  counts are floors, assembled from instances nobody went looking for. *"So optimise for
+  rules that survive their author"* was the sentence that first went here, and it is
+  exactly the tidy conclusion the paragraph above warns about: a prescription drawn from a
+  one-versus-fourteen ratio over samples of unknown size, arriving after the question felt
+  settled. The asymmetry is recorded because it is measurable and nobody had noticed it.
+  Nothing follows from it that has been checked.
   There is a structural consequence, and it is the strongest practical thing this work
   produced. **The correction neither participant can make is the one from someone with no
   stake in the exchange.** Two parties in a review loop audit each other's *arithmetic*
