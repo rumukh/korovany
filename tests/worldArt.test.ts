@@ -410,14 +410,30 @@ function reverseAsABuilderWould(geometry: THREE.BufferGeometry): THREE.BufferGeo
  * Neither alone covers the family. The centroid ray is decisive for compact solids but
  * weak on a sparse branch structure, where a correct fort tree already reads 47% inward
  * because its faces do not surround its centroid; signed volume is decisive there and
- * says nothing about an open sheet. Measured over the whole request space: centroid
- * alone catches 550 of 560 reversals, volume closes the remaining 10, and the pair
- * misses none.
+ * says nothing about an open sheet.
+ *
+ * The half threshold is derived, not tuned. Reversing every face negates each face's
+ * alignment with the centroid ray while leaving `|alignment|` — and therefore the
+ * decisive set — untouched, so reversal maps the inward fraction `f` to exactly `1 - f`.
+ * Measured across the request space, the largest departure from that law is 0.0023, all
+ * of it faces jittering across the decisiveness cutoff. A half is consequently the only
+ * threshold whose margin is symmetric for every geometry; any other value trades
+ * false-pass headroom for false-fail headroom with nothing to justify the rate. This
+ * check previously used 0.4, which put a *correct* washing line at 0.390 — 0.010 from
+ * being reported inside out. At a half its margin is 0.110, and the tightest in the
+ * whole family is the fort tree at 0.033.
  */
 function readsOutward(geometry: THREE.BufferGeometry): boolean {
   const { inward, decisive } = centroidInwardFaces(geometry)
-  if (decisive > 0 && inward < decisive * 0.4) return true
+  if (decisive > 0 && inward < decisive * 0.5) return true
   return signedVolume(geometry) > 0
+}
+
+/** How far a geometry's inward fraction sits from the undecidable half. */
+function centroidMargin(geometry: THREE.BufferGeometry): number | null {
+  const { inward, decisive } = centroidInwardFaces(geometry)
+  if (decisive === 0) return null
+  return Math.abs(inward / decisive - 0.5)
 }
 
 /**
@@ -885,6 +901,8 @@ test('every prop the world can build is oriented outwards', () => {
   const failures: string[] = []
   const undetectable: string[] = []
   const open: string[] = []
+  let tightestMargin = 1
+  let tightestMarginLabel = ''
   try {
     for (const [label, request] of requests) {
       for (const part of library.build(request)) {
@@ -903,6 +921,15 @@ test('every prop the world can build is oriented outwards', () => {
           undetectable.push(`${label}#${part.surface}`)
         }
         damaged.dispose()
+        // How close this prop sits to the half where the centroid reading means nothing.
+        // The verdict being right today says nothing about how much room it has, and a
+        // prop drifting toward the half gets reported inside out while being perfectly
+        // fine — a false *failure*, which costs more to diagnose than a false pass.
+        const margin = centroidMargin(part.geometry)
+        if (margin !== null && margin < tightestMargin) {
+          tightestMargin = margin
+          tightestMarginLabel = `${label}#${part.surface}`
+        }
         // Face population only. The disagreement count this also returns is *always*
         // zero here and asserting on it would be theatre: `mergePropParts` ends in
         // `mergeAll`, which recomputes normals from the winding, so the two sides of
@@ -967,6 +994,14 @@ test('every prop the world can build is oriented outwards', () => {
   assert.ok(
     judgedFaces >= 20000,
     `only ${String(judgedFaces)} faces carried an orientation to judge`,
+  )
+  // Headroom, not just correctness. Measured tightest is the fort tree at 0.033; the
+  // floor sits below it so ordinary art variation does not trip, but a prop drifting to
+  // within 2% of the undecidable half fails here — while its verdict is still right —
+  // rather than silently crossing later and being reported inside out.
+  assert.ok(
+    tightestMargin > 0.02,
+    `${tightestMarginLabel} sits ${tightestMargin.toFixed(3)} from the half where the centroid reading is meaningless; it needs volume backing or a different instrument`,
   )
 })
 

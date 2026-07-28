@@ -698,6 +698,28 @@ Four ferns fail that proof and are named in the assertion rather than excused, b
 sheet has no inside to be on the wrong side of. That list is the `open` list arrived at
 from the other direction: **orientation is undefined exactly where volume is.**
 
+**The centroid threshold is derived, not tuned, and the first version of it was one
+percent from a false failure.** Reversing every face negates each face's alignment with
+the centroid ray while leaving `|alignment|` — and therefore which faces are decisive at
+all — untouched. So reversal maps the inward fraction `f` to exactly `1 - f`; measured
+across the request space the largest departure from that law is **0.0023**, all of it
+faces jittering across the decisiveness cutoff. A half is therefore the *only* threshold
+whose margin is symmetric for every geometry, and any other value trades false-pass
+headroom against false-fail headroom with nothing to justify the rate.
+
+This mattered concretely. The check first shipped at 0.4, chosen because it looked
+comfortably clear of a compact solid's near-zero reading. A correct washing line sits at
+**0.390** — 0.010 from being reported inside out. Nothing was failing, and nothing would
+have failed until someone added a sag segment to a cloth prop, at which point the suite
+would have called a perfectly good prop inverted. At a half the same prop has 0.110, and
+the tightest margin in the family is the fort tree at 0.033.
+
+The test now asserts that margin with a floor of 0.02, so a prop drifting toward the
+undecidable half fails **while its verdict is still right**, rather than crossing later
+and failing with a diagnosis that is actively wrong. A false failure costs more than a
+false pass: it sends someone to look for a bug that is not there, in a file where the
+real bugs have all been in the instruments.
+
 The corollary for anything with a reference count: `release(key)` cannot detect a double
 release because a key has no holder identity, so the fault is invisible at that boundary.
 `WorldPropLibrary.release(asset)` takes a **receipt**, which does have identity, and
