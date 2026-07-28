@@ -58,9 +58,21 @@ test('destroy() releases every outline binding collection the engine declares', 
 
   const destroy = methodBody(ENGINE, 'destroy(): void {')
   for (const field of collections) {
-    const releases = new RegExp(
-      `this\\.${field}[\\s\\S]{0,200}?releaseOutline\\(`,
-    ).test(destroy)
+    // Bounded by the next other collection or the dispose sweep, not by a character count.
+    // A fixed window tests adjacency and reports it as association: at 200 characters the
+    // neighbouring collection's release sat 6 characters outside, and emptying this loop —
+    // the defect the assertion exists to catch — removed enough bytes to pull it inside.
+    // Only the last collection in the body was ever guarded; the rest borrowed a successor's
+    // release, so a third collection would join the derivation above already exempt.
+    const at = destroy.indexOf(`this.${field}`)
+    const bounds = [
+      ...collections
+        .filter((other) => other !== field)
+        .map((other) => destroy.indexOf(`this.${other}`, at + 1)),
+      destroy.indexOf('this.scene.traverse(', at + 1),
+    ].filter((index) => index !== -1)
+    const releases = at !== -1
+      && destroy.slice(at, Math.min(...bounds)).includes('releaseOutline(')
     assert.ok(
       releases,
       `destroy() never passes this.${field} to releaseOutline — its shells will reach the `

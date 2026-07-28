@@ -2096,3 +2096,109 @@ test('the geometry cache budget counts every key the cache actually holds', () =
     + 'the total against the ceiling in the same commit.',
   )
 })
+
+
+/**
+ * The kettle helm decides a winding assertion on a quantity that is exactly zero.
+ *
+ * Reported by the Wave 4 reviewer, which declined to act on it — correctly, on both
+ * counts: reshaping a shipped silhouette to satisfy a test is the wrong direction, and
+ * loosening the assertion would trade a real check for a quiet one. It flagged it as a
+ * latent flake and left it. This makes the flake **visible** instead, which is the third
+ * option and the one this programme keeps arriving at.
+ *
+ * `insideOutTriangles` asks `dot(face, first-vertex normal) < 0`. Measured across every
+ * headgear kind, the weakest `|cos|` is:
+ *
+ * ```text
+ * kettle      0.000e+0      <- 12 faces of 180, exactly zero
+ * ragHood     5.911e-1
+ * hood        6.129e-1
+ * ...
+ * greathelm   9.997e-1
+ * ```
+ *
+ * **That is a discontinuity, not a tight margin.** Every other kind sits above 0.59; the
+ * kettle sits at exactly 0 because its brim's lathe profile reverses sharply, so
+ * `LatheGeometry`'s averaged normal at that ring points *along* the profile — exactly
+ * perpendicular to its own face. The dot is `+0`, and `+0 < 0` is false, so today it
+ * passes **deterministically** rather than by luck. The hazard is that nothing about the
+ * geometry keeps it on that side: nudge the profile and those twelve faces become a tiny
+ * negative, and a test named for inside-out triangles fails on a helm that is not inside
+ * out.
+ *
+ * So this pins the two facts that make the pass meaningful rather than accidental — the
+ * degenerate faces are exactly zero, and none of them is negative — and fails with an
+ * explanation instead of leaving the next person to rediscover the geometry.
+ *
+ * **What it deliberately does not do:** change `insideOutTriangles`, which would make it
+ * detect less, or move the art. The face-orientation question at those twelve faces is
+ * genuinely undefined for a normal-based instrument, and it is already answered
+ * structurally by the edge-consistency check, which consults no normals at all.
+ */
+test('the kettle helm passes its winding check by construction, not by rounding', () => {
+  const geometry = buildHeadgear('kettle')
+  const position = geometry.getAttribute('position')
+  const normal = geometry.getAttribute('normal')
+  const index = geometry.getIndex()
+  const count = index ? index.count : position.count
+
+  const a = new THREE.Vector3()
+  const b = new THREE.Vector3()
+  const c = new THREE.Vector3()
+  const edge1 = new THREE.Vector3()
+  const edge2 = new THREE.Vector3()
+  const face = new THREE.Vector3()
+  const stored = new THREE.Vector3()
+
+  let judged = 0
+  let exactlyZero = 0
+  let negative = 0
+  let nearZeroButNot = 0
+  for (let triangle = 0; triangle + 2 < count; triangle += 3) {
+    const i0 = index ? index.getX(triangle) : triangle
+    const i1 = index ? index.getX(triangle + 1) : triangle + 1
+    const i2 = index ? index.getX(triangle + 2) : triangle + 2
+    a.fromBufferAttribute(position, i0)
+    b.fromBufferAttribute(position, i1)
+    c.fromBufferAttribute(position, i2)
+    face.copy(edge1.subVectors(b, a)).cross(edge2.subVectors(c, a))
+    if (face.lengthSq() < 1e-14) continue
+    stored.fromBufferAttribute(normal, i0)
+    if (stored.lengthSq() < 1e-14) continue
+    judged += 1
+    const cosine = face.normalize().dot(stored.normalize())
+    if (cosine < 0) negative += 1
+    if (cosine === 0) exactlyZero += 1
+    else if (Math.abs(cosine) < 1e-6) nearZeroButNot += 1
+  }
+  geometry.dispose()
+
+  assert.ok(judged > 0, 'the kettle produced no judgeable faces, so this asserts nothing')
+
+  assert.equal(
+    negative,
+    0,
+    `${String(negative)} kettle faces wind against their own normal. If this is the first `
+    + 'failure after a change to the brim profile, the helm is probably not inside out: '
+    + 'twelve of its faces sit at exactly zero margin because the profile reverses and '
+    + 'the lathe normal there points along it, and a nudge tips them negative. Check the '
+    + 'edge-consistency instrument, which reads no normals, before touching the winding.',
+  )
+
+  assert.equal(
+    nearZeroButNot,
+    0,
+    `${String(nearZeroButNot)} kettle faces sit within 1e-6 of zero without being exactly `
+    + 'zero, which means the perpendicularity is now the result of arithmetic rather than '
+    + 'of the profile being exactly reversed. At that point the sign really is decided by '
+    + 'rounding, and this check stops being deterministic.',
+  )
+
+  assert.ok(
+    exactlyZero > 0,
+    'no kettle face sits at exactly zero margin any more. That is very likely an '
+    + 'improvement — but it means the geometry this test was written against has changed, '
+    + 'so re-measure the weakest margin before deleting this.',
+  )
+})

@@ -931,6 +931,7 @@ from the request enumeration). Boundary edges before → after raw displacement 
 seam repair:
 
 ```text
+site (PropKit.ts line at time of measurement; positions drift, the sites do not)
 PropKit.ts:994    7 calls    0 -> 1680 -> 0     worst single call  280
 PropKit.ts:1748  16 calls    0 -> 2810 -> 0                        176
 PropKit.ts:3850   1 call     0 ->  112 -> 0                        112
@@ -1026,7 +1027,117 @@ and the obvious explanation — the keep-out reducing instanced meshes — is re
 measurement above. Recorded as unreconciled rather than explained away: these numbers are
 of this tree, measured this way, and that is all they claim.
 
+### 7.0.5 What the visual QA cannot answer, measured rather than assumed
+
+The metalness fix divides the toon band driver by `kAlbedoLuma * max(1 - metalness, 1e-3)`
+rather than by `kAlbedoLuma` alone. For the `metal` surface — `metalness: 0.35` — that is
+a factor of **1 / 0.65 = 1.538× on `kLit`**, which is why the pre-fix shader could not
+push a metal surface into the top toon band.
+
+The programme lead asked for the guard/palace start to be re-captured after the fix, on
+the grounds that the earlier sign-off — *"metal armour reads"* — had been taken against
+the unfixed shader. Reasonable, and the answer is not the one either of us expected.
+
+**A/B with only that line changed**, same seed, faction, viewport and toggles:
+
+```text
+                       mean    p95   p99   max   >160    >190
+pre-fix  kAlbedoLuma   83.01   115   145   245   2154    1369
+shipped  kDiffuseScale 82.98   115   144   245   2131    1367
+delta                  -0.03     0    -1     0    -23      -2
+```
+
+**The frame is identical within noise.** A 1.538× change to the band driver for every
+metal surface in the scene moves the aggregate luminance histogram by less than a
+quantisation step.
+
+That is not evidence the fix does nothing — the arithmetic is not in doubt. It is evidence
+about the **instrument**: a full-frame luminance histogram cannot see a large change
+applied to a small pixel population, and `surface: 'metal'` has six call sites in
+`GameEngine.ts` and none in `CharacterKit.ts`, so the armour vocabulary in question may
+not be what fills this viewport at all.
+
+> **The capture neither validated nor invalidated the original sign-off, and could not
+> have.** Reporting "metal reads" from this instrument was a claim outside its domain in
+> both directions — before the fix and after it.
+
+What would answer it: a capture framing a known metal object over a known pixel region, or
+reading `kNormalized` back from the shader for a metal material directly. Neither is
+expensive; both are follow-ups rather than blockers, because the defect being fixed is
+arithmetic and the arithmetic is checked by the chunk pin in `tests/art.test.ts`, which
+fails loudly if a three.js upgrade moves the accumulation the fix depends on.
+
+### 7.0.6 The follow-up above, run: count bands, not brightness
+
+§7.0.5 left the question open and named what would close it. This is that measurement.
+
+**Ask the question the ramp actually answers.** `kScale = kBanded / kNormalized` and
+`directDiffuse` is proportional to `kNormalized`, so the banded result is proportional to
+`kBanded` **alone** — flat within a band, whatever the geometry is doing. A scan line
+across a lit sphere is therefore a staircase, and **the number of steps is the number of
+ramp stops that surface can reach.** That is a small integer, not a distribution, and it
+does not care what fraction of the viewport is metal.
+
+Two spheres, one directional key, `paperStrength: 0`, `rimStrength: 0`, `roughness: 1`.
+The second sphere differs from the first **in `metalness` and in nothing else** — same
+preset, colour, geometry, band strength, light. Light intensity is the library's own
+`keyIntensity`, which is defined as the luminance that maps to the top of the ramp.
+
+```text
+                          bands   luminance plateaus        plateau widths (px, of 98 lit)
+metal 0.35   pre-fix        3     4-35, 100-105, 130-135     36, 39, 23
+metal 0.35   shipped        4     4-29, 82-86, 106-110,      23, 25, 26, 24
+                                  124-130
+control 0    pre-fix        4     3-12, 95-96, 122-123,      19, 26, 31, 54
+                                  142-144
+control 0    shipped        4     3-12, 95-96, 122-123,      19, 26, 31, 54
+```
+
+**The control is identical in both builds** — same four plateaus, same luminances, same
+pixel counts, no tolerance applied. That is the shader comment's *"metalness 0 is
+unaffected, exactly"* as a measurement, and it is what makes the metal row mean anything:
+the two builds differ in one line, and everything not downstream of that line is bitwise
+unmoved. A control that reads exactly zero is the discriminator; a control that merely
+reads *small* would have left driver noise and AA as live explanations.
+
+**Metal loses its brightest band entirely.** Pre-fix it reaches three stops where the
+otherwise-identical non-metal sphere reaches four. Post-fix it reaches four. So a quarter
+of every lit metal surface — 24 of 98 scan pixels — was rendering one stop below where the
+ramp says it should.
+
+**And the bands that did survive sat in the wrong places.** Post-fix the widths are
+23/25/26/24, near-equal quarters, which is what a four-stop ramp over a uniform driver
+must produce. Pre-fix they are 36/39/23: the dark band is **1.57× too wide** and eats the
+terminator. That is the *"every band boundary is crossed 53.8% late"* claim measured as
+geometry coverage rather than inferred from arithmetic — the fix is not a brightness
+change, it is the band boundaries returning to the geometry they belong on.
+
+#### The calibration trap in this probe, which caught me
+
+The first run used light intensity **3.2**, chosen as "bright enough to saturate". That is
+1.208× `keyIntensity`, so the pre-fix driver — 0.65× — reached 0.785 and **cleared the
+0.75 boundary into the top stop**. The probe duly reported **four bands for both builds**
+and the defect looked absent. Only the plateau *width* hinted otherwise: 4 pixels against
+38.
+
+Nothing about that run looked malformed. It had a clean control, a well-formed staircase,
+and a plausible answer. **The sensitivity of the instrument was set by a parameter I chose
+for unrelated reasons, and the wrong choice put the defect just inside the passing side of
+a boundary.** Calibrating the key to the one intensity the library actually defines —
+the value that maps to the top of the ramp — is what made the measurement discriminating,
+and it is defensible for a reason that has nothing to do with getting the answer I wanted.
+
+> **An instrument with a free parameter has a sensitivity, and the experimenter sets it.**
+> Pick that parameter from the system's own definitions, not from convenience, or the
+> measurement silently becomes a test of the parameter instead of a test of the code.
+
+This belongs to the same family as §13's other entries and is the sixth shape in it: not
+*"the assertion never saw the input"* and not *"two questions share an answer set"*, but
+**"the assertion saw the input at a setting where the defect does not express."**
+
 ### 7.1 `OUTLINE_WORLD_DRAWS_MAX` — the multiplier, and the unit that changed
+
+
 
 Two corrections, both found at Wave 4 integration by measuring rather than by
 reading. Neither is a defect in what shipped; both are the spec describing less than
@@ -1064,7 +1175,54 @@ settlement's roofline is what makes it read as a place — but it is a different
 currency, and the word "instanced" has been removed rather than left to mislead the
 next reader.
 
+### 7.1.1 Is the visible-set cap a test or a definition? Measured, and it is a budget
+
+The programme lead's closing rule, arrived at after a sibling retracted an invariant that
+was preserved by construction:
+
+> **An identity preserved by construction is not evidence, however exact it looks.** After
+> deriving one, ask what it forbids — then build the forbidden state and watch it fail. If
+> you cannot construct a failure, you have a definition, not a test.
+
+Applied to `OUTLINE_WORLD_VISIBLE_DRAWS_MAX = 48`, which this pass introduced. The
+forbidden state is a focus position whose nine visible regions draw more than 48 ink
+shells between them. Three attempts to construct it:
+
+```text
+lever                                                per-region peak   visible peak
+baseline                                                           7             41
+OUTLINE_WORLD_DRAWS_MAX raised 8 -> 64                             7             41
+takesInkShell loosened to ink instanced meshes too                 7             41
+both together                                                      7             41
+```
+
+**None of them moves it.** The peak is bound by *content* — the number of ink-worthy
+objects a region actually contains — not by either budget or by the filter. The
+per-region budget of 8 is itself never reached; the busiest region spends 7.
+
+So the honest classification is: **48 is a budget, not an assertion about a reachable
+state.** It cannot fail on this content, and the mutation that does make it fail —
+lowering the constant to 20 — changes the number rather than producing the state. That is
+what a budget *should* be, because its job is to catch growth that has not happened yet;
+but recording it as a test that could fail today would be exactly the overclaim §7.2
+exists to name.
+
+This also sharpens the split in §7.2.1. That section distinguishes an assertion that goes
+red because the code got better from a budget that goes red because a constant needs
+updating. The visible-set cap sits firmly on the budget side, and now it says so.
+
+**What would make it a test again** is content growth: more ink-worthy objects per region.
+That is precisely the change it guards, so the day it fires is the day it was worth
+having — and the measurement above tells the next person how much headroom there is
+before that day arrives, which is 48 against a content ceiling of 41–43.
+
+The `charged == built` reconciliation beside it is a different case and survives the rule:
+dropping one clause from the mirrored `takesInkShell` filter makes prediction and reality
+diverge, and it is caught by name. That forbidden state is constructible with a one-line
+code change, so that one is a test.
+
 ### 7.2 Why every budget above names a population
+
 
 `OUTLINE_WORLD_DRAWS_MAX` was not a one-off. Three budgets in this programme were sized
 against one population and later spent on another, and in every case **the number was
@@ -1093,7 +1251,8 @@ by faction × role × variant produces many. Measured across all 81 plans: **102
 character keys, past 64 on its own. Nobody was careless — a line reading `NAME<=11` beside
 a line reading `NAME<=64` invites addition, and neither says one counts code and the other
 counts data. Fixed by naming the population and by making it enforceable:
-`CHARACTER_GEOMETRY_KEYS<=180`, asserted at `tests/characterArt.test.ts:253`.
+`CHARACTER_GEOMETRY_KEYS<=180`, asserted in `tests/characterArt.test.ts` against
+`keys.size` in the character-plan sweep.
 
 The fourth is the clearest tell. A commit message said "three of four material sweeps"
 and it was later restated as three of six, because **the population was never inside the
@@ -1240,7 +1399,8 @@ Deferred to Wave 4 because it could only be answered with both kits merged. Answ
 There are seven traversals in `src/game/` that either assign `Mesh.material` or call
 `dispose()`. Four assign material and all four carry the `isOutlineShell` guard — those
 are what the scan enforces. Three dispose, and **two of those carry no `isOutlineShell`
-guard**: `GameEngine.ts:9137` and `GeneratedWorldRuntime.ts:1992`.
+guard**: `GameEngine.removeAndDisposeObject` and the `this.root.traverse` sweep in
+`GeneratedWorldRuntime.dispose`.
 
 Both are correct anyway, because they reach safety a different way. They **release the
 shells first, then traverse**, so by the time the traversal runs there is no shell left
@@ -1263,7 +1423,7 @@ were the ordering case above, generalised: builders that are safe purely because
 three:
 
 **A guard can be spelled differently.** `removeAndDisposeObject` does carry a predicate —
-`StylizedArtLibrary.isLibraryOwned` at `GameEngine.ts:9150` and `:9153` — it simply
+`StylizedArtLibrary.isLibraryOwned`, on both the geometry and the material — it simply
 answers a *different question*: who owns this resource, not is this a shell. A scan
 searching for the token `isOutlineShell` calls that site bare; a scan searching for "some
 guard" calls it covered and would miss a genuinely unguarded sweep that happened to
@@ -1431,7 +1591,12 @@ nothing.
 - [ ] `tests/worldGenerator.test.ts` determinism and fingerprint assertions pass
       unchanged.
 - [ ] `npm run build`, `npm run lint` and `npm test` are green.
-- [ ] Sustained frame time at 25 actors is within 1 ms of the pre-change build.
+- [ ] Sustained frame time at 25 actors is within 1 ms of the pre-change build — **for a
+      change that adds no geometry**. See §7: this criterion governs shader, lighting,
+      post-processing and outline-machinery work, which is the population it was written
+      against. A pass that adds geometry is judged by the two ceilings below instead.
+- [ ] Draw calls per frame at a faction start are within `DRAW_CALLS_PER_FRAME_MAX`.
+- [ ] Vertices per frame at a faction start are within `VERTICES_PER_FRAME_MAX`.
 
 ## 14. Effort
 
