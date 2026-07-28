@@ -582,6 +582,11 @@ export function tubeAlongPoints(
     0.5,
   )
 
+  // Arc length, so a radius slope expressed per-`t` can be converted into the
+  // per-distance slope the surface normal actually depends on.
+  const curveLength = curve.getLength()
+  const SLOPE_STEP = 1e-3
+
   const positions: number[] = []
   const normals: number[] = []
   const uvs: number[] = []
@@ -617,6 +622,23 @@ export function tubeAlongPoints(
     binormal.crossVectors(tangent, normal).normalize()
 
     const radius = Math.max(1e-4, radiusAt(t))
+
+    // A tapering tube's surface leans along its axis, so the radial direction is
+    // not the surface normal — it is short by the taper angle. For radius r(s)
+    // measured along arc length, the outward normal is `u - (dr/ds) * T`.
+    // Sampling is the only way to recover dr/ds from an arbitrary callback.
+    //
+    // A constant radius makes the difference exactly 0, so the branch below
+    // returns the untouched radial vector and every non-tapered caller is
+    // bit-for-bit unchanged. `smooth: false` never reads these at all.
+    const back = Math.max(0, t - SLOPE_STEP)
+    const ahead = Math.min(1, t + SLOPE_STEP)
+    const span = ahead - back
+    const slope =
+      span > 1e-9 && curveLength > 1e-9
+        ? (radiusAt(ahead) - radiusAt(back)) / span / curveLength
+        : 0
+
     const positionRing: THREE.Vector3[] = []
     const normalRing: THREE.Vector3[] = []
     for (let segment = 0; segment < radialSegments; segment += 1) {
@@ -626,7 +648,11 @@ export function tubeAlongPoints(
       const outward = new THREE.Vector3()
         .addScaledVector(normal, cos)
         .addScaledVector(binormal, sin)
-      normalRing.push(outward.clone())
+      normalRing.push(
+        slope === 0
+          ? outward.clone()
+          : outward.clone().addScaledVector(tangent, -slope).normalize(),
+      )
       positionRing.push(
         new THREE.Vector3().copy(center).addScaledVector(outward, radius),
       )
