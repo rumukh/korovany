@@ -31,8 +31,7 @@ import test from 'node:test'
  * on a line; it cannot see the key move under a different `concurrency:` block,
  * and it cannot see a second workflow added later with the flag the other way.
  * Both are covered below by doped inputs, and so is the parser's own blind spot:
- * the inline mapping form is not understood, so it is reported as a failure
- * rather than passing silently.
+ * the inline mapping form, which is now read rather than merely reported.
  *
  * That paragraph was wrong about its own coverage, and the miss was the whole
  * point of the check. "A second workflow added later with the flag the other way"
@@ -62,28 +61,64 @@ type ConcurrencyBlock = { readonly line: number; readonly entries: Map<string, s
 const DEPLOYS_PAGES = /^\s*(?:-\s+)?uses:\s*actions\/deploy-pages(?:@|\s|$)/m
 
 /**
- * Every block-form `concurrency:` mapping in a file, with its child scalars.
- * Indentation-scoped, so a key under a job-level block is not confused with one
- * under the workflow-level block — the relocation this is meant to catch.
+ * A scalar as written in YAML, reduced to what it means: trailing comment removed,
+ * surrounding quotes stripped. `'false'` and `"false"` and `false` are one value,
+ * and a check that treats them as three flags a workflow for declining to cancel.
+ */
+function scalar(raw: string): string {
+  return raw
+    .replace(/\s+#.*$/, '')
+    .trim()
+    .replace(/^(['"])([\s\S]*)\1$/, '$2')
+    .trim()
+}
+
+/**
+ * Every `concurrency:` mapping in a file, with its child scalars — both the block
+ * form and the inline `{ ... }` form.
+ *
+ * Block form is indentation-scoped, so a key under a job-level block is not
+ * confused with one under the workflow-level block.
+ *
+ * The inline form was originally left unparsed on the reasoning that it would be
+ * reported as a failure rather than pass silently. That was true only of the
+ * workflow that deploys Pages, where an unreadable block means no block and no
+ * block is itself a risk. For every *other* workflow the same blind spot was
+ * fail-open: a file joining `group: pages` with `cancel-in-progress: true` on one
+ * inline line was invisible, and passed. Measured, exit 0, against the block form
+ * of the identical values failing. So it is parsed.
  */
 function concurrencyBlocks(source: string): ConcurrencyBlock[] {
   const lines = source.split(/\r?\n/)
   const blocks: ConcurrencyBlock[] = []
 
   for (let i = 0; i < lines.length; i += 1) {
-    const opened = /^(\s*)concurrency:\s*$/.exec(lines[i] ?? '')
+    const line = lines[i] ?? ''
+
+    const inline = /^(\s*)concurrency:\s*\{(.*)\}\s*$/.exec(line)
+    if (inline) {
+      const entries = new Map<string, string>()
+      for (const part of (inline[2] ?? '').split(',')) {
+        const pair = /^\s*([A-Za-z][A-Za-z0-9-]*)\s*:\s*([\s\S]*)$/.exec(part)
+        if (pair) entries.set(pair[1] ?? '', scalar(pair[2] ?? ''))
+      }
+      blocks.push({ line: i + 1, entries })
+      continue
+    }
+
+    const opened = /^(\s*)concurrency:\s*$/.exec(line)
     if (!opened) continue
 
     const indent = (opened[1] ?? '').length
     const entries = new Map<string, string>()
 
     for (let j = i + 1; j < lines.length; j += 1) {
-      const line = lines[j] ?? ''
-      if (/^\s*(#.*)?$/.test(line)) continue
-      if (line.length - line.trimStart().length <= indent) break
+      const child = lines[j] ?? ''
+      if (/^\s*(#.*)?$/.test(child)) continue
+      if (child.length - child.trimStart().length <= indent) break
 
-      const pair = /^\s*([A-Za-z][A-Za-z0-9-]*):\s*(.*)$/.exec(line)
-      if (pair) entries.set(pair[1] ?? '', (pair[2] ?? '').replace(/\s+#.*$/, '').trim())
+      const pair = /^\s*([A-Za-z][A-Za-z0-9-]*):\s*(.*)$/.exec(child)
+      if (pair) entries.set(pair[1] ?? '', scalar(pair[2] ?? ''))
     }
 
     blocks.push({ line: i + 1, entries })
@@ -115,7 +150,7 @@ function protectedGroups(files: readonly WorkflowFile[]): Set<string> {
  * present, non-`false` value cancels — including an expression, which can be true.
  */
 function cancelsInProgress(value: string | undefined): boolean {
-  return value !== undefined && value !== 'false'
+  return value !== undefined && value.toLowerCase() !== 'false'
 }
 
 /**
@@ -145,7 +180,7 @@ function cancellationRisks(files: readonly WorkflowFile[]): string[] {
       if (deploysPages) {
         if (value === undefined) {
           risks.push(`${file.name}:${String(block.line)}: concurrency block does not set cancel-in-progress`)
-        } else if (value !== 'false') {
+        } else if (cancelsInProgress(value)) {
           risks.push(`${file.name}:${String(block.line)}: cancel-in-progress is \`${value}\`, not false`)
         }
         continue
@@ -226,7 +261,7 @@ test('the check fires on every way the flag can come back', () => {
       ],
     ],
     [
-      'concurrency rewritten in the inline mapping form this parser cannot read',
+      'concurrency rewritten in the inline mapping form',
       [
         {
           name: real.name,
@@ -286,6 +321,26 @@ test('the check fires on every way the flag can come back', () => {
         },
       ],
     ],
+    [
+      'an unrelated workflow joins the Pages group on one inline line — the form that was fail-open',
+      [
+        real,
+        {
+          name: 'housekeeping.yml',
+          source: ['name: Housekeeping', 'concurrency: { group: pages, cancel-in-progress: true }', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+        },
+      ],
+    ],
+    [
+      'an unrelated workflow joins the Pages group with a quoted true',
+      [
+        real,
+        {
+          name: 'housekeeping.yml',
+          source: ['name: Housekeeping', 'concurrency:', '  group: pages', "  cancel-in-progress: 'true'", 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+        },
+      ],
+    ],
   ]
 
   for (const [label, files] of doped) {
@@ -332,6 +387,20 @@ test('the widened scan stays quiet on workflows that cannot cancel a deployment'
       {
         name: 'housekeeping.yml',
         source: ['name: Housekeeping', 'concurrency:', '  group: pages', '  cancel-in-progress: false', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+      },
+    ],
+    [
+      'declines to cancel in quotes — the same value, and flagging it would be a false alarm',
+      {
+        name: 'housekeeping.yml',
+        source: ['name: Housekeeping', 'concurrency:', '  group: pages', "  cancel-in-progress: 'false'", 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+      },
+    ],
+    [
+      'declines to cancel inline',
+      {
+        name: 'housekeeping.yml',
+        source: ['name: Housekeeping', 'concurrency: { group: pages, cancel-in-progress: false }', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
       },
     ],
     [

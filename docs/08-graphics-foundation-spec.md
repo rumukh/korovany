@@ -1044,6 +1044,32 @@ population it was pointed at. Second, the probe run that first exposed this retu
 assertion failure — the flattering reading was one unprinted line away from being published
 as "the guard already catches it".
 
+**Then the fixed guard was doped again, and it had two more.** A workflow joining the group
+with `concurrency: { group: pages, cancel-in-progress: true }` on one inline line **passed**,
+while the identical values in block form failed. The parser's inability to read the inline
+form had been documented as acceptable on the grounds that an unreadable block counts as no
+block and no block is itself a risk — which is true of the *deploying* workflow and false of
+every other one, where an unreadable block simply produced no finding. **The same blind spot
+was fail-closed on one file and fail-open on the rest**, and the documentation asserted the
+first while the population had just been widened to the second. And `cancel-in-progress:
+'false'` — a workflow explicitly declining to cancel — was **flagged**, because a quoted
+scalar is not the string `false`. That is the false alarm that gets a gate deleted rather
+than fixed.
+
+| probe | before | after |
+| --- | --- | --- |
+| inline form, `group: pages`, cancel true | exit 0, **evades** | exit 1, caught |
+| block form, same values | exit 1, caught | exit 1, caught |
+| shares group, `cancel-in-progress: 'false'` | exit 1, **false alarm** | exit 0, quiet |
+
+Both fixed: the inline form is parsed, and scalars are unquoted and compared case-insensitively.
+
+The count that matters is three. **Three rounds of defects in one 300-line check, each found
+only by doping it again after declaring it sound**, and the second round was introduced by
+the fix for the first. A gate is not a thing you verify once; **the only evidence that a
+check works is a failing run you produced on purpose, and it expires the moment the check
+changes.**
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
