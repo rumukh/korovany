@@ -2134,10 +2134,22 @@ composition thatreads as places...`, at 161 columns. The gate passed over it: no
 beginning with a single space, no `**` between two word characters, no repeated prefix. It
 was caught by `git diff` against `main` and by nothing else.
 
-The first conclusion drawn here was that this is the splice-on-a-paragraph-boundary case
-§13 admits it cannot detect, and that widening the gate would need a line-length rule, which
-is the kind of stylistic gate §13 argues against. **Both halves of that were wrong, and the
-review that checked them is why this paragraph reads the way it does.**
+The first conclusion drawn here was that this is the splice-on-a-paragraph-boundary case the
+gate already admits it cannot detect, and that widening it would need a line-length rule,
+which is the kind of stylistic gate §13 argues against. **Both halves of that were wrong,
+and the review that checked them is why this paragraph reads the way it does.**
+
+Wrong in a third way as well, and the correction is worth more than the retraction. The
+admission is not in §13 at all — it is in the gate's own docblock in
+`tests/integration.test.ts`, and it reads *"a splice that lands on a paragraph boundary,
+where **the duplicated fragment is a whole line** and the join needs no concatenation."*
+That clause is load-bearing and this weld is its **inverse on both attributes**: a
+concatenation with no duplicate, where the admitted case is a duplicate with no
+concatenation. So it was never the admitted blind spot being confirmed. It is a third mode
+nobody had written down, which is exactly why the duplicate-prefix rule cannot see it —
+that rule needs a duplicate, and a weld destroys one line rather than repeating it.
+**Citing a real admission for a defect it does not cover is the more comfortable error**,
+because the quotation is genuine and only the match is wrong.
 
 The world-objects branch's own copy of this gate had **four** detectors, not three. The
 fourth was an over-long-line rule, and its comment says in as many words that it exists
@@ -2153,6 +2165,15 @@ detector is restored, and it is not a threshold to tune: table rows are excluded
 structure and fenced blocks were already skipped, so it scores zero on both specs as they
 stand. It was believed only after it was watched fire — clean file passes, the 161-column
 weld reintroduced is **caught**, reverted passes again.
+
+The measured band is what makes it a defect signature rather than a style rule. The longest
+legitimate prose line across both gated specs is **92** columns; the lines in this section
+that deliberately quote the welded string are **90** and **89**; the weld itself is **161**.
+So the rule is not *"lines should be short"* — it is *"no line may be two lines"*, and a
+threshold of 100 sits clear of everything the wrap convention produces. Its honest limit is
+that length is a proxy: two short lines welding to eighty columns would pass. It closes the
+observed instance and the common case, not the class, and saying which is the point of this
+section.
 
 The lesson is about the word *superseded*, and it is §13.2 one step further along. Three
 candidates from that merge were cleared as superseded rather than lost. The clearing was
