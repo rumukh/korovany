@@ -1420,7 +1420,10 @@ test('the chest lends the head its breath but not its shoulders', () => {
  *
  * Measured over the sweep this test runs — the chest envelope, the head's own pitch
  * and roll, the body's X-vs-Z asymmetry and the clamped look range, 6,174,630 states —
- * as the angle between the head's world forward and the requested heading:
+ * as the angle between the head's world forward and the requested heading. The three
+ * rejected rows are computed on **one plan** of that sweep, 228,690 states, which the
+ * plan-independence assertion below the probes proves is the whole population rather
+ * than a sample of it:
  *
  * | rule | worst heading error |
  * | --- | --- |
@@ -2485,6 +2488,7 @@ test('the engine wires the rig the way these tests measure it', () => {
   // assertion. Same for the chest coefficient: `heavy` is a two-role predicate, and
   // everyone else takes the other branch.
   const DEFAULT_CADENCE = '6.8'
+  const DEFAULT_SPEED = 3.7
   const HEAVY = ['brute', 'champion']
   for (const gait of GAITS) {
     const value = String(gait.cadence)
@@ -2500,13 +2504,27 @@ test('the engine wires the rig the way these tests measure it', () => {
       + 'chest twists under it` must move with it, or that test simulates physics the '
       + 'engine does not run.',
     )
+    // The speed pin gets the same treatment as the cadence pin above, and did not
+    // originally: `soldier` was matched by a bare `/:\s*3\.7\)/` against the whole
+    // file. That fires today — there is exactly one `: 3.7)` in `GameEngine.ts` — but
+    // it is the one pin in this loop not tied to a role, and a reviewer was right that
+    // the asymmetry is gratuitous once the better pattern exists three lines up. A pin
+    // that happens to be unique is not the same as a pin that is specific.
+    const speedChain = source.slice(
+      source.indexOf('beast?.speed ??'),
+      source.indexOf('const actor: Actor'),
+    )
+    const speedPaired = gait.speed === DEFAULT_SPEED
+      ? new RegExp(`:\\s*${String(gait.speed).replace('.', '\\.')}\\)`).test(speedChain)
+        && !new RegExp(`'${gait.role}'`).test(speedChain)
+      : new RegExp(`role === '${gait.role}'\\s*\\n?\\s*\\?\\s*${String(gait.speed).replace('.', '\\.')}`)
+        .test(speedChain)
     assert.ok(
-      new RegExp(`role === '${gait.role}'\\s*\\n?\\s*\\?\\s*${String(gait.speed).replace('.', '\\.')}`)
-        .test(source)
-      || (gait.role === 'soldier' && /:\s*3\.7\)/.test(source))
-      || (gait.role === 'peasant' && new RegExp(`role === 'peasant'[\\s\\S]{0,40}?${String(gait.speed).replace('.', '\\.')}`).test(source)),
-      `the ${gait.role}'s speed is no longer ${String(gait.speed)}; GAITS pairs each `
-      + 'speed with its cadence and the simulation multiplies the two.',
+      speedChain.length > 100 && speedPaired,
+      `the ${gait.role}'s speed is no longer ${String(gait.speed)} — either the value `
+      + 'moved, or it moved to another role. GAITS pairs each speed with its cadence '
+      + 'and the simulation multiplies the two, so a swap models the wrong physics '
+      + 'while every individual number is still present.',
     )
     assert.equal(
       gait.chestYawCoefficient,
