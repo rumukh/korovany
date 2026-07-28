@@ -10,10 +10,26 @@ import test from 'node:test'
  *
  * The evidence first offered for this was a cancelled run eight seconds before a
  * successful one. That is not what it looked like. Every cancellation in the
- * repository's history — four of them, not one — killed the *build* job; the
- * deploy job recorded zero steps in all four, and a successful run records three,
- * so the zeros are real. No deployment has ever been interrupted here. The defect
- * is a window that is open, not a wound.
+ * repository's history — four of them, not one — killed the *build* job, and the
+ * deploy job recorded zero steps in all four.
+ *
+ * That reading was then checked properly by a reviewer, against a much better
+ * population than the one I used: all 82 recorded Pages runs since the repository
+ * was created, run numbers 1–82 with no gaps, 77 success / 4 cancelled / 1 failure.
+ * The 77 successful deploy jobs record exactly three steps each — a 77-instance
+ * positive control rather than my single one — and the four cancelled SHAs have no
+ * artifacts and no `github-pages` deployment records.
+ *
+ * It also refuted the inference I had actually been making. The one failed run's
+ * deploy job was *skipped*, and it too reports `steps: []`. So empty steps is not
+ * a synonym for "never executed"; it is also what a skipped dependant looks like.
+ * The conclusion survives on the other evidence, but not on the reasoning I gave.
+ *
+ * So, stated no more strongly than it was measured: **across all 82 recorded Pages
+ * runs, no deployment job is recorded as starting and then being cancelled.** Of the
+ * four cancellations, three were runner-assigned builds and one was cancelled before
+ * a runner was assigned — "four builds did work and were abandoned" was not measured.
+ * The defect is a window that is open, not a wound.
  *
  * Which is exactly why this check exists rather than an incident report: the harm
  * has no artefact to point at, so nothing but a gate will keep the flag down.
@@ -58,7 +74,11 @@ type ConcurrencyBlock = { readonly line: number; readonly entries: Map<string, s
 // regex could not see it. The doped second-workflow case below found that, which is
 // the whole argument for doping — the real file happens to use the other form, so
 // every run against the repository would have passed.
-const DEPLOYS_PAGES = /^\s*(?:-\s+)?uses:\s*actions\/deploy-pages(?:@|\s|$)/m
+//
+// The optional quote matters for the same reason and was found the same way, by a
+// reviewer rather than by me: `uses: "actions/deploy-pages@v4"` is valid YAML naming
+// the identical action, and the unquoted-only regex did not see it.
+const DEPLOYS_PAGES = /^\s*(?:-\s+)?uses:\s*["']?actions\/deploy-pages(?:@|["'\s]|$)/m
 
 /**
  * A scalar as written in YAML, reduced to what it means: trailing comment removed,
@@ -209,7 +229,7 @@ function readWorkflows(): WorkflowFile[] {
     .map((name) => ({ name, source: readFileSync(new URL(name, dir), 'utf8') }))
 }
 
-test('no workflow can cancel a Pages deployment in flight', () => {
+test('no workflow on disk can cancel a Pages deployment in a form this check can read', () => {
   const files = readWorkflows()
 
   // The population, before the verdict. A zero from a scan that examined nothing
@@ -429,4 +449,56 @@ test('the widened scan stays quiet on workflows that cannot cancel a deployment'
     'ci.yml should still cancel via an expression — otherwise this case no longer exercises anything',
   )
   assert.deepEqual(cancellationRisks(files), [])
+})
+
+
+/**
+ * The check above reads YAML with a hand parser, and a hand parser's blind spots are
+ * unbounded: three rounds of defects have already been found in it, two of them by
+ * doping it again after it had been declared sound, and one by a reviewer who wrote
+ * `uses: "actions/deploy-pages@v4"` in quotes. Every fix so far has been a fix to a
+ * *form*, and there is no argument that the list of forms is now complete.
+ *
+ * So the universal claim is not made. This pins the population instead. Any workflow
+ * added, removed or renamed fails here, in whatever YAML dialect it is written, and a
+ * person has to look at the concurrency groups and re-reason. That is a claim this
+ * repository can actually support: not "no workflow can cancel a deployment", but
+ * "the set of workflows has not changed since someone last checked".
+ *
+ * It is the weaker instrument and the honest one. A parser that must understand every
+ * legal spelling of a mapping fails silently when it meets a new one; a file list
+ * fails loudly and cannot be evaded by syntax.
+ */
+test('the set of workflows is pinned, because a new one can evade the parser in valid YAML', () => {
+  const names = readWorkflows()
+    .map((file) => file.name)
+    .sort()
+
+  assert.deepEqual(
+    names,
+    ['ci.yml', 'deploy-pages.yml'],
+    'the set of workflow files changed. This test has no opinion about whether that is ' +
+      'correct — it exists because the concurrency checks above read YAML with a hand ' +
+      'parser that cannot be trusted to understand an unfamiliar file. Open the new or ' +
+      'changed workflow, check whether any concurrency group it declares collides with ' +
+      'the Pages group, and update this list once you have.',
+  )
+})
+
+/**
+ * The effective concurrency of the deployment, pinned by value rather than by parse.
+ * If the group or the flag changes, this fails even if the surrounding structure moved
+ * somewhere the block parser reads differently.
+ */
+test('the Pages workflow still declares the group and the flag it is supposed to', () => {
+  const [real] = pagesWorkflows(readWorkflows())
+  assert.ok(real, 'no Pages-deploying workflow found — the regex or the file moved')
+
+  const blocks = concurrencyBlocks(real.source)
+  assert.equal(blocks.length, 1, `expected exactly one concurrency block, found ${String(blocks.length)}`)
+
+  const only = blocks[0]
+  assert.ok(only, 'concurrency block missing after a length check said it was there')
+  assert.equal(only.entries.get('group'), 'pages')
+  assert.equal(only.entries.get('cancel-in-progress'), 'false')
 })

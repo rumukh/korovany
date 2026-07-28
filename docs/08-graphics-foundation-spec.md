@@ -918,8 +918,28 @@ It was not. Every cancellation in this repository's history — **four**, not on
 | 30355639257 | `1ff6ed4` | cancelled | **0 steps** |
 
 with the control that makes those zeros mean anything: a successful run reports `build` 10
-steps and `deploy` **3**. The API does report deploy's steps when deploy runs, so the zeros
-are real and no deployment has ever been interrupted here.
+steps and `deploy` **3**. The API does report deploy's steps when deploy runs.
+
+That conclusion held. **The reasoning behind it did not, and a reviewer's larger population
+is what showed the difference.** They enumerated all 82 recorded Pages runs since the
+repository was created — run numbers 1–82 with no gaps, 77 success / 4 cancelled / 1 failure
+— fetched every jobs endpoint with `filter=all`, and found the 77 successful deploy jobs
+each recording exactly three steps. That is a **77-instance positive control** where mine
+was one.
+
+It also produced the counterexample to my inference. The single failed run's deploy job was
+**skipped**, and it reports `steps: []` too. So empty steps is not a synonym for "never
+executed" — it is equally what a skipped dependant looks like. My argument had been *zeros
+plus one control therefore never ran*; the correct argument is zeros **plus no runner, plus
+no artifacts, plus no `github-pages` deployment record** for those four SHAs. Same verdict,
+different support, and only the second kind survives contact with the failure case.
+
+Restated at the strength it was actually measured:
+
+> **Across all 82 recorded Pages runs, no deployment job is recorded as starting and then
+> being cancelled.** Three of the four cancellations were runner-assigned builds; the fourth
+> was cancelled before a runner was assigned. "Four builds did work and were abandoned" was
+> never measured.
 
 > `gh run list --conclusion cancelled` answers *was a run cancelled*. It was read as *was a
 > deployment interrupted*.
@@ -1069,6 +1089,44 @@ only by doping it again after declaring it sound**, and the second round was int
 the fix for the first. A gate is not a thing you verify once; **the only evidence that a
 check works is a failing run you produced on purpose, and it expires the moment the check
 changes.**
+
+**Then a reviewer found a fourth**, and it settled the design argument. `uses:
+"actions/deploy-pages@v4"` — valid YAML, quoted, naming the identical action — was invisible
+to the detector, so a second Pages-deploying workflow with the flag reversed passed the whole
+gate. Reproduced here: exit 0.
+
+Four rounds, and every fix had been a fix to a *form*: unquoted `uses:`, compact `- uses:`,
+block mappings, inline mappings, quoted scalars. **There is no argument that the list of
+forms is now complete, and each round had been declared sound with the same confidence as
+this one.** A hand-rolled YAML parser has an unbounded blind-spot surface, and the failure
+mode is always silence.
+
+So the universal claim was withdrawn. The test no longer asserts *"no workflow can cancel a
+Pages deployment"* — it asserts *"no workflow **on disk**, in a form this check can read"* —
+and the gap that leaves is closed from the other side, by pinning the population:
+
+- **The set of workflow files is asserted exactly.** Any workflow added, removed or renamed
+  fails, in whatever dialect it is written, and a person must open it, check its concurrency
+  group against the Pages group, and update the list. A parser meeting an unfamiliar spelling
+  fails silently; **a file list fails loudly and cannot be evaded by syntax.**
+- **The deployment's effective concurrency is pinned by value** — group `pages`, flag
+  `false` — so a change survives even if the structure moves somewhere the parser reads
+  differently.
+
+That is a weaker claim and a stronger instrument, which is the trade this section has been
+recommending to other people for two days. **The check that can be defeated by an unfamiliar
+syntax was replaced by one that cannot, at the cost of admitting it only detects change
+rather than danger.**
+
+One coda, because it is the same error one level up. I concluded that reviewer had **never
+run** — `updated_at` frozen thirteen seconds after creation, nothing after a direct probe —
+and I reported that to two sessions as a finding about the delegation mechanism. I even ran
+a positive control first: another session, demonstrably alive, showed a current `updated_at`.
+**That control established the field *can* move, not that it moves whenever a session is
+working** — sensitivity, not completeness, which is precisely the distinction published three
+paragraphs above it. The reviewer was working the entire time and returned the best-evidenced
+findings of the day. **I applied my own newest rule to a detector I built and failed to apply
+it to the one I was using to judge a colleague.**
 
 ### 6.2 Known residue: sign-only assertions guarding loops
 
