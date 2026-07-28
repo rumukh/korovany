@@ -2705,14 +2705,32 @@ test('the engine wires the rig the way these tests measure it', () => {
   // Driven off `GAITS` itself rather than a hand-written subset, so a row added there
   // is pinned here automatically. Six of the eighteen numbers were pinned before; all
   // eighteen are now, and adding a seventh role pins three more without an edit.
+  // Every advance site, not "some site advances correctly". `.test()` returns true on
+  // the first match, so this pin was satisfied by one of the three `gaitPhase +=`
+  // statements while the other two could be inlined with a literal — which is the "gait
+  // wrong by 3.7x" defect it exists to prevent, moved onto the flee and charge paths.
+  // A reviewer inlined one and the file stayed 22/0.
+  //
+  // The question that would have caught this when the pin was written, and the five
+  // before it: **what is the population of the thing I am pinning, and am I sampling it
+  // or enumerating it?** Three call sites, two pivots, two placements, a second delta —
+  // every one was cheap to enumerate, and in every case the sample chosen was the one in
+  // front of the author. That is the review-response mechanism one level down.
+  //
+  // `>= 3` rather than `=== 3` so a legitimate fourth site is not a failure; the
+  // `every` is what carries the meaning.
+  const advances = source.match(/gaitPhase \+= [^\n]*/g) ?? []
   assert.ok(
-    /actor\.gaitPhase \+= travelled \* actorGaitCadence\(actor\.role\)/.test(source),
-    'the gait no longer advances by distance travelled. `the head holds its target '
-    + 'while the chest twists under it` multiplies speed by cadence on the strength of '
-    + 'this line; if the gait becomes time-based, that simulation is wrong by the '
-    + 'actor\'s speed. This stays a source pin because it is a wiring fact — *what* the '
-    + 'cadence is multiplied by — and `actorGaitCadence` cannot check what its caller '
-    + 'does with the answer.',
+    advances.length >= 3
+      && advances.every((a) => /travelled \* actorGaitCadence\(actor\.role\)/.test(a)),
+    `of the ${String(advances.length)} places the gait advances, `
+    + `${String(advances.filter((a) => !/travelled \* actorGaitCadence\(actor\.role\)/.test(a)).length)} `
+    + 'no longer multiply distance travelled by `actorGaitCadence`. `the head holds its '
+    + 'target while the chest twists under it` multiplies speed by cadence on the '
+    + 'strength of these lines; if any of them becomes time-based or takes a literal, '
+    + 'that simulation is wrong by the actor\'s speed on whichever path it is. This '
+    + 'stays a source pin because it is a wiring fact — *what* the cadence is multiplied '
+    + 'by — and `actorGaitCadence` cannot check what its callers do with the answer.',
   )
   const HEAVY = ['brute', 'champion']
   // ## Twelve source pins, replaced by two calls
@@ -2760,6 +2778,35 @@ test('the engine wires the rig the way these tests measure it', () => {
       + `${String(chestGaitYaw(1, HEAVY.includes(gait.role)))}.`,
     )
   }
+  // The beasts, which `GAITS` never covered and no assertion touched. `GAITS` documents
+  // why it excludes `minion`, `captive` and `commander`; the quadrupeds were simply not
+  // thought of, and `actorGaitCadence`'s first line carries three constants driving four
+  // creatures' limb animation. A reviewer changed the wolf's 9.6 to 2.0 and the file
+  // stayed 22/0.
+  //
+  // Low stakes — beasts never reach the biped pass this file measures — but they are
+  // three unpinned numbers inside a function whose entire purpose is now to be pinned,
+  // and *"the population is the ones I was thinking about"* is the defect this pass
+  // named. Enumerated from `BEAST_KINDS` rather than listed, so a fifth creature is a
+  // failure here rather than a silent omission.
+  for (const [kind, cadence] of [
+    ['wolf', 9.6], ['boar', 8.8], ['bear', 5.2], ['troll', 5.2],
+  ] as const) {
+    assert.equal(
+      actorGaitCadence(kind),
+      cadence,
+      `the ${kind}'s gait cadence is ${String(actorGaitCadence(kind))}, not the `
+      + `${String(cadence)} recorded here. Nothing downstream of this file reads it — `
+      + 'beasts do not run the biped posture pass — but an unpinned constant in a pinned '
+      + 'function is the omission this table exists to prevent.',
+    )
+  }
+  assert.deepEqual(
+    [...BEAST_KINDS].sort(),
+    ['bear', 'boar', 'troll', 'wolf'],
+    'the beast roster has changed, so the cadence table above is sampling it rather '
+    + 'than enumerating it. Add the new creature\'s cadence, or remove the departed one.',
+  )
   assert.ok(
     /const heavy = actor\.role === 'brute' \|\| actor\.role === 'champion'/.test(source),
     'the `heavy` predicate has changed, so GAITS\' split across the two coefficients no '
