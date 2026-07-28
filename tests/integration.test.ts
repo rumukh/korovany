@@ -638,3 +638,171 @@ test('every prop the game can ask for comes back coloured, and none of it white'
   )
   library.dispose()
 })
+
+/**
+ * `mergePropParts` must not change the orientation of anything it merges.
+ *
+ * This closes a gap the PM aimed Wave 4 at, and the gap is real: **a sub-part reversed
+ * inside a larger merged prop is invisible to both instruments this suite already
+ * carries.** Verified by planting exactly that defect — reversing one whole part's
+ * winding inside `mergePropParts`, every attribute swapped in step the way the kit's own
+ * `reverseWinding` does it — and running all 301 tests:
+ *
+ *     every prop the world can build is oriented outwards          PASSED
+ *     every prop winds its triangles to agree with its normals     PASSED
+ *
+ * Signed volume is absolute but it is a **sum**: one reversed part cancels against the
+ * correct ones and a building still reads +97. Normal agreement is **relative**: a
+ * reversal that swaps normals in step with positions stays perfectly self-consistent, so
+ * it goes quiet exactly when it matters. Only the sensitivity meta-test noticed, and its
+ * message is about its own control rather than about the defect.
+ *
+ * This asks a different question, and one neither of those can be rephrased into:
+ * **does the merge output still contain the same faces, pointing the same way, as the
+ * parts that went into it?** Face normals come from winding alone, so this reads no
+ * stored normals and does not care whether a prop is closed, convex, or a flat fern
+ * frond. It needs no exception list for open shapes for the same reason.
+ *
+ * Mutation-verified: with the planted reversal this reports the offending prop and
+ * surface by name, and how many faces changed direction.
+ */
+test('merging parts into a prop never turns any of them around', async () => {
+  const prop = await import('../src/game/art/PropKit.ts')
+  const { artVariation } = await import('../src/game/art/index.ts')
+
+  /** Quantized geometric face normals, from winding alone. Reads no stored normals. */
+  const faceDirections = (geometries: readonly THREE.BufferGeometry[]): string[] => {
+    const out: string[] = []
+    const a = new THREE.Vector3()
+    const b = new THREE.Vector3()
+    const c = new THREE.Vector3()
+    const normal = new THREE.Vector3()
+    for (const geometry of geometries) {
+      const position = geometry.getAttribute('position')
+      const index = geometry.getIndex()
+      const count = index ? index.count : position.count
+      for (let triangle = 0; triangle + 2 < count; triangle += 3) {
+        const i0 = index ? index.getX(triangle) : triangle
+        const i1 = index ? index.getX(triangle + 1) : triangle + 1
+        const i2 = index ? index.getX(triangle + 2) : triangle + 2
+        a.fromBufferAttribute(position, i0)
+        b.fromBufferAttribute(position, i1)
+        c.fromBufferAttribute(position, i2)
+        normal.crossVectors(b.sub(a), c.sub(a))
+        if (normal.lengthSq() < 1e-16) continue
+        normal.normalize()
+        out.push(
+          `${Math.round(normal.x * 512)},${Math.round(normal.y * 512)},${Math.round(normal.z * 512)}`,
+        )
+      }
+    }
+    return out.sort()
+  }
+
+  const BUILDING_PALETTE = {
+    foundation: 0x6c6f74, wall: 0xd6c7a4, wallShade: 0x8d8262, timber: 0x6a4a2f,
+    roof: 0x8a5a3a, roofShade: 0x4a2f1e, roofRidge: 0x5a4030, trim: 0xa08560,
+    door: 0x5e3d26, glass: 0x18202a, glow: 0xffc46a,
+  }
+  const PROP_PALETTE = {
+    timber: 0x8a6a44, timberShade: 0x4a3524, stone: 0x9aa0a8, stoneShade: 0x4b5158,
+    metal: 0x7d8590, cloth: 0xb4462f, clothAccent: 0xe0c78a, glow: 0xffc46a,
+    accent: 0xc48742,
+  }
+
+  const cases: { label: string; parts: readonly { surface: string; geometry: THREE.BufferGeometry }[] }[] = []
+  for (const wallStyle of ['timber-frame', 'log', 'stone', 'plank'] as const) {
+    for (const roofStyle of ['thatch', 'shingle', 'tile', 'flat', 'conical'] as const) {
+      cases.push({
+        label: `building:${wallStyle}:${roofStyle}`,
+        parts: prop.buildingParts({
+          variation: artVariation('props', `merge-orientation:${wallStyle}:${roofStyle}`),
+          noiseSeed: 0xb0115,
+          palette: BUILDING_PALETTE as never,
+          width: 5, depth: 4, wallHeight: 3, storeys: 2,
+          wallStyle, roofStyle, windows: 2, chimney: true,
+          porch: true, balcony: true, crenellated: roofStyle === 'flat', lit: true,
+        } as never) as never,
+      })
+    }
+  }
+  for (const [label, build] of [
+    ['well', prop.wellParts], ['monument', prop.monumentParts], ['brazier', prop.brazierParts],
+    ['cart', prop.cartParts], ['tent', prop.tentParts], ['tower', prop.towerParts],
+  ] as const) {
+    cases.push({
+      label,
+      parts: (build as (options: unknown) => never)({
+        variation: artVariation('props', `merge-orientation:${label}`),
+        noiseSeed: 0x51ee7,
+        palette: PROP_PALETTE,
+      }) as never,
+    })
+  }
+
+  let multiPartSurfaces = 0
+  let facesCompared = 0
+  const offenders: string[] = []
+
+  for (const { label, parts } of cases) {
+    const bySurface = new Map<string, THREE.BufferGeometry[]>()
+    for (const part of parts) {
+      const bucket = bySurface.get(part.surface) ?? []
+      bucket.push(part.geometry)
+      bySurface.set(part.surface, bucket)
+    }
+    // Snapshot before merging: `mergePropParts` consumes its inputs.
+    const before = new Map<string, string[]>()
+    for (const [surface, geometries] of bySurface) {
+      if (geometries.length > 1) multiPartSurfaces += 1
+      before.set(surface, faceDirections(geometries))
+    }
+
+    const merged = prop.mergePropParts(parts as never, { name: `merge-orientation:${label}` })
+    for (const surface of merged) {
+      const expected = before.get(surface.surface)
+      assert.ok(expected, `${label}: merge produced a surface '${String(surface.surface)}' nothing built`)
+      const after = faceDirections([surface.geometry])
+      facesCompared += after.length
+      if (after.length !== expected.length) {
+        offenders.push(
+          `${label}#${String(surface.surface)}: ${String(expected.length)} faces went in, `
+          + `${String(after.length)} came out`,
+        )
+        continue
+      }
+      let moved = 0
+      for (let index = 0; index < after.length; index += 1) {
+        if (after[index] !== expected[index]) moved += 1
+      }
+      if (moved > 0) {
+        offenders.push(
+          `${label}#${String(surface.surface)}: ${String(moved)} of ${String(after.length)} `
+          + 'faces point somewhere else after merging',
+        )
+      }
+      surface.geometry.dispose()
+    }
+  }
+
+  // Domain guards. The whole point is the multi-part case, so a run that happened to
+  // build only single-part surfaces would compare nothing and report clean.
+  assert.ok(
+    multiPartSurfaces >= 20,
+    `only ${String(multiPartSurfaces)} surfaces had more than one part, so the merge this `
+    + 'test exists to police barely happened',
+  )
+  assert.ok(
+    facesCompared >= 20_000,
+    `only ${String(facesCompared)} faces were compared`,
+  )
+  assert.deepEqual(
+    offenders.slice(0, 8),
+    [],
+    `merging changed the orientation of geometry it was only supposed to concatenate. `
+    + 'Signed volume cannot see this (one reversed part cancels against the rest) and '
+    + 'normal agreement cannot either (a reversal that swaps normals in step stays '
+    + 'self-consistent), which is why this compares the merge against its own inputs.',
+  )
+})
+
