@@ -2431,6 +2431,28 @@ test('a start position asked before streaming is not pretended to be checked', (
   const cold = runtime.getStartPosition('elf')
   assert.ok(Number.isFinite(cold.x) && Number.isFinite(cold.z), 'a cold start must still resolve')
 
+  // Pin the guard itself, not just the behaviour it enables. A reviewer noted that the
+  // throw had two mentions in this file and zero assertions — so it was correct today and
+  // unprotected tomorrow: a `canJudgeWalkability` that started returning true, or a caller
+  // that caught and ignored, would both be silent. The throw is unreachable through
+  // `getStartPosition` by construction, which is exactly why it needs reaching directly.
+  const reachIn = runtime as unknown as {
+    walkableNear(point: { x: number; y: number; z: number }): unknown
+    canJudgeWalkability(): boolean
+  }
+  assert.equal(
+    reachIn.canJudgeWalkability(),
+    false,
+    'nothing is resident yet, so the runtime must report it cannot judge walkability',
+  )
+  assert.throws(
+    () => {
+      reachIn.walkableNear({ x: cold.x, y: cold.y, z: cold.z })
+    },
+    /before any region was resident/,
+    'walkableNear must refuse to answer blind rather than return its unchecked input',
+  )
+
   // Once resident, the same call is free to snap, and must produce a standable point.
   runtime.update({ deltaSeconds: 0, focus: cold })
   const warm = runtime.getStartPosition('elf')
