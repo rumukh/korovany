@@ -94,6 +94,30 @@ export interface PropAsset {
   surfaces: PropSurfaceGeometry[]
 }
 
+/**
+ * Proof that a receipt was issued by a particular library, and was not made up.
+ *
+ * The `returned` `WeakSet` below closes double release by object identity, which is
+ * the fault it was written for. Wave 4 review asked the next question — can a
+ * *different* object carrying the *same* keys get past it — and the answer was yes,
+ * measured: `const forged = { ...asset }` is a different object sharing the very same
+ * `surfaces` array, so the `WeakSet` has never seen it. Released alongside the honest
+ * receipt it took the reference count from 1 to 0, fired `dispose` on a buffer a
+ * second holder was still drawing, and the next `acquire` rebuilt a different buffer
+ * while that holder went on pointing at the freed one. Exactly the corruption the
+ * receipt exists to prevent, through the one door it left open.
+ *
+ * A module-private symbol closes it, and **non-enumerable is the load-bearing part**:
+ * object spread and `Object.assign` copy own *enumerable* symbol keys, so an
+ * enumerable brand would ride along on the forgery and prove nothing. This is the same
+ * rule, for the same reason, as `ART_LIBRARY_OWNED` in `StylizedArtLibrary`.
+ *
+ * The value is the issuing library rather than `true`, so a receipt from one library
+ * released into another is caught as well — which matters because tests and the
+ * runtime both build more than one.
+ */
+const PROP_RECEIPT = Symbol('worldPropReceipt')
+
 export type PropRequest =
   | { kind: 'tree'; biome: ZoneId; slot: number; detail: PropDetail }
   | { kind: 'undergrowth'; biome: ZoneId; slot: number }
@@ -246,7 +270,14 @@ export class WorldPropLibrary {
       throw error
     }
     this.disposePending(pending)
-    return { key, surfaces }
+    const asset: PropAsset = { key, surfaces }
+    Object.defineProperty(asset, PROP_RECEIPT, {
+      value: this,
+      enumerable: false,
+      writable: false,
+      configurable: false,
+    })
+    return asset
   }
 
   /** Frees whatever a build produced that no cache key claimed. */
@@ -270,6 +301,19 @@ export class WorldPropLibrary {
   private readonly returned = new WeakSet<PropAsset>()
 
   release(asset: PropAsset): void {
+    // Provenance before identity. The `returned` set can only speak about objects this
+    // library has already seen, so it is silent about one it has never issued — and a
+    // structural copy of a receipt is exactly that: unseen, unreturned, and holding a
+    // live reference belonging to somebody else. See {@link PROP_RECEIPT}.
+    if ((asset as unknown as Record<symbol, unknown>)[PROP_RECEIPT] !== this) {
+      throw new Error(
+        `Prop asset ${String(asset.key)} was not issued by this library. A receipt is `
+        + 'the proof that a reference is yours to give back; a copy of one — a spread, '
+        + 'an Object.assign, a literal rebuilt from the same fields — carries the same '
+        + 'keys and none of the entitlement, and releasing it frees a buffer another '
+        + 'holder is still drawing from.',
+      )
+    }
     if (this.returned.has(asset)) {
       throw new Error(
         `Prop asset ${asset.key} was released twice; the second release takes a `

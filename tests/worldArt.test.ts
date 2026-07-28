@@ -31,6 +31,7 @@ import {
 } from '../src/game/world/SiteComposition.ts'
 import {
   WorldPropLibrary,
+  type PropAsset,
   type PropRequest,
 } from '../src/game/world/WorldPropLibrary.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
@@ -1898,3 +1899,113 @@ test('reloading a region rebuilds the same world objects', () => {
   runtime.dispose()
 })
 
+
+/**
+ * The receipt has to be un-forgeable, not merely un-repeatable.
+ *
+ * `release(asset)` takes a receipt rather than a key because a key has no holder
+ * identity: `GeometryCache.release(key)` cannot tell A releasing twice from A and B
+ * releasing once each, so the dangerous case leaves the count at 1 and *succeeds*,
+ * quietly stealing B's reference. The `WeakSet` of returned receipts closes that.
+ *
+ * Wave 4 review asked the next question, and it had not been answered: can a
+ * **different object carrying the same keys** get past a set keyed on object identity?
+ * It could. Measured on the library as it stood, with A and B both holding one
+ * reference to `tree:forest:0:near`:
+ *
+ * ```text
+ * refs with A and B holding                     2
+ * A releases its own receipt honestly           1
+ * `{ ...a }` released — a different object,     0   ACCEPTED, no error
+ *   the same `surfaces` array                       dispose fired on the shared buffer
+ * B still points at that buffer                 yes
+ * next acquire returns the same buffer?         no — rebuilt, B's was thrown away
+ * ```
+ *
+ * So the receipt closed double release and left forgery open, which is the same
+ * corruption through a different door. A module-private symbol closes it, and it must
+ * be **non-enumerable**: object spread and `Object.assign` copy own *enumerable*
+ * symbol keys, so an enumerable brand would ride along on the forgery. That is the
+ * same rule, for the same reason, as `ART_LIBRARY_OWNED` in `StylizedArtLibrary`, and
+ * `outline shells survive cloning` in `tests/art.test.ts` pins the opposite case.
+ *
+ * All three directions are asserted here, because two of them are the ones that make
+ * the third mean anything: an honest receipt must work, two holders releasing once
+ * each must work, and only the forgery and the repeat must throw.
+ */
+test('a prop receipt cannot be forged, only spent, and only once', () => {
+  const library = new WorldPropLibrary({ retention: 0 })
+  const request = { kind: 'tree', biome: 'forest', slot: 0, detail: 'near' } as const
+
+  // Direction one: two genuine holders of the same shape. Distinct receipts, one shared
+  // buffer, and releasing each exactly once is correct and must be permitted — this is
+  // the case a naive "one release per key" guard gets wrong.
+  const first = library.acquire(request as never)
+  const second = library.acquire(request as never)
+  const key = first.surfaces[0].key
+  assert.notEqual(first, second, 'two acquires must hand out two receipts')
+  assert.equal(
+    first.surfaces[0].geometry,
+    second.surfaces[0].geometry,
+    'two receipts for one request must share the buffer, or the cache is doing nothing',
+  )
+  assert.equal(library.referenceCount(key), 2, 'two holders, two references')
+
+  // The forgery: a different object, the same `surfaces` array, the same keys. Built
+  // with a spread specifically because that is the copy a future caller is most likely
+  // to reach for, and because a spread is what carries an enumerable symbol brand.
+  const forged: PropAsset = { ...first }
+  assert.notEqual(forged, first, 'the forgery must be a different object to be a test')
+  assert.equal(
+    forged.surfaces,
+    first.surfaces,
+    'the forgery must share the surfaces array, or it is not the case being modelled',
+  )
+  assert.throws(
+    () => { library.release(forged) },
+    /not issued by this library/,
+    'a copy of a receipt carries the keys and none of the entitlement; releasing it '
+    + 'frees a buffer another holder is still drawing from',
+  )
+  // And the forgery must have been rejected *before* it took anything, or the throw is
+  // an announcement rather than a guard.
+  assert.equal(
+    library.referenceCount(key),
+    2,
+    'the rejected forgery still took a reference; the guard must refuse before it spends',
+  )
+
+  // Direction two: both genuine receipts spend, once each, and the buffer is freed only
+  // when the last one does.
+  let freed = false
+  first.surfaces[0].geometry.addEventListener('dispose', () => { freed = true })
+  library.release(first)
+  assert.equal(library.referenceCount(key), 1, 'one holder left')
+  assert.equal(freed, false, 'the buffer must survive while the second holder draws it')
+  library.release(second)
+  assert.equal(library.referenceCount(key), 0, 'the last release frees it')
+  assert.equal(freed, true, 'a library with no retention disposes on the last release')
+
+  // Direction three: the original fault. A genuine receipt, spent twice.
+  const third = library.acquire(request as never)
+  library.release(third)
+  assert.throws(
+    () => { library.release(third) },
+    /released twice/,
+    'the same receipt handed back twice must be refused',
+  )
+
+  // A receipt from one library is not a receipt in another, which is the same
+  // entitlement question one scope out and is reachable whenever a test or a runtime
+  // holds two libraries at once.
+  const other = new WorldPropLibrary({ retention: 0 })
+  const foreign = other.acquire(request as never)
+  assert.throws(
+    () => { library.release(foreign) },
+    /not issued by this library/,
+    'a receipt is entitlement against the library that issued it, not against any library',
+  )
+  other.release(foreign)
+  other.dispose()
+  library.dispose()
+})
