@@ -664,7 +664,14 @@ test('every prop the game can ask for comes back coloured, and none of it white'
  * frond. It needs no exception list for open shapes for the same reason.
  *
  * Mutation-verified: with the planted reversal this reports the offending prop and
- * surface by name, and how many faces changed direction.
+ * surface by name, and how many faces changed direction —
+ *
+ *     building:timber-frame:thatch#hard   533 of 1436 faces point somewhere else
+ *     building:timber-frame:shingle#hard  531 of 1484
+ *     building:timber-frame:tile#hard     379 of 1404
+ *
+ * — while all four tests above it, and both existing orientation instruments, stay
+ * green on the same mutation.
  */
 test('merging parts into a prop never turns any of them around', async () => {
   const prop = await import('../src/game/art/PropKit.ts')
