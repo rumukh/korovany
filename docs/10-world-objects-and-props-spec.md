@@ -394,7 +394,7 @@ raises one:
 ```text
 PROP_SURFACES=4                      hard, foliage, cloth, glow
 PROP_RETENTION_KEYS=128              distinct recently released keys, one slot each
-PROP_CACHE_ENTRIES_MAX=176           live entries incl. retention; measured peak 130
+PROP_CACHE_ENTRIES_MAX=176           = PROP_RETENTION_DEFAULT + PROP_RESIDENT_HEADROOM
 BUILDING_LOD_DISTANCE=46             camera units; bridges swap at 1.6x that
 OUTLINE_SITE_DRAWS_MAX=4             of the 8 a region may spend
 DRESSING_KINDS_MAX=6                 instanced dressing meshes per region
@@ -409,6 +409,21 @@ BUILDING_TRIANGLES=750-1800 near, 120-260 far
 needs more, because the catalogue is much larger and the retention window deliberately
 holds geometry past its last reference. **Requested: 176**, justified by a measured
 peak of **130** live entries and asserted in `tests/worldArt.test.ts`.
+
+**Correction, and it invalidates the framing above more than the number.** The two
+constants govern *different caches*. `GEOMETRY_CACHE_ENTRIES_MAX` was written for
+`GameEngine.artGeometry`; the figure asserted here is `WorldPropLibrary`'s own cache. So
+this was never a request to raise a shared ceiling — the two never shared one, and
+`GEOMETRY_CACHE_ENTRIES_MAX` turns out to exist in no code at all, only in the two specs.
+Worse, the assertion enforcing 176 was a **bare literal** citing a
+`PROP_CACHE_ENTRIES_MAX` that likewise existed nowhere, so nothing connected the number
+to the thing that determines it.
+
+The budget is now derived from exported constants — `PROP_RETENTION_DEFAULT` (128) plus
+`PROP_RESIDENT_HEADROOM` (48) — so changing the retention default moves the bound with
+it. Found by the art-foundation session; the class is the same one §13 collects, one
+level up: not a check that cannot fail, but a check whose **threshold** came from
+somewhere unrelated to what it measures.
 
 The peak depends on how the player moves, and the intuition here is backwards, so it is
 worth recording. A 128-key window inside a 176 cap leaves 48 for the live set, which
@@ -622,6 +637,7 @@ Two were in this document's own advice rather than in any test.
 | the family-wide winding assertion | every prop is merged, so the above applies to all of it: **560 of 560** reversals undetected |
 | its stock-box mutation control | reversed *without* rebaking, proving detection of stale normals — a defect the pipeline cannot produce |
 | `git fetch` in the review checklist | the branch is local-only, so it reports "already up to date" whether you are current or six commits behind |
+| a `retained.length <= retentionLimit` bound | the window evicts at its own limit, so this holds even when every slot pins the same key — the duplicate-pin fault it was written for. Written *while fixing* a finding about vacuous checks, and caught before it shipped only because the habit was fresh |
 | `referenceCount === 0` double-release detector | the dangerous case leaves the count at 1, so the release *succeeds* and steals another holder's reference |
 
 Four rules fall out of them, in rough order of how much they would have saved:

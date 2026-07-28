@@ -31,6 +31,8 @@ import {
 } from '../src/game/world/SiteComposition.ts'
 import {
   WorldPropLibrary,
+  PROP_RESIDENT_HEADROOM,
+  PROP_RETENTION_DEFAULT,
   type PropRequest,
 } from '../src/game/world/WorldPropLibrary.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
@@ -1450,10 +1452,31 @@ test('region streaming returns every borrowed prop reference', () => {
     third <= Math.max(first, second),
     'streaming a lap of the map grew the live prop count',
   )
-  // §10 budget: PROP_CACHE_ENTRIES_MAX.
+  // §10 budget, derived rather than written down: the window is the dominant term and
+  // resident regions hold a small number of keys outside it. Sourcing both from the
+  // library means changing the retention default moves this bound with it, instead of
+  // leaving a literal that quietly stops describing anything. It previously read
+  // `<= 176` citing a `PROP_CACHE_ENTRIES_MAX` that exists in no code — a number
+  // inherited from a constant governing `GameEngine.artGeometry`, a different cache.
   assert.ok(
-    runtime.propCacheSize <= 176,
-    `live prop entries ${String(runtime.propCacheSize)} exceed the 176 budget`,
+    runtime.propCacheSize <= PROP_RETENTION_DEFAULT + PROP_RESIDENT_HEADROOM,
+    `live prop entries ${String(runtime.propCacheSize)} exceed the `
+      + `${String(PROP_RETENTION_DEFAULT + PROP_RESIDENT_HEADROOM)} budget`,
+  )
+  // The half that can actually fail. A count bound on the window would not: `retain`
+  // evicts at its own limit, so `retained.length <= limit` holds by construction even
+  // when the window is pinning the same key in three slots — which is exactly the fault
+  // that once cost it half its coverage, and exactly the fault a count bound waves
+  // through.
+  //
+  // Each slot pins one *distinct* live entry, so the window can never hold more slots
+  // than the cache holds entries. Under the duplicate-pin fault the window reported its
+  // full complement while the cache held roughly half that, which breaches this.
+  assert.ok(
+    runtime.retainedPropCount <= runtime.propCacheSize,
+    `the window claims ${String(runtime.retainedPropCount)} pinned keys but the cache `
+      + `holds only ${String(runtime.propCacheSize)} entries, so it is pinning `
+      + `duplicates and covering less than it advertises`,
   )
   assert.ok(runtime.retainedPropCount <= 128)
 
