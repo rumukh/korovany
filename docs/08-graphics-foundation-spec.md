@@ -872,6 +872,51 @@ better than implying they are enforced.
    that prices a multi-mesh building LOD correctly gains coverage only when something
    outlines a group.
 
+### 7.0.1 Displacement tearing, measured at every site
+
+`displaceGeometry` pushes each vertex along **its own normal**. At a hard crease the
+coincident vertices carry different normals — that is what makes the crease hard — so
+they travel apart and the shared edge splits into two boundary edges: a hairline slit you
+can see through.
+
+Three sites in this kit were measured when the hazard was found, and the ranking came out
+**backwards**. The fort boulder was expected to be the disaster — amplitude 0.34, and the
+code explicitly calls `toNonIndexed()` first, the exact precondition — and it measured
+**zero**, because `IcosahedronGeometry` carries shared radial normals. The one that tore
+was the forest trunk at a quarter the amplitude with nothing suspicious about it.
+
+Eleven further sites in `PropKit` had never been measured. All of them now, across the
+whole prop request space, 46 displacement calls at 10 distinct sites (one is unreachable
+from the request enumeration). Boundary edges before → after raw displacement → after the
+seam repair:
+
+```text
+PropKit.ts:994    7 calls    0 -> 1680 -> 0     worst single call  280
+PropKit.ts:1748  16 calls    0 -> 2810 -> 0                        176
+PropKit.ts:3850   1 call     0 ->  112 -> 0                        112
+PropKit.ts:423    3 calls    0 ->  292 -> 0                        102
+PropKit.ts:855    2 calls    0 ->  188 -> 0                         96
+PropKit.ts:1025   2 calls    0 ->  144 -> 0                         72
+PropKit.ts:796    3 calls    0 ->  192 -> 0                         64
+PropKit.ts:3476   4 calls    0 ->  240 -> 0                         60
+PropKit.ts:3762   4 calls    0 ->  192 -> 0                         48
+PropKit.ts:3587   4 calls    0 ->  192 -> 0                         48
+
+sites that would tear without the repair   10 of 10
+sites still torn after the repair           0 of 10
+```
+
+Two things follow. **Every one of these tears** — the hazard is not amplitude-dependent
+or input-dependent here, it is universal, and the 1-of-3 ratio from the original sample
+understated it badly. And **the repair closes all of them**: every site starts closed at
+0 boundary edges and returns to 0, so `displaceSeamless` is doing exactly what its
+docblock claims across the entire prop catalogue rather than on the cases it was written
+against.
+
+The general point is the sampling one. Three sites suggested a conditional hazard worth
+watching; eleven showed a universal one already fixed. Neither conclusion was available
+from the other sample, and the difference is which sites happened to be in reach.
+
 ### 7.1 `OUTLINE_WORLD_DRAWS_MAX` — the multiplier, and the unit that changed
 
 Two corrections, both found at Wave 4 integration by measuring rather than by
