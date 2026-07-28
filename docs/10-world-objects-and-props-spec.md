@@ -717,6 +717,25 @@ Four rules fall out of them, in rough order of how much they would have saved:
    *"the suite did not notice"* from *"there was nothing to notice."* Two of this
    campaign's reported survivors turned out to be the second kind.
 
+   **And a gate is an assertion, so it inherits every failure mode an assertion has.** The
+   reviewer's gate broke on line endings and reported SURVIVED; this pass's broke on an
+   ambiguous anchor — matching the first of two `releaseOutline` sites — and reported
+   PASSED on a file not mutated where it mattered. Same defect at three levels in one
+   night: the assertion, the mutation that tests it, and the gate that tests the mutation.
+
+   **The recursion does not obviously terminate, which argues for the cheapest possible
+   check at each level rather than a more elaborate one.** An elaborate gate is one more
+   thing that can be quietly wrong. The version that worked was two lines — *did the file
+   change, and did it change at the site I named* — and the site-specific half is the one
+   that mattered, because "something in this file moved" is exactly the answer that fooled
+   the ambiguous anchor.
+
+   Worth stating plainly to anyone adopting the technique: **it produces false positives at
+   roughly the rate it produces findings.** This campaign yielded three real survivors and
+   three retractions — a grouping-precision artefact, a CRLF-broken mutation, and an
+   equivalent mutation against a guard whose only caller already checks. The gates are not
+   optional overhead; they are what makes the results mean anything.
+
 7. **A regression test needs a seed that reproduced the bug.** Ordering, mechanism and
    assertion can all be correct and the test still prove nothing if its input never
    carried the defect. The spawn regression is the case, and it survived *three* rounds
