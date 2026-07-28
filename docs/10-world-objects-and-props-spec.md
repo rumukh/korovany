@@ -731,6 +731,35 @@ Four ferns fail that proof and are named in the assertion rather than excused, b
 sheet has no inside to be on the wrong side of. That list is the `open` list arrived at
 from the other direction: **orientation is undefined exactly where volume is.**
 
+**Two assertions related by an exact arithmetic identity have the discriminating power
+of one.** The identity is preserved by most mutations, so the second assertion is
+confirming arithmetic rather than testing code. Contributed by the foundation session
+after it probed its own `volume > 0` / `reversedVolume < 0` pair: swapping two vertices
+of a triple negates the cross-product term by term *whether or not those vertices were
+ever a triangle*, so a blind reader returns the exact negation of a blind measure and the
+reversed half passes unconditionally. All the discriminating power sat in the stock half.
+
+This programme produced the same shape twice more, which is why it is a rule and not an
+anecdote. The `acquires − releases === Σ referenceCount` ledger identity was preserved by
+construction — `acquire` adds one to both sides and an effective release subtracts one
+from both — so it could only fail on the absent-key case its neighbour already covered.
+And `retained.length <= retentionLimit` holds because `retain` evicts at the limit, so it
+survives the duplicate-pin fault it was written for. **Derived identities feel like
+rigour and are the easiest place to hide a check that cannot fail.** After deriving one,
+build the state it forbids and watch it fail; if you cannot construct that state, it is a
+definition rather than a test.
+
+**Prefer a magnitude or an exact count over a sign.** Same session, same probe: an
+index-blind volume reader on an indexed geometry returns a small artifact rather than
+nothing — measured +0.0029 against a true +4.01 — and the artifact's *sign* is a coin
+flip on topology, positive for a sphere and a box, negative for a cylinder, torus and
+lathe. So a sign test passes on a blind reader for exactly the two controls anyone
+reaches for first. The generalisation that covers both this and the index-blind checker
+in the table above: **assert the value the blind reading cannot produce.** A magnitude
+gap of three orders holds unconditionally; a sign does not. The volume check here now
+holds indexed prop surfaces to a fraction of their bounding box for that reason, and is
+mutation-proved by making the reader index-blind.
+
 **A check can fire eventually and still be blind, and that is a different failure from
 one that cannot fire at all.** The phantom-pin guard is the case. A phantom is a key in
 the retention window with no cache entry behind it: it holds a slot, pins nothing,

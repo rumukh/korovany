@@ -953,6 +953,33 @@ test('every prop the world can build is oriented outwards', () => {
         // already the dominant concurrent load in the suite — walking it twice to
         // measure two properties of the same geometry buys nothing.
         if (signedVolume(part.geometry) <= 0) open.push(label)
+        // Magnitude, not just sign. A sibling session proved that on an *indexed*
+        // geometry an index-blind volume reader returns a small artifact rather than
+        // nothing — measured +0.0029 against a true +4.01 on a stock sphere — and its
+        // sign is a coin flip on topology: positive for a sphere and a box, negative for
+        // a cylinder, torus and lathe. So a sign test passes on a blind reader for
+        // exactly the shapes anyone reaches for first.
+        //
+        // Four prop surfaces are genuinely indexed (`siteProp/pillar/*#hard`, pinned by
+        // its own test), so this file has real indexed inputs to hold the reader to. A
+        // solid's volume should be a serious fraction of its bounding box; three orders
+        // of magnitude below it is the signature of a reader that stopped following the
+        // index.
+        if (part.geometry.index) {
+          const box = new THREE.Box3().setFromBufferAttribute(
+            part.geometry.getAttribute('position') as THREE.BufferAttribute,
+          )
+          const extent = box.getSize(new THREE.Vector3())
+          const boxVolume = Math.max(1e-9, extent.x * extent.y * extent.z)
+          const ratio = signedVolume(part.geometry) / boxVolume
+          if (ratio < 0.02) {
+            failures.push(
+              `${label}#${part.surface}: indexed solid encloses ${ratio.toFixed(5)} of `
+                + 'its bounding box, which is what an index-blind volume reader returns',
+            )
+          }
+        }
+
         part.geometry.dispose()
       }
     }
