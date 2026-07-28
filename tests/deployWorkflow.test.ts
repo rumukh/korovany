@@ -153,7 +153,9 @@ function concurrencyBlocks(source: string): ConcurrencyBlock[] {
 
       // `group: >-` puts the value on the following lines. Read as a single line
       // the value is the indicator, which matches no group and reported nothing.
-      if (/^[>|][-+]?$/.test(value)) {
+      // The header may also carry an indentation indicator digit, in either order
+      // (`>2-`, `>-2`); a reviewer bypassed the guard with exactly that.
+      if (/^[>|](?:[1-9][-+]?|[-+][1-9]?)?$/.test(value)) {
         const childIndent = child.length - child.trimStart().length
         const continuation: string[] = []
 
@@ -207,14 +209,34 @@ function protectedGroups(files: readonly WorkflowFile[]): Set<string> {
  * it. That is a heuristic and wrong in the loud direction: `ci.yml` builds its
  * group from `github.workflow` and `github.ref` and never says `pages`, so it
  * stays quiet, while `${{ 'pages' }}` does not.
+ *
+ * Assembly. The substring test is defeated by an expression that produces the name
+ * without containing it — `${{ format('{0}{1}', 'pa', 'ges') }}` is a reviewer's,
+ * and it passed. The rule is therefore about *readability*, not danger: an
+ * expression carrying a construct this check does not model is treated as able to
+ * produce the protected group. A function call is the detectable form of "not
+ * modelled". The whole repository was measured under this rule before it shipped —
+ * no workflow here calls a function in a group, so it costs nothing today.
+ *
+ * It is fail-closed, and that has a price which is stated rather than hidden: a
+ * legitimate `format('ci-{0}', github.ref)` group is reported too. That is a loud
+ * failure on a concurrency edit whose safety genuinely cannot be decided here, not
+ * a failure on an unrelated one — the distinction that decides whether a gate
+ * survives contact with its maintainers.
+ *
+ * It closes one bypass, not the class. Measured, still fail-open here and caught
+ * only by the text pin: `${{ github.event.inputs.g }}` and `${{ env.GROUP }}`,
+ * which name nothing and call nothing yet can resolve to anything.
  */
 function joinsGuardedGroup(group: string, guarded: ReadonlySet<string>): boolean {
   const declared = group.toLowerCase()
+  const unreadable = declared.includes('${{') && /[a-z_]\w*\s*\(/.test(declared)
 
   for (const protectedGroup of guarded) {
     const target = protectedGroup.toLowerCase()
     if (declared === target) return true
     if (declared.includes('${{') && declared.includes(target)) return true
+    if (unreadable) return true
   }
 
   return false
@@ -536,6 +558,9 @@ test('a group is the same group however GitHub would spell it', () => {
     ['single quoted', "'pages'"],
     ['an expression that evaluates to it', "${{ 'pages' }}"],
     ['a folded scalar carrying the name on the next line', '>-\n    pages'],
+    ['a folded scalar with an indentation indicator', '>2-\n    pages'],
+    ['the same header with the indicators reversed', '>-2\n    pages'],
+    ["an expression assembling the name it never spells", "${{ format('{0}{1}', 'pa', 'ges') }}"],
   ]
 
   for (const [label, group] of spellings) {
@@ -547,7 +572,9 @@ test('a group is the same group however GitHub would spell it', () => {
 
   // The other direction, and the reason the expression rule is a substring test
   // rather than a blanket "unreadable means dangerous": ci.yml cancels deliberately
-  // under a group built from expressions, and must not be dragged in by it.
+  // under a group built from expressions, and must not be dragged in by it. The
+  // blanket rule was implemented and measured, by two parties independently: three
+  // tests red on the real file set. This control is what goes red.
   assert.deepEqual(
     cancellationRisks([deploying, cancelling('${{ github.workflow }}-${{ github.ref }}')]),
     [],

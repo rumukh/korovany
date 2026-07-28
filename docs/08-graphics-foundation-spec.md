@@ -1244,6 +1244,50 @@ prints whether each mutation landed and one reported `False` for an edit that sh
 applied — **the restore had already made it true.** The `APPLIED:` print earned its place
 again, this time by catching contamination rather than absence.
 
+#### Round seven: the pin caught all three, and that is not the same as the guard working
+
+The same reviewer returned with three more mutations of `ci.yml`. The text pin caught **all
+three** — its first live test, and it passed. The parser caught **one**. That gap is the whole
+entry, because a pin that fires says *"the concurrency lines changed"*, and a maintainer
+resolves that by reading the diff and updating the pin. **The instrument that fires and the
+instrument that understands are not the same instrument, and only one of them makes the
+maintainer's next move the right one.**
+
+| mutation on `ci.yml` | parser | text pin |
+| --- | --- | --- |
+| `"group": pages` — quoted key | **caught** (round six) | caught |
+| `group: >2-` / `>-2` — block header with an indentation indicator | missed | caught |
+| `${{ format('{0}{1}', 'pa', 'ges') }}` — assembles the name without spelling it | missed | caught |
+
+The block-scalar miss is a readable-form defect and was fixed as one: the YAML header carries
+an optional indentation digit in either order, and the check accepted neither.
+
+The `format` miss is different in kind and is the first defect here that **cannot** be answered
+by learning another form. No list of spellings closes it, because the group is not spelled —
+it is computed. So the rule was restated as being about *readability* rather than danger: **an
+expression carrying a construct this check does not model is treated as able to produce the
+protected group.** A function call is the detectable form of "not modelled".
+
+That is fail-closed, and the price is stated in the source rather than discovered later: a
+legitimate `format('ci-{0}', github.ref)` group is reported too. It is defensible only because
+of a distinction this document made two rounds earlier and had to apply against itself — **it
+fires on a concurrency edit whose safety genuinely cannot be decided here, not on an unrelated
+edit.** The `permissions: read → write` control stays green. A gate that cries about the
+subject it guards is survivable; one that cries about everything else is not.
+
+Both were measured before shipping, and the measurement is the reason the rule is this narrow
+rather than the reviewer's original. **Blanket "every dynamic expression is dangerous" turns
+three tests red on the real file set** — implemented and confirmed independently by both
+parties, and withdrawn by its author. The function-call form turns **none** red, because no
+workflow here calls a function in a group.
+
+And it closes one bypass, not the class. Measured, not assumed: `${{ github.event.inputs.g }}`
+and `${{ env.GROUP }}` name nothing and call nothing, can resolve to anything, and remain
+invisible to the parser — **caught by the pin alone.** Which is the honest summary of seven
+rounds: *the parser is a heuristic that gets better, and the pin is the thing that is actually
+load-bearing.* It took six rounds of trying to complete the parser to be able to write that
+sentence.
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
