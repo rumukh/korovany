@@ -14,6 +14,7 @@ A seeded 3D action roguelite inspired by the legendary Russian game-design meme.
 - Melee combat, NPC squads, caravan raids, stylized injuries, prosthetics, healing, and trading
 - Dynamic events, escalating threat, pooled loot, run upgrades, achievements, and starting boons
 - Original vector faction emblems, caravan key art, and adaptive chip-folk soundtrack
+- Run endings score themselves: a brass fanfare march for victory, a tolling funeral lament for death
 - Suspend/continue, terminal victory or defeat, profile rewards, and run history
 - Procedural 3D art and generated instruments with no external art, audio, or asset packs
 

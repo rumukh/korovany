@@ -9,10 +9,11 @@ import {
   planMusicStep,
   type MusicContext,
   type MusicDrum,
+  type MusicOutcome,
   type MusicTonePart,
 } from './MusicScore.ts'
 
-export type { MusicContext, MusicIntensity } from './MusicScore.ts'
+export type { MusicContext, MusicIntensity, MusicOutcome } from './MusicScore.ts'
 
 export type SoundCue =
   | 'swing'
@@ -110,6 +111,9 @@ const MASTER_GAIN = 0.85
 const MUSIC_ACTIVE_GAIN = 0.18
 const MUSIC_PAUSED_GAIN = 0.08
 const MUSIC_ENDED_GAIN = 0.035
+const MUSIC_OUTCOME_GAIN = 0.21
+/** Silent beat between the run's score and the outcome piece, in seconds. */
+const MUSIC_OUTCOME_GAP = 0.32
 const GAMEPLAY_GAIN = 0.62
 const UI_GAIN = 0.48
 
@@ -124,6 +128,13 @@ type MusicInstrument =
   | 'airPad'
   | 'marchPad'
   | 'darkPad'
+  | 'fanfareBrass'
+  | 'celebrationBell'
+  | 'anthemPad'
+  | 'lamentStrings'
+  | 'tollBell'
+  | 'graveBass'
+  | 'mourningPad'
 
 interface MusicInstrumentProfile {
   harmonics: readonly number[]
@@ -149,6 +160,13 @@ const MUSIC_INSTRUMENTS: readonly MusicInstrument[] = [
   'airPad',
   'marchPad',
   'darkPad',
+  'fanfareBrass',
+  'celebrationBell',
+  'anthemPad',
+  'lamentStrings',
+  'tollBell',
+  'graveBass',
+  'mourningPad',
 ]
 
 const MUSIC_INSTRUMENT_PROFILES: Readonly<Record<MusicInstrument, MusicInstrumentProfile>> = {
@@ -272,6 +290,90 @@ const MUSIC_INSTRUMENT_PROFILES: Readonly<Record<MusicInstrument, MusicInstrumen
     detune: -7,
     gain: 0.043,
   },
+  fanfareBrass: {
+    harmonics: [0, 1, 0.62, 0.44, 0.3, 0.22, 0.16, 0.11, 0.07],
+    attack: 0.014,
+    release: 0.16,
+    sustain: 0.76,
+    filterStart: 6200,
+    filterEnd: 2100,
+    reverb: 0.3,
+    echo: 0.06,
+    detune: 2,
+    gain: 0.092,
+  },
+  celebrationBell: {
+    harmonics: [0, 1, 0, 0.4, 0, 0.24, 0, 0, 0.16],
+    attack: 0.002,
+    release: 0.5,
+    sustain: 0.14,
+    filterStart: 7200,
+    filterEnd: 2600,
+    reverb: 0.5,
+    echo: 0.22,
+    detune: 0,
+    gain: 0.05,
+  },
+  anthemPad: {
+    harmonics: [0, 1, 0.4, 0.26, 0.16, 0.1, 0.06],
+    attack: 0.09,
+    release: 0.4,
+    sustain: 0.8,
+    filterStart: 3200,
+    filterEnd: 1700,
+    reverb: 0.44,
+    echo: 0.03,
+    detune: 4,
+    gain: 0.05,
+  },
+  lamentStrings: {
+    harmonics: [0, 1, 0.46, 0.3, 0.2, 0.13, 0.09, 0.06],
+    attack: 0.16,
+    release: 0.55,
+    sustain: 0.82,
+    filterStart: 2600,
+    filterEnd: 1150,
+    reverb: 0.6,
+    echo: 0.1,
+    detune: -5,
+    gain: 0.082,
+  },
+  tollBell: {
+    harmonics: [0, 1, 0, 0.34, 0, 0.2, 0, 0.11, 0, 0.06],
+    attack: 0.003,
+    release: 0.9,
+    sustain: 0.1,
+    filterStart: 4200,
+    filterEnd: 1400,
+    reverb: 0.66,
+    echo: 0.12,
+    detune: -3,
+    gain: 0.052,
+  },
+  graveBass: {
+    harmonics: [0, 1, 0.14, 0.2, 0.05, 0.06],
+    attack: 0.05,
+    release: 0.5,
+    sustain: 0.78,
+    filterStart: 700,
+    filterEnd: 190,
+    reverb: 0.22,
+    echo: 0,
+    detune: -2,
+    gain: 0.115,
+  },
+  mourningPad: {
+    harmonics: [0, 1, 0.28, 0.14, 0.09, 0.05],
+    attack: 0.35,
+    release: 0.7,
+    sustain: 0.78,
+    filterStart: 1000,
+    filterEnd: 520,
+    reverb: 0.62,
+    echo: 0.05,
+    detune: -9,
+    gain: 0.05,
+  },
 }
 
 const MUSIC_PART_INSTRUMENTS: Readonly<
@@ -297,11 +399,35 @@ const MUSIC_PART_INSTRUMENTS: Readonly<
   },
 }
 
+type OutcomeVoicing = Exclude<MusicOutcome, 'none'>
+
+const MUSIC_OUTCOME_INSTRUMENTS: Readonly<
+  Record<OutcomeVoicing, Readonly<Record<MusicTonePart, MusicInstrument>>>
+> = {
+  victory: {
+    lead: 'fanfareBrass',
+    bass: 'warmBass',
+    pad: 'anthemPad',
+    pulse: 'celebrationBell',
+  },
+  defeat: {
+    lead: 'lamentStrings',
+    bass: 'graveBass',
+    pad: 'mourningPad',
+    pulse: 'tollBell',
+  },
+}
+
 const MUSIC_ZONE_BRIGHTNESS: Readonly<Record<ZoneId, number>> = {
   neutral: 1,
   palace: 1.14,
   forest: 0.92,
   fort: 0.78,
+}
+
+const MUSIC_OUTCOME_BRIGHTNESS: Readonly<Record<OutcomeVoicing, number>> = {
+  victory: 1.22,
+  defeat: 0.7,
 }
 
 const MUSIC_KICK_PITCH: Readonly<Record<Faction, number>> = {
@@ -314,6 +440,27 @@ const MUSIC_TOM_PITCH: Readonly<Record<Faction, number>> = {
   elf: 164,
   guard: 148,
   villain: 126,
+}
+
+const MUSIC_OUTCOME_KICK_PITCH: Readonly<Record<OutcomeVoicing, number>> = {
+  victory: 128,
+  defeat: 76,
+}
+
+const MUSIC_OUTCOME_TOM_PITCH: Readonly<Record<OutcomeVoicing, number>> = {
+  victory: 158,
+  defeat: 98,
+}
+
+/** Parade skins ring open; the funeral drum and tam-tam are muffled and slow. */
+const MUSIC_OUTCOME_SKIN_TILT: Readonly<Record<OutcomeVoicing, number>> = {
+  victory: 1.15,
+  defeat: 0.45,
+}
+
+const MUSIC_OUTCOME_SKIN_DECAY: Readonly<Record<OutcomeVoicing, number>> = {
+  victory: 1,
+  defeat: 2.1,
 }
 
 const tone = (
@@ -880,6 +1027,11 @@ export class AudioDirector {
     this.pendingMusicContext = normalizeMusicContext(context)
   }
 
+  /** Hands the score over to the victory fanfare or the defeat lament. */
+  setMusicOutcome(outcome: MusicOutcome): void {
+    this.pendingMusicContext = { ...this.pendingMusicContext, outcome }
+  }
+
   getDiagnostics(): AudioDirectorDiagnostics {
     const voices = [...this.activeVoices.values()]
     return {
@@ -1057,7 +1209,9 @@ export class AudioDirector {
   }
 
   private musicEchoTime(): number {
-    return (60 / getMusicTempo(this.activeMusicContext.faction)) * 0.75
+    return (
+      (60 / getMusicTempo(this.activeMusicContext.faction, this.activeMusicContext.outcome)) * 0.75
+    )
   }
 
   private updateBusTargets(): void {
@@ -1079,15 +1233,15 @@ export class AudioDirector {
     const context = this.context
     const musicGain = this.musicGain
     if (!context || !musicGain) return
-    const target =
-      this.hidden || this.musicMuted
-        ? 0
-        : this.ended
-          ? MUSIC_ENDED_GAIN
-          : this.paused
-            ? MUSIC_PAUSED_GAIN
-            : MUSIC_ACTIVE_GAIN
-    rampParam(musicGain.gain, target, context.currentTime, 0.045)
+    rampParam(musicGain.gain, this.musicTargetGain(), context.currentTime, 0.045)
+  }
+
+  private musicTargetGain(): number {
+    if (this.hidden || this.musicMuted) return 0
+    // The outcome piece is the payoff of the run, so it never ducks to the ended level.
+    if (this.pendingMusicContext.outcome !== 'none') return MUSIC_OUTCOME_GAIN
+    if (this.ended) return MUSIC_ENDED_GAIN
+    return this.paused ? MUSIC_PAUSED_GAIN : MUSIC_ACTIVE_GAIN
   }
 
   private updateEffectsTargets(duration = 0.045): void {
@@ -1109,18 +1263,51 @@ export class AudioDirector {
   private scheduleMusic(): void {
     const context = this.context
     if (!context || !this.musicGain || context.state === 'closed') return
+    if (this.pendingMusicContext.outcome !== this.activeMusicContext.outcome) {
+      this.startOutcomeMusic()
+    }
     if (this.musicNextNoteTime < context.currentTime - 0.5) {
       this.musicNextNoteTime = context.currentTime + 0.04
     }
     while (this.musicNextNoteTime < context.currentTime + 0.16) {
       if (isMusicBarBoundary(this.musicStep)) this.commitMusicContext()
-      const stepDuration = 60 / getMusicTempo(this.activeMusicContext.faction) / 4
+      const stepDuration =
+        60 /
+        getMusicTempo(this.activeMusicContext.faction, this.activeMusicContext.outcome) /
+        4
       if (!this.hidden && !this.musicMuted) {
         this.scheduleMusicStep(this.musicNextNoteTime, stepDuration)
       }
       this.musicStep = (this.musicStep + 1) % MUSIC_CYCLE_STEPS
       this.musicNextNoteTime += stepDuration
     }
+  }
+
+  /**
+   * A run ending cuts in immediately instead of waiting for the next bar: the score is
+   * hushed, lingering tails are stopped while silent, and the outcome piece restarts at bar one.
+   */
+  private startOutcomeMusic(): void {
+    const context = this.context
+    if (!context) return
+    const now = context.currentTime
+    this.activeMusicContext = this.pendingMusicContext
+    this.musicStep = 0
+    this.musicNextNoteTime = now + MUSIC_OUTCOME_GAP
+
+    const musicGain = this.musicGain
+    if (musicGain) {
+      rampParam(musicGain.gain, 0, now, MUSIC_OUTCOME_GAP * 0.35)
+      musicGain.gain.linearRampToValueAtTime(
+        this.musicTargetGain(),
+        now + MUSIC_OUTCOME_GAP + 0.05,
+      )
+    }
+    for (const source of [...this.musicSources.keys()]) {
+      this.stopSource(source, 'scheduled music source', now + MUSIC_OUTCOME_GAP * 0.9)
+    }
+    const delay = this.musicDelay
+    if (delay) rampParam(delay.delayTime, this.musicEchoTime(), now, 0.08)
   }
 
   private commitMusicContext(): void {
@@ -1162,7 +1349,11 @@ export class AudioDirector {
     const context = this.context
     const musicGain = this.musicGain
     if (!context || !musicGain) return
-    const instrument = MUSIC_PART_INSTRUMENTS[this.activeMusicContext.faction][part]
+    const outcome = this.activeMusicContext.outcome
+    const instrument =
+      outcome === 'none'
+        ? MUSIC_PART_INSTRUMENTS[this.activeMusicContext.faction][part]
+        : MUSIC_OUTCOME_INSTRUMENTS[outcome][part]
     const profile = MUSIC_INSTRUMENT_PROFILES[instrument]
     const wave = this.musicWaves.get(instrument)
     if (!wave) return
@@ -1176,7 +1367,10 @@ export class AudioDirector {
     const attack = Math.min(profile.attack, duration * 0.35)
     const release = Math.min(profile.release, duration * 0.6)
     const releaseStart = Math.max(time + attack, time + duration - release)
-    const brightness = MUSIC_ZONE_BRIGHTNESS[this.activeMusicContext.zone]
+    const brightness =
+      outcome === 'none'
+        ? MUSIC_ZONE_BRIGHTNESS[this.activeMusicContext.zone]
+        : MUSIC_OUTCOME_BRIGHTNESS[outcome]
 
     oscillator.setPeriodicWave(wave)
     oscillator.frequency.setValueAtTime(midiToFrequency(midi), time)
@@ -1237,14 +1431,18 @@ export class AudioDirector {
     velocity: number,
     pan: number,
   ): void {
+    const outcome = this.activeMusicContext.outcome
     if (drum === 'kick') {
       this.scheduleMusicDrumTone(
         time,
         velocity,
         pan,
-        MUSIC_KICK_PITCH[this.activeMusicContext.faction],
-        42,
-        0.14,
+        outcome === 'none'
+          ? MUSIC_KICK_PITCH[this.activeMusicContext.faction]
+          : MUSIC_OUTCOME_KICK_PITCH[outcome],
+        outcome === 'defeat' ? 30 : 42,
+        outcome === 'defeat' ? 0.42 : 0.14,
+        outcome === 'defeat' ? 0.22 : 0,
       )
       return
     }
@@ -1253,10 +1451,12 @@ export class AudioDirector {
         time,
         velocity * 0.78,
         pan,
-        MUSIC_TOM_PITCH[this.activeMusicContext.faction],
+        outcome === 'none'
+          ? MUSIC_TOM_PITCH[this.activeMusicContext.faction]
+          : MUSIC_OUTCOME_TOM_PITCH[outcome],
         62,
-        0.19,
-        0.16,
+        outcome === 'defeat' ? 0.34 : 0.19,
+        outcome === 'defeat' ? 0.3 : 0.16,
       )
       return
     }
@@ -1304,9 +1504,12 @@ export class AudioDirector {
     const musicGain = this.musicGain
     const buffer = this.sharedNoiseBuffer
     if (!context || !musicGain || !buffer) return
-    const duration = type === 'hat' ? 0.045 : type === 'snare' ? 0.12 : 0.42
+    const outcome = this.activeMusicContext.outcome
+    const tilt = outcome === 'none' ? 1 : MUSIC_OUTCOME_SKIN_TILT[outcome]
+    const decay = outcome === 'none' ? 1 : MUSIC_OUTCOME_SKIN_DECAY[outcome]
+    const duration = (type === 'hat' ? 0.045 : type === 'snare' ? 0.12 : 0.42) * decay
     const gain = type === 'hat' ? 0.04 : type === 'snare' ? 0.085 : 0.058
-    const frequency = type === 'hat' ? 5600 : type === 'snare' ? 1550 : 3100
+    const frequency = (type === 'hat' ? 5600 : type === 'snare' ? 1550 : 3100) * tilt
     const reverb = type === 'hat' ? 0.05 : type === 'snare' ? 0.16 : 0.34
     const source = context.createBufferSource()
     const filter = context.createBiquadFilter()
@@ -1491,9 +1694,10 @@ export class AudioDirector {
     }
   }
 
-  private stopSource(source: AudioScheduledSourceNode, label: string): void {
+  private stopSource(source: AudioScheduledSourceNode, label: string, when?: number): void {
     try {
-      source.stop()
+      if (when === undefined) source.stop()
+      else source.stop(when)
     } catch (error) {
       if (!isInvalidStateError(error)) {
         console.warn(`Korovany: ${label} could not be stopped.`, error)
@@ -1533,7 +1737,8 @@ function sameMusicContext(left: MusicContext, right: MusicContext): boolean {
     left.faction === right.faction &&
     left.zone === right.zone &&
     left.intensity === right.intensity &&
-    left.threatTier === right.threatTier
+    left.threatTier === right.threatTier &&
+    left.outcome === right.outcome
   )
 }
 
