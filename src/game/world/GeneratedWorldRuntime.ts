@@ -1484,17 +1484,29 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
   }
 
   /**
-   * Points in this region that something will be placed at and must be able to stand.
+   * Encounter actor positions in this region, which decoration must not stand on.
    *
-   * Faction starts and encounter actors are positioned by world generation, which knows
-   * nothing about decoration. Before this pass every decoration collider was a
-   * sapling-sized 0.55 and the overlap went unnoticed; a fort boulder is 0.85, which is
-   * correct for a boulder and enough to trap a spawn. Measured by a reviewer across
-   * twelve seeds: decoration colliders newly blocked seven positions the previous
-   * collision model left clear.
+   * **Encounter actors only.** Faction starts are protected by a different mechanism —
+   * `getStartPosition` snaps through `walkableNear` — and deliberately so: this runs
+   * *during* collider registration, so computing a start position here would query a
+   * collision world that is still half-built and make the result depend on bucket
+   * order. The two mechanisms cover the two cases; neither covers both.
+   *
+   * That distinction is written out because the previous version of this comment
+   * claimed both, which is the documentation form of the fault this file's spec
+   * catalogues: a statement of coverage that nothing checks and that happened to be
+   * false. The measured result is what matters and it is unaffected — faction starts
+   * blocked went 1/180 to 0/180 — but the reason was the snap, not this.
+   *
+   * Encounter actors are positioned by world generation, which knows nothing about
+   * decoration. Before this pass every decoration collider was a sapling-sized 0.55 and
+   * the overlap went unnoticed; a fort boulder is 0.85, which is correct for a boulder
+   * and enough to trap a spawn.
    *
    * Shrinking the boulder back is not the fix — at 0.55 the same spawn cleared by 0.012
-   * units, so the old result was luck rather than safety.
+   * units, so the old result was luck rather than safety. A reviewer's field survey of
+   * 180 starts puts 1 blocked, 2 in a 0.25-1 unit band and 61 comfortable or clear, so
+   * the mechanism was unguarded rather than the radii being systematically wrong.
    */
   private spawnKeepOutPoints(): readonly { x: number; z: number }[] {
     const points: { x: number; z: number }[] = []
