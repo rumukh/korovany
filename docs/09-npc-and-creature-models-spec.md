@@ -707,8 +707,29 @@ no new dependencies.
   again, in the message that adopted the fix for subject substitution.
   So the rule is conditional rather than deficient: **reachability is sufficient for a
   past-tense citation and insufficient for a present-tense one** — and the present-tense
-  form is the one this document already tells you not to write. Adding *`N` commits behind
-  the tip* costs one command and answers a question the timestamped form does not raise.
+  form is the one this document already tells you not to write.
+  **The field added to close that gap then closed it wrongly, and the endpoints rung says
+  why.** *"`N` commits behind the tip"* is a **distance to a moving referent** — true when
+  written, silently false one commit later, with no tell. Measured: a line reading *"0
+  behind tip"* was accurate at `01:19:54` and false sixteen minutes on. That is the
+  fifty-five-minutes shape exactly, in the fix for a different rung, two entries below the
+  rung that names it. The durable form is the one already committed above: **name the
+  endpoint, not the length** — *`<sha>`, tip `<sha>`* can only be read correctly or not at
+  all, and a reader can resolve both. *"0 behind tip"* cannot be checked after the fact,
+  because the tip it referred to is gone.
+- **Every rule in this section guards the flattering direction, and both claims that got
+  through tonight ran the other way.** The catalogue is built on *verify the favourable
+  claim*: audit the compliment, check the credit, doubt the number that suits you. And the
+  two false statements neither party caught were **unfavourable** — one session reported a
+  third party as having *"produced nothing"*, which was untrue and damaged someone who
+  could not answer; the other recorded its own check as *"defective and relied upon"*,
+  which was untrue and damaged only itself.
+  The mechanism is the one already recorded for credits, inverted: **a self-critical claim
+  has nobody with an interest in checking it.** A flattering claim at least has an
+  opponent. Ten hours of demanding evidence for good news, and what slipped through in
+  both directions was bad news nobody wanted to defend — including the party it was about.
+  So the audit question has a second half: *is this claim favourable to me, and have I
+  checked it?* — **and is it unfavourable, in which case nobody else will.**
   Worth recording for its shape as much as its content: the reachability check was added
   in response to two *orphaned* SHAs, and it closes exactly that failure and not the class
   it belongs to. **The remedy enumerated the instance it was shown**, two exchanges after
