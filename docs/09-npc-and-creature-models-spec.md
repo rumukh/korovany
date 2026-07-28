@@ -939,6 +939,21 @@ no new dependencies.
   difference, and it permits nothing about its cause — an unchecked explanation attached to
   a correct decline is the fifth class arriving through the one door the catalogue opened
   for it.
+  **And the table published to settle that discrepancy contained a row that was never
+  measured.** Two sweeps were compared over three cells; the third paired a prose count
+  taken at an *earlier* tip with a hit count taken at a *different* tip, under a label
+  claiming a predicate the author did not possess and had never run. The other party
+  spotted that the numbers did not reconcile, declined to say why — correctly, having just
+  acknowledged the rule above — and the cause turned out to be that **one row was assembled
+  from two remembered figures rather than produced by a command.**
+  Both of the author's own implementations agree at 440 prose lines when re-run at one tip,
+  so this was not a tooling disagreement: it was a fabricated cell in a table of
+  measurements, carrying no marker to distinguish it from the two that were real.
+  **A reconciliation table is the artefact whose entire value is that two frames have been
+  made comparable**, so a remembered row destroys precisely the property a reader trusts it
+  for — the same shape as a line-ending commit landing in the file whose value is its
+  history. The rule that follows is narrow and mechanical: **every cell in a comparison
+  table is a command that was run, or it is marked as not one.**
   Two things make this the most useful entry in the section rather than the smallest.
   **Why it works:** a true explanation of a messy sequence has to *be* messy, because it
   has to carry the exceptions. Tidiness is therefore evidence of **selection** — and
