@@ -1256,6 +1256,44 @@ test('displacement does not tear a solid prop open at its creases', () => {
   assert.deepEqual(torn, [], 'these solid props have holes in them')
 })
 
+test('one geometry cannot be tagged under two prop surfaces', () => {
+  // `mergeAll` moves rather than copies for a single part, so tagging one geometry as
+  // both `hard` and `glow` hands the same buffer back for both surfaces. The library
+  // then holds two cache keys over one buffer and releasing either disposes the other,
+  // with no throw and no symptom until a draw — `dispose()` frees the GPU resource and
+  // leaves the JS object readable.
+  //
+  // Reference counting is structurally blind to it: every count is individually correct
+  // and the fault is that two counts govern one buffer. So the guard is at the merge
+  // boundary, where the duplicate is visible, rather than in the accounting.
+  const shared = new THREE.BoxGeometry(1, 1, 1)
+  assert.throws(
+    () => {
+      mergePropParts([propPart(shared, 'hard'), propPart(shared, 'glow')], {
+        name: 'double-tagged',
+      })
+    },
+    /more than one part/,
+    'the same geometry under two surfaces must be refused',
+  )
+
+  // The legitimate neighbour, so the guard is not just rejecting everything: two
+  // distinct geometries on two surfaces is the normal case and must still merge.
+  const hard = new THREE.BoxGeometry(1, 1, 1)
+  const glow = new THREE.BoxGeometry(0.5, 0.5, 0.5)
+  const merged = mergePropParts([propPart(hard, 'hard'), propPart(glow, 'glow')], {
+    name: 'two-surfaces',
+  })
+  assert.equal(merged.length, 2, 'two distinct geometries on two surfaces must merge')
+  assert.notEqual(
+    merged[0].geometry,
+    merged[1].geometry,
+    'two surfaces must not come back sharing one buffer',
+  )
+  for (const surface of merged) surface.geometry.dispose()
+  shared.dispose()
+})
+
 test('the merged hard surface of a prop carries welded outline normals', () => {
 
   const parts = buildingParts({
