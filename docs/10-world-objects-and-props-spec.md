@@ -878,9 +878,33 @@ blind to a guard spelled differently and blind to a guard that is an ordering fa
 line of code at all. That is rule 3 firing on the first check written after the rule
 landed, against its own author. **Landing a rule does not install it.** The last entry, and the one that explains why several of the others survived
 
+**A check that fires on correct code is worse than no check.** The tempting fix for a
+predicate that misses a case is to widen it — here, extending a `.material`-assignment
+scanner to catch `castShadow` too. That would have failed the build immediately, because
+the four builders it newly covers are *correctly* unguarded today: they run before
+anything outlines their output. A red light that means "this was always like this" is
+indistinguishable from one that means "you just broke it", and arriving mid-merge it
+trains everyone reading it to ignore the next one.
+
+The alternative is to assert the property that actually holds rather than a proxy for it.
+The real invariant is *"these builders contain no outline calls"* — measured true at every
+commit, so it never reddens a merge, and it fires exactly when someone co-locates
+outlining into a builder, which is the change that makes them unsafe. Same coverage,
+no false alarm, and it converts the ordering guard above into a greppable one without
+inventing a defect to justify itself.
+
+Contributed by the foundation session, about the widening of its own landed test — whose
+predicate is blind to the same four builders its throwaway scanner scored 0 for 5 on. The
+same blindness, one layer up: in the shipped artefact rather than the probe.
+
+**Cite symbols, not line numbers, in anything meant to be lifted.** Small, and it is the
+failure mode this section is most exposed to, since it exists to be copied into another
+programme's docs. Line numbers rot silently — the file they point into stays valid, so
+nothing errors, and the citation quietly starts describing a blank line. This spec cites
+files and symbols throughout for that reason. The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives already
+
 **Measure adopted fixes at least as hard as original code, precisely because they feel
-settled.** The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives already
-argued for, by someone who was right about something else, which is exactly the condition
+settled.** The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives alreadyargued for, by someone who was right about something else, which is exactly the condition
 under which nobody measures it again.
 
 Two of the three worst vacuous checks in this file were adopted from reviews. The ledger
