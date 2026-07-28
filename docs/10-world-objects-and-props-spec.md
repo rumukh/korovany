@@ -915,9 +915,45 @@ programme's docs. Line numbers rot silently — the file they point into stays v
 nothing errors, and the citation quietly starts describing a blank line. This spec cites
 files and symbols throughout for that reason. The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives already
 
+**The exact instrument arrived last: `git rev-parse <ref>:<path>`.** Nine hours were spent
+approximating a question that has an exact answer. *"Is this tree's copy of this file the
+same file?"* is settled by comparing the blob hash, which is immune to caching, to
+rebasing, to cherry-picking, and to a token appearing in a comment:
+
+```text
+src/game/art/stylizedShader.ts
+  origin/rumukh-s1-art-foundation       b2e50bd
+  origin/rumukh-s3-world-objects        b2e50bd
+  origin/rumukh-rumukh-s4-integration   b2e50bd     one object, three refs
+```
+
+Everything else tried on this programme fails in at least one direction.
+`merge-base --is-ancestor` is invalid under rebase or cherry-pick — three sessions, three
+different wrong answers. Test counts are a lossy hash that both collides and drifts.
+Tree-diff line counts raised false alarms twice, both in the alarming direction. A content
+grep proves a *token* is present, not that the file is right. The surviving set is three:
+**`git branch --contains`** for tip-versus-orphan, a **content probe** for "does this tree
+have the fix", and the **blob hash** for "is this file identical" — which is stronger than
+the other two wherever the question is really about a file.
+
+**An instruction that changes how findings are *treated* is more dangerous than one that
+changes code.** The programme lead's closing contribution, and the sharpest of the
+non-code entries. A bad code change leaves a diff; someone reviews it, and the error has a
+surface. An instruction to *discount a category of finding* leaves nothing — and **silence
+is indistinguishable from a clean review.**
+
+The instance: a report circulated that this pass's tree predated a shader fix, with the
+consequence that its reviewer's visual findings should be discounted as "shading nobody is
+shipping." The premise was false — the blob hash above settles it — and had it been acted
+on, a genuine visual defect would have been dropped with no artefact to find later. Every
+other phantom instruction on this programme would have produced a visible wrong edit.
+
+Which is the argument for the blob hash in one line: the claim that would have suppressed
+findings was refutable in one command, and the command that refutes it exactly is the one
+nobody reached for until the last hour. Both produce a large one-way gap, and the alarming reading
+
 **A one-directional set difference cannot distinguish "they lost work" from "they are
-describing an old snapshot."** Both produce a large one-way gap, and the alarming reading
-presents first — because the direction you naturally compute is *what is missing from
+describing an old snapshot."** Both produce a large one-way gap, and the alarming readingpresents first — because the direction you naturally compute is *what is missing from
 theirs*, which is also the direction that looks like data loss.
 
 Contributed by the foundation session, which came within one message of reporting that
