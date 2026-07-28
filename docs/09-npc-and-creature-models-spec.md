@@ -296,6 +296,16 @@ no new dependencies.
   the axis nobody complained about stays a sample** — so ask which axes a thing has, not
   whether you swept the one that broke. **Enumerating an axis at two points is
   enumerating the points**, which a clamp sitting on a sample point will demonstrate.
+  And **does the enumeration cover the whole of each axis, or the part the
+  demonstration used?** A stride sweep once ran `0.01 … 1` under a comment correctly
+  naming its population as `±0.62` — the domain was stated accurately in the sentence
+  justifying the enumeration, and the enumeration covered one side of zero, because
+  every mutation ever shown for that function had used a positive stride.
+  The generalisation that ties this to the instrument rule above: **every guard
+  enumerates the failure that was demonstrated to it.** The three mutation guards, the
+  axis sweeps and the scope of each ban all have that shape, which is why a fix's
+  coverage should be derived from the domain rather than from the report that prompted
+  it.
   And it applies to *fixes* as much as assertions: a fix scoped to the instance that was
   reported has inherited its sample from the report.
   The corollary that took two people to see: **the population has as many dimensions as
