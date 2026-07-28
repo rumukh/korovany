@@ -903,9 +903,31 @@ programme's docs. Line numbers rot silently — the file they point into stays v
 nothing errors, and the citation quietly starts describing a blank line. This spec cites
 files and symbols throughout for that reason. The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives already
 
+**The ambiguity resolved in my favour, silently — and that is a selection rule, not a
+measurement error.** The only entry here that is not about code, and the programme lead
+identified it as its own class after this pass reported it about itself.
+
+Three times tonight this session diagnosed a colleague's tooling as broken — "cached ref
+resolutions" from a reflog position, "reviewing an integration copy" from
+`git branch --contains`, and a stale-tip claim inverted. Every diagnosis was withdrawn.
+The evidence was correctly gathered every time: `40d6e7d` really did sit at reflog
+position `@{17}`, and both readings — *"they read a stale ref"* and *"I made seventeen
+moves since they measured"* — fit it exactly. **The tiebreak was not evidence.**
+
+Everything else in this section is *"the check could not tell."* This is *"the check was
+ambiguous and the ambiguity resolved in my favour."* No instrument catches it, because
+nothing was measured wrongly. The only defence is the habit of asking **what else fits
+this number** — and asking it hardest when the answer locates the fault somewhere other
+than yourself, which is exactly when it feels least necessary.
+
+The programme lead then produced the companion instance while checking one of these very
+claims: it queried a session record with the wrong key, got `0 mentions`, and nearly
+reported a confident negative. The table had **zero rows for that key at all**. **A
+negative query is a claim about your query** — count the rows before reading the answer,
+which is the negative-claim rule recursing onto the tool used to test it. The second half is the programme lead's, added after three separate
+
 **A figure inside quotation marks reads as already verified — and so does a figure inside
-an instruction.** The second half is the programme lead's, added after three separate
-sessions spent measurements refuting quotations none of them had written: a docblock edit,
+an instruction.** The second half is the programme lead's, added after three separatesessions spent measurements refuting quotations none of them had written: a docblock edit,
 a `smooth: true` count, and a freeze target. Nobody misquoted anyone. The figures acquired
 a specificity in transit that they did not have when sent, and each receiving session
 reasonably treated a quoted SHA as something to *check against* rather than something to
@@ -1087,6 +1109,19 @@ this pass wrote:
   without needing to know what changed. If you were handed a SHA, that is the check that
   tells you it has been superseded — nothing else will, because the orphaned commit
   still resolves and still looks healthy.
+
+**And the one that removes the whole class: `git push -u` on the first day.** Every
+mitigation above manages a problem that only exists while a branch is unpublished. This
+one was unpushed for most of the programme, so nobody could resolve it by name at all —
+which is why two reviewers spent passes reading the integration branch's copy of the work,
+why three sessions gave wrong ancestry answers, and why the same four false mechanisms
+kept being proposed to explain it. **One command per session, available from the first
+hour, and none of the rest of this subsection would have been needed.**
+
+The reason it was skipped is worth naming too: the shared object store makes an unpushed
+branch *look* shareable. Colleagues could read it through worktrees, so the cost of not
+pushing was invisible from the inside and paid entirely by everyone else.
+
 
 ## 14. Effort
 
