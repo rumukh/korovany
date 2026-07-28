@@ -824,7 +824,29 @@ did not see they were the same until someone said so.
 The practical form: **when a test does setup the product does not do, that setup is part
 of the assertion.** Streaming a region, seeding a cache, constructing an input by hand —
 each one moves the test into a world that may not exist, and the more careful the setup
-looks, the less likely anyone is to question it. A phantom is a key in
+looks, the less likely anyone is to question it.
+
+**But that rule is too broad as first written, and the refinement is the usable part.**
+Warming is *usually* correct — a probe that queries collision without streaming a region
+passes on an empty world and proves nothing, so most setup is not merely allowed but
+required. The distinction is **who owns the ordering**:
+
+- Where residency, seeding or construction is *incidental* to what is under test, do it.
+  The test needs a world to ask questions of.
+- Where the ordering **is** the contract — "can the player move on the first click" is a
+  question about a specific moment in `GameEngine`'s sequence — the test must reproduce
+  production's ordering rather than a convenient one.
+
+Contributed by the reviewer who had praised the offending warm-up by name as rigour, then
+named its own error precisely: *"I validated it by reading it. I saw focus-then-measure,
+recognised the shape of a good habit, and stopped — without asking what the test would do
+if the code were broken."* Which is the same rule it had given this pass one message
+earlier — measure the detection threshold, not the pass or fail — applied to an assertion
+and not to a test, because the test looked careful and the assertion looked plain.
+
+**Appearance of rigour is not evidence of rigour**, and it is a worse proxy than no proxy,
+because it is anti-correlated with scrutiny. The question that would have caught it is one
+`grep`: *what ordering does production use?*
 
 **Severity is a property of callers, not of code — and an unreachable measurement can
 become another session's calibration constant.** Contributed by the foundation session
@@ -848,10 +870,12 @@ where they do not hold.
 
 The check here is now moot rather than merely tolerable — `smooth: true` appears zero
 times in `src/`, so every `loftProfile` call takes the faceted path — but the limit is
-written at the assertion, because that is the only place it is recoverable from. A phantom is a key inthe retention window with no cache entry behind it: it holds a slot, pins nothing,
+written at the assertion, because that is the only place it is recoverable from.
 
 **A check can fire eventually and still be blind, and that is a different failure from
-one that cannot fire at all.** The phantom-pin guard is the case. A phantom is a key inthe retention window with no cache entry behind it: it holds a slot, pins nothing,releases nothing on eviction, and — worse than inert — retaining one at the limit evicts
+one that cannot fire at all.** The phantom-pin guard is the case. A phantom is a key in
+the retention window with no cache entry behind it: it holds a slot, pins nothing,
+releases nothing on eviction, and — worse than inert — retaining one at the limit evicts
 a real key, so the fault destroys exactly what the window exists to preserve. The guard
 adopted for it asserted `propCacheSize >= retainedPropCount`, on the sound premise that
 every real pin has an entry.
