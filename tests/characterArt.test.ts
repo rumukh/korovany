@@ -1734,25 +1734,47 @@ test('the head tracks its target through the chest, not past it', () => {
         + 'reaches the gaze directly, which the derivation says it cannot.',
       )
     }
+    // Swept, not sampled — and this assertion was written *after* a reviewer showed
+    // that `chestGaitYaw` and `decayStrideOnStagger` were each pinned at a single
+    // input, so it should not have been one pose and one component. It was.
+    //
+    // The reviewer's unifying diagnosis is that every remaining hole here is **a sample
+    // standing in for a population**: one plan for 27, one pose for 462, one grid corner
+    // for a joint set, one stride for a function, one delta for a decay. That is the
+    // same defect this file opened with — a hand-written chest table standing in for a
+    // reachable envelope — and it is unrecognisable at the far end because the sample
+    // stopped looking like a list and started looking like an argument list.
+    //
+    // So: several poses, all three components, and a component-swap check. `pitch` and
+    // `yaw` transposed would satisfy any assertion that only reads `rotation.x` at a
+    // pose where they happen to be equal, which is why none of the poses below have
+    // two equal components.
     for (const sabotage of ['YXZ', 'ZYX', 'ZXY'] as const) {
-      s.headPivot.rotation.order = sabotage
-      applyHeadPose(s.headPivot, 0.1, 0.2, 0.3)
-      assert.equal(
-        s.headPivot.rotation.order,
-        'XYZ',
-        `something set head-pivot's Euler order to ${sabotage} and \`applyHeadPose\` left `
-        + 'it there. It passes the order to `Euler.set` precisely so that a runtime '
-        + 'reassignment cannot survive a frame — asserting the order on a freshly built '
-        + 'skeleton does not cover this, because the engine animates a rig the test '
-        + 'never sees.',
-      )
-      assert.equal(
-        s.headPivot.rotation.x,
-        0.1,
-        'the pitch `applyHeadPose` was given is not the pitch it wrote. This is the '
-        + 'equality the source regex `headPivot.rotation.x = headPitch` was standing in '
-        + 'for, and it could be satisfied by `headPitch * 0.5`.',
-      )
+      for (const [pitch, yaw, roll] of [
+        [0.1, 0.2, 0.3], [-0.09, 0.65, -0.3], [0.18, -1.2, 0.037], [0, 0.5, -0.15],
+      ] as const) {
+        s.headPivot.rotation.order = sabotage
+        applyHeadPose(s.headPivot, pitch, yaw, roll)
+        assert.equal(
+          s.headPivot.rotation.order,
+          'XYZ',
+          `something set head-pivot's Euler order to ${sabotage} and \`applyHeadPose\` left `
+          + 'it there. It passes the order to `Euler.set` precisely so that a runtime '
+          + 'reassignment cannot survive a frame — asserting the order on a freshly built '
+          + 'skeleton does not cover this, because the engine animates a rig the test '
+          + 'never sees.',
+        )
+        assert.deepEqual(
+          [s.headPivot.rotation.x, s.headPivot.rotation.y, s.headPivot.rotation.z],
+          [pitch, yaw, roll],
+          `\`applyHeadPose\` was given (${String(pitch)}, ${String(yaw)}, ${String(roll)}) `
+          + `and wrote (${String(s.headPivot.rotation.x)}, ${String(s.headPivot.rotation.y)}, `
+          + `${String(s.headPivot.rotation.z)}). All three components are checked, at four `
+          + 'poses with no two equal, because a single pose reading only the pitch is '
+          + 'satisfied by `headPitch * 0.5` at zero and by transposing two arguments '
+          + 'anywhere they coincide.',
+        )
+      }
     }
   }
 
