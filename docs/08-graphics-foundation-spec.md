@@ -783,6 +783,41 @@ the injection for one surface. The first mutation attempted was inert — it gat
 which said nothing about the test. **A mutation that perturbs nothing observable is not a
 control**, and the pass it produces is the same green as a real one.
 
+#### A green pull request is a claim about a base that may already be gone
+
+Wave 2 and Wave 3 branch off this foundation and merge in parallel, so the gates above have
+a property worth stating outright: **they run against the base as it was when the run
+started, not as it is when you press merge.** GitHub tests a simulated merge — the CI job
+for PR #40 checked out `Merge 04d64b1 into 113977b` — but `113977b` had been superseded
+fifteen minutes before that PR landed.
+
+Measured on this repository, the first day two waves were open at once:
+
+```
+19:18:47Z   #40 CI runs, checking out  Merge 04d64b1 into 113977b     green
+19:33:47Z   #38 merges                 main becomes d66478b
+19:33:56Z   #40 merges, nine seconds later
+            git merge-base --is-ancestor d66478b 04d64b1  ->  exit 1
+```
+
+Both pull requests touched `src/game/art/index.ts`. Neither one's CI ever saw the other's
+version of it, and the barrel gate this section is about would not have caught a conflict
+between them, because it never ran on a tree containing both. Branch protection carries the
+required check under its correct name but sets `required_status_checks.strict` to `false`,
+which GitHub documents as *"Require branches to be up to date before merging."*
+
+**This was a near miss, not an incident.** `main` at `075b112` passes all four gates, and
+the push-triggered run on it succeeded; the two changes were genuinely independent. It is
+recorded because the next pair may not be, and because the cost of finding out is one
+command: fast-forward to `main` and run the suite before assuming your merged work is the
+work that was tested.
+
+One instrument note, since it nearly wrote a false sentence into this paragraph.
+`gh run list --json headSha` reports `04d64b1` for that run — the pull request head, not the
+tree the job checked out, which was a merge commit that exists nowhere in the repository's
+history. **The field is named for what you asked about, not for what ran**, and only the
+checkout line in the log distinguishes them.
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
