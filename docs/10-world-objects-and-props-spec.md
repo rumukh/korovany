@@ -973,6 +973,19 @@ and not to a test, because the test looked careful and the assertion looked plai
 because it is anti-correlated with scrutiny. The question that would have caught it is one
 `grep`: *what ordering does production use?*
 
+The same reviewer later reduced the whole distinction to a single question, which is the
+version to carry because it needs no judgement about what is "incidental":
+
+> **If you deleted the setup, would the test be measuring something production never does,
+> or nothing at all?**
+
+*Nothing at all* — the setup is scaffolding. Warm freely; a collision probe against an
+unstreamed region proves nothing and the setup is not part of the claim. *Something
+production never does* — the setup **is** the claim, and running it is asserting a world
+that does not occur. The faction-start test failed the second way: delete the warm-up and
+it still measures something, just the cold answer instead of the snapped one, and the cold
+answer is the only one `GameEngine` ever sees.
+
 **A guard you can grep for is a guard you can keep; a guard made of ordering is one a
 refactor is entitled to break.** Contributed by the foundation session after it tested a
 generalisation of this pass's finding rather than agreeing with it — twelve traversals
