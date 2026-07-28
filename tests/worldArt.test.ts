@@ -2988,7 +2988,12 @@ test('reloading a region rebuilds the same world objects', () => {
 test('the world-objects spec has no mangled paragraph joins', () => {
   const url = new URL('../docs/10-world-objects-and-props-spec.md', import.meta.url)
   const source = readFileSync(url, 'utf8')
-  const lines = source.split(/\r?\n/)
+  // Split on a lone `\r` too, not just `\r\n`. The integrator hit a file where PowerShell
+  // and node disagreed about line count for exactly that reason, and a splitter that
+  // misses a line ending silently joins two lines — which would hide the very defect
+  // these rules look for. This file measures 0 lone `\r` today; the pattern costs nothing
+  // and removes the dependence on that staying true.
+  const lines = source.split(/\r\n?|\n/)
 
   // An edit that anchors on a rule's bold header and replaces it leaves the previous
   // opening sentence orphaned above, indented by the wrap. Caught all ten real cases.
@@ -3010,6 +3015,31 @@ test('the world-objects spec has no mangled paragraph joins', () => {
     welds.map((entry) => `${entry.number}: ${entry.line.slice(0, 60)}`),
     [],
     'a bold header welded mid-sentence means a newline was deleted',
+  )
+
+  // Third rule, because the two above miss a weld between two lowercase words —
+  // `alreadyargued` is the case the integrator hit, and neither an orphan check nor a
+  // `**` check can see it. Length is the signature with real specificity: prose here wraps
+  // at ~95 columns, so a weld joins two wrapped lines and roughly doubles one. Table rows
+  // and fenced blocks legitimately run long and are excluded by structure rather than by
+  // length, so the rule stays exact rather than becoming a threshold to tune.
+  //
+  // The integrator's own detector for this was `[a-z]{3}(the|about|so|and|which)[a-z]`,
+  // which scores **60 matches on a clean file** — it fires on "whe*the*r", "under*st*and",
+  // "rea*so*ning". A check with that false-positive rate trains its reader to ignore it,
+  // which is a documented entry in this spec's §13 and the reason it is not adopted here.
+  const overlong = lines
+    .map((line, index) => ({ line, number: index + 1 }))
+    .filter(
+      (entry) =>
+        entry.line.length > 100
+        && !entry.line.startsWith('|')
+        && !entry.line.startsWith('```'),
+    )
+  assert.deepEqual(
+    overlong.map((entry) => `${entry.number}: [${String(entry.line.length)}] ${entry.line.slice(0, 50)}`),
+    [],
+    'a prose line at roughly twice the wrap width is two lines welded by a deleted newline',
   )
 })
 
