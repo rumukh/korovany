@@ -122,13 +122,23 @@ test('the whole visible set has an ink budget, not just each region in it', () =
       }
 
       // Reconcile the two counters. This walk counts the shells the library actually
-      // built; production charges what `inkDrawCost` PREDICTED before building them.
-      // They are independent measurements of the same quantity, and the last time they
-      // disagreed the production side was the wrong one — it billed one draw per
-      // `applyOutline` call while the library builds one shell per qualifying mesh, so a
-      // four-mesh building LOD was charged 1. The per-region check catches that on the
-      // regions it looks at; summing over the visible set puts every visible region on
-      // the same books at every focus position.
+      // built; production charges what `inkDrawCost` PREDICTED before building them,
+      // and it predicts using `takesInkShell`, whose own docblock says it "mirrors the
+      // mesh filter inside `StylizedArtLibrary.applyOutline`". A hand-copied predicate
+      // is the thing this assertion is really for: the library's filter and its mirror
+      // can drift apart with nothing else noticing.
+      //
+      // Calibrated, because "the counters agree" is worth nothing until you know what
+      // could make them disagree:
+      //
+      //   drop one clause from the mirrored filter   CAUGHT, names the focus and both numbers
+      //   flatten `inkDrawCost` to a constant 1      NOT caught, and correctly so
+      //
+      // The second is not a hole. That cost feeds both the spend gate and the charge,
+      // so flattening it moves both counters together and the tree stays self-consistent
+      // — a different defect, caught by the per-region budget assertion above. This one
+      // is aimed at filter divergence, which is the risk the duplicated predicate
+      // actually carries.
       const charged = runtime
         .getDebugSnapshot()
         .regionRoots.reduce((total, entry) => total + entry.inkDraws, 0)
