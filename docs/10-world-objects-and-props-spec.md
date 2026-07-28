@@ -848,9 +848,26 @@ and not to a test, because the test looked careful and the assertion looked plai
 because it is anti-correlated with scrutiny. The question that would have caught it is one
 `grep`: *what ordering does production use?*
 
+**Measure adopted fixes at least as hard as original code, precisely because they feel
+settled.** The last entry, and the one that explains why several of the others survived
+so long. **A check inherited from review carries borrowed authority**: it arrives already
+argued for, by someone who was right about something else, which is exactly the condition
+under which nobody measures it again.
+
+Two of the three worst vacuous checks in this file were adopted from reviews. The ledger
+identity was derived here, praised by the programme lead, recorded as programme guidance
+and propagated to the integrator before anyone asked what it forbade. The phantom-pin
+guard had **a reviewer's name on the reasoning and this pass's name on the
+implementation**, and neither party tested it — it was caught only because the reviewer
+went back to check its own suggestion rather than admire it, and found the weakened form
+blind until 29 simultaneous phantoms.
+
+That division is the mechanism worth naming: when the proposer and the implementer are
+different people, each can reasonably believe the other validated it. An original check
+has one owner and one conscience; an adopted one has two owners and, absent care, none. Contributed by the foundation session
+
 **Severity is a property of callers, not of code — and an unreachable measurement can
-become another session's calibration constant.** Contributed by the foundation session
-about its own work, and it is the only entry here where the fault propagated *between*
+become another session's calibration constant.** Contributed by the foundation sessionabout its own work, and it is the only entry here where the fault propagated *between*
 trees. It characterised a shading defect by its worst reachable-in-principle magnitude —
 104–125° — without asking who calls the builder. The answer was nobody: the only
 production route into that path has zero call sites in any of the four trees.
