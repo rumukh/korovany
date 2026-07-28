@@ -1736,6 +1736,34 @@ despair but an argument for keeping every level cheap enough that adding one mor
 almost nothing. **Both of the gates that failed on this programme failed by trying to be
 clever at level three.**
 
+**Two instruments disagreeing is worth more than either agreeing with itself — and the
+reconciliation is usually a population, not an error.** The integrator could reproduce this
+pass's geometry-disposal figure and not its `InstancedMesh` figure, and recorded the gap as
+*unreconciled* rather than inventing a cause. That was the right call and it is what made
+the cause findable. One flag explains it entirely:
+
+```
+                          geometry   InstancedMesh
+outlineDressing: true        3099         2223
+outlineDressing: false       3099         1644
+difference                      0          579
+```
+
+Ink shells **are** `InstancedMesh` instances and they **share** their source's geometry — so
+each one adds an instanced disposal and no geometry disposal. That is precisely why the two
+counters behaved differently: geometry agreed because it is blind to ink, `InstancedMesh`
+disagreed because it is not. Neither measurement was wrong; they were of different
+configurations, and the difference *is* the ink population.
+
+Two lessons, and the second is the uncomfortable one. **Refusing to explain a gap is what
+preserves it long enough to be explained** — a plausible reason invented at the time would
+have closed the item and buried a fact worth having. And this pass's own figure in that
+exchange, 2861, **failed to reproduce on its own tree** when re-measured under the same
+protocol. It was quoted from memory across several messages while the reconciliation work
+happened on the other side. The rule the programme kept re-deriving applies to one's own
+numbers first: *a figure without the command that produced it is a rumour that has been
+formatted*, and the author is the last person who will notice.
+
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
 state that no check could see. Ten lines were mangled — five entries whose opening sentence
