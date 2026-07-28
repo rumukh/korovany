@@ -3031,6 +3031,45 @@ const PROP_KIT_SURFACE = [
  */
 const SURFACE_SIZES = { foundation: 36, characterKit: 47, propKit: 39 }
 
+/**
+ * The same three pins written literally, by name.
+ *
+ * Redundant with the loop below, deliberately, and the reason is empirical rather than
+ * stylistic: **three separate reviewers went looking for `FOUNDATION_SURFACE.length` and
+ * none of them found it**, because the loop expresses the guarantee over a variable and
+ * that spelling never appears as text. Each concluded the pin was missing and asked for
+ * it to be added. The guarantee was present and passing the whole time.
+ *
+ * That is this file's own §13 theme aimed at itself: a check can be correct and still
+ * be undiscoverable by a reader searching for the thing it protects. `git grep` is how
+ * a reviewer asks *"is this pinned"*, and a guarantee that cannot answer that question
+ * costs more in repeated review than the duplication costs in maintenance.
+ *
+ * The duplication is safe because it cannot diverge silently: if someone edits
+ * `SURFACE_SIZES` without editing here, or vice versa, this assertion fails immediately
+ * and names both numbers. A redundant check that goes red on divergence is not a second
+ * source of truth — it is a cheap consistency proof between two statements of one.
+ */
+test('each frozen surface list is pinned to its exact length, by name', () => {
+  assert.equal(FOUNDATION_SURFACE.length, 36)
+  assert.equal(CHARACTER_KIT_SURFACE.length, 47)
+  assert.equal(PROP_KIT_SURFACE.length, 39)
+
+  // And the literals above must agree with the table the loop below reads, or one of
+  // the two is being maintained and the other is decoration.
+  assert.deepEqual(
+    {
+      foundation: FOUNDATION_SURFACE.length,
+      characterKit: CHARACTER_KIT_SURFACE.length,
+      propKit: PROP_KIT_SURFACE.length,
+    },
+    SURFACE_SIZES,
+    'the by-name pins and SURFACE_SIZES disagree. They state the same fact twice so that '
+    + 'a reviewer grepping for `FOUNDATION_SURFACE.length` finds an answer; if they can '
+    + 'drift apart, the second copy is worse than useless. Update both.',
+  )
+})
+
 test('the art barrel still exports every surface its owners published', async () => {
   const art = await import('../src/game/art/index.ts')
   const actual = new Set(Object.keys(art))
