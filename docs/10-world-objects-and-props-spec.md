@@ -777,7 +777,27 @@ The rules that fall out of them, in rough order of how much they would have save
    that mattered, because "something in this file moved" is exactly the answer that fooled
    the ambiguous anchor.
 
-   **A fifth way a mutation campaign lies, contributed by the foundation session and worth
+   **A mutation campaign needs a positive control, run first.** The foundation session
+   produced the sharpest instance: one of its mutations reported SURVIVED, and the harness
+   had done everything right — the replace matched, the gate confirmed the file changed at
+   the named site. The mutation had landed on a line that only executes when
+   `parts.length !== 1`, inside a branch reached only when `parts.length === 1`. **Textually
+   valid, semantically inert.** A gate can see a replace that matches nothing; it cannot see
+   a replace that matches and then never runs.
+
+   What caught it was structural rather than analytic: *a survivor sitting between three
+   caught siblings that all test the same guard.* That asymmetry prompted a re-check of the
+   injection site instead of the test — and re-injected where it runs, it was caught. The
+   remedy generalises past that instance: **run one mutation you know must be caught before
+   trusting any that survive**, which proves the harness reaches the code at all. Two of
+   that session's campaigns produced confidently meaningless numbers, and in both the
+   *campaign* was at fault rather than the suite.
+
+   This is the same defect as the unreachable assertion one level out: a mutation in dead
+   code is a check whose answer does not depend on the thing it claims to measure, and it
+   fails in the reassuring direction.
+
+
    more than the other four combined because it corrupts results silently and in bulk:**
    `git checkout -- <file>` is a *mutation* revert only for committed work. On uncommitted
    work it is a **feature** revert — it removes the thing being tested along with the
