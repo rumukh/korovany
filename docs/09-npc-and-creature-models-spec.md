@@ -187,6 +187,22 @@ no new dependencies.
   introducing a 0.3% error in it each fail now and each passed before. **A test that
   cannot see the code it is named after is the same defect as a bound that cannot
   fail** — and neither is visible by reading, only by mutating the right thing.
+- **A threshold sized against a mis-modelled input is a threshold sized against
+  nothing.** The wobble test's anti-degeneracy guard — "the rejected rule must be
+  worse than 2°" — was chosen against a gait model that ran 3.7× too slow, because
+  `actorGaitCadence` returns radians per *metre travelled* and the test read it as
+  radians per second. `updateActors` does `gaitPhase += travelled * cadence`, so a
+  soldier at 3.7 m/s oscillates at 25.16 rad/s, not 6.8. Under the real physics the
+  rejected rule produces **1.997°**: the guard had negative margin and was one
+  rounding from passing vacuously. The discipline of asserting that the rejected
+  alternative *fails* was right; the number was fiction. Guards of that kind should
+  be expressed against the bound they protect — "the rejected rule must fail the
+  bound the shipped rule passes" — so the two cannot drift apart.
+- **Validate a conversion under the conditions that break it, not the ones that
+  suit it.** Every early gaze measurement held the chest's pitch and roll near zero,
+  which is precisely the geometry in which a scalar `lookYaw - chestYaw` is exact. The
+  two tests validating the conversion were blind to the only condition under which
+  the conversion failed. Both now drive all three axes.
 - **Do not fix a second defect inside a regression fix.** `torso-pivot` is *also*
   rooted at the actor's origin rather than at the waist, so under the same `lean` the
   whole upper body slides forward against the pelvis: **0.2950 m** at the waist on a

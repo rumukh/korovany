@@ -1418,34 +1418,67 @@ test('the head tracks its target through the chest, not past it', () => {
 /**
  * And it holds still while the chest twists under it.
  *
- * The test above measures a settled pose, and a settled pose cannot see this. The
+ * The test above measures settled poses, and a settled pose cannot see a lag. The
  * head's yaw is *damped* — `dampAngle(..., 7, delta)` — and the chest's yaw
- * oscillates at the gait cadence, 6.8 rad/s for a soldier. Damping a target that has
- * already had the chest's yaw folded into it makes the head chase that oscillation a
- * fraction of a second late, and the lag comes straight back out as world-space
- * wobble. Simulated over 20 seconds at 60 Hz, after the transient:
+ * oscillates with the gait. Damping a target that has already been converted into
+ * chest space puts the chest's own oscillation inside the thing being smoothed, and
+ * the lag comes straight back out as world-space wobble. So the tracking is damped
+ * in body space, on `actor.headYaw`, and `solveHeadYaw` converts instantaneously.
+ * **A frame change is not a motion.**
  *
- * | rule | residual world wobble |
- * | --- | --- |
- * | damp the converted target | **2.80°** at gait frequency |
- * | damp in body space, then convert | **0.000°** |
+ * ## The gait model here was wrong by 3.7×, and it mattered
  *
- * 2.80° was inside the 3° bound of the test above, so that test would have shipped
- * it. The rule is the general one: **a frame change is not a motion.** Damp the
- * tracking in the frame the target is authored in, and convert instantaneously.
+ * `actorGaitCadence` returns **radians per metre travelled**, not per second:
+ * `updateActors` does `gaitPhase += travelled * cadence`. A soldier moves at 3.7 m/s
+ * and its cadence is 6.8 rad/m, so its chest oscillates at **25.16 rad/s — 4.00 Hz**,
+ * not the 6.8 rad/s an earlier version of this test simulated. The stride is also
+ * damped at 15 on its way from `sin(gaitPhase)` to `actor.stride`, which this model
+ * dropped.
  *
- * That is why `animateActorCharacter` carries `previousChestYaw` — it reconstructs
- * last frame's body-space yaw from the head's current local yaw, damps *that*, and
- * only then subtracts this frame's chest yaw.
+ * That is not a cosmetic error. The anti-degeneracy guard below was `converted > 2`,
+ * chosen against the slow model. Under the real physics the rejected rule produces
+ * **1.997°** — the guard had *negative margin* and was one rounding away from passing
+ * vacuously. A reviewer found it by fixing the units and re-running my own assertion
+ * until it fired. **A threshold sized against a mis-modelled input is the same defect
+ * as a threshold sized against nothing.**
+ *
+ * ## Measured under the corrected model, 60 s at 60 Hz, after the transient
+ *
+ * | rule | pure-yaw chest | with the chest's real pitch and roll |
+ * | --- | --- | --- |
+ * | no correction | 2.199° | 2.996° |
+ * | damp the converted target | 1.997° | 2.787° |
+ * | `solveHeadYaw`, damped in body space | **0.000°** | **0.000°** |
+ *
+ * The second column answers the other half of the same review: an earlier version of
+ * this test held the chest's pitch and roll at zero, which is *exactly* the geometry
+ * where a scalar `lookYaw - chestYaw` is exact — so the test validating the
+ * conversion was blind to the only condition under which that conversion broke. It
+ * now drives all three axes. `solveHeadYaw` is unaffected because it is exact for any
+ * chest orientation, which is the whole reason it replaced the subtraction.
+ *
+ * ## The guard is no longer a round number either
+ *
+ * `converted > 2` is replaced by `converted > BOUND` — the rejected rule must fail
+ * the very bound the shipped rule is held to. That cannot drift out of calibration
+ * with the thing it is guarding, because it *is* the thing it is guarding.
  */
 test('the head holds its target while the chest twists under it', () => {
-  const FRAMES = 1200
   const DELTA = 1 / 60
-  const CADENCE = 6.8
+  const SECONDS = 60
+  // `updateActors`: gaitPhase += travelled * actorGaitCadence(role). Cadence is
+  // radians per METRE, so the angular frequency is speed x cadence — 25.16 rad/s,
+  // 4.00 Hz, for a soldier. Getting this wrong by 3.7x is what made the old guard
+  // vacuous, so both factors are named rather than pre-multiplied.
+  const SOLDIER_SPEED = 3.7
+  const SOLDIER_CADENCE = 6.8
   const TARGET = 0.35
-  // `dampAngle`'s exponential form, and the coefficient the head is damped at.
-  const damp = (from: number, to: number): number =>
-    to + (from - to) * Math.exp(-7 * DELTA)
+  // `solveHeadYaw` is exact, so the shipped rule's residue is float noise. Same
+  // reasoning as the 0.1 degrees in the test above: a looser bound would readmit the
+  // rule this test exists to reject.
+  const BOUND = 0.1
+  const damp = (from: number, to: number, lambda: number): number =>
+    to + (from - to) * Math.exp(-lambda * DELTA)
   const forward = new THREE.Vector3()
 
   const wobble = (dampInBodySpace: boolean): number => {
@@ -1454,27 +1487,39 @@ test('the head holds its target while the chest twists under it', () => {
     const head = new THREE.Object3D()
     head.position.y = skeleton.headY
     skeleton.headPivot.add(head)
+    let gaitPhase = 0
+    let stride = 0
     let bodyYaw = TARGET
     let converted = TARGET
     let worst = 0
-    for (let frame = 0; frame < FRAMES; frame += 1) {
+    for (let frame = 0; frame < SECONDS / DELTA; frame += 1) {
       const time = frame * DELTA
-      // `updateActors` walks the gait; `animateActorCharacter` turns the stride into
-      // the chest's yaw as `-stride * 0.12` for a light actor.
-      const chestYaw = -Math.sin(time * CADENCE) * 0.62 * 0.12
+      gaitPhase += SOLDIER_SPEED * DELTA * SOLDIER_CADENCE
+      stride = damp(stride, Math.sin(gaitPhase) * 0.62, 15)
+      // The chest, on all three axes: the gait's twist, the forward lean plus the
+      // storm hunch plus the plan's own lean, and the turn's roll. Holding pitch and
+      // roll at zero is the one geometry where a scalar conversion happens to work.
+      const chestYaw = -stride * 0.12
+      const chestPitch = 0.04 + 0.22 + p.lean
+      const chestRoll = -Math.sin(time * 2) * 0.08
       if (dampInBodySpace) {
-        bodyYaw = damp(bodyYaw, TARGET)
-        skeleton.headPivot.rotation.y = solveHeadYaw(0, chestYaw, 0, bodyYaw)
+        bodyYaw = damp(bodyYaw, TARGET, 7)
+        skeleton.headPivot.rotation.y =
+          solveHeadYaw(chestPitch, chestYaw, chestRoll, bodyYaw)
       } else {
-        // The rejected rule: damp the angle after it has been converted, so the
-        // chest's own oscillation is inside the thing being smoothed.
-        converted = damp(converted, solveHeadYaw(0, chestYaw, 0, TARGET))
+        // The rejected rule: damp after converting, so the chest's own oscillation
+        // is inside the thing being smoothed.
+        converted = damp(
+          converted,
+          solveHeadYaw(chestPitch, chestYaw, chestRoll, TARGET),
+          7,
+        )
         skeleton.headPivot.rotation.y = converted
       }
-      skeleton.torsoPivot.rotation.y = chestYaw
+      skeleton.torsoPivot.rotation.set(chestPitch, chestYaw, chestRoll)
       skeleton.root.updateMatrixWorld(true)
       // Past the start-up transient, which neither rule is being judged on.
-      if (time <= 5) continue
+      if (time <= 8) continue
       forward.set(0, 0, 1).transformDirection(head.matrixWorld)
       worst = Math.max(worst, Math.abs(Math.atan2(forward.x, forward.z) - TARGET))
     }
@@ -1484,17 +1529,23 @@ test('the head holds its target while the chest twists under it', () => {
   const damped = wobble(true)
   const converted = wobble(false)
   assert.ok(
-    damped <= 0.5,
-    `the head wobbled ${damped.toFixed(3)} degrees with the gait. Damp the tracking in `
-    + 'body space and convert to chest space afterwards; a frame change is not a motion.',
+    damped <= BOUND,
+    `the head wobbled ${damped.toFixed(3)} degrees with the gait, over ${BOUND.toFixed(2)}. `
+    + 'Damp the tracking in body space and convert with `solveHeadYaw` afterwards; a '
+    + 'frame change is not a motion, and damping the converted angle makes the head '
+    + 'chase the chest a fraction of a second late.',
   )
-  // The rule this is guarding against has to be shown to be worse, or the bound above
-  // is just a number that happens to hold.
+  // The rejected rule has to fail the bound the shipped rule passes, or this test has
+  // stopped distinguishing them and the assertion above proves nothing. Expressed
+  // against `BOUND` rather than a round number, so the two cannot drift apart — the
+  // previous version said `> 2`, sized against a gait model that was 3.7x too slow,
+  // and the real figure is 1.997.
   assert.ok(
-    converted > 2,
+    converted > BOUND,
     `damping the already-converted target produced only ${converted.toFixed(3)} degrees `
-    + 'of wobble, so this test is no longer distinguishing the two rules and the bound '
-    + 'above proves nothing. Re-derive it against the current gait and damping.',
+    + `of wobble, inside the ${BOUND.toFixed(2)} the shipped rule is held to. This test `
+    + 'is no longer distinguishing the two rules. Check the gait model against '
+    + '`updateActors` before touching the bound: cadence is radians per metre.',
   )
 })
 
