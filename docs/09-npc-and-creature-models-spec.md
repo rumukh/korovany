@@ -395,6 +395,16 @@ no new dependencies.
   same one line, but the trigger is different: re-resolve at the moment of *writing the
   close*, not at the moment of measuring, because the interval that matters is the one
   the review itself opened.
+  **That narrows the window and does not close it, and the reviewer it was written for
+  said so.** Re-resolving late shrinks the gap from turn-duration to send-to-read
+  latency, which is bounded below by nothing either party controls: push one minute
+  later and a late re-resolve still ships a stale tip. The durable form is not timing but
+  **tense**. *"Tip `abc1234`, unchanged"* is a present-tense assertion about the world at
+  read time and has a shelf life; *"verified `abc1234` at 21:56"* is an assertion about
+  the past, is still true tomorrow, and silently tells the reader it may no longer hold —
+  which is the honest content of both. This is *carry the derivation, not the value*
+  applied to grammar rather than to method, and the two compose: **re-resolve late and
+  report in the past tense, and there is no window at all.**
 - **A rule stored without its trigger is a guard with no call site.** It exists, it is
   correct, and nothing invokes it — which is the same object as an assertion that cannot
   fail for the defect it names, one level up and in prose instead of a test. The evidence
