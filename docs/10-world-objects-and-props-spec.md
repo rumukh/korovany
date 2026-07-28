@@ -1405,6 +1405,127 @@ the call from `destroy()` leaves an identical `this.generatedWorld.dispose()` in
 the same weakness as a release check satisfied by "some collection is released", one level
 out, and it is why the assertion here brackets `destroy()` by its next top-level member.
 
+**A gate proves the edit landed. It does not prove it landed where you said.** Verifying a
+reviewer's claim that a mutation still survived on the *integration* branch, this pass
+created a detached worktree at that branch's tip, applied the mutation, and reported
+`GATE PASSED: M3 applied to S4 INTEGRATION tree 3d31a22`. The gate was true — a file had
+changed, at the named site, and a re-read confirmed it. **The file was in this branch's own
+working tree.** `Set-Location` moves PowerShell's location but not .NET's working directory,
+so `[IO.File]::ReadAllText` with a relative path resolved against the original process
+directory throughout. Every subsequent reading described the wrong repository, and the
+source file here was left silently modified — caught only because one `Contains` check
+disagreed with an earlier one on the same string.
+
+The gate asked *did the file change at the site I named*, which was the right question one
+round earlier and is the wrong one here. The missing clause is the subject: **name the
+absolute path in the gate, and print the path you actually wrote.** A relative path is a
+claim about a working directory, and a working directory is exactly the kind of ambient
+state that differs between the thing you are testing and the thing you are standing in.
+
+Two failures in one probe, and the second is the more dangerous. The first run against that
+worktree reported `pass 0, fail 1` and was nearly recorded as the mutation being caught —
+it was a module resolution error, because a fresh worktree has no `node_modules`. **A
+missing baseline turns any failure into a confirmation.** The control that fixes it is one
+line and was skipped because the answer was the one already expected: run the unmutated
+tree first and require it green. With the baseline in place the real answer came back
+inverted from the reviewer's — 37 pass clean, 36 pass and 1 fail mutated, so the fix *had*
+propagated and their claim was measured against a tree twenty-two commits old.
+
+A sibling session, writing up the third level of this recursion, added that it would not
+assume the pattern stopped there. It did not. The levels now run: the assertion, the
+mutation that tests it, the gate that tests the mutation, and **the subject the gate is
+silently addressing.** The remedy does not scale by adding a fifth checker — it is that
+every level state, in its own output, the thing it operated on rather than the thing it
+intended to.
+
+**Four green gates, and not one of them type-checks the tests.** The integrator asked
+whether `tsc -b` covers `tests/`, and it does not: `tsconfig.app.json` is
+`"include": ["src"]`, `tsconfig.node.json` is `"include": ["vite.config.ts"]`, and the
+runner strips types without checking them. Planting
+`const plantedTypeError: number = 'this is a string'` at the top of this pass's main test
+file passes **`tsc -b`, the suite, and `npm run build`** — three thousand lines of test
+code that no tool has ever read for types.
+
+Type-checking them found six real errors in this pass's own two files, and they are not
+cosmetic:
+
+- `plan.slotId` does not exist on `GeneratedEncounterPlan`, so the failure message for a
+  blocked encounter spawn printed `seed/undefined/faction`. The assertion still fires — the
+  array is non-empty either way — but the diagnostic naming *which* encounter broke was
+  never there, in the test whose whole purpose is to name it.
+- Two `BuildingSpec` fixtures omit `archetype` and `variant`. `buildingSpecKey` interpolates
+  `spec.archetype` directly, so those tests exercise cache keys reading
+  `building:forest:elf:undefined:...` — **a spec the product cannot produce.** The same
+  vacuity as the ordering trap and the one-seed trap, arriving through the type system
+  rather than through setup.
+- Three callers passed `1` or `0` where an `as const` default had narrowed the parameter to
+  the literal `0.35`, so the decoration-density tests were type-lying about the range they
+  claimed to sweep.
+
+The shape is the one this section keeps finding, at the level of the toolchain: **a gate
+that reports on a smaller population than the reader assumes.** `tsc -b` exits 0 and the
+natural reading is *"the project type-checks"*; the true statement is *"`src` type-checks"*.
+Nobody wrote that down, and the gap is invisible precisely because the command is green and
+its name says nothing about scope.
+
+Worth pairing with the Markdown entry below, because they are the same hole in two file
+types: the artefacts a build does not parse are the ones with no tests, whatever the suite
+count says. Here the suite count was 294.
+
+**A merge can keep a fix and drop the test that guards it, and the commit still reads as
+merged.** Checking a coordinator's "everything of yours is in", this pass diffed its test
+names against the integration branch and found three missing. `git merge-base --is-ancestor`
+said the commit that added them **was** an ancestor — so nothing was un-merged; conflict
+resolution had dropped the content while the history stayed intact. Ancestry is a claim
+about commits, not about lines, and the two come apart exactly where someone resolved a
+conflict by hand.
+
+The one that mattered: `retentionIsIntact` was **byte-identical** in both trees, and the
+test injecting a single phantom was absent from one. Measured rather than argued —
+mutating the predicate to `return true`:
+
+```
+integration tree   38 pass / 0 fail   green, entirely unguarded
+this branch        39 pass / 1 fail   "one phantom pin must be detected"
+```
+
+A correct, shipped fix with no power over its own regression, which is the shape this whole
+section is about, arriving through version control rather than through test design. **The
+strongest form of "is it merged?" is not ancestry and not a content grep — it is running
+the mutation on their tree.**
+
+Two method notes, both of which changed the finding:
+
+- **The name diff produced one false finding out of three.** A receipt test also looked
+  lost; the integration tree had replaced it with a better guard — `PROP_RECEIPT`,
+  provenance before identity — with its own test. Reported as loss it would have been
+  wrong, and the check that caught it was reading what the *other* tree had instead of
+  only what it lacked.
+- **"No test covers it" is a negative claim** and got a probe before it got asserted: the
+  integration tree's four `phantom` mentions were three comments and one assertion message,
+  and its count of `retained.push` — the injection itself — was zero. Even then the absence
+  of a test is not the absence of coverage, which is why the mutation still had to be run.
+
+**A negative claim has a shelf life; a positive one does not.** The programme lead added
+this after carrying a stale absence across several messages, and it is the sharper half of
+the negative-claim rule. Content is *added* to a live integration branch and essentially
+never removed, so **a "presence" claim only becomes truer with time and an "absence" claim
+only becomes falser.** They decay in opposite directions, which means a negative is not
+established by one probe — on a moving branch it needs re-probing at the moment it is
+restated, every time.
+
+This pass then had to apply it to its own open finding. Having measured two of its tests
+missing from the integration branch at one tip, the honest form of restating it was to
+re-run the probe against the tip at the moment of writing — three tips later, and the
+absence still held. **The version that makes this cheap is blob identity**: where
+`git rev-parse <tip>:<path>` matches the tree a mutation was measured on, the measurement
+carries exactly and needs no re-run; where it differs, nothing carries. That is the same
+instrument that survived every other staleness question on this programme, used to decide
+whether a *result* is still current rather than whether a file is.
+
+The pairing with the earlier entry is the useful shape: **a negative claim needs a probe
+more than a positive one, and it needs that probe again every time it is repeated.**
+
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
 state that no check could see. Ten lines were mangled — five entries whose opening sentence

@@ -1026,7 +1026,49 @@ and the obvious explanation — the keep-out reducing instanced meshes — is re
 measurement above. Recorded as unreconciled rather than explained away: these numbers are
 of this tree, measured this way, and that is all they claim.
 
+### 7.0.5 What the visual QA cannot answer, measured rather than assumed
+
+The metalness fix divides the toon band driver by `kAlbedoLuma * max(1 - metalness, 1e-3)`
+rather than by `kAlbedoLuma` alone. For the `metal` surface — `metalness: 0.35` — that is
+a factor of **1 / 0.65 = 1.538× on `kLit`**, which is why the pre-fix shader could not
+push a metal surface into the top toon band.
+
+The programme lead asked for the guard/palace start to be re-captured after the fix, on
+the grounds that the earlier sign-off — *"metal armour reads"* — had been taken against
+the unfixed shader. Reasonable, and the answer is not the one either of us expected.
+
+**A/B with only that line changed**, same seed, faction, viewport and toggles:
+
+```text
+                       mean    p95   p99   max   >160    >190
+pre-fix  kAlbedoLuma   83.01   115   145   245   2154    1369
+shipped  kDiffuseScale 82.98   115   144   245   2131    1367
+delta                  -0.03     0    -1     0    -23      -2
+```
+
+**The frame is identical within noise.** A 1.538× change to the band driver for every
+metal surface in the scene moves the aggregate luminance histogram by less than a
+quantisation step.
+
+That is not evidence the fix does nothing — the arithmetic is not in doubt. It is evidence
+about the **instrument**: a full-frame luminance histogram cannot see a large change
+applied to a small pixel population, and `surface: 'metal'` has six call sites in
+`GameEngine.ts` and none in `CharacterKit.ts`, so the armour vocabulary in question may
+not be what fills this viewport at all.
+
+> **The capture neither validated nor invalidated the original sign-off, and could not
+> have.** Reporting "metal reads" from this instrument was a claim outside its domain in
+> both directions — before the fix and after it.
+
+What would answer it: a capture framing a known metal object over a known pixel region, or
+reading `kNormalized` back from the shader for a metal material directly. Neither is
+expensive; both are follow-ups rather than blockers, because the defect being fixed is
+arithmetic and the arithmetic is checked by the chunk pin in `tests/art.test.ts`, which
+fails loudly if a three.js upgrade moves the accumulation the fix depends on.
+
 ### 7.1 `OUTLINE_WORLD_DRAWS_MAX` — the multiplier, and the unit that changed
+
+
 
 Two corrections, both found at Wave 4 integration by measuring rather than by
 reading. Neither is a defect in what shipped; both are the spec describing less than
@@ -1064,7 +1106,54 @@ settlement's roofline is what makes it read as a place — but it is a different
 currency, and the word "instanced" has been removed rather than left to mislead the
 next reader.
 
+### 7.1.1 Is the visible-set cap a test or a definition? Measured, and it is a budget
+
+The programme lead's closing rule, arrived at after a sibling retracted an invariant that
+was preserved by construction:
+
+> **An identity preserved by construction is not evidence, however exact it looks.** After
+> deriving one, ask what it forbids — then build the forbidden state and watch it fail. If
+> you cannot construct a failure, you have a definition, not a test.
+
+Applied to `OUTLINE_WORLD_VISIBLE_DRAWS_MAX = 48`, which this pass introduced. The
+forbidden state is a focus position whose nine visible regions draw more than 48 ink
+shells between them. Three attempts to construct it:
+
+```text
+lever                                                per-region peak   visible peak
+baseline                                                           7             41
+OUTLINE_WORLD_DRAWS_MAX raised 8 -> 64                             7             41
+takesInkShell loosened to ink instanced meshes too                 7             41
+both together                                                      7             41
+```
+
+**None of them moves it.** The peak is bound by *content* — the number of ink-worthy
+objects a region actually contains — not by either budget or by the filter. The
+per-region budget of 8 is itself never reached; the busiest region spends 7.
+
+So the honest classification is: **48 is a budget, not an assertion about a reachable
+state.** It cannot fail on this content, and the mutation that does make it fail —
+lowering the constant to 20 — changes the number rather than producing the state. That is
+what a budget *should* be, because its job is to catch growth that has not happened yet;
+but recording it as a test that could fail today would be exactly the overclaim §7.2
+exists to name.
+
+This also sharpens the split in §7.2.1. That section distinguishes an assertion that goes
+red because the code got better from a budget that goes red because a constant needs
+updating. The visible-set cap sits firmly on the budget side, and now it says so.
+
+**What would make it a test again** is content growth: more ink-worthy objects per region.
+That is precisely the change it guards, so the day it fires is the day it was worth
+having — and the measurement above tells the next person how much headroom there is
+before that day arrives, which is 48 against a content ceiling of 41–43.
+
+The `charged == built` reconciliation beside it is a different case and survives the rule:
+dropping one clause from the mirrored `takesInkShell` filter makes prediction and reality
+diverge, and it is caught by name. That forbidden state is constructible with a one-line
+code change, so that one is a test.
+
 ### 7.2 Why every budget above names a population
+
 
 `OUTLINE_WORLD_DRAWS_MAX` was not a one-off. Three budgets in this programme were sized
 against one population and later spent on another, and in every case **the number was
@@ -1431,7 +1520,12 @@ nothing.
 - [ ] `tests/worldGenerator.test.ts` determinism and fingerprint assertions pass
       unchanged.
 - [ ] `npm run build`, `npm run lint` and `npm test` are green.
-- [ ] Sustained frame time at 25 actors is within 1 ms of the pre-change build.
+- [ ] Sustained frame time at 25 actors is within 1 ms of the pre-change build — **for a
+      change that adds no geometry**. See §7: this criterion governs shader, lighting,
+      post-processing and outline-machinery work, which is the population it was written
+      against. A pass that adds geometry is judged by the two ceilings below instead.
+- [ ] Draw calls per frame at a faction start are within `DRAW_CALLS_PER_FRAME_MAX`.
+- [ ] Vertices per frame at a faction start are within `VERTICES_PER_FRAME_MAX`.
 
 ## 14. Effort
 
