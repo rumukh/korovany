@@ -1193,6 +1193,32 @@ This belongs to the same family as §13's other entries and is the sixth shape i
 *"the assertion never saw the input"* and not *"two questions share an answer set"*, but
 **"the assertion saw the input at a setting where the defect does not express."**
 
+### 7.0.7 A visual sign-off must carry the SHA of the tree it was captured from
+
+Every other mitigation this programme tried against stale trees — resolve the branch by
+name, `git merge-base --is-ancestor`, content probes, test-count fingerprints — **narrows
+the window between capture and claim. None of them closes it**, because all of them are
+checks performed *around* the capture rather than properties *of* it.
+
+The near-miss that produced this rule: a reviewer had edited `stylizedShader.ts` for an
+unrelated comment correction, so the diff stat showed the file as changed. *"Changed"* and
+*"changed in the way I needed"* are different facts, and only a content probe distinguishes
+them — the adjacent-question defect aimed at a diff stat instead of at a test. Had the
+sequencing gone ten minutes differently, this PR would have shipped QA screenshots of
+superseded shading, and **nothing in the process would have caught it**, because a
+screenshot does not record what it is a screenshot *of*.
+
+> **A capture that names its own tree cannot silently describe a different one.** Record
+> the SHA at capture time, in the artifact or beside it, and a sign-off becomes falsifiable
+> after the fact by anyone, without re-running it.
+
+The asymmetry is what makes it worth the line of tooling: the check costs one command at
+capture time and is free forever after, whereas every process-level mitigation costs
+vigilance on every message and degrades the moment attention lapses. It also survives the
+condition that defeated the rest of them here — **it needs no ref to resolve, so a cached
+or orphaned ref cannot corrupt it.** This generalises past graphics: any claim produced by
+looking at a build rather than by asserting over it has the same hole.
+
 ### 7.1 `OUTLINE_WORLD_DRAWS_MAX` — the multiplier, and the unit that changed
 
 

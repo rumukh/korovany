@@ -1494,34 +1494,100 @@ test('every bulk castShadow sweep excludes what you can see through', () => {
  * dressed up as a class. It is worth landing anyway because the figure is the one a
  * future pass is most likely to be judged against, and because a second copy drifting
  * from the first is exactly the shape this file exists to refuse.
+ *
+ * ---
+ *
+ * **Third revision, and the reason is the worst one available: this guard had the defect
+ * it was written to catch.**
+ *
+ * It read `docs/08` and only `docs/08`, while being named *"…not restated unscoped
+ * anywhere."* A third copy sat in `docs/09` §8 — S2's spec, the NPC and creature wave —
+ * carrying the target completely unscoped, and it shipped to `main` that way. The
+ * programme lead reported the contradiction four separate times; each time I checked
+ * `docs/08`, found both copies scoped, and replied that it was done. **The population I
+ * verified was "mentions in the file I had edited"; the population that mattered was
+ * "mentions in the specs."**
+ *
+ * That is the same defect as the number itself — a claim sized against one population and
+ * spent on another — one level up, in the guard. And the test name asserted the wider
+ * population while the implementation covered the narrower one, so **reading the test
+ * would have told you it was covered.**
+ *
+ * It now scans every `docs/*.md`, and it pins two exact sets rather than one:
+ *
+ *   1. Files that state the frame-time target and must scope it.
+ *   2. Files that mention "1 ms" about something else entirely — `STRATEGY.md`'s Chronicle
+ *      tick bar — which must be listed by name, not silently skipped by a pattern.
+ *
+ * Both are exact-set assertions, per S1's rule, so a spec that newly joins *or leaves*
+ * either set fails. A guard whose domain can shrink in silence is how a check stops
+ * covering the thing it was written for — which is precisely how this one failed.
  */
-test('the scoped frame-time target is not restated unscoped anywhere', () => {
-  const source = readFileSync(
-    new URL('../docs/08-graphics-foundation-spec.md', import.meta.url),
-    'utf8',
-  ).replace(/\r\n?/g, '\n')
-
-  const mentions: { line: number; text: string }[] = []
-  source.split('\n').forEach((text, index) => {
-    if (text.includes('1 ms')) mentions.push({ line: index + 1, text })
-  })
+test('the scoped frame-time target is not restated unscoped in any spec', () => {
+  const docsDir = new URL('../docs/', import.meta.url)
+  const files = readdirSync(docsDir)
+    .filter((name) => name.endsWith('.md'))
+    .sort()
 
   assert.ok(
-    mentions.length >= 2,
-    `found ${String(mentions.length)} mentions of the 1 ms figure; this test exists `
-    + 'because there are two copies of that rule, so finding fewer means the scan broke '
-    + 'or a copy was deleted without updating this check',
+    files.length >= 3,
+    `found ${String(files.length)} markdown files under docs/; this scan is the whole `
+    + 'point of the test, so an empty or tiny listing means it broke rather than passed',
   )
 
-  // The scope may sit on the same line or in the continuation immediately under it, so
-  // judge the mention together with the two lines that follow it.
-  const lines = source.split('\n')
-  const unscoped = mentions
-    .filter(({ line }) => {
-      const window = lines.slice(line - 1, line + 2).join(' ')
-      return !/adds? no geometry/.test(window)
+  // "1 ms" appears about two unrelated things. Separate them by subject, not by file,
+  // so a frame-time restatement in STRATEGY.md would still be caught.
+  const FRAME_TIME = /frame time at 25 actors/i
+  const mentions: { file: string; line: number; text: string; window: string }[] = []
+  const otherSubjects: string[] = []
+
+  for (const file of files) {
+    const source = readFileSync(new URL(file, docsDir), 'utf8').replace(/\r\n?/g, '\n')
+    const lines = source.split('\n')
+    lines.forEach((text, index) => {
+      if (!text.includes('1 ms')) return
+      const window = lines.slice(index, index + 3).join(' ')
+      if (FRAME_TIME.test(window)) {
+        mentions.push({ file, line: index + 1, text, window })
+      } else {
+        otherSubjects.push(`${file}:${String(index + 1)}`)
+      }
     })
-    .map(({ line, text }) => `docs/08:${String(line)}: ${text.trim().slice(0, 80)}`)
+  }
+
+  // Pin the unrelated mentions as an exact set. Skipping them by pattern alone would let
+  // a new "1 ms" claim about a third subject appear with nothing recording that a human
+  // decided it was out of scope.
+  assert.deepEqual(
+    otherSubjects,
+    ['STRATEGY.md:376'],
+    'these mention "1 ms" without naming frame time at 25 actors. The known one is '
+    + "STRATEGY.md's Chronicle tick bar, which is a different budget about a different "
+    + 'subsystem. A new entry here means either a third budget shares the figure — list '
+    + 'it — or a frame-time restatement was phrased so this scan missed it, which is the '
+    + 'failure this test exists to prevent.',
+  )
+
+  const statingFiles = [...new Set(mentions.map((mention) => mention.file))].sort()
+  assert.deepEqual(
+    statingFiles,
+    ['08-graphics-foundation-spec.md', '09-npc-and-creature-models-spec.md'],
+    'these are the specs that state the frame-time target. The set is pinned exactly '
+    + 'because this guard previously read only docs/08 while claiming to cover every '
+    + 'spec, and missed an unscoped copy in docs/09 that reached main. A file leaving '
+    + 'this set is as much a failure as one joining it.',
+  )
+
+  assert.ok(
+    mentions.length >= 3,
+    `found ${String(mentions.length)} frame-time mentions; there are three known copies `
+    + '(docs/08 §7, docs/08 §13 checklist, docs/09 §8) so fewer means the scan broke or '
+    + 'a copy was deleted without updating this check',
+  )
+
+  const unscoped = mentions
+    .filter(({ window }) => !/adds? no geometry/.test(window))
+    .map(({ file, line, text }) => `${file}:${String(line)}: ${text.trim().slice(0, 80)}`)
 
   assert.deepEqual(
     unscoped,
@@ -1530,6 +1596,6 @@ test('the scoped frame-time target is not restated unscoped anywhere', () => {
     + 'That target governs changes which add no geometry — shader, lighting, post FX, '
     + 'outline machinery. A pass that adds geometry is judged by the draw-call and '
     + 'vertices-per-frame ceilings instead, and restating the rule unscoped makes the '
-    + 'spec contradict itself.',
+    + 'specs contradict each other.',
   )
 })
