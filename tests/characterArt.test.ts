@@ -1594,8 +1594,17 @@ test('the head tracks its target through the chest, not past it', () => {
   // other at unity, because the two terms are independent and a probe that moved both
   // could not attribute what it saw — which is precisely how `body-pivot` went missing
   // from this test for four commits.
-  const probe = (breath: number, bodyZ: number): number => {
-    const p = resolveCharacterPlan('elf', 'soldier', 0, false).proportions
+  //
+  // They run on **one plan**, which on this branch's record should be the next
+  // sample-presented-as-population defect. It is not, and the reason is structural: a
+  // heading is a *direction*, every proportion enters the rig as a *position*, and no
+  // direction calculation reads a position. A reviewer reached that argument and
+  // verified it across all 27 plans; the assertion below re-verifies it rather than
+  // inheriting it, because the argument was established before `body-pivot` joined the
+  // chain and a justification that outlives the thing it justified is how most of the
+  // other fifteen findings on this branch happened.
+  const probe = (breath: number, bodyZ: number, faction = 'elf', role = 'soldier'): number => {
+    const p = resolveCharacterPlan(faction as CharacterFaction, role, 0, false).proportions
     const skeleton = buildCharacterSkeleton(p)
     const head = new THREE.Object3D()
     head.position.y = skeleton.headY
@@ -1672,6 +1681,35 @@ test('the head tracks its target through the chest, not past it', () => {
     `doubling the body's X-vs-Z asymmetry changed the heading residue by `
     + `${(bodyDouble / bodySingle).toFixed(4)}x, not 2x. `
     + '`SKEW_PER_UNIT_BODY_ASYMMETRY` is no longer a coefficient.',
+  )
+  // 4. And the three probes above are entitled to run on one plan, because the residue
+  //    is the same for every plan. Asserted rather than argued: a heading is a
+  //    direction, proportions enter the rig as positions, and no direction calculation
+  //    reads a position — but that is a claim about the code as it is now, and the last
+  //    time this file trusted such a claim across a change it was wrong.
+  const breathResidues = new Set<string>()
+  const bodyResidues = new Set<string>()
+  for (const faction of FACTIONS) {
+    for (const role of ROLES) {
+      breathResidues.add(probe(1 + BREATH_AMPLITUDE, 1, faction, role).toFixed(9))
+      bodyResidues.add(probe(1, 1 - BODY_Z_ASYMMETRY, faction, role).toFixed(9))
+    }
+  }
+  assert.equal(
+    breathResidues.size,
+    1,
+    `the breath residue takes ${String(breathResidues.size)} distinct values across the `
+    + `${String(FACTIONS.length * ROLES.length)} plans: ${[...breathResidues].join(', ')}. `
+    + 'It is no longer plan-independent, so the probes above are sampling one plan out '
+    + 'of a population that varies — and `SKEW_PER_UNIT_BREATH` was fitted on that one '
+    + 'sample. Sweep the plans in the probes, or find what made a direction depend on a '
+    + 'proportion.',
+  )
+  assert.equal(
+    bodyResidues.size,
+    1,
+    `the body residue takes ${String(bodyResidues.size)} distinct values across the plans: `
+    + `${[...bodyResidues].join(', ')}. Same consequence as the breath residue above.`,
   )
 })
 
