@@ -410,10 +410,12 @@ no new dependencies.
   pass now converts it with `solveHeadYaw` and damps `actor.headYaw` in body space.
   Uncorrected that is worth 2.5583° on a quadruped and 3.0334° on a troll, and the
   scalar `lookYaw - chestYaw` leaves 1.2799°/1.7368° and is worse than doing nothing in
-  9.0680% of swept states. Small next to the 43.64° the same mistake cost a person —
-  a beast's chest barely turns — but an error the reparenting *introduces*, so not
-  optional. `a beast's head tracks its target through its own chest` computes all five
-  of those figures, the two rejected rules included.
+  432 of 4764 swept states (9.0680%). Small next to the 43.64° the same mistake cost a
+  person — a beast's chest barely turns — but an error the reparenting *introduces*, so
+  not optional. `a beast's head tracks its target through its own chest` computes all
+  five of those figures, the two rejected rules included, and pins the count rather than
+  the share: a fifth quadruped would leave the share at 9.0680% and take the count to
+  540, so the share alone could not have failed.
 - **Do not derive a look from a spawn counter.** Appearance hangs off the most
   durable identity a caller can offer — a generated spawn slot, a persisted
   companion id, a deterministic event id — so the same person comes back the same

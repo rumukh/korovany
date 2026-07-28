@@ -3663,9 +3663,11 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
  * a beast's chest barely turns — but it is a *new* error the reparenting introduces, so
  * it is not optional: uncorrected it is worth 2.5583° on a quadruped and 3.0334° on a
  * troll, and the obvious scalar `lookYaw - chestYaw` leaves 1.2799°/1.7368° and is worse
- * than doing nothing in **9.0680%** of the swept states. `a beast's head tracks its
- * target through its own chest` computes all five figures, including the two rules it
- * rejects, rather than describing them.
+ * than doing nothing in **432 of 4764** swept states, 9.0680%. `a beast's head tracks
+ * its target through its own chest` computes all five figures, including the two rules
+ * it rejects, rather than describing them. The count is quoted alongside the share
+ * because the share alone is unfalsifiable: add a fifth quadruped and it stays 9.0680%
+ * while the count goes to 540.
  *
  * ## What the skull now inherits that it did not, stated rather than glossed
  *

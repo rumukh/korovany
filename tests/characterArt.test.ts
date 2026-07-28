@@ -2641,6 +2641,35 @@ function orientationDegrees(a: THREE.Quaternion, b: THREE.Quaternion): number {
 }
 
 /**
+ * Each animal's neck, as a committed literal — the expected side the hinge bound is not.
+ *
+ * The hinge check below bounds the skull's arc by `hypot(headY - frontJointY, headZ -
+ * frontZ)`, read out of `BEAST_RIG`. That is the right expectation for a defect in
+ * `buildBeastSkeleton`, which is a different piece of code from the table it reads. It is
+ * **blind to a defect in the table itself**: move a shoulder and the measured arc and the
+ * bound move together, and the check agrees with itself in a world where the neck has
+ * drifted back down to the animal's feet. Demonstrated rather than argued — dropping the
+ * wolf's `frontJointY` to 0 leaves the hinge bound green.
+ *
+ * That is the shape this repository keeps finding: **comparing two things you control.**
+ * It is not a hard-coded number that makes a pin sound, nor a computed one that makes it
+ * rotten; it is whether the expected side comes from somewhere the defect cannot reach.
+ * So these four are literals, committed here, and the sweep reads production. A shoulder
+ * that moves is named by this rather than absorbed by the bound that reads it.
+ *
+ * The second guard on the same hole is the ratio assertion beside the hinge — the neck's
+ * arm must be under half the foot-rooted one — which is a geometric claim with a
+ * committed constant rather than a quantity the rig can move. It is what caught the
+ * dropped shoulder.
+ */
+const BEAST_NECK: Record<BeastKind, number> = {
+  wolf: 0.566,
+  boar: 0.6612,
+  bear: 0.6462,
+  troll: 0.365,
+}
+
+/**
  * What the foot-rooted arrangement was worth, in authored units, per animal.
  *
  * Produced by the run that checks them. They are pinned as equalities against recorded
@@ -2840,6 +2869,20 @@ test("a beast's skull is rigid with its ribs and hinges at the neck", () => {
     const swung = actual.distanceTo(restLocal)
     const neckToHead = Math.hypot(rig.headY - rig.frontJointY, rig.headZ - rig.frontZ)
     const footToHead = Math.hypot(rig.headY, rig.headZ)
+    // The joint the bound below reads, pinned against a literal rather than against
+    // itself. Without this the hinge check is a comparison between two quantities the
+    // rig table controls, and a shoulder that slid to the floor would take the bound
+    // with it — measured: dropping the wolf's `frontJointY` to 0 leaves the bound green
+    // and is caught only by the ratio assertion further down. Half a unit in the last
+    // digit shown, so a drift that changes the printed figure cannot stay quiet.
+    assert.ok(
+      Math.abs(neckToHead - BEAST_NECK[kind]) < 0.00005,
+      `a ${kind}'s neck now measures ${neckToHead.toFixed(4)} from shoulder to skull, not `
+      + `the ${BEAST_NECK[kind].toFixed(4)} recorded. \`BEAST_RIG\` has been re-authored: `
+      + 'nothing is necessarily broken, but the hinge bound below reads this same number '
+      + 'on both sides, so it will not tell you. Correct the literal to the value in this '
+      + 'message and re-measure `FOOT_ROOTED_SKULL`.',
+    )
     // Chord of the arc, generous by a factor of two on the three-axis case — the same
     // shape of bound the humanoid hinge check uses.
     const bound = 2 * neckToHead * Math.sin(turn * 1.5)
@@ -2930,6 +2973,16 @@ test("a beast's skull is rigid with its ribs and hinges at the neck", () => {
  * scale, where the comparison is exact to 1e-12, and the scale's entire contribution is
  * what the proportion check measures instead. Splitting them that way is what makes both
  * bounds tight rather than one of them generous enough to hide the other.
+ *
+ * **Where each expectation comes from**, because that and not its syntax is what makes a
+ * gate real. The orientation check's expected side is the chest's own world rotation
+ * times the head's local Euler — read off the *same tree* as the value it checks, so it
+ * is a hierarchy consequence and cannot fail while the joint equalities in the previous
+ * test hold. What it adds is the degree of freedom those equalities do not describe and
+ * a number when it goes wrong. The proportion bound is the opposite and stronger case:
+ * its expected side is a **closed form** — `1/(1 - amplitude·gain) - 1` — over two
+ * literals that `the engine poses a beast through the rig these tests measure` pins
+ * against the engine's source. No part of the rig can reach it.
  */
 test("a beast's skull turns with its chest and keeps its own proportions", () => {
   const actualQuat = new THREE.Quaternion()
@@ -3044,6 +3097,19 @@ test("a beast's skull turns with its chest and keeps its own proportions", () =>
  *
  * The sweep is `beastPoses`, the same box every other beast measurement uses, so the
  * chest envelope here cannot drift away from the one the rig is asserted over.
+ *
+ * `solveHeadYaw`'s own exactness is checked against a **different code path**, not
+ * against itself: the solve produces a yaw, and the check composes the two Euler
+ * rotations into a matrix and reads the world heading back out. Agreement between a
+ * closed-form solve and a forward evaluation is evidence; agreement between the solve
+ * and a second call to the solve would not be.
+ *
+ * The share of states where the scalar rule loses is pinned as a **count**, not a
+ * percentage, and that distinction was earned rather than chosen. Adding a fifth animal
+ * to `BEAST_KINDS` takes the count from 432 to 540 and leaves the percentage at 9.0680%
+ * — because a new quadruped shares the existing chest envelope exactly. A decimal share
+ * with a tolerance would have been a figure that recomputes itself, survives a change to
+ * the population it describes, and looks in a diff exactly like a pin that works.
  */
 test("a beast's head tracks its target through its own chest", () => {
   // Produced by this run. Equalities against recorded constants, not bounds derived from
@@ -3053,7 +3119,16 @@ test("a beast's head tracks its target through its own chest", () => {
     scalar: 1.2799,
     trollNone: 3.0334,
     trollScalar: 1.7368,
-    scalarWorseShare: 9.068,
+    /**
+     * States where the scalar rule is worse than doing nothing, as a **count**, not a
+     * percentage.
+     *
+     * A share is a ratio of two integers and pinning it as a decimal invites a tolerance
+     * loose enough to admit a different displayed number. The count is exact, and the
+     * denominator is pinned separately, so a change to either is named rather than
+     * cancelling in the quotient.
+     */
+    scalarWorse: 432,
   }
   const forward = new THREE.Vector3()
   const chestMatrix = new THREE.Matrix4()
@@ -3139,11 +3214,14 @@ test("a beast's head tracks its target through its own chest", () => {
     )
   }
   const share = (100 * scalarWorse) / states
-  assert.ok(
-    Math.abs(share - RECORDED.scalarWorseShare) < 0.005,
-    `the scalar rule is now worse than doing nothing in ${share.toFixed(4)}% of the `
-    + `${String(states)} swept states, not the `
-    + `${RECORDED.scalarWorseShare.toFixed(4)}% recorded. Same correction as above.`,
+  assert.equal(
+    scalarWorse,
+    RECORDED.scalarWorse,
+    `the scalar rule is now worse than doing nothing in ${String(scalarWorse)} of the `
+    + `${String(states)} swept states — ${share.toFixed(4)}%, not the `
+    + `${((100 * RECORDED.scalarWorse) / states).toFixed(4)}% recorded. Same correction as `
+    + 'above: this figure appears in `buildBeastSkeleton`\'s docblock, in '
+    + '`animateBeastPosture`\'s and in docs/09 §4.',
   )
   // And the rejected rules have to be rejectable: if the chest stopped moving at all,
   // every rule above would be exact and this test would pass while measuring nothing.
@@ -3550,7 +3628,7 @@ test('the engine poses a beast through the rig these tests measure', () => {
     + 'a yaw solved against the chest\'s full rotation *and* that same pitch, and the '
     + 'turn-lean roll. `lookYaw` is a body-space angle and `head-pivot` is a chest-space '
     + 'node now: written raw it costs 3.0334 degrees on a troll, and the obvious '
-    + '`lookYaw - chestYaw` leaves 1.7368 and is worse than doing nothing in 9.0680% of '
+    + '`lookYaw - chestYaw` leaves 1.7368 and is worse than doing nothing in 432 of 4764 '
     + 'swept states. Every argument is checked because on the humanoid call two of them '
     + 'were not, and a reviewer passed `0` for the roll with the suite still green.',
   )
