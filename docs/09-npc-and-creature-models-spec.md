@@ -417,7 +417,15 @@ no new dependencies.
   because it names where the substitution happens: **`grep` defaults to the file, and the
   claim was about the change.** A tool's default scope is not neutral; it silently answers
   the population question on your behalf, and it answers it with whatever is cheapest to
-  enumerate rather than with whatever the sentence is about.  **That applies to tools nobody wrote as much as to detectors someone did**, and this
+  enumerate rather than with whatever the sentence is about.
+  **And the sweep that establishes this has to be re-run after the commit that cites it.**
+  The commit which first recorded the paragraph above reintroduced, in its own text, the
+  exact 146-character join the sweep had been built to find — and the *original*
+  period-space-space predicate catches it, returning one hit where it had returned zero one
+  commit earlier. Not a blind spot: **a check that was run, was correct, and was not
+  re-run after the next commit.** The verification aged inside the turn that produced it,
+  and every gate stayed green over a 146-character line, because none of them reads shape.
+  **That applies to tools nobody wrote as much as to detectors someone did**, and this
   repository contains the proof. `tsc --noEmit -p tsconfig.json` looks like a type-check
   and is not one: the root `tsconfig.json` is `"files": []` plus project references, so
   without `--build` the command compiles **zero files**. Measured with a positive control —
