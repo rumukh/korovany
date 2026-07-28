@@ -2986,3 +2986,97 @@ test('facetGeometry leaves its input alone unless asked to consume it', () => {
   moved.dispose()
   source.dispose()
 })
+
+/**
+ * The shadow pass and the ink pass must ask the same question about opacity.
+ *
+ * Wave 4 review found them asking different ones. `applyOutline` has always tested the
+ * material — a 62%-opaque ring has no silhouette to ink — while `GameEngine`'s
+ * `markCharacterShadows` tested `userData.noComicOutline`, which is an *ink* marker
+ * that covers transparent decorations only by coincidence. The two sets agreed on
+ * contact shadows and faction rings, which carry the marker, and diverged on the one
+ * transparent mesh in those four constructors that does not: the gilded caravan's
+ * beacon torus. `transparent: true` exempts nothing from the depth pass — only
+ * `castShadow` does — so three.js rendered it into the shadow map as a solid ring on
+ * the ground under every gilded cart.
+ *
+ * `isOpaque` is now the single predicate both passes use, so this pins the predicate
+ * rather than either caller. Each case below is a material shape that actually occurs
+ * in this game, named for where.
+ */
+test('one predicate decides what has a silhouette, for ink and for shadows alike', () => {
+  const cases: [label: string, material: THREE.Material | THREE.Material[], opaque: boolean][] = [
+    ['a character body', new THREE.MeshStandardMaterial({ color: 0x884422 }), true],
+    // The exact shape of the gilded caravan's beacon, which is what was casting.
+    ['the caravan beacon', new THREE.MeshBasicMaterial({
+      color: 0xffcc44,
+      transparent: true,
+      opacity: 0.62,
+    }), false],
+    // `transparent` false but faded: three.js still blends, and the silhouette is still
+    // not solid. A predicate testing only the flag would call this opaque.
+    ['a faded mesh with transparent unset', Object.assign(
+      new THREE.MeshStandardMaterial({ color: 0x224488 }),
+      { opacity: 0.4 },
+    ), false],
+    ['a faction ring', new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.48 }), false],
+    // A multi-material mesh is only opaque if every slot is; a merged prop with one
+    // glass surface has a hole in its silhouette wherever that group draws.
+    ['a merged prop, all slots solid', [
+      new THREE.MeshStandardMaterial({ color: 0x333333 }),
+      new THREE.MeshStandardMaterial({ color: 0x777777 }),
+    ], true],
+    ['a merged prop with one glass slot', [
+      new THREE.MeshStandardMaterial({ color: 0x333333 }),
+      new THREE.MeshStandardMaterial({ transparent: true, opacity: 0.5 }),
+    ], false],
+    // An empty material array draws nothing at all, and "nothing" is not a silhouette.
+    ['a mesh with no materials', [], false],
+  ]
+
+  let judgedOpaque = 0
+  let judgedTransparent = 0
+  for (const [label, material, opaque] of cases) {
+    assert.equal(
+      StylizedArtLibrary.isOpaque(material),
+      opaque,
+      `${label} should be ${opaque ? 'opaque' : 'non-opaque'}`,
+    )
+    if (opaque) judgedOpaque += 1
+    else judgedTransparent += 1
+    for (const entry of Array.isArray(material) ? material : [material]) entry.dispose()
+  }
+
+  // Domain guard, and it has to be two-sided. A predicate that returned `true` for
+  // everything and one that returned `false` for everything would each satisfy a
+  // one-sided sweep, so both verdicts have to be exercised and counted.
+  assert.ok(judgedOpaque >= 2, `only ${String(judgedOpaque)} opaque cases were judged`)
+  assert.ok(
+    judgedTransparent >= 4,
+    `only ${String(judgedTransparent)} non-opaque cases were judged`,
+  )
+
+  // And the two callers must be the same caller. `applyOutline` gates on this
+  // predicate; assert it declines to ink the beacon, so the shadow rule this now backs
+  // is anchored to observed behaviour rather than to a shared function name.
+  const library = createLibrary()
+  const root = new THREE.Group()
+  const solid = new THREE.Mesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    library.createMaterial({ color: 0x884422, surface: 'cloth' }),
+  )
+  const beacon = new THREE.Mesh(
+    new THREE.TorusGeometry(2.4, 0.12, 8, 28),
+    new THREE.MeshBasicMaterial({ color: 0xffcc44, transparent: true, opacity: 0.62 }),
+  )
+  root.add(solid, beacon)
+  const binding = library.applyOutline(root, 'landmark')
+  assert.equal(binding.shells.length, 1, 'exactly the solid mesh should have been inked')
+  assert.equal(
+    beacon.children.length,
+    0,
+    'the beacon was given an ink shell, so the two passes have drifted apart again',
+  )
+  library.releaseOutline(binding)
+  library.dispose()
+})
