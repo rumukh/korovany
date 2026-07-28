@@ -178,6 +178,14 @@ interface SceneRegionRuntimeContext {
   art: StylizedArtLibrary
   props: WorldPropLibrary
   style: RuntimeStyle
+  /**
+   * Faction start positions that fall in this region, before any collision snapping.
+   *
+   * Passed in rather than looked up because `createDressing` needs them *while* it is
+   * registering colliders, and the snapping form (`getStartPosition`) would query a
+   * half-built collision world.
+   */
+  startAnchors: readonly { x: number; z: number }[]
   onDisposed: (regionId: RegionId) => void
 }
 
@@ -292,6 +300,7 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
           art: this.art,
           props: this.props,
           style: this.style,
+          startAnchors: this.startAnchorsIn(context.regionId),
           onDisposed: (regionId) => {
             this.sceneRegions.delete(regionId)
           },
@@ -382,6 +391,27 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
   }
 
   getStartPosition(faction: Faction): Point3 {
+    return this.walkableNear(this.startCandidate(faction))
+  }
+
+  /**
+   * Where a faction's run begins, before anything looks at collision.
+   *
+   * Pure geometry — site position, critical-path direction, twenty units back, clamped
+   * to the region — so it can be asked at any point in the lifecycle, including from
+   * inside `createDressing` while the collision world is still half-built.
+   *
+   * That property is the fix. `getStartPosition` snaps through `walkableNear`, which
+   * can only see colliders that already exist, and `GameEngine` asks for the start
+   * position at line 2257 while the first `generatedWorld.update` is at 2314 — so at
+   * the moment the player is placed, **no region is resident and no decoration collider
+   * exists**. The snap queries an empty world, finds everything walkable, returns the
+   * point untouched, and the boulder arrives on top of the player fifty lines later.
+   *
+   * Keeping decoration off this point instead is order-independent: the collider is
+   * never created there, so it does not matter when anyone asks.
+   */
+  private startCandidate(faction: Faction): Point3 {
     const startSiteId = this.blueprint.starts[faction]
     const sitePosition = this.requireSitePosition(startSiteId)
     const path = this.blueprint.criticalPaths[faction].regionIds
@@ -404,7 +434,24 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
     const z = bounds
       ? THREE.MathUtils.clamp(candidateZ, bounds.minZ + margin, bounds.maxZ - margin)
       : candidateZ
-    return this.walkableNear(x, z)
+    return { x, y: sitePosition.y, z }
+  }
+
+  /** The region a faction's run begins in, or undefined if it cannot be resolved. */
+  private startRegionOf(faction: Faction): RegionId | undefined {
+    const startSiteId = this.blueprint.starts[faction]
+    return this.blueprint.sites.find((site) => site.id === startSiteId)?.regionId
+  }
+
+  /** Unsnapped faction start positions that land in the given region. */
+  private startAnchorsIn(regionId: RegionId): readonly { x: number; z: number }[] {
+    const anchors: { x: number; z: number }[] = []
+    for (const faction of WORLD_FACTIONS) {
+      if (this.startRegionOf(faction) !== regionId) continue
+      const anchor = this.startCandidate(faction)
+      anchors.push({ x: anchor.x, z: anchor.z })
+    }
+    return anchors
   }
 
   /**
@@ -424,8 +471,16 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
    * Returns the input untouched when it is already clear — which is the overwhelmingly
    * common case — so this changes no position that was not already broken. The search
    * is a fixed outward spiral, so it is deterministic.
+   *
+   * **This is the belt, not the braces.** It can only see colliders that already exist,
+   * and `GameEngine` asks for the start position before it streams any region in, so on
+   * the path that matters it runs against an empty collision world and does nothing.
+   * The keep-out in `createDressing` is what actually protects the spawn; this covers
+   * the case where a region is already resident, which is every caller except the one
+   * that hurts.
    */
-  private walkableNear(x: number, z: number): Point3 {
+  private walkableNear(point: Point3): Point3 {
+    const { x, z } = point
     const radius = 0.45
     if (this.collision.isWalkablePosition(x, z, radius)) {
       return { x, y: this.sampleHeight(x, z), z }
@@ -1505,19 +1560,21 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
   }
 
   /**
-   * Encounter actor positions in this region, which decoration must not stand on.
+   * Spawn points in this region that decoration must not stand on.
    *
-   * **Encounter actors only.** Faction starts are protected by a different mechanism —
-   * `getStartPosition` snaps through `walkableNear` — and deliberately so: this runs
-   * *during* collider registration, so computing a start position here would query a
-   * collision world that is still half-built and make the result depend on bucket
-   * order. The two mechanisms cover the two cases; neither covers both.
+   * Faction starts *and* encounter actors, and the faction starts are the important
+   * half. `getStartPosition` snaps through `walkableNear`, but `GameEngine` asks for it
+   * at line 2257 while the first `generatedWorld.update` is at 2314 — so when the player
+   * is placed, no region is resident, no decoration collider exists, the snap queries an
+   * empty world and returns the point untouched. Measured directly: asking cold gives
+   * `(-178.17, 188.00)`, unwalkable; asking once the region is resident gives
+   * `(-178.61, 188.25)`, walkable. Production takes the first path.
    *
-   * That distinction is written out because the previous version of this comment
-   * claimed both, which is the documentation form of the fault this file's spec
-   * catalogues: a statement of coverage that nothing checks and that happened to be
-   * false. The measured result is unaffected — faction starts blocked went 1/180 to
-   * 0/180 — but the reason was the snap, not this.
+   * A previous version of this comment credited the snap with the fix, and the test that
+   * confirmed it called `getStartPosition` twice with an `update` in between — measuring
+   * the one order in which the snap works, which is not the order the game uses. Keeping
+   * decoration off the point is order-independent and is what actually protects the
+   * spawn.
    *
    * Encounter actors are positioned by world generation, which knows nothing about
    * decoration. Before this pass every decoration collider was a sapling-sized 0.55 and
@@ -1532,9 +1589,17 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
    */
   private spawnKeepOutPoints(): readonly { x: number; z: number }[] {
     const points: { x: number; z: number }[] = []
+    // Faction starts first, and these are the ones that matter. The engine writes this
+    // position into the player before any region is resident, so the snap in
+    // `getStartPosition` cannot help there — keeping decoration off the point is the
+    // only mechanism that works regardless of when it is asked.
+    for (const anchor of this.context.startAnchors) {
+      points.push({ x: anchor.x, z: anchor.z })
+    }
     for (const faction of WORLD_FACTIONS) {
       for (const slot of this.context.blueprint.encounters) {
         if (slot.regionId !== this.id) continue
+
         const plan = createGeneratedEncounterPlan(
           this.context.blueprint,
           slot,

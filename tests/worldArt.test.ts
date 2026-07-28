@@ -1961,11 +1961,17 @@ test('decoration never blocks a spawn point', () => {
   // *start* is unwalkable, so the first click-to-move of the run silently does nothing.
   // The start is offset ~20 units back along the critical path, which puts it outside
   // the site clearing, so no other keep-out covers it.
+  //
+  // **Asked cold, exactly once**, because that is what `GameEngine` does: it calls
+  // `getStartPosition` at line 2257 and first calls `generatedWorld.update` at 2314. An
+  // earlier version of this test called it, streamed the region in, then called again
+  // and asserted on the second answer — which measures the snap in `walkableNear` doing
+  // its job against a populated collision world, an order production never takes. It
+  // passed while the game was broken.
   const unwalkableStarts: string[] = []
   for (const faction of ['elf', 'guard', 'villain'] as const) {
-    const approximate = runtime.getStartPosition(faction)
-    runtime.update({ deltaSeconds: 0, focus: approximate })
     const start = runtime.getStartPosition(faction)
+    runtime.update({ deltaSeconds: 0, focus: start })
     if (!runtime.collision.isWalkablePosition(start.x, start.z, 0.45)) {
       unwalkableStarts.push(faction)
     }
