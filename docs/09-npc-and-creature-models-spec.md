@@ -525,6 +525,31 @@ no new dependencies.
   discards: **a detector firing broadly on input everyone believes correct is evidence
   about the model, not the subject.** "The whole list is unsorted" on a file nobody had
   complained about was the model announcing itself, and it was read as sloppiness.
+  **The same class then caught the author's own gate, and it is the sharpest instance in
+  the file because it would have produced a false green on a real failure.** The
+  verification invocation used here read its test result through
+  `Select-String 'Tests +\d|Test Files'`, which matches `tests 371` — the **census**
+  `node:test` prints identically whether every test passed or none did. At that moment the
+  suite was **370 pass, 1 fail**. Reporting `371/371` from it would have restated a total
+  as a verdict: a number correctly measured of one subject, asserted of another, and
+  re-running the very same command confirms `371` while saying nothing about the
+  substitution — the documented signature of that failure, aimed at the instrument the
+  whole discipline reports through.
+  **And the second safeguard failed in the same run, in the same direction, for an
+  unrelated reason.** Sweep and gates were combined into one invocation deliberately, so a
+  clean sweep could not be quoted from a different tip than the gates — a real property,
+  bought at a cost nobody priced: **a chained script reports only the last command's exit
+  code.** Measured: `npm test` sets `$LASTEXITCODE` to `1`, the trailing `git status` line
+  resets it to `0`, and the invocation reports success. **Atomicity of tip was purchased
+  with loss of status**, silently, by the fix adopted to make verification trustworthy.
+  Two rules, both mechanical. **Read a gate on a line that differs between pass and fail**
+  — a filter that proves the command *ran* cannot also report what it *found*, and
+  `pass N / fail 0` is the verdict where `tests N` is a headcount. And **when probes are
+  chained for atomicity, exit codes are the thing being traded**, so a chained gate must
+  assert on parsed output rather than on the invocation's status.
+  What caught it was running the pass/fail lines separately for an unrelated reason —
+  which is to say, luck, and the entry is here because the next occurrence will not have
+  any.
 - **A measurement is a claim with a timestamp nobody writes down.** Every other rule
   here targets claims that were wrong. This one is about claims that were *right and
   stopped being* — which is a different failure, because a measurement carries its own
@@ -1051,7 +1076,7 @@ no new dependencies.
   The rescue is worth more than the defect. The reviewer's first re-run returned `1`, and
   the available move — reporting *"your 69 does not replicate"* — would have been wrong
   while looking maximally rigorous. What prevented it was printing twelve rows instead of
-  the count. **A count that disagrees is not yet a disagreement:** a scalar carries no
+  the count. **A count that disagrees is not by itself a disagreement:** a scalar carries no
   trace of whether the population, the predicate or the answer is what differs, which is
   the same fact as a count carrying no trace of the pattern that produced it, and it cuts
   toward false accusation as readily as toward false confidence.
