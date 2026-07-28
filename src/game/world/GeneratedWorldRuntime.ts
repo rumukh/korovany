@@ -114,6 +114,10 @@ export interface GeneratedRegionRootDebugSnapshot {
   cosmeticDecorationCount: number
   /** Placements dropped because they stood on a spawn point. */
   spawnBlockedPlacements: number
+  /** Site building colliders skipped because they covered a spawn point. */
+  spawnBlockedBuildingColliders: number
+  /** Site prop colliders skipped because they covered a spawn point. */
+  spawnBlockedPropColliders: number
   maxCosmeticDecorationCount: number
   /** Extra draws per frame this region charged itself for ink outlines. */
   inkDraws: number
@@ -143,6 +147,21 @@ export interface GeneratedWorldRuntimeDebugSnapshot {
      * floor proves the population was visited; this proves it could express the failure.
      */
     spawnBlockedPlacementCount: number
+  }
+  /**
+   * Site structure colliders the spawn keep-out skipped, counted **per population**.
+   *
+   * Buildings and props are split because they have very different hit rates, and a
+   * combined counter would be satisfied by the easy one. A reviewer measured the
+   * asymmetry: ringed towers sit at `wallRadius` and land on spawns readily, so the prop
+   * half fires on almost any seed, while a keep at a site centre covers a spawn only when
+   * an encounter slot happens to sit near a stronghold. A single number over both would
+   * read healthy while the building keep-out was entirely bypassed — which is the exact
+   * defect this counter exists to make visible.
+   */
+  siteStructures: {
+    spawnBlockedBuildingColliderCount: number
+    spawnBlockedPropColliderCount: number
   }
   collision: CollisionWorldDebugStats
   navigation: NavigationDebugStats
@@ -196,6 +215,16 @@ interface SceneRegionRuntimeContext {
    * half-built collision world.
    */
   startAnchors: readonly { x: number; z: number }[]
+  /**
+   * Reports a keep-out skip to the parent runtime.
+   *
+   * Counted on the runtime rather than summed from `regionRoots`, because region roots
+   * are the *resident* ones: streaming discards a region's counter when it unloads, so a
+   * reduce over roots under-reports by however much of the world has already scrolled
+   * away. A regression test sweeping 25 regions one focus at a time would read almost
+   * zero and conclude its seed carried no fault.
+   */
+  onSpawnKeepOut: (population: 'building' | 'prop' | 'decoration', count: number) => void
   onDisposed: (regionId: RegionId) => void
 }
 
@@ -241,6 +270,15 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
   /** True when this runtime built its own library and therefore has to free it. */
   private readonly ownsArt: boolean
   private readonly sceneRegions = new Map<RegionId, SceneRegionRuntime>()
+  /**
+   * Lifetime count of keep-out skips, per population, across every region ever built.
+   *
+   * Populations are kept apart because their hit rates differ by an order of magnitude —
+   * ringed towers sit at `wallRadius` and cover spawns readily, a keep at a site centre
+   * almost never does — so a combined total reads healthy while the building half is
+   * entirely bypassed. That is the exact defect a reviewer found in the test below.
+   */
+  private readonly spawnKeepOutSkips = { building: 0, prop: 0, decoration: 0 }
   private readonly sitePositions = new Map<string, Point3>()
   private disposedMaterialCount = 0
   private disposed = false
@@ -290,6 +328,9 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
           props: this.props,
           style: this.style,
           startAnchors: this.startAnchorsIn(context.regionId),
+          onSpawnKeepOut: (population, count) => {
+            this.spawnKeepOutSkips[population] += count
+          },
           onDisposed: (regionId) => {
             this.sceneRegions.delete(regionId)
           },
@@ -785,14 +826,15 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
           (total, root) => total + root.cosmeticDecorationCount,
           0,
         ),
-        spawnBlockedPlacementCount: regionRoots.reduce(
-          (total, root) => total + root.spawnBlockedPlacements,
-          0,
-        ),
+        spawnBlockedPlacementCount: this.spawnKeepOutSkips.decoration,
         maxCosmeticInstanceCount: regionRoots.reduce(
           (total, root) => total + root.maxCosmeticDecorationCount,
           0,
         ),
+      },
+      siteStructures: {
+        spawnBlockedBuildingColliderCount: this.spawnKeepOutSkips.building,
+        spawnBlockedPropColliderCount: this.spawnKeepOutSkips.prop,
       },
       collision: this.collision.getDebugStats(),
       navigation: this.navigation.getDebugStats(),
@@ -901,6 +943,10 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
   private structuralDecorationCount = 0
   /** Decoration placements dropped because they stood on a spawn point. */
   private spawnBlockedPlacements = 0
+  /** Site building colliders skipped because they covered a spawn point. */
+  private spawnBlockedBuildingColliders = 0
+  /** Site prop colliders skipped because they covered a spawn point. */
+  private spawnBlockedPropColliders = 0
   private maxCosmeticDecorationCount = 0
   /**
    * Every object whose ink can be toggled at runtime, with the kind it was inked
@@ -1014,6 +1060,8 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       colliderCount: this.runtime.colliderIds.size,
       structuralDecorationCount: this.structuralDecorationCount,
       spawnBlockedPlacements: this.spawnBlockedPlacements,
+      spawnBlockedBuildingColliders: this.spawnBlockedBuildingColliders,
+      spawnBlockedPropColliders: this.spawnBlockedPropColliders,
       cosmeticDecorationCount: this.cosmeticDressing.reduce(
         (total, dressing) => total + dressing.mesh.count,
         0,
@@ -1353,6 +1401,9 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
             tags: ['site', site.kind, 'building'],
           })
           this.runtime.ownCollider(colliderId)
+        } else {
+          this.spawnBlockedBuildingColliders += 1
+          this.context.onSpawnKeepOut('building', 1)
         }
       }
     }
@@ -1461,7 +1512,11 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       // Same treatment as the buildings above: the prop stays, its collision does not
       // sit on a spawn point. Towers at `wallRadius` are the usual offender.
       const radius = placement.radius * placement.scale
-      if (coversSpawn(world.x, world.z, radius, this.spawnAnchors())) continue
+      if (coversSpawn(world.x, world.z, radius, this.spawnAnchors())) {
+        this.spawnBlockedPropColliders += 1
+        this.context.onSpawnKeepOut('prop', 1)
+        continue
+      }
       const colliderId = `site-prop:${site.id}:${placement.id}`
       this.context.collision.registerCircle({
         id: colliderId,
@@ -1582,6 +1637,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       // floor proves the population was visited; this proves it could express the failure.
       if (bucket.structural) {
         this.spawnBlockedPlacements += grouped[index].length - entries.length
+        this.context.onSpawnKeepOut('decoration', grouped[index].length - entries.length)
       }
       if (entries.length === 0) continue
       const asset = this.acquireProp(bucket.request)
