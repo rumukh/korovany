@@ -685,6 +685,19 @@ Open a brief with a HEAD verification that includes a **positive** discriminator
 grep for something the stale tree contains and the current one does not. A negative check
 ("tests pass") cannot distinguish the two.
 
+Two refinements from reviewers who had to use that checklist, both correcting guidance
+this pass wrote:
+
+- **`git fetch` is a no-op for a session branch.** These branches are local-only — they
+  live in the shared object store and are reachable through worktrees, with no
+  `refs/remotes/origin/...` counterpart. A reviewer who fetches, sees "already up to
+  date", and concludes they are current has learned nothing. Use
+  `git rev-parse <branch>` at the start of **every** pass instead.
+- **`git reflog show <branch>` is what detects an amended-past SHA**, in seconds and
+  without needing to know what changed. If you were handed a SHA, that is the check that
+  tells you it has been superseded — nothing else will, because the orphaned commit
+  still resolves and still looks healthy.
+
 ## 14. Effort
 
 **2.5-3 days.** The vocabulary is mechanical. The time went into composition that
