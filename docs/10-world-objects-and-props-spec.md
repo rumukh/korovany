@@ -1366,6 +1366,26 @@ most often cited as authoritative, and those two facts were causally connected. 
 had to survive a machine, so nothing here was measured, and the absence of red never once
 read as absence of testing.
 
+**Last, and it is why the rest of this section exists: the review worked better than the
+accuracy of anyone in it.** The final tally across the two review sessions was roughly one
+wrong call per three good ones, in both directions — this pass made two incorrect diagnoses
+of a reviewer's tooling and propagated one of them upward; the reviewer produced three false
+positives, including a mutation broken by line endings that reported SURVIVED. Neither side
+was reliable on its own.
+
+What made that workable was not care, and it was not expertise. **Every claim on both sides
+arrived with the command that produced it**, so the wrong ones were cheap to overturn —
+usually within one message, and usually by the person who had not made them. Nothing here
+was caught by someone being right; it was caught by claims being *checkable* by someone
+else, quickly, without asking permission or re-deriving the context.
+
+The counterfactual is the point, and it is the reviewer's phrasing: **a review where both
+sides had been merely confident would have gone differently on identical facts.** Every
+defect in the table above was found by a measurement someone could re-run, and every wrong
+diagnosis died the same way. A catalogue of checks that could not fail is only possible in a
+process where checking is cheaper than arguing — so if one practice from this document
+survives into another programme, it should be that one, and the rules are downstream of it.
+
 
 ## 14. Effort
 
