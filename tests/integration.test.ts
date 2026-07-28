@@ -120,6 +120,27 @@ test('the whole visible set has an ink budget, not just each region in it', () =
           + `ink draws, per-region budget is ${String(OUTLINE_WORLD_DRAWS_MAX)}`,
         )
       }
+
+      // Reconcile the two counters. This walk counts the shells the library actually
+      // built; production charges what `inkDrawCost` PREDICTED before building them.
+      // They are independent measurements of the same quantity, and the last time they
+      // disagreed the production side was the wrong one — it billed one draw per
+      // `applyOutline` call while the library builds one shell per qualifying mesh, so a
+      // four-mesh building LOD was charged 1. The per-region check catches that on the
+      // regions it looks at; summing over the visible set puts every visible region on
+      // the same books at every focus position.
+      const charged = runtime
+        .getDebugSnapshot()
+        .regionRoots.reduce((total, entry) => total + entry.inkDraws, 0)
+      assert.equal(
+        visibleSet,
+        charged,
+        `seed ${seed}, focus ${String(region.id)}: the visible set draws `
+        + `${String(visibleSet)} ink shells but was charged ${String(charged)}. One of the `
+        + 'two counters is wrong, and it is not automatically the test — a predicted cost '
+        + 'that undercounts what gets built spends budget the region never had.',
+      )
+
       if (roots === 9) fullVisibleSets += 1
       visibleSetPeak = Math.max(visibleSetPeak, visibleSet)
       samples += 1
