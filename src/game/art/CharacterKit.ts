@@ -856,18 +856,27 @@ export function buildCharacterSkeleton(p: CharacterProportions): CharacterSkelet
  *
  * Subtracting the chest's `rotation.y` is the obvious answer and it is wrong for the
  * same reason a scale correction on a rotated pivot is wrong — it cancels only while
- * the other two axes are zero. Measured over the reachable chest envelope and look
- * range: no correction at all is out by up to **37.4°**; the scalar subtraction still
- * by **14.0°**, and in **4.2%** of those states it is *worse than doing nothing*.
- * This solve is exact.
+ * the other two axes are zero. Measured over the swept chest envelope and look range
+ * by `the head tracks its target through the chest, not past it`, which evaluates
+ * both rejected rules itself rather than leaving them to be quoted: no correction at
+ * all is out by up to **43.64°**; the scalar subtraction still by **20.30°**, and in
+ * **3.90%** of those states it is *worse than doing nothing*.
+ *
+ * This solve is exact wherever the chest's forward axis still points forward — the
+ * linear equation has two roots half a turn apart and `atan2` selects the one facing
+ * `+Z`, which requires `M₁₁ > 0`. Over the swept envelope `min M₁₁` is 0.55 and the
+ * equation is never near-degenerate, so the precondition holds with room to spare for
+ * anything the engine writes. It is stated because this function is exported and a
+ * caller inverting a chest would get a head exactly backwards, silently.
  *
  * It takes the head's own pitch because the pitch is applied *after* it, in the same
  * Euler, and therefore changes where the head ends up pointing. Roll does not: a
  * rotation about Z leaves the +Z axis fixed, so `head-pivot.rotation.z` cannot move
- * the gaze and is not a parameter. Omitting the pitch was worth **4.82°** on a
- * reachable first stagger frame — the solve was exact for the case the test drove
- * and inexact for the case the engine writes, which is the same defect as validating
- * a conversion only where it happens to work.
+ * the gaze and is not a parameter — argued, and then swept anyway, which is how the
+ * argument earns its place. Omitting the pitch costs **9.71°** over the sweep and
+ * **4.952°** on a jointly-reachable first stagger frame — the solve was exact for the
+ * case the test drove and inexact for the case the engine writes, which is the same
+ * defect as validating a conversion only where it happens to work.
  *
  * The derivation. Let `M = R_chest · Rx(headPitch)`, with first column **a** and
  * third column **c**. A head yawed by θ under that points along `a·sinθ + c·cosθ`;
