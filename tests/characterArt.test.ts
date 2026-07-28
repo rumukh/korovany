@@ -1344,15 +1344,22 @@ test('the chest lends the head its breath but not its shoulders', () => {
  * and not only in yaw: it pitches into the run, the attack and the storm, and rolls
  * with the turn and the flinch.
  *
- * Measured over the reachable chest envelope below and the clamped look range —
- * 51,480 states — as the angle between the head's world forward and the requested
- * heading:
+ * Measured over the sweep this test runs — the reachable chest envelope, the head's
+ * own pitch and roll, and the clamped look range, 213,840 states — as the angle
+ * between the head's world forward and the requested heading:
  *
  * | rule | worst heading error |
  * | --- | --- |
- * | `lookYaw` written raw | **35.93°** |
- * | `lookYaw - torsoPivot.rotation.y` | **13.79°**, and *worse than doing nothing* in **4.2%** of states |
- * | `solveHeadYaw` | **0.0000°** |
+ * | `lookYaw` written raw | **37.43°** |
+ * | `lookYaw - torsoPivot.rotation.y` | **14.00°**, and *worse than doing nothing* in **4.2%** of states |
+ * | `solveHeadYaw` without the head's pitch | **8.84°** |
+ * | `solveHeadYaw` | **exact**, to float |
+ *
+ * The first two figures are the ones the test's own mutations report. Earlier drafts
+ * quoted 35.93 and 13.79 from a one-off probe with a different grid, which is the
+ * defect of quoting a number the committed assertion does not produce — a reviewer
+ * ran the mutations and got different digits from the docblock beside them. Every
+ * number here is now what this test prints when the rule beside it is substituted.
  *
  * The middle row is the shape of mistake this codebase keeps making and is worth
  * naming: subtracting one Euler component corrects a rotation only while the other
@@ -1367,19 +1374,42 @@ test('the chest lends the head its breath but not its shoulders', () => {
  * it. A head can sit perfectly on its neck and still be looking at the wrong thing.
  */
 test('the head tracks its target through the chest, not past it', () => {
-  // The chest envelope, from `animateActorCharacter`:
-  //   rotation.x  forwardLean * motionBlend - anticipation * 0.16 + attack * 0.12
-  //               + stagger * 0.2 + ambientStormHunch + lean
-  //   rotation.y  -stride * (heavy ? 0.08 : 0.12) + attack * 0.16 - flinch * hitRight * 0.22
-  //   rotation.z  -turnLean * 0.16 + idleWeightShift * 0.55 - flinch * hitRight * 0.18
-  // Swept as a grid rather than as named poses: a hand-written list is a claim about
-  // what is reachable, and the last one in this file was wrong in both directions.
-  const PITCH = { from: -0.2, to: 0.7, step: 0.05 }
-  const YAW = { from: -0.32, to: 0.48, step: 0.04 }
-  const ROLL = { from: -0.3, to: 0.3, step: 0.05 }
+  // The chest envelope, from `animateActorCharacter`, plus the head's own pitch and
+  // roll — which the engine writes in the same Euler as the yaw, so a solve that
+  // ignores them is exact only for a test that also ignores them. Leaving the pitch
+  // out measured 7.31 degrees of error; the roll cannot matter, because a rotation
+  // about Z leaves the +Z axis fixed, and this sweep drives it anyway to prove that.
+  //
+  // Stepped by integer index, not by accumulating a float: the previous version wrote
+  // `for (x = from; x <= to; x += step)` and silently dropped its own declared
+  // endpoint, so the grid was smaller than the comment claimed. A reviewer counted the
+  // states and found the gap.
+  const AXES = [
+    { name: 'chest pitch', from: -0.2, to: 0.7, steps: 10 },
+    { name: 'chest yaw', from: -0.32, to: 0.48, steps: 10 },
+    { name: 'chest roll', from: -0.3, to: 0.3, steps: 6 },
+    { name: 'head pitch', from: -0.09, to: 0.18, steps: 4 },
+    { name: 'head roll', from: -0.3, to: 0.3, steps: 2 },
+  ] as const
+  const at = (axis: (typeof AXES)[number], index: number): number =>
+    axis.from + ((axis.to - axis.from) * index) / axis.steps
   const TARGETS = [-0.65, -0.39, -0.13, 0.13, 0.39, 0.65]
 
   const forward = new THREE.Vector3()
+  // `animateActorCharacter`: breathing = sin(...) * 0.018, scale.y = 1 + breathing * 0.55.
+  const BREATH_AMPLITUDE = 0.018 * 0.55
+  // Degrees of heading error per unit of breath, measured. The residue is not float
+  // noise: the chest's `scale.y` sits between its rotation and the head's, so it
+  // stretches the Y component of a *pitched* head's forward vector, and the chest's
+  // rotation then mixes that back into X and Z. `solveHeadYaw` composes rotations and
+  // deliberately does not model it — a per-frame scale is not something a closed form
+  // wants as an argument for a hundredth of a degree.
+  //
+  // It earns the word "derived" rather than "chosen" because it is *linear* in the
+  // breath and the test checks that below: measured 9.5225 at a quarter amplitude,
+  // 9.5301 at full, 9.5402 at double. Double the breath and this bound doubles with
+  // it, which is the property a round number does not have.
+  const SKEW_PER_UNIT_BREATH = 9.6
   let worst = 0
   let worstAt = ''
   let states = 0
@@ -1393,24 +1423,38 @@ test('the head tracks its target through the chest, not past it', () => {
       skeleton.headPivot.add(head)
       // The chest also carries the actor's width and breath, which skew orientation
       // as well as size, so the measurement has to include them.
-      skeleton.torsoPivot.scale.set(1.07, 1.01, 1)
-      skeleton.neckPivot.scale.x = 1 / 1.07
+      setCharacterShoulderWidth(skeleton.torsoPivot, skeleton.neckPivot, 1.07)
+      skeleton.torsoPivot.scale.y = 1 + BREATH_AMPLITUDE
 
-      for (let x = PITCH.from; x <= PITCH.to; x += PITCH.step) {
-        for (let y = YAW.from; y <= YAW.to; y += YAW.step) {
-          for (let z = ROLL.from; z <= ROLL.to; z += ROLL.step) {
+      for (let i = 0; i <= AXES[0].steps; i += 1) {
+        const x = at(AXES[0], i)
+        for (let j = 0; j <= AXES[1].steps; j += 1) {
+          const y = at(AXES[1], j)
+          for (let k = 0; k <= AXES[2].steps; k += 1) {
+            const z = at(AXES[2], k)
             skeleton.torsoPivot.rotation.set(x, y, z)
-            for (const target of TARGETS) {
-              states += 1
-              // Exactly what `animateActorCharacter` writes.
-              skeleton.headPivot.rotation.y = solveHeadYaw(x, y, z, target)
-              skeleton.root.updateMatrixWorld(true)
-              forward.set(0, 0, 1).transformDirection(head.matrixWorld)
-              const error = Math.abs(Math.atan2(forward.x, forward.z) - target)
-              if (error > worst) {
-                worst = error
-                worstAt = `${faction}/${role} chest [${x.toFixed(2)}, ${y.toFixed(2)}, `
-                  + `${z.toFixed(2)}] looking ${target.toFixed(2)}`
+            for (let m = 0; m <= AXES[3].steps; m += 1) {
+              const headPitch = at(AXES[3], m)
+              for (let n = 0; n <= AXES[4].steps; n += 1) {
+                const headRoll = at(AXES[4], n)
+                for (const target of TARGETS) {
+                  states += 1
+                  // Exactly what `animateActorCharacter` writes, in its order.
+                  skeleton.headPivot.rotation.set(
+                    headPitch,
+                    solveHeadYaw(x, y, z, headPitch, target),
+                    headRoll,
+                  )
+                  skeleton.root.updateMatrixWorld(true)
+                  forward.set(0, 0, 1).transformDirection(head.matrixWorld)
+                  const error = Math.abs(Math.atan2(forward.x, forward.z) - target)
+                  if (error > worst) {
+                    worst = error
+                    worstAt = `${faction}/${role} chest [${x.toFixed(2)}, ${y.toFixed(2)}, `
+                      + `${z.toFixed(2)}] head pitch ${headPitch.toFixed(2)} roll `
+                      + `${headRoll.toFixed(2)} looking ${target.toFixed(2)}`
+                  }
+                }
               }
             }
           }
@@ -1419,16 +1463,77 @@ test('the head tracks its target through the chest, not past it', () => {
     }
   }
 
-  assert.ok(states > 50_000, `swept only ${String(states)} states; the grid has collapsed`)
-  // A tenth of a degree. Not "comfortably above the answer" — the answer is exact,
-  // and this is float noise. A looser bound here would have admitted the scalar
-  // subtraction, which is the whole thing being excluded.
+  assert.equal(
+    states,
+    FACTIONS.length * ROLES.length * TARGETS.length *
+      AXES.reduce((total, axis) => total * (axis.steps + 1), 1),
+    'the grid has collapsed; every declared endpoint must be visited',
+  )
+  // The solve is exact on a chain of pure rotations — that is its whole contract, and
+  // an earlier version of it was not, because it ignored the head's own pitch. What
+  // is left here is the chest's breath skewing a pitched head's forward vector, and
+  // it is bounded by the breath rather than by a number someone liked.
+  const bound = SKEW_PER_UNIT_BREATH * BREATH_AMPLITUDE
   assert.ok(
-    worst * (180 / Math.PI) <= 0.1,
-    `the head ended up ${(worst * (180 / Math.PI)).toFixed(3)} degrees off its target at `
-    + `${worstAt}. \`lookYaw\` is authored in body space and consumed under `
-    + '`torso-pivot`, and the chest pitches and rolls as well as yawing, so no single '
-    + 'subtraction converts it. Use `solveHeadYaw`, which answers it exactly.',
+    worst * (180 / Math.PI) <= bound,
+    `the head ended up ${(worst * (180 / Math.PI)).toFixed(4)} degrees off its target `
+    + `at ${worstAt}, over the ${bound.toFixed(4)} the chest's breath accounts for. `
+    + '`solveHeadYaw` answers a linear equation rather than approximating one, so more '
+    + 'than the breath means it is being given the wrong arguments — most likely a '
+    + 'missing head pitch, which alone is worth 7.3 degrees.',
+  )
+
+  // Two probes that keep the bound above honest, on the worst plan the sweep found.
+  const probe = (breath: number): number => {
+    const p = resolveCharacterPlan('elf', 'soldier', 0, false).proportions
+    const skeleton = buildCharacterSkeleton(p)
+    const head = new THREE.Object3D()
+    head.position.y = skeleton.headY
+    skeleton.headPivot.add(head)
+    setCharacterShoulderWidth(skeleton.torsoPivot, skeleton.neckPivot, 1.07)
+    skeleton.torsoPivot.scale.y = breath
+    let peak = 0
+    for (let i = 0; i <= AXES[0].steps; i += 1) {
+      for (let j = 0; j <= AXES[1].steps; j += 1) {
+        const x = at(AXES[0], i)
+        const y = at(AXES[1], j)
+        const z = AXES[2].to
+        const headPitch = AXES[3].to
+        skeleton.torsoPivot.rotation.set(x, y, z)
+        for (const target of TARGETS) {
+          skeleton.headPivot.rotation.set(
+            headPitch,
+            solveHeadYaw(x, y, z, headPitch, target),
+            AXES[4].from,
+          )
+          skeleton.root.updateMatrixWorld(true)
+          forward.set(0, 0, 1).transformDirection(head.matrixWorld)
+          peak = Math.max(peak, Math.abs(Math.atan2(forward.x, forward.z) - target))
+        }
+      }
+    }
+    return peak * (180 / Math.PI)
+  }
+
+  // 1. With the breath switched off the chain is pure rotation, and the solve is
+  //    exact. If this ever reads more than float noise, the solve is wrong — not the
+  //    scale — and the bound above would absorb it silently.
+  assert.ok(
+    probe(1) <= 1e-6,
+    `with no breath the solve should be exact, and it is out by ${probe(1).toExponential(3)} `
+    + 'degrees. The residue above is then not the breath, and its bound is measuring '
+    + 'something it does not name.',
+  )
+  // 2. And the residue is linear in the breath, which is what makes the bound a
+  //    derivation. If this ever stops holding, the coefficient is no longer meaningful
+  //    and neither is the bound built from it.
+  const single = probe(1 + BREATH_AMPLITUDE)
+  const double = probe(1 + 2 * BREATH_AMPLITUDE)
+  assert.ok(
+    Math.abs(double / single - 2) < 0.02,
+    `doubling the breath changed the heading residue by ${(double / single).toFixed(4)}x, `
+    + 'not 2x. The residue is no longer linear in the breath, so `SKEW_PER_UNIT_BREATH` '
+    + 'is no longer a coefficient and the bound above is just a number again.',
   )
 })
 
@@ -1522,13 +1627,13 @@ test('the head holds its target while the chest twists under it', () => {
       if (dampInBodySpace) {
         bodyYaw = damp(bodyYaw, TARGET, 7)
         skeleton.headPivot.rotation.y =
-          solveHeadYaw(chestPitch, chestYaw, chestRoll, bodyYaw)
+          solveHeadYaw(chestPitch, chestYaw, chestRoll, 0, bodyYaw)
       } else {
         // The rejected rule: damp after converting, so the chest's own oscillation
         // is inside the thing being smoothed.
         converted = damp(
           converted,
-          solveHeadYaw(chestPitch, chestYaw, chestRoll, TARGET),
+          solveHeadYaw(chestPitch, chestYaw, chestRoll, 0, TARGET),
           7,
         )
         skeleton.headPivot.rotation.y = converted
@@ -1721,11 +1826,24 @@ test('the engine wires the rig the way these tests measure it', () => {
     + 'conversion it lags the chest\'s gait twist and the lag returns as world wobble.',
   )
   assert.ok(
-    /headPivot\.rotation\.y = torsoPivot\s*\?\s*solveHeadYaw\(/.test(actorPosture),
-    'the head yaw must be solved against the chest\'s full rotation, not offset by one '
-    + 'of its Euler components. `lookYaw` is authored in body space and consumed under '
-    + '`torso-pivot`, and the chest pitches and rolls as well as yawing — a scalar '
-    + 'subtraction leaves 13.8 degrees and is worse than nothing in 4.2% of states.',
+    /headPivot\.rotation\.y = torsoPivot\s*\?\s*solveHeadYaw\(\s*torsoPivot\.rotation\.x,\s*torsoPivot\.rotation\.y,\s*torsoPivot\.rotation\.z,\s*headPitch,\s*actor\.headYaw,?\s*\)/
+      .test(actorPosture),
+    'the head yaw must be solved against the chest\'s full rotation *and* the head\'s '
+    + 'own pitch, each passed through. Naming the function is not enough: a reviewer '
+    + 'replaced the call with `solveHeadYaw(0, 0, 0, actor.headYaw)` and the whole '
+    + 'suite still passed, because nothing checked the arguments. A scalar subtraction '
+    + 'leaves 14 degrees and is worse than nothing in 4.2% of states; dropping the '
+    + 'head pitch alone leaves 7.3.',
+  )
+  assert.ok(
+    /const headPitch = -forwardLean \* actor\.motionBlend \* 0\.35 \+ pose\.stagger \* 0\.18/
+      .test(actorPosture),
+    'the head pitch must be computed before the solve and reused when it is written, '
+    + 'so the solve reads the value that actually lands on the pivot',
+  )
+  assert.ok(
+    /headPivot\.rotation\.x = headPitch/.test(actorPosture),
+    'the pitch the solve was given must be the pitch the head is given',
   )
   // The breath. `the chest lends the head its breath but not its shoulders` derives
   // its whole bound from these two numbers — they are the only thing that legitimately

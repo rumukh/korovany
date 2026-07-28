@@ -14179,21 +14179,29 @@ export class GameEngine {
       // `lookYaw` is measured from the actor's own facing, but `head-pivot` now hangs
       // off `torso-pivot`, and the chest does not merely yaw — it pitches into the run
       // and the storm and rolls with the turn. Uncorrected the chest's twist is added
-      // to the gaze and the head looks past its target by up to 35.9 degrees; the
-      // obvious scalar `lookYaw - chestYaw` still leaves 13.8, and in 4.2% of
-      // reachable states it is worse than doing nothing. `solveHeadYaw` answers it
-      // exactly. See its docblock for why an offset cannot.
+      // to the gaze and the head looks past its target by up to 37 degrees; the
+      // obvious scalar `lookYaw - chestYaw` still leaves 14, and in 4.2% of reachable
+      // states it is worse than doing nothing. `solveHeadYaw` answers it exactly.
+      //
+      // The head's own pitch goes in as an argument because it is applied after the
+      // yaw, in the same Euler, so it moves where the head ends up pointing — leaving
+      // it out cost 7.3 degrees. Its roll does not: a rotation about Z leaves the +Z
+      // axis fixed, so it cannot move the gaze. Computed here rather than below so the
+      // solve reads the value that will actually be written.
       //
       // The damping is on the *body*-space angle and the conversion is instantaneous,
       // which is what `actor.headYaw` is for. A frame change is not a motion: damping
       // the converted angle leaves the head chasing the chest's gait twist a fraction
-      // of a second late, measured as 2.80 degrees of gait-frequency wobble.
+      // of a second late, measured as 2.0 degrees of wobble at a soldier's real
+      // 4.00 Hz cadence.
+      const headPitch = -forwardLean * actor.motionBlend * 0.35 + pose.stagger * 0.18
       actor.headYaw = dampAngle(actor.headYaw, lookYaw, 7, delta)
       headPivot.rotation.y = torsoPivot
         ? solveHeadYaw(
             torsoPivot.rotation.x,
             torsoPivot.rotation.y,
             torsoPivot.rotation.z,
+            headPitch,
             actor.headYaw,
           )
         : actor.headYaw
@@ -14203,8 +14211,7 @@ export class GameEngine {
       // `-turnLean * 0.16` and the head `+turnLean * 0.06` — which only means anything
       // against a transform the head inherits. The yaw is the odd one out because it
       // tracks a target rather than resisting a posture.
-      headPivot.rotation.x =
-        -forwardLean * actor.motionBlend * 0.35 + pose.stagger * 0.18
+      headPivot.rotation.x = headPitch
       headPivot.rotation.z =
         actor.turnLean * 0.06 -
         idleWeightShift * 0.2 -

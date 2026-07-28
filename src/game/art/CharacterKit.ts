@@ -831,44 +831,61 @@ export function buildCharacterSkeleton(p: CharacterProportions): CharacterSkelet
  *
  * Subtracting the chest's `rotation.y` is the obvious answer and it is wrong for the
  * same reason a scale correction on a rotated pivot is wrong — it cancels only while
- * the other two axes are zero. Measured over 51,480 reachable chest orientations and
- * look targets: no correction at all is out by up to **35.93°**; the scalar
- * subtraction still by **13.79°**, and in **4.2%** of those states it is *worse than
- * doing nothing*. This solve is out by **0.0000°**.
+ * the other two axes are zero. Measured over the reachable chest envelope and look
+ * range: no correction at all is out by up to **37.4°**; the scalar subtraction still
+ * by **14.0°**, and in **4.2%** of those states it is *worse than doing nothing*.
+ * This solve is exact.
  *
- * It is a solve rather than an offset because the question has an exact answer.
- * Writing the chest's rotation as a matrix with first column **a** and third column
- * **c**, a head yawed by θ points along `a·sinθ + c·cosθ`; asking for that to have
- * heading `L` in the XZ plane is one linear equation in `sinθ` and `cosθ`:
+ * It takes the head's own pitch because the pitch is applied *after* it, in the same
+ * Euler, and therefore changes where the head ends up pointing. Roll does not: a
+ * rotation about Z leaves the +Z axis fixed, so `head-pivot.rotation.z` cannot move
+ * the gaze and is not a parameter. Omitting the pitch was worth **4.82°** on a
+ * reachable first stagger frame — the solve was exact for the case the test drove
+ * and inexact for the case the engine writes, which is the same defect as validating
+ * a conversion only where it happens to work.
+ *
+ * The derivation. Let `M = R_chest · Rx(headPitch)`, with first column **a** and
+ * third column **c**. A head yawed by θ under that points along `a·sinθ + c·cosθ`;
+ * asking for that to have heading `L` in the XZ plane is one linear equation:
  *
  * ```text
  * sinθ (a₁cosL − a₃sinL) + cosθ (c₁cosL − c₃sinL) = 0
  * ```
  *
- * The four elements it needs come straight out of the Euler triple, so this
- * allocates nothing and builds no matrix — it runs for every actor every frame.
+ * The four elements come straight out of the two Euler triples, so this allocates
+ * nothing and builds no matrix — it runs for every actor every frame.
  *
  * Damp `lookYaw` *before* calling this, never the result. A frame change is not a
  * motion: damping the converted angle leaves the head chasing the chest's gait twist
- * a fraction of a second late, which measures as 2.80° of gait-frequency wobble.
+ * a fraction of a second late, which measures as 2.0° of wobble at a soldier's real
+ * 4.00 Hz cadence.
  */
 export function solveHeadYaw(
   chestX: number,
   chestY: number,
   chestZ: number,
+  headPitch: number,
   lookYaw: number,
 ): number {
-  // Columns 0 and 2 of three.js's XYZ Euler matrix, by hand.
+  // Columns of three.js's XYZ Euler matrix for the chest, by hand.
   const cx = Math.cos(chestX)
   const sx = Math.sin(chestX)
   const cy = Math.cos(chestY)
   const sy = Math.sin(chestY)
   const cz = Math.cos(chestZ)
   const sz = Math.sin(chestZ)
+  // Column 0, and columns 1 and 2, which the head's pitch mixes together.
   const a1 = cy * cz
   const a3 = sx * sz - cx * cz * sy
-  const c1 = sy
-  const c3 = cx * cy
+  const oneX = -cy * sz
+  const oneZ = sx * cz + cx * sz * sy
+  const twoX = sy
+  const twoZ = cx * cy
+  // `R_chest · Rx(headPitch)` rotates column 2 toward column 1.
+  const cp = Math.cos(headPitch)
+  const sp = Math.sin(headPitch)
+  const c1 = cp * twoX - sp * oneX
+  const c3 = cp * twoZ - sp * oneZ
   const cosL = Math.cos(lookYaw)
   const sinL = Math.sin(lookYaw)
   return Math.atan2(-(c1 * cosL - c3 * sinL), a1 * cosL - a3 * sinL)
