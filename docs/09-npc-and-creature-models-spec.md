@@ -462,6 +462,17 @@ no new dependencies.
   Replacing spans with a placeholder rather than nothing gives zero, and the control
   confirms the sweep can still fire — because a sanitiser that *removes* text is exactly
   the shape that produces a clean result by destroying the evidence.
+  **The pair has a character worth naming, because neither number means what it looks
+  like.** Deletion joins the text on either side of a span and can therefore *manufacture*
+  a hit that is not in the file; placeholder substitutes the span away and can therefore
+  *conceal* a real double space that lives **inside** inline code. So they are not two
+  attempts at one measurement — they are an **upper bound that over-reports and a lower
+  bound that under-reports**, and the true count lies between them. Concretely, at one tip:
+  `deletion 30, placeholder 0, raw 2` — where the two raw hits were this file quoting its
+  own patterns inside inline spans. **`placeholder = 0` never reads as "no double space in
+  the added lines"; it reads as "none outside inline code",** and only the raw count
+  distinguishes those. Here that is the behaviour wanted, which is precisely why the
+  distinction had to be stated rather than left to be inferred from a zero.
   **And the reason it went unnoticed is worth more than the bug.** A count in the plausible
   range prompts nothing. Zero would have raised *"is this thing on?"*; eighteen looks like
   a working detector finding real problems, and a reader would reasonably conclude the file
@@ -593,26 +604,31 @@ no new dependencies.
   `turns.timestamp` is completion rather than arrival, which is checkable in one query and
   was checked. Turn 0's `user_message` is the kickoff — necessarily present when the
   session was created — so under an arrival reading its stamp should equal creation. Over
-  the whole store:
+  the whole store, comparing the first 80 characters of each (`sessions.summary` is a
+  500-character truncation, so full equality holds for exactly one row and is the wrong
+  test):
   ```
   sessions with a turn 0                      80
-  premise holds (turn0 message == summary)    69      <- 11 do not, and are not evidence either way
     delta negative                             0
-    delta under 1 minute                       1
-    delta 20 minutes or more                  54
-    min 0.21 min          max 307.8 min
+    delta 20 minutes or more                  60
+    min 0.21 min          max 1006.3 min
+
+  split by whether the kickoff prefix matches:
+    matches      69    0 negative   54 over 20 min   mean  54.8 min
+    no match     11    0 negative    6 over 20 min   mean 125.0 min
   ```
-  **Fifty-four of sixty-nine first turns are stamped twenty minutes or more after the
-  session that was created holding them, and not one is negative.** The arrival reading is
-  false almost everywhere and contradicted nowhere. So `updated_at` sat frozen at thirteen
-  seconds while the session was demonstrably working, and *"nothing produced"* was false
-  when written, not overtaken later.
+  **Sixty of eighty first turns are stamped twenty minutes or more after the session that
+  was created holding them, and not one of eighty is negative.** The arrival reading is
+  false almost everywhere and contradicted nowhere.
+  **An earlier version of this entry excluded the eleven non-matching rows as "not evidence
+  either way." That was wrong twice.** They contain no negatives either, six of eleven are
+  over twenty minutes, and their mean is more than double the included group — so the
+  exclusion was immaterial and the claim is stronger without it. And the filtered maximum,
+  `307.8`, was quoted as the envelope of the phenomenon: **the true range is `1006.3`
+  minutes**, understated 3.3× by a filter adopted for an unrelated reason.
   **That proof was first offered on four sessions, and every one of them had a slow first
   turn** — a control drawn from inside the filter it was meant to test, which is this
-  document's own aim axis appearing inside a proof of something else. Widening it did two
-  things a small sample could not: it made the claim quantitative, and it exposed that
-  **eleven of the eighty do not satisfy the premise at all**, a limit nobody could have
-  stated from four cases.
+  document's own aim axis appearing inside a proof of something else.
   Which sharpens the rule about primary sources rather than confirming it. Consulting the
   store *was* a primary source, and four rows from it still under-supported the claim.
   **A primary source consulted on an unnamed sample is a negotiation with extra steps:**
@@ -1022,6 +1038,23 @@ no new dependencies.
   for — the same shape as a line-ending commit landing in the file whose value is its
   history. The rule that follows is narrow and mechanical: **every cell in a comparison
   table is a command that was run, or it is marked as not one.**
+  **That rule has a hole exactly one level out, and it was found in the commit after it.**
+  The completion-proof table above printed its filter as `turn0 message == summary`. Every
+  cell in it had genuinely been run — and the printed predicate returns **1, not 69**,
+  because `sessions.summary` is a 500-character truncation and full equality holds for the
+  single session whose kickoff was shorter than that. The command actually run compared an
+  80-character prefix. So: **every cell was a command, and the table still did not
+  reproduce** — the exact inverse of the fabricated row, from the same document, days
+  apart. A cell-level rule protects cells and says nothing about the row description that
+  makes the cells findable again. **A label that is not the command is a fabricated row
+  with real numbers in it.**
+  The rescue is worth more than the defect. The reviewer's first re-run returned `1`, and
+  the available move — reporting *"your 69 does not replicate"* — would have been wrong
+  while looking maximally rigorous. What prevented it was printing twelve rows instead of
+  the count. **A count that disagrees is not yet a disagreement:** a scalar carries no
+  trace of whether the population, the predicate or the answer is what differs, which is
+  the same fact as a count carrying no trace of the pattern that produced it, and it cuts
+  toward false accusation as readily as toward false confidence.
   Two things make this the most useful entry in the section rather than the smallest.
   **Why it works:** a true explanation of a messy sequence has to *be* messy, because it
   has to carry the exceptions. Tidiness is therefore evidence of **selection** — and
