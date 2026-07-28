@@ -1757,7 +1757,15 @@ test('the head tracks its target through the chest, not past it', () => {
     //
     // **A fix scoped to the instance that was reported is a fix scoped to a sample.**
     // The head was the pivot in the finding; the derivation names two.
-    for (const sabotage of ['YXZ', 'ZYX', 'ZXY'] as const) {
+    // All five non-default orders, not the three that were demonstrated. `THREE.Euler`
+    // has six and the set is closed, so sampling it is a choice rather than a
+    // necessity — and a reviewer pointed out that `XZY` and `YZX` were never exercised.
+    //
+    // Nothing hides there today: `rotation.set(…, 'XYZ')` is unconditional, so all six
+    // reset. But a future conditional reset — one that normalises only known-bad
+    // orders, say — would be pinned for three and blind for two, and the difference
+    // costs one line to remove.
+    for (const sabotage of ['YXZ', 'ZYX', 'ZXY', 'XZY', 'YZX'] as const) {
       for (const [pitch, yaw, roll] of [
         [0.1, 0.2, 0.3], [-0.09, 0.65, -0.3], [0.18, -1.2, 0.037], [0, 0.5, -0.15],
       ] as const) {

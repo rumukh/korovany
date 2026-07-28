@@ -298,6 +298,13 @@ no new dependencies.
   enumerating the points**, which a clamp sitting on a sample point will demonstrate.
   And it applies to *fixes* as much as assertions: a fix scoped to the instance that was
   reported has inherited its sample from the report.
+  The corollary that took two people to see: **the population has as many dimensions as
+  the claim has inputs, and the one you framed the question in is the one you will
+  enumerate.** Two harnesses were built within an hour to check the same equivalence
+  claim about a pose function. One swept 441 poses and left the Euler order at its
+  single default; the other swept all six orders and left the pose at one point. Both
+  framings were reasonable, both were one-dimensional, and each enumerated exactly the
+  axis its author had framed the question in. Neither was careless; the question was.
 - **A documented exclusion is a decision; the same exclusion carried into a different
   assertion is a sample.** The subtlest form of the question above, and the one with no
   usual tell. A gait table excluded three roles from a wobble simulation for written,
