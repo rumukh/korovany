@@ -1024,6 +1024,26 @@ negative query is a claim about your query** — count the rows before reading t
 which is the negative-claim rule recursing onto the tool used to test it.
  The second half is the programme lead's, added after three separate
 
+**Two readings from one act are not corroboration.** The habit this pass ran after every
+single commit — push, then print `local` and `origin` side by side and call it verified —
+carries no information, because the push *made* them agree. Agreement is guaranteed by
+construction; the check can only fail if the push failed, which the push already reports.
+
+The foundation session named it after watching it appear in the message announcing the fix
+for exactly that class. It is the same defect as comparing `<branch>` with
+`origin/<branch>` in a shared object store, one step further out: there the two refs share
+a fetch, here the two readings share an action.
+
+What actually discriminates is running `git ls-remote` **at the moment of writing the
+claim**, and treating agreement as the *expected* case rather than as confirmation of
+anything. Three sessions produced this shape tonight, including in messages about it.
+
+**And a census is the most quotable and least re-checked thing anyone produces.** Three
+counts were quoted from memory across one exchange — this pass's count of a colleague's
+call sites, the colleague's count of this file's lathe sites, and a count of matching lines
+in a spec — and all three were wrong. A number that took a command to produce gets repeated
+without one, because it reads as a fact rather than as a measurement with a timestamp.
+
 **A stale value in a coordinator's record is worse than one in a peer's message.** The
 programme lead's own closing entry, about its own ledger. A peer's figure is a claim you
 weigh; a coordinator's is quoted *at* you as the authoritative copy, and it arrives
