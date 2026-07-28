@@ -405,6 +405,22 @@ no new dependencies.
   which is the honest content of both. This is *carry the derivation, not the value*
   applied to grammar rather than to method, and the two compose: **re-resolve late and
   report in the past tense, and there is no window at all.**
+  One more thing came out of measuring that gap, and it is the sharpest instance the work
+  produced because every party measured and every party got a different answer. The
+  question — *is a reviewer's baseline falling further behind?* — was answered three ways
+  from the same commits within one hour: **self-sustaining** (asserted, unmeasured,
+  refuted); **7 → 5, converging** (measured, but across two of the four passes, because
+  the author measured against the last report he had read — a report standing in for the
+  set of them); **7 → 5 → 3 → 2, converging faster** (measured across all four, but the
+  last two against a fixed tip rather than "the tip at that moment", which was the stated
+  definition); and under that definition applied consistently, **7 → 5 → 6 → 6 — a steady
+  state**, which is neither story. The gap stabilises rather than closing, because each
+  report causes commits at about the rate the reviewer advances.
+  So: **a claim about a trend has two populations — the points, and the baseline each
+  point is measured against.** Enumerate the first, let the second drift, and the trend is
+  real in the arithmetic and absent in the world. Neither error here was careless; both
+  were caught only by recomputing from the raw commits, and the third answer was not
+  proposed by anyone until then.
 - **A rule stored without its trigger is a guard with no call site.** It exists, it is
   correct, and nothing invokes it — which is the same object as an assertion that cannot
   fail for the defect it names, one level up and in prose instead of a test. The evidence
