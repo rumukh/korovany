@@ -2041,6 +2041,172 @@ test('normal-derived geometry is checked by volume, because agreement is vacuous
 })
 
 /**
+ * Per-part signed volume inside a merged buffer. `mergeAll` concatenates, so each part
+ * owns a contiguous run of vertices; each run is measured about its **own** centre, so a
+ * part is judged on how it winds rather than on where in the prop it sits.
+ *
+ * Reads positions only — no normal attribute is consulted, so the `computeVertexNormals()`
+ * that every merge path runs downstream cannot make the result agree with itself.
+ */
+const mergedSpanVolumes = (parts: THREE.BufferGeometry[]): {
+  spans: number[]
+  consumed: number
+  total: number
+} => {
+  const merged = mergeAll(parts.map((part) => part.clone()))
+  const source = merged.index ? merged.toNonIndexed() : merged
+  const position = source.getAttribute('position')
+  const vertex = new THREE.Vector3()
+  const a = new THREE.Vector3()
+  const b = new THREE.Vector3()
+  const c = new THREE.Vector3()
+  const cross = new THREE.Vector3()
+  const spans: number[] = []
+  let cursor = 0
+  for (const part of parts) {
+    const flat = part.index ? part.toNonIndexed() : part
+    const count = flat.getAttribute('position').count
+    if (flat !== part) flat.dispose()
+    const box = new THREE.Box3()
+    for (let slot = cursor; slot < cursor + count && slot < position.count; slot += 1) {
+      box.expandByPoint(vertex.fromBufferAttribute(position, slot))
+    }
+    const centre = box.getCenter(new THREE.Vector3())
+    let volume = 0
+    for (let triangle = cursor; triangle + 2 < cursor + count && triangle + 2 < position.count; triangle += 3) {
+      a.fromBufferAttribute(position, triangle).sub(centre)
+      b.fromBufferAttribute(position, triangle + 1).sub(centre)
+      c.fromBufferAttribute(position, triangle + 2).sub(centre)
+      cross.crossVectors(b, c)
+      volume += a.dot(cross) / 6
+    }
+    spans.push(volume)
+    cursor += count
+  }
+  const total = position.count
+  if (source !== merged) source.dispose()
+  merged.dispose()
+  return { spans, consumed: cursor, total }
+}
+
+/**
+ * A reversed sub-part inside a merged prop, which is the defect a two-kit integration is
+ * most likely to produce: one builder returns a part wound inside out, it is merged into
+ * a prop, and the merge's normal recompute makes its shading agree with itself before
+ * anything looks at it.
+ *
+ * Neither test above sees it, and the reason is worth stating because both *look* like
+ * they should. Measured, `probe-laundered.mts`:
+ *
+ *     one part reversed              merged volume   the `volume > 0` test above
+ *     merged, part 0 of 2               -0.83664     catches
+ *     merged, part 1 of 2               +0.83664     PASSES   <- blind
+ *     composed prop, part 0 of 3        -0.06498     catches
+ *     composed prop, part 1 of 3        +0.12378     PASSES   <- blind
+ *     composed prop, part 2 of 3        +0.17698     PASSES   <- blind
+ *
+ * The signed volume of a prop is a *sum*: a small reversed part is netted against the
+ * larger correct ones and the total stays positive. Blind on 3 of 5, and blind in the
+ * direction that matters — it is the incidental parts that get reversed, not the body.
+ *
+ * The centroid test cannot take over either, though it is the sharper instrument. On the
+ * *correct* geometry, before any mutation:
+ *
+ *     merged          weakest 0.3075   2 of 52 faces spuriously inward
+ *     composed prop   weakest 0.2158   2 of 64 faces spuriously inward
+ *
+ * A prop is several bodies side by side, so it is not star-convex about the centroid of
+ * the whole — the same disqualification `branchStructure` carries above. Pointing
+ * `inward === 0` at these would go red on art that is perfectly well formed.
+ *
+ * So the part is the right subject, not the prop. The sweep below injects the defect one
+ * part at a time and requires each injection to be caught, so what this test detects is
+ * demonstrated rather than claimed.
+ */
+test('a merged prop is checked part by part, because the volume sum hides a reversed part', () => {
+  const props: [label: string, build: () => THREE.BufferGeometry[]][] = [
+    ['merged', () => [
+      taperedBox({ width: 1, height: 1, depth: 1 }),
+      transformed(latheProfile([
+        { x: 0.05, y: 0 },
+        { x: 0.4, y: 0.4 },
+        { x: 0.1, y: 0.9 },
+      ]), { position: { x: 0, y: 1, z: 0 } }),
+    ]],
+    ['composed prop', () => [
+      latheProfile([
+        { x: 0.05, y: 0 },
+        { x: 0.4, y: 0.3 },
+        { x: 0.25, y: 0.7 },
+      ], { segments: 10 }),
+      loftProfile({
+        profile: rectProfile(0.4, 0.4),
+        sections: [
+          { y: 0, scaleX: 1 },
+          { y: 0.6, scaleX: 0.5, scaleZ: 0.5 },
+        ],
+      }),
+      taperedBox({ width: 0.3, height: 0.5, depth: 0.3, topScale: 0.6 }),
+    ]],
+  ]
+
+  for (const [label, build] of props) {
+    const parts = build()
+    const baseline = mergedSpanVolumes(parts)
+
+    // The walk is the whole instrument. If the per-part counts stopped adding up to the
+    // merged buffer -- a merge that reorders, welds or drops vertices -- every span below
+    // would be measured over the wrong triangles and could still come out positive. So
+    // the walk reports rather than going quiet.
+    assert.equal(
+      baseline.consumed,
+      baseline.total,
+      `${label}: the part spans cover ${String(baseline.consumed)} of ${String(baseline.total)} `
+      + 'merged vertices, so mergeAll no longer lays parts down in order and these volumes '
+      + 'are measured over the wrong triangles',
+    )
+    assert.ok(baseline.spans.length > 1, `${label} is not a multi-part prop, so it proves nothing here`)
+    for (const [index, volume] of baseline.spans.entries()) {
+      assert.ok(
+        volume > 0,
+        `${label} part ${String(index)} encloses ${volume.toFixed(5)}, so it is merged in inside out`,
+      )
+    }
+    for (const part of parts) part.dispose()
+
+    // Which mutations make this red, rather than whether any does. One part reversed at a
+    // time, every part in turn. `reverseWinding` recomputes normals on the way out, so
+    // each injected part arrives laundered exactly as a real one would.
+    for (let index = 0; index < baseline.spans.length; index += 1) {
+      const mutated = build()
+      const original = mutated[index]
+      mutated[index] = reverseWinding(original)
+      original.dispose()
+      const probe = mergedSpanVolumes(mutated)
+      assert.equal(
+        probe.consumed,
+        probe.total,
+        `${label}: reversing part ${String(index)} changed the merged vertex layout`,
+      )
+      assert.ok(
+        probe.spans[index] < 0,
+        `${label}: reversing part ${String(index)} left its span at `
+        + `${probe.spans[index].toFixed(5)}, so a reversed sub-part would ship undetected`,
+      )
+      // And only that part. A detector that reported every span negative would catch all
+      // five injections while saying nothing about which part is at fault.
+      assert.equal(
+        probe.spans.filter((volume) => volume < 0).length,
+        1,
+        `${label}: reversing part ${String(index)} turned another part's span negative too, `
+        + 'so this measures the prop rather than the part',
+      )
+      for (const part of mutated) part.dispose()
+    }
+  }
+})
+
+/**
  * The three winding tests above are only as good as the set of builders they are pointed
  * at, and a hand-written list is exactly the thing that silently stops covering the kit
  * the first time someone adds a builder. So derive the set from the source instead: a
