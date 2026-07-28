@@ -907,7 +907,8 @@ The scanner that produced the five false positives is its own entry: it tested f
 presence of one guard token* rather than *"can this traversal see a shell?"*, so it was
 blind to a guard spelled differently and blind to a guard that is an ordering fact with no
 line of code at all. That is rule 3 firing on the first check written after the rule
-landed, against its own author. **Landing a rule does not install it.** The last entry, and the one that explains why several of the others survived
+landed, against its own author. **Landing a rule does not install it.**
+ The last entry, and the one that explains why several of the others survived
 
 **A check that fires on correct code is worse than no check.** The tempting fix for a
 predicate that misses a case is to widen it — here, extending a `.material`-assignment
@@ -932,7 +933,9 @@ same blindness, one layer up: in the shipped artefact rather than the probe.
 failure mode this section is most exposed to, since it exists to be copied into another
 programme's docs. Line numbers rot silently — the file they point into stays valid, so
 nothing errors, and the citation quietly starts describing a blank line. This spec cites
-files and symbols throughout for that reason. The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives already
+files and symbols throughout for that reason.
+
+ The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives already
 
 **The exact instrument arrived last: `git rev-parse <ref>:<path>`.** Nine hours were spent
 approximating a question that has an exact answer. *"Is this tree's copy of this file the
@@ -969,10 +972,12 @@ other phantom instruction on this programme would have produced a visible wrong 
 
 Which is the argument for the blob hash in one line: the claim that would have suppressed
 findings was refutable in one command, and the command that refutes it exactly is the one
-nobody reached for until the last hour. Both produce a large one-way gap, and the alarming reading
+nobody reached for until the last hour.
+ Both produce a large one-way gap, and the alarming reading
 
 **A one-directional set difference cannot distinguish "they lost work" from "they are
-describing an old snapshot."** Both produce a large one-way gap, and the alarming readingpresents first — because the direction you naturally compute is *what is missing from
+describing an old snapshot."**
+ Both produce a large one-way gap, and the alarming readingpresents first — because the direction you naturally compute is *what is missing from
 theirs*, which is also the direction that looks like data loss.
 
 Contributed by the foundation session, which came within one message of reporting that
@@ -992,10 +997,12 @@ since,"* and reading `git branch --contains` as *"they reviewed a copy"* when it
 The general form is cheap and mechanical, which is why it belongs next to the mutation
 rules rather than in the prose: **before reporting an asymmetry, compute it both ways.**
 One extra command, and it is the difference between a colleague's error and your own
-staleness — two readings that look identical from one side. The only entry here that is not about code, and the programme lead
+staleness — two readings that look identical from one side.
+ The only entry here that is not about code, and the programme lead
 
 **The ambiguity resolved in my favour, silently — and that is a selection rule, not a
-measurement error.** The only entry here that is not about code, and the programme leadidentified it as its own class after this pass reported it about itself.
+measurement error.**
+ The only entry here that is not about code, and the programme leadidentified it as its own class after this pass reported it about itself.
 
 Three times tonight this session diagnosed a colleague's tooling as broken — "cached ref
 resolutions" from a reflog position, "reviewing an integration copy" from
@@ -1014,10 +1021,31 @@ The programme lead then produced the companion instance while checking one of th
 claims: it queried a session record with the wrong key, got `0 mentions`, and nearly
 reported a confident negative. The table had **zero rows for that key at all**. **A
 negative query is a claim about your query** — count the rows before reading the answer,
-which is the negative-claim rule recursing onto the tool used to test it. The second half is the programme lead's, added after three separate
+which is the negative-claim rule recursing onto the tool used to test it.
+ The second half is the programme lead's, added after three separate
+
+**A stale value in a coordinator's record is worse than one in a peer's message.** The
+programme lead's own closing entry, about its own ledger. A peer's figure is a claim you
+weigh; a coordinator's is quoted *at* you as the authoritative copy, and it arrives
+attached to a decision. Six stale values were published in that ledger over one night, and
+at least one — an orphaned SHA this pass had created by amending — came back as an
+instruction to freeze there, from two directions.
+
+It also explains the phantom quotations better than message drift did. Several figures
+attributed to sessions that never sent them are traceable to a record rather than to a
+message, which is the more dangerous origin precisely because nobody thinks to ask a
+ledger for provenance.
+
+The rule the lead derived is the one to keep, and it generalises past SHAs: **record where
+a value came from, or do not record it.** The version that finally worked was leading with
+the command rather than the figure — `git rev-parse <branch>` in the header instead of its
+output, so the reader re-derives rather than inherits. That is the same move as citing
+symbols rather than line numbers, and as stating the population a budget governs: **a
+number without its provenance is a rumour that has been formatted.**
 
 **A figure inside quotation marks reads as already verified — and so does a figure inside
-an instruction.** The second half is the programme lead's, added after three separatesessions spent measurements refuting quotations none of them had written: a docblock edit,
+an instruction.** The second half is the programme lead's, added after three separate
+sessions spent measurements refuting quotations none of them had written: a docblock edit,
 a `smooth: true` count, and a freeze target. Nobody misquoted anyone. The figures acquired
 a specificity in transit that they did not have when sent, and each receiving session
 reasonably treated a quoted SHA as something to *check against* rather than something to
@@ -1055,7 +1083,10 @@ a command is checkable; an absence stated from memory is a rumour with a SHA att
 settled.**
 Contributed by the programme lead, about this pass's own status report, in the same message
 in which it retracted a probe of its own for the same class of defect — it had checked for
-two symbols that existed both before and after the fix they were meant to confirm. The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives alreadyargued for, by someone who was right about something else, which is exactly the condition
+two symbols that existed both before and after the fix they were meant to confirm.
+
+
+ The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives alreadyargued for, by someone who was right about something else, which is exactly the condition
 under which nobody measures it again.
 
 Two of the three worst vacuous checks in this file were adopted from reviews. The ledger
@@ -1068,10 +1099,12 @@ blind until 29 simultaneous phantoms.
 
 That division is the mechanism worth naming: when the proposer and the implementer are
 different people, each can reasonably believe the other validated it. An original check
-has one owner and one conscience; an adopted one has two owners and, absent care, none. Contributed by the foundation session
+has one owner and one conscience; an adopted one has two owners and, absent care, none.
+ Contributed by the foundation session
 
 **Severity is a property of callers, not of code — and an unreachable measurement can
-become another session's calibration constant.** Contributed by the foundation sessionabout its own work, and it is the only entry here where the fault propagated *between*
+become another session's calibration constant.**
+ Contributed by the foundation sessionabout its own work, and it is the only entry here where the fault propagated *between*
 trees. It characterised a shading defect by its worst reachable-in-principle magnitude —
 104–125° — without asking who calls the builder. The answer was nobody: the only
 production route into that path has zero call sites in any of the four trees.
