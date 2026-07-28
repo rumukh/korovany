@@ -848,9 +848,38 @@ and not to a test, because the test looked careful and the assertion looked plai
 because it is anti-correlated with scrutiny. The question that would have caught it is one
 `grep`: *what ordering does production use?*
 
+**A guard you can grep for is a guard you can keep; a guard made of ordering is one a
+refactor is entitled to break.** Contributed by the foundation session after it tested a
+generalisation of this pass's finding rather than agreeing with it — twelve traversals
+classified, five flagged as unguarded, and **all five false positives**. Two guard
+mechanisms, neither of them the token it searched for: one exemption spelled
+`isLibraryOwned` instead of `isOutlineShell`, and four builders safe purely because they
+run *before* anything outlines their output.
+
+The second kind is the dangerous one. The exemption is written down and holds whenever it
+runs. The ordering guard is written down **nowhere** — nothing in those builders says
+"must run before outlining" — so co-locating outline application into the builder, a
+reasonable refactor that puts the silhouette decision next to the geometry, would silently
+start marking every inverted hull as shadow-casting. Four builders at once, no test
+failing, and the diff that breaks it touches a different function from the one that
+becomes unsafe.
+
+This file has exactly one bulk traversal, the teardown dispose sweep, and it rests on
+exactly this kind of guard: `releaseOutline` must run before it or shells are freed while
+borrowing their source's `instanceMatrix`. That ordering was written only in a comment
+until a reviewer's mutation moved the release below the sweep and 283 tests stayed green.
+It is now greppable — the test records the dispose sequence and asserts each shell
+precedes its source — which is the general remedy: **convert an ordering guard into an
+asserted one, or accept that a refactor may take it.**
+
+The scanner that produced the five false positives is its own entry: it tested for *the
+presence of one guard token* rather than *"can this traversal see a shell?"*, so it was
+blind to a guard spelled differently and blind to a guard that is an ordering fact with no
+line of code at all. That is rule 3 firing on the first check written after the rule
+landed, against its own author. **Landing a rule does not install it.** The last entry, and the one that explains why several of the others survived
+
 **Measure adopted fixes at least as hard as original code, precisely because they feel
-settled.** The last entry, and the one that explains why several of the others survived
-so long. **A check inherited from review carries borrowed authority**: it arrives already
+settled.** The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives already
 argued for, by someone who was right about something else, which is exactly the condition
 under which nobody measures it again.
 
