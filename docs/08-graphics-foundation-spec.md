@@ -961,6 +961,16 @@ only the newest content is served. **The same scheduler behaviour is a defect in
 workflow and the desired behaviour in the other**, which is why the `ci.yml` fix was not
 copied across.
 
+**That argument assumes the event population is pushes to `main`, and it is not.** The
+workflow also carries `workflow_dispatch`. A manual run from a non-`main` ref enters the same
+fixed `pages` group, can displace a pending `main` push under `queue: single`, and is only
+rejected *afterwards* by the environment's `main`-only branch policy — by which point the
+push it replaced is gone. An old re-run can arrive late the same way. All 82 recorded runs
+were pushes, so this has never happened, but "`main` is linear" is a statement about one
+trigger of two. Neither `single` nor `max` addresses it; a current-`main`/SHA freshness check
+would, and none is proposed here. **Recorded as a known gap rather than fixed**, because the
+fix is a different change from the one this section is about.
+
 The guard is `tests/deployWorkflow.test.ts`, and its ceiling is stated in the file: it reads
 the input handed to the scheduler and cannot observe the scheduler. The pending behaviour in
 particular is **unobservable from run history, because `cancel-in-progress: true` prevents
@@ -968,8 +978,7 @@ the pending state from arising at all** — the setting suppresses its own evide
 check can fail for is the realistic case: somebody edits the flag back.
 
 It parses `concurrency:` blocks by indentation rather than grepping for the string, so a key
-relocated under a job-level block is caught, and it reports the inline mapping form as a
-failure rather than passing on syntax it cannot read. Six doped inputs — and **the sixth
+relocated under a job-level block is caught. Six doped inputs — and **the sixth
 found a hole in the detector**: the Pages-deployment pattern anchored `uses:` at line start,
 so a step written compactly as `- uses: actions/deploy-pages@v4` was invisible to it. The
 real file uses the other form, so every run against this repository would have passed while
