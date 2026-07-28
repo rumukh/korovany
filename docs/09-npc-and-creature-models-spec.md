@@ -746,6 +746,17 @@ no new dependencies.
   anyone took: **the mechanism you invoke may be real, may be the one you have watched
   operating all along, and may still not be the one that produced the number in front of
   you — and only measuring the explanation separates them.**
+  The class had no way to spot one from outside until its last instance supplied one:
+  **an explanation is suspect when it is tidier than the events it explains.** A summary
+  of this work's findings was offered as moving outward "in a straight line" — fix, tests,
+  bounds, instruments, sentences, timestamps, explanations, history — and was withdrawn by
+  its own author on inspection, because the sequence was not a line: the bounds and the
+  instruments interleaved, and the history defect arrived from a third session working on
+  something else. **The order was imposed afterwards, because an order reads as
+  understanding.** Each rule here came from a specific measured failure; the arc
+  connecting them came from one person at the end with nothing to check it against.
+  Tidiness is cheap to test: **compare the shape of an explanation against the record of
+  what happened, and be suspicious in proportion to how well it comes out.**
   There is a structural consequence, and it is the strongest practical thing this work
   produced. **The correction neither participant can make is the one from someone with no
   stake in the exchange.** Two parties in a review loop audit each other's *arithmetic*
