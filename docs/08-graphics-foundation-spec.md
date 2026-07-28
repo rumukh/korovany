@@ -993,6 +993,57 @@ only fire on something harmless is nearer to theatre than to a gate**, and §6's
 cuts that way: a documented absence beats a check that cannot fail for a reason worth
 failing over.
 
+#### The guard was reading the wrong population, and a probe with no Pages in it proved it
+
+The check shipped above asserts that no workflow can cancel a Pages deployment in flight.
+It was doped six ways before it shipped and it caught all six. It was still wrong, and the
+way it was wrong is the defect this section has catalogued more than any other: **a true
+answer about the wrong subject.**
+
+Its first line filtered the population — `if (!DEPLOYS_PAGES.test(file.source)) continue` —
+so it opened a workflow only after finding `actions/deploy-pages` in it. Every doped case
+was therefore a mutation of a *deploying* workflow, and every one was caught. The question
+never asked was whether the file that does the cancelling has to be the file that deploys.
+
+It does not. The schema is explicit, and it was read rather than recalled:
+
+> a run waits when "another job or workflow using the same concurrency group **in the
+> repository** is in progress", and `cancel-in-progress: true` cancels "any currently
+> running job or workflow **in the same concurrency group**".
+
+A concurrency group is repository-wide. **The hazard is membership of the group, not
+authorship of the deployment** — so the workflow able to kill a deployment need not mention
+Pages anywhere, and a workflow that mentions Pages nowhere was the one file the check was
+guaranteed never to open.
+
+Constructed and measured, against the real check with the real runner:
+
+| `.github/workflows/zz-probe-caller.yml` | before | after |
+| --- | --- | --- |
+| `group: pages`, `cancel-in-progress: true`, no Pages reference | **exit 0, 2/2 pass** | **exit 1**, `joins Pages group \`pages\` with cancel-in-progress \`true\`` |
+
+The scan now reads every workflow and the group selects it. Two details were worth getting
+right rather than fast:
+
+- **Absent means safe.** The documented default for `cancel-in-progress` is `false`, so a
+  workflow sharing the group without the key cannot cancel anything and must not be
+  reported. The deploying workflow is still held to the stricter rule — present *and*
+  `false` — so that deleting the line fails rather than falling back to a default that
+  happens to be correct today.
+- **A widened scan can be wrong in the other direction.** A check that flags everything
+  passes its own doped cases for the wrong reason and gets switched off the first time it
+  blocks something legitimate. A third test pins the cases that must stay quiet, including
+  the live one: `ci.yml` cancels superseded runs on purpose, and it asserts that `ci.yml`
+  still cancels via an expression before concluding anything from its silence.
+
+Two things are worth carrying out of this beyond the fix. First, **six doped inputs bought
+less assurance than they appeared to**, because all six were drawn from inside the filter
+they were meant to test; doping proves a detector fires, and says nothing about the
+population it was pointed at. Second, the probe run that first exposed this returned
+**exit 1 for a missing `tsx` package**, which is byte-identical to the exit code of a real
+assertion failure — the flattering reading was one unprinted line away from being published
+as "the guard already catches it".
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,

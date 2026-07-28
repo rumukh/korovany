@@ -33,6 +33,21 @@ import test from 'node:test'
  * Both are covered below by doped inputs, and so is the parser's own blind spot:
  * the inline mapping form is not understood, so it is reported as a failure
  * rather than passing silently.
+ *
+ * That paragraph was wrong about its own coverage, and the miss was the whole
+ * point of the check. "A second workflow added later with the flag the other way"
+ * was covered only when that workflow deployed Pages itself, because the scan
+ * opened a file only after `DEPLOYS_PAGES` matched it. A concurrency group is
+ * repository-wide — the schema says a run waits when "another job or workflow
+ * using the same concurrency group in the repository is in progress", and that
+ * `cancel-in-progress: true` cancels "any currently running job or workflow in
+ * the same concurrency group". So the workflow that does the cancelling need not
+ * mention Pages at all, and a file that never mentions it was the one file this
+ * check would never open. A probe of exactly that shape — `group: pages`,
+ * `cancel-in-progress: true`, no Pages reference anywhere — passed 2/2.
+ *
+ * The hazard is membership of the group, not authorship of the deployment, so
+ * the scan now reads every workflow and the group is what selects it.
  */
 
 type WorkflowFile = { readonly name: string; readonly source: string }
@@ -78,28 +93,69 @@ function concurrencyBlocks(source: string): ConcurrencyBlock[] {
 }
 
 /**
+ * The concurrency groups a Pages deployment actually runs under. These are the
+ * groups whose members can cancel it, wherever those members are declared.
+ */
+function protectedGroups(files: readonly WorkflowFile[]): Set<string> {
+  const groups = new Set<string>()
+
+  for (const file of pagesWorkflows(files)) {
+    for (const block of concurrencyBlocks(file.source)) {
+      const group = block.entries.get('group')
+      if (group !== undefined && group !== '') groups.add(group)
+    }
+  }
+
+  return groups
+}
+
+/**
+ * Absent means false: that is the documented default, so a workflow that shares
+ * the group without mentioning the flag is safe and must not be reported. Only a
+ * present, non-`false` value cancels — including an expression, which can be true.
+ */
+function cancelsInProgress(value: string | undefined): boolean {
+  return value !== undefined && value !== 'false'
+}
+
+/**
  * Reasons a set of workflow files could cancel a Pages deployment mid-flight.
  * Empty means no reason was found — which is only meaningful alongside the
  * population count below it, so both are asserted.
  */
 function cancellationRisks(files: readonly WorkflowFile[]): string[] {
   const risks: string[] = []
+  const guarded = protectedGroups(files)
 
   for (const file of files) {
-    if (!DEPLOYS_PAGES.test(file.source)) continue
-
+    const deploysPages = DEPLOYS_PAGES.test(file.source)
     const blocks = concurrencyBlocks(file.source)
-    if (blocks.length === 0) {
+
+    if (deploysPages && blocks.length === 0) {
       risks.push(`${file.name}: deploys Pages but has no concurrency: block this check can read`)
       continue
     }
 
     for (const block of blocks) {
       const value = block.entries.get('cancel-in-progress')
-      if (value === undefined) {
-        risks.push(`${file.name}:${String(block.line)}: concurrency block does not set cancel-in-progress`)
-      } else if (value !== 'false') {
-        risks.push(`${file.name}:${String(block.line)}: cancel-in-progress is \`${value}\`, not false`)
+
+      // The deploying workflow is held to the stricter rule: the flag must be
+      // present and false, so that deleting it is a failure rather than a
+      // silent fallback to a default that happens to be correct today.
+      if (deploysPages) {
+        if (value === undefined) {
+          risks.push(`${file.name}:${String(block.line)}: concurrency block does not set cancel-in-progress`)
+        } else if (value !== 'false') {
+          risks.push(`${file.name}:${String(block.line)}: cancel-in-progress is \`${value}\`, not false`)
+        }
+        continue
+      }
+
+      const group = block.entries.get('group')
+      if (group !== undefined && guarded.has(group) && cancelsInProgress(value)) {
+        risks.push(
+          `${file.name}:${String(block.line)}: joins Pages group \`${group}\` with cancel-in-progress \`${String(value)}\``,
+        )
       }
     }
   }
@@ -200,6 +256,36 @@ test('the check fires on every way the flag can come back', () => {
         },
       ],
     ],
+    [
+      'an unrelated workflow joins the Pages group and cancels — mentions Pages nowhere',
+      [
+        real,
+        {
+          name: 'housekeeping.yml',
+          source: ['name: Totally Unrelated Housekeeping', 'concurrency:', '  group: pages', '  cancel-in-progress: true', 'jobs:', '  tidy:', '    steps:', '      - run: echo nothing to do with Pages', ''].join('\n'),
+        },
+      ],
+    ],
+    [
+      'an unrelated workflow joins the Pages group at job level and cancels',
+      [
+        real,
+        {
+          name: 'housekeeping.yml',
+          source: ['name: Housekeeping', 'jobs:', '  tidy:', '    concurrency:', '      group: pages', '      cancel-in-progress: true', '    steps:', '      - run: echo tidy', ''].join('\n'),
+        },
+      ],
+    ],
+    [
+      'an unrelated workflow joins the Pages group with an expression that can evaluate true',
+      [
+        real,
+        {
+          name: 'housekeeping.yml',
+          source: ['name: Housekeeping', 'concurrency:', '  group: pages', "  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}", 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+        },
+      ],
+    ],
   ]
 
   for (const [label, files] of doped) {
@@ -213,4 +299,65 @@ test('the check fires on every way the flag can come back', () => {
     )
     assert.ok(cancellationRisks(files).length > 0, `${label}: should have been caught and was not`)
   }
+})
+
+/**
+ * The widened scan reads every workflow, so it now has room to be wrong in the
+ * other direction. A check that flags everything passes the doped cases above
+ * for the wrong reason, and would be turned off the first time it blocked a
+ * legitimate workflow — which is the failure mode that gets a gate deleted
+ * rather than fixed. These are the cases that must stay quiet.
+ */
+test('the widened scan stays quiet on workflows that cannot cancel a deployment', () => {
+  const [real] = pagesWorkflows(readWorkflows())
+  assert.ok(real, 'no Pages-deploying workflow to pair against')
+
+  const benign: ReadonlyArray<readonly [string, WorkflowFile]> = [
+    [
+      'shares the Pages group but never sets the flag — the default is false, so it is safe',
+      {
+        name: 'housekeeping.yml',
+        source: ['name: Housekeeping', 'concurrency:', '  group: pages', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+      },
+    ],
+    [
+      'cancels aggressively but in a group of its own',
+      {
+        name: 'lint.yml',
+        source: ['name: Lint', 'concurrency:', '  group: lint-${{ github.ref }}', '  cancel-in-progress: true', 'jobs:', '  lint:', '    steps:', '      - run: echo lint', ''].join('\n'),
+      },
+    ],
+    [
+      'shares the Pages group and explicitly declines to cancel',
+      {
+        name: 'housekeeping.yml',
+        source: ['name: Housekeeping', 'concurrency:', '  group: pages', '  cancel-in-progress: false', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+      },
+    ],
+    [
+      'has no concurrency block at all and deploys nothing',
+      {
+        name: 'stale.yml',
+        source: ['name: Stale', 'jobs:', '  stale:', '    steps:', '      - run: echo stale', ''].join('\n'),
+      },
+    ],
+  ]
+
+  for (const [label, file] of benign) {
+    // Prove the pairing is the thing under test: the real file alone is clean,
+    // so any risk reported here was contributed by the file being added.
+    assert.deepEqual(cancellationRisks([real]), [], 'the real file must be clean before pairing anything with it')
+    assert.deepEqual(cancellationRisks([real, file]), [], `${label}: flagged a workflow that cannot cancel a deployment`)
+  }
+
+  // And the ci.yml on disk is the live instance of the second case above: it
+  // cancels superseded runs on purpose, which is correct and must stay unflagged.
+  const files = readWorkflows()
+  const ci = files.find((candidate) => candidate.name === 'ci.yml')
+  assert.ok(ci, 'ci.yml should be present — if it is gone this assertion is measuring nothing')
+  assert.ok(
+    /cancel-in-progress:\s*\$\{\{/.test(ci.source),
+    'ci.yml should still cancel via an expression — otherwise this case no longer exercises anything',
+  )
+  assert.deepEqual(cancellationRisks(files), [])
 })
