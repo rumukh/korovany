@@ -436,6 +436,13 @@ no new dependencies.
   will be; the object it names is gone from shared history. So *"cannot go stale"* is
   precise about the claim and silent about the subject, and a claim naming a SHA should
   name one that will still resolve, or say what it was verified *for*.
+  That has a decidable test rather than being advice: **is the SHA an ancestor of the
+  default branch?** A merged commit is permanent and a branch-local one is not, which is
+  the whole difference between the two references this document has held. Applied to the
+  only real SHA in this file — the `loftProfile` fix cited below — it resolves, is
+  contained by `main`, and is therefore safe to cite; applied to the orphan above, it
+  fails. One line of `git merge-base --is-ancestor` separates them, which makes this one
+  of the few rules here that is a check rather than a sentence.
   One more thing came out of measuring that gap, and it is the sharpest instance the work
   produced because every party measured and every party got a different answer. The
   question — *is a reviewer's baseline falling further behind?* — was answered three ways
