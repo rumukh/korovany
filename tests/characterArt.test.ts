@@ -1668,6 +1668,20 @@ test('the head tracks its target through the chest, not past it', () => {
   // which is a proof this file already contained eighty lines above, in the comment
   // explaining why the sweep drives head roll at all.
   //
+  // **And the proof survives floating point, which the algebra alone does not promise.**
+  // `Rz(roll)·zHat` over 200,000 rolls spanning the full circle: worst deviation
+  // `0.000e+0`, bit-exact `(0, 0, 1)` at 200,000 of 200,000 — with a control, `Rx(0.3)`
+  // on the same vector, deviating `2.989e-1`, so the probe is not inert. A reviewer
+  // measured the same thing independently at 20,000 and got the same answer.
+  //
+  // That closes something that had been left as noise. The same reviewer earlier put head
+  // roll's effect on the heading at `2.386e-14` and called it float error. It was float
+  // error, but not *the roll's* — the roll contributes bit-exact zero, so the `2.4e-14`
+  // was accumulated error from the rest of the chain, which a roll sweep merely
+  // re-samples. **Once a row is a proof, any non-zero measurement of it is a fact about
+  // the instrument rather than the axis**, and a figure attributed to the swept variable
+  // is attributing to one axis what belongs to the composition.
+  //
   // **Chest roll is the largest single term**, and an earlier version of this comment
   // named chest pitch, the second largest. Jointly `|-turnLean*0.16 + shift*0.55|`
   // cannot exceed 0.099; the probe pinned it at 0.30, three times over.
