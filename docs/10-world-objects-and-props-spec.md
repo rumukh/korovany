@@ -603,6 +603,10 @@ depend on the thing it claimed to measure.** They are collected here because the
 cost more time than any bug in the geometry, and because every one of them read as
 diligence right up until someone measured the instrument instead of the code.
 
+Twelve, by the end. The last three arrived *after* this section was written, which is the
+most useful thing about them: knowing the pattern by name does not stop you shipping it.
+Two were in this document's own advice rather than in any test.
+
 | The check | What it could not see |
 | --- | --- |
 | `ART_LIBRARY_MATERIALS === 12` | never acquired a material, so the ceiling was never exercised |
@@ -615,6 +619,9 @@ diligence right up until someone measured the instrument instead of the code.
 | sign-only winding test | a normal can be 125° wrong and still be on the correct side |
 | signed volume alone | it is a **sum**: reversed faces cancel against correct ones, so a *partial* inversion passes. Measured on this pass's own builders — 5% missed on every prop tried, 25% missed on a fort rock |
 | normal agreement after displacement | `computeVertexNormals` derives normals **from** winding, so a reversed prop's normals reverse with it. Measured: misses at every fraction **including 100%** — blind, not weak |
+| the family-wide winding assertion | every prop is merged, so the above applies to all of it: **560 of 560** reversals undetected |
+| its stock-box mutation control | reversed *without* rebaking, proving detection of stale normals — a defect the pipeline cannot produce |
+| `git fetch` in the review checklist | the branch is local-only, so it reports "already up to date" whether you are current or six commits behind |
 | `referenceCount === 0` double-release detector | the dangerous case leaves the count at 1, so the release *succeeds* and steals another holder's reference |
 
 Four rules fall out of them, in rough order of how much they would have saved:
@@ -640,6 +647,13 @@ Four rules fall out of them, in rough order of how much they would have saved:
    scope. **Neither was counting draws, which is the only thing the budget is about.**
    Both were wrong in the same direction for the same reason, and the mistake was
    assuming the production side had the better vantage point.
+5. **A mutation proof only licenses an assertion if the mutation is drawn from the damage
+   model the assertion actually faces.** Rule 2 says validate the instrument before
+   trusting the reading, and that is not enough on its own: a control can be corrupted in
+   a way that is *detectable but impossible*, which passes while proving nothing about the
+   real input. Prefer mutating the real subject over a stand-in — a proof carried per
+   geometry costs a clone and removes the entire question of whether the control resembles
+   the thing it vouches for.
 
 **Orientation needs three instruments, because each is blind where the others see.**
 This pass reached that conclusion twice, the second time after a sibling session measured
@@ -648,15 +662,41 @@ table by being wrong:
 
 | Instrument | Sees | Blind to |
 | --- | --- | --- |
-| normal agreement | a builder that stored a normal against its winding | anything displaced — `computeVertexNormals` makes the two agree by construction |
-| signed volume | a whole prop turned inside out | partial inversion, because it sums and the faces cancel |
-| centroid winding | one bad face in ninety-two, and *where* it is | faces orthogonal to the centroid ray, and concave props, which have a legitimate non-zero baseline |
+| normal agreement | a builder that stored a normal against its winding | **everything the world builds.** Measured over the whole request space: a fully reversed prop produced zero disagreements in **560 of 560** cases |
+| signed volume | a whole prop turned inside out | partial inversion, because it sums and the faces cancel; and open sheets, which enclose nothing |
+| centroid winding | one bad face in ninety-two, and *where* it is | faces orthogonal to the centroid ray, and sparse structures — a *correct* fort tree already reads 47% inward, so reversal moves it only to 53% |
 
 `tests/worldArt.test.ts` carries all three. The centroid check is used for **sensitivity**
 rather than an absolute zero, because these props are not star-convex — a building's
 porch recesses and window reveals give it a healthy 300 inward faces of 844 — and the
 test asserts that reversing 2% of a prop's faces *raises* that count, which is a fault
 neither of the other two instruments can see at all.
+
+**Then a sibling session measured the first row again and it got worse.** The launderer is
+not `displaceGeometry`, it is `computeVertexNormals` — so the blindness reaches any
+geometry whose normals were re-derived after its winding was set, which includes
+`mergeAll`, `facetGeometry`, `bakeOutlineNormals`, and, decisively, the *builder*
+`extrudeProfile`. A builder that ends by deriving its own normals can never be caught by
+normal agreement, with no downstream transform required. Since `mergePropParts` ends in
+`mergeAll` and `bakeOutlineNormals`, **every** geometry `WorldPropLibrary` returns is
+laundered, and the family-wide winding assertion could not have failed for any prop in
+the game. It is now judged by centroid and volume together: centroid alone catches 550 of
+560 reversals, volume closes the remaining 10 (the sparse fort trees), and the pair misses
+nothing that has an orientation at all.
+
+**The sharper half is the control, not the instrument.** The mutation proof that licensed
+that loop reversed a `THREE.BoxGeometry` *without* recomputing its normals — leaving them
+stale, which is a defect the shipped pipeline cannot produce. So the control demonstrated
+detection of a damage class that does not exist, then vouched for an assertion facing a
+damage class it had never been tested against. Both halves passed; together they proved
+nothing. The fix is to draw the mutation from the pipeline's own damage model and apply it
+to the real geometry: every prop is now reversed *and rebaked* and must read the other way
+round, which makes the proof cover the 560 things the assertion covers instead of one box
+that shares none of their properties.
+
+Four ferns fail that proof and are named in the assertion rather than excused, because a
+sheet has no inside to be on the wrong side of. That list is the `open` list arrived at
+from the other direction: **orientation is undefined exactly where volume is.**
 
 The corollary for anything with a reference count: `release(key)` cannot detect a double
 release because a key has no holder identity, so the fault is invisible at that boundary.

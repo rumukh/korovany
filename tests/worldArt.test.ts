@@ -371,8 +371,65 @@ function reverseFaceFraction(
 }
 
 /**
+ * Reverses every face, then recomputes normals — the pipeline's own damage model.
+ *
+ * This is the shape a *builder* winding error takes, and it is the one that matters:
+ * `mergePropParts` ends with `mergeAll` and `bakeOutlineNormals`, both of which derive
+ * normals from whatever the winding currently says. So by the time any prop reaches an
+ * assertion, its normals agree with its winding no matter which way round that winding
+ * is. Reversing *without* recomputing leaves stale normals, which is a defect the
+ * shipped pipeline cannot produce — proving a detector against that instead is proving
+ * it against the wrong damage.
+ */
+function reverseAsABuilderWould(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  const copy = geometry.index ? geometry.toNonIndexed() : geometry.clone()
+  const position = copy.getAttribute('position')
+  const triangles = Math.floor(position.count / 3)
+  for (let triangle = 0; triangle < triangles; triangle += 1) {
+    const first = triangle * 3
+    const third = first + 2
+    for (const attribute of Object.values(copy.attributes)) {
+      for (let part = 0; part < attribute.itemSize; part += 1) {
+        const array = attribute.array as unknown as number[]
+        const left = first * attribute.itemSize + part
+        const right = third * attribute.itemSize + part
+        const swap = array[left]
+        array[left] = array[right]
+        array[right] = swap
+      }
+    }
+  }
+  copy.computeVertexNormals()
+  return copy
+}
+
+/**
+ * Whether a geometry reads as outward-facing, by the two instruments that survive a
+ * normal recompute.
+ *
+ * Neither alone covers the family. The centroid ray is decisive for compact solids but
+ * weak on a sparse branch structure, where a correct fort tree already reads 47% inward
+ * because its faces do not surround its centroid; signed volume is decisive there and
+ * says nothing about an open sheet. Measured over the whole request space: centroid
+ * alone catches 550 of 560 reversals, volume closes the remaining 10, and the pair
+ * misses none.
+ */
+function readsOutward(geometry: THREE.BufferGeometry): boolean {
+  const { inward, decisive } = centroidInwardFaces(geometry)
+  if (decisive > 0 && inward < decisive * 0.4) return true
+  return signedVolume(geometry) > 0
+}
+
+/**
  * Triangles whose vertex order disagrees with the normal the builder stored, and how
  * many triangles the question could be asked of at all.
+ *
+ * Scope note, because this instrument is narrower than it looks: it can only see a
+ * disagreement that already exists in the buffers, so it is meaningful for geometry
+ * whose normals were *not* re-derived after its winding was set. Every prop the library
+ * returns has been through `mergeAll`, so this is vacuous there — see
+ * `reverseAsABuilderWould`. It stays for the controls, which is the one place the
+ * stale-normal case genuinely arises.
  *
  * The second number exists because a sibling session found the hole it closes: an
  * all-degenerate geometry disagrees zero times, so `=== 0` passes having judged
@@ -826,18 +883,33 @@ test('every prop the world can build is oriented outwards', () => {
   let geometries = 0
   let judgedFaces = 0
   const failures: string[] = []
+  const undetectable: string[] = []
   const open: string[] = []
   try {
     for (const [label, request] of requests) {
       for (const part of library.build(request)) {
         geometries += 1
-        const reading = windingDisagreements(part.geometry)
-        judgedFaces += reading.judged
-        if (reading.disagreeing > 0) {
-          failures.push(
-            `${label}#${part.surface}: ${String(reading.disagreeing)} triangles`,
-          )
+        // Orientation, judged by the two instruments a normal recompute cannot
+        // launder, and *proved* per geometry rather than once on a stock box: the
+        // same prop reversed through the pipeline's own damage model must read the
+        // other way. A control built from `THREE.BoxGeometry` cannot license this
+        // loop, because the box is not what the loop is looking at and a compact box
+        // is not where either instrument is weak.
+        if (!readsOutward(part.geometry)) {
+          failures.push(`${label}#${part.surface}: reads inside out`)
         }
+        const damaged = reverseAsABuilderWould(part.geometry)
+        if (readsOutward(damaged)) {
+          undetectable.push(`${label}#${part.surface}`)
+        }
+        damaged.dispose()
+        // Face population only. The disagreement count this also returns is *always*
+        // zero here and asserting on it would be theatre: `mergePropParts` ends in
+        // `mergeAll`, which recomputes normals from the winding, so the two sides of
+        // that comparison stop being independent. Measured across this exact loop, a
+        // fully reversed prop produced 0 disagreements in 560 of 560 cases — the check
+        // that used to sit here could not have failed for any prop the world builds.
+        judgedFaces += windingDisagreements(part.geometry).judged
         // Magnitude, not just sign — see `worstNormalError`. A collapsed loft section
         // shades a downward spike as though it pointed at the sky, which a sign test
         // waves through.
@@ -858,7 +930,23 @@ test('every prop the world can build is oriented outwards', () => {
   } finally {
     library.dispose()
   }
-  assert.deepEqual(failures, [], 'props wound against their normals')
+  assert.deepEqual(failures, [], 'props are built inside out')
+  // The mutation proof, carried per geometry. Anything not on this list had its
+  // orientation established by a measurement that demonstrably changes answer when the
+  // orientation changes — which is the property the old stock-box control was asserted
+  // to have and did not, for anything in this loop.
+  //
+  // The ferns are on it, and belong on it: they are sheets, and a sheet has no inside
+  // to be on the wrong side of. Naming them rather than loosening the assertion means a
+  // fern that becomes a solid fails here and gets removed, and a prop that quietly
+  // becomes a sheet fails here and gets explained. It is the same list as `open` below,
+  // arrived at from the other direction — orientation is undefined exactly where volume
+  // is.
+  assert.deepEqual(
+    undetectable.sort(),
+    BIOMES.map((biome) => `ground/${biome}/fern#foliage`).sort(),
+    'reversing these props changed nothing the instruments can see, so their zero is not evidence',
+  )
   // Signed volume is the assertion that survives `displaceGeometry` recomputing
   // normals, but it is only meaningful for a closed solid. Rather than skip the open
   // shapes, pin exactly which ones they are: a builder that turns inside out joins
@@ -940,19 +1028,21 @@ test('every prop winds its triangles to agree with its shading normals', () => {
   // kit wound its lofts backwards once; this is the assertion that says the merged
   // compositions built on top of it come out the right way round.
   //
-  // Delegates to the one index-aware checker rather than re-walking the buffers.
-  // This loop used to read raw position triples, which silently misreads any indexed
-  // geometry as `floor(vertexCount / 3)` pseudo-triangles assembled from vertices
-  // that were never a triangle. `latheProfile` is the kit's only indexed builder, so
-  // that blindness had exactly one victim and it looked like a builder bug.
+  // Judged the same way as the family-wide loop, and for the same reason: every case
+  // in this list has been merged or displaced, so its normals were re-derived from its
+  // own winding and a normal-agreement check on it compares a value against itself.
+  // Each case carries its own reversal so the zero is licensed by a demonstration on
+  // *that* geometry rather than on a stock primitive that shares none of its
+  // properties.
   for (const [label, geometry] of cases) {
-    const reading = windingDisagreements(geometry)
-    assert.ok(reading.judged > 0, `${label} carried no face with an orientation`)
-    assert.equal(
-      reading.disagreeing,
-      0,
-      `${label} has triangles wound against their shading normals`,
+    assert.ok(readsOutward(geometry), `${label} is built inside out`)
+    const damaged = reverseAsABuilderWould(geometry)
+    assert.ok(
+      !readsOutward(damaged),
+      `${label} reads the same reversed as it does correct, so its pass means nothing`,
     )
+    damaged.dispose()
+    geometry.dispose()
   }
 })
 
