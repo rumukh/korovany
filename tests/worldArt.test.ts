@@ -1692,7 +1692,62 @@ test('every prop acquire is matched by exactly one release, on every path', () =
   }
 })
 
+test('a receipt is one reference, so two holders of one key release independently', () => {
+  // The invariant the double-release guard depends on, which nothing stated until an
+  // integrator asked the right question: does anything hand out two distinct
+  // `PropAsset` objects sharing the same surface keys, and if so, is releasing both a
+  // double release the `WeakSet` would miss?
+  //
+  // Two distinct receipts is the *normal* case — `acquireKeyed` returns a fresh object
+  // literal per call. It is safe because the two are in bijection with the references:
+  // each acquire takes exactly one cache reference per surface, and each release gives
+  // back exactly one. Two receipts means two references were taken, so two releases are
+  // correct rather than a double release. The guard catches the different fault of one
+  // receipt coming back twice, which returns two references for one taken.
+  //
+  // What would break it is a `PropAsset` minted without a matching acquire. There is
+  // one construction site and it sits inside the acquiring loop; this asserts the
+  // behavioural consequence, which survives a refactor that moves the construction.
+  const library = new WorldPropLibrary({ retention: 0 })
+  const request = { kind: 'tree', biome: 'forest', slot: 1, detail: 'near' } as const
+  try {
+    const first = library.acquire(request)
+    const key = first.surfaces[0].key
+    assert.equal(library.referenceCount(key), 1, 'one acquire must take one reference')
+
+    const second = library.acquire(request)
+    assert.notEqual(
+      first,
+      second,
+      'each acquire must mint its own receipt, or two holders share one identity',
+    )
+    assert.equal(first.key, second.key, 'the two receipts must describe the same prop')
+    assert.equal(
+      first.surfaces[0].geometry,
+      second.surfaces[0].geometry,
+      'sharing is the point: distinct receipts, one geometry',
+    )
+    assert.equal(library.referenceCount(key), 2, 'two acquires must take two references')
+
+    // n acquires, n references — the bijection, checked past the two-holder case that
+    // is easy to get right by accident.
+    const extra = [library.acquire(request), library.acquire(request)]
+    assert.equal(library.referenceCount(key), 4, 'four acquires must take four references')
+    for (const asset of extra) library.release(asset)
+    assert.equal(library.referenceCount(key), 2, 'each release must give back one')
+
+    // Releasing both distinct receipts is correct and must not trip the guard.
+    library.release(first)
+    assert.equal(library.referenceCount(key), 1, "releasing one holder must not free the other's")
+    library.release(second)
+    assert.equal(library.referenceCount(key), 0, 'the last release frees the key')
+  } finally {
+    library.dispose()
+  }
+})
+
 test('the retention window never releases a key a live region still holds', () => {
+
   // The window takes over a *released* reference. If it ever evicted a key that a
   // resident region were still using, the region would keep drawing a disposed buffer.
   const library = new WorldPropLibrary({ retention: 2 })
