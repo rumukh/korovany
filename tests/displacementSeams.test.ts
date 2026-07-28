@@ -240,12 +240,15 @@ test('every faceted displacement site in the tree is seam-repaired', () => {
     const match = /[\s\S]*(?:^|\n)(?:export\s+)?function\s+(\w+)\s*[(<]/.exec(before)
     return match ? match[1] : ''
   }
+  const exempted: string[] = []
+  const wrapped: string[] = []
   let checked = 0
   for (const site of callSites) {
     const before = site.source.slice(Math.max(0, site.at - 400), site.at)
-    if (exempt.test(before)) continue
+    const label = `${site.file}:${site.target}`
+    if (exempt.test(before)) { exempted.push(label); continue }
     // Inside `displaceSeamless` the repair *is* the enclosing function.
-    if (enclosing(site.source, site.at) === 'displaceSeamless') continue
+    if (enclosing(site.source, site.at) === 'displaceSeamless') { wrapped.push(label); continue }
     checked += 1
     assert.match(
       site.body,
@@ -255,6 +258,37 @@ test('every faceted displacement site in the tree is seam-repaired', () => {
       + 'the surface open along every hard crease',
     )
   }
+
+  // The exemptions are pinned as an EXACT SET, not counted and not merely bounded.
+  //
+  // The rule is the foundation session's, added to `docs/08` §6 after this programme
+  // produced five instrument-blindness defects: *treat an invariant as having a domain,
+  // and pin the known exceptions as an exact set, so a shape that newly joins it or
+  // newly leaves it fails.* A set that can only shrink silently is how a check stops
+  // covering the thing it was written for — and this scan had exactly that hole, because
+  // nothing recorded which sites were being skipped.
+  //
+  // Both directions matter and they fail for different reasons. A site JOINING silently
+  // reduces coverage: switch a builder to `IcosahedronGeometry(r, 1)` and it stops being
+  // checked, with no test going red. A site LEAVING is the safe direction for coverage
+  // but still means the measurement behind the exemption no longer describes the tree,
+  // and that measurement — radial normals tear zero edges — is the entire justification.
+  assert.deepEqual(
+    exempted,
+    [],
+    'the set of displacement sites exempted by source geometry has changed. The exemption '
+    + 'is justified by a measurement — `IcosahedronGeometry` at detail >= 1 carries radial '
+    + 'normals and tore 0 boundary edges — so re-measure the new member before adding it '
+    + 'here rather than widening the pattern.',
+  )
+  assert.deepEqual(
+    wrapped,
+    ['art/PropKit.ts:geometry'],
+    'the set of displacement sites repaired by `displaceSeamless` has changed. If a site '
+    + 'left, it now needs `seamless: true` at the call. If one joined, that is probably '
+    + 'correct — confirm it and add it here, because an exemption nobody records is one '
+    + 'nobody re-measures.',
+  )
   // Deliberately not `checked > 0`. Every site being exempt or wrapped is the *correct*
   // end state and is what this tree currently reaches — `displaceSeamless` is the only
   // caller, so `checked` is 0 and that is the invariant holding, not the test asserting
