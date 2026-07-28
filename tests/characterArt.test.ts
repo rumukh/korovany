@@ -2666,48 +2666,42 @@ function beastPoses(upright: boolean): BeastPose[] {
     -stride * 0.03,
     -turn * 0.06,
   ]
+  // The death roll `updateActorDeathMotion` writes: `side * 0.28 * eased`, over both
+  // sides and two points of the ease. `null` is the living animal, whose head roll comes
+  // from its turn-lean instead.
+  const rolls: readonly (number | null)[] = [
+    null,
+    BEAST_DEATH_LOLL,
+    -BEAST_DEATH_LOLL,
+    BEAST_DEATH_LOLL * 0.5,
+    -BEAST_DEATH_LOLL * 0.5,
+  ]
   for (const action of BEAST_ACTIONS) {
     for (const stride of [-BEAST_STRIDE_MAX, 0, BEAST_STRIDE_MAX]) {
       for (const turn of [-BEAST_TURN_MAX, 0, BEAST_TURN_MAX]) {
         for (const breath of [-BEAST_BREATH_AMPLITUDE, 0, BEAST_BREATH_AMPLITUDE]) {
           for (const look of [-BEAST_LOOK_CLAMP, 0, BEAST_LOOK_CLAMP]) {
             for (const shoulders of shoulderSet) {
-              out.push({
-                name: `${action.name} stride ${stride.toFixed(2)} turn ${turn.toFixed(2)} `
-                  + `breath ${breath.toFixed(3)} look ${look.toFixed(2)} `
-                  + `shoulders ${shoulders.toFixed(2)}`,
-                chest: chestOf(action, stride, turn),
-                head: [action.attack * 0.16 - action.flinch * 0.2, look, turn * 0.04],
-                breathScale: 1 + breath * BEAST_BREATH_GAIN,
-                shoulders,
-                death: false,
-              })
+              for (const roll of rolls) {
+                const dead = roll !== null
+                out.push({
+                  name: `${action.name}${dead ? ', dead,' : ''} stride ${stride.toFixed(2)} `
+                    + `turn ${turn.toFixed(2)} breath ${breath.toFixed(3)} `
+                    + `look ${look.toFixed(2)} shoulders ${shoulders.toFixed(2)}`
+                    + (dead ? ` roll ${roll.toFixed(2)}` : ''),
+                  chest: chestOf(action, stride, turn),
+                  head: [
+                    action.attack * 0.16 - action.flinch * 0.2,
+                    look,
+                    roll ?? turn * 0.04,
+                  ],
+                  breathScale: 1 + breath * BEAST_BREATH_GAIN,
+                  shoulders,
+                  death: dead,
+                })
+              }
             }
           }
-        }
-      }
-    }
-  }
-  // Death. The chest is frozen wherever the last live frame left it and only the skull's
-  // roll is driven, which is why this corner has to be written out rather than falling
-  // out of the living sweep.
-  for (const action of BEAST_ACTIONS) {
-    for (const side of [1, -1]) {
-      for (const eased of [0.5, 1]) {
-        for (const shoulders of shoulderSet) {
-          out.push({
-            name: `${action.name}, dead, side ${String(side)} eased ${eased.toFixed(2)} `
-              + `shoulders ${shoulders.toFixed(2)}`,
-            chest: chestOf(action, BEAST_STRIDE_MAX, BEAST_TURN_MAX),
-            head: [
-              action.attack * 0.16 - action.flinch * 0.2,
-              BEAST_LOOK_CLAMP,
-              side * BEAST_DEATH_LOLL * eased,
-            ],
-            breathScale: 1 + BEAST_BREATH_AMPLITUDE * BEAST_BREATH_GAIN,
-            shoulders,
-            death: true,
-          })
         }
       }
     }
@@ -2715,9 +2709,29 @@ function beastPoses(upright: boolean): BeastPose[] {
   return out
 }
 
-/** How many poses `beastPoses` produces. Restated so a silent collapse fails loudly. */
-const BEAST_POSE_COUNT =
-  1 + BEAST_ACTIONS.length * 3 * 3 * 3 * 3 * 2 + BEAST_ACTIONS.length * 2 * 2 * 2
+/**
+ * How many poses `beastPoses` produces, and how many action states it produces them from.
+ *
+ * Both restated as literals, because the first version derived the count from
+ * `BEAST_ACTIONS.length` — so **deleting a reachable action state left the whole suite
+ * green**: every expected count shrank with the loop it was counting. A reviewer found
+ * that by removing `idle`. A guard whose expectation is computed from the population it
+ * claims to pin is not pinning the population; it is agreeing with itself.
+ *
+ * The names are pinned too, not only the length, so a *swap* is caught as well as a
+ * deletion.
+ */
+const BEAST_ACTION_NAMES = [
+  'idle',
+  'windup',
+  'attack',
+  'flinch',
+  'windup+flinch',
+  'attack+flinch',
+  'stagger',
+] as const
+/** 7 actions x 3 strides x 3 turns x 3 breaths x 3 looks x 2 shoulders x 5 rolls, + rest. */
+const BEAST_POSE_COUNT = 1 + 7 * 3 * 3 * 3 * 3 * 2 * 5
 
 /**
  * `body-pivot`'s scale, which `applyActorVisualVariation` writes and beasts also get.
@@ -2817,14 +2831,19 @@ const FOOT_ROOTED_SKULL: Record<
   { slip: number; walking: number; dying: number; twist: number }
 > =
   {
-    wolf: { slip: 0.2574, walking: 0.4987, dying: 0.6642, twist: 8.3171 },
-    boar: { slip: 0.2246, walking: 0.4162, dying: 0.5675, twist: 8.3171 },
-    bear: { slip: 0.2935, walking: 0.5423, dying: 0.7614, twist: 8.3171 },
-    troll: { slip: 0.5104, walking: 0.6532, dying: 1.0763, twist: 11.6733 },
+    wolf: { slip: 0.2574, walking: 0.4987, dying: 0.7239, twist: 8.3171 },
+    boar: { slip: 0.2246, walking: 0.4162, dying: 0.6094, twist: 8.3171 },
+    bear: { slip: 0.2935, walking: 0.5423, dying: 0.8301, twist: 8.3171 },
+    troll: { slip: 0.5104, walking: 0.6532, dying: 1.1607, twist: 11.6733 },
   }
 
-/** The headline world-unit figure, kept beside the table it is derived from. */
-const TROLL_WORLD_DEATH_TRAVEL = 1.4422
+/** The world-unit figures, one per animal, kept beside the table they derive from. */
+const WORLD_DEATH_TRAVEL: Record<BeastKind, number> = {
+  wolf: 0.6226,
+  boar: 0.5789,
+  bear: 0.9961,
+  troll: 1.5553,
+}
 
 /**
  * A beast's skull is part of its body, and this is what proves it.
@@ -2868,8 +2887,8 @@ const TROLL_WORLD_DEATH_TRAVEL = 1.4422
  *
  * `updateActorDeathMotion` writes `head-pivot.rotation.z = side * 0.28 * eased` — a
  * skull lolling as the body goes down — and on a pivot at the feet that swings it
- * through the entire ground-to-skull lever arm. On a troll: **1.0763 authored units,
- * 1.4422 m in the world, on every single death**, covered by no assertion at all. The
+ * through the entire ground-to-skull lever arm. On a troll: **1.1607 authored units,
+ * 1.5553 m in the world, on every single death**, covered by no assertion at all. The
  * humanoid rig had the identical hole. A pose that only happens after the health bar
  * disappears is still a pose.
  *
@@ -2919,6 +2938,17 @@ test("a beast's skull is rigid with its ribs and hinges at the neck", () => {
     + 'nothing below covers.',
   )
   assert.equal(BEAST_KINDS.length, 4, 'the beast population is four kinds and no variants')
+  // The action states the pose box is built from, pinned by name and by count against
+  // literals. Derived from `BEAST_ACTIONS.length`, every count below shrank with the
+  // loop when a reachable state was deleted and the suite stayed green.
+  assert.deepEqual(
+    BEAST_ACTIONS.map((action) => action.name),
+    [...BEAST_ACTION_NAMES],
+    'the beast action states have changed. Every pose count in this file is a literal '
+    + 'derived from seven of them, and the magnitude tables are measured over them — so a '
+    + 'state added, removed or renamed needs the counts and the figures re-measured, not '
+    + 'just this list edited.',
+  )
 
   const restLocal = new THREE.Vector3()
   const actual = new THREE.Vector3()
@@ -3158,6 +3188,30 @@ test("a beast's skull is rigid with its ribs and hinges at the neck", () => {
  * against the engine's source. No part of the rig can reach it.
  */
 test("a beast's skull turns with its chest and keeps its own proportions", () => {
+  // Two-sided control on the instrument, before it is used to conclude anything. A
+  // detector that has only ever returned zero is indistinguishable from one that cannot
+  // fire, and `orientationDegrees` has a specific way to be silently wrong: `q` and `-q`
+  // are the same rotation, so dropping the `Math.abs` on the scalar part reads an
+  // antipodal pair as 360°. A reviewer removed it and the suite stayed green, because
+  // nothing in the swept envelope reaches half a turn.
+  const half = new THREE.Quaternion().setFromAxisAngle(
+    new THREE.Vector3(1, 2, 3).normalize(),
+    Math.PI / 4,
+  )
+  const antipode = new THREE.Quaternion(-half.x, -half.y, -half.z, -half.w)
+  assert.ok(
+    orientationDegrees(half, antipode) < 1e-9,
+    `orientationDegrees reads ${orientationDegrees(half, antipode).toFixed(4)} degrees `
+    + 'between a quaternion and its own negation, which are the same rotation. Every '
+    + 'angle it reports is then a coin toss on a sign three.js does not promise.',
+  )
+  assert.ok(
+    Math.abs(orientationDegrees(half, new THREE.Quaternion()) - 45) < 1e-9,
+    `orientationDegrees reads `
+    + `${orientationDegrees(half, new THREE.Quaternion()).toFixed(6)} degrees for a `
+    + 'rotation of exactly 45, so a zero from it below would mean nothing at all.',
+  )
+
   const actualQuat = new THREE.Quaternion()
   const expectedQuat = new THREE.Quaternion()
   const localQuat = new THREE.Quaternion()
@@ -3279,10 +3333,10 @@ test("a beast's skull turns with its chest and keeps its own proportions", () =>
  *
  * The share of states where the scalar rule loses is pinned as a **count**, not a
  * percentage, and that distinction was earned rather than chosen. Adding a fifth animal
- * to `BEAST_KINDS` takes the count from 432 to 540 and leaves the percentage at 9.0680%
- * — because a new quadruped shares the existing chest envelope exactly. A decimal share
- * with a tolerance would have been a figure that recomputes itself, survives a change to
- * the population it describes, and looks in a diff exactly like a pin that works.
+ * to `BEAST_KINDS` moved the count and left the percentage exactly where it was, because
+ * a new quadruped shares the existing chest envelope. A decimal share with a tolerance
+ * would have been a figure that recomputes itself, survives a change to the population it
+ * describes, and looks in a diff exactly like a pin that works.
  */
 test("a beast's head tracks its target through its own chest", () => {
   // Produced by this run. Equalities against recorded constants, not bounds derived from
@@ -3301,7 +3355,7 @@ test("a beast's head tracks its target through its own chest", () => {
      * denominator is pinned separately, so a change to either is named rather than
      * cancelling in the quotient.
      */
-    scalarWorse: 432,
+    scalarWorse: 1680,
   }
   const forward = new THREE.Vector3()
   const chestMatrix = new THREE.Matrix4()
@@ -3584,18 +3638,33 @@ test('what a foot-rooted skull was worth on each of the four animals', () => {
     + 'hand.',
   )
 
-  // And the world units, which is what the bug was reported in. `BEAST_PROFILES.scale`
-  // is authored in `Fauna.ts`, entirely independently of the art table, so this catches a
+  // And the world units, which is what the bug was reported in. `BEAST_PROFILES.scale` is
+  // authored in `Fauna.ts`, entirely independently of the art table, so this catches a
   // rescale that leaves every authored figure untouched.
-  const troll = measured.get('troll')
-  assert.ok(troll, 'the troll must be swept')
-  const trollWorld = troll.dying * BEAST_PROFILES.troll.scale
-  assert.ok(
-    Math.abs(trollWorld - TROLL_WORLD_DEATH_TRAVEL) < 0.00005,
-    `a foot-rooted troll's skull now left its chest by ${trollWorld.toFixed(4)} m on `
-    + `death, not the ${TROLL_WORLD_DEATH_TRAVEL.toFixed(4)} m recorded. That is the `
-    + 'figure this programme quotes as "worse than the bug the user reported"; correct it '
-    + 'here and in docs/09.',
+  //
+  // **All four, not just the troll.** The first version computed only the headline animal,
+  // and a reviewer changed `BEAST_PROFILES.wolf.scale` from 0.86 to 0.87 with the suite
+  // green while the wolf's quoted world figure moved. Three of the four numbers published
+  // in docs/09 were correct and unfalsifiable, and the sentence claiming the companion
+  // tests compute every figure was false for exactly those three.
+  const worldDrift: string[] = []
+  for (const kind of BEAST_KINDS) {
+    const got = measured.get(kind)
+    assert.ok(got, `${kind}: the sweep produced no measurement`)
+    const world = got.dying * BEAST_PROFILES[kind].scale
+    if (Math.abs(world - WORLD_DEATH_TRAVEL[kind]) >= 0.00005) {
+      worldDrift.push(
+        `${kind}: ${world.toFixed(4)} m not ${WORLD_DEATH_TRAVEL[kind].toFixed(4)} m`,
+      )
+    }
+  }
+  assert.deepEqual(
+    worldDrift,
+    [],
+    `the foot-rooted skull's travel in world units has moved: ${worldDrift.join('; ')}. `
+    + 'Either the authored figures above or `BEAST_PROFILES.scale` has changed. The troll '
+    + 'figure is the one this programme quotes as "worse than the bug the user reported"; '
+    + 'correct all four here and in docs/09.',
   )
 })
 
@@ -3653,21 +3722,41 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
   )
 
   // The clamp, driven rather than read. `beastLookYaw` is production.
+  //
+  // **The first version of this sampled only zero, the two boundaries and two values
+  // outside them, and a reviewer replaced production with
+  // `lookYaw === 0 ? 0 : Math.sign(lookYaw) * BEAST_LOOK_CLAMP` — a step function that
+  // snaps every non-zero look straight to the limit — and the suite stayed green.** That
+  // makes the honest verdict on this gate's replacement worse than the one recorded
+  // above: the source regex it replaced *would* have rejected that mutation, so the
+  // behavioural test as first written was **not strictly stronger**, it was stronger in
+  // one direction and weaker in another. Sampling the endpoints of a function tests the
+  // endpoints. The interior is where a clamp differs from a snap.
   assert.equal(beastLookYaw(0), 0, 'a beast looking straight ahead must not be deflected')
-  for (const look of [-Math.PI, -1.2, -BEAST_LOOK_CLAMP, 0, BEAST_LOOK_CLAMP, 1.2, Math.PI]) {
+  const STEPS = 41
+  for (let index = 0; index <= STEPS; index += 1) {
+    const look = -0.75 + (1.5 * index) / STEPS
     const yaw = beastLookYaw(look)
+    const want =
+      look > BEAST_LOOK_CLAMP
+        ? BEAST_LOOK_CLAMP
+        : look < -BEAST_LOOK_CLAMP
+          ? -BEAST_LOOK_CLAMP
+          : look
     assert.ok(
-      Math.abs(yaw) <= BEAST_LOOK_CLAMP + 1e-12,
-      `a beast asked to look ${look.toFixed(2)} rad turned its head ${yaw.toFixed(4)}, past `
-      + `the ${BEAST_LOOK_CLAMP.toFixed(2)} rad its neck allows.`,
+      Math.abs(yaw - want) < 1e-12,
+      `a beast asked to look ${look.toFixed(4)} rad turned its head ${yaw.toFixed(4)}, not `
+      + `${want.toFixed(4)}. Inside its range the clamp must be the identity and outside `
+      + 'it must saturate — anything else is a curve, and a head that snaps to its limit '
+      + 'the moment it is asked to look anywhere is not clamped, it is quantised.',
     )
-    if (Math.abs(look) <= BEAST_LOOK_CLAMP) {
-      assert.ok(
-        Math.abs(yaw - look) < 1e-12,
-        `a beast asked to look ${look.toFixed(2)} rad — inside its own range — turned `
-        + `${yaw.toFixed(4)} instead. The clamp must be a limit, not a scaling.`,
-      )
-    }
+  }
+  for (const look of [-Math.PI, -1.2, 1.2, Math.PI]) {
+    assert.ok(
+      Math.abs(beastLookYaw(look)) <= BEAST_LOOK_CLAMP + 1e-12,
+      `a beast asked to look ${look.toFixed(2)} rad turned past the `
+      + `${BEAST_LOOK_CLAMP.toFixed(2)} rad its neck allows.`,
+    )
   }
   assert.ok(
     Math.abs(beastLookYaw(Math.PI) - BEAST_LOOK_CLAMP) < 1e-12 &&
@@ -3754,10 +3843,10 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
  * | wrong order | head-pivot | torso-pivot |
  * | --- | --- | --- |
  * | `YXZ` | 0.5036° | 0.0691° |
- * | `ZXY` | 3.3522° | 0.3583° |
- * | `ZYX` | **4.1032°** | 0.4239° |
- * | `YZX` | 3.7037° | 0.4230° |
- * | `XZY` | 2.1342° | 0.0059° |
+ * | `ZXY` | 3.7855° | 0.3583° |
+ * | `ZYX` | **4.6012°** | 0.4239° |
+ * | `YZX` | 3.7926° | 0.4230° |
+ * | `XZY` | 2.1355° | 0.0059° |
  *
  * Every entry is pinned rather than bounded, and the reason is in the first row.
  * **`YXZ` is the cheapest of the five on the head and it is the only one anybody would
@@ -3817,10 +3906,10 @@ test('every beast pivot uses the Euler order its maths assumes', () => {
   //    someone actually makes.
   const WRONG_ORDER_COST: Record<string, { head: number; chest: number }> = {
     YXZ: { head: 0.5036, chest: 0.0691 },
-    ZXY: { head: 3.3522, chest: 0.3583 },
-    ZYX: { head: 4.1032, chest: 0.4239 },
-    YZX: { head: 3.7037, chest: 0.423 },
-    XZY: { head: 2.1342, chest: 0.0059 },
+    ZXY: { head: 3.7855, chest: 0.3583 },
+    ZYX: { head: 4.6012, chest: 0.4239 },
+    YZX: { head: 3.7926, chest: 0.423 },
+    XZY: { head: 2.1355, chest: 0.0059 },
   }
   const forward = new THREE.Vector3()
   const chestMatrix = new THREE.Matrix4()
@@ -3951,6 +4040,29 @@ test('the engine poses a beast through the rig these tests measure', () => {
     + 'and an animal off its shoulder; a head parented to the body is a second root at '
     + 'the feet, which is the defect both rigs were rebuilt to remove.',
   )
+  // And nothing may re-parent a pivot *at all* outside the builder that owns the layout.
+  //
+  // The line above names one spelling of the mistake. A reviewer wrote a different one —
+  // `if (kind === 'wolf') group.add(headPivot)` immediately after the builder call — and
+  // the whole suite stayed green while a wolf's skull dropped from (0, 1.24, 1.08) to its
+  // neck-relative (0, 0.30, 0.48) and came off the ribs. **One animal, one line, no
+  // assertion.** So the check is now the general one: `createBeast` receives a wired
+  // hierarchy and may add meshes *into* it, but may never move one of its pivots.
+  for (const pivot of ['bodyPivot', 'torsoPivot', 'neckPivot', 'headPivot', 'pelvisPivot']) {
+    assert.equal(
+      (beast.match(new RegExp(`\\.(?:add|attach)\\(${pivot}\\)`, 'g')) ?? []).length,
+      0,
+      `createBeast re-parents \`${pivot}\`. \`buildBeastSkeleton\` owns the hierarchy; a `
+      + 'second parent assigned here is invisible to every measurement in this file, '
+      + 'because they all build the skeleton directly. It can be scoped to one animal, '
+      + 'and then only that animal comes apart.',
+    )
+  }
+  assert.ok(
+    !/removeFromParent|\.remove\(/.test(beast),
+    'createBeast detaches something. The rig it is handed is already wired; taking a '
+    + 'pivot out of it is the same defect as re-parenting one.',
+  )
   assert.equal(
     (kit.match(/neckPivot\.add\(headPivot\)/g) ?? []).length,
     2,
@@ -3975,6 +4087,44 @@ test('the engine poses a beast through the rig these tests measure', () => {
     'the beast chest must be written through `applyChestPose`, which re-asserts the XYZ '
     + 'Euler order every frame. `solveHeadYaw` reads the columns of `Rx·Ry·Rz` out of the '
     + 'chest by hand, so an order set anywhere else silently invalidates the whole solve.',
+  )
+  // What the pass may touch on each pivot, enumerated as a *set* rather than as a list of
+  // forbidden spellings.
+  //
+  // The previous version banned `headPivot.rotation.[xyz] =` and called itself
+  // addition-proof. A reviewer added `headPivot.rotateY(0.2)` after `applyHeadPose` and
+  // the suite stayed green while the head gained 11.46° every frame. `Object3D` has a
+  // dozen ways to turn a node — `rotateX/Y/Z`, `rotateOnAxis`, `rotateOnWorldAxis`,
+  // `quaternion`, `setRotationFromEuler`, `setRotationFromQuaternion`, `applyQuaternion`,
+  // `lookAt`, `matrix` — and a ban that enumerates the ones you thought of buys exactly
+  // one more instance each time. So this asserts the *allowed* set instead: whatever is
+  // not listed fails, including whatever three.js adds next.
+  const members = (name: string): string[] => [
+    ...new Set([...pass.matchAll(new RegExp(`${name}\\.(\\w+)`, 'g'))].map((m) => m[1])),
+  ].sort()
+  assert.deepEqual(
+    members('headPivot'),
+    [],
+    'the beast pass touches a member of `headPivot`. It may only be handed to '
+    + '`applyHeadPose`, which is the single writer of the skull\'s orientation and '
+    + 're-asserts the Euler order while it writes. Any access at all — a rotation field, '
+    + '`rotateY`, `quaternion`, `lookAt` — either bypasses that or lands after it, and '
+    + 'a later write wins the rendered frame and repeats every frame.',
+  )
+  assert.deepEqual(
+    members('torsoPivot'),
+    ['position', 'rotation', 'scale'],
+    'the beast pass touches a member of `torso-pivot` outside {position, scale, rotation}. '
+    + '`rotation` appears here only because `solveHeadYaw` is handed its three components '
+    + 'to read; assigning them is banned separately. Anything else — `rotateY`, '
+    + '`quaternion`, `setRotationFromEuler` — bypasses `applyChestPose` and stops the '
+    + 'Euler order being re-asserted, which the solve reads by hand.',
+  )
+  assert.deepEqual(
+    members('pelvisPivot'),
+    ['rotation'],
+    'the beast pass touches a member of `pelvis-pivot` outside {rotation}. The hips follow '
+    + 'the ribs; nothing else about them is animated.',
   )
   assert.equal(
     (pass.match(/torsoPivot\.rotation\.[xyz]\s*(?:[-+*/]?=)/g) ?? []).length,
@@ -4008,17 +4158,17 @@ test('the engine poses a beast through the rig these tests measure', () => {
     + 'a yaw solved against the chest\'s full rotation *and* that same pitch, and the '
     + 'turn-lean roll. `lookYaw` is a body-space angle and `head-pivot` is a chest-space '
     + 'node now: written raw it costs 3.0334 degrees on a troll, and the obvious '
-    + '`lookYaw - chestYaw` leaves 1.7368 and is worse than doing nothing in 432 of 4764 '
+    + '`lookYaw - chestYaw` leaves 1.7368 and is worse than doing nothing in 1680 of 22684 '
     + 'swept states. Every argument is checked because on the humanoid call two of them '
     + 'were not, and a reviewer passed `0` for the roll with the suite still green.',
   )
   assert.equal(
     (pass.match(/headPivot\.rotation\.[xyz]\s*(?:[-+*/]?=)/g) ?? []).length,
     0,
-    'a component of the beast head\'s rotation is assigned directly. This is the '
-    + 'assertion that survives an *addition*: the `applyHeadPose` call above can stay '
-    + 'word for word and stop mattering entirely because a later line overwrote one of '
-    + 'its axes, and both the call pin and the helper sweep are blind to that.',
+    'a component of the beast head\'s rotation is assigned directly. Redundant with the '
+    + 'allowed-member set above and kept anyway, because it names the specific failure '
+    + 'the member set generalises: the `applyHeadPose` call can stay word for word and '
+    + 'stop mattering because a later line overwrote one of its axes.',
   )
   // The four helpers this pass leans on run per actor per frame. `docs/09` §4 forbids
   // allocating there, and an extraction made for testability is exactly where a
@@ -4046,13 +4196,16 @@ test('the engine poses a beast through the rig these tests measure', () => {
     + 'derived from it.',
   )
   assert.ok(
-    new RegExp(`const breathing = Math\\.sin\\([^)]*\\) \\* ${BEAST_BREATH_AMPLITUDE}`)
+    new RegExp(`const breathing = Math\\.sin\\([^)]*\\) \\* ${BEAST_BREATH_AMPLITUDE}$`, 'm')
       .test(source.slice(
         source.indexOf('private animateActorCharacter('),
         source.indexOf('private samplePlayerPose('),
       )),
     `the breathing amplitude is no longer ${BEAST_BREATH_AMPLITUDE}. It feeds both the `
-    + 'humanoid and the beast proportion bounds.',
+    + 'humanoid and the beast proportion bounds. **Anchored at the end of the line**: '
+    + 'unanchored it went on matching after production became `* 0.018 * 2`, which '
+    + 'doubles the breath and the skull stretch with the suite green — the exact defect '
+    + 'the documentation around it warns about, committed inside it.',
   )
 
   // The width. `applyActorVisualVariation` runs for beasts as well as people, and the
@@ -4063,10 +4216,11 @@ test('the engine poses a beast through the rig these tests measure', () => {
   )
   assert.ok(variation.length > 500, 'could not isolate the actor variation pass')
   assert.ok(
-    new RegExp(`shoulders = variation\\.around\\(1, ${BEAST_SHOULDER_SPREAD}\\)`)
+    new RegExp(`shoulders = variation\\.around\\(1, ${BEAST_SHOULDER_SPREAD}\\)$`, 'm')
       .test(variation),
     `the shoulder spread is no longer ${BEAST_SHOULDER_SPREAD}. The beast skull's `
-    + 'proportion sweep drives both extremes of it; move `BEAST_SHOULDER_SPREAD` with it.',
+    + 'proportion sweep drives both extremes of it; move `BEAST_SHOULDER_SPREAD` with it. '
+    + 'Anchored, for the same reason the breath pin is.',
   )
 
   // The death pose. Nothing else in the suite drives it, and on the old rig it was the

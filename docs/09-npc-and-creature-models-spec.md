@@ -679,10 +679,10 @@ no new dependencies.
 
   | | walking | on death | in the world, dying | skull vs its own chest |
   | --- | --- | --- | --- | --- |
-  | wolf | 0.4987 | 0.6642 | 0.5712 m | 8.3171° |
-  | boar | 0.4162 | 0.5675 | 0.5391 m | 8.3171° |
-  | bear | 0.5423 | 0.7614 | 0.9137 m | 8.3171° |
-  | troll | 0.6532 | **1.0763** | **1.4422 m** | **11.6733°** |
+  | wolf | 0.4987 | 0.7239 | 0.6226 m | 8.3171° |
+  | boar | 0.4162 | 0.6094 | 0.5789 m | 8.3171° |
+  | bear | 0.5423 | 0.8301 | 0.9961 m | 8.3171° |
+  | troll | 0.6532 | **1.1607** | **1.5553 m** | **11.6733°** |
 
   Swept: seven action states, three strides, three turn-leans, three breath phases, three
   look angles, both shoulder extremes, the death family, and the three `body-pivot` scale
@@ -717,12 +717,12 @@ no new dependencies.
   pass now converts it with `solveHeadYaw` and damps `actor.headYaw` in body space.
   Uncorrected that is worth 2.5583° on a quadruped and 3.0334° on a troll, and the
   scalar `lookYaw - chestYaw` leaves 1.2799°/1.7368° and is worse than doing nothing in
-  432 of 4764 swept states (9.0680%). Small next to the 43.64° the same mistake cost a
+  1680 of 22684 swept states (7.4061%). Small next to the 43.64° the same mistake cost a
   person — a beast's chest barely turns — but an error the reparenting *introduces*, so
   not optional. `a beast's head tracks its target through its own chest` computes all
   five of those figures, the two rejected rules included, and pins the count rather than
-  the share: a fifth quadruped would leave the share at 9.0680% and take the count to
-  540, so the share alone could not have failed.
+  the share, which a change to the population or the box can leave untouched while the
+  count moves.
 - **Enumerate a rig's Euler orders; do not sample them.** `applyHeadPose` was shipped to
   force `head-pivot` onto XYZ, because `solveHeadYaw` writes out the columns of
   `Rx·Ry·Rz` by hand. That fix was scoped to the pivot named in the bug report, and the
@@ -741,10 +741,10 @@ no new dependencies.
   | wrong order | head-pivot | torso-pivot |
   | --- | --- | --- |
   | `YXZ` | 0.5036° | 0.0691° |
-  | `ZXY` | 3.3522° | 0.3583° |
-  | `ZYX` | **4.1032°** | 0.4239° |
-  | `YZX` | 3.7037° | 0.4230° |
-  | `XZY` | 2.1342° | 0.0059° |
+  | `ZXY` | 3.7855° | 0.3583° |
+  | `ZYX` | **4.6012°** | 0.4239° |
+  | `YZX` | 3.7926° | 0.4230° |
+  | `XZY` | 2.1355° | 0.0059° |
 
   `YXZ` is the cheapest of the five on the head **and the only one anybody would write** —
   it is what a person reaches for when a head gimbal-locks at extreme pitch. The likely

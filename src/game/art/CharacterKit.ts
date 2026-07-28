@@ -3607,10 +3607,10 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
  *
  * | kind | slip | walking | dying | dying, in the world | skull vs its own chest |
  * | --- | --- | --- | --- | --- | --- |
- * | wolf | 0.2574 | 0.4987 | 0.6642 | 0.5712 m | 8.3171° |
- * | boar | 0.2246 | 0.4162 | 0.5675 | 0.5391 m | 8.3171° |
- * | bear | 0.2935 | 0.5423 | 0.7614 | 0.9137 m | 8.3171° |
- * | troll | 0.5104 | 0.6532 | **1.0763** | **1.4422 m** | **11.6733°** |
+ * | wolf | 0.2574 | 0.4987 | 0.7239 | 0.6226 m | 8.3171° |
+ * | boar | 0.2246 | 0.4162 | 0.6094 | 0.5789 m | 8.3171° |
+ * | bear | 0.2935 | 0.5423 | 0.8301 | 0.9961 m | 8.3171° |
+ * | troll | 0.5104 | 0.6532 | **1.1607** | **1.5553 m** | **11.6733°** |
  *
  * **What is swept and what is held fixed**, because a large number of samples along one
  * axis is not coverage of the others — a humanoid sweep of 441 poses on this programme
@@ -3677,11 +3677,11 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
  * a beast's chest barely turns — but it is a *new* error the reparenting introduces, so
  * it is not optional: uncorrected it is worth 2.5583° on a quadruped and 3.0334° on a
  * troll, and the obvious scalar `lookYaw - chestYaw` leaves 1.2799°/1.7368° and is worse
- * than doing nothing in **432 of 4764** swept states, 9.0680%. `a beast's head tracks
+ * than doing nothing in **1680 of 22684** swept states, 7.4061%. `a beast's head tracks
  * its target through its own chest` computes all five figures, including the two rules
  * it rejects, rather than describing them. The count is quoted alongside the share
- * because the share alone is unfalsifiable: add a fifth quadruped and it stays 9.0680%
- * while the count goes to 540.
+ * because the share alone is unfalsifiable: the count is what moves when the
+ * population or the box does; the share need not.
  *
  * ## What the skull now inherits that it did not, stated rather than glossed
  *
