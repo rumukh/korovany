@@ -1522,17 +1522,40 @@ test('every bulk castShadow sweep excludes what you can see through', () => {
  * Both are exact-set assertions, per S1's rule, so a spec that newly joins *or leaves*
  * either set fails. A guard whose domain can shrink in silence is how a check stops
  * covering the thing it was written for — which is precisely how this one failed.
+ *
+ * **Fourth revision, widening the domain one last time before it bites again.** The third
+ * revision scanned `docs/` — one level up from `docs/08`, and still narrower than the
+ * claim. `DESIGN.md`, `PRODUCT.md` and `README.md` sit at the repository root and were
+ * outside it; so would any `docs/` subdirectory. None of them states the target today,
+ * which is exactly the condition under which a domain hole is invisible: the guard is
+ * *correct* and *too narrow* at the same time, and only the second one is load-bearing
+ * later. Twice was enough to stop widening reactively, so this walks every tracked
+ * markdown file in the repository and the domain question is closed rather than deferred.
  */
 test('the scoped frame-time target is not restated unscoped in any spec', () => {
-  const docsDir = new URL('../docs/', import.meta.url)
-  const files = readdirSync(docsDir)
-    .filter((name) => name.endsWith('.md'))
-    .sort()
+  const root = new URL('../', import.meta.url)
+  // Walk directories explicitly and prune at the directory level. `readdirSync` with
+  // `recursive: true` descends into `node_modules` in full and filters afterwards,
+  // which costs ~8s per run — and a guard slow enough to be noticed is a guard someone
+  // eventually deletes.
+  const SKIP = new Set(['node_modules', 'dist', 'coverage', '.git'])
+  const files: string[] = []
+  const walk = (prefix: string): void => {
+    for (const entry of readdirSync(new URL(prefix, root), { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (!SKIP.has(entry.name)) walk(`${prefix}${entry.name}/`)
+      } else if (entry.name.endsWith('.md')) {
+        files.push(`${prefix}${entry.name}`)
+      }
+    }
+  }
+  walk('')
+  files.sort()
 
   assert.ok(
-    files.length >= 3,
-    `found ${String(files.length)} markdown files under docs/; this scan is the whole `
-    + 'point of the test, so an empty or tiny listing means it broke rather than passed',
+    files.length >= 6,
+    `found ${String(files.length)} markdown files in the repository; this scan is the `
+    + 'whole point of the test, so a tiny listing means it broke rather than passed',
   )
 
   // "1 ms" appears about two unrelated things. Separate them by subject, not by file,
@@ -1542,7 +1565,7 @@ test('the scoped frame-time target is not restated unscoped in any spec', () => 
   const otherSubjects: string[] = []
 
   for (const file of files) {
-    const source = readFileSync(new URL(file, docsDir), 'utf8').replace(/\r\n?/g, '\n')
+    const source = readFileSync(new URL(file, root), 'utf8').replace(/\r\n?/g, '\n')
     const lines = source.split('\n')
     lines.forEach((text, index) => {
       if (!text.includes('1 ms')) return
@@ -1560,7 +1583,7 @@ test('the scoped frame-time target is not restated unscoped in any spec', () => 
   // decided it was out of scope.
   assert.deepEqual(
     otherSubjects,
-    ['STRATEGY.md:376'],
+    ['docs/STRATEGY.md:376'],
     'these mention "1 ms" without naming frame time at 25 actors. The known one is '
     + "STRATEGY.md's Chronicle tick bar, which is a different budget about a different "
     + 'subsystem. A new entry here means either a third budget shares the figure — list '
@@ -1571,7 +1594,7 @@ test('the scoped frame-time target is not restated unscoped in any spec', () => 
   const statingFiles = [...new Set(mentions.map((mention) => mention.file))].sort()
   assert.deepEqual(
     statingFiles,
-    ['08-graphics-foundation-spec.md', '09-npc-and-creature-models-spec.md'],
+    ['docs/08-graphics-foundation-spec.md', 'docs/09-npc-and-creature-models-spec.md'],
     'these are the specs that state the frame-time target. The set is pinned exactly '
     + 'because this guard previously read only docs/08 while claiming to cover every '
     + 'spec, and missed an unscoped copy in docs/09 that reached main. A file leaving '

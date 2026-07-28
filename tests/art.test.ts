@@ -3010,6 +3010,24 @@ const PROP_KIT_SURFACE = [
  * cannot tell "nothing is missing" from "nothing was looked for", so the sizes are
  * asserted before the membership is, and the test reports how many names each
  * assertion actually classified.
+ *
+ * **The size pin needs the uniqueness assertion beside it, and that is not obvious.**
+ * S1 reviewed this guard and proposed the size pin alone — correctly, and it is the
+ * clause everyone reaches for first. But a length is not a fingerprint: deleting
+ * `mergeAll` and duplicating `fbm3` leaves the list at 36 names, so a size pin passes
+ * while a real export has stopped being checked. **Under a length-only guard the
+ * cheapest way to silence a regression is not to shrink the list, it is to pad it.**
+ *
+ * Both mutations are verified rather than argued:
+ *
+ *   delete 'mergeAll'                     -> red on the size pin
+ *   delete 'mergeAll' + duplicate 'fbm3'  -> size back to 36, size pin PASSES,
+ *                                            red on the uniqueness assertion only
+ *
+ * Neither clause subsumes the other. This is the `:2410` precedent one turn further
+ * on: a floor stops a broken parse reporting success by finding *nothing*; uniqueness
+ * stops a maintained list reporting success by finding the *same thing twice*. Empty
+ * and degenerate are different failure modes and a count only sees the first.
  */
 const SURFACE_SIZES = { foundation: 36, characterKit: 47, propKit: 39 }
 
