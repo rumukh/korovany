@@ -112,6 +112,8 @@ export interface GeneratedRegionRootDebugSnapshot {
   colliderCount: number
   structuralDecorationCount: number
   cosmeticDecorationCount: number
+  /** Placements dropped because they stood on a spawn point. */
+  spawnBlockedPlacements: number
   maxCosmeticDecorationCount: number
   /** Extra draws per frame this region charged itself for ink outlines. */
   inkDraws: number
@@ -133,6 +135,14 @@ export interface GeneratedWorldRuntimeDebugSnapshot {
     structuralInstanceCount: number
     cosmeticInstanceCount: number
     maxCosmeticInstanceCount: number
+    /**
+     * Decoration placements the spawn keep-out removed.
+     *
+     * Exposed so a regression test can assert its seed set **contains the fault** — that
+     * the keep-out had something to act on — rather than only that the loop ran. A sample
+     * floor proves the population was visited; this proves it could express the failure.
+     */
+    spawnBlockedPlacementCount: number
   }
   collision: CollisionWorldDebugStats
   navigation: NavigationDebugStats
@@ -796,6 +806,10 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
           (total, root) => total + root.cosmeticDecorationCount,
           0,
         ),
+        spawnBlockedPlacementCount: regionRoots.reduce(
+          (total, root) => total + root.spawnBlockedPlacements,
+          0,
+        ),
         maxCosmeticInstanceCount: regionRoots.reduce(
           (total, root) => total + root.maxCosmeticDecorationCount,
           0,
@@ -906,6 +920,8 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     maximumCount: number
   }> = []
   private structuralDecorationCount = 0
+  /** Decoration placements dropped because they stood on a spawn point. */
+  private spawnBlockedPlacements = 0
   private maxCosmeticDecorationCount = 0
   /**
    * Every object whose ink can be toggled at runtime, with the kind it was inked
@@ -1018,6 +1034,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       geometryCount: this.geometries.size,
       colliderCount: this.runtime.colliderIds.size,
       structuralDecorationCount: this.structuralDecorationCount,
+      spawnBlockedPlacements: this.spawnBlockedPlacements,
       cosmeticDecorationCount: this.cosmeticDressing.reduce(
         (total, dressing) => total + dressing.mesh.count,
         0,
@@ -1580,6 +1597,13 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
               ),
           )
         : grouped[index]
+      // Count what the keep-out actually removed. A regression test over seeds can then
+      // assert the seed set *contains the fault* — that the fix had something to act on —
+      // rather than merely that the loop ran. A reviewer drew the distinction: a sample
+      // floor proves the population was visited; this proves it could express the failure.
+      if (bucket.structural) {
+        this.spawnBlockedPlacements += grouped[index].length - entries.length
+      }
       if (entries.length === 0) continue
       const asset = this.acquireProp(bucket.request)
       const name = bucket.structural
