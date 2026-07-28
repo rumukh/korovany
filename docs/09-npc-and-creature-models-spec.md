@@ -592,8 +592,9 @@ Reverse a fifth of a guard's torso and recompute its normals, which is what
 `0.606 outward` and `+0.179 volume` — all three pass. Edge consistency reads 36 bad
 edges. On a closed, consistently oriented surface every directed edge has exactly one
 opposite twin; reversing any face breaks the pairing whatever the normals are later
-made to say. Measured clean across the roster: **986 parts, 480,423 directed edges,
-0 inconsistent**, plus 1,919 honest boundary edges from the open sheets.
+made to say. Measured clean across the whole roster — every plan part plus the headgear
+and weapon kinds no plan table selects: **1,228 parts, 588,015 directed edges,
+0 inconsistent**, plus 6,903 honest boundary edges from the open sheets (1.17%).
 
 Mutation-verified end to end. With 20% of every torso reversed and laundered, all six
 pre-existing tests in `tests/characterArt.test.ts` report green and only the new one

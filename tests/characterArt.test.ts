@@ -86,6 +86,15 @@ const ROLES = [
   'peasant',
 ] as const
 const BEASTS: readonly BeastKind[] = ['wolf', 'boar', 'bear', 'troll']
+/** Every kind the builders accept, including the ones no plan table selects. */
+const HEADGEAR_KINDS = [
+  'circlet', 'crown', 'hood', 'kettle', 'nasal', 'crested',
+  'greathelm', 'hornedHelm', 'boneMask', 'ragHood', 'cap', 'strap',
+] as const
+const WEAPON_KINDS = [
+  'sword', 'greatsword', 'sabre', 'dagger', 'axe', 'cleaver',
+  'spear', 'glaive', 'mace', 'maul', 'bow', 'staff',
+] as const
 
 const WIND_A = new THREE.Vector3()
 const WIND_B = new THREE.Vector3()
@@ -913,8 +922,9 @@ test('the load-bearing rig names are still assigned', () => {
  * tried, at every fraction, and needs no tolerance: a closed surface's every directed
  * edge has exactly one opposite twin, and reversing any face breaks that pairing
  * whatever the normals are later made to say. Measured clean across the whole roster:
- * **986 parts, 480,423 directed edges, 0 inconsistent**, with 1,919 honest boundary
- * edges from the open sheets (worst 16.67% of one part, a captive's trim).
+ * **1,228 parts, 588,015 directed edges, 0 inconsistent**, with 6,903 honest boundary
+ * edges from the open sheets (1.17%, and asserted, because that is the number that
+ * would move if the position grid started splitting shared corners).
  *
  * ## 3. Every detector is validated before it is believed
  *
@@ -1013,7 +1023,8 @@ test('character parts are oriented, measured by four instruments and not by one'
   }
 
   /**
-   * Directed edges that have no opposite twin, and boundary edges counted apart.
+   * Directed edges that are not part of exactly one opposite pair, and boundary edges
+   * counted apart.
    *
    * On a closed, consistently oriented surface every undirected edge is traversed
    * exactly twice, once in each direction. Reversing a single face flips its three
@@ -1022,14 +1033,26 @@ test('character parts are oriented, measured by four instruments and not by one'
    * this the only instrument here that survives `computeVertexNormals` AND sees a
    * partial inversion.
    *
+   * "Exactly one each way" is asserted literally rather than as "the two directions
+   * agree". Agreement alone accepts a doubled surface: two coincident copies of the
+   * same closed shell give every edge a count of two in each direction, and a reviewer
+   * demonstrated the looser rule reporting `{ bad: 0 }` on exactly that. Two coincident
+   * shells wound *opposite* ways read the same. The strict rule costs nothing here —
+   * measured across the whole roster it reports the identical zero as the loose one.
+   *
    * Vertices are matched by quantised position, not by index: these parts are merged,
-   * non-indexed, and share corners only geometrically. `1e-4` is four times finer than
-   * `bakeOutlineNormals` welds at (`1e-3`), so anything this module already treats as
-   * one point is one point here too, and it measured 0 inconsistent edges in 480,423.
+   * non-indexed, and share corners only geometrically. `1e-4` is a *finer* grid than
+   * `bakeOutlineNormals` welds at, so it is the conservative direction — it can split a
+   * shared corner into two, which turns real edges into boundary edges and makes this
+   * check blinder, never noisier. That is why the boundary count is returned and
+   * asserted rather than discarded: it is the number that would move if the grid
+   * started splitting corners. Measured both ways over 1,228 parts: `1e-4` gives
+   * 588,015 directed edges and 6,903 boundary; `1e-3` gives 586,485 and 6,633. A 0.26%
+   * difference in edges and 4% in boundary means the geometry is nowhere near the
+   * quantisation, which is the thing worth knowing.
    *
    * An edge traversed once with no twin is a boundary — an open sheet, of which this
    * module has several — and is counted separately rather than treated as a fault.
-   * An edge traversed *twice in the same direction* is never legitimate.
    */
   const inconsistentEdges = (
     geometry: THREE.BufferGeometry,
@@ -1064,7 +1087,7 @@ test('character parts are oriented, measured by four instruments and not by one'
       if (twin === 0) {
         if (count === 1) boundary += 1
         else bad += count
-      } else if (count !== twin) bad += Math.abs(count - twin)
+      } else if (count !== 1 || twin !== 1) bad += count
     }
     return { bad, edges, boundary }
   }
@@ -1204,6 +1227,11 @@ test('character parts are oriented, measured by four instruments and not by one'
   laundering.dispose()
 
   // ---- the sweep over every part the game can build --------------------------
+  // Every builder, not a selection. A reviewer found the first version of this sweep
+  // reaching seven part kinds per plan, which left faces, hair, forearms, hands, trim,
+  // cloaks, grips, offhands, beast limbs, deer legs, bird wings, ox heads and half the
+  // wagon outside both the edge check and the repair counter — and the counter is reset
+  // above, so any evidence those builders produced earlier in the file was erased.
   const parts: [string, THREE.BufferGeometry][] = []
   for (const faction of FACTIONS) {
     for (const role of [...ROLES, 'player']) {
@@ -1214,29 +1242,70 @@ test('character parts are oriented, measured by four instruments and not by one'
         const tag = `${faction}/${role}/${String(variant)}`
         parts.push([`${tag}:torso`, buildTorso(plan)])
         parts.push([`${tag}:head`, buildHead(plan.faction)])
+        parts.push([`${tag}:face`, buildFace(plan.faction)])
+        if (keys.hair) parts.push([`${tag}:hair:${plan.hair}`, buildHair(plan.hair)])
         parts.push([`${tag}:upperArm`, buildUpperArm(plan.faction, plan.armour, p.upperArm)])
+        parts.push([
+          `${tag}:forearm`,
+          buildForearm(plan.faction, plan.armour, plan.gloved, p.forearm),
+        ])
+        if (keys.hand) parts.push([`${tag}:hand`, buildHand()])
         parts.push([`${tag}:thigh`, buildThigh(plan.faction, plan.armour, p.thigh)])
         parts.push([`${tag}:shin`, buildShin(plan.faction, plan.armour, p.shin)])
-        if (keys.headgear) parts.push([`${tag}:headgear:${plan.headgear}`, buildHeadgear(plan.headgear)])
-        if (keys.weaponHead) parts.push([`${tag}:weapon:${plan.weapon}`, buildWeaponHead(plan.weapon)])
+        if (keys.trim) parts.push([`${tag}:trim:${plan.trim}`, buildTorsoTrim(plan.trim)])
+        if (keys.cloak) {
+          parts.push([`${tag}:cloak:${plan.cloak}`, buildCloak(plan.faction, plan.cloak)])
+        }
+        if (keys.headgear) {
+          parts.push([`${tag}:headgear:${plan.headgear}`, buildHeadgear(plan.headgear)])
+        }
+        if (keys.weaponHead) {
+          parts.push([`${tag}:weaponHead:${plan.weapon}`, buildWeaponHead(plan.weapon)])
+        }
+        if (keys.weaponGrip) {
+          parts.push([`${tag}:weaponGrip:${plan.weapon}`, buildWeaponGrip(plan.weapon)])
+        }
+        if (keys.offhand) parts.push([`${tag}:offhand:${plan.offhand}`, buildOffhand(plan.offhand)])
       }
     }
+  }
+  parts.push(['wrist-rope', buildWristRope()])
+  // The headgear and weapon kinds the plan tables happen never to select, which is
+  // where a builder can rot unbuilt for a whole wave.
+  for (const kind of HEADGEAR_KINDS) parts.push([`headgear:${kind}`, buildHeadgear(kind)])
+  for (const kind of WEAPON_KINDS) {
+    parts.push([`weaponHead:${kind}`, buildWeaponHead(kind)])
+    parts.push([`weaponGrip:${kind}`, buildWeaponGrip(kind)])
   }
   for (const kind of BEASTS) {
     parts.push([`beast:${kind}:body`, buildBeastBody(kind)])
     parts.push([`beast:${kind}:head`, buildBeastHead(kind)])
+    parts.push([`beast:${kind}:front`, buildBeastLimb(kind, true, BEAST_RIG[kind].frontLimb)])
+    parts.push([`beast:${kind}:hind`, buildBeastLimb(kind, false, BEAST_RIG[kind].hindLimb)])
     parts.push([`beast:${kind}:tail`, buildBeastTail(kind)])
   }
   parts.push(['deer:body', buildDeerBody()])
+  parts.push(['deer:crown', buildDeerCrown()])
+  parts.push(['deer:legFront', buildDeerLeg(true)])
+  parts.push(['deer:legBack', buildDeerLeg(false)])
   parts.push(['bird:body', buildBirdBody()])
-  parts.push(['ox:body', buildOxBody()])
+  parts.push(['bird:wing', buildBirdWing()])
+  parts.push(['wagon:frame', buildWagonFrame()])
   parts.push(['wagon:bed', buildWagonBed()])
-  parts.push(['wagon:wheel', buildWagonWheel(1.02)])
+  parts.push(['wagon:axle', buildWagonAxle(3.1)])
+  parts.push(['wagon:wheelBig', buildWagonWheel(1.02)])
+  parts.push(['wagon:wheelSmall', buildWagonWheel(0.78)])
+  parts.push(['wagon:tilt', buildWagonTilt()])
+  parts.push(['wagon:cargoPlain', buildWagonCargo(false)])
+  parts.push(['wagon:cargoGilded', buildWagonCargo(true)])
+  parts.push(['ox:body', buildOxBody()])
+  parts.push(['ox:head', buildOxHead()])
   parts.push(['harness', buildHarness()])
 
   let judgedParts = 0
   let judgedFaces = 0
   let judgedEdges = 0
+  let boundaryEdges = 0
   const hollow: string[] = []
   const disagreeing: string[] = []
   const inconsistent: string[] = []
@@ -1254,26 +1323,43 @@ test('character parts are oriented, measured by four instruments and not by one'
     if (disagree > 0) disagreeing.push(`${label} (${String(disagree)} triangles)`)
     const edges = inconsistentEdges(geometry)
     judgedEdges += edges.edges
+    boundaryEdges += edges.boundary
     if (edges.bad > 0) inconsistent.push(`${label} (${String(edges.bad)} edges)`)
     geometry.dispose()
   }
 
-  // Domain guards. Pinned, not floored, where the number is derivable: 3 factions x 10
-  // roles x 3 variants is 90 plans, and every plan contributes at least five parts.
+  // Domain guards, pinned rather than floored. Floors are what let the first version of
+  // this sweep drop two fifths of the roster and still pass its own `>= 450`. Measured
+  // on the merged tree: 1,228 parts, 588,015 directed edges, 6,903 of them boundary.
+  // The bands are +/-15% so a new headgear kind or an extra wagon part is not a test
+  // failure, while dropping a builder family is.
   assert.ok(
-    judgedParts >= 450,
-    `only ${String(judgedParts)} parts were judged; the sweep is not covering the roster`,
+    judgedParts >= 1050 && judgedParts <= 1400,
+    `the sweep judged ${String(judgedParts)} parts, outside the 1050-1400 band measured `
+    + 'for the full roster. Above it, a builder is being called more than it should be; '
+    + 'below it, a builder family has fallen out of this enumeration and is unchecked.',
   )
   assert.ok(
-    judgedFaces >= 40000,
+    judgedFaces >= 150000,
     `only ${String(judgedFaces)} faces were judged across ${String(judgedParts)} parts`,
   )
   // The edge instrument has its own domain, because it skips zero-area triangles and
   // would report a spotless zero over a population it had entirely discarded.
   assert.ok(
-    judgedEdges >= 150000,
-    `only ${String(judgedEdges)} directed edges were judged; the edge instrument threw `
-    + 'away most of the roster as degenerate, so its zero means nothing',
+    judgedEdges >= 500000 && judgedEdges <= 680000,
+    `the edge instrument judged ${String(judgedEdges)} directed edges, outside the `
+    + '500,000-680,000 band measured for the full roster',
+  )
+  // Boundary edges are the number that moves if the 1e-4 grid starts splitting shared
+  // corners, which would silently turn real edges into excused ones and blind this
+  // check. Measured 6,903, which is 1.17% of the edges; the band catches a grid that
+  // has begun to fragment long before it could hide a reversal.
+  assert.ok(
+    boundaryEdges <= judgedEdges * 0.02,
+    `${String(boundaryEdges)} of ${String(judgedEdges)} directed edges have no twin `
+    + `(${((boundaryEdges / judgedEdges) * 100).toFixed(2)}%, measured 1.17%). Open sheets `
+    + 'account for the baseline; a rise means the position quantisation is splitting '
+    + 'shared corners, and every edge it splits is one this check can no longer judge.',
   )
   assert.deepEqual(
     hollow.slice(0, 8),
@@ -1289,11 +1375,11 @@ test('character parts are oriented, measured by four instruments and not by one'
   assert.deepEqual(
     inconsistent.slice(0, 8),
     [],
-    'these parts have edges traversed twice in the same direction, which means some of '
-    + 'their faces are wound against their neighbours. Measured clean across the whole '
-    + 'roster (986 parts, 480,423 directed edges, 0 inconsistent), and it is the only '
-    + 'one of the four instruments that sees a PARTIAL inversion — so a failure here '
-    + 'with the other three green is the expected shape, not a contradiction.',
+    'these parts have edges that are not part of exactly one opposite pair, which means '
+    + 'some faces are wound against their neighbours or a surface is doubled. Measured '
+    + 'clean across the whole roster, and it is the only one of the four instruments '
+    + 'that sees a PARTIAL inversion — so a failure here with the other three green is '
+    + 'the expected shape, not a contradiction.',
   )
   // Measured: the smallest enclosed volume across the roster is 0.0012 (a bird wing).
   // Asserted as a floor rather than left implicit, because a part that collapsed to a

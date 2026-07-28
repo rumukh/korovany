@@ -2237,23 +2237,41 @@ test('lathe normals are unit length, including the last profile ring', () => {
 
   // And prove the check can fail, because "worst < 1e-6" over correct input says
   // nothing about whether it would notice incorrect input. This reproduces exactly
-  // what LatheGeometry does — scale the last ring by the last segment's length —
-  // and requires the assertion above to reject it.
+  // what LatheGeometry does — scale the last profile point's ring by the last
+  // segment's length — and requires the assertion above to reject it.
+  //
+  // The ring is STRIDED, not contiguous. `LatheGeometry` emits each meridian's whole
+  // profile in order, so the last profile point of meridian `s` is at
+  // `s * points.length + points.length - 1`. Measured on the hood profile: the raw
+  // geometry's non-unit normals sit at exactly [7,15,23,31,39,47,55,63,71,79], and all
+  // ten are at y = 0.540, the last profile point. Scaling the last ten *contiguous*
+  // vertices instead would still produce a worst value of 0.911451 — scaling any unit
+  // vector by 0.088549 does — so a mis-targeted plant is invisible in the number it
+  // reports and has to be pinned by index.
   const control = latheProfile(cases[1][1], { segments: 9 })
   const controlNormals = control.getAttribute('normal')
-  const ringSize = controlNormals.count / cases[1][1].length
+  const profilePoints = cases[1][1].length
   const scale = Math.hypot(0.001 - 0.08, 0.54 - 0.5)
-  let scaled = 0
-  for (let index = controlNormals.count - ringSize; index < controlNormals.count; index += 1) {
+  const planted: number[] = []
+  for (
+    let index = profilePoints - 1;
+    index < controlNormals.count;
+    index += profilePoints
+  ) {
     controlNormals.setXYZ(
       index,
       controlNormals.getX(index) * scale,
       controlNormals.getY(index) * scale,
       controlNormals.getZ(index) * scale,
     )
-    scaled += 1
+    planted.push(index)
   }
-  assert.ok(scaled > 0, 'the planted defect scaled no normals, so it proves nothing')
+  assert.deepEqual(
+    planted,
+    [7, 15, 23, 31, 39, 47, 55, 63, 71, 79],
+    'the plant did not land on the last profile ring; LatheGeometry\'s vertex order may '
+    + 'have changed, in which case this reproduction is testing the wrong vertices',
+  )
   let plantedWorst = 0
   for (let index = 0; index < controlNormals.count; index += 1) {
     plantedWorst = Math.max(
