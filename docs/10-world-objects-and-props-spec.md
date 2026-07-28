@@ -964,6 +964,19 @@ and not to a test, because the test looked careful and the assertion looked plai
 because it is anti-correlated with scrutiny. The question that would have caught it is one
 `grep`: *what ordering does production use?*
 
+The same reviewer later reduced the whole distinction to a single question, which is the
+version to carry because it needs no judgement about what is "incidental":
+
+> **If you deleted the setup, would the test be measuring something production never does,
+> or nothing at all?**
+
+*Nothing at all* — the setup is scaffolding. Warm freely; a collision probe against an
+unstreamed region proves nothing and the setup is not part of the claim. *Something
+production never does* — the setup **is** the claim, and running it is asserting a world
+that does not occur. The faction-start test failed the second way: delete the warm-up and
+it still measures something, just the cold answer instead of the snapped one, and the cold
+answer is the only one `GameEngine` ever sees.
+
 **A guard you can grep for is a guard you can keep; a guard made of ordering is one a
 refactor is entitled to break.** Contributed by the foundation session after it tested a
 generalisation of this pass's finding rather than agreeing with it — twelve traversals
@@ -1364,6 +1377,33 @@ So the general form is stronger than "avoid topic words": **the tokens nearest a
 the ones most likely to predate it, and a test's name is the nearest token of all.** A fix
 adds a mechanism, rarely a vocabulary. Probe for the mechanism — `patchedDispose`,
 `startAnchors`, `displaceSeamless` — never for what the thing is *about*.
+
+**The second failure mode is not a blind instrument but no instrument at all, and it hides
+behind a thoroughly tested implementation.** `GeneratedWorldRuntime.dispose()` is the most
+heavily guarded method this pass wrote: a reviewer's mutations proved independent power
+over dispose *order*, matrix restoration and shell detachment, three distinct faults, after
+an earlier version let a reordering pass with 283 green. All of that asserts the method
+where it is **implemented**. Nothing asserted it where it is **relied on** — deleting
+`this.generatedWorld.dispose()` from `GameEngine.destroy()` left the suite at **293 of 293**
+while every streamed region root, its geometry, its materials, its colliders and every ink
+shell leaked on teardown.
+
+No amount of sharpening the disposal tests reaches this, because the defect is not in
+anything they measure. The sibling foundation session found the identical hole in its own
+outline releases at the same hour, in the file that names the class, and supplied the
+framing: a blind check can be improved, an absent one cannot be found by improving
+anything. **Ask which callers depend on an invariant, not only whether the invariant holds
+where it is written.**
+
+The reason both instances existed is worth recording because it is not laziness: the
+reliance side lives in `GameEngine`, which needs a WebGL context and so had no runtime test
+to extend. The absence of a convenient place to put the check is what kept it unwritten for
+the whole programme. Asserting it by reading the source is a compromise, and the compromise
+is worth taking — but the scan must be **bounded to the method**, not to the file. Removing
+the call from `destroy()` leaves an identical `this.generatedWorld.dispose()` in a
+`catch` block two hundred lines above, so a file-wide grep passes on the mutation. That is
+the same weakness as a release check satisfied by "some collection is released", one level
+out, and it is why the assertion here brackets `destroy()` by its next top-level member.
 
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted

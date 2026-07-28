@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 import * as THREE from 'three'
 import { artVariation } from '../src/game/art/ArtRandom.ts'
 import { GeometryCache } from '../src/game/art/GeometryCache.ts'
@@ -2952,4 +2953,35 @@ test('a prop receipt cannot be forged, only spent, and only once', () => {
   other.release(foreign)
   other.dispose()
   library.dispose()
+})
+
+// `GeneratedWorldRuntime.dispose()` is hammered by the teardown tests above -- ordering,
+// matrix restoration and detachment each have independent power. All of that is asserted
+// where the method is *implemented*, and until this test nothing asserted it where it is
+// *relied on*: deleting `generatedWorld.dispose()` from `GameEngine.destroy()` left the
+// whole suite green while every region root, geometry, material, ink shell and collider
+// leaked on teardown. Measured, not supposed -- 293/293 with the call removed.
+//
+// The sibling foundation session found the identical hole in its own outline releases and
+// named the shape: this is not a blind instrument but *no instrument at all*, which is why
+// no amount of sharpening the disposal tests would ever have reached it. `GameEngine`
+// needs a WebGL context and cannot be constructed here, so the reliance is asserted by
+// reading the source -- the same compromise, for the same reason.
+test('GameEngine teardown disposes the streamed world it constructed', () => {
+  const source = readFileSync(new URL('../src/game/GameEngine.ts', import.meta.url), 'utf8')
+
+  const destroyAt = source.indexOf('\n  destroy(): void {')
+  assert.ok(destroyAt > 0, 'GameEngine.destroy() not found -- this scan needs re-pointing')
+  // Bounded by the next top-level member so a call in a later method cannot satisfy it.
+  const rest = source.slice(destroyAt + 1)
+  const nextMember = rest.slice(1).search(/\n {2}(?:public |private |protected )?[A-Za-z_]\w*[(:<]/)
+  const body = nextMember > 0 ? rest.slice(0, nextMember + 1) : rest
+
+  assert.match(
+    body,
+    /this\.generatedWorld\.dispose\(\)/,
+    'GameEngine.destroy() must dispose the generated world; without it the streamed '
+      + 'region roots, their geometry, their materials and every ink shell leak, and no '
+      + 'other test in this suite can see it',
+  )
 })
