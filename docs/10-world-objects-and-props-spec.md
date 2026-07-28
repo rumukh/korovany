@@ -671,7 +671,7 @@ Two were in this document's own advice rather than in any test.
 | normal agreement after displacement | `computeVertexNormals` derives normals **from** winding, so a reversed prop's normals reverse with it. Measured: misses at every fraction **including 100%** — blind, not weak |
 | the family-wide winding assertion | every prop is merged, so the above applies to all of it: **560 of 560** reversals undetected |
 | its stock-box mutation control | reversed *without* rebaking, proving detection of stale normals — a defect the pipeline cannot produce |
-| `git fetch` in the review checklist | the branch is local-only, so it reports "already up to date" whether you are current or six commits behind |
+| `git fetch` in the review checklist | the branch was local-only when written, so it reported "already up to date" whether you were current or six commits behind — and the advice then inverted when the branch was published, silently, because a method carries a status claim |
 | a `retained.length <= retentionLimit` bound | the window evicts at its own limit, so this holds even when every slot pins the same key — the duplicate-pin fault it was written for. Written *while fixing* a finding about vacuous checks, and caught before it shipped only because the habit was fresh |
 | the ink budget system test | every object this world outlines is a single mesh, so `inkDrawCost` is numerically identical to `return 1` and the assertion has **zero power** over the regression it documents. Found by mutation, not by reading |
 | teardown's instanced-shell ordering | spec 08 invariant 4 was tested where `disposeShell` is *implemented* and nowhere it is *relied on*; skipping the release entirely left 13 shells freeing their sources' buffers, suite green |
@@ -746,6 +746,16 @@ Four rules fall out of them, in rough order of how much they would have saved:
       `walkableNear`'s only caller already tests it, so the throw is unreachable in
       production. It reported that as its own miss rather than a finding.
 
+      **And then it stopped being equivalent, which is the more useful half.** Pinning the
+      guard with a test that casts past `private` made the same mutation fail — measured
+      independently on both trees, `CAUGHT` at 292 pass / 1 fail. So **equivalence is a
+      property of the tree, not of the mutation**: the identical edit is an equivalent
+      mutation before the pin and a caught one after, and nothing about the edit changed.
+      The durable statement is narrower than "equivalent mutation" and worth the precision:
+      *the throw is unreachable in production; it is reachable, and asserted, from a test
+      that reaches past `private`.* The two readings disagree about what happens when
+      someone deletes that test — under the loose one it is harmless, and it is not.
+
    Between them the two guards cost one extra measurement each and they are what separates
    *"the suite did not notice"* from *"there was nothing to notice."* Two of this
    campaign's reported survivors turned out to be the second kind.
@@ -763,13 +773,61 @@ Four rules fall out of them, in rough order of how much they would have saved:
    that mattered, because "something in this file moved" is exactly the answer that fooled
    the ambiguous anchor.
 
+   **A mutation campaign needs a positive control, run first.** The foundation session
+   produced the sharpest instance: one of its mutations reported SURVIVED, and the harness
+   had done everything right — the replace matched, the gate confirmed the file changed at
+   the named site. The mutation had landed on a line that only executes when
+   `parts.length !== 1`, inside a branch reached only when `parts.length === 1`. **Textually
+   valid, semantically inert.** A gate can see a replace that matches nothing; it cannot see
+   a replace that matches and then never runs.
+
+   What caught it was structural rather than analytic: *a survivor sitting between three
+   caught siblings that all test the same guard.* That asymmetry prompted a re-check of the
+   injection site instead of the test — and re-injected where it runs, it was caught. The
+   remedy generalises past that instance: **run one mutation you know must be caught before
+   trusting any that survive**, which proves the harness reaches the code at all. Two of
+   that session's campaigns produced confidently meaningless numbers, and in both the
+   *campaign* was at fault rather than the suite.
+
+   This is the same defect as the unreachable assertion one level out: a mutation in dead
+   code is a check whose answer does not depend on the thing it claims to measure, and it
+   fails in the reassuring direction.
+
+
+   more than the other four combined because it corrupts results silently and in bulk:**
+   `git checkout -- <file>` is a *mutation* revert only for committed work. On uncommitted
+   work it is a **feature** revert — it removes the thing being tested along with the
+   mutation — and `git status` reports clean either way, because the file genuinely does
+   match `HEAD`. Every subsequent mutation then runs against a tree with the feature absent
+   and returns plausible, entirely fictional counts. That session caught it only because a
+   test failed that its mutation had no path to reach, and its honest re-run against a
+   committed tree changed the result. **Commit first, then mutate.**
+
+   This pass escaped it by accident rather than by design: its reverts restored from an
+   in-memory copy of the file rather than from git, which is a true mutation revert
+   regardless of commit state. The tell it did produce is worth recording — one restore
+   check reported `blob == HEAD: False` on a correct restoration, because HEAD legitimately
+   lacked uncommitted work. **`blob == HEAD` is the right check only when the baseline is
+   HEAD**; when it is not, compare against the saved pre-mutation copy and say so, because
+   the two failures look identical and mean opposite things.
+
    Worth stating plainly to anyone adopting the technique: **it produces false positives at
    roughly the rate it produces findings.** This campaign yielded three real survivors and
    three retractions — a grouping-precision artefact, a CRLF-broken mutation, and an
-   equivalent mutation against a guard whose only caller already checks. The gates are not
+   equivalent mutation against a guard whose only caller already checks. That third one has
+   since expired as a retraction: the guard was pinned and the same mutation now fails, so
+   it was a correct verdict with a shelf life rather than a mistake. The gates are not
    optional overhead; they are what makes the results mean anything.
 
-7. **A regression test needs a seed that reproduced the bug.** Ordering, mechanism and
+   **And a survivor asks a question rather than answering one.** The same session's
+   remaining survivor was correct: deleting a bit-exactness guard left every test green
+   because no input can distinguish the two versions — summing *n* identical Float32 values
+   needs at most 24 + log₂(n) bits and is exact in double precision. The right response was
+   to document the guard as defensive and annotate the test to say it does *not* pin it,
+   rather than to invent an input or delete the guard. **A surviving mutation means "nothing
+   here distinguishes these two programs", which is sometimes a gap and sometimes a proof.**
+
+8. **A regression test needs a seed that reproduced the bug.** Ordering, mechanism and
    assertion can all be correct and the test still prove nothing if its input never
    carried the defect. The spawn regression is the case, and it survived *three* rounds
    of correct fixes: the mechanism moved from snap to keep-out, the test's call order
@@ -788,6 +846,24 @@ Four rules fall out of them, in rough order of how much they would have saved:
    Found by a reviewer who checked whether the *fix* was covered rather than whether it
    worked — the fix was real and order-independent, verified cold at 0 of 180, and the
    test guarding it was still empty.
+
+   **Which fix, though, and the answer is not the obvious one.** Two mechanisms were added
+   here and only one carries the cold path. `walkableNear` snaps a start to the nearest
+   standable point, and it is *the belt, not the braces*: it can only see colliders that
+   already exist, and `GameEngine` asks for the start position **before** it streams any
+   region, so on the run that matters it queries an empty collision world and returns its
+   input untouched. The **keep-out in `createDressing`** is what takes 1 of 180 to 0 of 180
+   on a cold start; the snap covers every caller whose region is already resident, which is
+   every caller except the one that hurts.
+
+   The integrator caught this pass describing it the other way round in a status summary —
+   *"`getStartPosition` now returns the nearest standable point, measured 0 of 180"* — which
+   is true, and reads as though the snap is the fix. **A reader carrying that model would
+   simplify by deleting the keep-out and keeping the snap**, and the suite would stay green
+   because the tests above run cold. It is the section's own defect one level out: a claim
+   true of one population, stated as though it covered another, and the docblock in
+   `GeneratedWorldRuntime.ts` named the population correctly while the summary did not.
+   **Prose that travels needs the population more than prose that stays next to the code.**
 
    That reviewer then sharpened the shape of the three rounds better than this pass had:
    **mechanism, then call order, then input.** Each correction was right, each was better
@@ -1057,6 +1133,20 @@ grep proves a *token* is present, not that the file is right. The surviving set 
 **`git branch --contains`** for tip-versus-orphan, a **content probe** for "does this tree
 have the fix", and the **blob hash** for "is this file identical" — which is stronger than
 the other two wherever the question is really about a file.
+
+**And the first of those three is sound in only one direction, which took until the last
+hour to name.** The integrator applies work **by patch** rather than by merge, so
+`--contains` and `--is-ancestor` report *False* for this branch against theirs **even on a
+byte-identical tree**. Ancestry answers *"did this commit arrive"*; the question is almost
+always *"did this content arrive"*. They coincide only when the receiver merges, and
+diverge silently when the receiver rebases, cherry-picks or patches — which is what an
+integrator does by definition.
+
+So: **True proves containment; False proves nothing at all.** Every negative conclusion
+drawn from ancestry on this programme should have come from a content diff over the owned
+paths instead. That is also the empirical result — the one genuinely missing item found all
+night was found by content diff, and it appeared on no list produced by SHA comparison,
+while the SHA lists repeatedly reported present things as absent.
 
 **An instruction that changes how findings are *treated* is more dangerous than one that
 changes code.** The programme lead's closing contribution, and the sharpest of the
@@ -1340,11 +1430,28 @@ grep for something the stale tree contains and the current one does not. A negat
 Two refinements from reviewers who had to use that checklist, both correcting guidance
 this pass wrote:
 
-- **`git fetch` is a no-op for a session branch.** These branches are local-only — they
-  live in the shared object store and are reachable through worktrees, with no
-  `refs/remotes/origin/...` counterpart. A reviewer who fetches, sees "already up to
-  date", and concludes they are current has learned nothing. Use
-  `git rev-parse <branch>` at the start of **every** pass instead.
+- **`git fetch` was a no-op for this branch, and is not any more — which is the point.**
+  For most of the programme these branches were local-only: they lived in the shared object
+  store, reachable through worktrees, with no `refs/remotes/origin/...` counterpart, so a
+  reviewer who fetched, saw "already up to date" and concluded they were current had learned
+  nothing. **That is no longer true.** The branch is on origin, so `git fetch` followed by
+  `git ls-remote origin refs/heads/<branch>` is now the *better* check, because it sees the
+  branch as another machine sees it — and `git rev-parse <local-ref>` is the one that cannot
+  report being stale.
+
+  The instruction inverted, and it did so silently. Which is the entry worth keeping over
+  either version of the advice, contributed by the integrator on finding this paragraph
+  still telling readers the old thing:
+
+  > **A "how to verify X" instruction is a status claim about the repository, and status
+  > claims expire.**
+
+  It is strictly worse than a stale sentence in a spec. A stale description reads oddly and
+  invites checking; **a stale method produces confident wrong answers and invites nothing.**
+  The remedy is not to keep this paragraph current — it will rot again — but to prefer
+  instruments whose correctness does not depend on repository state: `git ls-remote` is
+  right whether or not the branch is published, and the blob hash is right regardless of
+  how anything was published.
 - **`git reflog show <branch>` is what detects an amended-past SHA**, in seconds and
   without needing to know what changed. If you were handed a SHA, that is the check that
   tells you it has been superseded — nothing else will, because the orphaned commit
@@ -1531,6 +1638,303 @@ whether a *result* is still current rather than whether a file is.
 The pairing with the earlier entry is the useful shape: **a negative claim needs a probe
 more than a positive one, and it needs that probe again every time it is repeated.**
 
+**When a claim cannot be verified by the party receiving it, the cost of being wrong rises
+by an order of magnitude.** The reviewer produced the cleanest measurement of this
+programme's whole coordination failure, and it is a split rather than a count. Every claim
+about *code* was settled in one message, because the command that produced it could be run
+by the receiver. Every claim about *the other party's tooling* took four or more, because
+neither side could execute the other's evidence: a reflog position, a `--contains` reading,
+a local ref resolution. Four wrong explanations were produced on this programme and **all
+four were of that second kind.**
+
+Which reframes the single largest process error here. This branch was unpushed for most of
+the programme, and the visible cost looked like inconvenience — colleagues could still read
+it through the shared object store. The real cost is this: it forced every statement about
+this tree into the unverifiable class. *"Trust my account of my tip"* is not a claim anyone
+can check, and it is the exact shape that took four rounds each. `git push -u` on the first
+day is one command, and it does not merely publish a branch — **it moves every subsequent
+claim about that branch out of the expensive category.**
+
+The rule generalises past git: if a finding cannot be re-derived by the person receiving
+it, expect it to cost an order of magnitude more to settle, and spend the effort on making
+it checkable rather than on making it more convincing.
+
+**Three agreeing checks from one family are one check.** The foundation session put the
+sharpest form on the displacement-tearing result. This pass had three orientation
+instruments — winding consistency, signed volume, and centroid-outwardness — deliberately
+chosen because each is blind where the others see, and treated their agreement as strong
+evidence. On a fully shattered geometry, every triangle detached, all three pass:
+
+```
+                    TORN          MENDED
+signed volume       0.01988036    0.01953316    both positive
+winding conflicts   0             0             both consistent
+centroid inward     0/20          0/20          both pass
+centroid weakest    0.935645      0.965799      both pass comfortably
+```
+
+They are three instruments for **orientation**, and a hole is a defect of **connectivity**.
+Diversity within a family is not diversity. The agreement was never evidence about
+connectivity, and the confidence it produced was the reason nobody looked for eleven
+sessions.
+
+The measurement carries a second sting: **the torn version reads 1.8% *higher* volume than
+the mended one.** Tearing makes a shape measure bigger, not broken, so there is no threshold
+anywhere that catches it — the failure is not weak detection, it is detection of the wrong
+quantity. The remedy was a boundary-edge count, which is a connectivity instrument and found
+82 torn geometries immediately.
+
+Generalised, this is the rule to carry into any instrument suite: **before adding a fourth
+check, ask what family the first three belong to.** A suite that is broad within one family
+and empty outside it will report unanimous confidence about the thing it cannot see.
+
+**And the discriminator for which shapes tear is the source's normals, not the shape's
+name.** The same session measured `PolyhedronGeometry` at detail 0 producing faceted
+normals — each corner copy moves differently under displacement, so the shape comes apart —
+while detail 1 or higher produces radial normals shared by every copy, and is immune. So
+*"rocks tear"* is the wrong rule and *"faceted source normals tear"* is the right one, which
+also explains this catalogue's result without inspecting it: nothing here uses a polyhedron
+primitive, but `mergeAll` seams and hard-crease lofts produce exactly the same signature —
+coincident positions carrying different normals. **The property is measurable on any
+geometry; the family name is not.**
+
+**The last thing to re-measure is whatever both parties already agreed on.** The reviewer
+produced this while declining credit for auditing its own suggestions, and the deflation is
+the finding: it wasn't discipline, it was that **its own suggestions were the highest-yield
+place left to look.** Once the obvious surfaces were covered, the untested claims in the
+review were the ones already accepted — a fix it had proposed, a test it had praised, a
+mutation it had reported.
+
+The mechanism is general and unflattering: **agreement removes the pressure that produces
+measurement.** Every party to an agreed claim believes someone else's scrutiny is what
+settled it, and the person best placed to check is the one who least wants to. This is the
+adopted-check entry above generalised past adoption — it does not require a hand-off at
+all, only a conclusion both sides stopped arguing about. The evidence on this programme is
+that the three worst vacuous checks were all in that state: the ledger identity praised and
+propagated before anyone asked what it forbade, the phantom-pin guard with a reviewer's
+reasoning and this pass's implementation and nobody's measurement, and a warm-up call
+praised **by name** as rigour while being the exact half that made the test vacuous.
+
+**And the recursion converges even though it does not terminate.** Four levels appeared
+here — the assertion, the mutation that tests it, the gate that tests the mutation, and the
+subject the gate silently addresses — which reads as an infinite regress and is not one,
+because *each level is cheaper to check than the one below it*. The assertion needed a
+probe; the mutation needed a two-line gate; the gate needed a line-number comparison; the
+subject needed one printed absolute path. So "do not assume it stops" is not a counsel of
+despair but an argument for keeping every level cheap enough that adding one more costs
+almost nothing. **Both of the gates that failed on this programme failed by trying to be
+clever at level three.**
+
+**Two instruments disagreeing is worth more than either agreeing with itself — and the
+reconciliation is usually a population, not an error.** The integrator could reproduce this
+pass's geometry-disposal figure and not its `InstancedMesh` figure, and recorded the gap as
+*unreconciled* rather than inventing a cause. That was the right call and it is what made
+the cause findable. One flag explains it entirely:
+
+```
+                          geometry   InstancedMesh
+outlineDressing: true        3099         2223
+outlineDressing: false       3099         1644
+difference                      0          579
+```
+
+Ink shells **are** `InstancedMesh` instances and they **share** their source's geometry — so
+each one adds an instanced disposal and no geometry disposal. That is precisely why the two
+counters behaved differently: geometry agreed because it is blind to ink, `InstancedMesh`
+disagreed because it is not. Neither measurement was wrong; they were of different
+configurations, and the difference *is* the ink population.
+
+Two lessons, and the second is the uncomfortable one. **Refusing to explain a gap is what
+preserves it long enough to be explained** — a plausible reason invented at the time would
+have closed the item and buried a fact worth having. And this pass's own figure in that
+exchange, 2861, **failed to reproduce on its own tree** when re-measured under the same
+protocol. It was quoted from memory across several messages while the reconciliation work
+happened on the other side. The rule the programme kept re-deriving applies to one's own
+numbers first: *a figure without the command that produced it is a rumour that has been
+formatted*, and the author is the last person who will notice.
+
+**If the strict-equality form passes, the inequality beside it was never a test.** The
+foundation session supplied this while closing a fourth instance of the derived-identity
+defect, and it is stronger than the rule it improves. This spec already said *build the
+state the assertion forbids and watch it fail; if you cannot construct that state, you have
+a definition rather than a test.* That is a failure to falsify, and it leaves the hard cases
+open — sometimes the forbidden state is genuinely awkward to construct and the assertion
+survives on the benefit of the doubt.
+
+The replacement is a **positive** test for entailment. Where an assertion claims an
+inequality, assert the exact identity instead and run it:
+
+```
+assert.equal(probe.spans[index], -baseline.spans[index])   ->  GREEN, bit-exact
+```
+
+Reversal moves no vertex, so the bounding box and centre are unchanged and every triangle
+determinant negates exactly. Strict float equality passing proves the inequality beside it
+could not have failed — no construction required, one line, and it answers rather than
+merely failing to refute.
+
+**With the caution that matters more than the technique.** That session rewrote the entailed
+assertion and documented it in the commit as **a readability fix, not hardening**, because
+measurement showed both forms catch the blinded instrument and the reordered-spans mutation
+identically. Removing an entailment improves what a reader infers from an assertion count
+and improves detection **not at all**. Saying so explicitly is the same move as naming a
+guard's blind spot in a test title, pointed at a commit message instead — without it the
+next reader banks a guarantee nobody added.
+
+The tally for this defect is at least five across three sessions in a single night, and
+none of them was noticed while being written. Every one felt like rigour at the moment of
+writing, which is the only thing they reliably have in common.
+
+**A test name discriminates only for a test that never existed before, and the grep cannot
+tell you which case you are in.** This spec records that a test's name is the nearest token
+to a fix and therefore the worst probe — the integrator then tested its own discriminator
+table against two earlier states of its own tree and found the rule biting harder than
+written. Two of its five survivors were test names, and they held *only* because those
+tests were new: no earlier body had worn the title. It had also renamed one rewritten test,
+so a grep for the old name would have reported **present on both stale trees**.
+
+So the rule needs its second clause: a test name is a valid discriminator exactly when the
+test is new, that is invisible from the grep result, and **a rename converts a valid
+discriminator into an invalid one without changing the mechanism at all.**
+
+The same exercise struck one of its own five outright. `OUTLINE_WORLD_VISIBLE_DRAWS_MAX`
+read **3 in both stale trees** — it is the constant the ink work is *about*, present since
+the cap landed, so grepping for it reports a tree current when it may be six rounds behind.
+Advice given about how to avoid that failure, containing that failure.
+
+**And `--ours` / `--theirs` are file-scoped verbs answering a hunk-scoped question.** The
+integrator hit a docs conflict displaying as one-sided — `<<<<<<< HEAD` immediately followed
+by `=======` — which makes `--theirs` look obviously right. It is a whole-file operation:
+it silently dropped a population column, a call-sites-versus-keys correction and a 102-key
+measurement, producing 165 insertions against 83 deletions where the real change was 71
+insertions and nothing removed. **The deletions it causes do not appear in the conflict you
+are reading**, so the resolution looks correct at exactly the moment it is destroying work.
+Caught only by grepping for its own markers *after* resolving, which is the general remedy:
+after any whole-file resolution, probe for content you know should have survived.
+
+This pass used `git checkout --ours` on the same file class during a merge experiment, in a
+throwaway worktree where nothing could be lost. That it was harmless was luck of setting,
+not judgement.
+
+**A mutation that damages every element is the least discriminating one available.** The
+foundation session drew this out of a sweep this pass ran across 248 merged hard surfaces,
+and it retires a habit visible throughout this document. Reversing *all* faces maximises
+exactly the signal an orientation instrument is built to detect, so surviving it certifies
+only the case you already believed. **Every instrument survives its own best case.**
+
+The informative mutations are partial, and *partial* has structure that must be chosen
+rather than left to chance:
+
+```
+faces reversed   undetected
+        10%       248 of 248   (100%)
+        20%       244 of 248
+        35%       222 of 248
+        50%       118 of 248
+```
+
+Contiguous-block damage produced that curve. **Scattered damage at 10% would likely have
+cancelled to nothing and reported the opposite** — so contiguous versus scattered, one part
+of a merge versus one ring of a lathe, are not stylistic choices; they select which
+blindness you are able to see. A single mutation shape is a single population, which is the
+same defect as a single seed.
+
+Which retires a second habit both sessions had: **reporting a mutation grade as RED or
+GREEN.** The grade is a function of the damage model, and neither of us had been quoting the
+damage model beside the grade — the same disease as quoting a number without its noun. A
+survivor means *"this suite did not detect this damage shape at this magnitude"*, and every
+clause is load-bearing.
+
+**A stale number was correct once; a recalled number may never have been — and only the
+first is fixed by re-measuring at send time.** The foundation session drew this after
+correcting two of its own figures, both off by one, both from recall, and both inside the
+paragraph where it was correcting this pass about stale numbers. Its tip and test count in
+that same message were measured and right; the two *distances* were not, and a distance is
+exactly the derived quantity that feels too small to check.
+
+The programme-level result is stronger than any individual instance, and it holds across
+all four sessions: **everyone who published a wrong number tonight measured correctly and
+then re-used the result.** Not one was a bad measurement. This pass's withdrawn 2861 was
+measured once and quoted from memory across several messages while the other party did the
+reconciliation work; the same shape produced six stale SHAs, two wrong distances, a
+`docs/08` census, a cache peak quoted under the wrong protocol, and a verification
+instruction that inverted.
+
+Which narrows the remedy considerably. The discipline is **not** "measure more carefully" —
+the measuring was never the failure. It is **do not let a measured value survive into a
+second sentence.** That is why citing the command rather than its output is the only form
+that holds: a command re-derives, a number decays, and the decay is invisible because a
+number carries no evidence of its own age.
+
+It is also why every session on this programme kept failing at it *in the paragraph
+recommending it*. The rule asks you to give up the one thing a measurement produces — an
+answer you can now reuse — and reuse is what a measurement is for. Recording the failure
+alongside the rule is the honest form, because the next reader will do it too.
+
+**Three instruments on this programme were sound and aimed slightly off the thing they were
+trusted for. The common factor is aim, not sharpness — and aim is the part that looks
+settled once something passes.** A reviewer named this after finding the third, and the
+three are worth listing together because they were found by different people, in different
+subsystems, and none of them was a weak measurement:
+
+| instrument | what it measured | what it was trusted for |
+| --- | --- | --- |
+| this pass's keep-out counter | skips in the **resident** region set | skips across the whole sweep |
+| a reviewer's dispose audit | the behaviour of `dispose()` | whether `dispose()` is **called** |
+| the spawn seed set's guard | colliders **skipped** | spawns actually **blocked** |
+
+Each was correct about its own quantity. The dispose audit is the clearest: its owner
+instrumented all three dispose paths, streamed three laps with ink toggles, counted 7176
+disposals with zero doubles, forced a mid-build failure, and signed the category clean —
+**and every measurement it took began by calling `dispose()` itself.** The instrument was
+aimed at the method's behaviour while the question was about its reachability, so no amount
+of sharpening could have reached it.
+
+The seed-set case is the subtlest, because the two quantities differ only by a margin:
+`coversSpawn` skips at `radius + 0.45 + 0.2` and blocking is judged at `0.45`, so a skip
+inside that `0.2` of daylight is real and protects nothing. One seed's three skips are all
+margin, which makes it look like a fault-carrying seed to the guard and contribute nothing
+to the assertion above it.
+
+**The generalisation worth keeping is about when this is findable.** A wrongly aimed
+instrument produces correct, stable, reproducible numbers — it fails none of the checks in
+this section, because every check here tests whether a measurement is *sound*. Aim is
+established when the instrument is written and never revisited, since passing is taken as
+confirmation of both. The only question that reaches it is asked before trusting a result
+rather than after: **what quantity does this actually count, and is it the quantity the
+claim is about?**
+
+**A check establishes a property of the artefact it actually read. Name that artefact, out
+loud, in the result.** A reviewer produced this after tracing its own wrong claim, and it
+generalises the gate-subject entry above from gates to *any* check. Two failures on this
+programme have the same shape and different mechanisms:
+
+- This pass's gate proved an edit landed and was **silent about where** — it reported
+  `applied to S4 INTEGRATION tree` while editing this working tree, because `Set-Location`
+  does not move .NET's working directory.
+- A reviewer's blob check proved a defect persisted and was **silent about in what** — it
+  established that a defect survived at a branch head, which was true, and the result was
+  reported as *"live in the merged PR"* because a message had described that head as
+  merged.
+
+Both instruments were correct. Both answered about a subject the sentence then widened.
+The remedy is not additional verification, it is **refusing to widen the subject in the
+sentence that reports the result** — *"M3 live in `44c52ba`"* is true, checkable, and costs
+nothing, where *"live in the merged PR"* cost a detached worktree and two failed probes to
+refute.
+
+That is also why *"merged"* is such an effective solvent: it is a word in a message rather
+than a property of a tree, and it converts a measured claim about one artefact into an
+unmeasured claim about another without any step that feels like an inference.
+
+**And the mechanical form of the baseline rule, which the same exchange produced:** assert
+the baseline is **green before mutating**, and treat a red baseline as a **broken harness
+rather than a finding**. This pass read `pass 0, fail 1` from a worktree with no
+`node_modules` and nearly recorded it as a mutation being caught — the two are
+indistinguishable from the output alone. **A missing baseline turns any failure into a
+confirmation**, and the moment you are least likely to run one is when the number already
+agrees with you. One extra run makes the too-easy result impossible to accept by accident.
+
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
 state that no check could see. Ten lines were mangled — five entries whose opening sentence
@@ -1662,6 +2066,63 @@ Stated without hindsight: the probe was the right instrument for the question it
 built for — *does this tree contain this fix* — and was carried, reasonably, to a question
 one step away: *does this tree enforce this rule.* That is the adjacent-question defect
 in §13's table, arriving through the one technique the table exists to recommend.
+
+### 13.3 The instrument that had no test, raised at hand-off and closed here
+
+S3 ended its session by recording one open item: **`retentionIsIntact` was present on the
+integration branch byte-identical to its own copy, and the test proving the predicate can
+return `false` was not.** Measured then, with a baseline first:
+
+```
+BASELINE                          342 pass / 0 fail
+retentionIsIntact -> return true   342 pass / 0 fail   <- the gap
+```
+
+The integration branch did assert `assert.ok(runtime.retentionIsIntact, ...)` across 75
+region loads, which is real coverage — **of the system.** A phantom arising naturally
+during those loads is caught. What it could not cover is **the instrument**: it consumes
+the predicate output and never constructs a state where that output should be false, so
+replacing the predicate with `return true` satisfied it 342 times.
+
+That distinction is the whole of §13 in one line: *the existing assertion tests the world;
+the missing one tests the thermometer.* And it mattered because the regression had already
+happened once — the predecessor compared `propCacheSize >= retainedPropCount`, which
+reduces to `B >= P` and stayed green until **29 simultaneous phantoms**, blind across the
+entire range a real bug produces.
+
+**Closed.** `the phantom-pin check detects a single phantom, not thirty` is now in
+`tests/worldArt.test.ts`, and S3's instruction — *re-run the mutation rather than trusting
+the restore* — was followed rather than taken on faith:
+
+```
+retentionIsIntact -> return true   41 pass / 1 fail
+  the one failure: the phantom-pin check
+```
+
+#### The merge reported success and dropped it anyway
+
+Worth more than the item itself. Taking S3's branch conflicted on two regions, in
+`tests/worldArt.test.ts` and `docs/10`, and both were resolved keeping both sides — yet
+**two tests were absent from the result regardless**, neither anywhere near a conflict:
+this one, and `a receipt is one reference, so two holders of one key release
+independently`. Git reported a clean, resolved merge.
+
+> **A clean merge is not evidence that content arrived.** Conflict markers report the
+> regions git could not decide. They say nothing about the regions it decided wrongly, and
+> a resolved conflict actively draws attention to the wrong place — the reviewer's
+> attention goes to the hunks that shouted, not to the file that went quiet.
+
+What found it was cheap and should be routine: **enumerate the units on each side and diff
+the names.** 41 top-level `test(` declarations on the source branch, 40 after the merge.
+That comparison is one command, needs no knowledge of what the tests do, and would have
+caught it at any point in the six merges this integration performed. A diffstat would not
+have — `+217/-23` on a file both sides edited looks exactly like a successful merge.
+
+It is also why this section is written as history rather than as a hand-off note. The
+original entry said *"the integration branch does not carry the test"*, true when written
+and false eleven minutes later; the spec gate `no spec makes a status claim that can only
+expire` failed on it immediately after the merge, which is the second time that gate has
+caught a true statement with a shelf life.
 
 
 ## 14. Effort

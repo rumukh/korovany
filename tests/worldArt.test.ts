@@ -1164,6 +1164,12 @@ test('every prop the world can build is oriented outwards', () => {
     'these geometries were enumerated but carried no face an orientation instrument could '
       + 'judge, so their clean result is not evidence of anything',
   )
+  // Index handling: every instrument above dereferences `geometry.index`, and the catalogue
+  // does produce indexed surfaces — a lathe part that is the only part on its surface
+  // survives `mergeAll`'s length-1 passthrough with its index intact. That the route exists
+  // is pinned by exact set in `the one indexed prop surface stays indexed`, which shares
+  // this enumeration, so it is not re-asserted here. Named rather than duplicated: a second
+  // weaker assertion over the same population is noise that dilutes the first.
   // Headroom, not just correctness. Measured tightest is the fort tree at 0.033; the
   // floor sits below it so ordinary art variation does not trip, but a prop drifting to
   // within 2% of the undecidable half fails here — while its verdict is still right —
@@ -2478,6 +2484,35 @@ test('decoration never blocks a spawn point', () => {
   // world that was never broken. Fourth instance of that defect, in the test written to
   // close the third.
   const seeds = ['spawn-keepout', 'gp-6', 'gp-11', 'gp-23', 'gp-37', 'gp-48']
+  // **`gp-11` is the only seed that carries `blockedByStructure`.** Pinned as an assertion
+  // rather than a comment because removing it is silent: the non-vacuity guards below would
+  // still certify the set, and the protective assertion would have nothing left to detect.
+  //
+  // A reviewer found the reason, and it is that **the guard certifies a weaker predicate
+  // than the assertion it sits above.** `coversSpawn` skips a collider at
+  // `radius + 0.45 + 0.2`, while a spawn is judged blocked at the 0.45 agent radius — so a
+  // skip inside that 0.2 of daylight protects a spawn that was never going to be blocked.
+  // Measured with the building keep-out bypassed:
+  //
+  // ```text
+  //                 skips (fix on)   blocked spawns (fix off)
+  //   gp-11               3                    3
+  //   gp-37               3                    0     <- all margin
+  //   others              0                    0
+  // ```
+  //
+  // This pass validated the repaired counter by matching a reviewer's 3 for `gp-11`, and
+  // the two instruments agree there by coincidence rather than by construction. `gp-37` is
+  // the sample where they diverge, it was in this pass's own probe output, and it was read
+  // past. **Two instruments agreeing on one sample is worth much less than it feels like** —
+  // agreement is indistinguishable from coincidence until a sample exists where they would
+  // differ.
+  assert.ok(
+    seeds.includes('gp-11'),
+    'gp-11 is the only seed producing spawns that are genuinely blocked when the building '
+      + 'keep-out is bypassed; without it `blockedByStructure` has no power, and the '
+      + 'non-vacuity guards below will not notice because they count skips rather than blocks',
+  )
   const blockedByDressing: string[] = []
   const blockedByStructure: string[] = []
   const unwalkableStarts: string[] = []
@@ -2563,26 +2598,18 @@ test('decoration never blocks a spawn point', () => {
     `only ${String(startsSampled)} faction starts sampled across ${String(seeds.length)} seeds`,
   )
 
-  // A sample floor proves the population was visited. These prove the seed set could
-  // **express** each failure — that every keep-out had something to act on, so bypassing
-  // it has something to break. Asserted per population because that is exactly what the
-  // previous version got wrong: one number over two populations passes on the easy one.
-  assert.ok(
-    keepOutActed.decoration > 0,
-    'no decoration placement was removed across the seed set, so none of these seeds '
-      + 'carries the decoration fault and that assertion cannot detect its own regression',
-  )
-  assert.ok(
-    keepOutActed.building > 0,
-    'no site-building collider was skipped across the seed set, so none of these seeds '
-      + 'carries the building fault and that assertion cannot detect its own regression',
-  )
-  assert.ok(
-    keepOutActed.prop > 0,
-    'no site-prop collider was skipped across the seed set, so none of these seeds '
-      + 'carries the prop fault and that assertion cannot detect its own regression',
-  )
-
+  // **Regression assertions first, non-vacuity after.** Both orderings catch a broken
+  // keep-out — but only this one names it correctly. With the non-vacuity guards first, a
+  // developer who breaks the fix is told *"none of these seeds carries the fault"*, which
+  // points at the seed set: the one direction the diagnostic must never send them. The
+  // zero-count symptom is identical for both causes, so ordering is the only thing that
+  // separates them.
+  //
+  // Safe because the guards still run whenever the assertions above pass, and that is
+  // exactly the case where "your seed set is empty of the fault" is the correct
+  // explanation. A failing regression assertion is non-vacuous by construction — it found
+  // something. Contributed by a reviewer who measured both orderings rather than arguing
+  // from either.
   assert.deepEqual(
     blockedByDressing,
     [],
@@ -2602,6 +2629,34 @@ test('decoration never blocks a spawn point', () => {
     unwalkableStarts,
     [],
     'a faction starts the run unable to move',
+  )
+
+  // A sample floor proves the population was visited. These prove the seed set could
+  // **express** each failure — that every keep-out had something to act on, so bypassing
+  // it has something to break. Asserted per population because that is exactly what the
+  // previous version got wrong: one number over two populations passes on the easy one.
+  //
+  // **What these do not pin: the counters themselves.** A refactor that incremented once
+  // per structural bucket rather than once per removed placement would make every count
+  // permanently positive, and these three guards would go silent while still reading as
+  // protective. A reviewer measured that mutation surviving. It is recorded rather than
+  // closed because pinning a count means pinning an art-dependent number, which is the
+  // floor-that-fails-when-the-code-improves anti-pattern one row up in this file. Stated
+  // here so nobody later reads these as coverage of the counters.
+  assert.ok(
+    keepOutActed.decoration > 0,
+    'no decoration placement was removed across the seed set, so none of these seeds '
+      + 'carries the decoration fault and that assertion cannot detect its own regression',
+  )
+  assert.ok(
+    keepOutActed.building > 0,
+    'no site-building collider was skipped across the seed set, so none of these seeds '
+      + 'carries the building fault and that assertion cannot detect its own regression',
+  )
+  assert.ok(
+    keepOutActed.prop > 0,
+    'no site-prop collider was skipped across the seed set, so none of these seeds '
+      + 'carries the prop fault and that assertion cannot detect its own regression',
   )
 })
 
@@ -2965,6 +3020,115 @@ test('a prop receipt cannot be forged, only spent, and only once', () => {
   library.dispose()
 })
 
+// The spec is the only shipped artefact no gate reads: tsc, oxlint, the suite and the
+// build all ignore Markdown. It shipped corrupted for ~3h because of exactly that. These
+// two rules are structural, not stylistic, and both were violated by the real corruption.
+test('the world-objects spec has no mangled paragraph joins', () => {
+  const url = new URL('../docs/10-world-objects-and-props-spec.md', import.meta.url)
+  const source = readFileSync(url, 'utf8')
+  // Split on a lone `\r` too, not just `\r\n`. The integrator hit a file where PowerShell
+  // and node disagreed about line count for exactly that reason, and a splitter that
+  // misses a line ending silently joins two lines — which would hide the very defect
+  // these rules look for. This file measures 0 lone `\r` today; the pattern costs nothing
+  // and removes the dependence on that staying true.
+  const lines = source.split(/\r\n?|\n/)
+
+  // Fenced blocks are excluded from the indentation rule below. Indented lines inside a
+  // fence are correct, and the integrator's copy of this spec would have false-positived
+  // on its own `text` fences. **A check that fires on correct code gets silenced within a
+  // day** — already an entry in §13 of the file this test reads, so tripping over it here
+  // would have been the section failing on its own author twice.
+  const fenced = new Set<number>()
+  let insideFence = false
+  lines.forEach((line, index) => {
+    if (/^\s*```/.test(line)) {
+      insideFence = !insideFence
+      fenced.add(index)
+      return
+    }
+    if (insideFence) fenced.add(index)
+  })
+
+  // An edit that anchors on a rule's bold header and replaces it leaves the previous
+  // opening sentence orphaned above, indented by the wrap. Caught all ten real cases.
+  const orphans = lines
+    .map((line, index) => ({ line, number: index + 1, index }))
+    .filter((entry) => !fenced.has(entry.index) && /^ [A-Za-z]/.test(entry.line))
+  assert.deepEqual(
+    orphans.map((entry) => `${entry.number}: ${entry.line.slice(0, 60)}`),
+    [],
+    'lines starting with a space are orphaned paragraph openings',
+  )
+
+  // The strongest of the four, contributed by the integrator: **a line whose entire text
+  // reappears as the opening of a nearby line that continues past it.** That is the exact
+  // shape of the defect — the decapitated sentence is left orphaned above *and* welded
+  // into the body below, so the orphan's full text is a strict prefix of the weld.
+  //
+  // Unlike the other three it **cannot fire on legitimate prose**: a paragraph does not
+  // repeat its own opening within a dozen lines and then keep going. So it needs no
+  // exception list, which is what stops it being silenced later. It also catches the two
+  // cases the others miss — a weld between lowercase words, and an orphan that happens
+  // not to be indented.
+  const duplicated: string[] = []
+  lines.forEach((line, index) => {
+    const text = line.trim()
+    if (text.length < 30 || fenced.has(index)) return
+    for (let ahead = index + 1; ahead <= Math.min(index + 12, lines.length - 1); ahead += 1) {
+      const other = lines[ahead].trim()
+      if (other.length > text.length && other.startsWith(text)) {
+        duplicated.push(
+          `${String(index + 1)} repeated at ${String(ahead + 1)}, which continues: `
+            + `…${other.slice(text.length, text.length + 40)}`,
+        )
+        return
+      }
+    }
+  })
+  assert.deepEqual(
+    duplicated,
+    [],
+    'a line reappears as the prefix of a later line that continues past it, which is a '
+      + 'sentence duplicated as an orphan and welded into the body it was cut from',
+  )
+
+  // The same edit deletes the newline before the body continuation, welding two
+  // sentences together: "survivedso long", "the programme leadidentified".
+  const welds = lines
+    .map((line, index) => ({ line, number: index + 1 }))
+    .filter((entry) => /[a-z]\*\*[A-Z]/.test(entry.line))
+  assert.deepEqual(
+    welds.map((entry) => `${entry.number}: ${entry.line.slice(0, 60)}`),
+    [],
+    'a bold header welded mid-sentence means a newline was deleted',
+  )
+
+  // Third rule, because the two above miss a weld between two lowercase words —
+  // `alreadyargued` is the case the integrator hit, and neither an orphan check nor a
+  // `**` check can see it. Length is the signature with real specificity: prose here wraps
+  // at ~95 columns, so a weld joins two wrapped lines and roughly doubles one. Table rows
+  // and fenced blocks legitimately run long and are excluded by structure rather than by
+  // length, so the rule stays exact rather than becoming a threshold to tune.
+  //
+  // The integrator's own detector for this was `[a-z]{3}(the|about|so|and|which)[a-z]`,
+  // which scores **60 matches on a clean file** — it fires on "whe*the*r", "under*st*and",
+  // "rea*so*ning". A check with that false-positive rate trains its reader to ignore it,
+  // which is a documented entry in this spec's §13 and the reason it is not adopted here.
+  const overlong = lines
+    .map((line, index) => ({ line, number: index + 1 }))
+    .filter(
+      (entry) =>
+        entry.line.length > 100
+        && !entry.line.startsWith('|')
+        && !entry.line.startsWith('```'),
+    )
+  assert.deepEqual(
+    overlong.map((entry) => `${entry.number}: [${String(entry.line.length)}] ${entry.line.slice(0, 50)}`),
+    [],
+    'a prose line at roughly twice the wrap width is two lines welded by a deleted newline',
+  )
+})
+
 // `GeneratedWorldRuntime.dispose()` is hammered by the teardown tests above -- ordering,
 // matrix restoration and detachment each have independent power. All of that is asserted
 // where the method is *implemented*, and until this test nothing asserted it where it is
@@ -2994,4 +3158,174 @@ test('GameEngine teardown disposes the streamed world it constructed', () => {
       + 'region roots, their geometry, their materials and every ink shell leak, and no '
       + 'other test in this suite can see it',
   )
+})
+// The docblock on `reverseFaceFraction` states a measured curve — 10% of faces reversed
+// undetected on 248 of 248, 50% on 118 of 248 — and until now nothing read it. A measured
+// claim in prose rots exactly like a stale SHA: the code moves, the number stops being
+// true, and no one is told. The sibling foundation session hit the same thing one level
+// down and fixed it the way this file argues for elsewhere — **assert the limitation in
+// both directions**, so the claim cannot drift without something going red.
+//
+// This is deliberately not a coverage improvement. It changes detection not at all. What
+// it does is stop the documented blindness from silently becoming wrong in either
+// direction, which is the only thing prose can never do for itself.
+test('the volume instrument is still blind at 35% and still works at 100%', () => {
+  const library = new WorldPropLibrary({ retention: 0 })
+  let surfaces = 0
+  let missedAtThirtyFive = 0
+  let missedAtFull = 0
+  try {
+    for (const [, request] of everyPropRequest()) {
+      for (const part of library.build(request)) {
+        if (part.surface !== 'hard') {
+          part.geometry.dispose()
+          continue
+        }
+        surfaces += 1
+        const baseline = Math.sign(signedVolume(part.geometry))
+        for (const fraction of [0.35, 1] as const) {
+          const damaged = reverseFaceFraction(part.geometry, fraction)
+          const missed = Math.sign(signedVolume(damaged)) === baseline
+          if (missed && fraction === 0.35) missedAtThirtyFive += 1
+          if (missed && fraction === 1) missedAtFull += 1
+          damaged.dispose()
+        }
+        part.geometry.dispose()
+      }
+    }
+  } finally {
+    library.dispose()
+  }
+
+  assert.ok(surfaces >= 100, `only ${String(surfaces)} hard surfaces were swept`)
+
+  // The job. A wholly reversed solid must flip its signed volume, or the instrument has
+  // stopped measuring orientation at all.
+  assert.equal(
+    missedAtFull,
+    0,
+    `signed volume missed a FULL reversal on ${String(missedAtFull)} of ${String(surfaces)} `
+      + 'surfaces, so it is no longer detecting orientation on those shapes',
+  )
+
+  // The floor, asserted so the docblock cannot rot. **If this fails because the number
+  // dropped to zero, that is good news and not a bug** — an instrument that now catches a
+  // 35% contiguous reversal is strictly better. Update the curve in `reverseFaceFraction`
+  // and this assertion together; do not delete it, because then the next reader inherits a
+  // guarantee nobody measured.
+  assert.ok(
+    missedAtThirtyFive > 0,
+    'signed volume now catches a 35% contiguous reversal on every surface, which the '
+      + 'measured curve says it cannot. Either the instrument improved — update the curve '
+      + 'and this floor together — or the damage model stopped producing partial inversions',
+  )
+})
+
+
+// ---------------------------------------------------------------------------------
+// Recovered from S3's branch after a merge that reported success and dropped them.
+//
+// git merge conflicted on two regions of this file, both were resolved keeping both
+// sides, and these two tests were silently absent from the result anyway — they sit
+// nowhere near either conflict. Counting `test(` declarations on both sides found it:
+// 41 on the source branch, 40 after the merge.
+//
+// **A clean merge is not evidence that content arrived.** Conflict markers report the
+// regions git could not decide; they say nothing about the regions it decided wrongly,
+// and a resolved conflict draws attention to exactly the wrong place. The check that
+// found this is cheap and should be routine: enumerate the units on each side and
+// diff the names, rather than reading the diffstat.
+// ---------------------------------------------------------------------------------
+test('a receipt is one reference, so two holders of one key release independently', () => {
+  // The invariant the double-release guard depends on, which nothing stated until an
+  // integrator asked the right question: does anything hand out two distinct
+  // `PropAsset` objects sharing the same surface keys, and if so, is releasing both a
+  // double release the `WeakSet` would miss?
+  //
+  // Two distinct receipts is the *normal* case — `acquireKeyed` returns a fresh object
+  // literal per call. It is safe because the two are in bijection with the references:
+  // each acquire takes exactly one cache reference per surface, and each release gives
+  // back exactly one. Two receipts means two references were taken, so two releases are
+  // correct rather than a double release. The guard catches the different fault of one
+  // receipt coming back twice, which returns two references for one taken.
+  //
+  // What would break it is a `PropAsset` minted without a matching acquire. There is
+  // one construction site and it sits inside the acquiring loop; this asserts the
+  // behavioural consequence, which survives a refactor that moves the construction.
+  const library = new WorldPropLibrary({ retention: 0 })
+  const request = { kind: 'tree', biome: 'forest', slot: 1, detail: 'near' } as const
+  try {
+    const first = library.acquire(request)
+    const key = first.surfaces[0].key
+    assert.equal(library.referenceCount(key), 1, 'one acquire must take one reference')
+
+    const second = library.acquire(request)
+    assert.notEqual(
+      first,
+      second,
+      'each acquire must mint its own receipt, or two holders share one identity',
+    )
+    assert.equal(first.key, second.key, 'the two receipts must describe the same prop')
+    assert.equal(
+      first.surfaces[0].geometry,
+      second.surfaces[0].geometry,
+      'sharing is the point: distinct receipts, one geometry',
+    )
+    assert.equal(library.referenceCount(key), 2, 'two acquires must take two references')
+
+    // n acquires, n references — the bijection, checked past the two-holder case that
+    // is easy to get right by accident.
+    const extra = [library.acquire(request), library.acquire(request)]
+    assert.equal(library.referenceCount(key), 4, 'four acquires must take four references')
+    for (const asset of extra) library.release(asset)
+    assert.equal(library.referenceCount(key), 2, 'each release must give back one')
+
+    // Releasing both distinct receipts is correct and must not trip the guard.
+    library.release(first)
+    assert.equal(library.referenceCount(key), 1, "releasing one holder must not free the other's")
+    library.release(second)
+    assert.equal(library.referenceCount(key), 0, 'the last release frees the key')
+  } finally {
+    library.dispose()
+  }
+})
+
+test('the phantom-pin check detects a single phantom, not thirty', () => {
+  // The reason this exists as its own test: the previous form of the assertion was
+  // `propCacheSize >= retainedPropCount`, which a reviewer measured as blind until 29
+  // phantoms had been injected, because borrower-held entries mask the deficit one for
+  // one. A defensive check that only fires on gross corruption reads exactly like one
+  // that catches the class.
+  //
+  // One phantom is what a real bug produces — a `retain` path pushing a key whose
+  // reference has already gone. So one phantom is what this proves.
+  const library = new WorldPropLibrary({ retention: 4 })
+  const request = { kind: 'tree', biome: 'forest', slot: 0, detail: 'near' } as const
+  try {
+    const asset = library.acquire(request)
+    library.release(asset)
+    assert.equal(library.retainedCount, 1, 'the window should hold the released key')
+    assert.ok(library.retentionIsIntact, 'a genuine pin must read as intact')
+
+    // Inject exactly one phantom: a key in the window that the cache never held.
+    const retained = (library as unknown as { retained: string[] }).retained
+    retained.push('phantom:key#hard')
+    assert.equal(library.retainedCount, 2)
+    assert.equal(
+      library.retentionIsIntact,
+      false,
+      'one phantom pin must be detected, which is the whole point of this predicate',
+    )
+
+    // And the weakened form it replaced would not have noticed, which is why the
+    // replacement was worth making rather than a matter of taste.
+    assert.ok(
+      library.size >= library.retainedCount - 1,
+      'sanity: the cache still holds the one real entry',
+    )
+    retained.pop()
+    assert.ok(library.retentionIsIntact, 'removing the phantom must restore intactness')
+  } finally {
+    library.dispose()
+  }
 })
