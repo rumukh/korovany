@@ -1750,6 +1750,29 @@ test('the head tracks its target through the chest, not past it', () => {
   // this file's own rule for exactly this situation, and it is preferable to a third
   // number produced at the hour when the previous two were produced.
   //
+  // **And the disagreement turned out to be the experiment**, which is not why it was
+  // kept. Two harnesses were written independently, on different grids, with different
+  // pose conventions, and they disagree about row 1 and agree about the gap:
+  //
+  //             row 1 (fully joint)     gap to row 2
+  //   here                   4.8203                0
+  //   reviewer               4.8119         6.43e-13
+  //
+  // The rows differ by 0.0084 — 0.17%, one search finding a higher value than the other,
+  // which is a lower bound being revised upward *observed* rather than argued. The gaps
+  // differ by 6.43e-13. **The disagreement in the row is 1.3e+10 times the disagreement
+  // in the gap.** So the quantity that varies between instruments is the row and the
+  // quantity that is invariant is the difference, measured across two implementations
+  // that share no code — which is the claim above, demonstrated, by the one artefact of
+  // this review that neither party could explain and both agreed to leave standing.
+  //
+  // Worth stating because the decision was right for a reason nobody had: it was kept to
+  // avoid a late re-derivation, and it turned out to be the only datum that could
+  // separate "the figure is exact" from "the gap is exact". **A disagreement recorded
+  // instead of reconciled is a second instrument you did not have to build** — and
+  // reconciling it would have destroyed the evidence, because agreement is what a
+  // reconciliation manufactures.
+  //
   // Three causes were offered for one number and all three were wrong, by three
   // different people, while the number itself survived every attack. That pattern has a
   // sharper reading than "verify your causes", and it is the one worth keeping: **a
