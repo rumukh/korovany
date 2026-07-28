@@ -1182,6 +1182,41 @@ folded form; widening the expression rule to *"unreadable means dangerous"* fail
 **Five rounds, and the only reason there is a fifth is that somebody doped the part the design
 had declared safe to leave imperfect.**
 
+#### Round six: the pins covered the file set and one file's values, not the gap between
+
+The same reviewer then found what neither pin reaches — **an edit to an existing pinned
+workflow.** Changing only `ci.yml`'s `group:` to `"group": pages`, leaving its cancelling
+expression untouched, keeps the file set identical and the deployment's values identical, so
+neither pin fires. `"group"` is the same property as `group` to any YAML parser and was a
+different one to this check, whose key pattern accepted no quotes. **Five tests passed while
+CI could cancel a deployment.**
+
+That is the sixth defect and the sixth to be a defect in a *form*. Answering it with a seventh
+spelling would repeat what the previous five demonstrated does not converge, so the answer is
+both halves at once:
+
+- **The parser learns the form**, because round five established that the readable subset has
+  to be correct underneath the pins rather than excused by them. Quoted keys are read, on the
+  `concurrency:` line and on its children.
+- **A pin that does not parse at all.** Every line in every workflow that mentions concurrency
+  is collected as text — in any dialect, quoted or not, nested anywhere — and compared against
+  a fixed list. A spelling this file has never seen still changes the text. **The failure mode
+  of a parser is silence; the failure mode of a string comparison is noise, and noise is the
+  survivable one.**
+
+It is deliberately not a file hash. Comment-only lines are skipped and trailing comments
+stripped, both verified by negative control: editing the rationale comment in `ci.yml` and
+changing `permissions: contents: read` to `write` leave it green, while all three group
+mutations fail it. **A gate that fires on unrelated edits gets disabled, and a disabled gate
+is the one failure this catalogue cannot recover from.**
+
+One instrument note, because it nearly produced a false negative. A probe script threw while
+formatting output *after* writing the mutation and *before* the restore in its `finally`, so
+the next run's baseline was silently the mutated file. It surfaced only because the harness
+prints whether each mutation landed and one reported `False` for an edit that should have
+applied — **the restore had already made it true.** The `APPLIED:` print earned its place
+again, this time by catching contamination rather than absence.
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,

@@ -81,6 +81,15 @@ type ConcurrencyBlock = { readonly line: number; readonly entries: Map<string, s
 const DEPLOYS_PAGES = /^\s*(?:-\s+)?uses:\s*["']?actions\/deploy-pages(?:@|["'\s]|$)/m
 
 /**
+ * A mapping key and its value. The key may be quoted: `"group": pages` is the same
+ * property as `group: pages` to every YAML parser, and was a different one to this
+ * check — a reviewer changed only the quoting in `ci.yml`, left its cancelling
+ * expression intact, and all five tests passed while CI could cancel a deployment.
+ * The sixth round, and the sixth defect that was a defect in a *form*.
+ */
+const KEY_VALUE = /^\s*["']?([A-Za-z][A-Za-z0-9-]*)["']?\s*:\s*([\s\S]*)$/
+
+/**
  * A scalar as written in YAML, reduced to what it means: trailing comment removed,
  * surrounding quotes stripped. `'false'` and `"false"` and `false` are one value,
  * and a check that treats them as three flags a workflow for declining to cancel.
@@ -115,18 +124,18 @@ function concurrencyBlocks(source: string): ConcurrencyBlock[] {
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i] ?? ''
 
-    const inline = /^(\s*)concurrency:\s*\{(.*)\}\s*$/.exec(line)
+    const inline = /^(\s*)["']?concurrency["']?\s*:\s*\{(.*)\}\s*$/.exec(line)
     if (inline) {
       const entries = new Map<string, string>()
       for (const part of (inline[2] ?? '').split(',')) {
-        const pair = /^\s*([A-Za-z][A-Za-z0-9-]*)\s*:\s*([\s\S]*)$/.exec(part)
+        const pair = KEY_VALUE.exec(part)
         if (pair) entries.set(pair[1] ?? '', scalar(pair[2] ?? ''))
       }
       blocks.push({ line: i + 1, entries })
       continue
     }
 
-    const opened = /^(\s*)concurrency:\s*$/.exec(line)
+    const opened = /^(\s*)["']?concurrency["']?\s*:\s*$/.exec(line)
     if (!opened) continue
 
     const indent = (opened[1] ?? '').length
@@ -137,7 +146,7 @@ function concurrencyBlocks(source: string): ConcurrencyBlock[] {
       if (/^\s*(#.*)?$/.test(child)) continue
       if (child.length - child.trimStart().length <= indent) break
 
-      const pair = /^\s*([A-Za-z][A-Za-z0-9-]*):\s*(.*)$/.exec(child)
+      const pair = KEY_VALUE.exec(child)
       if (!pair) continue
 
       let value = scalar(pair[2] ?? '')
@@ -596,4 +605,45 @@ test('the Pages workflow still declares the group and the flag it is supposed to
   assert.ok(only, 'concurrency block missing after a length check said it was there')
   assert.equal(only.entries.get('group'), 'pages')
   assert.equal(only.entries.get('cancel-in-progress'), 'false')
+})
+
+
+/**
+ * The two pins above cover the *set* of workflows and the *deployment's* values. A
+ * reviewer found the hole between them: an edit to an existing pinned file, leaving
+ * the deployment untouched, fires neither. Changing only `ci.yml`'s `group:` to
+ * `"group":` — valid YAML, the identical property — hid its group from the parser
+ * while its cancelling expression stayed live, and all five tests passed.
+ *
+ * Every previous round was answered by teaching the parser one more spelling, and
+ * every round after it found another. This pin does not parse. It collects the lines
+ * that mention concurrency at all, in any dialect, quoted or not, nested anywhere,
+ * and compares them as text. A spelling this file has never seen still changes the
+ * text, so a new dialect is a failure rather than a silence.
+ *
+ * Comment-only lines are skipped and trailing comments stripped, so prose about the
+ * rationale can be edited without failing a test about semantics.
+ */
+test('every line that mentions concurrency, in every workflow, is pinned as text', () => {
+  const declarations = readWorkflows()
+    .slice()
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .flatMap((file) =>
+      file.source
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => !line.startsWith('#'))
+        .map((line) => line.replace(/\s+#.*$/, '').trim())
+        .filter((line) => /concurrency|group|cancel-in-progress/i.test(line))
+        .map((line) => `${file.name} :: ${line}`),
+    )
+
+  assert.deepEqual(declarations, [
+    'ci.yml :: concurrency:',
+    "ci.yml :: group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}",
+    "ci.yml :: cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
+    'deploy-pages.yml :: concurrency:',
+    'deploy-pages.yml :: group: pages',
+    'deploy-pages.yml :: cancel-in-progress: false',
+  ])
 })
