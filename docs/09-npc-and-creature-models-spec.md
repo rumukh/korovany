@@ -434,6 +434,13 @@ no new dependencies.
   `applyChestPose`, `chestGaitYaw`, `decayStrideOnStagger`, `actorGaitCadence` and
   `actorSpeedForRole`, so the suite drives it instead of reading it — twelve source pins
   became two calls, and a rewrite can no longer evade them.
+  That list names functions and no line numbers, which was accidental and is now
+  deliberate: **a name is a way to re-derive and a line number is a value**, so a table of
+  line numbers in a document is the most perishable thing this work could have committed,
+  and nothing would fail when it decayed. A reviewer flagged the hazard against a table
+  that turned out to exist only in a message — the committed prose had already dropped
+  the numbers. Correct by habit is the state a thing is in immediately before it stops
+  being correct, so it is written down here as a choice.
   *Unconvertible*: the wiring claims and the alias evasion, because `GameEngine` is not
   constructible in Node, which is why the test file states them as limitations instead of
   implying it has none.
