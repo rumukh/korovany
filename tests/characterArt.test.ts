@@ -2807,6 +2807,48 @@ test('the engine wires the rig the way these tests measure it', () => {
     'the beast roster has changed, so the cadence table above is sampling it rather '
     + 'than enumerating it. Add the new creature\'s cadence, or remove the departed one.',
   )
+  // And the three humanoid roles `GAITS` leaves out, found by asking the same question
+  // of the same function rather than waiting to be told a third time.
+  //
+  // `GAITS` documents why it excludes `minion`, `captive` and `commander` **from the
+  // wobble simulation** — minion duplicates soldier, commander has speed 0 and does not
+  // walk. That is a decision about which gaits are worth simulating. It is not a reason
+  // for their *constants* to be unpinned, and `commander`'s speed of 0 is a distinct
+  // production value that nothing checked at all.
+  //
+  // Enumerated from `characterRoles()`, so the nine are nine.
+  const ROLE_GAITS: Record<
+    (ReturnType<typeof characterRoles>)[number], readonly [number, number]
+  > = {
+    soldier: [3.7, 6.8], minion: [3.7, 6.8], scout: [4.8, 8.4],
+    archer: [3.2, 7.2], brute: [2.6, 5.8], commander: [0, 6.8],
+    champion: [4.15, 5.8], peasant: [3.1, 6.8], captive: [3.7, 6.8],
+  }
+  assert.deepEqual(
+    [...characterRoles()].sort(),
+    Object.keys(ROLE_GAITS).sort(),
+    'the humanoid roster and this speed/cadence table disagree, so the table is a '
+    + 'sample of the roles rather than an enumeration of them.',
+  )
+  for (const role of characterRoles()) {
+    // The cast is licensed by the assertion immediately above, not asserted away by it:
+    // `characterRoles()` returns `readonly string[]`, and the `deepEqual` has just
+    // established that its members are exactly the keys of this table. Doing it in that
+    // order matters — a cast placed before the enumeration check would be the thing
+    // hiding a mismatch rather than the thing relying on one being absent.
+    const named = role as Parameters<typeof actorSpeedForRole>[0]
+    const [speed, cadence] = ROLE_GAITS[role]
+    assert.deepEqual(
+      [actorSpeedForRole(named), actorGaitCadence(named)],
+      [speed, cadence],
+      `the ${role}'s speed/cadence is `
+      + `[${String(actorSpeedForRole(named))}, ${String(actorGaitCadence(named))}], not the `
+      + `[${String(speed)}, ${String(cadence)}] recorded here. Three of these roles are `
+      + 'absent from `GAITS` for stated reasons about which gaits are worth simulating — '
+      + 'which is a decision about the wobble table, not a licence for their constants '
+      + 'to go unchecked.',
+    )
+  }
   assert.ok(
     /const heavy = actor\.role === 'brute' \|\| actor\.role === 'champion'/.test(source),
     'the `heavy` predicate has changed, so GAITS\' split across the two coefficients no '
