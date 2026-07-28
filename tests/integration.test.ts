@@ -1239,3 +1239,106 @@ test('an ink shell under a hidden LOD level is free, which is why max beats sum'
   library.releaseOutline(binding)
   library.dispose()
 })
+
+
+/**
+ * Neither spec may contain a mangled paragraph join.
+ *
+ * Four times tonight `docs/10` arrived with prose spliced into the middle of itself, and
+ * the last time it had compounded to three copies of one fragment. The shape is identical
+ * every time: an editor inserting a paragraph leaves the tail of the sentence it split as
+ * a **dangling line prefixed with one space**, and jams the other copy onto the following
+ * line **without a space** — `survivedso long`, `sessionabout its own work`,
+ * `alreadyargued for`.
+ *
+ * Nothing could catch it. Markdown has no gate, which is the same failure as every "not
+ * yet" claim in these files and the reason the scanner above exists. This is the same
+ * remedy applied one level down.
+ *
+ * Three detectors, in increasing order of how specific they are:
+ *
+ *   1. a prose line beginning with a single space — the dangling fragment itself
+ *   2. `**` jammed between two word characters — a bold marker that lost its space
+ *   3. **the duplicate prefix**: a line whose whole text reappears as the opening of a
+ *      nearby line that continues past it. That is the actual signature, and unlike the
+ *      first two it cannot fire on legitimate prose, because a paragraph does not repeat
+ *      its own opening within twelve lines and then keep going.
+ *
+ * Fenced code blocks are excluded from (1): indented lines inside them are correct, and a
+ * detector that fires on the spec's own `text` fences would be silenced within a day.
+ *
+ * The world-objects session landed the first two of these on its own branch after this
+ * was reported to it. This covers both specs, because `docs/08` has the same exposure and
+ * only this branch edits both.
+ *
+ * What it cannot detect: a splice that lands on a paragraph boundary, where the duplicated
+ * fragment is a whole line and the join needs no concatenation. None of the four instances
+ * had that shape, but nothing rules it out.
+ */
+test('neither spec contains a mangled paragraph join', () => {
+  const specs = [
+    '08-graphics-foundation-spec.md',
+    '10-world-objects-and-props-spec.md',
+  ]
+  const dangling: string[] = []
+  const jammed: string[] = []
+  const duplicated: string[] = []
+  let linesScanned = 0
+
+  for (const spec of specs) {
+    const source = readFileSync(new URL(`../docs/${spec}`, import.meta.url), 'utf8')
+      .replace(/\r\n?/g, '\n')
+    const lines = source.split('\n')
+    linesScanned += lines.length
+    let fenced = false
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index]
+      if (line.startsWith('```')) { fenced = !fenced; continue }
+      if (fenced) continue
+      if (/^ [A-Za-z*]/.test(line)) {
+        dangling.push(`${spec}:${String(index + 1)}: ${line.trim().slice(0, 70)}`)
+      }
+      if (/[a-z]\*\*[A-Z]/.test(line)) {
+        jammed.push(`${spec}:${String(index + 1)}: ${line.trim().slice(0, 70)}`)
+      }
+      const text = line.trim()
+      if (text.length < 20) continue
+      for (let ahead = index + 1; ahead < Math.min(index + 12, lines.length); ahead += 1) {
+        const other = lines[ahead].trim()
+        if (other.length > text.length && other.startsWith(text)) {
+          duplicated.push(
+            `${spec}:${String(index + 1)} reappears at :${String(ahead + 1)} and continues: `
+            + `${other.slice(text.length, text.length + 40)}`,
+          )
+          break
+        }
+      }
+    }
+  }
+
+  // Domain guard on the enumeration, not on a line count: the specs must have been read.
+  assert.equal(
+    linesScanned > 0 && specs.length,
+    2,
+    'the spec scan read nothing, so every empty list below is vacuous',
+  )
+  assert.deepEqual(
+    duplicated,
+    [],
+    'a line reappears verbatim as the opening of a nearby line that continues past it. '
+    + 'That is a paragraph spliced into the middle of itself: delete the dangling copy '
+    + 'and split the joined line at the seam.',
+  )
+  assert.deepEqual(
+    dangling,
+    [],
+    'these prose lines begin with a single space, which is the residue of a paragraph '
+    + 'spliced into itself. Join them to the paragraph they belong to.',
+  )
+  assert.deepEqual(
+    jammed,
+    [],
+    'a `**` marker sits between two word characters, so a sentence was joined without '
+    + 'its space. Restore the space.',
+  )
+})
