@@ -2973,15 +2973,42 @@ test('every type the spec names is exported by the barrel', () => {
  * will churn traversals heavily. Blocking integration on a parsing artifact costs more
  * than this test is worth.
  *
- * One self-defeat to know about before then, found by reading these assertions rather
- * than recalling them, and then measured. The `sweeps.length >= 3` floor is there so a
- * broken scan cannot pass by finding nothing — but it also encodes "at least three
- * *separate* sweeps exist". The scan currently finds **4** (`GameEngine.ts` `:7460`,
- * `:9974`, `:10661`, `:10675`, all guarded), so the margin is **1**: removing any two
- * turns this red. Consolidating them into one guarded helper — the fix this docblock
- * argues for — drops the count to 1 and fails on a success. Lower the floor to 1, which
- * still catches a scan that finds nothing, or delete the test. Do not keep four
- * traversals alive to keep it green.
+ * One self-defeat, found by reading these assertions rather than recalling them, then
+ * measured, and now fixed. The floor used to be `sweeps.length >= 3`. Its only intended
+ * job is *"the scan ran and didn't silently find nothing"* — but at 3 it additionally
+ * encoded **"at least three separate material sweeps exist"**, a claim about code shape
+ * nobody meant to make. The scan finds **4** (`GameEngine.ts` `:7460`, `:9974`, `:10661`,
+ * `:10675`, all guarded), so the margin was **1**, and consolidating them into one
+ * guarded helper — the fix this docblock argues for — would have dropped the count to 1
+ * and turned the test red on a success.
+ *
+ * The general form, which is worth more than the instance:
+ *
+ * > **A floor that exists to prove the measurement ran can accidentally assert the shape
+ * > of the thing measured. The tell is that the codebase improving makes it fail. Any
+ * > assertion that goes red when the code gets better is asserting something nobody
+ * > meant to.** The smallest value that still separates "ran" from "found nothing" is
+ * > almost always 1.
+ *
+ * So the floor is 1, and the claim it was mistaken for — that the scan actually examined
+ * every call site it found — is now made directly and shape-independently by the
+ * `unterminated` assertion, which scales with whatever the tree contains.
+ *
+ * **What this test can and cannot detect**, stated because a scanner that reads as
+ * exhaustive is the most dangerous kind. The paren walk counts parentheses in source
+ * text, so one inside a string literal or a comment inside a traverse body closes it
+ * early. A body truncated *after* `.material =` but *before* its guard reports a false
+ * positive, which is loud and safe; a body truncated *before* `.material =` drops the
+ * site silently, and that is the direction that matters. The `unterminated` assertion
+ * catches both, because a traverse callback always ends at a closing brace and a
+ * truncated capture almost never does — a detector, not a proof, and cheap enough to be
+ * permanent rather than a measurement in prose that quietly stops being true.
+ *
+ * It was checked against a real parser rather than argued: running the same walk over a
+ * copy with every string and comment span blanked out gives the identical end offset for
+ * all 12 traverse sites, all 12 contain a callback, and 4 assign material. That is why
+ * the brace check is stated as sufficient here — it agrees with the exact answer on
+ * every site this tree has.
  *
  * Before consolidating them, know that **one of the four is live in this tree** and the
  * other three are not. `:9974` `restorePlayerLimb` traverses a limb of `this.player`;
@@ -3001,6 +3028,7 @@ test('every bulk material sweep by traversal excludes outline shells', () => {
 
   const sweeps: string[] = []
   const unguarded: string[] = []
+  const unterminated: string[] = []
 
   for (const name of files) {
     const source = readFileSync(new URL(name.split('\\').join('/'), root), 'utf8')
@@ -3010,27 +3038,57 @@ test('every bulk material sweep by traversal excludes outline shells', () => {
       const open = match.index + match[0].length - 1
       let depth = 0
       let end = open
+      let closed = false
       for (let i = open; i < source.length; i += 1) {
         if (source[i] === '(') depth += 1
         else if (source[i] === ')') {
           depth -= 1
-          if (depth === 0) { end = i; break }
+          if (depth === 0) { end = i; closed = true; break }
         }
       }
-      const body = source.slice(open, end)
-      if (!/\.material\s*=(?!=)/.test(body)) continue
       const line = source.slice(0, match.index).split('\n').length
       const label = `${name}:${String(line)}`
+      if (!closed) { unterminated.push(label); continue }
+      const body = source.slice(open, end)
+      // A traverse callback is `(o) => { … }` or `function (o) { … }`, so a correctly
+      // captured body ends at that callback's closing brace. One that ends anywhere else
+      // was cut short — see the docblock on what cuts it short and why it matters.
+      if (!/\}\s*$/.test(body)) { unterminated.push(`${label} (ends '${body.trimEnd().slice(-1)}')`); continue }
+      if (!/\.material\s*=(?!=)/.test(body)) continue
       sweeps.push(label)
       if (!body.includes('isOutlineShell')) unguarded.push(label)
     }
   }
 
-  // Without this the whole test passes by finding nothing — if the scan breaks, or
-  // the sweeps move to a helper, an empty `unguarded` would look like a clean bill.
+  // Every `.traverse(` the regex found must have yielded a body the paren walk closed at
+  // a callback's closing brace. This is the claim the floor below is often mistaken for
+  // and cannot make: the floor only notices the scan collapsing to nothing, while a walk
+  // that ends in the wrong place for *one* site drops that site from both lists and reads
+  // as a clean bill. Unlike a count it scales with whatever the tree contains, so it
+  // cannot go red for the code improving.
+  assert.deepEqual(
+    unterminated,
+    [],
+    'the paren walk did not close at a callback brace for these traverse call sites, so '
+    + 'their bodies were never examined and they are missing from both lists below',
+  )
+
+  // Floor of 1, not 3, and the reason is worth more than the test.
+  //
+  // A floor that exists to prove the *measurement ran* can accidentally assert the
+  // *shape of the thing measured*, and the tell is that improving the codebase makes it
+  // fail. At 3 this line additionally claimed "at least three separate material sweeps
+  // exist" — a claim about code shape nobody meant to make. The scan finds 4, so the
+  // margin was 1, and consolidating them into one guarded helper — the fix this
+  // docblock argues for — drops the count to 1 and turns the test red on a success.
+  //
+  // The smallest value that still distinguishes "ran" from "found nothing" is 1. The
+  // stronger claim now lives above, where it belongs, and is shape-independent.
   assert.ok(
-    sweeps.length >= 3,
-    `expected the known material sweeps, found ${String(sweeps.length)}: ${sweeps.join(', ')}`,
+    sweeps.length >= 1,
+    'found no material-assigning traversal at all in src/game, which means the scan '
+    + `broke rather than that the code is clean (${String(unterminated.length)} `
+    + 'unterminated)',
   )
   assert.deepEqual(
     unguarded,
