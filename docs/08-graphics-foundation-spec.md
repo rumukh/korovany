@@ -783,6 +783,178 @@ the injection for one surface. The first mutation attempted was inert — it gat
 which said nothing about the test. **A mutation that perturbs nothing observable is not a
 control**, and the pass it produces is the same green as a real one.
 
+#### A summary that reads the same on both paths
+
+`npm run docs:facts` is one of the four gates every branch here is measured by, and until
+this commit its summary was **byte-identical between a passing run and a failing one**:
+
+```
+clean run    exit 0    ... TOTAL 2313 facts, 187 missing ...  declared residue: 187 accepted, 0 NOT accepted
+doped run    exit 1    ... TOTAL 2313 facts, 187 missing ...  declared residue: 187 accepted, 0 NOT accepted
+```
+
+The mechanism is worth stating because it is not carelessness. The failure class this gate
+most often catches — a number written in the document contradicting the number the tool
+counts — **moves no count. It contradicts one.** So every total the summary prints is
+unchanged by it, the mismatch was written to `stderr` *after* the last line of `stdout`, and
+the last thing a reader saw was `0 NOT accepted`. Exit code red, summary green.
+
+That is the worse of the two available arrangements: **the verdict lived in the stream nobody
+reads, contradicted by the stream everybody does.** Fixed by ending both exit paths — the
+summary and the early return taken when recall controls fail — with a stated verdict on
+`stdout`, and held there by `tests/strategyFactsVerdict.test.ts`, which compares the two runs
+and asserts the failing invocation actually failed *before* comparing their wording.
+
+One observation logged rather than chased, because it belongs to whoever owns that document.
+The script's `--break=<word>` flag exists to answer "does a green run mean anything", and its
+own comment says a term whose deletion leaves the run green is a term the gate does not gate.
+**`--break=seed` removes 87 occurrences from `docs/STRATEGY.md` and every figure is
+identical** — 2313 facts, 187 missing, 187 accepted, PASSED. Whether those facts are anchored
+on other words or are already inside the declared residue is a question for that document's
+owner; what is recorded here is only that the deletion is invisible to the gate.
+#### Most of a new gate was already gated, and the mutations said which part
+
+The barrel tests above were written from a report that `tsc` accepts a duplicate re-export
+silently. Correcting that premise took two passes and the second one reversed the first, so
+both are set out here. It took four mutations of the real file — each applied to
+`src/game/art/index.ts`, then every gate run against it:
+
+| mutation | Node loads | `npm run build` | ordering gate | coverage gate |
+| --- | --- | --- | --- | --- |
+| a formatter changes one closing quote to `"` | yes | passes | **fires**, 7 blocks vs 6 parsed | passes |
+| a value is exported twice | **`SyntaxError`** | — | dead | dead |
+| a type is exported twice | yes | **`TS2300`**, both lines | passes | fires |
+| an export is aliased, `{ x as x }` | yes | **passes** | passes, on a smaller file | **fires** |
+
+So the duplicate half of that test catches nothing that was not already caught, harder and
+earlier: a duplicated value stops the module loading, which takes the whole suite with it, so
+the assertion written for that case is unreachable code. A duplicated type fails the build
+before the suite runs. The test keeps the check only so that `npm test` on its own names the
+barrel, and the comment above it now says so rather than repeating the premise.
+
+The half that earns its place is the one nobody asked for. **Aliasing an export leaves the
+build green, the module loading, and the name invisible to the text parse that the ordering
+gate shares** — so the ordering gate goes on passing while checking a quietly smaller file.
+That is the same failure as the `>= 5` floor two paragraphs down, arriving through a
+different door: a check that reports on a subset and describes it as the file. The
+cross-check against the runtime namespace closes it, and needs no maintenance, because the
+population maintains itself.
+
+Two things about how this was found are worth more than the finding. **The premise came from
+a peer's report of their own breakage and was carried into a commit message and a test
+comment without being run once** — plausible, first-hand, and adopted at the wrong scope.
+And **the mutation written to prove the duplicate check works never reached it**: Node
+rejected the file, the run went red, and a red run under a mutation is exactly as easy to
+mistake for a working detector as a green one is for a working subject. The failure had to be
+read to see it came from the loader, not the assertion.
+
+Then the peer re-ran it and the correction above turned out to be over-broad in its turn.
+**`tsc --noEmit -p tsconfig.json` really does exit 0 on a duplicated value re-export**, with
+no output — so "neither is silent" was true of the union of the gates and false of the one
+command a person is most likely to run alone. Their report was reproducible; what it could
+not carry was scope, because a single instrument had been sampled and written up as a claim
+about the world.
+
+The control settles it and inverts the finding. That same invocation exits 0 on
+`export const wrong: number = 'definitely a string'`. The root `tsconfig.json` is `"files":
+[]` with two `references` and no `--build`, so **it type-checks zero files**: it is not blind
+to duplicate exports, it is blind, and no green it has ever produced was evidence about
+anything. `npm run build` opens with `tsc -b`, which reports `TS2300` and exits 2 on both
+duplicate forms — the table above holds because that is the column it measured.
+
+So the sequence runs: a green read as a property of the subject, corrected to a claim about
+all gates, corrected again by a control nobody had run on the instrument itself. **Each step
+was a true reading attached to a question it did not answer**, and only the last one asked
+whether the instrument could fail at all.
+#### A green pull request is a claim about a base that may already be gone
+
+Wave 2 and Wave 3 branch off this foundation and merge in parallel, so the gates above have
+a property worth stating outright: **they run against the base as it was when the run
+started, not as it is when you press merge.** GitHub tests a simulated merge — the CI job
+for PR #40 checked out `Merge 04d64b1 into 113977b` — but `113977b` had been superseded
+fifteen minutes before that PR landed.
+
+Measured on this repository, the first day two waves were open at once:
+
+```
+19:18:47Z   #40 CI runs, checking out  Merge 04d64b1 into 113977b     green
+19:33:47Z   #38 merges                 main becomes d66478b
+19:33:56Z   #40 merges, nine seconds later
+            git merge-base --is-ancestor d66478b 04d64b1  ->  exit 1
+```
+
+Both pull requests touched `src/game/art/index.ts`. Neither one's CI ever saw the other's
+version of it, and the barrel gate this section is about would not have caught a conflict
+between them, because it never ran on a tree containing both. Branch protection carries the
+required check under its correct name but sets `required_status_checks.strict` to `false`,
+which GitHub documents as *"Require branches to be up to date before merging."*
+
+**This was a near miss, not an incident.** `main` at `075b112` passes all four gates, and
+the push-triggered run on it succeeded; the two changes were genuinely independent. It is
+recorded because the next pair may not be, and because the cost of finding out is one
+command: fast-forward to `main` and run the suite before assuming your merged work is the
+work that was tested.
+
+One instrument note, since it nearly wrote a false sentence into this paragraph.
+`gh run list --json headSha` reports `04d64b1` for that run — the pull request head, not the
+tree the job checked out, which was a merge commit that exists nowhere in the repository's
+history. **The field is named for what you asked about, not for what ran**, and only the
+checkout line in the log distinguishes them.
+
+#### The cancelled runs were builds, and the flag is still wrong
+
+`deploy-pages.yml` carried `cancel-in-progress: true` on a workflow-level concurrency group
+covering both jobs. The evidence first offered for its being harmful was a run `cancelled`
+eight seconds before a successful one, read as a deployment killed mid-flight.
+
+It was not. Every cancellation in this repository's history — **four**, not one — killed the
+`build` job:
+
+| run | commit | build | deploy |
+| --- | --- | --- | --- |
+| 30392484430 | `d66478b` | cancelled 9 s in, 0 steps recorded | **0 steps** |
+| 30362159815 | `c8ca38e` | cancelled inside `npm ci` | **0 steps** |
+| 30357016872 | `f582e49` | cancelled | **0 steps** |
+| 30355639257 | `1ff6ed4` | cancelled | **0 steps** |
+
+with the control that makes those zeros mean anything: a successful run reports `build` 10
+steps and `deploy` **3**. The API does report deploy's steps when deploy runs, so the zeros
+are real and no deployment has ever been interrupted here.
+
+> `gh run list --conclusion cancelled` answers *was a run cancelled*. It was read as *was a
+> deployment interrupted*.
+
+The flag is still wrong — the group covers `deploy`, so the window is open — but on the
+template's grounds rather than an incident's, and the one-word framing hid a cost: `true`
+had correctly abandoned four superseded builds, which is the behaviour it exists to provide.
+
+**The platform claim I was about to correct from memory was right.** `queue` is a real
+concurrency key. Checked against the workflow JSON schema, which declares
+`additionalProperties: false`, it is `enum [single, max]`, default `single`, *"additional
+pending runs cancel the previous one"* — and `queue: max` with `cancel-in-progress: true` is
+disallowed outright.
+
+That default is why `ci.yml` gives pushes to `main` a unique group: it owes a verdict to
+every commit, and a third push would cancel the pending second. `deploy-pages.yml` owes no
+such thing — `main` is linear, so a superseding push contains the commit it displaces and
+only the newest content is served. **The same scheduler behaviour is a defect in one
+workflow and the desired behaviour in the other**, which is why the `ci.yml` fix was not
+copied across.
+
+The guard is `tests/deployWorkflow.test.ts`, and its ceiling is stated in the file: it reads
+the input handed to the scheduler and cannot observe the scheduler. The pending behaviour in
+particular is **unobservable from run history, because `cancel-in-progress: true` prevents
+the pending state from arising at all** — the setting suppresses its own evidence. What the
+check can fail for is the realistic case: somebody edits the flag back.
+
+It parses `concurrency:` blocks by indentation rather than grepping for the string, so a key
+relocated under a job-level block is caught, and it reports the inline mapping form as a
+failure rather than passing on syntax it cannot read. Six doped inputs — and **the sixth
+found a hole in the detector**: the Pages-deployment pattern anchored `uses:` at line start,
+so a step written compactly as `- uses: actions/deploy-pages@v4` was invisible to it. The
+real file uses the other form, so every run against this repository would have passed while
+the check was blind to the exact evasion it was written for.
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,

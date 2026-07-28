@@ -282,6 +282,106 @@ no new dependencies.
   evidence available that the mechanism is real and that a rule is not a defence
   against it. The rule is about where to *look first*, not a claim about where every
   defect lives.
+- **What is the population of the thing this pins, and am I sampling it or enumerating
+  it?** This is the question that would have caught more defects in the head-rig work
+  than any other, and it kept recurring because the answer is almost always *sampling*
+  and the sample is almost always **the one that was in front of the author**.
+  It appeared as one plan standing in for twenty-seven, one pose for four hundred and
+  sixty-two, one grid corner for a joint set, one stride and one delta for a function's
+  domain, the positive half of an axis for the whole axis, one call site for the three
+  that exist, one placement for everywhere a write can land, one pivot for the two a
+  derivation names, one function's scope for a property that has none, and one argument
+  of a call for its argument list. Every one was cheap to enumerate.
+  Three refinements earned by repetition. **The axis you were shown gets enumerated and
+  the axis nobody complained about stays a sample** — so ask which axes a thing has, not
+  whether you swept the one that broke. **Enumerating an axis at two points is
+  enumerating the points**, which a clamp sitting on a sample point will demonstrate.
+  And **does the enumeration cover the whole of each axis, or the part the
+  demonstration used?** A stride sweep once ran `0.01 … 1` under a comment correctly
+  naming its population as `±0.62` — the domain was stated accurately in the sentence
+  justifying the enumeration, and the enumeration covered one side of zero, because
+  every mutation ever shown for that function had used a positive stride.
+  The generalisation that ties this to the instrument rule above: **every guard
+  enumerates the failure that was demonstrated to it.** The three mutation guards, the
+  axis sweeps and the scope of each ban all have that shape, which is why a fix's
+  coverage should be derived from the domain rather than from the report that prompted
+  it.
+  And the form with time as the axis, which is the one that closed the sequence: **a
+  lesson gets applied forward to the thing in hand and not backward to the thing that
+  taught it.** A two-point pin on one axis produced the sentence *"enumerating an axis
+  at two points is enumerating the points"*; that sentence was then applied to the axis
+  being worked on and never carried back to the axis that had taught it, so it sat
+  forty lines above a pin in exactly the state it describes. **When a lesson is
+  written down, the first place to apply it is the case that produced it.**
+  And it applies to *fixes* as much as assertions: a fix scoped to the instance that was
+  reported has inherited its sample from the report.
+  The corollary that took two people to see: **the population has as many dimensions as
+  the claim has inputs, and the one you framed the question in is the one you will
+  enumerate.** Two harnesses were built within an hour to check the same equivalence
+  claim about a pose function. One swept 441 poses and left the Euler order at its
+  single default; the other swept all six orders and left the pose at one point. Both
+  framings were reasonable, both were one-dimensional, and each enumerated exactly the
+  axis its author had framed the question in. Neither was careless; the question was.
+- **A documented exclusion is a decision; the same exclusion carried into a different
+  assertion is a sample.** The subtlest form of the question above, and the one with no
+  usual tell. A gait table excluded three roles from a wobble simulation for written,
+  correct reasons — one duplicates another, one has speed zero and does not walk. Those
+  reasons justify excluding them from a *simulation of gait*. They say nothing about
+  whether their constants should be *checked*, and one of the three had a speed of zero
+  that nothing verified at all.
+  What makes this hard to see is that the scope arrives **pre-justified**: there is an
+  explanation sitting right beside it, it is sound, and it is answering a different
+  question. The documentation makes the subset look more rigorous rather than less,
+  which removes the tell that normally prompts the question — an unexplained subset.
+  **When a scope travels from one assertion to another, its justification does not
+  travel with it.**
+- **An instrument fails silently, and you catch it by looking at its output rather than
+  at its verdict.** Checking work with a script, a grep or a mutation harness is only as
+  good as the script, and a broken one does not announce itself: it returns a clean,
+  plausible, wrong answer. A sort check anchored on a name absent from the file measured
+  an empty slice and reported *sorted: true*. A mutation that never applied printed
+  *22 pass, 0 fail*, which is exactly what a working guard prints. A regex over-escaped
+  for the shell returned zero hits, which reads as *the pins are gone*.
+  The tempting generalisation — that instruments err toward "nothing wrong" — **is
+  false, and was refuted by a session that built one.** A case-insensitive grouping
+  invented three duplicates that did not exist; a culture-aware sort reported four
+  blocks unordered that were correctly ordered under the comparator the file uses.
+  Direction follows the comparator's bias and is not invariant.
+  What is invariant across every instance either session recorded: **not one was caught
+  by the verdict. Every one was caught by looking at what the instrument actually
+  produced** — a count, a diff, a matched line — and noticing it contradicted something
+  already known. So the operational forms are all the same shape: confirm a mutation
+  applied *and compiled* before believing a test result; confirm a query matched
+  something before believing a null; assert a parse found the expected order of
+  magnitude of items before believing anything about them, and put the count in the
+  failure message. **A detector must be made to fire on doped input before its silence
+  on real input means anything.**
+  **That applies to tools nobody wrote as much as to detectors someone did**, and this
+  repository contains the proof. `tsc --noEmit -p tsconfig.json` looks like a type-check
+  and is not one: the root `tsconfig.json` is `"files": []` plus project references, so
+  without `--build` the command compiles **zero files**. Measured with a positive control —
+  `export const wrong: number = 'definitely a string'` — it exits **0 with no output**,
+  while `tsc -b` exits **2** and names `TS2322` on the same file. Every green that
+  invocation has ever produced was a measurement of nothing, and it was quoted in
+  discussion for hours as evidence that a duplicate re-export type-checks cleanly. What
+  actually gates is `tsc -b`, which `npm run build` runs.
+  The general form caps a rule that sounds sufficient and is not: *name the instrument and
+  the claim cannot outgrow it* — **except that naming an instrument implies it does what
+  its name suggests.** A named instrument bounds a claim only once it has been shown
+  **capable of a different answer**. Nobody dopes a compiler, because its name is taken as
+  its specification, which is exactly the condition under which a vacuous one goes
+  unnoticed indefinitely.
+  That rule has a ceiling, and it is worth stating beside it: **a positive control
+  validates the instrument against the model, never the model against reality.** Dope a
+  checker that holds a wrong model with a defect *its model recognises* and it fires
+  correctly, the control passes, and the model stays wrong — so a doped control cannot
+  catch a checker asking the right question about the wrong object. The instance that
+  produced this: a sort check modelled the barrel as one sorted list when the file's
+  actual convention is per block, values then types. Its control passed and its verdict
+  was noise. What catches that class is the signal such a checker emits and its author
+  discards: **a detector firing broadly on input everyone believes correct is evidence
+  about the model, not the subject.** "The whole list is unsorted" on a file nobody had
+  complained about was the model announcing itself, and it was read as sloppiness.
 - **A measurement is a claim with a timestamp nobody writes down.** Every other rule
   here targets claims that were wrong. This one is about claims that were *right and
   stopped being* — which is a different failure, because a measurement carries its own
@@ -297,6 +397,179 @@ no new dependencies.
   message has a shelf life of minutes on an active repository. In a test, the same rule
   is why a figure computed by the assertion that quotes it cannot go stale without going
   red, and a figure copied from a mutation run can.
+  There is a sharper case, and review is where it lives: **a report is an input to the
+  thing it reports on, so an effective review invalidates its own baseline.** The final
+  pass of this work opened by stating a branch tip as unchanged since the previous pass.
+  It was six commits behind, and the newest of those commits existed *because of that
+  reviewer's own previous message* — it had been pushed under two minutes before the
+  claim was written. Nobody was careless; the review worked. That is the point. The
+  usual reading of staleness is that time passes and a number decays, which suggests a
+  slow-moving hazard. Here the decay was **caused by the report**, so the more useful a
+  review is, the faster its own tip claim expires — and the reviewer is the one party
+  who cannot see it, because the effect lands after they stop looking. The remedy is the
+  same one line, but the trigger is different: re-resolve at the moment of *writing the
+  close*, not at the moment of measuring, because the interval that matters is the one
+  the review itself opened.
+  **That narrows the window and does not close it, and the reviewer it was written for
+  said so.** Re-resolving late shrinks the gap from turn-duration to send-to-read
+  latency, which is bounded below by nothing either party controls: push one minute
+  later and a late re-resolve still ships a stale tip. The durable form is not timing but
+  **tense**. *"Tip `abc1234`, unchanged"* is a present-tense assertion about the world at
+  read time and has a shelf life; *"verified `abc1234` at 21:56"* is an assertion about
+  the past, is still true tomorrow, and silently tells the reader it may no longer hold —
+  which is the honest content of both. This is *carry the derivation, not the value*
+  applied to grammar rather than to method, and the two compose: **re-resolve late and
+  report in the past tense, and there is no window at all.**
+  With one condition that is easy to miss and makes the difference between the form
+  working and merely looking like it works: **the timestamp has to be the measurement's,
+  not the sentence's.** A past-tense claim carries exactly one fact the present-tense one
+  lacks — *when* — so a timestamp taken from the clock at authoring time is decoration,
+  and re-introduces the decay it was adopted to remove. The mechanical form is the same as
+  everywhere else here: **emit the timestamp from the command that took the measurement**,
+  not from the writer.
+  **This rule was derived from an instance that did not exhibit it, and the correction is
+  worth more than the example was.** One party read another's *"verified at 22:40:07"*
+  against a superseding commit timestamped 22:38:39 and concluded the hour was the
+  author's; a stated interval of 12 seconds was likewise read as wrong against a measured
+  113. Both readings were mistaken. The 12 was anchored to the *resolve* and the 113 to the
+  *previous commit* — two correct measurements of different gaps — and the timestamp had
+  in fact been emitted by `Get-Date` inside the same invocation as the gates, after they
+  finished.
+  What makes this worth keeping rather than deleting is why the error was not avoidable:
+  **a timestamp in prose carries no evidence of its own provenance.** From the reader's
+  side the sentence is byte-identical whether the clock was the instrument's or the
+  author's. So the rule **cannot be verified from the artefact, only from the practice** —
+  which is the same shape as *verify the mutation, not just the outcome*, and a stronger
+  justification for the rule than a genuine violation would have been. A correct
+  conclusion arriving with a wrong supporting story is this catalogue's most repeated
+  event, and the story is the part nobody re-measures, because the conclusion already
+  passed.
+  And the tense fix has a limit found in the same episode, worth stating beside it:
+  **a past-tense claim cannot decay, but its referent can cease to be resolvable.** The
+  commit that reviewer verified was dropped when this branch was rebased — it exists in no
+  branch, reachable only from one worktree. The claim about it is still true and always
+  will be; the object it names is gone from shared history. So *"cannot go stale"* is
+  precise about the claim and silent about the subject, and a claim naming a SHA should
+  name one that will still resolve, or say what it was verified *for*.
+  That has a decidable test rather than being advice: **is the SHA an ancestor of the
+  default branch?** A merged commit is permanent and a branch-local one is not, which is
+  the whole difference between the two references this document has held. Applied to the
+  only real SHA in this file — the `loftProfile` fix cited below — it resolves, is
+  contained by `main`, and is therefore safe to cite; applied to the orphan above, it
+  fails. One line of `git merge-base --is-ancestor` separates them, which makes this one
+  of the few rules here that is a check rather than a sentence.
+  One more thing came out of measuring that gap, and it is the sharpest instance the work
+  produced because every party measured and every party got a different answer. The
+  question — *is a reviewer's baseline falling further behind?* — was answered three ways
+  from the same commits within one hour: **self-sustaining** (asserted, unmeasured,
+  refuted); **7 → 5, converging** (measured, but across two of the four passes, because
+  the author measured against the last report he had read — a report standing in for the
+  set of them); **7 → 5 → 3 → 2, converging faster** (measured across all four, but the
+  last two against a fixed tip rather than "the tip at that moment", which was the stated
+  definition); and under that definition applied consistently, **7 → 5 → 6 → 6 — a steady
+  state**, which is neither story. The gap stabilises rather than closing, because each
+  report causes commits at about the rate the reviewer advances.
+  So: **a claim about a trend has two populations — the points, and the baseline each
+  point is measured against.** Enumerate the first, let the second drift, and the trend is
+  real in the arithmetic and absent in the world. Neither error here was careless; both
+  were caught only by recomputing from the raw commits, and the third answer was not
+  proposed by anyone until then.
+  The reviewer then found its own error was worse than the drift it had been diagnosed
+  with, and the mechanism is the part worth keeping. All of its points used a *fixed*
+  baseline; its first point was not computed at all but quoted from the other party, who
+  had used a moving one. Applied consistently its method gives **9 → 5 → 3 → 2**, and its
+  own first point disagrees with the published 7 by two. So the series was **two
+  definitions spliced**, not one definition drifting.
+  Why the splice was invisible is not luck. Measured over all four points, exactly one —
+  the second — returns the same value under both definitions, because the fixed baseline
+  happened to *be* the moving one at that moment. **The series therefore read as coherent
+  because the only point where the two methods cannot disagree sat exactly where a reader
+  checks for a seam.** The general form is the positive-control rule pointed at
+  methodology: **when two methods are spliced, agreement at a point where they must agree
+  is not evidence of anything — verify the seam where they must differ.**
+  And both parties committed the same underlying act within an hour, in different
+  materials: a PR status carried into a freshly timestamped block, and a gap figure
+  carried into a computation it was not produced by. **A value borrowed into a fresh
+  context reads as fresh**, inheriting the credibility of its neighbours rather than
+  carrying its own.
+  A third member arrived while one party was verifying the second: a diff taken over
+  `A..B` where the claim concerned one commit and the range held **seven**. The output was
+  real repository content, freshly produced, correct — and about a different subject
+  entirely, which is the only reason it was caught. Had the intervening commits touched
+  the same block, it would have read exactly like the answer. So the family is **a range,
+  a block or a context wider than the claim returns a superset that reads as the
+  answer**, and all three instances produced output that was true and answered a question
+  nobody asked.
+- **The guards this work produced almost all check things that are free to check.** Six
+  mechanical forms came out of eighteen review passes — confirm the mutation applied,
+  confirm it compiled, confirm the query matched, dope the detector before believing its
+  silence, emit the timestamp from the measuring command, verify a spliced seam where the
+  methods must differ. Every one audits the author's own instrument, where being wrong
+  costs nothing socially, and the classes this programme repeatedly found unaudited — a
+  credit, a hedge, a compliment, another party's figure — have none of them.
+  The predictor is better than the list, because it generates rather than enumerates:
+  **a check with a social cost and no epistemic reward is a check nobody runs**, and the
+  next unaudited class will be whatever else has that shape.
+  **An earlier version of this entry said "not one guards a claim whose checking is
+  awkward", and a reviewer produced the counterexample from its own work.** A seventh
+  guard exists — *check whether the fix is free before recommending it* — it is squarely
+  in the awkward class, since its entire effect is to delete a finding from your own
+  report, and unlike the six it can be shown **firing on something consequential**: it
+  withheld a one-line recommendation that had a precedent one commit old and would have
+  broken four legitimate writes. The six between them have one demonstrable firing all
+  evening.
+  Why it was missing is the better half. **The six each have a scar** — every one was
+  written after paying for the failure it prevents. The seventh was invented in the moment
+  and worked first time, so nothing forced it into the record. **A catalogue assembled
+  from scars systematically omits the guards that never failed**, independent of whether
+  they are cheap or awkward to run — which is this programme's own defect, occurring
+  inside the entry that catalogues the programme's defects.
+  What survives is sharper than what was claimed: **the only guard here that checks
+  something awkward is the only one that was never written down.** The awkward class is
+  not merely unguarded — it goes unrecorded even when it is guarded.
+  And the reason that join was available at all is worth the next reader's attention:
+  both halves were already in this file, written twenty minutes apart, and neither author
+  saw the connection while writing either. **A catalogue with enough members starts
+  containing its own generalisations before anyone states them**, which is a cheaper place
+  to look than the code — and nobody looked there until the supply of new members ran out.
+- **A rule stored without its trigger is a guard with no call site.** It exists, it is
+  correct, and nothing invokes it — which is the same object as an assertion that cannot
+  fail for the defect it names, one level up and in prose instead of a test. The evidence
+  is unflattering and worth keeping: the note *"commit before mutating"* was written here
+  after a `git checkout --` destroyed uncommitted work, and it then failed to fire three
+  more times, because it recorded the rule and not the moment. So the operational form is
+  **where a rule can be made into a call site rather than a sentence, it should be**, and
+  this document is the wrong home for anything convertible.
+  That partitions the rules in this repo into three, and the partition is the useful part.
+  *Converted*: the arithmetic behind the head rig now lives in `applyHeadPose`,
+  `applyChestPose`, `chestGaitYaw`, `decayStrideOnStagger`, `actorGaitCadence` and
+  `actorSpeedForRole`, so the suite drives it instead of reading it — twelve source pins
+  became two calls, and a rewrite can no longer evade them.
+  That list names functions and no line numbers, which was accidental and is now
+  deliberate: **a name is a way to re-derive and a line number is a value**, so a table of
+  line numbers in a document is the most perishable thing this work could have committed,
+  and nothing would fail when it decayed. A reviewer flagged the hazard against a table
+  that turned out to exist only in a message — the committed prose had already dropped
+  the numbers. Correct by habit is the state a thing is in immediately before it stops
+  being correct, so it is written down here as a choice.
+  And the reason that is not merely a nice phrase: **a correct outcome tells you nothing
+  about whether the mechanism that produced it will fire again.** An unfired guard and an
+  undecided habit are the same object — untested mechanisms with clean records — and in
+  both cases the clean record is what makes them look settled. The file dropped the line
+  numbers by habit and nobody knew, including its author, until a reviewer mischaracterised
+  it and the check went looking for a mechanism that turned out not to exist.
+  That mischaracterisation is also the exact inverse of an error made an hour earlier in
+  the other direction: one party credited a message with prose that contradicted the
+  committed file, the other credited the file with prose that existed only in a message.
+  **Same split, opposite directions, both from reading a message as though it had been
+  through the moment a commit forces.**
+  *Unconvertible*: the wiring claims and the alias evasion, because `GameEngine` is not
+  constructible in Node, which is why the test file states them as limitations instead of
+  implying it has none.
+  *Sentence-only, and therefore inert until someone remembers*: everything about working
+  practice, including the one above. This bullet is in that third category and cannot
+  argue itself out of it — which is the point. **A rule that cannot be given a call site
+  should say so, so that its reader knows they are the invocation.**
 - **Before offering a cause, check whether your own code already answers it.** The
   sharpest instance this work produced: a docblock blamed head roll for a 39%
   discrepancy in a gaze figure, when `solveHeadYaw`'s signature — written ten commits

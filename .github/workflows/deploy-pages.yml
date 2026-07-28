@@ -12,8 +12,18 @@ permissions:
   id-token: write
 
 concurrency:
+  # A deployment must be allowed to finish. Cancelling `actions/deploy-pages`
+  # mid-flight can leave the live site on an older commit, and the run that would
+  # explain it reads `cancelled` rather than `failure` — a stale site with nothing
+  # pointing at it. GitHub's Pages template sets this `false` for that reason.
+  #
+  # The shared `pages` group is deliberate, and so is the default `queue: single`,
+  # which drops a pending run when a newer one arrives. That behaviour is a defect
+  # in ci.yml — which owes a verdict to every commit, so it groups main pushes
+  # uniquely — and is the behaviour we want here: main is linear, so a superseding
+  # push contains the commit it displaces, and only the newest content is served.
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:

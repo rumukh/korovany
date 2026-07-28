@@ -3554,9 +3554,25 @@ test('every type the spec names is exported by the barrel', () => {
  * attempts — a first pass that reported the *whole* list unsorted (its own
  * instrument, not the file), then a verification anchored on a name that is not
  * in the run, which measured an empty slice and printed `sorted: true`, then a
- * corrected edit that silently duplicated one name and dropped another. A barrel
- * re-export tolerates a duplicate name without complaint and `tsc` stayed green
- * through all of it.
+ * corrected edit that silently duplicated one name and dropped another.
+ *
+ * The last part of that report was that `tsc` stayed green through the duplicate,
+ * and it is worth setting out exactly because it is true, reproducible, and means
+ * something else entirely. `tsc --noEmit -p tsconfig.json` does exit 0 on a
+ * duplicated value re-export — and it exits 0 on `const wrong: number = 'a
+ * string'` too. The root `tsconfig.json` is `"files": []` with two references and
+ * no `--build`, so that invocation type-checks **zero files**. It is not blind to
+ * duplicates; it is blind, and its green has never been evidence about anything.
+ *
+ * The gates that do run:
+ *
+ *   duplicate value   tsc -b  TS2300 exit 2  ·  Node loader refuses the module
+ *   duplicate type    tsc -b  TS2300 exit 2
+ *
+ * `npm run build` starts with `tsc -b`, which is why the build catches both. The
+ * general form is the one this file keeps relearning: **a green from an
+ * instrument that has never been shown to fire is not a measurement**, and here
+ * the instrument was a command nobody had run against a planted error.
  *
  * Writing this gate found a fourth: my own `PropKit` run had `bridgeParts` ahead
  * of `brazierParts`, which no reviewer had ever seen.
@@ -3606,11 +3622,21 @@ test('the art barrel keeps every export block in the order siblings read it in',
   // A guard on the instrument, not the file. The review this test comes from
   // printed `sorted: true` over an empty slice; a parser that matches nothing
   // reports perfect order, and that is indistinguishable from success.
-  const blockCount = [...source.matchAll(/^export \{\r?\n/gm)].length
-  assert.ok(
-    blockCount >= 5,
-    `barrel parse found ${String(blockCount)} export blocks; the file has seven, so the `
-    + 'pattern has stopped matching and any verdict below is vacuous',
+  //
+  // This is an equality rather than a floor. The first version asserted `>= 5`
+  // against a file with seven blocks, which is the shape §6.2 of docs/08 argues
+  // against — a floor with slack in front of the loop that does the work — and
+  // it shipped two commits after that section was written. Counting the opening
+  // lines separately and requiring every one to have produced a parsed block
+  // costs nothing and cannot drift.
+  const opened = [...source.matchAll(/^export \{$/gm)].length
+  const parsedBlocks = [...source.matchAll(/^export \{\r?\n[\s\S]*?^\} from '\.\/\w+\.ts'/gm)].length
+  assert.equal(
+    parsedBlocks,
+    opened,
+    `the barrel opens ${String(opened)} multi-line export blocks and the parse recognised `
+    + `${String(parsedBlocks)}; the closing pattern has stopped matching, so any verdict `
+    + 'below is about a subset of the file rather than the file',
   )
 
   // Positive control first, deliberately. Run after the real assertion it would
@@ -3641,14 +3667,25 @@ test('the art barrel keeps every export block in the order siblings read it in',
 })
 
 /**
- * The ordering gate above would not have caught the breakage that actually
- * shipped during that review: an edit that replaced the wrong occurrence,
- * duplicating one name and dropping another. Both halves are invisible to
- * `tsc` — a barrel may name the same export twice, and a dropped export only
- * fails at the call site of whoever needed it, which may be a session that has
- * not been written yet.
+ * This test was written to catch duplicate re-exports, on the reported grounds
+ * that `tsc` accepts them silently. Four mutations of the real barrel say
+ * otherwise, and the duplicate half of it is redundant:
+ *
+ *   duplicate value  ->  Node refuses to load the module at all
+ *                        (`SyntaxError: Duplicate export of 'x'`), so this file
+ *                        never runs and the assertion below is dead code.
+ *   duplicate type   ->  `npm run build` fails with `TS2300: Duplicate
+ *                        identifier`, naming both lines, before the suite runs.
+ *
+ * What survives is the other assertion, and it earns its place on a mutation
+ * nothing else sees: aliasing one export (`{ x as x }`) leaves the build green
+ * and the module loading, while making that name invisible to the text parse
+ * the ordering gate above shares. The gate then checks a quietly smaller file
+ * and still reports success. So the job here is to prove the parse sees every
+ * name the module actually exports; the duplicate check is kept only so that
+ * running `npm test` alone still names the barrel for the type case.
  */
-test('the art barrel names no export twice', () => {
+test('the art barrel parse sees every name the module exports', () => {
   const source = readFileSync(
     new URL('../src/game/art/index.ts', import.meta.url),
     'utf8',
@@ -3661,11 +3698,39 @@ test('the art barrel names no export twice', () => {
       if (match) names.push(match[1]!)
     }
   }
+  // Single-line re-exports are a third form and the multi-line pattern is blind
+  // to them: `hasStylizedShader` on one line, and the two type aliases pulled
+  // from `../random/`. Both forms have to be collected or the cross-check below
+  // reports names as unseen that are merely parsed by the other half.
+  for (const single of source.matchAll(/^export (?:type )?\{ (\w+) \} from '[^']+'/gm)) {
+    names.push(single[1]!)
+  }
 
-  assert.ok(
-    names.length >= 150,
-    `barrel parse found ${String(names.length)} names; §5.2 documents far more, so the `
-    + 'parse has broken and the duplicate check below is vacuous',
+  // The control runs before the real assertions, not after. A failing verdict
+  // announces itself; a passing one from a detector that cannot fire does not.
+  // The neighbouring test was corrected for exactly this and this one was left
+  // as it was, in the same commit.
+  const dopedNames = ['alpha', 'beta', 'alpha']
+  const dopedSeen = new Set<string>()
+  assert.deepEqual(
+    dopedNames.filter((n) => (dopedSeen.has(n) ? true : (dopedSeen.add(n), false))),
+    ['alpha'],
+    'the duplicate detector did not fire on a planted duplicate',
+  )
+
+  // The floor this replaces asserted `>= 150` against 208 names — fifty-eight of
+  // slack, so most of the barrel could vanish without the guard noticing. The
+  // runtime namespace is the exact population for the value half and it grows by
+  // itself, so it needs no maintenance and has no slack. Types are invisible to
+  // `Object.keys`, but the same regex collects both, so a parse that loses the
+  // types has lost the values too and this fires.
+  const unseen = Object.keys(artBarrel).filter((name) => !names.includes(name))
+  assert.deepEqual(
+    unseen,
+    [],
+    'the text parse of src/game/art/index.ts did not find these names, but the module '
+    + 'exports them at runtime, so an export form exists that the parse cannot see and '
+    + 'the ordering gate above is silently checking a smaller file than it reports on',
   )
 
   // Case-sensitive by construction: `artVariation` and `ArtVariation` are a value
@@ -3677,17 +3742,9 @@ test('the art barrel names no export twice', () => {
   assert.deepEqual(
     twice,
     [],
-    'src/game/art/index.ts exports these names more than once. TypeScript accepts a '
-    + 'duplicate re-export silently, so this only surfaces as a missing export '
-    + 'somewhere else in the same edit.',
-  )
-
-  const dopedNames = ['alpha', 'beta', 'alpha']
-  const dopedSeen = new Set<string>()
-  assert.deepEqual(
-    dopedNames.filter((n) => (dopedSeen.has(n) ? true : (dopedSeen.add(n), false))),
-    ['alpha'],
-    'the duplicate detector did not fire on a planted duplicate',
+    'src/game/art/index.ts exports these names more than once. Both the build and the '
+    + 'module loader reject this before the suite runs, so reaching this line means the '
+    + 'suite was run on its own; the value is the barrel being named, not the catch.',
   )
 })
 

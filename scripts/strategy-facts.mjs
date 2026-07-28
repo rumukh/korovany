@@ -743,6 +743,10 @@ function audit() {
     for (const f of controlFailures) console.error(`  ${f}`)
     console.error('\n(a control cannot fire if its target fact is ALREADY missing —')
     console.error(' run with --no-controls to see the miss list, fix the document, then re-run)')
+    // Same rule as the verdict at the end: this path returns early, so without
+    // a line here stdout simply stops, and a reader who is not watching stderr
+    // sees a run that ended with no complaint.
+    console.log(`\nFAILED: ${controlFailures.length} recall control(s) did not fire — see stderr`)
     process.exitCode = 1
     return
   }
@@ -833,7 +837,27 @@ function audit() {
   const numberFailures = verifyDocumentNumbers(body, total, missing, { neverSites, neverMisses })
   for (const f of numberFailures) console.error(` DOCUMENT NUMBER MISMATCH: ${f}`)
 
-  if (keyMisses.length > 0 || unaccepted.length > 0 || stale.length > 0 || numberFailures.length > 0) process.exitCode = 1
+  // Every line of the summary above is byte-identical between a clean run and a
+  // failing one, because the failure this gate is most likely to catch moves no
+  // count — a document-number mismatch *contradicts* a count rather than
+  // changing it, so `TOTAL` and `declared residue` read the same either way.
+  // The mismatch itself went to stderr, after the last line of stdout, and the
+  // last thing a reader saw was `0 NOT accepted`. A summary that prints success
+  // on a failing run is not a summary; the verdict has to be in the same stream,
+  // last, and stated.
+  const reasons = [
+    keyMisses.length > 0 && `${keyMisses.length} storage key(s) absent from the document`,
+    unaccepted.length > 0 && `${unaccepted.length} undeclared miss(es)`,
+    stale.length > 0 && `${stale.length} stale acceptance(s)`,
+    numberFailures.length > 0 && `${numberFailures.length} document number mismatch(es)`,
+  ].filter((r) => typeof r === 'string')
+
+  if (reasons.length > 0) {
+    console.log(`\nFAILED: ${reasons.join('; ')}`)
+    process.exitCode = 1
+  } else {
+    console.log('\nPASSED: no undeclared misses, no stale acceptances, no number mismatches, no absent keys')
+  }
 }
 
 /**
