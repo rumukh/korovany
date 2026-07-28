@@ -130,6 +130,43 @@ no new dependencies.
   only where the head sat. Sweep a state space rather than a list of named poses; the
   first hand-written pose table here overshot the reachable chest yaw on one side and
   fell 2.9× short on the other.
+
+  Worth stating plainly, because it is why the rule is *do not test at rest* rather
+  than merely *test more*: **the bug and the test that should have caught it share a
+  blind spot, and it is the same blind spot.** At rest a joint at the feet is
+  indistinguishable from a joint at the neck — that is simultaneously why the defect
+  shipped and why no assertion that reads a resting body could ever have found it.
+
+  Two pieces of evidence that the child arrangement was the original intent and the
+  wiring was the defect. Six animation terms are written as the *opposite sign* of the
+  chest's, which only means anything against a transform you inherit. And
+  `animateDeath` writes `head-pivot.rotation.z = side * 0.28 * eased` to loll a dying
+  actor's head: about the feet that swung the skull **0.8094 m** sideways, clean off
+  the body; about the neck it lolls **0.1563 m**, which is what that line was always
+  trying to say.
+- **Do not derive an assertion's bound from the quantity the defect moves.** The
+  head-hinge test first bounded the head's swing by `skeleton.headY` — but a rig
+  regression changes `headY` too, so the bound grew in step with the damage and the
+  assertion could not fail for any input. It is a distinct failure from a vacuous
+  check and from one that is blind in a range: it is *self-scaling*, it tracks the
+  defect exactly, and it looks correct because the formula is correct and the number
+  is correct. The bound now comes from `p.headY - p.shoulderY`, an input the defect
+  cannot touch. Only the mutation run exposed it; no amount of reading would have.
+- **Do not fix a second defect inside a regression fix.** `torso-pivot` is *also*
+  rooted at the actor's origin rather than at the waist, so under the same `lean` the
+  whole upper body slides forward against the pelvis: **0.2950 m** at the waist on a
+  walking elf brute, 0.2316 m standing, 0.7901 m at the widest reachable pose. Same
+  defect class as the head, unreported, and deliberately **not** fixed with it. The
+  blast radius is the reason: `torso-pivot`'s origin is load-bearing for the shoulder
+  joints, the weapon rest pose, the captive's wrist rope, `cloak-pivot`, the
+  hard-coded absolute `shield` coordinates that `updateShieldPose` owns, and
+  `attachTorch`'s "hand height in torso space" contract. What makes the two separable
+  is that the head fix does not depend on it — the head is now rigid with the chest
+  *wherever the chest hinges from*, so moving the spine joint later cannot un-fix it.
+  Anyone taking this on starts from those numbers rather than rediscovering them. Note
+  also why nobody has reported it: at ordinary standing and walking poses the torso and
+  thigh meshes still intersect, so there is no visible gap — only at extreme scout and
+  champion poses do the surfaces come within about 1.9 cm of separating.
 - **Do not let a quadruped inherit a biped's spine.** The beasts share the rig names on
   purpose, but `createBeast` builds its own limb geometry per role and the shared
   stride is remapped, rather than a wolf borrowing a soldier's arm. The secondary
