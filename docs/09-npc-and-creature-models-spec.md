@@ -123,7 +123,7 @@ no new dependencies.
   of gaze error uncorrected, **14.0°** with the obvious scalar `lookYaw - chestYaw`
   (which is *worse than nothing* in 4.2% of them), exact solved, and **8.8°** if the solve is denied the head's own pitch. Damp the
   tracking in body space and convert instantaneously — a frame change is not a motion,
-  and damping the converted angle costs 2.80° of gait-frequency wobble.
+  and damping the converted angle costs 2.0° of wobble at the gait's real 4.00 Hz.
   Correspondingly, **do not test a rig without posing it** — every assertion that
   reads a body at rest is blind to this whole class — and **do not test position
   without testing orientation**: the gaze defect passed a rigidity test that measured
@@ -136,6 +136,24 @@ no new dependencies.
   blind spot, and it is the same blind spot.** At rest a joint at the feet is
   indistinguishable from a joint at the neck — that is simultaneously why the defect
   shipped and why no assertion that reads a resting body could ever have found it.
+
+  Both rules above are instances of one, and it earned the generalisation the hard
+  way — by recurring a third time *after* the first two were written down:
+
+  > **A rig has more degrees of freedom than your assertion does, and the ones you
+  > omit are where the defects live.**
+
+  Omit the pose and a joint at the feet passes for a neck. Omit orientation and a
+  head sits perfectly on its neck while looking somewhere else. Omit the head's own
+  *pitch* — one axis, in a sweep written by the same author, two commits after both
+  rules above were added to this file — and `solveHeadYaw` measures as exact while
+  being **7.3°** wrong for every head the engine actually writes, because the engine
+  applies that pitch in the same Euler as the yaw it solves for. Knowing the rule is
+  not the same as being able to see where it applies; the only reliable instrument is
+  to drive every axis the production code writes, including the ones you are confident
+  cannot matter. Head *roll* genuinely cannot — a rotation about Z leaves the +Z axis
+  fixed — and the sweep drives it anyway, so that claim is measured rather than
+  asserted.
 
   Two pieces of evidence that the child arrangement was the original intent and the
   wiring was the defect. Six animation terms are written as the *opposite sign* of the
