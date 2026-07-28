@@ -633,6 +633,17 @@ no new dependencies.
   front of them. This one decides itself, on any SHA, without knowing anything about the
   claim it sits in — which is the *call site rather than sentence* property arriving in
   the one place nobody was trying to apply it.
+  **And it is necessary without being sufficient, which was demonstrated on the check
+  itself within minutes of its being added.** Reachability answers *"can this be
+  resolved"*, not *"is this still the state"*: a verification against a **reachable but
+  superseded** commit is a true statement about a tree the branch has since moved past,
+  and it reads identically to one about the current tree. The complete citation is two
+  cheap facts rather than one — **`<sha>` reachable, and `N` commits behind the tip** — of
+  which only the second decays.
+  Worth recording for its shape as much as its content: the reachability check was added
+  in response to two *orphaned* SHAs, and it closes exactly that failure and not the class
+  it belongs to. **The remedy enumerated the instance it was shown**, two exchanges after
+  both parties had agreed that was the recurring pattern.
   One more thing came out of measuring that gap, and it is the sharpest instance the work
   produced because every party measured and every party got a different answer. The
   question — *is a reviewer's baseline falling further behind?* — was answered three ways
