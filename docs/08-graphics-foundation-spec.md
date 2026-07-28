@@ -1137,6 +1137,51 @@ paragraphs above it. The reviewer was working the entire time and returned the b
 findings of the day. **I applied my own newest rule to a detector I built and failed to apply
 it to the one I was using to judge a colleague.**
 
+#### Round five: the pin fired, and firing for the wrong reason is its own defect
+
+A second reviewer, reading the pinned-population design, went after the thing the pin was
+supposed to make safe to leave imperfect: **the group name.** Two spellings of it defeated the
+comparison on a branch that had already survived four rounds.
+
+| group as written | GitHub sees | this check saw | test named for the property |
+| --- | --- | --- | --- |
+| `pages` | the deployment's group | match | fails, correctly |
+| `"pages"` / `'pages'` | the deployment's group | match | fails, correctly |
+| **`PAGES`** | **the deployment's group** | **different group** | **passed** |
+| **`${{ 'pages' }}`** | **the deployment's group** | **different group** | **passed** |
+
+GitHub matches concurrency groups **case-insensitively**. `PAGES` is not a near-miss or a
+trick; it is the deployment's own group, and a workflow declaring it with
+`cancel-in-progress: true` could cancel a deployment while the test asserting that no workflow
+can do so passed.
+
+**The gate did fail — on the population pin, not on the hazard.** That is the finding, and it
+is a defect in the pin's own theory rather than a vindication of it. A pin reports *"a workflow
+was added"*, which is the message a maintainer resolves by **reading the workflow, deciding it
+is fine, and updating the pin.** The one time that judgement is wrong is exactly the time the
+group check needed to be right, and it was not. A backstop that fires for a reason the
+maintainer is expected to dismiss is one honest mistake away from being no backstop.
+
+So the pin stays and the readable subset was made correct: group comparison is
+case-insensitive, folded and literal block scalars are resolved to their value, and a group
+built from an expression is treated as able to produce any protected group whose name appears
+inside it.
+
+**The reviewer's own recommendation was measured and rejected on evidence.** They asked for
+dynamic groups to be handled *conservatively* — any unresolvable group treated as dangerous.
+Implemented as stated, that fails the build on this repository: `ci.yml` cancels deliberately
+under `group: ${{ github.workflow }}-${{ github.ref ... }}`, which is unresolvable and
+harmless, and three tests go red on the real file set. The substring rule is the weaker form
+that survives contact with the repository it has to run in, and the case is now a permanent
+negative control beside the positives.
+
+Each of the three fixes was reverted individually against the new test to confirm it fails,
+with the mutation's application printed before the verdict was read: reverting the
+case-insensitive compare fails on `PAGES`; disabling block-scalar resolution fails on the
+folded form; widening the expression rule to *"unreadable means dangerous"* fails on `ci.yml`.
+**Five rounds, and the only reason there is a fifth is that somebody doped the part the design
+had declared safe to leave imperfect.**
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,

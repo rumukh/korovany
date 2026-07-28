@@ -138,7 +138,27 @@ function concurrencyBlocks(source: string): ConcurrencyBlock[] {
       if (child.length - child.trimStart().length <= indent) break
 
       const pair = /^\s*([A-Za-z][A-Za-z0-9-]*):\s*(.*)$/.exec(child)
-      if (pair) entries.set(pair[1] ?? '', scalar(pair[2] ?? ''))
+      if (!pair) continue
+
+      let value = scalar(pair[2] ?? '')
+
+      // `group: >-` puts the value on the following lines. Read as a single line
+      // the value is the indicator, which matches no group and reported nothing.
+      if (/^[>|][-+]?$/.test(value)) {
+        const childIndent = child.length - child.trimStart().length
+        const continuation: string[] = []
+
+        for (let k = j + 1; k < lines.length; k += 1) {
+          const cont = lines[k] ?? ''
+          if (/^\s*$/.test(cont)) continue
+          if (cont.length - cont.trimStart().length <= childIndent) break
+          continuation.push(cont.trim())
+        }
+
+        value = continuation.join(' ').trim()
+      }
+
+      entries.set(pair[1] ?? '', value)
     }
 
     blocks.push({ line: i + 1, entries })
@@ -162,6 +182,33 @@ function protectedGroups(files: readonly WorkflowFile[]): Set<string> {
   }
 
   return groups
+}
+
+/**
+ * Whether a declared group can be the same group GitHub schedules the deployment
+ * under. Two ways it can be, beyond spelling it identically:
+ *
+ * Case. GitHub matches concurrency groups case-insensitively, so `PAGES` and
+ * `pages` are one group to the scheduler and were two to this check. A probe
+ * declaring `group: PAGES` with `cancel-in-progress: true` passed the test named
+ * for the property — measured, not argued.
+ *
+ * Expressions. `group: ${{ ... }}` cannot be evaluated here, so a group that
+ * mentions the protected name inside an expression is treated as able to produce
+ * it. That is a heuristic and wrong in the loud direction: `ci.yml` builds its
+ * group from `github.workflow` and `github.ref` and never says `pages`, so it
+ * stays quiet, while `${{ 'pages' }}` does not.
+ */
+function joinsGuardedGroup(group: string, guarded: ReadonlySet<string>): boolean {
+  const declared = group.toLowerCase()
+
+  for (const protectedGroup of guarded) {
+    const target = protectedGroup.toLowerCase()
+    if (declared === target) return true
+    if (declared.includes('${{') && declared.includes(target)) return true
+  }
+
+  return false
 }
 
 /**
@@ -207,7 +254,7 @@ function cancellationRisks(files: readonly WorkflowFile[]): string[] {
       }
 
       const group = block.entries.get('group')
-      if (group !== undefined && guarded.has(group) && cancelsInProgress(value)) {
+      if (group !== undefined && joinsGuardedGroup(group, guarded) && cancelsInProgress(value)) {
         risks.push(
           `${file.name}:${String(block.line)}: joins Pages group \`${group}\` with cancel-in-progress \`${String(value)}\``,
         )
@@ -449,6 +496,54 @@ test('the widened scan stays quiet on workflows that cannot cancel a deployment'
     'ci.yml should still cancel via an expression — otherwise this case no longer exercises anything',
   )
   assert.deepEqual(cancellationRisks(files), [])
+})
+
+
+/**
+ * The group is what selects a workflow as dangerous, so the ways one group name can
+ * be written are exactly as load-bearing as the ways the flag can be. Two of these
+ * were live on this branch until a reviewer of the pinned-population design went
+ * looking for them, and both passed the test named for the property while the
+ * population pin failed underneath — a gate failing for the wrong reason, which is
+ * a maintainer one pin update away from a real hazard.
+ *
+ * `PAGES` is the important one: GitHub matches groups case-insensitively, so it is
+ * the deployment's own group, spelled in a way this check compared as different.
+ */
+test('a group is the same group however GitHub would spell it', () => {
+  const deploying = pagesWorkflows(readWorkflows())[0]
+  assert.ok(deploying, 'no Pages-deploying workflow to protect')
+
+  const cancelling = (group: string): WorkflowFile => ({
+    name: 'probe.yml',
+    source: `name: Probe\non:\n  workflow_dispatch:\nconcurrency:\n  group: ${group}\n  cancel-in-progress: true\njobs:\n  noop:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n`,
+  })
+
+  const spellings: ReadonlyArray<readonly [string, string]> = [
+    ['identical', 'pages'],
+    ['upper case, which GitHub folds to the same group', 'PAGES'],
+    ['mixed case', 'Pages'],
+    ["double quoted, as GitHub's own starter template writes it", '"pages"'],
+    ['single quoted', "'pages'"],
+    ['an expression that evaluates to it', "${{ 'pages' }}"],
+    ['a folded scalar carrying the name on the next line', '>-\n    pages'],
+  ]
+
+  for (const [label, group] of spellings) {
+    assert.ok(
+      cancellationRisks([deploying, cancelling(group)]).length > 0,
+      `a workflow joining the deployment's group written as ${label} was not reported`,
+    )
+  }
+
+  // The other direction, and the reason the expression rule is a substring test
+  // rather than a blanket "unreadable means dangerous": ci.yml cancels deliberately
+  // under a group built from expressions, and must not be dragged in by it.
+  assert.deepEqual(
+    cancellationRisks([deploying, cancelling('${{ github.workflow }}-${{ github.ref }}')]),
+    [],
+    'an expression group that never names the protected group must stay quiet',
+  )
 })
 
 
