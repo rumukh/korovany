@@ -75,19 +75,35 @@ float kStylizedLuminance( const in vec3 rgb ) {
 const STYLIZED_FRAGMENT_BODY = /* glsl */ `
 #include <lights_fragment_end>
 {
-  // reflectedLight.directDiffuse == sum( N.L * lightColor ) * diffuseColor / PI,
-  // so the aggregate lighting term only comes back by dividing the albedo out.
-  // Doing that per channel is exact only while every channel has something to
-  // divide back. It is not hue that breaks it: a faction green (0.15, 0.55, 0.25)
-  // recovers the light exactly, because all three channels are lit. It breaks where
-  // a channel reaches zero and the guard clamp takes over — a saturated red keeps
-  // only the 0.2126 weight and reads 21% of the light a white surface sees under
-  // identical key, and a saturated blue keeps 0.0722 and reads 7%. Those surfaces
-  // band several stops too dark. One scalar ratio of luminances cancels the
-  // weights instead, and is exact for every albedo.
+  // RE_Direct_Physical accumulates material.diffuseContribution, which
+  // lights_physical_fragment sets to diffuseColor * ( 1.0 - metalness ) — not
+  // diffuseColor. So the identity is
+  //
+  //   directDiffuse == sum( N.L * lightColor ) * diffuseColor * ( 1 - metalness ) / PI
+  //
+  // and BOTH factors have to come back out to recover the aggregate lighting term.
+  // Dividing only the albedo out leaves the band driver scaled by 1 - metalness,
+  // which is a qualitative failure rather than a dim one: at metalness 0.35 the
+  // driver peaks at 0.65, so the surface can never reach the top band however bright
+  // the key is, and every band boundary is crossed 53.8% late. It also feeds the
+  // shadow-tint mix and the rim gate below, costing metal up to 82% extra rim
+  // suppression at low light. Metalness 0 is unaffected, exactly.
+  //
+  // Dividing the albedo *per channel* would be exact only while every channel has
+  // something to divide back. It is not hue that breaks that: a faction green
+  // (0.15, 0.55, 0.25) recovers the light exactly, because all three channels are
+  // lit. It breaks where a channel reaches zero and the guard clamp takes over — a
+  // saturated red keeps only the 0.2126 weight and reads 21% of the light a white
+  // surface sees under identical key, and a saturated blue keeps 0.0722 and reads
+  // 7%. Those surfaces band several stops too dark. One scalar ratio of luminances
+  // cancels the weights instead, and is exact for every albedo.
   vec3 kAlbedo = material.diffuseColor;
   float kAlbedoLuma = max( kStylizedLuminance( kAlbedo ), 1e-4 );
-  float kLit = kStylizedLuminance( reflectedLight.directDiffuse ) * PI / kAlbedoLuma;
+  // Metalness is a scalar, so it divides back out alongside the luminance. The
+  // 1e-3 floor only engages at metalness 1, where the numerator vanishes too — a
+  // pre-existing limit of driving bands from the diffuse term, not a new one.
+  float kDiffuseScale = kAlbedoLuma * max( 1.0 - material.metalness, 1e-3 );
+  float kLit = kStylizedLuminance( reflectedLight.directDiffuse ) * PI / kDiffuseScale;
   float kNormalized = clamp( kLit / max( uBandReference, 1e-3 ), 0.0, 1.0 );
   float kBanded = texture2D( uToonRamp, vec2( kNormalized, 0.5 ) ).r;
   float kScale = kBanded / max( kNormalized, 1e-3 );

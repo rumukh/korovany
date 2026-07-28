@@ -405,6 +405,71 @@ test('stylized materials compile the injection and share a program key', () => {
   library.dispose()
 })
 
+/**
+ * The band driver divides the albedo back out of `directDiffuse`. Since three 0.185
+ * that accumulator carries `material.diffuseContribution`, which is
+ * `diffuseColor * (1 - metalness)`, so the metalness factor has to be divided back
+ * out too or it silently scales the driver.
+ *
+ * Shipped behaviour before the fix: metal (metalness 0.35) peaked at 0.65, so it
+ * could never reach the top band at any key intensity, and every band boundary was
+ * crossed 53.8% late. Metalness-0 presets were exact, which is why it survived.
+ *
+ * The second half pins the *dependency* identity rather than our own text. The
+ * original comment asserted `directDiffuse == ... * diffuseColor / PI`, which was
+ * true of an older three and never of the pinned one. A three upgrade that moves
+ * this back — or renames the field — must fail here rather than quietly re-break
+ * metal, because nothing else in this suite reads the shader body at all.
+ */
+test('the toon band driver divides the metalness factor back out', () => {
+  const library = createLibrary()
+  const material = library.createMaterial({ color: 0xffffff, surface: 'metal' })
+  const shader = {
+    uniforms: {} as Record<string, { value: unknown }>,
+    vertexShader: THREE.ShaderLib.physical.vertexShader,
+    fragmentShader: THREE.ShaderLib.physical.fragmentShader,
+  }
+  material.onBeforeCompile(shader as never, null as never)
+
+  const driver = shader.fragmentShader
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('//'))
+    .join('\n')
+  assert.ok(
+    /material\.metalness/.test(driver),
+    'the band driver must compensate for the metalness factor baked into directDiffuse',
+  )
+  assert.ok(
+    /kLit\s*=[^;]*\/\s*kDiffuseScale/.test(driver),
+    'kLit must divide by the compensated scale, not by the raw albedo luminance',
+  )
+
+  // The dependency half: these are three's own chunks, not ours.
+  const pars = THREE.ShaderChunk.lights_physical_pars_fragment
+  const setup = THREE.ShaderChunk.lights_physical_fragment
+  assert.ok(
+    /struct PhysicalMaterial \{[^}]*\bfloat metalness;/.test(pars),
+    'PhysicalMaterial must still declare metalness for the compensation to compile',
+  )
+  assert.ok(
+    /material\.metalness\s*=\s*metalnessFactor/.test(setup),
+    'material.metalness must still be the same scalar baked into diffuseContribution',
+  )
+  assert.ok(
+    /material\.diffuseContribution\s*=\s*diffuseColor\.rgb\s*\*\s*\(\s*1\.0\s*-\s*metalnessFactor\s*\)/
+      .test(setup),
+    'directDiffuse still carries (1 - metalness); if three drops this, remove the divisor',
+  )
+  assert.ok(
+    /directDiffuse \+= irradiance \* BRDF_Lambert\( material\.diffuseContribution \)/
+      .test(THREE.ShaderChunk.lights_physical_pars_fragment),
+    'RE_Direct_Physical must still accumulate the contribution rather than diffuseColor',
+  )
+
+  material.dispose()
+  library.dispose()
+})
+
 test('lighting reference updates reach every material through shared uniforms', () => {
   const library = createLibrary()
   const first = library.createMaterial({ color: 0xffffff, surface: 'cloth' })
