@@ -695,15 +695,27 @@ Four rules fall out of them, in rough order of how much they would have saved:
    is the one thing a world-level test cannot substitute for. Both fixes were verified by
    re-applying the mutation and watching the new test go red.
 
-   **A campaign needs an applied-check gate, or it manufactures false findings as
-   confidently as a vacuous assertion manufactures false confidence.** Contributed by the
-   reviewer after a CRLF/LF mismatch made one of its own mutations fail to match: the
-   removal silently no-op'd, only the insertion applied, and the run reported SURVIVED
-   with no harm — which reads exactly like a real gap in the tests. **A mutation that
-   fails to apply is indistinguishable from one the suite ignored.** Verify the edit
-   landed before trusting the verdict, and verify it against the *right* site: repeating
-   the exercise here, the first gate matched the wrong `releaseOutline` of two and
-   reported success on a file that had not been mutated where it mattered.
+   **A campaign needs two guards, not one, or it manufactures false findings as
+   confidently as a vacuous assertion manufactures false confidence.** A survivor is only
+   evidence when both hold:
+
+   1. **The mutation changed the file.** Contributed by the reviewer after a CRLF/LF
+      mismatch made one of its own mutations fail to match: the removal silently no-op'd,
+      only the insertion applied, and the run reported SURVIVED with no harm — which reads
+      exactly like a real gap. **A mutation that fails to apply is indistinguishable from
+      one the suite ignored.** Verify the edit landed, and verify it against the *right*
+      site: repeating that exercise here, the first gate matched the wrong `releaseOutline`
+      of two and reported success on a file not mutated where it mattered.
+   2. **The mutation causes harm.** The half this pass missed when it first recorded the
+      rule. An *equivalent* mutation — one that changes the source but not the behaviour —
+      also reports SURVIVED, and also reads like a gap. The reviewer produced one against
+      a guard added here: forcing `canJudgeWalkability` true changed nothing, because
+      `walkableNear`'s only caller already tests it, so the throw is unreachable in
+      production. It reported that as its own miss rather than a finding.
+
+   Between them the two guards cost one extra measurement each and they are what separates
+   *"the suite did not notice"* from *"there was nothing to notice."* Two of this
+   campaign's reported survivors turned out to be the second kind.
 
 7. **A regression test needs a seed that reproduced the bug.** Ordering, mechanism and
    assertion can all be correct and the test still prove nothing if its input never
