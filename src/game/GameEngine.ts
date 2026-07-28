@@ -22,6 +22,7 @@ import {
   buildBeastTail,
   applyChestPose,
   applyHeadPose,
+  beastBreathScale,
   beastLookYaw,
   buildBirdBody,
   buildBirdWing,
@@ -14315,7 +14316,7 @@ export class GameEngine {
         -actor.stride * 0.03,
         -actor.turnLean * 0.06,
       )
-      torsoPivot.scale.y = 1 + breathing * 0.3
+      torsoPivot.scale.y = beastBreathScale(breathing)
     }
     if (pelvisPivot) {
       // The hindquarters follow the ribs rather than counter-rotating against them.

@@ -7,12 +7,14 @@ import { BEAST_PROFILES } from '../src/game/world/Fauna.ts'
 import * as THREE from 'three'
 import {
   BEAST_KINDS,
+  BEAST_BREATH_GAIN,
   BEAST_LOOK_CLAMP,
   BEAST_RIG,
   CHARACTER_FACTIONS,
   CHARACTER_VARIANTS,
   GeometryCache,
   artVariation,
+  beastBreathScale,
   beastLookYaw,
   buildBeastBody,
   buildBeastHead,
@@ -2625,8 +2627,6 @@ const BEAST_STRIDE_MAX = 0.62 * 1.18
 const BEAST_TURN_MAX = 0.5
 /** `animateActorCharacter`: `breathing = sin(...) * 0.018`. */
 const BEAST_BREATH_AMPLITUDE = 0.018
-/** `animateBeastPosture`: `torsoPivot.scale.y = 1 + breathing * 0.3`. */
-const BEAST_BREATH_GAIN = 0.3
 /** `applyActorVisualVariation`: `shoulders = variation.around(1, 0.07)`. */
 const BEAST_SHOULDER_SPREAD = 0.07
 /** `updateActorDeathMotion`: `head.rotation.z = side * 0.28 * eased`. */
@@ -2695,7 +2695,7 @@ function beastPoses(upright: boolean): BeastPose[] {
                     look,
                     roll ?? turn * 0.04,
                   ],
-                  breathScale: 1 + breath * BEAST_BREATH_GAIN,
+                  breathScale: beastBreathScale(breath),
                   shoulders,
                   death: dead,
                 })
@@ -2792,19 +2792,22 @@ function orientationDegrees(a: THREE.Quaternion, b: THREE.Quaternion): number {
  * That is the shape this repository keeps finding: **comparing two things you control.**
  * It is not a hard-coded number that makes a pin sound, nor a computed one that makes it
  * rotten; it is whether the expected side comes from somewhere the defect cannot reach.
- * So these four are literals, committed here, and the sweep reads production. A shoulder
- * that moves is named by this rather than absorbed by the bound that reads it.
+ * So these are literals, committed here, and the sweep reads production. A shoulder that
+ * moves is named by this rather than absorbed by the bound that reads it.
  *
- * The second guard on the same hole is the ratio assertion beside the hinge — the neck's
- * arm must be under half the foot-rooted one — which is a geometric claim with a
- * committed constant rather than a quantity the rig can move. It is what caught the
- * dropped shoulder.
+ * **Both components, not the length.** The first version pinned only the radius, and a
+ * reviewer rotated a wolf's shoulder-to-skull vector at exactly constant radius: this
+ * check passed. It was caught downstream, by `FOOT_ROOTED_SKULL`, so the suite's division
+ * of responsibility held — but a gate that survives the mutation it is named for is
+ * leaning on its neighbours. A neck is a direction as well as a distance; both are pinned
+ * now, and the radius is derived from them rather than recorded separately, so the two
+ * cannot disagree.
  */
-const BEAST_NECK: Record<BeastKind, number> = {
-  wolf: 0.566,
-  boar: 0.6612,
-  bear: 0.6462,
-  troll: 0.365,
+const BEAST_NECK: Record<BeastKind, { up: number; ahead: number }> = {
+  wolf: { up: 0.3, ahead: 0.48 },
+  boar: { up: 0.04, ahead: 0.66 },
+  bear: { up: 0.24, ahead: 0.6 },
+  troll: { up: -0.06, ahead: 0.36 },
 }
 
 /**
@@ -3062,13 +3065,19 @@ test("a beast's skull is rigid with its ribs and hinges at the neck", () => {
     // with it — measured: dropping the wolf's `frontJointY` to 0 leaves the bound green
     // and is caught only by the ratio assertion further down. Half a unit in the last
     // digit shown, so a drift that changes the printed figure cannot stay quiet.
-    if (Math.abs(neckToHead - BEAST_NECK[kind]) >= 0.00005) {
+    if (
+      Math.abs(rig.headY - rig.frontJointY - BEAST_NECK[kind].up) >= 0.00005 ||
+      Math.abs(rig.headZ - rig.frontZ - BEAST_NECK[kind].ahead) >= 0.00005
+    ) {
       problems.push(
-        `a ${kind}'s neck measures ${neckToHead.toFixed(4)} from shoulder to skull, not `
-        + `the ${BEAST_NECK[kind].toFixed(4)} recorded. \`BEAST_RIG\` has been re-authored: `
-        + 'nothing is necessarily broken, but the hinge bound reads this same number on '
-        + 'both sides, so it will not tell you. Correct the literal and re-measure '
-        + '`FOOT_ROOTED_SKULL`.',
+        `a ${kind}'s neck runs ${(rig.headY - rig.frontJointY).toFixed(4)} up and `
+        + `${(rig.headZ - rig.frontZ).toFixed(4)} ahead from shoulder to skull, not the `
+        + `${BEAST_NECK[kind].up.toFixed(4)} / ${BEAST_NECK[kind].ahead.toFixed(4)} `
+        + 'recorded. `BEAST_RIG` has been re-authored: nothing is necessarily broken, but '
+        + 'the hinge bound reads these same numbers on both sides, so it will not tell '
+        + 'you. Both components are pinned, not the radius alone — rotating the vector at '
+        + 'constant radius passed the radius-only version. Correct the literals and '
+        + 're-measure `FOOT_ROOTED_SKULL`.',
       )
     }
     // Chord of the arc, generous by a factor of two on the three-axis case — the same
@@ -3282,6 +3291,19 @@ test("a beast's skull turns with its chest and keeps its own proportions", () =>
   )
   // Derived from the breath the engine writes and nothing else, exactly as the humanoid
   // anisotropy bound is. Exhaling is the worse direction: 1/(1-b) - 1 > b.
+  //
+  // This is a **bound on an invariant**, not a pin on a recorded value, so the half-unit
+  // rule that governs every `toFixed(4)` record in this file does not apply to it: 1e-9
+  // in ratio space is about 500x tighter than half a unit of the percentage the message
+  // prints. A reviewer enumerated the tolerances and found this one, after I had claimed
+  // they were uniformly half-unit. They are not, and the reason is that these are two
+  // different kinds of number.
+  //
+  // The observed side is production's: `beastPoses` builds `breathScale` by calling
+  // `beastBreathScale`, so mutating that function moves this measurement. Before it
+  // existed the test generated the scale from its own copy of the same two literals and
+  // compared it against a closed form over those literals — both sides the test's, with
+  // only an unanchored source regex bridging to the engine.
   const breathAnisotropy = 1 / (1 - BEAST_BREATH_AMPLITUDE * BEAST_BREATH_GAIN) - 1
   assert.ok(
     worstAnisotropy <= breathAnisotropy + 1e-9,
@@ -3330,6 +3352,24 @@ test("a beast's skull turns with its chest and keeps its own proportions", () =>
  * rotations into a matrix and reads the world heading back out. Agreement between a
  * closed-form solve and a forward evaluation is evidence; agreement between the solve
  * and a second call to the solve would not be.
+ *
+ * ## What these figures do not cover, stated because a reviewer had to say it
+ *
+ * The two **rejected** rules are evaluated by a forward model written in this file, over
+ * a pose box also written in this file. Nothing about them touches `animateBeastPosture`.
+ * So `none` and `scalar` are properties of the *geometry* — what those rules would cost
+ * anyone who adopted them — and **not** measurements of the shipped pose pass. Only the
+ * solve residual reads production, through `solveHeadYaw`.
+ *
+ * That distinction matters because it bounds what a green here means. It does **not**
+ * mean the engine's gaze is right; it means the rule the engine was given is the right
+ * rule. That the engine still uses it, unaltered and last, is pinned separately and by a
+ * weaker instrument — the `applyHeadPose` argument shape and the allowed-member set in
+ * `the engine poses a beast through the rig these tests measure`, both source pins. A
+ * source pin holds a spelling. Closing that properly needs a constructible `GameEngine`,
+ * which needs a DOM, which is the architectural gap this file has recorded throughout and
+ * cannot fix from here. Saying so is better than letting the number imply coverage it
+ * does not have.
  *
  * The share of states where the scalar rule loses is pinned as a **count**, not a
  * percentage, and that distinction was earned rather than chosen. Adding a fifth animal
@@ -4189,11 +4229,12 @@ test('the engine poses a beast through the rig these tests measure', () => {
   // The breath, which the proportion bound above is derived from — a derivation reading a
   // stale input is just a round number again.
   assert.ok(
-    new RegExp(`torsoPivot\\.scale\\.y = 1 \\+ breathing \\* ${BEAST_BREATH_GAIN}$`, 'm')
-      .test(pass),
-    `a beast's chest no longer breathes by ${BEAST_BREATH_GAIN}. Move `
-    + '`BEAST_BREATH_GAIN` with it in the same commit: the skull\'s proportion bound is '
-    + 'derived from it.',
+    /torsoPivot\.scale\.y = beastBreathScale\(breathing\)$/m.test(pass),
+    'the beast chest\'s breath must go through `beastBreathScale`. Written inline again, '
+    + 'the sweep in `a beast\'s skull turns with its chest and keeps its own proportions` '
+    + 'becomes a private copy of the arithmetic that cannot fail when production changes '
+    + '— which is exactly what it was until a reviewer showed the source regex bridging '
+    + 'it to the engine was an unanchored prefix.',
   )
   assert.ok(
     new RegExp(`const breathing = Math\\.sin\\([^)]*\\) \\* ${BEAST_BREATH_AMPLITUDE}$`, 'm')

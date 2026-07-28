@@ -3789,6 +3789,32 @@ export function beastLookYaw(lookYaw: number): number {
 }
 
 /**
+ * A beast's chest as it breathes: the scale the flank rides on.
+ *
+ * Here rather than inline in `animateBeastPosture` for the reason
+ * {@link setCharacterShoulderWidth} is: the skull's proportion bound is derived from this
+ * gain, and until this existed the test **generated its own `scale.y` from its own copy
+ * of the same two literals** and compared it against a closed form over those literals.
+ * Both sides of that comparison were the test's. What made it a gate at all was a regex
+ * bridging to the engine's source — and a reviewer showed that regex was an unanchored
+ * prefix, so `* 0.018 * 2` matched it and a doubled breath shipped green.
+ *
+ * Anchoring the regex closed that instance. Moving the arithmetic here closes the class:
+ * the sweep now drives production, so mutating this function moves the measurement rather
+ * than leaving a private copy quietly agreeing with itself.
+ *
+ * The *amplitude* is still the engine's — `animateActorCharacter` needs it for the
+ * humanoid path too — so that one number is still bridged by a source regex, and a source
+ * regex pins a spelling. Said plainly rather than left to be assumed equivalent.
+ */
+export function beastBreathScale(breathing: number): number {
+  return 1 + breathing * BEAST_BREATH_GAIN
+}
+
+/** How much of the breath a beast's ribcage carries. Smaller than a person's 0.55. */
+export const BEAST_BREATH_GAIN = 0.3
+
+/**
  * Lofts a body along **Z** rather than Y.
  *
  * A quadruped's length runs forward, not upward. Building the loft on its own axis
