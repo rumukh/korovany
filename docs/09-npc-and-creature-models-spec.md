@@ -1150,13 +1150,42 @@ no new dependencies.
   evasion exactly — `const x = obj.rotation; x.y = …` names nothing a regex can anchor on
   — and it means the limitation recorded here is not *"we lack an instrument"* but
   **"the instrument is not completable even in principle."**
-  That changes what a fallback is worth. Where a check *can* be finished, a pin over the
-  input set is a safety net for the one case the check misses. Where it cannot, **the pin
-  plus a human reading the diff *is* the mechanism, not a backstop for one** — and the
-  honest form of the guard stops claiming to detect danger and claims only to detect
-  **unreadability**: an input carrying a construct the checker does not model is treated as
-  able to produce the bad state. Fail-closed, with the false-alarm cost paid deliberately
-  rather than discovered later.
+  **That was adopted from an analogy and needed a boundary, which a later round supplied
+  by proof.** *Not completable* is not a property of source-reading guards at all — it is a
+  property of a check whose **input domain is open**, and which side a given check falls on
+  is decidable before it is built:
+  ```
+  can the ways of producing the protected value be enumerated?
+
+  format('{0}{1}','pa','ges')   computation        open     -> not completable
+  \u0063oncurrency              finite escape list  closed  -> completable, and proved
+  ```
+  The escape case looked identical to the computed one — a string that decodes to a
+  keyword without containing it — and is the opposite: YAML's double-quoted escapes are a
+  **closed list**, only the hex forms can yield an ASCII letter, so banning `\xNN`,
+  `\uNNNN` and `\UNNNNNNNN` forces every keyword-spelling character to appear literally.
+  **A class closed by proof, not another form added to a list.**
+  Applied back to the alias evasion, the conclusion survives and now rests on its own
+  derivation rather than a borrowed one: an alias is produced by **arbitrary computation**
+  — `objs[i].rotation`, destructuring, a returned reference, a proxy — so the production
+  set is open and no enumeration terminates. That is worth stating separately, because if
+  the boundary had fallen the other way the analogy would have carried a wrong conclusion
+  into this file with no marker on it.
+  That changes what a fallback is worth, and the two sides differ. Where a check *can* be
+  finished, a pin over the input set is a safety net for the one case the check misses.
+  Where it cannot, **the pin plus a human reading the diff *is* the mechanism, not a
+  backstop for one** — and the honest form of the guard stops claiming to detect danger and
+  claims only to detect **unreadability**: an input carrying a construct the checker does
+  not model is treated as able to produce the bad state. Fail-closed, with the false-alarm
+  cost paid deliberately rather than discovered later.
+  **And a hypothesis about why the wrong reason survived so long, offered as one rather
+  than as a measurement.** This limitation carried *"`GameEngine` is not constructible in
+  Node"* for hours — true, checkable, and an answer to a different question, which is the
+  subject-substitution shape again. **A limitation shipped with a wrong reason is more
+  durable than one shipped with no reason at all**, because the reason closes the question:
+  nobody re-derives an explanation that already sounds terminal. **An unexplained gap
+  advertises itself; an explained one goes quiet.** Had the entry read *"we cannot finish
+  this and we do not know why,"* it would have stayed open and someone would have asked.
   *Sentence-only, and therefore inert until someone remembers*: everything about working
   practice, including the one above. This bullet is in that third category and cannot
   argue itself out of it — which is the point. **A rule that cannot be given a call site
