@@ -3609,6 +3609,81 @@ test('every function the spec declares in a signature block is a live export', (
 })
 
 /**
+ * Two things about the sun's shadow that nothing else in this repo checks.
+ *
+ * First, the renderer must not request a filter three.js silently replaces.
+ * `PCFSoftShadowMap` is deprecated in three 0.185: `WebGLShadowMap.render` overwrites
+ * `this.type` with `PCFShadowMap` on the first frame and warns once. Nothing failed
+ * when that happened — `tsc`, lint and every test here stayed green while the shipped
+ * build ran a filter the source did not name, and the sole witness was a console line
+ * no instrument in this repo reads.
+ *
+ * Second, and worse, `shadow.radius` must actually be set. The PCF path scales its
+ * five-tap Vogel disk by that value, which defaults to 1 — a single texel, i.e. a hard
+ * edge. So the game shipped hard shadows while docs/08 promised soft ones, and *this*
+ * half had no console warning either. Deleting the radius line as an unused-looking
+ * assignment would silently undo the fix.
+ *
+ * Matching the assignment rather than the bare token is deliberate: the first draft
+ * scanned for `PCFSoftShadowMap` anywhere and was reddened by the comment above the
+ * fix explaining the deprecation. A prose mention is not a request.
+ *
+ * The three.js assertion derives the deprecation from the pinned dependency rather
+ * than asserting it from memory, so a future three that un-deprecates the constant
+ * fails here and gets re-read instead of being trusted to a stale comment.
+ */
+test('the sun asks for a shadow filter three.js honours, at a softness above hard', () => {
+  const threeSource = readFileSync(
+    new URL('../node_modules/three/build/three.module.js', import.meta.url),
+    'utf8',
+  )
+  assert.ok(
+    threeSource.includes('PCFSoftShadowMap has been deprecated'),
+    'the pinned three.js no longer deprecates PCFSoftShadowMap, so the reason for this '
+    + 'gate has changed and it needs re-deriving rather than keeping',
+  )
+
+  const engine = readFileSync(new URL('../src/game/GameEngine.ts', import.meta.url), 'utf8')
+
+  const requested = [...engine.matchAll(/shadowMap\s*\.\s*type\s*=\s*(?:THREE\s*\.\s*)?(\w+)/g)]
+    .map((match) => match[1]!)
+  assert.ok(
+    requested.length >= 1,
+    'no shadowMap.type assignment found in GameEngine.ts, so this cannot fail',
+  )
+  assert.deepEqual(
+    requested.filter((type) => type === 'PCFSoftShadowMap'),
+    [],
+    'the renderer requests PCFSoftShadowMap, which three.js overwrites with PCFShadowMap '
+    + 'at render time — name the filter you actually get and soften it with shadow.radius',
+  )
+
+  const radiusAssignment = /shadow\s*\.\s*radius\s*=\s*([A-Za-z0-9_]+)/.exec(engine)
+  assert.ok(
+    radiusAssignment,
+    'nothing assigns shadow.radius, so the PCF sampling disk is one texel wide and the '
+    + 'sun casts hard shadows — silently, because three.js does not warn about this',
+  )
+
+  const named = radiusAssignment[1]!
+  const literal = /^\d+(?:\.\d+)?$/.test(named)
+    ? Number(named)
+    : Number(
+      new RegExp(`\\b${named}\\s*=\\s*(\\d+(?:\\.\\d+)?)`).exec(engine)?.[1] ?? Number.NaN,
+    )
+  assert.ok(
+    Number.isFinite(literal),
+    `shadow.radius is assigned from '${named}', which this test could not resolve to a `
+    + 'number, so it cannot tell a soft shadow from a hard one',
+  )
+  assert.ok(
+    literal > 1 && literal <= 8,
+    `shadow.radius is ${String(literal)}; 1 is three.js's hard default and 14 was measured `
+    + 'to stipple character surfaces, five taps being too sparse for a disk that wide',
+  )
+})
+
+/**
  * A bulk material assignment by scene traversal is safe right up until someone
  * downstream parents an ink shell inside the group being swept, and then it
  * silently destroys the silhouette. `applyOutline` parents shells to their source,
