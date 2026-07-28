@@ -18,9 +18,11 @@ import {
   buildBeastBody,
   buildBeastHead,
   buildBeastLimb,
+  buildBeastSkeleton,
   buildBeastTail,
   applyChestPose,
   applyHeadPose,
+  beastLookYaw,
   buildBirdBody,
   buildBirdWing,
   buildCharacterSkeleton,
@@ -12570,23 +12572,23 @@ export class GameEngine {
    * in diagonal pairs instead. What changed is that each animal now has its own
    * body, skull, limbs and tail rather than four scalars over a shared box, and its
    * own joint table in `BEAST_RIG` so the legs start where the ribs end.
+   *
+   * The pivots come from `buildBeastSkeleton`, which owns the fact that `head-pivot`
+   * is a joint at the front shoulder rather than a second root at the animal's feet.
+   * Read that docblock before moving a head mesh: `headY` and `headZ` here are
+   * measured **from the neck**, not from the ground, and `BEAST_RIG`'s are not.
    */
   private createBeast(role: BeastRole): THREE.Group {
     const kind = role as BeastKind
     const rig = BEAST_RIG[kind]
-    const group = new THREE.Group()
-    const bodyPivot = new THREE.Group()
-    bodyPivot.name = 'body-pivot'
-    group.add(bodyPivot)
-    const torsoPivot = new THREE.Group()
-    torsoPivot.name = 'torso-pivot'
-    bodyPivot.add(torsoPivot)
-    const headPivot = new THREE.Group()
-    headPivot.name = 'head-pivot'
-    bodyPivot.add(headPivot)
-    const pelvisPivot = new THREE.Group()
-    pelvisPivot.name = 'pelvis-pivot'
-    bodyPivot.add(pelvisPivot)
+    const {
+      root: group,
+      torsoPivot,
+      headPivot,
+      pelvisPivot,
+      headY,
+      headZ,
+    } = buildBeastSkeleton(rig)
 
     const pelt = this.beastPeltColor(role)
     const hideMaterial = this.artLibrary.acquireMaterial(`beast:hide:${role}`, {
@@ -12613,7 +12615,7 @@ export class GameEngine {
       hideMaterial,
     )
     head.name = 'head'
-    head.position.set(0, rig.headY, rig.headZ)
+    head.position.set(0, headY, headZ)
     headPivot.add(head)
 
     // Front limbs answer to `leftArm` / `rightArm`, hind limbs to `leftLeg` /
@@ -14272,6 +14274,21 @@ export class GameEngine {
    * into a lunge and the flank may breathe, but the hips must stay with the ribs
    * and the skull must not swing on the end of its own neck offset. The head still
    * tracks, just over a narrow arc and about the neck rather than the body centre.
+   *
+   * The skull hangs off the ribcage now — see `buildBeastSkeleton` — which changes
+   * what the numbers below mean rather than what they are. `lookYaw` is measured from
+   * the animal's own facing, so it is a *body*-space angle, and `head-pivot` is a
+   * chest-space node: writing it raw would leave the gaze out by 2.5583° on a
+   * quadruped and 3.0334° on a troll, and the obvious `lookYaw - chestYaw` leaves
+   * 1.2799°/1.7368° and is worse than doing nothing in 5.37%/6.84% of swept states.
+   * Those are small next to the 43.64° the same mistake was worth on a person —
+   * a beast's chest barely turns — but they are an error the reparenting *introduces*,
+   * so they are not optional, and `solveHeadYaw` answers them exactly.
+   *
+   * The damping moved with it, onto `actor.headYaw`, for the reason the biped pass
+   * gives: a frame change is not a motion, so the body-space angle is what damps and
+   * the conversion is instantaneous. Damped after conversion the head chases the
+   * chest's own gait twist a fraction of a second late.
    */
   private animateBeastPosture(
     rig: CharacterRig,
@@ -14290,12 +14307,14 @@ export class GameEngine {
     const { torsoPivot, pelvisPivot, headPivot } = pivots
     if (torsoPivot) {
       torsoPivot.position.x = 0
-      torsoPivot.rotation.x =
+      applyChestPose(
+        torsoPivot,
         -pose.anticipation * (upright ? 0.16 : 0.1) +
-        pose.attack * (upright ? 0.2 : 0.14) +
-        pose.stagger * 0.14
-      torsoPivot.rotation.y = -actor.stride * 0.03
-      torsoPivot.rotation.z = -actor.turnLean * 0.06
+          pose.attack * (upright ? 0.2 : 0.14) +
+          pose.stagger * 0.14,
+        -actor.stride * 0.03,
+        -actor.turnLean * 0.06,
+      )
       torsoPivot.scale.y = 1 + breathing * 0.3
     }
     if (pelvisPivot) {
@@ -14304,10 +14323,25 @@ export class GameEngine {
       pelvisPivot.rotation.z = actor.turnLean * 0.03
     }
     if (headPivot) {
-      const clamped = THREE.MathUtils.clamp(lookYaw, -0.45, 0.45)
-      headPivot.rotation.y = dampAngle(headPivot.rotation.y, clamped, 5, delta)
-      headPivot.rotation.x = pose.attack * 0.16 - pose.flinch * 0.2
-      headPivot.rotation.z = actor.turnLean * 0.04
+      actor.headYaw = dampAngle(actor.headYaw, beastLookYaw(lookYaw), 5, delta)
+      // Hoisted for the same reason the biped pass hoists it: the pitch is applied
+      // after the yaw in the same Euler, so the solve has to read the value that will
+      // actually land on the pivot.
+      const headPitch = pose.attack * 0.16 - pose.flinch * 0.2
+      applyHeadPose(
+        headPivot,
+        headPitch,
+        torsoPivot
+          ? solveHeadYaw(
+              torsoPivot.rotation.x,
+              torsoPivot.rotation.y,
+              torsoPivot.rotation.z,
+              headPitch,
+              actor.headYaw,
+            )
+          : actor.headYaw,
+        actor.turnLean * 0.04,
+      )
     }
   }
 

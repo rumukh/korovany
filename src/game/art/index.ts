@@ -107,6 +107,7 @@ export { hasStylizedShader } from './stylizedShader.ts'
 // turns it into geometry. See `docs/09-npc-and-creature-models-spec.md`.
 export {
   BEAST_KINDS,
+  BEAST_LOOK_CLAMP,
   BEAST_RIG,
   CHARACTER_DETAIL_DISTANCE,
   CHARACTER_FACTIONS,
@@ -114,9 +115,11 @@ export {
   WAGON_RIG,
   applyChestPose,
   applyHeadPose,
+  beastLookYaw,
   buildBeastBody,
   buildBeastHead,
   buildBeastLimb,
+  buildBeastSkeleton,
   buildBeastTail,
   buildBirdBody,
   buildBirdWing,
@@ -166,6 +169,7 @@ export {
   type ArmourWeight,
   type BeastKind,
   type BeastRig,
+  type BeastSkeleton,
   type CharacterFaction,
   type CharacterKitId,
   type CharacterPartKeys,

@@ -960,8 +960,10 @@ export function solveHeadYaw(
  * nothing at some angles — **1.00%** here, which is the chest's breath and nothing
  * else.
  *
- * A beast has no neck: `createBeast` still roots its head at the animal, so its skull
- * never wore the width. Pass `null` and nothing is divided out.
+ * A beast now has a neck too — `buildBeastSkeleton` puts one at the front limb joint —
+ * and it reaches this function through the very lookup that was written to allow it:
+ * `mesh.getObjectByName('neck-pivot')`, a name test rather than a role test. Passing
+ * `null` still divides nothing out, for anything that has no neck at all.
  */
 /**
  * How much of its gait yaw a chest carries, and how fast a stagger takes it away.
@@ -1012,10 +1014,13 @@ export function solveHeadYaw(
  * `headPivot.rotation.y` directly at spawn, and `animateBeastPosture` writes x, y and z
  * for quadrupeds — outside the slice the wiring assertions inspect. Neither is a live
  * defect: the variation write predates any pose pass and is overwritten on the first
- * frame, and beasts never reach `solveHeadYaw`. But *"sole writer"* was asserted from
- * the two call sites in front of me rather than from a search, which is the same
- * population defect this work has been cataloguing, committed inside the rule that
- * describes it.
+ * frame, and the beast pass now goes through this function too. But *"sole writer"* was
+ * asserted from the two call sites in front of me rather than from a search, which is
+ * the same population defect this work has been cataloguing, committed inside the rule
+ * that describes it. The sentence that followed it — *"beasts never reach
+ * `solveHeadYaw`"* — was true when it was written and stopped being true the moment
+ * their skulls were hung off their ribs, which is the other half of the same lesson:
+ * **a fact about the population decays when the population changes.**
  *
  * What is true, and is what the reassertion actually rests on: **every write that
  * matters for the gaze goes through here, and it runs after the others.** A write
@@ -3569,6 +3574,177 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
     tailZ: -0.52,
     footprint: 1.15,
   },
+}
+
+/**
+ * The pivots an animal is posed through, already wired to each other.
+ *
+ * The quadruped half of {@link CharacterSkeleton}, and it exists for the same reason:
+ * `createBeast` built `head-pivot` as a **sibling of `torso-pivot` at the animal's own
+ * origin** — the ground between its feet — with the skull placed at `headY` up and
+ * `headZ` forward of it. That is a second root, not a neck. It was deliberately left
+ * alone when the people were fixed, on the argument that a quadruped's neck is not at
+ * `shoulderY` and that guessing at one turns one regression into two. The guess is no
+ * longer needed: the rig table already says where a beast's shoulder is.
+ *
+ * ## What it cost, measured over the reachable pose box
+ *
+ * The population is four — `BEAST_KINDS` — and beasts have **no discrete variant**:
+ * `spawnActor` resolves one and hands it only to `createCharacter`. Their per-actor
+ * differences are the continuous scales `applyActorVisualVariation` writes, which is
+ * why the sweep drives the extremes of each term rather than enumerating people.
+ *
+ * The reachable box is not the product of the terms. `pose.attack` and
+ * `pose.anticipation` come from the same `actor.action` and exclude each other;
+ * `pose.flinch` and `pose.stagger` are one `reaction` field; and the stagger branch
+ * sets `actor.action = null`, so a staggering animal has no attack to add. Distance
+ * between the skull and where `torso-pivot` puts it, in authored units and then
+ * multiplied by `BEAST_PROFILES.scale` into the world:
+ *
+ * | kind | walking, posed | in the world | on death | in the world |
+ * | --- | --- | --- | --- | --- |
+ * | wolf | 0.2414 | 0.2076 m | 0.4218 | 0.3627 m |
+ * | boar | 0.2116 | 0.2010 m | 0.3632 | 0.3451 m |
+ * | bear | 0.2751 | 0.3301 m | 0.5061 | 0.6073 m |
+ * | troll | 0.4732 | **0.6341 m** | 0.8503 | **1.1395 m** |
+ *
+ * The death column is the one nothing was watching. `updateActorDeathMotion` writes
+ * `head-pivot.rotation.z = side * 0.28 * eased` — a skull lolling as the body goes
+ * down — and on a pivot at the feet that swings it through the entire ground-to-skull
+ * lever arm, 2.34 authored units on a troll. It is not a pose the animation reaches by
+ * accident; it happens on **every** death, and the humanoid rig had exactly the same
+ * hole covered by exactly as many assertions.
+ *
+ * The figures previously recorded for this defect — 0.296 on a wolf, 0.368 on a bear,
+ * 0.660 on a troll, "under attack plus stagger" — **do not reproduce.** Driven at that
+ * pose the shipped rig gives 0.4589, 0.5231 and 0.7911; and the pose is not reachable,
+ * for the same reason the humanoid table had to be corrected. Both numbers and their
+ * pose were wrong in the same direction as the fix being deferred, which is the reason
+ * every figure here is computed by `a beast's skull is rigid with its ribs and hinges
+ * at the neck` rather than restated.
+ *
+ * ## Where the neck goes, and why it is not a guess
+ *
+ * `(0, frontJointY, frontZ)` — the front limb joint. That is the same rule
+ * {@link buildCharacterSkeleton} follows, said in the beast's own vocabulary: a
+ * person's neck sits at `shoulderY`, *the height the arms hang from*, and a beast's
+ * front limbs hang from `frontJointY` at `frontZ`. Nothing new is authored, so nothing
+ * can drift: move a shoulder in `BEAST_RIG` and the neck follows it.
+ *
+ * It reads correctly on all four. A wolf's skull ends up 0.300 above and 0.480 ahead of
+ * its shoulder — a neck that runs forward and slightly up, which is the animal that
+ * "runs with its head below its shoulders". A boar's is 0.040 up and 0.660 ahead: the
+ * short thick neck thrust straight forward off a shoulder hump. A troll's is 0.060
+ * *below* its shoulder line and 0.360 ahead, which is docs/09's "small head set low and
+ * forward" arriving for free rather than being posed in.
+ *
+ * At rest the change is invisible to the pixel: the skull's rest position is identical
+ * on both arrangements to 0.00e+0, because `torso-pivot` sits at the animal's origin
+ * with an identity transform and the two offsets sum to the old one. That is the same
+ * property that let the defect survive review on people, so it is asserted rather than
+ * assumed.
+ *
+ * ## Two things the split buys that a single joint would not
+ *
+ * `neck-pivot` never rotates and `head-pivot` only rotates, for the reason
+ * {@link setCharacterShoulderWidth} exists: `applyActorVisualVariation` runs for beasts
+ * too, and it puts the actor's shoulder width on `torso-pivot.scale.x`. Once the skull
+ * descends from the chest it inherits that width, and a scale cancelled *below* a
+ * rotation only cancels at rest. The engine already looks the neck up by name —
+ * `mesh.getObjectByName('neck-pivot')` — written that way on purpose so that giving the
+ * beasts a neck would start cancelling their width with no further change. It does.
+ *
+ * And `lookYaw` becomes a chest-space quantity the moment the head hangs off the chest,
+ * so `animateBeastPosture` has to convert it with `solveHeadYaw`. That is small here —
+ * a beast's chest barely turns — but it is a *new* error the reparenting introduces, so
+ * it is not optional: uncorrected it is worth 2.5583° on a quadruped and 3.0334° on a
+ * troll, and the obvious scalar `lookYaw - chestYaw` leaves 1.2799°/1.7368° and is
+ * worse than doing nothing in 5.37%/6.84% of the swept states.
+ */
+export interface BeastSkeleton {
+  /** The animal's own group. Every pivot below is already parented into it. */
+  root: THREE.Group
+  bodyPivot: THREE.Group
+  torsoPivot: THREE.Group
+  /**
+   * The base of the neck, at the front limb joint. A child of {@link torsoPivot},
+   * carrying the neck's *offset* and nothing the animation writes — so that
+   * {@link headPivot} can be a pure rotation and the chest's width can be divided back
+   * out in the frame it was applied in.
+   */
+  neckPivot: THREE.Group
+  /** The skull's own rotation: look, lunge, flinch, turn roll, and the death loll. */
+  headPivot: THREE.Group
+  pelvisPivot: THREE.Group
+  /**
+   * Y and Z for the `head` mesh, in `head-pivot` space — measured **from the neck**,
+   * not from the ground. Read them from here rather than recomputing
+   * `headY - frontJointY` at the call site: a joint that has drifted from the mesh it
+   * carries is the defect this type exists to prevent.
+   */
+  headY: number
+  headZ: number
+}
+
+/**
+ * Builds the load-bearing pivots for one animal and parents them anatomically.
+ *
+ * Lives here rather than in the engine for the same reason {@link buildCharacterSkeleton}
+ * does: the layout is then reachable from a Node test with no DOM, so a wolf can be
+ * posed and measured instead of read. It builds groups and nothing else.
+ */
+export function buildBeastSkeleton(rig: BeastRig): BeastSkeleton {
+  const root = new THREE.Group()
+  const bodyPivot = new THREE.Group()
+  bodyPivot.name = 'body-pivot'
+  root.add(bodyPivot)
+  const torsoPivot = new THREE.Group()
+  torsoPivot.name = 'torso-pivot'
+  bodyPivot.add(torsoPivot)
+  const neckPivot = new THREE.Group()
+  neckPivot.name = 'neck-pivot'
+  // The front limb joint: a beast's shoulder, which is where its neck starts.
+  neckPivot.position.set(0, rig.frontJointY, rig.frontZ)
+  torsoPivot.add(neckPivot)
+  const headPivot = new THREE.Group()
+  headPivot.name = 'head-pivot'
+  neckPivot.add(headPivot)
+  const pelvisPivot = new THREE.Group()
+  pelvisPivot.name = 'pelvis-pivot'
+  bodyPivot.add(pelvisPivot)
+  return {
+    root,
+    bodyPivot,
+    torsoPivot,
+    neckPivot,
+    headPivot,
+    pelvisPivot,
+    headY: rig.headY - rig.frontJointY,
+    headZ: rig.headZ - rig.frontZ,
+  }
+}
+
+/**
+ * How far round a beast will turn its head, in its own body space.
+ *
+ * A wolf is not an owl. This was a magic pair of literals inside
+ * `animateBeastPosture`, pinned by a source regex — and this repository has already
+ * concluded, three review passes in, that **a source regex cannot pin a behavioural
+ * invariant; it can only pin the current spelling of one.** So it lives here, where a
+ * test drives the real function instead of a copy of the arithmetic, exactly as
+ * {@link setCharacterShoulderWidth} and {@link decayStrideOnStagger} do.
+ *
+ * The clamp used to be load-bearing for a different reason than it is now. On the
+ * sibling rig it was the *only* thing keeping the skull inside the animal: a look yaw
+ * about a pivot at the feet swept a wolf's head 0.7337 authored units sideways even at
+ * the clamp, and a troll's 1.0433 — under their own contact-shadow radii by a hair,
+ * which is what "reads as attached" meant. Hinged at the neck the same look moves them
+ * 0.2526 and 0.1629. What is left is anatomy, and that is a better reason.
+ */
+export const BEAST_LOOK_CLAMP = 0.45
+
+export function beastLookYaw(lookYaw: number): number {
+  return THREE.MathUtils.clamp(lookYaw, -BEAST_LOOK_CLAMP, BEAST_LOOK_CLAMP)
 }
 
 /**

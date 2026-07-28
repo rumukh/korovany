@@ -373,14 +373,46 @@ no new dependencies.
   pass is split the same way: `animateBeastPosture` replaces the biped shoulder
   bend, hip counter-rotation and head yaw, all of which pull an animal apart at the
   joints when applied to a body whose skull sits a metre forward of its own pivot.
-  Note what that buys and what it does not: it *reduces* the sliding, it does not
-  remove it. `createBeast` still roots `head-pivot` at the animal rather than on its
-  ribs, so the skull slides against the ribcage under attack and stagger — 0.296
-  authored units on a wolf, 0.368 on a bear, **0.660 on a troll**, before
-  `BEAST_PROFILES.scale` turns that into world units, where a troll's head travels
-  over a metre. That is worse than the 0.66 m humanoid case that was reported.
-  Deferred deliberately — a quadruped's neck is not at `shoulderY` and guessing at
-  one is how a fix becomes a second regression — but filed, not called solved.
+- **A quadruped's neck is where its front legs are.** `createBeast` used to root
+  `head-pivot` at the animal rather than on its ribs — the same foot-rooted second root
+  the humanoid head had — and that was deliberately deferred on the argument that a
+  quadruped's neck is not at `shoulderY` and that guessing at one turns one regression
+  into two. The guess was unnecessary: `BEAST_RIG` already records `frontJointY` and
+  `frontZ`, the joint the front limbs hang from, which is a beast's shoulder and where
+  its neck starts. `buildBeastSkeleton` puts `neck-pivot` there and hangs `head-pivot`
+  off it, exactly as `buildCharacterSkeleton` does at `shoulderY`. The rest pose is
+  bit-identical — measured at 0.00e+0 on all four animals — because `torso-pivot` sits
+  at the animal's origin with an identity transform and the two offsets sum to the old
+  one.
+  Measured over the reachable pose box, in authored units and then in world units after
+  `BEAST_PROFILES.scale`, as how far the fix moves the skull at an identical pose:
+
+  | | walking | on death | in the world, dying | skull vs its own chest |
+  | --- | --- | --- | --- | --- |
+  | wolf | 0.4697 | 0.6255 | 0.5379 m | 8.3171° |
+  | boar | 0.3927 | 0.5353 | 0.5085 m | 8.3171° |
+  | bear | 0.5102 | 0.7165 | 0.8598 m | 8.3171° |
+  | troll | 0.6055 | **1.0040** | **1.3453 m** | **11.6733°** |
+
+  Two things about the figures this replaces — 0.296 on a wolf, 0.368 on a bear, 0.660
+  on a troll, "under attack plus stagger". **They do not reproduce**: driven at that
+  pose the old rig gives 0.4589, 0.5231 and 0.7911. And **the pose is not reachable**,
+  because the stagger branch sets `actor.action = null` and `sampleActorPose` reads the
+  attack out of `actor.action` — the identical correction the humanoid table needed, in
+  the same file, with the beast line left holding the uncorrected version. Nothing could
+  have noticed either, because no assertion evaluated them. `a beast's skull is rigid
+  with its ribs and hinges at the neck` and its companion compute every figure above.
+  The largest of them is on **death**, which no test covered at all:
+  `updateActorDeathMotion` writes `head-pivot.rotation.z = side * 0.28 * eased` and on a
+  pivot at the feet that swings the skull through the whole ground-to-skull arm, on
+  every single death. The humanoid rig had the same hole.
+  Hanging the skull off the ribs makes `lookYaw` a chest-space quantity, so the beast
+  pass now converts it with `solveHeadYaw` and damps `actor.headYaw` in body space.
+  Uncorrected that is worth 2.5583° on a quadruped and 3.0334° on a troll, and the
+  scalar `lookYaw - chestYaw` leaves 1.2799°/1.7368° and is worse than doing nothing in
+  5.37%/6.84% of swept states. Small next to the 43.64° the same mistake cost a person —
+  a beast's chest barely turns — but an error the reparenting *introduces*, so not
+  optional.
 - **Do not derive a look from a spawn counter.** Appearance hangs off the most
   durable identity a caller can offer — a generated spawn slot, a persisted
   companion id, a deterministic event id — so the same person comes back the same
@@ -453,8 +485,9 @@ CharacterKit.ts
   ── rig maths ────────────────────────────────────────────────
   solveHandOffset(target, upperArm, forearm, armX, armZ, elbowX)
   ── creatures ────────────────────────────────────────────────
-  BEAST_RIG, buildBeastBody, buildBeastHead, buildBeastLimb,
-  buildBeastTail
+  BEAST_RIG, BEAST_LOOK_CLAMP, beastLookYaw,
+  buildBeastSkeleton, buildBeastBody, buildBeastHead,
+  buildBeastLimb, buildBeastTail
   buildDeerBody, buildDeerCrown, buildDeerLeg,
   buildBirdBody, buildBirdWing
   ── caravan ──────────────────────────────────────────────────
@@ -682,6 +715,36 @@ All procedural, all allocation-free, all driven from the existing `CharacterPose
 | `boar` | Front-heavy wedge. A shoulder hump taller than its hips, a short thick neck, a blunt snout with upturned tusks, a bristle ridge down the spine, small tail. |
 | `bear` | Mass over the shoulders, round rump, short neck, small round ears, broad plantigrade paws with claws. Lumbers. |
 | `troll` | Bipedal-leaning brute: long knuckle-dragging arms, a hunched back with a stone-like ridge, a heavy jaw, a small head set low and forward, a club-heavy stance. |
+
+The rig, built by `buildBeastSkeleton` in `CharacterKit` rather than by the engine, so a
+wolf can be posed and measured from a Node test with no DOM:
+
+```text
+group
+├── **body-pivot**
+│   ├── **torso-pivot**          rotation, breath on scale.y, shoulder width on scale.x
+│   │   ├── **torso**
+│   │   ├── **leftArm** / **rightArm**   front limbs, at (±frontX, frontJointY, frontZ)
+│   │   └── neck-pivot           the joint, at (0, frontJointY, frontZ) in torso space
+│   │       └── **head-pivot**   look, lunge, flinch, turn roll, and the death loll
+│   │           └── **head**     at (0, headY − frontJointY, headZ − frontZ)
+│   └── **pelvis-pivot**
+│       ├── **leftLeg** / **rightLeg**   hind limbs
+│       └── tail-pivot → tail    answers to `cloak` in the shared rig
+├── **faction-ring**
+└── contact-shadow
+```
+
+The neck sits at the front limb joint because that is the same rule the humanoid
+skeleton follows said in a beast's vocabulary: a person's neck is at `shoulderY`, *the
+height the arms hang from*. Nothing new is authored, so nothing can drift — move a
+shoulder in `BEAST_RIG` and the neck follows it. It reads correctly on all four: a wolf's
+skull ends up 0.300 above and 0.480 ahead of its shoulder, a boar's 0.040 up and 0.660
+ahead off its shoulder hump, and a troll's 0.060 *below* its shoulder line and 0.360
+ahead — the "small head set low and forward" above, arriving out of the joint table
+rather than posed in. `neck-pivot` is a separate node from `head-pivot` for the reason
+§5.5 gives for people: it never rotates, so the chest's shoulder width can be divided
+back out on it in the frame it was applied in.
 
 ### 6.2 Fauna
 
