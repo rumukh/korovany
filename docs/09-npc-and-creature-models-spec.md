@@ -700,6 +700,15 @@ no new dependencies.
   commit. That is the head-roll error again, at the far end of the work: a fact about the
   system, correct in itself, standing in for a cause. A wrong explanation built from a
   real mechanism resists doubt in a way an invented one never could.
+  **And one exchange later the same mechanism caused the next discrepancy, genuinely.**
+  Two blame counts of the same repaired file disagreed, 58 against 59; the cause was that
+  one was taken before a commit and one after, and the commit owns sixteen lines. Measured:
+  58 → 59 → 60 across three successive commits. So *staleness* was falsely blamed for one
+  gap and was the true cause of the very next one, with nothing in either number to
+  distinguish the cases. That is the fifth class demonstrating itself in the last count
+  anyone took: **the mechanism you invoke may be real, may be the one you have watched
+  operating all along, and may still not be the one that produced the number in front of
+  you — and only measuring the explanation separates them.**
   There is a structural consequence, and it is the strongest practical thing this work
   produced. **The correction neither participant can make is the one from someone with no
   stake in the exchange.** Two parties in a review loop audit each other's *arithmetic*
