@@ -282,6 +282,35 @@ no new dependencies.
   evidence available that the mechanism is real and that a rule is not a defence
   against it. The rule is about where to *look first*, not a claim about where every
   defect lives.
+- **What is the population of the thing this pins, and am I sampling it or enumerating
+  it?** This is the question that would have caught more defects in the head-rig work
+  than any other, and it kept recurring because the answer is almost always *sampling*
+  and the sample is almost always **the one that was in front of the author**.
+  It appeared as one plan standing in for twenty-seven, one pose for four hundred and
+  sixty-two, one grid corner for a joint set, one stride and one delta for a function's
+  domain, the positive half of an axis for the whole axis, one call site for the three
+  that exist, one placement for everywhere a write can land, one pivot for the two a
+  derivation names, one function's scope for a property that has none, and one argument
+  of a call for its argument list. Every one was cheap to enumerate.
+  Three refinements earned by repetition. **The axis you were shown gets enumerated and
+  the axis nobody complained about stays a sample** — so ask which axes a thing has, not
+  whether you swept the one that broke. **Enumerating an axis at two points is
+  enumerating the points**, which a clamp sitting on a sample point will demonstrate.
+  And it applies to *fixes* as much as assertions: a fix scoped to the instance that was
+  reported has inherited its sample from the report.
+- **A documented exclusion is a decision; the same exclusion carried into a different
+  assertion is a sample.** The subtlest form of the question above, and the one with no
+  usual tell. A gait table excluded three roles from a wobble simulation for written,
+  correct reasons — one duplicates another, one has speed zero and does not walk. Those
+  reasons justify excluding them from a *simulation of gait*. They say nothing about
+  whether their constants should be *checked*, and one of the three had a speed of zero
+  that nothing verified at all.
+  What makes this hard to see is that the scope arrives **pre-justified**: there is an
+  explanation sitting right beside it, it is sound, and it is answering a different
+  question. The documentation makes the subset look more rigorous rather than less,
+  which removes the tell that normally prompts the question — an unexplained subset.
+  **When a scope travels from one assertion to another, its justification does not
+  travel with it.**
 - **A measurement is a claim with a timestamp nobody writes down.** Every other rule
   here targets claims that were wrong. This one is about claims that were *right and
   stopped being* — which is a different failure, because a measurement carries its own
