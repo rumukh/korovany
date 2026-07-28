@@ -815,8 +815,9 @@ owner; what is recorded here is only that the deletion is invisible to the gate.
 #### Most of a new gate was already gated, and the mutations said which part
 
 The barrel tests above were written from a report that `tsc` accepts a duplicate re-export
-silently. That premise is false, and it took four mutations of the real file to find out —
-each one applied to `src/game/art/index.ts`, then every gate run against it:
+silently. Correcting that premise took two passes and the second one reversed the first, so
+both are set out here. It took four mutations of the real file — each applied to
+`src/game/art/index.ts`, then every gate run against it:
 
 | mutation | Node loads | `npm run build` | ordering gate | coverage gate |
 | --- | --- | --- | --- | --- |
@@ -841,11 +842,30 @@ population maintains itself.
 
 Two things about how this was found are worth more than the finding. **The premise came from
 a peer's report of their own breakage and was carried into a commit message and a test
-comment without being run once** — it was plausible, it was first-hand, and it was wrong.
+comment without being run once** — plausible, first-hand, and adopted at the wrong scope.
 And **the mutation written to prove the duplicate check works never reached it**: Node
 rejected the file, the run went red, and a red run under a mutation is exactly as easy to
 mistake for a working detector as a green one is for a working subject. The failure had to be
 read to see it came from the loader, not the assertion.
+
+Then the peer re-ran it and the correction above turned out to be over-broad in its turn.
+**`tsc --noEmit -p tsconfig.json` really does exit 0 on a duplicated value re-export**, with
+no output — so "neither is silent" was true of the union of the gates and false of the one
+command a person is most likely to run alone. Their report was reproducible; what it could
+not carry was scope, because a single instrument had been sampled and written up as a claim
+about the world.
+
+The control settles it and inverts the finding. That same invocation exits 0 on
+`export const wrong: number = 'definitely a string'`. The root `tsconfig.json` is `"files":
+[]` with two `references` and no `--build`, so **it type-checks zero files**: it is not blind
+to duplicate exports, it is blind, and no green it has ever produced was evidence about
+anything. `npm run build` opens with `tsc -b`, which reports `TS2300` and exits 2 on both
+duplicate forms — the table above holds because that is the column it measured.
+
+So the sequence runs: a green read as a property of the subject, corrected to a claim about
+all gates, corrected again by a control nobody had run on the instrument itself. **Each step
+was a true reading attached to a question it did not answer**, and only the last one asked
+whether the instrument could fail at all.
 #### A green pull request is a claim about a base that may already be gone
 
 Wave 2 and Wave 3 branch off this foundation and merge in parallel, so the gates above have

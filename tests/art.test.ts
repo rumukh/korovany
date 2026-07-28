@@ -3554,9 +3554,25 @@ test('every type the spec names is exported by the barrel', () => {
  * attempts — a first pass that reported the *whole* list unsorted (its own
  * instrument, not the file), then a verification anchored on a name that is not
  * in the run, which measured an empty slice and printed `sorted: true`, then a
- * corrected edit that silently duplicated one name and dropped another. A barrel
- * re-export tolerates a duplicate name without complaint and `tsc` stayed green
- * through all of it.
+ * corrected edit that silently duplicated one name and dropped another.
+ *
+ * The last part of that report was that `tsc` stayed green through the duplicate,
+ * and it is worth setting out exactly because it is true, reproducible, and means
+ * something else entirely. `tsc --noEmit -p tsconfig.json` does exit 0 on a
+ * duplicated value re-export — and it exits 0 on `const wrong: number = 'a
+ * string'` too. The root `tsconfig.json` is `"files": []` with two references and
+ * no `--build`, so that invocation type-checks **zero files**. It is not blind to
+ * duplicates; it is blind, and its green has never been evidence about anything.
+ *
+ * The gates that do run:
+ *
+ *   duplicate value   tsc -b  TS2300 exit 2  ·  Node loader refuses the module
+ *   duplicate type    tsc -b  TS2300 exit 2
+ *
+ * `npm run build` starts with `tsc -b`, which is why the build catches both. The
+ * general form is the one this file keeps relearning: **a green from an
+ * instrument that has never been shown to fire is not a measurement**, and here
+ * the instrument was a command nobody had run against a planted error.
  *
  * Writing this gate found a fourth: my own `PropKit` run had `bridgeParts` ahead
  * of `brazierParts`, which no reviewer had ever seen.
