@@ -677,6 +677,10 @@ Two were in this document's own advice rather than in any test.
 | teardown's instanced-shell ordering | spec 08 invariant 4 was tested where `disposeShell` is *implemented* and nowhere it is *relied on*; skipping the release entirely left 13 shells freeing their sources' buffers, suite green |
 | `referenceCount === 0` double-release detector | the dangerous case leaves the count at 1, so the release *succeeds* and steals another holder's reference |
 | the metal band probe at key intensity **3.2** | 1.208× `keyIntensity`, so the pre-fix band driver reached 0.785 and cleared the 0.75 stop boundary. The probe reported **four bands in both builds** and the defect looked absent — clean control, well-formed staircase, plausible answer. Only the plateau *width* dissented: 4 pixels against 38 |
+| the four-subject probe's column slicing | mapped column *i* to subject *i*; the spheres did not land there, so two shared a column and it reported one subject's name over a **pair** — 230 lit pixels, five bands on a four-stop ramp |
+| a frozen-list size pin, without uniqueness beside it | 36 names is not a fingerprint for 36 *particular* names. Delete one and duplicate another and the pin passes while an export stops being checked — **under a length-only guard the cheapest way to silence a regression is to pad the list, not shrink it** |
+| the frame-time scope guard | read `docs/08` and only `docs/08` while named *"…not restated unscoped **anywhere**"*. A third unscoped copy in `docs/09` §8 shipped to `main`; the test's **name** asserted the population its implementation did not cover, so reading it confirmed the coverage it lacked |
+| `git grep "FOUNDATION_SURFACE.length"` | returned **no matches** on a tree where the pin was present and passing. The guarantee is expressed as `assert.equal(surface.length, size)` over a loop, so the property holds and that spelling of it does not exist. **A content probe searches one spelling of a property that has many** |
 
 Four rules fall out of them, in rough order of how much they would have saved:
 
@@ -1613,6 +1617,51 @@ The practical defence is the one that has worked all night and needs no insight:
 parameter had a defensible value available, defined by the system, for reasons unrelated
 to the outcome. Preferring it over a convenient one costs nothing at the time and is the
 difference between a measurement and a coincidence.
+
+### 13.2 The limit of the content probe, found by the technique's own author
+
+This programme's most reusable process finding was **prefer a content probe to a ref**: a
+ref resolves through a cache that always returns a well-formed SHA and cannot report being
+stale, whereas `git grep <phrase> <tree>` reads the tree. It ended a night of sessions
+analysing superseded work, and it is right.
+
+It also has a limit, and the clearest demonstration came from the person who introduced it.
+Checking whether a frozen-list size pin had landed, they ran:
+
+```
+git grep "FOUNDATION_SURFACE.length"   ->   no matches
+```
+
+and reported the guard missing. The guard was present, passing, and had been on `main` for
+several merges — expressed as `assert.equal(surface.length, size)` inside a loop over
+`[label, surface, size]` triples. **The property held; that spelling of it did not exist.**
+
+> **A content probe tests one spelling of a property that has many.** It is strictly better
+> than a ref check, which tests no spelling of anything — but "the string is absent" and
+> "the guarantee is absent" are different facts, and a probe reports the first while a
+> reader hears the second.
+
+The failure is the catalogue's own shape once more, and it is instructive that the
+technique's strength and its weakness are the same mechanism: a probe is trustworthy
+*because* it reads the artefact rather than a name, and untrustworthy in exactly the
+degree that the artefact can express the property in a form the pattern does not match.
+
+**What closes it is a behavioural probe**, which needs no knowledge of how the guarantee is
+spelled:
+
+```
+shrink FOUNDATION_SURFACE from 36 names to 1   ->   suite goes RED
+```
+
+That is one mutation, it takes seconds, and it cannot be fooled by expression form,
+refactoring, or a helper extracted since the check was written. **Where a claim is about a
+guarantee rather than about text, mutate the input and watch the guarantee fire.** A grep
+answers *"is this written here"*; only running the thing answers *"is this enforced."*
+
+Stated without hindsight: the probe was the right instrument for the question it was
+built for — *does this tree contain this fix* — and was carried, reasonably, to a question
+one step away: *does this tree enforce this rule.* That is the adjacent-question defect
+in §13's table, arriving through the one technique the table exists to recommend.
 
 
 ## 14. Effort

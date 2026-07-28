@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { AudioDirector, type SoundCue, type SoundRequest } from './AudioDirector'
-import { musicIntensityRank, type MusicIntensity } from './MusicScore.ts'
+import { musicIntensityRank, type MusicIntensity, type MusicOutcome } from './MusicScore.ts'
 import { BloomPostProcessor } from './BloomPostProcessor'
 import {
   AchievementTracker,
@@ -1781,6 +1781,7 @@ export class GameEngine {
   private readonly audio: AudioDirector
   private readonly audioListenerRight = new THREE.Vector3()
   private musicIntensity: MusicIntensity = 'explore'
+  private musicOutcome: MusicOutcome = 'none'
   private musicIntensityReleaseAt = 0
   private nextMusicStateSampleAt = 0
   private lootSequence = 0
@@ -2183,6 +2184,7 @@ export class GameEngine {
       zone: this.lastZone,
       intensity: this.musicIntensity,
       threatTier: this.threatTier,
+      outcome: this.musicOutcome,
     })
     if (!restoredRun) {
       this.achievements.beginRun(faction, this.lastZone, launch.runId)
@@ -10007,6 +10009,8 @@ export class GameEngine {
       category: 'ui',
       intensity: 1,
     })
+    this.musicOutcome = result
+    this.audio.setMusicOutcome(result)
     this.audio.setEnded(true)
     this.emitView(true)
   }
@@ -14633,6 +14637,7 @@ export class GameEngine {
       zone: this.zoneAtPosition(this.player.position.x, this.player.position.z),
       intensity: this.musicIntensity,
       threatTier: this.threatTier,
+      outcome: this.musicOutcome,
     })
   }
 

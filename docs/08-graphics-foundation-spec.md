@@ -1112,6 +1112,65 @@ terminator. That is the *"every band boundary is crossed 53.8% late"* claim meas
 geometry coverage rather than inferred from arithmetic — the fix is not a brightness
 change, it is the band boundaries returning to the geometry they belong on.
 
+#### The whole shipped range, and a surface that lost banding altogether
+
+`metal`'s 0.35 is not the maximum. `GameEngine.ts:12416` is
+`metalness: gilded ? 0.76 : 0.45` — the gilded caravan's wheel rims, and 0.76 is the
+largest value in the codebase. S1 pointed at it as a structural cliff rather than a
+gradient, which the same probe settles by extending the subject list:
+
+```text
+metalness      pre-fix bands   shipped bands   pre-fix max   shipped max
+  0.76               1               4              88           112
+  0.45               3               4             138           126
+  0.35               3               4             134           130
+  0  (control)       4               4             144           144   <- identical
+```
+
+**At 0.76 the pre-fix build produced no bands at all** — a single continuous run across the
+whole lit crescent. The arithmetic behaving exactly as written, and a different failure
+from the one at 0.35:
+
+- Band 1 of the ramp requires `kNormalized >= 0.25`.
+- Pre-fix, `kNormalized <= 1 - metalness`, which at 0.76 is **0.24**.
+- `DEFAULT_RAMP[0]` is `0`, deliberately, so cast shadows survive; `metal.bandStrength`
+  is `1`, so the mix is not softened.
+- Therefore `kBanded == 0`, `kScale == 0`, and **`directDiffuse` is multiplied to zero.**
+
+What remains on those rims is specular and indirect, neither of which is banded — hence a
+smooth gradient where every other surface in the game is stepped. They did not read as
+*dim* metal; they read as **not participating in the shading model at all.**
+
+Nor could it be escaped by lighting the scene harder, which is the first thing one would
+try. `GameEngine.ts:11358` sets the band reference to
+`sun.intensity + rimLight.intensity * 0.4`, so the denominator grows with the key and the
+ratio stays bounded above by `1 - metalness` however bright the sun gets — the rim term
+pushing it strictly below. **No time of day, weather state or palette banded those wheels.**
+
+The measurement earns its place over the arithmetic for one reason: **0.76 sits past a
+boundary that nothing in the source marks.** 0.45 and 0.35 lose one stop and look merely
+wrong; 0.76 crosses `1 - m < 0.25` and loses the mechanism. One call site, one literal a
+notch above its neighbour, in a different regime — and no reader of `createCaravan` could
+have seen that from the call site.
+
+#### One more thing this probe got wrong before it got it right
+
+The four-subject version first sliced the frame into equal columns and mapped column *i*
+to subject *i*. The spheres did not land where that arithmetic said: two shared a column,
+and the run reported `metalness: 0.35` with **230 lit pixels and five bands** — a reading
+of a *pair* of spheres, presented under one subject's name. It was caught only because
+five bands is impossible on a four-stop ramp.
+
+The fix was to stop computing where the subjects should be and **segment the row by
+occupancy**, then assert the count matches the subject list and fail loudly otherwise.
+
+> **A probe that assumes where its subject is will happily measure something else and
+> report it under the subject's name.** Locate the subject in the data; do not derive its
+> position from parameters you also chose.
+
+Same family as the calibration trap below, and the same remedy: take the fact from the
+system rather than from your own arithmetic about the system.
+
 #### The calibration trap in this probe, which caught me
 
 The first run used light intensity **3.2**, chosen as "bright enough to saturate". That is
@@ -1134,6 +1193,32 @@ and it is defensible for a reason that has nothing to do with getting the answer
 This belongs to the same family as §13's other entries and is the sixth shape in it: not
 *"the assertion never saw the input"* and not *"two questions share an answer set"*, but
 **"the assertion saw the input at a setting where the defect does not express."**
+
+### 7.0.7 A visual sign-off must carry the SHA of the tree it was captured from
+
+Every other mitigation this programme tried against stale trees — resolve the branch by
+name, `git merge-base --is-ancestor`, content probes, test-count fingerprints — **narrows
+the window between capture and claim. None of them closes it**, because all of them are
+checks performed *around* the capture rather than properties *of* it.
+
+The near-miss that produced this rule: a reviewer had edited `stylizedShader.ts` for an
+unrelated comment correction, so the diff stat showed the file as changed. *"Changed"* and
+*"changed in the way I needed"* are different facts, and only a content probe distinguishes
+them — the adjacent-question defect aimed at a diff stat instead of at a test. Had the
+sequencing gone ten minutes differently, this PR would have shipped QA screenshots of
+superseded shading, and **nothing in the process would have caught it**, because a
+screenshot does not record what it is a screenshot *of*.
+
+> **A capture that names its own tree cannot silently describe a different one.** Record
+> the SHA at capture time, in the artifact or beside it, and a sign-off becomes falsifiable
+> after the fact by anyone, without re-running it.
+
+The asymmetry is what makes it worth the line of tooling: the check costs one command at
+capture time and is free forever after, whereas every process-level mitigation costs
+vigilance on every message and degrades the moment attention lapses. It also survives the
+condition that defeated the rest of them here — **it needs no ref to resolve, so a cached
+or orphaned ref cannot corrupt it.** This generalises past graphics: any claim produced by
+looking at a build rather than by asserting over it has the same hole.
 
 ### 7.1 `OUTLINE_WORLD_DRAWS_MAX` — the multiplier, and the unit that changed
 
