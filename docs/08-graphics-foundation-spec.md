@@ -117,6 +117,15 @@ accessibility rules still apply verbatim.
 - **Do not let the toolkit reach back into `GameEngine`.** `src/game/art/` imports
   only `three`, `three/addons` and `src/game/random/`. It must stay importable from
   a Node test with no DOM.
+- **Do not request `PCFSoftShadowMap`.** three 0.185 deprecates it: `WebGLShadowMap`
+  overwrites the type with `PCFShadowMap` on the first frame and warns once, so the
+  build runs a filter the source does not name. Ask for `PCFShadowMap` directly and
+  soften it with `shadow.radius`, which scales the five-tap Vogel disk the modern PCF
+  path samples. The default radius of `1` is one texel — a hard edge — so a shadow
+  type set and a softness left alone is a hard shadow with no warning attached.
+  Shipped at `SHADOW_SOFTNESS_RADIUS = 4`: at ±52 across 2048² that is 0.051 world
+  units per texel, so roughly a 0.2-unit penumbra. `14` was measured to stipple
+  character surfaces, five taps being too sparse for a disk that wide.
 
 ## 5. Architecture
 

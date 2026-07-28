@@ -938,6 +938,19 @@ const OUTLINE_INTERACTABLE_DISTANCE_SQ = 46 * 46
 /** §08 — shadow and rim budget. See `docs/08-graphics-foundation-spec.md`. */
 const SHADOW_MAP_SIZE = 2048
 const SHADOW_FRUSTUM_HALF_EXTENT = 52
+/**
+ * Width of the shadow filter disk, in shadow-map texels.
+ *
+ * three.js 0.185 filters `PCFShadowMap` with a five-tap Vogel disk rotated per
+ * pixel by interleaved gradient noise, scaled by exactly this value. It defaults
+ * to 1 — a one-texel disk, which is a hard edge. At 104 world units across a 2048
+ * map one texel is ~0.051 units, so 4 buys a ~0.2-unit penumbra: enough to read as
+ * a soft contact shadow at character scale without dissolving the shape.
+ *
+ * Do not raise this much further. Five taps spread over a wide disk stipple rather
+ * than blur; measured in-game, 14 visibly speckles character surfaces.
+ */
+const SHADOW_SOFTNESS_RADIUS = 4
 const RIM_LIGHT_BASE = 0.92
 const OUTLINE_CORPSE_SECONDS = 8
 const OUTLINE_PLAYER_HIDE_DISTANCE_SQ = 2.4 * 2.4
@@ -2133,7 +2146,11 @@ export class GameEngine {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    // `PCFSoftShadowMap` is deprecated in three 0.185: `WebGLShadowMap.render`
+    // overwrites it with `PCFShadowMap` on the first frame and warns. Naming the
+    // type we actually get keeps the code honest, silences a warning that was
+    // burying others, and makes `shadow.radius` the real softness control.
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     // ACES rolls saturated faction colour towards white and lifts blacks — exactly
     // wrong for ink. Neutral keeps hue and keeps outlines black.
@@ -10917,6 +10934,7 @@ export class GameEngine {
     // panning a large constant depth bias would cause.
     this.sun.shadow.bias = -0.0006
     this.sun.shadow.normalBias = 0.028
+    this.sun.shadow.radius = SHADOW_SOFTNESS_RADIUS
     this.sun.target.position.set(
       this.player.position.x,
       0,
