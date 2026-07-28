@@ -1068,6 +1068,43 @@ So `visibleSetPeak * 2 >= OUTLINE_WORLD_VISIBLE_DRAWS_MAX` stays. If instancing 
 peak to 12, the cap must come to 24 or below. That is the correct consequence, not a test
 to silence.
 
+### 7.2.2 A gate that reports success while checking nothing
+
+Three facts were individually true and each hid the next:
+
+```text
+tsconfig.json        "files": [] + project references  ->  tsc --noEmit checks NOTHING, exits 0
+tsconfig.app.json    "include": ["src"]                ->  no config ever reached tests/
+npm test             --experimental-strip-types        ->  strips types without checking them
+```
+
+Measured: a planted `const x: number = 's'` in `src/` **passes `tsc --noEmit`** and fails
+`tsc -b` with two errors. The same line in a *test* file passed **both** the build and the
+suite. Roughly 8,000 lines of test code had no type coverage of any kind.
+
+This is the same species as the budget defects above — a gate sized against one population
+(`src/`, via `tsc -b`) and quoted as coverage of another (the repo) — and it was found in
+the verification loop of the session that spent the day finding this pattern in everyone
+else's work. **The rule is easy to state and hard to apply to yourself.**
+
+Closing it surfaced twelve real errors and one that mattered: `tests/art.test.ts` passed
+`{ caps: true }` to `tubeAlongPoints`, whose options are `capStart` and `capEnd`. Silently
+dropped, so the test titled *"tube caps wind outward regardless of tube direction"* built
+96 triangles — exactly what passing no options builds — and had no cap to judge. Proved by
+reintroducing the defect its own title names: the old test stayed green, the fixed one
+fails. **A wrong option name is precisely what a type-checker is for, and there wasn't
+one.**
+
+The other eleven were fixture gaps, and each was closed by **measuring rather than
+reasoning**, because making a shape well-formed is exactly when another test's premise can
+shift. The riskiest was a negative control whose actors ran with `hp` and `role`
+undefined: `disagreements` = 698 before, 698 after.
+
+Enforcement is `tsc --noEmit -p tsconfig.test.json` inside `npm run build`, plus a test
+asserting that wiring — because the gate lives in a script where nothing running
+`npm test` can see it, which is how the hole formed. Both mutations bite: deleting the
+build step, and narrowing the config's `include`.
+
 ### 7.3 Should the repo-wide sweep scan cover disposal and occlusion too?
 
 Deferred to Wave 4 because it could only be answered with both kits merged. Answer:
