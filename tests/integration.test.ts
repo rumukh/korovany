@@ -403,35 +403,196 @@ test('each art kit is uniform about vertex colours, so a merge can never mix the
   )
   for (const geometry of plans) geometry.dispose()
 
-  // Acquired through the library rather than by calling builders directly, so this
-  // sees the geometry the world actually gets, merged surfaces and all.
+  // Six requests was a sample, not a sweep. The full request space is checked by
+  // `every prop the game can ask for comes back coloured, and none of it white` below.
   const library = new WorldPropLibrary({ retention: 0 })
-  const requests = [
-    { kind: 'tree', biome: 'forest', slot: 0, detail: 'near' },
-    { kind: 'tree', biome: 'fort', slot: 1, detail: 'far' },
-    { kind: 'undergrowth', biome: 'forest', slot: 2 },
-    { kind: 'rock', biome: 'fort', slot: 1, detail: 'near' },
-    { kind: 'reeds', biome: 'neutral' },
-    { kind: 'groundCover', biome: 'palace', cover: 'grass' },
-  ]
-  let propSurfaces = 0
-  const uncoloured: string[] = []
-  for (const request of requests) {
-    const asset = library.acquire(request as never)
-    for (const surface of asset.surfaces) {
-      propSurfaces += 1
-      if (!surface.geometry.getAttribute('color')) {
-        uncoloured.push(`${asset.key}#${String(surface.surface)}`)
+  const asset = library.acquire({ kind: 'tree', biome: 'forest', slot: 0, detail: 'near' } as never)
+  assert.ok(
+    asset.surfaces.length > 0 && asset.surfaces.every((surface) => surface.geometry.getAttribute('color')),
+    'a PropKit surface arrived without vertex colours, which is the other half of the hazard',
+  )
+  library.release(asset)
+  library.dispose()
+})
+
+/**
+ * S3's white-vertex-colour sweep, re-run on the merged tree, through `acquire`.
+ *
+ * `mergeAll` synthesises WHITE vertex colours for inputs that lack them, and only when
+ * some sibling input has them. In a zero-texture, vertex-coloured game that renders as
+ * blown-out geometry. Nothing asserted against it before this: the existing prop-colour
+ * test checks that a `color` attribute EXISTS, has the right count and is finite, all
+ * of which a synthesised white attribute satisfies perfectly.
+ *
+ * Baseline on S3's branch before the merge: **476 merged surfaces, 0 missing a colour
+ * attribute, 0 fully white**. This tree reproduces it exactly, at 352 requests.
+ *
+ * Detector proven before its zero is trusted, per the programme's rule — absence of a
+ * pattern is not absence of the behaviour, a working detector reporting zero is:
+ *
+ *     mixed merge (one coloured input, one bare)   36 of 72 vertices white  DETECTED
+ *     planted all-white geometry                   fully white: true        DETECTED
+ *     the coloured control                         fully white: false       correctly NOT
+ *
+ * The third line is the one that matters most. A checker that called everything white
+ * would also report zero problems if the sense were inverted, so the discriminating
+ * assertion is that a correct control reads exactly not-white.
+ */
+test('every prop the game can ask for comes back coloured, and none of it white', async () => {
+  const { WorldPropLibrary } = await import('../src/game/world/WorldPropLibrary.ts')
+
+  const isFullyWhite = (
+    attribute: THREE.BufferAttribute | THREE.InterleavedBufferAttribute,
+  ): boolean => {
+    for (let index = 0; index < attribute.count; index += 1) {
+      if (
+        attribute.getX(index) < 0.999
+        || attribute.getY(index) < 0.999
+        || attribute.getZ(index) < 0.999
+      ) return false
+    }
+    return true
+  }
+
+  // --- controls, before the sweep ---
+  const coloured = ensureVertexColors(new THREE.BoxGeometry(1, 1, 1).toNonIndexed(), 0x884422)
+  const bare = new THREE.BoxGeometry(1, 1, 1).toNonIndexed()
+  const mixed = mergeAll([coloured.clone(), bare], { name: 'control-mixed' })
+  const mixedColour = mixed.getAttribute('color')
+  let whiteVertices = 0
+  for (let index = 0; index < mixedColour.count; index += 1) {
+    if (
+      mixedColour.getX(index) >= 0.999
+      && mixedColour.getY(index) >= 0.999
+      && mixedColour.getZ(index) >= 0.999
+    ) whiteVertices += 1
+  }
+  assert.equal(
+    whiteVertices,
+    mixedColour.count / 2,
+    `mergeAll should whiten exactly the uncoloured half of a mixed list; it whitened `
+    + `${String(whiteVertices)} of ${String(mixedColour.count)}. If this is 0 the hazard `
+    + 'this test exists for has changed shape and the sweep below proves nothing.',
+  )
+  const planted = ensureVertexColors(new THREE.BoxGeometry(1, 1, 1).toNonIndexed(), 0xffffff)
+  assert.equal(isFullyWhite(planted.getAttribute('color')), true, 'the detector cannot see white')
+  assert.equal(
+    isFullyWhite(coloured.getAttribute('color')),
+    false,
+    'the detector calls a correctly coloured control white, so its zeroes mean nothing',
+  )
+  mixed.dispose()
+  planted.dispose()
+  coloured.dispose()
+
+  // --- the sweep ---
+  const BIOMES = ['neutral', 'palace', 'forest', 'fort'] as const
+  const DETAILS = ['near', 'far'] as const
+  const COVERS = ['fern', 'flower', 'grass', 'pebble'] as const
+  const TERRITORIES = ['elf', 'guard', 'villain', 'neutral'] as const
+  const FENCE_STYLES = ['rail', 'palisade', 'picket', 'iron', 'curtain'] as const
+  const SITE_PROPS = [
+    'banner', 'barrel', 'brazier', 'cairn', 'cart', 'chest', 'crate', 'gate',
+    'lantern', 'monument', 'obelisk', 'pillar', 'shrine', 'signboard', 'stall',
+    'tent', 'tower', 'washing-line', 'waystone', 'well', 'woodpile',
+  ] as const
+  const ROOFS = ['thatch', 'shingle', 'tile', 'flat', 'conical'] as const
+  const WALLS = ['timber-frame', 'log', 'stone', 'plank'] as const
+
+  const requests: { label: string; request: unknown }[] = []
+  for (const biome of BIOMES) {
+    for (let slot = 0; slot < 3; slot += 1) {
+      for (const detail of DETAILS) {
+        requests.push({ label: `tree/${biome}/${String(slot)}/${detail}`, request: { kind: 'tree', biome, slot, detail } })
+        requests.push({ label: `rock/${biome}/${String(slot)}/${detail}`, request: { kind: 'rock', biome, slot, detail } })
+      }
+      requests.push({ label: `undergrowth/${biome}/${String(slot)}`, request: { kind: 'undergrowth', biome, slot } })
+    }
+    requests.push({ label: `reeds/${biome}`, request: { kind: 'reeds', biome } })
+    for (const cover of COVERS) {
+      requests.push({ label: `ground/${biome}/${cover}`, request: { kind: 'groundCover', biome, cover } })
+    }
+    for (const detail of DETAILS) {
+      requests.push({
+        label: `bridge/${biome}/${detail}`,
+        request: { kind: 'bridge', biome, owner: 'neutral', span: 9, width: 4, detail },
+      })
+    }
+  }
+  for (const owner of TERRITORIES) {
+    for (const style of FENCE_STYLES) {
+      requests.push({ label: `fence/${style}/${owner}`, request: { kind: 'fence', style, biome: 'forest', owner, length: 6 } })
+    }
+    for (const prop of SITE_PROPS) {
+      requests.push({
+        label: `siteProp/${prop}/${owner}`,
+        request: { kind: 'siteProp', prop, biome: 'forest', owner, variant: 0, length: 4 },
+      })
+    }
+    for (const roofStyle of ROOFS) {
+      for (const wallStyle of WALLS) {
+        for (const detail of DETAILS) {
+          requests.push({
+            label: `building/${roofStyle}/${wallStyle}/${owner}/${detail}`,
+            request: {
+              kind: 'building',
+              biome: 'forest',
+              owner,
+              detail,
+              spec: {
+                width: 5, depth: 4, wallHeight: 3, storeys: 1,
+                wallStyle, roofStyle, windows: 2, chimney: true,
+                porch: true, balcony: false, crenellated: false,
+              },
+            },
+          })
+        }
       }
     }
-    library.release(asset)
   }
-  assert.ok(propSurfaces >= 6, `only judged ${String(propSurfaces)} prop surfaces`)
+
+  const library = new WorldPropLibrary({ retention: 0 })
+  let surfaces = 0
+  const offenders: string[] = []
+  for (const { label, request } of requests) {
+    const acquired = library.acquire(request as never)
+    for (const surface of acquired.surfaces) {
+      surfaces += 1
+      const colour = surface.geometry.getAttribute('color')
+      const position = surface.geometry.getAttribute('position')
+      if (!colour) {
+        offenders.push(`${label}#${String(surface.surface)}: no colour attribute`)
+        continue
+      }
+      if (colour.count !== position.count) {
+        offenders.push(`${label}#${String(surface.surface)}: colour count mismatch`)
+      }
+      if (isFullyWhite(colour)) {
+        offenders.push(`${label}#${String(surface.surface)}: every vertex is white`)
+      }
+    }
+    library.release(acquired)
+  }
+
+  // The population is pinned in both directions. A sweep that quietly stopped enumerating
+  // would report zero offenders and look identical to a clean one.
+  assert.equal(
+    requests.length,
+    352,
+    `the request space is ${String(requests.length)} requests, pinned at 352 — add the new `
+    + 'kind here and to the count together',
+  )
+  assert.ok(
+    surfaces >= 476,
+    `only ${String(surfaces)} merged surfaces were judged; S3's pre-merge baseline was 476, `
+    + 'so the enumeration has shrunk and this is measuring less than it did',
+  )
   assert.deepEqual(
-    uncoloured,
+    offenders.slice(0, 10),
     [],
-    `${String(uncoloured.length)} of ${String(propSurfaces)} PropKit surfaces have no vertex `
-    + 'colours, which is the other half of the same hazard',
+    `${String(offenders.length)} of ${String(surfaces)} merged surfaces are miscoloured. `
+    + '`mergeAll` writes WHITE into inputs that lack colours when any sibling input has '
+    + 'them, so the usual cause is a parts list that mixes a coloured builder with a bare one.',
   )
   library.dispose()
 })
