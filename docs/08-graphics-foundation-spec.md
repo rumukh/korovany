@@ -901,6 +901,60 @@ tree the job checked out, which was a merge commit that exists nowhere in the re
 history. **The field is named for what you asked about, not for what ran**, and only the
 checkout line in the log distinguishes them.
 
+#### The cancelled runs were builds, and the flag is still wrong
+
+`deploy-pages.yml` carried `cancel-in-progress: true` on a workflow-level concurrency group
+covering both jobs. The evidence first offered for its being harmful was a run `cancelled`
+eight seconds before a successful one, read as a deployment killed mid-flight.
+
+It was not. Every cancellation in this repository's history — **four**, not one — killed the
+`build` job:
+
+| run | commit | build | deploy |
+| --- | --- | --- | --- |
+| 30392484430 | `d66478b` | cancelled 9 s in, 0 steps recorded | **0 steps** |
+| 30362159815 | `c8ca38e` | cancelled inside `npm ci` | **0 steps** |
+| 30357016872 | `f582e49` | cancelled | **0 steps** |
+| 30355639257 | `1ff6ed4` | cancelled | **0 steps** |
+
+with the control that makes those zeros mean anything: a successful run reports `build` 10
+steps and `deploy` **3**. The API does report deploy's steps when deploy runs, so the zeros
+are real and no deployment has ever been interrupted here.
+
+> `gh run list --conclusion cancelled` answers *was a run cancelled*. It was read as *was a
+> deployment interrupted*.
+
+The flag is still wrong — the group covers `deploy`, so the window is open — but on the
+template's grounds rather than an incident's, and the one-word framing hid a cost: `true`
+had correctly abandoned four superseded builds, which is the behaviour it exists to provide.
+
+**The platform claim I was about to correct from memory was right.** `queue` is a real
+concurrency key. Checked against the workflow JSON schema, which declares
+`additionalProperties: false`, it is `enum [single, max]`, default `single`, *"additional
+pending runs cancel the previous one"* — and `queue: max` with `cancel-in-progress: true` is
+disallowed outright.
+
+That default is why `ci.yml` gives pushes to `main` a unique group: it owes a verdict to
+every commit, and a third push would cancel the pending second. `deploy-pages.yml` owes no
+such thing — `main` is linear, so a superseding push contains the commit it displaces and
+only the newest content is served. **The same scheduler behaviour is a defect in one
+workflow and the desired behaviour in the other**, which is why the `ci.yml` fix was not
+copied across.
+
+The guard is `tests/deployWorkflow.test.ts`, and its ceiling is stated in the file: it reads
+the input handed to the scheduler and cannot observe the scheduler. The pending behaviour in
+particular is **unobservable from run history, because `cancel-in-progress: true` prevents
+the pending state from arising at all** — the setting suppresses its own evidence. What the
+check can fail for is the realistic case: somebody edits the flag back.
+
+It parses `concurrency:` blocks by indentation rather than grepping for the string, so a key
+relocated under a job-level block is caught, and it reports the inline mapping form as a
+failure rather than passing on syntax it cannot read. Six doped inputs — and **the sixth
+found a hole in the detector**: the Pages-deployment pattern anchored `uses:` at line start,
+so a step written compactly as `- uses: actions/deploy-pages@v4` was invisible to it. The
+real file uses the other form, so every run against this repository would have passed while
+the check was blind to the exact evasion it was written for.
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
