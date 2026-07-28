@@ -3076,6 +3076,16 @@ test('the engine wires the rig the way these tests measure it', () => {
   // producing, and it is worth stating with the count rather than tidied away: the
   // question is not just which axes a function has, but *which half of each axis you
   // have actually been shown*.
+  //
+  // One fact about this instance is worth more than the defect. **Two review sessions
+  // found the positive-only range independently, within minutes, without contact** — the
+  // fourth reviewer by mutation, a third by reading the sine bound off `actor.stride`.
+  // Every other entry in this catalogue was found once, by one session, which leaves open
+  // whether the question that produced it was transferable or just idiosyncratic to
+  // whoever phrased it. This is the only place that question got answered: **the same
+  // question, asked by two parties who had not spoken, reached the same axis.** That is
+  // weak evidence — one instance — but it is the only evidence of transferability the
+  // programme produced, and it came from the two sessions declining to claim it.
   for (const stride of [-1, -0.62, -0.25, -0.05, -0.01, 0.01, 0.05, 0.1, 0.25, 0.5, 0.62, 1]) {
     assert.ok(
       Math.abs(decayStrideOnStagger(stride, 1 / 60) - stride * decayStrideOnStagger(1, 1 / 60))
