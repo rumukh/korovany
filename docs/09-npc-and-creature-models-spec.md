@@ -218,7 +218,13 @@ no new dependencies.
   some axes by the reaction and left others as free cross-product ranges. **Enforcing
   joint consistency on one axis and believing it enforced on all of them is its own
   defect**, and a partially-joint sweep is indistinguishable from a joint one from the
-  outside. Which axis carried the difference is not established and is no longer claimed.
+  outside. A two-factor design then isolates the contributor, because a probe that moves
+  two things cannot attribute what it sees: with chest pitch joint the coefficient is the
+  same whether head roll is joint or free, and with chest pitch pinned past its reachable
+  maximum it is the same again at a higher value. **Head roll contributes zero in both
+  rows; chest pitch carries the whole difference.** The remainder of the original gap is
+  still unaccounted for, and naming chest pitch as *a* demonstrated contributor is as far
+  as the measurement goes.
 
   Three causes, from three people, for one number — and the number was right throughout.
   That yields a sharper rule than "verify your causes": **a number surviving attack is

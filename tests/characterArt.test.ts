@@ -1593,10 +1593,25 @@ test('the head tracks its target through the chest, not past it', () => {
   //
   // So: **the sweep was partially joint** — it constrained some axes by the reaction and
   // left others as free cross-product ranges — and that is the defect, demonstrated.
-  // Which axis carried the difference is *not* established, and this comment no longer
-  // claims one. Enforcing joint consistency on one axis and believing it enforced on all
-  // of them is the finding; a partially-joint sweep looks exactly like a joint one from
-  // the outside.
+  //
+  // Which axis carried it is now partly established, by a two-factor design rather than
+  // a bracket, because a probe that moves two things cannot attribute what it sees:
+  //
+  //                          head roll joint   head roll free
+  //   chest pitch joint          4.9199            4.9199
+  //   chest pitch pinned 0.700   5.7018            5.7018
+  //
+  // **Head roll contributes exactly zero in both rows.** Chest pitch carries the whole
+  // difference, and 0.700 exceeds the reachable 0.6849 while co-occurring with a
+  // stagger's head pitch. A reviewer ran this first and the pinned figures agree to four
+  // decimals across two independently written harnesses — while the *joint* figures
+  // differ (4.9199 against its finer grid's 4.8119), which is itself the check: pinning
+  // the axis removes the one the two grids disagree about.
+  //
+  // What is still **not** accounted for is the rest of the gap: 5.70 is not 6.68, so at
+  // least one further axis was free and is unidentified. Naming chest pitch as *a*
+  // demonstrated contributor is as far as the measurement goes, and this comment stops
+  // there rather than reaching for the remainder.
   //
   // Three causes were offered for one number and all three were wrong, by three
   // different people, while the number itself survived every attack. That pattern has a
