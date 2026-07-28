@@ -3789,6 +3789,34 @@ export function beastLookYaw(lookYaw: number): number {
 }
 
 /**
+ * A limb's pose, written so that its Euler order is re-asserted with it.
+ *
+ * The four limb pivots were classified in this branch's own tests as **order-free, on
+ * the grounds that only one axis is ever written to them**. That is true of
+ * `animateBeastRig` and of `animateCharacter`, and false over the lifecycle: the death
+ * pass writes `rotation.z` *and* `rotation.x` on both arms, field by field, and
+ * `applyActorVisualVariation` puts the leg splay on `rotation.z` while every pose pass
+ * writes `rotation.x`. Two axes on one node is order-sensitive by definition, and a
+ * field write never touches `.order`, so nothing re-asserted it.
+ *
+ * Measured on the death pose a reviewer used — `x` 0.34, `z` -0.72 at full ease — the
+ * composed rotation differs by **13.6671°** between `XYZ` and `ZYX`. Not a gaze error;
+ * no hand-derived solve reads a limb. It is an arm in the wrong place on a corpse, on
+ * every death, which is precisely the class of pose this branch found nothing was
+ * watching.
+ *
+ * `y` is read back and rewritten rather than passed, so this is behaviour-preserving by
+ * construction on both rigs: it writes exactly the axes its callers already wrote and
+ * changes only the fact that the order comes with them. **It is shared with the humanoid
+ * rig**, which is stated rather than buried — the classification it corrects was mine,
+ * the death pass it corrects is not beast-specific, and a detector left in place of a
+ * setter here would have been a knowingly-false claim guarded by a regex.
+ */
+export function applyLimbPose(pivot: THREE.Object3D, pitch: number, roll: number): void {
+  pivot.rotation.set(pitch, pivot.rotation.y, roll, 'XYZ')
+}
+
+/**
  * A beast's chest as it breathes: the scale the flank rides on.
  *
  * Here rather than inline in `animateBeastPosture` for the reason

@@ -22,6 +22,7 @@ import {
   buildBeastTail,
   applyChestPose,
   applyHeadPose,
+  applyLimbPose,
   beastBreathScale,
   beastLookYaw,
   buildBirdBody,
@@ -9818,12 +9819,18 @@ export class GameEngine {
     const head = actor.mesh.getObjectByName('head-pivot')
     if (weapon) weapon.rotation.x = THREE.MathUtils.lerp(weapon.rotation.x, 1.4, eased)
     if (leftArm) {
-      leftArm.rotation.z = -0.72 * eased
-      leftArm.rotation.x = THREE.MathUtils.lerp(leftArm.rotation.x, 0.34 * side, eased)
+      applyLimbPose(
+        leftArm,
+        THREE.MathUtils.lerp(leftArm.rotation.x, 0.34 * side, eased),
+        -0.72 * eased,
+      )
     }
     if (rightArm) {
-      rightArm.rotation.z = 0.72 * eased
-      rightArm.rotation.x = THREE.MathUtils.lerp(rightArm.rotation.x, -0.34 * side, eased)
+      applyLimbPose(
+        rightArm,
+        THREE.MathUtils.lerp(rightArm.rotation.x, -0.34 * side, eased),
+        0.72 * eased,
+      )
     }
     if (rig) {
       const leftElbowX = rig.leftElbow
@@ -9834,8 +9841,8 @@ export class GameEngine {
         : 0
       if (rig.leftElbow) rig.leftElbow.rotation.x = leftElbowX
       if (rig.rightElbow) rig.rightElbow.rotation.x = rightElbowX
-      if (rig.leftLeg) rig.leftLeg.rotation.x = -0.5 * eased
-      if (rig.rightLeg) rig.rightLeg.rotation.x = -0.16 * eased
+      if (rig.leftLeg) applyLimbPose(rig.leftLeg, -0.5 * eased, rig.leftLeg.rotation.z)
+      if (rig.rightLeg) applyLimbPose(rig.rightLeg, -0.16 * eased, rig.rightLeg.rotation.z)
       if (rig.leftKnee) rig.leftKnee.rotation.x = 1.15 * eased
       if (rig.rightKnee) rig.rightKnee.rotation.x = 0.42 * eased
       if (rig.cloak) rig.cloak.rotation.x = THREE.MathUtils.lerp(rig.cloak.rotation.x, 0.3, eased)

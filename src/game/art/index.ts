@@ -116,6 +116,7 @@ export {
   WAGON_RIG,
   applyChestPose,
   applyHeadPose,
+  applyLimbPose,
   beastBreathScale,
   beastLookYaw,
   buildBeastBody,

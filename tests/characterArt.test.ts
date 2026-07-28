@@ -25,6 +25,7 @@ import {
   buildBirdWing,
   applyChestPose,
   applyHeadPose,
+  applyLimbPose,
   buildCharacterSkeleton,
   buildCloak,
   buildDeerBody,
@@ -3861,15 +3862,24 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
  * | --- | --- | --- | --- |
  * | `torso-pivot` | x, y, z | **yes, and read by hand** | `applyChestPose` |
  * | `head-pivot` | x, y, z | **yes, and read by hand** | `applyHeadPose` |
- * | `pelvis-pivot` | y, z | yes, cosmetically | the file-wide ban on `rotation.order =` |
+ * | `leftArm` / `rightArm` | x by the pose pass, **x and z on death** | yes, cosmetically | `applyLimbPose` |
+ * | `leftLeg` / `rightLeg` | x by the pose pass, **z by the variation pass** | yes, cosmetically | `applyLimbPose` |
+ * | `pelvis-pivot` | y, z | yes, cosmetically | the ban on assigning an Euler order |
  * | `tail-pivot` | x, z | yes, cosmetically | the same |
  * | `neck-pivot` | none | no — it never rotates | it is never written |
- * | `leftArm` / `rightArm` / `leftLeg` / `rightLeg` | x only | **no** | a one-axis rotation is order-free |
  *
- * The limbs are the interesting row: `animateBeastRig` writes them with
- * `rotation.set(x, 0, 0)`, and a rotation about a single axis is the same matrix under
- * all six orders, so they need no guard and get none. Saying that is the point — the
- * alternative is a reader assuming they were forgotten.
+ * **The limb rows used to read "x only, therefore order-free, therefore no guard", and
+ * that was false.** It is true of `animateBeastRig` and of `animateCharacter`, and false
+ * over the lifecycle: `updateActorDeathMotion` writes `rotation.z` *and* `rotation.x` on
+ * both arms, and `applyActorVisualVariation` puts the leg splay on `rotation.z` under
+ * every pose pass's `rotation.x`. A reviewer found it by asking what happens outside the
+ * one pass I had looked at — which is the same defect as scoping a fix to the instance
+ * that was reported, committed inside the table written to avoid it. Measured on the
+ * death pose: **13.6671°** between `XYZ` and `ZYX` at `x` 0.34, `z` -0.72.
+ *
+ * `applyLimbPose` now writes those, so the row is guarded by a setter rather than by a
+ * claim. It is shared with the humanoid rig; see its docblock for why that is stated
+ * rather than quietly done.
  *
  * ## What the guard is worth on a beast, measured
  *
@@ -3923,6 +3933,7 @@ test('every beast pivot uses the Euler order its maths assumes', () => {
   //    freshly built skeleton pins *construction*; the engine animates a rig that has
   //    been alive for minutes, and `Euler.order` is a mutable per-object property.
   const skeleton = buildBeastSkeleton(BEAST_RIG.troll)
+  const limb = new THREE.Object3D()
   for (const sabotage of ['YXZ', 'ZXY', 'ZYX', 'YZX', 'XZY'] as const) {
     for (const [name, node, apply] of [
       ['head-pivot', skeleton.headPivot, applyHeadPose],
@@ -3939,6 +3950,22 @@ test('every beast pivot uses the Euler order its maths assumes', () => {
         + 'setter does not.',
       )
     }
+    // The limbs, which this table used to classify as needing no guard at all.
+    limb.rotation.set(0, 0.15, 0, sabotage)
+    applyLimbPose(limb, 0.34, -0.72)
+    assert.equal(
+      limb.rotation.order,
+      'XYZ',
+      `a limb left on ${sabotage} survived \`applyLimbPose\`. The death pass writes two `
+      + 'axes on an arm and the variation pass writes a third on a leg, so a limb is '
+      + 'order-sensitive however single-axis the living animation looks.',
+    )
+    assert.ok(
+      Math.abs(limb.rotation.y - 0.15) < 1e-12,
+      '`applyLimbPose` must preserve the limb\'s yaw. It is the axis no caller passes, '
+      + 'which is exactly why it has to be read back rather than assumed zero — that '
+      + 'assumption is what makes the helper behaviour-preserving on both rigs.',
+    )
   }
 
   // 3. What it is worth. Pinned per order, because a single bound would let the cheap
@@ -4210,21 +4237,37 @@ test('the engine poses a beast through the rig these tests measure', () => {
     + 'the member set generalises: the `applyHeadPose` call can stay word for word and '
     + 'stop mattering because a later line overwrote one of its axes.',
   )
-  // The four helpers this pass leans on run per actor per frame. `docs/09` §4 forbids
-  // allocating there, and an extraction made for testability is exactly where a
-  // `new THREE.Euler()` gets shipped as a test improvement.
-  const kitBody = kit.slice(kit.indexOf('export function applyHeadPose('), kit.length)
-  for (const helper of ['applyHeadPose', 'applyChestPose', 'beastLookYaw', 'solveHeadYaw']) {
+  // The helpers this pass leans on run per actor per frame, and `docs/09` §4 forbids
+  // allocating there. **This is a smell detector, not a proof, and saying so is the
+  // point.** A reviewer replaced `beastLookYaw`'s body with `const sample = [lookYaw]`
+  // and clamped `sample[0]` — an array per beast per frame — and the previous version,
+  // which looked for `new [A-Z]`, did not see it. Nor would it see an object literal,
+  // `Array.from`, `.clone()`, `.slice()`, `.map()`, or `new (THREE.Vector3)()`. The list
+  // below covers the spellings anyone would plausibly write; it cannot establish
+  // allocation-free behaviour, because no source scan can. What actually holds this path
+  // is that these are one-expression functions and that the sweep above drives them
+  // hundreds of thousands of times, so a real allocation shows up as wall-clock.
+  const ALLOCATES = /new\s+[A-Z(]|Array\s*\.|\.clone\(|\.slice\(|\.map\(|\.concat\(|=\s*[[{]/
+  for (const helper of [
+    'applyHeadPose',
+    'applyChestPose',
+    'applyLimbPose',
+    'beastLookYaw',
+    'beastBreathScale',
+    'solveHeadYaw',
+  ]) {
     const start = kit.indexOf(`export function ${helper}(`)
     assert.ok(start > 0, `${helper} is no longer exported from CharacterKit`)
     const body = kit.slice(start, kit.indexOf('\n}', start))
     assert.ok(
-      !/new [A-Z]/.test(body),
-      `${helper} now allocates. It runs once per actor per frame in the beast pass; a `
-      + 'constructor inside it is a frame-time regression shipped as a test improvement.',
+      !ALLOCATES.test(body),
+      `${helper} looks like it allocates. It runs once per actor per frame in the beast `
+      + 'pass; a constructor, an array or an object literal inside it is a frame-time '
+      + 'regression shipped as a test improvement. This check cannot prove the absence '
+      + 'of allocation — if the change is deliberate and allocation-free, say which '
+      + 'spelling tripped it and why it is not one.',
     )
   }
-  assert.ok(kitBody.length > 0, 'could not locate the pose helpers')
 
   // The breath, which the proportion bound above is derived from — a derivation reading a
   // stale input is just a round number again.
@@ -4283,6 +4326,50 @@ test('the engine poses a beast through the rig these tests measure', () => {
     'the death motion must drive the skull\'s roll and nothing else. It is looked up by '
     + 'name off the actor\'s mesh, so a position or a second rotation written here reaches '
     + 'a pivot that no living pose pass will reset.',
+  )
+  // The limbs, which this branch first classified as needing no order guard at all. The
+  // death pass writes two axes on an arm, so they need `applyLimbPose` — and a source
+  // pin, because writing them inline again is a mutation that otherwise survives
+  // everything: the helper stays exported, its own neutralisation test still passes, and
+  // nothing else in the suite drives the death arms.
+  assert.equal(
+    (death.match(/applyLimbPose\(/g) ?? []).length,
+    4,
+    'the death pass no longer writes all four limbs through `applyLimbPose`. Both arms '
+    + 'take x *and* z as a body goes down and both legs carry the variation pass\'s splay '
+    + 'on z under the death pitch on x, so every one of the four is a multi-axis pivot '
+    + 'whose Euler order nothing else re-asserts — worth 13.6671 degrees between XYZ and '
+    + 'ZYX on the arm pose.',
+  )
+  for (const [limb, guard] of [
+    ['leftArm', 'if (leftArm) {'],
+    ['rightArm', 'if (rightArm) {'],
+    ['rig.leftLeg', 'if (rig.leftLeg) '],
+    ['rig.rightLeg', 'if (rig.rightLeg) '],
+  ] as const) {
+    assert.ok(
+      new RegExp(`applyLimbPose\\(\\s*${limb.replace('.', '\\.')}\\b`).test(death),
+      `the death pass no longer poses \`${limb}\` through \`applyLimbPose\`. Counting the `
+      + 'calls is not enough — four calls can pose the same limb twice.',
+    )
+    assert.ok(
+      death.includes(guard),
+      `\`${limb}\`'s death pose is no longer reached by \`${guard.trim()}\`. **This is a `
+      + 'spelling pin and it is bounded by the spellings I thought of**: a reviewer left '
+      + 'the call in place and made it unreachable, and the count above did not move. '
+      + 'Narrowing a guard — `if (rightArm && somethingElse)` — is the realistic version. '
+      + 'Closing this properly needs a test that runs a death frame and reads the pivot, '
+      + 'which needs a constructible `GameEngine`, which needs a DOM: the architectural '
+      + 'gap this file records throughout and cannot fix from here.',
+    )
+  }
+  assert.equal(
+    (death.match(/(?:left|right)(?:Arm|Leg)\.rotation\.[xyz]\s*(?:[-+*/]?=)/g) ?? []).length,
+    0,
+    'a limb rotation component is assigned directly in the death pass. That bypasses '
+    + '`applyLimbPose` and stops the Euler order being re-asserted. Reading a component — '
+    + '`lerp(leftArm.rotation.x, ...)` — is fine and is what the ease needs; assigning one '
+    + 'is what the helper exists to stop.',
   )
 })
 
@@ -4810,15 +4897,19 @@ test('the engine wires the rig the way these tests measure it', () => {
   // *"No order writes in the posture pass"* and *"no order writes"* are different
   // claims, and the second is the one actually wanted.
   assert.equal(
-    (source.match(/rotation\.order\s*=/g) ?? []).length,
+    (source.match(/rotation\s*(?:\.\s*order\s*=|\[\s*['"`]order['"`]\s*\]|\.\s*reorder\s*\()/g)
+      ?? []).length,
     0,
-    'something in `GameEngine.ts` assigns `rotation.order`. `applyHeadPose` and '
-    + '`applyChestPose` reassert XYZ on every write, but **that only beats a write they '
-    + 'run after** — a reviewer set the order on the line following the call and it '
-    + 'survived, because `Euler`\'s order setter recomputes the quaternion on its own, '
-    + 'and set it in a method that runs after the posture pass entirely. `solveHeadYaw` '
-    + 'reads the columns of `Rx·Ry·Rz` by hand from both pivots, so a foreign order '
-    + 'silently answers a different question — worth up to 30 degrees.',
+    'something in `GameEngine.ts` sets an Euler order. `applyHeadPose`, `applyChestPose` '
+    + 'and `applyLimbPose` reassert XYZ on every write, but **that only beats a write '
+    + 'they run after** — a reviewer set the order on the line following the call and it '
+    + 'survived, because `Euler`\'s order setter recomputes the quaternion on its own. '
+    + '**This pattern covers bracket access and `reorder()` because the dotted form alone '
+    + 'did not**: the same reviewer wrote `rotation[\'order\'] = \'ZYX\'` on the limb '
+    + 'pivots in `createBeast` and on the tail, worth 13.6671 and 2.7370 degrees of '
+    + 'silent rotation, and the ban did not see either. A ban on spellings is bounded by '
+    + 'the spellings you thought of, which is why the pivots that matter are held by '
+    + 'setters and this exists only to stop a write landing *after* one.',
   )
   assert.equal(
     (actorPosture.match(/applyChestPose\(/g) ?? []).length,
