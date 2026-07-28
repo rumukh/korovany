@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gates:
+    name: Build, lint, test, facts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      # Keep in step with .github/workflows/deploy-pages.yml, which builds
+      # the artifact that actually ships. If one moves, move both.
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (tsc -b, tsc --noEmit -p tsconfig.test.json, vite build)
+        run: npm run build
+
+      - name: Lint (oxlint)
+        run: npm run lint
+
+      - name: Test (node --test)
+        run: npm test
+
+      - name: Fact preservation check (scripts/strategy-facts.mjs)
+        run: npm run docs:facts
