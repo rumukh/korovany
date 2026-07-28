@@ -660,7 +660,7 @@ Constraints they must respect:
   correctly normalled, so nothing downstream will notice. Transform the *mesh*, or
   `facetGeometry` first and transform the copy.
 
-Verifying what they build — three rules, each learned the expensive way:
+Verifying what they build — four rules, each learned the expensive way:
 
 - **Any helper that inspects geometry needs a test that deliberately corrupts a
   known-good input and asserts the helper reports the corruption.** A control that is
@@ -680,6 +680,20 @@ Verifying what they build — three rules, each learned the expensive way:
   encloses none, and a radial winding check says nothing about a flat cap. Pin the
   known exceptions by name as an *exact* set rather than skipping them, so that a shape
   which newly joins the set fails, and so does one that leaves it.
+- **State what a check cannot detect, beside what it asserts.** Every failure above was a
+  check doing exactly what it said, where what it said was narrower than the next reader
+  assumed — so the gap has to be written at the assertion, because it is not recoverable
+  from reading it. Three measured shapes it takes. Its *subject* can be wrong: the
+  signed-volume mutation proof is algebraically entailed, since reversing a triangle
+  negates its scalar triple product term by term (residual `0.0e+0` on nine geometries),
+  so it grades the harness rather than the measure's discrimination. Its *domain* can be
+  narrower than its name: the centroid winding guard needs compactness, not merely
+  convexity, and declines a strictly convex lofted section at cross-section ratio 2.0 —
+  one ships at 3.75. Its *aggregate* can hide its members: a merged prop's signed volume
+  is a sum, blind to 3 of 5 single-part reversals, so the part is the subject and not the
+  prop. A floor is the same rule for population — `>= 3` against a population of 4 lets
+  one member vanish unremarked. One line of "this cannot see X" next to the assertion is
+  the entire fix, and it is what makes the next reader's rediscovery a read instead.
 
 ## 7. Budgets
 

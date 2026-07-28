@@ -2982,6 +2982,17 @@ test('every type the spec names is exported by the barrel', () => {
  * argues for — drops the count to 1 and fails on a success. Lower the floor to 1, which
  * still catches a scan that finds nothing, or delete the test. Do not keep four
  * traversals alive to keep it green.
+ *
+ * Before consolidating them, know that **one of the four is live in this tree** and the
+ * other three are not. `:9974` `restorePlayerLimb` traverses a limb of `this.player`;
+ * the player is outlined at `GameEngine.ts:2282`; and `applyOutline` parents each shell
+ * as a *child of its source mesh* (`StylizedArtLibrary.ts:551`), so that traversal walks
+ * real shells every time a prosthetic is fitted. Its guard is older than the other three
+ * (`935c9a0`, not `774b0a2`) because that is the one someone hit. The razed-site, token
+ * and ring sweeps are latent here only because nothing outlined happens to be parented
+ * under what they walk — reachability, not absence of shells, and reachability is exactly
+ * what a sibling changes. So the class is not hypothetical in this tree; it is reachable
+ * at one site today. A consolidation may drop the count, but it must not drop the guard.
  */
 test('every bulk material sweep by traversal excludes outline shells', () => {
   const root = new URL('../src/game/', import.meta.url)
