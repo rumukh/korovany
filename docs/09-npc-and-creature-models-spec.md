@@ -371,6 +371,19 @@ no new dependencies.
   message has a shelf life of minutes on an active repository. In a test, the same rule
   is why a figure computed by the assertion that quotes it cannot go stale without going
   red, and a figure copied from a mutation run can.
+  There is a sharper case, and review is where it lives: **a report is an input to the
+  thing it reports on, so an effective review invalidates its own baseline.** The final
+  pass of this work opened by stating a branch tip as unchanged since the previous pass.
+  It was six commits behind, and the newest of those commits existed *because of that
+  reviewer's own previous message* — it had been pushed under two minutes before the
+  claim was written. Nobody was careless; the review worked. That is the point. The
+  usual reading of staleness is that time passes and a number decays, which suggests a
+  slow-moving hazard. Here the decay was **caused by the report**, so the more useful a
+  review is, the faster its own tip claim expires — and the reviewer is the one party
+  who cannot see it, because the effect lands after they stop looking. The remedy is the
+  same one line, but the trigger is different: re-resolve at the moment of *writing the
+  close*, not at the moment of measuring, because the interval that matters is the one
+  the review itself opened.
 - **Before offering a cause, check whether your own code already answers it.** The
   sharpest instance this work produced: a docblock blamed head roll for a 39%
   discrepancy in a gaze figure, when `solveHeadYaw`'s signature — written ten commits
