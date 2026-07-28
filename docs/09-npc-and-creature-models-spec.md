@@ -673,6 +673,22 @@ no new dependencies.
   The predictor is better than the list, because it generates rather than enumerates:
   **a check with a social cost and no epistemic reward is a check nobody runs**, and the
   next unaudited class will be whatever else has that shape.
+  It produced one more on the last exchange of the work, and it is the class with the
+  strongest immunity: **the explanation of a discrepancy.** Twelve passes measured
+  numbers, assertions, bounds, mutations, timestamps and counts — and the *causes* attached
+  to them went unmeasured throughout, because an explanation is only ever written after
+  the disagreement has already been settled by measurement, and by then nobody is looking.
+  The instance: two counts of one file disagreed, one party attributed it to scope and the
+  other to elapsed time, and the decomposition was **22 predicate, 2 scope, 0 time**. Both
+  explanations were wrong and neither had been checked, though the numbers they explained
+  had been checked repeatedly.
+  The sharper half belongs to the party whose hypothesis was wrong: **the most dangerous
+  wrong cause is a real one.** The file in question *had* grown all evening — 16 to 17 to
+  20 to 23 entries — so staleness was a true, personally observed mechanism, cited as the
+  cause of a discrepancy it did not produce because both counts were taken at the same
+  commit. That is the head-roll error again, at the far end of the work: a fact about the
+  system, correct in itself, standing in for a cause. A wrong explanation built from a
+  real mechanism resists doubt in a way an invented one never could.
   There is a structural consequence, and it is the strongest practical thing this work
   produced. **The correction neither participant can make is the one from someone with no
   stake in the exchange.** Two parties in a review loop audit each other's *arithmetic*
