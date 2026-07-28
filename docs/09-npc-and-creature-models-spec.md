@@ -706,6 +706,32 @@ no new dependencies.
   five of those figures, the two rejected rules included, and pins the count rather than
   the share: a fifth quadruped would leave the share at 9.0680% and take the count to
   540, so the share alone could not have failed.
+- **Enumerate a rig's Euler orders; do not sample them.** `applyHeadPose` was shipped to
+  force `head-pivot` onto XYZ, because `solveHeadYaw` writes out the columns of
+  `Rx·Ry·Rz` by hand. That fix was scoped to the pivot named in the bug report, and the
+  chest turned out to have the identical hole, worth 30.0230° and unasserted — which is
+  the same shape as this whole entry, one level up: the humanoid fix was scoped to
+  humanoids because humanoids were what was reported. So every beast pivot is enumerated
+  and classified rather than sampled: `torso-pivot` and `head-pivot` are read by hand and
+  are written through the pose helpers; `pelvis-pivot` and `tail-pivot` take two axes each
+  and are order-sensitive only cosmetically, held by the file-wide ban on assigning
+  `rotation.order`; `neck-pivot` never rotates; and the four limb pivots take **one** axis,
+  which is the same matrix under all six orders and needs no guard. Measured over the
+  beast pose box, with the solve still assuming XYZ, the cost of a wrong order — pinned
+  per order rather than bounded, because the two pivots swap places relative to the
+  humanoid case and because a single bound sized on the loud orders hides the quiet one:
+
+  | wrong order | head-pivot | torso-pivot |
+  | --- | --- | --- |
+  | `YXZ` | 0.5036° | 0.0691° |
+  | `ZXY` | 3.3522° | 0.3583° |
+  | `ZYX` | **4.1032°** | 0.4239° |
+  | `YZX` | 3.7037° | 0.4230° |
+  | `XZY` | 2.1342° | 0.0059° |
+
+  `YXZ` is the cheapest of the five on the head **and the only one anybody would write** —
+  it is what a person reaches for when a head gimbal-locks at extreme pitch. The likely
+  edit and the detectable edit are different edits.
 - **Do not derive a look from a spawn counter.** Appearance hangs off the most
   durable identity a caller can offer — a generated spawn slot, a persisted
   companion id, a deterministic event id — so the same person comes back the same

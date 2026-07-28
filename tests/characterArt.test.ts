@@ -3617,7 +3617,195 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
 })
 
 /**
- * The engine poses a beast through the rig these tests measure.
+ * Every pivot a beast has, and what its Euler order must be.
+ *
+ * `solveHeadYaw` writes out the columns of `Rx·Ry·Rz` by hand, so **every term in it is
+ * order-specific**, and it reads its inputs off two pivots — the chest's three rotation
+ * components and the head's own pitch. Both are therefore load-bearing, and both are
+ * written through `applyChestPose`/`applyHeadPose`, which pass the order to `Euler.set`
+ * so a stray runtime reassignment is overwritten on the next frame rather than merely
+ * detected. A guard that can be walked around is worth less than an invariant that
+ * reasserts itself.
+ *
+ * That much this branch inherited. What it did **not** inherit is a statement about the
+ * other pivots, and the rule that produced `applyChestPose` in the first place is:
+ * *a fix scoped to the instance that was reported is a fix scoped to a sample.* The
+ * head was the pivot in the humanoid bug report and got the guard; the chest had the
+ * identical hole and went ten commits without one. This branch exists because the same
+ * thing happened one level up, at the population: the humanoid fix was scoped to
+ * humanoids because humanoids were what was reported. So the beast hierarchy is
+ * enumerated here rather than sampled.
+ *
+ * | pivot | axes written | order-sensitive | guarded by |
+ * | --- | --- | --- | --- |
+ * | `torso-pivot` | x, y, z | **yes, and read by hand** | `applyChestPose` |
+ * | `head-pivot` | x, y, z | **yes, and read by hand** | `applyHeadPose` |
+ * | `pelvis-pivot` | y, z | yes, cosmetically | the file-wide ban on `rotation.order =` |
+ * | `tail-pivot` | x, z | yes, cosmetically | the same |
+ * | `neck-pivot` | none | no — it never rotates | it is never written |
+ * | `leftArm` / `rightArm` / `leftLeg` / `rightLeg` | x only | **no** | a one-axis rotation is order-free |
+ *
+ * The limbs are the interesting row: `animateBeastRig` writes them with
+ * `rotation.set(x, 0, 0)`, and a rotation about a single axis is the same matrix under
+ * all six orders, so they need no guard and get none. Saying that is the point — the
+ * alternative is a reader assuming they were forgotten.
+ *
+ * ## What the guard is worth on a beast, measured
+ *
+ * Honestly, and **not by borrowing the humanoid's 30.0230°**, which is a figure about a
+ * different animal. A beast's chest turns by at most 0.2 rad where a person's reaches
+ * 0.70, but its *head* carries a 0.45 rad look and a 0.28 rad death roll. So the two
+ * pivots swap places: on a person the chest was the expensive one, on a beast it is the
+ * skull. Over the same pose box every other beast measurement uses, with the solve still
+ * assuming XYZ throughout:
+ *
+ * | wrong order | head-pivot | torso-pivot |
+ * | --- | --- | --- |
+ * | `YXZ` | 0.5036° | 0.0691° |
+ * | `ZXY` | 3.3522° | 0.3583° |
+ * | `ZYX` | **4.1032°** | 0.4239° |
+ * | `YZX` | 3.7037° | 0.4230° |
+ * | `XZY` | 2.1342° | 0.0059° |
+ *
+ * Every entry is pinned rather than bounded, and the reason is in the first row.
+ * **`YXZ` is the cheapest of the five on the head and it is the only one anybody would
+ * actually write** — it is what a person reaches for when a head gimbal-locks at extreme
+ * pitch, and it is applied at the animation site rather than the builder. A single bound
+ * sized on the loud orders would have let it through. The likely edit and the detectable
+ * edit are different edits; the sweep covers all five and the table names each.
+ */
+test('every beast pivot uses the Euler order its maths assumes', () => {
+  // 1. Construction. `buildBeastSkeleton` must hand back pivots on three.js's default.
+  //    The humanoid equivalent enumerates its own five; this one was not covered by it,
+  //    which is the same sampling error one rig over.
+  for (const kind of BEAST_KINDS) {
+    const skeleton = buildBeastSkeleton(BEAST_RIG[kind])
+    for (const [name, node] of [
+      ['body-pivot', skeleton.bodyPivot],
+      ['torso-pivot', skeleton.torsoPivot],
+      ['neck-pivot', skeleton.neckPivot],
+      ['head-pivot', skeleton.headPivot],
+      ['pelvis-pivot', skeleton.pelvisPivot],
+    ] as const) {
+      assert.equal(
+        node.rotation.order,
+        'XYZ',
+        `a ${kind}'s ${name} is built on ${node.rotation.order}. \`solveHeadYaw\` reads `
+        + 'the columns of `Rx·Ry·Rz` by hand off the chest and the head, so under any '
+        + 'other order it answers a different question — and the pivots that do not feed '
+        + 'it still compose differently, which is a silhouette nobody asked for.',
+      )
+    }
+  }
+
+  // 2. Neutralisation, driven from all five wrong orders. Asserting the order on a
+  //    freshly built skeleton pins *construction*; the engine animates a rig that has
+  //    been alive for minutes, and `Euler.order` is a mutable per-object property.
+  const skeleton = buildBeastSkeleton(BEAST_RIG.troll)
+  for (const sabotage of ['YXZ', 'ZXY', 'ZYX', 'YZX', 'XZY'] as const) {
+    for (const [name, node, apply] of [
+      ['head-pivot', skeleton.headPivot, applyHeadPose],
+      ['torso-pivot', skeleton.torsoPivot, applyChestPose],
+    ] as const) {
+      node.rotation.order = sabotage
+      apply(node, 0.1, 0.2, 0.3)
+      assert.equal(
+        node.rotation.order,
+        'XYZ',
+        `something set a beast's ${name} to ${sabotage} and the pose function left it `
+        + 'there. Both pass the order to `Euler.set` precisely so that a runtime '
+        + 'reassignment cannot survive a frame. A detector has to anticipate the edit; a '
+        + 'setter does not.',
+      )
+    }
+  }
+
+  // 3. What it is worth. Pinned per order, because a single bound would let the cheap
+  //    orders hide behind the expensive ones — and the cheap one, `YXZ`, is the edit
+  //    someone actually makes.
+  const WRONG_ORDER_COST: Record<string, { head: number; chest: number }> = {
+    YXZ: { head: 0.5036, chest: 0.0691 },
+    ZXY: { head: 3.3522, chest: 0.3583 },
+    ZYX: { head: 4.1032, chest: 0.4239 },
+    YZX: { head: 3.7037, chest: 0.423 },
+    XZY: { head: 2.1342, chest: 0.0059 },
+  }
+  const forward = new THREE.Vector3()
+  const chestMatrix = new THREE.Matrix4()
+  const headMatrix = new THREE.Matrix4()
+  const euler = new THREE.Euler()
+  const missBy = (
+    chest: readonly [number, number, number],
+    chestOrder: THREE.EulerOrder,
+    pitch: number,
+    yaw: number,
+    roll: number,
+    headOrder: THREE.EulerOrder,
+    look: number,
+  ): number => {
+    chestMatrix.makeRotationFromEuler(euler.set(chest[0], chest[1], chest[2], chestOrder))
+    headMatrix.makeRotationFromEuler(euler.set(pitch, yaw, roll, headOrder))
+    forward.set(0, 0, 1).applyMatrix4(chestMatrix.multiply(headMatrix))
+    const got = Math.atan2(forward.x, forward.z)
+    return Math.abs(Math.atan2(Math.sin(got - look), Math.cos(got - look))) * (180 / Math.PI)
+  }
+
+  const measured: Record<string, { head: number; chest: number }> = {}
+  for (const order of Object.keys(WRONG_ORDER_COST)) measured[order] = { head: 0, chest: 0 }
+  let baseline = 0
+  for (const kind of BEAST_KINDS) {
+    for (const pose of beastPoses(kind === 'troll')) {
+      const [pitch, look, roll] = pose.head
+      // The yaw the engine writes: solved against the chest, assuming XYZ throughout.
+      const yaw = solveHeadYaw(pose.chest[0], pose.chest[1], pose.chest[2], pitch, look)
+      baseline = Math.max(
+        baseline,
+        missBy(pose.chest, 'XYZ', pitch, yaw, roll, 'XYZ', look),
+      )
+      for (const order of Object.keys(WRONG_ORDER_COST) as THREE.EulerOrder[]) {
+        measured[order].head = Math.max(
+          measured[order].head,
+          missBy(pose.chest, 'XYZ', pitch, yaw, roll, order, look),
+        )
+        measured[order].chest = Math.max(
+          measured[order].chest,
+          missBy(pose.chest, order, pitch, yaw, roll, 'XYZ', look),
+        )
+      }
+    }
+  }
+  assert.ok(
+    baseline < 1e-9,
+    `the beast gaze is ${baseline.toFixed(6)} degrees off with every order correct, so `
+    + 'the costs below are not measured against an exact baseline and mean nothing.',
+  )
+  const drift: string[] = []
+  for (const [order, cost] of Object.entries(WRONG_ORDER_COST)) {
+    for (const pivot of ['head', 'chest'] as const) {
+      if (Math.abs(measured[order][pivot] - cost[pivot]) >= 0.00005) {
+        drift.push(`${order} ${pivot}: ${measured[order][pivot].toFixed(4)} not ${cost[pivot].toFixed(4)}`)
+      }
+      assert.ok(
+        measured[order][pivot] > 0,
+        `a beast's ${pivot} on ${order} costs nothing at all, which would mean the sweep `
+        + 'has stopped driving the rotations that make an order matter. Every one of '
+        + 'these must be non-zero or the guard above is protecting nothing.',
+      )
+    }
+  }
+  // One assertion carrying the whole table, so a moved envelope reports every figure it
+  // moved rather than the first — ten separate `assert`s would stop at one and the next
+  // run would find the next.
+  assert.deepEqual(
+    drift,
+    [],
+    `the cost of a wrong Euler order on a beast has moved: ${drift.join('; ')}. The chest `
+    + 'envelope or the pose box has changed. Correct the figures to the values in this '
+    + 'message rather than widening the assertion.',
+  )
+})
+
+/**
  *
  * `GameEngine` cannot be instantiated in Node, so every number above is taken through
  * `CharacterKit`'s pure pieces. That proves the arithmetic and proves nothing about
@@ -3696,13 +3884,16 @@ test('the engine poses a beast through the rig these tests measure', () => {
     + 'Euler order every frame. `solveHeadYaw` reads the columns of `Rx·Ry·Rz` out of the '
     + 'chest by hand, so an order set anywhere else silently invalidates the whole solve.',
   )
-  assert.ok(
-    !/torsoPivot\.rotation\.[xyz]\s*(?:[-+*/]?=[^=])/.test(pass),
-    'the beast pass must not assign a chest rotation field directly. A field write never '
-    + 'touches `.order`, which is exactly how the humanoid chest went ten commits with an '
-    + 'unasserted requirement — measured at up to 30.0230 degrees of gaze error. Reading '
-    + 'the three fields is fine and is what `solveHeadYaw` is handed; assigning them is '
-    + 'what `applyChestPose` exists to stop.',
+  assert.equal(
+    (pass.match(/torsoPivot\.rotation\.[xyz]\s*(?:[-+*/]?=)/g) ?? []).length,
+    0,
+    'a component of the beast chest\'s rotation is assigned directly. That bypasses '
+    + '`applyChestPose`, which means the Euler order stops being reasserted — and '
+    + '`solveHeadYaw` reads the columns of `Rx·Ry·Rz` out of this pivot by hand, so an '
+    + 'order set anywhere else silently invalidates the whole solve. Reading the three '
+    + 'components is fine and is what the solve is handed; assigning them is not. '
+    + 'Counting every assignment operator, because a negative-lookahead version of this '
+    + 'shape looked equivalent and let `+=` through.',
   )
   assert.ok(
     /actor\.headYaw = dampAngle\(actor\.headYaw, beastLookYaw\(lookYaw\), 5, delta\)$/m
@@ -3729,12 +3920,29 @@ test('the engine poses a beast through the rig these tests measure', () => {
     + 'swept states. Every argument is checked because on the humanoid call two of them '
     + 'were not, and a reviewer passed `0` for the roll with the suite still green.',
   )
-  assert.ok(
-    !/headPivot\.rotation\./.test(pass),
-    'the beast pass must not write a head rotation field after `applyHeadPose`. This is '
-    + 'the assertion that survives an *addition*: the call above can stay word for word '
-    + 'and stop mattering entirely because a later line overwrote one of its axes.',
+  assert.equal(
+    (pass.match(/headPivot\.rotation\.[xyz]\s*(?:[-+*/]?=)/g) ?? []).length,
+    0,
+    'a component of the beast head\'s rotation is assigned directly. This is the '
+    + 'assertion that survives an *addition*: the `applyHeadPose` call above can stay '
+    + 'word for word and stop mattering entirely because a later line overwrote one of '
+    + 'its axes, and both the call pin and the helper sweep are blind to that.',
   )
+  // The four helpers this pass leans on run per actor per frame. `docs/09` §4 forbids
+  // allocating there, and an extraction made for testability is exactly where a
+  // `new THREE.Euler()` gets shipped as a test improvement.
+  const kitBody = kit.slice(kit.indexOf('export function applyHeadPose('), kit.length)
+  for (const helper of ['applyHeadPose', 'applyChestPose', 'beastLookYaw', 'solveHeadYaw']) {
+    const start = kit.indexOf(`export function ${helper}(`)
+    assert.ok(start > 0, `${helper} is no longer exported from CharacterKit`)
+    const body = kit.slice(start, kit.indexOf('\n}', start))
+    assert.ok(
+      !/new [A-Z]/.test(body),
+      `${helper} now allocates. It runs once per actor per frame in the beast pass; a `
+      + 'constructor inside it is a frame-time regression shipped as a test improvement.',
+    )
+  }
+  assert.ok(kitBody.length > 0, 'could not locate the pose helpers')
 
   // The breath, which the proportion bound above is derived from — a derivation reading a
   // stale input is just a round number again.
