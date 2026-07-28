@@ -144,6 +144,26 @@ no new dependencies.
   actor's head: about the feet that swung the skull **0.8094 m** sideways, clean off
   the body; about the neck it lolls **0.1563 m**, which is what that line was always
   trying to say.
+- **Inherit what the joint physically transmits; cancel what it does not.** A neck
+  hangs off a chest, so it inherits everything a chest does to it — and
+  `torso-pivot` carries the actor's shoulder width on `scale.x` as well as the
+  breath on `scale.y`. The breath is *correct* to inherit: a chest lifting a head as
+  it inhales is a body working. The shoulder width is not, because it is a property
+  of the shoulders and not of the neck, and `headScale` is already the one thing that
+  sizes a skull. Anatomy is the discriminator here, not a magnitude — deciding by
+  "how big is the artifact" would have kept the wrong one and dropped the right one,
+  since both are around a percent. Measured across all 30 plans and the whole look
+  envelope: **7.00%** head anisotropy with the width uncancelled, **0.99%** with it
+  cancelled, and that 0.99% is the breath to ten decimal places.
+- **Cancel a scale above every rotation, never below one.** A scale and a rotation do
+  not commute, so a cancellation applied *downstream* of a rotation is valid only in
+  the rest pose. Putting the width correction on `head-pivot`, which the animation
+  yaws by up to 0.65 rad, left **5.34%** at full yaw — *worse than the 3.00% of doing
+  nothing* at some angles. `neck-pivot` exists so the correcting node never rotates,
+  which removes the angle-dependence rather than bounding it. The same shape of error
+  reappeared one commit later in the gaze, as `lookYaw - torsoPivot.rotation.y`: one
+  Euler component subtracted from a rotation that has three. `solveHeadYaw` answers
+  that exactly instead of approximately.
 - **Do not derive an assertion's bound from the quantity the defect moves.** The
   head-hinge test first bounded the head's swing by `skeleton.headY` — but a rig
   regression changes `headY` too, so the bound grew in step with the damage and the
@@ -152,6 +172,11 @@ no new dependencies.
   defect exactly, and it looks correct because the formula is correct and the number
   is correct. The bound now comes from `p.headY - p.shoulderY`, an input the defect
   cannot touch. Only the mutation run exposed it; no amount of reading would have.
+  The same rule retired the anisotropy bound's round 2%: the only thing that legally
+  reaches the head is `torso-pivot.scale.y`, a pure-Y scale, so the bound is
+  `1 / (1 - 0.018 * 0.55) - 1` — the breath's own closed form, which the measurement
+  matches to ten decimal places. A 0.3% contaminant reads 1.30% and now fails; under
+  the round 2% it passed.
 - **Do not fix a second defect inside a regression fix.** `torso-pivot` is *also*
   rooted at the actor's origin rather than at the waist, so under the same `lean` the
   whole upper body slides forward against the pelvis: **0.2950 m** at the waist on a

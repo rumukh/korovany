@@ -1144,19 +1144,41 @@ test('the head is rigid with the chest and hinges at the neck', () => {
  * | on the unrotated `neck-pivot` | **0.99%**, which is the chest's breath |
  *
  * The middle row is the point: it is better than nothing only while the actor looks
- * straight ahead, and a compensation that is right at one angle is not a fix. Note
- * also that the first draft of these numbers quoted 3.00% for "none" — that was one
- * pose of one plan, not the worst of the envelope, and it would have understated the
- * defect by more than half. The envelope is what the assertion sweeps.
+ * straight ahead, and a compensation that is right at one angle is not a fix. The
+ * structural reason is worth naming, because it is not specific to this rig: **a
+ * scale and a rotation do not commute**, so any cancellation applied *downstream* of
+ * a rotation is valid only in the rest pose. Splitting the joint so that the
+ * correcting pivot never rotates leaves no angle-dependence to test.
  *
- * The bound below is 2%: above the 1% the breath is allowed to contribute, and well
- * under either broken arrangement.
+ * Note also that the first draft of these numbers quoted 3.00% for "none" — that was
+ * one pose of one plan, not the worst of the envelope, and it would have understated
+ * the defect by more than half. The envelope is what the assertion sweeps.
+ *
+ * ## The bound is the breath, and nothing else
+ *
+ * With the correction where it belongs the *only* thing reaching the head is
+ * `torso-pivot.scale.y`, which the breathing pass writes as `1 + breathing * 0.55`
+ * with `breathing` bounded by 0.018. That is a pure-Y scale, so the anisotropy it
+ * causes has a closed form, and the measurement agrees with it to ten decimal places:
+ * inhaling, `b` = 0.0099000000; exhaling, `1 / (1 - b) - 1` = 0.0099989900.
+ *
+ * So this bound is not "comfortably above the answer" — the earlier 2% was a round
+ * number that would have admitted a doubling before firing. It is derived from the
+ * breath amplitude, an input no rig defect can move, exactly as the hinge bound is
+ * derived from the proportion table. Anything at all that is not the breath fails it.
+ * `the engine wires the rig the way these tests measure it` pins the two constants
+ * this derivation reads.
  */
 test('the chest lends the head its breath but not its shoulders', () => {
-  // The widest chest the engine can write: `around(1, 0.07)` at its extreme, times
-  // the breathing pass's `1 + breathing * 0.55` at the top of an inhale.
-  const SHOULDERS = 1.07
-  const BREATH = 1 + 0.018 * 0.55
+  // The widest chest the engine can write: `around(1, 0.07)` at either extreme.
+  const SHOULDERS = [1.07, 0.93]
+  // `animateActorCharacter`: breathing = sin(...) * 0.018, scale.y = 1 + breathing * 0.55.
+  const BREATH_AMPLITUDE = 0.018 * 0.55
+  const BREATHS = [1 + BREATH_AMPLITUDE, 1 - BREATH_AMPLITUDE]
+  // A pure-Y scale of `1 + b` stretches the head by `b`; one of `1 - b` squashes it,
+  // which reads as the other two axes being `1 / (1 - b)` longer. The exhale is the
+  // larger of the two, so it is the bound. The slack is float noise, not headroom.
+  const BOUND = 1 / (1 - BREATH_AMPLITUDE) - 1 + 1e-9
   // Everything `animateActorCharacter` and `animateDeath` write to `head-pivot`:
   // look yaw clamped to 0.65, stagger pitch, and the death roll.
   const LOOKS: readonly (readonly [number, number, number])[] = [
@@ -1181,32 +1203,38 @@ test('the chest lends the head its breath but not its shoulders', () => {
       head.scale.setScalar(p.headScale)
       skeleton.headPivot.add(head)
       // As `applyActorVisualVariation` sets them.
-      skeleton.torsoPivot.scale.set(SHOULDERS, BREATH, 1)
-      skeleton.neckPivot.scale.x = 1 / SHOULDERS
+      for (const shoulders of SHOULDERS) {
+        for (const breath of BREATHS) {
+          skeleton.torsoPivot.scale.set(shoulders, breath, 1)
+          skeleton.neckPivot.scale.x = 1 / shoulders
 
-      for (const look of LOOKS) {
-        skeleton.headPivot.rotation.set(...look)
-        skeleton.root.updateMatrixWorld(true)
-        basis.setFromMatrix4(head.matrixWorld)
-        for (let i = 0; i < 3; i += 1) {
-          axis[i].set(Number(i === 0), Number(i === 1), Number(i === 2)).applyMatrix3(basis)
-        }
-        const lengths = axis.map((v) => v.length())
-        const anisotropy = Math.max(...lengths) / Math.min(...lengths) - 1
-        if (anisotropy > worst) {
-          worst = anisotropy
-          worstAt = `${faction}/${role} looking [${look.map((v) => v.toFixed(2)).join(', ')}]`
+          for (const look of LOOKS) {
+            skeleton.headPivot.rotation.set(...look)
+            skeleton.root.updateMatrixWorld(true)
+            basis.setFromMatrix4(head.matrixWorld)
+            for (let i = 0; i < 3; i += 1) {
+              axis[i].set(Number(i === 0), Number(i === 1), Number(i === 2)).applyMatrix3(basis)
+            }
+            const lengths = axis.map((v) => v.length())
+            const anisotropy = Math.max(...lengths) / Math.min(...lengths) - 1
+            if (anisotropy > worst) {
+              worst = anisotropy
+              worstAt = `${faction}/${role} at shoulders ${shoulders.toFixed(2)}, breath `
+                + `${breath.toFixed(5)}, looking [${look.map((v) => v.toFixed(2)).join(', ')}]`
+            }
+          }
         }
       }
     }
   }
 
   assert.ok(
-    worst <= 0.02,
-    `the head came out ${(worst * 100).toFixed(2)}% anisotropic at ${worstAt}. The chest's `
-    + 'shoulder width has reached the skull. Divide it out on `neck-pivot`, which does not '
-    + 'rotate — on `head-pivot` the correction only cancels while the actor looks straight '
-    + 'ahead, and at full yaw it is worse than no correction at all.',
+    worst <= BOUND,
+    `the head came out ${(worst * 100).toFixed(4)}% anisotropic at ${worstAt}, over the `
+    + `${(BOUND * 100).toFixed(4)}% the chest's breath accounts for. Something other than `
+    + 'the breath has reached the skull — most likely the shoulder width, which must be '
+    + 'divided out on `neck-pivot`. It does not rotate; `head-pivot` does, and a scale '
+    + 'correction downstream of a rotation only cancels in the rest pose.',
   )
 })
 
@@ -1543,6 +1571,21 @@ test('the engine wires the rig the way these tests measure it', () => {
     + 'of its Euler components. `lookYaw` is authored in body space and consumed under '
     + '`torso-pivot`, and the chest pitches and rolls as well as yawing — a scalar '
     + 'subtraction leaves 13.8 degrees and is worse than nothing in 4.2% of states.',
+  )
+  // The breath. `the chest lends the head its breath but not its shoulders` derives
+  // its whole bound from these two numbers — they are the only thing that legitimately
+  // reaches the head — so a bound that came from an input the defect cannot move is
+  // worth nothing if the input itself has quietly drifted from the engine.
+  assert.ok(
+    /const breathing = Math\.sin\([^)]*\) \* 0\.018/.test(actorPosture),
+    'the breathing amplitude is no longer 0.018. Move it in the anisotropy test\'s '
+    + '`BREATH_AMPLITUDE` in the same commit — that test\'s bound is derived from it, '
+    + 'and a derivation reading a stale input is just a round number again.',
+  )
+  assert.ok(
+    /torsoPivot\.scale\.y = 1 \+ breathing \* 0\.55/.test(actorPosture),
+    'the chest\'s breath is no longer `1 + breathing * 0.55`. Move it in the anisotropy '
+    + 'test\'s `BREATH_AMPLITUDE` in the same commit.',
   )
 })
 
