@@ -1163,6 +1163,12 @@ test('every prop the world can build is oriented outwards', () => {
     'these geometries were enumerated but carried no face an orientation instrument could '
       + 'judge, so their clean result is not evidence of anything',
   )
+  // Index handling: every instrument above dereferences `geometry.index`, and the catalogue
+  // does produce indexed surfaces — a lathe part that is the only part on its surface
+  // survives `mergeAll`'s length-1 passthrough with its index intact. That the route exists
+  // is pinned by exact set in `the one indexed prop surface stays indexed`, which shares
+  // this enumeration, so it is not re-asserted here. Named rather than duplicated: a second
+  // weaker assertion over the same population is noise that dilutes the first.
   // Headroom, not just correctness. Measured tightest is the fort tree at 0.033; the
   // floor sits below it so ordinary art variation does not trip, but a prop drifting to
   // within 2% of the undecidable half fails here — while its verdict is still right —
