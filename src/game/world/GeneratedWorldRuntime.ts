@@ -404,6 +404,49 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
     const z = bounds
       ? THREE.MathUtils.clamp(candidateZ, bounds.minZ + margin, bounds.maxZ - margin)
       : candidateZ
+    return this.walkableNear(x, z)
+  }
+
+  /**
+   * The nearest position an actor can actually stand, starting from the given point.
+   *
+   * `GameEngine` writes `getStartPosition` verbatim into the player's position on a
+   * fresh run, and `NavigationSystem.findPath` returns `null` when the **start** is
+   * unwalkable — so a prop standing on this point silently swallows the first
+   * click-to-move of the run, and every AI path request from it, until the player
+   * nudges out with direct input.
+   *
+   * The spawn is deliberately offset about twenty units back along the critical path,
+   * which places it *outside* the site clearing, so none of the road, river or clearing
+   * keep-outs protect it. Snapping here rather than adding a fourth keep-out covers any
+   * prop that ever lands on it, not only the decoration that did.
+   *
+   * Returns the input untouched when it is already clear — which is the overwhelmingly
+   * common case — so this changes no position that was not already broken. The search
+   * is a fixed outward spiral, so it is deterministic.
+   */
+  private walkableNear(x: number, z: number): Point3 {
+    const radius = 0.45
+    if (this.collision.isWalkablePosition(x, z, radius)) {
+      return { x, y: this.sampleHeight(x, z), z }
+    }
+    for (let ring = 1; ring <= 8; ring += 1) {
+      const distance = ring * 0.5
+      for (let step = 0; step < 12; step += 1) {
+        const angle = (step / 12) * Math.PI * 2
+        const candidateX = x + Math.cos(angle) * distance
+        const candidateZ = z + Math.sin(angle) * distance
+        if (this.collision.isWalkablePosition(candidateX, candidateZ, radius)) {
+          return {
+            x: candidateX,
+            y: this.sampleHeight(candidateX, candidateZ),
+            z: candidateZ,
+          }
+        }
+      }
+    }
+    // Nothing clear within four units: the caller is better off with the designed
+    // position than with a point pushed somewhere arbitrary.
     return { x, y: this.sampleHeight(x, z), z }
   }
 
@@ -1960,12 +2003,6 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       }
     }
     this.propAssets.length = 0
-    if (errors.length > 0) {
-      throw new AggregateError(
-        errors,
-        `Failed to release region ${String(this.id)} resources`,
-      )
-    }
     this.cosmeticDressing.length = 0
     this.siteClearings.length = 0
     this.structuralDecorationCount = 0
@@ -1974,7 +2011,18 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     this.siteInkSpent = 0
     this.root.clear()
     this.context.onDisposed(this.id)
+    // Marked disposed before the throw, deliberately. Every list above is already
+    // emptied, so a region that failed to tear down cleanly has still given back
+    // everything it held — but if the failure escaped before this line, the region
+    // would stay re-enterable and a second pass would walk empty structures believing
+    // it had work to do. Report the failure, but only once, and never half-disposed.
     this.resourcesDisposed = true
+    if (errors.length > 0) {
+      throw new AggregateError(
+        errors,
+        `Failed to release region ${String(this.id)} resources`,
+      )
+    }
   }
 }
 
@@ -2752,6 +2800,20 @@ const GROUND_COVER_COUNTS: Record<
  * this size.
  */
 
+/**
+ * Grass height by biome: sparse and clipped at the palace, rank in the forest.
+ *
+ * Module scope on purpose. Built inside the function it allocated a fresh four-key
+ * record **per instance per region load** — up to 420 in a forest region, three regions
+ * per boundary crossing — on the streaming path, which is the hot one.
+ */
+const GRASS_ZONE_SCALE: Record<ZoneId, number> = {
+  neutral: 1,
+  palace: 0.62,
+  forest: 1.18,
+  fort: 0.7,
+}
+
 function writeGroundCoverScale(
   kind: GroundCoverKind,
   zone: ZoneId,
@@ -2759,14 +2821,9 @@ function writeGroundCoverScale(
   target: THREE.Vector3,
 ): void {
   if (kind === 'grass') {
-    const zoneScale: Record<ZoneId, number> = {
-      neutral: 1,
-      palace: 0.62,
-      forest: 1.18,
-      fort: 0.7,
-    }
-    const width = zoneScale[zone] * lerp(0.72, 1.35, placement.width)
-    const height = zoneScale[zone] * lerp(0.72, 1.58, placement.height)
+    const scale = GRASS_ZONE_SCALE[zone]
+    const width = scale * lerp(0.72, 1.35, placement.width)
+    const height = scale * lerp(0.72, 1.58, placement.height)
     target.set(width, height, width)
     return
   }
