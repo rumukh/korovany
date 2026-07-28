@@ -510,15 +510,31 @@ no new dependencies.
   first only out of habit. **The other party was exactly right, down to the default
   value.** A correct claim would have been corrected by a wrong one, and nothing in the
   process would have flagged it, because a recollection has no `--json` flag.
-  The same hierarchy has a form for delegated work, and it cost a session two false
-  reports before anyone checked: **a delegated review reports "I examined X and found
-  nothing", or it has not reported.** A review that was created and never ran leaves the
-  same trace as one that ran and found nothing — silence — and silence reads as assurance.
-  The instance was caught by a liveness probe, not by any rule: a delegated reviewer
-  created at 21:32:31 with `updated_at` frozen fourteen seconds later and nothing produced
-  in fifty-five minutes, already reported twice as delegated. **Absence of findings has to
-  be distinguishable from absence of the reviewer**, and only an affirmative statement of
-  scope does that — *a silent reviewer is a recollection with no rememberer.*
+  The same hierarchy has a form for delegated work: **a delegated review reports "I
+  examined X and found nothing", or it has not reported.** A review that was created and
+  never ran leaves the same trace as one that ran and found nothing — silence — and
+  silence reads as assurance. **Absence of findings has to be distinguishable from absence
+  of the reviewer**, and only an affirmative statement of scope does that.
+  **The instance originally recorded here was false, and the correction is worth more than
+  the rule.** A session reported a delegated reviewer dead — created, `updated_at` frozen
+  thirteen seconds later, nothing produced after fifty-five minutes — and published it
+  twice. The reviewer was working the whole time and returned the best-evidenced findings
+  of the programme forty minutes later, including a fourth defect in the guard that had
+  prompted the delegation.
+  The mechanism is this section's own aim axis, one paragraph from where that session had
+  just written it: a control was run first — another session, demonstrably alive, showing a
+  current `updated_at` — and it was read as validating the instrument. **It showed the
+  field *can* move. Not that it moves whenever a session is working.** Sensitivity, not
+  completeness; a population of one, unnamed. So the rule under the rule: **before
+  concluding that a silent instrument is broken, establish that silence is observable.**
+  Nobody had checked whether that field moves *during* a long turn, only that it moves
+  sometimes.
+  Two things make it the sharpest instance in this section. The claim ran **against a third
+  party who could not answer**, by a session that had been careful to verify favourable
+  claims before accepting them — and the retraction came from that session unprompted,
+  once the reviewer reported. **A conclusion drawn from an instrument's silence is a claim
+  about the instrument, not about the subject**, and it inherits every weakness the
+  instrument has, including the ones nobody has looked for.
   With one condition that is easy to miss and makes the difference between the form
   working and merely looking like it works: **the timestamp has to be the measurement's,
   not the sentence's.** A past-tense claim carries exactly one fact the present-tense one
