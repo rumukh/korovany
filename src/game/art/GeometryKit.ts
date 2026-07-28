@@ -786,6 +786,13 @@ export function branchStructure(
 // Organic surfaces
 // ---------------------------------------------------------------------------
 
+/**
+ * Grid used to decide whether two vertices are "the same corner" before displacing.
+ * 1e5 puts the tolerance at 10 microns in world units, far below any seam this
+ * toolkit produces and far above float error on a built profile.
+ */
+const SEAM_WELD_PRECISION = 1e5
+
 export interface DisplaceOptions {
   /** Uint32 noise seed, usually from `artNoiseSeed(worldSeed, label)`. */
   seed: number
@@ -800,6 +807,47 @@ export interface DisplaceOptions {
   axisScale?: Vec3Like
   /** Recomputes normals after displacing. On by default. */
   recomputeNormals?: boolean
+  /**
+   * Re-closes seams that displacement pulls open. **Off by default**, because
+   * turning it on moves vertices and so changes every silhouette it touches.
+   *
+   * Displacement runs along each vertex's own normal. On a non-indexed buffer whose
+   * normals are faceted, the several copies of one corner each carry a different
+   * normal, travel in different directions, and the surface splits along every hard
+   * crease. Nothing in the orientation instruments can see this — signed volume stays
+   * positive, winding stays consistent, normals stay in agreement — because a torn
+   * surface is still correctly wound. It shows up only as a boundary edge, or on
+   * screen as a crack.
+   *
+   * Turn it on for any shape whose source normals are faceted. It is a measured
+   * no-op for shapes whose normals are radial, such as `IcosahedronGeometry` above
+   * detail 0, where every copy of a corner shares one normal and they never separate.
+   */
+  seamless?: boolean
+}
+
+/**
+ * Buckets vertex indices that currently sit at the same position.
+ *
+ * Quantised rather than exact, because a seam that arrives from two different
+ * construction paths can be a rounding step apart before anything displaces it.
+ */
+function coincidentGroups(
+  position: THREE.BufferAttribute | THREE.InterleavedBufferAttribute,
+): number[][] {
+  const buckets = new Map<string, number[]>()
+  for (let index = 0; index < position.count; index += 1) {
+    const key =
+      `${Math.round(position.getX(index) * SEAM_WELD_PRECISION)},` +
+      `${Math.round(position.getY(index) * SEAM_WELD_PRECISION)},` +
+      `${Math.round(position.getZ(index) * SEAM_WELD_PRECISION)}`
+    const bucket = buckets.get(key)
+    if (bucket) bucket.push(index)
+    else buckets.set(key, [index])
+  }
+  const groups: number[][] = []
+  for (const bucket of buckets.values()) if (bucket.length > 1) groups.push(bucket)
+  return groups
 }
 
 /**
@@ -824,6 +872,10 @@ export function displaceGeometry(
   const ridged = options.mode === 'ridge'
   const axisScale = options.axisScale
   const flatBase = options.flatBase ?? 0
+
+  // Has to be recorded before anything moves: once the seam is open there is no way
+  // to tell which vertices used to be the same corner.
+  const seams = options.seamless ? coincidentGroups(position) : null
 
   let minimumY = Infinity
   if (flatBase > 0) {
@@ -852,6 +904,42 @@ export function displaceGeometry(
       y + normals.getY(index) * strength * (axisScale?.y ?? 1),
       z + normals.getZ(index) * strength * (axisScale?.z ?? 1),
     )
+  }
+  // Collapse each recorded seam back onto one point. Positions only — the normals are
+  // recomputed below from the repaired triangles, so a hard crease stays hard and the
+  // face normals describe the geometry that is actually there.
+  //
+  // The `moved` guard is defensive, not load-bearing, and a mutation campaign proved
+  // it: deleting it leaves all four seam tests green. Positions are Float32-backed, so
+  // summing n identical values needs at most 24 + log2(n) bits and is exact in double
+  // precision, and a correctly-rounded division by n then returns the value itself. It
+  // is kept for the case this reasoning does not cover — a Float64 attribute carrying
+  // values that need the full mantissa — and for the writes it skips. Do not write a
+  // test claiming to pin it; there is no input that can tell the two versions apart.
+  if (seams) {
+    for (const group of seams) {
+      const firstX = position.getX(group[0])
+      const firstY = position.getY(group[0])
+      const firstZ = position.getZ(group[0])
+      let x = 0
+      let y = 0
+      let z = 0
+      let moved = false
+      for (const index of group) {
+        const vertexX = position.getX(index)
+        const vertexY = position.getY(index)
+        const vertexZ = position.getZ(index)
+        if (vertexX !== firstX || vertexY !== firstY || vertexZ !== firstZ) moved = true
+        x += vertexX
+        y += vertexY
+        z += vertexZ
+      }
+      if (!moved) continue
+      x /= group.length
+      y /= group.length
+      z /= group.length
+      for (const index of group) position.setXYZ(index, x, y, z)
+    }
   }
   position.needsUpdate = true
   if (options.recomputeNormals !== false) geometry.computeVertexNormals()

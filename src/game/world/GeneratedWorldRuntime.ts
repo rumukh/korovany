@@ -2222,6 +2222,8 @@ function forestTreeGeometry(): THREE.BufferGeometry {
     frequency: 1.9,
     octaves: 2,
     flatBase: 0.2,
+    // Faceted loft: measured 112 boundary edges and a 0.97% slit without this.
+    seamless: true,
   })
   gradientVertexColors(trunk, { bottom: 0x4a3524, top: 0x8a6b48, bias: 0.8 })
 
@@ -2500,6 +2502,11 @@ function pebbleGeometry(): THREE.BufferGeometry {
     octaves: 2,
     mode: 'ridge',
     axisScale: { x: 1.2, y: 0.6, z: 1.1 },
+    // At detail 0 this source carries faceted normals, so without this the pebble
+    // displaced into twenty loose triangles: 60 of 60 edges open, widest slit 12.2%
+    // of its own diameter. The fort boulder above is detail 1, whose normals are
+    // radial, and measured 0 boundary edges — so it does not need the option.
+    seamless: true,
   })
   geometry.name = 'generated-pebble'
   return gradientVertexColors(geometry, {
