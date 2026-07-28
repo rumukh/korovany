@@ -664,6 +664,27 @@ release because a key has no holder identity, so the fault is invisible at that 
 refuses one it has already accepted. Where an API can be receipt-shaped, the class closes
 by construction and needs no test at all.
 
+**The same failure has a collaboration form, and it cost this programme more than any
+bug did.** Six of seven reviews analysed a tree that had already moved. A review of the
+wrong commit is a measurement of the wrong thing, and it is indistinguishable from a
+valid one — the findings are real, reproducible and about code that no longer exists.
+Three mitigations, in increasing order of how well they work:
+
+1. **Never pin a SHA in a review brief; resolve the branch by name.** Necessary, not
+   sufficient — it fails the moment the author amends mid-review.
+2. **Don't amend a branch others are reviewing.** An amended commit is not deleted; it is
+   orphaned, and an orphaned SHA still resolves in a shared object store, so a pinned
+   reference keeps returning a real, readable, permanently frozen tree. This pass caused
+   the epidemic by amending roughly twenty times.
+3. **State the measured SHA in every message, not just the first.** Proposed by a
+   reviewer after three crossed exchanges, and the only one that survives async
+   messaging with no read receipt: a crossed message is then self-dating, and staleness
+   is a one-line check rather than something inferred from the findings.
+
+Open a brief with a HEAD verification that includes a **positive** discriminator — a
+grep for something the stale tree contains and the current one does not. A negative check
+("tests pass") cannot distinguish the two.
+
 ## 14. Effort
 
 **2.5-3 days.** The vocabulary is mechanical. The time went into composition that
