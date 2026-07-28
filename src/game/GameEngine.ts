@@ -23,13 +23,13 @@ import {
   applyChestPose,
   applyHeadPose,
   applyLimbPose,
-  beastBreathScale,
   beastLookYaw,
   buildBirdBody,
   buildBirdWing,
   buildCharacterSkeleton,
   buildCloak,
   chestGaitYaw,
+  poseBeast,
   decayStrideOnStagger,
   buildDeerBody,
   buildDeerCrown,
@@ -64,6 +64,7 @@ import {
   solveHandOffset,
   solveHeadYaw,
   type BeastKind,
+  type BeastPosture,
   type CharacterPlan,
   type OutlineBinding,
   type OutlineKind,
@@ -1606,6 +1607,24 @@ export class GameEngine {
     recovery: 0,
     flinch: 0,
     stagger: 0,
+  }
+  /**
+   * The beast pose pass's inputs, reused for the same reason `scratchPose` is.
+   *
+   * `poseBeast` takes a struct rather than nine arguments, and `docs/09` §4 forbids
+   * allocating in the animation path — so the struct is filled in place once per living
+   * beast per frame rather than built.
+   */
+  private readonly beastPosture: BeastPosture = {
+    upright: false,
+    anticipation: 0,
+    attack: 0,
+    stagger: 0,
+    flinch: 0,
+    stride: 0,
+    turnLean: 0,
+    breathing: 0,
+    headYaw: 0,
   }
   private readonly playerPose: CharacterPose = {
     stride: 0,
@@ -14311,46 +14330,20 @@ export class GameEngine {
       headPivot: THREE.Object3D | undefined
     },
   ): void {
-    const upright = rig.beast === 'troll'
-    const { torsoPivot, pelvisPivot, headPivot } = pivots
-    if (torsoPivot) {
-      torsoPivot.position.x = 0
-      applyChestPose(
-        torsoPivot,
-        -pose.anticipation * (upright ? 0.16 : 0.1) +
-          pose.attack * (upright ? 0.2 : 0.14) +
-          pose.stagger * 0.14,
-        -actor.stride * 0.03,
-        -actor.turnLean * 0.06,
-      )
-      torsoPivot.scale.y = beastBreathScale(breathing)
-    }
-    if (pelvisPivot) {
-      // The hindquarters follow the ribs rather than counter-rotating against them.
-      pelvisPivot.rotation.y = actor.stride * 0.02
-      pelvisPivot.rotation.z = actor.turnLean * 0.03
-    }
-    if (headPivot) {
-      actor.headYaw = dampAngle(actor.headYaw, beastLookYaw(lookYaw), 5, delta)
-      // Hoisted for the same reason the biped pass hoists it: the pitch is applied
-      // after the yaw in the same Euler, so the solve has to read the value that will
-      // actually land on the pivot.
-      const headPitch = pose.attack * 0.16 - pose.flinch * 0.2
-      applyHeadPose(
-        headPivot,
-        headPitch,
-        torsoPivot
-          ? solveHeadYaw(
-              torsoPivot.rotation.x,
-              torsoPivot.rotation.y,
-              torsoPivot.rotation.z,
-              headPitch,
-              actor.headYaw,
-            )
-          : actor.headYaw,
-        actor.turnLean * 0.04,
-      )
-    }
+    // The damping is the only part that needs the actor and the frame, so it is the only
+    // part that stays here. Body-space angle in, converted instantaneously by `poseBeast`.
+    actor.headYaw = dampAngle(actor.headYaw, beastLookYaw(lookYaw), 5, delta)
+    const posture = this.beastPosture
+    posture.upright = rig.beast === 'troll'
+    posture.anticipation = pose.anticipation
+    posture.attack = pose.attack
+    posture.stagger = pose.stagger
+    posture.flinch = pose.flinch
+    posture.stride = actor.stride
+    posture.turnLean = actor.turnLean
+    posture.breathing = breathing
+    posture.headYaw = actor.headYaw
+    poseBeast(pivots.torsoPivot, pivots.pelvisPivot, pivots.headPivot, posture)
   }
 
   /**

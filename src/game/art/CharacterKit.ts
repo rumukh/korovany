@@ -3817,6 +3817,98 @@ export function applyLimbPose(pivot: THREE.Object3D, pitch: number, roll: number
 }
 
 /**
+ * Everything a beast's secondary pose pass needs, filled in place by the engine.
+ *
+ * A struct rather than nine arguments because the engine reuses one instance per frame —
+ * `docs/09` §4 forbids allocating in the animation path, and this runs once per living
+ * beast per frame. Same pattern, and same reason, as the engine's `scratchPose`.
+ */
+export interface BeastPosture {
+  /** A troll stands upright and leans further than something on four legs. */
+  upright: boolean
+  anticipation: number
+  attack: number
+  stagger: number
+  flinch: number
+  /** `actor.stride`, not `pose.stride`: a stagger damps the gait, it does not clear it. */
+  stride: number
+  turnLean: number
+  breathing: number
+  /** Already clamped by {@link beastLookYaw} and damped, in **body** space. */
+  headYaw: number
+}
+
+/**
+ * Poses a beast's chest, hips and skull. The whole secondary pass, in production.
+ *
+ * This lived in `GameEngine.animateBeastPosture`, where nothing could execute it: the
+ * engine needs a DOM. Everything asserted about it was therefore asserted about its
+ * *source text* — that `applyHeadPose` is called with the right arguments, that no member
+ * of `headPivot` is touched afterwards, that the chest is never written field by field.
+ *
+ * A reviewer walked past all of it with two lines:
+ *
+ * ```ts
+ * const skull = headPivot
+ * skull.rotateY(0.2)
+ * ```
+ *
+ * The call stays, the member set sees an identifier it does not know, and the rendered
+ * skull gains 11.46° every frame. Their diagnosis is the one this repository keeps
+ * arriving at from different directions: **a source regex cannot generalise across object
+ * identity.** You can ban the spellings you imagined; an alias is a new spelling, and so
+ * is `skull.parent`, and so is putting the alias into the `pivots` object before the call.
+ *
+ * So the pass moved here, where a test builds a real skeleton, calls this, and reads the
+ * resulting world transforms. An alias inside this function still has to produce a head
+ * in the wrong place or the wrong orientation, and that is measured rather than spelled.
+ * The damping stays in the engine because it needs `actor` and `delta`; it is one line and
+ * it is still pinned by a regex, which is stated rather than hidden.
+ */
+export function poseBeast(
+  torsoPivot: THREE.Object3D | null | undefined,
+  pelvisPivot: THREE.Object3D | null | undefined,
+  headPivot: THREE.Object3D | null | undefined,
+  posture: BeastPosture,
+): void {
+  if (torsoPivot) {
+    torsoPivot.position.x = 0
+    applyChestPose(
+      torsoPivot,
+      -posture.anticipation * (posture.upright ? 0.16 : 0.1) +
+        posture.attack * (posture.upright ? 0.2 : 0.14) +
+        posture.stagger * 0.14,
+      -posture.stride * 0.03,
+      -posture.turnLean * 0.06,
+    )
+    torsoPivot.scale.y = beastBreathScale(posture.breathing)
+  }
+  if (pelvisPivot) {
+    // The hindquarters follow the ribs rather than counter-rotating against them.
+    pelvisPivot.rotation.set(0, posture.stride * 0.02, posture.turnLean * 0.03, 'XYZ')
+  }
+  if (headPivot) {
+    // Hoisted because the pitch is applied after the yaw in the same Euler, so the solve
+    // has to read the value that will actually land on the pivot.
+    const headPitch = posture.attack * 0.16 - posture.flinch * 0.2
+    applyHeadPose(
+      headPivot,
+      headPitch,
+      torsoPivot
+        ? solveHeadYaw(
+            torsoPivot.rotation.x,
+            torsoPivot.rotation.y,
+            torsoPivot.rotation.z,
+            headPitch,
+            posture.headYaw,
+          )
+        : posture.headYaw,
+      posture.turnLean * 0.04,
+    )
+  }
+}
+
+/**
  * A beast's chest as it breathes: the scale the flank rides on.
  *
  * Here rather than inline in `animateBeastPosture` for the reason

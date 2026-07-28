@@ -58,6 +58,7 @@ import {
   characterPartKeys,
   characterRoles,
   chestGaitYaw,
+  poseBeast,
   decayStrideOnStagger,
   hasOutlineNormals,
   resolveCharacterPlan,
@@ -66,6 +67,7 @@ import {
   solveHeadYaw,
   WAGON_RIG,
   type BeastKind,
+  type BeastPosture,
   type CharacterFaction,
   type CharacterPartKeys,
   type CharacterPlan,
@@ -4103,6 +4105,168 @@ test('every beast pivot uses the Euler order its maths assumes', () => {
 })
 
 /**
+ * The beast pose pass, driven rather than read.
+ *
+ * Every other assertion about `animateBeastPosture` in this file was an assertion about
+ * its **source text**, because the engine needs a DOM and nothing could execute it. A
+ * reviewer walked past the lot of them with two lines:
+ *
+ * ```ts
+ * const skull = headPivot
+ * skull.rotateY(0.2)
+ * ```
+ *
+ * The `applyHeadPose` call stays, the allowed-member set sees an identifier it has never
+ * heard of, and the rendered skull gains 11.46° every frame. `skull.parent` works too,
+ * and so does putting the alias into the `pivots` object before the call. Their
+ * conclusion is the one this repository keeps reaching from different directions and had
+ * not yet applied here: **a source regex cannot generalise across object identity.** Ban
+ * the spellings you imagined and an alias is simply a spelling you did not.
+ *
+ * So the pass is `poseBeast` in `CharacterKit` now, and this builds a real skeleton, calls
+ * it, and measures what came out. An alias inside it still has to leave the skull in the
+ * wrong place or pointing the wrong way, and that is measured.
+ *
+ * What is asserted is the *contract*, not a transcription of the arithmetic:
+ *
+ * 1. The skull's world orientation is the chest's times the head's own — the invariant,
+ *    now checked against the function that actually writes it.
+ * 2. The skull's world gaze lands on the body-space angle it was handed. The end-to-end
+ *    version of `solveHeadYaw`: the solve, the chest it reads and the Euler the head
+ *    wears, together.
+ * 3. Every pivot it touches comes out on XYZ, from a sabotaged order.
+ * 4. The hips follow the ribs rather than counter-rotating, and the chest breathes.
+ *
+ * The damping stays the engine's, because it needs `actor` and `delta`, and it is still
+ * held by an anchored regex. One line, named as the remaining source pin rather than
+ * folded into this test's coverage.
+ */
+test('the beast pose pass puts the skull where it says it does', () => {
+  const posture: BeastPosture = {
+    upright: false,
+    anticipation: 0,
+    attack: 0,
+    stagger: 0,
+    flinch: 0,
+    stride: 0,
+    turnLean: 0,
+    breathing: 0,
+    headYaw: 0,
+  }
+  const headQuat = new THREE.Quaternion()
+  const chestQuat = new THREE.Quaternion()
+  const localQuat = new THREE.Quaternion()
+  const localEuler = new THREE.Euler()
+  const forward = new THREE.Vector3()
+  let worstTwist = 0
+  let worstGaze = 0
+  let worstGazeAt = ''
+  let checked = 0
+
+  for (const kind of BEAST_KINDS) {
+    const skeleton = buildBeastSkeleton(BEAST_RIG[kind])
+    const head = new THREE.Object3D()
+    head.position.set(0, skeleton.headY, skeleton.headZ)
+    skeleton.headPivot.add(head)
+    posture.upright = kind === 'troll'
+
+    for (const action of BEAST_ACTIONS) {
+      for (const stride of [-BEAST_STRIDE_MAX, 0, BEAST_STRIDE_MAX]) {
+        for (const turn of [-BEAST_TURN_MAX, 0, BEAST_TURN_MAX]) {
+          for (const breath of [-BEAST_BREATH_AMPLITUDE, 0, BEAST_BREATH_AMPLITUDE]) {
+            for (const look of [-BEAST_LOOK_CLAMP, 0, BEAST_LOOK_CLAMP]) {
+              checked += 1
+              posture.anticipation = action.anticipation
+              posture.attack = action.attack
+              posture.stagger = action.stagger
+              posture.flinch = action.flinch
+              posture.stride = stride
+              posture.turnLean = turn
+              posture.breathing = breath
+              posture.headYaw = look
+              // Sabotage the orders first, so the neutralisation is exercised by the real
+              // pass rather than by the helpers in isolation.
+              skeleton.torsoPivot.rotation.order = 'ZYX'
+              skeleton.headPivot.rotation.order = 'YXZ'
+              skeleton.pelvisPivot.rotation.order = 'ZXY'
+              poseBeast(skeleton.torsoPivot, skeleton.pelvisPivot, skeleton.headPivot, posture)
+              assert.ok(
+                Math.abs(skeleton.torsoPivot.scale.y - beastBreathScale(breath)) < 1e-12,
+                `${kind}: the chest's breath is not \`beastBreathScale\`'s`,
+              )
+              assert.equal(skeleton.torsoPivot.position.x, 0, `${kind}: chest off centre`)
+              // The breath is a non-uniform scale above the head's rotation, and a
+              // sheared matrix has no exact rotation to read back out. It is asserted
+              // above and then taken out, so the two orientation checks below measure
+              // rotation and nothing else — the same split the proportion sweep makes.
+              skeleton.torsoPivot.scale.y = 1
+              skeleton.root.updateMatrixWorld(true)
+
+              for (const [name, node] of [
+                ['torso-pivot', skeleton.torsoPivot],
+                ['head-pivot', skeleton.headPivot],
+                ['pelvis-pivot', skeleton.pelvisPivot],
+              ] as const) {
+                assert.equal(
+                  node.rotation.order,
+                  'XYZ',
+                  `${kind}: \`poseBeast\` left ${name} on ${node.rotation.order}`,
+                )
+              }
+
+              head.getWorldQuaternion(headQuat)
+              skeleton.torsoPivot.getWorldQuaternion(chestQuat)
+              localEuler.copy(skeleton.headPivot.rotation)
+              chestQuat.multiply(localQuat.setFromEuler(localEuler))
+              worstTwist = Math.max(worstTwist, orientationDegrees(headQuat, chestQuat))
+
+              forward.set(0, 0, 1).applyQuaternion(headQuat)
+              const heading = Math.atan2(forward.x, forward.z)
+              const miss =
+                Math.abs(Math.atan2(Math.sin(heading - look), Math.cos(heading - look))) *
+                (180 / Math.PI)
+              if (miss > worstGaze) {
+                worstGaze = miss
+                worstGazeAt = `${kind} ${action.name} stride ${stride.toFixed(2)} `
+                  + `turn ${turn.toFixed(2)} look ${look.toFixed(2)}`
+              }
+
+              assert.ok(
+                Math.abs(skeleton.pelvisPivot.rotation.y - stride * 0.02) < 1e-12 &&
+                  Math.abs(skeleton.pelvisPivot.rotation.z - turn * 0.03) < 1e-12,
+                `${kind}: the hips no longer follow the ribs. They counter-rotated on the `
+                + 'biped rig and pulled the animal apart at the waist, which is why the '
+                + 'beast pass exists at all.',
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+
+  assert.equal(
+    checked,
+    BEAST_KINDS.length * BEAST_ACTIONS.length * 3 * 3 * 3 * 3,
+    'the pose pass sweep did not run',
+  )
+  assert.ok(
+    worstTwist < 1e-9,
+    `\`poseBeast\` left the skull's axes ${worstTwist.toFixed(4)} degrees off the chest's. `
+    + 'This is the assertion an alias cannot walk past: it does not care what the head is '
+    + 'called or which method turned it, only where it ended up.',
+  )
+  assert.ok(
+    worstGaze < 1e-9,
+    `\`poseBeast\` left a beast looking ${worstGaze.toFixed(4)} degrees off its target at `
+    + `${worstGazeAt}. The gaze is solved against the chest and written in the same Euler `
+    + 'as the pitch, so this is the whole conversion measured end to end rather than the '
+    + 'solve measured against a model of its caller.',
+  )
+})
+
+/**
+ * The engine poses a beast through the rig these tests measure.
  *
  * `GameEngine` cannot be instantiated in Node, so every number above is taken through
  * `CharacterKit`'s pure pieces. That proves the arithmetic and proves nothing about
@@ -4174,6 +4338,35 @@ test('the engine poses a beast through the rig these tests measure', () => {
       + 'and then only that animal comes apart.',
     )
   }
+  // And the same claim made alias-proof, by allow-list rather than by ban.
+  //
+  // The line above forbids `.add(headPivot)`. A reviewer wrote
+  // `const skullRoot = headPivot; group.add(skullRoot)` and it saw nothing — the alias is
+  // an identifier the ban had never heard of. **A ban is bounded by the spellings you
+  // imagined; an allow-list is bounded by the code that exists.** Whatever an alias is
+  // called, it shows up here as an argument name that is not on the list.
+  const added = [...new Set(
+    [...beast.matchAll(/\.(?:add|attach)\(([^),]*)\)/g)].map((match) => match[1].trim()),
+  )].sort()
+  assert.deepEqual(
+    added,
+    [
+      'head',
+      'limb',
+      'pivot',
+      'ring',
+      'tail',
+      'tailPivot',
+      'this.artLibrary.createContactShadow({ radius: rig.footprint }',
+      'torso',
+    ],
+    `createBeast adds something new to the hierarchy: ${added.join(', ')}. Every entry `
+    + 'here is a mesh or a pivot the builder does not own, added *into* the skeleton. A '
+    + 'name that is not on this list is either a new part — put it on the list — or one '
+    + 'of the skeleton\'s own pivots being given a second parent, possibly under an '
+    + 'alias, which is the mutation this list exists to catch and a ban on names could '
+    + 'not.',
+  )
   assert.ok(
     !/removeFromParent|\.remove\(/.test(beast),
     'createBeast detaches something. The rig it is handed is already wired; taking a '
@@ -4198,130 +4391,72 @@ test('the engine poses a beast through the rig these tests measure', () => {
     source.indexOf('private sampleActorPose('),
   )
   assert.ok(pass.length > 600, 'could not isolate the beast posture pass')
-  assert.ok(
-    /applyChestPose\(\s*torsoPivot,/.test(pass),
-    'the beast chest must be written through `applyChestPose`, which re-asserts the XYZ '
-    + 'Euler order every frame. `solveHeadYaw` reads the columns of `Rx·Ry·Rz` out of the '
-    + 'chest by hand, so an order set anywhere else silently invalidates the whole solve.',
-  )
-  // What the pass may touch on each pivot, enumerated as a *set* rather than as a list of
-  // forbidden spellings.
+  // What the pass may touch, expressed as **members rather than objects**.
   //
-  // The previous version banned `headPivot.rotation.[xyz] =` and called itself
-  // addition-proof. A reviewer added `headPivot.rotateY(0.2)` after `applyHeadPose` and
-  // the suite stayed green while the head gained 11.46° every frame. `Object3D` has a
-  // dozen ways to turn a node — `rotateX/Y/Z`, `rotateOnAxis`, `rotateOnWorldAxis`,
-  // `quaternion`, `setRotationFromEuler`, `setRotationFromQuaternion`, `applyQuaternion`,
-  // `lookAt`, `matrix` — and a ban that enumerates the ones you thought of buys exactly
-  // one more instance each time. So this asserts the *allowed* set instead: whatever is
-  // not listed fails, including whatever three.js adds next.
-  const members = (name: string): string[] => [
-    ...new Set([...pass.matchAll(new RegExp(`${name}\\.(\\w+)`, 'g'))].map((m) => m[1])),
-  ].sort()
-  assert.deepEqual(
-    members('headPivot'),
-    [],
-    'the beast pass touches a member of `headPivot`. It may only be handed to '
-    + '`applyHeadPose`, which is the single writer of the skull\'s orientation and '
-    + 're-asserts the Euler order while it writes. Any access at all — a rotation field, '
-    + '`rotateY`, `quaternion`, `lookAt` — either bypasses that or lands after it, and '
-    + 'a later write wins the rendered frame and repeats every frame.',
-  )
-  assert.deepEqual(
-    members('torsoPivot'),
-    ['position', 'rotation', 'scale'],
-    'the beast pass touches a member of `torso-pivot` outside {position, scale, rotation}. '
-    + '`rotation` appears here only because `solveHeadYaw` is handed its three components '
-    + 'to read; assigning them is banned separately. Anything else — `rotateY`, '
-    + '`quaternion`, `setRotationFromEuler` — bypasses `applyChestPose` and stops the '
-    + 'Euler order being re-asserted, which the solve reads by hand.',
-  )
-  assert.deepEqual(
-    members('pelvisPivot'),
-    ['rotation'],
-    'the beast pass touches a member of `pelvis-pivot` outside {rotation}. The hips follow '
-    + 'the ribs; nothing else about them is animated.',
-  )
-  assert.equal(
-    (pass.match(/torsoPivot\.rotation\.[xyz]\s*(?:[-+*/]?=)/g) ?? []).length,
-    0,
-    'a component of the beast chest\'s rotation is assigned directly. That bypasses '
-    + '`applyChestPose`, which means the Euler order stops being reasserted — and '
-    + '`solveHeadYaw` reads the columns of `Rx·Ry·Rz` out of this pivot by hand, so an '
-    + 'order set anywhere else silently invalidates the whole solve. Reading the three '
-    + 'components is fine and is what the solve is handed; assigning them is not. '
-    + 'Counting every assignment operator, because a negative-lookahead version of this '
-    + 'shape looked equivalent and let `+=` through.',
-  )
-  assert.ok(
-    /actor\.headYaw = dampAngle\(actor\.headYaw, beastLookYaw\(lookYaw\), 5, delta\)$/m
-      .test(pass),
-    'a beast\'s tracking must clamp its look through `beastLookYaw` and damp the '
-    + '*body*-space angle. Damped after the conversion it lags the chest\'s own gait '
-    + 'twist, and the lag comes back as world-space wobble.',
-  )
-  assert.ok(
-    /const headPitch = pose\.attack \* 0\.16 - pose\.flinch \* 0\.2$/m.test(pass),
-    'the beast head pitch must be computed before the solve and reused when it is '
-    + 'written, so the solve reads the value that actually lands on the pivot. Anchored '
-    + 'at the end of the line: unanchored, an appended term would still match and would '
-    + 'move the head somewhere the solve does not know about.',
-  )
-  assert.ok(
-    /applyHeadPose\(\s*headPivot,\s*headPitch,\s*torsoPivot\s*\?\s*solveHeadYaw\(\s*torsoPivot\.rotation\.x,\s*torsoPivot\.rotation\.y,\s*torsoPivot\.rotation\.z,\s*headPitch,\s*actor\.headYaw,?\s*\)\s*:\s*actor\.headYaw,\s*actor\.turnLean \* 0\.04,?\s*\)/
-      .test(pass),
-    'the beast head pose is no longer one `applyHeadPose` call taking the hoisted pitch, '
-    + 'a yaw solved against the chest\'s full rotation *and* that same pitch, and the '
-    + 'turn-lean roll. `lookYaw` is a body-space angle and `head-pivot` is a chest-space '
-    + 'node now: written raw it costs 3.0334 degrees on a troll, and the obvious '
-    + '`lookYaw - chestYaw` leaves 1.7368 and is worse than doing nothing in 1680 of 22684 '
-    + 'swept states. Every argument is checked because on the humanoid call two of them '
-    + 'were not, and a reviewer passed `0` for the roll with the suite still green.',
-  )
-  assert.equal(
-    (pass.match(/headPivot\.rotation\.[xyz]\s*(?:[-+*/]?=)/g) ?? []).length,
-    0,
-    'a component of the beast head\'s rotation is assigned directly. Redundant with the '
-    + 'allowed-member set above and kept anyway, because it names the specific failure '
-    + 'the member set generalises: the `applyHeadPose` call can stay word for word and '
-    + 'stop mattering because a later line overwrote one of its axes.',
-  )
-  // The helpers this pass leans on run per actor per frame, and `docs/09` §4 forbids
-  // allocating there. **This is a smell detector, not a proof, and saying so is the
-  // point.** A reviewer replaced `beastLookYaw`'s body with `const sample = [lookYaw]`
-  // and clamped `sample[0]` — an array per beast per frame — and the previous version,
-  // which looked for `new [A-Z]`, did not see it. Nor would it see an object literal,
-  // `Array.from`, `.clone()`, `.slice()`, `.map()`, or `new (THREE.Vector3)()`. The list
-  // below covers the spellings anyone would plausibly write; it cannot establish
-  // allocation-free behaviour, because no source scan can. What actually holds this path
-  // is that these are one-expression functions and that the sweep above drives them
-  // hundreds of thousands of times, so a real allocation shows up as wall-clock.
-  const ALLOCATES = /new\s+[A-Z(]|Array\s*\.|\.clone\(|\.slice\(|\.map\(|\.concat\(|=\s*[[{]/
-  for (const helper of [
-    'applyHeadPose',
-    'applyChestPose',
-    'applyLimbPose',
-    'beastLookYaw',
-    'beastBreathScale',
-    'solveHeadYaw',
+  // The previous version extracted `headPivot.<member>` and asserted the set was empty.
+  // A reviewer wrote `const skull = headPivot; skull.rotateY(0.2)` and it saw nothing:
+  // the alias is an identifier it had never heard of, and so are `skull.parent` and an
+  // alias planted in `pivots` before the call. **A source regex cannot generalise across
+  // object identity** — you can ban the spellings you imagined, and an alias is by
+  // definition one you did not.
+  //
+  // The behaviour moved to `poseBeast`, which a test executes; what is left here is a
+  // struct fill and one call, and it may touch no Object3D state at all. That is checked
+  // by banning the *member names*, which is the one thing an alias cannot change: however
+  // the head is renamed, moving it still costs a `rotation`, a `quaternion`, a
+  // `rotate*`, a `matrix`, a `position`, a `scale`, an `add` or an `attach`.
+  for (const member of [
+    'rotation', 'quaternion', 'matrix', 'position', 'scale',
+    'rotateX', 'rotateY', 'rotateZ', 'rotateOnAxis', 'rotateOnWorldAxis',
+    'setRotationFromEuler', 'setRotationFromQuaternion', 'setRotationFromAxisAngle',
+    'applyQuaternion', 'lookAt', 'add', 'attach', 'remove', 'removeFromParent', 'parent',
   ]) {
-    const start = kit.indexOf(`export function ${helper}(`)
-    assert.ok(start > 0, `${helper} is no longer exported from CharacterKit`)
-    const body = kit.slice(start, kit.indexOf('\n}', start))
     assert.ok(
-      !ALLOCATES.test(body),
-      `${helper} looks like it allocates. It runs once per actor per frame in the beast `
-      + 'pass; a constructor, an array or an object literal inside it is a frame-time '
-      + 'regression shipped as a test improvement. This check cannot prove the absence '
-      + 'of allocation — if the change is deliberate and allocation-free, say which '
-      + 'spelling tripped it and why it is not one.',
+      !new RegExp(`\\.${member}\\b`).test(pass),
+      `the beast pass touches \`.${member}\`. It fills a struct and calls \`poseBeast\`; `
+      + 'every transform it used to write moved there so that a test could execute it. '
+      + 'Touching a pivot here is invisible to that test, and banning the member rather '
+      + 'than the identifier is what an alias cannot walk around.',
+    )
+  }
+  assert.ok(
+    /poseBeast\(pivots\.torsoPivot, pivots\.pelvisPivot, pivots\.headPivot, posture\)/
+      .test(pass),
+    'the beast pass must hand all three pivots to `poseBeast`. Which values reach it is '
+    + 'the one thing a call cannot check, since it takes whatever it is given.',
+  )
+  // And the struct it hands over, field by field. `stride` is the one that matters:
+  // `actor.stride`, not `pose.stride`, because a stagger damps the gait rather than
+  // clearing it and `pose.stride` is zeroed for the limbs.
+  for (const [field, from] of [
+    ['upright', "rig.beast === 'troll'"],
+    ['anticipation', 'pose.anticipation'],
+    ['attack', 'pose.attack'],
+    ['stagger', 'pose.stagger'],
+    ['flinch', 'pose.flinch'],
+    ['stride', 'actor.stride'],
+    ['turnLean', 'actor.turnLean'],
+    ['breathing', 'breathing'],
+    ['headYaw', 'actor.headYaw'],
+  ] as const) {
+    assert.ok(
+      new RegExp(`posture\\.${field} = ${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm')
+        .test(pass),
+      `the beast posture's \`${field}\` is no longer \`${from}\`. \`poseBeast\` is executed `
+      + 'by a test and its arithmetic is measured there; what reaches it from the actor '
+      + 'is what only this can see. Anchored, so an appended term is not a match.',
     )
   }
 
   // The breath, which the proportion bound above is derived from — a derivation reading a
   // stale input is just a round number again.
+  const kitPose = kit.slice(
+    kit.indexOf('export function poseBeast('),
+    kit.indexOf('export function beastBreathScale('),
+  )
+  assert.ok(kitPose.length > 400, 'could not isolate `poseBeast`')
   assert.ok(
-    /torsoPivot\.scale\.y = beastBreathScale\(breathing\)$/m.test(pass),
+    /torsoPivot\.scale\.y = beastBreathScale\(posture\.breathing\)$/m.test(kitPose),
     'the beast chest\'s breath must go through `beastBreathScale`. Written inline again, '
     + 'the sweep in `a beast\'s skull turns with its chest and keeps its own proportions` '
     + 'becomes a private copy of the arithmetic that cannot fail when production changes '
