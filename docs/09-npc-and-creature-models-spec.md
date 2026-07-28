@@ -105,12 +105,160 @@ no new dependencies.
   `torso-pivot` at hand height, where the torch and the trail expect it.
 - **Do not add a joint the animation cannot use.** Elbow and knee pivots are added
   because the walk, the attack and the death pose all drive them. Fingers are not.
+- **Do not root a joint anywhere but at the joint.** `head-pivot` shipped as a
+  *sibling* of `torso-pivot`, both at the actor's origin — the ground between the
+  feet. At rest that is indistinguishable from a neck, so it passed review and every
+  test in the file. Under the plan's own `lean` the chest swings forward through the
+  2.12-2.34 m from the ground to the shoulders and the head, on a pivot that never got
+  that rotation, stays where it was: measured at **0.4992 m** on a standing brute and
+  **0.6603 m** walking, against a head 0.66 m deep. Only actors showed it, because
+  `animateCharacter` — the player's only pose pass — never writes `torso-pivot`. The
+  head now hangs off the chest at `shoulderY`, which also makes six existing terms
+  mean what they say: `head-pivot`'s rotations are written as the opposite sign of
+  `torso-pivot`'s, and a partial counter-rotation only makes sense against a
+  transform you inherit. The one term that is *not* a counter-rotation is the look
+  yaw, which tracks a target rather than resisting a posture, so it is converted into
+  chest space by `solveHeadYaw` — a solve rather than an offset, because the chest
+  pitches and rolls as well as yawing. Measured over the 213,840-state cross-product sweep the tests run -- an upper bound over a superset, since the engine's terms are correlated: **37.4°**
+  of gaze error uncorrected, **14.0°** with the obvious scalar `lookYaw - chestYaw`
+  (which is *worse than nothing* in 4.2% of them), exact solved, and **8.8°** if the solve is denied the head's own pitch. Damp the
+  tracking in body space and convert instantaneously — a frame change is not a motion,
+  and damping the converted angle costs 2.0° of wobble at the gait's real 4.00 Hz.
+  Correspondingly, **do not test a rig without posing it** — every assertion that
+  reads a body at rest is blind to this whole class — and **do not test position
+  without testing orientation**: the gaze defect passed a rigidity test that measured
+  only where the head sat. Sweep a state space rather than a list of named poses; the
+  first hand-written pose table here overshot the reachable chest yaw on one side and
+  fell 2.9× short on the other.
+
+  Worth stating plainly, because it is why the rule is *do not test at rest* rather
+  than merely *test more*: **the bug and the test that should have caught it share a
+  blind spot, and it is the same blind spot.** At rest a joint at the feet is
+  indistinguishable from a joint at the neck — that is simultaneously why the defect
+  shipped and why no assertion that reads a resting body could ever have found it.
+
+  Both rules above are instances of one, and it earned the generalisation the hard
+  way — by recurring a third time *after* the first two were written down:
+
+  > **A rig has more degrees of freedom than your assertion does, and the ones you
+  > omit are where the defects live.**
+
+  Omit the pose and a joint at the feet passes for a neck. Omit orientation and a
+  head sits perfectly on its neck while looking somewhere else. Omit the head's own
+  *pitch* — one axis, in a sweep written by the same author, two commits after both
+  rules above were added to this file — and `solveHeadYaw` measures as exact while
+  being **7.3°** wrong for every head the engine actually writes, because the engine
+  applies that pitch in the same Euler as the yaw it solves for. Knowing the rule is
+  not the same as being able to see where it applies; the only reliable instrument is
+  to drive every axis the production code writes, including the ones you are confident
+  cannot matter. Head *roll* genuinely cannot — a rotation about Z leaves the +Z axis
+  fixed — and the sweep drives it anyway, so that claim is measured rather than
+  asserted.
+
+  Two pieces of evidence that the child arrangement was the original intent and the
+  wiring was the defect. Six animation terms are written as the *opposite sign* of the
+  chest's, which only means anything against a transform you inherit. And
+  `animateDeath` writes `head-pivot.rotation.z = side * 0.28 * eased` to loll a dying
+  actor's head: about the feet that swung the skull **0.8094 m** sideways, clean off
+  the body; about the neck it lolls **0.1563 m**, which is what that line was always
+  trying to say.
+- **Inherit what the joint physically transmits; cancel what it does not.** A neck
+  hangs off a chest, so it inherits everything a chest does to it — and
+  `torso-pivot` carries the actor's shoulder width on `scale.x` as well as the
+  breath on `scale.y`. The breath is *correct* to inherit: a chest lifting a head as
+  it inhales is a body working. The shoulder width is not, because it is a property
+  of the shoulders and not of the neck, and `headScale` is already the one thing that
+  sizes a skull. Anatomy is the discriminator here, not a magnitude — deciding by
+  "how big is the artifact" would have kept the wrong one and dropped the right one,
+  since both are around a percent. Measured across all 30 faction x role plans (21 distinct proportion sets) and the whole look
+  envelope: **8.59%** head anisotropy with the width uncancelled, **1.00%** with it
+  cancelled, and that 1.00% is the breath to ten decimal places.
+- **Cancel a scale above every rotation, never below one.** A scale and a rotation do
+  not commute, so a cancellation applied *downstream* of a rotation is valid only in
+  the rest pose. Putting the width correction on `head-pivot`, which the animation
+  yaws by up to 0.65 rad, left **6.05%** at full yaw — *worse than the 3.00% of doing
+  nothing* at some angles. `neck-pivot` exists so the correcting node never rotates,
+  which removes the angle-dependence rather than bounding it. The same shape of error
+  reappeared one commit later in the gaze, as `lookYaw - torsoPivot.rotation.y`: one
+  Euler component subtracted from a rotation that has three. `solveHeadYaw` answers
+  that exactly instead of approximately.
+- **Do not derive an assertion's bound from the quantity the defect moves.** The
+  head-hinge test first bounded the head's swing by `skeleton.headY` — but a rig
+  regression changes `headY` too, so the bound grew in step with the damage and the
+  assertion could not fail for any input. It is a distinct failure from a vacuous
+  check and from one that is blind in a range: it is *self-scaling*, it tracks the
+  defect exactly, and it looks correct because the formula is correct and the number
+  is correct. The bound now comes from `p.headY - p.shoulderY`, an input the defect
+  cannot touch. Only the mutation run exposed it; no amount of reading would have.
+  The same rule retired the anisotropy bound's round 2%: the only thing that legally
+  reaches the head is `torso-pivot.scale.y`, a pure-Y scale, so the bound is
+  `1 / (1 - 0.018 * 0.55) - 1` — the breath's own closed form, which the measurement
+  matches to ten decimal places. A 0.3% contaminant reads 1.30% and now fails; under
+  the round 2% it passed.
+- **Do not adopt a number you could not reproduce.** The gaze skew bound quoted a
+  reviewer's jointly-reachable coefficient of 4.81 where an independent enumeration
+  here had measured 6.68, and resolved the 39% disagreement by deferring rather than
+  reconciling. The reviewer caught its own number being taken on trust and named it as
+  the same defect class as the rest: *a claim adopted rather than verified*. 4.81 was
+  right — the 6.68 came from letting a staggering chest keep its gait yaw, which
+  `sampleActorPose` forbids — but being right by deference is indistinguishable from
+  being wrong by deference until someone checks. Reconcile, or state both figures with
+  both methods named; never present one as settled because its author outranks you.
+- **Mutate the production code, not the test's copy of it.** The anisotropy test used
+  to apply its own `neckPivot.scale.x = 1 / shoulders`, and the mutation evidence
+  published for it came from mutating *that* line. Reverting the engine's half left
+  every numerical assertion green — only a source regex noticed. The measurements
+  were right and the proof was worthless. Both halves now live in one exported
+  function that the engine and the test both call, so a production mutation breaks
+  the measurement; dropping the cancellation, putting it on the wrong axis, or
+  introducing a 0.3% error in it each fail now and each passed before. **A test that
+  cannot see the code it is named after is the same defect as a bound that cannot
+  fail** — and neither is visible by reading, only by mutating the right thing.
+- **A threshold sized against a mis-modelled input is a threshold sized against
+  nothing.** The wobble test's anti-degeneracy guard — "the rejected rule must be
+  worse than 2°" — was chosen against a gait model that ran 3.7× too slow, because
+  `actorGaitCadence` returns radians per *metre travelled* and the test read it as
+  radians per second. `updateActors` does `gaitPhase += travelled * cadence`, so a
+  soldier at 3.7 m/s oscillates at 25.16 rad/s, not 6.8. Under the real physics the
+  rejected rule produces **1.997°**: the guard had negative margin and was one
+  rounding from passing vacuously. The discipline of asserting that the rejected
+  alternative *fails* was right; the number was fiction. Guards of that kind should
+  be expressed against the bound they protect — "the rejected rule must fail the
+  bound the shipped rule passes" — so the two cannot drift apart.
+- **Validate a conversion under the conditions that break it, not the ones that
+  suit it.** Every early gaze measurement held the chest's pitch and roll near zero,
+  which is precisely the geometry in which a scalar `lookYaw - chestYaw` is exact. The
+  two tests validating the conversion were blind to the only condition under which
+  the conversion failed. Both now drive all three axes.
+- **Do not fix a second defect inside a regression fix.** `torso-pivot` is *also*
+  rooted at the actor's origin rather than at the waist, so under the same `lean` the
+  whole upper body slides forward against the pelvis: **0.2950 m** at the waist on a
+  walking elf brute, 0.2316 m standing, 0.7901 m at the widest reachable pose. Same
+  defect class as the head, unreported, and deliberately **not** fixed with it. The
+  blast radius is the reason: `torso-pivot`'s origin is load-bearing for the shoulder
+  joints, the weapon rest pose, the captive's wrist rope, `cloak-pivot`, the
+  hard-coded absolute `shield` coordinates that `updateShieldPose` owns, and
+  `attachTorch`'s "hand height in torso space" contract. What makes the two separable
+  is that the head fix does not depend on it — the head is now rigid with the chest
+  *wherever the chest hinges from*, so moving the spine joint later cannot un-fix it.
+  Anyone taking this on starts from those numbers rather than rediscovering them. Note
+  also why nobody has reported it: at ordinary standing and walking poses the torso and
+  thigh meshes still intersect, so there is no visible gap — only at extreme scout and
+  champion poses do the surfaces come within about 1.9 cm of separating.
 - **Do not let a quadruped inherit a biped's spine.** The beasts share the rig names on
   purpose, but `createBeast` builds its own limb geometry per role and the shared
   stride is remapped, rather than a wolf borrowing a soldier's arm. The secondary
   pass is split the same way: `animateBeastPosture` replaces the biped shoulder
   bend, hip counter-rotation and head yaw, all of which pull an animal apart at the
   joints when applied to a body whose skull sits a metre forward of its own pivot.
+  Note what that buys and what it does not: it *reduces* the sliding, it does not
+  remove it. `createBeast` still roots `head-pivot` at the animal rather than on its
+  ribs, so the skull slides against the ribcage under attack and stagger — 0.296
+  authored units on a wolf, 0.368 on a bear, **0.660 on a troll**, before
+  `BEAST_PROFILES.scale` turns that into world units, where a troll's head travels
+  over a metre. That is worse than the 0.66 m humanoid case that was reported.
+  Deferred deliberately — a quadruped's neck is not at `shoulderY` and guessing at
+  one is how a fix becomes a second regression — but filed, not called solved.
 - **Do not derive a look from a spawn counter.** Appearance hangs off the most
   durable identity a caller can offer — a generated spawn slot, a persisted
   companion id, a deterministic event id — so the same person comes back the same
@@ -272,12 +420,13 @@ group
 │   │   ├── **rightArm** (pivot) → upper arm mesh
 │   │   │      └── rightElbow (pivot) → forearm mesh [+ hand mesh, detail]
 │   │   ├── **weapon** (pivot) → weapon mesh (+ grip mesh)
-│   │   └── **shield**  (mesh, absolute local coords owned by updateShieldPose)
-│   ├── **head-pivot**
-│   │   ├── **head**             merged: neck, skull, brow, nose, jaw, ears
-│   │   ├── face                 eyes and mouth, dark material              [detail]
-│   │   ├── hair                                                            [detail]
-│   │   └── headgear
+│   │   ├── **shield**  (mesh, absolute local coords owned by updateShieldPose)
+│   │   └── neck-pivot           the joint, at `shoulderY` in torso space
+│   │       └── **head-pivot**   the head's own rotation: look, counter-pitch, roll
+│   │           ├── **head**     merged: neck, skull, brow, nose, jaw, ears
+│   │           ├── face        eyes and mouth, dark material               [detail]
+│   │           ├── hair                                                    [detail]
+│   │           └── headgear
 │   └── **pelvis-pivot**
 │       ├── **leftLeg**  (pivot) → thigh mesh
 │       │      └── leftKnee (pivot) → shin mesh (boot merged in)
@@ -286,6 +435,20 @@ group
 ├── **faction-ring**
 └── contact-shadow
 ```
+
+The five pivots are built by `buildCharacterSkeleton` in `CharacterKit`, not by the
+engine, so the layout is reachable from a Node test with no DOM — which is what lets
+`tests/characterArt.test.ts` pose a body and measure it rather than read it. The head
+meshes take their Y from the skeleton's `headY`, measured **from the neck**, not from
+the proportion table's `headY`, which is measured from the ground.
+
+`neck-pivot` and `head-pivot` are two nodes rather than one because `torso-pivot`
+carries scale as well as rotation — the actor's shoulder width on `scale.x` and the
+breath on `scale.y` — and the head has to divide the shoulder width back out in the
+same axis-aligned frame it was applied in. `neck-pivot` never rotates, so it can;
+`head-pivot` does, so on it the correction only cancels while the actor faces
+forward. Measured over both shoulder extremes, both breath extremes and a 462-pose look grid across all 30 plans: **8.59%** head anisotropy with no correction, **6.05%** with it on `head-pivot`, **1.00%** with it
+on `neck-pivot`, that last being the chest's breath and nothing else.
 
 Contracts this preserves, each verified against its consumer:
 

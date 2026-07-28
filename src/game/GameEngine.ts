@@ -21,6 +21,7 @@ import {
   buildBeastTail,
   buildBirdBody,
   buildBirdWing,
+  buildCharacterSkeleton,
   buildCloak,
   buildDeerBody,
   buildDeerCrown,
@@ -51,7 +52,9 @@ import {
   buildWristRope,
   characterPartKeys,
   resolveCharacterPlan,
+  setCharacterShoulderWidth,
   solveHandOffset,
+  solveHeadYaw,
   type BeastKind,
   type CharacterPlan,
   type OutlineBinding,
@@ -417,6 +420,16 @@ interface Actor {
   visualSpeed: number
   motionBlend: number
   turnLean: number
+  /**
+   * The head's tracking angle, in *body* space, damped.
+   *
+   * Kept on the actor rather than read back off `head-pivot` because the pivot now
+   * holds a *chest*-space angle, and the map from one to the other is a solve
+   * rather than a subtraction — see `animateActorCharacter`. Damping belongs on
+   * the body-space value, which is where `lookYaw` is authored; the conversion is
+   * a change of frame and happens instantaneously.
+   */
+  headYaw: number
   idleTimer: number
   wanderPace: number
   retreatTimer: number
@@ -11771,16 +11784,25 @@ export class GameEngine {
    *
    * The rig — every pivot and mesh name marked below — is load-bearing. Animation,
    * dismemberment, prosthetics, gore, the torch and the weapon trail all address it
-   * by name, so `body-pivot`, `torso-pivot`, `head-pivot`, `pelvis-pivot`, `torso`,
-   * `head`, `leftArm`, `rightArm`, `leftLeg`, `rightLeg`, `weapon`, `shield` and
-   * `faction-ring` are frozen. Elbows, knees, cloak, trim, face, hair and headgear
-   * are new children of those, which is additive and safe: hiding a limb still
-   * hides its whole chain, and a prosthetic still recolours all of it.
+   * by name, so `body-pivot`, `torso-pivot`, `neck-pivot`, `head-pivot`,
+   * `pelvis-pivot`, `torso`, `head`, `leftArm`, `rightArm`, `leftLeg`, `rightLeg`,
+   * `weapon`, `shield` and `faction-ring` are frozen. `neck-pivot` is newer than the
+   * rest and is not bold in docs/09's tree, but it is just as load-bearing:
+   * `applyActorVisualVariation` finds it by name to divide the chest's shoulder width
+   * back out, and a rename makes that silently stop. Elbows, knees, cloak, trim,
+   * face, hair and headgear are new children of those, which is additive and safe:
+   * hiding a limb still hides its whole chain, and a prosthetic still recolours all
+   * of it.
    *
    * Shape comes from `resolveCharacterPlan`, which turns a faction, a role and one
    * integer into a complete description of a person. Geometry is cached per plan
    * part and shared by every actor that resolves to the same part, so twenty-five
    * actors still build a few dozen buffers rather than a few hundred.
+   *
+   * The pivots themselves come from `buildCharacterSkeleton`, which owns the fact
+   * that `head-pivot` is a joint on the spine rather than a second root at the
+   * feet. Read that docblock before moving a head mesh: `headY` here is measured
+   * from the neck, not from the ground.
    */
   private createCharacter(
     faction: Faction,
@@ -11794,19 +11816,8 @@ export class GameEngine {
     const build = (key: string, factory: () => THREE.BufferGeometry) =>
       this.acquireArtGeometry(key, factory)
 
-    const group = new THREE.Group()
-    const bodyPivot = new THREE.Group()
-    bodyPivot.name = 'body-pivot'
-    group.add(bodyPivot)
-    const torsoPivot = new THREE.Group()
-    torsoPivot.name = 'torso-pivot'
-    bodyPivot.add(torsoPivot)
-    const headPivot = new THREE.Group()
-    headPivot.name = 'head-pivot'
-    bodyPivot.add(headPivot)
-    const pelvisPivot = new THREE.Group()
-    pelvisPivot.name = 'pelvis-pivot'
-    bodyPivot.add(pelvisPivot)
+    const { root: group, torsoPivot, headPivot, pelvisPivot, headY } =
+      buildCharacterSkeleton(p)
 
     const bodyMaterial = this.characterBodyMaterial(plan)
     const limbMaterial = this.characterLimbMaterial(plan)
@@ -11848,13 +11859,13 @@ export class GameEngine {
 
     const head = new THREE.Mesh(build(keys.head, () => buildHead(plan.faction)), skinMaterial)
     head.name = 'head'
-    head.position.y = p.headY
+    head.position.y = headY
     head.scale.setScalar(p.headScale)
     headPivot.add(head)
 
     const face = new THREE.Mesh(build(keys.face, () => buildFace(plan.faction)), darkMaterial)
     face.name = 'face'
-    face.position.y = p.headY
+    face.position.y = headY
     face.scale.setScalar(p.headScale)
     this.attachCharacterDetail(headPivot, face)
 
@@ -11865,7 +11876,7 @@ export class GameEngine {
         this.characterHairMaterial(plan.hairTone),
       )
       hair.name = 'hair'
-      hair.position.y = p.headY
+      hair.position.y = headY
       hair.scale.setScalar(p.headScale)
       this.attachCharacterDetail(headPivot, hair)
     }
@@ -11889,7 +11900,7 @@ export class GameEngine {
         headgearMaterial,
       )
       headgear.name = 'headgear'
-      headgear.position.y = p.headY
+      headgear.position.y = headY
       headgear.scale.setScalar(p.headScale)
       headPivot.add(headgear)
     }
@@ -12312,10 +12323,6 @@ export class GameEngine {
     const bodyPivot = mesh.getObjectByName('body-pivot')
     if (bodyPivot) bodyPivot.scale.set(bulk, height, bulk * variation.around(1, 0.03))
     const torsoPivot = mesh.getObjectByName('torso-pivot')
-    // Widening the torso pivot moves the shoulder joints with it, so the arms stay
-    // attached where they should be instead of floating away from a broader chest.
-    // Its `scale.y` is left alone because the breathing pass writes it every frame.
-    if (torsoPivot) torsoPivot.scale.x = shoulders
     const pelvisPivot = mesh.getObjectByName('pelvis-pivot')
     if (pelvisPivot) pelvisPivot.rotation.z = stance * 0.4
 
@@ -12342,6 +12349,10 @@ export class GameEngine {
     }
     const headPivot = mesh.getObjectByName('head-pivot')
     if (headPivot) headPivot.rotation.y = variation.signed(0.12)
+    // Both halves of the shoulder width — put it on the chest, take it off the neck —
+    // live in one place in `CharacterKit` so a Node test can drive the real code
+    // instead of a copy of its arithmetic. See `setCharacterShoulderWidth`.
+    setCharacterShoulderWidth(torsoPivot, mesh.getObjectByName('neck-pivot'), shoulders)
   }
 
   private createActorHealthBar(allegiance: Allegiance): {
@@ -12818,6 +12829,7 @@ export class GameEngine {
       visualSpeed: 0,
       motionBlend: 0,
       turnLean: 0,
+      headYaw: 0,
       idleTimer: 0.2 + (index % 3) * 0.25,
       wanderPace: 0.82 + (Math.sin(phase * 2.7) + 1) * 0.08,
       retreatTimer: 0,
@@ -14164,9 +14176,42 @@ export class GameEngine {
       pelvisPivot.rotation.z = actor.turnLean * 0.08 - idleWeightShift * 0.3
     }
     if (headPivot) {
-      headPivot.rotation.y = dampAngle(headPivot.rotation.y, lookYaw, 7, delta)
-      headPivot.rotation.x =
-        -forwardLean * actor.motionBlend * 0.35 + pose.stagger * 0.18
+      // `lookYaw` is measured from the actor's own facing, but `head-pivot` now hangs
+      // off `torso-pivot`, and the chest does not merely yaw — it pitches into the run
+      // and the storm and rolls with the turn. Uncorrected the chest's twist is added
+      // to the gaze and the head looks past its target by up to 37 degrees; the
+      // obvious scalar `lookYaw - chestYaw` still leaves 14, and in 4.2% of reachable
+      // states it is worse than doing nothing. `solveHeadYaw` answers it exactly.
+      //
+      // The head's own pitch goes in as an argument because it is applied after the
+      // yaw, in the same Euler, so it moves where the head ends up pointing — leaving
+      // it out cost 7.3 degrees. Its roll does not: a rotation about Z leaves the +Z
+      // axis fixed, so it cannot move the gaze. Computed here rather than below so the
+      // solve reads the value that will actually be written.
+      //
+      // The damping is on the *body*-space angle and the conversion is instantaneous,
+      // which is what `actor.headYaw` is for. A frame change is not a motion: damping
+      // the converted angle leaves the head chasing the chest's gait twist a fraction
+      // of a second late, measured as 2.0 degrees of wobble at a soldier's real
+      // 4.00 Hz cadence.
+      const headPitch = -forwardLean * actor.motionBlend * 0.35 + pose.stagger * 0.18
+      actor.headYaw = dampAngle(actor.headYaw, lookYaw, 7, delta)
+      headPivot.rotation.y = torsoPivot
+        ? solveHeadYaw(
+            torsoPivot.rotation.x,
+            torsoPivot.rotation.y,
+            torsoPivot.rotation.z,
+            headPitch,
+            actor.headYaw,
+          )
+        : actor.headYaw
+      // Pitch and roll are deliberately *not* corrected this way. Unlike the yaw they
+      // are authored as partial counter-rotations of the chest — the torso pitches
+      // `+forwardLean` and the head `-forwardLean * 0.35`, the torso rolls
+      // `-turnLean * 0.16` and the head `+turnLean * 0.06` — which only means anything
+      // against a transform the head inherits. The yaw is the odd one out because it
+      // tracks a target rather than resisting a posture.
+      headPivot.rotation.x = headPitch
       headPivot.rotation.z =
         actor.turnLean * 0.06 -
         idleWeightShift * 0.2 -

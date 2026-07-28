@@ -41,7 +41,19 @@ import {
 // Taxonomy
 // ---------------------------------------------------------------------------
 
-export type CharacterFaction = 'elf' | 'guard' | 'villain'
+/**
+ * The three factions, as data rather than as a type.
+ *
+ * Declared this way round — array first, type derived — so that a fourth faction
+ * cannot be added without joining every sweep that iterates this. A hand-written
+ * `readonly CharacterFaction[]` in a test is checked against the union in one
+ * direction only: removing a member breaks it, **adding** one escapes it silently,
+ * and every population claim in `tests/characterArt.test.ts` is built on these
+ * arrays. A reviewer found that hole; this closes it by construction.
+ */
+export const CHARACTER_FACTIONS = ['elf', 'guard', 'villain'] as const
+
+export type CharacterFaction = (typeof CHARACTER_FACTIONS)[number]
 
 /**
  * The nine shapes a person can be.
@@ -596,6 +608,19 @@ export function characterKitForRole(role: string, player: boolean): CharacterKit
 }
 
 /**
+ * Every non-player role a character plan can be built for, from the kit map itself.
+ *
+ * The one authority on which roles exist is `KIT_BY_ROLE`, so a sweep that wants to
+ * cover them should read it rather than restate it. A hand-written list is a claim
+ * about a population, and a new role added to the map would slip past every such
+ * list in the test file without a single assertion noticing — the type only catches
+ * a member *removed*.
+ */
+export function characterRoles(): readonly string[] {
+  return Object.keys(KIT_BY_ROLE).filter((role) => role !== 'player')
+}
+
+/**
  * Turns a faction, a role and one integer into a complete description of a person.
  *
  * `variant` is the only place chance enters, and it enters as an index rather than
@@ -685,6 +710,243 @@ export function characterPartKeys(plan: CharacterPlan): CharacterPartKeys {
     weaponGrip: plan.armed ? `char-weapon:${plan.weapon}:grip` : null,
     offhand: plan.offhand === 'none' ? null : `char-offhand:${plan.offhand}`,
   }
+}
+
+// ---------------------------------------------------------------------------
+// The rig
+// ---------------------------------------------------------------------------
+
+/**
+ * The pivots a person is posed through, already wired to each other.
+ *
+ * A pivot is a *joint*, and a joint has two properties that are easy to state and
+ * were both wrong here: it sits where the bones meet, and it hangs off the bone
+ * above it. `head-pivot` had neither. It was built as a sibling of `torso-pivot`
+ * at the actor's own origin — the ground between the feet — with the head placed
+ * at `headY` above it. In the rest pose that is indistinguishable from a neck,
+ * which is why it survived review: with every rotation at zero the head lands
+ * exactly where the chest puts it, measured at **0.0000 for all 27 proportion
+ * sets**.
+ *
+ * It comes apart the moment anything rotates. `animateActorCharacter` writes the
+ * plan's own `lean` into `torso-pivot.rotation.x`, which swings the collar forward
+ * through the whole 2.12-2.34 m lever arm from the ground to the shoulders, while a
+ * head rooted at the feet on a *different* pivot does not move at all. Measured on
+ * the sibling rig, as the distance between the head and where `torso-pivot` puts
+ * it — a brute standing still, `lean` 0.20: **0.4992 m**. A captive: 0.4710. A
+ * villain champion: 0.3690, and a villain soldier, minion or archer: 0.3430 — the
+ * three share a `lean` and differ by head height, which is why "any villain" was the
+ * wrong way to say it. A peasant: 0.2639. A head is 0.66 m deep, so a standing brute
+ * wore its skull three-quarters of a head behind its own neck.
+ * Walking takes the worst case to **0.6603 m** at the 1.18 cap `motionBlend` is
+ * clamped to, and the deepest pose the simulation can actually reach — attack and
+ * stagger cannot co-occur, because the stagger branch clears `actor.action` — is
+ * worth **1.7189 m** on a villain champion.
+ *
+ * The roles whose `lean` is zero — an elf or guard soldier, minion, archer or
+ * champion — measured 0.0000 standing and came apart only once they moved, which
+ * is exactly the kind of partial symptom that gets a bug reported as "some of
+ * them". The player was never affected at all, because `animateCharacter`, the
+ * only pose pass the player gets, never writes `torso-pivot`'s transform; only
+ * actors run `animateActorCharacter`. That asymmetry is the whole of "the NPC
+ * heads are wrong and mine is fine", and it is why the fix is structural rather
+ * than a nudge: no offset can be right for a displacement that is a rotation times
+ * a lever arm and changes every frame.
+ *
+ * Hanging the head off the chest also makes six existing animation terms mean what
+ * they say for the first time. `head-pivot`'s rotations are written as the *opposite
+ * sign* of `torso-pivot`'s — the torso pitches `+forwardLean` and the head
+ * `-forwardLean * 0.35`, the torso rolls `-turnLean * 0.16` and the head
+ * `+turnLean * 0.06`, the torso takes `+idleWeightShift * 0.55` and the head
+ * `-idleWeightShift * 0.2`. Partial counter-rotations only make sense against a
+ * transform you inherit. As siblings they were not corrections at all; they were
+ * the head and the chest leaning opposite ways in world space. So the animation was
+ * already written for this hierarchy, and nothing in it needs to change.
+ */
+export interface CharacterSkeleton {
+  /** The actor's own group. Every pivot below is already parented into it. */
+  root: THREE.Group
+  bodyPivot: THREE.Group
+  torsoPivot: THREE.Group
+  /**
+   * The joint at the top of the spine. A child of {@link torsoPivot}, carrying the
+   * neck's *height* and nothing else the animation writes.
+   *
+   * It exists so that {@link headPivot} can be a pure rotation. `torso-pivot` is
+   * not only a joint: `applyActorVisualVariation` puts the actor's shoulder width
+   * on its `scale.x` and the breathing pass writes its `scale.y` every frame, and
+   * a head is not a pair of shoulders. Dividing that width back out has to happen
+   * in the *same* axis-aligned frame it was applied in, which means above the head's
+   * rotation, not on it. Measured over both shoulder extremes, both breath extremes
+   * and a 462-pose look grid across all 30 plans: no correction at all leaves the
+   * head **8.59%** anisotropic; the correction on the rotated pivot leaves it
+   * **6.05%**, because a shrink along the head's local x and a stretch along the
+   * world's X stop cancelling once the two frames differ; on this node it is
+   * **1.00%**, and that residue is the chest's breath. What is being accepted there
+   * is a **vertical stretch of the skull mesh itself** — not, as an earlier draft of
+   * this docblock said, merely "a chest lifting a head as it inhales". The lift is a
+   * translation and the head keeps it either way, because the neck's *position*
+   * rides the chest's scale; cancelling `scale.y` would not cost it. A reviewer
+   * caught that the sentence was naming a benefit the decision
+   * was not buying. The stretch is kept because it is a hundredth of the shoulder
+   * problem and a chest that breathes without moving its head is worse, but the
+   * honest statement is the stretch, not the lift.
+   */
+  neckPivot: THREE.Group
+  /** The head's own rotation: look, counter-pitch, counter-roll. */
+  headPivot: THREE.Group
+  pelvisPivot: THREE.Group
+  /**
+   * Y for `head`, `face`, `hair` and `headgear`, in `head-pivot` space.
+   *
+   * Measured from the neck rather than from the ground, because that is where the
+   * pivot now is. Read it from here rather than recomputing `headY - shoulderY` at
+   * the call site: the two numbers have to move together, and a joint that has
+   * drifted from the mesh it carries is the defect this type exists to prevent.
+   */
+  headY: number
+}
+
+/**
+ * Builds the load-bearing pivots for one person and parents them anatomically.
+ *
+ * Lives here rather than in the engine so the layout is reachable from a Node test
+ * with no DOM — see {@link CharacterSkeleton} for what that test is for. It builds
+ * groups and nothing else: no geometry, no materials, no cache.
+ */
+export function buildCharacterSkeleton(p: CharacterProportions): CharacterSkeleton {
+  const root = new THREE.Group()
+  const bodyPivot = new THREE.Group()
+  bodyPivot.name = 'body-pivot'
+  root.add(bodyPivot)
+  const torsoPivot = new THREE.Group()
+  torsoPivot.name = 'torso-pivot'
+  bodyPivot.add(torsoPivot)
+  const neckPivot = new THREE.Group()
+  neckPivot.name = 'neck-pivot'
+  // The base of the neck, which is the shoulder line — the same height the arms
+  // hang from, and within 0.09 of where every head mesh's neck stub ends.
+  neckPivot.position.y = p.shoulderY
+  torsoPivot.add(neckPivot)
+  const headPivot = new THREE.Group()
+  headPivot.name = 'head-pivot'
+  neckPivot.add(headPivot)
+  const pelvisPivot = new THREE.Group()
+  pelvisPivot.name = 'pelvis-pivot'
+  bodyPivot.add(pelvisPivot)
+  return {
+    root,
+    bodyPivot,
+    torsoPivot,
+    neckPivot,
+    headPivot,
+    pelvisPivot,
+    headY: p.headY - p.shoulderY,
+  }
+}
+
+/**
+ * The head-yaw that makes an actor look where it means to, through a twisted chest.
+ *
+ * `lookYaw` is authored in *body* space — `updateActors` measures it from the
+ * actor's own facing to whatever it is tracking. `head-pivot` hangs off
+ * `torso-pivot`, so the value has to be expressed in *chest* space before it is
+ * written, and the chest does not merely yaw: it pitches into the run and the storm
+ * and rolls with the turn.
+ *
+ * Subtracting the chest's `rotation.y` is the obvious answer and it is wrong for the
+ * same reason a scale correction on a rotated pivot is wrong — it cancels only while
+ * the other two axes are zero. Measured over the reachable chest envelope and look
+ * range: no correction at all is out by up to **37.4°**; the scalar subtraction still
+ * by **14.0°**, and in **4.2%** of those states it is *worse than doing nothing*.
+ * This solve is exact.
+ *
+ * It takes the head's own pitch because the pitch is applied *after* it, in the same
+ * Euler, and therefore changes where the head ends up pointing. Roll does not: a
+ * rotation about Z leaves the +Z axis fixed, so `head-pivot.rotation.z` cannot move
+ * the gaze and is not a parameter. Omitting the pitch was worth **4.82°** on a
+ * reachable first stagger frame — the solve was exact for the case the test drove
+ * and inexact for the case the engine writes, which is the same defect as validating
+ * a conversion only where it happens to work.
+ *
+ * The derivation. Let `M = R_chest · Rx(headPitch)`, with first column **a** and
+ * third column **c**. A head yawed by θ under that points along `a·sinθ + c·cosθ`;
+ * asking for that to have heading `L` in the XZ plane is one linear equation:
+ *
+ * ```text
+ * sinθ (a₁cosL − a₃sinL) + cosθ (c₁cosL − c₃sinL) = 0
+ * ```
+ *
+ * The four elements come straight out of the two Euler triples, so this allocates
+ * nothing and builds no matrix — it runs for every actor every frame.
+ *
+ * Damp `lookYaw` *before* calling this, never the result. A frame change is not a
+ * motion: damping the converted angle leaves the head chasing the chest's gait twist
+ * a fraction of a second late, which measures as 2.0° of wobble at a soldier's real
+ * 4.00 Hz cadence.
+ */
+export function solveHeadYaw(
+  chestX: number,
+  chestY: number,
+  chestZ: number,
+  headPitch: number,
+  lookYaw: number,
+): number {
+  // Columns of three.js's XYZ Euler matrix for the chest, by hand.
+  const cx = Math.cos(chestX)
+  const sx = Math.sin(chestX)
+  const cy = Math.cos(chestY)
+  const sy = Math.sin(chestY)
+  const cz = Math.cos(chestZ)
+  const sz = Math.sin(chestZ)
+  // Column 0, and columns 1 and 2, which the head's pitch mixes together.
+  const a1 = cy * cz
+  const a3 = sx * sz - cx * cz * sy
+  const oneX = -cy * sz
+  const oneZ = sx * cz + cx * sz * sy
+  const twoX = sy
+  const twoZ = cx * cy
+  // `R_chest · Rx(headPitch)` rotates column 2 toward column 1.
+  const cp = Math.cos(headPitch)
+  const sp = Math.sin(headPitch)
+  const c1 = cp * twoX - sp * oneX
+  const c3 = cp * twoZ - sp * oneZ
+  const cosL = Math.cos(lookYaw)
+  const sinL = Math.sin(lookYaw)
+  return Math.atan2(-(c1 * cosL - c3 * sinL), a1 * cosL - a3 * sinL)
+}
+
+/**
+ * Widens an actor's chest without widening its head.
+ *
+ * Both halves live here, in one function, rather than as two lines in the engine —
+ * because a test can call this and cannot call `applyActorVisualVariation`, which
+ * needs a DOM. Split across two call sites the cancellation was provably correct and
+ * *untested*: mutating the engine's half left every numerical assertion green,
+ * because the test had applied its own copy of the same arithmetic. A reviewer found
+ * that by mutating production instead of the test, which is the only way to find it.
+ *
+ * `torso-pivot` carries the width so the shoulder joints move out with the chest —
+ * the arms are its children. `neck-pivot` divides it straight back out, because a
+ * head is not a pair of shoulders and `headScale` is meant to be the only thing that
+ * sizes a skull. It has to be `neck-pivot` and not `head-pivot`: a scale and a
+ * rotation do not commute, so a cancellation below a rotation is valid only in the
+ * rest pose, and the animation yaws `head-pivot` by up to 0.65 rad. Measured over
+ * both shoulder extremes, both breath extremes and a 462-pose look grid: **8.59%**
+ * head anisotropy uncancelled, **6.05%** cancelled on the rotated pivot — worse than
+ * nothing at some angles — **1.00%** here, which is the chest's breath and nothing
+ * else.
+ *
+ * A beast has no neck: `createBeast` still roots its head at the animal, so its skull
+ * never wore the width. Pass `null` and nothing is divided out.
+ */
+export function setCharacterShoulderWidth(
+  torsoPivot: THREE.Object3D | null | undefined,
+  neckPivot: THREE.Object3D | null | undefined,
+  shoulders: number,
+): void {
+  if (torsoPivot) torsoPivot.scale.x = shoulders
+  if (neckPivot) neckPivot.scale.x = 1 / shoulders
 }
 
 // ---------------------------------------------------------------------------
@@ -3069,7 +3331,10 @@ export function solveHandOffset(
 // Beasts
 // ---------------------------------------------------------------------------
 
-export type BeastKind = 'wolf' | 'boar' | 'bear' | 'troll'
+/** The four beasts. Array first, type derived — see {@link CHARACTER_FACTIONS}. */
+export const BEAST_KINDS = ['wolf', 'boar', 'bear', 'troll'] as const
+
+export type BeastKind = (typeof BEAST_KINDS)[number]
 
 export interface BeastRig {
   /** Height of the spine above the ground. */

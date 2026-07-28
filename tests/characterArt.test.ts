@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import * as THREE from 'three'
 import {
+  BEAST_KINDS,
   BEAST_RIG,
+  CHARACTER_FACTIONS,
   CHARACTER_VARIANTS,
   GeometryCache,
   artVariation,
@@ -14,6 +16,7 @@ import {
   buildBeastTail,
   buildBirdBody,
   buildBirdWing,
+  buildCharacterSkeleton,
   buildCloak,
   buildDeerBody,
   buildDeerCrown,
@@ -43,14 +46,19 @@ import {
   buildWeaponHead,
   buildWristRope,
   characterPartKeys,
+  characterRoles,
   hasOutlineNormals,
   resolveCharacterPlan,
+  setCharacterShoulderWidth,
   solveHandOffset,
+  solveHeadYaw,
   WAGON_RIG,
   type BeastKind,
   type CharacterFaction,
   type CharacterPartKeys,
   type CharacterPlan,
+  type CharacterProportions,
+  type CharacterSkeleton,
 } from '../src/game/art/index.ts'
 // Imported from the module rather than the barrel on purpose: these two are a review
 // instrument, not part of the art surface `docs/09` §5.1 publishes, and adding them to
@@ -84,19 +92,15 @@ const GEOMETRY_CACHE_ENTRIES_MAX = 220
  * still intact. See `docs/09-npc-and-creature-models-spec.md`.
  */
 
-const FACTIONS: readonly CharacterFaction[] = ['elf', 'guard', 'villain']
-const ROLES = [
-  'soldier',
-  'scout',
-  'commander',
-  'minion',
-  'archer',
-  'brute',
-  'champion',
-  'captive',
-  'peasant',
-] as const
-const BEASTS: readonly BeastKind[] = ['wolf', 'boar', 'bear', 'troll']
+// Read from `CharacterKit` rather than restated here. A hand-written array typed
+// `readonly CharacterFaction[]` is checked in one direction only: it breaks if a
+// faction is *removed* and stays green if one is *added*, so every population claim
+// in this file would quietly stop covering the population. A reviewer found that;
+// these three now come from the same data the plans are built out of, so a new
+// faction, role or beast joins every sweep below by construction.
+const FACTIONS = CHARACTER_FACTIONS
+const ROLES = characterRoles()
+const BEASTS = BEAST_KINDS
 /** Every kind the builders accept, including the ones no plan table selects. */
 const HEADGEAR_KINDS = [
   'circlet', 'crown', 'hood', 'kettle', 'nasal', 'crested',
@@ -805,9 +809,22 @@ test('the load-bearing rig names are still assigned', () => {
     fileURLToPath(new URL('../src/game/GameEngine.ts', import.meta.url)),
     'utf8',
   )
+  // The five pivots are now named by `buildCharacterSkeleton`, so the humanoid rig
+  // lives in two files. Search both: `createBeast` still names all four in the
+  // engine, and searching only the engine would have gone on passing for a body
+  // that had lost every one of them.
+  const kit = readFileSync(
+    fileURLToPath(new URL('../src/game/art/CharacterKit.ts', import.meta.url)),
+    'utf8',
+  )
+  const rigSource = `${source}\n${kit}`
   const frozen = [
     'body-pivot',
     'torso-pivot',
+    // Newer than the rest and not in docs/09's bold list, but load-bearing all the
+    // same: `applyActorVisualVariation` finds it by name to divide the chest's
+    // shoulder width back out. Rename it and the correction silently stops.
+    'neck-pivot',
     'head-pivot',
     'pelvis-pivot',
     'torso',
@@ -822,12 +839,28 @@ test('the load-bearing rig names are still assigned', () => {
   ]
   for (const name of frozen) {
     assert.ok(
-      source.includes(`.name = '${name}'`) ||
-        source.includes(`['${name}', -1]`) ||
-        source.includes(`['${name}', 1]`),
+      rigSource.includes(`.name = '${name}'`) ||
+        rigSource.includes(`['${name}', -1]`) ||
+        rigSource.includes(`['${name}', 1]`),
       `the rig no longer assigns the name "${name}"`,
     )
   }
+  // The humanoid pivots come from one builder, and the head hangs off the chest
+  // inside it. An engine that went back to building its own would compile, pass
+  // every other assertion here, and put the heads back behind the necks.
+  assert.ok(
+    kit.includes('torsoPivot.add(neckPivot)') && kit.includes('neckPivot.add(headPivot)'),
+    'buildCharacterSkeleton must hang the neck off the spine and the head off the neck',
+  )
+  assert.ok(
+    source.includes('buildCharacterSkeleton(p)'),
+    'createCharacter must take its pivots from buildCharacterSkeleton',
+  )
+  assert.equal(
+    (source.match(/bodyPivot\.add\(headPivot\)/g) ?? []).length,
+    1,
+    'only createBeast may root a head-pivot at the body; a person hangs one off the spine',
+  )
   // Fauna names the wildlife animation drives, plus the captive's rope, which
   // `unbindActorArms` looks up by name when the ropes come off.
   for (const name of ['deer-body', 'legs', 'wings', 'cargo', 'wheel', 'wrist-rope']) {
@@ -875,6 +908,1202 @@ test('the load-bearing rig names are still assigned', () => {
     'shared character materials must be selected, never mutated',
   )
 })
+
+/**
+ * The head is a joint on the spine, not a second root at the feet.
+ *
+ * ## What was wrong
+ *
+ * `head-pivot` was built as a *sibling* of `torso-pivot`, both at the actor's own
+ * origin — the ground between the feet — with the head placed at `headY` above it.
+ * At rest that is indistinguishable from a neck, which is why it shipped: with
+ * every rotation at zero the head lands exactly where the collar is, and this file
+ * had no test that posed a body before measuring it.
+ *
+ * It comes apart the moment anything rotates. `animateActorCharacter` writes the
+ * plan's own `lean` into `torso-pivot.rotation.x`, swinging the collar forward
+ * through the entire 2.12-2.34 m lever arm from the ground to the shoulders, while a
+ * head rooted at the feet on a different pivot does not move at all.
+ *
+ * ## Measured, on the sibling rig, over the 21 distinct proportion sets
+ *
+ * 27 faction × role pairs, but only **21 distinct** sets of proportions: the `heavy`
+ * kit patches all 18 fields, so the three factions' brutes are byte-identical;
+ * `civil` patches 17 of 18 and the one it omits is set only by `guard`, so the elf
+ * and villain peasants are too; and `soldier` and `minion` share the `line` kit
+ * within each faction. Both reviewers and I first quoted this as 27 or 24 by counting
+ * pairs and reasoning about the patch tables; 21 is what enumerating and comparing
+ * them actually returns.
+ *
+ * Distance between the head and where `torso-pivot` puts it — the same quantity
+ * assertion 1 below measures, with the head's own rotation held at zero so that
+ * both sides of the comparison are like for like.
+ *
+ * | pose | worst |
+ * | --- | --- |
+ * | rest, nothing posed | **0.0000** |
+ * | standing, plan `lean` only | **0.4992** (brute, `lean` 0.20) |
+ * | walking, at the 1.18 motion-blend cap | **0.6603** (elf brute) |
+ * | deepest *reachable* pose | **1.7189** (villain champion, 0.6149 rad) |
+ * | synthetic 0.83 rad, used by the sweep below | **2.3385** |
+ *
+ * A head is 0.66 m deep. Three-quarters of a head, backwards, standing still.
+ *
+ * Two corrections a reviewer made to earlier drafts of this table, kept here because
+ * both are the kind of mistake that survives if only the conclusion is recorded.
+ * The walking figure was first given as **0.6835**, which is arithmetically right but
+ * measures a different thing: it lets the head's own counter-pitch move the head on
+ * the "before" side while the "after" side holds it at zero. Like for like, at the
+ * 1.18 cap `motionBlend` is clamped to, it is 0.6603. And the 0.83 rad pose was
+ * labelled *reachable*; it is not — it sums role-incompatible maxima and adds attack
+ * to stagger, and `GameEngine.ts`'s stagger branch sets `actor.action = null`, so a
+ * staggering actor has no attack to add. Respecting that exclusivity, the deepest
+ * pose the simulation can reach is **0.6149 rad**, worth **1.7189 m** on a villain
+ * champion — not the brute, whose bigger angle rides a shorter lever arm. The 0.83
+ * pose stays in the sweep, because the invariant holds for any transform and a wider
+ * net is free, but it is labelled synthetic.
+ *
+ * A third correction was needed on the corrections: a second reviewer put the
+ * reachable worst at 2.0405 m by letting attack and stagger co-occur. The source
+ * forbids it. Two reviewers disagreed by 19% on this number and the tie-breaker was
+ * reading the line that clears the field, not averaging the estimates.
+ *
+ * The roles whose `lean` is zero — elf and guard soldier, minion, archer, champion
+ * — measured 0.0000 standing and only came apart once they walked, which is how a
+ * whole-population defect gets reported as "some of them". The player was never
+ * affected: `animateCharacter`, the only pose pass the player gets, never writes
+ * `torso-pivot`'s transform, and only actors run `animateActorCharacter`. That is
+ * the whole of "the NPC heads are wrong and mine is fine", and it is why no
+ * constant offset could have fixed it — the displacement is a rotation times a
+ * lever arm, so it changes with the pose.
+ *
+ * ## What this test is
+ *
+ * Two invariants, both consequences of the hierarchy rather than of any number:
+ *
+ * 1. **Rigid.** The head's world position is whatever `torso-pivot` says it is.
+ *    Exact — to 1e-12 — for every transform the engine can write.
+ * 2. **Hinged at the neck.** Turning the head moves it on an arc whose radius is
+ *    the neck-to-head distance, ~0.5 m, not the ground-to-head distance, ~2.7 m.
+ *
+ * **Know what assertion 1 does and does not prove.** Its expected value is
+ * `restLocal · torsoPivot.matrixWorld`, and `restLocal` is captured from the same
+ * tree — so on *any* tree where the head descends from `torso-pivot` it is zero by
+ * construction, wherever under it the head sits. It is a hierarchy test. A reviewer
+ * pointed this out and it is worth keeping in view: the *placement* is carried by
+ * the rest-pose check above it, which pins the head at exactly `p.headY` off the
+ * ground, and by assertion 2, which pins the hinge radius. The same reviewer
+ * verified both fire independently — mutating `neckPivot.position.y` to 0 while
+ * fixing `headY` back to `p.headY` keeps the head rigid *and* correctly placed at
+ * rest, so assertions 1 and the rest check both pass, and assertion 2 alone catches
+ * it at 1.3795 m against its 0.4872 m bound. Three assertions, three distinct
+ * failures; none of them is dead code behind another.
+ *
+ * ## Mutation proof
+ *
+ * Reverting `buildCharacterSkeleton` to the shipped arrangement — `head-pivot`
+ * parented to `bodyPivot`, at y 0, with `headY` back to `p.headY` — takes
+ * assertion 1 to **2.3385 m off** at `elf/soldier/0` in "deepest hunch" and
+ * assertion 2 to **1.3795 m against a 0.4872 m bound** at the same plan. On the
+ * real tree assertion 1 reads 0 and assertion 2 reads well inside its arc.
+ *
+ * The mutation run earned its keep twice: assertion 2's bound was first written
+ * against `skeleton.headY`, which the mutation *also* changes, so the bound grew
+ * with the number it was bounding and the assertion could not fail. It is now
+ * derived from the proportion table instead. A check whose answer moves with the
+ * thing it is checking is not a check.
+ */
+test('the head is rigid with the chest and hinges at the neck', () => {
+  // Every transform `animateActorCharacter` and `applyActorVisualVariation` can
+  // write onto `torso-pivot`, at the extreme of each term. Named so a reader can
+  // find the line each one comes from; the invariant holds for any transform at
+  // all, so this table is breadth, not a bound.
+  const POSES: readonly {
+    name: string
+    x: number
+    rotation: readonly [number, number, number]
+    scale: readonly [number, number, number]
+  }[] = [
+    { name: 'rest', x: 0, rotation: [0, 0, 0], scale: [1, 1, 1] },
+    // rotation.x: forwardLean * motionBlend + attack + stagger + storm hunch + lean
+    { name: 'deepest hunch', x: 0, rotation: [0.83, 0, 0], scale: [1, 1, 1] },
+    // rotation.x: anticipation * 0.16 against an officer's negative lean
+    { name: 'windup', x: 0, rotation: [-0.2, 0, 0], scale: [1, 1, 1] },
+    // rotation.y: stride * 0.12 + attack * 0.16 + flinch * 0.22
+    { name: 'twist', x: 0, rotation: [0, -0.5, 0], scale: [1, 1, 1] },
+    // rotation.z: turnLean * 0.16 + idleWeightShift * 0.55 + flinch * 0.18
+    { name: 'turn roll', x: 0.035, rotation: [0, 0, -0.28], scale: [1, 1, 1] },
+    // scale.x is the actor's shoulder width, scale.y the breath.
+    { name: 'broad and inhaling', x: -0.035, rotation: [0.2, 0.1, 0.1], scale: [1.07, 1.01, 1] },
+    { name: 'narrow and exhaling', x: 0.02, rotation: [0.4, -0.3, 0.2], scale: [0.93, 0.99, 1] },
+    { name: 'staggered back', x: 0, rotation: [-0.2, 0.4, 0.28], scale: [1, 1, 1] },
+  ]
+
+  const restLocal = new THREE.Vector3()
+  const expected = new THREE.Vector3()
+  const actual = new THREE.Vector3()
+  const rest = new THREE.Vector3()
+  const joints: {
+    label: string
+    skeleton: CharacterSkeleton
+    p: CharacterProportions
+    head: THREE.Object3D
+    rest: THREE.Vector3
+  }[] = []
+  let worstRigid = 0
+  let worstRigidAt = ''
+  let checked = 0
+
+  for (const faction of FACTIONS) {
+    for (const role of [...ROLES, 'player'] as const) {
+      for (let variant = 0; variant < CHARACTER_VARIANTS; variant += 1) {
+        const plan = resolveCharacterPlan(faction, role, variant, role === 'player')
+        const p = plan.proportions
+        const skeleton = buildCharacterSkeleton(p)
+        const label = `${faction}/${role}/${String(variant)}`
+        checked += 1
+
+        // The head mesh, placed exactly as `createCharacter` places it.
+        const head = new THREE.Object3D()
+        head.position.y = skeleton.headY
+        head.scale.setScalar(p.headScale)
+        skeleton.headPivot.add(head)
+
+        // Where the head sits in the chest's own frame. Not a magic number: the
+        // pivot chain has to reproduce the proportion table's `headY` above the
+        // ground with nothing posed, or the fix has moved the art.
+        skeleton.root.updateMatrixWorld(true)
+        rest.setFromMatrixPosition(head.matrixWorld)
+        assert.ok(
+          Math.abs(rest.x) < 1e-12 && Math.abs(rest.z) < 1e-12 &&
+            Math.abs(rest.y - p.headY) < 1e-12,
+          `${label}: at rest the head must stand at (0, ${p.headY.toFixed(3)}, 0), not `
+          + `(${rest.x.toFixed(4)}, ${rest.y.toFixed(4)}, ${rest.z.toFixed(4)}). The rig `
+          + 'change must be invisible on a body nothing has posed.',
+        )
+        restLocal.copy(rest)
+
+        // 1. Rigid with the chest.
+        for (const pose of POSES) {
+          skeleton.torsoPivot.position.x = pose.x
+          skeleton.torsoPivot.rotation.set(...pose.rotation)
+          skeleton.torsoPivot.scale.set(...pose.scale)
+          skeleton.root.updateMatrixWorld(true)
+          actual.setFromMatrixPosition(head.matrixWorld)
+          expected.copy(restLocal).applyMatrix4(skeleton.torsoPivot.matrixWorld)
+          const off = actual.distanceTo(expected)
+          if (off > worstRigid) {
+            worstRigid = off
+            worstRigidAt = `${label} in "${pose.name}"`
+          }
+        }
+        skeleton.torsoPivot.position.x = 0
+        skeleton.torsoPivot.rotation.set(0, 0, 0)
+        skeleton.torsoPivot.scale.set(1, 1, 1)
+
+        joints.push({ label, skeleton, p, head, rest: rest.clone() })
+      }
+    }
+  }
+
+  assert.equal(checked, FACTIONS.length * (ROLES.length + 1) * CHARACTER_VARIANTS)
+  assert.ok(
+    worstRigid < 1e-12,
+    `the head left the chest by ${worstRigid.toFixed(4)} m at ${worstRigidAt}. `
+    + 'It must be a child of `torso-pivot`, so that whatever the chest does the head '
+    + 'does too. Do not answer this with an offset: the displacement is a rotation '
+    + 'times a lever arm and changes with every frame of the pose.',
+  )
+
+  // 2. Hinged at the neck. The head's own rotations are look, counter-pitch and
+  //    counter-roll — they turn a skull, they do not swing a body.
+  for (const { label, skeleton, p, head, rest: restAt } of joints) {
+    const turn = 0.3
+    skeleton.headPivot.rotation.set(turn, turn, turn)
+    skeleton.root.updateMatrixWorld(true)
+    actual.setFromMatrixPosition(head.matrixWorld)
+    const swung = actual.distanceTo(restAt)
+    // Chord of the arc, generous by a factor of two on the three-axis case. Derived
+    // from the proportion table and NOT from `skeleton.headY`: a bound that grows
+    // with the number it is bounding cannot fail, and that is exactly what the first
+    // draft of this line did — the mutation run caught it, not review.
+    const bound = 2 * (p.headY - p.shoulderY) * Math.sin(turn * 1.5)
+    assert.ok(
+      swung <= bound,
+      `${label}: turning the head ${turn.toFixed(2)} rad moved it ${swung.toFixed(4)} m, `
+      + `over the ${bound.toFixed(4)} m an arc about the neck allows. head-pivot is `
+      + 'hinged somewhere below the neck — at the feet, it swings the whole body.',
+    )
+    assert.ok(swung > 0, `${label}: the head must actually turn`)
+    skeleton.headPivot.rotation.set(0, 0, 0)
+  }
+
+  // The joints themselves: the neck at the shoulder line on the spine, the head's
+  // rotation below it, carrying a head measured from the neck. Last, so that a rig
+  // which has come apart reports how far by.
+  for (const { label, skeleton, p } of joints) {
+    assert.equal(skeleton.neckPivot.parent, skeleton.torsoPivot, `${label}: neck off the spine`)
+    assert.equal(skeleton.headPivot.parent, skeleton.neckPivot, `${label}: head off the neck`)
+    assert.equal(skeleton.neckPivot.position.y, p.shoulderY, `${label}: neck off the shoulders`)
+    assert.equal(skeleton.headY, p.headY - p.shoulderY, `${label}: head Y not neck-relative`)
+  }
+})
+
+/**
+ * A head keeps its own proportions, whichever way it is looking.
+ *
+ * `torso-pivot` is not only a joint. `applyActorVisualVariation` writes this actor's
+ * shoulder width to its `scale.x` — `around(1, 0.07)` — and the breathing pass writes
+ * `scale.y` every frame. Hanging the neck off the chest, which is what stops the head
+ * leaving the body, also hands the head that width, and a head is not a pair of
+ * shoulders: `headScale` is supposed to be the only thing that sizes a skull.
+ *
+ * So the width is divided back out. **Where** it is divided out is the whole test.
+ * The first version of this fix put the correction on `head-pivot`, which the
+ * animation rotates by up to 0.65 rad of look yaw — and a shrink along the head's
+ * local x does not cancel a stretch along the world's X once those two frames differ.
+ * Measured over the look grid below — an over-covering cross-product of both shoulder extremes, both breath extremes,
+ * 462 head rotations, 30 plans — as max/min length of the head's transformed basis:
+ *
+ * | correction | worst head anisotropy |
+ * | --- | --- |
+ * | none | **8.59%** |
+ * | on the rotated `head-pivot` | **6.05%** |
+ * | on the unrotated `neck-pivot` | **1.00%**, which is the chest's breath |
+ *
+ * Those are not the 7.00 / 5.34 / 0.99 quoted in earlier drafts, and the reason is
+ * **not** the one those drafts gave. They said the grid replaced five sampled poses.
+ * The grid was the right change — the prose had called five poses "the whole look
+ * envelope" — but it moved nothing. Decomposed:
+ *
+ * | poses | shoulders | breaths | none | head | neck |
+ * | --- | --- | --- | --- | --- | --- |
+ * | 5 | 1.07 | inhale | 7.00 | 5.34 | 0.99 |
+ * | 5 | 1.07 | both | 8.07 | 5.60 | 1.00 |
+ * | 5 | both | both | **8.59** | **6.05** | **1.00** |
+ * | 462 | both | both | **8.59** | **6.05** | **1.00** |
+ *
+ * The last two rows are identical. **The entire move came from sweeping both shoulder
+ * and both breath extremes, not from pose coverage** — and for the uncorrected row it
+ * could not have come from anywhere else: with no cancellation the head inherits
+ * `diag(shoulders, breath, 1)`, whose max/min ratio is fixed regardless of how the
+ * head is rotated and is attained at the identity. Sweeping rotations there is
+ * *provably* incapable of finding anything new.
+ *
+ * A reviewer decomposed that after the commit claiming otherwise had landed. It is
+ * the branch's own recurring defect one level up: **a change attributed to the wrong
+ * variable.** The grid stays — it makes the claim honest going forward, and rotation
+ * does matter for the `head-pivot` row — but it is not what moved the number.
+ *
+ * The middle row is the point: it is better than nothing only while the actor looks
+ * straight ahead, and a compensation that is right at one angle is not a fix. The
+ * structural reason is worth naming, because it is not specific to this rig: **a
+ * scale and a rotation do not commute**, so any cancellation applied *downstream* of
+ * a rotation is valid only in the rest pose. Splitting the joint so that the
+ * correcting pivot never rotates leaves no angle-dependence to test.
+ *
+ * Note also that the first draft of these numbers quoted 3.00% for "none" — that was
+ * one pose of one plan, not the worst of the envelope, and it would have understated
+ * the defect by more than half. The envelope is what the assertion sweeps.
+ *
+ * ## The bound is the breath, and nothing else
+ *
+ * With the correction where it belongs the *only* thing reaching the head is
+ * `torso-pivot.scale.y`, which the breathing pass writes as `1 + breathing * 0.55`
+ * with `breathing` bounded by 0.018. That is a pure-Y scale, so the anisotropy it
+ * causes has a closed form, and the measurement agrees with it to ten decimal places:
+ * inhaling, `b` = 0.0099000000; exhaling, `1 / (1 - b) - 1` = 0.0099989900.
+ *
+ * So this bound is not "comfortably above the answer" — the earlier 2% was a round
+ * number that would have admitted a doubling before firing. It is derived from the
+ * breath amplitude, an input no rig defect can move, exactly as the hinge bound is
+ * derived from the proportion table. Anything at all that is not the breath fails it.
+ * `the engine wires the rig the way these tests measure it` pins the two constants
+ * this derivation reads.
+ *
+ * ## A retracted mutation proof, and what replaced it
+ *
+ * An earlier version of this test applied its own copy of the correction —
+ * `neckPivot.scale.x = 1 / shoulders`, written out here — and the mutation evidence
+ * published for it was obtained by mutating *that line*. A reviewer mutated
+ * **production** instead and found the numerical assertions stayed green: only the
+ * source regex noticed. The measurements were right and the proof was worthless,
+ * which is the same shape as a bound that cannot fail — a test that cannot see the
+ * code it is named after.
+ *
+ * Both halves of the width now live in `setCharacterShoulderWidth`, which the engine
+ * and this test both call, so mutating production breaks the measurement. Re-verified
+ * that way: dropping the cancellation, moving it to the wrong axis, and introducing a
+ * 0.3% error in it each fail here now, and each passed before.
+ *
+ * The strongest assertion is no longer the anisotropy sweep but the equality on what
+ * the neck hands down — a pure-Y breath and nothing else. It catches shear, which
+ * comparing basis lengths does not: measured on the rejected arrangement at 5.34% by
+ * basis length and **8.99%** by singular value, from five poses at one shoulder and
+ * an inhale. That measurement is the *third* reviewer's. An earlier draft of this
+ * docblock credited it to the second, which asked for the attribution to come off it
+ * — *"I never measured 8.99% by singular value"* — and then independently confirmed
+ * the figure was right. Provenance matters here for the same reason the numbers do.
+ */
+test('the chest lends the head its breath but not its shoulders', () => {
+  // The widest chest the engine can write: `around(1, 0.07)` at either extreme.
+  const SHOULDERS = [1.07, 0.93]
+  // `animateActorCharacter`: breathing = sin(...) * 0.018, scale.y = 1 + breathing * 0.55.
+  const BREATH_AMPLITUDE = 0.018 * 0.55
+  const BREATHS = [1 + BREATH_AMPLITUDE, 1 - BREATH_AMPLITUDE]
+  // A pure-Y scale of `1 + b` stretches the head by `b`; one of `1 - b` squashes it,
+  // which reads as the other two axes being `1 / (1 - b)` longer. The exhale is the
+  // larger of the two, so it is the bound. The slack is float noise, not headroom.
+  const BOUND = 1 / (1 - BREATH_AMPLITUDE) - 1 + 1e-9
+  // The head's own reachable rotations, swept as a grid rather than sampled. An
+  // earlier version enumerated five poses and the docblock called the result "the
+  // whole look envelope" — a reviewer swept 4,563 poses and got a different worst,
+  // which is the same overclaim as a hand-written chest table. Pitch is the gait
+  // counter-pitch plus stagger, yaw the ±0.65 clamp, roll the turn lean and the
+  // death loll.
+  const LOOK_PITCH = { from: -0.14, to: 0.2, step: 0.068 }
+  const LOOK_YAW = { from: -0.65, to: 0.65, step: 0.13 }
+  const LOOK_ROLL = { from: -0.3, to: 0.3, step: 0.1 }
+  const axis = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]
+  const basis = new THREE.Matrix3()
+  const inherited = new THREE.Matrix3()
+  let worst = 0
+  let worstAt = ''
+  let states = 0
+
+  for (const faction of FACTIONS) {
+    for (const role of [...ROLES, 'player'] as const) {
+      const plan = resolveCharacterPlan(faction, role, 0, role === 'player')
+      const p = plan.proportions
+      const skeleton = buildCharacterSkeleton(p)
+      const head = new THREE.Object3D()
+      head.position.y = skeleton.headY
+      head.scale.setScalar(p.headScale)
+      skeleton.headPivot.add(head)
+      // The *production* correction, not a copy of its arithmetic. This is the whole
+      // point of the helper existing: mutating `setCharacterShoulderWidth` has to
+      // break this measurement, and before the helper it did not — the engine's half
+      // could be reverted and every number here stayed green, because the test had
+      // applied its own.
+      for (const shoulders of SHOULDERS) {
+        setCharacterShoulderWidth(skeleton.torsoPivot, skeleton.neckPivot, shoulders)
+        for (const breath of BREATHS) {
+          skeleton.torsoPivot.scale.y = breath
+
+          // Everything the head inherits, before its own rotation is involved: the
+          // chest's scale times the neck's. Stated as an equality rather than a
+          // bound, because there is an exact right answer — a pure-Y scale carrying
+          // the breath — and anything else at all is contamination. This is stricter
+          // than the anisotropy sweep below and catches shear, which comparing basis
+          // lengths does not: a reviewer measured the rejected arrangement at 5.34%
+          // by basis length and 8.99% by singular value.
+          skeleton.root.updateMatrixWorld(true)
+          inherited.setFromMatrix4(skeleton.neckPivot.matrixWorld)
+          const e = inherited.elements
+          const expected = [1, 0, 0, 0, breath, 0, 0, 0, 1]
+          for (let i = 0; i < 9; i += 1) {
+            assert.ok(
+              Math.abs(e[i] - expected[i]) < 1e-12,
+              `${faction}/${role}: the head inherits ${JSON.stringify([...e].map((v) => `${v}`))} `
+              + `from the chest at shoulders ${shoulders.toFixed(2)}, not a pure breath of `
+              + `${breath.toFixed(5)}. Only the breath may reach a skull; the shoulder width `
+              + 'must be divided back out on `neck-pivot`, which does not rotate.',
+            )
+          }
+
+          for (let lx = LOOK_PITCH.from; lx <= LOOK_PITCH.to; lx += LOOK_PITCH.step) {
+            for (let ly = LOOK_YAW.from; ly <= LOOK_YAW.to; ly += LOOK_YAW.step) {
+              for (let lz = LOOK_ROLL.from; lz <= LOOK_ROLL.to; lz += LOOK_ROLL.step) {
+                states += 1
+                skeleton.headPivot.rotation.set(lx, ly, lz)
+                skeleton.root.updateMatrixWorld(true)
+                basis.setFromMatrix4(head.matrixWorld)
+                for (let i = 0; i < 3; i += 1) {
+                  axis[i]
+                    .set(Number(i === 0), Number(i === 1), Number(i === 2))
+                    .applyMatrix3(basis)
+                }
+                const lengths = axis.map((v) => v.length())
+                const anisotropy = Math.max(...lengths) / Math.min(...lengths) - 1
+                if (anisotropy > worst) {
+                  worst = anisotropy
+                  worstAt = `${faction}/${role} at shoulders ${shoulders.toFixed(2)}, breath `
+                    + `${breath.toFixed(5)}, looking [${lx.toFixed(2)}, ${ly.toFixed(2)}, `
+                    + `${lz.toFixed(2)}]`
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  assert.ok(states > 40_000, `swept only ${String(states)} states; the grid has collapsed`)
+  assert.ok(
+    worst <= BOUND,
+    `the head came out ${(worst * 100).toFixed(4)}% anisotropic **through the chest** at `
+    + `${worstAt}, over the ${(BOUND * 100).toFixed(4)}% the chest's breath accounts for. `
+    + 'This is scoped to `torso-pivot` and `neck-pivot` on purpose — it is not the total '
+    + 'a rendered head carries, because `body-pivot` adds its own non-uniform variation '
+    + 'on top and a reviewer measures the real in-game figure at 13.32%. That part is '
+    + 'pre-existing, identical before and after this rig change, and filed separately. '
+    + 'What this bound owns is the chest: something other than the breath has reached '
+    + 'the skull, most likely the shoulder width, which must be divided out on '
+    + '`neck-pivot`. It does not rotate; `head-pivot` does, and a scale correction '
+    + 'downstream of a rotation only cancels in the rest pose.',
+  )
+})
+
+/**
+ * The head points where the actor is looking, not where its chest is twisted.
+ *
+ * `lookYaw` is computed in `updateActors` as the angle from the actor's *own facing*
+ * to whatever it is tracking, clamped to ±0.65. Hanging `head-pivot` off the chest
+ * puts that value in a frame it was not authored in, because the chest twists too —
+ * and not only in yaw: it pitches into the run, the attack and the storm, and rolls
+ * with the turn and the flinch.
+ *
+ * Measured over the sweep this test runs — the chest envelope, the head's own pitch
+ * and roll, and the clamped look range, 213,840 states — as the angle between the
+ * head's world forward and the requested heading:
+ *
+ * | rule | worst heading error |
+ * | --- | --- |
+ * | `lookYaw` written raw | **37.43°** |
+ * | `lookYaw - torsoPivot.rotation.y` | **14.00°**, and *worse than doing nothing* in **4.2%** of states |
+ * | `solveHeadYaw` without the head's pitch | **8.84°** |
+ * | `solveHeadYaw` | **exact**, to float |
+ *
+ * **These are an upper bound over a superset, not a reachable worst.** The sweep is a
+ * cross-product of each axis's range, and the engine's terms are correlated —
+ * `flinch · hitRight` drives both `rotation.y` and `rotation.z`, and a stagger clears
+ * `actor.action`, so attack and stagger cannot co-occur. A reviewer measured the
+ * jointly-reachable worst for the head-tilt case at **4.952°** against this sweep's
+ * 8.344°, about 70% high. That is the right trade for a *guard* — a superset can only
+ * make it stricter, never blind — but it is the wrong number to quote as "what the
+ * player saw", and the same distinction the "reachable 0.83 rad" label got wrong
+ * earlier in this file. Where a reachable figure is what matters, this file says so
+ * and gives it separately.
+ *
+ * The first two figures are the ones the test's own mutations report. Earlier drafts
+ * quoted 35.93 and 13.79 from a one-off probe with a different grid, which is the
+ * defect of quoting a number the committed assertion does not produce — a reviewer
+ * ran the mutations and got different digits from the docblock beside them. Every
+ * number here is now what this test prints when the rule beside it is substituted.
+ *
+ * The middle row is the shape of mistake this codebase keeps making and is worth
+ * naming: subtracting one Euler component corrects a rotation only while the other
+ * two are zero, exactly as a scale correction on a rotated pivot cancels only while
+ * the actor faces forward. It shipped in this branch for one commit, and a reviewer
+ * caught it by sweeping a jointly-consistent state space instead of a hand-written
+ * pose list. That is also how the 3° bound this test used to carry was found to be
+ * dishonest: the old table ran `rotation.y` over [−0.382, 0.16] when the reachable
+ * range is about [−0.31, 0.47] — unreachable on one side, 2.9× short on the other.
+ *
+ * This test exists because the positional rigidity test could not have caught any of
+ * it. A head can sit perfectly on its neck and still be looking at the wrong thing.
+ */
+test('the head tracks its target through the chest, not past it', () => {
+  // The chest envelope, from `animateActorCharacter`, plus the head's own pitch and
+  // roll — which the engine writes in the same Euler as the yaw, so a solve that
+  // ignores them is exact only for a test that also ignores them. Leaving the pitch
+  // out measured 7.31 degrees of error; the roll cannot matter, because a rotation
+  // about Z leaves the +Z axis fixed, and this sweep drives it anyway to prove that.
+  //
+  // Stepped by integer index, not by accumulating a float: the previous version wrote
+  // `for (x = from; x <= to; x += step)` and silently dropped its own declared
+  // endpoint, so the grid was smaller than the comment claimed. A reviewer counted the
+  // states and found the gap.
+  const AXES = [
+    { name: 'chest pitch', from: -0.2, to: 0.7, steps: 10 },
+    { name: 'chest yaw', from: -0.32, to: 0.48, steps: 10 },
+    { name: 'chest roll', from: -0.3, to: 0.3, steps: 6 },
+    { name: 'head pitch', from: -0.09, to: 0.18, steps: 4 },
+    { name: 'head roll', from: -0.3, to: 0.3, steps: 2 },
+  ] as const
+  const at = (axis: (typeof AXES)[number], index: number): number =>
+    axis.from + ((axis.to - axis.from) * index) / axis.steps
+  const TARGETS = [-0.65, -0.39, -0.13, 0.13, 0.39, 0.65]
+
+  const forward = new THREE.Vector3()
+  // `animateActorCharacter`: breathing = sin(...) * 0.018, scale.y = 1 + breathing * 0.55.
+  const BREATH_AMPLITUDE = 0.018 * 0.55
+  // Degrees of heading error per unit of breath, measured. The residue is not float
+  // noise: the chest's `scale.y` sits between its rotation and the head's, so it
+  // stretches the Y component of a *pitched* head's forward vector, and the chest's
+  // rotation then mixes that back into X and Z. `solveHeadYaw` composes rotations and
+  // deliberately does not model it — a per-frame scale is not something a closed form
+  // wants as an argument for a hundredth of a degree.
+  //
+  // **This is an empirical coefficient, not a derivation.** It is the measured maximum
+  // rounded up — 9.5301 to 9.6, a margin of 0.73% — and it is worth naming the
+  // difference, because the anisotropy bound two tests up *is* a closed form
+  // (`1/(1-b) - 1`, matching to ten decimal places) and this is not. What it does have
+  // is linearity, which the probes below check: 9.5225 at quarter amplitude, 9.5301 at
+  // full, 9.5402 at double. Double the breath and this bound doubles with it — the
+  // property a round number lacks — but it is a fitted constant with thin margin, and
+  // a reviewer was right to say "derived" was doing more work than it can carry.
+  //
+  // The sweep it is measured over **over-covers**: it is a cross-product of each
+  // axis's range, and the engine's terms are correlated. `actor.reaction` is one
+  // field, so a stagger excludes a flinch, and a stagger also clears `actor.action` —
+  // yet the worst corner here needs the head pitch a stagger gives *and* the chest yaw
+  // a flinch gives. A reviewer put the jointly reachable worst at 0.0476° against this
+  // sweep's 0.0943°, and the coefficient at 4.81 against 9.53. Over-covering is the
+  // safe direction for a guard — it can only make the bound stricter — but it means
+  // the in-game figure is about half what is quoted, and the sweep must not be called
+  // "the reachable envelope". That mislabel has now been made three times in this file.
+  // Two coefficients, because there are two scales above the head and they are
+  // **independent additive terms**, not one effect. Both are degrees of heading error
+  // per unit of the asymmetry that causes them.
+  //
+  // The residue is not float noise. A scale between the chest's rotation and the
+  // head's stretches one component of a *pitched* head's forward vector, and the
+  // chest's rotation mixes it back into X and Z. Heading is `atan2(x, z)`, so it is
+  // invariant to `scale.y` and to any scale with `scale.x === scale.z` — which is why
+  // the chest's *breath* skews it only through the head's pitch, and why `body-pivot`
+  // skews it through the **X-vs-Z asymmetry** of `set(bulk, height, bulk * z)`.
+  // `solveHeadYaw` composes rotations and deliberately models neither: a per-frame
+  // scale is not something a closed form wants as an argument for a hundredth of a
+  // degree.
+  //
+  // **These are empirical coefficients, not derivations.** Each is a measured maximum
+  // rounded up, and that distinction matters because the anisotropy bound two tests up
+  // *is* a closed form (`1/(1-b) - 1`, matching to ten decimal places) and calling
+  // these "derived" flatters them. What they have is **linearity**, which the three
+  // probes below verify independently — halve or double either asymmetry and its term
+  // moves with it.
+  //
+  // `body-pivot` is the larger of the two by an order of magnitude and was missing
+  // from this sweep entirely until a reviewer found it: 0.89° against a bound of
+  // 0.095°, **9.4× over**, from a term the assertion's own message said could not be
+  // there. It is the same term that makes head *anisotropy* 13.32% in game against the
+  // 0.99% the chest accounts for — one missing scale, two bounds, found twice.
+  //
+  // The sweep **over-covers**: it is a cross-product of each axis's range, and the
+  // engine's terms are correlated. `actor.reaction` is one field, so a stagger
+  // excludes a flinch; a stagger clears `actor.action`, so attack cannot co-occur with
+  // it; and `sampleActorPose` sets `pose.stride = reaction === 'stagger' ? 0 : stride`,
+  // so a staggering chest has **no gait yaw at all**. Enumerating jointly, the breath
+  // coefficient is **4.81** against this sweep's 9.53. Over-covering is the safe
+  // direction for a guard — it can only make the bound stricter — but it means the
+  // in-game figure is about half what is quoted, and this sweep must not be called
+  // "the reachable envelope". That mislabel was made three times in this file before
+  // it stuck.
+  //
+  // 4.81 is worth a note on how it was settled, because the first version of this
+  // comment got there the wrong way. A reviewer measured 4.81; an independent
+  // enumeration here measured 6.68; and rather than reconcile a 39% disagreement the
+  // comment simply adopted the reviewer's figure and presented it as fact. The
+  // reviewer caught that — *"deferring to a reviewer's number over your own
+  // measurement is the same defect class as everything else this branch has caught: a
+  // claim adopted rather than verified"* — and it is the sharpest correction of the
+  // review, because the number was right and the reason for believing it was not.
+  // Re-enumerated properly, 4.81 holds: the 6.68 came from letting a staggering chest
+  // keep its gait yaw, which the line above forbids.
+  const SKEW_PER_UNIT_BREATH = 9.6
+  const SKEW_PER_UNIT_BODY_ASYMMETRY = 29
+  // `applyActorVisualVariation`: bodyPivot.scale.set(bulk, height, bulk * around(1, 0.03)).
+  // Only the third factor matters here — it is the whole of the X-vs-Z asymmetry.
+  const BODY_Z_ASYMMETRY = 0.03
+  const BODY_SCALES = [1 - BODY_Z_ASYMMETRY, 1, 1 + BODY_Z_ASYMMETRY]
+  let worst = 0
+  let worstAt = ''
+  let states = 0
+
+  for (const faction of FACTIONS) {
+    for (const role of ROLES) {
+      const p = resolveCharacterPlan(faction, role, 0, false).proportions
+      const skeleton = buildCharacterSkeleton(p)
+      const head = new THREE.Object3D()
+      head.position.y = skeleton.headY
+      skeleton.headPivot.add(head)
+      // Everything above the head that carries a scale: `body-pivot` for the actor's
+      // bulk, `torso-pivot` for its shoulders and its breath. `buildCharacterSkeleton`
+      // returns `body-pivot` as the parent of `torso-pivot`, so setting it here puts
+      // it above the whole rotation chain exactly as the engine does.
+      setCharacterShoulderWidth(skeleton.torsoPivot, skeleton.neckPivot, 1.07)
+      skeleton.torsoPivot.scale.y = 1 + BREATH_AMPLITUDE
+
+      for (const bodyZ of BODY_SCALES) {
+        skeleton.bodyPivot.scale.set(1.05, 1.055, 1.05 * bodyZ)
+        for (let i = 0; i <= AXES[0].steps; i += 1) {
+          const x = at(AXES[0], i)
+          for (let j = 0; j <= AXES[1].steps; j += 1) {
+            const y = at(AXES[1], j)
+            for (let k = 0; k <= AXES[2].steps; k += 1) {
+              const z = at(AXES[2], k)
+              skeleton.torsoPivot.rotation.set(x, y, z)
+              for (let m = 0; m <= AXES[3].steps; m += 1) {
+                const headPitch = at(AXES[3], m)
+                for (let n = 0; n <= AXES[4].steps; n += 1) {
+                  const headRoll = at(AXES[4], n)
+                  for (const target of TARGETS) {
+                    states += 1
+                    // Exactly what `animateActorCharacter` writes, in its order.
+                    skeleton.headPivot.rotation.set(
+                      headPitch,
+                      solveHeadYaw(x, y, z, headPitch, target),
+                      headRoll,
+                    )
+                    skeleton.root.updateMatrixWorld(true)
+                    forward.set(0, 0, 1).transformDirection(head.matrixWorld)
+                    const error = Math.abs(Math.atan2(forward.x, forward.z) - target)
+                    if (error > worst) {
+                      worst = error
+                      worstAt = `${faction}/${role} body z ${bodyZ.toFixed(2)} chest `
+                        + `[${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}] head pitch `
+                        + `${headPitch.toFixed(2)} roll ${headRoll.toFixed(2)} looking `
+                        + `${target.toFixed(2)}`
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  assert.equal(
+    states,
+    FACTIONS.length * ROLES.length * TARGETS.length * BODY_SCALES.length *
+      AXES.reduce((total, axis) => total * (axis.steps + 1), 1),
+    'the grid has collapsed; every declared endpoint must be visited',
+  )
+  // The solve is exact on a chain of pure rotations — that is its whole contract, and
+  // an earlier version of it was not, because it ignored the head's own pitch. What is
+  // left is the two scales above the head, each bounded by the asymmetry that causes
+  // it rather than by a number someone liked.
+  const bound =
+    SKEW_PER_UNIT_BREATH * BREATH_AMPLITUDE +
+    SKEW_PER_UNIT_BODY_ASYMMETRY * BODY_Z_ASYMMETRY
+  assert.ok(
+    worst * (180 / Math.PI) <= bound,
+    `the head ended up ${(worst * (180 / Math.PI)).toFixed(4)} degrees off its target `
+    + `at ${worstAt}, over the ${bound.toFixed(4)} the chest's breath and the body's `
+    + 'X-vs-Z asymmetry account for between them. `solveHeadYaw` answers a linear '
+    + 'equation rather than approximating one, so more than those two means it is being '
+    + 'given the wrong arguments — most likely a missing head pitch, which alone is '
+    + 'worth 7.3 degrees.',
+  )
+
+  // Three probes that keep the bound above honest. Each varies one scale and holds the
+  // other at unity, because the two terms are independent and a probe that moved both
+  // could not attribute what it saw — which is precisely how `body-pivot` went missing
+  // from this test for four commits.
+  //
+  // They run on **one plan**, which on this branch's record should be the next
+  // sample-presented-as-population defect. It is not, and the reason is structural: a
+  // heading is a *direction*, every proportion enters the rig as a *position*, and no
+  // direction calculation reads a position. A reviewer reached that argument and
+  // verified it across all 27 plans; the assertion below re-verifies it rather than
+  // inheriting it, because the argument was established before `body-pivot` joined the
+  // chain and a justification that outlives the thing it justified is how most of the
+  // other fifteen findings on this branch happened.
+  const probe = (breath: number, bodyZ: number, faction = 'elf', role = 'soldier'): number => {
+    const p = resolveCharacterPlan(faction as CharacterFaction, role, 0, false).proportions
+    const skeleton = buildCharacterSkeleton(p)
+    const head = new THREE.Object3D()
+    head.position.y = skeleton.headY
+    skeleton.headPivot.add(head)
+    setCharacterShoulderWidth(skeleton.torsoPivot, skeleton.neckPivot, 1.07)
+    skeleton.torsoPivot.scale.y = breath
+    skeleton.bodyPivot.scale.set(1.05, 1.055, 1.05 * bodyZ)
+    let peak = 0
+    for (let i = 0; i <= AXES[0].steps; i += 1) {
+      for (let j = 0; j <= AXES[1].steps; j += 1) {
+        const x = at(AXES[0], i)
+        const y = at(AXES[1], j)
+        const z = AXES[2].to
+        const headPitch = AXES[3].to
+        skeleton.torsoPivot.rotation.set(x, y, z)
+        for (const target of TARGETS) {
+          skeleton.headPivot.rotation.set(
+            headPitch,
+            solveHeadYaw(x, y, z, headPitch, target),
+            AXES[4].from,
+          )
+          skeleton.root.updateMatrixWorld(true)
+          forward.set(0, 0, 1).transformDirection(head.matrixWorld)
+          peak = Math.max(peak, Math.abs(Math.atan2(forward.x, forward.z) - target))
+        }
+      }
+    }
+    return peak * (180 / Math.PI)
+  }
+
+  // 1. With both scales at unity the chain is pure rotation, and the solve is exact.
+  //    If this ever reads more than float noise, the solve is wrong — not the scales —
+  //    and the bound above would absorb it silently.
+  //
+  //    The threshold is 1e-10 degrees against a measured 4e-14: four orders of
+  //    headroom for float, not the twenty-six million a previous 1e-6 gave while its
+  //    comment called it "float noise". A reviewer pointed out that mismatch, and it
+  //    matters here more than most — this guard's whole job is to stop the skew bound
+  //    absorbing a solver error, so slack in it is slack in both.
+  const exact = probe(1, 1)
+  assert.ok(
+    exact <= 1e-10,
+    `with no breath and no body asymmetry the solve should be exact, and it is out by `
+    + `${exact.toExponential(3)} degrees. The residue above is then neither of the two `
+    + 'scales, and its bound is measuring something it does not name.',
+  )
+  // 2. The breath term is linear in the breath, which is what makes its coefficient a
+  //    coefficient. If this stops holding, `SKEW_PER_UNIT_BREATH` is a number again.
+  //    Body asymmetry held at unity so this measures one term, not their sum.
+  const breathSingle = probe(1 + BREATH_AMPLITUDE, 1)
+  const breathDouble = probe(1 + 2 * BREATH_AMPLITUDE, 1)
+  assert.ok(
+    Math.abs(breathDouble / breathSingle - 2) < 0.02,
+    `doubling the breath changed the heading residue by ${(breathDouble / breathSingle).toFixed(4)}x, `
+    + 'not 2x. The residue is no longer linear in the breath, so `SKEW_PER_UNIT_BREATH` '
+    + 'is no longer a coefficient and the bound above is just a number again.',
+  )
+  // 3. And the body term is linear in the body's X-vs-Z asymmetry, with the breath
+  //    held off. This is the guard that did not exist while `body-pivot` was missing
+  //    from the sweep entirely — the term was 9.4x the whole bound and no assertion
+  //    in the file could see it, because none of them applied the scale that causes it.
+  const bodySingle = probe(1, 1 - BODY_Z_ASYMMETRY)
+  const bodyDouble = probe(1, 1 - 2 * BODY_Z_ASYMMETRY)
+  assert.ok(
+    bodySingle >= 0.5 * SKEW_PER_UNIT_BODY_ASYMMETRY * BODY_Z_ASYMMETRY,
+    `the body's asymmetry contributed only ${bodySingle.toFixed(4)} degrees, less than `
+    + `half what \`SKEW_PER_UNIT_BODY_ASYMMETRY\` predicts for it. Measured it is `
+    + `${(bodySingle / breathSingle).toFixed(2)}x the breath's ${breathSingle.toFixed(4)}; `
+    + 'if it has collapsed toward zero this sweep is no longer applying `body-pivot`\'s '
+    + 'scale and the bound has quietly lost the larger of the two inputs it names.',
+  )
+  assert.ok(
+    Math.abs(bodyDouble / bodySingle - 2) < 0.05,
+    `doubling the body's X-vs-Z asymmetry changed the heading residue by `
+    + `${(bodyDouble / bodySingle).toFixed(4)}x, not 2x. `
+    + '`SKEW_PER_UNIT_BODY_ASYMMETRY` is no longer a coefficient.',
+  )
+  // 4. And the three probes above are entitled to run on one plan, because the residue
+  //    is the same for every plan. Asserted rather than argued: a heading is a
+  //    direction, proportions enter the rig as positions, and no direction calculation
+  //    reads a position — but that is a claim about the code as it is now, and the last
+  //    time this file trusted such a claim across a change it was wrong.
+  const breathResidues = new Set<string>()
+  const bodyResidues = new Set<string>()
+  for (const faction of FACTIONS) {
+    for (const role of ROLES) {
+      breathResidues.add(probe(1 + BREATH_AMPLITUDE, 1, faction, role).toFixed(9))
+      bodyResidues.add(probe(1, 1 - BODY_Z_ASYMMETRY, faction, role).toFixed(9))
+    }
+  }
+  assert.equal(
+    breathResidues.size,
+    1,
+    `the breath residue takes ${String(breathResidues.size)} distinct values across the `
+    + `${String(FACTIONS.length * ROLES.length)} plans: ${[...breathResidues].join(', ')}. `
+    + 'It is no longer plan-independent, so the probes above are sampling one plan out '
+    + 'of a population that varies — and `SKEW_PER_UNIT_BREATH` was fitted on that one '
+    + 'sample. Sweep the plans in the probes, or find what made a direction depend on a '
+    + 'proportion.',
+  )
+  assert.equal(
+    bodyResidues.size,
+    1,
+    `the body residue takes ${String(bodyResidues.size)} distinct values across the plans: `
+    + `${[...bodyResidues].join(', ')}. Same consequence as the breath residue above.`,
+  )
+})
+
+/**
+ * And it holds still while the chest twists under it.
+ *
+ * The test above measures settled poses, and a settled pose cannot see a lag. The
+ * head's yaw is *damped* — `dampAngle(..., 7, delta)` — and the chest's yaw
+ * oscillates with the gait. Damping a target that has already been converted into
+ * chest space puts the chest's own oscillation inside the thing being smoothed, and
+ * the lag comes straight back out as world-space wobble. So the tracking is damped
+ * in body space, on `actor.headYaw`, and `solveHeadYaw` converts instantaneously.
+ * **A frame change is not a motion.**
+ *
+ * ## The gait model here was wrong by 3.7×, and it mattered
+ *
+ * `actorGaitCadence` returns **radians per metre travelled**, not per second:
+ * `updateActors` does `gaitPhase += travelled * cadence`. A soldier moves at 3.7 m/s
+ * and its cadence is 6.8 rad/m, so its chest oscillates at **25.16 rad/s — 4.00 Hz**,
+ * not the 6.8 rad/s an earlier version of this test simulated. The stride is also
+ * damped at 15 on its way from `sin(gaitPhase)` to `actor.stride`, which this model
+ * dropped.
+ *
+ * That is not a cosmetic error. The anti-degeneracy guard below was `converted > 2`,
+ * chosen against the slow model. Under the real physics the rejected rule produces
+ * **1.997°** — the guard had *negative margin* and was one rounding away from passing
+ * vacuously. A reviewer found it by fixing the units and re-running my own assertion
+ * until it fired. **A threshold sized against a mis-modelled input is the same defect
+ * as a threshold sized against nothing.**
+ *
+ * ## Measured under the corrected model, 60 s at 60 Hz, after the transient
+ *
+ * Four rules, because two of them were being conflated. What this test rejects is
+ * *damp after converting*; the scalar subtraction is a different rule, rejected
+ * elsewhere, and an earlier draft of this table printed the scalar's number under the
+ * damp-after-convert heading.
+ *
+ * | rule | pure-yaw chest | with the chest's real pitch and roll |
+ * | --- | --- | --- |
+ * | no correction | 2.199° | **2.996°** |
+ * | scalar `lookYaw - chestYaw`, damped | 1.997° | **2.787°** |
+ * | **damp after `solveHeadYaw`** — what this test rejects | — | **2.091°** |
+ * | `solveHeadYaw`, damped in body space | **0.000°** | **0.000°** |
+ *
+ * The 1.997 in the second row is the figure that mattered for the guard below: it is
+ * what the rejected-in-general scalar rule produces under the *correct* gait physics,
+ * against a guard that used to read `> 2`.
+ *
+ * The second column answers the other half of the same review: an earlier version of
+ * this test held the chest's pitch and roll at zero, which is *exactly* the geometry
+ * where a scalar `lookYaw - chestYaw` is exact — so the test validating the
+ * conversion was blind to the only condition under which that conversion broke. It
+ * now drives all three axes. `solveHeadYaw` is unaffected because it is exact for any
+ * chest orientation, which is the whole reason it replaced the subtraction.
+ *
+ * ## The guard is no longer a round number either
+ *
+ * `converted > 2` is replaced by `converted > BOUND` — the rejected rule must fail
+ * the very bound the shipped rule is held to. That cannot drift out of calibration
+ * with the thing it is guarding, because it *is* the thing it is guarding.
+ */
+test('the head holds its target while the chest twists under it', () => {
+  const DELTA = 1 / 60
+  const SECONDS = 60
+  // `updateActors`: gaitPhase += travelled * actorGaitCadence(role). Cadence is
+  // radians per METRE, so the angular frequency is speed x cadence. Getting this
+  // wrong by 3.7x is what made the old guard vacuous, so both factors are named
+  // rather than pre-multiplied — and every role is swept rather than one sampled,
+  // because "the gait" is a population and a soldier is a sample. `actorSpeedForRole`
+  // and `actorGaitCadence` both live in `GameEngine`, which a Node test cannot
+  // import, so the pairs are pinned against its source in `the engine wires the rig
+  // the way these tests measure it`.
+  const GAITS = [
+    { role: 'soldier', speed: 3.7, cadence: 6.8, chestYawCoefficient: 0.12 },
+    { role: 'scout', speed: 4.8, cadence: 8.4, chestYawCoefficient: 0.12 },
+    { role: 'archer', speed: 3.2, cadence: 7.2, chestYawCoefficient: 0.12 },
+    { role: 'brute', speed: 2.6, cadence: 5.8, chestYawCoefficient: 0.08 },
+    { role: 'champion', speed: 4.15, cadence: 5.8, chestYawCoefficient: 0.08 },
+    { role: 'peasant', speed: 3.1, cadence: 6.8, chestYawCoefficient: 0.12 },
+  ] as const
+  const TARGET = 0.35
+  // Not a tolerance. With `solveHeadYaw` the world heading *equals* the damped
+  // body-space angle identically, for any cadence, amplitude or damping rate — so
+  // this reads exactly zero and cannot be made to fail by moving a parameter, only by
+  // changing the rule. It is a **rule discriminator**, and the paired assertion below
+  // is what gives it teeth. A reviewer made that distinction and it is worth keeping
+  // visible: knowing which of your bounds are tolerances and which are discriminators
+  // is the difference between a number that can drift and one that cannot.
+  const BOUND = 0.1
+  const damp = (from: number, to: number, lambda: number): number =>
+    to + (from - to) * Math.exp(-lambda * DELTA)
+  const forward = new THREE.Vector3()
+
+  const wobble = (
+    gait: (typeof GAITS)[number],
+    dampInBodySpace: boolean,
+  ): number => {
+    const p = resolveCharacterPlan('guard', gait.role, 0, false).proportions
+    const skeleton = buildCharacterSkeleton(p)
+    const head = new THREE.Object3D()
+    head.position.y = skeleton.headY
+    skeleton.headPivot.add(head)
+    let gaitPhase = 0
+    let stride = 0
+    let bodyYaw = TARGET
+    let converted = TARGET
+    let worst = 0
+    for (let frame = 0; frame < SECONDS / DELTA; frame += 1) {
+      const time = frame * DELTA
+      gaitPhase += gait.speed * DELTA * gait.cadence
+      stride = damp(stride, Math.sin(gaitPhase) * 0.62, 15)
+      // The chest, on all three axes: the gait's twist, the forward lean plus the
+      // storm hunch plus the plan's own lean, and the turn's roll. Holding pitch and
+      // roll at zero is the one geometry where a scalar conversion happens to work,
+      // and two earlier versions of these tests did exactly that.
+      const chestYaw = -stride * gait.chestYawCoefficient
+      const chestPitch = 0.04 + 0.22 + p.lean
+      const chestRoll = -Math.sin(time * 2) * 0.08
+      if (dampInBodySpace) {
+        bodyYaw = damp(bodyYaw, TARGET, 7)
+        skeleton.headPivot.rotation.y =
+          solveHeadYaw(chestPitch, chestYaw, chestRoll, 0, bodyYaw)
+      } else {
+        // The rejected rule: damp after converting, so the chest's own oscillation
+        // is inside the thing being smoothed.
+        converted = damp(
+          converted,
+          solveHeadYaw(chestPitch, chestYaw, chestRoll, 0, TARGET),
+          7,
+        )
+        skeleton.headPivot.rotation.y = converted
+      }
+      skeleton.torsoPivot.rotation.set(chestPitch, chestYaw, chestRoll)
+      skeleton.root.updateMatrixWorld(true)
+      // Past the start-up transient, which neither rule is being judged on.
+      if (time <= 8) continue
+      forward.set(0, 0, 1).transformDirection(head.matrixWorld)
+      worst = Math.max(worst, Math.abs(Math.atan2(forward.x, forward.z) - TARGET))
+    }
+    return worst * (180 / Math.PI)
+  }
+
+  for (const gait of GAITS) {
+    const damped = wobble(gait, true)
+    const converted = wobble(gait, false)
+    assert.ok(
+      damped <= BOUND,
+      `a ${gait.role}'s head wobbled ${damped.toFixed(3)} degrees with the gait, over `
+      + `${BOUND.toFixed(2)}. Damp the tracking in body space and convert with `
+      + '`solveHeadYaw` afterwards; a frame change is not a motion, and damping the '
+      + 'converted angle makes the head chase the chest a fraction of a second late.',
+    )
+    // The rejected rule has to fail the bound the shipped rule passes, or this test
+    // has stopped distinguishing them. Expressed against `BOUND` rather than a round
+    // number, so the two cannot drift apart — the first version said `> 2`, sized
+    // against a gait model 3.7x too slow, and the real figure for a soldier is 1.983.
+    // Swept per role because the roles differ by more than the old margin did: a
+    // reviewer measured 1.36 for a champion against 2.10 for an archer.
+    assert.ok(
+      converted > BOUND,
+      `a ${gait.role}'s rejected rule produced only ${converted.toFixed(3)} degrees of `
+      + `wobble, inside the ${BOUND.toFixed(2)} the shipped rule is held to. This test `
+      + 'is no longer distinguishing the two rules. Check the gait model against '
+      + '`updateActors` before touching the bound: cadence is radians per metre.',
+    )
+  }
+})
+
+/**
+ * The beasts keep the sibling arrangement, and this pins what makes that safe.
+ *
+ * `createBeast` roots `head-pivot` at the animal's origin with the skull at `headY`
+ * up and `headZ` forward, exactly as the humanoid rig used to. It has not been
+ * moved here: a quadruped's neck is not at `shoulderY`, no one has reported a beast
+ * head, and guessing at a wolf's neck joint to fix a bug that was reported about
+ * people is how one regression becomes two.
+ *
+ * What makes it *tolerable* — not survivable, and the distinction matters — is a
+ * workaround rather than a joint. docs/09 §4 says `animateBeastPosture` "replaces
+ * the biped shoulder bend, hip counter-rotation and head yaw, all of which pull an
+ * animal apart at the joints when applied to a body whose skull sits a metre forward
+ * of its own pivot". True, but it *reduces* the defect rather than removing it: the
+ * skull still slides against the ribcage, measured in authored units at 0.296 on a
+ * wolf, 0.368 on a bear and **0.660 on a troll** under attack plus stagger, before
+ * `BEAST_PROFILES.scale` multiplies it into world units. A reviewer measures the
+ * troll at over a metre in the world — worse than the 0.66 m humanoid case that got
+ * reported. Filed separately rather than guessed at here.
+ *
+ * So the two premises this test pins are the early return that keeps a beast out of
+ * the biped pass and the clamp on the beast's own yaw. Both are load-bearing, both
+ * are one line, and both are invisible to every other test in this file. Neither
+ * makes the beast rig correct; they keep it inside the arc it can hide.
+ */
+test('a beast never reaches the biped posture pass, and its own yaw stays clamped', () => {
+  // The clamp `animateBeastPosture` puts on the beast's look. Named once and used
+  // both to assert the source and to size the sweep, so the two cannot disagree.
+  const BEAST_YAW_CLAMP = 0.45
+  const source = readFileSync(
+    fileURLToPath(new URL('../src/game/GameEngine.ts', import.meta.url)),
+    'utf8',
+  )
+  const posture = source.slice(
+    source.indexOf('private animateActorCharacter('),
+    source.indexOf('private samplePlayerPose('),
+  )
+  assert.ok(posture.length > 1000, 'could not isolate the actor posture pass')
+  // The early return, before a single torso rotation is written.
+  const guard = posture.indexOf('if (rig?.beast)')
+  const firstTorsoWrite = posture.indexOf('torsoPivot.rotation.x')
+  assert.ok(guard > 0, 'the beast branch has gone from animateActorCharacter')
+  assert.ok(
+    guard < firstTorsoWrite,
+    'a beast now reaches the biped shoulder bend. Its skull hangs off a pivot at the '
+    + 'animal\'s centre, so the hunch that fits a person swings a wolf\'s head a metre.',
+  )
+  assert.ok(
+    posture.slice(guard, firstTorsoWrite).includes('return'),
+    'the beast branch must return, not fall through into the biped pass',
+  )
+  // And the beast's own pass keeps the yaw inside the arc the rig can hide.
+  const beastPass = source.slice(
+    source.indexOf('private animateBeastPosture('),
+    source.indexOf('private sampleActorPose('),
+  )
+  assert.ok(beastPass.length > 400, 'could not isolate the beast posture pass')
+  // Built from the constant, not restated beside it. Written out as a literal this
+  // regex went on passing while `BEAST_YAW_CLAMP` said something else, so the sweep
+  // below and the clamp it claims to be measuring could quietly disagree — a
+  // reviewer caught that, and it is the same defect as a bound that cannot fail.
+  const clampSource = new RegExp(
+    `clamp\\(lookYaw,\\s*-${BEAST_YAW_CLAMP},\\s*${BEAST_YAW_CLAMP}\\)`,
+  )
+  assert.ok(
+    clampSource.test(beastPass),
+    `the beast head yaw is no longer clamped to +/-${BEAST_YAW_CLAMP} rad, which is the `
+    + 'only reason a skull on a pivot at the animal\'s centre still reads as attached. '
+    + 'If the clamp has moved deliberately, move BEAST_YAW_CLAMP with it and re-measure '
+    + 'the sweeps below — they are sized from it.',
+  )
+  // The rig data the numbers above were measured from, so a rewritten table is
+  // noticed here rather than in a screenshot.
+  //
+  // The bound is the animal's own `footprint` — the radius of its contact shadow,
+  // which is an independent number in the same authored units. Be clear about what it
+  // is: a **smoke bound**, not a derivation. It compares a chord against a radius, and
+  // there is no geometric reason those should be equal; what it buys is that the two
+  // quantities are authored separately, so a `headZ` that grows without a `footprint`
+  // to match trips it. A reviewer pointed out that an earlier message called the
+  // footprint "how wide the animal is", which is a radius described as a width.
+  //
+  // The first version of this assertion compared the sweep against `rig.headZ`, and
+  // `2 * headZ * sin(t/2)` divided by `headZ` is just `2 * sin(t/2)` = 0.446: the term
+  // it was bounding cancelled out and the check was true for every possible rig. It
+  // was caught by a reviewer who moved a wolf's skull to `headZ` 100 and watched the
+  // test pass.
+  for (const kind of BEASTS) {
+    const rig = BEAST_RIG[kind]
+    assert.ok(
+      rig.headZ > 0 && rig.headY > 0,
+      `${kind}: a skull is up and forward of the body centre`,
+    )
+    const sweep = 2 * rig.headZ * Math.sin(BEAST_YAW_CLAMP / 2)
+    assert.ok(
+      sweep <= rig.footprint,
+      `a ${kind}'s skull sweeps ${sweep.toFixed(4)} sideways at the clamped `
+      + `${BEAST_YAW_CLAMP.toFixed(2)} rad look — further than its ${rig.footprint.toFixed(2)} `
+      + 'footprint radius. A head on a pivot at the body centre only reads as attached '
+      + 'while that stays true; either clamp the look further, bring `headZ` in, or give '
+      + 'the beasts a neck joint as `buildCharacterSkeleton` does for people.',
+    )
+  }
+})
+
+/**
+ * The engine uses the rig the way the tests above assume.
+ *
+ * `GameEngine` cannot be instantiated in Node — no DOM, no WebGL — so every
+ * measurement in this file is taken through `CharacterKit`'s pure pieces. That
+ * proves the arithmetic and proves nothing about whether the engine calls it. These
+ * are the couplings, kept in one place with a name that says what they are.
+ *
+ * They lived inside the beast test for a while, which meant three humanoid guards
+ * were hiding under a heading about wolves, and a reviewer pointed out that stripping
+ * the gaze correction from the engine was caught by exactly one assertion in the
+ * whole suite — sitting in the wrong test. A guard nobody can find is a guard nobody
+ * will keep.
+ */
+test('the engine wires the rig the way these tests measure it', () => {
+  const source = readFileSync(
+    fileURLToPath(new URL('../src/game/GameEngine.ts', import.meta.url)),
+    'utf8',
+  )
+  // `applyActorVisualVariation` runs for beasts as well as people, and it divides
+  // the chest's width back out at the neck — which only exists on a person. A beast
+  // has no `neck-pivot`, so the lookup is the guard; written as a lookup rather than
+  // a role test so that adding a beast neck later fixes this for free.
+  const variation = source.slice(
+    source.indexOf('private applyActorVisualVariation('),
+    source.indexOf('private createActorHealthBar('),
+  )
+  assert.ok(variation.length > 500, 'could not isolate the actor variation pass')
+  // The width now goes through one shared function, which is what lets the numerical
+  // test above drive the real correction instead of a copy of its arithmetic. These
+  // two say the engine still delegates rather than doing it inline again.
+  assert.ok(
+    /setCharacterShoulderWidth\(\s*torsoPivot,\s*mesh\.getObjectByName\('neck-pivot'\),\s*shoulders,?\s*\)/
+      .test(variation),
+    'the shoulder width must go through `setCharacterShoulderWidth`, passing the neck. '
+    + 'Written inline again, the arithmetic in `the chest lends the head its breath but '
+    + 'not its shoulders` becomes a copy that cannot fail when production changes.',
+  )
+  assert.ok(
+    !/(neckPivot|headPivot)\.scale/.test(variation),
+    'the variation pass must not write a neck or head scale itself. The counter-scale '
+    + 'belongs in `setCharacterShoulderWidth`, and never on `head-pivot`: the animation '
+    + 'rotates that, and a scale correction below a rotation only cancels at rest.',
+  )
+  // The gaze. Without these two the engine could apply `lookYaw` raw, or damp it
+  // after converting, and every measurement in this file would still be green.
+  const actorPosture = source.slice(
+    source.indexOf('private animateActorCharacter('),
+    source.indexOf('private samplePlayerPose('),
+  )
+  assert.ok(actorPosture.length > 1000, 'could not isolate the actor posture pass')
+  assert.ok(
+    /actor\.headYaw = dampAngle\(actor\.headYaw, lookYaw, 7, delta\)/.test(actorPosture),
+    'the head\'s tracking must be damped on the body-space angle. Damped after the '
+    + 'conversion it lags the chest\'s gait twist and the lag returns as world wobble.',
+  )
+  assert.ok(
+    /headPivot\.rotation\.y = torsoPivot\s*\?\s*solveHeadYaw\(\s*torsoPivot\.rotation\.x,\s*torsoPivot\.rotation\.y,\s*torsoPivot\.rotation\.z,\s*headPitch,\s*actor\.headYaw,?\s*\)/
+      .test(actorPosture),
+    'the head yaw must be solved against the chest\'s full rotation *and* the head\'s '
+    + 'own pitch, each passed through. Naming the function is not enough: a reviewer '
+    + 'replaced the call with `solveHeadYaw(0, 0, 0, actor.headYaw)` and the whole '
+    + 'suite still passed, because nothing checked the arguments. A scalar subtraction '
+    + 'leaves 14 degrees and is worse than nothing in 4.2% of states; dropping the '
+    + 'head pitch alone leaves 7.3.',
+  )
+  assert.ok(
+    /const headPitch = -forwardLean \* actor\.motionBlend \* 0\.35 \+ pose\.stagger \* 0\.18/
+      .test(actorPosture),
+    'the head pitch must be computed before the solve and reused when it is written, '
+    + 'so the solve reads the value that actually lands on the pivot',
+  )
+  assert.ok(
+    /headPivot\.rotation\.x = headPitch/.test(actorPosture),
+    'the pitch the solve was given must be the pitch the head is given',
+  )
+  // The breath. `the chest lends the head its breath but not its shoulders` derives
+  // its whole bound from these two numbers — they are the only thing that legitimately
+  // reaches the head — so a bound that came from an input the defect cannot move is
+  // worth nothing if the input itself has quietly drifted from the engine.
+  assert.ok(
+    /const breathing = Math\.sin\([^)]*\) \* 0\.018/.test(actorPosture),
+    'the breathing amplitude is no longer 0.018. Move it in the anisotropy test\'s '
+    + '`BREATH_AMPLITUDE` in the same commit — that test\'s bound is derived from it, '
+    + 'and a derivation reading a stale input is just a round number again.',
+  )
+  assert.ok(
+    /torsoPivot\.scale\.y = 1 \+ breathing \* 0\.55/.test(actorPosture),
+    'the chest\'s breath is no longer `1 + breathing * 0.55`. Move it in the anisotropy '
+    + 'test\'s `BREATH_AMPLITUDE` in the same commit.',
+  )
+  // The gait. `the head holds its target while the chest twists under it` simulates
+  // the engine's loop, and its whole point is that the model matches — an earlier
+  // version read `actorGaitCadence` as radians per second when it is radians per
+  // metre, which left that test's guard with negative margin. These pin the four
+  // numbers the simulation reads.
+  assert.ok(
+    /actor\.gaitPhase \+= travelled \* this\.actorGaitCadence\(actor\.role\)/.test(source),
+    'the gait no longer advances by distance travelled. `the head holds its target '
+    + 'while the chest twists under it` multiplies speed by cadence on the strength of '
+    + 'this line; if the gait becomes time-based, that simulation is wrong by the '
+    + 'actor\'s speed.',
+  )
+  const cadence = source.slice(
+    source.indexOf('private actorGaitCadence('),
+    source.indexOf('private animateActorCharacter('),
+  )
+  for (const [role, value] of [['scout', '8.4'], ['archer', '7.2']] as const) {
+    assert.ok(
+      cadence.includes(`'${role}'`) && cadence.includes(value),
+      `the ${role}'s gait cadence is no longer ${value}; the wobble test's GAITS table `
+      + 'must move with it',
+    )
+  }
+  assert.ok(
+    /role === 'scout'\s*\?\s*4\.8/.test(source) && /:\s*3\.7\)/.test(source),
+    'the scout\'s or the default actor speed has changed; the wobble test\'s GAITS '
+    + 'table pairs each speed with its cadence and must move with them',
+  )
+})
+
 
 /**
  * Wave 4 review. `CharacterKit` never had an independent review, and its winding
