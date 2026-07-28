@@ -3660,6 +3660,25 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
  * it is not optional: uncorrected it is worth 2.5583° on a quadruped and 3.0334° on a
  * troll, and the obvious scalar `lookYaw - chestYaw` leaves 1.2799°/1.7368° and is
  * worse than doing nothing in 5.37%/6.84% of the swept states.
+ *
+ * ## What the skull now inherits that it did not, stated rather than glossed
+ *
+ * The chest carries two scales, and the skull's relationship to each changes:
+ *
+ * - **The shoulder width does not reach it**, and the *visible result is unchanged*. It
+ *   never wore the width on the sibling rig either; what is new is that the width is
+ *   now applied and divided back out rather than never applied. Measured over both
+ *   shoulder extremes, both breath extremes and the whole pose box, the skull's worst
+ *   anisotropy is **0.5429%**, which is the closed form of the breath alone —
+ *   `1/(1 - 0.018·0.3) - 1` — attained exactly, with nothing of the 7% shoulder spread
+ *   left in it.
+ * - **The breath does reach it, and that is a real change.** The chest's `scale.y` lifts
+ *   the neck, so the skull now rises by up to **0.0248** authored units as the animal
+ *   inhales, and the skull mesh itself stretches vertically by that same 0.5429%. The
+ *   lift is wanted — a chest that breathes without moving its head is worse. The stretch
+ *   is accepted, as it is on people, because it is a hundredth of the shoulder problem;
+ *   but it is a **stretch of the skull**, not merely a lift, and saying only "the head
+ *   rides the breath" would be naming a cost as a benefit.
  */
 export interface BeastSkeleton {
   /** The animal's own group. Every pivot below is already parented into it. */
