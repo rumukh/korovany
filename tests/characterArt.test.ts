@@ -3003,6 +3003,22 @@ test('the engine wires the rig the way these tests measure it', () => {
   // the range rather than a guess at it. **The lesson had been applied forward to the
   // axis in hand and not backward to the axis that taught it** — which is the same
   // asymmetry as "the axis you were shown gets enumerated", with time as the axis.
+  //
+  // One more thing fell out of re-running those two mutations against the sweep, and it
+  // is sharper than the sweep itself. **The clamp fires at `2/60` — a value the old
+  // two-point pin already contained.** It could not catch it, because the semigroup was
+  // written once with `d = 1/60`, so `2/60` only ever appeared as the *target* `2*d` and
+  // never as a base. Promoting the same number to a base is the entire difference:
+  // `f(4/60)` clamps, `f(2/60)` does not. The floor, by contrast, needs a genuinely new
+  // sample and fires at `1/240`.
+  //
+  // So: **a value can be present in an enumeration and still not be enumerated, if it
+  // only ever occupies one side of the assertion.** Every population check in this file
+  // counts values; this one is not answered by counting them, because the pin held the
+  // witness and used it in the one role where it was blind. The question has to be asked
+  // of the *roles* a sample plays — base and target, input and expectation, subject and
+  // control — and a list of six deltas answers it no better than a list of two if they
+  // all enter the same way.
   for (const delta of [1 / 240, 1 / 120, 1 / 60, 1 / 30, 0.045, 0.05]) {
     assert.ok(
       Math.abs(decayStrideOnStagger(1, 2 * delta) - decayStrideOnStagger(1, delta) ** 2) < 1e-12,
