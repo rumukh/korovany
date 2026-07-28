@@ -491,6 +491,47 @@ function readsOutward(geometry: THREE.BufferGeometry): boolean {
   return signedVolume(geometry) > 0
 }
 
+/** Faces with an orientation the centroid ray could be asked about at all. */
+function judgeableFaceCount(geometry: THREE.BufferGeometry): number {
+  const position = geometry.getAttribute('position')
+  const index = geometry.index
+  const triangles = index ? index.count / 3 : position.count / 3
+  const a = new THREE.Vector3()
+  const b = new THREE.Vector3()
+  const c = new THREE.Vector3()
+  const edgeA = new THREE.Vector3()
+  const edgeB = new THREE.Vector3()
+  const face = new THREE.Vector3()
+  const middle = new THREE.Vector3()
+  const ray = new THREE.Vector3()
+  const centre = new THREE.Vector3()
+  for (let vertex = 0; vertex < position.count; vertex += 1) {
+    centre.x += position.getX(vertex)
+    centre.y += position.getY(vertex)
+    centre.z += position.getZ(vertex)
+  }
+  centre.divideScalar(Math.max(1, position.count))
+  let judgeable = 0
+  for (let triangle = 0; triangle < triangles; triangle += 1) {
+    const offset = triangle * 3
+    const first = index ? index.getX(offset) : offset
+    const second = index ? index.getX(offset + 1) : offset + 1
+    const third = index ? index.getX(offset + 2) : offset + 2
+    a.fromBufferAttribute(position, first)
+    b.fromBufferAttribute(position, second)
+    c.fromBufferAttribute(position, third)
+    edgeA.subVectors(b, a)
+    edgeB.subVectors(c, a)
+    face.crossVectors(edgeA, edgeB)
+    if (face.lengthSq() < 1e-14) continue
+    middle.copy(a).add(b).add(c).divideScalar(3)
+    ray.subVectors(middle, centre)
+    if (ray.lengthSq() < 1e-14) continue
+    judgeable += 1
+  }
+  return judgeable
+}
+
 /** How far a geometry's inward fraction sits from the undecidable half. */
 function centroidMargin(geometry: THREE.BufferGeometry): number | null {
   const { inward, decisive } = centroidInwardFaces(geometry)
@@ -965,6 +1006,8 @@ test('every prop the world can build is oriented outwards', () => {
   const open: string[] = []
   let tightestMargin = 1
   let tightestMarginLabel = ''
+  let tightestCoverage = 1
+  let tightestCoverageLabel = ''
   try {
     for (const [label, request] of requests) {
       for (const part of library.build(request)) {
@@ -991,6 +1034,27 @@ test('every prop the world can build is oriented outwards', () => {
         if (margin !== null && margin < tightestMargin) {
           tightestMargin = margin
           tightestMarginLabel = `${label}#${part.surface}`
+        }
+        // Coverage: what fraction of judgeable faces the centroid check actually reads.
+        // A sibling session found the hole this closes — as a shape flattens, its cap
+        // faces fall under the decisiveness cutoff and leave the *denominator*, so `f`
+        // and the margin both stay perfectly flat while half the geometry goes
+        // unexamined. Worse, the per-geometry reversal proof is blind to it by
+        // construction: reversing the same geometry reverses the same surviving subset,
+        // so `f -> 1 - f` holds to full precision on the faces that remain.
+        //
+        // Neither instrument can see it. Volume stays orders of magnitude clear of the
+        // open-shape exclusion because the degradation is continuous and the exclusion is
+        // a cliff. Measured across this catalogue the worst is the rail fence at 64.3%
+        // (54 of 84) and nothing falls below half — so the floor is headroom, not a fit.
+        const seen = centroidInwardFaces(part.geometry)
+        const judgeable = judgeableFaceCount(part.geometry)
+        if (judgeable > 0) {
+          const cover = seen.decisive / judgeable
+          if (cover < tightestCoverage) {
+            tightestCoverage = cover
+            tightestCoverageLabel = `${label}#${part.surface}`
+          }
         }
         // Face population only. The disagreement count this also returns is *always*
         // zero here and asserting on it would be theatre: `mergePropParts` ends in
@@ -1091,6 +1155,17 @@ test('every prop the world can build is oriented outwards', () => {
   assert.ok(
     tightestMargin > 0.02,
     `${tightestMarginLabel} sits ${tightestMargin.toFixed(3)} from the half where the centroid reading is meaningless; it needs volume backing or a different instrument`,
+  )
+  // The denominator, which the margin above cannot police because it is computed over it.
+  // Measured worst is the rail fence at 0.643; a floor of 0.5 is headroom rather than a
+  // fit, and it fires when a prop flattens far enough that its caps leave the decisive
+  // set — the case where `f`, the margin, and the reversal proof all stay perfectly
+  // healthy while half the geometry goes unread.
+  assert.ok(
+    tightestCoverage > 0.5,
+    `${tightestCoverageLabel} has only ${(100 * tightestCoverage).toFixed(1)}% of its `
+      + 'judgeable faces inside the decisive set, so the centroid verdict and its margin '
+      + 'are being computed over a population that has quietly shrunk',
   )
 })
 
