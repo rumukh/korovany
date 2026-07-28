@@ -19,6 +19,7 @@ import {
   buildBeastHead,
   buildBeastLimb,
   buildBeastTail,
+  applyChestPose,
   applyHeadPose,
   buildBirdBody,
   buildBirdWing,
@@ -14146,27 +14147,27 @@ export class GameEngine {
 
     if (torsoPivot) {
       torsoPivot.position.x = idleWeightShift
-      torsoPivot.rotation.x =
+      applyChestPose(
+        torsoPivot,
         forwardLean * actor.motionBlend -
-        pose.anticipation * (heavy ? 0.11 : 0.16) +
-        pose.attack * 0.12 +
-        pose.stagger * 0.2 +
-        // §5D — shoulders up against the weather. Cosmetic only, but it is driven by the
-        // simulation's storm factor so it reads the same whether or not precipitation is
-        // being drawn.
-        this.ambientStormHunch +
-        // §4 — the plan's own posture. A villain stoops, a scout runs light and an
-        // officer stands up straight; without this the proportion table resolves a
-        // lean that nothing ever reads.
-        (rig?.lean ?? 0)
-      torsoPivot.rotation.y =
+          pose.anticipation * (heavy ? 0.11 : 0.16) +
+          pose.attack * 0.12 +
+          pose.stagger * 0.2 +
+          // §5D — shoulders up against the weather. Cosmetic only, but it is driven by the
+          // simulation's storm factor so it reads the same whether or not precipitation is
+          // being drawn.
+          this.ambientStormHunch +
+          // §4 — the plan's own posture. A villain stoops, a scout runs light and an
+          // officer stands up straight; without this the proportion table resolves a
+          // lean that nothing ever reads.
+          (rig?.lean ?? 0),
         chestGaitYaw(actor.stride, heavy) +
-        pose.attack * 0.16 -
-        pose.flinch * hitRight * 0.22
-      torsoPivot.rotation.z =
+          pose.attack * 0.16 -
+          pose.flinch * hitRight * 0.22,
         -actor.turnLean * 0.16 +
-        idleWeightShift * 0.55 -
-        pose.flinch * hitRight * 0.18
+          idleWeightShift * 0.55 -
+          pose.flinch * hitRight * 0.18,
+      )
       torsoPivot.scale.y = 1 + breathing * 0.55
     }
     if (pelvisPivot) {

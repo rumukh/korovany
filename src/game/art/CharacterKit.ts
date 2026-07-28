@@ -1016,6 +1016,39 @@ export function applyHeadPose(
   headPivot.rotation.set(pitch, yaw, roll, 'XYZ')
 }
 
+/**
+ * The same, for the chest — and it is the half that was missing.
+ *
+ * `solveHeadYaw`'s docblock says **both** pivots must use XYZ, because it reads the
+ * columns of `Rx·Ry·Rz` from `torsoPivot.rotation.{x,y,z}` by hand. `applyHeadPose`
+ * covered one of the two. The chest was written field by field, and **a field write
+ * never touches `.order`**, so nothing reasserted it and nothing checked it at runtime.
+ *
+ * A reviewer measured the cost against the gaze bound's 0.9650°:
+ *
+ * ```text
+ * chest order XYZ    0.9392 deg   (baseline)
+ * chest order YXZ   17.8932 deg
+ * chest order ZYX   30.0230 deg
+ * chest order ZXY   19.9081 deg
+ * ```
+ *
+ * 30° is within a factor of 1.5 of the 43.6° the original bug was worth, and the suite
+ * was blind to it: setting the chest order at animation time passed 22/0.
+ *
+ * The lesson is the one that produced `applyHeadPose` and then failed to finish the
+ * job: **a fix scoped to the instance that was reported is a fix scoped to a sample.**
+ * The head was the pivot in the finding; the derivation names two.
+ */
+export function applyChestPose(
+  torsoPivot: THREE.Object3D,
+  pitch: number,
+  yaw: number,
+  roll: number,
+): void {
+  torsoPivot.rotation.set(pitch, yaw, roll, 'XYZ')
+}
+
 export function chestGaitYaw(stride: number, heavy: boolean): number {
   return -stride * (heavy ? 0.08 : 0.12)
 }

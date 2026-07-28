@@ -118,6 +118,7 @@ export {
   buildBeastTail,
   buildBirdBody,
   buildBirdWing,
+  applyChestPose,
   applyHeadPose,
   buildCharacterSkeleton,
   buildCloak,

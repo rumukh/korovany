@@ -17,6 +17,7 @@ import {
   buildBeastTail,
   buildBirdBody,
   buildBirdWing,
+  applyChestPose,
   applyHeadPose,
   buildCharacterSkeleton,
   buildCloak,
@@ -1749,31 +1750,43 @@ test('the head tracks its target through the chest, not past it', () => {
     // `yaw` transposed would satisfy any assertion that only reads `rotation.x` at a
     // pose where they happen to be equal, which is why none of the poses below have
     // two equal components.
+    // Both pivots, because `solveHeadYaw` reads both and an earlier version of this
+    // block reasserted only the head. A reviewer measured what the missing half cost:
+    // chest order `ZYX` is worth **30.02°** against this test's 0.9650° bound, within a
+    // factor of 1.5 of the original bug — and setting it at animation time passed 22/0.
+    //
+    // **A fix scoped to the instance that was reported is a fix scoped to a sample.**
+    // The head was the pivot in the finding; the derivation names two.
     for (const sabotage of ['YXZ', 'ZYX', 'ZXY'] as const) {
       for (const [pitch, yaw, roll] of [
         [0.1, 0.2, 0.3], [-0.09, 0.65, -0.3], [0.18, -1.2, 0.037], [0, 0.5, -0.15],
       ] as const) {
-        s.headPivot.rotation.order = sabotage
-        applyHeadPose(s.headPivot, pitch, yaw, roll)
-        assert.equal(
-          s.headPivot.rotation.order,
-          'XYZ',
-          `something set head-pivot's Euler order to ${sabotage} and \`applyHeadPose\` left `
-          + 'it there. It passes the order to `Euler.set` precisely so that a runtime '
-          + 'reassignment cannot survive a frame — asserting the order on a freshly built '
-          + 'skeleton does not cover this, because the engine animates a rig the test '
-          + 'never sees.',
-        )
-        assert.deepEqual(
-          [s.headPivot.rotation.x, s.headPivot.rotation.y, s.headPivot.rotation.z],
-          [pitch, yaw, roll],
-          `\`applyHeadPose\` was given (${String(pitch)}, ${String(yaw)}, ${String(roll)}) `
-          + `and wrote (${String(s.headPivot.rotation.x)}, ${String(s.headPivot.rotation.y)}, `
-          + `${String(s.headPivot.rotation.z)}). All three components are checked, at four `
-          + 'poses with no two equal, because a single pose reading only the pitch is '
-          + 'satisfied by `headPitch * 0.5` at zero and by transposing two arguments '
-          + 'anywhere they coincide.',
-        )
+        for (const [name, node, apply] of [
+          ['head-pivot', s.headPivot, applyHeadPose],
+          ['torso-pivot', s.torsoPivot, applyChestPose],
+        ] as const) {
+          node.rotation.order = sabotage
+          apply(node, pitch, yaw, roll)
+          assert.equal(
+            node.rotation.order,
+            'XYZ',
+            `something set ${name}'s Euler order to ${sabotage} and the pose function left `
+            + 'it there. Both pass the order to `Euler.set` precisely so that a runtime '
+            + 'reassignment cannot survive a frame — asserting the order on a freshly built '
+            + 'skeleton does not cover this, because the engine animates a rig the test '
+            + 'never sees.',
+          )
+          assert.deepEqual(
+            [node.rotation.x, node.rotation.y, node.rotation.z],
+            [pitch, yaw, roll],
+            `the pose function was given (${String(pitch)}, ${String(yaw)}, ${String(roll)}) `
+            + `for ${name} and wrote (${String(node.rotation.x)}, ${String(node.rotation.y)}, `
+            + `${String(node.rotation.z)}). All three components are checked, at four `
+            + 'poses with no two equal, because a single pose reading only the pitch is '
+            + 'satisfied by `headPitch * 0.5` at zero and by transposing two arguments '
+            + 'anywhere they coincide.',
+          )
+        }
       }
     }
   }
@@ -2855,13 +2868,34 @@ test('the engine wires the rig the way these tests measure it', () => {
   // which is the structural claim, and any second writer fails it whatever it looks
   // like. **Where a function cannot own the state, assert the number of writers.**
   assert.equal(
-    (actorPosture.match(/torsoPivot\.rotation\.y\s*(?:[-+*/]?=)/g) ?? []).length,
+    (actorPosture.match(/rotation\.order\s*=/g) ?? []).length,
+    0,
+    'something in the actor posture pass assigns `rotation.order`. `applyHeadPose` and '
+    + '`applyChestPose` reassert XYZ on every write, but **that only beats a write they '
+    + 'run after** — a reviewer set the order on the line following the call and it '
+    + 'survived, because `Euler`\'s order setter recomputes the quaternion on its own. '
+    + 'Nothing here has any business setting an Euler order: the two pose functions own '
+    + 'it, and this assertion says so for both placements rather than the one that '
+    + 'happened to be measured.',
+  )
+  assert.equal(
+    (actorPosture.match(/applyChestPose\(/g) ?? []).length,
     1,
-    'the chest\'s yaw is assigned more than once in the actor posture pass. `GAITS` '
-    + 'simulates a single `chestGaitYaw` result, so a second write — even one that only '
-    + 'adjusts it — makes the wobble test model a gait the engine does not run, while '
-    + 'every assertion about the coefficient still passes because the coefficient did '
-    + 'not change.',
+    'the chest pose is written by something other than a single `applyChestPose` call. '
+    + '`GAITS` simulates one `chestGaitYaw` result, so a second write — even one that '
+    + 'only adjusts it — makes the wobble test model a gait the engine does not run, '
+    + 'while every assertion about the coefficient still passes because the coefficient '
+    + 'did not change.',
+  )
+  assert.equal(
+    (actorPosture.match(/torsoPivot\.rotation\.[xyz]\s*(?:[-+*/]?=)/g) ?? []).length,
+    0,
+    'a component of the chest\'s rotation is assigned directly in the actor posture '
+    + 'pass. That bypasses `applyChestPose`, which means the Euler order stops being '
+    + 'reasserted — worth up to 30 degrees of gaze error — and it means the chest yaw '
+    + 'the wobble test simulates is not the chest yaw the engine produces. Counting '
+    + 'every assignment operator, because the previous assertion of this shape looked '
+    + 'for `=` and was walked past with `*=`.',
   )
 })
 
