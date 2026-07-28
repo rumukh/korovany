@@ -409,6 +409,26 @@ function reverseAsABuilderWould(geometry: THREE.BufferGeometry): THREE.BufferGeo
  * Whether a geometry reads as outward-facing, by the two instruments that survive a
  * normal recompute.
  *
+ * **Whole-geometry verdict only.** It catches a prop built entirely inside out and is
+ * blind to a single reversed *part* inside a merged one — `mergeAll` concatenates, so a
+ * part that arrives wound backwards keeps its winding in the merged buffer, and the
+ * merge's normal recompute makes its shading agree with itself. Measured over 248 merged
+ * hard surfaces, reversing a contiguous block and rebaking:
+ *
+ * ```text
+ * 10% of faces reversed -> undetected on 248 of 248
+ * 20%                   -> 244 of 248
+ * 35%                   -> 222 of 248
+ * 50%                   -> 118 of 248
+ * ```
+ *
+ * Neither instrument can close that on its own: signed volume is a sum so a partial
+ * inversion cancels against the rest, and the centroid fraction cannot separate 10%
+ * reversed from a legitimately concave prop, because a correct fort tree already reads
+ * 47% inward. The guard against a backwards builder is that each builder's output is
+ * judged before it reaches a merge — which is where the sibling session's kit-level
+ * winding tests sit — not here.
+ *
  * Neither alone covers the family. The centroid ray is decisive for compact solids but
  * weak on a sparse branch structure, where a correct fort tree already reads 47% inward
  * because its faces do not surround its centroid; signed volume is decisive there and
@@ -1243,6 +1263,86 @@ function boundaryEdgeCount(geometry: THREE.BufferGeometry): number {
   for (const count of uses.values()) if (count === 1) boundary += 1
   return boundary
 }
+
+/** Reverses a leading contiguous block — one sub-part of a concatenated merge. */
+function reverseLeadingBlock(
+  geometry: THREE.BufferGeometry,
+  fraction: number,
+): THREE.BufferGeometry {
+  const copy = geometry.index ? geometry.toNonIndexed() : geometry.clone()
+  const position = copy.getAttribute('position')
+  const triangles = Math.floor(position.count / 3)
+  const upto = Math.max(1, Math.round(triangles * fraction))
+  for (let triangle = 0; triangle < upto; triangle += 1) {
+    const first = triangle * 3
+    const third = first + 2
+    for (const attribute of Object.values(copy.attributes)) {
+      for (let part = 0; part < attribute.itemSize; part += 1) {
+        const array = attribute.array as unknown as number[]
+        const left = first * attribute.itemSize + part
+        const right = third * attribute.itemSize + part
+        const swap = array[left]
+        array[left] = array[right]
+        array[right] = swap
+      }
+    }
+  }
+  copy.computeVertexNormals()
+  return copy
+}
+
+test('the orientation verdict is blind to a reversed sub-part, and says so', () => {
+  // Pinned because the docblock's claim is the kind that decays silently. `mergeAll`
+  // concatenates, so a part that arrives wound backwards keeps its winding in the merged
+  // buffer and the merge's normal recompute makes its shading agree with itself — the
+  // exact shape of the `loftProfile` bug that started this wave, one level down.
+  //
+  // Measured over 248 merged hard surfaces: a 10% contiguous block reversed and rebaked
+  // is undetected on all 248. This asserts the *shape* of that limitation rather than the
+  // exact number, so it fails if either the instrument gets better (good news, update the
+  // claim) or the world stops producing merged props (which would mean this file is
+  // measuring something else entirely).
+  const library = new WorldPropLibrary({ retention: 0 })
+  let tested = 0
+  let smallBlockMissed = 0
+  let fullReversalCaught = 0
+  try {
+    for (const [label, request] of everyPropRequest()) {
+      if (!label.startsWith('building/thatch/')) continue
+      for (const part of library.build(request)) {
+        if (part.surface !== 'hard') {
+          part.geometry.dispose()
+          continue
+        }
+        tested += 1
+        const partial = reverseLeadingBlock(part.geometry, 0.1)
+        if (readsOutward(partial)) smallBlockMissed += 1
+        partial.dispose()
+        const whole = reverseAsABuilderWould(part.geometry)
+        if (!readsOutward(whole)) fullReversalCaught += 1
+        whole.dispose()
+        part.geometry.dispose()
+      }
+    }
+  } finally {
+    library.dispose()
+  }
+  assert.ok(tested >= 4, `only ${String(tested)} merged surfaces were tested`)
+  // The limitation, stated as an assertion so it cannot rot into an assumption.
+  assert.equal(
+    smallBlockMissed,
+    tested,
+    'the verdict now detects a 10% reversed sub-part; that is an improvement and the '
+      + 'docblock on `readsOutward` should stop disclaiming it',
+  )
+  // And the thing it does cover, so this test cannot pass by the instrument being broken
+  // in both directions at once.
+  assert.equal(
+    fullReversalCaught,
+    tested,
+    'the verdict stopped detecting a fully reversed prop, which is its actual job',
+  )
+})
 
 test('displacement does not tear a solid prop open at its creases', () => {
   // Controls first, and this instrument needs them badly: a bug in the welding step
