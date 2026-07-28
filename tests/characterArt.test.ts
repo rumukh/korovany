@@ -46,6 +46,7 @@ import {
   hasOutlineNormals,
   resolveCharacterPlan,
   solveHandOffset,
+  WAGON_RIG,
   type BeastKind,
   type CharacterFaction,
   type CharacterPartKeys,
@@ -62,6 +63,16 @@ import {
 /** Spec 09 §8. Kept here so the numbers in the doc are measured, not asserted. */
 const CHARACTER_MESHES_NEAR = 19
 const CHARACTER_MESHES_FAR = 14
+/**
+ * Spec 09 §8 — `GEOMETRY_CACHE_ENTRIES_MAX`, the whole of `GameEngine.artGeometry`.
+ *
+ * Not `CHARACTER_GEOMETRY_KEYS<=180`, which is a different budget over a different
+ * population and is correctly measured at 140 by the plan sweep above. This is the one
+ * §8 describes as "one engine-side cache now holds humanoid parts, beasts, fauna and
+ * the caravan" — and which `docs/10` records as existing "in no code at all, only in
+ * the two specs".
+ */
+const GEOMETRY_CACHE_ENTRIES_MAX = 220
 
 /**
  * Wave 2A — NPC, creature and caravan models.
@@ -1401,5 +1412,141 @@ test('character parts are oriented, measured by four instruments and not by one'
     + 'building the roster. It is meant to be a no-op: the foundation fixed loftProfile, '
     + 'and a non-zero count means something upstream now emits triangles wound against '
     + 'their own normals and this module is hiding it from every assertion downstream.',
+  )
+})
+
+/**
+ * The one budget in §8 that no code enforces, given a population for the first time.
+ *
+ * A first pass at this test reported a much louder finding — that the cache sat at
+ * exactly its ceiling with zero headroom — and it was **wrong**. It compared the
+ * whole-cache population against `CHARACTER_GEOMETRY_KEYS<=180`, which is a budget over
+ * a *different* population: the keys reachable from a `CharacterPlan`, correctly
+ * measured at 140 by the sweep above, and honestly described as such in §8. Reading the
+ * spec being criticised is what caught it, and the near-miss is recorded here because
+ * comparing a number to the nearest similar-looking ceiling is a cheap mistake to make
+ * and an expensive one to publish.
+ *
+ * What survives is quieter and real. `GameEngine.artGeometry` is one cache, and four
+ * constructors put keys into it that no plan produces — `createBeast`, `createCaravan`,
+ * `createDeer`, `createBird` — plus `faction-ring` and `wrist-rope`, which the plan
+ * sweep names as living outside the key set and then does not count. §8 budgets that
+ * whole cache at `GEOMETRY_CACHE_ENTRIES_MAX=220`, and `docs/10` records that the
+ * constant "turns out to exist in no code at all, only in the two specs". So the
+ * population had never been measured against it:
+ *
+ * ```text
+ * keys the plan sweep measures      140   (90 plans: 3 factions x 10 roles x 3 variants)
+ * keys only the constructors make    40   (4 beasts x 5 parts, the cart, the fauna, 2 shared)
+ * overlap                             0
+ * whole cache                       180   of 220 -> 82%, 40 spare
+ * ```
+ *
+ * Nothing is over budget. The gap was that nothing could have told you when it was: a
+ * key family added to any of those four constructors moved a number that no assertion
+ * read. That is what the drift guard at the bottom is for, and it is the half of this
+ * test worth keeping — the count above is a snapshot, the guard is the part that keeps
+ * the snapshot true.
+ */
+test('the geometry cache budget counts every key the cache actually holds', () => {
+  // 1. The population the plan sweep covers.
+  const planKeys = new Set<string>()
+  let plans = 0
+  for (const faction of FACTIONS) {
+    for (const role of [...ROLES, 'player']) {
+      for (let variant = 0; variant < CHARACTER_VARIANTS; variant += 1) {
+        plans += 1
+        const keys = characterPartKeys(
+          resolveCharacterPlan(faction, role, variant, role === 'player'),
+        )
+        for (const key of Object.values(keys)) if (key) planKeys.add(key)
+      }
+    }
+  }
+
+  // 2. The population it does not. Derived from the taxonomy wherever the taxonomy
+  //    decides it — the beast roster from `BEAST_RIG`, the wheel keys from `WAGON_RIG`'s
+  //    own radii — so adding a fifth beast or a third axle moves this set by itself.
+  const engineKeys = new Set<string>([
+    'deer-body', 'deer-crown', 'deer-leg:front', 'deer-leg:hind',
+    'bird-body', 'bird-wing', 'bird-beak',
+    'wagon-frame', 'wagon-bed', 'wagon-tilt', 'wagon-axle', 'wagon-harness',
+    'ox-body', 'ox-head', 'wagon-cargo:gilded', 'wagon-cargo:plain',
+    'faction-ring', 'wrist-rope',
+  ])
+  for (const radius of [WAGON_RIG.rearWheelRadius, WAGON_RIG.frontWheelRadius]) {
+    engineKeys.add(`wagon-wheel:${radius.toFixed(2)}`)
+  }
+  for (const role of Object.keys(BEAST_RIG)) {
+    engineKeys.add(`beast-body:${role}`)
+    engineKeys.add(`beast-head:${role}`)
+    engineKeys.add(`beast-limb:${role}:front`)
+    engineKeys.add(`beast-limb:${role}:hind`)
+    engineKeys.add(`beast-tail:${role}`)
+  }
+
+  const shared = [...planKeys].filter((key) => engineKeys.has(key))
+  assert.deepEqual(
+    shared,
+    [],
+    'a key produced by both a plan and a constructor would be double counted below',
+  )
+  const everyKey = new Set([...planKeys, ...engineKeys])
+
+  // Domain guards, both sides, because a budget over an empty population is the failure
+  // this file exists to refuse and either half could collapse independently.
+  assert.equal(plans, 90, `enumerated ${String(plans)} plans, expected 3 x 10 x 3`)
+  assert.ok(planKeys.size >= 120, `only ${String(planKeys.size)} plan keys were enumerated`)
+  assert.ok(engineKeys.size >= 35, `only ${String(engineKeys.size)} engine keys were enumerated`)
+
+  assert.ok(
+    everyKey.size <= GEOMETRY_CACHE_ENTRIES_MAX,
+    `GameEngine.artGeometry can hold ${String(everyKey.size)} distinct keys — `
+    + `${String(planKeys.size)} from plans and ${String(engineKeys.size)} from the beast, `
+    + `caravan and fauna constructors — against the §8 whole-cache budget of `
+    + `${String(GEOMETRY_CACHE_ENTRIES_MAX)}. Raise it deliberately and say so in `
+    + 'docs/09 §8, or fold keys together; do not raise it to make a test pass. Note that '
+    + 'the plan sweep above will NOT have failed: it measures CHARACTER_GEOMETRY_KEYS, a '
+    + 'different budget over the 140 plan-reachable keys, and it cannot see these 40.',
+  )
+
+  // 3. The drift guard, which is the part that actually protects. The set above is a
+  //    hand-written mirror of literals that live in `GameEngine.ts`, and a mirror is
+  //    worth nothing unless something notices when the original moves. Every key family
+  //    handed to the cache must be represented here — matched on the static prefix,
+  //    because most of these keys are template literals.
+  const source = readFileSync(
+    fileURLToPath(new URL('../src/game/GameEngine.ts', import.meta.url)),
+    'utf8',
+  )
+  const families = new Set<string>()
+  // Lazy to the closing delimiter, not "anything that is not a delimiter". The strict
+  // form `[^'`]+` looks tighter and silently drops every key whose interpolation
+  // contains a quote — here that is exactly two, ``deer-leg:${front ? 'front' : 'hind'}``
+  // and the matching ``beast-limb:`` — so it found 19 of 21 and read as clean. The floor
+  // below is what caught that, on this test's own author, before it could be believed.
+  for (const match of source.matchAll(/\bbuild\(\s*(['`])(.+?)\1/g)) {
+    // Everything up to the first interpolation is the part a key always starts with.
+    families.add(match[2].split('${')[0])
+  }
+  const unaccounted = [...families].filter(
+    (prefix) => ![...engineKeys].some((key) => key.startsWith(prefix)),
+  )
+  // Without this, a scan that matched nothing would report no drift and read as clean.
+  // Pinned rather than floored, because the count is knowable and a drop of two is
+  // precisely the failure this guard already caught once.
+  assert.equal(
+    families.size,
+    21,
+    `found ${String(families.size)} cache key families in GameEngine.ts, expected 21. `
+    + 'Either a constructor gained or lost one — in which case update `engineKeys` and '
+    + 'the ceiling together — or the scan has stopped matching and cannot report drift.',
+  )
+  assert.deepEqual(
+    unaccounted,
+    [],
+    'these key families reach GameEngine.artGeometry and are absent from the budget above, '
+    + 'so the cache holds more than anything measures. Add them to `engineKeys`, and check '
+    + 'the total against the ceiling in the same commit.',
   )
 })

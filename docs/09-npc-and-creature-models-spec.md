@@ -626,6 +626,30 @@ rest. `StylizedArtLibrary.isOpaque` is now the single predicate both passes use,
 naive version gets wrong, a material with `opacity` below 1 and `transparent` unset,
 which is what turns the mutation red.
 
+**The two defects have one shape, and it is the same shape as the budget defects one
+level down.** `latheProfile`'s normals were saved by callers happening to route through
+`transformed()`; the shadow rule was saved by transparent things happening to be
+ink-excluded. In both cases the code was answering a question nobody had asked it, and
+the site where the coincidence failed was **textually identical** to the sites where it
+held — a lathe is a lathe, a `castShadow = true` is a `castShadow = true`. Neither was
+visible to any test, for the same reason: nothing was measuring the property the code
+was accidentally getting right.
+
+That is also why a scan that asserts the **rule** finds what a test against the **site**
+cannot. Wave 4's own fix for the shadow defect is the proof. It pinned
+`StylizedArtLibrary.isOpaque` — the predicate — and left `markCharacterShadows` free to
+stop calling it: deleting the guard from the caller left the whole suite green, because
+the predicate stays correct whether or not anything uses it. A test written against
+`markCharacterShadows`, the natural response, would have passed on a tree that still
+contained a second unguarded sweep in `createBird`. Asserting *every bulk `castShadow`
+sweep asks the predicate* is what found that one. A site test asks the question in the
+one place you already knew to look, which is the one place that is no longer a risk.
+
+The corollary for anyone reading this section later: when a fix is a guard added at a
+call site, the regression test belongs at the **rule**, not at the site or at the
+helper. A helper's test survives the caller being reverted, and that is exactly the
+regression you are trying to prevent.
+
 ## 15. Effort
 
 **2–3 days.** The geometry is the fun part and the fast part. The time goes into the
