@@ -428,10 +428,11 @@ no new dependencies.
   **Those failures were layered, not repeated, and the order was forced.** Five joins in
   this file were found across four rounds, and a reviewer's table separates them:
   ```
-                predicate   population   freshness
-  joins 1–2       wrong         —            —      ".  " cannot match "word  word"
-  joins 3–4       right       wrong          —      swept the file, claim was the diff
-  join 5          right       right        stale    correct sweep, one commit old
+                predicate   population   freshness   referent
+  joins 1–2       wrong         —            —          —      ".  " cannot match "word  word"
+  joins 3–4       right       wrong          —          —      swept the file, claim was the diff
+  join 5          right       right        stale        —      correct sweep, one commit old
+  this table      right       right        fresh    the pattern  a cell quoting the predicate
   ```
   Three independent ways for a correct-looking check to be wrong, and **each was only
   visible once the previous one was fixed.** A wrong predicate and a wrong frame both
@@ -441,6 +442,13 @@ no new dependencies.
   that a passing sweep cannot reveal.** The general form, and the reason a green check
   proves less than it appears to: **a check that passes has ruled out the failure modes
   already fixed, and says nothing about the one beneath them.**
+  The fourth row is this section's own hazard and appeared while sweeping the third. The
+  sweep hit the table above, correctly: that cell contains `".  "` because it *documents*
+  the predicate. **There is no predicate that separates a documented pattern from an
+  occurring one — only the frame does**, and here the frame is the fence. Which is a
+  standing property of any artefact that names its own failure modes: **a file that lists
+  the shapes it warns about will match its own list.** Sweeping this document for the
+  defects it catalogues will always find the catalogue.
   **That applies to tools nobody wrote as much as to detectors someone did**, and this
   repository contains the proof. `tsc --noEmit -p tsconfig.json` looks like a type-check
   and is not one: the root `tsconfig.json` is `"files": []` plus project references, so
