@@ -405,6 +405,18 @@ no new dependencies.
   which is the honest content of both. This is *carry the derivation, not the value*
   applied to grammar rather than to method, and the two compose: **re-resolve late and
   report in the past tense, and there is no window at all.**
+  With one condition that is easy to miss and makes the difference between the form
+  working and merely looking like it works: **the timestamp has to be the measurement's,
+  not the sentence's.** The reviewer who proposed this form demonstrated it on its own
+  next message — *"verified at 22:40:07 against `9a85bc2`"* — and the commit that
+  superseded `9a85bc2` had landed at 22:38:39, **88 seconds before that stated time**. The
+  sentence was still honest about what it had established, but the hour attached to it was
+  the hour of writing rather than the hour of running, and under that reading the claim was
+  false: at 22:40:07 the tip was not what was verified. A past-tense claim carries exactly
+  one fact the present-tense one lacks — *when* — so a timestamp taken from the clock at
+  authoring time is decoration, and re-introduces the decay it was adopted to remove. The
+  mechanical form is the same as everywhere else here: **emit the timestamp from the
+  command that took the measurement**, not from the writer.
   One more thing came out of measuring that gap, and it is the sharpest instance the work
   produced because every party measured and every party got a different answer. The
   question — *is a reviewer's baseline falling further behind?* — was answered three ways
