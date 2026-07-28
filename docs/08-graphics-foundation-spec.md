@@ -734,6 +734,24 @@ PROP_RESIDENT_HEADROOM               48      live prop entries on top of the ret
                                              asserted as the sum rather than as a literal 176)
 ```
 
+**There are two geometry caches, and until Wave 4 only one of them had ever been
+measured.** Naming both, because a budget that does not say which cache it governs is
+the defect §7.2 describes:
+
+| cache | population | measured |
+|---|---|---|
+| `WorldPropLibrary`'s own cache, read via `runtime.propCacheSize` | trees, rocks, buildings, site props — everything `PropRequest` can name | peak **118** live entries over a full-map sweep, **80** over straight-line traversal, against a ceiling of `PROP_RETENTION_DEFAULT + PROP_RESIDENT_HEADROOM` = 176 |
+| `GameEngine.artGeometry` | characters, beasts, fauna and the caravan — the six `acquireArtGeometry` sites | **102** distinct character part keys across every faction x role x variant, against the 180 that `tests/characterArt.test.ts` enforces; a single run touches 50-70 |
+
+The 102 is the theoretical ceiling of the character contribution, enumerated from
+`characterPartKeys` over all 81 plans rather than estimated. Beast, fauna and caravan keys
+sit on top of it under their own budgets above.
+
+The figure of 125 quoted through most of this programme's history belongs to the **first**
+row. It was repeatedly cited while approving a ceiling described as governing "the
+geometry cache", of which there are two — which is how a number sized for one population
+came to be spent on another without anyone editing it.
+
 **`GEOMETRY_CACHE_ENTRIES_MAX` has been removed from this block.** It was written here as
 64, existed in no source file and was enforced nowhere; meanwhile the *prop* library's
 cache was bounded at 176 in `tests/worldArt.test.ts` against `propCacheSize`. Two
@@ -827,8 +845,14 @@ written down and the population was not**:
 | budget | sized against | later spent on |
 |---|---|---|
 | `OUTLINE_WORLD_DRAWS_MAX` | one visible region | nine of them — 3x3 Chebyshev, up to 72 draws a frame |
-| `GEOMETRY_CACHE_ENTRIES_MAX` | the shared geometry cache | quoted at a *different* cache, the prop library's, 2.75x apart, with no link between the written number and the enforced one |
+| `GEOMETRY_CACHE_ENTRIES_MAX` | the shared geometry cache, when there was one | quoted at a *different* cache once there were two, 2.75x apart, with no link between the written number and the enforced one |
 | the guarded-sweep count | 4 material sweeps | read as covering 6 `isOutlineShell` call sites, of which 2 are disposal and occlusion, not material |
+
+The second is the one with no tell. `OUTLINE_WORLD_DRAWS_MAX` was caught because somebody
+watched a region reach 7 of 8 and went looking; the cache constant **changed meaning
+without anyone editing it**, when a second cache was added and the word "entries" silently
+became ambiguous. A number can go stale through a change made somewhere else entirely, and
+nothing in the sentence records enough to notice.
 
 The third is the clearest tell. A commit message said "three of four material sweeps"
 and it was later restated as three of six, because **the population was never inside the
