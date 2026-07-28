@@ -1670,6 +1670,144 @@ test('a smooth loft normal is exact on an anisotropic section, not merely plausi
 })
 
 /**
+ * `tubeAlongPoints` stored a purely radial vector as the surface normal. That is
+ * correct for a constant-radius tube — the surface is a generalised cylinder and
+ * its normal really is perpendicular to the axis — and wrong for every tapered
+ * one, by exactly the taper angle. A horn shaded like a cylinder is the visible
+ * symptom: the highlight sits in a band instead of running to the tip.
+ *
+ * The reviewer established the blast radius across the merged product, which is
+ * the reason this is a test and not a note. It is not one caller: eight direct
+ * `tubeAlongPoints` sites in `CharacterKit` pass a varying radius and omit
+ * `smooth` — headgear horn, bow limbs, beast head, beast tail, deer neck and two
+ * antler tubes, ox head — and every one of their builders has a live call site in
+ * `GameEngine.ts`. A ninth sits inside `branchStructure`, whose three `PropKit`
+ * callers are `broadleafGeometry`, `deadTreeGeometry` and `thornTreeGeometry`,
+ * all reachable through `treeGeometry` from `WorldPropLibrary`. My own call graph
+ * said "one live caller" because I ran it on this branch, where `branchStructure`
+ * genuinely has no caller — a branch-local answer to a programme-level question.
+ *
+ * Derivation, checked against numerical differentiation of the surface before it
+ * was written: for `P(t,th) = C(t) + r(t)*u(th)` with a parallel-transport frame,
+ * `dP/dt = a*T + r'*u` and `dP/dth = r*v`, giving an outward normal along
+ * `u - (dr/ds)*T`. `getPointAt` is arc-length parameterised, so `ds = L*dt`.
+ * Brute force agreed to 0.0000 deg; the old radial vector was out by 7.1250 deg
+ * on the taper below, which is `atan(0.5/4)` to four places.
+ *
+ * The constant-radius case is asserted strictly rather than within a tolerance,
+ * because the sampled slope is exactly zero there and the code returns the
+ * untouched vector. That makes every non-tapered caller bit-for-bit unchanged,
+ * and a strict assertion is the only kind that can prove it.
+ */
+test('a tapered tube leans its normal along the axis by the taper angle', () => {
+  const length = 4
+  const wide = 0.6
+  const narrow = 0.1
+  const radialSegments = 8
+  const tubularSegments = 6
+  const spine = [
+    { x: 0, y: 0, z: 0 },
+    { x: 0, y: length / 2, z: 0 },
+    { x: 0, y: length, z: 0 },
+  ]
+  // Side walls are emitted before the caps, six vertices per quad.
+  const sideVertices = 6 * radialSegments * tubularSegments
+
+  const slope = (narrow - wide) / length
+  const expectedY = -slope / Math.hypot(1, slope)
+  assert.ok(
+    Math.abs(expectedY) > 0.1,
+    `the taper must be steep enough to discriminate, got ${String(expectedY)}`,
+  )
+
+  const tapered = tubeAlongPoints(spine, {
+    radius: (t: number) => wide + (narrow - wide) * t,
+    radialSegments,
+    tubularSegments,
+  })
+  const taperedNormal = tapered.getAttribute('normal')
+  const taperedPosition = tapered.getAttribute('position')
+  assert.ok(
+    taperedNormal.count >= sideVertices,
+    `expected at least ${String(sideVertices)} vertices, got ${String(taperedNormal.count)}`,
+  )
+
+  for (let i = 0; i < sideVertices; i += 1) {
+    const nx = taperedNormal.getX(i)
+    const ny = taperedNormal.getY(i)
+    const nz = taperedNormal.getZ(i)
+
+    assert.ok(
+      Math.abs(ny - expectedY) < 1e-6,
+      `vertex ${String(i)} has axial normal ${String(ny)}, expected ${String(expectedY)} — `
+        + 'a radial vector is not the normal of a tapered surface',
+    )
+    assert.ok(
+      Math.abs(Math.hypot(nx, ny, nz) - 1) < 1e-6,
+      `vertex ${String(i)} normal is not unit length`,
+    )
+
+    // The lean must be purely axial: the horizontal part still points straight out.
+    const px = taperedPosition.getX(i)
+    const pz = taperedPosition.getZ(i)
+    const radial = Math.hypot(px, pz)
+    const horizontal = Math.hypot(nx, nz)
+    if (radial > 1e-6 && horizontal > 1e-6) {
+      const alignment = (nx * px + nz * pz) / (horizontal * radial)
+      assert.ok(
+        alignment > 1 - 1e-6,
+        `vertex ${String(i)} normal was rotated about the axis, alignment ${String(alignment)}`,
+      )
+    }
+  }
+  tapered.dispose()
+
+  // Control: a constant radius must be untouched, exactly.
+  const straight = tubeAlongPoints(spine, {
+    radius: 0.3,
+    radialSegments,
+    tubularSegments,
+  })
+  const straightNormal = straight.getAttribute('normal')
+  for (let i = 0; i < sideVertices; i += 1) {
+    assert.equal(
+      straightNormal.getY(i),
+      0,
+      `constant-radius vertex ${String(i)} gained an axial normal of `
+        + `${String(straightNormal.getY(i))} — the no-taper path is no longer a no-op`,
+    )
+  }
+  straight.dispose()
+
+  // Control: `smooth` omitted is `smooth: true`, which is what puts the live
+  // call sites on this path at all. If the default ever flips, this fails here
+  // rather than in someone else's shading.
+  const explicit = tubeAlongPoints(spine, {
+    radius: (t: number) => wide + (narrow - wide) * t,
+    radialSegments,
+    tubularSegments,
+    smooth: true,
+  })
+  const explicitNormal = explicit.getAttribute('normal')
+  const rebuilt = tubeAlongPoints(spine, {
+    radius: (t: number) => wide + (narrow - wide) * t,
+    radialSegments,
+    tubularSegments,
+  })
+  const rebuiltNormal = rebuilt.getAttribute('normal')
+  assert.equal(explicitNormal.count, rebuiltNormal.count)
+  for (let i = 0; i < explicitNormal.count; i += 1) {
+    assert.equal(
+      rebuiltNormal.getY(i),
+      explicitNormal.getY(i),
+      `omitting smooth diverged from smooth: true at vertex ${String(i)}`,
+    )
+  }
+  explicit.dispose()
+  rebuilt.dispose()
+})
+
+/**
  * The test above compares winding against the geometry's own stored normals, which
  * is exactly the check that caught the shipped loft inversion. It has one blind
  * spot: a builder that flipped its normals *and* its winding together would agree
