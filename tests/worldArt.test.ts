@@ -6,7 +6,9 @@ import { GeometryCache } from '../src/game/art/GeometryCache.ts'
 import {
   bridgeParts,
   buildingParts,
+  ensureVertexColors,
   fencePanelParts,
+  mergeAll,
   mergePropParts,
   monumentParts,
   outcropGeometry,
@@ -1383,7 +1385,64 @@ test('displacement does not tear a solid prop open at its creases', () => {
   assert.deepEqual(torn, [], 'these solid props have holes in them')
 })
 
+test('mergeAll still behaves the way this file depends on it behaving', () => {
+  // Assert the dependency's identity, not just my own output — my output can be right
+  // for the wrong reason. Suggested by the foundation session after it pinned three's own
+  // shader chunks rather than its text, so a three upgrade that moves an accumulation
+  // fails loudly instead of silently re-breaking a material.
+  //
+  // Two behaviours of `mergeAll` are load-bearing here and neither is stated anywhere
+  // that a change would have to pass:
+  //
+  //   1. A one-element merge is a PASSTHROUGH — it returns `parts[0]` itself. That is
+  //      what makes the aliasing hazard real (one geometry tagged under two surfaces
+  //      comes back as the same buffer for both, so releasing either disposes the other)
+  //      and it is why `mergePropParts` refuses duplicates.
+  //   2. A real merge DE-INDEXES. Combined with (1), a `latheProfile` part that is the
+  //      only part on its surface arrives indexed — which is the entire reason four prop
+  //      surfaces are indexed and the index-aware readers in this file have real inputs.
+  //
+  // If either flips, both of those facts change meaning silently.
+  const single = new THREE.BoxGeometry(1, 1, 1)
+  ensureVertexColors(single, 0x808080)
+  const passthrough = mergeAll([single], { name: 'dependency-single' })
+  assert.equal(
+    passthrough,
+    single,
+    'a one-element mergeAll stopped being a passthrough; the aliasing guard in '
+      + '`mergePropParts` and the indexed-surface pin both rest on it returning parts[0]',
+  )
+
+  const indexed = new THREE.SphereGeometry(1, 8, 6)
+  ensureVertexColors(indexed, 0x404040)
+  assert.ok(indexed.index, 'the fixture must be indexed for this to mean anything')
+  const keptIndex = mergeAll([indexed], { name: 'dependency-indexed' })
+  assert.ok(
+    keptIndex.index,
+    'a one-element mergeAll stopped preserving indexing; the four indexed prop surfaces '
+      + 'would vanish and the index-aware readers would lose their only real inputs',
+  )
+
+  const a = new THREE.SphereGeometry(1, 8, 6)
+  const b = new THREE.SphereGeometry(0.5, 8, 6)
+  ensureVertexColors(a, 0x404040)
+  ensureVertexColors(b, 0x606060)
+  const merged = mergeAll([a, b], { name: 'dependency-multi' })
+  assert.equal(
+    merged.index,
+    null,
+    'a multi-part mergeAll stopped de-indexing, which would change which geometries in '
+      + 'the catalogue are indexed and therefore which code paths the suite exercises',
+  )
+  assert.notEqual(merged, a, 'a real merge must produce a new geometry, not reuse an input')
+
+  keptIndex.dispose()
+  merged.dispose()
+  passthrough.dispose()
+})
+
 test('one geometry cannot be tagged under two prop surfaces', () => {
+
   // `mergeAll` moves rather than copies for a single part, so tagging one geometry as
   // both `hard` and `glow` hands the same buffer back for both surfaces. The library
   // then holds two cache keys over one buffer and releasing either disposes the other,
