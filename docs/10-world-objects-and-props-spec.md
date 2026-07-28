@@ -1438,6 +1438,40 @@ silently addressing.** The remedy does not scale by adding a fifth checker — i
 every level state, in its own output, the thing it operated on rather than the thing it
 intended to.
 
+**Four green gates, and not one of them type-checks the tests.** The integrator asked
+whether `tsc -b` covers `tests/`, and it does not: `tsconfig.app.json` is
+`"include": ["src"]`, `tsconfig.node.json` is `"include": ["vite.config.ts"]`, and the
+runner strips types without checking them. Planting
+`const plantedTypeError: number = 'this is a string'` at the top of this pass's main test
+file passes **`tsc -b`, the suite, and `npm run build`** — three thousand lines of test
+code that no tool has ever read for types.
+
+Type-checking them found six real errors in this pass's own two files, and they are not
+cosmetic:
+
+- `plan.slotId` does not exist on `GeneratedEncounterPlan`, so the failure message for a
+  blocked encounter spawn printed `seed/undefined/faction`. The assertion still fires — the
+  array is non-empty either way — but the diagnostic naming *which* encounter broke was
+  never there, in the test whose whole purpose is to name it.
+- Two `BuildingSpec` fixtures omit `archetype` and `variant`. `buildingSpecKey` interpolates
+  `spec.archetype` directly, so those tests exercise cache keys reading
+  `building:forest:elf:undefined:...` — **a spec the product cannot produce.** The same
+  vacuity as the ordering trap and the one-seed trap, arriving through the type system
+  rather than through setup.
+- Three callers passed `1` or `0` where an `as const` default had narrowed the parameter to
+  the literal `0.35`, so the decoration-density tests were type-lying about the range they
+  claimed to sweep.
+
+The shape is the one this section keeps finding, at the level of the toolchain: **a gate
+that reports on a smaller population than the reader assumes.** `tsc -b` exits 0 and the
+natural reading is *"the project type-checks"*; the true statement is *"`src` type-checks"*.
+Nobody wrote that down, and the gap is invisible precisely because the command is green and
+its name says nothing about scope.
+
+Worth pairing with the Markdown entry below, because they are the same hole in two file
+types: the artefacts a build does not parse are the ones with no tests, whatever the suite
+count says. Here the suite count was 294.
+
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
 state that no check could see. Ten lines were mangled — five entries whose opening sentence

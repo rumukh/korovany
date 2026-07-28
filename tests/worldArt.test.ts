@@ -187,7 +187,7 @@ function everyPropRequest(): Array<[string, PropRequest]> {
               owner,
               detail,
               spec: {
-                archetype: 'house' as const,
+                archetype: 'house',
                 variant: 0,
                 width: 5,
                 depth: 4,
@@ -874,7 +874,7 @@ test('a partial inversion is detectable, which volume and normals alone cannot m
         owner: 'elf',
         detail: 'near',
         spec: {
-          archetype: 'house' as const,
+          archetype: 'house',
           variant: 0,
           width: 5,
           depth: 4,

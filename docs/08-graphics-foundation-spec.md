@@ -1431,7 +1431,12 @@ nothing.
 - [ ] `tests/worldGenerator.test.ts` determinism and fingerprint assertions pass
       unchanged.
 - [ ] `npm run build`, `npm run lint` and `npm test` are green.
-- [ ] Sustained frame time at 25 actors is within 1 ms of the pre-change build.
+- [ ] Sustained frame time at 25 actors is within 1 ms of the pre-change build — **for a
+      change that adds no geometry**. See §7: this criterion governs shader, lighting,
+      post-processing and outline-machinery work, which is the population it was written
+      against. A pass that adds geometry is judged by the two ceilings below instead.
+- [ ] Draw calls per frame at a faction start are within `DRAW_CALLS_PER_FRAME_MAX`.
+- [ ] Vertices per frame at a faction start are within `VERTICES_PER_FRAME_MAX`.
 
 ## 14. Effort
 

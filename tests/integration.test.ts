@@ -1468,3 +1468,68 @@ test('every bulk castShadow sweep excludes what you can see through', () => {
     + 'a solid silhouette on the ground.',
   )
 })
+
+
+/**
+ * A scoped budget must not be restated unscoped in the acceptance checklist.
+ *
+ * `docs/08` §7's frame-time target was rewritten to name its population — *"for changes
+ * that add no geometry"* — because as written it was the fourth instance of a number
+ * sized against one population and spent on another. The rewrite was correct and it was
+ * **incomplete**: the same rule appears a second time as an acceptance checkbox in §13,
+ * and that copy was not touched. The spec then said two different things, and a reader
+ * running the checklist against this release would have marked it failed against a
+ * criterion §7 says does not apply.
+ *
+ * Nobody caught it for several rounds. It survived the population sweep that created it,
+ * because that sweep read the budgets block and the checklist is somewhere else.
+ *
+ * **The general defect is a rule stated in two places and corrected in one**, and I could
+ * not find a general detector for it: the two copies here share no distinctive phrase —
+ * *"must not regress by more than 1 ms"* against *"is within 1 ms of the pre-change
+ * build"* — so no exact-match rule relates them. What is checkable is the narrow thing
+ * that actually happened: **every mention of the 1 ms figure must carry its scope.**
+ *
+ * That is deliberately over-fitted to one instance, and it is stated as such rather than
+ * dressed up as a class. It is worth landing anyway because the figure is the one a
+ * future pass is most likely to be judged against, and because a second copy drifting
+ * from the first is exactly the shape this file exists to refuse.
+ */
+test('the scoped frame-time target is not restated unscoped anywhere', () => {
+  const source = readFileSync(
+    new URL('../docs/08-graphics-foundation-spec.md', import.meta.url),
+    'utf8',
+  ).replace(/\r\n?/g, '\n')
+
+  const mentions: { line: number; text: string }[] = []
+  source.split('\n').forEach((text, index) => {
+    if (text.includes('1 ms')) mentions.push({ line: index + 1, text })
+  })
+
+  assert.ok(
+    mentions.length >= 2,
+    `found ${String(mentions.length)} mentions of the 1 ms figure; this test exists `
+    + 'because there are two copies of that rule, so finding fewer means the scan broke '
+    + 'or a copy was deleted without updating this check',
+  )
+
+  // The scope may sit on the same line or in the continuation immediately under it, so
+  // judge the mention together with the two lines that follow it.
+  const lines = source.split('\n')
+  const unscoped = mentions
+    .filter(({ line }) => {
+      const window = lines.slice(line - 1, line + 2).join(' ')
+      return !/adds? no geometry/.test(window)
+    })
+    .map(({ line, text }) => `docs/08:${String(line)}: ${text.trim().slice(0, 80)}`)
+
+  assert.deepEqual(
+    unscoped,
+    [],
+    'these state the 1 ms frame-time target without the population §7 scopes it to. '
+    + 'That target governs changes which add no geometry — shader, lighting, post FX, '
+    + 'outline machinery. A pass that adds geometry is judged by the draw-call and '
+    + 'vertices-per-frame ceilings instead, and restating the rule unscoped makes the '
+    + 'spec contradict itself.',
+  )
+})
