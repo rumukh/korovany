@@ -155,6 +155,29 @@ export type PropRequest =
       detail: PropDetail
     }
 
+/**
+ * Keys the retention window holds by default, and the dominant term in the live cache
+ * budget.
+ *
+ * Exported because the budget assertion in `tests/worldArt.test.ts` used to be a bare
+ * `176` citing a `PROP_CACHE_ENTRIES_MAX` that exists in no code — a number descended
+ * from a constant governing the *other* geometry cache entirely. A budget with no
+ * mechanical link to the thing that determines it silently stops meaning anything the
+ * moment that thing changes.
+ */
+export const PROP_RETENTION_DEFAULT = 128
+
+/**
+ * Live entries a full set of resident regions can hold beyond the window.
+ *
+ * `visibleRadius: 1` under Chebyshev distance keeps 9 regions resident, and their
+ * in-use keys are almost entirely already pinned by the window — measured peak across
+ * a full-sweep lap is 130 total against a 128-key window, so only a couple of entries
+ * are genuinely outside it. The allowance is deliberately far above that: it is a
+ * ceiling that catches unbounded growth, not a fit to the current figure.
+ */
+export const PROP_RESIDENT_HEADROOM = 48
+
 export class WorldPropLibrary {
   private readonly cache = new GeometryCache()
   /**
@@ -178,7 +201,7 @@ export class WorldPropLibrary {
   private readonly retentionLimit: number
 
   constructor(options: { retention?: number } = {}) {
-    this.retentionLimit = Math.max(0, Math.floor(options.retention ?? 128))
+    this.retentionLimit = Math.max(0, Math.floor(options.retention ?? PROP_RETENTION_DEFAULT))
   }
 
   /** Live cache entries, including geometry held only by the retention window. */

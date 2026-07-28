@@ -23,7 +23,7 @@ import {
   type WallStyle,
 } from '../src/game/art/index.ts'
 import { SITE_PRESENTATIONS } from '../src/game/content/registry.ts'
-import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
+import { GeneratedWorldRuntime, inkDrawCost } from '../src/game/world/GeneratedWorldRuntime.ts'
 import {
   buildingSpecKey,
   composeSiteLayout,
@@ -31,6 +31,8 @@ import {
 } from '../src/game/world/SiteComposition.ts'
 import {
   WorldPropLibrary,
+  PROP_RESIDENT_HEADROOM,
+  PROP_RETENTION_DEFAULT,
   type PropAsset,
   type PropRequest,
 } from '../src/game/world/WorldPropLibrary.ts'
@@ -372,8 +374,81 @@ function reverseFaceFraction(
 }
 
 /**
+ * Reverses every face, then recomputes normals — the pipeline's own damage model.
+ *
+ * This is the shape a *builder* winding error takes, and it is the one that matters:
+ * `mergePropParts` ends with `mergeAll` and `bakeOutlineNormals`, both of which derive
+ * normals from whatever the winding currently says. So by the time any prop reaches an
+ * assertion, its normals agree with its winding no matter which way round that winding
+ * is. Reversing *without* recomputing leaves stale normals, which is a defect the
+ * shipped pipeline cannot produce — proving a detector against that instead is proving
+ * it against the wrong damage.
+ */
+function reverseAsABuilderWould(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
+  const copy = geometry.index ? geometry.toNonIndexed() : geometry.clone()
+  const position = copy.getAttribute('position')
+  const triangles = Math.floor(position.count / 3)
+  for (let triangle = 0; triangle < triangles; triangle += 1) {
+    const first = triangle * 3
+    const third = first + 2
+    for (const attribute of Object.values(copy.attributes)) {
+      for (let part = 0; part < attribute.itemSize; part += 1) {
+        const array = attribute.array as unknown as number[]
+        const left = first * attribute.itemSize + part
+        const right = third * attribute.itemSize + part
+        const swap = array[left]
+        array[left] = array[right]
+        array[right] = swap
+      }
+    }
+  }
+  copy.computeVertexNormals()
+  return copy
+}
+
+/**
+ * Whether a geometry reads as outward-facing, by the two instruments that survive a
+ * normal recompute.
+ *
+ * Neither alone covers the family. The centroid ray is decisive for compact solids but
+ * weak on a sparse branch structure, where a correct fort tree already reads 47% inward
+ * because its faces do not surround its centroid; signed volume is decisive there and
+ * says nothing about an open sheet.
+ *
+ * The half threshold is derived, not tuned. Reversing every face negates each face's
+ * alignment with the centroid ray while leaving `|alignment|` — and therefore the
+ * decisive set — untouched, so reversal maps the inward fraction `f` to exactly `1 - f`.
+ * Measured across the request space, the largest departure from that law is 0.0023, all
+ * of it faces jittering across the decisiveness cutoff. A half is consequently the only
+ * threshold whose margin is symmetric for every geometry; any other value trades
+ * false-pass headroom for false-fail headroom with nothing to justify the rate. This
+ * check previously used 0.4, which put a *correct* washing line at 0.390 — 0.010 from
+ * being reported inside out. At a half its margin is 0.110, and the tightest in the
+ * whole family is the fort tree at 0.033.
+ */
+function readsOutward(geometry: THREE.BufferGeometry): boolean {
+  const { inward, decisive } = centroidInwardFaces(geometry)
+  if (decisive > 0 && inward < decisive * 0.5) return true
+  return signedVolume(geometry) > 0
+}
+
+/** How far a geometry's inward fraction sits from the undecidable half. */
+function centroidMargin(geometry: THREE.BufferGeometry): number | null {
+  const { inward, decisive } = centroidInwardFaces(geometry)
+  if (decisive === 0) return null
+  return Math.abs(inward / decisive - 0.5)
+}
+
+/**
  * Triangles whose vertex order disagrees with the normal the builder stored, and how
  * many triangles the question could be asked of at all.
+ *
+ * Scope note, because this instrument is narrower than it looks: it can only see a
+ * disagreement that already exists in the buffers, so it is meaningful for geometry
+ * whose normals were *not* re-derived after its winding was set. Every prop the library
+ * returns has been through `mergeAll`, so this is vacuous there — see
+ * `reverseAsABuilderWould`. It stays for the controls, which is the one place the
+ * stale-normal case genuinely arises.
  *
  * The second number exists because a sibling session found the hole it closes: an
  * all-degenerate geometry disagrees zero times, so `=== 0` passes having judged
@@ -827,18 +902,44 @@ test('every prop the world can build is oriented outwards', () => {
   let geometries = 0
   let judgedFaces = 0
   const failures: string[] = []
+  const undetectable: string[] = []
   const open: string[] = []
+  let tightestMargin = 1
+  let tightestMarginLabel = ''
   try {
     for (const [label, request] of requests) {
       for (const part of library.build(request)) {
         geometries += 1
-        const reading = windingDisagreements(part.geometry)
-        judgedFaces += reading.judged
-        if (reading.disagreeing > 0) {
-          failures.push(
-            `${label}#${part.surface}: ${String(reading.disagreeing)} triangles`,
-          )
+        // Orientation, judged by the two instruments a normal recompute cannot
+        // launder, and *proved* per geometry rather than once on a stock box: the
+        // same prop reversed through the pipeline's own damage model must read the
+        // other way. A control built from `THREE.BoxGeometry` cannot license this
+        // loop, because the box is not what the loop is looking at and a compact box
+        // is not where either instrument is weak.
+        if (!readsOutward(part.geometry)) {
+          failures.push(`${label}#${part.surface}: reads inside out`)
         }
+        const damaged = reverseAsABuilderWould(part.geometry)
+        if (readsOutward(damaged)) {
+          undetectable.push(`${label}#${part.surface}`)
+        }
+        damaged.dispose()
+        // How close this prop sits to the half where the centroid reading means nothing.
+        // The verdict being right today says nothing about how much room it has, and a
+        // prop drifting toward the half gets reported inside out while being perfectly
+        // fine — a false *failure*, which costs more to diagnose than a false pass.
+        const margin = centroidMargin(part.geometry)
+        if (margin !== null && margin < tightestMargin) {
+          tightestMargin = margin
+          tightestMarginLabel = `${label}#${part.surface}`
+        }
+        // Face population only. The disagreement count this also returns is *always*
+        // zero here and asserting on it would be theatre: `mergePropParts` ends in
+        // `mergeAll`, which recomputes normals from the winding, so the two sides of
+        // that comparison stop being independent. Measured across this exact loop, a
+        // fully reversed prop produced 0 disagreements in 560 of 560 cases — the check
+        // that used to sit here could not have failed for any prop the world builds.
+        judgedFaces += windingDisagreements(part.geometry).judged
         // Magnitude, not just sign — see `worstNormalError`. A collapsed loft section
         // shades a downward spike as though it pointed at the sky, which a sign test
         // waves through.
@@ -859,7 +960,23 @@ test('every prop the world can build is oriented outwards', () => {
   } finally {
     library.dispose()
   }
-  assert.deepEqual(failures, [], 'props wound against their normals')
+  assert.deepEqual(failures, [], 'props are built inside out')
+  // The mutation proof, carried per geometry. Anything not on this list had its
+  // orientation established by a measurement that demonstrably changes answer when the
+  // orientation changes — which is the property the old stock-box control was asserted
+  // to have and did not, for anything in this loop.
+  //
+  // The ferns are on it, and belong on it: they are sheets, and a sheet has no inside
+  // to be on the wrong side of. Naming them rather than loosening the assertion means a
+  // fern that becomes a solid fails here and gets removed, and a prop that quietly
+  // becomes a sheet fails here and gets explained. It is the same list as `open` below,
+  // arrived at from the other direction — orientation is undefined exactly where volume
+  // is.
+  assert.deepEqual(
+    undetectable.sort(),
+    BIOMES.map((biome) => `ground/${biome}/fern#foliage`).sort(),
+    'reversing these props changed nothing the instruments can see, so their zero is not evidence',
+  )
   // Signed volume is the assertion that survives `displaceGeometry` recomputing
   // normals, but it is only meaningful for a closed solid. Rather than skip the open
   // shapes, pin exactly which ones they are: a builder that turns inside out joins
@@ -880,6 +997,14 @@ test('every prop the world can build is oriented outwards', () => {
   assert.ok(
     judgedFaces >= 20000,
     `only ${String(judgedFaces)} faces carried an orientation to judge`,
+  )
+  // Headroom, not just correctness. Measured tightest is the fort tree at 0.033; the
+  // floor sits below it so ordinary art variation does not trip, but a prop drifting to
+  // within 2% of the undecidable half fails here — while its verdict is still right —
+  // rather than silently crossing later and being reported inside out.
+  assert.ok(
+    tightestMargin > 0.02,
+    `${tightestMarginLabel} sits ${tightestMargin.toFixed(3)} from the half where the centroid reading is meaningless; it needs volume backing or a different instrument`,
   )
 })
 
@@ -941,23 +1066,105 @@ test('every prop winds its triangles to agree with its shading normals', () => {
   // kit wound its lofts backwards once; this is the assertion that says the merged
   // compositions built on top of it come out the right way round.
   //
-  // Delegates to the one index-aware checker rather than re-walking the buffers.
-  // This loop used to read raw position triples, which silently misreads any indexed
-  // geometry as `floor(vertexCount / 3)` pseudo-triangles assembled from vertices
-  // that were never a triangle. `latheProfile` is the kit's only indexed builder, so
-  // that blindness had exactly one victim and it looked like a builder bug.
+  // Judged the same way as the family-wide loop, and for the same reason: every case
+  // in this list has been merged or displaced, so its normals were re-derived from its
+  // own winding and a normal-agreement check on it compares a value against itself.
+  // Each case carries its own reversal so the zero is licensed by a demonstration on
+  // *that* geometry rather than on a stock primitive that shares none of its
+  // properties.
   for (const [label, geometry] of cases) {
-    const reading = windingDisagreements(geometry)
-    assert.ok(reading.judged > 0, `${label} carried no face with an orientation`)
-    assert.equal(
-      reading.disagreeing,
-      0,
-      `${label} has triangles wound against their shading normals`,
+    assert.ok(readsOutward(geometry), `${label} is built inside out`)
+    const damaged = reverseAsABuilderWould(geometry)
+    assert.ok(
+      !readsOutward(damaged),
+      `${label} reads the same reversed as it does correct, so its pass means nothing`,
     )
+    damaged.dispose()
+    geometry.dispose()
   }
 })
 
-test('the merged hard surface of a prop carries welded outline normals', () => {  const parts = buildingParts({
+test('the ink cost function prices hierarchies this world never happens to contain', () => {
+  // A mutation campaign replaced `inkDrawCost` with `return 1` and all 281 tests passed.
+  // The reason is not that the budget assertion is wrong — it is that every object the
+  // world outlines today is a single mesh, so the recursion and the LOD-max rule are
+  // inert and the system test compares two numbers that agree for an unrelated reason.
+  // Measured across three maps: 794 `applyOutline` calls, every one costing exactly 1.
+  //
+  // So the cost function is exercised here instead, on hierarchies built to make its
+  // branches vary. These are the shapes it was written for and the shapes it will meet
+  // the first time a prop's near LOD level is a group.
+  const mesh = (name = 'part'): THREE.Mesh => {
+    const object = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1))
+    object.name = name
+    return object
+  }
+
+  const single = mesh()
+  assert.equal(inkDrawCost(single, false), 1, 'a plain mesh costs one draw')
+
+  // The historical defect: one `applyOutline` call, four shells. Billing per call
+  // priced this at 1.
+  const group = new THREE.Group()
+  group.add(mesh('wall'), mesh('roof'), mesh('door'))
+  assert.equal(inkDrawCost(group, false), 3, 'a group costs one draw per eligible mesh')
+
+  // The LOD rule, which nothing else in the suite reaches: only one level renders, so
+  // the charge is the worst level and not the sum. Sum would say 5.
+  const near = new THREE.Group()
+  near.add(mesh('a'), mesh('b'), mesh('c'), mesh('d'))
+  const lod = new THREE.LOD()
+  lod.addLevel(near, 0)
+  lod.addLevel(mesh('far'), 60)
+  assert.equal(inkDrawCost(lod, false), 4, 'an LOD costs its worst level, not the sum')
+
+  // Order-independence: the same LOD with the cheap level first must still cost 4. A
+  // `worst = cost` bug rather than `Math.max` passes the assertion above and fails this.
+  const reversed = new THREE.LOD()
+  reversed.addLevel(mesh('far'), 60)
+  const nearAgain = new THREE.Group()
+  nearAgain.add(mesh('a'), mesh('b'), mesh('c'), mesh('d'))
+  reversed.addLevel(nearAgain, 0)
+  assert.equal(inkDrawCost(reversed, false), 4, 'the worst level is not the last level')
+
+  // The exclusions, each of which silently drops a draw if it stops working.
+  const skipped = mesh('lantern-glow')
+  skipped.userData.noComicOutline = true
+  assert.equal(inkDrawCost(skipped, false), 0, 'an opted-out mesh costs nothing')
+
+  const ring = mesh('faction-ring')
+  assert.equal(inkDrawCost(ring, false), 0, 'the faction ring is never outlined')
+
+  const instanced = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), undefined, 4)
+  assert.equal(
+    inkDrawCost(instanced, false),
+    0,
+    'an instanced mesh costs nothing unless instanced ink was asked for',
+  )
+  assert.equal(
+    inkDrawCost(instanced, true),
+    1,
+    'an instanced mesh costs one shared shell when instanced ink is asked for',
+  )
+
+  // A shell is not itself inkable, or the count compounds every time ink is toggled.
+  const shell = mesh('shell')
+  shell.userData.comicOutline = true
+  assert.equal(inkDrawCost(shell, false), 0, 'an outline shell does not take an outline')
+
+  // Nesting, since a group of groups is what a composed site actually is.
+  const nested = new THREE.Group()
+  const inner = new THREE.Group()
+  inner.add(mesh('x'), mesh('y'))
+  nested.add(mesh('z'), inner)
+  assert.equal(inkDrawCost(nested, false), 3, 'cost recurses through nested groups')
+
+  single.geometry.dispose()
+  instanced.dispose()
+})
+
+test('the merged hard surface of a prop carries welded outline normals', () => {
+  const parts = buildingParts({
     variation: artVariation('props', 'outline'),
     noiseSeed: 7,
     palette: BUILDING_PALETTE,
@@ -1326,10 +1533,31 @@ test('region streaming returns every borrowed prop reference', () => {
     third <= Math.max(first, second),
     'streaming a lap of the map grew the live prop count',
   )
-  // §10 budget: PROP_CACHE_ENTRIES_MAX.
+  // §10 budget, derived rather than written down: the window is the dominant term and
+  // resident regions hold a small number of keys outside it. Sourcing both from the
+  // library means changing the retention default moves this bound with it, instead of
+  // leaving a literal that quietly stops describing anything. It previously read
+  // `<= 176` citing a `PROP_CACHE_ENTRIES_MAX` that exists in no code — a number
+  // inherited from a constant governing `GameEngine.artGeometry`, a different cache.
   assert.ok(
-    runtime.propCacheSize <= 176,
-    `live prop entries ${String(runtime.propCacheSize)} exceed the 176 budget`,
+    runtime.propCacheSize <= PROP_RETENTION_DEFAULT + PROP_RESIDENT_HEADROOM,
+    `live prop entries ${String(runtime.propCacheSize)} exceed the `
+      + `${String(PROP_RETENTION_DEFAULT + PROP_RESIDENT_HEADROOM)} budget`,
+  )
+  // The half that can actually fail. A count bound on the window would not: `retain`
+  // evicts at its own limit, so `retained.length <= limit` holds by construction even
+  // when the window is pinning the same key in three slots — which is exactly the fault
+  // that once cost it half its coverage, and exactly the fault a count bound waves
+  // through.
+  //
+  // Each slot pins one *distinct* live entry, so the window can never hold more slots
+  // than the cache holds entries. Under the duplicate-pin fault the window reported its
+  // full complement while the cache held roughly half that, which breaches this.
+  assert.ok(
+    runtime.retainedPropCount <= runtime.propCacheSize,
+    `the window claims ${String(runtime.retainedPropCount)} pinned keys but the cache `
+      + `holds only ${String(runtime.propCacheSize)} entries, so it is pinning `
+      + `duplicates and covering less than it advertises`,
   )
   assert.ok(runtime.retainedPropCount <= 128)
 
@@ -1815,6 +2043,67 @@ test('every site in a region gets its own share of the ink budget', () => {
     assert.ok(inked > 0, `${site.id} received no ink while the region had budget left`)
   }
   runtime.dispose()
+})
+
+test('teardown detaches every instanced ink shell before its source is disposed', () => {
+  // Spec 08 invariant 4. An instanced shell shares `instanceMatrix` with its source and
+  // hangs off it as a child, so if teardown does not hand the binding back first, the
+  // shell is caught by the `root.traverse(... dispose())` sweep *as a child of its
+  // source*, while still holding the source's attribute — and three.js frees the
+  // source's buffer.
+  //
+  // A mutation campaign found this unguarded: making `releaseResources` skip its
+  // outline bindings left 13 shells disposed after their sources, still sharing their
+  // matrices, and the whole suite passed. The mechanism is thoroughly tested in
+  // `tests/art.test.ts`, where `disposeShell` lives. What was untested is that this
+  // runtime *calls* it — the invariant was guarded where it is implemented and not
+  // where it is relied on.
+  const { scene, blueprint, runtime } = createRuntime('teardown-ink-shells')
+  const region = blueprint.regions[Math.floor(blueprint.regions.length / 2)]
+  const center = runtime.getRegionCenter(region.id)
+  assert.ok(center)
+  runtime.update({ deltaSeconds: 0, focus: center })
+
+  const pairs: { shell: THREE.InstancedMesh; source: THREE.InstancedMesh }[] = []
+  scene.traverse((object) => {
+    if (!(object instanceof THREE.InstancedMesh)) return
+    if (!StylizedArtLibrary.isOutlineShell(object)) return
+    const source = object.parent
+    if (source instanceof THREE.InstancedMesh) pairs.push({ shell: object, source })
+  })
+
+  // Non-vacuity, in two parts. Zero pairs would pass every assertion below having
+  // observed nothing, and pairs that never shared a buffer would make the interesting
+  // half of the check trivially true.
+  assert.ok(
+    pairs.length > 0,
+    'no instanced ink shells were built, so this test observed nothing',
+  )
+  const sharing = pairs.filter(
+    (pair) => pair.shell.instanceMatrix === pair.source.instanceMatrix,
+  )
+  assert.equal(
+    sharing.length,
+    pairs.length,
+    'a live instanced shell must share its source matrix, or the hazard does not exist',
+  )
+
+  runtime.dispose()
+
+  const attached = pairs.filter((pair) => pair.shell.parent === pair.source)
+  assert.deepEqual(
+    attached.map((pair) => pair.shell.name),
+    [],
+    'these shells were still parented to their source when teardown disposed it',
+  )
+  const stillSharing = pairs.filter(
+    (pair) => pair.shell.instanceMatrix === pair.source.instanceMatrix,
+  )
+  assert.deepEqual(
+    stillSharing.map((pair) => pair.shell.name),
+    [],
+    'these shells were disposed still holding their source buffer, which frees it',
+  )
 })
 
 test('lit windows belong to the near building level, not beside it', () => {

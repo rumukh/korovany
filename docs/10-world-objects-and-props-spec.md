@@ -394,7 +394,7 @@ raises one:
 ```text
 PROP_SURFACES=4                      hard, foliage, cloth, glow
 PROP_RETENTION_KEYS=128              distinct recently released keys, one slot each
-PROP_CACHE_ENTRIES_MAX=176           live entries incl. retention; measured peak 130
+PROP_CACHE_ENTRIES_MAX=176           = PROP_RETENTION_DEFAULT + PROP_RESIDENT_HEADROOM
 BUILDING_LOD_DISTANCE=46             camera units; bridges swap at 1.6x that
 OUTLINE_SITE_DRAWS_MAX=4             of the 8 a region may spend
 DRESSING_KINDS_MAX=6                 instanced dressing meshes per region
@@ -409,6 +409,21 @@ BUILDING_TRIANGLES=750-1800 near, 120-260 far
 needs more, because the catalogue is much larger and the retention window deliberately
 holds geometry past its last reference. **Requested: 176**, justified by a measured
 peak of **130** live entries and asserted in `tests/worldArt.test.ts`.
+
+**Correction, and it invalidates the framing above more than the number.** The two
+constants govern *different caches*. `GEOMETRY_CACHE_ENTRIES_MAX` was written for
+`GameEngine.artGeometry`; the figure asserted here is `WorldPropLibrary`'s own cache. So
+this was never a request to raise a shared ceiling — the two never shared one, and
+`GEOMETRY_CACHE_ENTRIES_MAX` turns out to exist in no code at all, only in the two specs.
+Worse, the assertion enforcing 176 was a **bare literal** citing a
+`PROP_CACHE_ENTRIES_MAX` that likewise existed nowhere, so nothing connected the number
+to the thing that determines it.
+
+The budget is now derived from exported constants — `PROP_RETENTION_DEFAULT` (128) plus
+`PROP_RESIDENT_HEADROOM` (48) — so changing the retention default moves the bound with
+it. Found by the art-foundation session; the class is the same one §13 collects, one
+level up: not a check that cannot fail, but a check whose **threshold** came from
+somewhere unrelated to what it measures.
 
 The peak depends on how the player moves, and the intuition here is backwards, so it is
 worth recording. A 128-key window inside a 176 cap leaves 48 for the live set, which
@@ -603,6 +618,10 @@ depend on the thing it claimed to measure.** They are collected here because the
 cost more time than any bug in the geometry, and because every one of them read as
 diligence right up until someone measured the instrument instead of the code.
 
+Twelve, by the end. The last three arrived *after* this section was written, which is the
+most useful thing about them: knowing the pattern by name does not stop you shipping it.
+Two were in this document's own advice rather than in any test.
+
 | The check | What it could not see |
 | --- | --- |
 | `ART_LIBRARY_MATERIALS === 12` | never acquired a material, so the ceiling was never exercised |
@@ -615,6 +634,12 @@ diligence right up until someone measured the instrument instead of the code.
 | sign-only winding test | a normal can be 125° wrong and still be on the correct side |
 | signed volume alone | it is a **sum**: reversed faces cancel against correct ones, so a *partial* inversion passes. Measured on this pass's own builders — 5% missed on every prop tried, 25% missed on a fort rock |
 | normal agreement after displacement | `computeVertexNormals` derives normals **from** winding, so a reversed prop's normals reverse with it. Measured: misses at every fraction **including 100%** — blind, not weak |
+| the family-wide winding assertion | every prop is merged, so the above applies to all of it: **560 of 560** reversals undetected |
+| its stock-box mutation control | reversed *without* rebaking, proving detection of stale normals — a defect the pipeline cannot produce |
+| `git fetch` in the review checklist | the branch is local-only, so it reports "already up to date" whether you are current or six commits behind |
+| a `retained.length <= retentionLimit` bound | the window evicts at its own limit, so this holds even when every slot pins the same key — the duplicate-pin fault it was written for. Written *while fixing* a finding about vacuous checks, and caught before it shipped only because the habit was fresh |
+| the ink budget system test | every object this world outlines is a single mesh, so `inkDrawCost` is numerically identical to `return 1` and the assertion has **zero power** over the regression it documents. Found by mutation, not by reading |
+| teardown's instanced-shell ordering | spec 08 invariant 4 was tested where `disposeShell` is *implemented* and nowhere it is *relied on*; skipping the release entirely left 13 shells freeing their sources' buffers, suite green |
 | `referenceCount === 0` double-release detector | the dangerous case leaves the count at 1, so the release *succeeds* and steals another holder's reference |
 
 Four rules fall out of them, in rough order of how much they would have saved:
@@ -640,6 +665,28 @@ Four rules fall out of them, in rough order of how much they would have saved:
    scope. **Neither was counting draws, which is the only thing the budget is about.**
    Both were wrong in the same direction for the same reason, and the mistake was
    assuming the production side had the better vantage point.
+5. **A mutation proof only licenses an assertion if the mutation is drawn from the damage
+   model the assertion actually faces.** Rule 2 says validate the instrument before
+   trusting the reading, and that is not enough on its own: a control can be corrupted in
+   a way that is *detectable but impossible*, which passes while proving nothing about the
+   real input. Prefer mutating the real subject over a stand-in — a proof carried per
+   geometry costs a clone and removes the entire question of whether the control resembles
+   the thing it vouches for.
+6. **Reading a suite cannot find these; mutating the source can.** Every entry above was
+   found by argument, one at a time, over six review rounds — and a reviewer then found
+   two more in an afternoon by injecting the defects the suite claims to guard and seeing
+   which survived. **10 mutations, 8 caught, 2 survived**, and both survivors were
+   assertions that read as thorough. A surviving mutation is a demonstration rather than
+   an argument, and it is cheap: the campaign needed no knowledge the authors lacked, only
+   the discipline to check instead of assume.
+
+   The two it caught share a shape worth naming: **a system test can only exercise the
+   cases the system happens to contain.** `inkDrawCost` recursion and its LOD-max rule are
+   inert in this world because every outlined object is one mesh — 794 calls measured,
+   every one costing 1 — so the budget assertion was comparing two numbers that agree for
+   a reason unrelated to the logic. The remedy is a unit test on synthetic inputs, which
+   is the one thing a world-level test cannot substitute for. Both fixes were verified by
+   re-applying the mutation and watching the new test go red.
 
 **Orientation needs three instruments, because each is blind where the others see.**
 This pass reached that conclusion twice, the second time after a sibling session measured
@@ -648,15 +695,63 @@ table by being wrong:
 
 | Instrument | Sees | Blind to |
 | --- | --- | --- |
-| normal agreement | a builder that stored a normal against its winding | anything displaced — `computeVertexNormals` makes the two agree by construction |
-| signed volume | a whole prop turned inside out | partial inversion, because it sums and the faces cancel |
-| centroid winding | one bad face in ninety-two, and *where* it is | faces orthogonal to the centroid ray, and concave props, which have a legitimate non-zero baseline |
+| normal agreement | a builder that stored a normal against its winding | **everything the world builds.** Measured over the whole request space: a fully reversed prop produced zero disagreements in **560 of 560** cases |
+| signed volume | a whole prop turned inside out | partial inversion, because it sums and the faces cancel; and open sheets, which enclose nothing |
+| centroid winding | one bad face in ninety-two, and *where* it is | faces orthogonal to the centroid ray, and sparse structures — a *correct* fort tree already reads 47% inward, so reversal moves it only to 53% |
 
 `tests/worldArt.test.ts` carries all three. The centroid check is used for **sensitivity**
 rather than an absolute zero, because these props are not star-convex — a building's
 porch recesses and window reveals give it a healthy 300 inward faces of 844 — and the
 test asserts that reversing 2% of a prop's faces *raises* that count, which is a fault
 neither of the other two instruments can see at all.
+
+**Then a sibling session measured the first row again and it got worse.** The launderer is
+not `displaceGeometry`, it is `computeVertexNormals` — so the blindness reaches any
+geometry whose normals were re-derived after its winding was set, which includes
+`mergeAll`, `facetGeometry`, `bakeOutlineNormals`, and, decisively, the *builder*
+`extrudeProfile`. A builder that ends by deriving its own normals can never be caught by
+normal agreement, with no downstream transform required. Since `mergePropParts` ends in
+`mergeAll` and `bakeOutlineNormals`, **every** geometry `WorldPropLibrary` returns is
+laundered, and the family-wide winding assertion could not have failed for any prop in
+the game. It is now judged by centroid and volume together: centroid alone catches 550 of
+560 reversals, volume closes the remaining 10 (the sparse fort trees), and the pair misses
+nothing that has an orientation at all.
+
+**The sharper half is the control, not the instrument.** The mutation proof that licensed
+that loop reversed a `THREE.BoxGeometry` *without* recomputing its normals — leaving them
+stale, which is a defect the shipped pipeline cannot produce. So the control demonstrated
+detection of a damage class that does not exist, then vouched for an assertion facing a
+damage class it had never been tested against. Both halves passed; together they proved
+nothing. The fix is to draw the mutation from the pipeline's own damage model and apply it
+to the real geometry: every prop is now reversed *and rebaked* and must read the other way
+round, which makes the proof cover the 560 things the assertion covers instead of one box
+that shares none of their properties.
+
+Four ferns fail that proof and are named in the assertion rather than excused, because a
+sheet has no inside to be on the wrong side of. That list is the `open` list arrived at
+from the other direction: **orientation is undefined exactly where volume is.**
+
+**The centroid threshold is derived, not tuned, and the first version of it was one
+percent from a false failure.** Reversing every face negates each face's alignment with
+the centroid ray while leaving `|alignment|` — and therefore which faces are decisive at
+all — untouched. So reversal maps the inward fraction `f` to exactly `1 - f`; measured
+across the request space the largest departure from that law is **0.0023**, all of it
+faces jittering across the decisiveness cutoff. A half is therefore the *only* threshold
+whose margin is symmetric for every geometry, and any other value trades false-pass
+headroom against false-fail headroom with nothing to justify the rate.
+
+This mattered concretely. The check first shipped at 0.4, chosen because it looked
+comfortably clear of a compact solid's near-zero reading. A correct washing line sits at
+**0.390** — 0.010 from being reported inside out. Nothing was failing, and nothing would
+have failed until someone added a sag segment to a cloth prop, at which point the suite
+would have called a perfectly good prop inverted. At a half the same prop has 0.110, and
+the tightest margin in the family is the fort tree at 0.033.
+
+The test now asserts that margin with a floor of 0.02, so a prop drifting toward the
+undecidable half fails **while its verdict is still right**, rather than crossing later
+and failing with a diagnosis that is actively wrong. A false failure costs more than a
+false pass: it sends someone to look for a bug that is not there, in a file where the
+real bugs have all been in the instruments.
 
 The corollary for anything with a reference count: `release(key)` cannot detect a double
 release because a key has no holder identity, so the fault is invisible at that boundary.
