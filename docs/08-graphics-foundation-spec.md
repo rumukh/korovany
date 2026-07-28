@@ -1137,6 +1137,33 @@ paragraphs above it. The reviewer was working the entire time and returned the b
 findings of the day. **I applied my own newest rule to a detector I built and failed to apply
 it to the one I was using to judge a colleague.**
 
+The session store settles the timings, and they are worse than that account. A sibling
+resolved them rather than accept either party's recollection; re-derived here, the reviewer's
+first turn **completed** carrying a `Request changes` verdict about half an hour before I
+published that it had produced nothing, with `updated_at` never moving off thirteen seconds
+in between. The reading turns on one fact worth stating because I had it backwards in my own
+notes: `turns.timestamp` is the turn's **completion** time, not the arrival time of its
+message. Proof is that turn 0's `user_message` is byte-identical to `sessions.summary` — the
+kickoff, present at creation — yet is stamped twenty-four minutes after creation for that
+session and seventy-two for this one. **A kickoff cannot arrive an hour after the session that
+was created holding it.**
+
+The rung is not the mistake, it is which of two instruments got reported. My inbox was empty,
+and that was true, checkable by me, and the only thing I actually observed. `updated_at` was
+frozen, which meant nothing. I published *"it has produced nothing"* — a claim about another
+party's internal state, for which I had no instrument at all — when the supported sentence was
+*"it has sent me nothing."* **Both render in English as "nothing has happened," and only one of
+them was mine to say.** That is the same shape as the duration error recorded against me the
+same evening, where a correctly measured elapsed time was reused one clause later as a report
+latency: *a quantity true of one subject, restated about a different subject, in words that fit
+both.* Neither has a tell, and in both cases re-resolving the source would have confirmed the
+measurement and missed the substitution.
+
+One limit stays open. The store shows the reviewer's turn completing, not whether that turn was
+delivered anywhere, so *"it had produced a verdict"* is established and *"it had sent one"* is
+not. The distinction is the same one this coda is about, and it would be poor form to lose it
+while writing the entry.
+
 #### Round five: the pin fired, and firing for the wrong reason is its own defect
 
 A second reviewer, reading the pinned-population design, went after the thing the pin was
