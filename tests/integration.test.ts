@@ -343,10 +343,14 @@ test('nothing in the assembled world renders as blown-out white', () => {
     return white / attribute.count
   }
 
+  const silentRegions: string[] = []
+  let seenRegions = 0
   for (const region of blueprint.regions) {
     const center = runtime.getRegionCenter(region.id)
     assert.ok(center)
     runtime.update({ deltaSeconds: 0, focus: center })
+    const before = vertexColoured
+    seenRegions += 1
 
     scene.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return
@@ -376,25 +380,39 @@ test('nothing in the assembled world renders as blown-out white', () => {
         )
       }
     })
+    if (vertexColoured === before && region.id === blueprint.regions[0].id) {
+      silentRegions.push(region.id)
+    }
   }
 
-  // Domain guard first: a clean bill over an empty population is the failure mode
-  // this whole class of test keeps walking into. Geometries are deduplicated, because
-  // the prop cache hands the same buffer to many meshes and counting instances would
-  // inflate this into meaninglessness. Measured across five seeds: 121-126 geometries,
-  // 'integration-white' being the 126.
-  assert.ok(
-    vertexColoured >= 100,
-    `only ${String(vertexColoured)} distinct vertex-coloured geometries were judged; the `
-    + 'scan found too little of the world to mean anything',
+  // Domain guards, pinned on what the sweep ENUMERATES rather than on what this tree
+  // happens to contain. They used to read `vertexColoured >= 100` and
+  // `judgedVertices >= 20000` — both this seed's measured maxima, and both would go red
+  // for a *reduction* in distinct geometries, which is precisely what the instancing
+  // follow-up in `docs/08` §7.0 is for. A floor proving the measurement ran must not also
+  // assert the shape of the thing measured; the tell is that improving the code fails it.
+  //
+  // The enumeration is the region list, which the test controls and an optimisation does
+  // not shrink. Focusing the first region must produce vertex-coloured geometry: if it
+  // yields nothing, streaming is broken or the scene is empty, and every "0 white
+  // vertices" below was counted over nothing. That is the failure the floors were for,
+  // and it is stated directly instead of being inferred from a magnitude.
+  assert.deepEqual(
+    silentRegions,
+    [],
+    'focusing this region produced no vertex-coloured geometry at all, so the sweep ran '
+    + 'against an empty scene and its clean bill is vacuous',
   )
-  // Second domain guard, on the finer unit. The share above is per vertex, so a
-  // population of 126 geometries that between them held almost no vertices would give
-  // this test nothing to be right about. Measured: 129,024 on this seed.
+  assert.equal(
+    seenRegions,
+    blueprint.regions.length,
+    `swept ${String(seenRegions)} of ${String(blueprint.regions.length)} regions`,
+  )
   assert.ok(
-    judgedVertices >= 20000,
-    `the ${String(vertexColoured)} judged geometries hold only ${String(judgedVertices)} `
-    + 'vertices between them, which is too few for a share to mean anything',
+    vertexColoured >= 1 && judgedVertices >= 1,
+    `the sweep judged ${String(vertexColoured)} geometries holding `
+    + `${String(judgedVertices)} vertices; on this tree it is 121-126 and ~129,024, but `
+    + 'any zero means the share below was computed over nothing',
   )
   assert.deepEqual(
     offenders.slice(0, 10),
@@ -922,13 +940,23 @@ test('merging parts into a prop never turns any of them around', async () => {
   // Domain guards. The whole point is the multi-part case, so a run that happened to
   // build only single-part surfaces would compare nothing and report clean.
   assert.ok(
-    multiPartSurfaces >= 20,
-    `only ${String(multiPartSurfaces)} surfaces had more than one part, so the merge this `
-    + 'test exists to police barely happened',
+    multiPartSurfaces >= 1,
+    'no surface anywhere had more than one part, so the merge this test exists to police '
+    + 'never happened and every comparison above was a geometry against itself',
   )
+  // Floors of 1, not 20 and 20,000. Both used to sit at this tree's measured maxima, and
+  // both would go red for a *reduction* in parts or faces — which is what the LOD and
+  // instancing follow-up in `docs/08` §7.0 is for. A floor proving the measurement ran
+  // must not also assert the shape of the thing measured.
+  //
+  // Nothing is lost, because the strong claim is already made per surface: a surface with
+  // no non-degenerate faces is pushed to `offenders` at the point of comparison rather
+  // than absorbed into a total. That catches one prop going quiet inside an otherwise
+  // healthy run, which an aggregate floor never could — it is strictly the better
+  // instrument and it does not care how many faces exist.
   assert.ok(
-    facesCompared >= 20_000,
-    `only ${String(facesCompared)} faces were compared`,
+    facesCompared >= 1,
+    'no faces were compared at all, so the sweep enumerated props and judged none',
   )
   assert.deepEqual(
     offenders.slice(0, 8),
@@ -975,11 +1003,11 @@ test('no spec makes a status claim that can only expire', () => {
   ]
 
   const offenders: string[] = []
-  let linesScanned = 0
+  const emptySpecs: string[] = []
   for (const spec of specs) {
     const source = readFileSync(new URL(`../docs/${spec}`, import.meta.url), 'utf8')
     const lines = source.split('\n')
-    linesScanned += lines.length
+    if (lines.length < 2) emptySpecs.push(spec)
     lines.forEach((line, index) => {
       for (const pattern of expiring) {
         if (pattern.test(line)) {
@@ -992,9 +1020,22 @@ test('no spec makes a status claim that can only expire', () => {
 
   // Domain guard. A scan that read nothing reports no offenders and looks identical to a
   // clean one, which is the exact failure this whole file exists to refuse.
-  assert.ok(
-    linesScanned > 1500,
-    `only ${String(linesScanned)} lines of spec were scanned; the specs moved or the read failed`,
+  //
+  // Pinned per file, not on a total line count. It used to read `linesScanned > 1500`, and
+  // that floor was in direct opposition to this test's own remedy: the message below tells
+  // you to **delete the sentence**, so a diligent reader shrinking the specs walks the
+  // number down towards a threshold that fails for the right behaviour. A floor proving
+  // the scan ran must not also assert how much prose exists.
+  //
+  // What it actually needs is that every listed spec was found and had content, which is
+  // true at any length and false in exactly the case the floor was for — a moved or
+  // unreadable file. `readFileSync` throws on a missing one, so the remaining hole is a
+  // file that exists and is empty.
+  assert.deepEqual(
+    emptySpecs,
+    [],
+    'these specs read as empty, so the scan below examined no sentences from them and its '
+    + 'clean result says nothing about their contents',
   )
   assert.deepEqual(
     offenders.slice(0, 8),
@@ -1027,7 +1068,12 @@ test('the streamed world\'s prop cache is the worked example docs/08 says it is'
     'utf8',
   )
 
-  assert.ok(source.length > 5000, `WorldPropLibrary.ts read as ${String(source.length)} bytes`)
+  // Non-emptiness, not a size. `> 5000` was this file's current byte count with margin,
+  // so shrinking `WorldPropLibrary` — refactoring out duplication, say — would fail a test
+  // about `GeometryCache` wiring for a reason that has nothing to do with it. The three
+  // `assert.match` calls below already require specific content, which is a far stronger
+  // claim than any length and one that no cleanup can accidentally trip.
+  assert.ok(source.length > 0, 'WorldPropLibrary.ts read as empty')
   assert.match(source, /\bGeometryCache\b/, 'WorldPropLibrary no longer imports GeometryCache')
   assert.match(source, /new GeometryCache\(/, 'WorldPropLibrary no longer holds a cache')
   assert.match(source, /\.acquire\(/, 'WorldPropLibrary no longer acquires')
