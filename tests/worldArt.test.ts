@@ -2631,7 +2631,46 @@ test('teardown detaches every instanced ink shell before its source is disposed'
     'a live instanced shell must share its source matrix, or the hazard does not exist',
   )
 
-  runtime.dispose()
+  // Record the dispose *sequence*, not just the end state. "Detached with its matrix
+  // restored" is checked after `dispose()` returns, by which time `disposeShell` has done
+  // its job whenever it ran — so a teardown that releases the outlines *after* the
+  // `root.traverse(... InstancedMesh.dispose())` sweep passes every post-hoc check while
+  // firing dispose against the source's attribute 13 times out of 13. A reviewer moved
+  // the release loop below the sweep, changed nothing else, and 283 tests stayed green.
+  //
+  // Order is invisible to a state check. It needs an observation made during teardown.
+  const disposeOrder: THREE.InstancedMesh[] = []
+  const realDispose = THREE.InstancedMesh.prototype.dispose
+  THREE.InstancedMesh.prototype.dispose = function patchedDispose(
+    this: THREE.InstancedMesh,
+  ) {
+    disposeOrder.push(this)
+    return realDispose.call(this)
+  }
+  try {
+    runtime.dispose()
+  } finally {
+    THREE.InstancedMesh.prototype.dispose = realDispose
+  }
+
+  const disposedLate = pairs.filter((pair) => {
+    const shellAt = disposeOrder.indexOf(pair.shell)
+    const sourceAt = disposeOrder.indexOf(pair.source)
+    return shellAt >= 0 && sourceAt >= 0 && shellAt > sourceAt
+  })
+  assert.deepEqual(
+    disposedLate.map((pair) => pair.shell.name),
+    [],
+    'these shells were disposed after their source, so dispose fired against a buffer '
+      + 'the shell was still borrowing',
+  )
+  // Non-vacuity: the patch must actually have observed the teardown. An empty sequence
+  // makes every index -1 and the comparison above trivially true.
+  assert.ok(
+    disposeOrder.length >= pairs.length,
+    `the dispose patch observed only ${String(disposeOrder.length)} calls for `
+      + `${String(pairs.length)} shell/source pairs`,
+  )
 
   const attached = pairs.filter((pair) => pair.shell.parent === pair.source)
   assert.deepEqual(

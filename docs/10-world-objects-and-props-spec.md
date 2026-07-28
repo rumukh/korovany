@@ -688,6 +688,25 @@ Four rules fall out of them, in rough order of how much they would have saved:
    is the one thing a world-level test cannot substitute for. Both fixes were verified by
    re-applying the mutation and watching the new test go red.
 
+   **A campaign needs an applied-check gate, or it manufactures false findings as
+   confidently as a vacuous assertion manufactures false confidence.** Contributed by the
+   reviewer after a CRLF/LF mismatch made one of its own mutations fail to match: the
+   removal silently no-op'd, only the insertion applied, and the run reported SURVIVED
+   with no harm — which reads exactly like a real gap in the tests. **A mutation that
+   fails to apply is indistinguishable from one the suite ignored.** Verify the edit
+   landed before trusting the verdict, and verify it against the *right* site: repeating
+   the exercise here, the first gate matched the wrong `releaseOutline` of two and
+   reported success on a file that had not been mutated where it mattered.
+
+   The ordering variant is the sharpest of the set. `releaseResources` promises in a
+   comment to detach ink shells *before* the `InstancedMesh` sweep; moving the release
+   loop below the sweep left every post-hoc assertion true — shells still ended detached
+   with their own matrices — while firing `dispose` against the source's attribute 13
+   times of 13. **Order is invisible to a state check made after the fact**, and closing
+   it needs an observation taken *during* teardown: patch `InstancedMesh.prototype.dispose`
+   for the duration, record the sequence, and assert each shell's index precedes its
+   source's.
+
 **Orientation needs three instruments, because each is blind where the others see.**
 This pass reached that conclusion twice, the second time after a sibling session measured
 that the first two were insufficient — an entry above that was itself written into this
