@@ -190,9 +190,19 @@ export function loftProfile(options: LoftOptions): THREE.BufferGeometry {
         // normal on an anisotropic section: measured 41deg of error at `depthScale
         // 0.5` and 60deg at 0.25, which is precisely the `stylizedCapsule` option
         // documented for limbs that should not be cylinders.
-        const radialX = Math.abs(scaleX) < 1e-6 ? source.x : source.x / scaleX
-        const radialZ = Math.abs(scaleZ) < 1e-6 ? source.y : source.y / scaleZ
+        // If either scale collapses the section there is no tangent plane to be
+        // normal to, and the inverse is undefined. Fall back to the profile
+        // direction WHOLE rather than inverting one axis and not the other: a
+        // per-axis guard mixes profile space with normal space and invents a
+        // direction that is neither. Smooth collapsed-section cases are live in
+        // the suite, so this edge is reachable.
+        const degenerate = Math.abs(scaleX) < 1e-6 || Math.abs(scaleZ) < 1e-6
+        const radialX = degenerate ? source.x : source.x / scaleX
+        const radialZ = degenerate ? source.y : source.y / scaleZ
         const rotation = section.rotation ?? 0
+        // The same inline form as the position loop above, deliberately: rotation
+        // there is `x cos - z sin, x sin + z cos`, and `applyAxisAngle(UP, +r)`
+        // turns the other way, which is a silent 2r error on every rotated section.
         const cosine = Math.cos(rotation)
         const sine = Math.sin(rotation)
         radialNormal.set(

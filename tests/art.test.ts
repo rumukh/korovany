@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
 import * as THREE from 'three'
+import type { LoftSection } from '../src/game/art/index.ts'
 import {
   GeometryCache,
   OUTLINE_NORMAL_ATTRIBUTE,
@@ -1557,10 +1558,31 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
  * so the first sibling to build a limb would have been the one to find this.
  */
 test('a smooth loft normal is exact on an anisotropic section, not merely plausible', () => {
-  for (const scaleZ of [1, 0.9, 0.75, 0.5, 0.25]) {
+  // `scaleX`/`scaleZ` are supplied as written, NOT normalised here, because the second
+  // case deliberately omits `scaleZ` — the builder must default it to `scaleX` exactly
+  // as the position loop does. A test that always names both scales passes under
+  // `scaleZ ?? 1` as happily as under `scaleZ ?? scaleX`; that omission is the whole
+  // point of the isotropic case and it is worth 23.7 deg on a `{ scaleX: 0.4 }` section.
+  const cases: [label: string, section: Omit<LoftSection, 'y'>][] = [
+    ['isotropic', { scaleX: 1, scaleZ: 1 }],
+    ['anisotropic 0.5', { scaleX: 1, scaleZ: 0.5 }],
+    ['anisotropic 0.25', { scaleX: 1, scaleZ: 0.25 }],
+    // Pins `scaleZ ?? scaleX`. The shape is a circle of radius 0.4, so the exact normal
+    // is purely radial and any other default reads as anisotropy that is not there.
+    ['scaleX only', { scaleX: 0.4 }],
+    // Pins the rotation convention. `applyAxisAngle(UP, +rotation)` turns opposite to
+    // the position loop's `x cos - z sin`, a silent 2r error: 30/60/90 deg at 15/30/45.
+    ['rotated 30deg', { scaleX: 1, scaleZ: 0.5, rotation: Math.PI / 6 }],
+    ['rotated -50deg + squash', { scaleX: 0.8, scaleZ: 0.3, rotation: -0.873 }],
+  ]
+
+  for (const [label, section] of cases) {
+    const scaleX = section.scaleX ?? 1
+    const scaleZ = section.scaleZ ?? scaleX
+    const rotation = section.rotation ?? 0
     const wall = loftProfile({
       profile: polygonProfile(1, 64),
-      sections: [{ y: 0, scaleX: 1, scaleZ }, { y: 1, scaleX: 1, scaleZ }],
+      sections: [{ ...section, y: 0 }, { ...section, y: 1 }],
       smooth: true,
       capBottom: false,
       capTop: false,
@@ -1570,29 +1592,68 @@ test('a smooth loft normal is exact on an anisotropic section, not merely plausi
     // Caps are excluded above rather than filtered here: their normals are
     // legitimately vertical, so leaving them in contributes a constant 90 deg and
     // swamps the term under test. An earlier revision of this probe measured a flat
-    // 44.286 deg at every scale and read it as the builder's error.
+    // 44.286 deg at every scale and read it as the builder's error — a reading that
+    // does not move with the condition under test is measuring something else.
     let worst = 0
     let judged = 0
     for (let i = 0; i < position.count; i += 1) {
       const x = position.getX(i)
       const z = position.getZ(i)
       if (Math.hypot(x, z) < 1e-9) continue
-      // The wall is x^2 + z^2/scaleZ^2 = 1, whose exact normal is (x, 0, z/scaleZ^2).
-      const exact = new THREE.Vector3(x, 0, z / (scaleZ * scaleZ)).normalize()
+      // Undo the section's rotation, take the exact ellipse normal
+      // `(x / scaleX^2, z / scaleZ^2)` in that frame, then rotate it forward again.
+      const localX = x * Math.cos(-rotation) - z * Math.sin(-rotation)
+      const localZ = x * Math.sin(-rotation) + z * Math.cos(-rotation)
+      const nx = localX / (scaleX * scaleX)
+      const nz = localZ / (scaleZ * scaleZ)
+      const exact = new THREE.Vector3(
+        nx * Math.cos(rotation) - nz * Math.sin(rotation),
+        0,
+        nx * Math.sin(rotation) + nz * Math.cos(rotation),
+      ).normalize()
       const stored = new THREE.Vector3().fromBufferAttribute(normal, i)
       if (stored.lengthSq() < 1e-12) continue
       judged += 1
+      // The claim is scoped to the HORIZONTAL component: this repair makes the
+      // in-plane direction exact under scale and section rotation. Y is still the
+      // face's own approximation, so comparing full vectors would fold an untouched
+      // term into a verdict about this one. The wall is vertical, so Y is 0 anyway;
+      // zeroing it keeps that true if a later case tapers.
+      stored.setY(0)
+      if (stored.lengthSq() < 1e-12) continue
       const dot = Math.min(1, Math.max(-1, stored.normalize().dot(exact)))
       worst = Math.max(worst, (Math.acos(dot) * 180) / Math.PI)
     }
-    assert.ok(judged > 0, `scaleZ ${scaleZ} judged no wall vertex at all`)
+    assert.ok(judged > 0, `${label} judged no wall vertex at all`)
     assert.ok(
       worst < 0.01,
-      `scaleZ ${scaleZ}: smooth normals sit ${worst.toFixed(3)} deg off the exact `
-        + 'ellipse normal — normalFor is using the profile direction rather than the '
-        + 'inverse transpose, so every anisotropic section is mis-shaded',
+      `${label}: smooth normals sit ${worst.toFixed(4)} deg off the exact ellipse `
+        + 'normal — normalFor is not applying the inverse transpose `R . S^-1`, so '
+        + 'anisotropic or rotated sections are mis-shaded',
     )
     wall.dispose()
+  }
+
+  // A collapsed section has no tangent plane and no invertible scale. The requirement
+  // is finiteness, not accuracy: dividing by zero here would write NaN into the normal
+  // buffer, which renders as black and survives every angular assertion above because
+  // NaN fails every comparison rather than failing one.
+  for (const collapsed of [{ scaleX: 0, scaleZ: 1 }, { scaleX: 1, scaleZ: 0 }, { scaleX: 0 }]) {
+    const spike = loftProfile({
+      profile: polygonProfile(1, 8),
+      sections: [{ ...collapsed, y: 0 }, { scaleX: 1, y: 1 }],
+      smooth: true,
+    })
+    const normal = spike.getAttribute('normal')
+    for (let i = 0; i < normal.count; i += 1) {
+      const length = Math.hypot(normal.getX(i), normal.getY(i), normal.getZ(i))
+      assert.ok(
+        Number.isFinite(length) && Math.abs(length - 1) < 1e-3,
+        `collapsed section ${JSON.stringify(collapsed)} wrote a normal of length `
+          + `${String(length)} — the inverse scale was taken without guarding zero`,
+      )
+    }
+    spike.dispose()
   }
 })
 
