@@ -47,6 +47,8 @@ import {
   buildWristRope,
   characterPartKeys,
   characterRoles,
+  chestGaitYaw,
+  decayStrideOnStagger,
   hasOutlineNormals,
   resolveCharacterPlan,
   setCharacterShoulderWidth,
@@ -1626,10 +1628,26 @@ test('the head tracks its target through the chest, not past it', () => {
   // a bracket, because a probe that moves two things cannot attribute what it sees.
   // One constraint relaxed at a time, coefficient = degrees / 0.0099:
   //
-  //   fully joint                                             4.9199
-  //   head roll freed to +/-0.30                              4.9199   <- exactly zero
+  //   fully joint                                             4.8203
+  //   head roll freed to +/-0.30                              4.8203   <- exactly zero
   //   chest PITCH pinned at the axis maximum 0.70             5.7018
   //   chest ROLL  pinned at the axis maximum 0.30             6.0420   <- dominant
+  //
+  // **That baseline read 4.9199 for one commit, and it was itself partially joint** —
+  // the fourth instance of this defect, inside the commit documenting the third. A
+  // reviewer found it and named the free axis: `idleWeightShift` is
+  // `sin(...) * 0.035 * (1 - actor.motionBlend)`, so at the maximum's `motionBlend`
+  // of 1.18 the engine permits `|shift| <= 0.0063` and the harness permitted 0.035 —
+  // **5.6x over, on an axis that feeds `torsoPivot.rotation.z` directly**. You can read
+  // it off the corner: coupled, the worst sits at chest roll 0.083 (= 0.5*0.16 +
+  // 0.0063*0.55); decoupled, at 0.099 (= 0.5*0.16 + 0.035*0.55).
+  //
+  // So the baseline was inflated by 2.1% **on precisely the axis the design set out to
+  // isolate**, which means the two factors were not independent: part of the chest-roll
+  // effect was already inside the baseline. The ordering survives — head roll is zero
+  // for a structural reason, chest roll is the largest single term either way — but
+  // every delta moved, and 4.8203 now agrees with the 4.81 quoted twenty lines above
+  // instead of contradicting it inside the rule that says to reconcile or name both.
   //
   // **Head roll contributes exactly zero**, and not merely at the measured maximum:
   // `head-pivot`'s Euler is XYZ, so its matrix is `Rx·Ry·Rz` and `Rz(roll)·zHat = zHat`,
@@ -2535,10 +2553,6 @@ test('the engine wires the rig the way these tests measure it', () => {
   const DEFAULT_CADENCE = '6.8'
   const DEFAULT_SPEED = 3.7
   const HEAVY = ['brute', 'champion']
-  const chestYawExpression = actorPosture.slice(
-    actorPosture.indexOf('torsoPivot.rotation.y ='),
-    actorPosture.indexOf('torsoPivot.rotation.z ='),
-  )
   for (const gait of GAITS) {
     const value = String(gait.cadence)
     const paired = value === DEFAULT_CADENCE
@@ -2575,32 +2589,24 @@ test('the engine wires the rig the way these tests measure it', () => {
       + 'and the simulation multiplies the two, so a swap models the wrong physics '
       + 'while every individual number is still present.',
     )
-    // Read out of production, not restated here. This assertion previously compared
-    // `GAITS` against a hard-coded `0.08 : 0.12` written three lines up — two test-side
-    // constants agreeing with each other, which is true no matter what the engine does.
-    // A reviewer changed production's 0.12 to 0.13 and the whole file stayed 22/0.
+    // Read out of production by *calling* it, not by parsing it. This assertion has now
+    // been wrong twice in two different ways. First it compared `GAITS` against a
+    // hard-coded `0.08 : 0.12` written three lines up — two test-side constants agreeing
+    // with each other, blind to the engine. Then it parsed the coefficients out of the
+    // chest-yaw expression, which reads production but pins its *spelling*: a reviewer
+    // hoisted the term out of the matched window and the pin never saw it.
     //
-    // **That is the same defect as a test carrying its own copy of the correction it is
-    // meant to be checking**, which this file already caught once for the shoulder-width
-    // counter-scale — and I reintroduced it in the commit that fixed the cadence pins.
-    // The class is not "hard-coded numbers"; it is *comparing two things you control*.
-    // The cadence and speed pins above escape it only because they read `source`.
-    const coefficients =
-      /-actor\.stride \* \(heavy \? ([\d.]+) : ([\d.]+)\)/.exec(chestYawExpression)
-    assert.ok(
-      coefficients,
-      'the chest yaw no longer multiplies `actor.stride` by a `heavy ? x : y` pair, so '
-      + 'the coefficients GAITS simulates cannot be read out of the engine at all. '
-      + 'Whatever replaced it needs pinning here, or the wobble test is modelling a '
-      + 'gait the engine does not have.',
-    )
+    // `chestGaitYaw` exists so this can be a call. **A test that drives production
+    // cannot be evaded by rewriting production**, which is the entire difference between
+    // this and the six source regexes it replaces — and it is the same move that
+    // `setCharacterShoulderWidth` made for the anisotropy test, for the same reason.
     assert.equal(
-      gait.chestYawCoefficient,
-      Number(HEAVY.includes(gait.role) ? coefficients[1] : coefficients[2]),
+      chestGaitYaw(1, HEAVY.includes(gait.role)),
+      -gait.chestYawCoefficient,
       `GAITS gives the ${gait.role} a chest yaw coefficient of `
-      + `${String(gait.chestYawCoefficient)}; the engine gives it `
-      + `${HEAVY.includes(gait.role) ? coefficients[1] : coefficients[2]}. The wobble `
-      + 'simulation multiplies this by the stride, so the two must not drift.',
+      + `${String(gait.chestYawCoefficient)}; the engine turns a unit stride into `
+      + `${String(chestGaitYaw(1, HEAVY.includes(gait.role)))}. The wobble simulation `
+      + 'multiplies this by the stride, so the two must not drift.',
     )
   }
   assert.ok(
@@ -2615,51 +2621,69 @@ test('the engine wires the rig the way these tests measure it', () => {
   // version of that comment asserted the opposite of both — that `pose.stride` being
   // zeroed under stagger leaves a staggering chest with no gait yaw. It does not:
   // `pose.stride` only ever reaches the limbs, and `actor.stride` is damped rather than
-  // cleared. Pinned here so the next claim of that shape fails instead of shipping.
+  // cleared.
   //
-  // **Each pin is in two halves, and the second half is the one that was missing.** A
-  // positive source regex proves a line exists; it cannot prove the line still governs
-  // the value. A reviewer produced two mutations that create exactly the world these
-  // comments call impossible and left the file green:
+  // ## These were six source regexes, and three review passes walked past them
   //
-  //   keep the damp, add `actor.stride = 0` on the next line     22 pass, 0 fail
-  //   gate the chest's stride term on `pose.stagger > 0`         22 pass, 0 fail
+  // Each pass produced a new evasion and each fix bought exactly one more instance:
   //
-  // Both are *additions*, so anchoring does not help — the pinned line is still there,
-  // exactly as written, and has simply stopped mattering. **A pin that only looks for
-  // what should be present is blind to anything added after it**, which is the same
-  // shape as the `headPivot.rotation.x = headPitch` prefix hole and the third instance
-  // of it in this file. The negative assertions below are what close it.
-  assert.ok(
-    /torsoPivot\.rotation\.y =\s*\r?\n?\s*-actor\.stride \*/.test(actorPosture),
-    'the chest\'s yaw no longer reads `actor.stride`. If it now reads `pose.stride`, a '
-    + 'stagger really would zero it, and the gaze test\'s reachability comment — which '
-    + 'says the opposite — becomes wrong in the other direction.',
-  )
-  assert.ok(
-    chestYawExpression.length > 40 && !/stagger/.test(chestYawExpression),
-    'the chest\'s yaw expression now mentions `stagger`, so the gait term it reads may '
-    + 'be gated off during one. That is the behaviour the gaze test\'s reachability '
-    + 'model says is impossible, and the positive pin above cannot see it because the '
-    + '`-actor.stride *` it looks for is still there, merely multiplied by zero.',
-  )
-  const staggerBranch = source.slice(
-    source.indexOf("if (actor.reaction === 'stagger' || knockbackSpeed"),
-    source.indexOf("if (actor.reaction === 'stagger' || knockbackSpeed") + 400,
-  )
-  assert.ok(
-    /actor\.stride = THREE\.MathUtils\.damp\(actor\.stride, 0, 13, delta\)/.test(staggerBranch),
-    'a stagger no longer damps `actor.stride` at 13 — if it now clears it, the first '
-    + 'frame of a stagger stops carrying ~81% of its gait yaw and the gaze test\'s '
-    + 'reachability comment needs re-deriving, not editing.',
-  )
+  //   matching a prefix                  `= headPitch * 0.5`            22/0
+  //   adding a statement after the pin   `actor.stride = 0` on the next line   22/0
+  //   compound assignment                `actor.stride *= 0`            22/0
+  //   hoisting the term out of the slice  `const gaitGate = ...`        22/0
+  //   writing it somewhere else entirely  the stagger's own branch      22/0
+  //
+  // The third reviewer drew the conclusion the first two had earned: **a source regex
+  // cannot pin a behavioural invariant — it can only pin the current spelling of one**,
+  // so the class of evasions is unbounded. Anchoring closed modification, negative
+  // assertions closed addition, and neither touches scope or spelling.
+  //
+  // So the arithmetic moved into `chestGaitYaw` and `decayStrideOnStagger`, and these
+  // are now *calls* rather than patterns. **A test that drives production cannot be
+  // evaded by rewriting production** — mutating the damp rate from 13 to 30 fails here
+  // where no regex saw it, and that pin is permanent.
+  //
+  // **It does not close the class, and claiming otherwise was the first draft of this
+  // comment.** Two of the three evasions above survive the extraction, measured:
+  //
+  //   `actor.stride *= 0` after the call                    22 pass, 0 fail
+  //   gate hoisted above the block, `* gaitGate` in the yaw  22 pass, 0 fail
+  //
+  // Both leave the extracted functions untouched and change what happens *around* the
+  // call. The extraction pins what the arithmetic computes; it cannot pin that the
+  // result is what reaches the pivot. **Splitting a fact out of production converts a
+  // spelling problem into a wiring problem — it does not remove one.**
+  //
+  // What would close the remainder is a test that constructs an actor and runs a frame,
+  // and `GameEngine` is not constructible in Node, which is why this file pins source at
+  // all. So the honest position is: the arithmetic is now permanently guarded, the
+  // wiring is guarded by one regex that a determined edit can still walk around, and
+  // that gap is a property of the test architecture rather than of this assertion.
+  // Recorded rather than papered over, because the previous three rounds each ended
+  // with a claim that the latest patch had settled it.
   assert.equal(
-    (staggerBranch.match(/actor\.stride\s*=/g) ?? []).length,
-    1,
-    'the stagger branch assigns `actor.stride` more than once. The damp above is still '
-    + 'present — that is why the pin beside this one passes — but something after it '
-    + 'writes the value again, and if that write is a clear then the ~81% retention the '
-    + 'gaze test\'s reachability model depends on is gone.',
+    decayStrideOnStagger(1, 1 / 60).toFixed(4),
+    Math.exp(-13 / 60).toFixed(4),
+    'a stagger no longer damps the stride at 13. If it clears it instead, the first '
+    + 'frame of a stagger stops carrying ~81% of its gait yaw, and the gaze test\'s '
+    + 'reachability model — which pairs a staggering chest\'s residual gait yaw with the '
+    + 'head pitch that same frame produces — needs re-deriving rather than editing.',
+  )
+  assert.ok(
+    decayStrideOnStagger(1, 1 / 60) > 0.8,
+    `one frame of a stagger leaves ${decayStrideOnStagger(1, 1 / 60).toFixed(4)} of the `
+    + 'stride, not the ~0.806 the reachability model is built on. Anything that makes '
+    + 'this small enough to ignore makes that model wrong in the other direction.',
+  )
+  // The one fact that genuinely is about wiring rather than arithmetic, so it stays a
+  // source pin: *which* stride the chest reads. `chestGaitYaw` cannot check this — it
+  // takes whatever it is handed.
+  assert.ok(
+    /chestGaitYaw\(actor\.stride, heavy\)/.test(actorPosture),
+    'the chest\'s yaw no longer reads `actor.stride`. If it now reads `pose.stride`, a '
+    + 'stagger really would zero it — `pose.stride` is set to 0 on a stagger and only '
+    + 'ever reaches limbs — and the gaze test\'s reachability comment, which says the '
+    + 'opposite, becomes wrong in the other direction.',
   )
 })
 

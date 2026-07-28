@@ -23,6 +23,8 @@ import {
   buildBirdWing,
   buildCharacterSkeleton,
   buildCloak,
+  chestGaitYaw,
+  decayStrideOnStagger,
   buildDeerBody,
   buildDeerCrown,
   buildDeerLeg,
@@ -3994,7 +3996,7 @@ export class GameEngine {
       if (actor.action) {
         this.updateActorAction(actor, delta)
         actor.velocity.set(0, 0, 0)
-        actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+        actor.stride = decayStrideOnStagger(actor.stride, delta)
         actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
         this.animateActorCharacter(actor, delta, 0)
         this.updateChampionAura(actor)
@@ -4002,14 +4004,14 @@ export class GameEngine {
       }
       if (actor.reaction === 'stagger' || knockbackSpeed > KNOCKBACK_STEER_THRESHOLD) {
         actor.velocity.set(0, 0, 0)
-        actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+        actor.stride = decayStrideOnStagger(actor.stride, delta)
         actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
         this.animateActorCharacter(actor, delta, 0)
         this.updateChampionAura(actor)
         continue
       }
       if (actor.aiMode === 'captive') {
-        actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+        actor.stride = decayStrideOnStagger(actor.stride, delta)
         actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
         this.animateActorCharacter(actor, delta, 0)
         continue
@@ -4382,7 +4384,7 @@ export class GameEngine {
 
       if (actor.action) {
         actor.velocity.set(0, 0, 0)
-        actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+        actor.stride = decayStrideOnStagger(actor.stride, delta)
         actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
         this.animateActorCharacter(actor, delta, 0)
         this.updateChampionAura(actor)
@@ -4767,7 +4769,7 @@ export class GameEngine {
     if (actor.chargeWindup > 0) {
       actor.chargeWindup = Math.max(0, actor.chargeWindup - delta)
       actor.velocity.set(0, 0, 0)
-      actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+      actor.stride = decayStrideOnStagger(actor.stride, delta)
       actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
       this.animateActorCharacter(actor, delta, 0)
       if (actor.chargeWindup <= 0) actor.chargeTimer = BOAR_CHARGE_DURATION
@@ -14180,7 +14182,7 @@ export class GameEngine {
         // lean that nothing ever reads.
         (rig?.lean ?? 0)
       torsoPivot.rotation.y =
-        -actor.stride * (heavy ? 0.08 : 0.12) +
+        chestGaitYaw(actor.stride, heavy) +
         pose.attack * 0.16 -
         pose.flinch * hitRight * 0.22
       torsoPivot.rotation.z =

@@ -963,6 +963,41 @@ export function solveHeadYaw(
  * A beast has no neck: `createBeast` still roots its head at the animal, so its skull
  * never wore the width. Pass `null` and nothing is divided out.
  */
+/**
+ * How much of its gait yaw a chest carries, and how fast a stagger takes it away.
+ *
+ * These two lines used to live inline in `animateActorCharacter` and `updateActors`,
+ * pinned by source regexes in `the engine wires the rig the way these tests measure it`.
+ * Three review passes produced five ways past those regexes — matching a prefix, adding
+ * a statement after the pinned line, compound assignment, hoisting the term out of the
+ * matched window, and writing it somewhere else entirely — and the third reviewer drew
+ * the conclusion the first two had earned:
+ *
+ * **A source regex cannot pin a behavioural invariant. It can only pin the current
+ * spelling of one**, so the class of evasions is unbounded and each new pattern buys
+ * exactly one more instance. Putting the arithmetic where a test can *drive* it is the
+ * same move `setCharacterShoulderWidth` made for the anisotropy test.
+ *
+ * What the assertions were trying to say, and now say by calling:
+ *
+ * - the chest's gait yaw reads `actor.stride`, not `pose.stride` — `pose.stride` only
+ *   ever reaches limbs, so a stagger that zeroes it leaves the chest turning;
+ * - a stagger *damps* the stride rather than clearing it, at rate 13, so the first
+ *   frame of a stagger still carries `e^(-13/60)` = **80.6%** of its gait yaw — and
+ *   that frame is where `pose.stagger` peaks, which is what makes the pairing the
+ *   reachability model once called impossible not merely reachable but simultaneous.
+ */
+export function chestGaitYaw(stride: number, heavy: boolean): number {
+  return -stride * (heavy ? 0.08 : 0.12)
+}
+
+/**
+ * One frame of a stagger's effect on the stride. Damped, never cleared — see above.
+ */
+export function decayStrideOnStagger(stride: number, delta: number): number {
+  return THREE.MathUtils.damp(stride, 0, 13, delta)
+}
+
 export function setCharacterShoulderWidth(
   torsoPivot: THREE.Object3D | null | undefined,
   neckPivot: THREE.Object3D | null | undefined,

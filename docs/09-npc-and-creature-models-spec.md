@@ -225,14 +225,22 @@ no new dependencies.
   defect**, and a partially-joint sweep is indistinguishable from a joint one from the
   outside. A factorial design then isolates the contributor, because a probe that moves
   two things cannot attribute what it sees: relaxing one constraint at a time gives
-  4.9199 fully joint, 4.9199 with head roll freed, 5.7018 with chest pitch pinned at its
+  4.8203 fully joint, 4.8203 with head roll freed, 5.7018 with chest pitch pinned at its
   axis maximum, and 6.0420 with chest roll pinned at its. **Head roll contributes exactly
   zero — provably, since a Z-rotation fixes the +Z axis and every scale in the chain sits
   above it — and chest roll is the dominant term**, three times its jointly reachable
   bound. An earlier version of this paragraph named chest pitch, the second largest.
   Naming the second biggest contributor is the same defect as naming an inert one and is
   harder to catch, because a plausible-sized effect in the right direction reads as
-  confirmation. The remainder of the original gap is
+  confirmation.
+
+  That baseline read 4.9199 for one commit and was itself **partially joint**, which is
+  the fourth instance of this defect and the first inside the paragraph describing it.
+  `idleWeightShift` is `sin(...) * 0.035 * (1 - motionBlend)`, so at the maximum's
+  `motionBlend` of 1.18 the engine allows `|shift| <= 0.0063` while the harness allowed
+  0.035 — and that term feeds chest roll, the very axis the design was isolating. **A
+  factorial design is only as good as its baseline, and a baseline is a reachability
+  claim like any other.** The remainder of the original gap is
   still unaccounted for, and naming chest pitch as *a* demonstrated contributor is as far
   as the measurement goes.
 
