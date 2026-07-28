@@ -2295,6 +2295,8 @@ const GAITS = [
   { role: 'peasant', speed: 3.1, cadence: 6.8, chestYawCoefficient: 0.12 },
 ] as const
 
+const HEAVY_ROLES: readonly string[] = ['brute', 'champion']
+
 /**
  * What the rejected rule produces per role, measured off this sweep.
  *
@@ -2351,7 +2353,23 @@ test('the head holds its target while the chest twists under it', () => {
       // storm hunch plus the plan's own lean, and the turn's roll. Holding pitch and
       // roll at zero is the one geometry where a scalar conversion happens to work,
       // and two earlier versions of these tests did exactly that.
-      const chestYaw = -stride * gait.chestYawCoefficient
+      // Production's own function, not a test-side copy of its arithmetic. This line
+      // read `-stride * gait.chestYawCoefficient` for six passes, and a reviewer noticed
+      // what that cost: **this simulation is the only place in the file that exercises
+      // the chest-yaw arithmetic across its whole range** — 3,600 frames per role, the
+      // stride swinging through ±0.62 — and it was exercising a copy.
+      //
+      // The equality assertion elsewhere pins `chestGaitYaw(1, heavy)`. One input. A
+      // mutant returning `-Math.sign(stride) * 0.12` satisfies it exactly while turning
+      // the chest's gait yaw into a square wave, and a dead zone `if (|stride| < 0.1)
+      // return 0` — which is what anyone adds to kill jitter — satisfies it while
+      // deleting the gait yaw over the low-stride range the reachability model rests on.
+      // Both passed 22/0. Pointed here, the first fails at 21/1 through an assertion
+      // that already existed.
+      //
+      // **A function whose value is its shape cannot be pinned at a point**, and the
+      // cheapest shape test available is usually a numerical test that already runs.
+      const chestYaw = chestGaitYaw(stride, HEAVY_ROLES.includes(gait.role))
       const chestPitch = 0.04 + 0.22 + p.lean
       const chestRoll = -Math.sin(time * 2) * 0.08
       if (dampInBodySpace) {
@@ -2766,6 +2784,25 @@ test('the engine wires the rig the way these tests measure it', () => {
     + 'frame of a stagger stops carrying ~81% of its gait yaw, and the gaze test\'s '
     + 'reachability model — which pairs a staggering chest\'s residual gait yaw with the '
     + 'head pitch that same frame produces — needs re-deriving rather than editing.',
+  )
+  // A second delta, because the assertion above can be satisfied by construction. A
+  // reviewer replaced the body with `stride * Math.exp(-13 / 60)` — the frame rate
+  // hard-coded, `delta` ignored entirely — and it passed, because it returns exactly
+  // what the pin asks for at exactly the input the pin uses. At 30 fps the real
+  // function gives `exp(-13/30)` = 0.6485 and that mutant still gives 0.8059.
+  //
+  // **A hard-coded frame rate is precisely the class of defect that moving arithmetic
+  // into a function exists to catch**, and a single-delta pin cannot see it. Two
+  // deltas pin the exponential *form*: decay over 2/60 must equal decay over 1/60
+  // squared, which holds for `exp(-k·delta)` and fails for anything that ignores
+  // `delta` or is linear in it.
+  assert.ok(
+    Math.abs(decayStrideOnStagger(1, 2 / 60) - decayStrideOnStagger(1, 1 / 60) ** 2) < 1e-12,
+    `the stride decay is no longer exponential in delta: one frame at 2/60 leaves `
+    + `${decayStrideOnStagger(1, 2 / 60).toFixed(6)} where two frames at 1/60 leave `
+    + `${(decayStrideOnStagger(1, 1 / 60) ** 2).toFixed(6)}. A decay that ignores delta `
+    + 'passes the equality above and is wrong at every frame rate but the one it was '
+    + 'written at.',
   )
   assert.ok(
     decayStrideOnStagger(1, 1 / 60) > 0.8,
