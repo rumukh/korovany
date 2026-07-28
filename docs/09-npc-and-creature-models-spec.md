@@ -793,7 +793,21 @@ no new dependencies.
   one-versus-fourteen ratio over samples of unknown size, arriving after the question felt
   settled. The asymmetry is recorded because it is measurable and nobody had noticed it.
   Nothing follows from it that has been checked.
-  There is a structural consequence, and it is the strongest practical thing this work
+  **Two explanations for that asymmetry were offered and both were declined, and the
+  second failure names a mechanism the rest of this section does not.** The claim was
+  *"nothing here was ever found by being careful; every catch came from a moment that
+  forced a look — a commit, a mutation, a diffstat, a probe."* Neither party had
+  enumerated the findings by discovery mechanism; both generalised from what they could
+  recall. And recall is not a neutral sample here: **a defect caught by someone simply
+  reading closely and noticing leaves no artefact behind** — no mutation, no diff, no probe
+  output — while every forced-look catch leaves exactly the kind of trace that makes it
+  memorable. **The sampling frame excludes the disconfirming class by construction.**
+  That is worse than an ordinary sample and invisible from inside the sentence, because
+  the missing cases are missing from the evidence *and* from the memory of the person
+  surveying it. The usable form is a question, and it is cheap: **before generalising from
+  remembered instances, ask whether a counter-example would have left anything to
+  remember.** If it would not, the recollection is not evidence about the population — it
+  is evidence about what leaves traces.  There is a structural consequence, and it is the strongest practical thing this work
   produced. **The correction neither participant can make is the one from someone with no
   stake in the exchange.** Two parties in a review loop audit each other's *arithmetic*
   very well and each other's *framing* poorly, because framing is where the courtesy
