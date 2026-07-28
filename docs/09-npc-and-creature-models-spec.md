@@ -467,7 +467,8 @@ no new dependencies.
   a working detector finding real problems, and a reader would reasonably conclude the file
   was riddled with joins. That is the exact inverse of the vacuous-instrument case, where a
   clean result was the thing nobody questioned — **the number that escapes scrutiny is
-  whichever one matches expectation**, and the doped control is the answer to both.  **That applies to tools nobody wrote as much as to detectors someone did**, and this
+  whichever one matches expectation**, and the doped control is the answer to both.
+  **That applies to tools nobody wrote as much as to detectors someone did**, and this
   repository contains the proof. `tsc --noEmit -p tsconfig.json` looks like a type-check
   and is not one: the root `tsconfig.json` is `"files": []` plus project references, so
   without `--build` the command compiles **zero files**. Measured with a positive control —
