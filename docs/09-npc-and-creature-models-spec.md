@@ -705,6 +705,13 @@ no new dependencies.
   externalised the cost permanently. `.gitattributes` now pins `* text=auto eol=lf`, which
   is the gate at the point of writing that the ignore-file would only have simulated at
   the point of reading.
+  **And that gate is now proven by use rather than by configuration**, which is the
+  distinction this document draws elsewhere about unfired guards, resolved for once in the
+  good direction. Four documentation commits were written from the same machine after the
+  attributes landed — `16+`, `11+`, `9+`, `21+` lines, every one a clean incremental diff,
+  every blob at `CR = 0`, blame rising 58 → 59 → 60 → 61 → 62 with all 57 originals intact.
+  A setting that *should* work and a setting *observed working four times* are different
+  claims, and only the second one has been checked.
   It produced one more on the last exchange of the work, and it is the class with the
   strongest immunity: **the explanation of a discrepancy.** Twelve passes measured
   numbers, assertions, bounds, mutations, timestamps and counts — and the *causes* attached
