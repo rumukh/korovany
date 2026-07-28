@@ -306,6 +306,13 @@ no new dependencies.
   axis sweeps and the scope of each ban all have that shape, which is why a fix's
   coverage should be derived from the domain rather than from the report that prompted
   it.
+  And the form with time as the axis, which is the one that closed the sequence: **a
+  lesson gets applied forward to the thing in hand and not backward to the thing that
+  taught it.** A two-point pin on one axis produced the sentence *"enumerating an axis
+  at two points is enumerating the points"*; that sentence was then applied to the axis
+  being worked on and never carried back to the axis that had taught it, so it sat
+  forty lines above a pin in exactly the state it describes. **When a lesson is
+  written down, the first place to apply it is the case that produced it.**
   And it applies to *fixes* as much as assertions: a fix scoped to the instance that was
   reported has inherited its sample from the report.
   The corollary that took two people to see: **the population has as many dimensions as

@@ -2968,18 +2968,39 @@ test('the engine wires the rig the way these tests measure it', () => {
   // function gives `exp(-13/30)` = 0.6485 and that mutant still gives 0.8059.
   //
   // **A hard-coded frame rate is precisely the class of defect that moving arithmetic
-  // into a function exists to catch**, and a single-delta pin cannot see it. Two
-  // deltas pin the exponential *form*: decay over 2/60 must equal decay over 1/60
-  // squared, which holds for `exp(-k·delta)` and fails for anything that ignores
-  // `delta` or is linear in it.
-  assert.ok(
-    Math.abs(decayStrideOnStagger(1, 2 / 60) - decayStrideOnStagger(1, 1 / 60) ** 2) < 1e-12,
-    `the stride decay is no longer exponential in delta: one frame at 2/60 leaves `
-    + `${decayStrideOnStagger(1, 2 / 60).toFixed(6)} where two frames at 1/60 leave `
-    + `${(decayStrideOnStagger(1, 1 / 60) ** 2).toFixed(6)}. A decay that ignores delta `
-    + 'passes the equality above and is wrong at every frame rate but the one it was '
-    + 'written at.',
-  )
+  // into a function exists to catch**, and a single-delta pin cannot see it. The
+  // semigroup property is the right assertion — decay over `2d` must equal decay over
+  // `d` squared, which holds for `exp(-k·delta)` at every `d` and fails for anything
+  // that ignores `delta` or is linear in it.
+  //
+  // **Swept, because two deltas is two points.** That sentence was written forty lines
+  // above about the *stride* axis, having been learned from this one — and it was never
+  // carried back here. A reviewer found the delta pin still at `1/60` and `2/60`, and
+  // broke it twice:
+  //
+  //   damp(…, Math.min(delta, 2 / 60))    a delta clamp     22/0
+  //   damp(…, Math.max(delta, 1 / 60))    a delta floor     22/0
+  //
+  // Both are identical at both sample points. The clamp is the more likely of the two —
+  // `updateFrame` clamps its own delta at `0.05` twice, three lines apart — and it makes
+  // a staggering actor's stride decay too little on every frame between 20 and 30 fps.
+  //
+  // The reachable domain is bounded by the engine at `(0, 0.05]`, so the sweep below is
+  // the range rather than a guess at it. **The lesson had been applied forward to the
+  // axis in hand and not backward to the axis that taught it** — which is the same
+  // asymmetry as "the axis you were shown gets enumerated", with time as the axis.
+  for (const delta of [1 / 240, 1 / 120, 1 / 60, 1 / 30, 0.045, 0.05]) {
+    assert.ok(
+      Math.abs(decayStrideOnStagger(1, 2 * delta) - decayStrideOnStagger(1, delta) ** 2) < 1e-12,
+      `the stride decay is no longer exponential in delta at ${delta.toFixed(5)}: one `
+      + `step of ${(2 * delta).toFixed(5)} leaves `
+      + `${decayStrideOnStagger(1, 2 * delta).toFixed(9)} where two steps of `
+      + `${delta.toFixed(5)} leave ${(decayStrideOnStagger(1, delta) ** 2).toFixed(9)}. `
+      + 'A decay that ignores delta, clamps it or floors it passes at whichever deltas '
+      + 'happen to be sampled and is wrong at every frame rate between them. The engine '
+      + 'bounds delta at 0.05, so this range is the domain rather than a guess at it.',
+    )
+  }
   // And the *other* axis, which the commit that fixed the delta left at one point —
   // every assertion above uses `stride = 1`. `damp(Math.sign(stride), 0, 13, delta)` is
   // identical to production at `stride = 1` for every delta, so it satisfies the value
