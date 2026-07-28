@@ -1026,7 +1026,49 @@ and the obvious explanation — the keep-out reducing instanced meshes — is re
 measurement above. Recorded as unreconciled rather than explained away: these numbers are
 of this tree, measured this way, and that is all they claim.
 
+### 7.0.5 What the visual QA cannot answer, measured rather than assumed
+
+The metalness fix divides the toon band driver by `kAlbedoLuma * max(1 - metalness, 1e-3)`
+rather than by `kAlbedoLuma` alone. For the `metal` surface — `metalness: 0.35` — that is
+a factor of **1 / 0.65 = 1.538× on `kLit`**, which is why the pre-fix shader could not
+push a metal surface into the top toon band.
+
+The programme lead asked for the guard/palace start to be re-captured after the fix, on
+the grounds that the earlier sign-off — *"metal armour reads"* — had been taken against
+the unfixed shader. Reasonable, and the answer is not the one either of us expected.
+
+**A/B with only that line changed**, same seed, faction, viewport and toggles:
+
+```text
+                       mean    p95   p99   max   >160    >190
+pre-fix  kAlbedoLuma   83.01   115   145   245   2154    1369
+shipped  kDiffuseScale 82.98   115   144   245   2131    1367
+delta                  -0.03     0    -1     0    -23      -2
+```
+
+**The frame is identical within noise.** A 1.538× change to the band driver for every
+metal surface in the scene moves the aggregate luminance histogram by less than a
+quantisation step.
+
+That is not evidence the fix does nothing — the arithmetic is not in doubt. It is evidence
+about the **instrument**: a full-frame luminance histogram cannot see a large change
+applied to a small pixel population, and `surface: 'metal'` has six call sites in
+`GameEngine.ts` and none in `CharacterKit.ts`, so the armour vocabulary in question may
+not be what fills this viewport at all.
+
+> **The capture neither validated nor invalidated the original sign-off, and could not
+> have.** Reporting "metal reads" from this instrument was a claim outside its domain in
+> both directions — before the fix and after it.
+
+What would answer it: a capture framing a known metal object over a known pixel region, or
+reading `kNormalized` back from the shader for a metal material directly. Neither is
+expensive; both are follow-ups rather than blockers, because the defect being fixed is
+arithmetic and the arithmetic is checked by the chunk pin in `tests/art.test.ts`, which
+fails loudly if a three.js upgrade moves the accumulation the fix depends on.
+
 ### 7.1 `OUTLINE_WORLD_DRAWS_MAX` — the multiplier, and the unit that changed
+
+
 
 Two corrections, both found at Wave 4 integration by measuring rather than by
 reading. Neither is a defect in what shipped; both are the spec describing less than
