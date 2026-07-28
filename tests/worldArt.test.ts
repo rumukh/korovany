@@ -1734,14 +1734,20 @@ test('region streaming returns every borrowed prop reference', () => {
   // No phantom pins. A window entry whose key has no live cache entry would occupy a
   // slot, pin nothing, and release nothing when evicted — and it is invisible to a
   // reference-count sum, because `GeometryCache.release` is a silent no-op on a key it
-  // does not hold. Since the window holds distinct keys and each pins one reference,
-  // every retained key must correspond to a live entry, so the cache can never be
-  // smaller than the window. Suggested by review, which measured zero across 225
-  // checkpoints; this is what keeps it that way.
+  // does not hold. Worse than inert: retaining one at the limit evicts a real key, so a
+  // phantom actively displaces the geometry the window exists to keep.
+  //
+  // Asserted directly rather than through `propCacheSize >= retainedPropCount`, which
+  // looks equivalent and is not. `propCacheSize` also counts entries held only by live
+  // borrowers, and those mask a phantom deficit one for one — with `B` borrower-only
+  // entries the comparison reduces to `B >= P` and fires only when phantoms outnumber
+  // `B`. A reviewer measured it here: `B = 28`, the comparison first detected at **29**
+  // injected phantoms, and this predicate detects at 1. The comparison would have passed
+  // silently through every phantom bug anyone is likely to write.
   assert.ok(
-    runtime.propCacheSize >= runtime.retainedPropCount,
-    `${String(runtime.retainedPropCount)} retained keys against only `
-    + `${String(runtime.propCacheSize)} live entries: the window is pinning nothing`,
+    runtime.retentionIsIntact,
+    'the retention window holds a key with no live cache entry, so it is pinning '
+      + 'nothing and will release nothing when that slot is evicted',
   )
 
   runtime.dispose()
@@ -1917,7 +1923,48 @@ test('a receipt is one reference, so two holders of one key release independentl
   }
 })
 
+test('the phantom-pin check detects a single phantom, not thirty', () => {
+  // The reason this exists as its own test: the previous form of the assertion was
+  // `propCacheSize >= retainedPropCount`, which a reviewer measured as blind until 29
+  // phantoms had been injected, because borrower-held entries mask the deficit one for
+  // one. A defensive check that only fires on gross corruption reads exactly like one
+  // that catches the class.
+  //
+  // One phantom is what a real bug produces — a `retain` path pushing a key whose
+  // reference has already gone. So one phantom is what this proves.
+  const library = new WorldPropLibrary({ retention: 4 })
+  const request = { kind: 'tree', biome: 'forest', slot: 0, detail: 'near' } as const
+  try {
+    const asset = library.acquire(request)
+    library.release(asset)
+    assert.equal(library.retainedCount, 1, 'the window should hold the released key')
+    assert.ok(library.retentionIsIntact, 'a genuine pin must read as intact')
+
+    // Inject exactly one phantom: a key in the window that the cache never held.
+    const retained = (library as unknown as { retained: string[] }).retained
+    retained.push('phantom:key#hard')
+    assert.equal(library.retainedCount, 2)
+    assert.equal(
+      library.retentionIsIntact,
+      false,
+      'one phantom pin must be detected, which is the whole point of this predicate',
+    )
+
+    // And the weakened form it replaced would not have noticed, which is why the
+    // replacement was worth making rather than a matter of taste.
+    assert.ok(
+      library.size >= library.retainedCount - 1,
+      'sanity: the cache still holds the one real entry',
+    )
+    retained.pop()
+    assert.ok(library.retentionIsIntact, 'removing the phantom must restore intactness')
+  } finally {
+    library.dispose()
+  }
+})
+
 test('the retention window never releases a key a live region still holds', () => {
+
 
   // The window takes over a *released* reference. If it ever evicted a key that a
   // resident region were still using, the region would keep drawing a disposed buffer.

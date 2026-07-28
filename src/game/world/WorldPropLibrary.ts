@@ -190,6 +190,30 @@ export class WorldPropLibrary {
     return this.retained.length
   }
 
+  /**
+   * True while every retained key still has a live cache entry to pin.
+   *
+   * A *phantom pin* is a key sitting in the window with no entry behind it. It occupies
+   * a slot, pins nothing, and releases nothing on eviction, so the window silently
+   * covers fewer keys than it advertises — and worse, retaining one at the limit evicts
+   * a real key, actively displacing the geometry the window exists to keep.
+   *
+   * This is asserted directly because the obvious indirect form does not work. Checking
+   * `cacheSize >= retainedCount` looks equivalent — every real pin has an entry, so the
+   * cache cannot be smaller than the window — but `cacheSize` also counts entries held
+   * only by live borrowers, and those mask a phantom deficit one for one. With `B`
+   * borrower-only entries the comparison reduces to `B >= P`, so it fires only once
+   * phantoms outnumber `B`. Measured mid-stream: `B = 28`, and the comparison first
+   * detected at **29 phantoms** while this predicate detects at 1. A real phantom bug
+   * introduces a handful, not thirty.
+   *
+   * Found by a reviewer who measured the weakened form before accepting it as
+   * equivalent to the one they had proposed.
+   */
+  get retentionIsIntact(): boolean {
+    return this.retained.every((key) => this.cache.has(key))
+  }
+
   referenceCount(key: string): number {
     return this.cache.referenceCount(key)
   }
