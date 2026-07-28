@@ -3149,6 +3149,30 @@ test('the engine wires the rig the way these tests measure it', () => {
   // vulnerable and got a guard; the head's components had not and did not**, even though
   // `applyChestPose` had taught exactly this lesson for the chest one commit earlier.
   // Twelfth instance of enumerating only what was shown.
+  //
+  // **This slice is justified rather than inherited, and that needs saying**, because
+  // every other narrow scope on this branch turned out to be a sample and a reviewer
+  // came within one message of recommending this one be widened by analogy with the
+  // `rotation.order` ban directly above.
+  //
+  // That ban could go file-wide because *zero* legitimate order writes exist. This one
+  // cannot, because four legitimate component writes do:
+  //
+  //   L12375  applyActorVisualVariation   spawn variation, overwritten each frame
+  //   L14308  animateBeastPosture         a quadruped's head yaw
+  //   L14309  animateBeastPosture         its pitch
+  //   L14310  animateBeastPosture         its roll
+  //
+  // Beasts never call `applyHeadPose` — the biped pass holds the only call site — so
+  // `animateBeastPosture` writing the head directly is the rig working as designed.
+  // Measured, not argued: swapping `actorPosture` for `source` here takes this file
+  // from 22/0 to 21/1. The correct scope is "the posture pass, plus anything that runs
+  // after it for a biped", which is not expressible as a file-wide count and is bounded
+  // by the same architectural fact as everything else left open here.
+  //
+  // The general form, since it is the inverse of this branch's recurring defect: **an
+  // unexplained narrow scope reads as a sample, so a scope that is genuinely correct
+  // has to say why, or the next reader widens it and breaks three passing cases.**
   assert.equal(
     (actorPosture.match(/headPivot\.rotation\.[xyz]\s*(?:[-+*/]?=)/g) ?? []).length,
     0,
