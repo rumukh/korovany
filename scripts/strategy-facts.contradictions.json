@@ -1,0 +1,19 @@
+{
+  "_comment": [
+    "Names DELIBERATELY bound to two values or two expressions in this document, because the",
+    "document records both what a spec asked for and what shipped. Everything not on this list is",
+    "a genuine internal contradiction and fails the run.",
+    "",
+    "This list must stay short and each entry must be justified. It is the one place where the",
+    "consistency check can be silenced, so silencing it is a reviewable act. Adding an entry to",
+    "hide a contradiction you introduced is the failure mode."
+  ],
+  "allowed": [
+    "FIRST_EVENT_AT",
+    "eventRng"
+  ],
+  "reasons": {
+    "FIRST_EVENT_AT": "Recorded supersession. The spec specified 50 s or first-objective completion; the shipped scheduler is timer-only at 30. Both numbers are load-bearing - one is the intent, the other the behaviour - and section 14 states the difference explicitly.",
+    "eventRng": "Recorded supersession, and the one that proved this check needed extending to expressions. The spec's form was seededRandom((Date.now() % 2147483646) + 1); the shipped form is a derived stream, () => streams.event.next() at GameEngine.ts:1853. Section 14 states which is which and marks the spec form superseded. Before that paragraph was corrected the same two bindings were a genuine error - the document asserted the superseded form as current behaviour - and the numeric-only version of this check could not see it."
+  }
+}

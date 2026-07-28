@@ -1,0 +1,137 @@
+{
+  "_comment": [
+    "INDEPENDENT CONTROL CORPUS. Hand-authored against the fifteen specs at d854a75.",
+    "Nothing here is produced by extractFacts(). This is the answer to the objection that",
+    "sampling a control from the extractor's own fixtures tests the matcher rather than the",
+    "extractor: if the extractor is blind to a class or a sentence form, no fixture exists and",
+    "no fixture-derived control can expose it. Each entry mutates the DOCUMENT in memory and",
+    "asserts the miss count rises. A control that does not fire fails the run.",
+    "",
+    "'mutation' is applied to docs/STRATEGY.md before auditing. 'kind' records what the",
+    "mutation breaks, so a failure names the blind spot rather than just a number.",
+    "The first six are Agent SOL's adversarial mutations, kept verbatim in intent."
+  ],
+  "controls": [
+    {
+      "cls": "relation",
+      "kind": "binding-swap",
+      "name": "swap BOW_DAMAGE and BOW_MIN_DAMAGE",
+      "find": "BOW_DAMAGE=18",
+      "replace": "BOW_DAMAGE=10"
+    },
+    {
+      "cls": "relation",
+      "kind": "row-swap",
+      "name": "swap scout and archer hit points wherever the row appears",
+      "mutations": [
+        { "find": "| `scout` | 55 |", "replace": "| `scout` | 45 |" },
+        { "find": "`scout` 55 hp", "replace": "`scout` 45 hp" },
+        { "find": "`scout` → 55", "replace": "`scout` → 45" }
+      ]
+    },
+    {
+      "cls": "relation",
+      "kind": "binding-value",
+      "name": "ARCHER_DAMAGE 7 -> 9",
+      "find": "ARCHER_DAMAGE=7",
+      "replace": "ARCHER_DAMAGE=9"
+    },
+    {
+      "cls": "relation",
+      "kind": "binding-value",
+      "name": "BLOOM_LAYER 1 -> 9",
+      "find": "BLOOM_LAYER=1",
+      "replace": "BLOOM_LAYER=9"
+    },
+    {
+      "cls": "designRule",
+      "kind": "polarity",
+      "name": "invert the bloom/outline prohibition",
+      "find": "Do not make bloom responsible for outlines",
+      "replace": "Make bloom responsible for outlines"
+    },
+    {
+      "cls": "designRule",
+      "kind": "ordering",
+      "name": "invert weather/day-night ordering wherever it is stated",
+      "mutations": [
+        { "find": "Weather is applied **after** day/night every frame", "replace": "Weather is applied every frame" },
+        { "find": "apply weather **after** day/night every frame", "replace": "apply weather every frame" },
+        { "find": "Apply weather **after** day/night every frame", "replace": "Apply weather every frame" },
+        { "find": "only after the day/night colours are computed", "replace": "while the day/night colours are computed" }
+      ]
+    },
+    {
+      "cls": "relation",
+      "kind": "comparison",
+      "name": "invert the civilian/soldier alarm-radius comparison",
+      "mutations": [
+        { "find": "is **shorter** than a soldier's 15 on purpose", "replace": "matches a soldier's 15" },
+        { "find": "is *shorter* than a soldier's 15", "replace": "matches a soldier's 15" }
+      ]
+    },
+    {
+      "cls": "constant",
+      "kind": "name",
+      "name": "remove a named constant",
+      "find": "AMBIENT_BEAST_PRESSURE",
+      "replace": "ambient beast pressure"
+    },
+    {
+      "cls": "numericValue",
+      "kind": "value",
+      "name": "alter a measured result",
+      "find": "0.60",
+      "replace": "0.66"
+    },
+    {
+      "cls": "storageKey",
+      "kind": "key",
+      "name": "remove a storage key from its owning section",
+      "find": "korovany-dynamic-day-night",
+      "replace": "the day/night key"
+    },
+    {
+      "cls": "formula",
+      "kind": "expression",
+      "name": "remove a shipped formula",
+      "find": "response = 1 - Math.exp((-3 * delta) / WEATHER_BLEND)",
+      "replace": "the weather weights ease toward their target"
+    },
+    {
+      "cls": "designRule",
+      "kind": "rule",
+      "name": "remove a negative control",
+      "find": "Do not create one light per beam",
+      "replace": "Beams are cheap"
+    },
+    {
+      "cls": "lifecycleRule",
+      "kind": "ownership",
+      "name": "remove an ownership contract",
+      "find": "window-level stop owner",
+      "replace": "guard"
+    },
+    {
+      "cls": "budgetRule",
+      "kind": "cap",
+      "name": "remove a bounded-log budget rule",
+      "find": "is capped at `CHRONICLE_LOG_LIMIT = 40` entries so the save stays bounded",
+      "replace": "holds recent chronicle output"
+    },
+    {
+      "cls": "accessibilityRule",
+      "kind": "comfort",
+      "name": "remove a readability rule",
+      "find": "Telegraph opacity must remain readable **in all four zone ground textures and at night**",
+      "replace": "Telegraphs are drawn on the ground"
+    },
+    {
+      "cls": "edgeCaseRule",
+      "kind": "edge",
+      "name": "remove an edge case",
+      "find": "corpses do not **revive**",
+      "replace": "corpses stay down"
+    }
+  ]
+}
