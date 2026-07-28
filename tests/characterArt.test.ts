@@ -3100,6 +3100,15 @@ test('the engine wires the rig the way these tests measure it', () => {
   // question, asked by two parties who had not spoken, reached the same axis.** That is
   // weak evidence — one instance — but it is the only evidence of transferability the
   // programme produced, and it came from the two sessions declining to claim it.
+  //
+  // **And it is weaker than "independently" makes it sound**, which one of those sessions
+  // pointed out about its own finding. The two routes were not independent in *method*:
+  // a mutation and reading the sine bound off `actor.stride` are both "check the domain
+  // of the axis", which is the question itself. So this establishes that **the question
+  // transfers between sessions** — two parties holding it reached the same axis without
+  // contact — and not that the axis is reachable without it. Those are different claims,
+  // and the stronger one is the one the word `independently` smuggles in. The evidence
+  // supports only the weaker, and the weaker is still the only instance of it here.
   for (const stride of [-1, -0.62, -0.25, -0.05, -0.01, 0.01, 0.05, 0.1, 0.25, 0.5, 0.62, 1]) {
     assert.ok(
       Math.abs(decayStrideOnStagger(stride, 1 / 60) - stride * decayStrideOnStagger(1, 1 / 60))
