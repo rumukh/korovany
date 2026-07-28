@@ -819,9 +819,32 @@ of the assertion.** Streaming a region, seeding a cache, constructing an input b
 each one moves the test into a world that may not exist, and the more careful the setup
 looks, the less likely anyone is to question it. A phantom is a key in
 
+**Severity is a property of callers, not of code — and an unreachable measurement can
+become another session's calibration constant.** Contributed by the foundation session
+about its own work, and it is the only entry here where the fault propagated *between*
+trees. It characterised a shading defect by its worst reachable-in-principle magnitude —
+104–125° — without asking who calls the builder. The answer was nobody: the only
+production route into that path has zero call sites in any of the four trees.
+
+Those synthetic figures then became the calibration for `worstNormalError`'s 90°
+threshold in this file. Measured properly, the defect runs **0–9°** in production, the
+anisotropy branch asymptotes at **80.08°** and so can never trigger at any parameter
+value, and correct *faceted* geometry — the default — produces false positives from
+**81.3°**, opening a lying band below the useful one.
+
+Two things to take from it. **Reproducibility is not reachability**: a defect that
+reproduces on demand feels verified, and the ninety minutes it takes to ask "who calls
+this?" is the cheapest step in the whole exercise. And a number quoted as a reference
+point in one session arrives in another as a *constant*, stripped of the conditions that
+produced it — so state the parameters a measurement was taken at, or it will be reused
+where they do not hold.
+
+The check here is now moot rather than merely tolerable — `smooth: true` appears zero
+times in `src/`, so every `loftProfile` call takes the faceted path — but the limit is
+written at the assertion, because that is the only place it is recoverable from. A phantom is a key inthe retention window with no cache entry behind it: it holds a slot, pins nothing,
+
 **A check can fire eventually and still be blind, and that is a different failure from
-one that cannot fire at all.** The phantom-pin guard is the case. A phantom is a key inthe retention window with no cache entry behind it: it holds a slot, pins nothing,
-releases nothing on eviction, and — worse than inert — retaining one at the limit evicts
+one that cannot fire at all.** The phantom-pin guard is the case. A phantom is a key inthe retention window with no cache entry behind it: it holds a slot, pins nothing,releases nothing on eviction, and — worse than inert — retaining one at the limit evicts
 a real key, so the fault destroys exactly what the window exists to preserve. The guard
 adopted for it asserted `propCacheSize >= retainedPropCount`, on the sound premise that
 every real pin has an entry.

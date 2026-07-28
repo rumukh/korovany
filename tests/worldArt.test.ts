@@ -221,6 +221,31 @@ function everyPropRequest(): Array<[string, PropRequest]> {
  * about 21 degrees, the coarse pillar lathe about 73), so this is not a tight bound.
  * It exists to catch the >90 degree signature, where a normal has diverged so far
  * from its face that it is no longer describing the same surface.
+ *
+ * **What it cannot see, measured by the session that owns the builder.** The 90 degree
+ * threshold was calibrated against 104-125 degree figures that turned out to be
+ * synthetic extremes — parameter values chosen to exhibit the defect, not values any
+ * caller passes. In production the same defect runs **0-9 degrees**. Consequently:
+ *
+ * - The **twist** branch first crosses 90 at 77.6 degrees of section rotation. The
+ *   largest twist in this file is `PropKit.ts:2309` at 0.06 rad = **3.44 degrees**,
+ *   where the defect contributes 2.21 — a factor of 41 below trigger.
+ * - The **anisotropy** branch can never cross it at any parameter value: the defective
+ *   error asymptotes at **80.08 degrees**, ten below the threshold, monotonically. That
+ *   is the branch this file actually uses — `PropKit.ts:1773` is `scaleX: 0.9,
+ *   scaleZ: 0.04`, a 22:1 section.
+ * - There is a **false-positive band that opens below the true-positive one**: correct
+ *   *faceted* geometry crosses 90 at 81.3 degrees of twist, and faceted is the default.
+ *
+ * So the clean sweep this produces is real evidence for the collapsed-section class and
+ * **no evidence at all** for the anisotropic or rotational one. It is moot here rather
+ * than merely tolerable: `smooth: true` appears **zero times** in `src/`, so all 50
+ * `loftProfile` calls take the faceted path, whose derivation error is exactly 0.00 on
+ * every planar-quad shape. The defect is behind a branch these props never enter.
+ *
+ * If that ever changes, the fix-independent comparator is the same geometry built
+ * faceted — `smoothError - facetedError` isolates derivation error with no
+ * shape-dependent baseline — rather than a tighter absolute threshold.
  */
 function worstNormalError(geometry: THREE.BufferGeometry): number {
   const position = geometry.getAttribute('position')
