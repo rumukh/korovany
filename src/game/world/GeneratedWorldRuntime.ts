@@ -1270,16 +1270,25 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       }
       if (placement.radius > 0) {
         const world = toWorld(placement.x, placement.z)
-        const colliderId = `site-building:${site.id}:${placement.id}`
-        this.context.collision.registerCircle({
-          id: colliderId,
-          regionId: this.id,
-          x: world.x,
-          z: world.z,
-          radius: placement.radius,
-          tags: ['site', site.kind, 'building'],
-        })
-        this.runtime.ownCollider(colliderId)
+        // Keep the building, drop its collision where an actor has to spawn. A keep is
+        // 9 by 7.4 with a radius near 4.1 and a stronghold rings itself with towers, so
+        // the finale encounter spawns land inside them — a reviewer measured 40
+        // building-blocked and 36 prop-blocked spawns of 2688 once the decoration fix
+        // removed the rest. A wall you can walk through at the one point an actor
+        // materialises is strictly better than an actor that cannot move, and the
+        // silhouette is what the site is for.
+        if (!coversSpawn(world.x, world.z, placement.radius, this.spawnAnchors())) {
+          const colliderId = `site-building:${site.id}:${placement.id}`
+          this.context.collision.registerCircle({
+            id: colliderId,
+            regionId: this.id,
+            x: world.x,
+            z: world.z,
+            radius: placement.radius,
+            tags: ['site', site.kind, 'building'],
+          })
+          this.runtime.ownCollider(colliderId)
+        }
       }
     }
 
@@ -1384,13 +1393,17 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     for (const placement of layout.props) {
       if (placement.radius < 0.5) continue
       const world = toWorld(placement.x, placement.z)
+      // Same treatment as the buildings above: the prop stays, its collision does not
+      // sit on a spawn point. Towers at `wallRadius` are the usual offender.
+      const radius = placement.radius * placement.scale
+      if (coversSpawn(world.x, world.z, radius, this.spawnAnchors())) continue
       const colliderId = `site-prop:${site.id}:${placement.id}`
       this.context.collision.registerCircle({
         id: colliderId,
         regionId: this.id,
         x: world.x,
         z: world.z,
-        radius: placement.radius * placement.scale,
+        radius,
         tags: ['site', site.kind, 'prop'],
       })
       this.runtime.ownCollider(colliderId)
@@ -1481,7 +1494,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     }
 
     let primaryStructural = true
-    const spawnAnchors = this.spawnKeepOutPoints()
+    const spawnAnchors = this.spawnAnchors()
     for (let index = 0; index < buckets.length; index += 1) {
       const bucket = buckets[index]
       // A colliding decoration standing on a spawn point traps whatever spawns there.
@@ -1597,16 +1610,23 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     radius: number,
     anchors: readonly { x: number; z: number }[],
   ): boolean {
-    // The agent radius the collision world is queried with, plus a little daylight so a
-    // spawn is comfortably clear rather than clear by twelve thousandths.
-    const clearance = radius + 0.45 + 0.2
-    for (const anchor of anchors) {
-      if (Math.hypot(placement.x - anchor.x, placement.z - anchor.z) < clearance) {
-        return true
-      }
-    }
-    return false
+    return coversSpawn(placement.x, placement.z, radius, anchors)
   }
+
+  /**
+   * Spawn anchors for this region, built once.
+   *
+   * `spawnKeepOutPoints` walks every encounter slot and builds a plan per faction, which
+   * is far too expensive to repeat per site and per decoration bucket. The set cannot
+   * change during a region's life — it is derived from the blueprint — so it is computed
+   * on first use and kept.
+   */
+  private spawnAnchors(): readonly { x: number; z: number }[] {
+    this.cachedSpawnAnchors ??= this.spawnKeepOutPoints()
+    return this.cachedSpawnAnchors
+  }
+
+  private cachedSpawnAnchors: readonly { x: number; z: number }[] | null = null
 
   private createDressingMesh(
     placement: DressingPlacementStyle,
@@ -2120,7 +2140,28 @@ export function inkDrawCost(object: THREE.Object3D, instanced: boolean): number 
   return cost
 }
 
+/**
+ * Whether a circular collider at this position would stop an actor standing on a spawn.
+ *
+ * The agent radius the collision world is queried with, plus a little daylight so a
+ * spawn is comfortably clear rather than clear by twelve thousandths — which is what
+ * the baseline's apparently-clean result turned out to be.
+ */
+function coversSpawn(
+  x: number,
+  z: number,
+  radius: number,
+  anchors: readonly { x: number; z: number }[],
+): boolean {
+  const clearance = radius + 0.45 + 0.2
+  for (const anchor of anchors) {
+    if (Math.hypot(x - anchor.x, z - anchor.z) < clearance) return true
+  }
+  return false
+}
+
 /** Mirrors the mesh filter inside `StylizedArtLibrary.applyOutline`. */
+
 function takesInkShell(object: THREE.Object3D, instanced: boolean): boolean {
   if (!(object instanceof THREE.Mesh)) return false
   if (object instanceof THREE.InstancedMesh && !instanced) return false

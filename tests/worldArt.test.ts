@@ -2181,6 +2181,44 @@ test('decoration never blocks a spawn point', () => {
     'decoration colliders are standing on spawn points',
   )
 
+  // Site structures are the other half, and after the decoration fix they were all that
+  // remained: a reviewer measured 76 blocked encounter spawns of 2688, every one from a
+  // `site-building` or `site-prop` collider, concentrated on finale strongholds — a keep
+  // is 9 by 7.4 with a radius near 4.1 and the towers ring the wall, so the climactic
+  // encounter spawns land inside them. The baseline was worse (97), so this was never a
+  // regression, only the dominant term once decoration was handled.
+  //
+  // The collider is dropped, not the mesh. A wall you can walk through at the one point
+  // an actor materialises beats an actor that cannot move, and the silhouette is the
+  // whole reason the site exists.
+  const blockedByStructure: string[] = []
+  let structureSampled = 0
+  for (const region of blueprint.regions) {
+    const centre = runtime.getRegionCenter(region.id)
+    if (!centre) continue
+    runtime.update({ deltaSeconds: 0, focus: centre })
+    for (const faction of ['elf', 'guard', 'villain'] as const) {
+      for (const plan of runtime.getEncounterPlansInRegion(region.id, faction)) {
+        for (const spawn of plan.spawns) {
+          structureSampled += 1
+          if (runtime.collision.isWalkablePosition(spawn.worldX, spawn.worldZ, 0.45)) {
+            continue
+          }
+          blockedByStructure.push(`${plan.slotId}/${faction}`)
+        }
+      }
+    }
+  }
+  assert.ok(
+    structureSampled >= 40,
+    `only ${String(structureSampled)} encounter spawns were checked`,
+  )
+  assert.deepEqual(
+    blockedByStructure,
+    [],
+    'these encounter actors spawn inside a site structure and cannot move',
+  )
+
   // Faction starts are the other population, and the one that hurts most: the engine
   // writes this position into the player verbatim, and `findPath` returns null when the
   // *start* is unwalkable, so the first click-to-move of the run silently does nothing.
