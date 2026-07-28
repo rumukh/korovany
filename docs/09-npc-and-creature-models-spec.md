@@ -591,12 +591,33 @@ no new dependencies.
   `21:56:55` and its second at `21:58:27`, and the death was declared at `22:27:00` — so a
   verdict had been finished for **about half an hour** before it was pronounced silent.
   `turns.timestamp` is completion rather than arrival, which is checkable in one query and
-  was checked: turn 0's `user_message` is identical to `sessions.summary` — the kickoff,
-  necessarily present when the session was created — yet is stamped 24, 47 and 48 minutes
-  after creation across three sessions. **A kickoff cannot arrive after the session created
-  holding it.** So `updated_at` sat frozen at thirteen seconds while the session was
-  demonstrably working, and *"nothing produced"* was false when written, not overtaken
-  later.
+  was checked. Turn 0's `user_message` is the kickoff — necessarily present when the
+  session was created — so under an arrival reading its stamp should equal creation. Over
+  the whole store:
+  ```
+  sessions with a turn 0                      80
+  premise holds (turn0 message == summary)    69      <- 11 do not, and are not evidence either way
+    delta negative                             0
+    delta under 1 minute                       1
+    delta 20 minutes or more                  54
+    min 0.21 min          max 307.8 min
+  ```
+  **Fifty-four of sixty-nine first turns are stamped twenty minutes or more after the
+  session that was created holding them, and not one is negative.** The arrival reading is
+  false almost everywhere and contradicted nowhere. So `updated_at` sat frozen at thirteen
+  seconds while the session was demonstrably working, and *"nothing produced"* was false
+  when written, not overtaken later.
+  **That proof was first offered on four sessions, and every one of them had a slow first
+  turn** — a control drawn from inside the filter it was meant to test, which is this
+  document's own aim axis appearing inside a proof of something else. Widening it did two
+  things a small sample could not: it made the claim quantitative, and it exposed that
+  **eleven of the eighty do not satisfy the premise at all**, a limit nobody could have
+  stated from four cases.
+  Which sharpens the rule about primary sources rather than confirming it. Consulting the
+  store *was* a primary source, and four rows from it still under-supported the claim.
+  **A primary source consulted on an unnamed sample is a negotiation with extra steps:**
+  the query is what makes an answer possible, and naming the population is what makes it
+  an answer.
   *(Limit, stated rather than smoothed: the store shows the turn **completing**, not being
   **delivered**. That a verdict existed is established; that it had been sent is not.)*
   The mechanism is this section's own aim axis, one paragraph from where that session had
