@@ -105,6 +105,19 @@ no new dependencies.
   `torso-pivot` at hand height, where the torch and the trail expect it.
 - **Do not add a joint the animation cannot use.** Elbow and knee pivots are added
   because the walk, the attack and the death pose all drive them. Fingers are not.
+- **Do not root a joint anywhere but at the joint.** `head-pivot` shipped as a
+  *sibling* of `torso-pivot`, both at the actor's origin — the ground between the
+  feet. At rest that is indistinguishable from a neck, so it passed review and every
+  test in the file. Under the plan's own `lean` the chest swings forward through the
+  2.1–2.3 m from the ground to the shoulders and the head, on a pivot that never got
+  that rotation, stays where it was: measured at **0.4992 m** on a standing brute and
+  **0.6835 m** walking, against a head 0.66 m deep. Only actors showed it, because
+  `animateCharacter` — the player's only pose pass — never writes `torso-pivot`. The
+  head now hangs off the chest at `shoulderY`, which also makes six existing terms
+  mean what they say: `head-pivot`'s rotations are written as the opposite sign of
+  `torso-pivot`'s, and a partial counter-rotation only makes sense against a
+  transform you inherit. Correspondingly, **do not test a rig without posing it** —
+  every assertion that reads a body at rest is blind to this whole class.
 - **Do not let a quadruped inherit a biped's spine.** The beasts share the rig names on
   purpose, but `createBeast` builds its own limb geometry per role and the shared
   stride is remapped, rather than a wolf borrowing a soldier's arm. The secondary
@@ -272,12 +285,12 @@ group
 │   │   ├── **rightArm** (pivot) → upper arm mesh
 │   │   │      └── rightElbow (pivot) → forearm mesh [+ hand mesh, detail]
 │   │   ├── **weapon** (pivot) → weapon mesh (+ grip mesh)
-│   │   └── **shield**  (mesh, absolute local coords owned by updateShieldPose)
-│   ├── **head-pivot**
-│   │   ├── **head**             merged: neck, skull, brow, nose, jaw, ears
-│   │   ├── face                 eyes and mouth, dark material              [detail]
-│   │   ├── hair                                                            [detail]
-│   │   └── headgear
+│   │   ├── **shield**  (mesh, absolute local coords owned by updateShieldPose)
+│   │   └── **head-pivot**       the neck, at `shoulderY` in torso space
+│   │       ├── **head**         merged: neck, skull, brow, nose, jaw, ears
+│   │       ├── face            eyes and mouth, dark material               [detail]
+│   │       ├── hair                                                        [detail]
+│   │       └── headgear
 │   └── **pelvis-pivot**
 │       ├── **leftLeg**  (pivot) → thigh mesh
 │       │      └── leftKnee (pivot) → shin mesh (boot merged in)
@@ -286,6 +299,12 @@ group
 ├── **faction-ring**
 └── contact-shadow
 ```
+
+The four pivots are built by `buildCharacterSkeleton` in `CharacterKit`, not by the
+engine, so the layout is reachable from a Node test with no DOM — which is what lets
+`tests/characterArt.test.ts` pose a body and measure it rather than read it. The head
+meshes take their Y from the skeleton's `headY`, measured **from the neck**, not from
+the proportion table's `headY`, which is measured from the ground.
 
 Contracts this preserves, each verified against its consumer:
 

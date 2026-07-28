@@ -14,6 +14,7 @@ import {
   buildBeastTail,
   buildBirdBody,
   buildBirdWing,
+  buildCharacterSkeleton,
   buildCloak,
   buildDeerBody,
   buildDeerCrown,
@@ -51,6 +52,8 @@ import {
   type CharacterFaction,
   type CharacterPartKeys,
   type CharacterPlan,
+  type CharacterProportions,
+  type CharacterSkeleton,
 } from '../src/game/art/index.ts'
 // Imported from the module rather than the barrel on purpose: these two are a review
 // instrument, not part of the art surface `docs/09` §5.1 publishes, and adding them to
@@ -805,6 +808,15 @@ test('the load-bearing rig names are still assigned', () => {
     fileURLToPath(new URL('../src/game/GameEngine.ts', import.meta.url)),
     'utf8',
   )
+  // The four pivots are now named by `buildCharacterSkeleton`, so the humanoid rig
+  // lives in two files. Search both: `createBeast` still names all four in the
+  // engine, and searching only the engine would have gone on passing for a body
+  // that had lost every one of them.
+  const kit = readFileSync(
+    fileURLToPath(new URL('../src/game/art/CharacterKit.ts', import.meta.url)),
+    'utf8',
+  )
+  const rigSource = `${source}\n${kit}`
   const frozen = [
     'body-pivot',
     'torso-pivot',
@@ -822,12 +834,28 @@ test('the load-bearing rig names are still assigned', () => {
   ]
   for (const name of frozen) {
     assert.ok(
-      source.includes(`.name = '${name}'`) ||
-        source.includes(`['${name}', -1]`) ||
-        source.includes(`['${name}', 1]`),
+      rigSource.includes(`.name = '${name}'`) ||
+        rigSource.includes(`['${name}', -1]`) ||
+        rigSource.includes(`['${name}', 1]`),
       `the rig no longer assigns the name "${name}"`,
     )
   }
+  // The humanoid pivots come from one builder, and the head hangs off the chest
+  // inside it. An engine that went back to building its own would compile, pass
+  // every other assertion here, and put the heads back behind the necks.
+  assert.ok(
+    kit.includes('torsoPivot.add(headPivot)'),
+    'buildCharacterSkeleton must parent head-pivot to torso-pivot',
+  )
+  assert.ok(
+    source.includes('buildCharacterSkeleton(p)'),
+    'createCharacter must take its pivots from buildCharacterSkeleton',
+  )
+  assert.equal(
+    (source.match(/bodyPivot\.add\(headPivot\)/g) ?? []).length,
+    1,
+    'only createBeast may root a head-pivot at the body; a person hangs one off the spine',
+  )
   // Fauna names the wildlife animation drives, plus the captive's rope, which
   // `unbindActorArms` looks up by name when the ropes come off.
   for (const name of ['deer-body', 'legs', 'wings', 'cargo', 'wheel', 'wrist-rope']) {
@@ -875,6 +903,288 @@ test('the load-bearing rig names are still assigned', () => {
     'shared character materials must be selected, never mutated',
   )
 })
+
+/**
+ * The head is a joint on the spine, not a second root at the feet.
+ *
+ * ## What was wrong
+ *
+ * `head-pivot` was built as a *sibling* of `torso-pivot`, both at the actor's own
+ * origin — the ground between the feet — with the head placed at `headY` above it.
+ * At rest that is indistinguishable from a neck, which is why it shipped: with
+ * every rotation at zero the head lands exactly where the collar is, and this file
+ * had no test that posed a body before measuring it.
+ *
+ * It comes apart the moment anything rotates. `animateActorCharacter` writes the
+ * plan's own `lean` into `torso-pivot.rotation.x`, swinging the collar forward
+ * through the entire 2.1–2.3 m lever arm from the ground to the shoulders, while a
+ * head rooted at the feet on a different pivot does not move at all.
+ *
+ * ## Measured, on the sibling rig, over the 27 faction x role proportion sets
+ *
+ * Distance between the head and where `torso-pivot` puts it — the same quantity
+ * assertion 1 below measures.
+ *
+ * | pose | worst |
+ * | --- | --- |
+ * | rest, nothing posed | **0.0000** |
+ * | standing, plan `lean` only | **0.4992** (brute, `lean` 0.20) |
+ * | walking, `lean` + gait lean | **0.6835** (elf brute) |
+ * | deepest reachable hunch, 0.83 rad | **2.3385** |
+ *
+ * A head is 0.66 m deep. Three-quarters of a head, backwards, standing still.
+ *
+ * The roles whose `lean` is zero — elf and guard soldier, minion, archer, champion
+ * — measured 0.0000 standing and only came apart once they walked, which is how a
+ * whole-population defect gets reported as "some of them". The player was never
+ * affected: `animateCharacter`, the only pose pass the player gets, never writes
+ * `torso-pivot`'s transform, and only actors run `animateActorCharacter`. That is
+ * the whole of "the NPC heads are wrong and mine is fine", and it is why no
+ * constant offset could have fixed it — the displacement is a rotation times a
+ * lever arm, so it changes with the pose.
+ *
+ * ## What this test is
+ *
+ * Two invariants, both consequences of the hierarchy rather than of any number:
+ *
+ * 1. **Rigid.** The head's world position is whatever `torso-pivot` says it is.
+ *    Exact — to 1e-12 — for every transform the engine can write.
+ * 2. **Hinged at the neck.** Turning the head moves it on an arc whose radius is
+ *    the neck-to-head distance, ~0.5 m, not the ground-to-head distance, ~2.7 m.
+ *
+ * ## Mutation proof
+ *
+ * Reverting `buildCharacterSkeleton` to the shipped arrangement — `head-pivot`
+ * parented to `bodyPivot`, at y 0, with `headY` back to `p.headY` — takes
+ * assertion 1 to **2.3385 m off** at `elf/soldier/0` in "deepest hunch" and
+ * assertion 2 to **1.3795 m against a 0.4872 m bound** at the same plan. On the
+ * real tree assertion 1 reads 0 and assertion 2 reads well inside its arc.
+ *
+ * The mutation run earned its keep twice: assertion 2's bound was first written
+ * against `skeleton.headY`, which the mutation *also* changes, so the bound grew
+ * with the number it was bounding and the assertion could not fail. It is now
+ * derived from the proportion table instead. A check whose answer moves with the
+ * thing it is checking is not a check.
+ */
+test('the head is rigid with the chest and hinges at the neck', () => {
+  // Every transform `animateActorCharacter` and `applyActorVisualVariation` can
+  // write onto `torso-pivot`, at the extreme of each term. Named so a reader can
+  // find the line each one comes from; the invariant holds for any transform at
+  // all, so this table is breadth, not a bound.
+  const POSES: readonly {
+    name: string
+    x: number
+    rotation: readonly [number, number, number]
+    scale: readonly [number, number, number]
+  }[] = [
+    { name: 'rest', x: 0, rotation: [0, 0, 0], scale: [1, 1, 1] },
+    // rotation.x: forwardLean * motionBlend + attack + stagger + storm hunch + lean
+    { name: 'deepest hunch', x: 0, rotation: [0.83, 0, 0], scale: [1, 1, 1] },
+    // rotation.x: anticipation * 0.16 against an officer's negative lean
+    { name: 'windup', x: 0, rotation: [-0.2, 0, 0], scale: [1, 1, 1] },
+    // rotation.y: stride * 0.12 + attack * 0.16 + flinch * 0.22
+    { name: 'twist', x: 0, rotation: [0, -0.5, 0], scale: [1, 1, 1] },
+    // rotation.z: turnLean * 0.16 + idleWeightShift * 0.55 + flinch * 0.18
+    { name: 'turn roll', x: 0.035, rotation: [0, 0, -0.28], scale: [1, 1, 1] },
+    // scale.x is the actor's shoulder width, scale.y the breath.
+    { name: 'broad and inhaling', x: -0.035, rotation: [0.2, 0.1, 0.1], scale: [1.07, 1.01, 1] },
+    { name: 'narrow and exhaling', x: 0.02, rotation: [0.4, -0.3, 0.2], scale: [0.93, 0.99, 1] },
+    { name: 'staggered back', x: 0, rotation: [-0.2, 0.4, 0.28], scale: [1, 1, 1] },
+  ]
+
+  const restLocal = new THREE.Vector3()
+  const expected = new THREE.Vector3()
+  const actual = new THREE.Vector3()
+  const rest = new THREE.Vector3()
+  const joints: {
+    label: string
+    skeleton: CharacterSkeleton
+    p: CharacterProportions
+    head: THREE.Object3D
+    rest: THREE.Vector3
+  }[] = []
+  let worstRigid = 0
+  let worstRigidAt = ''
+  let checked = 0
+
+  for (const faction of FACTIONS) {
+    for (const role of [...ROLES, 'player'] as const) {
+      for (let variant = 0; variant < CHARACTER_VARIANTS; variant += 1) {
+        const plan = resolveCharacterPlan(faction, role, variant, role === 'player')
+        const p = plan.proportions
+        const skeleton = buildCharacterSkeleton(p)
+        const label = `${faction}/${role}/${String(variant)}`
+        checked += 1
+
+        // The head mesh, placed exactly as `createCharacter` places it.
+        const head = new THREE.Object3D()
+        head.position.y = skeleton.headY
+        head.scale.setScalar(p.headScale)
+        skeleton.headPivot.add(head)
+
+        // Where the head sits in the chest's own frame. Not a magic number: the
+        // pivot chain has to reproduce the proportion table's `headY` above the
+        // ground with nothing posed, or the fix has moved the art.
+        skeleton.root.updateMatrixWorld(true)
+        rest.setFromMatrixPosition(head.matrixWorld)
+        assert.ok(
+          Math.abs(rest.x) < 1e-12 && Math.abs(rest.z) < 1e-12 &&
+            Math.abs(rest.y - p.headY) < 1e-12,
+          `${label}: at rest the head must stand at (0, ${p.headY.toFixed(3)}, 0), not `
+          + `(${rest.x.toFixed(4)}, ${rest.y.toFixed(4)}, ${rest.z.toFixed(4)}). The rig `
+          + 'change must be invisible on a body nothing has posed.',
+        )
+        restLocal.copy(rest)
+
+        // 1. Rigid with the chest.
+        for (const pose of POSES) {
+          skeleton.torsoPivot.position.x = pose.x
+          skeleton.torsoPivot.rotation.set(...pose.rotation)
+          skeleton.torsoPivot.scale.set(...pose.scale)
+          skeleton.root.updateMatrixWorld(true)
+          actual.setFromMatrixPosition(head.matrixWorld)
+          expected.copy(restLocal).applyMatrix4(skeleton.torsoPivot.matrixWorld)
+          const off = actual.distanceTo(expected)
+          if (off > worstRigid) {
+            worstRigid = off
+            worstRigidAt = `${label} in "${pose.name}"`
+          }
+        }
+        skeleton.torsoPivot.position.x = 0
+        skeleton.torsoPivot.rotation.set(0, 0, 0)
+        skeleton.torsoPivot.scale.set(1, 1, 1)
+
+        joints.push({ label, skeleton, p, head, rest: rest.clone() })
+      }
+    }
+  }
+
+  assert.equal(checked, FACTIONS.length * (ROLES.length + 1) * CHARACTER_VARIANTS)
+  assert.ok(
+    worstRigid < 1e-12,
+    `the head left the chest by ${worstRigid.toFixed(4)} m at ${worstRigidAt}. `
+    + 'It must be a child of `torso-pivot`, so that whatever the chest does the head '
+    + 'does too. Do not answer this with an offset: the displacement is a rotation '
+    + 'times a lever arm and changes with every frame of the pose.',
+  )
+
+  // 2. Hinged at the neck. The head's own rotations are look, counter-pitch and
+  //    counter-roll — they turn a skull, they do not swing a body.
+  for (const { label, skeleton, p, head, rest: restAt } of joints) {
+    const turn = 0.3
+    skeleton.headPivot.rotation.set(turn, turn, turn)
+    skeleton.root.updateMatrixWorld(true)
+    actual.setFromMatrixPosition(head.matrixWorld)
+    const swung = actual.distanceTo(restAt)
+    // Chord of the arc, generous by a factor of two on the three-axis case. Derived
+    // from the proportion table and NOT from `skeleton.headY`: a bound that grows
+    // with the number it is bounding cannot fail, and that is exactly what the first
+    // draft of this line did — the mutation run caught it, not review.
+    const bound = 2 * (p.headY - p.shoulderY) * Math.sin(turn * 1.5)
+    assert.ok(
+      swung <= bound,
+      `${label}: turning the head ${turn.toFixed(2)} rad moved it ${swung.toFixed(4)} m, `
+      + `over the ${bound.toFixed(4)} m an arc about the neck allows. head-pivot is `
+      + 'hinged somewhere below the neck — at the feet, it swings the whole body.',
+    )
+    assert.ok(swung > 0, `${label}: the head must actually turn`)
+    skeleton.headPivot.rotation.set(0, 0, 0)
+  }
+
+  // The joint itself: at the shoulder line, on the spine, carrying a head measured
+  // from the neck. Last, so that a rig which has come apart reports how far by.
+  for (const { label, skeleton, p } of joints) {
+    assert.equal(skeleton.headPivot.parent, skeleton.torsoPivot, `${label}: head off the spine`)
+    assert.equal(skeleton.headPivot.position.y, p.shoulderY, `${label}: neck off the shoulders`)
+    assert.equal(skeleton.headY, p.headY - p.shoulderY, `${label}: head Y not neck-relative`)
+  }
+})
+
+/**
+ * The beasts keep the sibling arrangement, and this pins what makes that safe.
+ *
+ * `createBeast` roots `head-pivot` at the animal's origin with the skull at `headY`
+ * up and `headZ` forward, exactly as the humanoid rig used to. It has not been
+ * moved here: a quadruped's neck is not at `shoulderY`, no one has reported a beast
+ * head, and guessing at a wolf's neck joint to fix a bug that was reported about
+ * people is how one regression becomes two.
+ *
+ * What makes it survivable is a workaround rather than a joint, and docs/09 §4 says
+ * so: `animateBeastPosture` "replaces the biped shoulder bend, hip counter-rotation
+ * and head yaw, all of which pull an animal apart at the joints when applied to a
+ * body whose skull sits a metre forward of its own pivot". Measured on `BEAST_RIG`:
+ * a wolf's skull sits **1.08 of its own units forward** of the pivot it yaws about,
+ * so the clamped 0.45 rad look already sweeps it **0.48 units sideways**, and the
+ * biped pass — which reaches 0.83 rad of hunch on a lever arm of 1.64 — would move
+ * it **1.3**.
+ *
+ * So the two premises are the early return that keeps a beast out of the biped pass
+ * and the clamp on the beast's own yaw. Both are load-bearing, both are one line,
+ * and both are invisible to every other test in this file.
+ */
+test('a beast never reaches the biped posture pass, and its own yaw stays clamped', () => {
+  const source = readFileSync(
+    fileURLToPath(new URL('../src/game/GameEngine.ts', import.meta.url)),
+    'utf8',
+  )
+  const posture = source.slice(
+    source.indexOf('private animateActorCharacter('),
+    source.indexOf('private samplePlayerPose('),
+  )
+  assert.ok(posture.length > 1000, 'could not isolate the actor posture pass')
+  // The early return, before a single torso rotation is written.
+  const guard = posture.indexOf('if (rig?.beast)')
+  const firstTorsoWrite = posture.indexOf('torsoPivot.rotation.x')
+  assert.ok(guard > 0, 'the beast branch has gone from animateActorCharacter')
+  assert.ok(
+    guard < firstTorsoWrite,
+    'a beast now reaches the biped shoulder bend. Its skull hangs off a pivot at the '
+    + 'animal\'s centre, so the hunch that fits a person swings a wolf\'s head a metre.',
+  )
+  assert.ok(
+    posture.slice(guard, firstTorsoWrite).includes('return'),
+    'the beast branch must return, not fall through into the biped pass',
+  )
+  // And the beast's own pass keeps the yaw inside the arc the rig can hide.
+  const beastPass = source.slice(
+    source.indexOf('private animateBeastPosture('),
+    source.indexOf('private sampleActorPose('),
+  )
+  assert.ok(beastPass.length > 400, 'could not isolate the beast posture pass')
+  assert.ok(
+    /clamp\(lookYaw,\s*-0\.45,\s*0\.45\)/.test(beastPass),
+    'the beast head yaw is no longer clamped to +/-0.45 rad, which is the only reason '
+    + 'a skull on a pivot at the animal\'s centre still reads as attached',
+  )
+  // The rig data the numbers above were measured from, so a rewritten table is
+  // noticed here rather than in a screenshot.
+  for (const kind of BEASTS) {
+    const rig = BEAST_RIG[kind]
+    assert.ok(
+      rig.headZ > 0 && rig.headY > 0,
+      `${kind}: a skull is up and forward of the body centre`,
+    )
+    assert.ok(
+      2 * rig.headZ * Math.sin(0.45 / 2) < rig.headZ,
+      `${kind}: the clamped look must sweep the skull less than its own reach forward`,
+    )
+  }
+  // `applyActorVisualVariation` runs for beasts as well as people, and it divides
+  // the chest's width back out of the neck — which is only right for a neck that
+  // hangs off the chest. A beast's does not. Unguarded, it narrows every skull in
+  // the forest to fix a head that was never wrong.
+  const variation = source.slice(
+    source.indexOf('private applyActorVisualVariation('),
+    source.indexOf('private createActorHealthBar('),
+  )
+  assert.ok(variation.length > 500, 'could not isolate the actor variation pass')
+  assert.ok(
+    /headPivot\.parent === torsoPivot\)\s*headPivot\.scale\.x/.test(variation),
+    'the shoulder-width counter-scale must be guarded on the head hanging off the '
+    + 'chest; a beast head-pivot is still a sibling of its ribs and never wore it',
+  )
+})
+
 
 /**
  * Wave 4 review. `CharacterKit` never had an independent review, and its winding

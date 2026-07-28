@@ -21,6 +21,7 @@ import {
   buildBeastTail,
   buildBirdBody,
   buildBirdWing,
+  buildCharacterSkeleton,
   buildCloak,
   buildDeerBody,
   buildDeerCrown,
@@ -11777,6 +11778,11 @@ export class GameEngine {
    * integer into a complete description of a person. Geometry is cached per plan
    * part and shared by every actor that resolves to the same part, so twenty-five
    * actors still build a few dozen buffers rather than a few hundred.
+   *
+   * The pivots themselves come from `buildCharacterSkeleton`, which owns the fact
+   * that `head-pivot` is a joint on the spine rather than a second root at the
+   * feet. Read that docblock before moving a head mesh: `headY` here is measured
+   * from the neck, not from the ground.
    */
   private createCharacter(
     faction: Faction,
@@ -11790,19 +11796,8 @@ export class GameEngine {
     const build = (key: string, factory: () => THREE.BufferGeometry) =>
       this.acquireArtGeometry(key, factory)
 
-    const group = new THREE.Group()
-    const bodyPivot = new THREE.Group()
-    bodyPivot.name = 'body-pivot'
-    group.add(bodyPivot)
-    const torsoPivot = new THREE.Group()
-    torsoPivot.name = 'torso-pivot'
-    bodyPivot.add(torsoPivot)
-    const headPivot = new THREE.Group()
-    headPivot.name = 'head-pivot'
-    bodyPivot.add(headPivot)
-    const pelvisPivot = new THREE.Group()
-    pelvisPivot.name = 'pelvis-pivot'
-    bodyPivot.add(pelvisPivot)
+    const { root: group, torsoPivot, headPivot, pelvisPivot, headY } =
+      buildCharacterSkeleton(p)
 
     const bodyMaterial = this.characterBodyMaterial(plan)
     const limbMaterial = this.characterLimbMaterial(plan)
@@ -11844,13 +11839,13 @@ export class GameEngine {
 
     const head = new THREE.Mesh(build(keys.head, () => buildHead(plan.faction)), skinMaterial)
     head.name = 'head'
-    head.position.y = p.headY
+    head.position.y = headY
     head.scale.setScalar(p.headScale)
     headPivot.add(head)
 
     const face = new THREE.Mesh(build(keys.face, () => buildFace(plan.faction)), darkMaterial)
     face.name = 'face'
-    face.position.y = p.headY
+    face.position.y = headY
     face.scale.setScalar(p.headScale)
     this.attachCharacterDetail(headPivot, face)
 
@@ -11861,7 +11856,7 @@ export class GameEngine {
         this.characterHairMaterial(plan.hairTone),
       )
       hair.name = 'hair'
-      hair.position.y = p.headY
+      hair.position.y = headY
       hair.scale.setScalar(p.headScale)
       this.attachCharacterDetail(headPivot, hair)
     }
@@ -11885,7 +11880,7 @@ export class GameEngine {
         headgearMaterial,
       )
       headgear.name = 'headgear'
-      headgear.position.y = p.headY
+      headgear.position.y = headY
       headgear.scale.setScalar(p.headScale)
       headPivot.add(headgear)
     }
@@ -12337,7 +12332,20 @@ export class GameEngine {
       if (part instanceof THREE.Mesh) part.scale.multiplyScalar(headScale)
     }
     const headPivot = mesh.getObjectByName('head-pivot')
-    if (headPivot) headPivot.rotation.y = variation.signed(0.12)
+    if (headPivot) {
+      headPivot.rotation.y = variation.signed(0.12)
+      // A person's neck hangs off the chest, so it inherits the chest's width — and
+      // a head is not a pair of shoulders. Undone here, at the one place that widens
+      // the chest, so `headScale` above stays the only thing that sizes a skull.
+      // Left uncorrected, a broad-shouldered actor wore a head up to 7% wider than
+      // it is deep, on top of the 5% `body-pivot` already applies.
+      //
+      // Guarded on the parent rather than on the role because this function runs for
+      // beasts too, and `createBeast` still roots `head-pivot` at the animal instead
+      // of on its ribs. A beast's skull never wore the width, so dividing it out
+      // would narrow the one thing that was right.
+      if (headPivot.parent === torsoPivot) headPivot.scale.x = 1 / shoulders
+    }
   }
 
   private createActorHealthBar(allegiance: Allegiance): {

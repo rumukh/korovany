@@ -688,6 +688,105 @@ export function characterPartKeys(plan: CharacterPlan): CharacterPartKeys {
 }
 
 // ---------------------------------------------------------------------------
+// The rig
+// ---------------------------------------------------------------------------
+
+/**
+ * The pivots a person is posed through, already wired to each other.
+ *
+ * A pivot is a *joint*, and a joint has two properties that are easy to state and
+ * were both wrong here: it sits where the bones meet, and it hangs off the bone
+ * above it. `head-pivot` had neither. It was built as a sibling of `torso-pivot`
+ * at the actor's own origin — the ground between the feet — with the head placed
+ * at `headY` above it. In the rest pose that is indistinguishable from a neck,
+ * which is why it survived review: with every rotation at zero the head lands
+ * exactly where the chest puts it, measured at **0.0000 for all 27 proportion
+ * sets**.
+ *
+ * It comes apart the moment anything rotates. `animateActorCharacter` writes the
+ * plan's own `lean` into `torso-pivot.rotation.x`, which swings the collar forward
+ * through the whole 2.1–2.3 m lever arm from the ground to the shoulders, while a
+ * head rooted at the feet on a *different* pivot does not move at all. Measured on
+ * the sibling rig, as the distance between the head and where `torso-pivot` puts
+ * it — a brute standing still, `lean` 0.20: **0.4992 m**. A captive: 0.4710. Any
+ * villain, whose faction leans: 0.3430. A peasant: 0.2639. A head is 0.66 m deep,
+ * so a standing brute wore its skull three-quarters of a head behind its own neck.
+ * Walking adds the gait's forward lean and takes the worst case to **0.6835 m**.
+ *
+ * The roles whose `lean` is zero — an elf or guard soldier, minion, archer or
+ * champion — measured 0.0000 standing and came apart only once they moved, which
+ * is exactly the kind of partial symptom that gets a bug reported as "some of
+ * them". The player was never affected at all, because `animateCharacter`, the
+ * only pose pass the player gets, never writes `torso-pivot`'s transform; only
+ * actors run `animateActorCharacter`. That asymmetry is the whole of "the NPC
+ * heads are wrong and mine is fine", and it is why the fix is structural rather
+ * than a nudge: no offset can be right for a displacement that is a rotation times
+ * a lever arm and changes every frame.
+ *
+ * Hanging the head off the chest also makes six existing animation terms mean what
+ * they say for the first time. `head-pivot`'s rotations are written as the *opposite
+ * sign* of `torso-pivot`'s — the torso pitches `+forwardLean` and the head
+ * `-forwardLean * 0.35`, the torso rolls `-turnLean * 0.16` and the head
+ * `+turnLean * 0.06`, the torso takes `+idleWeightShift * 0.55` and the head
+ * `-idleWeightShift * 0.2`. Partial counter-rotations only make sense against a
+ * transform you inherit. As siblings they were not corrections at all; they were
+ * the head and the chest leaning opposite ways in world space. So the animation was
+ * already written for this hierarchy, and nothing in it needs to change.
+ */
+export interface CharacterSkeleton {
+  /** The actor's own group. Every pivot below is already parented into it. */
+  root: THREE.Group
+  bodyPivot: THREE.Group
+  torsoPivot: THREE.Group
+  /** The neck. A child of {@link torsoPivot}, at the top of the spine. */
+  headPivot: THREE.Group
+  pelvisPivot: THREE.Group
+  /**
+   * Y for `head`, `face`, `hair` and `headgear`, in `head-pivot` space.
+   *
+   * Measured from the neck rather than from the ground, because that is where the
+   * pivot now is. Read it from here rather than recomputing `headY - shoulderY` at
+   * the call site: the two numbers have to move together, and a joint that has
+   * drifted from the mesh it carries is the defect this type exists to prevent.
+   */
+  headY: number
+}
+
+/**
+ * Builds the four load-bearing pivots for one person and parents them anatomically.
+ *
+ * Lives here rather than in the engine so the layout is reachable from a Node test
+ * with no DOM — see {@link CharacterSkeleton} for what that test is for. It builds
+ * groups and nothing else: no geometry, no materials, no cache.
+ */
+export function buildCharacterSkeleton(p: CharacterProportions): CharacterSkeleton {
+  const root = new THREE.Group()
+  const bodyPivot = new THREE.Group()
+  bodyPivot.name = 'body-pivot'
+  root.add(bodyPivot)
+  const torsoPivot = new THREE.Group()
+  torsoPivot.name = 'torso-pivot'
+  bodyPivot.add(torsoPivot)
+  const headPivot = new THREE.Group()
+  headPivot.name = 'head-pivot'
+  // The base of the neck, which is the shoulder line — the same height the arms
+  // hang from, and within 0.09 of where every head mesh's neck stub ends.
+  headPivot.position.y = p.shoulderY
+  torsoPivot.add(headPivot)
+  const pelvisPivot = new THREE.Group()
+  pelvisPivot.name = 'pelvis-pivot'
+  bodyPivot.add(pelvisPivot)
+  return {
+    root,
+    bodyPivot,
+    torsoPivot,
+    headPivot,
+    pelvisPivot,
+    headY: p.headY - p.shoulderY,
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Local construction helpers
 // ---------------------------------------------------------------------------
 
