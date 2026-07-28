@@ -229,7 +229,11 @@ no new dependencies.
   axis maximum, and 6.0420 with chest roll pinned at its. **Head roll contributes exactly
   zero — provably, since a Z-rotation fixes the +Z axis and every scale in the chain sits
   above it — and chest roll is the dominant term**, three times its jointly reachable
-  bound. An earlier version of this paragraph named chest pitch, the second largest.
+  bound. That ranks the axes that were *free*, not the axes the bound is sensitive to:
+  pinning chest yaw gives 5.9876, between the other two, but yaw contributed nothing
+  because it is the one axis the original sweep constrained correctly. **Sensitivity and
+  contribution are different quantities, and only the second explains a wrong number.**
+  An earlier version of this paragraph named chest pitch, the second largest.
   Naming the second biggest contributor is the same defect as naming an inert one and is
   harder to catch, because a plausible-sized effect in the right direction reads as
   confirmation.

@@ -1635,6 +1635,15 @@ test('the head tracks its target through the chest, not past it', () => {
   //   chest PITCH pinned at the axis maximum 0.70             5.7018
   //   chest ROLL  pinned at the axis maximum 0.30             6.0420   <- dominant
   //
+  // **That is a ranking over the axes that were free, not over the axes the bound is
+  // sensitive to.** Pinning chest *yaw* at its maximum gives 5.9876 — between the two —
+  // but yaw contributed nothing to the discrepancy, because it is the one axis the
+  // original sweep constrained correctly. A reviewer measured that and flagged the
+  // misreading before anyone made it: "roll dominant, pitch second" invites being read
+  // as a statement about the geometry when it is a statement about which constraints
+  // were missing. **Sensitivity and contribution are different quantities, and only the
+  // second one explains a wrong number.**
+  //
   // **That baseline read 4.9199 for one commit, and it was itself partially joint** —
   // the fourth instance of this defect, inside the commit documenting the third. A
   // reviewer found it and named the free axis: `idleWeightShift` is
