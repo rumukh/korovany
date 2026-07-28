@@ -2670,26 +2670,18 @@ test('decoration never blocks a spawn point', () => {
     `only ${String(startsSampled)} faction starts sampled across ${String(seeds.length)} seeds`,
   )
 
-  // A sample floor proves the population was visited. These prove the seed set could
-  // **express** each failure — that every keep-out had something to act on, so bypassing
-  // it has something to break. Asserted per population because that is exactly what the
-  // previous version got wrong: one number over two populations passes on the easy one.
-  assert.ok(
-    keepOutActed.decoration > 0,
-    'no decoration placement was removed across the seed set, so none of these seeds '
-      + 'carries the decoration fault and that assertion cannot detect its own regression',
-  )
-  assert.ok(
-    keepOutActed.building > 0,
-    'no site-building collider was skipped across the seed set, so none of these seeds '
-      + 'carries the building fault and that assertion cannot detect its own regression',
-  )
-  assert.ok(
-    keepOutActed.prop > 0,
-    'no site-prop collider was skipped across the seed set, so none of these seeds '
-      + 'carries the prop fault and that assertion cannot detect its own regression',
-  )
-
+  // **Regression assertions first, non-vacuity after.** Both orderings catch a broken
+  // keep-out — but only this one names it correctly. With the non-vacuity guards first, a
+  // developer who breaks the fix is told *"none of these seeds carries the fault"*, which
+  // points at the seed set: the one direction the diagnostic must never send them. The
+  // zero-count symptom is identical for both causes, so ordering is the only thing that
+  // separates them.
+  //
+  // Safe because the guards still run whenever the assertions above pass, and that is
+  // exactly the case where "your seed set is empty of the fault" is the correct
+  // explanation. A failing regression assertion is non-vacuous by construction — it found
+  // something. Contributed by a reviewer who measured both orderings rather than arguing
+  // from either.
   assert.deepEqual(
     blockedByDressing,
     [],
@@ -2709,6 +2701,34 @@ test('decoration never blocks a spawn point', () => {
     unwalkableStarts,
     [],
     'a faction starts the run unable to move',
+  )
+
+  // A sample floor proves the population was visited. These prove the seed set could
+  // **express** each failure — that every keep-out had something to act on, so bypassing
+  // it has something to break. Asserted per population because that is exactly what the
+  // previous version got wrong: one number over two populations passes on the easy one.
+  //
+  // **What these do not pin: the counters themselves.** A refactor that incremented once
+  // per structural bucket rather than once per removed placement would make every count
+  // permanently positive, and these three guards would go silent while still reading as
+  // protective. A reviewer measured that mutation surviving. It is recorded rather than
+  // closed because pinning a count means pinning an art-dependent number, which is the
+  // floor-that-fails-when-the-code-improves anti-pattern one row up in this file. Stated
+  // here so nobody later reads these as coverage of the counters.
+  assert.ok(
+    keepOutActed.decoration > 0,
+    'no decoration placement was removed across the seed set, so none of these seeds '
+      + 'carries the decoration fault and that assertion cannot detect its own regression',
+  )
+  assert.ok(
+    keepOutActed.building > 0,
+    'no site-building collider was skipped across the seed set, so none of these seeds '
+      + 'carries the building fault and that assertion cannot detect its own regression',
+  )
+  assert.ok(
+    keepOutActed.prop > 0,
+    'no site-prop collider was skipped across the seed set, so none of these seeds '
+      + 'carries the prop fault and that assertion cannot detect its own regression',
   )
 })
 
