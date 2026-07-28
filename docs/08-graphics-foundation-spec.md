@@ -1159,10 +1159,51 @@ latency: *a quantity true of one subject, restated about a different subject, in
 both.* Neither has a tell, and in both cases re-resolving the source would have confirmed the
 measurement and missed the substitution.
 
-One limit stays open. The store shows the reviewer's turn completing, not whether that turn was
-delivered anywhere, so *"it had produced a verdict"* is established and *"it had sent one"* is
-not. The distinction is the same one this coda is about, and it would be poor form to lose it
-while writing the entry.
+One limit stayed open for two hours, and it is worth keeping as written before it was closed:
+*the store shows the reviewer's turn completing, not whether that turn was delivered anywhere,
+so "it had produced a verdict" is established and "it had sent one" is not.* The distinction is
+the same one this coda is about, and it would have been poor form to lose it while writing the
+entry.
+
+That limit is now closed, and closing it produced a better instrument fact than the entry it
+was blocking. Three consecutive turns in this session are stamped exactly **four milliseconds**
+before the clock reading on the next message to arrive — the same offset three times, which is
+not two independent events. A cross-session message written while the recipient is busy is
+**queued and delivered at the instant the recipient's turn ends**, so the two readings are one
+event. That gives delivery a bound where before there was none. The verdict was produced by
+`21:56:55.065`; it was demonstrably *not* in this session's context during the turn that ended
+`22:27:00.533`, since that turn published the opposite; and it is the message that opened the
+turn ending `22:45:44.615`. Delivery therefore falls in that window, and the gap between
+produced and delivered is **at least thirty minutes and five seconds** — a bound, not a point,
+because the exact instant is no longer recoverable. The two-instrument distinction stops being a
+distinction and becomes an interval with two named ends. The corollary is worth more than the
+closure: **the timestamp on an incoming message is when the reader became free, not when the
+sender sent it.** Correctly measured, of a different subject — the same class, discovered inside
+the instrument being used to audit that class.
+
+The rung, however, is the near-miss that fact caused. Reading three four-millisecond offsets, I
+concluded the field was arrival rather than completion, that the paragraph above was wrong, and
+that a sibling who had adopted and committed the reading needed telling. **It survives, and the
+discriminating case was cheap:** if the stamp were the next message's arrival, the reviewer's
+turn 1 stamp of `21:58:27.392` would be when this session's status check landed, and that check
+was sent inside a turn bounded by `22:07:09.222` and `22:27:00.533` — nine minutes clear,
+minimum. What made the error possible is that **three readings existed and only two were ever
+compared.** The original proof — a kickoff cannot be stamped an hour after the session created
+holding it — eliminates *arrival of the turn's own message* and says nothing whatever about
+*arrival of the next one*. **Eliminating one alternative is not confirming yours unless the
+space has been enumerated**, and a proof that discriminates against the reading already rejected
+feels exactly as conclusive as one that discriminates against the reading held. The control was
+in this session's own conversation the entire time and cost a single query, which is the same
+free-and-therefore-invisible shape recorded twice above.
+
+One consequence for the direction rule stated elsewhere in this section: the unaudited direction
+is not self-criticism as such. A reviewer here withdrew their own blanket rule — maximally
+self-critical — and it was checked twice, by them and independently here, because **it shipped
+with a reproduction attached.** A claim goes unaudited when nobody has an interest in building
+the instrument for it; when the claimant supplies the instrument, the direction stops mattering.
+The actionable form is not *be suspicious of your own bad news*, which is another discipline,
+but **ship the reproduction with the concession**, which is structure and works both ways at
+once.
 
 #### Round five: the pin fired, and firing for the wrong reason is its own defect
 
