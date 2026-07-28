@@ -286,11 +286,12 @@ group
 │   │   │      └── rightElbow (pivot) → forearm mesh [+ hand mesh, detail]
 │   │   ├── **weapon** (pivot) → weapon mesh (+ grip mesh)
 │   │   ├── **shield**  (mesh, absolute local coords owned by updateShieldPose)
-│   │   └── **head-pivot**       the neck, at `shoulderY` in torso space
-│   │       ├── **head**         merged: neck, skull, brow, nose, jaw, ears
-│   │       ├── face            eyes and mouth, dark material               [detail]
-│   │       ├── hair                                                        [detail]
-│   │       └── headgear
+│   │   └── neck-pivot           the joint, at `shoulderY` in torso space
+│   │       └── **head-pivot**   the head's own rotation: look, counter-pitch, roll
+│   │           ├── **head**     merged: neck, skull, brow, nose, jaw, ears
+│   │           ├── face        eyes and mouth, dark material               [detail]
+│   │           ├── hair                                                    [detail]
+│   │           └── headgear
 │   └── **pelvis-pivot**
 │       ├── **leftLeg**  (pivot) → thigh mesh
 │       │      └── leftKnee (pivot) → shin mesh (boot merged in)
@@ -305,6 +306,15 @@ engine, so the layout is reachable from a Node test with no DOM — which is wha
 `tests/characterArt.test.ts` pose a body and measure it rather than read it. The head
 meshes take their Y from the skeleton's `headY`, measured **from the neck**, not from
 the proportion table's `headY`, which is measured from the ground.
+
+`neck-pivot` and `head-pivot` are two nodes rather than one because `torso-pivot`
+carries scale as well as rotation — the actor's shoulder width on `scale.x` and the
+breath on `scale.y` — and the head has to divide the shoulder width back out in the
+same axis-aligned frame it was applied in. `neck-pivot` never rotates, so it can;
+`head-pivot` does, so on it the correction only cancels while the actor faces
+forward. Measured across all 30 plans and the whole look envelope: **7.00%** head
+anisotropy with no correction, **5.34%** with it on `head-pivot`, **0.99%** with it
+on `neck-pivot`, that last being the chest's breath and nothing else.
 
 Contracts this preserves, each verified against its consumer:
 

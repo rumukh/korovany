@@ -738,7 +738,24 @@ export interface CharacterSkeleton {
   root: THREE.Group
   bodyPivot: THREE.Group
   torsoPivot: THREE.Group
-  /** The neck. A child of {@link torsoPivot}, at the top of the spine. */
+  /**
+   * The joint at the top of the spine. A child of {@link torsoPivot}, carrying the
+   * neck's *height* and nothing else the animation writes.
+   *
+   * It exists so that {@link headPivot} can be a pure rotation. `torso-pivot` is
+   * not only a joint: `applyActorVisualVariation` puts the actor's shoulder width
+   * on its `scale.x` and the breathing pass writes its `scale.y` every frame, and
+   * a head is not a pair of shoulders. Dividing that width back out has to happen
+   * in the *same* axis-aligned frame it was applied in, which means above the head's
+   * rotation, not on it. Measured across all 30 plans and the whole look envelope:
+   * no correction at all leaves the head **7.00%** anisotropic; the correction on
+   * the rotated pivot leaves it **5.34%**, because a shrink along the head's local x
+   * and a stretch along the world's X stop cancelling once the two frames differ; on
+   * this node it is **0.99%**, and that residue is the chest's breath — a chest
+   * lifting a head as it inhales, which is correct.
+   */
+  neckPivot: THREE.Group
+  /** The head's own rotation: look, counter-pitch, counter-roll. */
   headPivot: THREE.Group
   pelvisPivot: THREE.Group
   /**
@@ -753,7 +770,7 @@ export interface CharacterSkeleton {
 }
 
 /**
- * Builds the four load-bearing pivots for one person and parents them anatomically.
+ * Builds the load-bearing pivots for one person and parents them anatomically.
  *
  * Lives here rather than in the engine so the layout is reachable from a Node test
  * with no DOM — see {@link CharacterSkeleton} for what that test is for. It builds
@@ -767,12 +784,15 @@ export function buildCharacterSkeleton(p: CharacterProportions): CharacterSkelet
   const torsoPivot = new THREE.Group()
   torsoPivot.name = 'torso-pivot'
   bodyPivot.add(torsoPivot)
-  const headPivot = new THREE.Group()
-  headPivot.name = 'head-pivot'
+  const neckPivot = new THREE.Group()
+  neckPivot.name = 'neck-pivot'
   // The base of the neck, which is the shoulder line — the same height the arms
   // hang from, and within 0.09 of where every head mesh's neck stub ends.
-  headPivot.position.y = p.shoulderY
-  torsoPivot.add(headPivot)
+  neckPivot.position.y = p.shoulderY
+  torsoPivot.add(neckPivot)
+  const headPivot = new THREE.Group()
+  headPivot.name = 'head-pivot'
+  neckPivot.add(headPivot)
   const pelvisPivot = new THREE.Group()
   pelvisPivot.name = 'pelvis-pivot'
   bodyPivot.add(pelvisPivot)
@@ -780,6 +800,7 @@ export function buildCharacterSkeleton(p: CharacterProportions): CharacterSkelet
     root,
     bodyPivot,
     torsoPivot,
+    neckPivot,
     headPivot,
     pelvisPivot,
     headY: p.headY - p.shoulderY,

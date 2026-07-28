@@ -12332,20 +12332,21 @@ export class GameEngine {
       if (part instanceof THREE.Mesh) part.scale.multiplyScalar(headScale)
     }
     const headPivot = mesh.getObjectByName('head-pivot')
-    if (headPivot) {
-      headPivot.rotation.y = variation.signed(0.12)
-      // A person's neck hangs off the chest, so it inherits the chest's width — and
-      // a head is not a pair of shoulders. Undone here, at the one place that widens
-      // the chest, so `headScale` above stays the only thing that sizes a skull.
-      // Left uncorrected, a broad-shouldered actor wore a head up to 7% wider than
-      // it is deep, on top of the 5% `body-pivot` already applies.
-      //
-      // Guarded on the parent rather than on the role because this function runs for
-      // beasts too, and `createBeast` still roots `head-pivot` at the animal instead
-      // of on its ribs. A beast's skull never wore the width, so dividing it out
-      // would narrow the one thing that was right.
-      if (headPivot.parent === torsoPivot) headPivot.scale.x = 1 / shoulders
-    }
+    if (headPivot) headPivot.rotation.y = variation.signed(0.12)
+    // A person's neck hangs off the chest, so it inherits the chest's width — and a
+    // head is not a pair of shoulders. Undone here, at the one place that widens the
+    // chest, so `headScale` above stays the only thing that sizes a skull. Left
+    // uncorrected, a broad-shouldered actor wore a head up to 7% wider than it is
+    // deep, on top of the 5% `body-pivot` already applies.
+    //
+    // It goes on `neck-pivot` and not on `head-pivot` because the correction has to
+    // happen in the same axis-aligned frame the width was applied in: on the rotated
+    // pivot it only cancels while the actor looks straight ahead, and at full look
+    // yaw it measured *worse* than doing nothing. Beasts have no `neck-pivot` —
+    // `createBeast` still roots its head at the animal — so the lookup is also the
+    // guard, and a skull that never wore the width does not get it divided out.
+    const neckPivot = mesh.getObjectByName('neck-pivot')
+    if (neckPivot) neckPivot.scale.x = 1 / shoulders
   }
 
   private createActorHealthBar(allegiance: Allegiance): {

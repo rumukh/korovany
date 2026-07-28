@@ -820,6 +820,10 @@ test('the load-bearing rig names are still assigned', () => {
   const frozen = [
     'body-pivot',
     'torso-pivot',
+    // Newer than the rest and not in docs/09's bold list, but load-bearing all the
+    // same: `applyActorVisualVariation` finds it by name to divide the chest's
+    // shoulder width back out. Rename it and the correction silently stops.
+    'neck-pivot',
     'head-pivot',
     'pelvis-pivot',
     'torso',
@@ -844,8 +848,8 @@ test('the load-bearing rig names are still assigned', () => {
   // inside it. An engine that went back to building its own would compile, pass
   // every other assertion here, and put the heads back behind the necks.
   assert.ok(
-    kit.includes('torsoPivot.add(headPivot)'),
-    'buildCharacterSkeleton must parent head-pivot to torso-pivot',
+    kit.includes('torsoPivot.add(neckPivot)') && kit.includes('neckPivot.add(headPivot)'),
+    'buildCharacterSkeleton must hang the neck off the spine and the head off the neck',
   )
   assert.ok(
     source.includes('buildCharacterSkeleton(p)'),
@@ -1091,13 +1095,104 @@ test('the head is rigid with the chest and hinges at the neck', () => {
     skeleton.headPivot.rotation.set(0, 0, 0)
   }
 
-  // The joint itself: at the shoulder line, on the spine, carrying a head measured
-  // from the neck. Last, so that a rig which has come apart reports how far by.
+  // The joints themselves: the neck at the shoulder line on the spine, the head's
+  // rotation below it, carrying a head measured from the neck. Last, so that a rig
+  // which has come apart reports how far by.
   for (const { label, skeleton, p } of joints) {
-    assert.equal(skeleton.headPivot.parent, skeleton.torsoPivot, `${label}: head off the spine`)
-    assert.equal(skeleton.headPivot.position.y, p.shoulderY, `${label}: neck off the shoulders`)
+    assert.equal(skeleton.neckPivot.parent, skeleton.torsoPivot, `${label}: neck off the spine`)
+    assert.equal(skeleton.headPivot.parent, skeleton.neckPivot, `${label}: head off the neck`)
+    assert.equal(skeleton.neckPivot.position.y, p.shoulderY, `${label}: neck off the shoulders`)
     assert.equal(skeleton.headY, p.headY - p.shoulderY, `${label}: head Y not neck-relative`)
   }
+})
+
+/**
+ * A head keeps its own proportions, whichever way it is looking.
+ *
+ * `torso-pivot` is not only a joint. `applyActorVisualVariation` writes this actor's
+ * shoulder width to its `scale.x` — `around(1, 0.07)` — and the breathing pass writes
+ * `scale.y` every frame. Hanging the neck off the chest, which is what stops the head
+ * leaving the body, also hands the head that width, and a head is not a pair of
+ * shoulders: `headScale` is supposed to be the only thing that sizes a skull.
+ *
+ * So the width is divided back out. **Where** it is divided out is the whole test.
+ * The first version of this fix put the correction on `head-pivot`, which the
+ * animation rotates by up to 0.65 rad of look yaw — and a shrink along the head's
+ * local x does not cancel a stretch along the world's X once those two frames differ.
+ * Measured over the whole look envelope below, with the widest shoulders and a full
+ * inhale, across all 30 faction x role plans:
+ *
+ * | correction | worst head anisotropy |
+ * | --- | --- |
+ * | none | **7.00%** (elf soldier, facing forward) |
+ * | on the rotated `head-pivot` | **5.34%** (elf peasant, full yaw) |
+ * | on the unrotated `neck-pivot` | **0.99%**, which is the chest's breath |
+ *
+ * The middle row is the point: it is better than nothing only while the actor looks
+ * straight ahead, and a compensation that is right at one angle is not a fix. Note
+ * also that the first draft of these numbers quoted 3.00% for "none" — that was one
+ * pose of one plan, not the worst of the envelope, and it would have understated the
+ * defect by more than half. The envelope is what the assertion sweeps.
+ *
+ * The bound below is 2%: above the 1% the breath is allowed to contribute, and well
+ * under either broken arrangement.
+ */
+test('the chest lends the head its breath but not its shoulders', () => {
+  // The widest chest the engine can write: `around(1, 0.07)` at its extreme, times
+  // the breathing pass's `1 + breathing * 0.55` at the top of an inhale.
+  const SHOULDERS = 1.07
+  const BREATH = 1 + 0.018 * 0.55
+  // Everything `animateActorCharacter` and `animateDeath` write to `head-pivot`:
+  // look yaw clamped to 0.65, stagger pitch, and the death roll.
+  const LOOKS: readonly (readonly [number, number, number])[] = [
+    [0, 0, 0],
+    [0, 0.65, 0],
+    [0, -0.65, 0],
+    [0.18, 0.65, 0.3],
+    [-0.12, 0.4, -0.28],
+  ]
+  const axis = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]
+  const basis = new THREE.Matrix3()
+  let worst = 0
+  let worstAt = ''
+
+  for (const faction of FACTIONS) {
+    for (const role of [...ROLES, 'player'] as const) {
+      const plan = resolveCharacterPlan(faction, role, 0, role === 'player')
+      const p = plan.proportions
+      const skeleton = buildCharacterSkeleton(p)
+      const head = new THREE.Object3D()
+      head.position.y = skeleton.headY
+      head.scale.setScalar(p.headScale)
+      skeleton.headPivot.add(head)
+      // As `applyActorVisualVariation` sets them.
+      skeleton.torsoPivot.scale.set(SHOULDERS, BREATH, 1)
+      skeleton.neckPivot.scale.x = 1 / SHOULDERS
+
+      for (const look of LOOKS) {
+        skeleton.headPivot.rotation.set(...look)
+        skeleton.root.updateMatrixWorld(true)
+        basis.setFromMatrix4(head.matrixWorld)
+        for (let i = 0; i < 3; i += 1) {
+          axis[i].set(Number(i === 0), Number(i === 1), Number(i === 2)).applyMatrix3(basis)
+        }
+        const lengths = axis.map((v) => v.length())
+        const anisotropy = Math.max(...lengths) / Math.min(...lengths) - 1
+        if (anisotropy > worst) {
+          worst = anisotropy
+          worstAt = `${faction}/${role} looking [${look.map((v) => v.toFixed(2)).join(', ')}]`
+        }
+      }
+    }
+  }
+
+  assert.ok(
+    worst <= 0.02,
+    `the head came out ${(worst * 100).toFixed(2)}% anisotropic at ${worstAt}. The chest's `
+    + 'shoulder width has reached the skull. Divide it out on `neck-pivot`, which does not '
+    + 'rotate — on `head-pivot` the correction only cancels while the actor looks straight '
+    + 'ahead, and at full yaw it is worse than no correction at all.',
+  )
 })
 
 /**
@@ -1170,18 +1265,25 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
     )
   }
   // `applyActorVisualVariation` runs for beasts as well as people, and it divides
-  // the chest's width back out of the neck — which is only right for a neck that
-  // hangs off the chest. A beast's does not. Unguarded, it narrows every skull in
-  // the forest to fix a head that was never wrong.
+  // the chest's width back out at the neck — which only exists on a person. A beast
+  // has no `neck-pivot`, so the lookup is the guard; written as a lookup rather than
+  // a role test so that adding a beast neck later fixes this for free.
   const variation = source.slice(
     source.indexOf('private applyActorVisualVariation('),
     source.indexOf('private createActorHealthBar('),
   )
   assert.ok(variation.length > 500, 'could not isolate the actor variation pass')
   assert.ok(
-    /headPivot\.parent === torsoPivot\)\s*headPivot\.scale\.x/.test(variation),
-    'the shoulder-width counter-scale must be guarded on the head hanging off the '
-    + 'chest; a beast head-pivot is still a sibling of its ribs and never wore it',
+    /getObjectByName\('neck-pivot'\)[\s\S]{0,120}neckPivot\.scale\.x = 1 \/ shoulders/.test(
+      variation,
+    ),
+    'the shoulder-width counter-scale must go on neck-pivot, which people have and '
+    + 'beasts do not, and which does not rotate',
+  )
+  assert.ok(
+    !/headPivot\.scale/.test(variation),
+    'the counter-scale must not go on head-pivot: the animation rotates it, so the '
+    + 'correction stops cancelling the moment the actor looks anywhere but forward',
   )
 })
 
