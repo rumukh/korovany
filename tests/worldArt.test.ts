@@ -2995,15 +2995,63 @@ test('the world-objects spec has no mangled paragraph joins', () => {
   // and removes the dependence on that staying true.
   const lines = source.split(/\r\n?|\n/)
 
+  // Fenced blocks are excluded from the indentation rule below. Indented lines inside a
+  // fence are correct, and the integrator's copy of this spec would have false-positived
+  // on its own `text` fences. **A check that fires on correct code gets silenced within a
+  // day** — already an entry in §13 of the file this test reads, so tripping over it here
+  // would have been the section failing on its own author twice.
+  const fenced = new Set<number>()
+  let insideFence = false
+  lines.forEach((line, index) => {
+    if (/^\s*```/.test(line)) {
+      insideFence = !insideFence
+      fenced.add(index)
+      return
+    }
+    if (insideFence) fenced.add(index)
+  })
+
   // An edit that anchors on a rule's bold header and replaces it leaves the previous
   // opening sentence orphaned above, indented by the wrap. Caught all ten real cases.
   const orphans = lines
-    .map((line, index) => ({ line, number: index + 1 }))
-    .filter((entry) => /^ [A-Za-z]/.test(entry.line))
+    .map((line, index) => ({ line, number: index + 1, index }))
+    .filter((entry) => !fenced.has(entry.index) && /^ [A-Za-z]/.test(entry.line))
   assert.deepEqual(
     orphans.map((entry) => `${entry.number}: ${entry.line.slice(0, 60)}`),
     [],
     'lines starting with a space are orphaned paragraph openings',
+  )
+
+  // The strongest of the four, contributed by the integrator: **a line whose entire text
+  // reappears as the opening of a nearby line that continues past it.** That is the exact
+  // shape of the defect — the decapitated sentence is left orphaned above *and* welded
+  // into the body below, so the orphan's full text is a strict prefix of the weld.
+  //
+  // Unlike the other three it **cannot fire on legitimate prose**: a paragraph does not
+  // repeat its own opening within a dozen lines and then keep going. So it needs no
+  // exception list, which is what stops it being silenced later. It also catches the two
+  // cases the others miss — a weld between lowercase words, and an orphan that happens
+  // not to be indented.
+  const duplicated: string[] = []
+  lines.forEach((line, index) => {
+    const text = line.trim()
+    if (text.length < 30 || fenced.has(index)) return
+    for (let ahead = index + 1; ahead <= Math.min(index + 12, lines.length - 1); ahead += 1) {
+      const other = lines[ahead].trim()
+      if (other.length > text.length && other.startsWith(text)) {
+        duplicated.push(
+          `${String(index + 1)} repeated at ${String(ahead + 1)}, which continues: `
+            + `…${other.slice(text.length, text.length + 40)}`,
+        )
+        return
+      }
+    }
+  })
+  assert.deepEqual(
+    duplicated,
+    [],
+    'a line reappears as the prefix of a later line that continues past it, which is a '
+      + 'sentence duplicated as an orphan and welded into the body it was cut from',
   )
 
   // The same edit deletes the newline before the body continuation, welding two
