@@ -1342,3 +1342,52 @@ test('neither spec contains a mangled paragraph join', () => {
     + 'its space. Restore the space.',
   )
 })
+
+
+/**
+ * The barrel assertion must stay a subset check, and this is why it needs its own test.
+ *
+ * `tests/art.test.ts` is edited by every session. The world-objects branch still carries
+ * the pre-rewrite exact-set form — `const expected = [ … ]` compared with `deepEqual` —
+ * and merging that file wholesale reintroduces it. **A tree that took the merge passes
+ * every other check**: the suite is green, the test count is right, the barrel test
+ * exists and has the same name, and the three frozen per-wave lists are simply gone.
+ *
+ * Reported by the Wave 4 review, which watched it nearly happen and told me to resolve
+ * `tests/art.test.ts` to my side on every merge from that branch and re-run the check
+ * afterwards. That is sound advice and it is a *habit*, which is precisely the thing this
+ * programme has spent the night refusing to rely on. Two merges from that branch have
+ * landed since and the rewrite survived both — by habit, with nothing asserting it.
+ *
+ * So: the exact-set construct must be absent, and the three lists must be present. The
+ * second half matters more. Absence alone would pass on a file where the barrel test had
+ * been deleted outright, which is the same clean bill for a worse reason.
+ *
+ * What it cannot detect: a *different* exact-set comparison written some other way. It
+ * pins the one construct that actually exists on a branch that actually merges into this
+ * one, which is the hazard rather than the whole class.
+ */
+test('the barrel assertion is still the subset form, not the exact-set form', () => {
+  const source = readFileSync(
+    new URL('../tests/art.test.ts', import.meta.url),
+    'utf8',
+  )
+  const lists = ['FOUNDATION_SURFACE', 'CHARACTER_KIT_SURFACE', 'PROP_KIT_SURFACE']
+  for (const list of lists) {
+    assert.match(
+      source,
+      new RegExp(`const ${list}\\b`),
+      `${list} is gone from tests/art.test.ts. The barrel check has been replaced with `
+      + 'something else — most likely the exact-set form from a sibling branch, which '
+      + 'merges cleanly and leaves the suite green.',
+    )
+  }
+  assert.doesNotMatch(
+    source,
+    /const expected = \[[\s\S]{0,200}?\]\s*\n\s*assert\.deepEqual\(\s*\n\s*Object\.keys\(art\)/,
+    'the exact-set barrel comparison is back in tests/art.test.ts. It goes red when a '
+    + 'sibling ADDS an export, which forces two sessions to edit a file they do not own, '
+    + 'and it caught none of the three spec-vs-barrel drifts it was credited with — all '
+    + 'three were type-only exports, invisible to Object.keys.',
+  )
+})
