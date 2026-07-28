@@ -760,9 +760,28 @@ gap of three orders holds unconditionally; a sign does not. The volume check her
 holds indexed prop surfaces to a fraction of their bounding box for that reason, and is
 mutation-proved by making the reader index-blind.
 
+**The two halves of this are one class, and naming it that way is the most portable
+thing in the section.** Contributed by a reviewer after both had been fixed separately:
+
+> A test that establishes world state the product doesn't establish is a check that
+> cannot fail, for the same reason a control that mutates impossible damage is — **both
+> measure a world that never occurs.**
+
+The mutation-proof rule (rule 5) says the damage must come from the model the assertion
+faces. The ordering trap says the *state* must be the one the product is in. They read as
+two different lessons and they are the same one: an assertion is only worth its result if
+the world it runs in is reachable. This pass produced both independently — a control
+reversing a box without rebaking normals, which the pipeline cannot do, and a test
+warming a runtime before asking for a start position, which `GameEngine` never does — and
+did not see they were the same until someone said so.
+
+The practical form: **when a test does setup the product does not do, that setup is part
+of the assertion.** Streaming a region, seeding a cache, constructing an input by hand —
+each one moves the test into a world that may not exist, and the more careful the setup
+looks, the less likely anyone is to question it. A phantom is a key in
+
 **A check can fire eventually and still be blind, and that is a different failure from
-one that cannot fire at all.** The phantom-pin guard is the case. A phantom is a key in
-the retention window with no cache entry behind it: it holds a slot, pins nothing,
+one that cannot fire at all.** The phantom-pin guard is the case. A phantom is a key inthe retention window with no cache entry behind it: it holds a slot, pins nothing,
 releases nothing on eviction, and — worse than inert — retaining one at the limit evicts
 a real key, so the fault destroys exactly what the window exists to preserve. The guard
 adopted for it asserted `propCacheSize >= retainedPropCount`, on the sound premise that
