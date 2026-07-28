@@ -1162,7 +1162,7 @@ test('the head is rigid with the chest and hinges at the neck', () => {
  * The first version of this fix put the correction on `head-pivot`, which the
  * animation rotates by up to 0.65 rad of look yaw — and a shrink along the head's
  * local x does not cancel a stretch along the world's X once those two frames differ.
- * Measured over the look grid below — both shoulder extremes, both breath extremes,
+ * Measured over the look grid below — an over-covering cross-product of both shoulder extremes, both breath extremes,
  * 462 head rotations, 30 plans — as max/min length of the head's transformed basis:
  *
  * | correction | worst head anisotropy |
@@ -1436,10 +1436,24 @@ test('the head tracks its target through the chest, not past it', () => {
   // deliberately does not model it — a per-frame scale is not something a closed form
   // wants as an argument for a hundredth of a degree.
   //
-  // It earns the word "derived" rather than "chosen" because it is *linear* in the
-  // breath and the test checks that below: measured 9.5225 at a quarter amplitude,
-  // 9.5301 at full, 9.5402 at double. Double the breath and this bound doubles with
-  // it, which is the property a round number does not have.
+  // **This is an empirical coefficient, not a derivation.** It is the measured maximum
+  // rounded up — 9.5301 to 9.6, a margin of 0.73% — and it is worth naming the
+  // difference, because the anisotropy bound two tests up *is* a closed form
+  // (`1/(1-b) - 1`, matching to ten decimal places) and this is not. What it does have
+  // is linearity, which the probes below check: 9.5225 at quarter amplitude, 9.5301 at
+  // full, 9.5402 at double. Double the breath and this bound doubles with it — the
+  // property a round number lacks — but it is a fitted constant with thin margin, and
+  // a reviewer was right to say "derived" was doing more work than it can carry.
+  //
+  // The sweep it is measured over **over-covers**: it is a cross-product of each
+  // axis's range, and the engine's terms are correlated. `actor.reaction` is one
+  // field, so a stagger excludes a flinch, and a stagger also clears `actor.action` —
+  // yet the worst corner here needs the head pitch a stagger gives *and* the chest yaw
+  // a flinch gives. A reviewer put the jointly reachable worst at 0.0476° against this
+  // sweep's 0.0943°, and the coefficient at 4.81 against 9.53. Over-covering is the
+  // safe direction for a guard — it can only make the bound stricter — but it means
+  // the in-game figure is about half what is quoted, and the sweep must not be called
+  // "the reachable envelope". That mislabel has now been made three times in this file.
   const SKEW_PER_UNIT_BREATH = 9.6
   let worst = 0
   let worstAt = ''
@@ -1549,9 +1563,16 @@ test('the head tracks its target through the chest, not past it', () => {
   // 1. With the breath switched off the chain is pure rotation, and the solve is
   //    exact. If this ever reads more than float noise, the solve is wrong — not the
   //    scale — and the bound above would absorb it silently.
+  //
+  //    The threshold is 1e-10 degrees against a measured 4e-14: four orders of
+  //    headroom for float, not the twenty-six million a previous 1e-6 gave while its
+  //    comment called it "float noise". A reviewer pointed out that mismatch, and it
+  //    matters here more than most — this guard's whole job is to stop the skew bound
+  //    absorbing a solver error, so slack in it is slack in both.
+  const exact = probe(1)
   assert.ok(
-    probe(1) <= 1e-6,
-    `with no breath the solve should be exact, and it is out by ${probe(1).toExponential(3)} `
+    exact <= 1e-10,
+    `with no breath the solve should be exact, and it is out by ${exact.toExponential(3)} `
     + 'degrees. The residue above is then not the breath, and its bound is measuring '
     + 'something it does not name.',
   )
