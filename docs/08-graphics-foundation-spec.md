@@ -683,32 +683,52 @@ Verifying what they build — three rules, each learned the expensive way:
 
 ## 7. Budgets
 
+Every line names the **population it governs**, not only its value. Three budgets in this
+programme were sized against one population and later spent on another, and in each case
+the number had been written down and the population had not — see §7.2. A budget with no
+nameable population is the next instance, so the column is mandatory rather than tidy.
+
 ```text
-ART_RAMP_TEXELS=4                    one shared DataTexture for the whole game
-ART_RAMP_STOPS=0, 0.42, 0.72, 1.0
-ART_LIBRARY_MATERIALS<=24            shared + outline (4 kinds x 2 variants) + contact shadow
-OUTLINE_THICKNESS=0.0042             view-space units per unit of depth, ~0.36% of frame height
-OUTLINE_MIN_DEPTH=2.0
-OUTLINE_MAX_DEPTH=42.0
-OUTLINE_CHARACTER_SCALE (retired)    replaced by normal extrusion
-OUTLINE_ACTOR_DISTANCE=38            unchanged from spec 01
-OUTLINE_INTERACTABLE_DISTANCE=46     unchanged from spec 01
-OUTLINE_WORLD_DRAWS_MAX=8            world silhouettes per visible region
-OUTLINE_WORLD_VISIBLE_DRAWS_MAX=48   the same silhouettes summed over the 3x3 visible set
-CONTACT_SHADOW_TEXELS=64x64          one shared DataTexture
-CONTACT_SHADOW_MATERIALS<=4          one shared material per distinct opacity
-CONTACT_SHADOW_DRAWS_MAX=26          25 actors plus the player
-SHADOW_MAP=2048                      unchanged
-SHADOW_FRUSTUM=52                    down from 85
-RIM_LIGHT_COUNT=1                    non-shadowing
-BLOOM=0.42 strength / 0.55 radius / 0.9 threshold
-GRADE_VIGNETTE=0.22
-POST_PASSES=4                        render, bloom, grade, output
-GEOMETRY_CACHE_ENTRIES_MAX=64
-CHARACTER_GEOMETRY_KEYS<=11          9 build sites, two keyed by player/faction
-BEAST_GEOMETRY_KEYS<=26              keyed by bulk/length, shared across the four roles
-CARAVAN_GEOMETRY_KEYS=6              shared by every caravan in the run
+                                     value   population it governs
+ART_RAMP_TEXELS                      4       one shared DataTexture, whole game
+ART_RAMP_STOPS                       0, 0.42, 0.72, 1.0
+ART_LIBRARY_MATERIALS               <=24     materials the library itself owns, whole game
+OUTLINE_THICKNESS                    0.0042  view-space units per unit of depth (~0.36% frame height)
+OUTLINE_MIN_DEPTH                    2.0     per outlined object
+OUTLINE_MAX_DEPTH                    42.0    per outlined object
+OUTLINE_CHARACTER_SCALE              retired replaced by normal extrusion
+OUTLINE_ACTOR_DISTANCE               38      per actor
+OUTLINE_INTERACTABLE_DISTANCE        46      per interactable
+OUTLINE_WORLD_DRAWS_MAX              8       per VISIBLE REGION
+OUTLINE_WORLD_VISIBLE_DRAWS_MAX      48      per FRAME: 9 regions (3x3 Chebyshev) x 8 = 72 worst case
+OUTLINE_SITE_DRAWS_MAX               4       per SITE, out of its region's 8 (docs/10)
+CONTACT_SHADOW_TEXELS                64x64   one shared DataTexture, whole game
+CONTACT_SHADOW_MATERIALS            <=4      one per distinct opacity, whole game
+CONTACT_SHADOW_DRAWS_MAX             26      per frame: 25 actors plus the player
+SHADOW_MAP                           2048    one directional light
+SHADOW_FRUSTUM                       52      one directional light
+RIM_LIGHT_COUNT                      1       whole scene, non-shadowing
+BLOOM                                0.42 strength / 0.55 radius / 0.9 threshold
+GRADE_VIGNETTE                       0.22
+POST_PASSES                          4       per frame: render, bloom, grade, output
+CHARACTER_GEOMETRY_KEYS             <=180    distinct keys across every faction x role x variant
+BEAST_GEOMETRY_KEYS                 <=26     keyed by bulk/length, shared across the four roles
+CARAVAN_GEOMETRY_KEYS                6       shared by every caravan in the run
+PROP_RETENTION_DEFAULT               128     recently-released prop keys held by the prop library
+PROP_RESIDENT_HEADROOM               48      live prop entries on top of the retention window
+                                             (the prop cache ceiling is these two summed, and is
+                                             asserted as the sum rather than as a literal 176)
 ```
+
+**`GEOMETRY_CACHE_ENTRIES_MAX` has been removed from this block.** It was written here as
+64, existed in no source file and was enforced nowhere; meanwhile the *prop* library's
+cache was bounded at 176 in `tests/worldArt.test.ts` against `propCacheSize`. Two
+different caches, one name, 2.75x apart, and no mechanical link between the written
+number and the enforced one. The generic `GeometryCache` has no population-wide ceiling —
+its holders bound it — and saying that plainly is better than naming a limit nothing
+checks. The prop library's ceiling now appears above under the two constants that
+actually determine it.
+
 
 Targets:
 
@@ -783,6 +803,55 @@ forest. Wave 2B spends it largely on non-instanced per-building meshes, so the s
 settlement's roofline is what makes it read as a place — but it is a different
 currency, and the word "instanced" has been removed rather than left to mislead the
 next reader.
+
+### 7.2 Why every budget above names a population
+
+`OUTLINE_WORLD_DRAWS_MAX` was not a one-off. Three budgets in this programme were sized
+against one population and later spent on another, and in every case **the number was
+written down and the population was not**:
+
+| budget | sized against | later spent on |
+|---|---|---|
+| `OUTLINE_WORLD_DRAWS_MAX` | one visible region | nine of them — 3x3 Chebyshev, up to 72 draws a frame |
+| `GEOMETRY_CACHE_ENTRIES_MAX` | the shared geometry cache | quoted at a *different* cache, the prop library's, 2.75x apart, with no link between the written number and the enforced one |
+| the guarded-sweep count | 4 material sweeps | read as covering 6 `isOutlineShell` call sites, of which 2 are disposal and occlusion, not material |
+
+The third is the clearest tell. A commit message said "three of four material sweeps"
+and it was later restated as three of six, because **the population was never inside the
+sentence, so there was nothing to preserve.** The true ratio before that fix was 1 of 4.
+
+None of these were carelessness. They are a property of how a budget gets recorded: a
+bare `NAME=value` line carries no scope, so the scope survives only in whoever wrote it.
+Hence the second column, and hence the rule that a budget with no nameable population is
+the next instance.
+
+### 7.3 Should the repo-wide sweep scan cover disposal and occlusion too?
+
+Deferred to Wave 4 because it could only be answered with both kits merged. Answer:
+**no**, and the reason is worth more than the verdict.
+
+There are seven traversals in `src/game/` that either assign `Mesh.material` or call
+`dispose()`. Four assign material and all four carry the `isOutlineShell` guard — those
+are what the scan enforces. Three dispose, and **two of those carry no guard at all**:
+`GameEngine.ts:9137` and `GeneratedWorldRuntime.ts:1992`.
+
+Both are correct anyway, because they reach safety a different way. They **release the
+shells first, then traverse**, so by the time the traversal runs there is no shell left
+to skip. `GeneratedWorldRuntime` releases every binding and empties `this.outlines`
+immediately before its traversal, with a comment saying shells "have to be gone before
+the source instanced mesh is disposed"; `removeAndDisposeObject` calls
+`unregisterOutlineRoot` on its first line and says the same.
+
+So a scan extended to disposal traversals would report **two violations out of two, both
+false**, and the natural way to silence it would be to add a predicate that is redundant
+given the ordering — which quietly suggests the ordering is optional. It is not: for
+instanced sources the shell shares `instanceMatrix` with its source, and ordering is the
+only thing that makes disposal safe.
+
+The material sweeps need a *predicate* because they run while shells are attached. The
+disposal sweeps need an *ordering* because they run to tear the shells down. One scan
+cannot enforce both properties, and enforcing the wrong one is worse than enforcing
+nothing.
 
 ## 8. Resource and lifecycle rules
 

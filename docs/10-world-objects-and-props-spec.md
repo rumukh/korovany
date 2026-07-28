@@ -392,23 +392,38 @@ Existing budgets from spec 08 are unchanged. This pass declares three new number
 raises one:
 
 ```text
-PROP_SURFACES=4                      hard, foliage, cloth, glow
-PROP_RETENTION_KEYS=128              distinct recently released keys, one slot each
-PROP_CACHE_ENTRIES_MAX=176           = PROP_RETENTION_DEFAULT + PROP_RESIDENT_HEADROOM
-BUILDING_LOD_DISTANCE=46             camera units; bridges swap at 1.6x that
-OUTLINE_SITE_DRAWS_MAX=4             of the 8 a region may spend
-DRESSING_KINDS_MAX=6                 instanced dressing meshes per region
-GROUND_COVER_KINDS=4                 unchanged
-SITE_DRAWS_MAX=4                     hard, foliage, cloth, glow per site
-REGION_DRAWS_PEAK=27                 measured, worst region of a 5x5 map
-REGION_TRIANGLES_PEAK=63k            measured, worst region, decoration density 1.0
-BUILDING_TRIANGLES=750-1800 near, 120-260 far
+                                     value   population it governs
+PROP_SURFACES                        4       per prop: hard, foliage, cloth, glow
+PROP_RETENTION_KEYS                  128     recently released keys held by the prop library
+PROP_CACHE_ENTRIES_MAX               176     live prop entries; asserted as
+                                             PROP_RETENTION_DEFAULT + PROP_RESIDENT_HEADROOM,
+                                             never as the literal, so the two move together
+BUILDING_LOD_DISTANCE                46      camera units, per building; bridges swap at 1.6x
+OUTLINE_SITE_DRAWS_MAX               4       per SITE, of the 8 its region may spend
+DRESSING_KINDS_MAX                   6       instanced dressing meshes per REGION
+GROUND_COVER_KINDS                   4       per region
+SITE_DRAWS_MAX                       4       per SITE: hard, foliage, cloth, glow
+REGION_DRAWS_PEAK                    27      per REGION, measured, worst of a 5x5 map
+REGION_TRIANGLES_PEAK                63k     per REGION, measured, decoration density 1.0
+BUILDING_TRIANGLES                   750-1800 near, 120-260 far, per building
 ```
 
-`GEOMETRY_CACHE_ENTRIES_MAX` in spec 08 is 64 and describes the whole game. This pass
-needs more, because the catalogue is much larger and the retention window deliberately
-holds geometry past its last reference. **Requested: 176**, justified by a measured
-peak of **130** live entries and asserted in `tests/worldArt.test.ts`.
+Every line names the population it governs. Ink is the worked example: this pass's
+`OUTLINE_SITE_DRAWS_MAX=4` is per **site**, `OUTLINE_WORLD_DRAWS_MAX=8` is per **region**,
+and the number a frame actually pays is `OUTLINE_WORLD_VISIBLE_DRAWS_MAX=48` across the
+**nine** regions visible at once. Three populations, one quantity; the middle one was the
+only one written down for most of this programme. See `docs/08` §7.1 and §7.2.
+
+
+`GEOMETRY_CACHE_ENTRIES_MAX` used to appear in spec 08 as 64, described as covering the
+whole game. **It has now been removed from spec 08 entirely**, because it existed in no
+source file and was enforced nowhere — a written number with no mechanical link to
+anything. What follows is the history of how that was found, kept because the shape of
+the error is more useful than the number.
+
+This pass believed it needed more than 64, because the catalogue is much larger and the
+retention window deliberately holds geometry past its last reference. **Requested: 176**,
+justified by a measured peak of **130** live entries.
 
 **Correction, and it invalidates the framing above more than the number.** The two
 constants govern *different caches*. `GEOMETRY_CACHE_ENTRIES_MAX` was written for
