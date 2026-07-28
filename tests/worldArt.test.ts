@@ -210,89 +210,6 @@ function everyPropRequest(): Array<[string, PropRequest]> {
   return requests
 }
 
-/**
- * Worst angle, in degrees, between a face's geometric normal and the shading normal
- * its vertices carry.
- *
- * `windingDisagreements` is a **sign** test, so it is blind to a normal that points
- * the roughly-right way but is badly wrong in magnitude. That is exactly the shape of
- * the collapsed-section defect: a loft section that pinches to zero takes its normal
- * from a zeroed edge and falls back to straight up, so a downward spike shades as
- * though it points at the sky — measured upstream at 104-125 degrees, and passing a
- * sign test cleanly the whole time.
- *
- * Smooth-shaded revolved solids legitimately run high here (a healthy capsule is
- * about 21 degrees, the coarse pillar lathe about 73), so this is not a tight bound.
- * It exists to catch the >90 degree signature, where a normal has diverged so far
- * from its face that it is no longer describing the same surface.
- *
- * **What it cannot see, measured by the session that owns the builder.** The 90 degree
- * threshold was calibrated against 104-125 degree figures that turned out to be
- * synthetic extremes — parameter values chosen to exhibit the defect, not values any
- * caller passes. In production the same defect runs **0-9 degrees**. Consequently:
- *
- * - The **twist** branch first crosses 90 at 77.6 degrees of section rotation. The
- *   largest twist in this file is `PropKit.ts:2309` at 0.06 rad = **3.44 degrees**,
- *   where the defect contributes 2.21 — a factor of 41 below trigger.
- * - The **anisotropy** branch can never cross it at any parameter value: the defective
- *   error asymptotes at **80.08 degrees**, ten below the threshold, monotonically. That
- *   is the branch this file actually uses — `PropKit.ts:1773` is `scaleX: 0.9,
- *   scaleZ: 0.04`, a 22:1 section.
- * - There is a **false-positive band that opens below the true-positive one**: correct
- *   *faceted* geometry crosses 90 at 81.3 degrees of twist, and faceted is the default.
- *
- * So the clean sweep this produces is real evidence for the collapsed-section class and
- * **no evidence at all** for the anisotropic or rotational one. It is moot here rather
- * than merely tolerable: `smooth: true` appears **zero times** in `src/`, so all 50
- * `loftProfile` calls take the faceted path, whose derivation error is exactly 0.00 on
- * every planar-quad shape. The defect is behind a branch these props never enter.
- *
- * If that ever changes, the fix-independent comparator is the same geometry built
- * faceted — `smoothError - facetedError` isolates derivation error with no
- * shape-dependent baseline — rather than a tighter absolute threshold.
- */
-function worstNormalError(geometry: THREE.BufferGeometry): number {
-  const position = geometry.getAttribute('position')
-  const normal = geometry.getAttribute('normal')
-  if (!position || !normal) return 0
-  const index = geometry.index
-  const triangles = index ? index.count / 3 : position.count / 3
-  const a = new THREE.Vector3()
-  const b = new THREE.Vector3()
-  const c = new THREE.Vector3()
-  const edgeA = new THREE.Vector3()
-  const edgeB = new THREE.Vector3()
-  const geometric = new THREE.Vector3()
-  const shading = new THREE.Vector3()
-  let worst = 0
-  for (let triangle = 0; triangle < triangles; triangle += 1) {
-    const offset = triangle * 3
-    const first = index ? index.getX(offset) : offset
-    const second = index ? index.getX(offset + 1) : offset + 1
-    const third = index ? index.getX(offset + 2) : offset + 2
-    a.fromBufferAttribute(position, first)
-    b.fromBufferAttribute(position, second)
-    c.fromBufferAttribute(position, third)
-    edgeA.subVectors(b, a)
-    edgeB.subVectors(c, a)
-    geometric.crossVectors(edgeA, edgeB)
-    if (geometric.lengthSq() < 1e-12) continue
-    geometric.normalize()
-    shading.set(0, 0, 0)
-    for (const vertex of [first, second, third]) {
-      shading.x += normal.getX(vertex)
-      shading.y += normal.getY(vertex)
-      shading.z += normal.getZ(vertex)
-    }
-    // A zeroed shading normal is the collapsed-section failure in its purest form.
-    if (shading.lengthSq() < 1e-12) return 180
-    shading.normalize()
-    const degrees =
-      (Math.acos(Math.max(-1, Math.min(1, geometric.dot(shading)))) * 180) / Math.PI
-    if (degrees > worst) worst = degrees
-  }
-  return worst
-}
 
 /**
  * Faces wound inward relative to the geometry's centroid, and how many faces the
@@ -1175,15 +1092,28 @@ test('every prop the world can build is oriented outwards', () => {
         // that used to sit here could not have failed for any prop the world builds.
         const judgedHere = windingDisagreements(part.geometry).judged
         if (judgedHere === 0) hollow.push(`${label}#${part.surface}`)
-        // Magnitude, not just sign — see `worstNormalError`. A collapsed loft section
-        // shades a downward spike as though it pointed at the sky, which a sign test
-        // waves through.
-        const error = worstNormalError(part.geometry)
-        if (error > 90) {
-          failures.push(
-            `${label}#${part.surface}: normal ${error.toFixed(1)}deg from its face`,
-          )
-        }
+        // **The `error > 90` failure that used to sit here is gone, and the reason is
+        // measured.** It was calibrated on "broken looks like 104-125deg", figures a
+        // sibling had taken on synthetic extremes and never on the real builder. On the
+        // real builder the defect contributes single digits, so the true-positive band was
+        // unreachable — and 90 sits *below* what correct geometry reaches, so the
+        // false-positive band was not. Measured on a well-formed smooth loft, twisting one
+        // section against the other:
+        //
+        //     twist   0    20    45    60    81.3    90    120
+        //     worst  22.5  42.7  67.8  83.2  105.3  114.2  144.2   <- fires from 81.3
+        //
+        // Nothing in the catalogue twists that far today, which is the only reason it was
+        // green. The first spiral column or helical rope would have turned it red on
+        // correct art, and the check could not have caught the thing it names either way.
+        //
+        // A large angle between a shading normal and its face is what smooth shading *is*;
+        // it is not evidence of anything on its own. The defect the comment names — a
+        // collapsed section shading a spike as though it pointed at the sky — is covered
+        // by the collapsed-section fallback in `loftProfile` and by the anisotropic-normal
+        // test in `art.test.ts`, both of which assert against an analytic answer rather
+        // than against a threshold. **A threshold with no derivation is a guess wearing a
+        // number**, and this one was a guess inherited from someone else's synthetic case.
         // Both metrics in one pass. Building the whole request space is the most
         // expensive thing in this file, and `generatedWorldRuntime.test.ts` is
         // already the dominant concurrent load in the suite — walking it twice to
