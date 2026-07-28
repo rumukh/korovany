@@ -9,6 +9,7 @@
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 import * as THREE from 'three'
 
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
@@ -880,6 +881,111 @@ test('merging parts into a prop never turns any of them around', async () => {
     + 'Signed volume cannot see this (one reversed part cancels against the rest) and '
     + 'normal agreement cannot either (a reversal that swaps normals in step stays '
     + 'self-consistent), which is why this compares the merge against its own inputs.',
+  )
+})
+
+
+/**
+ * A spec sentence whose job is to expire should not be able to expire silently.
+ *
+ * Four claims in `docs/08` were true when written and false the moment three branches
+ * merged — that the streamed world did not use `GeometryCache`, and that no in-repo
+ * example of its release path existed. The second is the harmful one: understating what
+ * is wired is inert, while telling the next reader nothing exists routes them into
+ * reinventing a working, measured implementation. Prose has no failure mode, so it did
+ * not fail; it just became untrue and sat there.
+ *
+ * This makes the class mechanical. A status claim in a spec must either be deleted or
+ * be backed by an assertion that fires when it stops holding — and the phrases below are
+ * the ones that mark a sentence as a status claim rather than a description.
+ *
+ * Deliberately strict, with no escape hatch. A scanner with an opt-out is defeated by the
+ * opt-out, and the fix is always available: state what IS true, and pin it with a test.
+ * That is what `the streamed world's prop cache is the worked example` below does for the
+ * sentence this test forced me to rewrite.
+ */
+test('no spec makes a status claim that can only expire', () => {
+  const specs = ['08-graphics-foundation-spec.md', '09-npc-and-creature-models-spec.md', '10-world-objects-and-props-spec.md']
+  const expiring = [
+    /\bnot yet\b/i,
+    /\bno existing\b/i,
+    /\bdoes not currently\b/i,
+    /\bno in-repo\b/i,
+    /\bon this branch\b/i,
+    /\bonce merged\b/i,
+    /\bonce the trees merge\b/i,
+    /\bhas no caller\b/i,
+    /\bnobody has written\b/i,
+  ]
+
+  const offenders: string[] = []
+  let linesScanned = 0
+  for (const spec of specs) {
+    const source = readFileSync(new URL(`../docs/${spec}`, import.meta.url), 'utf8')
+    const lines = source.split('\n')
+    linesScanned += lines.length
+    lines.forEach((line, index) => {
+      for (const pattern of expiring) {
+        if (pattern.test(line)) {
+          offenders.push(`${spec}:${String(index + 1)}: ${line.trim().slice(0, 90)}`)
+          break
+        }
+      }
+    })
+  }
+
+  // Domain guard. A scan that read nothing reports no offenders and looks identical to a
+  // clean one, which is the exact failure this whole file exists to refuse.
+  assert.ok(
+    linesScanned > 1500,
+    `only ${String(linesScanned)} lines of spec were scanned; the specs moved or the read failed`,
+  )
+  assert.deepEqual(
+    offenders.slice(0, 8),
+    [],
+    'these spec sentences describe a state of the repo rather than a rule, so they expire '
+    + 'silently as soon as somebody changes that state — which has already happened here '
+    + 'four times in one merge. Either delete the sentence, or state what IS true and pin '
+    + 'it with a test that goes red when it stops being true.',
+  )
+})
+
+/**
+ * The claim the test above forced into existence, now mechanical.
+ *
+ * `docs/08` §5.4 tells the next session that `WorldPropLibrary` is the worked example of
+ * the `GeometryCache` release path. If that stops being true — the import dropped, the
+ * release path removed — the spec would go back to lying, so this fails instead.
+ *
+ * It asserts the *shape* that makes it an example worth copying, not merely that the
+ * words appear: it must acquire, release, and hold its own cache. A file that imported
+ * `GeometryCache` and never released would satisfy a grep and teach the wrong thing.
+ */
+test('the streamed world\'s prop cache is the worked example docs/08 says it is', () => {
+  const source = readFileSync(
+    new URL('../src/game/world/WorldPropLibrary.ts', import.meta.url),
+    'utf8',
+  )
+  const spec = readFileSync(
+    new URL('../docs/08-graphics-foundation-spec.md', import.meta.url),
+    'utf8',
+  )
+
+  assert.ok(source.length > 5000, `WorldPropLibrary.ts read as ${String(source.length)} bytes`)
+  assert.match(source, /\bGeometryCache\b/, 'WorldPropLibrary no longer imports GeometryCache')
+  assert.match(source, /new GeometryCache\(/, 'WorldPropLibrary no longer holds a cache')
+  assert.match(source, /\.acquire\(/, 'WorldPropLibrary no longer acquires')
+  assert.match(
+    source,
+    /\.release\(/,
+    'WorldPropLibrary no longer releases — which is the half `GameEngine` cannot '
+    + 'demonstrate, and the reason docs/08 §5.4 points here rather than at the engine',
+  )
+  assert.match(
+    spec,
+    /WorldPropLibrary\.ts` is the worked example/,
+    'docs/08 §5.4 no longer names WorldPropLibrary as the release-path example; if that '
+    + 'moved on purpose, move this assertion with it',
   )
 })
 

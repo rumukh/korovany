@@ -286,16 +286,16 @@ decrements and disposes at zero. One region streaming out must not dispose a tre
 another region is still drawing. `dispose()` releases everything unconditionally and
 is idempotent.
 
-**Status:** the engine uses this for actor and caravan geometry. *On this branch* the
-streamed world does not — `GeneratedWorldRuntime` still builds and disposes its own
-dressing and ground-cover buffers per region, so identical forest regions currently hold
-duplicate copies. **That gap is closed on the world-object branch.** Verified from here:
-`src/game/world/WorldPropLibrary.ts` imports `GeometryCache` at `:3` and holds one at
-`:135`, keyed `acquire`/`release` with the region tracking receipts rather than geometry
-objects. Reported by that pass and not independently measured here: a 128-key retention
-window, peak 125 live entries streaming a full 5x5 map, 0 after dispose, balanced over
-three load/unload/reload laps. Read this paragraph as describing the foundation branch
-only; once the trees merge, `WorldPropLibrary` is the implementation and §12 is done.
+**Status: wired.** The engine uses this for actor and caravan geometry, and the streamed
+world uses it too — `src/game/world/WorldPropLibrary.ts` imports `GeometryCache` at `:3`
+and holds one at `:135`, keyed `acquire`/`release` with regions tracking receipts rather
+than geometry objects. Measured on this tree, not reported: a 128-key retention window,
+peak **118** live entries over a full-map sweep and **80** over straight-line traversal
+against a ceiling of 176, 0 after dispose, balanced over laps. §12 is done.
+
+This paragraph used to describe the streamed world as still building its own buffers,
+which was true when written and false the moment the trees merged. That is the shape of
+claim §7.4 is about.
 
 The cost that buys is measured, not assumed. An instrumented `A → B → A` region cycle
 rebuilds **225 procedural geometries per load/unload/reload**, each one a
@@ -304,11 +304,16 @@ exactly — net geometry growth per cycle is `0`, nothing is double-disposed, an
 library-owned resource is freed by streaming — so this is recurring construction cost,
 not a leak. 225 rebuilds per cycle is the number the runtime-level cache removes.
 
-*On this branch* there is **no in-repo example of the release path** to copy. `GameEngine`
-only ever calls `acquire`, because its cache lives as long as the process and is torn
-down wholesale by `dispose()`. **Do not read that as "nobody has written one"** — the
-world-object pass has, in `src/game/world/WorldPropLibrary.ts`, and once merged that file
-rather than this section is the precedent to copy.
+**The release path to copy is `src/game/world/WorldPropLibrary.ts`.** `GameEngine` only
+ever calls `acquire`, because its cache lives as long as the process and is torn down
+wholesale by `dispose()` — so it is not the example to follow for streaming. The prop
+library is: keyed acquire, receipts held by region, release on unload, a retention window,
+and a double-release guard that throws.
+
+This paragraph used to deny that any release path existed here. That was the most
+dangerous of the four expired claims, because understating what is wired is inert, while
+telling the next reader nothing exists routes them into reinventing a working, measured
+implementation.
 
 Three lifetime rules, none of which the API enforces. The first two were paid for by that
 pass; the third was found reviewing it and has no known instance:
@@ -620,9 +625,8 @@ the following as stable:
   reinstate the injection. `hasStylizedShader(material)` reports whether a material
   actually carries the injection, which is what `adoptMaterial` now keys off.
 - `GeometryCache` is ref-counted, so both passes can key by shape parameters and let
-  streaming handle lifetime. On this branch `src/game/world/` has no example of it; the
-  world-object pass has since written one in `WorldPropLibrary.ts`, and §5.4 lists the
-  three lifetime rules the API does not enforce.
+  streaming handle lifetime. `src/game/world/WorldPropLibrary.ts` is the worked example,
+  and §5.4 lists the three lifetime rules the API does not enforce.
 - `transformed` carries baked outline normals through the rotation, and `mergeAll`
   with `dispose: false` works on copies, so neither can quietly corrupt a geometry you
   still hold.
