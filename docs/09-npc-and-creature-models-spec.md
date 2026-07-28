@@ -517,11 +517,18 @@ no new dependencies.
   silence reads as assurance. **Absence of findings has to be distinguishable from absence
   of the reviewer**, and only an affirmative statement of scope does that.
   **The instance originally recorded here was false, and the correction is worth more than
-  the rule.** A session reported a delegated reviewer dead — created, `updated_at` frozen
-  thirteen seconds later, nothing produced after fifty-five minutes — and published it
-  twice. The reviewer was working the whole time and returned the best-evidenced findings
-  of the programme forty minutes later, including a fourth defect in the guard that had
-  prompted the delegation.
+  the rule.** A session reported a delegated reviewer dead — created `21:32:43`,
+  `updated_at` frozen at `21:32:56`, thirteen seconds later, and apparently silent
+  fifty-five minutes on — and published it twice. The reviewer was working the whole time
+  and returned the best-evidenced findings of the programme, including a fourth defect in
+  the guard that had prompted the delegation.
+  **Resolved against the session store rather than anyone's memory, the timings are worse
+  for the instrument than either party said.** Turns were recorded at `21:56:55` and
+  `21:58:27` — twenty-four minutes after creation, and **thirty-one minutes before the
+  death was declared at `22:27:43`.** So it was not a lagging field: `updated_at` sat
+  frozen at thirteen seconds while the session was demonstrably producing, and the
+  observer's *"nothing produced"* was false at the moment it was written, not merely
+  overtaken later.
   The mechanism is this section's own aim axis, one paragraph from where that session had
   just written it: a control was run first — another session, demonstrably alive, showing a
   current `updated_at` — and it was read as validating the instrument. **It showed the
@@ -536,6 +543,17 @@ no new dependencies.
   once the reviewer reported. **A conclusion drawn from an instrument's silence is a claim
   about the instrument, not about the subject**, and it inherits every weakness the
   instrument has, including the ones nobody has looked for.
+  **And the wrong figure that reached this file has a mechanism of its own, distinct from
+  a stale quote or a recollection.** The number *"fifty-five minutes"* was computed exactly
+  and reported truthfully — it was the elapsed time at the moment the death was declared.
+  Eighteen minutes later, when the reviewer spoke, it was reused in the next sentence as
+  the *report latency*, which it never was. Nobody misremembered it and nobody quoted a
+  stale source: **the clock was never wrong, the referent moved.** Re-resolving the source
+  would not have caught it, because the source was correct.
+  So a fourth rung under the quote/recollection hierarchy, and the only one with no tell:
+  **a duration is not a value, it is a function of *now*, and it must be re-evaluated
+  everywhere it appears.** A figure that answered one question correctly will answer the
+  next one silently and wrongly, and nothing in the sentence changes when it does.
   With one condition that is easy to miss and makes the difference between the form
   working and merely looking like it works: **the timestamp has to be the measurement's,
   not the sentence's.** A past-tense claim carries exactly one fact the present-tense one
