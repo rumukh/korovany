@@ -1171,12 +1171,29 @@ test('the head is rigid with the chest and hinges at the neck', () => {
  * | on the rotated `head-pivot` | **6.05%** |
  * | on the unrotated `neck-pivot` | **1.00%**, which is the chest's breath |
  *
- * Those are not the 7.00 / 5.34 / 0.99 quoted in earlier drafts. Same phenomenon,
- * honest coverage: the first figures came from **five enumerated poses and one
- * shoulder extreme**, and the docblock called that "the whole look envelope". A third
- * reviewer swept 4,563 poses and got a different worst, which is the same overclaim
- * as the hand-written chest table that had already been caught once in this file. The
- * poses are a grid now, so the sentence and the number agree.
+ * Those are not the 7.00 / 5.34 / 0.99 quoted in earlier drafts, and the reason is
+ * **not** the one those drafts gave. They said the grid replaced five sampled poses.
+ * The grid was the right change — the prose had called five poses "the whole look
+ * envelope" — but it moved nothing. Decomposed:
+ *
+ * | poses | shoulders | breaths | none | head | neck |
+ * | --- | --- | --- | --- | --- | --- |
+ * | 5 | 1.07 | inhale | 7.00 | 5.34 | 0.99 |
+ * | 5 | 1.07 | both | 8.07 | 5.60 | 1.00 |
+ * | 5 | both | both | **8.59** | **6.05** | **1.00** |
+ * | 462 | both | both | **8.59** | **6.05** | **1.00** |
+ *
+ * The last two rows are identical. **The entire move came from sweeping both shoulder
+ * and both breath extremes, not from pose coverage** — and for the uncorrected row it
+ * could not have come from anywhere else: with no cancellation the head inherits
+ * `diag(shoulders, breath, 1)`, whose max/min ratio is fixed regardless of how the
+ * head is rotated and is attained at the identity. Sweeping rotations there is
+ * *provably* incapable of finding anything new.
+ *
+ * A reviewer decomposed that after the commit claiming otherwise had landed. It is
+ * the branch's own recurring defect one level up: **a change attributed to the wrong
+ * variable.** The grid stays — it makes the claim honest going forward, and rotation
+ * does matter for the `head-pivot` row — but it is not what moved the number.
  *
  * The middle row is the point: it is better than nothing only while the actor looks
  * straight ahead, and a compensation that is right at one angle is not a fix. The
@@ -1221,8 +1238,12 @@ test('the head is rigid with the chest and hinges at the neck', () => {
  *
  * The strongest assertion is no longer the anisotropy sweep but the equality on what
  * the neck hands down — a pure-Y breath and nothing else. It catches shear, which
- * comparing basis lengths does not: the same reviewer measured the rejected
- * arrangement at 5.34% by basis length and **8.99%** by singular value.
+ * comparing basis lengths does not: measured on the rejected arrangement at 5.34% by
+ * basis length and **8.99%** by singular value, from five poses at one shoulder and
+ * an inhale. That measurement is the *third* reviewer's. An earlier draft of this
+ * docblock credited it to the second, which asked for the attribution to come off it
+ * — *"I never measured 8.99% by singular value"* — and then independently confirmed
+ * the figure was right. Provenance matters here for the same reason the numbers do.
  */
 test('the chest lends the head its breath but not its shoulders', () => {
   // The widest chest the engine can write: `around(1, 0.07)` at either extreme.
@@ -1343,9 +1364,9 @@ test('the chest lends the head its breath but not its shoulders', () => {
  * and not only in yaw: it pitches into the run, the attack and the storm, and rolls
  * with the turn and the flinch.
  *
- * Measured over the sweep this test runs — the reachable chest envelope, the head's
- * own pitch and roll, and the clamped look range, 213,840 states — as the angle
- * between the head's world forward and the requested heading:
+ * Measured over the sweep this test runs — the chest envelope, the head's own pitch
+ * and roll, and the clamped look range, 213,840 states — as the angle between the
+ * head's world forward and the requested heading:
  *
  * | rule | worst heading error |
  * | --- | --- |
@@ -1353,6 +1374,17 @@ test('the chest lends the head its breath but not its shoulders', () => {
  * | `lookYaw - torsoPivot.rotation.y` | **14.00°**, and *worse than doing nothing* in **4.2%** of states |
  * | `solveHeadYaw` without the head's pitch | **8.84°** |
  * | `solveHeadYaw` | **exact**, to float |
+ *
+ * **These are an upper bound over a superset, not a reachable worst.** The sweep is a
+ * cross-product of each axis's range, and the engine's terms are correlated —
+ * `flinch · hitRight` drives both `rotation.y` and `rotation.z`, and a stagger clears
+ * `actor.action`, so attack and stagger cannot co-occur. A reviewer measured the
+ * jointly-reachable worst for the head-tilt case at **4.952°** against this sweep's
+ * 8.344°, about 70% high. That is the right trade for a *guard* — a superset can only
+ * make it stricter, never blind — but it is the wrong number to quote as "what the
+ * player saw", and the same distinction the "reachable 0.83 rad" label got wrong
+ * earlier in this file. Where a reachable figure is what matters, this file says so
+ * and gives it separately.
  *
  * The first two figures are the ones the test's own mutations report. Earlier drafts
  * quoted 35.93 and 13.79 from a one-off probe with a different grid, which is the
@@ -1565,11 +1597,21 @@ test('the head tracks its target through the chest, not past it', () => {
  *
  * ## Measured under the corrected model, 60 s at 60 Hz, after the transient
  *
+ * Four rules, because two of them were being conflated. What this test rejects is
+ * *damp after converting*; the scalar subtraction is a different rule, rejected
+ * elsewhere, and an earlier draft of this table printed the scalar's number under the
+ * damp-after-convert heading.
+ *
  * | rule | pure-yaw chest | with the chest's real pitch and roll |
  * | --- | --- | --- |
- * | no correction | 2.199° | 2.996° |
- * | damp the converted target | 1.997° | 2.787° |
+ * | no correction | 2.199° | **2.996°** |
+ * | scalar `lookYaw - chestYaw`, damped | 1.997° | **2.787°** |
+ * | **damp after `solveHeadYaw`** — what this test rejects | — | **2.091°** |
  * | `solveHeadYaw`, damped in body space | **0.000°** | **0.000°** |
+ *
+ * The 1.997 in the second row is the figure that mattered for the guard below: it is
+ * what the rejected-in-general scalar rule produces under the *correct* gait physics,
+ * against a guard that used to read `> 2`.
  *
  * The second column answers the other half of the same review: an earlier version of
  * this test held the chest's pitch and roll at zero, which is *exactly* the geometry

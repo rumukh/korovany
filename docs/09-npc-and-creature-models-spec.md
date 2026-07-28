@@ -119,7 +119,7 @@ no new dependencies.
   transform you inherit. The one term that is *not* a counter-rotation is the look
   yaw, which tracks a target rather than resisting a posture, so it is converted into
   chest space by `solveHeadYaw` — a solve rather than an offset, because the chest
-  pitches and rolls as well as yawing. Measured over the 213,840-state sweep the tests run: **37.4°**
+  pitches and rolls as well as yawing. Measured over the 213,840-state cross-product sweep the tests run -- an upper bound over a superset, since the engine's terms are correlated: **37.4°**
   of gaze error uncorrected, **14.0°** with the obvious scalar `lookYaw - chestYaw`
   (which is *worse than nothing* in 4.2% of them), exact solved, and **8.8°** if the solve is denied the head's own pitch. Damp the
   tracking in body space and convert instantaneously — a frame change is not a motion,
