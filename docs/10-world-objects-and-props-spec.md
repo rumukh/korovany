@@ -731,8 +731,38 @@ Four ferns fail that proof and are named in the assertion rather than excused, b
 sheet has no inside to be on the wrong side of. That list is the `open` list arrived at
 from the other direction: **orientation is undefined exactly where volume is.**
 
-**The centroid threshold is derived, not tuned, and the first version of it was one
-percent from a false failure.** Reversing every face negates each face's alignment with
+**A check can fire eventually and still be blind, and that is a different failure from
+one that cannot fire at all.** The phantom-pin guard is the case. A phantom is a key in
+the retention window with no cache entry behind it: it holds a slot, pins nothing,
+releases nothing on eviction, and — worse than inert — retaining one at the limit evicts
+a real key, so the fault destroys exactly what the window exists to preserve. The guard
+adopted for it asserted `propCacheSize >= retainedPropCount`, on the sound premise that
+every real pin has an entry.
+
+The premise is true and the assertion still doesn't test it. `propCacheSize` also counts
+entries held only by live borrowers, and those mask the deficit one for one: with `B`
+borrower-only entries and `P` phantoms it reduces to **`B >= P`**. A reviewer measured
+the threshold rather than the verdict, injecting phantoms one at a time into a real
+streamed world:
+
+```text
+propCacheSize 131   retainedPropCount 103   borrower-only entries 28
+ 1..28 phantoms -> PASSES (blind)
+    29 phantoms -> FAILS
+```
+
+Algebra and experiment agree on 29, and a real phantom bug produces a handful. Replaced
+with `retentionIsIntact` — every retained key must have a live cache entry — which
+detects at `P = 1` and is proved at `P = 1`.
+
+Two things make this its own entry. First, **the check adopted to close a vacuous-check
+hole was itself vacuous**, in a section written about that pattern, by someone hunting it
+deliberately. Second, and more useful: everything else in the table could *never* fire.
+This one fires — at a threshold that has nothing to do with the fault, drifts with seed
+and lap, and is invisible unless you measure the **detection threshold** rather than the
+pass or fail. A check that only catches gross corruption reads exactly like one that
+catches the class.
+
 the centroid ray while leaving `|alignment|` — and therefore which faces are decisive at
 all — untouched. So reversal maps the inward fraction `f` to exactly `1 - f`; measured
 across the request space the largest departure from that law is **0.0023**, all of it
@@ -771,6 +801,21 @@ Three mitigations, in increasing order of how well they work:
    orphaned, and an orphaned SHA still resolves in a shared object store, so a pinned
    reference keeps returning a real, readable, permanently frozen tree. This pass caused
    the epidemic by amending roughly twenty times.
+
+   **"I stopped amending" is not a guarantee of stability, and reads like one.** It does
+   not cover the base moving underneath: a rebase rewrites every SHA on the branch
+   exactly as an amend does. This pass committed additively for its last twenty commits
+   and still handed reviewers four different SHAs for the same work, because the
+   foundation tip moved four times. Both reviewers and the integrator hit it
+   independently.
+
+   The consequence for a downstream merger is the same as an amend, so the advice "commit
+   additively" does not fix their problem either: a rebase re-parents the branch, and an
+   integration branch that already merged the old shape gets add/add conflicts on files
+   it has already reviewed. **Staying rebased on a moving foundation and being cheaply
+   mergeable downstream are incompatible**, and someone has to choose. The integrator's
+   workaround — applying `git diff <old>..<new>` as a patch instead of merging — resolves
+   it as long as both SHAs are stated, which is what rule 3 is for.
 3. **State the measured SHA in every message, not just the first.** Proposed by a
    reviewer after three crossed exchanges, and the only one that survives async
    messaging with no read receipt: a crossed message is then self-dating, and staleness
