@@ -1663,6 +1663,114 @@ built for — *does this tree contain this fix* — and was carried, reasonably,
 one step away: *does this tree enforce this rule.* That is the adjacent-question defect
 in §13's table, arriving through the one technique the table exists to recommend.
 
+### 13.3 The one open item, and how it was closed
+
+Recorded at hand-off as coverage rather than a defect, because a session ends and a
+measurement should not end with it.
+
+**The integration branch carried `retentionIsIntact` byte-identical to this branch's copy,
+and did not carry the test that proves it can return `false`.** The predicate was fully
+merged; only the test was dropped, in conflict resolution. Measured at hand-off on the PR
+head `d6cddc6` at 342 tests, and re-measured on `main` at `348a874` before restoring
+anything. The totals move as `main` moves; the shape does not:
+
+```text
+                                                tests   pass   fail
+BASELINE on main                                  345    345      0
+retentionIsIntact -> return true, no new test     345    345      0   <- the finding
+same mutation, with the restored test             346    345      1
+predicate restored, test kept                     346    346      0
+```
+
+Row two is the finding: the predicate can be replaced by a constant and the suite does not
+move. `main` does assert `assert.ok(runtime.retentionIsIntact, …)` across 75 region loads,
+and that is real coverage — **of the system.** A phantom arising naturally during those
+loads is caught. What it cannot cover is **the instrument**: it consumes the predicate's
+output and never constructs a state where that output should be false, so a predicate that
+always returns `true` satisfies every existing assertion about it.
+
+The distinction is the whole of §13 in one line: *that assertion tests the world; the
+restored one tests the thermometer.*
+
+It matters because this is the exact regression that already happened once. The predicate's
+predecessor compared `propCacheSize >= retainedPropCount`, which reduces to `B >= P` and
+stayed green until **29 simultaneous phantoms** — blind across the entire range a real bug
+produces. Nothing on `main` would have noticed it being weakened back that far.
+
+The probe that found it was `retained.push` — the phantom injection itself — which was
+**0** occurrences there and 1 here. It is a content probe on the file rather than a SHA or
+ancestry comparison for the reason given in §6: a merge conflict is the one place a commit
+can be fully merged and its content still be gone, so `--is-ancestor` proves containment
+when true and proves nothing when false.
+
+The restored test is `the phantom-pin check detects a single phantom, not thirty`, in
+`tests/worldArt.test.ts`, free of dependencies beyond `WorldPropLibrary`. Three further
+candidates from the same diff were checked and cleared as superseded rather than lost: a
+receipt test now covered by `a prop receipt cannot be forged, only spent, and only once`; a
+`docs/10` structural gate renamed, moved into `tests/integration.test.ts` and widened to
+cover two specs; and a barrel-surface pin in `tests/art.test.ts` renamed and widened to
+three published surfaces. Each was cleared by a content probe, never by its title — **a
+title is often aspirational before a fix and accurate after, identical in both.** One of the
+three turned out to have been superseded *and* narrowed; see the postscript, because the
+distinction is the more useful half of this entry.
+
+**After restoring a test, re-run the mutation rather than trusting the restore** — the
+entire finding is that a present fix and a present-looking test are different things, which
+makes the author of a restore the worst available source for "it is covered now." That cuts
+both ways here: the first version of the restored test injected its phantom with no live
+borrower present, where the weakened predecessor and the correct predicate agree. It
+discriminated against a constant, not against the form it names, and the comment claiming
+otherwise shipped until review measured it. **A test written to prove an instrument has an
+instrument of its own, and it needs the same treatment.**
+
+#### A postscript, because the same merge took a second thing and nearly kept it
+
+While this was being written an edit of mine welded two lines of §14 into `...went into
+composition thatreads as places...`, at 161 columns. The gate passed over it: no line left
+beginning with a single space, no `**` between two word characters, no repeated prefix. It
+was caught by `git diff` against `main` and by nothing else.
+
+The first conclusion drawn here was that this is the splice-on-a-paragraph-boundary case
+§13 admits it cannot detect, and that widening the gate would need a line-length rule, which
+is the kind of stylistic gate §13 argues against. **Both halves of that were wrong, and the
+review that checked them is why this paragraph reads the way it does.**
+
+The world-objects branch's own copy of this gate had **four** detectors, not three. The
+fourth was an over-long-line rule, and its comment says in as many words that it exists
+because the other three cannot see a weld between two lowercase words — `alreadyargued` was
+the instance then, `thatreads` is the instance now. When the gate was renamed, moved into
+`tests/integration.test.ts` and widened to cover two specs, that detector did not come with
+it. The widening was recorded; the narrowing was not, and a rename plus a move plus a
+genuine improvement is a very comfortable place for a deletion to sit.
+
+So the weld is not an instance of an undetectable class. It is a **second casualty of the
+same merge**, and it was found only because the first casualty was being repaired. The
+detector is restored, and it is not a threshold to tune: table rows are excluded by
+structure and fenced blocks were already skipped, so it scores zero on both specs as they
+stand. It was believed only after it was watched fire — clean file passes, the 161-column
+weld reintroduced is **caught**, reverted passes again.
+
+The lesson is about the word *superseded*, and it is §13.2 one step further along. Three
+candidates from that merge were cleared as superseded rather than lost. The clearing was
+done by content probe, correctly, and it was still not enough: **"superseded" is a claim
+about completeness, and a content probe that finds the replacement does not measure whether
+the replacement kept everything.** One of the three had been superseded *and* narrowed. A
+probe that answers *did something take its place?* was mistaken for one that answers *did
+anything go missing?* — the same adjacent-question step §13.2 describes, taken with the same
+instrument.
+
+And it closed the same way §13.2 says to close it: by mutating the input and watching the
+guarantee fire. The restored detector was believed only after the 161-column weld was put
+back and seen to trip it, and the restored test only after the weakened predicate was put
+back and seen to fail it.
+
+The probe written for the weld was wrong the first time in the same direction. Substring
+containment — *is every line of `main`'s copy present somewhere in mine?* — answers **yes**
+for a welded line, because the prefix survives inside the weld. A line-exact probe answers
+correctly, but only earned belief once it had been shown to fire: run against a branch known
+to differ it reported 467 missing lines, and only then was its **0** against `main` worth
+anything. *A probe that reports zero without having been shown to fire is not a result.*
+
 
 ## 14. Effort
 
