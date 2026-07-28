@@ -1483,25 +1483,40 @@ test('the head tracks its target through the chest, not past it', () => {
   //
   // The sweep **over-covers**: it is a cross-product of each axis's range, and the
   // engine's terms are correlated. `actor.reaction` is one field, so a stagger
-  // excludes a flinch; a stagger clears `actor.action`, so attack cannot co-occur with
-  // it; and `sampleActorPose` sets `pose.stride = reaction === 'stagger' ? 0 : stride`,
-  // so a staggering chest has **no gait yaw at all**. Enumerating jointly, the breath
-  // coefficient is **4.81** against this sweep's 9.53. Over-covering is the safe
-  // direction for a guard — it can only make the bound stricter — but it means the
-  // in-game figure is about half what is quoted, and this sweep must not be called
-  // "the reachable envelope". That mislabel was made three times in this file before
-  // it stuck.
+  // excludes a flinch, and a stagger clears `actor.action`, so attack cannot co-occur
+  // with it. Note what is *not* true, because an earlier version of this comment
+  // asserted it: a stagger does **not** stop the chest yawing with the gait.
+  // `torsoPivot.rotation.y` reads `actor.stride`, not `pose.stride` — `pose.stride` is
+  // zeroed under stagger but only ever reaches the limbs — and `actor.stride` is
+  // *damped* toward zero at rate 13, so the first frame of a stagger keeps about 81%
+  // of its gait yaw. That first frame is also where `pose.stagger` peaks, so the
+  // pairing is not merely reachable, it is reachable exactly where the head pitch is
+  // largest. Enumerating jointly, the breath coefficient is **4.81** against this
+  // sweep's 9.53. Over-covering is the safe direction for a guard — it can only make
+  // the bound stricter — but it means the in-game figure is about half what is quoted,
+  // and this sweep must not be called "the reachable envelope". That mislabel was made
+  // three times in this file before it stuck.
   //
-  // 4.81 is worth a note on how it was settled, because the first version of this
-  // comment got there the wrong way. A reviewer measured 4.81; an independent
-  // enumeration here measured 6.68; and rather than reconcile a 39% disagreement the
-  // comment simply adopted the reviewer's figure and presented it as fact. The
-  // reviewer caught that — *"deferring to a reviewer's number over your own
-  // measurement is the same defect class as everything else this branch has caught: a
-  // claim adopted rather than verified"* — and it is the sharpest correction of the
-  // review, because the number was right and the reason for believing it was not.
-  // Re-enumerated properly, 4.81 holds: the 6.68 came from letting a staggering chest
-  // keep its gait yaw, which the line above forbids.
+  // 4.81 is worth a note on how it was settled, because it took three attempts and the
+  // first two were wrong in instructive ways. A reviewer measured 4.81; an independent
+  // enumeration here measured 6.68; and rather than reconcile a 39% disagreement, the
+  // comment adopted the reviewer's figure and presented it as fact. The reviewer caught
+  // that — *"deferring to a reviewer's number over your own measurement is the same
+  // defect class as everything else this branch has caught: a claim adopted rather than
+  // verified"* — which is the sharpest correction of the review, because the number was
+  // right and the reason for believing it was not.
+  //
+  // The first reconciliation then blamed `pose.stride`, and was wrong for the reasons
+  // above. Traced properly, the 6.68 came from a **partial** joint enumeration: it
+  // constrained the chest's *yaw* correctly by stagger, then swept chest pitch and
+  // pinned head roll at -0.30 as free cross-product axes. Its maximum sits at
+  // `stagger 1` with `headRoll -0.30` — but head roll is
+  // `turnLean*0.06 - idleWeightShift*0.2 - flinch*hitRight*0.3`, which cannot exceed
+  // 0.037 without a flinch, and a flinch cannot co-occur with a stagger. So the state
+  // it maximised at needs a flinch and a stagger at once. **Enforcing joint
+  // consistency on one axis and believing it enforced on all of them** is the actual
+  // defect, and it is worth more than the number: a partially-joint sweep looks exactly
+  // like a joint one from the outside.
   const SKEW_PER_UNIT_BREATH = 9.6
   const SKEW_PER_UNIT_BODY_ASYMMETRY = 29
   // `applyActorVisualVariation`: bodyPivot.scale.set(bulk, height, bulk * around(1, 0.03)).
@@ -2101,6 +2116,28 @@ test('the engine wires the rig the way these tests measure it', () => {
     /role === 'scout'\s*\?\s*4\.8/.test(source) && /:\s*3\.7\)/.test(source),
     'the scout\'s or the default actor speed has changed; the wobble test\'s GAITS '
     + 'table pairs each speed with its cadence and must move with them',
+  )
+  // Which stride the chest reads, and what a stagger does to it. Both are load-bearing
+  // for the joint-reachability model the gaze test's comment describes, and a previous
+  // version of that comment asserted the opposite of both — that `pose.stride` being
+  // zeroed under stagger leaves a staggering chest with no gait yaw. It does not:
+  // `pose.stride` only ever reaches the limbs, and `actor.stride` is damped rather than
+  // cleared. Pinned here so the next claim of that shape fails instead of shipping.
+  assert.ok(
+    /torsoPivot\.rotation\.y =\s*\r?\n?\s*-actor\.stride \*/.test(actorPosture),
+    'the chest\'s yaw no longer reads `actor.stride`. If it now reads `pose.stride`, a '
+    + 'stagger really would zero it, and the gaze test\'s reachability comment — which '
+    + 'says the opposite — becomes wrong in the other direction.',
+  )
+  const staggerBranch = source.slice(
+    source.indexOf("if (actor.reaction === 'stagger' || knockbackSpeed"),
+    source.indexOf("if (actor.reaction === 'stagger' || knockbackSpeed") + 400,
+  )
+  assert.ok(
+    /actor\.stride = THREE\.MathUtils\.damp\(actor\.stride, 0, 13, delta\)/.test(staggerBranch),
+    'a stagger no longer damps `actor.stride` at 13 — if it now clears it, the first '
+    + 'frame of a stagger stops carrying ~81% of its gait yaw and the gaze test\'s '
+    + 'reachability comment needs re-deriving, not editing.',
   )
 })
 
