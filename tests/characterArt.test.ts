@@ -1701,7 +1701,17 @@ test('the head tracks its target through the chest, not past it', () => {
   //    is the same for every plan. Asserted rather than argued: a heading is a
   //    direction, proportions enter the rig as positions, and no direction calculation
   //    reads a position — but that is a claim about the code as it is now, and the last
-  //    time this file trusted such a claim across a change it was wrong.
+  //    time this file trusted such a claim across a change it was wrong. (A reviewer
+  //    made the argument; it also pointed out that `body-pivot`'s scale is neither a
+  //    proportion nor a position, so the argument happened to survive the change rather
+  //    than covering it.)
+  //
+  //    Nine decimals is normally the kind of precision choice worth attacking as a
+  //    knife-edge. Measured, it is not: the residues are **bit-identical** across the
+  //    27 plans — one distinct double, spread exactly 0, zero ulps — so the margin to
+  //    the rounding threshold is not a judgement call. Comparing raw doubles instead
+  //    would be stricter and would also fail on a harmless last-bit change, which is a
+  //    worse trade for a property that is structural rather than numerical.
   const breathResidues = new Set<string>()
   const bodyResidues = new Set<string>()
   for (const faction of FACTIONS) {

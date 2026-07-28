@@ -217,6 +217,24 @@ no new dependencies.
   is its own defect**, and a partially-joint sweep is indistinguishable from a joint
   one from the outside. Two wrong causes for one right number, in a rule about
   verification — which is the strongest argument the rule has.
+- **Review the justification, not the fix.** Code written in response to a review is
+  the most defective code in a change set, and the head-rig work has the base rate to
+  say so: every finding in that window landed on a *claim written in the act of
+  correcting a previous claim*. The mechanism, which a reviewer named and which is what
+  makes the rule predictive rather than descriptive: **the fix gets reasoned carefully
+  and the sentence explaining why the old thing was wrong gets written in the same
+  breath and never independently checked.** The author is at their most certain and
+  least sceptical at exactly the moment they are writing prose about their own error.
+  So a review pass over review-response code should go straight at the justifications —
+  the docblock that says *why*, the commit message's causal clause, the comment naming
+  a mechanism — and treat the fix itself as the part most likely to be right.
+
+  Concretely, from the head-rig work: a gaze correction that was itself the fix for a
+  gaze correction; a reachability model asserted in this document while explaining a
+  reconciliation; an attribution to the wrong reviewer written while correcting an
+  attribution; and a change credited to the wrong variable in a commit whose entire
+  subject was honest measurement. Four instances, all in explanations, none in the
+  code being explained.
 - **Mutate the production code, not the test's copy of it.** The anisotropy test used
   to apply its own `neckPivot.scale.x = 1 / shoulders`, and the mutation evidence
   published for it came from mutating *that* line. Reverting the engine's half left
