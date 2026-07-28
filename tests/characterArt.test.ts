@@ -1163,14 +1163,21 @@ test('the head is rigid with the chest and hinges at the neck', () => {
  * The first version of this fix put the correction on `head-pivot`, which the
  * animation rotates by up to 0.65 rad of look yaw — and a shrink along the head's
  * local x does not cancel a stretch along the world's X once those two frames differ.
- * Measured over the whole look envelope below, with the widest shoulders and a full
- * inhale, across all 30 faction x role plans (21 distinct proportion sets):
+ * Measured over the look grid below — both shoulder extremes, both breath extremes,
+ * 462 head rotations, 30 plans — as max/min length of the head's transformed basis:
  *
  * | correction | worst head anisotropy |
  * | --- | --- |
- * | none | **7.00%** (elf soldier, facing forward) |
- * | on the rotated `head-pivot` | **5.34%** (elf peasant, full yaw) |
- * | on the unrotated `neck-pivot` | **0.99%**, which is the chest's breath |
+ * | none | **8.59%** |
+ * | on the rotated `head-pivot` | **6.05%** |
+ * | on the unrotated `neck-pivot` | **1.00%**, which is the chest's breath |
+ *
+ * Those are not the 7.00 / 5.34 / 0.99 quoted in earlier drafts. Same phenomenon,
+ * honest coverage: the first figures came from **five enumerated poses and one
+ * shoulder extreme**, and the docblock called that "the whole look envelope". A third
+ * reviewer swept 4,563 poses and got a different worst, which is the same overclaim
+ * as the hand-written chest table that had already been caught once in this file. The
+ * poses are a grid now, so the sentence and the number agree.
  *
  * The middle row is the point: it is better than nothing only while the actor looks
  * straight ahead, and a compensation that is right at one angle is not a fix. The
@@ -1228,20 +1235,21 @@ test('the chest lends the head its breath but not its shoulders', () => {
   // which reads as the other two axes being `1 / (1 - b)` longer. The exhale is the
   // larger of the two, so it is the bound. The slack is float noise, not headroom.
   const BOUND = 1 / (1 - BREATH_AMPLITUDE) - 1 + 1e-9
-  // Everything `animateActorCharacter` and `animateDeath` write to `head-pivot`:
-  // look yaw clamped to 0.65, stagger pitch, and the death roll.
-  const LOOKS: readonly (readonly [number, number, number])[] = [
-    [0, 0, 0],
-    [0, 0.65, 0],
-    [0, -0.65, 0],
-    [0.18, 0.65, 0.3],
-    [-0.12, 0.4, -0.28],
-  ]
+  // The head's own reachable rotations, swept as a grid rather than sampled. An
+  // earlier version enumerated five poses and the docblock called the result "the
+  // whole look envelope" — a reviewer swept 4,563 poses and got a different worst,
+  // which is the same overclaim as a hand-written chest table. Pitch is the gait
+  // counter-pitch plus stagger, yaw the ±0.65 clamp, roll the turn lean and the
+  // death loll.
+  const LOOK_PITCH = { from: -0.14, to: 0.2, step: 0.068 }
+  const LOOK_YAW = { from: -0.65, to: 0.65, step: 0.13 }
+  const LOOK_ROLL = { from: -0.3, to: 0.3, step: 0.1 }
   const axis = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]
   const basis = new THREE.Matrix3()
   const inherited = new THREE.Matrix3()
   let worst = 0
   let worstAt = ''
+  let states = 0
 
   for (const faction of FACTIONS) {
     for (const role of [...ROLES, 'player'] as const) {
@@ -1283,19 +1291,27 @@ test('the chest lends the head its breath but not its shoulders', () => {
             )
           }
 
-          for (const look of LOOKS) {
-            skeleton.headPivot.rotation.set(...look)
-            skeleton.root.updateMatrixWorld(true)
-            basis.setFromMatrix4(head.matrixWorld)
-            for (let i = 0; i < 3; i += 1) {
-              axis[i].set(Number(i === 0), Number(i === 1), Number(i === 2)).applyMatrix3(basis)
-            }
-            const lengths = axis.map((v) => v.length())
-            const anisotropy = Math.max(...lengths) / Math.min(...lengths) - 1
-            if (anisotropy > worst) {
-              worst = anisotropy
-              worstAt = `${faction}/${role} at shoulders ${shoulders.toFixed(2)}, breath `
-                + `${breath.toFixed(5)}, looking [${look.map((v) => v.toFixed(2)).join(', ')}]`
+          for (let lx = LOOK_PITCH.from; lx <= LOOK_PITCH.to; lx += LOOK_PITCH.step) {
+            for (let ly = LOOK_YAW.from; ly <= LOOK_YAW.to; ly += LOOK_YAW.step) {
+              for (let lz = LOOK_ROLL.from; lz <= LOOK_ROLL.to; lz += LOOK_ROLL.step) {
+                states += 1
+                skeleton.headPivot.rotation.set(lx, ly, lz)
+                skeleton.root.updateMatrixWorld(true)
+                basis.setFromMatrix4(head.matrixWorld)
+                for (let i = 0; i < 3; i += 1) {
+                  axis[i]
+                    .set(Number(i === 0), Number(i === 1), Number(i === 2))
+                    .applyMatrix3(basis)
+                }
+                const lengths = axis.map((v) => v.length())
+                const anisotropy = Math.max(...lengths) / Math.min(...lengths) - 1
+                if (anisotropy > worst) {
+                  worst = anisotropy
+                  worstAt = `${faction}/${role} at shoulders ${shoulders.toFixed(2)}, breath `
+                    + `${breath.toFixed(5)}, looking [${lx.toFixed(2)}, ${ly.toFixed(2)}, `
+                    + `${lz.toFixed(2)}]`
+                }
+              }
             }
           }
         }
@@ -1303,6 +1319,7 @@ test('the chest lends the head its breath but not its shoulders', () => {
     }
   }
 
+  assert.ok(states > 40_000, `swept only ${String(states)} states; the grid has collapsed`)
   assert.ok(
     worst <= BOUND,
     `the head came out ${(worst * 100).toFixed(4)}% anisotropic **through the chest** at `

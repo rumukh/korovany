@@ -153,12 +153,12 @@ no new dependencies.
   sizes a skull. Anatomy is the discriminator here, not a magnitude — deciding by
   "how big is the artifact" would have kept the wrong one and dropped the right one,
   since both are around a percent. Measured across all 30 faction x role plans (21 distinct proportion sets) and the whole look
-  envelope: **7.00%** head anisotropy with the width uncancelled, **0.99%** with it
-  cancelled, and that 0.99% is the breath to ten decimal places.
+  envelope: **8.59%** head anisotropy with the width uncancelled, **1.00%** with it
+  cancelled, and that 1.00% is the breath to ten decimal places.
 - **Cancel a scale above every rotation, never below one.** A scale and a rotation do
   not commute, so a cancellation applied *downstream* of a rotation is valid only in
   the rest pose. Putting the width correction on `head-pivot`, which the animation
-  yaws by up to 0.65 rad, left **5.34%** at full yaw — *worse than the 3.00% of doing
+  yaws by up to 0.65 rad, left **6.05%** at full yaw — *worse than the 3.00% of doing
   nothing* at some angles. `neck-pivot` exists so the correcting node never rotates,
   which removes the angle-dependence rather than bounding it. The same shape of error
   reappeared one commit later in the gaze, as `lookYaw - torsoPivot.rotation.y`: one
@@ -420,8 +420,7 @@ carries scale as well as rotation — the actor's shoulder width on `scale.x` an
 breath on `scale.y` — and the head has to divide the shoulder width back out in the
 same axis-aligned frame it was applied in. `neck-pivot` never rotates, so it can;
 `head-pivot` does, so on it the correction only cancels while the actor faces
-forward. Measured across all 30 faction x role plans (21 distinct proportion sets) and the whole look envelope: **7.00%** head
-anisotropy with no correction, **5.34%** with it on `head-pivot`, **0.99%** with it
+forward. Measured over both shoulder extremes, both breath extremes and a 462-pose look grid across all 30 plans: **8.59%** head anisotropy with no correction, **6.05%** with it on `head-pivot`, **1.00%** with it
 on `neck-pivot`, that last being the chest's breath and nothing else.
 
 Contracts this preserves, each verified against its consumer:

@@ -708,9 +708,11 @@ export function characterPartKeys(plan: CharacterPlan): CharacterPartKeys {
  * through the whole 2.12-2.34 m lever arm from the ground to the shoulders, while a
  * head rooted at the feet on a *different* pivot does not move at all. Measured on
  * the sibling rig, as the distance between the head and where `torso-pivot` puts
- * it — a brute standing still, `lean` 0.20: **0.4992 m**. A captive: 0.4710. Any
- * villain, whose faction leans: 0.3430. A peasant: 0.2639. A head is 0.66 m deep,
- * so a standing brute wore its skull three-quarters of a head behind its own neck.
+ * it — a brute standing still, `lean` 0.20: **0.4992 m**. A captive: 0.4710. A
+ * villain champion: 0.3690, and a villain soldier, minion or archer: 0.3430 — the
+ * three share a `lean` and differ by head height, which is why "any villain" was the
+ * wrong way to say it. A peasant: 0.2639. A head is 0.66 m deep, so a standing brute
+ * wore its skull three-quarters of a head behind its own neck.
  * Walking takes the worst case to **0.6603 m** at the 1.18 cap `motionBlend` is
  * clamped to, and the deepest pose the simulation can actually reach — attack and
  * stagger cannot co-occur, because the stagger branch clears `actor.action` — is
@@ -750,16 +752,17 @@ export interface CharacterSkeleton {
    * on its `scale.x` and the breathing pass writes its `scale.y` every frame, and
    * a head is not a pair of shoulders. Dividing that width back out has to happen
    * in the *same* axis-aligned frame it was applied in, which means above the head's
-   * rotation, not on it. Measured across all 30 faction x role plans (21 distinct proportion sets) and the whole look envelope:
-   * no correction at all leaves the head **7.00%** anisotropic; the correction on
-   * the rotated pivot leaves it **5.34%**, because a shrink along the head's local x
-   * and a stretch along the world's X stop cancelling once the two frames differ; on
-   * this node it is **0.99%**, and that residue is the chest's breath. What is being
-   * accepted there is a **0.99% vertical stretch of the skull mesh itself** — not,
-   * as an earlier draft of this docblock said, merely "a chest lifting a head as it
-   * inhales". The lift is a translation and the head keeps it either way, because
-   * the neck's *position* rides the chest's scale; cancelling `scale.y` would not
-   * cost it. A reviewer caught that the sentence was naming a benefit the decision
+   * rotation, not on it. Measured over both shoulder extremes, both breath extremes
+   * and a 462-pose look grid across all 30 plans: no correction at all leaves the
+   * head **8.59%** anisotropic; the correction on the rotated pivot leaves it
+   * **6.05%**, because a shrink along the head's local x and a stretch along the
+   * world's X stop cancelling once the two frames differ; on this node it is
+   * **1.00%**, and that residue is the chest's breath. What is being accepted there
+   * is a **vertical stretch of the skull mesh itself** — not, as an earlier draft of
+   * this docblock said, merely "a chest lifting a head as it inhales". The lift is a
+   * translation and the head keeps it either way, because the neck's *position*
+   * rides the chest's scale; cancelling `scale.y` would not cost it. A reviewer
+   * caught that the sentence was naming a benefit the decision
    * was not buying. The stretch is kept because it is a hundredth of the shoulder
    * problem and a chest that breathes without moving its head is worse, but the
    * honest statement is the stretch, not the lift.
@@ -887,9 +890,10 @@ export function solveHeadYaw(
  * sizes a skull. It has to be `neck-pivot` and not `head-pivot`: a scale and a
  * rotation do not commute, so a cancellation below a rotation is valid only in the
  * rest pose, and the animation yaws `head-pivot` by up to 0.65 rad. Measured over
- * the whole look envelope: **7.00%** head anisotropy uncancelled, **5.34%** cancelled
- * on the rotated pivot — worse than nothing at some angles — **0.99%** here, which is
- * the chest's breath and nothing else.
+ * both shoulder extremes, both breath extremes and a 462-pose look grid: **8.59%**
+ * head anisotropy uncancelled, **6.05%** cancelled on the rotated pivot — worse than
+ * nothing at some angles — **1.00%** here, which is the chest's breath and nothing
+ * else.
  *
  * A beast has no neck: `createBeast` still roots its head at the animal, so its skull
  * never wore the width. Pass `null` and nothing is divided out.
