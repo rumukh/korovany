@@ -851,6 +851,24 @@ The rules that fall out of them, in rough order of how much they would have save
    worked — the fix was real and order-independent, verified cold at 0 of 180, and the
    test guarding it was still empty.
 
+   **Which fix, though, and the answer is not the obvious one.** Two mechanisms were added
+   here and only one carries the cold path. `walkableNear` snaps a start to the nearest
+   standable point, and it is *the belt, not the braces*: it can only see colliders that
+   already exist, and `GameEngine` asks for the start position **before** it streams any
+   region, so on the run that matters it queries an empty collision world and returns its
+   input untouched. The **keep-out in `createDressing`** is what takes 1 of 180 to 0 of 180
+   on a cold start; the snap covers every caller whose region is already resident, which is
+   every caller except the one that hurts.
+
+   The integrator caught this pass describing it the other way round in a status summary —
+   *"`getStartPosition` now returns the nearest standable point, measured 0 of 180"* — which
+   is true, and reads as though the snap is the fix. **A reader carrying that model would
+   simplify by deleting the keep-out and keeping the snap**, and the suite would stay green
+   because the tests above run cold. It is the section's own defect one level out: a claim
+   true of one population, stated as though it covered another, and the docblock in
+   `GeneratedWorldRuntime.ts` named the population correctly while the summary did not.
+   **Prose that travels needs the population more than prose that stays next to the code.**
+
    That reviewer then sharpened the shape of the three rounds better than this pass had:
    **mechanism, then call order, then input.** Each correction was right, each was better
    argued than the last, and none of them gave the assertion any power — because in every
@@ -1119,6 +1137,20 @@ grep proves a *token* is present, not that the file is right. The surviving set 
 **`git branch --contains`** for tip-versus-orphan, a **content probe** for "does this tree
 have the fix", and the **blob hash** for "is this file identical" — which is stronger than
 the other two wherever the question is really about a file.
+
+**And the first of those three is sound in only one direction, which took until the last
+hour to name.** The integrator applies work **by patch** rather than by merge, so
+`--contains` and `--is-ancestor` report *False* for this branch against theirs **even on a
+byte-identical tree**. Ancestry answers *"did this commit arrive"*; the question is almost
+always *"did this content arrive"*. They coincide only when the receiver merges, and
+diverge silently when the receiver rebases, cherry-picks or patches — which is what an
+integrator does by definition.
+
+So: **True proves containment; False proves nothing at all.** Every negative conclusion
+drawn from ancestry on this programme should have come from a content diff over the owned
+paths instead. That is also the empirical result — the one genuinely missing item found all
+night was found by content diff, and it appeared on no list produced by SHA comparison,
+while the SHA lists repeatedly reported present things as absent.
 
 **An instruction that changes how findings are *treated* is more dangerous than one that
 changes code.** The programme lead's closing contribution, and the sharpest of the
