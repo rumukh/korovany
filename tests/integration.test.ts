@@ -400,6 +400,21 @@ test('nothing in the assembled world renders as blown-out white', () => {
  * Mutation-verified: adding `ensureVertexColors` to `CharacterKit`'s `finish()` — a
  * one-line change a future pass could plausibly make — turns this red immediately,
  * while both tests above stay green. That gap between them is the point.
+ *
+ * **What it cannot detect.** Three things, stated because the next reader will have none
+ * of the context that made them obvious:
+ *
+ *  - It checks that each kit is **uniform**, not that either kit chose *correctly*.
+ *    If both kits flipped convention together it would stay green, and the world would
+ *    render wrong. The correctness of the choice lives in the two tests above, which
+ *    look at what actually reaches a frame.
+ *  - It samples builders rather than enumerating them: 5 roles x 3 factions x 3 variants
+ *    plus the beasts and the wagon, not every builder in the kit. A part that broke the
+ *    convention *and* fell outside this sample would pass here. The population floor
+ *    (>= 50 parts) bounds how badly the sample can shrink, not what it covers.
+ *  - It says nothing about *within-part* consistency — a single geometry carrying a
+ *    partial colour attribute reads as coloured here. `every prop the game can ask for`
+ *    above is what counts vertices.
  */
 test('each art kit is uniform about vertex colours, so a merge can never mix them', async () => {
   const character = await import('../src/game/art/CharacterKit.ts')
