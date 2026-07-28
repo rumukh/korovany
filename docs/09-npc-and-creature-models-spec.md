@@ -218,11 +218,16 @@ no new dependencies.
   some axes by the reaction and left others as free cross-product ranges. **Enforcing
   joint consistency on one axis and believing it enforced on all of them is its own
   defect**, and a partially-joint sweep is indistinguishable from a joint one from the
-  outside. A two-factor design then isolates the contributor, because a probe that moves
-  two things cannot attribute what it sees: with chest pitch joint the coefficient is the
-  same whether head roll is joint or free, and with chest pitch pinned past its reachable
-  maximum it is the same again at a higher value. **Head roll contributes zero in both
-  rows; chest pitch carries the whole difference.** The remainder of the original gap is
+  outside. A factorial design then isolates the contributor, because a probe that moves
+  two things cannot attribute what it sees: relaxing one constraint at a time gives
+  4.9199 fully joint, 4.9199 with head roll freed, 5.7018 with chest pitch pinned at its
+  axis maximum, and 6.0420 with chest roll pinned at its. **Head roll contributes exactly
+  zero — provably, since a Z-rotation fixes the +Z axis and every scale in the chain sits
+  above it — and chest roll is the dominant term**, three times its jointly reachable
+  bound. An earlier version of this paragraph named chest pitch, the second largest.
+  Naming the second biggest contributor is the same defect as naming an inert one and is
+  harder to catch, because a plausible-sized effect in the right direction reads as
+  confirmation. The remainder of the original gap is
   still unaccounted for, and naming chest pitch as *a* demonstrated contributor is as far
   as the measurement goes.
 
@@ -244,12 +249,22 @@ no new dependencies.
   the docblock that says *why*, the commit message's causal clause, the comment naming
   a mechanism — and treat the fix itself as the part most likely to be right.
 
-  Concretely, from the head-rig work: a gaze correction that was itself the fix for a
-  gaze correction; a reachability model asserted in this document while explaining a
-  reconciliation; an attribution to the wrong reviewer written while correcting an
-  attribution; and a change credited to the wrong variable in a commit whose entire
-  subject was honest measurement. Four instances, all in explanations, none in the
-  code being explained.
+  Concretely, from the head-rig work: a reachability model asserted in this document
+  while explaining a reconciliation; an attribution to the wrong reviewer written
+  while correcting an attribution; a change credited to the wrong variable in a commit
+  whose entire subject was honest measurement; and, twice, a cause named for a
+  discrepancy that measurement showed the named variable could not produce.
+
+  An earlier version of this rule said *"every finding in that window landed on a
+  claim"* and *"none in the code being explained"*. Both are false, and a reviewer
+  falsified them with findings the same window had already accepted: an unanchored
+  source pin that passed against `= headPitch * 0.5`, an order-blind cadence pin that
+  passed with two roles' values swapped, and a float-accumulating loop visiting 396
+  poses while four places called it 462. Those are code. **The rule's own summary
+  sentence exhibited the defect the rule describes**, which is the most direct
+  evidence available that the mechanism is real and that a rule is not a defence
+  against it. The rule is about where to *look first*, not a claim about where every
+  defect lives.
 - **Turn a finding into a gate, not a paragraph.** A written rule is re-read by the
   person least able to see past it — the author, mid-correction, at the moment of
   greatest certainty. A check is not immune to carelessness either, but **its

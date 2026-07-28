@@ -1594,24 +1594,37 @@ test('the head tracks its target through the chest, not past it', () => {
   // So: **the sweep was partially joint** — it constrained some axes by the reaction and
   // left others as free cross-product ranges — and that is the defect, demonstrated.
   //
-  // Which axis carried it is now partly established, by a two-factor design rather than
-  // a bracket, because a probe that moves two things cannot attribute what it sees:
+  // Which axis carried it is now partly established, by a factorial design rather than
+  // a bracket, because a probe that moves two things cannot attribute what it sees.
+  // One constraint relaxed at a time, coefficient = degrees / 0.0099:
   //
-  //                          head roll joint   head roll free
-  //   chest pitch joint          4.9199            4.9199
-  //   chest pitch pinned 0.700   5.7018            5.7018
+  //   fully joint                                             4.9199
+  //   head roll freed to +/-0.30                              4.9199   <- exactly zero
+  //   chest PITCH pinned at the axis maximum 0.70             5.7018
+  //   chest ROLL  pinned at the axis maximum 0.30             6.0420   <- dominant
   //
-  // **Head roll contributes exactly zero in both rows.** Chest pitch carries the whole
-  // difference, and 0.700 exceeds the reachable 0.6849 while co-occurring with a
-  // stagger's head pitch. A reviewer ran this first and the pinned figures agree to four
-  // decimals across two independently written harnesses — while the *joint* figures
-  // differ (4.9199 against its finer grid's 4.8119), which is itself the check: pinning
-  // the axis removes the one the two grids disagree about.
+  // **Head roll contributes exactly zero**, and not merely at the measured maximum:
+  // `head-pivot`'s Euler is XYZ, so its matrix is `Rx·Ry·Rz` and `Rz(roll)·zHat = zHat`,
+  // while every scale in the chain sits *above* that rotation and so cannot reintroduce
+  // a dependence. Head roll cannot move this heading at any value, reachable or not —
+  // which is a proof this file already contained eighty lines above, in the comment
+  // explaining why the sweep drives head roll at all.
   //
-  // What is still **not** accounted for is the rest of the gap: 5.70 is not 6.68, so at
-  // least one further axis was free and is unidentified. Naming chest pitch as *a*
-  // demonstrated contributor is as far as the measurement goes, and this comment stops
-  // there rather than reaching for the remainder.
+  // **Chest roll is the largest single term**, and an earlier version of this comment
+  // named chest pitch, the second largest. Jointly `|-turnLean*0.16 + shift*0.55|`
+  // cannot exceed 0.099; the probe pinned it at 0.30, three times over.
+  //
+  // Two lessons rather than one. Naming the *second* biggest contributor is not a
+  // rounding error in an explanation — it is the same "change credited to the wrong
+  // variable" defect as naming an inert one, just harder to notice, because a
+  // plausible-sized effect in the right direction reads as confirmation. And **the
+  // reason a variable is inert can be sitting in the same file, already proven, and
+  // still not be reached for** — the head-roll claim was refuted by a comment eighty
+  // lines up that I had read and written near.
+  //
+  // What is still **not** accounted for is the remainder: 6.04 is not 6.68, so at least
+  // one further axis was free. Both files name chest roll as the dominant demonstrated
+  // contributor and stop there.
   //
   // Three causes were offered for one number and all three were wrong, by three
   // different people, while the number itself survived every attack. That pattern has a
@@ -1832,13 +1845,30 @@ test('the head tracks its target through the chest, not past it', () => {
   // from this test for four commits.
   //
   // They run on **one plan**, which on this branch's record should be the next
-  // sample-presented-as-population defect. It is not, and the reason is structural: a
-  // heading is a *direction*, every proportion enters the rig as a *position*, and no
-  // direction calculation reads a position. A reviewer reached that argument and
-  // verified it across all 27 plans; the assertion below re-verifies it rather than
-  // inheriting it, because the argument was established before `body-pivot` joined the
-  // chain and a justification that outlives the thing it justified is how most of the
-  // other fifteen findings on this branch happened.
+  // sample-presented-as-population defect. It is not — but the reason given here for
+  // three commits was false, and the counter-example sits a hundred lines down.
+  //
+  // The false version: *"every proportion enters the rig as a position, and no direction
+  // calculation reads a position."* `CharacterProportions.lean` is documented **"in
+  // radians"**, takes seven distinct values across the plans, and reaches
+  // `torsoPivot.rotation.x` directly as `rig.lean` — which is the very rotation
+  // `solveHeadYaw` consumes. Three more fields are radians and four are scales. A
+  // proportion reaching a rotation is not merely possible, it is what the wobble test
+  // below already does: `const chestPitch = 0.04 + 0.22 + p.lean`.
+  //
+  // The true version is narrower and is a property of **this probe**, not of the rig:
+  // the probe *overwrites* `torso-pivot.rotation` wholesale before measuring, so every
+  // plan-derived rotation is discarded before it can matter. What remains plan-derived
+  // in the chain is `neckPivot.position.y` and the head's own offset — **translations,
+  // and a translation cannot change a direction.**
+  //
+  // The difference is not pedantic. The false version would license a probe that
+  // *derived* its chest pitch from `p.lean`, and plan-independence would then be
+  // straightforwardly untrue while the stated reason said it could not be. A reviewer
+  // found this by reading the type rather than the argument. The assertion below is
+  // unaffected and re-verifies the property empirically across all 27 plans rather than
+  // resting on either argument, which is the only reason a wrong justification stayed
+  // harmless for three commits.
   const probe = (breath: number, bodyZ: number, faction = 'elf', role = 'soldier'): number => {
     const p = resolveCharacterPlan(faction as CharacterFaction, role, 0, false).proportions
     const skeleton = buildCharacterSkeleton(p)
@@ -1919,13 +1949,18 @@ test('the head tracks its target through the chest, not past it', () => {
     + '`SKEW_PER_UNIT_BODY_ASYMMETRY` is no longer a coefficient.',
   )
   // 4. And the three probes above are entitled to run on one plan, because the residue
-  //    is the same for every plan. Asserted rather than argued: a heading is a
-  //    direction, proportions enter the rig as positions, and no direction calculation
-  //    reads a position — but that is a claim about the code as it is now, and the last
-  //    time this file trusted such a claim across a change it was wrong. (A reviewer
-  //    made the argument; it also pointed out that `body-pivot`'s scale is neither a
-  //    proportion nor a position, so the argument happened to survive the change rather
-  //    than covering it.)
+  //    is the same for every plan. **Asserted rather than argued**, which turned out to
+  //    matter: the argument that stood here for three commits — proportions enter the
+  //    rig as positions, and no direction calculation reads a position — is false.
+  //    `lean` is a proportion in radians and reaches `torsoPivot.rotation.x`. The
+  //    property still holds, for the narrower reason given above the probe, and this
+  //    assertion is why a wrong justification cost nothing: it measures the residues
+  //    instead of trusting the sentence beside them.
+  //
+  //    That is the case for asserting a property you believe you can prove. **A proof
+  //    is only as good as its weakest premise and nothing re-checks a premise**, while
+  //    an assertion re-checks itself on every run — and this one was written by someone
+  //    who believed the false argument and would have written the same code either way.
   //
   //    Nine decimals is normally the kind of precision choice worth attacking as a
   //    knife-edge. Measured, it is not: the residues are **bit-identical** across the
@@ -2461,11 +2496,36 @@ test('the engine wires the rig the way these tests measure it', () => {
   // zeroed under stagger leaves a staggering chest with no gait yaw. It does not:
   // `pose.stride` only ever reaches the limbs, and `actor.stride` is damped rather than
   // cleared. Pinned here so the next claim of that shape fails instead of shipping.
+  //
+  // **Each pin is in two halves, and the second half is the one that was missing.** A
+  // positive source regex proves a line exists; it cannot prove the line still governs
+  // the value. A reviewer produced two mutations that create exactly the world these
+  // comments call impossible and left the file green:
+  //
+  //   keep the damp, add `actor.stride = 0` on the next line     22 pass, 0 fail
+  //   gate the chest's stride term on `pose.stagger > 0`         22 pass, 0 fail
+  //
+  // Both are *additions*, so anchoring does not help — the pinned line is still there,
+  // exactly as written, and has simply stopped mattering. **A pin that only looks for
+  // what should be present is blind to anything added after it**, which is the same
+  // shape as the `headPivot.rotation.x = headPitch` prefix hole and the third instance
+  // of it in this file. The negative assertions below are what close it.
   assert.ok(
     /torsoPivot\.rotation\.y =\s*\r?\n?\s*-actor\.stride \*/.test(actorPosture),
     'the chest\'s yaw no longer reads `actor.stride`. If it now reads `pose.stride`, a '
     + 'stagger really would zero it, and the gaze test\'s reachability comment — which '
     + 'says the opposite — becomes wrong in the other direction.',
+  )
+  const chestYawExpression = actorPosture.slice(
+    actorPosture.indexOf('torsoPivot.rotation.y ='),
+    actorPosture.indexOf('torsoPivot.rotation.z ='),
+  )
+  assert.ok(
+    chestYawExpression.length > 40 && !/stagger/.test(chestYawExpression),
+    'the chest\'s yaw expression now mentions `stagger`, so the gait term it reads may '
+    + 'be gated off during one. That is the behaviour the gaze test\'s reachability '
+    + 'model says is impossible, and the positive pin above cannot see it because the '
+    + '`-actor.stride *` it looks for is still there, merely multiplied by zero.',
   )
   const staggerBranch = source.slice(
     source.indexOf("if (actor.reaction === 'stagger' || knockbackSpeed"),
@@ -2476,6 +2536,14 @@ test('the engine wires the rig the way these tests measure it', () => {
     'a stagger no longer damps `actor.stride` at 13 — if it now clears it, the first '
     + 'frame of a stagger stops carrying ~81% of its gait yaw and the gaze test\'s '
     + 'reachability comment needs re-deriving, not editing.',
+  )
+  assert.equal(
+    (staggerBranch.match(/actor\.stride\s*=/g) ?? []).length,
+    1,
+    'the stagger branch assigns `actor.stride` more than once. The damp above is still '
+    + 'present — that is why the pin beside this one passes — but something after it '
+    + 'writes the value again, and if that write is a clear then the ~81% retention the '
+    + 'gaze test\'s reachability model depends on is gone.',
   )
 })
 
