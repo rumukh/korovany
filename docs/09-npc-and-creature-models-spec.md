@@ -436,6 +436,13 @@ no new dependencies.
   will be; the object it names is gone from shared history. So *"cannot go stale"* is
   precise about the claim and silent about the subject, and a claim naming a SHA should
   name one that will still resolve, or say what it was verified *for*.
+  That has a decidable test rather than being advice: **is the SHA an ancestor of the
+  default branch?** A merged commit is permanent and a branch-local one is not, which is
+  the whole difference between the two references this document has held. Applied to the
+  only real SHA in this file — the `loftProfile` fix cited below — it resolves, is
+  contained by `main`, and is therefore safe to cite; applied to the orphan above, it
+  fails. One line of `git merge-base --is-ancestor` separates them, which makes this one
+  of the few rules here that is a check rather than a sentence.
   One more thing came out of measuring that gap, and it is the sharpest instance the work
   produced because every party measured and every party got a different answer. The
   question — *is a reviewer's baseline falling further behind?* — was answered three ways
@@ -478,18 +485,38 @@ no new dependencies.
   a block or a context wider than the claim returns a superset that reads as the
   answer**, and all three instances produced output that was true and answered a question
   nobody asked.
-- **The guards this work produced all check things that are free to check.** Six
+- **The guards this work produced almost all check things that are free to check.** Six
   mechanical forms came out of eighteen review passes — confirm the mutation applied,
   confirm it compiled, confirm the query matched, dope the detector before believing its
   silence, emit the timestamp from the measuring command, verify a spliced seam where the
-  methods must differ. Every one of them audits the author's own instrument, where being
-  wrong costs nothing socially. **Not one guards a claim whose checking is awkward** —
-  a credit, a hedge, a compliment, another party's figure — and those are precisely the
-  three classes this programme found unaudited, on both sides, repeatedly.
+  methods must differ. Every one audits the author's own instrument, where being wrong
+  costs nothing socially, and the classes this programme repeatedly found unaudited — a
+  credit, a hedge, a compliment, another party's figure — have none of them.
   The predictor is better than the list, because it generates rather than enumerates:
   **a check with a social cost and no epistemic reward is a check nobody runs**, and the
-  next unaudited class will be whatever else has that shape. Recording it here does not
-  fix it — no guard in this repository addresses it, which is itself the evidence.
+  next unaudited class will be whatever else has that shape.
+  **An earlier version of this entry said "not one guards a claim whose checking is
+  awkward", and a reviewer produced the counterexample from its own work.** A seventh
+  guard exists — *check whether the fix is free before recommending it* — it is squarely
+  in the awkward class, since its entire effect is to delete a finding from your own
+  report, and unlike the six it can be shown **firing on something consequential**: it
+  withheld a one-line recommendation that had a precedent one commit old and would have
+  broken four legitimate writes. The six between them have one demonstrable firing all
+  evening.
+  Why it was missing is the better half. **The six each have a scar** — every one was
+  written after paying for the failure it prevents. The seventh was invented in the moment
+  and worked first time, so nothing forced it into the record. **A catalogue assembled
+  from scars systematically omits the guards that never failed**, independent of whether
+  they are cheap or awkward to run — which is this programme's own defect, occurring
+  inside the entry that catalogues the programme's defects.
+  What survives is sharper than what was claimed: **the only guard here that checks
+  something awkward is the only one that was never written down.** The awkward class is
+  not merely unguarded — it goes unrecorded even when it is guarded.
+  And the reason that join was available at all is worth the next reader's attention:
+  both halves were already in this file, written twenty minutes apart, and neither author
+  saw the connection while writing either. **A catalogue with enough members starts
+  containing its own generalisations before anyone states them**, which is a cheaper place
+  to look than the code — and nobody looked there until the supply of new members ran out.
 - **A rule stored without its trigger is a guard with no call site.** It exists, it is
   correct, and nothing invokes it — which is the same object as an assertion that cannot
   fail for the defect it names, one level up and in prose instead of a test. The evidence
