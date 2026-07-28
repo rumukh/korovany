@@ -1899,6 +1899,39 @@ recommending it*. The rule asks you to give up the one thing a measurement produ
 answer you can now reuse — and reuse is what a measurement is for. Recording the failure
 alongside the rule is the honest form, because the next reader will do it too.
 
+**Three instruments on this programme were sound and aimed slightly off the thing they were
+trusted for. The common factor is aim, not sharpness — and aim is the part that looks
+settled once something passes.** A reviewer named this after finding the third, and the
+three are worth listing together because they were found by different people, in different
+subsystems, and none of them was a weak measurement:
+
+| instrument | what it measured | what it was trusted for |
+| --- | --- | --- |
+| this pass's keep-out counter | skips in the **resident** region set | skips across the whole sweep |
+| a reviewer's dispose audit | the behaviour of `dispose()` | whether `dispose()` is **called** |
+| the spawn seed set's guard | colliders **skipped** | spawns actually **blocked** |
+
+Each was correct about its own quantity. The dispose audit is the clearest: its owner
+instrumented all three dispose paths, streamed three laps with ink toggles, counted 7176
+disposals with zero doubles, forced a mid-build failure, and signed the category clean —
+**and every measurement it took began by calling `dispose()` itself.** The instrument was
+aimed at the method's behaviour while the question was about its reachability, so no amount
+of sharpening could have reached it.
+
+The seed-set case is the subtlest, because the two quantities differ only by a margin:
+`coversSpawn` skips at `radius + 0.45 + 0.2` and blocking is judged at `0.45`, so a skip
+inside that `0.2` of daylight is real and protects nothing. One seed's three skips are all
+margin, which makes it look like a fault-carrying seed to the guard and contribute nothing
+to the assertion above it.
+
+**The generalisation worth keeping is about when this is findable.** A wrongly aimed
+instrument produces correct, stable, reproducible numbers — it fails none of the checks in
+this section, because every check here tests whether a measurement is *sound*. Aim is
+established when the instrument is written and never revisited, since passing is taken as
+confirmation of both. The only question that reaches it is asked before trusting a result
+rather than after: **what quantity does this actually count, and is it the quantity the
+claim is about?**
+
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
 state that no check could see. Ten lines were mangled — five entries whose opening sentence
