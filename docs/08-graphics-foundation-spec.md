@@ -733,7 +733,7 @@ uniformly backed, and nothing in the prose distinguishes the two kinds. Measured
 | Determinism from `artVariation` | `tests/art.test.ts` | red test |
 | **Export block ordering in `art/index.ts`** | **none** — no test, and `.oxlintrc.json` carries exactly two rules, neither about sorting | **silently** |
 | **Label namespacing (`npc:`, `props:`)** | tests *use* `npc:torso` / `props:cart`; **none asserts a caller namespaced anything** | **silently** |
-| **"Do not `.clone()` a stylized material"** | the *mechanism* is tested exhaustively (`art.test.ts:3865` — clone loses the injection, cannot forge ownership, keeps a misleading preset label, `adoptMaterial` repairs it, repair does not transfer ownership); **no test detects a caller in `src/` that clones and never adopts** | silently, at runtime, as unbanded shading |
+| **"Do not `.clone()` a stylized material"** | **partly enforced.** `tests/worldArt.test.ts` walks a streamed scene and fails any material advertising `stylizedSurfacePreset` without the injection — proven red by mutation, naming all 5 affected meshes. **Covers the world scene only**; `GameEngine`'s character, fauna and caravan materials are not in that scene | silently, at runtime, as unbanded shading |
 
 The quantitative contract is genuinely enforced — every budget in §7 has a test that
 *spends* it, not merely one that compares it. **The conventions are not**, and the first
@@ -749,10 +749,21 @@ and this table exists so that the half-life is visible rather than discovered.
 
 The last three rows share a shape worth naming, because it is easy to mistake for coverage:
 **a rule can be tested at its mechanism and unenforced at its call sites.** The clone hazard
-has five assertions behind it and not one of them fires when a caller clones and forgets to
-adopt. Two of these rows were written as a flat "none" in the first draft of this table and
-were wrong — grepping the tests finds hits for all three. The hits are *uses*, not
+had five assertions behind it and not one fired when a caller cloned and forgot to adopt —
+`tests/worldArt.test.ts` now closes that for the world scene, and the character path is
+still open. Two of these rows were written as a flat "none" in the first draft of this table
+and were wrong — grepping the tests finds hits for all three. The hits are *uses*, not
 *assertions*, and the difference is the whole of what this section is for.
+
+A note on the instrument that closed it, because it is the cheapest habit in this document.
+A check that has never been observed failing is indistinguishable from a check that cannot
+fail: **`0` is the normal output both for *nothing is wrong* and for *my pattern cannot see
+it*.** So the new test plants a forgery in the scene and asserts the detector reports exactly
+that one, and the detector was additionally proven red by mutating `createMaterial` to skip
+the injection for one surface. The first mutation attempted was inert — it gated on
+`'bark'`, which is a valid surface that this scene does not contain — and the test passed,
+which said nothing about the test. **A mutation that perturbs nothing observable is not a
+control**, and the pass it produces is the same green as a real one.
 
 ## 7. Budgets
 
