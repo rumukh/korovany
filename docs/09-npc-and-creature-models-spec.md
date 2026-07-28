@@ -295,7 +295,8 @@ no new dependencies.
   Three refinements earned by repetition. **The axis you were shown gets enumerated and
   the axis nobody complained about stays a sample** — so ask which axes a thing has, not
   whether you swept the one that broke. **Enumerating an axis at two points is
-  enumerating the points**, which a clamp sitting on a sample point will demonstrate.  And **does the enumeration cover the whole of each axis, or the part the
+  enumerating the points**, which a clamp sitting on a sample point will demonstrate.
+  And **does the enumeration cover the whole of each axis, or the part the
   demonstration used?** A stride sweep once ran `0.01 … 1` under a comment correctly
   naming its population as `±0.62` — the domain was stated accurately in the sentence
   justifying the enumeration, and the enumeration covered one side of zero, because
@@ -821,8 +822,9 @@ no new dependencies.
   surveying it. The usable form is a question, and it is cheap: **before generalising from
   remembered instances, ask whether a counter-example would have left anything to
   remember.** If it would not, the recollection is not evidence about the population — it
-  is evidence about what leaves traces.  There is a structural consequence, and it is the strongest practical thing this work
-  produced. **The correction neither participant can make is the one from someone with no
+  is evidence about what leaves traces.
+  There is a structural consequence, and it rests on an argument rather than on a count.
+  **The correction neither participant can make is the one from someone with no
   stake in the exchange.** Two parties in a review loop audit each other's *arithmetic*
   very well and each other's *framing* poorly, because framing is where the courtesy
   lives — and the unaudited classes above are precisely the ones courtesy operates on. The
