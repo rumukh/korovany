@@ -458,6 +458,12 @@ no new dependencies.
   contained by `main`, and is therefore safe to cite; applied to the orphan above, it
   fails. One line of `git merge-base --is-ancestor` separates them, which makes this one
   of the few rules here that is a check rather than a sentence.
+  A reviewer put it more precisely than that, and the distinction is worth a maintainer's
+  attention: **it is the only rule in this document whose verdict is computed rather than
+  judged.** Every other entry needs a reader to decide whether it applies to the case in
+  front of them. This one decides itself, on any SHA, without knowing anything about the
+  claim it sits in — which is the *call site rather than sentence* property arriving in
+  the one place nobody was trying to apply it.
   One more thing came out of measuring that gap, and it is the sharpest instance the work
   produced because every party measured and every party got a different answer. The
   question — *is a reviewer's baseline falling further behind?* — was answered three ways
