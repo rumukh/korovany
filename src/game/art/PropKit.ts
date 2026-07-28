@@ -240,7 +240,7 @@ const SEAM_KEY_PRECISION = 1e5
  * *moves geometry that should not move*. `GeometryKit`'s own weld keys already used
  * `Math.round`; this copy did not, and no test compared them. Found by a sibling session.
  */
-function displaceSeamless(
+export function displaceSeamless(
   geometry: THREE.BufferGeometry,
   options: Parameters<typeof displaceGeometry>[1],
 ): THREE.BufferGeometry {
