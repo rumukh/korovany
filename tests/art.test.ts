@@ -3548,6 +3548,150 @@ test('every type the spec names is exported by the barrel', () => {
 })
 
 /**
+ * §6.1 lists export ordering in this barrel as advisory: a rule kept by care,
+ * failing silently. That stopped being theoretical. A sibling adding two entries
+ * put both in the wrong place, and the review that caught it needed three
+ * attempts — a first pass that reported the *whole* list unsorted (its own
+ * instrument, not the file), then a verification anchored on a name that is not
+ * in the run, which measured an empty slice and printed `sorted: true`, then a
+ * corrected edit that silently duplicated one name and dropped another. A barrel
+ * re-export tolerates a duplicate name without complaint and `tsc` stayed green
+ * through all of it.
+ *
+ * Writing this gate found a fourth: my own `PropKit` run had `bridgeParts` ahead
+ * of `brazierParts`, which no reviewer had ever seen.
+ *
+ * The convention is per block, not per file — every block is a values run in
+ * ordinal order followed by a types run in ordinal order, and sorting across
+ * module groups is what produced the false "unsorted" verdict above. Ordinal is
+ * load-bearing: `PROP_SURFACES` precedes `bannerParts` here, which culture-aware
+ * comparison reverses. This test uses one comparator for both the verdict and
+ * the report, because using two is how the first draft of it disagreed with
+ * itself.
+ */
+const barrelBreaks = (source: string): string[] => {
+  const breaks: string[] = []
+  const blocks = [...source.matchAll(/^export \{\r?\n([\s\S]*?)^\} from '\.\/(\w+)\.ts'/gm)]
+  for (const block of blocks) {
+    const values: string[] = []
+    const types: string[] = []
+    for (const raw of block[1]!.split(/\r?\n/)) {
+      const line = raw.trim()
+      const typed = /^type\s+(\w+),?$/.exec(line)
+      const plain = /^(\w+),?$/.exec(line)
+      if (typed) types.push(typed[1]!)
+      else if (plain) values.push(plain[1]!)
+    }
+    for (const run of [values, types]) {
+      for (let i = 1; i < run.length; i += 1) {
+        // Plain `>=` on strings is UTF-16 code-unit order, which is the ordinal
+        // comparison this file is sorted by. Do not reach for `localeCompare`:
+        // it is culture-aware, it puts `bannerParts` before `PROP_SURFACES`, and
+        // the first draft of this function used both and disagreed with itself.
+        if (run[i - 1]! >= run[i]!) {
+          breaks.push(`${block[2]!}: ${run[i - 1]!} before ${run[i]!}`)
+        }
+      }
+    }
+  }
+  return breaks
+}
+
+test('the art barrel keeps every export block in the order siblings read it in', () => {
+  const source = readFileSync(
+    new URL('../src/game/art/index.ts', import.meta.url),
+    'utf8',
+  )
+
+  // A guard on the instrument, not the file. The review this test comes from
+  // printed `sorted: true` over an empty slice; a parser that matches nothing
+  // reports perfect order, and that is indistinguishable from success.
+  const blockCount = [...source.matchAll(/^export \{\r?\n/gm)].length
+  assert.ok(
+    blockCount >= 5,
+    `barrel parse found ${String(blockCount)} export blocks; the file has seven, so the `
+    + 'pattern has stopped matching and any verdict below is vacuous',
+  )
+
+  // Positive control first, deliberately. Run after the real assertion it would
+  // be skipped on failure, which is harmless — but the case that matters is a
+  // *passing* verdict from a pattern that matches nothing, and that only gets
+  // caught if the detector has already been made to fire.
+  const doped = ['export {', '  alpha,', '  gamma,', '  beta,', "} from './Control.ts'", '']
+    .join('\n')
+  assert.deepEqual(
+    barrelBreaks(doped),
+    ['Control: gamma before beta'],
+    'the detector did not fire on a planted misordering, so its verdict on the real '
+    + 'barrel carries no information',
+  )
+  assert.deepEqual(
+    barrelBreaks(['export {', '  alpha,', '  beta,', "} from './Control.ts'", ''].join('\n')),
+    [],
+    'the detector fires on correctly ordered input, so it cannot distinguish',
+  )
+
+  assert.deepEqual(
+    barrelBreaks(source),
+    [],
+    'src/game/art/index.ts re-exports these out of order. Each block is values in '
+    + 'ordinal order then types in ordinal order; siblings scan these runs to find '
+    + 'what the foundation offers, and an entry in the wrong place reads as absent.',
+  )
+})
+
+/**
+ * The ordering gate above would not have caught the breakage that actually
+ * shipped during that review: an edit that replaced the wrong occurrence,
+ * duplicating one name and dropping another. Both halves are invisible to
+ * `tsc` — a barrel may name the same export twice, and a dropped export only
+ * fails at the call site of whoever needed it, which may be a session that has
+ * not been written yet.
+ */
+test('the art barrel names no export twice', () => {
+  const source = readFileSync(
+    new URL('../src/game/art/index.ts', import.meta.url),
+    'utf8',
+  )
+
+  const names: string[] = []
+  for (const block of source.matchAll(/^export \{\r?\n([\s\S]*?)^\} from '\.\/(\w+)\.ts'/gm)) {
+    for (const raw of block[1]!.split(/\r?\n/)) {
+      const match = /^(?:type\s+)?(\w+),?$/.exec(raw.trim())
+      if (match) names.push(match[1]!)
+    }
+  }
+
+  assert.ok(
+    names.length >= 150,
+    `barrel parse found ${String(names.length)} names; §5.2 documents far more, so the `
+    + 'parse has broken and the duplicate check below is vacuous',
+  )
+
+  // Case-sensitive by construction: `artVariation` and `ArtVariation` are a value
+  // and its options type, and a case-insensitive grouping reports three false
+  // duplicates here. That grouping is PowerShell's default and it did.
+  const seen = new Set<string>()
+  const twice = names.filter((name) => (seen.has(name) ? true : (seen.add(name), false)))
+
+  assert.deepEqual(
+    twice,
+    [],
+    'src/game/art/index.ts exports these names more than once. TypeScript accepts a '
+    + 'duplicate re-export silently, so this only surfaces as a missing export '
+    + 'somewhere else in the same edit.',
+  )
+
+  const dopedNames = ['alpha', 'beta', 'alpha']
+  const dopedSeen = new Set<string>()
+  assert.deepEqual(
+    dopedNames.filter((n) => (dopedSeen.has(n) ? true : (dopedSeen.add(n), false))),
+    ['alpha'],
+    'the duplicate detector did not fire on a planted duplicate',
+  )
+})
+
+/**
  * The gate above covers the type names in §5.2's signatures and nothing else. It
  * extracts identifiers in `: Position` and `readonly X[]` positions, and every
  * function name in this kit is lowercase and sits before a paren, so no function
