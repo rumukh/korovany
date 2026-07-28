@@ -192,6 +192,13 @@ function piece(
 }
 
 /**
+ * Quantisation for the seam key below. Matches `GeometryKit`'s `SEAM_WELD_PRECISION`,
+ * deliberately: two different tolerances for "the same point" in one pipeline is a
+ * defect waiting for the one shape that falls between them.
+ */
+const SEAM_KEY_PRECISION = 1e5
+
+/**
  * Displaces a surface without tearing it open at hard creases.
  *
  * `displaceGeometry` pushes every vertex along **its own normal**. At a hard crease the
@@ -212,6 +219,26 @@ function piece(
  *
  * A geometry with no coincident vertices is unchanged, so this is safe to apply
  * everywhere rather than only where tearing was measured.
+ *
+ * **The key is rounded integers, not `toFixed`.** `toFixed` formats the sign separately
+ * from the digits, so a coordinate at exactly `0` keys as `"0.0000"` while one at
+ * `-4.9e-18` — the same point, off by half an attometre — keys as `"-0.0000"`. That is
+ * wrong in *both* directions, and this wrapper shipped with it. Measured here, groups of
+ * coincident vertices found by each key:
+ *
+ * ```text
+ *                  toFixed(4)   Math.round   verdict
+ *   latheProfile        0            3       MISSES every seam
+ *   Sphere              2            7       MISSES 5
+ *   Cylinder           28           26       INVENTS 2
+ *   loftProfile         8            8       agree
+ * ```
+ *
+ * Missing a group leaves the seam open, which is the whole defect this wrapper exists to
+ * fix — so on lathe-based props it was doing **nothing at all** while looking applied.
+ * Inventing one is worse than nothing: it averages vertices that were never coincident and
+ * *moves geometry that should not move*. `GeometryKit`'s own weld keys already used
+ * `Math.round`; this copy did not, and no test compared them. Found by a sibling session.
  */
 function displaceSeamless(
   geometry: THREE.BufferGeometry,
@@ -221,9 +248,9 @@ function displaceSeamless(
   const groups = new Map<string, number[]>()
   for (let vertex = 0; vertex < position.count; vertex += 1) {
     const key =
-      `${position.getX(vertex).toFixed(4)},`
-      + `${position.getY(vertex).toFixed(4)},`
-      + `${position.getZ(vertex).toFixed(4)}`
+      `${String(Math.round(position.getX(vertex) * SEAM_KEY_PRECISION))},`
+      + `${String(Math.round(position.getY(vertex) * SEAM_KEY_PRECISION))},`
+      + `${String(Math.round(position.getZ(vertex) * SEAM_KEY_PRECISION))}`
     const group = groups.get(key)
     if (group) group.push(vertex)
     else groups.set(key, [vertex])
