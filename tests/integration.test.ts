@@ -492,6 +492,13 @@ test('every prop the game can ask for comes back coloured, and none of it white'
   const bare = new THREE.BoxGeometry(1, 1, 1).toNonIndexed()
   const mixed = mergeAll([coloured.clone(), bare], { name: 'control-mixed' })
   const mixedColour = mixed.getAttribute('color')
+  // Corollary: a mutation proof is an assertion too. `controlWhite === count / 2` reads
+  // `0 === 0` on an empty attribute and passes, so the one instrument whose whole job is
+  // proving the checker can fail would itself have proved nothing.
+  assert.ok(
+    mixedColour.count > 0,
+    'the control merge produced no vertices, so nothing below it means anything',
+  )
   // Uses the same counter the sweep uses, so the control validates the instrument
   // rather than a second implementation of it that could drift from the real one.
   const controlWhite = countWhiteVertices(mixedColour)
@@ -771,6 +778,17 @@ test('merging parts into a prop never turns any of them around', async () => {
       assert.ok(expected, `${label}: merge produced a surface '${String(surface.surface)}' nothing built`)
       const after = faceDirections([surface.geometry])
       facesCompared += after.length
+      // Per surface, not only in the totals below. `faceDirections` skips degenerate
+      // triangles, so a surface that degenerated entirely compares [] against [] —
+      // equal lengths, zero moved, silently clean. The aggregate floor catches a total
+      // collapse but not one prop going quiet inside an otherwise healthy run.
+      if (after.length === 0) {
+        offenders.push(
+          `${label}#${String(surface.surface)}: no non-degenerate faces to compare, so this `
+          + 'surface was judged on nothing',
+        )
+        continue
+      }
       if (after.length !== expected.length) {
         offenders.push(
           `${label}#${String(surface.surface)}: ${String(expected.length)} faces went in, `
