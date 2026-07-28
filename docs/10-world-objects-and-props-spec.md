@@ -1873,6 +1873,32 @@ damage model beside the grade — the same disease as quoting a number without i
 survivor means *"this suite did not detect this damage shape at this magnitude"*, and every
 clause is load-bearing.
 
+**A stale number was correct once; a recalled number may never have been — and only the
+first is fixed by re-measuring at send time.** The foundation session drew this after
+correcting two of its own figures, both off by one, both from recall, and both inside the
+paragraph where it was correcting this pass about stale numbers. Its tip and test count in
+that same message were measured and right; the two *distances* were not, and a distance is
+exactly the derived quantity that feels too small to check.
+
+The programme-level result is stronger than any individual instance, and it holds across
+all four sessions: **everyone who published a wrong number tonight measured correctly and
+then re-used the result.** Not one was a bad measurement. This pass's withdrawn 2861 was
+measured once and quoted from memory across several messages while the other party did the
+reconciliation work; the same shape produced six stale SHAs, two wrong distances, a
+`docs/08` census, a cache peak quoted under the wrong protocol, and a verification
+instruction that inverted.
+
+Which narrows the remedy considerably. The discipline is **not** "measure more carefully" —
+the measuring was never the failure. It is **do not let a measured value survive into a
+second sentence.** That is why citing the command rather than its output is the only form
+that holds: a command re-derives, a number decays, and the decay is invisible because a
+number carries no evidence of its own age.
+
+It is also why every session on this programme kept failing at it *in the paragraph
+recommending it*. The rule asks you to give up the one thing a measurement produces — an
+answer you can now reuse — and reuse is what a measurement is for. Recording the failure
+alongside the rule is the honest form, because the next reader will do it too.
+
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
 state that no check could see. Ten lines were mangled — five entries whose opening sentence
