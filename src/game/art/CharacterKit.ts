@@ -889,6 +889,14 @@ export function buildCharacterSkeleton(p: CharacterProportions): CharacterSkelet
  * The four elements come straight out of the two Euler triples, so this allocates
  * nothing and builds no matrix — it runs for every actor every frame.
  *
+ * **Both pivots must use three.js's default `XYZ` Euler order.** The columns below are
+ * written out by hand for `Rx·Ry·Rz`, and every term in them is order-specific; under
+ * `ZYX` the head's roll becomes outermost, reaches the gaze directly, and the claim
+ * that roll cannot matter stops being true. That requirement went unstated while being
+ * load-bearing, and was caught only because a bound aimed at something else happened to
+ * notice a 143° error. `the head tracks its target through the chest, not past it` now
+ * asserts the order directly, so the failure names the cause.
+ *
  * Damp `lookYaw` *before* calling this, never the result. A frame change is not a
  * motion: damping the converted angle leaves the head chasing the chest's gait twist
  * a fraction of a second late, which measures as 2.0° of wobble at a soldier's real

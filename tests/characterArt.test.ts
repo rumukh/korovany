@@ -1644,6 +1644,38 @@ test('the head tracks its target through the chest, not past it', () => {
   let worstAt = ''
   let states = 0
 
+  // `solveHeadYaw` derives its two columns by hand from **three.js's XYZ Euler matrix**
+  // — `R = Rx·Ry·Rz` for the chest, with the head's pitch applied after its yaw in the
+  // same order. Every element in that derivation is order-specific. Under `ZYX` the
+  // head's roll becomes outermost and reaches the gaze directly, and the closed form is
+  // solving a different problem.
+  //
+  // Nothing said so. A reviewer mutated `headPivot.rotation.order = 'ZYX'` and found the
+  // bound below catches it — 143 degrees of movement — so the order was *transitively*
+  // pinned by a guard aimed at something else entirely. That is a guard by luck: it
+  // holds exactly as long as nobody weakens the bound or changes what it measures, and
+  // nothing would connect the two.
+  //
+  // **An assumption load-bearing for a closed form should be asserted where the closed
+  // form lives, not inherited from whatever else happens to notice.** Pinned explicitly,
+  // on a real skeleton, so the failure names the cause instead of reporting a
+  // 143-degree gaze error and leaving the reader to work backwards to the Euler order.
+  {
+    const s = buildCharacterSkeleton(resolveCharacterPlan('elf', 'soldier', 0, false).proportions)
+    for (const [name, node] of [
+      ['torso-pivot', s.torsoPivot], ['neck-pivot', s.neckPivot], ['head-pivot', s.headPivot],
+    ] as const) {
+      assert.equal(
+        node.rotation.order,
+        'XYZ',
+        `${name} now uses ${node.rotation.order} Euler order. \`solveHeadYaw\` reads the `
+        + 'columns of `Rx·Ry·Rz` by hand and every term in it assumes XYZ, so under any '
+        + 'other order it answers a different question. Under ZYX the head\'s roll '
+        + 'reaches the gaze directly, which the derivation says it cannot.',
+      )
+    }
+  }
+
   for (const faction of FACTIONS) {
     for (const role of ROLES) {
       const p = resolveCharacterPlan(faction, role, 0, false).proportions
