@@ -1139,3 +1139,103 @@ test('the type gate still covers tests/, in the build and in a config', () => {
     + 'nothing and still exits 0 — the same shape as `tsc --noEmit` on the root config',
   )
 })
+
+
+/**
+ * The three assumptions `simultaneousInkDraws` rests on, asserted rather than reasoned.
+ *
+ * That helper takes the **max over LOD levels**, not the sum, and every ink number in
+ * this programme is built on it — the per-region peak of 8, the visible-set peak of 43,
+ * and `OUTLINE_WORLD_VISIBLE_DRAWS_MAX`. Charging the sum would price a building at
+ * several times what it draws; charging the max is only honest if a shell parented under
+ * a *hidden* LOD level is genuinely free.
+ *
+ * It is, and the reason is a single character in a dependency:
+ *
+ * ```js
+ * function projectObject( object, camera, groupOrder, sortObjects ) {
+ *     if ( object.visible === false ) return;
+ * ```
+ *
+ * An early `return`, not a `continue` — so the renderer never recurses into an invisible
+ * node's children. Had three written `continue`, every level's shells would be projected
+ * and the helper would have been undercharging by a factor of the level count, silently,
+ * with every measurement downstream inheriting it.
+ *
+ * **That argument was written in a docblock, which has no failure mode.** This is the
+ * mechanical form. It pins all three legs:
+ *
+ *   1. three's renderer skips an invisible node's subtree — the early return precedes
+ *      the recursion into `object.children`.
+ *   2. three's `LOD.update()` leaves exactly one level visible.
+ *   3. this repo parents each shell *under* its level's mesh, so leg 1 applies to it.
+ *
+ * What it cannot detect: leg 1 is read from three's shipped source, so it verifies the
+ * text rather than the behaviour — there is no GL context in this suite to render
+ * through. It is still worth having, because the failure it guards is a dependency
+ * upgrade, and an upgrade changes exactly that text.
+ */
+test('an ink shell under a hidden LOD level is free, which is why max beats sum', () => {
+  const three = readFileSync(
+    new URL('../node_modules/three/build/three.module.js', import.meta.url),
+    'utf8',
+  )
+  const at = three.indexOf('function projectObject(')
+  assert.ok(at > 0, 'projectObject is no longer in three\'s shipped module under that name')
+  const body = three.slice(at, at + 6000)
+  const guard = body.search(/if\s*\(\s*object\.visible\s*===\s*false\s*\)\s*return\s*;/)
+  const recursion = body.search(/projectObject\(\s*children\[/)
+  assert.ok(
+    guard > 0,
+    'three no longer early-returns on an invisible object in projectObject. If this '
+    + 'became a `continue`, shells under hidden LOD levels would be projected and every '
+    + 'ink measurement in docs/08 §7.1 would be undercharged by the level count.',
+  )
+  assert.ok(
+    recursion > guard,
+    'the recursion into object.children now precedes the visibility guard, so an '
+    + 'invisible node\'s subtree is reached after all — max-over-levels is no longer exact',
+  )
+
+  // Leg 2, behavioural: three's own LOD leaves exactly one level visible.
+  const camera = new THREE.PerspectiveCamera()
+  camera.position.set(0, 0, 0)
+  camera.updateMatrixWorld(true)
+  const lod = new THREE.LOD()
+  for (const distance of [0, 25, 60]) {
+    const level = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial())
+    lod.addLevel(level, distance)
+  }
+  lod.position.set(0, 0, -30)
+  lod.updateMatrixWorld(true)
+  lod.update(camera)
+  const visible = lod.levels.filter((level) => level.object.visible)
+  assert.equal(
+    visible.length,
+    1,
+    `LOD.update left ${String(visible.length)} levels visible, not 1; taking the max over `
+    + 'levels is only equal to what the frame draws while exactly one is shown',
+  )
+
+  // Leg 3, in this repo: a shell is a CHILD of the mesh it outlines, so leg 1 reaches it.
+  const library = new StylizedArtLibrary({
+    ink: { player: 0x2b3a55, enemy: 0x5a1f2b, interactable: 0x4a3a12, landmark: 0x22303a },
+  })
+  const root = new THREE.Group()
+  const source = new THREE.Mesh(
+    ensureVertexColors(new THREE.BoxGeometry(1, 1, 1), 0x808080),
+    library.acquireMaterial('lod-shell-source', { color: 0x808080, surface: 'cloth' }),
+  )
+  root.add(source)
+  const binding = library.applyOutline(root, 'enemy')
+  assert.equal(binding.shells.length, 1, 'the fixture must produce exactly one shell')
+  assert.equal(
+    binding.shells[0].parent,
+    source,
+    'applyOutline no longer parents the shell under its source. If shells became '
+    + 'siblings, an invisible LOD level would not hide them and max-over-levels would '
+    + 'start undercharging — this is the leg that connects the two above to this repo.',
+  )
+  library.releaseOutline(binding)
+  library.dispose()
+})
