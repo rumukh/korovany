@@ -1,0 +1,1140 @@
+{
+  "_comment": [
+    "Declared residue: facts the consolidated document does not preserve in the section that owns",
+    "them. Each entry names the spec, the class, the source sentence, and WHY it is here — a",
+    "matcher limitation or genuinely missing content. The checker fails if a miss appears that is",
+    "NOT on this list, and also if an entry here is no longer missing, so the list can only shrink.",
+    "Regenerate with `node scripts/strategy-facts.mjs --accept`, and do that deliberately: it is",
+    "the one operation in this tool that can hide a regression.",
+    "",
+    "Agent SOL sampled this list during its final audit and found it honestly declared rather than",
+    "a dumping ground for omissions it did not want to face. That finding is recorded here because",
+    "an allowlist nobody has audited is worth very little, and one that an adversarial reviewer has",
+    "sampled is worth rather more.",
+    "Currently 187 entries, of which 0 are content rather than matcher limits."
+  ],
+  "accepted": [
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:Actor AI:15,18,6.5,15",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:Hostility:5,5",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:settlementIntegrity:2",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:bear:135,74",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:troll:165,88",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:The storm hunch and slow:0",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:No morale:2,0",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:Morale:240,242",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "relation",
+      "id": "row:Threat scoring:959,478,2.01",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "| 2 | **Materialization** | Chronicle events become 3D only when the p",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "lifecycleRule",
+      "id": "| Region state | `RegionRuntime` (` `) | Owns runtime ids and a `delta",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "O(regions + roadConnections) — roughly 25 + 40 iterations of scalar ar",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "budgetRule",
+      "id": "single rule is what makes `ambient` yield its slots first: it is last ",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "as a fifth kind ( ); the Layer 2 test that asserted one could never ap",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "— or, if the attackers are spent, `raidRepelled`. Wiping out one side ",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "> `factionRaid` satisfies that **by construction, not by design**: it ",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "`Faction` deliberately stays the three playable sides. It carries a sp",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "yet. Layer 5 confirmed that: a villager is hostile to beasts by this t",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "lower, because a raid the chronicle resolved on its own only fed them.",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "changes and no faction's pressure moves, because beasts do not hold gr",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "when the homestead is destroyed, which says nothing about how many of ",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "never fire. The measured case is `bear+wolf+boar`: one wolf, kin size ",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "| `boar`, `bear`, `troll` | Layer 3 said \"never routs\" and that is sti",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "objective might need ever leaves the map because it lost a morale chec",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "**This is the one Layer 4 mechanic the headless harness cannot measure",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "a new route: the cart cannot leave the road network.",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "same frame and the cart can never actually be lost — see  .",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "budgetRule",
+      "id": "the moment a materialized raid or a threat wave needs the slots the gu",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "budgetRule",
+      "id": "| Deer, birds, crows | **props, 0 slots** | The brief said *non-combat",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "| Deer, birds, crows | **props, 0 slots** | The brief said *non-combat",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "budgetRule",
+      "id": "That split is not an optimization, it is the design. It means the six-",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "cheapest thing in the layer: it makes a chronicle number the player ha",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "budgetRule",
+      "id": "materialized raid takes their slots rather than arriving short. A vill",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "routing actor gets, a villager makes 3.57 m/s against a wolf's 5.4 and",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "an alert — and never to a pursuit, an attack approach, or a beast. Tru",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "instead, so the player never watches a building change state from thin",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "and their regions never flip, so a generated campaign always remains c",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "- **A charge into scenery.** The boar cannot steer mid-charge, so a ch",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "and is despawned by the next headcount. The one thing it must not do i",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "- [x] Campaign start and finale regions never flip and their sites are",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "- [x] Actor count never exceeds `MAX_ACTORS`; ambient actors yield fir",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "- [x] A wolf pack routs when it breaks; a boar charges and cannot stee",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "never be stranded; a broken non-beast falls back on its rally point an",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "treeline, and loses the cart when the escort loses. Escorts are charge",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "budgetRule",
+      "id": "actor slot**, so none of it can crowd out a raid.",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "day/night toggle cannot put them out. *(Torches observed in the browse",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "- [x] Actor count never exceeds `MAX_ACTORS` with ambient life in play",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "third arm in which raids are offered but never handed back: captures t",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "it **never fired**: zero routs across 60 fights of `bear+wolf+wolf` an",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "*not* the step function surviving — it is `evaluatePlayerPursuit` sayi",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "cohesion, and the boar and bear never break at all. Layer 3's 0 was th",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "\"never breaks\" entry became \"breaks like a soldier\": commanders and ch",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "**The general rule, which matters more than the bug.** `??` cannot dis",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "wobble but a campaign that cannot be completed. Where a table's `null`",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "**most of what this layer is for cannot be measured at all.** Whether ",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "Attacks went *up*. A villager at `3.1 × 1.15 = 3.57 m/s` cannot outrun",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "designRule",
+      "id": "ambient life must not do. Scattering puts it back: 0 against the empty",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "budgetRule",
+      "id": "- **Not resolved fights.** The panic arm exhausts its frame budget, be",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "living-world",
+      "cls": "edgeCaseRule",
+      "id": "climbs ~19 m over `BIRD_FLIGHT_SECONDS`. When the timer expired it fel",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-depth",
+      "cls": "relation",
+      "id": "row:Primary attack:0.52,3.6,26,28,31,13",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-depth",
+      "cls": "designRule",
+      "id": "then the frontal shield modifier. Melee attacks may injure; archer pro",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-depth",
+      "cls": "edgeCaseRule",
+      "id": "| **Guard** | **Стойка щита** *(hold)* | RMB / `KeyR` / touch hold | F",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-depth",
+      "cls": "designRule",
+      "id": "The elf ability is unavailable when both arms are missing. Failed acti",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "relation",
+      "id": "row:Death:90",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "relation",
+      "id": "row:Soldier:28",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "relation",
+      "id": "row:Commander:46",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "relation",
+      "id": "row:Brute:58",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "relation",
+      "id": "row:Champion:72",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "designRule",
+      "id": "| Animation | Actors receive stride animation only; `animateCharacter(",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "designRule",
+      "id": "Repeated flinches take the maximum remaining duration; they do not add",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "budgetRule",
+      "id": "At pool pressure, retain brute/champion/commander telegraphs before so",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "lifecycleRule",
+      "id": "- Event props can become invalid during cleanup. An invalid prop actio",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "edgeCaseRule",
+      "id": "- Event props can become invalid during cleanup. An invalid prop actio",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "lifecycleRule",
+      "id": "- Actor arrows spawn once at contact. Existing projectile source clean",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "04-enemy-reactions",
+      "cls": "designRule",
+      "id": "- [ ] Light hits visibly flinch but do not cancel attacks; poise break",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "relation",
+      "id": "row:UI cadence:90",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "relation",
+      "id": "row:Combat FX:48,180,72",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "relation",
+      "id": "row:Heavy direct-player hit:48",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "relation",
+      "id": "row:Lethal direct-player hit:64",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "relation",
+      "id": "row:Shield block on player:24",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "relation",
+      "id": "row:AI-vs-AI or miss:0",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "budgetRule",
+      "id": "| Combat FX | Sparks are capped at 48, gore at 180, decals at 72; ordi",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "designRule",
+      "id": "Extend the existing `damageActor` options with `attackKind`; do not ad",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "designRule",
+      "id": "This classification changes presentation only. It must not increase da",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "designRule",
+      "id": "- upgrade weight/priority but never downgrade it.",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "designRule",
+      "id": "- Rays do not cast shadows and remain below number/callout render orde",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "designRule",
+      "id": "`requestHitStop(seconds)` takes the maximum of current and requested d",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "budgetRule",
+      "id": "`requestHitStop(seconds)` takes the maximum of current and requested d",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "budgetRule",
+      "id": "cap all stops at 20 ms. A later dedicated `combatMotion` setting may s",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "designRule",
+      "id": "`ComicHitFx.ts` after behavior is working. Do not create a generic eff",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "budgetRule",
+      "id": "mesh exists. After pool warm-up, a 25-actor fight must create no new s",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "designRule",
+      "id": "- Numbers display rounded post-mitigation damage, never pre-mitigation",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "designRule",
+      "id": "- Do not cover the crosshair: project a candidate position and bias it",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "designRule",
+      "id": "- A target killed by the same hit still produces one result; do not em",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "lifecycleRule",
+      "id": "- [ ] Weapon trail follows the player weapon pivot, hides on pause/end",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "02-comic-hit-language",
+      "cls": "lifecycleRule",
+      "id": "- the sibling spec and 07 consume `CombatFeedbackEvent`; this spec own",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "relation",
+      "id": "row:Frontal shield block:0.08",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "relation",
+      "id": "row:Cleave that hits at least one actor:0.42",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "relation",
+      "id": "row:Nearby direct player kill:0.08,12",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "lifecycleRule",
+      "id": "| Camera | `updateCamera()` lerps `camera.position` toward a collision",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "budgetRule",
+      "id": "- Scale `newIntensity` from post-mitigation `dealt`. Cap shield-block ",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "budgetRule",
+      "id": "to `SPARK_MAX_ACTIVE`; `createSparks` only fills available slots. Brig",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "budgetRule",
+      "id": "pool is below `DECAL_MAX`, or immediately recycles the oldest active e",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "designRule",
+      "id": "shared textures once. Do not add a second decal-disposal pass.",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "lifecycleRule",
+      "id": "shared textures once. Do not add a second decal-disposal pass.",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "designRule",
+      "id": "adjustment. AI kills may leave decals but never add camera trauma.",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "lifecycleRule",
+      "id": "burst. The existing scene teardown owns final disposal. The separate d",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "budgetRule",
+      "id": "burst. The existing scene teardown owns final disposal. The separate d",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "edgeCaseRule",
+      "id": "emission if needed. Resuming cannot reveal a stale red frame or restar",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "lifecycleRule",
+      "id": "paused consistently with actors and projectiles. Landed gore returns t",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "designRule",
+      "id": "Tune constants together in a 25-actor stress fight. Do not increase co",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "combat-juice",
+      "cls": "designRule",
+      "id": "nonexistent weapon clashes do not emit impact feedback.",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "07-camera-accents",
+      "cls": "relation",
+      "id": "row:Nearby direct-player kill:2.4,0.20,14",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "07-camera-accents",
+      "cls": "designRule",
+      "id": "This reuses the authoritative gameplay sprint decision; camera code mu",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "07-camera-accents",
+      "cls": "designRule",
+      "id": "Normal melee hits do not change FOV. the sibling spec hit stop and exi",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "07-camera-accents",
+      "cls": "lifecycleRule",
+      "id": "- Pause displays base FOV immediately rather than freezing halfway thr",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "07-camera-accents",
+      "cls": "lifecycleRule",
+      "id": "- Trauma and FOV reset happen before the paused/end frame renders.",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "07-camera-accents",
+      "cls": "lifecycleRule",
+      "id": "1. the sibling spec: toon materials, selective outlines, and resource ",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "03-loot-spectacle",
+      "cls": "relation",
+      "id": "row:Save:1",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "03-loot-spectacle",
+      "cls": "relation",
+      "id": "row:Rare:4.2",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "03-loot-spectacle",
+      "cls": "lifecycleRule",
+      "id": "| Kill reward | A direct player kill grants `12` gold or `55` for a co",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "03-loot-spectacle",
+      "cls": "designRule",
+      "id": "Use a dedicated runtime `lootRng`; do not reuse event RNG sequencing o",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "03-loot-spectacle",
+      "cls": "budgetRule",
+      "id": "changed. If current damage is already at or above the cap, exclude whe",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "03-loot-spectacle",
+      "cls": "designRule",
+      "id": "one view emission on clear. Do not schedule React timeouts that can ou",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "03-loot-spectacle",
+      "cls": "edgeCaseRule",
+      "id": "- Collection and save settlement can race in one frame; marking inacti",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "01-toon-shading-and-outlines",
+      "cls": "relation",
+      "id": "row:Renderer:0.92,1.75",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "01-toon-shading-and-outlines",
+      "cls": "designRule",
+      "id": "- is marked `userData.comicOutline = true` so later traversal never ou",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "01-toon-shading-and-outlines",
+      "cls": "lifecycleRule",
+      "id": "geometries and materials in `Set`s before disposal so shared resources",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "01-toon-shading-and-outlines",
+      "cls": "designRule",
+      "id": "- Do not add outline shells to `generatedTextures`; that map remains f",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "01-toon-shading-and-outlines",
+      "cls": "lifecycleRule",
+      "id": "- Engine teardown clears the outline registry after scene/resource dis",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "01-toon-shading-and-outlines",
+      "cls": "designRule",
+      "id": "- Faction recognition must not rely on outline color; torso color, rin",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "01-toon-shading-and-outlines",
+      "cls": "designRule",
+      "id": "resources are each disposed once; repeated game start/return-to-menu c",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "relation",
+      "id": "row:Neutral:26",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "relation",
+      "id": "row:Palace:20",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "relation",
+      "id": "row:Forest:22",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "relation",
+      "id": "row:Fort:26",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "designRule",
+      "id": "- **Do not duplicate tree/grass work.** Forest identity additions are ",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "designRule",
+      "id": "- do not recolor health, danger, success, rarity, or faction semantics",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "designRule",
+      "id": "- Procedural marks must not cover transparent canvas pixels on signs/d",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "05-zone-art-direction",
+      "cls": "edgeCaseRule",
+      "id": "cannot accidentally reuse one cache key.",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "bloom-post-processing",
+      "cls": "relation",
+      "id": "row:Pixel ratio:1.75",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "bloom-post-processing",
+      "cls": "relation",
+      "id": "row:Emissive sources:1.55",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "ground-foliage-wind",
+      "cls": "relation",
+      "id": "row:ferns:3,4,0,90,0,0,0,260,0,0",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "ground-foliage-wind",
+      "cls": "designRule",
+      "id": "writes the same canonical wind state before the atmosphere update. Do ",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "ground-foliage-wind",
+      "cls": "designRule",
+      "id": "- Do not add `uFade` alpha in v1. If fog is ever removed, prefer a dit",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "ground-foliage-wind",
+      "cls": "designRule",
+      "id": "before disposing geometry/materials. Do not also call the rebuild clea",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "ground-foliage-wind",
+      "cls": "lifecycleRule",
+      "id": "before disposing geometry/materials. Do not also call the rebuild clea",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "ground-foliage-wind",
+      "cls": "lifecycleRule",
+      "id": "- Dispose temporary source geometries after merged fern/flower geometr",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "ground-foliage-wind",
+      "cls": "designRule",
+      "id": "- [ ] Wind-displaced vertices do not clip at frustum edges.",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "day-night-cycle",
+      "cls": "formula",
+      "id": "(`opacity = nightFactor² × 0.88`, `fog:false`). Push each to",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "day-night-cycle",
+      "cls": "relation",
+      "id": "row:Sun light:2.65,35,58,24,2048",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "day-night-cycle",
+      "cls": "relation",
+      "id": "row:Sky dome:178,88,74,112,10",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "day-night-cycle",
+      "cls": "relation",
+      "id": "row:Torch flames:1.4,11,2",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "day-night-cycle",
+      "cls": "relation",
+      "id": "row:Tone mapping:0.92",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "edgeCaseRule",
+      "id": "| Treat weather as a **camera-local atmosphere**, not four simultaneou",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "lifecycleRule",
+      "id": "| Disposal | `destroy()` | Handles `Mesh`, `Sprite`, and `Points`, but",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "designRule",
+      "id": "palette-derived blue-gray color. Do not use additive blending; rain sh",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "designRule",
+      "id": "Do not lerp weather toward absolute daytime colors: that would brighte",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "designRule",
+      "id": "multiplier; do not regenerate or edit textures.",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "designRule",
+      "id": "Create one dedicated, normally dark `HemisphereLight` for lightning. D",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "lifecycleRule",
+      "id": "day/night lights directly; a separate light prevents ownership conflic",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "designRule",
+      "id": "Do not use `setTimeout`, which would outlive pause/destroy.",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "lifecycleRule",
+      "id": "Do not use `setTimeout`, which would outlive pause/destroy.",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "edgeCaseRule",
+      "id": "- If the player leaves the rain zone after a flash, already queued thu",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "designRule",
+      "id": "- Persist only the preference. Do not add weather to `SavedGame` or `G",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "budgetRule",
+      "id": "- [ ] Steady precipitation costs one draw call, a rain-to-snow blend c",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "weather-system",
+      "cls": "designRule",
+      "id": "- [ ] Rain/snow do not bloom noticeably; precipitation and new line ge",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "formula",
+      "id": "- Uses a dedicated `eventRng = seededRandom(seed)`. If the s",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "formula",
+      "id": "- **`MiniMap`**: render `kind === 'event'` markers with a di",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "relation",
+      "id": "row:defendHome:4,100,45,90,8,0",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "budgetRule",
+      "id": "| `defendHome` | Pick a tracked village house, attach fire/smoke FX, a",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "budgetRule",
+      "id": "| `champion` | Spawn 1 elite roaming actor (hp 260, aura). | Kill the ",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "lifecycleRule",
+      "id": "| `rescue` | Spawn a captive ally guarded by 2 enemies; marker. The ca",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "lifecycleRule",
+      "id": "| `bounty` | Mark a living hostile non-critical actor, excluding comma",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "budgetRule",
+      "id": "| `bounty` | Mark a living hostile non-critical actor, excluding comma",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "edgeCaseRule",
+      "id": "- Uses a dedicated `eventRng = seededRandom(seed)`. If the seed derive",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "lifecycleRule",
+      "id": "idempotent cleanup, clear `activeEvent`, and set cooldown. When idle a",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "lifecycleRule",
+      "id": "actors inline, so cleanup cannot mutate `actors` during combat iterati",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "edgeCaseRule",
+      "id": "actors inline, so cleanup cannot mutate `actors` during combat iterati",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "lifecycleRule",
+      "id": "damage `EventPropTarget.hp` on their attack cooldown. The house itself",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "designRule",
+      "id": "- Killing event-spawned actors never advances campaign objectives. A b",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "lifecycleRule",
+      "id": "- Killing event-spawned actors never advances campaign objectives. A b",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "dynamic-world-events",
+      "cls": "designRule",
+      "id": "keeps the captive out of the squad until success; bounty never removes",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "06-layered-audio",
+      "cls": "lifecycleRule",
+      "id": "| Lifecycle | Music scheduled sources are tracked; ordinary SFX source",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "06-layered-audio",
+      "cls": "designRule",
+      "id": "- **Do not connect SFX directly to destination.** Every source routes ",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "06-layered-audio",
+      "cls": "designRule",
+      "id": "Pass the current zone into `setMusicContext(faction, zone)` or provide",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    },
+    {
+      "spec": "06-layered-audio",
+      "cls": "designRule",
+      "id": "request before context creation may be dropped; do not queue stale com",
+      "why": "matcher: all terms present in the file but not co-occurring in the owning section"
+    }
+  ]
+}

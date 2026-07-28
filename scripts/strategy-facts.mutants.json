@@ -1,0 +1,46 @@
+{
+  "_comment": [
+    "SEMANTIC MUTATION TABLE. Deletion is the easy mutation; corruption is the one that matters,",
+    "because a dropped rule is a gap while an inverted rule is a lie that reads as authoritative.",
+    "",
+    "Each entry is applied to the whole document and MUST be caught — the miss count must rise.",
+    "`node scripts/strategy-facts.mjs --mutate` fails the run if any mutant survives, which turns",
+    "adversarial mutation testing from an audit somebody happened to perform into a property the",
+    "repository owns and re-checks on every run.",
+    "",
+    "Entries 1-6 are the coordinator's; 7-9 are Agent SOL's. Do not delete an entry because it",
+    "became inconvenient: a surviving mutant is a real hole in the checker, not a broken test."
+  ],
+  "mutants": [
+    { "id": "enum-member-drop", "why": "drop one member from a closed union; every other token stays present", "find": "WeatherKind = 'clear' | 'overcast' | 'rain' | 'snow'", "replace": "WeatherKind = 'clear' | 'overcast' | 'rain'" },
+    { "id": "expression-contradiction", "why": "bind one name to two incompatible expressions — the shape that slipped past the numeric-only check. Anchor deliberately single-line: a multi-line anchor breaks in a CRLF checkout and reports UNTESTABLE instead of failing at the point of the bug", "find": "`this.eventRng = () => streams.event.next()` (`:1853`)", "replace": "`this.dropRng = () => streams.event.next()` and elsewhere `dropRng = seededRandom(Date.now())` (`:1853`)" },
+    { "id": "sequence-archer-range", "why": "reverse an ordered array; both values still present", "find": "ARCHER_RANGE=[8,12]", "replace": "ARCHER_RANGE=[12,8]" },
+    { "id": "row-tail-swap",         "why": "swap row values past the fourth column", "find": "| `rain` | 30 / 95 | 0.62 | 0.78 | 0.90 | 0.78 | 1 | 0 | 0.85 |", "replace": "| `rain` | 30 / 95 | 0.62 | 0.78 | 0.90 | 0.78 | 0 | 1 | 0.85 |" },
+    { "id": "ordering-operand-swap", "why": "reverse the operands while keeping the marker word", "find": "clears the old canvas before drawing", "replace": "draws before clearing the old canvas" },
+    { "id": "negation-scope-move", "why": "move the negation to the other clause of one sentence",
+      "mutations": [
+        { "find": "**Callouts are decorative.** Missing one due to pool pressure **cannot** hide", "replace": "**Callouts are not decorative.** Missing one due to pool pressure can hide" },
+        { "find": "Callouts are decorative. Missing one due to pool pressure cannot hide", "replace": "Callouts are not decorative. Missing one due to pool pressure can hide" }
+      ] },    { "id": "polarity-do-not",      "why": "invert every prohibition in the document", "find": "do not ", "replace": "do " },
+    { "id": "polarity-must-not",    "why": "invert every requirement-negation",        "find": "must not ", "replace": "must " },
+    { "id": "polarity-never",       "why": "invert every absolute prohibition",        "find": "never", "replace": "always" },
+    { "id": "ordering-shorter", "why": "invert a comparison where the relation IS the fact",
+      "mutations": [ { "find": "shorter than", "replace": "longer than" }, { "find": "**shorter** than", "replace": "**longer** than" } ] },
+    { "id": "value-voices",         "why": "corrupt a bound cap",                      "find": "MAX_ACTIVE_VOICES = 24", "replace": "MAX_ACTIVE_VOICES = 42" },
+    { "id": "value-max-actors",     "why": "corrupt a bound budget total",             "find": "MAX_ACTORS = 25", "replace": "MAX_ACTORS = 35" },
+    { "id": "value-bloom-layer",    "why": "corrupt a single-digit bound value",       "find": "BLOOM_LAYER=1", "replace": "BLOOM_LAYER=9" },
+    { "id": "value-archer-damage",  "why": "corrupt a single-digit bound value",       "find": "ARCHER_DAMAGE=7", "replace": "ARCHER_DAMAGE=9" },
+    {
+      "id": "row-swap-scout",
+      "why": "swap a role's hit points wherever the row appears",
+      "mutations": [
+        { "find": "| `scout` | 55 |", "replace": "| `scout` | 45 |" },
+        { "find": "`scout` 55 hp", "replace": "`scout` 45 hp" },
+        { "find": "`scout` → 55", "replace": "`scout` → 45" }
+      ]
+    },
+    { "id": "ordering-after",       "why": "invert a phase ordering",                  "find": "**after** day/night", "replace": "**before** day/night" },
+    { "id": "value-day-length",     "why": "corrupt a named duration",                 "find": "DAY_LENGTH = 240", "replace": "DAY_LENGTH = 420" },
+    { "id": "value-alarm-radius",   "why": "corrupt a bound radius",                   "find": "CIVILIAN_ALARM_RADIUS = 12", "replace": "CIVILIAN_ALARM_RADIUS = 21" }
+  ]
+}
