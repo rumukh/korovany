@@ -1305,6 +1305,77 @@ The reason it was skipped is worth naming too: the shared object store makes an 
 branch *look* shareable. Colleagues could read it through worktrees, so the cost of not
 pushing was invisible from the inside and paid entirely by everyone else.
 
+**A test's name is vocabulary, not mechanism — so "is the test there?" answers yes on a
+tree where it cannot catch the bug.** This pass claimed one of its fixes had reached the
+integration branch and probed for it with `teardown`, `disposeShell` and `releaseOutline`.
+Measured across three trees: `disposeShell` appears in **3 files in every one of them**,
+including the tree that lacked the fix — zero discriminating power. The programme lead
+caught it with the token this pass had recommended *to the programme lead* one message
+earlier: pick the string that only exists after the fix. Here that was `patchedDispose`,
+0 files before and 1 after.
+
+The sharper half emerged on re-measuring. The test's **exact name** —
+*"teardown detaches every instanced ink shell before its source is disposed"* — is present
+in the tree without the fix, because the upgrade rewrote the body from 61 lines to 100 and
+left the title alone. A grep for the test name, which is the most natural probe anyone
+would reach for, reports **present** on a tree where the test asserts post-hoc state and
+cannot see ordering at all.
+
+So the general form is stronger than "avoid topic words": **the tokens nearest a fix are
+the ones most likely to predate it, and a test's name is the nearest token of all.** A fix
+adds a mechanism, rarely a vocabulary. Probe for the mechanism — `patchedDispose`,
+`startAnchors`, `displaceSeamless` — never for what the thing is *about*.
+
+**The artefact with no gate is the one you are proudest of.** This section spent the night
+cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
+state that no check could see. Ten lines were mangled — five entries whose opening sentence
+had been duplicated as an orphan above the rule and simultaneously jammed into the body with
+its newline deleted, producing text reading `survivedso long` and `the programme
+leadidentified`. It was committed, pushed, reviewed by two sessions, merged by the
+integrator, and quoted back approvingly, and nobody saw it. Including its author, who
+described it in three separate messages as the programme's most durable output.
+
+The mechanism is mundane: every edit that inserted a new rule *before* an existing one
+anchored on that rule's bold header, and the replacement decapitated it. The identical
+mistake was then made a sixth time, live, while writing the entry above this one — and was
+caught only because a structural `grep` happened to run afterwards.
+
+But the reason it survived is the point. Four gates ran on every one of those commits —
+`tsc -b`, `oxlint`, 292 tests, `npm run build` — and **not one of them reads Markdown.**
+The prose was the only shipped artefact with no automated reader at all, which is precisely
+why it rotted, and precisely why the rot was invisible: the humans reading it were reading
+for argument, and an argument survives a missing newline. **A file no tool parses has no
+tests, whatever else you have.** The cheap remedy is structural, not stylistic, and would
+have caught all ten: no line begins with a space, no `**Header` appears mid-sentence, every
+rule has a blank line above it.
+
+The corollary is worse than the instance. The confidence attached to this file was inverted
+against its coverage — it was the least-verified artefact in the programme *and* the one
+most often cited as authoritative, and those two facts were causally connected. Nothing here
+had to survive a machine, so nothing here was measured, and the absence of red never once
+read as absence of testing.
+
+**Last, and it is why the rest of this section exists: the review worked better than the
+accuracy of anyone in it.** The final tally across the two review sessions was roughly one
+wrong call per three good ones, in both directions — this pass made two incorrect diagnoses
+of a reviewer's tooling and propagated one of them upward; the reviewer produced three false
+positives, including a mutation broken by line endings that reported SURVIVED. Neither side
+was reliable on its own.
+
+What made that workable was not care, and it was not expertise. **Every claim on both sides
+arrived with the command that produced it**, so the wrong ones were cheap to overturn —
+usually within one message, and usually by the person who had not made them. Nothing here
+was caught by someone being right; it was caught by claims being *checkable* by someone
+else, quickly, without asking permission or re-deriving the context.
+
+The counterfactual is the point, and it is the reviewer's phrasing: **a review where both
+sides had been merely confident would have gone differently on identical facts.** Every
+defect in the table above was found by a measurement someone could re-run, and every wrong
+diagnosis died the same way. A catalogue of checks that could not fail is only possible in a
+process where checking is cheaper than arguing — so if one practice from this document
+survives into another programme, it should be that one, and the rules are downstream of it.
+
+
 ## 14. Effort
 
 **2.5-3 days.** The vocabulary is mechanical. The time went into composition that
