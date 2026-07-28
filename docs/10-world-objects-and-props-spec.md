@@ -2196,6 +2196,37 @@ correctly, but only earned belief once it had been shown to fire: run against a 
 to differ it reported 467 missing lines, and only then was its **0** against `main` worth
 anything. *A probe that reports zero without having been shown to fire is not a result.*
 
+And one instrument this session very nearly added to §13's surviving set fails that test
+outright, which is the reason it is written down here instead. Resolving whether a SHA was
+*ever* a branch tip, `git branch --contains` answers only about **now** — it is silent
+after a force-push — so `git reflog show <branch>` was proposed as the instrument for
+**then**. Measured in a fresh clone, which is what a second reviewer or CI actually has:
+
+```text
+git reflog show origin/<branch>      (no output)   exit 0
+git reflog show origin/main          (no output)   exit 0
+git rev-parse --verify -q <old sha>                exit 1
+git cat-file -t <old sha>            fatal: Not a valid object name
+```
+
+**Reflogs are not cloned.** They are a property of a machine that watched the pushes, not
+of the repository — so the instrument returns the same clean, exit-0 emptiness for *"this
+branch was never force-pushed"* and *"I have no way to know."* The superseded object is not
+merely unreferenced there; it is absent, so parent-walking and diff-shape have nothing to
+walk either. Both candidate disambiguators are machine-local, and the one proposed to fix a
+silent negative produces a silent negative of its own.
+
+`git rev-parse --verify -q <sha>` is the one that speaks: **exit 1 for an object that is not
+there**, which distinguishes *absent* from *absence of history*. It belongs beside any
+reflog citation.
+
+The rule sits one step upstream of all of that, and it is the practical one: **on a
+rebasing branch, never hand anyone a bare SHA.** Name the ref, say what the SHA was the tip
+*of*, and when — because the reader may hold no instrument that can resolve it at all. The
+same applies to reflog indices, which are positional and shift as entries land: two sessions
+read `@{9}` and `@{10}` for one entry, minutes apart, and both were right. Quote the SHA and
+the reason line, never the index.
+
 
 
 #### The cheap detector for all of it: count the units, not the lines
