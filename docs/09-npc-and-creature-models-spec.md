@@ -195,6 +195,15 @@ no new dependencies.
   `1 / (1 - 0.018 * 0.55) - 1` — the breath's own closed form, which the measurement
   matches to ten decimal places. A 0.3% contaminant reads 1.30% and now fails; under
   the round 2% it passed.
+- **Do not adopt a number you could not reproduce.** The gaze skew bound quoted a
+  reviewer's jointly-reachable coefficient of 4.81 where an independent enumeration
+  here had measured 6.68, and resolved the 39% disagreement by deferring rather than
+  reconciling. The reviewer caught its own number being taken on trust and named it as
+  the same defect class as the rest: *a claim adopted rather than verified*. 4.81 was
+  right — the 6.68 came from letting a staggering chest keep its gait yaw, which
+  `sampleActorPose` forbids — but being right by deference is indistinguishable from
+  being wrong by deference until someone checks. Reconcile, or state both figures with
+  both methods named; never present one as settled because its author outranks you.
 - **Mutate the production code, not the test's copy of it.** The anisotropy test used
   to apply its own `neckPivot.scale.x = 1 / shoulders`, and the mutation evidence
   published for it came from mutating *that* line. Reverting the engine's half left

@@ -1454,7 +1454,60 @@ test('the head tracks its target through the chest, not past it', () => {
   // safe direction for a guard — it can only make the bound stricter — but it means
   // the in-game figure is about half what is quoted, and the sweep must not be called
   // "the reachable envelope". That mislabel has now been made three times in this file.
+  // Two coefficients, because there are two scales above the head and they are
+  // **independent additive terms**, not one effect. Both are degrees of heading error
+  // per unit of the asymmetry that causes them.
+  //
+  // The residue is not float noise. A scale between the chest's rotation and the
+  // head's stretches one component of a *pitched* head's forward vector, and the
+  // chest's rotation mixes it back into X and Z. Heading is `atan2(x, z)`, so it is
+  // invariant to `scale.y` and to any scale with `scale.x === scale.z` — which is why
+  // the chest's *breath* skews it only through the head's pitch, and why `body-pivot`
+  // skews it through the **X-vs-Z asymmetry** of `set(bulk, height, bulk * z)`.
+  // `solveHeadYaw` composes rotations and deliberately models neither: a per-frame
+  // scale is not something a closed form wants as an argument for a hundredth of a
+  // degree.
+  //
+  // **These are empirical coefficients, not derivations.** Each is a measured maximum
+  // rounded up, and that distinction matters because the anisotropy bound two tests up
+  // *is* a closed form (`1/(1-b) - 1`, matching to ten decimal places) and calling
+  // these "derived" flatters them. What they have is **linearity**, which the three
+  // probes below verify independently — halve or double either asymmetry and its term
+  // moves with it.
+  //
+  // `body-pivot` is the larger of the two by an order of magnitude and was missing
+  // from this sweep entirely until a reviewer found it: 0.89° against a bound of
+  // 0.095°, **9.4× over**, from a term the assertion's own message said could not be
+  // there. It is the same term that makes head *anisotropy* 13.32% in game against the
+  // 0.99% the chest accounts for — one missing scale, two bounds, found twice.
+  //
+  // The sweep **over-covers**: it is a cross-product of each axis's range, and the
+  // engine's terms are correlated. `actor.reaction` is one field, so a stagger
+  // excludes a flinch; a stagger clears `actor.action`, so attack cannot co-occur with
+  // it; and `sampleActorPose` sets `pose.stride = reaction === 'stagger' ? 0 : stride`,
+  // so a staggering chest has **no gait yaw at all**. Enumerating jointly, the breath
+  // coefficient is **4.81** against this sweep's 9.53. Over-covering is the safe
+  // direction for a guard — it can only make the bound stricter — but it means the
+  // in-game figure is about half what is quoted, and this sweep must not be called
+  // "the reachable envelope". That mislabel was made three times in this file before
+  // it stuck.
+  //
+  // 4.81 is worth a note on how it was settled, because the first version of this
+  // comment got there the wrong way. A reviewer measured 4.81; an independent
+  // enumeration here measured 6.68; and rather than reconcile a 39% disagreement the
+  // comment simply adopted the reviewer's figure and presented it as fact. The
+  // reviewer caught that — *"deferring to a reviewer's number over your own
+  // measurement is the same defect class as everything else this branch has caught: a
+  // claim adopted rather than verified"* — and it is the sharpest correction of the
+  // review, because the number was right and the reason for believing it was not.
+  // Re-enumerated properly, 4.81 holds: the 6.68 came from letting a staggering chest
+  // keep its gait yaw, which the line above forbids.
   const SKEW_PER_UNIT_BREATH = 9.6
+  const SKEW_PER_UNIT_BODY_ASYMMETRY = 29
+  // `applyActorVisualVariation`: bodyPivot.scale.set(bulk, height, bulk * around(1, 0.03)).
+  // Only the third factor matters here — it is the whole of the X-vs-Z asymmetry.
+  const BODY_Z_ASYMMETRY = 0.03
+  const BODY_SCALES = [1 - BODY_Z_ASYMMETRY, 1, 1 + BODY_Z_ASYMMETRY]
   let worst = 0
   let worstAt = ''
   let states = 0
@@ -1466,38 +1519,44 @@ test('the head tracks its target through the chest, not past it', () => {
       const head = new THREE.Object3D()
       head.position.y = skeleton.headY
       skeleton.headPivot.add(head)
-      // The chest also carries the actor's width and breath, which skew orientation
-      // as well as size, so the measurement has to include them.
+      // Everything above the head that carries a scale: `body-pivot` for the actor's
+      // bulk, `torso-pivot` for its shoulders and its breath. `buildCharacterSkeleton`
+      // returns `body-pivot` as the parent of `torso-pivot`, so setting it here puts
+      // it above the whole rotation chain exactly as the engine does.
       setCharacterShoulderWidth(skeleton.torsoPivot, skeleton.neckPivot, 1.07)
       skeleton.torsoPivot.scale.y = 1 + BREATH_AMPLITUDE
 
-      for (let i = 0; i <= AXES[0].steps; i += 1) {
-        const x = at(AXES[0], i)
-        for (let j = 0; j <= AXES[1].steps; j += 1) {
-          const y = at(AXES[1], j)
-          for (let k = 0; k <= AXES[2].steps; k += 1) {
-            const z = at(AXES[2], k)
-            skeleton.torsoPivot.rotation.set(x, y, z)
-            for (let m = 0; m <= AXES[3].steps; m += 1) {
-              const headPitch = at(AXES[3], m)
-              for (let n = 0; n <= AXES[4].steps; n += 1) {
-                const headRoll = at(AXES[4], n)
-                for (const target of TARGETS) {
-                  states += 1
-                  // Exactly what `animateActorCharacter` writes, in its order.
-                  skeleton.headPivot.rotation.set(
-                    headPitch,
-                    solveHeadYaw(x, y, z, headPitch, target),
-                    headRoll,
-                  )
-                  skeleton.root.updateMatrixWorld(true)
-                  forward.set(0, 0, 1).transformDirection(head.matrixWorld)
-                  const error = Math.abs(Math.atan2(forward.x, forward.z) - target)
-                  if (error > worst) {
-                    worst = error
-                    worstAt = `${faction}/${role} chest [${x.toFixed(2)}, ${y.toFixed(2)}, `
-                      + `${z.toFixed(2)}] head pitch ${headPitch.toFixed(2)} roll `
-                      + `${headRoll.toFixed(2)} looking ${target.toFixed(2)}`
+      for (const bodyZ of BODY_SCALES) {
+        skeleton.bodyPivot.scale.set(1.05, 1.055, 1.05 * bodyZ)
+        for (let i = 0; i <= AXES[0].steps; i += 1) {
+          const x = at(AXES[0], i)
+          for (let j = 0; j <= AXES[1].steps; j += 1) {
+            const y = at(AXES[1], j)
+            for (let k = 0; k <= AXES[2].steps; k += 1) {
+              const z = at(AXES[2], k)
+              skeleton.torsoPivot.rotation.set(x, y, z)
+              for (let m = 0; m <= AXES[3].steps; m += 1) {
+                const headPitch = at(AXES[3], m)
+                for (let n = 0; n <= AXES[4].steps; n += 1) {
+                  const headRoll = at(AXES[4], n)
+                  for (const target of TARGETS) {
+                    states += 1
+                    // Exactly what `animateActorCharacter` writes, in its order.
+                    skeleton.headPivot.rotation.set(
+                      headPitch,
+                      solveHeadYaw(x, y, z, headPitch, target),
+                      headRoll,
+                    )
+                    skeleton.root.updateMatrixWorld(true)
+                    forward.set(0, 0, 1).transformDirection(head.matrixWorld)
+                    const error = Math.abs(Math.atan2(forward.x, forward.z) - target)
+                    if (error > worst) {
+                      worst = error
+                      worstAt = `${faction}/${role} body z ${bodyZ.toFixed(2)} chest `
+                        + `[${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}] head pitch `
+                        + `${headPitch.toFixed(2)} roll ${headRoll.toFixed(2)} looking `
+                        + `${target.toFixed(2)}`
+                    }
                   }
                 }
               }
@@ -1510,26 +1569,32 @@ test('the head tracks its target through the chest, not past it', () => {
 
   assert.equal(
     states,
-    FACTIONS.length * ROLES.length * TARGETS.length *
+    FACTIONS.length * ROLES.length * TARGETS.length * BODY_SCALES.length *
       AXES.reduce((total, axis) => total * (axis.steps + 1), 1),
     'the grid has collapsed; every declared endpoint must be visited',
   )
   // The solve is exact on a chain of pure rotations — that is its whole contract, and
-  // an earlier version of it was not, because it ignored the head's own pitch. What
-  // is left here is the chest's breath skewing a pitched head's forward vector, and
-  // it is bounded by the breath rather than by a number someone liked.
-  const bound = SKEW_PER_UNIT_BREATH * BREATH_AMPLITUDE
+  // an earlier version of it was not, because it ignored the head's own pitch. What is
+  // left is the two scales above the head, each bounded by the asymmetry that causes
+  // it rather than by a number someone liked.
+  const bound =
+    SKEW_PER_UNIT_BREATH * BREATH_AMPLITUDE +
+    SKEW_PER_UNIT_BODY_ASYMMETRY * BODY_Z_ASYMMETRY
   assert.ok(
     worst * (180 / Math.PI) <= bound,
     `the head ended up ${(worst * (180 / Math.PI)).toFixed(4)} degrees off its target `
-    + `at ${worstAt}, over the ${bound.toFixed(4)} the chest's breath accounts for. `
-    + '`solveHeadYaw` answers a linear equation rather than approximating one, so more '
-    + 'than the breath means it is being given the wrong arguments — most likely a '
-    + 'missing head pitch, which alone is worth 7.3 degrees.',
+    + `at ${worstAt}, over the ${bound.toFixed(4)} the chest's breath and the body's `
+    + 'X-vs-Z asymmetry account for between them. `solveHeadYaw` answers a linear '
+    + 'equation rather than approximating one, so more than those two means it is being '
+    + 'given the wrong arguments — most likely a missing head pitch, which alone is '
+    + 'worth 7.3 degrees.',
   )
 
-  // Two probes that keep the bound above honest, on the worst plan the sweep found.
-  const probe = (breath: number): number => {
+  // Three probes that keep the bound above honest. Each varies one scale and holds the
+  // other at unity, because the two terms are independent and a probe that moved both
+  // could not attribute what it saw — which is precisely how `body-pivot` went missing
+  // from this test for four commits.
+  const probe = (breath: number, bodyZ: number): number => {
     const p = resolveCharacterPlan('elf', 'soldier', 0, false).proportions
     const skeleton = buildCharacterSkeleton(p)
     const head = new THREE.Object3D()
@@ -1537,6 +1602,7 @@ test('the head tracks its target through the chest, not past it', () => {
     skeleton.headPivot.add(head)
     setCharacterShoulderWidth(skeleton.torsoPivot, skeleton.neckPivot, 1.07)
     skeleton.torsoPivot.scale.y = breath
+    skeleton.bodyPivot.scale.set(1.05, 1.055, 1.05 * bodyZ)
     let peak = 0
     for (let i = 0; i <= AXES[0].steps; i += 1) {
       for (let j = 0; j <= AXES[1].steps; j += 1) {
@@ -1560,32 +1626,52 @@ test('the head tracks its target through the chest, not past it', () => {
     return peak * (180 / Math.PI)
   }
 
-  // 1. With the breath switched off the chain is pure rotation, and the solve is
-  //    exact. If this ever reads more than float noise, the solve is wrong — not the
-  //    scale — and the bound above would absorb it silently.
+  // 1. With both scales at unity the chain is pure rotation, and the solve is exact.
+  //    If this ever reads more than float noise, the solve is wrong — not the scales —
+  //    and the bound above would absorb it silently.
   //
   //    The threshold is 1e-10 degrees against a measured 4e-14: four orders of
   //    headroom for float, not the twenty-six million a previous 1e-6 gave while its
   //    comment called it "float noise". A reviewer pointed out that mismatch, and it
   //    matters here more than most — this guard's whole job is to stop the skew bound
   //    absorbing a solver error, so slack in it is slack in both.
-  const exact = probe(1)
+  const exact = probe(1, 1)
   assert.ok(
     exact <= 1e-10,
-    `with no breath the solve should be exact, and it is out by ${exact.toExponential(3)} `
-    + 'degrees. The residue above is then not the breath, and its bound is measuring '
-    + 'something it does not name.',
+    `with no breath and no body asymmetry the solve should be exact, and it is out by `
+    + `${exact.toExponential(3)} degrees. The residue above is then neither of the two `
+    + 'scales, and its bound is measuring something it does not name.',
   )
-  // 2. And the residue is linear in the breath, which is what makes the bound a
-  //    derivation. If this ever stops holding, the coefficient is no longer meaningful
-  //    and neither is the bound built from it.
-  const single = probe(1 + BREATH_AMPLITUDE)
-  const double = probe(1 + 2 * BREATH_AMPLITUDE)
+  // 2. The breath term is linear in the breath, which is what makes its coefficient a
+  //    coefficient. If this stops holding, `SKEW_PER_UNIT_BREATH` is a number again.
+  //    Body asymmetry held at unity so this measures one term, not their sum.
+  const breathSingle = probe(1 + BREATH_AMPLITUDE, 1)
+  const breathDouble = probe(1 + 2 * BREATH_AMPLITUDE, 1)
   assert.ok(
-    Math.abs(double / single - 2) < 0.02,
-    `doubling the breath changed the heading residue by ${(double / single).toFixed(4)}x, `
+    Math.abs(breathDouble / breathSingle - 2) < 0.02,
+    `doubling the breath changed the heading residue by ${(breathDouble / breathSingle).toFixed(4)}x, `
     + 'not 2x. The residue is no longer linear in the breath, so `SKEW_PER_UNIT_BREATH` '
     + 'is no longer a coefficient and the bound above is just a number again.',
+  )
+  // 3. And the body term is linear in the body's X-vs-Z asymmetry, with the breath
+  //    held off. This is the guard that did not exist while `body-pivot` was missing
+  //    from the sweep entirely — the term was 9.4x the whole bound and no assertion
+  //    in the file could see it, because none of them applied the scale that causes it.
+  const bodySingle = probe(1, 1 - BODY_Z_ASYMMETRY)
+  const bodyDouble = probe(1, 1 - 2 * BODY_Z_ASYMMETRY)
+  assert.ok(
+    bodySingle >= 0.5 * SKEW_PER_UNIT_BODY_ASYMMETRY * BODY_Z_ASYMMETRY,
+    `the body's asymmetry contributed only ${bodySingle.toFixed(4)} degrees, less than `
+    + `half what \`SKEW_PER_UNIT_BODY_ASYMMETRY\` predicts for it. Measured it is `
+    + `${(bodySingle / breathSingle).toFixed(2)}x the breath's ${breathSingle.toFixed(4)}; `
+    + 'if it has collapsed toward zero this sweep is no longer applying `body-pivot`\'s '
+    + 'scale and the bound has quietly lost the larger of the two inputs it names.',
+  )
+  assert.ok(
+    Math.abs(bodyDouble / bodySingle - 2) < 0.05,
+    `doubling the body's X-vs-Z asymmetry changed the heading residue by `
+    + `${(bodyDouble / bodySingle).toFixed(4)}x, not 2x. `
+    + '`SKEW_PER_UNIT_BODY_ASYMMETRY` is no longer a coefficient.',
   )
 })
 
