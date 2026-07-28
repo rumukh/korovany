@@ -85,11 +85,41 @@ export interface MergedPropSurface {
  *
  * Consumes the parts: merging is a move. Surfaces with no parts are omitted rather
  * than returned empty, so callers never create a mesh with zero triangles.
+ *
+ * Rejects the same geometry object appearing under two surfaces, which is a quiet and
+ * expensive mistake. `mergeAll` **moves** rather than copies for a single part — with
+ * the default `dispose: true` it returns `parts[0]` itself — so tagging one geometry as
+ * both `hard` and `glow` to draw it twice hands the same buffer back for both surfaces.
+ * The library then takes two cache keys over one buffer, and releasing either disposes
+ * a geometry the other is still drawing. With two or more parts on a surface the same
+ * mistake is worse: one merge disposes a geometry the other merge is about to read, so
+ * the buffer takes two dispose events.
+ *
+ * Per-key reference counting cannot see any of this. Every count is individually
+ * correct at every step; the fault is that two counts govern one buffer, and
+ * `dispose()` frees the GPU resource while leaving the JS object readable — so there is
+ * no throw and no symptom until a draw.
+ *
+ * Reported by a sibling session, which then enumerated all 30 `propPart` sites here and
+ * found no instance. Guarded anyway: it costs one `Set`, it closes the class by
+ * construction rather than by everyone remembering, and the failure it prevents is
+ * invisible right up to the point where it corrupts a frame.
  */
 export function mergePropParts(
   parts: readonly PropPart[],
   options: { name?: string; outlineNormals?: boolean } = {},
 ): MergedPropSurface[] {
+  const seen = new Set<THREE.BufferGeometry>()
+  for (const part of parts) {
+    if (seen.has(part.geometry)) {
+      throw new Error(
+        `Prop ${options.name ?? 'prop'} tagged one geometry under more than one part; `
+        + 'merging moves rather than copies, so both surfaces would share a buffer and '
+        + 'releasing either would dispose the other. Clone it instead.',
+      )
+    }
+    seen.add(part.geometry)
+  }
   const merged: MergedPropSurface[] = []
   for (const surface of PROP_SURFACES) {
     const geometries = parts
