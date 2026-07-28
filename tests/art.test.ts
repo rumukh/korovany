@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
 import * as THREE from 'three'
+import * as artBarrel from '../src/game/art/index.ts'
 import type { LoftSection } from '../src/game/art/index.ts'
 import {
   GeometryCache,
@@ -3365,6 +3366,67 @@ test('every type the spec names is exported by the barrel', () => {
     [],
     'docs/08 names these types but the art barrel does not export them, so code '
     + 'copied from the spec will not compile',
+  )
+})
+
+/**
+ * The gate above covers the type names in §5.2's signatures and nothing else. It
+ * extracts identifiers in `: Position` and `readonly X[]` positions, and every
+ * function name in this kit is lowercase and sits before a paren, so no function
+ * has ever been checked by it. That leaves the more direct half of the same
+ * contract unguarded: a sibling copying `createArtStream(...)` out of the spec
+ * fails on the *call*, not on a type annotation.
+ *
+ * That is not hypothetical here. The neighbouring test records the type half
+ * shipping broken twice, and a rename is strictly easier to get wrong than a type
+ * reference, because renaming an export updates every call site the compiler can
+ * see and leaves the one document that two other sessions are coding against
+ * untouched. Nothing in `tsc -b`, `oxlint`, the suite or `vite build` reads
+ * Markdown, so the spec is the only shipped artefact of mine with no automated
+ * reader at all — which S3 found the hard way, with ten mangled lines in a file
+ * three sessions had read and approved.
+ *
+ * Resolution is against the imported module rather than a regex over `index.ts`,
+ * which is the difference between checking the contract and checking a parse of
+ * it. Writing this, a barrel-text parser handling `export { x } from './y.ts'` in
+ * list form but not single-line form reported `hasStylizedShader` missing — a red
+ * light on correct code, from the check itself. `typeof bag[name] === 'function'`
+ * cannot make that mistake: it asks the question a sibling's import asks.
+ *
+ * Deliberately scoped to fenced signatures. Prose in the baseline and retired-
+ * budget sections cites `ComicMaterialLibrary` and `GEOMETRY_CACHE_ENTRIES_MAX`
+ * precisely because they no longer exist, and widening this to every backticked
+ * identifier would redden on text that is correct — which trains the next reader
+ * to ignore it. The count floor is the other half: an extractor that silently
+ * matches nothing passes a "no missing names" assertion perfectly.
+ */
+test('every function the spec declares in a signature block is a live export', () => {
+  const spec = readFileSync(
+    new URL('../docs/08-graphics-foundation-spec.md', import.meta.url),
+    'utf8',
+  )
+
+  const fences = [...spec.matchAll(/```(?:ts|typescript)\r?\n([\s\S]*?)```/g)]
+    .map((match) => match[1]!)
+  assert.ok(fences.length >= 4, `expected the spec's API blocks, found ${String(fences.length)}`)
+
+  const declared = new Set<string>()
+  for (const match of fences.join('\n').matchAll(/^\s*(?:export\s+)?function\s+(\w+)\s*[(<]/gm)) {
+    declared.add(match[1]!)
+  }
+  assert.ok(
+    declared.size >= 25,
+    `spec parse found only ${String(declared.size)} signatures, so this cannot fail`,
+  )
+
+  const bag = artBarrel as unknown as Record<string, unknown>
+  const missing = [...declared].filter((name) => typeof bag[name] !== 'function').sort()
+
+  assert.deepEqual(
+    missing,
+    [],
+    'docs/08 documents these functions but the art barrel does not export them, so '
+    + 'code copied from the spec will not run',
   )
 })
 
