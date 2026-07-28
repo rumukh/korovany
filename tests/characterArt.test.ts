@@ -2783,6 +2783,27 @@ test('the engine wires the rig the way these tests measure it', () => {
     + 'ever reaches limbs — and the gaze test\'s reachability comment, which says the '
     + 'opposite, becomes wrong in the other direction.',
   )
+  // And that the value `chestGaitYaw` returns is the value the chest keeps. A reviewer
+  // added `torsoPivot.rotation.y -= actor.stride * 0.01` *after* the expression: the
+  // extracted function still returns 0.12 per unit stride, the assertion above still
+  // passes, and the chest effectively turns at 0.13. The extraction pins what the
+  // arithmetic computes and cannot pin that the result survives to the pivot, because
+  // `torsoPivot.rotation.y` is assignable by anything downstream.
+  //
+  // Counted, not pattern-matched, and counting **every** assignment operator — the
+  // previous negative assertion of this shape looked for `=` and was walked past with
+  // `*=`. This is not one more spelling: it says the property has exactly one writer,
+  // which is the structural claim, and any second writer fails it whatever it looks
+  // like. **Where a function cannot own the state, assert the number of writers.**
+  assert.equal(
+    (actorPosture.match(/torsoPivot\.rotation\.y\s*(?:[-+*/]?=)/g) ?? []).length,
+    1,
+    'the chest\'s yaw is assigned more than once in the actor posture pass. `GAITS` '
+    + 'simulates a single `chestGaitYaw` result, so a second write — even one that only '
+    + 'adjusts it — makes the wobble test model a gait the engine does not run, while '
+    + 'every assertion about the coefficient still passes because the coefficient did '
+    + 'not change.',
+  )
 })
 
 
