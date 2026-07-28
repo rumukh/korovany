@@ -784,6 +784,24 @@ Four rules fall out of them, in rough order of how much they would have saved:
    worked — the fix was real and order-independent, verified cold at 0 of 180, and the
    test guarding it was still empty.
 
+   That reviewer then sharpened the shape of the three rounds better than this pass had:
+   **mechanism, then call order, then input.** Each correction was right, each was better
+   argued than the last, and none of them gave the assertion any power — because in every
+   round *the falsifying measurement was written in the world that made the claim true.*
+   Which yields the most uncomfortable line in this section: **the escalating care was the
+   symptom, not the progress.** Three rounds of increasing rigour are what a vacuous check
+   looks like from the inside, and the thing that finally worked took one run and no
+   insight at all.
+
+   The seed set also turned out stronger than it was written to be. The reviewer mutated
+   it three ways: dropping `startAnchors` from the keep-out, forcing `blocksSpawn` to
+   return `false`, and — the useful one — reducing the clearance from `radius + 0.45 + 0.2`
+   to a bare radius. All three caught. The third leaves the keep-out structurally intact
+   and merely under-protects, so the seed set has power over a **quantitative weakening**
+   and not only over removal. That is worth more than the assertion it was written for: it
+   means the margin cannot be quietly tuned toward nothing later, which is how this kind of
+   guard usually dies.
+
    The ordering variant is the sharpest of the mutation set. `releaseResources` promises
    in a comment to detach ink shells *before* the `InstancedMesh` sweep; moving the release
    loop below the sweep left every post-hoc assertion true — shells still ended detached
