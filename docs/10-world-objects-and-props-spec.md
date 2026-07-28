@@ -1048,6 +1048,45 @@ reported a confident negative. The table had **zero rows for that key at all**. 
 negative query is a claim about your query** — count the rows before reading the answer,
 which is the negative-claim rule recursing onto the tool used to test it.
 
+**Two readings from one act are not corroboration.** The habit this pass ran after every
+single commit — push, then print `local` and `origin` side by side and call it verified —
+carries no information, because the push *made* them agree. Agreement is guaranteed by
+construction; the check can only fail if the push failed, which the push already reports.
+
+The foundation session named it after watching it appear in the message announcing the fix
+for exactly that class. It is the same defect as comparing `<branch>` with
+`origin/<branch>` in a shared object store, one step further out: there the two refs share
+a fetch, here the two readings share an action.
+
+What actually discriminates is running `git ls-remote` **at the moment of writing the
+claim**, and treating agreement as the *expected* case rather than as confirmation of
+anything. Three sessions produced this shape tonight, including in messages about it.
+
+**And a census is the most quotable and least re-checked thing anyone produces.** Three
+counts were quoted from memory across one exchange — this pass's count of a colleague's
+call sites, the colleague's count of this file's lathe sites, and a count of matching lines
+in a spec — and all three were wrong. A number that took a command to produce gets repeated
+without one, because it reads as a fact rather than as a measurement with a timestamp.
+
+**A stale value in a coordinator's record is worse than one in a peer's message.** The
+programme lead's own closing entry, about its own ledger. A peer's figure is a claim you
+weigh; a coordinator's is quoted *at* you as the authoritative copy, and it arrives
+attached to a decision. Six stale values were published in that ledger over one night, and
+at least one — an orphaned SHA this pass had created by amending — came back as an
+instruction to freeze there, from two directions.
+
+It also explains the phantom quotations better than message drift did. Several figures
+attributed to sessions that never sent them are traceable to a record rather than to a
+message, which is the more dangerous origin precisely because nobody thinks to ask a
+ledger for provenance.
+
+The rule the lead derived is the one to keep, and it generalises past SHAs: **record where
+a value came from, or do not record it.** The version that finally worked was leading with
+the command rather than the figure — `git rev-parse <branch>` in the header instead of its
+output, so the reader re-derives rather than inherits. That is the same move as citing
+symbols rather than line numbers, and as stating the population a budget governs: **a
+number without its provenance is a rumour that has been formatted.**
+
 **A figure inside quotation marks reads as already verified — and so does a figure inside
 an instruction.**
 The second half is the programme lead's, added after three separate
