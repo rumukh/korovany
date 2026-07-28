@@ -133,13 +133,18 @@ test('the whole visible set has an ink budget, not just each region in it', () =
       // could make them disagree:
       //
       //   drop one clause from the mirrored filter   CAUGHT, names the focus and both numbers
-      //   flatten `inkDrawCost` to a constant 1      NOT caught, and correctly so
+      //   flatten `inkDrawCost` to a constant 1      NOT caught — and it is not a mutation
       //
-      // The second is not a hole. That cost feeds both the spend gate and the charge,
-      // so flattening it moves both counters together and the tree stays self-consistent
-      // — a different defect, caught by the per-region budget assertion above. This one
-      // is aimed at filter divergence, which is the risk the duplicated predicate
-      // actually carries.
+      // The second line needs the sharper reason, not the one first written here. It is
+      // not that the cost feeds both the gate and the charge: measured across 4 seeds and
+      // 3040 outlined objects, **every object this world outlines is a single mesh, so
+      // `inkDrawCost` already returns exactly 1 for all of them.** `return 1` is therefore
+      // an identity, not a change, and no assertion anywhere could distinguish it.
+      //
+      // So the cost function's recursion — the part that prices a multi-mesh building LOD
+      // correctly — has zero coverage from this world's data, and would only gain it when
+      // something outlines a group. That is a real hole and it belongs in the open, not
+      // behind a comfortable explanation of why a mutation did not bite.
       const charged = runtime
         .getDebugSnapshot()
         .regionRoots.reduce((total, entry) => total + entry.inkDraws, 0)

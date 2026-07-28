@@ -847,6 +847,31 @@ The other three budgets in this section sit behind `GameEngine` and need WebGL a
 a DOM to measure, so they remain prose rather than tests. Saying so plainly is
 better than implying they are enforced.
 
+### 7.0 Open follow-ups, with the reasoning that makes them actionable
+
+1. **No real-GPU frame-time measurement exists.** Checked, not assumed: no GPU is
+   reachable from headless Chromium on the machine these numbers were taken on. Needs
+   different hardware, not more effort.
+2. **LOD and instancing tuning**, against the two new per-frame ceilings above.
+3. **A handle-based `GeometryCache` API — but only if the handle carries identity.**
+   `release(key)` cannot detect a double release because a key has no holder: A releasing
+   twice while B still draws leaves the count at 1, so the release *succeeds* and steals
+   B's reference. `WorldPropLibrary.release(asset)` takes a **receipt**, which does have
+   identity, and refuses one it has already accepted. That is the shape to copy, and it is
+   already in-tree. **A token that is handed out but never checked for reuse buys nothing**
+   — the fix is the identity, not the indirection. Where an API can be receipt-shaped the
+   class closes by construction and needs no test at all.
+4. **An unreproduced collider finding, deliberately not taken.** A review reported a fort
+   boulder collider (`0.55 → 0.85`) blocking 1 spawn in 180; the enumeration could not be
+   reproduced. Navigation is the one system this pass measurably *improved* — blocked
+   sites 3 → 0, unreachable 12 → 8 — and an unverified radius change is not worth risking
+   that on. Reproduce the probe first, then decide.
+5. **`inkDrawCost`'s recursion is uncovered by this world's data.** Measured across 4
+   seeds and 3040 outlined objects: every one is a single mesh, so the function already
+   returns 1 everywhere and `return 1` is an identity rather than a mutation. The branch
+   that prices a multi-mesh building LOD correctly gains coverage only when something
+   outlines a group.
+
 ### 7.1 `OUTLINE_WORLD_DRAWS_MAX` — the multiplier, and the unit that changed
 
 Two corrections, both found at Wave 4 integration by measuring rather than by
