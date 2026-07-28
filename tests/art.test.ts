@@ -2015,6 +2015,37 @@ test('closed builders wind outward, independently of their normals', () => {
     // their own plane, and non-star-convex solids (Torus, 2 sites) score 0.28-0.34
     // with roughly half their faces spuriously inward. Neither is a winding fault.
     // Anything in either family belongs in the signed-volume test below, not here.
+    //
+    // S1 raised flatness as a second declining axis alongside non-star-convexity, which
+    // is right, and measuring it turned up four axes rather than two. Lofted boxes,
+    // `flatprobe.mts`, `weakest` against the 0.2 guard:
+    //
+    //   section flatness   0.28x0.3  0.2879 PASS   0.6x0.1   0.1050 FAIL
+    //   (width:depth)      0.4 x0.2  0.2091 PASS   1.0x0.04  0.0406 FAIL
+    //   elongation         h=1 0.3067 PASS   h=2 0.1597 FAIL   h=8 0.0405 FAIL
+    //   radial coarseness  3-gon 0.1592 FAIL  4-gon 0.2227    32-gon 0.2992
+    //   axial subdivision  2 rings 0.6529 -> 40 rings 0.2905, asymptote, never crosses
+    //
+    // Three of the four cross the guard on geometry with **no concavity at all**, and
+    // the fourth never does however far it is pushed. So "non-star-convex" names too
+    // little and "more triangles" names the wrong thing: the property the guard needs
+    // is **compactness** — how far a face sits from the centroid along the surface,
+    // against how far it sits from the centroid at all. All four axes move that one
+    // quantity, which is why they cannot be enumerated as separate rules.
+    //
+    // Two corrections fall out, one to S1's report and one to the paragraph above it.
+    // **Elongation alone does fail**: a square 0.3x0.3 section at height 2 reads 0.1597,
+    // where S1 measured aspect 8.0 still passing at 0.315 and concluded elongation was
+    // exempt. And **"coarse tessellation" is only true radially** — a 3-gon section
+    // fails at 0.1592 while a 32-gon passes at 0.2992, but along the axis the margin
+    // moves the *other* way, falling with *more* rings toward an asymptote it never
+    // crosses. Both halves of that sentence were written as one claim and they are two.
+    //
+    // Practical consequence for whoever extends this case list: a plank, banner, blade
+    // or rail will fail here while being perfectly wound. `PropKit.ts:874` and `:3944`
+    // ship `rectProfile(0.045, 0.012)` and `(0.075, 0.018)` and measure 0.0277 and
+    // 0.0414. Route flat and slender shapes to the signed-volume test; a failure here
+    // is a statement about the instrument's domain, not about winding.
     assert.ok(
       weakest > 0.2,
       `${label} is too flat for the centroid invariant to classify `
@@ -2281,13 +2312,18 @@ test('branch and tube builders wind outward by volume, where the centroid test m
     assert.ok(volume > 0, `${label} encloses non-positive volume ${volume.toFixed(6)}`)
 
     // Reversal negates the sum exactly, so this is arithmetic and not a per-shape
-    // proof. It is kept for the one thing it does catch: a measure that lost its sign.
+    // proof. Asserted as the identity it is rather than as a sign: `< 0` is entailed by
+    // the `> 0` two lines above and so cannot fail for any reason to do with this shape,
+    // while the equality still catches the two harness faults that matter — a
+    // `reverseWinding` that no-ops, and a `signedVolume` that returns a magnitude.
     const flipped = reverseWinding(geometry)
     const reversed = signedVolume(flipped)
-    assert.ok(
-      reversed.volume < 0,
-      `${label} reversed must enclose negative volume, got ${reversed.volume.toFixed(6)} `
-      + '— the measure cannot distinguish this shape from its own inversion',
+    assert.equal(
+      reversed.volume,
+      -volume,
+      `${label} reversed reads ${reversed.volume.toFixed(6)}, not ${(-volume).toFixed(6)}. `
+      + 'Swapping two vertices negates the scalar triple product term by term, so this is '
+      + 'an exact identity; a residual means the measure is not a signed sum',
     )
     flipped.dispose()
 
@@ -2415,14 +2451,18 @@ test('normal-derived geometry is checked by volume, because agreement is vacuous
     // Reversal negates this sum *exactly* -- swapping two vertices negates the scalar
     // triple product term by term, measured at 0.00e+0 residual on all five. So this
     // is arithmetic rather than a detection, and it says nothing about whether this
-    // particular case is a fair subject for the measure. Kept because it still bites
-    // the one substitution that would fake a pass everywhere at once: a detector that
-    // returns a magnitude instead of a signed sum.
+    // particular case is a fair subject for the measure. Asserted as that identity
+    // rather than as a sign, because `< 0` is entailed by the `> 0` above it and cannot
+    // fail for any shape reason -- while the equality still bites the one substitution
+    // that would fake a pass everywhere at once: a detector returning a magnitude.
     const flipped = reverseWinding(geometry)
     const caught = signedVolume(flipped)
-    assert.ok(
-      caught.volume < 0,
-      `reversing ${label} left volume at ${caught.volume.toFixed(5)}, so the measure is unsigned`,
+    assert.equal(
+      caught.volume,
+      -volume,
+      `reversing ${label} read ${caught.volume.toFixed(5)}, not ${(-volume).toFixed(5)} — `
+      + 'the negation is exact term by term, so any residual means the measure is not a '
+      + 'signed sum',
     )
     flipped.dispose()
 
