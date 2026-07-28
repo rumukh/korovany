@@ -819,6 +819,19 @@ test('adoptMaterial styles a caller-owned material without taking ownership', ()
 
 test('tube caps wind outward regardless of tube direction', () => {
   // Downward and horizontal tubes used to get reversed caps, which `FrontSide` culls.
+  //
+  // This test spent its whole life checking zero cap triangles. It passed
+  // `{ caps: true }` — an option `TubeOptions` does not have, so it was silently
+  // dropped and every tube here was built UNCAPPED. Measured: `{ caps: true }` yields
+  // 96 triangles, exactly what passing no options yields; `capStart`/`capEnd` yields
+  // 108. The twelve triangles this test exists to check were the twelve it never built.
+  //
+  // It was invisible because `tests/` is not in `tsconfig.app.json`'s `include`, so no
+  // type-check has ever read this file, and `--experimental-strip-types` strips types
+  // without checking them. A typo in an option name is exactly what a type-checker is
+  // for, and there wasn't one here. See the population guard below: a wrong option name
+  // now shows up as missing geometry rather than as a quieter test.
+  const capCounts = new Set<number>()
   for (const points of [
     [
       [0, 4, 0],
@@ -833,7 +846,23 @@ test('tube caps wind outward regardless of tube direction', () => {
   ] as const) {
     const geometry = tubeAlongPoints(
       points.map(([x, y, z]) => new THREE.Vector3(x, y, z)),
-      { radius: 0.4, radialSegments: 6, caps: true },
+      { radius: 0.4, radialSegments: 6, capStart: true, capEnd: true },
+    )
+    // The caps must actually exist, measured against the same tube without them. A
+    // bare count would pin a shape; a difference pins that the option did something,
+    // whatever the segment count.
+    const bare = tubeAlongPoints(
+      points.map(([x, y, z]) => new THREE.Vector3(x, y, z)),
+      { radius: 0.4, radialSegments: 6 },
+    )
+    const capTriangles = geometry.getAttribute('position').count
+      - bare.getAttribute('position').count
+    capCounts.add(capTriangles)
+    bare.dispose()
+    assert.ok(
+      capTriangles > 0,
+      'this tube was built with no cap geometry, so the winding check below walks only '
+      + 'the wall and the test cannot fail at the thing it is named for',
     )
     const position = geometry.getAttribute('position')
     const normal = geometry.getAttribute('normal')
@@ -866,6 +895,15 @@ test('tube caps wind outward regardless of tube direction', () => {
     }
     geometry.dispose()
   }
+  // Every direction must have produced caps, and the same amount of them — one
+  // orientation silently losing its caps is the failure this test was written for, and
+  // a per-tube `> 0` alone would not see it.
+  assert.equal(
+    capCounts.size,
+    1,
+    'the tube directions produced different cap vertex counts '
+    + `(${[...capCounts].join(', ')}), so at least one is not capped like the others`,
+  )
 })
 
 
@@ -998,7 +1036,7 @@ test('every geometry-kit builder winds to agree with its normals', () => {
         { x: 0.3, y: 0.7, z: 0.15 },
         { x: 0.1, y: 1.5, z: -0.25 },
       ],
-      { radius: 0.18, radialSegments: 6, caps: true },
+      { radius: 0.18, radialSegments: 6, capStart: true, capEnd: true },
     )],
     ['tube body smooth', tubeAlongPoints(
       [
