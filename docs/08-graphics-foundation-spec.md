@@ -783,6 +783,35 @@ the injection for one surface. The first mutation attempted was inert — it gat
 which said nothing about the test. **A mutation that perturbs nothing observable is not a
 control**, and the pass it produces is the same green as a real one.
 
+#### A summary that reads the same on both paths
+
+`npm run docs:facts` is one of the four gates every branch here is measured by, and until
+this commit its summary was **byte-identical between a passing run and a failing one**:
+
+```
+clean run    exit 0    ... TOTAL 2313 facts, 187 missing ...  declared residue: 187 accepted, 0 NOT accepted
+doped run    exit 1    ... TOTAL 2313 facts, 187 missing ...  declared residue: 187 accepted, 0 NOT accepted
+```
+
+The mechanism is worth stating because it is not carelessness. The failure class this gate
+most often catches — a number written in the document contradicting the number the tool
+counts — **moves no count. It contradicts one.** So every total the summary prints is
+unchanged by it, the mismatch was written to `stderr` *after* the last line of `stdout`, and
+the last thing a reader saw was `0 NOT accepted`. Exit code red, summary green.
+
+That is the worse of the two available arrangements: **the verdict lived in the stream nobody
+reads, contradicted by the stream everybody does.** Fixed by ending both exit paths — the
+summary and the early return taken when recall controls fail — with a stated verdict on
+`stdout`, and held there by `tests/strategyFactsVerdict.test.ts`, which compares the two runs
+and asserts the failing invocation actually failed *before* comparing their wording.
+
+One observation logged rather than chased, because it belongs to whoever owns that document.
+The script's `--break=<word>` flag exists to answer "does a green run mean anything", and its
+own comment says a term whose deletion leaves the run green is a term the gate does not gate.
+**`--break=seed` removes 87 occurrences from `docs/STRATEGY.md` and every figure is
+identical** — 2313 facts, 187 missing, 187 accepted, PASSED. Whether those facts are anchored
+on other words or are already inside the declared residue is a question for that document's
+owner; what is recorded here is only that the deletion is invisible to the gate.
 #### Most of a new gate was already gated, and the mutations said which part
 
 The barrel tests above were written from a report that `tsc` accepts a duplicate re-export
