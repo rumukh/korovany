@@ -568,12 +568,18 @@ no new dependencies.
   and returned the best-evidenced findings of the programme, including a fourth defect in
   the guard that had prompted the delegation.
   **Resolved against the session store rather than anyone's memory, the timings are worse
-  for the instrument than either party said.** Turns were recorded at `21:56:55` and
-  `21:58:27` — twenty-four minutes after creation, and **thirty-one minutes before the
-  death was declared at `22:27:43`.** So it was not a lagging field: `updated_at` sat
-  frozen at thirteen seconds while the session was demonstrably producing, and the
-  observer's *"nothing produced"* was false at the moment it was written, not merely
-  overtaken later.
+  for the instrument than either party said.** The reviewer's first turn **completed** at
+  `21:56:55` and its second at `21:58:27`, and the death was declared at `22:27:00` — so a
+  verdict had been finished for **about half an hour** before it was pronounced silent.
+  `turns.timestamp` is completion rather than arrival, which is checkable in one query and
+  was checked: turn 0's `user_message` is identical to `sessions.summary` — the kickoff,
+  necessarily present when the session was created — yet is stamped 24, 47 and 48 minutes
+  after creation across three sessions. **A kickoff cannot arrive after the session created
+  holding it.** So `updated_at` sat frozen at thirteen seconds while the session was
+  demonstrably working, and *"nothing produced"* was false when written, not overtaken
+  later.
+  *(Limit, stated rather than smoothed: the store shows the turn **completing**, not being
+  **delivered**. That a verdict existed is established; that it had been sent is not.)*
   The mechanism is this section's own aim axis, one paragraph from where that session had
   just written it: a control was run first — another session, demonstrably alive, showing a
   current `updated_at` — and it was read as validating the instrument. **It showed the
@@ -613,6 +619,19 @@ no new dependencies.
   inside them. That is checkable when the sentence is written — it is a **shape, not a
   discipline** — which puts this rung in the structure column rather than asking anyone to
   remember to re-evaluate.
+  **And the rung is not really about durations.** The same session produced a second
+  instance with no number in it at all. What it had actually observed was *"my inbox is
+  empty"* — true, checkable by it, and the only instrument it held. What it published was
+  *"it has produced nothing"* — a claim about another party's internal state, for which it
+  had no instrument whatever. **Both render in English as "nothing has happened," and only
+  one of them was its to say.**
+  So the general form is **subject substitution**: a quantity or an observation, correctly
+  measured of one subject, restated about a different one. The duration case swaps the
+  question; this case swaps the party. Neither has a tell, and in both
+  **re-resolving the source confirms the measurement and misses the substitution** — the
+  clock was never wrong and the inbox was genuinely empty. What moved was the referent,
+  which is why checking harder cannot reach it: **the check verifies the sentence you
+  wrote, not the sentence you meant.**
   With one condition that is easy to miss and makes the difference between the form
   working and merely looking like it works: **the timestamp has to be the measurement's,
   not the sentence's.** A past-tense claim carries exactly one fact the present-tense one
