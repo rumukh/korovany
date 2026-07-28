@@ -209,14 +209,23 @@ no new dependencies.
   verification — blamed `pose.stride` being zeroed under stagger. That was wrong twice
   over: `torsoPivot.rotation.y` reads `actor.stride`, not `pose.stride`, and a stagger
   *damps* `actor.stride` rather than clearing it, so the first frame of a stagger keeps
-  about 81% of its gait yaw. The same reviewer caught that too. Traced by measurement
-  instead, the 6.68 came from a **partially joint** enumeration: it constrained the
-  chest's yaw by the stagger correctly, then swept chest pitch and pinned head roll at
-  a value only a *flinch* can produce — and a flinch cannot co-occur with a stagger.
-  **Enforcing joint consistency on one axis and believing it enforced on all of them
-  is its own defect**, and a partially-joint sweep is indistinguishable from a joint
-  one from the outside. Two wrong causes for one right number, in a rule about
-  verification — which is the strongest argument the rule has.
+  about 81% of its gait yaw. The same reviewer caught that too. The *second* blamed head
+  roll being swept to a value only a flinch can produce, which is a true engine fact
+  about an unreachable state and still not the cause: measured both ways, holding head
+  roll to what the engine writes gives the same 0.0487° as sweeping it free, at the same
+  chest state — the maximum is roll-degenerate, so the extra states tie rather than win.
+  What *is* established is that the enumeration was **partially joint**: it constrained
+  some axes by the reaction and left others as free cross-product ranges. **Enforcing
+  joint consistency on one axis and believing it enforced on all of them is its own
+  defect**, and a partially-joint sweep is indistinguishable from a joint one from the
+  outside. Which axis carried the difference is not established and is no longer claimed.
+
+  Three causes, from three people, for one number — and the number was right throughout.
+  That yields a sharper rule than "verify your causes": **a number surviving attack is
+  not evidence that any story about it is true.** The justification is the part nobody
+  re-measures, precisely *because* the number it explains has already been checked, so
+  the number's correctness lends unearned credibility to the story attached to it. When
+  a cause cannot be reproduced, say that, rather than reaching for the next one.
 - **Review the justification, not the fix.** Code written in response to a review is
   the most defective code in a change set, and the head-rig work has the base rate to
   say so: every finding in that window landed on a *claim written in the act of

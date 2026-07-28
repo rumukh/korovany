@@ -1577,16 +1577,35 @@ test('the head tracks its target through the chest, not past it', () => {
   // right and the reason for believing it was not.
   //
   // The first reconciliation then blamed `pose.stride`, and was wrong for the reasons
-  // above. Traced properly, the 6.68 came from a **partial** joint enumeration: it
-  // constrained the chest's *yaw* correctly by stagger, then swept chest pitch and
-  // pinned head roll at -0.30 as free cross-product axes. Its maximum sits at
-  // `stagger 1` with `headRoll -0.30` — but head roll is
-  // `turnLean*0.06 - idleWeightShift*0.2 - flinch*hitRight*0.3`, which cannot exceed
-  // 0.037 without a flinch, and a flinch cannot co-occur with a stagger. So the state
-  // it maximised at needs a flinch and a stagger at once. **Enforcing joint
-  // consistency on one axis and believing it enforced on all of them** is the actual
-  // defect, and it is worth more than the number: a partially-joint sweep looks exactly
-  // like a joint one from the outside.
+  // above. The second blamed head roll being swept free to -0.30 when the engine cannot
+  // exceed 0.037 without a flinch, and a flinch cannot co-occur with a stagger. That
+  // engine fact is true and the state is genuinely unreachable — but it is **not what
+  // produced 6.68**, because removing it changes nothing. Measured both ways over a
+  // jointly-consistent enumeration:
+  //
+  //   head roll held to what the engine writes   0.0487 deg
+  //   head roll swept free to +/-0.30            0.0487 deg, same chest state
+  //
+  // The maximum is roll-degenerate: the worst chest configuration scores identically at
+  // roll 0.037 and at -0.150, so freeing the axis adds states that tie rather than
+  // states that win. A reviewer measured this first and I reproduced it rather than
+  // taking it, which is the rule this whole passage is about.
+  //
+  // So: **the sweep was partially joint** — it constrained some axes by the reaction and
+  // left others as free cross-product ranges — and that is the defect, demonstrated.
+  // Which axis carried the difference is *not* established, and this comment no longer
+  // claims one. Enforcing joint consistency on one axis and believing it enforced on all
+  // of them is the finding; a partially-joint sweep looks exactly like a joint one from
+  // the outside.
+  //
+  // Three causes were offered for one number and all three were wrong, by three
+  // different people, while the number itself survived every attack. That pattern has a
+  // sharper reading than "verify your causes", and it is the one worth keeping: **a
+  // number surviving attack is not evidence that any story about it is true.** The
+  // justification is the part nobody re-measures, precisely *because* the number it
+  // explains has already been checked — the number's correctness lends unearned
+  // credibility to the story attached to it. Separate the two, and when the story cannot
+  // be reproduced, say so instead of reaching for the next one.
   const SKEW_PER_UNIT_BREATH = 9.6
   const SKEW_PER_UNIT_BODY_ASYMMETRY = 29
   // `applyActorVisualVariation`: bodyPivot.scale.set(bulk, height, bulk * around(1, 0.03)).
