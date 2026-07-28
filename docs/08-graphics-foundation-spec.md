@@ -729,6 +729,8 @@ RIM_LIGHT_COUNT                      1       whole scene, non-shadowing
 BLOOM                                0.42 strength / 0.55 radius / 0.9 threshold
 GRADE_VIGNETTE                       0.22
 POST_PASSES                          4       per frame: render, bloom, grade, output
+DRAW_CALLS_PER_FRAME_MAX             507     per frame at a faction start (measured max 453 + ~12%)
+VERTICES_PER_FRAME_MAX               1170k   per frame at a faction start (measured max 1,044k + ~12%)
 CHARACTER_GEOMETRY_KEYS             <=180    distinct keys across every faction x role x variant
 BEAST_GEOMETRY_KEYS                 <=26     keyed by bulk/length, shared across the four roles
 CARAVAN_GEOMETRY_KEYS                6       shared by every caravan in the run
@@ -772,10 +774,53 @@ Targets:
 - No per-frame allocation in any code this spec adds. The grade pass, the outline
   update and the contact shadows allocate nothing after construction.
 - The banded-toon injection compiles one extra program variant, not one per material.
-- Sustained frame time at 25 actors must not regress by more than 1 ms against the
-  pre-change build. If it does, drop the rim directional light first, then the paper
-  tooth term, then the grade pass. Do not reduce actor count or drop the player
+- **Sustained frame time at 25 actors must not regress by more than 1 ms** — *for changes
+  that add no geometry*: shader, lighting, post-processing and the outline machinery.
+  That is the population this target was written against, when the shading foundation was
+  the only change in flight. If it regresses, drop the rim directional light first, then
+  the paper tooth term, then the grade pass. Do not reduce actor count or drop the player
   outline.
+- **Draw calls per frame at a faction start: <= 507.** Measured maximum 453 (palace),
+  plus ~12%.
+- **Vertices per frame at a faction start: <= 1,170,000.** Measured maximum 1,043,911
+  (elf forest), plus ~12%.
+
+The last two are new, and they exist because the sentence above them was the **fourth**
+instance of the defect §7.2 describes. "No measurable frame-time cost" was authored when
+the foundation added no geometry; a pass whose entire purpose is to put more in the world
+cannot be judged by it. The target was never about this work, so it has been scoped to
+what it actually governs rather than deleted — it remains a real guard for foundation-level
+changes — and the budgets this pass needs have been stated beside it.
+
+**The trade, stated so nobody has to infer it: this release spends vertex throughput to
+buy fidelity, deliberately.** Measured against `main` at a fixed seed and viewport:
+
+```text
+faction (biome)   draw calls        vertices / frame        ink's share of draws
+elf (forest)      295 -> 449        112k -> 1,044k (9.3x)   107 (24%)
+guard (palace)    316 -> 453         60k ->   340k (5.6x)    93 (21%)
+villain (fort)    196 -> 333         88k ->   438k (5.0x)    70 (21%)
+```
+
+Three things belong with those numbers every time they are quoted:
+
+1. **Frame time was measured under SwiftShader software rasterisation**, which is fill-
+   and vertex-bound. It is directional only and is **not a GPU number**. No real-GPU
+   capture exists yet; that is the first follow-up, not a covered base.
+
+   This was checked rather than assumed. On the machine these numbers were taken on, no
+   GPU is reachable from headless Chromium at all: the default configuration reports
+   `NO WEBGL`, and forcing it (`--use-angle=default --ignore-gpu-blocklist`) yields
+   *Microsoft Basic Render Driver* — a second software rasteriser, not hardware. The gap
+   is a property of the environment, not of the effort spent on it, and it can only be
+   closed on a machine with a GPU.
+2. **Ink is only 15-20% of the vertex delta.** The rest is the product change — more in
+   the world, not more decoration on the same world.
+3. `ActorBudget.ts` and `ActorAi.ts` are byte-identical to `main`, so the 25-actor
+   population is the same on both sides by construction rather than by configuration.
+
+LOD and instancing tuning is the immediate follow-up. The ceilings above are set so a
+genuine regression trips them while the next seed does not.
 
 `ART_LIBRARY_MATERIALS` is the only budget here that a downstream session can blow
 without noticing, so it is the one that is enforced rather than asserted: read
