@@ -141,6 +141,21 @@ export function actorGaitCadence(role: ActorRole): number {
   return 6.8
 }
 
+/**
+ * **Humanoids only, despite the parameter type.** Beasts never reach it: `createActor`
+ * reads `beast?.speed ?? actorSpeedForRole(role)`, so a quadruped takes its profile's
+ * speed and short-circuits. Handed a beast role directly it returns the humanoid
+ * default of 3.7, where the profiles are wolf 5.4, boar 4.6, bear 3.4, troll 2.9.
+ *
+ * A reviewer found that and put the choice correctly: **either the function's domain is
+ * wrong or its beast behaviour is.** It is the domain — `actorGaitCadence` above really
+ * does answer for all thirteen roles and branches on `isBeastRole` to do it, and the
+ * two sitting side by side with the same signature invites reading them as a pair.
+ * Narrowing the parameter type is the honest fix and is a wider change than the hour
+ * warrants; the wiring assertion pins the `beast?.speed ??` short-circuit so the
+ * unreachable branch stays unreachable, and this note says why it is unreachable rather
+ * than leaving the next reader to discover that 3.7 is not a wolf.
+ */
 export function actorSpeedForRole(role: ActorRole): number {
   if (role === 'scout') return 4.8
   if (role === 'champion') return 4.15
@@ -152,7 +167,6 @@ export function actorSpeedForRole(role: ActorRole): number {
   if (role === 'peasant') return 3.1
   return 3.7
 }
-
 export type ZoneId = 'neutral' | 'palace' | 'forest' | 'fort'
 
 export type HatchMotif = 'scrape' | 'chevron' | 'organic' | 'slash'

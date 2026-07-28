@@ -1006,6 +1006,21 @@ export function solveHeadYaw(
  * as its fourth argument, and passing it here means any runtime reassignment is
  * overwritten on the next frame. A guard that can be walked around is worth less than
  * an invariant that reasserts itself, and the difference costs one argument.
+ *
+ * **It is not the sole writer of the head's Euler, and a commit of mine said it was.**
+ * A reviewer checked rather than accepting it: `applyActorVisualVariation` writes
+ * `headPivot.rotation.y` directly at spawn, and `animateBeastPosture` writes x, y and z
+ * for quadrupeds — outside the slice the wiring assertions inspect. Neither is a live
+ * defect: the variation write predates any pose pass and is overwritten on the first
+ * frame, and beasts never reach `solveHeadYaw`. But *"sole writer"* was asserted from
+ * the two call sites in front of me rather than from a search, which is the same
+ * population defect this work has been cataloguing, committed inside the rule that
+ * describes it.
+ *
+ * What is true, and is what the reassertion actually rests on: **every write that
+ * matters for the gaze goes through here, and it runs after the others.** A write
+ * placed after this call still wins — which is why the posture pass separately asserts
+ * that nothing assigns `rotation.order` at all.
  */
 export function applyHeadPose(
   headPivot: THREE.Object3D,

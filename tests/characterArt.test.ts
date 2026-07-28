@@ -2705,6 +2705,20 @@ test('the engine wires the rig the way these tests measure it', () => {
   // Driven off `GAITS` itself rather than a hand-written subset, so a row added there
   // is pinned here automatically. Six of the eighteen numbers were pinned before; all
   // eighteen are now, and adding a seventh role pins three more without an edit.
+  // And the beast short-circuit, which is what keeps `actorSpeedForRole`'s unreachable
+  // branch unreachable. Handed a beast role directly it returns the humanoid 3.7, where
+  // the profiles are wolf 5.4, boar 4.6, bear 3.4, troll 2.9 — so if this `??` ever
+  // goes, every quadruped silently takes a soldier's speed while the cadence function
+  // beside it keeps answering correctly for them. A reviewer found the mismatch and put
+  // the choice correctly: either the function's domain is wrong or its beast behaviour
+  // is. This line is what makes the answer "the domain".
+  assert.ok(
+    /beast\?\.speed \?\? actorSpeedForRole\(role\)/.test(source),
+    'the beast speed short-circuit is gone, so quadrupeds now reach '
+    + '`actorSpeedForRole`, which answers only for humanoids and returns 3.7 for all '
+    + 'four of them. Narrow that function\'s parameter type, or restore the '
+    + '`beast?.speed ??` that keeps its unreachable branch unreachable.',
+  )
   // Every advance site, not "some site advances correctly". `.test()` returns true on
   // the first match, so this pin was satisfied by one of the three `gaitPhase +=`
   // statements while the other two could be inlined with a literal — which is the "gait
@@ -2951,12 +2965,18 @@ test('the engine wires the rig the way these tests measure it', () => {
   // `Math.max(stride, 0.5)` passed it 22/0: a clamp sitting exactly on a sample point is
   // invisible to it, and my own mutation run found that within a minute of writing it.
   //
-  // Which is the reviewer's question applied one level down, to the fix for the
-  // reviewer's question: **enumerating an axis at two points is enumerating the points,
-  // not the axis.** The strides below span the reachable range — `actor.stride` is
-  // damped toward `sin(gaitPhase)` and lives in ±0.62 — and include values well below
-  // any plausible dead zone or clamp.
-  for (const stride of [0.01, 0.05, 0.1, 0.25, 0.5, 0.62, 1]) {
+  // **And the range it then swept was positive-only**, which a fourth reviewer broke with
+  // `stride < 0 ? 0 : damp(...)` — 22/0. `actor.stride` is damped toward `sin(gaitPhase)`
+  // and spends half the gait cycle negative, so clearing the negative half deletes half
+  // the cycle and invalidates the signed reachability model this file's bounds rest on.
+  //
+  // Three rounds of the same defect on one axis of one function: a point, then two
+  // points, then the positive half. **Each fix enumerated exactly the part that had been
+  // demonstrated broken.** That is the sharpest form of the pattern this branch keeps
+  // producing, and it is worth stating with the count rather than tidied away: the
+  // question is not just which axes a function has, but *which half of each axis you
+  // have actually been shown*.
+  for (const stride of [-1, -0.62, -0.25, -0.05, -0.01, 0.01, 0.05, 0.1, 0.25, 0.5, 0.62, 1]) {
     assert.ok(
       Math.abs(decayStrideOnStagger(stride, 1 / 60) - stride * decayStrideOnStagger(1, 1 / 60))
         < 1e-12,
@@ -2993,9 +3013,27 @@ test('the engine wires the rig the way these tests measure it', () => {
   //
   // Counted, not pattern-matched, and counting **every** assignment operator — the
   // previous negative assertion of this shape looked for `=` and was walked past with
-  // `*=`. This is not one more spelling: it says the property has exactly one writer,
-  // which is the structural claim, and any second writer fails it whatever it looks
-  // like. **Where a function cannot own the state, assert the number of writers.**
+  // `*=`.
+  //
+  // **The commit that added this claimed it was "not one more spelling" and caught a
+  // second writer "whatever it looks like". That claim is false and a reviewer
+  // falsified it in one line:**
+  //
+  // ```ts
+  // const chestRotation = torsoPivot.rotation
+  // chestRotation.y -= actor.stride * 0.01
+  // ```
+  //
+  // 22/0. `Object.assign`, `rotation.set`, bracket notation and a helper call are the
+  // same class. This *is* one more spelling — a better one, because it covers the four
+  // operators rather than one, but a source regex cannot see through an alias and no
+  // amount of widening will change that.
+  //
+  // It is left in place because it raises the bar against the mutations that are
+  // actually likely, and the claim is corrected rather than the assertion deleted. What
+  // would close it is a test that runs a frame and reads the pivot, which needs a
+  // constructible `GameEngine` — the architectural gap this file has recorded throughout
+  // and cannot fix from here.
   assert.equal(
     (actorPosture.match(/rotation\.order\s*=/g) ?? []).length,
     0,
