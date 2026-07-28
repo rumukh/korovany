@@ -1111,6 +1111,65 @@ terminator. That is the *"every band boundary is crossed 53.8% late"* claim meas
 geometry coverage rather than inferred from arithmetic — the fix is not a brightness
 change, it is the band boundaries returning to the geometry they belong on.
 
+#### The whole shipped range, and a surface that lost banding altogether
+
+`metal`'s 0.35 is not the maximum. `GameEngine.ts:12416` is
+`metalness: gilded ? 0.76 : 0.45` — the gilded caravan's wheel rims, and 0.76 is the
+largest value in the codebase. S1 pointed at it as a structural cliff rather than a
+gradient, which the same probe settles by extending the subject list:
+
+```text
+metalness      pre-fix bands   shipped bands   pre-fix max   shipped max
+  0.76               1               4              88           112
+  0.45               3               4             138           126
+  0.35               3               4             134           130
+  0  (control)       4               4             144           144   <- identical
+```
+
+**At 0.76 the pre-fix build produced no bands at all** — a single continuous run across the
+whole lit crescent. The arithmetic behaving exactly as written, and a different failure
+from the one at 0.35:
+
+- Band 1 of the ramp requires `kNormalized >= 0.25`.
+- Pre-fix, `kNormalized <= 1 - metalness`, which at 0.76 is **0.24**.
+- `DEFAULT_RAMP[0]` is `0`, deliberately, so cast shadows survive; `metal.bandStrength`
+  is `1`, so the mix is not softened.
+- Therefore `kBanded == 0`, `kScale == 0`, and **`directDiffuse` is multiplied to zero.**
+
+What remains on those rims is specular and indirect, neither of which is banded — hence a
+smooth gradient where every other surface in the game is stepped. They did not read as
+*dim* metal; they read as **not participating in the shading model at all.**
+
+Nor could it be escaped by lighting the scene harder, which is the first thing one would
+try. `GameEngine.ts:11358` sets the band reference to
+`sun.intensity + rimLight.intensity * 0.4`, so the denominator grows with the key and the
+ratio stays bounded above by `1 - metalness` however bright the sun gets — the rim term
+pushing it strictly below. **No time of day, weather state or palette banded those wheels.**
+
+The measurement earns its place over the arithmetic for one reason: **0.76 sits past a
+boundary that nothing in the source marks.** 0.45 and 0.35 lose one stop and look merely
+wrong; 0.76 crosses `1 - m < 0.25` and loses the mechanism. One call site, one literal a
+notch above its neighbour, in a different regime — and no reader of `createCaravan` could
+have seen that from the call site.
+
+#### One more thing this probe got wrong before it got it right
+
+The four-subject version first sliced the frame into equal columns and mapped column *i*
+to subject *i*. The spheres did not land where that arithmetic said: two shared a column,
+and the run reported `metalness: 0.35` with **230 lit pixels and five bands** — a reading
+of a *pair* of spheres, presented under one subject's name. It was caught only because
+five bands is impossible on a four-stop ramp.
+
+The fix was to stop computing where the subjects should be and **segment the row by
+occupancy**, then assert the count matches the subject list and fail loudly otherwise.
+
+> **A probe that assumes where its subject is will happily measure something else and
+> report it under the subject's name.** Locate the subject in the data; do not derive its
+> position from parameters you also chose.
+
+Same family as the calibration trap below, and the same remedy: take the fact from the
+system rather than from your own arithmetic about the system.
+
 #### The calibration trap in this probe, which caught me
 
 The first run used light intensity **3.2**, chosen as "bright enough to saturate". That is
