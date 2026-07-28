@@ -1405,6 +1405,39 @@ the call from `destroy()` leaves an identical `this.generatedWorld.dispose()` in
 the same weakness as a release check satisfied by "some collection is released", one level
 out, and it is why the assertion here brackets `destroy()` by its next top-level member.
 
+**A gate proves the edit landed. It does not prove it landed where you said.** Verifying a
+reviewer's claim that a mutation still survived on the *integration* branch, this pass
+created a detached worktree at that branch's tip, applied the mutation, and reported
+`GATE PASSED: M3 applied to S4 INTEGRATION tree 3d31a22`. The gate was true — a file had
+changed, at the named site, and a re-read confirmed it. **The file was in this branch's own
+working tree.** `Set-Location` moves PowerShell's location but not .NET's working directory,
+so `[IO.File]::ReadAllText` with a relative path resolved against the original process
+directory throughout. Every subsequent reading described the wrong repository, and the
+source file here was left silently modified — caught only because one `Contains` check
+disagreed with an earlier one on the same string.
+
+The gate asked *did the file change at the site I named*, which was the right question one
+round earlier and is the wrong one here. The missing clause is the subject: **name the
+absolute path in the gate, and print the path you actually wrote.** A relative path is a
+claim about a working directory, and a working directory is exactly the kind of ambient
+state that differs between the thing you are testing and the thing you are standing in.
+
+Two failures in one probe, and the second is the more dangerous. The first run against that
+worktree reported `pass 0, fail 1` and was nearly recorded as the mutation being caught —
+it was a module resolution error, because a fresh worktree has no `node_modules`. **A
+missing baseline turns any failure into a confirmation.** The control that fixes it is one
+line and was skipped because the answer was the one already expected: run the unmutated
+tree first and require it green. With the baseline in place the real answer came back
+inverted from the reviewer's — 37 pass clean, 36 pass and 1 fail mutated, so the fix *had*
+propagated and their claim was measured against a tree twenty-two commits old.
+
+A sibling session, writing up the third level of this recursion, added that it would not
+assume the pattern stopped there. It did not. The levels now run: the assertion, the
+mutation that tests it, the gate that tests the mutation, and **the subject the gate is
+silently addressing.** The remedy does not scale by adding a fifth checker — it is that
+every level state, in its own output, the thing it operated on rather than the thing it
+intended to.
+
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
 state that no check could see. Ten lines were mangled — five entries whose opening sentence
