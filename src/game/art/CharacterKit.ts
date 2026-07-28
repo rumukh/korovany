@@ -808,6 +808,60 @@ export function buildCharacterSkeleton(p: CharacterProportions): CharacterSkelet
   }
 }
 
+/**
+ * The head-yaw that makes an actor look where it means to, through a twisted chest.
+ *
+ * `lookYaw` is authored in *body* space — `updateActors` measures it from the
+ * actor's own facing to whatever it is tracking. `head-pivot` hangs off
+ * `torso-pivot`, so the value has to be expressed in *chest* space before it is
+ * written, and the chest does not merely yaw: it pitches into the run and the storm
+ * and rolls with the turn.
+ *
+ * Subtracting the chest's `rotation.y` is the obvious answer and it is wrong for the
+ * same reason a scale correction on a rotated pivot is wrong — it cancels only while
+ * the other two axes are zero. Measured over 51,480 reachable chest orientations and
+ * look targets: no correction at all is out by up to **35.93°**; the scalar
+ * subtraction still by **13.79°**, and in **4.2%** of those states it is *worse than
+ * doing nothing*. This solve is out by **0.0000°**.
+ *
+ * It is a solve rather than an offset because the question has an exact answer.
+ * Writing the chest's rotation as a matrix with first column **a** and third column
+ * **c**, a head yawed by θ points along `a·sinθ + c·cosθ`; asking for that to have
+ * heading `L` in the XZ plane is one linear equation in `sinθ` and `cosθ`:
+ *
+ * ```text
+ * sinθ (a₁cosL − a₃sinL) + cosθ (c₁cosL − c₃sinL) = 0
+ * ```
+ *
+ * The four elements it needs come straight out of the Euler triple, so this
+ * allocates nothing and builds no matrix — it runs for every actor every frame.
+ *
+ * Damp `lookYaw` *before* calling this, never the result. A frame change is not a
+ * motion: damping the converted angle leaves the head chasing the chest's gait twist
+ * a fraction of a second late, which measures as 2.80° of gait-frequency wobble.
+ */
+export function solveHeadYaw(
+  chestX: number,
+  chestY: number,
+  chestZ: number,
+  lookYaw: number,
+): number {
+  // Columns 0 and 2 of three.js's XYZ Euler matrix, by hand.
+  const cx = Math.cos(chestX)
+  const sx = Math.sin(chestX)
+  const cy = Math.cos(chestY)
+  const sy = Math.sin(chestY)
+  const cz = Math.cos(chestZ)
+  const sz = Math.sin(chestZ)
+  const a1 = cy * cz
+  const a3 = sx * sz - cx * cz * sy
+  const c1 = sy
+  const c3 = cx * cy
+  const cosL = Math.cos(lookYaw)
+  const sinL = Math.sin(lookYaw)
+  return Math.atan2(-(c1 * cosL - c3 * sinL), a1 * cosL - a3 * sinL)
+}
+
 // ---------------------------------------------------------------------------
 // Local construction helpers
 // ---------------------------------------------------------------------------

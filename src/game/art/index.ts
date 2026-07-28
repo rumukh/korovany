@@ -152,6 +152,7 @@ export {
   resolveCharacterPlan,
   shinVariant,
   solveHandOffset,
+  solveHeadYaw,
   thighVariant,
   upperArmVariant,
   type ArmourWeight,

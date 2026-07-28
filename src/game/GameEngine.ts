@@ -53,6 +53,7 @@ import {
   characterPartKeys,
   resolveCharacterPlan,
   solveHandOffset,
+  solveHeadYaw,
   type BeastKind,
   type CharacterPlan,
   type OutlineBinding,
@@ -418,6 +419,16 @@ interface Actor {
   visualSpeed: number
   motionBlend: number
   turnLean: number
+  /**
+   * The head's tracking angle, in *body* space, damped.
+   *
+   * Kept on the actor rather than read back off `head-pivot` because the pivot now
+   * holds a *chest*-space angle, and the map from one to the other is a solve
+   * rather than a subtraction — see `animateActorCharacter`. Damping belongs on
+   * the body-space value, which is where `lookYaw` is authored; the conversion is
+   * a change of frame and happens instantaneously.
+   */
+  headYaw: number
   idleTimer: number
   wanderPace: number
   retreatTimer: number
@@ -12823,6 +12834,7 @@ export class GameEngine {
       visualSpeed: 0,
       motionBlend: 0,
       turnLean: 0,
+      headYaw: 0,
       idleTimer: 0.2 + (index % 3) * 0.25,
       wanderPace: 0.82 + (Math.sin(phase * 2.7) + 1) * 0.08,
       retreatTimer: 0,
@@ -14138,11 +14150,6 @@ export class GameEngine {
     const hitRight =
       Math.cos(yaw) * actor.lastHitDirection.x - Math.sin(yaw) * actor.lastHitDirection.z
     const forwardLean = this.actorForwardLean(actor.role)
-    // The chest's yaw as it was last frame, captured before the block below writes
-    // this frame's. The head's tracking is damped in body space and converted into
-    // chest space afterwards, and reconstructing the body-space value needs the yaw
-    // that was subtracted from it. See the head block.
-    const previousChestYaw = torsoPivot ? torsoPivot.rotation.y : 0
 
     if (torsoPivot) {
       torsoPivot.position.x = idleWeightShift
@@ -14175,24 +14182,26 @@ export class GameEngine {
     }
     if (headPivot) {
       // `lookYaw` is measured from the actor's own facing, but `head-pivot` now hangs
-      // off `torso-pivot`, and the chest has a yaw of its own — the stride's twist,
-      // the attack's follow-through and the flinch. Left unsubtracted the chest's
-      // twist is *added* to the gaze, so the head no longer points where the actor is
-      // looking: measured at 24.3 degrees of heading error at the reachable extreme,
-      // and 4-13 degrees walking, attacking or flinching. Subtracting it is a change
-      // of frame, not a fudge — the value is authored in body space and consumed in
-      // chest space.
+      // off `torso-pivot`, and the chest does not merely yaw — it pitches into the run
+      // and the storm and rolls with the turn. Uncorrected the chest's twist is added
+      // to the gaze and the head looks past its target by up to 35.9 degrees; the
+      // obvious scalar `lookYaw - chestYaw` still leaves 13.8, and in 4.2% of
+      // reachable states it is worse than doing nothing. `solveHeadYaw` answers it
+      // exactly. See its docblock for why an offset cannot.
       //
-      // The damping happens *before* the conversion, which is the whole reason
-      // `previousChestYaw` exists. A frame change is not a motion and must not be
-      // damped: damping the already-converted target leaves the head chasing the
-      // chest's gait twist a fraction of a second late, which measures as 2.80
-      // degrees of gait-frequency wobble in world space at a soldier's cadence.
-      // Damped in body space and converted instantaneously it is 0.000, and the
-      // static residue is 1.6 degrees of Euler composition and chest width.
-      const chestYaw = torsoPivot ? torsoPivot.rotation.y : 0
-      const bodyYaw = dampAngle(headPivot.rotation.y + previousChestYaw, lookYaw, 7, delta)
-      headPivot.rotation.y = bodyYaw - chestYaw
+      // The damping is on the *body*-space angle and the conversion is instantaneous,
+      // which is what `actor.headYaw` is for. A frame change is not a motion: damping
+      // the converted angle leaves the head chasing the chest's gait twist a fraction
+      // of a second late, measured as 2.80 degrees of gait-frequency wobble.
+      actor.headYaw = dampAngle(actor.headYaw, lookYaw, 7, delta)
+      headPivot.rotation.y = torsoPivot
+        ? solveHeadYaw(
+            torsoPivot.rotation.x,
+            torsoPivot.rotation.y,
+            torsoPivot.rotation.z,
+            actor.headYaw,
+          )
+        : actor.headYaw
       // Pitch and roll are deliberately *not* corrected this way. Unlike the yaw they
       // are authored as partial counter-rotations of the chest — the torso pitches
       // `+forwardLean` and the head `-forwardLean * 0.35`, the torso rolls

@@ -47,6 +47,7 @@ import {
   hasOutlineNormals,
   resolveCharacterPlan,
   solveHandOffset,
+  solveHeadYaw,
   WAGON_RIG,
   type BeastKind,
   type CharacterFaction,
@@ -1213,50 +1214,50 @@ test('the chest lends the head its breath but not its shoulders', () => {
  * The head points where the actor is looking, not where its chest is twisted.
  *
  * `lookYaw` is computed in `updateActors` as the angle from the actor's *own facing*
- * to whatever it is tracking, clamped to ±0.65. Hanging `head-pivot` off the chest —
- * which is what stops the head leaving the body — puts that value in a frame it was
- * not authored in, because the chest yaws too: `-stride * 0.12` from the gait,
- * `+attack * 0.16` from the swing, `-flinch * hitRight * 0.22` from a hit. Left
- * unsubtracted the chest's twist is *added* to the gaze.
+ * to whatever it is tracking, clamped to ±0.65. Hanging `head-pivot` off the chest
+ * puts that value in a frame it was not authored in, because the chest twists too —
+ * and not only in yaw: it pitches into the run, the attack and the storm, and rolls
+ * with the turn and the flinch.
  *
- * Measured on a guard soldier, over reachable torso yaws and the four look targets
- * below, as the angle between the head's world forward and the requested one:
+ * Measured over the reachable chest envelope below and the clamped look range —
+ * 51,480 states — as the angle between the head's world forward and the requested
+ * heading:
  *
- * | | worst heading error |
+ * | rule | worst heading error |
  * | --- | --- |
- * | `lookYaw` applied raw | **24.31°** |
- * | `lookYaw - torsoPivot.rotation.y` | **1.55°** |
+ * | `lookYaw` written raw | **35.93°** |
+ * | `lookYaw - torsoPivot.rotation.y` | **13.79°**, and *worse than doing nothing* in **4.2%** of states |
+ * | `solveHeadYaw` | **0.0000°** |
  *
- * Subtracting is a change of frame, not a fudge: the value is authored in body space
- * and consumed in chest space. The 1.55° residue is Euler composition plus the
- * chest's own non-uniform width, and is an order of magnitude inside the 0.65 rad
- * arc the gaze is clamped to.
+ * The middle row is the shape of mistake this codebase keeps making and is worth
+ * naming: subtracting one Euler component corrects a rotation only while the other
+ * two are zero, exactly as a scale correction on a rotated pivot cancels only while
+ * the actor faces forward. It shipped in this branch for one commit, and a reviewer
+ * caught it by sweeping a jointly-consistent state space instead of a hand-written
+ * pose list. That is also how the 3° bound this test used to carry was found to be
+ * dishonest: the old table ran `rotation.y` over [−0.382, 0.16] when the reachable
+ * range is about [−0.31, 0.47] — unreachable on one side, 2.9× short on the other.
  *
- * This test exists because the positional rigidity test could not have caught it —
- * a head can sit perfectly on its neck and still be looking at the wrong thing. A
- * reviewer found it by measuring orientation after I had measured only position.
- *
- * Pitch and roll deliberately get no such correction: unlike the yaw they are
- * authored as *partial counter-rotations* of the chest, which only mean anything
- * against a transform the head inherits.
+ * This test exists because the positional rigidity test could not have caught any of
+ * it. A head can sit perfectly on its neck and still be looking at the wrong thing.
  */
 test('the head tracks its target through the chest, not past it', () => {
-  // `animateActorCharacter`: torsoPivot.rotation.y = -stride * (heavy ? 0.08 : 0.12)
-  // + attack * 0.16 - flinch * hitRight * 0.22, with the pitch and roll that go
-  // with each. Named so a reader can find the line each comes from.
-  const CHEST: readonly { name: string; rotation: readonly [number, number, number] }[] = [
-    { name: 'still', rotation: [0, 0, 0] },
-    { name: 'walking', rotation: [0.24, -0.12, -0.02] },
-    { name: 'at full motion blend', rotation: [0.28, -0.142, -0.03] },
-    { name: 'attacking', rotation: [0.12, 0.16, 0] },
-    { name: 'flinching', rotation: [0.1, -0.22, 0.18] },
-    { name: 'struck mid-stride', rotation: [0.3, -0.382, 0.2] },
-  ]
-  // `lookYaw` is clamped to ±0.65 in updateActors.
-  const TARGETS = [0, 0.35, 0.65, -0.65]
+  // The chest envelope, from `animateActorCharacter`:
+  //   rotation.x  forwardLean * motionBlend - anticipation * 0.16 + attack * 0.12
+  //               + stagger * 0.2 + ambientStormHunch + lean
+  //   rotation.y  -stride * (heavy ? 0.08 : 0.12) + attack * 0.16 - flinch * hitRight * 0.22
+  //   rotation.z  -turnLean * 0.16 + idleWeightShift * 0.55 - flinch * hitRight * 0.18
+  // Swept as a grid rather than as named poses: a hand-written list is a claim about
+  // what is reachable, and the last one in this file was wrong in both directions.
+  const PITCH = { from: -0.2, to: 0.7, step: 0.05 }
+  const YAW = { from: -0.32, to: 0.48, step: 0.04 }
+  const ROLL = { from: -0.3, to: 0.3, step: 0.05 }
+  const TARGETS = [-0.65, -0.39, -0.13, 0.13, 0.39, 0.65]
+
   const forward = new THREE.Vector3()
   let worst = 0
   let worstAt = ''
+  let states = 0
 
   for (const faction of FACTIONS) {
     for (const role of ROLES) {
@@ -1265,38 +1266,44 @@ test('the head tracks its target through the chest, not past it', () => {
       const head = new THREE.Object3D()
       head.position.y = skeleton.headY
       skeleton.headPivot.add(head)
-      // The chest also carries the actor's width, which skews orientation as well
-      // as size, so the measurement has to include it.
+      // The chest also carries the actor's width and breath, which skew orientation
+      // as well as size, so the measurement has to include them.
       skeleton.torsoPivot.scale.set(1.07, 1.01, 1)
       skeleton.neckPivot.scale.x = 1 / 1.07
 
-      for (const chest of CHEST) {
-        skeleton.torsoPivot.rotation.set(...chest.rotation)
-        for (const target of TARGETS) {
-          // What `animateActorCharacter` writes: the body-space target, less the
-          // chest's own yaw. Derived from the pose, never from the head, so the
-          // expected value cannot drift toward whatever the head happens to do.
-          skeleton.headPivot.rotation.y = target - chest.rotation[1]
-          skeleton.root.updateMatrixWorld(true)
-          forward.set(0, 0, 1).transformDirection(head.matrixWorld)
-          const heading = Math.atan2(forward.x, forward.z)
-          const error = Math.abs(heading - target) * (180 / Math.PI)
-          if (error > worst) {
-            worst = error
-            worstAt = `${faction}/${role} ${chest.name}, looking ${target.toFixed(2)}`
+      for (let x = PITCH.from; x <= PITCH.to; x += PITCH.step) {
+        for (let y = YAW.from; y <= YAW.to; y += YAW.step) {
+          for (let z = ROLL.from; z <= ROLL.to; z += ROLL.step) {
+            skeleton.torsoPivot.rotation.set(x, y, z)
+            for (const target of TARGETS) {
+              states += 1
+              // Exactly what `animateActorCharacter` writes.
+              skeleton.headPivot.rotation.y = solveHeadYaw(x, y, z, target)
+              skeleton.root.updateMatrixWorld(true)
+              forward.set(0, 0, 1).transformDirection(head.matrixWorld)
+              const error = Math.abs(Math.atan2(forward.x, forward.z) - target)
+              if (error > worst) {
+                worst = error
+                worstAt = `${faction}/${role} chest [${x.toFixed(2)}, ${y.toFixed(2)}, `
+                  + `${z.toFixed(2)}] looking ${target.toFixed(2)}`
+              }
+            }
           }
         }
       }
     }
   }
 
+  assert.ok(states > 50_000, `swept only ${String(states)} states; the grid has collapsed`)
+  // A tenth of a degree. Not "comfortably above the answer" — the answer is exact,
+  // and this is float noise. A looser bound here would have admitted the scalar
+  // subtraction, which is the whole thing being excluded.
   assert.ok(
-    worst <= 3,
-    `the head ended up ${worst.toFixed(2)} degrees off its target at ${worstAt}. `
-    + '`lookYaw` is measured from the actor\'s facing and consumed under `torso-pivot`, '
-    + 'so the chest\'s own yaw has to come off it first. Applied raw it reaches 24 '
-    + 'degrees of error, and a head that sits perfectly on its neck while looking past '
-    + 'its target is a bug the rigidity test cannot see.',
+    worst * (180 / Math.PI) <= 0.1,
+    `the head ended up ${(worst * (180 / Math.PI)).toFixed(3)} degrees off its target at `
+    + `${worstAt}. \`lookYaw\` is authored in body space and consumed under `
+    + '`torso-pivot`, and the chest pitches and rolls as well as yawing, so no single '
+    + 'subtraction converts it. Use `solveHeadYaw`, which answers it exactly.',
   )
 })
 
@@ -1339,8 +1346,8 @@ test('the head holds its target while the chest twists under it', () => {
     const head = new THREE.Object3D()
     head.position.y = skeleton.headY
     skeleton.headPivot.add(head)
-    skeleton.headPivot.rotation.y = TARGET
-    let previousChestYaw = 0
+    let bodyYaw = TARGET
+    let converted = TARGET
     let worst = 0
     for (let frame = 0; frame < FRAMES; frame += 1) {
       const time = frame * DELTA
@@ -1348,12 +1355,14 @@ test('the head holds its target while the chest twists under it', () => {
       // the chest's yaw as `-stride * 0.12` for a light actor.
       const chestYaw = -Math.sin(time * CADENCE) * 0.62 * 0.12
       if (dampInBodySpace) {
-        const bodyYaw = damp(skeleton.headPivot.rotation.y + previousChestYaw, TARGET)
-        skeleton.headPivot.rotation.y = bodyYaw - chestYaw
+        bodyYaw = damp(bodyYaw, TARGET)
+        skeleton.headPivot.rotation.y = solveHeadYaw(0, chestYaw, 0, bodyYaw)
       } else {
-        skeleton.headPivot.rotation.y = damp(skeleton.headPivot.rotation.y, TARGET - chestYaw)
+        // The rejected rule: damp the angle after it has been converted, so the
+        // chest's own oscillation is inside the thing being smoothed.
+        converted = damp(converted, solveHeadYaw(0, chestYaw, 0, TARGET))
+        skeleton.headPivot.rotation.y = converted
       }
-      previousChestYaw = chestYaw
       skeleton.torsoPivot.rotation.y = chestYaw
       skeleton.root.updateMatrixWorld(true)
       // Past the start-up transient, which neither rule is being judged on.
@@ -1435,10 +1444,19 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
     source.indexOf('private sampleActorPose('),
   )
   assert.ok(beastPass.length > 400, 'could not isolate the beast posture pass')
+  // Built from the constant, not restated beside it. Written out as a literal this
+  // regex went on passing while `BEAST_YAW_CLAMP` said something else, so the sweep
+  // below and the clamp it claims to be measuring could quietly disagree — a
+  // reviewer caught that, and it is the same defect as a bound that cannot fail.
+  const clampSource = new RegExp(
+    `clamp\\(lookYaw,\\s*-${BEAST_YAW_CLAMP},\\s*${BEAST_YAW_CLAMP}\\)`,
+  )
   assert.ok(
-    /clamp\(lookYaw,\s*-0\.45,\s*0\.45\)/.test(beastPass),
-    'the beast head yaw is no longer clamped to +/-0.45 rad, which is the only reason '
-    + 'a skull on a pivot at the animal\'s centre still reads as attached',
+    clampSource.test(beastPass),
+    `the beast head yaw is no longer clamped to +/-${BEAST_YAW_CLAMP} rad, which is the `
+    + 'only reason a skull on a pivot at the animal\'s centre still reads as attached. '
+    + 'If the clamp has moved deliberately, move BEAST_YAW_CLAMP with it and re-measure '
+    + 'the sweeps below — they are sized from it.',
   )
   // The rig data the numbers above were measured from, so a rewritten table is
   // noticed here rather than in a screenshot.
@@ -1465,6 +1483,27 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
       + 'the beasts a neck joint as `buildCharacterSkeleton` does for people.',
     )
   }
+})
+
+/**
+ * The engine uses the rig the way the tests above assume.
+ *
+ * `GameEngine` cannot be instantiated in Node — no DOM, no WebGL — so every
+ * measurement in this file is taken through `CharacterKit`'s pure pieces. That
+ * proves the arithmetic and proves nothing about whether the engine calls it. These
+ * are the couplings, kept in one place with a name that says what they are.
+ *
+ * They lived inside the beast test for a while, which meant three humanoid guards
+ * were hiding under a heading about wolves, and a reviewer pointed out that stripping
+ * the gaze correction from the engine was caught by exactly one assertion in the
+ * whole suite — sitting in the wrong test. A guard nobody can find is a guard nobody
+ * will keep.
+ */
+test('the engine wires the rig the way these tests measure it', () => {
+  const source = readFileSync(
+    fileURLToPath(new URL('../src/game/GameEngine.ts', import.meta.url)),
+    'utf8',
+  )
   // `applyActorVisualVariation` runs for beasts as well as people, and it divides
   // the chest's width back out at the neck — which only exists on a person. A beast
   // has no `neck-pivot`, so the lookup is the guard; written as a lookup rather than
@@ -1486,24 +1525,24 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
     'the counter-scale must not go on head-pivot: the animation rotates it, so the '
     + 'correction stops cancelling the moment the actor looks anywhere but forward',
   )
-  // And the gaze. `the head tracks its target through the chest, not past it` proves
-  // the arithmetic; this is what ties it to the engine, which a Node test cannot
-  // instantiate. Without it the engine could apply `lookYaw` raw and both the maths
-  // test and the rigidity test would still be green.
+  // The gaze. Without these two the engine could apply `lookYaw` raw, or damp it
+  // after converting, and every measurement in this file would still be green.
   const actorPosture = source.slice(
     source.indexOf('private animateActorCharacter('),
     source.indexOf('private samplePlayerPose('),
   )
+  assert.ok(actorPosture.length > 1000, 'could not isolate the actor posture pass')
   assert.ok(
-    /dampAngle\(\s*headPivot\.rotation\.y \+ previousChestYaw,\s*lookYaw/.test(actorPosture),
-    'the head yaw must be damped in body space and converted to chest space afterwards. '
-    + '`lookYaw` is measured from the actor\'s facing and head-pivot now hangs off '
-    + 'torso-pivot, so applied raw the chest\'s twist is added to the gaze — 24 degrees '
-    + 'at the extreme — and damped after conversion it lags the gait by 2.8 degrees.',
+    /actor\.headYaw = dampAngle\(actor\.headYaw, lookYaw, 7, delta\)/.test(actorPosture),
+    'the head\'s tracking must be damped on the body-space angle. Damped after the '
+    + 'conversion it lags the chest\'s gait twist and the lag returns as world wobble.',
   )
   assert.ok(
-    /headPivot\.rotation\.y = bodyYaw - chestYaw/.test(actorPosture),
-    'the conversion out of body space must be instantaneous, not damped',
+    /headPivot\.rotation\.y = torsoPivot\s*\?\s*solveHeadYaw\(/.test(actorPosture),
+    'the head yaw must be solved against the chest\'s full rotation, not offset by one '
+    + 'of its Euler components. `lookYaw` is authored in body space and consumed under '
+    + '`torso-pivot`, and the chest pitches and rolls as well as yawing — a scalar '
+    + 'subtraction leaves 13.8 degrees and is worse than nothing in 4.2% of states.',
   )
 })
 

@@ -117,12 +117,19 @@ no new dependencies.
   mean what they say: `head-pivot`'s rotations are written as the opposite sign of
   `torso-pivot`'s, and a partial counter-rotation only makes sense against a
   transform you inherit. The one term that is *not* a counter-rotation is the look
-  yaw, which tracks a target rather than resisting a posture, so the chest's own yaw
-  is subtracted from it — measured at **24.3°** of gaze error before that
-  subtraction and 1.6° after. Correspondingly, **do not test a rig without posing
-  it** — every assertion that reads a body at rest is blind to this whole class —
-  and **do not test position without testing orientation**: the gaze defect passed a
-  rigidity test that measured only where the head sat.
+  yaw, which tracks a target rather than resisting a posture, so it is converted into
+  chest space by `solveHeadYaw` — a solve rather than an offset, because the chest
+  pitches and rolls as well as yawing. Measured over 51,480 reachable states: **35.9°**
+  of gaze error uncorrected, **13.8°** with the obvious scalar `lookYaw - chestYaw`
+  (which is *worse than nothing* in 4.2% of them), **0.0000°** solved. Damp the
+  tracking in body space and convert instantaneously — a frame change is not a motion,
+  and damping the converted angle costs 2.80° of gait-frequency wobble.
+  Correspondingly, **do not test a rig without posing it** — every assertion that
+  reads a body at rest is blind to this whole class — and **do not test position
+  without testing orientation**: the gaze defect passed a rigidity test that measured
+  only where the head sat. Sweep a state space rather than a list of named poses; the
+  first hand-written pose table here overshot the reachable chest yaw on one side and
+  fell 2.9× short on the other.
 - **Do not let a quadruped inherit a biped's spine.** The beasts share the rig names on
   purpose, but `createBeast` builds its own limb geometry per role and the shared
   stride is remapped, rather than a wolf borrowing a soldier's arm. The secondary
