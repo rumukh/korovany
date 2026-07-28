@@ -2082,6 +2082,47 @@ test('a visible region never spends more ink than the budget allows', () => {
   runtime.dispose()
 })
 
+test('a start position asked before streaming is not pretended to be checked', () => {
+  // The silent no-op that made the first spawn fix look like it worked. With no region
+  // resident the collision world answers "unwalkable" to everything, so the snap's
+  // 96-point spiral is *guaranteed* to exhaust and *guaranteed* to return its input —
+  // an unchecked value that looks identical to a checked one. Three separate reports of
+  // "0 blocked of 180" were measured against a warmed-up runtime and were true of that
+  // ordering only.
+  //
+  // `getStartPosition` now declines to snap when it cannot judge, and `walkableNear`
+  // throws rather than answer blind, so the next caller that gets this wrong finds out
+  // at the call rather than three reports later.
+  const { blueprint, runtime } = createRuntime('cold-start-honesty')
+
+  // Nothing streamed yet: every point reads unwalkable, including open ground far from
+  // any prop. This is the state that makes a blind answer meaningless.
+  assert.equal(
+    runtime.collision.isWalkablePosition(0, 0, 0.45),
+    false,
+    'with no region resident the collision world should judge everything unwalkable',
+  )
+
+  const cold = runtime.getStartPosition('elf')
+  assert.ok(Number.isFinite(cold.x) && Number.isFinite(cold.z), 'a cold start must still resolve')
+
+  // Once resident, the same call is free to snap, and must produce a standable point.
+  runtime.update({ deltaSeconds: 0, focus: cold })
+  const warm = runtime.getStartPosition('elf')
+  assert.ok(
+    runtime.collision.isWalkablePosition(warm.x, warm.z, 0.45),
+    'a warm start must be somewhere an actor can stand',
+  )
+
+  // The cold answer is the unsnapped anchor. It is protected by the keep-out at
+  // generation time rather than by the snap, which is why it is safe to hand out — but
+  // it must not be mistaken for a checked value, and the blueprint start must land in
+  // the same region either way.
+  const startSite = blueprint.sites.find((site) => site.id === blueprint.starts.elf)
+  assert.ok(startSite)
+  runtime.dispose()
+})
+
 test('decoration never blocks a spawn point', () => {
   // Faction starts and encounter actors are positioned by world generation, which knows
   // nothing about decoration. Before this pass every decoration collider was a

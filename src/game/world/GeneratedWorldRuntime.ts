@@ -390,8 +390,25 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
     return { ...located }
   }
 
+  /**
+   * Whether the collision world can currently answer a walkability question.
+   *
+   * `setActiveBounds([])` in the constructor means nothing is walkable until the first
+   * `update` streams a region in — so before that, "is this point clear?" has no useful
+   * answer rather than the answer "no".
+   */
+  private canJudgeWalkability(): boolean {
+    const bounds = this.collision.getActiveBounds()
+    return bounds !== null && bounds.length > 0
+  }
+
   getStartPosition(faction: Faction): Point3 {
-    return this.walkableNear(this.startCandidate(faction))
+    const candidate = this.startCandidate(faction)
+    // Snap only when the collision world can actually judge. On a fresh run this is
+    // false — `GameEngine` places the player at :2257 and first streams at :2314 — and
+    // the keep-out in `createDressing` is what protects the spawn there. Asking anyway
+    // would return the candidate unchanged while looking like it had been checked.
+    return this.canJudgeWalkability() ? this.walkableNear(candidate) : candidate
   }
 
   /**
@@ -434,7 +451,9 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
     const z = bounds
       ? THREE.MathUtils.clamp(candidateZ, bounds.minZ + margin, bounds.maxZ - margin)
       : candidateZ
-    return { x, y: sitePosition.y, z }
+    // Height at the offset point, not at the site it was measured from — the anchor can
+    // sit twenty units away across sloping ground.
+    return { x, y: this.sampleHeight(x, z), z }
   }
 
   /** The region a faction's run begins in, or undefined if it cannot be resolved. */
@@ -478,8 +497,23 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
    * The keep-out in `createDressing` is what actually protects the spawn; this covers
    * the case where a region is already resident, which is every caller except the one
    * that hurts.
+   *
+   * **Refuses to answer blind.** With no active bounds every candidate reads unwalkable,
+   * so the 96-point spiral is guaranteed to exhaust and guaranteed to return the input
+   * — a plausible-looking answer that was never checked against anything. That silent
+   * no-op is what made the first version of the spawn fix appear to work for three
+   * separate reports. Callers that may run before streaming must ask
+   * `canJudgeWalkability` first; this throws rather than pretend, on the same principle
+   * as `WorldPropLibrary.release` refusing a spent receipt: fail at the boundary, not
+   * with a believable wrong value later.
    */
   private walkableNear(point: Point3): Point3 {
+    if (!this.canJudgeWalkability()) {
+      throw new Error(
+        'walkableNear was asked before any region was resident, where every candidate '
+        + 'reads unwalkable and the answer would be the unchecked input',
+      )
+    }
     const { x, z } = point
     const radius = 0.45
     if (this.collision.isWalkablePosition(x, z, radius)) {
