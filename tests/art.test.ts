@@ -1883,6 +1883,31 @@ const reverseWinding = (geometry: THREE.BufferGeometry): THREE.BufferGeometry =>
 }
 
 /**
+ * `reverseWinding` inverts every triangle, which is the one damage shape a signed-volume
+ * measure always catches — the sum flips wholesale. This inverts a contiguous *prefix*
+ * instead, which is the shape that nets against the untouched remainder. Contiguity is
+ * deliberate: a scattered selection of the same size tends to cancel to nothing and would
+ * report the opposite conclusion, so the selection rule is part of the instrument.
+ */
+const reversePrefix = (geometry: THREE.BufferGeometry, fraction: number): THREE.BufferGeometry => {
+  const flipped = geometry.index ? geometry.toNonIndexed() : geometry.clone()
+  const position = flipped.getAttribute('position')
+  const damaged = Math.floor(Math.floor(position.count / 3) * fraction)
+  for (let triangle = 0; triangle < damaged; triangle += 1) {
+    const base = triangle * 3
+    for (const axis of ['X', 'Y', 'Z'] as const) {
+      const second = position[`get${axis}`](base + 1)
+      const third = position[`get${axis}`](base + 2)
+      position[`set${axis}`](base + 1, third)
+      position[`set${axis}`](base + 2, second)
+    }
+  }
+  position.needsUpdate = true
+  flipped.computeVertexNormals()
+  return flipped
+}
+
+/**
  * The centroid test is the sharper instrument — it catches a *single* reversed face —
  * but it only speaks about shapes that are star-convex about their own centroid, and
  * its `weakest > 0.2` guard makes it decline rather than lie when they are not. That
@@ -2223,7 +2248,9 @@ const mergedSpanVolumes = (parts: THREE.BufferGeometry[]): {
  *
  * So the part is the right subject, not the prop. The sweep below injects the defect one
  * part at a time and requires each injection to be caught, so what this test detects is
- * demonstrated rather than claimed.
+ * demonstrated rather than claimed. It does not, however, make the measure exact: moving
+ * the subject from prop to part lowers the threshold at which a partial inversion hides,
+ * it does not remove it. The measured floor is in the second sweep at the end of the test.
  */
 test('a merged prop is checked part by part, because the volume sum hides a reversed part', () => {
   const props: [label: string, build: () => THREE.BufferGeometry[]][] = [
@@ -2327,6 +2354,51 @@ test('a merged prop is checked part by part, because the volume sum hides a reve
         + 'so this measures the prop rather than the part',
       )
       for (const part of mutated) part.dispose()
+    }
+
+    // And the floor, which is the thing this test was silent about. The docblock's own
+    // argument -- "the signed volume of a prop is a *sum*" -- applies to a span as well as
+    // to a prop, so moving the subject from prop to part lowered the blind threshold
+    // without removing it. Measured, contiguous prefix of one part, before the merge:
+    //
+    //     reversed    merged p0  merged p1  composed p0  composed p1  composed p2
+    //        10%        BLIND      BLIND       BLIND        BLIND        BLIND
+    //        20%        BLIND      BLIND       BLIND        BLIND        BLIND
+    //        35%        BLIND      BLIND       BLIND        BLIND        BLIND
+    //        50%        catch      BLIND       BLIND        BLIND        BLIND
+    //        65%        catch      catch       catch        catch        catch
+    //
+    // Blind on 19 of 35 injections. So `spans[i] > 0` certifies "no part is *mostly*
+    // inside out", not "no part is inside out", and a builder that inverted a third of one
+    // part would ship. The per-face centroid instrument is the one that would catch it,
+    // and it declines on exactly these shapes for the reason given above -- a prop is
+    // several bodies side by side and is not star-convex about its own centroid.
+    //
+    // Asserted in both directions so the claim stays coupled to the instrument: 35% must
+    // still be missed (if that changes, the instrument improved and this comment is now
+    // wrong), and a full reversal must still be caught (that is its actual job).
+    for (let index = 0; index < baseline.spans.length; index += 1) {
+      const missed = build()
+      const partial = missed[index]
+      missed[index] = reversePrefix(partial, 0.35)
+      partial.dispose()
+      assert.ok(
+        mergedSpanVolumes(missed).spans[index] > 0,
+        `${label}: the span guard now catches a 35% prefix reversal of part ${String(index)}. `
+        + 'That is an improvement, not a failure — update the measured floor above.',
+      )
+      for (const part of missed) part.dispose()
+
+      const whole = build()
+      const full = whole[index]
+      whole[index] = reversePrefix(full, 1)
+      full.dispose()
+      assert.ok(
+        mergedSpanVolumes(whole).spans[index] < 0,
+        `${label}: a fully reversed part ${String(index)} is no longer caught, `
+        + 'so the guard has stopped doing the job it is kept for',
+      )
+      for (const part of whole) part.dispose()
     }
   }
 })
