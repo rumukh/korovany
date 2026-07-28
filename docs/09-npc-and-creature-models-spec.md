@@ -211,9 +211,14 @@ no new dependencies.
   *damps* `actor.stride` rather than clearing it, so the first frame of a stagger keeps
   about 81% of its gait yaw. The same reviewer caught that too. The *second* blamed head
   roll being swept to a value only a flinch can produce, which is a true engine fact
-  about an unreachable state and still not the cause: measured both ways, holding head
-  roll to what the engine writes gives the same 0.0487° as sweeping it free, at the same
-  chest state — the maximum is roll-degenerate, so the extra states tie rather than win.
+  about an unreachable state and still not the cause: head roll cannot affect this
+  heading **anywhere**, not merely at the measured maximum. Sweeping it across arbitrary
+  chest states moves the result by at most 2.4e-14°, because a Z-rotation fixes the +Z
+  axis and every scale in the chain sits above it. Saying "the maximum is roll-degenerate"
+  would be true and would still mislead, by inviting the thought that some *other*
+  maximum might be roll-sensitive. And that claim was refutable with no measurement at
+  all: `solveHeadYaw` takes no roll argument, and its docblock says why — written ten
+  commits before the paragraph that blamed the axis, by the same hand.
   What *is* established is that the enumeration was **partially joint**: it constrained
   some axes by the reaction and left others as free cross-product ranges. **Enforcing
   joint consistency on one axis and believing it enforced on all of them is its own
