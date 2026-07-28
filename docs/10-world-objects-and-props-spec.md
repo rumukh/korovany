@@ -430,6 +430,26 @@ is the comfortable direction for a budget to be wrong in.
 Memory cost is bounded by the window: most entries are small props, and the largest — a
 merged settlement — is roughly 340 KB.
 
+**What the window buys, measured rather than argued.** Independent review instrumented
+`dispose` across three identical laps of a 5x5 map, before and after the fix that made
+the window hold distinct keys instead of duplicate pins:
+
+```text
+geometry disposals     7668 -> 3102     -60%   the window now covers enough keys that a
+                                               returning region stops rebuilding
+InstancedMesh disposals 2184 -> 2861     +31%   the ink fix adding shells, consistent
+                                               with mean draws 2.24 -> 3.99
+```
+
+The two changes are separable in the disposal counts, which is the clearest evidence
+either of them worked. The same review verified the ledger invariant at all 225 region
+loads rather than at lap boundaries, with `retained == distinct` every time, and added a
+**phantom pin** check this pass had not thought of: a window entry whose key has no live
+cache entry pins nothing and releases nothing when evicted, and is invisible to a
+reference-count sum because `GeometryCache.release` is a silent no-op on a key it does
+not hold. Zero observed; `tests/worldArt.test.ts` now asserts the cheap form of it —
+the cache can never hold fewer entries than the window holds keys.
+
 Targets:
 
 - No per-frame allocation. Everything above is built at region load and mutated only
