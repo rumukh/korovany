@@ -290,7 +290,8 @@ is idempotent.
 world uses it too — `src/game/world/WorldPropLibrary.ts` imports `GeometryCache` at `:3`
 and holds one at `:135`, keyed `acquire`/`release` with regions tracking receipts rather
 than geometry objects. Measured on this tree, not reported: a 128-key retention window,
-peak **118** live entries over a full-map sweep and **80** over straight-line traversal
+peak **128** live entries over three laps of a 5x5 map (120-128 across five seeds),
+**118** over a single sweep and **80** over straight-line traversal
 against a ceiling of 176, 0 after dispose, balanced over laps. §12 is done.
 
 This paragraph used to describe the streamed world as still building its own buffers,
@@ -752,7 +753,7 @@ the defect §7.2 describes:
 
 | cache | population | measured |
 |---|---|---|
-| `WorldPropLibrary`'s own cache, read via `runtime.propCacheSize` | trees, rocks, buildings, site props — everything `PropRequest` can name | peak **118** live entries over a full-map sweep, **80** over straight-line traversal, against a ceiling of `PROP_RETENTION_DEFAULT + PROP_RESIDENT_HEADROOM` = 176 |
+| `WorldPropLibrary`'s own cache, read via `runtime.propCacheSize` | trees, rocks, buildings, site props — everything `PropRequest` can name | peak **128** over three laps of a 5x5 map (120–128 across five seeds); **118** over a single sweep, **80** over straight-line traversal, against a ceiling of `PROP_RETENTION_DEFAULT + PROP_RESIDENT_HEADROOM` = 176 |
 | `GameEngine.artGeometry` | characters, beasts, fauna and the caravan — the six `acquireArtGeometry` sites | **102** distinct character part keys across every faction x role x variant, against the 180 that `tests/characterArt.test.ts` enforces; a single run touches 50-70 |
 
 The 102 is the theoretical ceiling of the character contribution, enumerated from
@@ -988,6 +989,43 @@ Worth keeping as a method note: **the discriminating measurement was the ink-off
 not the outlier.** Nine clean scenarios and one bad number cannot distinguish "ink is
 broken here" from "this scene is dark", and no amount of staring at the capture settles
 it either. One more capture with the suspected cause removed settles it in one comparison.
+### 7.0.4 Streaming churn, measured on the tree that ships
+
+Disposal counts over **three identical laps of a 5x5 map — 75 region loads** — counted by
+wrapping `dispose` on the prototypes rather than by reading a counter the runtime keeps,
+so the number is what the engine actually calls and does not inherit any bookkeeping the
+runtime might get wrong.
+
+```text
+seed                 geometry   InstancedMesh   peak cache entries
+3353944086               2965            1613                  122
+integration-ink          3191            1595                  128
+korovan-a                2906            1631                  121
+korovan-b                2980            1624                  125
+integration-disposal     2884            1643                  120
+```
+
+**The cache empties on dispose in every run — 0 entries — and `retentionIsIntact` holds at
+all 75 loads, not only at lap boundaries.** Peak is 120–128 against a ceiling of 176, so
+the headroom is about 27%.
+
+**This corrects a figure of my own.** §5.4 and the budget table previously quoted 118,
+which is the peak over a *single* sweep. Three laps reach 128 because retention accumulates
+across re-entry, and three laps is the more demanding protocol, so 128 is what the budget
+should be read against. Both are true measurements of different populations — which is the
+defect §7.2 exists to name, found here in my own numbers.
+
+**The keep-out costs nothing in churn.** Emptying the spawn anchor set — which disables it
+entirely — leaves all three figures unchanged at 2965 / 1613 / 122. So dropping structural
+placements near spawns removes placements that were never built rather than rebuilding
+anything: the gameplay fix is free at the streaming layer.
+
+The world pass reported 3102 geometry and 2861 InstancedMesh disposals over its own three
+laps. Geometry agrees within seed variance. **The InstancedMesh figures do not reconcile**,
+and the obvious explanation — the keep-out reducing instanced meshes — is refuted by the
+measurement above. Recorded as unreconciled rather than explained away: these numbers are
+of this tree, measured this way, and that is all they claim.
+
 ### 7.1 `OUTLINE_WORLD_DRAWS_MAX` — the multiplier, and the unit that changed
 
 Two corrections, both found at Wave 4 integration by measuring rather than by
