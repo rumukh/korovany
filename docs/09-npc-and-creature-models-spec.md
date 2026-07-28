@@ -491,6 +491,17 @@ no new dependencies.
   that turned out to exist only in a message — the committed prose had already dropped
   the numbers. Correct by habit is the state a thing is in immediately before it stops
   being correct, so it is written down here as a choice.
+  And the reason that is not merely a nice phrase: **a correct outcome tells you nothing
+  about whether the mechanism that produced it will fire again.** An unfired guard and an
+  undecided habit are the same object — untested mechanisms with clean records — and in
+  both cases the clean record is what makes them look settled. The file dropped the line
+  numbers by habit and nobody knew, including its author, until a reviewer mischaracterised
+  it and the check went looking for a mechanism that turned out not to exist.
+  That mischaracterisation is also the exact inverse of an error made an hour earlier in
+  the other direction: one party credited a message with prose that contradicted the
+  committed file, the other credited the file with prose that existed only in a message.
+  **Same split, opposite directions, both from reading a message as though it had been
+  through the moment a commit forces.**
   *Unconvertible*: the wiring claims and the alias evasion, because `GameEngine` is not
   constructible in Node, which is why the test file states them as limitations instead of
   implying it has none.
