@@ -1294,7 +1294,45 @@ test('one geometry cannot be tagged under two prop surfaces', () => {
   shared.dispose()
 })
 
+test('the one indexed prop surface stays indexed, so the index-aware readers are exercised', () => {
+  // `latheProfile` is the kit's only indexed builder, and `mergeAll` de-indexes whenever
+  // it actually merges — but a length-1 array is a passthrough, so a lathe part that is
+  // the *only* part on its surface arrives indexed. A sibling session predicted the
+  // route from the kit source; measured across the catalogue it is real and it is
+  // exactly four surfaces.
+  //
+  // Pinned for two reasons. Every orientation instrument in this file dereferences
+  // `geometry.index`, and an index-blind reader returns an answer uncorrelated with
+  // correctness — 6 for a correct sphere and 6 for a fully reversed one — so those
+  // readers need at least one genuinely indexed shipped input or their index handling
+  // is only tested against synthetic controls. And if this silently becomes zero,
+  // someone added a part to the pillar and quietly changed which code path the whole
+  // suite exercises.
+  const library = new WorldPropLibrary({ retention: 0 })
+  const indexed: string[] = []
+  let checked = 0
+  try {
+    for (const [label, request] of everyPropRequest()) {
+      for (const part of library.build(request)) {
+        checked += 1
+        if (part.geometry.index) indexed.push(`${label}#${part.surface}`)
+        part.geometry.dispose()
+      }
+    }
+  } finally {
+    library.dispose()
+  }
+  assert.ok(checked >= 500, `only ${String(checked)} surfaces were checked`)
+  assert.deepEqual(
+    indexed.sort(),
+    TERRITORIES.map((owner) => `siteProp/pillar/${owner}#hard`).sort(),
+    'the set of indexed prop surfaces changed; the index-aware readers may now be '
+      + 'exercised only by synthetic controls',
+  )
+})
+
 test('the merged hard surface of a prop carries welded outline normals', () => {
+
 
   const parts = buildingParts({
     variation: artVariation('props', 'outline'),
