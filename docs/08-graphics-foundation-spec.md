@@ -715,6 +715,45 @@ Verifying what they build — four rules, each learned the expensive way:
   one member vanish unremarked. One line of "this cannot see X" next to the assertion is
   the entire fix, and it is what makes the next reader's rediscovery a read instead.
 
+### 6.1 Which of these rules will stop you, and which depend on care
+
+This spec makes **61 normative statements** (`MUST` / `NEVER` / `never`). They are not
+uniformly backed, and nothing in the prose distinguishes the two kinds. Measured against
+`tests/` and `.oxlintrc.json`:
+
+| Rule | Instrument | Fails how |
+| --- | --- | --- |
+| `ART_LIBRARY_MATERIALS <= 24` | `tests/art.test.ts` | red test |
+| Library owns 9, Wave 2 headroom 15 | `tests/art.test.ts` — *acquires all 15* | red test |
+| Outline eligibility, budget, distance cull | `tests/art.test.ts` | red test |
+| LOD thresholds and swap behaviour | `tests/art.test.ts` | red test |
+| Disposal exactly once, ref-count balance | `tests/art.test.ts`, `tests/mergeOwnership.test.ts` | red test |
+| Vertex-colour attribute presence | `tests/art.test.ts` | red test |
+| Instanced-mesh material sharing | `tests/art.test.ts` | red test |
+| Determinism from `artVariation` | `tests/art.test.ts` | red test |
+| **Export block ordering in `art/index.ts`** | **none** — no test, and `.oxlintrc.json` carries exactly two rules, neither about sorting | **silently** |
+| **Label namespacing (`npc:`, `props:`)** | tests *use* `npc:torso` / `props:cart`; **none asserts a caller namespaced anything** | **silently** |
+| **"Do not `.clone()` a stylized material"** | the *mechanism* is tested exhaustively (`art.test.ts:3865` — clone loses the injection, cannot forge ownership, keeps a misleading preset label, `adoptMaterial` repairs it, repair does not transfer ownership); **no test detects a caller in `src/` that clones and never adopts** | silently, at runtime, as unbanded shading |
+
+The quantitative contract is genuinely enforced — every budget in §7 has a test that
+*spends* it, not merely one that compares it. **The conventions are not**, and the first
+was violated within hours of the first sibling branch: `applyHeadPose` landed at line 121
+of `src/game/art/index.ts` where its sorted position is 115, and all four CI gates
+reported success on two successive commits carrying it. That is correct behaviour by every
+instrument involved. It is also the entire point.
+
+**Treat the unbacked rows as advisory and the backed rows as load-bearing.** If you need an
+advisory rule to hold, the cheapest correct move is to add its instrument in the same PR as
+the reliance. A rule whose only enforcement is that someone remembers it has a half-life,
+and this table exists so that the half-life is visible rather than discovered.
+
+The last three rows share a shape worth naming, because it is easy to mistake for coverage:
+**a rule can be tested at its mechanism and unenforced at its call sites.** The clone hazard
+has five assertions behind it and not one of them fires when a caller clones and forgets to
+adopt. Two of these rows were written as a flat "none" in the first draft of this table and
+were wrong — grepping the tests finds hits for all three. The hits are *uses*, not
+*assertions*, and the difference is the whole of what this section is for.
+
 ## 7. Budgets
 
 Every line names the **population it governs**, not only its value. Three budgets in this
