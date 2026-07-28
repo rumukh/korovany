@@ -1657,6 +1657,33 @@ primitive, but `mergeAll` seams and hard-crease lofts produce exactly the same s
 coincident positions carrying different normals. **The property is measurable on any
 geometry; the family name is not.**
 
+**The last thing to re-measure is whatever both parties already agreed on.** The reviewer
+produced this while declining credit for auditing its own suggestions, and the deflation is
+the finding: it wasn't discipline, it was that **its own suggestions were the highest-yield
+place left to look.** Once the obvious surfaces were covered, the untested claims in the
+review were the ones already accepted — a fix it had proposed, a test it had praised, a
+mutation it had reported.
+
+The mechanism is general and unflattering: **agreement removes the pressure that produces
+measurement.** Every party to an agreed claim believes someone else's scrutiny is what
+settled it, and the person best placed to check is the one who least wants to. This is the
+adopted-check entry above generalised past adoption — it does not require a hand-off at
+all, only a conclusion both sides stopped arguing about. The evidence on this programme is
+that the three worst vacuous checks were all in that state: the ledger identity praised and
+propagated before anyone asked what it forbade, the phantom-pin guard with a reviewer's
+reasoning and this pass's implementation and nobody's measurement, and a warm-up call
+praised **by name** as rigour while being the exact half that made the test vacuous.
+
+**And the recursion converges even though it does not terminate.** Four levels appeared
+here — the assertion, the mutation that tests it, the gate that tests the mutation, and the
+subject the gate silently addresses — which reads as an infinite regress and is not one,
+because *each level is cheaper to check than the one below it*. The assertion needed a
+probe; the mutation needed a two-line gate; the gate needed a line-number comparison; the
+subject needed one printed absolute path. So "do not assume it stops" is not a counsel of
+despair but an argument for keeping every level cheap enough that adding one more costs
+almost nothing. **Both of the gates that failed on this programme failed by trying to be
+clever at level three.**
+
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
 state that no check could see. Ten lines were mangled — five entries whose opening sentence
