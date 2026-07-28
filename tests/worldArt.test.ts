@@ -224,6 +224,31 @@ function everyPropRequest(): Array<[string, PropRequest]> {
  * about 21 degrees, the coarse pillar lathe about 73), so this is not a tight bound.
  * It exists to catch the >90 degree signature, where a normal has diverged so far
  * from its face that it is no longer describing the same surface.
+ *
+ * **What it cannot see, measured by the session that owns the builder.** The 90 degree
+ * threshold was calibrated against 104-125 degree figures that turned out to be
+ * synthetic extremes — parameter values chosen to exhibit the defect, not values any
+ * caller passes. In production the same defect runs **0-9 degrees**. Consequently:
+ *
+ * - The **twist** branch first crosses 90 at 77.6 degrees of section rotation. The
+ *   largest twist in this file is `PropKit.ts:2309` at 0.06 rad = **3.44 degrees**,
+ *   where the defect contributes 2.21 — a factor of 41 below trigger.
+ * - The **anisotropy** branch can never cross it at any parameter value: the defective
+ *   error asymptotes at **80.08 degrees**, ten below the threshold, monotonically. That
+ *   is the branch this file actually uses — `PropKit.ts:1773` is `scaleX: 0.9,
+ *   scaleZ: 0.04`, a 22:1 section.
+ * - There is a **false-positive band that opens below the true-positive one**: correct
+ *   *faceted* geometry crosses 90 at 81.3 degrees of twist, and faceted is the default.
+ *
+ * So the clean sweep this produces is real evidence for the collapsed-section class and
+ * **no evidence at all** for the anisotropic or rotational one. It is moot here rather
+ * than merely tolerable: `smooth: true` appears **zero times** in `src/`, so all 50
+ * `loftProfile` calls take the faceted path, whose derivation error is exactly 0.00 on
+ * every planar-quad shape. The defect is behind a branch these props never enter.
+ *
+ * If that ever changes, the fix-independent comparator is the same geometry built
+ * faceted — `smoothError - facetedError` isolates derivation error with no
+ * shape-dependent baseline — rather than a tighter absolute threshold.
  */
 function worstNormalError(geometry: THREE.BufferGeometry): number {
   const position = geometry.getAttribute('position')
@@ -2308,6 +2333,28 @@ test('a start position asked before streaming is not pretended to be checked', (
 
   const cold = runtime.getStartPosition('elf')
   assert.ok(Number.isFinite(cold.x) && Number.isFinite(cold.z), 'a cold start must still resolve')
+
+  // Pin the guard itself, not just the behaviour it enables. A reviewer noted that the
+  // throw had two mentions in this file and zero assertions — so it was correct today and
+  // unprotected tomorrow: a `canJudgeWalkability` that started returning true, or a caller
+  // that caught and ignored, would both be silent. The throw is unreachable through
+  // `getStartPosition` by construction, which is exactly why it needs reaching directly.
+  const reachIn = runtime as unknown as {
+    walkableNear(point: { x: number; y: number; z: number }): unknown
+    canJudgeWalkability(): boolean
+  }
+  assert.equal(
+    reachIn.canJudgeWalkability(),
+    false,
+    'nothing is resident yet, so the runtime must report it cannot judge walkability',
+  )
+  assert.throws(
+    () => {
+      reachIn.walkableNear({ x: cold.x, y: cold.y, z: cold.z })
+    },
+    /before any region was resident/,
+    'walkableNear must refuse to answer blind rather than return its unchecked input',
+  )
 
   // Once resident, the same call is free to snap, and must produce a standable point.
   runtime.update({ deltaSeconds: 0, focus: cold })

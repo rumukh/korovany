@@ -423,7 +423,10 @@ the error is more useful than the number.
 
 This pass believed it needed more than 64, because the catalogue is much larger and the
 retention window deliberately holds geometry past its last reference. **Requested: 176**,
-justified by a measured peak of **130** live entries.
+justified by a measured peak of **130** live entries. **That request is withdrawn** — it
+was made against the wrong cache and nothing here was ever gated on it. Withdrawing it
+deletes a decision item rather than resolving one: `PROP_CACHE_ENTRIES_MAX` above is this
+pass's own budget, is real, and is asserted, so nothing needs spec 08 to move.
 
 **Correction, and it invalidates the framing above more than the number.** The two
 constants govern *different caches*. `GEOMETRY_CACHE_ENTRIES_MAX` was written for
@@ -433,6 +436,24 @@ this was never a request to raise a shared ceiling — the two never shared one,
 Worse, the assertion enforcing 176 was a **bare literal** citing a
 `PROP_CACHE_ENTRIES_MAX` that likewise existed nowhere, so nothing connected the number
 to the thing that determines it.
+
+**And the arithmetic that made 64 look comfortable is the same defect one layer down, so
+it is worth stopping on.** The natural check is to sum the sub-populations spec 08
+enumerates beneath the constant — `CHARACTER_GEOMETRY_KEYS ≤ 11`, `BEAST_GEOMETRY_KEYS
+≤ 26`, `CARAVAN_GEOMETRY_KEYS = 6` — reach 43, and conclude there is headroom under 64.
+**There is not, because those are not the same unit.** The 11 was annotated *"9 build
+sites, two keyed by player/faction"*: it counts **call sites in the source**, while the
+cache holds one entry per **distinct key**, and a single build site keyed by faction ×
+role × variant produces many. Enumerated across all 81 plans on the merged tree, the
+character contribution alone is **102 distinct keys** — nine times the 11, and on its own
+past a ceiling of 64.
+
+Nobody was careless. A budget line reading `NAME<=11` alongside a budget line reading
+`NAME<=64` invites addition, and nothing in either line says one counts code and the other
+counts data. `CHARACTER_GEOMETRY_KEYS` now reads `<= 180` in spec 08 with its population
+named — *distinct keys across every faction × role × variant* — and, unlike the number it
+replaced, it is enforced: `tests/characterArt.test.ts:253` asserts `keys.size <= 180` after
+building every part of every plan.
 
 The budget is now derived from exported constants — `PROP_RETENTION_DEFAULT` (128) plus
 `PROP_RESIDENT_HEADROOM` (48) — so changing the retention default moves the bound with

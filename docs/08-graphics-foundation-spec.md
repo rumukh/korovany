@@ -999,7 +999,9 @@ written down and the population was not**:
 |---|---|---|
 | `OUTLINE_WORLD_DRAWS_MAX` | one visible region | nine of them — 3x3 Chebyshev, up to 72 draws a frame |
 | `GEOMETRY_CACHE_ENTRIES_MAX` | the shared geometry cache, when there was one | quoted at a *different* cache once there were two, 2.75x apart, with no link between the written number and the enforced one |
+| `CHARACTER_GEOMETRY_KEYS<=11` | **9 build sites in the source**, per its own annotation | summed with two sibling budgets and compared against a *cache-entry* ceiling — 43 against 64, "comfortable". Measured population is **102 distinct keys** |
 | the guarded-sweep count | 4 material sweeps | read as covering 6 `isOutlineShell` call sites, of which 2 are disposal and occlusion, not material |
+| the type gate | `src/`, via `tsc -b` | quoted as covering the repo, while `tests/` was in no config at all — §7.2.2 |
 
 The second is the one with no tell. `OUTLINE_WORLD_DRAWS_MAX` was caught because somebody
 watched a region reach 7 of 8 and went looking; the cache constant **changed meaning
@@ -1007,7 +1009,18 @@ without anyone editing it**, when a second cache was added and the word "entries
 became ambiguous. A number can go stale through a change made somewhere else entirely, and
 nothing in the sentence records enough to notice.
 
-The third is the clearest tell. A commit message said "three of four material sweeps"
+The third is the sharpest, because the arithmetic looks like diligence. Summing
+`CHARACTER_GEOMETRY_KEYS<=11`, `BEAST_GEOMETRY_KEYS<=26` and `CARAVAN_GEOMETRY_KEYS=6`
+gives 43 and reads as headroom under a 64-entry cache. **They are not the same unit.** The
+11 is annotated *"9 build sites, two keyed by player/faction"* — it counts **call sites in
+the source**, while a cache holds one entry per **distinct key**, and one build site keyed
+by faction × role × variant produces many. Measured across all 81 plans: **102** distinct
+character keys, past 64 on its own. Nobody was careless — a line reading `NAME<=11` beside
+a line reading `NAME<=64` invites addition, and neither says one counts code and the other
+counts data. Fixed by naming the population and by making it enforceable:
+`CHARACTER_GEOMETRY_KEYS<=180`, asserted at `tests/characterArt.test.ts:253`.
+
+The fourth is the clearest tell. A commit message said "three of four material sweeps"
 and it was later restated as three of six, because **the population was never inside the
 sentence, so there was nothing to preserve.** The true ratio before that fix was 1 of 4.
 
