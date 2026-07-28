@@ -3658,6 +3658,22 @@ test('every function the spec declares in a signature block is a live export', (
  * every call site it found — is now made directly and shape-independently by the
  * `unterminated` assertion, which scales with whatever the tree contains.
  *
+ * **Which of the four is load-bearing, contributed by S1 and verified here.** All four are
+ * guarded, but three of the guards are defensive and one is live, and a consolidation that
+ * kept "a guard" without keeping *that* guard would compile, pass, and break the game:
+ *
+ * ```text
+ * GameEngine.ts:2168   this.player is outlined       registerOutline(this.player, 'player')
+ * StylizedArtLibrary.ts:551   applyOutline does      source.add(shell)
+ * GameEngine.ts:9893   restorePlayerLimb traverses   this.player.getObjectByName(part)
+ * ```
+ *
+ * Shells are **children of their source mesh**, so that traversal walks real ink shells
+ * every time a prosthetic is fitted — the `isOutlineShell` check at `:9898` is the only
+ * one of the four that a player can actually reach. Its guard also predates the others in
+ * this tree's history, which is the usual signature of the site somebody hit rather than
+ * the site somebody anticipated.
+ *
  * **What this test can and cannot detect**, stated because a scanner that reads as
  * exhaustive is the most dangerous kind. The paren walk counts parentheses in source
  * text, so one inside a string literal or a comment inside a traverse body closes it
