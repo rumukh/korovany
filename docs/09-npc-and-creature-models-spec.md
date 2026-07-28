@@ -356,6 +356,21 @@ no new dependencies.
   magnitude of items before believing anything about them, and put the count in the
   failure message. **A detector must be made to fire on doped input before its silence
   on real input means anything.**
+  **That applies to tools nobody wrote as much as to detectors someone did**, and this
+  repository contains the proof. `tsc --noEmit -p tsconfig.json` looks like a type-check
+  and is not one: the root `tsconfig.json` is `"files": []` plus project references, so
+  without `--build` the command compiles **zero files**. Measured with a positive control —
+  `export const wrong: number = 'definitely a string'` — it exits **0 with no output**,
+  while `tsc -b` exits **2** and names `TS2322` on the same file. Every green that
+  invocation has ever produced was a measurement of nothing, and it was quoted in
+  discussion for hours as evidence that a duplicate re-export type-checks cleanly. What
+  actually gates is `tsc -b`, which `npm run build` runs.
+  The general form caps a rule that sounds sufficient and is not: *name the instrument and
+  the claim cannot outgrow it* — **except that naming an instrument implies it does what
+  its name suggests.** A named instrument bounds a claim only once it has been shown
+  **capable of a different answer**. Nobody dopes a compiler, because its name is taken as
+  its specification, which is exactly the condition under which a vacuous one goes
+  unnoticed indefinitely.
   That rule has a ceiling, and it is worth stating beside it: **a positive control
   validates the instrument against the model, never the model against reality.** Dope a
   checker that holds a wrong model with a defect *its model recognises* and it fires
