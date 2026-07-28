@@ -872,7 +872,41 @@ better than implying they are enforced.
    that prices a multi-mesh building LOD correctly gains coverage only when something
    outlines a group.
 
-### 7.0.1 Displacement tearing, measured at every site
+### 7.0.1 One buffer behind two keys — the hazard `GeometryCache` cannot see
+
+`GeometryCache` counts references **per key**. `mergeAll` **moves** rather than copies for
+a single part — it returns `parts[0]` itself. Neither is wrong alone. Composed, a builder
+that tags one geometry into two surfaces gets **one buffer behind two keys**, and
+releasing either disposes geometry the other is still drawing.
+
+**Per-key reference counting is structurally blind to this.** Every count is individually
+correct; the fault is that two counts govern one buffer. That is the same shape as the
+double-release problem — blind by construction, not broken — which is why the receipt
+guard and this check are complementary rather than redundant.
+
+The detector is an **identity** check, not a counting one: distinct geometry *objects*
+held by the cache must equal live cache *entries*. Counts stay right under this defect;
+identity does not. Measured on the merged tree:
+
+```text
+streamed world, 25 focus checkpoints    peak 122 entries / 122 distinct    0 collisions
+whole prop request space, held at once      360 entries / 360 distinct    0 collisions
+every character part, 1047 builds        114 keys / 1047 distinct objects  0 collisions
+```
+
+**Zero instances in either kit.** Recorded rather than left unsaid, because a latent
+hazard measured to zero is a different thing from one nobody looked for, and the next
+person to write a two-surface builder needs to know the trap is there.
+
+`PropKit` is where it can happen — 31 `propPart` sites, each tagging a geometry with a
+surface — and `mergePropParts` now **throws** on a repeated geometry object rather than
+relying on nobody making the mistake. `CharacterKit` cannot reach it at all: it has no
+surface-tagging mechanism, its only `surface:` and `GeometryCache` mentions are prose in
+comments, and all three of its `mergeAll` calls return a single geometry. The empirical
+result above is stated anyway, because the absence of a pattern is not the absence of the
+behaviour.
+
+### 7.0.2 Displacement tearing, measured at every site
 
 `displaceGeometry` pushes each vertex along **its own normal**. At a hard crease the
 coincident vertices carry different normals — that is what makes the crease hard — so
@@ -1164,3 +1198,4 @@ injection being correct across every material variant the game already uses, int
 outline extrusion behaving on merged geometry and instances, into resource ownership
 being provably single-dispose, and into re-tuning every emissive value that the tone
 mapping change moves.
+
