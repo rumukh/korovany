@@ -425,6 +425,22 @@ no new dependencies.
   commit earlier. Not a blind spot: **a check that was run, was correct, and was not
   re-run after the next commit.** The verification aged inside the turn that produced it,
   and every gate stayed green over a 146-character line, because none of them reads shape.
+  **Those failures were layered, not repeated, and the order was forced.** Five joins in
+  this file were found across four rounds, and a reviewer's table separates them:
+  ```
+                predicate   population   freshness
+  joins 1–2       wrong         —            —      ".  " cannot match "word  word"
+  joins 3–4       right       wrong          —      swept the file, claim was the diff
+  join 5          right       right        stale    correct sweep, one commit old
+  ```
+  Three independent ways for a correct-looking check to be wrong, and **each was only
+  visible once the previous one was fixed.** A wrong predicate and a wrong frame both
+  return plausible numbers, so a stale result cannot be detected underneath them — you
+  cannot see that a count is one commit old while you are still counting the wrong set.
+  So *"re-run rather than reuse"* had to arrive last: **it is the only one of the three
+  that a passing sweep cannot reveal.** The general form, and the reason a green check
+  proves less than it appears to: **a check that passes has ruled out the failure modes
+  already fixed, and says nothing about the one beneath them.**
   **That applies to tools nobody wrote as much as to detectors someone did**, and this
   repository contains the proof. `tsc --noEmit -p tsconfig.json` looks like a type-check
   and is not one: the root `tsconfig.json` is `"files": []` plus project references, so
