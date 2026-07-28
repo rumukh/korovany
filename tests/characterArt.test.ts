@@ -1211,8 +1211,22 @@ test('the head is rigid with the chest and hinges at the neck', () => {
  * With the correction where it belongs the *only* thing reaching the head is
  * `torso-pivot.scale.y`, which the breathing pass writes as `1 + breathing * 0.55`
  * with `breathing` bounded by 0.018. That is a pure-Y scale, so the anisotropy it
- * causes has a closed form, and the measurement agrees with it to ten decimal places:
- * inhaling, `b` = 0.0099000000; exhaling, `1 / (1 - b) - 1` = 0.0099989900.
+ * causes has a closed form: inhaling, `b` = 0.0099000000; exhaling,
+ * `1 / (1 - b) - 1` = 0.0099989900.
+ *
+ * **The sweep reaches 0.0099988276 of that — six decimal places, not the ten this
+ * comment claimed for three commits.** The gap is 1.62e-7, which is 162x the `+1e-9`
+ * the bound adds and calls float noise, so the two statements were quietly in conflict
+ * with each other. Neither the closed form nor the measurement is wrong: the maximum
+ * of a pure-Y scale's anisotropy is attained at the *identity* rotation, and the look
+ * grid's pitch axis runs -0.14, -0.072, -0.004, 0.064, 0.132, 0.2 — it never samples
+ * zero, so it approaches the maximum without reaching it. A grid that steps from a
+ * negative endpoint to a positive one does not necessarily contain the origin, and
+ * assuming it does is how a measurement gets credited with precision it never had.
+ *
+ * The bound is genuinely tight regardless — 0.0016% relative headroom over the
+ * measured worst — which is the property that matters and is what "derived rather than
+ * chosen" was always about.
  *
  * So this bound is not "comfortably above the answer" — the earlier 2% was a round
  * number that would have admitted a doubling before firing. It is derived from the
@@ -1261,9 +1275,27 @@ test('the chest lends the head its breath but not its shoulders', () => {
   // which is the same overclaim as a hand-written chest table. Pitch is the gait
   // counter-pitch plus stagger, yaw the ±0.65 clamp, roll the turn lean and the
   // death loll.
-  const LOOK_PITCH = { from: -0.14, to: 0.2, step: 0.068 }
-  const LOOK_YAW = { from: -0.65, to: 0.65, step: 0.13 }
-  const LOOK_ROLL = { from: -0.3, to: 0.3, step: 0.1 }
+  //
+  // Stepped by integer index, not by accumulating a float — the same repair the gaze
+  // test above already carries, and this is where it should have been made first,
+  // because this is the test whose grid size is *published*. Accumulating `lz += 0.1`
+  // from -0.3 reaches 0.30000000000000004 on the seventh step, which fails `<= 0.3`,
+  // so the roll axis declared seven values and visited six and the "462-pose look
+  // grid" quoted in `CharacterKit.ts` and `docs/09` was really 396. Nothing was wrong
+  // with the *result* — a smaller grid can only make the measured worst smaller, and
+  // the bound held anyway — but the endpoint the comment names as reachable was never
+  // reached, and the published count was 17% high.
+  //
+  // The lesson is narrower than "floats are inexact" and worth stating: **a loop
+  // condition is not a count.** Anything that declares how many states it visits has
+  // to derive the states from that number rather than hope a comparison agrees with
+  // it, and the `steps + 1` product below is now the only definition of the grid.
+  const LOOK_PITCH = { from: -0.14, to: 0.2, steps: 5 }
+  const LOOK_YAW = { from: -0.65, to: 0.65, steps: 10 }
+  const LOOK_ROLL = { from: -0.3, to: 0.3, steps: 6 }
+  const atLook = (a: { from: number, to: number, steps: number }, index: number): number =>
+    a.from + ((a.to - a.from) * index) / a.steps
+  let lookStates = 0
   const axis = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]
   const basis = new THREE.Matrix3()
   const inherited = new THREE.Matrix3()
@@ -1311,10 +1343,14 @@ test('the chest lends the head its breath but not its shoulders', () => {
             )
           }
 
-          for (let lx = LOOK_PITCH.from; lx <= LOOK_PITCH.to; lx += LOOK_PITCH.step) {
-            for (let ly = LOOK_YAW.from; ly <= LOOK_YAW.to; ly += LOOK_YAW.step) {
-              for (let lz = LOOK_ROLL.from; lz <= LOOK_ROLL.to; lz += LOOK_ROLL.step) {
+          for (let li = 0; li <= LOOK_PITCH.steps; li += 1) {
+            const lx = atLook(LOOK_PITCH, li)
+            for (let lj = 0; lj <= LOOK_YAW.steps; lj += 1) {
+              const ly = atLook(LOOK_YAW, lj)
+              for (let lk = 0; lk <= LOOK_ROLL.steps; lk += 1) {
+                const lz = atLook(LOOK_ROLL, lk)
                 states += 1
+                lookStates += 1
                 skeleton.headPivot.rotation.set(lx, ly, lz)
                 skeleton.root.updateMatrixWorld(true)
                 basis.setFromMatrix4(head.matrixWorld)
@@ -1339,6 +1375,24 @@ test('the chest lends the head its breath but not its shoulders', () => {
     }
   }
 
+  // `> 40_000` proves the sweep ran; it does not prove the sweep is the one described.
+  // The roll axis silently lost its endpoint for four commits and this guard passed
+  // throughout, because 396 poses and 462 poses both clear a floor. A count that is
+  // published has to be asserted exactly, against the product of its own axes.
+  const LOOK_POSES =
+    (LOOK_PITCH.steps + 1) * (LOOK_YAW.steps + 1) * (LOOK_ROLL.steps + 1)
+  assert.equal(
+    LOOK_POSES,
+    462,
+    `the look grid is now ${String(LOOK_POSES)} poses, not the 462 published in `
+    + '`CharacterKit.ts` and `docs/09`. Update both, or restore the axis that shrank.',
+  )
+  assert.equal(
+    lookStates % LOOK_POSES,
+    0,
+    `the look grid visited ${String(lookStates)} states, which is not a whole number of `
+    + `${String(LOOK_POSES)}-pose sweeps — an axis is not reaching its declared endpoint.`,
+  )
   assert.ok(states > 40_000, `swept only ${String(states)} states; the grid has collapsed`)
   assert.ok(
     worst <= BOUND,
@@ -1365,32 +1419,47 @@ test('the chest lends the head its breath but not its shoulders', () => {
  * with the turn and the flinch.
  *
  * Measured over the sweep this test runs — the chest envelope, the head's own pitch
- * and roll, and the clamped look range, 213,840 states — as the angle between the
- * head's world forward and the requested heading:
+ * and roll, the body's X-vs-Z asymmetry and the clamped look range, 6,174,630 states —
+ * as the angle between the head's world forward and the requested heading:
  *
  * | rule | worst heading error |
  * | --- | --- |
- * | `lookYaw` written raw | **37.43°** |
- * | `lookYaw - torsoPivot.rotation.y` | **14.00°**, and *worse than doing nothing* in **4.2%** of states |
- * | `solveHeadYaw` without the head's pitch | **8.84°** |
- * | `solveHeadYaw` | **exact**, to float |
+ * | `lookYaw` written raw | **43.64°** |
+ * | `lookYaw - torsoPivot.rotation.y` | **20.30°**, and *worse than doing nothing* in **3.90%** of states |
+ * | `solveHeadYaw` without the head's pitch | **9.71°** |
+ * | `solveHeadYaw` | **exact**, to float, given an upright chest — see `solveHeadYaw` |
  *
  * **These are an upper bound over a superset, not a reachable worst.** The sweep is a
  * cross-product of each axis's range, and the engine's terms are correlated —
  * `flinch · hitRight` drives both `rotation.y` and `rotation.z`, and a stagger clears
  * `actor.action`, so attack and stagger cannot co-occur. A reviewer measured the
  * jointly-reachable worst for the head-tilt case at **4.952°** against this sweep's
- * 8.344°, about 70% high. That is the right trade for a *guard* — a superset can only
+ * 9.71°, about 96% high. That is the right trade for a *guard* — a superset can only
  * make it stricter, never blind — but it is the wrong number to quote as "what the
  * player saw", and the same distinction the "reachable 0.83 rad" label got wrong
  * earlier in this file. Where a reachable figure is what matters, this file says so
  * and gives it separately.
  *
- * The first two figures are the ones the test's own mutations report. Earlier drafts
- * quoted 35.93 and 13.79 from a one-off probe with a different grid, which is the
- * defect of quoting a number the committed assertion does not produce — a reviewer
- * ran the mutations and got different digits from the docblock beside them. Every
- * number here is now what this test prints when the rule beside it is substituted.
+ * ## Every figure in that table is computed by this test, and that is a recent repair
+ *
+ * They used to be measured by hand — mutate `solveHeadYaw`, read the assertion, copy
+ * the digits into four files — and they were wrong three times running. 35.93/13.79
+ * first, corrected to 37.43/14.00, and both of those were already wrong when written:
+ * the grid at the time printed 43.37 and 19.50. A third reviewer caught that and
+ * supplied 43.37/19.50/8.84 — correct for the tip it read, and stale by the time it
+ * reported, because `body-pivot` had joined the sweep in between and moved every one
+ * of them. The 4.2% was worse still: it belonged to a *different rule* and had never
+ * been computed by anything at all.
+ *
+ * The lesson is not that four people were careless. **A number produced by mutating
+ * production cannot be re-checked by the suite that quotes it**, so it goes stale
+ * silently and the sentence certifying it as measured goes stale with it — and every
+ * reader who verifies it, including three reviewers, is verifying it against the same
+ * grid the author had, not the grid in the repository. The rules are now evaluated
+ * inside the committed sweep and pinned to a hundredth of a degree, so the assertion
+ * reports the drift and names the new value. That is the only reason this table can
+ * be trusted, and it is why "I measured it once" is not a durable claim about a number
+ * that depends on a grid someone else can edit.
  *
  * The middle row is the shape of mistake this codebase keeps making and is worth
  * naming: subtracting one Euler component corrects a rotation only while the other
@@ -1408,7 +1477,8 @@ test('the head tracks its target through the chest, not past it', () => {
   // The chest envelope, from `animateActorCharacter`, plus the head's own pitch and
   // roll — which the engine writes in the same Euler as the yaw, so a solve that
   // ignores them is exact only for a test that also ignores them. Leaving the pitch
-  // out measured 7.31 degrees of error; the roll cannot matter, because a rotation
+  // out measures 9.71 degrees of error over this sweep; the roll cannot matter,
+  // because a rotation
   // about Z leaves the +Z axis fixed, and this sweep drives it anyway to prove that.
   //
   // Stepped by integer index, not by accumulating a float: the previous version wrote
@@ -1439,7 +1509,7 @@ test('the head tracks its target through the chest, not past it', () => {
   // **This is an empirical coefficient, not a derivation.** It is the measured maximum
   // rounded up — 9.5301 to 9.6, a margin of 0.73% — and it is worth naming the
   // difference, because the anisotropy bound two tests up *is* a closed form
-  // (`1/(1-b) - 1`, matching to ten decimal places) and this is not. What it does have
+  // (`1/(1-b) - 1`, a closed form the sweep approaches to six decimals, short only because its pitch axis misses the identity) and this is not. What it does have
   // is linearity, which the probes below check: 9.5225 at quarter amplitude, 9.5301 at
   // full, 9.5402 at double. Double the breath and this bound doubles with it — the
   // property a round number lacks — but it is a fitted constant with thin margin, and
@@ -1470,7 +1540,7 @@ test('the head tracks its target through the chest, not past it', () => {
   //
   // **These are empirical coefficients, not derivations.** Each is a measured maximum
   // rounded up, and that distinction matters because the anisotropy bound two tests up
-  // *is* a closed form (`1/(1-b) - 1`, matching to ten decimal places) and calling
+  // *is* a closed form (`1/(1-b) - 1`, a closed form the sweep approaches to six decimals, short only because its pitch axis misses the identity) and calling
   // these "derived" flatters them. What they have is **linearity**, which the three
   // probes below verify independently — halve or double either asymmetry and its term
   // moves with it.
@@ -1602,8 +1672,125 @@ test('the head tracks its target through the chest, not past it', () => {
     + 'X-vs-Z asymmetry account for between them. `solveHeadYaw` answers a linear '
     + 'equation rather than approximating one, so more than those two means it is being '
     + 'given the wrong arguments — most likely a missing head pitch, which alone is '
-    + 'worth 7.3 degrees.',
+    + 'worth 9.7 degrees.',
   )
+
+  // ## The rejected rules are measured here, not quoted from a mutation run
+  //
+  // Every earlier version of this file carried the rejected rules' error as prose —
+  // "raw leaves 37.43 degrees, a scalar subtraction leaves 14.00" — measured once by
+  // mutating `solveHeadYaw` and reading the assertion above. Three separate reviewers
+  // found three separate sets of those digits wrong, and the last one found the
+  // *replacement* digits wrong too, because the sweep gained `body-pivot` between the
+  // measurement and the quotation.
+  //
+  // The numbers were never the problem. **A number that is produced by a mutation run
+  // cannot be re-checked by the suite that quotes it**, so it drifts silently every
+  // time the grid moves, and the sentence certifying it as measured drifts with it.
+  // The fix is not more careful copying. It is to make the committed suite compute
+  // them, so they are as re-checkable as anything else here and go red when they move.
+  //
+  // One plan, because a heading is a direction and no direction calculation reads a
+  // position — the same property the assertion below the probes verifies rather than
+  // assumes. Every body scale and the full axis grid, because those do reach a heading.
+  const rejected = { raw: 0, scalar: 0, nopitch: 0 }
+  let scalarWorseThanNothing = 0
+  let rejectedStates = 0
+  {
+    const p = resolveCharacterPlan('elf', 'soldier', 0, false).proportions
+    const skeleton = buildCharacterSkeleton(p)
+    const head = new THREE.Object3D()
+    head.position.y = skeleton.headY
+    skeleton.headPivot.add(head)
+    setCharacterShoulderWidth(skeleton.torsoPivot, skeleton.neckPivot, 1.07)
+    skeleton.torsoPivot.scale.y = 1 + BREATH_AMPLITUDE
+    // The chest rotation is set *inside* here rather than by the caller. It was a
+    // parameter that the body ignored, relying on the loop having set the pivot first
+    // — which `tsc` caught as three unread arguments. A measurement helper that
+    // silently depends on state its own signature claims to take is how a sweep ends
+    // up measuring the previous iteration.
+    const measure = (
+      x: number, y: number, z: number, headPitch: number, headRoll: number,
+      target: number, yaw: number,
+    ): number => {
+      skeleton.torsoPivot.rotation.set(x, y, z)
+      skeleton.headPivot.rotation.set(headPitch, yaw, headRoll)
+      skeleton.root.updateMatrixWorld(true)
+      forward.set(0, 0, 1).transformDirection(head.matrixWorld)
+      return Math.abs(Math.atan2(forward.x, forward.z) - target)
+    }
+    for (const bodyZ of BODY_SCALES) {
+      skeleton.bodyPivot.scale.set(1.05, 1.055, 1.05 * bodyZ)
+      for (let i = 0; i <= AXES[0].steps; i += 1) {
+        const x = at(AXES[0], i)
+        for (let j = 0; j <= AXES[1].steps; j += 1) {
+          const y = at(AXES[1], j)
+          for (let k = 0; k <= AXES[2].steps; k += 1) {
+            const z = at(AXES[2], k)
+            for (let m = 0; m <= AXES[3].steps; m += 1) {
+              const headPitch = at(AXES[3], m)
+              for (let n = 0; n <= AXES[4].steps; n += 1) {
+                const headRoll = at(AXES[4], n)
+                for (const target of TARGETS) {
+                  // The head keeps the pitch it really wears in all three; only the
+                  // yaw rule changes. `solveHeadYaw(..., 0, ...)` is the pre-`3257029`
+                  // solve exactly — at `headPitch` zero its `cp`/`sp` terms collapse
+                  // to column 2 — so this is the shipped code's own history, not a
+                  // hand-written imitation of it.
+                  rejectedStates += 1
+                  const raw = measure(x, y, z, headPitch, headRoll, target, target)
+                  const scalar = measure(x, y, z, headPitch, headRoll, target, target - y)
+                  const nopitch = measure(
+                    x, y, z, headPitch, headRoll, target, solveHeadYaw(x, y, z, 0, target),
+                  )
+                  // "Worse than doing nothing" is the whole case against the scalar
+                  // rule, and it is a comparison between two rejected rules, so it can
+                  // only be measured where both are evaluated. Quoted as a bare
+                  // percentage for four commits, in four files, without one.
+                  if (scalar > raw) scalarWorseThanNothing += 1
+                  rejected.raw = Math.max(rejected.raw, raw)
+                  rejected.scalar = Math.max(rejected.scalar, scalar)
+                  rejected.nopitch = Math.max(rejected.nopitch, nopitch)
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  const asDegrees = (radians: number): number => radians * (180 / Math.PI)
+  const worseShare = (scalarWorseThanNothing / rejectedStates) * 100
+  assert.ok(
+    Math.abs(worseShare - 3.904) < 0.01,
+    `the scalar rule is now worse than no correction in ${worseShare.toFixed(4)}% of states, `
+    + 'not the 3.904% quoted beside it. This figure was carried as "4.2%" through four '
+    + 'files and four commits without ever being computed by anything — it needs both '
+    + 'rejected rules evaluated over one grid, which nothing did until now.',
+  )
+  // Pinned to a hundredth of a degree. That is a discriminator, not a tolerance: it is
+  // tight enough that any real change to the grid or the rules moves it, and the
+  // failure message carries the new value, so the docblocks quoting these get corrected
+  // by being told rather than by someone remembering to re-measure.
+  for (const [rule, expected, worthIt] of [
+    ['raw `lookYaw`, authored in body space and used in chest space', 43.64, rejected.raw],
+    ['a scalar `lookYaw - chestYaw`', 20.30, rejected.scalar],
+    ['the solve without the head\'s own pitch', 9.71, rejected.nopitch],
+  ] as const) {
+    assert.ok(
+      Math.abs(asDegrees(worthIt) - expected) < 0.01,
+      `${rule} now leaves ${asDegrees(worthIt).toFixed(4)} degrees, not the ${String(expected)} `
+      + 'quoted beside it. Nothing is necessarily broken — the grid may simply have '
+      + 'moved — but every docblock in `CharacterKit.ts`, `GameEngine.ts` and `docs/09` '
+      + 'that quotes this figure is now wrong, and this assertion exists so that it is '
+      + 'this test that tells you rather than a reviewer.',
+    )
+    assert.ok(
+      asDegrees(worthIt) > bound,
+      `${rule} would pass the bound above, so rejecting it needs an argument this test `
+      + 'does not have.',
+    )
+  }
 
   // Three probes that keep the bound above honest. Each varies one scale and holds the
   // other at unity, because the two terms are independent and a probe that moved both
@@ -1796,25 +1983,39 @@ test('the head tracks its target through the chest, not past it', () => {
  * the very bound the shipped rule is held to. That cannot drift out of calibration
  * with the thing it is guarding, because it *is* the thing it is guarding.
  */
+/**
+ * The gait pairs the two tests below share.
+ *
+ * `updateActors`: gaitPhase += travelled * actorGaitCadence(role). Cadence is radians
+ * per METRE, so the angular frequency is speed x cadence. Getting this wrong by 3.7x is
+ * what made an older guard vacuous, so both factors are named rather than pre-multiplied
+ * — and every walking role is swept rather than one sampled, because "the gait" is a
+ * population and a soldier is a sample. `actorSpeedForRole` and `actorGaitCadence` both
+ * live in `GameEngine`, which a Node test cannot import, so every pair here is pinned
+ * against its source in `the engine wires the rig the way these tests measure it`.
+ *
+ * **Six of nine roles, and the three missing ones are a decision rather than an
+ * oversight.** `characterRoles()` returns nine; `minion` reproduces `soldier` exactly
+ * (same speed, cadence and plan `lean`, so its wobble is 2.091 to the digit and it adds
+ * a row without adding coverage); `captive` is genuinely distinct at 2.221, because the
+ * guard faction gives it a `lean` of 0.180 against 0.000; and `commander` has speed 0,
+ * so it does not walk, produces 0.039 of wobble and would *fail* the rejected-rule
+ * discriminator below for the honest reason that a stationary actor has no gait to get
+ * wrong. Deriving this list from `characterRoles()` would therefore break the test — the
+ * exclusion is real. `captive` is the one worth adding if this table is ever revisited.
+ */
+const GAITS = [
+  { role: 'soldier', speed: 3.7, cadence: 6.8, chestYawCoefficient: 0.12 },
+  { role: 'scout', speed: 4.8, cadence: 8.4, chestYawCoefficient: 0.12 },
+  { role: 'archer', speed: 3.2, cadence: 7.2, chestYawCoefficient: 0.12 },
+  { role: 'brute', speed: 2.6, cadence: 5.8, chestYawCoefficient: 0.08 },
+  { role: 'champion', speed: 4.15, cadence: 5.8, chestYawCoefficient: 0.08 },
+  { role: 'peasant', speed: 3.1, cadence: 6.8, chestYawCoefficient: 0.12 },
+] as const
+
 test('the head holds its target while the chest twists under it', () => {
   const DELTA = 1 / 60
   const SECONDS = 60
-  // `updateActors`: gaitPhase += travelled * actorGaitCadence(role). Cadence is
-  // radians per METRE, so the angular frequency is speed x cadence. Getting this
-  // wrong by 3.7x is what made the old guard vacuous, so both factors are named
-  // rather than pre-multiplied — and every role is swept rather than one sampled,
-  // because "the gait" is a population and a soldier is a sample. `actorSpeedForRole`
-  // and `actorGaitCadence` both live in `GameEngine`, which a Node test cannot
-  // import, so the pairs are pinned against its source in `the engine wires the rig
-  // the way these tests measure it`.
-  const GAITS = [
-    { role: 'soldier', speed: 3.7, cadence: 6.8, chestYawCoefficient: 0.12 },
-    { role: 'scout', speed: 4.8, cadence: 8.4, chestYawCoefficient: 0.12 },
-    { role: 'archer', speed: 3.2, cadence: 7.2, chestYawCoefficient: 0.12 },
-    { role: 'brute', speed: 2.6, cadence: 5.8, chestYawCoefficient: 0.08 },
-    { role: 'champion', speed: 4.15, cadence: 5.8, chestYawCoefficient: 0.08 },
-    { role: 'peasant', speed: 3.1, cadence: 6.8, chestYawCoefficient: 0.12 },
-  ] as const
   const TARGET = 0.35
   // Not a tolerance. With `solveHeadYaw` the world heading *equals* the damped
   // body-space angle identically, for any cadence, amplitude or damping rate — so
@@ -1890,9 +2091,19 @@ test('the head holds its target while the chest twists under it', () => {
     // The rejected rule has to fail the bound the shipped rule passes, or this test
     // has stopped distinguishing them. Expressed against `BOUND` rather than a round
     // number, so the two cannot drift apart — the first version said `> 2`, sized
-    // against a gait model 3.7x too slow, and the real figure for a soldier is 1.983.
-    // Swept per role because the roles differ by more than the old margin did: a
-    // reviewer measured 1.36 for a champion against 2.10 for an archer.
+    // against a gait model 3.7x too slow.
+    //
+    // The figures this comment used to quote — 1.983 for a soldier, 1.36 for a
+    // champion against 2.10 for an archer — were from the wrong column. They are what
+    // the rejected rule produces with the chest's *pitch and roll held at zero*,
+    // which is precisely the pure-yaw geometry this test's own docblock spends two
+    // paragraphs explaining that earlier versions were wrong to use. What this loop
+    // actually computes is 2.091, 1.446 and 2.207. The numbers were carried across
+    // from the probe that motivated the per-role sweep and never re-read off the
+    // sweep itself — the same defect as the gaze table above, in the same file, on
+    // the same day. Quoting a figure from the experiment that *prompted* an assertion
+    // rather than from the assertion is how a comment ends up describing code that
+    // was replaced for being wrong.
     assert.ok(
       converted > BOUND,
       `a ${gait.role}'s rejected rule produced only ${converted.toFixed(3)} degrees of `
@@ -2071,18 +2282,26 @@ test('the engine wires the rig the way these tests measure it', () => {
     + 'own pitch, each passed through. Naming the function is not enough: a reviewer '
     + 'replaced the call with `solveHeadYaw(0, 0, 0, actor.headYaw)` and the whole '
     + 'suite still passed, because nothing checked the arguments. A scalar subtraction '
-    + 'leaves 14 degrees and is worse than nothing in 4.2% of states; dropping the '
-    + 'head pitch alone leaves 7.3.',
+    + 'leaves 20.3 degrees and is worse than nothing in 3.90% of states; dropping the '
+    + 'head pitch alone leaves 9.7.',
   )
   assert.ok(
-    /const headPitch = -forwardLean \* actor\.motionBlend \* 0\.35 \+ pose\.stagger \* 0\.18/
+    /const headPitch = -forwardLean \* actor\.motionBlend \* 0\.35 \+ pose\.stagger \* 0\.18$/m
       .test(actorPosture),
     'the head pitch must be computed before the solve and reused when it is written, '
-    + 'so the solve reads the value that actually lands on the pivot',
+    + 'so the solve reads the value that actually lands on the pivot. Anchored at the '
+    + 'end of the line: unanchored, appending `+ pose.attack * 0.4` still matched, and '
+    + 'that term would push the head pitch outside the [-0.09, 0.18] axis the skew '
+    + 'bound is derived over — the bound would silently stop describing the engine.',
   )
   assert.ok(
-    /headPivot\.rotation\.x = headPitch/.test(actorPosture),
-    'the pitch the solve was given must be the pitch the head is given',
+    /headPivot\.rotation\.x = headPitch$/m.test(actorPosture),
+    'the pitch the solve was given must be the pitch the head is given. Anchored for '
+    + 'the same reason: a reviewer mutated this to `headPitch * 0.5` and the whole file '
+    + 'passed 22/0, because the unanchored pattern matches its own prefix. Hoisting '
+    + '`headPitch` into a const exists solely so the solve and the pivot read one '
+    + 'value, and this was the assertion that was supposed to notice them diverging. '
+    + 'Driving the solve with a pitch the head does not wear costs 9.7 degrees.',
   )
   // The breath. `the chest lends the head its breath but not its shoulders` derives
   // its whole bound from these two numbers — they are the only thing that legitimately
@@ -2102,8 +2321,21 @@ test('the engine wires the rig the way these tests measure it', () => {
   // The gait. `the head holds its target while the chest twists under it` simulates
   // the engine's loop, and its whole point is that the model matches — an earlier
   // version read `actorGaitCadence` as radians per second when it is radians per
-  // metre, which left that test's guard with negative margin. These pin the four
-  // numbers the simulation reads.
+  // metre, which left that test's guard with negative margin.
+  //
+  // These used to pin four numbers with `includes`, which asks whether a string
+  // appears *somewhere* in the function, not whether it appears next to the role it
+  // belongs to. A reviewer swapped the scout's and the archer's cadences — 8.4 and
+  // 7.2 traded — and the whole file still passed, because both strings were still
+  // present. The wobble simulation was then modelling the wrong physics for two
+  // roles, which is the exact "threshold sized against a mis-modelled input" defect
+  // the cadence fix existed to close, reintroduced by the assertion meant to prevent
+  // it. **A pin that tests for the presence of a value cannot see it move to another
+  // key**, and half the point of a lookup table is which key each value sits under.
+  //
+  // Driven off `GAITS` itself rather than a hand-written subset, so a row added there
+  // is pinned here automatically. Six of the eighteen numbers were pinned before; all
+  // eighteen are now, and adding a seventh role pins three more without an edit.
   assert.ok(
     /actor\.gaitPhase \+= travelled \* this\.actorGaitCadence\(actor\.role\)/.test(source),
     'the gait no longer advances by distance travelled. `the head holds its target '
@@ -2115,17 +2347,47 @@ test('the engine wires the rig the way these tests measure it', () => {
     source.indexOf('private actorGaitCadence('),
     source.indexOf('private animateActorCharacter('),
   )
-  for (const [role, value] of [['scout', '8.4'], ['archer', '7.2']] as const) {
+  // `soldier` and `peasant` are not named in the cadence function — they fall through
+  // to its default — so their pairing is the default's value, and naming that is the
+  // assertion. Same for the chest coefficient: `heavy` is a two-role predicate, and
+  // everyone else takes the other branch.
+  const DEFAULT_CADENCE = '6.8'
+  const HEAVY = ['brute', 'champion']
+  for (const gait of GAITS) {
+    const value = String(gait.cadence)
+    const paired = value === DEFAULT_CADENCE
+      ? new RegExp(`return ${value.replace('.', '\\.')}\\s*\\n\\s*\\}`).test(cadence)
+        && !new RegExp(`'${gait.role}'`).test(cadence)
+      : new RegExp(`role === '${gait.role}'[^\\n]*\\)\\s*return ${value.replace('.', '\\.')}`)
+        .test(cadence)
     assert.ok(
-      cadence.includes(`'${role}'`) && cadence.includes(value),
-      `the ${role}'s gait cadence is no longer ${value}; the wobble test's GAITS table `
-      + 'must move with it',
+      paired,
+      `the ${gait.role}'s gait cadence is no longer ${value} — either the value moved, `
+      + 'or it moved to another role. `GAITS` in `the head holds its target while the '
+      + 'chest twists under it` must move with it, or that test simulates physics the '
+      + 'engine does not run.',
+    )
+    assert.ok(
+      new RegExp(`role === '${gait.role}'\\s*\\n?\\s*\\?\\s*${String(gait.speed).replace('.', '\\.')}`)
+        .test(source)
+      || (gait.role === 'soldier' && /:\s*3\.7\)/.test(source))
+      || (gait.role === 'peasant' && new RegExp(`role === 'peasant'[\\s\\S]{0,40}?${String(gait.speed).replace('.', '\\.')}`).test(source)),
+      `the ${gait.role}'s speed is no longer ${String(gait.speed)}; GAITS pairs each `
+      + 'speed with its cadence and the simulation multiplies the two.',
+    )
+    assert.equal(
+      gait.chestYawCoefficient,
+      HEAVY.includes(gait.role) ? 0.08 : 0.12,
+      `GAITS gives the ${gait.role} a chest yaw coefficient of `
+      + `${String(gait.chestYawCoefficient)}, but the engine's \`heavy\` predicate puts `
+      + `it on ${HEAVY.includes(gait.role) ? '0.08' : '0.12'}.`,
     )
   }
   assert.ok(
-    /role === 'scout'\s*\?\s*4\.8/.test(source) && /:\s*3\.7\)/.test(source),
-    'the scout\'s or the default actor speed has changed; the wobble test\'s GAITS '
-    + 'table pairs each speed with its cadence and must move with them',
+    /const heavy = actor\.role === 'brute' \|\| actor\.role === 'champion'/.test(source),
+    'the `heavy` predicate has changed, so GAITS\' 0.08-vs-0.12 split no longer '
+    + 'matches the engine. The assertion above compares against a hard-coded pair of '
+    + 'role names and this is what keeps that honest.',
   )
   // Which stride the chest reads, and what a stagger does to it. Both are load-bearing
   // for the joint-reachability model the gaze test's comment describes, and a previous

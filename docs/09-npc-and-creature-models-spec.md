@@ -119,9 +119,9 @@ no new dependencies.
   transform you inherit. The one term that is *not* a counter-rotation is the look
   yaw, which tracks a target rather than resisting a posture, so it is converted into
   chest space by `solveHeadYaw` — a solve rather than an offset, because the chest
-  pitches and rolls as well as yawing. Measured over the 213,840-state cross-product sweep the tests run -- an upper bound over a superset, since the engine's terms are correlated: **37.4°**
-  of gaze error uncorrected, **14.0°** with the obvious scalar `lookYaw - chestYaw`
-  (which is *worse than nothing* in 4.2% of them), exact solved, and **8.8°** if the solve is denied the head's own pitch. Damp the
+  pitches and rolls as well as yawing. Measured over the 6,174,630-state cross-product sweep the tests run -- an upper bound over a superset, since the engine's terms are correlated: **43.64°**
+  of gaze error uncorrected, **20.30°** with the obvious scalar `lookYaw - chestYaw`
+  (which is *worse than nothing* in 3.90% of them), exact solved, and **9.71°** if the solve is denied the head's own pitch. Every one of those four figures is computed by the committed sweep and pinned to a hundredth of a degree, because the previous three sets were measured by hand under mutation and all three were wrong by the time they were read. Damp the
   tracking in body space and convert instantaneously — a frame change is not a motion,
   and damping the converted angle costs 2.0° of wobble at the gait's real 4.00 Hz.
   Correspondingly, **do not test a rig without posing it** — every assertion that
@@ -172,7 +172,7 @@ no new dependencies.
   "how big is the artifact" would have kept the wrong one and dropped the right one,
   since both are around a percent. Measured across all 30 faction x role plans (21 distinct proportion sets) and the whole look
   envelope: **8.59%** head anisotropy with the width uncancelled, **1.00%** with it
-  cancelled, and that 1.00% is the breath to ten decimal places.
+  cancelled, and that 1.00% is the breath to six decimals -- the closed form is exact, the grid simply never samples the identity rotation that attains it.
 - **Cancel a scale above every rotation, never below one.** A scale and a rotation do
   not commute, so a cancellation applied *downstream* of a rotation is valid only in
   the rest pose. Putting the width correction on `head-pivot`, which the animation
@@ -193,7 +193,7 @@ no new dependencies.
   The same rule retired the anisotropy bound's round 2%: the only thing that legally
   reaches the head is `torso-pivot.scale.y`, a pure-Y scale, so the bound is
   `1 / (1 - 0.018 * 0.55) - 1` — the breath's own closed form, which the measurement
-  matches to ten decimal places. A 0.3% contaminant reads 1.30% and now fails; under
+  matches to six decimals, the gap being a grid that misses the maximising pose rather than a loose bound. A 0.3% contaminant reads 1.30% and now fails; under
   the round 2% it passed.
 - **Do not adopt a number you could not reproduce.** The gaze skew bound quoted a
   reviewer's jointly-reachable coefficient of 4.81 where an independent enumeration

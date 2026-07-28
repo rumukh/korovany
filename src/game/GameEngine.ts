@@ -14197,13 +14197,14 @@ export class GameEngine {
       // `lookYaw` is measured from the actor's own facing, but `head-pivot` now hangs
       // off `torso-pivot`, and the chest does not merely yaw — it pitches into the run
       // and the storm and rolls with the turn. Uncorrected the chest's twist is added
-      // to the gaze and the head looks past its target by up to 37 degrees; the
-      // obvious scalar `lookYaw - chestYaw` still leaves 14, and in 4.2% of reachable
+      // to the gaze and the head looks past its target by up to 43.6 degrees; the
+      // obvious scalar `lookYaw - chestYaw` still leaves 20.3, and in 3.90% of swept
       // states it is worse than doing nothing. `solveHeadYaw` answers it exactly.
       //
       // The head's own pitch goes in as an argument because it is applied after the
       // yaw, in the same Euler, so it moves where the head ends up pointing — leaving
-      // it out cost 7.3 degrees. Its roll does not: a rotation about Z leaves the +Z
+      // it out costs 9.7 degrees over the sweep, 4.952 on a jointly-reachable stagger
+      // frame. Its roll does not: a rotation about Z leaves the +Z
       // axis fixed, so it cannot move the gaze. Computed here rather than below so the
       // solve reads the value that will actually be written.
       //
