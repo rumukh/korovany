@@ -927,16 +927,30 @@ test('the load-bearing rig names are still assigned', () => {
  * ## Measured, on the sibling rig, over the 27 faction x role proportion sets
  *
  * Distance between the head and where `torso-pivot` puts it — the same quantity
- * assertion 1 below measures.
+ * assertion 1 below measures, with the head's own rotation held at zero so that
+ * both sides of the comparison are like for like.
  *
  * | pose | worst |
  * | --- | --- |
  * | rest, nothing posed | **0.0000** |
  * | standing, plan `lean` only | **0.4992** (brute, `lean` 0.20) |
- * | walking, `lean` + gait lean | **0.6835** (elf brute) |
- * | deepest reachable hunch, 0.83 rad | **2.3385** |
+ * | walking, `lean` + gait lean at full blend | **0.6358** (elf brute) |
+ * | walking at the 1.18 motion-blend cap | **0.6603** |
+ * | deepest *reachable* pitch | **0.6849** (brute) |
+ * | synthetic 0.83 rad, used by the sweep below | **2.3385** |
  *
  * A head is 0.66 m deep. Three-quarters of a head, backwards, standing still.
+ *
+ * Two corrections a reviewer made to earlier drafts of this table, kept here because
+ * both are the kind of mistake that survives if only the conclusion is recorded.
+ * The walking figure was first given as **0.6835**, which is arithmetically right but
+ * measures a different thing: it lets the head's own counter-pitch move the head on
+ * the "before" side while the "after" side holds it at zero. Like for like it is
+ * 0.6358. And the 0.83 rad pose was labelled *reachable*; it is not — it sums
+ * role-incompatible maxima and adds attack to stagger, and `stagger` clears
+ * `actor.action`. The deepest pose the simulation can actually reach is 0.6849 on a
+ * brute. The 0.83 pose stays in the sweep, because the invariant holds for any
+ * transform and a wider net is free, but it is labelled synthetic.
  *
  * The roles whose `lean` is zero — elf and guard soldier, minion, archer, champion
  * — measured 0.0000 standing and only came apart once they walked, which is how a
@@ -1196,6 +1210,97 @@ test('the chest lends the head its breath but not its shoulders', () => {
 })
 
 /**
+ * The head points where the actor is looking, not where its chest is twisted.
+ *
+ * `lookYaw` is computed in `updateActors` as the angle from the actor's *own facing*
+ * to whatever it is tracking, clamped to ±0.65. Hanging `head-pivot` off the chest —
+ * which is what stops the head leaving the body — puts that value in a frame it was
+ * not authored in, because the chest yaws too: `-stride * 0.12` from the gait,
+ * `+attack * 0.16` from the swing, `-flinch * hitRight * 0.22` from a hit. Left
+ * unsubtracted the chest's twist is *added* to the gaze.
+ *
+ * Measured on a guard soldier, over reachable torso yaws and the four look targets
+ * below, as the angle between the head's world forward and the requested one:
+ *
+ * | | worst heading error |
+ * | --- | --- |
+ * | `lookYaw` applied raw | **24.31°** |
+ * | `lookYaw - torsoPivot.rotation.y` | **1.55°** |
+ *
+ * Subtracting is a change of frame, not a fudge: the value is authored in body space
+ * and consumed in chest space. The 1.55° residue is Euler composition plus the
+ * chest's own non-uniform width, and is an order of magnitude inside the 0.65 rad
+ * arc the gaze is clamped to.
+ *
+ * This test exists because the positional rigidity test could not have caught it —
+ * a head can sit perfectly on its neck and still be looking at the wrong thing. A
+ * reviewer found it by measuring orientation after I had measured only position.
+ *
+ * Pitch and roll deliberately get no such correction: unlike the yaw they are
+ * authored as *partial counter-rotations* of the chest, which only mean anything
+ * against a transform the head inherits.
+ */
+test('the head tracks its target through the chest, not past it', () => {
+  // `animateActorCharacter`: torsoPivot.rotation.y = -stride * (heavy ? 0.08 : 0.12)
+  // + attack * 0.16 - flinch * hitRight * 0.22, with the pitch and roll that go
+  // with each. Named so a reader can find the line each comes from.
+  const CHEST: readonly { name: string; rotation: readonly [number, number, number] }[] = [
+    { name: 'still', rotation: [0, 0, 0] },
+    { name: 'walking', rotation: [0.24, -0.12, -0.02] },
+    { name: 'at full motion blend', rotation: [0.28, -0.142, -0.03] },
+    { name: 'attacking', rotation: [0.12, 0.16, 0] },
+    { name: 'flinching', rotation: [0.1, -0.22, 0.18] },
+    { name: 'struck mid-stride', rotation: [0.3, -0.382, 0.2] },
+  ]
+  // `lookYaw` is clamped to ±0.65 in updateActors.
+  const TARGETS = [0, 0.35, 0.65, -0.65]
+  const forward = new THREE.Vector3()
+  let worst = 0
+  let worstAt = ''
+
+  for (const faction of FACTIONS) {
+    for (const role of ROLES) {
+      const p = resolveCharacterPlan(faction, role, 0, false).proportions
+      const skeleton = buildCharacterSkeleton(p)
+      const head = new THREE.Object3D()
+      head.position.y = skeleton.headY
+      skeleton.headPivot.add(head)
+      // The chest also carries the actor's width, which skews orientation as well
+      // as size, so the measurement has to include it.
+      skeleton.torsoPivot.scale.set(1.07, 1.01, 1)
+      skeleton.neckPivot.scale.x = 1 / 1.07
+
+      for (const chest of CHEST) {
+        skeleton.torsoPivot.rotation.set(...chest.rotation)
+        for (const target of TARGETS) {
+          // What `animateActorCharacter` writes: the body-space target, less the
+          // chest's own yaw. Derived from the pose, never from the head, so the
+          // expected value cannot drift toward whatever the head happens to do.
+          skeleton.headPivot.rotation.y = target - chest.rotation[1]
+          skeleton.root.updateMatrixWorld(true)
+          forward.set(0, 0, 1).transformDirection(head.matrixWorld)
+          const heading = Math.atan2(forward.x, forward.z)
+          const error = Math.abs(heading - target) * (180 / Math.PI)
+          if (error > worst) {
+            worst = error
+            worstAt = `${faction}/${role} ${chest.name}, looking ${target.toFixed(2)}`
+          }
+        }
+      }
+    }
+  }
+
+  assert.ok(
+    worst <= 3,
+    `the head ended up ${worst.toFixed(2)} degrees off its target at ${worstAt}. `
+    + '`lookYaw` is measured from the actor\'s facing and consumed under `torso-pivot`, '
+    + 'so the chest\'s own yaw has to come off it first. Applied raw it reaches 24 '
+    + 'degrees of error, and a head that sits perfectly on its neck while looking past '
+    + 'its target is a bug the rigidity test cannot see.',
+  )
+})
+
+/**
  * The beasts keep the sibling arrangement, and this pins what makes that safe.
  *
  * `createBeast` roots `head-pivot` at the animal's origin with the skull at `headY`
@@ -1218,6 +1323,9 @@ test('the chest lends the head its breath but not its shoulders', () => {
  * and both are invisible to every other test in this file.
  */
 test('a beast never reaches the biped posture pass, and its own yaw stays clamped', () => {
+  // The clamp `animateBeastPosture` puts on the beast's look. Named once and used
+  // both to assert the source and to size the sweep, so the two cannot disagree.
+  const BEAST_YAW_CLAMP = 0.45
   const source = readFileSync(
     fileURLToPath(new URL('../src/game/GameEngine.ts', import.meta.url)),
     'utf8',
@@ -1253,15 +1361,27 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
   )
   // The rig data the numbers above were measured from, so a rewritten table is
   // noticed here rather than in a screenshot.
+  //
+  // The bound is the animal's own `footprint` — the radius of its contact shadow,
+  // which is an independent number in the same authored units. The first version of
+  // this assertion compared the sweep against `rig.headZ`, and `2 * headZ * sin(t/2)`
+  // divided by `headZ` is just `2 * sin(t/2)` = 0.446: the term it was bounding
+  // cancelled out and the check was true for every possible rig. It was caught by a
+  // reviewer who moved a wolf's skull to `headZ` 100 and watched the test pass.
   for (const kind of BEASTS) {
     const rig = BEAST_RIG[kind]
     assert.ok(
       rig.headZ > 0 && rig.headY > 0,
       `${kind}: a skull is up and forward of the body centre`,
     )
+    const sweep = 2 * rig.headZ * Math.sin(BEAST_YAW_CLAMP / 2)
     assert.ok(
-      2 * rig.headZ * Math.sin(0.45 / 2) < rig.headZ,
-      `${kind}: the clamped look must sweep the skull less than its own reach forward`,
+      sweep <= rig.footprint,
+      `a ${kind}'s skull sweeps ${sweep.toFixed(4)} sideways at the clamped `
+      + `${BEAST_YAW_CLAMP.toFixed(2)} rad look — further than the ${rig.footprint.toFixed(2)} `
+      + 'the animal is wide. A head on a pivot at the body centre only reads as attached '
+      + 'while that stays true; either clamp the look further, bring `headZ` in, or give '
+      + 'the beasts a neck joint as `buildCharacterSkeleton` does for people.',
     )
   }
   // `applyActorVisualVariation` runs for beasts as well as people, and it divides
@@ -1284,6 +1404,20 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
     !/headPivot\.scale/.test(variation),
     'the counter-scale must not go on head-pivot: the animation rotates it, so the '
     + 'correction stops cancelling the moment the actor looks anywhere but forward',
+  )
+  // And the gaze. `the head tracks its target through the chest, not past it` proves
+  // the arithmetic; this is what ties it to the engine, which a Node test cannot
+  // instantiate. Without it the engine could apply `lookYaw` raw and both the maths
+  // test and the rigidity test would still be green.
+  const actorPosture = source.slice(
+    source.indexOf('private animateActorCharacter('),
+    source.indexOf('private samplePlayerPose('),
+  )
+  assert.ok(
+    /dampAngle\(\s*headPivot\.rotation\.y,\s*lookYaw - chestYaw/.test(actorPosture),
+    'the head yaw must have the chest\'s own yaw subtracted from it. `lookYaw` is '
+    + 'measured from the actor\'s facing and head-pivot now hangs off torso-pivot, so '
+    + 'applied raw the chest\'s twist is added to the gaze — 24 degrees at the extreme.',
   )
 })
 

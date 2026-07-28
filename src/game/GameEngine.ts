@@ -14169,7 +14169,23 @@ export class GameEngine {
       pelvisPivot.rotation.z = actor.turnLean * 0.08 - idleWeightShift * 0.3
     }
     if (headPivot) {
-      headPivot.rotation.y = dampAngle(headPivot.rotation.y, lookYaw, 7, delta)
+      // `lookYaw` is measured from the actor's own facing, but `head-pivot` now hangs
+      // off `torso-pivot`, and the chest has a yaw of its own — the stride's twist,
+      // the attack's follow-through and the flinch. Left unsubtracted the chest's
+      // twist is *added* to the gaze, so the head no longer points where the actor is
+      // looking: measured at 24.3 degrees of heading error at the reachable extreme,
+      // and 4-13 degrees walking, attacking or flinching. Subtracting it is a change
+      // of frame, not a fudge — the value is authored in body space and consumed in
+      // chest space. The residue is 1.6 degrees, which is Euler composition and the
+      // chest's own width, not a missing term.
+      const chestYaw = torsoPivot ? torsoPivot.rotation.y : 0
+      headPivot.rotation.y = dampAngle(headPivot.rotation.y, lookYaw - chestYaw, 7, delta)
+      // Pitch and roll are deliberately *not* corrected this way. Unlike the yaw they
+      // are authored as partial counter-rotations of the chest — the torso pitches
+      // `+forwardLean` and the head `-forwardLean * 0.35`, the torso rolls
+      // `-turnLean * 0.16` and the head `+turnLean * 0.06` — which only means anything
+      // against a transform the head inherits. The yaw is the odd one out because it
+      // tracks a target rather than resisting a posture.
       headPivot.rotation.x =
         -forwardLean * actor.motionBlend * 0.35 + pose.stagger * 0.18
       headPivot.rotation.z =

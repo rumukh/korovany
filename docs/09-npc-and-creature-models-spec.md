@@ -111,13 +111,18 @@ no new dependencies.
   test in the file. Under the plan's own `lean` the chest swings forward through the
   2.1–2.3 m from the ground to the shoulders and the head, on a pivot that never got
   that rotation, stays where it was: measured at **0.4992 m** on a standing brute and
-  **0.6835 m** walking, against a head 0.66 m deep. Only actors showed it, because
+  **0.6358 m** walking, against a head 0.66 m deep. Only actors showed it, because
   `animateCharacter` — the player's only pose pass — never writes `torso-pivot`. The
   head now hangs off the chest at `shoulderY`, which also makes six existing terms
   mean what they say: `head-pivot`'s rotations are written as the opposite sign of
   `torso-pivot`'s, and a partial counter-rotation only makes sense against a
-  transform you inherit. Correspondingly, **do not test a rig without posing it** —
-  every assertion that reads a body at rest is blind to this whole class.
+  transform you inherit. The one term that is *not* a counter-rotation is the look
+  yaw, which tracks a target rather than resisting a posture, so the chest's own yaw
+  is subtracted from it — measured at **24.3°** of gaze error before that
+  subtraction and 1.6° after. Correspondingly, **do not test a rig without posing
+  it** — every assertion that reads a body at rest is blind to this whole class —
+  and **do not test position without testing orientation**: the gaze defect passed a
+  rigidity test that measured only where the head sat.
 - **Do not let a quadruped inherit a biped's spine.** The beasts share the rig names on
   purpose, but `createBeast` builds its own limb geometry per role and the shared
   stride is remapped, rather than a wolf borrowing a soldier's arm. The secondary

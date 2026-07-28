@@ -711,7 +711,8 @@ export function characterPartKeys(plan: CharacterPlan): CharacterPartKeys {
  * it — a brute standing still, `lean` 0.20: **0.4992 m**. A captive: 0.4710. Any
  * villain, whose faction leans: 0.3430. A peasant: 0.2639. A head is 0.66 m deep,
  * so a standing brute wore its skull three-quarters of a head behind its own neck.
- * Walking adds the gait's forward lean and takes the worst case to **0.6835 m**.
+ * Walking takes the worst case to **0.6358 m**, and **0.6849 m** at the deepest
+ * pitch the simulation can actually reach.
  *
  * The roles whose `lean` is zero — an elf or guard soldier, minion, archer or
  * champion — measured 0.0000 standing and came apart only once they moved, which
