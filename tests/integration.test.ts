@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { readFileSync, readdirSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import * as THREE from 'three'
 
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
@@ -1416,53 +1417,79 @@ test('neither spec contains a mangled paragraph join', () => {
  * there: a check that is *correct* and *too narrow* looks identical to a sufficient one
  * until the day it doesn't.
  *
- * The scan carries its own positive control. A detector that has only ever returned zero
- * is indistinguishable from one that cannot fire, so the same predicate is run over a
- * constructed conflict block first and asserted to catch all three markers.
+ * **Tracked, derived rather than approximated.** The first version walked the working tree
+ * and filtered by a nine-extension allow-list, which was wrong twice. It scanned
+ * *untracked* files, so a reviewer's scratch `.md` failed the suite under a message
+ * reading "was committed" — an assertion claiming more than its predicate establishes,
+ * which is the defect this file catalogues. And the allow-list excluded 6 tracked text
+ * files including `.github/workflows/deploy-pages.yml`, among the most conflict-prone
+ * files in any repository. Enumerating `git ls-files` fixes both, and binaries are then
+ * excluded by **content** — a NUL byte — rather than by name, so an unfamiliar extension
+ * defaults to being scanned. A safety net should fail towards looking.
+ *
+ * The scan carries a two-sided control. A detector that has only ever returned zero is
+ * indistinguishable from one that cannot fire, so the predicate is first run over a block
+ * containing every marker shape **and** the near-misses it must stay silent on — setext
+ * underlines, over-long rules, indented and mid-line runs. Both halves ship with the code,
+ * so a later loosening to `{4,}` fails here rather than quietly widening.
  */
 test('no tracked text file contains a merge-conflict marker', () => {
-  const isMarker = (line: string): boolean => /^(?:<{7}|={7}|>{7})(?: |$)/.test(line)
+  // `\r?$` because git on Windows writes `=======\r\n`. The caller normalises, but this
+  // predicate reads as self-contained and will eventually be used somewhere that doesn't.
+  const isMarker = (line: string): boolean => /^(?:<{7}|={7}|>{7}|\|{7})(?: |\r?$)/.test(line)
 
-  // Positive control, built rather than written, so this file does not trip its own scan.
-  const control = [
-    `${'<'.repeat(7)} HEAD`,
+  // Built rather than written, so this file does not trip its own scan.
+  const seven = (character: string): string => character.repeat(7)
+  const mustFire = [
+    `${seven('<')} HEAD`,
+    seven('='),
+    `${seven('|')} base`, // diff3 / zdiff3 leave this one behind
+    `${seven('>')} some-branch`,
+  ]
+  const mustNotFire = [
     'one side of the merge',
-    '='.repeat(7),
-    'the other side',
-    `${'>'.repeat(7)} some-branch`,
+    seven('=') + '=', // eight: a setext underline or a horizontal rule
+    '======', // six
+    `  ${seven('<')} HEAD`, // indented: inside a fence or a quoted example
+    `a ${seven('=')} mid-line`,
   ]
   assert.equal(
-    control.filter(isMarker).length,
-    3,
-    'the marker predicate does not fire on a constructed conflict block, so a clean '
-    + 'result from the repository scan below would mean nothing',
+    mustFire.filter(isMarker).length,
+    mustFire.length,
+    'the marker predicate missed a real conflict marker, so a clean result from the '
+    + 'repository scan below would mean nothing',
+  )
+  assert.deepEqual(
+    mustNotFire.filter(isMarker),
+    [],
+    'the marker predicate fires on something that is not a conflict marker; a guard with '
+    + 'false positives is one somebody deletes',
   )
 
   const root = new URL('../', import.meta.url)
-  const SKIP = new Set(['node_modules', 'dist', 'coverage', '.git'])
-  const TEXT = ['.md', '.ts', '.tsx', '.js', '.mjs', '.cjs', '.json', '.css', '.html']
-  const files: string[] = []
-  const walk = (prefix: string): void => {
-    for (const entry of readdirSync(new URL(prefix, root), { withFileTypes: true })) {
-      if (entry.isDirectory()) {
-        if (!SKIP.has(entry.name)) walk(`${prefix}${entry.name}/`)
-      } else if (TEXT.some((extension) => entry.name.endsWith(extension))) {
-        files.push(`${prefix}${entry.name}`)
-      }
-    }
-  }
-  walk('')
-  files.sort()
+  const files = execFileSync('git', ['ls-files', '-z'], {
+    cwd: new URL('.', root),
+    encoding: 'utf8',
+    maxBuffer: 1 << 26,
+  })
+    .split('\0')
+    .filter(Boolean)
 
-  assert.ok(
-    files.length >= 50,
-    `only ${String(files.length)} text files were found; this scan is the whole point of `
-    + 'the test, so a tiny listing means it broke rather than passed',
-  )
+  // No floor on the count: the domain is derived from git rather than assembled here, so
+  // it cannot silently under-enumerate the way a hand-written walk could. What is worth
+  // asserting is that the enumeration ran at all.
+  assert.ok(files.length > 0, 'git ls-files returned nothing, so this scan examined no files')
 
   const conflicted: string[] = []
   for (const file of files) {
-    const lines = readFileSync(new URL(file, root), 'utf8').replace(/\r\n?/g, '\n').split('\n')
+    let raw: Buffer
+    try {
+      raw = readFileSync(new URL(file, root))
+    } catch {
+      continue // tracked but absent from the worktree; not this test's business
+    }
+    if (raw.includes(0)) continue // binary, by content rather than by extension
+    const lines = raw.toString('utf8').replace(/\r\n?/g, '\n').split('\n')
     lines.forEach((line, index) => {
       if (isMarker(line)) conflicted.push(`${file}:${String(index + 1)}: ${line.slice(0, 40)}`)
     })
@@ -1471,9 +1498,9 @@ test('no tracked text file contains a merge-conflict marker', () => {
   assert.deepEqual(
     conflicted,
     [],
-    'a merge-conflict marker was committed. Both sides of that hunk are still in the '
-    + 'file and one of them is not meant to be — which is the same mechanism that lost a '
-    + 'test here once already, and nothing else in this repository can see it.',
+    'a merge-conflict marker is present in a tracked file. Both sides of that hunk are '
+    + 'still there and one of them is not meant to be — which is the same mechanism that '
+    + 'lost a test here once already, and nothing else in this repository can see it.',
   )
 })
 
