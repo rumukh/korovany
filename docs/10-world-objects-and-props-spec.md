@@ -1813,6 +1813,45 @@ diagnosis died the same way. A catalogue of checks that could not fail is only p
 process where checking is cheaper than arguing — so if one practice from this document
 survives into another programme, it should be that one, and the rules are downstream of it.
 
+### 13.1 Open at hand-off
+
+One item, and it is coverage rather than a defect. It is recorded here because a session
+ends and a measurement should not end with it.
+
+**The integration branch carries `retentionIsIntact` byte-identical to this branch's copy,
+and does not carry the test that proves it can return `false`.** Measured on the PR head
+`d6cddc6` in a fresh worktree, with a baseline first:
+
+```
+BASELINE                            342 pass / 0 fail
+retentionIsIntact -> return true    342 pass / 0 fail
+same mutation on this branch         39 pass /  1 fail
+```
+
+The integration branch does assert `assert.ok(runtime.retentionIsIntact, …)` across 75
+region loads, and that is real coverage — **of the system.** A phantom arising naturally
+during those loads is caught. What it cannot cover is **the instrument**: it consumes the
+predicate's output and never constructs a state where that output should be false, so
+replacing the predicate with `return true` satisfies it 342 times.
+
+The distinction is the whole of §13 in one line: *that assertion tests the world; the
+missing one tests the thermometer.* The content probe is `retained.push` — the phantom
+injection itself — which is **0** there and 1 here, and it is a content probe rather than a
+SHA comparison for the reason given in §6: the integrator applies work by patch, so
+ancestry proves containment when true and nothing when false.
+
+It matters because this is the exact regression that already happened once. The predicate's
+predecessor compared `propCacheSize >= retainedPropCount`, which reduces to `B >= P` and
+stayed green until **29 simultaneous phantoms** — blind across the entire range a real bug
+produces. Nothing on the integration branch would notice it being weakened back.
+
+Two tests restore it, both in `tests/worldArt.test.ts` on this branch and both free of
+dependencies beyond `WorldPropLibrary`: `the phantom-pin check detects a single phantom,
+not thirty`, and `the world-objects spec has no mangled paragraph joins`. **After restoring
+either, re-run the mutation rather than trusting the restore** — the entire finding is that
+a present fix and a present-looking test are different things, which makes the author of
+this note the worst available source for *"it is covered now."*
+
 
 ## 14. Effort
 
