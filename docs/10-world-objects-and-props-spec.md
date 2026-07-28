@@ -903,7 +903,26 @@ programme's docs. Line numbers rot silently — the file they point into stays v
 nothing errors, and the citation quietly starts describing a blank line. This spec cites
 files and symbols throughout for that reason. The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives already
 
-**A negative claim needs a probe at least as much as a positive one, and usually more.**
+**A figure inside quotation marks reads as already verified — and so does a figure inside
+an instruction.** The second half is the programme lead's, added after three separate
+sessions spent measurements refuting quotations none of them had written: a docblock edit,
+a `smooth: true` count, and a freeze target. Nobody misquoted anyone. The figures acquired
+a specificity in transit that they did not have when sent, and each receiving session
+reasonably treated a quoted SHA as something to *check against* rather than something to
+first confirm existed.
+
+The instruction case is the more dangerous one, because a directive carries authority a
+quotation does not. *"Freeze at X"* is acted on; *"I measured X"* is at least a claim
+someone might test. Two of the three phantom quotations this pass received were
+instructions, and refusing them required arguing against a premise rather than a number.
+
+The practical form is the same one this section keeps arriving at from different
+directions: **state the command beside the figure.** A SHA with `git rev-parse` next to it
+can be re-run; a SHA inside an instruction cannot be distinguished from one inside a
+measurement, and by the time it reaches a third party it has neither provenance nor a way
+to acquire one.
+
+
 Nothing else will contradict it. Reporting the state of an integration branch, this pass
 ran five content probes for what it *had* — all five correct — and then listed what it
 *lacked* from its own commit titles. Two of the three named as missing were already
