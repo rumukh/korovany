@@ -356,6 +356,17 @@ no new dependencies.
   magnitude of items before believing anything about them, and put the count in the
   failure message. **A detector must be made to fire on doped input before its silence
   on real input means anything.**
+  That rule has a ceiling, and it is worth stating beside it: **a positive control
+  validates the instrument against the model, never the model against reality.** Dope a
+  checker that holds a wrong model with a defect *its model recognises* and it fires
+  correctly, the control passes, and the model stays wrong — so a doped control cannot
+  catch a checker asking the right question about the wrong object. The instance that
+  produced this: a sort check modelled the barrel as one sorted list when the file's
+  actual convention is per block, values then types. Its control passed and its verdict
+  was noise. What catches that class is the signal such a checker emits and its author
+  discards: **a detector firing broadly on input everyone believes correct is evidence
+  about the model, not the subject.** "The whole list is unsorted" on a file nobody had
+  complained about was the model announcing itself, and it was read as sloppiness.
 - **A measurement is a claim with a timestamp nobody writes down.** Every other rule
   here targets claims that were wrong. This one is about claims that were *right and
   stopped being* — which is a different failure, because a measurement carries its own
