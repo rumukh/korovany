@@ -765,6 +765,38 @@ the injection for one surface. The first mutation attempted was inert — it gat
 which said nothing about the test. **A mutation that perturbs nothing observable is not a
 control**, and the pass it produces is the same green as a real one.
 
+### 6.2 Known residue: sign-only assertions guarding loops
+
+Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
+`mergeOwnership`) take the form `assert.ok(x > 0)` or `assert.ok(xs.length >= n)` with no
+message; the same shape appears **46 times across the whole `tests/` suite**, so this is a
+house habit rather than a foundation defect. Most are fixture guards and harmless. A few are
+**floors standing in front of the loop that does the actual testing** — `worldArt.test.ts`'s
+prop-colour check asserts `parts.length >= 1` and then iterates, so a builder that silently
+returned fewer parts would shrink the covered population without failing anything. This is
+§6's own rule (*prefer magnitudes and exact counts to signs and inequalities*) unapplied to
+the tests that enforce §6.
+
+They are listed as a class rather than by line number, because line numbers rot and the
+detection is one command. Note the leading `\s*`: assertions inside a `test()` body are
+indented, and the same pattern anchored at `^assert` returns **zero** on this repository
+while thirteen of them sit in the files it names.
+
+```powershell
+Select-String -Path tests\*.test.ts -Pattern '^\s*assert\.ok\([^,]*[><]=?\s*\d+\)$'
+```
+
+That anchoring bug is not hypothetical — it is the first form this section shipped with,
+caught only by running the published command instead of trusting the measurement it was
+derived from. The measurement had trimmed each line; the command could not. **A count and
+the command that is supposed to reproduce it are two different instruments, and agreeing
+about a number is not the same as measuring the same population** — the count above is
+thirteen for four files and forty-six for the suite, from one pattern.
+
+Not fixed here: converting a floor to an exact count requires knowing each true population,
+and two of the four files are open in sibling pull requests. **Whoever narrows one should
+assert the count, not the sign, and should watch it fail once first.**
+
 ## 7. Budgets
 
 Every line names the **population it governs**, not only its value. Three budgets in this
