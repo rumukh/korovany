@@ -2519,13 +2519,36 @@ test('decoration never blocks a spawn point', () => {
   // its job against a populated collision world, an order production never takes. It
   // passed while the game was broken.
   const unwalkableStarts: string[] = []
-  for (const faction of ['elf', 'guard', 'villain'] as const) {
-    const start = runtime.getStartPosition(faction)
-    runtime.update({ deltaSeconds: 0, focus: start })
-    if (!runtime.collision.isWalkablePosition(start.x, start.z, 0.45)) {
-      unwalkableStarts.push(faction)
+  // Across seeds that include one which reproduced the fault. A reviewer showed the
+  // single-seed version had no power at all: dropping faction starts from the anchor set
+  // left the suite green while the cold sweep went back to 1 of 180, because
+  // `'spawn-keepout'` contains no blocked start in either state. Ordering, mechanism and
+  // assertion were all correct and the input never had the defect.
+  //
+  // `gp-6` is the seed the reviewer's sweep found, and its `villain` start is the case.
+  // **A regression test needs a seed that reproduced the bug** — otherwise it asserts a
+  // true thing about a world that was never broken.
+  const seeds = ['spawn-keepout', 'gp-6', 'gp-11', 'gp-23', 'gp-37', 'gp-48']
+  let startsSampled = 0
+  for (const seed of seeds) {
+    const cold = createRuntime(seed)
+    try {
+      for (const faction of ['elf', 'guard', 'villain'] as const) {
+        const start = cold.runtime.getStartPosition(faction)
+        cold.runtime.update({ deltaSeconds: 0, focus: start })
+        startsSampled += 1
+        if (!cold.runtime.collision.isWalkablePosition(start.x, start.z, 0.45)) {
+          unwalkableStarts.push(`${seed}/${faction}`)
+        }
+      }
+    } finally {
+      cold.runtime.dispose()
     }
   }
+  assert.ok(
+    startsSampled >= 18,
+    `only ${String(startsSampled)} faction starts were sampled across ${String(seeds.length)} seeds`,
+  )
   assert.deepEqual(
     unwalkableStarts,
     [],

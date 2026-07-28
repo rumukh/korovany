@@ -698,8 +698,28 @@ Four rules fall out of them, in rough order of how much they would have saved:
    the exercise here, the first gate matched the wrong `releaseOutline` of two and
    reported success on a file that had not been mutated where it mattered.
 
-   The ordering variant is the sharpest of the set. `releaseResources` promises in a
-   comment to detach ink shells *before* the `InstancedMesh` sweep; moving the release
+7. **A regression test needs a seed that reproduced the bug.** Ordering, mechanism and
+   assertion can all be correct and the test still prove nothing if its input never
+   carried the defect. The spawn regression is the case, and it survived *three* rounds
+   of correct fixes: the mechanism moved from snap to keep-out, the test's call order
+   moved from warm to cold, and the assertion had no power over the faction-start case at
+   any point — because it ran on one seed, `'spawn-keepout'`, which has no blocked start
+   in either state. Dropping faction starts from the anchor set left the suite green
+   while the cold sweep went straight back to 1 of 180.
+
+   This is rule 6's sub-point at its most expensive: a system test can only exercise the
+   cases the system happens to contain, and a single seed is a very small system. The
+   remedy is one line and should be reflexive: **disable the fix and confirm the test goes
+   red.** It would have caught this iteration and the two before it. The test now runs six
+   seeds including `gp-6`, whose `villain` start is the original fault, with a sample
+   floor so a shrinking seed set fails loudly.
+
+   Found by a reviewer who checked whether the *fix* was covered rather than whether it
+   worked — the fix was real and order-independent, verified cold at 0 of 180, and the
+   test guarding it was still empty.
+
+   The ordering variant is the sharpest of the mutation set. `releaseResources` promises
+   in a comment to detach ink shells *before* the `InstancedMesh` sweep; moving the release
    loop below the sweep left every post-hoc assertion true — shells still ended detached
    with their own matrices — while firing `dispose` against the source's attribute 13
    times of 13. **Order is invisible to a state check made after the fact**, and closing
