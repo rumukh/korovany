@@ -511,6 +511,15 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
    * `canJudgeWalkability` first; this throws rather than pretend, on the same principle
    * as `WorldPropLibrary.release` refusing a spent receipt: fail at the boundary, not
    * with a believable wrong value later.
+   *
+   * **The throw is prospective, not active.** There is exactly one caller —
+   * `getStartPosition` — and it tests `canJudgeWalkability` itself before calling, so
+   * the throw is unreachable in production today. A reviewer measured that directly:
+   * forcing the condition true changes no shipped behaviour, which makes it an
+   * equivalent mutation rather than a finding. What it defends is the *second* caller,
+   * whenever one arrives without the outer check. That is worth having, and it is worth
+   * not mistaking for a guard that protects something now — the test reaches it by
+   * casting past `private`, which is the only route to it.
    */
   private walkableNear(point: Point3): Point3 {
     if (!this.canJudgeWalkability()) {

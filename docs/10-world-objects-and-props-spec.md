@@ -907,8 +907,53 @@ blind to a guard spelled differently and blind to a guard that is an ordering fa
 line of code at all. That is rule 3 firing on the first check written after the rule
 landed, against its own author. **Landing a rule does not install it.**
 
+**A check that fires on correct code is worse than no check.** The tempting fix for a
+predicate that misses a case is to widen it — here, extending a `.material`-assignment
+scanner to catch `castShadow` too. That would have failed the build immediately, because
+the four builders it newly covers are *correctly* unguarded today: they run before
+anything outlines their output. A red light that means "this was always like this" is
+indistinguishable from one that means "you just broke it", and arriving mid-merge it
+trains everyone reading it to ignore the next one.
+
+The alternative is to assert the property that actually holds rather than a proxy for it.
+The real invariant is *"these builders contain no outline calls"* — measured true at every
+commit, so it never reddens a merge, and it fires exactly when someone co-locates
+outlining into a builder, which is the change that makes them unsafe. Same coverage,
+no false alarm, and it converts the ordering guard above into a greppable one without
+inventing a defect to justify itself.
+
+Contributed by the foundation session, about the widening of its own landed test — whose
+predicate is blind to the same four builders its throwaway scanner scored 0 for 5 on. The
+same blindness, one layer up: in the shipped artefact rather than the probe.
+
+**Cite symbols, not line numbers, in anything meant to be lifted.** Small, and it is the
+failure mode this section is most exposed to, since it exists to be copied into another
+programme's docs. Line numbers rot silently — the file they point into stays valid, so
+nothing errors, and the citation quietly starts describing a blank line. This spec cites
+files and symbols throughout for that reason.
+
+**A negative claim needs a probe at least as much as a positive one, and usually more.**
+Nothing else will contradict it. Reporting the state of an integration branch, this pass
+ran five content probes for what it *had* — all five correct — and then listed what it
+*lacked* from its own commit titles. Two of the three named as missing were already
+merged, and the one genuinely missing was described as test-only when it carried source in
+two files.
+
+The asymmetry is the point: a positive claim invites the check that refutes it, because
+the natural response to "it has X" is to look for X. A negative claim has no such
+counterpart — *"it lacks X"* looks the same whether or not anyone measured, and being
+wrong about it is invisible until someone else looks. It is the borrowed-check finding one
+level up: the assertion arriving with confidence attached gets the least scrutiny.
+
+The remedy is mechanical and costs the same as the positive probe: **grep for the thing
+you claim is absent, and report the number.** An absence stated as `MISS <token>` next to
+a command is checkable; an absence stated from memory is a rumour with a SHA attached.
+
 **Measure adopted fixes at least as hard as original code, precisely because they feel
-settled.** The last entry, and the one that explains why several of the others survived
+settled.** Contributed by the programme lead, about this pass's own status report, in
+the same message in which it retracted a probe of its own for the same class of defect —
+it had checked for two symbols that existed both before and after the fix they were meant
+to confirm. The last entry, and the one that explains why several of the others survived
 so long. **A check inherited from review carries borrowed authority**: it arrives already
 argued for, by someone who was right about something else, which is exactly the condition
 under which nobody measures it again.

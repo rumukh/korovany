@@ -674,7 +674,13 @@ Verifying what they build — four rules, each learned the expensive way:
   acquired a material; a winding check whose helper conformed the winding it was about
   to measure; a face walker that ignored the index buffer and so returned the same
   count for a correct sphere as for a fully reversed one; and 252 passing tests of
-  which not one read the injected shader body.
+  which not one read the injected shader body. The first three are blind instruments
+  and the corruption test above repairs all three. The fourth is different in kind —
+  there was no instrument to corrupt — and no mutation can reach it. That case needs a
+  coverage question rather than a mutation one: derive the population from source and
+  assert both halves non-empty, as the builder-coverage test does by parsing the
+  exports of `GeometryKit.ts`. Hardening the instruments you have is silent about the
+  ones you never wrote.
 - **Prefer magnitudes and exact counts to signs and inequalities.** `> 0` passes for a
   blind instrument as readily as for a correct one, so an assertion built on a sign is
   a coin flip against any defect that perturbs magnitude without perturbing sign. An
