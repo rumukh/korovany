@@ -433,9 +433,22 @@ function reverseAsABuilderWould(geometry: THREE.BufferGeometry): THREE.BufferGeo
  * winding tests sit — not here.
  *
  * Neither alone covers the family. The centroid ray is decisive for compact solids but
- * weak on a sparse branch structure, where a correct fort tree already reads 47% inward
- * because its faces do not surround its centroid; signed volume is decisive there and
- * says nothing about an open sheet.
+ * weak in two unrelated ways. A **sparse** branch structure reads badly because its
+ * faces do not surround its centroid — a correct fort tree already sits at 47% inward.
+ * A **flat** cross-section reads badly for a different reason: its faces are nearly
+ * orthogonal to the centroid ray, so they fall under the decisiveness cutoff and are
+ * declined rather than misjudged. A sibling session measured the onset at a section
+ * ratio of about **2:1** on strictly convex, flawless lofts; this file has two profiles
+ * past it — `rectProfile(0.045, 0.012)` at 3.75:1 and `rectProfile(0.075, 0.018)` at
+ * 4.17:1 — both blade-like parts inside merged props, where the rest of the merge
+ * restores decisiveness.
+ *
+ * That second cause is worth naming because it is invisible in the shipped numbers: a
+ * flat part declines faces rather than failing, so it looks like coverage. Anything
+ * blade-, plank- or banner-shaped tested in isolation belongs on signed volume, and a
+ * centroid failure there is the guard working rather than a winding fault.
+ *
+ * Signed volume is decisive for both and says nothing about an open sheet.
  *
  * The half threshold is derived, not tuned. Reversing every face negates each face's
  * alignment with the centroid ray while leaving `|alignment|` — and therefore the
@@ -2405,13 +2418,36 @@ test('decoration never blocks a spawn point', () => {
   // its job against a populated collision world, an order production never takes. It
   // passed while the game was broken.
   const unwalkableStarts: string[] = []
-  for (const faction of ['elf', 'guard', 'villain'] as const) {
-    const start = runtime.getStartPosition(faction)
-    runtime.update({ deltaSeconds: 0, focus: start })
-    if (!runtime.collision.isWalkablePosition(start.x, start.z, 0.45)) {
-      unwalkableStarts.push(faction)
+  // Across seeds that include one which reproduced the fault. A reviewer showed the
+  // single-seed version had no power at all: dropping faction starts from the anchor set
+  // left the suite green while the cold sweep went back to 1 of 180, because
+  // `'spawn-keepout'` contains no blocked start in either state. Ordering, mechanism and
+  // assertion were all correct and the input never had the defect.
+  //
+  // `gp-6` is the seed the reviewer's sweep found, and its `villain` start is the case.
+  // **A regression test needs a seed that reproduced the bug** — otherwise it asserts a
+  // true thing about a world that was never broken.
+  const seeds = ['spawn-keepout', 'gp-6', 'gp-11', 'gp-23', 'gp-37', 'gp-48']
+  let startsSampled = 0
+  for (const seed of seeds) {
+    const cold = createRuntime(seed)
+    try {
+      for (const faction of ['elf', 'guard', 'villain'] as const) {
+        const start = cold.runtime.getStartPosition(faction)
+        cold.runtime.update({ deltaSeconds: 0, focus: start })
+        startsSampled += 1
+        if (!cold.runtime.collision.isWalkablePosition(start.x, start.z, 0.45)) {
+          unwalkableStarts.push(`${seed}/${faction}`)
+        }
+      }
+    } finally {
+      cold.runtime.dispose()
     }
   }
+  assert.ok(
+    startsSampled >= 18,
+    `only ${String(startsSampled)} faction starts were sampled across ${String(seeds.length)} seeds`,
+  )
   assert.deepEqual(
     unwalkableStarts,
     [],
@@ -2530,7 +2566,46 @@ test('teardown detaches every instanced ink shell before its source is disposed'
     'a live instanced shell must share its source matrix, or the hazard does not exist',
   )
 
-  runtime.dispose()
+  // Record the dispose *sequence*, not just the end state. "Detached with its matrix
+  // restored" is checked after `dispose()` returns, by which time `disposeShell` has done
+  // its job whenever it ran — so a teardown that releases the outlines *after* the
+  // `root.traverse(... InstancedMesh.dispose())` sweep passes every post-hoc check while
+  // firing dispose against the source's attribute 13 times out of 13. A reviewer moved
+  // the release loop below the sweep, changed nothing else, and 283 tests stayed green.
+  //
+  // Order is invisible to a state check. It needs an observation made during teardown.
+  const disposeOrder: THREE.InstancedMesh[] = []
+  const realDispose = THREE.InstancedMesh.prototype.dispose
+  THREE.InstancedMesh.prototype.dispose = function patchedDispose(
+    this: THREE.InstancedMesh,
+  ) {
+    disposeOrder.push(this)
+    return realDispose.call(this)
+  }
+  try {
+    runtime.dispose()
+  } finally {
+    THREE.InstancedMesh.prototype.dispose = realDispose
+  }
+
+  const disposedLate = pairs.filter((pair) => {
+    const shellAt = disposeOrder.indexOf(pair.shell)
+    const sourceAt = disposeOrder.indexOf(pair.source)
+    return shellAt >= 0 && sourceAt >= 0 && shellAt > sourceAt
+  })
+  assert.deepEqual(
+    disposedLate.map((pair) => pair.shell.name),
+    [],
+    'these shells were disposed after their source, so dispose fired against a buffer '
+      + 'the shell was still borrowing',
+  )
+  // Non-vacuity: the patch must actually have observed the teardown. An empty sequence
+  // makes every index -1 and the comparison above trivially true.
+  assert.ok(
+    disposeOrder.length >= pairs.length,
+    `the dispose patch observed only ${String(disposeOrder.length)} calls for `
+      + `${String(pairs.length)} shell/source pairs`,
+  )
 
   const attached = pairs.filter((pair) => pair.shell.parent === pair.source)
   assert.deepEqual(
