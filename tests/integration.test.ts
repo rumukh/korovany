@@ -1045,3 +1045,51 @@ test('the streamed world\'s prop cache is the worked example docs/08 says it is'
   )
 })
 
+
+
+/**
+ * The type gate covers `tests/`, and this asserts the wiring rather than the outcome.
+ *
+ * Three separate things were true at once and each hid the next. The root
+ * `tsconfig.json` is `"files": []` with project references, so **`tsc --noEmit` checks
+ * nothing and exits 0** — measured: a planted `const x: number = "s"` in `src/` passes
+ * it and fails `tsc -b`. `tsconfig.app.json` includes only `src`, so **no config
+ * reached `tests/` at all**. And the runner uses `--experimental-strip-types`, which
+ * removes types without checking them. A blatant type error in a test file passed the
+ * build AND the suite.
+ *
+ * It was not theoretical. `tests/art.test.ts` passed `{ caps: true }` to
+ * `tubeAlongPoints`, whose option is `capStart`/`capEnd` — silently dropped, so the
+ * test titled *"tube caps wind outward regardless of tube direction"* built 96
+ * triangles, exactly what passing no options builds, and never had a cap to judge.
+ * Reintroducing the defect its title names left it green.
+ *
+ * **This assertion exists because the gate is in a build script, where nothing running
+ * `npm test` can see it.** Deleting the `tsc --noEmit -p tsconfig.test.json` step, or
+ * narrowing the config's `include`, restores the exact silence above and no test would
+ * otherwise notice — which is how the hole formed in the first place.
+ *
+ * What it cannot detect: whether the gate PASSES. It asserts the wiring is present, not
+ * that the code type-checks — that is `npm run build`'s job, and this only guarantees
+ * the build still asks.
+ */
+test('the type gate still covers tests/, in the build and in a config', () => {
+  const root = new URL('../', import.meta.url)
+  const pkg = JSON.parse(readFileSync(new URL('package.json', root), 'utf8')) as {
+    scripts: Record<string, string>
+  }
+  assert.match(
+    pkg.scripts.build,
+    /tsc --noEmit -p tsconfig\.test\.json/,
+    'the build no longer type-checks tests/. `tsc -b` covers only tsconfig.app.json '
+    + '("include": ["src"]), and --experimental-strip-types does not type-check, so '
+    + 'removing this step leaves every test file unchecked by anything',
+  )
+  const testConfig = readFileSync(new URL('tsconfig.test.json', root), 'utf8')
+  const parsed = JSON.parse(testConfig) as { include?: string[] }
+  assert.ok(
+    parsed.include?.includes('tests'),
+    'tsconfig.test.json stopped including tests/, so the build step above now checks '
+    + 'nothing and still exits 0 — the same shape as `tsc --noEmit` on the root config',
+  )
+})

@@ -14,6 +14,8 @@ const generatedMap = {
       territory: 'neutral',
       discovered: true,
       current: true,
+      contested: false,
+      razed: false,
     },
     {
       id: 'unknown',
@@ -23,6 +25,8 @@ const generatedMap = {
       territory: 'elf',
       discovered: false,
       current: false,
+      contested: false,
+      razed: false,
     },
   ],
 } satisfies WorldMapView

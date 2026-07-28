@@ -21,7 +21,7 @@ const RUNTIME_OPTIONS = {
 
 function createRuntime(
   seed: string | number,
-  decorationDensity = RUNTIME_OPTIONS.decorationDensity,
+  decorationDensity: number = RUNTIME_OPTIONS.decorationDensity,
 ) {
   const scene = new THREE.Scene()
   const blueprint = generateWorld(seed)

@@ -186,6 +186,8 @@ function everyPropRequest(): Array<[string, PropRequest]> {
               owner,
               detail,
               spec: {
+                archetype: 'house' as const,
+                variant: 0,
                 width: 5,
                 depth: 4,
                 wallHeight: 3,
@@ -805,6 +807,8 @@ test('a partial inversion is detectable, which volume and normals alone cannot m
         owner: 'elf',
         detail: 'near',
         spec: {
+          archetype: 'house' as const,
+          variant: 0,
           width: 5,
           depth: 4,
           wallHeight: 3,
@@ -2390,7 +2394,7 @@ test('decoration never blocks a spawn point', () => {
           if (runtime.collision.isWalkablePosition(spawn.worldX, spawn.worldZ, 0.45)) {
             continue
           }
-          blockedByStructure.push(`${plan.slotId}/${faction}`)
+          blockedByStructure.push(`${plan.id}/${faction}`)
         }
       }
     }
