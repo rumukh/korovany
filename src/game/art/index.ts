@@ -106,8 +106,10 @@ export { hasStylizedShader } from './stylizedShader.ts'
 // Wave 2A. People, animals and the caravan: the taxonomy plus every builder that
 // turns it into geometry. See `docs/09-npc-and-creature-models-spec.md`.
 export {
+  BEAST_KINDS,
   BEAST_RIG,
   CHARACTER_DETAIL_DISTANCE,
+  CHARACTER_FACTIONS,
   CHARACTER_VARIANTS,
   WAGON_RIG,
   buildBeastBody,
@@ -147,6 +149,7 @@ export {
   buildWristRope,
   characterKitForRole,
   characterPartKeys,
+  characterRoles,
   cloakVariant,
   forearmVariant,
   resolveCharacterPlan,

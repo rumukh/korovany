@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import * as THREE from 'three'
 import {
+  BEAST_KINDS,
   BEAST_RIG,
+  CHARACTER_FACTIONS,
   CHARACTER_VARIANTS,
   GeometryCache,
   artVariation,
@@ -44,6 +46,7 @@ import {
   buildWeaponHead,
   buildWristRope,
   characterPartKeys,
+  characterRoles,
   hasOutlineNormals,
   resolveCharacterPlan,
   setCharacterShoulderWidth,
@@ -89,19 +92,15 @@ const GEOMETRY_CACHE_ENTRIES_MAX = 220
  * still intact. See `docs/09-npc-and-creature-models-spec.md`.
  */
 
-const FACTIONS: readonly CharacterFaction[] = ['elf', 'guard', 'villain']
-const ROLES = [
-  'soldier',
-  'scout',
-  'commander',
-  'minion',
-  'archer',
-  'brute',
-  'champion',
-  'captive',
-  'peasant',
-] as const
-const BEASTS: readonly BeastKind[] = ['wolf', 'boar', 'bear', 'troll']
+// Read from `CharacterKit` rather than restated here. A hand-written array typed
+// `readonly CharacterFaction[]` is checked in one direction only: it breaks if a
+// faction is *removed* and stays green if one is *added*, so every population claim
+// in this file would quietly stop covering the population. A reviewer found that;
+// these three now come from the same data the plans are built out of, so a new
+// faction, role or beast joins every sweep below by construction.
+const FACTIONS = CHARACTER_FACTIONS
+const ROLES = characterRoles()
+const BEASTS = BEAST_KINDS
 /** Every kind the builders accept, including the ones no plan table selects. */
 const HEADGEAR_KINDS = [
   'circlet', 'crown', 'hood', 'kettle', 'nasal', 'crested',
@@ -1746,11 +1745,18 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
   // noticed here rather than in a screenshot.
   //
   // The bound is the animal's own `footprint` — the radius of its contact shadow,
-  // which is an independent number in the same authored units. The first version of
-  // this assertion compared the sweep against `rig.headZ`, and `2 * headZ * sin(t/2)`
-  // divided by `headZ` is just `2 * sin(t/2)` = 0.446: the term it was bounding
-  // cancelled out and the check was true for every possible rig. It was caught by a
-  // reviewer who moved a wolf's skull to `headZ` 100 and watched the test pass.
+  // which is an independent number in the same authored units. Be clear about what it
+  // is: a **smoke bound**, not a derivation. It compares a chord against a radius, and
+  // there is no geometric reason those should be equal; what it buys is that the two
+  // quantities are authored separately, so a `headZ` that grows without a `footprint`
+  // to match trips it. A reviewer pointed out that an earlier message called the
+  // footprint "how wide the animal is", which is a radius described as a width.
+  //
+  // The first version of this assertion compared the sweep against `rig.headZ`, and
+  // `2 * headZ * sin(t/2)` divided by `headZ` is just `2 * sin(t/2)` = 0.446: the term
+  // it was bounding cancelled out and the check was true for every possible rig. It
+  // was caught by a reviewer who moved a wolf's skull to `headZ` 100 and watched the
+  // test pass.
   for (const kind of BEASTS) {
     const rig = BEAST_RIG[kind]
     assert.ok(
@@ -1761,8 +1767,8 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
     assert.ok(
       sweep <= rig.footprint,
       `a ${kind}'s skull sweeps ${sweep.toFixed(4)} sideways at the clamped `
-      + `${BEAST_YAW_CLAMP.toFixed(2)} rad look — further than the ${rig.footprint.toFixed(2)} `
-      + 'the animal is wide. A head on a pivot at the body centre only reads as attached '
+      + `${BEAST_YAW_CLAMP.toFixed(2)} rad look — further than its ${rig.footprint.toFixed(2)} `
+      + 'footprint radius. A head on a pivot at the body centre only reads as attached '
       + 'while that stays true; either clamp the look further, bring `headZ` in, or give '
       + 'the beasts a neck joint as `buildCharacterSkeleton` does for people.',
     )

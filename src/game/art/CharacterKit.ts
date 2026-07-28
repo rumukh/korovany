@@ -41,7 +41,19 @@ import {
 // Taxonomy
 // ---------------------------------------------------------------------------
 
-export type CharacterFaction = 'elf' | 'guard' | 'villain'
+/**
+ * The three factions, as data rather than as a type.
+ *
+ * Declared this way round — array first, type derived — so that a fourth faction
+ * cannot be added without joining every sweep that iterates this. A hand-written
+ * `readonly CharacterFaction[]` in a test is checked against the union in one
+ * direction only: removing a member breaks it, **adding** one escapes it silently,
+ * and every population claim in `tests/characterArt.test.ts` is built on these
+ * arrays. A reviewer found that hole; this closes it by construction.
+ */
+export const CHARACTER_FACTIONS = ['elf', 'guard', 'villain'] as const
+
+export type CharacterFaction = (typeof CHARACTER_FACTIONS)[number]
 
 /**
  * The nine shapes a person can be.
@@ -593,6 +605,19 @@ function patchProportions(
 export function characterKitForRole(role: string, player: boolean): CharacterKitId {
   if (player) return 'hero'
   return KIT_BY_ROLE[role] ?? 'line'
+}
+
+/**
+ * Every non-player role a character plan can be built for, from the kit map itself.
+ *
+ * The one authority on which roles exist is `KIT_BY_ROLE`, so a sweep that wants to
+ * cover them should read it rather than restate it. A hand-written list is a claim
+ * about a population, and a new role added to the map would slip past every such
+ * list in the test file without a single assertion noticing — the type only catches
+ * a member *removed*.
+ */
+export function characterRoles(): readonly string[] {
+  return Object.keys(KIT_BY_ROLE).filter((role) => role !== 'player')
 }
 
 /**
@@ -3306,7 +3331,10 @@ export function solveHandOffset(
 // Beasts
 // ---------------------------------------------------------------------------
 
-export type BeastKind = 'wolf' | 'boar' | 'bear' | 'troll'
+/** The four beasts. Array first, type derived — see {@link CHARACTER_FACTIONS}. */
+export const BEAST_KINDS = ['wolf', 'boar', 'bear', 'troll'] as const
+
+export type BeastKind = (typeof BEAST_KINDS)[number]
 
 export interface BeastRig {
   /** Height of the spine above the ground. */
