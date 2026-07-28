@@ -1703,23 +1703,34 @@ test('the head tracks its target through the chest, not past it', () => {
   //    **6.1925**, against the 6.0420 below.
   //
   // Neither changes the ordering or the head-roll conclusion. Both make the table's
-  // *non-zero* figures lower bounds rather than maxima — which is the safe direction for
-  // anything reading them as a guard, and the wrong direction for anything quoting them
-  // as what the geometry does.
+  // figures lower bounds rather than maxima — which is the safe direction for anything
+  // reading them as a guard, and the wrong direction for anything quoting them as what
+  // the geometry does. That applies to **all four rows**: each is an absolute coefficient
+  // found by search, and a better search revises any of them upward.
   //
-  // **The zero row is not in that class, and an earlier version of this caveat said it
-  // was.** "The table's figures are lower bounds" is true of five rows and false of the
-  // one that matters most: head roll's delta is exactly zero by the algebra eighty lines
-  // above — `Rz(roll)·zHat = zHat` at every value, reachable or not — so it is not a
-  // sample of anything and cannot be revised upward by a better search. A reviewer
-  // reading from outside caught the two statements contradicting each other.
+  // **What is exact is not a figure but a difference.** Head roll's *contribution* —
+  // row 2 minus row 1 — is zero by the algebra eighty lines above, `Rz(roll)·zHat = zHat`
+  // at every value, reachable or not. Both rows are lower bounds; their difference is a
+  // proof, and it stays zero however far either row is revised, because the revision
+  // moves them together.
   //
-  // Worth naming because it is this file's defect running backwards. Everywhere else, a
-  // narrow claim was quietly standing in for a wide population. Here a **caveat**
-  // generalised across rows that were not alike, and the cost is inverted: instead of
-  // overclaiming a measurement, it underclaims a proof. A blanket hedge is not free —
-  // it is a claim about every row it covers, and it needs the same population check as
-  // the confident sentence it was written to soften.
+  // **An earlier version of this caveat got that wrong twice, in the act of fixing it.**
+  // It said the caveat covered the "non-zero figures" and was "true of five rows" — but
+  // the head-roll row's figure is `4.8203`, not zero, and *is* a lower bound like the
+  // rest; and this table has four rows, not six. The "one of six" came from a reviewer's
+  // remark about a different table entirely — the Euler-order sweep, where `XYZ` really
+  // does sit alone against five others. **A precise observation about one object was
+  // imported onto another without checking the two had the same shape.** The observation
+  // was right, the object was wrong, and borrowed precision reads exactly like earned
+  // precision: it arrives with a number attached and nothing about it invites checking
+  // whether the number was ever counted here.
+  //
+  // Worth keeping because it is this file's defect running backwards, twice over.
+  // Everywhere else a narrow claim stood in for a wide population; here a **caveat**
+  // generalised across rows that were not alike, underclaiming a proof rather than
+  // overclaiming a measurement — and then the correction to it overclaimed in turn. A
+  // blanket hedge is a claim about every row it covers and needs the same population
+  // check as the confident sentence it softens; so does the sentence that narrows it.
   //
   // **The disagreement is the record.** Stating both figures with both methods named is
   // this file's own rule for exactly this situation, and it is preferable to a third
