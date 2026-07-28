@@ -1332,6 +1332,19 @@ test('region streaming returns every borrowed prop reference', () => {
   )
   assert.ok(runtime.retainedPropCount <= 128)
 
+  // No phantom pins. A window entry whose key has no live cache entry would occupy a
+  // slot, pin nothing, and release nothing when evicted — and it is invisible to a
+  // reference-count sum, because `GeometryCache.release` is a silent no-op on a key it
+  // does not hold. Since the window holds distinct keys and each pins one reference,
+  // every retained key must correspond to a live entry, so the cache can never be
+  // smaller than the window. Suggested by review, which measured zero across 225
+  // checkpoints; this is what keeps it that way.
+  assert.ok(
+    runtime.propCacheSize >= runtime.retainedPropCount,
+    `${String(runtime.retainedPropCount)} retained keys against only `
+    + `${String(runtime.propCacheSize)} live entries: the window is pinning nothing`,
+  )
+
   runtime.dispose()
   assert.equal(runtime.propCacheSize, 0)
   assert.equal(runtime.retainedPropCount, 0)
