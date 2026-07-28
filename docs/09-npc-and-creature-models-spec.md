@@ -572,9 +572,23 @@ no new dependencies.
   stale source: **the clock was never wrong, the referent moved.** Re-resolving the source
   would not have caught it, because the source was correct.
   So a fourth rung under the quote/recollection hierarchy, and the only one with no tell:
-  **a duration is not a value, it is a function of *now*, and it must be re-evaluated
-  everywhere it appears.** A figure that answered one question correctly will answer the
-  next one silently and wrongly, and nothing in the sentence changes when it does.
+  **a duration is not a value, it is a function of *now*.**
+  **And it is the one measurement a timestamp on itself cannot rescue**, which is what
+  separates it from every other entry in this hierarchy. *"Fifty-five minutes"* is wrong
+  when reused; *"fifty-five minutes, measured at 22:27"* is **equally wrong when reused at
+  22:45**, because the reading was never stale — the *referent* rebound. The past-tense
+  remedy that repairs a stale tip does nothing here.
+  What cannot rebind is a pair of instants:
+  ```
+  brittle   "55 minutes"                       silently answers the next question
+  brittle   "55 minutes, measured at 22:27"    still silently answers it
+  durable   "21:32:43 → 22:27:43"              can only be reused correctly, or not at all
+  ```
+  So the structural form is **store intervals as endpoints, not lengths.** A length is a
+  scalar that rebinds to whichever question is nearest; two instants carry their referent
+  inside them. That is checkable when the sentence is written — it is a **shape, not a
+  discipline** — which puts this rung in the structure column rather than asking anyone to
+  remember to re-evaluate.
   With one condition that is easy to miss and makes the difference between the form
   working and merely looking like it works: **the timestamp has to be the measurement's,
   not the sentence's.** A past-tense claim carries exactly one fact the present-tense one
