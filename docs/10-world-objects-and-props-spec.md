@@ -746,8 +746,87 @@ Four ferns fail that proof and are named in the assertion rather than excused, b
 sheet has no inside to be on the wrong side of. That list is the `open` list arrived at
 from the other direction: **orientation is undefined exactly where volume is.**
 
-**The centroid threshold is derived, not tuned, and the first version of it was one
-percent from a false failure.** Reversing every face negates each face's alignment with
+**Two assertions related by an exact arithmetic identity have the discriminating power
+of one.** The identity is preserved by most mutations, so the second assertion is
+confirming arithmetic rather than testing code. Contributed by the foundation session
+after it probed its own `volume > 0` / `reversedVolume < 0` pair: swapping two vertices
+of a triple negates the cross-product term by term *whether or not those vertices were
+ever a triangle*, so a blind reader returns the exact negation of a blind measure and the
+reversed half passes unconditionally. All the discriminating power sat in the stock half.
+
+This programme produced the same shape twice more, which is why it is a rule and not an
+anecdote. The `acquires − releases === Σ referenceCount` ledger identity was preserved by
+construction — `acquire` adds one to both sides and an effective release subtracts one
+from both — so it could only fail on the absent-key case its neighbour already covered.
+And `retained.length <= retentionLimit` holds because `retain` evicts at the limit, so it
+survives the duplicate-pin fault it was written for. **Derived identities feel like
+rigour and are the easiest place to hide a check that cannot fail.** After deriving one,
+build the state it forbids and watch it fail; if you cannot construct that state, it is a
+definition rather than a test.
+
+**Prefer a magnitude or an exact count over a sign.** Same session, same probe: an
+index-blind volume reader on an indexed geometry returns a small artifact rather than
+nothing — measured +0.0029 against a true +4.01 — and the artifact's *sign* is a coin
+flip on topology, positive for a sphere and a box, negative for a cylinder, torus and
+lathe. So a sign test passes on a blind reader for exactly the two controls anyone
+reaches for first. The generalisation that covers both this and the index-blind checker
+in the table above: **assert the value the blind reading cannot produce.** A magnitude
+gap of three orders holds unconditionally; a sign does not. The volume check here now
+holds indexed prop surfaces to a fraction of their bounding box for that reason, and is
+mutation-proved by making the reader index-blind.
+
+**The two halves of this are one class, and naming it that way is the most portable
+thing in the section.** Contributed by a reviewer after both had been fixed separately:
+
+> A test that establishes world state the product doesn't establish is a check that
+> cannot fail, for the same reason a control that mutates impossible damage is — **both
+> measure a world that never occurs.**
+
+The mutation-proof rule (rule 5) says the damage must come from the model the assertion
+faces. The ordering trap says the *state* must be the one the product is in. They read as
+two different lessons and they are the same one: an assertion is only worth its result if
+the world it runs in is reachable. This pass produced both independently — a control
+reversing a box without rebaking normals, which the pipeline cannot do, and a test
+warming a runtime before asking for a start position, which `GameEngine` never does — and
+did not see they were the same until someone said so.
+
+The practical form: **when a test does setup the product does not do, that setup is part
+of the assertion.** Streaming a region, seeding a cache, constructing an input by hand —
+each one moves the test into a world that may not exist, and the more careful the setup
+looks, the less likely anyone is to question it.
+
+**A check can fire eventually and still be blind, and that is a different failure from
+one that cannot fire at all.** The phantom-pin guard is the case.
+A phantom is a key in the retention window with no cache entry behind it: it holds a slot,
+pins nothing, releases nothing on eviction, and — worse than inert — retaining one at the
+limit evicts a real key, so the fault destroys exactly what the window exists to preserve.
+The guard adopted for it asserted `propCacheSize >= retainedPropCount`, on the sound
+premise that every real pin has an entry.
+
+The premise is true and the assertion still doesn't test it. `propCacheSize` also counts
+entries held only by live borrowers, and those mask the deficit one for one: with `B`
+borrower-only entries and `P` phantoms it reduces to **`B >= P`**. A reviewer measured
+the threshold rather than the verdict, injecting phantoms one at a time into a real
+streamed world:
+
+```text
+propCacheSize 131   retainedPropCount 103   borrower-only entries 28
+ 1..28 phantoms -> PASSES (blind)
+    29 phantoms -> FAILS
+```
+
+Algebra and experiment agree on 29, and a real phantom bug produces a handful. Replaced
+with `retentionIsIntact` — every retained key must have a live cache entry — which
+detects at `P = 1` and is proved at `P = 1`.
+
+Two things make this its own entry. First, **the check adopted to close a vacuous-check
+hole was itself vacuous**, in a section written about that pattern, by someone hunting it
+deliberately. Second, and more useful: everything else in the table could *never* fire.
+This one fires — at a threshold that has nothing to do with the fault, drifts with seed
+and lap, and is invisible unless you measure the **detection threshold** rather than the
+pass or fail. A check that only catches gross corruption reads exactly like one that
+catches the class.
+
 the centroid ray while leaving `|alignment|` — and therefore which faces are decisive at
 all — untouched. So reversal maps the inward fraction `f` to exactly `1 - f`; measured
 across the request space the largest departure from that law is **0.0023**, all of it
@@ -786,6 +865,21 @@ Three mitigations, in increasing order of how well they work:
    orphaned, and an orphaned SHA still resolves in a shared object store, so a pinned
    reference keeps returning a real, readable, permanently frozen tree. This pass caused
    the epidemic by amending roughly twenty times.
+
+   **"I stopped amending" is not a guarantee of stability, and reads like one.** It does
+   not cover the base moving underneath: a rebase rewrites every SHA on the branch
+   exactly as an amend does. This pass committed additively for its last twenty commits
+   and still handed reviewers four different SHAs for the same work, because the
+   foundation tip moved four times. Both reviewers and the integrator hit it
+   independently.
+
+   The consequence for a downstream merger is the same as an amend, so the advice "commit
+   additively" does not fix their problem either: a rebase re-parents the branch, and an
+   integration branch that already merged the old shape gets add/add conflicts on files
+   it has already reviewed. **Staying rebased on a moving foundation and being cheaply
+   mergeable downstream are incompatible**, and someone has to choose. The integrator's
+   workaround — applying `git diff <old>..<new>` as a patch instead of merging — resolves
+   it as long as both SHAs are stated, which is what rule 3 is for.
 3. **State the measured SHA in every message, not just the first.** Proposed by a
    reviewer after three crossed exchanges, and the only one that survives async
    messaging with no read receipt: a crossed message is then self-dating, and staleness

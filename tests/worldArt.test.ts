@@ -6,7 +6,9 @@ import { GeometryCache } from '../src/game/art/GeometryCache.ts'
 import {
   bridgeParts,
   buildingParts,
+  ensureVertexColors,
   fencePanelParts,
+  mergeAll,
   mergePropParts,
   monumentParts,
   outcropGeometry,
@@ -409,6 +411,26 @@ function reverseAsABuilderWould(geometry: THREE.BufferGeometry): THREE.BufferGeo
 /**
  * Whether a geometry reads as outward-facing, by the two instruments that survive a
  * normal recompute.
+ *
+ * **Whole-geometry verdict only.** It catches a prop built entirely inside out and is
+ * blind to a single reversed *part* inside a merged one — `mergeAll` concatenates, so a
+ * part that arrives wound backwards keeps its winding in the merged buffer, and the
+ * merge's normal recompute makes its shading agree with itself. Measured over 248 merged
+ * hard surfaces, reversing a contiguous block and rebaking:
+ *
+ * ```text
+ * 10% of faces reversed -> undetected on 248 of 248
+ * 20%                   -> 244 of 248
+ * 35%                   -> 222 of 248
+ * 50%                   -> 118 of 248
+ * ```
+ *
+ * Neither instrument can close that on its own: signed volume is a sum so a partial
+ * inversion cancels against the rest, and the centroid fraction cannot separate 10%
+ * reversed from a legitimately concave prop, because a correct fort tree already reads
+ * 47% inward. The guard against a backwards builder is that each builder's output is
+ * judged before it reaches a merge — which is where the sibling session's kit-level
+ * winding tests sit — not here.
  *
  * Neither alone covers the family. The centroid ray is decisive for compact solids but
  * weak on a sparse branch structure, where a correct fort tree already reads 47% inward
@@ -954,6 +976,33 @@ test('every prop the world can build is oriented outwards', () => {
         // already the dominant concurrent load in the suite — walking it twice to
         // measure two properties of the same geometry buys nothing.
         if (signedVolume(part.geometry) <= 0) open.push(label)
+        // Magnitude, not just sign. A sibling session proved that on an *indexed*
+        // geometry an index-blind volume reader returns a small artifact rather than
+        // nothing — measured +0.0029 against a true +4.01 on a stock sphere — and its
+        // sign is a coin flip on topology: positive for a sphere and a box, negative for
+        // a cylinder, torus and lathe. So a sign test passes on a blind reader for
+        // exactly the shapes anyone reaches for first.
+        //
+        // Four prop surfaces are genuinely indexed (`siteProp/pillar/*#hard`, pinned by
+        // its own test), so this file has real indexed inputs to hold the reader to. A
+        // solid's volume should be a serious fraction of its bounding box; three orders
+        // of magnitude below it is the signature of a reader that stopped following the
+        // index.
+        if (part.geometry.index) {
+          const box = new THREE.Box3().setFromBufferAttribute(
+            part.geometry.getAttribute('position') as THREE.BufferAttribute,
+          )
+          const extent = box.getSize(new THREE.Vector3())
+          const boxVolume = Math.max(1e-9, extent.x * extent.y * extent.z)
+          const ratio = signedVolume(part.geometry) / boxVolume
+          if (ratio < 0.02) {
+            failures.push(
+              `${label}#${part.surface}: indexed solid encloses ${ratio.toFixed(5)} of `
+                + 'its bounding box, which is what an index-blind volume reader returns',
+            )
+          }
+        }
+
         part.geometry.dispose()
       }
     }
@@ -1218,6 +1267,86 @@ function boundaryEdgeCount(geometry: THREE.BufferGeometry): number {
   return boundary
 }
 
+/** Reverses a leading contiguous block — one sub-part of a concatenated merge. */
+function reverseLeadingBlock(
+  geometry: THREE.BufferGeometry,
+  fraction: number,
+): THREE.BufferGeometry {
+  const copy = geometry.index ? geometry.toNonIndexed() : geometry.clone()
+  const position = copy.getAttribute('position')
+  const triangles = Math.floor(position.count / 3)
+  const upto = Math.max(1, Math.round(triangles * fraction))
+  for (let triangle = 0; triangle < upto; triangle += 1) {
+    const first = triangle * 3
+    const third = first + 2
+    for (const attribute of Object.values(copy.attributes)) {
+      for (let part = 0; part < attribute.itemSize; part += 1) {
+        const array = attribute.array as unknown as number[]
+        const left = first * attribute.itemSize + part
+        const right = third * attribute.itemSize + part
+        const swap = array[left]
+        array[left] = array[right]
+        array[right] = swap
+      }
+    }
+  }
+  copy.computeVertexNormals()
+  return copy
+}
+
+test('the orientation verdict is blind to a reversed sub-part, and says so', () => {
+  // Pinned because the docblock's claim is the kind that decays silently. `mergeAll`
+  // concatenates, so a part that arrives wound backwards keeps its winding in the merged
+  // buffer and the merge's normal recompute makes its shading agree with itself — the
+  // exact shape of the `loftProfile` bug that started this wave, one level down.
+  //
+  // Measured over 248 merged hard surfaces: a 10% contiguous block reversed and rebaked
+  // is undetected on all 248. This asserts the *shape* of that limitation rather than the
+  // exact number, so it fails if either the instrument gets better (good news, update the
+  // claim) or the world stops producing merged props (which would mean this file is
+  // measuring something else entirely).
+  const library = new WorldPropLibrary({ retention: 0 })
+  let tested = 0
+  let smallBlockMissed = 0
+  let fullReversalCaught = 0
+  try {
+    for (const [label, request] of everyPropRequest()) {
+      if (!label.startsWith('building/thatch/')) continue
+      for (const part of library.build(request)) {
+        if (part.surface !== 'hard') {
+          part.geometry.dispose()
+          continue
+        }
+        tested += 1
+        const partial = reverseLeadingBlock(part.geometry, 0.1)
+        if (readsOutward(partial)) smallBlockMissed += 1
+        partial.dispose()
+        const whole = reverseAsABuilderWould(part.geometry)
+        if (!readsOutward(whole)) fullReversalCaught += 1
+        whole.dispose()
+        part.geometry.dispose()
+      }
+    }
+  } finally {
+    library.dispose()
+  }
+  assert.ok(tested >= 4, `only ${String(tested)} merged surfaces were tested`)
+  // The limitation, stated as an assertion so it cannot rot into an assumption.
+  assert.equal(
+    smallBlockMissed,
+    tested,
+    'the verdict now detects a 10% reversed sub-part; that is an improvement and the '
+      + 'docblock on `readsOutward` should stop disclaiming it',
+  )
+  // And the thing it does cover, so this test cannot pass by the instrument being broken
+  // in both directions at once.
+  assert.equal(
+    fullReversalCaught,
+    tested,
+    'the verdict stopped detecting a fully reversed prop, which is its actual job',
+  )
+})
+
 test('displacement does not tear a solid prop open at its creases', () => {
   // Controls first, and this instrument needs them badly: a bug in the welding step
   // makes every non-indexed geometry read as entirely boundary, which looks like a
@@ -1257,7 +1386,64 @@ test('displacement does not tear a solid prop open at its creases', () => {
   assert.deepEqual(torn, [], 'these solid props have holes in them')
 })
 
+test('mergeAll still behaves the way this file depends on it behaving', () => {
+  // Assert the dependency's identity, not just my own output — my output can be right
+  // for the wrong reason. Suggested by the foundation session after it pinned three's own
+  // shader chunks rather than its text, so a three upgrade that moves an accumulation
+  // fails loudly instead of silently re-breaking a material.
+  //
+  // Two behaviours of `mergeAll` are load-bearing here and neither is stated anywhere
+  // that a change would have to pass:
+  //
+  //   1. A one-element merge is a PASSTHROUGH — it returns `parts[0]` itself. That is
+  //      what makes the aliasing hazard real (one geometry tagged under two surfaces
+  //      comes back as the same buffer for both, so releasing either disposes the other)
+  //      and it is why `mergePropParts` refuses duplicates.
+  //   2. A real merge DE-INDEXES. Combined with (1), a `latheProfile` part that is the
+  //      only part on its surface arrives indexed — which is the entire reason four prop
+  //      surfaces are indexed and the index-aware readers in this file have real inputs.
+  //
+  // If either flips, both of those facts change meaning silently.
+  const single = new THREE.BoxGeometry(1, 1, 1)
+  ensureVertexColors(single, 0x808080)
+  const passthrough = mergeAll([single], { name: 'dependency-single' })
+  assert.equal(
+    passthrough,
+    single,
+    'a one-element mergeAll stopped being a passthrough; the aliasing guard in '
+      + '`mergePropParts` and the indexed-surface pin both rest on it returning parts[0]',
+  )
+
+  const indexed = new THREE.SphereGeometry(1, 8, 6)
+  ensureVertexColors(indexed, 0x404040)
+  assert.ok(indexed.index, 'the fixture must be indexed for this to mean anything')
+  const keptIndex = mergeAll([indexed], { name: 'dependency-indexed' })
+  assert.ok(
+    keptIndex.index,
+    'a one-element mergeAll stopped preserving indexing; the four indexed prop surfaces '
+      + 'would vanish and the index-aware readers would lose their only real inputs',
+  )
+
+  const a = new THREE.SphereGeometry(1, 8, 6)
+  const b = new THREE.SphereGeometry(0.5, 8, 6)
+  ensureVertexColors(a, 0x404040)
+  ensureVertexColors(b, 0x606060)
+  const merged = mergeAll([a, b], { name: 'dependency-multi' })
+  assert.equal(
+    merged.index,
+    null,
+    'a multi-part mergeAll stopped de-indexing, which would change which geometries in '
+      + 'the catalogue are indexed and therefore which code paths the suite exercises',
+  )
+  assert.notEqual(merged, a, 'a real merge must produce a new geometry, not reuse an input')
+
+  keptIndex.dispose()
+  merged.dispose()
+  passthrough.dispose()
+})
+
 test('one geometry cannot be tagged under two prop surfaces', () => {
+
   // `mergeAll` moves rather than copies for a single part, so tagging one geometry as
   // both `hard` and `glow` hands the same buffer back for both surfaces. The library
   // then holds two cache keys over one buffer and releasing either disposes the other,
