@@ -654,6 +654,24 @@ export class StylizedArtLibrary {
   }
 
   /**
+   * True for a material that writes a solid silhouette.
+   *
+   * Public because two passes need the same answer and used to guess it separately.
+   * `applyOutline` has always asked this — a 62%-opaque ring has no silhouette to ink
+   * — but the engine's shadow pass asked a different question, `userData.noComicOutline`,
+   * which is an *ink* marker that covers transparent decorations only by coincidence.
+   * The two sets agreed on contact shadows and faction rings and diverged on the
+   * gilded caravan's beacon, which cast a solid torus shadow on the ground.
+   *
+   * Opacity, not intent: a caller that wants a transparent thing to cast a shadow
+   * anyway can still say so on the object, and a caller that forgets no longer gets a
+   * silhouette it never drew.
+   */
+  static isOpaque(material: THREE.Material | THREE.Material[]): boolean {
+    return isOpaqueMaterial(material)
+  }
+
+  /**
    * True for anything the library disposes itself.
    *
    * Scene-traversal teardown must skip these or a shared ramp gets freed while

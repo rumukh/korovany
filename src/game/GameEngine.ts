@@ -12097,10 +12097,27 @@ export class GameEngine {
     if (rope) rope.visible = false
   }
 
-  private markCharacterShadows(root: THREE.Object3D): void {    root.traverse((object) => {
+  /**
+   * Gives a freshly built actor, animal or cart its shadow flags.
+   *
+   * The opacity test is not a refinement of the two above it — it is a different
+   * question that used to be answered by accident. `noComicOutline` is an *ink*
+   * marker, and it covered every transparent decoration these constructors made right
+   * up until one of them was not also ink-excluded: the gilded caravan's beacon, a
+   * 62%-opaque torus, which three.js then rendered into the shadow map as a solid
+   * ring on the ground. `transparent: true` does not exempt an object from the depth
+   * pass; only `castShadow` does.
+   *
+   * So it asks the same question the ink pass asks, through the same predicate, rather
+   * than a nearby one that happens to agree.
+   */
+  private markCharacterShadows(root: THREE.Object3D): void {
+    root.traverse((object) => {
       if (!(object instanceof THREE.Mesh)) return
       if (object.name === 'faction-ring') return
       if (object.userData.noComicOutline === true) return
+      // A thing you can see through has no silhouette to cast.
+      if (!StylizedArtLibrary.isOpaque(object.material)) return
       object.castShadow = true
       object.receiveShadow = true
     })

@@ -610,6 +610,22 @@ defect appeared depended on whether a caller happened to position its lathe. It 
 the ink shell: `bakeOutlineNormals` averages by welded position, and a normal 11x short
 is 11x under-weighted at exactly the vertex where a hood's silhouette is a single point.
 
+**A second defect, in the engine half, and the same shape as the first.** The gilded
+caravan's beacon — a 62%-opaque torus — cast a solid ring shadow on the ground.
+`markCharacterShadows` excluded meshes by `name === 'faction-ring'` and
+`userData.noComicOutline`, which is the *ink* pass's exclusion set; `transparent: true`
+exempts nothing from three.js's depth pass, only `castShadow` does. The two sets agree
+on contact shadows and faction rings, which carry the marker, and diverge on the one
+transparent mesh in these four constructors that does not.
+
+Note what makes it the same shape as the lathe defect: in both cases the correct
+behaviour was reached *by coincidence* everywhere it was reached, so the code looked
+uniformly right and the one place the coincidence failed looked no different from the
+rest. `StylizedArtLibrary.isOpaque` is now the single predicate both passes use, and
+`tests/art.test.ts` pins the predicate rather than either caller — including the case a
+naive version gets wrong, a material with `opacity` below 1 and `transparent` unset,
+which is what turns the mutation red.
+
 ## 15. Effort
 
 **2–3 days.** The geometry is the fun part and the fast part. The time goes into the
