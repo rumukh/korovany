@@ -777,6 +777,24 @@ The rules that fall out of them, in rough order of how much they would have save
    that mattered, because "something in this file moved" is exactly the answer that fooled
    the ambiguous anchor.
 
+   **A fifth way a mutation campaign lies, contributed by the foundation session and worth
+   more than the other four combined because it corrupts results silently and in bulk:**
+   `git checkout -- <file>` is a *mutation* revert only for committed work. On uncommitted
+   work it is a **feature** revert — it removes the thing being tested along with the
+   mutation — and `git status` reports clean either way, because the file genuinely does
+   match `HEAD`. Every subsequent mutation then runs against a tree with the feature absent
+   and returns plausible, entirely fictional counts. That session caught it only because a
+   test failed that its mutation had no path to reach, and its honest re-run against a
+   committed tree changed the result. **Commit first, then mutate.**
+
+   This pass escaped it by accident rather than by design: its reverts restored from an
+   in-memory copy of the file rather than from git, which is a true mutation revert
+   regardless of commit state. The tell it did produce is worth recording — one restore
+   check reported `blob == HEAD: False` on a correct restoration, because HEAD legitimately
+   lacked uncommitted work. **`blob == HEAD` is the right check only when the baseline is
+   HEAD**; when it is not, compare against the saved pre-mutation copy and say so, because
+   the two failures look identical and mean opposite things.
+
    Worth stating plainly to anyone adopting the technique: **it produces false positives at
    roughly the rate it produces findings.** This campaign yielded three real survivors and
    three retractions — a grouping-precision artefact, a CRLF-broken mutation, and an
@@ -784,6 +802,14 @@ The rules that fall out of them, in rough order of how much they would have save
    since expired as a retraction: the guard was pinned and the same mutation now fails, so
    it was a correct verdict with a shelf life rather than a mistake. The gates are not
    optional overhead; they are what makes the results mean anything.
+
+   **And a survivor asks a question rather than answering one.** The same session's
+   remaining survivor was correct: deleting a bit-exactness guard left every test green
+   because no input can distinguish the two versions — summing *n* identical Float32 values
+   needs at most 24 + log₂(n) bits and is exact in double precision. The right response was
+   to document the guard as defensive and annotate the test to say it does *not* pin it,
+   rather than to invent an input or delete the guard. **A surviving mutation means "nothing
+   here distinguishes these two programs", which is sometimes a gap and sometimes a proof.**
 
 8. **A regression test needs a seed that reproduced the bug.** Ordering, mechanism and
    assertion can all be correct and the test still prove nothing if its input never
@@ -1591,6 +1617,45 @@ claim about that branch out of the expensive category.**
 The rule generalises past git: if a finding cannot be re-derived by the person receiving
 it, expect it to cost an order of magnitude more to settle, and spend the effort on making
 it checkable rather than on making it more convincing.
+
+**Three agreeing checks from one family are one check.** The foundation session put the
+sharpest form on the displacement-tearing result. This pass had three orientation
+instruments — winding consistency, signed volume, and centroid-outwardness — deliberately
+chosen because each is blind where the others see, and treated their agreement as strong
+evidence. On a fully shattered geometry, every triangle detached, all three pass:
+
+```
+                    TORN          MENDED
+signed volume       0.01988036    0.01953316    both positive
+winding conflicts   0             0             both consistent
+centroid inward     0/20          0/20          both pass
+centroid weakest    0.935645      0.965799      both pass comfortably
+```
+
+They are three instruments for **orientation**, and a hole is a defect of **connectivity**.
+Diversity within a family is not diversity. The agreement was never evidence about
+connectivity, and the confidence it produced was the reason nobody looked for eleven
+sessions.
+
+The measurement carries a second sting: **the torn version reads 1.8% *higher* volume than
+the mended one.** Tearing makes a shape measure bigger, not broken, so there is no threshold
+anywhere that catches it — the failure is not weak detection, it is detection of the wrong
+quantity. The remedy was a boundary-edge count, which is a connectivity instrument and found
+82 torn geometries immediately.
+
+Generalised, this is the rule to carry into any instrument suite: **before adding a fourth
+check, ask what family the first three belong to.** A suite that is broad within one family
+and empty outside it will report unanimous confidence about the thing it cannot see.
+
+**And the discriminator for which shapes tear is the source's normals, not the shape's
+name.** The same session measured `PolyhedronGeometry` at detail 0 producing faceted
+normals — each corner copy moves differently under displacement, so the shape comes apart —
+while detail 1 or higher produces radial normals shared by every copy, and is immune. So
+*"rocks tear"* is the wrong rule and *"faceted source normals tear"* is the right one, which
+also explains this catalogue's result without inspecting it: nothing here uses a polyhedron
+primitive, but `mergeAll` seams and hard-crease lofts produce exactly the same signature —
+coincident positions carrying different normals. **The property is measurable on any
+geometry; the family name is not.**
 
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
