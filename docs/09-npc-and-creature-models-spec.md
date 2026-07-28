@@ -479,8 +479,15 @@ Targets:
 
 - No per-frame allocation anywhere in `animateCharacter`, `animateActorCharacter`,
   the death pose or `animateWildlife`.
-- Sustained frame time at 25 actors within 1 ms of the pre-change build, measured the
-  same way spec 08 measured it.
+- Sustained frame time at 25 actors within 1 ms of the pre-change build — **for a change
+  that adds no geometry**, measured the same way spec 08 measured it. This wave is not
+  such a change: it rebuilds every character, beast and caravan, so it is judged by the
+  draw-call and vertices-per-frame ceilings in spec 08 §7 instead. Measured after the
+  merge: 507 draws and 1,170,000 vertices, both at the measured maximum plus ~12%.
+- The trade is deliberate. Frame time at 25 actors went 406 → 594 ms in software
+  rasterisation, which buys the silhouette and material vocabulary this spec exists to
+  add. **Throughput is spent on fidelity here on purpose; the ceilings are what bound
+  the spending.**
 - No new texture. No new material family. No new post pass. No new light.
 
 ## 9. Resource and lifecycle rules
