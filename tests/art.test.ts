@@ -1737,6 +1737,37 @@ test('closed builders wind outward, independently of their normals', () => {
     // their own plane, and non-star-convex solids (Torus, 2 sites) score 0.28-0.34
     // with roughly half their faces spuriously inward. Neither is a winding fault.
     // Anything in either family belongs in the signed-volume test below, not here.
+    //
+    // S1 raised flatness as a second declining axis alongside non-star-convexity, which
+    // is right, and measuring it turned up four axes rather than two. Lofted boxes,
+    // `flatprobe.mts`, `weakest` against the 0.2 guard:
+    //
+    //   section flatness   0.28x0.3  0.2879 PASS   0.6x0.1   0.1050 FAIL
+    //   (width:depth)      0.4 x0.2  0.2091 PASS   1.0x0.04  0.0406 FAIL
+    //   elongation         h=1 0.3067 PASS   h=2 0.1597 FAIL   h=8 0.0405 FAIL
+    //   radial coarseness  3-gon 0.1592 FAIL  4-gon 0.2227    32-gon 0.2992
+    //   axial subdivision  2 rings 0.6529 -> 40 rings 0.2905, asymptote, never crosses
+    //
+    // Three of the four cross the guard on geometry with **no concavity at all**, and
+    // the fourth never does however far it is pushed. So "non-star-convex" names too
+    // little and "more triangles" names the wrong thing: the property the guard needs
+    // is **compactness** — how far a face sits from the centroid along the surface,
+    // against how far it sits from the centroid at all. All four axes move that one
+    // quantity, which is why they cannot be enumerated as separate rules.
+    //
+    // Two corrections fall out, one to S1's report and one to the paragraph above it.
+    // **Elongation alone does fail**: a square 0.3x0.3 section at height 2 reads 0.1597,
+    // where S1 measured aspect 8.0 still passing at 0.315 and concluded elongation was
+    // exempt. And **"coarse tessellation" is only true radially** — a 3-gon section
+    // fails at 0.1592 while a 32-gon passes at 0.2992, but along the axis the margin
+    // moves the *other* way, falling with *more* rings toward an asymptote it never
+    // crosses. Both halves of that sentence were written as one claim and they are two.
+    //
+    // Practical consequence for whoever extends this case list: a plank, banner, blade
+    // or rail will fail here while being perfectly wound. `PropKit.ts:874` and `:3944`
+    // ship `rectProfile(0.045, 0.012)` and `(0.075, 0.018)` and measure 0.0277 and
+    // 0.0414. Route flat and slender shapes to the signed-volume test; a failure here
+    // is a statement about the instrument's domain, not about winding.
     assert.ok(
       weakest > 0.2,
       `${label} is too flat for the centroid invariant to classify `
