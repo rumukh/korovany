@@ -987,6 +987,35 @@ export function solveHeadYaw(
  *   that frame is where `pose.stagger` peaks, which is what makes the pairing the
  *   reachability model once called impossible not merely reachable but simultaneous.
  */
+/**
+ * Writes the head's pose, and re-asserts the Euler order every time it does.
+ *
+ * `solveHeadYaw` derives the columns of `Rx·Ry·Rz` by hand, so **every term in it
+ * assumes three.js's default XYZ order**. That requirement was unstated for ten
+ * commits, then asserted on a freshly built skeleton — which a reviewer pointed out
+ * pins *construction*, not the object the engine actually animates. `Euler.order` is a
+ * mutable per-object property, so the engine can change it at any point after the rig
+ * is built, and a test that constructs its own skeleton will never see that.
+ *
+ * The realistic edit is not the loud one. `ZYX` moves the gaze by 143° and any bound
+ * catches it; **`YXZ` is the order everyone reaches for when a head gimbal-locks at
+ * extreme pitch**, it is applied at the animation site rather than the builder, and
+ * under it roll stays inert — so the conspicuous signature never appears.
+ *
+ * So this does not detect the change, it **prevents** it: `Euler.set` takes the order
+ * as its fourth argument, and passing it here means any runtime reassignment is
+ * overwritten on the next frame. A guard that can be walked around is worth less than
+ * an invariant that reasserts itself, and the difference costs one argument.
+ */
+export function applyHeadPose(
+  headPivot: THREE.Object3D,
+  pitch: number,
+  yaw: number,
+  roll: number,
+): void {
+  headPivot.rotation.set(pitch, yaw, roll, 'XYZ')
+}
+
 export function chestGaitYaw(stride: number, heavy: boolean): number {
   return -stride * (heavy ? 0.08 : 0.12)
 }

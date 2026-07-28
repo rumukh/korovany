@@ -19,6 +19,7 @@ import {
   buildBeastHead,
   buildBeastLimb,
   buildBeastTail,
+  applyHeadPose,
   buildBirdBody,
   buildBirdWing,
   buildCharacterSkeleton,
@@ -14217,26 +14218,26 @@ export class GameEngine {
       // 4.00 Hz cadence.
       const headPitch = -forwardLean * actor.motionBlend * 0.35 + pose.stagger * 0.18
       actor.headYaw = dampAngle(actor.headYaw, lookYaw, 7, delta)
-      headPivot.rotation.y = torsoPivot
-        ? solveHeadYaw(
-            torsoPivot.rotation.x,
-            torsoPivot.rotation.y,
-            torsoPivot.rotation.z,
-            headPitch,
-            actor.headYaw,
-          )
-        : actor.headYaw
-      // Pitch and roll are deliberately *not* corrected this way. Unlike the yaw they
-      // are authored as partial counter-rotations of the chest — the torso pitches
-      // `+forwardLean` and the head `-forwardLean * 0.35`, the torso rolls
+      // Pitch and roll are deliberately *not* corrected the way the yaw is. Unlike the
+      // yaw they are authored as partial counter-rotations of the chest — the torso
+      // pitches `+forwardLean` and the head `-forwardLean * 0.35`, the torso rolls
       // `-turnLean * 0.16` and the head `+turnLean * 0.06` — which only means anything
       // against a transform the head inherits. The yaw is the odd one out because it
       // tracks a target rather than resisting a posture.
-      headPivot.rotation.x = headPitch
-      headPivot.rotation.z =
-        actor.turnLean * 0.06 -
-        idleWeightShift * 0.2 -
-        pose.flinch * hitRight * 0.3
+      applyHeadPose(
+        headPivot,
+        headPitch,
+        torsoPivot
+          ? solveHeadYaw(
+              torsoPivot.rotation.x,
+              torsoPivot.rotation.y,
+              torsoPivot.rotation.z,
+              headPitch,
+              actor.headYaw,
+            )
+          : actor.headYaw,
+        actor.turnLean * 0.06 - idleWeightShift * 0.2 - pose.flinch * hitRight * 0.3,
+      )
     }
 
     if (!rig) return

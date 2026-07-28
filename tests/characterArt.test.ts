@@ -16,6 +16,7 @@ import {
   buildBeastTail,
   buildBirdBody,
   buildBirdWing,
+  applyHeadPose,
   buildCharacterSkeleton,
   buildCloak,
   buildDeerBody,
@@ -1696,16 +1697,19 @@ test('the head tracks its target through the chest, not past it', () => {
   // head's roll becomes outermost and reaches the gaze directly, and the closed form is
   // solving a different problem.
   //
-  // Nothing said so. A reviewer mutated `headPivot.rotation.order = 'ZYX'` and found the
-  // bound below catches it — 143 degrees of movement — so the order was *transitively*
-  // pinned by a guard aimed at something else entirely. That is a guard by luck: it
-  // holds exactly as long as nobody weakens the bound or changes what it measures, and
-  // nothing would connect the two.
+  // This started as an assertion on a freshly built skeleton, which pinned
+  // **construction** rather than the object the engine animates. `Euler.order` is a
+  // mutable per-object property, so setting it at the animation site passed 22/0 — the
+  // addition-blindness lesson one object across. And the realistic edit is the quiet
+  // one: `ZYX` moves the gaze 143° and any bound catches it, while **`YXZ` is what
+  // everyone reaches for when a head gimbal-locks**, and under `YXZ` roll stays inert,
+  // so the conspicuous signature never appears.
   //
-  // **An assumption load-bearing for a closed form should be asserted where the closed
-  // form lives, not inherited from whatever else happens to notice.** Pinned explicitly,
-  // on a real skeleton, so the failure names the cause instead of reporting a
-  // 143-degree gaze error and leaving the reader to work backwards to the Euler order.
+  // `applyHeadPose` therefore passes the order to `Euler.set` on every write, which
+  // does not detect a runtime change but **overwrites it on the next frame**. The
+  // assertion below drives that function against a deliberately corrupted pivot rather
+  // than inspecting a clean one. **An invariant that reasserts itself is worth more
+  // than a guard that can be walked around**, and here it cost one argument.
   {
     const s = buildCharacterSkeleton(resolveCharacterPlan('elf', 'soldier', 0, false).proportions)
     for (const [name, node] of [
@@ -1718,6 +1722,26 @@ test('the head tracks its target through the chest, not past it', () => {
         + 'columns of `Rx·Ry·Rz` by hand and every term in it assumes XYZ, so under any '
         + 'other order it answers a different question. Under ZYX the head\'s roll '
         + 'reaches the gaze directly, which the derivation says it cannot.',
+      )
+    }
+    for (const sabotage of ['YXZ', 'ZYX', 'ZXY'] as const) {
+      s.headPivot.rotation.order = sabotage
+      applyHeadPose(s.headPivot, 0.1, 0.2, 0.3)
+      assert.equal(
+        s.headPivot.rotation.order,
+        'XYZ',
+        `something set head-pivot's Euler order to ${sabotage} and \`applyHeadPose\` left `
+        + 'it there. It passes the order to `Euler.set` precisely so that a runtime '
+        + 'reassignment cannot survive a frame — asserting the order on a freshly built '
+        + 'skeleton does not cover this, because the engine animates a rig the test '
+        + 'never sees.',
+      )
+      assert.equal(
+        s.headPivot.rotation.x,
+        0.1,
+        'the pitch `applyHeadPose` was given is not the pitch it wrote. This is the '
+        + 'equality the source regex `headPivot.rotation.x = headPitch` was standing in '
+        + 'for, and it could be satisfied by `headPitch * 0.5`.',
       )
     }
   }
@@ -2474,15 +2498,26 @@ test('the engine wires the rig the way these tests measure it', () => {
     'the head\'s tracking must be damped on the body-space angle. Damped after the '
     + 'conversion it lags the chest\'s gait twist and the lag returns as world wobble.',
   )
+  // Three source pins reduced to one, because `applyHeadPose` made two of them
+  // behavioural. What is left here is genuinely a *wiring* fact — which values are
+  // handed to the function — and that is the one thing a call cannot check, since it
+  // takes whatever it is given.
+  //
+  // The single-argument shape matters: `headPitch` appears twice in the call, once as
+  // the pitch written and once as the pitch the solve corrects for. Hoisting it into a
+  // const exists so those cannot diverge, and this pattern is what notices if the two
+  // occurrences stop being the same expression.
   assert.ok(
-    /headPivot\.rotation\.y = torsoPivot\s*\?\s*solveHeadYaw\(\s*torsoPivot\.rotation\.x,\s*torsoPivot\.rotation\.y,\s*torsoPivot\.rotation\.z,\s*headPitch,\s*actor\.headYaw,?\s*\)/
+    /applyHeadPose\(\s*headPivot,\s*headPitch,\s*torsoPivot\s*\?\s*solveHeadYaw\(\s*torsoPivot\.rotation\.x,\s*torsoPivot\.rotation\.y,\s*torsoPivot\.rotation\.z,\s*headPitch,\s*actor\.headYaw,?\s*\)/
       .test(actorPosture),
-    'the head yaw must be solved against the chest\'s full rotation *and* the head\'s '
-    + 'own pitch, each passed through. Naming the function is not enough: a reviewer '
-    + 'replaced the call with `solveHeadYaw(0, 0, 0, actor.headYaw)` and the whole '
-    + 'suite still passed, because nothing checked the arguments. A scalar subtraction '
-    + 'leaves 20.3 degrees and is worse than nothing in 3.90% of states; dropping the '
-    + 'head pitch alone leaves 9.7.',
+    'the head pose is no longer written by one `applyHeadPose` call taking `headPitch` '
+    + 'and a yaw solved against the chest\'s full rotation *and* that same `headPitch`. '
+    + 'Naming the function is not enough: a reviewer replaced the call with '
+    + '`solveHeadYaw(0, 0, 0, actor.headYaw)` and the whole suite still passed, because '
+    + 'nothing checked the arguments. A scalar subtraction leaves 20.3 degrees and is '
+    + 'worse than nothing in 3.90% of states; dropping the head pitch alone leaves 9.7. '
+    + 'The equality between the pitch given and the pitch written is checked by driving '
+    + '`applyHeadPose` directly, in the gaze test — this only checks what reaches it.',
   )
   assert.ok(
     /const headPitch = -forwardLean \* actor\.motionBlend \* 0\.35 \+ pose\.stagger \* 0\.18$/m
@@ -2492,15 +2527,6 @@ test('the engine wires the rig the way these tests measure it', () => {
     + 'end of the line: unanchored, appending `+ pose.attack * 0.4` still matched, and '
     + 'that term would push the head pitch outside the [-0.09, 0.18] axis the skew '
     + 'bound is derived over — the bound would silently stop describing the engine.',
-  )
-  assert.ok(
-    /headPivot\.rotation\.x = headPitch$/m.test(actorPosture),
-    'the pitch the solve was given must be the pitch the head is given. Anchored for '
-    + 'the same reason: a reviewer mutated this to `headPitch * 0.5` and the whole file '
-    + 'passed 22/0, because the unanchored pattern matches its own prefix. Hoisting '
-    + '`headPitch` into a const exists solely so the solve and the pivot read one '
-    + 'value, and this was the assertion that was supposed to notice them diverging. '
-    + 'Driving the solve with a pitch the head does not wear costs 9.7 degrees.',
   )
   // The breath. `the chest lends the head its breath but not its shoulders` derives
   // its whole bound from these two numbers — they are the only thing that legitimately
