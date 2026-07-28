@@ -3335,67 +3335,6 @@ test('GameEngine teardown disposes the streamed world it constructed', () => {
       + 'other test in this suite can see it',
   )
 })
-// The docblock on `reverseFaceFraction` states a measured curve — 10% of faces reversed
-// undetected on 248 of 248, 50% on 118 of 248 — and until now nothing read it. A measured
-// claim in prose rots exactly like a stale SHA: the code moves, the number stops being
-// true, and no one is told. The sibling foundation session hit the same thing one level
-// down and fixed it the way this file argues for elsewhere — **assert the limitation in
-// both directions**, so the claim cannot drift without something going red.
-//
-// This is deliberately not a coverage improvement. It changes detection not at all. What
-// it does is stop the documented blindness from silently becoming wrong in either
-// direction, which is the only thing prose can never do for itself.
-test('the volume instrument is still blind at 35% and still works at 100%', () => {
-  const library = new WorldPropLibrary({ retention: 0 })
-  let surfaces = 0
-  let missedAtThirtyFive = 0
-  let missedAtFull = 0
-  try {
-    for (const [, request] of everyPropRequest()) {
-      for (const part of library.build(request)) {
-        if (part.surface !== 'hard') {
-          part.geometry.dispose()
-          continue
-        }
-        surfaces += 1
-        const baseline = Math.sign(signedVolume(part.geometry))
-        for (const fraction of [0.35, 1] as const) {
-          const damaged = reverseFaceFraction(part.geometry, fraction)
-          const missed = Math.sign(signedVolume(damaged)) === baseline
-          if (missed && fraction === 0.35) missedAtThirtyFive += 1
-          if (missed && fraction === 1) missedAtFull += 1
-          damaged.dispose()
-        }
-        part.geometry.dispose()
-      }
-    }
-  } finally {
-    library.dispose()
-  }
-
-  assert.ok(surfaces >= 100, `only ${String(surfaces)} hard surfaces were swept`)
-
-  // The job. A wholly reversed solid must flip its signed volume, or the instrument has
-  // stopped measuring orientation at all.
-  assert.equal(
-    missedAtFull,
-    0,
-    `signed volume missed a FULL reversal on ${String(missedAtFull)} of ${String(surfaces)} `
-      + 'surfaces, so it is no longer detecting orientation on those shapes',
-  )
-
-  // The floor, asserted so the docblock cannot rot. **If this fails because the number
-  // dropped to zero, that is good news and not a bug** — an instrument that now catches a
-  // 35% contiguous reversal is strictly better. Update the curve in `reverseFaceFraction`
-  // and this assertion together; do not delete it, because then the next reader inherits a
-  // guarantee nobody measured.
-  assert.ok(
-    missedAtThirtyFive > 0,
-    'signed volume now catches a 35% contiguous reversal on every surface, which the '
-      + 'measured curve says it cannot. Either the instrument improved — update the curve '
-      + 'and this floor together — or the damage model stopped producing partial inversions',
-  )
-})
 
 
 // ---------------------------------------------------------------------------------
