@@ -405,6 +405,18 @@ no new dependencies.
   which is the honest content of both. This is *carry the derivation, not the value*
   applied to grammar rather than to method, and the two compose: **re-resolve late and
   report in the past tense, and there is no window at all.**
+  With one condition that is easy to miss and makes the difference between the form
+  working and merely looking like it works: **the timestamp has to be the measurement's,
+  not the sentence's.** The reviewer who proposed this form demonstrated it on its own
+  next message — *"verified at 22:40:07 against `9a85bc2`"* — and the commit that
+  superseded `9a85bc2` had landed at 22:38:39, **88 seconds before that stated time**. The
+  sentence was still honest about what it had established, but the hour attached to it was
+  the hour of writing rather than the hour of running, and under that reading the claim was
+  false: at 22:40:07 the tip was not what was verified. A past-tense claim carries exactly
+  one fact the present-tense one lacks — *when* — so a timestamp taken from the clock at
+  authoring time is decoration, and re-introduces the decay it was adopted to remove. The
+  mechanical form is the same as everywhere else here: **emit the timestamp from the
+  command that took the measurement**, not from the writer.
   One more thing came out of measuring that gap, and it is the sharpest instance the work
   produced because every party measured and every party got a different answer. The
   question — *is a reviewer's baseline falling further behind?* — was answered three ways
@@ -421,6 +433,44 @@ no new dependencies.
   real in the arithmetic and absent in the world. Neither error here was careless; both
   were caught only by recomputing from the raw commits, and the third answer was not
   proposed by anyone until then.
+  The reviewer then found its own error was worse than the drift it had been diagnosed
+  with, and the mechanism is the part worth keeping. All of its points used a *fixed*
+  baseline; its first point was not computed at all but quoted from the other party, who
+  had used a moving one. Applied consistently its method gives **9 → 5 → 3 → 2**, and its
+  own first point disagrees with the published 7 by two. So the series was **two
+  definitions spliced**, not one definition drifting.
+  Why the splice was invisible is not luck. Measured over all four points, exactly one —
+  the second — returns the same value under both definitions, because the fixed baseline
+  happened to *be* the moving one at that moment. **The series therefore read as coherent
+  because the only point where the two methods cannot disagree sat exactly where a reader
+  checks for a seam.** The general form is the positive-control rule pointed at
+  methodology: **when two methods are spliced, agreement at a point where they must agree
+  is not evidence of anything — verify the seam where they must differ.**
+  And both parties committed the same underlying act within an hour, in different
+  materials: a PR status carried into a freshly timestamped block, and a gap figure
+  carried into a computation it was not produced by. **A value borrowed into a fresh
+  context reads as fresh**, inheriting the credibility of its neighbours rather than
+  carrying its own.
+  A third member arrived while one party was verifying the second: a diff taken over
+  `A..B` where the claim concerned one commit and the range held **seven**. The output was
+  real repository content, freshly produced, correct — and about a different subject
+  entirely, which is the only reason it was caught. Had the intervening commits touched
+  the same block, it would have read exactly like the answer. So the family is **a range,
+  a block or a context wider than the claim returns a superset that reads as the
+  answer**, and all three instances produced output that was true and answered a question
+  nobody asked.
+- **The guards this work produced all check things that are free to check.** Six
+  mechanical forms came out of eighteen review passes — confirm the mutation applied,
+  confirm it compiled, confirm the query matched, dope the detector before believing its
+  silence, emit the timestamp from the measuring command, verify a spliced seam where the
+  methods must differ. Every one of them audits the author's own instrument, where being
+  wrong costs nothing socially. **Not one guards a claim whose checking is awkward** —
+  a credit, a hedge, a compliment, another party's figure — and those are precisely the
+  three classes this programme found unaudited, on both sides, repeatedly.
+  The predictor is better than the list, because it generates rather than enumerates:
+  **a check with a social cost and no epistemic reward is a check nobody runs**, and the
+  next unaudited class will be whatever else has that shape. Recording it here does not
+  fix it — no guard in this repository addresses it, which is itself the evidence.
 - **A rule stored without its trigger is a guard with no call site.** It exists, it is
   correct, and nothing invokes it — which is the same object as an assertion that cannot
   fail for the defect it names, one level up and in prose instead of a test. The evidence
@@ -441,6 +491,17 @@ no new dependencies.
   that turned out to exist only in a message — the committed prose had already dropped
   the numbers. Correct by habit is the state a thing is in immediately before it stops
   being correct, so it is written down here as a choice.
+  And the reason that is not merely a nice phrase: **a correct outcome tells you nothing
+  about whether the mechanism that produced it will fire again.** An unfired guard and an
+  undecided habit are the same object — untested mechanisms with clean records — and in
+  both cases the clean record is what makes them look settled. The file dropped the line
+  numbers by habit and nobody knew, including its author, until a reviewer mischaracterised
+  it and the check went looking for a mechanism that turned out not to exist.
+  That mischaracterisation is also the exact inverse of an error made an hour earlier in
+  the other direction: one party credited a message with prose that contradicted the
+  committed file, the other credited the file with prose that existed only in a message.
+  **Same split, opposite directions, both from reading a message as though it had been
+  through the moment a commit forces.**
   *Unconvertible*: the wiring claims and the alias evasion, because `GameEngine` is not
   constructible in Node, which is why the test file states them as limitations instead of
   implying it has none.
