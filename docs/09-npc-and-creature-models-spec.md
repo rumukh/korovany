@@ -265,6 +265,20 @@ no new dependencies.
   evidence available that the mechanism is real and that a rule is not a defence
   against it. The rule is about where to *look first*, not a claim about where every
   defect lives.
+- **Before offering a cause, check whether your own code already answers it.** The
+  sharpest instance this work produced: a docblock blamed head roll for a 39%
+  discrepancy in a gaze figure, when `solveHeadYaw`'s signature — written ten commits
+  earlier, by the same hand — takes no roll argument at all, and its own docblock says
+  why: *"a rotation about Z leaves the +Z axis fixed, so `head-pivot.rotation.z` cannot
+  move the gaze and is not a parameter."* The claim was refutable by `git grep`, without
+  measuring anything.
+  The mechanism is worth naming because it is not carelessness. **A justification
+  written while correcting yourself is written by the one person who has stopped
+  consulting the source** — because they have just been deep in it and are certain they
+  know what it says. Certainty about the code is highest immediately after working on
+  it, which is exactly when the correction gets written. That is why this pairs with
+  reviewing the justification rather than the fix: the fix was checked against the code,
+  and the sentence explaining it was checked against memory.
 - **Turn a finding into a gate, not a paragraph.** A written rule is re-read by the
   person least able to see past it — the author, mid-correction, at the moment of
   greatest certainty. A check is not immune to carelessness either, but **its

@@ -1589,10 +1589,26 @@ test('the head tracks its target through the chest, not past it', () => {
   //   head roll held to what the engine writes   0.0487 deg
   //   head roll swept free to +/-0.30            0.0487 deg, same chest state
   //
-  // The maximum is roll-degenerate: the worst chest configuration scores identically at
-  // roll 0.037 and at -0.150, so freeing the axis adds states that tie rather than
-  // states that win. A reviewer measured this first and I reproduced it rather than
-  // taking it, which is the rule this whole passage is about.
+  // The objective is **constant** in head roll — not merely flat at this maximum. The
+  // worst chest configuration scores identically at roll 0.037 and at -0.150, and
+  // sweeping roll across arbitrary chest states moves the heading by at most 2.4e-14
+  // degrees, which is float noise. Saying "the maximum is roll-degenerate" would be
+  // true and would still mislead, because it invites the thought that some *other*
+  // maximum might be roll-sensitive. None can be. A reviewer measured this first and I
+  // reproduced it rather than taking it, which is the rule this whole passage is about.
+  //
+  // **And it was refutable without measuring anything, from this codebase, ten commits
+  // earlier.** `solveHeadYaw` takes `chestX, chestY, chestZ, headPitch, lookYaw`. There
+  // is no roll argument, and its absence is documented as deliberate in the function's
+  // own docblock — *"a rotation about Z leaves the +Z axis fixed, so head-pivot's
+  // rotation.z cannot move the gaze and is not a parameter"* — written in `3257029`, by
+  // the same hand that later blamed that axis for a 39% discrepancy.
+  //
+  // So the general rule is sharper than "verify your causes": **before offering a cause,
+  // check whether your own code already answers it.** A justification written while
+  // correcting yourself is not merely unverified — it is written by the one person who
+  // has stopped consulting the source, because they are certain they know what it says.
+  // The counter-proof here was a function signature, and a `git grep` away.
   //
   // So: **the sweep was partially joint** — it constrained some axes by the reaction and
   // left others as free cross-product ranges — and that is the defect, demonstrated.
