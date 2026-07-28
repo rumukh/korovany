@@ -2457,145 +2457,141 @@ test('decoration never blocks a spawn point', () => {
   //
   // Shrinking the boulder is not the fix: at 0.55 the same spawn cleared by 0.012 units,
   // so the old clean result was luck. The keep-out is the fix, and this is what says so.
-  const { blueprint, runtime } = createRuntime('spawn-keepout')
-  let sampled = 0
+  //
+  // **All three populations run across the same seed set**, and that is the whole shape
+  // of this test. An earlier version ran the faction starts over six seeds — because a
+  // reviewer had proved the single-seed version blind — and left the two encounter
+  // populations on the lone `'spawn-keepout'` runtime directly above it. The same
+  // reviewer then bypassed the site-building keep-out entirely and the suite stayed
+  // green: `'spawn-keepout'` has **0** building skips, so the assertion was true about a
+  // world that was never broken. Fourth instance of that defect, in the test written to
+  // close the third.
+  const seeds = ['spawn-keepout', 'gp-6', 'gp-11', 'gp-23', 'gp-37', 'gp-48']
   const blockedByDressing: string[] = []
-  for (const region of blueprint.regions) {
-    const centre = runtime.getRegionCenter(region.id)
-    if (!centre) continue
-    runtime.update({ deltaSeconds: 0, focus: centre })
-    for (const faction of ['elf', 'guard', 'villain'] as const) {
-      for (const plan of runtime.getEncounterPlansInRegion(region.id, faction)) {
-        for (const spawn of plan.spawns) {
-          sampled += 1
-          if (runtime.collision.isWalkablePosition(spawn.worldX, spawn.worldZ, 0.45)) {
-            continue
-          }
-          const blocking = runtime.collision.queryBounds({
-            minX: spawn.worldX - 2,
-            maxX: spawn.worldX + 2,
-            minZ: spawn.worldZ - 2,
-            maxZ: spawn.worldZ + 2,
-          })
-          if (blocking.some((entry) => entry.id.startsWith('dressing-solid'))) {
-            blockedByDressing.push(spawn.id)
+  const blockedByStructure: string[] = []
+  const unwalkableStarts: string[] = []
+  let sampled = 0
+  let startsSampled = 0
+  // Counted per population rather than as one total. A reviewer measured the hit rates
+  // and they differ by an order of magnitude: on `'spawn-keepout'` the props fire 12
+  // times and the buildings zero, because towers ring the wall at `wallRadius` and land
+  // on spawns readily while a keep at a site centre only covers one when an encounter
+  // slot happens to sit near a stronghold. A combined counter would have read 12, looked
+  // thoroughly healthy, and proved nothing about the half that was broken.
+  const keepOutActed = { decoration: 0, building: 0, prop: 0 }
+
+  for (const seed of seeds) {
+    const { blueprint, runtime } = createRuntime(seed)
+    try {
+      // Starts first, and cold. `GameEngine` calls `getStartPosition` at line 2257 and
+      // first calls `generatedWorld.update` at 2314, so the production order is
+      // *ask, then stream*. An earlier version of this test streamed the whole region
+      // sweep first and asked afterwards, which measures the snap in `walkableNear`
+      // working against a populated collision world — an order production never takes.
+      // It passed while the game was broken. The region sweep below must stay after it.
+      for (const faction of ['elf', 'guard', 'villain'] as const) {
+        const start = runtime.getStartPosition(faction)
+        runtime.update({ deltaSeconds: 0, focus: start })
+        startsSampled += 1
+        if (!runtime.collision.isWalkablePosition(start.x, start.z, 0.45)) {
+          unwalkableStarts.push(`${seed}/${faction}`)
+        }
+      }
+
+      // One pass over the regions serves both encounter populations — they read the same
+      // spawns and differ only in what they blame, so walking the world twice bought
+      // nothing but streaming cost.
+      for (const region of blueprint.regions) {
+        const centre = runtime.getRegionCenter(region.id)
+        if (!centre) continue
+        runtime.update({ deltaSeconds: 0, focus: centre })
+        for (const faction of ['elf', 'guard', 'villain'] as const) {
+          for (const plan of runtime.getEncounterPlansInRegion(region.id, faction)) {
+            for (const spawn of plan.spawns) {
+              sampled += 1
+              if (runtime.collision.isWalkablePosition(spawn.worldX, spawn.worldZ, 0.45)) {
+                continue
+              }
+              // Site structures are the other half, and after the decoration fix they
+              // were all that remained: a reviewer measured 76 blocked encounter spawns
+              // of 2688, every one from a `site-building` or `site-prop` collider,
+              // concentrated on finale strongholds. The baseline was worse (97), so this
+              // was never a regression, only the dominant term once decoration was
+              // handled. The collider is dropped, not the mesh — a wall you can walk
+              // through at the one point an actor materialises beats an actor that
+              // cannot move, and the silhouette is the whole reason the site exists.
+              blockedByStructure.push(`${seed}/${plan.id}/${faction}`)
+              const blocking = runtime.collision.queryBounds({
+                minX: spawn.worldX - 2,
+                maxX: spawn.worldX + 2,
+                minZ: spawn.worldZ - 2,
+                maxZ: spawn.worldZ + 2,
+              })
+              if (blocking.some((entry) => entry.id.startsWith('dressing-solid'))) {
+                blockedByDressing.push(`${seed}/${spawn.id}`)
+              }
+            }
           }
         }
       }
+
+      const snapshot = runtime.getDebugSnapshot()
+      keepOutActed.decoration += snapshot.decorations.spawnBlockedPlacementCount
+      keepOutActed.building += snapshot.siteStructures.spawnBlockedBuildingColliderCount
+      keepOutActed.prop += snapshot.siteStructures.spawnBlockedPropColliderCount
+    } finally {
+      runtime.dispose()
     }
   }
-  // Guards the sampling itself: a probe that walked no spawns would report a clean
+
+  // Sample floors guard the probe itself: one that walked no spawns would report a clean
   // result for any amount of breakage.
-  assert.ok(sampled >= 100, `only ${String(sampled)} spawns sampled`)
+  assert.ok(sampled >= 100, `only ${String(sampled)} encounter spawns sampled`)
+  assert.ok(
+    startsSampled >= 18,
+    `only ${String(startsSampled)} faction starts sampled across ${String(seeds.length)} seeds`,
+  )
+
+  // A sample floor proves the population was visited. These prove the seed set could
+  // **express** each failure — that every keep-out had something to act on, so bypassing
+  // it has something to break. Asserted per population because that is exactly what the
+  // previous version got wrong: one number over two populations passes on the easy one.
+  assert.ok(
+    keepOutActed.decoration > 0,
+    'no decoration placement was removed across the seed set, so none of these seeds '
+      + 'carries the decoration fault and that assertion cannot detect its own regression',
+  )
+  assert.ok(
+    keepOutActed.building > 0,
+    'no site-building collider was skipped across the seed set, so none of these seeds '
+      + 'carries the building fault and that assertion cannot detect its own regression',
+  )
+  assert.ok(
+    keepOutActed.prop > 0,
+    'no site-prop collider was skipped across the seed set, so none of these seeds '
+      + 'carries the prop fault and that assertion cannot detect its own regression',
+  )
+
   assert.deepEqual(
     blockedByDressing,
     [],
     'decoration colliders are standing on spawn points',
-  )
-
-  // Site structures are the other half, and after the decoration fix they were all that
-  // remained: a reviewer measured 76 blocked encounter spawns of 2688, every one from a
-  // `site-building` or `site-prop` collider, concentrated on finale strongholds — a keep
-  // is 9 by 7.4 with a radius near 4.1 and the towers ring the wall, so the climactic
-  // encounter spawns land inside them. The baseline was worse (97), so this was never a
-  // regression, only the dominant term once decoration was handled.
-  //
-  // The collider is dropped, not the mesh. A wall you can walk through at the one point
-  // an actor materialises beats an actor that cannot move, and the silhouette is the
-  // whole reason the site exists.
-  const blockedByStructure: string[] = []
-  let structureSampled = 0
-  for (const region of blueprint.regions) {
-    const centre = runtime.getRegionCenter(region.id)
-    if (!centre) continue
-    runtime.update({ deltaSeconds: 0, focus: centre })
-    for (const faction of ['elf', 'guard', 'villain'] as const) {
-      for (const plan of runtime.getEncounterPlansInRegion(region.id, faction)) {
-        for (const spawn of plan.spawns) {
-          structureSampled += 1
-          if (runtime.collision.isWalkablePosition(spawn.worldX, spawn.worldZ, 0.45)) {
-            continue
-          }
-          blockedByStructure.push(`${plan.id}/${faction}`)
-        }
-      }
-    }
-  }
-  assert.ok(
-    structureSampled >= 40,
-    `only ${String(structureSampled)} encounter spawns were checked`,
   )
   assert.deepEqual(
     blockedByStructure,
     [],
     'these encounter actors spawn inside a site structure and cannot move',
   )
-
-  // Faction starts are the other population, and the one that hurts most: the engine
-  // writes this position into the player verbatim, and `findPath` returns null when the
-  // *start* is unwalkable, so the first click-to-move of the run silently does nothing.
-  // The start is offset ~20 units back along the critical path, which puts it outside
-  // the site clearing, so no other keep-out covers it.
-  //
-  // **Asked cold, exactly once**, because that is what `GameEngine` does: it calls
-  // `getStartPosition` at line 2257 and first calls `generatedWorld.update` at 2314. An
-  // earlier version of this test called it, streamed the region in, then called again
-  // and asserted on the second answer — which measures the snap in `walkableNear` doing
-  // its job against a populated collision world, an order production never takes. It
-  // passed while the game was broken.
-  const unwalkableStarts: string[] = []
-  // Across seeds that include one which reproduced the fault. A reviewer showed the
-  // single-seed version had no power at all: dropping faction starts from the anchor set
-  // left the suite green while the cold sweep went back to 1 of 180, because
-  // `'spawn-keepout'` contains no blocked start in either state. Ordering, mechanism and
-  // assertion were all correct and the input never had the defect.
-  //
-  // `gp-6` is the seed the reviewer's sweep found, and its `villain` start is the case.
-  // **A regression test needs a seed that reproduced the bug** — otherwise it asserts a
-  // true thing about a world that was never broken.
-  const seeds = ['spawn-keepout', 'gp-6', 'gp-11', 'gp-23', 'gp-37', 'gp-48']
-  let startsSampled = 0
-  let keepOutActed = 0
-  for (const seed of seeds) {
-    const cold = createRuntime(seed)
-    try {
-      for (const faction of ['elf', 'guard', 'villain'] as const) {
-        const start = cold.runtime.getStartPosition(faction)
-        cold.runtime.update({ deltaSeconds: 0, focus: start })
-        startsSampled += 1
-        if (!cold.runtime.collision.isWalkablePosition(start.x, start.z, 0.45)) {
-          unwalkableStarts.push(`${seed}/${faction}`)
-        }
-      }
-      keepOutActed
-        += cold.runtime.getDebugSnapshot().decorations.spawnBlockedPlacementCount
-    } finally {
-      cold.runtime.dispose()
-    }
-  }
-  assert.ok(
-    startsSampled >= 18,
-    `only ${String(startsSampled)} faction starts were sampled across ${String(seeds.length)} seeds`,
-  )
-  // The seed set must **contain the fault**, not merely be large. A reviewer drew the
-  // distinction after measuring that the single-seed version of this test passed
-  // identically with and without the keep-out: `'spawn-keepout'` has no blocked start in
-  // either state, so the assertion was satisfied by a world that was never broken.
-  //
-  // A sample floor proves the population was visited. This proves it could express the
-  // failure — the keep-out removed at least one placement that would otherwise have stood
-  // on a spawn point, so bypassing it has something to break.
-  assert.ok(
-    keepOutActed > 0,
-    'the keep-out removed no placements across the whole seed set, so none of these '
-      + 'seeds carries the fault and this assertion cannot detect its own regression',
-  )
+  // Faction starts are the population that hurts most: the engine writes this position
+  // into the player verbatim, and `findPath` returns null when the *start* is unwalkable,
+  // so the first click-to-move of the run silently does nothing. The start sits ~20 units
+  // back along the critical path, outside the site clearing, so no other keep-out covers
+  // it. `gp-6`'s `villain` start is the case a reviewer's sweep found.
   assert.deepEqual(
     unwalkableStarts,
     [],
     'a faction starts the run unable to move',
   )
-  runtime.dispose()
 })
 
 test('settlement buildings block movement and their squares stay walkable', () => {

@@ -811,6 +811,45 @@ Four rules fall out of them, in rough order of how much they would have saved:
    for the duration, record the sequence, and assert each shell's index precedes its
    source's.
 
+9. **One assertion over two populations passes on the strength of the easier one.** The
+   fourth instance of this class, found in the test written to close the third — which is
+   why it belongs immediately after it. Rule 8 fixed the seed coverage for the population
+   that had bitten this pass, faction starts, and left the two *encounter* populations on
+   the single runtime directly above it. A reviewer bypassed the `site-building` keep-out
+   entirely and the suite stayed green.
+
+   The measured asymmetry is the mechanism, and nothing in the code suggests it. Keep-out
+   skips on `'spawn-keepout'`, the only seed the encounter sections saw:
+
+   ```
+   site-prop      12    towers ring the wall at wallRadius, so they cover spawns readily
+   site-building   0    a keep sits at the site centre and almost never does
+   ```
+
+   Both halves were guarded by one assertion, which passed on the prop half while the
+   building half was never exercised at all. **A combined counter reads 12 and looks
+   thorough.** Split per population it reads zero and the hole is obvious, so the test now
+   asserts `building`, `prop` and `decoration` separately and each must prove its own seed
+   set carries its own fault.
+
+   Two further faults surfaced while fixing it, both of which would have left the new
+   assertion vacuous:
+
+   - **The counter summed the wrong population.** It reduced over `regionRoots`, which are
+     the *resident* regions, so streaming discarded each count as the world scrolled away
+     and a 25-region sweep read near zero. It was caught only because it disagreed with
+     the reviewer's independently measured 3 for `gp-11` — **two instruments disagreeing
+     is worth more than either agreeing with itself.** Now accumulated on the runtime for
+     its lifetime, where it reproduces their number exactly.
+   - **The non-vacuity guard fired first and hid whether the real assertion worked.** With
+     the keep-out bypassed, `keepOutActed.building > 0` fails before `blockedByStructure`
+     is ever compared, so the suite goes red either way and the genuinely protective
+     assertion is never exercised. Neutralising all three guards to `>= 0` and re-running
+     proved the real assertion carries the mutation alone. **A test going red does not
+     tell you which assertion has the power**, and the one that fires first is the one you
+     learn nothing about.
+
+
 **Orientation needs three instruments, because each is blind where the others see.**
 This pass reached that conclusion twice, the second time after a sibling session measured
 that the first two were insufficient — an entry above that was itself written into this
