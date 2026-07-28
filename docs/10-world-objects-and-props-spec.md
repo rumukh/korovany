@@ -1932,6 +1932,37 @@ confirmation of both. The only question that reaches it is asked before trusting
 rather than after: **what quantity does this actually count, and is it the quantity the
 claim is about?**
 
+**A check establishes a property of the artefact it actually read. Name that artefact, out
+loud, in the result.** A reviewer produced this after tracing its own wrong claim, and it
+generalises the gate-subject entry above from gates to *any* check. Two failures on this
+programme have the same shape and different mechanisms:
+
+- This pass's gate proved an edit landed and was **silent about where** — it reported
+  `applied to S4 INTEGRATION tree` while editing this working tree, because `Set-Location`
+  does not move .NET's working directory.
+- A reviewer's blob check proved a defect persisted and was **silent about in what** — it
+  established that a defect survived at a branch head, which was true, and the result was
+  reported as *"live in the merged PR"* because a message had described that head as
+  merged.
+
+Both instruments were correct. Both answered about a subject the sentence then widened.
+The remedy is not additional verification, it is **refusing to widen the subject in the
+sentence that reports the result** — *"M3 live in `44c52ba`"* is true, checkable, and costs
+nothing, where *"live in the merged PR"* cost a detached worktree and two failed probes to
+refute.
+
+That is also why *"merged"* is such an effective solvent: it is a word in a message rather
+than a property of a tree, and it converts a measured claim about one artefact into an
+unmeasured claim about another without any step that feels like an inference.
+
+**And the mechanical form of the baseline rule, which the same exchange produced:** assert
+the baseline is **green before mutating**, and treat a red baseline as a **broken harness
+rather than a finding**. This pass read `pass 0, fail 1` from a worktree with no
+`node_modules` and nearly recorded it as a mutation being caught — the two are
+indistinguishable from the output alone. **A missing baseline turns any failure into a
+confirmation**, and the moment you are least likely to run one is when the number already
+agrees with you. One extra run makes the too-easy result impossible to accept by accident.
+
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
 state that no check could see. Ten lines were mangled — five entries whose opening sentence
