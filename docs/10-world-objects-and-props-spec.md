@@ -1539,6 +1539,26 @@ Two method notes, both of which changed the finding:
   and its count of `retained.push` — the injection itself — was zero. Even then the absence
   of a test is not the absence of coverage, which is why the mutation still had to be run.
 
+**A negative claim has a shelf life; a positive one does not.** The programme lead added
+this after carrying a stale absence across several messages, and it is the sharper half of
+the negative-claim rule. Content is *added* to a live integration branch and essentially
+never removed, so **a "presence" claim only becomes truer with time and an "absence" claim
+only becomes falser.** They decay in opposite directions, which means a negative is not
+established by one probe — on a moving branch it needs re-probing at the moment it is
+restated, every time.
+
+This pass then had to apply it to its own open finding. Having measured two of its tests
+missing from the integration branch at one tip, the honest form of restating it was to
+re-run the probe against the tip at the moment of writing — three tips later, and the
+absence still held. **The version that makes this cheap is blob identity**: where
+`git rev-parse <tip>:<path>` matches the tree a mutation was measured on, the measurement
+carries exactly and needs no re-run; where it differs, nothing carries. That is the same
+instrument that survived every other staleness question on this programme, used to decide
+whether a *result* is still current rather than whether a file is.
+
+The pairing with the earlier entry is the useful shape: **a negative claim needs a probe
+more than a positive one, and it needs that probe again every time it is repeated.**
+
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
 state that no check could see. Ten lines were mangled — five entries whose opening sentence
