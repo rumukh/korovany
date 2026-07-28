@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import test from 'node:test'
 import * as THREE from 'three'
+import * as artBarrel from '../src/game/art/index.ts'
+import type { LoftSection } from '../src/game/art/index.ts'
 import {
   GeometryCache,
   OUTLINE_NORMAL_ATTRIBUTE,
@@ -1465,9 +1467,12 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
   //
   // It has to be a TALL one. The sign test's blindness here is not a blind spot
   // but a blind *zone* with an exact boundary. In smooth mode `normalFor` takes X
-  // and Z from the profile — always the true radial — and only Y from the
-  // corrupted face normal, so the stored normal was `normalize((r, 1))` while the
-  // truth is `normalize((h * r, -h_r))`; their dot is proportional to `(h - r)`.
+  // and Z from the profile — the true radial whenever the section is isotropic,
+  // which every case in this test is — and only Y from the corrupted face normal,
+  // so the stored normal was `normalize((r, 1))` while the truth is
+  // `normalize((h * r, -h_r))`; their dot is proportional to `(h - r)`.
+  // (On an ANISOTROPIC section the profile direction is not the radial at all; that
+  // is a separate defect, guarded by its own test below.)
   // Measured on the broken builder, radius 1, sweeping height:
   //
   //     h = 4.0    sign test 0 bad    worst  60.41 deg   <- blind
@@ -1532,6 +1537,277 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
 })
 
 /**
+ * Every smooth-normal test above judges a shape whose correct answer is itself
+ * approximate — a polygon has creases, a collapsed ring has no tangent plane — so
+ * each asserts a magnitude or a comparison rather than a value. That left one class
+ * of defect with nowhere to fail: an error that is *exactly zero* on the isotropic
+ * case every other test uses, and grows only when `scaleX !== scaleZ`.
+ *
+ * A ring is `R(rotation) . S(scaleX, scaleZ)` applied to the profile, so its normals
+ * transform by the inverse transpose, `R . S^-1`. `normalFor` used the raw profile
+ * point, which is the direction *before* the squash — correct whenever the two
+ * scales agree, and wrong by a widening margin as they diverge. Measured against the
+ * exact ellipse normal on the untapered wall, where a smooth normal is unambiguous:
+ *
+ *     scaleZ         1.00    0.90    0.75    0.50    0.25
+ *     before        0.000   3.013   8.202  19.442  36.809  worst deg
+ *     after         0.000   0.000   0.000   0.000   0.000
+ *
+ * 342 tests passed over it, because `stylizedCapsule` — whose `depthScale` is the
+ * one shipped route to an anisotropic section, and is documented for limbs that
+ * should not be cylinders — is called nowhere yet. It is exported from the barrel,
+ * so the first sibling to build a limb would have been the one to find this.
+ */
+test('a smooth loft normal is exact on an anisotropic section, not merely plausible', () => {
+  // `scaleX`/`scaleZ` are supplied as written, NOT normalised here, because the second
+  // case deliberately omits `scaleZ` — the builder must default it to `scaleX` exactly
+  // as the position loop does. A test that always names both scales passes under
+  // `scaleZ ?? 1` as happily as under `scaleZ ?? scaleX`; that omission is the whole
+  // point of the isotropic case and it is worth 23.7 deg on a `{ scaleX: 0.4 }` section.
+  const cases: [label: string, section: Omit<LoftSection, 'y'>][] = [
+    ['isotropic', { scaleX: 1, scaleZ: 1 }],
+    ['anisotropic 0.5', { scaleX: 1, scaleZ: 0.5 }],
+    ['anisotropic 0.25', { scaleX: 1, scaleZ: 0.25 }],
+    // Pins `scaleZ ?? scaleX`. The shape is a circle of radius 0.4, so the exact normal
+    // is purely radial and any other default reads as anisotropy that is not there.
+    ['scaleX only', { scaleX: 0.4 }],
+    // Pins the rotation convention. `applyAxisAngle(UP, +rotation)` turns opposite to
+    // the position loop's `x cos - z sin`, a silent 2r error: 30/60/90 deg at 15/30/45.
+    ['rotated 30deg', { scaleX: 1, scaleZ: 0.5, rotation: Math.PI / 6 }],
+    ['rotated -50deg + squash', { scaleX: 0.8, scaleZ: 0.3, rotation: -0.873 }],
+  ]
+
+  for (const [label, section] of cases) {
+    const scaleX = section.scaleX ?? 1
+    const scaleZ = section.scaleZ ?? scaleX
+    const rotation = section.rotation ?? 0
+    const wall = loftProfile({
+      profile: polygonProfile(1, 64),
+      sections: [{ ...section, y: 0 }, { ...section, y: 1 }],
+      smooth: true,
+      capBottom: false,
+      capTop: false,
+    })
+    const position = wall.getAttribute('position')
+    const normal = wall.getAttribute('normal')
+    // Caps are excluded above rather than filtered here: their normals are
+    // legitimately vertical, so leaving them in contributes a constant 90 deg and
+    // swamps the term under test. An earlier revision of this probe measured a flat
+    // 44.286 deg at every scale and read it as the builder's error — a reading that
+    // does not move with the condition under test is measuring something else.
+    let worst = 0
+    let judged = 0
+    for (let i = 0; i < position.count; i += 1) {
+      const x = position.getX(i)
+      const z = position.getZ(i)
+      if (Math.hypot(x, z) < 1e-9) continue
+      // Undo the section's rotation, take the exact ellipse normal
+      // `(x / scaleX^2, z / scaleZ^2)` in that frame, then rotate it forward again.
+      const localX = x * Math.cos(-rotation) - z * Math.sin(-rotation)
+      const localZ = x * Math.sin(-rotation) + z * Math.cos(-rotation)
+      const nx = localX / (scaleX * scaleX)
+      const nz = localZ / (scaleZ * scaleZ)
+      const exact = new THREE.Vector3(
+        nx * Math.cos(rotation) - nz * Math.sin(rotation),
+        0,
+        nx * Math.sin(rotation) + nz * Math.cos(rotation),
+      ).normalize()
+      const stored = new THREE.Vector3().fromBufferAttribute(normal, i)
+      if (stored.lengthSq() < 1e-12) continue
+      judged += 1
+      // The claim is scoped to the HORIZONTAL component: this repair makes the
+      // in-plane direction exact under scale and section rotation. Y is still the
+      // face's own approximation, so comparing full vectors would fold an untouched
+      // term into a verdict about this one. The wall is vertical, so Y is 0 anyway;
+      // zeroing it keeps that true if a later case tapers.
+      stored.setY(0)
+      if (stored.lengthSq() < 1e-12) continue
+      const dot = Math.min(1, Math.max(-1, stored.normalize().dot(exact)))
+      worst = Math.max(worst, (Math.acos(dot) * 180) / Math.PI)
+    }
+    assert.ok(judged > 0, `${label} judged no wall vertex at all`)
+    // A proportional floor, for the reason S3 found the hard way: the verdict ranges
+    // over the judged vertices, and three `continue`s above can shrink that set
+    // without changing the result's colour. Measured, all six cases judge 384/384 —
+    // including a 500:1 taper, so the `setY(0)` skip added with this test never bites
+    // and is a guard rather than a filter. That is worth pinning, because it was
+    // added in the same patch as the claim it protects and nothing else records it.
+    assert.ok(
+      judged >= position.count * 0.9,
+      `${label} judged only ${judged} of ${position.count} vertices — the skips above `
+        + 'have become a filter, so `worst` is a maximum over a shrinking population',
+    )
+    assert.ok(
+      worst < 0.01,
+      `${label}: smooth normals sit ${worst.toFixed(4)} deg off the exact ellipse `
+        + 'normal — normalFor is not applying the inverse transpose `R . S^-1`, so '
+        + 'anisotropic or rotated sections are mis-shaded',
+    )
+    wall.dispose()
+  }
+
+  // A collapsed section has no tangent plane and no invertible scale. The requirement
+  // is finiteness, not accuracy: dividing by zero here would write NaN into the normal
+  // buffer, which renders as black and survives every angular assertion above because
+  // NaN fails every comparison rather than failing one.
+  for (const collapsed of [{ scaleX: 0, scaleZ: 1 }, { scaleX: 1, scaleZ: 0 }, { scaleX: 0 }]) {
+    const spike = loftProfile({
+      profile: polygonProfile(1, 8),
+      sections: [{ ...collapsed, y: 0 }, { scaleX: 1, y: 1 }],
+      smooth: true,
+    })
+    const normal = spike.getAttribute('normal')
+    for (let i = 0; i < normal.count; i += 1) {
+      const length = Math.hypot(normal.getX(i), normal.getY(i), normal.getZ(i))
+      assert.ok(
+        Number.isFinite(length) && Math.abs(length - 1) < 1e-3,
+        `collapsed section ${JSON.stringify(collapsed)} wrote a normal of length `
+          + `${String(length)} — the inverse scale was taken without guarding zero`,
+      )
+    }
+    spike.dispose()
+  }
+})
+
+/**
+ * `tubeAlongPoints` stored a purely radial vector as the surface normal. That is
+ * correct for a constant-radius tube — the surface is a generalised cylinder and
+ * its normal really is perpendicular to the axis — and wrong for every tapered
+ * one, by exactly the taper angle. A horn shaded like a cylinder is the visible
+ * symptom: the highlight sits in a band instead of running to the tip.
+ *
+ * The reviewer established the blast radius across the merged product, which is
+ * the reason this is a test and not a note. It is not one caller: eight direct
+ * `tubeAlongPoints` sites in `CharacterKit` pass a varying radius and omit
+ * `smooth` — headgear horn, bow limbs, beast head, beast tail, deer neck and two
+ * antler tubes, ox head — and every one of their builders has a live call site in
+ * `GameEngine.ts`. A ninth sits inside `branchStructure`, whose three `PropKit`
+ * callers are `broadleafGeometry`, `deadTreeGeometry` and `thornTreeGeometry`,
+ * all reachable through `treeGeometry` from `WorldPropLibrary`. My own call graph
+ * said "one live caller" because I ran it on this branch, where `branchStructure`
+ * genuinely has no caller — a branch-local answer to a programme-level question.
+ *
+ * Derivation, checked against numerical differentiation of the surface before it
+ * was written: for `P(t,th) = C(t) + r(t)*u(th)` with a parallel-transport frame,
+ * `dP/dt = a*T + r'*u` and `dP/dth = r*v`, giving an outward normal along
+ * `u - (dr/ds)*T`. `getPointAt` is arc-length parameterised, so `ds = L*dt`.
+ * Brute force agreed to 0.0000 deg; the old radial vector was out by 7.1250 deg
+ * on the taper below, which is `atan(0.5/4)` to four places.
+ *
+ * The constant-radius case is asserted strictly rather than within a tolerance,
+ * because the sampled slope is exactly zero there and the code returns the
+ * untouched vector. That makes every non-tapered caller bit-for-bit unchanged,
+ * and a strict assertion is the only kind that can prove it.
+ */
+test('a tapered tube leans its normal along the axis by the taper angle', () => {
+  const length = 4
+  const wide = 0.6
+  const narrow = 0.1
+  const radialSegments = 8
+  const tubularSegments = 6
+  const spine = [
+    { x: 0, y: 0, z: 0 },
+    { x: 0, y: length / 2, z: 0 },
+    { x: 0, y: length, z: 0 },
+  ]
+  // Side walls are emitted before the caps, six vertices per quad.
+  const sideVertices = 6 * radialSegments * tubularSegments
+
+  const slope = (narrow - wide) / length
+  const expectedY = -slope / Math.hypot(1, slope)
+  assert.ok(
+    Math.abs(expectedY) > 0.1,
+    `the taper must be steep enough to discriminate, got ${String(expectedY)}`,
+  )
+
+  const tapered = tubeAlongPoints(spine, {
+    radius: (t: number) => wide + (narrow - wide) * t,
+    radialSegments,
+    tubularSegments,
+  })
+  const taperedNormal = tapered.getAttribute('normal')
+  const taperedPosition = tapered.getAttribute('position')
+  assert.ok(
+    taperedNormal.count >= sideVertices,
+    `expected at least ${String(sideVertices)} vertices, got ${String(taperedNormal.count)}`,
+  )
+
+  for (let i = 0; i < sideVertices; i += 1) {
+    const nx = taperedNormal.getX(i)
+    const ny = taperedNormal.getY(i)
+    const nz = taperedNormal.getZ(i)
+
+    assert.ok(
+      Math.abs(ny - expectedY) < 1e-6,
+      `vertex ${String(i)} has axial normal ${String(ny)}, expected ${String(expectedY)} — `
+        + 'a radial vector is not the normal of a tapered surface',
+    )
+    assert.ok(
+      Math.abs(Math.hypot(nx, ny, nz) - 1) < 1e-6,
+      `vertex ${String(i)} normal is not unit length`,
+    )
+
+    // The lean must be purely axial: the horizontal part still points straight out.
+    const px = taperedPosition.getX(i)
+    const pz = taperedPosition.getZ(i)
+    const radial = Math.hypot(px, pz)
+    const horizontal = Math.hypot(nx, nz)
+    if (radial > 1e-6 && horizontal > 1e-6) {
+      const alignment = (nx * px + nz * pz) / (horizontal * radial)
+      assert.ok(
+        alignment > 1 - 1e-6,
+        `vertex ${String(i)} normal was rotated about the axis, alignment ${String(alignment)}`,
+      )
+    }
+  }
+  tapered.dispose()
+
+  // Control: a constant radius must be untouched, exactly.
+  const straight = tubeAlongPoints(spine, {
+    radius: 0.3,
+    radialSegments,
+    tubularSegments,
+  })
+  const straightNormal = straight.getAttribute('normal')
+  for (let i = 0; i < sideVertices; i += 1) {
+    assert.equal(
+      straightNormal.getY(i),
+      0,
+      `constant-radius vertex ${String(i)} gained an axial normal of `
+        + `${String(straightNormal.getY(i))} — the no-taper path is no longer a no-op`,
+    )
+  }
+  straight.dispose()
+
+  // Control: `smooth` omitted is `smooth: true`, which is what puts the live
+  // call sites on this path at all. If the default ever flips, this fails here
+  // rather than in someone else's shading.
+  const explicit = tubeAlongPoints(spine, {
+    radius: (t: number) => wide + (narrow - wide) * t,
+    radialSegments,
+    tubularSegments,
+    smooth: true,
+  })
+  const explicitNormal = explicit.getAttribute('normal')
+  const rebuilt = tubeAlongPoints(spine, {
+    radius: (t: number) => wide + (narrow - wide) * t,
+    radialSegments,
+    tubularSegments,
+  })
+  const rebuiltNormal = rebuilt.getAttribute('normal')
+  assert.equal(explicitNormal.count, rebuiltNormal.count)
+  for (let i = 0; i < explicitNormal.count; i += 1) {
+    assert.equal(
+      rebuiltNormal.getY(i),
+      explicitNormal.getY(i),
+      `omitting smooth diverged from smooth: true at vertex ${String(i)}`,
+    )
+  }
+  explicit.dispose()
+  rebuilt.dispose()
+})
+
+/**
  * The test above compares winding against the geometry's own stored normals, which
  * is exactly the check that caught the shipped loft inversion. It has one blind
  * spot: a builder that flipped its normals *and* its winding together would agree
@@ -1561,6 +1837,7 @@ test('closed builders wind outward, independently of their normals', () => {
     inward: number
     weakest: number
     judged: number
+    triangles: number
   } => {
     const source = geometry.index ? geometry.toNonIndexed() : geometry
     const position = source.getAttribute('position')
@@ -1594,8 +1871,9 @@ test('closed builders wind outward, independently of their normals', () => {
       if (wind.dot(outward) <= 0) inward += 1
       weakest = Math.min(weakest, Math.abs(wind.normalize().dot(outward.normalize())))
     }
+    const triangles = Math.floor(position.count / 3)
     if (source !== geometry) source.dispose()
-    return { inward, weakest, judged }
+    return { inward, weakest, judged, triangles }
   }
 
   // Same control set as the relative test, and valid here for the same reason:
@@ -1715,7 +1993,7 @@ test('closed builders wind outward, independently of their normals', () => {
 
   let totalJudged = 0
   for (const [, label, geometry] of cases) {
-    const { inward, weakest, judged } = measure(geometry)
+    const { inward, weakest, judged, triangles } = measure(geometry)
     // Prove the invariant applies before trusting what it says. 0.2 is a TRIPWIRE on
     // this test's own cases, not a correctness threshold on geometry in general, and
     // the difference is not academic. Measured, `probe-inventory2.mts`:
@@ -1777,6 +2055,28 @@ test('closed builders wind outward, independently of their normals', () => {
     // `weakest` alone cannot catch an empty measurement: with no judged face it stays
     // at its `Infinity` seed and sails past the guard above.
     assert.ok(judged > 0, `${label} judged no faces at all`)
+    // ...and `judged > 0` is a floor of ONE, which catches only total collapse. The
+    // verdict below ranges over the judged faces alone, so a case that quietly stops
+    // presenting most of its triangles gets a weaker test with an identical green
+    // result. Every case here judges 100% today, so this asserts a real property of
+    // the builders rather than a fitted coverage number: THEY MUST NOT EMIT DEGENERATE
+    // TRIANGLES. `measure` skips exactly two things — zero-area faces and faces whose
+    // centroid coincides with the body's — and neither should occur in this kit's
+    // output at all. The 0.9 is headroom against a sliver at a fan cap, not a fit.
+    //
+    // Found by S3 in their own coverage instrument, where per-geometry share had
+    // fallen to 64% under an aggregate that still looked healthy. The aggregate floor
+    // below cannot see that failure: one case collapsing while another grows leaves
+    // the total untouched.
+    assert.ok(
+      judged >= triangles * 0.9,
+      `${label} judged only ${judged} of ${triangles} triangles `
+        + `(${((judged / triangles) * 100).toFixed(1)}%) — faces are leaving the `
+        + 'measurement, either because the builder now emits degenerate or '
+        + 'centroid-coincident geometry or because a skip was added to `measure`. '
+        + 'Either way the winding verdict below now ranges over a subset, and no '
+        + 'other assertion here reports that it shrank',
+    )
     assert.equal(inward, 0, `${label} must wind outward`)
     totalJudged += judged
     geometry.dispose()
@@ -2281,6 +2581,15 @@ const mergedSpanVolumes = (parts: THREE.BufferGeometry[]): {
  *
  *     merged          weakest 0.3075   2 of 52 faces spuriously inward
  *     composed prop   weakest 0.2158   2 of 64 faces spuriously inward
+ *
+ * Neither figure is a property of the shape alone, and that is the disqualification rather
+ * than a caveat on it. `measure` averages vertex *positions*, so refining one part of a
+ * merged prop drags the shared reference point into that part: the composed prop's lathe
+ * holds 62.5% of the vertices at `segments: 10` and 97.7% at 256, moving the centroid
+ * 0.062 up the axis and the reading 0.2158 -> 0.1900 while the surface is unchanged.
+ * Judged about an area-weighted centroid, invariant to how finely the same surface is cut,
+ * it converges to 0.1886. Refining the loft instead moves it *up*, to 0.2358. Measured by
+ * review, `probe-centroid-weighting.mts`. Quote neither number without its tessellation.
  *
  * A prop is several bodies side by side, so it is not star-convex about the centroid of
  * the whole — the same disqualification `branchStructure` carries above. Pointing
@@ -3235,6 +3544,67 @@ test('every type the spec names is exported by the barrel', () => {
     [],
     'docs/08 names these types but the art barrel does not export them, so code '
     + 'copied from the spec will not compile',
+  )
+})
+
+/**
+ * The gate above covers the type names in §5.2's signatures and nothing else. It
+ * extracts identifiers in `: Position` and `readonly X[]` positions, and every
+ * function name in this kit is lowercase and sits before a paren, so no function
+ * has ever been checked by it. That leaves the more direct half of the same
+ * contract unguarded: a sibling copying `createArtStream(...)` out of the spec
+ * fails on the *call*, not on a type annotation.
+ *
+ * That is not hypothetical here. The neighbouring test records the type half
+ * shipping broken twice, and a rename is strictly easier to get wrong than a type
+ * reference, because renaming an export updates every call site the compiler can
+ * see and leaves the one document that two other sessions are coding against
+ * untouched. Nothing in `tsc -b`, `oxlint`, the suite or `vite build` reads
+ * Markdown, so the spec is the only shipped artefact of mine with no automated
+ * reader at all — which S3 found the hard way, with ten mangled lines in a file
+ * three sessions had read and approved.
+ *
+ * Resolution is against the imported module rather than a regex over `index.ts`,
+ * which is the difference between checking the contract and checking a parse of
+ * it. Writing this, a barrel-text parser handling `export { x } from './y.ts'` in
+ * list form but not single-line form reported `hasStylizedShader` missing — a red
+ * light on correct code, from the check itself. `typeof bag[name] === 'function'`
+ * cannot make that mistake: it asks the question a sibling's import asks.
+ *
+ * Deliberately scoped to fenced signatures. Prose in the baseline and retired-
+ * budget sections cites `ComicMaterialLibrary` and `GEOMETRY_CACHE_ENTRIES_MAX`
+ * precisely because they no longer exist, and widening this to every backticked
+ * identifier would redden on text that is correct — which trains the next reader
+ * to ignore it. The count floor is the other half: an extractor that silently
+ * matches nothing passes a "no missing names" assertion perfectly.
+ */
+test('every function the spec declares in a signature block is a live export', () => {
+  const spec = readFileSync(
+    new URL('../docs/08-graphics-foundation-spec.md', import.meta.url),
+    'utf8',
+  )
+
+  const fences = [...spec.matchAll(/```(?:ts|typescript)\r?\n([\s\S]*?)```/g)]
+    .map((match) => match[1]!)
+  assert.ok(fences.length >= 4, `expected the spec's API blocks, found ${String(fences.length)}`)
+
+  const declared = new Set<string>()
+  for (const match of fences.join('\n').matchAll(/^\s*(?:export\s+)?function\s+(\w+)\s*[(<]/gm)) {
+    declared.add(match[1]!)
+  }
+  assert.ok(
+    declared.size >= 25,
+    `spec parse found only ${String(declared.size)} signatures, so this cannot fail`,
+  )
+
+  const bag = artBarrel as unknown as Record<string, unknown>
+  const missing = [...declared].filter((name) => typeof bag[name] !== 'function').sort()
+
+  assert.deepEqual(
+    missing,
+    [],
+    'docs/08 documents these functions but the art barrel does not export them, so '
+    + 'code copied from the spec will not run',
   )
 })
 

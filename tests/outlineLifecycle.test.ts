@@ -30,7 +30,17 @@ function methodBody(source: string, signature: string): string {
     if (source[index] === '{') depth += 1
     else if (source[index] === '}') {
       depth -= 1
-      if (depth === 0) return source.slice(start, index + 1)
+      if (depth !== 0) continue
+      // Anchored on a signature, brace matching closes on the first `{` after it — which
+      // in TypeScript is the return type whenever one is written as an object literal
+      // (`purchase(item): { ok: boolean } {`; 4 such in GameEngine.ts today, one of them
+      // spanning several lines). A type annotation is followed by the body brace, a body
+      // is not, so skipping on that distinction handles both spellings. Today's two
+      // anchors are safe by the shape of their signatures rather than by construction:
+      // give `registerOutline` an object return type and this would extract the type,
+      // reddening an outline test for a reason that has nothing to do with outlines.
+      if (/^\s*\{/.test(source.slice(index + 1, index + 8))) continue
+      return source.slice(start, index + 1)
     }
   }
   assert.fail(`${signature} has unbalanced braces`)

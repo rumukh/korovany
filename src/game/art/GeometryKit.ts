@@ -178,12 +178,51 @@ export function loftProfile(options: LoftOptions): THREE.BufferGeometry {
       const u0 = point / pointCount
       const u1 = (point + 1) / pointCount
 
-      const normalFor = (pointIndex: number): THREE.Vector3 => {
+      const normalFor = (pointIndex: number, ringIndex: number): THREE.Vector3 => {
         if (!smooth) return faceNormal
         const source = profile[pointIndex]
-        radialNormal.set(source.x, 0, source.y)
+        const section = sections[ringIndex]
+        const scaleX = section.scaleX ?? 1
+        const scaleZ = section.scaleZ ?? scaleX
+        // A ring is `R(rotation) . S(scaleX, scaleZ)` applied to the profile, so its
+        // normals transform by the inverse transpose, `R . S^-1` -- divide by the
+        // scales, do not multiply. Taking the raw profile point instead tilts every
+        // normal on an anisotropic section: measured 41deg of error at `depthScale
+        // 0.5` and 60deg at 0.25, which is precisely the `stylizedCapsule` option
+        // documented for limbs that should not be cylinders.
+        // If either scale collapses the section there is no tangent plane to be
+        // normal to, and the inverse is undefined. Fall back to the profile
+        // direction WHOLE rather than inverting one axis and not the other: a
+        // per-axis guard mixes profile space with normal space and invents a
+        // direction that is neither. Smooth collapsed-section cases are live in
+        // the suite, so this edge is reachable.
+        const degenerate = Math.abs(scaleX) < 1e-6 || Math.abs(scaleZ) < 1e-6
+        const radialX = degenerate ? source.x : source.x / scaleX
+        const radialZ = degenerate ? source.y : source.y / scaleZ
+        const rotation = section.rotation ?? 0
+        // The same inline form as the position loop above, deliberately: rotation
+        // there is `x cos - z sin, x sin + z cos`, and `applyAxisAngle(UP, +r)`
+        // turns the other way, which is a silent 2r error on every rotated section.
+        const cosine = Math.cos(rotation)
+        const sine = Math.sin(rotation)
+        radialNormal.set(
+          radialX * cosine - radialZ * sine,
+          0,
+          radialX * sine + radialZ * cosine,
+        )
+        if (radialNormal.lengthSq() < 1e-12) {
+          radialNormal.copy(faceNormal)
+          return radialNormal
+        }
+        // Keep the face's horizontal-to-vertical proportion and replace only its
+        // horizontal DIRECTION. Normalising the radial part to unit length before
+        // writing Y forces that proportion to `1 : faceNormal.y`, which is right
+        // only where the face is vertical -- so a capsule's caps shaded as though
+        // they were shaft, 24deg out at the poles even on a circular section.
+        const planar = Math.hypot(faceNormal.x, faceNormal.z)
+        radialNormal.normalize().multiplyScalar(planar).setY(faceNormal.y)
         if (radialNormal.lengthSq() < 1e-12) radialNormal.copy(faceNormal)
-        else radialNormal.normalize().setY(faceNormal.y).normalize()
+        else radialNormal.normalize()
         return radialNormal
       }
 
@@ -191,13 +230,13 @@ export function loftProfile(options: LoftOptions): THREE.BufferGeometry {
       // outward normals written above. Reversing these six pushes turns every
       // loft inside out: `FrontSide` would draw the far wall and the `BackSide`
       // ink shell would cover the mesh instead of haloing it.
-      pushVertex(ring, point, normalFor(point), u0)
-      pushVertex(ring + 1, next, normalFor(next), u1)
-      pushVertex(ring, next, normalFor(next), u1)
+      pushVertex(ring, point, normalFor(point, ring), u0)
+      pushVertex(ring + 1, next, normalFor(next, ring + 1), u1)
+      pushVertex(ring, next, normalFor(next, ring), u1)
 
-      pushVertex(ring, point, normalFor(point), u0)
-      pushVertex(ring + 1, point, normalFor(point), u0)
-      pushVertex(ring + 1, next, normalFor(next), u1)
+      pushVertex(ring, point, normalFor(point, ring), u0)
+      pushVertex(ring + 1, point, normalFor(point, ring + 1), u0)
+      pushVertex(ring + 1, next, normalFor(next, ring + 1), u1)
     }
   }
 
@@ -543,6 +582,11 @@ export function tubeAlongPoints(
     0.5,
   )
 
+  // Arc length, so a radius slope expressed per-`t` can be converted into the
+  // per-distance slope the surface normal actually depends on.
+  const curveLength = curve.getLength()
+  const SLOPE_STEP = 1e-3
+
   const positions: number[] = []
   const normals: number[] = []
   const uvs: number[] = []
@@ -578,6 +622,23 @@ export function tubeAlongPoints(
     binormal.crossVectors(tangent, normal).normalize()
 
     const radius = Math.max(1e-4, radiusAt(t))
+
+    // A tapering tube's surface leans along its axis, so the radial direction is
+    // not the surface normal — it is short by the taper angle. For radius r(s)
+    // measured along arc length, the outward normal is `u - (dr/ds) * T`.
+    // Sampling is the only way to recover dr/ds from an arbitrary callback.
+    //
+    // A constant radius makes the difference exactly 0, so the branch below
+    // returns the untouched radial vector and every non-tapered caller is
+    // bit-for-bit unchanged. `smooth: false` never reads these at all.
+    const back = Math.max(0, t - SLOPE_STEP)
+    const ahead = Math.min(1, t + SLOPE_STEP)
+    const span = ahead - back
+    const slope =
+      span > 1e-9 && curveLength > 1e-9
+        ? (radiusAt(ahead) - radiusAt(back)) / span / curveLength
+        : 0
+
     const positionRing: THREE.Vector3[] = []
     const normalRing: THREE.Vector3[] = []
     for (let segment = 0; segment < radialSegments; segment += 1) {
@@ -587,7 +648,11 @@ export function tubeAlongPoints(
       const outward = new THREE.Vector3()
         .addScaledVector(normal, cos)
         .addScaledVector(binormal, sin)
-      normalRing.push(outward.clone())
+      normalRing.push(
+        slope === 0
+          ? outward.clone()
+          : outward.clone().addScaledVector(tangent, -slope).normalize(),
+      )
       positionRing.push(
         new THREE.Vector3().copy(center).addScaledVector(outward, radius),
       )

@@ -1264,6 +1264,19 @@ test('an ink shell under a hidden LOD level is free, which is why max beats sum'
  *      first two it cannot fire on legitimate prose, because a paragraph does not repeat
  *      its own opening within twelve lines and then keep going.
  *
+ * A fourth, restored after it was found missing: **an over-long line.** Prose here wraps
+ * at ~95 columns, so a weld joins two wrapped lines and roughly doubles one. It is the
+ * only one of the four that can see a join between two lowercase words — `alreadyargued`,
+ * `thatreads` — which leaves no dangling fragment, no `**`, and no duplicated prefix.
+ * Table rows are excluded by structure rather than by length, and fenced blocks are
+ * already skipped, so the rule stays exact instead of becoming a threshold to tune.
+ *
+ * It carried over from the world-objects branch's own copy of this gate and was dropped
+ * when that gate was renamed, moved here and widened to two specs — the widening was
+ * real, and so was the narrowing, and only the first was noticed. It earned its way back
+ * the hard way: a `docs/10` edit welded `…into composition thatreads as places…` at 161
+ * columns, and the three detectors above passed over it.
+ *
  * Fenced code blocks are excluded from (1): indented lines inside them are correct, and a
  * detector that fires on the spec's own `text` fences would be silenced within a day.
  *
@@ -1283,6 +1296,7 @@ test('neither spec contains a mangled paragraph join', () => {
   const dangling: string[] = []
   const jammed: string[] = []
   const duplicated: string[] = []
+  const overlong: string[] = []
   let linesScanned = 0
 
   for (const spec of specs) {
@@ -1300,6 +1314,11 @@ test('neither spec contains a mangled paragraph join', () => {
       }
       if (/[a-z]\*\*[A-Z]/.test(line)) {
         jammed.push(`${spec}:${String(index + 1)}: ${line.trim().slice(0, 70)}`)
+      }
+      if (line.length > 100 && !line.startsWith('|')) {
+        overlong.push(
+          `${spec}:${String(index + 1)}: [${String(line.length)}] ${line.trim().slice(0, 60)}`,
+        )
       }
       const text = line.trim()
       if (text.length < 20) continue
@@ -1340,6 +1359,13 @@ test('neither spec contains a mangled paragraph join', () => {
     [],
     'a `**` marker sits between two word characters, so a sentence was joined without '
     + 'its space. Restore the space.',
+  )
+  assert.deepEqual(
+    overlong,
+    [],
+    'a prose line at roughly twice the wrap width is two lines welded by a deleted '
+    + 'newline. This is the only detector here that can see a join between two lowercase '
+    + 'words, which leaves no other residue. Split the line at the seam.',
   )
 })
 
