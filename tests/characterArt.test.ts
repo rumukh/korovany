@@ -2928,6 +2928,33 @@ test('the engine wires the rig the way these tests measure it', () => {
     + 'passes the equality above and is wrong at every frame rate but the one it was '
     + 'written at.',
   )
+  // And the *other* axis, which the commit that fixed the delta left at one point —
+  // every assertion above uses `stride = 1`. `damp(Math.sign(stride), 0, 13, delta)` is
+  // identical to production at `stride = 1` for every delta, so it satisfies the value
+  // pin, the semigroup pin and the `> 0.8` pin together; at `stride = 0.5` it snaps a
+  // staggering actor's stride to full magnitude and then decays, instead of decaying
+  // from where it was.
+  //
+  // **A reviewer found this inside the commit titled "pin the extracted functions across
+  // their range, not at one input"**, which is the sharpest instance this branch has
+  // produced of its own recurring defect: *the axis you were shown gets enumerated and
+  // the axis nobody complained about stays a sample.* The delta axis had a demonstrated
+  // failure; the stride axis did not; only the demonstrated one got swept.
+  //
+  // So the question is not "am I sampling or enumerating" but **"which axes does this
+  // function have, and did I enumerate the one nobody complained about?"** — which is
+  // why `chestGaitYaw` escaped: the wobble simulation calls it 3,600 times per role
+  // across ±0.62, so its stride axis was covered by something that already existed.
+  // `decayStrideOnStagger` has nothing behind it; the simulation never staggers.
+  assert.ok(
+    Math.abs(decayStrideOnStagger(0.5, 1 / 60) - 0.5 * decayStrideOnStagger(1, 1 / 60)) < 1e-12,
+    'the stride decay is no longer linear in the stride: half a stride does not leave '
+    + `half the result. ${decayStrideOnStagger(0.5, 1 / 60).toFixed(6)} against `
+    + `${(0.5 * decayStrideOnStagger(1, 1 / 60)).toFixed(6)}. Linearity holds for `
+    + '`s·e^(-k·delta)` and fails for anything that normalises, clamps or signs the '
+    + 'stride — all of which leave a staggering actor decaying from full magnitude '
+    + 'rather than from where it actually was.',
+  )
   assert.ok(
     decayStrideOnStagger(1, 1 / 60) > 0.8,
     `one frame of a stagger leaves ${decayStrideOnStagger(1, 1 / 60).toFixed(4)} of the `
