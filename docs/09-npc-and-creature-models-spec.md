@@ -989,8 +989,34 @@ no new dependencies.
   acknowledged the rule above — and the cause turned out to be that **one row was assembled
   from two remembered figures rather than produced by a command.**
   Both of the author's own implementations agree at 440 prose lines when re-run at one tip,
-  so this was not a tooling disagreement: it was a fabricated cell in a table of
+  so this was not a disagreement *between them*: it was a fabricated cell in a table of
   measurements, carrying no marker to distinguish it from the two that were real.
+  **And the explanation that replaced the fabricated row was wrong too, which is the more
+  useful half.** The gap was attributed to *"the tip 12%, the frame essentially the rest."*
+  Measured on one population with one variable — 440 prose lines, one strip mode, two
+  predicates:
+  ```
+  \S  \S   ->  28
+  \w  \w   ->  18
+  ```
+  **The predicate is the entire gap, 10 of 10, and the frame contributes zero** — both
+  sweeps counted the same 440 lines. The separating lines are those with a non-word
+  character on one side of the double space: `,  and`, an em dash, a comma. Four successive
+  statements were made about this discrepancy and the one command that settles it was run
+  by neither party until the fourth.
+  The mechanism is worth more than the number. **The 12% was measured; the "therefore the
+  frame" was not.** It is a remainder, and a remainder can only be assigned to a term that
+  has been named — predicate was never in the decomposition, so it could receive nothing,
+  and its share was silently redistributed to the only other candidate. **An unnamed
+  contributor is invisible by construction.**
+  And the reason it survived two parties checking each other: **a measured component
+  launders an unmeasured decomposition.** *"It is 12%, not co-equal"* reads as a result
+  because it contains one, and it reads as *more* careful than the claim it replaced,
+  which is precisely what stops anyone reopening it — **a correction inherits the
+  credibility of the act of correcting.**
+  So, checkable rather than surveyed: **attributing a remainder is a measurement claim
+  about every cause you did not name.** *"The rest is X"* asserts that nothing unnamed
+  contributes, which is the strongest claim in the sentence and the only one nobody checks.
   **A reconciliation table is the artefact whose entire value is that two frames have been
   made comparable**, so a remembered row destroys precisely the property a reader trusts it
   for — the same shape as a line-ending commit landing in the file whose value is its
