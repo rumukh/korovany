@@ -344,6 +344,15 @@ no new dependencies.
   parties always ran was never the step that would have caught it — which retires
   *"verify rather than accept"* as the discipline and puts the population question in its
   place.
+  **And the count of those failures is a lower bound, not a total.** Five were recorded
+  here — a rule broken by its own author within minutes or hours of writing it — and not
+  one of the five was found by looking for it. Each surfaced because someone happened to
+  be examining that exact artefact for an unrelated reason: a sweep run for a different
+  purpose, a regex aimed at a compliment, a grep over the wrong file set. **A count
+  assembled entirely from accidental discoveries measures the accidents, not the
+  population**, which is this section's own rule about lower bounds turned on its own
+  tally. The honest reading of "five" is the one the factorial table already demands of
+  its figures: a floor under a maximum nobody has computed.
 - **A documented exclusion is a decision; the same exclusion carried into a different
   assertion is a sample.** The subtlest form of the question above, and the one with no
   usual tell. A gait table excluded three roles from a wobble simulation for written,
