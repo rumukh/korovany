@@ -2013,6 +2013,24 @@ const GAITS = [
   { role: 'peasant', speed: 3.1, cadence: 6.8, chestYawCoefficient: 0.12 },
 ] as const
 
+/**
+ * What the rejected rule produces per role, measured off this sweep.
+ *
+ * Not a bound and not a tolerance — a record, pinned to a thousandth of a degree so
+ * that the figures quoted in the comment beside the assertion cannot go stale without
+ * something saying so. Every one of these was wrong once: they were taken from the
+ * pure-yaw probe that motivated the per-role sweep rather than from the sweep itself,
+ * and nothing in the file could tell.
+ */
+const REJECTED_WOBBLE: Record<(typeof GAITS)[number]['role'], number> = {
+  soldier: 2.091,
+  scout: 1.526,
+  archer: 2.207,
+  brute: 1.932,
+  champion: 1.446,
+  peasant: 2.391,
+}
+
 test('the head holds its target while the chest twists under it', () => {
   const DELTA = 1 / 60
   const SECONDS = 60
@@ -2104,6 +2122,20 @@ test('the head holds its target while the chest twists under it', () => {
     // the same day. Quoting a figure from the experiment that *prompted* an assertion
     // rather than from the assertion is how a comment ends up describing code that
     // was replaced for being wrong.
+    //
+    // So they are pinned, not quoted. Correcting a stale number and leaving nothing
+    // able to notice the next one is half a fix, and this file had just done exactly
+    // that to the gaze table two hundred lines above. The whole per-role table is
+    // asserted to a thousandth of a degree; if the gait model, the damping rate or the
+    // rejected rule moves, this names the new value instead of a reviewer doing it.
+    assert.ok(
+      Math.abs(converted - REJECTED_WOBBLE[gait.role]) < 0.001,
+      `a ${gait.role}'s rejected rule now produces ${converted.toFixed(3)} degrees of `
+      + `wobble, not the ${REJECTED_WOBBLE[gait.role].toFixed(3)} recorded beside it. `
+      + 'Nothing is necessarily broken — but the comment above and any docblock quoting '
+      + 'these figures are now wrong, and this assertion exists so that they get '
+      + 'corrected by being told rather than by someone remembering to re-measure.',
+    )
     assert.ok(
       converted > BOUND,
       `a ${gait.role}'s rejected rule produced only ${converted.toFixed(3)} degrees of `
