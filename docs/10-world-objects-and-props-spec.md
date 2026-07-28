@@ -915,9 +915,32 @@ programme's docs. Line numbers rot silently — the file they point into stays v
 nothing errors, and the citation quietly starts describing a blank line. This spec cites
 files and symbols throughout for that reason. The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives already
 
+**A one-directional set difference cannot distinguish "they lost work" from "they are
+describing an old snapshot."** Both produce a large one-way gap, and the alarming reading
+presents first — because the direction you naturally compute is *what is missing from
+theirs*, which is also the direction that looks like data loss.
+
+Contributed by the foundation session, which came within one message of reporting that
+this pass had destroyed a spawn fix. Its method was sound and deliberately rebase-proof:
+compare commit *subjects* rather than SHAs, so a rebase cannot fake a difference. That
+defeats rebase. **It does not defeat staleness**, and it had been treated as though it
+defeated both. The reverse direction settled it in one command — every subject on the
+older tree was already present on the newer one, and the timestamps were three and a half
+hours apart.
+
+This was the third time in one night that the decisive check was **the other direction of
+a comparison already run**. The first two were this pass's: reading a reflog position as
+*"they read a stale ref"* when it read equally well as *"I have moved seventeen times
+since,"* and reading `git branch --contains` as *"they reviewed a copy"* when it meant
+*"I rebased past it."*
+
+The general form is cheap and mechanical, which is why it belongs next to the mutation
+rules rather than in the prose: **before reporting an asymmetry, compute it both ways.**
+One extra command, and it is the difference between a colleague's error and your own
+staleness — two readings that look identical from one side. The only entry here that is not about code, and the programme lead
+
 **The ambiguity resolved in my favour, silently — and that is a selection rule, not a
-measurement error.** The only entry here that is not about code, and the programme lead
-identified it as its own class after this pass reported it about itself.
+measurement error.** The only entry here that is not about code, and the programme leadidentified it as its own class after this pass reported it about itself.
 
 Three times tonight this session diagnosed a colleague's tooling as broken — "cached ref
 resolutions" from a reflog position, "reviewing an integration copy" from
