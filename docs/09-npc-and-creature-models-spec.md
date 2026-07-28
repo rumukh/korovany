@@ -395,6 +395,26 @@ no new dependencies.
   same one line, but the trigger is different: re-resolve at the moment of *writing the
   close*, not at the moment of measuring, because the interval that matters is the one
   the review itself opened.
+- **A rule stored without its trigger is a guard with no call site.** It exists, it is
+  correct, and nothing invokes it — which is the same object as an assertion that cannot
+  fail for the defect it names, one level up and in prose instead of a test. The evidence
+  is unflattering and worth keeping: the note *"commit before mutating"* was written here
+  after a `git checkout --` destroyed uncommitted work, and it then failed to fire three
+  more times, because it recorded the rule and not the moment. So the operational form is
+  **where a rule can be made into a call site rather than a sentence, it should be**, and
+  this document is the wrong home for anything convertible.
+  That partitions the rules in this repo into three, and the partition is the useful part.
+  *Converted*: the arithmetic behind the head rig now lives in `applyHeadPose`,
+  `applyChestPose`, `chestGaitYaw`, `decayStrideOnStagger`, `actorGaitCadence` and
+  `actorSpeedForRole`, so the suite drives it instead of reading it — twelve source pins
+  became two calls, and a rewrite can no longer evade them.
+  *Unconvertible*: the wiring claims and the alias evasion, because `GameEngine` is not
+  constructible in Node, which is why the test file states them as limitations instead of
+  implying it has none.
+  *Sentence-only, and therefore inert until someone remembers*: everything about working
+  practice, including the one above. This bullet is in that third category and cannot
+  argue itself out of it — which is the point. **A rule that cannot be given a call site
+  should say so, so that its reader knows they are the invocation.**
 - **Before offering a cause, check whether your own code already answers it.** The
   sharpest instance this work produced: a docblock blamed head roll for a 39%
   discrepancy in a gaze figure, when `solveHeadYaw`'s signature — written ten commits
