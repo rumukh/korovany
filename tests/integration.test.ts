@@ -9,7 +9,7 @@
  */
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import * as THREE from 'three'
 
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
@@ -1389,5 +1389,82 @@ test('the barrel assertion is still the subset form, not the exact-set form', ()
     + 'sibling ADDS an export, which forces two sessions to edit a file they do not own, '
     + 'and it caught none of the three spec-vs-barrel drifts it was credited with — all '
     + 'three were type-only exports, invisible to Object.keys.',
+  )
+})
+
+
+/**
+ * Every bulk `castShadow` sweep asks the opacity predicate.
+ *
+ * The Wave 4 review found a 62%-opaque torus — the gilded caravan's beacon — being
+ * rendered into the shadow map as a solid ring, because `markCharacterShadows` excluded
+ * meshes by `name === 'faction-ring'` and `userData.noComicOutline`, both of which are
+ * **ink** markers. `transparent: true` exempts nothing from three's depth pass; only
+ * `castShadow` does. It survived because every *other* transparent mesh those
+ * constructors make is a contact shadow, and contact shadows set the ink marker
+ * themselves — so the wrong rule gave the right answer everywhere anyone looked.
+ *
+ * **The fix had no regression test, and I measured that rather than assuming it.**
+ * Deleting `if (!StylizedArtLibrary.isOpaque(...)) return` from `markCharacterShadows`
+ * leaves the entire suite green at 337 — the review pinned the *predicate*, and the
+ * predicate stays correct with the caller reverted. Nothing was asking whether the
+ * caller still called it.
+ *
+ * A behavioural test is not available: `GameEngine` needs a DOM and a GL context, and
+ * nothing in this suite constructs one. So this is a scan, in the same family as the
+ * material-sweep scan in `tests/art.test.ts`, and it asserts the **rule** rather than
+ * the one site — which is how it found a second instance. `createBird` bulk-set
+ * `castShadow` on every mesh in its group with no opacity guard. Latent rather than
+ * live: both of its materials are opaque today, which is precisely the state the beacon
+ * sweep was in until one decoration got an opacity. Guarded now.
+ *
+ * What this cannot detect: a `castShadow` assignment on a single object outside a
+ * traversal. There are eight of those and each is a mesh its author had just built and
+ * knew the material of, which is a different situation from a sweep over a subtree
+ * somebody else populates.
+ */
+test('every bulk castShadow sweep excludes what you can see through', () => {
+  const root = new URL('../src/game/', import.meta.url)
+  const files = readdirSync(root, { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith('.ts'))
+
+  const sweeps: string[] = []
+  const unguarded: string[] = []
+  for (const name of files) {
+    const source = readFileSync(new URL(name.split('\\').join('/'), root), 'utf8')
+    for (const match of source.matchAll(/\.traverse\s*\(/g)) {
+      const open = match.index + match[0].length - 1
+      let depth = 0
+      let end = open
+      let closed = false
+      for (let index = open; index < source.length; index += 1) {
+        if (source[index] === '(') depth += 1
+        else if (source[index] === ')') {
+          depth -= 1
+          if (depth === 0) { end = index; closed = true; break }
+        }
+      }
+      if (!closed) continue
+      const body = source.slice(open, end)
+      if (!/\.castShadow\s*=\s*true/.test(body)) continue
+      const line = source.slice(0, match.index).split('\n').length
+      const label = `${name}:${String(line)}`
+      sweeps.push(label)
+      if (!body.includes('isOpaque')) unguarded.push(label)
+    }
+  }
+
+  assert.ok(
+    sweeps.length >= 1,
+    'found no bulk castShadow sweep at all, so this scan is passing by looking at '
+    + 'nothing rather than by finding them guarded',
+  )
+  assert.deepEqual(
+    unguarded,
+    [],
+    'these traversals set castShadow on every mesh they walk without asking '
+    + '`StylizedArtLibrary.isOpaque`. `transparent: true` does not exempt an object '
+    + 'from the depth pass, so a translucent decoration under one of these renders as '
+    + 'a solid silhouette on the ground.',
   )
 })

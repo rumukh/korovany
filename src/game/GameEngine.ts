@@ -7048,7 +7048,13 @@ export class GameEngine {
     wings.position.y = 0.25
     group.add(wings)
     group.traverse((object) => {
-      if (object instanceof THREE.Mesh) object.castShadow = true
+      // Same predicate as `markCharacterShadows`, for the same reason. Every material
+      // this builder makes is opaque today, so the guard changes nothing — which is
+      // exactly what was true of the caravan beacon's sweep until somebody gave one
+      // decoration an opacity.
+      if (!(object instanceof THREE.Mesh)) return
+      if (!StylizedArtLibrary.isOpaque(object.material)) return
+      object.castShadow = true
     })
     return group
   }
