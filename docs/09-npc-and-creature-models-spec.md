@@ -295,8 +295,7 @@ no new dependencies.
   Three refinements earned by repetition. **The axis you were shown gets enumerated and
   the axis nobody complained about stays a sample** — so ask which axes a thing has, not
   whether you swept the one that broke. **Enumerating an axis at two points is
-  enumerating the points**, which a clamp sitting on a sample point will demonstrate.
-  And **does the enumeration cover the whole of each axis, or the part the
+  enumerating the points**, which a clamp sitting on a sample point will demonstrate.  And **does the enumeration cover the whole of each axis, or the part the
   demonstration used?** A stride sweep once ran `0.01 … 1` under a comment correctly
   naming its population as `±0.62` — the domain was stated accurately in the sentence
   justifying the enumeration, and the enumeration covered one side of zero, because
@@ -322,6 +321,29 @@ no new dependencies.
   single default; the other swept all six orders and left the pose at one point. Both
   framings were reasonable, both were one-dimensional, and each enumerated exactly the
   axis its author had framed the question in. Neither was careless; the question was.
+  A third party then supplied the mechanism, from its own instance rather than from
+  observing ours: **a sweep proves coverage of the dimensions it varies and says nothing
+  about the ones it holds fixed — and the fixed one is usually the one the change is
+  about**, because the variable a change exists to control reads as *background* rather
+  than as an input. It had overruled a request for another review pass by citing 51,480
+  swept states as evidence a closed form was safe; that sweep held the head's pitch at
+  **zero**, which is precisely where the form was already correct. The same shape as the
+  441 poses at a single Euler order, in the artefact whose entire job was to establish
+  safety.
+  Hence: **a large state count is not coverage, and the count is what makes it
+  persuasive.** 441 × 1 and 51,480 × 1 are both impressive numbers and both
+  one-dimensional in the dimension that mattered. The number reports the product of the
+  axes that were swept; it cannot report the axes that were not.
+  And the closing form, which explains why every rule above kept failing against people
+  who were actively applying it: **verification and scope are orthogonal, and verification
+  is the cheap one.** A claim can be measured, reproduced, counted, committed and quoted
+  back with every step sound, and its scope never enters any of them. That is exactly what
+  happened to the entry two sections down: an observation about guards was measured,
+  verified, committed, and the counterexample to it sat in a review pass the author had
+  read and replied to. **Measuring a claim does not examine its scope**, so the step both
+  parties always ran was never the step that would have caught it — which retires
+  *"verify rather than accept"* as the discipline and puts the population question in its
+  place.
 - **A documented exclusion is a decision; the same exclusion carried into a different
   assertion is a sample.** The subtlest form of the question above, and the one with no
   usual tell. A gait table excluded three roles from a wobble simulation for written,
@@ -356,6 +378,22 @@ no new dependencies.
   magnitude of items before believing anything about them, and put the count in the
   failure message. **A detector must be made to fire on doped input before its silence
   on real input means anything.**
+  **And that is only half of it, which took eighteen passes and an outside session to
+  see: doping proves a detector fires. It says nothing about the population it was aimed
+  at.** Every rule in this section — can the assertion fail, did the mutation land, did it
+  compile, name the instrument, name the population of the count — tests a detector's
+  *sensitivity*. Not one asks whether it was **pointed at the right set**. The instance:
+  a workflow guard opened a file only if that file already deployed Pages, and was proved
+  with six doped inputs, all six mutations of a deploying workflow. Six controls, six
+  catches, and near-zero information — because the controls were drawn from **inside the
+  filter they were meant to test**, and a control drawn from inside a filter can only
+  confirm it. The real hazard was a workflow that mentions Pages nowhere and shares a
+  concurrency group, which is exactly the file the check was structurally guaranteed never
+  to open.
+  This sits above the mutation ladder in the same position the *did-it-land* premise sits
+  above the rungs: **a precondition the ladder cannot see, because every rung is climbed
+  inside it.** So the question to add is not about the assertion but about its reach —
+  *what does this detector never look at, and is the defect more likely there?*
   **That applies to tools nobody wrote as much as to detectors someone did**, and this
   repository contains the proof. `tsc --noEmit -p tsconfig.json` looks like a type-check
   and is not one: the root `tsconfig.json` is `"files": []` plus project references, so
@@ -371,6 +409,26 @@ no new dependencies.
   **capable of a different answer**. Nobody dopes a compiler, because its name is taken as
   its specification, which is exactly the condition under which a vacuous one goes
   unnoticed indefinitely.
+  **A sibling session then took that generalisation and earned the negative result.**
+  `npm run build` runs `tsc -b`, then `tsc --noEmit -p tsconfig.test.json`, then
+  `vite build` — two type-checking commands, neither ever shown capable of failing. Doped
+  one file per surface with a blatant type error, application confirmed before the result
+  was read, each file restored byte-exact: `src/game/art/index.ts`,
+  `tests/deployWorkflow.test.ts`, `scripts/AudioDirector.test.ts` and `vite.config.ts` each
+  took the build to **exit 2 with `TS2322` naming the file**. Population: **84 tracked
+  `.ts`/`.tsx`, 84 under an `include`.** So only the ad-hoc short form is vacuous, and the
+  gate everything here depends on is sound.
+  That is worth recording precisely because it is a **negative result**, which nobody
+  earns: there was no reason to doubt it, which is the same condition the vacuous
+  invocation had survived under for the life of the repository. Had it come out the other
+  way — `tsconfig.test.json` mis-including, so `tests/` was never checked at all — it would
+  have been the largest finding of the programme, **and the green would have looked
+  identical.**
+  The same session declined to build a companion check, and the reason generalises: a
+  guard that every `.ts` sits under an `include` could only fire when a file appears
+  outside `src`, `tests` and `scripts` — a location nothing imports and nothing bundles.
+  **An instrument that can only fire on something harmless is nearer to theatre than to a
+  gate**, so the absence is documented with its reason instead.
   That rule has a ceiling, and it is worth stating beside it: **a positive control
   validates the instrument against the model, never the model against reality.** Dope a
   checker that holds a wrong model with a defect *its model recognises* and it fires
@@ -412,14 +470,46 @@ no new dependencies.
   the review itself opened.
   **That narrows the window and does not close it, and the reviewer it was written for
   said so.** Re-resolving late shrinks the gap from turn-duration to send-to-read
-  latency, which is bounded below by nothing either party controls: push one minute
-  later and a late re-resolve still ships a stale tip. The durable form is not timing but
+  latency, which is bounded below by nothing either party controls. That was an argument
+  when written; it now has a measurement. A pull request was read as
+  `OPEN / MERGEABLE / CLEAN` at **21:12:34Z** and merged at **21:12:38Z** — the reading was
+  accurate for **four seconds**, taken by someone who had measured rather than quoted,
+  re-run after a rebase, and reported the instrument and the time. **No amount of care
+  makes a distributed state claim outlive its own transmission**, and four seconds is the
+  observed floor rather than a hypothetical minute. The durable form is not timing but
   **tense**. *"Tip `abc1234`, unchanged"* is a present-tense assertion about the world at
   read time and has a shelf life; *"verified `abc1234` at 21:56"* is an assertion about
   the past, is still true tomorrow, and silently tells the reader it may no longer hold —
   which is the honest content of both. This is *carry the derivation, not the value*
   applied to grammar rather than to method, and the two compose: **re-resolve late and
   report in the past tense, and there is no window at all.**
+  The two halves do different work and it is worth knowing which: **a command tells the
+  reader how to re-measure; a timestamped past-tense claim tells them that they must.**
+  The first is a capability, the second is an obligation, and only the second travels with
+  the sentence. And the reason the present tense is seductive rather than merely
+  incorrect: **it has no expiry field at all**, so a bare state claim reads as durable
+  precisely because it offers nothing to date it against — the same property that makes a
+  measurement carry authority without inviting a re-check.
+  There is a hierarchy under this worth stating, because the worst member does not look
+  like a member. **A quoted state is a measurement with someone else's timestamp on it**,
+  and it is worse than your own stale reading because you cannot see how old it is. **A
+  recalled fact is a quote with no timestamp at all**, and it is worse again, because it
+  does not present as a reading: a quote announces where it came from, while memory
+  arrives as knowledge and so never prompts the question the rule depends on. The instance
+  that fixed this: a session was mid-way through correcting another's claim about a CI
+  configuration key — confident, specific, and from recollection — and checked the schema
+  first only out of habit. **The other party was exactly right, down to the default
+  value.** A correct claim would have been corrected by a wrong one, and nothing in the
+  process would have flagged it, because a recollection has no `--json` flag.
+  The same hierarchy has a form for delegated work, and it cost a session two false
+  reports before anyone checked: **a delegated review reports "I examined X and found
+  nothing", or it has not reported.** A review that was created and never ran leaves the
+  same trace as one that ran and found nothing — silence — and silence reads as assurance.
+  The instance was caught by a liveness probe, not by any rule: a delegated reviewer
+  created at 21:32:31 with `updated_at` frozen fourteen seconds later and nothing produced
+  in fifty-five minutes, already reported twice as delegated. **Absence of findings has to
+  be distinguishable from absence of the reviewer**, and only an affirmative statement of
+  scope does that — *a silent reviewer is a recollection with no rememberer.*
   With one condition that is easy to miss and makes the difference between the form
   working and merely looking like it works: **the timestamp has to be the measurement's,
   not the sentence's.** A past-tense claim carries exactly one fact the present-tense one
@@ -473,8 +563,31 @@ no new dependencies.
   set of them); **7 → 5 → 3 → 2, converging faster** (measured across all four, but the
   last two against a fixed tip rather than "the tip at that moment", which was the stated
   definition); and under that definition applied consistently, **7 → 5 → 6 → 6 — a steady
-  state**, which is neither story. The gap stabilises rather than closing, because each
-  report causes commits at about the rate the reviewer advances.
+  state**, which is neither story. What the data supports is weaker than any of the three:
+  the gap is **review-caused** — every commit in it exists because of a report — and it
+  neither closes monotonically nor stays open. A fourth series measured live rather than
+  reconstructed ran `1, 1, 0, 1, 1, 0` — **one observer, one branch**, with transitions in
+  both directions twice each. And one further fact makes those points measure the thing
+  this entry is about rather than something adjacent: they were taken across **six
+  different HEADs**, each the tip the observer had just been handed, never their own work.
+  So the quantity is the **reviewer's-eye gap** — how stale the thing a reviewer is holding
+  is at the moment they measure it — which is the staleness this section concerns. An
+  author's own branch against `main` is a different quantity and a less relevant one.
+  Two observations in the same direction, published as a
+
+ pattern, refuted by a third measurement the observer had  no particular reason to take, and oscillating within `{0, 1}` across two more. **That is  a direction read off a two-point sample, in a claim about the defect of reading
+  directions off samples**, and it is the fourth wrong answer to this question by the third
+  party to attempt it. Anything sharper than *review-caused, non-monotonic* has been wrong
+  every time it was stated; the six points support only *small, bounded, non-zero on
+  average*.
+  **And an earlier version of this sentence recorded that series as `1, 1, 0, 1, 0`,
+  because its last point was taken from a different worktree.** Two participants were each
+  measuring their own branch against `main` — different HEADs, therefore different
+  quantities — and four points from one were joined to a fifth from the other, producing a
+  series that never existed. That is the splice defect described two paragraphs above,
+  committed inside the entry that describes it, by the author who had just corrected
+  someone else for it. **A series has an observer as well as a definition**, and neither
+  the numbers nor their agreement reveals when the observer changes.
   So: **a claim about a trend has two populations — the points, and the baseline each
   point is measured against.** Enumerate the first, let the second drift, and the trend is
   real in the arithmetic and absent in the world. Neither error here was careless; both
@@ -506,6 +619,40 @@ no new dependencies.
   a block or a context wider than the claim returns a superset that reads as the
   answer**, and all three instances produced output that was true and answered a question
   nobody asked.
+  A fifth kind is specific to auditing prose, which is what most of this document is, and
+  it arrived on the last measurement anyone took. A reviewer checking an attribution count
+  searched for `reviewer\s+named` and reported one named attribution in a file that has
+  none. The line it matched reads *"the mechanism, which a reviewer **named** and which is
+  what…"* — **"named" as a verb.** The probe matched the wrong *sense* of an English word
+  and returned a clean, plausible, wrong count. **A regex over prose selects on spelling
+  and the claim is about meaning**, and nothing in the output distinguishes the two; the
+  rescue was reading the matched line, which is the same rescue as every other null in
+  this catalogue and is still not a method.
+  **The same episode produced a sixth form, and it is the only one where both parties
+  proposed a cause and both were wrong.** Two attribution counts of the same file
+  disagreed — 59 against 76. One party diagnosed *scope*, having seen three definitional
+  mismatches that evening; the other diagnosed *staleness*, the files having demonstrably
+  grown all night. Measured: the file held **59 at both commits**, so time explains
+  nothing, and both parties had counted the same file, so scope explains nothing. The
+  cause was the **predicate**: `a reviewer|A reviewer|the reviewer|reviewers` matches 59
+  lines and a bare `reviewer` matches exactly 76. **A count is a function of its pattern,
+  and the number carries no trace of which pattern produced it.**
+  What makes it worth the entry is not the miss but its shape. Four prior discrepancies
+  had a definitional cause, so the fifth was diagnosed as definitional without checking —
+  **a correct generalisation applied to a case it did not fit, which is indistinguishable
+  from a wrong guess at the moment of writing and much harder to doubt.** The catalogue's
+  standing rule is that the story is the part nobody re-measures; here the story was a
+  pattern with four confirmations behind it, and it was still the part nobody re-measured.
+  **That last clause refutes a tempting summary of the whole record**, offered near the
+  end: *every rescue was a check that ran without being remembered*. Recall did fail
+  every time it was tried — a rule was re-broken two hours after being published, in a
+  message that named it. But the rescues divide three ways, not two. **Structure**
+  succeeded wherever it existed: the `APPLIED:` print, the positive control, the API call
+  already inside the command being run. **Recall** succeeded never. And **noticing** —
+  reading a matched line, recognising that a diff was about the wrong subject — rescued at
+  least four instances and is neither structural nor recallable. It is the category this
+  document has twice had to mark unguardable, and a summary that folds it into structure
+  claims a coverage nothing here has.
   A fourth arrived from the author's side, in prose rather than in a query. A pull request
   opened as evidence-only, grew three source extractions during review, and merged with a
   header still reading *"evidence and test hardening only — plus one docblock line"* over
@@ -520,13 +667,41 @@ no new dependencies.
 - **The guards this work produced almost all check things that are free to check.** Six
   mechanical forms came out of eighteen review passes — confirm the mutation applied,
   confirm it compiled, confirm the query matched, dope the detector before believing its
-  silence, emit the timestamp from the measuring command, verify a spliced seam where the
-  methods must differ. Every one audits the author's own instrument, where being wrong
+  silence, emit the timestamp from the measuring command, verify a spliced seam where the  methods must differ. Every one audits the author's own instrument, where being wrong
   costs nothing socially, and the classes this programme repeatedly found unaudited — a
   credit, a hedge, a compliment, another party's figure — have none of them.
   The predictor is better than the list, because it generates rather than enumerates:
   **a check with a social cost and no epistemic reward is a check nobody runs**, and the
   next unaudited class will be whatever else has that shape.
+  There is a structural consequence, and it is the strongest practical thing this work
+  produced. **The correction neither participant can make is the one from someone with no
+  stake in the exchange.** Two parties in a review loop audit each other's *arithmetic*
+  very well and each other's *framing* poorly, because framing is where the courtesy
+  lives — and the unaudited classes above are precisely the ones courtesy operates on. The
+  evidence is one-sided: of everything found across eighteen passes, the correction that
+  neither reviewer nor author was positioned to resist came from a session working on an
+  unrelated branch, which refuted a rule that had been committed here as a universal and
+  did it with three counterexamples out of its own tooling. Neither of us would have found
+  it, and not for lack of rigour — **we had a relationship to the claim and it did not.**
+  So a third reader is not redundancy, it is the only instrument that reaches the class
+  the other instruments are socially prevented from touching.
+- **A difference is not automatically a defect, and a catalogue this size makes it feel
+  like one.** The closing entry, and the only one about when to stop. Everything above
+  arms a reader with named failure shapes, which is the point — and the cost is that a
+  reader so armed can match a shape onto anything, including cases where nothing is
+  wrong. It happened twice near the end of this work in opposite directions: a correct
+  narrow scope was nearly widened because unexplained narrow scopes had been samples four
+  times running, and two participants' measurement series differed only because they had
+  sampled at different minutes, which is the mundane case and not a fifth instance of the
+  anchor family. **Reporting the second would have been the pattern rather than a
+  finding.**
+  So the discipline includes declining. The test is the same one the rest of this section
+  asks for and it is cheap: **measure whether the difference has a cause, before naming
+  which cause it has.** Four of the discrepancies in this work had a definitional cause
+  and one had none at all; a fifth had a cause nobody proposed. A catalogue with no false
+  positives has not been used hard enough to know its own precision — and one used this
+  hard has to be willing to say *nothing is wrong here*, which is the only sentence in the
+  section that costs its author a finding.
   **An earlier version of this entry said "not one guards a claim whose checking is
   awkward", and a reviewer produced the counterexample from its own work.** A seventh
   guard exists — *check whether the fix is free before recommending it* — it is squarely

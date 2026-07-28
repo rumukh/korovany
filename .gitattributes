@@ -1,0 +1,12 @@
+# Normalise line endings in the repository so a checkout on any platform cannot
+# commit a whole-file rewrite. A docs file was once converted LF -> CRLF by a
+# Windows write, producing 1351 insertions and 1340 deletions for a ten-line
+# edit and collapsing 57 commits of `git blame` provenance into one.
+* text=auto eol=lf
+
+# Binary assets, if any are ever added, must not be touched.
+*.png binary
+*.jpg binary
+*.webp binary
+*.woff binary
+*.woff2 binary
