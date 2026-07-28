@@ -2242,6 +2242,15 @@ const mergedSpanVolumes = (parts: THREE.BufferGeometry[]): {
  *     merged          weakest 0.3075   2 of 52 faces spuriously inward
  *     composed prop   weakest 0.2158   2 of 64 faces spuriously inward
  *
+ * Neither figure is a property of the shape alone, and that is the disqualification rather
+ * than a caveat on it. `measure` averages vertex *positions*, so refining one part of a
+ * merged prop drags the shared reference point into that part: the composed prop's lathe
+ * holds 62.5% of the vertices at `segments: 10` and 97.7% at 256, moving the centroid
+ * 0.062 up the axis and the reading 0.2158 -> 0.1900 while the surface is unchanged.
+ * Judged about an area-weighted centroid, invariant to how finely the same surface is cut,
+ * it converges to 0.1886. Refining the loft instead moves it *up*, to 0.2358. Measured by
+ * review, `probe-centroid-weighting.mts`. Quote neither number without its tessellation.
+ *
  * A prop is several bodies side by side, so it is not star-convex about the centroid of
  * the whole — the same disqualification `branchStructure` carries above. Pointing
  * `inward === 0` at these would go red on art that is perfectly well formed.
