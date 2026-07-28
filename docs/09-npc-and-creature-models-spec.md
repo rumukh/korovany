@@ -684,6 +684,27 @@ no new dependencies.
   prompts it; the expensive ones at least announce themselves by being avoided. This
   section was built from the classes that hurt, which is precisely why it could not name
   the one that doesn't.
+- **A complete green suite is evidence about the working tree and nothing else.** The last
+  defect this work produced is the only one a passing suite *actively concealed* rather
+  than merely failed to catch, and it is the entry to put in front of a reader before any
+  finding about the rig. A commit converted a documentation file from LF to CRLF —
+  1351 insertions and 1340 deletions for a ten-line entry — and collapsed 57 commits of
+  `git blame` provenance into one, in the file whose entire value is its accumulated
+  attributions. Build, lint, 371 tests and the facts checker were run after every commit
+  by two parties for two and a half hours, **all green throughout the entire period the
+  defect existed**, because not one of them reads history.
+  Both parties were treating a green suite as evidence about *the change*. It is evidence
+  about the *state*: what the tree contains now, not what the commit did to get there.
+  Everything a commit can damage that is not present in the working tree — history,
+  provenance, line endings normalised away, a file's diffability — is outside every gate
+  in this repository by construction, and adding more tests cannot reach it.
+  The check that would have caught it is `git diff --stat`, four words, free. It was run
+  by nobody across forty commits. The repair was possible only because the damage had not
+  merged: rebuilding the branch restored all 57 attributions natively, where the usual
+  remedy — a `.git-blame-ignore-revs` every future reader must configure — would have
+  externalised the cost permanently. `.gitattributes` now pins `* text=auto eol=lf`, which
+  is the gate at the point of writing that the ignore-file would only have simulated at
+  the point of reading.
   It produced one more on the last exchange of the work, and it is the class with the
   strongest immunity: **the explanation of a discrepancy.** Twelve passes measured
   numbers, assertions, bounds, mutations, timestamps and counts — and the *causes* attached
