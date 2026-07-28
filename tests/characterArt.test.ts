@@ -2652,16 +2652,19 @@ test('the engine wires the rig the way these tests measure it', () => {
   // const exists so those cannot diverge, and this pattern is what notices if the two
   // occurrences stop being the same expression.
   assert.ok(
-    /applyHeadPose\(\s*headPivot,\s*headPitch,\s*torsoPivot\s*\?\s*solveHeadYaw\(\s*torsoPivot\.rotation\.x,\s*torsoPivot\.rotation\.y,\s*torsoPivot\.rotation\.z,\s*headPitch,\s*actor\.headYaw,?\s*\)/
+    /applyHeadPose\(\s*headPivot,\s*headPitch,\s*torsoPivot\s*\?\s*solveHeadYaw\(\s*torsoPivot\.rotation\.x,\s*torsoPivot\.rotation\.y,\s*torsoPivot\.rotation\.z,\s*headPitch,\s*actor\.headYaw,?\s*\)\s*:\s*actor\.headYaw,\s*actor\.turnLean \* 0\.06 -\s*idleWeightShift \* 0\.2 -\s*pose\.flinch \* hitRight \* 0\.3,?\s*\)/
       .test(actorPosture),
-    'the head pose is no longer written by one `applyHeadPose` call taking `headPitch` '
-    + 'and a yaw solved against the chest\'s full rotation *and* that same `headPitch`. '
-    + 'Naming the function is not enough: a reviewer replaced the call with '
-    + '`solveHeadYaw(0, 0, 0, actor.headYaw)` and the whole suite still passed, because '
-    + 'nothing checked the arguments. A scalar subtraction leaves 20.3 degrees and is '
-    + 'worse than nothing in 3.90% of states; dropping the head pitch alone leaves 9.7. '
-    + 'The equality between the pitch given and the pitch written is checked by driving '
-    + '`applyHeadPose` directly, in the gaze test — this only checks what reaches it.',
+    'the head pose is no longer written by one `applyHeadPose` call taking `headPitch`, '
+    + 'a yaw solved against the chest\'s full rotation *and* that same `headPitch`, and '
+    + 'the turn-lean roll. Naming the function is not enough: a reviewer replaced the '
+    + 'call with `solveHeadYaw(0, 0, 0, actor.headYaw)` and the whole suite still '
+    + 'passed, because nothing checked the arguments. A scalar subtraction leaves 20.3 '
+    + 'degrees and is worse than nothing in 3.90% of states; dropping the head pitch '
+    + 'alone leaves 9.7. **The roll argument is checked because it was not**: the same '
+    + 'reviewer passed `0` there and this assertion stayed green, which would have '
+    + 'silently removed the head\'s counter-roll against the turn. The equality between '
+    + 'the pitch given and the pitch written is checked by driving `applyHeadPose` '
+    + 'directly, in the gaze test — this only checks what reaches it.',
   )
   assert.ok(
     /const headPitch = -forwardLean \* actor\.motionBlend \* 0\.35 \+ pose\.stagger \* 0\.18$/m
