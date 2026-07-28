@@ -200,10 +200,41 @@ no new dependencies.
   here had measured 6.68, and resolved the 39% disagreement by deferring rather than
   reconciling. The reviewer caught its own number being taken on trust and named it as
   the same defect class as the rest: *a claim adopted rather than verified*. 4.81 was
-  right — the 6.68 came from letting a staggering chest keep its gait yaw, which
-  `sampleActorPose` forbids — but being right by deference is indistinguishable from
-  being wrong by deference until someone checks. Reconcile, or state both figures with
-  both methods named; never present one as settled because its author outranks you.
+  right, but being right by deference is indistinguishable from being wrong by
+  deference until someone checks. Reconcile, or state both figures with both methods
+  named; never present one as settled because its author outranks you.
+
+  The worked example runs one step further than it looks, and the extra step is the
+  useful half. The *first* reconciliation — offered confidently, in this rule, about
+  verification — blamed `pose.stride` being zeroed under stagger. That was wrong twice
+  over: `torsoPivot.rotation.y` reads `actor.stride`, not `pose.stride`, and a stagger
+  *damps* `actor.stride` rather than clearing it, so the first frame of a stagger keeps
+  about 81% of its gait yaw. The same reviewer caught that too. Traced by measurement
+  instead, the 6.68 came from a **partially joint** enumeration: it constrained the
+  chest's yaw by the stagger correctly, then swept chest pitch and pinned head roll at
+  a value only a *flinch* can produce — and a flinch cannot co-occur with a stagger.
+  **Enforcing joint consistency on one axis and believing it enforced on all of them
+  is its own defect**, and a partially-joint sweep is indistinguishable from a joint
+  one from the outside. Two wrong causes for one right number, in a rule about
+  verification — which is the strongest argument the rule has.
+- **Review the justification, not the fix.** Code written in response to a review is
+  the most defective code in a change set, and the head-rig work has the base rate to
+  say so: every finding in that window landed on a *claim written in the act of
+  correcting a previous claim*. The mechanism, which a reviewer named and which is what
+  makes the rule predictive rather than descriptive: **the fix gets reasoned carefully
+  and the sentence explaining why the old thing was wrong gets written in the same
+  breath and never independently checked.** The author is at their most certain and
+  least sceptical at exactly the moment they are writing prose about their own error.
+  So a review pass over review-response code should go straight at the justifications —
+  the docblock that says *why*, the commit message's causal clause, the comment naming
+  a mechanism — and treat the fix itself as the part most likely to be right.
+
+  Concretely, from the head-rig work: a gaze correction that was itself the fix for a
+  gaze correction; a reachability model asserted in this document while explaining a
+  reconciliation; an attribution to the wrong reviewer written while correcting an
+  attribution; and a change credited to the wrong variable in a commit whose entire
+  subject was honest measurement. Four instances, all in explanations, none in the
+  code being explained.
 - **Mutate the production code, not the test's copy of it.** The anisotropy test used
   to apply its own `neckPivot.scale.x = 1 / shoulders`, and the mutation evidence
   published for it came from mutating *that* line. Reverting the engine's half left
