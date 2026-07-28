@@ -326,6 +326,11 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
     return this.props.retainedCount
   }
 
+  /** True while every retained prop key still has a live cache entry to pin. */
+  get retentionIsIntact(): boolean {
+    return this.props.retentionIsIntact
+  }
+
   get currentRegionId(): RegionId | undefined {
     return this.regions.currentRegionId
   }
