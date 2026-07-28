@@ -666,6 +666,28 @@ The rules that fall out of them, in rough order of how much they would have save
    have caught all three layers; it also caught the vacuous ledger identity, the phantom-pin
    threshold, the ink-budget system test and this document's own corruption, at one run each.
    Ranked first by the programme lead, and the cost-to-benefit is not close.
+
+   **It has one blind spot, and it is exactly the complement of its strength.** A reviewer
+   supplied the qualification after watching it succeed four times: in every one of those
+   cases the fix was already correct and only the *coverage* was missing. Disabling a fix
+   cannot tell you the fix does not work, because the test is green in a world where it
+   does. The faction-start bug was precisely that shape — `walkableNear` snapped correctly
+   against a populated collision world, so the guard was real, and the test warmed the
+   world before asking. Removing the fix would have reddened a test that was already
+   measuring the wrong world.
+
+   So the two belong paired rather than ranked, because they fail in opposite directions:
+
+   - **disable the fix, confirm the test goes red** — catches a *test* with no power over
+     a correct fix;
+   - **run the probe in the order the product uses** — catches a *fix* with no power in
+     the world the product actually runs in.
+
+   The first would have passed for the entire life of the spawn bug while the game was
+   broken. The second is what found it. Neither subsumes the other, and the cheap version
+   of the second is to read the call order out of the product and copy it — here,
+   `getStartPosition` at `GameEngine:2257` and the first `update` at `:2314`.
+
 2. **A silent runtime fixup does not protect an invariant — it destroys the evidence
    that the invariant broke.** `conformWinding` was well-intentioned, idempotent and
    load-bearing-looking, and it made a 560-geometry assertion incapable of failing.
