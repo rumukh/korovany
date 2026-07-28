@@ -2652,6 +2652,7 @@ test('decoration never blocks a spawn point', () => {
   // true thing about a world that was never broken.
   const seeds = ['spawn-keepout', 'gp-6', 'gp-11', 'gp-23', 'gp-37', 'gp-48']
   let startsSampled = 0
+  let keepOutActed = 0
   for (const seed of seeds) {
     const cold = createRuntime(seed)
     try {
@@ -2663,6 +2664,8 @@ test('decoration never blocks a spawn point', () => {
           unwalkableStarts.push(`${seed}/${faction}`)
         }
       }
+      keepOutActed
+        += cold.runtime.getDebugSnapshot().decorations.spawnBlockedPlacementCount
     } finally {
       cold.runtime.dispose()
     }
@@ -2670,6 +2673,19 @@ test('decoration never blocks a spawn point', () => {
   assert.ok(
     startsSampled >= 18,
     `only ${String(startsSampled)} faction starts were sampled across ${String(seeds.length)} seeds`,
+  )
+  // The seed set must **contain the fault**, not merely be large. A reviewer drew the
+  // distinction after measuring that the single-seed version of this test passed
+  // identically with and without the keep-out: `'spawn-keepout'` has no blocked start in
+  // either state, so the assertion was satisfied by a world that was never broken.
+  //
+  // A sample floor proves the population was visited. This proves it could express the
+  // failure — the keep-out removed at least one placement that would otherwise have stood
+  // on a spawn point, so bypassing it has something to break.
+  assert.ok(
+    keepOutActed > 0,
+    'the keep-out removed no placements across the whole seed set, so none of these '
+      + 'seeds carries the fault and this assertion cannot detect its own regression',
   )
   assert.deepEqual(
     unwalkableStarts,
