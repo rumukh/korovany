@@ -931,6 +931,7 @@ from the request enumeration). Boundary edges before → after raw displacement 
 seam repair:
 
 ```text
+site (PropKit.ts line at time of measurement; positions drift, the sites do not)
 PropKit.ts:994    7 calls    0 -> 1680 -> 0     worst single call  280
 PropKit.ts:1748  16 calls    0 -> 2810 -> 0                        176
 PropKit.ts:3850   1 call     0 ->  112 -> 0                        112
@@ -1182,7 +1183,8 @@ by faction × role × variant produces many. Measured across all 81 plans: **102
 character keys, past 64 on its own. Nobody was careless — a line reading `NAME<=11` beside
 a line reading `NAME<=64` invites addition, and neither says one counts code and the other
 counts data. Fixed by naming the population and by making it enforceable:
-`CHARACTER_GEOMETRY_KEYS<=180`, asserted at `tests/characterArt.test.ts:253`.
+`CHARACTER_GEOMETRY_KEYS<=180`, asserted in `tests/characterArt.test.ts` against
+`keys.size` in the character-plan sweep.
 
 The fourth is the clearest tell. A commit message said "three of four material sweeps"
 and it was later restated as three of six, because **the population was never inside the
@@ -1329,7 +1331,8 @@ Deferred to Wave 4 because it could only be answered with both kits merged. Answ
 There are seven traversals in `src/game/` that either assign `Mesh.material` or call
 `dispose()`. Four assign material and all four carry the `isOutlineShell` guard — those
 are what the scan enforces. Three dispose, and **two of those carry no `isOutlineShell`
-guard**: `GameEngine.ts:9137` and `GeneratedWorldRuntime.ts:1992`.
+guard**: `GameEngine.removeAndDisposeObject` and the `this.root.traverse` sweep in
+`GeneratedWorldRuntime.dispose`.
 
 Both are correct anyway, because they reach safety a different way. They **release the
 shells first, then traverse**, so by the time the traversal runs there is no shell left
@@ -1352,7 +1355,7 @@ were the ordering case above, generalised: builders that are safe purely because
 three:
 
 **A guard can be spelled differently.** `removeAndDisposeObject` does carry a predicate —
-`StylizedArtLibrary.isLibraryOwned` at `GameEngine.ts:9150` and `:9153` — it simply
+`StylizedArtLibrary.isLibraryOwned`, on both the geometry and the material — it simply
 answers a *different question*: who owns this resource, not is this a shell. A scan
 searching for the token `isOutlineShell` calls that site bare; a scan searching for "some
 guard" calls it covered and would miss a genuinely unguarded sweep that happened to
