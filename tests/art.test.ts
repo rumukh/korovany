@@ -406,6 +406,70 @@ test('stylized materials compile the injection and share a program key', () => {
 })
 
 /**
+ * `outlineProjection` hand-mirrors three's `defaultnormal_vertex`: an instanced normal
+ * has to be divided by the squared basis lengths *before* the basis multiply, because
+ * `mat3( instanceMatrix )` is the vertex transform rather than its inverse transpose. Get
+ * it wrong and a non-uniformly scaled instance skews its own ink until the hull creeps
+ * inside the source — a geometric failure that no test of ours would notice, because both
+ * the shell and the source keep rendering.
+ *
+ * A mirror of a dependency looks unpinnable from inside the repo, since both sides of the
+ * comparison seem to be ours. They are not: three ships the chunk as an importable string,
+ * so the upstream half can be asserted directly against the installed version.
+ *
+ * This pins the *behaviour*, not the version number. A bump that leaves the
+ * inverse-transpose handling alone stays green; one that changes it goes red, which is the
+ * only bump that should. A `REVISION === '185'` assertion would fail on every release and
+ * be silenced by the first person to bump it — precisely the drift it was meant to catch.
+ *
+ * If the dependency half goes red, `outlineProjection` must be re-derived against whatever
+ * replaced the chunk. It must not be "fixed" to match these assertions.
+ */
+test('the instanced outline normal mirrors three, and three still does what it mirrors', () => {
+  const library = createLibrary()
+  const outline = library.getOutlineMaterial('enemy', true)
+  const outlineShader = {
+    uniforms: {} as Record<string, { value: unknown }>,
+    vertexShader: THREE.ShaderLib.basic.vertexShader,
+    fragmentShader: THREE.ShaderLib.basic.fragmentShader,
+  }
+  outline.onBeforeCompile(outlineShader as never, null as never)
+
+  // Our half.
+  const ours = outlineShader.vertexShader
+  assert.ok(
+    /kInstanceScaleSq\s*=\s*vec3\(\s*dot\(\s*kInstanceBasis\[\s*0\s*\]/.test(
+      ours.replace(/\s+/g, ' '),
+    ),
+    'the outline must build the squared basis lengths it divides by',
+  )
+  assert.ok(
+    /kOutlineNormal = kInstanceBasis \* \( kOutlineNormal \/ max\( kInstanceScaleSq/.test(
+      ours.replace(/\s+/g, ' '),
+    ),
+    'the instanced outline normal must be divided by the squared lengths before the basis multiply',
+  )
+
+  // The dependency half: this is three's own chunk, not ours.
+  const chunk = THREE.ShaderChunk.defaultnormal_vertex
+  const at = chunk.indexOf('#ifdef USE_INSTANCING')
+  assert.ok(at >= 0, 'defaultnormal_vertex must still branch on USE_INSTANCING')
+  // Sliced forward so the USE_BATCHING block above cannot satisfy these by accident.
+  const instancing = chunk.slice(at).replace(/\s+/g, ' ')
+  assert.ok(
+    /transformedNormal \/= vec3\( dot\( im\[ 0 \], im\[ 0 \] \)/.test(instancing),
+    'three still divides the instanced normal by its squared basis lengths; if this is ' +
+      'red, re-derive outlineProjection against the new chunk rather than editing this test',
+  )
+  assert.ok(
+    /transformedNormal = im \* transformedNormal/.test(instancing),
+    'three still multiplies by the instance basis after the division',
+  )
+
+  library.dispose()
+})
+
+/**
  * The band driver divides the albedo back out of `directDiffuse`. Since three 0.185
  * that accumulator carries `material.diffuseContribution`, which is
  * `diffuseColor * (1 - metalness)`, so the metalness factor has to be divided back
