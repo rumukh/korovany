@@ -150,6 +150,7 @@ export {
   cloakVariant,
   forearmVariant,
   resolveCharacterPlan,
+  setCharacterShoulderWidth,
   shinVariant,
   solveHandOffset,
   solveHeadYaw,

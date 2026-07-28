@@ -177,6 +177,16 @@ no new dependencies.
   `1 / (1 - 0.018 * 0.55) - 1` — the breath's own closed form, which the measurement
   matches to ten decimal places. A 0.3% contaminant reads 1.30% and now fails; under
   the round 2% it passed.
+- **Mutate the production code, not the test's copy of it.** The anisotropy test used
+  to apply its own `neckPivot.scale.x = 1 / shoulders`, and the mutation evidence
+  published for it came from mutating *that* line. Reverting the engine's half left
+  every numerical assertion green — only a source regex noticed. The measurements
+  were right and the proof was worthless. Both halves now live in one exported
+  function that the engine and the test both call, so a production mutation breaks
+  the measurement; dropping the cancellation, putting it on the wrong axis, or
+  introducing a 0.3% error in it each fail now and each passed before. **A test that
+  cannot see the code it is named after is the same defect as a bound that cannot
+  fail** — and neither is visible by reading, only by mutating the right thing.
 - **Do not fix a second defect inside a regression fix.** `torso-pivot` is *also*
   rooted at the actor's origin rather than at the waist, so under the same `lean` the
   whole upper body slides forward against the pelvis: **0.2950 m** at the waist on a
@@ -375,7 +385,7 @@ group
 └── contact-shadow
 ```
 
-The four pivots are built by `buildCharacterSkeleton` in `CharacterKit`, not by the
+The five pivots are built by `buildCharacterSkeleton` in `CharacterKit`, not by the
 engine, so the layout is reachable from a Node test with no DOM — which is what lets
 `tests/characterArt.test.ts` pose a body and measure it rather than read it. The head
 meshes take their Y from the skeleton's `headY`, measured **from the neck**, not from

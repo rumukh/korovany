@@ -46,6 +46,7 @@ import {
   characterPartKeys,
   hasOutlineNormals,
   resolveCharacterPlan,
+  setCharacterShoulderWidth,
   solveHandOffset,
   solveHeadYaw,
   WAGON_RIG,
@@ -809,7 +810,7 @@ test('the load-bearing rig names are still assigned', () => {
     fileURLToPath(new URL('../src/game/GameEngine.ts', import.meta.url)),
     'utf8',
   )
-  // The four pivots are now named by `buildCharacterSkeleton`, so the humanoid rig
+  // The five pivots are now named by `buildCharacterSkeleton`, so the humanoid rig
   // lives in two files. Search both: `createBeast` still names all four in the
   // engine, and searching only the engine would have gone on passing for a body
   // that had lost every one of them.
@@ -1168,6 +1169,26 @@ test('the head is rigid with the chest and hinges at the neck', () => {
  * derived from the proportion table. Anything at all that is not the breath fails it.
  * `the engine wires the rig the way these tests measure it` pins the two constants
  * this derivation reads.
+ *
+ * ## A retracted mutation proof, and what replaced it
+ *
+ * An earlier version of this test applied its own copy of the correction —
+ * `neckPivot.scale.x = 1 / shoulders`, written out here — and the mutation evidence
+ * published for it was obtained by mutating *that line*. A reviewer mutated
+ * **production** instead and found the numerical assertions stayed green: only the
+ * source regex noticed. The measurements were right and the proof was worthless,
+ * which is the same shape as a bound that cannot fail — a test that cannot see the
+ * code it is named after.
+ *
+ * Both halves of the width now live in `setCharacterShoulderWidth`, which the engine
+ * and this test both call, so mutating production breaks the measurement. Re-verified
+ * that way: dropping the cancellation, moving it to the wrong axis, and introducing a
+ * 0.3% error in it each fail here now, and each passed before.
+ *
+ * The strongest assertion is no longer the anisotropy sweep but the equality on what
+ * the neck hands down — a pure-Y breath and nothing else. It catches shear, which
+ * comparing basis lengths does not: the same reviewer measured the rejected
+ * arrangement at 5.34% by basis length and **8.99%** by singular value.
  */
 test('the chest lends the head its breath but not its shoulders', () => {
   // The widest chest the engine can write: `around(1, 0.07)` at either extreme.
@@ -1190,6 +1211,7 @@ test('the chest lends the head its breath but not its shoulders', () => {
   ]
   const axis = [new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()]
   const basis = new THREE.Matrix3()
+  const inherited = new THREE.Matrix3()
   let worst = 0
   let worstAt = ''
 
@@ -1202,11 +1224,36 @@ test('the chest lends the head its breath but not its shoulders', () => {
       head.position.y = skeleton.headY
       head.scale.setScalar(p.headScale)
       skeleton.headPivot.add(head)
-      // As `applyActorVisualVariation` sets them.
+      // The *production* correction, not a copy of its arithmetic. This is the whole
+      // point of the helper existing: mutating `setCharacterShoulderWidth` has to
+      // break this measurement, and before the helper it did not — the engine's half
+      // could be reverted and every number here stayed green, because the test had
+      // applied its own.
       for (const shoulders of SHOULDERS) {
+        setCharacterShoulderWidth(skeleton.torsoPivot, skeleton.neckPivot, shoulders)
         for (const breath of BREATHS) {
-          skeleton.torsoPivot.scale.set(shoulders, breath, 1)
-          skeleton.neckPivot.scale.x = 1 / shoulders
+          skeleton.torsoPivot.scale.y = breath
+
+          // Everything the head inherits, before its own rotation is involved: the
+          // chest's scale times the neck's. Stated as an equality rather than a
+          // bound, because there is an exact right answer — a pure-Y scale carrying
+          // the breath — and anything else at all is contamination. This is stricter
+          // than the anisotropy sweep below and catches shear, which comparing basis
+          // lengths does not: a reviewer measured the rejected arrangement at 5.34%
+          // by basis length and 8.99% by singular value.
+          skeleton.root.updateMatrixWorld(true)
+          inherited.setFromMatrix4(skeleton.neckPivot.matrixWorld)
+          const e = inherited.elements
+          const expected = [1, 0, 0, 0, breath, 0, 0, 0, 1]
+          for (let i = 0; i < 9; i += 1) {
+            assert.ok(
+              Math.abs(e[i] - expected[i]) < 1e-12,
+              `${faction}/${role}: the head inherits ${JSON.stringify([...e].map((v) => `${v}`))} `
+              + `from the chest at shoulders ${shoulders.toFixed(2)}, not a pure breath of `
+              + `${breath.toFixed(5)}. Only the breath may reach a skull; the shoulder width `
+              + 'must be divided back out on `neck-pivot`, which does not rotate.',
+            )
+          }
 
           for (const look of LOOKS) {
             skeleton.headPivot.rotation.set(...look)
@@ -1541,17 +1588,21 @@ test('the engine wires the rig the way these tests measure it', () => {
     source.indexOf('private createActorHealthBar('),
   )
   assert.ok(variation.length > 500, 'could not isolate the actor variation pass')
+  // The width now goes through one shared function, which is what lets the numerical
+  // test above drive the real correction instead of a copy of its arithmetic. These
+  // two say the engine still delegates rather than doing it inline again.
   assert.ok(
-    /getObjectByName\('neck-pivot'\)[\s\S]{0,120}neckPivot\.scale\.x = 1 \/ shoulders/.test(
-      variation,
-    ),
-    'the shoulder-width counter-scale must go on neck-pivot, which people have and '
-    + 'beasts do not, and which does not rotate',
+    /setCharacterShoulderWidth\(\s*torsoPivot,\s*mesh\.getObjectByName\('neck-pivot'\),\s*shoulders,?\s*\)/
+      .test(variation),
+    'the shoulder width must go through `setCharacterShoulderWidth`, passing the neck. '
+    + 'Written inline again, the arithmetic in `the chest lends the head its breath but '
+    + 'not its shoulders` becomes a copy that cannot fail when production changes.',
   )
   assert.ok(
-    !/headPivot\.scale/.test(variation),
-    'the counter-scale must not go on head-pivot: the animation rotates it, so the '
-    + 'correction stops cancelling the moment the actor looks anywhere but forward',
+    !/(neckPivot|headPivot)\.scale/.test(variation),
+    'the variation pass must not write a neck or head scale itself. The counter-scale '
+    + 'belongs in `setCharacterShoulderWidth`, and never on `head-pivot`: the animation '
+    + 'rotates that, and a scale correction below a rotation only cancels at rest.',
   )
   // The gaze. Without these two the engine could apply `lookYaw` raw, or damp it
   // after converting, and every measurement in this file would still be green.

@@ -862,6 +862,38 @@ export function solveHeadYaw(
   return Math.atan2(-(c1 * cosL - c3 * sinL), a1 * cosL - a3 * sinL)
 }
 
+/**
+ * Widens an actor's chest without widening its head.
+ *
+ * Both halves live here, in one function, rather than as two lines in the engine —
+ * because a test can call this and cannot call `applyActorVisualVariation`, which
+ * needs a DOM. Split across two call sites the cancellation was provably correct and
+ * *untested*: mutating the engine's half left every numerical assertion green,
+ * because the test had applied its own copy of the same arithmetic. A reviewer found
+ * that by mutating production instead of the test, which is the only way to find it.
+ *
+ * `torso-pivot` carries the width so the shoulder joints move out with the chest —
+ * the arms are its children. `neck-pivot` divides it straight back out, because a
+ * head is not a pair of shoulders and `headScale` is meant to be the only thing that
+ * sizes a skull. It has to be `neck-pivot` and not `head-pivot`: a scale and a
+ * rotation do not commute, so a cancellation below a rotation is valid only in the
+ * rest pose, and the animation yaws `head-pivot` by up to 0.65 rad. Measured over
+ * the whole look envelope: **7.00%** head anisotropy uncancelled, **5.34%** cancelled
+ * on the rotated pivot — worse than nothing at some angles — **0.99%** here, which is
+ * the chest's breath and nothing else.
+ *
+ * A beast has no neck: `createBeast` still roots its head at the animal, so its skull
+ * never wore the width. Pass `null` and nothing is divided out.
+ */
+export function setCharacterShoulderWidth(
+  torsoPivot: THREE.Object3D | null | undefined,
+  neckPivot: THREE.Object3D | null | undefined,
+  shoulders: number,
+): void {
+  if (torsoPivot) torsoPivot.scale.x = shoulders
+  if (neckPivot) neckPivot.scale.x = 1 / shoulders
+}
+
 // ---------------------------------------------------------------------------
 // Local construction helpers
 // ---------------------------------------------------------------------------

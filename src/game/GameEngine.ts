@@ -52,6 +52,7 @@ import {
   buildWristRope,
   characterPartKeys,
   resolveCharacterPlan,
+  setCharacterShoulderWidth,
   solveHandOffset,
   solveHeadYaw,
   type BeastKind,
@@ -12318,10 +12319,6 @@ export class GameEngine {
     const bodyPivot = mesh.getObjectByName('body-pivot')
     if (bodyPivot) bodyPivot.scale.set(bulk, height, bulk * variation.around(1, 0.03))
     const torsoPivot = mesh.getObjectByName('torso-pivot')
-    // Widening the torso pivot moves the shoulder joints with it, so the arms stay
-    // attached where they should be instead of floating away from a broader chest.
-    // Its `scale.y` is left alone because the breathing pass writes it every frame.
-    if (torsoPivot) torsoPivot.scale.x = shoulders
     const pelvisPivot = mesh.getObjectByName('pelvis-pivot')
     if (pelvisPivot) pelvisPivot.rotation.z = stance * 0.4
 
@@ -12348,20 +12345,10 @@ export class GameEngine {
     }
     const headPivot = mesh.getObjectByName('head-pivot')
     if (headPivot) headPivot.rotation.y = variation.signed(0.12)
-    // A person's neck hangs off the chest, so it inherits the chest's width — and a
-    // head is not a pair of shoulders. Undone here, at the one place that widens the
-    // chest, so `headScale` above stays the only thing that sizes a skull. Left
-    // uncorrected, a broad-shouldered actor wore a head up to 7% wider than it is
-    // deep, on top of the 5% `body-pivot` already applies.
-    //
-    // It goes on `neck-pivot` and not on `head-pivot` because the correction has to
-    // happen in the same axis-aligned frame the width was applied in: on the rotated
-    // pivot it only cancels while the actor looks straight ahead, and at full look
-    // yaw it measured *worse* than doing nothing. Beasts have no `neck-pivot` —
-    // `createBeast` still roots its head at the animal — so the lookup is also the
-    // guard, and a skull that never wore the width does not get it divided out.
-    const neckPivot = mesh.getObjectByName('neck-pivot')
-    if (neckPivot) neckPivot.scale.x = 1 / shoulders
+    // Both halves of the shoulder width — put it on the chest, take it off the neck —
+    // live in one place in `CharacterKit` so a Node test can drive the real code
+    // instead of a copy of its arithmetic. See `setCharacterShoulderWidth`.
+    setCharacterShoulderWidth(torsoPivot, mesh.getObjectByName('neck-pivot'), shoulders)
   }
 
   private createActorHealthBar(allegiance: Allegiance): {
