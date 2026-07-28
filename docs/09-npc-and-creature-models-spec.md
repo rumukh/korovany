@@ -282,6 +282,91 @@ no new dependencies.
   evidence available that the mechanism is real and that a rule is not a defence
   against it. The rule is about where to *look first*, not a claim about where every
   defect lives.
+- **What is the population of the thing this pins, and am I sampling it or enumerating
+  it?** This is the question that would have caught more defects in the head-rig work
+  than any other, and it kept recurring because the answer is almost always *sampling*
+  and the sample is almost always **the one that was in front of the author**.
+  It appeared as one plan standing in for twenty-seven, one pose for four hundred and
+  sixty-two, one grid corner for a joint set, one stride and one delta for a function's
+  domain, the positive half of an axis for the whole axis, one call site for the three
+  that exist, one placement for everywhere a write can land, one pivot for the two a
+  derivation names, one function's scope for a property that has none, and one argument
+  of a call for its argument list. Every one was cheap to enumerate.
+  Three refinements earned by repetition. **The axis you were shown gets enumerated and
+  the axis nobody complained about stays a sample** — so ask which axes a thing has, not
+  whether you swept the one that broke. **Enumerating an axis at two points is
+  enumerating the points**, which a clamp sitting on a sample point will demonstrate.
+  And **does the enumeration cover the whole of each axis, or the part the
+  demonstration used?** A stride sweep once ran `0.01 … 1` under a comment correctly
+  naming its population as `±0.62` — the domain was stated accurately in the sentence
+  justifying the enumeration, and the enumeration covered one side of zero, because
+  every mutation ever shown for that function had used a positive stride.
+  The generalisation that ties this to the instrument rule above: **every guard
+  enumerates the failure that was demonstrated to it.** The three mutation guards, the
+  axis sweeps and the scope of each ban all have that shape, which is why a fix's
+  coverage should be derived from the domain rather than from the report that prompted
+  it.
+  And the form with time as the axis, which is the one that closed the sequence: **a
+  lesson gets applied forward to the thing in hand and not backward to the thing that
+  taught it.** A two-point pin on one axis produced the sentence *"enumerating an axis
+  at two points is enumerating the points"*; that sentence was then applied to the axis
+  being worked on and never carried back to the axis that had taught it, so it sat
+  forty lines above a pin in exactly the state it describes. **When a lesson is
+  written down, the first place to apply it is the case that produced it.**
+  And it applies to *fixes* as much as assertions: a fix scoped to the instance that was
+  reported has inherited its sample from the report.
+  The corollary that took two people to see: **the population has as many dimensions as
+  the claim has inputs, and the one you framed the question in is the one you will
+  enumerate.** Two harnesses were built within an hour to check the same equivalence
+  claim about a pose function. One swept 441 poses and left the Euler order at its
+  single default; the other swept all six orders and left the pose at one point. Both
+  framings were reasonable, both were one-dimensional, and each enumerated exactly the
+  axis its author had framed the question in. Neither was careless; the question was.
+- **A documented exclusion is a decision; the same exclusion carried into a different
+  assertion is a sample.** The subtlest form of the question above, and the one with no
+  usual tell. A gait table excluded three roles from a wobble simulation for written,
+  correct reasons — one duplicates another, one has speed zero and does not walk. Those
+  reasons justify excluding them from a *simulation of gait*. They say nothing about
+  whether their constants should be *checked*, and one of the three had a speed of zero
+  that nothing verified at all.
+  What makes this hard to see is that the scope arrives **pre-justified**: there is an
+  explanation sitting right beside it, it is sound, and it is answering a different
+  question. The documentation makes the subset look more rigorous rather than less,
+  which removes the tell that normally prompts the question — an unexplained subset.
+  **When a scope travels from one assertion to another, its justification does not
+  travel with it.**
+- **An instrument fails silently, and you catch it by looking at its output rather than
+  at its verdict.** Checking work with a script, a grep or a mutation harness is only as
+  good as the script, and a broken one does not announce itself: it returns a clean,
+  plausible, wrong answer. A sort check anchored on a name absent from the file measured
+  an empty slice and reported *sorted: true*. A mutation that never applied printed
+  *22 pass, 0 fail*, which is exactly what a working guard prints. A regex over-escaped
+  for the shell returned zero hits, which reads as *the pins are gone*.
+  The tempting generalisation — that instruments err toward "nothing wrong" — **is
+  false, and was refuted by a session that built one.** A case-insensitive grouping
+  invented three duplicates that did not exist; a culture-aware sort reported four
+  blocks unordered that were correctly ordered under the comparator the file uses.
+  Direction follows the comparator's bias and is not invariant.
+  What is invariant across every instance either session recorded: **not one was caught
+  by the verdict. Every one was caught by looking at what the instrument actually
+  produced** — a count, a diff, a matched line — and noticing it contradicted something
+  already known. So the operational forms are all the same shape: confirm a mutation
+  applied *and compiled* before believing a test result; confirm a query matched
+  something before believing a null; assert a parse found the expected order of
+  magnitude of items before believing anything about them, and put the count in the
+  failure message. **A detector must be made to fire on doped input before its silence
+  on real input means anything.**
+  That rule has a ceiling, and it is worth stating beside it: **a positive control
+  validates the instrument against the model, never the model against reality.** Dope a
+  checker that holds a wrong model with a defect *its model recognises* and it fires
+  correctly, the control passes, and the model stays wrong — so a doped control cannot
+  catch a checker asking the right question about the wrong object. The instance that
+  produced this: a sort check modelled the barrel as one sorted list when the file's
+  actual convention is per block, values then types. Its control passed and its verdict
+  was noise. What catches that class is the signal such a checker emits and its author
+  discards: **a detector firing broadly on input everyone believes correct is evidence
+  about the model, not the subject.** "The whole list is unsorted" on a file nobody had
+  complained about was the model announcing itself, and it was read as sloppiness.
 - **A measurement is a claim with a timestamp nobody writes down.** Every other rule
   here targets claims that were wrong. This one is about claims that were *right and
   stopped being* — which is a different failure, because a measurement carries its own
@@ -297,6 +382,39 @@ no new dependencies.
   message has a shelf life of minutes on an active repository. In a test, the same rule
   is why a figure computed by the assertion that quotes it cannot go stale without going
   red, and a figure copied from a mutation run can.
+  There is a sharper case, and review is where it lives: **a report is an input to the
+  thing it reports on, so an effective review invalidates its own baseline.** The final
+  pass of this work opened by stating a branch tip as unchanged since the previous pass.
+  It was six commits behind, and the newest of those commits existed *because of that
+  reviewer's own previous message* — it had been pushed under two minutes before the
+  claim was written. Nobody was careless; the review worked. That is the point. The
+  usual reading of staleness is that time passes and a number decays, which suggests a
+  slow-moving hazard. Here the decay was **caused by the report**, so the more useful a
+  review is, the faster its own tip claim expires — and the reviewer is the one party
+  who cannot see it, because the effect lands after they stop looking. The remedy is the
+  same one line, but the trigger is different: re-resolve at the moment of *writing the
+  close*, not at the moment of measuring, because the interval that matters is the one
+  the review itself opened.
+- **A rule stored without its trigger is a guard with no call site.** It exists, it is
+  correct, and nothing invokes it — which is the same object as an assertion that cannot
+  fail for the defect it names, one level up and in prose instead of a test. The evidence
+  is unflattering and worth keeping: the note *"commit before mutating"* was written here
+  after a `git checkout --` destroyed uncommitted work, and it then failed to fire three
+  more times, because it recorded the rule and not the moment. So the operational form is
+  **where a rule can be made into a call site rather than a sentence, it should be**, and
+  this document is the wrong home for anything convertible.
+  That partitions the rules in this repo into three, and the partition is the useful part.
+  *Converted*: the arithmetic behind the head rig now lives in `applyHeadPose`,
+  `applyChestPose`, `chestGaitYaw`, `decayStrideOnStagger`, `actorGaitCadence` and
+  `actorSpeedForRole`, so the suite drives it instead of reading it — twelve source pins
+  became two calls, and a rewrite can no longer evade them.
+  *Unconvertible*: the wiring claims and the alias evasion, because `GameEngine` is not
+  constructible in Node, which is why the test file states them as limitations instead of
+  implying it has none.
+  *Sentence-only, and therefore inert until someone remembers*: everything about working
+  practice, including the one above. This bullet is in that third category and cannot
+  argue itself out of it — which is the point. **A rule that cannot be given a call site
+  should say so, so that its reader knows they are the invocation.**
 - **Before offering a cause, check whether your own code already answers it.** The
   sharpest instance this work produced: a docblock blamed head roll for a 39%
   discrepancy in a gaze figure, when `solveHeadYaw`'s signature — written ten commits

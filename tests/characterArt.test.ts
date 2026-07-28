@@ -1668,6 +1668,20 @@ test('the head tracks its target through the chest, not past it', () => {
   // which is a proof this file already contained eighty lines above, in the comment
   // explaining why the sweep drives head roll at all.
   //
+  // **And the proof survives floating point, which the algebra alone does not promise.**
+  // `Rz(roll)·zHat` over 200,000 rolls spanning the full circle: worst deviation
+  // `0.000e+0`, bit-exact `(0, 0, 1)` at 200,000 of 200,000 — with a control, `Rx(0.3)`
+  // on the same vector, deviating `2.989e-1`, so the probe is not inert. A reviewer
+  // measured the same thing independently at 20,000 and got the same answer.
+  //
+  // That closes something that had been left as noise. The same reviewer earlier put head
+  // roll's effect on the heading at `2.386e-14` and called it float error. It was float
+  // error, but not *the roll's* — the roll contributes bit-exact zero, so the `2.4e-14`
+  // was accumulated error from the rest of the chain, which a roll sweep merely
+  // re-samples. **Once a row is a proof, any non-zero measurement of it is a fact about
+  // the instrument rather than the axis**, and a figure attributed to the swept variable
+  // is attributing to one axis what belongs to the composition.
+  //
   // **Chest roll is the largest single term**, and an earlier version of this comment
   // named chest pitch, the second largest. Jointly `|-turnLean*0.16 + shift*0.55|`
   // cannot exceed 0.099; the probe pinned it at 0.30, three times over.
@@ -1683,6 +1697,58 @@ test('the head tracks its target through the chest, not past it', () => {
   // What is still **not** accounted for is the remainder: 6.04 is not 6.68, so at least
   // one further axis was free. Both files name chest roll as the dominant demonstrated
   // contributor and stop there.
+  //
+  // ## Two figures in this table are disputed and the dispute is unresolved
+  //
+  // A reviewer measured the same decomposition and reports two disagreements, with the
+  // mechanism for each. Recorded here rather than reconciled, because reconciling it
+  // would mean re-deriving the table late in a long session with fresh confidence —
+  // which is the exact profile of every defect this file has caught since the rig
+  // itself was correct, and it would be the fourth cause offered for this family.
+  //
+  // 1. **The baseline still is not fully joint.** `decayStrideOnStagger` runs before
+  //    `animateActorCharacter`, so a staggering actor's stride has already been damped
+  //    by `e^(-13/60)` when the posture pass reads it. This sweep pairs `stagger = 1`
+  //    with the full pre-stagger stride. Applying the retention gives **4.8119** joint
+  //    and **4.8795** idle-decoupled, against the 4.8203 and 4.9199 below.
+  // 2. **The chest-roll row underreports.** Within the same six-target grid, a
+  //    stationary storm-hunched brute at chest `[0.62, 0, 0.30]`, head pitch 0.18,
+  //    target 0.39 gives **6.1569**; optimising the reachable target interval gives
+  //    **6.1925**, against the 6.0420 below.
+  //
+  // Neither changes the ordering or the head-roll conclusion. Both make the table's
+  // figures lower bounds rather than maxima — which is the safe direction for anything
+  // reading them as a guard, and the wrong direction for anything quoting them as what
+  // the geometry does. That applies to **all four rows**: each is an absolute coefficient
+  // found by search, and a better search revises any of them upward.
+  //
+  // **What is exact is not a figure but a difference.** Head roll's *contribution* —
+  // row 2 minus row 1 — is zero by the algebra eighty lines above, `Rz(roll)·zHat = zHat`
+  // at every value, reachable or not. Both rows are lower bounds; their difference is a
+  // proof, and it stays zero however far either row is revised, because the revision
+  // moves them together.
+  //
+  // **An earlier version of this caveat got that wrong twice, in the act of fixing it.**
+  // It said the caveat covered the "non-zero figures" and was "true of five rows" — but
+  // the head-roll row's figure is `4.8203`, not zero, and *is* a lower bound like the
+  // rest; and this table has four rows, not six. The "one of six" came from a reviewer's
+  // remark about a different table entirely — the Euler-order sweep, where `XYZ` really
+  // does sit alone against five others. **A precise observation about one object was
+  // imported onto another without checking the two had the same shape.** The observation
+  // was right, the object was wrong, and borrowed precision reads exactly like earned
+  // precision: it arrives with a number attached and nothing about it invites checking
+  // whether the number was ever counted here.
+  //
+  // Worth keeping because it is this file's defect running backwards, twice over.
+  // Everywhere else a narrow claim stood in for a wide population; here a **caveat**
+  // generalised across rows that were not alike, underclaiming a proof rather than
+  // overclaiming a measurement — and then the correction to it overclaimed in turn. A
+  // blanket hedge is a claim about every row it covers and needs the same population
+  // check as the confident sentence it softens; so does the sentence that narrows it.
+  //
+  // **The disagreement is the record.** Stating both figures with both methods named is
+  // this file's own rule for exactly this situation, and it is preferable to a third
+  // number produced at the hour when the previous two were produced.
   //
   // Three causes were offered for one number and all three were wrong, by three
   // different people, while the number itself survived every attack. That pattern has a
@@ -1757,7 +1823,15 @@ test('the head tracks its target through the chest, not past it', () => {
     //
     // **A fix scoped to the instance that was reported is a fix scoped to a sample.**
     // The head was the pivot in the finding; the derivation names two.
-    for (const sabotage of ['YXZ', 'ZYX', 'ZXY'] as const) {
+    // All five non-default orders, not the three that were demonstrated. `THREE.Euler`
+    // has six and the set is closed, so sampling it is a choice rather than a
+    // necessity — and a reviewer pointed out that `XZY` and `YZX` were never exercised.
+    //
+    // Nothing hides there today: `rotation.set(…, 'XYZ')` is unconditional, so all six
+    // reset. But a future conditional reset — one that normalises only known-bad
+    // orders, say — would be pinned for three and blind for two, and the difference
+    // costs one line to remove.
+    for (const sabotage of ['YXZ', 'ZYX', 'ZXY', 'XZY', 'YZX'] as const) {
       for (const [pitch, yaw, roll] of [
         [0.1, 0.2, 0.3], [-0.09, 0.65, -0.3], [0.18, -1.2, 0.037], [0, 0.5, -0.15],
       ] as const) {
@@ -2933,18 +3007,55 @@ test('the engine wires the rig the way these tests measure it', () => {
   // function gives `exp(-13/30)` = 0.6485 and that mutant still gives 0.8059.
   //
   // **A hard-coded frame rate is precisely the class of defect that moving arithmetic
-  // into a function exists to catch**, and a single-delta pin cannot see it. Two
-  // deltas pin the exponential *form*: decay over 2/60 must equal decay over 1/60
-  // squared, which holds for `exp(-k·delta)` and fails for anything that ignores
-  // `delta` or is linear in it.
-  assert.ok(
-    Math.abs(decayStrideOnStagger(1, 2 / 60) - decayStrideOnStagger(1, 1 / 60) ** 2) < 1e-12,
-    `the stride decay is no longer exponential in delta: one frame at 2/60 leaves `
-    + `${decayStrideOnStagger(1, 2 / 60).toFixed(6)} where two frames at 1/60 leave `
-    + `${(decayStrideOnStagger(1, 1 / 60) ** 2).toFixed(6)}. A decay that ignores delta `
-    + 'passes the equality above and is wrong at every frame rate but the one it was '
-    + 'written at.',
-  )
+  // into a function exists to catch**, and a single-delta pin cannot see it. The
+  // semigroup property is the right assertion — decay over `2d` must equal decay over
+  // `d` squared, which holds for `exp(-k·delta)` at every `d` and fails for anything
+  // that ignores `delta` or is linear in it.
+  //
+  // **Swept, because two deltas is two points.** That sentence was written forty lines
+  // above about the *stride* axis, having been learned from this one — and it was never
+  // carried back here. A reviewer found the delta pin still at `1/60` and `2/60`, and
+  // broke it twice:
+  //
+  //   damp(…, Math.min(delta, 2 / 60))    a delta clamp     22/0
+  //   damp(…, Math.max(delta, 1 / 60))    a delta floor     22/0
+  //
+  // Both are identical at both sample points. The clamp is the more likely of the two —
+  // `updateFrame` clamps its own delta at `0.05` twice, three lines apart — and it makes
+  // a staggering actor's stride decay too little on every frame between 20 and 30 fps.
+  //
+  // The reachable domain is bounded by the engine at `(0, 0.05]`, so the sweep below is
+  // the range rather than a guess at it. **The lesson had been applied forward to the
+  // axis in hand and not backward to the axis that taught it** — which is the same
+  // asymmetry as "the axis you were shown gets enumerated", with time as the axis.
+  //
+  // One more thing fell out of re-running those two mutations against the sweep, and it
+  // is sharper than the sweep itself. **The clamp fires at `2/60` — a value the old
+  // two-point pin already contained.** It could not catch it, because the semigroup was
+  // written once with `d = 1/60`, so `2/60` only ever appeared as the *target* `2*d` and
+  // never as a base. Promoting the same number to a base is the entire difference:
+  // `f(4/60)` clamps, `f(2/60)` does not. The floor, by contrast, needs a genuinely new
+  // sample and fires at `1/240`.
+  //
+  // So: **a value can be present in an enumeration and still not be enumerated, if it
+  // only ever occupies one side of the assertion.** Every population check in this file
+  // counts values; this one is not answered by counting them, because the pin held the
+  // witness and used it in the one role where it was blind. The question has to be asked
+  // of the *roles* a sample plays — base and target, input and expectation, subject and
+  // control — and a list of six deltas answers it no better than a list of two if they
+  // all enter the same way.
+  for (const delta of [1 / 240, 1 / 120, 1 / 60, 1 / 30, 0.045, 0.05]) {
+    assert.ok(
+      Math.abs(decayStrideOnStagger(1, 2 * delta) - decayStrideOnStagger(1, delta) ** 2) < 1e-12,
+      `the stride decay is no longer exponential in delta at ${delta.toFixed(5)}: one `
+      + `step of ${(2 * delta).toFixed(5)} leaves `
+      + `${decayStrideOnStagger(1, 2 * delta).toFixed(9)} where two steps of `
+      + `${delta.toFixed(5)} leave ${(decayStrideOnStagger(1, delta) ** 2).toFixed(9)}. `
+      + 'A decay that ignores delta, clamps it or floors it passes at whichever deltas '
+      + 'happen to be sampled and is wrong at every frame rate between them. The engine '
+      + 'bounds delta at 0.05, so this range is the domain rather than a guess at it.',
+    )
+  }
   // And the *other* axis, which the commit that fixed the delta left at one point —
   // every assertion above uses `stride = 1`. `damp(Math.sign(stride), 0, 13, delta)` is
   // identical to production at `stride = 1` for every delta, so it satisfies the value
@@ -2979,6 +3090,16 @@ test('the engine wires the rig the way these tests measure it', () => {
   // producing, and it is worth stating with the count rather than tidied away: the
   // question is not just which axes a function has, but *which half of each axis you
   // have actually been shown*.
+  //
+  // One fact about this instance is worth more than the defect. **Two review sessions
+  // found the positive-only range independently, within minutes, without contact** — the
+  // fourth reviewer by mutation, a third by reading the sine bound off `actor.stride`.
+  // Every other entry in this catalogue was found once, by one session, which leaves open
+  // whether the question that produced it was transferable or just idiosyncratic to
+  // whoever phrased it. This is the only place that question got answered: **the same
+  // question, asked by two parties who had not spoken, reached the same axis.** That is
+  // weak evidence — one instance — but it is the only evidence of transferability the
+  // programme produced, and it came from the two sessions declining to claim it.
   for (const stride of [-1, -0.62, -0.25, -0.05, -0.01, 0.01, 0.05, 0.1, 0.25, 0.5, 0.62, 1]) {
     assert.ok(
       Math.abs(decayStrideOnStagger(stride, 1 / 60) - stride * decayStrideOnStagger(1, 1 / 60))
@@ -3037,16 +3158,32 @@ test('the engine wires the rig the way these tests measure it', () => {
   // would close it is a test that runs a frame and reads the pivot, which needs a
   // constructible `GameEngine` — the architectural gap this file has recorded throughout
   // and cannot fix from here.
+  // No Euler order is written anywhere in `GameEngine.ts` — not "not in the posture
+  // pass". `applyHeadPose` and `applyChestPose` pass the order to `Euler.set` and are
+  // the only two places in `src/game` that write one; production has no legitimate
+  // reason to touch it.
+  //
+  // This was scoped to `actorPosture` for one commit, and a reviewer walked out of the
+  // scope rather than around the pattern: `updateChampionAura` runs immediately after
+  // `animateActorCharacter` at five sites, so an order write there survives to render
+  // and the ban never saw it. **Third instance of one placement standing in for the
+  // population of placements**, this time at function granularity rather than statement
+  // granularity — and the fix is shorter than the version it replaces, which is usually
+  // the sign that the narrower assertion was carrying an assumption rather than a
+  // constraint.
+  //
+  // *"No order writes in the posture pass"* and *"no order writes"* are different
+  // claims, and the second is the one actually wanted.
   assert.equal(
-    (actorPosture.match(/rotation\.order\s*=/g) ?? []).length,
+    (source.match(/rotation\.order\s*=/g) ?? []).length,
     0,
-    'something in the actor posture pass assigns `rotation.order`. `applyHeadPose` and '
+    'something in `GameEngine.ts` assigns `rotation.order`. `applyHeadPose` and '
     + '`applyChestPose` reassert XYZ on every write, but **that only beats a write they '
     + 'run after** — a reviewer set the order on the line following the call and it '
-    + 'survived, because `Euler`\'s order setter recomputes the quaternion on its own. '
-    + 'Nothing here has any business setting an Euler order: the two pose functions own '
-    + 'it, and this assertion says so for both placements rather than the one that '
-    + 'happened to be measured.',
+    + 'survived, because `Euler`\'s order setter recomputes the quaternion on its own, '
+    + 'and set it in a method that runs after the posture pass entirely. `solveHeadYaw` '
+    + 'reads the columns of `Rx·Ry·Rz` by hand from both pivots, so a foreign order '
+    + 'silently answers a different question — worth up to 30 degrees.',
   )
   assert.equal(
     (actorPosture.match(/applyChestPose\(/g) ?? []).length,
@@ -3066,6 +3203,49 @@ test('the engine wires the rig the way these tests measure it', () => {
     + 'the wobble test simulates is not the chest yaw the engine produces. Counting '
     + 'every assignment operator, because the previous assertion of this shape looked '
     + 'for `=` and was walked past with `*=`.',
+  )
+  // The same for the head, which had no equivalent. A reviewer added
+  // `headPivot.rotation.x *= 0.5` **after** the `applyHeadPose` call and the file stayed
+  // 22/0: the call assertion checks what goes in, the gaze test drives the helper
+  // directly, and neither can see a later write to the pivot the helper just set.
+  //
+  // The order case was already covered — `rotation.order` is asserted absent from this
+  // pass — and that difference is the point. **The head's order had been demonstrated
+  // vulnerable and got a guard; the head's components had not and did not**, even though
+  // `applyChestPose` had taught exactly this lesson for the chest one commit earlier.
+  // Twelfth instance of enumerating only what was shown.
+  //
+  // **This slice is justified rather than inherited, and that needs saying**, because
+  // every other narrow scope on this branch turned out to be a sample and a reviewer
+  // came within one message of recommending this one be widened by analogy with the
+  // `rotation.order` ban directly above.
+  //
+  // That ban could go file-wide because *zero* legitimate order writes exist. This one
+  // cannot, because four legitimate component writes do:
+  //
+  //   L12375  applyActorVisualVariation   spawn variation, overwritten each frame
+  //   L14308  animateBeastPosture         a quadruped's head yaw
+  //   L14309  animateBeastPosture         its pitch
+  //   L14310  animateBeastPosture         its roll
+  //
+  // Beasts never call `applyHeadPose` — the biped pass holds the only call site — so
+  // `animateBeastPosture` writing the head directly is the rig working as designed.
+  // Measured, not argued: swapping `actorPosture` for `source` here takes this file
+  // from 22/0 to 21/1. The correct scope is "the posture pass, plus anything that runs
+  // after it for a biped", which is not expressible as a file-wide count and is bounded
+  // by the same architectural fact as everything else left open here.
+  //
+  // The general form, since it is the inverse of this branch's recurring defect: **an
+  // unexplained narrow scope reads as a sample, so a scope that is genuinely correct
+  // has to say why, or the next reader widens it and breaks three passing cases.**
+  assert.equal(
+    (actorPosture.match(/headPivot\.rotation\.[xyz]\s*(?:[-+*/]?=)/g) ?? []).length,
+    0,
+    'a component of the head\'s rotation is assigned directly in the actor posture '
+    + 'pass. Everything the gaze depends on goes through `applyHeadPose` so that the '
+    + 'Euler order is reasserted and the pitch the solve was given is the pitch the head '
+    + 'wears; a later write wins the rendered frame and repeats every frame, and both '
+    + 'the call assertion and the helper sweep are blind to it.',
   )
 })
 
