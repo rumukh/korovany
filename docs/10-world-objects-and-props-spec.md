@@ -750,6 +750,16 @@ The rules that fall out of them, in rough order of how much they would have save
       `walkableNear`'s only caller already tests it, so the throw is unreachable in
       production. It reported that as its own miss rather than a finding.
 
+      **And then it stopped being equivalent, which is the more useful half.** Pinning the
+      guard with a test that casts past `private` made the same mutation fail — measured
+      independently on both trees, `CAUGHT` at 292 pass / 1 fail. So **equivalence is a
+      property of the tree, not of the mutation**: the identical edit is an equivalent
+      mutation before the pin and a caught one after, and nothing about the edit changed.
+      The durable statement is narrower than "equivalent mutation" and worth the precision:
+      *the throw is unreachable in production; it is reachable, and asserted, from a test
+      that reaches past `private`.* The two readings disagree about what happens when
+      someone deletes that test — under the loose one it is harmless, and it is not.
+
    Between them the two guards cost one extra measurement each and they are what separates
    *"the suite did not notice"* from *"there was nothing to notice."* Two of this
    campaign's reported survivors turned out to be the second kind.
@@ -770,7 +780,9 @@ The rules that fall out of them, in rough order of how much they would have save
    Worth stating plainly to anyone adopting the technique: **it produces false positives at
    roughly the rate it produces findings.** This campaign yielded three real survivors and
    three retractions — a grouping-precision artefact, a CRLF-broken mutation, and an
-   equivalent mutation against a guard whose only caller already checks. The gates are not
+   equivalent mutation against a guard whose only caller already checks. That third one has
+   since expired as a retraction: the guard was pinned and the same mutation now fails, so
+   it was a correct verdict with a shelf life rather than a mistake. The gates are not
    optional overhead; they are what makes the results mean anything.
 
 8. **A regression test needs a seed that reproduced the bug.** Ordering, mechanism and
@@ -1558,6 +1570,27 @@ whether a *result* is still current rather than whether a file is.
 
 The pairing with the earlier entry is the useful shape: **a negative claim needs a probe
 more than a positive one, and it needs that probe again every time it is repeated.**
+
+**When a claim cannot be verified by the party receiving it, the cost of being wrong rises
+by an order of magnitude.** The reviewer produced the cleanest measurement of this
+programme's whole coordination failure, and it is a split rather than a count. Every claim
+about *code* was settled in one message, because the command that produced it could be run
+by the receiver. Every claim about *the other party's tooling* took four or more, because
+neither side could execute the other's evidence: a reflog position, a `--contains` reading,
+a local ref resolution. Four wrong explanations were produced on this programme and **all
+four were of that second kind.**
+
+Which reframes the single largest process error here. This branch was unpushed for most of
+the programme, and the visible cost looked like inconvenience — colleagues could still read
+it through the shared object store. The real cost is this: it forced every statement about
+this tree into the unverifiable class. *"Trust my account of my tip"* is not a claim anyone
+can check, and it is the exact shape that took four rounds each. `git push -u` on the first
+day is one command, and it does not merely publish a branch — **it moves every subsequent
+claim about that branch out of the expensive category.**
+
+The rule generalises past git: if a finding cannot be re-derived by the person receiving
+it, expect it to cost an order of magnitude more to settle, and spend the effort on making
+it checkable rather than on making it more convincing.
 
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
