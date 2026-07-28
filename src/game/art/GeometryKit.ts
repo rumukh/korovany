@@ -1074,6 +1074,31 @@ function assertNotAlreadyMerged(
  *
  * Sources are consumed unless `dispose: false`; re-using one afterwards throws rather
  * than corrupting a frame later. See `mergedAway`.
+ *
+ * **The output is non-indexed only when there is more than one part.** A real merge
+ * calls `toNonIndexed()` on every indexed part first, because mixed indexing is one of
+ * the disagreements `mergeGeometries` answers with `null`. The single-part path hands
+ * its input straight back, so an indexed input stays indexed:
+ *
+ *     mergeAll([cylinder])            INDEXED       96 idx / 52 pos
+ *     mergeAll([cylinder, cylinder])  non-indexed   192 pos
+ *     mergeAll([latheProfile(...)])   INDEXED       96 idx / 27 pos
+ *
+ * That matters to anything downstream that reads triangles or welds vertices, because
+ * an indexed buffer has no duplicate corners to weld and a different attribute count
+ * for the same shape — `bakeOutlineNormals` writes 52 entries in the first row above
+ * and 96 in the second. Lathe- and revolve-built parts are the common route in, since
+ * they are indexed by construction and are frequently a prop's only part.
+ *
+ * Readers in this kit handle both. Consumers outside it must not assume the count-
+ * dependent case away: **write against `geometry.index`, not against what a two-part
+ * merge happens to return.**
+ *
+ * Normalising the single-part path would make the contract uniform and is the obvious
+ * tidy-up, but it is not free — `toNonIndexed()` costs +85% vertices on a cylinder and
+ * +256% on a lathe profile, on every single-part prop in a streamed world. Priced and
+ * deliberately not taken here; see `tests/mergeOwnership.test.ts`, which pins both rows
+ * so the behaviour cannot drift silently in either direction.
  */
 export function mergeAll(
   parts: readonly THREE.BufferGeometry[],

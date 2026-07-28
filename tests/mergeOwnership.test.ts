@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import * as THREE from 'three'
 
-import { mergeAll } from '../src/game/art/GeometryKit.ts'
+import { bakeOutlineNormals, latheProfile, mergeAll } from '../src/game/art/GeometryKit.ts'
 
 /**
  * Merging is a move, and a moved-from geometry is silent.
@@ -88,4 +88,65 @@ test('the guard does NOT catch two single-part merges of one geometry', () => {
     foliage.getAttribute('position').array,
     'one buffer under two names — the caller-side guard is the one that catches this',
   )
+})
+
+/**
+ * Merging is also the place the output's *structure* changes shape.
+ *
+ * A real merge non-indexes every part first, because mixed indexing is one of the
+ * disagreements `mergeGeometries` answers with `null`. The single-part path returns
+ * its input, so an indexed part stays indexed — the output's indexing depends on how
+ * many parts it was given, and lathe-built props are the common route in because they
+ * are indexed by construction and are frequently a prop's only part.
+ *
+ * Pinned in both directions. A reader that only ever sees non-indexed input is covered
+ * by accident, and would go on passing if the indexed route quietly disappeared.
+ */
+
+test('a single-part merge keeps indexing that a real merge would have destroyed', () => {
+  const single = mergeAll([new THREE.CylinderGeometry(0.3, 0.3, 1, 8)], { name: 'one' })
+  assert.ok(single.index, 'a single-part merge hands back its input, index and all')
+
+  const many = mergeAll(
+    [new THREE.CylinderGeometry(0.3, 0.3, 1, 8), new THREE.CylinderGeometry(0.2, 0.2, 1, 8)],
+    { name: 'many' },
+  )
+  assert.equal(many.index, null, 'a real merge non-indexes first')
+})
+
+test('a lathe part survives a single-part merge still indexed', () => {
+  // The live route: a revolve-built prop whose only part goes through mergeAll.
+  const lathe = latheProfile(
+    [{ x: 0.1, y: 0 }, { x: 0.25, y: 0.4 }, { x: 0.18, y: 0.9 }],
+    { segments: 8 },
+  )
+  assert.ok(lathe.index, 'latheProfile is indexed by construction')
+
+  const merged = mergeAll([lathe], { name: 'pillar' })
+  assert.ok(merged.index, 'and the passthrough preserves it')
+})
+
+test('bakeOutlineNormals matches whichever structure it is handed', () => {
+  const indexed = new THREE.CylinderGeometry(0.3, 0.3, 1, 8)
+  const flat = new THREE.CylinderGeometry(0.3, 0.3, 1, 8).toNonIndexed()
+
+  // Non-vacuity: if these ever stop differing, the case this test exists for is gone.
+  assert.ok(indexed.index, 'the indexed case must actually be indexed')
+  assert.equal(flat.index, null)
+  assert.notEqual(
+    indexed.getAttribute('position').count,
+    flat.getAttribute('position').count,
+    'the two structures must have different vertex counts for this to test anything',
+  )
+
+  for (const geometry of [indexed, flat]) {
+    const baked = bakeOutlineNormals(geometry)
+    const outline = baked.getAttribute('outlineNormal')
+    assert.ok(outline, 'every structure gets outline normals')
+    assert.equal(
+      outline.count,
+      baked.getAttribute('position').count,
+      'one outline normal per vertex, whichever vertex set that is',
+    )
+  }
 })
