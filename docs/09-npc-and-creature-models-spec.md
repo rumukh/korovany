@@ -673,6 +673,17 @@ no new dependencies.
   The predictor is better than the list, because it generates rather than enumerates:
   **a check with a social cost and no epistemic reward is a check nobody runs**, and the
   next unaudited class will be whatever else has that shape.
+  **That predictor is incomplete, and the thing it cannot generate is the defect that
+  survived everything.** It explains classes that go unchecked because checking costs
+  something socially. A `git diff --stat` costs *nothing* — no awkwardness, no relationship
+  to anyone, one word of output — and it went unlooked-at across forty commits by two
+  parties who were, all evening, explicitly hunting for unrun checks. The commit it would
+  have caught in four words rewrote a whole file and destroyed 57 commits of provenance.
+  So there is a second mechanism beside social cost, and it is its opposite: **free is its
+  own kind of invisible.** A check with no cost attaches to no decision, so nothing ever
+  prompts it; the expensive ones at least announce themselves by being avoided. This
+  section was built from the classes that hurt, which is precisely why it could not name
+  the one that doesn't.
   It produced one more on the last exchange of the work, and it is the class with the
   strongest immunity: **the explanation of a discrepancy.** Twelve passes measured
   numbers, assertions, bounds, mutations, timestamps and counts — and the *causes* attached
