@@ -638,6 +638,8 @@ Two were in this document's own advice rather than in any test.
 | its stock-box mutation control | reversed *without* rebaking, proving detection of stale normals — a defect the pipeline cannot produce |
 | `git fetch` in the review checklist | the branch is local-only, so it reports "already up to date" whether you are current or six commits behind |
 | a `retained.length <= retentionLimit` bound | the window evicts at its own limit, so this holds even when every slot pins the same key — the duplicate-pin fault it was written for. Written *while fixing* a finding about vacuous checks, and caught before it shipped only because the habit was fresh |
+| the ink budget system test | every object this world outlines is a single mesh, so `inkDrawCost` is numerically identical to `return 1` and the assertion has **zero power** over the regression it documents. Found by mutation, not by reading |
+| teardown's instanced-shell ordering | spec 08 invariant 4 was tested where `disposeShell` is *implemented* and nowhere it is *relied on*; skipping the release entirely left 13 shells freeing their sources' buffers, suite green |
 | `referenceCount === 0` double-release detector | the dangerous case leaves the count at 1, so the release *succeeds* and steals another holder's reference |
 
 Four rules fall out of them, in rough order of how much they would have saved:
@@ -670,6 +672,21 @@ Four rules fall out of them, in rough order of how much they would have saved:
    real input. Prefer mutating the real subject over a stand-in — a proof carried per
    geometry costs a clone and removes the entire question of whether the control resembles
    the thing it vouches for.
+6. **Reading a suite cannot find these; mutating the source can.** Every entry above was
+   found by argument, one at a time, over six review rounds — and a reviewer then found
+   two more in an afternoon by injecting the defects the suite claims to guard and seeing
+   which survived. **10 mutations, 8 caught, 2 survived**, and both survivors were
+   assertions that read as thorough. A surviving mutation is a demonstration rather than
+   an argument, and it is cheap: the campaign needed no knowledge the authors lacked, only
+   the discipline to check instead of assume.
+
+   The two it caught share a shape worth naming: **a system test can only exercise the
+   cases the system happens to contain.** `inkDrawCost` recursion and its LOD-max rule are
+   inert in this world because every outlined object is one mesh — 794 calls measured,
+   every one costing 1 — so the budget assertion was comparing two numbers that agree for
+   a reason unrelated to the logic. The remedy is a unit test on synthetic inputs, which
+   is the one thing a world-level test cannot substitute for. Both fixes were verified by
+   re-applying the mutation and watching the new test go red.
 
 **Orientation needs three instruments, because each is blind where the others see.**
 This pass reached that conclusion twice, the second time after a sibling session measured

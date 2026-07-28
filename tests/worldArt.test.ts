@@ -23,7 +23,7 @@ import {
   type WallStyle,
 } from '../src/game/art/index.ts'
 import { SITE_PRESENTATIONS } from '../src/game/content/registry.ts'
-import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
+import { GeneratedWorldRuntime, inkDrawCost } from '../src/game/world/GeneratedWorldRuntime.ts'
 import {
   buildingSpecKey,
   composeSiteLayout,
@@ -1083,7 +1083,87 @@ test('every prop winds its triangles to agree with its shading normals', () => {
   }
 })
 
-test('the merged hard surface of a prop carries welded outline normals', () => {  const parts = buildingParts({
+test('the ink cost function prices hierarchies this world never happens to contain', () => {
+  // A mutation campaign replaced `inkDrawCost` with `return 1` and all 281 tests passed.
+  // The reason is not that the budget assertion is wrong — it is that every object the
+  // world outlines today is a single mesh, so the recursion and the LOD-max rule are
+  // inert and the system test compares two numbers that agree for an unrelated reason.
+  // Measured across three maps: 794 `applyOutline` calls, every one costing exactly 1.
+  //
+  // So the cost function is exercised here instead, on hierarchies built to make its
+  // branches vary. These are the shapes it was written for and the shapes it will meet
+  // the first time a prop's near LOD level is a group.
+  const mesh = (name = 'part'): THREE.Mesh => {
+    const object = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1))
+    object.name = name
+    return object
+  }
+
+  const single = mesh()
+  assert.equal(inkDrawCost(single, false), 1, 'a plain mesh costs one draw')
+
+  // The historical defect: one `applyOutline` call, four shells. Billing per call
+  // priced this at 1.
+  const group = new THREE.Group()
+  group.add(mesh('wall'), mesh('roof'), mesh('door'))
+  assert.equal(inkDrawCost(group, false), 3, 'a group costs one draw per eligible mesh')
+
+  // The LOD rule, which nothing else in the suite reaches: only one level renders, so
+  // the charge is the worst level and not the sum. Sum would say 5.
+  const near = new THREE.Group()
+  near.add(mesh('a'), mesh('b'), mesh('c'), mesh('d'))
+  const lod = new THREE.LOD()
+  lod.addLevel(near, 0)
+  lod.addLevel(mesh('far'), 60)
+  assert.equal(inkDrawCost(lod, false), 4, 'an LOD costs its worst level, not the sum')
+
+  // Order-independence: the same LOD with the cheap level first must still cost 4. A
+  // `worst = cost` bug rather than `Math.max` passes the assertion above and fails this.
+  const reversed = new THREE.LOD()
+  reversed.addLevel(mesh('far'), 60)
+  const nearAgain = new THREE.Group()
+  nearAgain.add(mesh('a'), mesh('b'), mesh('c'), mesh('d'))
+  reversed.addLevel(nearAgain, 0)
+  assert.equal(inkDrawCost(reversed, false), 4, 'the worst level is not the last level')
+
+  // The exclusions, each of which silently drops a draw if it stops working.
+  const skipped = mesh('lantern-glow')
+  skipped.userData.noComicOutline = true
+  assert.equal(inkDrawCost(skipped, false), 0, 'an opted-out mesh costs nothing')
+
+  const ring = mesh('faction-ring')
+  assert.equal(inkDrawCost(ring, false), 0, 'the faction ring is never outlined')
+
+  const instanced = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), undefined, 4)
+  assert.equal(
+    inkDrawCost(instanced, false),
+    0,
+    'an instanced mesh costs nothing unless instanced ink was asked for',
+  )
+  assert.equal(
+    inkDrawCost(instanced, true),
+    1,
+    'an instanced mesh costs one shared shell when instanced ink is asked for',
+  )
+
+  // A shell is not itself inkable, or the count compounds every time ink is toggled.
+  const shell = mesh('shell')
+  shell.userData.comicOutline = true
+  assert.equal(inkDrawCost(shell, false), 0, 'an outline shell does not take an outline')
+
+  // Nesting, since a group of groups is what a composed site actually is.
+  const nested = new THREE.Group()
+  const inner = new THREE.Group()
+  inner.add(mesh('x'), mesh('y'))
+  nested.add(mesh('z'), inner)
+  assert.equal(inkDrawCost(nested, false), 3, 'cost recurses through nested groups')
+
+  single.geometry.dispose()
+  instanced.dispose()
+})
+
+test('the merged hard surface of a prop carries welded outline normals', () => {
+  const parts = buildingParts({
     variation: artVariation('props', 'outline'),
     noiseSeed: 7,
     palette: BUILDING_PALETTE,
@@ -1962,6 +2042,67 @@ test('every site in a region gets its own share of the ink budget', () => {
     assert.ok(inked > 0, `${site.id} received no ink while the region had budget left`)
   }
   runtime.dispose()
+})
+
+test('teardown detaches every instanced ink shell before its source is disposed', () => {
+  // Spec 08 invariant 4. An instanced shell shares `instanceMatrix` with its source and
+  // hangs off it as a child, so if teardown does not hand the binding back first, the
+  // shell is caught by the `root.traverse(... dispose())` sweep *as a child of its
+  // source*, while still holding the source's attribute — and three.js frees the
+  // source's buffer.
+  //
+  // A mutation campaign found this unguarded: making `releaseResources` skip its
+  // outline bindings left 13 shells disposed after their sources, still sharing their
+  // matrices, and the whole suite passed. The mechanism is thoroughly tested in
+  // `tests/art.test.ts`, where `disposeShell` lives. What was untested is that this
+  // runtime *calls* it — the invariant was guarded where it is implemented and not
+  // where it is relied on.
+  const { scene, blueprint, runtime } = createRuntime('teardown-ink-shells')
+  const region = blueprint.regions[Math.floor(blueprint.regions.length / 2)]
+  const center = runtime.getRegionCenter(region.id)
+  assert.ok(center)
+  runtime.update({ deltaSeconds: 0, focus: center })
+
+  const pairs: { shell: THREE.InstancedMesh; source: THREE.InstancedMesh }[] = []
+  scene.traverse((object) => {
+    if (!(object instanceof THREE.InstancedMesh)) return
+    if (!StylizedArtLibrary.isOutlineShell(object)) return
+    const source = object.parent
+    if (source instanceof THREE.InstancedMesh) pairs.push({ shell: object, source })
+  })
+
+  // Non-vacuity, in two parts. Zero pairs would pass every assertion below having
+  // observed nothing, and pairs that never shared a buffer would make the interesting
+  // half of the check trivially true.
+  assert.ok(
+    pairs.length > 0,
+    'no instanced ink shells were built, so this test observed nothing',
+  )
+  const sharing = pairs.filter(
+    (pair) => pair.shell.instanceMatrix === pair.source.instanceMatrix,
+  )
+  assert.equal(
+    sharing.length,
+    pairs.length,
+    'a live instanced shell must share its source matrix, or the hazard does not exist',
+  )
+
+  runtime.dispose()
+
+  const attached = pairs.filter((pair) => pair.shell.parent === pair.source)
+  assert.deepEqual(
+    attached.map((pair) => pair.shell.name),
+    [],
+    'these shells were still parented to their source when teardown disposed it',
+  )
+  const stillSharing = pairs.filter(
+    (pair) => pair.shell.instanceMatrix === pair.source.instanceMatrix,
+  )
+  assert.deepEqual(
+    stillSharing.map((pair) => pair.shell.name),
+    [],
+    'these shells were disposed still holding their source buffer, which frees it',
+  )
 })
 
 test('lit windows belong to the near building level, not beside it', () => {

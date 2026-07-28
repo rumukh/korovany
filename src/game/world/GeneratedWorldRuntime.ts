@@ -2021,8 +2021,16 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
  * transparent materials, which this does not model, so the estimate may run high by
  * a draw. Over-charging costs a silhouette; under-charging costs frame time, and
  * `tests/worldArt.test.ts` pins the estimate against the shells actually built.
+ *
+ * Exported for tests, and the export is the point. A mutation campaign replaced this
+ * whole function with `return 1` and the entire suite still passed — because every
+ * object *this* world outlines is a single mesh, so the recursion and the LOD rule are
+ * both inert in production and the system-level assertion has no power over them. The
+ * regression named above could be reintroduced silently. A cost function has to be
+ * tested where its inputs can vary, which means synthetic hierarchies rather than a
+ * world that happens to contain only the trivial case.
  */
-function inkDrawCost(object: THREE.Object3D, instanced: boolean): number {
+export function inkDrawCost(object: THREE.Object3D, instanced: boolean): number {
   if (object instanceof THREE.LOD) {
     let worst = 0
     for (const level of object.levels) {
