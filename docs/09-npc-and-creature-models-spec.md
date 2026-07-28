@@ -433,6 +433,24 @@ no new dependencies.
   real in the arithmetic and absent in the world. Neither error here was careless; both
   were caught only by recomputing from the raw commits, and the third answer was not
   proposed by anyone until then.
+  The reviewer then found its own error was worse than the drift it had been diagnosed
+  with, and the mechanism is the part worth keeping. All of its points used a *fixed*
+  baseline; its first point was not computed at all but quoted from the other party, who
+  had used a moving one. Applied consistently its method gives **9 → 5 → 3 → 2**, and its
+  own first point disagrees with the published 7 by two. So the series was **two
+  definitions spliced**, not one definition drifting.
+  Why the splice was invisible is not luck. Measured over all four points, exactly one —
+  the second — returns the same value under both definitions, because the fixed baseline
+  happened to *be* the moving one at that moment. **The series therefore read as coherent
+  because the only point where the two methods cannot disagree sat exactly where a reader
+  checks for a seam.** The general form is the positive-control rule pointed at
+  methodology: **when two methods are spliced, agreement at a point where they must agree
+  is not evidence of anything — verify the seam where they must differ.**
+  And both parties committed the same underlying act within an hour, in different
+  materials: a PR status carried into a freshly timestamped block, and a gap figure
+  carried into a computation it was not produced by. **A value borrowed into a fresh
+  context reads as fresh**, inheriting the credibility of its neighbours rather than
+  carrying its own.
 - **A rule stored without its trigger is a guard with no call site.** It exists, it is
   correct, and nothing invokes it — which is the same object as an assertion that cannot
   fail for the defect it names, one level up and in prose instead of a test. The evidence
