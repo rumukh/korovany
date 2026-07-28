@@ -648,6 +648,13 @@ test('the Pages workflow still declares the group and the flag it is supposed to
  * and compares them as text. A spelling this file has never seen still changes the
  * text, so a new dialect is a failure rather than a silence.
  *
+ * That claim was too strong and a reviewer falsified it: `"\u0063oncurrency"` is a
+ * valid YAML key decoding to `concurrency`, and the filter below never sees the
+ * word. **The keyword filter is a lexer, so this pin has exactly one structural
+ * assumption — that the words appear literally in the source.** The test after this
+ * one makes that assumption explicit and fails when a file leaves it, rather than
+ * letting the pin go quiet.
+ *
  * Comment-only lines are skipped and trailing comments stripped, so prose about the
  * rationale can be edited without failing a test about semantics.
  */
@@ -673,4 +680,50 @@ test('every line that mentions concurrency, in every workflow, is pinned as text
     'deploy-pages.yml :: group: pages',
     'deploy-pages.yml :: cancel-in-progress: false',
   ])
+})
+
+
+/**
+ * The readability precondition of the pin above, made a test instead of an
+ * assumption. A reviewer hid a whole cancelling block from it with
+ * `"\u0063oncurrency"` — valid YAML, decodes to `concurrency`, contains none of the
+ * words the filter looks for. Verified against the runner's own parser dependency,
+ * not only the spec.
+ *
+ * Every previous round was answered by learning one more spelling and every one
+ * after it found another, so this is not answered that way. YAML's double-quoted
+ * escapes are a closed list, and of them **only the hex forms can produce an ASCII
+ * letter** — the named escapes yield control characters, space, slash, backslash,
+ * quote, NEL, NBSP, LS and PS, none of which can spell part of a keyword. So
+ * rejecting hex escapes closes the letter-hiding class rather than one member of it.
+ *
+ * Both workflows contain zero backslashes of any kind, measured, so this costs
+ * nothing today. Banning *all* backslashes would also have been free today and was
+ * rejected: ordinary `run:` steps use shell continuations and Windows paths, and a
+ * gate that fires on those is a gate someone deletes.
+ *
+ * One member is examined and deliberately not closed. A double-quoted scalar may
+ * carry a line continuation, so `"conc\` + newline + `urrency"` splits a keyword
+ * across lines where no per-line scan can see it. As an implicit mapping key that is
+ * not valid YAML — it would need explicit `? key` syntax — and a rule against
+ * trailing backslashes would fire on every multi-line `run:` in the repository. It
+ * is recorded here rather than guarded, on the same terms as the expression forms
+ * the parser cannot evaluate.
+ */
+test('no workflow hides text from the pin behind a character escape', () => {
+  const HEX_ESCAPE = /\\(?:x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})/
+
+  const encoded = readWorkflows().flatMap((file) =>
+    file.source
+      .split(/\r?\n/)
+      .map((line, index) => ({ line: line.trim(), number: index + 1 }))
+      .filter((entry) => HEX_ESCAPE.test(entry.line))
+      .map((entry) => `${file.name}:${String(entry.number)}: ${entry.line}`),
+  )
+
+  assert.deepEqual(
+    encoded,
+    [],
+    'a workflow encodes characters as escapes, so the text pin can no longer be trusted to see what YAML sees',
+  )
 })

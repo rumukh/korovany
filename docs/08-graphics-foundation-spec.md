@@ -1288,6 +1288,42 @@ rounds: *the parser is a heuristic that gets better, and the pin is the thing th
 load-bearing.* It took six rounds of trying to complete the parser to be able to write that
 sentence.
 
+#### Round eight: the pin was defeated, and the defect was the claim made for it
+
+One round after calling the pin load-bearing, the same reviewer defeated it. A job keyed
+`"\u0063oncurrency"` with `"\u0067roup": pages` is valid YAML that decodes to a cancelling
+block, and **contains none of the words the pin searches for**. Seven of seven passed. They
+verified the decoding against the runner's own parser dependency rather than the spec alone,
+and caught a contamination in their first attempt — a probe named *"Encoded concurrency
+probe"*, whose display line tripped the pin for the wrong reason. **A probe containing the word
+the detector looks for tests the probe, not the subject**, and that one was caught before it
+could be reported as a pass.
+
+The defect is not the missing escape form, it is the sentence shipped alongside the pin: *"this
+pin does not parse."* **It does. A keyword filter is a lexer, and it has exactly one structural
+assumption — that the words appear literally in the source.** The assumption was real, was
+never stated, and was therefore never tested. Every earlier round in this section is a check
+that was wrong about YAML; this is the first one that was wrong about *itself*.
+
+So the fix is to make the assumption a test rather than teach the pin one more encoding. YAML's
+double-quoted escapes are a closed list, and **only the hex forms can produce an ASCII letter**
+— the named escapes yield control characters, space, slash, backslash, quote, NEL, NBSP, LS and
+PS, none of which can spell part of a keyword. Rejecting hex escapes closes the letter-hiding
+class rather than one member of it, which is the first fix in eight rounds that can say so.
+
+The cheaper rule was measured and rejected. Both workflows contain **zero backslashes of any
+kind**, so banning all of them would also have been free today — and would fire on the first
+multi-line `run:` or Windows path anyone adds. Both were run as controls and both stay green
+under the hex rule. *Free today* is not the test; **what it costs the day someone writes
+ordinary YAML is the test**, and that is the same reasoning that kept the blanket expression
+rule out one round earlier.
+
+One member is examined and deliberately left open, on the terms this section now uses for
+things it cannot close: a double-quoted scalar may carry a line continuation, so a keyword can
+be split across two lines where no per-line scan sees it. As an implicit mapping key that is
+not valid YAML, and a rule against trailing backslashes would fire on every multi-line `run:`
+in the repository. Recorded, not guarded.
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
