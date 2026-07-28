@@ -449,7 +449,25 @@ no new dependencies.
   standing property of any artefact that names its own failure modes: **a file that lists
   the shapes it warns about will match its own list.** Sweeping this document for the
   defects it catalogues will always find the catalogue.
-  **That applies to tools nobody wrote as much as to detectors someone did**, and this
+  **The fix for that produced a seventh shape, and it is the only one where the instrument
+  is generative rather than misaimed.** Excluding inline code spans by *deleting* them
+  turns `permanently.` + a span + `now` into a period followed by two spaces — **the
+  sanitiser manufactures the exact signature it was built to detect**, wherever a span sits
+  between two spaces, which is ordinary markup. Measured over this branch's prose:
+  ```
+  strip inline spans by DELETION      18 hits   (a reviewer measured 26 at an earlier tip)
+  strip inline spans by PLACEHOLDER    0 hits
+  control: doped line                  fires
+  ```
+  Replacing spans with a placeholder rather than nothing gives zero, and the control
+  confirms the sweep can still fire — because a sanitiser that *removes* text is exactly
+  the shape that produces a clean result by destroying the evidence.
+  **And the reason it went unnoticed is worth more than the bug.** A count in the plausible
+  range prompts nothing. Zero would have raised *"is this thing on?"*; eighteen looks like
+  a working detector finding real problems, and a reader would reasonably conclude the file
+  was riddled with joins. That is the exact inverse of the vacuous-instrument case, where a
+  clean result was the thing nobody questioned — **the number that escapes scrutiny is
+  whichever one matches expectation**, and the doped control is the answer to both.  **That applies to tools nobody wrote as much as to detectors someone did**, and this
   repository contains the proof. `tsc --noEmit -p tsconfig.json` looks like a type-check
   and is not one: the root `tsconfig.json` is `"files": []` plus project references, so
   without `--build` the command compiles **zero files**. Measured with a positive control —
