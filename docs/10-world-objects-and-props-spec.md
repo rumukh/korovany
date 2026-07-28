@@ -677,6 +677,9 @@ Two were in this document's own advice rather than in any test.
 | teardown's instanced-shell ordering | spec 08 invariant 4 was tested where `disposeShell` is *implemented* and nowhere it is *relied on*; skipping the release entirely left 13 shells freeing their sources' buffers, suite green |
 | `referenceCount === 0` double-release detector | the dangerous case leaves the count at 1, so the release *succeeds* and steals another holder's reference |
 | the metal band probe at key intensity **3.2** | 1.208× `keyIntensity`, so the pre-fix band driver reached 0.785 and cleared the 0.75 stop boundary. The probe reported **four bands in both builds** and the defect looked absent — clean control, well-formed staircase, plausible answer. Only the plateau *width* dissented: 4 pixels against 38 |
+| the four-subject probe's column slicing | mapped column *i* to subject *i*; the spheres did not land there, so two shared a column and it reported one subject's name over a **pair** — 230 lit pixels, five bands on a four-stop ramp |
+| a frozen-list size pin, without uniqueness beside it | 36 names is not a fingerprint for 36 *particular* names. Delete one and duplicate another and the pin passes while an export stops being checked — **under a length-only guard the cheapest way to silence a regression is to pad the list, not shrink it** |
+| the frame-time scope guard | read `docs/08` and only `docs/08` while named *"…not restated unscoped **anywhere**"*. A third unscoped copy in `docs/09` §8 shipped to `main`; the test's **name** asserted the population its implementation did not cover, so reading it confirmed the coverage it lacked |
 
 Four rules fall out of them, in rough order of how much they would have saved:
 
