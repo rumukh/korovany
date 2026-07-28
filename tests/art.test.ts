@@ -1625,6 +1625,17 @@ test('a smooth loft normal is exact on an anisotropic section, not merely plausi
       worst = Math.max(worst, (Math.acos(dot) * 180) / Math.PI)
     }
     assert.ok(judged > 0, `${label} judged no wall vertex at all`)
+    // A proportional floor, for the reason S3 found the hard way: the verdict ranges
+    // over the judged vertices, and three `continue`s above can shrink that set
+    // without changing the result's colour. Measured, all six cases judge 384/384 —
+    // including a 500:1 taper, so the `setY(0)` skip added with this test never bites
+    // and is a guard rather than a filter. That is worth pinning, because it was
+    // added in the same patch as the claim it protects and nothing else records it.
+    assert.ok(
+      judged >= position.count * 0.9,
+      `${label} judged only ${judged} of ${position.count} vertices — the skips above `
+        + 'have become a filter, so `worst` is a maximum over a shrinking population',
+    )
     assert.ok(
       worst < 0.01,
       `${label}: smooth normals sit ${worst.toFixed(4)} deg off the exact ellipse `
@@ -1687,6 +1698,7 @@ test('closed builders wind outward, independently of their normals', () => {
     inward: number
     weakest: number
     judged: number
+    triangles: number
   } => {
     const source = geometry.index ? geometry.toNonIndexed() : geometry
     const position = source.getAttribute('position')
@@ -1720,8 +1732,9 @@ test('closed builders wind outward, independently of their normals', () => {
       if (wind.dot(outward) <= 0) inward += 1
       weakest = Math.min(weakest, Math.abs(wind.normalize().dot(outward.normalize())))
     }
+    const triangles = Math.floor(position.count / 3)
     if (source !== geometry) source.dispose()
-    return { inward, weakest, judged }
+    return { inward, weakest, judged, triangles }
   }
 
   // Same control set as the relative test, and valid here for the same reason:
@@ -1841,7 +1854,7 @@ test('closed builders wind outward, independently of their normals', () => {
 
   let totalJudged = 0
   for (const [, label, geometry] of cases) {
-    const { inward, weakest, judged } = measure(geometry)
+    const { inward, weakest, judged, triangles } = measure(geometry)
     // Prove the invariant applies before trusting what it says. 0.2 is a TRIPWIRE on
     // this test's own cases, not a correctness threshold on geometry in general, and
     // the difference is not academic. Measured, `probe-inventory2.mts`:
@@ -1872,6 +1885,28 @@ test('closed builders wind outward, independently of their normals', () => {
     // `weakest` alone cannot catch an empty measurement: with no judged face it stays
     // at its `Infinity` seed and sails past the guard above.
     assert.ok(judged > 0, `${label} judged no faces at all`)
+    // ...and `judged > 0` is a floor of ONE, which catches only total collapse. The
+    // verdict below ranges over the judged faces alone, so a case that quietly stops
+    // presenting most of its triangles gets a weaker test with an identical green
+    // result. Every case here judges 100% today, so this asserts a real property of
+    // the builders rather than a fitted coverage number: THEY MUST NOT EMIT DEGENERATE
+    // TRIANGLES. `measure` skips exactly two things — zero-area faces and faces whose
+    // centroid coincides with the body's — and neither should occur in this kit's
+    // output at all. The 0.9 is headroom against a sliver at a fan cap, not a fit.
+    //
+    // Found by S3 in their own coverage instrument, where per-geometry share had
+    // fallen to 64% under an aggregate that still looked healthy. The aggregate floor
+    // below cannot see that failure: one case collapsing while another grows leaves
+    // the total untouched.
+    assert.ok(
+      judged >= triangles * 0.9,
+      `${label} judged only ${judged} of ${triangles} triangles `
+        + `(${((judged / triangles) * 100).toFixed(1)}%) — faces are leaving the `
+        + 'measurement, either because the builder now emits degenerate or '
+        + 'centroid-coincident geometry or because a skip was added to `measure`. '
+        + 'Either way the winding verdict below now ranges over a subset, and no '
+        + 'other assertion here reports that it shrank',
+    )
     assert.equal(inward, 0, `${label} must wind outward`)
     totalJudged += judged
     geometry.dispose()
