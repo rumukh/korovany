@@ -679,10 +679,27 @@ no new dependencies.
 
   | | walking | on death | in the world, dying | skull vs its own chest |
   | --- | --- | --- | --- | --- |
-  | wolf | 0.4697 | 0.6255 | 0.5379 m | 8.3171° |
-  | boar | 0.3927 | 0.5353 | 0.5085 m | 8.3171° |
-  | bear | 0.5102 | 0.7165 | 0.8598 m | 8.3171° |
-  | troll | 0.6055 | **1.0040** | **1.3453 m** | **11.6733°** |
+  | wolf | 0.4987 | 0.6642 | 0.5712 m | 8.3171° |
+  | boar | 0.4162 | 0.5675 | 0.5391 m | 8.3171° |
+  | bear | 0.5423 | 0.7614 | 0.9137 m | 8.3171° |
+  | troll | 0.6532 | **1.0763** | **1.4422 m** | **11.6733°** |
+
+  Swept: seven action states, three strides, three turn-leans, three breath phases, three
+  look angles, both shoulder extremes, the death family, and the three `body-pivot` scale
+  extremes the art stream can write. Held fixed: the actor's world position and facing,
+  which sit above every pivot involved; the head's own rotation in the chest-inheritance
+  column, on both sides, so the comparison is like for like; and the Euler order at XYZ,
+  which is swept over all five wrong values in its own test. **Saying which dimensions
+  are fixed is part of publishing the figure** — a sweep of 441 poses on this programme
+  held the Euler order at the one value where two implementations agree, and one of
+  51,480 states held head pitch at zero, exactly where the solve was already correct.
+  Both were large numbers measuring a single point.
+
+  The harness is proven against a known-bad configuration rather than trusted: reverting
+  `buildBeastSkeleton` to the pre-fix arrangement takes the suite to 21/7 and makes it
+  **report 2.5072 of skull travel on a troll** and name sixteen distinct breakages in one
+  message. Against the shipped rig the same figure is 0. Two readings, one of them large,
+  is what distinguishes *"the fix works"* from *"the harness measures nothing"*.
 
   Two things about the figures this replaces — 0.296 on a wolf, 0.368 on a bear, 0.660
   on a troll, "under attack plus stagger". **They do not reproduce**: driven at that

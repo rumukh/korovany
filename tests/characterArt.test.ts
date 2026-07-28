@@ -2720,6 +2720,33 @@ const BEAST_POSE_COUNT =
   1 + BEAST_ACTIONS.length * 3 * 3 * 3 * 3 * 2 + BEAST_ACTIONS.length * 2 * 2 * 2
 
 /**
+ * `body-pivot`'s scale, which `applyActorVisualVariation` writes and beasts also get.
+ *
+ * A dimension that was **held fixed at the identity** in the first version of every
+ * measurement below, and not by choice — by construction. The rigid check's expected
+ * value was a *world* position captured at rest and pushed back through
+ * `torsoPivot.matrixWorld`, which double-counts anything above the chest, so the
+ * assertion was only correct while `body-pivot` was identity. It would have failed on a
+ * scaled animal for a reason that had nothing to do with the defect.
+ *
+ * Both halves are now fixed: the expected side is read out of `BEAST_RIG` in *chest*
+ * space, so it is independent of everything above the chest, and the sweep drives the
+ * two extremes of what the art stream can write — `bulk` and `height` at
+ * `around(1, 0.05)` and `around(1, 0.055)`, with the depth `bulk * around(1, 0.03)`.
+ *
+ * It is still held fixed for the orientation and proportion sweeps, and there the reason
+ * is real rather than accidental, so it is stated beside each: a non-uniform scale above
+ * a rotation shears, and a sheared matrix has no exact rotation to compare against; and
+ * `body-pivot`'s squash reaches every part of the animal equally, so it is not something
+ * a head-against-chest cancellation can or should answer for.
+ */
+const BEAST_BODY_SCALES: readonly (readonly [number, number, number])[] = [
+  [1, 1, 1],
+  [1.05, 1.055, 1.05 * 1.03],
+  [0.95, 0.945, 0.95 * 0.97],
+]
+
+/**
  * The angle between two orientations, in degrees, without `acos` near the identity.
  *
  * `2 * acos(|q1 · q2|)` is the obvious formula and it is useless for the assertion that
@@ -2790,11 +2817,14 @@ const FOOT_ROOTED_SKULL: Record<
   { slip: number; walking: number; dying: number; twist: number }
 > =
   {
-    wolf: { slip: 0.2414, walking: 0.4697, dying: 0.6255, twist: 8.3171 },
-    boar: { slip: 0.2116, walking: 0.3927, dying: 0.5353, twist: 8.3171 },
-    bear: { slip: 0.2751, walking: 0.5102, dying: 0.7165, twist: 8.3171 },
-    troll: { slip: 0.4732, walking: 0.6055, dying: 1.0040, twist: 11.6733 },
+    wolf: { slip: 0.2574, walking: 0.4987, dying: 0.6642, twist: 8.3171 },
+    boar: { slip: 0.2246, walking: 0.4162, dying: 0.5675, twist: 8.3171 },
+    bear: { slip: 0.2935, walking: 0.5423, dying: 0.7614, twist: 8.3171 },
+    troll: { slip: 0.5104, walking: 0.6532, dying: 1.0763, twist: 11.6733 },
   }
+
+/** The headline world-unit figure, kept beside the table it is derived from. */
+const TROLL_WORLD_DEATH_TRAVEL = 1.4422
 
 /**
  * A beast's skull is part of its body, and this is what proves it.
@@ -2838,8 +2868,8 @@ const FOOT_ROOTED_SKULL: Record<
  *
  * `updateActorDeathMotion` writes `head-pivot.rotation.z = side * 0.28 * eased` — a
  * skull lolling as the body goes down — and on a pivot at the feet that swings it
- * through the entire ground-to-skull lever arm. On a troll: **1.0040 authored units,
- * 1.3453 m in the world, on every single death**, covered by no assertion at all. The
+ * through the entire ground-to-skull lever arm. On a troll: **1.0763 authored units,
+ * 1.4422 m in the world, on every single death**, covered by no assertion at all. The
  * humanoid rig had the identical hole. A pose that only happens after the health bar
  * disappears is still a pose.
  *
@@ -2897,6 +2927,19 @@ test("a beast's skull is rigid with its ribs and hinges at the neck", () => {
   let worstRigid = 0
   let worstRigidAt = ''
   let checked = 0
+  /**
+   * Collected rather than thrown, and the reason is a control run that failed to produce
+   * a reading.
+   *
+   * Pointing the harness at a known-bad rig and confirming it reports a *large* number is
+   * how you prove it detects the defect it is about to hunt. Run against the pre-fix beast
+   * rig, this test went red — and printed the **hinge** message, because `assert` throws
+   * and the aggregate travel figure is the last assertion in the test. *"The suite went
+   * red"* was available; *"the skull travelled 2.36"* was not, and those are different
+   * pieces of evidence. So everything below accumulates and one assertion at the end
+   * reports the lot, the travel figure included.
+   */
+  const problems: string[] = []
 
   for (const kind of BEAST_KINDS) {
     const rig = BEAST_RIG[kind]
@@ -2918,39 +2961,56 @@ test("a beast's skull is rigid with its ribs and hinges at the neck", () => {
     //    — which is where the sibling arrangement put it too.
     skeleton.root.updateMatrixWorld(true)
     restLocal.setFromMatrixPosition(head.matrixWorld)
-    assert.ok(
-      Math.abs(restLocal.x) < 1e-12 &&
-        Math.abs(restLocal.y - rig.headY) < 1e-12 &&
-        Math.abs(restLocal.z - rig.headZ) < 1e-12,
-      `${kind}: at rest the skull must stand at (0, ${rig.headY.toFixed(3)}, `
-      + `${rig.headZ.toFixed(3)}), not (${restLocal.x.toFixed(4)}, `
-      + `${restLocal.y.toFixed(4)}, ${restLocal.z.toFixed(4)}). Hanging the head off the `
-      + 'ribs must be invisible on an animal nothing has posed — that property is the '
-      + 'entire reason this defect survived on people for the life of the code.',
-    )
+    if (
+      Math.abs(restLocal.x) >= 1e-12 ||
+      Math.abs(restLocal.y - rig.headY) >= 1e-12 ||
+      Math.abs(restLocal.z - rig.headZ) >= 1e-12
+    ) {
+      problems.push(
+        `${kind}: at rest the skull stands at (${restLocal.x.toFixed(4)}, `
+        + `${restLocal.y.toFixed(4)}, ${restLocal.z.toFixed(4)}), not at `
+        + `(0, ${rig.headY.toFixed(3)}, ${rig.headZ.toFixed(3)}). Hanging the head off `
+        + 'the ribs must be invisible on an animal nothing has posed — that property is '
+        + 'the entire reason this defect survived on people for the life of the code.',
+      )
+    }
 
     for (const pose of poses) {
-      checked += 1
-      // Full pose, scales included. `setCharacterShoulderWidth` is production's own
-      // function: mutate it and this measurement moves, which is precisely what a copy
-      // of its arithmetic written out here would prevent.
-      applyChestPose(skeleton.torsoPivot, pose.chest[0], pose.chest[1], pose.chest[2])
-      skeleton.torsoPivot.scale.y = pose.breathScale
-      setCharacterShoulderWidth(skeleton.torsoPivot, skeleton.neckPivot, pose.shoulders)
+      for (const body of BEAST_BODY_SCALES) {
+        checked += 1
+        skeleton.bodyPivot.scale.set(body[0], body[1], body[2])
+        // Full pose, scales included. `setCharacterShoulderWidth` is production's own
+        // function: mutate it and this measurement moves, which is precisely what a copy
+        // of its arithmetic written out here would prevent.
+        applyChestPose(skeleton.torsoPivot, pose.chest[0], pose.chest[1], pose.chest[2])
+        skeleton.torsoPivot.scale.y = pose.breathScale
+        setCharacterShoulderWidth(skeleton.torsoPivot, skeleton.neckPivot, pose.shoulders)
 
-      // 2. Rigid in position, with the head's own rotation held at zero so that both
-      //    sides of the comparison are like for like — the correction the humanoid table
-      //    needed when it first read 0.6835 instead of 0.6603.
-      applyHeadPose(skeleton.headPivot, 0, 0, 0)
-      skeleton.root.updateMatrixWorld(true)
-      actual.setFromMatrixPosition(head.matrixWorld)
-      expected.copy(restLocal).applyMatrix4(skeleton.torsoPivot.matrixWorld)
-      const off = actual.distanceTo(expected)
-      if (off > worstRigid) {
-        worstRigid = off
-        worstRigidAt = `${kind} in "${pose.name}"`
+        // 2. Rigid in position, with the head's own rotation held at zero so that both
+        //    sides of the comparison are like for like — the correction the humanoid
+        //    table needed when it first read 0.6835 instead of 0.6603.
+        //
+        //    The expected side is the skull's rest position **in chest space**, which is
+        //    `BEAST_RIG`'s own two offsets, not a world position captured off this tree.
+        //    That matters twice: it is independent of every transform above the chest,
+        //    so `body-pivot` can be swept instead of silently pinned at the identity;
+        //    and it comes from production data rather than from a second reading of the
+        //    subject, which is the difference between a pin and a tautology.
+        applyHeadPose(skeleton.headPivot, 0, 0, 0)
+        skeleton.root.updateMatrixWorld(true)
+        actual.setFromMatrixPosition(head.matrixWorld)
+        expected
+          .set(0, rig.headY, rig.headZ)
+          .applyMatrix4(skeleton.torsoPivot.matrixWorld)
+        const off = actual.distanceTo(expected)
+        if (off > worstRigid) {
+          worstRigid = off
+          worstRigidAt = `${kind} in "${pose.name}" at body scale ${body.join('/')}`
+        }
       }
     }
+
+    skeleton.bodyPivot.scale.set(1, 1, 1)
 
     applyChestPose(skeleton.torsoPivot, 0, 0, 0)
     skeleton.torsoPivot.scale.set(1, 1, 1)
@@ -2972,68 +3032,84 @@ test("a beast's skull is rigid with its ribs and hinges at the neck", () => {
     // with it — measured: dropping the wolf's `frontJointY` to 0 leaves the bound green
     // and is caught only by the ratio assertion further down. Half a unit in the last
     // digit shown, so a drift that changes the printed figure cannot stay quiet.
-    assert.ok(
-      Math.abs(neckToHead - BEAST_NECK[kind]) < 0.00005,
-      `a ${kind}'s neck now measures ${neckToHead.toFixed(4)} from shoulder to skull, not `
-      + `the ${BEAST_NECK[kind].toFixed(4)} recorded. \`BEAST_RIG\` has been re-authored: `
-      + 'nothing is necessarily broken, but the hinge bound below reads this same number '
-      + 'on both sides, so it will not tell you. Correct the literal to the value in this '
-      + 'message and re-measure `FOOT_ROOTED_SKULL`.',
-    )
+    if (Math.abs(neckToHead - BEAST_NECK[kind]) >= 0.00005) {
+      problems.push(
+        `a ${kind}'s neck measures ${neckToHead.toFixed(4)} from shoulder to skull, not `
+        + `the ${BEAST_NECK[kind].toFixed(4)} recorded. \`BEAST_RIG\` has been re-authored: `
+        + 'nothing is necessarily broken, but the hinge bound reads this same number on '
+        + 'both sides, so it will not tell you. Correct the literal and re-measure '
+        + '`FOOT_ROOTED_SKULL`.',
+      )
+    }
     // Chord of the arc, generous by a factor of two on the three-axis case — the same
     // shape of bound the humanoid hinge check uses.
     const bound = 2 * neckToHead * Math.sin(turn * 1.5)
-    assert.ok(
-      swung <= bound,
-      `${kind}: turning the head ${turn.toFixed(2)} rad moved it ${swung.toFixed(4)}, over `
-      + `the ${bound.toFixed(4)} an arc about the shoulder allows. head-pivot is hinged `
-      + 'somewhere below the neck; at the animal\'s own origin it swings the whole body, '
-      + `which is ${(2 * footToHead * Math.sin(turn * 1.5)).toFixed(4)} on this one.`,
-    )
-    assert.ok(swung > 0, `${kind}: the head must actually turn`)
+    if (swung > bound) {
+      problems.push(
+        `${kind}: turning the head ${turn.toFixed(2)} rad moved it ${swung.toFixed(4)}, `
+        + `over the ${bound.toFixed(4)} an arc about the shoulder allows. head-pivot is `
+        + 'hinged somewhere below the neck; at the animal\'s own origin it swings the '
+        + `whole body, which is ${(2 * footToHead * Math.sin(turn * 1.5)).toFixed(4)} on `
+        + 'this one.',
+      )
+    }
+    if (swung <= 0) problems.push(`${kind}: the head does not actually turn`)
     // And the hinge has to be a real improvement, not a renamed one. Both radii come out
     // of the same table, so this cannot be satisfied by rescaling the animal.
-    assert.ok(
-      neckToHead < footToHead * 0.5,
-      `${kind}: the neck-to-skull arm is ${neckToHead.toFixed(4)} against a foot-to-skull `
-      + `arm of ${footToHead.toFixed(4)}. The joint has drifted back down towards the `
-      + 'animal\'s origin, which is the defect this rig was rebuilt to remove.',
-    )
+    if (neckToHead >= footToHead * 0.5) {
+      problems.push(
+        `${kind}: the neck-to-skull arm is ${neckToHead.toFixed(4)} against a `
+        + `foot-to-skull arm of ${footToHead.toFixed(4)}. The joint has drifted back `
+        + 'down towards the animal\'s origin, which is the defect this rig was rebuilt '
+        + 'to remove.',
+      )
+    }
     applyHeadPose(skeleton.headPivot, 0, 0, 0)
 
-    // The joints themselves, last, so a rig that has come apart reports how far by.
-    assert.equal(skeleton.neckPivot.parent, skeleton.torsoPivot, `${kind}: neck off the ribs`)
-    assert.equal(skeleton.headPivot.parent, skeleton.neckPivot, `${kind}: head off the neck`)
-    assert.equal(skeleton.neckPivot.position.x, 0, `${kind}: the neck is off centre`)
-    assert.equal(
-      skeleton.neckPivot.position.y,
-      rig.frontJointY,
-      `${kind}: the neck must start at the front limb joint, which is a beast's shoulder`,
-    )
-    assert.equal(skeleton.neckPivot.position.z, rig.frontZ, `${kind}: neck off the shoulder`)
-    assert.equal(
-      skeleton.headY,
-      rig.headY - rig.frontJointY,
-      `${kind}: the head mesh's Y is not measured from the neck`,
-    )
-    assert.equal(
-      skeleton.headZ,
-      rig.headZ - rig.frontZ,
-      `${kind}: the head mesh's Z is not measured from the neck`,
-    )
+    // The joints themselves, collected rather than thrown, so a rig that has come apart
+    // reports how far by in the same message as everything else it broke.
+    if (skeleton.neckPivot.parent !== skeleton.torsoPivot) {
+      problems.push(`${kind}: the neck does not hang off the ribs`)
+    }
+    if (skeleton.headPivot.parent !== skeleton.neckPivot) {
+      problems.push(`${kind}: the head does not hang off the neck`)
+    }
+    if (skeleton.neckPivot.position.x !== 0) problems.push(`${kind}: the neck is off centre`)
+    if (skeleton.neckPivot.position.y !== rig.frontJointY) {
+      problems.push(
+        `${kind}: the neck starts at y ${String(skeleton.neckPivot.position.y)}, not at the `
+        + `front limb joint ${String(rig.frontJointY)}, which is a beast's shoulder`,
+      )
+    }
+    if (skeleton.neckPivot.position.z !== rig.frontZ) {
+      problems.push(`${kind}: the neck is not at the shoulder's Z`)
+    }
+    if (skeleton.headY !== rig.headY - rig.frontJointY) {
+      problems.push(`${kind}: the head mesh's Y is not measured from the neck`)
+    }
+    if (skeleton.headZ !== rig.headZ - rig.frontZ) {
+      problems.push(`${kind}: the head mesh's Z is not measured from the neck`)
+    }
   }
 
   assert.equal(
     checked,
-    BEAST_KINDS.length * BEAST_POSE_COUNT,
-    'the sweep did not run over every animal and every pose',
+    BEAST_KINDS.length * BEAST_POSE_COUNT * BEAST_BODY_SCALES.length,
+    'the sweep did not run over every animal, every pose and every body scale',
   )
-  assert.ok(
-    worstRigid < 1e-12,
-    `the skull left the ribcage by ${worstRigid.toFixed(4)} at ${worstRigidAt}. It must `
-    + 'descend from `torso-pivot`, so that whatever the chest does the head does too. Do '
-    + 'not answer this with an offset: the displacement is a rotation times a lever arm '
-    + 'and changes with every frame of the pose.',
+  if (worstRigid >= 1e-12) {
+    problems.push(
+      `the skull left the ribcage by ${worstRigid.toFixed(4)} at ${worstRigidAt}. It must `
+      + 'descend from `torso-pivot`, so that whatever the chest does the head does too. Do '
+      + 'not answer this with an offset: the displacement is a rotation times a lever arm '
+      + 'and changes with every frame of the pose.',
+    )
+  }
+  assert.deepEqual(
+    problems,
+    [],
+    `the beast rig has come apart in ${String(problems.length)} way(s):\n- `
+    + problems.join('\n- '),
   )
 })
 
@@ -3408,59 +3484,61 @@ test('what a foot-rooted skull was worth on each of the four animals', () => {
     let dying = 0
     let twist = 0
     for (const pose of poses) {
-      for (const skeleton of [broken, fixed]) {
-        applyChestPose(skeleton.torsoPivot, pose.chest[0], pose.chest[1], pose.chest[2])
-        skeleton.torsoPivot.scale.y = pose.breathScale
-        applyHeadPose(skeleton.headPivot, pose.head[0], pose.head[1], pose.head[2])
-        skeleton.root.updateMatrixWorld(true)
+      for (const body of BEAST_BODY_SCALES) {
+        for (const skeleton of [broken, fixed]) {
+          skeleton.bodyPivot.scale.set(body[0], body[1], body[2])
+          applyChestPose(skeleton.torsoPivot, pose.chest[0], pose.chest[1], pose.chest[2])
+          skeleton.torsoPivot.scale.y = pose.breathScale
+          applyHeadPose(skeleton.headPivot, pose.head[0], pose.head[1], pose.head[2])
+          skeleton.root.updateMatrixWorld(true)
+        }
+        // How far the fix moves the skull, at an identical authored pose. This is the
+        // measurement that sees *both* halves of the defect: the chest the skull failed
+        // to follow, and its own rotation swinging it about the feet instead of the neck.
+        brokenAt.setFromMatrixPosition(brokenHead.matrixWorld)
+        fixedAt.setFromMatrixPosition(fixedHead.matrixWorld)
+        const travel = brokenAt.distanceTo(fixedAt)
+        if (pose.death) dying = Math.max(dying, travel)
+        else walking = Math.max(walking, travel)
+
+        // Orientation, on the broken rig, against a skull rigid with its own chest.
+        // Held at the identity body scale on purpose: a non-uniform scale above a
+        // rotation shears, and a sheared matrix has no exact rotation to read back.
+        if (body[0] === 1 && body[1] === 1 && body[2] === 1) {
+          brokenHead.getWorldQuaternion(headQuat)
+          broken.torsoPivot.getWorldQuaternion(chestQuat)
+          localEuler.set(pose.head[0], pose.head[1], pose.head[2], 'XYZ')
+          chestQuat.multiply(localQuat.setFromEuler(localEuler))
+          twist = Math.max(twist, orientationDegrees(headQuat, chestQuat))
+        }
+
+        // And the chest-inheritance half on its own, with the head's rotation held at
+        // zero on both sides so they are like for like — the correction the humanoid
+        // table needed when it first read 0.6835 instead of 0.6603.
+        applyHeadPose(broken.headPivot, 0, 0, 0)
+        broken.root.updateMatrixWorld(true)
+        brokenAt.setFromMatrixPosition(brokenHead.matrixWorld)
+        expected.set(0, rig.headY, rig.headZ).applyMatrix4(broken.torsoPivot.matrixWorld)
+        slip = Math.max(slip, brokenAt.distanceTo(expected))
       }
-      // How far the fix moves the skull, at an identical authored pose. This is the
-      // measurement that sees *both* halves of the defect: the chest the skull failed to
-      // follow, and its own rotation swinging it about the feet instead of the neck.
-      brokenAt.setFromMatrixPosition(brokenHead.matrixWorld)
-      fixedAt.setFromMatrixPosition(fixedHead.matrixWorld)
-      const travel = brokenAt.distanceTo(fixedAt)
-      if (pose.death) dying = Math.max(dying, travel)
-      else walking = Math.max(walking, travel)
-
-      // Orientation, on the broken rig, against a skull rigid with its own chest.
-      brokenHead.getWorldQuaternion(headQuat)
-      broken.torsoPivot.getWorldQuaternion(chestQuat)
-      localEuler.set(pose.head[0], pose.head[1], pose.head[2], 'XYZ')
-      chestQuat.multiply(localQuat.setFromEuler(localEuler))
-      twist = Math.max(twist, orientationDegrees(headQuat, chestQuat))
-
-      // And the chest-inheritance half on its own, with the head's rotation held at zero
-      // on both sides so they are like for like — the correction the humanoid table
-      // needed when it first read 0.6835 instead of 0.6603.
-      applyHeadPose(broken.headPivot, 0, 0, 0)
-      broken.root.updateMatrixWorld(true)
-      brokenAt.setFromMatrixPosition(brokenHead.matrixWorld)
-      expected.copy(restLocal).applyMatrix4(broken.torsoPivot.matrixWorld)
-      slip = Math.max(slip, brokenAt.distanceTo(expected))
     }
+    for (const skeleton of [broken, fixed]) skeleton.bodyPivot.scale.set(1, 1, 1)
     measured.set(kind, { slip, walking, dying, twist })
   }
 
+  const drift: string[] = []
   for (const kind of BEAST_KINDS) {
     const record = FOOT_ROOTED_SKULL[kind]
     const got = measured.get(kind)
     assert.ok(got, `${kind}: the sweep produced no measurement`)
     for (const what of ['slip', 'walking', 'dying'] as const) {
-      assert.ok(
-        Math.abs(got[what] - record[what]) < 0.00005,
-        `a foot-rooted ${kind} skull now measures ${got[what].toFixed(4)} for "${what}", `
-        + `not the ${record[what].toFixed(4)} recorded beside it. Nothing is necessarily `
-        + 'broken — but `BEAST_RIG`, the pose box or the animation has moved, and every '
-        + 'figure in the docblocks above and in docs/09 is now wrong. Correct them to the '
-        + 'value in this message rather than re-measuring by hand.',
-      )
+      if (Math.abs(got[what] - record[what]) >= 0.00005) {
+        drift.push(`${kind} ${what}: ${got[what].toFixed(4)} not ${record[what].toFixed(4)}`)
+      }
     }
-    assert.ok(
-      Math.abs(got.twist - record.twist) < 0.00005,
-      `a foot-rooted ${kind} skull is now ${got.twist.toFixed(4)} degrees off its own `
-      + `chest, not the ${record.twist.toFixed(4)} recorded. Same correction as above.`,
-    )
+    if (Math.abs(got.twist - record.twist) >= 0.00005) {
+      drift.push(`${kind} twist: ${got.twist.toFixed(4)} not ${record.twist.toFixed(4)}`)
+    }
     // The defect has to be worth something, or the equalities above are pinning nothing.
     // The floor is the animal's **own skull**, measured off the mesh — a quantity from
     // an entirely different part of the module, that no rig change can move, and not any
@@ -3493,6 +3571,19 @@ test('what a foot-rooted skull was worth on each of the four animals', () => {
     )
   }
 
+  // One assertion carrying the whole table, so a moved envelope reports every figure it
+  // moved rather than the first — separate `assert`s stop at one, and the next run finds
+  // the next.
+  assert.deepEqual(
+    drift,
+    [],
+    `the foot-rooted skull's measurements have moved: ${drift.join('; ')}. Nothing is `
+    + 'necessarily broken — `BEAST_RIG`, the pose box, the body-scale envelope or the '
+    + 'animation has changed — but every figure in the docblocks above and in docs/09 is '
+    + 'now wrong. Correct them to the values in this message rather than re-measuring by '
+    + 'hand.',
+  )
+
   // And the world units, which is what the bug was reported in. `BEAST_PROFILES.scale`
   // is authored in `Fauna.ts`, entirely independently of the art table, so this catches a
   // rescale that leaves every authored figure untouched.
@@ -3500,10 +3591,11 @@ test('what a foot-rooted skull was worth on each of the four animals', () => {
   assert.ok(troll, 'the troll must be swept')
   const trollWorld = troll.dying * BEAST_PROFILES.troll.scale
   assert.ok(
-    Math.abs(trollWorld - 1.3453) < 0.00005,
+    Math.abs(trollWorld - TROLL_WORLD_DEATH_TRAVEL) < 0.00005,
     `a foot-rooted troll's skull now left its chest by ${trollWorld.toFixed(4)} m on `
-    + 'death, not the 1.3453 m recorded. That is the figure this programme quotes as '
-    + '"worse than the bug the user reported"; correct it here and in docs/09.',
+    + `death, not the ${TROLL_WORLD_DEATH_TRAVEL.toFixed(4)} m recorded. That is the `
+    + 'figure this programme quotes as "worse than the bug the user reported"; correct it '
+    + 'here and in docs/09.',
   )
 })
 

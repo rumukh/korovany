@@ -3607,10 +3607,24 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
  *
  * | kind | slip | walking | dying | dying, in the world | skull vs its own chest |
  * | --- | --- | --- | --- | --- | --- |
- * | wolf | 0.2414 | 0.4697 | 0.6255 | 0.5379 m | 8.3171° |
- * | boar | 0.2116 | 0.3927 | 0.5353 | 0.5085 m | 8.3171° |
- * | bear | 0.2751 | 0.5102 | 0.7165 | 0.8598 m | 8.3171° |
- * | troll | 0.4732 | 0.6055 | **1.0040** | **1.3453 m** | **11.6733°** |
+ * | wolf | 0.2574 | 0.4987 | 0.6642 | 0.5712 m | 8.3171° |
+ * | boar | 0.2246 | 0.4162 | 0.5675 | 0.5391 m | 8.3171° |
+ * | bear | 0.2935 | 0.5423 | 0.7614 | 0.9137 m | 8.3171° |
+ * | troll | 0.5104 | 0.6532 | **1.0763** | **1.4422 m** | **11.6733°** |
+ *
+ * **What is swept and what is held fixed**, because a large number of samples along one
+ * axis is not coverage of the others — a humanoid sweep of 441 poses on this programme
+ * held the Euler order at the single value where both implementations agree, and one of
+ * 51,480 states held head pitch at zero, precisely where the solve was already correct.
+ * Both were large numbers measuring one point. So, for the figures above: swept are the
+ * seven action states, three strides, three turn-leans, three breath phases, three look
+ * angles, both shoulder extremes, the death family, and the three `body-pivot` scale
+ * extremes `applyActorVisualVariation` can write. Held fixed are the actor's world
+ * position and facing, which sit above every pivot involved and cancel; `head-pivot`'s
+ * own rotation for the `slip` column specifically, on both sides, so the comparison is
+ * like for like; and the Euler order, at XYZ — which is the one this programme has been
+ * caught by, so it is swept over all five wrong values in its own test rather than left
+ * unexamined here.
  *
  * The death column is the one nothing was watching, and it is the worst on all four.
  * `updateActorDeathMotion` writes `head-pivot.rotation.z = side * 0.28 * eased` — a
