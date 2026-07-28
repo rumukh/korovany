@@ -18,6 +18,10 @@ function createFiveByFiveWorld() {
         },
         biomeId: `biome-${x}-${z}`,
         heightProfile: { baseHeight: 0, amplitude: 0 },
+        // Present because RegionManager:690 reads it off the blueprint. Omitting it
+        // left the fixture's inferred type without the field, so the assignment below
+        // was a type error nothing was checking.
+        territory: 'neutral' as string,
       })
     }
   }

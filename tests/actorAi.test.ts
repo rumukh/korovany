@@ -271,6 +271,10 @@ test('a deliberately wrong implementation is caught by the same comparison', () 
       targetId: null,
       packId: null,
       packKinSize: 1,
+      role: 'soldier' as const,
+      hp: 100,
+      maxHp: 100,
+      playerAggro: false,
       position: { x: rng.range(-9, 9), y: rng.range(0, 22), z: rng.range(-9, 9) },
     }))
     for (const actor of crowd) {

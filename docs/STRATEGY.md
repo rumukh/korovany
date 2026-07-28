@@ -2553,9 +2553,24 @@ rather than assumed distant.
 Scene traversal disposes mesh geometry and materials and `generatedTextures`, which is the
 **lifecycle** the library must stay outside of. The library owns one **four-texel** `DataTexture`
 gradient ramp and the shared outline materials; those are marked **library-owned** and excluded from
-generic scene-material disposal, and `ComicMaterialLibrary.dispose()` **releases** them. Toon
+generic scene-material disposal, and `StylizedArtLibrary.dispose()` **releases** them. Toon
 materials **returned** by `createToonMaterial()` are scene-owned — the library must neither retain nor
-dispose them, and scene traversal **releases** those unique materials. Outline shells are never added
+dispose them, and scene traversal **releases** those unique materials.
+
+> **That last sentence is superseded, and the direction is the part that matters.** It was written
+> against `ComicMaterialLibrary.createToonMaterial()`, which returned a **scene-owned** material for
+> the scene to dispose. The replacement, `StylizedArtLibrary.acquireMaterial()`, hands back a
+> **library-owned shared** instance, gated by `StylizedArtLibrary.isLibraryOwned()`. A traversal that
+> disposes what the sentence above says to dispose would free a material other meshes are still
+> drawing with — the double-dispose the same section forbids. `ComicMaterialLibrary` exists in no
+> file; its remaining mentions here describe a class that was renamed, not code you can go and read.
+>
+> Kept rather than deleted because the fact-preservation checker verifies that this document did not
+> **lose** a claim the old specs made, not that the claim is still **true** of the code — so deleting
+> it reads to the tool exactly like losing it. That asymmetry is worth knowing about the tool: it
+> guards one direction, and a superseded fact has to be marked rather than removed.
+
+Outline shells are never added
 to `generatedTextures`; that map **remains** for generated textures only. Engine **teardown** clears
 the outline registry after scene and resource disposal, and bindings must not retain detached scene
 roots **indefinitely**. **Expose** the toggle in menu and pause settings labelled `Чернильные

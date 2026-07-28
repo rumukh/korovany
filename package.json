@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "bundle": "tsc -b && vite build && node scripts/bundle.mjs",
+    "build": "tsc -b && tsc --noEmit -p tsconfig.test.json && vite build",
+    "bundle": "tsc -b && tsc --noEmit -p tsconfig.test.json && vite build && node scripts/bundle.mjs",
     "lint": "oxlint",
     "test": "node --experimental-strip-types --test scripts/AudioDirector.test.ts tests/*.test.ts",
     "test:audio": "node --experimental-strip-types --test scripts/AudioDirector.test.ts",
