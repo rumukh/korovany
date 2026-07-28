@@ -2321,6 +2321,84 @@ test('re-releasing a retained key keeps it from being evicted', () => {
 })
 
 /**
+ * The instrument, not the world.
+ *
+ * `region streaming returns every borrowed prop reference` asserts `retentionIsIntact`
+ * across 75 region loads, which is real coverage of the system: a phantom arising
+ * naturally there is caught. It cannot cover the predicate itself, because it consumes
+ * the output and never builds a state in which that output should be `false`. Measured:
+ * stubbing `retentionIsIntact` to `return true` leaves the whole suite green, and the
+ * test count unchanged, on every base this has been run against.
+ *
+ * That is not hypothetical. The predecessor of this predicate compared `propCacheSize`
+ * with `retainedPropCount`, which reduces to `B >= P` and was blind below 29 simultaneous
+ * phantoms — see the doc comment on `WorldPropLibrary.retentionIsIntact` for the
+ * measurement. It stayed green the whole time. Nothing here would notice it weakening
+ * back, so the detection threshold is pinned at one phantom, which is what a real bug
+ * produces: a `retain` path pushing a key whose reference has already gone.
+ *
+ * **The live borrower below is load-bearing, not scenery.** `B` is the count of cache
+ * entries held only by live borrowers, and it is what masks a phantom deficit one for
+ * one. The first version of this test injected the phantom with `B = 0`, where the two
+ * predicates agree and both fire — so it discriminated against a constant and not against
+ * the weakened form it names. Measured on that version: `retentionIsIntact` replaced by
+ * `cache.size >= retained.length` left this file at 39 pass / 0 fail. With the borrower
+ * it fails on that form, which is what the title claims.
+ *
+ * Found by the `S3 world objects` session, which measured the consequence rather than
+ * asserting it; the missing borrower was found by review, the same way.
+ */
+test('the phantom-pin check detects a single phantom, not thirty', () => {
+  const library = new WorldPropLibrary({ retention: 4 })
+  const request = { kind: 'tree', biome: 'forest', slot: 0, detail: 'near' } as const
+  // Acquired and never released: a cache entry the window does not pin. This is `B`.
+  const borrowed = library.acquire({
+    kind: 'tree',
+    biome: 'forest',
+    slot: 1,
+    detail: 'near',
+  } as const)
+  try {
+    const asset = library.acquire(request)
+    library.release(asset)
+    assert.equal(library.retainedCount, 1, 'the window should hold the released key')
+    assert.equal(library.size, 2, 'one borrower-held entry and one retained entry')
+    assert.ok(library.retentionIsIntact, 'a genuine pin must read as intact')
+
+    // Inject exactly one phantom: a key in the window that the cache never held.
+    const retained = (library as unknown as { retained: string[] }).retained
+    retained.push('phantom:key#hard')
+    assert.equal(
+      library.retainedCount,
+      2,
+      'the injection must reach the array the count reads, or this test measures nothing',
+    )
+    assert.equal(
+      library.retentionIsIntact,
+      false,
+      'one phantom pin must be detected, which is the whole point of this predicate',
+    )
+
+    // The state above is one the weakened form calls intact: `2 >= 2`. Asserting that
+    // here means the discrimination cannot rot away silently — delete the borrower and
+    // this line fails rather than the test quietly going back to proving less.
+    assert.ok(
+      library.size >= library.retainedCount,
+      'the borrower must mask the deficit, or this test is not exercising the case that '
+      + 'separates this predicate from the one it replaced',
+    )
+
+    // Only power left is against a predicate that latches false; kept as intent, not
+    // sold as a second detector.
+    retained.pop()
+    assert.ok(library.retentionIsIntact, 'removing the phantom must restore intactness')
+  } finally {
+    library.release(borrowed)
+    library.dispose()
+  }
+})
+
+/**
  * Ink shells that can draw in the same frame.
  *
  * An LOD renders exactly one level, so counting every shell under it bills a
