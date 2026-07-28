@@ -2,7 +2,14 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import * as THREE from 'three'
 
-import { bakeOutlineNormals, latheProfile, mergeAll } from '../src/game/art/GeometryKit.ts'
+import {
+  bakeOutlineNormals,
+  bakeSkyOcclusion,
+  bakeVerticalOcclusion,
+  gradientVertexColors,
+  latheProfile,
+  mergeAll,
+} from '../src/game/art/GeometryKit.ts'
 
 /**
  * Merging is a move, and a moved-from geometry is silent.
@@ -148,5 +155,60 @@ test('bakeOutlineNormals matches whichever structure it is handed', () => {
       baked.getAttribute('position').count,
       'one outline normal per vertex, whichever vertex set that is',
     )
+  }
+})
+
+test('every baker agrees on an indexed and a flat build of the same shape', () => {
+  // palace-pillar and character-hood are lathes that never merge, so they reach the
+  // renderer indexed. That path is exercised in production either way; this asserts it
+  // is exercised in the suite, matched by position rather than by index.
+  const profile = [
+    { x: 0.001, y: 0 }, { x: 0.72, y: 0 }, { x: 0.66, y: 0.16 },
+    { x: 0.48, y: 0.3 }, { x: 0.42, y: 1.9 }, { x: 0.56, y: 2.24 },
+    { x: 0.66, y: 2.42 }, { x: 0.62, y: 2.62 }, { x: 0.001, y: 2.7 },
+  ]
+  const bake = (geometry: THREE.BufferGeometry) => {
+    gradientVertexColors(geometry, { bottom: 0x6c6a63, top: 0xc9c4b4, bias: 0.75 })
+    bakeVerticalOcclusion(geometry, { strength: 0.28, falloff: 0.7 })
+    bakeSkyOcclusion(geometry, { strength: 0.2 })
+    return bakeOutlineNormals(geometry)
+  }
+
+  const indexed = latheProfile(profile, { segments: 8, name: 'palace-pillar' })
+  const flat = latheProfile(profile, { segments: 8, name: 'palace-pillar' }).toNonIndexed()
+  assert.ok(indexed.index, 'the indexed build must really be indexed')
+  assert.equal(flat.index, null)
+
+  bake(indexed)
+  bake(flat)
+
+  const at = (geometry: THREE.BufferGeometry, name: string, i: number) => {
+    const a = geometry.getAttribute(name)
+    return [a.getX(i), a.getY(i), a.getZ(i)]
+  }
+  const key = (geometry: THREE.BufferGeometry, i: number) =>
+    at(geometry, 'position', i).map((v) => Math.round(v * 1e5)).join(',')
+
+  for (const attribute of ['color', 'outlineNormal']) {
+    const reference = new Map<string, number[]>()
+    for (let i = 0; i < indexed.getAttribute('position').count; i++) {
+      reference.set(key(indexed, i), at(indexed, attribute, i))
+    }
+
+    let compared = 0
+    for (let i = 0; i < flat.getAttribute('position').count; i++) {
+      const expected = reference.get(key(flat, i))
+      assert.ok(expected, `${attribute}: flat vertex ${String(i)} has no indexed twin`)
+      const actual = at(flat, attribute, i)
+      for (let axis = 0; axis < 3; axis++) {
+        assert.ok(
+          Math.abs(expected[axis] - actual[axis]) < 1e-6,
+          `${attribute} disagrees between structures at vertex ${String(i)}`,
+        )
+      }
+      compared++
+    }
+    // A floor, so a broken key can't report success by matching nothing.
+    assert.ok(compared > 300, `${attribute}: only ${String(compared)} vertices compared`)
   }
 })

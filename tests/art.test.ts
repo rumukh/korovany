@@ -2226,8 +2226,31 @@ test('a merged prop is checked part by part, because the volume sum hides a reve
         probe.total,
         `${label}: reversing part ${String(index)} changed the merged vertex layout`,
       )
-      assert.ok(
-        probe.spans[index] < 0,
+      // Stated as the identity it is, rather than as `spans[index] < 0`. Reversal does not
+      // move a vertex, so the span's bounding box and centre are unchanged and every
+      // triangle's determinant negates -- the span negates *bit-exactly*, which is why
+      // strict equality on floats is the right operator here and passes.
+      //
+      // The consequence is that `spans[index] < 0` was entailed: given the `volume > 0`
+      // assertion on every baseline span above, it could not fail. Three assertions in this
+      // loop, two independent guarantees. Reviewed by S1-review-2, who found it; the same
+      // shape as the whole-prop entailment that `21e5c9d` annotated, recurring inside the
+      // test written to replace it.
+      //
+      // What this rewrite does NOT do is detect more. Measured, one mutation at a time,
+      // each assertion run alone:
+      //
+      //     mutation                         spans[i] < 0   exact negation
+      //     spans over the whole buffer          RED             RED
+      //     spans returned in reverse order      RED             RED
+      //
+      // So it is a readability fix, not hardening, and should not be described as hardening:
+      // it stops a reader counting three assertions and inferring three guarantees. The
+      // grading is earned by the `filter(...).length === 1` assertion below and by this one
+      // equally -- both catch a blinded instrument on their own.
+      assert.equal(
+        probe.spans[index],
+        -baseline.spans[index],
         `${label}: reversing part ${String(index)} left its span at `
         + `${probe.spans[index].toFixed(5)}, so a reversed sub-part would ship undetected`,
       )
