@@ -679,6 +679,12 @@ test('every prop the game can ask for comes back coloured, and none of it white'
  *
  * — while all four tests above it, and both existing orientation instruments, stay
  * green on the same mutation.
+ *
+ * The population guards are mutation-verified too, because a guard nobody has tried to
+ * break is a comment. Degenerating every face reports `only 0 faces were compared`;
+ * silencing exactly one prop while the totals stay healthy reports `well#hard: no
+ * non-degenerate faces to compare, so this surface was judged on nothing`. Both are
+ * needed — the aggregate floor cannot see one prop going quiet inside a healthy run.
  */
 test('merging parts into a prop never turns any of them around', async () => {
   const prop = await import('../src/game/art/PropKit.ts')
