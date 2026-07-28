@@ -21,7 +21,10 @@ const RUNTIME_OPTIONS = {
 
 function createRuntime(
   seed: string | number,
-  decorationDensity = RUNTIME_OPTIONS.decorationDensity,
+  // Annotated, not inferred: `RUNTIME_OPTIONS` is `as const`, so the default's type is
+  // the literal `0.35` and every caller passing 1 or 0 is a type error. Nothing caught it
+  // because no tsconfig includes `tests/`.
+  decorationDensity: number = RUNTIME_OPTIONS.decorationDensity,
 ) {
   const scene = new THREE.Scene()
   const blueprint = generateWorld(seed)

@@ -186,6 +186,8 @@ function everyPropRequest(): Array<[string, PropRequest]> {
               owner,
               detail,
               spec: {
+                archetype: 'house',
+                variant: 0,
                 width: 5,
                 depth: 4,
                 wallHeight: 3,
@@ -871,6 +873,8 @@ test('a partial inversion is detectable, which volume and normals alone cannot m
         owner: 'elf',
         detail: 'near',
         spec: {
+          archetype: 'house',
+          variant: 0,
           width: 5,
           depth: 4,
           wallHeight: 3,
@@ -2618,7 +2622,7 @@ test('decoration never blocks a spawn point', () => {
               // handled. The collider is dropped, not the mesh — a wall you can walk
               // through at the one point an actor materialises beats an actor that
               // cannot move, and the silhouette is the whole reason the site exists.
-              blockedByStructure.push(`${seed}/${plan.slotId}/${faction}`)
+              blockedByStructure.push(`${seed}/${plan.id}/${faction}`)
               const blocking = runtime.collision.queryBounds({
                 minX: spawn.worldX - 2,
                 maxX: spawn.worldX + 2,
