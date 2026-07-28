@@ -62,6 +62,7 @@ import type {
   WorldMarker,
   WorldRuntimeUpdate,
 } from './WorldRuntime.ts'
+import { WORLD_FACTIONS } from './worldTypes.ts'
 import type {
   BridgeCrossing,
   EncounterSlot,
@@ -403,6 +404,49 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
     const z = bounds
       ? THREE.MathUtils.clamp(candidateZ, bounds.minZ + margin, bounds.maxZ - margin)
       : candidateZ
+    return this.walkableNear(x, z)
+  }
+
+  /**
+   * The nearest position an actor can actually stand, starting from the given point.
+   *
+   * `GameEngine` writes `getStartPosition` verbatim into the player's position on a
+   * fresh run, and `NavigationSystem.findPath` returns `null` when the **start** is
+   * unwalkable — so a prop standing on this point silently swallows the first
+   * click-to-move of the run, and every AI path request from it, until the player
+   * nudges out with direct input.
+   *
+   * The spawn is deliberately offset about twenty units back along the critical path,
+   * which places it *outside* the site clearing, so none of the road, river or clearing
+   * keep-outs protect it. Snapping here rather than adding a fourth keep-out covers any
+   * prop that ever lands on it, not only the decoration that did.
+   *
+   * Returns the input untouched when it is already clear — which is the overwhelmingly
+   * common case — so this changes no position that was not already broken. The search
+   * is a fixed outward spiral, so it is deterministic.
+   */
+  private walkableNear(x: number, z: number): Point3 {
+    const radius = 0.45
+    if (this.collision.isWalkablePosition(x, z, radius)) {
+      return { x, y: this.sampleHeight(x, z), z }
+    }
+    for (let ring = 1; ring <= 8; ring += 1) {
+      const distance = ring * 0.5
+      for (let step = 0; step < 12; step += 1) {
+        const angle = (step / 12) * Math.PI * 2
+        const candidateX = x + Math.cos(angle) * distance
+        const candidateZ = z + Math.sin(angle) * distance
+        if (this.collision.isWalkablePosition(candidateX, candidateZ, radius)) {
+          return {
+            x: candidateX,
+            y: this.sampleHeight(candidateX, candidateZ),
+            z: candidateZ,
+          }
+        }
+      }
+    }
+    // Nothing clear within four units: the caller is better off with the designed
+    // position than with a point pushed somewhere arbitrary.
     return { x, y: this.sampleHeight(x, z), z }
   }
 
@@ -1403,9 +1447,23 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     }
 
     let primaryStructural = true
+    const spawnAnchors = this.spawnKeepOutPoints()
     for (let index = 0; index < buckets.length; index += 1) {
       const bucket = buckets[index]
-      const entries = grouped[index]
+      // A colliding decoration standing on a spawn point traps whatever spawns there.
+      // Drop the placement rather than the collider, so there is no invisible boulder
+      // and no visible one you can walk through. Only structural buckets collide, so
+      // only they need filtering.
+      const entries = bucket.structural
+        ? grouped[index].filter(
+            (placement) =>
+              !this.blocksSpawn(
+                placement,
+                bucket.colliderRadius * placement.scale,
+                spawnAnchors,
+              ),
+          )
+        : grouped[index]
       if (entries.length === 0) continue
       const asset = this.acquireProp(bucket.request)
       const name = bucket.structural
@@ -1444,6 +1502,54 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
         this.registerCosmeticDressing(mesh, entries.length)
       }
     }
+  }
+
+  /**
+   * Points in this region that something will be placed at and must be able to stand.
+   *
+   * Faction starts and encounter actors are positioned by world generation, which knows
+   * nothing about decoration. Before this pass every decoration collider was a
+   * sapling-sized 0.55 and the overlap went unnoticed; a fort boulder is 0.85, which is
+   * correct for a boulder and enough to trap a spawn. Measured by a reviewer across
+   * twelve seeds: decoration colliders newly blocked seven positions the previous
+   * collision model left clear.
+   *
+   * Shrinking the boulder back is not the fix — at 0.55 the same spawn cleared by 0.012
+   * units, so the old result was luck rather than safety.
+   */
+  private spawnKeepOutPoints(): readonly { x: number; z: number }[] {
+    const points: { x: number; z: number }[] = []
+    for (const faction of WORLD_FACTIONS) {
+      for (const slot of this.context.blueprint.encounters) {
+        if (slot.regionId !== this.id) continue
+        const plan = createGeneratedEncounterPlan(
+          this.context.blueprint,
+          slot,
+          faction,
+        )
+        for (const spawn of plan.spawns) {
+          points.push({ x: spawn.worldX, z: spawn.worldZ })
+        }
+      }
+    }
+    return points
+  }
+
+  /** True when a decoration of this radius would stop an actor standing on a spawn. */
+  private blocksSpawn(
+    placement: DressingPlacement,
+    radius: number,
+    anchors: readonly { x: number; z: number }[],
+  ): boolean {
+    // The agent radius the collision world is queried with, plus a little daylight so a
+    // spawn is comfortably clear rather than clear by twelve thousandths.
+    const clearance = radius + 0.45 + 0.2
+    for (const anchor of anchors) {
+      if (Math.hypot(placement.x - anchor.x, placement.z - anchor.z) < clearance) {
+        return true
+      }
+    }
+    return false
   }
 
   private createDressingMesh(
@@ -1624,6 +1730,15 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
    * wrong by a factor of four on exactly the props the budget exists to protect —
    * a building LOD is a group of surface meshes and `applyOutline` shells every
    * one of them.
+   *
+   * An LOD is charged its most expensive level rather than the sum, and that rests on
+   * a renderer detail worth naming: `applyOutline` traverses, so shells exist on
+   * *every* level at once, and the charge is only honest if a shell under a hidden
+   * level is free. It is. `WebGLRenderer.projectObject` early-`return`s on
+   * `object.visible === false` rather than continuing, so it never recurses into an
+   * invisible level's children; `LOD.update()` sets `visible` per level and a shell is
+   * a child of its level's mesh. Exactly one level's shells are ever projected, and
+   * that stays true if a level later gains meshes. Confirmed independently by review.
    */
   private tryOutline(
     object: THREE.Object3D,
@@ -1888,12 +2003,6 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       }
     }
     this.propAssets.length = 0
-    if (errors.length > 0) {
-      throw new AggregateError(
-        errors,
-        `Failed to release region ${String(this.id)} resources`,
-      )
-    }
     this.cosmeticDressing.length = 0
     this.siteClearings.length = 0
     this.structuralDecorationCount = 0
@@ -1902,7 +2011,18 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     this.siteInkSpent = 0
     this.root.clear()
     this.context.onDisposed(this.id)
+    // Marked disposed before the throw, deliberately. Every list above is already
+    // emptied, so a region that failed to tear down cleanly has still given back
+    // everything it held — but if the failure escaped before this line, the region
+    // would stay re-enterable and a second pass would walk empty structures believing
+    // it had work to do. Report the failure, but only once, and never half-disposed.
     this.resourcesDisposed = true
+    if (errors.length > 0) {
+      throw new AggregateError(
+        errors,
+        `Failed to release region ${String(this.id)} resources`,
+      )
+    }
   }
 }
 
@@ -2680,6 +2800,20 @@ const GROUND_COVER_COUNTS: Record<
  * this size.
  */
 
+/**
+ * Grass height by biome: sparse and clipped at the palace, rank in the forest.
+ *
+ * Module scope on purpose. Built inside the function it allocated a fresh four-key
+ * record **per instance per region load** — up to 420 in a forest region, three regions
+ * per boundary crossing — on the streaming path, which is the hot one.
+ */
+const GRASS_ZONE_SCALE: Record<ZoneId, number> = {
+  neutral: 1,
+  palace: 0.62,
+  forest: 1.18,
+  fort: 0.7,
+}
+
 function writeGroundCoverScale(
   kind: GroundCoverKind,
   zone: ZoneId,
@@ -2687,14 +2821,9 @@ function writeGroundCoverScale(
   target: THREE.Vector3,
 ): void {
   if (kind === 'grass') {
-    const zoneScale: Record<ZoneId, number> = {
-      neutral: 1,
-      palace: 0.62,
-      forest: 1.18,
-      fort: 0.7,
-    }
-    const width = zoneScale[zone] * lerp(0.72, 1.35, placement.width)
-    const height = zoneScale[zone] * lerp(0.72, 1.58, placement.height)
+    const scale = GRASS_ZONE_SCALE[zone]
+    const width = scale * lerp(0.72, 1.35, placement.width)
+    const height = scale * lerp(0.72, 1.58, placement.height)
     target.set(width, height, width)
     return
   }

@@ -1148,6 +1148,7 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
   // deviation at all is a defect.
   const worstDegrees = (
     geometry: THREE.BufferGeometry,
+    keep?: (midY: number) => boolean,
   ): { worst: number, judged: number } => {
     const position = geometry.getAttribute('position')
     const normal = geometry.getAttribute('normal')
@@ -1169,6 +1170,9 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
       a.fromBufferAttribute(position, indices[0])
       b.fromBufferAttribute(position, indices[1])
       c.fromBufferAttribute(position, indices[2])
+      // Region filter, applied before anything is judged so `judged` reports the
+      // population of the region rather than of the whole shape.
+      if (keep && !keep((a.y + b.y + c.y) / 3)) continue
       wind.crossVectors(edge1.subVectors(b, a), edge2.subVectors(c, a))
       if (wind.lengthSq() < 1e-14) continue
       wind.normalize()
@@ -1235,10 +1239,32 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
   // — so the honest assertion is differential: collapsing a section must not make a
   // capsule any worse than the healthy one of the same tessellation. Before the fix
   // this read 72.14 against 20.97 while the sign test called both clean.
+  //
+  // Measured on the LOWER HALF only, because whole-shape this was not measuring the
+  // parameter at all. `bottomScale` perturbs the bottom cap, the capsule is mirror
+  // symmetric, and the deviation peaks at the cap either way — so the healthy shape's
+  // worst triangle sits at y = -0.95 and the spiked shape's worst sits at its own
+  // untouched mirror image, y = +0.95. Equal to the bit:
+  //
+  //     region    healthy worst       spiked worst       margin
+  //     whole     20.969619 @ -0.95   20.969619 @ +0.95  0.000e+0   <- symmetry
+  //     y < 0     20.969619 @ -0.95    7.861194 @ -0.74  13.1084
+  //
+  // So the assertion was passing on capsule symmetry rather than on the repair, with
+  // the 1e-6 epsilon absorbing nothing and a float nudge anywhere in the top cap
+  // enough to fail a healthy build. Not a coincidence to be re-tuned: the extremum
+  // had relocated out of the region under test, which is the second way to lose an
+  // assertion's subject and leaves exactly as little trace as the first.
+  //
+  // This fixes the region and the exact-tie flake. It does NOT make the assertion
+  // sensitive to a downward-only regression — a spike that got worse but stayed under
+  // the healthy cap's 20.97 would still pass, and catching that needs a directional
+  // measure rather than a worst-of.
   const healthy = stylizedCapsule({ radius: 0.5, height: 1 })
   const spiked = stylizedCapsule({ radius: 0.5, height: 1, bottomScale: 0 })
-  const healthyMeasure = worstDegrees(healthy)
-  const spikedMeasure = worstDegrees(spiked)
+  const lowerHalf = (midY: number): boolean => midY < 0
+  const healthyMeasure = worstDegrees(healthy, lowerHalf)
+  const spikedMeasure = worstDegrees(spiked, lowerHalf)
   assert.ok(healthyMeasure.judged > 0, 'healthy capsule judged no triangles')
   assert.ok(
     spikedMeasure.worst <= healthyMeasure.worst + 1e-6,
@@ -1247,7 +1273,8 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
   )
   // The collapse also used to delete half the judgeable faces — 46 against 92 — so
   // even a magnitude test could have been fooled by measuring fewer things. The
-  // floor keeps the population identical.
+  // floor keeps the population identical: 46 each under the region filter, and the
+  // pairing rather than the value is what carries the guarantee.
   assert.equal(
     spikedMeasure.judged,
     healthyMeasure.judged,
@@ -1256,12 +1283,18 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
   healthy.dispose()
   spiked.dispose()
 
-  // The capsule pair above no longer reaches the repaired code path at all, and
-  // that is the point of the block below. The floor stops its bottom ring at
-  // radius 0.02, so `loftProfile`'s collapsed-ring branch never fires for it —
-  // fixing the floor removed the input that the loft assertion depended on. Two
-  // fixes in one commit, and the second neutralised the first one's only smooth
-  // test. So a direct smooth loft has to carry that coverage.
+  // The capsule pair above no longer *covers* the repaired code path, which is not
+  // the same as the path being unreachable — worth correcting, because the stronger
+  // claim invites deleting a branch that production still enters. The floor applies
+  // to the bottom ring only. Measured: `bottomScale: 0` is floored to radius 0.02000
+  // and yields 92 non-degenerate triangles, identical to the plain capsule, so
+  // `loftProfile`'s collapsed-ring branch never fires for it. `topScale: 0` is
+  // unfloored — min ring radius 0.00000, 76 non-degenerate triangles — so the
+  // repaired path is still live, just not exercised by this pair.
+  //
+  // Fixing the floor removed the input the loft assertion depended on. Two fixes in
+  // one commit, and the second neutralised the first one's only smooth test. So a
+  // direct smooth loft has to carry that coverage.
   //
   // It has to be a TALL one. The sign test's blindness here is not a blind spot
   // but a blind *zone* with an exact boundary. In smooth mode `normalFor` takes X
@@ -1586,9 +1619,65 @@ const NORMAL_DERIVED_CASES = [
   'extrude', 'displaced', 'faceted', 'merged', 'composed prop',
 ] as const
 
+/**
+ * Edges used by exactly one triangle. Zero means the surface is closed.
+ *
+ * Welded by quantised position rather than by index, because most of the kit's output
+ * is non-indexed by the time it reaches here -- `facetGeometry` and `displaceGeometry`
+ * both hard-edge their result, so an index-based count would call every shape open.
+ */
+const boundaryEdgeCount = (geometry: THREE.BufferGeometry): number => {
+  const position = geometry.getAttribute('position')
+  const index = geometry.getIndex()
+  const count = index ? index.count : position.count
+  const round = (value: number) => Math.round(value * 1e4) / 1e4
+  const key = (slot: number) => {
+    const vertex = index ? index.getX(slot) : slot
+    return `${round(position.getX(vertex))},${round(position.getY(vertex))},${round(position.getZ(vertex))}`
+  }
+  const edges = new Map<string, number>()
+  for (let triangle = 0; triangle + 2 < count; triangle += 3) {
+    const a = key(triangle)
+    const b = key(triangle + 1)
+    const c = key(triangle + 2)
+    if (a === b || b === c || a === c) continue
+    for (const [from, to] of [[a, b], [b, c], [c, a]] as const) {
+      const edge = from < to ? `${from}|${to}` : `${to}|${from}`
+      edges.set(edge, (edges.get(edge) ?? 0) + 1)
+    }
+  }
+  let boundary = 0
+  for (const uses of edges.values()) if (uses === 1) boundary += 1
+  return boundary
+}
+
+/**
+ * The laundered cases that are *open* surfaces, measured by `boundaryEdgeCount` and
+ * asserted below rather than trusted. `displaced` tears along its hard edges because
+ * `displaceGeometry` pushes each vertex along its own normal and coincident vertices
+ * at a crease do not share one; the two composites are open because `latheProfile`
+ * with non-zero start and end radii revolves a tube rather than a solid.
+ */
+const OPEN_NORMAL_DERIVED_CASES = ['displaced', 'merged', 'composed prop'] as const
+
+/**
+ * Signed volume about the geometry's own bounding-box centre.
+ *
+ * The recentring is load-bearing, not tidiness. The divergence sum is translation-
+ * invariant only for a *closed* surface; for an open one it measures the cone from the
+ * origin out to the surface, so it drifts with position and eventually changes sign
+ * with the winding untouched. Measured on `composed prop`, which is open: +0.22255 at
+ * the authored position, negative once moved +4 in y -- an offset any prop placement
+ * exceeds, so the un-centred form was a false failure waiting for someone to move a
+ * rock. About the shape's own centre all five sit at +0.23578 to +1.17084 and none
+ * flips at any offset, so the assertion is about winding rather than placement.
+ */
 const signedVolume = (geometry: THREE.BufferGeometry): { volume: number, judged: number } => {
   const source = geometry.index ? geometry.toNonIndexed() : geometry
   const position = source.getAttribute('position')
+  const centre = new THREE.Box3().setFromBufferAttribute(
+    position as THREE.BufferAttribute,
+  ).getCenter(new THREE.Vector3())
   const a = new THREE.Vector3()
   const b = new THREE.Vector3()
   const c = new THREE.Vector3()
@@ -1596,9 +1685,9 @@ const signedVolume = (geometry: THREE.BufferGeometry): { volume: number, judged:
   let volume = 0
   let judged = 0
   for (let triangle = 0; triangle + 2 < position.count; triangle += 3) {
-    a.fromBufferAttribute(position, triangle)
-    b.fromBufferAttribute(position, triangle + 1)
-    c.fromBufferAttribute(position, triangle + 2)
+    a.fromBufferAttribute(position, triangle).sub(centre)
+    b.fromBufferAttribute(position, triangle + 1).sub(centre)
+    c.fromBufferAttribute(position, triangle + 2).sub(centre)
     cross.crossVectors(b, c)
     if (!Number.isFinite(cross.lengthSq())) continue
     judged += 1
@@ -1639,9 +1728,23 @@ const reverseWinding = (geometry: THREE.BufferGeometry): THREE.BufferGeometry =>
  *
  * A trunk with limbs is not star-convex, and neither is a bent tube — the exact shapes
  * the NPC pass needs for horns and tails and the world pass needs for branches. Signed
- * volume is the complement: it does not care whether the body is convex, only that it
- * is closed, and it never reads the normal attribute either, so `computeVertexNormals()`
- * downstream cannot make it tautological.
+ * volume is the complement: it does not care whether the body is convex, and it never
+ * reads the normal attribute either, so `computeVertexNormals()` downstream cannot make
+ * it tautological.
+ *
+ * What it *does* care about was asserted in this test's own title and never measured.
+ * None of these four is closed:
+ *
+ *     bare trunk             5 boundary edges
+ *     one level of limbs    25
+ *     two levels of limbs   85
+ *     bent tube             12
+ *
+ * `branchStructure` leaves the limb sockets open and `tubeAlongPoints` does not cap its
+ * ends. For an open surface the divergence sum is not an enclosed volume and drifts with
+ * position, so `signedVolume` measures about each shape's own centre — see its docblock.
+ * That is what makes the sign below a statement about winding rather than about placement.
+ * The split is re-measured on every run so this block cannot quietly go stale.
  *
  * It is a much blunter tool and that is stated here rather than discovered later. It is
  * a *sum*, so partial inversions cancel. Measured on a fully-formed capsule, reversing
@@ -1656,7 +1759,7 @@ const reverseWinding = (geometry: THREE.BufferGeometry): THREE.BufferGeometry =>
  * So volume detects a global flip and nothing subtler. It is here to cover the shapes
  * the centroid test must refuse, not to second-guess it where it already speaks.
  */
-test('closed builders enclose positive volume, including the ones the centroid test must decline', () => {
+test('branch and tube builders wind outward by volume, where the centroid test must decline', () => {
   const variation = artVariation('art-test-winding', 'branch')
   const cases: [builder: string, label: string, geometry: THREE.BufferGeometry][] = [
     ['branchStructure', 'bare trunk', branchStructure({
@@ -1678,13 +1781,15 @@ test('closed builders enclose positive volume, including the ones the centroid t
   ]
 
   let totalJudged = 0
+  const openness: [string, number][] = []
   for (const [, label, geometry] of cases) {
+    openness.push([label, boundaryEdgeCount(geometry)])
     const { volume, judged } = signedVolume(geometry)
     assert.ok(judged > 0, `${label} judged no faces at all`)
     assert.ok(volume > 0, `${label} encloses non-positive volume ${volume.toFixed(6)}`)
 
-    // Prove the measure can fail on this very geometry before believing that it passed.
-    // Without this the assertion above is only ever shown agreeing with correct input.
+    // Reversal negates the sum exactly, so this is arithmetic and not a per-shape
+    // proof. It is kept for the one thing it does catch: a measure that lost its sign.
     const flipped = reverseWinding(geometry)
     const reversed = signedVolume(flipped)
     assert.ok(
@@ -1697,6 +1802,14 @@ test('closed builders enclose positive volume, including the ones the centroid t
     totalJudged += judged
     geometry.dispose()
   }
+
+  // Every one of these is open, which is why `signedVolume` recentres. If a builder
+  // starts capping its ends the block above needs rewriting, so notice it here.
+  assert.deepEqual(
+    openness.filter(([, edges]) => edges === 0).map(([label]) => label),
+    [],
+    'a builder here became closed; the volume reasoning above was written for open surfaces',
+  )
 
   // 1601 faces today across the four cases; the floor is a guard against an
   // enumeration that stops producing, not a pin on the exact geometry.
@@ -1739,8 +1852,23 @@ test('closed builders enclose positive volume, including the ones the centroid t
  *     merged                     2/52   <- false   1.15821
  *     composed prop              2/64   <- false   0.22255
  *
- * So asserting `inward === 0` here would fail on correct geometry. All five are closed,
- * so volume speaks about all five, and every one goes negative when reversed.
+ * So asserting `inward === 0` here would fail on correct geometry.
+ *
+ * What is *not* true, and was asserted here in prose until it was measured: that all
+ * five are closed. Boundary-edge counts say only two are, which matters because the
+ * divergence sum is a volume only for a closed surface:
+ *
+ *     case              boundary edges   volume    un-centred sign flips at +y
+ *     extrude                 0          0.27650      never    <- closed
+ *     faceted                 0          0.45055      never    <- closed
+ *     displaced              40          1.17084      never
+ *     merged                 20          1.16336      +256
+ *     composed prop          20          0.23578      +4
+ *
+ * `signedVolume` therefore measures about each shape's own centre, which makes the
+ * result independent of where the caller placed it and the sign a statement about
+ * winding for open and closed alike. The open three are pinned by name in
+ * `OPEN_NORMAL_DERIVED_CASES` and the split is re-measured on every run.
  */
 test('normal-derived geometry is checked by volume, because agreement is vacuous there', () => {
   const cases: [label: string, geometry: THREE.BufferGeometry][] = [
@@ -1785,25 +1913,56 @@ test('normal-derived geometry is checked by volume, because agreement is vacuous
   ]
 
   let totalJudged = 0
+  const open: string[] = []
   for (const [label, geometry] of cases) {
+    if (boundaryEdgeCount(geometry) > 0) open.push(label)
     const { volume, judged } = signedVolume(geometry)
     assert.ok(judged > 0, `${label} was judged on no triangles, so its result means nothing`)
     assert.ok(volume > 0, `${label} encloses ${volume.toFixed(5)}, so it is wound inside out`)
 
-    // The detector must be shown capable of failing on this exact case before its
-    // positive result is believed -- the whole point of the test is that the *other*
-    // detector silently cannot.
+    // Reversal negates this sum *exactly* -- swapping two vertices negates the scalar
+    // triple product term by term, measured at 0.00e+0 residual on all five. So this
+    // is arithmetic rather than a detection, and it says nothing about whether this
+    // particular case is a fair subject for the measure. Kept because it still bites
+    // the one substitution that would fake a pass everywhere at once: a detector that
+    // returns a magnitude instead of a signed sum.
     const flipped = reverseWinding(geometry)
     const caught = signedVolume(flipped)
     assert.ok(
       caught.volume < 0,
-      `reversing ${label} left volume at ${caught.volume.toFixed(5)}, so this case proves nothing`,
+      `reversing ${label} left volume at ${caught.volume.toFixed(5)}, so the measure is unsigned`,
     )
     flipped.dispose()
+
+    // The property the recentring buys, asserted rather than described. The sign is what
+    // the check above consumes, and for an open surface it is not translation-invariant:
+    // un-centred, `composed prop` reads +0.22255 where it is authored and goes negative
+    // once moved +4 in y, `merged` at +256, both with their winding untouched. Without
+    // this the suite would have gone red on correct geometry the first time a sibling
+    // repositioned a prop. Sign rather than magnitude, because summing large coordinates
+    // loses precision by cancellation and that is not the defect being pinned.
+    const moved = geometry.clone()
+    moved.translate(0, 311, -177)
+    const shifted = signedVolume(moved)
+    assert.ok(
+      shifted.volume > 0,
+      `${label} volume went from ${volume.toFixed(5)} to ${shifted.volume.toFixed(5)} under a `
+      + 'pure translation, so the measure is about placement rather than winding',
+    )
+    moved.dispose()
 
     totalJudged += judged
     geometry.dispose()
   }
+
+  // Measured, not assumed. If a kit change closes one of these or opens one of the
+  // closed pair, the comment block above stops being true and the recentring becomes
+  // load-bearing for a different set -- so it reports here rather than going quiet.
+  assert.deepEqual(
+    open,
+    [...OPEN_NORMAL_DERIVED_CASES],
+    'the closed/open split of the laundered family changed; re-check the block above this test',
+  )
 
   // Actual total is 252. A floor stops an enumeration that quietly stops producing
   // geometry from passing by producing none.
@@ -1978,6 +2137,168 @@ test('lathe surfaces wind away from their axis of revolution', () => {
     )
     geometry.dispose()
   }
+})
+
+/**
+ * `latheProfile` must hand back unit normals, and the reason is a `THREE`
+ * quirk rather than anything this kit does.
+ *
+ * `LatheGeometry` builds each profile point's normal from the segment ahead of it,
+ * carries it forward in `prevNormal`, and — for the **last** point only — pushes
+ * `prevNormal` straight into the buffer. It copies that vector *before* it
+ * normalises the working one, so the final ring's normals come out scaled by the
+ * length of the last profile segment. Nothing downstream re-normalises them.
+ *
+ * This is asserted here rather than trusted because the failure has the worst
+ * possible distribution: `transformed()` calls `applyMatrix4`, which runs
+ * `applyNormalMatrix` and normalises as a side effect, so every lathe that is
+ * *positioned* comes out clean and only the ones used at the origin carry it.
+ * Measured before the fix, `buildHeadgear` was the only caller that reached the
+ * origin: `cap` 27 vertices at |n| = 0.246416, `hood` 27 at 0.088549, `ragHood`
+ * 21 at 0.088549 — and in every case the value equalled the length of the last
+ * profile segment exactly, which is how the mechanism was confirmed rather than
+ * inferred. The other nine headgear kinds measured a clean 1.000000 purely
+ * because their lathes happened to be placed.
+ *
+ * The cost is not shading — three.js normalises `vNormal` in the fragment shader.
+ * It is `bakeOutlineNormals`, which averages normals per welded position: a normal
+ * 11x short is 11x under-weighted, so the ink shell extrudes the wrong way at the
+ * peak of a hood, the single vertex where the silhouette is a point.
+ */
+test('lathe normals are unit length, including the last profile ring', () => {
+  // Two profiles whose last segment is short, which is what makes the defect
+  // visible: the shortfall IS the segment length, so a long final segment hides it.
+  const cases: [label: string, points: { x: number, y: number }[]][] = [
+    ['cap', [
+      { x: 0.001, y: -0.05 },
+      { x: 0.36, y: -0.06 },
+      { x: 0.43, y: -0.02 },
+      { x: 0.4, y: 0.08 },
+      { x: 0.24, y: 0.24 },
+      { x: 0.001, y: 0.3 },
+    ]],
+    ['hood', [
+      { x: 0.001, y: -0.44 },
+      { x: 0.4, y: -0.46 },
+      { x: 0.47, y: -0.3 },
+      { x: 0.47, y: -0.02 },
+      { x: 0.4, y: 0.2 },
+      { x: 0.22, y: 0.38 },
+      { x: 0.08, y: 0.5 },
+      { x: 0.001, y: 0.54 },
+    ]],
+    ['kettle brim', [
+      { x: 0.3, y: -0.03 },
+      { x: 0.52, y: -0.09 },
+      { x: 0.52, y: -0.03 },
+      { x: 0.3, y: 0.05 },
+    ]],
+  ]
+
+  let judged = 0
+  for (const [label, points] of cases) {
+    const geometry = latheProfile(points, { segments: 9 })
+    const normal = geometry.getAttribute('normal')
+    assert.ok(normal, `lathe ${label} has no normals`)
+    let worst = 0
+    for (let index = 0; index < normal.count; index += 1) {
+      const length = Math.hypot(
+        normal.getX(index),
+        normal.getY(index),
+        normal.getZ(index),
+      )
+      worst = Math.max(worst, Math.abs(length - 1))
+      judged += 1
+    }
+    // 1e-6 rather than a round number: `normalizeNormals` divides Float32 values by
+    // a Float64 hypot and writes back to Float32, so the residual is bounded by one
+    // Float32 ulp near 1, which is 6e-8. Measured worst across these three profiles
+    // after the fix: 5.96e-8. The guard is 16x that, and 4 million times below the
+    // 0.911451 the hood measured before it.
+    assert.ok(
+      worst < 1e-6,
+      `lathe ${label} has a normal off unit length by ${worst.toExponential(6)}; `
+      + 'LatheGeometry pushes the last profile point\'s normal from an unnormalised '
+      + '`prevNormal`, so the final ring is scaled by the last segment\'s length',
+    )
+    geometry.dispose()
+  }
+
+  // Domain guard. A loop over an empty case list, or over geometry with no normal
+  // attribute, would report a clean bill having compared nothing. Pinned exactly
+  // rather than as a floor, because the count is derivable and a drift means the
+  // cases changed: `LatheGeometry` emits `(segments + 1) * points` vertices, so
+  // 10x6 + 10x8 + 10x4 = 180.
+  assert.equal(
+    judged,
+    180,
+    `measured ${String(judged)} normals across ${String(cases.length)} profiles, expected 180`,
+  )
+
+  // And prove the check can fail, because "worst < 1e-6" over correct input says
+  // nothing about whether it would notice incorrect input. This reproduces exactly
+  // what LatheGeometry does — scale the last profile point's ring by the last
+  // segment's length — and requires the assertion above to reject it.
+  //
+  // The ring is STRIDED, not contiguous. `LatheGeometry` emits each meridian's whole
+  // profile in order, so the last profile point of meridian `s` is at
+  // `s * points.length + points.length - 1`. Measured on the hood profile: the raw
+  // geometry's non-unit normals sit at exactly [7,15,23,31,39,47,55,63,71,79], and all
+  // ten are at y = 0.540, the last profile point. Scaling the last ten *contiguous*
+  // vertices instead would still produce a worst value of 0.911451 — scaling any unit
+  // vector by 0.088549 does — so a mis-targeted plant is invisible in the number it
+  // reports and has to be pinned by index.
+  const control = latheProfile(cases[1][1], { segments: 9 })
+  const controlNormals = control.getAttribute('normal')
+  const profilePoints = cases[1][1].length
+  const scale = Math.hypot(0.001 - 0.08, 0.54 - 0.5)
+  const planted: number[] = []
+  for (
+    let index = profilePoints - 1;
+    index < controlNormals.count;
+    index += profilePoints
+  ) {
+    controlNormals.setXYZ(
+      index,
+      controlNormals.getX(index) * scale,
+      controlNormals.getY(index) * scale,
+      controlNormals.getZ(index) * scale,
+    )
+    planted.push(index)
+  }
+  assert.deepEqual(
+    planted,
+    [7, 15, 23, 31, 39, 47, 55, 63, 71, 79],
+    'the plant did not land on the last profile ring; LatheGeometry\'s vertex order may '
+    + 'have changed, in which case this reproduction is testing the wrong vertices',
+  )
+  let plantedWorst = 0
+  for (let index = 0; index < controlNormals.count; index += 1) {
+    plantedWorst = Math.max(
+      plantedWorst,
+      Math.abs(
+        Math.hypot(
+          controlNormals.getX(index),
+          controlNormals.getY(index),
+          controlNormals.getZ(index),
+        ) - 1,
+      ),
+    )
+  }
+  assert.ok(
+    plantedWorst > 1e-6,
+    `the planted defect measured ${plantedWorst.toExponential(6)}, which the guard `
+    + 'above would accept — so a green result on the real profiles means nothing',
+  )
+  // Pinned rather than merely "> guard": this is the exact figure the hood carried
+  // before the fix, so if LatheGeometry's behaviour ever changes the reproduction
+  // stops matching and this says so instead of quietly testing something else.
+  assert.ok(
+    Math.abs(plantedWorst - 0.911451) < 1e-5,
+    `the reproduction measured ${plantedWorst.toFixed(6)}, not the 0.911451 the hood `
+    + 'carried before the fix; LatheGeometry may no longer behave as this test assumes',
+  )
+  control.dispose()
 })
 
 /**
@@ -2412,6 +2733,24 @@ test('every type the spec names is exported by the barrel', () => {
  * Deliberately repo-wide rather than scoped to one file, and deliberately not a list
  * to maintain: a sweep that trips this has a real bug and the fix is the guard, not
  * an entry in a table.
+ *
+ * **Wave 4 is authorised to narrow or delete this test rather than contort code to
+ * satisfy it, and must delete it if shells become siblings of their source rather
+ * than children** — that removes the class structurally and leaves this scanning for
+ * a bug that can no longer exist. It parses TypeScript by paren balance over source
+ * text, which is a heuristic scanner wearing a test's clothes, and merging three trees
+ * will churn traversals heavily. Blocking integration on a parsing artifact costs more
+ * than this test is worth.
+ *
+ * One self-defeat to know about before then, found by reading these assertions rather
+ * than recalling them, and then measured. The `sweeps.length >= 3` floor is there so a
+ * broken scan cannot pass by finding nothing — but it also encodes "at least three
+ * *separate* sweeps exist". The scan currently finds **4** (`GameEngine.ts` `:7460`,
+ * `:9974`, `:10661`, `:10675`, all guarded), so the margin is **1**: removing any two
+ * turns this red. Consolidating them into one guarded helper — the fix this docblock
+ * argues for — drops the count to 1 and fails on a success. Lower the floor to 1, which
+ * still catches a scan that finds nothing, or delete the test. Do not keep four
+ * traversals alive to keep it green.
  */
 test('every bulk material sweep by traversal excludes outline shells', () => {
   const root = new URL('../src/game/', import.meta.url)

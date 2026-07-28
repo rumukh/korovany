@@ -261,11 +261,132 @@ function worstNormalError(geometry: THREE.BufferGeometry): number {
   return worst
 }
 
-/** Triangles whose vertex order disagrees with the normal the builder stored. */
-function windingDisagreements(geometry: THREE.BufferGeometry): number {
+/**
+ * Faces wound inward relative to the geometry's centroid, and how many faces the
+ * question could be asked of at all.
+ *
+ * The third instrument, and the only one that localises. The other two both fail on a
+ * *partial* inversion, which is the realistic shape of the fault:
+ *
+ * - `windingDisagreements` reads the normals, and `displaceGeometry` derives normals
+ *   **from** winding via `computeVertexNormals()`. Measured on this pass's own builders,
+ *   it misses a reversal at every fraction **including 100%** — after displacement the
+ *   reversed faces carry reversed normals and agree tautologically. It is not weak on
+ *   displaced geometry, it is blind.
+ * - `signedVolume` is a sum, so reversed faces cancel against correct ones. Measured:
+ *   it misses 5% on every prop tried and 25% on a fort rock.
+ *
+ * Centroid winding reads no normals and is per-face, so it survives both. Its own limit
+ * is that it assumes roughly star-convex geometry: a face orthogonal to the centroid ray
+ * carries no signal, and a concave prop has legitimately inward faces — a building's
+ * porch recesses and window reveals put its healthy baseline at 300 of 844. So it is
+ * used here for **sensitivity**, not for an absolute `=== 0`, and faces below the
+ * decisiveness floor are excluded rather than counted as inverted.
+ */
+function centroidInwardFaces(geometry: THREE.BufferGeometry): {
+  inward: number
+  decisive: number
+} {
+  const position = geometry.getAttribute('position')
+  const index = geometry.index
+  const triangles = index ? index.count / 3 : position.count / 3
+  const a = new THREE.Vector3()
+  const b = new THREE.Vector3()
+  const c = new THREE.Vector3()
+  const edgeA = new THREE.Vector3()
+  const edgeB = new THREE.Vector3()
+  const face = new THREE.Vector3()
+  const middle = new THREE.Vector3()
+  const ray = new THREE.Vector3()
+  const centre = new THREE.Vector3()
+  for (let vertex = 0; vertex < position.count; vertex += 1) {
+    centre.x += position.getX(vertex)
+    centre.y += position.getY(vertex)
+    centre.z += position.getZ(vertex)
+  }
+  centre.divideScalar(Math.max(1, position.count))
+  let inward = 0
+  let decisive = 0
+  for (let triangle = 0; triangle < triangles; triangle += 1) {
+    const offset = triangle * 3
+    const first = index ? index.getX(offset) : offset
+    const second = index ? index.getX(offset + 1) : offset + 1
+    const third = index ? index.getX(offset + 2) : offset + 2
+    a.fromBufferAttribute(position, first)
+    b.fromBufferAttribute(position, second)
+    c.fromBufferAttribute(position, third)
+    edgeA.subVectors(b, a)
+    edgeB.subVectors(c, a)
+    face.crossVectors(edgeA, edgeB)
+    if (face.lengthSq() < 1e-14) continue
+    face.normalize()
+    middle.copy(a).add(b).add(c).divideScalar(3)
+    ray.subVectors(middle, centre)
+    if (ray.lengthSq() < 1e-14) continue
+    ray.normalize()
+    const alignment = face.dot(ray)
+    // Orthogonal to the ray: the invariant has nothing to say about this face. A flat
+    // annulus reports every face "inward" at |cos| = 0 without being malformed.
+    if (Math.abs(alignment) < 0.08) continue
+    decisive += 1
+    if (alignment < 0) inward += 1
+  }
+  return { inward, decisive }
+}
+
+/**
+ * Reverses a fraction of a geometry's faces, then recomputes normals from the result.
+ *
+ * Damage is spread by stride rather than taken as a block from index zero. A block can
+ * land entirely on faces the centroid check cannot read — the tower lathe's first 2%
+ * are all near-orthogonal to the centroid ray — which measures where the damage was put
+ * rather than whether the instrument works.
+ */
+function reverseFaceFraction(
+  geometry: THREE.BufferGeometry,
+  fraction: number,
+): THREE.BufferGeometry {
+  const copy = geometry.index ? geometry.toNonIndexed() : geometry.clone()
+  const position = copy.getAttribute('position')
+  const triangles = Math.floor(position.count / 3)
+  const wanted = Math.max(1, Math.round(triangles * fraction))
+  const stride = Math.max(1, Math.floor(triangles / wanted))
+  for (let triangle = 0; triangle < triangles; triangle += stride) {
+    const first = triangle * 3
+    const third = first + 2
+    for (const attribute of Object.values(copy.attributes)) {
+      for (let part = 0; part < attribute.itemSize; part += 1) {
+        const array = attribute.array as unknown as number[]
+        const left = first * attribute.itemSize + part
+        const right = third * attribute.itemSize + part
+        const swap = array[left]
+        array[left] = array[right]
+        array[right] = swap
+      }
+    }
+  }
+  // The displacement model: normals derived from whatever the winding now says.
+  copy.computeVertexNormals()
+  return copy
+}
+
+/**
+ * Triangles whose vertex order disagrees with the normal the builder stored, and how
+ * many triangles the question could be asked of at all.
+ *
+ * The second number exists because a sibling session found the hole it closes: an
+ * all-degenerate geometry disagrees zero times, so `=== 0` passes having judged
+ * nothing. Worse, the same hole sits inside a mutation proof — a degenerate *reversed*
+ * control also reports zero, so the assertion whose whole job is proving the detector
+ * can fail would itself pass on an empty measurement.
+ */
+function windingDisagreements(geometry: THREE.BufferGeometry): {
+  disagreeing: number
+  judged: number
+} {
   const position = geometry.getAttribute('position')
   const normal = geometry.getAttribute('normal')
-  if (!position || !normal) return 0
+  if (!position || !normal) return { disagreeing: 0, judged: 0 }
   const index = geometry.index
   const triangles = index ? index.count / 3 : position.count / 3
   const a = new THREE.Vector3()
@@ -275,7 +396,8 @@ function windingDisagreements(geometry: THREE.BufferGeometry): number {
   const edgeB = new THREE.Vector3()
   const geometric = new THREE.Vector3()
   const shading = new THREE.Vector3()
-  let disagree = 0
+  let disagreeing = 0
+  let judged = 0
   for (let triangle = 0; triangle < triangles; triangle += 1) {
     const offset = triangle * 3
     const first = index ? index.getX(offset) : offset
@@ -295,9 +417,10 @@ function windingDisagreements(geometry: THREE.BufferGeometry): number {
       shading.y += normal.getY(vertex)
       shading.z += normal.getZ(vertex)
     }
-    if (geometric.dot(shading) < 0) disagree += 1
+    judged += 1
+    if (geometric.dot(shading) < 0) disagreeing += 1
   }
-  return disagree
+  return { disagreeing, judged }
 }
 
 const RUNTIME_OPTIONS = {
@@ -544,6 +667,80 @@ test('every prop faces outwards, measured by volume rather than by normals', () 
   }
 })
 
+test('a partial inversion is detectable, which volume and normals alone cannot manage', () => {
+  // A review measured that this suite's two orientation instruments both miss a
+  // *partial* reversal — the realistic fault, since a builder inverts one section, not
+  // a whole prop. Reproduced on this pass's own builders, reversing a fraction of the
+  // faces and recomputing normals from the result:
+  //
+  //   building   2% reversed   volume +97.4 (missed)   normal agreement (missed)
+  //   fort rock  25% reversed  volume  +1.0 (missed)   normal agreement (missed)
+  //
+  // Normal agreement misses at **every** fraction including 100%, because
+  // `computeVertexNormals` derives the normals from the reversed winding. Signed volume
+  // is a sum and the reversed faces cancel against the correct ones. Centroid winding
+  // reads no normals and is per-face, so it sees what both of them miss.
+  //
+  // These props are not star-convex — a building's porch recesses and window reveals
+  // give it a healthy baseline of ~300 inward faces of 844 — so the assertion is
+  // sensitivity, not `=== 0`.
+  const library = new WorldPropLibrary({ retention: 0 })
+  const cases: Array<[string, PropRequest]> = [
+    [
+      'building',
+      {
+        kind: 'building',
+        biome: 'forest',
+        owner: 'elf',
+        detail: 'near',
+        spec: {
+          width: 5,
+          depth: 4,
+          wallHeight: 3,
+          storeys: 1,
+          wallStyle: 'timber-frame',
+          roofStyle: 'thatch',
+          windows: 2,
+          chimney: true,
+          porch: true,
+          balcony: false,
+          crenellated: false,
+        },
+      },
+    ],
+    ['rock', { kind: 'rock', biome: 'fort', slot: 0, detail: 'near' }],
+    ['crate', { kind: 'siteProp', prop: 'crate', biome: 'forest', owner: 'neutral', variant: 0 }],
+    ['tower', { kind: 'siteProp', prop: 'tower', biome: 'forest', owner: 'guard', variant: 0 }],
+    ['bridge', { kind: 'bridge', biome: 'forest', owner: 'neutral', span: 9, width: 4, detail: 'near' }],
+  ]
+  try {
+    for (const [label, request] of cases) {
+      const asset = library.acquire(request)
+      const hard = asset.surfaces.find((surface) => surface.surface === 'hard')
+      assert.ok(hard, `${label} has no hard surface`)
+      const shipped = centroidInwardFaces(hard.geometry)
+      assert.ok(
+        shipped.decisive > 0,
+        `${label}: no face carries centroid signal, so the check says nothing`,
+      )
+
+      // Two percent is well below what either other instrument can see.
+      const damaged = reverseFaceFraction(hard.geometry, 0.02)
+      const after = centroidInwardFaces(damaged)
+      assert.ok(
+        after.inward > shipped.inward,
+        `${label}: reversing 2% of faces did not raise the inward count `
+        + `(${String(shipped.inward)} -> ${String(after.inward)}), so this suite `
+        + 'cannot detect a partial inversion at all',
+      )
+      damaged.dispose()
+      library.release(asset)
+    }
+  } finally {
+    library.dispose()
+  }
+})
+
 test('every prop the world can build is oriented outwards', () => {
   // The family-wide version of the check above, measured two ways because each is
   // blind where the other sees. `loftProfile` wound every triangle against its
@@ -555,7 +752,9 @@ test('every prop the world can build is oriented outwards', () => {
   // report zero across 500-odd geometries. A check that cannot fail is worse than no
   // check, because it reads as evidence.
   const control = new THREE.BoxGeometry(1, 1, 1)
-  assert.equal(windingDisagreements(control), 0, 'a stock box is wound correctly')
+  const controlReading = windingDisagreements(control)
+  assert.ok(controlReading.judged > 0, 'the control judged no faces at all')
+  assert.equal(controlReading.disagreeing, 0, 'a stock box is wound correctly')
   const reversed = control.toNonIndexed()
   const position = reversed.getAttribute('position')
   for (let triangle = 0; triangle < position.count / 3; triangle += 1) {
@@ -570,9 +769,15 @@ test('every prop the world can build is oriented outwards', () => {
       }
     }
   }
-  assert.ok(
-    windingDisagreements(reversed) > 0,
-    'the detector must notice a deliberately reversed box',
+  // The mutation proof needs its own non-empty guard, or a degenerate control makes
+  // *this* assertion — the one whose job is proving the detector can fail — pass on
+  // nothing. Every face must be caught, not merely one.
+  const reversedReading = windingDisagreements(reversed)
+  assert.ok(reversedReading.judged > 0, 'the reversed control judged no faces at all')
+  assert.equal(
+    reversedReading.disagreeing,
+    reversedReading.judged,
+    'the detector must notice every face of a deliberately reversed box',
   )
   control.dispose()
   reversed.dispose()
@@ -588,8 +793,10 @@ test('every prop the world can build is oriented outwards', () => {
   // it claims to measure. That is how a reversed lathe once read as a partial flip.
   const indexed = new THREE.SphereGeometry(1, 8, 6)
   assert.ok(indexed.index, 'the indexed control must actually be indexed')
+  const indexedReading = windingDisagreements(indexed)
+  assert.ok(indexedReading.judged > 0, 'the indexed control judged no faces at all')
   assert.equal(
-    windingDisagreements(indexed),
+    indexedReading.disagreeing,
     0,
     'the detector is index-blind: a correctly wound indexed sphere must report zero',
   )
@@ -604,9 +811,12 @@ test('every prop the world can build is oriented outwards', () => {
   }
   // Reversed purely through the index buffer: every position byte is untouched, so
   // this is invisible to anything that reads positions in raw triples.
-  assert.ok(
-    windingDisagreements(flipped) > flippedIndex.count / 6,
-    'reversing every triangle must make most of them disagree',
+  const flippedReading = windingDisagreements(flipped)
+  assert.ok(flippedReading.judged > 0, 'the flipped control judged no faces at all')
+  assert.equal(
+    flippedReading.disagreeing,
+    flippedReading.judged,
+    'reversing every triangle must make every judged face disagree',
   )
   indexed.dispose()
   flipped.dispose()
@@ -614,15 +824,19 @@ test('every prop the world can build is oriented outwards', () => {
   const library = new WorldPropLibrary({ retention: 0 })
   const requests = everyPropRequest()
   let geometries = 0
+  let judgedFaces = 0
   const failures: string[] = []
   const open: string[] = []
   try {
     for (const [label, request] of requests) {
       for (const part of library.build(request)) {
         geometries += 1
-        const disagree = windingDisagreements(part.geometry)
-        if (disagree > 0) {
-          failures.push(`${label}#${part.surface}: ${String(disagree)} triangles`)
+        const reading = windingDisagreements(part.geometry)
+        judgedFaces += reading.judged
+        if (reading.disagreeing > 0) {
+          failures.push(
+            `${label}#${part.surface}: ${String(reading.disagreeing)} triangles`,
+          )
         }
         // Magnitude, not just sign — see `worstNormalError`. A collapsed loft section
         // shades a downward spike as though it pointed at the sky, which a sign test
@@ -656,10 +870,15 @@ test('every prop the world can build is oriented outwards', () => {
     'an unexpected prop encloses no volume, which usually means it is inside out',
   )
   // Guards the enumeration itself: a request space that quietly stopped producing
-  // anything would otherwise pass this test with flying colours.
+  // anything would otherwise pass this test with flying colours. Faces, not just
+  // geometries — a population of degenerate slivers judges nothing and reports clean.
   assert.ok(
     geometries >= 500,
     `only ${String(geometries)} geometries were checked; the enumeration has holes`,
+  )
+  assert.ok(
+    judgedFaces >= 20000,
+    `only ${String(judgedFaces)} faces carried an orientation to judge`,
   )
 })
 
@@ -727,10 +946,10 @@ test('every prop winds its triangles to agree with its shading normals', () => {
   // that were never a triangle. `latheProfile` is the kit's only indexed builder, so
   // that blindness had exactly one victim and it looked like a builder bug.
   for (const [label, geometry] of cases) {
-    const position = geometry.getAttribute('position')
-    assert.ok(position.count > 0, `${label} produced no triangles`)
+    const reading = windingDisagreements(geometry)
+    assert.ok(reading.judged > 0, `${label} carried no face with an orientation`)
     assert.equal(
-      windingDisagreements(geometry),
+      reading.disagreeing,
       0,
       `${label} has triangles wound against their shading normals`,
     )
@@ -1113,6 +1332,19 @@ test('region streaming returns every borrowed prop reference', () => {
   )
   assert.ok(runtime.retainedPropCount <= 128)
 
+  // No phantom pins. A window entry whose key has no live cache entry would occupy a
+  // slot, pin nothing, and release nothing when evicted — and it is invisible to a
+  // reference-count sum, because `GeometryCache.release` is a silent no-op on a key it
+  // does not hold. Since the window holds distinct keys and each pins one reference,
+  // every retained key must correspond to a live entry, so the cache can never be
+  // smaller than the window. Suggested by review, which measured zero across 225
+  // checkpoints; this is what keeps it that way.
+  assert.ok(
+    runtime.propCacheSize >= runtime.retainedPropCount,
+    `${String(runtime.retainedPropCount)} retained keys against only `
+    + `${String(runtime.propCacheSize)} live entries: the window is pinning nothing`,
+  )
+
   runtime.dispose()
   assert.equal(runtime.propCacheSize, 0)
   assert.equal(runtime.retainedPropCount, 0)
@@ -1450,6 +1682,73 @@ test('a visible region never spends more ink than the budget allows', () => {
   runtime.dispose()
 })
 
+test('decoration never blocks a spawn point', () => {
+  // Faction starts and encounter actors are positioned by world generation, which knows
+  // nothing about decoration. Before this pass every decoration collider was a
+  // sapling-sized 0.55; a fort boulder is 0.85, which is right for a boulder and enough
+  // to trap whatever spawns there. A reviewer measured decoration colliders newly
+  // blocking positions the previous collision model left clear.
+  //
+  // Shrinking the boulder is not the fix: at 0.55 the same spawn cleared by 0.012 units,
+  // so the old clean result was luck. The keep-out is the fix, and this is what says so.
+  const { blueprint, runtime } = createRuntime('spawn-keepout')
+  let sampled = 0
+  const blockedByDressing: string[] = []
+  for (const region of blueprint.regions) {
+    const centre = runtime.getRegionCenter(region.id)
+    if (!centre) continue
+    runtime.update({ deltaSeconds: 0, focus: centre })
+    for (const faction of ['elf', 'guard', 'villain'] as const) {
+      for (const plan of runtime.getEncounterPlansInRegion(region.id, faction)) {
+        for (const spawn of plan.spawns) {
+          sampled += 1
+          if (runtime.collision.isWalkablePosition(spawn.worldX, spawn.worldZ, 0.45)) {
+            continue
+          }
+          const blocking = runtime.collision.queryBounds({
+            minX: spawn.worldX - 2,
+            maxX: spawn.worldX + 2,
+            minZ: spawn.worldZ - 2,
+            maxZ: spawn.worldZ + 2,
+          })
+          if (blocking.some((entry) => entry.id.startsWith('dressing-solid'))) {
+            blockedByDressing.push(spawn.id)
+          }
+        }
+      }
+    }
+  }
+  // Guards the sampling itself: a probe that walked no spawns would report a clean
+  // result for any amount of breakage.
+  assert.ok(sampled >= 100, `only ${String(sampled)} spawns sampled`)
+  assert.deepEqual(
+    blockedByDressing,
+    [],
+    'decoration colliders are standing on spawn points',
+  )
+
+  // Faction starts are the other population, and the one that hurts most: the engine
+  // writes this position into the player verbatim, and `findPath` returns null when the
+  // *start* is unwalkable, so the first click-to-move of the run silently does nothing.
+  // The start is offset ~20 units back along the critical path, which puts it outside
+  // the site clearing, so no other keep-out covers it.
+  const unwalkableStarts: string[] = []
+  for (const faction of ['elf', 'guard', 'villain'] as const) {
+    const approximate = runtime.getStartPosition(faction)
+    runtime.update({ deltaSeconds: 0, focus: approximate })
+    const start = runtime.getStartPosition(faction)
+    if (!runtime.collision.isWalkablePosition(start.x, start.z, 0.45)) {
+      unwalkableStarts.push(faction)
+    }
+  }
+  assert.deepEqual(
+    unwalkableStarts,
+    [],
+    'a faction starts the run unable to move',
+  )
+  runtime.dispose()
+})
+
 test('settlement buildings block movement and their squares stay walkable', () => {
   const { blueprint, runtime } = createRuntime('site-collision')
   const settlement = blueprint.sites.find((site) => site.kind === 'settlement')
@@ -1598,3 +1897,4 @@ test('reloading a region rebuilds the same world objects', () => {
   assert.deepEqual(snapshot(), before)
   runtime.dispose()
 })
+

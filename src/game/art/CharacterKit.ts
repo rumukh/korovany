@@ -800,11 +800,50 @@ function reverseWinding(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
 }
 
 /**
+ * Triangles {@link ensureOutwardWinding} has had to reverse since the last reset.
+ *
+ * A silent runtime fixup does not protect an invariant — it destroys the evidence
+ * that the invariant broke. `ensureOutwardWinding` runs inside `loft()` and inside
+ * `finish()`, which is to say inside every builder in this module, so any downstream
+ * assertion that winding agrees with normals is answering a question the builder has
+ * already forced. This counter is the evidence surviving the repair: the repair still
+ * happens, so a regression cannot ship broken art, and the count still rises, so a
+ * regression cannot ship unnoticed either.
+ *
+ * Measured Wave 4, across all 1235 parts the game can build — every faction x role x
+ * variant, every headgear and weapon the tables do not reach, the four beasts, the
+ * deer, the bird, the ox, the wagon, the harness and the rope: **0 of 196,705
+ * triangles reversed.** The repair is already a no-op, which its own docblock
+ * predicted would happen "the day the kit itself is corrected". The foundation
+ * corrected `loftProfile` and nothing recorded that this had become dead weight.
+ *
+ * It is kept rather than deleted because deleting it removes the guard as well as
+ * the dead code, and this counter is what makes the guard honest.
+ *
+ * Validated by mutation, because a counter that reads 0 is the same shape as a counter
+ * that cannot count. With `loftProfile`'s normals negated — the regression this repair
+ * was written for — one torso reports **444** and one head **248**, and the roster
+ * assertion in `tests/characterArt.test.ts` goes red naming the figure. On the real
+ * tree both read 0.
+ */
+let windingRepairsMade = 0
+
+/** How many triangles the winding repair has reversed. See {@link windingRepairsMade}. */
+export function characterWindingRepairs(): number {
+  return windingRepairsMade
+}
+
+/** Zeroes the repair counter, so a test can attribute repairs to its own builds. */
+export function resetCharacterWindingRepairs(): void {
+  windingRepairsMade = 0
+}
+
+/**
  * Makes every triangle's winding agree with its own normals.
  *
  * `loftProfile` — which is most of this module, directly or through `taperedBox` —
- * emits triangles wound the opposite way round from the normals it writes. A
- * `FrontSide` material then draws the *inside* of the far wall, and, far more
+ * *used to* emit triangles wound the opposite way round from the normals it writes.
+ * A `FrontSide` material then draws the *inside* of the far wall, and, far more
  * visibly, the `BackSide` ink shell ends up in front of its own source and paints
  * the whole silhouette solid ink.
  *
@@ -814,6 +853,14 @@ function reverseWinding(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
  * `tubeAlongPoints` winds its walls one way and its caps the other — and a
  * majority vote would fix one and break the other. It is a measurement, so it is
  * idempotent and becomes a no-op the day the kit itself is corrected.
+ *
+ * **That day has arrived**, and the past tense above is deliberate. Wave 4 measured
+ * every part this module can build with the repair disabled and found 0 inside-out
+ * triangles in 196,705. Two things follow. The first is that no assertion anywhere
+ * can distinguish this module's builders from the repair's output, so the winding
+ * tests in `tests/characterArt.test.ts` were never testing this module. The second
+ * is that the fixup is now purely a tripwire that swallows its own alarm — hence
+ * {@link windingRepairsMade}, which is asserted to be zero rather than assumed.
  */
 function ensureOutwardWinding(geometry: THREE.BufferGeometry): THREE.BufferGeometry {
   const position = geometry.getAttribute('position')
@@ -839,6 +886,7 @@ function ensureOutwardWinding(geometry: THREE.BufferGeometry): THREE.BufferGeome
     reversed += 1
   }
   if (reversed === 0) return geometry
+  windingRepairsMade += reversed
   if (index) index.needsUpdate = true
   else {
     for (const name of Object.keys(geometry.attributes)) {

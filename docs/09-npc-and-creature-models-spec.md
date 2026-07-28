@@ -559,7 +559,58 @@ Targets:
 - [x] Verified visually in a headless capture: day and night, bloom on and off, all
       three factions.
 
-## 14. Effort
+## 14. Wave 4 review
+
+This spec's implementation was the one part of the graphics overhaul whose mandated
+independent review never ran — S2's session went dark. Wave 4 reviewed it instead.
+Nothing shipped by this pass was found broken. Three things about how it was *checked*
+were, and they are recorded here because the pattern is reusable.
+
+**The winding guard was a silent fixup, and it had also become dead.**
+`ensureOutwardWinding` runs inside `loft()` and inside `finish()`, using exactly the
+computation `tests/characterArt.test.ts` then asserts is zero, so that assertion could
+never have failed. Measured with the repair disabled: **0 inside-out triangles in
+196,705, across all 1,235 parts the game can build.** The foundation had corrected
+`loftProfile` and nothing recorded that this repair had become a no-op — its own
+docblock predicted the day would come. It is kept, because deleting it would remove a
+guard as well as dead code, and `characterWindingRepairs()` now carries the count so a
+regression goes red instead of being papered over. Validated by mutation: with
+`loftProfile`'s normals negated, one torso reports 444 and one head 248.
+
+**Orientation needs four instruments, not three.** `docs/10` §13 records three and
+their blind spots. A fourth was measured here, because the three leave a hole:
+
+| Instrument | Sees | Blind to |
+| --- | --- | --- |
+| normal agreement | a stored normal against its own winding | anything recomputed — and everything in this module, per the fixup above |
+| signed volume | a part inside out **whole** | **partial** inversion: it is a sum, so reversed faces cancel |
+| centroid / outward share | a whole flip, cheaply | partial inversion; concave parts have a large honest baseline |
+| **edge consistency** | **any** inconsistently wound face, absolutely, with no tolerance | an open sheet's boundary, which it counts separately |
+
+Reverse a fifth of a guard's torso and recompute its normals, which is what
+`displaceGeometry` does downstream, and the first three read `0 disagreements`,
+`0.606 outward` and `+0.179 volume` — all three pass. Edge consistency reads 36 bad
+edges. On a closed, consistently oriented surface every directed edge has exactly one
+opposite twin; reversing any face breaks the pairing whatever the normals are later
+made to say. Measured clean across the whole roster — every plan part plus the headgear
+and weapon kinds no plan table selects: **1,228 parts, 588,015 directed edges,
+0 inconsistent**, plus 6,903 honest boundary edges from the open sheets (1.17%).
+
+Mutation-verified end to end. With 20% of every torso reversed and laundered, all six
+pre-existing tests in `tests/characterArt.test.ts` report green and only the new one
+fails.
+
+**One real defect, and it was the foundation's.** `latheProfile` handed back a final
+profile ring whose normals were scaled by the length of the last profile segment — a
+`THREE.LatheGeometry` quirk, since fixed with `normalizeNormals()`. It reached the game
+through `buildHeadgear`: `cap` 27 vertices at |n| = 0.246416, `hood` 27 at 0.088549,
+`ragHood` 21 at 0.088549. The other nine headgear kinds measured clean, and only
+because `transformed()` normalises as a side effect of `applyMatrix4` — so whether the
+defect appeared depended on whether a caller happened to position its lathe. It costs
+the ink shell: `bakeOutlineNormals` averages by welded position, and a normal 11x short
+is 11x under-weighted at exactly the vertex where a hood's silhouette is a single point.
+
+## 15. Effort
 
 **2–3 days.** The geometry is the fun part and the fast part. The time goes into the
 plan taxonomy staying small enough to cache, into every rig-name consumer being

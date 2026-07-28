@@ -201,7 +201,7 @@ function requireInjectionPoint(source: string, token: string, label: string): vo
  * *assigns* `onBeforeCompile` rather than composing onto it, so a re-adopt swaps
  * the closure for an equivalent one and the GLSL is unchanged. What actually
  * breaks is that `adoptMaterial` re-derives band, rim and rim-power from
- * `options.surface ?? 'cloth'` and overwrites `userData.stylizedSurface` — so an
+ * `options.surface ?? 'cloth'` and overwrites `userData.stylizedSurfacePreset` — so an
  * assign-derived `metal` would silently retune to `cloth` (rim 0.62 -> 0.34,
  * power 3.2 -> 2.6, and band identical at 1, so it is invisible on the banding
  * axis entirely). A silent retune is harder to spot than a crash, which makes

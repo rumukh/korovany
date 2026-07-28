@@ -412,6 +412,26 @@ export interface LatheProfileOptions {
 /**
  * Revolves a silhouette. Best tool in the kit for pots, bells, helmets, cairns,
  * mushroom caps and anything else whose shape is a drawn outline.
+ *
+ * `normalizeNormals()` is not decoration. `THREE.LatheGeometry` writes the *last*
+ * profile point's normal from `prevNormal`, which it copies before normalising it,
+ * so the whole final ring comes out scaled by the length of the last profile
+ * segment. Measured on this game's own art: `buildHeadgear('cap')` ends
+ * `(0.24, 0.24) -> (0.001, 0.3)`, giving |n| = 0.246416, and `('hood')` ends
+ * `(0.08, 0.5) -> (0.001, 0.54)`, giving |n| = 0.088549 — both exactly the length
+ * of that segment, which is how the mechanism was identified rather than guessed.
+ *
+ * It went unnoticed because `transformed()` launders it: `applyMatrix4` runs
+ * `applyNormalMatrix`, which normalises, so every lathe that happened to be
+ * positioned came out clean and only the three that are used at the origin —
+ * `cap`, `hood`, `ragHood` — carried it. That is the worst possible distribution
+ * for a defect, because the callers that expose it look identical to the ones that
+ * do not.
+ *
+ * What it costs: `bakeOutlineNormals` averages normals per welded position, so a
+ * normal 11x shorter than its neighbours is 11x under-weighted and the ink shell
+ * extrudes the wrong way at a hood's peak — the one vertex where the silhouette is
+ * a single point and the error has nowhere to hide.
  */
 export function latheProfile(
   points: readonly Vec2Like[],
@@ -426,6 +446,7 @@ export function latheProfile(
     options.phiStart ?? 0,
     options.phiLength ?? Math.PI * 2,
   )
+  geometry.normalizeNormals()
   geometry.name = options.name ?? 'art-lathe'
   return geometry
 }
