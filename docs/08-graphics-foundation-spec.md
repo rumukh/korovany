@@ -955,6 +955,44 @@ so a step written compactly as `- uses: actions/deploy-pages@v4` was invisible t
 real file uses the other form, so every run against this repository would have passed while
 the check was blind to the exact evasion it was written for.
 
+#### Doping the compiler, since nobody does
+
+The finding above — that `tsc --noEmit -p tsconfig.json` type-checks zero files — surfaced
+by accident, inside an argument about something else. It generalises to a question nobody
+asks: **a compiler's name is taken as its specification, so a vacuous one survives
+indefinitely.** The doping rule in this document was written for detectors we build. It
+had never been pointed at a tool we did not write, and `npm run build` runs two
+type-checking commands, neither of which had ever been shown capable of failing.
+
+Both were doped. A blatant type error was appended to one file on each surface the build
+claims to cover; the mutation's application was confirmed before its result was read, and
+every file was restored byte-exact:
+
+| doped file | `npm run build` | first error |
+| --- | --- | --- |
+| `src/game/art/index.ts` | **exit 2** | `TS2322` naming the file |
+| `tests/deployWorkflow.test.ts` | **exit 2** | `TS2322` naming the file |
+| `scripts/AudioDirector.test.ts` | **exit 2** | `TS2322` naming the file |
+| `vite.config.ts` | **exit 2** | `TS2322` naming the file |
+
+So `tsc -b` genuinely checks `src` and `vite.config.ts`, and `tsc --noEmit -p
+tsconfig.test.json` genuinely checks `tests` and `scripts`. **The gate is sound; only the
+ad-hoc short form is vacuous.** That is a negative result, and it is one that is normally
+never earned — the reason nobody had it is that there was no reason to doubt it, which is
+precisely the condition the vacuous invocation had been surviving under for the life of
+the repository.
+
+The population, because four passes prove only four files: **84 tracked `.ts`/`.tsx` files,
+84 under an `include`** — 48 `src`, 34 `tests`, 1 `scripts`, plus `vite.config.ts`. None
+orphaned.
+
+No guard was added for that last number, deliberately. It could fire only when a TypeScript
+file is added outside `src`, `tests` and `scripts` — a location nothing imports and `vite`
+does not bundle, so it would gate a scenario with no consequence. **An instrument that can
+only fire on something harmless is nearer to theatre than to a gate**, and §6's own rule
+cuts that way: a documented absence beats a check that cannot fail for a reason worth
+failing over.
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
