@@ -1844,6 +1844,35 @@ This pass used `git checkout --ours` on the same file class during a merge exper
 throwaway worktree where nothing could be lost. That it was harmless was luck of setting,
 not judgement.
 
+**A mutation that damages every element is the least discriminating one available.** The
+foundation session drew this out of a sweep this pass ran across 248 merged hard surfaces,
+and it retires a habit visible throughout this document. Reversing *all* faces maximises
+exactly the signal an orientation instrument is built to detect, so surviving it certifies
+only the case you already believed. **Every instrument survives its own best case.**
+
+The informative mutations are partial, and *partial* has structure that must be chosen
+rather than left to chance:
+
+```
+faces reversed   undetected
+        10%       248 of 248   (100%)
+        20%       244 of 248
+        35%       222 of 248
+        50%       118 of 248
+```
+
+Contiguous-block damage produced that curve. **Scattered damage at 10% would likely have
+cancelled to nothing and reported the opposite** — so contiguous versus scattered, one part
+of a merge versus one ring of a lathe, are not stylistic choices; they select which
+blindness you are able to see. A single mutation shape is a single population, which is the
+same defect as a single seed.
+
+Which retires a second habit both sessions had: **reporting a mutation grade as RED or
+GREEN.** The grade is a function of the damage model, and neither of us had been quoting the
+damage model beside the grade — the same disease as quoting a number without its noun. A
+survivor means *"this suite did not detect this damage shape at this magnitude"*, and every
+clause is load-bearing.
+
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
 state that no check could see. Ten lines were mangled — five entries whose opening sentence
