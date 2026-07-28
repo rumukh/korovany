@@ -695,13 +695,20 @@ no new dependencies.
   front of them. This one decides itself, on any SHA, without knowing anything about the
   claim it sits in — which is the *call site rather than sentence* property arriving in
   the one place nobody was trying to apply it.
-  **And it is necessary without being sufficient, which was demonstrated on the check
-  itself within minutes of its being added.** Reachability answers *"can this be
-  resolved"*, not *"is this still the state"*: a verification against a **reachable but
-  superseded** commit is a true statement about a tree the branch has since moved past,
-  and it reads identically to one about the current tree. The complete citation is two
-  cheap facts rather than one — **`<sha>` reachable, and `N` commits behind the tip** — of
-  which only the second decays.
+  **And whether it is sufficient depends on what the citation claims — which is the part
+  that was got wrong twice.** Reachability answers *"can this be resolved"*, not *"is this
+  still the state"*. That gap was reported as a defect in the check: a verification against
+  a **reachable but superseded** commit describes a tree the branch has moved past, and
+  reads identically to one about the current tree.
+  The reporting session then withdrew it, correctly. **A past-tense verification never
+  asserts currency**, so being superseded does not falsify it — *"verified at 01:17 against
+  `8353974`"* is exactly as true after the branch advances as before. **A currency test was
+  applied to a claim that does not make a currency claim**, which is subject substitution
+  again, in the message that adopted the fix for subject substitution.
+  So the rule is conditional rather than deficient: **reachability is sufficient for a
+  past-tense citation and insufficient for a present-tense one** — and the present-tense
+  form is the one this document already tells you not to write. Adding *`N` commits behind
+  the tip* costs one command and answers a question the timestamped form does not raise.
   Worth recording for its shape as much as its content: the reachability check was added
   in response to two *orphaned* SHAs, and it closes exactly that failure and not the class
   it belongs to. **The remedy enumerated the instance it was shown**, two exchanges after
@@ -1052,6 +1059,21 @@ no new dependencies.
   *Unconvertible*: the wiring claims and the alias evasion, because `GameEngine` is not
   constructible in Node, which is why the test file states them as limitations instead of
   implying it has none.
+  **A sibling session found the sharper reason, and it is not about Node.** After six
+  rounds of hardening a source-reading guard against successive spellings, a seventh
+  arrived that no spelling covers: `${{ format('{0}{1}', 'pa', 'ges') }}` resolves to a
+  protected name **without containing it**. The name is never written; it is *computed*.
+  **No list of forms closes that, because the defect is not a form.** Which is the alias
+  evasion exactly — `const x = obj.rotation; x.y = …` names nothing a regex can anchor on
+  — and it means the limitation recorded here is not *"we lack an instrument"* but
+  **"the instrument is not completable even in principle."**
+  That changes what a fallback is worth. Where a check *can* be finished, a pin over the
+  input set is a safety net for the one case the check misses. Where it cannot, **the pin
+  plus a human reading the diff *is* the mechanism, not a backstop for one** — and the
+  honest form of the guard stops claiming to detect danger and claims only to detect
+  **unreadability**: an input carrying a construct the checker does not model is treated as
+  able to produce the bad state. Fail-closed, with the false-alarm cost paid deliberately
+  rather than discovered later.
   *Sentence-only, and therefore inert until someone remembers*: everything about working
   practice, including the one above. This bullet is in that third category and cannot
   argue itself out of it — which is the point. **A rule that cannot be given a call site
