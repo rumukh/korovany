@@ -916,6 +916,22 @@ no new dependencies.
   connecting them came from one person at the end with nothing to check it against.
   Tidiness is cheap to test: **compare the shape of an explanation against the record of
   what happened, and be suspicious in proportion to how well it comes out.**
+  **And declining to report a difference is not a licence to explain it.** The entry above
+  was invoked correctly on a discrepancy between two sweeps — 26 hits against 18, judged
+  not worth a finding because the conclusion was identical in both — and an explanation was
+  attached to the decline anyway: *"a later tip and a different predicate."* Measured, the
+  tip accounts for **one hit of eight**:
+  ```
+  same predicate @ earlier tip   407 prose lines, 17 hits
+  same predicate @ later tip     440 prose lines, 18 hits
+  other predicate @ later tip    426 prose lines, 26 hits
+  ```
+  The frame was essentially the whole cause and the tip was noise. **"The number does not
+  matter" and "the explanation is right" are separate claims, and only the first was
+  checked.** So the licence this entry grants is narrow: it permits *silence* about a
+  difference, and it permits nothing about its cause — an unchecked explanation attached to
+  a correct decline is the fifth class arriving through the one door the catalogue opened
+  for it.
   Two things make this the most useful entry in the section rather than the smallest.
   **Why it works:** a true explanation of a messy sequence has to *be* messy, because it
   has to carry the exceptions. Tidiness is therefore evidence of **selection** — and
