@@ -3906,6 +3906,10 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
  * edit are different edits; the sweep covers all five and the table names each.
  */
 test('every beast pivot uses the Euler order its maths assumes', () => {
+  const source = readFileSync(
+    fileURLToPath(new URL('../src/game/GameEngine.ts', import.meta.url)),
+    'utf8',
+  )
   // 1. Construction. `buildBeastSkeleton` must hand back pivots on three.js's default.
   //    The humanoid equivalent enumerates its own five; this one was not covered by it,
   //    which is the same sampling error one rig over.
@@ -3971,6 +3975,51 @@ test('every beast pivot uses the Euler order its maths assumes', () => {
   // 3. What it is worth. Pinned per order, because a single bound would let the cheap
   //    orders hide behind the expensive ones — and the cheap one, `YXZ`, is the edit
   //    someone actually makes.
+  //
+  //    The two multi-axis pivots no solve reads — the death arm and the tail — are
+  //    computed here too. Both figures were in assertion messages, quoted from a
+  //    reviewer, computed by nothing. That is the decay pattern this whole branch has
+  //    been correcting, so they are produced by the run that cites them, from poses read
+  //    out of the engine rather than retyped.
+  const armDeath = /applyLimbPose\(\s*leftArm,\s*THREE\.MathUtils\.lerp\(\s*leftArm\.rotation\.x,\s*(-?[\d.]+) \* side,\s*eased,?\s*\),\s*(-?[\d.]+) \* eased,?\s*\)/
+    .exec(
+      source.slice(
+        source.indexOf('private updateActorDeathMotion('),
+        source.indexOf('private injurePlayer('),
+      ),
+    )
+  assert.ok(
+    armDeath,
+    'could not read the death arm pose out of `updateActorDeathMotion`. The figure below '
+    + 'is derived from it, so a rewritten call means the derivation is reading nothing.',
+  )
+  const tailRoll = /rig\.cloak\.rotation\.z = Math\.sin\([^)]*\) \* ([\d.]+)/.exec(
+    source.slice(
+      source.indexOf('private animateBeastRig('),
+      source.indexOf('private animateActorCharacter('),
+    ),
+  )
+  assert.ok(tailRoll, 'could not read the tail roll amplitude out of `animateBeastRig`')
+  const orderCost = (pitch: number, roll: number, order: THREE.EulerOrder): number =>
+    orientationDegrees(
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, 0, roll, 'XYZ')),
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(pitch, 0, roll, order)),
+    )
+  const armCost = orderCost(Number(armDeath[1]), Number(armDeath[2]), 'ZYX')
+  // The tail's deepest lift is a flinch: `-0.1 + flinch * 0.9`, with the roll at its own
+  // amplitude. Both terms come from the slice above rather than from memory.
+  const tailCost = orderCost(0.8, Number(tailRoll[1]), 'ZYX')
+  assert.ok(
+    Math.abs(armCost - 13.6671) < 0.00005,
+    `a death arm on ZYX now costs ${armCost.toFixed(4)} degrees against XYZ, not the `
+    + '13.6671 recorded. This is the figure the limb row of the table above is justified '
+    + 'by; correct it there and in docs/09.',
+  )
+  assert.ok(
+    Math.abs(tailCost - 7.1334) < 0.00005,
+    `a tail on ZYX now costs ${tailCost.toFixed(4)} degrees against XYZ, not the 7.1334 `
+    + 'recorded. Same correction.',
+  )
   const WRONG_ORDER_COST: Record<string, { head: number; chest: number }> = {
     YXZ: { head: 0.5036, chest: 0.0691 },
     ZXY: { head: 3.7855, chest: 0.3583 },
@@ -4906,7 +4955,7 @@ test('the engine wires the rig the way these tests measure it', () => {
     + 'survived, because `Euler`\'s order setter recomputes the quaternion on its own. '
     + '**This pattern covers bracket access and `reorder()` because the dotted form alone '
     + 'did not**: the same reviewer wrote `rotation[\'order\'] = \'ZYX\'` on the limb '
-    + 'pivots in `createBeast` and on the tail, worth 13.6671 and 2.7370 degrees of '
+    + 'pivots in `createBeast` and on the tail, worth 13.6671 and 7.1334 degrees of '
     + 'silent rotation, and the ban did not see either. A ban on spellings is bounded by '
     + 'the spellings you thought of, which is why the pivots that matter are held by '
     + 'setters and this exists only to stop a write landing *after* one.',
