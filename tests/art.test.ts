@@ -3010,6 +3010,15 @@ test('every type the spec names is exported by the barrel', () => {
  * the brace check is stated as sufficient here — it agrees with the exact answer on
  * every site this tree has.
  *
+ * And it is not redundant with the floor, which was measured rather than assumed. Insert
+ * one line — `// closing this early: )` — inside a traverse body **and delete that body's
+ * guard**, and the previous version of this test returns a **green clean bill on a
+ * genuinely unguarded material sweep**: the truncated body loses `.material =` before
+ * anyone notices, the site drops out of both lists, the remaining three still clear a
+ * floor of three, and `unguarded` is empty for the worst possible reason. The version
+ * below fails on it. **A scanner's own parse is part of its result, and until now
+ * nothing here asserted it.**
+ *
  * Before consolidating them, know that **one of the four is live in this tree** and the
  * other three are not. `:9974` `restorePlayerLimb` traverses a limb of `this.player`;
  * the player is outlined at `GameEngine.ts:2282`; and `applyOutline` parents each shell

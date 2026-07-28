@@ -89,6 +89,7 @@ function simultaneousInkDraws(object: THREE.Object3D): number {
 test('the whole visible set has an ink budget, not just each region in it', () => {
   let samples = 0
   let fullVisibleSets = 0
+  let multiRegionFocuses = 0
   let visibleSetPeak = 0
   let perRegionPeak = 0
   let regionsClassified = 0
@@ -108,12 +109,14 @@ test('the whole visible set has an ink budget, not just each region in it', () =
 
       let visibleSet = 0
       let roots = 0
+      let inkingRegions = 0
       for (const root of scene.children) {
         if (root.userData.generatedWorldRegionId === undefined) continue
         roots += 1
         regionsClassified += 1
         const ink = simultaneousInkDraws(root)
         perRegionPeak = Math.max(perRegionPeak, ink)
+        if (ink > 0) inkingRegions += 1
         visibleSet += ink
         assert.ok(
           ink <= OUTLINE_WORLD_DRAWS_MAX,
@@ -158,6 +161,7 @@ test('the whole visible set has an ink budget, not just each region in it', () =
       )
 
       if (roots === 9) fullVisibleSets += 1
+      if (inkingRegions >= 2) multiRegionFocuses += 1
       visibleSetPeak = Math.max(visibleSetPeak, visibleSet)
       samples += 1
       seedSamples += 1
@@ -192,28 +196,62 @@ test('the whole visible set has an ink budget, not just each region in it', () =
     'no focus position ever had the full 3x3 visible set, so the multiplier this test '
     + 'exists to bound was never exercised',
   )
-  // And the sum has to be genuinely bigger than the per-region figure, or this test
-  // would keep passing on a tree that draws no world ink at all — which is exactly
-  // what `main` is, and `main` must not be able to satisfy this.
+
+  // The three assertions below used to be `visibleSetPeak > OUTLINE_WORLD_DRAWS_MAX`,
+  // `perRegionPeak >= 5` and `visibleSetPeak >= 40`, and all three were the same mistake:
+  //
+  //   A floor that exists to prove the measurement ran can accidentally assert the shape
+  //   of the thing measured. The tell is that the codebase improving makes it fail.
+  //
+  // Every one of them goes red if ink gets *cheaper* — and making ink cheaper by
+  // instancing outlined props is the immediate follow-up this pass recommends. The
+  // budget was originally sized for instanced silhouettes ("an outlined forest costs one
+  // draw, not one per tree"), so a tree that draws 12 ink calls where this one draws 43
+  // is the goal, not a regression, and it would have failed all three.
+  //
+  // What each was actually reaching for, restated so it survives the improvement:
+
+  // 1. `main` must not be able to satisfy this test. What distinguishes `main` is that it
+  //    draws ZERO world ink, so the floor is 1. Nothing between 1 and 43 separates a
+  //    working tree from `main`; it only separates this tree from a cheaper one.
   assert.ok(
-    visibleSetPeak > OUTLINE_WORLD_DRAWS_MAX,
-    `the visible-set peak was ${String(visibleSetPeak)}, no larger than one region's `
-    + 'budget; either the world stopped drawing ink or the sum is not being summed',
+    visibleSetPeak >= 1,
+    'no focus position drew any world ink at all, so every budget assertion above '
+    + 'passed on zeros — which is exactly what `main` does',
   )
+
+  // 2. The multiplier is the point of this test, and it is a claim about SIMULTANEITY,
+  //    not about magnitude: more than one visible region draws ink at the same time, so
+  //    the frame pays a sum the per-region budget never mentions. True at 43 draws and
+  //    equally true at 3.
   assert.ok(
-    perRegionPeak >= 5,
-    `the busiest single region spent only ${String(perRegionPeak)} of `
+    multiRegionFocuses > 0,
+    'no focus ever had two visible regions drawing ink at once, so the sum this test '
+    + 'exists to bound is indistinguishable from a single region and the 9x multiplier '
+    + 'was never actually observed',
+  )
+
+  // 3. A cap must stay within reach of what is measured, or it is a budget nothing can
+  //    trip — the failure this programme hit eight times. Stated as a RATIO to the cap
+  //    rather than as an absolute, this follows the code down instead of fighting it: if
+  //    instancing takes the peak to 12, the cap must come to 24 or below, which is the
+  //    correct consequence rather than a test to silence.
+  assert.ok(
+    visibleSetPeak * 2 >= OUTLINE_WORLD_VISIBLE_DRAWS_MAX,
+    `the peak was ${String(visibleSetPeak)} against a cap of `
+    + `${String(OUTLINE_WORLD_VISIBLE_DRAWS_MAX)}, more than 2x of headroom. Either the `
+    + 'seeds stopped sampling the busy end, or ink got cheaper and the cap did not '
+    + 'follow — in which case lower the cap rather than this floor.',
+  )
+
+  // Recorded, not asserted: per-region peak 8 (never exceeded), visible-set peak 43 over
+  // twelve seeds and 43 over this pair, cap 48. Those are the numbers the budget was
+  // sized from and they belong in the spec, where changing them is an edit rather than a
+  // test failure.
+  assert.ok(
+    perRegionPeak <= OUTLINE_WORLD_DRAWS_MAX,
+    `the busiest single region spent ${String(perRegionPeak)} of `
     + `${String(OUTLINE_WORLD_DRAWS_MAX)} ink draws`,
-  )
-  // The pair has to actually reach the figure the budget was sized from, or widening
-  // the seed domain bought coverage on paper and nothing in practice. Measured 43 over
-  // twelve seeds, 43 over this pair; 40 leaves room for placement to drift a little
-  // without pretending the peak is still being observed.
-  assert.ok(
-    visibleSetPeak >= 40,
-    `the two seeds peaked at ${String(visibleSetPeak)}, short of the 43 the budget was `
-    + 'sized from — they are no longer sampling the busy end of the range, so 48 is '
-    + 'being checked against a case that never approaches it',
   )
 })
 
@@ -643,8 +681,10 @@ test('every prop the game can ask for comes back coloured, and none of it white'
   let vertices = 0
   let whiteVertices = 0
   const offenders: string[] = []
+  const silentRequests: string[] = []
   for (const { label, request } of requests) {
     const acquired = library.acquire(request as never)
+    if (acquired.surfaces.length === 0) silentRequests.push(label)
     for (const surface of acquired.surfaces) {
       surfaces += 1
       const colour = surface.geometry.getAttribute('color')
@@ -671,20 +711,31 @@ test('every prop the game can ask for comes back coloured, and none of it white'
   // The population is pinned in every direction it can shrink in. A sweep that quietly
   // stopped enumerating, or one judging surfaces that had lost their vertices, would
   // report zero offenders and look identical to a clean run.
+  //
+  // Pinned on the ENUMERATION, not on the output. `surfaces >= 476` and
+  // `vertices >= 350_000` used to sit here — both measured maxima of this exact tree, and
+  // both would go red if two surfaces were ever merged into one, which is a draw-call
+  // reduction and the follow-up this pass recommends. A floor that proves the measurement
+  // ran must not also assert the shape of the thing measured; the tell is that improving
+  // the code makes it fail. What the sweep actually needs is that **every request it
+  // enumerated produced something to judge**, which stays true however the surfaces are
+  // arranged.
   assert.equal(
     requests.length,
     352,
     `the request space is ${String(requests.length)} requests, pinned at 352 — add the new `
     + 'kind here and to the count together',
   )
-  assert.ok(
-    surfaces >= 476,
-    `only ${String(surfaces)} merged surfaces were judged; S3's pre-merge baseline was 476, `
-    + 'so the enumeration has shrunk and this is measuring less than it did',
+  assert.deepEqual(
+    silentRequests,
+    [],
+    'these requests produced no merged surface at all, so the sweep enumerated them and '
+    + 'then judged nothing — indistinguishable from a clean result',
   )
   assert.ok(
-    vertices >= 350_000,
-    `only ${String(vertices)} vertices were examined, against 351,636 measured on this tree`,
+    vertices > 0 && surfaces > 0,
+    `the sweep judged ${String(surfaces)} surfaces and ${String(vertices)} vertices; on `
+    + 'this tree it is 476 and 351,636, but any zero here means it measured nothing',
   )
   assert.deepEqual(
     offenders.slice(0, 10),
