@@ -1630,22 +1630,39 @@ test('the head holds its target while the chest twists under it', () => {
   const DELTA = 1 / 60
   const SECONDS = 60
   // `updateActors`: gaitPhase += travelled * actorGaitCadence(role). Cadence is
-  // radians per METRE, so the angular frequency is speed x cadence — 25.16 rad/s,
-  // 4.00 Hz, for a soldier. Getting this wrong by 3.7x is what made the old guard
-  // vacuous, so both factors are named rather than pre-multiplied.
-  const SOLDIER_SPEED = 3.7
-  const SOLDIER_CADENCE = 6.8
+  // radians per METRE, so the angular frequency is speed x cadence. Getting this
+  // wrong by 3.7x is what made the old guard vacuous, so both factors are named
+  // rather than pre-multiplied — and every role is swept rather than one sampled,
+  // because "the gait" is a population and a soldier is a sample. `actorSpeedForRole`
+  // and `actorGaitCadence` both live in `GameEngine`, which a Node test cannot
+  // import, so the pairs are pinned against its source in `the engine wires the rig
+  // the way these tests measure it`.
+  const GAITS = [
+    { role: 'soldier', speed: 3.7, cadence: 6.8, chestYawCoefficient: 0.12 },
+    { role: 'scout', speed: 4.8, cadence: 8.4, chestYawCoefficient: 0.12 },
+    { role: 'archer', speed: 3.2, cadence: 7.2, chestYawCoefficient: 0.12 },
+    { role: 'brute', speed: 2.6, cadence: 5.8, chestYawCoefficient: 0.08 },
+    { role: 'champion', speed: 4.15, cadence: 5.8, chestYawCoefficient: 0.08 },
+    { role: 'peasant', speed: 3.1, cadence: 6.8, chestYawCoefficient: 0.12 },
+  ] as const
   const TARGET = 0.35
-  // `solveHeadYaw` is exact, so the shipped rule's residue is float noise. Same
-  // reasoning as the 0.1 degrees in the test above: a looser bound would readmit the
-  // rule this test exists to reject.
+  // Not a tolerance. With `solveHeadYaw` the world heading *equals* the damped
+  // body-space angle identically, for any cadence, amplitude or damping rate — so
+  // this reads exactly zero and cannot be made to fail by moving a parameter, only by
+  // changing the rule. It is a **rule discriminator**, and the paired assertion below
+  // is what gives it teeth. A reviewer made that distinction and it is worth keeping
+  // visible: knowing which of your bounds are tolerances and which are discriminators
+  // is the difference between a number that can drift and one that cannot.
   const BOUND = 0.1
   const damp = (from: number, to: number, lambda: number): number =>
     to + (from - to) * Math.exp(-lambda * DELTA)
   const forward = new THREE.Vector3()
 
-  const wobble = (dampInBodySpace: boolean): number => {
-    const p = resolveCharacterPlan('guard', 'soldier', 0, false).proportions
+  const wobble = (
+    gait: (typeof GAITS)[number],
+    dampInBodySpace: boolean,
+  ): number => {
+    const p = resolveCharacterPlan('guard', gait.role, 0, false).proportions
     const skeleton = buildCharacterSkeleton(p)
     const head = new THREE.Object3D()
     head.position.y = skeleton.headY
@@ -1657,12 +1674,13 @@ test('the head holds its target while the chest twists under it', () => {
     let worst = 0
     for (let frame = 0; frame < SECONDS / DELTA; frame += 1) {
       const time = frame * DELTA
-      gaitPhase += SOLDIER_SPEED * DELTA * SOLDIER_CADENCE
+      gaitPhase += gait.speed * DELTA * gait.cadence
       stride = damp(stride, Math.sin(gaitPhase) * 0.62, 15)
       // The chest, on all three axes: the gait's twist, the forward lean plus the
       // storm hunch plus the plan's own lean, and the turn's roll. Holding pitch and
-      // roll at zero is the one geometry where a scalar conversion happens to work.
-      const chestYaw = -stride * 0.12
+      // roll at zero is the one geometry where a scalar conversion happens to work,
+      // and two earlier versions of these tests did exactly that.
+      const chestYaw = -stride * gait.chestYawCoefficient
       const chestPitch = 0.04 + 0.22 + p.lean
       const chestRoll = -Math.sin(time * 2) * 0.08
       if (dampInBodySpace) {
@@ -1689,27 +1707,30 @@ test('the head holds its target while the chest twists under it', () => {
     return worst * (180 / Math.PI)
   }
 
-  const damped = wobble(true)
-  const converted = wobble(false)
-  assert.ok(
-    damped <= BOUND,
-    `the head wobbled ${damped.toFixed(3)} degrees with the gait, over ${BOUND.toFixed(2)}. `
-    + 'Damp the tracking in body space and convert with `solveHeadYaw` afterwards; a '
-    + 'frame change is not a motion, and damping the converted angle makes the head '
-    + 'chase the chest a fraction of a second late.',
-  )
-  // The rejected rule has to fail the bound the shipped rule passes, or this test has
-  // stopped distinguishing them and the assertion above proves nothing. Expressed
-  // against `BOUND` rather than a round number, so the two cannot drift apart — the
-  // previous version said `> 2`, sized against a gait model that was 3.7x too slow,
-  // and the real figure is 1.997.
-  assert.ok(
-    converted > BOUND,
-    `damping the already-converted target produced only ${converted.toFixed(3)} degrees `
-    + `of wobble, inside the ${BOUND.toFixed(2)} the shipped rule is held to. This test `
-    + 'is no longer distinguishing the two rules. Check the gait model against '
-    + '`updateActors` before touching the bound: cadence is radians per metre.',
-  )
+  for (const gait of GAITS) {
+    const damped = wobble(gait, true)
+    const converted = wobble(gait, false)
+    assert.ok(
+      damped <= BOUND,
+      `a ${gait.role}'s head wobbled ${damped.toFixed(3)} degrees with the gait, over `
+      + `${BOUND.toFixed(2)}. Damp the tracking in body space and convert with `
+      + '`solveHeadYaw` afterwards; a frame change is not a motion, and damping the '
+      + 'converted angle makes the head chase the chest a fraction of a second late.',
+    )
+    // The rejected rule has to fail the bound the shipped rule passes, or this test
+    // has stopped distinguishing them. Expressed against `BOUND` rather than a round
+    // number, so the two cannot drift apart — the first version said `> 2`, sized
+    // against a gait model 3.7x too slow, and the real figure for a soldier is 1.983.
+    // Swept per role because the roles differ by more than the old margin did: a
+    // reviewer measured 1.36 for a champion against 2.10 for an archer.
+    assert.ok(
+      converted > BOUND,
+      `a ${gait.role}'s rejected rule produced only ${converted.toFixed(3)} degrees of `
+      + `wobble, inside the ${BOUND.toFixed(2)} the shipped rule is held to. This test `
+      + 'is no longer distinguishing the two rules. Check the gait model against '
+      + '`updateActors` before touching the bound: cadence is radians per metre.',
+    )
+  }
 })
 
 /**
@@ -1907,6 +1928,34 @@ test('the engine wires the rig the way these tests measure it', () => {
     /torsoPivot\.scale\.y = 1 \+ breathing \* 0\.55/.test(actorPosture),
     'the chest\'s breath is no longer `1 + breathing * 0.55`. Move it in the anisotropy '
     + 'test\'s `BREATH_AMPLITUDE` in the same commit.',
+  )
+  // The gait. `the head holds its target while the chest twists under it` simulates
+  // the engine's loop, and its whole point is that the model matches — an earlier
+  // version read `actorGaitCadence` as radians per second when it is radians per
+  // metre, which left that test's guard with negative margin. These pin the four
+  // numbers the simulation reads.
+  assert.ok(
+    /actor\.gaitPhase \+= travelled \* this\.actorGaitCadence\(actor\.role\)/.test(source),
+    'the gait no longer advances by distance travelled. `the head holds its target '
+    + 'while the chest twists under it` multiplies speed by cadence on the strength of '
+    + 'this line; if the gait becomes time-based, that simulation is wrong by the '
+    + 'actor\'s speed.',
+  )
+  const cadence = source.slice(
+    source.indexOf('private actorGaitCadence('),
+    source.indexOf('private animateActorCharacter('),
+  )
+  for (const [role, value] of [['scout', '8.4'], ['archer', '7.2']] as const) {
+    assert.ok(
+      cadence.includes(`'${role}'`) && cadence.includes(value),
+      `the ${role}'s gait cadence is no longer ${value}; the wobble test's GAITS table `
+      + 'must move with it',
+    )
+  }
+  assert.ok(
+    /role === 'scout'\s*\?\s*4\.8/.test(source) && /:\s*3\.7\)/.test(source),
+    'the scout\'s or the default actor speed has changed; the wobble test\'s GAITS '
+    + 'table pairs each speed with its cadence and must move with them',
   )
 })
 
