@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
+import { actorGaitCadence, actorSpeedForRole } from '../src/game/types.ts'
 import * as THREE from 'three'
 import {
   BEAST_KINDS,
@@ -2562,77 +2563,58 @@ test('the engine wires the rig the way these tests measure it', () => {
   // is pinned here automatically. Six of the eighteen numbers were pinned before; all
   // eighteen are now, and adding a seventh role pins three more without an edit.
   assert.ok(
-    /actor\.gaitPhase \+= travelled \* this\.actorGaitCadence\(actor\.role\)/.test(source),
+    /actor\.gaitPhase \+= travelled \* actorGaitCadence\(actor\.role\)/.test(source),
     'the gait no longer advances by distance travelled. `the head holds its target '
     + 'while the chest twists under it` multiplies speed by cadence on the strength of '
     + 'this line; if the gait becomes time-based, that simulation is wrong by the '
-    + 'actor\'s speed.',
+    + 'actor\'s speed. This stays a source pin because it is a wiring fact — *what* the '
+    + 'cadence is multiplied by — and `actorGaitCadence` cannot check what its caller '
+    + 'does with the answer.',
   )
-  const cadence = source.slice(
-    source.indexOf('private actorGaitCadence('),
-    source.indexOf('private animateActorCharacter('),
-  )
-  // `soldier` and `peasant` are not named in the cadence function — they fall through
-  // to its default — so their pairing is the default's value, and naming that is the
-  // assertion. Same for the chest coefficient: `heavy` is a two-role predicate, and
-  // everyone else takes the other branch.
-  const DEFAULT_CADENCE = '6.8'
-  const DEFAULT_SPEED = 3.7
   const HEAVY = ['brute', 'champion']
+  // ## Twelve source pins, replaced by two calls
+  //
+  // The cadence and speed for each role used to be matched against `GameEngine`'s
+  // source text, because `GameEngine` cannot be constructed in a Node test. Across six
+  // review passes those patterns were walked past six different ways, and the last one
+  // is what settled it: both *default* branches asserted that a role name was **absent**
+  // from a slice, and absence is defeated by routing the name through a constant —
+  // `role === ROLE_SOLDIER ? 9.9 : 3.7)` leaves `: 3.7)` intact, keeps `'soldier'` out
+  // of the slice, and gives the soldier a speed of 9.9 with the file at 22/0.
+  //
+  // That evasion is contrived on its own. The *shape* is not: three of the six earlier
+  // evasions were also "move the token out of the window", and **a negative source
+  // assertion is exactly as strong as your confidence about where the token can live**.
+  //
+  // `actorGaitCadence` and `actorSpeedForRole` are now pure functions in `types.ts`, so
+  // this table is checked by calling them. No spelling of the engine can satisfy these
+  // assertions without returning the values — which is the same move that retired the
+  // anisotropy test's private copy of the shoulder-width correction, and the reason to
+  // prefer it is not elegance but that **reading code can always be defeated by
+  // rewriting it, and running it cannot.**
   for (const gait of GAITS) {
-    const value = String(gait.cadence)
-    const paired = value === DEFAULT_CADENCE
-      ? new RegExp(`return ${value.replace('.', '\\.')}\\s*\\n\\s*\\}`).test(cadence)
-        && !new RegExp(`'${gait.role}'`).test(cadence)
-      : new RegExp(`role === '${gait.role}'[^\\n]*\\)\\s*return ${value.replace('.', '\\.')}`)
-        .test(cadence)
-    assert.ok(
-      paired,
-      `the ${gait.role}'s gait cadence is no longer ${value} — either the value moved, `
-      + 'or it moved to another role. `GAITS` in `the head holds its target while the '
-      + 'chest twists under it` must move with it, or that test simulates physics the '
-      + 'engine does not run.',
+    assert.equal(
+      actorGaitCadence(gait.role),
+      gait.cadence,
+      `the ${gait.role}'s gait cadence is ${String(actorGaitCadence(gait.role))} in the `
+      + `engine and ${String(gait.cadence)} in GAITS. The wobble simulation below `
+      + 'multiplies speed by cadence, so a drift here models physics the engine does '
+      + 'not run — which is how an earlier version of that test came to be sized '
+      + 'against a gait 3.7x too slow.',
     )
-    // The speed pin gets the same treatment as the cadence pin above, and did not
-    // originally: `soldier` was matched by a bare `/:\s*3\.7\)/` against the whole
-    // file. That fires today — there is exactly one `: 3.7)` in `GameEngine.ts` — but
-    // it is the one pin in this loop not tied to a role, and a reviewer was right that
-    // the asymmetry is gratuitous once the better pattern exists three lines up. A pin
-    // that happens to be unique is not the same as a pin that is specific.
-    const speedChain = source.slice(
-      source.indexOf('beast?.speed ??'),
-      source.indexOf('const actor: Actor'),
+    assert.equal(
+      actorSpeedForRole(gait.role),
+      gait.speed,
+      `the ${gait.role}'s speed is ${String(actorSpeedForRole(gait.role))} in the engine `
+      + `and ${String(gait.speed)} in GAITS. Cadence is radians per *metre*, so the `
+      + 'simulated frequency is this speed times that cadence and both must be right.',
     )
-    const speedPaired = gait.speed === DEFAULT_SPEED
-      ? new RegExp(`:\\s*${String(gait.speed).replace('.', '\\.')}\\)`).test(speedChain)
-        && !new RegExp(`'${gait.role}'`).test(speedChain)
-      : new RegExp(`role === '${gait.role}'\\s*\\n?\\s*\\?\\s*${String(gait.speed).replace('.', '\\.')}`)
-        .test(speedChain)
-    assert.ok(
-      speedChain.length > 100 && speedPaired,
-      `the ${gait.role}'s speed is no longer ${String(gait.speed)} — either the value `
-      + 'moved, or it moved to another role. GAITS pairs each speed with its cadence '
-      + 'and the simulation multiplies the two, so a swap models the wrong physics '
-      + 'while every individual number is still present.',
-    )
-    // Read out of production by *calling* it, not by parsing it. This assertion has now
-    // been wrong twice in two different ways. First it compared `GAITS` against a
-    // hard-coded `0.08 : 0.12` written three lines up — two test-side constants agreeing
-    // with each other, blind to the engine. Then it parsed the coefficients out of the
-    // chest-yaw expression, which reads production but pins its *spelling*: a reviewer
-    // hoisted the term out of the matched window and the pin never saw it.
-    //
-    // `chestGaitYaw` exists so this can be a call. **A test that drives production
-    // cannot be evaded by rewriting production**, which is the entire difference between
-    // this and the six source regexes it replaces — and it is the same move that
-    // `setCharacterShoulderWidth` made for the anisotropy test, for the same reason.
     assert.equal(
       chestGaitYaw(1, HEAVY.includes(gait.role)),
       -gait.chestYawCoefficient,
       `GAITS gives the ${gait.role} a chest yaw coefficient of `
       + `${String(gait.chestYawCoefficient)}; the engine turns a unit stride into `
-      + `${String(chestGaitYaw(1, HEAVY.includes(gait.role)))}. The wobble simulation `
-      + 'multiplies this by the stride, so the two must not drift.',
+      + `${String(chestGaitYaw(1, HEAVY.includes(gait.role)))}.`,
     )
   }
   assert.ok(

@@ -116,6 +116,8 @@ import {
   getMaxStamina,
   getShopItemPrice,
   getThreatTier,
+  actorGaitCadence,
+  actorSpeedForRole,
   isBeastRole,
   isFactionAllegiance,
   isRandomWorldEventKind,
@@ -4466,7 +4468,7 @@ export class GameEngine {
       const roleSpeed = Math.max(actor.speed, 0.1)
       const desiredMotionBlend = THREE.MathUtils.clamp(actor.visualSpeed / roleSpeed, 0, 1.18)
       actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, desiredMotionBlend, 9, delta)
-      actor.gaitPhase += travelled * this.actorGaitCadence(actor.role)
+      actor.gaitPhase += travelled * actorGaitCadence(actor.role)
       const desiredStride = Math.sin(actor.gaitPhase) * 0.62 * actor.motionBlend
       actor.stride = THREE.MathUtils.damp(actor.stride, desiredStride, 15, delta)
 
@@ -4728,7 +4730,7 @@ export class GameEngine {
     const yaw = Math.atan2(away.x, away.z)
     actor.mesh.rotation.y = dampAngle(actor.mesh.rotation.y, yaw, 9, delta)
     actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 1, 9, delta)
-    actor.gaitPhase += travelled * this.actorGaitCadence(actor.role)
+    actor.gaitPhase += travelled * actorGaitCadence(actor.role)
     actor.stride = THREE.MathUtils.damp(
       actor.stride,
       Math.sin(actor.gaitPhase) * 0.62 * actor.motionBlend,
@@ -4783,7 +4785,7 @@ export class GameEngine {
     const travelled = this.moveActorWithSteering(actor, actor.chargeDirection, step)
     actor.mesh.rotation.y = Math.atan2(actor.chargeDirection.x, actor.chargeDirection.z)
     actor.motionBlend = 1.18
-    actor.gaitPhase += travelled * this.actorGaitCadence(actor.role)
+    actor.gaitPhase += travelled * actorGaitCadence(actor.role)
     actor.stride = Math.sin(actor.gaitPhase) * 0.62
     this.animateActorCharacter(actor, delta, 0)
     this.resolveBoarChargeContact(actor)
@@ -12807,24 +12809,7 @@ export class GameEngine {
         this.enemyHealthMultiplier(allegiance) *
         Math.max(0.1, options.healthScale ?? 1),
     )
-    const speed =
-      beast?.speed ??
-      (role === 'scout'
-        ? 4.8
-        : role === 'champion'
-          ? 4.15
-          : role === 'archer'
-            ? 3.2
-            : role === 'brute'
-              ? 2.6
-              : role === 'commander'
-                ? 0
-                : // Slower than a soldier at a walk, faster than one in a panic — the
-                  // 1.15× every routing actor gets makes a bolting villager outrun a
-                  // strolling one, which is the read.
-                  role === 'peasant'
-                  ? 3.1
-                  : 3.7)
+    const speed = beast?.speed ?? actorSpeedForRole(role)
     const actor: Actor = {
       id: options.generatedSpawnId
         ? `generated:${options.generatedSpawnId}`
@@ -14117,14 +14102,6 @@ export class GameEngine {
         -0.1 - Math.abs(stride) * 0.4 + pose.flinch * 0.9 + pose.stagger * 0.7
       rig.cloak.rotation.z = Math.sin(this.elapsed * 5.5 + stride * 3) * 0.16
     }
-  }
-
-  private actorGaitCadence(role: ActorRole): number {
-    if (isBeastRole(role)) return role === 'wolf' ? 9.6 : role === 'boar' ? 8.8 : 5.2
-    if (role === 'scout') return 8.4
-    if (role === 'brute' || role === 'champion') return 5.8
-    if (role === 'archer') return 7.2
-    return 6.8
   }
 
   private animateActorCharacter(actor: Actor, delta: number, lookYaw: number): void {
