@@ -773,6 +773,18 @@ no new dependencies.
   connecting them came from one person at the end with nothing to check it against.
   Tidiness is cheap to test: **compare the shape of an explanation against the record of
   what happened, and be suspicious in proportion to how well it comes out.**
+  Two things make this the most useful entry in the section rather than the smallest.
+  **Why it works:** a true explanation of a messy sequence has to *be* messy, because it
+  has to carry the exceptions. Tidiness is therefore evidence of **selection** — and
+  selection is the one operation that leaves no trace in its own output, which is the same
+  fact as a count carrying no trace of the pattern that produced it, one level up.
+  **And who can use it:** every other rule here is something an *author* does — enumerate
+  the population, verify the mutation, carry the derivation, report in the past tense. All
+  of them require the person most likely to be wrong to remember to be careful, which is
+  precisely the thing this section records failing at least six times. This one **a reader
+  can apply to someone else's prose with no access to the author's process.** It is the
+  only entry in the file that survives its author not co-operating, and on the evidence
+  gathered here that is the property worth optimising for.
   There is a structural consequence, and it is the strongest practical thing this work
   produced. **The correction neither participant can make is the one from someone with no
   stake in the exchange.** Two parties in a review loop audit each other's *arithmetic*
