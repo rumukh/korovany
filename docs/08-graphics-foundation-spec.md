@@ -731,29 +731,47 @@ uniformly backed, and nothing in the prose distinguishes the two kinds. Measured
 | Vertex-colour attribute presence | `tests/art.test.ts` | red test |
 | Instanced-mesh material sharing | `tests/art.test.ts` | red test |
 | Determinism from `artVariation` | `tests/art.test.ts` | red test |
-| **Export block ordering in `art/index.ts`** | **none** — no test, and `.oxlintrc.json` carries exactly two rules, neither about sorting | **silently** |
+| **Export block ordering in `art/index.ts`** | **enforced.** `tests/art.test.ts` parses the barrel and fails on any block whose values run or types run leaves ordinal order, naming the pair; a companion test rejects a name exported twice. Both prove their detector on doped input *before* believing its verdict on the file | **silently**, until this test |
 | **Label namespacing (`npc:`, `props:`)** | tests *use* `npc:torso` / `props:cart`; **none asserts a caller namespaced anything** | **silently** |
 | **"Do not `.clone()` a stylized material"** | **partly enforced.** `tests/worldArt.test.ts` walks a streamed scene and fails any material advertising `stylizedSurfacePreset` without the injection — proven red by mutation, naming all 5 affected meshes. **Covers the world scene only**; `GameEngine`'s character, fauna and caravan materials are not in that scene | silently, at runtime, as unbanded shading |
 
 The quantitative contract is genuinely enforced — every budget in §7 has a test that
-*spends* it, not merely one that compares it. **The conventions are not**, and the first
+*spends* it, not merely one that compares it. **The conventions were not**, and the first
 was violated within hours of the first sibling branch: `applyHeadPose` landed at line 121
 of `src/game/art/index.ts` where its sorted position is 115, and all four CI gates
 reported success on two successive commits carrying it. That is correct behaviour by every
 instrument involved. It is also the entire point.
 
-**Treat the unbacked rows as advisory and the backed rows as load-bearing.** If you need an
-advisory rule to hold, the cheapest correct move is to add its instrument in the same PR as
-the reliance. A rule whose only enforcement is that someone remembers it has a half-life,
-and this table exists so that the half-life is visible rather than discovered.
+That row now has an instrument, and building it is the clearest argument in this document
+for building them. Getting one cosmetic two-line fix reviewed produced, between two
+sessions: a first pass that reported the whole export list unsorted — sorting across module
+groups, when the convention is per block; a verification anchored on a name absent from the
+run, which measured an empty slice and printed `sorted: true`; an edit that duplicated one
+name and dropped another, which `tsc` accepts in a barrel without complaint; a first draft
+of the detector itself that used `localeCompare` **and** `>=` joined by `||`, two
+comparators for one question, in the function whose own comment forbade exactly that; and
+finally a case-insensitive `Group-Object`, PowerShell's default, reporting three duplicate
+exports that do not exist — `artVariation` is a value and `ArtVariation` is its options
+type. **Five instrument failures around a change that moved two lines.** The rule had been
+kept by care for the whole of Wave 1, and care had already missed `bridgeParts` sitting
+ahead of `brazierParts` in the `PropKit` run, which no reviewer ever saw and the new test
+found in its first run.
 
-The last three rows share a shape worth naming, because it is easy to mistake for coverage:
-**a rule can be tested at its mechanism and unenforced at its call sites.** The clone hazard
-had five assertions behind it and not one fired when a caller cloned and forgot to adopt —
-`tests/worldArt.test.ts` now closes that for the world scene, and the character path is
-still open. Two of these rows were written as a flat "none" in the first draft of this table
-and were wrong — grepping the tests finds hits for all three. The hits are *uses*, not
-*assertions*, and the difference is the whole of what this section is for.
+**Treat any remaining unbacked row as advisory and the backed rows as load-bearing.** If you
+need an advisory rule to hold, the cheapest correct move is to add its instrument in the same
+PR as the reliance. A rule whose only enforcement is that someone remembers it has a
+half-life, and this table exists so that the half-life is visible rather than discovered.
+
+The three convention rows shared a shape worth naming, because it is easy to mistake for
+coverage: **a rule can be tested at its mechanism and unenforced at its call sites.** The
+clone hazard had five assertions behind it and not one fired when a caller cloned and forgot
+to adopt — `tests/worldArt.test.ts` now closes that for the world scene, and the character
+path is still open. Export ordering is now closed outright. **Label namespacing is the one
+left**, and it is the purest example of the shape: the tests are full of `npc:torso` and
+`props:cart`, and not one of them asserts that a caller namespaced anything. Two of these
+rows were written as a flat "none" in the first draft of this table and were wrong —
+grepping the tests finds hits for all three. The hits are *uses*, not *assertions*, and the
+difference is the whole of what this section is for.
 
 A note on the instrument that closed it, because it is the cheapest habit in this document.
 A check that has never been observed failing is indistinguishable from a check that cannot
