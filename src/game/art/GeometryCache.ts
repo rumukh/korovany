@@ -32,7 +32,35 @@ export class GeometryCache {
     return geometry
   }
 
-  /** Drops one reference and disposes the geometry when the last one goes. */
+  /**
+   * Drops one reference and disposes the geometry when the last one goes.
+   *
+   * **Currently unreachable, and deliberately so.** The only consumer is
+   * `GameEngine.acquireArtGeometry`, which acquires and never releases; the cache is
+   * freed in one `dispose()` at teardown. Measured on the shipped tree: one `acquire`
+   * call site, zero `release` call sites.
+   *
+   * That matters before anyone adds the first one, because **this count is keyed, not
+   * holder-identified, and the distinction is not recoverable from a key.** Two regions
+   * holding `'tree'` and one region releasing twice produce the identical call sequence.
+   * Measured on this class:
+   *
+   *     A and B acquire 'tree'          references 2
+   *     A releases                      references 1   nothing disposed
+   *     A releases again                references 0   entry deleted, geometry DISPOSED
+   *                                     — while B is still drawing it
+   *
+   * So the only anomaly this method can detect is `!existing`, which is the case where
+   * the entry is already gone and there is nothing left to corrupt. **It can see the
+   * harmless mistake and not the harmful one.** A throw or a warning added here would
+   * fire exactly when no damage is possible and stay silent exactly when damage is
+   * certain — the reference count would look guarded without being so.
+   *
+   * If release ever gains real callers, the fix is holder identity — a token issued by
+   * `acquire` and consumed by `release` — because that is the minimum that distinguishes
+   * one holder releasing twice from two holders releasing once. A better message or a
+   * key-level guard cannot substitute for it, and should not be mistaken for it.
+   */
   release(key: string): void {
     const existing = this.entries.get(key)
     if (!existing) return
