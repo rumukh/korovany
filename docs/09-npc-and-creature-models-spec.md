@@ -318,6 +318,27 @@ no new dependencies.
   which removes the tell that normally prompts the question — an unexplained subset.
   **When a scope travels from one assertion to another, its justification does not
   travel with it.**
+- **An instrument fails silently, and you catch it by looking at its output rather than
+  at its verdict.** Checking work with a script, a grep or a mutation harness is only as
+  good as the script, and a broken one does not announce itself: it returns a clean,
+  plausible, wrong answer. A sort check anchored on a name absent from the file measured
+  an empty slice and reported *sorted: true*. A mutation that never applied printed
+  *22 pass, 0 fail*, which is exactly what a working guard prints. A regex over-escaped
+  for the shell returned zero hits, which reads as *the pins are gone*.
+  The tempting generalisation — that instruments err toward "nothing wrong" — **is
+  false, and was refuted by a session that built one.** A case-insensitive grouping
+  invented three duplicates that did not exist; a culture-aware sort reported four
+  blocks unordered that were correctly ordered under the comparator the file uses.
+  Direction follows the comparator's bias and is not invariant.
+  What is invariant across every instance either session recorded: **not one was caught
+  by the verdict. Every one was caught by looking at what the instrument actually
+  produced** — a count, a diff, a matched line — and noticing it contradicted something
+  already known. So the operational forms are all the same shape: confirm a mutation
+  applied *and compiled* before believing a test result; confirm a query matched
+  something before believing a null; assert a parse found the expected order of
+  magnitude of items before believing anything about them, and put the count in the
+  failure message. **A detector must be made to fire on doped input before its silence
+  on real input means anything.**
 - **A measurement is a claim with a timestamp nobody writes down.** Every other rule
   here targets claims that were wrong. This one is about claims that were *right and
   stopped being* — which is a different failure, because a measurement carries its own
