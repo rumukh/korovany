@@ -282,6 +282,21 @@ no new dependencies.
   evidence available that the mechanism is real and that a rule is not a defence
   against it. The rule is about where to *look first*, not a claim about where every
   defect lives.
+- **A measurement is a claim with a timestamp nobody writes down.** Every other rule
+  here targets claims that were wrong. This one is about claims that were *right and
+  stopped being* — which is a different failure, because a measurement carries its own
+  authority and no expiry date, so nothing about it invites re-checking.
+  It fired repeatedly during the head-rig work in both directions: a reviewer supplied
+  gaze figures that were correct for the tip it read and stale by the time they were
+  read, by the identical mechanism it was reporting on; a claim that a commit was in
+  `main` was false when made, true fourteen minutes later, and corrected in both
+  directions inside one exchange. Neither party was careless — one needed a check, the
+  other needed a timestamp.
+  The mechanical form: **do not carry the value, carry the way to re-derive it.**
+  `git log --oneline -1 origin/main` costs nothing and is never stale, where a SHA in a
+  message has a shelf life of minutes on an active repository. In a test, the same rule
+  is why a figure computed by the assertion that quotes it cannot go stale without going
+  red, and a figure copied from a mutation run can.
 - **Before offering a cause, check whether your own code already answers it.** The
   sharpest instance this work produced: a docblock blamed head roll for a 39%
   discrepancy in a gaze figure, when `solveHeadYaw`'s signature — written ten commits
