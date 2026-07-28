@@ -506,6 +506,17 @@ no new dependencies.
   a block or a context wider than the claim returns a superset that reads as the
   answer**, and all three instances produced output that was true and answered a question
   nobody asked.
+  A fourth arrived from the author's side, in prose rather than in a query. A pull request
+  opened as evidence-only, grew three source extractions during review, and merged with a
+  header still reading *"evidence and test hardening only — plus one docblock line"* over
+  a diff carrying **241 production additions across four source files**. The body had been
+  updated throughout; the summary line had not. What makes it the sharpest of the four is
+  that the same description carried, verbatim, a note explaining that it deliberately
+  omitted a commit count *"because a count in prose is a claim nothing re-checks"*.
+  **The author removed the number and kept the adjective.** Both are claims nothing
+  re-checks; only the one that had already bitten him was defended against — which is
+  *enumerate the failure you were shown*, applied by an author to his own summary line,
+  inside the sentence warning about it.
 - **The guards this work produced almost all check things that are free to check.** Six
   mechanical forms came out of eighteen review passes — confirm the mutation applied,
   confirm it compiled, confirm the query matched, dope the detector before believing its
