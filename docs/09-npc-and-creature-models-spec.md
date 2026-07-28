@@ -407,16 +407,35 @@ no new dependencies.
   report in the past tense, and there is no window at all.**
   With one condition that is easy to miss and makes the difference between the form
   working and merely looking like it works: **the timestamp has to be the measurement's,
-  not the sentence's.** The reviewer who proposed this form demonstrated it on its own
-  next message — *"verified at 22:40:07 against `9a85bc2`"* — and the commit that
-  superseded `9a85bc2` had landed at 22:38:39, **88 seconds before that stated time**. The
-  sentence was still honest about what it had established, but the hour attached to it was
-  the hour of writing rather than the hour of running, and under that reading the claim was
-  false: at 22:40:07 the tip was not what was verified. A past-tense claim carries exactly
-  one fact the present-tense one lacks — *when* — so a timestamp taken from the clock at
-  authoring time is decoration, and re-introduces the decay it was adopted to remove. The
-  mechanical form is the same as everywhere else here: **emit the timestamp from the
-  command that took the measurement**, not from the writer.
+  not the sentence's.** A past-tense claim carries exactly one fact the present-tense one
+  lacks — *when* — so a timestamp taken from the clock at authoring time is decoration,
+  and re-introduces the decay it was adopted to remove. The mechanical form is the same as
+  everywhere else here: **emit the timestamp from the command that took the measurement**,
+  not from the writer.
+  **This rule was derived from an instance that did not exhibit it, and the correction is
+  worth more than the example was.** One party read another's *"verified at 22:40:07"*
+  against a superseding commit timestamped 22:38:39 and concluded the hour was the
+  author's; a stated interval of 12 seconds was likewise read as wrong against a measured
+  113. Both readings were mistaken. The 12 was anchored to the *resolve* and the 113 to the
+  *previous commit* — two correct measurements of different gaps — and the timestamp had
+  in fact been emitted by `Get-Date` inside the same invocation as the gates, after they
+  finished.
+  What makes this worth keeping rather than deleting is why the error was not avoidable:
+  **a timestamp in prose carries no evidence of its own provenance.** From the reader's
+  side the sentence is byte-identical whether the clock was the instrument's or the
+  author's. So the rule **cannot be verified from the artefact, only from the practice** —
+  which is the same shape as *verify the mutation, not just the outcome*, and a stronger
+  justification for the rule than a genuine violation would have been. A correct
+  conclusion arriving with a wrong supporting story is this catalogue's most repeated
+  event, and the story is the part nobody re-measures, because the conclusion already
+  passed.
+  And the tense fix has a limit found in the same episode, worth stating beside it:
+  **a past-tense claim cannot decay, but its referent can cease to be resolvable.** The
+  commit that reviewer verified was dropped when this branch was rebased — it exists in no
+  branch, reachable only from one worktree. The claim about it is still true and always
+  will be; the object it names is gone from shared history. So *"cannot go stale"* is
+  precise about the claim and silent about the subject, and a claim naming a SHA should
+  name one that will still resolve, or say what it was verified *for*.
   One more thing came out of measuring that gap, and it is the sharpest instance the work
   produced because every party measured and every party got a different answer. The
   question — *is a reviewer's baseline falling further behind?* — was answered three ways
