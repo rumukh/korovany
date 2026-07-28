@@ -194,6 +194,7 @@ export {
   crateGeometry,
   curtainWallParts,
   deadfallGeometry,
+  displaceSeamless,
   fencePanelParts,
   gateParts,
   groundCoverGeometry,

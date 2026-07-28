@@ -7,8 +7,10 @@ import { GeometryCache } from '../src/game/art/GeometryCache.ts'
 import {
   bridgeParts,
   buildingParts,
+  displaceSeamless,
   ensureVertexColors,
   fencePanelParts,
+  latheProfile,
   mergeAll,
   mergePropParts,
   monumentParts,
@@ -3373,4 +3375,94 @@ test('the phantom-pin check detects a single phantom, not thirty', () => {
   } finally {
     library.dispose()
   }
+})
+
+// **Routing is not efficacy**, and the first attempt at this test was vacuous — worth
+// recording, because it failed for a reason the foundation session had itself established
+// an hour earlier.
+//
+// That session proposed asserting the repair reunites a lathe seam, predicting it would
+// fail against the old key. It does not, and cannot: a `LatheGeometry` seam's coincident
+// vertices carry **identical normals**, so `displaceGeometry` moves them identically and
+// splits none of them with no repair at all. Measured. **Faceted source normals tear; radial ones
+// are immune** — their rule, refuting their own suggested test, and mine for accepting it
+// without checking that the subject could exhibit the fault.
+//
+// So the subject has to be a geometry whose coincident positions carry *differing* normals,
+// which is what `mergeAll` seams and hard-crease lofts produce and what all eleven call
+// sites actually feed. Constructed here explicitly rather than hoped for.
+//
+// What was broken: the repair keyed groups with `toFixed`, which formats sign separately
+// from digits, so `0` keyed as `"0.0000"` and `-4.9e-18` — the same point — as `"-0.0000"`.
+// It both missed real groups and invented ones, the latter averaging two vertices that were
+// never coincident and so moving geometry that should not move.
+//
+// **The counts that finding travelled with were not reproducible, and that is its own
+// entry.** Two sessions measured "Cylinder" for that table, both correctly, and got 28/26
+// and 22/20 — because the row named a builder and the number was a property of the radial
+// segment count. Swept 6…16 segments the pair climbs linearly while the *difference* stays
+// at 2 throughout. The verdict was invariant, the counts were fixture-bound, and the table
+// put them side by side with nothing to distinguish them. `PropKit.displaceSeamless` now
+// names every fixture beside its number. Prefer the invariant to the reading: only one of
+// the two survives a change of input.
+//
+// This test needs none of those numbers. It builds its own fixture, finds pairs by distance
+// rather than by any key, and asserts on identity of the pair set — so it is reproducible
+// from its own body.
+test('the seam repair reunites vertices that displacement would pull apart', () => {
+  const geometry = latheProfile(
+    [
+      { x: 0.001, y: 0 },
+      { x: 0.16, y: 0 },
+      { x: 0.19, y: 0.26 },
+      { x: 0.18, y: 0.28 },
+      { x: 0.001, y: 0.28 },
+    ],
+    { segments: 7, name: 'seam-probe' },
+  )
+  const position = geometry.getAttribute('position')
+  const normal = geometry.getAttribute('normal')
+
+  // Coincident by distance, so this cannot inherit the keying defect it tests for.
+  const pairs: Array<[number, number]> = []
+  for (let a = 0; a < position.count; a += 1) {
+    for (let b = a + 1; b < position.count; b += 1) {
+      const distance = Math.hypot(
+        position.getX(a) - position.getX(b),
+        position.getY(a) - position.getY(b),
+        position.getZ(a) - position.getZ(b),
+      )
+      if (distance < 1e-6) pairs.push([a, b])
+    }
+  }
+  assert.ok(pairs.length > 0, 'the probe geometry has no coincident vertices to reunite')
+
+  // Give one of each pair a different normal. This is the `mergeAll`-seam condition, and
+  // it is what makes the pair *able* to tear — without it the test proves nothing.
+  for (const [, b] of pairs) {
+    normal.setXYZ(b, -normal.getX(b), -normal.getY(b), -normal.getZ(b))
+  }
+  normal.needsUpdate = true
+
+  const displaced = displaceSeamless(geometry, {
+    amplitude: 0.05,
+    frequency: 3,
+    seed: 7,
+  })
+  const after = displaced.getAttribute('position')
+  const split = pairs.filter(([a, b]) => {
+    const distance = Math.hypot(
+      after.getX(a) - after.getX(b),
+      after.getY(a) - after.getY(b),
+      after.getZ(a) - after.getZ(b),
+    )
+    return distance > 1e-6
+  })
+  assert.deepEqual(
+    split.map(([a, b]) => `${String(a)}~${String(b)}`),
+    [],
+    'these vertices were coincident before displacement and are not after, so the repair '
+      + 'was called and did nothing — routing without efficacy',
+  )
+  displaced.dispose()
 })
