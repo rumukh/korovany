@@ -1379,6 +1379,13 @@ test('the chest lends the head its breath but not its shoulders', () => {
   // The roll axis silently lost its endpoint for four commits and this guard passed
   // throughout, because 396 poses and 462 poses both clear a floor. A count that is
   // published has to be asserted exactly, against the product of its own axes.
+  //
+  // And the modulo form that replaced it was a second member of the same class rather
+  // than a fix. `lookStates % LOOK_POSES === 0` is satisfied by dropping the *pitch*
+  // endpoint instead of the roll one: 385 poses over 120 sweeps is 46,200, and
+  // 46,200 % 462 === 0. A reviewer found that. **A divisibility check on a count is a
+  // check on the number of sweeps, not on the size of one** — so it is asserted
+  // directly now, against the plans and configurations that produce it.
   const LOOK_POSES =
     (LOOK_PITCH.steps + 1) * (LOOK_YAW.steps + 1) * (LOOK_ROLL.steps + 1)
   assert.equal(
@@ -1388,10 +1395,12 @@ test('the chest lends the head its breath but not its shoulders', () => {
     + '`CharacterKit.ts` and `docs/09`. Update both, or restore the axis that shrank.',
   )
   assert.equal(
-    lookStates % LOOK_POSES,
-    0,
-    `the look grid visited ${String(lookStates)} states, which is not a whole number of `
-    + `${String(LOOK_POSES)}-pose sweeps — an axis is not reaching its declared endpoint.`,
+    lookStates,
+    55_440,
+    `the look grid visited ${String(lookStates)} states, not the 55,440 that 462 poses `
+    + 'across every plan and shoulder/breath configuration produce. Asserted as a total '
+    + 'rather than as a multiple of 462, because a multiple is also what you get when a '
+    + 'different axis loses an endpoint and the sweep count absorbs it.',
   )
   assert.ok(states > 40_000, `swept only ${String(states)} states; the grid has collapsed`)
   assert.ok(
@@ -1756,6 +1765,19 @@ test('the head tracks its target through the chest, not past it', () => {
       AXES.reduce((total, axis) => total * (axis.steps + 1), 1),
     'the grid has collapsed; every declared endpoint must be visited',
   )
+  // The check above is self-consistent, not a pin: it compares the loop's count against
+  // the product of the same axes the loop reads, so widening an axis moves both sides
+  // together and it stays green. A reviewer took the direction-degenerate head-roll axis
+  // from 2 steps to 3 and the published total went 6,174,630 -> 8,232,840 with the whole
+  // file at 22/0. **A count that is quoted elsewhere has to be pinned to a literal**, or
+  // the only thing verified is that the loop can multiply.
+  assert.equal(
+    states,
+    6_174_630,
+    `the gaze sweep now visits ${String(states)} states, not the 6,174,630 published in `
+    + 'this docblock, `GameEngine.ts` and `docs/09`. That is not necessarily wrong — an '
+    + 'axis may have been widened deliberately — but three files quote the old figure.',
+  )
   // The solve is exact on a chain of pure rotations — that is its whole contract, and
   // an earlier version of it was not, because it ignored the head's own pitch. What is
   // left is the two scales above the head, each bounded by the asymmetry that causes
@@ -1860,23 +1882,30 @@ test('the head tracks its target through the chest, not past it', () => {
   const asDegrees = (radians: number): number => radians * (180 / Math.PI)
   const worseShare = (scalarWorseThanNothing / rejectedStates) * 100
   assert.ok(
-    Math.abs(worseShare - 3.904) < 0.01,
+    Math.abs(worseShare - 3.904) < 0.0005,
     `the scalar rule is now worse than no correction in ${worseShare.toFixed(4)}% of states, `
     + 'not the 3.904% quoted beside it. This figure was carried as "4.2%" through four '
     + 'files and four commits without ever being computed by anything — it needs both '
     + 'rejected rules evaluated over one grid, which nothing did until now.',
   )
-  // Pinned to a hundredth of a degree. That is a discriminator, not a tolerance: it is
-  // tight enough that any real change to the grid or the rules moves it, and the
-  // failure message carries the new value, so the docblocks quoting these get corrected
-  // by being told rather than by someone remembering to re-measure.
+  // Pinned to **half** the last published digit, not a whole one. The original `< 0.01`
+  // against a two-decimal figure was the wrong bound by exactly a factor of two: 43.6448
+  // could drift to 43.6494 — which *displays* as 43.65, a different number in every
+  // docblock quoting it — and stay green. A reviewer produced that drift for all three
+  // rows and the share.
+  //
+  // The rule the tolerance has to encode is not "close enough" but **"still rounds to
+  // what we published"**, so it is half a unit in the last place shown. A guard on a
+  // published figure is really a guard on the *rendering* of that figure, and the two
+  // differ by a factor of two — which is invisible unless you ask what the assertion is
+  // protecting, rather than what it is measuring.
   for (const [rule, expected, worthIt] of [
     ['raw `lookYaw`, authored in body space and used in chest space', 43.64, rejected.raw],
     ['a scalar `lookYaw - chestYaw`', 20.30, rejected.scalar],
     ['the solve without the head\'s own pitch', 9.71, rejected.nopitch],
   ] as const) {
     assert.ok(
-      Math.abs(asDegrees(worthIt) - expected) < 0.01,
+      Math.abs(asDegrees(worthIt) - expected) < 0.005,
       `${rule} now leaves ${asDegrees(worthIt).toFixed(4)} degrees, not the ${String(expected)} `
       + 'quoted beside it. Nothing is necessarily broken — the grid may simply have '
       + 'moved — but every docblock in `CharacterKit.ts`, `GameEngine.ts` and `docs/09` '
@@ -2249,8 +2278,8 @@ test('the head holds its target while the chest twists under it', () => {
     // asserted to a thousandth of a degree; if the gait model, the damping rate or the
     // rejected rule moves, this names the new value instead of a reviewer doing it.
     assert.ok(
-      Math.abs(converted - REJECTED_WOBBLE[gait.role]) < 0.001,
-      `a ${gait.role}'s rejected rule now produces ${converted.toFixed(3)} degrees of `
+      Math.abs(converted - REJECTED_WOBBLE[gait.role]) < 0.0005,
+      `a ${gait.role}'s rejected rule now produces ${converted.toFixed(4)} degrees of `
       + `wobble, not the ${REJECTED_WOBBLE[gait.role].toFixed(3)} recorded beside it. `
       + 'Nothing is necessarily broken — but the comment above and any docblock quoting '
       + 'these figures are now wrong, and this assertion exists so that they get '
@@ -2506,6 +2535,10 @@ test('the engine wires the rig the way these tests measure it', () => {
   const DEFAULT_CADENCE = '6.8'
   const DEFAULT_SPEED = 3.7
   const HEAVY = ['brute', 'champion']
+  const chestYawExpression = actorPosture.slice(
+    actorPosture.indexOf('torsoPivot.rotation.y ='),
+    actorPosture.indexOf('torsoPivot.rotation.z ='),
+  )
   for (const gait of GAITS) {
     const value = String(gait.cadence)
     const paired = value === DEFAULT_CADENCE
@@ -2542,19 +2575,40 @@ test('the engine wires the rig the way these tests measure it', () => {
       + 'and the simulation multiplies the two, so a swap models the wrong physics '
       + 'while every individual number is still present.',
     )
+    // Read out of production, not restated here. This assertion previously compared
+    // `GAITS` against a hard-coded `0.08 : 0.12` written three lines up — two test-side
+    // constants agreeing with each other, which is true no matter what the engine does.
+    // A reviewer changed production's 0.12 to 0.13 and the whole file stayed 22/0.
+    //
+    // **That is the same defect as a test carrying its own copy of the correction it is
+    // meant to be checking**, which this file already caught once for the shoulder-width
+    // counter-scale — and I reintroduced it in the commit that fixed the cadence pins.
+    // The class is not "hard-coded numbers"; it is *comparing two things you control*.
+    // The cadence and speed pins above escape it only because they read `source`.
+    const coefficients =
+      /-actor\.stride \* \(heavy \? ([\d.]+) : ([\d.]+)\)/.exec(chestYawExpression)
+    assert.ok(
+      coefficients,
+      'the chest yaw no longer multiplies `actor.stride` by a `heavy ? x : y` pair, so '
+      + 'the coefficients GAITS simulates cannot be read out of the engine at all. '
+      + 'Whatever replaced it needs pinning here, or the wobble test is modelling a '
+      + 'gait the engine does not have.',
+    )
     assert.equal(
       gait.chestYawCoefficient,
-      HEAVY.includes(gait.role) ? 0.08 : 0.12,
+      Number(HEAVY.includes(gait.role) ? coefficients[1] : coefficients[2]),
       `GAITS gives the ${gait.role} a chest yaw coefficient of `
-      + `${String(gait.chestYawCoefficient)}, but the engine's \`heavy\` predicate puts `
-      + `it on ${HEAVY.includes(gait.role) ? '0.08' : '0.12'}.`,
+      + `${String(gait.chestYawCoefficient)}; the engine gives it `
+      + `${HEAVY.includes(gait.role) ? coefficients[1] : coefficients[2]}. The wobble `
+      + 'simulation multiplies this by the stride, so the two must not drift.',
     )
   }
   assert.ok(
     /const heavy = actor\.role === 'brute' \|\| actor\.role === 'champion'/.test(source),
-    'the `heavy` predicate has changed, so GAITS\' 0.08-vs-0.12 split no longer '
-    + 'matches the engine. The assertion above compares against a hard-coded pair of '
-    + 'role names and this is what keeps that honest.',
+    'the `heavy` predicate has changed, so GAITS\' split across the two coefficients no '
+    + 'longer matches the engine. The assertion above reads both values out of source '
+    + 'but still decides which role gets which from a hard-coded pair of names, and '
+    + 'this is what keeps that honest.',
   )
   // Which stride the chest reads, and what a stagger does to it. Both are load-bearing
   // for the joint-reachability model the gaze test's comment describes, and a previous
@@ -2581,10 +2635,6 @@ test('the engine wires the rig the way these tests measure it', () => {
     'the chest\'s yaw no longer reads `actor.stride`. If it now reads `pose.stride`, a '
     + 'stagger really would zero it, and the gaze test\'s reachability comment — which '
     + 'says the opposite — becomes wrong in the other direction.',
-  )
-  const chestYawExpression = actorPosture.slice(
-    actorPosture.indexOf('torsoPivot.rotation.y ='),
-    actorPosture.indexOf('torsoPivot.rotation.z ='),
   )
   assert.ok(
     chestYawExpression.length > 40 && !/stagger/.test(chestYawExpression),

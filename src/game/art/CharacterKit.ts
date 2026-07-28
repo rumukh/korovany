@@ -864,10 +864,16 @@ export function buildCharacterSkeleton(p: CharacterProportions): CharacterSkelet
  *
  * This solve is exact wherever the chest's forward axis still points forward — the
  * linear equation has two roots half a turn apart and `atan2` selects the one facing
- * `+Z`, which requires `M₁₁ > 0`. Over the swept envelope `min M₁₁` is 0.55 and the
- * equation is never near-degenerate, so the precondition holds with room to spare for
- * anything the engine writes. It is stated because this function is exported and a
- * caller inverting a chest would get a head exactly backwards, silently.
+ * `+Z`, which requires `M₁₁ > 0`. Over the swept envelope `min M₁₁` is **0.5301**, at
+ * chest `[0.70, 0.48, 0.30]` with head pitch 0.18, and the equation is never
+ * near-degenerate — so the precondition holds with room to spare for anything the
+ * engine writes. It is stated because this function is exported and a caller inverting
+ * a chest would get a head exactly backwards, silently.
+ *
+ * That figure read 0.55 for one commit, from an estimate rather than an enumeration.
+ * It was safe either way, which is exactly why nobody would have checked it: **a
+ * margin quoted loosely still sounds like a margin**, and the only thing distinguishing
+ * a measured bound from a remembered one is whether someone ran it.
  *
  * It takes the head's own pitch because the pitch is applied *after* it, in the same
  * Euler, and therefore changes where the head ends up pointing. Roll does not: a
