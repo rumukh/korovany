@@ -1163,7 +1163,102 @@ test('the ink cost function prices hierarchies this world never happens to conta
   instanced.dispose()
 })
 
+/**
+ * Edges used by exactly one triangle, after welding coincident positions.
+ *
+ * A closed solid has none. `displaceGeometry` pushes each vertex along **its own**
+ * normal, so at a hard crease — where coincident vertices carry different normals by
+ * design — the two sides travel apart and the shared edge splits into two boundary
+ * edges. That is a hairline slit you can see through, and it is invisible to every
+ * other instrument in this file: signed volume stays positive, winding stays
+ * consistent, normals stay agreed.
+ *
+ * Welding by quantized position is what makes the number mean anything. Without it
+ * every non-indexed geometry reports every edge as a boundary.
+ */
+function boundaryEdgeCount(geometry: THREE.BufferGeometry): number {
+  const position = geometry.getAttribute('position')
+  const index = geometry.index
+  const triangles = index ? index.count / 3 : position.count / 3
+  const idOf = new Map<string, number>()
+  const weld = (vertex: number): number => {
+    const key =
+      `${position.getX(vertex).toFixed(4)},`
+      + `${position.getY(vertex).toFixed(4)},`
+      + `${position.getZ(vertex).toFixed(4)}`
+    let id = idOf.get(key)
+    if (id === undefined) {
+      id = idOf.size
+      idOf.set(key, id)
+    }
+    return id
+  }
+  const uses = new Map<string, number>()
+  for (let triangle = 0; triangle < triangles; triangle += 1) {
+    const offset = triangle * 3
+    const corners = [0, 1, 2].map((step) =>
+      weld(index ? index.getX(offset + step) : offset + step),
+    )
+    if (
+      corners[0] === corners[1]
+      || corners[1] === corners[2]
+      || corners[0] === corners[2]
+    ) {
+      continue
+    }
+    for (let edge = 0; edge < 3; edge += 1) {
+      const a = corners[edge]
+      const b = corners[(edge + 1) % 3]
+      const key = a < b ? `${String(a)}_${String(b)}` : `${String(b)}_${String(a)}`
+      uses.set(key, (uses.get(key) ?? 0) + 1)
+    }
+  }
+  let boundary = 0
+  for (const count of uses.values()) if (count === 1) boundary += 1
+  return boundary
+}
+
+test('displacement does not tear a solid prop open at its creases', () => {
+  // Controls first, and this instrument needs them badly: a bug in the welding step
+  // makes every non-indexed geometry read as entirely boundary, which looks like a
+  // catastrophic finding rather than a broken checker. Both directions, so a checker
+  // that always says zero and one that always says everything are both excluded.
+  assert.equal(
+    boundaryEdgeCount(new THREE.BoxGeometry(1, 1, 1).toNonIndexed()),
+    0,
+    'a closed box read as open: the position welding is not working',
+  )
+  assert.ok(
+    boundaryEdgeCount(new THREE.PlaneGeometry(1, 1, 4, 4)) > 0,
+    'an open sheet read as closed: the checker cannot see a boundary at all',
+  )
+
+  // Rocks are the case. They are unambiguously solid, they carry the hardest creases in
+  // the catalogue, and they take the largest displacement amplitude — measured at 3.4 to
+  // 4.3% of the shape's own size before `displaceSeamless` existed, which is a visible
+  // crack at near LOD. Swapping `displaceSeamless` back to `displaceGeometry` takes the
+  // catalogue from 34 geometries carrying boundary edges to 82 and fails this.
+  const library = new WorldPropLibrary({ retention: 0 })
+  const torn: string[] = []
+  let checked = 0
+  try {
+    for (const [label, request] of everyPropRequest()) {
+      if (!label.startsWith('rock/')) continue
+      for (const part of library.build(request)) {
+        checked += 1
+        if (boundaryEdgeCount(part.geometry) > 0) torn.push(`${label}#${part.surface}`)
+        part.geometry.dispose()
+      }
+    }
+  } finally {
+    library.dispose()
+  }
+  assert.ok(checked >= 20, `only ${String(checked)} rock surfaces were checked`)
+  assert.deepEqual(torn, [], 'these solid props have holes in them')
+})
+
 test('the merged hard surface of a prop carries welded outline normals', () => {
+
   const parts = buildingParts({
     variation: artVariation('props', 'outline'),
     noiseSeed: 7,

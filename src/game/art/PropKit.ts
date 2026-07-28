@@ -161,6 +161,64 @@ function piece(
   return transformed(geometry, transform)
 }
 
+/**
+ * Displaces a surface without tearing it open at hard creases.
+ *
+ * `displaceGeometry` pushes every vertex along **its own normal**. At a hard crease the
+ * coincident vertices carry different normals — that is what makes the crease hard — so
+ * they travel in different directions and the shared edge splits into two boundary
+ * edges. The result is a hairline slit you can see through.
+ *
+ * Measured across the whole prop catalogue before this wrapper existed: displacement
+ * took geometries carrying boundary edges from **34 to 82**, and the widest slits ran
+ * **3.4–4.9% of the shape's own size** — 0.145 units on a forest rock, which reads as a
+ * crack at near LOD. A sibling session found the mechanism in its own tree at three call
+ * sites; this file has eleven.
+ *
+ * The fix keeps the faceting and closes the gap: remember which vertices were coincident
+ * *before* displacement, then collapse each of those groups back onto their common
+ * average afterwards. Normals are left exactly as `displaceGeometry` recomputed them, so
+ * a hard edge stays hard — only the positions are reunited.
+ *
+ * A geometry with no coincident vertices is unchanged, so this is safe to apply
+ * everywhere rather than only where tearing was measured.
+ */
+function displaceSeamless(
+  geometry: THREE.BufferGeometry,
+  options: Parameters<typeof displaceGeometry>[1],
+): THREE.BufferGeometry {
+  const position = geometry.getAttribute('position')
+  const groups = new Map<string, number[]>()
+  for (let vertex = 0; vertex < position.count; vertex += 1) {
+    const key =
+      `${position.getX(vertex).toFixed(4)},`
+      + `${position.getY(vertex).toFixed(4)},`
+      + `${position.getZ(vertex).toFixed(4)}`
+    const group = groups.get(key)
+    if (group) group.push(vertex)
+    else groups.set(key, [vertex])
+  }
+  displaceGeometry(geometry, options)
+  const displaced = geometry.getAttribute('position')
+  for (const group of groups.values()) {
+    if (group.length < 2) continue
+    let x = 0
+    let y = 0
+    let z = 0
+    for (const vertex of group) {
+      x += displaced.getX(vertex)
+      y += displaced.getY(vertex)
+      z += displaced.getZ(vertex)
+    }
+    x /= group.length
+    y /= group.length
+    z /= group.length
+    for (const vertex of group) displaced.setXYZ(vertex, x, y, z)
+  }
+  displaced.needsUpdate = true
+  return geometry
+}
+
 /** Overrides a part's colour with a vertical ramp. */
 function shade(
   geometry: THREE.BufferGeometry,
@@ -303,7 +361,7 @@ function trunkGeometry(
     name: 'tree-trunk',
   })
   if (detail === 'near') {
-    displaceGeometry(trunk, {
+    displaceSeamless(trunk, {
       seed: noiseSeed,
       amplitude: radius * 0.16,
       frequency: 2.4,
@@ -676,7 +734,7 @@ export function stumpGeometry(options: UndergrowthOptions): THREE.BufferGeometry
     ],
     name: 'stump-body',
   })
-  displaceGeometry(body, {
+  displaceSeamless(body, {
     seed: options.noiseSeed,
     amplitude: radius * 0.14,
     frequency: 3.2,
@@ -735,7 +793,7 @@ export function deadfallGeometry(options: UndergrowthOptions): THREE.BufferGeome
     ],
     name: 'deadfall-log',
   })
-  displaceGeometry(log, {
+  displaceSeamless(log, {
     seed: options.noiseSeed,
     amplitude: radius * 0.16,
     frequency: 2.2,
@@ -874,7 +932,7 @@ export function strataRockGeometry(options: RockOptions): THREE.BufferGeometry {
   }
   const geometry = mergeAll(parts, { name: options.name ?? 'prop-strata-rock' })
   if (detail === 'near') {
-    displaceGeometry(geometry, {
+    displaceSeamless(geometry, {
       seed: options.noiseSeed,
       amplitude: radius * 0.11,
       frequency: 2.1,
@@ -905,7 +963,7 @@ export function outcropGeometry(options: RockOptions): THREE.BufferGeometry {
     ],
     name: 'outcrop',
   })
-  displaceGeometry(wedge, {
+  displaceSeamless(wedge, {
     seed: options.noiseSeed,
     amplitude: radius * 0.12,
     frequency: 1.5,
@@ -1628,7 +1686,7 @@ function roofParts(
   if (style === 'thatch' && detail === 'near') {
     // Thatch is a bundled organic surface; a perfectly ruled eave line reads as
     // plastic. A little ridged noise puts the straw back.
-    displaceGeometry(roof, {
+    displaceSeamless(roof, {
       seed: noiseSeed,
       amplitude: Math.min(span, depth) * 0.022,
       frequency: 3.4,
@@ -3356,7 +3414,7 @@ export function waystoneParts(options: PropOptions & { height?: number }): PropP
     ],
     name: 'waystone',
   })
-  displaceGeometry(stone, {
+  displaceSeamless(stone, {
     seed: options.noiseSeed,
     amplitude: 0.05,
     frequency: 3.2,
@@ -3467,7 +3525,7 @@ export function obeliskParts(options: MonumentOptions): PropPart[] {
     ],
     name: 'obelisk-base',
   })
-  displaceGeometry(base, {
+  displaceSeamless(base, {
     seed: options.noiseSeed,
     amplitude: radius * 0.16,
     frequency: 2,
@@ -3642,7 +3700,7 @@ export function chestParts(
     ],
     name: 'chest-plinth',
   })
-  displaceGeometry(plinth, {
+  displaceSeamless(plinth, {
     seed: options.noiseSeed,
     amplitude: 0.09,
     frequency: 2.4,
@@ -3730,7 +3788,7 @@ export function haystackParts(
     ],
     name: 'haystack',
   })
-  displaceGeometry(stack, {
+  displaceSeamless(stack, {
     seed: options.noiseSeed,
     amplitude: radius * 0.07,
     frequency: 3.6,
@@ -3994,7 +4052,7 @@ function pebbleGeometry(options: GroundCoverOptions): THREE.BufferGeometry {
     parts.push(stone)
   }
   const geometry = mergeAll(parts, { name: 'prop-pebble' })
-  displaceGeometry(geometry, {
+  displaceSeamless(geometry, {
     seed: options.noiseSeed,
     amplitude: 0.018,
     frequency: 7,
