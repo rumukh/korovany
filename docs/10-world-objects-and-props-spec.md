@@ -414,7 +414,6 @@ and the number a frame actually pays is `OUTLINE_WORLD_VISIBLE_DRAWS_MAX=48` acr
 **nine** regions visible at once. Three populations, one quantity; the middle one was the
 only one written down for most of this programme. See `docs/08` §7.1 and §7.2.
 
-
 `GEOMETRY_CACHE_ENTRIES_MAX` used to appear in spec 08 as 64, described as covering the
 whole game. **It has now been removed from spec 08 entirely**, because it existed in no
 source file and was enforced nowhere — a written number with no mechanical link to
@@ -724,15 +723,46 @@ Four rules fall out of them, in rough order of how much they would have saved:
    is the one thing a world-level test cannot substitute for. Both fixes were verified by
    re-applying the mutation and watching the new test go red.
 
-   **A campaign needs an applied-check gate, or it manufactures false findings as
-   confidently as a vacuous assertion manufactures false confidence.** Contributed by the
-   reviewer after a CRLF/LF mismatch made one of its own mutations fail to match: the
-   removal silently no-op'd, only the insertion applied, and the run reported SURVIVED
-   with no harm — which reads exactly like a real gap in the tests. **A mutation that
-   fails to apply is indistinguishable from one the suite ignored.** Verify the edit
-   landed before trusting the verdict, and verify it against the *right* site: repeating
-   the exercise here, the first gate matched the wrong `releaseOutline` of two and
-   reported success on a file that had not been mutated where it mattered.
+   **A campaign needs two guards, not one, or it manufactures false findings as
+   confidently as a vacuous assertion manufactures false confidence.** A survivor is only
+   evidence when both hold:
+
+   1. **The mutation changed the file.** Contributed by the reviewer after a CRLF/LF
+      mismatch made one of its own mutations fail to match: the removal silently no-op'd,
+      only the insertion applied, and the run reported SURVIVED with no harm — which reads
+      exactly like a real gap. **A mutation that fails to apply is indistinguishable from
+      one the suite ignored.** Verify the edit landed, and verify it against the *right*
+      site: repeating that exercise here, the first gate matched the wrong `releaseOutline`
+      of two and reported success on a file not mutated where it mattered.
+   2. **The mutation causes harm.** The half this pass missed when it first recorded the
+      rule. An *equivalent* mutation — one that changes the source but not the behaviour —
+      also reports SURVIVED, and also reads like a gap. The reviewer produced one against
+      a guard added here: forcing `canJudgeWalkability` true changed nothing, because
+      `walkableNear`'s only caller already tests it, so the throw is unreachable in
+      production. It reported that as its own miss rather than a finding.
+
+   Between them the two guards cost one extra measurement each and they are what separates
+   *"the suite did not notice"* from *"there was nothing to notice."* Two of this
+   campaign's reported survivors turned out to be the second kind.
+
+   **And a gate is an assertion, so it inherits every failure mode an assertion has.** The
+   reviewer's gate broke on line endings and reported SURVIVED; this pass's broke on an
+   ambiguous anchor — matching the first of two `releaseOutline` sites — and reported
+   PASSED on a file not mutated where it mattered. Same defect at three levels in one
+   night: the assertion, the mutation that tests it, and the gate that tests the mutation.
+
+   **The recursion does not obviously terminate, which argues for the cheapest possible
+   check at each level rather than a more elaborate one.** An elaborate gate is one more
+   thing that can be quietly wrong. The version that worked was two lines — *did the file
+   change, and did it change at the site I named* — and the site-specific half is the one
+   that mattered, because "something in this file moved" is exactly the answer that fooled
+   the ambiguous anchor.
+
+   Worth stating plainly to anyone adopting the technique: **it produces false positives at
+   roughly the rate it produces findings.** This campaign yielded three real survivors and
+   three retractions — a grouping-precision artefact, a CRLF-broken mutation, and an
+   equivalent mutation against a guard whose only caller already checks. The gates are not
+   optional overhead; they are what makes the results mean anything.
 
 7. **A regression test needs a seed that reproduced the bug.** Ordering, mechanism and
    assertion can all be correct and the test still prove nothing if its input never
@@ -932,7 +962,112 @@ programme's docs. Line numbers rot silently — the file they point into stays v
 nothing errors, and the citation quietly starts describing a blank line. This spec cites
 files and symbols throughout for that reason.
 
-**A negative claim needs a probe at least as much as a positive one, and usually more.**
+**The exact instrument arrived last: `git rev-parse <ref>:<path>`.** Nine hours were spent
+approximating a question that has an exact answer. *"Is this tree's copy of this file the
+same file?"* is settled by comparing the blob hash, which is immune to caching, to
+rebasing, to cherry-picking, and to a token appearing in a comment:
+
+```text
+src/game/art/stylizedShader.ts
+  origin/rumukh-s1-art-foundation       b2e50bd
+  origin/rumukh-s3-world-objects        b2e50bd
+  origin/rumukh-rumukh-s4-integration   b2e50bd     one object, three refs
+```
+
+Everything else tried on this programme fails in at least one direction.
+`merge-base --is-ancestor` is invalid under rebase or cherry-pick — three sessions, three
+different wrong answers. Test counts are a lossy hash that both collides and drifts.
+Tree-diff line counts raised false alarms twice, both in the alarming direction. A content
+grep proves a *token* is present, not that the file is right. The surviving set is three:
+**`git branch --contains`** for tip-versus-orphan, a **content probe** for "does this tree
+have the fix", and the **blob hash** for "is this file identical" — which is stronger than
+the other two wherever the question is really about a file.
+
+**An instruction that changes how findings are *treated* is more dangerous than one that
+changes code.** The programme lead's closing contribution, and the sharpest of the
+non-code entries. A bad code change leaves a diff; someone reviews it, and the error has a
+surface. An instruction to *discount a category of finding* leaves nothing — and **silence
+is indistinguishable from a clean review.**
+
+The instance: a report circulated that this pass's tree predated a shader fix, with the
+consequence that its reviewer's visual findings should be discounted as "shading nobody is
+shipping." The premise was false — the blob hash above settles it — and had it been acted
+on, a genuine visual defect would have been dropped with no artefact to find later. Every
+other phantom instruction on this programme would have produced a visible wrong edit.
+
+Which is the argument for the blob hash in one line: the claim that would have suppressed
+findings was refutable in one command, and the command that refutes it exactly is the one
+nobody reached for until the last hour.
+
+**A one-directional set difference cannot distinguish "they lost work" from "they are
+describing an old snapshot."**
+Both produce a large one-way gap, and the alarming reading
+presents first — because the direction you naturally compute is *what is missing from
+theirs*, which is also the direction that looks like data loss.
+
+Contributed by the foundation session, which came within one message of reporting that
+this pass had destroyed a spawn fix. Its method was sound and deliberately rebase-proof:
+compare commit *subjects* rather than SHAs, so a rebase cannot fake a difference. That
+defeats rebase. **It does not defeat staleness**, and it had been treated as though it
+defeated both. The reverse direction settled it in one command — every subject on the
+older tree was already present on the newer one, and the timestamps were three and a half
+hours apart.
+
+This was the third time in one night that the decisive check was **the other direction of
+a comparison already run**. The first two were this pass's: reading a reflog position as
+*"they read a stale ref"* when it read equally well as *"I have moved seventeen times
+since,"* and reading `git branch --contains` as *"they reviewed a copy"* when it meant
+*"I rebased past it."*
+
+The general form is cheap and mechanical, which is why it belongs next to the mutation
+rules rather than in the prose: **before reporting an asymmetry, compute it both ways.**
+One extra command, and it is the difference between a colleague's error and your own
+staleness — two readings that look identical from one side.
+
+**The ambiguity resolved in my favour, silently — and that is a selection rule, not a
+measurement error.**
+The only entry here that is not about code, and the programme lead
+identified it as its own class after this pass reported it about itself.
+
+Three times tonight this session diagnosed a colleague's tooling as broken — "cached ref
+resolutions" from a reflog position, "reviewing an integration copy" from
+`git branch --contains`, and a stale-tip claim inverted. Every diagnosis was withdrawn.
+The evidence was correctly gathered every time: `40d6e7d` really did sit at reflog
+position `@{17}`, and both readings — *"they read a stale ref"* and *"I made seventeen
+moves since they measured"* — fit it exactly. **The tiebreak was not evidence.**
+
+Everything else in this section is *"the check could not tell."* This is *"the check was
+ambiguous and the ambiguity resolved in my favour."* No instrument catches it, because
+nothing was measured wrongly. The only defence is the habit of asking **what else fits
+this number** — and asking it hardest when the answer locates the fault somewhere other
+than yourself, which is exactly when it feels least necessary.
+
+The programme lead then produced the companion instance while checking one of these very
+claims: it queried a session record with the wrong key, got `0 mentions`, and nearly
+reported a confident negative. The table had **zero rows for that key at all**. **A
+negative query is a claim about your query** — count the rows before reading the answer,
+which is the negative-claim rule recursing onto the tool used to test it.
+
+**A figure inside quotation marks reads as already verified — and so does a figure inside
+an instruction.**
+The second half is the programme lead's, added after three separate
+sessions spent measurements refuting quotations none of them had written: a docblock edit,
+a `smooth: true` count, and a freeze target. Nobody misquoted anyone. The figures acquired
+a specificity in transit that they did not have when sent, and each receiving session
+reasonably treated a quoted SHA as something to *check against* rather than something to
+first confirm existed.
+
+The instruction case is the more dangerous one, because a directive carries authority a
+quotation does not. *"Freeze at X"* is acted on; *"I measured X"* is at least a claim
+someone might test. Two of the three phantom quotations this pass received were
+instructions, and refusing them required arguing against a premise rather than a number.
+
+The practical form is the same one this section keeps arriving at from different
+directions: **state the command beside the figure.** A SHA with `git rev-parse` next to it
+can be re-run; a SHA inside an instruction cannot be distinguished from one inside a
+measurement, and by the time it reaches a third party it has neither provenance nor a way
+to acquire one.
+
 Nothing else will contradict it. Reporting the state of an integration branch, this pass
 ran five content probes for what it *had* — all five correct — and then listed what it
 *lacked* from its own commit titles. Two of the three named as missing were already
@@ -1100,6 +1235,18 @@ this pass wrote:
   without needing to know what changed. If you were handed a SHA, that is the check that
   tells you it has been superseded — nothing else will, because the orphaned commit
   still resolves and still looks healthy.
+
+**And the one that removes the whole class: `git push -u` on the first day.** Every
+mitigation above manages a problem that only exists while a branch is unpublished. This
+one was unpushed for most of the programme, so nobody could resolve it by name at all —
+which is why two reviewers spent passes reading the integration branch's copy of the work,
+why three sessions gave wrong ancestry answers, and why the same four false mechanisms
+kept being proposed to explain it. **One command per session, available from the first
+hour, and none of the rest of this subsection would have been needed.**
+
+The reason it was skipped is worth naming too: the shared object store makes an unpushed
+branch *look* shareable. Colleagues could read it through worktrees, so the cost of not
+pushing was invisible from the inside and paid entirely by everyone else.
 
 ## 14. Effort
 

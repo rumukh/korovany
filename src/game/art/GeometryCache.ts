@@ -35,10 +35,11 @@ export class GeometryCache {
   /**
    * Drops one reference and disposes the geometry when the last one goes.
    *
-   * **Currently unreachable, and deliberately so.** The only consumer is
+   * **Currently unreachable on this branch, and deliberately so.** The only consumer is
    * `GameEngine.acquireArtGeometry`, which acquires and never releases; the cache is
-   * freed in one `dispose()` at teardown. Measured on the shipped tree: one `acquire`
-   * call site, zero `release` call sites.
+   * freed in one `dispose()` at teardown. Measured on `rumukh-s1-art-foundation`: one
+   * `acquire` call site, zero `release` call sites. That is a fact about this branch and
+   * not about the merged tree — see the last paragraph.
    *
    * That matters before anyone adds the first one, because **this count is keyed, not
    * holder-identified, and the distinction is not recoverable from a key.** Two regions
@@ -56,10 +57,23 @@ export class GeometryCache {
    * fire exactly when no damage is possible and stay silent exactly when damage is
    * certain — the reference count would look guarded without being so.
    *
-   * If release ever gains real callers, the fix is holder identity — a token issued by
-   * `acquire` and consumed by `release` — because that is the minimum that distinguishes
-   * one holder releasing twice from two holders releasing once. A better message or a
+   * The fix is holder identity, because that is the minimum that distinguishes one
+   * holder releasing twice from two holders releasing once. A better message or a
    * key-level guard cannot substitute for it, and should not be mistaken for it.
+   *
+   * **That condition has already fired one branch over, and the answer is not a token on
+   * this signature.** The world-object layer wraps this cache — five `cache.release(key)`
+   * sites in `WorldPropLibrary` — and puts the guard one layer up, on the caller-facing
+   * receipt: its `release(asset)` rejects a repeat through a `WeakSet<PropAsset>`,
+   * because an asset object carries the identity a key cannot. Prefer that shape over
+   * changing this signature. It leaves every other consumer untouched, and it names the
+   * fault as "this asset came back twice" at the boundary that owns it, rather than
+   * inferring it from a reference count after the damage.
+   *
+   * One raw `release(key)` there is correct and is not a bypass: rolling back a
+   * partially-acquired asset, where no receipt was ever issued, so no receipt can be
+   * double-spent. That is the case a receipt guard cannot cover, and the reason this
+   * method must stay silent on `!existing` rather than throwing.
    */
   release(key: string): void {
     const existing = this.entries.get(key)
