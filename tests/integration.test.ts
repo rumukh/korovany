@@ -436,6 +436,11 @@ test('each art kit is uniform about vertex colours, so a merge can never mix the
  * being asked. Counting vertices catches it, and needs no tolerance, because the art
  * emits no pure white of its own.
  *
+ * The same mutation, before and after:
+ *
+ *     asking "is the whole surface white"   PASSED CLEAN      <- could not see it
+ *     counting white vertices               155,904 white across 84 of 476 surfaces
+ *
  * Detector proven before its zero is trusted, because absence of a pattern is not
  * absence of the behaviour — a working detector reporting zero is:
  *
