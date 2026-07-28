@@ -307,7 +307,9 @@ function worstNormalError(geometry: THREE.BufferGeometry): number {
  *   reversed faces carry reversed normals and agree tautologically. It is not weak on
  *   displaced geometry, it is blind.
  * - `signedVolume` is a sum, so reversed faces cancel against correct ones. Measured:
- *   it misses 5% on every prop tried and 25% on a fort rock.
+ *   it misses a 5% reversal on **every** prop tried, and a 25% reversal on **287 of 380**
+ *   hard surfaces — three in four, the typical case rather than an exotic one. It catches
+ *   a full reversal on all of them.
  *
  * Centroid winding reads no normals and is per-face, so it survives both. Its own limit
  * is that it assumes roughly star-convex geometry: a face orthogonal to the centroid ray
@@ -1004,12 +1006,18 @@ test('the volume instrument is still blind below a quarter and still works at fu
     + 'measured curve and this assertion together rather than deleting either',
   )
 
-  // "and 25% on a fort rock" — sensitivity, because the claim is about some props.
+  // "a 25% reversal on three in four" — the previous wording was "on a fort rock", which
+  // an existence check (`> 0`) translated faithfully. Both were too weak: the measurement
+  // is 287 of 380, so a reader inferred an edge case from what is the majority case, and
+  // the pin would have stayed green down to a single surface. Proportional rather than
+  // exact, because "most" is the durable claim and 287 is a measurement of today's props.
   assert.ok(
-    missedAtAQuarter > 0,
-    'signed volume now catches a 25% contiguous reversal on every surface, which the '
-    + 'measured curve says it cannot. Either the instrument improved — update the curve '
-    + 'and this floor together — or the damage model stopped producing partial inversions',
+    missedAtAQuarter > surfaces / 2,
+    `the docblock says signed volume misses a 25% reversal on most hard surfaces — `
+    + `measured at 287 of 380. It now misses ${String(missedAtAQuarter)} of `
+    + `${String(surfaces)}, no longer a majority. If the instrument improved, that is `
+    + 'good news — update the measured curve and this floor together rather than '
+    + 'deleting either',
   )
 })
 
