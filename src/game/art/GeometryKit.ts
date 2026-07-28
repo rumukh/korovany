@@ -178,12 +178,41 @@ export function loftProfile(options: LoftOptions): THREE.BufferGeometry {
       const u0 = point / pointCount
       const u1 = (point + 1) / pointCount
 
-      const normalFor = (pointIndex: number): THREE.Vector3 => {
+      const normalFor = (pointIndex: number, ringIndex: number): THREE.Vector3 => {
         if (!smooth) return faceNormal
         const source = profile[pointIndex]
-        radialNormal.set(source.x, 0, source.y)
+        const section = sections[ringIndex]
+        const scaleX = section.scaleX ?? 1
+        const scaleZ = section.scaleZ ?? scaleX
+        // A ring is `R(rotation) . S(scaleX, scaleZ)` applied to the profile, so its
+        // normals transform by the inverse transpose, `R . S^-1` -- divide by the
+        // scales, do not multiply. Taking the raw profile point instead tilts every
+        // normal on an anisotropic section: measured 41deg of error at `depthScale
+        // 0.5` and 60deg at 0.25, which is precisely the `stylizedCapsule` option
+        // documented for limbs that should not be cylinders.
+        const radialX = Math.abs(scaleX) < 1e-6 ? source.x : source.x / scaleX
+        const radialZ = Math.abs(scaleZ) < 1e-6 ? source.y : source.y / scaleZ
+        const rotation = section.rotation ?? 0
+        const cosine = Math.cos(rotation)
+        const sine = Math.sin(rotation)
+        radialNormal.set(
+          radialX * cosine - radialZ * sine,
+          0,
+          radialX * sine + radialZ * cosine,
+        )
+        if (radialNormal.lengthSq() < 1e-12) {
+          radialNormal.copy(faceNormal)
+          return radialNormal
+        }
+        // Keep the face's horizontal-to-vertical proportion and replace only its
+        // horizontal DIRECTION. Normalising the radial part to unit length before
+        // writing Y forces that proportion to `1 : faceNormal.y`, which is right
+        // only where the face is vertical -- so a capsule's caps shaded as though
+        // they were shaft, 24deg out at the poles even on a circular section.
+        const planar = Math.hypot(faceNormal.x, faceNormal.z)
+        radialNormal.normalize().multiplyScalar(planar).setY(faceNormal.y)
         if (radialNormal.lengthSq() < 1e-12) radialNormal.copy(faceNormal)
-        else radialNormal.normalize().setY(faceNormal.y).normalize()
+        else radialNormal.normalize()
         return radialNormal
       }
 
@@ -191,13 +220,13 @@ export function loftProfile(options: LoftOptions): THREE.BufferGeometry {
       // outward normals written above. Reversing these six pushes turns every
       // loft inside out: `FrontSide` would draw the far wall and the `BackSide`
       // ink shell would cover the mesh instead of haloing it.
-      pushVertex(ring, point, normalFor(point), u0)
-      pushVertex(ring + 1, next, normalFor(next), u1)
-      pushVertex(ring, next, normalFor(next), u1)
+      pushVertex(ring, point, normalFor(point, ring), u0)
+      pushVertex(ring + 1, next, normalFor(next, ring + 1), u1)
+      pushVertex(ring, next, normalFor(next, ring), u1)
 
-      pushVertex(ring, point, normalFor(point), u0)
-      pushVertex(ring + 1, point, normalFor(point), u0)
-      pushVertex(ring + 1, next, normalFor(next), u1)
+      pushVertex(ring, point, normalFor(point, ring), u0)
+      pushVertex(ring + 1, point, normalFor(point, ring + 1), u0)
+      pushVertex(ring + 1, next, normalFor(next, ring + 1), u1)
     }
   }
 

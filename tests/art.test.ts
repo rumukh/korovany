@@ -1465,9 +1465,12 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
   //
   // It has to be a TALL one. The sign test's blindness here is not a blind spot
   // but a blind *zone* with an exact boundary. In smooth mode `normalFor` takes X
-  // and Z from the profile — always the true radial — and only Y from the
-  // corrupted face normal, so the stored normal was `normalize((r, 1))` while the
-  // truth is `normalize((h * r, -h_r))`; their dot is proportional to `(h - r)`.
+  // and Z from the profile — the true radial whenever the section is isotropic,
+  // which every case in this test is — and only Y from the corrupted face normal,
+  // so the stored normal was `normalize((r, 1))` while the truth is
+  // `normalize((h * r, -h_r))`; their dot is proportional to `(h - r)`.
+  // (On an ANISOTROPIC section the profile direction is not the radial at all; that
+  // is a separate defect, guarded by its own test below.)
   // Measured on the broken builder, radius 1, sweeping height:
   //
   //     h = 4.0    sign test 0 bad    worst  60.41 deg   <- blind
@@ -1528,6 +1531,68 @@ test('collapsed sections keep their normals, in magnitude not just in sign', () 
       `bottomScale ${bottomScale} collapses the bottom ring to ${smallest}`,
     )
     capsule.dispose()
+  }
+})
+
+/**
+ * Every smooth-normal test above judges a shape whose correct answer is itself
+ * approximate — a polygon has creases, a collapsed ring has no tangent plane — so
+ * each asserts a magnitude or a comparison rather than a value. That left one class
+ * of defect with nowhere to fail: an error that is *exactly zero* on the isotropic
+ * case every other test uses, and grows only when `scaleX !== scaleZ`.
+ *
+ * A ring is `R(rotation) . S(scaleX, scaleZ)` applied to the profile, so its normals
+ * transform by the inverse transpose, `R . S^-1`. `normalFor` used the raw profile
+ * point, which is the direction *before* the squash — correct whenever the two
+ * scales agree, and wrong by a widening margin as they diverge. Measured against the
+ * exact ellipse normal on the untapered wall, where a smooth normal is unambiguous:
+ *
+ *     scaleZ         1.00    0.90    0.75    0.50    0.25
+ *     before        0.000   3.013   8.202  19.442  36.809  worst deg
+ *     after         0.000   0.000   0.000   0.000   0.000
+ *
+ * 342 tests passed over it, because `stylizedCapsule` — whose `depthScale` is the
+ * one shipped route to an anisotropic section, and is documented for limbs that
+ * should not be cylinders — is called nowhere yet. It is exported from the barrel,
+ * so the first sibling to build a limb would have been the one to find this.
+ */
+test('a smooth loft normal is exact on an anisotropic section, not merely plausible', () => {
+  for (const scaleZ of [1, 0.9, 0.75, 0.5, 0.25]) {
+    const wall = loftProfile({
+      profile: polygonProfile(1, 64),
+      sections: [{ y: 0, scaleX: 1, scaleZ }, { y: 1, scaleX: 1, scaleZ }],
+      smooth: true,
+      capBottom: false,
+      capTop: false,
+    })
+    const position = wall.getAttribute('position')
+    const normal = wall.getAttribute('normal')
+    // Caps are excluded above rather than filtered here: their normals are
+    // legitimately vertical, so leaving them in contributes a constant 90 deg and
+    // swamps the term under test. An earlier revision of this probe measured a flat
+    // 44.286 deg at every scale and read it as the builder's error.
+    let worst = 0
+    let judged = 0
+    for (let i = 0; i < position.count; i += 1) {
+      const x = position.getX(i)
+      const z = position.getZ(i)
+      if (Math.hypot(x, z) < 1e-9) continue
+      // The wall is x^2 + z^2/scaleZ^2 = 1, whose exact normal is (x, 0, z/scaleZ^2).
+      const exact = new THREE.Vector3(x, 0, z / (scaleZ * scaleZ)).normalize()
+      const stored = new THREE.Vector3().fromBufferAttribute(normal, i)
+      if (stored.lengthSq() < 1e-12) continue
+      judged += 1
+      const dot = Math.min(1, Math.max(-1, stored.normalize().dot(exact)))
+      worst = Math.max(worst, (Math.acos(dot) * 180) / Math.PI)
+    }
+    assert.ok(judged > 0, `scaleZ ${scaleZ} judged no wall vertex at all`)
+    assert.ok(
+      worst < 0.01,
+      `scaleZ ${scaleZ}: smooth normals sit ${worst.toFixed(3)} deg off the exact `
+        + 'ellipse normal — normalFor is using the profile direction rather than the '
+        + 'inverse transpose, so every anisotropic section is mis-shaded',
+    )
+    wall.dispose()
   }
 })
 
