@@ -2946,15 +2946,28 @@ test('the engine wires the rig the way these tests measure it', () => {
   // why `chestGaitYaw` escaped: the wobble simulation calls it 3,600 times per role
   // across ±0.62, so its stride axis was covered by something that already existed.
   // `decayStrideOnStagger` has nothing behind it; the simulation never staggers.
-  assert.ok(
-    Math.abs(decayStrideOnStagger(0.5, 1 / 60) - 0.5 * decayStrideOnStagger(1, 1 / 60)) < 1e-12,
-    'the stride decay is no longer linear in the stride: half a stride does not leave '
-    + `half the result. ${decayStrideOnStagger(0.5, 1 / 60).toFixed(6)} against `
-    + `${(0.5 * decayStrideOnStagger(1, 1 / 60)).toFixed(6)}. Linearity holds for `
-    + '`s·e^(-k·delta)` and fails for anything that normalises, clamps or signs the '
-    + 'stride — all of which leave a staggering actor decaying from full magnitude '
-    + 'rather than from where it actually was.',
-  )
+  // Linearity across a *range* of strides, not at two points — because two points is
+  // still a sample, and the first version of this assertion used exactly 0.5 and 1.
+  // `Math.max(stride, 0.5)` passed it 22/0: a clamp sitting exactly on a sample point is
+  // invisible to it, and my own mutation run found that within a minute of writing it.
+  //
+  // Which is the reviewer's question applied one level down, to the fix for the
+  // reviewer's question: **enumerating an axis at two points is enumerating the points,
+  // not the axis.** The strides below span the reachable range — `actor.stride` is
+  // damped toward `sin(gaitPhase)` and lives in ±0.62 — and include values well below
+  // any plausible dead zone or clamp.
+  for (const stride of [0.01, 0.05, 0.1, 0.25, 0.5, 0.62, 1]) {
+    assert.ok(
+      Math.abs(decayStrideOnStagger(stride, 1 / 60) - stride * decayStrideOnStagger(1, 1 / 60))
+        < 1e-12,
+      `the stride decay is no longer linear in the stride at ${String(stride)}: it leaves `
+      + `${decayStrideOnStagger(stride, 1 / 60).toFixed(9)} where linearity requires `
+      + `${(stride * decayStrideOnStagger(1, 1 / 60)).toFixed(9)}. Linearity holds for `
+      + '`s·e^(-k·delta)` and fails for anything that normalises, clamps or signs the '
+      + 'stride — all of which leave a staggering actor decaying from a magnitude it '
+      + 'never had rather than from where it actually was.',
+    )
+  }
   assert.ok(
     decayStrideOnStagger(1, 1 / 60) > 0.8,
     `one frame of a stagger leaves ${decayStrideOnStagger(1, 1 / 60).toFixed(4)} of the `
