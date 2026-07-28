@@ -404,7 +404,20 @@ no new dependencies.
   above the rungs: **a precondition the ladder cannot see, because every rung is climbed
   inside it.** So the question to add is not about the assertion but about its reach —
   *what does this detector never look at, and is the defect more likely there?*
-  **That applies to tools nobody wrote as much as to detectors someone did**, and this
+  **And there is a reason this failure recurs even where it has been catalogued: nobody
+  chooses the wrong population — the tool supplies it.** Four times in one session a sweep
+  of this document produced a count that was *correct for the set it examined and useless
+  for the claim*: 29 hits that were all binaries, 225 that were code-block alignment, 28
+  that were headings, 12 that were case-insensitivity. **Every signature was right. Every
+  frame was wrong**, and no refinement of any predicate would have reached it, because the
+  predicate was never at fault.
+  What fixed it was expressing the population directly — `git diff origin/main...HEAD`,
+  the only phrasing of *"lines for which this branch is responsible"* — after which three
+  independent signatures over 349 lines returned zero. The general form is worth carrying
+  because it names where the substitution happens: **`grep` defaults to the file, and the
+  claim was about the change.** A tool's default scope is not neutral; it silently answers
+  the population question on your behalf, and it answers it with whatever is cheapest to
+  enumerate rather than with whatever the sentence is about.  **That applies to tools nobody wrote as much as to detectors someone did**, and this
   repository contains the proof. `tsc --noEmit -p tsconfig.json` looks like a type-check
   and is not one: the root `tsconfig.json` is `"files": []` plus project references, so
   without `--build` the command compiles **zero files**. Measured with a positive control —
