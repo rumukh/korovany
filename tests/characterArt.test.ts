@@ -1703,9 +1703,23 @@ test('the head tracks its target through the chest, not past it', () => {
   //    **6.1925**, against the 6.0420 below.
   //
   // Neither changes the ordering or the head-roll conclusion. Both make the table's
-  // figures lower bounds rather than maxima — which is the safe direction for anything
-  // reading them as a guard, and the wrong direction for anything quoting them as what
-  // the geometry does.
+  // *non-zero* figures lower bounds rather than maxima — which is the safe direction for
+  // anything reading them as a guard, and the wrong direction for anything quoting them
+  // as what the geometry does.
+  //
+  // **The zero row is not in that class, and an earlier version of this caveat said it
+  // was.** "The table's figures are lower bounds" is true of five rows and false of the
+  // one that matters most: head roll's delta is exactly zero by the algebra eighty lines
+  // above — `Rz(roll)·zHat = zHat` at every value, reachable or not — so it is not a
+  // sample of anything and cannot be revised upward by a better search. A reviewer
+  // reading from outside caught the two statements contradicting each other.
+  //
+  // Worth naming because it is this file's defect running backwards. Everywhere else, a
+  // narrow claim was quietly standing in for a wide population. Here a **caveat**
+  // generalised across rows that were not alike, and the cost is inverted: instead of
+  // overclaiming a measurement, it underclaims a proof. A blanket hedge is not free —
+  // it is a claim about every row it covers, and it needs the same population check as
+  // the confident sentence it was written to soften.
   //
   // **The disagreement is the record.** Stating both figures with both methods named is
   // this file's own rule for exactly this situation, and it is preferable to a third
