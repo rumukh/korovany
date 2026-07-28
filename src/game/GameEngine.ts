@@ -14138,6 +14138,11 @@ export class GameEngine {
     const hitRight =
       Math.cos(yaw) * actor.lastHitDirection.x - Math.sin(yaw) * actor.lastHitDirection.z
     const forwardLean = this.actorForwardLean(actor.role)
+    // The chest's yaw as it was last frame, captured before the block below writes
+    // this frame's. The head's tracking is damped in body space and converted into
+    // chest space afterwards, and reconstructing the body-space value needs the yaw
+    // that was subtracted from it. See the head block.
+    const previousChestYaw = torsoPivot ? torsoPivot.rotation.y : 0
 
     if (torsoPivot) {
       torsoPivot.position.x = idleWeightShift
@@ -14176,10 +14181,18 @@ export class GameEngine {
       // looking: measured at 24.3 degrees of heading error at the reachable extreme,
       // and 4-13 degrees walking, attacking or flinching. Subtracting it is a change
       // of frame, not a fudge — the value is authored in body space and consumed in
-      // chest space. The residue is 1.6 degrees, which is Euler composition and the
-      // chest's own width, not a missing term.
+      // chest space.
+      //
+      // The damping happens *before* the conversion, which is the whole reason
+      // `previousChestYaw` exists. A frame change is not a motion and must not be
+      // damped: damping the already-converted target leaves the head chasing the
+      // chest's gait twist a fraction of a second late, which measures as 2.80
+      // degrees of gait-frequency wobble in world space at a soldier's cadence.
+      // Damped in body space and converted instantaneously it is 0.000, and the
+      // static residue is 1.6 degrees of Euler composition and chest width.
       const chestYaw = torsoPivot ? torsoPivot.rotation.y : 0
-      headPivot.rotation.y = dampAngle(headPivot.rotation.y, lookYaw - chestYaw, 7, delta)
+      const bodyYaw = dampAngle(headPivot.rotation.y + previousChestYaw, lookYaw, 7, delta)
+      headPivot.rotation.y = bodyYaw - chestYaw
       // Pitch and roll are deliberately *not* corrected this way. Unlike the yaw they
       // are authored as partial counter-rotations of the chest — the torso pitches
       // `+forwardLean` and the head `-forwardLean * 0.35`, the torso rolls

@@ -1301,6 +1301,87 @@ test('the head tracks its target through the chest, not past it', () => {
 })
 
 /**
+ * And it holds still while the chest twists under it.
+ *
+ * The test above measures a settled pose, and a settled pose cannot see this. The
+ * head's yaw is *damped* — `dampAngle(..., 7, delta)` — and the chest's yaw
+ * oscillates at the gait cadence, 6.8 rad/s for a soldier. Damping a target that has
+ * already had the chest's yaw folded into it makes the head chase that oscillation a
+ * fraction of a second late, and the lag comes straight back out as world-space
+ * wobble. Simulated over 20 seconds at 60 Hz, after the transient:
+ *
+ * | rule | residual world wobble |
+ * | --- | --- |
+ * | damp the converted target | **2.80°** at gait frequency |
+ * | damp in body space, then convert | **0.000°** |
+ *
+ * 2.80° was inside the 3° bound of the test above, so that test would have shipped
+ * it. The rule is the general one: **a frame change is not a motion.** Damp the
+ * tracking in the frame the target is authored in, and convert instantaneously.
+ *
+ * That is why `animateActorCharacter` carries `previousChestYaw` — it reconstructs
+ * last frame's body-space yaw from the head's current local yaw, damps *that*, and
+ * only then subtracts this frame's chest yaw.
+ */
+test('the head holds its target while the chest twists under it', () => {
+  const FRAMES = 1200
+  const DELTA = 1 / 60
+  const CADENCE = 6.8
+  const TARGET = 0.35
+  // `dampAngle`'s exponential form, and the coefficient the head is damped at.
+  const damp = (from: number, to: number): number =>
+    to + (from - to) * Math.exp(-7 * DELTA)
+  const forward = new THREE.Vector3()
+
+  const wobble = (dampInBodySpace: boolean): number => {
+    const p = resolveCharacterPlan('guard', 'soldier', 0, false).proportions
+    const skeleton = buildCharacterSkeleton(p)
+    const head = new THREE.Object3D()
+    head.position.y = skeleton.headY
+    skeleton.headPivot.add(head)
+    skeleton.headPivot.rotation.y = TARGET
+    let previousChestYaw = 0
+    let worst = 0
+    for (let frame = 0; frame < FRAMES; frame += 1) {
+      const time = frame * DELTA
+      // `updateActors` walks the gait; `animateActorCharacter` turns the stride into
+      // the chest's yaw as `-stride * 0.12` for a light actor.
+      const chestYaw = -Math.sin(time * CADENCE) * 0.62 * 0.12
+      if (dampInBodySpace) {
+        const bodyYaw = damp(skeleton.headPivot.rotation.y + previousChestYaw, TARGET)
+        skeleton.headPivot.rotation.y = bodyYaw - chestYaw
+      } else {
+        skeleton.headPivot.rotation.y = damp(skeleton.headPivot.rotation.y, TARGET - chestYaw)
+      }
+      previousChestYaw = chestYaw
+      skeleton.torsoPivot.rotation.y = chestYaw
+      skeleton.root.updateMatrixWorld(true)
+      // Past the start-up transient, which neither rule is being judged on.
+      if (time <= 5) continue
+      forward.set(0, 0, 1).transformDirection(head.matrixWorld)
+      worst = Math.max(worst, Math.abs(Math.atan2(forward.x, forward.z) - TARGET))
+    }
+    return worst * (180 / Math.PI)
+  }
+
+  const damped = wobble(true)
+  const converted = wobble(false)
+  assert.ok(
+    damped <= 0.5,
+    `the head wobbled ${damped.toFixed(3)} degrees with the gait. Damp the tracking in `
+    + 'body space and convert to chest space afterwards; a frame change is not a motion.',
+  )
+  // The rule this is guarding against has to be shown to be worse, or the bound above
+  // is just a number that happens to hold.
+  assert.ok(
+    converted > 2,
+    `damping the already-converted target produced only ${converted.toFixed(3)} degrees `
+    + 'of wobble, so this test is no longer distinguishing the two rules and the bound '
+    + 'above proves nothing. Re-derive it against the current gait and damping.',
+  )
+})
+
+/**
  * The beasts keep the sibling arrangement, and this pins what makes that safe.
  *
  * `createBeast` roots `head-pivot` at the animal's origin with the skull at `headY`
@@ -1414,10 +1495,15 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
     source.indexOf('private samplePlayerPose('),
   )
   assert.ok(
-    /dampAngle\(\s*headPivot\.rotation\.y,\s*lookYaw - chestYaw/.test(actorPosture),
-    'the head yaw must have the chest\'s own yaw subtracted from it. `lookYaw` is '
-    + 'measured from the actor\'s facing and head-pivot now hangs off torso-pivot, so '
-    + 'applied raw the chest\'s twist is added to the gaze — 24 degrees at the extreme.',
+    /dampAngle\(\s*headPivot\.rotation\.y \+ previousChestYaw,\s*lookYaw/.test(actorPosture),
+    'the head yaw must be damped in body space and converted to chest space afterwards. '
+    + '`lookYaw` is measured from the actor\'s facing and head-pivot now hangs off '
+    + 'torso-pivot, so applied raw the chest\'s twist is added to the gaze — 24 degrees '
+    + 'at the extreme — and damped after conversion it lags the gait by 2.8 degrees.',
+  )
+  assert.ok(
+    /headPivot\.rotation\.y = bodyYaw - chestYaw/.test(actorPosture),
+    'the conversion out of body space must be instantaneous, not damped',
   )
 })
 
