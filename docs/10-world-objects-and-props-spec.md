@@ -903,8 +903,28 @@ programme's docs. Line numbers rot silently — the file they point into stays v
 nothing errors, and the citation quietly starts describing a blank line. This spec cites
 files and symbols throughout for that reason. The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives already
 
+**A negative claim needs a probe at least as much as a positive one, and usually more.**
+Nothing else will contradict it. Reporting the state of an integration branch, this pass
+ran five content probes for what it *had* — all five correct — and then listed what it
+*lacked* from its own commit titles. Two of the three named as missing were already
+merged, and the one genuinely missing was described as test-only when it carried source in
+two files.
+
+The asymmetry is the point: a positive claim invites the check that refutes it, because
+the natural response to "it has X" is to look for X. A negative claim has no such
+counterpart — *"it lacks X"* looks the same whether or not anyone measured, and being
+wrong about it is invisible until someone else looks. It is the borrowed-check finding one
+level up: the assertion arriving with confidence attached gets the least scrutiny.
+
+The remedy is mechanical and costs the same as the positive probe: **grep for the thing
+you claim is absent, and report the number.** An absence stated as `MISS <token>` next to
+a command is checkable; an absence stated from memory is a rumour with a SHA attached.
+
 **Measure adopted fixes at least as hard as original code, precisely because they feel
-settled.** The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives alreadyargued for, by someone who was right about something else, which is exactly the condition
+settled.**
+Contributed by the programme lead, about this pass's own status report, in the same message
+in which it retracted a probe of its own for the same class of defect — it had checked for
+two symbols that existed both before and after the fix they were meant to confirm. The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives alreadyargued for, by someone who was right about something else, which is exactly the condition
 under which nobody measures it again.
 
 Two of the three worst vacuous checks in this file were adopted from reviews. The ledger
