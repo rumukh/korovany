@@ -3,7 +3,25 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import * as THREE from 'three'
 
-import { displaceGeometry } from '../src/game/art/index.ts'
+import {
+  artVariation,
+  displaceGeometry,
+  haystackParts,
+  type PropPalette,
+} from '../src/game/art/index.ts'
+
+/** Colours only; nothing here affects geometry. Mirrors the fixture in `worldArt.test.ts`. */
+const SEAM_PROP_PALETTE: PropPalette = {
+  timber: 0x8a6a44,
+  timberShade: 0x4a3524,
+  stone: 0x9aa0a8,
+  stoneShade: 0x4b5158,
+  metal: 0x7d8590,
+  cloth: 0xb4462f,
+  clothAccent: 0xe0c78a,
+  glow: 0xffc46a,
+  accent: 0xc48742,
+}
 
 /**
  * `displaceGeometry` pushes every vertex along **its own normal**. On a non-indexed
@@ -297,5 +315,81 @@ test('every faceted displacement site in the tree is seam-repaired', () => {
   assert.ok(
     checked >= 0 && callSites.length >= 1,
     'unreachable: the population guard above already covers this',
+  )
+})
+
+
+/**
+ * The three tests above validate the *technique* with a local implementation. None of
+ * them touches `PropKit`'s shipped `displaceSeamless`, and that gap let a real defect
+ * live in it while this file stayed green.
+ *
+ * Its seam key used `toFixed(4)`. `toFixed` formats the sign separately from the digits,
+ * so a coordinate at exactly `0` keys as `"0.0000"` and one at `-4.9e-18` — the same
+ * point — keys as `"-0.0000"`. Measured groups of coincident vertices, by key:
+ *
+ *     latheProfile   toFixed 0    round 3    MISSES every seam
+ *     Sphere                 2          7    MISSES 5
+ *     Cylinder              28         26    INVENTS 2
+ *     loftProfile            8          8    agree
+ *
+ * So on every lathe-derived prop the wrapper did **nothing at all while looking applied**,
+ * and on cylinders it averaged vertices that were never coincident, moving geometry that
+ * should not move. Found by a sibling session, not by this suite.
+ *
+ * The lesson is narrow and worth stating: **a test that reimplements the thing it tests
+ * verifies the idea and not the artefact.** All three tests above are correct about the
+ * technique and were silent about the shipped copy for as long as it existed.
+ *
+ * `haystackParts` is the one displacement site whose surface comes from `latheProfile` —
+ * the row where the two keys disagree completely — so it is the likeliest place for the
+ * defect to express.
+ *
+ * **It does not express, and this test does not discriminate the fix.** Measured both
+ * ways, with the seam key patched to each in turn and every constructible prop swept:
+ *
+ *     Math.round   7 surfaces, 8 boundary edges
+ *     toFixed(4)   7 surfaces, 8 boundary edges   <- identical
+ *
+ * Re-applying the `toFixed` key leaves this test green. Stated here rather than quietly,
+ * because a test that cannot fail for the reason it was written is the thing this file's
+ * own §13 exists to refuse, and writing one while fixing an instance of the same class
+ * was not a mistake worth hiding.
+ *
+ * So the fix is **correct and latent**. `toFixed` is wrong by construction — it formats
+ * the sign separately, so one point has two keys — and that is settled by the grouping
+ * table above, not by any prop. What no measurement here supports is a claim that a
+ * shipped prop was visibly torn by it.
+ *
+ * What this test does cover, which is worth having on its own: these builders come out
+ * closed at all. Four further sites — `tree`, `strataRock`, `outcrop`, `groundCover` —
+ * need construction context this file does not have, so the sweep is 7 surfaces of 11
+ * sites and the defect could still express in the four not measured.
+ */
+test('a shipped lathe-derived prop comes out of displaceSeamless closed', () => {
+  const parts = haystackParts({
+    variation: artVariation(4242, 'seam:haystack'),
+    noiseSeed: 1,
+    palette: SEAM_PROP_PALETTE,
+  })
+
+  const open: string[] = []
+  let checked = 0
+  for (const [index, part] of parts.entries()) {
+    checked += 1
+    const edges = boundaryEdges(part.geometry)
+    if (edges > 0) open.push(`haystack[${String(index)}] ${part.surface}: ${String(edges)} open edges`)
+    part.geometry.dispose()
+  }
+
+  // Pins the population: a builder that stopped producing geometry would otherwise let
+  // this pass by measuring nothing, which is the defect this whole file documents.
+  assert.ok(checked >= 1, `only ${String(checked)} prop surfaces were swept`)
+  assert.deepEqual(
+    open,
+    [],
+    'this shipped prop displaced open. `displaceSeamless` groups coincident vertices by a '
+    + 'rounded-integer key; if that key stops matching coincident points — `toFixed` was '
+    + 'the instance — the wrapper silently does nothing and the crease tears.',
   )
 })
