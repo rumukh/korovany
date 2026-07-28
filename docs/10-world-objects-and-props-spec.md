@@ -1764,6 +1764,38 @@ happened on the other side. The rule the programme kept re-deriving applies to o
 numbers first: *a figure without the command that produced it is a rumour that has been
 formatted*, and the author is the last person who will notice.
 
+**If the strict-equality form passes, the inequality beside it was never a test.** The
+foundation session supplied this while closing a fourth instance of the derived-identity
+defect, and it is stronger than the rule it improves. This spec already said *build the
+state the assertion forbids and watch it fail; if you cannot construct that state, you have
+a definition rather than a test.* That is a failure to falsify, and it leaves the hard cases
+open — sometimes the forbidden state is genuinely awkward to construct and the assertion
+survives on the benefit of the doubt.
+
+The replacement is a **positive** test for entailment. Where an assertion claims an
+inequality, assert the exact identity instead and run it:
+
+```
+assert.equal(probe.spans[index], -baseline.spans[index])   ->  GREEN, bit-exact
+```
+
+Reversal moves no vertex, so the bounding box and centre are unchanged and every triangle
+determinant negates exactly. Strict float equality passing proves the inequality beside it
+could not have failed — no construction required, one line, and it answers rather than
+merely failing to refute.
+
+**With the caution that matters more than the technique.** That session rewrote the entailed
+assertion and documented it in the commit as **a readability fix, not hardening**, because
+measurement showed both forms catch the blinded instrument and the reordered-spans mutation
+identically. Removing an entailment improves what a reader infers from an assertion count
+and improves detection **not at all**. Saying so explicitly is the same move as naming a
+guard's blind spot in a test title, pointed at a commit message instead — without it the
+next reader banks a guarantee nobody added.
+
+The tally for this defect is at least five across three sessions in a single night, and
+none of them was noticed while being written. Every one felt like rigour at the moment of
+writing, which is the only thing they reliably have in common.
+
 **The artefact with no gate is the one you are proudest of.** This section spent the night
 cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
 state that no check could see. Ten lines were mangled — five entries whose opening sentence
