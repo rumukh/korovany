@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
+import { actorGaitCadence, actorSpeedForRole } from '../src/game/types.ts'
 import * as THREE from 'three'
 import {
   BEAST_KINDS,
@@ -16,6 +17,8 @@ import {
   buildBeastTail,
   buildBirdBody,
   buildBirdWing,
+  applyChestPose,
+  applyHeadPose,
   buildCharacterSkeleton,
   buildCloak,
   buildDeerBody,
@@ -47,6 +50,8 @@ import {
   buildWristRope,
   characterPartKeys,
   characterRoles,
+  chestGaitYaw,
+  decayStrideOnStagger,
   hasOutlineNormals,
   resolveCharacterPlan,
   setCharacterShoulderWidth,
@@ -1379,6 +1384,13 @@ test('the chest lends the head its breath but not its shoulders', () => {
   // The roll axis silently lost its endpoint for four commits and this guard passed
   // throughout, because 396 poses and 462 poses both clear a floor. A count that is
   // published has to be asserted exactly, against the product of its own axes.
+  //
+  // And the modulo form that replaced it was a second member of the same class rather
+  // than a fix. `lookStates % LOOK_POSES === 0` is satisfied by dropping the *pitch*
+  // endpoint instead of the roll one: 385 poses over 120 sweeps is 46,200, and
+  // 46,200 % 462 === 0. A reviewer found that. **A divisibility check on a count is a
+  // check on the number of sweeps, not on the size of one** — so it is asserted
+  // directly now, against the plans and configurations that produce it.
   const LOOK_POSES =
     (LOOK_PITCH.steps + 1) * (LOOK_YAW.steps + 1) * (LOOK_ROLL.steps + 1)
   assert.equal(
@@ -1388,10 +1400,12 @@ test('the chest lends the head its breath but not its shoulders', () => {
     + '`CharacterKit.ts` and `docs/09`. Update both, or restore the axis that shrank.',
   )
   assert.equal(
-    lookStates % LOOK_POSES,
-    0,
-    `the look grid visited ${String(lookStates)} states, which is not a whole number of `
-    + `${String(LOOK_POSES)}-pose sweeps — an axis is not reaching its declared endpoint.`,
+    lookStates,
+    55_440,
+    `the look grid visited ${String(lookStates)} states, not the 55,440 that 462 poses `
+    + 'across every plan and shoulder/breath configuration produce. Asserted as a total '
+    + 'rather than as a multiple of 462, because a multiple is also what you get when a '
+    + 'different axis loses an endpoint and the sweep count absorbs it.',
   )
   assert.ok(states > 40_000, `swept only ${String(states)} states; the grid has collapsed`)
   assert.ok(
@@ -1420,7 +1434,10 @@ test('the chest lends the head its breath but not its shoulders', () => {
  *
  * Measured over the sweep this test runs — the chest envelope, the head's own pitch
  * and roll, the body's X-vs-Z asymmetry and the clamped look range, 6,174,630 states —
- * as the angle between the head's world forward and the requested heading:
+ * as the angle between the head's world forward and the requested heading. The three
+ * rejected rows are computed on **one plan** of that sweep, 228,690 states, which the
+ * plan-independence assertion below the probes proves is the whole population rather
+ * than a sample of it:
  *
  * | rule | worst heading error |
  * | --- | --- |
@@ -1586,17 +1603,86 @@ test('the head tracks its target through the chest, not past it', () => {
   //   head roll held to what the engine writes   0.0487 deg
   //   head roll swept free to +/-0.30            0.0487 deg, same chest state
   //
-  // The maximum is roll-degenerate: the worst chest configuration scores identically at
-  // roll 0.037 and at -0.150, so freeing the axis adds states that tie rather than
-  // states that win. A reviewer measured this first and I reproduced it rather than
-  // taking it, which is the rule this whole passage is about.
+  // The objective is **constant** in head roll — not merely flat at this maximum. The
+  // worst chest configuration scores identically at roll 0.037 and at -0.150, and
+  // sweeping roll across arbitrary chest states moves the heading by at most 2.4e-14
+  // degrees, which is float noise. Saying "the maximum is roll-degenerate" would be
+  // true and would still mislead, because it invites the thought that some *other*
+  // maximum might be roll-sensitive. None can be. A reviewer measured this first and I
+  // reproduced it rather than taking it, which is the rule this whole passage is about.
+  //
+  // **And it was refutable without measuring anything, from this codebase, ten commits
+  // earlier.** `solveHeadYaw` takes `chestX, chestY, chestZ, headPitch, lookYaw`. There
+  // is no roll argument, and its absence is documented as deliberate in the function's
+  // own docblock — *"a rotation about Z leaves the +Z axis fixed, so head-pivot's
+  // rotation.z cannot move the gaze and is not a parameter"* — written in `3257029`, by
+  // the same hand that later blamed that axis for a 39% discrepancy.
+  //
+  // So the general rule is sharper than "verify your causes": **before offering a cause,
+  // check whether your own code already answers it.** A justification written while
+  // correcting yourself is not merely unverified — it is written by the one person who
+  // has stopped consulting the source, because they are certain they know what it says.
+  // The counter-proof here was a function signature, and a `git grep` away.
   //
   // So: **the sweep was partially joint** — it constrained some axes by the reaction and
   // left others as free cross-product ranges — and that is the defect, demonstrated.
-  // Which axis carried the difference is *not* established, and this comment no longer
-  // claims one. Enforcing joint consistency on one axis and believing it enforced on all
-  // of them is the finding; a partially-joint sweep looks exactly like a joint one from
-  // the outside.
+  //
+  // Which axis carried it is now partly established, by a factorial design rather than
+  // a bracket, because a probe that moves two things cannot attribute what it sees.
+  // One constraint relaxed at a time, coefficient = degrees / 0.0099:
+  //
+  //   fully joint                                             4.8203
+  //   head roll freed to +/-0.30                              4.8203   <- exactly zero
+  //   chest PITCH pinned at the axis maximum 0.70             5.7018
+  //   chest ROLL  pinned at the axis maximum 0.30             6.0420   <- dominant
+  //
+  // **That is a ranking over the axes that were free, not over the axes the bound is
+  // sensitive to.** Pinning chest *yaw* at its maximum gives 5.9876 — between the two —
+  // but yaw contributed nothing to the discrepancy, because it is the one axis the
+  // original sweep constrained correctly. A reviewer measured that and flagged the
+  // misreading before anyone made it: "roll dominant, pitch second" invites being read
+  // as a statement about the geometry when it is a statement about which constraints
+  // were missing. **Sensitivity and contribution are different quantities, and only the
+  // second one explains a wrong number.**
+  //
+  // **That baseline read 4.9199 for one commit, and it was itself partially joint** —
+  // the fourth instance of this defect, inside the commit documenting the third. A
+  // reviewer found it and named the free axis: `idleWeightShift` is
+  // `sin(...) * 0.035 * (1 - actor.motionBlend)`, so at the maximum's `motionBlend`
+  // of 1.18 the engine permits `|shift| <= 0.0063` and the harness permitted 0.035 —
+  // **5.6x over, on an axis that feeds `torsoPivot.rotation.z` directly**. You can read
+  // it off the corner: coupled, the worst sits at chest roll 0.083 (= 0.5*0.16 +
+  // 0.0063*0.55); decoupled, at 0.099 (= 0.5*0.16 + 0.035*0.55).
+  //
+  // So the baseline was inflated by 2.1% **on precisely the axis the design set out to
+  // isolate**, which means the two factors were not independent: part of the chest-roll
+  // effect was already inside the baseline. The ordering survives — head roll is zero
+  // for a structural reason, chest roll is the largest single term either way — but
+  // every delta moved, and 4.8203 now agrees with the 4.81 quoted twenty lines above
+  // instead of contradicting it inside the rule that says to reconcile or name both.
+  //
+  // **Head roll contributes exactly zero**, and not merely at the measured maximum:
+  // `head-pivot`'s Euler is XYZ, so its matrix is `Rx·Ry·Rz` and `Rz(roll)·zHat = zHat`,
+  // while every scale in the chain sits *above* that rotation and so cannot reintroduce
+  // a dependence. Head roll cannot move this heading at any value, reachable or not —
+  // which is a proof this file already contained eighty lines above, in the comment
+  // explaining why the sweep drives head roll at all.
+  //
+  // **Chest roll is the largest single term**, and an earlier version of this comment
+  // named chest pitch, the second largest. Jointly `|-turnLean*0.16 + shift*0.55|`
+  // cannot exceed 0.099; the probe pinned it at 0.30, three times over.
+  //
+  // Two lessons rather than one. Naming the *second* biggest contributor is not a
+  // rounding error in an explanation — it is the same "change credited to the wrong
+  // variable" defect as naming an inert one, just harder to notice, because a
+  // plausible-sized effect in the right direction reads as confirmation. And **the
+  // reason a variable is inert can be sitting in the same file, already proven, and
+  // still not be reached for** — the head-roll claim was refuted by a comment eighty
+  // lines up that I had read and written near.
+  //
+  // What is still **not** accounted for is the remainder: 6.04 is not 6.68, so at least
+  // one further axis was free. Both files name chest roll as the dominant demonstrated
+  // contributor and stop there.
   //
   // Three causes were offered for one number and all three were wrong, by three
   // different people, while the number itself survived every attack. That pattern has a
@@ -1615,6 +1701,95 @@ test('the head tracks its target through the chest, not past it', () => {
   let worst = 0
   let worstAt = ''
   let states = 0
+
+  // `solveHeadYaw` derives its two columns by hand from **three.js's XYZ Euler matrix**
+  // — `R = Rx·Ry·Rz` for the chest, with the head's pitch applied after its yaw in the
+  // same order. Every element in that derivation is order-specific. Under `ZYX` the
+  // head's roll becomes outermost and reaches the gaze directly, and the closed form is
+  // solving a different problem.
+  //
+  // This started as an assertion on a freshly built skeleton, which pinned
+  // **construction** rather than the object the engine animates. `Euler.order` is a
+  // mutable per-object property, so setting it at the animation site passed 22/0 — the
+  // addition-blindness lesson one object across. And the realistic edit is the quiet
+  // one: `ZYX` moves the gaze 143° and any bound catches it, while **`YXZ` is what
+  // everyone reaches for when a head gimbal-locks**, and under `YXZ` roll stays inert,
+  // so the conspicuous signature never appears.
+  //
+  // `applyHeadPose` therefore passes the order to `Euler.set` on every write, which
+  // does not detect a runtime change but **overwrites it on the next frame**. The
+  // assertion below drives that function against a deliberately corrupted pivot rather
+  // than inspecting a clean one. **An invariant that reasserts itself is worth more
+  // than a guard that can be walked around**, and here it cost one argument.
+  {
+    const s = buildCharacterSkeleton(resolveCharacterPlan('elf', 'soldier', 0, false).proportions)
+    for (const [name, node] of [
+      ['torso-pivot', s.torsoPivot], ['neck-pivot', s.neckPivot], ['head-pivot', s.headPivot],
+    ] as const) {
+      assert.equal(
+        node.rotation.order,
+        'XYZ',
+        `${name} now uses ${node.rotation.order} Euler order. \`solveHeadYaw\` reads the `
+        + 'columns of `Rx·Ry·Rz` by hand and every term in it assumes XYZ, so under any '
+        + 'other order it answers a different question. Under ZYX the head\'s roll '
+        + 'reaches the gaze directly, which the derivation says it cannot.',
+      )
+    }
+    // Swept, not sampled — and this assertion was written *after* a reviewer showed
+    // that `chestGaitYaw` and `decayStrideOnStagger` were each pinned at a single
+    // input, so it should not have been one pose and one component. It was.
+    //
+    // The reviewer's unifying diagnosis is that every remaining hole here is **a sample
+    // standing in for a population**: one plan for 27, one pose for 462, one grid corner
+    // for a joint set, one stride for a function, one delta for a decay. That is the
+    // same defect this file opened with — a hand-written chest table standing in for a
+    // reachable envelope — and it is unrecognisable at the far end because the sample
+    // stopped looking like a list and started looking like an argument list.
+    //
+    // So: several poses, all three components, and a component-swap check. `pitch` and
+    // `yaw` transposed would satisfy any assertion that only reads `rotation.x` at a
+    // pose where they happen to be equal, which is why none of the poses below have
+    // two equal components.
+    // Both pivots, because `solveHeadYaw` reads both and an earlier version of this
+    // block reasserted only the head. A reviewer measured what the missing half cost:
+    // chest order `ZYX` is worth **30.02°** against this test's 0.9650° bound, within a
+    // factor of 1.5 of the original bug — and setting it at animation time passed 22/0.
+    //
+    // **A fix scoped to the instance that was reported is a fix scoped to a sample.**
+    // The head was the pivot in the finding; the derivation names two.
+    for (const sabotage of ['YXZ', 'ZYX', 'ZXY'] as const) {
+      for (const [pitch, yaw, roll] of [
+        [0.1, 0.2, 0.3], [-0.09, 0.65, -0.3], [0.18, -1.2, 0.037], [0, 0.5, -0.15],
+      ] as const) {
+        for (const [name, node, apply] of [
+          ['head-pivot', s.headPivot, applyHeadPose],
+          ['torso-pivot', s.torsoPivot, applyChestPose],
+        ] as const) {
+          node.rotation.order = sabotage
+          apply(node, pitch, yaw, roll)
+          assert.equal(
+            node.rotation.order,
+            'XYZ',
+            `something set ${name}'s Euler order to ${sabotage} and the pose function left `
+            + 'it there. Both pass the order to `Euler.set` precisely so that a runtime '
+            + 'reassignment cannot survive a frame — asserting the order on a freshly built '
+            + 'skeleton does not cover this, because the engine animates a rig the test '
+            + 'never sees.',
+          )
+          assert.deepEqual(
+            [node.rotation.x, node.rotation.y, node.rotation.z],
+            [pitch, yaw, roll],
+            `the pose function was given (${String(pitch)}, ${String(yaw)}, ${String(roll)}) `
+            + `for ${name} and wrote (${String(node.rotation.x)}, ${String(node.rotation.y)}, `
+            + `${String(node.rotation.z)}). All three components are checked, at four `
+            + 'poses with no two equal, because a single pose reading only the pitch is '
+            + 'satisfied by `headPitch * 0.5` at zero and by transposing two arguments '
+            + 'anywhere they coincide.',
+          )
+        }
+      }
+    }
+  }
 
   for (const faction of FACTIONS) {
     for (const role of ROLES) {
@@ -1677,6 +1852,19 @@ test('the head tracks its target through the chest, not past it', () => {
       AXES.reduce((total, axis) => total * (axis.steps + 1), 1),
     'the grid has collapsed; every declared endpoint must be visited',
   )
+  // The check above is self-consistent, not a pin: it compares the loop's count against
+  // the product of the same axes the loop reads, so widening an axis moves both sides
+  // together and it stays green. A reviewer took the direction-degenerate head-roll axis
+  // from 2 steps to 3 and the published total went 6,174,630 -> 8,232,840 with the whole
+  // file at 22/0. **A count that is quoted elsewhere has to be pinned to a literal**, or
+  // the only thing verified is that the loop can multiply.
+  assert.equal(
+    states,
+    6_174_630,
+    `the gaze sweep now visits ${String(states)} states, not the 6,174,630 published in `
+    + 'this docblock, `GameEngine.ts` and `docs/09`. That is not necessarily wrong — an '
+    + 'axis may have been widened deliberately — but three files quote the old figure.',
+  )
   // The solve is exact on a chain of pure rotations — that is its whole contract, and
   // an earlier version of it was not, because it ignored the head's own pitch. What is
   // left is the two scales above the head, each bounded by the asymmetry that causes
@@ -1709,35 +1897,66 @@ test('the head tracks its target through the chest, not past it', () => {
   // The fix is not more careful copying. It is to make the committed suite compute
   // them, so they are as re-checkable as anything else here and go red when they move.
   //
-  // One plan, because a heading is a direction and no direction calculation reads a
-  // position — the same property the assertion below the probes verifies rather than
-  // assumes. Every body scale and the full axis grid, because those do reach a heading.
+  // One plan, and **this comment cited the wrong assertion as its licence for three
+  // commits.** The plan-independence sets below the probes evaluate the *exact solve's*
+  // breath and body residue; they never touch the raw, scalar or no-pitch rules. A
+  // reviewer injected `p.lean` into the rejected `measure` alone and the file stayed
+  // 22/0, because sampled `elf/soldier` has `lean` 0 while other plans reach 0.20.
+  //
+  // The shortcut is nevertheless sound — the same reviewer swept all 27 plans over the
+  // full 6,174,630 rejected states and got exactly one double per rule. **But "the
+  // claim is true" and "this assertion proves it" are different statements**, and
+  // citing a nearby assertion that happens to be about something else is how a
+  // justification survives without ever being tested. So the rejected rules now carry
+  // their own plan sweep, below, at the state each of them maximises at.
   const rejected = { raw: 0, scalar: 0, nopitch: 0 }
+  const worstState = {
+    raw: [0, 0, 0, 0, 0, 0] as number[],
+    scalar: [0, 0, 0, 0, 0, 0] as number[],
+    nopitch: [0, 0, 0, 0, 0, 0] as number[],
+  }
   let scalarWorseThanNothing = 0
   let rejectedStates = 0
-  {
-    const p = resolveCharacterPlan('elf', 'soldier', 0, false).proportions
-    const skeleton = buildCharacterSkeleton(p)
+  // Built once, used by both the one-plan sweep and the plan-independence check below.
+  // They previously had **two implementations of the same measurement**, which is how a
+  // reviewer's mutation of one slipped past the other — and re-implementing the thing
+  // you are checking is the defect this file caught in the anisotropy test and again in
+  // the chest-yaw coefficients. A shared closure cannot drift from itself.
+  const rig = (plan: CharacterProportions): {
+    skeleton: ReturnType<typeof buildCharacterSkeleton>, head: THREE.Object3D,
+  } => {
+    const skeleton = buildCharacterSkeleton(plan)
     const head = new THREE.Object3D()
     head.position.y = skeleton.headY
     skeleton.headPivot.add(head)
     setCharacterShoulderWidth(skeleton.torsoPivot, skeleton.neckPivot, 1.07)
     skeleton.torsoPivot.scale.y = 1 + BREATH_AMPLITUDE
-    // The chest rotation is set *inside* here rather than by the caller. It was a
-    // parameter that the body ignored, relying on the loop having set the pivot first
-    // — which `tsc` caught as three unread arguments. A measurement helper that
-    // silently depends on state its own signature claims to take is how a sweep ends
-    // up measuring the previous iteration.
+    return { skeleton, head }
+  }
+  // The chest rotation is set *inside* here rather than by the caller. It was a
+  // parameter that the body ignored, relying on the loop having set the pivot first
+  // — which `tsc` caught as three unread arguments. A measurement helper that
+  // silently depends on state its own signature claims to take is how a sweep ends
+  // up measuring the previous iteration.
+  const measureOn = (
+    r: { skeleton: ReturnType<typeof buildCharacterSkeleton>, head: THREE.Object3D },
+    x: number, y: number, z: number, headPitch: number, headRoll: number,
+    target: number, yaw: number,
+  ): number => {
+    r.skeleton.torsoPivot.rotation.set(x, y, z)
+    r.skeleton.headPivot.rotation.set(headPitch, yaw, headRoll)
+    r.skeleton.root.updateMatrixWorld(true)
+    forward.set(0, 0, 1).transformDirection(r.head.matrixWorld)
+    return Math.abs(Math.atan2(forward.x, forward.z) - target)
+  }
+  {
+    const p = resolveCharacterPlan('elf', 'soldier', 0, false).proportions
+    const one = rig(p)
+    const skeleton = one.skeleton
     const measure = (
       x: number, y: number, z: number, headPitch: number, headRoll: number,
       target: number, yaw: number,
-    ): number => {
-      skeleton.torsoPivot.rotation.set(x, y, z)
-      skeleton.headPivot.rotation.set(headPitch, yaw, headRoll)
-      skeleton.root.updateMatrixWorld(true)
-      forward.set(0, 0, 1).transformDirection(head.matrixWorld)
-      return Math.abs(Math.atan2(forward.x, forward.z) - target)
-    }
+    ): number => measureOn(one, x, y, z, headPitch, headRoll, target, yaw)
     for (const bodyZ of BODY_SCALES) {
       skeleton.bodyPivot.scale.set(1.05, 1.055, 1.05 * bodyZ)
       for (let i = 0; i <= AXES[0].steps; i += 1) {
@@ -1767,9 +1986,18 @@ test('the head tracks its target through the chest, not past it', () => {
                   // only be measured where both are evaluated. Quoted as a bare
                   // percentage for four commits, in four files, without one.
                   if (scalar > raw) scalarWorseThanNothing += 1
-                  rejected.raw = Math.max(rejected.raw, raw)
-                  rejected.scalar = Math.max(rejected.scalar, scalar)
-                  rejected.nopitch = Math.max(rejected.nopitch, nopitch)
+                  if (raw > rejected.raw) {
+                    rejected.raw = raw
+                    worstState.raw = [bodyZ, x, y, z, headPitch, headRoll]
+                  }
+                  if (scalar > rejected.scalar) {
+                    rejected.scalar = scalar
+                    worstState.scalar = [bodyZ, x, y, z, headPitch, headRoll]
+                  }
+                  if (nopitch > rejected.nopitch) {
+                    rejected.nopitch = nopitch
+                    worstState.nopitch = [bodyZ, x, y, z, headPitch, headRoll]
+                  }
                 }
               }
             }
@@ -1779,25 +2007,73 @@ test('the head tracks its target through the chest, not past it', () => {
     }
   }
   const asDegrees = (radians: number): number => radians * (180 / Math.PI)
+  // The licence for measuring the three rejected rules on one plan, owned here rather
+  // than borrowed from an assertion about a different quantity. Each rule is re-evaluated
+  // across all 27 plans **at the state it maximises at** — the state where a plan
+  // dependence would matter most — and must take exactly one distinct double.
+  //
+  // Raw doubles, not rounded: the residues of a *direction* calculation are either
+  // bit-identical or they are not, and a tolerance here would be the thing that lets a
+  // real dependence through. `p.lean` reaching the chest is the specific defect this
+  // catches, and it is not hypothetical — `elf/soldier` has `lean` 0 while other plans
+  // reach 0.20, which is exactly why sampling that plan hid it.
+  for (const [rule, yawOf] of [
+    ['raw', (_x: number, _y: number, _z: number, _hp: number, t: number): number => t],
+    ['scalar', (_x: number, y: number, _z: number, _hp: number, t: number): number => t - y],
+    ['nopitch', (x: number, y: number, z: number, _hp: number, t: number): number =>
+      solveHeadYaw(x, y, z, 0, t)],
+  ] as const) {
+    const [bodyZ, cx, cy, cz, headPitch, headRoll] = worstState[rule]
+    const residues = new Set<number>()
+    for (const faction of FACTIONS) {
+      for (const role of ROLES) {
+        const r = rig(resolveCharacterPlan(faction, role, 0, false).proportions)
+        r.skeleton.bodyPivot.scale.set(1.05, 1.055, 1.05 * bodyZ)
+        // Through the *same* `measureOn` the sweep above uses, so the two cannot
+        // disagree. `measureOn` returns |heading − target|; feeding target 0 makes that
+        // the heading itself, which is the quantity plan-independence is about.
+        residues.add(
+          measureOn(r, cx, cy, cz, headPitch, headRoll, 0, yawOf(cx, cy, cz, headPitch, 0.65)),
+        )
+      }
+    }
+    assert.equal(
+      residues.size,
+      1,
+      `the ${rule} rule's heading takes ${String(residues.size)} distinct values across `
+      + `the ${String(FACTIONS.length * ROLES.length)} plans at the state it maximises `
+      + 'at, so the figure quoted for it is a sample of a population that varies rather '
+      + 'than the population itself. Sweep the plans in the rejected block, or find what '
+      + 'made a direction depend on a proportion — `lean` is measured in radians and '
+      + 'reaches `torsoPivot.rotation.x`, so it is the first place to look.',
+    )
+  }
   const worseShare = (scalarWorseThanNothing / rejectedStates) * 100
   assert.ok(
-    Math.abs(worseShare - 3.904) < 0.01,
+    Math.abs(worseShare - 3.904) < 0.0005,
     `the scalar rule is now worse than no correction in ${worseShare.toFixed(4)}% of states, `
     + 'not the 3.904% quoted beside it. This figure was carried as "4.2%" through four '
     + 'files and four commits without ever being computed by anything — it needs both '
     + 'rejected rules evaluated over one grid, which nothing did until now.',
   )
-  // Pinned to a hundredth of a degree. That is a discriminator, not a tolerance: it is
-  // tight enough that any real change to the grid or the rules moves it, and the
-  // failure message carries the new value, so the docblocks quoting these get corrected
-  // by being told rather than by someone remembering to re-measure.
+  // Pinned to **half** the last published digit, not a whole one. The original `< 0.01`
+  // against a two-decimal figure was the wrong bound by exactly a factor of two: 43.6448
+  // could drift to 43.6494 — which *displays* as 43.65, a different number in every
+  // docblock quoting it — and stay green. A reviewer produced that drift for all three
+  // rows and the share.
+  //
+  // The rule the tolerance has to encode is not "close enough" but **"still rounds to
+  // what we published"**, so it is half a unit in the last place shown. A guard on a
+  // published figure is really a guard on the *rendering* of that figure, and the two
+  // differ by a factor of two — which is invisible unless you ask what the assertion is
+  // protecting, rather than what it is measuring.
   for (const [rule, expected, worthIt] of [
     ['raw `lookYaw`, authored in body space and used in chest space', 43.64, rejected.raw],
     ['a scalar `lookYaw - chestYaw`', 20.30, rejected.scalar],
     ['the solve without the head\'s own pitch', 9.71, rejected.nopitch],
   ] as const) {
     assert.ok(
-      Math.abs(asDegrees(worthIt) - expected) < 0.01,
+      Math.abs(asDegrees(worthIt) - expected) < 0.005,
       `${rule} now leaves ${asDegrees(worthIt).toFixed(4)} degrees, not the ${String(expected)} `
       + 'quoted beside it. Nothing is necessarily broken — the grid may simply have '
       + 'moved — but every docblock in `CharacterKit.ts`, `GameEngine.ts` and `docs/09` '
@@ -1817,13 +2093,30 @@ test('the head tracks its target through the chest, not past it', () => {
   // from this test for four commits.
   //
   // They run on **one plan**, which on this branch's record should be the next
-  // sample-presented-as-population defect. It is not, and the reason is structural: a
-  // heading is a *direction*, every proportion enters the rig as a *position*, and no
-  // direction calculation reads a position. A reviewer reached that argument and
-  // verified it across all 27 plans; the assertion below re-verifies it rather than
-  // inheriting it, because the argument was established before `body-pivot` joined the
-  // chain and a justification that outlives the thing it justified is how most of the
-  // other fifteen findings on this branch happened.
+  // sample-presented-as-population defect. It is not — but the reason given here for
+  // three commits was false, and the counter-example sits a hundred lines down.
+  //
+  // The false version: *"every proportion enters the rig as a position, and no direction
+  // calculation reads a position."* `CharacterProportions.lean` is documented **"in
+  // radians"**, takes seven distinct values across the plans, and reaches
+  // `torsoPivot.rotation.x` directly as `rig.lean` — which is the very rotation
+  // `solveHeadYaw` consumes. Three more fields are radians and four are scales. A
+  // proportion reaching a rotation is not merely possible, it is what the wobble test
+  // below already does: `const chestPitch = 0.04 + 0.22 + p.lean`.
+  //
+  // The true version is narrower and is a property of **this probe**, not of the rig:
+  // the probe *overwrites* `torso-pivot.rotation` wholesale before measuring, so every
+  // plan-derived rotation is discarded before it can matter. What remains plan-derived
+  // in the chain is `neckPivot.position.y` and the head's own offset — **translations,
+  // and a translation cannot change a direction.**
+  //
+  // The difference is not pedantic. The false version would license a probe that
+  // *derived* its chest pitch from `p.lean`, and plan-independence would then be
+  // straightforwardly untrue while the stated reason said it could not be. A reviewer
+  // found this by reading the type rather than the argument. The assertion below is
+  // unaffected and re-verifies the property empirically across all 27 plans rather than
+  // resting on either argument, which is the only reason a wrong justification stayed
+  // harmless for three commits.
   const probe = (breath: number, bodyZ: number, faction = 'elf', role = 'soldier'): number => {
     const p = resolveCharacterPlan(faction as CharacterFaction, role, 0, false).proportions
     const skeleton = buildCharacterSkeleton(p)
@@ -1904,13 +2197,18 @@ test('the head tracks its target through the chest, not past it', () => {
     + '`SKEW_PER_UNIT_BODY_ASYMMETRY` is no longer a coefficient.',
   )
   // 4. And the three probes above are entitled to run on one plan, because the residue
-  //    is the same for every plan. Asserted rather than argued: a heading is a
-  //    direction, proportions enter the rig as positions, and no direction calculation
-  //    reads a position — but that is a claim about the code as it is now, and the last
-  //    time this file trusted such a claim across a change it was wrong. (A reviewer
-  //    made the argument; it also pointed out that `body-pivot`'s scale is neither a
-  //    proportion nor a position, so the argument happened to survive the change rather
-  //    than covering it.)
+  //    is the same for every plan. **Asserted rather than argued**, which turned out to
+  //    matter: the argument that stood here for three commits — proportions enter the
+  //    rig as positions, and no direction calculation reads a position — is false.
+  //    `lean` is a proportion in radians and reaches `torsoPivot.rotation.x`. The
+  //    property still holds, for the narrower reason given above the probe, and this
+  //    assertion is why a wrong justification cost nothing: it measures the residues
+  //    instead of trusting the sentence beside them.
+  //
+  //    That is the case for asserting a property you believe you can prove. **A proof
+  //    is only as good as its weakest premise and nothing re-checks a premise**, while
+  //    an assertion re-checks itself on every run — and this one was written by someone
+  //    who believed the false argument and would have written the same code either way.
   //
   //    Nine decimals is normally the kind of precision choice worth attacking as a
   //    knife-edge. Measured, it is not: the residues are **bit-identical** across the
@@ -2032,6 +2330,8 @@ const GAITS = [
   { role: 'peasant', speed: 3.1, cadence: 6.8, chestYawCoefficient: 0.12 },
 ] as const
 
+const HEAVY_ROLES: readonly string[] = ['brute', 'champion']
+
 /**
  * What the rejected rule produces per role, measured off this sweep.
  *
@@ -2088,7 +2388,23 @@ test('the head holds its target while the chest twists under it', () => {
       // storm hunch plus the plan's own lean, and the turn's roll. Holding pitch and
       // roll at zero is the one geometry where a scalar conversion happens to work,
       // and two earlier versions of these tests did exactly that.
-      const chestYaw = -stride * gait.chestYawCoefficient
+      // Production's own function, not a test-side copy of its arithmetic. This line
+      // read `-stride * gait.chestYawCoefficient` for six passes, and a reviewer noticed
+      // what that cost: **this simulation is the only place in the file that exercises
+      // the chest-yaw arithmetic across its whole range** — 3,600 frames per role, the
+      // stride swinging through ±0.62 — and it was exercising a copy.
+      //
+      // The equality assertion elsewhere pins `chestGaitYaw(1, heavy)`. One input. A
+      // mutant returning `-Math.sign(stride) * 0.12` satisfies it exactly while turning
+      // the chest's gait yaw into a square wave, and a dead zone `if (|stride| < 0.1)
+      // return 0` — which is what anyone adds to kill jitter — satisfies it while
+      // deleting the gait yaw over the low-stride range the reachability model rests on.
+      // Both passed 22/0. Pointed here, the first fails at 21/1 through an assertion
+      // that already existed.
+      //
+      // **A function whose value is its shape cannot be pinned at a point**, and the
+      // cheapest shape test available is usually a numerical test that already runs.
+      const chestYaw = chestGaitYaw(stride, HEAVY_ROLES.includes(gait.role))
       const chestPitch = 0.04 + 0.22 + p.lean
       const chestRoll = -Math.sin(time * 2) * 0.08
       if (dampInBodySpace) {
@@ -2148,8 +2464,8 @@ test('the head holds its target while the chest twists under it', () => {
     // asserted to a thousandth of a degree; if the gait model, the damping rate or the
     // rejected rule moves, this names the new value instead of a reviewer doing it.
     assert.ok(
-      Math.abs(converted - REJECTED_WOBBLE[gait.role]) < 0.001,
-      `a ${gait.role}'s rejected rule now produces ${converted.toFixed(3)} degrees of `
+      Math.abs(converted - REJECTED_WOBBLE[gait.role]) < 0.0005,
+      `a ${gait.role}'s rejected rule now produces ${converted.toFixed(4)} degrees of `
       + `wobble, not the ${REJECTED_WOBBLE[gait.role].toFixed(3)} recorded beside it. `
       + 'Nothing is necessarily broken — but the comment above and any docblock quoting '
       + 'these figures are now wrong, and this assertion exists so that they get '
@@ -2326,15 +2642,29 @@ test('the engine wires the rig the way these tests measure it', () => {
     'the head\'s tracking must be damped on the body-space angle. Damped after the '
     + 'conversion it lags the chest\'s gait twist and the lag returns as world wobble.',
   )
+  // Three source pins reduced to one, because `applyHeadPose` made two of them
+  // behavioural. What is left here is genuinely a *wiring* fact — which values are
+  // handed to the function — and that is the one thing a call cannot check, since it
+  // takes whatever it is given.
+  //
+  // The single-argument shape matters: `headPitch` appears twice in the call, once as
+  // the pitch written and once as the pitch the solve corrects for. Hoisting it into a
+  // const exists so those cannot diverge, and this pattern is what notices if the two
+  // occurrences stop being the same expression.
   assert.ok(
-    /headPivot\.rotation\.y = torsoPivot\s*\?\s*solveHeadYaw\(\s*torsoPivot\.rotation\.x,\s*torsoPivot\.rotation\.y,\s*torsoPivot\.rotation\.z,\s*headPitch,\s*actor\.headYaw,?\s*\)/
+    /applyHeadPose\(\s*headPivot,\s*headPitch,\s*torsoPivot\s*\?\s*solveHeadYaw\(\s*torsoPivot\.rotation\.x,\s*torsoPivot\.rotation\.y,\s*torsoPivot\.rotation\.z,\s*headPitch,\s*actor\.headYaw,?\s*\)\s*:\s*actor\.headYaw,\s*actor\.turnLean \* 0\.06 -\s*idleWeightShift \* 0\.2 -\s*pose\.flinch \* hitRight \* 0\.3,?\s*\)/
       .test(actorPosture),
-    'the head yaw must be solved against the chest\'s full rotation *and* the head\'s '
-    + 'own pitch, each passed through. Naming the function is not enough: a reviewer '
-    + 'replaced the call with `solveHeadYaw(0, 0, 0, actor.headYaw)` and the whole '
-    + 'suite still passed, because nothing checked the arguments. A scalar subtraction '
-    + 'leaves 20.3 degrees and is worse than nothing in 3.90% of states; dropping the '
-    + 'head pitch alone leaves 9.7.',
+    'the head pose is no longer written by one `applyHeadPose` call taking `headPitch`, '
+    + 'a yaw solved against the chest\'s full rotation *and* that same `headPitch`, and '
+    + 'the turn-lean roll. Naming the function is not enough: a reviewer replaced the '
+    + 'call with `solveHeadYaw(0, 0, 0, actor.headYaw)` and the whole suite still '
+    + 'passed, because nothing checked the arguments. A scalar subtraction leaves 20.3 '
+    + 'degrees and is worse than nothing in 3.90% of states; dropping the head pitch '
+    + 'alone leaves 9.7. **The roll argument is checked because it was not**: the same '
+    + 'reviewer passed `0` there and this assertion stayed green, which would have '
+    + 'silently removed the head\'s counter-roll against the turn. The equality between '
+    + 'the pitch given and the pitch written is checked by driving `applyHeadPose` '
+    + 'directly, in the gaze test — this only checks what reaches it.',
   )
   assert.ok(
     /const headPitch = -forwardLean \* actor\.motionBlend \* 0\.35 \+ pose\.stagger \* 0\.18$/m
@@ -2344,15 +2674,6 @@ test('the engine wires the rig the way these tests measure it', () => {
     + 'end of the line: unanchored, appending `+ pose.attack * 0.4` still matched, and '
     + 'that term would push the head pitch outside the [-0.09, 0.18] axis the skew '
     + 'bound is derived over — the bound would silently stop describing the engine.',
-  )
-  assert.ok(
-    /headPivot\.rotation\.x = headPitch$/m.test(actorPosture),
-    'the pitch the solve was given must be the pitch the head is given. Anchored for '
-    + 'the same reason: a reviewer mutated this to `headPitch * 0.5` and the whole file '
-    + 'passed 22/0, because the unanchored pattern matches its own prefix. Hoisting '
-    + '`headPitch` into a const exists solely so the solve and the pivot read one '
-    + 'value, and this was the assertion that was supposed to notice them diverging. '
-    + 'Driving the solve with a pitch the head does not wear costs 9.7 degrees.',
   )
   // The breath. `the chest lends the head its breath but not its shoulders` derives
   // its whole bound from these two numbers — they are the only thing that legitimately
@@ -2387,80 +2708,364 @@ test('the engine wires the rig the way these tests measure it', () => {
   // Driven off `GAITS` itself rather than a hand-written subset, so a row added there
   // is pinned here automatically. Six of the eighteen numbers were pinned before; all
   // eighteen are now, and adding a seventh role pins three more without an edit.
+  // And the beast short-circuit, which is what keeps `actorSpeedForRole`'s unreachable
+  // branch unreachable. Handed a beast role directly it returns the humanoid 3.7, where
+  // the profiles are wolf 5.4, boar 4.6, bear 3.4, troll 2.9 — so if this `??` ever
+  // goes, every quadruped silently takes a soldier's speed while the cadence function
+  // beside it keeps answering correctly for them. A reviewer found the mismatch and put
+  // the choice correctly: either the function's domain is wrong or its beast behaviour
+  // is. This line is what makes the answer "the domain".
   assert.ok(
-    /actor\.gaitPhase \+= travelled \* this\.actorGaitCadence\(actor\.role\)/.test(source),
-    'the gait no longer advances by distance travelled. `the head holds its target '
-    + 'while the chest twists under it` multiplies speed by cadence on the strength of '
-    + 'this line; if the gait becomes time-based, that simulation is wrong by the '
-    + 'actor\'s speed.',
+    /beast\?\.speed \?\? actorSpeedForRole\(role\)/.test(source),
+    'the beast speed short-circuit is gone, so quadrupeds now reach '
+    + '`actorSpeedForRole`, which answers only for humanoids and returns 3.7 for all '
+    + 'four of them. Narrow that function\'s parameter type, or restore the '
+    + '`beast?.speed ??` that keeps its unreachable branch unreachable.',
   )
-  const cadence = source.slice(
-    source.indexOf('private actorGaitCadence('),
-    source.indexOf('private animateActorCharacter('),
+  // Every advance site, not "some site advances correctly". `.test()` returns true on
+  // the first match, so this pin was satisfied by one of the three `gaitPhase +=`
+  // statements while the other two could be inlined with a literal — which is the "gait
+  // wrong by 3.7x" defect it exists to prevent, moved onto the flee and charge paths.
+  // A reviewer inlined one and the file stayed 22/0.
+  //
+  // The question that would have caught this when the pin was written, and the five
+  // before it: **what is the population of the thing I am pinning, and am I sampling it
+  // or enumerating it?** Three call sites, two pivots, two placements, a second delta —
+  // every one was cheap to enumerate, and in every case the sample chosen was the one in
+  // front of the author. That is the review-response mechanism one level down.
+  //
+  // `>= 3` rather than `=== 3` so a legitimate fourth site is not a failure; the
+  // `every` is what carries the meaning.
+  const advances = source.match(/gaitPhase \+= [^\n]*/g) ?? []
+  assert.ok(
+    advances.length >= 3
+      && advances.every((a) => /travelled \* actorGaitCadence\(actor\.role\)/.test(a)),
+    `of the ${String(advances.length)} places the gait advances, `
+    + `${String(advances.filter((a) => !/travelled \* actorGaitCadence\(actor\.role\)/.test(a)).length)} `
+    + 'no longer multiply distance travelled by `actorGaitCadence`. `the head holds its '
+    + 'target while the chest twists under it` multiplies speed by cadence on the '
+    + 'strength of these lines; if any of them becomes time-based or takes a literal, '
+    + 'that simulation is wrong by the actor\'s speed on whichever path it is. This '
+    + 'stays a source pin because it is a wiring fact — *what* the cadence is multiplied '
+    + 'by — and `actorGaitCadence` cannot check what its callers do with the answer.',
   )
-  // `soldier` and `peasant` are not named in the cadence function — they fall through
-  // to its default — so their pairing is the default's value, and naming that is the
-  // assertion. Same for the chest coefficient: `heavy` is a two-role predicate, and
-  // everyone else takes the other branch.
-  const DEFAULT_CADENCE = '6.8'
   const HEAVY = ['brute', 'champion']
+  // ## Twelve source pins, replaced by two calls
+  //
+  // The cadence and speed for each role used to be matched against `GameEngine`'s
+  // source text, because `GameEngine` cannot be constructed in a Node test. Across six
+  // review passes those patterns were walked past six different ways, and the last one
+  // is what settled it: both *default* branches asserted that a role name was **absent**
+  // from a slice, and absence is defeated by routing the name through a constant —
+  // `role === ROLE_SOLDIER ? 9.9 : 3.7)` leaves `: 3.7)` intact, keeps `'soldier'` out
+  // of the slice, and gives the soldier a speed of 9.9 with the file at 22/0.
+  //
+  // That evasion is contrived on its own. The *shape* is not: three of the six earlier
+  // evasions were also "move the token out of the window", and **a negative source
+  // assertion is exactly as strong as your confidence about where the token can live**.
+  //
+  // `actorGaitCadence` and `actorSpeedForRole` are now pure functions in `types.ts`, so
+  // this table is checked by calling them. No spelling of the engine can satisfy these
+  // assertions without returning the values — which is the same move that retired the
+  // anisotropy test's private copy of the shoulder-width correction, and the reason to
+  // prefer it is not elegance but that **reading code can always be defeated by
+  // rewriting it, and running it cannot.**
   for (const gait of GAITS) {
-    const value = String(gait.cadence)
-    const paired = value === DEFAULT_CADENCE
-      ? new RegExp(`return ${value.replace('.', '\\.')}\\s*\\n\\s*\\}`).test(cadence)
-        && !new RegExp(`'${gait.role}'`).test(cadence)
-      : new RegExp(`role === '${gait.role}'[^\\n]*\\)\\s*return ${value.replace('.', '\\.')}`)
-        .test(cadence)
-    assert.ok(
-      paired,
-      `the ${gait.role}'s gait cadence is no longer ${value} — either the value moved, `
-      + 'or it moved to another role. `GAITS` in `the head holds its target while the '
-      + 'chest twists under it` must move with it, or that test simulates physics the '
-      + 'engine does not run.',
-    )
-    assert.ok(
-      new RegExp(`role === '${gait.role}'\\s*\\n?\\s*\\?\\s*${String(gait.speed).replace('.', '\\.')}`)
-        .test(source)
-      || (gait.role === 'soldier' && /:\s*3\.7\)/.test(source))
-      || (gait.role === 'peasant' && new RegExp(`role === 'peasant'[\\s\\S]{0,40}?${String(gait.speed).replace('.', '\\.')}`).test(source)),
-      `the ${gait.role}'s speed is no longer ${String(gait.speed)}; GAITS pairs each `
-      + 'speed with its cadence and the simulation multiplies the two.',
+    assert.equal(
+      actorGaitCadence(gait.role),
+      gait.cadence,
+      `the ${gait.role}'s gait cadence is ${String(actorGaitCadence(gait.role))} in the `
+      + `engine and ${String(gait.cadence)} in GAITS. The wobble simulation below `
+      + 'multiplies speed by cadence, so a drift here models physics the engine does '
+      + 'not run — which is how an earlier version of that test came to be sized '
+      + 'against a gait 3.7x too slow.',
     )
     assert.equal(
-      gait.chestYawCoefficient,
-      HEAVY.includes(gait.role) ? 0.08 : 0.12,
+      actorSpeedForRole(gait.role),
+      gait.speed,
+      `the ${gait.role}'s speed is ${String(actorSpeedForRole(gait.role))} in the engine `
+      + `and ${String(gait.speed)} in GAITS. Cadence is radians per *metre*, so the `
+      + 'simulated frequency is this speed times that cadence and both must be right.',
+    )
+    assert.equal(
+      chestGaitYaw(1, HEAVY.includes(gait.role)),
+      -gait.chestYawCoefficient,
       `GAITS gives the ${gait.role} a chest yaw coefficient of `
-      + `${String(gait.chestYawCoefficient)}, but the engine's \`heavy\` predicate puts `
-      + `it on ${HEAVY.includes(gait.role) ? '0.08' : '0.12'}.`,
+      + `${String(gait.chestYawCoefficient)}; the engine turns a unit stride into `
+      + `${String(chestGaitYaw(1, HEAVY.includes(gait.role)))}.`,
+    )
+  }
+  // The beasts, which `GAITS` never covered and no assertion touched. `GAITS` documents
+  // why it excludes `minion`, `captive` and `commander`; the quadrupeds were simply not
+  // thought of, and `actorGaitCadence`'s first line carries three constants driving four
+  // creatures' limb animation. A reviewer changed the wolf's 9.6 to 2.0 and the file
+  // stayed 22/0.
+  //
+  // Low stakes — beasts never reach the biped pass this file measures — but they are
+  // three unpinned numbers inside a function whose entire purpose is now to be pinned,
+  // and *"the population is the ones I was thinking about"* is the defect this pass
+  // named. Enumerated from `BEAST_KINDS` rather than listed, so a fifth creature is a
+  // failure here rather than a silent omission.
+  for (const [kind, cadence] of [
+    ['wolf', 9.6], ['boar', 8.8], ['bear', 5.2], ['troll', 5.2],
+  ] as const) {
+    assert.equal(
+      actorGaitCadence(kind),
+      cadence,
+      `the ${kind}'s gait cadence is ${String(actorGaitCadence(kind))}, not the `
+      + `${String(cadence)} recorded here. Nothing downstream of this file reads it — `
+      + 'beasts do not run the biped posture pass — but an unpinned constant in a pinned '
+      + 'function is the omission this table exists to prevent.',
+    )
+  }
+  assert.deepEqual(
+    [...BEAST_KINDS].sort(),
+    ['bear', 'boar', 'troll', 'wolf'],
+    'the beast roster has changed, so the cadence table above is sampling it rather '
+    + 'than enumerating it. Add the new creature\'s cadence, or remove the departed one.',
+  )
+  // And the three humanoid roles `GAITS` leaves out, found by asking the same question
+  // of the same function rather than waiting to be told a third time.
+  //
+  // `GAITS` documents why it excludes `minion`, `captive` and `commander` **from the
+  // wobble simulation** — minion duplicates soldier, commander has speed 0 and does not
+  // walk. That is a decision about which gaits are worth simulating. It is not a reason
+  // for their *constants* to be unpinned, and `commander`'s speed of 0 is a distinct
+  // production value that nothing checked at all.
+  //
+  // Enumerated from `characterRoles()`, so the nine are nine.
+  const ROLE_GAITS: Record<
+    (ReturnType<typeof characterRoles>)[number], readonly [number, number]
+  > = {
+    soldier: [3.7, 6.8], minion: [3.7, 6.8], scout: [4.8, 8.4],
+    archer: [3.2, 7.2], brute: [2.6, 5.8], commander: [0, 6.8],
+    champion: [4.15, 5.8], peasant: [3.1, 6.8], captive: [3.7, 6.8],
+  }
+  assert.deepEqual(
+    [...characterRoles()].sort(),
+    Object.keys(ROLE_GAITS).sort(),
+    'the humanoid roster and this speed/cadence table disagree, so the table is a '
+    + 'sample of the roles rather than an enumeration of them.',
+  )
+  for (const role of characterRoles()) {
+    // The cast is licensed by the assertion immediately above, not asserted away by it:
+    // `characterRoles()` returns `readonly string[]`, and the `deepEqual` has just
+    // established that its members are exactly the keys of this table. Doing it in that
+    // order matters — a cast placed before the enumeration check would be the thing
+    // hiding a mismatch rather than the thing relying on one being absent.
+    const named = role as Parameters<typeof actorSpeedForRole>[0]
+    const [speed, cadence] = ROLE_GAITS[role]
+    assert.deepEqual(
+      [actorSpeedForRole(named), actorGaitCadence(named)],
+      [speed, cadence],
+      `the ${role}'s speed/cadence is `
+      + `[${String(actorSpeedForRole(named))}, ${String(actorGaitCadence(named))}], not the `
+      + `[${String(speed)}, ${String(cadence)}] recorded here. Three of these roles are `
+      + 'absent from `GAITS` for stated reasons about which gaits are worth simulating — '
+      + 'which is a decision about the wobble table, not a licence for their constants '
+      + 'to go unchecked.',
     )
   }
   assert.ok(
     /const heavy = actor\.role === 'brute' \|\| actor\.role === 'champion'/.test(source),
-    'the `heavy` predicate has changed, so GAITS\' 0.08-vs-0.12 split no longer '
-    + 'matches the engine. The assertion above compares against a hard-coded pair of '
-    + 'role names and this is what keeps that honest.',
+    'the `heavy` predicate has changed, so GAITS\' split across the two coefficients no '
+    + 'longer matches the engine. The assertion above reads both values out of source '
+    + 'but still decides which role gets which from a hard-coded pair of names, and '
+    + 'this is what keeps that honest.',
   )
   // Which stride the chest reads, and what a stagger does to it. Both are load-bearing
   // for the joint-reachability model the gaze test's comment describes, and a previous
   // version of that comment asserted the opposite of both — that `pose.stride` being
   // zeroed under stagger leaves a staggering chest with no gait yaw. It does not:
   // `pose.stride` only ever reaches the limbs, and `actor.stride` is damped rather than
-  // cleared. Pinned here so the next claim of that shape fails instead of shipping.
+  // cleared.
+  //
+  // ## These were six source regexes, and three review passes walked past them
+  //
+  // Each pass produced a new evasion and each fix bought exactly one more instance:
+  //
+  //   matching a prefix                  `= headPitch * 0.5`            22/0
+  //   adding a statement after the pin   `actor.stride = 0` on the next line   22/0
+  //   compound assignment                `actor.stride *= 0`            22/0
+  //   hoisting the term out of the slice  `const gaitGate = ...`        22/0
+  //   writing it somewhere else entirely  the stagger's own branch      22/0
+  //
+  // The third reviewer drew the conclusion the first two had earned: **a source regex
+  // cannot pin a behavioural invariant — it can only pin the current spelling of one**,
+  // so the class of evasions is unbounded. Anchoring closed modification, negative
+  // assertions closed addition, and neither touches scope or spelling.
+  //
+  // So the arithmetic moved into `chestGaitYaw` and `decayStrideOnStagger`, and these
+  // are now *calls* rather than patterns. **A test that drives production cannot be
+  // evaded by rewriting production** — mutating the damp rate from 13 to 30 fails here
+  // where no regex saw it, and that pin is permanent.
+  //
+  // **It does not close the class, and claiming otherwise was the first draft of this
+  // comment.** Two of the three evasions above survive the extraction, measured:
+  //
+  //   `actor.stride *= 0` after the call                    22 pass, 0 fail
+  //   gate hoisted above the block, `* gaitGate` in the yaw  22 pass, 0 fail
+  //
+  // Both leave the extracted functions untouched and change what happens *around* the
+  // call. The extraction pins what the arithmetic computes; it cannot pin that the
+  // result is what reaches the pivot. **Splitting a fact out of production converts a
+  // spelling problem into a wiring problem — it does not remove one.**
+  //
+  // What would close the remainder is a test that constructs an actor and runs a frame,
+  // and `GameEngine` is not constructible in Node, which is why this file pins source at
+  // all. So the honest position is: the arithmetic is now permanently guarded, the
+  // wiring is guarded by one regex that a determined edit can still walk around, and
+  // that gap is a property of the test architecture rather than of this assertion.
+  // Recorded rather than papered over, because the previous three rounds each ended
+  // with a claim that the latest patch had settled it.
+  assert.equal(
+    decayStrideOnStagger(1, 1 / 60).toFixed(4),
+    Math.exp(-13 / 60).toFixed(4),
+    'a stagger no longer damps the stride at 13. If it clears it instead, the first '
+    + 'frame of a stagger stops carrying ~81% of its gait yaw, and the gaze test\'s '
+    + 'reachability model — which pairs a staggering chest\'s residual gait yaw with the '
+    + 'head pitch that same frame produces — needs re-deriving rather than editing.',
+  )
+  // A second delta, because the assertion above can be satisfied by construction. A
+  // reviewer replaced the body with `stride * Math.exp(-13 / 60)` — the frame rate
+  // hard-coded, `delta` ignored entirely — and it passed, because it returns exactly
+  // what the pin asks for at exactly the input the pin uses. At 30 fps the real
+  // function gives `exp(-13/30)` = 0.6485 and that mutant still gives 0.8059.
+  //
+  // **A hard-coded frame rate is precisely the class of defect that moving arithmetic
+  // into a function exists to catch**, and a single-delta pin cannot see it. Two
+  // deltas pin the exponential *form*: decay over 2/60 must equal decay over 1/60
+  // squared, which holds for `exp(-k·delta)` and fails for anything that ignores
+  // `delta` or is linear in it.
   assert.ok(
-    /torsoPivot\.rotation\.y =\s*\r?\n?\s*-actor\.stride \*/.test(actorPosture),
+    Math.abs(decayStrideOnStagger(1, 2 / 60) - decayStrideOnStagger(1, 1 / 60) ** 2) < 1e-12,
+    `the stride decay is no longer exponential in delta: one frame at 2/60 leaves `
+    + `${decayStrideOnStagger(1, 2 / 60).toFixed(6)} where two frames at 1/60 leave `
+    + `${(decayStrideOnStagger(1, 1 / 60) ** 2).toFixed(6)}. A decay that ignores delta `
+    + 'passes the equality above and is wrong at every frame rate but the one it was '
+    + 'written at.',
+  )
+  // And the *other* axis, which the commit that fixed the delta left at one point —
+  // every assertion above uses `stride = 1`. `damp(Math.sign(stride), 0, 13, delta)` is
+  // identical to production at `stride = 1` for every delta, so it satisfies the value
+  // pin, the semigroup pin and the `> 0.8` pin together; at `stride = 0.5` it snaps a
+  // staggering actor's stride to full magnitude and then decays, instead of decaying
+  // from where it was.
+  //
+  // **A reviewer found this inside the commit titled "pin the extracted functions across
+  // their range, not at one input"**, which is the sharpest instance this branch has
+  // produced of its own recurring defect: *the axis you were shown gets enumerated and
+  // the axis nobody complained about stays a sample.* The delta axis had a demonstrated
+  // failure; the stride axis did not; only the demonstrated one got swept.
+  //
+  // So the question is not "am I sampling or enumerating" but **"which axes does this
+  // function have, and did I enumerate the one nobody complained about?"** — which is
+  // why `chestGaitYaw` escaped: the wobble simulation calls it 3,600 times per role
+  // across ±0.62, so its stride axis was covered by something that already existed.
+  // `decayStrideOnStagger` has nothing behind it; the simulation never staggers.
+  // Linearity across a *range* of strides, not at two points — because two points is
+  // still a sample, and the first version of this assertion used exactly 0.5 and 1.
+  // `Math.max(stride, 0.5)` passed it 22/0: a clamp sitting exactly on a sample point is
+  // invisible to it, and my own mutation run found that within a minute of writing it.
+  //
+  // **And the range it then swept was positive-only**, which a fourth reviewer broke with
+  // `stride < 0 ? 0 : damp(...)` — 22/0. `actor.stride` is damped toward `sin(gaitPhase)`
+  // and spends half the gait cycle negative, so clearing the negative half deletes half
+  // the cycle and invalidates the signed reachability model this file's bounds rest on.
+  //
+  // Three rounds of the same defect on one axis of one function: a point, then two
+  // points, then the positive half. **Each fix enumerated exactly the part that had been
+  // demonstrated broken.** That is the sharpest form of the pattern this branch keeps
+  // producing, and it is worth stating with the count rather than tidied away: the
+  // question is not just which axes a function has, but *which half of each axis you
+  // have actually been shown*.
+  for (const stride of [-1, -0.62, -0.25, -0.05, -0.01, 0.01, 0.05, 0.1, 0.25, 0.5, 0.62, 1]) {
+    assert.ok(
+      Math.abs(decayStrideOnStagger(stride, 1 / 60) - stride * decayStrideOnStagger(1, 1 / 60))
+        < 1e-12,
+      `the stride decay is no longer linear in the stride at ${String(stride)}: it leaves `
+      + `${decayStrideOnStagger(stride, 1 / 60).toFixed(9)} where linearity requires `
+      + `${(stride * decayStrideOnStagger(1, 1 / 60)).toFixed(9)}. Linearity holds for `
+      + '`s·e^(-k·delta)` and fails for anything that normalises, clamps or signs the '
+      + 'stride — all of which leave a staggering actor decaying from a magnitude it '
+      + 'never had rather than from where it actually was.',
+    )
+  }
+  assert.ok(
+    decayStrideOnStagger(1, 1 / 60) > 0.8,
+    `one frame of a stagger leaves ${decayStrideOnStagger(1, 1 / 60).toFixed(4)} of the `
+    + 'stride, not the ~0.806 the reachability model is built on. Anything that makes '
+    + 'this small enough to ignore makes that model wrong in the other direction.',
+  )
+  // The one fact that genuinely is about wiring rather than arithmetic, so it stays a
+  // source pin: *which* stride the chest reads. `chestGaitYaw` cannot check this — it
+  // takes whatever it is handed.
+  assert.ok(
+    /chestGaitYaw\(actor\.stride, heavy\)/.test(actorPosture),
     'the chest\'s yaw no longer reads `actor.stride`. If it now reads `pose.stride`, a '
-    + 'stagger really would zero it, and the gaze test\'s reachability comment — which '
-    + 'says the opposite — becomes wrong in the other direction.',
+    + 'stagger really would zero it — `pose.stride` is set to 0 on a stagger and only '
+    + 'ever reaches limbs — and the gaze test\'s reachability comment, which says the '
+    + 'opposite, becomes wrong in the other direction.',
   )
-  const staggerBranch = source.slice(
-    source.indexOf("if (actor.reaction === 'stagger' || knockbackSpeed"),
-    source.indexOf("if (actor.reaction === 'stagger' || knockbackSpeed") + 400,
+  // And that the value `chestGaitYaw` returns is the value the chest keeps. A reviewer
+  // added `torsoPivot.rotation.y -= actor.stride * 0.01` *after* the expression: the
+  // extracted function still returns 0.12 per unit stride, the assertion above still
+  // passes, and the chest effectively turns at 0.13. The extraction pins what the
+  // arithmetic computes and cannot pin that the result survives to the pivot, because
+  // `torsoPivot.rotation.y` is assignable by anything downstream.
+  //
+  // Counted, not pattern-matched, and counting **every** assignment operator — the
+  // previous negative assertion of this shape looked for `=` and was walked past with
+  // `*=`.
+  //
+  // **The commit that added this claimed it was "not one more spelling" and caught a
+  // second writer "whatever it looks like". That claim is false and a reviewer
+  // falsified it in one line:**
+  //
+  // ```ts
+  // const chestRotation = torsoPivot.rotation
+  // chestRotation.y -= actor.stride * 0.01
+  // ```
+  //
+  // 22/0. `Object.assign`, `rotation.set`, bracket notation and a helper call are the
+  // same class. This *is* one more spelling — a better one, because it covers the four
+  // operators rather than one, but a source regex cannot see through an alias and no
+  // amount of widening will change that.
+  //
+  // It is left in place because it raises the bar against the mutations that are
+  // actually likely, and the claim is corrected rather than the assertion deleted. What
+  // would close it is a test that runs a frame and reads the pivot, which needs a
+  // constructible `GameEngine` — the architectural gap this file has recorded throughout
+  // and cannot fix from here.
+  assert.equal(
+    (actorPosture.match(/rotation\.order\s*=/g) ?? []).length,
+    0,
+    'something in the actor posture pass assigns `rotation.order`. `applyHeadPose` and '
+    + '`applyChestPose` reassert XYZ on every write, but **that only beats a write they '
+    + 'run after** — a reviewer set the order on the line following the call and it '
+    + 'survived, because `Euler`\'s order setter recomputes the quaternion on its own. '
+    + 'Nothing here has any business setting an Euler order: the two pose functions own '
+    + 'it, and this assertion says so for both placements rather than the one that '
+    + 'happened to be measured.',
   )
-  assert.ok(
-    /actor\.stride = THREE\.MathUtils\.damp\(actor\.stride, 0, 13, delta\)/.test(staggerBranch),
-    'a stagger no longer damps `actor.stride` at 13 — if it now clears it, the first '
-    + 'frame of a stagger stops carrying ~81% of its gait yaw and the gaze test\'s '
-    + 'reachability comment needs re-deriving, not editing.',
+  assert.equal(
+    (actorPosture.match(/applyChestPose\(/g) ?? []).length,
+    1,
+    'the chest pose is written by something other than a single `applyChestPose` call. '
+    + '`GAITS` simulates one `chestGaitYaw` result, so a second write — even one that '
+    + 'only adjusts it — makes the wobble test model a gait the engine does not run, '
+    + 'while every assertion about the coefficient still passes because the coefficient '
+    + 'did not change.',
+  )
+  assert.equal(
+    (actorPosture.match(/torsoPivot\.rotation\.[xyz]\s*(?:[-+*/]?=)/g) ?? []).length,
+    0,
+    'a component of the chest\'s rotation is assigned directly in the actor posture '
+    + 'pass. That bypasses `applyChestPose`, which means the Euler order stops being '
+    + 'reasserted — worth up to 30 degrees of gaze error — and it means the chest yaw '
+    + 'the wobble test simulates is not the chest yaw the engine produces. Counting '
+    + 'every assignment operator, because the previous assertion of this shape looked '
+    + 'for `=` and was walked past with `*=`.',
   )
 })
 

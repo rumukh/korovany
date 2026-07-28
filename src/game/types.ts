@@ -111,6 +111,62 @@ export function isBeastRole(role: ActorRole): role is BeastRole {
   return (BEAST_ROLES as readonly string[]).includes(role)
 }
 
+/**
+ * How fast a role walks, and how many radians of gait phase it spends per metre.
+ *
+ * These lived inline in `GameEngine` and were pinned by source regexes, because
+ * `GameEngine` cannot be constructed in a Node test. Across six review passes those
+ * regexes were walked past six different ways — prefix matching, a statement added
+ * after the pinned line, compound assignment, hoisting a term out of the matched
+ * window, writing the value somewhere else entirely, and finally routing a role name
+ * through a constant so a *negative* assertion about the token stopped matching.
+ *
+ * Five correct patches, one family, and the root was never regex quality: **reading
+ * code can always be defeated by rewriting it.** The last of those evasions is what
+ * made the case unarguable — the two default-branch pins asserted that a role name was
+ * *absent* from a slice, and absence is defeated by moving the token, which is the same
+ * manoeuvre as three of the earlier five.
+ *
+ * So they are functions, and the wobble test's `GAITS` table is now checked by calling
+ * them. `actorGaitCadence` returns **radians per metre travelled**, not per second —
+ * `updateActors` does `gaitPhase += travelled * cadence` — which a test once got wrong
+ * by a factor of 3.7 and thereby sized a guard against a gait model the engine does not
+ * run.
+ */
+export function actorGaitCadence(role: ActorRole): number {
+  if (isBeastRole(role)) return role === 'wolf' ? 9.6 : role === 'boar' ? 8.8 : 5.2
+  if (role === 'scout') return 8.4
+  if (role === 'brute' || role === 'champion') return 5.8
+  if (role === 'archer') return 7.2
+  return 6.8
+}
+
+/**
+ * **Humanoids only, despite the parameter type.** Beasts never reach it: `createActor`
+ * reads `beast?.speed ?? actorSpeedForRole(role)`, so a quadruped takes its profile's
+ * speed and short-circuits. Handed a beast role directly it returns the humanoid
+ * default of 3.7, where the profiles are wolf 5.4, boar 4.6, bear 3.4, troll 2.9.
+ *
+ * A reviewer found that and put the choice correctly: **either the function's domain is
+ * wrong or its beast behaviour is.** It is the domain — `actorGaitCadence` above really
+ * does answer for all thirteen roles and branches on `isBeastRole` to do it, and the
+ * two sitting side by side with the same signature invites reading them as a pair.
+ * Narrowing the parameter type is the honest fix and is a wider change than the hour
+ * warrants; the wiring assertion pins the `beast?.speed ??` short-circuit so the
+ * unreachable branch stays unreachable, and this note says why it is unreachable rather
+ * than leaving the next reader to discover that 3.7 is not a wolf.
+ */
+export function actorSpeedForRole(role: ActorRole): number {
+  if (role === 'scout') return 4.8
+  if (role === 'champion') return 4.15
+  if (role === 'archer') return 3.2
+  if (role === 'brute') return 2.6
+  if (role === 'commander') return 0
+  // §5D — slower than a soldier at a walk, faster than one in a panic. The 1.15x every
+  // routing actor gets makes a bolting villager outrun a strolling one, which is the read.
+  if (role === 'peasant') return 3.1
+  return 3.7
+}
 export type ZoneId = 'neutral' | 'palace' | 'forest' | 'fort'
 
 export type HatchMotif = 'scrape' | 'chevron' | 'organic' | 'slash'

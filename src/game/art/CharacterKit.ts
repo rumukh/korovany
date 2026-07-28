@@ -864,10 +864,16 @@ export function buildCharacterSkeleton(p: CharacterProportions): CharacterSkelet
  *
  * This solve is exact wherever the chest's forward axis still points forward — the
  * linear equation has two roots half a turn apart and `atan2` selects the one facing
- * `+Z`, which requires `M₁₁ > 0`. Over the swept envelope `min M₁₁` is 0.55 and the
- * equation is never near-degenerate, so the precondition holds with room to spare for
- * anything the engine writes. It is stated because this function is exported and a
- * caller inverting a chest would get a head exactly backwards, silently.
+ * `+Z`, which requires `M₁₁ > 0`. Over the swept envelope `min M₁₁` is **0.5301**, at
+ * chest `[0.70, 0.48, 0.30]` with head pitch 0.18, and the equation is never
+ * near-degenerate — so the precondition holds with room to spare for anything the
+ * engine writes. It is stated because this function is exported and a caller inverting
+ * a chest would get a head exactly backwards, silently.
+ *
+ * That figure read 0.55 for one commit, from an estimate rather than an enumeration.
+ * It was safe either way, which is exactly why nobody would have checked it: **a
+ * margin quoted loosely still sounds like a margin**, and the only thing distinguishing
+ * a measured bound from a remembered one is whether someone ran it.
  *
  * It takes the head's own pitch because the pitch is applied *after* it, in the same
  * Euler, and therefore changes where the head ends up pointing. Roll does not: a
@@ -888,6 +894,14 @@ export function buildCharacterSkeleton(p: CharacterProportions): CharacterSkelet
  *
  * The four elements come straight out of the two Euler triples, so this allocates
  * nothing and builds no matrix — it runs for every actor every frame.
+ *
+ * **Both pivots must use three.js's default `XYZ` Euler order.** The columns below are
+ * written out by hand for `Rx·Ry·Rz`, and every term in them is order-specific; under
+ * `ZYX` the head's roll becomes outermost, reaches the gaze directly, and the claim
+ * that roll cannot matter stops being true. That requirement went unstated while being
+ * load-bearing, and was caught only because a bound aimed at something else happened to
+ * notice a 143° error. `the head tracks its target through the chest, not past it` now
+ * asserts the order directly, so the failure names the cause.
  *
  * Damp `lookYaw` *before* calling this, never the result. A frame change is not a
  * motion: damping the converted angle leaves the head chasing the chest's gait twist
@@ -949,6 +963,118 @@ export function solveHeadYaw(
  * A beast has no neck: `createBeast` still roots its head at the animal, so its skull
  * never wore the width. Pass `null` and nothing is divided out.
  */
+/**
+ * How much of its gait yaw a chest carries, and how fast a stagger takes it away.
+ *
+ * These two lines used to live inline in `animateActorCharacter` and `updateActors`,
+ * pinned by source regexes in `the engine wires the rig the way these tests measure it`.
+ * Three review passes produced five ways past those regexes — matching a prefix, adding
+ * a statement after the pinned line, compound assignment, hoisting the term out of the
+ * matched window, and writing it somewhere else entirely — and the third reviewer drew
+ * the conclusion the first two had earned:
+ *
+ * **A source regex cannot pin a behavioural invariant. It can only pin the current
+ * spelling of one**, so the class of evasions is unbounded and each new pattern buys
+ * exactly one more instance. Putting the arithmetic where a test can *drive* it is the
+ * same move `setCharacterShoulderWidth` made for the anisotropy test.
+ *
+ * What the assertions were trying to say, and now say by calling:
+ *
+ * - the chest's gait yaw reads `actor.stride`, not `pose.stride` — `pose.stride` only
+ *   ever reaches limbs, so a stagger that zeroes it leaves the chest turning;
+ * - a stagger *damps* the stride rather than clearing it, at rate 13, so the first
+ *   frame of a stagger still carries `e^(-13/60)` = **80.6%** of its gait yaw — and
+ *   that frame is where `pose.stagger` peaks, which is what makes the pairing the
+ *   reachability model once called impossible not merely reachable but simultaneous.
+ */
+/**
+ * Writes the head's pose, and re-asserts the Euler order every time it does.
+ *
+ * `solveHeadYaw` derives the columns of `Rx·Ry·Rz` by hand, so **every term in it
+ * assumes three.js's default XYZ order**. That requirement was unstated for ten
+ * commits, then asserted on a freshly built skeleton — which a reviewer pointed out
+ * pins *construction*, not the object the engine actually animates. `Euler.order` is a
+ * mutable per-object property, so the engine can change it at any point after the rig
+ * is built, and a test that constructs its own skeleton will never see that.
+ *
+ * The realistic edit is not the loud one. `ZYX` moves the gaze by 143° and any bound
+ * catches it; **`YXZ` is the order everyone reaches for when a head gimbal-locks at
+ * extreme pitch**, it is applied at the animation site rather than the builder, and
+ * under it roll stays inert — so the conspicuous signature never appears.
+ *
+ * So this does not detect the change, it **prevents** it: `Euler.set` takes the order
+ * as its fourth argument, and passing it here means any runtime reassignment is
+ * overwritten on the next frame. A guard that can be walked around is worth less than
+ * an invariant that reasserts itself, and the difference costs one argument.
+ *
+ * **It is not the sole writer of the head's Euler, and a commit of mine said it was.**
+ * A reviewer checked rather than accepting it: `applyActorVisualVariation` writes
+ * `headPivot.rotation.y` directly at spawn, and `animateBeastPosture` writes x, y and z
+ * for quadrupeds — outside the slice the wiring assertions inspect. Neither is a live
+ * defect: the variation write predates any pose pass and is overwritten on the first
+ * frame, and beasts never reach `solveHeadYaw`. But *"sole writer"* was asserted from
+ * the two call sites in front of me rather than from a search, which is the same
+ * population defect this work has been cataloguing, committed inside the rule that
+ * describes it.
+ *
+ * What is true, and is what the reassertion actually rests on: **every write that
+ * matters for the gaze goes through here, and it runs after the others.** A write
+ * placed after this call still wins — which is why the posture pass separately asserts
+ * that nothing assigns `rotation.order` at all.
+ */
+export function applyHeadPose(
+  headPivot: THREE.Object3D,
+  pitch: number,
+  yaw: number,
+  roll: number,
+): void {
+  headPivot.rotation.set(pitch, yaw, roll, 'XYZ')
+}
+
+/**
+ * The same, for the chest — and it is the half that was missing.
+ *
+ * `solveHeadYaw`'s docblock says **both** pivots must use XYZ, because it reads the
+ * columns of `Rx·Ry·Rz` from `torsoPivot.rotation.{x,y,z}` by hand. `applyHeadPose`
+ * covered one of the two. The chest was written field by field, and **a field write
+ * never touches `.order`**, so nothing reasserted it and nothing checked it at runtime.
+ *
+ * A reviewer measured the cost against the gaze bound's 0.9650°:
+ *
+ * ```text
+ * chest order XYZ    0.9392 deg   (baseline)
+ * chest order YXZ   17.8932 deg
+ * chest order ZYX   30.0230 deg
+ * chest order ZXY   19.9081 deg
+ * ```
+ *
+ * 30° is within a factor of 1.5 of the 43.6° the original bug was worth, and the suite
+ * was blind to it: setting the chest order at animation time passed 22/0.
+ *
+ * The lesson is the one that produced `applyHeadPose` and then failed to finish the
+ * job: **a fix scoped to the instance that was reported is a fix scoped to a sample.**
+ * The head was the pivot in the finding; the derivation names two.
+ */
+export function applyChestPose(
+  torsoPivot: THREE.Object3D,
+  pitch: number,
+  yaw: number,
+  roll: number,
+): void {
+  torsoPivot.rotation.set(pitch, yaw, roll, 'XYZ')
+}
+
+export function chestGaitYaw(stride: number, heavy: boolean): number {
+  return -stride * (heavy ? 0.08 : 0.12)
+}
+
+/**
+ * One frame of a stagger's effect on the stride. Damped, never cleared — see above.
+ */
+export function decayStrideOnStagger(stride: number, delta: number): number {
+  return THREE.MathUtils.damp(stride, 0, 13, delta)
+}
+
 export function setCharacterShoulderWidth(
   torsoPivot: THREE.Object3D | null | undefined,
   neckPivot: THREE.Object3D | null | undefined,

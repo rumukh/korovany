@@ -19,10 +19,14 @@ import {
   buildBeastHead,
   buildBeastLimb,
   buildBeastTail,
+  applyChestPose,
+  applyHeadPose,
   buildBirdBody,
   buildBirdWing,
   buildCharacterSkeleton,
   buildCloak,
+  chestGaitYaw,
+  decayStrideOnStagger,
   buildDeerBody,
   buildDeerCrown,
   buildDeerLeg,
@@ -113,6 +117,8 @@ import {
   getMaxStamina,
   getShopItemPrice,
   getThreatTier,
+  actorGaitCadence,
+  actorSpeedForRole,
   isBeastRole,
   isFactionAllegiance,
   isRandomWorldEventKind,
@@ -3994,7 +4000,7 @@ export class GameEngine {
       if (actor.action) {
         this.updateActorAction(actor, delta)
         actor.velocity.set(0, 0, 0)
-        actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+        actor.stride = decayStrideOnStagger(actor.stride, delta)
         actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
         this.animateActorCharacter(actor, delta, 0)
         this.updateChampionAura(actor)
@@ -4002,14 +4008,14 @@ export class GameEngine {
       }
       if (actor.reaction === 'stagger' || knockbackSpeed > KNOCKBACK_STEER_THRESHOLD) {
         actor.velocity.set(0, 0, 0)
-        actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+        actor.stride = decayStrideOnStagger(actor.stride, delta)
         actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
         this.animateActorCharacter(actor, delta, 0)
         this.updateChampionAura(actor)
         continue
       }
       if (actor.aiMode === 'captive') {
-        actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+        actor.stride = decayStrideOnStagger(actor.stride, delta)
         actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
         this.animateActorCharacter(actor, delta, 0)
         continue
@@ -4382,7 +4388,7 @@ export class GameEngine {
 
       if (actor.action) {
         actor.velocity.set(0, 0, 0)
-        actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+        actor.stride = decayStrideOnStagger(actor.stride, delta)
         actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
         this.animateActorCharacter(actor, delta, 0)
         this.updateChampionAura(actor)
@@ -4463,7 +4469,7 @@ export class GameEngine {
       const roleSpeed = Math.max(actor.speed, 0.1)
       const desiredMotionBlend = THREE.MathUtils.clamp(actor.visualSpeed / roleSpeed, 0, 1.18)
       actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, desiredMotionBlend, 9, delta)
-      actor.gaitPhase += travelled * this.actorGaitCadence(actor.role)
+      actor.gaitPhase += travelled * actorGaitCadence(actor.role)
       const desiredStride = Math.sin(actor.gaitPhase) * 0.62 * actor.motionBlend
       actor.stride = THREE.MathUtils.damp(actor.stride, desiredStride, 15, delta)
 
@@ -4725,7 +4731,7 @@ export class GameEngine {
     const yaw = Math.atan2(away.x, away.z)
     actor.mesh.rotation.y = dampAngle(actor.mesh.rotation.y, yaw, 9, delta)
     actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 1, 9, delta)
-    actor.gaitPhase += travelled * this.actorGaitCadence(actor.role)
+    actor.gaitPhase += travelled * actorGaitCadence(actor.role)
     actor.stride = THREE.MathUtils.damp(
       actor.stride,
       Math.sin(actor.gaitPhase) * 0.62 * actor.motionBlend,
@@ -4767,7 +4773,7 @@ export class GameEngine {
     if (actor.chargeWindup > 0) {
       actor.chargeWindup = Math.max(0, actor.chargeWindup - delta)
       actor.velocity.set(0, 0, 0)
-      actor.stride = THREE.MathUtils.damp(actor.stride, 0, 13, delta)
+      actor.stride = decayStrideOnStagger(actor.stride, delta)
       actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
       this.animateActorCharacter(actor, delta, 0)
       if (actor.chargeWindup <= 0) actor.chargeTimer = BOAR_CHARGE_DURATION
@@ -4780,7 +4786,7 @@ export class GameEngine {
     const travelled = this.moveActorWithSteering(actor, actor.chargeDirection, step)
     actor.mesh.rotation.y = Math.atan2(actor.chargeDirection.x, actor.chargeDirection.z)
     actor.motionBlend = 1.18
-    actor.gaitPhase += travelled * this.actorGaitCadence(actor.role)
+    actor.gaitPhase += travelled * actorGaitCadence(actor.role)
     actor.stride = Math.sin(actor.gaitPhase) * 0.62
     this.animateActorCharacter(actor, delta, 0)
     this.resolveBoarChargeContact(actor)
@@ -12804,24 +12810,7 @@ export class GameEngine {
         this.enemyHealthMultiplier(allegiance) *
         Math.max(0.1, options.healthScale ?? 1),
     )
-    const speed =
-      beast?.speed ??
-      (role === 'scout'
-        ? 4.8
-        : role === 'champion'
-          ? 4.15
-          : role === 'archer'
-            ? 3.2
-            : role === 'brute'
-              ? 2.6
-              : role === 'commander'
-                ? 0
-                : // Slower than a soldier at a walk, faster than one in a panic — the
-                  // 1.15× every routing actor gets makes a bolting villager outrun a
-                  // strolling one, which is the read.
-                  role === 'peasant'
-                  ? 3.1
-                  : 3.7)
+    const speed = beast?.speed ?? actorSpeedForRole(role)
     const actor: Actor = {
       id: options.generatedSpawnId
         ? `generated:${options.generatedSpawnId}`
@@ -14116,14 +14105,6 @@ export class GameEngine {
     }
   }
 
-  private actorGaitCadence(role: ActorRole): number {
-    if (isBeastRole(role)) return role === 'wolf' ? 9.6 : role === 'boar' ? 8.8 : 5.2
-    if (role === 'scout') return 8.4
-    if (role === 'brute' || role === 'champion') return 5.8
-    if (role === 'archer') return 7.2
-    return 6.8
-  }
-
   private animateActorCharacter(actor: Actor, delta: number, lookYaw: number): void {
     const pose = this.sampleActorPose(actor)
     this.animateCharacter(actor.mesh, pose)
@@ -14166,27 +14147,27 @@ export class GameEngine {
 
     if (torsoPivot) {
       torsoPivot.position.x = idleWeightShift
-      torsoPivot.rotation.x =
+      applyChestPose(
+        torsoPivot,
         forwardLean * actor.motionBlend -
-        pose.anticipation * (heavy ? 0.11 : 0.16) +
-        pose.attack * 0.12 +
-        pose.stagger * 0.2 +
-        // §5D — shoulders up against the weather. Cosmetic only, but it is driven by the
-        // simulation's storm factor so it reads the same whether or not precipitation is
-        // being drawn.
-        this.ambientStormHunch +
-        // §4 — the plan's own posture. A villain stoops, a scout runs light and an
-        // officer stands up straight; without this the proportion table resolves a
-        // lean that nothing ever reads.
-        (rig?.lean ?? 0)
-      torsoPivot.rotation.y =
-        -actor.stride * (heavy ? 0.08 : 0.12) +
-        pose.attack * 0.16 -
-        pose.flinch * hitRight * 0.22
-      torsoPivot.rotation.z =
+          pose.anticipation * (heavy ? 0.11 : 0.16) +
+          pose.attack * 0.12 +
+          pose.stagger * 0.2 +
+          // §5D — shoulders up against the weather. Cosmetic only, but it is driven by the
+          // simulation's storm factor so it reads the same whether or not precipitation is
+          // being drawn.
+          this.ambientStormHunch +
+          // §4 — the plan's own posture. A villain stoops, a scout runs light and an
+          // officer stands up straight; without this the proportion table resolves a
+          // lean that nothing ever reads.
+          (rig?.lean ?? 0),
+        chestGaitYaw(actor.stride, heavy) +
+          pose.attack * 0.16 -
+          pose.flinch * hitRight * 0.22,
         -actor.turnLean * 0.16 +
-        idleWeightShift * 0.55 -
-        pose.flinch * hitRight * 0.18
+          idleWeightShift * 0.55 -
+          pose.flinch * hitRight * 0.18,
+      )
       torsoPivot.scale.y = 1 + breathing * 0.55
     }
     if (pelvisPivot) {
@@ -14215,26 +14196,26 @@ export class GameEngine {
       // 4.00 Hz cadence.
       const headPitch = -forwardLean * actor.motionBlend * 0.35 + pose.stagger * 0.18
       actor.headYaw = dampAngle(actor.headYaw, lookYaw, 7, delta)
-      headPivot.rotation.y = torsoPivot
-        ? solveHeadYaw(
-            torsoPivot.rotation.x,
-            torsoPivot.rotation.y,
-            torsoPivot.rotation.z,
-            headPitch,
-            actor.headYaw,
-          )
-        : actor.headYaw
-      // Pitch and roll are deliberately *not* corrected this way. Unlike the yaw they
-      // are authored as partial counter-rotations of the chest — the torso pitches
-      // `+forwardLean` and the head `-forwardLean * 0.35`, the torso rolls
+      // Pitch and roll are deliberately *not* corrected the way the yaw is. Unlike the
+      // yaw they are authored as partial counter-rotations of the chest — the torso
+      // pitches `+forwardLean` and the head `-forwardLean * 0.35`, the torso rolls
       // `-turnLean * 0.16` and the head `+turnLean * 0.06` — which only means anything
       // against a transform the head inherits. The yaw is the odd one out because it
       // tracks a target rather than resisting a posture.
-      headPivot.rotation.x = headPitch
-      headPivot.rotation.z =
-        actor.turnLean * 0.06 -
-        idleWeightShift * 0.2 -
-        pose.flinch * hitRight * 0.3
+      applyHeadPose(
+        headPivot,
+        headPitch,
+        torsoPivot
+          ? solveHeadYaw(
+              torsoPivot.rotation.x,
+              torsoPivot.rotation.y,
+              torsoPivot.rotation.z,
+              headPitch,
+              actor.headYaw,
+            )
+          : actor.headYaw,
+        actor.turnLean * 0.06 - idleWeightShift * 0.2 - pose.flinch * hitRight * 0.3,
+      )
     }
 
     if (!rig) return

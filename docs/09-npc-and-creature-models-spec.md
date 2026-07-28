@@ -211,14 +211,42 @@ no new dependencies.
   *damps* `actor.stride` rather than clearing it, so the first frame of a stagger keeps
   about 81% of its gait yaw. The same reviewer caught that too. The *second* blamed head
   roll being swept to a value only a flinch can produce, which is a true engine fact
-  about an unreachable state and still not the cause: measured both ways, holding head
-  roll to what the engine writes gives the same 0.0487° as sweeping it free, at the same
-  chest state — the maximum is roll-degenerate, so the extra states tie rather than win.
+  about an unreachable state and still not the cause: head roll cannot affect this
+  heading **anywhere**, not merely at the measured maximum. Sweeping it across arbitrary
+  chest states moves the result by at most 2.4e-14°, because a Z-rotation fixes the +Z
+  axis and every scale in the chain sits above it. Saying "the maximum is roll-degenerate"
+  would be true and would still mislead, by inviting the thought that some *other*
+  maximum might be roll-sensitive. And that claim was refutable with no measurement at
+  all: `solveHeadYaw` takes no roll argument, and its docblock says why — written ten
+  commits before the paragraph that blamed the axis, by the same hand.
   What *is* established is that the enumeration was **partially joint**: it constrained
   some axes by the reaction and left others as free cross-product ranges. **Enforcing
   joint consistency on one axis and believing it enforced on all of them is its own
   defect**, and a partially-joint sweep is indistinguishable from a joint one from the
-  outside. Which axis carried the difference is not established and is no longer claimed.
+  outside. A factorial design then isolates the contributor, because a probe that moves
+  two things cannot attribute what it sees: relaxing one constraint at a time gives
+  4.8203 fully joint, 4.8203 with head roll freed, 5.7018 with chest pitch pinned at its
+  axis maximum, and 6.0420 with chest roll pinned at its. **Head roll contributes exactly
+  zero — provably, since a Z-rotation fixes the +Z axis and every scale in the chain sits
+  above it — and chest roll is the dominant term**, three times its jointly reachable
+  bound. That ranks the axes that were *free*, not the axes the bound is sensitive to:
+  pinning chest yaw gives 5.9876, between the other two, but yaw contributed nothing
+  because it is the one axis the original sweep constrained correctly. **Sensitivity and
+  contribution are different quantities, and only the second explains a wrong number.**
+  An earlier version of this paragraph named chest pitch, the second largest.
+  Naming the second biggest contributor is the same defect as naming an inert one and is
+  harder to catch, because a plausible-sized effect in the right direction reads as
+  confirmation.
+
+  That baseline read 4.9199 for one commit and was itself **partially joint**, which is
+  the fourth instance of this defect and the first inside the paragraph describing it.
+  `idleWeightShift` is `sin(...) * 0.035 * (1 - motionBlend)`, so at the maximum's
+  `motionBlend` of 1.18 the engine allows `|shift| <= 0.0063` while the harness allowed
+  0.035 — and that term feeds chest roll, the very axis the design was isolating. **A
+  factorial design is only as good as its baseline, and a baseline is a reachability
+  claim like any other.** The remainder of the original gap is
+  still unaccounted for, and naming chest pitch as *a* demonstrated contributor is as far
+  as the measurement goes.
 
   Three causes, from three people, for one number — and the number was right throughout.
   That yields a sharper rule than "verify your causes": **a number surviving attack is
@@ -238,12 +266,51 @@ no new dependencies.
   the docblock that says *why*, the commit message's causal clause, the comment naming
   a mechanism — and treat the fix itself as the part most likely to be right.
 
-  Concretely, from the head-rig work: a gaze correction that was itself the fix for a
-  gaze correction; a reachability model asserted in this document while explaining a
-  reconciliation; an attribution to the wrong reviewer written while correcting an
-  attribution; and a change credited to the wrong variable in a commit whose entire
-  subject was honest measurement. Four instances, all in explanations, none in the
-  code being explained.
+  Concretely, from the head-rig work: a reachability model asserted in this document
+  while explaining a reconciliation; an attribution to the wrong reviewer written
+  while correcting an attribution; a change credited to the wrong variable in a commit
+  whose entire subject was honest measurement; and, twice, a cause named for a
+  discrepancy that measurement showed the named variable could not produce.
+
+  An earlier version of this rule said *"every finding in that window landed on a
+  claim"* and *"none in the code being explained"*. Both are false, and a reviewer
+  falsified them with findings the same window had already accepted: an unanchored
+  source pin that passed against `= headPitch * 0.5`, an order-blind cadence pin that
+  passed with two roles' values swapped, and a float-accumulating loop visiting 396
+  poses while four places called it 462. Those are code. **The rule's own summary
+  sentence exhibited the defect the rule describes**, which is the most direct
+  evidence available that the mechanism is real and that a rule is not a defence
+  against it. The rule is about where to *look first*, not a claim about where every
+  defect lives.
+- **A measurement is a claim with a timestamp nobody writes down.** Every other rule
+  here targets claims that were wrong. This one is about claims that were *right and
+  stopped being* — which is a different failure, because a measurement carries its own
+  authority and no expiry date, so nothing about it invites re-checking.
+  It fired repeatedly during the head-rig work in both directions: a reviewer supplied
+  gaze figures that were correct for the tip it read and stale by the time they were
+  read, by the identical mechanism it was reporting on; a claim that a commit was in
+  `main` was false when made, true fourteen minutes later, and corrected in both
+  directions inside one exchange. Neither party was careless — one needed a check, the
+  other needed a timestamp.
+  The mechanical form: **do not carry the value, carry the way to re-derive it.**
+  `git log --oneline -1 origin/main` costs nothing and is never stale, where a SHA in a
+  message has a shelf life of minutes on an active repository. In a test, the same rule
+  is why a figure computed by the assertion that quotes it cannot go stale without going
+  red, and a figure copied from a mutation run can.
+- **Before offering a cause, check whether your own code already answers it.** The
+  sharpest instance this work produced: a docblock blamed head roll for a 39%
+  discrepancy in a gaze figure, when `solveHeadYaw`'s signature — written ten commits
+  earlier, by the same hand — takes no roll argument at all, and its own docblock says
+  why: *"a rotation about Z leaves the +Z axis fixed, so `head-pivot.rotation.z` cannot
+  move the gaze and is not a parameter."* The claim was refutable by `git grep`, without
+  measuring anything.
+  The mechanism is worth naming because it is not carelessness. **A justification
+  written while correcting yourself is written by the one person who has stopped
+  consulting the source** — because they have just been deep in it and are certain they
+  know what it says. Certainty about the code is highest immediately after working on
+  it, which is exactly when the correction gets written. That is why this pairs with
+  reviewing the justification rather than the fix: the fix was checked against the code,
+  and the sentence explaining it was checked against memory.
 - **Turn a finding into a gate, not a paragraph.** A written rule is re-read by the
   person least able to see past it — the author, mid-correction, at the moment of
   greatest certainty. A check is not immune to carelessness either, but **its
