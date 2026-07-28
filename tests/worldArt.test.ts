@@ -2585,6 +2585,35 @@ test('decoration never blocks a spawn point', () => {
   // world that was never broken. Fourth instance of that defect, in the test written to
   // close the third.
   const seeds = ['spawn-keepout', 'gp-6', 'gp-11', 'gp-23', 'gp-37', 'gp-48']
+  // **`gp-11` is the only seed that carries `blockedByStructure`.** Pinned as an assertion
+  // rather than a comment because removing it is silent: the non-vacuity guards below would
+  // still certify the set, and the protective assertion would have nothing left to detect.
+  //
+  // A reviewer found the reason, and it is that **the guard certifies a weaker predicate
+  // than the assertion it sits above.** `coversSpawn` skips a collider at
+  // `radius + 0.45 + 0.2`, while a spawn is judged blocked at the 0.45 agent radius — so a
+  // skip inside that 0.2 of daylight protects a spawn that was never going to be blocked.
+  // Measured with the building keep-out bypassed:
+  //
+  // ```text
+  //                 skips (fix on)   blocked spawns (fix off)
+  //   gp-11               3                    3
+  //   gp-37               3                    0     <- all margin
+  //   others              0                    0
+  // ```
+  //
+  // This pass validated the repaired counter by matching a reviewer's 3 for `gp-11`, and
+  // the two instruments agree there by coincidence rather than by construction. `gp-37` is
+  // the sample where they diverge, it was in this pass's own probe output, and it was read
+  // past. **Two instruments agreeing on one sample is worth much less than it feels like** —
+  // agreement is indistinguishable from coincidence until a sample exists where they would
+  // differ.
+  assert.ok(
+    seeds.includes('gp-11'),
+    'gp-11 is the only seed producing spawns that are genuinely blocked when the building '
+      + 'keep-out is bypassed; without it `blockedByStructure` has no power, and the '
+      + 'non-vacuity guards below will not notice because they count skips rather than blocks',
+  )
   const blockedByDressing: string[] = []
   const blockedByStructure: string[] = []
   const unwalkableStarts: string[] = []
