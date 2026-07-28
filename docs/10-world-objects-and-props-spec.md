@@ -405,19 +405,26 @@ REGION_TRIANGLES_PEAK=63k            measured, worst region, decoration density 
 BUILDING_TRIANGLES=750-1800 near, 120-260 far
 ```
 
-`GEOMETRY_CACHE_ENTRIES_MAX` in spec 08 is 64 and describes the whole game. This pass
-needs more, because the catalogue is much larger and the retention window deliberately
-holds geometry past its last reference. **Requested: 176**, justified by a measured
-peak of **130** live entries and asserted in `tests/worldArt.test.ts`.
+`GEOMETRY_CACHE_ENTRIES_MAX` in spec 08 is 64. **This pass requested it be raised to 176
+and that request is withdrawn** — it was made against the wrong cache and nothing here
+was ever gated on it.
 
-**Correction, and it invalidates the framing above more than the number.** The two
-constants govern *different caches*. `GEOMETRY_CACHE_ENTRIES_MAX` was written for
-`GameEngine.artGeometry`; the figure asserted here is `WorldPropLibrary`'s own cache. So
-this was never a request to raise a shared ceiling — the two never shared one, and
-`GEOMETRY_CACHE_ENTRIES_MAX` turns out to exist in no code at all, only in the two specs.
-Worse, the assertion enforcing 176 was a **bare literal** citing a
-`PROP_CACHE_ENTRIES_MAX` that likewise existed nowhere, so nothing connected the number
-to the thing that determines it.
+The two constants govern *different caches*. `GEOMETRY_CACHE_ENTRIES_MAX` was written for
+`GameEngine.artGeometry`, and the population it was sized for is enumerated directly
+beneath it in `docs/08` — `CHARACTER_GEOMETRY_KEYS ≤ 11`, `BEAST_GEOMETRY_KEYS ≤ 26`,
+`CARAVAN_GEOMETRY_KEYS = 6`, so 43 under a ceiling of 64. The 130 measured here is
+`WorldPropLibrary`'s own cache, reached through `propCacheSize`. So the request used a
+world-prop measurement to justify relaxing the **actor-geometry** budget by 2.75×, and
+cited an assertion that measures the prop cache as well: justification and enforcement
+both concerned a cache the constant does not govern.
+
+Withdrawing it deletes a decision item rather than resolving one. `PROP_CACHE_ENTRIES_MAX`
+above is this pass's own budget, is real, and is asserted — nothing needs spec 08 to move.
+
+Two further facts, both found while unpicking this. `GEOMETRY_CACHE_ENTRIES_MAX` exists in
+no code at all, only in the two specs. And the assertion enforcing 176 was a **bare
+literal** citing a `PROP_CACHE_ENTRIES_MAX` that likewise existed nowhere, so nothing
+connected the number to the thing that determines it.
 
 The budget is now derived from exported constants — `PROP_RETENTION_DEFAULT` (128) plus
 `PROP_RESIDENT_HEADROOM` (48) — so changing the retention default moves the bound with
