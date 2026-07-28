@@ -244,6 +244,21 @@ no new dependencies.
   attribution; and a change credited to the wrong variable in a commit whose entire
   subject was honest measurement. Four instances, all in explanations, none in the
   code being explained.
+- **Turn a finding into a gate, not a paragraph.** A written rule is re-read by the
+  person least able to see past it — the author, mid-correction, at the moment of
+  greatest certainty. A check is not immune to carelessness either, but **its
+  carelessness is fixed at authoring time rather than growing at use time**: it only
+  catches the classes somebody thought to encode, and it catches every one of those
+  forever, regardless of how sure anyone later becomes. That asymmetry is the whole
+  argument for pinning.
+  It is why the gaze table's figures are computed by the committed sweep rather than
+  copied out of a mutation run, why the per-role wobble numbers are asserted to a
+  thousandth of a degree, and why the published pose count is checked against the
+  product of its own axes instead of a floor. Each of those had been wrong while a
+  paragraph beside it explained it correctly.
+  The test for whether a finding has been properly absorbed is not "is it written
+  down" but **"what goes red when it recurs"**. If the answer is nothing, the finding
+  has been recorded rather than fixed.
 - **Mutate the production code, not the test's copy of it.** The anisotropy test used
   to apply its own `neckPivot.scale.x = 1 / shoulders`, and the mutation evidence
   published for it came from mutating *that* line. Reverting the engine's half left
