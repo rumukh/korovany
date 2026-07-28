@@ -1193,6 +1193,45 @@ asserting that wiring — because the gate lives in a script where nothing runni
 `npm test` can see it, which is how the hole formed. Both mutations bite: deleting the
 build step, and narrowing the config's `include`.
 
+### 7.2.3 A mutation proof only licenses an assertion if the mutation is reachable
+
+Found by the world-objects session in its own family-wide winding assertion, and it is the
+sharpest failure mode this programme turned up because **both halves pass review and only
+the pair is empty**.
+
+Its control reversed a stock box **without rebaking normals** — and its pipeline cannot
+produce that state, because `mergePropParts` ends in `mergeAll`, which recomputes normals
+from the winding. So the control proved the detector could catch an **impossible** fault,
+and that proof then licensed an assertion facing a real one it had never been tested
+against. Measured: a fully reversed prop produced **0 disagreements in 560 of 560 cases**.
+The assertion could not have failed for any prop the game builds.
+
+> **A mutation proof only licenses an assertion if the mutation is drawn from the damage
+> model the assertion actually faces.** A control that manufactures a state the pipeline
+> cannot reach measures the detector against a world that does not exist — which is §7.2's
+> defect with the populations swapped, inside the proof rather than inside the check.
+
+Sibling to the rule already recorded here — *when an assertion fails, it may be wrong in
+the direction of weakness*. Both describe a proof that looks complete and measures nothing.
+
+**Applied to this branch's own mutation records**, which is the only use of a rule like
+this that costs anything:
+
+- The merge-orientation check survives it on both halves. Its control reverses one part
+  *"every attribute swapped in step the way the kit's own `reverseWinding` does it"* — the
+  pipeline's own function, not a hand-made half-reversal — and its instrument compares the
+  merge output against **its own inputs by vertex order**, reading no stored normals at
+  all. The rebake that laundered the assertion above cannot reach it. That was deliberate,
+  not lucky: it is the reason the instrument was built that way.
+- The ink-counter record already contains this rule applied without a name for it.
+  Flattening `inkDrawCost` to `return 1` is listed as **"NOT caught — and it is not a
+  mutation"**, because every outlined object in this world is a single mesh, so `return 1`
+  is an identity rather than damage. Refusing to count it is the same judgement.
+
+The general form for a reviewer: **ask what produced the damaged state, not whether the
+detector noticed it.** If the answer is "the test wrote it by hand", the proof is about
+the test.
+
 ### 7.3 Should the repo-wide sweep scan cover disposal and occlusion too?
 
 Deferred to Wave 4 because it could only be answered with both kits merged. Answer:
