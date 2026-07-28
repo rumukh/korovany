@@ -1981,13 +1981,18 @@ test('branch and tube builders wind outward by volume, where the centroid test m
     assert.ok(volume > 0, `${label} encloses non-positive volume ${volume.toFixed(6)}`)
 
     // Reversal negates the sum exactly, so this is arithmetic and not a per-shape
-    // proof. It is kept for the one thing it does catch: a measure that lost its sign.
+    // proof. Asserted as the identity it is rather than as a sign: `< 0` is entailed by
+    // the `> 0` two lines above and so cannot fail for any reason to do with this shape,
+    // while the equality still catches the two harness faults that matter — a
+    // `reverseWinding` that no-ops, and a `signedVolume` that returns a magnitude.
     const flipped = reverseWinding(geometry)
     const reversed = signedVolume(flipped)
-    assert.ok(
-      reversed.volume < 0,
-      `${label} reversed must enclose negative volume, got ${reversed.volume.toFixed(6)} `
-      + '— the measure cannot distinguish this shape from its own inversion',
+    assert.equal(
+      reversed.volume,
+      -volume,
+      `${label} reversed reads ${reversed.volume.toFixed(6)}, not ${(-volume).toFixed(6)}. `
+      + 'Swapping two vertices negates the scalar triple product term by term, so this is '
+      + 'an exact identity; a residual means the measure is not a signed sum',
     )
     flipped.dispose()
 
@@ -2115,14 +2120,18 @@ test('normal-derived geometry is checked by volume, because agreement is vacuous
     // Reversal negates this sum *exactly* -- swapping two vertices negates the scalar
     // triple product term by term, measured at 0.00e+0 residual on all five. So this
     // is arithmetic rather than a detection, and it says nothing about whether this
-    // particular case is a fair subject for the measure. Kept because it still bites
-    // the one substitution that would fake a pass everywhere at once: a detector that
-    // returns a magnitude instead of a signed sum.
+    // particular case is a fair subject for the measure. Asserted as that identity
+    // rather than as a sign, because `< 0` is entailed by the `> 0` above it and cannot
+    // fail for any shape reason -- while the equality still bites the one substitution
+    // that would fake a pass everywhere at once: a detector returning a magnitude.
     const flipped = reverseWinding(geometry)
     const caught = signedVolume(flipped)
-    assert.ok(
-      caught.volume < 0,
-      `reversing ${label} left volume at ${caught.volume.toFixed(5)}, so the measure is unsigned`,
+    assert.equal(
+      caught.volume,
+      -volume,
+      `reversing ${label} read ${caught.volume.toFixed(5)}, not ${(-volume).toFixed(5)} — `
+      + 'the negation is exact term by term, so any residual means the measure is not a '
+      + 'signed sum',
     )
     flipped.dispose()
 
