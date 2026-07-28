@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import * as THREE from 'three'
 import { artVariation } from '../src/game/art/ArtRandom.ts'
@@ -2944,3 +2945,34 @@ test('reloading a region rebuilds the same world objects', () => {
   runtime.dispose()
 })
 
+
+// The spec is the only shipped artefact no gate reads: tsc, oxlint, the suite and the
+// build all ignore Markdown. It shipped corrupted for ~3h because of exactly that. These
+// two rules are structural, not stylistic, and both were violated by the real corruption.
+test('the world-objects spec has no mangled paragraph joins', () => {
+  const url = new URL('../docs/10-world-objects-and-props-spec.md', import.meta.url)
+  const source = readFileSync(url, 'utf8')
+  const lines = source.split(/\r?\n/)
+
+  // An edit that anchors on a rule's bold header and replaces it leaves the previous
+  // opening sentence orphaned above, indented by the wrap. Caught all ten real cases.
+  const orphans = lines
+    .map((line, index) => ({ line, number: index + 1 }))
+    .filter((entry) => /^ [A-Za-z]/.test(entry.line))
+  assert.deepEqual(
+    orphans.map((entry) => `${entry.number}: ${entry.line.slice(0, 60)}`),
+    [],
+    'lines starting with a space are orphaned paragraph openings',
+  )
+
+  // The same edit deletes the newline before the body continuation, welding two
+  // sentences together: "survivedso long", "the programme leadidentified".
+  const welds = lines
+    .map((line, index) => ({ line, number: index + 1 }))
+    .filter((entry) => /[a-z]\*\*[A-Z]/.test(entry.line))
+  assert.deepEqual(
+    welds.map((entry) => `${entry.number}: ${entry.line.slice(0, 60)}`),
+    [],
+    'a bold header welded mid-sentence means a newline was deleted',
+  )
+})

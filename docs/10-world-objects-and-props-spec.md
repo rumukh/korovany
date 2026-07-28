@@ -908,7 +908,6 @@ presence of one guard token* rather than *"can this traversal see a shell?"*, so
 blind to a guard spelled differently and blind to a guard that is an ordering fact with no
 line of code at all. That is rule 3 firing on the first check written after the rule
 landed, against its own author. **Landing a rule does not install it.**
- The last entry, and the one that explains why several of the others survived
 
 **A check that fires on correct code is worse than no check.** The tempting fix for a
 predicate that misses a case is to widen it — here, extending a `.material`-assignment
@@ -934,8 +933,6 @@ failure mode this section is most exposed to, since it exists to be copied into 
 programme's docs. Line numbers rot silently — the file they point into stays valid, so
 nothing errors, and the citation quietly starts describing a blank line. This spec cites
 files and symbols throughout for that reason.
-
- The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives already
 
 **The exact instrument arrived last: `git rev-parse <ref>:<path>`.** Nine hours were spent
 approximating a question that has an exact answer. *"Is this tree's copy of this file the
@@ -973,11 +970,10 @@ other phantom instruction on this programme would have produced a visible wrong 
 Which is the argument for the blob hash in one line: the claim that would have suppressed
 findings was refutable in one command, and the command that refutes it exactly is the one
 nobody reached for until the last hour.
- Both produce a large one-way gap, and the alarming reading
 
 **A one-directional set difference cannot distinguish "they lost work" from "they are
-describing an old snapshot."**
- Both produce a large one-way gap, and the alarming readingpresents first — because the direction you naturally compute is *what is missing from
+describing an old snapshot."** Both produce a large one-way gap, and the alarming reading
+presents first — because the direction you naturally compute is *what is missing from
 theirs*, which is also the direction that looks like data loss.
 
 Contributed by the foundation session, which came within one message of reporting that
@@ -998,11 +994,10 @@ The general form is cheap and mechanical, which is why it belongs next to the mu
 rules rather than in the prose: **before reporting an asymmetry, compute it both ways.**
 One extra command, and it is the difference between a colleague's error and your own
 staleness — two readings that look identical from one side.
- The only entry here that is not about code, and the programme lead
 
 **The ambiguity resolved in my favour, silently — and that is a selection rule, not a
-measurement error.**
- The only entry here that is not about code, and the programme leadidentified it as its own class after this pass reported it about itself.
+measurement error.** The only entry here that is not about code, and the programme lead
+identified it as its own class after this pass reported it about itself.
 
 Three times tonight this session diagnosed a colleague's tooling as broken — "cached ref
 resolutions" from a reflog position, "reviewing an integration copy" from
@@ -1022,7 +1017,30 @@ claims: it queried a session record with the wrong key, got `0 mentions`, and ne
 reported a confident negative. The table had **zero rows for that key at all**. **A
 negative query is a claim about your query** — count the rows before reading the answer,
 which is the negative-claim rule recursing onto the tool used to test it.
- The second half is the programme lead's, added after three separate
+
+**A verification instrument has a shelf life, and its output ages at the speed of the
+thing verified, not the speed of the instrument.** `git branch --contains` cannot go
+stale the way a local ref read can — it answers correctly as of the moment it runs. It
+goes stale by being **quoted later**. For a branch moving twice in twenty minutes, the fix
+is not a better command; it is a shorter interval between running one and reporting it.
+
+The concrete cost is small and worth naming because it is invisible: this pass reported a
+full green gate run — tests, typecheck, lint, build — against a SHA that a subsequent
+rebase orphaned. The content survived, every subject replayed. **The citation did not.**
+Nobody can reproduce that run, which is precisely the audience publishing it was meant to
+serve. A green result at an unreachable commit is not evidence anyone else can use.
+
+**And the aphorism above covers one of two classes, not both.** *"The person best placed
+to describe a tree is the worst placed to notice they've moved past their description"*
+names the **velocity** case exactly — self-reports of one's own tip, where no instrument
+helps and only a shorter interval does. It does not name the other: reports of *someone
+else's* tip, which failed for a different reason — an instrument that cannot report being
+stale, or a reading derived from the very thing it claims to confirm.
+
+Different causes, different fixes, and the memorable version will absorb the second if
+allowed to. Contributed by the foundation session, which separated them after tonight's
+data split cleanly along that line — three self-reports past their own tip, and four
+reports of another's tip taken from a local ref or an echo.
 
 **Two readings from one act are not corroboration.** The habit this pass ran after every
 single commit — push, then print `local` and `origin` side by side and call it verified —
@@ -1105,8 +1123,9 @@ Contributed by the programme lead, about this pass's own status report, in the s
 in which it retracted a probe of its own for the same class of defect — it had checked for
 two symbols that existed both before and after the fix they were meant to confirm.
 
-
- The last entry, and the one that explains why several of the others survivedso long. **A check inherited from review carries borrowed authority**: it arrives alreadyargued for, by someone who was right about something else, which is exactly the condition
+The last entry, and the one that explains why several of the others survived
+so long. **A check inherited from review carries borrowed authority**: it arrives already
+argued for, by someone who was right about something else, which is exactly the condition
 under which nobody measures it again.
 
 Two of the three worst vacuous checks in this file were adopted from reviews. The ledger
@@ -1120,11 +1139,10 @@ blind until 29 simultaneous phantoms.
 That division is the mechanism worth naming: when the proposer and the implementer are
 different people, each can reasonably believe the other validated it. An original check
 has one owner and one conscience; an adopted one has two owners and, absent care, none.
- Contributed by the foundation session
 
 **Severity is a property of callers, not of code — and an unreachable measurement can
-become another session's calibration constant.**
- Contributed by the foundation sessionabout its own work, and it is the only entry here where the fault propagated *between*
+become another session's calibration constant.** Contributed by the foundation session,
+about its own work, and it is the only entry here where the fault propagated *between*
 trees. It characterised a shading defect by its worst reachable-in-principle magnitude —
 104–125° — without asking who calls the builder. The answer was nobody: the only
 production route into that path has zero call sites in any of the four trees.
@@ -1264,6 +1282,35 @@ hour, and none of the rest of this subsection would have been needed.**
 The reason it was skipped is worth naming too: the shared object store makes an unpushed
 branch *look* shareable. Colleagues could read it through worktrees, so the cost of not
 pushing was invisible from the inside and paid entirely by everyone else.
+
+**The artefact with no gate is the one you are proudest of.** This section spent the night
+cataloguing checks that could not fail, and shipped for roughly three hours in a corrupted
+state that no check could see. Ten lines were mangled — five entries whose opening sentence
+had been duplicated as an orphan above the rule and simultaneously jammed into the body with
+its newline deleted, producing text reading `survivedso long` and `the programme
+leadidentified`. It was committed, pushed, reviewed by two sessions, merged by the
+integrator, and quoted back approvingly, and nobody saw it. Including its author, who
+described it in three separate messages as the programme's most durable output.
+
+The mechanism is mundane: every edit that inserted a new rule *before* an existing one
+anchored on that rule's bold header, and the replacement decapitated it. The identical
+mistake was then made a sixth time, live, while writing the entry above this one — and was
+caught only because a structural `grep` happened to run afterwards.
+
+But the reason it survived is the point. Four gates ran on every one of those commits —
+`tsc -b`, `oxlint`, 292 tests, `npm run build` — and **not one of them reads Markdown.**
+The prose was the only shipped artefact with no automated reader at all, which is precisely
+why it rotted, and precisely why the rot was invisible: the humans reading it were reading
+for argument, and an argument survives a missing newline. **A file no tool parses has no
+tests, whatever else you have.** The cheap remedy is structural, not stylistic, and would
+have caught all ten: no line begins with a space, no `**Header` appears mid-sentence, every
+rule has a blank line above it.
+
+The corollary is worse than the instance. The confidence attached to this file was inverted
+against its coverage — it was the least-verified artefact in the programme *and* the one
+most often cited as authoritative, and those two facts were causally connected. Nothing here
+had to survive a machine, so nothing here was measured, and the absence of red never once
+read as absence of testing.
 
 
 ## 14. Effort
