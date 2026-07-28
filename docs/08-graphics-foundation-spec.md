@@ -783,6 +783,40 @@ the injection for one surface. The first mutation attempted was inert — it gat
 which said nothing about the test. **A mutation that perturbs nothing observable is not a
 control**, and the pass it produces is the same green as a real one.
 
+#### Most of a new gate was already gated, and the mutations said which part
+
+The barrel tests above were written from a report that `tsc` accepts a duplicate re-export
+silently. That premise is false, and it took four mutations of the real file to find out —
+each one applied to `src/game/art/index.ts`, then every gate run against it:
+
+| mutation | Node loads | `npm run build` | ordering gate | coverage gate |
+| --- | --- | --- | --- | --- |
+| a formatter changes one closing quote to `"` | yes | passes | **fires**, 7 blocks vs 6 parsed | passes |
+| a value is exported twice | **`SyntaxError`** | — | dead | dead |
+| a type is exported twice | yes | **`TS2300`**, both lines | passes | fires |
+| an export is aliased, `{ x as x }` | yes | **passes** | passes, on a smaller file | **fires** |
+
+So the duplicate half of that test catches nothing that was not already caught, harder and
+earlier: a duplicated value stops the module loading, which takes the whole suite with it, so
+the assertion written for that case is unreachable code. A duplicated type fails the build
+before the suite runs. The test keeps the check only so that `npm test` on its own names the
+barrel, and the comment above it now says so rather than repeating the premise.
+
+The half that earns its place is the one nobody asked for. **Aliasing an export leaves the
+build green, the module loading, and the name invisible to the text parse that the ordering
+gate shares** — so the ordering gate goes on passing while checking a quietly smaller file.
+That is the same failure as the `>= 5` floor two paragraphs down, arriving through a
+different door: a check that reports on a subset and describes it as the file. The
+cross-check against the runtime namespace closes it, and needs no maintenance, because the
+population maintains itself.
+
+Two things about how this was found are worth more than the finding. **The premise came from
+a peer's report of their own breakage and was carried into a commit message and a test
+comment without being run once** — it was plausible, it was first-hand, and it was wrong.
+And **the mutation written to prove the duplicate check works never reached it**: Node
+rejected the file, the run went red, and a red run under a mutation is exactly as easy to
+mistake for a working detector as a green one is for a working subject. The failure had to be
+read to see it came from the loader, not the assertion.
 #### A green pull request is a claim about a base that may already be gone
 
 Wave 2 and Wave 3 branch off this foundation and merge in parallel, so the gates above have
