@@ -660,6 +660,27 @@ Constraints they must respect:
   correctly normalled, so nothing downstream will notice. Transform the *mesh*, or
   `facetGeometry` first and transform the copy.
 
+Verifying what they build — three rules, each learned the expensive way:
+
+- **Any helper that inspects geometry needs a test that deliberately corrupts a
+  known-good input and asserts the helper reports the corruption.** A control that is
+  only ever asked to read a clean shape cannot separate *the geometry is fine* from
+  *the instrument is blind*, because both produce a pass. Four measured instances in
+  this programme so far: a material-budget assertion pinned to a constant that never
+  acquired a material; a winding check whose helper conformed the winding it was about
+  to measure; a face walker that ignored the index buffer and so returned the same
+  count for a correct sphere as for a fully reversed one; and 252 passing tests of
+  which not one read the injected shader body.
+- **Prefer magnitudes and exact counts to signs and inequalities.** `> 0` passes for a
+  blind instrument as readily as for a correct one, so an assertion built on a sign is
+  a coin flip against any defect that perturbs magnitude without perturbing sign. An
+  exact count has no such blind spot.
+- **An invariant has a domain, and the first question on a reported violation is
+  whether the faces are inside it.** Signed volume is meaningless for a shape that
+  encloses none, and a radial winding check says nothing about a flat cap. Pin the
+  known exceptions by name as an *exact* set rather than skipping them, so that a shape
+  which newly joins the set fails, and so does one that leaves it.
+
 ## 7. Budgets
 
 ```text
