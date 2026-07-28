@@ -1862,35 +1862,66 @@ test('the head tracks its target through the chest, not past it', () => {
   // The fix is not more careful copying. It is to make the committed suite compute
   // them, so they are as re-checkable as anything else here and go red when they move.
   //
-  // One plan, because a heading is a direction and no direction calculation reads a
-  // position — the same property the assertion below the probes verifies rather than
-  // assumes. Every body scale and the full axis grid, because those do reach a heading.
+  // One plan, and **this comment cited the wrong assertion as its licence for three
+  // commits.** The plan-independence sets below the probes evaluate the *exact solve's*
+  // breath and body residue; they never touch the raw, scalar or no-pitch rules. A
+  // reviewer injected `p.lean` into the rejected `measure` alone and the file stayed
+  // 22/0, because sampled `elf/soldier` has `lean` 0 while other plans reach 0.20.
+  //
+  // The shortcut is nevertheless sound — the same reviewer swept all 27 plans over the
+  // full 6,174,630 rejected states and got exactly one double per rule. **But "the
+  // claim is true" and "this assertion proves it" are different statements**, and
+  // citing a nearby assertion that happens to be about something else is how a
+  // justification survives without ever being tested. So the rejected rules now carry
+  // their own plan sweep, below, at the state each of them maximises at.
   const rejected = { raw: 0, scalar: 0, nopitch: 0 }
+  const worstState = {
+    raw: [0, 0, 0, 0, 0, 0] as number[],
+    scalar: [0, 0, 0, 0, 0, 0] as number[],
+    nopitch: [0, 0, 0, 0, 0, 0] as number[],
+  }
   let scalarWorseThanNothing = 0
   let rejectedStates = 0
-  {
-    const p = resolveCharacterPlan('elf', 'soldier', 0, false).proportions
-    const skeleton = buildCharacterSkeleton(p)
+  // Built once, used by both the one-plan sweep and the plan-independence check below.
+  // They previously had **two implementations of the same measurement**, which is how a
+  // reviewer's mutation of one slipped past the other — and re-implementing the thing
+  // you are checking is the defect this file caught in the anisotropy test and again in
+  // the chest-yaw coefficients. A shared closure cannot drift from itself.
+  const rig = (plan: CharacterProportions): {
+    skeleton: ReturnType<typeof buildCharacterSkeleton>, head: THREE.Object3D,
+  } => {
+    const skeleton = buildCharacterSkeleton(plan)
     const head = new THREE.Object3D()
     head.position.y = skeleton.headY
     skeleton.headPivot.add(head)
     setCharacterShoulderWidth(skeleton.torsoPivot, skeleton.neckPivot, 1.07)
     skeleton.torsoPivot.scale.y = 1 + BREATH_AMPLITUDE
-    // The chest rotation is set *inside* here rather than by the caller. It was a
-    // parameter that the body ignored, relying on the loop having set the pivot first
-    // — which `tsc` caught as three unread arguments. A measurement helper that
-    // silently depends on state its own signature claims to take is how a sweep ends
-    // up measuring the previous iteration.
+    return { skeleton, head }
+  }
+  // The chest rotation is set *inside* here rather than by the caller. It was a
+  // parameter that the body ignored, relying on the loop having set the pivot first
+  // — which `tsc` caught as three unread arguments. A measurement helper that
+  // silently depends on state its own signature claims to take is how a sweep ends
+  // up measuring the previous iteration.
+  const measureOn = (
+    r: { skeleton: ReturnType<typeof buildCharacterSkeleton>, head: THREE.Object3D },
+    x: number, y: number, z: number, headPitch: number, headRoll: number,
+    target: number, yaw: number,
+  ): number => {
+    r.skeleton.torsoPivot.rotation.set(x, y, z)
+    r.skeleton.headPivot.rotation.set(headPitch, yaw, headRoll)
+    r.skeleton.root.updateMatrixWorld(true)
+    forward.set(0, 0, 1).transformDirection(r.head.matrixWorld)
+    return Math.abs(Math.atan2(forward.x, forward.z) - target)
+  }
+  {
+    const p = resolveCharacterPlan('elf', 'soldier', 0, false).proportions
+    const one = rig(p)
+    const skeleton = one.skeleton
     const measure = (
       x: number, y: number, z: number, headPitch: number, headRoll: number,
       target: number, yaw: number,
-    ): number => {
-      skeleton.torsoPivot.rotation.set(x, y, z)
-      skeleton.headPivot.rotation.set(headPitch, yaw, headRoll)
-      skeleton.root.updateMatrixWorld(true)
-      forward.set(0, 0, 1).transformDirection(head.matrixWorld)
-      return Math.abs(Math.atan2(forward.x, forward.z) - target)
-    }
+    ): number => measureOn(one, x, y, z, headPitch, headRoll, target, yaw)
     for (const bodyZ of BODY_SCALES) {
       skeleton.bodyPivot.scale.set(1.05, 1.055, 1.05 * bodyZ)
       for (let i = 0; i <= AXES[0].steps; i += 1) {
@@ -1920,9 +1951,18 @@ test('the head tracks its target through the chest, not past it', () => {
                   // only be measured where both are evaluated. Quoted as a bare
                   // percentage for four commits, in four files, without one.
                   if (scalar > raw) scalarWorseThanNothing += 1
-                  rejected.raw = Math.max(rejected.raw, raw)
-                  rejected.scalar = Math.max(rejected.scalar, scalar)
-                  rejected.nopitch = Math.max(rejected.nopitch, nopitch)
+                  if (raw > rejected.raw) {
+                    rejected.raw = raw
+                    worstState.raw = [bodyZ, x, y, z, headPitch, headRoll]
+                  }
+                  if (scalar > rejected.scalar) {
+                    rejected.scalar = scalar
+                    worstState.scalar = [bodyZ, x, y, z, headPitch, headRoll]
+                  }
+                  if (nopitch > rejected.nopitch) {
+                    rejected.nopitch = nopitch
+                    worstState.nopitch = [bodyZ, x, y, z, headPitch, headRoll]
+                  }
                 }
               }
             }
@@ -1932,6 +1972,47 @@ test('the head tracks its target through the chest, not past it', () => {
     }
   }
   const asDegrees = (radians: number): number => radians * (180 / Math.PI)
+  // The licence for measuring the three rejected rules on one plan, owned here rather
+  // than borrowed from an assertion about a different quantity. Each rule is re-evaluated
+  // across all 27 plans **at the state it maximises at** — the state where a plan
+  // dependence would matter most — and must take exactly one distinct double.
+  //
+  // Raw doubles, not rounded: the residues of a *direction* calculation are either
+  // bit-identical or they are not, and a tolerance here would be the thing that lets a
+  // real dependence through. `p.lean` reaching the chest is the specific defect this
+  // catches, and it is not hypothetical — `elf/soldier` has `lean` 0 while other plans
+  // reach 0.20, which is exactly why sampling that plan hid it.
+  for (const [rule, yawOf] of [
+    ['raw', (_x: number, _y: number, _z: number, _hp: number, t: number): number => t],
+    ['scalar', (_x: number, y: number, _z: number, _hp: number, t: number): number => t - y],
+    ['nopitch', (x: number, y: number, z: number, _hp: number, t: number): number =>
+      solveHeadYaw(x, y, z, 0, t)],
+  ] as const) {
+    const [bodyZ, cx, cy, cz, headPitch, headRoll] = worstState[rule]
+    const residues = new Set<number>()
+    for (const faction of FACTIONS) {
+      for (const role of ROLES) {
+        const r = rig(resolveCharacterPlan(faction, role, 0, false).proportions)
+        r.skeleton.bodyPivot.scale.set(1.05, 1.055, 1.05 * bodyZ)
+        // Through the *same* `measureOn` the sweep above uses, so the two cannot
+        // disagree. `measureOn` returns |heading − target|; feeding target 0 makes that
+        // the heading itself, which is the quantity plan-independence is about.
+        residues.add(
+          measureOn(r, cx, cy, cz, headPitch, headRoll, 0, yawOf(cx, cy, cz, headPitch, 0.65)),
+        )
+      }
+    }
+    assert.equal(
+      residues.size,
+      1,
+      `the ${rule} rule's heading takes ${String(residues.size)} distinct values across `
+      + `the ${String(FACTIONS.length * ROLES.length)} plans at the state it maximises `
+      + 'at, so the figure quoted for it is a sample of a population that varies rather '
+      + 'than the population itself. Sweep the plans in the rejected block, or find what '
+      + 'made a direction depend on a proportion — `lean` is measured in radians and '
+      + 'reaches `torsoPivot.rotation.x`, so it is the first place to look.',
+    )
+  }
   const worseShare = (scalarWorseThanNothing / rejectedStates) * 100
   assert.ok(
     Math.abs(worseShare - 3.904) < 0.0005,
