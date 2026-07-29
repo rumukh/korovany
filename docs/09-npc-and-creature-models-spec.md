@@ -940,6 +940,20 @@ no new dependencies.
   better one:
   > **A second party's irreplaceable contribution is raising the question, not holding the
   > record.** Both parties had the evidence; only one had a reason to look.
+  *(Guarded against a stronger sentence that did not survive. A closing line here read*
+  *"neither of us ever supplied the other with a fact the other couldn't reach — we supplied*
+  *questions", and the record refutes it in both directions. `PowerShell -match is*
+  *case-insensitive* was a fact one party supplied from their own harness's failure; it was
+  adopted and **moved a published count from 28 to 2 one message later**, and was named as a
+  transfer at the time. The reciprocal: `Select-Object -First N` cancels the upstream
+  pipeline so the exit code is never recorded — a fact about the other party's instrument
+  they had been describing as truncation, unreachable from their side because the failure
+  was not theirs.
+  The rule survives untouched because it says what is **irreplaceable**, not what was
+  **exclusively exchanged** — a much larger claim, unaudited, arriving in a closing position
+  from the party who had just been thanked. Worth keeping as its own caution: **a tidy
+  closing sentence is the one that gets remembered instead of the mechanism**, and the
+  mechanism is the part that transfers.)*
   *(One more label-is-not-the-command, in the reciprocal count below. The range was first
   published as `ea7bbcb..2fc9685`, which yields **16**, not the 17 it was attached to; `..`
   excludes its base. The base commit is `ea7bbcb`, whose subject is *"a label that is not
