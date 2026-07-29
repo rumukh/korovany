@@ -13,7 +13,7 @@
  * nothing to check. The entry in `docs/09` that says *"move the rule into
  * something that runs"* had never been applied at its own site.
  *
- * The five properties, each with its originating failure:
+ * The six properties, each with its originating failure:
  *
  * 1. **Individual exit codes, never the chain's.** Sweep and gates were combined
  *    into one invocation so a clean sweep could not be quoted from a different
@@ -42,6 +42,22 @@
  *    local tip with a PR status two commits older, so `MERGEABLE CLEAN` was a
  *    checked status for an unchecked commit. Local tip, remote tip and PR head
  *    are resolved together and compared.
+ *
+ * 6. **The population is selected from authoritative git data, not from a
+ *    convenient rendering of it.** Both halves of this were merged defects and
+ *    both were silent in the same direction. `git diff --name-only` is a list of
+ *    paths with the *reason* for each one stripped off, so a **deleted** `.md`
+ *    was listed, had no head path to read, and failed the run on a legitimate
+ *    change — and the same rendering C-quotes any non-ASCII path, so a unicode
+ *    filename produced a name no filesystem has. Statuses are now read from
+ *    `--name-status -z`, enumerated rather than inferred, with renames swept at
+ *    their destination. The other half: `git diff -U0` of a **binary** `.md`
+ *    prints `Binary files ... differ` and no `+` rows, so both buckets took zero
+ *    and the partition equality below was satisfied as `0 = 0 + 0`. A partition
+ *    asserts that the parts sum to the population; it cannot assert that the
+ *    population is the truth. `--numstat -z` reports `-`/`-` where a unified
+ *    diff reports nothing, and the counts it gives are reconciled against the
+ *    parser's rows per file.
  *
  * Fenced-region detection reads the **file at HEAD** and maps added lines to
  * their new-file line numbers, rather than toggling a fence flag across added
@@ -134,11 +150,12 @@ function run(command, opts = {}) {
  * in the step added to stop exactly that. Quoting would have fixed it in bash
  * and broken it in `cmd`; not invoking a shell fixes it in both.
  */
-function runGit(args) {
+function runGit(args, opts = {}) {
   const r = spawnSync('git', args, {
     cwd: ROOT,
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
+    ...opts,
   })
   return { code: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` }
 }
@@ -149,6 +166,33 @@ function git(...args) {
   // labelled as a commit — and `|| '(none)'` never fires, because the error
   // text is truthy. Observed live in this instrument's own identity block.
   const r = runGit(args)
+  return r.code === 0 ? r.out.trim() : null
+}
+
+/**
+ * The same, without the trim.
+ *
+ * `git(...)` trims because every caller of it wants one short token — a SHA, a
+ * branch name, a count. NUL-delimited output is not that: the fields are the
+ * payload, a path may legitimately begin or end with a space, and trimming a
+ * record set is a way to corrupt one path in a thousand and never hear about
+ * it. Diff bodies get the same treatment for the same reason — a trailing
+ * whitespace-only added line is content the over-long detector should see.
+ */
+function gitRaw(...args) {
+  const r = runGit(args)
+  return r.code === 0 ? r.out : null
+}
+
+/**
+ * The empty tree's object id, asked of git rather than pasted in.
+ *
+ * `4b825dc...` is the SHA-1 answer and is wrong in a SHA-256 repository, so the
+ * constant would be a control that silently stops running. Nothing is written:
+ * `hash-object` without `-w` computes and prints.
+ */
+function emptyTree() {
+  const r = runGit(['hash-object', '-t', 'tree', '--stdin'], { input: '' })
   return r.code === 0 ? r.out.trim() : null
 }
 
@@ -264,6 +308,203 @@ export function parseAddedLines(diff) {
     lineNo += 1
   }
   return added
+}
+
+/**
+ * Which diff statuses the sweep scans, which it deliberately skips, and — by
+ * being in neither set — which it refuses.
+ *
+ * The sweep used to take `git diff --name-only`, which is a list of paths with
+ * the reason for each one stripped off. A deletion is in that list, its head
+ * path does not exist, and the file was therefore reported as *unreadable* —
+ * a red run on a legitimate change, on the one status where "not on disk" is
+ * the correct state rather than a fault. `--name-only` cannot distinguish the
+ * two because it is not told to.
+ *
+ * So the statuses are enumerated instead of inferred:
+ *
+ *   scan  A M R C T   a head blob exists and its added lines are prose
+ *   skip  D           the file is gone; there is nothing at HEAD to read
+ *
+ * Anything else — `U` (unmerged), `X` (git's own "should not happen"), `B` (a
+ * broken pairing), or a letter git has not shipped yet — is neither scanned nor
+ * skipped but **named and failed**. A default of "scan it" turns an unmerged
+ * path into an unreadable-file failure; a default of "skip it" is the silent
+ * drop this file exists to make impossible. Renames and copies are scanned at
+ * their **destination**, because that is the path that exists at HEAD and the
+ * path whose content the sweep is about to read.
+ */
+export const SWEEP_STATUSES = Object.freeze({
+  scan: Object.freeze(['A', 'M', 'R', 'C', 'T']),
+  skip: Object.freeze(['D']),
+})
+
+/**
+ * Parse `git diff --name-status -z`.
+ *
+ * `-z` is not a formatting preference. Without it git C-quotes any path that is
+ * not plain ASCII — `docs/re named ünïcode.md` comes back as
+ * `"docs/re named \303\274n\303\257code.md"`, quotes and octal escapes included
+ * — and every consumer downstream then looks for a file by a name no filesystem
+ * has. Splitting on newlines is the same class of bug one layer up: a newline is
+ * a legal character in a path.
+ *
+ * The record grammar, from `git-diff(1)`:
+ *
+ *   <status> NUL <path> NUL                       for A M D T U X B
+ *   <status><score> NUL <src> NUL <dst> NUL       for R and C
+ *
+ * A record that does not start with a status letter, or that ends before its
+ * paths, aborts the walk with an error rather than resynchronising — a
+ * half-parsed file list is a population selector that silently narrowed.
+ */
+export function parseNameStatusZ(out) {
+  const fields = out.split('\0')
+  while (fields.length > 0 && fields[fields.length - 1] === '') fields.pop()
+  const entries = []
+  const skipped = []
+  const errors = []
+  let i = 0
+  while (i < fields.length) {
+    const token = fields[i]
+    const m = /^([A-Z])(\d*)$/.exec(token)
+    if (m === null) {
+      errors.push(`git --name-status -z produced "${token}" where a status was expected, so the changed-file list could not be read`)
+      break
+    }
+    const status = m[1]
+    const paired = status === 'R' || status === 'C'
+    const need = paired ? 2 : 1
+    if (fields.length - (i + 1) < need) {
+      errors.push(`git --name-status -z ended after status "${token}" without its ${need === 2 ? 'source and destination paths' : 'path'}`)
+      break
+    }
+    const from = paired ? fields[i + 1] : null
+    const path = paired ? fields[i + 2] : fields[i + 1]
+    i += 1 + need
+    if (SWEEP_STATUSES.skip.includes(status)) {
+      skipped.push({ status, path })
+      continue
+    }
+    if (!SWEEP_STATUSES.scan.includes(status)) {
+      errors.push(`${path} carries diff status "${token}", which the sweep neither scans nor skips`)
+      continue
+    }
+    entries.push({ status, path, from })
+  }
+  return { entries, skipped, errors }
+}
+
+/**
+ * Parse `git diff --numstat -z` — the authoritative added/deleted counts.
+ *
+ * This exists because of the second silent pass: a Markdown file whose content
+ * is binary. `git diff -U0` prints `Binary files a/x.md and b/x.md differ` and
+ * no `+` rows at all, so the diff parser found nothing, both buckets took
+ * nothing, and the partition equality was satisfied as `0 = 0 + 0`. The
+ * decomposition was sound and the population was empty — which is the failure
+ * mode a partition cannot see, because it checks that the parts sum to the
+ * total and not that the total is the truth.
+ *
+ * `--numstat` answers the question the unified diff cannot: it reports `-` and
+ * `-` for a binary file instead of `0` and `0`, so "no added lines" and "no
+ * readable lines" stop being the same observation.
+ *
+ * Record grammar, from `git-diff(1)`:
+ *
+ *   <added> TAB <deleted> TAB [ <src> NUL ] <dst> NUL
+ *
+ * A rename puts nothing between the second tab and the NUL, so an empty path in
+ * the leading field *is* the rename marker — the two paths that follow are then
+ * unambiguous, with no need to guess where one record ends and the next begins.
+ */
+export function parseNumstatZ(out) {
+  const fields = out.split('\0')
+  while (fields.length > 0 && fields[fields.length - 1] === '') fields.pop()
+  const rows = []
+  const errors = []
+  let i = 0
+  while (i < fields.length) {
+    const m = /^(\d+|-)\t(\d+|-)\t([\s\S]*)$/.exec(fields[i])
+    if (m === null) {
+      errors.push(`git --numstat -z produced "${fields[i]}", which is not "<added> TAB <deleted> TAB <path>"`)
+      break
+    }
+    const paired = m[3] === ''
+    if (paired && fields.length - (i + 1) < 2) {
+      errors.push('git --numstat -z announced a rename and then ended without both paths')
+      break
+    }
+    const from = paired ? fields[i + 1] : null
+    const path = paired ? fields[i + 2] : m[3]
+    i += paired ? 3 : 1
+    const binary = m[1] === '-' || m[2] === '-'
+    rows.push({
+      added: binary ? null : Number(m[1]),
+      deleted: binary ? null : Number(m[2]),
+      binary,
+      path,
+      from,
+    })
+  }
+  return { rows, errors }
+}
+
+/** Strict UTF-8: throws rather than substituting U+FFFD for bytes it cannot read. */
+const UTF8_STRICT = new TextDecoder('utf-8', { fatal: true })
+
+/**
+ * Is this byte string something the sweep can honestly call Markdown?
+ *
+ * The second, independent gate on the binary-Markdown defect, and independent on
+ * purpose: `--numstat` reports what *git* decided, and git decides by looking
+ * for a NUL in the first 8000 bytes — a `.gitattributes` line, a NUL past that
+ * window, or a file that is merely mis-encoded all land outside it. This gate
+ * reads the bytes at HEAD instead.
+ *
+ * `readFileSync(path, 'utf8')` is the reason the second half matters: it does
+ * not fail on invalid UTF-8, it substitutes U+FFFD. The sweep would then run its
+ * detectors over replacement characters and report a clean result for a file
+ * whose committed bytes it never saw — the same shape as the binary case, one
+ * layer down.
+ */
+export function classifyMarkdownBytes(bytes) {
+  if (bytes.includes(0)) {
+    return { ok: false, reason: 'contains a NUL byte, so it is binary content behind a Markdown extension' }
+  }
+  try {
+    UTF8_STRICT.decode(bytes)
+  } catch {
+    return { ok: false, reason: 'is not valid UTF-8, so reading it as text substitutes replacement characters for the bytes actually committed' }
+  }
+  return { ok: true, reason: null }
+}
+
+/**
+ * Do the rows the diff parser found agree with the count git reports?
+ *
+ * The partition equality below asserts that `prose + fenced` sums to `allAdded`.
+ * It is a statement about the *decomposition* and says nothing about whether
+ * `allAdded` is the right population — `0 = 0 + 0` is a valid partition of
+ * nothing, and a binary file produces exactly that. This is the missing half:
+ * an equality against a count that comes from git rather than from the parser
+ * being checked, so the two can disagree.
+ *
+ * Returns the reason as text, because a boolean here would reproduce the defect
+ * it closes — a run that fails without naming the file is a run whose author
+ * goes looking, and the failures worth catching are the ones nobody looks for.
+ */
+export function reconcileAddedRows(file, parsedAdded, row) {
+  if (row === undefined || row === null) {
+    return `${file} (git reported no numstat row for it, so the ${parsedAdded} parsed added lines corroborate nothing)`
+  }
+  if (row.binary) {
+    return `${file} (binary to git — numstat reported -/-, so the diff carries no added rows and the sweep would pass it clean)`
+  }
+  if (row.added !== parsedAdded) {
+    return `${file} (git counted ${row.added} added lines, the diff parser found ${parsedAdded} — the sweep would scan a different population than the diff contains)`
+  }
+  return null
 }
 
 /**
@@ -698,6 +939,225 @@ export const CONTROLS = [
       successVerdict({ identityCompared: false, gatesRun: false })
         .includes('gates clean'),
   },
+
+  // --- defect 1: a deleted markdown file failed the sweep --------------------
+  {
+    name: 'a-deleted-markdown-file-is-skipped-not-unreadable',
+    // The merged defect. `--name-only` lists a deletion with no reason attached,
+    // the head path does not exist, and the sweep reported it as unreadable —
+    // a red run on a legitimate change, on the one status where "not on disk"
+    // is the correct state rather than a fault.
+    check: () => {
+      const { entries, skipped, errors } = parseNameStatusZ('M\u0000docs/a.md\u0000D\u0000docs/gone.md\u0000')
+      return errors.length === 0
+        && entries.length === 1 && entries[0].path === 'docs/a.md'
+        && skipped.length === 1 && skipped[0].path === 'docs/gone.md' && skipped[0].status === 'D'
+    },
+    mutate: () => parseNameStatusZ('M\u0000docs/a.md\u0000D\u0000docs/gone.md\u0000')
+      .entries.some((e) => e.path === 'docs/gone.md'),
+  },
+  {
+    name: 'a-rename-is-swept-at-its-destination',
+    // Two paths in one record. The destination is the one that exists at HEAD
+    // and the one whose content the sweep is about to read; taking the source
+    // reproduces the deletion defect with a different spelling.
+    check: () => {
+      const { entries, errors } = parseNameStatusZ('R077\u0000docs/old.md\u0000docs/new.md\u0000M\u0000docs/a.md\u0000')
+      return errors.length === 0 && entries.length === 2
+        && entries[0].status === 'R' && entries[0].path === 'docs/new.md' && entries[0].from === 'docs/old.md'
+        && entries[1].path === 'docs/a.md'
+    },
+    mutate: () => parseNameStatusZ('R077\u0000docs/old.md\u0000docs/new.md\u0000M\u0000docs/a.md\u0000')
+      .entries[0].path === 'docs/old.md',
+  },
+  {
+    name: 'a-path-with-spaces-and-unicode-survives-the-parser',
+    // Trailing whitespace in a path is why the record is not trimmed, and the
+    // mutation is the shape the old listing actually produced.
+    check: () => {
+      const uni = 'docs/re named \u00fcn\u00efcode.md'
+      const spaced = 'docs/trailing space .md '
+      const { entries, errors } = parseNameStatusZ(`M\u0000${uni}\u0000A\u0000${spaced}\u0000`)
+      return errors.length === 0 && entries.length === 2
+        && entries[0].path === uni && entries[1].path === spaced
+        && !entries[0].path.includes('\\303')
+    },
+    mutate: () => {
+      // What `--name-only` hands back for that path: C-quoted, newline
+      // delimited, and a name no filesystem has.
+      const quoted = '"docs/re named \\303\\274n\\303\\257code.md"'
+      return quoted.split('\n').map((f) => f.trim()).filter(Boolean)[0] === 'docs/re named \u00fcn\u00efcode.md'
+    },
+  },
+  {
+    name: 'an-ordinary-modification-still-reaches-the-sweep',
+    // The repair must not narrow the population it was repairing: a plain `M`
+    // parses, its numstat row reconciles, and its added line reaches the
+    // detectors. Every guard above is a way to stop looking at a file.
+    check: () => {
+      const { entries, skipped, errors } = parseNameStatusZ('M\u0000README.md\u0000')
+      const row = parseNumstatZ('1\t0\tREADME.md\u0000').rows[0]
+      const added = parseAddedLines('@@ -3,0 +4 @@\n+a  b\n')
+      return errors.length === 0 && skipped.length === 0
+        && entries.length === 1 && entries[0].status === 'M' && entries[0].path === 'README.md'
+        && row.binary === false && row.added === 1
+        && reconcileAddedRows('README.md', added.length, row) === null
+        && sweepBounds(added.map((a) => a.text)).raw === 1
+    },
+    mutate: () => parseNameStatusZ('M\u0000README.md\u0000').entries.length === 0,
+  },
+  {
+    name: 'an-unrecognised-status-is-named-rather-than-guessed-at',
+    // Defaulting to "scan it" turns an unmerged path into an unreadable-file
+    // failure; defaulting to "skip it" is the silent drop. Both are guesses,
+    // and the third option is to say which status and which path.
+    check: () => {
+      const u = parseNameStatusZ('U\u0000docs/a.md\u0000')
+      const junk = parseNameStatusZ('docs/a.md\u0000')
+      return u.entries.length === 0 && u.skipped.length === 0
+        && u.errors.length === 1 && u.errors[0].includes('docs/a.md') && u.errors[0].includes('"U"')
+        && junk.errors.length === 1 && junk.errors[0].includes('where a status was expected')
+    },
+    mutate: () => parseNameStatusZ('U\u0000docs/a.md\u0000').errors.length === 0,
+  },
+  {
+    name: 'a-truncated-name-status-record-does-not-half-parse',
+    check: () => {
+      const t = parseNameStatusZ('M\u0000docs/a.md\u0000R100\u0000docs/old.md\u0000')
+      return t.entries.length === 1 && t.entries[0].path === 'docs/a.md'
+        && t.errors.length === 1 && t.errors[0].includes('without its source and destination paths')
+    },
+    mutate: () => parseNameStatusZ('M\u0000docs/a.md\u0000R100\u0000docs/old.md\u0000').errors.length === 0,
+  },
+  {
+    name: 'the-nul-status-parser-runs-against-real-git',
+    // A positive control, because every case above is synthetic: a parser that
+    // is never handed real bytes is a parser that agrees with its author. This
+    // drives `git diff --name-status -z` against the empty tree, which reports
+    // every tracked markdown file as added, and asserts the output is genuinely
+    // NUL-delimited rather than newline-delimited with NULs nowhere in it.
+    check: () => {
+      const tree = emptyTree()
+      if (tree === null) return false
+      const out = gitRaw('diff', '--name-status', '-z', tree, 'HEAD', '--', '*.md')
+      if (out === null || !out.includes('\u0000') || out.includes('\n')) return false
+      const { entries, skipped, errors } = parseNameStatusZ(out)
+      return errors.length === 0 && skipped.length === 0 && entries.length >= 2
+        && entries.every((e) => e.status === 'A' && e.path.endsWith('.md') && e.from === null)
+    },
+    mutate: () => {
+      // The listing this replaced: one record per line. Real `-z` output has no
+      // newlines in it, so a line split cannot reproduce the count — and if it
+      // can, the check above was not reading `-z` bytes.
+      const tree = emptyTree()
+      const out = tree === null ? null : gitRaw('diff', '--name-status', '-z', tree, 'HEAD', '--', '*.md')
+      if (out === null) return false
+      const naive = out.split('\n').map((f) => f.trim()).filter(Boolean)
+      return naive.length === parseNameStatusZ(out).entries.length
+    },
+  },
+  {
+    name: 'a-literal-pathspec-is-not-a-glob',
+    // Paths out of `--name-status` go back to git as pathspecs, where `?` and
+    // `[` are wildcards: `docs/notes[draft].md` is an ordinary filename and a
+    // character class. Drives real git, because the magic prefix is git's
+    // behaviour and not this file's.
+    check: () => git('ls-files', '--', ':(literal)READM?.md') === ''
+      && git('ls-files', '--', 'READM?.md') === 'README.md',
+    mutate: () => git('ls-files', '--', ':(literal)READM?.md') === 'README.md',
+  },
+
+  // --- defect 2: a binary markdown file swept clean --------------------------
+  {
+    name: 'the-partition-alone-cannot-see-a-binary-file',
+    // Why the reconciliation exists. A binary Markdown file yields zero added
+    // rows, so prose and fenced take zero each and `0 = 0 + 0` is a *valid*
+    // partition — of a population the sweep never read. The equality is about
+    // the decomposition; it cannot be about whether the total is the truth.
+    check: () => partitionResidual(0, [0, 0]) === 0
+      && reconcileAddedRows('x.md', 0, { binary: true, added: null }) !== null,
+    mutate: () => reconcileAddedRows('x.md', 0, { binary: true, added: null }) === null,
+  },
+  {
+    name: 'binary-markdown-is-caught-by-numstat',
+    check: () => {
+      const { rows, errors } = parseNumstatZ('-\t-\tdocs/bin.md\u0000')
+      const reason = reconcileAddedRows('docs/bin.md', 0, rows[0])
+      return errors.length === 0 && rows.length === 1
+        && rows[0].binary === true && rows[0].added === null && rows[0].path === 'docs/bin.md'
+        && reason !== null && reason.includes('docs/bin.md') && reason.includes('binary to git')
+    },
+    mutate: () => reconcileAddedRows('docs/bin.md', 0, parseNumstatZ('-\t-\tdocs/bin.md\u0000').rows[0]) === null,
+  },
+  {
+    name: 'binary-markdown-is-caught-by-its-bytes',
+    // The second gate, independent of the first: git decides "binary" from a
+    // NUL in the first 8000 bytes, so `.gitattributes` or a NUL past that
+    // window puts a file outside its answer and inside this one.
+    check: () => {
+      const nul = classifyMarkdownBytes(Uint8Array.from([0x41, 0x00, 0x42]))
+      const text = classifyMarkdownBytes(Uint8Array.from([0x23, 0x20, 0x68, 0x69, 0x0a]))
+      return nul.ok === false && nul.reason.includes('NUL byte') && text.ok === true && text.reason === null
+    },
+    mutate: () => classifyMarkdownBytes(Uint8Array.from([0x41, 0x00, 0x42])).ok === true,
+  },
+  {
+    name: 'mis-encoded-markdown-is-not-read-as-text',
+    // `0xE9` alone is Latin-1 'é' and an invalid UTF-8 sequence. `readFileSync`
+    // with 'utf8' substitutes U+FFFD and reports nothing, so the detectors run
+    // over replacement characters and call the file clean.
+    check: () => {
+      const bad = classifyMarkdownBytes(Uint8Array.from([0x61, 0xe9, 0x62]))
+      const good = classifyMarkdownBytes(Uint8Array.from([0x61, 0xc3, 0xa9, 0x62]))
+      return bad.ok === false && bad.reason.includes('not valid UTF-8') && good.ok === true
+    },
+    mutate: () => classifyMarkdownBytes(Uint8Array.from([0x61, 0xe9, 0x62])).ok === true,
+  },
+  {
+    name: 'numstat-and-the-diff-parser-must-agree',
+    check: () => {
+      const row = parseNumstatZ('7\t0\tdocs/a.md\u0000').rows[0]
+      const agree = reconcileAddedRows('docs/a.md', 7, row)
+      const differ = reconcileAddedRows('docs/a.md', 5, row)
+      return agree === null && differ !== null
+        && differ.includes('git counted 7 added lines')
+        && differ.includes('the diff parser found 5')
+    },
+    mutate: () => reconcileAddedRows('docs/a.md', 5, parseNumstatZ('7\t0\tdocs/a.md\u0000').rows[0]) === null,
+  },
+  {
+    name: 'a-missing-numstat-row-is-not-an-agreement',
+    check: () => {
+      const r = reconcileAddedRows('docs/a.md', 3, undefined)
+      return r !== null && r.includes('no numstat row') && r.includes('docs/a.md')
+    },
+    mutate: () => reconcileAddedRows('docs/a.md', 3, undefined) === null,
+  },
+  {
+    name: 'a-numstat-rename-record-reports-its-destination',
+    // A rename puts nothing between the second tab and the NUL, and the two
+    // paths follow. A parser that treats every NUL field as a record reads one
+    // rename as two files and mis-attributes both counts.
+    check: () => {
+      const { rows, errors } = parseNumstatZ('1\t0\tdocs/a.md\u00003\t2\t\u0000docs/old.md\u0000docs/new name.md\u0000')
+      return errors.length === 0 && rows.length === 2
+        && rows[0].path === 'docs/a.md' && rows[0].from === null && rows[0].added === 1
+        && rows[1].path === 'docs/new name.md' && rows[1].from === 'docs/old.md'
+        && rows[1].added === 3 && rows[1].deleted === 2
+    },
+    mutate: () => parseNumstatZ('1\t0\tdocs/a.md\u00003\t2\t\u0000docs/old.md\u0000docs/new name.md\u0000').rows.length === 3,
+  },
+  {
+    name: 'a-crlf-added-line-still-reaches-the-detectors',
+    // CRLF survives into the added text and must not disarm the double-space
+    // detector — the sweep runs on a repository edited from Windows.
+    check: () => {
+      const a = parseAddedLines('@@ -2,0 +3 @@ b\n+c  d\r\n')
+      return a.length === 1 && a[0].lineNo === 3 && a[0].text === 'c  d\r'
+        && sweepBounds(a.map((x) => x.text)).raw === 1
+    },
+    mutate: () => sweepBounds(parseAddedLines('@@ -2,0 +3 @@ b\n+c  d\r\n').map((x) => x.text)).raw === 0,
+  },
 ]
 
 function runControls() {
@@ -774,33 +1234,72 @@ function runMutation() {
 }
 
 function collectProse() {
-  const listed = git('diff', '--name-only', `${BASE}...HEAD`, '--', '*.md')
-  if (listed === null) return { files: [], prose: [], allAdded: [], unreadable: ['(git diff failed)'] }
-  const files = listed.split('\n').map((f) => f.trim()).filter(Boolean)
+  // `--name-status -z`, not `--name-only`. Two properties, both load-bearing:
+  // the status says *why* each path is in the list, and `-z` hands the path over
+  // verbatim instead of C-quoting anything outside ASCII.
+  const listed = gitRaw('diff', '--name-status', '-z', `${BASE}...HEAD`, '--', '*.md')
+  if (listed === null) {
+    return { files: [], skipped: [], prose: [], fencedOut: [], allAdded: [], unreadable: ['(git diff --name-status failed)'] }
+  }
+  const { entries, skipped, errors } = parseNameStatusZ(listed)
+  const files = entries.map((e) => e.path)
 
   // Domain guard, the shape `strategy-facts.mjs` has carried since before this
   // script: a scan that read nothing reports no offenders and looks identical to
   // a clean one. Zero markdown files in the diff is legitimate and is *stated*;
   // a file that is listed and then unreadable or empty is a failure, because
   // that is the case where the clean result is a lie.
-  const unreadable = []
+  const unreadable = [...errors]
   const prose = []
   const fencedOut = []
   const allAdded = []
-  for (const file of files) {
-    const diff = git('diff', '-U0', `${BASE}...HEAD`, '--', file)
+  for (const { path: file } of entries) {
+    // `:(literal)` because these paths come from git, not from a human: a
+    // markdown file named `docs/notes[draft].md` is a perfectly ordinary path
+    // and a pathspec whose brackets are a character class. Without the magic
+    // prefix it would match nothing and the file would go unswept, quietly.
+    const spec = `:(literal)${file}`
+    const diff = gitRaw('diff', '-U0', `${BASE}...HEAD`, '--', spec)
     if (diff === null) {
       unreadable.push(`${file} (diff failed)`)
       continue
     }
+    const countsRaw = gitRaw('diff', '--numstat', '-z', `${BASE}...HEAD`, '--', spec)
+    if (countsRaw === null) {
+      unreadable.push(`${file} (numstat failed, so no added-line count could be corroborated)`)
+      continue
+    }
+    const counts = parseNumstatZ(countsRaw)
+    if (counts.errors.length > 0) {
+      unreadable.push(`${file} (${counts.errors[0]})`)
+      continue
+    }
     const added = parseAddedLines(diff)
+    // Pushed before the guards below, deliberately. A file that fails one of
+    // them has contributed to the population and to neither bucket, so the
+    // residual goes non-zero and the partition reports the drop on its own —
+    // which is the property that made the partition worth having.
     allAdded.push(...added.map((a) => a.text))
+    const mismatch = reconcileAddedRows(file, added.length, counts.rows.find((r) => r.path === file))
+    if (mismatch !== null) {
+      unreadable.push(mismatch)
+      continue
+    }
     const path = join(ROOT, file)
     if (!existsSync(path)) {
       unreadable.push(`${file} (not on disk)`)
       continue
     }
-    const source = readFileSync(path, 'utf8')
+    // Read as bytes, classify, then decode — rather than decoding first and
+    // asking the decoded string whether the bytes were readable, which it can
+    // no longer say.
+    const bytes = readFileSync(path)
+    const encoding = classifyMarkdownBytes(bytes)
+    if (!encoding.ok) {
+      unreadable.push(`${file} (${encoding.reason})`)
+      continue
+    }
+    const source = bytes.toString('utf8')
     if (source.length === 0) {
       unreadable.push(`${file} (empty)`)
       continue
@@ -815,7 +1314,7 @@ function collectProse() {
       else prose.push(text)
     }
   }
-  return { files, prose, fencedOut, allAdded, unreadable }
+  return { files, skipped, prose, fencedOut, allAdded, unreadable }
 }
 
 /**
@@ -967,11 +1466,15 @@ function main() {
   }
 
   // --- sweep ----------------------------------------------------------------
-  const { files, prose, fencedOut, allAdded, unreadable } = collectProse()
+  const { files, skipped, prose, fencedOut, allAdded, unreadable } = collectProse()
   const bounds = sweepBounds(prose)
   const long = overLong(allAdded)
   const residual = partitionResidual(allAdded.length, [prose.length, fencedOut.length])
-  console.log(`  markdown files changed : ${files.length}${files.length === 0 ? '  (sweep examined nothing and contributes nothing below)' : ''}`)
+  // Deletions are reported rather than merely skipped. A count that silently
+  // omits them is a count that cannot be reconciled against `git diff --stat`
+  // by anyone reading the log, and "skipped" that nobody can see is "dropped".
+  const deleted = skipped.length === 0 ? '' : `  (+${skipped.length} deleted, not swept: nothing at HEAD to read)`
+  console.log(`  markdown files changed : ${files.length}${deleted}${files.length === 0 ? '  (sweep examined nothing and contributes nothing below)' : ''}`)
   console.log(`  added = prose + fenced : ${allAdded.length} = ${prose.length} + ${fencedOut.length}${residual === 0 ? '' : `  RESIDUAL ${residual}`}`)
   console.log(`  double space, 3 bounds : raw=${bounds.raw}  placeholder(outside inline code)=${bounds.placeholder}  deletion(upper bound)=${bounds.deletion}   [prose only]`)
   console.log(`  over-120               : ${long.length}   [all added lines, fenced included — long code lines break rendering too]`)
