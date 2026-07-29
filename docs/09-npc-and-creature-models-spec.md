@@ -687,6 +687,17 @@ no new dependencies.
   > instrument acquires clean-erring holes **by omission** and noisy ones only **by
   > commission** — and *fail-toward-green is the shape of every gap in every gate unless
   > something is written to prevent it.*
+  **That is narrower than the section around it implies, and a reviewer narrowed it against
+  their own error.** They reported reachability for two fence forms that does not exist —
+  erring toward **red**, the opposite direction from every other instrument failure recorded
+  here. The distinction is clean and checkable against this record:
+  > **Fail-toward-green is a property of *omitted assertions*: the thing nobody wrote has no
+  > way to fail.** A **wrong population** is a thing somebody did write, and has **no
+  > inherent direction** — it can hide defects or invent them.
+  V1, V2, X3 and W1 were omissions and all four erred green. The population failures on both
+  sides — a fence-shaped grep with no fence model, and the four join-detector variants —
+  went both ways. So the asymmetry argument is sound for gaps and does not extend to
+  instruments generally.
   That predicts the direction of V1, V2 and V3 without anyone having chosen it, and it
   subsumes the vacuous-instrument and doped-control entries above as instances rather than
   neighbours. It also caught one more within the hour: a test harness recorded `exit=0`
@@ -771,6 +782,25 @@ no new dependencies.
   CommonMark's actual rules — fence character, run length, and info-string constraints —
   with seven new controls, and **the swept population is byte-identical afterwards**, which
   is the latency confirmed end-to-end rather than asserted.
+  **Reachability, measured with the fixed classifier rather than with a grep:** across every
+  tracked markdown file, **0** live tilde openers, **0** live four-backtick openers, **0**
+  fences inside blockquotes, **0** fence runs at four spaces of indent — against **179**
+  blockquote lines. The two constructs are each in heavy use and have simply never met.
+  The instrument note is worth as much as the number. A reviewer first counted these with a
+  line-oriented `Select-String '^ {0,3}~~~'` and reported two hits that were **content
+  inside a fenced block** — this document's own table describing the defect. **Predicate
+  right, population wrong**: the question asked was *which lines look like fences*, and the
+  question needed was *which lines are fences*, which differ by exactly the thing under
+  review. **The correct instrument was exported from the file being attacked**, and had
+  already been imported twice in the same turn.
+  So the remaining gap is stated rather than modelled: `^ {0,3}` is correct for top-level
+  fences and blind to fences inside **container blocks** — a blockquoted fenced block has
+  its contents swept as prose, and an *unclosed* fence inside a blockquote is invisible to
+  the balance check. CommonMark container parsing is a real parser; the honest guard is the
+  shape used for the alias evasion — treat a quoted or deeply-indented line carrying a fence
+  run as **unreadable** and fail closed, rather than pretending to model it. Recorded with
+  its reachability of zero, and with the reason it is zero being coincidence rather than
+  design.
   **The stronger claim first written here — that enumerating a hypothesis space usually
   requires a second party — is false, and the record of this work refutes it.** Five
   self-generated enumerations, each against a position its own author had already
@@ -836,6 +866,20 @@ no new dependencies.
   appearance across the two turn tables, ordered by timestamp, is the only attribution
   evidence either party holds.** Exact, cheap, and unused until the question was finally
   asked — because attribution had never been the question anyone was asking.
+  **A consequence of that missing column showed up within the hour, and it is checkable.** A
+  reviewer described a figure they had sent earlier as `1` and `1`; the primary source — the
+  message body as stored in this session's `user_message` — reads `0` and `0`. The
+  difference is reported and **not explained**, per the rule two entries below: the numbers
+  do not reconcile, that is checkable and worth saying, and *why* is not something measured
+  here.
+  What follows from it structurally is the part worth keeping. Because outbound messages are
+  not recorded anywhere and inbound bodies are, **only the recipient holds a record of what
+  was sent.** A sender can re-derive their own prose only from prose they wrote about having
+  sent it — which is recollection with a paper trail's appearance. So:
+  > **In this channel, the party who can check a claim about what was said is never the party
+  > who said it.** Self-correction about one's own past statements is structurally
+  > unavailable, and every rule here about auditing your own claims silently assumed a record
+  > that exists only on the other side.
   *(One more label-is-not-the-command, in the reciprocal count below. The range was first
   published as `ea7bbcb..2fc9685`, which yields **16**, not the 17 it was attached to; `..`
   excludes its base. The base commit is `ea7bbcb`, whose subject is *"a label that is not
