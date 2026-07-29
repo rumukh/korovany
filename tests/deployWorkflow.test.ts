@@ -63,11 +63,53 @@ import test from 'node:test'
  *
  * The hazard is membership of the group, not authorship of the deployment, so
  * the scan now reads every workflow and the group is what selects it.
+ *
+ * The seventh round is not a defect but a shape. The workflow-level group is gone,
+ * because it bought the deployment's safety with the build's: GitHub holds a queued
+ * run in the same group `pending` before any job starts, so run N+1 could not
+ * supersede run N's build no matter what the build asked for. The two jobs now carry
+ * one group each — `pages-build`, which cancels, and `pages-deploy`, which does not.
+ *
+ * That breaks the old rule rather than bending it. This check held *every*
+ * concurrency block in the deploying file to "the flag is present and false", which
+ * the build job now violates on purpose. So blocks are attributed to their owner —
+ * the run, or one named job — and only the groups that govern the *deploying job*
+ * are protected. Which job deploys is read from where the `actions/deploy-pages`
+ * step is, not assumed from a name.
+ *
+ * The split also creates a group that did not exist before, and a hazard with it: a
+ * foreign member of `pages-build` cancels builds, and a cancelled build leaves the
+ * deployment skipped. That harm never appears as an interrupted deployment, so the
+ * cancellation check would never see it. It is answered by reserving the groups the
+ * Pages workflow declares to the Pages workflow, which is a membership claim and is
+ * kept as one, in its own check with its own message.
  */
 
 type WorkflowFile = { readonly name: string; readonly source: string }
 
-type ConcurrencyBlock = { readonly line: number; readonly entries: Map<string, string> }
+/** Which declaration a concurrency block belongs to: the whole run, or one job. */
+type Owner = { readonly kind: 'workflow' } | { readonly kind: 'job'; readonly job: string }
+
+type Declaration = {
+  readonly line: number
+  readonly entries: Map<string, string>
+  readonly unreadable: string | null
+}
+
+type ConcurrencyBlock = Declaration & { readonly owner: Owner }
+
+/** A job's header line and the last line of its body, both 1-based and inclusive. */
+type JobRegion = { readonly name: string; readonly first: number; readonly last: number }
+
+type JobLayout = { readonly regions: readonly JobRegion[]; readonly unreadable: string | null }
+
+/**
+ * The keys a concurrency mapping may carry. GitHub's published workflow schema
+ * declares `additionalProperties: false` over exactly `group` (required),
+ * `cancel-in-progress` and `queue`, so anything else is either not a valid workflow
+ * or a key added after this check was written. Both want a person, not a silence.
+ */
+const CONCURRENCY_KEYS = new Set(['group', 'cancel-in-progress', 'queue'])
 
 // The optional `- ` matters: a step written compactly as `- uses: actions/deploy-pages@v4`
 // is the same deployment as one with a `name:` above it, and the first draft of this
@@ -103,42 +145,92 @@ function scalar(raw: string): string {
 }
 
 /**
- * Every `concurrency:` mapping in a file, with its child scalars — both the block
- * form and the inline `{ ... }` form.
+ * The value of a mapping entry, following a block scalar onto the lines that carry
+ * it. `group: >-` puts the value on the following lines; read as a single line the
+ * value is the indicator, which matches no group and reported nothing. The header
+ * may also carry an indentation indicator digit, in either order (`>2-`, `>-2`); a
+ * reviewer bypassed the guard with exactly that.
+ */
+function readValue(lines: readonly string[], index: number, raw: string): string {
+  const value = scalar(raw)
+  if (!/^[>|](?:[1-9][-+]?|[-+][1-9]?)?$/.test(value)) return value
+
+  const own = lines[index] ?? ''
+  const indent = own.length - own.trimStart().length
+  const continuation: string[] = []
+
+  for (let k = index + 1; k < lines.length; k += 1) {
+    const cont = lines[k] ?? ''
+    if (/^\s*$/.test(cont)) continue
+    if (cont.length - cont.trimStart().length <= indent) break
+    continuation.push(cont.trim())
+  }
+
+  return continuation.join(' ').trim()
+}
+
+/**
+ * Every `concurrency:` mapping in a file, with its child scalars — the block form,
+ * the inline `{ ... }` form, and the bare scalar form.
  *
  * Block form is indentation-scoped, so a key under a job-level block is not
- * confused with one under the workflow-level block.
+ * confused with one under another job's.
  *
  * The inline form was originally left unparsed on the reasoning that it would be
  * reported as a failure rather than pass silently. That was true only of the
  * workflow that deploys Pages, where an unreadable block means no block and no
  * block is itself a risk. For every *other* workflow the same blind spot was
- * fail-open: a file joining `group: pages` with `cancel-in-progress: true` on one
- * inline line was invisible, and passed. Measured, exit 0, against the block form
- * of the identical values failing. So it is parsed.
+ * fail-open: a file joining the deployment's group with `cancel-in-progress: true`
+ * on one inline line was invisible, and passed. Measured, exit 0, against the block
+ * form of the identical values failing. So it is parsed.
+ *
+ * The bare scalar form — `concurrency: pages-deploy` — is the one the schema allows
+ * beside the mapping (`oneOf: [string, object]`) and the one this reader never saw
+ * at all. On the deploying workflow it names a group and takes the default flag, so
+ * before this round it turned "the flag must be present" into silence.
+ *
+ * Forms that remain unread are said out loud rather than skipped: a flow collection
+ * spanning lines, an alias, a tagged node. Every defect this file has recorded was a
+ * form it could not see and did not mention.
  */
-function concurrencyBlocks(source: string): ConcurrencyBlock[] {
+function concurrencyDeclarations(source: string): Declaration[] {
   const lines = source.split(/\r?\n/)
-  const blocks: ConcurrencyBlock[] = []
+  const found: Declaration[] = []
 
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i] ?? ''
 
-    const inline = /^(\s*)["']?concurrency["']?\s*:\s*\{(.*)\}\s*$/.exec(line)
+    const inline = /^\s*["']?concurrency["']?\s*:\s*\{(.*)\}\s*$/.exec(line)
     if (inline) {
       const entries = new Map<string, string>()
-      for (const part of (inline[2] ?? '').split(',')) {
+      for (const part of (inline[1] ?? '').split(',')) {
         const pair = KEY_VALUE.exec(part)
         if (pair) entries.set(pair[1] ?? '', scalar(pair[2] ?? ''))
       }
-      blocks.push({ line: i + 1, entries })
+      found.push({ line: i + 1, entries, unreadable: null })
       continue
     }
 
-    const opened = /^(\s*)["']?concurrency["']?\s*:\s*$/.exec(line)
-    if (!opened) continue
+    const declared = /^(\s*)["']?concurrency["']?\s*:(.*)$/.exec(line)
+    if (!declared) continue
 
-    const indent = (opened[1] ?? '').length
+    const value = readValue(lines, i, declared[2] ?? '')
+
+    if (/^[{[*&!]/.test(value)) {
+      found.push({
+        line: i + 1,
+        entries: new Map(),
+        unreadable: `concurrency: opens with \`${value.slice(0, 1)}\`, a form this check cannot read`,
+      })
+      continue
+    }
+
+    if (value !== '') {
+      found.push({ line: i + 1, entries: new Map([['group', value]]), unreadable: null })
+      continue
+    }
+
+    const indent = (declared[1] ?? '').length
     const entries = new Map<string, string>()
 
     for (let j = i + 1; j < lines.length; j += 1) {
@@ -149,44 +241,147 @@ function concurrencyBlocks(source: string): ConcurrencyBlock[] {
       const pair = KEY_VALUE.exec(child)
       if (!pair) continue
 
-      let value = scalar(pair[2] ?? '')
-
-      // `group: >-` puts the value on the following lines. Read as a single line
-      // the value is the indicator, which matches no group and reported nothing.
-      // The header may also carry an indentation indicator digit, in either order
-      // (`>2-`, `>-2`); a reviewer bypassed the guard with exactly that.
-      if (/^[>|](?:[1-9][-+]?|[-+][1-9]?)?$/.test(value)) {
-        const childIndent = child.length - child.trimStart().length
-        const continuation: string[] = []
-
-        for (let k = j + 1; k < lines.length; k += 1) {
-          const cont = lines[k] ?? ''
-          if (/^\s*$/.test(cont)) continue
-          if (cont.length - cont.trimStart().length <= childIndent) break
-          continuation.push(cont.trim())
-        }
-
-        value = continuation.join(' ').trim()
-      }
-
-      entries.set(pair[1] ?? '', value)
+      entries.set(pair[1] ?? '', readValue(lines, j, pair[2] ?? ''))
     }
 
-    blocks.push({ line: i + 1, entries })
+    found.push({ line: i + 1, entries, unreadable: null })
   }
 
-  return blocks
+  return found
 }
 
 /**
- * The concurrency groups a Pages deployment actually runs under. These are the
- * groups whose members can cancel it, wherever those members are declared.
+ * The jobs of a workflow and the lines each one owns.
+ *
+ * A job-level block governs its own job and nothing else, so telling the jobs apart
+ * is what makes the split readable at all. A `jobs:` mapping this cannot segment is
+ * reported rather than read as no jobs, because no jobs reads as nothing deploys —
+ * the fail-open shape of every earlier round.
+ */
+function jobRegions(source: string): JobLayout {
+  const lines = source.split(/\r?\n/)
+
+  let jobsIndent: number | null = null
+  let start = -1
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const raw = lines[i] ?? ''
+    if (/^\s*(#.*)?$/.test(raw)) continue
+
+    const opened = /^(\s*)["']?jobs["']?\s*:(.*)$/.exec(raw)
+    if (!opened) continue
+
+    const rest = readValue(lines, i, opened[2] ?? '')
+    if (rest !== '') {
+      return {
+        regions: [],
+        unreadable: `${String(i + 1)}: jobs: is written as \`${rest}\`, which this check cannot segment into jobs`,
+      }
+    }
+
+    jobsIndent = (opened[1] ?? '').length
+    start = i
+    break
+  }
+
+  if (jobsIndent === null) return { regions: [], unreadable: null }
+
+  const regions: JobRegion[] = []
+  let jobIndent: number | null = null
+  let open: { name: string; first: number } | null = null
+  let end = lines.length
+
+  for (let i = start + 1; i < lines.length; i += 1) {
+    const raw = lines[i] ?? ''
+    if (/^\s*(#.*)?$/.test(raw)) continue
+
+    const indent = raw.length - raw.trimStart().length
+    if (indent <= jobsIndent) {
+      end = i
+      break
+    }
+
+    jobIndent ??= indent
+    if (indent !== jobIndent) continue
+
+    const header = /^\s*["']?([A-Za-z_][A-Za-z0-9_-]*)["']?\s*:\s*(?:#.*)?$/.exec(raw)
+    if (!header) {
+      return { regions: [], unreadable: `${String(i + 1)}: \`${raw.trim()}\` is not a job header this check can read` }
+    }
+
+    if (open) regions.push({ name: open.name, first: open.first, last: i })
+    open = { name: header[1] ?? '', first: i + 1 }
+  }
+
+  if (open) regions.push({ name: open.name, first: open.first, last: end })
+
+  return { regions, unreadable: null }
+}
+
+/** Every concurrency block in a file, each attributed to the run or to one job. */
+function concurrencyBlocks(file: WorkflowFile): ConcurrencyBlock[] {
+  const layout = jobRegions(file.source)
+
+  return concurrencyDeclarations(file.source).map((declaration) => {
+    const region = layout.regions.find(
+      (candidate) => declaration.line >= candidate.first && declaration.line <= candidate.last,
+    )
+
+    return { ...declaration, owner: region ? { kind: 'job', job: region.name } : { kind: 'workflow' } }
+  })
+}
+
+/**
+ * The jobs that deploy Pages, read from where the step is rather than from a name.
+ * `deploy` is a convention, not a guarantee, and the check has already been wrong
+ * once by trusting a shape instead of reading one.
+ */
+function deployJobs(file: WorkflowFile): string[] {
+  const lines = file.source.split(/\r?\n/)
+
+  return jobRegions(file.source)
+    .regions.filter((region) => DEPLOYS_PAGES.test(lines.slice(region.first - 1, region.last).join('\n')))
+    .map((region) => region.name)
+}
+
+/** A workflow-level block governs every job; a job-level block governs only its own. */
+function governs(block: ConcurrencyBlock, job: string): boolean {
+  return block.owner.kind === 'workflow' || block.owner.job === job
+}
+
+/** Every group a file declares, wherever it declares it. */
+function declaredGroups(file: WorkflowFile): Set<string> {
+  const groups = new Set<string>()
+
+  for (const block of concurrencyBlocks(file)) {
+    const group = block.entries.get('group')
+    if (group !== undefined && group !== '') groups.add(group)
+  }
+
+  return groups
+}
+
+/**
+ * The concurrency groups a Pages deployment actually runs under: the group its own
+ * job declares, plus any workflow-level group above it, which governs every job in
+ * the run. These are the groups whose members can cancel it mid-flight, wherever
+ * those members are declared.
+ *
+ * The build job's group is deliberately not one of them. It is a different group to
+ * GitHub, its members cancel builds rather than deployments, and counting it here
+ * would report the build job's own `cancel-in-progress: true` — which is the point
+ * of the split, not a defect in it. The build group is held by `groupIntruders`
+ * instead, on the narrower claim that it belongs to this workflow alone.
  */
 function protectedGroups(files: readonly WorkflowFile[]): Set<string> {
   const groups = new Set<string>()
 
-  for (const file of pagesWorkflows(files)) {
-    for (const block of concurrencyBlocks(file.source)) {
+  for (const file of files) {
+    const deploying = deployJobs(file)
+
+    for (const block of concurrencyBlocks(file)) {
+      if (!deploying.some((job) => governs(block, job))) continue
+
       const group = block.entries.get('group')
       if (group !== undefined && group !== '') groups.add(group)
     }
@@ -261,31 +456,57 @@ function cancellationRisks(files: readonly WorkflowFile[]): string[] {
   const guarded = protectedGroups(files)
 
   for (const file of files) {
-    const deploysPages = DEPLOYS_PAGES.test(file.source)
-    const blocks = concurrencyBlocks(file.source)
+    const layout = jobRegions(file.source)
+    if (layout.unreadable !== null) risks.push(`${file.name}:${layout.unreadable}`)
 
-    if (deploysPages && blocks.length === 0) {
-      risks.push(`${file.name}: deploys Pages but has no concurrency: block this check can read`)
-      continue
+    const deploying = deployJobs(file)
+    const blocks = concurrencyBlocks(file)
+
+    if (DEPLOYS_PAGES.test(file.source) && deploying.length === 0) {
+      risks.push(`${file.name}: deploys Pages, but this check cannot tell which job does it`)
+    }
+
+    for (const job of deploying) {
+      if (!blocks.some((block) => governs(block, job))) {
+        risks.push(`${file.name}: job \`${job}\` deploys Pages under no concurrency block this check can read`)
+      }
     }
 
     for (const block of blocks) {
+      if (block.unreadable !== null) {
+        risks.push(`${file.name}:${String(block.line)}: ${block.unreadable}`)
+        continue
+      }
+
+      for (const key of block.entries.keys()) {
+        if (!CONCURRENCY_KEYS.has(key)) {
+          risks.push(`${file.name}:${String(block.line)}: concurrency sets \`${key}\`, which is not a key this check models`)
+        }
+      }
+
+      const group = block.entries.get('group')
+      if (group === undefined || group === '') {
+        risks.push(`${file.name}:${String(block.line)}: concurrency block declares no group`)
+        continue
+      }
+
       const value = block.entries.get('cancel-in-progress')
 
-      // The deploying workflow is held to the stricter rule: the flag must be
-      // present and false, so that deleting it is a failure rather than a
-      // silent fallback to a default that happens to be correct today.
-      if (deploysPages) {
+      // A group the deployment itself runs under is held to the stricter rule: the
+      // flag must be present and false, so that deleting it is a failure rather
+      // than a silent fallback to a default that happens to be correct today.
+      if (deploying.some((job) => governs(block, job))) {
         if (value === undefined) {
-          risks.push(`${file.name}:${String(block.line)}: concurrency block does not set cancel-in-progress`)
+          risks.push(`${file.name}:${String(block.line)}: the group the deployment runs under does not set cancel-in-progress`)
         } else if (cancelsInProgress(value)) {
-          risks.push(`${file.name}:${String(block.line)}: cancel-in-progress is \`${value}\`, not false`)
+          risks.push(
+            `${file.name}:${String(block.line)}: cancel-in-progress is \`${value}\`, not false, on a group the deployment runs under`,
+          )
         }
         continue
       }
 
-      const group = block.entries.get('group')
-      if (group !== undefined && joinsGuardedGroup(group, guarded) && cancelsInProgress(value)) {
+      if (joinsGuardedGroup(group, guarded) && cancelsInProgress(value)) {
         risks.push(
           `${file.name}:${String(block.line)}: joins Pages group \`${group}\` with cancel-in-progress \`${String(value)}\``,
         )
@@ -294,6 +515,42 @@ function cancellationRisks(files: readonly WorkflowFile[]): string[] {
   }
 
   return risks
+}
+
+/**
+ * Workflows other than the Pages workflow that declare one of its groups.
+ *
+ * This is a membership claim and not a cancellation one, deliberately. Splitting the
+ * concurrency per job created `pages-build`, whose members cancel *builds*; a
+ * cancelled build leaves `deploy` skipped, so the site silently stays on an older
+ * commit and no deployment is ever recorded as interrupted. The check above would
+ * see nothing, and modelling a second kind of harm would mean modelling `needs:`
+ * chains — more parser, in a file whose parser has been wrong six times.
+ *
+ * So the groups the Pages workflow declares are simply reserved to it. That is a
+ * claim about names, which is cheap to state and impossible to evade by syntax, and
+ * it is stricter than the cancellation rule on purpose: sharing a group without
+ * cancelling still serialises a foreign workflow against the deployment.
+ */
+function groupIntruders(files: readonly WorkflowFile[]): string[] {
+  const intruders: string[] = []
+
+  for (const pages of pagesWorkflows(files)) {
+    const reserved = declaredGroups(pages)
+
+    for (const file of files) {
+      if (file.name === pages.name) continue
+
+      for (const block of concurrencyBlocks(file)) {
+        const group = block.entries.get('group')
+        if (group === undefined || !joinsGuardedGroup(group, reserved)) continue
+
+        intruders.push(`${file.name}:${String(block.line)}: declares \`${group}\`, a group reserved to ${pages.name}`)
+      }
+    }
+  }
+
+  return intruders
 }
 
 function pagesWorkflows(files: readonly WorkflowFile[]): WorkflowFile[] {
@@ -340,6 +597,10 @@ test('the check fires on every way the flag can come back', () => {
   // that never does.
   assert.deepEqual(cancellationRisks([real]), [], 'the real file must be clean before doping it')
 
+  // The deployment's own block, matched as a unit so that a dope which replaces it
+  // wholesale replaces something rather than silently matching nothing.
+  const DEPLOY_BLOCK = /^ *concurrency:\r?\n *group: pages-deploy\r?\n *cancel-in-progress: false$/m
+
   const doped: ReadonlyArray<readonly [string, WorkflowFile[]]> = [
     [
       'flag flipped back to true',
@@ -359,23 +620,61 @@ test('the check fires on every way the flag can come back', () => {
       ],
     ],
     [
-      'concurrency rewritten in the inline mapping form',
+      "the deployment's block rewritten in the inline mapping form",
       [
         {
           name: real.name,
-          source: real.source.replace(/^concurrency:(\r?\n(?:[ \t]+.*)?)*$/m, 'concurrency: { group: pages, cancel-in-progress: true }'),
+          source: real.source.replace(DEPLOY_BLOCK, '    concurrency: { group: pages-deploy, cancel-in-progress: true }'),
         },
       ],
     ],
     [
-      'flag relocated under a job-level block, workflow level left correct',
+      'the deployment given a bare scalar group, so the flag falls back to a default',
+      [{ name: real.name, source: real.source.replace(DEPLOY_BLOCK, '    concurrency: pages-deploy') }],
+    ],
+    [
+      'the deployment block reopened as a flow mapping spanning lines',
       [
         {
           name: real.name,
           source: real.source.replace(
-            /^(\s*)deploy:$/m,
-            '$1deploy:\n$1  concurrency:\n$1    group: pages-deploy\n$1    cancel-in-progress: true',
+            DEPLOY_BLOCK,
+            '    concurrency: {\n      group: pages-deploy,\n      cancel-in-progress: true }',
           ),
+        },
+      ],
+    ],
+    [
+      'a workflow-level group put back above both jobs, cancelling',
+      [
+        {
+          name: real.name,
+          source: real.source.replace(/^jobs:$/m, 'concurrency:\n  group: pages\n  cancel-in-progress: true\n\njobs:'),
+        },
+      ],
+    ],
+    [
+      'a third job in the same file joining the deployment group and cancelling',
+      [
+        {
+          name: real.name,
+          source: real.source.replace(
+            /^ {2}deploy:$/m,
+            '  cleanup:\n    runs-on: ubuntu-latest\n    concurrency:\n      group: pages-deploy\n      cancel-in-progress: true\n    steps:\n      - run: echo tidy\n\n  deploy:',
+          ),
+        },
+      ],
+    ],
+    [
+      'the build job moved onto the deployment group while it still cancels',
+      [{ name: real.name, source: real.source.replace('group: pages-build', 'group: pages-deploy') }],
+    ],
+    [
+      'a concurrency key this check does not model',
+      [
+        {
+          name: real.name,
+          source: real.source.replace('group: pages-deploy', 'group: pages-deploy\n      cancel-on-supersede: true'),
         },
       ],
     ],
@@ -395,7 +694,7 @@ test('the check fires on every way the flag can come back', () => {
         real,
         {
           name: 'housekeeping.yml',
-          source: ['name: Totally Unrelated Housekeeping', 'concurrency:', '  group: pages', '  cancel-in-progress: true', 'jobs:', '  tidy:', '    steps:', '      - run: echo nothing to do with Pages', ''].join('\n'),
+          source: ['name: Totally Unrelated Housekeeping', 'concurrency:', '  group: pages-deploy', '  cancel-in-progress: true', 'jobs:', '  tidy:', '    steps:', '      - run: echo nothing to do with Pages', ''].join('\n'),
         },
       ],
     ],
@@ -405,7 +704,7 @@ test('the check fires on every way the flag can come back', () => {
         real,
         {
           name: 'housekeeping.yml',
-          source: ['name: Housekeeping', 'jobs:', '  tidy:', '    concurrency:', '      group: pages', '      cancel-in-progress: true', '    steps:', '      - run: echo tidy', ''].join('\n'),
+          source: ['name: Housekeeping', 'jobs:', '  tidy:', '    concurrency:', '      group: pages-deploy', '      cancel-in-progress: true', '    steps:', '      - run: echo tidy', ''].join('\n'),
         },
       ],
     ],
@@ -415,7 +714,7 @@ test('the check fires on every way the flag can come back', () => {
         real,
         {
           name: 'housekeeping.yml',
-          source: ['name: Housekeeping', 'concurrency:', '  group: pages', "  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}", 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+          source: ['name: Housekeeping', 'concurrency:', '  group: pages-deploy', "  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}", 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
         },
       ],
     ],
@@ -425,7 +724,7 @@ test('the check fires on every way the flag can come back', () => {
         real,
         {
           name: 'housekeeping.yml',
-          source: ['name: Housekeeping', 'concurrency: { group: pages, cancel-in-progress: true }', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+          source: ['name: Housekeeping', 'concurrency: { group: pages-deploy, cancel-in-progress: true }', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
         },
       ],
     ],
@@ -435,7 +734,21 @@ test('the check fires on every way the flag can come back', () => {
         real,
         {
           name: 'housekeeping.yml',
-          source: ['name: Housekeeping', 'concurrency:', '  group: pages', "  cancel-in-progress: 'true'", 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+          source: ['name: Housekeeping', 'concurrency:', '  group: pages-deploy', "  cancel-in-progress: 'true'", 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+        },
+      ],
+    ],
+    [
+      'a workflow whose jobs cannot be told apart at all',
+      [real, { name: 'flow.yml', source: ['name: Flow', 'jobs: { tidy: { runs-on: ubuntu-latest } }', ''].join('\n') }],
+    ],
+    [
+      'a concurrency block that declares no group, which no valid workflow does',
+      [
+        real,
+        {
+          name: 'housekeeping.yml',
+          source: ['name: Housekeeping', 'concurrency:', '  cancel-in-progress: true', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
         },
       ],
     ],
@@ -455,6 +768,96 @@ test('the check fires on every way the flag can come back', () => {
 })
 
 /**
+ * A count of risks is not evidence that the right thing was noticed. Every previous
+ * round of this file asserted `length > 0`, and a check that reported one wrong
+ * reason for every doped input would have satisfied all of them — which matters now
+ * more than before, because the per-job shape gives the same file several ways to be
+ * wrong at once and `protectedGroups` decides between them.
+ *
+ * So the three new judgements are asserted by what they say. The fail-loud ones are
+ * here rather than in the list above because "it fired" is the least interesting
+ * thing about them: they exist to name a form the parser could not read, and a
+ * failure message that names the wrong form is a maintainer sent to the wrong file.
+ */
+test('the reason the check gives is the reason the dope was written for', () => {
+  const [real] = pagesWorkflows(readWorkflows())
+  assert.ok(real, 'no Pages-deploying workflow to dope')
+
+  const reasoned: ReadonlyArray<readonly [string, WorkflowFile[], RegExp]> = [
+    [
+      'the deployment flag flipped',
+      [{ name: real.name, source: real.source.replace('cancel-in-progress: false', 'cancel-in-progress: true') }],
+      /cancel-in-progress is `true`, not false, on a group the deployment runs under/,
+    ],
+    [
+      'the build job moved onto the deployment group',
+      [{ name: real.name, source: real.source.replace('group: pages-build', 'group: pages-deploy') }],
+      /joins Pages group `pages-deploy` with cancel-in-progress `true`/,
+    ],
+    [
+      'the deployment given a bare scalar group, which names the group but not the flag',
+      [
+        {
+          name: real.name,
+          source: real.source.replace(
+            /^ *concurrency:\r?\n *group: pages-deploy\r?\n *cancel-in-progress: false$/m,
+            '    concurrency: pages-deploy',
+          ),
+        },
+      ],
+      /the group the deployment runs under does not set cancel-in-progress/,
+    ],
+    [
+      'a key the schema does not allow',
+      [
+        {
+          name: real.name,
+          source: real.source.replace('group: pages-deploy', 'group: pages-deploy\n      cancel-on-supersede: true'),
+        },
+      ],
+      /concurrency sets `cancel-on-supersede`, which is not a key this check models/,
+    ],
+    [
+      'a concurrency value this reader cannot open',
+      [
+        {
+          name: real.name,
+          source: real.source.replace(
+            /^ *concurrency:\r?\n *group: pages-deploy\r?\n *cancel-in-progress: false$/m,
+            '    concurrency: {\n      group: pages-deploy,\n      cancel-in-progress: true }',
+          ),
+        },
+      ],
+      /concurrency: opens with `\{`, a form this check cannot read/,
+    ],
+    [
+      'jobs that cannot be told apart',
+      [real, { name: 'flow.yml', source: 'name: Flow\njobs: { tidy: { runs-on: ubuntu-latest } }\n' }],
+      /jobs: is written as `\{ tidy: \{ runs-on: ubuntu-latest \} \}`, which this check cannot segment into jobs/,
+    ],
+    [
+      'a block with no group',
+      [real, { name: 'housekeeping.yml', source: 'name: Housekeeping\nconcurrency:\n  cancel-in-progress: true\n' }],
+      /concurrency block declares no group/,
+    ],
+  ]
+
+  for (const [label, files, reason] of reasoned) {
+    assert.notEqual(
+      files.map((file) => file.source).join('\n'),
+      [real].map((file) => file.source).join('\n'),
+      `${label}: mutation did not change the source, so its result means nothing`,
+    )
+
+    const risks = cancellationRisks(files)
+    assert.ok(
+      risks.some((risk) => reason.test(risk)),
+      `${label}: fired, but for none of the expected reasons — got ${JSON.stringify(risks)}`,
+    )
+  }
+})
+
+/**
  * The widened scan reads every workflow, so it now has room to be wrong in the
  * other direction. A check that flags everything passes the doped cases above
  * for the wrong reason, and would be turned off the first time it blocked a
@@ -470,7 +873,7 @@ test('the widened scan stays quiet on workflows that cannot cancel a deployment'
       'shares the Pages group but never sets the flag — the default is false, so it is safe',
       {
         name: 'housekeeping.yml',
-        source: ['name: Housekeeping', 'concurrency:', '  group: pages', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+        source: ['name: Housekeeping', 'concurrency:', '  group: pages-deploy', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
       },
     ],
     [
@@ -484,21 +887,42 @@ test('the widened scan stays quiet on workflows that cannot cancel a deployment'
       'shares the Pages group and explicitly declines to cancel',
       {
         name: 'housekeeping.yml',
-        source: ['name: Housekeeping', 'concurrency:', '  group: pages', '  cancel-in-progress: false', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+        source: ['name: Housekeeping', 'concurrency:', '  group: pages-deploy', '  cancel-in-progress: false', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
       },
     ],
     [
       'declines to cancel in quotes — the same value, and flagging it would be a false alarm',
       {
         name: 'housekeeping.yml',
-        source: ['name: Housekeeping', 'concurrency:', '  group: pages', "  cancel-in-progress: 'false'", 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+        source: ['name: Housekeeping', 'concurrency:', '  group: pages-deploy', "  cancel-in-progress: 'false'", 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
       },
     ],
     [
       'declines to cancel inline',
       {
         name: 'housekeeping.yml',
-        source: ['name: Housekeeping', 'concurrency: { group: pages, cancel-in-progress: false }', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+        source: ['name: Housekeeping', 'concurrency: { group: pages-deploy, cancel-in-progress: false }', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+      },
+    ],
+    [
+      'queues behind the deployment instead of cancelling it, using a key the schema documents',
+      {
+        name: 'housekeeping.yml',
+        source: ['name: Housekeeping', 'concurrency:', '  group: pages-deploy', '  queue: max', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+      },
+    ],
+    [
+      'joins the build group and cancels — which abandons builds, not deployments, and is a different claim entirely',
+      {
+        name: 'housekeeping.yml',
+        source: ['name: Housekeeping', 'concurrency:', '  group: pages-build', '  cancel-in-progress: true', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
+      },
+    ],
+    [
+      'names a group of its own that merely starts the same way',
+      {
+        name: 'housekeeping.yml',
+        source: ['name: Housekeeping', 'concurrency:', '  group: pages-deployment-notes', '  cancel-in-progress: true', 'jobs:', '  tidy:', '    steps:', '      - run: echo tidy', ''].join('\n'),
       },
     ],
     [
@@ -538,8 +962,8 @@ test('the widened scan stays quiet on workflows that cannot cancel a deployment'
  * population pin failed underneath — a gate failing for the wrong reason, which is
  * a maintainer one pin update away from a real hazard.
  *
- * `PAGES` is the important one: GitHub matches groups case-insensitively, so it is
- * the deployment's own group, spelled in a way this check compared as different.
+ * `PAGES-DEPLOY` is the important one: GitHub matches groups case-insensitively, so
+ * it is the deployment's own group, spelled in a way this check compared as different.
  */
 test('a group is the same group however GitHub would spell it', () => {
   const deploying = pagesWorkflows(readWorkflows())[0]
@@ -551,16 +975,16 @@ test('a group is the same group however GitHub would spell it', () => {
   })
 
   const spellings: ReadonlyArray<readonly [string, string]> = [
-    ['identical', 'pages'],
-    ['upper case, which GitHub folds to the same group', 'PAGES'],
-    ['mixed case', 'Pages'],
-    ["double quoted, as GitHub's own starter template writes it", '"pages"'],
-    ['single quoted', "'pages'"],
-    ['an expression that evaluates to it', "${{ 'pages' }}"],
-    ['a folded scalar carrying the name on the next line', '>-\n    pages'],
-    ['a folded scalar with an indentation indicator', '>2-\n    pages'],
-    ['the same header with the indicators reversed', '>-2\n    pages'],
-    ["an expression assembling the name it never spells", "${{ format('{0}{1}', 'pa', 'ges') }}"],
+    ['identical', 'pages-deploy'],
+    ['upper case, which GitHub folds to the same group', 'PAGES-DEPLOY'],
+    ['mixed case', 'Pages-Deploy'],
+    ["double quoted, as GitHub's own starter template writes it", '"pages-deploy"'],
+    ['single quoted', "'pages-deploy'"],
+    ['an expression that evaluates to it', "${{ 'pages-deploy' }}"],
+    ['a folded scalar carrying the name on the next line', '>-\n    pages-deploy'],
+    ['a folded scalar with an indentation indicator', '>2-\n    pages-deploy'],
+    ['the same header with the indicators reversed', '>-2\n    pages-deploy'],
+    ['an expression assembling the name it never spells', "${{ format('{0}{1}', 'pages-', 'deploy') }}"],
   ]
 
   for (const [label, group] of spellings) {
@@ -612,26 +1036,143 @@ test('the set of workflows is pinned, because a new one can evade the parser in 
       'correct — it exists because the concurrency checks above read YAML with a hand ' +
       'parser that cannot be trusted to understand an unfamiliar file. Open the new or ' +
       'changed workflow, check whether any concurrency group it declares collides with ' +
-      'the Pages group, and update this list once you have.',
+      'either of the Pages groups, and update this list once you have.',
   )
 })
 
 /**
- * The effective concurrency of the deployment, pinned by value rather than by parse.
- * If the group or the flag changes, this fails even if the surrounding structure moved
+ * The effective concurrency of the workflow, pinned by value rather than by parse.
+ * If a group or a flag changes, this fails even if the surrounding structure moved
  * somewhere the block parser reads differently.
+ *
+ * The two jobs carry opposite policies, and that opposition *is* the change: one
+ * group that both jobs shared could only hold one of them. So both halves are
+ * pinned, not just the deployment's — a `pages-build` that quietly stopped
+ * cancelling would restore the defect this workflow was edited to remove, and no
+ * cancellation check can see a cancellation that fails to happen.
  */
-test('the Pages workflow still declares the group and the flag it is supposed to', () => {
+test('the Pages workflow splits the two policies across its two jobs', () => {
   const [real] = pagesWorkflows(readWorkflows())
   assert.ok(real, 'no Pages-deploying workflow found — the regex or the file moved')
 
-  const blocks = concurrencyBlocks(real.source)
-  assert.equal(blocks.length, 1, `expected exactly one concurrency block, found ${String(blocks.length)}`)
+  const blocks = concurrencyBlocks(real)
+  assert.equal(blocks.length, 2, `expected exactly two concurrency blocks, found ${String(blocks.length)}`)
 
-  const only = blocks[0]
-  assert.ok(only, 'concurrency block missing after a length check said it was there')
-  assert.equal(only.entries.get('group'), 'pages')
-  assert.equal(only.entries.get('cancel-in-progress'), 'false')
+  const owned = new Map(blocks.map((block) => [block.owner.kind === 'job' ? block.owner.job : '<workflow>', block]))
+  assert.deepEqual([...owned.keys()].sort(), ['build', 'deploy'])
+
+  assert.equal(owned.get('build')?.entries.get('group'), 'pages-build')
+  assert.equal(owned.get('build')?.entries.get('cancel-in-progress'), 'true')
+  assert.equal(owned.get('deploy')?.entries.get('group'), 'pages-deploy')
+  assert.equal(owned.get('deploy')?.entries.get('cancel-in-progress'), 'false')
+
+  // And the job that deploys is read, not assumed: if the deployment step moves to
+  // another job the pin above is pinning the wrong block.
+  assert.deepEqual(deployJobs(real), ['deploy'])
+})
+
+/**
+ * Why there is no workflow-level block, as a test rather than a comment.
+ *
+ * A workflow-level group governs every job in the run, and GitHub holds a queued
+ * member of an occupied group `pending` — "if another job or workflow using the same
+ * concurrency group in the repository is in progress, the queued job or workflow
+ * will be `pending`". Under one shared group, run N+1 therefore waits for run N to
+ * finish *before its build job starts*, so `pages-build` never has an in-progress
+ * peer to cancel and the split does nothing. Reinstating a workflow-level group with
+ * `cancel-in-progress: false` would pass every check above while silently undoing
+ * the change, because everything above asks whether a deployment can be cancelled
+ * and nothing above asks whether a build can be.
+ *
+ * This is a claim about GitHub's scheduler, which nothing in this repository can
+ * observe. It is quoted from the documented semantics and pinned as configuration,
+ * which is the only part of it that is ours to hold.
+ */
+test('the Pages workflow declares no workflow-level group, which would freeze the split', () => {
+  const [real] = pagesWorkflows(readWorkflows())
+  assert.ok(real, 'no Pages-deploying workflow found')
+
+  assert.deepEqual(
+    concurrencyBlocks(real)
+      .filter((block) => block.owner.kind === 'workflow')
+      .map((block) => `${real.name}:${String(block.line)}`),
+    [],
+    'a workflow-level concurrency group governs every job in the run, so a queued run waits ' +
+      'pending before its build job starts and `pages-build` can never supersede anything. ' +
+      'The split only works while the run itself is ungrouped.',
+  )
+
+  // The negative control for the filter: it reports workflow-level blocks when there
+  // are any, and ci.yml has one. Without this the assertion above passes if `owner`
+  // is ever computed as `job` unconditionally.
+  const ci = readWorkflows().find((file) => file.name === 'ci.yml')
+  assert.ok(ci, 'ci.yml should be present — otherwise the control below measures nothing')
+  assert.equal(concurrencyBlocks(ci).filter((block) => block.owner.kind === 'workflow').length, 1)
+})
+
+/**
+ * `deploy` deploys what `build` uploaded. Without the dependency the two jobs run at
+ * once and `actions/deploy-pages` publishes whatever artifact happens to exist —
+ * which, now that two runs can be in flight together, is a live possibility rather
+ * than a theoretical one.
+ */
+test('the deployment still waits for the build whose artifact it publishes', () => {
+  const [real] = pagesWorkflows(readWorkflows())
+  assert.ok(real, 'no Pages-deploying workflow found')
+
+  const lines = real.source.split(/\r?\n/)
+  const region = jobRegions(real.source).regions.find((candidate) => candidate.name === 'deploy')
+  assert.ok(region, 'no `deploy` job found to check the dependency of')
+
+  assert.match(lines.slice(region.first - 1, region.last).join('\n'), /^\s*needs:\s*build\s*$/m)
+})
+
+/**
+ * The membership claim, doped like the rest. The build group is new, and a foreign
+ * member of it does a harm the cancellation check is not built to see, so the check
+ * that covers it must be shown firing rather than assumed to.
+ */
+test('the groups the Pages workflow declares are reserved to it', () => {
+  const files = readWorkflows()
+  const [real] = pagesWorkflows(files)
+  assert.ok(real, 'no Pages-deploying workflow found')
+
+  assert.deepEqual([...declaredGroups(real)].sort(), ['pages-build', 'pages-deploy'])
+  assert.deepEqual(groupIntruders(files), [])
+
+  const joining = (group: string): WorkflowFile => ({
+    name: 'housekeeping.yml',
+    source: `name: Housekeeping\nconcurrency:\n  group: ${group}\njobs:\n  tidy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo tidy\n`,
+  })
+
+  const intruding: ReadonlyArray<readonly [string, string]> = [
+    ['the build group, whose members starve deployments rather than interrupt them', 'pages-build'],
+    ['the deployment group', 'pages-deploy'],
+    ['the build group in another case, which GitHub folds to the same group', 'PAGES-BUILD'],
+  ]
+
+  for (const [label, group] of intruding) {
+    assert.ok(groupIntruders([real, joining(group)]).length > 0, `${label}: was not reported`)
+
+    // Not cancelling, so the check named for cancellation must stay quiet. The two
+    // claims are separate on purpose and this is what keeps them separate.
+    assert.deepEqual(
+      cancellationRisks([real, joining(group)]),
+      [],
+      `${label}: reported as a cancellation risk, which it is not`,
+    )
+  }
+
+  // Declared under a job rather than the run: the same membership, one level down.
+  const jobLevel: WorkflowFile = {
+    name: 'housekeeping.yml',
+    source: 'name: Housekeeping\njobs:\n  tidy:\n    concurrency:\n      group: pages-build\n    steps:\n      - run: echo tidy\n',
+  }
+  assert.ok(groupIntruders([real, jobLevel]).length > 0, 'a job-level declaration of a reserved group was not reported')
+
+  // The control: a group that is nobody else's business stays unreported, so the
+  // reservation is about these names rather than about having a group at all.
+  assert.deepEqual(groupIntruders([real, joining('lint-${{ github.ref }}')]), [])
 })
 
 
@@ -677,7 +1218,10 @@ test('every line that mentions concurrency, in every workflow, is pinned as text
     "ci.yml :: group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}",
     "ci.yml :: cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
     'deploy-pages.yml :: concurrency:',
-    'deploy-pages.yml :: group: pages',
+    'deploy-pages.yml :: group: pages-build',
+    'deploy-pages.yml :: cancel-in-progress: true',
+    'deploy-pages.yml :: concurrency:',
+    'deploy-pages.yml :: group: pages-deploy',
     'deploy-pages.yml :: cancel-in-progress: false',
   ])
 })

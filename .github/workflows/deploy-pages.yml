@@ -11,23 +11,23 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  # A deployment must be allowed to finish. Cancelling `actions/deploy-pages`
-  # mid-flight can leave the live site on an older commit, and the run that would
-  # explain it reads `cancelled` rather than `failure` — a stale site with nothing
-  # pointing at it. GitHub's Pages template sets this `false` for that reason.
-  #
-  # The shared `pages` group is deliberate, and so is the default `queue: single`,
-  # which drops a pending run when a newer one arrives. That behaviour is a defect
-  # in ci.yml — which owes a verdict to every commit, so it groups main pushes
-  # uniquely — and is the behaviour we want here: main is linear, so a superseding
-  # push contains the commit it displaces, and only the newest content is served.
-  group: pages
-  cancel-in-progress: false
+# There is deliberately no workflow-level `concurrency:` here. One group covering
+# the whole run protected the deployment and paid for it with the build: GitHub
+# holds a queued run in the same group `pending` before any job starts, so run N+1
+# waited for run N to finish end to end and a superseded build could never be
+# abandoned. Every cancellation in this repository's history killed a build; none
+# interrupted a deployment. The two jobs want opposite policies, so they get one
+# group each — the level at which GitHub lets them differ.
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # A superseded build has nothing worth finishing. Its artifact would be
+    # replaced by the newer run's before anything served it, so cancelling it
+    # costs a discarded artifact and saves the runner minutes.
+    concurrency:
+      group: pages-build
+      cancel-in-progress: true
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -58,6 +58,21 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build
+    # A deployment must be allowed to finish. Cancelling `actions/deploy-pages`
+    # mid-flight can leave the live site on an older commit, and the run that
+    # would explain it reads `cancelled` rather than `failure` — a stale site
+    # with nothing pointing at it. GitHub's Pages template sets this `false` for
+    # that reason, and the flag is spelled out rather than left to the default so
+    # that deleting it is a visible edit.
+    #
+    # The default `queue: single` is also deliberate. It drops a pending run when
+    # a newer one arrives, which is a defect in ci.yml — that workflow owes a
+    # verdict to every commit, so it groups main pushes uniquely — and is the
+    # behaviour we want here: main is linear, so a superseding push contains the
+    # commit it displaces, and only the newest content is ever served.
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
     steps:
       - name: Deploy
         id: deployment
