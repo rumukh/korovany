@@ -1,5 +1,11 @@
 name: Deploy GitHub Pages
 
+# `workflow_dispatch` is what makes the build group below an expression rather than
+# a name. A manual run picks its own ref — "this trigger only receives events when
+# the workflow file is on the default branch", but the run itself is started against
+# a chosen branch or tag — so a constant cancelling group would let a manual run on
+# a months-old ref cancel the build of the newest commit on main. The group is keyed
+# by event and ref for that reason, and the two keys are pinned by a test.
 on:
   push:
     branches:
@@ -13,11 +19,13 @@ permissions:
 
 # There is deliberately no workflow-level `concurrency:` here. One group covering
 # the whole run protected the deployment and paid for it with the build: GitHub
-# holds a queued run in the same group `pending` before any job starts, so run N+1
-# waited for run N to finish end to end and a superseded build could never be
-# abandoned. Every cancellation in this repository's history killed a build; none
-# interrupted a deployment. The two jobs want opposite policies, so they get one
-# group each — the level at which GitHub lets them differ.
+# documents that "when a concurrent job or workflow is queued, if another job or
+# workflow using the same concurrency group in the repository is in progress, the
+# queued job or workflow will be `pending`", so run N+1 would wait for run N to
+# finish end to end and a superseded build could never be abandoned. Every
+# cancellation in this repository's recorded history killed a build; none is
+# recorded as interrupting a deployment. The two jobs want opposite policies, so
+# they get one group each — the level at which GitHub lets them differ.
 
 jobs:
   build:
@@ -25,8 +33,16 @@ jobs:
     # A superseded build has nothing worth finishing. Its artifact would be
     # replaced by the newer run's before anything served it, so cancelling it
     # costs a discarded artifact and saves the runner minutes.
+    #
+    # The group is keyed by event and ref so that "superseded" means what it says.
+    # Pushes to main all land in `pages-build-push-refs/heads/main` and supersede
+    # one another, which is the whole point. A `workflow_dispatch` run lands in
+    # `pages-build-workflow_dispatch-<its ref>`, so it can neither cancel a main
+    # build nor be cancelled by one, and two manual runs of the same ref still
+    # supersede each other. `github.event_name` and `github.ref` are both in the
+    # `github` context, which is one of the contexts this key may reference.
     concurrency:
-      group: pages-build
+      group: pages-build-${{ github.event_name }}-${{ github.ref }}
       cancel-in-progress: true
     steps:
       - name: Check out repository
@@ -65,11 +81,15 @@ jobs:
     # that reason, and the flag is spelled out rather than left to the default so
     # that deleting it is a visible edit.
     #
-    # The default `queue: single` is also deliberate. It drops a pending run when
-    # a newer one arrives, which is a defect in ci.yml — that workflow owes a
-    # verdict to every commit, so it groups main pushes uniquely — and is the
-    # behaviour we want here: main is linear, so a superseding push contains the
-    # commit it displaces, and only the newest content is ever served.
+    # This group is a constant where the build's is not, because there is one live
+    # site and every deployment competes for it. Keying it by ref would let a
+    # manual run of an old ref publish alongside main instead of behind it. The
+    # documented default `queue: single` is kept for the same reason: "at most one
+    # job or workflow run can be `pending` in the concurrency group … any existing
+    # `pending` job or workflow run in the same group is canceled and replaced".
+    # Dropping a pending deploy is a defect in ci.yml, which owes a verdict to
+    # every commit; here main is linear, a superseding push contains the commit it
+    # displaces, and only the newest content is ever served.
     concurrency:
       group: pages-deploy
       cancel-in-progress: false
