@@ -833,9 +833,15 @@ function main() {
   console.log(`  branch                 : ${branch}`)
   console.log(`  local / remote / pr    : ${sha} / ${remote} / ${prHead}${suppliedBase ? '   [--base supplied: identity not compared]' : `  -> ${agree ? 'ALL AGREE' : 'MISMATCH'}`}`)
   if (prDesc) console.log(`  pull request           : ${prDesc}`)
-  console.log(`  behind ${BASE} / dirty : ${behind ?? '(git error)'} / ${dirty ?? '(git error)'}`)
+  console.log(`  behind ${BASE} / dirty : ${behind ?? '(git error)'} / ${dirty ?? '(git error)'}${suppliedBase ? '   [--base is a fixed point, not a currency referent]' : ''}`)
   if (!agree) failures.push('local, remote and PR head do not all agree')
-  if (behind !== null && behind !== '0') failures.push(`branch is ${behind} behind ${BASE}`)
+  // `behind` asserts currency: the branch should not be missing commits the base
+  // has. A supplied `--base` is a **fixed comparison point** — a PR's base SHA,
+  // or a chosen earlier tip — not a moving referent, so asserting currency
+  // against it is a category error and the two halves of this mode would
+  // disagree about whether currency is being claimed at all. Reported, not
+  // failed, when supplied.
+  if (!suppliedBase && behind !== null && behind !== '0') failures.push(`branch is ${behind} behind ${BASE}`)
   if (dirty !== null && dirty !== 0) failures.push(`working tree has ${dirty} modified paths`)
 
   // --- gates: each exit code captured on its own ----------------------------

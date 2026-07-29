@@ -15,6 +15,7 @@
     "docs:mutate": "node scripts/strategy-facts.mjs --mutate",
     "verify": "node scripts/verify.mjs",
     "verify:mutate": "node scripts/verify.mjs --mutate",
+    "verify:sweep": "node scripts/verify.mjs --sweep-only",
     "preview": "vite preview"
   },
   "dependencies": {
