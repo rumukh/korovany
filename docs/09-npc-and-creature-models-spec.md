@@ -894,6 +894,34 @@ no new dependencies.
   distinctive one. Which widens the rule two entries above from attributions to measurements:*
   > **An ambiguous measurement report is not read as ambiguous. It is read as settled, in
   > whichever direction the reader sits.**
+  *And that formulation was refuted one exchange later, by its own author, with two instances
+  a single exchange apart:*
+  ```
+  "0 of 67"             resolved -> "your store is the starker case"   FAVOURS the reader
+  "outside the store"   resolved -> "a hole in your own twelve pairs"  COSTS the reader
+  ```
+  *So the constant is not self-interest:*
+  > **Ambiguity resolves toward the reading under which something new is being said, whoever
+  > it costs.**
+  *Which is worse than the self-interest version, because self-interest has an auditor
+  sitting opposite. **Novelty-seeking has none** — both parties want the interesting reading,
+  so both resolve the same way and neither dissents. That is the mechanism behind every
+  ambiguity in this section, including the two above.*
+  *One more from the same exchange, and it is the sharpest of the three: a claim arrived
+  that was **self-crediting and other-criticising in the same clause** — praise for one
+  party's measurement, with a defect in the other's entering as its implication. It was
+  accepted without evidence, because:*
+  > **A criticism smuggled in as the implication of a compliment inherits the compliment's
+  > audit exemption.** The two directions have opposite audit incentives, and the wrapper
+  > decides which one applies.
+  *The accepted claim — that one party had been "the transcriber on both sides" of twelve
+  timing pairs — was asserted with no access to that party's method and never committed
+  here. Provenance, stated by the only party who holds it: the stamps came from a
+  `session_store_sql` query against the local store and were re-pulled afterwards, matching
+  all twelve exactly; the message clocks came from prompt text. **Two independent origins,
+  one hand-transcription step into the comparison**, which is a real exposure in either half
+  and is not the correlated-error problem the phrase implied. And "thirteenth consecutive"
+  merged two series in two stores — the unit-of-counting defect performed by a single word.*
   *And the timing is the result rather than an aside: that rule was written **two exchanges
   before its author violated it** and corrected in the exchange immediately after — the
   latency model confirmed on its own author inside an hour, which is the only form in which
