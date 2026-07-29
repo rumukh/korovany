@@ -262,9 +262,17 @@ export function classifyPrResult({ code, out }) {
   if (code === 0) {
     try {
       const j = JSON.parse(out)
+      // A merged or closed PR's head is frozen at what it landed as. Comparing
+      // the working branch against it is not a currency check — the branch is
+      // *supposed* to move past it — so the head is reported and excluded from
+      // the comparison. Observed live: after a PR merged, this instrument
+      // reported MISMATCH on a branch that was 0 behind main and entirely
+      // clean, which is a red run for a reason that is not a defect.
+      const state = String(j.state ?? '')
+      const settled = state === 'MERGED' || state === 'CLOSED'
       return {
-        head: String(j.headRefOid).slice(0, 7),
-        desc: `#${j.number} ${j.state} ${j.mergeStateStatus}`,
+        head: settled ? `(${state.toLowerCase()} at ${String(j.headRefOid).slice(0, 7)})` : String(j.headRefOid).slice(0, 7),
+        desc: `#${j.number} ${state} ${j.mergeStateStatus}`,
         failure: null,
       }
     } catch {
@@ -283,7 +291,9 @@ export function classifyPrResult({ code, out }) {
 
 /** Which of local/remote/PR are comparable, and do they agree. */
 export function headsAgree(sha, remote, prHead) {
-  const comparable = [sha, remote, prHead].filter((h) => h !== '(no remote)' && h !== '(no pr)')
+  const comparable = [sha, remote, prHead].filter(
+    (h) => h !== '(no remote)' && h !== '(no pr)' && !/^\((merged|closed) at /.test(h),
+  )
   return comparable.every((h) => h === sha)
 }
 
@@ -497,6 +507,36 @@ export const CONTROLS = [
       return r.head === 'abc1234' && r.failure === null && r.desc === '#56 OPEN CLEAN'
     },
     mutate: () => classifyPrResult({ code: 0, out: '{"headRefOid":"abc1234def","number":56,"state":"OPEN","mergeStateStatus":"CLEAN"}' }).head === 'abc1234def',
+  },
+  {
+    name: 'a-merged-pr-head-is-not-a-currency-claim',
+    // A merged PR's head is frozen at what it landed as, and the branch is
+    // supposed to move past it. Comparing against it produced MISMATCH on a
+    // branch that was clean and 0 behind main.
+    check: () => {
+      const merged = classifyPrResult({ code: 0, out: '{"headRefOid":"abc1234def","number":56,"state":"MERGED","mergeStateStatus":"UNKNOWN"}' })
+      return merged.failure === null
+        && /^\(merged at abc1234\)$/.test(merged.head)
+        && headsAgree('9999999', '9999999', merged.head) === true
+    },
+    mutate: () => {
+      const merged = classifyPrResult({ code: 0, out: '{"headRefOid":"abc1234def","number":56,"state":"MERGED","mergeStateStatus":"UNKNOWN"}' })
+      return headsAgree('9999999', '9999999', merged.head) === false
+    },
+  },
+  {
+    name: 'an-open-pr-head-still-must-agree',
+    // The exemption must not leak: an OPEN PR whose head differs is still a
+    // failure, which is the whole reason the check exists.
+    check: () => {
+      const open = classifyPrResult({ code: 0, out: '{"headRefOid":"abc1234def","number":56,"state":"OPEN","mergeStateStatus":"CLEAN"}' })
+      return headsAgree('9999999', '9999999', open.head) === false
+        && headsAgree('abc1234', 'abc1234', open.head) === true
+    },
+    mutate: () => {
+      const open = classifyPrResult({ code: 0, out: '{"headRefOid":"abc1234def","number":56,"state":"OPEN","mergeStateStatus":"CLEAN"}' })
+      return headsAgree('9999999', '9999999', open.head) === true
+    },
   },
 ]
 
