@@ -918,15 +918,57 @@ no new dependencies.
   turn 231  23:58:13.487      next message  23:58:13.484     +3 ms
   turn 232  00:02:33.461      next message  00:02:33.456     +5 ms
   ```
-  What kills it is a population the argument never used: **twenty-one sessions idle for
-  more than fifty hours whose final turn still carries a stamp** — and all eighty sessions
-  with turns have a stamped final turn. No next message exists or has for two days, so
-  under arrival-of-next that field could not have a value. It does.
-  *(That count was first published here as **six**, which was the `LIMIT` on the query that
-  displayed the rows, restated as the size of the population. A display bound reported as a
-  census — and in the **strengthening** direction, which is why nobody checked it: an
-  understatement of one's own evidence has nobody with an interest in auditing it, the
-  unfavourable-direction axis arriving inside the proof it was supporting.)*
+  What kills it is a population the argument never used: **all eighty sessions with turns
+  carry a stamped final turn**, and twenty-one of those were last active before
+  `2026-07-27T00:00Z` — two days dead at the time of writing, with no next message then or
+  since. Under arrival-of-next that field could not have a value. It does.
+  *(Two corrections to how that count was first published. It appeared as **six**, which was
+  the `LIMIT` on the query that displayed the rows restated as the size of the population —
+  a display bound reported as a census, in the **strengthening** direction, which is why
+  nobody checked it. And the replacement, "twenty-one idle beyond fifty hours", **had a
+  clock in the predicate**: idleness is measured against `now`, so the identical query over
+  identical unchanged rows returned `9` four hours earlier, `11` two hours earlier, `20` one
+  hour earlier and `21` at the moment of writing. **A number that more than doubled in two
+  hours while the data stood still**, committed in the past tense of a finished measurement.
+  It is now anchored to a fixed instant, which is *cite endpoints, not lengths* — derived
+  here for commit ranges and not carried across to time until a sibling hit the same wall.)*
+  **The gate that exists for this class did not fire, and that is the finding.** This
+  repository has a test named *no spec makes a status claim that can only expire*, and it
+  had already caught *"the eight most recent commits on this branch"* an hour earlier. Its
+  nine patterns are all phrases that **advertise their own volatility** — unfinished states,
+  pending merges, things not yet done.
+  > *"Twenty-one sessions have been idle over fifty hours"* advertises nothing. **The gate
+  > detects the vocabulary of currency, not the semantics of a moving referent** — and the
+  > perishable claim with no currency vocabulary is exactly the one that gets written down,
+  > because it is the one that sounds like a result.
+  The real discriminator is **tense with both ends named**: *"one limit stayed open for two
+  hours"* and *"have been idle for fifty hours"* are the same construction, and only the
+  first has both ends nailed to fixed events.
+  **And the guard for it was refuted before it was built, which is the discipline moving one
+  step earlier.** A sibling counted the population first: of 24 number-plus-time-unit lines
+  across three specs, **22 were closed intervals between named events and 2 were anchored at
+  reading time.** A pattern-based guard would have been wrong on 23 of 24 — established for
+  the price of one query rather than for the price of another review round. The remedy stays
+  the authoring rule, and both offenders were pinned to instants.
+  Two things from writing that up are worth more than it was. **The guard then fired on the
+  paragraph describing the guard**, because quoting its pattern list is indistinguishable
+  from using those phrases — the use/mention defect that took ten rounds to remove from a
+  different guard in the same suite. A structural exemption was available and was
+  **measured and refused**: 1,817 code spans across the specs, exactly one matching line, so
+  the exemption would be validated against an empty population of real offenders while
+  handing every future expiring claim a disguise costing one backtick. That is the opposite
+  call from the earlier round, and the difference is not correctness — both are false
+  positives on content nobody should be punished for:
+  > **A false positive earns a fix when the population it rejects is one you must keep
+  > serving, and a reword when it is not.** Ten rounds of treating every false positive as a
+  > defect trains exactly the wrong reflex for the second case.
+  And an instrument failure in the family this file already records: a re-wrap ran inside a
+  PowerShell function that reported progress with `Write-Output`, which joins the function's
+  **return stream**, so two progress strings were prepended to the document as lines 1 and
+  2. Longest line unchanged, over-120 set identical, paragraph diffs correct — **every check
+  passed because every check was aimed at the region being edited.** Reading the whole diff
+  rather than the changed hunks is what caught it, which is *aim* again, at the smallest
+  scale yet.
   **The queueing account that was published as the explanation is refuted, and refuted by
   the rows offered as its evidence.** It held that delivery of a queued message is triggered
   by turn completion, so the two coincide to within milliseconds. That predicts
@@ -991,7 +1033,8 @@ no new dependencies.
   that cannot be repaired later by collecting more.**
   The discriminating rows were inside the eighty the whole time, and two parties found two
   independent versions of them within minutes of each other once the third reading was
-  named: **twenty-one sessions idle beyond fifty hours** with stamped final turns, and
+  named: **twenty-one sessions last active before `2026-07-27T00:00Z`** with stamped final
+  turns, and
   **fifteen single-turn sessions, fifteen of fifteen stamped**, ten of them older than a
   day. Neither
   party had asked, and not because the query was hard — because neither was asking a
