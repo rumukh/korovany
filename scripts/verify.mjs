@@ -72,14 +72,17 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const BASE = 'origin/main'
 
 /** Run a command and return its own exit code — never a chain's. */
-function run(cmd, args, opts = {}) {
-  // `shell: true` with an args array concatenates without escaping (DEP0190).
-  // npm/npx are `.cmd` shims on Windows, so resolve the executable instead of
-  // reaching for a shell.
-  const exe = process.platform === 'win32' && /^(npm|npx|gh)$/.test(cmd) ? `${cmd}.cmd` : cmd
-  const r = spawnSync(exe, args, {
+function run(command, opts = {}) {
+  // Windows ships npm/npx/gh as `.cmd` shims, which `spawnSync` refuses to
+  // execute without a shell. DEP0190 is about passing an *args array* alongside
+  // `shell: true` — arguments are concatenated unescaped — so the command is
+  // built here as one string instead. Every command in this file is a fixed
+  // literal with no interpolated input, which is what makes that safe; do not
+  // pass caller-supplied text through this function.
+  const r = spawnSync(command, {
     cwd: ROOT,
     encoding: 'utf8',
+    shell: true,
     maxBuffer: 64 * 1024 * 1024,
     ...opts,
   })
@@ -87,7 +90,7 @@ function run(cmd, args, opts = {}) {
 }
 
 function git(...args) {
-  return run('git', args).out.trim()
+  return run(['git', ...args].join(' ')).out.trim()
 }
 
 /**
@@ -337,7 +340,7 @@ function main() {
   const remote = git('rev-parse', '--short', `origin/${branch}`) || '(none)'
   const behind = git('rev-list', '--count', `HEAD..${BASE}`)
   const dirty = git('status', '--porcelain').split('\n').filter(Boolean).length
-  const pr = run('gh', ['pr', 'view', '--json', 'headRefOid,number,state,mergeStateStatus'])
+  const pr = run('gh pr view --json headRefOid,number,state,mergeStateStatus')
   let prHead = '(no pr)'
   let prDesc = ''
   if (pr.code === 0) {
@@ -364,17 +367,17 @@ function main() {
   // --- gates: each exit code captured on its own ----------------------------
   if (!process.argv.includes('--sweep-only')) {
     const gates = [
-      ['build', 'npm', ['run', 'build']],
-      ['lint', 'npx', ['oxlint', 'src', 'tests']],
-      ['docsfacts', 'npm', ['run', 'docs:facts']],
+      ['build', 'npm run build'],
+      ['lint', 'npx oxlint src tests'],
+      ['docsfacts', 'npm run docs:facts'],
     ]
     const codes = []
-    for (const [name, cmd, args] of gates) {
-      const { code } = run(cmd, args)
+    for (const [name, command] of gates) {
+      const { code } = run(command)
       codes.push(`${name}=${code}`)
       if (code !== 0) failures.push(`${name} exited ${code}`)
     }
-    const t = run('npm', ['test'])
+    const t = run('npm test')
     codes.push(`test=${t.code}`)
     const verdict = parseTestVerdict(t.out)
     console.log(`  exit codes             : ${codes.join(' ')}`)
