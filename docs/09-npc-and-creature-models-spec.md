@@ -624,6 +624,38 @@ no new dependencies.
   not the variable. **A rule is applied at the sites its author is thinking about, and
   nowhere else** — which is why the remedy is never *remember harder*, and always *move the
   rule into something that runs*.
+  **That last clause had never been applied at its own site, and the same reviewer measured
+  it.** At the tip where it was written: `package.json` had `dev build bundle lint test
+  docs:facts docs:mutate preview` and **no `verify`**; there were **no `.ps1` or `.sh` files
+  outside `node_modules`**; the sweep-and-gate line that produced two of the defects in this
+  section existed only as text typed freshly into a shell by both parties for the whole run,
+  so **CI could not check it because there was nothing to check.** Every other instance here
+  has a distance — eighteen hours and a different file, two hours and one screen. **This one
+  is zero: the rule and its unapplied site are the same sentence.**
+  And the exemplar was already in the repository. `scripts/strategy-facts.mjs --mutate` is
+  *move the rule into something that runs* done to the highest standard here — a checked-in
+  instrument with a doped mutation self-test proving it can fail — sitting one directory
+  from the hand-typed filter. So the site-blindness claim is stronger than stated above:
+  **the author had written the rule, built its exemplar, and still not applied it one layer
+  up.**
+  Now `scripts/verify.mjs` / `npm run verify`, with `verify:mutate` gated in CI. Two things
+  it measured about itself on the way in, both worth more than the script:
+  **It caught its author breaking it, by the property it was built for.** A `DEP0190` fix
+  resolved `npm`/`npx`/`gh` to their `.cmd` shims, which `spawnSync` refuses to execute
+  without a shell, and all four gates went to `exit 1`. The run reported
+  `build=1 lint=1 docsfacts=1 test=1` **and** *"output carried no verdict"* — four
+  attributions and a refusal, where a chained invocation shows one status and no attribution.
+  **And proving it could go red exposed a load-bearing dependency nobody had stated.** The
+  first negative control doped the *working tree*; the sweep reads the *committed* diff, so
+  it measured nothing and the run failed for *"working tree has 2 modified paths"* — **a red
+  run for the wrong reason, which reads as the right one.** The sweep is sound only because
+  the clean-tree assertion runs in the same invocation: if the tree is clean, the committed
+  diff *is* the working tree. Two checks composing into a third property, unnamed until a
+  control failed to work.
+  The honest bound on all of it: **a gate does not substitute for a reader, it frees one.**
+  This instrument closes the two defects already found and has no opinion about the next
+  class, because its controls are the ones its author could think of. Every novel class in
+  this section came from a second party, and that is the count to keep.
 - **A measurement is a claim with a timestamp nobody writes down.** Every other rule
   here targets claims that were wrong. This one is about claims that were *right and
   stopped being* — which is a different failure, because a measurement carries its own
