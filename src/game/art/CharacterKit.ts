@@ -3603,43 +3603,43 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
  * zero on both sides; `walking` and `dying` are how far the fix **moves** the skull at an
  * identical pose, which also catches the second half — a head rotation about a pivot at
  * the feet swings the skull through the whole ground-to-skull arm instead of the neck's.
- * Authored units, then multiplied by `BEAST_PROFILES.scale` into the world:
  *
- * | kind | slip | walking | dying | dying, in the world | skull vs its own chest |
- * | --- | --- | --- | --- | --- | --- |
- * | wolf | 0.2574 | 0.4987 | 0.7239 | 0.6226 m | 8.3171° |
- * | boar | 0.2246 | 0.4162 | 0.6094 | 0.5789 m | 8.3171° |
- * | bear | 0.2935 | 0.5423 | 0.8301 | 0.9961 m | 8.3171° |
- * | troll | 0.5104 | 0.6532 | **1.1607** | **1.5553 m** | **11.6733°** |
+ * **The figures live in `FOOT_ROOTED_SKULL` and `WORLD_DEATH_TRAVEL`** in
+ * `tests/characterArt.test.ts`, pinned by `what a foot-rooted skull was worth on each of
+ * the four animals`, which drives the rejected arrangement out of this builder's own
+ * pivots and names the new value in its failure message when one moves. They are not
+ * copied here, and that is deliberate rather than lazy: a table in a docblock is a claim
+ * nothing re-evaluates. The figures this fix replaced had been carried in exactly such a
+ * table, and they were wrong twice over — see below.
  *
  * **What is swept and what is held fixed**, because a large number of samples along one
  * axis is not coverage of the others — a humanoid sweep of 441 poses on this programme
  * held the Euler order at the single value where both implementations agree, and one of
  * 51,480 states held head pitch at zero, precisely where the solve was already correct.
- * Both were large numbers measuring one point. So, for the figures above: swept are the
- * seven action states, three strides, three turn-leans, three breath phases, three look
- * angles, both shoulder extremes, the death family, and the three `body-pivot` scale
- * extremes `applyActorVisualVariation` can write. Held fixed are the actor's world
- * position and facing, which sit above every pivot involved and cancel; `head-pivot`'s
- * own rotation for the `slip` column specifically, on both sides, so the comparison is
- * like for like; and the Euler order, at XYZ — which is the one this programme has been
- * caught by, so it is swept over all five wrong values in its own test rather than left
- * unexamined here.
+ * Both were large numbers measuring one point. So: swept are the seven action states,
+ * three strides, three turn-leans, three breath phases, three look angles, both shoulder
+ * extremes, the death family, and the three `body-pivot` scale extremes
+ * `applyActorVisualVariation` can write. Held fixed are the actor's world position and
+ * facing, which sit above every pivot involved and cancel; `head-pivot`'s own rotation
+ * for the `slip` column specifically, on both sides, so the comparison is like for like;
+ * and the Euler order, at XYZ — which is the one this programme has been caught by, so
+ * it is swept over all five wrong values in its own test rather than left unexamined
+ * here.
  *
  * The death column is the one nothing was watching, and it is the worst on all four.
  * `updateActorDeathMotion` writes `head-pivot.rotation.z = side * 0.28 * eased` — a
  * skull lolling as the body goes down — and on a pivot at the feet that swings it
- * through the entire ground-to-skull lever arm, 2.34 authored units on a troll. It is
- * not a pose the animation reaches by accident; it happens on **every** death, and the
- * humanoid rig had exactly the same hole covered by exactly as many assertions.
+ * through the entire ground-to-skull lever arm. It is not a pose the animation reaches
+ * by accident; it happens on **every** death, and the humanoid rig had exactly the same
+ * hole covered by exactly as many assertions.
  *
  * The figures previously recorded for this defect — 0.296 on a wolf, 0.368 on a bear,
- * 0.660 on a troll, "under attack plus stagger" — **do not reproduce.** Driven at that
- * pose the shipped rig gives 0.4589, 0.5231 and 0.7911; and the pose is not reachable,
- * for the same reason the humanoid table had to be corrected. Both numbers and their
- * pose were wrong in the same direction as the fix being deferred, which is the reason
- * every figure here is computed by `a beast's skull is rigid with its ribs and hinges
- * at the neck` rather than restated.
+ * 0.660 on a troll, "under attack plus stagger" — **do not reproduce**, and the pose they
+ * name is not reachable, for the same reason the humanoid table had to be corrected: the
+ * stagger branch clears `actor.action`. Those three numbers are quoted because they are
+ * *retracted*, which is the one thing a stale figure is safe to be used for. What the
+ * rejected arrangement is actually worth at that pose is computed by the same test, so
+ * the retraction cannot itself go stale.
  *
  * ## Where the neck goes, and why it is not a guess
  *
@@ -3675,13 +3675,11 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
  * And `lookYaw` becomes a chest-space quantity the moment the head hangs off the chest,
  * so `animateBeastPosture` has to convert it with `solveHeadYaw`. That is small here —
  * a beast's chest barely turns — but it is a *new* error the reparenting introduces, so
- * it is not optional: uncorrected it is worth 2.5583° on a quadruped and 3.0334° on a
- * troll, and the obvious scalar `lookYaw - chestYaw` leaves 1.2799°/1.7368° and is worse
- * than doing nothing in **1680 of 22684** swept states, 7.4061%. `a beast's head tracks
- * its target through its own chest` computes all five figures, including the two rules
- * it rejects, rather than describing them. The count is quoted alongside the share
- * because the share alone is unfalsifiable: the count is what moves when the
- * population or the box does; the share need not.
+ * it is not optional. `a beast's head tracks its target through its own chest` computes
+ * what it is worth: the uncorrected cost, the scalar rule's cost, and the count of
+ * states where the scalar rule is *worse than doing nothing*, all pinned in its
+ * `RECORDED` table. The count rather than the share, because a share can survive a
+ * change to the population it describes while the count moves.
  *
  * ## What the skull now inherits that it did not, stated rather than glossed
  *
@@ -3689,18 +3687,18 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
  *
  * - **The shoulder width does not reach it**, and the *visible result is unchanged*. It
  *   never wore the width on the sibling rig either; what is new is that the width is
- *   now applied and divided back out rather than never applied. Measured over both
- *   shoulder extremes, both breath extremes and the whole pose box, the skull's worst
- *   anisotropy is **0.5429%**, which is the closed form of the breath alone —
- *   `1/(1 - 0.018·0.3) - 1` — attained exactly, with nothing of the 7% shoulder spread
- *   left in it.
+ *   now applied and divided back out rather than never applied. What is left on the
+ *   skull is the breath and nothing else, which `a beast's skull turns with its chest
+ *   and keeps its own proportions` bounds by the closed form
+ *   `1/(1 - amplitude·gain) - 1` — a derivation over two engine constants rather than a
+ *   recorded measurement, so it moves when they do.
  * - **The breath does reach it, and that is a real change.** The chest's `scale.y` lifts
- *   the neck, so the skull now rises by up to **0.0248** authored units as the animal
- *   inhales, and the skull mesh itself stretches vertically by that same 0.5429%. The
- *   lift is wanted — a chest that breathes without moving its head is worse. The stretch
- *   is accepted, as it is on people, because it is a hundredth of the shoulder problem;
- *   but it is a **stretch of the skull**, not merely a lift, and saying only "the head
- *   rides the breath" would be naming a cost as a benefit.
+ *   the neck, so the skull rises as the animal inhales and the skull mesh itself
+ *   stretches vertically by that same fraction. The lift is wanted — a chest that
+ *   breathes without moving its head is worse. The stretch is accepted, as it is on
+ *   people, because it is a hundredth of the shoulder problem; but it is a **stretch of
+ *   the skull**, not merely a lift, and saying only "the head rides the breath" would be
+ *   naming a cost as a benefit.
  */
 export interface BeastSkeleton {
   /** The animal's own group. Every pivot below is already parented into it. */
@@ -3799,11 +3797,12 @@ export function beastLookYaw(lookYaw: number): number {
  * writes `rotation.x`. Two axes on one node is order-sensitive by definition, and a
  * field write never touches `.order`, so nothing re-asserted it.
  *
- * Measured on the death pose a reviewer used — `x` 0.34, `z` -0.72 at full ease — the
- * composed rotation differs by **13.6671°** between `XYZ` and `ZYX`. Not a gaze error;
- * no hand-derived solve reads a limb. It is an arm in the wrong place on a corpse, on
- * every death, which is precisely the class of pose this branch found nothing was
- * watching.
+ * The composed rotation differs measurably between `XYZ` and `ZYX` at the death pose —
+ * the figure is computed and pinned by `every beast pivot uses the Euler order its maths
+ * assumes`, which parses the angles out of `updateActorDeathMotion`'s own call so that
+ * moving them moves the figure. Not a gaze error; no hand-derived solve reads a limb. It
+ * is an arm in the wrong place on a corpse, on every death, which is precisely the class
+ * of pose this branch found nothing was watching.
  *
  * `y` is read back and rewritten rather than passed, so this is behaviour-preserving by
  * construction on both rigs: it writes exactly the axes its callers already wrote and
