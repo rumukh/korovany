@@ -661,6 +661,34 @@ no new dependencies.
   an answer.
   *(Limit, stated rather than smoothed: the store shows the turn **completing**, not being
   **delivered**. That a verdict existed is established; that it had been sent is not.)*
+  **That proof had a third reading, and eliminating one alternative was mistaken for
+  confirming the held one.** The turn-0 argument rules out *arrival of the turn's own
+  message*. It does not touch *arrival of the **next** message* — and that reading fits the
+  data disturbingly well. Measured on this session, each turn's stamp sits **3–5 ms** from
+  the `current_datetime` of the message that opens the following turn, four consecutive
+  times:
+  ```
+  turn 230  23:50:14.610      next message  23:50:14.605     +5 ms
+  turn 231  23:58:13.487      next message  23:58:13.484     +3 ms
+  turn 232  00:02:33.461      next message  00:02:33.456     +5 ms
+  ```
+  What kills it is a population the argument never used: **six sessions idle for more than
+  fifty hours whose final turn still carries a stamp.** No next message exists or has for
+  two days, so under arrival-of-next that field could not have a value. It does. Completion
+  survives, and the alignment above has a cause that predicts both: **delivery of a queued
+  message is triggered by turn completion**, so the two coincide to within milliseconds
+  whenever anything is waiting, and diverge only when nothing is — which is exactly the
+  case the idle sessions supply.
+  So the rung, which is general and cost one query: **eliminating one alternative is not
+  confirming yours unless the space was enumerated.** A proof that discriminates against a
+  reading you had already rejected feels precisely as conclusive as one that discriminates
+  against the reading you hold — and there is no felt difference to warn you which you
+  built. It recurred immediately: the queueing explanation above was itself offered as *the*
+  account of the 3–5 ms when a second account fits the same three rows, and only the idle
+  population separates them.
+  A consequence worth carrying: **`current_datetime` on a queued cross-session message is
+  when the recipient became free, not when the sender sent it.** Correctly measured, of a
+  different subject — subject substitution inside the instrument being used to audit it.
   The mechanism is this section's own aim axis, one paragraph from where that session had
   just written it: a control was run first — another session, demonstrably alive, showing a
   current `updated_at` — and it was read as validating the instrument. **It showed the
@@ -814,6 +842,17 @@ no new dependencies.
   both directions was bad news nobody wanted to defend — including the party it was about.
   So the audit question has a second half: *is this claim favourable to me, and have I
   checked it?* — **and is it unfavourable, in which case nobody else will.**
+  **A sibling session then supplied the counterexample that makes this actionable rather
+  than merely true.** One reviewer withdrew their **own** blanket rule — self-critical, and
+  it *was* audited, by them and independently — because they shipped it **with a
+  reproduction attached**. So direction is not the operative variable:
+  > **A self-critical claim goes unaudited when nobody has an interest in building the
+  > instrument. When the claimant supplies the instrument, the direction stops mattering.**
+  Which converts a description into a structure. *"Be suspicious of your own bad news"* is
+  another act of vigilance by the party least able to supply it — the failure mode this
+  whole section documents. **Ship the reproduction with the concession** costs one command
+  and works in both directions at once, because a reproduction does not know whether the
+  claim it accompanies flatters or damages its author.
   Worth recording for its shape as much as its content: the reachability check was added
   in response to two *orphaned* SHAs, and it closes exactly that failure and not the class
   it belongs to. **The remedy enumerated the instance it was shown**, two exchanges after
