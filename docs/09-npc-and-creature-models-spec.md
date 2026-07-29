@@ -738,7 +738,7 @@ no new dependencies.
   names a mechanism and a limit. **Three spaces is not a cleverer test than two. It is only
   a test the author had no reason to write.**
   A companion from the same round refines the error-path reading above. An unterminated
-  ``` fence made every line below it read as code, so the sweep went blind to the rest of
+  code fence made every line below it read as code, so the sweep went blind to the rest of
   the file and reported clean — and that is on the **happy path, executed every run**. So
   the class is not *error paths*: it is **any output whose correct value is not
   independently knowable.** Error paths qualify because nobody exercises them;
