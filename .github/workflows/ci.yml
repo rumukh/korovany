@@ -24,6 +24,12 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          # The prose sweep diffs the PR against its base SHA. A shallow clone
+          # does not contain that commit, and `git diff <missing>...HEAD` fails
+          # rather than reporting nothing — which the sweep treats as a failure,
+          # correctly, but for the environment instead of the tree.
+          fetch-depth: 0
 
       # Keep in step with .github/workflows/deploy-pages.yml, which builds
       # the artifact that actually ships. If one moves, move both.
@@ -57,3 +63,16 @@ jobs:
       # mutation are false is invisible to the negated expectations alone.
       - name: Verification controls (scripts/verify.mjs --mutate)
         run: npm run verify:mutate
+
+      # The prose sweep, gated. A reviewer measured the gap it closes: the
+      # controls above got a trigger and the sweep did not, so the class that
+      # took four review rounds to characterise — double spaces outside inline
+      # code, over-long lines, unterminated fences, a partition that drops rows
+      # — was guarded only by a command someone had to remember to type.
+      #
+      # `--base` takes the SHA the runner already has, so this needs no `gh`,
+      # no remote resolution and no network. Pull requests only: `base.sha`
+      # does not exist on a push.
+      - name: Prose sweep (scripts/verify.mjs --sweep-only)
+        if: github.event_name == 'pull_request'
+        run: node scripts/verify.mjs --sweep-only --base=${{ github.event.pull_request.base.sha }}
