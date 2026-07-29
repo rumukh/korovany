@@ -176,6 +176,47 @@ export function overLong(lines, limit = 120) {
 }
 
 /**
+ * Classify a `gh pr view` result.
+ *
+ * Extracted so the error branch can be *driven* rather than reasoned about.
+ * Five of the eight defects found in this file across two review rounds were
+ * in paths that only run when something is already wrong — the `else` nobody
+ * exercises and the `catch` that did not exist — because the happy path runs
+ * every invocation and the failure path runs the first time it matters, which
+ * is the first time anyone depends on it. An error branch reachable only by a
+ * broken subprocess is an error branch nothing tests; a pure function taking
+ * `{ code, out }` is one the controls below can hit directly.
+ */
+export function classifyPrResult({ code, out }) {
+  if (code === 0) {
+    try {
+      const j = JSON.parse(out)
+      return {
+        head: String(j.headRefOid).slice(0, 7),
+        desc: `#${j.number} ${j.state} ${j.mergeStateStatus}`,
+        failure: null,
+      }
+    } catch {
+      return { head: '(unparsed)', desc: '', failure: 'gh returned output that could not be parsed as JSON' }
+    }
+  }
+  if (/no pull requests? found/i.test(out)) {
+    return { head: '(no pr)', desc: '', failure: null }
+  }
+  return {
+    head: '(gh failed)',
+    desc: '',
+    failure: `gh failed, so the PR head could not be compared: ${out.trim().split('\n')[0] || `exit ${code}`}`,
+  }
+}
+
+/** Which of local/remote/PR are comparable, and do they agree. */
+export function headsAgree(sha, remote, prHead) {
+  const comparable = [sha, remote, prHead].filter((h) => h !== '(no remote)' && h !== '(no pr)')
+  return comparable.every((h) => h === sha)
+}
+
+/**
  * Controls. Each asserts the instrument can produce a different answer; a
  * control that cannot fail is the failure it is meant to exclude.
  *
@@ -270,6 +311,43 @@ export const CONTROLS = [
     name: 'over-long-detector-fires-at-121',
     check: () => overLong(['x'.repeat(121), 'x'.repeat(120)]).length === 1,
     mutate: () => overLong(['x'.repeat(121), 'x'.repeat(120)]).length === 0,
+  },
+  {
+    name: 'no-pr-is-benign-and-a-broken-gh-is-not',
+    // The defect this replaces: both cases exit non-zero with no JSON, both
+    // left the head unset, the unset head was filtered out of the comparison,
+    // and the run printed ALL AGREE with its PR arm switched off.
+    check: () => {
+      const absent = classifyPrResult({ code: 1, out: 'no pull requests found for branch "x"' })
+      const broken = classifyPrResult({ code: 1, out: 'GraphQL: Could not resolve to a Repository' })
+      return absent.failure === null && absent.head === '(no pr)'
+        && broken.failure !== null && broken.head === '(gh failed)'
+    },
+    mutate: () => classifyPrResult({ code: 1, out: 'GraphQL: Could not resolve to a Repository' }).failure === null,
+  },
+  {
+    name: 'unparseable-gh-output-is-a-failure',
+    check: () => {
+      const r = classifyPrResult({ code: 0, out: 'not json at all' })
+      return r.failure !== null && r.head === '(unparsed)'
+    },
+    mutate: () => classifyPrResult({ code: 0, out: 'not json at all' }).failure === null,
+  },
+  {
+    name: 'a-disabled-pr-arm-cannot-produce-agreement',
+    // The whole point of the arm: `(gh failed)` must never compare equal.
+    check: () => headsAgree('abc1234', 'abc1234', '(gh failed)') === false
+      && headsAgree('abc1234', 'abc1234', 'abc1234') === true
+      && headsAgree('abc1234', 'abc1234', '(no pr)') === true,
+    mutate: () => headsAgree('abc1234', 'abc1234', '(gh failed)') === true,
+  },
+  {
+    name: 'a-good-pr-result-parses-to-its-head',
+    check: () => {
+      const r = classifyPrResult({ code: 0, out: '{"headRefOid":"abc1234def","number":56,"state":"OPEN","mergeStateStatus":"CLEAN"}' })
+      return r.head === 'abc1234' && r.failure === null && r.desc === '#56 OPEN CLEAN'
+    },
+    mutate: () => classifyPrResult({ code: 0, out: '{"headRefOid":"abc1234def","number":56,"state":"OPEN","mergeStateStatus":"CLEAN"}' }).head === 'abc1234def',
   },
 ]
 
@@ -417,32 +495,11 @@ function main() {
   if (status === null) failures.push('could not read working tree status')
   const dirty = status === null ? null : status.split('\n').filter(Boolean).length
   const pr = run('gh pr view --json headRefOid,number,state,mergeStateStatus')
-  let prHead = '(no pr)'
-  let prDesc = ''
-  if (pr.code === 0) {
-    try {
-      const j = JSON.parse(pr.out)
-      prHead = String(j.headRefOid).slice(0, 7)
-      prDesc = `#${j.number} ${j.state} ${j.mergeStateStatus}`
-    } catch {
-      prHead = '(unparsed)'
-      failures.push('gh returned output that could not be parsed as JSON')
-    }
-  } else if (/no pull requests? found/i.test(pr.out)) {
-    prHead = '(no pr)'
-  } else {
-    // A broken `gh` — expired token, rate limit, network, wrong repo — exits
-    // non-zero exactly like "there is no PR", and both used to leave `prHead`
-    // at '(no pr)', which is then filtered out of the comparison. The PR arm of
-    // the identity check silently disappeared and the run printed ALL AGREE.
-    // This is the check built for "MERGEABLE CLEAN was a checked status for an
-    // unchecked commit", so losing it silently is the original defect returning
-    // through its own remedy.
-    prHead = '(gh failed)'
-    failures.push(`gh failed, so the PR head could not be compared: ${pr.out.trim().split('\n')[0] || `exit ${pr.code}`}`)
-  }
-  const heads = [sha, remote, prHead].filter((h) => h !== '(no remote)' && h !== '(no pr)')
-  const agree = heads.every((h) => h === sha)
+  const prResult = classifyPrResult(pr)
+  const prHead = prResult.head
+  const prDesc = prResult.desc
+  if (prResult.failure !== null) failures.push(prResult.failure)
+  const agree = headsAgree(sha, remote, prHead)
 
   console.log(`VERIFIED AT ${stamp}`)
   console.log(`  branch                 : ${branch}`)
