@@ -2696,13 +2696,16 @@ group
 The neck sits at the front limb joint because that is the same rule the humanoid
 skeleton follows said in a beast's vocabulary: a person's neck is at `shoulderY`, *the
 height the arms hang from*. Nothing new is authored, so nothing can drift — move a
-shoulder in `BEAST_RIG` and the neck follows it. It reads correctly on all four: a wolf's
-skull ends up 0.300 above and 0.480 ahead of its shoulder, a boar's 0.040 up and 0.660
-ahead off its shoulder hump, and a troll's 0.060 *below* its shoulder line and 0.360
-ahead — the "small head set low and forward" above, arriving out of the joint table
-rather than posed in. `neck-pivot` is a separate node from `head-pivot` for the reason
-§5.5 gives for people: it never rotates, so the chest's shoulder width can be divided
-back out on it in the frame it was applied in.
+shoulder in `BEAST_RIG` and the neck follows it. It reads correctly on all four: the
+wolf's skull lands above and well ahead of its shoulder, the boar's barely above it and
+further forward still off the shoulder hump, and the troll's *below* its shoulder line —
+the "small head set low and forward" above, arriving out of the joint table rather than
+posed in. The offsets themselves are pinned per animal in `BEAST_NECK`, direction and
+distance both, by `a beast's skull is rigid with its ribs and hinges at the neck`; they
+are not restated here, because a figure written twice can only ever be right once
+(`grep -A6 'const BEAST_NECK' tests/characterArt.test.ts`). `neck-pivot` is a separate
+node from `head-pivot` for the reason §5.5 gives for people: it never rotates, so the
+chest's shoulder width can be divided back out on it in the frame it was applied in.
 
 ### 6.2 Fauna
 

@@ -3649,12 +3649,14 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
  * front limbs hang from `frontJointY` at `frontZ`. Nothing new is authored, so nothing
  * can drift: move a shoulder in `BEAST_RIG` and the neck follows it.
  *
- * It reads correctly on all four. A wolf's skull ends up 0.300 above and 0.480 ahead of
- * its shoulder — a neck that runs forward and slightly up, which is the animal that
- * "runs with its head below its shoulders". A boar's is 0.040 up and 0.660 ahead: the
- * short thick neck thrust straight forward off a shoulder hump. A troll's is 0.060
- * *below* its shoulder line and 0.360 ahead, which is docs/09's "small head set low and
- * forward" arriving for free rather than being posed in.
+ * It reads correctly on all four. A wolf's skull lands above and well ahead of its
+ * shoulder — a neck that runs forward and slightly up, which is the animal that "runs
+ * with its head below its shoulders". A boar's is barely above its shoulder and further
+ * forward still: the short thick neck thrust straight out off a shoulder hump. A troll's
+ * sits *below* its shoulder line, which is docs/09's "small head set low and forward"
+ * arriving for free rather than being posed in. The offsets are pinned per animal in
+ * the test's `BEAST_NECK`, direction and distance both, and are deliberately not
+ * restated here: a figure written in two places can only ever be right in one of them.
  *
  * At rest the change is invisible to the pixel: the skull's rest position is identical
  * on both arrangements to 0.00e+0, because `torso-pivot` sits at the animal's origin
