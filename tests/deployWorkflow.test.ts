@@ -838,6 +838,103 @@ const BLOCK_SCALAR_DECOY: WorkflowFile = {
   ].join('\n'),
 }
 
+/**
+ * A deployment reached through a job-level reusable-workflow call, sitting under a
+ * group that cancels. This passed the earlier guard completely: there is no `uses:`
+ * step to attribute, so the job was not a deploying job, so the strict rule never
+ * applied to the block above it. It is not readable here either — the steps are in
+ * another file — but "not readable" is reported rather than treated as "no
+ * deployment", which is the difference between a gate and a silence.
+ */
+const REUSABLE_UNDER_CANCEL: WorkflowFile = {
+  name: 'reusable.yml',
+  source: [
+    'name: Reusable',
+    'on:',
+    '  push:',
+    '    branches:',
+    '      - main',
+    'jobs:',
+    '  build:',
+    '    concurrency:',
+    '      group: pages-build-${{ github.event_name }}-${{ github.ref }}',
+    '      cancel-in-progress: true',
+    '    uses: ./.github/workflows/publish.yml',
+    '',
+  ].join('\n'),
+}
+
+/**
+ * Quoted job keys, and a quoted `jobs` key above them. The parser decodes both, so
+ * this is the same workflow as the unquoted spelling and is read as one.
+ *
+ * It is kept as a fixture for a second reason, stated rather than discovered later:
+ * the doped edits below find their targets by literal text, so quoting a job key
+ * makes those edits match nothing. That is a `precondition:` failure by design —
+ * loud, and about the harness rather than the workflow.
+ */
+const QUOTED_JOB_KEYS: WorkflowFile = {
+  name: 'quoted-jobs.yml',
+  source: [
+    'name: Quoted',
+    '"jobs":',
+    '  "build":',
+    '    "runs-on": ubuntu-latest',
+    '    "concurrency":',
+    '      "group": pages-deploy',
+    '      "cancel-in-progress": true',
+    '    "steps":',
+    '      - "uses": actions/deploy-pages@v4',
+    '',
+  ].join('\n'),
+}
+
+/**
+ * Two deployments that the earlier guard let through because they are not written
+ * as a plain step in a plain job: one under a `strategy: matrix:`, one behind an
+ * `if:`. Neither changes what the step *is*, and both are read here.
+ *
+ * Treating `if:` as irrelevant is deliberate and fail-closed: whether the condition
+ * evaluates true is not decidable from the file, so a step that could deploy is
+ * treated as one that does. The alternative is a guard that can be turned off with
+ * an expression.
+ */
+const MATRIX_DEPLOY: WorkflowFile = {
+  name: 'matrix.yml',
+  source: [
+    'name: Matrix',
+    'jobs:',
+    '  ship:',
+    '    runs-on: ubuntu-latest',
+    '    strategy:',
+    '      matrix:',
+    '        target: [alpha, beta]',
+    '    concurrency:',
+    '      group: pages-deploy-${{ matrix.target }}',
+    '      cancel-in-progress: true',
+    '    steps:',
+    '      - uses: actions/deploy-pages@v4',
+    '',
+  ].join('\n'),
+}
+
+const CONDITIONAL_DEPLOY: WorkflowFile = {
+  name: 'conditional.yml',
+  source: [
+    'name: Conditional',
+    'jobs:',
+    '  ship:',
+    '    runs-on: ubuntu-latest',
+    '    concurrency:',
+    '      group: pages-ship',
+    '      cancel-in-progress: true',
+    '    steps:',
+    "      - if: ${{ github.ref == 'refs/heads/never' }}",
+    '        uses: actions/deploy-pages@v4',
+    '',
+  ].join('\n'),
+}
+
 test('no workflow on disk can cancel a Pages deployment', () => {
   const files = readWorkflows()
 
@@ -1240,6 +1337,37 @@ test('every doped input is caught, and for the reason it was doped', () => {
       ],
       /concurrency is an alias, and this check will not follow one to another node/,
     ],
+    [
+      'a second job in the deploying file that also deploys, under no concurrency block at all',
+      [
+        variant(
+          'a second job in the deploying file that also deploys, under no concurrency block at all',
+          /^ {2}deploy:$/m,
+          '  publish:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/deploy-pages@v4\n\n  deploy:',
+        ),
+      ],
+      /job `publish` deploys Pages under no concurrency block this check can read/,
+    ],
+    [
+      'the deployment reached through a job-level reusable workflow, under a group that cancels',
+      [real, REUSABLE_UNDER_CANCEL],
+      /job `build` calls the reusable workflow `\.\/\.github\/workflows\/publish\.yml`, whose steps this check cannot read/,
+    ],
+    [
+      'a deployment under a matrix, in a job whose group cancels',
+      [real, MATRIX_DEPLOY],
+      /cancel-in-progress is `true`, not false, on a group the deployment runs under/,
+    ],
+    [
+      'a deployment behind an `if:`, in a job whose group cancels',
+      [real, CONDITIONAL_DEPLOY],
+      /cancel-in-progress is `true`, not false, on a group the deployment runs under/,
+    ],
+    [
+      'a deploying job written entirely with quoted keys, cancelling',
+      [real, QUOTED_JOB_KEYS],
+      /cancel-in-progress is `true`, not false, on a group the deployment runs under/,
+    ],
   ]
 
   for (const [label, files, reason] of doped) {
@@ -1284,6 +1412,100 @@ test('a workflow that does not parse is reported rather than read as empty', () 
   assert.ok(
     risks.some((risk) => /^broken\.yml: YAML does not parse:/.test(risk)),
     `catch: an unparseable workflow was not reported — got ${JSON.stringify(risks)}`,
+  )
+})
+
+/**
+ * The missing-block rule as a rule, not as a side effect of a pin.
+ *
+ * A reviewer of the previous round found a second literal deploying job with no
+ * concurrency block on it, and observed that the only thing that went red was the
+ * exact `deployJobs === ['deploy']` pin. A pin fails on any change to the file,
+ * including harmless ones, so a maintainer clears it by updating the list — and
+ * the ungoverned deployment goes with it.
+ *
+ * So the claim is tested where it lives, on a synthetic file with no pin anywhere
+ * near it: one deploying job under a block, one under nothing, and the second must
+ * be reported by name.
+ */
+test('a deploying job under no concurrency block is reported by the rule, not only by a pin', () => {
+  const twoDeployers: WorkflowFile = {
+    name: 'two-deployers.yml',
+    source: [
+      'name: Two deployers',
+      'jobs:',
+      '  governed:',
+      '    runs-on: ubuntu-latest',
+      '    concurrency:',
+      '      group: pages-deploy',
+      '      cancel-in-progress: false',
+      '    steps:',
+      '      - uses: actions/deploy-pages@v4',
+      '  ungoverned:',
+      '    runs-on: ubuntu-latest',
+      '    steps:',
+      '      - uses: actions/deploy-pages@v4',
+      '',
+    ].join('\n'),
+  }
+
+  assertParses(twoDeployers, 'two deploying jobs')
+
+  const model = readWorkflow(twoDeployers)
+  assert.deepEqual(model.deployJobs, ['governed', 'ungoverned'], 'precondition: both jobs must be read as deploying')
+
+  const risks = cancellationRisks([twoDeployers])
+  assert.deepEqual(
+    risks,
+    ['two-deployers.yml: job `ungoverned` deploys Pages under no concurrency block this check can read'],
+    'catch: the ungoverned deployment was not reported, or was reported alongside something else',
+  )
+})
+
+/**
+ * Quoted keys, one level up from the step. `"jobs":` and `"build":` are the same
+ * keys as the unquoted spellings, and a job written entirely that way is the same
+ * job — which is what makes the earlier round's `"uses"` bypass a family rather
+ * than a one-off.
+ *
+ * The second half is the harness's own postcondition, made explicit because it was
+ * previously only implied: a doped edit whose literal target has moved must fail
+ * loudly rather than silently produce the unmodified file. That is what quoting a
+ * job key does to every edit below that names one.
+ */
+test('quoted keys are the same keys, and an edit whose target they move fails loudly', () => {
+  assertParses(QUOTED_JOB_KEYS, 'quoted job keys')
+
+  const model = readWorkflow(QUOTED_JOB_KEYS)
+  assert.deepEqual(model.jobs, ['build'], 'catch: a quoted job key was not read as a job')
+  assert.deepEqual(model.deployJobs, ['build'], 'catch: a quoted `"uses"` under a quoted job key was not read')
+  assert.deepEqual(model.unreadable, [], 'catch: quoting keys made the workflow unreadable, which it is not')
+  assert.equal(model.blocks[0]?.entries.get('group')?.text, 'pages-deploy')
+  assert.deepEqual(model.blocks[0]?.entries.get('cancel-in-progress'), { text: 'true', kind: 'boolean' })
+
+  // The postcondition. `dope` must throw rather than return the input unchanged,
+  // and must throw rather than edit an ambiguous target.
+  assert.throws(
+    () => dope(QUOTED_JOB_KEYS.source, /^ {2}build:$/m, '  renamed:', 'target moved by quoting'),
+    /the dope's target occurs 0 times/,
+    'catch: an edit that matched nothing did not fail loudly',
+  )
+  assert.throws(
+    () => dope('a: 1\nb: 1\n', ': 1', ': 2', 'ambiguous target'),
+    /the dope's target occurs 2 times/,
+    'catch: an edit with two candidate targets did not fail loudly',
+  )
+
+  // And the other two harness helpers, so that none of them can be the always-true
+  // step in the chain.
+  assert.throws(
+    () => { assertParses({ name: 'bad.yml', source: 'a: 1\n b: 2\n' }, 'invalid') },
+    /is not valid YAML/,
+    'catch: assertParses accepted a document that does not parse',
+  )
+  assert.ok(
+    contributed(realPagesWorkflow(), QUOTED_JOB_KEYS, cancellationRisks).length > 0,
+    'catch: contributed() reported nothing for a file that plainly contributes a risk',
   )
 })
 
@@ -1404,6 +1626,46 @@ test('the check stays quiet on workflows that cannot cancel a deployment', () =>
     [
       'mentions the deployment action only inside a shell script, which is a string',
       BLOCK_SCALAR_DECOY,
+    ],
+    [
+      'deploys under a matrix but declines to cancel — the matrix is not what decides',
+      {
+        name: 'matrix-safe.yml',
+        source: [
+          'name: Matrix safe',
+          'jobs:',
+          '  ship:',
+          '    runs-on: ubuntu-latest',
+          '    strategy:',
+          '      matrix:',
+          '        target: [alpha, beta]',
+          '    concurrency:',
+          '      group: preview-${{ matrix.target }}',
+          '      cancel-in-progress: false',
+          '    steps:',
+          '      - uses: actions/deploy-pages@v4',
+          '',
+        ].join('\n'),
+      },
+    ],
+    [
+      'deploys behind an `if:` but declines to cancel — the condition is not what decides either',
+      {
+        name: 'conditional-safe.yml',
+        source: [
+          'name: Conditional safe',
+          'jobs:',
+          '  ship:',
+          '    runs-on: ubuntu-latest',
+          '    concurrency:',
+          '      group: preview-ship',
+          '      cancel-in-progress: false',
+          '    steps:',
+          "      - if: ${{ github.ref == 'refs/heads/main' }}",
+          '        uses: actions/deploy-pages@v4',
+          '',
+        ].join('\n'),
+      },
     ],
     [
       'has no concurrency block at all and deploys nothing',
