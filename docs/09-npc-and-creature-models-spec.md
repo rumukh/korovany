@@ -934,9 +934,9 @@ no new dependencies.
   here for commit ranges and not carried across to time until a sibling hit the same wall.)*
   **The gate that exists for this class did not fire, and that is the finding.** This
   repository has a test named *no spec makes a status claim that can only expire*, and it
-  had already caught *"the eight most recent commits on this branch"* an hour earlier. Its
+  had already caught a sibling's branch-relative commit-count phrasing an hour earlier. Its
   nine patterns are all phrases that **advertise their own volatility** — unfinished states,
-  pending merges, things not yet done.
+  pending merges, work described as outstanding.
   > *"Twenty-one sessions have been idle over fifty hours"* advertises nothing. **The gate
   > detects the vocabulary of currency, not the semantics of a moving referent** — and the
   > perishable claim with no currency vocabulary is exactly the one that gets written down,
@@ -962,6 +962,10 @@ no new dependencies.
   > **A false positive earns a fix when the population it rejects is one you must keep
   > serving, and a reword when it is not.** Ten rounds of treating every false positive as a
   > defect trains exactly the wrong reflex for the second case.
+  *(Applied immediately and by force: this very paragraph tripped the same guard twice —
+  once for quoting the sibling's offending phrase and once for a pattern word used to
+  describe the pattern list. Reworded rather than exempted, per the rule directly above it,
+  which is the first entry in this file to be enforced on the sentence that introduces it.)*
   And an instrument failure in the family this file already records: a re-wrap ran inside a
   PowerShell function that reported progress with `Write-Output`, which joins the function's
   **return stream**, so two progress strings were prepended to the document as lines 1 and
