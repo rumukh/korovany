@@ -579,6 +579,40 @@ export const CONTROLS = [
     },
   },
   {
+    name: 'a-closed-unmerged-pr-is-settled-too',
+    // Live observation supplied by a reviewer, not an analogy to MERGED:
+    // #63 closed unmerged at 10:15:55Z with head b968e5e while its branch later
+    // stood at 21b8156; headRefOid and mergeStateStatus froze. Comparing either
+    // as current is the same category error as comparing a merged PR's head.
+    //
+    // This control owns classifyPrResult's `state === 'CLOSED'` arm. Removing
+    // that arm makes the check red and the mutation survive.
+    check: () => {
+      const closed = classifyPrResult({
+        code: 0,
+        out: '{"headRefOid":"b968e5e999","number":63,"state":"CLOSED","mergeStateStatus":"BEHIND"}',
+      })
+      return closed.failure === null
+        && closed.head === '(closed at b968e5e)'
+        && closed.desc === '#63 CLOSED BEHIND'
+    },
+    mutate: () => classifyPrResult({
+      code: 0,
+      out: '{"headRefOid":"b968e5e999","number":63,"state":"CLOSED","mergeStateStatus":"BEHIND"}',
+    }).head === 'b968e5e',
+  },
+  {
+    name: 'a-closed-pr-head-is-excluded-from-currency',
+    // Separate from the classifier control because headsAgree has its own
+    // settled-state model. The reviewer removed `|closed` from that regex and
+    // every existing control stayed green.
+    check: () =>
+      headsAgree('21b8156', '21b8156', '(closed at b968e5e)') === true
+      && headsAgree('21b8156', '21b8156', 'b968e5e') === false,
+    mutate: () =>
+      headsAgree('21b8156', '21b8156', '(closed at b968e5e)') === false,
+  },
+  {
     name: 'an-open-pr-head-still-must-agree',
     // The exemption must not leak: an OPEN PR whose head differs is still a
     // failure, which is the whole reason the check exists.
