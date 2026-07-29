@@ -23,6 +23,7 @@ import { deriveSeed } from '../src/game/random/seed.ts'
 import {
   createAbilityView,
   createHealthyBody,
+  createMeleeView,
   getMaxHealth,
   getMaxStamina,
   getThreatTier,
@@ -45,6 +46,11 @@ import {
   type RegionChronicleState,
 } from '../src/game/world/Chronicle.ts'
 import { createGeneratedObjectives } from '../src/game/world/CampaignDirector.ts'
+import {
+  PLAYER_MELEE_BEATS,
+  createPlayerMeleeState,
+  playerBeatSpec,
+} from '../src/game/world/CombatResolver.ts'
 import {
   buildAbilityView,
   buildGameView,
@@ -191,6 +197,7 @@ function legacyInitialView(
     paused: false,
     caravanCooldown: legacySerializableNumber(restored?.directorState.caravanCooldown),
     ability: createAbilityView(config.faction, stamina, body),
+    melee: createMeleeView(PLAYER_MELEE_BEATS.length, playerBeatSpec(3).staminaCost),
     activeEvent: null,
     lootToast: null,
     campaignCompleted: objectives.every((objective) => objective.done),
@@ -641,6 +648,7 @@ test('the live view carries every field the HUD reads', () => {
     caravanCooldown: 4.5,
     shieldActive: false,
     abilityCooldown: 0,
+    melee: createPlayerMeleeState(),
     campaignCompleted: false,
     threatTier: 3,
     upgrades: { blade: 1, vitality: 0, endurance: 2 },

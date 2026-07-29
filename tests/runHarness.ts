@@ -121,14 +121,25 @@ import {
   actionRecovery,
   actionWindup,
   actorMaxPoise,
+  advancePlayerMelee,
   advanceReaction,
   applyDamageReaction,
+  bufferPlayerMelee,
+  cancelPlayerMelee,
+  createPlayerMeleeState,
+  isPlayerMeleeCommitted,
   isWithinContact,
+  nextPlayerMeleeBeat,
+  PLAYER_MELEE_BEATS,
   playerArmor,
+  playerBeatSpec,
   resolveActorDamage,
   resolvePlayerDamage,
   rollMeleeDamage,
+  selectMeleeTarget,
   type CombatActor,
+  type MeleeArcCandidate,
+  type PlayerMeleeState,
 } from '../src/game/world/CombatResolver.ts'
 import {
   aiDistance,
@@ -185,11 +196,64 @@ export const HARNESS_MATERIALIZE_INTERVAL = 6
 /** How often the harness looks for encounters to trigger. */
 export const HARNESS_ENCOUNTER_SCAN_INTERVAL = 1
 
+// --- roadmap 1.1: the aimed-melee arm --------------------------------------
+
+/**
+ * How fast the scripted player turns, in radians per second.
+ *
+ * This is the whole reason the honest arm can whiff at all, and it is the harness's most
+ * consequential invention: the shipped game aims with a mouse and there is no mouse here,
+ * so a policy that snapped its aim to the target every frame would report a whiff rate of
+ * zero and prove nothing. 6.5 rad/s is ~372°/s — brisk, not instant, and slower than a
+ * scout can circle at close range, which is where the misses come from.
+ */
+export const HARNESS_AIM_TURN_RATE = 6.5
+/** How close a hostile has to be before the duelist stops walking and fights. */
+export const HARNESS_DUEL_RANGE = 13
+/** How long before contact the duelist notices a telegraph and answers it. */
+export const HARNESS_REACTION_WINDOW = 0.32
+/** Wind-up at or above this reads as a heavy: commander 0.38, champion 0.48, brute 0.56. */
+export const HARNESS_HEAVY_WINDUP = 0.32
+/** Player stamina regeneration while not sprinting. Matches the engine's `+16/s`. */
+export const HARNESS_STAMINA_REGEN = 16
+/** Stamina a retreat-sprint burns per second. Matches the engine's `24/s`. */
+export const HARNESS_SPRINT_DRAIN = 24
+/** How much faster the retreat is than a walk. Matches the engine's sprint multiplier. */
+export const HARNESS_SPRINT_MULTIPLIER = 1.65
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type InputPolicy = 'beeline' | 'cautious' | 'idle'
+export type InputPolicy = 'beeline' | 'cautious' | 'idle' | 'duelist'
+
+/**
+ * Which melee model the scripted player runs.
+ *
+ * `legacy` is the pre-1.1 swing this file has always driven: a cooldown and a
+ * nearest-hostile-in-reach hit that cannot miss and cannot be aimed. `honest` is roadmap
+ * 1.1 — `CombatResolver`'s buffered three-beat sequence, the camera-facing arc, the
+ * in-arc-only assist and the committing finisher.
+ *
+ * **The default stays `legacy` on purpose.** Every pinned number in
+ * `runHarnessTest`/`runHarnessSchedules`/`runHarnessSweep` describes one fixed simulation,
+ * and silently re-pointing them at a different combat model would destroy the baseline the
+ * 1.1 arms are compared against. The roadmap asks for melee to be exercised by *a policy*,
+ * and that is what this is.
+ */
+export type MeleeModel = 'legacy' | 'honest'
+
+/**
+ * How much of a telegraph the scripted player answers.
+ *
+ * Three arms because the two signals ask different questions. `none` is the control: the
+ * player swings through every wind-up, so "the cancel raised the avoided share" is a
+ * comparison rather than a claim. `heavy` is the realistic arm — trade with a scout's
+ * 0.18 s jab, get out of a brute's 0.56 s swing — and it is where the whiff rate and the
+ * avoided share come from. `all` answers *every* wind-up, which is the only way to
+ * exercise the whole 0.18–0.56 s band the roadmap's third signal names.
+ */
+export type MeleeDefence = 'none' | 'heavy' | 'all'
 
 /** Why a run ended. `timeout` is the honest answer, not a failure of the harness. */
 export type RunOutcome = 'victory' | 'defeat' | 'timeout'
@@ -229,10 +293,55 @@ export interface EventExposure {
   materializedNearPlayer: number
 }
 
+/**
+ * Roadmap 1.1's four signals, plus the number open disagreement (a) asked for.
+ *
+ * Every field is a count or a ratio of counts, so a claim about melee can be checked
+ * rather than asserted. The two that matter most are `whiffRate` — above zero proves the
+ * swing can miss at all — and `avoidableHitRate`, which is the share of *telegraphed
+ * heavies* the player got out of the way of.
+ */
+export interface MeleeMetrics {
+  /** Contact frames resolved, whiffs included. Zero in the `legacy` arm. */
+  beatsResolved: number
+  beatsWhiffed: number
+  /** `beatsWhiffed / beatsResolved`, or 0 when nothing swung. */
+  whiffRate: number
+  /** Contact frames resolved per beat index, so a chain that never reaches three shows. */
+  beatsByIndex: number[]
+  finishersLanded: number
+  /** Stances the finisher broke. The third beat's reason to exist. */
+  poiseBreaks: number
+  staminaSpent: number
+  /** Sequences abandoned by sprint, jump or the faction ability. */
+  cancels: number
+  /** Melee wind-ups a heavy role started against the player. */
+  telegraphedHeavies: number
+  /** How many of those failed to connect. */
+  telegraphedHeaviesAvoided: number
+  /** `telegraphedHeaviesAvoided / telegraphedHeavies`, or 0 when none were thrown. */
+  avoidableHitRate: number
+  /** Wind-ups the player tried to walk out of, by role. */
+  windupClearAttempts: Record<string, number>
+  /** How many of those it cleared before contact, by role. */
+  windupClears: Record<string, number>
+  /** Hits taken while the finisher had the player rooted. The price of committing. */
+  hitsWhileCommitted: number
+  /** Simulated seconds spent committed to a finisher. */
+  committedSeconds: number
+  /** Median seconds from an actor's first wound to its death, keyed by role. */
+  timeToKillByRole: Record<string, number>
+  /** How many deaths each median is made of, so a one-sample median is visible. */
+  killsByRole: Record<string, number>
+}
+
 export interface RunReport {
   seed: number
   faction: Faction
   policy: InputPolicy
+  meleeModel: MeleeModel
+  /** How much of a telegraph the scripted player answered. */
+  meleeDefence: MeleeDefence
   /** Frames per simulated second the run was driven at. */
   hz: number
   outcome: RunOutcome
@@ -258,6 +367,7 @@ export interface RunReport {
   finalWeather: WeatherKind
   finalStormFactor: number
   health: number
+  melee: MeleeMetrics
 }
 
 export interface RunOptions {
@@ -267,6 +377,16 @@ export interface RunOptions {
   /** Simulation rate. The scripted schedules are 30, 60 and 144. */
   hz?: number
   timeLimit?: number
+  /** Defaults to `legacy`, which is the pre-1.1 model every pinned number describes. */
+  meleeModel?: MeleeModel
+  /**
+   * Whether the player answers a telegraph by cancelling and getting out.
+   *
+   * The negative control for signal 2: an arm with this set to `none` swings through every
+   * heavy wind-up, so "the cancel raised the avoided share" is a comparison rather than a
+   * claim.
+   */
+  meleeDefence?: MeleeDefence
 }
 
 // ---------------------------------------------------------------------------
@@ -289,7 +409,18 @@ interface HarnessActor extends AiActor, CombatActor {
   deathAt: number | null
   regionId: string
   encounterId: string
+  /** When the player first wounded it. The left-hand end of the time-to-kill measurement. */
+  firstHitAt: number | null
+  /** Set when a wind-up against the player starts, so the resolution can be attributed. */
+  telegraphHeavy: boolean
+  /** True once the player has answered *this* wind-up, so a clear is counted once. */
+  clearAttempted: boolean
 }
+
+/** The beat indexes, so a metric array cannot disagree with the beat table's length. */
+const PLAYER_MELEE_BEAT_INDEXES: readonly number[] = PLAYER_MELEE_BEATS.map(
+  (spec) => spec.beat,
+)
 
 function actorPoint(actor: HarnessActor): AiPoint {
   return { x: actor.x, y: 0, z: actor.z }
@@ -326,6 +457,8 @@ export function runHarness(options: RunOptions): RunReport {
   const hz = options.hz ?? 60
   const delta = 1 / hz
   const timeLimit = options.timeLimit ?? HARNESS_TIME_LIMIT
+  const meleeModel = options.meleeModel ?? 'legacy'
+  const meleeDefence = options.meleeDefence ?? 'heavy'
 
   const blueprint = generateWorld(options.seed)
   const terrain = new TerrainSystem(blueprint)
@@ -360,6 +493,38 @@ export function runHarness(options: RunOptions): RunReport {
     damage: 28,
     bleeding: 0,
     attackCooldown: 0,
+    // --- roadmap 1.1 ---------------------------------------------------------
+    stamina: 100,
+    maxStamina: 100,
+    /** Where the camera points. `(sin, cos)` of it is the aim vector the arc tests. */
+    aimYaw: 0,
+    melee: createPlayerMeleeState() as PlayerMeleeState,
+  }
+
+  const melee: MeleeMetrics = {
+    beatsResolved: 0,
+    beatsWhiffed: 0,
+    whiffRate: 0,
+    beatsByIndex: PLAYER_MELEE_BEAT_INDEXES.map(() => 0),
+    finishersLanded: 0,
+    poiseBreaks: 0,
+    staminaSpent: 0,
+    cancels: 0,
+    telegraphedHeavies: 0,
+    telegraphedHeaviesAvoided: 0,
+    avoidableHitRate: 0,
+    windupClearAttempts: {},
+    windupClears: {},
+    hitsWhileCommitted: 0,
+    committedSeconds: 0,
+    timeToKillByRole: {},
+    killsByRole: {},
+  }
+  const killTimes = new Map<string, number[]>()
+  const recordKill = (role: string, seconds: number): void => {
+    const bucket = killTimes.get(role)
+    if (bucket) bucket.push(seconds)
+    else killTimes.set(role, [seconds])
   }
 
   let elapsed = 0
@@ -526,6 +691,9 @@ export function runHarness(options: RunOptions): RunReport {
           staggerImmunity: 0,
           regionId,
           encounterId: slot.id,
+          firstHitAt: null,
+          telegraphHeavy: false,
+          clearAttempted: false,
         })
       }
     }
@@ -618,16 +786,36 @@ export function runHarness(options: RunOptions): RunReport {
       ? getSiteWorldPosition2D(blueprint, activeNode.siteId)
       : undefined
 
-    if (policy !== 'idle' && objectiveSite) {
+    // Roadmap 1.1 — the inbound telegraph the duelist answers, found before anything
+    // moves so the answer is a reaction to this frame rather than to the last one.
+    const inbound =
+      policy === 'duelist' && meleeDefence !== 'none'
+        ? inboundWindup(actors, player, meleeDefence === 'heavy')
+        : null
+    if (inbound) {
+      // The defensive verb, exactly as the engine spends it: sprint/jump/ability drop the
+      // buffer and the beat in flight, and are refused outright while the finisher is
+      // committed. `cancelPlayerMelee` is the shipped function, not a re-implementation.
+      if (meleeModel === 'honest' && cancelPlayerMelee(player.melee)) melee.cancels += 1
+      if (!inbound.actor.clearAttempted) {
+        inbound.actor.clearAttempted = true
+        const role = inbound.actor.role
+        melee.windupClearAttempts[role] = (melee.windupClearAttempts[role] ?? 0) + 1
+      }
+    }
+    const duelTarget =
+      policy === 'duelist' ? nearestHostileWithin(actors, player, HARNESS_DUEL_RANGE) : null
+
+    if (policy !== 'idle' && (objectiveSite || duelTarget)) {
       const retreating =
         policy === 'cautious' && player.health < player.maxHealth * 0.35
-      if (elapsed >= repathAt || waypoints.length === 0) {
+      if (objectiveSite && (elapsed >= repathAt || waypoints.length === 0)) {
         repathAt = elapsed + 2
         pathTo(objectiveSite.x, objectiveSite.z)
       }
-      let targetX = objectiveSite.x
-      let targetZ = objectiveSite.z
-      if (waypoints.length > 0) {
+      let targetX = objectiveSite?.x ?? player.x
+      let targetZ = objectiveSite?.z ?? player.z
+      if (objectiveSite && waypoints.length > 0) {
         const [wx, wz] = waypoints[0]
         if (Math.hypot(wx - player.x, wz - player.z) < 1.5) waypoints.shift()
         else {
@@ -645,11 +833,45 @@ export function runHarness(options: RunOptions): RunReport {
           targetZ = player.z + (player.z - threat.z)
         }
       }
+      // A duelist stops for a fight, and gets out of the way of a telegraph. Both are the
+      // whole point of the arm: a player who walks past every enemy measures travel, not
+      // combat, and a player who never reacts measures nothing about the defensive verb.
+      let sprinting = false
+      let holding = false
+      if (inbound) {
+        targetX = player.x + (player.x - inbound.actor.x)
+        targetZ = player.z + (player.z - inbound.actor.z)
+        sprinting = player.stamina > 2
+      } else if (duelTarget) {
+        const spec = playerBeatSpec(nextPlayerMeleeBeat(player.melee))
+        const engageRange =
+          meleeModel === 'honest' ? spec.reach - 0.5 : HARNESS_PLAYER_REACH - 0.4
+        const distance = Math.hypot(duelTarget.x - player.x, duelTarget.z - player.z)
+        if (distance <= engageRange) holding = true
+        else {
+          targetX = duelTarget.x
+          targetZ = duelTarget.z
+        }
+      }
+
+      // The finisher's root. `isPlayerMeleeCommitted` is the same predicate the engine
+      // gates movement on, so the price of the third beat is paid identically in both.
+      const committed = meleeModel === 'honest' && isPlayerMeleeCommitted(player.melee)
+      if (committed) melee.committedSeconds += delta
+      if (sprinting) player.stamina = Math.max(0, player.stamina - delta * HARNESS_SPRINT_DRAIN)
+      else {
+        player.stamina = Math.min(
+          player.maxStamina,
+          player.stamina + delta * HARNESS_STAMINA_REGEN,
+        )
+      }
+
       const dx = targetX - player.x
       const dz = targetZ - player.z
       const length = Math.hypot(dx, dz)
-      if (length > 0.001) {
-        const step = Math.min(HARNESS_PLAYER_SPEED * delta, length)
+      if (length > 0.001 && !holding && !committed) {
+        const speed = HARNESS_PLAYER_SPEED * (sprinting ? HARNESS_SPRINT_MULTIPLIER : 1)
+        const step = Math.min(speed * delta, length)
         const moved = collision.resolveMovement(
           { x: player.x, z: player.z },
           { x: player.x + (dx / length) * step, z: player.z + (dz / length) * step },
@@ -699,6 +921,8 @@ export function runHarness(options: RunOptions): RunReport {
       combatRng,
       collision,
       damageTaken,
+      melee,
+      playerCommitted: meleeModel === 'honest' && isPlayerMeleeCommitted(player.melee),
       onKill: () => {
         kills += 1
       },
@@ -708,25 +932,103 @@ export function runHarness(options: RunOptions): RunReport {
       },
     })
 
-    // 6. The player's swing. No aim, no ability: the stated limit.
-    player.attackCooldown = Math.max(0, player.attackCooldown - delta)
-    if (policy !== 'idle' && player.attackCooldown <= 0) {
-      const victim = nearestHostileInReach(actors, player)
-      if (victim) {
-        player.attackCooldown = HARNESS_PLAYER_ATTACK_COOLDOWN
-        const outcomeHit = resolveActorDamage({
-          target: victim,
-          baseDamage: player.damage + combatRng.next() * 7,
-          attackKind: 'melee',
-          facingDotToSource: null,
-        })
-        victim.hp = Math.max(0, victim.hp - outcomeHit.dealt)
-        record(damageDealt, victim.role, victim.allegiance, outcomeHit.dealt)
-        applyDamageReaction(victim, outcomeHit, 'melee')
-        if (outcomeHit.killed) {
-          victim.alive = false
-          victim.deathAt = elapsed
-          kills += 1
+    // 6. The player's swing.
+    //
+    //    `legacy` is the pre-1.1 model: a cooldown and a nearest-hostile-in-reach hit that
+    //    cannot miss and cannot be aimed — the stated limit this file has always carried.
+    //    `honest` is roadmap 1.1 driven through `CombatResolver`'s own functions, with a
+    //    finite turn rate standing in for a mouse, so a swing can land behind its target.
+    if (meleeModel === 'legacy') {
+      player.attackCooldown = Math.max(0, player.attackCooldown - delta)
+      if (policy !== 'idle' && player.attackCooldown <= 0) {
+        const victim = nearestHostileInReach(actors, player)
+        if (victim) {
+          player.attackCooldown = HARNESS_PLAYER_ATTACK_COOLDOWN
+          const outcomeHit = resolveActorDamage({
+            target: victim,
+            baseDamage: player.damage + combatRng.next() * 7,
+            attackKind: 'melee',
+            facingDotToSource: null,
+          })
+          if (victim.firstHitAt === null) victim.firstHitAt = elapsed
+          victim.hp = Math.max(0, victim.hp - outcomeHit.dealt)
+          record(damageDealt, victim.role, victim.allegiance, outcomeHit.dealt)
+          applyDamageReaction(victim, outcomeHit, 'melee')
+          if (outcomeHit.killed) {
+            victim.alive = false
+            victim.deathAt = elapsed
+            recordKill(victim.role, elapsed - (victim.firstHitAt ?? elapsed))
+            kills += 1
+          }
+        }
+      }
+    } else if (policy !== 'idle') {
+      const aimTarget = nearestHostileWithin(actors, player, HARNESS_DUEL_RANGE)
+      if (aimTarget) {
+        player.aimYaw = turnToward(
+          player.aimYaw,
+          Math.atan2(aimTarget.x - player.x, aimTarget.z - player.z),
+          HARNESS_AIM_TURN_RATE * delta,
+        )
+      }
+      // Press whenever the *next* beat could reach something. The buffer decides when it
+      // becomes a swing; nothing here resolves a hit, which is the point.
+      const pending = playerBeatSpec(nextPlayerMeleeBeat(player.melee))
+      const reachable = nearestHostileWithin(actors, player, pending.reach)
+      if (reachable && !inbound) bufferPlayerMelee(player.melee)
+
+      const step = advancePlayerMelee(player.melee, { delta, stamina: player.stamina })
+      if (step.startedBeat > 0) {
+        player.stamina = Math.max(0, player.stamina - step.staminaSpent)
+        melee.staminaSpent += step.staminaSpent
+      }
+      if (step.contactBeat > 0) {
+        const spec = playerBeatSpec(step.contactBeat)
+        melee.beatsResolved += 1
+        melee.beatsByIndex[step.contactBeat - 1] += 1
+        const aimX = Math.sin(player.aimYaw)
+        const aimZ = Math.cos(player.aimYaw)
+        const candidates: MeleeArcCandidate[] = []
+        for (const actor of actors) {
+          if (!actor.alive || !actor.hostileToPlayer) continue
+          const offsetX = actor.x - player.x
+          const offsetZ = actor.z - player.z
+          const distance = Math.hypot(offsetX, offsetZ)
+          if (distance > spec.reach) continue
+          candidates.push({
+            id: actor.id,
+            distance,
+            aimDot:
+              distance > 0.001 ? (offsetX * aimX + offsetZ * aimZ) / distance : 1,
+            hostile: true,
+          })
+        }
+        const chosen = selectMeleeTarget(candidates, spec)
+        const victim = chosen
+          ? actors.find((actor) => actor.id === chosen.id) ?? null
+          : null
+        if (!victim?.alive) {
+          melee.beatsWhiffed += 1
+        } else {
+          const outcomeHit = resolveActorDamage({
+            target: victim,
+            baseDamage:
+              (player.damage + combatRng.next() * 7) * spec.damageMultiplier,
+            attackKind: spec.attackKind,
+            facingDotToSource: null,
+          })
+          if (victim.firstHitAt === null) victim.firstHitAt = elapsed
+          victim.hp = Math.max(0, victim.hp - outcomeHit.dealt)
+          record(damageDealt, victim.role, victim.allegiance, outcomeHit.dealt)
+          const broke = applyDamageReaction(victim, outcomeHit, spec.attackKind)
+          if (broke) melee.poiseBreaks += 1
+          if (spec.commits) melee.finishersLanded += 1
+          if (outcomeHit.killed) {
+            victim.alive = false
+            victim.deathAt = elapsed
+            recordKill(victim.role, elapsed - (victim.firstHitAt ?? elapsed))
+            kills += 1
+          }
         }
       }
     }
@@ -820,10 +1122,23 @@ export function runHarness(options: RunOptions): RunReport {
       },
   )
 
+  melee.whiffRate =
+    melee.beatsResolved > 0 ? melee.beatsWhiffed / melee.beatsResolved : 0
+  melee.avoidableHitRate =
+    melee.telegraphedHeavies > 0
+      ? melee.telegraphedHeaviesAvoided / melee.telegraphedHeavies
+      : 0
+  for (const [role, times] of killTimes) {
+    melee.timeToKillByRole[role] = median(times)
+    melee.killsByRole[role] = times.length
+  }
+
   return {
     seed: blueprint.seed,
     faction: options.faction,
     policy,
+    meleeModel,
+    meleeDefence,
     hz,
     outcome,
     elapsed,
@@ -845,6 +1160,7 @@ export function runHarness(options: RunOptions): RunReport {
     finalWeather: weatherTarget,
     finalStormFactor: computeStormFactor(weatherMix),
     health: Math.max(0, player.health),
+    melee,
   }
 }
 
@@ -897,6 +1213,58 @@ function nearestHostileInReach(
     : null
 }
 
+function nearestHostileWithin(
+  actors: readonly HarnessActor[],
+  player: { x: number; z: number },
+  range: number,
+): HarnessActor | null {
+  const nearest = nearestHostile(actors, player)
+  if (!nearest) return null
+  return Math.hypot(nearest.x - player.x, nearest.z - player.z) <= range ? nearest : null
+}
+
+/**
+ * A wind-up aimed at the player that is about to land.
+ *
+ * The duelist reacts to it and nothing else: reacting to a hostile merely being *near*
+ * would make the arm a measurement of proximity, and reacting after contact would measure
+ * nothing at all. `HARNESS_REACTION_WINDOW` is the notice a player gets from a telegraph
+ * decal and the `attackTell` cue, which is what the enemy half already spends on being
+ * readable.
+ */
+function inboundWindup(
+  actors: readonly HarnessActor[],
+  player: { x: number; z: number },
+  heavyOnly: boolean,
+): { actor: HarnessActor; remaining: number } | null {
+  let best: { actor: HarnessActor; remaining: number } | null = null
+  for (const actor of actors) {
+    if (!actor.alive || !actor.hostileToPlayer) continue
+    if (actor.actionPhase !== 'windup' || !actor.actionTargetIsPlayer) continue
+    if (heavyOnly && actionWindup(actor.role) < HARNESS_HEAVY_WINDUP) continue
+    if (actor.actionRemaining > HARNESS_REACTION_WINDOW) continue
+    if (
+      Math.hypot(actor.x - player.x, actor.z - player.z) >
+      HARNESS_PLAYER_CONTACT + 2.5
+    ) {
+      continue
+    }
+    if (best === null || actor.actionRemaining < best.remaining) {
+      best = { actor, remaining: actor.actionRemaining }
+    }
+  }
+  return best
+}
+
+/** Turn `from` toward `to` by at most `maxStep` radians, the short way round. */
+function turnToward(from: number, to: number, maxStep: number): number {
+  let difference = to - from
+  while (difference > Math.PI) difference -= Math.PI * 2
+  while (difference < -Math.PI) difference += Math.PI * 2
+  if (Math.abs(difference) <= maxStep) return to
+  return from + Math.sign(difference) * maxStep
+}
+
 interface StepContext {
   actors: HarnessActor[]
   player: { x: number; z: number; health: number; maxHealth: number; bleeding: number }
@@ -906,6 +1274,9 @@ interface StepContext {
   combatRng: RandomStream
   collision: CollisionWorld
   damageTaken: DamageBySource
+  melee: MeleeMetrics
+  /** True while the finisher has the player rooted, so a hit taken then is attributable. */
+  playerCommitted: boolean
   onKill: () => void
   onPlayerHit: (actor: HarnessActor, amount: number) => void
 }
@@ -993,7 +1364,23 @@ function stepActors(context: StepContext): void {
       actor.actionRemaining -= delta
       if (actor.actionRemaining <= 0) {
         if (actor.actionPhase === 'windup') {
-          if (isWithinContact(distance, contactRange) && actor.reaction !== 'stagger') {
+          const connected =
+            isWithinContact(distance, contactRange) && actor.reaction !== 'stagger'
+          // Roadmap 1.1's signal 2 and signal 3, both counted at the one moment that can
+          // answer them: a telegraph either reached the player or it did not.
+          if (actor.actionTargetIsPlayer) {
+            if (actor.telegraphHeavy && !connected) {
+              context.melee.telegraphedHeaviesAvoided += 1
+            }
+            if (actor.clearAttempted && !connected) {
+              context.melee.windupClears[actor.role] =
+                (context.melee.windupClears[actor.role] ?? 0) + 1
+            }
+            if (connected && context.playerCommitted) {
+              context.melee.hitsWhileCommitted += 1
+            }
+          }
+          if (connected) {
             if (targetIsPlayer) {
               const base = rollMeleeDamage(actor.role, 'player', () => combatRng.next())
               const hit = resolvePlayerDamage({
@@ -1037,6 +1424,15 @@ function stepActors(context: StepContext): void {
     if (isWithinContact(distance, contactRange) && actor.attackCooldown <= 0) {
       actor.actionPhase = 'windup'
       actor.actionRemaining = actionWindup(actor.role)
+      // `actionTargetIsPlayer` was declared and never written before 1.1. It is what makes
+      // "a telegraph aimed at the player" a thing the harness can count, so it is written
+      // here, at the one place a wind-up begins.
+      actor.actionTargetIsPlayer = targetIsPlayer
+      actor.actionTargetId = target?.id ?? null
+      actor.clearAttempted = false
+      actor.telegraphHeavy =
+        targetIsPlayer && actionWindup(actor.role) >= HARNESS_HEAVY_WINDUP
+      if (actor.telegraphHeavy) context.melee.telegraphedHeavies += 1
       actor.attackCooldown = actionCooldown(
         targetIsPlayer ? 'meleePlayer' : 'meleeActor',
         actor.role,

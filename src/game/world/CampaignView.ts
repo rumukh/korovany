@@ -24,6 +24,7 @@ import { getSiteWorldPosition2D } from '../content/registry.ts'
 import {
   createAbilityView,
   createHealthyBody,
+  createMeleeView,
   getMaxHealth,
   getMaxStamina,
   getThreatTier,
@@ -35,6 +36,7 @@ import {
   type GameView,
   type LootToastView,
   type MapMarker,
+  type MeleeView,
   type Objective,
   type WorldEventView,
   type WorldMapRegion,
@@ -44,6 +46,14 @@ import {
 import type { ActiveRunSaveV3, RunConfig } from '../run/runTypes.ts'
 import { getContestedRegionIds, isRegionRazed, type RegionChronicleState } from './Chronicle.ts'
 import { createGeneratedObjectives } from './CampaignDirector.ts'
+import {
+  PLAYER_MELEE_BEATS,
+  createPlayerMeleeState,
+  isPlayerMeleeCommitted,
+  nextPlayerMeleeBeat,
+  playerBeatSpec,
+  type PlayerMeleeState,
+} from './CombatResolver.ts'
 import type { WorldBlueprint } from './worldTypes.ts'
 /** A world marker as the runtime knows it, before it becomes a `MapMarker`. */
 export interface ViewMarkerSource {
@@ -163,6 +173,7 @@ export interface LiveViewInput {
   caravanCooldown: number
   shieldActive: boolean
   abilityCooldown: number
+  melee: PlayerMeleeState
   campaignCompleted: boolean
   threatTier: number
   upgrades: GameView['upgrades']
@@ -269,6 +280,32 @@ export function buildAbilityView(input: {
   return ability
 }
 
+/**
+ * The beat counter.
+ *
+ * `finisherReady` is deliberately about the *next press* rather than about the state the
+ * sequence is in: what the player needs to know before pressing is whether the button is
+ * about to spend stamina, and the answer is no while the sequence is closed even though
+ * the bar is full.
+ */
+export function buildMeleeView(input: {
+  melee: PlayerMeleeState
+  stamina: number
+  paused: boolean
+  ended: boolean
+}): MeleeView {
+  const finisher = playerBeatSpec(PLAYER_MELEE_BEATS.length)
+  const view = createMeleeView(PLAYER_MELEE_BEATS.length, finisher.staminaCost)
+  view.beat = input.melee.beat
+  view.committed = isPlayerMeleeCommitted(input.melee)
+  view.finisherReady =
+    !input.paused &&
+    !input.ended &&
+    nextPlayerMeleeBeat(input.melee) === PLAYER_MELEE_BEATS.length &&
+    input.stamina >= finisher.staminaCost
+  return view
+}
+
 /** The live view, emitted every frame. */
 export function buildGameView(input: LiveViewInput): GameView {
   return {
@@ -302,6 +339,7 @@ export function buildGameView(input: LiveViewInput): GameView {
     paused: input.paused,
     caravanCooldown: input.caravanCooldown,
     ability: buildAbilityView(input),
+    melee: buildMeleeView(input),
     campaignCompleted: input.campaignCompleted,
     threatTier: input.threatTier,
     upgrades: { ...input.upgrades },
@@ -432,6 +470,12 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     paused: false,
     caravanCooldown: serializableNumber(restored?.directorState.caravanCooldown),
     ability: createAbilityView(config.faction, stamina, body),
+    melee: buildMeleeView({
+      melee: createPlayerMeleeState(),
+      stamina,
+      paused: false,
+      ended: false,
+    }),
     activeEvent: null,
     lootToast: null,
     campaignCompleted: objectives.every((objective) => objective.done),

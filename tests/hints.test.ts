@@ -102,6 +102,7 @@ const TRIPPING_VIEW: Record<HintId, (base: GameView) => GameView> = {
   squad: (base) => ({ ...base, squad: 2 }),
   threat: (base) => ({ ...base, threatTier: 2 }),
   ability: (base) => ({ ...base, ability: { ...base.ability, cooldown: 1.4 } }),
+  melee: (base) => ({ ...base, melee: { ...base.melee, beat: 1 } }),
   events: (base) => ({
     ...base,
     activeEvent: {
