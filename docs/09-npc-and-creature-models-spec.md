@@ -592,6 +592,23 @@ no new dependencies.
   the strongest form the entry could take.
   > **A rule stated about one instrument does not generalise to another by being true.** It
   > has to be re-derived at each site, and authorship is no protection.
+  **One counter-instance arrived seven hours later, from a different author, and the
+  difference is what it was carried in.** A beast-rig fix landed on `main` — *"hang a
+  beast's skull off its shoulder instead of its feet"* — the same defect as this one, in a
+  different rig. Its skeleton builder reproduces the chain exactly:
+  ```
+  neckPivot.position.set(0, rig.frontJointY, rig.frontZ)
+  torsoPivot.add(neckPivot)
+  neckPivot.add(headPivot)
+  ```
+  and its docblock reads *"{@link buildCharacterSkeleton} follows, said in the beast's own
+  vocabulary."* So `torsoPivot.add(neckPivot)` now appears **twice in one file, once per
+  rig**, and the second was written by someone else.
+  Every failure-to-transfer recorded above was a rule carried **as a sentence**. This one
+  transferred **as a function with a name another author could link to**. That is one
+  instance and a correlation, not a measurement of cause — but it is the only transfer in
+  the record, and the difference is visible in the artefact: **a `{@link}` resolves; a
+  remembered principle does not.**
   The evidence for that is as strong as evidence gets: its author re-derived it **by
   accident**, one screenful from where he had written it three times. Which corrects the
   weaker claim first published here — *"mine now has a mechanism; the general lesson does
