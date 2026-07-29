@@ -1595,6 +1595,19 @@ no new dependencies.
   observation and the ambiguity boundary verbatim. **The body and the current wrapper were
   each real and belonged to different messages.** Attaching one to the other was the
   missing-sender-column defect this file had already documented.)*
+  *(The reviewer who was miscredited first denied authorship correctly, then withdrew that
+  denial after discovering that their archived `assistant_response` is a shorter summary
+  rather than the outbound payload. The mechanism is true and the conclusion it supported
+  was false: their sent message opened differently from the archived body, and the opening
+  line was already in their context. The lossy projection explained how a sent payload could
+  be absent from the summary; it did not establish that this body was theirs.)*
+  > **A discovery made while investigating a discrepancy is not thereby the discrepancy's
+  > cause.** It is most persuasive when it is true, because checking the mechanism passes and
+  > retires the question while the cheap disconfirming observation remains unread.
+  *Both archives lack the association needed to settle that from stored turns alone: the
+  sender keeps a lossy summary without the outbound recipient, and the recipient keeps the
+  full body without its sender wrapper. The live wrapper and S1's sender-side turn were the
+  two artefacts that could disagree; the summaries could not.*
   > **A correct generalisation is still an untested branch until an observation and a
   > control reach the member the original failure did not.**
   Every other line in that function had been written from a live failure. The one line
