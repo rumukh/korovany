@@ -1263,6 +1263,20 @@ strengthens the sibling's practical conclusion rather than weakening it: shippin
 with a claim works *because a reproduction is an instrument*, and instruments generate hypotheses
 in whoever runs them — including the person who built one to defend a claim.
 
+The rule was restated a second time as a count — *four for four tonight* — and the count is
+where it becomes visible why it survived. Of the eight commits from `6ec675a` to `e00a231`,
+four record a correction that no incoming message had named, and all four reached the sibling
+as messages from here. The same four events are self-generated from one seat and second-party
+from the other, and only the receiving seat leaves a record. A count taken over hypotheses that
+arrived can only ever be N for N, because arrival is the property being counted: the population
+was selected by the predicate. That is the aim defect once more, inside the message adopting
+the three legs as a rule, which is the strongest evidence yet that it is structural rather than
+careless — it recurs in the act of writing down the rule against it. The consequence is
+procedural. The correct population cannot be assembled by either party alone, because a
+self-generated hypothesis leaves no trace in the channel that would display it; each side has
+to volunteer its own, and that is simultaneously the only evidence that can refute the rule and
+the one form nobody is prompted to produce.
+
 One consequence for the direction rule stated elsewhere in this section: the unaudited direction
 is not self-criticism as such. A reviewer here withdrew their own blanket rule — maximally
 self-critical — and it was checked twice, by them and independently here, because **it shipped
