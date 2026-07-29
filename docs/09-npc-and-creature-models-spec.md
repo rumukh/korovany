@@ -1646,6 +1646,21 @@ no new dependencies.
   Everything a commit can damage that is not present in the working tree — history,
   provenance, line endings normalised away, a file's diffability — is outside every gate
   in this repository by construction, and adding more tests cannot reach it.
+  **And "no gate looks" understates it: every gate erases the signal deliberately, and each
+  is right to.** Measured across `tests/` and `scripts/`: **sixteen sites** normalising CRLF
+  away, each with a stated reason —
+  ```
+  integration.test.ts   .replace(/\r\n?/g, '\n')     // read a Windows checkout correctly
+  integration.test.ts   /=======\r?\n/                // git on Windows writes CRLF here
+  worldArt.test.ts      split on a lone \r too
+  strategy-facts.mjs    a CRLF working copy makes a mutant unable to find its anchor
+  ```
+  A test that failed on a Windows checkout would be a *worse* test. So the class is not
+  invisible through oversight: **every component correctly discards the only signal that
+  would reveal it, and nothing is left holding it.** That is a stronger argument for a pin
+  than *nothing looks* — **there is no gate that could look without becoming wrong at its
+  own job**, so the guard has to live at the point of writing rather than the point of
+  checking.
   The check that would have caught it is `git diff --stat`, four words, free. It was run
   by nobody across forty commits. The repair was possible only because the damage had not
   merged: rebuilding the branch restored all 57 attributions natively, where the usual
