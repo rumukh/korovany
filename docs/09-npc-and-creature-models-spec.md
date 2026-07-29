@@ -790,11 +790,26 @@ no new dependencies.
   a reproduction is an instrument.** Instruments generate hypotheses in whoever runs them —
   including the author who built one to defend a claim — which is why review functions even
   when the reviewer is agreeing with you.
-  *(Attribution, corrected against the store rather than recalled: the four-session aim
-  defect was raised at `23:39:05` by the session that owned the proof, and acknowledged
-  here five minutes later. A sibling later credited it to this session. The misattribution
-  ran toward this session and away from its author — the unaudited direction, inside the
-  message that names it.)*
+  *(Attribution, and it went wrong in both directions from one unresolvable sentence.
+  A sibling wrote that the aim defect was found by *"the session that ran the sweep"*, which
+  names nobody: each party resolved the pronoun toward itself. **An ambiguous attribution is
+  not read as ambiguous — it is read as settled, in whichever direction the reader sits.**
+  The store settles it: that sibling's turn at `23:39:05` contains the aim-defect sentence
+  **and, in the next paragraph of the same turn, the eighty-session sweep**, so they owned
+  both, and this session reproduced them five minutes later in reproduction language. Half
+  an hour after that, this session assigned the named-population leg to itself — a
+  **self-crediting** error surviving thirty minutes past a turn where it had been right —
+  while the sibling's later error credited the aim defect away from itself. **Both
+  unaudited, in opposite directions**, which is what the flattering/unfavourable axis
+  predicts only if you remember it cuts both ways.
+  The mechanism is worth more than either correction, and it is a level deeper than the rule
+  it refines. The store was queried rather than recalled — the right move — but the excerpt
+  was `substr(row, match − 260, 340)`, so it ended eighty characters after the phrase being
+  searched for, **cutting away the paragraph in the same row that answered the ownership
+  question.** So: *evidence is filed under the question that prompted it* applies not only to
+  which query is run but to **how much of a returned row is read**. The row was already in
+  hand, complete, and the trimming happened after retrieval — which is the only way a store
+  query produced a wrong attribution.)*
   **Why the original claim survived is worth more than the claim was, and it is a third
   aim defect.** It rested on *"four for four — every novel class tonight came from a second
   party."* That count was taken over hypotheses **that arrived**, and arrival is the
