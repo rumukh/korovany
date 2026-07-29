@@ -322,6 +322,38 @@ no new dependencies.
   single default; the other swept all six orders and left the pose at one point. Both
   framings were reasonable, both were one-dimensional, and each enumerated exactly the
   axis its author had framed the question in. Neither was careless; the question was.
+  A third party then supplied the mechanism, from its own instance rather than from
+  observing ours: **a sweep proves coverage of the dimensions it varies and says nothing
+  about the ones it holds fixed — and the fixed one is usually the one the change is
+  about**, because the variable a change exists to control reads as *background* rather
+  than as an input. It had overruled a request for another review pass by citing 51,480
+  swept states as evidence a closed form was safe; that sweep held the head's pitch at
+  **zero**, which is precisely where the form was already correct. The same shape as the
+  441 poses at a single Euler order, in the artefact whose entire job was to establish
+  safety.
+  Hence: **a large state count is not coverage, and the count is what makes it
+  persuasive.** 441 × 1 and 51,480 × 1 are both impressive numbers and both
+  one-dimensional in the dimension that mattered. The number reports the product of the
+  axes that were swept; it cannot report the axes that were not.
+  And the closing form, which explains why every rule above kept failing against people
+  who were actively applying it: **verification and scope are orthogonal, and verification
+  is the cheap one.** A claim can be measured, reproduced, counted, committed and quoted
+  back with every step sound, and its scope never enters any of them. That is exactly what
+  happened to the entry two sections down: an observation about guards was measured,
+  verified, committed, and the counterexample to it sat in a review pass the author had
+  read and replied to. **Measuring a claim does not examine its scope**, so the step both
+  parties always ran was never the step that would have caught it — which retires
+  *"verify rather than accept"* as the discipline and puts the population question in its
+  place.
+  **And the count of those failures is a lower bound, not a total.** Five were recorded
+  here — a rule broken by its own author within minutes or hours of writing it — and not
+  one of the five was found by looking for it. Each surfaced because someone happened to
+  be examining that exact artefact for an unrelated reason: a sweep run for a different
+  purpose, a regex aimed at a compliment, a grep over the wrong file set. **A count
+  assembled entirely from accidental discoveries measures the accidents, not the
+  population**, which is this section's own rule about lower bounds turned on its own
+  tally. The honest reading of "five" is the one the factorial table already demands of
+  its figures: a floor under a maximum nobody has computed.
 - **A documented exclusion is a decision; the same exclusion carried into a different
   assertion is a sample.** The subtlest form of the question above, and the one with no
   usual tell. A gait table excluded three roles from a wobble simulation for written,
@@ -356,6 +388,97 @@ no new dependencies.
   magnitude of items before believing anything about them, and put the count in the
   failure message. **A detector must be made to fire on doped input before its silence
   on real input means anything.**
+  **And that is only half of it, which took eighteen passes and an outside session to
+  see: doping proves a detector fires. It says nothing about the population it was aimed
+  at.** Every rule in this section — can the assertion fail, did the mutation land, did it
+  compile, name the instrument, name the population of the count — tests a detector's
+  *sensitivity*. Not one asks whether it was **pointed at the right set**. The instance:
+  a workflow guard opened a file only if that file already deployed Pages, and was proved
+  with six doped inputs, all six mutations of a deploying workflow. Six controls, six
+  catches, and near-zero information — because the controls were drawn from **inside the
+  filter they were meant to test**, and a control drawn from inside a filter can only
+  confirm it. The real hazard was a workflow that mentions Pages nowhere and shares a
+  concurrency group, which is exactly the file the check was structurally guaranteed never
+  to open.
+  This sits above the mutation ladder in the same position the *did-it-land* premise sits
+  above the rungs: **a precondition the ladder cannot see, because every rung is climbed
+  inside it.** So the question to add is not about the assertion but about its reach —
+  *what does this detector never look at, and is the defect more likely there?*
+  **And there is a reason this failure recurs even where it has been catalogued: nobody
+  chooses the wrong population — the tool supplies it.** Four times in one session a sweep
+  of this document produced a count that was *correct for the set it examined and useless
+  for the claim*: 29 hits that were all binaries, 225 that were code-block alignment, 28
+  that were headings, 12 that were case-insensitivity. **Every signature was right. Every
+  frame was wrong**, and no refinement of any predicate would have reached it, because the
+  predicate was never at fault.
+  What fixed it was expressing the population directly — `git diff origin/main...HEAD`,
+  the only phrasing of *"lines for which this branch is responsible"* — after which three
+  independent signatures over 349 lines returned zero. The general form is worth carrying
+  because it names where the substitution happens: **`grep` defaults to the file, and the
+  claim was about the change.** A tool's default scope is not neutral; it silently answers
+  the population question on your behalf, and it answers it with whatever is cheapest to
+  enumerate rather than with whatever the sentence is about.
+  **And the sweep that establishes this has to be re-run after the commit that cites it.**
+  The commit which first recorded the paragraph above reintroduced, in its own text, the
+  exact 146-character join the sweep had been built to find — and the *original*
+  period-space-space predicate catches it, returning one hit where it had returned zero one
+  commit earlier. Not a blind spot: **a check that was run, was correct, and was not
+  re-run after the next commit.** The verification aged inside the turn that produced it,
+  and every gate stayed green over a 146-character line, because none of them reads shape.
+  **Those failures were layered, not repeated, and the order was forced.** Five joins in
+  this file were found across four rounds, and a reviewer's table separates them:
+  ```
+                predicate   population   freshness   referent
+  joins 1–2       wrong         —            —          —      ".  " cannot match "word  word"
+  joins 3–4       right       wrong          —          —      swept the file, claim was the diff
+  join 5          right       right        stale        —      correct sweep, one commit old
+  this table      right       right        fresh    the pattern  a cell quoting the predicate
+  ```
+  Three independent ways for a correct-looking check to be wrong, and **each was only
+  visible once the previous one was fixed.** A wrong predicate and a wrong frame both
+  return plausible numbers, so a stale result cannot be detected underneath them — you
+  cannot see that a count is one commit old while you are still counting the wrong set.
+  So *"re-run rather than reuse"* had to arrive last: **it is the only one of the three
+  that a passing sweep cannot reveal.** The general form, and the reason a green check
+  proves less than it appears to: **a check that passes has ruled out the failure modes
+  already fixed, and says nothing about the one beneath them.**
+  The fourth row is this section's own hazard and appeared while sweeping the third. The
+  sweep hit the table above, correctly: that cell contains `".  "` because it *documents*
+  the predicate. **There is no predicate that separates a documented pattern from an
+  occurring one — only the frame does**, and here the frame is the fence. Which is a
+  standing property of any artefact that names its own failure modes: **a file that lists
+  the shapes it warns about will match its own list.** Sweeping this document for the
+  defects it catalogues will always find the catalogue.
+  **The fix for that produced a seventh shape, and it is the only one where the instrument
+  is generative rather than misaimed.** Excluding inline code spans by *deleting* them
+  turns `permanently.` + a span + `now` into a period followed by two spaces — **the
+  sanitiser manufactures the exact signature it was built to detect**, wherever a span sits
+  between two spaces, which is ordinary markup. Measured over this branch's prose:
+  ```
+  strip inline spans by DELETION      18 hits   (a reviewer measured 26 at an earlier tip)
+  strip inline spans by PLACEHOLDER    0 hits
+  control: doped line                  fires
+  ```
+  Replacing spans with a placeholder rather than nothing gives zero, and the control
+  confirms the sweep can still fire — because a sanitiser that *removes* text is exactly
+  the shape that produces a clean result by destroying the evidence.
+  **The pair has a character worth naming, because neither number means what it looks
+  like.** Deletion joins the text on either side of a span and can therefore *manufacture*
+  a hit that is not in the file; placeholder substitutes the span away and can therefore
+  *conceal* a real double space that lives **inside** inline code. So they are not two
+  attempts at one measurement — they are an **upper bound that over-reports and a lower
+  bound that under-reports**, and the true count lies between them. Concretely, at one tip:
+  `deletion 30, placeholder 0, raw 2` — where the two raw hits were this file quoting its
+  own patterns inside inline spans. **`placeholder = 0` never reads as "no double space in
+  the added lines"; it reads as "none outside inline code",** and only the raw count
+  distinguishes those. Here that is the behaviour wanted, which is precisely why the
+  distinction had to be stated rather than left to be inferred from a zero.
+  **And the reason it went unnoticed is worth more than the bug.** A count in the plausible
+  range prompts nothing. Zero would have raised *"is this thing on?"*; eighteen looks like
+  a working detector finding real problems, and a reader would reasonably conclude the file
+  was riddled with joins. That is the exact inverse of the vacuous-instrument case, where a
+  clean result was the thing nobody questioned — **the number that escapes scrutiny is
+  whichever one matches expectation**, and the doped control is the answer to both.
   **That applies to tools nobody wrote as much as to detectors someone did**, and this
   repository contains the proof. `tsc --noEmit -p tsconfig.json` looks like a type-check
   and is not one: the root `tsconfig.json` is `"files": []` plus project references, so
@@ -371,6 +494,26 @@ no new dependencies.
   **capable of a different answer**. Nobody dopes a compiler, because its name is taken as
   its specification, which is exactly the condition under which a vacuous one goes
   unnoticed indefinitely.
+  **A sibling session then took that generalisation and earned the negative result.**
+  `npm run build` runs `tsc -b`, then `tsc --noEmit -p tsconfig.test.json`, then
+  `vite build` — two type-checking commands, neither ever shown capable of failing. Doped
+  one file per surface with a blatant type error, application confirmed before the result
+  was read, each file restored byte-exact: `src/game/art/index.ts`,
+  `tests/deployWorkflow.test.ts`, `scripts/AudioDirector.test.ts` and `vite.config.ts` each
+  took the build to **exit 2 with `TS2322` naming the file**. Population: **84 tracked
+  `.ts`/`.tsx`, 84 under an `include`.** So only the ad-hoc short form is vacuous, and the
+  gate everything here depends on is sound.
+  That is worth recording precisely because it is a **negative result**, which nobody
+  earns: there was no reason to doubt it, which is the same condition the vacuous
+  invocation had survived under for the life of the repository. Had it come out the other
+  way — `tsconfig.test.json` mis-including, so `tests/` was never checked at all — it would
+  have been the largest finding of the programme, **and the green would have looked
+  identical.**
+  The same session declined to build a companion check, and the reason generalises: a
+  guard that every `.ts` sits under an `include` could only fire when a file appears
+  outside `src`, `tests` and `scripts` — a location nothing imports and nothing bundles.
+  **An instrument that can only fire on something harmless is nearer to theatre than to a
+  gate**, so the absence is documented with its reason instead.
   That rule has a ceiling, and it is worth stating beside it: **a positive control
   validates the instrument against the model, never the model against reality.** Dope a
   checker that holds a wrong model with a defect *its model recognises* and it fires
@@ -382,6 +525,529 @@ no new dependencies.
   discards: **a detector firing broadly on input everyone believes correct is evidence
   about the model, not the subject.** "The whole list is unsorted" on a file nobody had
   complained about was the model announcing itself, and it was read as sloppiness.
+  **The same class then caught the author's own gate, and it is the sharpest instance in
+  the file because it would have produced a false green on a real failure.** The
+  verification invocation used here read its test result through
+  `Select-String 'Tests +\d|Test Files'`, which matches `tests 371` — the **census**
+  `node:test` prints identically whether every test passed or none did. At that moment the
+  suite was **370 pass, 1 fail**. Reporting `371/371` from it would have restated a total
+  as a verdict: a number correctly measured of one subject, asserted of another, and
+  re-running the very same command confirms `371` while saying nothing about the
+  substitution — the documented signature of that failure, aimed at the instrument the
+  whole discipline reports through.
+  **And the second safeguard failed in the same run, in the same direction, for an
+  unrelated reason.** Sweep and gates were combined into one invocation deliberately, so a
+  clean sweep could not be quoted from a different tip than the gates — a real property,
+  bought at a cost nobody priced: **a chained script reports only the last command's exit
+  code.** Measured: `npm test` sets `$LASTEXITCODE` to `1`, the trailing `git status` line
+  resets it to `0`, and the invocation reports success. **Atomicity of tip was purchased
+  with loss of status**, silently, by the fix adopted to make verification trustworthy.
+  Two rules, both mechanical. **Read a gate on a line that differs between pass and fail**
+  — a filter that proves the command *ran* cannot also report what it *found*, and
+  `pass N / fail 0` is the verdict where `tests N` is a headcount. And **when probes are
+  chained for atomicity, exit codes are the thing being traded**, so a chained gate must
+  assert on parsed output rather than on the invocation's status.
+  **Both parties held the same defect, from opposite sides, and neither could see the
+  other's.** The reviewer's combined invocation filtered on the census too; the
+  `pass N / fail 0` it published came from a **second, separate** run. So the property it
+  claimed — *swept and gated in one invocation, therefore the verification cannot age* —
+  was held by a run incapable of reporting a failure, while the run that carried the
+  verdict was not the atomic one. **Atomicity and verdict were never true simultaneously**
+  on either side: one lost status to the chain, the other to the filter, and both losses
+  occurred **inside the mitigation adopted to stop losing things**.
+  The general form is worth more than either instance. **A mitigation is an unexamined
+  instrument**, and it enters service with the credibility of the problem it solved rather
+  than any evidence about itself — which is the same asymmetry as a correction inheriting
+  the credibility of correcting, arriving one layer down in the toolchain.
+  The paired observation also upgrades a claim here from inference to measurement: `tests
+  371` was **printed identically at `pass 371 / fail 0` and at `pass 370 / fail 1`**, the
+  latter under a deliberate mutation. The census's blindness is no longer deduced from how
+  the runner reports; both halves have been seen.
+  What caught it was running the pass/fail lines separately for an unrelated reason —
+  which is to say, luck, and the entry is here because the next occurrence will not have
+  any.
+  **The remedy was already in this repository, written three times, once inside the very
+  test that fired.** A reviewer went looking and found it; the interval is measurable to
+  the minute:
+  ```
+  e6edeb34  2026-07-28 07:45   tests/integration.test.ts
+    L393   "A floor proving the measurement ran must not also assert the shape of the
+            thing measured"
+    L950   same sentence, second occurrence
+    L1028  "A floor proving the scan ran must not also assert how much prose exists."
+           -- inside test('no spec makes a status claim that can only expire'),
+              the test that went red at 2026-07-29 01:56
+  ```
+  **Eighteen hours and eleven minutes**, same author, same repository, and the third
+  occurrence sits inside the test whose failure produced the re-derivation. The earlier
+  statements were about a **test floor**; the defect was in a **shell filter**. Nothing
+  links them but the shape, and shape is not what a reader indexes on.
+  Two checks a reviewer ran before letting that interval stand, both of which it needed.
+  **It is not a rebase artefact** — `e6edeb34` has `author == commit` time, which matters
+  because this branch was rebuilt once and a blame-derived interval is exactly the number
+  that survives history rewriting while ceasing to be true. And **it was not branch-local**:
+  `e6edeb34` is an ancestor of `origin/main`, so the rule was **published, merged and
+  readable by every session** for the whole interval. The population that held it and did
+  not apply it is not one author on one branch; it is everyone reading mainline, which is
+  the strongest form the entry could take.
+  > **A rule stated about one instrument does not generalise to another by being true.** It
+  > has to be re-derived at each site, and authorship is no protection.
+  The evidence for that is as strong as evidence gets: its author re-derived it **by
+  accident**, one screenful from where he had written it three times. Which corrects the
+  weaker claim first published here — *"mine now has a mechanism; the general lesson does
+  not."* The general lesson **did** have one, in this repository, in a file the author had
+  edited that day, and having it changed nothing. **That a rule can be held and still not
+  applied is a larger finding than a rule being absent**, because absence has an obvious
+  remedy and this does not.
+  **That claim was retired by a sibling, and the mechanism is this section's own N-for-N
+  rule one level up.** Every instance counted here — five of them — is visible **because it
+  produced a defect somebody then found.** A rule that *fires* produces nothing: no defect,
+  no commit, no line in any ledger.
+  > **The sample of rule-applications consists entirely of failures, because failure is the
+  > property that generates the record.**
+  Structurally identical to *a count taken over hypotheses that arrived can only be N for N*,
+  applied to rules instead of findings, and neither party saw it while building the count.
+  **A count was then offered in support and it does not survive its own premise.** This
+  session published *"29 commits, each running the check, 0 defects recorded"* against a
+  stated head — and `589cc58..8e69593` is 29 while `589cc58..7d343f5`, the head cited, is
+  **30**. The count was taken at one commit and published against another: a fourth instance
+  of the coreference defect, **inside the count of that defect's own silent successes.**
+  The arithmetic is the smaller problem. If success generates no record, **a count of
+  successes cannot come from the record**; what was counted is *commits at which the check
+  ran*, and that is recorded, in every verification block. So:
+  > **The moment a population is countable, it is not the silent one.** Any number produced
+  > for the silent population is a count of something else — runs, opportunities, or commits.
+  And zero findings across thirty runs is the shape of *an instrument that never fires is
+  indistinguishable from one that cannot fire*, aimed at the check the count was about. There
+  is a duller mechanism available for the zero: `589cc58` created the rule **by fixing the
+  defect**, and the practice it installed — printing all three heads together — makes that
+  defect visible at the instant it would occur. Thirty occasions on which it had **no
+  opportunity to form silently** is opportunities removed by construction, not preventions.
+  **The two silent successes offered as the other half of the evidence fail the same way**,
+  and the sentence that kills them was written in support of the finding: *a rule that has
+  been internalised is indistinguishable from ordinary caution, and ordinary caution is not
+  written down.* If that holds, neither caution can be attributed to the rule — they may be
+  caution that would have occurred had it never been written. **Two behaviours were observed
+  and a cause assigned, and the counterfactual is exactly what is not stored.** Which is the
+  missing-column entry one level up: **not who said it, but what produced it.**
+  > **A rule's application is unattributable even where the behaviour is observed**, because
+  > the behaviour does not carry which rule produced it.
+  So the non-events are not merely unrecorded but **unidentifiable in principle**, and the
+  latency claim keeps its status as untested — now with an argument for why rather than an
+  absence of one. Both the counterexample count and the evidence for it are withdrawn; the
+  finding stands on the argument alone, which is the correct place for it.
+  So the count was scoring rules against **prevention** — a bar this programme rejected in
+  writing hours earlier, in the same file the count was drawn from: *the rule did not stop
+  me, it shortened the round trip.* The surviving form is a latency claim, and its second
+  clause is why it was mistaken for the first:
+  > **A rule reduces the round trip from never to one, and cannot be observed doing it.**
+  Which is why *"held and not applied"* felt like the finding: the failures are the only
+  members of the sample that exist.
+  The reviewer's search for the principle then reproduced the class again, at one remove:
+  a line-oriented pattern for `proving the (scan|measurement|command) ran` returned **2 of
+  3**, missing L1028 because the sentence wraps across a newline. **The population problem,
+  in the grep for the sentence about populations** — which is the third self-instantiating
+  defect recorded here and the cheapest to state: prose is not line-shaped, so a
+  line-oriented search of prose has an unnamed exclusion built in.
+  **And eighteen hours is not the characteristic timescale, which the entry would be
+  misread as claiming.** The same failure recurred at **two hours**, committed by the
+  adopting party, in a status line inside the message about rules being held and not
+  applied. This document adopted, verbatim: *`placeholder = 0` reads as "none outside
+  inline code", never as "none"*. Its own verification line then read `\S  \S 0`,
+  unqualified, which reads as none. Measured at that tip: `raw 2, placeholder 0,
+  deletion 43` — both raw hits being this file quoting its own patterns inside inline
+  spans.
+  Ruled a defect rather than shorthand, and the reason is the ruling: **the label names a
+  predicate the instrument did not run.** `\S  \S 0` is not what was measured; *"0 after
+  inline spans were replaced by placeholders"* is. That is the label-is-not-the-command
+  class, which this file also records, so the line was defective under two of its own
+  entries simultaneously. The corrected form prints all three counts and names the
+  instrument, because a single number here cannot carry which bound it is.
+  So the timescale spans two hours to eighteen, the author was the adopter in both, and in
+  the shorter case the rule was **one screen above the line that broke it**. Distance is
+  not the variable. **A rule is applied at the sites its author is thinking about, and
+  nowhere else** — which is why the remedy is never *remember harder*, and always *move the
+  rule into something that runs*.
+  **That last clause had never been applied at its own site, and the same reviewer measured
+  it.** At the tip where it was written: `package.json` had `dev build bundle lint test
+  docs:facts docs:mutate preview` and **no `verify`**; there were **no `.ps1` or `.sh` files
+  outside `node_modules`**; the sweep-and-gate line that produced two of the defects in this
+  section existed only as text typed freshly into a shell by both parties for the whole run,
+  so **CI could not check it because there was nothing to check.** Every other instance here
+  has a distance — eighteen hours and a different file, two hours and one screen. **This one
+  is zero: the rule and its unapplied site are the same sentence.**
+  And the exemplar was already in the repository. `scripts/strategy-facts.mjs --mutate` is
+  *move the rule into something that runs* done to the highest standard here — a checked-in
+  instrument with a doped mutation self-test proving it can fail — sitting one directory
+  from the hand-typed filter. So the site-blindness claim is stronger than stated above:
+  **the author had written the rule, built its exemplar, and still not applied it one layer
+  up.**
+  Now `scripts/verify.mjs` / `npm run verify`, with `verify:mutate` gated in CI. Two things
+  it measured about itself on the way in, both worth more than the script:
+  **It caught its author breaking it, by the property it was built for.** A `DEP0190` fix
+  resolved `npm`/`npx`/`gh` to their `.cmd` shims, which `spawnSync` refuses to execute
+  without a shell, and all four gates went to `exit 1`. The run reported
+  `build=1 lint=1 docsfacts=1 test=1` **and** *"output carried no verdict"* — four
+  attributions and a refusal, where a chained invocation shows one status and no attribution.
+  **And proving it could go red exposed a load-bearing dependency nobody had stated.** The
+  first negative control doped the *working tree*; the sweep reads the *committed* diff, so
+  it measured nothing and the run failed for *"working tree has 2 modified paths"* — **a red
+  run for the wrong reason, which reads as the right one.** The sweep is sound only because
+  the clean-tree assertion runs in the same invocation: if the tree is clean, the committed
+  diff *is* the working tree. Two checks composing into a third property, unnamed until a
+  control failed to work.
+  The honest bound on all of it: **a gate does not substitute for a reader, it frees one.**
+  This instrument closes the two defects already found and has no opinion about the next
+  class, because its controls are the ones its author could think of.
+  **A reviewer then attacked it with its own methodology and found six defects, three of
+  which meant the CI step could not fail for the reason it existed.** Each was measured,
+  not read:
+  ```
+  V1  the mutate path returned before running the live checks, and CI runs only
+      that path -- stubbing sweepBounds to a constant gave PASSED / exit 0 while
+      four controls were failing their real assertions
+  V2  a mutation that THREW was scored CAUGHT -- a mutation that never ran is not
+      evidence a control can fire
+  V3  no domain guard: a zero-line scan passed silently
+  V4  git() returned stderr as a value, so `fatal: ...` became data in a field
+      labelled as a commit, and `|| '(none)'` never fired -- error text is truthy
+  V5  the lint gate ran `oxlint src tests` where the project runs the whole repo;
+      the excluded directory was the one the instrument lives in
+  V6  two adjacent counts over two populations, neither labelled
+  ```
+  **V3 is the finding, and it is the fourth site of one commit.** `e6edeb34` contains three
+  *"A floor proving … must not also assert …"* comments **and** `emptySpecs` at L1007 —
+  *"a scan that read nothing reports no offenders and looks identical to a clean one."* The
+  worked example was in the file whose failing test started this, eighteen hours and
+  forty-five minutes earlier, **and was absent from the instrument written to embody it.**
+  Fixing V5 surfaced a second census: **`oxlint` exits 0 on warnings**, so `lint=0` is a
+  verdict about errors and says nothing about findings. The count is now printed beside the
+  code — and warnings deliberately do not fail, because failing on them would make the
+  instrument **silently stricter than the project's own gate**, which is the same drift V5
+  named, running the other way.
+  The reviewer's synthesis is the most general rule this work produced, and it is an
+  argument rather than a tally:
+  > **Green is the default outcome of every path that does not explicitly assert.** So an
+  > instrument acquires clean-erring holes **by omission** and noisy ones only **by
+  > commission** — and *fail-toward-green is the shape of every gap in every gate unless
+  > something is written to prevent it.*
+  **That is narrower than the section around it implies, and a reviewer narrowed it against
+  their own error.** They reported reachability for two fence forms that does not exist —
+  erring toward **red**, the opposite direction from every other instrument failure recorded
+  here. The distinction is clean and checkable against this record:
+  > **Fail-toward-green is a property of *omitted assertions*: the thing nobody wrote has no
+  > way to fail.** A **wrong population** is a thing somebody did write, and has **no
+  > inherent direction** — it can hide defects or invent them.
+  V1, V2, X3 and W1 were omissions and all four erred green. The population failures on both
+  sides — a fence-shaped grep with no fence model, and the four join-detector variants —
+  went both ways. So the asymmetry argument is sound for gaps and does not extend to
+  instruments generally.
+  That predicts the direction of V1, V2 and V3 without anyone having chosen it, and it
+  subsumes the vacuous-instrument and doped-control entries above as instances rather than
+  neighbours. It also caught one more within the hour: a test harness recorded `exit=0`
+  from a run that printed `FAILED`, because `Select-Object -First 6` truncated the pipeline
+  and masked the status. **A truncation errs toward the clean-looking number and announces
+  nothing** — the same shape as a filter returning empty for an object that exists.
+  **A second round found two more, and both are the same shape one level in.** `gh pr view`
+  exits non-zero identically for *"there is no PR"* and for an expired token, a rate limit
+  or a wrong repository — so a broken `gh` left the PR head unset, the unset value was
+  filtered out of the comparison, and the run printed `ALL AGREE` with the PR arm silently
+  switched off. **That is the check built for "`MERGEABLE CLEAN` was a checked status for an
+  unchecked commit", disappearing through its own remedy.** And a `check()` that threw was an
+  unhandled crash printing nothing at all — not even the header — while the mutation path
+  had `UNTESTABLE` machinery for exactly that case, added in the same commit. Fail-closed,
+  but unclassified, and asymmetric with its own sibling.
+  **Then the substrate turned out to have the same bias, which is the strongest form of the
+  rule because no author chose anything.** Two independent PowerShell mechanisms produce a
+  false zero:
+  ```
+  cmd | ForEach-Object { $LASTEXITCODE }          0 inside, 3 after   evaluation order
+  cmd | Select-Object -First 1 | ForEach { ... }  0 inside, 0 after   pipeline cancelled,
+                                                                      exit code never recorded
+  ```
+  `-Last N` is safe because it drains the stream. **Both mechanisms yield a stale or zero
+  code and neither can yield a spurious non-zero.** So *fail-toward-green* is not only a
+  property of what an author omits to assert — **the plumbing underneath errs the same way**,
+  and a green result therefore carries strictly less information than a red one at every
+  layer, including the ones nobody wrote.
+  **A third round then found the deepest one, and it is about controls rather than code.**
+  The double-space detector was `/\S {2}\S/` — **exactly** two spaces — so `a   b` did not
+  match. Three spaces is the *more likely* form of the very defect it exists for: a
+  paragraph join where the first line ended in a trailing space produces three, and
+  trailing whitespace before a join is the common case. Measured end-to-end on committed
+  dopes:
+  ```
+  "A control sentence.  It has two spaces."     raw=5  placeholder=1   CAUGHT
+  "A control sentence.   It has three spaces."  raw=4  placeholder=0   MISSED
+  ```
+  **And no control in the file could have found it.** Every double-space control was written
+  with exactly two spaces, so:
+  > **A control derived from a model cannot test the model.** The mutation harness proves the
+  > implementation matches what its author believes; it is structurally unable to ask whether
+  > the belief matches the world, because the dope and the detector were drawn from the same
+  > idea.
+  That is materially stronger than *"its controls are the ones its author could think of"* —
+  not incomplete, but **incapable in a specific direction**, and the direction is
+  unreachable from inside. Which restores the second-party rule in the bounded form that
+  survives: the general version was unfalsifiable because it counted arrivals, but this one
+  names a mechanism and a limit. **Three spaces is not a cleverer test than two. It is only
+  a test the author had no reason to write.**
+  A companion from the same round refines the error-path reading above. An unterminated
+  code fence made every line below it read as code, so the sweep went blind to the rest of
+  the file and reported clean — and that is on the **happy path, executed every run**. So
+  the class is not *error paths*: it is **any output whose correct value is not
+  independently knowable.** Error paths qualify because nobody exercises them;
+  `placeholder=0` qualifies because it is equally consistent with a clean file, a blind
+  predicate and a swallowed population, and nothing in the number distinguishes them. **The
+  dope is the only discriminator in either case** — which is why the harness matters, and
+  why its inability to dope outside its own model is the sharpest limit recorded here.
+  **The rule then generalised one commit after being written, on a guard in this same
+  file.** `fenceBalanced` was added *as the remedy for* the unterminated-fence defect, and
+  it recognised fences by the same rule the classifier did — so it could not detect a fence
+  its classifier did not recognise. Four latent cases, all measured, none live:
+  ```
+  ~~~ tilde fence           balanced: true   -- invisible; contents swept as prose
+  ```` wrapping ```         balanced: false  -- on a VALID document, and the inner
+                                                content classified as prose
+  \ No newline at end...    shifts every line number after it by one
+  added line beginning ++   dropped, and misaligns the rest
+  ```
+  > **A guard is a control that runs in production.** Deriving it from the same model as the
+  > component it protects makes it blind in precisely the region that component is wrong in —
+  > which is the only region it exists for.
+  An hour before this was found, the two functions were **deliberately unified into one state
+  machine** so that they could not disagree with each other. That was the right call for
+  consistency and it made the shared blind spot **structural rather than accidental** — the
+  guard and the guarded now provably share a model. Both are true at once, and the second
+  was not noticed while making the first.
+  The remedy is the one that worked for the three-space case, and it is not a better guard:
+  **an input the author's model does not generate.** `~~~` is not a cleverer fence than
+  three backticks; it is only one nobody in this repository has written. Fixed to
+  CommonMark's actual rules — fence character, run length, and info-string constraints —
+  with seven new controls, and **the swept population is byte-identical afterwards**, which
+  is the latency confirmed end-to-end rather than asserted.
+  **Reachability, measured with the fixed classifier rather than with a grep:** across every
+  tracked markdown file, **0** live tilde openers, **0** live four-backtick openers, **0**
+  fences inside blockquotes, **0** fence runs at four spaces of indent — against **179**
+  blockquote lines. The two constructs are each in heavy use and have simply never met.
+  The instrument note is worth as much as the number. A reviewer first counted these with a
+  line-oriented `Select-String '^ {0,3}~~~'` and reported two hits that were **content
+  inside a fenced block** — this document's own table describing the defect. **Predicate
+  right, population wrong**: the question asked was *which lines look like fences*, and the
+  question needed was *which lines are fences*, which differ by exactly the thing under
+  review. **The correct instrument was exported from the file being attacked**, and had
+  already been imported twice in the same turn.
+  So the remaining gap is stated rather than modelled: `^ {0,3}` is correct for top-level
+  fences and blind to fences inside **container blocks** — a blockquoted fenced block has
+  its contents swept as prose, and an *unclosed* fence inside a blockquote is invisible to
+  the balance check. CommonMark container parsing is a real parser; the honest guard is the
+  shape used for the alias evasion — treat a quoted or deeply-indented line carrying a fence
+  run as **unreadable** and fail closed, rather than pretending to model it. Recorded with
+  its reachability of zero, and with the reason it is zero being coincidence rather than
+  design.
+  **The stronger claim first written here — that enumerating a hypothesis space usually
+  requires a second party — is false, and the record of this work refutes it.** Five
+  self-generated enumerations, each against a position its own author had already
+  committed: the third reading of the timestamp field; the aim defect in a four-session
+  proof, found by the session that ran it; the inverted sign in a paragraph, found by the
+  author of the paragraph; the coreference defect between a local tip and a PR head; and
+  the census-versus-verdict filter.
+  **None came from reflection.** Every one arrived while running an instrument for an
+  unrelated purpose and reading a row nobody had asked for — a `git rev-parse` run to
+  compose a report, a pass/fail line printed for a different reason, a query aimed at a
+  neighbouring question. So:
+  > **Enumeration is a side effect of measurement, not of thinking harder.** You cannot
+  > decide to have a hypothesis; you can decide to run something that returns columns you
+  > did not ask about.
+  That is actionable where *get a reviewer* is not, and it supplies the missing mechanism
+  for the rule two entries above: **ship the reproduction with the concession works because
+  a reproduction is an instrument.** Instruments generate hypotheses in whoever runs them —
+  including the author who built one to defend a claim — which is why review functions even
+  when the reviewer is agreeing with you.
+  *(Attribution, and it went wrong in both directions from one unresolvable sentence.
+  A sibling wrote that the aim defect was found by *"the session that ran the sweep"*, which
+  names nobody: each party resolved the pronoun toward itself. **An ambiguous attribution is
+  not read as ambiguous — it is read as settled, in whichever direction the reader sits.**
+  The store settles it: that sibling's turn at `23:39:05` contains the aim-defect sentence
+  **and, in the next paragraph of the same turn, the eighty-session sweep**, so they owned
+  both, and this session reproduced them five minutes later in reproduction language. Half
+  an hour after that, this session assigned the named-population leg to itself — a
+  **self-crediting** error surviving thirty minutes past a turn where it had been right —
+  while the sibling's later error credited the aim defect away from itself. **Both
+  unaudited, in opposite directions**, which is what the flattering/unfavourable axis
+  predicts only if you remember it cuts both ways.
+  The mechanism is worth more than either correction, and it is a level deeper than the rule
+  it refines. The store was queried rather than recalled — the right move — but the excerpt
+  was `substr(row, match − 260, 340)`, so it ended eighty characters after the phrase being
+  searched for, **cutting away the paragraph in the same row that answered the ownership
+  question.** So: *evidence is filed under the question that prompted it* applies not only to
+  which query is run but to **how much of a returned row is read**. The row was already in
+  hand, complete, and the trimming happened after retrieval — which is the only way a store
+  query produced a wrong attribution.)*
+  **And then the reason all of it happened turned out to be a missing column.** Looking for
+  the population of findings that never travelled, a sibling found it is not hidden but
+  **unrecorded** — and so is everything else about attribution. Measured independently in
+  this session's store, over all 264 turns:
+  ```
+  from_project_session_id in a stored turn    1   <- and it is a sibling's prose,
+                                                     a table reporting the field's absence
+  from_session_id                             0
+  cross-session wrapper tag                   1   <- the same row
+  system notifications                       92   <- every one naming a session precisely,
+                                                     and every one solely to say it finished
+  outbound messages                           no field, no table
+  ```
+  **The identifier never reaches storage at all**, in either party's store. So the record
+  knows *who was working* and never *who said what* — the exact inverse of what an
+  attribution question needs. The one appearance of the field name in 264 turns is a party
+  writing about the fact that it never appears.
+  *(A stronger version was committed here first — that this store was **starker** than the
+  sibling's, its wrapper stripped entirely where theirs merely lacked the field. It was
+  wrong: the two behave identically. The difference came from a sentence reading*
+  *"`from_project_session_id` survives in 0 of 67", which can mean **a column present and
+  null throughout** or **an identifier that never reaches storage**. The author meant the
+  second; this session read the first, in the direction that made its own store the
+  distinctive one. Which widens the rule two entries above from attributions to measurements:*
+  > **An ambiguous measurement report is not read as ambiguous. It is read as settled, in
+  > whichever direction the reader sits.**
+  *And that formulation was refuted one exchange later, by its own author, with two instances
+  a single exchange apart:*
+  ```
+  "0 of 67"             resolved -> "your store is the starker case"   FAVOURS the reader
+  "outside the store"   resolved -> "a hole in your own twelve pairs"  COSTS the reader
+  ```
+  *So the constant is not self-interest:*
+  > **Ambiguity resolves toward the reading under which something new is being said, whoever
+  > it costs.**
+  *Which is worse than the self-interest version, because self-interest has an auditor
+  sitting opposite. **Novelty-seeking has none** — both parties want the interesting reading,
+  so both resolve the same way and neither dissents. That is the mechanism behind every
+  ambiguity in this section, including the two above.*
+  *One more from the same exchange, and it is the sharpest of the three: a claim arrived
+  that was **self-crediting and other-criticising in the same clause** — praise for one
+  party's measurement, with a defect in the other's entering as its implication. It was
+  accepted without evidence, because:*
+  > **A criticism smuggled in as the implication of a compliment inherits the compliment's
+  > audit exemption.** The two directions have opposite audit incentives, and the wrapper
+  > decides which one applies.
+  *The accepted claim — that one party had been "the transcriber on both sides" of twelve
+  timing pairs — was asserted with no access to that party's method and never committed
+  here. Provenance, stated by the only party who holds it: the stamps came from a
+  `session_store_sql` query against the local store and were re-pulled afterwards, matching
+  all twelve exactly; the message clocks came from prompt text. **Two independent origins,
+  one hand-transcription step into the comparison**, which is a real exposure in either half
+  and is not the correlated-error problem the phrase implied. And "thirteenth consecutive"
+  merged two series in two stores — the unit-of-counting defect performed by a single word.*
+  *And the timing is the result rather than an aside: that rule was written **two exchanges
+  before its author violated it** and corrected in the exchange immediately after — the
+  latency model confirmed on its own author inside an hour, which is the only form in which
+  it can be observed working at all.)*
+  > **Attribution is precisely the column the record does not keep, in both directions.** A
+  > count of second-party contributions therefore cannot be taken from the data by either
+  > party. It can only be taken from narration written at the time, by the party with an
+  > interest in it.
+  That collapses three separate defects in this section into one cause — a ledger assigning
+  one session's population to another, an unresolvable pronoun, and both parties' N-for-N
+  counts. **A body arrives with its sender stripped, and half an hour later the label is all
+  that remains.** Not carelessness, and not a channel *filter* either: in these sessions
+  everything arrived. **The channel relabels on delivery**, and the relabelling is durable
+  because the original label was never written down.
+  The remedy is the instrument that settled the exchange above, and it generalises: **first
+  appearance across the two turn tables, ordered by timestamp, is the only attribution
+  evidence either party holds.** Exact, cheap, and unused until the question was finally
+  asked — because attribution had never been the question anyone was asking.
+  **A consequence of that missing column showed up within the hour, and it is checkable.** A
+  reviewer described a figure they had sent earlier as `1` and `1`; the primary source — the
+  message body as stored in this session's `user_message` — reads `0` and `0`. The
+  difference is reported and **not explained**, per the rule two entries below: the numbers
+  do not reconcile, that is checkable and worth saying, and *why* is not something measured
+  here.
+  **The cause was then measured by the other party, and it was neither of the readings
+  available from here.** Their store holds the figures as `0` and `0`, sent ten seconds
+  before the copy in this session — so the earlier report was right, and the *retraction*
+  was the error. The two numbers differed because **the subject moved**:
+  ```
+  cf3446f   naive grep: ~~~=0  4-backtick=0    <- measured and published here
+  702ebef   naive grep: ~~~=1  4-backtick=1
+  git log -S'~~~ tilde fence'  ->  702ebef
+  ```
+  `702ebef` is **this session's own fix commit**, which added the quoted example lines — so
+  the document acquired the very constructs it describes, and a later re-run of the same
+  grep at a later tip returned different numbers about a different file.
+  > **A retraction is a comparison across two times and inherits every hazard of one.** Two
+  > measurements that differ because the subject moved are indistinguishable from one
+  > measurement that was wrong.
+  The self-directed form is what makes it durable: **retracting reads as scrupulous**, so a
+  false provenance rides in on the credibility of the act — the correction-inherits-
+  credibility entry above, arriving against the party who contributed it, in a correction
+  they volunteered. And the conclusion was *true*: the structural count is zero and the
+  grep does have a population defect. **A retraction with a true conclusion and a false
+  provenance is the maximally durable error**, because nobody audits the story behind a
+  number that verifies.
+  What follows from it structurally is the part worth keeping. Because outbound messages are
+  not recorded anywhere and inbound bodies are, **only the recipient holds a record of what
+  was sent** — *and that was too strong, refuted by the party it was written about.* Their
+  own `turns.assistant_response` **did** carry the disputed figures, in the same words, ten
+  seconds before the copy in this session's store. They had the record and had never opened
+  it in fourteen hours.
+  Measured here rather than accepted, because the answer differs by working style: a phrase
+  that appeared **only** in a sent message returns **0** rows from this session's store; a
+  phrase restated in the author's own turn returns **1**; a rule restated repeatedly returns
+  **4**. So:
+  > **The record of one's own past claims exists to the extent they were restated in the
+  > author's own turn, and not at all for content that appeared only in a sent message.** It
+  > is partial, and it is a channel nobody has a habit of consulting — not a channel that
+  > does not exist. **The remedy is a query, not a second party.**
+  Which relocates the second-party rule onto the mechanism that survives, and it is the
+  better one:
+  > **A second party's irreplaceable contribution is raising the question, not holding the
+  > record.** Both parties had the evidence; only one had a reason to look.
+  *(Guarded against a stronger sentence that did not survive. A closing line here read*
+  *"neither of us ever supplied the other with a fact the other couldn't reach — we supplied*
+  *questions", and the record refutes it in both directions. `PowerShell -match is*
+  *case-insensitive* was a fact one party supplied from their own harness's failure; it was
+  adopted and **moved a published count from 28 to 2 one message later**, and was named as a
+  transfer at the time. The reciprocal: `Select-Object -First N` cancels the upstream
+  pipeline so the exit code is never recorded — a fact about the other party's instrument
+  they had been describing as truncation, unreachable from their side because the failure
+  was not theirs.
+  The rule survives untouched because it says what is **irreplaceable**, not what was
+  **exclusively exchanged** — a much larger claim, unaudited, arriving in a closing position
+  from the party who had just been thanked. Worth keeping as its own caution: **a tidy
+  closing sentence is the one that gets remembered instead of the mechanism**, and the
+  mechanism is the part that transfers.)*
+  *(One more label-is-not-the-command, in the reciprocal count below. The range was first
+  published as `ea7bbcb..2fc9685`, which yields **16**, not the 17 it was attached to; `..`
+  excludes its base. The base commit is `ea7bbcb`, whose subject is *"a label that is not
+  the command is a fabricated row with real numbers."* The notation was a label that was not
+  the command, anchored on the commit that named the defect.)*
+  **Why the original claim survived is worth more than the claim was, and it is a third
+  aim defect.** It rested on *"four for four — every novel class tonight came from a second
+  party."* That count was taken over hypotheses **that arrived**, and arrival is the
+  property being counted: **a tally over what reached you can only ever be N for N**, because
+  no observation from that seat could come out otherwise. The population was selected by the
+  predicate, and the selection is invisible because it is the channel itself.
+  The reciprocal counts make it concrete. Over one sibling's eight commits, four corrected
+  something an incoming message had named and **four were self-generated — and all four
+  reached this session as messages**, so from here every one of them looked like a
+  second-party contribution. Over this session's seventeen in the window
+  `ea7bbcb^..2fc9685`, thirteen
+  were named by an incoming message and **four were self-generated** — the census-versus-
+  verdict filter, the coreference defect, the committed-diff dependency, and the `.cmd`
+  break — **and all four travelled outward**, so from the other seat all four look like
+  second-party contributions too. Symmetric, and invisible from either side.
+  *(Commit granularity undercounts it further: three more self-generated findings — a `LIMIT`
+  published as a census, a misattributed credit, and `oxlint`'s warning-blind exit code —
+  ride inside commits whose headline correction was named by someone else. The unit of
+  counting was itself a population choice nobody made deliberately.)*
+  > **A self-generated hypothesis leaves no trace in the channel that would display it.** It
+  > arrives downstream as a finished correction, indistinguishable from one that was
+  > prompted — so the only evidence that can refute the rule is **each side reporting its
+  > own**, which is the one form nobody is ever prompted to produce.
+  That is the protocol rather than the aphorism, and it is the third time this section
+  records an aim defect appearing **inside the passage adopting the rule against it**. Which
+  is the strongest available evidence that it is structural: selection by arrival is not a
+  lapse of care, it is what a channel is.
 - **A measurement is a claim with a timestamp nobody writes down.** Every other rule
   here targets claims that were wrong. This one is about claims that were *right and
   stopped being* — which is a different failure, because a measurement carries its own
@@ -412,14 +1078,298 @@ no new dependencies.
   the review itself opened.
   **That narrows the window and does not close it, and the reviewer it was written for
   said so.** Re-resolving late shrinks the gap from turn-duration to send-to-read
-  latency, which is bounded below by nothing either party controls: push one minute
-  later and a late re-resolve still ships a stale tip. The durable form is not timing but
+  latency, which is bounded below by nothing either party controls. That was an argument
+  when written; it now has a measurement. A pull request was read as
+  `OPEN / MERGEABLE / CLEAN` at **21:12:34Z** and merged at **21:12:38Z** — the reading was
+  accurate for **four seconds**, taken by someone who had measured rather than quoted,
+  re-run after a rebase, and reported the instrument and the time. **No amount of care
+  makes a distributed state claim outlive its own transmission**, and four seconds is the
+  observed floor rather than a hypothetical minute. The durable form is not timing but
   **tense**. *"Tip `abc1234`, unchanged"* is a present-tense assertion about the world at
   read time and has a shelf life; *"verified `abc1234` at 21:56"* is an assertion about
   the past, is still true tomorrow, and silently tells the reader it may no longer hold —
   which is the honest content of both. This is *carry the derivation, not the value*
   applied to grammar rather than to method, and the two compose: **re-resolve late and
   report in the past tense, and there is no window at all.**
+  The two halves do different work and it is worth knowing which: **a command tells the
+  reader how to re-measure; a timestamped past-tense claim tells them that they must.**
+  The first is a capability, the second is an obligation, and only the second travels with
+  the sentence. And the reason the present tense is seductive rather than merely
+  incorrect: **it has no expiry field at all**, so a bare state claim reads as durable
+  precisely because it offers nothing to date it against — the same property that makes a
+  measurement carry authority without inviting a re-check.
+  There is a hierarchy under this worth stating, because the worst member does not look
+  like a member. **A quoted state is a measurement with someone else's timestamp on it**,
+  and it is worse than your own stale reading because you cannot see how old it is. **A
+  recalled fact is a quote with no timestamp at all**, and it is worse again, because it
+  does not present as a reading: a quote announces where it came from, while memory
+  arrives as knowledge and so never prompts the question the rule depends on. The instance
+  that fixed this: a session was mid-way through correcting another's claim about a CI
+  configuration key — confident, specific, and from recollection — and checked the schema
+  first only out of habit. **The other party was exactly right, down to the default
+  value.** A correct claim would have been corrected by a wrong one, and nothing in the
+  process would have flagged it, because a recollection has no `--json` flag.
+  The same hierarchy has a form for delegated work: **a delegated review reports "I
+  examined X and found nothing", or it has not reported.** A review that was created and
+  never ran leaves the same trace as one that ran and found nothing — silence — and
+  silence reads as assurance. **Absence of findings has to be distinguishable from absence
+  of the reviewer**, and only an affirmative statement of scope does that.
+  **The instance originally recorded here was false, and the correction is worth more than
+  the rule.** A session reported a delegated reviewer dead — created `21:32:43`,
+  `updated_at` frozen at `21:32:56`, thirteen seconds later, and apparently silent
+  fifty-five minutes on — and published it twice. The reviewer was working the whole time
+  and returned the best-evidenced findings of the programme, including a fourth defect in
+  the guard that had prompted the delegation.
+  **Resolved against the session store rather than anyone's memory, the timings are worse
+  for the instrument than either party said.** The reviewer's first turn **completed** at
+  `21:56:55` and its second at `21:58:27`, and the death was declared at `22:27:00` — so a
+  verdict had been finished for **about half an hour** before it was pronounced silent.
+  `turns.timestamp` is completion rather than arrival, which is checkable in one query and
+  was checked. Turn 0's `user_message` is the kickoff — necessarily present when the
+  session was created — so under an arrival reading its stamp should equal creation. Over
+  the whole store, comparing the first 80 characters of each (`sessions.summary` is a
+  500-character truncation, so full equality holds for exactly one row and is the wrong
+  test):
+  ```
+  sessions with a turn 0                      80
+    delta negative                             0
+    delta 20 minutes or more                  60
+    min 0.21 min          max 1006.3 min
+
+  split by whether the kickoff prefix matches:
+    matches      69    0 negative   54 over 20 min   mean  54.8 min
+    no match     11    0 negative    6 over 20 min   mean 125.0 min
+  ```
+  **Sixty of eighty first turns are stamped twenty minutes or more after the session that
+  was created holding them, and not one of eighty is negative.** The arrival reading is
+  false almost everywhere and contradicted nowhere.
+  **An earlier version of this entry excluded the eleven non-matching rows as "not evidence
+  either way." That was wrong twice.** They contain no negatives either, six of eleven are
+  over twenty minutes, and their mean is more than double the included group — so the
+  exclusion was immaterial and the claim is stronger without it. And the filtered maximum,
+  `307.8`, was quoted as the envelope of the phenomenon: **the true range is `1006.3`
+  minutes**, understated 3.3× by a filter adopted for an unrelated reason.
+  **That proof was first offered on four sessions, and every one of them had a slow first
+  turn** — a control drawn from inside the filter it was meant to test, which is this
+  document's own aim axis appearing inside a proof of something else.
+  Which sharpens the rule about primary sources rather than confirming it. Consulting the
+  store *was* a primary source, and four rows from it still under-supported the claim.
+  **A primary source consulted on an unnamed sample is a negotiation with extra steps:**
+  the query is what makes an answer possible, and naming the population is what makes it
+  an answer.
+  *(Limit, stated rather than smoothed: the store shows the turn **completing**, not being
+  **delivered**. That a verdict existed is established; that it had been sent is not.)*
+  **That proof had a third reading, and eliminating one alternative was mistaken for
+  confirming the held one.** The turn-0 argument rules out *arrival of the turn's own
+  message*. It does not touch *arrival of the **next** message* — and that reading fits the
+  data disturbingly well. Measured on this session, each turn's stamp sits **3–5 ms** from
+  the `current_datetime` of the message that opens the following turn, four consecutive
+  times:
+  ```
+  turn 230  23:50:14.610      next message  23:50:14.605     +5 ms
+  turn 231  23:58:13.487      next message  23:58:13.484     +3 ms
+  turn 232  00:02:33.461      next message  00:02:33.456     +5 ms
+  ```
+  What kills it is a population the argument never used: **twenty-one sessions whose final
+  turn predates `2026-07-27T00:00Z`** — two days dead at the time of writing, with no next
+  message then or since. Under arrival-of-next that field could not have a value. It does.
+  *(Three corrections to how that count was published, and the third is the one that
+  matters. It appeared as **six**, which was the `LIMIT` on the query that displayed the
+  rows restated as the size of the population — a display bound reported as a census, in the
+  **strengthening** direction, which is why nobody checked it. Then as "twenty-one idle
+  beyond fifty hours", which **had a clock in the predicate**: idleness is measured against
+  `now`, so the identical query over identical unchanged rows returned `9` four hours
+  earlier, `11` two hours earlier and `21` at the moment of writing. **A number that more
+  than doubled in two hours while the data stood still.** Anchoring the endpoint fixed
+  that — *cite endpoints, not lengths*, derived here for commit ranges and not carried
+  across to time.*
+  *Then it was widened to **all eighty sessions with turns**, on the reasoning that the
+  eighty has no clock in it at all. **True, and it also has no argument.** The hypothesis
+  says turn N's row is written when the input opening turn N+1 arrives, so a stamped final
+  turn refutes it **only where no next input ever arrived** — which is the entire work the
+  idleness filter was doing. The other fifty-nine were mid-conversation; their final row is
+  stamped **because the next message did arrive**, which is what the hypothesis *predicts*.
+  Measured, and it is the two sessions having the argument:*
+  ```
+  9c712218   last turn 0.3 min ago    NOT in the 21
+  e558ef9b   last turn 0.9 min ago    NOT in the 21
+  ```
+  *So the widened form cited the hypothesis's own output as evidence against it.)*
+  > **A clock and a filter are different defects, and dropping the filter is not a way to
+  > fix the clock.** The clock was in the predicate's *form* — an interval measured from
+  > reading time — and anchoring the endpoint fixes the form while keeping the filter.
+  >
+  > **Widening a population cannot strengthen a refutation when the added members are
+  > predicted by the hypothesis.** They are not weak counterexamples; they are its output,
+  > and an aggregate mixing them is no stronger than its most active member.
+  Recorded as a class rather than an incident, because both parties made the same reach
+  within an hour: **on discovering a bad filter, the reflex is to remove filtering, when the
+  defect was in the predicate.** The bigger number feels safer and is the one that cannot
+  discriminate.
+  **The gate that exists for this class did not fire, and that is the finding.** This
+  repository has a test named *no spec makes a status claim that can only expire*, and it
+  had already caught a sibling's branch-relative commit-count phrasing an hour earlier. Its
+  nine patterns are all phrases that **advertise their own volatility** — unfinished states,
+  pending merges, work described as outstanding.
+  > *"Twenty-one sessions have been idle over fifty hours"* advertises nothing. **The gate
+  > detects the vocabulary of currency, not the semantics of a moving referent** — and the
+  > perishable claim with no currency vocabulary is exactly the one that gets written down,
+  > because it is the one that sounds like a result.
+  The real discriminator is **tense with both ends named**: *"one limit stayed open for two
+  hours"* and *"have been idle for fifty hours"* are the same construction, and only the
+  first has both ends nailed to fixed events.
+  **And the guard for it was refuted before it was built, which is the discipline moving one
+  step earlier.** A sibling counted the population first: of 24 number-plus-time-unit lines
+  across three specs, **22 were closed intervals between named events and 2 were anchored at
+  reading time.** A pattern-based guard would have been wrong on 23 of 24 — established for
+  the price of one query rather than for the price of another review round. The remedy stays
+  the authoring rule, and both offenders were pinned to instants.
+  Two things from writing that up are worth more than it was. **The guard then fired on the
+  paragraph describing the guard**, because quoting its pattern list is indistinguishable
+  from using those phrases — the use/mention defect that took ten rounds to remove from a
+  different guard in the same suite. A structural exemption was available and was
+  **measured and refused**: 1,817 code spans across the specs, exactly one matching line, so
+  the exemption would be validated against an empty population of real offenders while
+  handing every future expiring claim a disguise costing one backtick. That is the opposite
+  call from the earlier round, and the difference is not correctness — both are false
+  positives on content nobody should be punished for:
+  > **A false positive earns a fix when the population it rejects is one you must keep
+  > serving, and a reword when it is not.** Ten rounds of treating every false positive as a
+  > defect trains exactly the wrong reflex for the second case.
+  *(Applied immediately and by force: this very paragraph tripped the same guard twice —
+  once for quoting the sibling's offending phrase and once for a pattern word used to
+  describe the pattern list. Reworded rather than exempted, per the rule directly above it,
+  which is the first entry in this file to be enforced on the sentence that introduces it.)*
+  And an instrument failure in the family this file already records: a re-wrap ran inside a
+  PowerShell function that reported progress with `Write-Output`, which joins the function's
+  **return stream**, so two progress strings were prepended to the document as lines 1 and
+  2. Longest line unchanged, over-120 set identical, paragraph diffs correct — **every check
+  passed because every check was aimed at the region being edited.** Reading the whole diff
+  rather than the changed hunks is what caught it, which is *aim* again, at the smallest
+  scale yet.
+  **The queueing account that was published as the explanation is refuted, and refuted by
+  the rows offered as its evidence.** It held that delivery of a queued message is triggered
+  by turn completion, so the two coincide to within milliseconds. That predicts
+  `message clock ≥ stamp` — delivery cannot precede the completion that causes it. Measured
+  across every pair available, on the column neither party read:
+  ```
+  stamp − message clock, 12 consecutive turns:  +3 to +6 ms
+  stamp AFTER message clock : 12
+  stamp BEFORE               :  0
+  ```
+  **The message clock is always earlier than the stamp**, so the message was read before the
+  turn record was written, and delivery-at-completion is impossible. The magnitude was the
+  whole content of the observation for both parties; **the direction was never asked**, and
+  the direction is the only part that discriminates.
+  The write-at-boundary reading dies on the same page: it cannot write the twenty-one idle
+  rows, and a reviewer's turn stamped `21:58:27.392` is followed by a message sent no
+  earlier than `22:07:09.222` — **8m 41.830s** later — a stamp that does not move to meet a
+  late arrival. What survives is neither proposal but the residue: **the next turn's clock
+  and the previous turn's row are two reads bracketing one boundary, in that order, five
+  milliseconds apart.**
+  **The corollary never needed any of it.** *`current_datetime` is the recipient's boundary,
+  not the sender's send* follows from the alignment alone — from the fact of coincidence,
+  whatever produces it. A mechanism was added because it made the sentence sound explained,
+  and **the added part is the only part that could be false, and was.** So:
+  > **Over-justification is a risk, not a courtesy.** The strongest-sounding clause in a
+  > paragraph is often its only refutable one. A sufficient observation given an unnecessary
+  > cause fails at the cause.
+  With a companion that indicts both parties: the evidence refuting one account had been
+  collected an hour earlier, for a different question, and never re-read against this one.
+  **Evidence is filed under the question that prompted it, and nothing prompts a second
+  reading** — which is why both sessions went looking for new populations while the
+  discriminator sat in the file.
+  So the rung, which is general and cost one query: **eliminating one alternative is not
+  confirming yours unless the space was enumerated.** A proof that discriminates against a
+  reading you had already rejected feels precisely as conclusive as one that discriminates
+  against the reading you hold — and there is no felt difference to warn you which you
+  built. It recurred immediately, and then went one worse: the queueing explanation was
+  offered as *the* account of the 3–5 ms when a second account fit the same rows — and
+  **both were later refuted by the sign of the very delta they were explaining**, which
+  neither party had read. Enumerating two candidates is no better than enumerating one when
+  the discriminating column was in every row all along.
+  A consequence worth carrying: **`current_datetime` on a queued cross-session message is
+  when the recipient became free, not when the sender sent it.** Correctly measured, of a
+  different subject — subject substitution inside the instrument being used to audit it.
+  **And the widening from three sessions to sixty-nine is no part of the remedy for this**,
+  which is the finding that makes the two failures worth separating. Every one of the 69
+  rows is consistent with *both* surviving readings: for turn 0, completion-of-turn-0 and
+  arrival-of-turn-1's-message each predict a large positive delta from creation. The sweep
+  discriminates against exactly one hypothesis — **the same one three sessions had already
+  discriminated against.** It made the claim defensible; it did not make it one degree
+  more correct.
+  ```
+  wrong sample  ->  widen the population       repairable after the fact
+  wrong space   ->  enumerate the hypotheses   no quantity of data touches it
+  ```
+  So the synthesis has three legs, not two, and they were supplied by different parties
+  because no one of them held all three: a **primary source** — necessary, and insufficient
+  alone, since four rows from it under-supported a claim; a **named population** —
+  necessary, and insufficient alone, since 69 rows stayed silent between two readings; and
+  **named hypotheses**. A query answers the question you asked of the data, and
+  **enumerating the space is what makes it the right question — the only one of the three
+  that cannot be repaired later by collecting more.**
+  The discriminating rows were inside the eighty the whole time, and two parties found two
+  independent versions of them within minutes of each other once the third reading was
+  named: **twenty-one sessions last active before `2026-07-27T00:00Z`** with stamped final
+  turns, and
+  **fifteen single-turn sessions, fifteen of fifteen stamped**, ten of them older than a
+  day. Neither
+  party had asked, and not because the query was hard — because neither was asking a
+  question they believed had three answers. **The sweep was aimed at *how large is my
+  sample*, and the evidence for *how many readings survive* sat in the same table.**
+  The mechanism is this section's own aim axis, one paragraph from where that session had
+  just written it: a control was run first — another session, demonstrably alive, showing a
+  current `updated_at` — and it was read as validating the instrument. **It showed the
+  field *can* move. Not that it moves whenever a session is working.** Sensitivity, not
+  completeness; a population of one, unnamed. So the rule under the rule: **before
+  concluding that a silent instrument is broken, establish that silence is observable.**
+  Nobody had checked whether that field moves *during* a long turn, only that it moves
+  sometimes.
+  Two things make it the sharpest instance in this section. The claim ran **against a third
+  party who could not answer**, by a session that had been careful to verify favourable
+  claims before accepting them — and the retraction came from that session unprompted,
+  once the reviewer reported. **A conclusion drawn from an instrument's silence is a claim
+  about the instrument, not about the subject**, and it inherits every weakness the
+  instrument has, including the ones nobody has looked for.
+  **And the wrong figure that reached this file has a mechanism of its own, distinct from
+  a stale quote or a recollection.** The number *"fifty-five minutes"* was computed exactly
+  and reported truthfully — it was the elapsed time at the moment the death was declared.
+  Eighteen minutes later, when the reviewer spoke, it was reused in the next sentence as
+  the *report latency*, which it never was. Nobody misremembered it and nobody quoted a
+  stale source: **the clock was never wrong, the referent moved.** Re-resolving the source
+  would not have caught it, because the source was correct.
+  So a fourth rung under the quote/recollection hierarchy, and the only one with no tell:
+  **a duration is not a value, it is a function of *now*.**
+  **And it is the one measurement a timestamp on itself cannot rescue**, which is what
+  separates it from every other entry in this hierarchy. *"Fifty-five minutes"* is wrong
+  when reused; *"fifty-five minutes, measured at 22:27"* is **equally wrong when reused at
+  22:45**, because the reading was never stale — the *referent* rebound. The past-tense
+  remedy that repairs a stale tip does nothing here.
+  What cannot rebind is a pair of instants:
+  ```
+  brittle   "55 minutes"                       silently answers the next question
+  brittle   "55 minutes, measured at 22:27"    still silently answers it
+  durable   "21:32:43 → 22:27:43"              can only be reused correctly, or not at all
+  ```
+  So the structural form is **store intervals as endpoints, not lengths.** A length is a
+  scalar that rebinds to whichever question is nearest; two instants carry their referent
+  inside them. That is checkable when the sentence is written — it is a **shape, not a
+  discipline** — which puts this rung in the structure column rather than asking anyone to
+  remember to re-evaluate.
+  **And the rung is not really about durations.** The same session produced a second
+  instance with no number in it at all. What it had actually observed was *"my inbox is
+  empty"* — true, checkable by it, and the only instrument it held. What it published was
+  *"it has produced nothing"* — a claim about another party's internal state, for which it
+  had no instrument whatever. **Both render in English as "nothing has happened," and only
+  one of them was its to say.**
+  So the general form is **subject substitution**: a quantity or an observation, correctly
+  measured of one subject, restated about a different one. The duration case swaps the
+  question; this case swaps the party. Neither has a tell, and in both
+  **re-resolving the source confirms the measurement and misses the substitution** — the
+  clock was never wrong and the inbox was genuinely empty. What moved was the referent,
+  which is why checking harder cannot reach it: **the check verifies the sentence you
+  wrote, not the sentence you meant.**
   With one condition that is easy to miss and makes the difference between the form
   working and merely looking like it works: **the timestamp has to be the measurement's,
   not the sentence's.** A past-tense claim carries exactly one fact the present-tense one
@@ -464,6 +1414,78 @@ no new dependencies.
   front of them. This one decides itself, on any SHA, without knowing anything about the
   claim it sits in — which is the *call site rather than sentence* property arriving in
   the one place nobody was trying to apply it.
+  **And whether it is sufficient depends on what the citation claims — which is the part
+  that was got wrong twice.** Reachability answers *"can this be resolved"*, not *"is this
+  still the state"*. That gap was reported as a defect in the check: a verification against
+  a **reachable but superseded** commit describes a tree the branch has moved past, and
+  reads identically to one about the current tree.
+  The reporting session then withdrew it, correctly. **A past-tense verification never
+  asserts currency**, so being superseded does not falsify it — *"verified at 01:17 against
+  `8353974`"* is exactly as true after the branch advances as before. **A currency test was
+  applied to a claim that does not make a currency claim**, which is subject substitution
+  again, in the message that adopted the fix for subject substitution.
+  So the rule is conditional rather than deficient: **reachability is sufficient for a
+  past-tense citation and insufficient for a present-tense one** — and the present-tense
+  form is the one this document already tells you not to write.
+  **The field added to close that gap then closed it wrongly, and the endpoints rung says
+  why.** *"`N` commits behind the tip"* is a **distance to a moving referent** — true when
+  written, silently false one commit later, with no tell. Measured: a line reading *"0
+  behind tip"* was accurate at `01:19:54` and false sixteen minutes on. That is the
+  fifty-five-minutes shape exactly, in the fix for a different rung, two entries below the
+  rung that names it. The durable form is the one already committed above: **name the
+  endpoint, not the length** — *`<sha>`, tip `<sha>`* can only be read correctly or not at
+  all, and a reader can resolve both. *"0 behind tip"* cannot be checked after the fact,
+  because the tip it referred to is gone.
+  **The block those fields sit in has a defect none of them can catch, and it was found in
+  the report that committed the two rules above.** A verification block resolved every
+  field at the moment of use, exactly as required, and read:
+  ```
+  tip 6ae3c3b, 0 behind main, clean · build ok · pass 371 / fail 0 · PR #56 OPEN MERGEABLE
+  ```
+  Every line was true. **They described two different objects.** The PR's head was
+  `615cea0`; two commits of gated work had never been pushed, so `MERGEABLE CLEAN` was a
+  status of a tree two commits older than the one the gates had just certified. Not
+  pedantry: after pushing, the state went to `BLOCKED` until CI ran on the new head. The
+  block had asserted a **checked** status for an **unchecked** commit.
+  **Adjacency in a verification block is read as coreference, and nothing asserts it.** The
+  discipline governs the freshness of each line and is silent on whether the lines share a
+  subject — so following it perfectly does not reach this, which is why it survived a
+  report whose entire subject was instruments reporting the wrong object.
+  The tell cost one command — `git rev-parse origin/<branch>` against `HEAD` — which is the
+  second instance here of a check being skipped **because** it was free, and the first
+  where free-and-unrun concealed a substitution rather than a diffstat.
+  Mechanical form: **a verification block resolves local tip, remote tip and the PR head,
+  and states whether they agree.** A remote status is a claim about the remote's content;
+  quoting it beside a local gate result silently asserts an identity that costs one command
+  to check and was worth two commits of unverified work.
+- **Every rule in this section guards the flattering direction, and both claims that got
+  through tonight ran the other way.** The catalogue is built on *verify the favourable
+  claim*: audit the compliment, check the credit, doubt the number that suits you. And the
+  two false statements neither party caught were **unfavourable** — one session reported a
+  third party as having *"produced nothing"*, which was untrue and damaged someone who
+  could not answer; the other recorded its own check as *"defective and relied upon"*,
+  which was untrue and damaged only itself.
+  The mechanism is the one already recorded for credits, inverted: **a self-critical claim
+  has nobody with an interest in checking it.** A flattering claim at least has an
+  opponent. Ten hours of demanding evidence for good news, and what slipped through in
+  both directions was bad news nobody wanted to defend — including the party it was about.
+  So the audit question has a second half: *is this claim favourable to me, and have I
+  checked it?* — **and is it unfavourable, in which case nobody else will.**
+  **A sibling session then supplied the counterexample that makes this actionable rather
+  than merely true.** One reviewer withdrew their **own** blanket rule — self-critical, and
+  it *was* audited, by them and independently — because they shipped it **with a
+  reproduction attached**. So direction is not the operative variable:
+  > **A self-critical claim goes unaudited when nobody has an interest in building the
+  > instrument. When the claimant supplies the instrument, the direction stops mattering.**
+  Which converts a description into a structure. *"Be suspicious of your own bad news"* is
+  another act of vigilance by the party least able to supply it — the failure mode this
+  whole section documents. **Ship the reproduction with the concession** costs one command
+  and works in both directions at once, because a reproduction does not know whether the
+  claim it accompanies flatters or damages its author.
+  Worth recording for its shape as much as its content: the reachability check was added
+  in response to two *orphaned* SHAs, and it closes exactly that failure and not the class
+  it belongs to. **The remedy enumerated the instance it was shown**, two exchanges after
+  both parties had agreed that was the recurring pattern.
   One more thing came out of measuring that gap, and it is the sharpest instance the work
   produced because every party measured and every party got a different answer. The
   question — *is a reviewer's baseline falling further behind?* — was answered three ways
@@ -473,8 +1495,32 @@ no new dependencies.
   set of them); **7 → 5 → 3 → 2, converging faster** (measured across all four, but the
   last two against a fixed tip rather than "the tip at that moment", which was the stated
   definition); and under that definition applied consistently, **7 → 5 → 6 → 6 — a steady
-  state**, which is neither story. The gap stabilises rather than closing, because each
-  report causes commits at about the rate the reviewer advances.
+  state**, which is neither story. What the data supports is weaker than any of the three:
+  the gap is **review-caused** — every commit in it exists because of a report — and it
+  neither closes monotonically nor stays open. A fourth series measured live rather than
+  reconstructed ran `1, 1, 0, 1, 1, 0` — **one observer, one branch**, with transitions in
+  both directions twice each. And one further fact makes those points measure the thing
+  this entry is about rather than something adjacent: they were taken across **six
+  different HEADs**, each the tip the observer had just been handed, never their own work.
+  So the quantity is the **reviewer's-eye gap** — how stale the thing a reviewer is holding
+  is at the moment they measure it — which is the staleness this section concerns. An
+  author's own branch against `main` is a different quantity and a less relevant one.
+  Two observations in the same direction, published as a
+ pattern, refuted by a third measurement the observer had no particular reason to take,
+ and oscillating within `{0, 1}` across two more. **That is a direction read off a
+ two-point sample, in a claim about the defect of reading
+ directions off samples**, and it is the fourth wrong answer to this question by the third
+  party to attempt it. Anything sharper than *review-caused, non-monotonic* has been wrong
+  every time it was stated; the six points support only *small, bounded, non-zero on
+  average*.
+  **And an earlier version of this sentence recorded that series as `1, 1, 0, 1, 0`,
+  because its last point was taken from a different worktree.** Two participants were each
+  measuring their own branch against `main` — different HEADs, therefore different
+  quantities — and four points from one were joined to a fifth from the other, producing a
+  series that never existed. That is the splice defect described two paragraphs above,
+  committed inside the entry that describes it, by the author who had just corrected
+  someone else for it. **A series has an observer as well as a definition**, and neither
+  the numbers nor their agreement reveals when the observer changes.
   So: **a claim about a trend has two populations — the points, and the baseline each
   point is measured against.** Enumerate the first, let the second drift, and the trend is
   real in the arithmetic and absent in the world. Neither error here was careless; both
@@ -506,6 +1552,54 @@ no new dependencies.
   a block or a context wider than the claim returns a superset that reads as the
   answer**, and all three instances produced output that was true and answered a question
   nobody asked.
+  A fifth kind is specific to auditing prose, which is what most of this document is, and
+  it arrived on the last measurement anyone took. A reviewer checking an attribution count
+  searched for `reviewer\s+named` and reported one named attribution in a file that has
+  none. The line it matched reads *"the mechanism, which a reviewer **named** and which is
+  what…"* — **"named" as a verb.** The probe matched the wrong *sense* of an English word
+  and returned a clean, plausible, wrong count. **A regex over prose selects on spelling
+  and the claim is about meaning**, and nothing in the output distinguishes the two; the
+  rescue was reading the matched line, which is the same rescue as every other null in
+  this catalogue and is still not a method.
+  **The same episode produced a sixth form, and it is the only one where both parties
+  proposed a cause and both were wrong.** Two attribution counts of the same file
+  disagreed — 59 against 76. One party diagnosed *scope*, having seen three definitional
+  mismatches that evening; the other diagnosed *staleness*, the files having demonstrably
+  grown all night. Measured: the file held **59 at both commits**, so time explains
+  nothing, and both parties had counted the same file, so scope explains nothing. The
+  cause was the **predicate**: `a reviewer|A reviewer|the reviewer|reviewers` matches 59
+  lines and a bare `reviewer` matches exactly 76. **A count is a function of its pattern,
+  and the number carries no trace of which pattern produced it.**
+  What makes it worth the entry is not the miss but its shape. Four prior discrepancies
+  had a definitional cause, so the fifth was diagnosed as definitional without checking —
+  **a correct generalisation applied to a case it did not fit, which is indistinguishable
+  from a wrong guess at the moment of writing and much harder to doubt.** The catalogue's
+  standing rule is that the story is the part nobody re-measures; here the story was a
+  pattern with four confirmations behind it, and it was still the part nobody re-measured.
+  **That last clause refutes a tempting summary of the whole record**, offered near the
+  end: *every rescue was a check that ran without being remembered*. Recall did fail
+  every time it was tried — a rule was re-broken two hours after being published, in a
+  message that named it. But the rescues divide three ways, not two. **Structure**
+  succeeded wherever it existed: the `APPLIED:` print, the positive control, the API call
+  already inside the command being run. **Recall** succeeded never. And **noticing** —
+  reading a matched line, recognising that a diff was about the wrong subject — rescued at
+  least four instances and is neither structural nor recallable. It is the category this
+  document has twice had to mark unguardable, and a summary that folds it into structure
+  claims a coverage nothing here has.
+  **Unguardable does not mean unpredictable, and its failures cluster.** Four
+  noticing-failures from this work share one shape: a cheap summary existed, was read, and
+  was wrong about the detail beneath it. An **exit code** read while the one unread line
+  said `ERR_MODULE_NOT_FOUND` — not an assertion failure at all. **Totals** that matched
+  while the contradicting line went to stderr, after the last line of stdout. A **rollup**
+  reporting success while the perturbation had never applied, because an empty pipeline
+  into `Set-Content` leaves the file untouched. A **clean-merge check** published as a
+  control, on a merge that is clean whether or not the tool can detect anything.
+  So noticing cannot be mandated, but its weak point can be pointed at in advance:
+  **wherever a summary is cheaper to read than the thing it summarises.** Which yields the
+  one form of this category that is not a request to remember — **you cannot make yourself
+  notice, but you can refuse to ship an instrument whose summary can disagree with its own
+  detail.** The `APPLIED:` print is exactly that: it does not ask anyone to look past the
+  verdict, it removes the verdict's monopoly.
   A fourth arrived from the author's side, in prose rather than in a query. A pull request
   opened as evidence-only, grew three source extractions during review, and merged with a
   header still reading *"evidence and test hardening only — plus one docblock line"* over
@@ -527,6 +1621,234 @@ no new dependencies.
   The predictor is better than the list, because it generates rather than enumerates:
   **a check with a social cost and no epistemic reward is a check nobody runs**, and the
   next unaudited class will be whatever else has that shape.
+  **That predictor is incomplete, and the thing it cannot generate is the defect that
+  survived everything.** It explains classes that go unchecked because checking costs
+  something socially. A `git diff --stat` costs *nothing* — no awkwardness, no relationship
+  to anyone, one word of output — and it went unlooked-at across forty commits by two
+  parties who were, all evening, explicitly hunting for unrun checks. The commit it would
+  have caught in four words rewrote a whole file and destroyed 57 commits of provenance.
+  So there is a second mechanism beside social cost, and it is its opposite: **free is its
+  own kind of invisible.** A check with no cost attaches to no decision, so nothing ever
+  prompts it; the expensive ones at least announce themselves by being avoided. This
+  section was built from the classes that hurt, which is precisely why it could not name
+  the one that doesn't.
+- **A complete green suite is evidence about the working tree and nothing else.** The last
+  defect this work produced is the only one a passing suite *actively concealed* rather
+  than merely failed to catch, and it is the entry to put in front of a reader before any
+  finding about the rig. A commit converted a documentation file from LF to CRLF —
+  1351 insertions and 1340 deletions for a ten-line entry — and collapsed 57 commits of
+  `git blame` provenance into one, in the file whose entire value is its accumulated
+  attributions. Build, lint, 371 tests and the facts checker were run after every commit
+  by two parties for two and a half hours, **all green throughout the entire period the
+  defect existed**, because not one of them reads history.
+  Both parties were treating a green suite as evidence about *the change*. It is evidence
+  about the *state*: what the tree contains now, not what the commit did to get there.
+  Everything a commit can damage that is not present in the working tree — history,
+  provenance, line endings normalised away, a file's diffability — is outside every gate
+  in this repository by construction, and adding more tests cannot reach it.
+  **And "no gate looks" understates it: every gate erases the signal deliberately, and each
+  is right to.** Measured across `tests/` and `scripts/`: **sixteen sites** normalising CRLF
+  away, each with a stated reason —
+  ```
+  integration.test.ts   .replace(/\r\n?/g, '\n')     // read a Windows checkout correctly
+  integration.test.ts   /=======\r?\n/                // git on Windows writes CRLF here
+  worldArt.test.ts      split on a lone \r too
+  strategy-facts.mjs    a CRLF working copy makes a mutant unable to find its anchor
+  ```
+  A test that failed on a Windows checkout would be a *worse* test. So the class is not
+  invisible through oversight: **every component correctly discards the only signal that
+  would reveal it, and nothing is left holding it.** That is a stronger argument for a pin
+  than *nothing looks* — **there is no gate that could look without becoming wrong at its
+  own job**, so the guard has to live at the point of writing rather than the point of
+  checking.
+  The check that would have caught it is `git diff --stat`, four words, free. It was run
+  by nobody across forty commits. The repair was possible only because the damage had not
+  merged: rebuilding the branch restored all 57 attributions natively, where the usual
+  remedy — a `.git-blame-ignore-revs` every future reader must configure — would have
+  externalised the cost permanently. `.gitattributes` now pins `* text=auto eol=lf`, which
+  is the gate at the point of writing that the ignore-file would only have simulated at
+  the point of reading.
+  **And that gate is now proven by use rather than by configuration**, which is the
+  distinction this document draws elsewhere about unfired guards, resolved for once in the
+  good direction. Four documentation commits were written from the same machine after the
+  attributes landed — `16+`, `11+`, `9+`, `21+` lines, every one a clean incremental diff,
+  every blob at `CR = 0`, blame rising 58 → 59 → 60 → 61 → 62 with all 57 originals intact.
+  A setting that *should* work and a setting *observed working four times* are different
+  claims, and only the second one has been checked.
+  It produced one more on the last exchange of the work, and it is the class with the
+  strongest immunity: **the explanation of a discrepancy.** Twelve passes measured
+  numbers, assertions, bounds, mutations, timestamps and counts — and the *causes* attached
+  to them went unmeasured throughout, because an explanation is only ever written after
+  the disagreement has already been settled by measurement, and by then nobody is looking.
+  The instance: two counts of one file disagreed, one party attributed it to scope and the
+  other to elapsed time, and the decomposition was **22 predicate, 2 scope, 0 time**. Both
+  explanations were wrong and neither had been checked, though the numbers they explained
+  had been checked repeatedly.
+  The sharper half belongs to the party whose hypothesis was wrong: **the most dangerous
+  wrong cause is a real one.** The file in question *had* grown all evening — 16 to 17 to
+  20 to 23 entries — so staleness was a true, personally observed mechanism, cited as the
+  cause of a discrepancy it did not produce because both counts were taken at the same
+  commit. That is the head-roll error again, at the far end of the work: a fact about the
+  system, correct in itself, standing in for a cause. A wrong explanation built from a
+  real mechanism resists doubt in a way an invented one never could.
+  **And one exchange later the same mechanism caused the next discrepancy, genuinely.**
+  Two blame counts of the same repaired file disagreed, 58 against 59; the cause was that
+  one was taken before a commit and one after, and the commit owns sixteen lines. Measured:
+  58 → 59 → 60 across three successive commits. So *staleness* was falsely blamed for one
+  gap and was the true cause of the very next one, with nothing in either number to
+  distinguish the cases. That is the fifth class demonstrating itself in the last count
+  anyone took: **the mechanism you invoke may be real, may be the one you have watched
+  operating all along, and may still not be the one that produced the number in front of
+  you — and only measuring the explanation separates them.**
+  The class had no way to spot one from outside until its last instance supplied one:
+  **an explanation is suspect when it is tidier than the events it explains.** A summary
+  of this work's findings was offered as moving outward "in a straight line" — fix, tests,
+  bounds, instruments, sentences, timestamps, explanations, history — and was withdrawn by
+  its own author on inspection, because the sequence was not a line: the bounds and the
+  instruments interleaved, and the history defect arrived from a third session working on
+  something else. **The order was imposed afterwards, because an order reads as
+  understanding.** Each rule here came from a specific measured failure; the arc
+  connecting them came from one person at the end with nothing to check it against.
+  Tidiness is cheap to test: **compare the shape of an explanation against the record of
+  what happened, and be suspicious in proportion to how well it comes out.**
+  **And declining to report a difference is not a licence to explain it.** The entry above
+  was invoked correctly on a discrepancy between two sweeps — 26 hits against 18, judged
+  not worth a finding because the conclusion was identical in both — and an explanation was
+  attached to the decline anyway: *"a later tip and a different predicate."* Measured, the
+  tip accounts for **one hit of eight**:
+  ```
+  same predicate @ earlier tip   407 prose lines, 17 hits
+  same predicate @ later tip     440 prose lines, 18 hits
+  other predicate @ later tip    426 prose lines, 26 hits
+  ```
+  The frame was essentially the whole cause and the tip was noise. **"The number does not
+  matter" and "the explanation is right" are separate claims, and only the first was
+  checked.** So the licence this entry grants is narrow: it permits *silence* about a
+  difference, and it permits nothing about its cause — an unchecked explanation attached to
+  a correct decline is the fifth class arriving through the one door the catalogue opened
+  for it.
+  **And the table published to settle that discrepancy contained a row that was never
+  measured.** Two sweeps were compared over three cells; the third paired a prose count
+  taken at an *earlier* tip with a hit count taken at a *different* tip, under a label
+  claiming a predicate the author did not possess and had never run. The other party
+  spotted that the numbers did not reconcile, declined to say why — correctly, having just
+  acknowledged the rule above — and the cause turned out to be that **one row was assembled
+  from two remembered figures rather than produced by a command.**
+  Both of the author's own implementations agree at 440 prose lines when re-run at one tip,
+  so this was not a disagreement *between them*: it was a fabricated cell in a table of
+  measurements, carrying no marker to distinguish it from the two that were real.
+  **And the explanation that replaced the fabricated row was wrong too, which is the more
+  useful half.** The gap was attributed to *"the tip 12%, the frame essentially the rest."*
+  Measured on one population with one variable — 440 prose lines, one strip mode, two
+  predicates:
+  ```
+  \S  \S   ->  28
+  \w  \w   ->  18
+  ```
+  **The predicate is the entire gap, 10 of 10, and the frame contributes zero** — both
+  sweeps counted the same 440 lines. The separating lines are those with a non-word
+  character on one side of the double space: `,  and`, an em dash, a comma. Four successive
+  statements were made about this discrepancy and the one command that settles it was run
+  by neither party until the fourth.
+  The mechanism is worth more than the number. **The 12% was measured; the "therefore the
+  frame" was not.** It is a remainder, and a remainder can only be assigned to a term that
+  has been named — predicate was never in the decomposition, so it could receive nothing,
+  and its share was silently redistributed to the only other candidate. **An unnamed
+  contributor is invisible by construction.**
+  And the reason it survived two parties checking each other: **a measured component
+  launders an unmeasured decomposition.** *"It is 12%, not co-equal"* reads as a result
+  because it contains one, and it reads as *more* careful than the claim it replaced,
+  which is precisely what stops anyone reopening it — **a correction inherits the
+  credibility of the act of correcting.**
+  So, checkable rather than surveyed: **attributing a remainder is a measurement claim
+  about every cause you did not name.** *"The rest is X"* asserts that nothing unnamed
+  contributes, which is the strongest claim in the sentence and the only one nobody checks.
+  **A reconciliation table is the artefact whose entire value is that two frames have been
+  made comparable**, so a remembered row destroys precisely the property a reader trusts it
+  for — the same shape as a line-ending commit landing in the file whose value is its
+  history. The rule that follows is narrow and mechanical: **every cell in a comparison
+  table is a command that was run, or it is marked as not one.**
+  **That rule has a hole exactly one level out, and it was found in the commit after it.**
+  The completion-proof table above printed its filter as `turn0 message == summary`. Every
+  cell in it had genuinely been run — and the printed predicate returns **1, not 69**,
+  because `sessions.summary` is a 500-character truncation and full equality holds for the
+  single session whose kickoff was shorter than that. The command actually run compared an
+  80-character prefix. So: **every cell was a command, and the table still did not
+  reproduce** — the exact inverse of the fabricated row, from the same document, days
+  apart. A cell-level rule protects cells and says nothing about the row description that
+  makes the cells findable again. **A label that is not the command is a fabricated row
+  with real numbers in it.**
+  The rescue is worth more than the defect. The reviewer's first re-run returned `1`, and
+  the available move — reporting *"your 69 does not replicate"* — would have been wrong
+  while looking maximally rigorous. What prevented it was printing twelve rows instead of
+  the count. **A count that disagrees is not by itself a disagreement:** a scalar carries no
+  trace of whether the population, the predicate or the answer is what differs, which is
+  the same fact as a count carrying no trace of the pattern that produced it, and it cuts
+  toward false accusation as readily as toward false confidence.
+  Two things make this the most useful entry in the section rather than the smallest.
+  **Why it works:** a true explanation of a messy sequence has to *be* messy, because it
+  has to carry the exceptions. Tidiness is therefore evidence of **selection** — and
+  selection is the one operation that leaves no trace in its own output, which is the same
+  fact as a count carrying no trace of the pattern that produced it, one level up.
+  **And who can use it:** every other rule here is something an *author* does — enumerate
+  the population, verify the mutation, carry the derivation, report in the past tense. All
+  of them require the person most likely to be wrong to remember to be careful, which is
+  precisely the thing this section records failing at least six times. This one **a reader
+  can apply to someone else's prose with no access to the author's process.** It is the
+  only entry in the file that survives its author not co-operating.
+  **The asymmetry is the finding; what to do about it is not.** Fourteen rules that ask an
+  author to remember something, one that does not, in a section documenting at least six
+  occasions when a rule failed against the person who had just written it — both of those
+  counts are floors, assembled from instances nobody went looking for. *"So optimise for
+  rules that survive their author"* was the sentence that first went here, and it is
+  exactly the tidy conclusion the paragraph above warns about: a prescription drawn from a
+  one-versus-fourteen ratio over samples of unknown size, arriving after the question felt
+  settled. The asymmetry is recorded because it is measurable and nobody had noticed it.
+  Nothing follows from it that has been checked.
+  **Two explanations for that asymmetry were offered and both were declined, and the
+  second failure names a mechanism the rest of this section does not.** The claim was
+  *"nothing here was ever found by being careful; every catch came from a moment that
+  forced a look — a commit, a mutation, a diffstat, a probe."* Neither party had
+  enumerated the findings by discovery mechanism; both generalised from what they could
+  recall. And recall is not a neutral sample here: **a defect caught by someone simply
+  reading closely and noticing leaves no artefact behind** — no mutation, no diff, no probe
+  output — while every forced-look catch leaves exactly the kind of trace that makes it
+  memorable. **The sampling frame excludes the disconfirming class by construction.**
+  That is worse than an ordinary sample and invisible from inside the sentence, because
+  the missing cases are missing from the evidence *and* from the memory of the person
+  surveying it. The usable form is a question, and it is cheap: **before generalising from
+  remembered instances, ask whether a counter-example would have left anything to
+  remember.** If it would not, the recollection is not evidence about the population — it
+  is evidence about what leaves traces.
+  There is a structural consequence, and it rests on an argument rather than on a count.
+  **The correction neither participant can make is the one from someone with no
+  stake in the exchange.** Two parties in a review loop audit each other's *arithmetic*
+  very well and each other's *framing* poorly, because framing is where the courtesy
+  lives — and the unaudited classes above are precisely the ones courtesy operates on. The
+  evidence is one-sided: of everything found across eighteen passes, the correction that
+  neither reviewer nor author was positioned to resist came from a session working on an
+  unrelated branch, which refuted a rule that had been committed here as a universal and
+  did it with three counterexamples out of its own tooling. Neither of us would have found
+  it, and not for lack of rigour — **we had a relationship to the claim and it did not.**
+  So a third reader is not redundancy, it is the only instrument that reaches the class
+  the other instruments are socially prevented from touching.
+- **A difference is not automatically a defect, and a catalogue this size makes it feel
+  like one.** The closing entry, and the only one about when to stop. Everything above
+  arms a reader with named failure shapes, which is the point — and the cost is that a
+  reader so armed can match a shape onto anything, including cases where nothing is
+  wrong. It happened twice near the end of this work in opposite directions: a correct
+  narrow scope was nearly widened because unexplained narrow scopes had been samples four
+  times running, and two participants' measurement series differed only because they had
+  sampled at different minutes, which is the mundane case and not a fifth instance of the
+  anchor family. **Reporting the second would have been the pattern rather than a
+  finding.**
+  So the discipline includes declining. The test is the same one the rest of this section
+  asks for and it is cheap: **measure whether the difference has a cause, before naming
+  which cause it has.** Four of the discrepancies in this work had a definitional cause
+  and one had none at all; a fifth had a cause nobody proposed. A catalogue with no false
+  positives has not been used hard enough to know its own precision — and one used this
+  hard has to be willing to say *nothing is wrong here*, which is the only sentence in the
+  section that costs its author a finding.
   **An earlier version of this entry said "not one guards a claim whose checking is
   awkward", and a reviewer produced the counterexample from its own work.** A seventh
   guard exists — *check whether the fix is free before recommending it* — it is squarely
@@ -583,6 +1905,88 @@ no new dependencies.
   *Unconvertible*: the wiring claims and the alias evasion, because `GameEngine` is not
   constructible in Node, which is why the test file states them as limitations instead of
   implying it has none.
+  **A sibling session found the sharper reason, and it is not about Node.** After six
+  rounds of hardening a source-reading guard against successive spellings, a seventh
+  arrived that no spelling covers: `${{ format('{0}{1}', 'pa', 'ges') }}` resolves to a
+  protected name **without containing it**. The name is never written; it is *computed*.
+  **No list of forms closes that, because the defect is not a form.** Which is the alias
+  evasion exactly — `const x = obj.rotation; x.y = …` names nothing a regex can anchor on
+  — and it means the limitation recorded here is not *"we lack an instrument"* but
+  **"the instrument is not completable even in principle."**
+  **That was adopted from an analogy and needed a boundary, which a later round supplied
+  by proof.** *Not completable* is not a property of source-reading guards at all — it is a
+  property of a check whose **input domain is open**, and which side a given check falls on
+  is decidable before it is built:
+  ```
+  can the ways of producing the protected value be enumerated?
+
+  format('{0}{1}','pa','ges')   computation        open     -> not completable
+  \u0063oncurrency              finite escape list  closed  -> completable, and proved
+  ```
+  The escape case looked identical to the computed one — a string that decodes to a
+  keyword without containing it — and is the opposite: YAML's double-quoted escapes are a
+  **closed list**, only the hex forms can yield an ASCII letter, so banning `\xNN`,
+  `\uNNNN` and `\UNNNNNNNN` forces every keyword-spelling character to appear literally.
+  **A class closed by proof, not another form added to a list.**
+  Applied back to the alias evasion, the conclusion survives and now rests on its own
+  derivation rather than a borrowed one: an alias is produced by **arbitrary computation**
+  — `objs[i].rotation`, destructuring, a returned reference, a proxy — so the production
+  set is open and no enumeration terminates. That is worth stating separately, because if
+  the boundary had fallen the other way the analogy would have carried a wrong conclusion
+  into this file with no marker on it.
+  **The two-box split is still wrong, and this repository's own fix is the counterexample.**
+  A sibling session read `applyHeadPose` and found a third box, whose discriminator is not
+  the domain at all but **who owns the property**:
+  ```
+  open domain          not completable         pin + judgement IS the mechanism
+  closed, self-owned   reassert the invariant  detection becomes unnecessary
+  closed, other-owned  detection is the ceiling  complete, and still only a detector
+  ```
+  `applyHeadPose` and `applyChestPose` pass the Euler order as the **fourth argument** to
+  `rotation.set`, so a runtime reassignment does not survive a frame. Measured:
+  ```
+  initial       head=XYZ chest=XYZ
+  after attack  head=ZYX chest=ZYX
+  next frame    head=XYZ chest=XYZ     -> the attack does not survive one frame
+  ```
+  That is not a better detector; it is the **elimination of the need to detect**, and it is
+  available only because the property is ours to write. The escape-list case is not: a
+  workflow's cancellation is read off the **incoming** run, so the declaration that must
+  hold belongs to whoever writes the next file. **Proved complete over its escape class and
+  still permanently a detector**, because no write forecloses the edit.
+  So *closed by proof* felt weaker than it sounded for a reason that the domain question
+  cannot express. **The question to ask second is not "is the input set enumerable" but
+  "can I write the property instead of watching for its absence."**
+  That changes what a fallback is worth, and the two sides differ. Where a check *can* be
+  finished, a pin over the input set is a safety net for the one case the check misses.
+  Where it cannot, **the pin plus a human reading the diff *is* the mechanism, not a
+  backstop for one** — and the honest form of the guard stops claiming to detect danger and
+  claims only to detect **unreadability**: an input carrying a construct the checker does
+  not model is treated as able to produce the bad state. Fail-closed, with the false-alarm
+  cost paid deliberately rather than discovered later.
+  **And a hypothesis about why the wrong reason survived so long, offered as one rather
+  than as a measurement.** This limitation carried *"`GameEngine` is not constructible in
+  Node"* for hours — true, checkable, and an answer to a different question, which is the
+  subject-substitution shape again. **A limitation shipped with a wrong reason is more
+  durable than one shipped with no reason at all**, because the reason closes the question:
+  nobody re-derives an explanation that already sounds terminal. **An unexplained gap
+  advertises itself; an explained one goes quiet.** Had the entry read *"we cannot finish
+  this and we do not know why,"* it would have stayed open and someone would have asked.
+  **Its own author then produced the counterexample and retracted it, within the night.**
+  A delivery limitation of theirs shipped *with* a reason — *the store shows the turn
+  completing, not delivery* — and was reopened and closed two hours later. The hypothesis
+  survives that by predicting it: the reopening happened **by accident**, while checking
+  something unrelated. Which is the fatal part rather than the rescue. **As stated it
+  predicts both outcomes, so it is a mood, not a claim.**
+  What survives is narrower and has a test in principle: *a stated reason suppresses
+  re-derivation **by readers who did not write it***. Reasons attached versus gaps
+  reopened, by someone other than the author — and the honest report is that **neither
+  file has enough gaps to run it.** Recorded as untested rather than as supported, which
+  is the only form the evidence permits.
+  Worth noting for its shape: that limit surfaced *because* the aphorism was shipped with
+  its test, per the rule agreed two exchanges earlier. **Attaching a test to a claim is
+  also how you discover the claim does not have one** — the discipline paying out against
+  the sentence that adopted it.
   *Sentence-only, and therefore inert until someone remembers*: everything about working
   practice, including the one above. This bullet is in that third category and cannot
   argue itself out of it — which is the point. **A rule that cannot be given a call site
@@ -663,14 +2067,92 @@ no new dependencies.
   pass is split the same way: `animateBeastPosture` replaces the biped shoulder
   bend, hip counter-rotation and head yaw, all of which pull an animal apart at the
   joints when applied to a body whose skull sits a metre forward of its own pivot.
-  Note what that buys and what it does not: it *reduces* the sliding, it does not
-  remove it. `createBeast` still roots `head-pivot` at the animal rather than on its
-  ribs, so the skull slides against the ribcage under attack and stagger — 0.296
-  authored units on a wolf, 0.368 on a bear, **0.660 on a troll**, before
-  `BEAST_PROFILES.scale` turns that into world units, where a troll's head travels
-  over a metre. That is worse than the 0.66 m humanoid case that was reported.
-  Deferred deliberately — a quadruped's neck is not at `shoulderY` and guessing at
-  one is how a fix becomes a second regression — but filed, not called solved.
+- **A quadruped's neck is where its front legs are.** `createBeast` used to root
+  `head-pivot` at the animal rather than on its ribs — the same foot-rooted second root
+  the humanoid head had — and that was deliberately deferred on the argument that a
+  quadruped's neck is not at `shoulderY` and that guessing at one turns one regression
+  into two. The guess was unnecessary: `BEAST_RIG` already records `frontJointY` and
+  `frontZ`, the joint the front limbs hang from, which is a beast's shoulder and where
+  its neck starts. `buildBeastSkeleton` puts `neck-pivot` there and hangs `head-pivot`
+  off it, exactly as `buildCharacterSkeleton` does at `shoulderY`. The rest pose is
+  bit-identical — measured at 0.00e+0 on all four animals — because `torso-pivot` sits
+  at the animal's origin with an identity transform and the two offsets sum to the old
+  one.
+  Measured over the reachable pose box, in authored units and then in world units after
+  `BEAST_PROFILES.scale`, as how far the fix moves the skull at an identical pose:
+
+  | | walking | on death | in the world, dying | skull vs its own chest |
+  | --- | --- | --- | --- | --- |
+  | wolf | 0.4987 | 0.7239 | 0.6226 m | 8.3171° |
+  | boar | 0.4162 | 0.6094 | 0.5789 m | 8.3171° |
+  | bear | 0.5423 | 0.8301 | 0.9961 m | 8.3171° |
+  | troll | 0.6532 | **1.1607** | **1.5553 m** | **11.6733°** |
+
+  Swept: seven action states, three strides, three turn-leans, three breath phases, three
+  look angles, both shoulder extremes, the death family, and the three `body-pivot` scale
+  extremes the art stream can write. Held fixed: the actor's world position and facing,
+  which sit above every pivot involved; the head's own rotation in the chest-inheritance
+  column, on both sides, so the comparison is like for like; and the Euler order at XYZ,
+  which is swept over all five wrong values in its own test. **Saying which dimensions
+  are fixed is part of publishing the figure** — a sweep of 441 poses on this programme
+  held the Euler order at the one value where two implementations agree, and one of
+  51,480 states held head pitch at zero, exactly where the solve was already correct.
+  Both were large numbers measuring a single point.
+
+  The harness is proven against a known-bad configuration rather than trusted: reverting
+  `buildBeastSkeleton` to the pre-fix arrangement takes the suite to 21/7 and makes it
+  **report 2.5072 of skull travel on a troll** and name sixteen distinct breakages in one
+  message. Against the shipped rig the same figure is 0. Two readings, one of them large,
+  is what distinguishes *"the fix works"* from *"the harness measures nothing"*.
+
+  Two things about the figures this replaces — 0.296 on a wolf, 0.368 on a bear, 0.660
+  on a troll, "under attack plus stagger". **They do not reproduce**: driven at that
+  pose the old rig gives 0.4589, 0.5231 and 0.7911. And **the pose is not reachable**,
+  because the stagger branch sets `actor.action = null` and `sampleActorPose` reads the
+  attack out of `actor.action` — the identical correction the humanoid table needed, in
+  the same file, with the beast line left holding the uncorrected version. Nothing could
+  have noticed either, because no assertion evaluated them. `a beast's skull is rigid
+  with its ribs and hinges at the neck` and its companion compute every figure above.
+  The largest of them is on **death**, which no test covered at all:
+  `updateActorDeathMotion` writes `head-pivot.rotation.z = side * 0.28 * eased` and on a
+  pivot at the feet that swings the skull through the whole ground-to-skull arm, on
+  every single death. The humanoid rig had the same hole.
+  Hanging the skull off the ribs makes `lookYaw` a chest-space quantity, so the beast
+  pass now converts it with `solveHeadYaw` and damps `actor.headYaw` in body space.
+  Uncorrected that is worth 2.5583° on a quadruped and 3.0334° on a troll, and the
+  scalar `lookYaw - chestYaw` leaves 1.2799°/1.7368° and is worse than doing nothing in
+  1680 of 22684 swept states (7.4061%). Small next to the 43.64° the same mistake cost a
+  person — a beast's chest barely turns — but an error the reparenting *introduces*, so
+  not optional. `a beast's head tracks its target through its own chest` computes all
+  five of those figures, the two rejected rules included, and pins the count rather than
+  the share, which a change to the population or the box can leave untouched while the
+  count moves.
+- **Enumerate a rig's Euler orders; do not sample them.** `applyHeadPose` was shipped to
+  force `head-pivot` onto XYZ, because `solveHeadYaw` writes out the columns of
+  `Rx·Ry·Rz` by hand. That fix was scoped to the pivot named in the bug report, and the
+  chest turned out to have the identical hole, worth 30.0230° and unasserted — which is
+  the same shape as this whole entry, one level up: the humanoid fix was scoped to
+  humanoids because humanoids were what was reported. So every beast pivot is enumerated
+  and classified rather than sampled: `torso-pivot` and `head-pivot` are read by hand and
+  are written through the pose helpers; `pelvis-pivot` and `tail-pivot` take two axes each
+  and are order-sensitive only cosmetically, held by the file-wide ban on assigning
+  `rotation.order`; `neck-pivot` never rotates; and the four limb pivots take **one** axis,
+  which is the same matrix under all six orders and needs no guard. Measured over the
+  beast pose box, with the solve still assuming XYZ, the cost of a wrong order — pinned
+  per order rather than bounded, because the two pivots swap places relative to the
+  humanoid case and because a single bound sized on the loud orders hides the quiet one:
+
+  | wrong order | head-pivot | torso-pivot |
+  | --- | --- | --- |
+  | `YXZ` | 0.5036° | 0.0691° |
+  | `ZXY` | 3.7855° | 0.3583° |
+  | `ZYX` | **4.6012°** | 0.4239° |
+  | `YZX` | 3.7926° | 0.4230° |
+  | `XZY` | 2.1355° | 0.0059° |
+
+  `YXZ` is the cheapest of the five on the head **and the only one anybody would write** —
+  it is what a person reaches for when a head gimbal-locks at extreme pitch. The likely
+  edit and the detectable edit are different edits.
 - **Do not derive a look from a spawn counter.** Appearance hangs off the most
   durable identity a caller can offer — a generated spawn slot, a persisted
   companion id, a deterministic event id — so the same person comes back the same
@@ -743,8 +2225,9 @@ CharacterKit.ts
   ── rig maths ────────────────────────────────────────────────
   solveHandOffset(target, upperArm, forearm, armX, armZ, elbowX)
   ── creatures ────────────────────────────────────────────────
-  BEAST_RIG, buildBeastBody, buildBeastHead, buildBeastLimb,
-  buildBeastTail
+  BEAST_RIG, BEAST_LOOK_CLAMP, beastLookYaw,
+  buildBeastSkeleton, buildBeastBody, buildBeastHead,
+  buildBeastLimb, buildBeastTail
   buildDeerBody, buildDeerCrown, buildDeerLeg,
   buildBirdBody, buildBirdWing
   ── caravan ──────────────────────────────────────────────────
@@ -972,6 +2455,36 @@ All procedural, all allocation-free, all driven from the existing `CharacterPose
 | `boar` | Front-heavy wedge. A shoulder hump taller than its hips, a short thick neck, a blunt snout with upturned tusks, a bristle ridge down the spine, small tail. |
 | `bear` | Mass over the shoulders, round rump, short neck, small round ears, broad plantigrade paws with claws. Lumbers. |
 | `troll` | Bipedal-leaning brute: long knuckle-dragging arms, a hunched back with a stone-like ridge, a heavy jaw, a small head set low and forward, a club-heavy stance. |
+
+The rig, built by `buildBeastSkeleton` in `CharacterKit` rather than by the engine, so a
+wolf can be posed and measured from a Node test with no DOM:
+
+```text
+group
+├── **body-pivot**
+│   ├── **torso-pivot**          rotation, breath on scale.y, shoulder width on scale.x
+│   │   ├── **torso**
+│   │   ├── **leftArm** / **rightArm**   front limbs, at (±frontX, frontJointY, frontZ)
+│   │   └── neck-pivot           the joint, at (0, frontJointY, frontZ) in torso space
+│   │       └── **head-pivot**   look, lunge, flinch, turn roll, and the death loll
+│   │           └── **head**     at (0, headY − frontJointY, headZ − frontZ)
+│   └── **pelvis-pivot**
+│       ├── **leftLeg** / **rightLeg**   hind limbs
+│       └── tail-pivot → tail    answers to `cloak` in the shared rig
+├── **faction-ring**
+└── contact-shadow
+```
+
+The neck sits at the front limb joint because that is the same rule the humanoid
+skeleton follows said in a beast's vocabulary: a person's neck is at `shoulderY`, *the
+height the arms hang from*. Nothing new is authored, so nothing can drift — move a
+shoulder in `BEAST_RIG` and the neck follows it. It reads correctly on all four: a wolf's
+skull ends up 0.300 above and 0.480 ahead of its shoulder, a boar's 0.040 up and 0.660
+ahead off its shoulder hump, and a troll's 0.060 *below* its shoulder line and 0.360
+ahead — the "small head set low and forward" above, arriving out of the joint table
+rather than posed in. `neck-pivot` is a separate node from `head-pivot` for the reason
+§5.5 gives for people: it never rotates, so the chest's shoulder width can be divided
+back out on it in the frame it was applied in.
 
 ### 6.2 Fauna
 

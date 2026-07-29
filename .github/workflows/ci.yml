@@ -47,3 +47,13 @@ jobs:
 
       - name: Fact preservation check (scripts/strategy-facts.mjs)
         run: npm run docs:facts
+
+      # The verification instrument's own controls. `npm run verify` needs a
+      # remote and `gh`; `--mutate` is pure and repo-local. It runs both halves:
+      # every control's live assertion, and its mutation. Running only the
+      # mutations was a measured defect — a reviewer stubbed `sweepBounds` to a
+      # constant and this step stayed green while four controls were failing
+      # their real assertions, because a corruption where both the check and its
+      # mutation are false is invisible to the negated expectations alone.
+      - name: Verification controls (scripts/verify.mjs --mutate)
+        run: npm run verify:mutate

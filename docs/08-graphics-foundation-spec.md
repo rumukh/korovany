@@ -643,11 +643,16 @@ the following as stable:
 - `bakeOutlineNormals` before `applyOutline` for anything with hard edges.
 - Deterministic variation comes from `artVariation(worldSeed, label)`; labels are
   namespaced by the caller (`npc:torso`, `props:cart`).
-- Character rig names are load-bearing and unchanged: `body-pivot`, `torso-pivot`,
+- Character rig names are load-bearing: `body-pivot`, `torso-pivot`, `neck-pivot`,
   `head-pivot`, `pelvis-pivot`, `torso`, `head`, `leftArm`, `rightArm`, `leftLeg`,
   `rightLeg`, `weapon`, `shield`, `faction-ring`. Animation, dismemberment,
-  prosthetics and gore all address them by name. Add children freely; do not rename
-  or reparent.
+  prosthetics and gore all address them by name. Add children freely; do not rename.
+  **Reparenting is owned by the two skeleton builders and forbidden everywhere else** —
+  `buildCharacterSkeleton` and `buildBeastSkeleton` in `CharacterKit` decide where each
+  pivot hangs, and both have had to move `head-pivot` off the actor's origin and onto a
+  neck. A consumer that re-parents one is invisible to every rig measurement in the
+  suite, because those build the skeleton directly; it can be scoped to a single role or
+  a single animal, and then only that one comes apart.
 - `GeneratedWorldRuntimeOptions.art` accepts a library; when omitted the runtime
   builds and disposes its own, which is what keeps the Node tests working.
   `GeneratedWorldRuntimeOptions.outlineDressing` opts structural dressing into ink.
@@ -918,8 +923,28 @@ It was not. Every cancellation in this repository's history — **four**, not on
 | 30355639257 | `1ff6ed4` | cancelled | **0 steps** |
 
 with the control that makes those zeros mean anything: a successful run reports `build` 10
-steps and `deploy` **3**. The API does report deploy's steps when deploy runs, so the zeros
-are real and no deployment has ever been interrupted here.
+steps and `deploy` **3**. The API does report deploy's steps when deploy runs.
+
+That conclusion held. **The reasoning behind it did not, and a reviewer's larger population
+is what showed the difference.** They enumerated all 82 recorded Pages runs since the
+repository was created — run numbers 1–82 with no gaps, 77 success / 4 cancelled / 1 failure
+— fetched every jobs endpoint with `filter=all`, and found the 77 successful deploy jobs
+each recording exactly three steps. That is a **77-instance positive control** where mine
+was one.
+
+It also produced the counterexample to my inference. The single failed run's deploy job was
+**skipped**, and it reports `steps: []` too. So empty steps is not a synonym for "never
+executed" — it is equally what a skipped dependant looks like. My argument had been *zeros
+plus one control therefore never ran*; the correct argument is zeros **plus no runner, plus
+no artifacts, plus no `github-pages` deployment record** for those four SHAs. Same verdict,
+different support, and only the second kind survives contact with the failure case.
+
+Restated at the strength it was actually measured:
+
+> **Across all 82 recorded Pages runs, no deployment job is recorded as starting and then
+> being cancelled.** Three of the four cancellations were runner-assigned builds; the fourth
+> was cancelled before a runner was assigned. "Four builds did work and were abandoned" was
+> never measured.
 
 > `gh run list --conclusion cancelled` answers *was a run cancelled*. It was read as *was a
 > deployment interrupted*.
@@ -941,6 +966,16 @@ only the newest content is served. **The same scheduler behaviour is a defect in
 workflow and the desired behaviour in the other**, which is why the `ci.yml` fix was not
 copied across.
 
+**That argument assumes the event population is pushes to `main`, and it is not.** The
+workflow also carries `workflow_dispatch`. A manual run from a non-`main` ref enters the same
+fixed `pages` group, can displace a pending `main` push under `queue: single`, and is only
+rejected *afterwards* by the environment's `main`-only branch policy — by which point the
+push it replaced is gone. An old re-run can arrive late the same way. All 82 recorded runs
+were pushes, so this has never happened, but "`main` is linear" is a statement about one
+trigger of two. Neither `single` nor `max` addresses it; a current-`main`/SHA freshness check
+would, and none is proposed here. **Recorded as a known gap rather than fixed**, because the
+fix is a different change from the one this section is about.
+
 The guard is `tests/deployWorkflow.test.ts`, and its ceiling is stated in the file: it reads
 the input handed to the scheduler and cannot observe the scheduler. The pending behaviour in
 particular is **unobservable from run history, because `cancel-in-progress: true` prevents
@@ -948,12 +983,939 @@ the pending state from arising at all** — the setting suppresses its own evide
 check can fail for is the realistic case: somebody edits the flag back.
 
 It parses `concurrency:` blocks by indentation rather than grepping for the string, so a key
-relocated under a job-level block is caught, and it reports the inline mapping form as a
-failure rather than passing on syntax it cannot read. Six doped inputs — and **the sixth
+relocated under a job-level block is caught. Six doped inputs — and **the sixth
 found a hole in the detector**: the Pages-deployment pattern anchored `uses:` at line start,
 so a step written compactly as `- uses: actions/deploy-pages@v4` was invisible to it. The
 real file uses the other form, so every run against this repository would have passed while
 the check was blind to the exact evasion it was written for.
+
+#### Doping the compiler, since nobody does
+
+The finding above — that `tsc --noEmit -p tsconfig.json` type-checks zero files — surfaced
+by accident, inside an argument about something else. It generalises to a question nobody
+asks: **a compiler's name is taken as its specification, so a vacuous one survives
+indefinitely.** The doping rule in this document was written for detectors we build. It
+had never been pointed at a tool we did not write, and `npm run build` runs two
+type-checking commands, neither of which had ever been shown capable of failing.
+
+Both were doped. A blatant type error was appended to one file on each surface the build
+claims to cover; the mutation's application was confirmed before its result was read, and
+every file was restored byte-exact:
+
+| doped file | `npm run build` | first error |
+| --- | --- | --- |
+| `src/game/art/index.ts` | **exit 2** | `TS2322` naming the file |
+| `tests/deployWorkflow.test.ts` | **exit 2** | `TS2322` naming the file |
+| `scripts/AudioDirector.test.ts` | **exit 2** | `TS2322` naming the file |
+| `vite.config.ts` | **exit 2** | `TS2322` naming the file |
+
+So `tsc -b` genuinely checks `src` and `vite.config.ts`, and `tsc --noEmit -p
+tsconfig.test.json` genuinely checks `tests` and `scripts`. **The gate is sound; only the
+ad-hoc short form is vacuous.** That is a negative result, and it is one that is normally
+never earned — the reason nobody had it is that there was no reason to doubt it, which is
+precisely the condition the vacuous invocation had been surviving under for the life of
+the repository.
+
+The population, because four passes prove only four files: **84 tracked `.ts`/`.tsx` files,
+84 under an `include`** — 48 `src`, 34 `tests`, 1 `scripts`, plus `vite.config.ts`. None
+orphaned.
+
+No guard was added for that last number, deliberately. It could fire only when a TypeScript
+file is added outside `src`, `tests` and `scripts` — a location nothing imports and `vite`
+does not bundle, so it would gate a scenario with no consequence. **An instrument that can
+only fire on something harmless is nearer to theatre than to a gate**, and §6's own rule
+cuts that way: a documented absence beats a check that cannot fail for a reason worth
+failing over.
+
+#### The guard was reading the wrong population, and a probe with no Pages in it proved it
+
+The check shipped above asserts that no workflow can cancel a Pages deployment in flight.
+It was doped six ways before it shipped and it caught all six. It was still wrong, and the
+way it was wrong is the defect this section has catalogued more than any other: **a true
+answer about the wrong subject.**
+
+Its first line filtered the population — `if (!DEPLOYS_PAGES.test(file.source)) continue` —
+so it opened a workflow only after finding `actions/deploy-pages` in it. Every doped case
+was therefore a mutation of a *deploying* workflow, and every one was caught. The question
+never asked was whether the file that does the cancelling has to be the file that deploys.
+
+It does not. The schema is explicit, and it was read rather than recalled:
+
+> a run waits when "another job or workflow using the same concurrency group **in the
+> repository** is in progress", and `cancel-in-progress: true` cancels "any currently
+> running job or workflow **in the same concurrency group**".
+
+A concurrency group is repository-wide. **The hazard is membership of the group, not
+authorship of the deployment** — so the workflow able to kill a deployment need not mention
+Pages anywhere, and a workflow that mentions Pages nowhere was the one file the check was
+guaranteed never to open.
+
+Constructed and measured, against the real check with the real runner:
+
+| `.github/workflows/zz-probe-caller.yml` | before | after |
+| --- | --- | --- |
+| `group: pages`, `cancel-in-progress: true`, no Pages reference | **exit 0, 2/2 pass** | **exit 1**, `joins Pages group \`pages\` with cancel-in-progress \`true\`` |
+
+The scan now reads every workflow and the group selects it. Two details were worth getting
+right rather than fast:
+
+- **Absent means safe.** The documented default for `cancel-in-progress` is `false`, so a
+  workflow sharing the group without the key cannot cancel anything and must not be
+  reported. The deploying workflow is still held to the stricter rule — present *and*
+  `false` — so that deleting the line fails rather than falling back to a default that
+  happens to be correct today.
+- **A widened scan can be wrong in the other direction.** A check that flags everything
+  passes its own doped cases for the wrong reason and gets switched off the first time it
+  blocks something legitimate. A third test pins the cases that must stay quiet, including
+  the live one: `ci.yml` cancels superseded runs on purpose, and it asserts that `ci.yml`
+  still cancels via an expression before concluding anything from its silence.
+
+Two things are worth carrying out of this beyond the fix. First, **six doped inputs bought
+less assurance than they appeared to**, because all six were drawn from inside the filter
+they were meant to test; doping proves a detector fires, and says nothing about the
+population it was pointed at. Second, the probe run that first exposed this returned
+**exit 1 for a missing `tsx` package**, which is byte-identical to the exit code of a real
+assertion failure — the flattering reading was one unprinted line away from being published
+as "the guard already catches it".
+
+**Then the fixed guard was doped again, and it had two more.** A workflow joining the group
+with `concurrency: { group: pages, cancel-in-progress: true }` on one inline line **passed**,
+while the identical values in block form failed. The parser's inability to read the inline
+form had been documented as acceptable on the grounds that an unreadable block counts as no
+block and no block is itself a risk — which is true of the *deploying* workflow and false of
+every other one, where an unreadable block simply produced no finding. **The same blind spot
+was fail-closed on one file and fail-open on the rest**, and the documentation asserted the
+first while the population had just been widened to the second. And `cancel-in-progress:
+'false'` — a workflow explicitly declining to cancel — was **flagged**, because a quoted
+scalar is not the string `false`. That is the false alarm that gets a gate deleted rather
+than fixed.
+
+| probe | before | after |
+| --- | --- | --- |
+| inline form, `group: pages`, cancel true | exit 0, **evades** | exit 1, caught |
+| block form, same values | exit 1, caught | exit 1, caught |
+| shares group, `cancel-in-progress: 'false'` | exit 1, **false alarm** | exit 0, quiet |
+
+Both fixed: the inline form is parsed, and scalars are unquoted and compared case-insensitively.
+
+The count that matters is three. **Three rounds of defects in one 300-line check, each found
+only by doping it again after declaring it sound**, and the second round was introduced by
+the fix for the first. A gate is not a thing you verify once; **the only evidence that a
+check works is a failing run you produced on purpose, and it expires the moment the check
+changes.**
+
+**Then a reviewer found a fourth**, and it settled the design argument. `uses:
+"actions/deploy-pages@v4"` — valid YAML, quoted, naming the identical action — was invisible
+to the detector, so a second Pages-deploying workflow with the flag reversed passed the whole
+gate. Reproduced here: exit 0.
+
+Four rounds, and every fix had been a fix to a *form*: unquoted `uses:`, compact `- uses:`,
+block mappings, inline mappings, quoted scalars. **There is no argument that the list of
+forms is now complete, and each round had been declared sound with the same confidence as
+this one.** A hand-rolled YAML parser has an unbounded blind-spot surface, and the failure
+mode is always silence.
+
+So the universal claim was withdrawn. The test no longer asserts *"no workflow can cancel a
+Pages deployment"* — it asserts *"no workflow **on disk**, in a form this check can read"* —
+and the gap that leaves is closed from the other side, by pinning the population:
+
+- **The set of workflow files is asserted exactly.** Any workflow added, removed or renamed
+  fails, in whatever dialect it is written, and a person must open it, check its concurrency
+  group against the Pages group, and update the list. A parser meeting an unfamiliar spelling
+  fails silently; **a file list fails loudly and cannot be evaded by syntax.**
+- **The deployment's effective concurrency is pinned by value** — group `pages`, flag
+  `false` — so a change survives even if the structure moves somewhere the parser reads
+  differently.
+
+That is a weaker claim and a stronger instrument, which is the trade this section has been
+recommending to other people since its first entry. **The check that can be defeated by an
+unfamiliar syntax was replaced by one that cannot, at the cost of admitting it only detects
+change rather than danger.**
+
+One coda, because it is the same error one level up. I concluded that reviewer had **never
+run** — `updated_at` frozen thirteen seconds after creation, nothing after a direct probe —
+and I reported that to two sessions as a finding about the delegation mechanism. I even ran
+a positive control first: another session, demonstrably alive, showed a current `updated_at`.
+**That control established the field *can* move, not that it moves whenever a session is
+working** — sensitivity, not completeness, which is precisely the distinction published three
+paragraphs above it. The reviewer was working the entire time and returned the best-evidenced
+findings of the day. **I applied my own newest rule to a detector I built and failed to apply
+it to the one I was using to judge a colleague.**
+
+The session store settles the timings, and they are worse than that account. A sibling
+resolved them rather than accept either party's recollection; re-derived here, the reviewer's
+first turn **completed** carrying a `Request changes` verdict about half an hour before I
+published that it had produced nothing, with `updated_at` never moving off thirteen seconds
+in between. The reading turns on one fact worth stating because I had it backwards in my own
+notes: `turns.timestamp` is the turn's **completion** time, not the arrival time of its
+message. Proof is that turn 0's `user_message` is byte-identical to `sessions.summary` — the
+kickoff, present at creation — yet is stamped twenty-four minutes after creation for that
+session and seventy-two for this one. **A kickoff cannot arrive an hour after the session that
+was created holding it.**
+
+The rung is not the mistake, it is which of two instruments got reported. My inbox was empty,
+and that was true, checkable by me, and the only thing I actually observed. `updated_at` was
+frozen, which meant nothing. I published *"it has produced nothing"* — a claim about another
+party's internal state, for which I had no instrument at all — when the supported sentence was
+*"it has sent me nothing."* **Both render in English as "nothing has happened," and only one of
+them was mine to say.** That is the same shape as the duration error recorded against me the
+same evening, where a correctly measured elapsed time was reused one clause later as a report
+latency: *a quantity true of one subject, restated about a different subject, in words that fit
+both.* Neither has a tell, and in both cases re-resolving the source would have confirmed the
+measurement and missed the substitution.
+
+One limit stayed open for two hours, and it is worth keeping as written before it was closed:
+*the store shows the reviewer's turn completing, not whether that turn was delivered anywhere,
+so "it had produced a verdict" is established and "it had sent one" is not.* The distinction is
+the same one this coda is about, and it would have been poor form to lose it while writing the
+entry.
+
+That limit is now closed, and closing it produced a better instrument fact than the entry it
+was blocking — and then, hours later, a defect in the fact itself. Three consecutive turns in
+this session are stamped within **five milliseconds** of the clock reading on the message that
+opens the *next* turn — the same offset three times, which is not three independent events. A
+cross-session message written while the recipient is busy is therefore held and released at the
+recipient's turn boundary, so the two readings are one event. That gives delivery a bound where
+before there was none. The verdict was produced by
+`21:56:55.065`; it was demonstrably *not* in this session's context during the turn that ended
+`22:27:00.533`, since that turn published the opposite; and it is the message that opened the
+turn ending `22:45:44.615`. Delivery therefore falls in that window, and the gap between
+produced and delivered is **at least thirty minutes and five seconds** — a bound, not a point,
+because the exact instant is no longer recoverable. The two-instrument distinction stops being a
+distinction and becomes an interval with two named ends. The corollary is worth more than the
+closure: **the timestamp on an incoming message is when the reader became free, not when the
+sender sent it.** Correctly measured, of a different subject — the same class, discovered inside
+the instrument being used to audit that class.
+
+The defect in it is the direction, and the direction was never read. The paragraph above
+originally said the turn was stamped four milliseconds **before** the clock on the next
+message; the store says the opposite, five milliseconds **after** it, in five pairs across two
+independent session stores — two re-measured here, three reported by a sibling from its own.
+The inversion is not a transcription slip, because it is precisely the direction the account
+required: a message delivered *at* completion carries a clock reading at or after the stamp and
+never before it. **The wrong sign and the wrong mechanism are one error, and each made the
+other look supported.** A sibling proposed the competing account — the turn row is finalised
+when the next input arrives, making the offset a write latency — which fits the identical rows
+and dies on two counts: twenty-one sessions in this store had their final turn before
+`2026-07-27T00:00Z` and every one has its final turn stamped, a row that account cannot write;
+and the reviewer's turn 1 is stamped `21:58:27.392` while the message opening its turn 2 was
+sent no earlier than `22:07:09.222`, eight minutes forty-two seconds clear. What survives is
+neither: the next turn's clock and the previous turn's row are two reads bracketing one
+boundary, in that order, five milliseconds apart.
+
+The rung is that **the corollary never needed the mechanism.** The alignment alone fixes the
+incoming clock to the recipient's boundary; the mechanism was added because it made the
+sentence sound explained, and the added part is the only part that was false. The observation
+was sufficient before it was justified, and justifying it introduced the sole refutable claim
+in the paragraph. **Over-justification is a risk and not a courtesy.** It also has a companion
+already recorded three rungs above — the evidence that killed the competing account is the
+nine-minute reviewer case, collected an hour earlier for an unrelated question and never
+re-read against this one. *Evidence is filed under the question that prompted it,* and nothing
+prompts a second reading.
+
+The rung, however, is the near-miss that fact caused. Reading three four-millisecond offsets, I
+concluded the field was arrival rather than completion, that the paragraph above was wrong, and
+that a sibling who had adopted and committed the reading needed telling. **It survives, and the
+discriminating case was cheap:** if the stamp were the next message's arrival, the reviewer's
+turn 1 stamp of `21:58:27.392` would be when this session's status check landed, and that check
+was sent inside a turn bounded by `22:07:09.222` and `22:27:00.533` — eight minutes forty-two
+seconds clear, minimum. What made the error possible is that **three readings existed and only
+two were ever compared.** The original proof — a kickoff cannot be stamped an hour after the
+session created holding it — eliminates *arrival of the turn's own message* and says nothing
+whatever about *arrival of the next one*. **Eliminating one alternative is not confirming
+yours unless the space has been enumerated**, and a proof that discriminates against the
+reading already rejected feels exactly as conclusive as one that discriminates against the
+reading held. The control was
+in this session's own conversation the entire time and cost a single query, which is the same
+free-and-therefore-invisible shape recorded twice above.
+
+A second discriminator exists, it is independent of that one, and it was inside a dataset both
+sessions had already swept: **fifteen sessions have exactly one recorded turn, and all fifteen
+turn 0 rows carry a timestamp** — all fifteen created on an earlier calendar day, so none is a
+turn still in flight. A field meaning *when the next message arrived* cannot be populated when
+there is no next message. Nobody ran that query, and the reason is the point: the sweep that
+produced those rows was aimed at *how large is my sample*, and the evidence for *how many
+readings survive* was in the same table. This is the sharp edge of the rung, because the
+obvious repair does not reach it. A sibling widened the original proof from three sessions to
+sixty-nine, which is the complete remedy for a badly aimed sample and **no remedy at all here**
+— every one of the sixty-nine is consistent with both surviving readings, since each predicts a
+large positive delta from creation. **Widening the population fixes the sample; it cannot fix
+the space.** The two failures are orthogonal, and only the first is repairable after the fact
+by collecting more. So the pair of rules this section already carries — consult a primary
+source, and name the population you consulted it on — needs a third that neither implies:
+**enumerate the readings the answer could have.** A query answers the question asked of the
+data; enumerating the space is what makes it the right question.
+
+That sentence originally read *ten of them created on earlier days*, and a sibling recomputed it
+rather than reading it: the day-boundary predicate returns **fifteen** in UTC and fifteen shifted
+to local, while `julianday('now') - julianday(created_at) > 1` returns ten. **Ten is "older than
+twenty-four hours", which is not what the sentence claimed.** Third instance in one session of
+the same defect — *the cells are correct and the label is not the command that produced them* —
+and the first where the mismatch ran against its author: the stricter test was the right one to
+run for the purpose, the looser label undersold the evidence, and **an understated number is a
+self-critical claim, which nobody has an interest in auditing.** The direction rule predicted
+exactly this and it still went unnoticed for two hours.
+
+The same sibling proposed that **enumerating the space requires a second party**, since a solo
+author can widen a population indefinitely without leaving their own hypotheses. The claim is
+too strong and this session's own record refutes it: the third reading of the timestamp field
+was raised here, against a position already committed here; the aim defect in the four-case
+sample was named here at 23:39:05, in the same turn that replaced it with a sixty-nine-row
+sweep; and the inverted sign above was found by its own author. What every one of those has in
+common is sharper than the rule it replaces — **none came from reflection; each came from
+running an instrument for an unrelated purpose and reading a row nobody asked for.**
+Enumeration is a side effect of measurement, not of thinking harder. That strengthens the
+sibling's practical conclusion rather than weakening it: shipping a reproduction with a claim
+works *because a reproduction is an instrument*, and instruments generate hypotheses in whoever
+runs them — including the person who built one to defend a claim.
+
+That list was audited by the sibling it names, which reported one case as misattributed to it.
+The finding is right and the sentence above is what made it available: *the session that ran
+it* names nobody, so each reader resolved the pronoun toward the other. **An ambiguous
+attribution is not read as ambiguous; it is read as settled, in whichever direction the reader
+sits.** Both offenders are now named instead of referred to, and the object is corrected too —
+the aim defect was in the four-case sample, while the sweep was its remedy.
+
+The store settles it in one column neither party had queried. The sixty-nine-row population
+first appears here at 23:39:05, inside the same turn that names the aim defect; the sibling
+reproduces it five minutes later and credits this session by name; and half an hour after that
+its own ledger assigns the named-population leg to itself. So a misattribution exists and it
+ran toward the sibling, not away from it, which is the reverse of the direction offered
+alongside the correction — and that direction mattered, because the rule being applied was that
+self-diminishing claims go unaudited.
+
+The mechanism is worth more than the correction. The sibling did query the store, and quoted
+two real rows; the excerpt of this session's turn stopped at the end of the aim-defect
+sentence, and the next paragraph of the same turn is the eighty-row count that answers who ran
+the sweep. **The excerpt was cut at the boundary of the question being asked**, so evidence
+sufficient to settle a second question was collected and then trimmed away before it could.
+That is the filing rule one level further in than it has appeared before: not which query gets
+run, but how much of a returned row gets read.
+
+The rule was restated a second time as a count — *four for four tonight* — and the count is
+where it becomes visible why it survived. Of the eight commits from `6ec675a` to `e00a231`,
+four record a correction that no incoming message had named, and all four reached the sibling
+as messages from here. The same four events are self-generated from one seat and second-party
+from the other, and only the receiving seat leaves a record. A count taken over hypotheses that
+arrived can only ever be N for N, because arrival is the property being counted: the population
+was selected by the predicate. That is the aim defect once more, inside the message adopting
+the three legs as a rule, which is the strongest evidence yet that it is structural rather than
+careless — it recurs in the act of writing down the rule against it. The consequence is
+procedural. The correct population cannot be assembled by either party alone, because a
+self-generated hypothesis leaves no trace in the channel that would display it; each side has
+to volunteer its own, and that is simultaneously the only evidence that can refute the rule and
+the one form nobody is prompted to produce.
+
+One consequence for the direction rule stated elsewhere in this section: the unaudited direction
+is not self-criticism as such. A reviewer here withdrew their own blanket rule — maximally
+self-critical — and it was checked twice, by them and independently here, because **it shipped
+with a reproduction attached.** A claim goes unaudited when nobody has an interest in building
+the instrument for it; when the claimant supplies the instrument, the direction stops mattering.
+The actionable form is not *be suspicious of your own bad news*, which is another discipline,
+but **ship the reproduction with the concession**, which is structure and works both ways at
+once.
+
+#### Round five: the pin fired, and firing for the wrong reason is its own defect
+
+A second reviewer, reading the pinned-population design, went after the thing the pin was
+supposed to make safe to leave imperfect: **the group name.** Two spellings of it defeated the
+comparison on a branch that had already survived four rounds.
+
+| group as written | GitHub sees | this check saw | test named for the property |
+| --- | --- | --- | --- |
+| `pages` | the deployment's group | match | fails, correctly |
+| `"pages"` / `'pages'` | the deployment's group | match | fails, correctly |
+| **`PAGES`** | **the deployment's group** | **different group** | **passed** |
+| **`${{ 'pages' }}`** | **the deployment's group** | **different group** | **passed** |
+
+GitHub matches concurrency groups **case-insensitively**. `PAGES` is not a near-miss or a
+trick; it is the deployment's own group, and a workflow declaring it with
+`cancel-in-progress: true` could cancel a deployment while the test asserting that no workflow
+can do so passed.
+
+**The gate did fail — on the population pin, not on the hazard.** That is the finding, and it
+is a defect in the pin's own theory rather than a vindication of it. A pin reports *"a workflow
+was added"*, which is the message a maintainer resolves by **reading the workflow, deciding it
+is fine, and updating the pin.** The one time that judgement is wrong is exactly the time the
+group check needed to be right, and it was not. A backstop that fires for a reason the
+maintainer is expected to dismiss is one honest mistake away from being no backstop.
+
+So the pin stays and the readable subset was made correct: group comparison is
+case-insensitive, folded and literal block scalars are resolved to their value, and a group
+built from an expression is treated as able to produce any protected group whose name appears
+inside it.
+
+**The reviewer's own recommendation was measured and rejected on evidence.** They asked for
+dynamic groups to be handled *conservatively* — any unresolvable group treated as dangerous.
+Implemented as stated, that fails the build on this repository: `ci.yml` cancels deliberately
+under `group: ${{ github.workflow }}-${{ github.ref ... }}`, which is unresolvable and
+harmless, and three tests go red on the real file set. The substring rule is the weaker form
+that survives contact with the repository it has to run in, and the case is now a permanent
+negative control beside the positives.
+
+Each of the three fixes was reverted individually against the new test to confirm it fails,
+with the mutation's application printed before the verdict was read: reverting the
+case-insensitive compare fails on `PAGES`; disabling block-scalar resolution fails on the
+folded form; widening the expression rule to *"unreadable means dangerous"* fails on `ci.yml`.
+**Five rounds, and the only reason there is a fifth is that somebody doped the part the design
+had declared safe to leave imperfect.**
+
+#### Round six: the pins covered the file set and one file's values, not the gap between
+
+The same reviewer then found what neither pin reaches — **an edit to an existing pinned
+workflow.** Changing only `ci.yml`'s `group:` to `"group": pages`, leaving its cancelling
+expression untouched, keeps the file set identical and the deployment's values identical, so
+neither pin fires. `"group"` is the same property as `group` to any YAML parser and was a
+different one to this check, whose key pattern accepted no quotes. **Five tests passed while
+CI could cancel a deployment.**
+
+That is the sixth defect and the sixth to be a defect in a *form*. Answering it with a seventh
+spelling would repeat what the previous five demonstrated does not converge, so the answer is
+both halves at once:
+
+- **The parser learns the form**, because round five established that the readable subset has
+  to be correct underneath the pins rather than excused by them. Quoted keys are read, on the
+  `concurrency:` line and on its children.
+- **A pin that does not parse at all.** Every line in every workflow that mentions concurrency
+  is collected as text — in any dialect, quoted or not, nested anywhere — and compared against
+  a fixed list. A spelling this file has never seen still changes the text. **The failure mode
+  of a parser is silence; the failure mode of a string comparison is noise, and noise is the
+  survivable one.**
+
+It is deliberately not a file hash. Comment-only lines are skipped and trailing comments
+stripped, both verified by negative control: editing the rationale comment in `ci.yml` and
+changing `permissions: contents: read` to `write` leave it green, while all three group
+mutations fail it. **A gate that fires on unrelated edits gets disabled, and a disabled gate
+is the one failure this catalogue cannot recover from.**
+
+One instrument note, because it nearly produced a false negative. A probe script threw while
+formatting output *after* writing the mutation and *before* the restore in its `finally`, so
+the next run's baseline was silently the mutated file. It surfaced only because the harness
+prints whether each mutation landed and one reported `False` for an edit that should have
+applied — **the restore had already made it true.** The `APPLIED:` print earned its place
+again, this time by catching contamination rather than absence.
+
+#### Round seven: the pin caught all three, and that is not the same as the guard working
+
+The same reviewer returned with three more mutations of `ci.yml`. The text pin caught **all
+three** — its first live test, and it passed. The parser caught **one**. That gap is the whole
+entry, because a pin that fires says *"the concurrency lines changed"*, and a maintainer
+resolves that by reading the diff and updating the pin. **The instrument that fires and the
+instrument that understands are not the same instrument, and only one of them makes the
+maintainer's next move the right one.**
+
+| mutation on `ci.yml` | parser | text pin |
+| --- | --- | --- |
+| `"group": pages` — quoted key | **caught** (round six) | caught |
+| `group: >2-` / `>-2` — block header with an indentation indicator | missed | caught |
+| `${{ format('{0}{1}', 'pa', 'ges') }}` — assembles the name without spelling it | missed | caught |
+
+The block-scalar miss is a readable-form defect and was fixed as one: the YAML header carries
+an optional indentation digit in either order, and the check accepted neither.
+
+The `format` miss is different in kind and is the first defect here that **cannot** be answered
+by learning another form. No list of spellings closes it, because the group is not spelled —
+it is computed. So the rule was restated as being about *readability* rather than danger: **an
+expression carrying a construct this check does not model is treated as able to produce the
+protected group.** A function call is the detectable form of "not modelled".
+
+That is fail-closed, and the price is stated in the source rather than discovered later: a
+legitimate `format('ci-{0}', github.ref)` group is reported too. It is defensible only because
+of a distinction this document made two rounds earlier and had to apply against itself — **it
+fires on a concurrency edit whose safety genuinely cannot be decided here, not on an unrelated
+edit.** The `permissions: read → write` control stays green. A gate that cries about the
+subject it guards is survivable; one that cries about everything else is not.
+
+Both were measured before shipping, and the measurement is the reason the rule is this narrow
+rather than the reviewer's original. **Blanket "every dynamic expression is dangerous" turns
+three tests red on the real file set** — implemented and confirmed independently by both
+parties, and withdrawn by its author. The function-call form turns **none** red, because no
+workflow here calls a function in a group.
+
+And it closes one bypass, not the class. Measured, not assumed: `${{ github.event.inputs.g }}`
+and `${{ env.GROUP }}` name nothing and call nothing, can resolve to anything, and remain
+invisible to the parser — **caught by the pin alone.** Which is the honest summary of seven
+rounds: *the parser is a heuristic that gets better, and the pin is the thing that is actually
+load-bearing.* It took six rounds of trying to complete the parser to be able to write that
+sentence.
+
+#### Round eight: the pin was defeated, and the defect was the claim made for it
+
+One round after calling the pin load-bearing, the same reviewer defeated it. A job keyed
+`"\u0063oncurrency"` with `"\u0067roup": pages` is valid YAML that decodes to a cancelling
+block, and **contains none of the words the pin searches for**. Seven of seven passed. They
+verified the decoding against the runner's own parser dependency rather than the spec alone,
+and caught a contamination in their first attempt — a probe named *"Encoded concurrency
+probe"*, whose display line tripped the pin for the wrong reason. **A probe containing the word
+the detector looks for tests the probe, not the subject**, and that one was caught before it
+could be reported as a pass.
+
+The defect is not the missing escape form, it is the sentence shipped alongside the pin: *"this
+pin does not parse."* **It does. A keyword filter is a lexer, and it has exactly one structural
+assumption — that the words appear literally in the source.** The assumption was real, was
+never stated, and was therefore never tested. Every earlier round in this section is a check
+that was wrong about YAML; this is the first one that was wrong about *itself*.
+
+So the fix is to make the assumption a test rather than teach the pin one more encoding. YAML's
+double-quoted escapes are a closed list, and **only the hex forms can produce an ASCII letter**
+— the named escapes yield control characters, space, slash, backslash, quote, NEL, NBSP, LS and
+PS, none of which can spell part of a keyword. Rejecting hex escapes closes the letter-hiding
+class rather than one member of it, which is the first fix in eight rounds that can say so.
+
+The cheaper rule was measured and rejected. Both workflows contain **zero backslashes of any
+kind**, so banning all of them would also have been free today — and would fire on the first
+multi-line `run:` or Windows path anyone adds. Both were run as controls and both stay green
+under the hex rule. *Free today* is not the test; **what it costs the day someone writes
+ordinary YAML is the test**, and that is the same reasoning that kept the blanket expression
+rule out one round earlier.
+
+One member is examined and deliberately left open, on the terms this section now uses for
+things it cannot close: a double-quoted scalar may carry a line continuation, so a keyword can
+be split across two lines where no per-line scan sees it. As an implicit mapping key that is
+not valid YAML, and a rule against trailing backslashes would fire on every multi-line `run:`
+in the repository. Recorded, not guarded.
+
+A closing qualification, because *closed by proof* sounded stronger than it is. A sibling
+session reached the same boundary from the other side and went one step further than this fix
+can: their head-pose write passes the Euler order as an argument on every frame, so a runtime
+reassignment is overwritten rather than detected — **an invariant that reasserts itself, not a
+guard that can be walked around.** That option is unavailable here, and the reason is not the
+domain. `cancel-in-progress` is read off the *incoming* run, so a Pages deployment cannot
+declare itself uncancellable; the property that must hold belongs to whoever writes the next
+workflow file. So the enumerability boundary has three boxes rather than two: an **open** domain
+is not completable and the pin plus a maintainer's judgement is the mechanism; a **closed,
+self-owned** property should be reasserted, which removes the need to detect at all; a
+**closed, other-owned** property admits a provably complete detector and nothing better. This
+round is in the third box. **The discriminator is not the size of the domain, it is who owns
+the property** — which is why a complete detector here is still permanently a detector.
+
+#### Round nine: the rule was right and the scope was the file
+
+The escape rule shipped in round eight scanned every line of every workflow, and the next round
+rejected it from the opposite side: `run: printf '\x1b[32mAll gates passed\x1b[0m\n'` is ordinary
+shell, YAML never decodes it, and the gate fired on it and named it. **That is precisely the cost
+the commit shipping the rule said the rule avoided.**
+
+The rule was not wrong; its scope was the file rather than the assumption. Two facts narrow it to
+exactly what the pin needs, and both are closed rather than enumerated. First, **YAML decodes
+escapes only inside double-quoted scalars** — plain and single-quoted scalars carry backslashes
+through literally, so `'\u0063oncurrency'` is simply a key of that name and collides with nothing.
+Second, **a keyword can only be hidden from the pin in a key**: the pin holds an exact list of
+lines mentioning the three words, and any line carrying one of them as a *value* still carries its
+own key literally, so it stays on the list. Only escaping the key removes the line. The scan is
+therefore double-quoted mapping keys, and YAML has exactly two key syntaxes — implicit
+(`key: value`) and explicit (`? key` / `: value`) — which keeps the enumeration closed. Values,
+block scalars and shell source are no longer read at all.
+
+**The lesson is about the controls, not the rule.** Banning all backslashes was measured and
+rejected last round against a shell continuation and a Windows path, and both stayed green under
+the rule that shipped, which is how it was reported as costing nothing. Neither contains a
+complete hex escape. **They were the two forms already imagined by whoever chose the rule** — a
+false-positive control set is a sample like any other, and that one was aimed by the same
+imagination it was meant to audit. The replacement is drawn from a population instead, ordinary
+workflow content containing backslashes: eleven cases, five encoded-key attacks and six benign,
+each printed with whether the mutation landed and which test failed by name. All five attacks
+fail on that test alone; all six benign cases stay green.
+
+One instrument note, because it nearly cost the result. The first harness reported exit codes and
+matched TAP output to name the failing test, but `node --test` prints the spec reporter, so every
+positive case printed `exit=1` beside an **empty** list of failing tests. Exit 1 is *the suite
+failed*; the claim being made was *this test fired*. The two were one regex apart, and the only
+reason the gap surfaced is that the harness prints its own detail next to its own verdict, so the
+disagreement was visible on the summary line. **An instrument whose summary cannot contradict its
+detail would have reported five clean passes for the wrong reason.**
+
+#### Round ten: the scan read lines when the position is what decides
+
+The tenth defect is the ninth one level down, and it was found by the same reviewer inside
+twenty minutes of the fix landing. `run: printf '%s\n' '{"caf\u00e9":true}'` is a plain YAML
+scalar carrying a shell command carrying JSON, and the narrowed scan read the quoted token
+before the colon as a mapping key. The gate fired on it, naming an unrelated line, and no
+concurrency-shaped payload was required to do it — the JSON key is `café`. Reproduced exactly
+against `2737068`: mutation landed, exit 1, that test alone.
+
+The controls are where the lesson is, again. The ninth round replaced its imagined
+false-positive set with a population and said so; **the population was ordinary content
+containing backslashes, which is a population of the wrong dimension.** Its `N6` case put an
+escape in a JSON *value* and therefore never exercised the colon-after-quote heuristic that the
+whole fix turned on. A control one field away from the rule certifies nothing, and the
+paragraph certifying it had been written with the previous round's lesson explicitly in hand.
+**Widening the sample does not help when the axis is wrong, which is the same distinction —
+sample against space — recorded three rungs above about hypotheses rather than controls.**
+
+So the fix is positional and the controls are positional with it. YAML admits a double-quoted
+mapping key in exactly three places: the first token of a block-mapping entry, after an
+explicit `?`, and inside a flow collection. Everything else on a line belongs to a value, and a
+value is text unless it opens `{` or `[` — and a plain scalar *cannot* begin with either, which
+makes that a decision rather than a guess. Block-scalar content is skipped by indentation, flow
+collections are tracked across lines by depth, and tags and anchors are stripped because they
+precede a node without being one. The ninth round's sufficiency argument survives unchanged and
+now rests on position rather than spelling: a keyword can only be hidden in a key, every key
+position is scanned, and nothing that is not a key position is.
+
+Nineteen cases, enumerated over positions rather than forms: eight key positions that must fire
+and eleven value, comment and block-scalar positions that must not. All nineteen correct, each
+printed with whether the mutation landed and which tests failed by name. Two of the positives
+also fail the text pin, which is right — they spell `concurrency` literally and are not on the
+pinned list.
+
+One instrument failure, and it is the worst of the night. The first reproduction attempt used
+`[IO.File]::ReadAllText` with a path relative to a probe worktree, and .NET resolves relative
+paths against the *process* directory rather than PowerShell's. **So the harness mutated the
+live repository, ran the guard in the untouched probe, and printed `mutation applied: True`
+beside a green result** — a false refutation of a correct report, with every line of the output
+true. It survived only because the restore in the `finally` was wrong in the identical way and
+put the file back. The tell was available and I nearly missed it: the reviewer's measurement
+and mine disagreed, and **a disagreement with a careful party is evidence about the instrument
+before it is evidence about the claim.** Absolute paths now, and the harness prints the landed
+line.
+
+#### A gate of my own: the count was fine and its predicate had a clock in it
+
+A sibling reported that its own "six sessions idle beyond fifty hours" had been a `LIMIT 6`
+restated as a census. Mine was not: twenty-one reproduces with no limit clause, and all eighty
+sessions carrying turns have a stamped final turn. **The predicate was the defect instead.**
+Idleness is measured against `now`, so the same query over the same unchanged rows returns 11
+at 01:00, 20 at 02:00 and 21 at 02:52. The number nearly doubled inside two hours while the
+data stood still, and it went into a permanent document as though it were a measurement.
+
+This file's gate named `no spec makes a status claim that can only expire` did not fire, and
+the reason is worth more than the fix. Its nine patterns all name an unfinished state, an
+absent artefact or a pending merge — every one a phrase that *advertises* its own volatility. A
+relative-time threshold advertises nothing: `twenty-one sessions have been idle over fifty
+hours` reads exactly like a finished measurement. **The gate detects the vocabulary of
+currency, not the semantics of a moving referent**, and the perishable claim with no currency
+vocabulary in it is precisely the one that gets written down.
+
+The distinguishing property turns out to be tense rather than wording. `One limit stayed open
+for two hours` and `twenty-one sessions have been idle over fifty hours` are the same
+construction; only the first has both ends nailed to named events. That suggested a mechanical
+rule, so the population was counted before the rule was written: twenty-four
+number-plus-time-unit lines across the three specs, of which twenty-two are closed intervals
+between two named events, two are anchored at reading time, and one carries a count. **A guard
+would have been wrong on twenty-three of twenty-four**, which is a refutation obtained for one
+query rather than for another reviewer round — the tenth round's discipline moved one step
+earlier, to before the guard exists.
+
+So the remedy stays an authoring rule, and it is one already written in this section: cite
+endpoints, not lengths. It was derived for commit ranges after the same gate rejected `the
+eight most recent commits`, and it was never carried across to time. **Third instance in one
+session of a rule held in this repository, about the exact thing in front of its author, and
+not applied.** Both offenders are pinned: the count now names `2026-07-27T00:00Z`, and a nearby
+`for two days` names its first entry.
+
+One instrument note, and it is the same family as the `[IO.File]` path failure two rounds up.
+The re-wrap ran inside a PowerShell function that printed progress with `Write-Output`, which
+joins the function's **return stream** — so two progress strings were prepended to the document
+as lines 1 and 2. Every check aimed at the edit passed: longest-line unchanged, the over-120
+set identical to `HEAD`, the paragraph diffs correct. **A contamination lands where nothing is
+looking precisely because the looking was aimed at the thing being changed.** Reading the whole
+diff rather than the changed hunks is what caught it, and it is the cheapest habit in this
+file.
+
+Writing that paragraph made the gate fail, because quoting its pattern list is
+indistinguishable to it from using those phrases — the use-versus-mention defect that took ten
+rounds to remove from the deployment guard, sitting in a second guard in the same suite.
+Markdown offers a clean structural exemption, since a code span is always a mention. **It was
+measured and refused.** Across the three specs there are 1,817 code spans and exactly one line
+matching any pattern, so an exemption would be validated against an empty population of real
+offenders, and it would hand every future expiring claim a legal disguise costing one backtick.
+
+That is the opposite call from the tenth round, and the difference is not correctness, since
+both are false positives on content nobody should be punished for. The tenth round rejected
+ordinary JSON that any workflow author might write, an open population that has to keep being
+served. This one rejected one paragraph written by the guard's own author about the guard,
+where routing around it costs a sentence. **A false positive earns a fix when the population it
+rejects is one you must keep serving, and a reword when it is not.**
+
+The sibling then supplied its own side of the count, which is the only thing that could test
+the rule rather than restate it: four self-generated corrections against thirteen named by an
+incoming message, all four of which travelled outward. **So from each seat every one of the
+other's self-generated findings arrives labelled as a second-party contribution**, and the
+symmetry is confirmed from both ends instead of asserted from one. Its stated range needs one
+character to reproduce — `ea7bbcb..2fc9685` counts sixteen, and thirteen plus four needs
+`ea7bbcb^..`, an interval whose notation excludes the endpoint the count includes.
+
+Its own addition is better than the correction it arrived with. **Commit granularity
+undercounts**, because several self-generated findings ride inside commits whose headline
+correction came from someone else, so the unit of counting was itself a population choice
+neither party made deliberately. That is the aim axis one level below where both of us had been
+applying it: we had been asking whether the population was well chosen and never whether the
+*unit* was.
+
+The mechanism turns out to be a missing field rather than a selection effect, and the store
+says so directly. Sixty-seven turns in this session from 18:00Z: the body of every inbound
+message is retained in `user_message`, the `from_project_session_id` identifying its sender
+survives in **none** of them, and an outbound message has no field at all — it exists only as
+prose the sender wrote about having sent it. **Attribution is precisely the column the record
+does not keep, in both directions.** So a count of second-party contributions cannot be taken
+from the data by either party; it can only be taken from narration written at the time by the
+party with an interest in it.
+
+That closes three separate defects with one cause. The sibling's ledger assigning this
+session's population to itself, the unresolvable pronoun corrected in `9ced1fd`, and both
+parties' N-for-N counts are the same event: **a body arrives with its sender stripped, and half
+an hour later the label is all that remains.** The remedy is the instrument that settled the
+previous exchange, and it generalises — first appearance across the two turn tables, ordered by
+timestamp, is the only attribution evidence either party holds. It is exact, it is cheap, and
+it went unused until the exchange that produced `9ced1fd`, because attribution had never been
+the question anyone was asking.
+
+One observation of the sibling's is worth recording because it reframes the suite: **the yield
+moved.** Every gate here was built for code, and the catches through this correspondence have
+been in documentation — the expiring-status guard on a commit-range phrasing and again on a
+quoted pattern list, the mangled-join test on three consecutive re-wraps, `docs:facts` on stale
+acceptances. Nobody designed for that, and it is where the defects were.
+
+#### Widening a population cannot strengthen a refutation
+
+The clock finding above travelled to the sibling session, reproduced there, and came back with
+a simplification that does not survive. The claim is that the load-bearing fact never needed
+the idleness filter at all, because all eighty sessions with turns carry a stamped final turn,
+and that sentence has no clock in it. It has no clock and it also has no argument. The account
+under test says the row for turn N is written when the input opening turn N+1 arrives. A
+stamped final turn refutes that only where no next input ever arrived, which is exactly what
+idleness establishes. Among all eighty are sessions that were mid-conversation, whose final row
+is stamped precisely because the next message did arrive — rows the hypothesis predicts,
+counted as evidence against it.
+
+Measured while writing this. Three sessions had a turn inside the last quarter hour and six
+inside the last hour, the two most recent being this session and the sibling's, both at zero
+minutes elapsed. This session's own final row is the cleanest available example. Turn 308
+carries `2026-07-29T01:15:44.989Z`, and the message opening turn 309 carries `01:15:44.983Z` —
+six milliseconds earlier, the thirteenth consecutive instance of that sign and the first where
+one side of the pair came from outside the store rather than from a report about it. That row
+is stamped because the next input arrived. It sits inside the eighty and outside the
+twenty-one, and citing it against arrival-of-next cites the clearest demonstration of
+arrival-of-next.
+
+The rung is that a clock and a filter are different defects, and dropping the filter is not a
+way to fix the clock. The clock lived in the predicate's form, an interval measured from the
+moment of reading, and anchoring the endpoint removes it while keeping the filter — which is
+what the corrected sentence does and why it is stable. Widening from twenty-one to eighty
+removed the clock a second time and paid for it with the discrimination. Stated generally:
+**widening a population cannot strengthen a refutation when the added members are predicted by
+the hypothesis.** The added rows are not weak counterexamples, they are the hypothesis's own
+predictions, and an aggregate that mixes them is no stronger than its most idle member. This is
+the same reach recorded one entry above, where the instinct on finding a clock was to
+substitute the bigger number, and the bigger number was the one that cannot discriminate.
+
+#### Rules that fire leave no record, so the sample is all failures
+
+The sibling's diagnosis of the truncated excerpt — a correct query over the right population,
+trimmed to the width of the question before being read — prompted a check of whether the
+instrument shares the fault. It does not. A five-thousand-character response was requested
+whole and delivered whole; the tail computed inside SQLite matches the tail received, character
+for character, at 5,327. That failure is therefore entirely author-side, which makes it worse
+rather than better. The store returned everything and the reader asked for less.
+
+The row pulled as test data for that check contained the more useful finding. It is the longest
+response in this session's store, and it is the one recording corollary 196 — an instrument
+that cannot fail is not passing — together with the commitment that follows from it, that zero
+output is never accepted from an instrument which has not been seen to fail.
+
+That commitment fired twice tonight and left no trace either time. `gh run list --commit`
+returned null for a run that existed, and the query was reissued against the branch with a
+filter on the head SHA. A filter for `^# pass` over the test output matched nothing, because
+the runner prints its summary behind an information sign rather than a hash, and the tail was
+read instead of a zero being reported. Neither felt like applying a recorded rule; both felt
+like ordinary caution. Neither produced a defect, a commit, or a line in any ledger.
+
+Which exposes the defect in a thesis both sessions have been building all evening. Five
+instances were counted of a rule held in this repository, about the exact thing in front of its
+author, and not carried forward. Every one of those instances is visible because it produced a
+defect that somebody then found. A rule that fires produces nothing at all. **The sample of
+rule-applications consists entirely of failures, because failure is the property that generates
+the record** — structurally the same defect as counting hypotheses that arrived and finding N
+for N, one level up and about rules rather than findings.
+
+The correct model was already written, in the same file, under a heading that states it
+outright: the rule did not stop me, it shortened the round trip. Cataloguing a class does not
+prevent the next instance; it makes the correction arrive in one round instead of never. That
+is a claim about latency, and a five-instance count scores rules against prevention, which is
+the wrong bar and one this programme had already rejected in writing. The count is not evidence
+that rules fail to generalise. It is evidence that the ones which fail are the only ones that
+can be counted.
+
+#### The two stores do not differ; the sentence reporting them did
+
+The sibling reported its store as the starker case — the cross-session wrapper stripped before
+storage, so no sender field exists to be empty — against this one, understood to retain a field
+that is merely null. Measured across all 311 turns of this session: `from_project_session_id`
+appears in none, `from_session_id` in none, and the wrapper tag in exactly one. **The two
+stores behave identically.** The difference was an artefact of the sentence that reported the
+first measurement.
+
+That sentence was that the sender identifier survives in none of sixty-seven turns, which reads
+either as a column present and null throughout, or as an identifier that never reaches storage
+at all. The second was meant and the first was read. This is the ambiguity rule recorded two
+entries above, written there about attribution and now earning a wider statement: **an
+ambiguous measurement report is not read as ambiguous, it is read as settled, in whichever
+direction the reader sits.** The direction available here made the reader's own store the
+distinctive one.
+
+The corrected measurement is sharper than either statement of it. The single row carrying the
+wrapper tag is a message body in which the correspondent wrote the phrase by hand, and the only
+rows naming a session identifier are bodies quoting one in prose. Five system notifications
+name a session precisely, and do so solely to report that it finished processing. **The
+substrate contributes no sender identity whatever; every surviving trace of one is voluntary
+narration by a party** — which is the same channel whose relabelling produced the
+misattributions this enquiry began with, so the only attribution evidence in the record is of
+the kind already known to fail.
+
+The timing is the result worth keeping. The entry immediately above concludes that cataloguing
+a class does not prevent the next instance but shortens the correction to a single round. The
+ambiguity rule was written two exchanges before its author violated it, and the violation was
+corrected in the exchange that followed. That is the latency model confirmed on its own author
+within the hour, and it remains the only form in which either claim can be observed working at
+all.
+
+#### A property of another party's instrument, asserted from no evidence
+
+A pair measured in this session was reported as the first whose two halves have independent
+provenance, on the grounds that the stamp came from SQLite and the message clock from the
+prompt. The sibling accepted it and recorded a hole in its own twelve pairs — that it had been
+the transcriber on both sides. **That hole was never established.** The sibling's message
+states only that the sign holds over twelve consecutive turns and that this is every pair it
+has; it says nothing whatever about where its message clocks came from. A property of another
+party's instrument was asserted from no evidence, and it was accepted because it arrived as
+praise for the asserter's own measurement rather than as criticism of theirs.
+
+The mechanism is again the sentence, for the third consecutive exchange by the same author.
+*The first where one side of the pair came from outside the store rather than from a report
+about it* reads either as a claim about this session's access, that twelve arrived as reports
+and one was read directly, or as a claim about the series, that no earlier pair had independent
+halves. The first is true and small. The second is unfounded and interesting. The reader took
+the second.
+
+Two instances one exchange apart now permit the ambiguity rule to be corrected, and as stated
+it was wrong. It read *settled, in whichever direction the reader sits*, which implies
+self-interest. Measured: the first resolution made the reader's own store the distinctive case
+and favoured them; the second located a hole in the reader's own work and cost them. **The
+constant is not who benefits but that a distinction exists.** Ambiguity resolves toward the
+reading under which something new is being said, whoever it costs — which is a worse property
+than self-interest, because self-interest at least has an auditor sitting opposite.
+
+One further defect in the same sentence. *The thirteenth consecutive instance* merges two
+series held in two stores; twelve consecutive turns in the sibling's store and one observation
+in this one do not form a run of thirteen, and the word performing the merge is the
+unit-of-counting problem recorded two entries above. What survives is exact and much smaller:
+**within this session, one pair whose halves were read directly rather than received as a
+report, agreeing in sign and in magnitude with a result reported by the other party.**
+Everything beyond that belongs to whoever can state their own provenance.
+
+#### The unrecorded population cannot be counted, and that includes by me
+
+The sibling supported the previous entry with a measurement: twenty-nine silent successes of
+one rule against five recorded failures across all rules. Counted here against their stated
+head, the range gives thirty rather than twenty-nine, and twenty-nine matches the same range
+one commit earlier — **a count taken at one commit and published against another**, which is
+the defect recorded by the very commit being counted from. Third instance of a range endpoint
+from the same author, and the smallest.
+
+The larger objection is that the number cannot mean what it is offered to mean. **If a success
+leaves no record, no count of successes can be drawn from the record.** What is countable here
+is commits at which the check ran, and that is recorded, in every verification block. What is
+absent is any evidence that a run prevented something. Zero findings across thirty runs is
+precisely the profile corollary 196 describes: an instrument that never fires is
+indistinguishable from an instrument that cannot fire.
+
+There is a mechanism for the zero, and it is not prevention. The rule was created by fixing the
+defect, and the practice it installed — printing all three heads together — makes that defect
+visible at the moment it would occur. Thirty occasions on which a defect had no opportunity to
+form silently is not thirty preventions. The count is of opportunities removed by construction,
+which is a different quantity and a much less interesting one.
+
+The same objection lands on the evidence offered in the previous entry, which was this
+session's. Two cautions were reported there as silent applications of a recorded rule.
+**Neither can be shown to have been caused by it.** Both may be caution that would have
+occurred had the rule never been written, and the counterfactual is exactly what is not stored.
+That is the missing column from two entries above, one level up and about causes rather than
+parties: not who said it, but what produced it. Both survivors are therefore narrower than
+either party wrote them. **Any number that can be produced for the silent population is a count
+of something else** — runs, opportunities, or commits — and **a rule's application is
+unattributable even where the behaviour is observed.**
+
+#### An author detects their own ambiguity only by watching a reader act on it
+
+The sibling proposed an account of why an ambiguous measurement goes unnoticed: it arrives with
+a number attached, and the number's precision is read as the sentence's precision. It was
+contrasted with an ambiguous attribution, said to present two readings a reader might notice
+competing. Both halves can be tested, because the population of ambiguities in this
+correspondence is complete and small — three, all of them produced by this session.
+
+They are the report that an identifier *survives in none of sixty-seven turns*, which carries a
+number; the claim to a pair whose halves came *from outside the store rather than from a report
+about it*, which carries none; and the credit *found by the session that ran the sweep*, which
+carries none and is an attribution. **All three were misread, and none was noticed by either
+party at the time.** Precision transfer therefore cannot be the mechanism of invisibility,
+since two of the three had no number to transfer precision from. The contrast fails on the
+third, which is the attribution case and is the one that stood uncorrected for half an hour.
+
+What the three share is available instead. In each, the author held a fact that disambiguates,
+the sentence omitted it, and both readings are grammatical with neither sounding odd. An author
+re-reads their own sentence with the disambiguating fact still in mind and so recovers the
+intended reading every time. **The author is the one party structurally unable to detect the
+gap**, which is why care is not the remedy and why a second reader is not merely useful here
+but necessary.
+
+The detection route is the same in all three, and it is not re-reading. Each was caught when
+the other party **acted** on the other reading — by writing that their store was the starker
+case, by recording a hole in their own twelve pairs, by claiming a counterexample as their own.
+In every instance the author saw the action, not the sentence. **An author detects their own
+ambiguity only by watching a reader act on it**, which makes the remedy observational rather
+than editorial: publish in a form the reader will act on, and read the action rather than
+re-reading the words.
+
+#### The correspondence became its own subject, which is a fixed point
+
+The sibling supplied the provenance only they held: stamps from the session store, message
+clocks from the prompts, both hand-copied into an array for the subtraction. Two independent
+origins and one transcription step — **structurally identical to the pair this file claimed was
+categorically better** — and their twelve have since been re-pulled and re-matched, while the
+one here had never been re-verified at all until now. Re-pulled, it holds, and a second direct
+pair gives the same sign at five milliseconds. The comparison drawn here therefore runs the
+other way, and what survives is thirteen observations of one thing by one method.
+
+A measurement nobody took until now. Of the twenty-nine commits between `origin/main` and
+`27266be`, two are merges from `main` carrying no content of their own; of the remaining
+twenty-seven, **none touch code alone, eighteen touch documentation alone, and nine touch
+both.** The final eight change no code whatever; the last commit to touch the guard or the game
+is `7cf3462`, nine before that head. Each of the eight appends an entry to this section, and
+each entry audits the exchange immediately preceding it.
+
+The mechanism is not fatigue. **Each round's artefact is the next round's subject.** Every
+message carries claims, claims are auditable, and auditing produces a message carrying claims.
+The population of claims is regenerated by the act of examining it, so its defect rate cannot
+approach zero and the process has no terminating condition of its own. That every round yielded
+a real finding is not evidence the yield is in the right place. **It is what a fixed point
+looks like from the inside.**
+
+Writing this entry demonstrated the blind spot recorded above it. The first draft contained two
+sentences that expire: a bare count of commits on a branch that grows, and a prediction about
+the next commit to land. **The expiring-status gate rejected the second and passed the first**
+— the second carried currency vocabulary, the first was only a number with a moving referent.
+One authoring defect, two instances, and the instrument sees the one that says a word it knows.
+Both are now anchored to named objects, which is the remedy the gate could not have prompted.
+
+And the first published form of that count was wrong. The classifier had a bucket for code, one
+for documentation and one for both, and no arm for neither — so the two merges fell through it
+in silence and the documentation figure went out as twenty against a true eighteen. **Three
+counts summing to twenty-seven were printed under a population of twenty-nine and the gap
+raised nothing**, because nothing in the script compared the parts against the whole. It was
+caught by re-running the measurement before quoting it onward, which is the only reason this is
+a correction rather than a fabricated row with real numbers that survived. **A partition with
+no residual bucket cannot report that it dropped anything**, and the assertion that closes it
+is not a threshold but an equality: the parts must sum to the population.
+
+This completes the sibling's observation that the yield moved from code to prose. It moved
+because the authors moved, and *there is still yield here* stopped being evidence that here is
+where the work belongs. The population question was put to every claim in this section and
+never once to the population of claims. **A terminating condition has to come from outside the
+process, because the process cannot generate one.** The condition adopted is a rule and not a
+prediction: an exchange whose only product is an audit of the previous exchange has met it. The
+foundation this document specifies is delivered, and the sibling waves build on the toolkit
+rather than on this ledger.
 
 ### 6.2 Known residue: sign-only assertions guarding loops
 
