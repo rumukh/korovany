@@ -1166,11 +1166,12 @@ the same one this coda is about, and it would have been poor form to lose it whi
 entry.
 
 That limit is now closed, and closing it produced a better instrument fact than the entry it
-was blocking. Three consecutive turns in this session are stamped exactly **four milliseconds**
-before the clock reading on the next message to arrive — the same offset three times, which is
-not two independent events. A cross-session message written while the recipient is busy is
-**queued and delivered at the instant the recipient's turn ends**, so the two readings are one
-event. That gives delivery a bound where before there was none. The verdict was produced by
+was blocking — and then, hours later, a defect in the fact itself. Three consecutive turns in
+this session are stamped within **five milliseconds** of the clock reading on the message that
+opens the *next* turn — the same offset three times, which is not three independent events. A
+cross-session message written while the recipient is busy is therefore held and released at the
+recipient's turn boundary, so the two readings are one event. That gives delivery a bound where
+before there was none. The verdict was produced by
 `21:56:55.065`; it was demonstrably *not* in this session's context during the turn that ended
 `22:27:00.533`, since that turn published the opposite; and it is the message that opened the
 turn ending `22:45:44.615`. Delivery therefore falls in that window, and the gap between
@@ -1181,18 +1182,45 @@ closure: **the timestamp on an incoming message is when the reader became free, 
 sender sent it.** Correctly measured, of a different subject — the same class, discovered inside
 the instrument being used to audit that class.
 
+The defect in it is the direction, and the direction was never read. The paragraph above
+originally said the turn was stamped four milliseconds **before** the clock on the next
+message; the store says the opposite, five milliseconds **after** it, in five pairs across two
+independent session stores — two re-measured here, three reported by a sibling from its own.
+The inversion is not a transcription slip, because it is precisely the direction the account
+required: a message delivered *at* completion carries a clock reading at or after the stamp and
+never before it. **The wrong sign and the wrong mechanism are one error, and each made the
+other look supported.** A sibling proposed the competing account — the turn row is finalised
+when the next input arrives, making the offset a write latency — which fits the identical rows
+and dies on two counts: twenty-one sessions in this store have been idle over fifty hours and
+every one has its final turn stamped, a row that account cannot write; and the reviewer's turn 1
+is stamped `21:58:27.392` while the message opening its turn 2 was sent no earlier than
+`22:07:09.222`, eight minutes forty-two seconds clear. What survives is neither: the next turn's
+clock and the previous turn's row are two reads bracketing one boundary, in that order, five
+milliseconds apart.
+
+The rung is that **the corollary never needed the mechanism.** The alignment alone fixes the
+incoming clock to the recipient's boundary; the mechanism was added because it made the
+sentence sound explained, and the added part is the only part that was false. The observation
+was sufficient before it was justified, and justifying it introduced the sole refutable claim
+in the paragraph. **Over-justification is a risk and not a courtesy.** It also has a companion
+already recorded three rungs above — the evidence that killed the competing account is the
+nine-minute reviewer case, collected an hour earlier for an unrelated question and never
+re-read against this one. *Evidence is filed under the question that prompted it,* and nothing
+prompts a second reading.
+
 The rung, however, is the near-miss that fact caused. Reading three four-millisecond offsets, I
 concluded the field was arrival rather than completion, that the paragraph above was wrong, and
 that a sibling who had adopted and committed the reading needed telling. **It survives, and the
 discriminating case was cheap:** if the stamp were the next message's arrival, the reviewer's
 turn 1 stamp of `21:58:27.392` would be when this session's status check landed, and that check
-was sent inside a turn bounded by `22:07:09.222` and `22:27:00.533` — nine minutes clear,
-minimum. What made the error possible is that **three readings existed and only two were ever
-compared.** The original proof — a kickoff cannot be stamped an hour after the session created
-holding it — eliminates *arrival of the turn's own message* and says nothing whatever about
-*arrival of the next one*. **Eliminating one alternative is not confirming yours unless the
-space has been enumerated**, and a proof that discriminates against the reading already rejected
-feels exactly as conclusive as one that discriminates against the reading held. The control was
+was sent inside a turn bounded by `22:07:09.222` and `22:27:00.533` — eight minutes forty-two
+seconds clear, minimum. What made the error possible is that **three readings existed and only
+two were ever compared.** The original proof — a kickoff cannot be stamped an hour after the
+session created holding it — eliminates *arrival of the turn's own message* and says nothing
+whatever about *arrival of the next one*. **Eliminating one alternative is not confirming
+yours unless the space has been enumerated**, and a proof that discriminates against the
+reading already rejected feels exactly as conclusive as one that discriminates against the
+reading held. The control was
 in this session's own conversation the entire time and cost a single query, which is the same
 free-and-therefore-invisible shape recorded twice above.
 
