@@ -122,37 +122,47 @@ export function parseTestVerdict(output) {
  * Scan fences once, returning both the fenced line set and whether the file
  * ends with one open.
  *
- * The state machine models one CommonMark rule that a line-counting version
- * got wrong: **an opening fence may carry an info string; a closing fence may
- * not.** So ```` ```text ```` opens, a bare ```` ``` ```` closes, and a line
- * beginning with a fence *plus text* while a block is already open is content,
- * not a close. Counting fence-shaped lines and testing parity disagrees with
- * that, and disagrees silently.
+ * Models CommonMark's fence rules rather than approximating them, because the
+ * approximation's blind spots were shared by the guard built to cover it:
  *
- * Measured across every tracked markdown file at the time this was written:
- * **zero divergent lines.** Added anyway, because the round that produced it
- * established that a path nothing exercises is not a path that is safe — and
- * because the previous version's model gap was the same shape as the one that
- * made the double-space detector blind to three spaces.
+ *  - a fence is **3+ backticks or 3+ tildes**, indented at most 3 spaces;
+ *  - a closer must use the **same character**, be **at least as long**, and
+ *    carry **no info string** — so ```` ``` ```` inside a ```` ```` ```` block is
+ *    content, which is exactly how this document quotes fenced examples;
+ *  - a backtick opener's info string **may not contain a backtick**.
+ *
+ * The previous version toggled on any `/^\s*```/`, so `~~~` was invisible, a
+ * four-backtick wrapper reported unbalanced on a *valid* document and
+ * misclassified in both directions, and the balance guard inherited every one
+ * of those blind spots — because it was written from the same model as the
+ * classifier it was guarding. **A guard is a control that runs in production**,
+ * and deriving it from the model it protects makes it blind in precisely the
+ * region that model is wrong in.
  */
 function scanFences(source) {
   const fenced = new Set()
-  let open = false
+  let open = null
   source.split('\n').forEach((line, i) => {
-    const m = /^\s*```(.*)$/.exec(line)
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line)
     if (!m) {
       if (open) fenced.add(i + 1)
       return
     }
-    const hasInfo = m[1].trim().length > 0
-    fenced.add(i + 1)
+    const char = m[1][0]
+    const len = m[1].length
+    const info = m[2]
     if (!open) {
-      open = true
+      // An info string on a backtick fence may not contain a backtick; such a
+      // line is ordinary text, not an opener.
+      if (char === '`' && info.includes('`')) return
+      fenced.add(i + 1)
+      open = { char, len }
       return
     }
-    if (!hasInfo) open = false
+    fenced.add(i + 1)
+    if (char === open.char && len >= open.len && info.trim() === '') open = null
   })
-  return { fenced, balanced: !open }
+  return { fenced, balanced: open === null }
 }
 
 /** Line numbers inside ``` fences, computed from whole-file content. */
@@ -182,7 +192,15 @@ export function parseAddedLines(diff) {
       lineNo = Number(hunk[1])
       continue
     }
-    if (line.startsWith('+++') || line.startsWith('---')) continue
+    // `\ No newline at end of file` is a diff annotation, not content. Under
+    // -U0 every non-`+`/`-` line is spurious, and counting it as context shifts
+    // every line number after it by one — which silently repositions the whole
+    // population, because fence membership is keyed on those numbers.
+    if (line.startsWith('\\')) continue
+    // The file headers are `+++ b/path` and `--- a/path`, with a space. Testing
+    // the bare prefix also swallowed an added line whose *content* began with
+    // `++`, and did so without advancing the counter, misaligning the rest.
+    if (/^\+\+\+ /.test(line) || /^--- /.test(line)) continue
     if (line.startsWith('+')) {
       added.push({ lineNo, text: line.slice(1) })
       lineNo += 1
@@ -339,6 +357,54 @@ export const CONTROLS = [
       return balanced === true && fenced.has(3) && !fenced.has(5)
     },
     mutate: () => fenceBalanced('a\n```text\n``` more\n```\nb') === false,
+  },
+  {
+    name: 'tilde-fences-are-fences',
+    check: () => fenceBalanced('a\n~~~\nb\nc') === false
+      && fenceBalanced('a\n~~~\nb\n~~~\nc') === true
+      && fencedLines('a\n~~~\nb\n~~~\nc').has(3),
+    mutate: () => fenceBalanced('a\n~~~\nb\nc') === true,
+  },
+  {
+    name: 'a-longer-fence-quotes-a-shorter-one',
+    // Four backticks wrapping a three-backtick block — which is how this
+    // document quotes fenced examples. The inner fences are content; only a
+    // run at least as long as the opener closes it.
+    check: () => {
+      const src = 'a\n````\n```\ninner\n```\n````\nz'
+      const f = fencedLines(src)
+      return fenceBalanced(src) === true && f.has(4) && !f.has(7) && !f.has(1)
+    },
+    mutate: () => fencedLines('a\n````\n```\ninner\n```\n````\nz').has(7),
+  },
+  {
+    name: 'a-mismatched-fence-char-does-not-close',
+    check: () => fenceBalanced('a\n```\nb\n~~~\nc') === false,
+    mutate: () => fenceBalanced('a\n```\nb\n~~~\nc') === true,
+  },
+  {
+    name: 'the-no-newline-marker-does-not-shift-line-numbers',
+    check: () => {
+      const a = parseAddedLines('@@ -0,0 +1,2 @@\n+one\n\\ No newline at end of file\n+two\n')
+      return a.length === 2 && a[0].lineNo === 1 && a[1].lineNo === 2
+    },
+    mutate: () => parseAddedLines('@@ -0,0 +1,2 @@\n+one\n\\ No newline at end of file\n+two\n')[1].lineNo === 3,
+  },
+  {
+    name: 'an-added-line-starting-with-plus-plus-is-content',
+    check: () => {
+      const a = parseAddedLines('@@ -0,0 +1,3 @@\n+a\n+++x\n+c\n')
+      return a.length === 3 && a[1].text === '++x' && a[2].lineNo === 3
+    },
+    mutate: () => parseAddedLines('@@ -0,0 +1,3 @@\n+a\n+++x\n+c\n').length === 2,
+  },
+  {
+    name: 'the-file-header-is-still-skipped',
+    check: () => {
+      const a = parseAddedLines('--- a/f\n+++ b/f\n@@ -0,0 +1,1 @@\n+only\n')
+      return a.length === 1 && a[0].text === 'only' && a[0].lineNo === 1
+    },
+    mutate: () => parseAddedLines('--- a/f\n+++ b/f\n@@ -0,0 +1,1 @@\n+only\n').length === 2,
   },
   {
     name: 'sweep-is-silent-on-clean-prose',

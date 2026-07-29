@@ -746,6 +746,31 @@ no new dependencies.
   predicate and a swallowed population, and nothing in the number distinguishes them. **The
   dope is the only discriminator in either case** — which is why the harness matters, and
   why its inability to dope outside its own model is the sharpest limit recorded here.
+  **The rule then generalised one commit after being written, on a guard in this same
+  file.** `fenceBalanced` was added *as the remedy for* the unterminated-fence defect, and
+  it recognised fences by the same rule the classifier did — so it could not detect a fence
+  its classifier did not recognise. Four latent cases, all measured, none live:
+  ```
+  ~~~ tilde fence           balanced: true   -- invisible; contents swept as prose
+  ```` wrapping ```         balanced: false  -- on a VALID document, and the inner
+                                                content classified as prose
+  \ No newline at end...    shifts every line number after it by one
+  added line beginning ++   dropped, and misaligns the rest
+  ```
+  > **A guard is a control that runs in production.** Deriving it from the same model as the
+  > component it protects makes it blind in precisely the region that component is wrong in —
+  > which is the only region it exists for.
+  An hour before this was found, the two functions were **deliberately unified into one state
+  machine** so that they could not disagree with each other. That was the right call for
+  consistency and it made the shared blind spot **structural rather than accidental** — the
+  guard and the guarded now provably share a model. Both are true at once, and the second
+  was not noticed while making the first.
+  The remedy is the one that worked for the three-space case, and it is not a better guard:
+  **an input the author's model does not generate.** `~~~` is not a cleverer fence than
+  three backticks; it is only one nobody in this repository has written. Fixed to
+  CommonMark's actual rules — fence character, run length, and info-string constraints —
+  with seven new controls, and **the swept population is byte-identical afterwards**, which
+  is the latency confirmed end-to-end rather than asserted.
   **The stronger claim first written here — that enumerating a hypothesis space usually
   requires a second party — is false, and the record of this work refutes it.** Five
   self-generated enumerations, each against a position its own author had already
