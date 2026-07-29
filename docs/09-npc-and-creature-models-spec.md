@@ -547,9 +547,56 @@ no new dependencies.
   `pass N / fail 0` is the verdict where `tests N` is a headcount. And **when probes are
   chained for atomicity, exit codes are the thing being traded**, so a chained gate must
   assert on parsed output rather than on the invocation's status.
+  **Both parties held the same defect, from opposite sides, and neither could see the
+  other's.** The reviewer's combined invocation filtered on the census too; the
+  `pass N / fail 0` it published came from a **second, separate** run. So the property it
+  claimed — *swept and gated in one invocation, therefore the verification cannot age* —
+  was held by a run incapable of reporting a failure, while the run that carried the
+  verdict was not the atomic one. **Atomicity and verdict were never true simultaneously**
+  on either side: one lost status to the chain, the other to the filter, and both losses
+  occurred **inside the mitigation adopted to stop losing things**.
+  The general form is worth more than either instance. **A mitigation is an unexamined
+  instrument**, and it enters service with the credibility of the problem it solved rather
+  than any evidence about itself — which is the same asymmetry as a correction inheriting
+  the credibility of correcting, arriving one layer down in the toolchain.
+  The paired observation also upgrades a claim here from inference to measurement: `tests
+  371` was **printed identically at `pass 371 / fail 0` and at `pass 370 / fail 1`**, the
+  latter under a deliberate mutation. The census's blindness is no longer deduced from how
+  the runner reports; both halves have been seen.
   What caught it was running the pass/fail lines separately for an unrelated reason —
   which is to say, luck, and the entry is here because the next occurrence will not have
   any.
+  **The remedy was already in this repository, written three times, once inside the very
+  test that fired.** A reviewer went looking and found it; the interval is measurable to
+  the minute:
+  ```
+  e6edeb34  2026-07-28 07:45   tests/integration.test.ts
+    L393   "A floor proving the measurement ran must not also assert the shape of the
+            thing measured"
+    L950   same sentence, second occurrence
+    L1028  "A floor proving the scan ran must not also assert how much prose exists."
+           -- inside test('no spec makes a status claim that can only expire'),
+              the test that went red at 2026-07-29 01:56
+  ```
+  **Eighteen hours and eleven minutes**, same author, same repository, and the third
+  occurrence sits inside the test whose failure produced the re-derivation. The earlier
+  statements were about a **test floor**; the defect was in a **shell filter**. Nothing
+  links them but the shape, and shape is not what a reader indexes on.
+  > **A rule stated about one instrument does not generalise to another by being true.** It
+  > has to be re-derived at each site, and authorship is no protection.
+  The evidence for that is as strong as evidence gets: its author re-derived it **by
+  accident**, one screenful from where he had written it three times. Which corrects the
+  weaker claim first published here — *"mine now has a mechanism; the general lesson does
+  not."* The general lesson **did** have one, in this repository, in a file the author had
+  edited that day, and having it changed nothing. **That a rule can be held and still not
+  applied is a larger finding than a rule being absent**, because absence has an obvious
+  remedy and this does not.
+  The reviewer's search for the principle then reproduced the class again, at one remove:
+  a line-oriented pattern for `proving the (scan|measurement|command) ran` returned **2 of
+  3**, missing L1028 because the sentence wraps across a newline. **The population problem,
+  in the grep for the sentence about populations** — which is the third self-instantiating
+  defect recorded here and the cheapest to state: prose is not line-shaped, so a
+  line-oriented search of prose has an unnamed exclusion built in.
 - **A measurement is a claim with a timestamp nobody writes down.** Every other rule
   here targets claims that were wrong. This one is about claims that were *right and
   stopped being* — which is a different failure, because a measurement carries its own
