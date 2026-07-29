@@ -1496,6 +1496,51 @@ reason the gap surfaced is that the harness prints its own detail next to its ow
 disagreement was visible on the summary line. **An instrument whose summary cannot contradict its
 detail would have reported five clean passes for the wrong reason.**
 
+#### Round ten: the scan read lines when the position is what decides
+
+The tenth defect is the ninth one level down, and it was found by the same reviewer inside
+twenty minutes of the fix landing. `run: printf '%s\n' '{"caf\u00e9":true}'` is a plain YAML
+scalar carrying a shell command carrying JSON, and the narrowed scan read the quoted token
+before the colon as a mapping key. The gate fired on it, naming an unrelated line, and no
+concurrency-shaped payload was required to do it — the JSON key is `café`. Reproduced exactly
+against `2737068`: mutation landed, exit 1, that test alone.
+
+The controls are where the lesson is, again. The ninth round replaced its imagined
+false-positive set with a population and said so; **the population was ordinary content
+containing backslashes, which is a population of the wrong dimension.** Its `N6` case put an
+escape in a JSON *value* and therefore never exercised the colon-after-quote heuristic that the
+whole fix turned on. A control one field away from the rule certifies nothing, and the
+paragraph certifying it had been written with the previous round's lesson explicitly in hand.
+**Widening the sample does not help when the axis is wrong, which is the same distinction —
+sample against space — recorded three rungs above about hypotheses rather than controls.**
+
+So the fix is positional and the controls are positional with it. YAML admits a double-quoted
+mapping key in exactly three places: the first token of a block-mapping entry, after an
+explicit `?`, and inside a flow collection. Everything else on a line belongs to a value, and a
+value is text unless it opens `{` or `[` — and a plain scalar *cannot* begin with either, which
+makes that a decision rather than a guess. Block-scalar content is skipped by indentation, flow
+collections are tracked across lines by depth, and tags and anchors are stripped because they
+precede a node without being one. The ninth round's sufficiency argument survives unchanged and
+now rests on position rather than spelling: a keyword can only be hidden in a key, every key
+position is scanned, and nothing that is not a key position is.
+
+Nineteen cases, enumerated over positions rather than forms: eight key positions that must fire
+and eleven value, comment and block-scalar positions that must not. All nineteen correct, each
+printed with whether the mutation landed and which tests failed by name. Two of the positives
+also fail the text pin, which is right — they spell `concurrency` literally and are not on the
+pinned list.
+
+One instrument failure, and it is the worst of the night. The first reproduction attempt used
+`[IO.File]::ReadAllText` with a path relative to a probe worktree, and .NET resolves relative
+paths against the *process* directory rather than PowerShell's. **So the harness mutated the
+live repository, ran the guard in the untouched probe, and printed `mutation applied: True`
+beside a green result** — a false refutation of a correct report, with every line of the output
+true. It survived only because the restore in the `finally` was wrong in the identical way and
+put the file back. The tell was available and I nearly missed it: the reviewer's measurement
+and mine disagreed, and **a disagreement with a careful party is evidence about the instrument
+before it is evidence about the claim.** Absolute paths now, and the harness prints the landed
+line.
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,

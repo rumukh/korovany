@@ -731,33 +731,184 @@ test('every line that mentions concurrency, in every workflow, is pinned as text
  * trailing backslashes would fire on every multi-line `run:` in the repository. It
  * is recorded here rather than guarded, on the same terms as the expression forms
  * the parser cannot evaluate.
+ *
+ * The tenth round is the same defect one level down: the narrowed scan read
+ * *lines* when what matters is *position*. `run: printf '%s\n' '{"caf\u00e9":true}'`
+ * is a plain scalar carrying a shell command carrying JSON, and a quoted token
+ * followed by a colon inside it is a character sequence, not a mapping key. The gate
+ * fired on it, and no concurrency-shaped payload was needed. The N6 control from the
+ * ninth round covered an escape in a JSON *value* and so never exercised the
+ * colon-after-quote heuristic at all — a control set aimed one field away from the
+ * rule it was certifying, which is the ninth round's own lesson arriving again with
+ * the correction that was supposed to have absorbed it.
+ *
+ * So the scan is positional, and the positions are enumerated rather than sampled.
+ * YAML admits a double-quoted mapping key in exactly three places: as the first
+ * token of a block-mapping entry, after an explicit `?`, and inside a flow
+ * collection. Everything else on a line belongs to a value, and a value is text
+ * unless it opens `{` or `[` — a plain scalar cannot begin with either, which is
+ * what makes the test a decision rather than a guess. Block-scalar content is
+ * skipped by indentation, flow collections are tracked across lines by depth, and
+ * tags and anchors are stripped because they precede a node without being one.
+ *
+ * The sufficiency argument from the ninth round is unchanged and now rests on
+ * position instead of spelling: a keyword can only be hidden in a key, every key
+ * position is scanned, and nothing that is not a key position is.
  */
+function quotedEnd(text: string, from: number): number {
+  let i = from + 1
+  while (i < text.length && text[i] !== '"') i += text[i] === '\\' ? 2 : 1
+  return i < text.length ? i : -1
+}
+
+/**
+ * The closing quote of the single-quoted scalar starting at `from`. YAML writes a
+ * literal quote as `''`, which continues the scalar rather than ending it — and a
+ * single-quoted scalar is the wrapper the tenth round's shell command used.
+ */
+function singleEnd(text: string, from: number): number {
+  let i = from + 1
+  while (i < text.length) {
+    if (text[i] === "'") {
+      if (text[i + 1] === "'") {
+        i += 2
+        continue
+      }
+      return i
+    }
+    i += 1
+  }
+  return -1
+}
+
+/** Skips the scalar starting at `i`, returning the index of its last character. */
+function skipText(text: string, i: number): number {
+  if (text[i] === '"') {
+    const end = quotedEnd(text, i)
+    return end < 0 ? text.length : end
+  }
+  if (text[i] === "'") {
+    const end = singleEnd(text, i)
+    return end < 0 ? text.length : end
+  }
+  return i
+}
+
+/**
+ * The `:` that separates an implicit key from its value: the first one followed by
+ * whitespace or end of line that is not inside a scalar or a comment. Everything
+ * after it is a value, and a value is text unless it opens a flow collection.
+ */
+function separatorIndex(content: string): number {
+  for (let i = 0; i < content.length; i += 1) {
+    const ch = content[i] ?? ''
+    if (ch === '#' && (i === 0 || /\s/.test(content[i - 1] ?? ''))) return -1
+    if (ch === '"' || ch === "'") {
+      i = skipText(content, i)
+      continue
+    }
+    if (ch === ':' && (i + 1 >= content.length || /\s/.test(content[i + 1] ?? ''))) return i
+  }
+  return -1
+}
+
+/**
+ * Net change in flow-collection depth across a region, counting only brackets that
+ * are structure. A `{` inside a quoted scalar is a character in a string, which is
+ * the whole of the tenth round.
+ */
+function flowDelta(region: string): number {
+  let depth = 0
+  for (let i = 0; i < region.length; i += 1) {
+    const ch = region[i] ?? ''
+    if (ch === '#' && (i === 0 || /\s/.test(region[i - 1] ?? ''))) break
+    if (ch === '"' || ch === "'") {
+      i = skipText(region, i)
+      continue
+    }
+    if (ch === '{' || ch === '[') depth += 1
+    else if (ch === '}' || ch === ']') depth -= 1
+  }
+  return depth
+}
+
+/** Every double-quoted mapping key in a file, and nothing that merely looks like one. */
 function doubleQuotedKeys(source: string): { line: string; key: string; number: number }[] {
   const found: { line: string; key: string; number: number }[] = []
+  const lines = source.split(/\r?\n/)
+
   let explicitPending = false
+  let blockIndent: number | null = null
+  let flowDepth = 0
 
-  source.split(/\r?\n/).forEach((raw, index) => {
-    const line = raw.trim()
-    if (line === '') return
-
-    const explicitHere = /^\?(\s|$)/.test(line)
-    const explicit = explicitHere || explicitPending
-
-    for (let i = 0; i < line.length; i += 1) {
-      if (line[i] !== '"') continue
-
-      let j = i + 1
-      while (j < line.length && line[j] !== '"') j += line[j] === '\\' ? 2 : 1
-      if (j >= line.length) break
-
-      const key = line.slice(i, j + 1)
-      if (explicit || /^\s*:/.test(line.slice(j + 1))) {
-        found.push({ line, key, number: index + 1 })
+  const collect = (region: string, line: string, number: number, all: boolean): void => {
+    for (let i = 0; i < region.length; i += 1) {
+      if (region[i] === "'") {
+        i = skipText(region, i)
+        continue
       }
-      i = j
+      if (region[i] !== '"') continue
+
+      const end = quotedEnd(region, i)
+      if (end < 0) break
+      if (all || /^\s*:/.test(region.slice(end + 1))) {
+        found.push({ line, key: region.slice(i, end + 1), number })
+      }
+      i = end
+    }
+  }
+
+  lines.forEach((raw, index) => {
+    const number = index + 1
+    const line = raw.trim()
+    const indent = raw.length - raw.trimStart().length
+
+    // Content of a block scalar is text to YAML, whatever it looks like.
+    if (blockIndent !== null) {
+      if (line === '' || indent > blockIndent) return
+      blockIndent = null
+    }
+    if (line === '' || line.startsWith('#')) return
+
+    // A flow collection may span lines; every key inside one is a key.
+    if (flowDepth > 0) {
+      collect(line, line, number, false)
+      flowDepth += flowDelta(line)
+      return
     }
 
-    explicitPending = explicitHere && line === '?'
+    let content = line
+    while (/^-(\s|$)/.test(content)) content = content.slice(1).trim()
+
+    const explicitHere = /^\?(\s|$)/.test(content)
+    if (explicitHere || explicitPending) {
+      collect(explicitHere ? content.slice(1).trim() : content, line, number, true)
+      explicitPending = explicitHere && content === '?'
+      return
+    }
+
+    const sep = separatorIndex(content)
+    if (sep < 0) return
+
+    const key = content.slice(0, sep).trim()
+    if (key.startsWith('"') && quotedEnd(key, 0) === key.length - 1) {
+      found.push({ line, key, number })
+    }
+
+    // Tags and anchors precede the node without being it.
+    const region = content
+      .slice(sep + 1)
+      .trim()
+      .replace(/^(?:[!&]\S*\s+)+/, '')
+
+    if (/^[>|](?:[1-9][-+]?|[-+][1-9]?)?(?:\s+#.*)?$/.test(region)) {
+      blockIndent = indent
+      return
+    }
+    if (region.startsWith('{') || region.startsWith('[')) {
+      collect(region, line, number, false)
+      flowDepth += flowDelta(region)
+    }
   })
 
   return found
