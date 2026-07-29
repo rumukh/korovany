@@ -1,5 +1,12 @@
 import { SITE_PRESENTATIONS } from './registry.ts'
-import type { ChronicleWorldEventKind, Faction, NoticeTone, RandomWorldEventKind } from '../types.ts'
+import type {
+  BodyPart,
+  ChronicleWorldEventKind,
+  Faction,
+  NoticeTone,
+  RandomWorldEventKind,
+  ZoneId,
+} from '../types.ts'
 import type { ChronicleEventKind } from '../world/Chronicle.ts'
 import type { ObjectiveKind, SiteKind } from '../world/worldTypes.ts'
 
@@ -379,5 +386,283 @@ export function describeLocatedEventOutcome(
  */
 export function describeEventHandback(regionLabel: string): string {
   return `Пользователь ушёл из квадрата ${regionLabel}. Чем там кончилось — прочитаешь в хронике.`
+}
+
+// ---------------------------------------------------------------------------
+// Engine notices
+// ---------------------------------------------------------------------------
+
+/**
+ * What the engine says through `onNotice`, moved out of `GameEngine.ts` unchanged.
+ *
+ * A copy move, not a rewrite: every line below is the string that was embedded at its call
+ * site, and the numbers that used to be baked into a sentence are parameters so the
+ * sentence cannot drift from the amount the engine actually awarded. Nothing is deduped
+ * against `types.ts` — the zone names here are the engine's, which differ from
+ * `ZONE_INFO`'s on purpose, and merging them would be a copy change wearing a refactor's
+ * clothes.
+ */
+
+const BODY_PART_NAMES: Record<BodyPart, string> = {
+  leftArm: 'левая рука',
+  rightArm: 'правая рука',
+  leftLeg: 'левая нога',
+  rightLeg: 'правая нога',
+  leftEye: 'левый глаз',
+  rightEye: 'правый глаз',
+}
+
+export function formatBodyPart(part: BodyPart): string {
+  return BODY_PART_NAMES[part]
+}
+
+/** The engine's own zone names, which are not `ZONE_INFO`'s. */
+const ZONE_DISCOVERY_NAMES: Record<ZoneId, string> = {
+  neutral: 'Вольные земли',
+  palace: 'Имперский удел',
+  forest: 'Чаща Эленвуда',
+  fort: 'Чёрный кряж',
+}
+
+export const ABILITY_BLOCKED_NO_ARMS_NOTICE =
+  'Без рук лук не натянуть. Можно достать или купить протез.'
+export const ABILITY_BLOCKED_NO_STAMINA_NOTICE =
+  'Выносливость кончилась. Можно ползать и т. п., но приём не выйдет.'
+export const SHIELD_DROPPED_NOTICE = 'Выносливость кончилась — щит опущен.'
+
+export const CARAVAN_DEFENDED_BY_PLAYER_NOTICE =
+  'Ты играешь охраной дворца: этот корован надо защищать.'
+export const CARAVAN_ALREADY_ROBBED_NOTICE = 'Этот корован уже ограбили. Ждём следующий.'
+export const CARAVAN_AMBUSH_NOTICE = 'Засада! Охрана корована набигает.'
+export const RICH_CARAVAN_LOOT_TAKEN_NOTICE = 'Добыча у тебя. Теперь уходи от погони!'
+
+export function describeCaravanRobbed(reward: number): string {
+  return `Корован ограблен! +${reward} золота. Охрана уже набигает.`
+}
+
+const SQUAD_NAMES: Record<Faction, string> = {
+  elf: 'Партизаны эльфов',
+  guard: 'Солдаты охраны',
+  villain: 'Войска злодея',
+}
+
+export function describeSquadOrder(faction: Faction, following: boolean): string {
+  return following
+    ? `${SQUAD_NAMES[faction]} идут за тобой. Пользователь сам себе командир.`
+    : `${SQUAD_NAMES[faction]} остаются на месте.`
+}
+
+export const REINFORCEMENTS_ORDERED_NOTICE =
+  'Командир приказал подкреплению вступить в бой!'
+
+export function describeRationEaten(healed: number): string {
+  return `Дорожный паёк вернул ${healed} здоровья. Не спрашивай, из чего он.`
+}
+
+export function describeRazedSite(kind: SiteKind): string {
+  return kind === 'shop'
+    ? 'Лавка сгорела вместе с домиками деревяными. Торговать не с кем.'
+    : 'Лечить некому: знахаря вынесли вперёд ногами, а избу — по брёвнышку.'
+}
+
+export const HEALER_TREATED_NOTICE = 'Пользователя вылечили. До протезов дело пока не дошло.'
+export const TREASURE_ALREADY_LOOTED_NOTICE = 'Этот тайник уже пуст.'
+
+export function describeTreasureFound(reward: number): string {
+  return `В тайнике нашлись припасы и ${reward} золота.`
+}
+
+export function describeSiteInspected(kind: SiteKind): string {
+  return `Осмотрено: «${generatedSiteLabel(kind)}».`
+}
+
+export function describeObjectiveCompleted(text: string): string {
+  return `Задача выполнена: ${text}.`
+}
+
+export function describeZoneDiscovered(zone: ZoneId): string {
+  return `Открыта область: «${ZONE_DISCOVERY_NAMES[zone]}».`
+}
+
+export function describeThreatTier(tier: number, maxTier: number): string {
+  return `Угроза растёт: уровень ${tier}/${maxTier}. Враги сильнее, событий и набегов больше.`
+}
+
+export function describeThreatWave(spawned: number, tier: number): string {
+  return `На пользователя набигают: ${formatRussianCount(spawned, [
+    'враг',
+    'врага',
+    'врагов',
+  ])}. Угроза: ${tier}.`
+}
+
+export function describeEventStarted(title: string, description: string): string {
+  return `Событие: ${title}. ${description}`
+}
+
+/** The four fixed success lines; the champion's depends on how much damage it granted. */
+export const WORLD_EVENT_SUCCESS_MESSAGES: Record<
+  Exclude<RandomWorldEventKind, 'champion'>,
+  string
+> = {
+  richCaravan: 'Богатый корован ограблен, погоня позади. +180 золота.',
+  defendHome: 'Дом отбили! +90 золота и +8 здоровья.',
+  rescue: 'Пленник спасён и теперь идёт в твоём отряде.',
+  bounty: 'Заказ выполнен, награда в кармане. +70 золота.',
+}
+
+export function describeChampionDefeated(damageBonus: number): string {
+  return damageBonus > 0
+    ? `Чемпион побеждён! +120 золота и +${damageBonus} к урону.`
+    : 'Чемпион побеждён! +120 золота. Урон уже достиг предела.'
+}
+
+export function describeKillReward(
+  kind: 'beast' | 'commander' | 'soldier',
+  reward: number,
+): string {
+  if (kind === 'beast') {
+    return `Зверьё стало на одну штуку тише. Шкура, конечно, тоже 3Д. +${reward} золота.`
+  }
+  if (kind === 'commander') return 'Командир дворца больше не командир.'
+  return `Враг побеждён. Труп тоже 3Д. +${reward} золота.`
+}
+
+export function describeLimbLost(part: BodyPart): string {
+  return part.includes('Eye')
+    ? `Потерян ${formatBodyPart(part)}. Теперь пол-экрана не видно; ищи протез.`
+    : `Потеряна ${formatBodyPart(part)}. Без лечения истечёшь кровью; самое хорошее — протез.`
+}
+
+export function describeWound(part: BodyPart): string {
+  return `Ранение: ${formatBodyPart(part)}. Если не вылечить, станет хуже.`
+}
+
+// ---------------------------------------------------------------------------
+// Diegetic first-time lines
+// ---------------------------------------------------------------------------
+
+/**
+ * One line per mechanic that owns a piece of the HUD, shown the first time the player
+ * meets that mechanic and never again (`seenHints` on the profile).
+ *
+ * Not a tutorial: there is no mode, no modal and no ordering. Each line is attached to the
+ * moment its HUD element first says something — the stamina line arrives when the bar
+ * moves, the prosthetic line when a prosthetic is on, the threat line when the tier climbs
+ * — because explaining stamina to somebody who has not spent any is worse than saying
+ * nothing. `content/hints.ts` owns *when*; this file owns *what it says*.
+ *
+ * Same register as the rest of the game: in-fiction, self-ironic, never corporate. Each
+ * line has to earn its place by telling the player something the HUD alone does not — what
+ * the number is made of, what it costs, or what it will do next.
+ */
+export type HintId =
+  | 'health'
+  | 'stamina'
+  | 'bleeding'
+  | 'limbLoss'
+  | 'prosthetic'
+  | 'gold'
+  | 'upgrades'
+  | 'shopPrices'
+  | 'zone'
+  | 'objectives'
+  | 'interact'
+  | 'map'
+  | 'chronicle'
+  | 'squad'
+  | 'threat'
+  | 'ability'
+  | 'events'
+  | 'loot'
+
+export interface HintCopy {
+  readonly text: string
+  readonly tone: NoticeTone
+}
+
+const HINT_COPY: Record<HintId, HintCopy> = {
+  health: {
+    text: 'Здоровье само не зарастает: лечат паёк, торговец и трофеи. Полоска слева — весь запас пользователя.',
+    tone: 'warning',
+  },
+  stamina: {
+    text: 'Выносливость уходит на бег, прыжки и приёмы. Кончится — останется ходить пешком и т. п.',
+    tone: 'info',
+  },
+  bleeding: {
+    text: 'Кровь идёт сама, без твоего участия, и здоровье капает вместе с ней. Останавливают паёк и лекарь, а не характер.',
+    tone: 'danger',
+  },
+  limbLoss: {
+    text: 'Оторванное не отрастает: без руки бьёшь слабее, без ноги ходишь медленнее, без глаза видишь полмира. Помогает только протез у торговца.',
+    tone: 'danger',
+  },
+  prosthetic: {
+    text: 'Протез встал на место. Не как родное, но держит: штраф меньше, чем был, и картинка снова 3-хмерная.',
+    tone: 'success',
+  },
+  gold: {
+    text: 'Золото тратится у торговца: лечение, протезы, заточка. Что доживёт до конца забега, вернётся монетами профиля — на них открываются припасы к следующему.',
+    tone: 'success',
+  },
+  upgrades: {
+    text: 'Улучшение живёт до конца забега, не дольше. Число с мечом слева — это оно и есть.',
+    tone: 'success',
+  },
+  shopPrices: {
+    text: 'Торговцы прослышали, кто тут ходит, и подняли цены. Чем громче забег, тем дороже лечиться.',
+    tone: 'warning',
+  },
+  zone: {
+    text: 'Новая область — свои хозяева, своё зверьё и свои цены. Смотреть, куда зашёл, полезно.',
+    tone: 'info',
+  },
+  objectives: {
+    text: 'Список «Суть такова» слева — весь смысл забега. Закроешь все пункты — победа, и корован ушёл не зря.',
+    tone: 'success',
+  },
+  interact: {
+    text: 'Подсказка внизу означает, что рядом есть на что нажать E: торговец, тайник или корован.',
+    tone: 'info',
+  },
+  map: {
+    text: 'Карта открывается ногами: где прошёл, то и видно. Точки на ней — свои, чужие и корованы.',
+    tone: 'info',
+  },
+  chronicle: {
+    text: 'Хроника справа — то, что мир делает без пользователя. Пока ты идёшь, кого-то уже грабят.',
+    tone: 'info',
+  },
+  squad: {
+    text: 'Рядом свои, и счётчик с человечком слева считает живых. Q переключает приказ: идти следом или держать место.',
+    tone: 'success',
+  },
+  threat: {
+    text: 'Угроза в углу растёт от времени, а не от подвигов. Чем дольше забег, тем злее гости.',
+    tone: 'warning',
+  },
+  ability: {
+    text: 'Приём (ПКМ или R) не бесплатный: ест выносливость и уходит на перезарядку. Полоска под иконкой — сколько ждать.',
+    tone: 'info',
+  },
+  events: {
+    text: 'События идут по таймеру и заканчиваются без тебя тоже. Успел — забрал награду, ушёл из квадрата — прочитаешь в хронике.',
+    tone: 'info',
+  },
+  loot: {
+    text: 'С павших падает добыча. Монеты идут в кошелёк сразу, остальное лечит или точит.',
+    tone: 'success',
+  },
+}
+
+export const HINT_IDS = Object.keys(HINT_COPY) as readonly HintId[]
+
+export function isHintId(value: unknown): value is HintId {
+  return typeof value === 'string' && Object.hasOwn(HINT_COPY, value)
+}
+
+export function describeHint(id: HintId): HintCopy {
+  return HINT_COPY[id]
 }
 

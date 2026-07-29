@@ -120,4 +120,14 @@ export interface ProfileSaveV1 {
   selectedFaction: Faction | null
   runHistory: RunHistorySummary[]
   finalizedRunIds: string[]
+  /**
+   * Diegetic first-time lines the player has already been shown, so a hint fires once per
+   * player and never again. Ids are stored raw rather than validated against the current
+   * `HintId` union: a build that no longer knows an id must forget the hint, not re-teach
+   * it, and normalization already bounds the list. Absent on every profile written before
+   * this field existed, which is why it is read as an optional and defaulted to empty —
+   * the discard-and-report policy is for saves that cannot be *read*, not for a field a
+   * returning player simply predates.
+   */
+  seenHints: string[]
 }

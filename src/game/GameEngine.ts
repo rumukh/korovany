@@ -132,24 +132,50 @@ import {
   type GeneratedEncounterPlan,
 } from './content/registry'
 import {
+  ABILITY_BLOCKED_NO_ARMS_NOTICE,
+  ABILITY_BLOCKED_NO_STAMINA_NOTICE,
+  CARAVAN_ALREADY_ROBBED_NOTICE,
+  CARAVAN_AMBUSH_NOTICE,
+  CARAVAN_DEFENDED_BY_PLAYER_NOTICE,
   chronicleEventTone,
   describeBeastProwler,
   describeCaravanPlundered,
+  describeCaravanRobbed,
+  describeChampionDefeated,
   describeChronicleEvent,
   describeCivilianDeath,
   describeEventHandback,
+  describeEventStarted,
+  describeKillReward,
+  describeLimbLost,
   describeLocatedEvent,
   describeLocatedEventOutcome,
   describeLocatedEventStart,
+  describeObjectiveCompleted,
+  describeRationEaten,
+  describeRazedSite,
   describeRout,
+  describeSiteInspected,
+  describeSquadOrder,
+  describeThreatTier,
+  describeThreatWave,
+  describeTreasureFound,
   describeVillageLife,
+  describeWound,
+  describeZoneDiscovered,
   formatRegionGridLabel,
-  formatRussianCount,
   generatedSiteLabel,
+  HEALER_TREATED_NOTICE,
   RALLY_NOTICE,
+  REINFORCEMENTS_ORDERED_NOTICE,
+  RICH_CARAVAN_LOOT_TAKEN_NOTICE,
+  SHIELD_DROPPED_NOTICE,
+  TREASURE_ALREADY_LOOTED_NOTICE,
   WORLD_EVENT_FAILURE_MESSAGES,
+  WORLD_EVENT_SUCCESS_MESSAGES,
   type LocatedEventCopyContext,
 } from './content/gameCopy'
+import { HintDirector } from './content/hints'
 import { RandomStream } from './random/RandomStream'
 import { deriveSeed, parseSeed } from './random/seed'
 import { getStartingBoonEffects } from './run/profile'
@@ -392,6 +418,11 @@ export interface GameEngineSettings {
    * else is regenerated, so a stale or wrong blueprint cannot be smuggled in.
    */
   blueprint: WorldBlueprint
+  /**
+   * Diegetic first-time lines this player has already seen, from the profile. The engine
+   * keeps no profile of its own; it reports back through `onHintSeen`.
+   */
+  seenHints: readonly string[]
 }
 
 export type GameEngineOptions = Partial<Omit<GameEngineSettings, 'generatedRun'>> &
@@ -1544,20 +1575,18 @@ function actorPosition(actor: Actor): AiPoint {
   return actor.mesh.position
 }
 
-function formatPart(part: BodyPart): string {
-  const names: Record<BodyPart, string> = {
-    leftArm: 'левая рука',
-    rightArm: 'правая рука',
-    leftLeg: 'левая нога',
-    rightLeg: 'правая нога',
-    leftEye: 'левый глаз',
-    rightEye: 'правый глаз',
-  }
-  return names[part]
-}
-
 function foliageQualityDensity(quality: FoliageQuality): number {
   return quality === 'off' ? 0 : quality === 'low' ? 0.55 : 1
+}
+
+/** A bounded list of ids out of the save's free-form director bag. */
+function readSerializableStringArray(
+  state: SerializableState | undefined,
+  key: string,
+): string[] {
+  const value = state?.[key]
+  if (!Array.isArray(value)) return []
+  return value.filter((entry): entry is string => typeof entry === 'string').slice(0, 64)
 }
 
 function generatedMaximumBonus(
@@ -1614,6 +1643,11 @@ export class GameEngine {
   private generatedHealthBonus = 0
   private generatedStaminaBonus = 0
   private readonly achievements: AchievementTracker
+  /**
+   * Diegetic first-time lines. Reads the emitted view and speaks through `onNotice`, so it
+   * needs no hook of its own in any system and cannot touch a random stream.
+   */
+  private readonly hints: HintDirector
   private readonly palette: Palette
   private readonly zoneArtProfiles: Record<ZoneId, ZoneArtProfile>
   private readonly scene = new THREE.Scene()
@@ -1969,6 +2003,19 @@ export class GameEngine {
     this.achievements = new AchievementTracker((achievement) => {
       this.callbacks.onAchievementUnlocked(achievement)
       this.playSound('achievement')
+    })
+    this.hints = new HintDirector({
+      seen: settings.seenHints ?? [],
+      // Rides in `directorState`, which is a free-form JSON bag the save already carries,
+      // so a queued line survives a checkpoint and continue instead of dying with the
+      // engine that queued it.
+      pending: readSerializableStringArray(restoredRun?.directorState, 'pendingHints'),
+      emit: (message, tone) => {
+        this.callbacks.onNotice(message, tone)
+      },
+      onSeen: (hintId) => {
+        this.callbacks.onHintSeen(hintId)
+      },
     })
     if (
       restoredRun &&
@@ -2637,14 +2684,11 @@ export class GameEngine {
       this.body.leftArm === 'missing' &&
       this.body.rightArm === 'missing'
     ) {
-      this.callbacks.onNotice(
-        'Без рук лук не натянуть. Можно достать или купить протез.',
-        'warning',
-      )
+      this.callbacks.onNotice(ABILITY_BLOCKED_NO_ARMS_NOTICE, 'warning')
       return
     }
     if (this.stamina < ability.staminaCost) {
-      this.callbacks.onNotice('Выносливость кончилась. Можно ползать и т. п., но приём не выйдет.', 'warning')
+      this.callbacks.onNotice(ABILITY_BLOCKED_NO_STAMINA_NOTICE, 'warning')
       return
     }
 
@@ -2758,15 +2802,12 @@ export class GameEngine {
     const playerPosition = this.player.position
     if (playerPosition.distanceTo(this.caravan.position) < 7) {
       if (this.faction === 'guard') {
-        this.callbacks.onNotice(
-          'Ты играешь охраной дворца: этот корован надо защищать.',
-          'info',
-        )
+        this.callbacks.onNotice(CARAVAN_DEFENDED_BY_PLAYER_NOTICE, 'info')
         this.health = Math.min(this.maxHealth, this.health + 8)
         return
       }
       if (this.caravanCooldown > 0) {
-        this.callbacks.onNotice('Этот корован уже ограбили. Ждём следующий.', 'warning')
+        this.callbacks.onNotice(CARAVAN_ALREADY_ROBBED_NOTICE, 'warning')
         return
       }
       this.gold += 95
@@ -2774,10 +2815,7 @@ export class GameEngine {
       this.achievements.recordCaravanRobbed(false)
       this.caravanCooldown = 40
       this.caravanRobbedFlash = 1
-      this.callbacks.onNotice(
-        'Корован ограблен! +95 золота. Охрана уже набигает.',
-        'success',
-      )
+      this.callbacks.onNotice(describeCaravanRobbed(95), 'success')
       this.playSound('coin')
       this.spawnAmbush()
       this.emitView(true)
@@ -2789,16 +2827,10 @@ export class GameEngine {
     this.resumeAudio()
     this.squadFollowing = !this.squadFollowing
     this.achievements.recordSquadCommand()
-    const squadName =
-      this.faction === 'guard'
-        ? 'Солдаты охраны'
-        : this.faction === 'elf'
-          ? 'Партизаны эльфов'
-          : 'Войска злодея'
-    const message = this.squadFollowing
-      ? `${squadName} идут за тобой. Пользователь сам себе командир.`
-      : `${squadName} остаются на месте.`
-    this.callbacks.onNotice(message, this.squadFollowing ? 'success' : 'info')
+    this.callbacks.onNotice(
+      describeSquadOrder(this.faction, this.squadFollowing),
+      this.squadFollowing ? 'success' : 'info',
+    )
     this.playSound('command')
     this.emitView(true)
   }
@@ -2949,6 +2981,7 @@ export class GameEngine {
         caravanDirection: this.caravanDirection,
         caravanX: this.caravan.position.x,
         caravanZ: this.caravan.position.z,
+        pendingHints: this.hints.pending(),
         pendingLoot: this.lootPickups
           .filter((pickup) => pickup.active)
           .sort((left, right) => left.serial - right.serial)
@@ -3558,7 +3591,7 @@ export class GameEngine {
         this.generatedSupplyCount -= 1
         this.health = Math.min(this.maxHealth, this.health + 35)
         this.body.bleeding = Math.max(0, this.body.bleeding - 0.35)
-        this.callbacks.onNotice('Дорожный паёк вернул 35 здоровья. Не спрашивай, из чего он.', 'success')
+        this.callbacks.onNotice(describeRationEaten(35), 'success')
         this.playSound('objective')
         return true
       }
@@ -3586,12 +3619,7 @@ export class GameEngine {
       (site.kind === 'shop' || site.kind === 'recovery') &&
       this.isChronicleSiteRazed(site.id)
     ) {
-      this.callbacks.onNotice(
-        site.kind === 'shop'
-          ? 'Лавка сгорела вместе с домиками деревяными. Торговать не с кем.'
-          : 'Лечить некому: знахаря вынесли вперёд ногами, а избу — по брёвнышку.',
-        'warning',
-      )
+      this.callbacks.onNotice(describeRazedSite(site.kind), 'warning')
       return true
     }
     if (site.kind === 'shop') {
@@ -3604,14 +3632,11 @@ export class GameEngine {
       this.stamina = this.maxStamina
       this.body.bleeding = 0
       this.healWounds()
-      this.callbacks.onNotice(
-        'Пользователя вылечили. До протезов дело пока не дошло.',
-        'success',
-      )
+      this.callbacks.onNotice(HEALER_TREATED_NOTICE, 'success')
       this.playSound('objective')
     } else if (site.kind === 'treasure' || node?.kind === 'claim') {
       if (collected) {
-        this.callbacks.onNotice('Этот тайник уже пуст.', 'info')
+        this.callbacks.onNotice(TREASURE_ALREADY_LOOTED_NOTICE, 'info')
       } else {
         const reward = 28 + Math.floor(this.lootRng() * 43)
         this.gold += reward
@@ -3624,7 +3649,7 @@ export class GameEngine {
             next.completedInteractionIds.push(site.id)
           }
         })
-        this.callbacks.onNotice(`В тайнике нашлись припасы и ${reward} золота.`, 'success')
+        this.callbacks.onNotice(describeTreasureFound(reward), 'success')
         this.playSound('coin')
       }
     } else if (!interacted) {
@@ -3633,10 +3658,7 @@ export class GameEngine {
           next.completedInteractionIds.push(site.id)
         }
       })
-      this.callbacks.onNotice(
-        `Осмотрено: «${generatedSiteLabel(site.kind)}».`,
-        'success',
-      )
+      this.callbacks.onNotice(describeSiteInspected(site.kind), 'success')
     }
 
     if (targetsNode) {
@@ -3941,7 +3963,7 @@ export class GameEngine {
       this.stamina = Math.max(0, this.stamina - delta * SHIELD_STAMINA_DRAIN)
       if (this.stamina === 0) {
         this.dropShield()
-        this.callbacks.onNotice('Выносливость кончилась — щит опущен.', 'warning')
+        this.callbacks.onNotice(SHIELD_DROPPED_NOTICE, 'warning')
       }
     } else if (sprinting) {
       this.stamina = Math.max(0, this.stamina - delta * 24)
@@ -5541,7 +5563,7 @@ export class GameEngine {
     )
     actor.reinforcementsCalled += 1
     if (actor.mesh.position.distanceTo(this.player.position) < 35) {
-      this.callbacks.onNotice('Командир приказал подкреплению вступить в бой!', 'warning')
+      this.callbacks.onNotice(REINFORCEMENTS_ORDERED_NOTICE, 'warning')
     }
   }
 
@@ -6236,7 +6258,7 @@ export class GameEngine {
     if (currentZone !== this.lastZone) {
       this.lastZone = currentZone
       this.achievements.recordZone(currentZone)
-      this.callbacks.onNotice(`Открыта область: «${this.zoneName(currentZone)}».`, 'info')
+      this.callbacks.onNotice(describeZoneDiscovered(currentZone), 'info')
     }
 
     const node = this.getActiveGeneratedObjective()
@@ -6265,7 +6287,7 @@ export class GameEngine {
     if (nextTier > this.threatTier) {
       this.threatTier = nextTier
       this.callbacks.onNotice(
-        `Угроза растёт: уровень ${this.threatTier}/${MAX_THREAT_TIER}. Враги сильнее, событий и набегов больше.`,
+        describeThreatTier(this.threatTier, MAX_THREAT_TIER),
         'warning',
       )
       this.playSound('event')
@@ -6284,14 +6306,7 @@ export class GameEngine {
     this.nextThreatWaveAt = this.elapsed + threatWaveInterval(this.threatTier)
     const spawned = this.spawnThreatWave(scheduledAt)
     if (spawned > 0) {
-      this.callbacks.onNotice(
-        `На пользователя набигают: ${formatRussianCount(spawned, [
-          'враг',
-          'врага',
-          'врагов',
-        ])}. Угроза: ${this.threatTier}.`,
-        'warning',
-      )
+      this.callbacks.onNotice(describeThreatWave(spawned, this.threatTier), 'warning')
       this.playSound('event')
     }
   }
@@ -7748,7 +7763,7 @@ export class GameEngine {
     if (!event) return false
 
     this.activeEvents.push(event)
-    this.callbacks.onNotice(`Событие: ${event.title}. ${event.description}`, event.tone)
+    this.callbacks.onNotice(describeEventStarted(event.title, event.description), event.tone)
     this.playSound('event')
     this.emitView(true)
     return true
@@ -7798,13 +7813,13 @@ export class GameEngine {
       this.gold += 180
       this.achievements.recordGoldEarned(180)
       this.achievements.recordCaravanRobbed(true)
-      return 'Богатый корован ограблен, погоня позади. +180 золота.'
+      return WORLD_EVENT_SUCCESS_MESSAGES.richCaravan
     }
     if (kind === 'defendHome') {
       this.gold += 90
       this.achievements.recordGoldEarned(90)
       this.health = Math.min(this.maxHealth, this.health + 8)
-      return 'Дом отбили! +90 золота и +8 здоровья.'
+      return WORLD_EVENT_SUCCESS_MESSAGES.defendHome
     }
     if (kind === 'champion') {
       this.gold += 120
@@ -7815,14 +7830,12 @@ export class GameEngine {
       )
       this.championDamageBonus += damageBonus
       this.damage += damageBonus
-      return damageBonus > 0
-        ? `Чемпион побеждён! +120 золота и +${damageBonus} к урону.`
-        : 'Чемпион побеждён! +120 золота. Урон уже достиг предела.'
+      return describeChampionDefeated(damageBonus)
     }
-    if (kind === 'rescue') return 'Пленник спасён и теперь идёт в твоём отряде.'
+    if (kind === 'rescue') return WORLD_EVENT_SUCCESS_MESSAGES.rescue
     this.gold += 70
     this.achievements.recordGoldEarned(70)
-    return 'Заказ выполнен, награда в кармане. +70 золота.'
+    return WORLD_EVENT_SUCCESS_MESSAGES.bounty
   }
 
   /**
@@ -8012,7 +8025,7 @@ export class GameEngine {
           event.markerPos.copy(robberyPoint)
           const cargo = caravan.getObjectByName('cargo')
           if (cargo instanceof THREE.Mesh) cargo.scale.y = 0.38
-          this.callbacks.onNotice('Добыча у тебя. Теперь уходи от погони!', 'warning')
+          this.callbacks.onNotice(RICH_CARAVAN_LOOT_TAKEN_NOTICE, 'warning')
           this.playSound('coin')
         }
         return true
@@ -9643,11 +9656,14 @@ export class GameEngine {
     this.achievements.recordGoldEarned(reward)
     this.trySpawnKillLoot(actor, deathPosition)
     this.callbacks.onNotice(
-      actor.allegiance === 'beast'
-        ? `Зверьё стало на одну штуку тише. Шкура, конечно, тоже 3Д. +${reward} золота.`
-        : actor.role === 'commander'
-          ? 'Командир дворца больше не командир.'
-          : `Враг побеждён. Труп тоже 3Д. +${reward} золота.`,
+      describeKillReward(
+        actor.allegiance === 'beast'
+          ? 'beast'
+          : actor.role === 'commander'
+            ? 'commander'
+            : 'soldier',
+        reward,
+      ),
       'success',
     )
     this.emitView(true)
@@ -9781,20 +9797,12 @@ export class GameEngine {
         this.body.bleeding = Math.min(2.1, this.body.bleeding + (part.includes('Leg') ? 0.48 : 0.34))
         this.hidePlayerLimb(part)
       }
-      this.callbacks.onNotice(
-        part.includes('Eye')
-          ? `Потерян ${formatPart(part)}. Теперь пол-экрана не видно; ищи протез.`
-          : `Потеряна ${formatPart(part)}. Без лечения истечёшь кровью; самое хорошее — протез.`,
-        'danger',
-      )
+      this.callbacks.onNotice(describeLimbLost(part), 'danger')
     } else {
       this.body[part] = 'wounded'
       this.achievements.recordInjury(part, false)
       this.body.bleeding = Math.min(1.2, this.body.bleeding + 0.12)
-      this.callbacks.onNotice(
-        `Ранение: ${formatPart(part)}. Если не вылечить, станет хуже.`,
-        'warning',
-      )
+      this.callbacks.onNotice(describeWound(part), 'warning')
     }
     this.emitView(true)
   }
@@ -9904,7 +9912,7 @@ export class GameEngine {
   private completeObjective(id: string): boolean {
     const objective = completeObjectiveEntry(this.objectives, id)
     if (!objective) return false
-    this.callbacks.onNotice(`Задача выполнена: ${objective.text}.`, 'success')
+    this.callbacks.onNotice(describeObjectiveCompleted(objective.text), 'success')
     this.achievements.recordObjectiveCompleted()
     this.playSound('objective')
     this.emitView(true)
@@ -10043,6 +10051,9 @@ export class GameEngine {
         : null,
     })
     this.callbacks.onView(view)
+    // After the HUD has the frame, so a hint can never describe a state the player has not
+    // been shown yet. Skipped once the run is over: the end screen owns that moment.
+    if (!this.ended) this.hints.observe(view)
   }
 
   private stableSeed(value: string): number {
@@ -12778,7 +12789,7 @@ export class GameEngine {
       )
     }
     if (availableSlots > 0) {
-      this.callbacks.onNotice('Засада! Охрана корована набигает.', 'warning')
+      this.callbacks.onNotice(CARAVAN_AMBUSH_NOTICE, 'warning')
     }
   }
 
@@ -14341,16 +14352,6 @@ export class GameEngine {
   /** How the player's own side regards this actor, straight out of the matrix. */
   private playerRelationTo(actor: Actor): ReturnType<typeof allegianceRelation> {
     return allegianceRelation(this.faction, actor.allegiance)
-  }
-
-  private zoneName(zone: ZoneId): string {
-    const names: Record<ZoneId, string> = {
-      neutral: 'Вольные земли',
-      palace: 'Имперский удел',
-      forest: 'Чаща Эленвуда',
-      fort: 'Чёрный кряж',
-    }
-    return names[zone]
   }
 
   private resize(): void {

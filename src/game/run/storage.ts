@@ -6,6 +6,7 @@ import {
 import { REGION_DELTA_VERSION } from '../world/RegionRuntime.ts'
 import {
   DEFAULT_STARTING_BOON_IDS,
+  MAX_SEEN_HINTS,
   computeRunCompletionReward,
   isBoonId,
 } from './profile.ts'
@@ -634,6 +635,12 @@ export function normalizeProfileSaveV1(value: unknown): ProfileSaveV1 | null {
     value.finalizedRunIds === undefined
       ? []
       : normalizeStringArray(value.finalizedRunIds, MAX_FINALIZED_RUN_IDS)
+  // Absent on every profile written before the hint ledger existed. Treated exactly like
+  // `finalizedRunIds`: missing means empty, malformed still fails the whole profile.
+  const seenHints =
+    value.seenHints === undefined
+      ? []
+      : normalizeStringArray(value.seenHints, MAX_SEEN_HINTS)
   if (
     profileCurrency === null ||
     !unlockedBoonIds ||
@@ -642,7 +649,8 @@ export function normalizeProfileSaveV1(value: unknown): ProfileSaveV1 | null {
     (value.selectedBoonId !== null && !selectedBoonId) ||
     (value.selectedFaction !== null && !selectedFaction) ||
     !runHistory ||
-    !providedFinalizedRunIds
+    !providedFinalizedRunIds ||
+    !seenHints
   ) {
     return null
   }
@@ -668,6 +676,7 @@ export function normalizeProfileSaveV1(value: unknown): ProfileSaveV1 | null {
     selectedFaction,
     runHistory,
     finalizedRunIds,
+    seenHints,
   }
 }
 
@@ -682,6 +691,7 @@ export function createDefaultProfile(): ProfileSaveV1 {
     selectedFaction: null,
     runHistory: [],
     finalizedRunIds: [],
+    seenHints: [],
   }
 }
 
