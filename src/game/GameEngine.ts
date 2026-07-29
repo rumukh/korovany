@@ -98,13 +98,11 @@ import {
   type ChronicleEntryView,
   type Faction,
   type GameCallbacks,
-  type GameView,
   type LootRarity,
   type LootReward,
   type LootRewardKind,
   type LootToastView,
   type HatchMotif,
-  type MapMarker,
   type NoticeTone,
   type Objective,
   type ShopItem,
@@ -116,7 +114,6 @@ import {
   RANDOM_WORLD_EVENT_KINDS,
   allegianceRelation,
   areAllegiancesHostile,
-  createAbilityView,
   createHealthyBody,
   getMaxHealth,
   getMaxStamina,
@@ -136,7 +133,6 @@ import {
 } from './content/registry'
 import {
   chronicleEventTone,
-  createGeneratedObjectiveText,
   describeBeastProwler,
   describeCaravanPlundered,
   describeChronicleEvent,
@@ -155,7 +151,7 @@ import {
   type LocatedEventCopyContext,
 } from './content/gameCopy'
 import { RandomStream } from './random/RandomStream'
-import { deriveSeed } from './random/seed'
+import { deriveSeed, parseSeed } from './random/seed'
 import { getStartingBoonEffects } from './run/profile'
 import {
   STARTING_SQUAD_VERSION,
@@ -187,7 +183,6 @@ import {
   type ActorBudgetUsage,
 } from './world/ActorBudget'
 import {
-  CHRONICLE_TICK_SECONDS,
   cloneChronicleState,
   cloneRegionChronicleState,
   createChronicleRegions,
@@ -248,6 +243,55 @@ import {
   type MoraleBreak,
   type PlayerThreat,
 } from './world/ActorAi'
+import {
+  FLINCH_TIME,
+  KNOCKBACK_MAX_SPEED,
+  actionCooldown,
+  actionRecovery,
+  actionWindup,
+  actorMaxPoise,
+  actorStaggerDuration,
+  advanceReaction,
+  applyDamageReaction,
+  canStartAction,
+  isLargeBody,
+  isWithinContact,
+  killReward,
+  knockbackMagnitude,
+  playerArmor,
+  resolveActorDamage,
+  resolvePlayerDamage,
+  rollMeleeDamage,
+  rollPropBite,
+  selectDeathStyle,
+  shouldInjurePlayer,
+  type CombatAttackKind,
+  type CombatHitWeight,
+  type CombatOutcome,
+} from './world/CombatResolver'
+import {
+  EVENT_RETRY,
+  advanceEventTimer,
+  buildChronicleFeedSignature,
+  campaignObjectivesComplete,
+  commitChronicleTicks,
+  completeObjectiveEntry,
+  createGeneratedObjectives,
+  enemyDamageMultiplier,
+  enemyHealthMultiplier,
+  eventCooldownRange,
+  getActiveObjectiveNode,
+  isWithinObjectiveArrival,
+  objectivePrerequisitesDone,
+  playerObjectiveRatio,
+  rollEventCooldown,
+  selectChronicleAnnouncements,
+  selectChronicleFeedEvents,
+  selectWeightedEventKind,
+  shouldHandBackForStreaming,
+  threatWaveInterval,
+} from './world/CampaignDirector'
+import { buildGameView } from './world/CampaignView'
 import {
   AMBIENT_CIVILIAN_LIMIT,
   BIRD_CLIMB_SPEED,
@@ -339,6 +383,15 @@ export interface GameEngineSettings {
   foliageQuality: FoliageQuality
   achievementRunId: string
   generatedRun: GeneratedRunLaunch
+  /**
+   * A world the caller has already generated for this seed.
+   *
+   * `generateWorld` is deterministic, so this is purely a way to stop the same world being
+   * built twice per launch — the menu preview needs one before the engine exists. It is
+   * accepted only when its seed and generator version match the launch config; anything
+   * else is regenerated, so a stale or wrong blueprint cannot be smuggled in.
+   */
+  blueprint: WorldBlueprint
 }
 
 export type GameEngineOptions = Partial<Omit<GameEngineSettings, 'generatedRun'>> &
@@ -820,15 +873,12 @@ interface ProjectileHit {
   player: boolean
 }
 
-type AttackKind = 'melee' | 'cleave' | 'arrow' | 'allyMelee' | 'actorArrow'
-type HitWeight = 'normal' | 'heavy' | 'lethal' | 'blocked'
+type AttackKind = CombatAttackKind
+type HitWeight = CombatHitWeight
 type ComicCallout = 'БАЦ!' | 'ХРЯСЬ!' | 'БУМ!' | 'БЛОК!'
 
-interface DamageResult {
-  applied: boolean
-  dealt: number
-  killed: boolean
-  weight: HitWeight
+/** `CombatResolver`'s outcome plus the two THREE vectors the presentation layer needs. */
+interface DamageResult extends CombatOutcome {
   position: THREE.Vector3
   direction: THREE.Vector3
 }
@@ -917,8 +967,7 @@ const GENERATED_NAVIGATION_CACHE_LIMIT = 96
 const GENERATED_CARAVAN_COLLIDER_RADIUS = 1.4
 const GENERATED_CARAVAN_PATROL_NEAR = 6
 const GENERATED_CARAVAN_PATROL_FAR = 28
-const CHRONICLE_MAX_CATCHUP_TICKS = 8
-const CHRONICLE_FEED_LIMIT = 8
+
 const LOOT_DROP_CHANCE = 0.3
 const LOOT_MAX_ACTIVE = 20
 const LOOT_BURST_TIME = 0.45
@@ -966,11 +1015,7 @@ const RIM_LIGHT_BASE = 0.92
 const OUTLINE_CORPSE_SECONDS = 8
 const OUTLINE_PLAYER_HIDE_DISTANCE_SQ = 2.4 * 2.4
 const FIRST_EVENT_AT = 30
-const EVENT_COOLDOWN_MIN = 50
-const EVENT_COOLDOWN_MAX = 70
-const EVENT_RETRY = 10
 const THREAT_WAVE_FIRST_AT = 240
-const THREAT_WAVE_MIN_INTERVAL = 70
 const CORPSE_LIFETIME = 12
 const CHAMPION_DAMAGE_CAP = 18
 const DEFEND_HOME_MAX_DISTANCE = 95
@@ -982,13 +1027,10 @@ const ACTOR_ARROW_DAMAGE = 7
 const ACTOR_ARROW_SPEED = 16
 const ARCHER_MIN_RANGE = 8
 const ARCHER_MAX_RANGE = 12
-const ARCHER_FIRE_COOLDOWN = 1.8
 const PROJECTILE_HIT_RADIUS = 0.9
 const PROJECTILE_GRAVITY = 1.6
-const SHIELD_DAMAGE_MULTIPLIER = 0.15
 const SHIELD_STAMINA_DRAIN = 18
 const SHIELD_SPEED_MULTIPLIER = 0.5
-const SHIELD_FRONT_DOT = 0.2
 const CLEAVE_DAMAGE_MULTIPLIER = 1.1
 const CLEAVE_RADIUS = 4.5
 const CLEAVE_ARC_DOT = 0.5
@@ -1073,22 +1115,12 @@ const CARAVAN_GUARDED_RANGE = 7
 const CARAVAN_PLUNDER_RANGE = 3.4
 /** How long a plundered cart stays empty. Longer than a player robbery: it was taken. */
 const CARAVAN_PLUNDER_COOLDOWN = 55
-const BRUTE_FRONTAL_DAMAGE_MULTIPLIER = 0.5
-const BRUTE_FRONT_DOT = 0.2
-const FLINCH_TIME = 0.12
-const POISE_REGEN_DELAY = 0.75
-const POISE_RECOVERY_PER_SECOND = 22
-const STAGGER_IMMUNITY = 0.45
 const KNOCKBACK_DAMPING = 11
-const KNOCKBACK_MAX_SPEED = 11
 const KNOCKBACK_STEER_THRESHOLD = 0.8
-const LARGE_ROLE_KNOCKBACK_SCALE = 0.55
 const TELEGRAPH_MAX = 8
 const TELEGRAPH_Y = 0.055
-const CONTACT_RANGE_FORGIVENESS = 0.35
 const DEATH_POSE_TIME = 0.24
 const REDUCED_MOTION_COMBAT_SCALE = 0.6
-const HIGH_KNOCKBACK_THRESHOLD = 2.5
 const SHAKE_POSITION = 0.22
 const SHAKE_ROLL = 0.012
 const SHAKE_DECAY = 2.1
@@ -1888,7 +1920,12 @@ export class GameEngine {
     if (launch.config.faction !== faction) {
       throw new Error('Generated run faction does not match the GameEngine faction')
     }
-    const blueprint = generateWorld(launch.config.seed)
+    const blueprint =
+      settings.blueprint &&
+      settings.blueprint.seed === parseSeed(launch.config.seed) &&
+      settings.blueprint.generatorVersion === launch.config.generatorVersion
+        ? settings.blueprint
+        : generateWorld(launch.config.seed)
     if (launch.restored) {
       restoredRun = normalizeActiveRunSaveV3(launch.restored)
       if (!restoredRun) throw new Error('Generated run save is malformed')
@@ -2063,7 +2100,7 @@ export class GameEngine {
     const boon = restoredRun ? null : configuredBoon
     this.objectives =
       generatedPlayer?.objectives.map((objective) => ({ ...objective })) ??
-      this.createGeneratedObjectives(blueprint.objectives[faction].nodes)
+      createGeneratedObjectives(blueprint, faction)
     this.body = generatedPlayer ? { ...generatedPlayer.body } : createHealthyBody()
     this.upgrades = normalizeUpgradeLevels(generatedPlayer?.upgrades)
     const baseMaxHealth = getMaxHealth(this.upgrades)
@@ -2140,7 +2177,7 @@ export class GameEngine {
     const defaultNextWave =
       this.elapsed < THREAT_WAVE_FIRST_AT
         ? THREAT_WAVE_FIRST_AT
-        : this.elapsed + Math.min(45, this.threatWaveInterval())
+        : this.elapsed + Math.min(45, threatWaveInterval(this.threatTier))
     this.nextThreatWaveAt = Math.max(
       this.elapsed,
       Math.min(
@@ -2149,7 +2186,7 @@ export class GameEngine {
           'nextThreatWaveAt',
           defaultNextWave,
         ),
-        this.elapsed + this.threatWaveInterval(),
+        this.elapsed + threatWaveInterval(this.threatTier),
       ),
     )
     this.championDamageBonus = Math.min(
@@ -3043,20 +3080,6 @@ export class GameEngine {
     return typeof value === 'number' && Number.isFinite(value) ? value : fallback
   }
 
-  private createGeneratedObjectives(
-    nodes: readonly FactionObjectiveNode[],
-  ): Objective[] {
-    return nodes.map((node) => {
-      const site = this.generatedBlueprint.sites.find(
-        (candidate) => candidate.id === node.siteId,
-      )
-      return {
-        id: node.id,
-        text: createGeneratedObjectiveText(node.kind, site?.kind),
-        done: false,
-      }
-    })
-  }
 
   private zoneAtPosition(x: number, z: number): ZoneId {
     const biome = this.generatedWorld.getBiomeAt(x, z)
@@ -3509,17 +3532,11 @@ export class GameEngine {
   }
 
   private generatedPrerequisitesDone(node: FactionObjectiveNode): boolean {
-    return node.prerequisiteIds.every((id) => this.isObjectiveDone(id))
+    return objectivePrerequisitesDone(node, this.objectives)
   }
 
   private getActiveGeneratedObjective(): FactionObjectiveNode | null {
-    const graph = this.generatedBlueprint.objectives[this.faction]
-    return (
-      graph.nodes.find(
-        (node) =>
-          !this.isObjectiveDone(node.id) && this.generatedPrerequisitesDone(node),
-      ) ?? null
-    )
+    return getActiveObjectiveNode(this.generatedBlueprint, this.faction, this.objectives)
   }
 
   private completeGeneratedObjective(node: FactionObjectiveNode): boolean {
@@ -5010,41 +5027,6 @@ export class GameEngine {
     return new THREE.Vector3(Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw))
   }
 
-  private actorWindup(role: ActorRole): number {
-    if (role === 'scout' || role === 'minion') return 0.18
-    if (role === 'archer') return 0.32
-    if (role === 'commander') return 0.38
-    if (role === 'brute') return 0.56
-    if (role === 'champion') return 0.48
-    return 0.26
-  }
-
-  private actorRecovery(role: ActorRole): number {
-    if (role === 'scout' || role === 'minion') return 0.18
-    if (role === 'archer') return 0.2
-    if (role === 'commander') return 0.28
-    if (role === 'brute') return 0.42
-    if (role === 'champion') return 0.36
-    return 0.24
-  }
-
-  private actorMaxPoise(role: ActorRole): number {
-    if (isBeastRole(role)) return BEAST_PROFILES[role].poise
-    if (role === 'scout' || role === 'minion' || role === 'archer') return 18
-    if (role === 'commander') return 46
-    if (role === 'brute') return 58
-    if (role === 'champion') return 72
-    return 28
-  }
-
-  private actorStaggerDuration(role: ActorRole): number {
-    if (role === 'scout' || role === 'minion' || role === 'archer') return 0.34
-    if (role === 'commander') return 0.24
-    if (role === 'brute') return 0.2
-    if (role === 'champion') return 0.18
-    return 0.3
-  }
-
   private startActorAction(
     actor: Actor,
     kind: ActorActionKind,
@@ -5052,24 +5034,14 @@ export class GameEngine {
     targetPosition: THREE.Vector3,
     contactRange: number,
   ): void {
-    if (!actor.alive || actor.action || actor.reaction === 'stagger') return
-    const cooldown =
-      kind === 'arrow'
-        ? ARCHER_FIRE_COOLDOWN
-        : kind === 'meleePlayer'
-          ? actor.role === 'commander'
-            ? 0.8
-            : 1.15
-          : kind === 'meleeActor'
-            ? 1.3
-            : 1.35
-    actor.attackCooldown = this.actorAttackInterval(actor, cooldown)
+    if (!canStartAction(actor)) return
+    actor.attackCooldown = this.actorAttackInterval(actor, actionCooldown(kind, actor.role))
     actor.velocity.set(0, 0, 0)
     const action: ActorAction = {
       kind,
       phase: 'windup',
       elapsed: 0,
-      duration: this.actorWindup(actor.role),
+      duration: actionWindup(actor.role),
       target,
       targetPosition: targetPosition.clone(),
       contactRange,
@@ -5098,7 +5070,7 @@ export class GameEngine {
       if (actor.role === 'scout') actor.retreatTimer = SCOUT_RETREAT_DURATION
       action.phase = 'recovery'
       action.elapsed = 0
-      action.duration = this.actorRecovery(actor.role)
+      action.duration = actionRecovery(actor.role)
       return
     }
 
@@ -5136,8 +5108,10 @@ export class GameEngine {
     const livePosition = this.resolveActorActionTarget(actor, action)
     if (
       !livePosition ||
-      actor.mesh.position.distanceTo(livePosition) >
-        action.contactRange + CONTACT_RANGE_FORGIVENESS
+      !isWithinContact(
+        actor.mesh.position.distanceTo(livePosition),
+        action.contactRange,
+      )
     ) {
       this.playActorActionSound(actor, action, 'whiff')
       return
@@ -5189,22 +5163,7 @@ export class GameEngine {
   }
 
   private updateActorReaction(actor: Actor, delta: number): void {
-    actor.staggerImmunity = Math.max(0, actor.staggerImmunity - delta)
-    actor.poiseRecoveryDelay = Math.max(0, actor.poiseRecoveryDelay - delta)
-    if (actor.reaction !== 'none') {
-      const wasStaggered = actor.reaction === 'stagger'
-      actor.reactionRemaining = Math.max(0, actor.reactionRemaining - delta)
-      if (actor.reactionRemaining <= 0) {
-        actor.reaction = 'none'
-        if (wasStaggered) actor.poise = Math.max(actor.poise, actor.maxPoise * 0.7)
-      }
-    }
-    if (actor.reaction !== 'stagger' && actor.poiseRecoveryDelay <= 0) {
-      actor.poise = Math.min(
-        actor.maxPoise,
-        actor.poise + POISE_RECOVERY_PER_SECOND * delta,
-      )
-    }
+    advanceReaction(actor, delta)
   }
 
   private applyActorDamageReaction(
@@ -5218,38 +5177,20 @@ export class GameEngine {
     actor.lastHitDirection.y = 0
     if (actor.lastHitDirection.lengthSq() > 0.0001) actor.lastHitDirection.normalize()
     if (requestedKnockback > 0 && !result.killed) {
-      const largeRole =
-        actor.role === 'brute' || actor.role === 'commander' || actor.role === 'champion'
-      const resistance = largeRole ? LARGE_ROLE_KNOCKBACK_SCALE : 1
       const motionScale =
         !this.screenShakeEnabled || this.reducedMotion ? REDUCED_MOTION_COMBAT_SCALE : 1
       actor.knockbackVelocity.addScaledVector(
         actor.lastHitDirection,
-        requestedKnockback * resistance * motionScale,
+        knockbackMagnitude(actor.role, requestedKnockback, motionScale),
       )
       if (actor.knockbackVelocity.length() > KNOCKBACK_MAX_SPEED) {
         actor.knockbackVelocity.setLength(KNOCKBACK_MAX_SPEED)
       }
     }
-    if (result.killed) return
+    if (!applyDamageReaction(actor, result, attackKind)) return
 
-    if (actor.reaction !== 'stagger') {
-      actor.reaction = 'flinch'
-      actor.reactionRemaining = Math.max(actor.reactionRemaining, FLINCH_TIME)
-    }
-    actor.poiseRecoveryDelay = POISE_REGEN_DELAY
-    const poiseDamage = result.dealt * (attackKind === 'cleave' ? 1.45 : 0.75)
-    if (actor.staggerImmunity > 0) {
-      actor.poise = Math.max(actor.maxPoise * 0.7, actor.poise - poiseDamage)
-      return
-    }
-    actor.poise -= poiseDamage
-    if (actor.poise > 0) return
-
-    actor.reaction = 'stagger'
-    actor.reactionRemaining = this.actorStaggerDuration(actor.role)
-    actor.staggerImmunity = STAGGER_IMMUNITY
-    actor.poise = actor.maxPoise * 0.7
+    // The stance broke. Everything below is scene-side and stays here: a telegraph is a
+    // mesh and `CombatResolver` has no scene.
     actor.retreatTimer = 0
     actor.velocity.set(0, 0, 0)
     actor.action = null
@@ -6303,15 +6244,17 @@ export class GameEngine {
       const site = this.generatedWorld.getSitePosition(node.siteId)
       if (
         site &&
-        Math.hypot(
-          site.x - this.player.position.x,
-          site.z - this.player.position.z,
-        ) <= 8
+        isWithinObjectiveArrival(
+          this.player.position.x,
+          this.player.position.z,
+          site.x,
+          site.z,
+        )
       ) {
         this.completeGeneratedObjective(node)
       }
     }
-    if (this.objectives.every((objective) => objective.done)) {
+    if (campaignObjectivesComplete(this.objectives)) {
       this.campaignCompleted = true
       this.endGame('victory')
     }
@@ -6338,7 +6281,7 @@ export class GameEngine {
     }
 
     const scheduledAt = this.nextThreatWaveAt
-    this.nextThreatWaveAt = this.elapsed + this.threatWaveInterval()
+    this.nextThreatWaveAt = this.elapsed + threatWaveInterval(this.threatTier)
     const spawned = this.spawnThreatWave(scheduledAt)
     if (spawned > 0) {
       this.callbacks.onNotice(
@@ -7202,30 +7145,22 @@ export class GameEngine {
     hand.add(torch)
   }
 
-  private updateChronicle(delta: number): void {    if (this.ended) return
-    this.chronicleAccumulator += delta
-    if (this.chronicleAccumulator < CHRONICLE_TICK_SECONDS) return
+  private updateChronicle(delta: number): void {
+    if (this.ended) return
+    const commitment = commitChronicleTicks(this.chronicleAccumulator, delta)
+    this.chronicleAccumulator = commitment.accumulator
+    if (commitment.ticks === 0) return
 
     const frozenRegionIds = new Set(
       this.generatedWorld.regions.getSimulatedRegionIds().map(String),
     )
-    const playerObjectiveRatio =
-      this.objectives.length === 0
-        ? 0
-        : this.objectives.filter((objective) => objective.done).length /
-          this.objectives.length
     const environment = createChronicleEnvironment(
       this.elapsed,
       this.weatherWeights,
     )
+    const ratio = playerObjectiveRatio(this.objectives)
     const events: ChronicleEvent[] = []
-    let ticks = 0
-    while (
-      this.chronicleAccumulator >= CHRONICLE_TICK_SECONDS &&
-      ticks < CHRONICLE_MAX_CATCHUP_TICKS
-    ) {
-      this.chronicleAccumulator -= CHRONICLE_TICK_SECONDS
-      ticks += 1
+    for (let tick = 0; tick < commitment.ticks; tick += 1) {
       events.push(
         ...tickChronicle({
           blueprint: this.generatedBlueprint,
@@ -7234,14 +7169,11 @@ export class GameEngine {
           rng: this.generatedRngStreams.chronicle,
           environment,
           playerFaction: this.faction,
-          playerObjectiveRatio,
+          playerObjectiveRatio: ratio,
           protectedRegionIds: this.chronicleProtectedRegionIds,
           frozenRegionIds,
         }),
       )
-    }
-    if (this.chronicleAccumulator >= CHRONICLE_TICK_SECONDS) {
-      this.chronicleAccumulator = 0
     }
     this.chronicleContestedRegionIds = getContestedRegionIds(
       this.generatedBlueprint,
@@ -7254,21 +7186,17 @@ export class GameEngine {
     const discovered = new Set(
       this.generatedWorld.discoveredRegionIds.map(String),
     )
-    let announced = 0
+    // The world's own bookkeeping runs for every event, discovered or not: fog of war
+    // hides what happened, it does not stop it happening.
     for (const event of events) {
-      const regionId = String(event.regionId)
       if (event.kind === 'regionCaptured') {
-        this.refreshChronicleEncounterPlans(regionId)
+        this.refreshChronicleEncounterPlans(String(event.regionId))
       }
       if (event.kind === 'settlementBurned') {
         this.refreshChronicleRazedSites()
       }
-      const salient =
-        event.kind === 'settlementBurned' ||
-        event.kind === 'regionCaptured' ||
-        event.kind === 'caravanLost'
-      if (!salient || announced >= 2 || !discovered.has(regionId)) continue
-      announced += 1
+    }
+    for (const event of selectChronicleAnnouncements(events, discovered)) {
       this.callbacks.onNotice(
         this.describeChronicleEntry(event),
         chronicleEventTone(event.kind),
@@ -7304,27 +7232,27 @@ export class GameEngine {
       this.generatedWorld.discoveredRegionIds.map(String),
     )
     const log = this.chronicleState.log
-    const signature = `${this.chronicleState.tick}:${discovered.size}:${log.length}:${log[log.length - 1]?.id ?? ''}`
+    const signature = buildChronicleFeedSignature(
+      this.chronicleState.tick,
+      discovered.size,
+      log,
+    )
     if (signature === this.chronicleFeedSignature) return this.chronicleFeed
     this.chronicleFeedSignature = signature
-    this.chronicleFeed = log
-      .filter((event) => discovered.has(String(event.regionId)))
-      .slice(-CHRONICLE_FEED_LIMIT)
-      .reverse()
-      .map((event) => {
-        const region = this.generatedBlueprint.regions.find(
-          (candidate) => String(candidate.id) === String(event.regionId),
-        )
-        return {
-          id: event.id,
-          tick: event.tick,
-          regionLabel: region
-            ? formatRegionGridLabel(region.coordinate.x, region.coordinate.y)
-            : '??',
-          text: this.describeChronicleEntry(event),
-          tone: chronicleEventTone(event.kind),
-        }
-      })
+    this.chronicleFeed = selectChronicleFeedEvents(log, discovered).map((event) => {
+      const region = this.generatedBlueprint.regions.find(
+        (candidate) => String(candidate.id) === String(event.regionId),
+      )
+      return {
+        id: event.id,
+        tick: event.tick,
+        regionLabel: region
+          ? formatRegionGridLabel(region.coordinate.x, region.coordinate.y)
+          : '??',
+        text: this.describeChronicleEntry(event),
+        tone: chronicleEventTone(event.kind),
+      }
+    })
     return this.chronicleFeed
   }
 
@@ -7406,23 +7334,16 @@ export class GameEngine {
     }
   }
 
-  private eventCooldownRange(): { min: number; max: number } {    const tierOffset = this.threatTier - 1
-    return {
-      min: Math.max(30, EVENT_COOLDOWN_MIN - tierOffset * 5),
-      max: Math.max(42, EVENT_COOLDOWN_MAX - tierOffset * 7),
-    }
-  }
-
-  private threatWaveInterval(): number {
-    return Math.max(THREAT_WAVE_MIN_INTERVAL, 130 - this.threatTier * 12)
+  private eventCooldownRange(): { min: number; max: number } {
+    return eventCooldownRange(this.threatTier)
   }
 
   private enemyHealthMultiplier(allegiance: Allegiance): number {
-    return hostile(this.faction, allegiance) ? 1 + (this.threatTier - 1) * 0.12 : 1
+    return enemyHealthMultiplier(this.threatTier, hostile(this.faction, allegiance))
   }
 
   private enemyDamageMultiplier(actor: Actor): number {
-    return actor.hostileToPlayer ? 1 + (this.threatTier - 1) * 0.09 : 1
+    return enemyDamageMultiplier(this.threatTier, actor.hostileToPlayer)
   }
 
   private spawnThreatWave(scheduledAt: number): number {
@@ -7643,19 +7564,24 @@ export class GameEngine {
       if (event.state === 'active') {
         // Layer 2: a located event whose region streamed out is not cancelled — it is
         // handed back to the chronicle, which resolves it and records who won.
-        if (event.anchor === 'located' && !this.isRegionSimulated(event.regionId)) {
+        if (
+          shouldHandBackForStreaming(event, (regionId) =>
+            this.isRegionSimulated(regionId),
+          )
+        ) {
           this.dematerializeEvent(event)
           continue
         }
         event.update?.(delta)
-        if (event.state === 'active' && event.timer !== null) {
-          event.timer = Math.max(0, event.timer - delta)
-          if (event.timer <= 0) {
-            if (event.anchor === 'located') {
+        if (event.state === 'active') {
+          const direction = advanceEventTimer(event, delta)
+          if (direction) {
+            event.timer = direction.timer
+            if (direction.kind === 'handBack') {
               this.dematerializeEvent(event)
               continue
             }
-            event.state = 'failed'
+            if (direction.kind === 'expired') event.state = 'failed'
           }
         }
       }
@@ -7801,21 +7727,13 @@ export class GameEngine {
 
   private startRandomEvent(): boolean {
     const eligibleKinds = this.getEligibleEventKinds()
-    if (eligibleKinds.length === 0) return false
-
-    const totalWeight = eligibleKinds.reduce(
-      (total, kind) => total + EVENT_WEIGHTS[this.faction][kind],
-      0,
+    const selected = selectWeightedEventKind(
+      eligibleKinds,
+      (kind) => EVENT_WEIGHTS[this.faction][kind],
+      // Drawn only when there is something to pick, matching the engine's early return.
+      eligibleKinds.length === 0 ? 0 : this.eventRng(),
     )
-    let roll = this.eventRng() * totalWeight
-    let selected = eligibleKinds[eligibleKinds.length - 1]
-    for (const kind of eligibleKinds) {
-      roll -= EVENT_WEIGHTS[this.faction][kind]
-      if (roll <= 0) {
-        selected = kind
-        break
-      }
-    }
+    if (!selected) return false
 
     const event =
       selected === 'richCaravan'
@@ -7866,8 +7784,7 @@ export class GameEngine {
 
     this.releaseEvent(event)
     if (event.anchor === 'player') {
-      const cooldown = this.eventCooldownRange()
-      this.eventCooldown = cooldown.min + this.eventRng() * (cooldown.max - cooldown.min)
+      this.eventCooldown = rollEventCooldown(this.threatTier, this.eventRng())
     }
     this.emitView(true)
   }
@@ -9222,15 +9139,7 @@ export class GameEngine {
   }
 
   private actorAttackPlayer(actor: Actor): void {
-    const baseDamage = isBeastRole(actor.role)
-      ? BEAST_PROFILES[actor.role].meleeDamage
-      : actor.role === 'commander'
-        ? 10
-        : actor.role === 'champion'
-          ? 17
-          : actor.role === 'brute'
-            ? 14
-            : 6 + this.combatRng() * 3
+    const baseDamage = rollMeleeDamage(actor.role, 'player', this.combatRng)
     const incomingDirection = actor.mesh.position.clone().sub(this.player.position)
     incomingDirection.y = 0
     this.damagePlayer(
@@ -9242,15 +9151,7 @@ export class GameEngine {
   }
 
   private actorAttackActor(attacker: Actor, target: Actor): void {
-    const baseDamage = isBeastRole(attacker.role)
-      ? BEAST_PROFILES[attacker.role].meleeDamage
-      : attacker.role === 'commander'
-        ? 18
-        : attacker.role === 'champion'
-          ? 17
-          : attacker.role === 'brute'
-            ? 14
-            : 13
+    const baseDamage = rollMeleeDamage(attacker.role, 'actor', this.combatRng)
     this.damageActor(
       target,
       this.actorDamageWithAura(attacker, baseDamage),
@@ -9262,9 +9163,7 @@ export class GameEngine {
   }
 
   private actorAttackEventProp(actor: Actor, target: EventPropTarget): void {
-    // A troll is a prop-wrecker: it is on the settlement to take it apart, and it does
-    // that roughly twice as fast as a raider with a torch.
-    const bite = actor.role === 'troll' ? 9 + this.eventRng() * 4 : 4 + this.eventRng() * 2
+    const bite = rollPropBite(actor.role, this.eventRng())
     target.hp = Math.max(0, target.hp - bite)
     this.createHitParticles(target.position, actor.allegiance)
     if (target.position.distanceTo(this.player.position) < 25) {
@@ -9283,28 +9182,28 @@ export class GameEngine {
     options: DamagePlayerOptions,
   ): DamageResult {
     const fallbackDirection = new THREE.Vector3(0, 0, 1)
-    if (this.health <= 0) {
-      return {
-        applied: false,
-        dealt: 0,
-        killed: false,
-        weight: 'normal',
-        position: this.player.position.clone().add(new THREE.Vector3(0, 1.3, 0)),
-        direction: fallbackDirection,
-      }
-    }
-    const armor = this.faction === 'guard' ? 0.72 : 1
     const normalizedIncoming = incomingDirection.clone()
     normalizedIncoming.y = 0
     const hasIncomingDirection = normalizedIncoming.lengthSq() > 0.0001
     if (hasIncomingDirection) normalizedIncoming.normalize()
-    const frontalBlock =
-      this.shieldActive &&
-      hasIncomingDirection &&
-      normalizedIncoming.dot(this.getAimDirection()) > SHIELD_FRONT_DOT
-    const dealt =
-      baseDamage * armor * (frontalBlock ? SHIELD_DAMAGE_MULTIPLIER : 1)
-    const impact = THREE.MathUtils.clamp(dealt / 20, 0, 1)
+    const outcome = resolvePlayerDamage({
+      baseDamage,
+      health: this.health,
+      shieldActive: this.shieldActive,
+      hasIncomingDirection,
+      incomingDotAim: hasIncomingDirection
+        ? normalizedIncoming.dot(this.getAimDirection())
+        : 0,
+      armor: playerArmor(this.faction),
+    })
+    if (!outcome.applied) {
+      return {
+        ...outcome,
+        position: this.player.position.clone().add(new THREE.Vector3(0, 1.3, 0)),
+        direction: fallbackDirection,
+      }
+    }
+    const { dealt, impact, blocked: frontalBlock } = outcome
     this.health = Math.max(0, this.health - dealt)
     this.achievements.recordPlayerDamage(dealt, frontalBlock)
     const contact = this.player.position.clone().add(new THREE.Vector3(0, 1.3, 0))
@@ -9334,27 +9233,13 @@ export class GameEngine {
       )
     }
     this.createHitParticles(this.player.position, this.faction)
-    if (
-      canInjure &&
-      !frontalBlock &&
-      this.combatRng() < 0.11 &&
-      this.health < 82
-    ) {
+    // The `canInjure && !frontalBlock` gate stays out here on purpose: it is what keeps
+    // the injury roll off the combat stream on a blocked hit.
+    if (canInjure && !frontalBlock && shouldInjurePlayer(this.combatRng(), this.health)) {
       this.injurePlayer()
     }
-    const killed = this.health <= 0
-    const weight: HitWeight = frontalBlock
-      ? 'blocked'
-      : killed
-        ? 'lethal'
-        : dealt >= 22
-          ? 'heavy'
-          : 'normal'
     const result: DamageResult = {
-      applied: true,
-      dealt,
-      killed,
-      weight,
+      ...outcome,
       position: contact,
       direction: hasIncomingDirection
         ? normalizedIncoming.clone().multiplyScalar(-1)
@@ -9389,6 +9274,8 @@ export class GameEngine {
         dealt: 0,
         killed: false,
         weight: 'normal',
+        blocked: false,
+        impact: 0,
         position,
         direction,
       }
@@ -9420,7 +9307,8 @@ export class GameEngine {
         target.retaliationTimer = NPC_RETALIATION_DURATION
       }
     }
-    let dealt = Math.max(0, baseDamage)
+    // Only a brute reads the facing, so only a brute pays for computing it.
+    let facingDotToSource: number | null = null
     if (target.role === 'brute') {
       const facing = new THREE.Vector3(
         Math.sin(target.mesh.rotation.y),
@@ -9429,15 +9317,18 @@ export class GameEngine {
       )
       const toSource = sourcePosition.clone().sub(target.mesh.position)
       toSource.y = 0
-      if (
-        toSource.lengthSq() > 0.0001 &&
-        facing.dot(toSource.normalize()) > BRUTE_FRONT_DOT
-      ) {
-        dealt *= BRUTE_FRONTAL_DAMAGE_MULTIPLIER
+      if (toSource.lengthSq() > 0.0001) {
+        facingDotToSource = facing.dot(toSource.normalize())
       }
     }
+    const outcome = resolveActorDamage({
+      target,
+      baseDamage,
+      attackKind: options.attackKind,
+      facingDotToSource,
+    })
+    const { dealt, impact, killed } = outcome
 
-    const impact = THREE.MathUtils.clamp(dealt / 36, 0, 1)
     this.createBloodBurst(
       position,
       direction,
@@ -9455,20 +9346,7 @@ export class GameEngine {
     ) {
       this.detachActorLimb(target)
     }
-    const killed = target.hp <= 0
-    const weight: HitWeight = killed
-      ? 'lethal'
-      : options.attackKind === 'cleave' || dealt >= target.maxHp * 0.22
-        ? 'heavy'
-        : 'normal'
-    const result: DamageResult = {
-      applied: true,
-      dealt,
-      killed,
-      weight,
-      position,
-      direction,
-    }
+    const result: DamageResult = { ...outcome, position, direction }
     this.applyActorDamageReaction(
       target,
       result,
@@ -9658,8 +9536,7 @@ export class GameEngine {
   ): void {
     if (!actor.alive) return
     const deathPosition = actor.mesh.position.clone()
-    const largeBody =
-      actor.role === 'brute' || actor.role === 'champion' || actor.role === 'commander'
+    const largeBody = isLargeBody(actor.role)
     const deathDirection = result.direction.clone()
     this.createBloodBurst(
       deathPosition.clone().add(new THREE.Vector3(0, 1.25, 0)),
@@ -9707,16 +9584,12 @@ export class GameEngine {
       Math.cos(actor.mesh.rotation.y),
     )
     const right = new THREE.Vector3(forward.z, 0, -forward.x)
-    const lateralStrength = Math.abs(right.dot(actor.lastHitDirection))
-    const sourceInFront = forward.dot(actor.lastHitDirection.clone().negate()) > 0.2
-    actor.deathStyle =
-      attackKind === 'cleave' || requestedKnockback >= HIGH_KNOCKBACK_THRESHOLD
-        ? 'launchFall'
-        : lateralStrength > 0.68
-          ? 'spinFall'
-          : sourceInFront
-            ? 'backFall'
-            : 'sideFall'
+    actor.deathStyle = selectDeathStyle({
+      attackKind,
+      requestedKnockback,
+      lateralStrength: Math.abs(right.dot(actor.lastHitDirection)),
+      sourceInFront: forward.dot(actor.lastHitDirection.clone().negate()) > 0.2,
+    })
     actor.deathAge = 0
     actor.deathStartPosition.copy(actor.mesh.position)
     actor.deathStartRotation.copy(actor.mesh.rotation)
@@ -9765,7 +9638,7 @@ export class GameEngine {
       this.emitView(true)
       return
     }
-    const reward = actor.role === 'commander' ? 55 : 12
+    const reward = killReward(actor.role)
     this.gold += reward
     this.achievements.recordGoldEarned(reward)
     this.trySpawnKillLoot(actor, deathPosition)
@@ -10029,10 +9902,8 @@ export class GameEngine {
   }
 
   private completeObjective(id: string): boolean {
-    const objective = this.objectives.find((entry) => entry.id === id)
-    if (!objective || objective.done) return false
-    objective.done = true
-    if (objective.target) objective.progress = objective.target
+    const objective = completeObjectiveEntry(this.objectives, id)
+    if (!objective) return false
     this.callbacks.onNotice(`Задача выполнена: ${objective.text}.`, 'success')
     this.achievements.recordObjectiveCompleted()
     this.playSound('objective')
@@ -10040,9 +9911,6 @@ export class GameEngine {
     return true
   }
 
-  private isObjectiveDone(id: string): boolean {
-    return this.objectives.some((objective) => objective.id === id && objective.done)
-  }
 
   private endGame(result: 'victory' | 'defeat'): void {
     if (this.ended) return
@@ -10072,125 +9940,20 @@ export class GameEngine {
     const now = performance.now()
     if (!force && now - this.lastViewAt < 90) return
     this.lastViewAt = now
-    const markers: MapMarker[] = [
-      {
-        id: 'player',
-        x: this.player.position.x,
-        z: this.player.position.z,
-        kind: 'player',
-        heading: this.cameraYaw,
-      },
-      {
-        id: 'caravan',
-        x: this.caravan.position.x,
-        z: this.caravan.position.z,
-        kind: 'caravan',
-      },
-    ]
     const activeNode = this.getActiveGeneratedObjective()
     const activeSite = activeNode
       ? this.generatedWorld.getSitePosition(activeNode.siteId)
       : undefined
-    for (const marker of this.generatedWorld.getMarkers()) {
-      const active = marker.id === `site:${activeNode?.siteId}`
-      const site = marker.id.startsWith('site:')
-        ? this.generatedBlueprint.sites.find(
-            (candidate) => `site:${candidate.id}` === marker.id,
-          )
-        : undefined
-      const label = site ? generatedSiteLabel(site.kind) : marker.label
-      markers.push({
-        id: marker.id,
-        x: marker.x,
-        z: marker.z,
-        kind: active ? 'objective' : 'landmark',
-        ...(label ? { label } : {}),
-      })
-    }
-    if (
-      activeNode &&
-      activeSite &&
-      !markers.some((marker) => marker.id === `site:${activeNode.siteId}`)
-    ) {
-      const objective = this.objectives.find(
-        (entry) => entry.id === activeNode.id,
-      )
-      markers.push({
-        id: `site:${activeNode.siteId}`,
-        x: activeSite.x,
-        z: activeSite.z,
-        kind: 'objective',
-        label: objective?.text,
-      })
-    }
-    for (const event of this.activeEvents) {
-      markers.push({
-        id: event.markerId,
-        x: event.markerPos.x,
-        z: event.markerPos.z,
-        kind: 'event',
-        label: event.title,
-      })
-    }
-    for (const actor of this.actors) {
-      if (!actor.alive) continue
-      markers.push({
-        id: actor.id,
-        x: actor.mesh.position.x,
-        z: actor.mesh.position.z,
-        // §5.3 — the matrix decides the colour. Beasts get their own so a pack never
-        // reads as somebody's soldiers, and anything we have no quarrel with is neutral.
-        kind:
-          actor.allegiance === 'beast'
-            ? 'beast'
-            : this.playerRelationTo(actor) === 'hostile'
-              ? 'enemy'
-              : this.playerRelationTo(actor) === 'friendly'
-                ? 'ally'
-                : 'neutral',
-      })
-    }
     const generatedCurrentRegionId = this.generatedWorld.getRegionIdAt(
       this.player.position.x,
       this.player.position.z,
     )
-    const discoveredRegions = new Set(
-      this.generatedWorld.discoveredRegionIds.map(String),
-    )
-    const worldMap: GameView['worldMap'] = {
-      bounds: { ...this.generatedWorld.bounds },
-      ...(generatedCurrentRegionId === undefined
-        ? {}
-        : { currentRegionId: String(generatedCurrentRegionId) }),
-      seed: this.generatedBlueprint.seed,
-      generatorVersion: this.generatedBlueprint.generatorVersion,
-      regions: this.generatedBlueprint.regions.map((region) => {
-        const chronicle = this.chronicleRegions.get(String(region.id))
-        return {
-          id: String(region.id),
-          gridX: region.coordinate.x,
-          gridZ: region.coordinate.y,
-          biome: region.biome,
-          territory: chronicle?.control ?? region.territory,
-          discovered: discoveredRegions.has(String(region.id)),
-          current: String(region.id) === String(generatedCurrentRegionId),
-          contested: this.chronicleContestedRegionIds.has(String(region.id)),
-          razed: isRegionRazed(chronicle),
-        }
-      }),
-    }
-    const ability = createAbilityView(this.faction, this.stamina, this.body)
-    ability.active = this.shieldActive
-    ability.cooldown = this.abilityCooldown
-    ability.ready =
-      ability.ready &&
-      !this.paused &&
-      !this.ended &&
-      !this.shieldActive &&
-      this.abilityCooldown <= 0
-    const view: GameView = {
+    const primary = this.primaryEvent
+    const view = buildGameView({
       faction: this.faction,
-      health: Math.max(0, this.health),
+      blueprint: this.generatedBlueprint,
+      bounds: this.generatedWorld.bounds,
+      health: this.health,
       maxHealth: this.maxHealth,
       damageFlash: this.damageFlash,
       stamina: this.stamina,
@@ -10199,11 +9962,51 @@ export class GameEngine {
       kills: this.kills,
       damage: this.damage,
       zone: this.zoneAtPosition(this.player.position.x, this.player.position.z),
-      body: { ...this.body },
-      objectives: this.objectives.map((objective) => ({ ...objective })),
+      body: this.body,
+      objectives: this.objectives,
       prompt: this.prompt,
-      markers,
-      worldMap,
+      playerX: this.player.position.x,
+      playerZ: this.player.position.z,
+      playerHeading: this.cameraYaw,
+      caravanX: this.caravan.position.x,
+      caravanZ: this.caravan.position.z,
+      worldMarkers: this.generatedWorld.getMarkers(),
+      activeObjectiveSiteId: activeNode?.siteId ?? null,
+      activeObjectiveSiteX: activeSite?.x ?? null,
+      activeObjectiveSiteZ: activeSite?.z ?? null,
+      activeObjectiveId: activeNode?.id ?? null,
+      events: this.activeEvents.map((event) => ({
+        markerId: event.markerId,
+        markerX: event.markerPos.x,
+        markerZ: event.markerPos.z,
+        title: event.title,
+      })),
+      actors: this.actors
+        .filter((actor) => actor.alive)
+        .map((actor) => ({
+          id: actor.id,
+          x: actor.mesh.position.x,
+          z: actor.mesh.position.z,
+          // §5.3 — the matrix decides the colour. Beasts get their own so a pack never
+          // reads as somebody's soldiers, and anything we have no quarrel with is neutral.
+          kind:
+            actor.allegiance === 'beast'
+              ? ('beast' as const)
+              : this.playerRelationTo(actor) === 'hostile'
+                ? ('enemy' as const)
+                : this.playerRelationTo(actor) === 'friendly'
+                  ? ('ally' as const)
+                  : ('neutral' as const),
+        })),
+      chronicleRegions: this.chronicleRegions,
+      discoveredRegionIds: new Set(
+        this.generatedWorld.discoveredRegionIds.map(String),
+      ),
+      contestedRegionIds: this.chronicleContestedRegionIds,
+      currentRegionId:
+        generatedCurrentRegionId === undefined
+          ? undefined
+          : String(generatedCurrentRegionId),
       chronicle: this.buildChronicleFeed(),
       shopPriceMultiplier: this.activeShopPriceMultiplier,
       squad: this.actors.filter(
@@ -10216,27 +10019,29 @@ export class GameEngine {
       elapsed: this.elapsed,
       pointerLocked: document.pointerLockElement === this.renderer.domElement,
       paused: this.paused,
+      ended: this.ended,
       caravanCooldown: this.caravanCooldown,
-      ability,
+      shieldActive: this.shieldActive,
+      abilityCooldown: this.abilityCooldown,
       campaignCompleted: this.campaignCompleted,
       threatTier: this.threatTier,
-      upgrades: { ...this.upgrades },
-      lootToast: this.lootToast ? { ...this.lootToast } : null,
-      activeEvent: this.primaryEvent
+      upgrades: this.upgrades,
+      lootToast: this.lootToast,
+      activeEvent: primary
         ? {
-            id: this.primaryEvent.id,
-            kind: this.primaryEvent.kind,
-            title: this.primaryEvent.title,
-            description: this.primaryEvent.description,
-            tone: this.primaryEvent.tone,
-            progress: this.primaryEvent.progress,
-            target: this.primaryEvent.target,
-            ...(this.primaryEvent.timer === null
+            id: primary.id,
+            kind: primary.kind,
+            title: primary.title,
+            description: primary.description,
+            tone: primary.tone,
+            progress: primary.progress,
+            target: primary.target,
+            ...(primary.timer === null
               ? {}
-              : { timeRemaining: Math.max(0, this.primaryEvent.timer) }),
+              : { timeRemaining: Math.max(0, primary.timer) }),
           }
         : null,
-    }
+    })
     this.callbacks.onView(view)
   }
 
@@ -12892,8 +12697,8 @@ export class GameEngine {
       action: null,
       reaction: 'none',
       reactionRemaining: 0,
-      poise: this.actorMaxPoise(role),
-      maxPoise: this.actorMaxPoise(role),
+      poise: actorMaxPoise(role),
+      maxPoise: actorMaxPoise(role),
       poiseRecoveryDelay: 0,
       staggerImmunity: 0,
       knockbackVelocity: new THREE.Vector3(),
@@ -14384,7 +14189,7 @@ export class GameEngine {
     pose.stagger =
       actor.reaction === 'stagger'
         ? THREE.MathUtils.clamp(
-            actor.reactionRemaining / this.actorStaggerDuration(actor.role),
+            actor.reactionRemaining / actorStaggerDuration(actor.role),
             0,
             1,
           )
