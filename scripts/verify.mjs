@@ -698,6 +698,85 @@ export const CONTROLS = [
       successVerdict({ identityCompared: false, gatesRun: false })
         .includes('gates clean'),
   },
+  {
+    name: 'a-beast-table-is-found-by-shape-not-by-name',
+    // The population must come from the tree. The sweep this check replaces read
+    // three constants an author had listed by hand and therefore could not see
+    // `BEAST_NECK`, whose rows were duplicated in two documents throughout.
+    check: () => {
+      const t = beastValueTables('const X: Record<BeastKind, { up: number }> = {\n  wolf: { up: 0.3 },\n}\n')
+      return t.size === 1 && t.get('X').has(0.3)
+    },
+    mutate: () => beastValueTables('const X: Record<BeastKind, { up: number }> = {\n  wolf: { up: 0.3 },\n}\n').size === 0,
+  },
+  {
+    name: 'an-empty-population-is-an-error-not-a-pass',
+    // A scan with nothing to match reports no offenders and reads exactly like a
+    // clean tree. Rename the constants' type and this would go green forever.
+    check: () => beastValueTables('const X = { wolf: 0.3 }\n').size === 0,
+    mutate: () => beastValueTables('const X = { wolf: 0.3 }\n').size === 1,
+  },
+  {
+    name: 'a-restated-row-is-caught',
+    check: () => {
+      const t = new Map([['T', new Set([0.3, 0.48])]])
+      return restatedBeastRows(t, 'a.md', "a wolf's skull is 0.3 up and 0.48 ahead\n").length === 1
+    },
+    mutate: () => {
+      const t = new Map([['T', new Set([0.3, 0.48])]])
+      return restatedBeastRows(t, 'a.md', "a wolf's skull is 0.3 up and 0.48 ahead\n").length === 0
+    },
+  },
+  {
+    name: 'a-reformatted-row-is-caught-because-the-compare-is-numeric',
+    // The one that matters. The constant writes `0.3`; the prose wrote `0.300`.
+    // Same value, different string — a `grep` for the constant's spelling reports
+    // clean, and a clean report from an instrument that cannot see the defect is
+    // indistinguishable from a clean tree. The mutation is a *string* compare,
+    // which is the shape this replaced; it must go red.
+    check: () => {
+      const t = new Map([['T', new Set([0.3, 0.48])]])
+      return restatedBeastRows(t, 'a.md', "a wolf's skull is 0.300 up and 0.480 ahead\n").length === 1
+    },
+    mutate: () => {
+      const spellings = new Set(['0.3', '0.48'])
+      const line = "a wolf's skull is 0.300 up and 0.480 ahead"
+      return [...line.matchAll(/-?\d+\.\d+/g)].filter((m) => spellings.has(m[0])).length >= 2
+    },
+  },
+  {
+    name: 'two-values-without-a-kind-name-are-not-a-beast-row',
+    // Precision, and the reason no suppression list is needed: `0.24`/`0.36` are
+    // ordinary numbers that occur in supply constants, combat timings and
+    // headgear normals. A file/line suppression list would itself be copied
+    // state that decays, which is the defect this whole check exists to prevent.
+    check: () => {
+      const t = new Map([['T', new Set([0.24, 0.36])]])
+      return restatedBeastRows(t, 'a.md', '| Champion | 0.24 s | 0.36 s |\n').length === 0
+    },
+    mutate: () => {
+      const t = new Map([['T', new Set([0.24, 0.36])]])
+      return restatedBeastRows(t, 'a.md', '| Champion | 0.24 s | 0.36 s |\n').length === 1
+    },
+  },
+  {
+    name: 'one-value-beside-a-kind-name-is-coincidence-not-a-row',
+    check: () => {
+      const t = new Map([['T', new Set([0.3, 0.48])]])
+      return restatedBeastRows(t, 'a.md', 'the wolf leans 0.3 and nothing else here\n').length === 0
+    },
+    mutate: () => {
+      const t = new Map([['T', new Set([0.3, 0.48])]])
+      return restatedBeastRows(t, 'a.md', 'the wolf leans 0.3 and nothing else here\n').length === 1
+    },
+  },
+  {
+    name: 'a-code-line-is-not-prose',
+    // The constants themselves, and any production literal, must not trip it.
+    check: () => isProseLine('a.ts', "  wolf: { up: 0.3, ahead: 0.48 },") === false
+      && isProseLine('a.ts', " * a wolf's 0.3 and 0.48") === true,
+    mutate: () => isProseLine('a.ts', "  wolf: { up: 0.3, ahead: 0.48 },") === true,
+  },
 ]
 
 function runControls() {
@@ -816,6 +895,105 @@ function collectProse() {
     }
   }
   return { files, prose, fencedOut, allAdded, unreadable }
+}
+
+/**
+ * Beast measurement rows restated in prose outside the tests.
+ *
+ * The defect: a per-animal measurement lives twice — once in a
+ * `Record<BeastKind, …>` constant that an assertion drives, and once as a row of
+ * digits in a docblock or a spec, where nothing evaluates it. The second copy
+ * decays independently of the first, and on this repository it has, repeatedly.
+ *
+ * Two things this gets right that the hand-run sweep before it did not, both of
+ * which are the reason it exists as code rather than as a habit:
+ *
+ * **The population is derived, not named.** The earlier sweep read three
+ * constants an author had listed by hand, so it could only find copies of the
+ * families that author had thought of. `BEAST_NECK` was not among them and its
+ * rows sat duplicated in two documents through the whole exercise. Here every
+ * `Record<BeastKind, …>` in the test file is the population, so a table added
+ * later is covered without anybody remembering to add it.
+ *
+ * **The comparison is numeric, not textual.** The constant writes `0.3` and the
+ * prose wrote `0.300`. Same value, different string. A `grep` for the constant's
+ * spelling reports clean, and a clean report from a scan that cannot see the
+ * defect is indistinguishable from a clean tree — the worst failure mode
+ * available to an instrument. Six of the figures in the tables this check was
+ * written against were reachable only by parsing both sides to numbers.
+ *
+ * ## What it cannot do, stated rather than implied
+ *
+ * 1. It compares against the values the constants **currently** hold. A prose
+ *    copy of a *superseded* value has nothing to match and is invisible. That
+ *    class is not closable by comparison at all, and this check does not close
+ *    it.
+ * 2. It needs the kind name and two values on one line. A row split across lines,
+ *    or written one value per line, evades it.
+ * 3. It only knows values that appear in a `Record<BeastKind, …>`. A measurement
+ *    kept in some other shape is outside its population by construction.
+ *
+ * The kind-name conjunct is what makes it usable without a suppression list.
+ * Two-values-alone fires on unrelated domains that share round numbers — supply
+ * constants, combat timings, headgear normals — and a suppression list keyed to
+ * file and line would itself be copied state that decays, which is the defect.
+ */
+export const BEAST_KIND = /\b(?:wolf|boar|bear|troll)(?:'s|s)?\b/i
+
+export function beastValueTables(testSource) {
+  const tables = new Map()
+  const shape = /const\s+(\w+)\s*:\s*Record<\s*BeastKind[\s\S]{0,120}?>\s*=\s*\{?\s*(\{[\s\S]*?\n\s*\}\s*\n)/g
+  for (const m of testSource.matchAll(shape)) {
+    const values = new Set()
+    for (const n of m[2].matchAll(/-?\d+\.\d+/g)) {
+      const v = Math.abs(Number(n[0]))
+      if (v > 0) values.add(v)
+    }
+    if (values.size > 0) tables.set(m[1], values)
+  }
+  return tables
+}
+
+/** A markdown body line, or a `*` continuation inside a doc comment. */
+export function isProseLine(file, line) {
+  return file.endsWith('.md') ? !/^\s{4,}\S/.test(line) : /^\s*\*/.test(line)
+}
+
+export function restatedBeastRows(tables, file, source) {
+  const out = []
+  source.split(/\r?\n/).forEach((line, i) => {
+    if (!isProseLine(file, line)) return
+    if (!BEAST_KIND.test(line)) return
+    const nums = [...line.matchAll(/-?\d+\.\d+/g)].map((n) => Math.abs(Number(n[0])))
+    for (const [name, values] of tables) {
+      const hit = nums.filter((v) => values.has(v))
+      if (hit.length >= 2) out.push({ file, line: i + 1, table: name, count: hit.length })
+    }
+  })
+  return out
+}
+
+function scanRestatedRows() {
+  const testPath = join(ROOT, 'tests/characterArt.test.ts')
+  if (!existsSync(testPath)) return { error: 'tests/characterArt.test.ts is missing — the population cannot be derived' }
+  const tables = beastValueTables(readFileSync(testPath, 'utf8'))
+  // A scan whose population is empty reports no offenders and reads exactly like
+  // a clean tree. The same domain guard `collectProse` carries, for the same
+  // reason: rename the constants' type and this would go quietly green forever.
+  if (tables.size === 0) return { error: 'no Record<BeastKind, …> tables found — the check would pass vacuously' }
+
+  const listed = git('ls-files', 'docs', 'src')
+  if (listed === null) return { error: 'could not list docs/ and src/' }
+  const files = listed.split('\n').map((f) => f.trim()).filter((f) => /\.(md|ts|tsx)$/.test(f))
+  if (files.length === 0) return { error: 'no documents to scan — vacuous pass' }
+
+  const offenders = []
+  for (const file of files) {
+    const path = join(ROOT, file)
+    if (!existsSync(path)) continue
+    offenders.push(...restatedBeastRows(tables, file, readFileSync(path, 'utf8')))
+  }
+  return { tables: tables.size, values: [...tables.values()].reduce((a, s) => a + s.size, 0), files: files.length, offenders }
 }
 
 /**
@@ -975,6 +1153,23 @@ function main() {
   console.log(`  added = prose + fenced : ${allAdded.length} = ${prose.length} + ${fencedOut.length}${residual === 0 ? '' : `  RESIDUAL ${residual}`}`)
   console.log(`  double space, 3 bounds : raw=${bounds.raw}  placeholder(outside inline code)=${bounds.placeholder}  deletion(upper bound)=${bounds.deletion}   [prose only]`)
   console.log(`  over-120               : ${long.length}   [all added lines, fenced included — long code lines break rendering too]`)
+
+  // --- restated beast rows ---------------------------------------------------
+  // Whole tree, not the diff: a copy that predates this check is the same defect
+  // as one added today, and the diff cannot see it.
+  const restated = scanRestatedRows()
+  if (restated.error) {
+    console.log(`  restated beast rows    : NOT SCANNED — ${restated.error}`)
+    failures.push(`beast row scan could not run: ${restated.error}`)
+  } else {
+    console.log(`  restated beast rows    : ${restated.offenders.length}   [${restated.values} values from ${restated.tables} tables vs ${restated.files} documents, compared numerically]`)
+    for (const o of restated.offenders) {
+      console.log(`      ${o.file}:${o.line} restates ${o.count} values from ${o.table}`)
+    }
+    if (restated.offenders.length > 0) {
+      failures.push(`${restated.offenders.length} prose lines restate a beast measurement row — reference the constant instead`)
+    }
+  }
   console.log(`  controls               : ${controls.total} run, ${controls.failed.length} failed, ${controls.broken.length} broken`)
   if (residual !== 0) failures.push(`${residual} added lines fell into neither bucket — the partition does not sum to its population`)
   if (unreadable.length > 0) failures.push(`sweep could not read: ${unreadable.join(', ')}`)
