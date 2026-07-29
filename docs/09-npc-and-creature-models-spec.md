@@ -563,6 +563,19 @@ no new dependencies.
   371` was **printed identically at `pass 371 / fail 0` and at `pass 370 / fail 1`**, the
   latter under a deliberate mutation. The census's blindness is no longer deduced from how
   the runner reports; both halves have been seen.
+  **The same defect then reached the instrument's final sentence, where no number existed
+  to contradict it.** `--sweep-only --base=<sha>` deliberately skips both identity and the
+  four gates, states *"identity not compared"*, and used to close eleven lines later with:
+  *"PASSED: heads agree, gates clean, sweep clean, controls fire."* The exit code and
+  failures list were right; **the line a human reads named two checks the run declined by
+  design.** In CI it was worse than false: earlier job steps had run the gates, so a reader
+  saw a true claim produced by a process that could not know it. Reordering, removing or
+  weakening those steps would not have changed the sentence.
+  > **A fixed-string verdict is a claim with no measurement behind it by construction.**
+  The repair gives the verdict inputs and assembles it from the arms that ran. All four
+  modes are pinned exactly: full; fixed-base with gates; sweep-only with identity; and
+  sweep-only with fixed base, which now says only *"sweep clean, controls fire."* The
+  control's mutation restores the skipped clause and must go red.
   What caught it was running the pass/fail lines separately for an unrelated reason —
   which is to say, luck, and the entry is here because the next occurrence will not have
   any.
