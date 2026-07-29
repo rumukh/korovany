@@ -119,29 +119,57 @@ export function parseTestVerdict(output) {
 }
 
 /**
- * Line numbers inside ``` fences, computed from whole-file content.
+ * Scan fences once, returning both the fenced line set and whether the file
+ * ends with one open.
  *
- * `fenceBalanced` is separate and asserted by the caller: an unterminated fence
- * makes every line below it read as code, so the sweep goes blind to the rest of
- * the file and reports clean. That is the population-selector failing silently,
- * which is the class this file catalogues repeatedly.
+ * The state machine models one CommonMark rule that a line-counting version
+ * got wrong: **an opening fence may carry an info string; a closing fence may
+ * not.** So ```` ```text ```` opens, a bare ```` ``` ```` closes, and a line
+ * beginning with a fence *plus text* while a block is already open is content,
+ * not a close. Counting fence-shaped lines and testing parity disagrees with
+ * that, and disagrees silently.
+ *
+ * Measured across every tracked markdown file at the time this was written:
+ * **zero divergent lines.** Added anyway, because the round that produced it
+ * established that a path nothing exercises is not a path that is safe — and
+ * because the previous version's model gap was the same shape as the one that
+ * made the double-space detector blind to three spaces.
  */
-export function fencedLines(source) {
+function scanFences(source) {
   const fenced = new Set()
   let open = false
   source.split('\n').forEach((line, i) => {
-    if (/^\s*```/.test(line)) {
-      fenced.add(i + 1)
-      open = !open
+    const m = /^\s*```(.*)$/.exec(line)
+    if (!m) {
+      if (open) fenced.add(i + 1)
       return
     }
-    if (open) fenced.add(i + 1)
+    const hasInfo = m[1].trim().length > 0
+    fenced.add(i + 1)
+    if (!open) {
+      open = true
+      return
+    }
+    if (!hasInfo) open = false
   })
-  return fenced
+  return { fenced, balanced: !open }
 }
 
+/** Line numbers inside ``` fences, computed from whole-file content. */
+export function fencedLines(source) {
+  return scanFences(source).fenced
+}
+
+/**
+ * Does the file end with no fence open?
+ *
+ * An unterminated fence makes every line below it read as code, so the sweep
+ * goes blind to the rest of the file and reports clean — the population
+ * selector failing silently, which is the class this file catalogues
+ * repeatedly. Asserted per file by the caller.
+ */
 export function fenceBalanced(source) {
-  return source.split('\n').filter((l) => /^\s*```/.test(l)).length % 2 === 0
+  return scanFences(source).balanced
 }
 
 /** Added lines with their new-file line numbers, from a unified diff. */
@@ -298,6 +326,19 @@ export const CONTROLS = [
     check: () => fenceBalanced('a\n```\nb\n```\nc') === true
       && fenceBalanced('a\n```\nb\nc') === false,
     mutate: () => fenceBalanced('a\n```\nb\nc') === true,
+  },
+  {
+    name: 'only-a-bare-fence-closes-a-block',
+    // CommonMark: an opening fence may carry an info string, a closing fence
+    // may not. A parity count over fence-shaped lines disagrees, silently.
+    check: () => {
+      // ```text opens, "``` more" is content, bare ``` closes -> balanced,
+      // and the content line is inside the block.
+      const src = 'a\n```text\n``` more\n```\nb'
+      const { fenced, balanced } = { fenced: fencedLines(src), balanced: fenceBalanced(src) }
+      return balanced === true && fenced.has(3) && !fenced.has(5)
+    },
+    mutate: () => fenceBalanced('a\n```text\n``` more\n```\nb') === false,
   },
   {
     name: 'sweep-is-silent-on-clean-prose',
