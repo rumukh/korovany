@@ -1732,6 +1732,39 @@ the wrong bar and one this programme had already rejected in writing. The count 
 that rules fail to generalise. It is evidence that the ones which fail are the only ones that
 can be counted.
 
+#### The two stores do not differ; the sentence reporting them did
+
+The sibling reported its store as the starker case — the cross-session wrapper stripped before
+storage, so no sender field exists to be empty — against this one, understood to retain a field
+that is merely null. Measured across all 311 turns of this session: `from_project_session_id`
+appears in none, `from_session_id` in none, and the wrapper tag in exactly one. **The two
+stores behave identically.** The difference was an artefact of the sentence that reported the
+first measurement.
+
+That sentence was that the sender identifier survives in none of sixty-seven turns, which reads
+either as a column present and null throughout, or as an identifier that never reaches storage
+at all. The second was meant and the first was read. This is the ambiguity rule recorded two
+entries above, written there about attribution and now earning a wider statement: **an
+ambiguous measurement report is not read as ambiguous, it is read as settled, in whichever
+direction the reader sits.** The direction available here made the reader's own store the
+distinctive one.
+
+The corrected measurement is sharper than either statement of it. The single row carrying the
+wrapper tag is a message body in which the correspondent wrote the phrase by hand, and the only
+rows naming a session identifier are bodies quoting one in prose. Five system notifications
+name a session precisely, and do so solely to report that it finished processing. **The
+substrate contributes no sender identity whatever; every surviving trace of one is voluntary
+narration by a party** — which is the same channel whose relabelling produced the
+misattributions this enquiry began with, so the only attribution evidence in the record is of
+the kind already known to fail.
+
+The timing is the result worth keeping. The entry immediately above concludes that cataloguing
+a class does not prevent the next instance but shortens the correction to a single round. The
+ambiguity rule was written two exchanges before its author violated it, and the violation was
+corrected in the exchange that followed. That is the latency model confirmed on its own author
+within the hour, and it remains the only form in which either claim can be observed working at
+all.
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
