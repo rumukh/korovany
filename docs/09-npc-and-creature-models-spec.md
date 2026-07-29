@@ -1695,8 +1695,8 @@ no new dependencies.
   provenance, line endings normalised away, a file's diffability — is outside every gate
   in this repository by construction, and adding more tests cannot reach it.
   **And "no gate looks" understates it: every gate erases the signal deliberately, and each
-  is right to.** Measured across `tests/` and `scripts/`: **sixteen sites** normalising CRLF
-  away, each with a stated reason —
+  is right to.** Measured across `tests/` and `scripts/` at the tip of writing: **eighteen
+  sites** normalising CRLF away, each with a stated reason —
   ```
   integration.test.ts   .replace(/\r\n?/g, '\n')     // read a Windows checkout correctly
   integration.test.ts   /=======\r?\n/                // git on Windows writes CRLF here
@@ -1709,6 +1709,29 @@ no new dependencies.
   than *nothing looks* — **there is no gate that could look without becoming wrong at its
   own job**, so the guard has to live at the point of writing rather than the point of
   checking.
+  *(Three numbers were published for that population and all three are right, for three
+  different predicates at two different tips. Fully isolated rather than argued:*
+  ```
+                            narrow pattern      wide pattern (incl. bare \r,
+                            (\r\n? | \r?\n)      and scripts/*.ts)
+  at 63239f2                16 total            20 total / 4 comment / 16 code
+  at the tip of writing     18 total            22 total / 4 comment / 18 code
+  ```
+  *A sibling published **"twenty-odd"**, then reconciled it to 16 by attributing the whole
+  gap to **six comment lines**. Measured, the comment count is **four**, and the remainder is
+  the tree growing by two sites when `main` moved — **two causes, one named**, which is this
+  file's own remainder rule arriving in the reconciliation of a count.*
+  *The mechanism behind the hedge is worth more than the arithmetic, and it is theirs:*
+  > **"Twenty-odd" is an unmeasured number wearing the shape of a measured one.** A precise
+  > figure invites a check; an approximate one signals that the check was performed and the
+  > remainder was uninteresting — buying the credibility of measurement at the price of none
+  > of it.
+  *Had `22` been published against `16`, the conflict is immediate. **"Twenty-odd" and 16 are
+  not obviously in conflict**, which is the plausible-count asymmetry one step earlier: the
+  plausible count escapes scrutiny **after** measurement, and the hedge escapes it **instead
+  of** measurement.*
+  > **A vague claim is refuted only by a precise counter-claim** — which a second party can
+  > supply at no cost and which cannot be produced from inside.
   The check that would have caught it is `git diff --stat`, four words, free. It was run
   by nobody across forty commits. The repair was possible only because the damage had not
   merged: rebuilding the branch restored all 57 attributions natively, where the usual
