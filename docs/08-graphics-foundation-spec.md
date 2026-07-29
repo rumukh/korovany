@@ -1226,20 +1226,42 @@ free-and-therefore-invisible shape recorded twice above.
 
 A second discriminator exists, it is independent of that one, and it was inside a dataset both
 sessions had already swept: **fifteen sessions have exactly one recorded turn, and all fifteen
-turn 0 rows carry a timestamp** — ten of them created on earlier days, so none is a turn still
-in flight. A field meaning *when the next message arrived* cannot be populated when there is no
-next message. Nobody ran that query, and the reason is the point: the sweep that produced those
-rows was aimed at *how large is my sample*, and the evidence for *how many readings survive* was
-in the same table. This is the sharp edge of the rung, because the obvious repair does not
-reach it. A sibling widened the original proof from three sessions to sixty-nine, which is the
-complete remedy for a badly aimed sample and **no remedy at all here** — every one of the
-sixty-nine is consistent with both surviving readings, since each predicts a large positive
-delta from creation. **Widening the population fixes the sample; it cannot fix the space.** The
-two failures are orthogonal, and only the first is repairable after the fact by collecting more.
-So the pair of rules this section already carries — consult a primary source, and name the
-population you consulted it on — needs a third that neither implies: **enumerate the readings
-the answer could have.** A query answers the question asked of the data; enumerating the space is
-what makes it the right question.
+turn 0 rows carry a timestamp** — all fifteen created on an earlier calendar day, so none is a
+turn still in flight. A field meaning *when the next message arrived* cannot be populated when
+there is no next message. Nobody ran that query, and the reason is the point: the sweep that
+produced those rows was aimed at *how large is my sample*, and the evidence for *how many
+readings survive* was in the same table. This is the sharp edge of the rung, because the
+obvious repair does not reach it. A sibling widened the original proof from three sessions to
+sixty-nine, which is the complete remedy for a badly aimed sample and **no remedy at all here**
+— every one of the sixty-nine is consistent with both surviving readings, since each predicts a
+large positive delta from creation. **Widening the population fixes the sample; it cannot fix
+the space.** The two failures are orthogonal, and only the first is repairable after the fact
+by collecting more. So the pair of rules this section already carries — consult a primary
+source, and name the population you consulted it on — needs a third that neither implies:
+**enumerate the readings the answer could have.** A query answers the question asked of the
+data; enumerating the space is what makes it the right question.
+
+That sentence originally read *ten of them created on earlier days*, and a sibling recomputed it
+rather than reading it: the day-boundary predicate returns **fifteen** in UTC and fifteen shifted
+to local, while `julianday('now') - julianday(created_at) > 1` returns ten. **Ten is "older than
+twenty-four hours", which is not what the sentence claimed.** Third instance in one session of
+the same defect — *the cells are correct and the label is not the command that produced them* —
+and the first where the mismatch ran against its author: the stricter test was the right one to
+run for the purpose, the looser label undersold the evidence, and **an understated number is a
+self-critical claim, which nobody has an interest in auditing.** The direction rule predicted
+exactly this and it still went unnoticed for two hours.
+
+The same sibling proposed that **enumerating the space requires a second party**, since a solo
+author can widen a population indefinitely without leaving their own hypotheses. The claim is
+too strong and this session's own record refutes it: the third reading of the timestamp field
+was raised here, against a position already committed here; the aim defect in the sixty-nine-row
+sweep was found by the session that ran it; and the inverted sign above was found by its own
+author. What every one of those has in common is sharper than the rule it replaces — **none came
+from reflection; each came from running an instrument for an unrelated purpose and reading a row
+nobody asked for.** Enumeration is a side effect of measurement, not of thinking harder. That
+strengthens the sibling's practical conclusion rather than weakening it: shipping a reproduction
+with a claim works *because a reproduction is an instrument*, and instruments generate hypotheses
+in whoever runs them — including the person who built one to defend a claim.
 
 One consequence for the direction rule stated elsewhere in this section: the unaudited direction
 is not self-criticism as such. A reviewer here withdrew their own blanket rule — maximally
