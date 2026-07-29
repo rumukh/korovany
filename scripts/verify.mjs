@@ -274,8 +274,24 @@ export const CONTROLS = [
 ]
 
 function runControls() {
-  const failed = CONTROLS.filter((c) => c.check() !== true)
-  return { total: CONTROLS.length, failed: failed.map((c) => c.name) }
+  // A throwing `check()` must be classified, not fatal. `runControls()` is the
+  // first thing `main()` calls, so an exception here printed nothing at all —
+  // not even the header — while the `--mutate` path had `UNTESTABLE` machinery
+  // for exactly this, built in the same commit. Fail-closed either way; the
+  // defect was the asymmetry and the absent verdict line.
+  const failed = []
+  const broken = []
+  for (const c of CONTROLS) {
+    let ok
+    try {
+      ok = c.check() === true
+    } catch (err) {
+      broken.push(`${c.name} (${err instanceof Error ? err.message : String(err)})`)
+      continue
+    }
+    if (!ok) failed.push(c.name)
+  }
+  return { total: CONTROLS.length, failed, broken }
 }
 
 /**
@@ -307,7 +323,7 @@ function runMutation() {
     }
     if (healthy) survived.push(c.name)
   }
-  console.log(`\n${CONTROLS.length} controls, ${controls.failed.length} failed live, ${survived.length} survived mutation, ${untestable.length} untestable`)
+  console.log(`\n${CONTROLS.length} controls, ${controls.failed.length} failed live, ${controls.broken.length} broken, ${survived.length} survived mutation, ${untestable.length} untestable`)
   for (const c of CONTROLS) {
     const bad = survived.includes(c.name) || untestable.some((u) => u.startsWith(`${c.name} `))
     const red = controls.failed.includes(c.name)
@@ -318,6 +334,7 @@ function runMutation() {
   }
   const problems = []
   if (controls.failed.length > 0) problems.push(`${controls.failed.length} controls fail their live assertion: ${controls.failed.join(', ')}`)
+  if (controls.broken.length > 0) problems.push(`${controls.broken.length} controls threw: ${controls.broken.join(', ')}`)
   if (survived.length > 0) problems.push(`${survived.length} survived mutation: ${survived.join(', ')}`)
   if (untestable.length > 0) problems.push(`${untestable.length} untestable: ${untestable.join(', ')}`)
   if (problems.length > 0) {
@@ -378,7 +395,8 @@ function main() {
   const failures = []
 
   const controls = runControls()
-  if (controls.failed.length > 0) failures.push(`controls: ${controls.failed.join(', ')}`)
+  if (controls.failed.length > 0) failures.push(`controls failed: ${controls.failed.join(', ')}`)
+  if (controls.broken.length > 0) failures.push(`controls threw: ${controls.broken.join(', ')}`)
 
   // --- identity: every line below must describe the same object -------------
   // A null here is a failed git command, not an answer. Distinguishing "no
@@ -408,7 +426,20 @@ function main() {
       prDesc = `#${j.number} ${j.state} ${j.mergeStateStatus}`
     } catch {
       prHead = '(unparsed)'
+      failures.push('gh returned output that could not be parsed as JSON')
     }
+  } else if (/no pull requests? found/i.test(pr.out)) {
+    prHead = '(no pr)'
+  } else {
+    // A broken `gh` — expired token, rate limit, network, wrong repo — exits
+    // non-zero exactly like "there is no PR", and both used to leave `prHead`
+    // at '(no pr)', which is then filtered out of the comparison. The PR arm of
+    // the identity check silently disappeared and the run printed ALL AGREE.
+    // This is the check built for "MERGEABLE CLEAN was a checked status for an
+    // unchecked commit", so losing it silently is the original defect returning
+    // through its own remedy.
+    prHead = '(gh failed)'
+    failures.push(`gh failed, so the PR head could not be compared: ${pr.out.trim().split('\n')[0] || `exit ${pr.code}`}`)
   }
   const heads = [sha, remote, prHead].filter((h) => h !== '(no remote)' && h !== '(no pr)')
   const agree = heads.every((h) => h === sha)
@@ -476,7 +507,7 @@ function main() {
   console.log(`  added / prose lines    : ${allAdded.length} / ${prose.length}`)
   console.log(`  double space, 3 bounds : raw=${bounds.raw}  placeholder(outside inline code)=${bounds.placeholder}  deletion(upper bound)=${bounds.deletion}   [prose only]`)
   console.log(`  over-120               : ${long.length}   [all added lines, fenced included — long code lines break rendering too]`)
-  console.log(`  controls               : ${controls.total} run, ${controls.failed.length} failed`)
+  console.log(`  controls               : ${controls.total} run, ${controls.failed.length} failed, ${controls.broken.length} broken`)
   if (unreadable.length > 0) failures.push(`sweep could not read: ${unreadable.join(', ')}`)
   if (bounds.placeholder > 0) failures.push(`${bounds.placeholder} double spaces outside inline code`)
   if (long.length > 0) failures.push(`${long.length} lines over 120 characters`)

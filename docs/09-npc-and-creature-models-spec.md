@@ -693,6 +693,28 @@ no new dependencies.
   from a run that printed `FAILED`, because `Select-Object -First 6` truncated the pipeline
   and masked the status. **A truncation errs toward the clean-looking number and announces
   nothing** — the same shape as a filter returning empty for an object that exists.
+  **A second round found two more, and both are the same shape one level in.** `gh pr view`
+  exits non-zero identically for *"there is no PR"* and for an expired token, a rate limit
+  or a wrong repository — so a broken `gh` left the PR head unset, the unset value was
+  filtered out of the comparison, and the run printed `ALL AGREE` with the PR arm silently
+  switched off. **That is the check built for "`MERGEABLE CLEAN` was a checked status for an
+  unchecked commit", disappearing through its own remedy.** And a `check()` that threw was an
+  unhandled crash printing nothing at all — not even the header — while the mutation path
+  had `UNTESTABLE` machinery for exactly that case, added in the same commit. Fail-closed,
+  but unclassified, and asymmetric with its own sibling.
+  **Then the substrate turned out to have the same bias, which is the strongest form of the
+  rule because no author chose anything.** Two independent PowerShell mechanisms produce a
+  false zero:
+  ```
+  cmd | ForEach-Object { $LASTEXITCODE }          0 inside, 3 after   evaluation order
+  cmd | Select-Object -First 1 | ForEach { ... }  0 inside, 0 after   pipeline cancelled,
+                                                                      exit code never recorded
+  ```
+  `-Last N` is safe because it drains the stream. **Both mechanisms yield a stale or zero
+  code and neither can yield a spurious non-zero.** So *fail-toward-green* is not only a
+  property of what an author omits to assert — **the plumbing underneath errs the same way**,
+  and a green result therefore carries strictly less information than a red one at every
+  layer, including the ones nobody wrote.
   **The stronger claim first written here — that enumerating a hypothesis space usually
   requires a second party — is false, and the record of this work refutes it.** Five
   self-generated enumerations, each against a position its own author had already
