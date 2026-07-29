@@ -2302,9 +2302,9 @@ no new dependencies.
   `frontZ`, the joint the front limbs hang from, which is a beast's shoulder and where
   its neck starts. `buildBeastSkeleton` puts `neck-pivot` there and hangs `head-pivot`
   off it, exactly as `buildCharacterSkeleton` does at `shoulderY`. The rest pose is
-  bit-identical — measured at 0.00e+0 on all four animals — because `torso-pivot` sits
-  at the animal's origin with an identity transform and the two offsets sum to the old
-  one.
+  unchanged by the split — asserted, to the tolerance the assertion states rather than to
+  bit-identity — because `torso-pivot` sits at the animal's origin with an identity
+  transform and the two offsets sum to the old one.
   How far the fix moves the skull, per animal, in authored units and in world units after
   `BEAST_PROFILES.scale`, is pinned in `FOOT_ROOTED_SKULL` and `WORLD_DEATH_TRAVEL` and
   computed by `what a foot-rooted skull was worth on each of the four animals`:

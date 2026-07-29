@@ -359,6 +359,13 @@ export function headsAgree(sha, remote, prHead) {
  * every control goes red under its mutation, which is what makes the green run
  * evidence rather than decoration.
  */
+/**
+ * A fixed kind pattern for the controls below, so they exercise `restatedBeastRows`
+ * without depending on production's current animal list. The *derivation* from
+ * `BEAST_KINDS` is exercised separately, by its own control.
+ */
+const KIND_PROBE = /\b(?:wolf|boar|bear|troll)(?:'s|s)?\b/i
+
 export const CONTROLS = [
   {
     name: 'verdict-parser-reads-pass-fail',
@@ -720,11 +727,11 @@ export const CONTROLS = [
     name: 'a-restated-row-is-caught',
     check: () => {
       const t = new Map([['T', new Set([0.3, 0.48])]])
-      return restatedBeastRows(t, 'a.md', "a wolf's skull is 0.3 up and 0.48 ahead\n").length === 1
+      return restatedBeastRows(t, KIND_PROBE, 'a.md', "a wolf's skull is 0.3 up and 0.48 ahead\n").length === 1
     },
     mutate: () => {
       const t = new Map([['T', new Set([0.3, 0.48])]])
-      return restatedBeastRows(t, 'a.md', "a wolf's skull is 0.3 up and 0.48 ahead\n").length === 0
+      return restatedBeastRows(t, KIND_PROBE, 'a.md', "a wolf's skull is 0.3 up and 0.48 ahead\n").length === 0
     },
   },
   {
@@ -736,7 +743,7 @@ export const CONTROLS = [
     // which is the shape this replaced; it must go red.
     check: () => {
       const t = new Map([['T', new Set([0.3, 0.48])]])
-      return restatedBeastRows(t, 'a.md', "a wolf's skull is 0.300 up and 0.480 ahead\n").length === 1
+      return restatedBeastRows(t, KIND_PROBE, 'a.md', "a wolf's skull is 0.300 up and 0.480 ahead\n").length === 1
     },
     mutate: () => {
       const spellings = new Set(['0.3', '0.48'])
@@ -752,22 +759,22 @@ export const CONTROLS = [
     // state that decays, which is the defect this whole check exists to prevent.
     check: () => {
       const t = new Map([['T', new Set([0.24, 0.36])]])
-      return restatedBeastRows(t, 'a.md', '| Champion | 0.24 s | 0.36 s |\n').length === 0
+      return restatedBeastRows(t, KIND_PROBE, 'a.md', '| Champion | 0.24 s | 0.36 s |\n').length === 0
     },
     mutate: () => {
       const t = new Map([['T', new Set([0.24, 0.36])]])
-      return restatedBeastRows(t, 'a.md', '| Champion | 0.24 s | 0.36 s |\n').length === 1
+      return restatedBeastRows(t, KIND_PROBE, 'a.md', '| Champion | 0.24 s | 0.36 s |\n').length === 1
     },
   },
   {
     name: 'one-value-beside-a-kind-name-is-coincidence-not-a-row',
     check: () => {
       const t = new Map([['T', new Set([0.3, 0.48])]])
-      return restatedBeastRows(t, 'a.md', 'the wolf leans 0.3 and nothing else here\n').length === 0
+      return restatedBeastRows(t, KIND_PROBE, 'a.md', 'the wolf leans 0.3 and nothing else here\n').length === 0
     },
     mutate: () => {
       const t = new Map([['T', new Set([0.3, 0.48])]])
-      return restatedBeastRows(t, 'a.md', 'the wolf leans 0.3 and nothing else here\n').length === 1
+      return restatedBeastRows(t, KIND_PROBE, 'a.md', 'the wolf leans 0.3 and nothing else here\n').length === 1
     },
   },
   {
@@ -785,6 +792,80 @@ export const CONTROLS = [
     // outside it, and reads identical to a clean tree.
     check: () => isProseLine('a.ts', "    // wolf 1.40x, boar 1.30x") === true,
     mutate: () => isProseLine('a.ts', "    // wolf 1.40x, boar 1.30x") === false,
+  },
+  {
+    name: 'the-kinds-come-from-production-not-from-here',
+    // Hand-written first, and a reviewer observed that a fifth animal would then be
+    // invisible to the check that exists to cover the animals — naming the population by
+    // hand, one level up, inside the fix for naming the population by hand.
+    check: () => {
+      const p = beastKindPattern("export const BEAST_KINDS = ['wolf', 'lynx'] as const\n")
+      return p !== null && p.test("a lynx's head") && !p.test('a bear head')
+    },
+    mutate: () => {
+      const p = beastKindPattern("export const BEAST_KINDS = ['wolf', 'lynx'] as const\n")
+      return p !== null && p.test('a bear head')
+    },
+  },
+  {
+    name: 'an-unreadable-kind-list-is-an-error-not-a-pass',
+    // Every line fails the kind test if the pattern is empty, so the check would report
+    // zero offenders over any tree. Vacuous passes are the failure mode of this file.
+    check: () => beastKindPattern('no kinds here') === null
+      && beastKindPattern('BEAST_KINDS = []') === null,
+    mutate: () => beastKindPattern('no kinds here') !== null,
+  },
+  {
+    name: 'the-kind-name-may-be-on-an-earlier-line-of-the-paragraph',
+    // Prose wraps. Requiring the animal and its numbers on one physical line is a rule
+    // about typography, not duplication, and a reviewer's block-level sweep found a live
+    // duplicate that this check read clean for exactly that reason.
+    check: () => {
+      const t = new Map([['T', new Set([0.3, 0.48])]])
+      const src = " * a wolf's skull dropped from its body-space height\n * to 0.3 up and 0.48 ahead\n"
+      return restatedBeastRows(t, KIND_PROBE, 'a.ts', src).length === 1
+    },
+    mutate: () => {
+      const t = new Map([['T', new Set([0.3, 0.48])]])
+      const src = " * a wolf's skull dropped from its body-space height\n * to 0.3 up and 0.48 ahead\n"
+      return restatedBeastRows(t, KIND_PROBE, 'a.ts', src).length === 0
+    },
+  },
+  {
+    name: 'the-paragraph-window-does-not-reach-across-code',
+    // The window walks back only while the lines are still prose, so an animal named in
+    // one comment cannot lend its name to numbers in an unrelated comment below.
+    check: () => {
+      const t = new Map([['T', new Set([0.3, 0.48])]])
+      const src = " * a wolf\nconst x = 1\nconst y = 2\n * 0.3 and 0.48 here\n"
+      return restatedBeastRows(t, KIND_PROBE, 'a.ts', src).length === 0
+    },
+    mutate: () => {
+      const t = new Map([['T', new Set([0.3, 0.48])]])
+      const src = " * a wolf\nconst x = 1\nconst y = 2\n * 0.3 and 0.48 here\n"
+      return restatedBeastRows(t, KIND_PROBE, 'a.ts', src).length === 1
+    },
+  },
+  {
+    name: 'the-scan-reaches-every-tracked-prose-file',
+    // End-to-end over the enumeration, not over the predicate. The unit controls above
+    // all passed while the scan listed `docs` and `src` only — excluding `tests/`, the
+    // file the population is derived from, which was holding a live duplicate at the
+    // time. A control that exercises the judgement but not the reach cannot see that.
+    check: () => {
+      const listed = git('ls-files')
+      if (listed === null) return false
+      const files = listed.split('\n').map((f) => f.trim()).filter((f) => /\.(md|ts|tsx|mjs|js)$/.test(f))
+      return files.includes('tests/characterArt.test.ts')
+        && files.includes('src/game/art/CharacterKit.ts')
+        && files.includes('scripts/verify.mjs')
+        && files.some((f) => f.endsWith('.md') && !f.includes('/'))
+    },
+    mutate: () => {
+      // Stand in for the narrowed enumeration this replaced.
+      const listed = git('ls-files', 'docs', 'src') ?? ''
+      return listed.split('\n').map((f) => f.trim()).includes('tests/characterArt.test.ts')
+    },
   },
 ]
 
@@ -937,8 +1018,8 @@ function collectProse() {
  *    copy of a *superseded* value has nothing to match and is invisible. That
  *    class is not closable by comparison at all, and this check does not close
  *    it.
- * 2. It needs the kind name and two values on one line. A row split across lines,
- *    or written one value per line, evades it.
+ * 2. It needs two values on one line, with the kind name within the same wrapped
+ *    prose paragraph. A row written one value per line evades it.
  * 3. It only knows values that appear in a `Record<BeastKind, …>`. A measurement
  *    kept in some other shape is outside its population by construction.
  *
@@ -946,8 +1027,19 @@ function collectProse() {
  * Two-values-alone fires on unrelated domains that share round numbers — supply
  * constants, combat timings, headgear normals — and a suppression list keyed to
  * file and line would itself be copied state that decays, which is the defect.
+ *
+ * The kinds come from production's `BEAST_KINDS`, not from a list here. They were
+ * written by hand first, and a reviewer observed that a fifth animal would then be
+ * invisible to the check that exists to cover the animals — the same defect as
+ * naming the constants by hand, one level up, sitting inside the fix for it.
  */
-export const BEAST_KIND = /\b(?:wolf|boar|bear|troll)(?:'s|s)?\b/i
+export function beastKindPattern(kitSource) {
+  const m = kitSource.match(/BEAST_KINDS\s*=\s*\[([^\]]*)\]/)
+  if (m === null) return null
+  const kinds = [...m[1].matchAll(/'([a-z]+)'/g)].map((k) => k[1])
+  if (kinds.length === 0) return null
+  return new RegExp(`\\b(?:${kinds.join('|')})(?:'s|s)?\\b`, 'i')
+}
 
 export function beastValueTables(testSource) {
   const tables = new Map()
@@ -975,11 +1067,21 @@ export function isProseLine(file, line) {
   return file.endsWith('.md') ? !/^\s{4,}\S/.test(line) : /^\s*(\*|\/\/)/.test(line)
 }
 
-export function restatedBeastRows(tables, file, source) {
+export function restatedBeastRows(tables, kindPattern, file, source) {
   const out = []
-  source.split(/\r?\n/).forEach((line, i) => {
+  const lines = source.split(/\r?\n/)
+  lines.forEach((line, i) => {
     if (!isProseLine(file, line)) return
-    if (!BEAST_KIND.test(line)) return
+    // The kind name may sit on an earlier line of the same paragraph — prose wraps, and
+    // the row that prompted this widening named the animal on one line and gave its
+    // neck-relative offsets on the next. Requiring both on one line is a rule about
+    // typography, not about duplication. The window walks back only while the lines are
+    // still prose, so it cannot reach across a code block.
+    let named = false
+    for (let j = i; j >= 0 && j > i - 4 && isProseLine(file, lines[j]); j -= 1) {
+      if (kindPattern.test(lines[j])) { named = true; break }
+    }
+    if (!named) return
     const nums = [...line.matchAll(/-?\d+\.\d+/g)].map((n) => Math.abs(Number(n[0])))
     for (const [name, values] of tables) {
       const hit = nums.filter((v) => values.has(v))
@@ -998,16 +1100,26 @@ function scanRestatedRows() {
   // reason: rename the constants' type and this would go quietly green forever.
   if (tables.size === 0) return { error: 'no Record<BeastKind, …> tables found — the check would pass vacuously' }
 
-  const listed = git('ls-files', 'docs', 'src')
-  if (listed === null) return { error: 'could not list docs/ and src/' }
-  const files = listed.split('\n').map((f) => f.trim()).filter((f) => /\.(md|ts|tsx)$/.test(f))
+  const kitPath = join(ROOT, 'src/game/art/CharacterKit.ts')
+  if (!existsSync(kitPath)) return { error: 'CharacterKit.ts is missing — the kind names cannot be derived' }
+  const kindPattern = beastKindPattern(readFileSync(kitPath, 'utf8'))
+  if (kindPattern === null) return { error: 'BEAST_KINDS could not be read — every line would fail the kind test and the check would pass vacuously' }
+
+  // Every tracked file that can carry prose, not a chosen subset. This read
+  // `docs` and `src` only, which excluded `tests/` — the very file the population
+  // is derived from, and which was holding a live duplicate of a `BEAST_NECK` row
+  // at the time. A scan that names the places it will look will not look anywhere
+  // else, and its silence about the rest is indistinguishable from a clean tree.
+  const listed = git('ls-files')
+  if (listed === null) return { error: 'could not list tracked files' }
+  const files = listed.split('\n').map((f) => f.trim()).filter((f) => /\.(md|ts|tsx|mjs|js)$/.test(f))
   if (files.length === 0) return { error: 'no documents to scan — vacuous pass' }
 
   const offenders = []
   for (const file of files) {
     const path = join(ROOT, file)
     if (!existsSync(path)) continue
-    offenders.push(...restatedBeastRows(tables, file, readFileSync(path, 'utf8')))
+    offenders.push(...restatedBeastRows(tables, kindPattern, file, readFileSync(path, 'utf8')))
   }
   return { tables: tables.size, values: [...tables.values()].reduce((a, s) => a + s.size, 0), files: files.length, offenders }
 }

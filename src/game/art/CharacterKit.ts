@@ -3663,11 +3663,13 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
  * the test's `BEAST_NECK`, direction and distance both, and are deliberately not
  * restated here: a figure written in two places can only ever be right in one of them.
  *
- * At rest the change is invisible to the pixel: the skull's rest position is identical
- * on both arrangements to 0.00e+0, because `torso-pivot` sits at the animal's origin
- * with an identity transform and the two offsets sum to the old one. That is the same
- * property that let the defect survive review on people, so it is asserted rather than
- * assumed.
+ * At rest the change is invisible to the pixel: the skull's rest position is unchanged by
+ * the split, because `torso-pivot` sits at the animal's origin with an identity transform
+ * and the two offsets sum to the old one. That is the same property that let the defect
+ * survive review on people, so it is asserted rather than assumed — to the tolerance the
+ * assertion states, which is a tolerance and not bit-identity. The residual measures zero
+ * on all four today; the assertion permits a small non-zero one, so "bit-identical" would
+ * be a stronger claim than anything that is checked.
  *
  * ## Two things the split buys that a single joint would not
  *

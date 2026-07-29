@@ -3902,11 +3902,13 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
  * animal. A beast's chest turns through a fraction of a person's range, but its *head*
  * carries both the look clamp and the death roll — `BEAST_LOOK_CLAMP`, imported from
  * production, and `BEAST_DEATH_LOLL`, which is a literal here held against production's
- * source text by a regex that fails and names the new value when the engine moves. Two
- * different strengths of tie, said as two rather than as one: the first cannot drift,
- * the second is a bounded spelling pin. Neither is restated in this sentence. So the two
- * pivots swap places: on a person the chest was the expensive one, on a beast it is the
- * skull. The per-order
+ * source text by a regex that fails when the engine moves. The failure names the value
+ * *this file* holds and tells you to go and re-read the engine's; it cannot name the
+ * engine's new one, because the regex matches a fixed spelling and captures nothing.
+ * Two different strengths of tie, said as two rather than as one: the first cannot
+ * drift, the second is a bounded spelling pin. Neither is restated in this sentence. So
+ * the two pivots swap places: on a person the chest was the expensive one, on a beast it
+ * is the skull. The per-order
  * costs are in `WRONG_ORDER_COST` below, swept over the same pose box every other beast
  * measurement uses with the solve still assuming XYZ.
  *
@@ -4336,10 +4338,12 @@ test('the engine poses a beast through the rig these tests measure', () => {
   //
   // The line above names one spelling of the mistake. A reviewer wrote a different one —
   // `if (kind === 'wolf') group.add(headPivot)` immediately after the builder call — and
-  // the whole suite stayed green while a wolf's skull dropped from (0, 1.24, 1.08) to its
-  // neck-relative (0, 0.30, 0.48) and came off the ribs. **One animal, one line, no
-  // assertion.** So the check is now the general one: `createBeast` receives a wired
-  // hierarchy and may add meshes *into* it, but may never move one of its pivots.
+  // the whole suite stayed green while that animal's skull dropped from its body-space
+  // height to its much lower neck-relative offset and came off the ribs. The two
+  // positions are `BEAST_RIG`'s and `BEAST_NECK`'s and are not restated here.
+  // **One animal, one line, no assertion.** So the check is now the general one:
+  // `createBeast` receives a wired hierarchy and may add meshes *into* it, but may never
+  // move one of its pivots.
   for (const pivot of ['bodyPivot', 'torsoPivot', 'neckPivot', 'headPivot', 'pelvisPivot']) {
     assert.equal(
       (beast.match(
