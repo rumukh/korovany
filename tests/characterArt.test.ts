@@ -3889,11 +3889,12 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
  * ## What the guard is worth on a beast, measured
  *
  * Honestly, and **not by borrowing the humanoid's figure**, which is about a different
- * animal. A beast's chest turns by at most 0.2 rad where a person's reaches 0.70, but its
- * *head* carries a 0.45 rad look and a 0.28 rad death roll. So the two pivots swap
- * places: on a person the chest was the expensive one, on a beast it is the skull. The
- * per-order costs are in `WRONG_ORDER_COST` below, swept over the same pose box every
- * other beast measurement uses with the solve still assuming XYZ.
+ * animal. A beast's chest turns through a fraction of a person's range, but its *head*
+ * carries both the look clamp and the death roll — `BEAST_LOOK_CLAMP` and `BEAST_DEATH_LOLL`, each
+ * read from production rather than restated here. So the two pivots swap places: on a
+ * person the chest was the expensive one, on a beast it is the skull. The per-order
+ * costs are in `WRONG_ORDER_COST` below, swept over the same pose box every other beast
+ * measurement uses with the solve still assuming XYZ.
  *
  * Every entry is pinned rather than bounded, and the reason is the `YXZ` row.
  * **`YXZ` is the cheapest of the five on the head and it is the only one anybody would
