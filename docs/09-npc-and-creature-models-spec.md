@@ -582,6 +582,14 @@ no new dependencies.
   occurrence sits inside the test whose failure produced the re-derivation. The earlier
   statements were about a **test floor**; the defect was in a **shell filter**. Nothing
   links them but the shape, and shape is not what a reader indexes on.
+  Two checks a reviewer ran before letting that interval stand, both of which it needed.
+  **It is not a rebase artefact** — `e6edeb34` has `author == commit` time, which matters
+  because this branch was rebuilt once and a blame-derived interval is exactly the number
+  that survives history rewriting while ceasing to be true. And **it was not branch-local**:
+  `e6edeb34` is an ancestor of `origin/main`, so the rule was **published, merged and
+  readable by every session** for the whole interval. The population that held it and did
+  not apply it is not one author on one branch; it is everyone reading mainline, which is
+  the strongest form the entry could take.
   > **A rule stated about one instrument does not generalise to another by being true.** It
   > has to be re-derived at each site, and authorship is no protection.
   The evidence for that is as strong as evidence gets: its author re-derived it **by
@@ -597,6 +605,25 @@ no new dependencies.
   in the grep for the sentence about populations** — which is the third self-instantiating
   defect recorded here and the cheapest to state: prose is not line-shaped, so a
   line-oriented search of prose has an unnamed exclusion built in.
+  **And eighteen hours is not the characteristic timescale, which the entry would be
+  misread as claiming.** The same failure recurred at **two hours**, committed by the
+  adopting party, in a status line inside the message about rules being held and not
+  applied. This document adopted, verbatim: *`placeholder = 0` reads as "none outside
+  inline code", never as "none"*. Its own verification line then read `\S  \S 0`,
+  unqualified, which reads as none. Measured at that tip: `raw 2, placeholder 0,
+  deletion 43` — both raw hits being this file quoting its own patterns inside inline
+  spans.
+  Ruled a defect rather than shorthand, and the reason is the ruling: **the label names a
+  predicate the instrument did not run.** `\S  \S 0` is not what was measured; *"0 after
+  inline spans were replaced by placeholders"* is. That is the label-is-not-the-command
+  class, which this file also records, so the line was defective under two of its own
+  entries simultaneously. The corrected form prints all three counts and names the
+  instrument, because a single number here cannot carry which bound it is.
+  So the timescale spans two hours to eighteen, the author was the adopter in both, and in
+  the shorter case the rule was **one screen above the line that broke it**. Distance is
+  not the variable. **A rule is applied at the sites its author is thinking about, and
+  nowhere else** — which is why the remedy is never *remember harder*, and always *move the
+  rule into something that runs*.
 - **A measurement is a claim with a timestamp nobody writes down.** Every other rule
   here targets claims that were wrong. This one is about claims that were *right and
   stopped being* — which is a different failure, because a measurement carries its own
