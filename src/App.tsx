@@ -84,29 +84,14 @@ import {
   type ShopItem,
   type WorldEventView,
   type WorldMapRegion,
-  createAbilityView,
-  createHealthyBody,
-  getMaxHealth,
-  getMaxStamina,
   getShopItemPrice,
-  getThreatTier,
-  normalizeUpgradeLevels,
 } from './game/types'
-import {
-  getContestedRegionIds,
-  isRegionRazed,
-  type RegionChronicleState,
-} from './game/world/Chronicle'
 import { isMapMarkerVisible, projectMapMarker } from './game/mapMarkers'
-import {
-  createGeneratedObjectiveText,
-  formatRussianCount,
-} from './game/content/gameCopy'
-import { getSiteWorldPosition2D } from './game/content/registry'
+import { buildInitialGameView } from './game/world/CampaignView'
+import { formatRussianCount } from './game/content/gameCopy'
 import { parseSeed } from './game/random/seed'
 import {
   BOON_CATALOGUE,
-  getStartingBoonEffects,
   isBoonUnlocked,
   selectProfileBoon,
   unlockBoon,
@@ -418,139 +403,29 @@ function formatSaveDate(value: string): string {
       }).format(date)
 }
 
-function createGeneratedObjectives(blueprint: WorldBlueprint, faction: Faction) {
-  return blueprint.objectives[faction].nodes.map((node) => {
-    const site = blueprint.sites.find((candidate) => candidate.id === node.siteId)
-    return {
-      id: node.id,
-      text: createGeneratedObjectiveText(node.kind, site?.kind),
-      done: false,
-    }
-  })
-}
-
 function serializableNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
-function createGeneratedInitialView(launch: GeneratedRunLaunch): GameView {
-  const blueprint = generateWorld(launch.config.seed)
-  const restored = launch.restored
-  const startSite = blueprint.sites.find(
-    (site) => site.id === blueprint.starts[launch.config.faction],
-  )
-  if (!startSite) throw new Error('Generated start site is missing')
-  const startPosition = getSiteWorldPosition2D(blueprint, startSite)
-  if (!startPosition) throw new Error('Generated start position is missing')
+/**
+ * One generated world per seed, shared by the menu preview and the launch view.
+ *
+ * A launch used to generate the world three times: once for the menu's map preview, once
+ * for `App`'s own hand-rolled initial `GameView`, and once inside `GameEngine`. The second
+ * is gone along with the builder that needed it — `world/CampaignView.ts` is now the only
+ * thing that assembles a `GameView` — and this cache plus the blueprint handed to the
+ * engine collapses the remaining two into one. A blueprint is immutable; nothing outside
+ * `generateWorld` writes to one, and `GameEngine` re-generates anyway if the seed or the
+ * generator version does not match what it was handed.
+ */
+let cachedBlueprint: { seed: number; blueprint: WorldBlueprint } | null = null
 
-  const position = restored?.currentLocation.worldPosition ?? [
-    startPosition.x,
-    0,
-    startPosition.z,
-  ]
-  const currentRegionId = restored?.currentLocation.regionId ?? startSite.regionId
-  const currentRegion =
-    blueprint.regions.find((region) => region.id === currentRegionId) ??
-    blueprint.regions.find((region) => region.id === startSite.regionId)
-  if (!currentRegion) throw new Error('Generated start region is missing')
-
-  const boon = getStartingBoonEffects(launch.config.selectedBoonId)
-  const upgrades = normalizeUpgradeLevels(restored?.player.upgrades)
-  const baseHealth = getMaxHealth(upgrades)
-  const baseStamina = getMaxStamina(upgrades)
-  const maxHealth =
-    restored?.player.maxHealth ?? baseHealth + boon.startingHealthBonus
-  const maxStamina =
-    restored?.player.maxStamina ?? baseStamina + boon.startingStaminaBonus
-  const health = Math.min(maxHealth, restored?.player.health ?? maxHealth)
-  const stamina = Math.min(maxStamina, restored?.player.stamina ?? maxStamina)
-  const body = restored ? { ...restored.player.body } : createHealthyBody()
-  const objectives =
-    restored?.player.objectives.map((objective) => ({ ...objective })) ??
-    createGeneratedObjectives(blueprint, launch.config.faction)
-  const elapsed = serializableNumber(restored?.directorState.elapsed)
-  const discovered = new Set(restored?.discoveredRegionIds ?? [])
-  discovered.add(currentRegion.id)
-  const chronicleRegions = new Map<string, RegionChronicleState>()
-  for (const [regionId, delta] of Object.entries(restored?.regionDeltas ?? {})) {
-    chronicleRegions.set(regionId, delta.chronicle)
-  }
-  const contestedRegionIds = getContestedRegionIds(blueprint, chronicleRegions)
-
-  if (!restored && boon.revealAdjacentRegions) {
-    for (const region of blueprint.regions) {
-      if (
-        Math.abs(region.coordinate.x - currentRegion.coordinate.x) <= 1 &&
-        Math.abs(region.coordinate.y - currentRegion.coordinate.y) <= 1
-      ) {
-        discovered.add(region.id)
-      }
-    }
-  }
-
-  return {
-    faction: launch.config.faction,
-    health,
-    maxHealth,
-    damageFlash: 0,
-    stamina,
-    maxStamina,
-    gold: restored?.player.gold ?? 55 + boon.startingGoldBonus,
-    kills: restored?.player.kills ?? 0,
-    damage:
-      restored?.player.damage ??
-      (launch.config.faction === 'villain'
-        ? 31
-        : launch.config.faction === 'guard'
-          ? 28
-          : 26) + boon.startingDamageBonus,
-    zone: currentRegion.biome,
-    body,
-    objectives,
-    prompt: '',
-    markers: [
-      {
-        id: 'player',
-        x: position[0],
-        z: position[2],
-        kind: 'player',
-        heading: restored?.currentLocation.heading ?? 0,
-      },
-    ],
-    worldMap: {
-      bounds: { ...blueprint.bounds },
-      currentRegionId: currentRegion.id,
-      seed: blueprint.seed,
-      generatorVersion: blueprint.generatorVersion,
-      regions: blueprint.regions.map((region) => {
-        const chronicle = restored?.regionDeltas[region.id]?.chronicle
-        return {
-          id: region.id,
-          gridX: region.coordinate.x,
-          gridZ: region.coordinate.y,
-          biome: region.biome,
-          territory: chronicle?.control ?? region.territory,
-          discovered: discovered.has(region.id),
-          current: region.id === currentRegion.id,
-          contested: contestedRegionIds.has(region.id),
-          razed: isRegionRazed(chronicle),
-        }
-      }),
-    },
-    chronicle: [],
-    shopPriceMultiplier: 1,
-    squad: 0,
-    elapsed,
-    pointerLocked: false,
-    paused: false,
-    caravanCooldown: serializableNumber(restored?.directorState.caravanCooldown),
-    ability: createAbilityView(launch.config.faction, stamina, body),
-    activeEvent: null,
-    lootToast: null,
-    campaignCompleted: objectives.every((objective) => objective.done),
-    threatTier: getThreatTier(elapsed),
-    upgrades,
-  }
+function blueprintForSeed(seed: number): WorldBlueprint {
+  const canonical = parseSeed(seed)
+  if (cachedBlueprint?.seed === canonical) return cachedBlueprint.blueprint
+  const blueprint = generateWorld(canonical)
+  cachedBlueprint = { seed: canonical, blueprint }
+  return blueprint
 }
 
 function StatusDot({ status }: { status: PartStatus }) {
@@ -1147,7 +1022,7 @@ function MenuScreen({
   onSfxVolumeChange: (volume: number) => void
 }) {
   const selectedBoonId = selectedProfileBoon(profile)
-  const previewWorld = useMemo(() => generateWorld(canonicalSeed), [canonicalSeed])
+  const previewWorld = useMemo(() => blueprintForSeed(canonicalSeed), [canonicalSeed])
   const activeElapsed = serializableNumber(activeRun?.directorState.elapsed)
   const recentRuns = profile.runHistory.slice(0, 4)
   const compatibilityError =
@@ -2615,6 +2490,7 @@ function App() {
           screenShakeEnabled: screenShakeEnabledRef.current,
           achievementRunId: `${achievementSessionId}:${runId}`,
           generatedRun: launch,
+          blueprint: blueprintForSeed(launch.config.seed),
         },
       )
     } catch (error) {
@@ -2724,7 +2600,13 @@ function App() {
     setActiveRunError(null)
     setFaction(launch.config.faction)
     setPendingGeneratedLaunch(launch)
-    setGameView(createGeneratedInitialView(launch))
+    setGameView(
+      buildInitialGameView({
+        blueprint: blueprintForSeed(launch.config.seed),
+        config: launch.config,
+        restored: launch.restored,
+      }),
+    )
     lastGeneratedRegionRef.current = null
     resetGameUi()
   }
