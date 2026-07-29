@@ -1,5 +1,6 @@
 import { SITE_PRESENTATIONS } from './registry.ts'
 import type {
+  ActorRole,
   BodyPart,
   ChronicleWorldEventKind,
   Faction,
@@ -7,6 +8,14 @@ import type {
   RandomWorldEventKind,
   ZoneId,
 } from '../types.ts'
+import type {
+  ArchivedRunStatus,
+  RunEpilogue,
+  RunEpilogueBeat,
+  RunEpilogueControl,
+  RunEpilogueWound,
+  RunHistorySummary,
+} from '../run/runTypes.ts'
 import type { ChronicleEventKind } from '../world/Chronicle.ts'
 import type { ObjectiveKind, SiteKind } from '../world/worldTypes.ts'
 
@@ -538,6 +547,244 @@ export function describeLimbLost(part: BodyPart): string {
 
 export function describeWound(part: BodyPart): string {
   return `Ранение: ${formatBodyPart(part)}. Если не вылечить, станет хуже.`
+}
+
+// ---------------------------------------------------------------------------
+// «Походная сводка» — the run epilogue
+// ---------------------------------------------------------------------------
+
+/**
+ * The postcard.
+ *
+ * One entry point, `describeRunEpilogue`, renders both the panel and the copyable text, so
+ * the thing a player pastes into a chat cannot drift from the thing they were shown. The
+ * сводка stores kinds, roles and map squares; the sentences are written here and are free to
+ * change without touching a single saved profile.
+ *
+ * There is no i18n layer and there is not going to be one — see the rejected ideas. These
+ * lines are Russian because the game is.
+ */
+
+const ACTOR_ROLE_FORMS: Record<ActorRole, RussianCountForms> = {
+  soldier: ['солдат', 'солдата', 'солдат'],
+  scout: ['разведчик', 'разведчика', 'разведчиков'],
+  commander: ['командир', 'командира', 'командиров'],
+  minion: ['прихвостень', 'прихвостня', 'прихвостней'],
+  archer: ['лучник', 'лучника', 'лучников'],
+  brute: ['громила', 'громилы', 'громил'],
+  champion: ['чемпион', 'чемпиона', 'чемпионов'],
+  captive: ['пленник', 'пленника', 'пленников'],
+  peasant: ['крестьянин', 'крестьянина', 'крестьян'],
+  wolf: ['волк', 'волка', 'волков'],
+  boar: ['кабан', 'кабана', 'кабанов'],
+  bear: ['медведь', 'медведя', 'медведей'],
+  troll: ['тролль', 'тролля', 'троллей'],
+}
+
+const WOUND_STATUS_NAMES: Record<RunEpilogueWound['status'], string> = {
+  wounded: 'ранение',
+  missing: 'нет',
+  prosthetic: 'протез',
+}
+
+const EPILOGUE_TITLES: Record<ArchivedRunStatus, string> = {
+  victory: 'Походная сводка: корованы ограблены',
+  defeat: 'Походная сводка: труп тоже 3Д',
+  abandoned: 'Походная сводка: поход бросили',
+}
+
+const EPILOGUE_STATUS_WORDS: Record<ArchivedRunStatus, string> = {
+  victory: 'победа',
+  defeat: 'поражение',
+  abandoned: 'поход брошен',
+}
+
+const CONTROL_NAMES: Record<keyof RunEpilogueControl, string> = {
+  elf: 'эльфы',
+  guard: 'охрана',
+  villain: 'злодей',
+  neutral: 'ничьи',
+}
+
+/**
+ * With no backend, "поделиться" is a file and a clipboard. Said in the interface rather than
+ * in a design document, so nobody builds a button that needs a server that does not exist.
+ */
+export const EPILOGUE_SHARE_NOTE =
+  'Сервера у нас нет и не будет: «поделиться» — это скачать картинку или скопировать текст и отправить самому.'
+
+export const EPILOGUE_COPY_LABEL = 'Скопировать текст'
+export const EPILOGUE_COPIED_LABEL = 'Скопировано'
+export const EPILOGUE_COPY_FAILED_LABEL = 'Не вышло — выдели и скопируй руками'
+export const EPILOGUE_IMAGE_LABEL = 'Скачать картинку'
+export const EPILOGUE_IMAGE_FAILED_LABEL = 'Картинка не сохранилась'
+export const EPILOGUE_EMPTY_NOTICE =
+  'Сводка этого забега уже осыпалась: подробности хранятся только для последних походов.'
+
+export function formatActorRole(role: ActorRole): string {
+  return ACTOR_ROLE_FORMS[role][0]
+}
+
+/** `754` → `12:34`. The engine counts run time in seconds; a postcard does not. */
+export function formatRunClock(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds))
+  const minutes = Math.floor(total / 60)
+  return `${String(minutes).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`
+}
+
+function describeEpilogueRoute(epilogue: RunEpilogue): string {
+  if (epilogue.route.length === 0) {
+    return 'Маршрут: с места так и не сдвинулись.'
+  }
+  const truncated = epilogue.routeTotal > epilogue.route.length
+  const path = truncated
+    ? `${epilogue.route.slice(0, -1).join(' → ')} → … → ${epilogue.route[epilogue.route.length - 1]}`
+    : epilogue.route.join(' → ')
+  const squares = formatRussianCount(epilogue.routeTotal, ['квадрат', 'квадрата', 'квадратов'])
+  return `Маршрут: ${path} — ${squares} из ${epilogue.regionsTotal}.`
+}
+
+function describeEpilogueMap(epilogue: RunEpilogue): string {
+  const parts = (Object.keys(CONTROL_NAMES) as (keyof RunEpilogueControl)[])
+    .filter((territory) => epilogue.control[territory] > 0)
+    .map((territory) => `${CONTROL_NAMES[territory]} — ${epilogue.control[territory]}`)
+  return parts.length === 0
+    ? 'Карта на конец: кто там теперь хозяин, разведка не доложила.'
+    : `Карта на конец: ${parts.join(', ')}.`
+}
+
+function describeEpilogueBeat(beat: RunEpilogueBeat): string {
+  return describeChronicleEvent(
+    {
+      kind: beat.kind,
+      regionLabel: beat.region,
+      faction: beat.faction,
+      siteLabel: null,
+    },
+    `${beat.kind}:${beat.region}:${String(beat.tick)}`,
+  )
+}
+
+function describeEpilogueBody(epilogue: RunEpilogue): string {
+  const parts = epilogue.wounds.map(
+    (wound) => `${formatBodyPart(wound.part)} — ${WOUND_STATUS_NAMES[wound.status]}`,
+  )
+  const bleeding = epilogue.bleeding ? ' Кровь так и не остановили.' : ''
+  if (parts.length === 0) {
+    return epilogue.bleeding
+      ? `Тело: целое, но течёт.${bleeding}`
+      : 'Тело: целое. Даже как-то неловко.'
+  }
+  const lost =
+    epilogue.limbsLost > 0
+      ? ` Всего потеряно частей: ${String(epilogue.limbsLost)}.`
+      : ''
+  return `Тело: ${parts.join(', ')}.${lost}${bleeding}`
+}
+
+function describeEpilogueSquad(epilogue: RunEpilogue): string {
+  if (epilogue.companions.length === 0) return 'Отряд: до конца не дошёл никто.'
+  const parts = epilogue.companions.map((companion) =>
+    formatRussianCount(companion.count, ACTOR_ROLE_FORMS[companion.role]),
+  )
+  return `Отряд: ${parts.join(', ')} — дошли.`
+}
+
+/**
+ * Doctrines are roadmap 1.6. Until they exist the сводка says nothing at all about them —
+ * a heading with no rows under it is worse than silence.
+ */
+function describeEpilogueDoctrines(epilogue: RunEpilogue): string | null {
+  return epilogue.doctrines.length === 0
+    ? null
+    : `Доктрины: ${epilogue.doctrines.join(', ')}.`
+}
+
+function describeEpilogueCause(epilogue: RunEpilogue): string {
+  const killer = epilogue.causeRole ? formatActorRole(epilogue.causeRole) : null
+  switch (epilogue.cause) {
+    case 'objectives':
+      return 'Итог: все задачи закрыты. Летописцы уже преувеличивают.'
+    case 'beast':
+      return killer
+        ? `Итог: пользователя доел ${killer}. Шкура, конечно, тоже 3Д.`
+        : 'Итог: пользователя доело зверьё. Лес не спрашивал имени.'
+    case 'faction':
+      return killer
+        ? `Итог: пользователя уронил ${killer}. Всё по-честному, в открытую.`
+        : 'Итог: пользователя уронили чужие. Кто именно — не разглядели.'
+    case 'bleeding':
+      return killer
+        ? `Итог: кровь не остановили. Начал это ${killer}, закончил сам пользователь.`
+        : 'Итог: кровь не остановили. Никто не добивал — само дотекло.'
+    case 'abandoned':
+      return 'Итог: поход бросили на полпути. Мир как-нибудь сам.'
+    case 'unknown':
+      return 'Итог: здоровье кончилось, а протокол — нет. История умалчивает.'
+  }
+}
+
+function describeEpilogueTally(summary: RunHistorySummary, epilogue: RunEpilogue): string {
+  return [
+    `побед — ${String(summary.kills)}`,
+    `золота — ${String(summary.endingGold)}`,
+    `задач — ${String(summary.objectivesCompleted)}`,
+    `серия — ${String(epilogue.bestKillStreak)}`,
+    `корованов — ${String(epilogue.caravansRobbed)}`,
+    `событий — ${String(epilogue.eventsCompleted)}`,
+  ].join(' · ')
+}
+
+export interface RunEpilogueCopy {
+  title: string
+  subtitle: string
+  route: string
+  map: string
+  beats: string[]
+  body: string
+  squad: string
+  /** `null` until roadmap 1.6 ships doctrines. Readers must render nothing. */
+  doctrines: string | null
+  cause: string
+  tally: string
+  /** The copyable seed-and-story block, exactly as the panel above reads. */
+  text: string
+}
+
+export function describeRunEpilogue(
+  summary: RunHistorySummary,
+  epilogue: RunEpilogue,
+): RunEpilogueCopy {
+  const title = EPILOGUE_TITLES[summary.status]
+  const subtitle = `seed ${String(summary.seed)} · ${CHRONICLE_FACTION_NAMES[summary.faction]} · ${
+    EPILOGUE_STATUS_WORDS[summary.status]
+  } · ${formatRunClock(epilogue.elapsed)}`
+  const route = describeEpilogueRoute(epilogue)
+  const map = describeEpilogueMap(epilogue)
+  const beats = epilogue.beats.map(describeEpilogueBeat)
+  const body = describeEpilogueBody(epilogue)
+  const squad = describeEpilogueSquad(epilogue)
+  const doctrines = describeEpilogueDoctrines(epilogue)
+  const cause = describeEpilogueCause(epilogue)
+  const tally = describeEpilogueTally(summary, epilogue)
+  const text = [
+    'КОРОВАНЫ — походная сводка',
+    subtitle,
+    '',
+    route,
+    map,
+    '',
+    ...(beats.length > 0 ? ['Летопись:', ...beats.map((beat) => `· ${beat}`), ''] : []),
+    body,
+    squad,
+    ...(doctrines ? [doctrines] : []),
+    cause,
+    '',
+    tally,
+    '',
+    `Повторить этот мир: seed ${String(summary.seed)}, ${CHRONICLE_FACTION_NAMES[summary.faction]}.`,
+  ].join('\n')
+  return { title, subtitle, route, map, beats, body, squad, doctrines, cause, tally, text }
 }
 
 // ---------------------------------------------------------------------------

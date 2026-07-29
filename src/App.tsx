@@ -88,7 +88,18 @@ import {
 } from './game/types'
 import { isMapMarkerVisible, projectMapMarker } from './game/mapMarkers'
 import { buildInitialGameView } from './game/world/CampaignView'
-import { formatRussianCount } from './game/content/gameCopy'
+import {
+  EPILOGUE_COPIED_LABEL,
+  EPILOGUE_COPY_FAILED_LABEL,
+  EPILOGUE_COPY_LABEL,
+  EPILOGUE_EMPTY_NOTICE,
+  EPILOGUE_IMAGE_FAILED_LABEL,
+  EPILOGUE_IMAGE_LABEL,
+  EPILOGUE_SHARE_NOTE,
+  describeRunEpilogue,
+  formatRussianCount,
+  type RunEpilogueCopy,
+} from './game/content/gameCopy'
 import { parseSeed } from './game/random/seed'
 import {
   BOON_CATALOGUE,
@@ -104,12 +115,14 @@ import {
   loadProfile,
   saveActiveRun,
   saveProfile,
+  MAX_RICH_RUN_EPILOGUES,
   type StorageWarning,
 } from './game/run/storage'
 import type {
   ActiveRunSaveV3,
   ProfileSaveV1,
   RunConfig,
+  RunEpilogue,
   RunHistorySummary,
 } from './game/run/runTypes'
 import { generateWorld } from './game/world/WorldGenerator'
@@ -1026,7 +1039,10 @@ function MenuScreen({
   const selectedBoonId = selectedProfileBoon(profile)
   const previewWorld = useMemo(() => blueprintForSeed(canonicalSeed), [canonicalSeed])
   const activeElapsed = serializableNumber(activeRun?.directorState.elapsed)
-  const recentRuns = profile.runHistory.slice(0, 4)
+  // One more than `MAX_RICH_RUN_EPILOGUES`, so the oldest visible run is the first one whose
+  // сводка has decayed: the retention rule is legible from the profile screen rather than
+  // only from the storage code.
+  const recentRuns = profile.runHistory.slice(0, MAX_RICH_RUN_EPILOGUES + 1)
   const compatibilityError =
     activeRun &&
     activeRun.config.generatorVersion !== WORLD_GENERATOR_VERSION
@@ -1472,6 +1488,14 @@ function MenuScreen({
                     <span className="history-reward">
                       <Coins aria-hidden="true" />+{run.profileCurrencyEarned}
                     </span>
+                    <details className="history-epilogue">
+                      <summary>Походная сводка</summary>
+                      {run.epilogue ? (
+                        <RunPostcard epilogue={run.epilogue} summary={run} />
+                      ) : (
+                        <p className="postcard-decayed">{EPILOGUE_EMPTY_NOTICE}</p>
+                      )}
+                    </details>
                   </article>
                 ))}
               </div>
@@ -1739,6 +1763,213 @@ function PauseModal({
   )
 }
 
+/**
+ * The «походная сводка», as a panel and as a picture.
+ *
+ * There is no backend, so "поделиться" is exactly two things and the interface says so: a
+ * PNG the browser downloads and a block of text the clipboard takes. The text is not
+ * assembled here — `describeRunEpilogue` renders both the panel and the copyable block from
+ * one call, so what a player pastes cannot drift from what they were shown.
+ */
+const POSTCARD_WIDTH = 1000
+const POSTCARD_PADDING = 56
+const POSTCARD_LINE_HEIGHT = 34
+
+interface PostcardRow {
+  text: string
+  font: string
+  colour: string
+  gap: number
+}
+
+function wrapPostcardText(
+  context: CanvasRenderingContext2D,
+  text: string,
+  font: string,
+  maxWidth: number,
+): string[] {
+  context.font = font
+  const words = text.split(' ')
+  const lines: string[] = []
+  let current = ''
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word
+    if (current && context.measureText(candidate).width > maxWidth) {
+      lines.push(current)
+      current = word
+    } else {
+      current = candidate
+    }
+  }
+  if (current) lines.push(current)
+  return lines
+}
+
+function renderPostcardCanvas(copy: RunEpilogueCopy): HTMLCanvasElement | null {
+  const measure = document.createElement('canvas').getContext('2d')
+  if (!measure) return null
+  const contentWidth = POSTCARD_WIDTH - POSTCARD_PADDING * 2
+  const titleFont = '700 40px Georgia, "Times New Roman", serif'
+  const subtitleFont = '20px Consolas, "Courier New", monospace'
+  const bodyFont = '23px Georgia, "Times New Roman", serif'
+  const beatFont = 'italic 21px Georgia, "Times New Roman", serif'
+  const tallyFont = '19px Consolas, "Courier New", monospace'
+
+  const rows: PostcardRow[] = []
+  const push = (text: string, font: string, colour: string, gap = 0) => {
+    for (const line of wrapPostcardText(measure, text, font, contentWidth)) {
+      rows.push({ text: line, font, colour, gap })
+      gap = 0
+    }
+  }
+  push(copy.title, titleFont, '#f6e6c8', 0)
+  push(copy.subtitle, subtitleFont, '#c2a878', 10)
+  push(copy.route, bodyFont, '#efe3cd', 26)
+  push(copy.map, bodyFont, '#efe3cd', 6)
+  for (const [index, beat] of copy.beats.entries()) {
+    push(`· ${beat}`, beatFont, '#d9c9a6', index === 0 ? 22 : 10)
+  }
+  push(copy.body, bodyFont, '#efe3cd', 22)
+  push(copy.squad, bodyFont, '#efe3cd', 6)
+  if (copy.doctrines) push(copy.doctrines, bodyFont, '#efe3cd', 6)
+  push(copy.cause, bodyFont, '#f6c66b', 18)
+  push(copy.tally, tallyFont, '#bda87f', 24)
+
+  const height =
+    POSTCARD_PADDING * 2 +
+    rows.reduce((total, row) => total + row.gap + POSTCARD_LINE_HEIGHT, 0)
+
+  const canvas = document.createElement('canvas')
+  canvas.width = POSTCARD_WIDTH
+  canvas.height = height
+  const context = canvas.getContext('2d')
+  if (!context) return null
+
+  const background = context.createLinearGradient(0, 0, POSTCARD_WIDTH, height)
+  background.addColorStop(0, '#1d1710')
+  background.addColorStop(1, '#2a2118')
+  context.fillStyle = background
+  context.fillRect(0, 0, POSTCARD_WIDTH, height)
+  context.strokeStyle = '#6f5a34'
+  context.lineWidth = 3
+  context.strokeRect(14, 14, POSTCARD_WIDTH - 28, height - 28)
+
+  let cursor = POSTCARD_PADDING
+  for (const row of rows) {
+    cursor += row.gap
+    context.font = row.font
+    context.fillStyle = row.colour
+    context.textBaseline = 'top'
+    context.fillText(row.text, POSTCARD_PADDING, cursor)
+    cursor += POSTCARD_LINE_HEIGHT
+  }
+  return canvas
+}
+
+function RunPostcard({
+  summary,
+  epilogue,
+}: {
+  summary: RunHistorySummary
+  epilogue: RunEpilogue
+}) {
+  const copy = useMemo(() => describeRunEpilogue(summary, epilogue), [summary, epilogue])
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const [imageFailed, setImageFailed] = useState(false)
+  const textRef = useRef<HTMLTextAreaElement>(null)
+
+  const copyText = () => {
+    void (async () => {
+      try {
+        await navigator.clipboard.writeText(copy.text)
+        setCopyState('copied')
+      } catch (error) {
+        console.warn('Korovany: the run epilogue could not reach the clipboard.', error)
+        textRef.current?.select()
+        setCopyState('failed')
+      }
+    })()
+  }
+
+  const downloadImage = () => {
+    try {
+      const canvas = renderPostcardCanvas(copy)
+      if (!canvas) {
+        setImageFailed(true)
+        return
+      }
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          setImageFailed(true)
+          return
+        }
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `korovany-svodka-${String(summary.seed)}.png`
+        link.click()
+        URL.revokeObjectURL(url)
+        setImageFailed(false)
+      }, 'image/png')
+    } catch (error) {
+      console.warn('Korovany: the run epilogue could not be drawn.', error)
+      setImageFailed(true)
+    }
+  }
+
+  return (
+    <section className="run-postcard" aria-label="Походная сводка">
+      <header>
+        <span className="eyebrow">Походная сводка</span>
+        <h3>{copy.title}</h3>
+        <p className="postcard-subtitle">{copy.subtitle}</p>
+      </header>
+      <ul className="postcard-lines">
+        <li>{copy.route}</li>
+        <li>{copy.map}</li>
+        <li>{copy.body}</li>
+        <li>{copy.squad}</li>
+        {copy.doctrines ? <li>{copy.doctrines}</li> : null}
+        <li className="postcard-cause">{copy.cause}</li>
+      </ul>
+      {copy.beats.length > 0 ? (
+        <div className="postcard-chronicle">
+          <span className="eyebrow">Что было в летописи</span>
+          <ol>
+            {copy.beats.map((beat, index) => (
+              <li key={`${String(index)}:${beat}`}>{beat}</li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
+      <p className="postcard-tally">{copy.tally}</p>
+      <textarea
+        aria-label="Текст сводки"
+        className="postcard-text"
+        readOnly
+        ref={textRef}
+        rows={5}
+        value={copy.text}
+      />
+      <div className="postcard-actions">
+        <button className="secondary-button" onClick={copyText} type="button">
+          <ScrollText aria-hidden="true" />
+          {copyState === 'copied'
+            ? EPILOGUE_COPIED_LABEL
+            : copyState === 'failed'
+              ? EPILOGUE_COPY_FAILED_LABEL
+              : EPILOGUE_COPY_LABEL}
+        </button>
+        <button className="secondary-button" onClick={downloadImage} type="button">
+          <Save aria-hidden="true" />
+          {imageFailed ? EPILOGUE_IMAGE_FAILED_LABEL : EPILOGUE_IMAGE_LABEL}
+        </button>
+      </div>
+      <p className="postcard-share-note">{EPILOGUE_SHARE_NOTE}</p>
+    </section>
+  )
+}
+
 function EndModal({
   result,
   view,
@@ -1792,6 +2023,12 @@ function EndModal({
             золота
           </span>
         </div>
+        {terminalRun?.summary?.epilogue ? (
+          <RunPostcard
+            epilogue={terminalRun.summary.epilogue}
+            summary={terminalRun.summary}
+          />
+        ) : null}
         {terminalRun && !terminalRun.finalizationPending ? (
           <div
             className="terminal-reward"

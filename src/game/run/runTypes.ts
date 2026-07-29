@@ -1,13 +1,15 @@
 import type { AchievementRunState } from '../achievements'
 import type {
   ActorRole,
+  BodyPart,
   BodyState,
   Faction,
   Objective,
   UpgradeLevels,
 } from '../types'
-import type { ChronicleState } from '../world/Chronicle.ts'
+import type { ChronicleEventKind, ChronicleState } from '../world/Chronicle.ts'
 import type { RegionDelta } from '../world/RegionRuntime.ts'
+import type { Territory } from '../world/worldTypes.ts'
 
 export type { ChronicleState, RegionDelta }
 
@@ -74,6 +76,93 @@ export interface RunCompanionState {
 export type RegionDeltaMap = Record<string, RegionDelta>
 export type RuntimeRngStateMap = Record<string, number>
 
+/**
+ * What ended the run, in the vocabulary `tests/runHarness.ts` already counts deaths with
+ * (`DeathCause`), plus the two terminal states a harness run has no word for.
+ *
+ * `unknown` is a real answer rather than a bug: a save written before the engine started
+ * recording this, or a defeat with no attributable last blow, must say so instead of
+ * inventing a killer.
+ */
+export type RunEndCause =
+  | 'objectives'
+  | 'faction'
+  | 'beast'
+  | 'bleeding'
+  | 'abandoned'
+  | 'unknown'
+
+export interface RunEndingState {
+  cause: RunEndCause
+  /** The role that landed the last blow, when a blow ended it. */
+  role?: ActorRole
+}
+
+export interface RunEpilogueBeat {
+  kind: ChronicleEventKind
+  /** Map square label, e.g. `C3`. */
+  region: string
+  faction: Faction | null
+  tick: number
+}
+
+export type RunEpilogueWoundStatus = Exclude<
+  BodyState[BodyPart],
+  'healthy'
+>
+
+export interface RunEpilogueWound {
+  part: BodyPart
+  status: RunEpilogueWoundStatus
+}
+
+export interface RunEpilogueCompanion {
+  role: ActorRole
+  count: number
+}
+
+/** Regions held at the end, counted by holder. */
+export type RunEpilogueControl = Record<Territory, number>
+
+/**
+ * The «походная сводка»: a terminal snapshot of a run, small enough to keep several of.
+ *
+ * Every collection here is bounded by a constant in `run/epilogue.ts` and every entry is an
+ * id or a highlight — a kind, a role, a map square — never a whole object. That is the whole
+ * mitigation for the named risk: the profile is a single localStorage blob rewritten on every
+ * save, so an epilogue that could grow with the run would be paid for on every write.
+ */
+export interface RunEpilogue {
+  /** Map squares in discovery order, oldest first; truncated, hence `routeTotal`. */
+  route: string[]
+  /** Squares discovered over the whole run, whether or not they fit in `route`. */
+  routeTotal: number
+  /** Squares the world had. */
+  regionsTotal: number
+  /** Where it ended. */
+  finalRegion: string
+  control: RunEpilogueControl
+  beats: RunEpilogueBeat[]
+  wounds: RunEpilogueWound[]
+  bleeding: boolean
+  limbsLost: number
+  injuries: number
+  companions: RunEpilogueCompanion[]
+  /**
+   * Equipped doctrine ids. Roadmap 1.6 builds doctrines; this field exists so that when it
+   * does, the сводка already has somewhere to put them. Until then it is always empty and
+   * every reader must render nothing rather than a heading with no rows under it.
+   */
+  doctrines: string[]
+  cause: RunEndCause
+  causeRole: ActorRole | null
+  /** Seconds of run time at the end. */
+  elapsed: number
+  caravansRobbed: number
+  eventsCompleted: number
+  bestKillStreak: number
+}
+
 export interface ActiveRunSaveV3 {
   version: 3
   runId: string
@@ -92,6 +181,13 @@ export interface ActiveRunSaveV3 {
   chronicleState: ChronicleState
   rngStates: RuntimeRngStateMap
   achievementRunState: AchievementRunState
+  /**
+   * How the run ended. Absent while it is still running, and absent on every save written
+   * before the engine recorded a cause — read as an optional for the same reason
+   * `seenHints` is, because a returning player predating a field is not a save that cannot
+   * be read.
+   */
+  ending?: RunEndingState
 }
 
 export interface RunHistorySummary {
@@ -108,6 +204,12 @@ export interface RunHistorySummary {
   endingGold: number
   profileCurrencyEarned: number
   blueprintFingerprint: string
+  /**
+   * The rich сводка, kept for the newest few runs only. Older entries decay back to the
+   * thirteen thin fields above — see `MAX_RICH_RUN_EPILOGUES` in `run/storage.ts` — so the
+   * profile blob does not carry fifty of these through every write.
+   */
+  epilogue?: RunEpilogue
 }
 
 export interface ProfileSaveV1 {
