@@ -1019,6 +1019,19 @@ no new dependencies.
   will act on, and **read the action instead of re-reading the words.** That is a better
   argument for review than scepticism or a second execution — it is the only channel through
   which an author's own ambiguity is visible at all.
+  **With one boundary, supplied by the same reviewer rather than inferred here.** Ambiguity
+  has no instrument: the sentence is grammatical under both readings and the author carries
+  the omitted fact, so re-reading regenerates the intended one. **Factual error does have
+  instruments**, and the author can catch it alone. In one hour the reviewer drafted two
+  favourable claims — that an older CI run used a different check set, and that the settled
+  exemption was keyed on `state !== OPEN` — then read the job and the source and withdrew
+  both before publishing. No reader was needed because an artefact could disagree.
+  > **Nothing is caught by re-reading. Errors are caught by artefacts that can disagree: a
+  > measurement, or a reader's action.**
+  The disciplines therefore belong to different error classes. *Measure before publishing*
+  catches a factual error in seconds and is useless against ambiguity because there is
+  nothing to query. *Publish and watch a reader act* is the only channel for ambiguity and
+  is far too slow for a fact an artefact can settle directly.
   *One more from the same exchange, and it is the sharpest of the three: a claim arrived
   that was **self-crediting and other-criticising in the same clause** — praise for one
   party's measurement, with a defect in the other's entering as its implication. It was
@@ -1554,6 +1567,29 @@ no new dependencies.
   and states whether they agree.** A remote status is a claim about the remote's content;
   quoting it beside a local gate result silently asserts an identity that costs one command
   to check and was worth two commits of unverified work.
+  **The settled-PR exemption then carried a correct generalisation with no control.** The
+  live failure was `MERGED`: after a PR merged, its frozen head made a clean branch report
+  `MISMATCH`. The code generalised that to `CLOSED` in two independent sites —
+  `classifyPrResult` and the settled-head filter in `headsAgree` — while the controls covered
+  only `MERGED`. A reviewer removed `state === 'CLOSED'` from the first and `|closed` from
+  the second: **zero failures in both cases**. Adding `state === 'OPEN'` produced two reds,
+  proving the harness could see the predicate and was blind only to the reasoned arm.
+  The same reviewer supplied the missing observation:
+  ```
+  PR #63   CLOSED unmerged at 10:15:55Z
+  frozen headRefOid       b968e5e
+  branch later at         21b8156
+  frozen mergeStateStatus BEHIND
+  ```
+  A closed-unmerged PR therefore behaves like a merged one: its status and head are history,
+  not currency. The generalisation was right and unsupported. Two controls now own the two
+  sites separately — one requires `CLOSED` to classify as `(closed at b968e5e)`, the other
+  requires that rendered head to be excluded from currency comparison. Either line can fail
+  without the other hiding it.
+  > **A correct generalisation is still an untested branch until an observation and a
+  > control reach the member the original failure did not.**
+  Every other line in that function had been written from a live failure. The one line
+  written from reasoning was the one no control could falsify.
 - **Every rule in this section guards the flattering direction, and both claims that got
   through tonight ran the other way.** The catalogue is built on *verify the favourable
   claim*: audit the compliment, check the credit, doubt the number that suits you. And the
