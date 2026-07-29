@@ -810,6 +810,37 @@ no new dependencies.
   which query is run but to **how much of a returned row is read**. The row was already in
   hand, complete, and the trimming happened after retrieval — which is the only way a store
   query produced a wrong attribution.)*
+  **And then the reason all of it happened turned out to be a missing column.** Looking for
+  the population of findings that never travelled, a sibling found it is not hidden but
+  **unrecorded** — and so is everything else about attribution. Measured independently in
+  this session's store, where it is starker than in theirs:
+  ```
+  inbound cross-session messages   body kept in `user_message`, wrapper stripped --
+                                   no sender id, no sender name, nothing
+  outbound messages                no field, no table; they survive only as prose
+                                   the author wrote about having sent them
+  system notifications             DO name a session -- but only that it went idle,
+                                   never that it sent anything or what
+  ```
+  > **Attribution is precisely the column the record does not keep, in both directions.** A
+  > count of second-party contributions therefore cannot be taken from the data by either
+  > party. It can only be taken from narration written at the time, by the party with an
+  > interest in it.
+  That collapses three separate defects in this section into one cause — a ledger assigning
+  one session's population to another, an unresolvable pronoun, and both parties' N-for-N
+  counts. **A body arrives with its sender stripped, and half an hour later the label is all
+  that remains.** Not carelessness, and not a channel *filter* either: in these sessions
+  everything arrived. **The channel relabels on delivery**, and the relabelling is durable
+  because the original label was never written down.
+  The remedy is the instrument that settled the exchange above, and it generalises: **first
+  appearance across the two turn tables, ordered by timestamp, is the only attribution
+  evidence either party holds.** Exact, cheap, and unused until the question was finally
+  asked — because attribution had never been the question anyone was asking.
+  *(One more label-is-not-the-command, in the reciprocal count below. The range was first
+  published as `ea7bbcb..2fc9685`, which yields **16**, not the 17 it was attached to; `..`
+  excludes its base. The base commit is `ea7bbcb`, whose subject is *"a label that is not
+  the command is a fabricated row with real numbers."* The notation was a label that was not
+  the command, anchored on the commit that named the defect.)*
   **Why the original claim survived is worth more than the claim was, and it is a third
   aim defect.** It rested on *"four for four — every novel class tonight came from a second
   party."* That count was taken over hypotheses **that arrived**, and arrival is the
@@ -819,7 +850,8 @@ no new dependencies.
   The reciprocal counts make it concrete. Over one sibling's eight commits, four corrected
   something an incoming message had named and **four were self-generated — and all four
   reached this session as messages**, so from here every one of them looked like a
-  second-party contribution. Over this session's seventeen in the same window, thirteen
+  second-party contribution. Over this session's seventeen in the window
+  `ea7bbcb^..2fc9685`, thirteen
   were named by an incoming message and **four were self-generated** — the census-versus-
   verdict filter, the coreference defect, the committed-diff dependency, and the `.cmd`
   break — **and all four travelled outward**, so from the other seat all four look like
