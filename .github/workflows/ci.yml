@@ -73,6 +73,13 @@ jobs:
       # `--base` takes the SHA the runner already has, so this needs no `gh`,
       # no remote resolution and no network. Pull requests only: `base.sha`
       # does not exist on a push.
-      - name: Prose sweep (scripts/verify.mjs --sweep-only)
+      #
+      # Delegates to package.json like every other step. The first version of
+      # this line restated `node scripts/verify.mjs --sweep-only` — the only
+      # invocation in the repository that did — which is the defect the script
+      # it calls fixed inside itself and documents in a comment two functions
+      # above the one this runs. A flag that later becomes required would reach
+      # `npm run verify` and not this step, silently, with the step still green.
+      - name: Prose sweep (npm run verify:sweep)
         if: github.event_name == 'pull_request'
-        run: node scripts/verify.mjs --sweep-only --base=${{ github.event.pull_request.base.sha }}
+        run: npm run verify:sweep -- --base=${{ github.event.pull_request.base.sha }}
