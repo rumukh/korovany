@@ -483,6 +483,15 @@ function readWorkflows(): WorkflowFile[] {
  * claiming to flip the deployment's reports the wrong verdict under a label that
  * sounds right. Measured: with the build's flag already false, that probe mutated the
  * build, found no hazard, and failed saying the check had missed one.
+ *
+ * Both failure paths throw rather than returning `source` unchanged. A helper whose
+ * job is to establish a precondition has no legitimate no-op: returning the input
+ * silently converts "the mutation did not apply" into "the mutation applied and the
+ * guard did not object", which is a doped case passing as a tautology. Instrumented
+ * and measured on the suite as it stands: four call sites, four calls, four
+ * mutations, zero no-ops -- so today the throws are unreachable. They exist for the
+ * call site nobody has written yet, because the previous version of this helper was
+ * also correct until the file it targeted moved underneath it.
  */
 function reflag(source: string, group: string, value: string | null): string {
   const lines = source.split(/\r?\n/)
@@ -490,7 +499,7 @@ function reflag(source: string, group: string, value: string | null): string {
   const flag = /^\s*["']?cancel-in-progress["']?\s*:/
 
   const target = lines.findIndex((line) => declares.test(line))
-  if (target < 0) return source
+  if (target < 0) throw new Error(`reflag: no line declares group ${group}`)
 
   const indent = (lines[target] ?? '').length - (lines[target] ?? '').trimStart().length
 
@@ -504,7 +513,7 @@ function reflag(source: string, group: string, value: string | null): string {
     return [...lines.slice(0, i), ...replacement, ...lines.slice(i + 1)].join('\n')
   }
 
-  return source
+  throw new Error(`reflag: group ${group} declares no cancel-in-progress to rewrite`)
 }
 
 /**
@@ -517,6 +526,10 @@ function reflag(source: string, group: string, value: string | null): string {
  * `notEqual` guard in the loop below caught it, which is the only reason this is a
  * rewritten helper rather than a silently dead case — the same failure it was
  * written to catch, arriving in the edit that moved the block it targeted.
+ *
+ * That guard lives in the caller, so it protects the call sites that happen to have
+ * it and not the one added next. Both failure paths therefore throw here, in the
+ * helper, where forgetting is not an available mistake.
  */
 function replaceBlockDeclaring(source: string, group: string, replacement: string): string {
   const lines = source.split(/\r?\n/)
@@ -524,11 +537,12 @@ function replaceBlockDeclaring(source: string, group: string, replacement: strin
   const opens = /^\s*["']?concurrency["']?\s*:\s*$/
 
   const target = lines.findIndex((line) => declares.test(line))
-  if (target < 0) return source
+  if (target < 0) throw new Error(`replaceBlockDeclaring: no line declares group ${group}`)
 
   let start = target
   while (start > 0 && !opens.test(lines[start] ?? '')) start -= 1
-  if (!opens.test(lines[start] ?? '')) return source
+  if (!opens.test(lines[start] ?? ''))
+    throw new Error(`replaceBlockDeclaring: group ${group} sits under no concurrency: key`)
 
   const indent = (lines[start] ?? '').length - (lines[start] ?? '').trimStart().length
 

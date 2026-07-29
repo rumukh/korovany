@@ -1984,6 +1984,34 @@ test prevents the pending state from arising. Removing the workflow-level block 
 question rather than answering it**, and that is the justification, not a finding that nesting
 was shown harmful.
 
+One further measurement, made after the guard was already green. The two helpers that establish a
+doped case's preconditions each had paths that returned their input unchanged when they matched
+nothing, which is the silent no-op that turns a doped case into a tautology. Measured before
+changing anything, by instrumenting the helper rather than reasoning about it: four call sites,
+four calls, four mutations, zero no-ops — the hazard was real in form and unrealised in fact.
+Both helpers now throw on those paths, and each throw was then doped in turn to show it fires,
+because a defensive branch nobody has shown capable of failing is the same vacuity this section
+is about.
+
+Making them throw raised a sharper question, since a helper that throws turns a collapsed
+precondition into a red test, and the measurement that reports which test catches each mutation
+counts test **names**. Checked rather than assumed: for the mutation that deletes the
+deployment's concurrency block, six tests go red and the instrument scores four as semantic
+coverage — but three carry the message *no protected group derived from the real file, so every
+probe below is vacuous*. Genuine semantic coverage for that mutation is **one**, the empty-case
+check. The probes were behaving correctly and saying so plainly; the instrument reading them was
+not.
+
+> **A probe that announces its own collapsed precondition is indistinguishable from a probe that
+> caught something, to any instrument that counts names rather than reading messages.**
+
+That is the same confound as *a check firing and a probe breaking are the same colour at the exit
+code*, moved one level up — the fix for the first was to record which test went red, and this is
+the defect in that fix. The remedy is the one that has worked every time here: make the failing
+assertion carry a message naming its own precondition, then classify by message rather than by
+name. The guard is not weakened by this, because the mutation is still caught; what was wrong was
+the number claimed for how thoroughly.
+
 ### 6.3 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
