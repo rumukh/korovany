@@ -715,6 +715,37 @@ no new dependencies.
   property of what an author omits to assert — **the plumbing underneath errs the same way**,
   and a green result therefore carries strictly less information than a red one at every
   layer, including the ones nobody wrote.
+  **A third round then found the deepest one, and it is about controls rather than code.**
+  The double-space detector was `/\S {2}\S/` — **exactly** two spaces — so `a   b` did not
+  match. Three spaces is the *more likely* form of the very defect it exists for: a
+  paragraph join where the first line ended in a trailing space produces three, and
+  trailing whitespace before a join is the common case. Measured end-to-end on committed
+  dopes:
+  ```
+  "A control sentence.  It has two spaces."     raw=5  placeholder=1   CAUGHT
+  "A control sentence.   It has three spaces."  raw=4  placeholder=0   MISSED
+  ```
+  **And no control in the file could have found it.** Every double-space control was written
+  with exactly two spaces, so:
+  > **A control derived from a model cannot test the model.** The mutation harness proves the
+  > implementation matches what its author believes; it is structurally unable to ask whether
+  > the belief matches the world, because the dope and the detector were drawn from the same
+  > idea.
+  That is materially stronger than *"its controls are the ones its author could think of"* —
+  not incomplete, but **incapable in a specific direction**, and the direction is
+  unreachable from inside. Which restores the second-party rule in the bounded form that
+  survives: the general version was unfalsifiable because it counted arrivals, but this one
+  names a mechanism and a limit. **Three spaces is not a cleverer test than two. It is only
+  a test the author had no reason to write.**
+  A companion from the same round refines the error-path reading above. An unterminated
+  ``` fence made every line below it read as code, so the sweep went blind to the rest of
+  the file and reported clean — and that is on the **happy path, executed every run**. So
+  the class is not *error paths*: it is **any output whose correct value is not
+  independently knowable.** Error paths qualify because nobody exercises them;
+  `placeholder=0` qualifies because it is equally consistent with a clean file, a blind
+  predicate and a swallowed population, and nothing in the number distinguishes them. **The
+  dope is the only discriminator in either case** — which is why the harness matters, and
+  why its inability to dope outside its own model is the sharpest limit recorded here.
   **The stronger claim first written here — that enumerating a hypothesis space usually
   requires a second party — is false, and the record of this work refutes it.** Five
   self-generated enumerations, each against a position its own author had already
