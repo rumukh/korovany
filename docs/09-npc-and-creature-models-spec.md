@@ -2345,8 +2345,10 @@ no new dependencies.
   humanoid table needed, in the same file, with the beast line left holding the
   uncorrected version. Nothing could have noticed either, because no assertion evaluated
   them. They are quoted here only because they are *retracted*, which is the one use a
-  stale figure is safe for; what the old rig is actually worth at that pose is computed by
-  the same test, so the retraction cannot itself decay.
+  stale figure is safe for. Nothing replaces them **at that pose** and nothing can — the
+  pose is not in the reachable state space, so the pose box excludes it by construction.
+  What is computed is what the old rig is worth across the poses the animal can actually
+  reach, in `FOOT_ROOTED_SKULL`.
   The largest of the measurements is on **death**, which no test covered at all:
   `updateActorDeathMotion` writes `head-pivot.rotation.z = side * 0.28 * eased` and on a
   pivot at the feet that swings the skull through the whole ground-to-skull arm, on
@@ -2368,16 +2370,22 @@ no new dependencies.
   rather than sampled: `torso-pivot` and `head-pivot` are read by hand and are written
   through the pose helpers; `pelvis-pivot` and `tail-pivot` take two axes each and are
   order-sensitive only cosmetically, held by the ban on assigning an Euler order;
-  `neck-pivot` never rotates; and the four limb pivots take two axes over their
-  lifetime — `updateActorDeathMotion` writes x *and* z on both arms, and
-  `applyActorVisualVariation` puts the leg splay on z beneath every pose pass's x — so
-  they are written through `applyLimbPose`.
+  `neck-pivot` never rotates; and the four limb pivots take two axes at once on the
+  death path only — `updateActorDeathMotion` writes pitch *and* roll on both arms and
+  both legs — so **that** path writes them through `applyLimbPose`. The live passes do
+  not, and they differ from each other: `animateCharacter` writes `rotation.x` and
+  leaves the leg splay `applyActorVisualVariation` put on z, so a humanoid genuinely
+  carries two axes there; `animateBeastRig` writes `rotation.set(x, 0, 0)`, which
+  **clears** z, so a beast's splay does not survive its first posed frame.
 
   **That last row read "one axis, therefore order-free, therefore no guard" until a
-  reviewer asked what happens outside the one pass it had been checked in.** It is true
-  of `animateBeastRig` and of `animateCharacter` and false over the lifecycle, and it is
-  the same defect as scoping a fix to the reported instance — committed inside the table
-  written to avoid it.
+  reviewer asked what happens outside the one pass it had been checked in.** It holds
+  only where the pass leaves the pivot carrying a single axis — `animateBeastRig`, which
+  zeroes the other two — and fails wherever a second axis is still on the pivot from
+  somewhere else, which is the humanoid live pass and the death path on both rigs. The
+  question is what the pivot *carries*, not what one pass writes, and answering the
+  second was the same defect as scoping a fix to the reported instance — committed
+  inside the table written to avoid it.
 
   The cost of a wrong order is pinned per order in `WRONG_ORDER_COST`, computed by
   `every beast pivot uses the Euler order its maths assumes`, which also derives the limb

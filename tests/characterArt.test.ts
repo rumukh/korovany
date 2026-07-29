@@ -2878,17 +2878,21 @@ const WORLD_DEATH_TRAVEL: Record<BeastKind, number> = {
  *
  * `docs/09` §4 and the docblock that used to stand here recorded **0.296 on a wolf,
  * 0.368 on a bear and 0.660 on a troll**, "under attack plus stagger". Both halves of
- * that are wrong, and the companion test computes replacements rather than correcting
- * them by hand:
+ * that are wrong:
  *
- * - Driven at the pose they name, the sibling rig gives figures roughly half again as
- *   large — computed by the companion test rather than restated, so the retraction
- *   cannot itself decay. Nothing could have noticed either way: no assertion evaluated
- *   them.
  * - The pose they name is **not reachable.** The stagger branch sets
  *   `actor.action = null`, and `sampleActorPose` reads the attack out of `actor.action`.
  *   That is the *same* correction the humanoid table needed, made in this same file,
  *   with the beast line left holding the uncorrected version.
+ * - The figures do not reproduce anywhere in the space that *is* reachable, and no
+ *   assertion had ever evaluated them, so nothing could have noticed either fault.
+ *
+ * **No replacement figure exists for the pose they name, and none can be computed**,
+ * because the pose box excludes an unreachable state by construction — this docblock
+ * previously claimed the companion test drove that pose and gave a value "roughly half
+ * again as large", which was false twice over: nothing drives it, and the comparison was
+ * an unpinned figure of the kind this whole exercise removes. What *is* computed is what
+ * the old rig was worth across the reachable poses, per animal, in `FOOT_ROOTED_SKULL`.
  *
  * ## And the corner nothing was watching: death
  *

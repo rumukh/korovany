@@ -3637,9 +3637,14 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
  * 0.660 on a troll, "under attack plus stagger" — **do not reproduce**, and the pose they
  * name is not reachable, for the same reason the humanoid table had to be corrected: the
  * stagger branch clears `actor.action`. Those three numbers are quoted because they are
- * *retracted*, which is the one thing a stale figure is safe to be used for. What the
- * rejected arrangement is actually worth at that pose is computed by the same test, so
- * the retraction cannot itself go stale.
+ * *retracted*, which is the one thing a stale figure is safe to be used for.
+ *
+ * No figure replaces them **at that pose**, and none can: the pose does not exist in the
+ * reachable state space, so the pose box deliberately excludes it and nothing measures
+ * it. What is computed is what the rejected arrangement is worth across the poses the
+ * animal can actually be in — `FOOT_ROOTED_SKULL`, produced by the known-bad control in
+ * `what a foot-rooted skull was worth on each of the four animals`. Saying the retraction
+ * is "computed" without saying *of what* was itself the shape being retracted here.
  *
  * ## Where the neck goes, and why it is not a guess
  *
