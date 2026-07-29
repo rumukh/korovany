@@ -579,6 +579,40 @@ export const CONTROLS = [
     },
   },
   {
+    name: 'a-closed-unmerged-pr-is-settled-too',
+    // Live observation supplied by a reviewer, not an analogy to MERGED:
+    // #63 closed unmerged at 10:15:55Z with head b968e5e while its branch later
+    // stood at 21b8156; headRefOid and mergeStateStatus froze. Comparing either
+    // as current is the same category error as comparing a merged PR's head.
+    //
+    // This control owns classifyPrResult's `state === 'CLOSED'` arm. Removing
+    // that arm makes the check red and the mutation survive.
+    check: () => {
+      const closed = classifyPrResult({
+        code: 0,
+        out: '{"headRefOid":"b968e5e999","number":63,"state":"CLOSED","mergeStateStatus":"BEHIND"}',
+      })
+      return closed.failure === null
+        && closed.head === '(closed at b968e5e)'
+        && closed.desc === '#63 CLOSED BEHIND'
+    },
+    mutate: () => classifyPrResult({
+      code: 0,
+      out: '{"headRefOid":"b968e5e999","number":63,"state":"CLOSED","mergeStateStatus":"BEHIND"}',
+    }).head === 'b968e5e',
+  },
+  {
+    name: 'a-closed-pr-head-is-excluded-from-currency',
+    // Separate from the classifier control because headsAgree has its own
+    // settled-state model. The reviewer removed `|closed` from that regex and
+    // every existing control stayed green.
+    check: () =>
+      headsAgree('21b8156', '21b8156', '(closed at b968e5e)') === true
+      && headsAgree('21b8156', '21b8156', 'b968e5e') === false,
+    mutate: () =>
+      headsAgree('21b8156', '21b8156', '(closed at b968e5e)') === false,
+  },
+  {
     name: 'an-open-pr-head-still-must-agree',
     // The exemption must not leak: an OPEN PR whose head differs is still a
     // failure, which is the whole reason the check exists.
@@ -646,6 +680,23 @@ export const CONTROLS = [
       const rootOnly = (git('ls-files', '--', '*.md') ?? '').split('\n').filter((p) => p && !p.includes('/'))
       return rootOnly.some((p) => p.includes('/'))
     },
+  },
+  {
+    name: 'the-success-verdict-names-only-checks-that-ran',
+    // Four invocation modes, four conclusions. Exact strings make skipped
+    // checks impossible to smuggle back into a fixed summary line.
+    check: () =>
+      successVerdict({ identityCompared: true, gatesRun: true })
+        === 'PASSED: heads agree, gates clean, sweep clean, controls fire'
+      && successVerdict({ identityCompared: false, gatesRun: true })
+        === 'PASSED: gates clean, sweep clean, controls fire'
+      && successVerdict({ identityCompared: true, gatesRun: false })
+        === 'PASSED: heads agree, sweep clean, controls fire'
+      && successVerdict({ identityCompared: false, gatesRun: false })
+        === 'PASSED: sweep clean, controls fire',
+    mutate: () =>
+      successVerdict({ identityCompared: false, gatesRun: false })
+        .includes('gates clean'),
   },
 ]
 
@@ -781,6 +832,28 @@ export function partitionResidual(total, parts) {
   return total - parts.reduce((a, b) => a + b, 0)
 }
 
+/**
+ * Build the success line from checks this invocation actually ran.
+ *
+ * The first version was a fixed string:
+ *
+ *   PASSED: heads agree, gates clean, sweep clean, controls fire
+ *
+ * In `--sweep-only --base=<sha>` mode, identity is deliberately not compared
+ * and the gates are deliberately skipped. The exit code and failure list were
+ * right, but the line a human reads claimed both — the census-as-verdict defect
+ * in the verdict itself. In CI the statement happened to be true because
+ * earlier job steps ran the gates, which made it worse: a correct conclusion
+ * produced by a process that could not know it.
+ */
+export function successVerdict({ identityCompared, gatesRun }) {
+  const claims = []
+  if (identityCompared) claims.push('heads agree')
+  if (gatesRun) claims.push('gates clean')
+  claims.push('sweep clean', 'controls fire')
+  return `PASSED: ${claims.join(', ')}`
+}
+
 function main() {
   if (process.argv.includes('--mutate')) {
     runMutation()
@@ -797,6 +870,9 @@ function main() {
   // would fail for the environment rather than for the tree, which is a red run
   // for the wrong reason: the defect this file records twice.
   const suppliedBase = process.argv.some((a) => a.startsWith('--base='))
+  const sweepOnly = process.argv.includes('--sweep-only')
+  const identityCompared = !suppliedBase
+  const gatesRun = !sweepOnly
 
   const controls = runControls()
   if (controls.failed.length > 0) failures.push(`controls failed: ${controls.failed.join(', ')}`)
@@ -845,7 +921,7 @@ function main() {
   if (dirty !== null && dirty !== 0) failures.push(`working tree has ${dirty} modified paths`)
 
   // --- gates: each exit code captured on its own ----------------------------
-  if (!process.argv.includes('--sweep-only')) {
+  if (gatesRun) {
     // Every gate delegates to package.json rather than restating the command.
     // `npx oxlint src tests` sat here and is narrower than the project's own
     // `oxlint`, which lints the whole repository — so this instrument reported
@@ -911,7 +987,7 @@ function main() {
     process.exitCode = 1
     return
   }
-  console.log('\nPASSED: heads agree, gates clean, sweep clean, controls fire')
+  console.log(`\n${successVerdict({ identityCompared, gatesRun })}`)
 }
 
 // Only run when invoked as the entry point. The exports above exist to be
