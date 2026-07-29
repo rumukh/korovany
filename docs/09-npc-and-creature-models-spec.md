@@ -1717,10 +1717,26 @@ no new dependencies.
   at 63239f2                16 total            20 total / 4 comment / 16 code
   at the tip of writing     18 total            22 total / 4 comment / 18 code
   ```
-  *A sibling published **"twenty-odd"**, then reconciled it to 16 by attributing the whole
-  gap to **six comment lines**. Measured, the comment count is **four**, and the remainder is
-  the tree growing by two sites when `main` moved — **two causes, one named**, which is this
-  file's own remainder rule arriving in the reconciliation of a count.*
+  *A sibling published **"twenty-odd"**, and this file then reconciled it to 16 by
+  attributing the gap to four comment lines plus two sites the tree gained when `main` moved.
+  **That reconciliation landed on their number by the wrong route, and they caught it.**
+  Their predicate was never `\r`: it was `\r | CRLF | eol | gitattributes`,
+  case-insensitive, which they had published. Replayed here:*
+  ```
+  their predicate @ 63239f2   total=22   comment=6   code=16
+  their predicate @ the tip   total=24   comment=6   code=18
+  ```
+  ***22 and 6, at the same tip as the 16*** *— a third predicate, not the wide one, and the
+  tree moving contributes nothing to it. The wide-pattern-at-the-later-tip figure is also 22,
+  by an entirely different route.*
+  > **A reconciliation that lands on the published number is not thereby the route that
+  > produced it.** Two predicates over one corpus collide constantly — the numbers are small
+  > and the corpus is one repository — so arriving at the figure is weak evidence of having
+  > found its derivation.
+  *Which is the same shape as the thing being reconciled, one turn later. And it was
+  resolvable only across both sides: one party needed the other's **predicate**, the other
+  needed the **table** — both published, neither party suspicious. **Publishing the predicate
+  rather than the conclusion is what made it checkable at all.***
   *The mechanism behind the hedge is worth more than the arithmetic, and it is theirs:*
   > **"Twenty-odd" is an unmeasured number wearing the shape of a measured one.** A precise
   > figure invites a check; an approximate one signals that the check was performed and the
