@@ -119,12 +119,36 @@ function run(command, opts = {}) {
   return { code: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` }
 }
 
+/**
+ * Run `git` with an argument vector and **no shell**.
+ *
+ * `git` is a real executable on both platforms, so it never needed the shell
+ * that the `.cmd` shims do — and routing it through one was a live defect for
+ * the life of this file. The pathspec `-- *.md` is glob syntax to a POSIX
+ * shell: bash expanded it against the working directory to the three
+ * root-level markdown files, so `docs/**` was excluded and the sweep reported
+ * **zero files changed** on every Linux run while working correctly on Windows,
+ * where `cmd` does not glob.
+ *
+ * It therefore passed CI by measuring nothing, on the one platform CI uses,
+ * in the step added to stop exactly that. Quoting would have fixed it in bash
+ * and broken it in `cmd`; not invoking a shell fixes it in both.
+ */
+function runGit(args) {
+  const r = spawnSync('git', args, {
+    cwd: ROOT,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  })
+  return { code: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` }
+}
+
 function git(...args) {
   // A failed git command must not become data. `run` concatenates stderr into
   // `out`, so returning it unconditionally puts `fatal: ...` into a field
   // labelled as a commit — and `|| '(none)'` never fires, because the error
   // text is truthy. Observed live in this instrument's own identity block.
-  const r = run(['git', ...args].join(' '))
+  const r = runGit(args)
   return r.code === 0 ? r.out.trim() : null
 }
 
@@ -603,6 +627,25 @@ export const CONTROLS = [
     name: 'a-supplied-base-does-not-become-the-fallback',
     check: () => parseBase(['node', 'verify.mjs', '--base=deadbee'], 'origin/main').base === 'deadbee',
     mutate: () => parseBase(['node', 'verify.mjs', '--base=deadbee'], 'origin/main').base === 'origin/main',
+  },
+  {
+    name: 'the-md-pathspec-reaches-git-unexpanded',
+    // The defect: `-- *.md` inside a shell string is glob syntax. bash expanded
+    // it to the root-level markdown files, excluding `docs/**`, so the sweep
+    // reported zero files on Linux and worked on Windows. This drives real git
+    // and asserts a nested path is reachable — which is false under expansion
+    // and true without a shell, on either platform.
+    check: () => {
+      const listed = git('ls-files', '--', '*.md')
+      if (listed === null) return false
+      const paths = listed.split('\n').filter(Boolean)
+      return paths.some((p) => p.includes('/')) && paths.some((p) => !p.includes('/'))
+    },
+    mutate: () => {
+      // Stand in for the expanded pathspec: root-level names only.
+      const rootOnly = (git('ls-files', '--', '*.md') ?? '').split('\n').filter((p) => p && !p.includes('/'))
+      return rootOnly.some((p) => p.includes('/'))
+    },
   },
 ]
 
