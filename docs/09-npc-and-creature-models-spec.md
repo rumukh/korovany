@@ -778,20 +778,56 @@ no new dependencies.
   turn 231  23:58:13.487      next message  23:58:13.484     +3 ms
   turn 232  00:02:33.461      next message  00:02:33.456     +5 ms
   ```
-  What kills it is a population the argument never used: **six sessions idle for more than
-  fifty hours whose final turn still carries a stamp.** No next message exists or has for
-  two days, so under arrival-of-next that field could not have a value. It does. Completion
-  survives, and the alignment above has a cause that predicts both: **delivery of a queued
-  message is triggered by turn completion**, so the two coincide to within milliseconds
-  whenever anything is waiting, and diverge only when nothing is — which is exactly the
-  case the idle sessions supply.
+  What kills it is a population the argument never used: **twenty-one sessions idle for
+  more than fifty hours whose final turn still carries a stamp** — and all eighty sessions
+  with turns have a stamped final turn. No next message exists or has for two days, so
+  under arrival-of-next that field could not have a value. It does.
+  *(That count was first published here as **six**, which was the `LIMIT` on the query that
+  displayed the rows, restated as the size of the population. A display bound reported as a
+  census — and in the **strengthening** direction, which is why nobody checked it: an
+  understatement of one's own evidence has nobody with an interest in auditing it, the
+  unfavourable-direction axis arriving inside the proof it was supporting.)*
+  **The queueing account that was published as the explanation is refuted, and refuted by
+  the rows offered as its evidence.** It held that delivery of a queued message is triggered
+  by turn completion, so the two coincide to within milliseconds. That predicts
+  `message clock ≥ stamp` — delivery cannot precede the completion that causes it. Measured
+  across every pair available, on the column neither party read:
+  ```
+  stamp − message clock, 12 consecutive turns:  +3 to +6 ms
+  stamp AFTER message clock : 12
+  stamp BEFORE               :  0
+  ```
+  **The message clock is always earlier than the stamp**, so the message was read before the
+  turn record was written, and delivery-at-completion is impossible. The magnitude was the
+  whole content of the observation for both parties; **the direction was never asked**, and
+  the direction is the only part that discriminates.
+  The write-at-boundary reading dies on the same page: it cannot write the twenty-one idle
+  rows, and a reviewer's turn stamped `21:58:27.392` is followed by a message sent no
+  earlier than `22:07:09.222` — **8m 41.830s** later — a stamp that does not move to meet a
+  late arrival. What survives is neither proposal but the residue: **the next turn's clock
+  and the previous turn's row are two reads bracketing one boundary, in that order, five
+  milliseconds apart.**
+  **The corollary never needed any of it.** *`current_datetime` is the recipient's boundary,
+  not the sender's send* follows from the alignment alone — from the fact of coincidence,
+  whatever produces it. A mechanism was added because it made the sentence sound explained,
+  and **the added part is the only part that could be false, and was.** So:
+  > **Over-justification is a risk, not a courtesy.** The strongest-sounding clause in a
+  > paragraph is often its only refutable one. A sufficient observation given an unnecessary
+  > cause fails at the cause.
+  With a companion that indicts both parties: the evidence refuting one account had been
+  collected an hour earlier, for a different question, and never re-read against this one.
+  **Evidence is filed under the question that prompted it, and nothing prompts a second
+  reading** — which is why both sessions went looking for new populations while the
+  discriminator sat in the file.
   So the rung, which is general and cost one query: **eliminating one alternative is not
   confirming yours unless the space was enumerated.** A proof that discriminates against a
   reading you had already rejected feels precisely as conclusive as one that discriminates
   against the reading you hold — and there is no felt difference to warn you which you
-  built. It recurred immediately: the queueing explanation above was itself offered as *the*
-  account of the 3–5 ms when a second account fits the same three rows, and only the idle
-  population separates them.
+  built. It recurred immediately, and then went one worse: the queueing explanation was
+  offered as *the* account of the 3–5 ms when a second account fit the same rows — and
+  **both were later refuted by the sign of the very delta they were explaining**, which
+  neither party had read. Enumerating two candidates is no better than enumerating one when
+  the discriminating column was in every row all along.
   A consequence worth carrying: **`current_datetime` on a queued cross-session message is
   when the recipient became free, not when the sender sent it.** Correctly measured, of a
   different subject — subject substitution inside the instrument being used to audit it.
@@ -815,8 +851,9 @@ no new dependencies.
   that cannot be repaired later by collecting more.**
   The discriminating rows were inside the eighty the whole time, and two parties found two
   independent versions of them within minutes of each other once the third reading was
-  named: **six sessions idle beyond fifty hours** with stamped final turns, and **fifteen
-  single-turn sessions, fifteen of fifteen stamped**, ten of them older than a day. Neither
+  named: **twenty-one sessions idle beyond fifty hours** with stamped final turns, and
+  **fifteen single-turn sessions, fifteen of fifteen stamped**, ten of them older than a
+  day. Neither
   party had asked, and not because the query was hard — because neither was asking a
   question they believed had three answers. **The sweep was aimed at *how large is my
   sample*, and the evidence for *how many readings survive* sat in the same table.**
