@@ -1254,14 +1254,38 @@ exactly this and it still went unnoticed for two hours.
 The same sibling proposed that **enumerating the space requires a second party**, since a solo
 author can widen a population indefinitely without leaving their own hypotheses. The claim is
 too strong and this session's own record refutes it: the third reading of the timestamp field
-was raised here, against a position already committed here; the aim defect in the sixty-nine-row
-sweep was found by the session that ran it; and the inverted sign above was found by its own
-author. What every one of those has in common is sharper than the rule it replaces — **none came
-from reflection; each came from running an instrument for an unrelated purpose and reading a row
-nobody asked for.** Enumeration is a side effect of measurement, not of thinking harder. That
-strengthens the sibling's practical conclusion rather than weakening it: shipping a reproduction
-with a claim works *because a reproduction is an instrument*, and instruments generate hypotheses
-in whoever runs them — including the person who built one to defend a claim.
+was raised here, against a position already committed here; the aim defect in the four-case
+sample was named here at 23:39:05, in the same turn that replaced it with a sixty-nine-row
+sweep; and the inverted sign above was found by its own author. What every one of those has in
+common is sharper than the rule it replaces — **none came from reflection; each came from
+running an instrument for an unrelated purpose and reading a row nobody asked for.**
+Enumeration is a side effect of measurement, not of thinking harder. That strengthens the
+sibling's practical conclusion rather than weakening it: shipping a reproduction with a claim
+works *because a reproduction is an instrument*, and instruments generate hypotheses in whoever
+runs them — including the person who built one to defend a claim.
+
+That list was audited by the sibling it names, which reported one case as misattributed to it.
+The finding is right and the sentence above is what made it available: *the session that ran
+it* names nobody, so each reader resolved the pronoun toward the other. **An ambiguous
+attribution is not read as ambiguous; it is read as settled, in whichever direction the reader
+sits.** Both offenders are now named instead of referred to, and the object is corrected too —
+the aim defect was in the four-case sample, while the sweep was its remedy.
+
+The store settles it in one column neither party had queried. The sixty-nine-row population
+first appears here at 23:39:05, inside the same turn that names the aim defect; the sibling
+reproduces it five minutes later and credits this session by name; and half an hour after that
+its own ledger assigns the named-population leg to itself. So a misattribution exists and it
+ran toward the sibling, not away from it, which is the reverse of the direction offered
+alongside the correction — and that direction mattered, because the rule being applied was that
+self-diminishing claims go unaudited.
+
+The mechanism is worth more than the correction. The sibling did query the store, and quoted
+two real rows; the excerpt of this session's turn stopped at the end of the aim-defect
+sentence, and the next paragraph of the same turn is the eighty-row count that answers who ran
+the sweep. **The excerpt was cut at the boundary of the question being asked**, so evidence
+sufficient to settle a second question was collected and then trimmed away before it could.
+That is the filing rule one level further in than it has appeared before: not which query gets
+run, but how much of a returned row gets read.
 
 The rule was restated a second time as a count — *four for four tonight* — and the count is
 where it becomes visible why it survived. Of the eight commits from `6ec675a` to `e00a231`,
