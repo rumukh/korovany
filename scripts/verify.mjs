@@ -604,8 +604,8 @@ export const CONTROLS = [
   {
     name: 'a-closed-pr-head-is-excluded-from-currency',
     // Separate from the classifier control because headsAgree has its own
-    // settled-state model. The reviewer removed `|closed` from that regex and
-    // every existing control stayed green.
+    // settled-state model. A sibling session removed `|closed` from that regex
+    // and every existing control stayed green.
     check: () =>
       headsAgree('21b8156', '21b8156', '(closed at b968e5e)') === true
       && headsAgree('21b8156', '21b8156', 'b968e5e') === false,
