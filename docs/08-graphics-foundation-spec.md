@@ -1917,7 +1917,74 @@ prediction: an exchange whose only product is an audit of the previous exchange 
 foundation this document specifies is delivered, and the sibling waves build on the toolkit
 rather than on this ledger.
 
-### 6.2 Known residue: sign-only assertions guarding loops
+### 6.2 A predicate at the wrong scope survives every round of hardening aimed at its rule
+
+The Pages workflow was split so the build cancels its superseded runs and the deployment does
+not, which required two concurrency groups where there had been one. That edit broke the guard
+in `tests/deployWorkflow.test.ts` — a file hardened over ten rounds of adversarial doping,
+carrying a sixty-line docstring about what it can and cannot see, and the defect was in the one
+place none of those rounds looked.
+
+`cancellationRisks` computed `DEPLOYS_PAGES.test(file.source)` — a property of the **file** —
+and then applied the strict rule to **every** concurrency block in it. Ten rounds asked what
+the rule should check and never which objects it should check, because with one block per file
+the two questions had the same answer. **A predicate is correct-by-accident whenever the
+population it selects from has one member, and nothing distinguishes that from correct.** The
+rounds that hardened the rule could not have found this; they were aimed at a different axis.
+
+The docstring makes it sharper. It already said, in a paragraph committed rounds earlier, that
+*the hazard is membership of the group, not authorship of the deployment*. The code was still
+asking about authorship of the **file**. **The sentence naming the distinction was committed
+while the function it describes sat on the wrong side of it**, and prose agreeing with a fix is
+not evidence the fix landed.
+
+Fixing it surfaced the same false positive one layer down: `protectedGroups` collected every
+group in a Pages workflow, so the build group would have become protected and the build own
+legitimate cancellation caught by the ordinary rule instead. Two doors, one error, and closing
+the first would have looked like a fix.
+
+The controls had the disease of the code they test. Nine probes spelled the group literally,
+and after the split the four **benign** ones went on passing — not because their flag is false
+but because the name they used protects nothing. **A false-positive control that passes for the
+wrong reason certifies nothing**, which is the round-nine failure this file already records,
+recurring in the controls rather than the check.
+
+That was found by measuring which test catches each mutation rather than whether the run went
+red. The measurement also retired coverage that was not there: two mutations that are not
+hazards at all showed semantic hits which were entirely probes breaking on their own stale
+literals, and one probe labelled *the build joins the deployment group and cancels it* mutated
+a group that no longer cancelled, found no hazard, and reported that the check had missed one.
+**At the exit-code level a check firing and a probe breaking are the same colour**, so a
+harness reading only pass/fail cannot tell coverage from breakage and will report breakage as
+coverage. **A probe resting on an unstated precondition reports its own broken assumption as a
+failure of the thing under test.**
+
+Three transport failures on the way, all one class: a literal that does not survive being
+written through a tool. The harness matching the failure glyph carried it as a character in a
+script file, where it did not survive the write, and printed `failed=0` for nine mutations that
+were all failing. The first draft of this very section was assembled in a PowerShell
+double-quoted string, in which a backtick introduces an escape — so the code span around `tsc`
+became a tab, the one around `node` became a newline, and **all sixteen code-span delimiters in
+the section were eaten**, leaving a file path that opened with a tab character.
+
+Every gate passed on that draft. The line-length, double-space, trailing-whitespace and
+code-point checks all went green, because the code-point histogram filtered for characters
+above 126 and a tab is 9. **A histogram bounded from one side cannot see corruption that falls
+on the other**, and the corruption a text pipeline actually produces is control characters,
+which is the side that was not being examined. The bare newline **was** counted, reported as
+one, and dismissed as pre-existing without checking whether it was mine. **An instrument that
+fires and is explained away has not failed; it has been overruled**, and that is the more
+expensive of the two because it leaves a green record.
+
+What could not be measured is stated as such. The reviewer asked whether workflow-level and
+job-level concurrency fight when nested. **No test in this repository can answer that** — the
+guard reads the input handed to the scheduler and cannot observe the scheduler, and the
+pending-run behaviour in particular cannot be recovered from run history because the flag under
+test prevents the pending state from arising. Removing the workflow-level block **dissolves the
+question rather than answering it**, and that is the justification, not a finding that nesting
+was shown harmful.
+
+### 6.3 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
 `mergeOwnership`) take the form `assert.ok(x > 0)` or `assert.ok(xs.length >= n)` with no

@@ -3624,7 +3624,7 @@ test('the art barrel keeps every export block in the order siblings read it in',
   // reports perfect order, and that is indistinguishable from success.
   //
   // This is an equality rather than a floor. The first version asserted `>= 5`
-  // against a file with seven blocks, which is the shape §6.2 of docs/08 argues
+  // against a file with seven blocks, which is the shape §6.3 of docs/08 argues
   // against — a floor with slack in front of the loop that does the work — and
   // it shipped two commits after that section was written. Counting the opening
   // lines separately and requiring every one to have produced a parsed block

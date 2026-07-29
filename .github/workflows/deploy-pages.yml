@@ -11,23 +11,24 @@ permissions:
   pages: write
   id-token: write
 
-concurrency:
-  # A deployment must be allowed to finish. Cancelling `actions/deploy-pages`
-  # mid-flight can leave the live site on an older commit, and the run that would
-  # explain it reads `cancelled` rather than `failure` — a stale site with nothing
-  # pointing at it. GitHub's Pages template sets this `false` for that reason.
-  #
-  # The shared `pages` group is deliberate, and so is the default `queue: single`,
-  # which drops a pending run when a newer one arrives. That behaviour is a defect
-  # in ci.yml — which owes a verdict to every commit, so it groups main pushes
-  # uniquely — and is the behaviour we want here: main is linear, so a superseding
-  # push contains the commit it displaces, and only the newest content is served.
-  group: pages
-  cancel-in-progress: false
-
 jobs:
   build:
     runs-on: ubuntu-latest
+    concurrency:
+      # A superseded build is waste: main is linear, so a newer push contains the
+      # commit it displaces and the artifact this job would upload is already stale.
+      # Cancelling it was the behaviour before the flag was flipped workflow-wide,
+      # and it was observed working four times on 2026-07-28 — runs 30355639257,
+      # 30357016872, 30362159815 and 30392484430. Stated no more strongly than it was
+      # measured: three of those were runner-assigned and died at `Install
+      # dependencies` or `Build` after 16-28s; the fourth recorded zero steps at 9s,
+      # cancelled before a runner was assigned. All four predate the flip to false.
+      #
+      # This group is deliberately NOT the deployment's. A single workflow-level
+      # group cannot hold both rules, because the flag it carries is the same flag
+      # for the build that should die and the deploy that must not.
+      group: pages-build
+      cancel-in-progress: true
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -58,6 +59,26 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build
+    concurrency:
+      # A deployment must be allowed to finish. Cancelling `actions/deploy-pages`
+      # mid-flight can leave the live site on an older commit, and the run that would
+      # explain it reads `cancelled` rather than `failure` — a stale site with nothing
+      # pointing at it. GitHub's Pages template sets this `false` for that reason.
+      #
+      # In the four cancellations above this job recorded zero steps and a zero-second
+      # duration, so the harm has never actually occurred here: those are `needs:`
+      # cascades, not interrupted deployments. It is guarded because it is unobserved,
+      # not because it is impossible — the previous configuration could have caused it
+      # on any of those four and simply did not.
+      #
+      # The default `queue: single` is inherited and is the decision we want, stated
+      # rather than assumed: when a deploy is in flight and two more arrive, the older
+      # pending one is dropped. main is linear, so the survivor contains the commit it
+      # displaces and only the newest content is ever served. The same scheduler
+      # behaviour is a defect in ci.yml — which owes a verdict to every commit, so it
+      # groups main pushes uniquely — and is correct here, where only the tip matters.
+      group: pages-deploy
+      cancel-in-progress: false
     steps:
       - name: Deploy
         id: deployment
