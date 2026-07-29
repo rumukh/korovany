@@ -1662,6 +1662,39 @@ been in documentation — the expiring-status guard on a commit-range phrasing a
 quoted pattern list, the mangled-join test on three consecutive re-wraps, `docs:facts` on stale
 acceptances. Nobody designed for that, and it is where the defects were.
 
+#### Widening a population cannot strengthen a refutation
+
+The clock finding above travelled to the sibling session, reproduced there, and came back with
+a simplification that does not survive. The claim is that the load-bearing fact never needed
+the idleness filter at all, because all eighty sessions with turns carry a stamped final turn,
+and that sentence has no clock in it. It has no clock and it also has no argument. The account
+under test says the row for turn N is written when the input opening turn N+1 arrives. A
+stamped final turn refutes that only where no next input ever arrived, which is exactly what
+idleness establishes. Among all eighty are sessions that were mid-conversation, whose final row
+is stamped precisely because the next message did arrive — rows the hypothesis predicts,
+counted as evidence against it.
+
+Measured while writing this. Three sessions had a turn inside the last quarter hour and six
+inside the last hour, the two most recent being this session and the sibling's, both at zero
+minutes elapsed. This session's own final row is the cleanest available example. Turn 308
+carries `2026-07-29T01:15:44.989Z`, and the message opening turn 309 carries `01:15:44.983Z` —
+six milliseconds earlier, the thirteenth consecutive instance of that sign and the first where
+one side of the pair came from outside the store rather than from a report about it. That row
+is stamped because the next input arrived. It sits inside the eighty and outside the
+twenty-one, and citing it against arrival-of-next cites the clearest demonstration of
+arrival-of-next.
+
+The rung is that a clock and a filter are different defects, and dropping the filter is not a
+way to fix the clock. The clock lived in the predicate's form, an interval measured from the
+moment of reading, and anchoring the endpoint removes it while keeping the filter — which is
+what the corrected sentence does and why it is stable. Widening from twenty-one to eighty
+removed the clock a second time and paid for it with the discrimination. Stated generally:
+**widening a population cannot strengthen a refutation when the added members are predicted by
+the hypothesis.** The added rows are not weak counterexamples, they are the hypothesis's own
+predictions, and an aggregate that mixes them is no stronger than its most idle member. This is
+the same reach recorded one entry above, where the instinct on finding a clock was to
+substitute the bigger number, and the bigger number was the one that cannot discriminate.
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
