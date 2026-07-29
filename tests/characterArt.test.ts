@@ -2910,10 +2910,12 @@ const WORLD_DEATH_TRAVEL: Record<BeastKind, number> = {
  * rather than appended here, because `assert` throws and an invariant asserted after one
  * that has already failed is an invariant nobody will ever watch fail.
  *
- * 1. **Placed.** The rest pose is bit-identical to the old one. The whole reason this
- *    defect survived on people for the life of the code is that it is invisible until
- *    something rotates, so "the fix moved the art" has to be excluded by measurement
- *    rather than by argument.
+ * 1. **Placed.** The rest pose is unchanged from the old one, to the same `1e-12` the
+ *    rows below use — a tolerance, not bit-identity, which is worth saying because the
+ *    residual happens to be zero and the assertion does not require it to be. The whole
+ *    reason this defect survived on people for the life of the code is that it is
+ *    invisible until something rotates, so "the fix moved the art" has to be excluded by
+ *    measurement rather than by argument.
  * 2. **Rigid in position.** The skull's world position is whatever `torso-pivot` says it
  *    is, to 1e-12, for every transform the engine can write — including the two the
  *    chest carries as *scale*, which is why `setCharacterShoulderWidth` is driven here
@@ -3877,19 +3879,22 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
  * | `torso-pivot` | x, y, z | **yes, and read by hand** | `applyChestPose` |
  * | `head-pivot` | x, y, z | **yes, and read by hand** | `applyHeadPose` |
  * | `leftArm` / `rightArm` | x by the pose pass, **x and z on death** | yes, cosmetically | `applyLimbPose` |
- * | `leftLeg` / `rightLeg` | x by the pose pass, **z by the variation pass** | yes, cosmetically | `applyLimbPose` |
+ * | `leftLeg` / `rightLeg` | x by the pose pass, which zeroes z, **x and z on death** | yes, cosmetically | `applyLimbPose` |
  * | `pelvis-pivot` | y, z | yes, cosmetically | the ban on assigning an Euler order |
  * | `tail-pivot` | x, z | yes, cosmetically | the same |
  * | `neck-pivot` | none | no — it never rotates | it is never written |
  *
  * **The limb rows used to read "x only, therefore order-free, therefore no guard", and
- * that was false.** It is true of `animateBeastRig` and of `animateCharacter`, and false
- * over the lifecycle: `updateActorDeathMotion` writes `rotation.z` *and* `rotation.x` on
- * both arms, and `applyActorVisualVariation` puts the leg splay on `rotation.z` under
- * every pose pass's `rotation.x`. A reviewer found it by asking what happens outside the
- * one pass I had looked at — which is the same defect as scoping a fix to the instance
- * that was reported, committed inside the table written to avoid it. What it is worth on
- * the death pose is computed below, from angles parsed out of `updateActorDeathMotion`
+ * that was false.** It holds only where the pass leaves the pivot carrying a single
+ * axis, and fails wherever a second axis is still on the node: `updateActorDeathMotion`
+ * writes `rotation.z` *and* `rotation.x` on both arms and both legs, and on the humanoid
+ * rig `animateCharacter` writes `rotation.x` over the leg splay `applyActorVisualVariation`
+ * left on `rotation.z`. `animateBeastRig` is the one place the old claim does hold, and
+ * only because `rotation.set(x, 0, 0)` clears the other two — which is a fact about that
+ * pass, not about the pivot. A reviewer found it by asking what happens outside the one
+ * pass I had looked at, which is the same defect as scoping a fix to the instance that
+ * was reported, committed inside the table written to avoid it. What it is worth on the
+ * death pose is computed below, from angles parsed out of `updateActorDeathMotion`
  * rather than retyped.
  *
  * `applyLimbPose` now writes those, so the row is guarded by a setter rather than by a

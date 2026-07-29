@@ -3667,9 +3667,9 @@ export const BEAST_RIG: Record<BeastKind, BeastRig> = {
  * the split, because `torso-pivot` sits at the animal's origin with an identity transform
  * and the two offsets sum to the old one. That is the same property that let the defect
  * survive review on people, so it is asserted rather than assumed — to the tolerance the
- * assertion states, which is a tolerance and not bit-identity. The residual measures zero
- * on all four today; the assertion permits a small non-zero one, so "bit-identical" would
- * be a stronger claim than anything that is checked.
+ * assertion states, which is a tolerance and not bit-identity. Stating any measured
+ * residual here would be a third exact claim nothing checks; the assertion permits a
+ * small non-zero one and that is the whole of what is guaranteed.
  *
  * ## Two things the split buys that a single joint would not
  *
@@ -3804,12 +3804,21 @@ export function beastLookYaw(lookYaw: number): number {
  * A limb's pose, written so that its Euler order is re-asserted with it.
  *
  * The four limb pivots were classified in this branch's own tests as **order-free, on
- * the grounds that only one axis is ever written to them**. That is true of
- * `animateBeastRig` and of `animateCharacter`, and false over the lifecycle: the death
- * pass writes `rotation.z` *and* `rotation.x` on both arms, field by field, and
- * `applyActorVisualVariation` puts the leg splay on `rotation.z` while every pose pass
- * writes `rotation.x`. Two axes on one node is order-sensitive by definition, and a
- * field write never touches `.order`, so nothing re-asserted it.
+ * the grounds that only one axis is ever written to them**. That holds only where the
+ * pass leaves the pivot carrying a single axis, and it is false wherever a second is
+ * still on the node from somewhere else:
+ *
+ * - the **death pass** writes `rotation.z` *and* `rotation.x` on both arms and both
+ *   legs, field by field — genuinely two axes at once, on either rig;
+ * - **`animateCharacter`** writes `rotation.x` and leaves the leg splay
+ *   `applyActorVisualVariation` put on `rotation.z`, so a humanoid limb carries two.
+ *
+ * `animateBeastRig` is the exception rather than the rule it was mistaken for: it writes
+ * `rotation.set(x, 0, 0)`, which *clears* z, so a beast's splay does not survive its
+ * first posed frame and the pivot really does carry one axis there. The question is what
+ * the pivot **carries**, not what one pass writes, and answering the second was the
+ * original error. Two axes on one node is order-sensitive by definition, and a field
+ * write never touches `.order`, so nothing re-asserted it.
  *
  * The composed rotation differs measurably between `XYZ` and `ZYX` at the death pose —
  * the figure is computed and pinned by `every beast pivot uses the Euler order its maths

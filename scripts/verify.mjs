@@ -832,9 +832,9 @@ export const CONTROLS = [
     },
   },
   {
-    name: 'the-paragraph-window-does-not-reach-across-code',
-    // The window walks back only while the lines are still prose, so an animal named in
-    // one comment cannot lend its name to numbers in an unrelated comment below.
+    name: 'the-paragraph-does-not-reach-across-code',
+    // The block walks outward only while the lines are still prose, so an animal named
+    // in one comment cannot lend its name to numbers in an unrelated comment below.
     check: () => {
       const t = new Map([['T', new Set([0.3, 0.48])]])
       const src = " * a wolf\nconst x = 1\nconst y = 2\n * 0.3 and 0.48 here\n"
@@ -852,11 +852,14 @@ export const CONTROLS = [
     // all passed while the scan listed `docs` and `src` only — excluding `tests/`, the
     // file the population is derived from, which was holding a live duplicate at the
     // time. A control that exercises the judgement but not the reach cannot see that.
+    //
+    // It calls `enumerateProseFiles` rather than running its own `git ls-files`: the
+    // first version did the latter, so narrowing the real scanner would have left this
+    // green — a private copy of the thing under test, inside the control for it.
     check: () => {
-      const listed = git('ls-files')
-      if (listed === null) return false
-      const files = listed.split('\n').map((f) => f.trim()).filter((f) => /\.(md|ts|tsx|mjs|js)$/.test(f))
-      return files.includes('tests/characterArt.test.ts')
+      const files = enumerateProseFiles()
+      return files !== null
+        && files.includes('tests/characterArt.test.ts')
         && files.includes('src/game/art/CharacterKit.ts')
         && files.includes('scripts/verify.mjs')
         && files.some((f) => f.endsWith('.md') && !f.includes('/'))
@@ -865,6 +868,40 @@ export const CONTROLS = [
       // Stand in for the narrowed enumeration this replaced.
       const listed = git('ls-files', 'docs', 'src') ?? ''
       return listed.split('\n').map((f) => f.trim()).includes('tests/characterArt.test.ts')
+    },
+  },
+  {
+    name: 'a-paragraph-longer-than-a-window-is-still-one-paragraph',
+    // The first version walked back a fixed three lines. A reviewer's probe showed a
+    // five-line wrapped paragraph evading it entirely. A bound chosen by the author is a
+    // bound the document is under no obligation to respect.
+    check: () => {
+      const t = new Map([['T', new Set([0.3, 0.48])]])
+      const src = " * a wolf\n * and\n * some\n * more\n * words\n * then 0.3 and 0.48\n"
+      return restatedBeastRows(t, KIND_PROBE, 'a.ts', src).length === 1
+    },
+    mutate: () => {
+      const t = new Map([['T', new Set([0.3, 0.48])]])
+      const src = " * a wolf\n * and\n * some\n * more\n * words\n * then 0.3 and 0.48\n"
+      return restatedBeastRows(t, KIND_PROBE, 'a.ts', src).length === 0
+    },
+  },
+  {
+    name: 'a-blank-line-ends-the-paragraph',
+    // The other half of the same defect, and the one that manufactures offenders rather
+    // than hiding them: walking through a blank line lets an animal named in one
+    // paragraph lend its name to numbers in the next. True of `*` blocks and of markdown.
+    check: () => {
+      const t = new Map([['T', new Set([0.3, 0.48])]])
+      const ts = " * a wolf lives here\n *\n * 0.3 and 0.48 are about something else\n"
+      const md = 'a wolf lives here\n\n0.3 and 0.48 are about something else\n'
+      return restatedBeastRows(t, KIND_PROBE, 'a.ts', ts).length === 0
+        && restatedBeastRows(t, KIND_PROBE, 'a.md', md).length === 0
+    },
+    mutate: () => {
+      const t = new Map([['T', new Set([0.3, 0.48])]])
+      const md = 'a wolf lives here\n\n0.3 and 0.48 are about something else\n'
+      return restatedBeastRows(t, KIND_PROBE, 'a.md', md).length === 1
     },
   },
 ]
@@ -1018,10 +1055,14 @@ function collectProse() {
  *    copy of a *superseded* value has nothing to match and is invisible. That
  *    class is not closable by comparison at all, and this check does not close
  *    it.
- * 2. It needs two values on one line, with the kind name within the same wrapped
+ * 2. It needs two values on one line, with the animal named somewhere in the same
  *    prose paragraph. A row written one value per line evades it.
  * 3. It only knows values that appear in a `Record<BeastKind, …>`. A measurement
  *    kept in some other shape is outside its population by construction.
+ * 4. It reads only non-zero decimal literals. An integer-valued table, a zero, or a
+ *    value written in exponent form is invisible to it.
+ * 5. A comment trailing a line of code is not classified as prose, so a row written
+ *    there is outside it too.
  *
  * The kind-name conjunct is what makes it usable without a suppression list.
  * Two-values-alone fires on unrelated domains that share round numbers — supply
@@ -1067,21 +1108,42 @@ export function isProseLine(file, line) {
   return file.endsWith('.md') ? !/^\s{4,}\S/.test(line) : /^\s*(\*|\/\/)/.test(line)
 }
 
+/**
+ * A blank line, in whichever syntax the file writes prose in.
+ *
+ * Paragraph boundaries matter in both directions. A fixed backward window is wrong
+ * twice: it stops early inside a paragraph longer than the window, so a wrapped row
+ * evades it, and it walks straight through a blank line into the paragraph above, so an
+ * animal named in one paragraph lends its name to numbers in the next. Both were found
+ * by probe, not by reading.
+ */
+export function isProseBreak(file, line) {
+  if (line === undefined) return true
+  const bare = line.replace(/^\s*(\*|\/\/)?/, '').trim()
+  return bare.length === 0
+}
+
+/**
+ * The prose paragraph a line belongs to: outward in both directions to the first blank
+ * or non-prose line. Bounded by the document, not by a constant.
+ */
+export function proseBlock(file, lines, index) {
+  let start = index
+  while (start > 0 && isProseLine(file, lines[start - 1]) && !isProseBreak(file, lines[start - 1])) start -= 1
+  let end = index
+  while (end + 1 < lines.length && isProseLine(file, lines[end + 1]) && !isProseBreak(file, lines[end + 1])) end += 1
+  return lines.slice(start, end + 1)
+}
+
 export function restatedBeastRows(tables, kindPattern, file, source) {
   const out = []
   const lines = source.split(/\r?\n/)
   lines.forEach((line, i) => {
-    if (!isProseLine(file, line)) return
-    // The kind name may sit on an earlier line of the same paragraph — prose wraps, and
-    // the row that prompted this widening named the animal on one line and gave its
-    // neck-relative offsets on the next. Requiring both on one line is a rule about
-    // typography, not about duplication. The window walks back only while the lines are
-    // still prose, so it cannot reach across a code block.
-    let named = false
-    for (let j = i; j >= 0 && j > i - 4 && isProseLine(file, lines[j]); j -= 1) {
-      if (kindPattern.test(lines[j])) { named = true; break }
-    }
-    if (!named) return
+    if (!isProseLine(file, line) || isProseBreak(file, line)) return
+    // The animal may be named anywhere in the same wrapped paragraph — prose wraps, and
+    // requiring the name and its numbers on one physical line is a rule about typography
+    // rather than about duplication.
+    if (!proseBlock(file, lines, i).some((l) => kindPattern.test(l))) return
     const nums = [...line.matchAll(/-?\d+\.\d+/g)].map((n) => Math.abs(Number(n[0])))
     for (const [name, values] of tables) {
       const hit = nums.filter((v) => values.has(v))
@@ -1089,6 +1151,21 @@ export function restatedBeastRows(tables, kindPattern, file, source) {
     }
   })
   return out
+}
+
+/**
+ * Every tracked file that can carry prose.
+ *
+ * One function, called by the scan **and** by the control that asserts the scan's reach.
+ * The control had its own `git ls-files` and its own extension list, so narrowing the
+ * real scanner back to `docs`/`src` would have left it green — a private copy of the
+ * thing under test, which is the defect this file was written to catch, rebuilt inside
+ * the control for it.
+ */
+export function enumerateProseFiles() {
+  const listed = git('ls-files')
+  if (listed === null) return null
+  return listed.split('\n').map((f) => f.trim()).filter((f) => /\.(md|ts|tsx|mjs|js)$/.test(f))
 }
 
 function scanRestatedRows() {
@@ -1105,14 +1182,8 @@ function scanRestatedRows() {
   const kindPattern = beastKindPattern(readFileSync(kitPath, 'utf8'))
   if (kindPattern === null) return { error: 'BEAST_KINDS could not be read — every line would fail the kind test and the check would pass vacuously' }
 
-  // Every tracked file that can carry prose, not a chosen subset. This read
-  // `docs` and `src` only, which excluded `tests/` — the very file the population
-  // is derived from, and which was holding a live duplicate of a `BEAST_NECK` row
-  // at the time. A scan that names the places it will look will not look anywhere
-  // else, and its silence about the rest is indistinguishable from a clean tree.
-  const listed = git('ls-files')
-  if (listed === null) return { error: 'could not list tracked files' }
-  const files = listed.split('\n').map((f) => f.trim()).filter((f) => /\.(md|ts|tsx|mjs|js)$/.test(f))
+  const files = enumerateProseFiles()
+  if (files === null) return { error: 'could not list tracked files' }
   if (files.length === 0) return { error: 'no documents to scan — vacuous pass' }
 
   const offenders = []
