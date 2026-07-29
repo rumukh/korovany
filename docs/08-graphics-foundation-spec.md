@@ -1196,6 +1196,23 @@ feels exactly as conclusive as one that discriminates against the reading held. 
 in this session's own conversation the entire time and cost a single query, which is the same
 free-and-therefore-invisible shape recorded twice above.
 
+A second discriminator exists, it is independent of that one, and it was inside a dataset both
+sessions had already swept: **fifteen sessions have exactly one recorded turn, and all fifteen
+turn 0 rows carry a timestamp** — ten of them created on earlier days, so none is a turn still
+in flight. A field meaning *when the next message arrived* cannot be populated when there is no
+next message. Nobody ran that query, and the reason is the point: the sweep that produced those
+rows was aimed at *how large is my sample*, and the evidence for *how many readings survive* was
+in the same table. This is the sharp edge of the rung, because the obvious repair does not
+reach it. A sibling widened the original proof from three sessions to sixty-nine, which is the
+complete remedy for a badly aimed sample and **no remedy at all here** — every one of the
+sixty-nine is consistent with both surviving readings, since each predicts a large positive
+delta from creation. **Widening the population fixes the sample; it cannot fix the space.** The
+two failures are orthogonal, and only the first is repairable after the fact by collecting more.
+So the pair of rules this section already carries — consult a primary source, and name the
+population you consulted it on — needs a third that neither implies: **enumerate the readings
+the answer could have.** A query answers the question asked of the data; enumerating the space is
+what makes it the right question.
+
 One consequence for the direction rule stated elsewhere in this section: the unaudited direction
 is not self-criticism as such. A reviewer here withdrew their own blanket rule — maximally
 self-critical — and it was checked twice, by them and independently here, because **it shipped
