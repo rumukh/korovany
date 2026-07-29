@@ -779,6 +779,28 @@ no new dependencies.
   endpoint, not the length** — *`<sha>`, tip `<sha>`* can only be read correctly or not at
   all, and a reader can resolve both. *"0 behind tip"* cannot be checked after the fact,
   because the tip it referred to is gone.
+  **The block those fields sit in has a defect none of them can catch, and it was found in
+  the report that committed the two rules above.** A verification block resolved every
+  field at the moment of use, exactly as required, and read:
+  ```
+  tip 6ae3c3b, 0 behind main, clean · build ok · pass 371 / fail 0 · PR #56 OPEN MERGEABLE
+  ```
+  Every line was true. **They described two different objects.** The PR's head was
+  `615cea0`; two commits of gated work had never been pushed, so `MERGEABLE CLEAN` was a
+  status of a tree two commits older than the one the gates had just certified. Not
+  pedantry: after pushing, the state went to `BLOCKED` until CI ran on the new head. The
+  block had asserted a **checked** status for an **unchecked** commit.
+  **Adjacency in a verification block is read as coreference, and nothing asserts it.** The
+  discipline governs the freshness of each line and is silent on whether the lines share a
+  subject — so following it perfectly does not reach this, which is why it survived a
+  report whose entire subject was instruments reporting the wrong object.
+  The tell cost one command — `git rev-parse origin/<branch>` against `HEAD` — which is the
+  second instance here of a check being skipped **because** it was free, and the first
+  where free-and-unrun concealed a substitution rather than a diffstat.
+  Mechanical form: **a verification block resolves local tip, remote tip and the PR head,
+  and states whether they agree.** A remote status is a claim about the remote's content;
+  quoting it beside a local gate result silently asserts an identity that costs one command
+  to check and was worth two commits of unverified work.
 - **Every rule in this section guards the flattering direction, and both claims that got
   through tonight ran the other way.** The catalogue is built on *verify the favourable
   claim*: audit the compliment, check the credit, doubt the number that suits you. And the
