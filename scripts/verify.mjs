@@ -65,7 +65,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { readFileSync, existsSync } from 'node:fs'
-import { join, dirname } from 'node:path'
+import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -118,7 +118,14 @@ export function parseTestVerdict(output) {
   }
 }
 
-/** Line numbers inside ``` fences, computed from whole-file content. */
+/**
+ * Line numbers inside ``` fences, computed from whole-file content.
+ *
+ * `fenceBalanced` is separate and asserted by the caller: an unterminated fence
+ * makes every line below it read as code, so the sweep goes blind to the rest of
+ * the file and reports clean. That is the population-selector failing silently,
+ * which is the class this file catalogues repeatedly.
+ */
 export function fencedLines(source) {
   const fenced = new Set()
   let open = false
@@ -131,6 +138,10 @@ export function fencedLines(source) {
     if (open) fenced.add(i + 1)
   })
   return fenced
+}
+
+export function fenceBalanced(source) {
+  return source.split('\n').filter((l) => /^\s*```/.test(l)).length % 2 === 0
 }
 
 /** Added lines with their new-file line numbers, from a unified diff. */
@@ -155,7 +166,21 @@ export function parseAddedLines(diff) {
   return added
 }
 
-const DOUBLE_SPACE = /\S {2}\S/
+/**
+ * `{2,}`, not `{2}`. The original required **exactly** two spaces, so `a   b`
+ * did not match — and three spaces is the *more likely* form of the defect this
+ * detector exists for: a paragraph join where the first line ended in a trailing
+ * space produces three, and trailing whitespace before a join is the common case.
+ *
+ * A reviewer found it; no control here could have. Every double-space control
+ * was written with exactly two spaces, so the controls encoded the same model as
+ * the detector and the mutation harness was a closed loop over that model —
+ * proving the implementation matches the author's belief and structurally unable
+ * to test whether the belief matches the world. Three spaces is not a cleverer
+ * test than two; it is only a test the author had no reason to write.
+ */
+const DOUBLE_SPACE = /\S {2,}\S/
+
 
 /**
  * Three bounds, because one number cannot carry which it is.
@@ -256,6 +281,23 @@ export const CONTROLS = [
     name: 'sweep-fires-on-a-doped-line',
     check: () => sweepBounds(['a  b']).raw === 1,
     mutate: () => sweepBounds(['a  b']).raw === 0,
+  },
+  {
+    name: 'sweep-catches-runs-longer-than-two',
+    // The detector required exactly two spaces and missed three — which is the
+    // *more likely* form of a paragraph join, because the first line usually
+    // ends in a trailing space. Doped with a width the author's model did not
+    // generate, which is why it took a second party.
+    check: () => sweepBounds(['a   b']).raw === 1
+      && sweepBounds(['a    b']).raw === 1
+      && sweepBounds(['a     b']).raw === 1,
+    mutate: () => sweepBounds(['a   b']).raw === 0,
+  },
+  {
+    name: 'an-unterminated-fence-is-not-silently-code',
+    check: () => fenceBalanced('a\n```\nb\n```\nc') === true
+      && fenceBalanced('a\n```\nb\nc') === false,
+    mutate: () => fenceBalanced('a\n```\nb\nc') === true,
   },
   {
     name: 'sweep-is-silent-on-clean-prose',
@@ -455,6 +497,10 @@ function collectProse() {
       unreadable.push(`${file} (empty)`)
       continue
     }
+    if (!fenceBalanced(source)) {
+      unreadable.push(`${file} (unterminated \`\`\` fence — every line below it would read as code)`)
+      continue
+    }
     const fenced = fencedLines(source)
     for (const { lineNo, text } of added) {
       if (!fenced.has(lineNo)) prose.push(text)
@@ -578,4 +624,10 @@ function main() {
   console.log('\nPASSED: heads agree, gates clean, sweep clean, controls fire')
 }
 
-main()
+// Only run when invoked as the entry point. The exports above exist to be
+// imported, and importing them used to execute the whole verification —
+// including `npm test`, so a test importing one of these functions would
+// re-enter `npm test` from inside `npm test`.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main()
+}
