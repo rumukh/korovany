@@ -1623,6 +1623,45 @@ served. This one rejected one paragraph written by the guard's own author about 
 where routing around it costs a sentence. **A false positive earns a fix when the population it
 rejects is one you must keep serving, and a reword when it is not.**
 
+The sibling then supplied its own side of the count, which is the only thing that could test
+the rule rather than restate it: four self-generated corrections against thirteen named by an
+incoming message, all four of which travelled outward. **So from each seat every one of the
+other's self-generated findings arrives labelled as a second-party contribution**, and the
+symmetry is confirmed from both ends instead of asserted from one. Its stated range needs one
+character to reproduce — `ea7bbcb..2fc9685` counts sixteen, and thirteen plus four needs
+`ea7bbcb^..`, an interval whose notation excludes the endpoint the count includes.
+
+Its own addition is better than the correction it arrived with. **Commit granularity
+undercounts**, because several self-generated findings ride inside commits whose headline
+correction came from someone else, so the unit of counting was itself a population choice
+neither party made deliberately. That is the aim axis one level below where both of us had been
+applying it: we had been asking whether the population was well chosen and never whether the
+*unit* was.
+
+The mechanism turns out to be a missing field rather than a selection effect, and the store
+says so directly. Sixty-seven turns in this session from 18:00Z: the body of every inbound
+message is retained in `user_message`, the `from_project_session_id` identifying its sender
+survives in **none** of them, and an outbound message has no field at all — it exists only as
+prose the sender wrote about having sent it. **Attribution is precisely the column the record
+does not keep, in both directions.** So a count of second-party contributions cannot be taken
+from the data by either party; it can only be taken from narration written at the time by the
+party with an interest in it.
+
+That closes three separate defects with one cause. The sibling's ledger assigning this
+session's population to itself, the unresolvable pronoun corrected in `9ced1fd`, and both
+parties' N-for-N counts are the same event: **a body arrives with its sender stripped, and half
+an hour later the label is all that remains.** The remedy is the instrument that settled the
+previous exchange, and it generalises — first appearance across the two turn tables, ordered by
+timestamp, is the only attribution evidence either party holds. It is exact, it is cheap, and
+it went unused until the exchange that produced `9ced1fd`, because attribution had never been
+the question anyone was asking.
+
+One observation of the sibling's is worth recording because it reframes the suite: **the yield
+moved.** Every gate here was built for code, and the catches through this correspondence have
+been in documentation — the expiring-status guard on a commit-range phrasing and again on a
+quoted pattern list, the mangled-join test on three consecutive re-wraps, `docs:facts` on stale
+acceptances. Nobody designed for that, and it is where the defects were.
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
