@@ -3777,10 +3777,15 @@ export function buildBeastSkeleton(rig: BeastRig): BeastSkeleton {
  *
  * The clamp used to be load-bearing for a different reason than it is now. On the
  * sibling rig it was the *only* thing keeping the skull inside the animal: a look yaw
- * about a pivot at the feet swept a wolf's head 0.7337 authored units sideways even at
- * the clamp, and a troll's 1.0433 — under their own contact-shadow radii by a hair,
- * which is what "reads as attached" meant. Hinged at the neck the same look moves them
- * 0.2526 and 0.1629. What is left is anatomy, and that is a better reason.
+ * about a pivot at the feet swept a wolf's and a troll's head far enough sideways to sit
+ * only just inside their own contact-shadow radii, which is what "reads as attached"
+ * meant. Hinged at the neck the same look barely moves them. What is left is anatomy,
+ * and that is a better reason.
+ *
+ * Those sideways figures were a one-off measurement and are pinned nowhere, so they are
+ * not restated — here or in the test, where the same four digits used to sit. An
+ * unpinned number repeated in two documents is the worst of both: it reads as
+ * established and nothing will ever correct it. Re-measure if the argument matters.
  */
 export const BEAST_LOOK_CLAMP = 0.45
 
@@ -3932,7 +3937,12 @@ export function beastBreathScale(breathing: number): number {
   return 1 + breathing * BEAST_BREATH_GAIN
 }
 
-/** How much of the breath a beast's ribcage carries. Smaller than a person's 0.55. */
+/**
+ * How much of the breath a beast's ribcage carries. Smaller than a person's, which is
+ * an unnamed literal in `animateActorCharacter`'s humanoid branch — referenced rather
+ * than copied here, because a figure restated beside a constant decays independently of
+ * the code that owns it.
+ */
 export const BEAST_BREATH_GAIN = 0.3
 
 /**

@@ -777,6 +777,15 @@ export const CONTROLS = [
       && isProseLine('a.ts', " * a wolf's 0.3 and 0.48") === true,
     mutate: () => isProseLine('a.ts', "  wolf: { up: 0.3, ahead: 0.48 },") === true,
   },
+  {
+    name: 'a-double-slash-comment-is-prose-too',
+    // The first version of this check took only `*` continuations, and the first site it
+    // was shown to have missed was a four-animal margin row written as `//`. A scan whose
+    // notion of prose is narrower than the codebase's reports clean over everything
+    // outside it, and reads identical to a clean tree.
+    check: () => isProseLine('a.ts', "    // wolf 1.40x, boar 1.30x") === true,
+    mutate: () => isProseLine('a.ts', "    // wolf 1.40x, boar 1.30x") === false,
+  },
 ]
 
 function runControls() {
@@ -954,9 +963,16 @@ export function beastValueTables(testSource) {
   return tables
 }
 
-/** A markdown body line, or a `*` continuation inside a doc comment. */
+/**
+ * A markdown body line, or a comment inside source.
+ *
+ * `//` is included as well as `*`. The first version took only `*` continuations, and
+ * the very first site it was shown to have missed was a four-animal margin row written
+ * as `//` — a scan whose notion of "prose" is narrower than the codebase's reports clean
+ * over everything outside it, which is the failure this whole check exists to prevent.
+ */
 export function isProseLine(file, line) {
-  return file.endsWith('.md') ? !/^\s{4,}\S/.test(line) : /^\s*\*/.test(line)
+  return file.endsWith('.md') ? !/^\s{4,}\S/.test(line) : /^\s*(\*|\/\/)/.test(line)
 }
 
 export function restatedBeastRows(tables, file, source) {

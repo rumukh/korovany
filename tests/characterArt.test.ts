@@ -3641,8 +3641,9 @@ test('what a foot-rooted skull was worth on each of the four animals', () => {
     // The defect has to be worth something, or the equalities above are pinning nothing.
     // The floor is the animal's **own skull**, measured off the mesh — a quantity from
     // an entirely different part of the module, that no rig change can move, and not any
-    // fraction of the measurement itself. Margins as recorded: wolf 1.40x, boar 1.30x,
-    // bear 1.81x, troll 3.30x.
+    // fraction of the measurement itself. The margin each animal clears it by is
+    // computed below and named in the failure message; it is deliberately not recorded
+    // here, because a ratio written in a comment is not the ratio being asserted.
     const skull = buildBeastHead(kind)
     skull.computeBoundingBox()
     skull.boundingBox?.getSize(axis)
@@ -3732,13 +3733,18 @@ test('what a foot-rooted skull was worth on each of the four animals', () => {
  * Why the clamp is *kept* has changed, and that is worth writing down rather than
  * quietly leaving the old justification standing. On the sibling rig it was the only
  * thing holding the skull inside the animal: a look yaw about a pivot at the feet swept
- * a wolf's head 0.7337 authored units sideways even at the clamp and a troll's 1.0433,
- * both just inside their own contact-shadow radii — which is all "reads as attached"
- * ever meant. Hinged at the shoulder the same look moves them 0.2526 and 0.1629. The
- * clamp is no longer load-bearing for attachment. It is load-bearing for anatomy, and
- * the footprint comparison below stays what it always was — a **smoke bound**, two
- * separately authored numbers that ought to stay in proportion — with the radius
- * corrected to the joint the skull now actually turns about.
+ * a wolf's and a troll's head far enough sideways to sit only just inside their own
+ * contact-shadow radii — which is all "reads as attached" ever meant. Hinged at the
+ * shoulder the same look barely moves them. The clamp is no longer load-bearing for
+ * attachment. It is load-bearing for anatomy, and the footprint comparison below stays
+ * what it always was — a **smoke bound**, two separately authored numbers that ought to
+ * stay in proportion — with the radius corrected to the joint the skull now actually
+ * turns about.
+ *
+ * The sideways figures themselves were a one-off measurement, pinned nowhere and
+ * previously written out both here and in `buildBeastSkeleton`. Two prose copies of a
+ * number no assertion drives is the worst arrangement available: it reads as
+ * established and nothing will ever correct it. Re-measure if the argument matters.
  */
 test('a beast never reaches the biped posture pass, and its own yaw stays clamped', () => {
   const source = readFileSync(
@@ -3890,9 +3896,13 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
  *
  * Honestly, and **not by borrowing the humanoid's figure**, which is about a different
  * animal. A beast's chest turns through a fraction of a person's range, but its *head*
- * carries both the look clamp and the death roll — `BEAST_LOOK_CLAMP` and `BEAST_DEATH_LOLL`, each
- * read from production rather than restated here. So the two pivots swap places: on a
- * person the chest was the expensive one, on a beast it is the skull. The per-order
+ * carries both the look clamp and the death roll — `BEAST_LOOK_CLAMP`, imported from
+ * production, and `BEAST_DEATH_LOLL`, which is a literal here held against production's
+ * source text by a regex that fails and names the new value when the engine moves. Two
+ * different strengths of tie, said as two rather than as one: the first cannot drift,
+ * the second is a bounded spelling pin. Neither is restated in this sentence. So the two
+ * pivots swap places: on a person the chest was the expensive one, on a beast it is the
+ * skull. The per-order
  * costs are in `WRONG_ORDER_COST` below, swept over the same pose box every other beast
  * measurement uses with the solve still assuming XYZ.
  *
