@@ -714,6 +714,41 @@ no new dependencies.
   diff *is* the working tree. Two checks composing into a third property, unnamed until a
   control failed to work.
   The honest bound on all of it: **a gate does not substitute for a reader, it frees one.**
+  **And the gate itself shipped green while measuring nothing, on the only platform that
+  runs it.** The sweep was gated in CI after a reviewer measured that the instrument's
+  *controls* had a trigger and its *sweep* did not. The first CI run reported:
+  ```
+  markdown files changed : 0  (sweep examined nothing and contributes nothing below)
+  PASSED
+  ```
+  True for that change — no markdown in it — and the domain guard said so. **Saying so is
+  not evidence it can fire**, so it was doped with a committed line carrying three spaces
+  outside inline code. It passed. The cause:
+  ```
+  the runner builds one shell string, so the pathspec  -- *.md  is glob syntax to bash
+
+  bash expands it against the working directory:
+    DESIGN.md PRODUCT.md README.md      <- root-level only, docs/** excluded, 0 matches
+  cmd does not glob, so the identical command passes *.md to git literally:  1 match
+  ```
+  **Windows-only correctness.** Every local run ever published was right; every CI run was
+  measuring an empty set — including the step added one commit earlier to stop exactly that.
+  The origin is traceable and is this section's own shape: **the fix for an
+  argument-*injection* warning introduced an argument-*expansion* defect**, by collapsing an
+  args array into a shell string, in a helper that never needed a shell — `git` is a real
+  executable on both platforms and only the `.cmd` shims required one.
+  > **A gate that has never been observed failing in the environment that runs it is a gate
+  > in that environment's sense only.** A local mutation proof establishes the *logic*; it
+  > says nothing about the *invocation*, and the invocation is platform-specific.
+  Why no control could see it: **every control was pure, so every control was green on both
+  platforms.** The one impure thing — how a command reaches the operating system — was the
+  thing that differed, and doping the pure parts cannot reach it. That is the model-closure
+  rule at the boundary of the process: `git ls-files -- *.md` was, in CI, **a filter
+  returning empty for a live object** — the class recorded three times already — this time
+  inside the guard rather than inside a probe.
+  Proved by mutation in CI itself, which is the only place the proof means anything: the
+  same doped commit now reports `markdown files changed : 1`, `placeholder=1`, and **fails
+  the run**; reverted, it passes.
   This instrument closes the two defects already found and has no opinion about the next
   class, because its controls are the ones its author could think of.
   **A reviewer then attacked it with its own methodology and found six defects, three of

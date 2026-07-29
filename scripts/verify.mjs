@@ -58,9 +58,19 @@
  * go red doped the working tree and measured nothing.
  *
  * Usage:
- *   node scripts/verify.mjs              gates + sweep
- *   node scripts/verify.mjs --sweep-only skip the four gates
- *   node scripts/verify.mjs --mutate     prove every control can fail
+ *   node scripts/verify.mjs                    gates + sweep
+ *   node scripts/verify.mjs --sweep-only       skip the four gates
+ *   node scripts/verify.mjs --mutate           prove every control can fail
+ *   node scripts/verify.mjs --base=<sha|ref>   compare against something other
+ *                                              than origin/main
+ *
+ * `--base` exists so the sweep can be gated. The identity block needs a remote
+ * and `gh`; the **sweep does not** — it is a diff against a ref the runner
+ * already has. A reviewer measured the consequence of not splitting them: the
+ * controls got a CI trigger and the sweep did not, so the prose-defect class
+ * that took four rounds to characterise was left guarded by a command nothing
+ * runs. `--base=<pull_request.base.sha> --sweep-only` closes that with no
+ * network and no remote resolution.
  */
 
 import { spawnSync } from 'node:child_process'
@@ -69,7 +79,27 @@ import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const BASE = 'origin/main'
+/**
+ * What the sweep diffs against. `--base=<sha|ref>` overrides, so CI can pass a
+ * SHA the runner already has instead of resolving a remote.
+ *
+ * Parsed rather than read straight from `argv` so a malformed flag fails loudly:
+ * `--base=` with nothing after it silently became `''`, and `git diff ...HEAD`
+ * against an empty ref is not an error — it is a diff against the empty tree,
+ * which reports every line in the repository as added and would have passed a
+ * clean sweep as a very large one.
+ */
+export function parseBase(argv, fallback = 'origin/main') {
+  const flag = argv.find((a) => a.startsWith('--base='))
+  if (flag === undefined) return { base: fallback, error: null }
+  const value = flag.slice('--base='.length).trim()
+  if (value === '') return { base: null, error: '--base= was given with no ref' }
+  return { base: value, error: null }
+}
+
+const parsedBase = parseBase(process.argv)
+const BASE = parsedBase.base ?? 'origin/main'
+
 
 /** Run a command and return its own exit code — never a chain's. */
 function run(command, opts = {}) {
@@ -89,12 +119,36 @@ function run(command, opts = {}) {
   return { code: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` }
 }
 
+/**
+ * Run `git` with an argument vector and **no shell**.
+ *
+ * `git` is a real executable on both platforms, so it never needed the shell
+ * that the `.cmd` shims do — and routing it through one was a live defect for
+ * the life of this file. The pathspec `-- *.md` is glob syntax to a POSIX
+ * shell: bash expanded it against the working directory to the three
+ * root-level markdown files, so `docs/**` was excluded and the sweep reported
+ * **zero files changed** on every Linux run while working correctly on Windows,
+ * where `cmd` does not glob.
+ *
+ * It therefore passed CI by measuring nothing, on the one platform CI uses,
+ * in the step added to stop exactly that. Quoting would have fixed it in bash
+ * and broken it in `cmd`; not invoking a shell fixes it in both.
+ */
+function runGit(args) {
+  const r = spawnSync('git', args, {
+    cwd: ROOT,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+  })
+  return { code: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` }
+}
+
 function git(...args) {
   // A failed git command must not become data. `run` concatenates stderr into
   // `out`, so returning it unconditionally puts `fatal: ...` into a field
   // labelled as a commit — and `|| '(none)'` never fires, because the error
   // text is truthy. Observed live in this instrument's own identity block.
-  const r = run(['git', ...args].join(' '))
+  const r = runGit(args)
   return r.code === 0 ? r.out.trim() : null
 }
 
@@ -553,6 +607,46 @@ export const CONTROLS = [
     check: () => partitionResidual(12, [5, 4]) === 3,
     mutate: () => partitionResidual(12, [5, 4]) === 0,
   },
+  {
+    name: 'an-empty-base-flag-is-an-error-not-a-default',
+    // `--base=` with nothing after it became '', and `git diff ...HEAD` against
+    // an empty ref is not an error — it diffs the empty tree and reports the
+    // whole repository as added. A clean sweep would have passed as a very
+    // large one.
+    check: () => {
+      const empty = parseBase(['node', 'verify.mjs', '--base='])
+      const given = parseBase(['node', 'verify.mjs', '--base=abc123'])
+      const absent = parseBase(['node', 'verify.mjs'])
+      return empty.error !== null && empty.base === null
+        && given.error === null && given.base === 'abc123'
+        && absent.error === null && absent.base === 'origin/main'
+    },
+    mutate: () => parseBase(['node', 'verify.mjs', '--base=']).error === null,
+  },
+  {
+    name: 'a-supplied-base-does-not-become-the-fallback',
+    check: () => parseBase(['node', 'verify.mjs', '--base=deadbee'], 'origin/main').base === 'deadbee',
+    mutate: () => parseBase(['node', 'verify.mjs', '--base=deadbee'], 'origin/main').base === 'origin/main',
+  },
+  {
+    name: 'the-md-pathspec-reaches-git-unexpanded',
+    // The defect: `-- *.md` inside a shell string is glob syntax. bash expanded
+    // it to the root-level markdown files, excluding `docs/**`, so the sweep
+    // reported zero files on Linux and worked on Windows. This drives real git
+    // and asserts a nested path is reachable — which is false under expansion
+    // and true without a shell, on either platform.
+    check: () => {
+      const listed = git('ls-files', '--', '*.md')
+      if (listed === null) return false
+      const paths = listed.split('\n').filter(Boolean)
+      return paths.some((p) => p.includes('/')) && paths.some((p) => !p.includes('/'))
+    },
+    mutate: () => {
+      // Stand in for the expanded pathspec: root-level names only.
+      const rootOnly = (git('ls-files', '--', '*.md') ?? '').split('\n').filter((p) => p && !p.includes('/'))
+      return rootOnly.some((p) => p.includes('/'))
+    },
+  },
 ]
 
 function runControls() {
@@ -695,6 +789,14 @@ function main() {
 
   const stamp = new Date().toTimeString().slice(0, 8)
   const failures = []
+  if (parsedBase.error !== null) failures.push(parsedBase.error)
+
+  // An explicit `--base` means the caller is supplying a ref because remote
+  // resolution is unavailable — a CI runner has the base SHA and has neither a
+  // configured remote branch nor `gh`. Comparing local/remote/PR heads there
+  // would fail for the environment rather than for the tree, which is a red run
+  // for the wrong reason: the defect this file records twice.
+  const suppliedBase = process.argv.some((a) => a.startsWith('--base='))
 
   const controls = runControls()
   if (controls.failed.length > 0) failures.push(`controls failed: ${controls.failed.join(', ')}`)
@@ -711,23 +813,25 @@ function main() {
     process.exitCode = 1
     return
   }
-  const remoteRaw = git('rev-parse', '--short', `origin/${branch}`)
-  const remote = remoteRaw === null ? '(no remote)' : remoteRaw
+  const remoteRaw = suppliedBase ? null : git('rev-parse', '--short', `origin/${branch}`)
+  const remote = suppliedBase ? '(not compared)' : (remoteRaw === null ? '(no remote)' : remoteRaw)
   const behind = git('rev-list', '--count', `HEAD..${BASE}`)
   const status = git('status', '--porcelain')
   if (behind === null) failures.push(`could not compare against ${BASE}`)
   if (status === null) failures.push('could not read working tree status')
   const dirty = status === null ? null : status.split('\n').filter(Boolean).length
-  const pr = run('gh pr view --json headRefOid,number,state,mergeStateStatus')
-  const prResult = classifyPrResult(pr)
+  const pr = suppliedBase ? null : run('gh pr view --json headRefOid,number,state,mergeStateStatus')
+  const prResult = pr === null
+    ? { head: '(not compared)', desc: '', failure: null }
+    : classifyPrResult(pr)
   const prHead = prResult.head
   const prDesc = prResult.desc
   if (prResult.failure !== null) failures.push(prResult.failure)
-  const agree = headsAgree(sha, remote, prHead)
+  const agree = suppliedBase ? true : headsAgree(sha, remote, prHead)
 
   console.log(`VERIFIED AT ${stamp}`)
   console.log(`  branch                 : ${branch}`)
-  console.log(`  local / remote / pr    : ${sha} / ${remote} / ${prHead}  -> ${agree ? 'ALL AGREE' : 'MISMATCH'}`)
+  console.log(`  local / remote / pr    : ${sha} / ${remote} / ${prHead}${suppliedBase ? '   [--base supplied: identity not compared]' : `  -> ${agree ? 'ALL AGREE' : 'MISMATCH'}`}`)
   if (prDesc) console.log(`  pull request           : ${prDesc}`)
   console.log(`  behind ${BASE} / dirty : ${behind ?? '(git error)'} / ${dirty ?? '(git error)'}`)
   if (!agree) failures.push('local, remote and PR head do not all agree')
