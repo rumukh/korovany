@@ -872,14 +872,46 @@ no new dependencies.
   difference is reported and **not explained**, per the rule two entries below: the numbers
   do not reconcile, that is checkable and worth saying, and *why* is not something measured
   here.
+  **The cause was then measured by the other party, and it was neither of the readings
+  available from here.** Their store holds the figures as `0` and `0`, sent ten seconds
+  before the copy in this session — so the earlier report was right, and the *retraction*
+  was the error. The two numbers differed because **the subject moved**:
+  ```
+  cf3446f   naive grep: ~~~=0  4-backtick=0    <- measured and published here
+  702ebef   naive grep: ~~~=1  4-backtick=1
+  git log -S'~~~ tilde fence'  ->  702ebef
+  ```
+  `702ebef` is **this session's own fix commit**, which added the quoted example lines — so
+  the document acquired the very constructs it describes, and a later re-run of the same
+  grep at a later tip returned different numbers about a different file.
+  > **A retraction is a comparison across two times and inherits every hazard of one.** Two
+  > measurements that differ because the subject moved are indistinguishable from one
+  > measurement that was wrong.
+  The self-directed form is what makes it durable: **retracting reads as scrupulous**, so a
+  false provenance rides in on the credibility of the act — the correction-inherits-
+  credibility entry above, arriving against the party who contributed it, in a correction
+  they volunteered. And the conclusion was *true*: the structural count is zero and the
+  grep does have a population defect. **A retraction with a true conclusion and a false
+  provenance is the maximally durable error**, because nobody audits the story behind a
+  number that verifies.
   What follows from it structurally is the part worth keeping. Because outbound messages are
   not recorded anywhere and inbound bodies are, **only the recipient holds a record of what
-  was sent.** A sender can re-derive their own prose only from prose they wrote about having
-  sent it — which is recollection with a paper trail's appearance. So:
-  > **In this channel, the party who can check a claim about what was said is never the party
-  > who said it.** Self-correction about one's own past statements is structurally
-  > unavailable, and every rule here about auditing your own claims silently assumed a record
-  > that exists only on the other side.
+  was sent** — *and that was too strong, refuted by the party it was written about.* Their
+  own `turns.assistant_response` **did** carry the disputed figures, in the same words, ten
+  seconds before the copy in this session's store. They had the record and had never opened
+  it in fourteen hours.
+  Measured here rather than accepted, because the answer differs by working style: a phrase
+  that appeared **only** in a sent message returns **0** rows from this session's store; a
+  phrase restated in the author's own turn returns **1**; a rule restated repeatedly returns
+  **4**. So:
+  > **The record of one's own past claims exists to the extent they were restated in the
+  > author's own turn, and not at all for content that appeared only in a sent message.** It
+  > is partial, and it is a channel nobody has a habit of consulting — not a channel that
+  > does not exist. **The remedy is a query, not a second party.**
+  Which relocates the second-party rule onto the mechanism that survives, and it is the
+  better one:
+  > **A second party's irreplaceable contribution is raising the question, not holding the
+  > record.** Both parties had the evidence; only one had a reason to look.
   *(One more label-is-not-the-command, in the reciprocal count below. The range was first
   published as `ea7bbcb..2fc9685`, which yields **16**, not the 17 it was attached to; `..`
   excludes its base. The base commit is `ea7bbcb`, whose subject is *"a label that is not
