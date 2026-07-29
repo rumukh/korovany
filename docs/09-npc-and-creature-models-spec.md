@@ -2199,15 +2199,19 @@ no new dependencies.
   bit-identical — measured at 0.00e+0 on all four animals — because `torso-pivot` sits
   at the animal's origin with an identity transform and the two offsets sum to the old
   one.
-  Measured over the reachable pose box, in authored units and then in world units after
-  `BEAST_PROFILES.scale`, as how far the fix moves the skull at an identical pose:
+  How far the fix moves the skull, per animal, in authored units and in world units after
+  `BEAST_PROFILES.scale`, is pinned in `FOOT_ROOTED_SKULL` and `WORLD_DEATH_TRAVEL` and
+  computed by `what a foot-rooted skull was worth on each of the four animals`:
 
-  | | walking | on death | in the world, dying | skull vs its own chest |
-  | --- | --- | --- | --- | --- |
-  | wolf | 0.4987 | 0.7239 | 0.6226 m | 8.3171° |
-  | boar | 0.4162 | 0.6094 | 0.5789 m | 8.3171° |
-  | bear | 0.5423 | 0.8301 | 0.9961 m | 8.3171° |
-  | troll | 0.6532 | **1.1607** | **1.5553 m** | **11.6733°** |
+  ```
+  grep -A6 'FOOT_ROOTED_SKULL\|WORLD_DEATH_TRAVEL' tests/characterArt.test.ts
+  ```
+
+  **The numbers are not repeated here on purpose.** A table in prose is a claim nothing
+  re-evaluates, and the figures this entry replaced were carried exactly that way for the
+  life of the beast rig — see the retraction below. The test drives the rejected
+  arrangement out of the production builder's own pivots and names the new value in its
+  failure message when one moves, so the pinned copy is the only one that cannot go stale.
 
   Swept: seven action states, three strides, three turn-leans, three breath phases, three
   look angles, both shoulder extremes, the death family, and the three `body-pivot` scale
@@ -2221,55 +2225,64 @@ no new dependencies.
   Both were large numbers measuring a single point.
 
   The harness is proven against a known-bad configuration rather than trusted: reverting
-  `buildBeastSkeleton` to the pre-fix arrangement takes the suite to 21/7 and makes it
-  **report 2.5072 of skull travel on a troll** and name sixteen distinct breakages in one
-  message. Against the shipped rig the same figure is 0. Two readings, one of them large,
-  is what distinguishes *"the fix works"* from *"the harness measures nothing"*.
+  `buildBeastSkeleton` to the pre-fix arrangement makes the suite **report** a large skull
+  travel and name every breakage in one message, where against the shipped rig the same
+  figure is zero. Two readings, one of them large, is what distinguishes *"the fix works"*
+  from *"the harness measures nothing"* — and the known-bad rig is rebuilt from
+  production's own pivots on every CI run rather than measured once, so the control is
+  re-proved continuously.
 
-  Two things about the figures this replaces — 0.296 on a wolf, 0.368 on a bear, 0.660
-  on a troll, "under attack plus stagger". **They do not reproduce**: driven at that
-  pose the old rig gives 0.4589, 0.5231 and 0.7911. And **the pose is not reachable**,
-  because the stagger branch sets `actor.action = null` and `sampleActorPose` reads the
-  attack out of `actor.action` — the identical correction the humanoid table needed, in
-  the same file, with the beast line left holding the uncorrected version. Nothing could
-  have noticed either, because no assertion evaluated them. `a beast's skull is rigid
-  with its ribs and hinges at the neck` and its companion compute every figure above.
-  The largest of them is on **death**, which no test covered at all:
+  Two things about the figures this entry replaces — 0.296 on a wolf, 0.368 on a bear,
+  0.660 on a troll, "under attack plus stagger". **They do not reproduce**, and **the pose
+  is not reachable**, because the stagger branch sets `actor.action = null` and
+  `sampleActorPose` reads the attack out of `actor.action` — the identical correction the
+  humanoid table needed, in the same file, with the beast line left holding the
+  uncorrected version. Nothing could have noticed either, because no assertion evaluated
+  them. They are quoted here only because they are *retracted*, which is the one use a
+  stale figure is safe for; what the old rig is actually worth at that pose is computed by
+  the same test, so the retraction cannot itself decay.
+  The largest of the measurements is on **death**, which no test covered at all:
   `updateActorDeathMotion` writes `head-pivot.rotation.z = side * 0.28 * eased` and on a
   pivot at the feet that swings the skull through the whole ground-to-skull arm, on
   every single death. The humanoid rig had the same hole.
   Hanging the skull off the ribs makes `lookYaw` a chest-space quantity, so the beast
   pass now converts it with `solveHeadYaw` and damps `actor.headYaw` in body space.
-  Uncorrected that is worth 2.5583° on a quadruped and 3.0334° on a troll, and the
-  scalar `lookYaw - chestYaw` leaves 1.2799°/1.7368° and is worse than doing nothing in
-  1680 of 22684 swept states (7.4061%). Small next to the 43.64° the same mistake cost a
-  person — a beast's chest barely turns — but an error the reparenting *introduces*, so
-  not optional. `a beast's head tracks its target through its own chest` computes all
-  five of those figures, the two rejected rules included, and pins the count rather than
-  the share, which a change to the population or the box can leave untouched while the
-  count moves.
+  Small next to what the same mistake cost a person — a beast's chest barely turns — but
+  an error the reparenting *introduces*, so not optional. `a beast's head tracks its
+  target through its own chest` computes the uncorrected cost, the scalar rule's cost and
+  the count of states where the scalar rule is worse than doing nothing, and pins the
+  count rather than the share, which a change to the population or the box can leave
+  untouched while the count moves.
 - **Enumerate a rig's Euler orders; do not sample them.** `applyHeadPose` was shipped to
   force `head-pivot` onto XYZ, because `solveHeadYaw` writes out the columns of
   `Rx·Ry·Rz` by hand. That fix was scoped to the pivot named in the bug report, and the
-  chest turned out to have the identical hole, worth 30.0230° and unasserted — which is
-  the same shape as this whole entry, one level up: the humanoid fix was scoped to
-  humanoids because humanoids were what was reported. So every beast pivot is enumerated
-  and classified rather than sampled: `torso-pivot` and `head-pivot` are read by hand and
-  are written through the pose helpers; `pelvis-pivot` and `tail-pivot` take two axes each
-  and are order-sensitive only cosmetically, held by the file-wide ban on assigning
-  `rotation.order`; `neck-pivot` never rotates; and the four limb pivots take **one** axis,
-  which is the same matrix under all six orders and needs no guard. Measured over the
-  beast pose box, with the solve still assuming XYZ, the cost of a wrong order — pinned
-  per order rather than bounded, because the two pivots swap places relative to the
-  humanoid case and because a single bound sized on the loud orders hides the quiet one:
+  chest turned out to have the identical hole, unasserted — which is the same shape as
+  this whole entry, one level up: the humanoid fix was scoped to humanoids because
+  humanoids were what was reported. So every beast pivot is enumerated and classified
+  rather than sampled: `torso-pivot` and `head-pivot` are read by hand and are written
+  through the pose helpers; `pelvis-pivot` and `tail-pivot` take two axes each and are
+  order-sensitive only cosmetically, held by the ban on assigning an Euler order;
+  `neck-pivot` never rotates; and the four limb pivots take two axes over their
+  lifetime — `updateActorDeathMotion` writes x *and* z on both arms, and
+  `applyActorVisualVariation` puts the leg splay on z beneath every pose pass's x — so
+  they are written through `applyLimbPose`.
 
-  | wrong order | head-pivot | torso-pivot |
-  | --- | --- | --- |
-  | `YXZ` | 0.5036° | 0.0691° |
-  | `ZXY` | 3.7855° | 0.3583° |
-  | `ZYX` | **4.6012°** | 0.4239° |
-  | `YZX` | 3.7926° | 0.4230° |
-  | `XZY` | 2.1355° | 0.0059° |
+  **That last row read "one axis, therefore order-free, therefore no guard" until a
+  reviewer asked what happens outside the one pass it had been checked in.** It is true
+  of `animateBeastRig` and of `animateCharacter` and false over the lifecycle, and it is
+  the same defect as scoping a fix to the reported instance — committed inside the table
+  written to avoid it.
+
+  The cost of a wrong order is pinned per order in `WRONG_ORDER_COST`, computed by
+  `every beast pivot uses the Euler order its maths assumes`, which also derives the limb
+  and tail figures from poses parsed out of `GameEngine.ts` rather than retyped:
+
+  ```
+  grep -A8 'WRONG_ORDER_COST' tests/characterArt.test.ts
+  ```
+
+  Per order rather than bounded, because the two pivots swap places relative to the
+  humanoid case and a single bound sized on the loud orders hides the quiet one.
 
   `YXZ` is the cheapest of the five on the head **and the only one anybody would write** —
   it is what a person reaches for when a head gimbal-locks at extreme pitch. The likely
