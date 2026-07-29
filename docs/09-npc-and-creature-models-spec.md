@@ -689,6 +689,31 @@ no new dependencies.
   A consequence worth carrying: **`current_datetime` on a queued cross-session message is
   when the recipient became free, not when the sender sent it.** Correctly measured, of a
   different subject — subject substitution inside the instrument being used to audit it.
+  **And the widening from three sessions to sixty-nine is no part of the remedy for this**,
+  which is the finding that makes the two failures worth separating. Every one of the 69
+  rows is consistent with *both* surviving readings: for turn 0, completion-of-turn-0 and
+  arrival-of-turn-1's-message each predict a large positive delta from creation. The sweep
+  discriminates against exactly one hypothesis — **the same one three sessions had already
+  discriminated against.** It made the claim defensible; it did not make it one degree
+  more correct.
+  ```
+  wrong sample  ->  widen the population       repairable after the fact
+  wrong space   ->  enumerate the hypotheses   no quantity of data touches it
+  ```
+  So the synthesis has three legs, not two, and they were supplied by different parties
+  because no one of them held all three: a **primary source** — necessary, and insufficient
+  alone, since four rows from it under-supported a claim; a **named population** —
+  necessary, and insufficient alone, since 69 rows stayed silent between two readings; and
+  **named hypotheses**. A query answers the question you asked of the data, and
+  **enumerating the space is what makes it the right question — the only one of the three
+  that cannot be repaired later by collecting more.**
+  The discriminating rows were inside the eighty the whole time, and two parties found two
+  independent versions of them within minutes of each other once the third reading was
+  named: **six sessions idle beyond fifty hours** with stamped final turns, and **fifteen
+  single-turn sessions, fifteen of fifteen stamped**, ten of them older than a day. Neither
+  party had asked, and not because the query was hard — because neither was asking a
+  question they believed had three answers. **The sweep was aimed at *how large is my
+  sample*, and the evidence for *how many readings survive* sat in the same table.**
   The mechanism is this section's own aim axis, one paragraph from where that session had
   just written it: a control was run first — another session, demonstrably alive, showing a
   current `updated_at` — and it was read as validating the instrument. **It showed the
