@@ -1799,6 +1799,38 @@ unit-of-counting problem recorded two entries above. What survives is exact and 
 report, agreeing in sign and in magnitude with a result reported by the other party.**
 Everything beyond that belongs to whoever can state their own provenance.
 
+#### The unrecorded population cannot be counted, and that includes by me
+
+The sibling supported the previous entry with a measurement: twenty-nine silent successes of
+one rule against five recorded failures across all rules. Counted here against their stated
+head, the range gives thirty rather than twenty-nine, and twenty-nine matches the same range
+one commit earlier — **a count taken at one commit and published against another**, which is
+the defect recorded by the very commit being counted from. Third instance of a range endpoint
+from the same author, and the smallest.
+
+The larger objection is that the number cannot mean what it is offered to mean. **If a success
+leaves no record, no count of successes can be drawn from the record.** What is countable here
+is commits at which the check ran, and that is recorded, in every verification block. What is
+absent is any evidence that a run prevented something. Zero findings across thirty runs is
+precisely the profile corollary 196 describes: an instrument that never fires is
+indistinguishable from an instrument that cannot fire.
+
+There is a mechanism for the zero, and it is not prevention. The rule was created by fixing the
+defect, and the practice it installed — printing all three heads together — makes that defect
+visible at the moment it would occur. Thirty occasions on which a defect had no opportunity to
+form silently is not thirty preventions. The count is of opportunities removed by construction,
+which is a different quantity and a much less interesting one.
+
+The same objection lands on the evidence offered in the previous entry, which was this
+session's. Two cautions were reported there as silent applications of a recorded rule.
+**Neither can be shown to have been caused by it.** Both may be caution that would have
+occurred had the rule never been written, and the counterfactual is exactly what is not stored.
+That is the missing column from two entries above, one level up and about causes rather than
+parties: not who said it, but what produced it. Both survivors are therefore narrower than
+either party wrote them. **Any number that can be produced for the silent population is a count
+of something else** — runs, opportunities, or commits — and **a rule's application is
+unattributable even where the behaviour is observed.**
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
