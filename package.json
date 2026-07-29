@@ -13,6 +13,8 @@
     "test:world": "node --experimental-strip-types --test tests/random.test.ts tests/worldGenerator.test.ts tests/terrainSystem.test.ts tests/collisionWorld.test.ts tests/navigationSystem.test.ts tests/regionManager.test.ts tests/runStorage.test.ts tests/achievementsRunState.test.ts",
     "docs:facts": "node scripts/strategy-facts.mjs",
     "docs:mutate": "node scripts/strategy-facts.mjs --mutate",
+    "verify": "node scripts/verify.mjs",
+    "verify:mutate": "node scripts/verify.mjs --mutate",
     "preview": "vite preview"
   },
   "dependencies": {
