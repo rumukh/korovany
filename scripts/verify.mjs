@@ -90,7 +90,12 @@ function run(command, opts = {}) {
 }
 
 function git(...args) {
-  return run(['git', ...args].join(' ')).out.trim()
+  // A failed git command must not become data. `run` concatenates stderr into
+  // `out`, so returning it unconditionally puts `fatal: ...` into a field
+  // labelled as a commit — and `|| '(none)'` never fires, because the error
+  // text is truthy. Observed live in this instrument's own identity block.
+  const r = run(['git', ...args].join(' '))
+  return r.code === 0 ? r.out.trim() : null
 }
 
 /**
@@ -273,53 +278,94 @@ function runControls() {
   return { total: CONTROLS.length, failed: failed.map((c) => c.name) }
 }
 
-/** `--mutate`: every control must go red under its own mutation. */
+/**
+ * `--mutate`: every control must go red under its own mutation.
+ *
+ * It also runs the real `check()`s, because CI runs *only* this path. Without
+ * that, a corruption where both `check()` and `mutate()` are false is invisible
+ * to the gate: a reviewer stubbed `sweepBounds` to a constant and got
+ * `0 survived / PASSED / exit 0` here while four controls were failing their
+ * real assertions.
+ *
+ * A `mutate()` that throws is `UNTESTABLE`, not `CAUGHT`. A mutation that never
+ * ran is not evidence that the control can fire, and scoring it as a catch errs
+ * toward green — the direction this whole file names as the dangerous one.
+ * `strategy-facts.mjs` has carried an `untestable` category since before this
+ * script existed; the guard did not come across.
+ */
 function runMutation() {
+  const controls = runControls()
   const survived = []
+  const untestable = []
   for (const c of CONTROLS) {
-    // The mutant stands in for a corrupted instrument. If the control still
-    // reports healthy against it, the control proves nothing.
-    let healthyUnderMutation = false
+    let healthy
     try {
-      healthyUnderMutation = c.mutate() === true
-    } catch {
-      healthyUnderMutation = false
+      healthy = c.mutate() === true
+    } catch (err) {
+      untestable.push(`${c.name} (${err instanceof Error ? err.message : String(err)})`)
+      continue
     }
-    if (healthyUnderMutation) survived.push(c.name)
+    if (healthy) survived.push(c.name)
   }
-  console.log(`\n${CONTROLS.length} controls, ${survived.length} survived mutation`)
+  console.log(`\n${CONTROLS.length} controls, ${controls.failed.length} failed live, ${survived.length} survived mutation, ${untestable.length} untestable`)
   for (const c of CONTROLS) {
-    const dead = !survived.includes(c.name)
-    console.log(`  ${dead ? 'CAUGHT  ' : 'SURVIVED'}  ${c.name}`)
+    const bad = survived.includes(c.name) || untestable.some((u) => u.startsWith(`${c.name} `))
+    const red = controls.failed.includes(c.name)
+    let verdict = 'CAUGHT  '
+    if (untestable.some((u) => u.startsWith(`${c.name} `))) verdict = 'UNTESTABLE'
+    else if (survived.includes(c.name)) verdict = 'SURVIVED'
+    console.log(`  ${verdict}${bad || red ? '' : '  '}${red ? '  CHECK-RED' : ''}  ${c.name}`)
   }
-  if (survived.length > 0) {
-    console.log('\nFAILED: a control that cannot fail is not a control')
+  const problems = []
+  if (controls.failed.length > 0) problems.push(`${controls.failed.length} controls fail their live assertion: ${controls.failed.join(', ')}`)
+  if (survived.length > 0) problems.push(`${survived.length} survived mutation: ${survived.join(', ')}`)
+  if (untestable.length > 0) problems.push(`${untestable.length} untestable: ${untestable.join(', ')}`)
+  if (problems.length > 0) {
+    console.log('\nFAILED:')
+    for (const p of problems) console.log(`  - ${p}`)
     process.exitCode = 1
     return
   }
-  console.log('\nPASSED: every control goes red under its mutation')
+  console.log('\nPASSED: every control holds live and goes red under its mutation')
 }
 
 function collectProse() {
-  const files = git('diff', '--name-only', `${BASE}...HEAD`, '--', '*.md')
-    .split('\n')
-    .map((f) => f.trim())
-    .filter(Boolean)
+  const listed = git('diff', '--name-only', `${BASE}...HEAD`, '--', '*.md')
+  if (listed === null) return { files: [], prose: [], allAdded: [], unreadable: ['(git diff failed)'] }
+  const files = listed.split('\n').map((f) => f.trim()).filter(Boolean)
 
+  // Domain guard, the shape `strategy-facts.mjs` has carried since before this
+  // script: a scan that read nothing reports no offenders and looks identical to
+  // a clean one. Zero markdown files in the diff is legitimate and is *stated*;
+  // a file that is listed and then unreadable or empty is a failure, because
+  // that is the case where the clean result is a lie.
+  const unreadable = []
   const prose = []
   const allAdded = []
   for (const file of files) {
     const diff = git('diff', '-U0', `${BASE}...HEAD`, '--', file)
+    if (diff === null) {
+      unreadable.push(`${file} (diff failed)`)
+      continue
+    }
     const added = parseAddedLines(diff)
     allAdded.push(...added.map((a) => a.text))
     const path = join(ROOT, file)
-    if (!existsSync(path)) continue
-    const fenced = fencedLines(readFileSync(path, 'utf8'))
+    if (!existsSync(path)) {
+      unreadable.push(`${file} (not on disk)`)
+      continue
+    }
+    const source = readFileSync(path, 'utf8')
+    if (source.length === 0) {
+      unreadable.push(`${file} (empty)`)
+      continue
+    }
+    const fenced = fencedLines(source)
     for (const { lineNo, text } of added) {
       if (!fenced.has(lineNo)) prose.push(text)
     }
   }
-  return { files, prose, allAdded }
+  return { files, prose, allAdded, unreadable }
 }
 
 function main() {
@@ -335,11 +381,23 @@ function main() {
   if (controls.failed.length > 0) failures.push(`controls: ${controls.failed.join(', ')}`)
 
   // --- identity: every line below must describe the same object -------------
+  // A null here is a failed git command, not an answer. Distinguishing "no
+  // remote" from "git errored" matters: the second must fail the run, and both
+  // used to render as a truthy string in a field labelled as a commit.
   const sha = git('rev-parse', '--short', 'HEAD')
   const branch = git('rev-parse', '--abbrev-ref', 'HEAD')
-  const remote = git('rev-parse', '--short', `origin/${branch}`) || '(none)'
+  if (sha === null || branch === null) {
+    console.log('FAILED: could not resolve HEAD — git errored, so nothing below would describe a known object')
+    process.exitCode = 1
+    return
+  }
+  const remoteRaw = git('rev-parse', '--short', `origin/${branch}`)
+  const remote = remoteRaw === null ? '(no remote)' : remoteRaw
   const behind = git('rev-list', '--count', `HEAD..${BASE}`)
-  const dirty = git('status', '--porcelain').split('\n').filter(Boolean).length
+  const status = git('status', '--porcelain')
+  if (behind === null) failures.push(`could not compare against ${BASE}`)
+  if (status === null) failures.push('could not read working tree status')
+  const dirty = status === null ? null : status.split('\n').filter(Boolean).length
   const pr = run('gh pr view --json headRefOid,number,state,mergeStateStatus')
   let prHead = '(no pr)'
   let prDesc = ''
@@ -352,35 +410,54 @@ function main() {
       prHead = '(unparsed)'
     }
   }
-  const heads = [sha, remote, prHead].filter((h) => h !== '(none)' && h !== '(no pr)')
+  const heads = [sha, remote, prHead].filter((h) => h !== '(no remote)' && h !== '(no pr)')
   const agree = heads.every((h) => h === sha)
 
   console.log(`VERIFIED AT ${stamp}`)
   console.log(`  branch                 : ${branch}`)
   console.log(`  local / remote / pr    : ${sha} / ${remote} / ${prHead}  -> ${agree ? 'ALL AGREE' : 'MISMATCH'}`)
   if (prDesc) console.log(`  pull request           : ${prDesc}`)
-  console.log(`  behind ${BASE} / dirty : ${behind} / ${dirty}`)
+  console.log(`  behind ${BASE} / dirty : ${behind ?? '(git error)'} / ${dirty ?? '(git error)'}`)
   if (!agree) failures.push('local, remote and PR head do not all agree')
-  if (behind !== '0') failures.push(`branch is ${behind} behind ${BASE}`)
-  if (dirty !== 0) failures.push(`working tree has ${dirty} modified paths`)
+  if (behind !== null && behind !== '0') failures.push(`branch is ${behind} behind ${BASE}`)
+  if (dirty !== null && dirty !== 0) failures.push(`working tree has ${dirty} modified paths`)
 
   // --- gates: each exit code captured on its own ----------------------------
   if (!process.argv.includes('--sweep-only')) {
+    // Every gate delegates to package.json rather than restating the command.
+    // `npx oxlint src tests` sat here and is narrower than the project's own
+    // `oxlint`, which lints the whole repository — so this instrument reported
+    // "gates clean" over a lint state the project's gate reports, and the
+    // directory it excluded was `scripts/`, where it lives. Carry the
+    // derivation, not the value.
     const gates = [
       ['build', 'npm run build'],
-      ['lint', 'npx oxlint src tests'],
+      ['lint', 'npm run lint'],
       ['docsfacts', 'npm run docs:facts'],
     ]
     const codes = []
+    let lintFindings = null
     for (const [name, command] of gates) {
-      const { code } = run(command)
+      const { code, out } = run(command)
       codes.push(`${name}=${code}`)
       if (code !== 0) failures.push(`${name} exited ${code}`)
+      if (name === 'lint') {
+        // oxlint exits 0 on warnings, so `lint=0` is a verdict about *errors*
+        // and says nothing about findings — the census-versus-verdict shape in
+        // a second gate. Report the count beside the code so it cannot be read
+        // as "no findings"; do not fail on warnings, because that would make
+        // this instrument silently stricter than the project's own gate.
+        const lines = out.split('\n').filter((l) => /:\d+:\d+: (warning|error)\b/.test(l))
+        lintFindings = lines.length
+      }
     }
     const t = run('npm test')
     codes.push(`test=${t.code}`)
     const verdict = parseTestVerdict(t.out)
     console.log(`  exit codes             : ${codes.join(' ')}`)
+    if (lintFindings !== null) {
+      console.log(`  lint findings          : ${lintFindings}   [oxlint exits 0 on warnings — the code is a verdict on errors only]`)
+    }
     if (!verdict.ok) {
       console.log('  tests                  : NO VERDICT — output carried no pass/fail line')
       failures.push('test output carried no verdict')
@@ -392,14 +469,15 @@ function main() {
   }
 
   // --- sweep ----------------------------------------------------------------
-  const { files, prose, allAdded } = collectProse()
+  const { files, prose, allAdded, unreadable } = collectProse()
   const bounds = sweepBounds(prose)
   const long = overLong(allAdded)
-  console.log(`  markdown files changed : ${files.length}`)
+  console.log(`  markdown files changed : ${files.length}${files.length === 0 ? '  (sweep examined nothing and contributes nothing below)' : ''}`)
   console.log(`  added / prose lines    : ${allAdded.length} / ${prose.length}`)
-  console.log(`  double space, 3 bounds : raw=${bounds.raw}  placeholder(outside inline code)=${bounds.placeholder}  deletion(upper bound)=${bounds.deletion}`)
-  console.log(`  over-120               : ${long.length}`)
+  console.log(`  double space, 3 bounds : raw=${bounds.raw}  placeholder(outside inline code)=${bounds.placeholder}  deletion(upper bound)=${bounds.deletion}   [prose only]`)
+  console.log(`  over-120               : ${long.length}   [all added lines, fenced included — long code lines break rendering too]`)
   console.log(`  controls               : ${controls.total} run, ${controls.failed.length} failed`)
+  if (unreadable.length > 0) failures.push(`sweep could not read: ${unreadable.join(', ')}`)
   if (bounds.placeholder > 0) failures.push(`${bounds.placeholder} double spaces outside inline code`)
   if (long.length > 0) failures.push(`${long.length} lines over 120 characters`)
 
