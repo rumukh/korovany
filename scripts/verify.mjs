@@ -580,7 +580,7 @@ export const CONTROLS = [
   },
   {
     name: 'a-closed-unmerged-pr-is-settled-too',
-    // Live observation supplied by a reviewer, not an analogy to MERGED:
+    // Live observation supplied by a sibling session, not an analogy to MERGED:
     // #63 closed unmerged at 10:15:55Z with head b968e5e while its branch later
     // stood at 21b8156; headRefOid and mergeStateStatus froze. Comparing either
     // as current is the same category error as comparing a merged PR's head.
