@@ -48,6 +48,15 @@
  * lines alone. The latter is wrong for a line added inside a pre-existing fence,
  * which is a case this repository produces constantly.
  *
+ * **The sweep reads the committed diff, not the working tree**, and that is only
+ * sound because the clean-tree assertion above runs in the same invocation: if
+ * the tree is clean the committed diff *is* the working tree. The two checks
+ * compose, and the composition is load-bearing rather than incidental — doping a
+ * file without committing it produces a clean sweep and a dirty-tree failure,
+ * which is a red run for the wrong reason and would read as the right one. Stated
+ * because it was found that way: the first attempt to prove this instrument could
+ * go red doped the working tree and measured nothing.
+ *
  * Usage:
  *   node scripts/verify.mjs              gates + sweep
  *   node scripts/verify.mjs --sweep-only skip the four gates
@@ -64,10 +73,13 @@ const BASE = 'origin/main'
 
 /** Run a command and return its own exit code — never a chain's. */
 function run(cmd, args, opts = {}) {
-  const r = spawnSync(cmd, args, {
+  // `shell: true` with an args array concatenates without escaping (DEP0190).
+  // npm/npx are `.cmd` shims on Windows, so resolve the executable instead of
+  // reaching for a shell.
+  const exe = process.platform === 'win32' && /^(npm|npx|gh)$/.test(cmd) ? `${cmd}.cmd` : cmd
+  const r = spawnSync(exe, args, {
     cwd: ROOT,
     encoding: 'utf8',
-    shell: process.platform === 'win32',
     maxBuffer: 64 * 1024 * 1024,
     ...opts,
   })
