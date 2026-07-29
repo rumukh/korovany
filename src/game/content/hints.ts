@@ -164,6 +164,14 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
     firstSighting: (view) => view.ability.active || view.ability.cooldown > 0,
   },
   {
+    hint: 'melee',
+    viewFields: ['melee'],
+    // The first swing, not the first fight: the counter only ever reads above zero once
+    // the player has actually pressed attack, so the line arrives attached to the thing
+    // it explains rather than to the sight of an enemy.
+    firstSighting: (view) => view.melee.beat > 0,
+  },
+  {
     hint: 'events',
     viewFields: ['activeEvent'],
     firstSighting: (view) => view.activeEvent !== null,

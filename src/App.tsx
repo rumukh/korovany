@@ -1959,6 +1959,16 @@ function GameScreen({
       : view.ability.cooldown > 0
         ? `${view.ability.cooldown.toFixed(1)} с`
         : 'Недоступно'
+  // Roadmap 1.1 — the attack button is a sequence now, so the HUD has to say so. The
+  // three states worth a word are "committed", "the next press costs stamina" and "you are
+  // partway through"; anything else is the resting label.
+  const meleeStatus = view.melee.committed
+    ? 'Добивание идёт'
+    : view.melee.finisherReady
+      ? `Добивание: ${view.melee.finisherCost} выносливости`
+      : view.melee.beat > 0
+        ? `Замах ${view.melee.beat}/${view.melee.beats}`
+        : 'ЛКМ — связка из трёх'
 
   useEffect(() => {
     let hideTimer: number | undefined
@@ -2094,6 +2104,22 @@ function GameScreen({
             <i style={{ width: abilityProgress }} />
           </div>
         </div>
+        <div
+          className={`melee-chip hud-card ${view.melee.finisherReady ? 'finisher' : ''} ${view.melee.committed ? 'committed' : ''}`}
+        >
+          <div className="ability-copy">
+            <span>Связка</span>
+            <strong>{meleeStatus}</strong>
+          </div>
+          <div className="melee-beats" aria-hidden="true">
+            {[...Array(view.melee.beats).keys()].map((index) => (
+              <i
+                className={index < view.melee.beat ? 'lit' : ''}
+                key={`beat-${String(index)}`}
+              />
+            ))}
+          </div>
+        </div>
         <ObjectiveList view={view} />
         <EventBanner event={view.activeEvent} />
       </div>
@@ -2140,13 +2166,13 @@ function GameScreen({
             <kbd>WASD</kbd> идти
           </span>
           <span>
-            <kbd>Shift</kbd> бег
+            <kbd>Shift</kbd> бег, сброс замаха
           </span>
           <span>
-            <kbd>Space</kbd> прыгнуть
+            <kbd>Space</kbd> прыжок, сброс
           </span>
           <span>
-            <kbd>ЛКМ</kbd> удар
+            <kbd>ЛКМ</kbd> связка из трёх
           </span>
           <span>
             <kbd>ПКМ/R</kbd> {view.ability.name}
@@ -2179,8 +2205,14 @@ function GameScreen({
           </button>
         </div>
         <div className="touch-actions">
-          <button type="button" onClick={onAttack} aria-label="Удар">
+          <button
+            className={`touch-attack ${view.melee.committed ? 'committed' : ''} ${view.melee.finisherReady ? 'finisher' : ''}`}
+            type="button"
+            onClick={onAttack}
+            aria-label={`Удар, замах ${String(view.melee.beat)} из ${String(view.melee.beats)}`}
+          >
             <Sword aria-hidden="true" />
+            <b aria-hidden="true">{view.melee.beat > 0 ? view.melee.beat : ''}</b>
           </button>
           <button
             className={view.ability.active ? 'active' : undefined}

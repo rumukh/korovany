@@ -428,6 +428,8 @@ export const ABILITY_BLOCKED_NO_ARMS_NOTICE =
   'Без рук лук не натянуть. Можно достать или купить протез.'
 export const ABILITY_BLOCKED_NO_STAMINA_NOTICE =
   'Выносливость кончилась. Можно ползать и т. п., но приём не выйдет.'
+export const FINISHER_BLOCKED_NO_STAMINA_NOTICE =
+  'На добивание выносливости не хватило — вышел обычный замах.'
 export const SHIELD_DROPPED_NOTICE = 'Выносливость кончилась — щит опущен.'
 
 export const CARAVAN_DEFENDED_BY_PLAYER_NOTICE =
@@ -573,6 +575,7 @@ export type HintId =
   | 'squad'
   | 'threat'
   | 'ability'
+  | 'melee'
   | 'events'
   | 'loot'
 
@@ -644,6 +647,10 @@ const HINT_COPY: Record<HintId, HintCopy> = {
   },
   ability: {
     text: 'Приём (ПКМ или R) не бесплатный: ест выносливость и уходит на перезарядку. Полоска под иконкой — сколько ждать.',
+    tone: 'info',
+  },
+  melee: {
+    text: 'Удар идёт в три замаха: два лёгких, третий — добивание. Он ест выносливость и ломает стойку, но с него уже не сойти. Первые два можно бросить бегом, прыжком или приёмом — это и есть уворот.',
     tone: 'info',
   },
   events: {

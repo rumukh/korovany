@@ -2312,6 +2312,55 @@ button {
   background: var(--cp-link);
 }
 
+/*
+ * Roadmap 1.1 — the beat counter.
+ *
+ * Deliberately small and next to the ability chip: the sequence is the same button the
+ * player has always had, so it gets a strip rather than a panel. The pips are the only
+ * place on screen that says "three", and the warning tint is the only place that says the
+ * next press will cost stamina.
+ */
+.melee-chip {
+  align-items: center;
+  display: grid;
+  gap: 0.35rem 0.6rem;
+  grid-template-columns: 1fr auto;
+  padding: 0.5rem 0.7rem;
+}
+
+.melee-chip.finisher {
+  border-color: color-mix(in srgb, var(--cp-warning) 52%, var(--cp-border));
+}
+
+.melee-chip.committed {
+  background: color-mix(in srgb, var(--cp-warning) 14%, var(--cp-panel));
+  border-color: var(--cp-warning);
+}
+
+.melee-beats {
+  display: flex;
+  gap: 0.2rem;
+}
+
+.melee-beats i {
+  background: var(--cp-surface-soft);
+  border: 1px solid var(--cp-border);
+  border-radius: 999px;
+  height: 0.42rem;
+  width: 0.42rem;
+}
+
+.melee-beats i.lit {
+  background: var(--cp-accent);
+  border-color: var(--cp-accent);
+}
+
+.melee-chip.finisher .melee-beats i.lit,
+.melee-chip.committed .melee-beats i.lit {
+  background: var(--cp-warning);
+  border-color: var(--cp-warning);
+}
+
 .objectives-card {
   padding: 0.7rem;
 }
@@ -4137,6 +4186,33 @@ kbd {
     display: grid;
     gap: 0.3rem;
     grid-template-columns: repeat(2, 2.75rem);
+  }
+
+  /*
+   * Roadmap 1.1 forbids a sixth touch control, so the beat counter rides the attack
+   * button that is already there rather than becoming one. The number is decorative; the
+   * button's `aria-label` carries the same state for a screen reader.
+   */
+  .touch-attack {
+    position: relative;
+  }
+
+  .touch-attack b {
+    bottom: 0.1rem;
+    font-family: Consolas, "Courier New", Courier, monospace;
+    font-size: 0.55rem;
+    line-height: 1;
+    position: absolute;
+    right: 0.25rem;
+  }
+
+  .touch-attack.finisher {
+    border-color: var(--cp-warning);
+  }
+
+  .touch-attack.committed {
+    background: var(--cp-warning);
+    color: var(--cp-accent-fg);
   }
 
   .capture-prompt,

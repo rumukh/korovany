@@ -34,7 +34,14 @@ import {
 } from '../types.ts'
 import { BEAST_PROFILES } from './Fauna.ts'
 
-export type CombatAttackKind = 'melee' | 'cleave' | 'arrow' | 'allyMelee' | 'actorArrow'
+export type CombatAttackKind =
+  | 'melee'
+  | 'cleave'
+  | 'arrow'
+  | 'allyMelee'
+  | 'actorArrow'
+  /** The third beat of the player's melee sequence. The only stance-breaking swing. */
+  | 'finisher'
 export type CombatHitWeight = 'normal' | 'heavy' | 'lethal' | 'blocked'
 export type CombatActionKind = 'meleePlayer' | 'meleeActor' | 'eventProp' | 'arrow'
 export type CombatActionPhase = 'windup' | 'recovery'
@@ -73,6 +80,17 @@ export const ARCHER_FIRE_COOLDOWN = 1.8
 /** Poise damage multiplier by attack kind: a cleave rocks composure, a jab does not. */
 export const CLEAVE_POISE_MULTIPLIER = 1.45
 export const STANDARD_POISE_MULTIPLIER = 0.75
+/**
+ * The finisher's multiplier — and, on its own, not the reason a finisher breaks a stance.
+ *
+ * Multipliers alone make "the third beat breaks poise" conditional on the player's damage
+ * number: a champion's 72 poise survives an armless player's finisher and nothing says so.
+ * `applyDamageReaction` therefore floors a finisher's poise damage at the target's
+ * *current* poise, so the break is a rule rather than an arithmetic accident. The
+ * multiplier still matters for what it does to a target that is already reeling, and it
+ * keeps the finisher above a cleave where a reader would expect it to be.
+ */
+export const FINISHER_POISE_MULTIPLIER = 2.6
 /** Where poise sits after a stagger, and the floor it cannot be pushed below while immune. */
 export const POISE_AFTER_STAGGER_RATIO = 0.7
 /** A hit at or above this share of the target's max health reads as heavy. */
@@ -230,6 +248,28 @@ export function actorMaxPoise(role: ActorRole): number {
 }
 
 /**
+ * How much health a role spawns with, before the allegiance and threat multipliers.
+ *
+ * Lives here rather than inside `createActor` because time-to-kill is health divided by
+ * damage, and roadmap 1.1's fourth signal — "time-to-kill separates by role" — cannot be
+ * measured at all if half of that division is a ternary chain inside a mesh builder. The
+ * numbers are the engine's own, unchanged.
+ */
+export function actorBaseHealth(role: ActorRole): number {
+  if (isBeastRole(role)) return BEAST_PROFILES[role].hp
+  if (role === 'commander') return 150
+  if (role === 'champion') return 260
+  if (role === 'brute') return 130
+  if (role === 'archer') return 45
+  if (role === 'scout') return 55
+  // §5D — a villager dies to two hits and is meant to. It is not a difficulty knob: a
+  // peasant with a soldier's health bar would turn every raid into a chore and make
+  // hitting one feel like a fight.
+  if (role === 'peasant') return 26
+  return 70
+}
+
+/**
  * How long a broken stance lasts. Inverted against `actorMaxPoise` on purpose: the roles
  * that are hardest to stagger stay staggered for the shortest time, so breaking a champion
  * is an achievement with a narrow window rather than a free kill.
@@ -302,6 +342,392 @@ export function advanceReaction(actor: CombatActor, delta: number): void {
   if (actor.reaction !== 'stagger' && actor.poiseRecoveryDelay <= 0) {
     actor.poise = Math.min(actor.maxPoise, actor.poise + POISE_RECOVERY_PER_SECOND * delta)
   }
+}
+
+// ---------------------------------------------------------------------------
+// The player's half of the same contract
+// ---------------------------------------------------------------------------
+
+/**
+ * The player's melee sequence, as a contract rather than a cooldown.
+ *
+ * The asymmetry this answers is written down in `docs/STRATEGY.md`: NPCs got five per-role
+ * wind-ups, telegraphs, contact resolved at the end of the wind-up, recovery, flinch,
+ * poise and stagger; the player got `attackCooldown = 0.52`, a 3.6 m nearest-hostile scan
+ * and a facing snap, so a swing with anything in that radius **could not miss and could
+ * not be aimed**. Everything below exists to give the player the same four ideas the
+ * enemies already have — wind-up, contact, whiff, recovery — without a second button.
+ *
+ * Three rules shape the table and are the reason it is a table:
+ *
+ * 1. **Chaining must dominate mashing.** Beat one is the shortest beat, so if the sequence
+ *    reset for free a player would spam it. It does not: after a beat's recovery the
+ *    sequence stays open for `PLAYER_MELEE_CHAIN_WINDOW`, and a press inside that window
+ *    *continues*. Opening beat one again therefore costs the whole chain window of
+ *    waiting, which makes 1→2→3 strictly faster per point of damage than 1→1→1.
+ * 2. **Only the third beat commits.** Beats one and two leave movement live and can be
+ *    cancelled by sprint, jump or the faction ability — that is the defensive verb elf and
+ *    villain never had, delivered through inputs that already exist. The finisher cannot
+ *    be cancelled, and `PLAYER_MELEE_FINISHER_COMMITMENT` is the number open disagreement
+ *    (a) asked to be measured against the 0.18 s scout/minion wind-up floor.
+ * 3. **The finisher has to be worth its cost.** It is the only swing that spends stamina
+ *    and the only one that breaks a stance, so the third beat has a reason to exist beyond
+ *    a bigger damage number.
+ *
+ * Pure and allocation-free per frame: `advancePlayerMelee` mutates one small state object
+ * and returns a plain report, so `GameEngine` and the headless harness run the same model
+ * rather than two that can drift.
+ */
+export type PlayerMeleePhase = 'idle' | 'windup' | 'recovery'
+
+export interface PlayerBeatSpec {
+  /** 1, 2 or 3. Stored so a report can name the beat without an index dance. */
+  readonly beat: number
+  /** Seconds before contact resolves. The player's own telegraph. */
+  readonly windup: number
+  /** Seconds after contact before the sequence is free again. */
+  readonly recovery: number
+  /** Metres the arc reaches. */
+  readonly reach: number
+  /** Minimum dot of the direction to a target with the aim vector for a legal hit. */
+  readonly arcDot: number
+  /** A narrower dot, **inside the arc**, that the soft assist prefers. Never widens it. */
+  readonly assistDot: number
+  readonly damageMultiplier: number
+  readonly knockback: number
+  readonly staminaCost: number
+  readonly attackKind: CombatAttackKind
+  /** True when the beat refuses cancels and locks movement until its recovery ends. */
+  readonly commits: boolean
+}
+
+export const PLAYER_MELEE_BEATS: readonly PlayerBeatSpec[] = [
+  {
+    beat: 1,
+    windup: 0.12,
+    recovery: 0.22,
+    reach: 3.1,
+    arcDot: 0.35,
+    assistDot: 0.72,
+    damageMultiplier: 0.8,
+    knockback: 0,
+    staminaCost: 0,
+    attackKind: 'melee',
+    commits: false,
+  },
+  {
+    beat: 2,
+    windup: 0.14,
+    recovery: 0.24,
+    reach: 3.1,
+    arcDot: 0.35,
+    assistDot: 0.72,
+    damageMultiplier: 1,
+    knockback: 0.9,
+    staminaCost: 0,
+    attackKind: 'melee',
+    commits: false,
+  },
+  {
+    // Wider and longer than the two jabs before it, because it is a sweep rather than a
+    // poke — and because a swing the player has committed to should not be beaten by a
+    // target sidestepping two degrees.
+    beat: 3,
+    windup: 0.15,
+    recovery: 0.26,
+    reach: 3.5,
+    arcDot: 0.2,
+    assistDot: 0.6,
+    damageMultiplier: 1.7,
+    knockback: 2.6,
+    staminaCost: 22,
+    attackKind: 'finisher',
+    commits: true,
+  },
+]
+
+/**
+ * How long a press is remembered while a beat is still running.
+ *
+ * Sized deliberately longer than the longest beat (0.41 s): a press on a beat's *first*
+ * frame has to survive until that beat's recovery ends, or the sequence would silently
+ * refuse to chain for anybody who presses early — which is the exact input the buffer
+ * exists to forgive.
+ */
+export const PLAYER_MELEE_BUFFER = 0.45
+/** How long the sequence stays open after a beat's recovery before it resets to beat one. */
+export const PLAYER_MELEE_CHAIN_WINDOW = 0.4
+/** Dead time after the finisher's recovery, before a new sequence may open. */
+export const PLAYER_MELEE_RESET_COOLDOWN = 0.18
+/** Below this the direction to a target is meaningless, so the arc test is range-only. */
+export const PLAYER_MELEE_POINT_BLANK = 0.001
+
+/**
+ * Seconds the player is committed once the finisher starts: no cancel, no movement.
+ *
+ * Reported against the 0.18 s scout/minion floor from open disagreement (a), which is the
+ * written condition for whether a true dodge is the missing half of the mechanic. It is
+ * derived rather than typed so it cannot drift away from the table above.
+ */
+export const PLAYER_MELEE_FINISHER_COMMITMENT =
+  PLAYER_MELEE_BEATS[2].windup + PLAYER_MELEE_BEATS[2].recovery
+
+/** Weights of the soft assist. Aim dominates; range breaks the tie. */
+export const MELEE_ASSIST_AIM_WEIGHT = 1
+export const MELEE_ASSIST_RANGE_WEIGHT = 0.55
+export const MELEE_ASSIST_CONE_BONUS = 0.45
+
+export function playerBeatSpec(beat: number): PlayerBeatSpec {
+  const index = Math.min(PLAYER_MELEE_BEATS.length, Math.max(1, Math.floor(beat))) - 1
+  return PLAYER_MELEE_BEATS[index]
+}
+
+export interface PlayerMeleeState {
+  /** The beat last started, or 0 when the sequence is closed. */
+  beat: number
+  phase: PlayerMeleePhase
+  phaseRemaining: number
+  bufferRemaining: number
+  chainRemaining: number
+  /** Only the finisher sets it. Keeps a cancel from skipping the finisher's dead time. */
+  lockout: number
+}
+
+export function createPlayerMeleeState(): PlayerMeleeState {
+  return {
+    beat: 0,
+    phase: 'idle',
+    phaseRemaining: 0,
+    bufferRemaining: 0,
+    chainRemaining: 0,
+    lockout: 0,
+  }
+}
+
+/**
+ * Hard reset for a pause, an end screen or a restart — the one place the commitment does
+ * not apply, because there is no fight left to be committed to.
+ */
+export function resetPlayerMelee(state: PlayerMeleeState): void {
+  state.beat = 0
+  state.phase = 'idle'
+  state.phaseRemaining = 0
+  state.bufferRemaining = 0
+  state.chainRemaining = 0
+  state.lockout = 0
+}
+
+/** True while the finisher is running, which is the only state that refuses a cancel. */
+export function isPlayerMeleeCommitted(state: PlayerMeleeState): boolean {
+  return state.phase !== 'idle' && playerBeatSpec(state.beat).commits
+}
+
+/** Which beat the next press would start. 3 means the finisher is the next swing. */
+export function nextPlayerMeleeBeat(state: PlayerMeleeState): number {
+  if (state.phase === 'idle' && state.chainRemaining <= 0) return 1
+  const next = state.beat + 1
+  return next > PLAYER_MELEE_BEATS.length ? 1 : next
+}
+
+/** One press of the attack button. Remembered for `PLAYER_MELEE_BUFFER` seconds. */
+export function bufferPlayerMelee(state: PlayerMeleeState): void {
+  state.bufferRemaining = PLAYER_MELEE_BUFFER
+}
+
+/**
+ * Sprint, jump, the faction ability or the guard's shield. Drops the buffer and the beat
+ * in flight, and reports whether there was anything to drop — which is what lets the
+ * caller tell "I cancelled a swing" from "I just started running".
+ *
+ * The finisher's lockout deliberately survives: cancelling is not a way to pay less for a
+ * finisher already thrown.
+ */
+export function cancelPlayerMelee(state: PlayerMeleeState): boolean {
+  if (isPlayerMeleeCommitted(state)) return false
+  const cancelled =
+    state.phase !== 'idle' || state.bufferRemaining > 0 || state.chainRemaining > 0
+  state.beat = 0
+  state.phase = 'idle'
+  state.phaseRemaining = 0
+  state.bufferRemaining = 0
+  state.chainRemaining = 0
+  return cancelled
+}
+
+export interface PlayerMeleeInput {
+  delta: number
+  /** Stamina available now. The finisher will not start without its cost. */
+  stamina: number
+}
+
+export interface PlayerMeleeStep {
+  /** The beat that started this step, or 0. */
+  startedBeat: number
+  /** Stamina the started beat cost. */
+  staminaSpent: number
+  /** The beat whose contact frame resolved this step, or 0. */
+  contactBeat: number
+  /** True when the sequence wanted the finisher and could not pay for it. */
+  finisherStalled: boolean
+  /** True when the chain window closed without a press. */
+  sequenceReset: boolean
+}
+
+const NO_STEP: PlayerMeleeStep = {
+  startedBeat: 0,
+  staminaSpent: 0,
+  contactBeat: 0,
+  finisherStalled: false,
+  sequenceReset: false,
+}
+
+/**
+ * One frame of the sequence.
+ *
+ * Order matters and is the buffering: a recovery that ends inside this frame leaves the
+ * state idle, and the start block below runs in the *same* frame, so a press held through
+ * a recovery chains on the first frame it legally can rather than on the next one.
+ */
+export function advancePlayerMelee(
+  state: PlayerMeleeState,
+  input: PlayerMeleeInput,
+): PlayerMeleeStep {
+  const step = { ...NO_STEP }
+  const delta = Math.max(0, input.delta)
+  state.lockout = Math.max(0, state.lockout - delta)
+  state.bufferRemaining = Math.max(0, state.bufferRemaining - delta)
+
+  if (state.phase === 'idle') {
+    state.chainRemaining = Math.max(0, state.chainRemaining - delta)
+    if (state.chainRemaining <= 0 && state.beat !== 0) {
+      state.beat = 0
+      step.sequenceReset = true
+    }
+  } else {
+    state.phaseRemaining -= delta
+    if (state.phaseRemaining <= 0) {
+      const spec = playerBeatSpec(state.beat)
+      if (state.phase === 'windup') {
+        step.contactBeat = state.beat
+        state.phase = 'recovery'
+        state.phaseRemaining = spec.recovery
+      } else {
+        state.phase = 'idle'
+        state.phaseRemaining = 0
+        state.lockout = spec.commits ? PLAYER_MELEE_RESET_COOLDOWN : 0
+        state.chainRemaining = spec.commits ? 0 : PLAYER_MELEE_CHAIN_WINDOW
+        if (state.chainRemaining <= 0) {
+          state.beat = 0
+          step.sequenceReset = true
+        }
+      }
+    }
+  }
+
+  if (state.phase !== 'idle' || state.bufferRemaining <= 0 || state.lockout > 0) {
+    return step
+  }
+
+  const wanted = nextPlayerMeleeBeat(state)
+  const wantedSpec = playerBeatSpec(wanted)
+  // A refused finisher opens beat one instead of swallowing the press. The one-button
+  // promise is that the button always does something; an empty stamina bar is a reason to
+  // hit lighter, not a reason for nothing to happen.
+  const stalled = wantedSpec.staminaCost > input.stamina
+  const spec = stalled ? playerBeatSpec(1) : wantedSpec
+  state.beat = spec.beat
+  state.phase = 'windup'
+  state.phaseRemaining = spec.windup
+  state.bufferRemaining = 0
+  state.chainRemaining = 0
+  step.startedBeat = spec.beat
+  step.staminaSpent = spec.staminaCost
+  step.finisherStalled = stalled
+  return step
+}
+
+/** One thing the swing might land on, measured against the aim vector. */
+export interface MeleeArcCandidate {
+  readonly id: string
+  /** Planar metres from the player. */
+  readonly distance: number
+  /** Dot of the normalised planar direction to the target with the player's aim. */
+  readonly aimDot: number
+  /** Hostiles are struck before bystanders, whatever the assist would prefer. */
+  readonly hostile: boolean
+}
+
+/**
+ * The arc test, in the shape `cleave()` already uses: inside the reach, and no wider off
+ * the aim vector than the beat's dot allows.
+ *
+ * This is the whole of what makes a hit legal. Nothing else in this file may return a
+ * target that fails it, which is the property `tests/honestMelee.test.ts` pins with a
+ * candidate placed outside the arc and given an overwhelming assist score.
+ */
+export function isWithinMeleeArc(
+  candidate: MeleeArcCandidate,
+  spec: PlayerBeatSpec,
+): boolean {
+  if (candidate.distance > spec.reach) return false
+  // Standing inside the player: there is no direction to test, exactly as `cleave()`
+  // treats it.
+  if (candidate.distance <= PLAYER_MELEE_POINT_BLANK) return true
+  return candidate.aimDot >= spec.arcDot
+}
+
+/**
+ * How much the assist wants a candidate. Only ever compares things already inside the arc.
+ *
+ * Aim leads, range breaks ties, and a bonus applies inside the narrower assist cone so the
+ * swing prefers what the player is looking *at* over what merely stands in the arc.
+ */
+export function meleeAssistScore(
+  candidate: MeleeArcCandidate,
+  spec: PlayerBeatSpec,
+): number {
+  const aimSpan = Math.max(1e-6, 1 - spec.arcDot)
+  const aim = clamp01((candidate.aimDot - spec.arcDot) / aimSpan)
+  const range = clamp01(1 - candidate.distance / Math.max(1e-6, spec.reach))
+  const cone = candidate.aimDot >= spec.assistDot ? MELEE_ASSIST_CONE_BONUS : 0
+  return aim * MELEE_ASSIST_AIM_WEIGHT + range * MELEE_ASSIST_RANGE_WEIGHT + cone
+}
+
+/**
+ * Who the beat hits, or `null` for a whiff.
+ *
+ * Two rules, in this order. **Hostiles first, always** — the §5D rule the old auto-target
+ * had, kept: a villager is only a legal target when there is nothing to fight, so walking
+ * into a village mid-raid cannot make the swing meant for the wolf land on the man running
+ * from it. Then the assist, *among candidates the arc already accepted*. The filter runs
+ * before the score for a reason: an assist that could reach outside the arc would be the
+ * old unaimed swing wearing a cone.
+ */
+export function selectMeleeTarget(
+  candidates: readonly MeleeArcCandidate[],
+  spec: PlayerBeatSpec,
+): MeleeArcCandidate | null {
+  return (
+    bestInArc(candidates, spec, true) ?? bestInArc(candidates, spec, false)
+  )
+}
+
+function bestInArc(
+  candidates: readonly MeleeArcCandidate[],
+  spec: PlayerBeatSpec,
+  hostile: boolean,
+): MeleeArcCandidate | null {
+  let best: MeleeArcCandidate | null = null
+  let bestScore = Number.NEGATIVE_INFINITY
+  for (const candidate of candidates) {
+    if (candidate.hostile !== hostile) continue
+    if (!isWithinMeleeArc(candidate, spec)) continue
+    const score = meleeAssistScore(candidate, spec)
+    if (best !== null && score <= bestScore) continue
+    best = candidate
+    bestScore = score
+  }
+  return best
 }
 
 // ---------------------------------------------------------------------------
@@ -416,7 +842,9 @@ export function resolveActorDamage(input: ActorDamageInput): CombatOutcome {
   const killed = target.hp - dealt <= 0
   const weight: CombatHitWeight = killed
     ? 'lethal'
-    : input.attackKind === 'cleave' || dealt >= target.maxHp * HEAVY_HIT_HEALTH_RATIO
+    : input.attackKind === 'cleave' ||
+        input.attackKind === 'finisher' ||
+        dealt >= target.maxHp * HEAVY_HIT_HEALTH_RATIO
       ? 'heavy'
       : 'normal'
   return { applied: true, dealt, killed, weight, blocked: false, impact }
@@ -428,6 +856,10 @@ export function resolveActorDamage(input: ActorDamageInput): CombatOutcome {
  * Mutates the actor's poise fields and reports whether the stance broke, so the caller can
  * cancel the action and drop the telegraph — which stays in `GameEngine`, because a
  * telegraph is a mesh.
+ *
+ * A `finisher` is the one kind whose break is guaranteed rather than computed: its poise
+ * damage is floored at whatever poise the target has left. The stagger-immunity window
+ * still applies above it, so the third beat breaks a stance — it does not stun-lock one.
  */
 export function applyDamageReaction(
   actor: CombatActor,
@@ -440,9 +872,9 @@ export function applyDamageReaction(
     actor.reactionRemaining = Math.max(actor.reactionRemaining, FLINCH_TIME)
   }
   actor.poiseRecoveryDelay = POISE_REGEN_DELAY
+  const scaled = outcome.dealt * poiseMultiplier(attackKind)
   const poiseDamage =
-    outcome.dealt *
-    (attackKind === 'cleave' ? CLEAVE_POISE_MULTIPLIER : STANDARD_POISE_MULTIPLIER)
+    attackKind === 'finisher' ? Math.max(scaled, actor.poise) : scaled
   if (actor.staggerImmunity > 0) {
     actor.poise = Math.max(
       actor.maxPoise * POISE_AFTER_STAGGER_RATIO,
@@ -458,6 +890,12 @@ export function applyDamageReaction(
   actor.staggerImmunity = STAGGER_IMMUNITY
   actor.poise = actor.maxPoise * POISE_AFTER_STAGGER_RATIO
   return true
+}
+
+function poiseMultiplier(attackKind: CombatAttackKind): number {
+  if (attackKind === 'cleave') return CLEAVE_POISE_MULTIPLIER
+  if (attackKind === 'finisher') return FINISHER_POISE_MULTIPLIER
+  return STANDARD_POISE_MULTIPLIER
 }
 
 /** How hard a hit shoves, before it is applied to a velocity the collision world owns. */

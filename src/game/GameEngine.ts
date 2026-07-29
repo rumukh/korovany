@@ -146,6 +146,7 @@ import {
   describeCivilianDeath,
   describeEventHandback,
   describeEventStarted,
+  FINISHER_BLOCKED_NO_STAMINA_NOTICE,
   describeKillReward,
   describeLimbLost,
   describeLocatedEvent,
@@ -275,25 +276,36 @@ import {
   actionCooldown,
   actionRecovery,
   actionWindup,
+  actorBaseHealth,
   actorMaxPoise,
   actorStaggerDuration,
+  advancePlayerMelee,
   advanceReaction,
   applyDamageReaction,
+  bufferPlayerMelee,
   canStartAction,
+  cancelPlayerMelee,
+  createPlayerMeleeState,
   isLargeBody,
+  isPlayerMeleeCommitted,
   isWithinContact,
   killReward,
   knockbackMagnitude,
   playerArmor,
+  playerBeatSpec,
+  resetPlayerMelee,
   resolveActorDamage,
   resolvePlayerDamage,
   rollMeleeDamage,
   rollPropBite,
   selectDeathStyle,
+  selectMeleeTarget,
   shouldInjurePlayer,
   type CombatAttackKind,
   type CombatHitWeight,
   type CombatOutcome,
+  type MeleeArcCandidate,
+  type PlayerBeatSpec,
 } from './world/CombatResolver'
 import {
   EVENT_RETRY,
@@ -423,6 +435,15 @@ export interface GameEngineSettings {
    * keeps no profile of its own; it reports back through `onHintSeen`.
    */
   seenHints: readonly string[]
+  /**
+   * Roadmap 1.1's prototype flag: the buffered, aimed three-beat sequence.
+   *
+   * Off, `attack()` is the pre-1.1 swing — a 0.52 s cooldown, a 3.6 m nearest-hostile scan
+   * and a facing snap, which cannot miss and cannot be aimed. The old path is kept rather
+   * than deleted because "measure before committing" needs something to measure *against*,
+   * and the headless harness's `meleeModel` arms are the same two models.
+   */
+  honestMelee: boolean
 }
 
 export type GameEngineOptions = Partial<Omit<GameEngineSettings, 'generatedRun'>> &
@@ -1067,6 +1088,15 @@ const CLEAVE_RADIUS = 4.5
 const CLEAVE_ARC_DOT = 0.5
 const CLEAVE_DASH_DISTANCE = 3
 const CLEAVE_KNOCKBACK_DISTANCE = 3
+/**
+ * Whether the buffered three-beat sequence is the shipped melee.
+ *
+ * `false` while roadmap 1.1 was being measured; `true` once the harness arms had numbers
+ * for both models. The flag survives the default flip on purpose — a feel change wants a
+ * way back for the next person who wants to compare, and the legacy branch is also what
+ * the harness's `meleeModel: 'legacy'` arm keeps honest.
+ */
+const HONEST_MELEE_DEFAULT = true
 const SCOUT_RETREAT_DURATION = 0.62
 const AGGRO_MEMORY_DURATION = 6
 const RAGE_DURATION = 5
@@ -1819,6 +1849,10 @@ export class GameEngine {
   private attackCooldown = 0
   private attackAnimation = 0
   private activePlayerAttackKind: AttackKind = 'melee'
+  /** Roadmap 1.1 — the buffered three-beat sequence. `honestMelee` off runs the old swing. */
+  private readonly melee = createPlayerMeleeState()
+  private readonly honestMelee: boolean
+  private wasSprinting = false
   private abilityCooldown = 0
   private shieldActive = false
   private lastViewAt = 0
@@ -2027,6 +2061,7 @@ export class GameEngine {
     this.weatherEnabled = settings.weatherEnabled ?? true
     this.inkOutlinesEnabled = settings.inkOutlinesEnabled ?? true
     this.screenShakeEnabled = settings.screenShakeEnabled ?? true
+    this.honestMelee = settings.honestMelee ?? HONEST_MELEE_DEFAULT
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     this.groundFoliageQuality = settings.foliageQuality ?? 'high'
     this.palette = createPalette()
@@ -2691,6 +2726,11 @@ export class GameEngine {
       this.callbacks.onNotice(ABILITY_BLOCKED_NO_STAMINA_NOTICE, 'warning')
       return
     }
+    // Roadmap 1.1 — the ability is one of the three cancels. It is refused outright while
+    // the finisher is committed, which is what "only the third beat commits" means for
+    // the two factions whose ability is their only other verb.
+    if (isPlayerMeleeCommitted(this.melee)) return
+    this.cancelMelee()
 
     this.resumeAudio()
     this.stamina -= ability.staminaCost
@@ -2727,10 +2767,14 @@ export class GameEngine {
       this.ended ||
       this.shieldActive ||
       this.abilityCooldown > 0 ||
-      this.stamina <= 0
+      this.stamina <= 0 ||
+      // The guard's fourth cancel. Same rule as the other three: everything but the
+      // committed finisher.
+      isPlayerMeleeCommitted(this.melee)
     ) {
       return
     }
+    this.cancelMelee()
     this.resumeAudio()
     this.shieldActive = true
     this.achievements.recordAbilityUse('shield')
@@ -2739,12 +2783,33 @@ export class GameEngine {
   }
 
   attack(): void {
-    if (this.paused || this.ended || this.attackCooldown > 0) return
+    if (this.paused || this.ended) return
     this.resumeAudio()
+    this.menacePlayer()
+    if (!this.honestMelee) {
+      this.legacyAttack()
+      return
+    }
+    // Roadmap 1.1 — the press is *buffered*, not resolved. Everything that decides what
+    // the swing hits happens at the contact frame in `updatePlayerMelee`, which is what
+    // makes a whiff possible: the old code resolved a target at the instant of the press,
+    // so nothing could step out of the way in between.
+    bufferPlayerMelee(this.melee)
+    this.emitView(true)
+  }
+
+  /**
+   * The pre-1.1 swing, kept as the flag's off arm.
+   *
+   * A 0.52 s cooldown, a 3.6 m nearest-hostile scan and a facing snap. Once anything
+   * hostile was inside that radius the swing could not miss and could not be aimed, which
+   * is the asymmetry roadmap 1.1 exists to close.
+   */
+  private legacyAttack(): void {
+    if (this.attackCooldown > 0) return
     this.attackCooldown = 0.52
     this.attackAnimation = 1
     this.activePlayerAttackKind = 'melee'
-    this.menacePlayer()
 
     // §5D — hostiles first, always. A villager is only a legal target when there is
     // nothing to fight, so walking into a village mid-raid cannot make the swing meant
@@ -2776,16 +2841,119 @@ export class GameEngine {
 
     const targetDirection = target.mesh.position.clone().sub(this.player.position)
     this.player.rotation.y = Math.atan2(targetDirection.x, targetDirection.z)
-    const armPenalty =
-      (this.body.leftArm === 'missing' ? 5 : 0) + (this.body.rightArm === 'missing' ? 9 : 0)
     const dealt = Math.max(
       8,
-      this.damage - armPenalty + Math.floor(this.combatRng() * 7),
+      this.damage - this.armPenalty() + Math.floor(this.combatRng() * 7),
     )
     this.damageActor(target, dealt, this.player.position, this.faction, true, {
       attackKind: 'melee',
       detachChance: 0.45,
     })
+  }
+
+  /** Missing arms cost damage. One place, because three swings read it. */
+  private armPenalty(): number {
+    return (
+      (this.body.leftArm === 'missing' ? 5 : 0) +
+      (this.body.rightArm === 'missing' ? 9 : 0)
+    )
+  }
+
+  /**
+   * One frame of the player's melee sequence: advance it, spend the finisher's stamina,
+   * and resolve the contact frame of any beat that reached it.
+   *
+   * The whole point is that the beat resolves *here*, a wind-up after the press, against
+   * whoever is inside the arc at that moment — the same shape `updateActorAction` uses for
+   * every NPC, so both halves of the fight now revalidate at resolution time.
+   */
+  private updatePlayerMelee(delta: number): void {
+    if (!this.honestMelee) return
+    const step = advancePlayerMelee(this.melee, { delta, stamina: this.stamina })
+    if (step.startedBeat > 0) {
+      const spec = playerBeatSpec(step.startedBeat)
+      this.stamina = Math.max(0, this.stamina - step.staminaSpent)
+      this.attackAnimation = 1
+      this.activePlayerAttackKind = spec.attackKind
+      const aim = this.getAimDirection()
+      this.player.rotation.y = Math.atan2(aim.x, aim.z)
+      if (step.finisherStalled) {
+        this.callbacks.onNotice(FINISHER_BLOCKED_NO_STAMINA_NOTICE, 'warning')
+      }
+    }
+    if (step.contactBeat > 0) this.resolveMeleeContact(playerBeatSpec(step.contactBeat))
+  }
+
+  /**
+   * The contact frame: the camera-facing arc, the soft assist, and the whiff.
+   *
+   * The arc is the same test `cleave()` uses — inside the reach, and no further off the
+   * aim vector than the beat allows — and the assist only ever chooses between candidates
+   * that already passed it. That ordering is the mechanic: an assist that could reach past
+   * the arc would be the old unmissable swing wearing a cone.
+   */
+  private resolveMeleeContact(spec: PlayerBeatSpec): void {
+    const aim = this.getAimDirection()
+    const candidates: MeleeArcCandidate[] = []
+    for (const actor of this.actors) {
+      if (!actor.alive) continue
+      const hostile = actor.hostileToPlayer
+      if (!hostile && actor.allegiance !== 'civilian') continue
+      const offset = actor.mesh.position.clone().sub(this.player.position)
+      offset.y = 0
+      const distance = offset.length()
+      if (distance > spec.reach) continue
+      candidates.push({
+        id: actor.id,
+        distance,
+        aimDot: distance > 0.001 ? offset.normalize().dot(aim) : 1,
+        hostile,
+      })
+    }
+
+    const chosen = selectMeleeTarget(candidates, spec)
+    if (!chosen) {
+      // An honest miss. `whiff` is the cue the NPCs already use for one, so the player's
+      // swing sounds like the thing it now is.
+      this.playSound('swing')
+      this.playSound('whiff', { position: this.player.position, intensity: 0.5 })
+      return
+    }
+    const target = this.actors.find((actor) => actor.id === chosen.id)
+    if (!target?.alive) return
+
+    // The soft half of the assist: face what the swing found. It is inside the arc by
+    // construction, so this can only ever turn the player *within* the arc they aimed.
+    const toTarget = target.mesh.position.clone().sub(this.player.position)
+    toTarget.y = 0
+    if (toTarget.lengthSq() > 0.0001) {
+      this.player.rotation.y = Math.atan2(toTarget.x, toTarget.z)
+    }
+
+    // One draw per landed beat, which is exactly what the pre-1.1 swing spent: a whiff
+    // drew nothing then and draws nothing now, so the combat stream still advances once
+    // per hit rather than once per press.
+    const dealt =
+      Math.max(8, this.damage - this.armPenalty() + Math.floor(this.combatRng() * 7)) *
+      spec.damageMultiplier
+    this.damageActor(target, dealt, this.player.position, this.faction, true, {
+      attackKind: spec.attackKind,
+      detachChance: spec.commits ? 0.7 : 0.45,
+      knockback: spec.knockback,
+    })
+  }
+
+  /**
+   * Sprint, jump, the faction ability or the shield, used as the defensive verb.
+   *
+   * This is the whole of 1.1's answer to a telegraph for elf and villain, and the reason
+   * there is no sixth control: the inputs already exist, and enemy contact already
+   * revalidates range at resolution time, so getting out of the way has always worked —
+   * what was missing was a way to *abandon a swing* in order to do it.
+   */
+  private cancelMelee(): void {
+    if (!this.honestMelee) return
+    if (cancelPlayerMelee(this.melee)) this.emitView(true)
   }
 
   interact(): void {
@@ -3059,6 +3227,7 @@ export class GameEngine {
     this.caravanCooldown = Math.max(0, this.caravanCooldown - delta)
     this.caravanRobbedFlash = Math.max(0, this.caravanRobbedFlash - delta * 2)
     this.moraleNoticeCooldown = Math.max(0, this.moraleNoticeCooldown - delta)
+    this.updatePlayerMelee(delta)
     this.updatePlayer(delta)
     this.generatedWorld.update({
       focus: {
@@ -3934,6 +4103,12 @@ export class GameEngine {
     if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) move.add(right)
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) move.sub(right)
 
+    // Roadmap 1.1 — movement stays live through beats one and two and stops dead for the
+    // finisher. That single line is the price of the third beat, and
+    // `PLAYER_MELEE_FINISHER_COMMITMENT` is how long it lasts.
+    const committed = isPlayerMeleeCommitted(this.melee)
+    if (committed) move.set(0, 0, 0)
+
     const missingLegs =
       Number(this.body.leftLeg === 'missing') + Number(this.body.rightLeg === 'missing')
     const prostheticLegs =
@@ -3953,6 +4128,10 @@ export class GameEngine {
       this.stamina > 2 &&
       move.lengthSq() > 0 &&
       missingLegs === 0
+    // The rising edge, not the held key: breaking into a run is the cancel, and holding
+    // shift through the whole fight must not make every beat uncancellable-by-accident.
+    if (sprinting && !this.wasSprinting) this.cancelMelee()
+    this.wasSprinting = sprinting
     this.isSprinting = sprinting
     const speed =
       8.2 *
@@ -3991,7 +4170,8 @@ export class GameEngine {
 
     const jumpHeld = this.keys.has('Space')
     let tookOff = false
-    if (jumpHeld && this.onGround && missingLegs < 2) {
+    if (jumpHeld && this.onGround && missingLegs < 2 && !committed) {
+      this.cancelMelee()
       this.verticalVelocity = missingLegs === 1 ? 6.2 : 8.5
       this.onGround = false
       tookOff = true
@@ -10031,6 +10211,7 @@ export class GameEngine {
       caravanCooldown: this.caravanCooldown,
       shieldActive: this.shieldActive,
       abilityCooldown: this.abilityCooldown,
+      melee: this.melee,
       campaignCompleted: this.campaignCompleted,
       threatTier: this.threatTier,
       upgrades: this.upgrades,
@@ -12632,24 +12813,7 @@ export class GameEngine {
     const phase = index * 0.73
     const home = mesh.position.clone()
     const initialAngle = phase * 4.7
-    const baseHp =
-      beast?.hp ??
-      (role === 'commander'
-        ? 150
-        : role === 'champion'
-          ? 260
-          : role === 'brute'
-            ? 130
-            : role === 'archer'
-              ? 45
-              : role === 'scout'
-                ? 55
-                : // §5D — a villager dies to two hits and is meant to. It is not a
-                  // difficulty knob: a peasant with a soldier's health bar would turn
-                  // every raid into a chore and make hitting one feel like a fight.
-                  role === 'peasant'
-                  ? 26
-                  : 70)
+    const baseHp = actorBaseHealth(role)
     const hp = Math.round(
       baseHp *
         this.enemyHealthMultiplier(allegiance) *
@@ -12875,6 +13039,7 @@ export class GameEngine {
     this.calloutCooldown = 0
     this.attackAnimation = 0
     this.activePlayerAttackKind = 'melee'
+    resetPlayerMelee(this.melee)
     this.damageNumberFx.forEach((entry) => this.releaseDamageNumberFx(entry))
     this.comicCalloutFx.forEach((entry) => this.releaseComicCalloutFx(entry))
     this.impactRayFx.forEach((entry) => this.releaseImpactRayFx(entry))

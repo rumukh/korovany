@@ -330,6 +330,37 @@ export function createAbilityView(
   }
 }
 
+/**
+ * The player's melee sequence, as the HUD sees it.
+ *
+ * The beat counter is the only place the game says out loud that the attack button is a
+ * sequence rather than a cooldown, and the finisher flag is the only place it says the
+ * third beat costs something. `world/CombatResolver.ts` owns the timings; this is what
+ * survives into the view.
+ */
+export interface MeleeView {
+  /** The beat in flight, or the beat the sequence is still open on. 0 when closed. */
+  beat: number
+  /** How many beats the sequence has. The HUD draws this many pips. */
+  beats: number
+  /** True when the next press would throw the finisher and the stamina is there. */
+  finisherReady: boolean
+  /** Stamina the finisher costs. */
+  finisherCost: number
+  /** True while the finisher is running: no cancel, no movement. */
+  committed: boolean
+}
+
+export function createMeleeView(beats: number, finisherCost: number): MeleeView {
+  return {
+    beat: 0,
+    beats,
+    finisherReady: false,
+    finisherCost,
+    committed: false,
+  }
+}
+
 export interface Objective {
   id: string
   text: string
@@ -419,6 +450,7 @@ export interface GameView {
   paused: boolean
   caravanCooldown: number
   ability: AbilityView
+  melee: MeleeView
   activeEvent: WorldEventView | null
   lootToast: LootToastView | null
   campaignCompleted: boolean
