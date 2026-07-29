@@ -654,8 +654,31 @@ no new dependencies.
   control failed to work.
   The honest bound on all of it: **a gate does not substitute for a reader, it frees one.**
   This instrument closes the two defects already found and has no opinion about the next
-  class, because its controls are the ones its author could think of. Every novel class in
-  this section came from a second party, and that is the count to keep.
+  class, because its controls are the ones its author could think of.
+  **The stronger claim first written here — that enumerating a hypothesis space usually
+  requires a second party — is false, and the record of this work refutes it.** Five
+  self-generated enumerations, each against a position its own author had already
+  committed: the third reading of the timestamp field; the aim defect in a four-session
+  proof, found by the session that ran it; the inverted sign in a paragraph, found by the
+  author of the paragraph; the coreference defect between a local tip and a PR head; and
+  the census-versus-verdict filter.
+  **None came from reflection.** Every one arrived while running an instrument for an
+  unrelated purpose and reading a row nobody had asked for — a `git rev-parse` run to
+  compose a report, a pass/fail line printed for a different reason, a query aimed at a
+  neighbouring question. So:
+  > **Enumeration is a side effect of measurement, not of thinking harder.** You cannot
+  > decide to have a hypothesis; you can decide to run something that returns columns you
+  > did not ask about.
+  That is actionable where *get a reviewer* is not, and it supplies the missing mechanism
+  for the rule two entries above: **ship the reproduction with the concession works because
+  a reproduction is an instrument.** Instruments generate hypotheses in whoever runs them —
+  including the author who built one to defend a claim — which is why review functions even
+  when the reviewer is agreeing with you.
+  *(Attribution, corrected against the store rather than recalled: the four-session aim
+  defect was raised at `23:39:05` by the session that owned the proof, and acknowledged
+  here five minutes later. A sibling later credited it to this session. The misattribution
+  ran toward this session and away from its author — the unaudited direction, inside the
+  message that names it.)*
 - **A measurement is a claim with a timestamp nobody writes down.** Every other rule
   here targets claims that were wrong. This one is about claims that were *right and
   stopped being* — which is a different failure, because a measurement carries its own
