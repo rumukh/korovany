@@ -1123,9 +1123,9 @@ and the gap that leaves is closed from the other side, by pinning the population
   differently.
 
 That is a weaker claim and a stronger instrument, which is the trade this section has been
-recommending to other people for two days. **The check that can be defeated by an unfamiliar
-syntax was replaced by one that cannot, at the cost of admitting it only detects change
-rather than danger.**
+recommending to other people since its first entry. **The check that can be defeated by an
+unfamiliar syntax was replaced by one that cannot, at the cost of admitting it only detects
+change rather than danger.**
 
 One coda, because it is the same error one level up. I concluded that reviewer had **never
 run** — `updated_at` frozen thirteen seconds after creation, nothing after a direct probe —
@@ -1191,12 +1191,12 @@ required: a message delivered *at* completion carries a clock reading at or afte
 never before it. **The wrong sign and the wrong mechanism are one error, and each made the
 other look supported.** A sibling proposed the competing account — the turn row is finalised
 when the next input arrives, making the offset a write latency — which fits the identical rows
-and dies on two counts: twenty-one sessions in this store have been idle over fifty hours and
-every one has its final turn stamped, a row that account cannot write; and the reviewer's turn 1
-is stamped `21:58:27.392` while the message opening its turn 2 was sent no earlier than
-`22:07:09.222`, eight minutes forty-two seconds clear. What survives is neither: the next turn's
-clock and the previous turn's row are two reads bracketing one boundary, in that order, five
-milliseconds apart.
+and dies on two counts: twenty-one sessions in this store had their final turn before
+`2026-07-27T00:00Z` and every one has its final turn stamped, a row that account cannot write;
+and the reviewer's turn 1 is stamped `21:58:27.392` while the message opening its turn 2 was
+sent no earlier than `22:07:09.222`, eight minutes forty-two seconds clear. What survives is
+neither: the next turn's clock and the previous turn's row are two reads bracketing one
+boundary, in that order, five milliseconds apart.
 
 The rung is that **the corollary never needed the mechanism.** The alignment alone fixes the
 incoming clock to the recipient's boundary; the mechanism was added because it made the
@@ -1540,6 +1540,64 @@ put the file back. The tell was available and I nearly missed it: the reviewer's
 and mine disagreed, and **a disagreement with a careful party is evidence about the instrument
 before it is evidence about the claim.** Absolute paths now, and the harness prints the landed
 line.
+
+#### A gate of my own: the count was fine and its predicate had a clock in it
+
+A sibling reported that its own "six sessions idle beyond fifty hours" had been a `LIMIT 6`
+restated as a census. Mine was not: twenty-one reproduces with no limit clause, and all eighty
+sessions carrying turns have a stamped final turn. **The predicate was the defect instead.**
+Idleness is measured against `now`, so the same query over the same unchanged rows returns 11
+at 01:00, 20 at 02:00 and 21 at 02:52. The number nearly doubled inside two hours while the
+data stood still, and it went into a permanent document as though it were a measurement.
+
+This file's gate named `no spec makes a status claim that can only expire` did not fire, and
+the reason is worth more than the fix. Its nine patterns all name an unfinished state, an
+absent artefact or a pending merge — every one a phrase that *advertises* its own volatility. A
+relative-time threshold advertises nothing: `twenty-one sessions have been idle over fifty
+hours` reads exactly like a finished measurement. **The gate detects the vocabulary of
+currency, not the semantics of a moving referent**, and the perishable claim with no currency
+vocabulary in it is precisely the one that gets written down.
+
+The distinguishing property turns out to be tense rather than wording. `One limit stayed open
+for two hours` and `twenty-one sessions have been idle over fifty hours` are the same
+construction; only the first has both ends nailed to named events. That suggested a mechanical
+rule, so the population was counted before the rule was written: twenty-four
+number-plus-time-unit lines across the three specs, of which twenty-two are closed intervals
+between two named events, two are anchored at reading time, and one carries a count. **A guard
+would have been wrong on twenty-three of twenty-four**, which is a refutation obtained for one
+query rather than for another reviewer round — the tenth round's discipline moved one step
+earlier, to before the guard exists.
+
+So the remedy stays an authoring rule, and it is one already written in this section: cite
+endpoints, not lengths. It was derived for commit ranges after the same gate rejected `the
+eight most recent commits`, and it was never carried across to time. **Third instance in one
+session of a rule held in this repository, about the exact thing in front of its author, and
+not applied.** Both offenders are pinned: the count now names `2026-07-27T00:00Z`, and a nearby
+`for two days` names its first entry.
+
+One instrument note, and it is the same family as the `[IO.File]` path failure two rounds up.
+The re-wrap ran inside a PowerShell function that printed progress with `Write-Output`, which
+joins the function's **return stream** — so two progress strings were prepended to the document
+as lines 1 and 2. Every check aimed at the edit passed: longest-line unchanged, the over-120
+set identical to `HEAD`, the paragraph diffs correct. **A contamination lands where nothing is
+looking precisely because the looking was aimed at the thing being changed.** Reading the whole
+diff rather than the changed hunks is what caught it, and it is the cheapest habit in this
+file.
+
+Writing that paragraph made the gate fail, because quoting its pattern list is
+indistinguishable to it from using those phrases — the use-versus-mention defect that took ten
+rounds to remove from the deployment guard, sitting in a second guard in the same suite.
+Markdown offers a clean structural exemption, since a code span is always a mention. **It was
+measured and refused.** Across the three specs there are 1,817 code spans and exactly one line
+matching any pattern, so an exemption would be validated against an empty population of real
+offenders, and it would hand every future expiring claim a legal disguise costing one backtick.
+
+That is the opposite call from the tenth round, and the difference is not correctness, since
+both are false positives on content nobody should be punished for. The tenth round rejected
+ordinary JSON that any workflow author might write, an open population that has to keep being
+served. This one rejected one paragraph written by the guard's own author about the guard,
+where routing around it costs a sentence. **A false positive earns a fix when the population it
+rejects is one you must keep serving, and a reword when it is not.**
 
 ### 6.2 Known residue: sign-only assertions guarding loops
 
