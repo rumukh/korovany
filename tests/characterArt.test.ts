@@ -2881,9 +2881,10 @@ const WORLD_DEATH_TRAVEL: Record<BeastKind, number> = {
  * that are wrong, and the companion test computes replacements rather than correcting
  * them by hand:
  *
- * - Driven at the pose they name, the sibling rig gives **0.4589, 0.5231 and 0.7911** —
- *   between 42% and 55% more than recorded. Nothing could have noticed: no assertion
- *   ever evaluated them.
+ * - Driven at the pose they name, the sibling rig gives figures roughly half again as
+ *   large — computed by the companion test rather than restated, so the retraction
+ *   cannot itself decay. Nothing could have noticed either way: no assertion evaluated
+ *   them.
  * - The pose they name is **not reachable.** The stagger branch sets
  *   `actor.action = null`, and `sampleActorPose` reads the attack out of `actor.action`.
  *   That is the *same* correction the humanoid table needed, made in this same file,
@@ -2893,8 +2894,8 @@ const WORLD_DEATH_TRAVEL: Record<BeastKind, number> = {
  *
  * `updateActorDeathMotion` writes `head-pivot.rotation.z = side * 0.28 * eased` — a
  * skull lolling as the body goes down — and on a pivot at the feet that swings it
- * through the entire ground-to-skull lever arm. On a troll: **1.1607 authored units,
- * 1.5553 m in the world, on every single death**, covered by no assertion at all. The
+ * through the entire ground-to-skull lever arm — the largest instance of the defect on
+ * every animal, **on every single death**, covered by no assertion at all. The
  * humanoid rig had the identical hole. A pose that only happens after the health bar
  * disappears is still a pose.
  *
@@ -3169,8 +3170,9 @@ test("a beast's skull is rigid with its ribs and hinges at the neck", () => {
  * translation and ignore its rotation — that is exactly what a head-stabilisation hack
  * looks like, and it is the most likely future edit here — and no position assertion
  * would ever see it. On the arrangement this rig replaces the skull's axes were out by
- * **11.6733°** on a troll and **8.3171°** on the other three, which is precisely the
- * chest's whole rotation, because the skull inherited none of it.
+ * **exactly the chest's whole rotation**, because the skull inherited none of it — the
+ * per-animal figures are in `FOOT_ROOTED_SKULL`'s `twist` column, computed by the
+ * companion test.
  *
  * **Proportion.** Hanging a head off a chest is exactly what hands it a pair of
  * shoulders: `applyActorVisualVariation` runs for beasts too, and it writes the actor's
@@ -3876,8 +3878,9 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
  * both arms, and `applyActorVisualVariation` puts the leg splay on `rotation.z` under
  * every pose pass's `rotation.x`. A reviewer found it by asking what happens outside the
  * one pass I had looked at — which is the same defect as scoping a fix to the instance
- * that was reported, committed inside the table written to avoid it. Measured on the
- * death pose: **13.6671°** between `XYZ` and `ZYX` at `x` 0.34, `z` -0.72.
+ * that was reported, committed inside the table written to avoid it. What it is worth on
+ * the death pose is computed below, from angles parsed out of `updateActorDeathMotion`
+ * rather than retyped.
  *
  * `applyLimbPose` now writes those, so the row is guarded by a setter rather than by a
  * claim. It is shared with the humanoid rig; see its docblock for why that is stated
@@ -3885,22 +3888,14 @@ test('a beast never reaches the biped posture pass, and its own yaw stays clampe
  *
  * ## What the guard is worth on a beast, measured
  *
- * Honestly, and **not by borrowing the humanoid's 30.0230°**, which is a figure about a
- * different animal. A beast's chest turns by at most 0.2 rad where a person's reaches
- * 0.70, but its *head* carries a 0.45 rad look and a 0.28 rad death roll. So the two
- * pivots swap places: on a person the chest was the expensive one, on a beast it is the
- * skull. Over the same pose box every other beast measurement uses, with the solve still
- * assuming XYZ throughout:
+ * Honestly, and **not by borrowing the humanoid's figure**, which is about a different
+ * animal. A beast's chest turns by at most 0.2 rad where a person's reaches 0.70, but its
+ * *head* carries a 0.45 rad look and a 0.28 rad death roll. So the two pivots swap
+ * places: on a person the chest was the expensive one, on a beast it is the skull. The
+ * per-order costs are in `WRONG_ORDER_COST` below, swept over the same pose box every
+ * other beast measurement uses with the solve still assuming XYZ.
  *
- * | wrong order | head-pivot | torso-pivot |
- * | --- | --- | --- |
- * | `YXZ` | 0.5036° | 0.0691° |
- * | `ZXY` | 3.7855° | 0.3583° |
- * | `ZYX` | **4.6012°** | 0.4239° |
- * | `YZX` | 3.7926° | 0.4230° |
- * | `XZY` | 2.1355° | 0.0059° |
- *
- * Every entry is pinned rather than bounded, and the reason is in the first row.
+ * Every entry is pinned rather than bounded, and the reason is the `YXZ` row.
  * **`YXZ` is the cheapest of the five on the head and it is the only one anybody would
  * actually write** — it is what a person reaches for when a head gimbal-locks at extreme
  * pitch, and it is applied at the animation site rather than the builder. A single bound
@@ -4547,8 +4542,8 @@ test('the engine poses a beast through the rig these tests measure', () => {
     'the death pass no longer writes all four limbs through `applyLimbPose`. Both arms '
     + 'take x *and* z as a body goes down and both legs carry the variation pass\'s splay '
     + 'on z under the death pitch on x, so every one of the four is a multi-axis pivot '
-    + 'whose Euler order nothing else re-asserts — worth 13.6671 degrees between XYZ and '
-    + 'ZYX on the arm pose.',
+    + 'whose Euler order nothing else re-asserts. What that is worth on the death arm is '
+    + 'computed and pinned by `every beast pivot uses the Euler order its maths assumes`.',
   )
   for (const [limb, guard] of [
     ['leftArm', 'if (leftArm) {'],
@@ -5115,8 +5110,9 @@ test('the engine wires the rig the way these tests measure it', () => {
     + 'survived, because `Euler`\'s order setter recomputes the quaternion on its own. '
     + '**This pattern covers bracket access and `reorder()` because the dotted form alone '
     + 'did not**: the same reviewer wrote `rotation[\'order\'] = \'ZYX\'` on the limb '
-    + 'pivots in `createBeast` and on the tail, worth 13.6671 and 7.1334 degrees of '
-    + 'silent rotation, and the ban did not see either. A ban on spellings is bounded by '
+    + 'pivots in `createBeast` and on the tail, both worth real silent rotation — the '
+    + 'figures are computed by `every beast pivot uses the Euler order its maths assumes` '
+    + '— and the ban did not see either. A ban on spellings is bounded by '
     + 'the spellings you thought of, which is why the pivots that matter are held by '
     + 'setters and this exists only to stop a write landing *after* one.',
   )

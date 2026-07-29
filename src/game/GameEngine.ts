@@ -14302,15 +14302,15 @@ export class GameEngine {
    * and the skull must not swing on the end of its own neck offset. The head still
    * tracks, just over a narrow arc and about the neck rather than the body centre.
    *
-   * The skull hangs off the ribcage now — see `buildBeastSkeleton` — which changes
-   * what the numbers below mean rather than what they are. `lookYaw` is measured from
-   * the animal's own facing, so it is a *body*-space angle, and `head-pivot` is a
-   * chest-space node: writing it raw would leave the gaze out by 2.5583° on a
-   * quadruped and 3.0334° on a troll, and the obvious `lookYaw - chestYaw` leaves
-   * 1.2799°/1.7368° and is worse than doing nothing in 1680 of 22684 swept states.
-   * Those are small next to the 43.64° the same mistake was worth on a person —
-   * a beast's chest barely turns — but they are an error the reparenting *introduces*,
-   * so they are not optional, and `solveHeadYaw` answers them exactly.
+   * The skull hangs off the ribcage now — see `buildBeastSkeleton`. `lookYaw` is
+   * measured from the animal's own facing, so it is a *body*-space angle, and
+   * `head-pivot` is a chest-space node: writing it raw leaves the gaze wrong by the
+   * chest's own contribution, and the obvious `lookYaw - chestYaw` cancels only while
+   * the chest's other two axes are zero, which a lunging, rolling animal's are not.
+   * `a beast's head tracks its target through its own chest` computes what each rejected
+   * rule costs and pins it. Small next to what the same mistake was worth on a person —
+   * a beast's chest barely turns — but an error the reparenting *introduces*, so not
+   * optional, and `solveHeadYaw` answers it exactly.
    *
    * The damping moved with it, onto `actor.headYaw`, for the reason the biped pass
    * gives: a frame change is not a motion, so the body-space angle is what damps and
