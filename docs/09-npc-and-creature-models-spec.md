@@ -607,19 +607,35 @@ no new dependencies.
   > property that generates the record.**
   Structurally identical to *a count taken over hypotheses that arrived can only be N for N*,
   applied to rules instead of findings, and neither party saw it while building the count.
-  Measured on this session's own record, one rule alone:
-  ```
-  589cc58  added "local tip, remote tip and PR head must agree"
-  commits since, each running that check          29
-  defects it recorded in those 29                  0
-  commits recording a rule that failed to transfer 5
-  ```
-  **Twenty-nine silent successes of one check against five recorded failures across all
-  rules** — and 29 is a floor, counting one rule at commit granularity. A sibling supplies
-  two more from the same night: a `gh` filter returning `null` for an existing run, and a
-  `^# pass` pattern over output that is not hash-prefixed. Both were rule-applications that
-  worked. **Neither felt like applying a rule; both felt like ordinary caution**, and neither
-  left a trace.
+  **A count was then offered in support and it does not survive its own premise.** This
+  session published *"29 commits, each running the check, 0 defects recorded"* against a
+  stated head — and `589cc58..8e69593` is 29 while `589cc58..7d343f5`, the head cited, is
+  **30**. The count was taken at one commit and published against another: a fourth instance
+  of the coreference defect, **inside the count of that defect's own silent successes.**
+  The arithmetic is the smaller problem. If success generates no record, **a count of
+  successes cannot come from the record**; what was counted is *commits at which the check
+  ran*, and that is recorded, in every verification block. So:
+  > **The moment a population is countable, it is not the silent one.** Any number produced
+  > for the silent population is a count of something else — runs, opportunities, or commits.
+  And zero findings across thirty runs is the shape of *an instrument that never fires is
+  indistinguishable from one that cannot fire*, aimed at the check the count was about. There
+  is a duller mechanism available for the zero: `589cc58` created the rule **by fixing the
+  defect**, and the practice it installed — printing all three heads together — makes that
+  defect visible at the instant it would occur. Thirty occasions on which it had **no
+  opportunity to form silently** is opportunities removed by construction, not preventions.
+  **The two silent successes offered as the other half of the evidence fail the same way**,
+  and the sentence that kills them was written in support of the finding: *a rule that has
+  been internalised is indistinguishable from ordinary caution, and ordinary caution is not
+  written down.* If that holds, neither caution can be attributed to the rule — they may be
+  caution that would have occurred had it never been written. **Two behaviours were observed
+  and a cause assigned, and the counterfactual is exactly what is not stored.** Which is the
+  missing-column entry one level up: **not who said it, but what produced it.**
+  > **A rule's application is unattributable even where the behaviour is observed**, because
+  > the behaviour does not carry which rule produced it.
+  So the non-events are not merely unrecorded but **unidentifiable in principle**, and the
+  latency claim keeps its status as untested — now with an argument for why rather than an
+  absence of one. Both the counterexample count and the evidence for it are withdrawn; the
+  finding stands on the argument alone, which is the correct place for it.
   So the count was scoring rules against **prevention** — a bar this programme rejected in
   writing hours earlier, in the same file the count was drawn from: *the rule did not stop
   me, it shortened the round trip.* The surviving form is a latency claim, and its second
