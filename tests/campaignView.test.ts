@@ -296,7 +296,7 @@ function makeRestored(
         supply: rng.next(),
         lastEventTick: rng.integer(0, 40),
       },
-    } as ActiveRunSaveV3['regionDeltas'][string]
+    } as unknown as ActiveRunSaveV3['regionDeltas'][string]
   }
   return {
     version: 3,
@@ -333,9 +333,9 @@ function makeRestored(
       caravanCooldown: rng.range(0, 60),
     },
     eventState: {},
-    chronicleState: createChronicleState(blueprint),
+    chronicleState: createChronicleState(),
     rngStates: {},
-    achievementRunState: { version: 1, runId: 'run-1', counters: {}, unlocked: [] } as ActiveRunSaveV3['achievementRunState'],
+    achievementRunState: { version: 1, runId: 'run-1', counters: {}, unlocked: [] } as unknown as ActiveRunSaveV3['achievementRunState'],
   }
 }
 
@@ -481,7 +481,7 @@ test('minimap markers match the engine loop they replaced, in the same order', (
       activeObjectiveSiteId: input.activeSiteId,
       activeObjectiveSiteX: input.activeSiteX,
       activeObjectiveSiteZ: input.activeSiteZ,
-    } as LiveViewInput)
+    } as unknown as LiveViewInput)
     assert.deepEqual(actual, expected, `seed ${index}`)
     comparisons += 1
     if (actual.length > expected.length) throw new Error('unreachable')
@@ -526,7 +526,7 @@ test('the objective pin is drawn after landmarks so a crowd cannot bury it', () 
     objectives,
     events: [{ markerId: 'event-0', markerX: 4, markerZ: 4, title: 'raid' }],
     actors: [{ id: 'actor-0', x: 5, z: 5, kind: 'enemy' }],
-  } as LiveViewInput)
+  } as unknown as LiveViewInput)
 
   const kinds = markers.map((marker) => marker.kind)
   assert.deepEqual(kinds, ['player', 'caravan', 'landmark', 'objective', 'event', 'enemy'])
@@ -764,7 +764,7 @@ test('a deliberately wrong view builder is caught by the same comparisons', () =
       objectives,
       events: [],
       actors: [{ id: 'a', x: 2, z: 2, kind: 'enemy' }],
-    } as LiveViewInput)
+    } as unknown as LiveViewInput)
     const reversed = [...markers].reverse()
     if (JSON.stringify(markers) !== JSON.stringify(reversed)) orderDisagreements += 1
   }
