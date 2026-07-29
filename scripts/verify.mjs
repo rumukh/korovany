@@ -538,6 +538,21 @@ export const CONTROLS = [
       return headsAgree('9999999', '9999999', open.head) === true
     },
   },
+  {
+    name: 'a-partition-reports-its-own-residual',
+    // The defect this closes: prose and fenced were reported against the total
+    // with no arm for "neither", so a file skipped by a guard contributed to
+    // the total and to neither bucket, silently. An equality, not a threshold.
+    check: () => partitionResidual(29, [18, 9]) === 2
+      && partitionResidual(27, [18, 9]) === 0
+      && partitionResidual(10, [20]) === -10,
+    mutate: () => partitionResidual(29, [18, 9]) === 0,
+  },
+  {
+    name: 'a-skipped-file-shows-up-as-residual',
+    check: () => partitionResidual(12, [5, 4]) === 3,
+    mutate: () => partitionResidual(12, [5, 4]) === 0,
+  },
 ]
 
 function runControls() {
@@ -625,6 +640,7 @@ function collectProse() {
   // that is the case where the clean result is a lie.
   const unreadable = []
   const prose = []
+  const fencedOut = []
   const allAdded = []
   for (const file of files) {
     const diff = git('diff', '-U0', `${BASE}...HEAD`, '--', file)
@@ -650,10 +666,25 @@ function collectProse() {
     }
     const fenced = fencedLines(source)
     for (const { lineNo, text } of added) {
-      if (!fenced.has(lineNo)) prose.push(text)
+      if (fenced.has(lineNo)) fencedOut.push(text)
+      else prose.push(text)
     }
   }
-  return { files, prose, allAdded, unreadable }
+  return { files, prose, fencedOut, allAdded, unreadable }
+}
+
+/**
+ * The parts must sum to the population.
+ *
+ * `prose` and `fencedOut` partition `allAdded` — except that a file skipped by
+ * any guard above contributes to `allAdded` and to neither bucket, silently. A
+ * partition with no residual bucket cannot report that it dropped anything, so
+ * the residual is computed and asserted rather than assumed to be zero. This is
+ * an **equality**, not a threshold: thresholds are what the rest of this file
+ * uses, and an equality is what a decomposition needs.
+ */
+export function partitionResidual(total, parts) {
+  return total - parts.reduce((a, b) => a + b, 0)
 }
 
 function main() {
@@ -750,14 +781,16 @@ function main() {
   }
 
   // --- sweep ----------------------------------------------------------------
-  const { files, prose, allAdded, unreadable } = collectProse()
+  const { files, prose, fencedOut, allAdded, unreadable } = collectProse()
   const bounds = sweepBounds(prose)
   const long = overLong(allAdded)
+  const residual = partitionResidual(allAdded.length, [prose.length, fencedOut.length])
   console.log(`  markdown files changed : ${files.length}${files.length === 0 ? '  (sweep examined nothing and contributes nothing below)' : ''}`)
-  console.log(`  added / prose lines    : ${allAdded.length} / ${prose.length}`)
+  console.log(`  added = prose + fenced : ${allAdded.length} = ${prose.length} + ${fencedOut.length}${residual === 0 ? '' : `  RESIDUAL ${residual}`}`)
   console.log(`  double space, 3 bounds : raw=${bounds.raw}  placeholder(outside inline code)=${bounds.placeholder}  deletion(upper bound)=${bounds.deletion}   [prose only]`)
   console.log(`  over-120               : ${long.length}   [all added lines, fenced included — long code lines break rendering too]`)
   console.log(`  controls               : ${controls.total} run, ${controls.failed.length} failed, ${controls.broken.length} broken`)
+  if (residual !== 0) failures.push(`${residual} added lines fell into neither bucket — the partition does not sum to its population`)
   if (unreadable.length > 0) failures.push(`sweep could not read: ${unreadable.join(', ')}`)
   if (bounds.placeholder > 0) failures.push(`${bounds.placeholder} double spaces outside inline code`)
   if (long.length > 0) failures.push(`${long.length} lines over 120 characters`)
