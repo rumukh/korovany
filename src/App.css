@@ -1990,6 +1990,27 @@ button {
   width: 0.5rem;
 }
 
+/* Roadmap 1.3 — the pinned rumour. Reads as a target rather than as a place: the objective
+   pin is where the campaign wants you, this is where you said you would go. */
+.map-marker.rumour {
+  align-items: center;
+  background: var(--cp-panel-strong);
+  border: 1px solid var(--cp-link);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--cp-link) 28%, transparent);
+  color: var(--cp-link);
+  display: flex;
+  height: 0.8rem;
+  justify-content: center;
+  width: 0.8rem;
+  z-index: 6;
+}
+
+.map-marker.rumour svg {
+  height: 0.48rem;
+  stroke-width: 3;
+  width: 0.48rem;
+}
+
 .map-legend {
   color: var(--cp-text-muted);
   display: flex;
@@ -2145,6 +2166,135 @@ button {
 
 .chronicle-entry.danger .chronicle-square {
   color: var(--cp-danger);
+}
+
+/* Roadmap 1.3 — the rumour board. Sits under the chronicle because it is the same feed
+   asked as a question: two rows at most, and nothing at all when the world is quiet. */
+.rumour-card {
+  padding: 0.65rem;
+  width: 16rem;
+}
+
+.rumour-card .hud-card-header .zone-code {
+  font-family: inherit;
+  font-weight: 400;
+  max-width: 8.5rem;
+  text-align: right;
+  text-transform: none;
+}
+
+.rumour-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  pointer-events: auto;
+}
+
+.rumour-entry {
+  background: var(--cp-surface-soft);
+  border: 1px solid var(--cp-border);
+  border-radius: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.4rem;
+}
+
+.rumour-entry.pinned {
+  border-color: color-mix(in srgb, var(--cp-link) 55%, var(--cp-border));
+}
+
+.rumour-entry.verdict.kept {
+  border-color: color-mix(in srgb, var(--cp-success) 55%, var(--cp-border));
+}
+
+.rumour-entry.verdict.broken {
+  border-color: color-mix(in srgb, var(--cp-danger) 55%, var(--cp-border));
+}
+
+.rumour-line {
+  align-items: center;
+  display: flex;
+  gap: 0.35rem;
+}
+
+.rumour-line strong {
+  color: var(--cp-text);
+  flex: 1;
+  font-size: 0.66rem;
+}
+
+.rumour-line svg {
+  height: 0.72rem;
+  width: 0.72rem;
+}
+
+.rumour-entry.verdict.kept .rumour-line svg {
+  color: var(--cp-success);
+}
+
+.rumour-entry.verdict.broken .rumour-line svg {
+  color: var(--cp-danger);
+}
+
+.rumour-clock {
+  align-items: center;
+  color: var(--cp-text-muted);
+  display: flex;
+  font-family: Consolas, "Courier New", Courier, monospace;
+  font-size: 0.58rem;
+  gap: 0.2rem;
+}
+
+.rumour-task,
+.rumour-stake,
+.rumour-outcome {
+  font-size: 0.6rem;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.rumour-task,
+.rumour-outcome {
+  color: var(--cp-text);
+}
+
+.rumour-stake {
+  color: var(--cp-warning);
+}
+
+.rumour-progress {
+  background: var(--cp-border);
+  border-radius: 999px;
+  height: 0.22rem;
+  overflow: hidden;
+}
+
+.rumour-progress i {
+  background: var(--cp-link);
+  display: block;
+  height: 100%;
+}
+
+.rumour-pin {
+  align-self: flex-start;
+  background: var(--cp-surface);
+  border: 1px solid var(--cp-border);
+  border-radius: 0.3rem;
+  color: var(--cp-text);
+  cursor: pointer;
+  font-size: 0.6rem;
+  min-height: 1.6rem;
+  padding: 0.2rem 0.6rem;
+  pointer-events: auto;
+}
+
+.rumour-pin:hover {
+  border-color: var(--cp-link);
+}
+
+.rumour-pin.active {
+  border-color: color-mix(in srgb, var(--cp-danger) 55%, var(--cp-border));
 }
 
 .shop-supply-note {
@@ -4174,6 +4324,25 @@ kbd {
 
   .chronicle-card {
     display: none;
+  }
+
+  /* Roadmap 1.3 — the chronicle card is a feed and can wait; the rumour board is a
+     decision with a clock on it, so it stays and loses its prose instead. */
+  .rumour-card {
+    padding: 0.4rem;
+    width: 10.5rem;
+  }
+
+  .rumour-card .hud-card-header .zone-code,
+  .rumour-task,
+  .rumour-stake {
+    display: none;
+  }
+
+  .rumour-pin {
+    align-self: stretch;
+    min-height: 2rem;
+    text-align: center;
   }
 
   .generated-map-meta {

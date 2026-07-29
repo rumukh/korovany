@@ -89,6 +89,7 @@ import {
   createChronicleState,
   getChronicleProtectedRegionIds,
   getContestedRegionIds,
+  isRegionRazed,
   tickChronicle,
   type ChronicleEvent,
   type ChronicleState,
@@ -109,12 +110,24 @@ import {
   campaignObjectivesComplete,
   commitChronicleTicks,
   completeObjectiveEntry,
+  createChronicleCommitmentState,
   createGeneratedObjectives,
   enemyHealthMultiplier,
   getActiveObjectiveNode,
+  getPinnedRumour,
+  getRumourEscort,
+  getRumourReservedRegionIds,
   isWithinObjectiveArrival,
+  advanceRumourProgress,
+  markRumourActioned,
+  offerRumours,
+  pinRumour,
   playerObjectiveRatio,
   selectChronicleAnnouncements,
+  settleDueRumours,
+  type ChronicleCommitmentState,
+  type ChronicleRumour,
+  type RumourWorldContext,
 } from '../src/game/world/CampaignDirector.ts'
 import {
   actionCooldown,
@@ -152,6 +165,7 @@ import {
   type AiActor,
   type AiPoint,
 } from '../src/game/world/ActorAi.ts'
+import type { Territory } from '../src/game/world/worldTypes.ts'
 import {
   BEAST_PROFILES,
   BEAST_LEASH_RANGE,
@@ -255,6 +269,38 @@ export type MeleeModel = 'legacy' | 'honest'
  */
 export type MeleeDefence = 'none' | 'heavy' | 'all'
 
+/**
+ * Roadmap 1.3 — how the scripted player treats the chronicle's rumours.
+ *
+ * Four arms, and the fourth is the one that makes the measurement mean anything:
+ *
+ * - `off` is **the default and stays the default**, for the same reason `legacy` is the
+ *   default melee model: every pinned number in `runHarnessTest`, `runHarnessSchedules` and
+ *   `runHarnessSweep` describes one fixed simulation, and an ignored rumour resolving
+ *   against the player is a real world change, so switching it on by default would rewrite
+ *   those baselines rather than add an arm beside them.
+ * - `ignore` is **the no-input baseline the roadmap's signal is measured against**: rumours
+ *   are offered and resolve on their clocks, and the player never pins one or walks to one.
+ * - `walk` is the **placebo**. The player detours to exactly the same squares the committed
+ *   arm detours to, and pins nothing. Presence alone already freezes a region and moves
+ *   encounters, so without this arm "committing changed region control" would be indist-
+ *   inguishable from "walking somewhere else changed region control".
+ * - `commit` is the treatment: pin one, honour it, burn the depot if that is what it asks.
+ */
+export type RumourPolicy = 'off' | 'ignore' | 'walk' | 'commit'
+
+/** How close the scripted player has to get to a depot before it torches it. */
+export const HARNESS_SABOTAGE_RANGE = 6
+/**
+ * How far the scripted player will go out of its way for a rumour, in metres.
+ *
+ * Without a cap the arm degenerates: a policy that abandons the campaign for every rumour
+ * on the board measures a player who never finishes a run, and "region control at victory"
+ * stops having victories in it. ~260 m is roughly two squares, which is a detour rather
+ * than a change of career. Both `commit` and `walk` use it, so the placebo stays matched.
+ */
+export const HARNESS_RUMOUR_DETOUR = 110
+
 /** Why a run ended. `timeout` is the honest answer, not a failure of the harness. */
 export type RunOutcome = 'victory' | 'defeat' | 'timeout'
 
@@ -335,6 +381,27 @@ export interface MeleeMetrics {
   killsByRole: Record<string, number>
 }
 
+/**
+ * Roadmap 1.3 — what the commitment loop did, per run.
+ *
+ * `brokenWhileCommitted` is the honest one: a rumour the player pinned and then failed is
+ * not the same event as one they never touched, and a feature that could only ever be
+ * kept would not be a stake.
+ */
+export interface RumourMetrics {
+  offered: number
+  offeredByKind: Record<string, number>
+  pinned: number
+  resolved: number
+  kept: number
+  broken: number
+  brokenWhileCommitted: number
+  /** Chronicle events the settlements themselves wrote. */
+  events: number
+  /** Simulated seconds the player spent inside a pinned rumour's square. */
+  embodiedSeconds: number
+}
+
 export interface RunReport {
   seed: number
   faction: Faction
@@ -342,6 +409,8 @@ export interface RunReport {
   meleeModel: MeleeModel
   /** How much of a telegraph the scripted player answered. */
   meleeDefence: MeleeDefence
+  /** Roadmap 1.3 — which rumour arm this run was. */
+  rumourPolicy: RumourPolicy
   /** Frames per simulated second the run was driven at. */
   hz: number
   outcome: RunOutcome
@@ -362,6 +431,25 @@ export interface RunReport {
   /** Chronicle log ids in order, the "chronicle history" the schedule arms compare. */
   chronicleHistory: string[]
   chronicleTicks: number
+  /**
+   * Roadmap 1.3's signal, in its raw form: who held each square when the run stopped.
+   *
+   * The map, not only the tally. 1.2's epilogues found the *tally* coming out identical
+   * across two seeds and two factions, so a metric that only counted squares per faction
+   * could report "no change" while every square had swapped owners.
+   */
+  regionControl: Record<string, Territory>
+  /** The same thing counted by holder, which is what the epilogue prints. */
+  regionControlTally: Record<Territory, number>
+  /**
+   * Squares burned to the ground by the time the run stopped.
+   *
+   * Reported because it is the campaign-safety condition made checkable: an objective site
+   * in a razed square is a run that cannot be finished, since `handleGeneratedInteraction`
+   * refuses a burned shop or healer before it looks at whether an objective wanted it.
+   */
+  razedRegionIds: string[]
+  rumours: RumourMetrics
   /** Weather target changes, and where the player was standing for each. */
   weatherTargetChanges: number
   finalWeather: WeatherKind
@@ -387,6 +475,8 @@ export interface RunOptions {
    * claim.
    */
   meleeDefence?: MeleeDefence
+  /** Defaults to `off`, which is the pre-1.3 world every pinned number describes. */
+  rumourPolicy?: RumourPolicy
 }
 
 // ---------------------------------------------------------------------------
@@ -459,6 +549,7 @@ export function runHarness(options: RunOptions): RunReport {
   const timeLimit = options.timeLimit ?? HARNESS_TIME_LIMIT
   const meleeModel = options.meleeModel ?? 'legacy'
   const meleeDefence = options.meleeDefence ?? 'heavy'
+  const rumourPolicy = options.rumourPolicy ?? 'off'
 
   const blueprint = generateWorld(options.seed)
   const terrain = new TerrainSystem(blueprint)
@@ -469,6 +560,9 @@ export function runHarness(options: RunOptions): RunReport {
   const combatRng = new RandomStream(deriveSeed(blueprint.seed, 'gameplay:combat'))
   const eventRng = new RandomStream(deriveSeed(blueprint.seed, 'gameplay:event'))
   const chronicleRng = new RandomStream(deriveSeed(blueprint.seed, 'gameplay:chronicle'))
+  // Roadmap 1.3 — the engine's own dedicated stream, derived the same way, so a rumour
+  // offer never moves a draw the chronicle tick was going to take.
+  const rumourRng = new RandomStream(deriveSeed(blueprint.seed, 'gameplay:rumour'))
 
   const chronicleState: ChronicleState = createChronicleState()
   const chronicleRegions: Map<string, RegionChronicleState> =
@@ -477,6 +571,28 @@ export function runHarness(options: RunOptions): RunReport {
 
   const objectives: Objective[] = createGeneratedObjectives(blueprint, options.faction)
   const objectiveReports = new Map<string, ObjectiveReport>()
+
+  // --- roadmap 1.3: the commitment loop ---------------------------------------
+  const commitments: ChronicleCommitmentState = createChronicleCommitmentState()
+  const rumourReservedRegionIds = getRumourReservedRegionIds(blueprint, options.faction)
+  const rumours: RumourMetrics = {
+    offered: 0,
+    offeredByKind: {},
+    pinned: 0,
+    resolved: 0,
+    kept: 0,
+    broken: 0,
+    brokenWhileCommitted: 0,
+    events: 0,
+    embodiedSeconds: 0,
+  }
+  const rumourContext = (): RumourWorldContext => ({
+    blueprint,
+    state: chronicleState,
+    regions: chronicleRegions,
+    playerFaction: options.faction,
+    reservedRegionIds: rumourReservedRegionIds,
+  })
 
   const startSite = blueprint.sites.find(
     (site) => site.id === blueprint.starts[options.faction],
@@ -591,6 +707,89 @@ export function runHarness(options: RunOptions): RunReport {
   let simulatedRegionIds = new Set(activeRegionIds())
   navigation.setActiveRegions(simulatedRegionIds)
   discoveredRegionIds.add(regionIdAt(player.x, player.z))
+
+  // --- roadmap 1.3: where a rumour sends the player ---------------------------
+
+  /**
+   * The spot a rumour asks the scripted player to stand on.
+   *
+   * A sabotage points at the depot itself, because the torch needs the player within
+   * `HARNESS_SABOTAGE_RANGE` of it. The other two point at the square's centre, which is
+   * the same rule the engine's map pin follows.
+   */
+  const rumourTarget = (
+    rumour: ChronicleRumour,
+  ): { x: number; z: number } | null => {
+    if (rumour.kind === 'sabotage' && rumour.siteId) {
+      const site = getSiteWorldPosition2D(blueprint, rumour.siteId)
+      if (site) return { x: site.x, z: site.z }
+    }
+    const region = terrain.getRegion(rumour.regionId)
+    if (!region) return null
+    return {
+      x: (region.bounds.minX + region.bounds.maxX) / 2,
+      z: (region.bounds.minZ + region.bounds.maxZ) / 2,
+    }
+  }
+
+  /**
+   * The rumour the policy is currently walking toward.
+   *
+   * `commit` follows the pin. `walk` — the placebo — follows the *first offered* rumour
+   * without ever pinning it, so the two arms take the same detours and differ only in
+   * whether a commitment exists. Both are capped by `HARNESS_RUMOUR_DETOUR`.
+   */
+  const steeringRumour = (): ChronicleRumour | null => {
+    const candidate =
+      rumourPolicy === 'commit'
+        ? getPinnedRumour(commitments)
+        : rumourPolicy === 'walk'
+          ? (commitments.rumours.find((rumour) => withinDetour(rumour)) ?? null)
+          : null
+    if (!candidate) return null
+    return withinDetour(candidate) ? candidate : null
+  }
+
+  /** True when the rumour is close enough to be worth leaving the road for. */
+  const withinDetour = (rumour: ChronicleRumour): boolean => {
+    const target = rumourTarget(rumour)
+    if (!target) return false
+    return Math.hypot(target.x - player.x, target.z - player.z) <= HARNESS_RUMOUR_DETOUR
+  }
+
+  /**
+   * One tick of the commitment loop, in the engine's order: progress, settle, offer.
+   * The functions are the shipped ones, not a re-implementation.
+   */
+  const advanceCommitments = (playerRegionId: string): ChronicleEvent[] => {
+    if (rumourPolicy === 'off') return []
+    const context = rumourContext()
+    advanceRumourProgress(commitments, context, playerRegionId || null)
+    const settlement = settleDueRumours(commitments, context, rumourRng)
+    rumours.events += settlement.events.length
+    for (const verdict of settlement.verdicts) {
+      rumours.resolved += 1
+      if (verdict.outcome === 'kept') rumours.kept += 1
+      else {
+        rumours.broken += 1
+        if (verdict.committed) rumours.brokenWhileCommitted += 1
+      }
+    }
+    const offered = offerRumours(commitments, context, rumourRng)
+    if (offered) {
+      rumours.offered += 1
+      rumours.offeredByKind[offered.kind] =
+        (rumours.offeredByKind[offered.kind] ?? 0) + 1
+    }
+    if (rumourPolicy === 'commit' && getPinnedRumour(commitments) === null) {
+      // Only pin what the policy is actually willing to walk to. A commitment the arm
+      // never honours because it is half a map away would measure indifference, not a
+      // decision.
+      const next = commitments.rumours.find((rumour) => withinDetour(rumour))
+      if (next && pinRumour(commitments, next.id)) rumours.pinned += 1
+    }
+    return settlement.events
+  }
 
   // --- objective bookkeeping -------------------------------------------------
 
@@ -714,6 +913,7 @@ export function runHarness(options: RunOptions): RunReport {
       const ratio = playerObjectiveRatio(objectives)
       const produced: ChronicleEvent[] = []
       for (let tick = 0; tick < commitment.ticks; tick += 1) {
+        const playerRegionId = regionIdAt(player.x, player.z)
         produced.push(
           ...tickChronicle({
             blueprint,
@@ -725,8 +925,13 @@ export function runHarness(options: RunOptions): RunReport {
             playerObjectiveRatio: ratio,
             protectedRegionIds,
             frozenRegionIds: simulatedRegionIds,
+            escort:
+              rumourPolicy === 'off'
+                ? null
+                : getRumourEscort(commitments, rumourContext(), playerRegionId || null),
           }),
         )
+        produced.push(...advanceCommitments(playerRegionId))
         chronicleTicks += 1
       }
       getContestedRegionIds(blueprint, chronicleRegions)
@@ -806,16 +1011,24 @@ export function runHarness(options: RunOptions): RunReport {
     const duelTarget =
       policy === 'duelist' ? nearestHostileWithin(actors, player, HARNESS_DUEL_RANGE) : null
 
-    if (policy !== 'idle' && (objectiveSite || duelTarget)) {
+    // Roadmap 1.3 — the detour. `commit` follows its pin and `walk` follows the same square
+    // without one, which is the placebo that keeps "the commitment did it" from meaning
+    // "walking somewhere else did it". `travelSite` replaces the objective as a destination
+    // only; objective completion below still reads `objectiveSite`.
+    const steering = steeringRumour()
+    const rumourSite = steering ? rumourTarget(steering) : null
+    const travelSite = rumourSite ?? objectiveSite
+
+    if (policy !== 'idle' && (travelSite || duelTarget)) {
       const retreating =
         policy === 'cautious' && player.health < player.maxHealth * 0.35
-      if (objectiveSite && (elapsed >= repathAt || waypoints.length === 0)) {
+      if (travelSite && (elapsed >= repathAt || waypoints.length === 0)) {
         repathAt = elapsed + 2
-        pathTo(objectiveSite.x, objectiveSite.z)
+        pathTo(travelSite.x, travelSite.z)
       }
-      let targetX = objectiveSite?.x ?? player.x
-      let targetZ = objectiveSite?.z ?? player.z
-      if (objectiveSite && waypoints.length > 0) {
+      let targetX = travelSite?.x ?? player.x
+      let targetZ = travelSite?.z ?? player.z
+      if (travelSite && waypoints.length > 0) {
         const [wx, wz] = waypoints[0]
         if (Math.hypot(wx - player.x, wz - player.z) < 1.5) waypoints.shift()
         else {
@@ -893,6 +1106,26 @@ export function runHarness(options: RunOptions): RunReport {
     if (currentRegionId) {
       regionDwell[currentRegionId] = (regionDwell[currentRegionId] ?? 0) + delta
       discoveredRegionIds.add(currentRegionId)
+    }
+
+    // Roadmap 1.3 — the embodied half, checked after the player has moved. The torch is the
+    // only one of the three interventions that is an act rather than a stay, and it is
+    // gated on distance to the depot for exactly the reason the design is: a sabotage that
+    // could be done from the HUD would be the rejected purchase.
+    if (rumourPolicy === 'commit') {
+      const pinned = getPinnedRumour(commitments)
+      if (pinned && pinned.regionId === currentRegionId) {
+        rumours.embodiedSeconds += delta
+      }
+      if (pinned && pinned.kind === 'sabotage' && !pinned.actioned && pinned.siteId) {
+        const depot = getSiteWorldPosition2D(blueprint, pinned.siteId)
+        if (
+          depot &&
+          Math.hypot(depot.x - player.x, depot.z - player.z) <= HARNESS_SABOTAGE_RANGE
+        ) {
+          markRumourActioned(commitments, rumourContext(), pinned.id)
+        }
+      }
     }
     const nextActive = new Set(activeRegionIds())
     if (!sameSet(nextActive, simulatedRegionIds)) {
@@ -1133,12 +1366,30 @@ export function runHarness(options: RunOptions): RunReport {
     melee.killsByRole[role] = times.length
   }
 
+  const regionControl: Record<string, Territory> = {}
+  const regionControlTally: Record<Territory, number> = {
+    neutral: 0,
+    elf: 0,
+    guard: 0,
+    villain: 0,
+  }
+  const razedRegionIds: string[] = []
+  for (const region of blueprint.regions) {
+    const key = String(region.id)
+    const chronicle = chronicleRegions.get(key)
+    const control = chronicle?.control ?? region.territory
+    regionControl[key] = control
+    regionControlTally[control] += 1
+    if (isRegionRazed(chronicle)) razedRegionIds.push(key)
+  }
+
   return {
     seed: blueprint.seed,
     faction: options.faction,
     policy,
     meleeModel,
     meleeDefence,
+    rumourPolicy,
     hz,
     outcome,
     elapsed,
@@ -1156,6 +1407,10 @@ export function runHarness(options: RunOptions): RunReport {
     eventExposure: exposure,
     chronicleHistory: chronicleState.log.map((event) => event.id),
     chronicleTicks,
+    regionControl,
+    regionControlTally,
+    razedRegionIds,
+    rumours,
     weatherTargetChanges,
     finalWeather: weatherTarget,
     finalStormFactor: computeStormFactor(weatherMix),

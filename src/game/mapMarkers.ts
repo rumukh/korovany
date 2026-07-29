@@ -38,5 +38,8 @@ export function isMapMarkerVisible(
   marker: MapMarker,
 ): boolean {
   if (marker.kind === 'player' || marker.kind === 'objective') return true
+  // Roadmap 1.3 — a pin the player chose points somewhere they have not been yet, which is
+  // the point of taking it on. Fogging it would make "go there" unanswerable.
+  if (marker.kind === 'rumour') return true
   return markerIsDiscovered(worldMap, marker.x, marker.z)
 }

@@ -190,6 +190,7 @@ function legacyInitialView(
       }),
     },
     chronicle: [],
+    rumours: [],
     shopPriceMultiplier: 1,
     squad: 0,
     elapsed,
@@ -488,6 +489,10 @@ test('minimap markers match the engine loop they replaced, in the same order', (
       activeObjectiveSiteId: input.activeSiteId,
       activeObjectiveSiteX: input.activeSiteX,
       activeObjectiveSiteZ: input.activeSiteZ,
+      // Roadmap 1.3's pin is the one marker the pre-extraction loop never drew, so the
+      // equivalence is asserted with no commitment open. `tests/chronicleCommitments.test.ts`
+      // owns the pinned case.
+      rumours: [],
     } as unknown as LiveViewInput)
     assert.deepEqual(actual, expected, `seed ${index}`)
     comparisons += 1
@@ -533,6 +538,7 @@ test('the objective pin is drawn after landmarks so a crowd cannot bury it', () 
     objectives,
     events: [{ markerId: 'event-0', markerX: 4, markerZ: 4, title: 'raid' }],
     actors: [{ id: 'actor-0', x: 5, z: 5, kind: 'enemy' }],
+    rumours: [],
   } as unknown as LiveViewInput)
 
   const kinds = markers.map((marker) => marker.kind)
@@ -638,6 +644,23 @@ test('the live view carries every field the HUD reads', () => {
     currentRegionId: blueprint.regions[0].id,
     chronicle: [
       { id: 'c0', tick: 3, regionLabel: 'B2', text: 'сгорело', tone: 'danger' },
+    ],
+    rumours: [
+      {
+        id: 'rumour:defend:2:guard',
+        kind: 'defend',
+        title: 'На домики собираются',
+        task: 'Постоять в квадрате B2.',
+        stake: 'Не придёшь — займут.',
+        regionLabel: 'B2',
+        timeRemaining: 64,
+        pinned: true,
+        progress: 0.5,
+        x: 12,
+        z: -8,
+        outcome: null,
+        outcomeText: null,
+      },
     ],
     shopPriceMultiplier: 1.2,
     squad: 2,
@@ -772,6 +795,7 @@ test('a deliberately wrong view builder is caught by the same comparisons', () =
       objectives,
       events: [],
       actors: [{ id: 'a', x: 2, z: 2, kind: 'enemy' }],
+      rumours: [],
     } as unknown as LiveViewInput)
     const reversed = [...markers].reverse()
     if (JSON.stringify(markers) !== JSON.stringify(reversed)) orderDisagreements += 1

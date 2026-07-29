@@ -6,6 +6,8 @@ import type {
   Faction,
   NoticeTone,
   RandomWorldEventKind,
+  RumourKind,
+  RumourOutcome,
   ZoneId,
 } from '../types.ts'
 import type {
@@ -396,6 +398,129 @@ export function describeLocatedEventOutcome(
 export function describeEventHandback(regionLabel: string): string {
   return `Пользователь ушёл из квадрата ${regionLabel}. Чем там кончилось — прочитаешь в хронике.`
 }
+
+// ---------------------------------------------------------------------------
+// Roadmap 1.3 — rumours the player can take on
+// ---------------------------------------------------------------------------
+
+/**
+ * The only place in the game where the world asks the player a question instead of
+ * reporting an answer.
+ *
+ * Three rules for these lines. **The stake is stated before the choice**, in the same
+ * sentence as the cost, because a time-boxed decision with a vague consequence is a
+ * lottery. **The verdict names the decision**, since the whole complaint 1.3 answers is
+ * that the chronicle feed never attributes an outcome to anything the player did. And a
+ * broken promise reads differently from a shrug: `committed` is in the copy, not only in
+ * the state, because "ты обещал" and "никто не обещал" are different sentences about the
+ * same burned village.
+ */
+export interface RumourCopyContext {
+  /** Where the player has to be, as a map square. */
+  regionLabel: string
+  /** The square that pays for it. */
+  targetLabel: string
+  siteLabel: string | null
+  faction: Faction | null
+}
+
+export const RUMOUR_PANEL_TITLE = 'Слухи'
+export const RUMOUR_PANEL_HINT = 'Взяться можно за один. Остальное мир решит без тебя.'
+export const RUMOUR_PIN_LABEL = 'Взяться'
+export const RUMOUR_UNPIN_LABEL = 'Бросить'
+
+const RUMOUR_TITLES: Record<RumourKind, string> = {
+  escort: 'Корован без охраны',
+  defend: 'На домики собираются',
+  sabotage: 'Чужой склад',
+}
+
+export function describeRumourTitle(kind: RumourKind): string {
+  return RUMOUR_TITLES[kind]
+}
+
+/** What the player would have to physically do. */
+export function describeRumourTask(
+  kind: RumourKind,
+  context: RumourCopyContext,
+): string {
+  const site = context.siteLabel ?? DEFAULT_SITE_LABEL
+  if (kind === 'escort') {
+    return `Идти рядом с корованом до точки «${site}». Сейчас он в квадрате ${context.regionLabel}.`
+  }
+  if (kind === 'defend') {
+    return `Постоять в квадрате ${context.regionLabel}, пока не отстанут. Ногами, не по карте.`
+  }
+  return `Дойти до склада «${site}» в квадрате ${context.regionLabel} и поджечь его (E).`
+}
+
+/** What it costs to walk past. Stated before the choice, not after it. */
+export function describeRumourStake(
+  kind: RumourKind,
+  context: RumourCopyContext,
+): string {
+  const site = context.siteLabel ?? DEFAULT_SITE_LABEL
+  if (kind === 'escort') {
+    return `Не пойдёшь — корован ляжет по дороге, а в квадрате ${context.targetLabel} всё подорожает.`
+  }
+  if (kind === 'defend') {
+    return `Не придёшь — ${factionName(context.faction)} займут квадрат ${context.targetLabel} и подпалят точку «${site}».`
+  }
+  return `Не тронешь — со склада снабдят набег на квадрат ${context.targetLabel}, и он сменит хозяина.`
+}
+
+/**
+ * The outcome, attributed to the decision.
+ *
+ * `committed` splits every broken line in two on purpose: the world does the same thing
+ * either way, and the difference the player is owed is whether it was their doing.
+ */
+export function describeRumourVerdict(
+  kind: RumourKind,
+  outcome: RumourOutcome,
+  committed: boolean,
+  context: RumourCopyContext,
+): string {
+  const site = context.siteLabel ?? DEFAULT_SITE_LABEL
+  if (kind === 'escort') {
+    if (outcome === 'kept') {
+      return `Корован дошёл до точки «${site}» целым. Дошёл потому, что рядом кто-то шёл.`
+    }
+    return committed
+      ? `Ты взялся вести корован и не довёл. В квадрате ${context.targetLabel} теперь дороже, и виноват известно кто.`
+      : `Корован никто не повёл, и он не дошёл. Слух был, охраны не было.`
+  }
+  if (kind === 'defend') {
+    if (outcome === 'kept') {
+      return `Набег на квадрат ${context.regionLabel} отбили. Пользователь стоял там, а не читал сводку.`
+    }
+    return committed
+      ? `Ты взялся держать квадрат ${context.regionLabel} и ушёл. ${capitalize(factionName(context.faction))} зашли без тебя.`
+      : `Квадрат ${context.regionLabel} держать было некому. ${capitalize(factionName(context.faction))} зашли.`
+  }
+  if (outcome === 'kept') {
+    return `Склад «${site}» в квадрате ${context.regionLabel} сгорел. Набег на ${context.targetLabel} так и не собрался, а цены у соседей заметили.`
+  }
+  return committed
+    ? `Ты собирался поджечь склад в квадрате ${context.regionLabel} и не дошёл. Оттуда снабдили набег на ${context.targetLabel}.`
+    : `Склад в квадрате ${context.regionLabel} отработал как задумано: набег на ${context.targetLabel} состоялся.`
+}
+
+export function describeRumourPinned(kind: RumourKind): string {
+  return `Взялся: «${RUMOUR_TITLES[kind]}». Теперь это дело пользователя, а не строчка в хронике.`
+}
+
+export function describeRumourDropped(kind: RumourKind): string {
+  return `Бросил: «${RUMOUR_TITLES[kind]}». Мир доведёт до конца сам, и не в твою пользу.`
+}
+
+/** The prompt at the depot, once the player has actually committed to burning it. */
+export function describeSabotagePrompt(siteLabel: string | null): string {
+  return `[E] Поджечь склад: ${siteLabel ?? DEFAULT_SITE_LABEL}`
+}
+
+export const SABOTAGE_DONE_NOTICE =
+  'Склад горит. Припасы, которыми собирались снабжать набег, теперь дым.'
 
 // ---------------------------------------------------------------------------
 // Engine notices
@@ -819,6 +944,7 @@ export type HintId =
   | 'interact'
   | 'map'
   | 'chronicle'
+  | 'rumours'
   | 'squad'
   | 'threat'
   | 'ability'
@@ -882,6 +1008,10 @@ const HINT_COPY: Record<HintId, HintCopy> = {
   },
   chronicle: {
     text: 'Хроника справа — то, что мир делает без пользователя. Пока ты идёшь, кого-то уже грабят.',
+    tone: 'info',
+  },
+  rumours: {
+    text: 'Слух — единственное место, где мир спрашивает, а не докладывает. Взяться можно за один: провести корован, постоять в квадрате или сжечь склад. Пройдёшь мимо — случится и без тебя.',
     tone: 'info',
   },
   squad: {

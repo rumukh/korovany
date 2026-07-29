@@ -149,6 +149,14 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
     firstSighting: (view) => view.chronicle.length > 0,
   },
   {
+    hint: 'rumours',
+    viewFields: ['rumours'],
+    // The panel only exists when the world has something to offer, so the first sighting
+    // is the first offer — the line arrives attached to a decision the player can still
+    // make, not to the news that they missed one.
+    firstSighting: (view) => view.rumours.length > 0,
+  },
+  {
     hint: 'squad',
     viewFields: ['squad'],
     firstSighting: (view) => view.squad > 0,
