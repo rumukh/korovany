@@ -2872,4 +2872,3 @@ regression you are trying to prevent.
 plan taxonomy staying small enough to cache, into every rig-name consumer being
 re-verified by hand rather than by hope, into the animation staying allocation-free,
 and into the visual pass that catches the things a unit test cannot.
-DOPE: a control sentence.   It has three spaces and must fail CI.
