@@ -655,6 +655,44 @@ no new dependencies.
   The honest bound on all of it: **a gate does not substitute for a reader, it frees one.**
   This instrument closes the two defects already found and has no opinion about the next
   class, because its controls are the ones its author could think of.
+  **A reviewer then attacked it with its own methodology and found six defects, three of
+  which meant the CI step could not fail for the reason it existed.** Each was measured,
+  not read:
+  ```
+  V1  the mutate path returned before running the live checks, and CI runs only
+      that path -- stubbing sweepBounds to a constant gave PASSED / exit 0 while
+      four controls were failing their real assertions
+  V2  a mutation that THREW was scored CAUGHT -- a mutation that never ran is not
+      evidence a control can fire
+  V3  no domain guard: a zero-line scan passed silently
+  V4  git() returned stderr as a value, so `fatal: ...` became data in a field
+      labelled as a commit, and `|| '(none)'` never fired -- error text is truthy
+  V5  the lint gate ran `oxlint src tests` where the project runs the whole repo;
+      the excluded directory was the one the instrument lives in
+  V6  two adjacent counts over two populations, neither labelled
+  ```
+  **V3 is the finding, and it is the fourth site of one commit.** `e6edeb34` contains three
+  *"A floor proving … must not also assert …"* comments **and** `emptySpecs` at L1007 —
+  *"a scan that read nothing reports no offenders and looks identical to a clean one."* The
+  worked example was in the file whose failing test started this, eighteen hours and
+  forty-five minutes earlier, **and was absent from the instrument written to embody it.**
+  Fixing V5 surfaced a second census: **`oxlint` exits 0 on warnings**, so `lint=0` is a
+  verdict about errors and says nothing about findings. The count is now printed beside the
+  code — and warnings deliberately do not fail, because failing on them would make the
+  instrument **silently stricter than the project's own gate**, which is the same drift V5
+  named, running the other way.
+  The reviewer's synthesis is the most general rule this work produced, and it is an
+  argument rather than a tally:
+  > **Green is the default outcome of every path that does not explicitly assert.** So an
+  > instrument acquires clean-erring holes **by omission** and noisy ones only **by
+  > commission** — and *fail-toward-green is the shape of every gap in every gate unless
+  > something is written to prevent it.*
+  That predicts the direction of V1, V2 and V3 without anyone having chosen it, and it
+  subsumes the vacuous-instrument and doped-control entries above as instances rather than
+  neighbours. It also caught one more within the hour: a test harness recorded `exit=0`
+  from a run that printed `FAILED`, because `Select-Object -First 6` truncated the pipeline
+  and masked the status. **A truncation errs toward the clean-looking number and announces
+  nothing** — the same shape as a filter returning empty for an object that exists.
   **The stronger claim first written here — that enumerating a hypothesis space usually
   requires a second party — is false, and the record of this work refutes it.** Five
   self-generated enumerations, each against a position its own author had already
