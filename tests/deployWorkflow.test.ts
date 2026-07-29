@@ -694,13 +694,35 @@ test('every line that mentions concurrency, in every workflow, is pinned as text
  * after it found another, so this is not answered that way. YAML's double-quoted
  * escapes are a closed list, and of them **only the hex forms can produce an ASCII
  * letter** — the named escapes yield control characters, space, slash, backslash,
- * quote, NEL, NBSP, LS and PS, none of which can spell part of a keyword. So
- * rejecting hex escapes closes the letter-hiding class rather than one member of it.
+ * quote, NEL, NBSP, LS and PS, none of which can spell part of a keyword.
  *
- * Both workflows contain zero backslashes of any kind, measured, so this costs
- * nothing today. Banning *all* backslashes would also have been free today and was
- * rejected: ordinary `run:` steps use shell continuations and Windows paths, and a
- * gate that fires on those is a gate someone deletes.
+ * The first version of this test applied that rule to every line of the file and was
+ * rejected by the next round: `run: printf '\x1b[32m…'` is ordinary shell, YAML never
+ * decodes it, and the gate fired on it. **The rule was right and the scope was the
+ * file rather than the assumption.** Two things narrow it to exactly what the pin
+ * needs, and both are closed rather than enumerated:
+ *
+ * 1. YAML decodes escapes **only inside double-quoted scalars**. Plain and
+ *    single-quoted scalars carry backslashes through literally, so `'\u0063oncurrency'`
+ *    is a key named `\u0063oncurrency` and cannot collide with anything.
+ * 2. A keyword can only be hidden from the pin in a **key**. The pin holds an exact
+ *    list of lines mentioning the three words; any line carrying one of them as a
+ *    *value* still carries its own key literally and is pinned. Only escaping the key
+ *    removes the line from the list.
+ *
+ * So the scan is double-quoted mapping keys, and YAML has exactly two key syntaxes —
+ * implicit (`key: value`) and explicit (`? key` / `: value`) — which is a closed
+ * enumeration rather than an open one. Values, block scalars and shell source are
+ * left alone entirely.
+ *
+ * The round-nine lesson is about the controls, not the rule. Banning *all*
+ * backslashes was measured and rejected against a shell continuation and a Windows
+ * path — **the two forms already imagined by whoever wrote the rule.** Neither
+ * contains a complete hex escape, so both stayed green under the shipped rule and
+ * reported it as safe. A false-positive control set is a sample like any other, and
+ * that one was aimed by the same imagination that chose what to guard. The controls
+ * below are drawn from a population instead: ordinary workflow content that contains
+ * backslashes.
  *
  * One member is examined and deliberately not closed. A double-quoted scalar may
  * carry a line continuation, so `"conc\` + newline + `urrency"` splits a keyword
@@ -710,20 +732,49 @@ test('every line that mentions concurrency, in every workflow, is pinned as text
  * is recorded here rather than guarded, on the same terms as the expression forms
  * the parser cannot evaluate.
  */
-test('no workflow hides text from the pin behind a character escape', () => {
+function doubleQuotedKeys(source: string): { line: string; key: string; number: number }[] {
+  const found: { line: string; key: string; number: number }[] = []
+  let explicitPending = false
+
+  source.split(/\r?\n/).forEach((raw, index) => {
+    const line = raw.trim()
+    if (line === '') return
+
+    const explicitHere = /^\?(\s|$)/.test(line)
+    const explicit = explicitHere || explicitPending
+
+    for (let i = 0; i < line.length; i += 1) {
+      if (line[i] !== '"') continue
+
+      let j = i + 1
+      while (j < line.length && line[j] !== '"') j += line[j] === '\\' ? 2 : 1
+      if (j >= line.length) break
+
+      const key = line.slice(i, j + 1)
+      if (explicit || /^\s*:/.test(line.slice(j + 1))) {
+        found.push({ line, key, number: index + 1 })
+      }
+      i = j
+    }
+
+    explicitPending = explicitHere && line === '?'
+  })
+
+  return found
+}
+
+test('no workflow hides a keyword from the pin inside an encoded mapping key', () => {
   const HEX_ESCAPE = /\\(?:x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})/
 
   const encoded = readWorkflows().flatMap((file) =>
-    file.source
-      .split(/\r?\n/)
-      .map((line, index) => ({ line: line.trim(), number: index + 1 }))
-      .filter((entry) => HEX_ESCAPE.test(entry.line))
+    doubleQuotedKeys(file.source)
+      .filter((entry) => HEX_ESCAPE.test(entry.key))
       .map((entry) => `${file.name}:${String(entry.number)}: ${entry.line}`),
   )
 
   assert.deepEqual(
     encoded,
     [],
-    'a workflow encodes characters as escapes, so the text pin can no longer be trusted to see what YAML sees',
+    'a workflow spells a mapping key with character escapes, so the text pin can no longer be trusted to see the keys YAML sees',
   )
 })

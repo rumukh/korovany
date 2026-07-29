@@ -1396,6 +1396,42 @@ self-owned** property should be reasserted, which removes the need to detect at 
 round is in the third box. **The discriminator is not the size of the domain, it is who owns
 the property** — which is why a complete detector here is still permanently a detector.
 
+#### Round nine: the rule was right and the scope was the file
+
+The escape rule shipped in round eight scanned every line of every workflow, and the next round
+rejected it from the opposite side: `run: printf '\x1b[32mAll gates passed\x1b[0m\n'` is ordinary
+shell, YAML never decodes it, and the gate fired on it and named it. **That is precisely the cost
+the commit shipping the rule said the rule avoided.**
+
+The rule was not wrong; its scope was the file rather than the assumption. Two facts narrow it to
+exactly what the pin needs, and both are closed rather than enumerated. First, **YAML decodes
+escapes only inside double-quoted scalars** — plain and single-quoted scalars carry backslashes
+through literally, so `'\u0063oncurrency'` is simply a key of that name and collides with nothing.
+Second, **a keyword can only be hidden from the pin in a key**: the pin holds an exact list of
+lines mentioning the three words, and any line carrying one of them as a *value* still carries its
+own key literally, so it stays on the list. Only escaping the key removes the line. The scan is
+therefore double-quoted mapping keys, and YAML has exactly two key syntaxes — implicit
+(`key: value`) and explicit (`? key` / `: value`) — which keeps the enumeration closed. Values,
+block scalars and shell source are no longer read at all.
+
+**The lesson is about the controls, not the rule.** Banning all backslashes was measured and
+rejected last round against a shell continuation and a Windows path, and both stayed green under
+the rule that shipped, which is how it was reported as costing nothing. Neither contains a
+complete hex escape. **They were the two forms already imagined by whoever chose the rule** — a
+false-positive control set is a sample like any other, and that one was aimed by the same
+imagination it was meant to audit. The replacement is drawn from a population instead, ordinary
+workflow content containing backslashes: eleven cases, five encoded-key attacks and six benign,
+each printed with whether the mutation landed and which test failed by name. All five attacks
+fail on that test alone; all six benign cases stay green.
+
+One instrument note, because it nearly cost the result. The first harness reported exit codes and
+matched TAP output to name the failing test, but `node --test` prints the spec reporter, so every
+positive case printed `exit=1` beside an **empty** list of failing tests. Exit 1 is *the suite
+failed*; the claim being made was *this test fired*. The two were one regex apart, and the only
+reason the gap surfaced is that the harness prints its own detail next to its own verdict, so the
+disagreement was visible on the summary line. **An instrument whose summary cannot contradict its
+detail would have reported five clean passes for the wrong reason.**
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
