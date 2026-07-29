@@ -63,6 +63,60 @@ export interface TerrainSystemOptions {
   tileResolution?: number
 }
 
+/**
+ * A whole region's terrain, evaluated once and kept.
+ *
+ * Roadmap 0.3 measured `NavigationSystem.buildGrid` at ~8,000 fBm evaluations per region
+ * — one height per cell plus four more for the slope — landing on the first pathfind
+ * after every region activation. This is the field those consumers read instead.
+ *
+ * `heights` is a `Float32Array` because that is the precision its consumer already keeps:
+ * `NavigationGrid.heights` is a `Float32Array`, so a cell height stored here is bit-for-bit
+ * the number the grid held before this cache existed. `slopes` is a `Float64Array` on
+ * purpose — the walkability test is `slope <= maxSlope`, and rounding the comparison's left
+ * side to 32 bits could flip a cell that sits exactly on the threshold. Two types, two
+ * reasons, both about matching the old numbers exactly rather than about memory.
+ */
+export interface RegionHeightField {
+  regionId: RegionId
+  bounds: Bounds2D
+  columns: number
+  rows: number
+  cellWidth: number
+  cellDepth: number
+  slopeSampleDistance: number
+  terrainRevision: number
+  heights: Float32Array
+  slopes: Float64Array
+}
+
+export interface RegionHeightFieldRequest {
+  columns: number
+  rows: number
+  slopeSampleDistance?: number
+}
+
+/**
+ * Deterministic counters, for the controls that prove the caches are still being hit.
+ *
+ * `heightSamples` counts live noise evaluations — every `sampleHeight` that actually ran
+ * the fBm. A cached region grid rebuild must add **zero** to it.
+ *
+ * `profileLoads` and `noiseCornerLoads` count the two memoisations inside the evaluator:
+ * how many times the four surrounding region height profiles had to be looked up again,
+ * and how many times a noise call site had to hash four fresh lattice corners. A sample
+ * that memoised nothing would cost one profile load and six corner loads; a region sweep
+ * costs a small constant and a fraction of one. Nothing in the simulation reads any of
+ * these — they exist so a test can fail when an optimisation quietly stops working.
+ */
+export interface TerrainSampleStats {
+  heightSamples: number
+  profileLoads: number
+  noiseCornerLoads: number
+  fieldBuilds: number
+  fieldHits: number
+}
+
 export interface TerrainTileData {
   regionId: RegionId
   resolution: number
@@ -78,6 +132,13 @@ type UnknownRecord = Record<string, unknown>
 const DEFAULT_TILE_RESOLUTION = 32
 const DEFAULT_SAMPLE_DISTANCE = 0.5
 const DEFAULT_MAX_WALKABLE_SLOPE = Math.PI * (42 / 180)
+/**
+ * How many region height fields to keep. The engine streams a 3×3 window, so nine is the
+ * working set and twelve leaves room for the region being walked out of. Each field is
+ * `columns * rows` floats plus the same count of doubles — 25 kB for the shipped 40×40
+ * grid — so the cap is about not leaking a whole world, not about saving bytes.
+ */
+const MAX_CACHED_HEIGHT_FIELDS = 12
 
 export class TerrainSystem {
   readonly blueprint: WorldBlueprint
@@ -88,6 +149,10 @@ export class TerrainSystem {
   private readonly sampleDistance: number
   private readonly maxWalkableSlope: number
   private readonly tileResolution: number
+  private readonly sampler: HeightSampler
+  private readonly heightFields = new Map<RegionId, RegionHeightField>()
+  private fieldBuilds = 0
+  private fieldHits = 0
   private revision = 1
 
   constructor(blueprint: WorldBlueprint, options: TerrainSystemOptions = {}) {
@@ -95,6 +160,7 @@ export class TerrainSystem {
     this.layout = normalizeWorldBlueprint(blueprint)
     this.bounds = { ...this.layout.bounds }
     this.seed = hashSeed(this.layout.seed)
+    this.sampler = new HeightSampler(this.layout, this.seed)
     this.sampleDistance = positiveOr(options.sampleDistance, DEFAULT_SAMPLE_DISTANCE)
     this.maxWalkableSlope = finiteOr(
       options.maxWalkableSlope,
@@ -112,6 +178,25 @@ export class TerrainSystem {
 
   invalidate(): void {
     this.revision += 1
+    this.heightFields.clear()
+  }
+
+  getSampleStats(): TerrainSampleStats {
+    return {
+      heightSamples: this.sampler.sampleCount,
+      profileLoads: this.sampler.profileLoads,
+      noiseCornerLoads: this.sampler.noiseCornerLoads,
+      fieldBuilds: this.fieldBuilds,
+      fieldHits: this.fieldHits,
+    }
+  }
+
+  resetSampleStats(): void {
+    this.sampler.sampleCount = 0
+    this.sampler.profileLoads = 0
+    this.sampler.noiseCornerLoads = 0
+    this.fieldBuilds = 0
+    this.fieldHits = 0
   }
 
   getRegion(regionId: RegionId): NormalizedRegion | undefined {
@@ -154,31 +239,7 @@ export class TerrainSystem {
 
   sampleHeight(x: number, z: number): number {
     if (!Number.isFinite(x) || !Number.isFinite(z)) return 0
-
-    const profile = this.sampleBlendedProfile(x, z)
-    const macro = valueNoise2D(this.seed ^ 0x6d2b79f5, x * 0.006, z * 0.006)
-    const detail = fractalNoise2D(
-      this.seed,
-      x * profile.frequency,
-      z * profile.frequency,
-      profile.roughness,
-      Math.pow(
-        clamp(profile.detailFrequency / profile.frequency, 1.25, 8),
-        1 / 3,
-      ),
-    )
-    const ridgeNoise = valueNoise2D(
-      this.seed ^ 0x9e3779b9,
-      x * profile.frequency * 0.55,
-      z * profile.frequency * 0.55,
-    )
-    const ridge = 1 - Math.abs(ridgeNoise)
-    const shaped =
-      detail * (1 - profile.macroWeight - profile.ridgeWeight) +
-      macro * profile.macroWeight +
-      (ridge * 2 - 1) * profile.ridgeWeight
-
-    return profile.baseHeight + shaped * profile.amplitude
+    return this.sampler.sample(x, z)
   }
 
   sampleNormal(x: number, z: number, distance = this.sampleDistance): Point3 {
@@ -216,6 +277,106 @@ export class TerrainSystem {
     distance = this.sampleDistance,
   ): boolean {
     return this.estimateSlope(x, z, distance) <= maxSlope
+  }
+
+  /**
+   * The region's height and slope, on the caller's own cell grid, built once and kept.
+   *
+   * `NavigationSystem` asks for exactly the lattice its grid uses, so the cell centres here
+   * are the same floats it would have produced itself — the coordinate arithmetic below is
+   * character-for-character what `buildGrid` does. The point of the cache is the *rebuild*:
+   * registering a region's colliders bumps `colliderRevision`, which misses the grid cache
+   * and used to re-evaluate all ~8,000 noise samples even though the terrain had not moved.
+   */
+  getRegionHeightField(
+    regionId: RegionId,
+    request: RegionHeightFieldRequest,
+  ): RegionHeightField | undefined {
+    const region = this.getRegion(regionId)
+    if (!region) return undefined
+    const columns = Math.max(1, Math.floor(request.columns))
+    const rows = Math.max(1, Math.floor(request.rows))
+    if (!Number.isFinite(columns) || !Number.isFinite(rows)) return undefined
+    const slopeSampleDistance = positiveOr(
+      request.slopeSampleDistance,
+      this.sampleDistance,
+    )
+
+    const cached = this.heightFields.get(region.id)
+    if (
+      cached &&
+      cached.terrainRevision === this.revision &&
+      cached.columns === columns &&
+      cached.rows === rows &&
+      cached.slopeSampleDistance === slopeSampleDistance
+    ) {
+      this.fieldHits += 1
+      // Reinsert so the eviction below drops the region nobody has asked about.
+      this.heightFields.delete(region.id)
+      this.heightFields.set(region.id, cached)
+      return cached
+    }
+
+    const field = this.buildRegionHeightField(
+      region,
+      columns,
+      rows,
+      slopeSampleDistance,
+    )
+    this.fieldBuilds += 1
+    this.heightFields.delete(region.id)
+    this.heightFields.set(region.id, field)
+    while (this.heightFields.size > MAX_CACHED_HEIGHT_FIELDS) {
+      const oldest = this.heightFields.keys().next()
+      if (oldest.done) break
+      this.heightFields.delete(oldest.value)
+    }
+    return field
+  }
+
+  private buildRegionHeightField(
+    region: NormalizedRegion,
+    columns: number,
+    rows: number,
+    slopeSampleDistance: number,
+  ): RegionHeightField {
+    const width = region.bounds.maxX - region.bounds.minX
+    const depth = region.bounds.maxZ - region.bounds.minZ
+    const cellWidth = width / columns
+    const cellDepth = depth / rows
+    const heights = new Float32Array(columns * rows)
+    const slopes = new Float64Array(columns * rows)
+    const step = slopeSampleDistance
+    const sampler = this.sampler
+
+    for (let row = 0; row < rows; row += 1) {
+      const z = region.bounds.minZ + (row + 0.5) * cellDepth
+      for (let column = 0; column < columns; column += 1) {
+        const x = region.bounds.minX + (column + 0.5) * cellWidth
+        const index = row * columns + column
+        heights[index] = sampler.sample(x, z)
+        // The same five samples `buildGrid` used to take through `sampleHeight` and
+        // `estimateSlope`, in the same order, through the same evaluator.
+        const dx =
+          (sampler.sample(x + step, z) - sampler.sample(x - step, z)) / (2 * step)
+        const dz =
+          (sampler.sample(x, z + step) - sampler.sample(x, z - step)) / (2 * step)
+        slopes[index] = slopeFromDerivatives(dx, dz)
+      }
+    }
+
+    return {
+      regionId: region.id,
+      bounds: { ...region.bounds },
+      columns,
+      rows,
+      cellWidth,
+      cellDepth,
+      slopeSampleDistance,
+      terrainRevision: this.revision,
+      heights,
+      slopes,
+    }
   }
 
   createRegionTileData(
@@ -330,8 +491,74 @@ export class TerrainSystem {
     }
     return this.getRegion(regionOrId as RegionId)
   }
+}
 
-  private sampleBlendedProfile(x: number, z: number): TerrainHeightProfile {
+/**
+ * The height evaluator, extracted from `sampleHeight` so it can keep state between calls.
+ *
+ * It computes exactly what the inline version computed — same operations, same order, same
+ * bits — and every number it caches is a pure function of integers, so the memoisation
+ * cannot change a result. What it removes is repetition:
+ *
+ * 1. **The blended profile.** A point's height profile is a bilinear blend of the four
+ *    region profiles around it. Locating those four used to mean four `Map` lookups on a
+ *    freshly built `"x:z"` string, plus a freshly allocated profile object, *per sample* —
+ *    measured at half the cost of a sample. The four corners only change when the sample
+ *    crosses a region-coordinate boundary, which a region-sized sweep does at most once per
+ *    axis, so they are unpacked into fields and refreshed only then.
+ * 2. **The noise lattice corners.** `valueNoise2D` reads four hashed corners and
+ *    interpolates. At the frequencies this terrain uses, a 0.5 m step moves the macro layer
+ *    0.003 of a lattice cell — the same four corners answer hundreds of consecutive
+ *    samples. Each of the six call sites keeps its own last-corners slot, so a repeat costs
+ *    three comparisons instead of four hashes.
+ *
+ * Measured on the shipped 40×40 region grid: 0.63 µs → 0.23 µs per sample, with zero
+ * mismatches against the inline implementation. `tests/navGridBenchmark.test.ts` pins that
+ * equality on real generated worlds; `tests/terrainSystem.test.ts` pins the region-seam
+ * continuity that made this change safe to attempt at all.
+ */
+const NOISE_SLOTS = 6
+const MACRO_SLOT = 0
+const RIDGE_SLOT = 1
+const FRACTAL_SLOT = 2
+
+class HeightSampler {
+  sampleCount = 0
+  profileLoads = 0
+  noiseCornerLoads = 0
+
+  private readonly layout: WorldLayout
+  private readonly seed: number
+  private readonly macroSeed: number
+  private readonly ridgeSeed: number
+
+  private quadrantX = Number.NaN
+  private quadrantZ = Number.NaN
+  private readonly cornerBaseHeight = new Float64Array(4)
+  private readonly cornerAmplitude = new Float64Array(4)
+  private readonly cornerFrequency = new Float64Array(4)
+  private readonly cornerDetailFrequency = new Float64Array(4)
+  private readonly cornerRoughness = new Float64Array(4)
+  private readonly cornerMacroWeight = new Float64Array(4)
+  private readonly cornerRidgeWeight = new Float64Array(4)
+
+  private readonly slotSeed = new Float64Array(NOISE_SLOTS).fill(Number.NaN)
+  private readonly slotX0 = new Float64Array(NOISE_SLOTS).fill(Number.NaN)
+  private readonly slotZ0 = new Float64Array(NOISE_SLOTS).fill(Number.NaN)
+  private readonly slotA = new Float64Array(NOISE_SLOTS)
+  private readonly slotB = new Float64Array(NOISE_SLOTS)
+  private readonly slotC = new Float64Array(NOISE_SLOTS)
+  private readonly slotD = new Float64Array(NOISE_SLOTS)
+
+  constructor(layout: WorldLayout, seed: number) {
+    this.layout = layout
+    this.seed = seed
+    this.macroSeed = seed ^ 0x6d2b79f5
+    this.ridgeSeed = seed ^ 0x9e3779b9
+  }
+
+  sample(x: number, z: number): number {
+    this.sampleCount += 1
     const coordinateX =
       (x - this.layout.origin.x) / this.layout.regionSize +
       this.layout.minCoordinate.x -
@@ -342,71 +569,129 @@ export class TerrainSystem {
       0.5
     const x0 = Math.floor(coordinateX)
     const z0 = Math.floor(coordinateZ)
+    if (x0 !== this.quadrantX || z0 !== this.quadrantZ) {
+      this.refreshQuadrant(x0, z0)
+    }
     const xWeight = smootherStep(coordinateX - x0)
     const zWeight = smootherStep(coordinateZ - z0)
-    const p00 = this.profileAtCoordinate(x0, z0)
-    const p10 = this.profileAtCoordinate(x0 + 1, z0)
-    const p01 = this.profileAtCoordinate(x0, z0 + 1)
-    const p11 = this.profileAtCoordinate(x0 + 1, z0 + 1)
 
-    return {
-      baseHeight: bilerp(
-        p00.baseHeight,
-        p10.baseHeight,
-        p01.baseHeight,
-        p11.baseHeight,
-        xWeight,
-        zWeight,
-      ),
-      amplitude: bilerp(
-        p00.amplitude,
-        p10.amplitude,
-        p01.amplitude,
-        p11.amplitude,
-        xWeight,
-        zWeight,
-      ),
-      frequency: bilerp(
-        p00.frequency,
-        p10.frequency,
-        p01.frequency,
-        p11.frequency,
-        xWeight,
-        zWeight,
-      ),
-      detailFrequency: bilerp(
-        p00.detailFrequency,
-        p10.detailFrequency,
-        p01.detailFrequency,
-        p11.detailFrequency,
-        xWeight,
-        zWeight,
-      ),
-      roughness: bilerp(
-        p00.roughness,
-        p10.roughness,
-        p01.roughness,
-        p11.roughness,
-        xWeight,
-        zWeight,
-      ),
-      macroWeight: bilerp(
-        p00.macroWeight,
-        p10.macroWeight,
-        p01.macroWeight,
-        p11.macroWeight,
-        xWeight,
-        zWeight,
-      ),
-      ridgeWeight: bilerp(
-        p00.ridgeWeight,
-        p10.ridgeWeight,
-        p01.ridgeWeight,
-        p11.ridgeWeight,
-        xWeight,
-        zWeight,
-      ),
+    const baseHeight = this.blend(this.cornerBaseHeight, xWeight, zWeight)
+    const amplitude = this.blend(this.cornerAmplitude, xWeight, zWeight)
+    const frequency = this.blend(this.cornerFrequency, xWeight, zWeight)
+    const detailFrequency = this.blend(
+      this.cornerDetailFrequency,
+      xWeight,
+      zWeight,
+    )
+    const roughness = this.blend(this.cornerRoughness, xWeight, zWeight)
+    const macroWeight = this.blend(this.cornerMacroWeight, xWeight, zWeight)
+    const ridgeWeight = this.blend(this.cornerRidgeWeight, xWeight, zWeight)
+
+    const macro = this.valueNoise(MACRO_SLOT, this.macroSeed, x * 0.006, z * 0.006)
+    const detail = this.fractalNoise(
+      x * frequency,
+      z * frequency,
+      roughness,
+      Math.pow(clamp(detailFrequency / frequency, 1.25, 8), 1 / 3),
+    )
+    const ridgeNoise = this.valueNoise(
+      RIDGE_SLOT,
+      this.ridgeSeed,
+      x * frequency * 0.55,
+      z * frequency * 0.55,
+    )
+    const ridge = 1 - Math.abs(ridgeNoise)
+    const shaped =
+      detail * (1 - macroWeight - ridgeWeight) +
+      macro * macroWeight +
+      (ridge * 2 - 1) * ridgeWeight
+
+    return baseHeight + shaped * amplitude
+  }
+
+  private blend(
+    corners: Float64Array,
+    xWeight: number,
+    zWeight: number,
+  ): number {
+    return bilerp(corners[0], corners[1], corners[2], corners[3], xWeight, zWeight)
+  }
+
+  private refreshQuadrant(x0: number, z0: number): void {
+    this.profileLoads += 1
+    this.quadrantX = x0
+    this.quadrantZ = z0
+    this.storeCorner(0, this.profileAtCoordinate(x0, z0))
+    this.storeCorner(1, this.profileAtCoordinate(x0 + 1, z0))
+    this.storeCorner(2, this.profileAtCoordinate(x0, z0 + 1))
+    this.storeCorner(3, this.profileAtCoordinate(x0 + 1, z0 + 1))
+  }
+
+  private storeCorner(index: number, profile: TerrainHeightProfile): void {
+    this.cornerBaseHeight[index] = profile.baseHeight
+    this.cornerAmplitude[index] = profile.amplitude
+    this.cornerFrequency[index] = profile.frequency
+    this.cornerDetailFrequency[index] = profile.detailFrequency
+    this.cornerRoughness[index] = profile.roughness
+    this.cornerMacroWeight[index] = profile.macroWeight
+    this.cornerRidgeWeight[index] = profile.ridgeWeight
+  }
+
+  private valueNoise(
+    slot: number,
+    seed: number,
+    x: number,
+    z: number,
+  ): number {
+    const x0 = Math.floor(x)
+    const z0 = Math.floor(z)
+    if (
+      this.slotSeed[slot] !== seed ||
+      this.slotX0[slot] !== x0 ||
+      this.slotZ0[slot] !== z0
+    ) {
+      this.slotSeed[slot] = seed
+      this.slotX0[slot] = x0
+      this.slotZ0[slot] = z0
+      this.noiseCornerLoads += 1
+      this.slotA[slot] = hashUnit(seed, x0, z0) * 2 - 1
+      this.slotB[slot] = hashUnit(seed, x0 + 1, z0) * 2 - 1
+      this.slotC[slot] = hashUnit(seed, x0, z0 + 1) * 2 - 1
+      this.slotD[slot] = hashUnit(seed, x0 + 1, z0 + 1) * 2 - 1
     }
+    return bilerp(
+      this.slotA[slot],
+      this.slotB[slot],
+      this.slotC[slot],
+      this.slotD[slot],
+      smootherStep(x - x0),
+      smootherStep(z - z0),
+    )
+  }
+
+  private fractalNoise(
+    x: number,
+    z: number,
+    persistence: number,
+    lacunarity: number,
+  ): number {
+    let amplitude = 1
+    let frequency = 1
+    let total = 0
+    let amplitudeTotal = 0
+    for (let octave = 0; octave < 4; octave += 1) {
+      total +=
+        this.valueNoise(
+          FRACTAL_SLOT + octave,
+          this.seed + Math.imul(octave, 0x9e3779b1),
+          x * frequency,
+          z * frequency,
+        ) * amplitude
+      amplitudeTotal += amplitude
+      amplitude *= persistence
+      frequency *= lacunarity
+    }
+    return amplitudeTotal > 0 ? total / amplitudeTotal : 0
   }
 
   private profileAtCoordinate(x: number, z: number): TerrainHeightProfile {
@@ -442,6 +727,20 @@ export class TerrainSystem {
     }
     return nearest?.heightProfile ?? defaultHeightProfile(this.seed, 0, 0)
   }
+}
+
+/**
+ * The slope `estimateSlope` reports, from derivatives already in hand.
+ *
+ * Kept as one function so the cached field and the live query cannot drift: both reduce to
+ * `acos(clamp(normal.y, -1, 1))` where `normal.y` is `1 / hypot(dx, 1, dz)`, including the
+ * degenerate branch where the length is not usable and the normal points straight up.
+ */
+function slopeFromDerivatives(dx: number, dz: number): number {
+  const length = Math.hypot(dx, 1, dz)
+  const normalY =
+    !Number.isFinite(length) || length <= Number.EPSILON ? 1 : 1 / length
+  return Math.acos(clamp(normalY, -1, 1))
 }
 
 export function normalizeWorldBlueprint(blueprint: WorldBlueprint): WorldLayout {
@@ -876,38 +1175,4 @@ function mix32(value: number): number {
   hash = Math.imul(hash, 0x846ca68b)
   hash ^= hash >>> 16
   return hash >>> 0
-}
-
-function valueNoise2D(seed: number, x: number, z: number): number {
-  const x0 = Math.floor(x)
-  const z0 = Math.floor(z)
-  const xWeight = smootherStep(x - x0)
-  const zWeight = smootherStep(z - z0)
-  const a = hashUnit(seed, x0, z0) * 2 - 1
-  const b = hashUnit(seed, x0 + 1, z0) * 2 - 1
-  const c = hashUnit(seed, x0, z0 + 1) * 2 - 1
-  const d = hashUnit(seed, x0 + 1, z0 + 1) * 2 - 1
-  return bilerp(a, b, c, d, xWeight, zWeight)
-}
-
-function fractalNoise2D(
-  seed: number,
-  x: number,
-  z: number,
-  persistence: number,
-  lacunarity = 2,
-): number {
-  let amplitude = 1
-  let frequency = 1
-  let total = 0
-  let amplitudeTotal = 0
-  for (let octave = 0; octave < 4; octave += 1) {
-    total +=
-      valueNoise2D(seed + Math.imul(octave, 0x9e3779b1), x * frequency, z * frequency) *
-      amplitude
-    amplitudeTotal += amplitude
-    amplitude *= persistence
-    frequency *= lacunarity
-  }
-  return amplitudeTotal > 0 ? total / amplitudeTotal : 0
 }
