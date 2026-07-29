@@ -7,6 +7,8 @@ import {
   type NormalizedRegion,
   type Point2,
   type Point3,
+  type RegionHeightField,
+  type RegionHeightFieldRequest,
   type WorldLayout,
 } from '../world/TerrainSystem.ts'
 import type {
@@ -21,6 +23,17 @@ export interface NavigationTerrain {
   sampleHeight(x: number, z: number): number
   estimateSlope(x: number, z: number, distance?: number): number
   getRevision?(): number
+  /**
+   * The region's heights and slopes on the grid's own lattice, if the terrain can cache
+   * them. Optional on purpose: a terrain without it still builds a correct grid the slow
+   * way, and `tests/navGridBenchmark.test.ts` uses exactly that as the negative control
+   * for the cache — same world, same grid, and a live-sample count that says whether the
+   * field was really used.
+   */
+  getRegionHeightField?(
+    regionId: RegionId,
+    request: RegionHeightFieldRequest,
+  ): RegionHeightField | undefined
 }
 
 export interface NavigationCollision {
@@ -32,6 +45,7 @@ export interface NavigationCollision {
       maxSlope?: number
       slopeSampleDistance?: number
       requireActiveBounds?: boolean
+      skipTerrainSlope?: boolean
     },
   ): boolean
   getRevision(regionId?: RegionId): number
@@ -462,10 +476,21 @@ export class NavigationSystem {
     const cellDepth = depth / rows
     const walkable = new Uint8Array(columns * rows)
     const heights = new Float32Array(columns * rows)
+    // Roadmap 0.3. Heights and terrain slopes come from the region field the terrain caches,
+    // so a rebuild triggered by a collider registration — which is what region activation
+    // does, three times per 3x3 streaming step — costs no noise evaluations at all. The
+    // collider half of walkability still runs per cell, because that is the half that
+    // changed.
+    const field = this.terrain.getRegionHeightField?.(region.id, {
+      columns,
+      rows,
+      slopeSampleDistance: this.slopeSampleDistance,
+    })
     const collisionOptions = {
       maxSlope: this.maxSlope,
       slopeSampleDistance: this.slopeSampleDistance,
       requireActiveBounds: false,
+      skipTerrainSlope: field !== undefined,
     }
 
     for (let row = 0; row < rows; row += 1) {
@@ -473,7 +498,15 @@ export class NavigationSystem {
       for (let column = 0; column < columns; column += 1) {
         const x = region.bounds.minX + (column + 0.5) * cellWidth
         const index = row * columns + column
-        heights[index] = this.terrain.sampleHeight(x, z)
+        if (field) {
+          heights[index] = field.heights[index]
+          if (field.slopes[index] > this.maxSlope) {
+            walkable[index] = 0
+            continue
+          }
+        } else {
+          heights[index] = this.terrain.sampleHeight(x, z)
+        }
         walkable[index] = this.collision.isWalkablePosition(
           x,
           z,

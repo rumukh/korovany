@@ -71,6 +71,19 @@ export interface WalkablePositionOptions extends CollisionQueryOptions {
   maxSlope?: number
   slopeSampleDistance?: number
   requireActiveBounds?: boolean
+  /**
+   * The caller has already decided the terrain slope for this point; do not sample it again.
+   *
+   * Roadmap 0.3: the terrain half of this test is four `sampleHeight` calls, and a region
+   * navmesh build makes 1,600 of them — 6,400 fBm evaluations, the bulk of the measured
+   * 20–29 ms streaming stall. `NavigationSystem` now reads those slopes from the region
+   * height field `TerrainSystem` caches and sets this flag, so the collider half still runs
+   * and the terrain half is not paid twice. The verdict it skips is the same verdict:
+   * `TerrainSystem.getRegionHeightField` computes slope through the one function
+   * `estimateSlope` uses, and `tests/navGridBenchmark.test.ts` compares the two grids
+   * cell for cell.
+   */
+  skipTerrainSlope?: boolean
 }
 
 export interface ResolveMovementOptions extends WalkablePositionOptions {
@@ -413,23 +426,25 @@ export class CollisionWorld {
       return false
     }
     const maxSlope = finiteOr(options.maxSlope, this.maxWalkableSlope)
-    if (
-      this.terrain?.isWalkableSlope &&
-      !this.terrain.isWalkableSlope(
-        x,
-        z,
-        maxSlope,
-        options.slopeSampleDistance,
-      )
-    ) {
-      return false
-    }
-    if (
-      !this.terrain?.isWalkableSlope &&
-      this.terrain?.estimateSlope &&
-      this.terrain.estimateSlope(x, z, options.slopeSampleDistance) > maxSlope
-    ) {
-      return false
+    if (options.skipTerrainSlope !== true) {
+      if (
+        this.terrain?.isWalkableSlope &&
+        !this.terrain.isWalkableSlope(
+          x,
+          z,
+          maxSlope,
+          options.slopeSampleDistance,
+        )
+      ) {
+        return false
+      }
+      if (
+        !this.terrain?.isWalkableSlope &&
+        this.terrain?.estimateSlope &&
+        this.terrain.estimateSlope(x, z, options.slopeSampleDistance) > maxSlope
+      ) {
+        return false
+      }
     }
     return !this.overlapsCircle(x, z, Math.max(0, radius), options)
   }
