@@ -643,11 +643,16 @@ the following as stable:
 - `bakeOutlineNormals` before `applyOutline` for anything with hard edges.
 - Deterministic variation comes from `artVariation(worldSeed, label)`; labels are
   namespaced by the caller (`npc:torso`, `props:cart`).
-- Character rig names are load-bearing and unchanged: `body-pivot`, `torso-pivot`,
+- Character rig names are load-bearing: `body-pivot`, `torso-pivot`, `neck-pivot`,
   `head-pivot`, `pelvis-pivot`, `torso`, `head`, `leftArm`, `rightArm`, `leftLeg`,
   `rightLeg`, `weapon`, `shield`, `faction-ring`. Animation, dismemberment,
-  prosthetics and gore all address them by name. Add children freely; do not rename
-  or reparent.
+  prosthetics and gore all address them by name. Add children freely; do not rename.
+  **Reparenting is owned by the two skeleton builders and forbidden everywhere else** —
+  `buildCharacterSkeleton` and `buildBeastSkeleton` in `CharacterKit` decide where each
+  pivot hangs, and both have had to move `head-pivot` off the actor's origin and onto a
+  neck. A consumer that re-parents one is invisible to every rig measurement in the
+  suite, because those build the skeleton directly; it can be scoped to a single role or
+  a single animal, and then only that one comes apart.
 - `GeneratedWorldRuntimeOptions.art` accepts a library; when omitted the runtime
   builds and disposes its own, which is what keeps the Node tests working.
   `GeneratedWorldRuntimeOptions.outlineDressing` opts structural dressing into ink.
