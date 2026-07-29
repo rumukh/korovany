@@ -18,14 +18,18 @@ import {
   buildBeastBody,
   buildBeastHead,
   buildBeastLimb,
+  buildBeastSkeleton,
   buildBeastTail,
   applyChestPose,
   applyHeadPose,
+  applyLimbPose,
+  beastLookYaw,
   buildBirdBody,
   buildBirdWing,
   buildCharacterSkeleton,
   buildCloak,
   chestGaitYaw,
+  poseBeast,
   decayStrideOnStagger,
   buildDeerBody,
   buildDeerCrown,
@@ -60,6 +64,7 @@ import {
   solveHandOffset,
   solveHeadYaw,
   type BeastKind,
+  type BeastPosture,
   type CharacterPlan,
   type OutlineBinding,
   type OutlineKind,
@@ -1602,6 +1607,24 @@ export class GameEngine {
     recovery: 0,
     flinch: 0,
     stagger: 0,
+  }
+  /**
+   * The beast pose pass's inputs, reused for the same reason `scratchPose` is.
+   *
+   * `poseBeast` takes a struct rather than nine arguments, and `docs/09` §4 forbids
+   * allocating in the animation path — so the struct is filled in place once per living
+   * beast per frame rather than built.
+   */
+  private readonly beastPosture: BeastPosture = {
+    upright: false,
+    anticipation: 0,
+    attack: 0,
+    stagger: 0,
+    flinch: 0,
+    stride: 0,
+    turnLean: 0,
+    breathing: 0,
+    headYaw: 0,
   }
   private readonly playerPose: CharacterPose = {
     stride: 0,
@@ -9815,12 +9838,18 @@ export class GameEngine {
     const head = actor.mesh.getObjectByName('head-pivot')
     if (weapon) weapon.rotation.x = THREE.MathUtils.lerp(weapon.rotation.x, 1.4, eased)
     if (leftArm) {
-      leftArm.rotation.z = -0.72 * eased
-      leftArm.rotation.x = THREE.MathUtils.lerp(leftArm.rotation.x, 0.34 * side, eased)
+      applyLimbPose(
+        leftArm,
+        THREE.MathUtils.lerp(leftArm.rotation.x, 0.34 * side, eased),
+        -0.72 * eased,
+      )
     }
     if (rightArm) {
-      rightArm.rotation.z = 0.72 * eased
-      rightArm.rotation.x = THREE.MathUtils.lerp(rightArm.rotation.x, -0.34 * side, eased)
+      applyLimbPose(
+        rightArm,
+        THREE.MathUtils.lerp(rightArm.rotation.x, -0.34 * side, eased),
+        0.72 * eased,
+      )
     }
     if (rig) {
       const leftElbowX = rig.leftElbow
@@ -9831,8 +9860,8 @@ export class GameEngine {
         : 0
       if (rig.leftElbow) rig.leftElbow.rotation.x = leftElbowX
       if (rig.rightElbow) rig.rightElbow.rotation.x = rightElbowX
-      if (rig.leftLeg) rig.leftLeg.rotation.x = -0.5 * eased
-      if (rig.rightLeg) rig.rightLeg.rotation.x = -0.16 * eased
+      if (rig.leftLeg) applyLimbPose(rig.leftLeg, -0.5 * eased, rig.leftLeg.rotation.z)
+      if (rig.rightLeg) applyLimbPose(rig.rightLeg, -0.16 * eased, rig.rightLeg.rotation.z)
       if (rig.leftKnee) rig.leftKnee.rotation.x = 1.15 * eased
       if (rig.rightKnee) rig.rightKnee.rotation.x = 0.42 * eased
       if (rig.cloak) rig.cloak.rotation.x = THREE.MathUtils.lerp(rig.cloak.rotation.x, 0.3, eased)
@@ -12570,23 +12599,23 @@ export class GameEngine {
    * in diagonal pairs instead. What changed is that each animal now has its own
    * body, skull, limbs and tail rather than four scalars over a shared box, and its
    * own joint table in `BEAST_RIG` so the legs start where the ribs end.
+   *
+   * The pivots come from `buildBeastSkeleton`, which owns the fact that `head-pivot`
+   * is a joint at the front shoulder rather than a second root at the animal's feet.
+   * Read that docblock before moving a head mesh: `headY` and `headZ` here are
+   * measured **from the neck**, not from the ground, and `BEAST_RIG`'s are not.
    */
   private createBeast(role: BeastRole): THREE.Group {
     const kind = role as BeastKind
     const rig = BEAST_RIG[kind]
-    const group = new THREE.Group()
-    const bodyPivot = new THREE.Group()
-    bodyPivot.name = 'body-pivot'
-    group.add(bodyPivot)
-    const torsoPivot = new THREE.Group()
-    torsoPivot.name = 'torso-pivot'
-    bodyPivot.add(torsoPivot)
-    const headPivot = new THREE.Group()
-    headPivot.name = 'head-pivot'
-    bodyPivot.add(headPivot)
-    const pelvisPivot = new THREE.Group()
-    pelvisPivot.name = 'pelvis-pivot'
-    bodyPivot.add(pelvisPivot)
+    const {
+      root: group,
+      torsoPivot,
+      headPivot,
+      pelvisPivot,
+      headY,
+      headZ,
+    } = buildBeastSkeleton(rig)
 
     const pelt = this.beastPeltColor(role)
     const hideMaterial = this.artLibrary.acquireMaterial(`beast:hide:${role}`, {
@@ -12613,7 +12642,7 @@ export class GameEngine {
       hideMaterial,
     )
     head.name = 'head'
-    head.position.set(0, rig.headY, rig.headZ)
+    head.position.set(0, headY, headZ)
     headPivot.add(head)
 
     // Front limbs answer to `leftArm` / `rightArm`, hind limbs to `leftLeg` /
@@ -14272,6 +14301,21 @@ export class GameEngine {
    * into a lunge and the flank may breathe, but the hips must stay with the ribs
    * and the skull must not swing on the end of its own neck offset. The head still
    * tracks, just over a narrow arc and about the neck rather than the body centre.
+   *
+   * The skull hangs off the ribcage now — see `buildBeastSkeleton` — which changes
+   * what the numbers below mean rather than what they are. `lookYaw` is measured from
+   * the animal's own facing, so it is a *body*-space angle, and `head-pivot` is a
+   * chest-space node: writing it raw would leave the gaze out by 2.5583° on a
+   * quadruped and 3.0334° on a troll, and the obvious `lookYaw - chestYaw` leaves
+   * 1.2799°/1.7368° and is worse than doing nothing in 1680 of 22684 swept states.
+   * Those are small next to the 43.64° the same mistake was worth on a person —
+   * a beast's chest barely turns — but they are an error the reparenting *introduces*,
+   * so they are not optional, and `solveHeadYaw` answers them exactly.
+   *
+   * The damping moved with it, onto `actor.headYaw`, for the reason the biped pass
+   * gives: a frame change is not a motion, so the body-space angle is what damps and
+   * the conversion is instantaneous. Damped after conversion the head chases the
+   * chest's own gait twist a fraction of a second late.
    */
   private animateBeastPosture(
     rig: CharacterRig,
@@ -14286,29 +14330,20 @@ export class GameEngine {
       headPivot: THREE.Object3D | undefined
     },
   ): void {
-    const upright = rig.beast === 'troll'
-    const { torsoPivot, pelvisPivot, headPivot } = pivots
-    if (torsoPivot) {
-      torsoPivot.position.x = 0
-      torsoPivot.rotation.x =
-        -pose.anticipation * (upright ? 0.16 : 0.1) +
-        pose.attack * (upright ? 0.2 : 0.14) +
-        pose.stagger * 0.14
-      torsoPivot.rotation.y = -actor.stride * 0.03
-      torsoPivot.rotation.z = -actor.turnLean * 0.06
-      torsoPivot.scale.y = 1 + breathing * 0.3
-    }
-    if (pelvisPivot) {
-      // The hindquarters follow the ribs rather than counter-rotating against them.
-      pelvisPivot.rotation.y = actor.stride * 0.02
-      pelvisPivot.rotation.z = actor.turnLean * 0.03
-    }
-    if (headPivot) {
-      const clamped = THREE.MathUtils.clamp(lookYaw, -0.45, 0.45)
-      headPivot.rotation.y = dampAngle(headPivot.rotation.y, clamped, 5, delta)
-      headPivot.rotation.x = pose.attack * 0.16 - pose.flinch * 0.2
-      headPivot.rotation.z = actor.turnLean * 0.04
-    }
+    // The damping is the only part that needs the actor and the frame, so it is the only
+    // part that stays here. Body-space angle in, converted instantaneously by `poseBeast`.
+    actor.headYaw = dampAngle(actor.headYaw, beastLookYaw(lookYaw), 5, delta)
+    const posture = this.beastPosture
+    posture.upright = rig.beast === 'troll'
+    posture.anticipation = pose.anticipation
+    posture.attack = pose.attack
+    posture.stagger = pose.stagger
+    posture.flinch = pose.flinch
+    posture.stride = actor.stride
+    posture.turnLean = actor.turnLean
+    posture.breathing = breathing
+    posture.headYaw = actor.headYaw
+    poseBeast(pivots.torsoPivot, pivots.pelvisPivot, pivots.headPivot, posture)
   }
 
   /**

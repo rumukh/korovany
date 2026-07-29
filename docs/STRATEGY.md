@@ -514,7 +514,8 @@ smaller but not toothless). `WOLF_PACK_CHANCE = 0.3` of raids arrive as a pure w
 
 **Meshes.** Procedural quadrupeds from the same `BoxGeometry`/`ConeGeometry` primitives and
 `ComicMaterialLibrary.createToonMaterial`. `createBeast()` deliberately reuses the humanoid
-**pivot names** — `body-pivot`, `torso-pivot`, `head-pivot`, `pelvis-pivot`, `leftArm`/`rightArm`
+**pivot names** — `body-pivot`, `torso-pivot`, `neck-pivot`, `head-pivot`, `pelvis-pivot`,
+`leftArm`/`rightArm`
 as front legs, `leftLeg`/`rightLeg` as hind legs, `faction-ring` — so `animateCharacter`, death
 motion, limb detachment, the outline pass and health bars all work with **no beast branch**.
 Front-left shares a sign with hind-right, producing a diagonal quadruped gait.
