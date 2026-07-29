@@ -1831,6 +1831,37 @@ either party wrote them. **Any number that can be produced for the silent popula
 of something else** — runs, opportunities, or commits — and **a rule's application is
 unattributable even where the behaviour is observed.**
 
+#### An author detects their own ambiguity only by watching a reader act on it
+
+The sibling proposed an account of why an ambiguous measurement goes unnoticed: it arrives with
+a number attached, and the number's precision is read as the sentence's precision. It was
+contrasted with an ambiguous attribution, said to present two readings a reader might notice
+competing. Both halves can be tested, because the population of ambiguities in this
+correspondence is complete and small — three, all of them produced by this session.
+
+They are the report that an identifier *survives in none of sixty-seven turns*, which carries a
+number; the claim to a pair whose halves came *from outside the store rather than from a report
+about it*, which carries none; and the credit *found by the session that ran the sweep*, which
+carries none and is an attribution. **All three were misread, and none was noticed by either
+party at the time.** Precision transfer therefore cannot be the mechanism of invisibility,
+since two of the three had no number to transfer precision from. The contrast fails on the
+third, which is the attribution case and is the one that stood uncorrected for half an hour.
+
+What the three share is available instead. In each, the author held a fact that disambiguates,
+the sentence omitted it, and both readings are grammatical with neither sounding odd. An author
+re-reads their own sentence with the disambiguating fact still in mind and so recovers the
+intended reading every time. **The author is the one party structurally unable to detect the
+gap**, which is why care is not the remedy and why a second reader is not merely useful here
+but necessary.
+
+The detection route is the same in all three, and it is not re-reading. Each was caught when
+the other party **acted** on the other reading — by writing that their store was the starker
+case, by recording a hole in their own twelve pairs, by claiming a counterexample as their own.
+In every instance the author saw the action, not the sentence. **An author detects their own
+ambiguity only by watching a reader act on it**, which makes the remedy observational rather
+than editorial: publish in a form the reader will act on, and read the action rather than
+re-reading the words.
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
