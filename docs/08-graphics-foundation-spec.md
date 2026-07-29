@@ -1382,6 +1382,20 @@ be split across two lines where no per-line scan sees it. As an implicit mapping
 not valid YAML, and a rule against trailing backslashes would fire on every multi-line `run:`
 in the repository. Recorded, not guarded.
 
+A closing qualification, because *closed by proof* sounded stronger than it is. A sibling
+session reached the same boundary from the other side and went one step further than this fix
+can: their head-pose write passes the Euler order as an argument on every frame, so a runtime
+reassignment is overwritten rather than detected — **an invariant that reasserts itself, not a
+guard that can be walked around.** That option is unavailable here, and the reason is not the
+domain. `cancel-in-progress` is read off the *incoming* run, so a Pages deployment cannot
+declare itself uncancellable; the property that must hold belongs to whoever writes the next
+workflow file. So the enumerability boundary has three boxes rather than two: an **open** domain
+is not completable and the pin plus a maintainer's judgement is the mechanism; a **closed,
+self-owned** property should be reasserted, which removes the need to detect at all; a
+**closed, other-owned** property admits a provably complete detector and nothing better. This
+round is in the third box. **The discriminator is not the size of the domain, it is who owns
+the property** — which is why a complete detector here is still permanently a detector.
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
