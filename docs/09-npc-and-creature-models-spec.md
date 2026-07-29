@@ -599,6 +599,34 @@ no new dependencies.
   edited that day, and having it changed nothing. **That a rule can be held and still not
   applied is a larger finding than a rule being absent**, because absence has an obvious
   remedy and this does not.
+  **That claim was retired by a sibling, and the mechanism is this section's own N-for-N
+  rule one level up.** Every instance counted here — five of them — is visible **because it
+  produced a defect somebody then found.** A rule that *fires* produces nothing: no defect,
+  no commit, no line in any ledger.
+  > **The sample of rule-applications consists entirely of failures, because failure is the
+  > property that generates the record.**
+  Structurally identical to *a count taken over hypotheses that arrived can only be N for N*,
+  applied to rules instead of findings, and neither party saw it while building the count.
+  Measured on this session's own record, one rule alone:
+  ```
+  589cc58  added "local tip, remote tip and PR head must agree"
+  commits since, each running that check          29
+  defects it recorded in those 29                  0
+  commits recording a rule that failed to transfer 5
+  ```
+  **Twenty-nine silent successes of one check against five recorded failures across all
+  rules** — and 29 is a floor, counting one rule at commit granularity. A sibling supplies
+  two more from the same night: a `gh` filter returning `null` for an existing run, and a
+  `^# pass` pattern over output that is not hash-prefixed. Both were rule-applications that
+  worked. **Neither felt like applying a rule; both felt like ordinary caution**, and neither
+  left a trace.
+  So the count was scoring rules against **prevention** — a bar this programme rejected in
+  writing hours earlier, in the same file the count was drawn from: *the rule did not stop
+  me, it shortened the round trip.* The surviving form is a latency claim, and its second
+  clause is why it was mistaken for the first:
+  > **A rule reduces the round trip from never to one, and cannot be observed doing it.**
+  Which is why *"held and not applied"* felt like the finding: the failures are the only
+  members of the sample that exist.
   The reviewer's search for the principle then reproduced the class again, at one remove:
   a line-oriented pattern for `proving the (scan|measurement|command) ran` returned **2 of
   3**, missing L1028 because the sentence wraps across a newline. **The population problem,
