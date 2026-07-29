@@ -434,6 +434,12 @@ export interface GameCallbacks {
   onSaveRequest: () => void
   onEnd: (result: 'victory' | 'defeat') => void
   onAchievementUnlocked: (achievement: AchievementUnlock) => void
+  /**
+   * A diegetic first-time line was shown. The engine has no profile, so persisting the
+   * ledger is the caller's job — and it is reported when the line is *shown*, not when it
+   * is queued, so nothing is marked as taught that the player never saw.
+   */
+  onHintSeen: (hintId: string) => void
 }
 
 export interface ShopItem {

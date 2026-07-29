@@ -93,6 +93,7 @@ import { parseSeed } from './game/random/seed'
 import {
   BOON_CATALOGUE,
   isBoonUnlocked,
+  recordSeenHint,
   selectProfileBoon,
   unlockBoon,
   validateBoonSelection,
@@ -203,6 +204,7 @@ function readPlayerProfile(): ProfileSaveV1 {
       selectedFaction: null,
       runHistory: [],
       finalizedRunIds: [],
+      seenHints: [],
     }
   }
 }
@@ -2305,6 +2307,7 @@ function App() {
   const [achievementSessionId] = useState(() => crypto.randomUUID())
   const worldRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<GameEngine | null>(null)
+  const profileRef = useRef(profile)
   const achievementsOpenRef = useRef(false)
   const noticeCounter = useRef(0)
   const musicMutedRef = useRef(musicMuted)
@@ -2335,6 +2338,23 @@ function App() {
     },
     [],
   )
+
+  // The hint ledger has to survive a reload mid-run, not just a run boundary, so it is
+  // written the moment a line is shown rather than folded into the run checkpoint. The ref
+  // is what keeps that write off the engine effect's dependency list: seeding the engine
+  // from `profile` directly would rebuild the whole world every time a hint fired.
+  useEffect(() => {
+    profileRef.current = profile
+  }, [profile])
+
+  const markHintSeen = useCallback((hintId: string) => {
+    const next = recordSeenHint(profileRef.current, hintId)
+    if (!next) return
+    if (writePlayerProfile(next)) {
+      profileRef.current = next
+      setProfile(next)
+    }
+  }, [])
 
   const checkpointGeneratedRun = useCallback(
     (
@@ -2478,6 +2498,7 @@ function App() {
             engineRef.current?.getAchievements() ?? readAchievementCatalogue(),
           )
         },
+        onHintSeen: markHintSeen,
         },
         {
           musicMuted: musicMutedRef.current,
@@ -2491,6 +2512,7 @@ function App() {
           achievementRunId: `${achievementSessionId}:${runId}`,
           generatedRun: launch,
           blueprint: blueprintForSeed(launch.config.seed),
+          seenHints: profileRef.current.seenHints,
         },
       )
     } catch (error) {
@@ -2529,6 +2551,7 @@ function App() {
     addNotice,
     checkpointGeneratedRun,
     faction,
+    markHintSeen,
     pendingGeneratedLaunch,
     recordTerminalRun,
     runId,

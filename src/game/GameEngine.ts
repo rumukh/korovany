@@ -150,6 +150,7 @@ import {
   WORLD_EVENT_FAILURE_MESSAGES,
   type LocatedEventCopyContext,
 } from './content/gameCopy'
+import { HintDirector } from './content/hints'
 import { RandomStream } from './random/RandomStream'
 import { deriveSeed, parseSeed } from './random/seed'
 import { getStartingBoonEffects } from './run/profile'
@@ -392,6 +393,11 @@ export interface GameEngineSettings {
    * else is regenerated, so a stale or wrong blueprint cannot be smuggled in.
    */
   blueprint: WorldBlueprint
+  /**
+   * Diegetic first-time lines this player has already seen, from the profile. The engine
+   * keeps no profile of its own; it reports back through `onHintSeen`.
+   */
+  seenHints: readonly string[]
 }
 
 export type GameEngineOptions = Partial<Omit<GameEngineSettings, 'generatedRun'>> &
@@ -1614,6 +1620,11 @@ export class GameEngine {
   private generatedHealthBonus = 0
   private generatedStaminaBonus = 0
   private readonly achievements: AchievementTracker
+  /**
+   * Diegetic first-time lines. Reads the emitted view and speaks through `onNotice`, so it
+   * needs no hook of its own in any system and cannot touch a random stream.
+   */
+  private readonly hints: HintDirector
   private readonly palette: Palette
   private readonly zoneArtProfiles: Record<ZoneId, ZoneArtProfile>
   private readonly scene = new THREE.Scene()
@@ -1969,6 +1980,15 @@ export class GameEngine {
     this.achievements = new AchievementTracker((achievement) => {
       this.callbacks.onAchievementUnlocked(achievement)
       this.playSound('achievement')
+    })
+    this.hints = new HintDirector({
+      seen: settings.seenHints ?? [],
+      emit: (message, tone) => {
+        this.callbacks.onNotice(message, tone)
+      },
+      onSeen: (hintId) => {
+        this.callbacks.onHintSeen(hintId)
+      },
     })
     if (
       restoredRun &&
@@ -10043,6 +10063,9 @@ export class GameEngine {
         : null,
     })
     this.callbacks.onView(view)
+    // After the HUD has the frame, so a hint can never describe a state the player has not
+    // been shown yet. Skipped once the run is over: the end screen owns that moment.
+    if (!this.ended) this.hints.observe(view)
   }
 
   private stableSeed(value: string): number {

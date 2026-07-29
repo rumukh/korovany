@@ -146,6 +146,7 @@ function copyProfile(profile: ProfileSaveV1): ProfileSaveV1 {
     unlockedCosmeticIds: [...profile.unlockedCosmeticIds],
     runHistory: profile.runHistory.map((summary) => ({ ...summary })),
     finalizedRunIds: [...profile.finalizedRunIds],
+    seenHints: [...profile.seenHints],
   }
 }
 
@@ -200,6 +201,32 @@ export function unlockBoon(profile: ProfileSaveV1, boonId: string): BoonUnlockRe
 }
 
 export const unlockBoonWithCurrency = unlockBoon
+
+/**
+ * The profile is one localStorage blob rewritten on every save, so the hint ledger is
+ * capped well above the number of hints that exist and far below anything that would make
+ * the blob expensive to write.
+ */
+export const MAX_SEEN_HINTS = 256
+
+/**
+ * Records that a diegetic first-time line has been shown.
+ *
+ * Returns `null` when the hint was already recorded, so the caller can skip a profile
+ * write instead of rewriting an identical blob on every duplicate report. The set is kept
+ * in first-seen order and trimmed from the front, which only matters if a future build
+ * ships more hints than the cap.
+ */
+export function recordSeenHint(
+  profile: ProfileSaveV1,
+  hintId: string,
+): ProfileSaveV1 | null {
+  if (typeof hintId !== 'string' || hintId.length === 0) return null
+  if (profile.seenHints.includes(hintId)) return null
+  const copy = copyProfile(profile)
+  copy.seenHints = [...new Set([...copy.seenHints, hintId])].slice(-MAX_SEEN_HINTS)
+  return copy
+}
 
 function boundedInteger(value: number, maximum: number): number {
   if (!Number.isFinite(value)) return 0

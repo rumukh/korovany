@@ -381,3 +381,131 @@ export function describeEventHandback(regionLabel: string): string {
   return `Пользователь ушёл из квадрата ${regionLabel}. Чем там кончилось — прочитаешь в хронике.`
 }
 
+// ---------------------------------------------------------------------------
+// Diegetic first-time lines
+// ---------------------------------------------------------------------------
+
+/**
+ * One line per mechanic that owns a piece of the HUD, shown the first time the player
+ * meets that mechanic and never again (`seenHints` on the profile).
+ *
+ * Not a tutorial: there is no mode, no modal and no ordering. Each line is attached to the
+ * moment its HUD element first says something — the stamina line arrives when the bar
+ * moves, the prosthetic line when a prosthetic is on, the threat line when the tier climbs
+ * — because explaining stamina to somebody who has not spent any is worse than saying
+ * nothing. `content/hints.ts` owns *when*; this file owns *what it says*.
+ *
+ * Same register as the rest of the game: in-fiction, self-ironic, never corporate. Each
+ * line has to earn its place by telling the player something the HUD alone does not — what
+ * the number is made of, what it costs, or what it will do next.
+ */
+export type HintId =
+  | 'health'
+  | 'stamina'
+  | 'bleeding'
+  | 'limbLoss'
+  | 'prosthetic'
+  | 'gold'
+  | 'upgrades'
+  | 'shopPrices'
+  | 'zone'
+  | 'objectives'
+  | 'interact'
+  | 'map'
+  | 'chronicle'
+  | 'squad'
+  | 'threat'
+  | 'ability'
+  | 'events'
+  | 'loot'
+
+export interface HintCopy {
+  readonly text: string
+  readonly tone: NoticeTone
+}
+
+const HINT_COPY: Record<HintId, HintCopy> = {
+  health: {
+    text: 'Здоровье само не зарастает: лечат паёк, торговец и трофеи. Полоска слева — весь запас пользователя.',
+    tone: 'warning',
+  },
+  stamina: {
+    text: 'Выносливость уходит на бег, прыжки и приёмы. Кончится — останется ходить пешком и т. п.',
+    tone: 'info',
+  },
+  bleeding: {
+    text: 'Кровь идёт сама, без твоего участия, и здоровье капает вместе с ней. Останавливают паёк и лекарь, а не характер.',
+    tone: 'danger',
+  },
+  limbLoss: {
+    text: 'Оторванное не отрастает: без руки бьёшь слабее, без ноги ходишь медленнее, без глаза видишь полмира. Помогает только протез у торговца.',
+    tone: 'danger',
+  },
+  prosthetic: {
+    text: 'Протез встал на место. Не как родное, но держит: штраф меньше, чем был, и картинка снова 3-хмерная.',
+    tone: 'success',
+  },
+  gold: {
+    text: 'Золото тратится у торговца: лечение, протезы, заточка. Что доживёт до конца забега, вернётся монетами профиля — на них открываются припасы к следующему.',
+    tone: 'success',
+  },
+  upgrades: {
+    text: 'Улучшение живёт до конца забега, не дольше. Число с мечом слева — это оно и есть.',
+    tone: 'success',
+  },
+  shopPrices: {
+    text: 'Торговцы прослышали, кто тут ходит, и подняли цены. Чем громче забег, тем дороже лечиться.',
+    tone: 'warning',
+  },
+  zone: {
+    text: 'Новая область — свои хозяева, своё зверьё и свои цены. Смотреть, куда зашёл, полезно.',
+    tone: 'info',
+  },
+  objectives: {
+    text: 'Список «Суть такова» слева — весь смысл забега. Закроешь все пункты — победа, и корован ушёл не зря.',
+    tone: 'success',
+  },
+  interact: {
+    text: 'Подсказка внизу означает, что рядом есть на что нажать E: торговец, тайник или корован.',
+    tone: 'info',
+  },
+  map: {
+    text: 'Карта открывается ногами: где прошёл, то и видно. Точки на ней — свои, чужие и корованы.',
+    tone: 'info',
+  },
+  chronicle: {
+    text: 'Хроника справа — то, что мир делает без пользователя. Пока ты идёшь, кого-то уже грабят.',
+    tone: 'info',
+  },
+  squad: {
+    text: 'Рядом свои, и счётчик с человечком слева считает живых. Q переключает приказ: идти следом или держать место.',
+    tone: 'success',
+  },
+  threat: {
+    text: 'Угроза в углу растёт от времени, а не от подвигов. Чем дольше забег, тем злее гости.',
+    tone: 'warning',
+  },
+  ability: {
+    text: 'Приём (ПКМ или R) не бесплатный: ест выносливость и уходит на перезарядку. Полоска под иконкой — сколько ждать.',
+    tone: 'info',
+  },
+  events: {
+    text: 'События идут по таймеру и заканчиваются без тебя тоже. Успел — забрал награду, ушёл из квадрата — прочитаешь в хронике.',
+    tone: 'info',
+  },
+  loot: {
+    text: 'С павших падает добыча. Монеты идут в кошелёк сразу, остальное лечит или точит.',
+    tone: 'success',
+  },
+}
+
+export const HINT_IDS = Object.keys(HINT_COPY) as readonly HintId[]
+
+export function isHintId(value: unknown): value is HintId {
+  return typeof value === 'string' && Object.hasOwn(HINT_COPY, value)
+}
+
+export function describeHint(id: HintId): HintCopy {
+  return HINT_COPY[id]
+}
+

@@ -5,11 +5,14 @@ import {
   createGeneratedObjectiveText,
   describeChronicleEvent,
   describeEventHandback,
+  describeHint,
   describeLocatedEvent,
   describeLocatedEventOutcome,
   describeLocatedEventStart,
   formatRegionGridLabel,
   formatRussianCount,
+  HINT_IDS,
+  isHintId,
   WORLD_EVENT_FAILURE_MESSAGES,
 } from '../src/game/content/gameCopy.ts'
 import { SITE_PRESENTATIONS } from '../src/game/content/registry.ts'
@@ -213,3 +216,42 @@ test('every player-anchored event kind has a failure line', () => {
     assert.ok(/[.!?]$/.test(line), `${kind} failure line is not a sentence`)
   }
 })
+
+// ---------------------------------------------------------------------------
+// Diegetic first-time lines
+// ---------------------------------------------------------------------------
+
+test('every hint is a censored Russian sentence that fits the notice stack', () => {
+  const banned = /\b(бля|хер|нах|сука)/i
+  const tones = new Set(['info', 'success', 'warning', 'danger'])
+
+  // A floor first: an empty catalogue would satisfy every assertion in the loop.
+  assert.ok(HINT_IDS.length >= 12, `only ${String(HINT_IDS.length)} hints exist`)
+
+  for (const id of HINT_IDS) {
+    const { text, tone } = describeHint(id)
+    assert.ok(/[А-Яа-яЁё]/.test(text), `${id} is not written in Russian: ${text}`)
+    assert.ok(text.length > 40, `${id} is too terse to teach anything: ${text}`)
+    // Long enough to say something, short enough to be read before the notice expires.
+    assert.ok(text.length <= 190, `${id} will not be read in 4.3 s: ${text}`)
+    assert.ok(/[.!?]$/.test(text), `${id} is not a full sentence: ${text}`)
+    assert.equal(banned.test(text), false, `${id} is not censored: ${text}`)
+    assert.equal(text.includes('undefined'), false, `${id}: ${text}`)
+    assert.ok(tones.has(tone), `${id} has no notice tone`)
+  }
+})
+
+test('no two hints teach the same line', () => {
+  const lines = HINT_IDS.map((id) => describeHint(id).text)
+  assert.equal(new Set(lines).size, lines.length, 'a hint line is duplicated')
+})
+
+test('hint ids are recognised by id, not by shape', () => {
+  for (const id of HINT_IDS) assert.equal(isHintId(id), true, `${id} is not recognised`)
+  // Negative control: the guard has to reject something, including inherited keys.
+  assert.equal(isHintId('tutorial'), false)
+  assert.equal(isHintId('toString'), false)
+  assert.equal(isHintId(''), false)
+  assert.equal(isHintId(null), false)
+})
+

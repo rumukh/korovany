@@ -2,8 +2,10 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   DEFAULT_STARTING_BOON_IDS,
+  MAX_SEEN_HINTS,
   computeRunCompletionReward,
   getStartingBoonEffects,
+  recordSeenHint,
   selectProfileBoon,
   unlockBoon,
   validateBoonSelection,
@@ -269,6 +271,41 @@ test('active runs and profiles round-trip without touching unrelated storage', (
 
   assert.equal(removeProfile(storage), true)
   assert.deepEqual(loadProfile(storage), createDefaultProfile())
+})
+
+test('the hint ledger persists, bounds itself, and does not discard a profile that predates it', () => {
+  const storage = new MemoryStorage()
+  const taught = recordSeenHint(createDefaultProfile(), 'stamina')
+  assert.ok(taught)
+  assert.deepEqual(taught.seenHints, ['stamina'])
+  // Reporting the same hint twice must not produce a second profile write.
+  assert.equal(recordSeenHint(taught, 'stamina'), null)
+  assert.equal(recordSeenHint(taught, ''), null)
+
+  const both = recordSeenHint(taught, 'bleeding')
+  assert.ok(both)
+  assert.deepEqual(both.seenHints, ['stamina', 'bleeding'])
+  assert.deepEqual(taught.seenHints, ['stamina'], 'the source profile was mutated')
+
+  assert.equal(saveProfile(storage, both), true)
+  assert.deepEqual(loadProfile(storage).seenHints, ['stamina', 'bleeding'])
+
+  // A profile written before this field existed still loads; discard-and-report is for
+  // saves that cannot be read, not for a returning player who predates a field.
+  const older = { ...createDefaultProfile() } as Partial<ProfileSaveV1>
+  delete older.seenHints
+  storage.setItem(PROFILE_SAVE_KEY, JSON.stringify(older))
+  assert.deepEqual(loadProfile(storage).seenHints, [])
+
+  // Malformed is still malformed, and the ledger is bounded like every other list.
+  assert.equal(normalizeProfileSaveV1({ ...createDefaultProfile(), seenHints: [7] }), null)
+  assert.equal(normalizeProfileSaveV1({ ...createDefaultProfile(), seenHints: 'stamina' }), null)
+  const flooded = normalizeProfileSaveV1({
+    ...createDefaultProfile(),
+    seenHints: Array.from({ length: MAX_SEEN_HINTS + 40 }, (_, index) => `hint-${String(index)}`),
+  })
+  assert.ok(flooded)
+  assert.equal(flooded.seenHints.length, MAX_SEEN_HINTS)
 })
 
 test('runtime region deltas survive manager extraction, active-run storage, and reapplication', () => {
