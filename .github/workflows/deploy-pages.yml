@@ -21,11 +21,15 @@ permissions:
 # the whole run protected the deployment and paid for it with the build: GitHub
 # documents that "when a concurrent job or workflow is queued, if another job or
 # workflow using the same concurrency group in the repository is in progress, the
-# queued job or workflow will be `pending`", so run N+1 would wait for run N to
-# finish end to end and a superseded build could never be abandoned. Every
-# cancellation in this repository's recorded history killed a build; none is
-# recorded as interrupting a deployment. The two jobs want opposite policies, so
-# they get one group each — the level at which GitHub lets them differ.
+# queued job or workflow will be `pending`". So run N+1 would not start its build
+# while run N held the group — it would be held pending, and under the default
+# `queue: single` a run N+2 would replace it there rather than queue behind it.
+# Which of those two happens does not matter to the build: either way the build
+# job has no in-progress peer to cancel, so a superseded build could never be
+# abandoned. Every cancellation in this repository's recorded history killed a
+# build; none is recorded as interrupting a deployment. The two jobs want opposite
+# policies, so they get one group each — the level at which GitHub lets them
+# differ.
 
 jobs:
   build:
@@ -74,12 +78,14 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     needs: build
-    # A deployment must be allowed to finish. Cancelling `actions/deploy-pages`
-    # mid-flight can leave the live site on an older commit, and the run that
-    # would explain it reads `cancelled` rather than `failure` — a stale site
-    # with nothing pointing at it. GitHub's Pages template sets this `false` for
-    # that reason, and the flag is spelled out rather than left to the default so
-    # that deleting it is a visible edit.
+    # A deployment must be allowed to finish. What is documented is modest, and is
+    # all that is claimed here: GitHub's Pages starter workflow sets this `false`
+    # with the comment that production deployments should be allowed to complete.
+    # The reason to care is an inference on top of that and is labelled as one — a
+    # deployment interrupted part-way leaves the live site on whatever was last
+    # published, and the run that would explain it reads `cancelled` rather than
+    # `failure`, so nothing points at it. The flag is spelled out rather than left
+    # to the default so that deleting it is a visible edit.
     #
     # This group is a constant where the build's is not, because there is one live
     # site and every deployment competes for it. Keying it by ref would let a
@@ -93,8 +99,12 @@ jobs:
     # stays on whatever is already live — older than either. That is a real
     # availability-versus-freshness trade, accepted here because main is linear and
     # a superseding push contains the commit it displaces, so the displaced deploy
-    # is redundant whenever the newer one succeeds. `queue: max` would buy the
-    # other side of the trade at the cost of a queue of stale deployments, and
+    # is redundant whenever the newer one succeeds. Ordering among waiting runs is
+    # documented as best-effort in any case — "processed in first-in-first-out
+    # (FIFO) order according to the time each one started waiting on the
+    # concurrency group … ordering is not guaranteed" — so "the newest content is
+    # served" is not a claim this configuration can make. `queue: max` would buy
+    # the other side of the trade at the cost of a queue of stale deployments, and
     # cannot be combined with `cancel-in-progress: true` in any case. ci.yml makes
     # the opposite choice deliberately, because it owes a verdict to every commit
     # and a verdict is not superseded by a later one.

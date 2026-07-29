@@ -2079,9 +2079,15 @@ test('the groups the Pages workflow declares are reserved to it', () => {
   assert.ok(groupIntruders([real, jobLevel]).length > 0, 'catch: a job-level declaration of a reserved group was not reported')
 
   // The control: a group that is nobody else's business stays unreported, so the
-  // reservation is about these names rather than about having a group at all.
+  // reservation is about these names rather than about having a group at all. The
+  // build group is generated, so the reservation over it is a reservation over a
+  // *namespace* — and the separator is what keeps that narrow. `pages-build-…` is
+  // reserved; `pages-buildkite` and `pages-buildings` are not, because neither is
+  // something the pattern can produce.
   assert.deepEqual(groupIntruders([real, joining('lint-${{ github.ref }}')]), [])
   assert.deepEqual(groupIntruders([real, joining('pages-buildings')]), [])
+  assert.deepEqual(groupIntruders([real, joining('pages-buildkite')]), [])
+  assert.deepEqual(groupIntruders([real, joining('pages-deployment-notes')]), [])
 })
 
 /**
@@ -2262,8 +2268,8 @@ function flowDelta(region: string): number {
 }
 
 /** Every double-quoted mapping key in a file, and nothing that merely looks like one. */
-function doubleQuotedKeys(source: string): { line: string; key: string; number: number }[] {
-  const found: { line: string; key: string; number: number }[] = []
+function doubleQuotedKeys(source: string): { line: string; key: string; number: number; open: boolean }[] {
+  const found: { line: string; key: string; number: number; open: boolean }[] = []
   const lines = source.split(/\r?\n/)
 
   let explicitPending = false
@@ -2279,9 +2285,19 @@ function doubleQuotedKeys(source: string): { line: string; key: string; number: 
       if (region[i] !== '"') continue
 
       const end = quotedEnd(region, i)
-      if (end < 0) break
+
+      // A double-quoted scalar that does not close on its own line is the one
+      // form the round-nine prose recorded and left unguarded. Abandoning the
+      // scan here is what made it unguarded: a trailing `\` joins the two halves
+      // into one string, so the key spells a word neither line contains. It is
+      // reported rather than skipped, and the report is what the test below reads.
+      if (end < 0) {
+        found.push({ line, key: region.slice(i), number, open: true })
+        break
+      }
+
       if (all || /^\s*:/.test(region.slice(end + 1))) {
-        found.push({ line, key: region.slice(i, end + 1), number })
+        found.push({ line, key: region.slice(i, end + 1), number, open: false })
       }
       i = end
     }
@@ -2321,7 +2337,7 @@ function doubleQuotedKeys(source: string): { line: string; key: string; number: 
 
     const key = content.slice(0, sep).trim()
     if (key.startsWith('"') && quotedEnd(key, 0) === key.length - 1) {
-      found.push({ line, key, number })
+      found.push({ line, key, number, open: false })
     }
 
     // Tags and anchors precede the node without being it.
@@ -2350,6 +2366,95 @@ function encodedKeys(file: WorkflowFile): string[] {
     .filter((entry) => HEX_ESCAPE.test(entry.key))
     .map((entry) => `${file.name}:${String(entry.number)}: ${entry.line}`)
 }
+
+function continuedKeys(file: WorkflowFile): string[] {
+  return doubleQuotedKeys(file.source)
+    .filter((entry) => entry.open)
+    .map((entry) => `${file.name}:${String(entry.number)}: ${entry.line}`)
+}
+
+/**
+ * The form the ninth round recorded and declined to guard: a double-quoted scalar
+ * continued with a trailing backslash, which joins both halves into one string. As
+ * an explicit key it spells a word neither line contains.
+ *
+ * A reviewer built exactly this against the previous head and measured it there:
+ * valid YAML, schema-valid, and the whole guard green. Measured again here it is
+ * caught twice — the parser decodes the key and reports a workflow-level group,
+ * and the check below reports the continuation. That is two notices on the *same*
+ * surface, which is the only kind that counts: the concurrency pins would not have
+ * seen it either, because they read values and this is a key.
+ *
+ * The ninth round's objection to guarding it was that banning trailing backslashes
+ * would fire on every multi-line `run:`. That objection was about a rule over
+ * *lines*; this scan is over key positions, and a `run:` body is a value.
+ */
+const CONTINUED_KEY_BYPASS: WorkflowFile = {
+  name: 'continued.yml',
+  source: [
+    'name: Continued',
+    '? "con\\',
+    '  currency"',
+    ':',
+    '  ? "gr\\',
+    '    oup"',
+    '  : pages',
+    '  ? "cancel-in-\\',
+    '    progress"',
+    '  : false',
+    'jobs:',
+    '  build:',
+    '    runs-on: ubuntu-latest',
+    '    steps:',
+    '      - run: echo hi',
+    '',
+  ].join('\n'),
+}
+
+test('no workflow continues a double-quoted mapping key onto the next line', () => {
+  // The positive control, and the proof that the fixture is what it claims: it
+  // parses, and it decodes to a workflow-level concurrency group.
+  assertParses(CONTINUED_KEY_BYPASS, 'continued key')
+  const model = readWorkflow(CONTINUED_KEY_BYPASS)
+  assert.deepEqual(
+    model.blocks.map((block) => [block.owner.kind, [...block.entries].map(([k, v]) => `${k}=${v.text}`)]),
+    [['workflow', ['group=pages', 'cancel-in-progress=false']]],
+    'precondition: the fixture does not decode to the workflow-level group it is supposed to hide',
+  )
+
+  assert.ok(
+    continuedKeys(CONTINUED_KEY_BYPASS).length > 0,
+    'catch: a key continued onto the next line was not reported',
+  )
+
+  // The false-positive controls, drawn from ordinary workflow content that carries
+  // backslashes in *values* rather than from forms chosen to pass.
+  const innocent: ReadonlyArray<readonly [string, WorkflowFile]> = [
+    [
+      'a shell continuation inside a block scalar',
+      { name: 'innocent.yml', source: 'jobs:\n  x:\n    steps:\n      - run: |\n          echo one \\\n            two\n' },
+    ],
+    [
+      'a printf format in a double-quoted value',
+      { name: 'innocent.yml', source: 'jobs:\n  x:\n    steps:\n      - run: printf "%s\\n" hi\n' },
+    ],
+    [
+      'a Windows path in a double-quoted value',
+      { name: 'innocent.yml', source: 'jobs:\n  x:\n    steps:\n      - run: echo "C:\\Users\\runner"\n' },
+    ],
+  ]
+
+  for (const [label, file] of innocent) {
+    assertParses(file, label)
+    assert.deepEqual(continuedKeys(file), [], `catch: ${label}: reported a value as a continued key`)
+  }
+
+  assert.deepEqual(
+    readWorkflows().flatMap(continuedKeys),
+    [],
+    'live: a workflow continues a double-quoted mapping key across a line break, so the key it spells is not the key either line shows',
+  )
+})
 
 test('no workflow spells a mapping key with character escapes', () => {
   // The positive control, first and deliberately. The assertion below is an
