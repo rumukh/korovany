@@ -1019,7 +1019,8 @@ no new dependencies.
   will act on, and **read the action instead of re-reading the words.** That is a better
   argument for review than scepticism or a second execution — it is the only channel through
   which an author's own ambiguity is visible at all.
-  **With one boundary, supplied by the same reviewer rather than inferred here.** Ambiguity
+  **With one boundary, supplied by the same sibling session rather than inferred here.**
+  Ambiguity
   has no instrument: the sentence is grammatical under both readings and the author carries
   the omitted fact, so re-reading regenerates the intended one. **Factual error does have
   instruments**, and the author can catch it alone. In one hour the reviewer drafted two
@@ -1571,10 +1572,11 @@ no new dependencies.
   live failure was `MERGED`: after a PR merged, its frozen head made a clean branch report
   `MISMATCH`. The code generalised that to `CLOSED` in two independent sites —
   `classifyPrResult` and the settled-head filter in `headsAgree` — while the controls covered
-  only `MERGED`. A reviewer removed `state === 'CLOSED'` from the first and `|closed` from
+  only `MERGED`. A sibling session removed `state === 'CLOSED'` from the first and
+  `|closed` from
   the second: **zero failures in both cases**. Adding `state === 'OPEN'` produced two reds,
   proving the harness could see the predicate and was blind only to the reasoned arm.
-  The same reviewer supplied the missing observation:
+  The same sibling session supplied the missing observation:
   ```
   PR #63   CLOSED unmerged at 10:15:55Z
   frozen headRefOid       b968e5e
@@ -1586,6 +1588,13 @@ no new dependencies.
   sites separately — one requires `CLOSED` to classify as `(closed at b968e5e)`, the other
   requires that rendered head to be excluded from currency comparison. Either line can fail
   without the other hiding it.
+  *(Attribution corrected from both archives rather than inferred from the body. The
+  recipient store held the full finding as turn 297 but stripped its sender wrapper. A later
+  reviewer message denying authorship was then mistaken for the wrapper of that older body.
+  The sibling session's own archive, turn 321, contains the same A/B/C table, the #63
+  observation and the ambiguity boundary verbatim. **The body and the current wrapper were
+  each real and belonged to different messages.** Attaching one to the other was the
+  missing-sender-column defect this file had already documented.)*
   > **A correct generalisation is still an untested branch until an observation and a
   > control reach the member the original failure did not.**
   Every other line in that function had been written from a live failure. The one line
