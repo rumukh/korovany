@@ -1872,11 +1872,12 @@ one here had never been re-verified at all until now. Re-pulled, it holds, and a
 pair gives the same sign at five milliseconds. The comparison drawn here therefore runs the
 other way, and what survives is thirteen observations of one thing by one method.
 
-A measurement nobody took until now. Across the twenty-nine commits between `origin/main` and
-`27266be`: **none touch code alone, twenty touch documentation alone, nine touch both.** The
-final eight of those change no code whatever; the last commit to touch the guard or the game is
-`7cf3462`, nine before that head. Each of the eight appends an entry to this section, and each
-entry audits the exchange immediately preceding it.
+A measurement nobody took until now. Of the twenty-nine commits between `origin/main` and
+`27266be`, two are merges from `main` carrying no content of their own; of the remaining
+twenty-seven, **none touch code alone, eighteen touch documentation alone, and nine touch
+both.** The final eight change no code whatever; the last commit to touch the guard or the game
+is `7cf3462`, nine before that head. Each of the eight appends an entry to this section, and
+each entry audits the exchange immediately preceding it.
 
 The mechanism is not fatigue. **Each round's artefact is the next round's subject.** Every
 message carries claims, claims are auditable, and auditing produces a message carrying claims.
@@ -1891,6 +1892,16 @@ the next commit to land. **The expiring-status gate rejected the second and pass
 — the second carried currency vocabulary, the first was only a number with a moving referent.
 One authoring defect, two instances, and the instrument sees the one that says a word it knows.
 Both are now anchored to named objects, which is the remedy the gate could not have prompted.
+
+And the first published form of that count was wrong. The classifier had a bucket for code, one
+for documentation and one for both, and no arm for neither — so the two merges fell through it
+in silence and the documentation figure went out as twenty against a true eighteen. **Three
+counts summing to twenty-seven were printed under a population of twenty-nine and the gap
+raised nothing**, because nothing in the script compared the parts against the whole. It was
+caught by re-running the measurement before quoting it onward, which is the only reason this is
+a correction rather than a fabricated row with real numbers that survived. **A partition with
+no residual bucket cannot report that it dropped anything**, and the assertion that closes it
+is not a threshold but an equality: the parts must sum to the population.
 
 This completes the sibling's observation that the yield moved from code to prose. It moved
 because the authors moved, and *there is still yield here* stopped being evidence that here is
