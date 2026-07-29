@@ -1,14 +1,27 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import {
   chronicleEventTone,
   createGeneratedObjectiveText,
+  describeCaravanRobbed,
+  describeChampionDefeated,
   describeChronicleEvent,
   describeEventHandback,
   describeHint,
+  describeKillReward,
+  describeLimbLost,
   describeLocatedEvent,
   describeLocatedEventOutcome,
   describeLocatedEventStart,
+  describeRationEaten,
+  describeRazedSite,
+  describeSquadOrder,
+  describeThreatTier,
+  describeThreatWave,
+  describeTreasureFound,
+  describeWound,
+  describeZoneDiscovered,
   formatRegionGridLabel,
   formatRussianCount,
   HINT_IDS,
@@ -253,5 +266,63 @@ test('hint ids are recognised by id, not by shape', () => {
   assert.equal(isHintId('toString'), false)
   assert.equal(isHintId(''), false)
   assert.equal(isHintId(null), false)
+})
+
+// ---------------------------------------------------------------------------
+// The engine's own notices
+// ---------------------------------------------------------------------------
+
+test('no notice in GameEngine.ts carries its own copy', () => {
+  // The roadmap's other half: the engine-side `onNotice` strings belong here, not welded
+  // into a 14,000-line file. This is what keeps the next one from being written inline.
+  const source = readFileSync(
+    new URL('../src/game/GameEngine.ts', import.meta.url),
+    'utf8',
+  )
+  const calls = [...source.matchAll(/callbacks\.onNotice\(\s*(.)/g)]
+
+  // Floor: a regex that matches nothing would pass the assertion below happily.
+  assert.ok(calls.length >= 30, `only ${String(calls.length)} notice sites found`)
+  const inline = calls.filter(([, first]) => first === "'" || first === '`' || first === '"')
+  assert.deepEqual(inline.map(([match]) => match), [])
+
+  // And the same for the wrapped form, where the literal starts on the next line.
+  const wrapped = [...source.matchAll(/callbacks\.onNotice\(\s*\n\s*(.)/g)].filter(
+    ([, first]) => first === "'" || first === '`' || first === '"',
+  )
+  assert.deepEqual(wrapped.map(([match]) => match), [])
+})
+
+test('moved notices name the amount the engine actually awarded', () => {
+  // The numbers used to be baked into the sentence next to the line that granted them.
+  // As parameters they cannot drift apart silently, so the pairing is pinned here.
+  assert.ok(describeCaravanRobbed(95).includes('+95 золота'))
+  assert.ok(describeTreasureFound(41).includes('41 золота'))
+  assert.ok(describeRationEaten(35).includes('35 здоровья'))
+  assert.ok(describeKillReward('beast', 12).includes('+12 золота'))
+  assert.ok(describeKillReward('soldier', 7).includes('+7 золота'))
+  assert.equal(describeKillReward('commander', 7).includes('золота'), false)
+  assert.ok(describeChampionDefeated(4).includes('+4 к урону'))
+  assert.ok(describeChampionDefeated(0).includes('предела'))
+  assert.equal(describeChampionDefeated(0).includes('+0'), false)
+  assert.equal(describeThreatTier(3, 5), 'Угроза растёт: уровень 3/5. Враги сильнее, событий и набегов больше.')
+  assert.ok(describeThreatWave(1, 2).includes('1 враг.'))
+  assert.ok(describeThreatWave(3, 2).includes('3 врага'))
+  assert.ok(describeThreatWave(5, 2).includes('5 врагов'))
+})
+
+test('moved notices still differ per faction, per site and per body part', () => {
+  const orders = (['elf', 'guard', 'villain'] as const).map((faction) => [
+    describeSquadOrder(faction, true),
+    describeSquadOrder(faction, false),
+  ])
+  assert.equal(new Set(orders.flat()).size, 6, 'a faction lost its own squad line')
+
+  assert.notEqual(describeRazedSite('shop'), describeRazedSite('recovery'))
+  assert.notEqual(describeZoneDiscovered('forest'), describeZoneDiscovered('fort'))
+  assert.ok(describeLimbLost('leftEye').includes('пол-экрана'))
+  assert.ok(describeLimbLost('leftArm').includes('протез'))
+  assert.equal(describeLimbLost('leftArm').includes('пол-экрана'), false)
+  assert.ok(describeWound('rightLeg').includes('правая нога'))
 })
 
