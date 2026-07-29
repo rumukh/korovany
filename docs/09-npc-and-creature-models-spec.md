@@ -1034,20 +1034,42 @@ no new dependencies.
   turn 231  23:58:13.487      next message  23:58:13.484     +3 ms
   turn 232  00:02:33.461      next message  00:02:33.456     +5 ms
   ```
-  What kills it is a population the argument never used: **all eighty sessions with turns
-  carry a stamped final turn**, and twenty-one of those were last active before
-  `2026-07-27T00:00Z` — two days dead at the time of writing, with no next message then or
-  since. Under arrival-of-next that field could not have a value. It does.
-  *(Two corrections to how that count was first published. It appeared as **six**, which was
-  the `LIMIT` on the query that displayed the rows restated as the size of the population —
-  a display bound reported as a census, in the **strengthening** direction, which is why
-  nobody checked it. And the replacement, "twenty-one idle beyond fifty hours", **had a
-  clock in the predicate**: idleness is measured against `now`, so the identical query over
-  identical unchanged rows returned `9` four hours earlier, `11` two hours earlier, `20` one
-  hour earlier and `21` at the moment of writing. **A number that more than doubled in two
-  hours while the data stood still**, committed in the past tense of a finished measurement.
-  It is now anchored to a fixed instant, which is *cite endpoints, not lengths* — derived
-  here for commit ranges and not carried across to time until a sibling hit the same wall.)*
+  What kills it is a population the argument never used: **twenty-one sessions whose final
+  turn predates `2026-07-27T00:00Z`** — two days dead at the time of writing, with no next
+  message then or since. Under arrival-of-next that field could not have a value. It does.
+  *(Three corrections to how that count was published, and the third is the one that
+  matters. It appeared as **six**, which was the `LIMIT` on the query that displayed the
+  rows restated as the size of the population — a display bound reported as a census, in the
+  **strengthening** direction, which is why nobody checked it. Then as "twenty-one idle
+  beyond fifty hours", which **had a clock in the predicate**: idleness is measured against
+  `now`, so the identical query over identical unchanged rows returned `9` four hours
+  earlier, `11` two hours earlier and `21` at the moment of writing. **A number that more
+  than doubled in two hours while the data stood still.** Anchoring the endpoint fixed
+  that — *cite endpoints, not lengths*, derived here for commit ranges and not carried
+  across to time.*
+  *Then it was widened to **all eighty sessions with turns**, on the reasoning that the
+  eighty has no clock in it at all. **True, and it also has no argument.** The hypothesis
+  says turn N's row is written when the input opening turn N+1 arrives, so a stamped final
+  turn refutes it **only where no next input ever arrived** — which is the entire work the
+  idleness filter was doing. The other fifty-nine were mid-conversation; their final row is
+  stamped **because the next message did arrive**, which is what the hypothesis *predicts*.
+  Measured, and it is the two sessions having the argument:*
+  ```
+  9c712218   last turn 0.3 min ago    NOT in the 21
+  e558ef9b   last turn 0.9 min ago    NOT in the 21
+  ```
+  *So the widened form cited the hypothesis's own output as evidence against it.)*
+  > **A clock and a filter are different defects, and dropping the filter is not a way to
+  > fix the clock.** The clock was in the predicate's *form* — an interval measured from
+  > reading time — and anchoring the endpoint fixes the form while keeping the filter.
+  >
+  > **Widening a population cannot strengthen a refutation when the added members are
+  > predicted by the hypothesis.** They are not weak counterexamples; they are its output,
+  > and an aggregate mixing them is no stronger than its most active member.
+  Recorded as a class rather than an incident, because both parties made the same reach
+  within an hour: **on discovering a bad filter, the reflex is to remove filtering, when the
+  defect was in the predicate.** The bigger number feels safer and is the one that cannot
+  discriminate.
   **The gate that exists for this class did not fire, and that is the finding.** This
   repository has a test named *no spec makes a status claim that can only expire*, and it
   had already caught a sibling's branch-relative commit-count phrasing an hour earlier. Its
