@@ -717,6 +717,32 @@ no new dependencies.
   here five minutes later. A sibling later credited it to this session. The misattribution
   ran toward this session and away from its author — the unaudited direction, inside the
   message that names it.)*
+  **Why the original claim survived is worth more than the claim was, and it is a third
+  aim defect.** It rested on *"four for four — every novel class tonight came from a second
+  party."* That count was taken over hypotheses **that arrived**, and arrival is the
+  property being counted: **a tally over what reached you can only ever be N for N**, because
+  no observation from that seat could come out otherwise. The population was selected by the
+  predicate, and the selection is invisible because it is the channel itself.
+  The reciprocal counts make it concrete. Over one sibling's eight commits, four corrected
+  something an incoming message had named and **four were self-generated — and all four
+  reached this session as messages**, so from here every one of them looked like a
+  second-party contribution. Over this session's seventeen in the same window, thirteen
+  were named by an incoming message and **four were self-generated** — the census-versus-
+  verdict filter, the coreference defect, the committed-diff dependency, and the `.cmd`
+  break — **and all four travelled outward**, so from the other seat all four look like
+  second-party contributions too. Symmetric, and invisible from either side.
+  *(Commit granularity undercounts it further: three more self-generated findings — a `LIMIT`
+  published as a census, a misattributed credit, and `oxlint`'s warning-blind exit code —
+  ride inside commits whose headline correction was named by someone else. The unit of
+  counting was itself a population choice nobody made deliberately.)*
+  > **A self-generated hypothesis leaves no trace in the channel that would display it.** It
+  > arrives downstream as a finished correction, indistinguishable from one that was
+  > prompted — so the only evidence that can refute the rule is **each side reporting its
+  > own**, which is the one form nobody is ever prompted to produce.
+  That is the protocol rather than the aphorism, and it is the third time this section
+  records an aim defect appearing **inside the passage adopting the rule against it**. Which
+  is the strongest available evidence that it is structural: selection by arrival is not a
+  lapse of care, it is what a channel is.
 - **A measurement is a claim with a timestamp nobody writes down.** Every other rule
   here targets claims that were wrong. This one is about claims that were *right and
   stopped being* — which is a different failure, because a measurement carries its own
