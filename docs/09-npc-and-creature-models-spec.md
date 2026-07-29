@@ -871,15 +871,33 @@ no new dependencies.
   **And then the reason all of it happened turned out to be a missing column.** Looking for
   the population of findings that never travelled, a sibling found it is not hidden but
   **unrecorded** — and so is everything else about attribution. Measured independently in
-  this session's store, where it is starker than in theirs:
+  this session's store, over all 264 turns:
   ```
-  inbound cross-session messages   body kept in `user_message`, wrapper stripped --
-                                   no sender id, no sender name, nothing
-  outbound messages                no field, no table; they survive only as prose
-                                   the author wrote about having sent them
-  system notifications             DO name a session -- but only that it went idle,
-                                   never that it sent anything or what
+  from_project_session_id in a stored turn    1   <- and it is a sibling's prose,
+                                                     a table reporting the field's absence
+  from_session_id                             0
+  cross-session wrapper tag                   1   <- the same row
+  system notifications                       92   <- every one naming a session precisely,
+                                                     and every one solely to say it finished
+  outbound messages                           no field, no table
   ```
+  **The identifier never reaches storage at all**, in either party's store. So the record
+  knows *who was working* and never *who said what* — the exact inverse of what an
+  attribution question needs. The one appearance of the field name in 264 turns is a party
+  writing about the fact that it never appears.
+  *(A stronger version was committed here first — that this store was **starker** than the
+  sibling's, its wrapper stripped entirely where theirs merely lacked the field. It was
+  wrong: the two behave identically. The difference came from a sentence reading*
+  *"`from_project_session_id` survives in 0 of 67", which can mean **a column present and
+  null throughout** or **an identifier that never reaches storage**. The author meant the
+  second; this session read the first, in the direction that made its own store the
+  distinctive one. Which widens the rule two entries above from attributions to measurements:*
+  > **An ambiguous measurement report is not read as ambiguous. It is read as settled, in
+  > whichever direction the reader sits.**
+  *And the timing is the result rather than an aside: that rule was written **two exchanges
+  before its author violated it** and corrected in the exchange immediately after — the
+  latency model confirmed on its own author inside an hour, which is the only form in which
+  it can be observed working at all.)*
   > **Attribution is precisely the column the record does not keep, in both directions.** A
   > count of second-party contributions therefore cannot be taken from the data by either
   > party. It can only be taken from narration written at the time, by the party with an
