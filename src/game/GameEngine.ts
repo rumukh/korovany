@@ -192,6 +192,7 @@ import {
   type ActiveRunSaveV3,
   type RunCompanionState,
   type RunConfig,
+  type RunEndingState,
   type RunStatus,
   type SerializableState,
 } from './run/runTypes'
@@ -951,6 +952,11 @@ interface DamageActorOptions {
 
 interface DamagePlayerOptions {
   attackKind: AttackKind
+  /**
+   * Whatever swung, when something did — the epilogue's only route to a cause of death.
+   * The role is optional because a projectile can outlive its shooter.
+   */
+  source?: { role?: ActorRole; allegiance: Allegiance }
 }
 
 interface DamageNumberFx {
@@ -1669,6 +1675,17 @@ export class GameEngine {
   private generatedNavigationRegionSignature = ''
   private generatedCaravanPatrolReady = false
   private generatedRunStatus: RunStatus = 'active'
+  /**
+   * What landed the last blow on the player, and whether a bleed finished the job.
+   *
+   * Kept so the run epilogue can name a cause instead of reporting a health bar that
+   * reached zero. Both are plain observations of combat that already happened — nothing
+   * here draws from a random stream or reads a clock.
+   */
+  private lastPlayerDamageRole: ActorRole | null = null
+  private lastPlayerDamageAllegiance: Allegiance | null = null
+  private bledOut = false
+  private runEnding: RunEndingState | null = null
   private generatedSupplyCount = 0
   private generatedHealthBonus = 0
   private generatedStaminaBonus = 0
@@ -3176,6 +3193,9 @@ export class GameEngine {
         chronicle: this.generatedRngStreams.chronicle.getState(),
       },
       achievementRunState,
+      ...(this.runEnding && this.generatedRunStatus !== 'active'
+        ? { ending: { ...this.runEnding } }
+        : {}),
     }
     const normalized = normalizeActiveRunSaveV3(save)
     if (!normalized) throw new Error('Generated run save failed validation')
@@ -3253,7 +3273,11 @@ export class GameEngine {
     this.updateAtmosphere(delta)
 
     if (this.body.bleeding > 0) {
+      const healthBeforeBleed = this.health
       this.health -= this.body.bleeding * delta
+      // A wound that finishes the job on its own is a different story from a blow that
+      // does, and the сводка is allowed to say which one it was.
+      if (healthBeforeBleed > 0 && this.health <= 0) this.bledOut = true
       this.bleedFxCooldown -= delta
       if (this.bleedFxCooldown <= 0) {
         this.bleedFxCooldown = BLEED_FX_INTERVAL
@@ -5051,6 +5075,7 @@ export class GameEngine {
       incoming.y = 0
       this.damagePlayer(BOAR_CHARGE_DAMAGE * this.enemyDamageMultiplier(actor), incoming, true, {
         attackKind: 'allyMelee',
+        source: { role: actor.role, allegiance: actor.allegiance },
       })
       actor.chargeTimer = 0
       actor.chargeCooldown = BOAR_CHARGE_COOLDOWN
@@ -6185,6 +6210,12 @@ export class GameEngine {
           incomingDirection.y = 0
           this.damagePlayer(projectile.damage, incomingDirection, false, {
             attackKind: 'actorArrow',
+            source: {
+              // The shooter may already be dead by the time its arrow lands, in which case
+              // the сводка names the side but not the role rather than guessing at one.
+              role: this.actors.find((actor) => actor.id === projectile.sourceActorId)?.role,
+              allegiance: projectile.allegiance,
+            },
           })
         } else if (hit.actor) {
           const damage =
@@ -9339,7 +9370,10 @@ export class GameEngine {
       this.actorDamageWithAura(actor, baseDamage) * this.enemyDamageMultiplier(actor),
       incomingDirection,
       true,
-      { attackKind: 'allyMelee' },
+      {
+        attackKind: 'allyMelee',
+        source: { role: actor.role, allegiance: actor.allegiance },
+      },
     )
   }
 
@@ -9398,6 +9432,11 @@ export class GameEngine {
     }
     const { dealt, impact, blocked: frontalBlock } = outcome
     this.health = Math.max(0, this.health - dealt)
+    if (options.source && dealt > 0) {
+      this.lastPlayerDamageRole = options.source.role ?? null
+      this.lastPlayerDamageAllegiance = options.source.allegiance
+      this.bledOut = false
+    }
     this.achievements.recordPlayerDamage(dealt, frontalBlock)
     const contact = this.player.position.clone().add(new THREE.Vector3(0, 1.3, 0))
     if (frontalBlock) {
@@ -10108,6 +10147,7 @@ export class GameEngine {
     if (result === 'victory') this.settleActiveLoot('victory')
     else this.clearLootRuntime()
     this.generatedRunStatus = result
+    this.runEnding = this.resolveRunEnding(result)
     this.campaignCompleted = result === 'victory'
     this.ended = true
     this.achievements.recordCampaignEnd(result, this.elapsed, Math.max(0, this.health))
@@ -10122,6 +10162,22 @@ export class GameEngine {
     this.audio.setMusicOutcome(result)
     this.audio.setEnded(true)
     this.emitView(true)
+  }
+
+  /**
+   * The cause of death, from what the fight already recorded.
+   *
+   * `unknown` is a real answer: a defeat with no attributable last blow — a bleed started by
+   * something long dead, a save from a build that recorded nothing — must say so rather than
+   * pick a plausible killer.
+   */
+  private resolveRunEnding(result: 'victory' | 'defeat'): RunEndingState {
+    if (result === 'victory') return { cause: 'objectives' }
+    const role = this.lastPlayerDamageRole
+    if (this.bledOut) return role ? { cause: 'bleeding', role } : { cause: 'bleeding' }
+    if (!this.lastPlayerDamageAllegiance) return { cause: 'unknown' }
+    const cause = this.lastPlayerDamageAllegiance === 'beast' ? 'beast' : 'faction'
+    return role ? { cause, role } : { cause }
   }
 
   private emitView(force: boolean): void {
