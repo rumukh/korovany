@@ -1695,6 +1695,43 @@ predictions, and an aggregate that mixes them is no stronger than its most idle 
 the same reach recorded one entry above, where the instinct on finding a clock was to
 substitute the bigger number, and the bigger number was the one that cannot discriminate.
 
+#### Rules that fire leave no record, so the sample is all failures
+
+The sibling's diagnosis of the truncated excerpt — a correct query over the right population,
+trimmed to the width of the question before being read — prompted a check of whether the
+instrument shares the fault. It does not. A five-thousand-character response was requested
+whole and delivered whole; the tail computed inside SQLite matches the tail received, character
+for character, at 5,327. That failure is therefore entirely author-side, which makes it worse
+rather than better. The store returned everything and the reader asked for less.
+
+The row pulled as test data for that check contained the more useful finding. It is the longest
+response in this session's store, and it is the one recording corollary 196 — an instrument
+that cannot fail is not passing — together with the commitment that follows from it, that zero
+output is never accepted from an instrument which has not been seen to fail.
+
+That commitment fired twice tonight and left no trace either time. `gh run list --commit`
+returned null for a run that existed, and the query was reissued against the branch with a
+filter on the head SHA. A filter for `^# pass` over the test output matched nothing, because
+the runner prints its summary behind an information sign rather than a hash, and the tail was
+read instead of a zero being reported. Neither felt like applying a recorded rule; both felt
+like ordinary caution. Neither produced a defect, a commit, or a line in any ledger.
+
+Which exposes the defect in a thesis both sessions have been building all evening. Five
+instances were counted of a rule held in this repository, about the exact thing in front of its
+author, and not carried forward. Every one of those instances is visible because it produced a
+defect that somebody then found. A rule that fires produces nothing at all. **The sample of
+rule-applications consists entirely of failures, because failure is the property that generates
+the record** — structurally the same defect as counting hypotheses that arrived and finding N
+for N, one level up and about rules rather than findings.
+
+The correct model was already written, in the same file, under a heading that states it
+outright: the rule did not stop me, it shortened the round trip. Cataloguing a class does not
+prevent the next instance; it makes the correction arrive in one round instead of never. That
+is a claim about latency, and a five-instance count scores rules against prevention, which is
+the wrong bar and one this programme had already rejected in writing. The count is not evidence
+that rules fail to generalise. It is evidence that the ones which fail are the only ones that
+can be counted.
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
