@@ -1579,6 +1579,16 @@ function foliageQualityDensity(quality: FoliageQuality): number {
   return quality === 'off' ? 0 : quality === 'low' ? 0.55 : 1
 }
 
+/** A bounded list of ids out of the save's free-form director bag. */
+function readSerializableStringArray(
+  state: SerializableState | undefined,
+  key: string,
+): string[] {
+  const value = state?.[key]
+  if (!Array.isArray(value)) return []
+  return value.filter((entry): entry is string => typeof entry === 'string').slice(0, 64)
+}
+
 function generatedMaximumBonus(
   savedMaximum: number | undefined,
   baseMaximum: number,
@@ -1996,6 +2006,10 @@ export class GameEngine {
     })
     this.hints = new HintDirector({
       seen: settings.seenHints ?? [],
+      // Rides in `directorState`, which is a free-form JSON bag the save already carries,
+      // so a queued line survives a checkpoint and continue instead of dying with the
+      // engine that queued it.
+      pending: readSerializableStringArray(restoredRun?.directorState, 'pendingHints'),
       emit: (message, tone) => {
         this.callbacks.onNotice(message, tone)
       },
@@ -2967,6 +2981,7 @@ export class GameEngine {
         caravanDirection: this.caravanDirection,
         caravanX: this.caravan.position.x,
         caravanZ: this.caravan.position.z,
+        pendingHints: this.hints.pending(),
         pendingLoot: this.lootPickups
           .filter((pickup) => pickup.active)
           .sort((left, right) => left.serial - right.serial)

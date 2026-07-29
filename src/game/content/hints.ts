@@ -28,7 +28,7 @@ import {
   type NoticeTone,
   type UpgradeId,
 } from '../types.ts'
-import { HINT_IDS, describeHint, type HintId } from './gameCopy.ts'
+import { HINT_IDS, describeHint, isHintId, type HintId } from './gameCopy.ts'
 
 /**
  * Seconds between two hints. Longer than the 4.3 s a notice lives in `App.tsx`, so two
@@ -253,6 +253,15 @@ export function findHudCoverageGaps(
 export interface HintDirectorOptions {
   /** Hint ids the profile has already been shown. Unknown ids are kept and ignored. */
   seen?: Iterable<string>
+  /**
+   * Hints queued by an earlier session of the same run but never shown.
+   *
+   * Without this the queue would die with the engine, and a *transition* trigger — gold
+   * rising, an upgrade bought, a square discovered — cannot rediscover its transition
+   * after a restore, because the change already happened. Unknown or already-seen ids are
+   * dropped rather than trusted.
+   */
+  pending?: Iterable<string>
   /** The existing notice channel. Hints do not get a surface of their own. */
   emit: (message: string, tone: NoticeTone) => void
   /** Called once, when a hint is actually shown, so the profile can record it. */
@@ -285,6 +294,10 @@ export class HintDirector {
     this.onSeen = options.onSeen
     this.minGapSeconds = options.minGapSeconds ?? HINT_MIN_GAP_SECONDS
     this.mechanics = options.mechanics ?? HUD_MECHANICS
+    for (const id of options.pending ?? []) {
+      if (!isHintId(id) || this.seen.has(id) || this.queue.includes(id)) continue
+      if (this.mechanics.some((mechanic) => mechanic.hint === id)) this.queue.push(id)
+    }
   }
 
   /** One emitted frame of HUD state. Safe to call at any rate, including twice in a row. */
@@ -302,6 +315,11 @@ export class HintDirector {
   /** The ledger to persist. Includes ids this build did not recognise. */
   snapshot(): string[] {
     return [...this.seen]
+  }
+
+  /** Queued but not yet shown, to be carried across a save and restore of the same run. */
+  pending(): HintId[] {
+    return [...this.queue]
   }
 
   hasSeen(hintId: string): boolean {

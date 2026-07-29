@@ -306,6 +306,15 @@ test('the hint ledger persists, bounds itself, and does not discard a profile th
   })
   assert.ok(flooded)
   assert.equal(flooded.seenHints.length, MAX_SEEN_HINTS)
+
+  // The other half of the ledger rides in the run's free-form director bag: hints queued
+  // behind the pacing gate have to survive a checkpoint, or a transition trigger loses its
+  // line for good — the gold is already earned by the time the new engine sees a frame.
+  const run = makeRun()
+  run.directorState.pendingHints = ['gold', 'upgrades']
+  const normalizedRun = normalizeActiveRunSaveV3(run)
+  assert.ok(normalizedRun)
+  assert.deepEqual(normalizedRun.directorState.pendingHints, ['gold', 'upgrades'])
 })
 
 test('runtime region deltas survive manager extraction, active-run storage, and reapplication', () => {

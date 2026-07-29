@@ -244,16 +244,76 @@ test('every hint is reachable: one view per mechanic, and it trips only that mec
   }
 })
 
-test('the launch view teaches nothing at all', () => {
-  // The rejected design in one assertion: no hint may fire before the player has done
-  // something. A modal that explains stamina before the player has any is worse than
-  // nothing, and so is a notice.
-  const recorded = recordingDirector()
+test('the launch view teaches only what is already on screen', () => {
+  // The rejected design, stated precisely rather than generously. No hint may fire before
+  // the player has done something — but "done something" is about the HUD, not the clock:
+  // a live `GameEngine` spawns the starting squad before its first `emitView`, so the
+  // counter really does read three on frame one, and the line about that counter is the
+  // one thing that is allowed to arrive unprompted. Everything else must wait.
+  //
+  // `buildInitialGameView` reports `squad: 0`, so both shapes are driven here. Asserting
+  // only the first would claim more than it measures.
   const base = launchView()
-  recorded.director.observe(base)
-  recorded.director.observe({ ...base, elapsed: 30 })
-  assert.deepEqual(recorded.messages, [])
-  assert.deepEqual(recorded.reported, [])
+  assert.equal(base.squad, 0, 'the launch view builder is expected to report no squad')
+
+  const quiet = recordingDirector()
+  quiet.director.observe(base)
+  quiet.director.observe({ ...base, elapsed: 30 })
+  assert.deepEqual(quiet.messages, [])
+  assert.deepEqual(quiet.reported, [])
+
+  // The live engine's first frame: allies exist, so the counter is showing something.
+  const withSquad = recordingDirector()
+  withSquad.director.observe({ ...base, squad: 3 })
+  withSquad.director.observe({ ...base, squad: 3, elapsed: 30 })
+  assert.deepEqual(hintsFrom(withSquad), ['squad'], 'launch taught more than the squad')
+})
+
+test('a queued hint survives a save and continue of the same run', () => {
+  // A transition trigger cannot rediscover its transition after a restore — the gold was
+  // already earned, the square already discovered. Without carrying the queue, a line
+  // queued behind the pacing gate would die with the engine that queued it.
+  const base = launchView()
+  const first = recordingDirector()
+  first.director.observe(base)
+  // Two mechanics inside one gap: the second is still queued when the run is saved.
+  first.director.observe({ ...TRIPPING_VIEW.bleeding(base), gold: base.gold + 20 })
+  assert.equal(first.messages.length, 1, 'the pacing gate is expected to hold one back')
+  const carried = first.director.pending()
+  assert.deepEqual(carried, ['gold'])
+
+  // Non-vacuity: dropping the queue on restore loses the line for good, because the gold
+  // rise is in the past by the time the new engine sees its first view.
+  const dropped = recordingDirector(first.director.snapshot())
+  dropped.director.observe({ ...base, gold: base.gold + 20, elapsed: 100 })
+  dropped.director.observe({ ...base, gold: base.gold + 20, elapsed: 130 })
+  assert.deepEqual(dropped.messages, [])
+
+  const restoredMessages: string[] = []
+  const restored = new HintDirector({
+    seen: first.director.snapshot(),
+    pending: carried,
+    emit: (text) => restoredMessages.push(text),
+  })
+  restored.observe({ ...base, gold: base.gold + 20, elapsed: 100 })
+  assert.deepEqual(restoredMessages, [describeHint('gold').text])
+  assert.deepEqual(restored.pending(), [], 'the carried hint was not consumed')
+})
+
+test('a carried queue cannot smuggle in an unknown, duplicate or already-seen hint', () => {
+  const base = launchView()
+  const messages: string[] = []
+  const director = new HintDirector({
+    seen: ['bleeding'],
+    pending: ['bleeding', 'gold', 'gold', 'hintFromTheFuture', '', 'toString'],
+    emit: (text) => messages.push(text),
+  })
+  assert.deepEqual(director.pending(), ['gold'])
+
+  for (let step = 0; step < 10; step += 1) {
+    director.observe({ ...base, elapsed: step * 10 })
+  }
+  assert.deepEqual(messages, [describeHint('gold').text])
 })
 
 // ---------------------------------------------------------------------------
