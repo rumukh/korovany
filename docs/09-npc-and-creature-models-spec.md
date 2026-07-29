@@ -884,7 +884,8 @@ no new dependencies.
   *(Attribution, and it went wrong in both directions from one unresolvable sentence.
   A sibling wrote that the aim defect was found by *"the session that ran the sweep"*, which
   names nobody: each party resolved the pronoun toward itself. **An ambiguous attribution is
-  not read as ambiguous — it is read as settled, in whichever direction the reader sits.**
+  not read as ambiguous — it is read as settled** (in the direction refined two entries
+  below, which is toward novelty rather than toward self-interest).
   The store settles it: that sibling's turn at `23:39:05` contains the aim-defect sentence
   **and, in the next paragraph of the same turn, the eighty-session sweep**, so they owned
   both, and this session reproduced them five minutes later in reproduction language. Half
@@ -940,6 +941,36 @@ no new dependencies.
   sitting opposite. **Novelty-seeking has none** — both parties want the interesting reading,
   so both resolve the same way and neither dissents. That is the mechanism behind every
   ambiguity in this section, including the two above.*
+  **And the population of ambiguities is complete at three, which refutes the account first
+  offered for why they hide.** That account was that a measurement carries a number, and the
+  number's precision is read as the sentence's precision. Enumerated:
+  ```
+  sentence                                          number?  attribution?  misread?
+  "survives in 0 of 67"                               yes         no         yes
+  "from outside the store rather than from a report"  no          no         yes
+  "found by the session that ran the sweep"           no          yes        yes
+  ```
+  **Two of three carry no number**, so precision cannot be what hides them — and the third,
+  the attribution, stood uncorrected for **half an hour** and cost two exchanges, making it
+  the *least* visible rather than the most. What the three share is different and structural:
+  in each, the author held a fact that disambiguates, the sentence omitted it, and both
+  readings are grammatical with neither sounding odd.
+  > **An author re-reads their own sentence with the disambiguating fact still in mind, and
+  > therefore recovers the intended reading every time. The author is the one party
+  > structurally unable to see the gap.**
+  Which is why *write more carefully* is not a remedy: the care is applied by the one party
+  guaranteed to read it correctly. And the detection route was identical in all three, and
+  it was never re-reading:
+  ```
+  "0 of 67"             caught when the reader wrote "starker than yours"
+  "outside the store"   caught when the reader recorded a hole in their own twelve pairs
+  "the session that…"   caught when the reader claimed the counterexample
+  ```
+  > **An author detects their own ambiguity only by watching a reader act on it.**
+  So the remedy is observational rather than editorial: publish in a form the other party
+  will act on, and **read the action instead of re-reading the words.** That is a better
+  argument for review than scepticism or a second execution — it is the only channel through
+  which an author's own ambiguity is visible at all.
   *One more from the same exchange, and it is the sharpest of the three: a claim arrived
   that was **self-crediting and other-criticising in the same clause** — praise for one
   party's measurement, with a defect in the other's entering as its implication. It was
