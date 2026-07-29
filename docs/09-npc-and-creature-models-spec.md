@@ -1362,6 +1362,29 @@ no new dependencies.
   set is open and no enumeration terminates. That is worth stating separately, because if
   the boundary had fallen the other way the analogy would have carried a wrong conclusion
   into this file with no marker on it.
+  **The two-box split is still wrong, and this repository's own fix is the counterexample.**
+  A sibling session read `applyHeadPose` and found a third box, whose discriminator is not
+  the domain at all but **who owns the property**:
+  ```
+  open domain          not completable         pin + judgement IS the mechanism
+  closed, self-owned   reassert the invariant  detection becomes unnecessary
+  closed, other-owned  detection is the ceiling  complete, and still only a detector
+  ```
+  `applyHeadPose` and `applyChestPose` pass the Euler order as the **fourth argument** to
+  `rotation.set`, so a runtime reassignment does not survive a frame. Measured:
+  ```
+  initial       head=XYZ chest=XYZ
+  after attack  head=ZYX chest=ZYX
+  next frame    head=XYZ chest=XYZ     -> the attack does not survive one frame
+  ```
+  That is not a better detector; it is the **elimination of the need to detect**, and it is
+  available only because the property is ours to write. The escape-list case is not: a
+  workflow's cancellation is read off the **incoming** run, so the declaration that must
+  hold belongs to whoever writes the next file. **Proved complete over its escape class and
+  still permanently a detector**, because no write forecloses the edit.
+  So *closed by proof* felt weaker than it sounded for a reason that the domain question
+  cannot express. **The question to ask second is not "is the input set enumerable" but
+  "can I write the property instead of watching for its absence."**
   That changes what a fallback is worth, and the two sides differ. Where a check *can* be
   finished, a pin over the input set is a safety net for the one case the check misses.
   Where it cannot, **the pin plus a human reading the diff *is* the mechanism, not a
@@ -1377,6 +1400,21 @@ no new dependencies.
   nobody re-derives an explanation that already sounds terminal. **An unexplained gap
   advertises itself; an explained one goes quiet.** Had the entry read *"we cannot finish
   this and we do not know why,"* it would have stayed open and someone would have asked.
+  **Its own author then produced the counterexample and retracted it, within the night.**
+  A delivery limitation of theirs shipped *with* a reason — *the store shows the turn
+  completing, not delivery* — and was reopened and closed two hours later. The hypothesis
+  survives that by predicting it: the reopening happened **by accident**, while checking
+  something unrelated. Which is the fatal part rather than the rescue. **As stated it
+  predicts both outcomes, so it is a mood, not a claim.**
+  What survives is narrower and has a test in principle: *a stated reason suppresses
+  re-derivation **by readers who did not write it***. Reasons attached versus gaps
+  reopened, by someone other than the author — and the honest report is that **neither
+  file has enough gaps to run it.** Recorded as untested rather than as supported, which
+  is the only form the evidence permits.
+  Worth noting for its shape: that limit surfaced *because* the aphorism was shipped with
+  its test, per the rule agreed two exchanges earlier. **Attaching a test to a claim is
+  also how you discover the claim does not have one** — the discipline paying out against
+  the sentence that adopted it.
   *Sentence-only, and therefore inert until someone remembers*: everything about working
   practice, including the one above. This bullet is in that third category and cannot
   argue itself out of it — which is the point. **A rule that cannot be given a call site
