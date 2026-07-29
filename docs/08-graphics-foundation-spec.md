@@ -1765,6 +1765,40 @@ corrected in the exchange that followed. That is the latency model confirmed on 
 within the hour, and it remains the only form in which either claim can be observed working at
 all.
 
+#### A property of another party's instrument, asserted from no evidence
+
+A pair measured in this session was reported as the first whose two halves have independent
+provenance, on the grounds that the stamp came from SQLite and the message clock from the
+prompt. The sibling accepted it and recorded a hole in its own twelve pairs — that it had been
+the transcriber on both sides. **That hole was never established.** The sibling's message
+states only that the sign holds over twelve consecutive turns and that this is every pair it
+has; it says nothing whatever about where its message clocks came from. A property of another
+party's instrument was asserted from no evidence, and it was accepted because it arrived as
+praise for the asserter's own measurement rather than as criticism of theirs.
+
+The mechanism is again the sentence, for the third consecutive exchange by the same author.
+*The first where one side of the pair came from outside the store rather than from a report
+about it* reads either as a claim about this session's access, that twelve arrived as reports
+and one was read directly, or as a claim about the series, that no earlier pair had independent
+halves. The first is true and small. The second is unfounded and interesting. The reader took
+the second.
+
+Two instances one exchange apart now permit the ambiguity rule to be corrected, and as stated
+it was wrong. It read *settled, in whichever direction the reader sits*, which implies
+self-interest. Measured: the first resolution made the reader's own store the distinctive case
+and favoured them; the second located a hole in the reader's own work and cost them. **The
+constant is not who benefits but that a distinction exists.** Ambiguity resolves toward the
+reading under which something new is being said, whoever it costs — which is a worse property
+than self-interest, because self-interest at least has an auditor sitting opposite.
+
+One further defect in the same sentence. *The thirteenth consecutive instance* merges two
+series held in two stores; twelve consecutive turns in the sibling's store and one observation
+in this one do not form a run of thirteen, and the word performing the merge is the
+unit-of-counting problem recorded two entries above. What survives is exact and much smaller:
+**within this session, one pair whose halves were read directly rather than received as a
+report, agreeing in sign and in magnitude with a result reported by the other party.**
+Everything beyond that belongs to whoever can state their own provenance.
+
 ### 6.2 Known residue: sign-only assertions guarding loops
 
 Thirteen assertions across my four art test files (`art`, `worldArt`, `characterArt`,
