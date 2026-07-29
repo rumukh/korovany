@@ -83,13 +83,26 @@ jobs:
     #
     # This group is a constant where the build's is not, because there is one live
     # site and every deployment competes for it. Keying it by ref would let a
-    # manual run of an old ref publish alongside main instead of behind it. The
-    # documented default `queue: single` is kept for the same reason: "at most one
-    # job or workflow run can be `pending` in the concurrency group … any existing
-    # `pending` job or workflow run in the same group is canceled and replaced".
-    # Dropping a pending deploy is a defect in ci.yml, which owes a verdict to
-    # every commit; here main is linear, a superseding push contains the commit it
-    # displaces, and only the newest content is ever served.
+    # manual run of an old ref publish alongside main instead of behind it.
+    #
+    # The documented default `queue: single` is kept, and it is a policy choice
+    # rather than a proof: "at most one job or workflow run can be `pending` in the
+    # concurrency group … any existing `pending` job or workflow run in the same
+    # group is canceled and replaced". So a newer pending deploy displaces an older
+    # pending one that would have worked, and if the newer one then fails the site
+    # stays on whatever is already live — older than either. That is a real
+    # availability-versus-freshness trade, accepted here because main is linear and
+    # a superseding push contains the commit it displaces, so the displaced deploy
+    # is redundant whenever the newer one succeeds. `queue: max` would buy the
+    # other side of the trade at the cost of a queue of stale deployments, and
+    # cannot be combined with `cancel-in-progress: true` in any case. ci.yml makes
+    # the opposite choice deliberately, because it owes a verdict to every commit
+    # and a verdict is not superseded by a later one.
+    #
+    # `queue: single` is left implicit rather than spelled out, unlike the flag
+    # below it. Writing it would restate a default for no behavioural gain while
+    # adding a key to a workflow that must not fail validation; the reasoning is
+    # recorded here and in the guard instead.
     concurrency:
       group: pages-deploy
       cancel-in-progress: false

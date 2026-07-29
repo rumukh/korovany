@@ -14,8 +14,9 @@ import { LineCounter, isAlias, isMap, isScalar, isSeq, parseDocument } from 'yam
  * against a much better population than the one it came from: all 82 recorded
  * Pages runs since the repository was created, run numbers 1-82 with no gaps,
  * 77 success / 4 cancelled / 1 failure. The 77 successful deploy jobs record
- * exactly three steps each, and the four cancelled SHAs have no artifacts and no
- * `github-pages` deployment records.
+ * exactly three steps each; the four cancelled runs record **zero steps on the
+ * deploy job in every one of the four**, and those four SHAs have no artifacts and
+ * no `github-pages` deployment records.
  *
  * It also refuted the inference actually being made. The one failed run's deploy
  * job was *skipped*, and it too reports `steps: []`. So empty steps is not a
@@ -24,19 +25,21 @@ import { LineCounter, isAlias, isMap, isScalar, isSeq, parseDocument } from 'yam
  * Stated no more strongly than it was measured: **across all 82 recorded Pages
  * runs, no deployment job is recorded as starting and then being cancelled.** Of
  * the four cancellations, three were runner-assigned builds and one was cancelled
- * before a runner was assigned. "Four builds did work and were abandoned" was not
- * measured. The defect is a window that is open, not a wound.
+ * before a runner was assigned, with zero steps. "Four builds did work and were
+ * abandoned" was not measured. The defect is a window that is open, not a wound.
  *
  * Which is why this is a check rather than an incident report: the harm has no
  * artefact to point at, so nothing but a gate will keep the flag down.
  *
  * ## What changed in this round, and why the parser did
  *
- * Every earlier round of this file read YAML with a hand-written scanner, and
- * every round found another *form* the scanner could not see: a compact `- uses:`
- * step, a quoted action name, a quoted mapping key, an inline flow mapping, a bare
- * scalar group, a folded block scalar with an indentation indicator. Three
- * reviewers then independently produced structured encodings it still missed:
+ * Every earlier round of this file read YAML with a hand-written scanner, and each
+ * round taught it one more form: a compact `- uses:` step, a quoted action name, a
+ * quoted mapping key, an inline flow mapping, a bare scalar group, a folded block
+ * scalar with an indentation indicator. That scanner was **not** silently wrong.
+ * It said in its own comments that its blind spots were unbounded and that it made
+ * no universal claim, and it named the residual it could not close. Three reviewers
+ * then produced structured encodings inside that declared bound:
  *
  *   - a real deployment step written `"uses": actions/deploy-pages@v4`, with a
  *     decoy `uses:` line inside a `run: |` block scalar in another job, which
@@ -45,14 +48,32 @@ import { LineCounter, isAlias, isMap, isScalar, isSeq, parseDocument } from 'yam
  *   - an escaped scalar, `uses: "actions/\u0064eploy-pages@v4"`, which decodes to
  *     the same action and contains none of the letters a text scan looks for.
  *
- * There is no argument that a list of forms patched one at a time is ever
- * complete, so this round stops patching and parses. The semantic checks below run
- * on a YAML document produced by the `yaml` package, declared as a devDependency
- * and pinned in the lockfile rather than borrowed from a transitive. Structure is
- * whatever the parser says it is: escapes are decoded, folded and literal scalars
- * are joined, flow and block mappings are the same mapping, quoted and plain keys
- * are the same key, and the contents of a `run: |` block are a *string* — so text
- * shaped like a step inside one attributes nothing, because it is not a step.
+ * So the change here is not a bug fix. It is the removal of the bound: a list of
+ * forms patched one at a time is never finished, and the honest response to a
+ * declared limit that keeps being reached is to stop needing it. The semantic
+ * checks below run on a YAML document produced by the `yaml` package, declared as
+ * a devDependency and pinned in the lockfile rather than borrowed from a
+ * transitive. Structure is whatever the parser says it is: escapes are decoded,
+ * folded and literal scalars are joined, flow and block mappings are the same
+ * mapping, quoted and plain keys are the same key, and the contents of a `run: |`
+ * block are a *string* — so text shaped like a step inside one attributes nothing,
+ * because it is not a step.
+ *
+ * ## Attribution is load-bearing, and nothing else backs it up
+ *
+ * `governs` scopes a concurrency block to the jobs it covers, and every rule below
+ * that distinguishes "the group the deployment runs under" from "some other group"
+ * depends on it. But `governs` can only scope correctly once the deploying jobs
+ * have been selected correctly, so YAML-aware ownership is the load-bearing part
+ * of this file and not an implementation detail of it.
+ *
+ * There is a tempting and false comfort to refuse here. The concurrency pins below
+ * hold `concurrency`, `group` and `cancel-in-progress`; the attribution bypasses
+ * all modify `uses:`. **Two layers that read disjoint surfaces are not defence in
+ * depth**, and the pins are not a semantic backup for attribution: an edit that
+ * moves which job deploys changes no pinned line. The one place attribution is
+ * pinned at all is the ordered `uses` list of the Pages workflow, and that covers
+ * one file. Everywhere else, attribution rests on the parser alone.
  *
  * ## What is still not claimed
  *
@@ -71,7 +92,10 @@ import { LineCounter, isAlias, isMap, isScalar, isSeq, parseDocument } from 'yam
  * The other honest limit is unchanged: this reads the *input* handed to GitHub's
  * scheduler and cannot observe the scheduler. Claims about queueing and
  * cancellation below are quoted from the documented semantics in the conditional,
- * never asserted as something this repository watched happen.
+ * never asserted as something this repository watched happen. **Runs on main after
+ * this merges are the only surface on which the split's actual scheduling can be
+ * verified** — not this suite, not a PR run, and not the run history to date,
+ * which was produced under the configuration being replaced.
  */
 
 /** A workflow file as it sits on disk, or as a doped variant of one. */
@@ -129,6 +153,14 @@ const CONCURRENCY_KEYS = new Set(['group', 'cancel-in-progress', 'queue'])
  * The documented values of `queue`: "`single` (default): At most one job or
  * workflow run can be `pending` in the concurrency group" and "`max`: Up to 100
  * jobs or workflow runs can be `pending`".
+ *
+ * The Pages deployment keeps `single`, and that is a policy rather than a proof.
+ * Under it a newer pending deploy replaces an older pending one that would have
+ * worked; if the newer one then fails, the site stays on whatever is already live,
+ * which may be older than either. Availability traded against freshness, accepted
+ * because main is linear and the displaced deploy is redundant whenever the newer
+ * one succeeds. Nothing below asserts that trade is correct — it asserts that it
+ * is the trade currently made, so changing it is a visible edit.
  */
 const QUEUE_VALUES = new Set(['single', 'max'])
 
@@ -360,7 +392,13 @@ function readModels(files: readonly WorkflowFile[]): Workflow[] {
   return files.map(readWorkflow)
 }
 
-/** A workflow-level block governs every job; a job-level block governs only its own. */
+/** A workflow-level block governs every job; a job-level block governs only its own.
+ *
+ * This is where the whole file's correctness funnels. Scoping a block to the jobs
+ * it covers is only meaningful once the deploying jobs have been identified, so an
+ * attribution error does not produce a wrong answer here — it produces a right
+ * answer about the wrong job, silently, and every rule downstream inherits it.
+ */
 function governs(block: ConcurrencyBlock, job: string): boolean {
   return block.owner.kind === 'workflow' || block.owner.job === job
 }
@@ -2081,6 +2119,13 @@ test('the set of workflows is pinned, because a new one is a set of groups nobod
  *
  * The values are compared, so a *value* change still fails. That is the thing worth
  * failing on.
+ *
+ * What this pin does **not** do is back up the attribution above it. It reads
+ * `concurrency`, `group` and `cancel-in-progress`; every bypass that moves which
+ * job deploys edits a `uses:`, and touches none of those. Two layers reading
+ * disjoint surfaces are not defence in depth, and reading them as though they were
+ * is how a gate acquires a backstop that was never there. If the parser attributes
+ * a deployment to the wrong job, this pin stays green.
  */
 test('the concurrency of every workflow is pinned as the parser resolves it', () => {
   const pinned = readWorkflows()
