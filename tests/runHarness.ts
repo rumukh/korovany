@@ -589,13 +589,34 @@ export interface RunReport {
   damageDealt: DamageBySource
   kills: number
   deathCause: DeathCause
+  /** The role that landed the last blow, when a blow ended it — the epilogue's `causeRole`. */
+  deathRole: ActorRole | null
   /** Simulated seconds spent in each region, keyed by region id. */
   regionDwell: Record<string, number>
   regionsVisited: number
   eventExposure: EventExposure
   /** Chronicle log ids in order, the "chronicle history" the schedule arms compare. */
   chronicleHistory: string[]
+  /**
+   * The chronicle log itself, not only its ids.
+   *
+   * `chronicleHistory` answers "did two runs write the same history"; this answers "what
+   * did the сводка have to choose from", which is what `run/epilogue.ts` ranks into three
+   * beats. Carried so a beat-shape measurement can run the shipped selection rather than
+   * a re-implementation of it.
+   */
+  chronicleLog: ChronicleEvent[]
   chronicleTicks: number
+  /**
+   * Squares the run discovered, in discovery order — the epilogue's `route`, unbounded.
+   *
+   * The bounded eight-label postcard version is derived from this by `buildRunEpilogue`;
+   * `regionDwell` cannot stand in for it, because a streamed-in square is discovered
+   * without ever being stood in.
+   */
+  discoveredRegionIds: string[]
+  /** Where the run stopped. The last square the сводка prints. */
+  finalRegionId: string
   /**
    * Roadmap 1.3's signal, in its raw form: who held each square when the run stopped.
    *
@@ -662,6 +683,29 @@ export interface RunOptions {
    * the roadmap's second signal is about.
    */
   doctrinePool?: readonly string[]
+  /**
+   * The world to run in, instead of `generateWorld(seed)`.
+   *
+   * Measurement instrumentation for ablation arms: `tests/worldVariety.ts` already knows
+   * how to hold one generator axis still across a corpus, and this is what lets that
+   * ablated corpus be *walked* rather than only counted. Nothing in the shipped game hands
+   * a blueprint in — the engine always generates its own — so an arm that uses this is
+   * declaring itself a control.
+   *
+   * The blueprint is used as given and may be mutated by the `chain` arm, so a caller that
+   * reuses one across runs should pass a copy.
+   */
+  blueprint?: WorldBlueprint
+  /**
+   * A nuisance salt on the combat stream only. The noise floor's instrument.
+   *
+   * With it unset, every stream derives exactly as it always has, so every pinned number
+   * in this suite still describes the same run. With it set, the world, the encounters,
+   * the chronicle draws and the rumour draws are **identical** and only the damage rolls
+   * differ — which is what makes "this metric is reading world structure" a comparison
+   * against "this metric is reading dice" rather than an assertion.
+   */
+  combatNoiseSalt?: number
 }
 
 // ---------------------------------------------------------------------------
@@ -740,7 +784,7 @@ export function runHarness(options: RunOptions): RunReport {
   const contractOutcome = options.contractOutcome ?? 'honour'
   const doctrinePolicy = options.doctrinePolicy ?? 'off'
 
-  const blueprint = generateWorld(options.seed)
+  const blueprint = options.blueprint ?? generateWorld(options.seed)
   // Roadmap 1.4 — the placebo. Linearising the shipped graph leaves every site, encounter,
   // road and chronicle seed identical and removes only the fork, which is what makes "the
   // fork produced the divergence" a comparison rather than a claim.
@@ -750,7 +794,16 @@ export function runHarness(options: RunOptions): RunReport {
   collision.setWorldBounds(terrain.bounds)
   const navigation = new NavigationSystem(blueprint, terrain, collision)
 
-  const combatRng = new RandomStream(deriveSeed(blueprint.seed, 'gameplay:combat'))
+  // The noise arm salts this one stream and nothing else, so an unsalted run derives
+  // exactly what it always derived.
+  const combatRng = new RandomStream(
+    deriveSeed(
+      blueprint.seed,
+      options.combatNoiseSalt === undefined
+        ? 'gameplay:combat'
+        : `harness:combat-noise:${options.combatNoiseSalt}`,
+    ),
+  )
   const eventRng = new RandomStream(deriveSeed(blueprint.seed, 'gameplay:event'))
   const chronicleRng = new RandomStream(deriveSeed(blueprint.seed, 'gameplay:chronicle'))
   // Roadmap 1.3 — the engine's own dedicated stream, derived the same way, so a rumour
@@ -925,6 +978,7 @@ export function runHarness(options: RunOptions): RunReport {
   let distanceWalked = 0
   let kills = 0
   let deathCause: DeathCause = 'none'
+  let deathRole: ActorRole | null = null
   let outcome: RunOutcome = 'timeout'
   const damageTaken = emptyDamage()
   const damageDealt = emptyDamage()
@@ -945,6 +999,7 @@ export function runHarness(options: RunOptions): RunReport {
   let materializeCooldown = 0
   let encounterScanCooldown = 0
   let lastAttackerCause: DeathCause = 'none'
+  let lastAttackerRole: ActorRole | null = null
 
   const actors: HarnessActor[] = []
   let actorSequence = 0
@@ -1501,6 +1556,7 @@ export function runHarness(options: RunOptions): RunReport {
       onPlayerHit: (actor, amount) => {
         record(damageTaken, actor.role, actor.allegiance, amount)
         lastAttackerCause = actor.allegiance === 'beast' ? 'beast' : 'faction'
+        lastAttackerRole = actor.role
       },
     })
 
@@ -1714,6 +1770,7 @@ export function runHarness(options: RunOptions): RunReport {
     if (player.health <= 0) {
       outcome = 'defeat'
       deathCause = lastAttackerCause
+      deathRole = lastAttackerRole
       break
     }
     if (campaignObjectivesComplete(objectives)) {
@@ -1819,11 +1876,15 @@ export function runHarness(options: RunOptions): RunReport {
     damageDealt,
     kills,
     deathCause,
+    deathRole,
     regionDwell,
     regionsVisited: Object.keys(regionDwell).length,
     eventExposure: exposure,
     chronicleHistory: chronicleState.log.map((event) => event.id),
+    chronicleLog: chronicleState.log.map((event) => ({ ...event })),
     chronicleTicks,
+    discoveredRegionIds: [...discoveredRegionIds],
+    finalRegionId: regionIdAt(player.x, player.z),
     regionControl,
     regionControlTally,
     razedRegionIds,
