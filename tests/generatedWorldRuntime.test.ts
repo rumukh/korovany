@@ -284,6 +284,79 @@ test('generated world bounds are centered and site positions belong to their reg
   runtime.dispose()
 })
 
+/**
+ * Roadmap 1.5 — the same question asked of a river that turns.
+ *
+ * A square where the macro river changes column carries an L of water: in from the edge it
+ * came by, out by the edge it leaves by. That is a real barrier in two directions rather
+ * than one, and it is the thing that would strand a run if it were drawn but not collided,
+ * or collided but not drawn. Seeds are searched rather than pinned, so the case is found
+ * however the meander moves.
+ */
+test('a river that turns blocks both of its legs, and its ford still opens', () => {
+  let checkedBend = 0
+  let checkedFord = 0
+  for (let seed = 0; seed < 12 && (checkedBend === 0 || checkedFord === 0); seed += 1) {
+    const { blueprint, runtime } = createRuntime(seed)
+    try {
+      const regionById = new Map(blueprint.regions.map((region) => [region.id, region]))
+      const rows = new Map<number, string[]>()
+      for (const regionId of blueprint.river.regionPath) {
+        const row = regionById.get(regionId)?.coordinate.y ?? -1
+        rows.set(row, [...(rows.get(row) ?? []), regionId])
+      }
+      const bendRegionId = [...rows.values()].find((ids) => ids.length > 1)?.[0]
+      if (bendRegionId && checkedBend === 0) {
+        const centre = runtime.getRegionCenter(bendRegionId)
+        assert.ok(centre)
+        runtime.update({ deltaSeconds: 0, focus: centre })
+        // The turning square's entry leg comes down from the north edge, so a crossing that
+        // walks north of the centre meets water whichever way it is travelling.
+        const acrossTheEntry = runtime.collision.resolveMovement(
+          { x: centre.x - 9, z: centre.z - 14 },
+          { x: centre.x + 9, z: centre.z - 14 },
+          0.45,
+        )
+        assert.equal(
+          acrossTheEntry.blocked,
+          true,
+          `seed ${seed}: ${bendRegionId} let a crossing through its entry leg`,
+        )
+        assert.ok(acrossTheEntry.collisionIds.some((id) => id.startsWith('water:')))
+        // And no bridge is ever built on a turning square, which is the invariant that
+        // keeps that barrier honest rather than a trap.
+        assert.equal(
+          blueprint.bridges.some((bridge) => bridge.regionId === bendRegionId),
+          false,
+          `seed ${seed}: ${bendRegionId} carries a bridge over a turn`,
+        )
+        checkedBend += 1
+      }
+
+      const fordRegionId = blueprint.bridges[0]?.regionId
+      if (fordRegionId && checkedFord === 0) {
+        const centre = runtime.getRegionCenter(fordRegionId)
+        assert.ok(centre)
+        runtime.update({ deltaSeconds: 0, focus: centre })
+        const crossing = runtime.collision.resolveMovement(
+          { x: centre.x - 9, z: centre.z },
+          { x: centre.x + 9, z: centre.z },
+          0.45,
+        )
+        assert.ok(
+          crossing.x > centre.x + 8,
+          `seed ${seed}: the ford at ${fordRegionId} did not open`,
+        )
+        checkedFord += 1
+      }
+    } finally {
+      runtime.dispose()
+    }
+  }
+  assert.equal(checkedBend, 1, 'no seed in the first twelve produced a river that turns')
+  assert.equal(checkedFord, 1, 'no seed in the first twelve produced a bridge')
+})
+
 test('river water blocks ordinary crossings while bridge gaps remain traversable', () => {
   const { blueprint, runtime } = createRuntime('generated-runtime-test')
   const bridgedRegionId = blueprint.bridges[0]?.regionId
