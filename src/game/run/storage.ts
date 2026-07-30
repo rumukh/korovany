@@ -553,6 +553,12 @@ export function normalizeActiveRunSaveV3(value: unknown): ActiveRunSaveV3 | null
   const startedAt = normalizeTimestamp(value.startedAt)
   const updatedAt = normalizeTimestamp(value.updatedAt)
   const blueprintFingerprint = normalizeId(value.blueprintFingerprint)
+  // Roadmap 1.6 — absent on every run written before the ruleset fingerprint existed.
+  // Read exactly like `ending`: missing is fine, malformed still fails the whole save.
+  const rulesetFingerprint =
+    value.rulesetFingerprint === undefined
+      ? undefined
+      : normalizeId(value.rulesetFingerprint)
   const currentLocation = normalizeLocation(value.currentLocation)
   const player = normalizePlayer(value.player)
   const companions = normalizeCompanions(value.companions)
@@ -572,6 +578,7 @@ export function normalizeActiveRunSaveV3(value: unknown): ActiveRunSaveV3 | null
     !updatedAt ||
     Date.parse(updatedAt) < Date.parse(startedAt) ||
     !blueprintFingerprint ||
+    (value.rulesetFingerprint !== undefined && !rulesetFingerprint) ||
     !currentLocation ||
     !player ||
     companions === null ||
@@ -601,6 +608,7 @@ export function normalizeActiveRunSaveV3(value: unknown): ActiveRunSaveV3 | null
     startedAt,
     updatedAt,
     blueprintFingerprint,
+    ...(rulesetFingerprint ? { rulesetFingerprint } : {}),
     currentLocation,
     player,
     ...(companions === undefined ? {} : { companions }),

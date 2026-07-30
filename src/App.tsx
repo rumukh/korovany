@@ -101,15 +101,29 @@ import {
   CONTRACT_PANEL_TITLE,
   CONTRACT_PIN_LABEL,
   CONTRACT_UNPIN_LABEL,
+  DOCTRINE_DRAFT_HINT,
+  DOCTRINE_EQUIPPED_HINT,
+  DOCTRINE_MENU_EYEBROW,
+  DOCTRINE_MENU_NOTE,
+  DOCTRINE_MENU_TITLE,
+  DOCTRINE_PANEL_TITLE,
+  DOCTRINE_TAKE_LABEL,
   RUMOUR_PANEL_HINT,
   RUMOUR_PANEL_TITLE,
   RUMOUR_PIN_LABEL,
   RUMOUR_UNPIN_LABEL,
+  describeDoctrineSlots,
   describeRunEpilogue,
   formatRussianCount,
   type RunEpilogueCopy,
 } from './game/content/gameCopy'
 import { parseSeed } from './game/random/seed'
+import {
+  DOCTRINE_CATALOGUE,
+  getUnlockedDoctrineIds,
+  isDoctrineUnlocked,
+  unlockDoctrine,
+} from './game/run/doctrine'
 import {
   BOON_CATALOGUE,
   isBoonUnlocked,
@@ -790,8 +804,85 @@ function ContractBoard({
   )
 }
 
-function ObjectiveList({ view }: { view: GameView }) {
-  const completed = view.objectives.filter((objective) => objective.done).length
+/**
+ * Roadmap 1.6 — the draft, and the rules the run is already committed to.
+ *
+ * One card at a time on the left column, beside the campaign board, because both ask the
+ * same kind of question and neither should have to compete with the other for attention.
+ * Three rules shape it:
+ *
+ * 1. **The cost is on the card.** Every entry shows what it gives *and* what it takes. The
+ *    mitigation for power creep is that these are sidegrades, and a panel that showed only
+ *    the upside would be selling a boon with a doctrine's name on it.
+ * 2. **The panel never quotes a number**, because there is none to quote.
+ * 3. **The slot count is drawn from the view, and the cap is not enforced here.**
+ *    `equipDoctrine` refuses a fourth card; the button being absent is a courtesy, not the
+ *    rule, which is why the strip below keeps printing the count either way.
+ */
+function DoctrineBoard({
+  view,
+  onTake,
+}: {
+  view: GameView
+  onTake: (doctrineId: string) => void
+}) {
+  const { doctrines } = view
+  if (doctrines.offer.length === 0 && doctrines.equipped.length === 0) return null
+
+  return (
+    <section className="hud-card doctrine-card" aria-label={DOCTRINE_PANEL_TITLE}>
+      <header className="hud-card-header">
+        <span>
+          <ScrollText aria-hidden="true" />
+          {DOCTRINE_PANEL_TITLE}
+        </span>
+        <span className="zone-code">
+          {doctrines.offer.length > 0
+            ? DOCTRINE_DRAFT_HINT
+            : describeDoctrineSlots(doctrines.equipped.length, doctrines.slots)}
+        </span>
+      </header>
+      {doctrines.offer.length > 0 ? (
+        <div className="doctrine-list">
+          <p className="doctrine-draft-label">
+            Раздача {doctrines.draft}/{doctrines.draftsTotal}
+          </p>
+          {doctrines.offer.map((card) => (
+            <article className="doctrine-entry" key={card.id}>
+              <strong>{card.name}</strong>
+              <p className="doctrine-rule">{card.rule}</p>
+              <p className="doctrine-gives">{card.gives}</p>
+              <p className="doctrine-takes">{card.takes}</p>
+              <button
+                className="doctrine-take"
+                type="button"
+                onClick={() => {
+                  onTake(card.id)
+                }}
+              >
+                {DOCTRINE_TAKE_LABEL}
+              </button>
+            </article>
+          ))}
+        </div>
+      ) : null}
+      {doctrines.equipped.length > 0 ? (
+        <div className="doctrine-strip">
+          {doctrines.equipped.map((card) => (
+            <span className="doctrine-chip" key={card.id} title={card.rule}>
+              {card.name}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      {doctrines.offer.length === 0 && doctrines.equipped.length > 0 ? (
+        <p className="doctrine-note">{DOCTRINE_EQUIPPED_HINT}</p>
+      ) : null}
+    </section>
+  )
+}
+
+function ObjectiveList({ view }: { view: GameView }) {  const completed = view.objectives.filter((objective) => objective.done).length
   const raidDone = view.objectives.some((objective) => objective.id === 'raid' && objective.done)
   const guards = view.objectives.find((objective) => objective.id === 'guards')
   const lootTurnInReady = raidDone && Boolean(guards?.done)
@@ -1157,6 +1248,7 @@ function MenuScreen({
   onRandomSeed,
   onSelectBoon,
   onUnlockBoon,
+  onUnlockDoctrine,
   onAchievements,
   onToggleTheme,
   onToggleDynamicDayNight,
@@ -1188,6 +1280,7 @@ function MenuScreen({
   onRandomSeed: () => void
   onSelectBoon: (boonId: string) => void
   onUnlockBoon: (boonId: string) => void
+  onUnlockDoctrine: (doctrineId: string) => void
   onAchievements: () => void
   onToggleTheme: () => void
   onToggleDynamicDayNight: () => void
@@ -1514,6 +1607,62 @@ function MenuScreen({
               })}
             </div>
           </div>
+
+          {/* Roadmap 1.6 — where profile currency goes once the boons are all open. Unlocked
+              cards join the run's draft pool; nothing is selected here, because a doctrine is
+              chosen during the run and not before it. */}
+          <div className="boon-panel doctrine-panel">
+            <div className="run-setup-heading">
+              <div>
+                <span className="eyebrow">{DOCTRINE_MENU_EYEBROW}</span>
+                <h3>{DOCTRINE_MENU_TITLE}</h3>
+              </div>
+              <div className="profile-currency" title="Валюта профиля">
+                <Coins aria-hidden="true" />
+                <span>{profile.profileCurrency}</span>
+              </div>
+            </div>
+            <p className="doctrine-menu-note">{DOCTRINE_MENU_NOTE}</p>
+            <div className="boon-grid">
+              {DOCTRINE_CATALOGUE.map((doctrine) => {
+                const unlocked = isDoctrineUnlocked(profile, doctrine.id)
+                const affordable = profile.profileCurrency >= doctrine.unlockCost
+                return (
+                  <article
+                    className={`boon-card doctrine-menu-card ${unlocked ? 'unlocked' : 'locked'}`}
+                    key={doctrine.id}
+                  >
+                    <div className="doctrine-menu-body">
+                      <span className="boon-state">
+                        {unlocked ? 'В раздаче' : 'Закрыт'}
+                      </span>
+                      <strong>{doctrine.name}</strong>
+                      <small>{doctrine.rule}</small>
+                      <small className="doctrine-menu-takes">{doctrine.takes}</small>
+                    </div>
+                    {!unlocked ? (
+                      <button
+                        className="boon-unlock"
+                        type="button"
+                        disabled={!affordable}
+                        onClick={() => {
+                          onUnlockDoctrine(doctrine.id)
+                        }}
+                        title={
+                          affordable
+                            ? `Стоимость: ${doctrine.unlockCost}`
+                            : `Не хватает валюты: ${doctrine.unlockCost - profile.profileCurrency}`
+                        }
+                      >
+                        <Coins aria-hidden="true" />
+                        {doctrine.unlockCost}
+                      </button>
+                    ) : null}
+                  </article>
+                )
+              })}
+            </div>
+          </div>
         </div>
 
         {activeRun ? (
@@ -1687,6 +1836,9 @@ function ShopModal({
   onClose: () => void
   onBuy: (item: ShopItem) => void
 }) {
+  const tradeOnlyCare = view.doctrines.equipped.some(
+    (card) => card.id === 'quartermaster',
+  )
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="modal shop-modal" role="dialog" aria-modal="true" aria-labelledby="shop-title">
@@ -1711,8 +1863,17 @@ function ShopModal({
             {Math.round((view.shopPriceMultiplier - 1) * 100)}%.
           </p>
         ) : null}
+        {/* Roadmap 1.6 — «Интендантский устав» empties the upgrade shelf. The engine refuses
+            the purchase either way; hiding the rows is so the player is not offered a thing
+            they cannot have. */}
+        {tradeOnlyCare ? (
+          <p className="shop-supply-note">
+            Интендантский устав: только лечение и протезы. Заточка, сердце и выучка — не в
+            этот забег.
+          </p>
+        ) : null}
         <div className="shop-grid">
-          {SHOP_ITEMS.map((item) => {
+          {SHOP_ITEMS.filter((item) => !(tradeOnlyCare && item.upgrade)).map((item) => {
             const level = item.upgrade ? view.upgrades[item.upgrade] : 0
             const maxed = Boolean(item.upgrade && level >= (item.maxLevel ?? 0))
             const price = getShopItemPrice(item, view.upgrades, view.shopPriceMultiplier)
@@ -2105,6 +2266,9 @@ function RunPostcard({
         </div>
       ) : null}
       <p className="postcard-tally">{copy.tally}</p>
+      {/* Roadmap 1.6 — the world's identity and the run's, side by side. A shared seed means
+          one world; a shared seed *and* this line mean one run. */}
+      <p className="postcard-ruleset">Устав забега: {copy.ruleset}</p>
       <textarea
         aria-label="Текст сводки"
         className="postcard-text"
@@ -2270,6 +2434,7 @@ function GameScreen({
   onCommand,
   onPinRumour,
   onPinObjective,
+  onTakeDoctrine,
   onPointerLock,
   onInput,
   onRetryFinalization,
@@ -2315,6 +2480,7 @@ function GameScreen({
   onCommand: () => void
   onPinRumour: (rumourId: string | null) => void
   onPinObjective: (nodeId: string | null) => void
+  onTakeDoctrine: (doctrineId: string) => void
   onPointerLock: () => void
   onInput: (code: string, active: boolean) => void
   onRetryFinalization: () => void
@@ -2525,6 +2691,7 @@ function GameScreen({
           </div>
         </div>
         <ContractBoard view={view} onPin={onPinObjective} />
+        <DoctrineBoard view={view} onTake={onTakeDoctrine} />
         <ObjectiveList view={view} />
         <EventBanner event={view.activeEvent} />
       </div>
@@ -2950,6 +3117,9 @@ function App() {
           generatedRun: launch,
           blueprint: blueprintForSeed(launch.config.seed),
           seenHints: profileRef.current.seenHints,
+          // Roadmap 1.6 — the doctrine pool, from the profile's `unlockedContentIds`. Passed
+          // in for the same reason `seenHints` is: the engine keeps no profile.
+          unlockedDoctrineIds: getUnlockedDoctrineIds(profileRef.current),
         },
       )
     } catch (error) {
@@ -3285,6 +3455,15 @@ function App() {
     }
   }
 
+  // Roadmap 1.6 — the second thing profile currency buys, and the one that still has
+  // somewhere to go once every boon is open.
+  const unlockProfileDoctrine = (doctrineId: string) => {
+    const result = unlockDoctrine(profile, doctrineId)
+    if (result.status === 'unlocked' && writePlayerProfile(result.profile)) {
+      setProfile(result.profile)
+    }
+  }
+
   const abandonGeneratedRun = () => {
     if (!activeRun) return
     const finalized = finalizeGeneratedRunSnapshot({
@@ -3339,6 +3518,7 @@ function App() {
           onRandomSeed={() => setSeedInput(String(createRandomSeed()))}
           onSelectBoon={selectBoon}
           onUnlockBoon={unlockProfileBoon}
+          onUnlockDoctrine={unlockProfileDoctrine}
           onAchievements={openAchievements}
           onToggleTheme={() => setTheme((current) => (current === 'dark' ? 'light' : 'dark'))}
           onToggleDynamicDayNight={toggleDynamicDayNight}
@@ -3410,6 +3590,9 @@ function App() {
         onCommand={() => engineRef.current?.commandSquad()}
         onPinRumour={(rumourId) => engineRef.current?.pinRumour(rumourId)}
         onPinObjective={(nodeId) => engineRef.current?.pinObjective(nodeId)}
+        onTakeDoctrine={(doctrineId) => {
+          engineRef.current?.chooseDoctrine(doctrineId)
+        }}
         onPointerLock={() => engineRef.current?.requestPointerLock()}
         onInput={(code, active) => engineRef.current?.setInput(code, active)}
         onRetryFinalization={retryTerminalFinalization}

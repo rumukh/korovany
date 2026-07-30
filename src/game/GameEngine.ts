@@ -145,6 +145,8 @@ import {
   describeChampionDefeated,
   describeChronicleEvent,
   describeCivilianDeath,
+  describeDoctrineDraftOpened,
+  describeDoctrineTaken,
   describeEventHandback,
   describeEventStarted,
   FINISHER_BLOCKED_NO_STAMINA_NOTICE,
@@ -183,6 +185,7 @@ import {
   generatedSiteLabel,
   HEALER_TREATED_NOTICE,
   RALLY_NOTICE,
+  RATION_ON_BLEED_NOTICE,
   REINFORCEMENTS_ORDERED_NOTICE,
   RICH_CARAVAN_LOOT_TAKEN_NOTICE,
   SABOTAGE_DONE_NOTICE,
@@ -198,6 +201,22 @@ import { HintDirector } from './content/hints'
 import { RandomStream } from './random/RandomStream'
 import { deriveSeed, parseSeed } from './random/seed'
 import { getStartingBoonEffects } from './run/profile'
+import {
+  DEFAULT_DOCTRINE_IDS,
+  DOCTRINE_DRAFT_TIERS,
+  advanceDoctrineAnchors,
+  createDoctrineRunState,
+  equipDoctrine,
+  getDoctrineDefinition,
+  getDoctrineOffer,
+  normalizeDoctrineRunState,
+  pendingDoctrineDraftIndex,
+  resolveDoctrineEffects,
+  serializeDoctrineRunState,
+  type DoctrineEffects,
+  type DoctrineRunState,
+} from './run/doctrine'
+import { computeRunRulesetFingerprint } from './run/ruleset'
 import {
   STARTING_SQUAD_VERSION,
   getSquadFollowSpeed,
@@ -383,7 +402,11 @@ import {
   type RumourVerdict,
   type RumourWorldContext,
 } from './world/CampaignDirector'
-import { buildCampaignContractViews, buildGameView } from './world/CampaignView'
+import {
+  buildCampaignContractViews,
+  buildDoctrineView,
+  buildGameView,
+} from './world/CampaignView'
 import {
   AMBIENT_CIVILIAN_LIMIT,
   BIRD_CLIMB_SPEED,
@@ -489,6 +512,14 @@ export interface GameEngineSettings {
    * keeps no profile of its own; it reports back through `onHintSeen`.
    */
   seenHints: readonly string[]
+  /**
+   * Roadmap 1.6 — the doctrine ids this profile has unlocked, from `unlockedContentIds`.
+   *
+   * Passed in for the same reason `seenHints` is: the engine has no profile. Snapshotted
+   * into the run's ledger at launch, so unlocking a card at the menu between a checkpoint
+   * and a continue cannot rewrite an offer the player is already looking at.
+   */
+  unlockedDoctrineIds: readonly string[]
   /**
    * Roadmap 1.1's prototype flag: the buffered, aimed three-beat sequence.
    *
@@ -1760,6 +1791,28 @@ export class GameEngine {
   private campaignContracts: CampaignContractState
   /** The contract event currently on the ground, by objective node id. */
   private activeContractNodeId: string | null = null
+  /**
+   * Roadmap 1.6 — the doctrine ledger: the pool this run may draft from, what it has taken,
+   * and how many draft anchors the threat tier has crossed.
+   *
+   * A field in `directorState` and **not** in `RunConfig.modifiers`, deliberately.
+   * `RunConfig` is immutable launch configuration — seed, generator version, faction, boon
+   * — and a rule drafted at minute three is not launch configuration; that field stays
+   * reserved for launch-time challenge rules, which is what its name and position imply.
+   * The ledger sits beside `threatTier`, the anchor it is paced by, which is where 0.4's
+   * hint queue, 1.3's commitments and 1.4's contracts already live.
+   */
+  private doctrines: DoctrineRunState
+  /**
+   * The rules those doctrines add up to, refreshed whenever the ledger changes.
+   *
+   * Cached rather than resolved per read because it is consulted in the movement loop, the
+   * morale check and the spawner. The cache is written in exactly two places — the
+   * constructor and `chooseDoctrine` — so it cannot drift from the ledger.
+   */
+  private doctrineEffects: DoctrineEffects
+  /** The square «Устав следопыта» last opened a horizon around, so it runs on entry only. */
+  private doctrineHorizonRegionId: string | null = null
   private activeShopPriceMultiplier = 1
   private generatedCameraRegionSignature = ''
   private generatedNavigationRegionSignature = ''
@@ -2279,6 +2332,13 @@ export class GameEngine {
     this.campaignContracts = restoredRun
       ? normalizeCampaignContractState(restoredRun.directorState.campaignContracts)
       : createCampaignContractState()
+    // Roadmap 1.6 — the pool is snapshotted at launch rather than read live from the
+    // profile, so unlocking a card at the menu between a checkpoint and a continue cannot
+    // rewrite an offer the player is already looking at.
+    this.doctrines = restoredRun
+      ? normalizeDoctrineRunState(restoredRun.directorState.doctrines)
+      : createDoctrineRunState(settings.unlockedDoctrineIds ?? DEFAULT_DOCTRINE_IDS)
+    this.doctrineEffects = resolveDoctrineEffects(this.doctrines.equipped)
     this.eventRng = () => streams.event.next()
     this.directorRng = () => streams.director.next()
     this.combatRng = () => streams.combat.next()
@@ -3126,6 +3186,14 @@ export class GameEngine {
   }
 
   purchase(item: ShopItem): { ok: boolean; message: string } {
+    // Roadmap 1.6 — «Интендантский устав» takes the upgrade shelf away entirely. Refused
+    // here rather than only hidden in the panel, because the panel is one caller.
+    if (item.upgrade && this.doctrineEffects.tradeOnlyCare) {
+      return {
+        ok: false,
+        message: `${item.name}: интендантский устав такого не отпускает. Только лечение и протезы.`,
+      }
+    }
     const currentLevel = item.upgrade ? this.upgrades[item.upgrade] : 0
     if (item.upgrade && currentLevel >= (item.maxLevel ?? Number.POSITIVE_INFINITY)) {
       return { ok: false, message: `${item.name}: достигнут максимальный уровень.` }
@@ -3211,6 +3279,17 @@ export class GameEngine {
       startedAt: this.generatedRun.startedAt,
       updatedAt: timestamp,
       blueprintFingerprint: this.generatedBlueprint.fingerprint,
+      // Roadmap 1.6 — the *other* fingerprint, and the reason there are two. The line above
+      // says which world this is; this one says which run. Doctrines never enter the world
+      // hash, because two identical worlds must not get two different world identities —
+      // see `run/ruleset.ts`.
+      rulesetFingerprint: computeRunRulesetFingerprint({
+        seed: this.generatedRun.config.seed,
+        generatorVersion: this.generatedRun.config.generatorVersion,
+        faction: this.generatedRun.config.faction,
+        selectedBoonId: this.generatedRun.config.selectedBoonId,
+        doctrines: this.doctrines.equipped,
+      }),
       currentLocation: {
         regionId: String(regionId),
         localPosition: [
@@ -3279,6 +3358,11 @@ export class GameEngine {
         // survive a reload is not a decision.
         campaignContracts: serializeCampaignContractState(
           this.campaignContracts,
+        ) as SerializableState[string],
+        // Roadmap 1.6 — the same argument, one rung up: a rule the run committed to at
+        // minute three has to still be the rule after a checkpoint and a continue.
+        doctrines: serializeDoctrineRunState(
+          this.doctrines,
         ) as SerializableState[string],
         pendingLoot: this.lootPickups
           .filter((pickup) => pickup.active)
@@ -3387,16 +3471,29 @@ export class GameEngine {
     this.updateAtmosphere(delta)
 
     if (this.body.bleeding > 0) {
-      const healthBeforeBleed = this.health
-      this.health -= this.body.bleeding * delta
-      // A wound that finishes the job on its own is a different story from a blow that
-      // does, and the сводка is allowed to say which one it was.
-      if (healthBeforeBleed > 0 && this.health <= 0) this.bledOut = true
-      this.bleedFxCooldown -= delta
-      if (this.bleedFxCooldown <= 0) {
-        this.bleedFxCooldown = BLEED_FX_INTERVAL
-        this.createBleedParticle()
-        this.spawnDecal(this.player.position, 'blood', 0.55)
+      // Roadmap 1.6 — «Устав сухого пайка». The ration is spent by the wound rather than by
+      // the player, and it stops the bleed outright instead of nudging it down. The check
+      // sits ahead of the tick so the doctrine costs the run a ration and not a heartbeat
+      // of health, which is what makes it a different rule rather than a faster one.
+      if (this.doctrineEffects.rationOnBleed && this.generatedSupplyCount > 0) {
+        this.generatedSupplyCount -= 1
+        this.body.bleeding = 0
+        this.callbacks.onNotice(RATION_ON_BLEED_NOTICE, 'success')
+        this.playSound('objective')
+        this.bleedFxCooldown = 0
+        this.emitView(true)
+      } else {
+        const healthBeforeBleed = this.health
+        this.health -= this.body.bleeding * delta
+        // A wound that finishes the job on its own is a different story from a blow that
+        // does, and the сводка is allowed to say which one it was.
+        if (healthBeforeBleed > 0 && this.health <= 0) this.bledOut = true
+        this.bleedFxCooldown -= delta
+        if (this.bleedFxCooldown <= 0) {
+          this.bleedFxCooldown = BLEED_FX_INTERVAL
+          this.createBleedParticle()
+          this.spawnDecal(this.player.position, 'blood', 0.55)
+        }
       }
     } else {
       this.bleedFxCooldown = 0
@@ -4088,6 +4185,9 @@ export class GameEngine {
       if (
         this.generatedSupplyCount > 0 &&
         this.health < this.maxHealth &&
+        // Roadmap 1.6 — «Устав сухого пайка» takes the ration out of the player's hands.
+        // It is not eaten for less; it is not eaten *by choice* at all, and waits for blood.
+        !this.doctrineEffects.rationOnBleed &&
         this.player.position.distanceTo(this.caravan.position) >= 7
       ) {
         this.generatedSupplyCount -= 1
@@ -4148,9 +4248,14 @@ export class GameEngine {
       return true
     }
     if (site.kind === 'shop') {
-      this.activeShopPriceMultiplier = getSupplyPriceMultiplier(
-        this.chronicleRegions.get(String(site.regionId)),
-      )
+      // Roadmap 1.6 — «Интендантский устав» freezes the scarcity surcharge. Not a smaller
+      // multiplier: the rule that the multiplier exists at all stops applying, which is the
+      // half of the card that pays for the upgrade shelf being empty.
+      this.activeShopPriceMultiplier = this.doctrineEffects.tradeOnlyCare
+        ? 1
+        : getSupplyPriceMultiplier(
+            this.chronicleRegions.get(String(site.regionId)),
+          )
       this.callbacks.onShop()
     } else if (site.kind === 'recovery') {
       this.health = Math.min(this.maxHealth, this.health + 40)
@@ -4246,7 +4351,13 @@ export class GameEngine {
           ? 'Корован уже ограбили'
           : '[E] ГРАБИТЬ КОРОВАН'
     }
-    if (this.generatedSupplyCount > 0 && this.health < this.maxHealth) {
+    if (
+      this.generatedSupplyCount > 0 &&
+      this.health < this.maxHealth &&
+      // The prompt has to agree with the interaction: under «Устав сухого пайка» pressing E
+      // does nothing, so offering it would be the HUD lying about a rule.
+      !this.doctrineEffects.rationOnBleed
+    ) {
       return `[E] Съесть паёк • ${this.generatedSupplyCount}`
     }
     if (node) {
@@ -4511,8 +4622,15 @@ export class GameEngine {
         this.callbacks.onNotice(SHIELD_DROPPED_NOTICE, 'warning')
       }
     } else if (sprinting) {
-      this.stamina = Math.max(0, this.stamina - delta * 24)
-    } else {
+      // Roadmap 1.6 — «Устав скорого шага». The drain is not smaller, it is gone; what
+      // moves is the *condition* on recovery, below.
+      if (!this.doctrineEffects.forcedMarch) {
+        this.stamina = Math.max(0, this.stamina - delta * 24)
+      }
+    } else if (!this.doctrineEffects.forcedMarch || move.lengthSq() > 0) {
+      // The same doctrine's other half: standing still returns nothing, so the run cannot be
+      // rested through. Walking still does, which is what keeps it a sidegrade rather than a
+      // tax on staying alive.
       this.stamina = Math.min(this.maxStamina, this.stamina + delta * 16)
     }
 
@@ -5194,6 +5312,12 @@ export class GameEngine {
       alarmDistance: alarm ? alarm.distance : Number.POSITIVE_INFINITY,
     })
     if (broke === 'none') return
+    // Roadmap 1.6 — «Устав звериного перемирия» takes nerve out of the world: nobody breaks
+    // and nobody runs. A villager's panic is left alone on purpose — that is a bystander
+    // reflex rather than a fight leaving the field, and suppressing it would turn the card
+    // into "civilians stand still while a wolf eats them", which is a different rule than
+    // the one written on it.
+    if (this.doctrineEffects.beastTruce && broke !== 'panic') return
 
     // §5D — panic is shorter and shallower than a rout on purpose. A villager keeps its
     // back to whatever frightened it rather than falling back on a rally point it does
@@ -6813,6 +6937,10 @@ export class GameEngine {
       this.achievements.recordZone(currentZone)
       this.callbacks.onNotice(describeZoneDiscovered(currentZone), 'info')
     }
+    // Roadmap 1.6 — «Устав следопыта» reveals a square's neighbours on entry, so discovery
+    // stops being "where I have been" and becomes "what I could see from where I have been".
+    // Guarded on the square rather than the frame, so it is one pass per crossing.
+    if (this.doctrineEffects.scoutedHorizon) this.revealDoctrineHorizon()
 
     const node = this.getActiveGeneratedObjective()
     // Roadmap 1.4 — a node completes on arrival when it asked for an arrival, and also when
@@ -6853,9 +6981,14 @@ export class GameEngine {
       this.playSound('event')
       this.emitView(true)
     }
+    this.updateDoctrineDraft()
 
     if (
       this.threatTier < 2 ||
+      // Roadmap 1.6 — «Устав дозора» moves the wave off the clock and onto a closed
+      // objective. Not a longer interval: the *trigger* is somewhere else, which is why the
+      // scheduler is skipped outright rather than tuned.
+      this.doctrineEffects.threatWavesOnObjective ||
       this.elapsed < this.nextThreatWaveAt ||
       this.hasNearbyEvent(THREAT_WAVE_EVENT_RADIUS)
     ) {
@@ -6868,6 +7001,102 @@ export class GameEngine {
     if (spawned > 0) {
       this.callbacks.onNotice(describeThreatWave(spawned, this.threatTier), 'warning')
       this.playSound('event')
+    }
+  }
+
+  /**
+   * Roadmap 1.6 — opens a draft when the threat tier reaches one of its anchors.
+   *
+   * The anchors are tiers 2, 3 and 4, which `getThreatTier` puts at three, six and nine
+   * minutes. Anchoring on the tier rather than on a timer of this feature's own is
+   * deliberate: the tier already exists, is already persisted, already paces the run, and —
+   * the load-bearing part — it decoupled this initiative from 1.4 entirely.
+   *
+   * A player who walks past an open offer meets it again rather than losing it, so the
+   * announcement fires when a draft *becomes* pending and not on every frame it stays that
+   * way. The offer itself consumes nothing: it is recomputed from the seed and the ledger by
+   * `getDoctrineOffer`, which draws from its own derivation and never from the run's
+   * persisted streams.
+   */
+  private updateDoctrineDraft(): void {
+    if (this.ended) return
+    if (!advanceDoctrineAnchors(this.doctrines, this.threatTier)) return
+    const index = pendingDoctrineDraftIndex(this.doctrines)
+    if (index === null) return
+    this.callbacks.onNotice(
+      describeDoctrineDraftOpened(index + 1, DOCTRINE_DRAFT_TIERS.length),
+      'info',
+    )
+    this.playSound('objective')
+    this.emitView(true)
+  }
+
+  /**
+   * Takes a card off the table.
+   *
+   * Every refusal — the cap, a card that is not on offer, an id this build does not know —
+   * lives in `equipDoctrine`, not here and not in the panel. The HUD disables a button, but
+   * the button is not the cap: the engine, a restored save and a test are all callers, and
+   * only one of them has a button.
+   */
+  chooseDoctrine(doctrineId: string): boolean {
+    if (this.paused || this.ended) return false
+    if (!equipDoctrine(this.doctrines, this.generatedBlueprint.seed, doctrineId)) {
+      return false
+    }
+    this.doctrineEffects = resolveDoctrineEffects(this.doctrines.equipped)
+    const definition = getDoctrineDefinition(doctrineId)
+    if (definition) {
+      this.callbacks.onNotice(
+        describeDoctrineTaken(definition.name, definition.rule),
+        'success',
+      )
+    }
+    this.playSound('command')
+    // A drafted rule can change what the map is allowed to show, so the horizon is
+    // re-published on the frame it is taken rather than on the next square boundary.
+    if (this.doctrineEffects.scoutedHorizon) this.revealDoctrineHorizon()
+    this.callbacks.onSaveRequest()
+    this.emitView(true)
+    return true
+  }
+
+  /** The cards on the table right now. Empty when no draft is open. */
+  getDoctrineOfferIds(): string[] {
+    return getDoctrineOffer(this.doctrines, this.generatedBlueprint.seed)
+  }
+
+  /** Equipped doctrine ids, in draft order. */
+  getEquippedDoctrineIds(): string[] {
+    return [...this.doctrines.equipped]
+  }
+
+  /**
+   * «Устав следопыта» — the squares around the one the player is standing in.
+   *
+   * The boon `scout-map` does this once at launch; the doctrine does it every time the
+   * player changes square, which is the rule that changes: discovery stops being "where I
+   * have been" and becomes "what I could see from where I have been".
+   */
+  private revealDoctrineHorizon(): void {
+    const currentId = this.generatedWorld.getRegionIdAt(
+      this.player.position.x,
+      this.player.position.z,
+    )
+    if (currentId === undefined) return
+    if (String(currentId) === this.doctrineHorizonRegionId) return
+    this.doctrineHorizonRegionId = String(currentId)
+    const current = this.generatedBlueprint.regions.find(
+      (region) => String(region.id) === String(currentId),
+    )
+    if (!current) return
+    for (const region of this.generatedBlueprint.regions) {
+      if (
+        Math.abs(region.coordinate.x - current.coordinate.x) <= 1 &&
+        Math.abs(region.coordinate.y - current.coordinate.y) <= 1
+      ) {
+        this.generatedWorld.regions.markDiscovered(region.id)
+      }
     }
   }
 
@@ -10094,6 +10323,20 @@ export class GameEngine {
     if (
       directPlayerKill &&
       target.aiMode !== 'captive' &&
+      // Roadmap 1.6 — the truce is broken by the first swing, and by nothing else. The
+      // whole pack answers, because a wolf that took a blade and its brother that watched
+      // are not going to reach different conclusions.
+      this.doctrineEffects.beastTruce &&
+      isBeastRole(target.role) &&
+      !target.hostileToPlayer
+    ) {
+      for (const actor of this.actors) {
+        if (actor.alive && isBeastRole(actor.role)) actor.hostileToPlayer = true
+      }
+    }
+    if (
+      directPlayerKill &&
+      target.aiMode !== 'captive' &&
       target.hostileToPlayer
     ) {
       target.playerAggro = true
@@ -10713,6 +10956,17 @@ export class GameEngine {
     this.callbacks.onNotice(describeObjectiveCompleted(objective.text), 'success')
     this.achievements.recordObjectiveCompleted()
     this.playSound('objective')
+    // Roadmap 1.6 — «Устав дозора». The wave the clock is no longer throwing arrives here
+    // instead, so the run's pressure is paced by what the player finishes rather than by how
+    // long they have been out. Tier 1 is left alone for the same reason the scheduler leaves
+    // it alone: the first three minutes are not a wave's business.
+    if (this.doctrineEffects.threatWavesOnObjective && this.threatTier >= 2 && !this.ended) {
+      const spawned = this.spawnThreatWave(this.elapsed)
+      if (spawned > 0) {
+        this.callbacks.onNotice(describeThreatWave(spawned, this.threatTier), 'warning')
+        this.playSound('event')
+      }
+    }
     this.emitView(true)
     return true
   }
@@ -10804,23 +11058,28 @@ export class GameEngine {
         markerZ: event.markerPos.z,
         title: event.title,
       })),
-      actors: this.actors
-        .filter((actor) => actor.alive)
-        .map((actor) => ({
-          id: actor.id,
-          x: actor.mesh.position.x,
-          z: actor.mesh.position.z,
-          // §5.3 — the matrix decides the colour. Beasts get their own so a pack never
-          // reads as somebody's soldiers, and anything we have no quarrel with is neutral.
-          kind:
-            actor.allegiance === 'beast'
-              ? ('beast' as const)
-              : this.playerRelationTo(actor) === 'hostile'
-                ? ('enemy' as const)
-                : this.playerRelationTo(actor) === 'friendly'
-                  ? ('ally' as const)
-                  : ('neutral' as const),
-        })),
+      actors: this.doctrineEffects.scoutedHorizon
+        ? // Roadmap 1.6 — «Устав следопыта» buys the horizon with the bodies. The list is
+          // emptied here rather than filtered inside `buildMapMarkers`, so the marker
+          // builder keeps one rule and the doctrine keeps one place to be true.
+          []
+        : this.actors
+            .filter((actor) => actor.alive)
+            .map((actor) => ({
+              id: actor.id,
+              x: actor.mesh.position.x,
+              z: actor.mesh.position.z,
+              // §5.3 — the matrix decides the colour. Beasts get their own so a pack never
+              // reads as somebody's soldiers, and anything we have no quarrel with is neutral.
+              kind:
+                actor.allegiance === 'beast'
+                  ? ('beast' as const)
+                  : this.playerRelationTo(actor) === 'hostile'
+                    ? ('enemy' as const)
+                    : this.playerRelationTo(actor) === 'friendly'
+                      ? ('ally' as const)
+                      : ('neutral' as const),
+            })),
       chronicleRegions: this.chronicleRegions,
       discoveredRegionIds: new Set(
         this.generatedWorld.discoveredRegionIds.map(String),
@@ -10839,6 +11098,7 @@ export class GameEngine {
         contracts: this.campaignContracts,
         sitePosition: (siteId) => this.generatedWorld.getSitePosition(siteId) ?? null,
       }),
+      doctrines: buildDoctrineView(this.doctrines, this.generatedBlueprint.seed),
       shopPriceMultiplier: this.activeShopPriceMultiplier,
       squad: this.actors.filter(
         (actor) =>
@@ -13532,7 +13792,14 @@ export class GameEngine {
       generatedSpawnId: options.generatedSpawnId ?? null,
       generatedObjectiveId: options.generatedObjectiveId ?? null,
       generatedUnique: options.generatedUnique ?? false,
-      hostileToPlayer: options.hostileToPlayer ?? hostile(allegiance, this.faction),
+      hostileToPlayer:
+        // Roadmap 1.6 — «Устав звериного перемирия». The truce is a spawn-time rule, not a
+        // damage-time one: a wolf under it simply is not the player's enemy, so morale,
+        // threat selection and the minimap colour all agree without a special case each.
+        // `damageActor` breaks it the moment the player swings first.
+        this.doctrineEffects.beastTruce && isBeastRole(role)
+          ? false
+          : (options.hostileToPlayer ?? hostile(allegiance, this.faction)),
       budgetCategory: options.budget,
       packId: options.packId ?? null,
       packKinSize: Math.max(1, options.packKinSize ?? 1),

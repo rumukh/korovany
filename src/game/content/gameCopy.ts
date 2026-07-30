@@ -1,4 +1,6 @@
 import { SITE_PRESENTATIONS } from './registry.ts'
+import { getDoctrineDefinition } from '../run/doctrine.ts'
+import { computeRunRulesetFingerprint } from '../run/ruleset.ts'
 import type {
   ActorRole,
   BodyPart,
@@ -641,6 +643,46 @@ export function describeObjectiveDropped(text: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Roadmap 1.6 — the doctrine draft
+// ---------------------------------------------------------------------------
+
+/**
+ * The words for the draft.
+ *
+ * Two rules, and the second is the one this initiative is emphatic about. **The panel never
+ * quotes a number**, because there is no number to quote: a doctrine changes a rule, and a
+ * card that could be described as «+10 к урону» would be the thing 1.6 exists to replace.
+ * And **the cost is stated on the same card as the gain**, because the whole mitigation for
+ * power creep is that every card is a sidegrade — a panel that showed only the upside would
+ * be selling a boon in a doctrine's coat.
+ *
+ * The names and the rule lines themselves live in `run/doctrine.ts` beside the effect each
+ * one flips, so a card cannot promise one thing and do another.
+ */
+export const DOCTRINE_PANEL_TITLE = 'Устав похода'
+export const DOCTRINE_DRAFT_HINT = 'Взять можно один. Устав меняет правило, а не число.'
+export const DOCTRINE_TAKE_LABEL = 'Принять'
+/** Above the equipped strip, when there is nothing left to draft. */
+export const DOCTRINE_EQUIPPED_HINT = 'Устав принят и не меняется до конца забега.'
+export const DOCTRINE_MENU_EYEBROW = 'Уставы'
+export const DOCTRINE_MENU_TITLE = 'Правила, а не числа — по три на забег'
+export const DOCTRINE_MENU_NOTE =
+  'Открытые уставы попадают в раздачу: чем их больше, тем реальнее выбор на третьей минуте.'
+
+export function describeDoctrineDraftOpened(index: number, total: number): string {
+  return `Раздача уставов ${String(index)}/${String(total)}: выбери, по какому правилу идти дальше.`
+}
+
+export function describeDoctrineTaken(name: string, rule: string): string {
+  return `Принят «${name}». ${rule}`
+}
+
+/** The strip's own line when three slots are full — the cap, said out loud. */
+export function describeDoctrineSlots(taken: number, total: number): string {
+  return `Уставов принято: ${String(taken)} из ${String(total)}.`
+}
+
+// ---------------------------------------------------------------------------
 // Engine notices
 // ---------------------------------------------------------------------------
 
@@ -683,6 +725,10 @@ export const ABILITY_BLOCKED_NO_STAMINA_NOTICE =
 export const FINISHER_BLOCKED_NO_STAMINA_NOTICE =
   'На добивание выносливости не хватило — вышел обычный замах.'
 export const SHIELD_DROPPED_NOTICE = 'Выносливость кончилась — щит опущен.'
+
+/** Roadmap 1.6 — «Устав сухого пайка» spends a ration the moment blood shows. */
+export const RATION_ON_BLEED_NOTICE =
+  'Пошла кровь — паёк ушёл сам, по уставу. Кровь остановлена, котомка легче.'
 
 export const CARAVAN_DEFENDED_BY_PLAYER_NOTICE =
   'Ты играешь охраной дворца: этот корован надо защищать.'
@@ -934,13 +980,18 @@ function describeEpilogueSquad(epilogue: RunEpilogue): string {
 }
 
 /**
- * Doctrines are roadmap 1.6. Until they exist the сводка says nothing at all about them —
- * a heading with no rows under it is worse than silence.
+ * Roadmap 1.6 — the doctrines a run went out under, by name rather than by id.
+ *
+ * The сводка stores ids, because ids are what a save should hold; the words are chosen here
+ * and are free to change without touching a profile. A run that drafted nothing still says
+ * nothing at all — a heading with no rows under it is worse than silence.
  */
 function describeEpilogueDoctrines(epilogue: RunEpilogue): string | null {
-  return epilogue.doctrines.length === 0
-    ? null
-    : `Доктрины: ${epilogue.doctrines.join(', ')}.`
+  if (epilogue.doctrines.length === 0) return null
+  const names = epilogue.doctrines.map(
+    (id) => getDoctrineDefinition(id)?.name ?? id,
+  )
+  return `Уставы: ${names.join(', ')}.`
 }
 
 function describeEpilogueCause(epilogue: RunEpilogue): string {
@@ -986,10 +1037,19 @@ export interface RunEpilogueCopy {
   beats: string[]
   body: string
   squad: string
-  /** `null` until roadmap 1.6 ships doctrines. Readers must render nothing. */
+  /** `null` when the run drafted no doctrines. Readers must render nothing. */
   doctrines: string | null
   cause: string
   tally: string
+  /**
+   * Roadmap 1.6 — the run's ruleset fingerprint, which is *not* the world's.
+   *
+   * A shared seed means one world; a shared seed **and** this value mean one run. The
+   * postcard prints both because after 1.6 they are genuinely different questions, and a
+   * share block that printed only the seed would be quietly claiming two runs were the same
+   * when their doctrines made them different games.
+   */
+  ruleset: string
   /** The copyable seed-and-story block, exactly as the panel above reads. */
   text: string
 }
@@ -1010,6 +1070,13 @@ export function describeRunEpilogue(
   const doctrines = describeEpilogueDoctrines(epilogue)
   const cause = describeEpilogueCause(epilogue)
   const tally = describeEpilogueTally(summary, epilogue)
+  const ruleset = computeRunRulesetFingerprint({
+    seed: summary.seed,
+    generatorVersion: summary.generatorVersion,
+    faction: summary.faction,
+    selectedBoonId: summary.selectedBoonId,
+    doctrines: epilogue.doctrines,
+  })
   const text = [
     'КОРОВАНЫ — походная сводка',
     subtitle,
@@ -1026,8 +1093,22 @@ export function describeRunEpilogue(
     tally,
     '',
     `Повторить этот мир: seed ${String(summary.seed)}, ${CHRONICLE_FACTION_NAMES[summary.faction]}.`,
+    `Повторить этот забег: устав ${ruleset}.`,
   ].join('\n')
-  return { title, subtitle, route, map, beats, body, squad, doctrines, cause, tally, text }
+  return {
+    title,
+    subtitle,
+    route,
+    map,
+    beats,
+    body,
+    squad,
+    doctrines,
+    cause,
+    tally,
+    ruleset,
+    text,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1064,6 +1145,7 @@ export type HintId =
   | 'chronicle'
   | 'rumours'
   | 'contracts'
+  | 'doctrines'
   | 'squad'
   | 'threat'
   | 'ability'
@@ -1135,6 +1217,10 @@ const HINT_COPY: Record<HintId, HintCopy> = {
   },
   contracts: {
     text: 'Пунктов открылось сразу несколько, и один из них — подряд твоей стороны. Берись за любой: закрывать всё равно все, ты выбираешь порядок, а не дорогу.',
+    tone: 'info',
+  },
+  doctrines: {
+    text: 'Устав меняет правило, а не число: что-то даёт и что-то забирает. Раздача трижды за забег — на третьей, шестой и девятой минуте, — и принятое до конца похода не меняется.',
     tone: 'info',
   },
   squad: {

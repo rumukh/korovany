@@ -149,9 +149,9 @@ export interface RunEpilogue {
   injuries: number
   companions: RunEpilogueCompanion[]
   /**
-   * Equipped doctrine ids. Roadmap 1.6 builds doctrines; this field exists so that when it
-   * does, the сводка already has somewhere to put them. Until then it is always empty and
-   * every reader must render nothing rather than a heading with no rows under it.
+   * Equipped doctrine ids, in draft order. Bounded by `MAX_EPILOGUE_DOCTRINES`, and by the
+   * three-slot cap long before that. Ids rather than names: a save should hold ids, and
+   * `content/gameCopy.ts` owns the words a reader is shown.
    */
   doctrines: string[]
   cause: RunEndCause
@@ -171,6 +171,20 @@ export interface ActiveRunSaveV3 {
   startedAt: string
   updatedAt: string
   blueprintFingerprint: string
+  /**
+   * Roadmap 1.6 — the run's *ruleset* identity, which is deliberately a different value
+   * from `blueprintFingerprint` and answers a different question.
+   *
+   * `blueprintFingerprint` asks «это тот же мир?» and is hashed from canonical generated
+   * world data only. This one asks «это тот же забег?» and folds in the launch config plus
+   * the doctrines the run drafted — see `run/ruleset.ts`. Keeping them apart is what stops
+   * two identical worlds getting two different *world* fingerprints, which would blur what
+   * the save validator is asserting.
+   *
+   * Optional for the same reason `seenHints` is: a run written before this field existed is
+   * a run that predates a field, not a save that cannot be read.
+   */
+  rulesetFingerprint?: string
   currentLocation: RunLocationState
   player: RunPlayerState
   companions?: RunCompanionState[]

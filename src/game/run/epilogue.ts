@@ -1,4 +1,5 @@
 import { formatRegionGridLabel } from '../content/gameCopy.ts'
+import { normalizeDoctrineRunState } from './doctrine.ts'
 import type { ActorRole, BodyPart, BodyState } from '../types.ts'
 import type { ChronicleEvent, ChronicleEventKind } from '../world/Chronicle.ts'
 import { WORLD_HEIGHT, WORLD_WIDTH } from '../world/worldTypes.ts'
@@ -38,7 +39,7 @@ export const MAX_EPILOGUE_BEATS = 3
 export const MAX_EPILOGUE_WOUNDS = 6
 /** Surviving companions, grouped by role. */
 export const MAX_EPILOGUE_COMPANIONS = 6
-/** Equipped doctrines. Roadmap 1.6 fills this; today it is always empty. */
+/** Equipped doctrines. Roadmap 1.6 fills this; the three-slot cap bounds it long before. */
 export const MAX_EPILOGUE_DOCTRINES = 4
 
 /**
@@ -178,8 +179,23 @@ function routeOf(discoveredRegionIds: readonly string[], finalRegion: string): s
   return [...rest.slice(0, MAX_EPILOGUE_ROUTE - 1), finalRegion]
 }
 
-function causeOf(snapshot: ActiveRunSaveV3): RunEndCause {
-  if (snapshot.status === 'victory') return 'objectives'
+/**
+ * Roadmap 1.6 — the doctrines the run went out under.
+ *
+ * Read from `directorState`, which is where the ledger lives (and *not* from
+ * `RunConfig.modifiers`, which is launch configuration and stays reserved for launch-time
+ * challenge rules). The сводка's stated purpose is to show whether two runs were genuinely
+ * different, and the rules a run committed to are exactly that kind of difference — so this
+ * field stops being the empty list 1.2 provisioned and starts carrying something.
+ */
+function doctrinesOf(directorState: ActiveRunSaveV3['directorState']): string[] {
+  return normalizeDoctrineRunState(directorState.doctrines).equipped.slice(
+    0,
+    MAX_EPILOGUE_DOCTRINES,
+  )
+}
+
+function causeOf(snapshot: ActiveRunSaveV3): RunEndCause {  if (snapshot.status === 'victory') return 'objectives'
   if (snapshot.status === 'abandoned') return 'abandoned'
   return snapshot.ending?.cause ?? 'unknown'
 }
@@ -213,9 +229,7 @@ export function buildRunEpilogue(snapshot: ActiveRunSaveV3): RunEpilogue {
     limbsLost: Math.max(0, Math.trunc(achievements.limbsLost)),
     injuries: Math.max(0, Math.trunc(achievements.injuries)),
     companions: companionsOf(snapshot.companions),
-    // Provisioned for roadmap 1.6. There is no doctrine system to read from yet, and
-    // inventing one here would be building 1.6 by accident.
-    doctrines: [],
+    doctrines: doctrinesOf(snapshot.directorState),
     cause: causeOf(snapshot),
     causeRole: snapshot.ending?.role ?? null,
     elapsed: elapsedOf(snapshot),

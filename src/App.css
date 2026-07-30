@@ -2437,6 +2437,144 @@ button {
   border-color: var(--cp-link);
 }
 
+/* Roadmap 1.6 — the doctrine draft and the equipped strip. Same width and rhythm as the
+   campaign board above it, because both ask the player the same kind of question and a
+   different shape would imply a different weight. */
+.doctrine-card {
+  padding: 0.65rem;
+  width: 17rem;
+}
+
+.doctrine-card .hud-card-header .zone-code {
+  font-family: inherit;
+  font-weight: 400;
+  max-width: 9.5rem;
+  text-align: right;
+  text-transform: none;
+}
+
+.doctrine-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  /* Three cards at most, and the card is capped anyway: HUD overload is the named risk
+     this initiative inherited from 1.3 and 1.4. */
+  max-height: 19rem;
+  overflow-y: auto;
+  pointer-events: auto;
+}
+
+.doctrine-draft-label {
+  color: var(--cp-text-muted);
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.doctrine-entry {
+  background: var(--cp-surface-soft);
+  border: 1px solid var(--cp-border);
+  border-radius: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.4rem;
+}
+
+.doctrine-entry strong {
+  color: var(--cp-text);
+  font-size: 0.66rem;
+}
+
+.doctrine-rule,
+.doctrine-gives,
+.doctrine-takes {
+  font-size: 0.6rem;
+  line-height: 1.35;
+  margin: 0;
+}
+
+.doctrine-rule {
+  color: var(--cp-text);
+}
+
+.doctrine-gives {
+  color: var(--cp-success);
+}
+
+.doctrine-takes {
+  color: var(--cp-warning);
+}
+
+.doctrine-take {
+  align-self: flex-start;
+  background: var(--cp-surface);
+  border: 1px solid var(--cp-border);
+  border-radius: 0.3rem;
+  color: var(--cp-text);
+  cursor: pointer;
+  font-size: 0.6rem;
+  min-height: 1.6rem;
+  padding: 0.2rem 0.6rem;
+  pointer-events: auto;
+}
+
+.doctrine-take:hover {
+  border-color: var(--cp-link);
+}
+
+.doctrine-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.35rem;
+}
+
+.doctrine-chip {
+  background: var(--cp-surface);
+  border: 1px solid color-mix(in srgb, var(--cp-link) 40%, var(--cp-border));
+  border-radius: 0.3rem;
+  color: var(--cp-text);
+  font-size: 0.58rem;
+  padding: 0.15rem 0.4rem;
+}
+
+.doctrine-note {
+  color: var(--cp-text-muted);
+  font-size: 0.58rem;
+  line-height: 1.35;
+  margin: 0.3rem 0 0;
+}
+
+.doctrine-menu-note {
+  color: var(--cp-text-muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+  margin: 0 0 0.6rem;
+}
+
+.doctrine-menu-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.75rem 0.85rem;
+  text-align: left;
+}
+
+.doctrine-menu-takes {
+  color: var(--cp-warning);
+}
+
+.postcard-ruleset {
+  color: var(--cp-text-muted);
+  font-family: Consolas, "Courier New", Courier, monospace;
+  font-size: 0.7rem;
+  margin: 0.2rem 0 0;
+  word-break: break-all;
+}
+
 .shop-supply-note {
   color: var(--cp-warning);
   font-size: 0.78rem;
@@ -4499,6 +4637,25 @@ kbd {
   }
 
   .contract-pin {
+    align-self: stretch;
+    min-height: 2rem;
+    text-align: center;
+  }
+
+  /* Roadmap 1.6 — the same trade again. The draft is a decision the player has to answer,
+     so the rule and the cost stay and the "what it gives" line goes; the button grows to a
+     thumb. */
+  .doctrine-card {
+    padding: 0.4rem;
+    width: 11rem;
+  }
+
+  .doctrine-card .hud-card-header .zone-code,
+  .doctrine-gives {
+    display: none;
+  }
+
+  .doctrine-take {
     align-self: stretch;
     min-height: 2rem;
     text-align: center;

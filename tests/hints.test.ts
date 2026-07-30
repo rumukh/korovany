@@ -152,6 +152,24 @@ const TRIPPING_VIEW: Record<HintId, (base: GameView) => GameView> = {
       },
     ],
   }),
+  doctrines: (base) => ({
+    ...base,
+    // Roadmap 1.6 — the *offer*, not the equipped strip. The lesson arrives while the
+    // choice can still be made; a card already taken teaches nothing.
+    doctrines: {
+      ...base.doctrines,
+      offer: [
+        {
+          id: 'vanguard',
+          name: 'Устав дозора',
+          rule: 'Волны угрозы приходят на закрытый пункт, а не по часам.',
+          gives: 'Дорога тихая.',
+          takes: 'Каждый пункт заканчивается дракой.',
+        },
+      ],
+      draft: 1,
+    },
+  }),
   squad: (base) => ({ ...base, squad: 2 }),
   threat: (base) => ({ ...base, threatTier: 2 }),
   ability: (base) => ({ ...base, ability: { ...base.ability, cooldown: 1.4 } }),
