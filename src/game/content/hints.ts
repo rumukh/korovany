@@ -157,6 +157,14 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
     firstSighting: (view) => view.rumours.length > 0,
   },
   {
+    hint: 'contracts',
+    viewFields: ['contracts'],
+    // Roadmap 1.4 — **more than one**, not "at least one". A single ready node is the
+    // campaign the player already had; the lesson is that several opened at once and the
+    // order is theirs, so the line arrives on the frame the fork does and not before.
+    firstSighting: (view) => view.contracts.length > 1,
+  },
+  {
     hint: 'squad',
     viewFields: ['squad'],
     firstSighting: (view) => view.squad > 0,

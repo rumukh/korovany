@@ -26,43 +26,60 @@ import { runHarness } from './runHarness.ts'
 test('the harness produces a stable run report for a fixed seed', () => {
   const report = runHarness({ seed: 424242, faction: 'elf', policy: 'beeline', hz: 60 })
 
+  // Every number below moved once, when roadmap 1.4 turned the three-node chain into a
+  // four-node diamond: the campaign is a node longer, so the run is longer, walks further
+  // and sees more of the chronicle. The default arms are unchanged — `contractPolicy` is
+  // `firstReady`, which pins nothing and takes the ready nodes in graph order, exactly as
+  // the pre-1.4 `.find()` did.
   assert.equal(report.outcome, 'victory')
-  assert.equal(report.objectivesCompleted, 3)
-  assert.equal(report.objectivesTotal, 3)
-  assert.equal(report.frames, 5_930)
-  assert.equal(report.kills, 1)
-  assert.equal(report.regionsVisited, 10)
-  assert.equal(report.chronicleTicks, 12)
-  assert.equal(report.chronicleHistory.length, 7)
-  assert.equal(report.weatherTargetChanges, 6)
+  assert.equal(report.objectivesCompleted, 4)
+  assert.equal(report.objectivesTotal, 4)
+  assert.equal(report.frames, 9_665)
+  assert.equal(report.kills, 2)
+  assert.equal(report.regionsVisited, 12)
+  assert.equal(report.chronicleTicks, 20)
+  assert.equal(report.chronicleHistory.length, 14)
+  assert.equal(report.weatherTargetChanges, 8)
   assert.equal(report.finalWeather, 'clear')
 
   // Floats to four places: enough to catch a changed rule, loose enough to survive a
   // platform's last-bit difference in `Math.hypot`.
-  assert.equal(report.elapsed.toFixed(4), '98.8333')
-  assert.equal(report.distanceWalked.toFixed(4), '596.3821')
-  assert.equal(report.damageTaken.total.toFixed(4), '24.6802')
-  assert.equal(report.damageDealt.total.toFixed(4), '222.7169')
-  assert.equal(report.health.toFixed(4), '75.3198')
+  assert.equal(report.elapsed.toFixed(4), '161.0833')
+  assert.equal(report.distanceWalked.toFixed(4), '978.1452')
+  assert.equal(report.damageTaken.total.toFixed(4), '32.2296')
+  assert.equal(report.damageDealt.total.toFixed(4), '352.6049')
+  assert.equal(report.health.toFixed(4), '67.7704')
 
   // Time and distance to each objective, which is deliverable A's first bullet. The first
   // objective completes almost immediately because a faction's campaign begins at the site
   // it spawns on: worth knowing, and not a defect.
-  const [first, second, third] = report.objectives
+  const [first, second, third, fourth] = report.objectives
   assert.equal(first.completedAt?.toFixed(3), '0.017')
   assert.equal(first.distanceWalked.toFixed(2), '0.00')
   assert.equal(second.completedAt?.toFixed(3), '76.700')
   assert.equal(second.distanceWalked.toFixed(2), '490.77')
-  assert.equal(third.completedAt?.toFixed(3), '98.833')
-  assert.equal(third.distanceWalked.toFixed(2), '105.61')
+  assert.equal(third.completedAt?.toFixed(3), '123.350')
+  assert.equal(third.distanceWalked.toFixed(2), '278.82')
+  assert.equal(fourth.completedAt?.toFixed(3), '161.083')
+  assert.equal(fourth.distanceWalked.toFixed(2), '208.55')
+
+  // Roadmap 1.4 — the fork existed and the run took one of its arms. Two ready nodes at
+  // once is the whole shape; `chose` is false because this arm pins nothing.
+  assert.equal(report.contracts.contractId, 'unshackle')
+  assert.equal(report.contracts.maxReady, 2)
+  assert.equal(report.contracts.chose, false)
+  assert.deepEqual(report.contracts.middleOrder, [
+    'objective-elf-branch',
+    'objective-elf-contract',
+  ])
 
   // Event exposure: how much of the world's own history this run was in a position to see.
   assert.deepEqual(report.eventExposure, {
-    chronicleEvents: 7,
-    witnessed: 1,
-    offScreen: 6,
-    materializable: 14,
-    materializedNearPlayer: 14,
+    chronicleEvents: 14,
+    witnessed: 4,
+    offScreen: 10,
+    materializable: 19,
+    materializedNearPlayer: 19,
   })
 
   // Region dwell sums to the run, minus nothing: every frame is spent somewhere.
@@ -80,19 +97,24 @@ test('the harness produces a stable run report for a fixed seed', () => {
 test('the idle control separates what the player did from what the world did', () => {
   // The control arm `aiHarness.ts` learned to demand twice. A metric that cannot tell a
   // walking player from a standing one is not measuring the player.
+  //
+  // The limit is 180 s rather than 120 s since roadmap 1.4 added a fourth required node:
+  // measured on this seed, the walking arm reaches victory at 156.6 s. What the control is
+  // about is the *separation* between the arms, so the window was widened rather than the
+  // claim weakened.
   const walking = runHarness({
     seed: 424242,
     faction: 'elf',
     policy: 'beeline',
     hz: 20,
-    timeLimit: 120,
+    timeLimit: 180,
   })
   const idle = runHarness({
     seed: 424242,
     faction: 'elf',
     policy: 'idle',
     hz: 20,
-    timeLimit: 120,
+    timeLimit: 180,
   })
 
   assert.equal(idle.distanceWalked, 0, 'the idle policy must genuinely not move')

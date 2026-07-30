@@ -66,6 +66,19 @@ import type { WorldBlueprint } from '../src/game/world/worldTypes.ts'
 
 const FACTIONS: readonly Faction[] = ['elf', 'guard', 'villain']
 
+/**
+ * Roadmap 1.4 added `contracts` to the `GameView`, and the deleted `App.tsx` builder
+ * predates it by definition.
+ *
+ * So the equivalence below is asserted over the fields that existed on both sides, and the
+ * new one is pinned by `tests/factionContracts.test.ts` instead. The alternative — teaching
+ * the "before" copy to build a field it never had — would stop it being a copy, which is
+ * the only thing that makes it worth keeping.
+ */
+function withoutContracts(view: GameView): Omit<GameView, 'contracts'> {
+  const { contracts: _contracts, ...rest } = view
+  return rest
+}
 // ---------------------------------------------------------------------------
 // The deleted App.tsx builder, copied verbatim
 // ---------------------------------------------------------------------------
@@ -91,7 +104,7 @@ function legacyInitialView(
   blueprint: WorldBlueprint,
   config: RunConfig,
   restored: ActiveRunSaveV3 | undefined,
-): GameView {
+): Omit<GameView, 'contracts'> {
   const startSite = blueprint.sites.find(
     (site) => site.id === blueprint.starts[config.faction],
   )
@@ -367,7 +380,11 @@ test('the launch view reproduces the deleted App.tsx builder on a fresh run', ()
         }
         const expected = legacyInitialView(blueprint, config, undefined)
         const actual = buildInitialGameView({ blueprint, config, restored: undefined })
-        assert.deepEqual(actual, expected, `seed ${index}, ${faction}, boon ${selectedBoonId}`)
+        assert.deepEqual(
+          withoutContracts(actual),
+          expected,
+          `seed ${index}, ${faction}, boon ${selectedBoonId}`,
+        )
         comparisons += 1
       }
     }
@@ -393,7 +410,11 @@ test('the launch view reproduces the deleted builder on a restored run', () => {
       const restored = makeRestored(blueprint, config, rng)
       const expected = legacyInitialView(blueprint, config, restored)
       const actual = buildInitialGameView({ blueprint, config, restored })
-      assert.deepEqual(actual, expected, `seed ${index}, ${faction}`)
+      assert.deepEqual(
+        withoutContracts(actual),
+        expected,
+        `seed ${index}, ${faction}`,
+      )
       comparisons += 1
       if (actual.worldMap.regions.some((region) => region.razed)) withRazedRegions += 1
       if (actual.worldMap.regions.some((region) => region.contested)) withContested += 1
@@ -493,6 +514,10 @@ test('minimap markers match the engine loop they replaced, in the same order', (
       // equivalence is asserted with no commitment open. `tests/chronicleCommitments.test.ts`
       // owns the pinned case.
       rumours: [],
+      // Roadmap 1.4 — same argument for the fork's second pin: the deleted loop drew one
+      // objective marker and no contracts, so the equivalence is asserted with an empty
+      // board. `tests/factionContracts.test.ts` owns the case where the fork is open.
+      contracts: [],
     } as unknown as LiveViewInput)
     assert.deepEqual(actual, expected, `seed ${index}`)
     comparisons += 1
@@ -539,6 +564,7 @@ test('the objective pin is drawn after landmarks so a crowd cannot bury it', () 
     events: [{ markerId: 'event-0', markerX: 4, markerZ: 4, title: 'raid' }],
     actors: [{ id: 'actor-0', x: 5, z: 5, kind: 'enemy' }],
     rumours: [],
+    contracts: [],
   } as unknown as LiveViewInput)
 
   const kinds = markers.map((marker) => marker.kind)
@@ -677,6 +703,22 @@ test('the live view carries every field the HUD reads', () => {
     upgrades: { blade: 1, vitality: 0, endurance: 2 },
     lootToast: null,
     activeEvent: null,
+    // Roadmap 1.4 — the fork, with one arm pinned, so the round trip covers it too.
+    contracts: [
+      {
+        id: node.id,
+        contract: null,
+        title: 'Пункт похода',
+        task: 'Дойти',
+        stake: 'Обязательный',
+        regionLabel: 'A1',
+        pinned: true,
+        status: null,
+        timeRemaining: null,
+        x: null,
+        z: null,
+      },
+    ],
   })
 
   // Health is clamped on the way out; the engine relied on that and the HUD does not clamp.
@@ -707,7 +749,7 @@ test('the live view carries every field the HUD reads', () => {
     'kills', 'damage', 'zone', 'body', 'objectives', 'prompt', 'markers', 'worldMap',
     'chronicle', 'shopPriceMultiplier', 'squad', 'elapsed', 'pointerLocked', 'paused',
     'caravanCooldown', 'ability', 'activeEvent', 'lootToast', 'campaignCompleted',
-    'threatTier', 'upgrades',
+    'threatTier', 'upgrades', 'contracts',
   ]
   for (const key of required) {
     assert.ok(key in view, `the live view dropped ${key}`)
@@ -796,6 +838,7 @@ test('a deliberately wrong view builder is caught by the same comparisons', () =
       events: [],
       actors: [{ id: 'a', x: 2, z: 2, kind: 'enemy' }],
       rumours: [],
+      contracts: [],
     } as unknown as LiveViewInput)
     const reversed = [...markers].reverse()
     if (JSON.stringify(markers) !== JSON.stringify(reversed)) orderDisagreements += 1

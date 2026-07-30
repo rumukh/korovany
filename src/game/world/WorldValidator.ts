@@ -2,6 +2,7 @@ import { hashString32 } from '../random/seed.ts'
 import type { Faction, ZoneId } from '../types.ts'
 import { getChronicleProtectedRegionIds } from './Chronicle.ts'
 import {
+  CONTRACT_IDS,
   DEFAULT_REGION_SIZE,
   WORLD_BIOMES,
   WORLD_FACTIONS,
@@ -1549,6 +1550,7 @@ function validateObjectives(
     const reachableRegions = startSite
       ? reachableFrom(startSite.regionId, regionAdjacency)
       : new Set<string>()
+    let contractNodes = 0
 
     for (let index = 0; index < graph.nodes.length; index += 1) {
       const node = graph.nodes[index]
@@ -1591,6 +1593,19 @@ function validateObjectives(
       ) {
         context.add('objective.kind', `${nodePath}.kind`, 'Objective kind is invalid')
       }
+      // Roadmap 1.4 — a contract is an optional tag on a node, never a fifth verb, and an
+      // unknown one would reach the engine as a contract with no template to run.
+      if (
+        node.contract !== undefined &&
+        !(CONTRACT_IDS as readonly string[]).includes(node.contract)
+      ) {
+        context.add(
+          'objective.contract',
+          `${nodePath}.contract`,
+          'Objective contract id is not a shipped contract',
+        )
+      }
+      if (node.contract !== undefined) contractNodes += 1
       if (!Array.isArray(node.prerequisiteIds)) {
         context.add(
           'objective.prerequisites',
@@ -1622,6 +1637,17 @@ function validateObjectives(
 
     validateObjectiveRoots(graph, nodeById, indegree, path, context)
     validateObjectiveDag(graph, dependents, indegree, path, context)
+
+    // Roadmap 1.4 — exactly one signature contract per faction. Zero would mean the fork
+    // has no contract arm on this seed; two would mean a faction with two signatures, and
+    // both are generator defects the 500-seed gate should catch rather than the browser.
+    if (contractNodes !== 1) {
+      context.add(
+        'objective.contractCount',
+        `${path}.nodes`,
+        `Faction ${faction} must have exactly one signature contract node, found ${String(contractNodes)}`,
+      )
+    }
 
     const finalNode = nodeById.get(graph.finalNodeId)
     if (!finalNode) {

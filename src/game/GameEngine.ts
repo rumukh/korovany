@@ -154,6 +154,13 @@ import {
   describeLocatedEventOutcome,
   describeLocatedEventStart,
   describeObjectiveCompleted,
+  describeObjectiveDropped,
+  describeObjectivePinned,
+  describeContractAbandoned,
+  describeContractFailed,
+  describeContractKept,
+  describeContractStarted,
+  describeContractTitle,
   describeRationEaten,
   describeRazedSite,
   describeRout,
@@ -184,6 +191,7 @@ import {
   WORLD_EVENT_FAILURE_MESSAGES,
   WORLD_EVENT_SUCCESS_MESSAGES,
   type LocatedEventCopyContext,
+  type ContractCopyContext,
   type RumourCopyContext,
 } from './content/gameCopy'
 import { HintDirector } from './content/hints'
@@ -320,45 +328,62 @@ import {
 } from './world/CombatResolver'
 import {
   EVENT_RETRY,
+  advanceContract,
   advanceEventTimer,
   advanceRumourProgress,
+  beginContract,
   buildChronicleFeedSignature,
   campaignObjectivesComplete,
   commitChronicleTicks,
   completeObjectiveEntry,
+  createCampaignContractState,
   createChronicleCommitmentState,
   createGeneratedObjectives,
   enemyDamageMultiplier,
   enemyHealthMultiplier,
+  ensureContractProgress,
   eventCooldownRange,
-  getActiveObjectiveNode,
+  findContractNode,
+  getContractStatus,
+  getFactionContract,
   getPinnedRumour,
+  getReadyObjectiveNodes,
   getRumourEscort,
   getRumourReservedRegionIds,
+  isContractLive,
+  isContractNodeCompletableByArrival,
+  isObjectiveDone,
   isVerdictFresh,
   isWithinObjectiveArrival,
   markRumourActioned,
+  normalizeCampaignContractState,
   normalizeChronicleCommitmentState,
   objectivePrerequisitesDone,
   offerRumours,
+  pinObjective,
   pinRumour,
   playerObjectiveRatio,
+  resolveActiveObjectiveNode,
+  resolveContract,
   rollEventCooldown,
   rumourProgressShare,
   rumourSecondsRemaining,
   selectChronicleAnnouncements,
   selectChronicleFeedEvents,
   selectWeightedEventKind,
+  serializeCampaignContractState,
   serializeChronicleCommitmentState,
   settleDueRumours,
   shouldHandBackForStreaming,
   threatWaveInterval,
+  type CampaignContractState,
   type ChronicleCommitmentState,
   type ChronicleRumour,
+  type FactionContractTemplate,
   type RumourVerdict,
   type RumourWorldContext,
 } from './world/CampaignDirector'
-import { buildGameView } from './world/CampaignView'
+import { buildCampaignContractViews, buildGameView } from './world/CampaignView'
 import {
   AMBIENT_CIVILIAN_LIMIT,
   BIRD_CLIMB_SPEED,
@@ -753,6 +778,14 @@ interface WorldEvent {
   regionId: string | null
   /** Pending-materialization id, so one chronicle situation runs one event. */
   situationId: string | null
+  /**
+   * Roadmap 1.4 — the campaign node this event is the contract for, when it is one.
+   *
+   * Null on every ordinary event, which is what keeps a contract's resolution from being
+   * confused with a random encounter's: the same builder produces both, and only this
+   * says which one the player is looking at.
+   */
+  contractNodeId?: string | null
   /** Chronicle actor slots this event holds. */
   slots: number
   state: 'active' | 'succeeded' | 'failed'
@@ -1105,6 +1138,14 @@ const THREAT_WAVE_FIRST_AT = 240
 const CORPSE_LIFETIME = 12
 const CHAMPION_DAMAGE_CAP = 18
 const DEFEND_HOME_MAX_DISTANCE = 95
+/**
+ * Roadmap 1.4 — how close the player has to get before a signature contract goes live.
+ *
+ * Wider than `OBJECTIVE_ARRIVE_RADIUS` on purpose: the builders scatter their actors
+ * seventeen to twenty-two metres out, and a contract that only started once the player was
+ * standing on the site would spawn its escort on top of them.
+ */
+const CONTRACT_TRIGGER_RADIUS = 26
 const BOW_DAMAGE = 18
 const BOW_MIN_DAMAGE = 10
 const BOW_RANGE = 30
@@ -1708,6 +1749,17 @@ export class GameEngine {
   private chronicleCommitments: ChronicleCommitmentState
   /** Squares a rumour may never put at stake: anchors, plus the player's objective squares. */
   private readonly chronicleRumourReserved: ReadonlySet<string>
+  /**
+   * Roadmap 1.4 — which arm of the fork the player took on, and how far each contract got.
+   *
+   * A field for the same reason the pin above is one: the objective list persists whether a
+   * node is *done*, and nothing in it records which of two ready nodes the player decided
+   * to do first, or that a contract has already fallen through and the node is now an
+   * arrival. Written to `directorState` on every save and read back on restore.
+   */
+  private campaignContracts: CampaignContractState
+  /** The contract event currently on the ground, by objective node id. */
+  private activeContractNodeId: string | null = null
   private activeShopPriceMultiplier = 1
   private generatedCameraRegionSignature = ''
   private generatedNavigationRegionSignature = ''
@@ -2224,6 +2276,9 @@ export class GameEngine {
           restoredRun.directorState.chronicleCommitments,
         )
       : createChronicleCommitmentState()
+    this.campaignContracts = restoredRun
+      ? normalizeCampaignContractState(restoredRun.directorState.campaignContracts)
+      : createCampaignContractState()
     this.eventRng = () => streams.event.next()
     this.directorRng = () => streams.director.next()
     this.combatRng = () => streams.combat.next()
@@ -3220,6 +3275,11 @@ export class GameEngine {
         chronicleCommitments: serializeChronicleCommitmentState(
           this.chronicleCommitments,
         ) as SerializableState[string],
+        // Roadmap 1.4 — the pin and every contract's state. A decision that does not
+        // survive a reload is not a decision.
+        campaignContracts: serializeCampaignContractState(
+          this.campaignContracts,
+        ) as SerializableState[string],
         pendingLoot: this.lootPickups
           .filter((pickup) => pickup.active)
           .sort((left, right) => left.serial - right.serial)
@@ -3346,6 +3406,9 @@ export class GameEngine {
       return
     }
     this.updateMission()
+    // Roadmap 1.4 — after the mission check and before the event director, so a contract
+    // that just failed forward is already failed when `updateEvents` looks at its event.
+    this.updateFactionContract(delta)
     this.updateEvents(delta)
     this.updatePrompt()
     this.emitView(false)
@@ -3816,7 +3879,184 @@ export class GameEngine {
   }
 
   private getActiveGeneratedObjective(): FactionObjectiveNode | null {
-    return getActiveObjectiveNode(this.generatedBlueprint, this.faction, this.objectives)
+    // Roadmap 1.4 — the pinned node if it is still ready, and only then the first ready
+    // one. Everything downstream reads this: the marker, the prompt, the arrival check and
+    // the contract driver, so the pin moves all four together or none of them.
+    return resolveActiveObjectiveNode(
+      this.generatedBlueprint,
+      this.faction,
+      this.objectives,
+      this.campaignContracts.pinnedNodeId,
+    )
+  }
+
+  private getReadyGeneratedObjectives(): FactionObjectiveNode[] {
+    return getReadyObjectiveNodes(
+      this.generatedBlueprint,
+      this.faction,
+      this.objectives,
+    )
+  }
+
+  /**
+   * Roadmap 1.4 — takes on one of the ready campaign nodes, or drops the pin.
+   *
+   * The HUD's second write into the simulation, and the same rules as `pinRumour`: no RNG,
+   * no clock. A pin that is not one of the currently ready nodes is refused rather than
+   * stored, so the state can never claim a commitment to something the player cannot do.
+   */
+  pinObjective(nodeId: string | null): void {
+    if (this.ended) return
+    const ready = this.getReadyGeneratedObjectives()
+    const previousId = this.campaignContracts.pinnedNodeId
+    if (!pinObjective(this.campaignContracts, nodeId, ready.map((node) => node.id))) {
+      return
+    }
+    const pinnedId = this.campaignContracts.pinnedNodeId
+    if (pinnedId !== null) {
+      const text = this.objectives.find((entry) => entry.id === pinnedId)?.text
+      if (text) this.callbacks.onNotice(describeObjectivePinned(text), 'info')
+    } else if (previousId !== null) {
+      const text = this.objectives.find((entry) => entry.id === previousId)?.text
+      if (text) this.callbacks.onNotice(describeObjectiveDropped(text), 'info')
+    }
+    this.emitView(true)
+  }
+
+  private contractCopyContext(node: FactionObjectiveNode): ContractCopyContext {
+    const site = this.generatedBlueprint.sites.find(
+      (candidate) => candidate.id === node.siteId,
+    )
+    return {
+      regionLabel: this.regionGridLabel(String(node.regionId)),
+      siteLabel: site ? generatedSiteLabel(site.kind) : null,
+    }
+  }
+
+  /**
+   * One frame of the signature contract, and the whole of the fail-forward guarantee.
+   *
+   * Three exits, and every one of them ends with a node the player can still finish:
+   *
+   * - the builder went down on the ground and the contract is now `active`, with its own
+   *   bounded clock;
+   * - the clock ran out, or the engine stood on the site for the whole start grace without
+   *   being able to afford the event — the contract **fails forward**, and from that moment
+   *   the node completes by walking to its site;
+   * - the event resolved on its own terms, which `finishEvent` records.
+   *
+   * The site is one of this faction's objective sites, so `chronicleRumourReserved` already
+   * keeps it out of every rumour's stake and out of every raid's reach. A contract cannot
+   * burn down the place it needs.
+   */
+  private updateFactionContract(delta: number): void {
+    const template = getFactionContract(this.faction)
+    const node = findContractNode(this.generatedBlueprint, this.faction)
+    if (!node || node.contract !== template.id) return
+    if (isObjectiveDone(this.objectives, node.id)) return
+    const progress = ensureContractProgress(this.campaignContracts, node)
+    if (!progress || !isContractLive(progress.status)) return
+
+    const site = this.generatedWorld.getSitePosition(node.siteId)
+    const onSite =
+      site !== undefined &&
+      Math.hypot(
+        site.x - this.player.position.x,
+        site.z - this.player.position.z,
+      ) <= CONTRACT_TRIGGER_RADIUS
+
+    // The contract only *starts* on the arm the player took on, which is what makes the
+    // pin a decision rather than a label. Once it is on the ground its clock runs whether
+    // or not the pin moves — a fight you walked away from is still happening.
+    if (
+      progress.status === 'offered' &&
+      onSite &&
+      site &&
+      objectivePrerequisitesDone(node, this.objectives) &&
+      this.getActiveGeneratedObjective()?.id === node.id
+    ) {
+      if (this.startContractEvent(node, template, site)) {
+        beginContract(this.campaignContracts, node, template)
+        this.callbacks.onNotice(describeContractStarted(template.id), 'warning')
+        this.playSound('event')
+        this.emitView(true)
+        return
+      }
+    }
+
+    const tick = advanceContract(progress, template, delta, onSite)
+    if (tick.kind === 'expired' || tick.kind === 'abandoned') {
+      this.failContractForward(
+        node,
+        template,
+        tick.kind === 'expired'
+          ? describeContractFailed(template.id, this.contractCopyContext(node))
+          : describeContractAbandoned(template.id, this.contractCopyContext(node)),
+      )
+    }
+  }
+
+  /**
+   * Ends a contract as failed and says so, in the one sentence that matters: the payout is
+   * gone and the run is not.
+   */
+  private failContractForward(
+    node: FactionObjectiveNode,
+    template: FactionContractTemplate,
+    message: string,
+  ): void {
+    if (!resolveContract(this.campaignContracts, node.id, 'failed')) return
+    if (this.activeContractNodeId === node.id) {
+      const live = this.activeEvents.find((event) => event.contractNodeId === node.id)
+      if (live && live.state === 'active') live.state = 'failed'
+      this.activeContractNodeId = null
+    }
+    // `failForward` is true on every shipped template; the branch exists so the engine
+    // still says something honest if a future one is not, rather than silently locking a
+    // node. `tests/factionContracts.test.ts` is where the impossible case is proved to be
+    // reported rather than survived.
+    this.callbacks.onNotice(
+      template.failForward ? message : WORLD_EVENT_FAILURE_MESSAGES[template.eventKind],
+      'danger',
+    )
+    this.playSound('eventFail')
+    this.emitView(true)
+  }
+
+  /**
+   * Puts the contract's shipped builder on the ground at the objective's site.
+   *
+   * This is the whole of the "adapt the builders" work: each of the three takes an optional
+   * origin now, and a contract passes the site instead of letting it pick a ring around the
+   * player. Nothing about what the builder *does* changed — the caravan still has its
+   * escort, the house still burns, the captive is still guarded by two.
+   */
+  private startContractEvent(
+    node: FactionObjectiveNode,
+    template: FactionContractTemplate,
+    site: { x: number; z: number },
+  ): boolean {
+    if (this.activeContractNodeId !== null) return false
+    if (this.playerAnchoredEvent) return false
+    const origin = new THREE.Vector3(site.x, 0, site.z)
+    origin.y = this.groundHeightAt(origin.x, origin.z)
+    const event =
+      template.eventKind === 'richCaravan'
+        ? this.startRichCaravanEvent(origin)
+        : template.eventKind === 'defendHome'
+          ? this.startDefendHomeEvent(origin)
+          : template.eventKind === 'rescue'
+            ? this.startRescueEvent(origin)
+            : null
+    if (!event) return false
+    event.contractNodeId = node.id
+    event.title = describeContractTitle(template.id)
+    // The contract's clock replaces the builder's, when the builder had one at all. It is
+    // the bound that makes stranding impossible, so it is never left to the event.
+    event.timer = template.timeoutSeconds
+    this.activeEvents.push(event)
+    this.activeContractNodeId = node.id
+    return true
   }
 
   private completeGeneratedObjective(node: FactionObjectiveNode): boolean {
@@ -3860,7 +4100,15 @@ export class GameEngine {
       return false
     }
     const node = this.getActiveGeneratedObjective()
+    // Roadmap 1.4 — a live signature contract is not completed by pressing E at its site.
+    // The contract is the work; the plain interaction is what the node degrades to once the
+    // contract has failed forward, and that path is an arrival rather than a keypress.
+    const contractLive =
+      node !== null &&
+      node.contract !== undefined &&
+      isContractLive(getContractStatus(this.campaignContracts, node))
     const targetsNode =
+      !contractLive &&
       node?.siteId === site.id &&
       (node.kind === 'interact' || node.kind === 'claim')
     if (
@@ -3938,6 +4186,12 @@ export class GameEngine {
 
   private getGeneratedPrompt(): string {
     const node = this.getActiveGeneratedObjective()
+    // Roadmap 1.4 — the prompt agrees with the interaction gate, or the HUD would offer a
+    // keypress that does nothing while a contract is running.
+    const contractLive =
+      node !== null &&
+      node.contract !== undefined &&
+      isContractLive(getContractStatus(this.campaignContracts, node))
     const nearbySite = this.generatedWorld.findNearbySite(
       { x: this.player.position.x, z: this.player.position.z },
       6,
@@ -3947,6 +4201,7 @@ export class GameEngine {
         return describeSabotagePrompt(generatedSiteLabel(nearbySite.kind))
       }
       if (
+        !contractLive &&
         node?.siteId === nearbySite.id &&
         (node.kind === 'interact' || node.kind === 'claim')
       ) {
@@ -6545,7 +6800,14 @@ export class GameEngine {
     }
 
     const node = this.getActiveGeneratedObjective()
-    if (node?.kind === 'arrive') {
+    // Roadmap 1.4 — a node completes on arrival when it asked for an arrival, and also when
+    // its contract fell through. The second clause is the fail-forward guarantee in the one
+    // place the player meets it: the payout is gone, the road is not.
+    const failedForward = isContractNodeCompletableByArrival(
+      node ? getContractStatus(this.campaignContracts, node) : null,
+      node?.contract === undefined ? null : getFactionContract(this.faction),
+    )
+    if (node && (node.kind === 'arrive' || failedForward)) {
       const site = this.generatedWorld.getSitePosition(node.siteId)
       if (
         site &&
@@ -8268,11 +8530,43 @@ export class GameEngine {
       this.playSound('eventFail')
     }
 
+    // Roadmap 1.4 — the campaign half of the same ending. A contract that was won closes
+    // its node and pays; one that was lost fails forward, so the node stops asking for the
+    // contract and starts asking only that the player be there.
+    if (event.contractNodeId) this.resolveContractEvent(event, succeeded)
+
     this.releaseEvent(event)
     if (event.anchor === 'player') {
       this.eventCooldown = rollEventCooldown(this.threatTier, this.eventRng())
     }
     this.emitView(true)
+  }
+
+  private resolveContractEvent(event: WorldEvent, succeeded: boolean): void {
+    const nodeId = event.contractNodeId
+    if (!nodeId) return
+    if (this.activeContractNodeId === nodeId) this.activeContractNodeId = null
+    const node = this.generatedBlueprint.objectives[this.faction].nodes.find(
+      (candidate) => candidate.id === nodeId,
+    )
+    if (!node) return
+    const template = getFactionContract(this.faction)
+    if (!succeeded) {
+      this.failContractForward(
+        node,
+        template,
+        describeContractFailed(template.id, this.contractCopyContext(node)),
+      )
+      return
+    }
+    if (!resolveContract(this.campaignContracts, nodeId, 'kept')) return
+    this.gold += template.reward
+    this.achievements.recordGoldEarned(template.reward)
+    this.callbacks.onNotice(
+      describeContractKept(template.id, template.reward),
+      'success',
+    )
+    this.completeGeneratedObjective(node)
   }
 
   private resolveRandomEventOutcome(
@@ -8371,14 +8665,21 @@ export class GameEngine {
     return event
   }
 
-  private startRichCaravanEvent(): WorldEvent | null {
+  /**
+   * Roadmap 1.4 — `origin` is the one change this builder needed to become a contract.
+   *
+   * Absent, it behaves exactly as it always has: a fat cart in a ring around the player,
+   * position drawn from the event stream. Given, the cart is where the campaign says it is.
+   * Nothing else about the event moved.
+   */
+  private startRichCaravanEvent(origin?: THREE.Vector3): WorldEvent | null {
     if (!this.reserveActorSlots('chronicle', EVENT_REQUIRED_SLOTS.richCaravan)) {
       return null
     }
 
     const id = this.nextEventId('richCaravan')
     const caravan = this.createCaravan(true)
-    const position = this.pickEventPosition()
+    const position = origin ?? this.pickEventPosition()
     caravan.position.copy(position)
     caravan.position.y = this.groundHeightAt(caravan.position.x, caravan.position.z)
     this.scene.add(caravan)
@@ -8527,11 +8828,13 @@ export class GameEngine {
     return best
   }
 
-  private startDefendHomeEvent(): WorldEvent | null {
+  /** Roadmap 1.4 — `home` sites the fire at the contract's own place instead of the nearest
+   * settlement to the player. Same four raiders, same 45 s of house. */
+  private startDefendHomeEvent(home?: THREE.Vector3): WorldEvent | null {
     if (!this.reserveActorSlots('chronicle', EVENT_REQUIRED_SLOTS.defendHome)) {
       return null
     }
-    const homePosition = this.pickDefendHomePosition()
+    const homePosition = home ?? this.pickDefendHomePosition()
     if (!homePosition) return null
 
     const id = this.nextEventId('defendHome')
@@ -8670,11 +8973,12 @@ export class GameEngine {
     return event
   }
 
-  private startRescueEvent(): WorldEvent | null {
+  /** Roadmap 1.4 — `origin` puts the ropes at the contract's site. Same captive, same two. */
+  private startRescueEvent(origin?: THREE.Vector3): WorldEvent | null {
     if (!this.reserveActorSlots('chronicle', EVENT_REQUIRED_SLOTS.rescue)) return null
 
     const id = this.nextEventId('rescue')
-    const position = this.pickEventPosition()
+    const position = origin ?? this.pickEventPosition()
     const captive = this.spawnActor(
       this.faction,
       'captive',
@@ -10513,6 +10817,13 @@ export class GameEngine {
           : String(generatedCurrentRegionId),
       chronicle: this.buildChronicleFeed(),
       rumours: this.buildRumourViews(),
+      contracts: buildCampaignContractViews({
+        blueprint: this.generatedBlueprint,
+        faction: this.faction,
+        objectives: this.objectives,
+        contracts: this.campaignContracts,
+        sitePosition: (siteId) => this.generatedWorld.getSitePosition(siteId) ?? null,
+      }),
       shopPriceMultiplier: this.activeShopPriceMultiplier,
       squad: this.actors.filter(
         (actor) =>

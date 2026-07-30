@@ -19,7 +19,15 @@
  */
 
 import { getStartingBoonEffects } from '../run/profile.ts'
-import { generatedSiteLabel } from '../content/gameCopy.ts'
+import {
+  CONTRACT_ERRAND_STAKE,
+  CONTRACT_FAILED_TASK,
+  describeContractStake,
+  describeContractTask,
+  describeContractTitle,
+  formatRegionGridLabel,
+  generatedSiteLabel,
+} from '../content/gameCopy.ts'
 import { getSiteWorldPosition2D } from '../content/registry.ts'
 import {
   createAbilityView,
@@ -31,6 +39,7 @@ import {
   normalizeUpgradeLevels,
   type AbilityView,
   type BodyState,
+  type CampaignContractView,
   type ChronicleEntryView,
   type ChronicleRumourView,
   type Faction,
@@ -46,7 +55,14 @@ import {
 } from '../types.ts'
 import type { ActiveRunSaveV3, RunConfig } from '../run/runTypes.ts'
 import { getContestedRegionIds, isRegionRazed, type RegionChronicleState } from './Chronicle.ts'
-import { createGeneratedObjectives } from './CampaignDirector.ts'
+import {
+  createGeneratedObjectives,
+  findContractTemplate,
+  getContractProgress,
+  getReadyObjectiveNodes,
+  normalizeCampaignContractState,
+  type CampaignContractState,
+} from './CampaignDirector.ts'
 import {
   PLAYER_MELEE_BEATS,
   createPlayerMeleeState,
@@ -167,6 +183,8 @@ export interface LiveViewInput {
   chronicle: readonly ChronicleEntryView[]
   /** Roadmap 1.3 — open rumours and, briefly, the last verdict. */
   rumours: readonly ChronicleRumourView[]
+  /** Roadmap 1.4 — every ready campaign node, the pinned one included. */
+  contracts: readonly CampaignContractView[]
   shopPriceMultiplier: number
   squad: number
   elapsed: number
@@ -263,10 +281,95 @@ export function buildMapMarkers(input: LiveViewInput): MapMarker[] {
       label: pinned.title,
     })
   }
+  // Roadmap 1.4 — the arms of the fork the player did *not* pin. The active one already
+  // has an `objective` pin above; drawing the others is the difference between a campaign
+  // that offers a choice and a campaign that merely has one.
+  for (const entry of input.contracts) {
+    if (entry.x === null || entry.z === null) continue
+    if (entry.id === input.activeObjectiveId) continue
+    const markerId = `site:${entry.id}`
+    if (markers.some((marker) => marker.id === markerId)) continue
+    markers.push({
+      id: markerId,
+      x: entry.x,
+      z: entry.z,
+      kind: 'contract',
+      label: entry.title,
+    })
+  }
   for (const actor of input.actors) {
     markers.push({ id: actor.id, x: actor.x, z: actor.z, kind: actor.kind })
   }
   return markers
+}
+
+/**
+ * Roadmap 1.4 — the campaign board: every node the player could take on right now.
+ *
+ * Shared by both view paths for the same reason the objective list is: the launch view and
+ * the live view must not be able to disagree about which fork the player is looking at.
+ *
+ * `sitePosition` is a callback rather than a map because the two callers know where a site
+ * is by different means — the engine asks its streamed world runtime, the launch path
+ * derives it from the blueprint — and a node whose region has not streamed in yet has no
+ * position at all, which the HUD renders as "no pin yet" rather than as the origin.
+ */
+export interface CampaignContractInput {
+  blueprint: WorldBlueprint
+  faction: Faction
+  objectives: readonly Objective[]
+  contracts: CampaignContractState
+  sitePosition: (siteId: string) => { x: number; z: number } | null
+}
+
+export function buildCampaignContractViews(
+  input: CampaignContractInput,
+): CampaignContractView[] {
+  const ready = getReadyObjectiveNodes(input.blueprint, input.faction, input.objectives)
+  return ready.map((node) => {
+    const site = input.blueprint.sites.find((candidate) => candidate.id === node.siteId)
+    const region = input.blueprint.regions.find(
+      (candidate) => String(candidate.id) === String(node.regionId),
+    )
+    const regionLabel = region
+      ? formatRegionGridLabel(region.coordinate.x, region.coordinate.y)
+      : '??'
+    const siteLabel = site ? generatedSiteLabel(site.kind) : null
+    const position = input.sitePosition(node.siteId)
+    const objective = input.objectives.find((entry) => entry.id === node.id)
+    const template = findContractTemplate(node.contract)
+    const progress = getContractProgress(input.contracts, node.id)
+    const status = node.contract === undefined ? null : (progress?.status ?? 'offered')
+    const contractId = node.contract ?? null
+    const title =
+      contractId === null
+        ? (objective?.text ?? 'Пункт похода')
+        : describeContractTitle(contractId)
+    const task =
+      contractId === null
+        ? (objective?.text ?? 'Пункт похода')
+        : status === 'failed'
+          ? CONTRACT_FAILED_TASK
+          : describeContractTask(contractId, { regionLabel, siteLabel })
+    const stake =
+      contractId === null
+        ? CONTRACT_ERRAND_STAKE
+        : describeContractStake(contractId, { regionLabel, siteLabel })
+    return {
+      id: node.id,
+      contract: contractId,
+      title,
+      task,
+      stake,
+      regionLabel,
+      pinned: input.contracts.pinnedNodeId === node.id,
+      status,
+      timeRemaining:
+        status === 'active' && progress && template ? progress.remaining : null,
+      x: position?.x ?? null,
+      z: position?.z ?? null,
+    }
+  })
 }
 
 /**
@@ -351,6 +454,7 @@ export function buildGameView(input: LiveViewInput): GameView {
     }),
     chronicle: [...input.chronicle],
     rumours: input.rumours.map((rumour) => ({ ...rumour })),
+    contracts: input.contracts.map((entry) => ({ ...entry })),
     shopPriceMultiplier: input.shopPriceMultiplier,
     squad: input.squad,
     elapsed: input.elapsed,
@@ -437,6 +541,16 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     chronicleRegions.set(regionId, delta.chronicle)
   }
   const contestedRegionIds = getContestedRegionIds(blueprint, chronicleRegions)
+  const contracts = buildCampaignContractViews({
+    blueprint,
+    faction: config.faction,
+    objectives,
+    contracts: normalizeCampaignContractState(restored?.directorState.campaignContracts),
+    sitePosition: (siteId) => {
+      const position = getSiteWorldPosition2D(blueprint, siteId)
+      return position ? { x: position.x, z: position.z } : null
+    },
+  })
 
   if (!restored && boon.revealAdjacentRegions) {
     for (const region of blueprint.regions) {
@@ -486,6 +600,11 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     // yet even on a restored run: `settleDueRumours` runs in the engine, and showing a
     // rumour whose clock the engine has not yet checked would be showing a stale deadline.
     rumours: [],
+    // The campaign board is the other way round, and deliberately so: it is derived from
+    // the blueprint, the objective list and the persisted pin, none of which needs a frame
+    // of engine to be true. Drawing it at launch is what makes "the pin survived the
+    // reload" visible before the first frame rather than after it.
+    contracts,
     shopPriceMultiplier: 1,
     squad: 0,
     elapsed,

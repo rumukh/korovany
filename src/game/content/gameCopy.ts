@@ -19,7 +19,7 @@ import type {
   RunHistorySummary,
 } from '../run/runTypes.ts'
 import type { ChronicleEventKind } from '../world/Chronicle.ts'
-import type { ObjectiveKind, SiteKind } from '../world/worldTypes.ts'
+import type { ContractId, ObjectiveKind, SiteKind } from '../world/worldTypes.ts'
 
 export type RussianCountForms = readonly [one: string, few: string, many: string]
 
@@ -523,6 +523,124 @@ export const SABOTAGE_DONE_NOTICE =
   'Склад горит. Припасы, которыми собирались снабжать набег, теперь дым.'
 
 // ---------------------------------------------------------------------------
+// Roadmap 1.4 — faction contracts
+// ---------------------------------------------------------------------------
+
+/**
+ * The words for the fork.
+ *
+ * Two rules, and the second one is the one the roadmap is emphatic about. **The stake is
+ * stated before the choice**, same as a rumour's. And **the copy never says the player is
+ * choosing a route.** Every branch is required; what is being chosen is the order. A panel
+ * that implied otherwise would be selling 2.1 on 1.4's budget, so the panel hint says so in
+ * as many words and every line below is written to agree with it.
+ */
+export interface ContractCopyContext {
+  /** Where the work is, as a map square. */
+  regionLabel: string
+  siteLabel: string | null
+}
+
+export const CONTRACT_PANEL_TITLE = 'Подряды'
+export const CONTRACT_PANEL_HINT = 'Закрыть придётся все. Выбираешь порядок, а не дорогу.'
+export const CONTRACT_PIN_LABEL = 'Взяться'
+export const CONTRACT_UNPIN_LABEL = 'Бросить'
+/** The line under a plain campaign node, so a required errand does not read as optional. */
+export const CONTRACT_ERRAND_STAKE = 'Пункт обязательный: без него забег не закроется.'
+export const CONTRACT_FAILED_TASK = 'Подряд сорван. Дойти до точки — пункт закроется пустым.'
+
+const CONTRACT_TITLES: Record<ContractId, string> = {
+  plunder: 'Жирный корован',
+  bulwark: 'Домики жгут',
+  unshackle: 'Свои в верёвках',
+}
+
+export function describeContractTitle(id: ContractId): string {
+  return CONTRACT_TITLES[id]
+}
+
+/** What the player would have to physically go and do. */
+export function describeContractTask(
+  id: ContractId,
+  context: ContractCopyContext,
+): string {
+  const site = context.siteLabel ?? DEFAULT_SITE_LABEL
+  if (id === 'plunder') {
+    return `Дойти до точки «${site}» в квадрате ${context.regionLabel} и обнести обоз, пока охрана не опомнилась.`
+  }
+  if (id === 'bulwark') {
+    return `Дойти до точки «${site}» в квадрате ${context.regionLabel} и отбить налёт, пока дом ещё стоит.`
+  }
+  return `Дойти до точки «${site}» в квадрате ${context.regionLabel} и снять верёвки со своего.`
+}
+
+/** What failing costs. Stated before the choice, and never overstated. */
+export function describeContractStake(
+  id: ContractId,
+  context: ContractCopyContext,
+): string {
+  const site = context.siteLabel ?? DEFAULT_SITE_LABEL
+  if (id === 'plunder') {
+    return `Провалишь — обоз уйдёт своим ходом. Платить будет некому, а пункт всё равно закрывать: дойдёшь до «${site}» и пойдёшь дальше пустым.`
+  }
+  if (id === 'bulwark') {
+    return `Провалишь — «${site}» догорит без тебя. Награды не будет, а пункт всё равно закрывать: дойдёшь и пойдёшь дальше пустым.`
+  }
+  return `Провалишь — своего уведут. Награды не будет, а пункт всё равно закрывать: дойдёшь до «${site}» и пойдёшь дальше пустым.`
+}
+
+export function describeContractStarted(id: ContractId): string {
+  if (id === 'plunder') return 'Обоз на месте, охрана тоже. Подряд пошёл.'
+  if (id === 'bulwark') return 'Налётчики уже здесь. Подряд пошёл, дом горит.'
+  return 'Свой в верёвках, рядом двое. Подряд пошёл.'
+}
+
+export function describeContractKept(id: ContractId, reward: number): string {
+  if (id === 'plunder') {
+    return `Обоз обнесён по-хозяйски. Подряд закрыт, ${String(reward)} золотых сверху.`
+  }
+  if (id === 'bulwark') {
+    return `Налёт отбит, дом стоит. Подряд закрыт, ${String(reward)} золотых сверху.`
+  }
+  return `Верёвки сняты, свой при оружии. Подряд закрыт, ${String(reward)} золотых сверху.`
+}
+
+/**
+ * The fail-forward line.
+ *
+ * It has to say two things in one breath: the contract is lost, and the run is not. That is
+ * the difference between an event and a campaign objective, and it is the sentence the
+ * player reads at the exact moment the difference matters.
+ */
+export function describeContractFailed(
+  id: ContractId,
+  context: ContractCopyContext,
+): string {
+  const site = context.siteLabel ?? DEFAULT_SITE_LABEL
+  const tail = `Дорога не закрыта: дойди до точки «${site}» в квадрате ${context.regionLabel} — пункт закроется, но пустым.`
+  if (id === 'plunder') return `Обоз ушёл. ${tail}`
+  if (id === 'bulwark') return `Дом догорел. ${tail}`
+  return `Своего увели. ${tail}`
+}
+
+/** The contract could not even be put on the ground, and its patience ran out. */
+export function describeContractAbandoned(
+  id: ContractId,
+  context: ContractCopyContext,
+): string {
+  const site = context.siteLabel ?? DEFAULT_SITE_LABEL
+  return `«${CONTRACT_TITLES[id]}» так и не собрался — не тот час, не то место. Точка «${site}» в квадрате ${context.regionLabel} всё равно твоя: дойди и закрывай пункт.`
+}
+
+export function describeObjectivePinned(text: string): string {
+  return `Взялся: «${text}». Остальное подождёт своей очереди — очередь ты и выбираешь.`
+}
+
+export function describeObjectiveDropped(text: string): string {
+  return `Бросил: «${text}». Пункт никуда не делся, просто теперь не первый.`
+}
+
+// ---------------------------------------------------------------------------
 // Engine notices
 // ---------------------------------------------------------------------------
 
@@ -945,6 +1063,7 @@ export type HintId =
   | 'map'
   | 'chronicle'
   | 'rumours'
+  | 'contracts'
   | 'squad'
   | 'threat'
   | 'ability'
@@ -1012,6 +1131,10 @@ const HINT_COPY: Record<HintId, HintCopy> = {
   },
   rumours: {
     text: 'Слух — единственное место, где мир спрашивает, а не докладывает. Взяться можно за один: провести корован, постоять в квадрате или сжечь склад. Пройдёшь мимо — случится и без тебя.',
+    tone: 'info',
+  },
+  contracts: {
+    text: 'Пунктов открылось сразу несколько, и один из них — подряд твоей стороны. Берись за любой: закрывать всё равно все, ты выбираешь порядок, а не дорогу.',
     tone: 'info',
   },
   squad: {
