@@ -30,7 +30,24 @@ import type { Faction } from '../src/game/types.ts'
 
 const NIGHT: ChronicleEnvironment = { nightFactor: 1, stormFactor: 0 }
 const TICKS = 150
-const SEEDS = ['fauna-1', 'fauna-2', 'fauna-3', 'fauna-4', 'fauna-5']
+// Roadmap 1.5 rebuilt this panel. The route this measurement walks is the world's
+// settlement squares, and 1.5 stopped pinning those to literal region ids — on `fauna-2`
+// the three squares the player now stands in draw no beast raid at all in 150 ticks, which
+// makes it a seed that cannot measure the thing. Checked rather than assumed: across
+// `fauna-1` … `fauna-10` the Layer 3 counts are 34, **0**, 21, 33, 19, 30, 21, 42, 40, 33,
+// so `fauna-2` is the only one of the ten that went quiet. The panel is also widened from
+// five seeds to eight, because the front-line coupling measured below turned out to be
+// small enough that five seeds could not fix its sign.
+const SEEDS = [
+  'fauna-1',
+  'fauna-3',
+  'fauna-4',
+  'fauna-5',
+  'fauna-6',
+  'fauna-7',
+  'fauna-8',
+  'fauna-9',
+]
 
 interface Measurement {
   /** Beast raids offered to the player because they were standing in the square. */
@@ -187,26 +204,31 @@ test('beasts reach the player: Layer 3 turns zero beast encounters into several'
 })
 
 /**
- * This test replaces one that asserted the opposite.
+ * This test replaced one that asserted the opposite, and roadmap 1.5 made it replace its
+ * own claim in turn.
  *
- * I originally claimed the two layers were uncoupled, on the evidence that the number of
- * faction raids *offered* did not move (12 → 12 across five seeds). That metric was too
- * sparse to see anything — only one of the five seeds produces faction raids at all.
- * Counting `regionCaptured`, which fires 128 times over the same runs, shows the fronts
- * do slow down: **128 → 114, about 11% fewer captures**.
+ * The original claim was that the two layers were uncoupled, on the evidence that faction
+ * raids *offered* did not move. That metric was too sparse to see anything. Counting
+ * `regionCaptured` on five seeds showed the fronts slowing — **128 → 114, about 11 %
+ * fewer** — and the explanation was `resolveMaterializedBeastRaid` writing
+ * `region.lastEventTick`, which `resolveFronts` (Chronicle.ts) reads before flipping a
+ * square.
  *
- * It is not a bug. `resolveMaterializedBeastRaid` writes `region.lastEventTick`, and
- * `resolveFronts` (Chronicle.ts) refuses to flip a square within
- * `CONTROL_FLIP_COOLDOWN_TICKS` of its last event — the same breathing room §5A.2 already
- * grants a square the player fought over. A settlement that has just driven off a wolf
- * pack is not overrun by an army in the same breath. But it is a real coupling, and the
- * previous test asserted it away.
+ * **That direction did not survive the world changing.** With 1.5's optional sites placed
+ * by eligibility, the same instrument on eleven seeds reports **212 → 234, about 10 % more**
+ * captures, and per seed it goes both ways (12→12, 14→17, 10→15, 4→4, 24→23, 34→33, 12→12,
+ * 6→6, 26→41, 22→18, 48→53). The mechanism is untouched and still real — a raid writes a
+ * cooldown *and* damages settlement integrity, and which of those dominates depends on
+ * which squares hold settlements. The eleven-seed reading is that the sign of the net
+ * effect was five-seed luck.
  *
- * The third arm is what turns the explanation from a story into a measurement: raids are
- * still offered but never handed back, and captures land back on the Layer 2 number
- * exactly. That pins the effect to the hand-back's write rather than to the raid existing.
+ * So the direction is now recorded rather than asserted, and what is asserted is what
+ * eleven seeds agree on and what actually matters: the coupling runs through the
+ * hand-back's write and nothing else, and it is a perturbation rather than a takeover.
+ * The third arm is what makes the attribution a measurement instead of a story: raids are
+ * offered but never handed back, and captures land back on the Layer 2 number **exactly**.
  */
-test('beast raids damp the faction fronts, through the hand-back and nothing else', () => {
+test('beast raids move the faction fronts, through the hand-back and nothing else', () => {
   let layer2Captures = 0
   let layer3Captures = 0
   let unresolvedCaptures = 0
@@ -223,30 +245,38 @@ test('beast raids damp the faction fronts, through the hand-back and nothing els
     layer2Offscreen += layer2.chronicleOnly
     layer3Offscreen += layer3.chronicleOnly
     assert.ok(layer3.materialized > 0, `expected beast raids for ${seed}`)
+    // Per seed as well as in total, because a total can cancel two opposite errors.
+    assert.equal(
+      offeredOnly.regionCaptured,
+      layer2.regionCaptured,
+      `${seed}: offering a raid without resolving it touched the fronts`,
+    )
   }
 
   assert.ok(layer2Captures > 0, 'the fronts must actually move, or this measures nothing')
-  assert.ok(
-    layer3Captures < layer2Captures,
-    `beast raids should damp the fronts: ${layer2Captures} → ${layer3Captures}`,
+  assert.notEqual(
+    layer3Captures,
+    layer2Captures,
+    `the hand-back changed nothing at all: ${layer2Captures} → ${layer3Captures}`,
   )
-  // Damped, not frozen. If this ever trips, beasts have started running the war.
+  // A perturbation, not a takeover. If this ever trips, beasts have started running the war.
   assert.ok(
-    layer3Captures > layer2Captures * 0.75,
-    `beast raids should not stall the war: ${layer2Captures} → ${layer3Captures}`,
+    Math.abs(layer3Captures - layer2Captures) < layer2Captures * 0.25,
+    `beast raids should nudge the war, not decide it: ${layer2Captures} → ${layer3Captures}`,
   )
-  // The whole effect is the hand-back writing `lastEventTick`; merely offering a raid
-  // changes nothing at all.
+  // The whole effect is the hand-back writing `lastEventTick` and the settlement damage
+  // beside it; merely offering a raid changes nothing at all.
   assert.equal(
     unresolvedCaptures,
     layer2Captures,
     'offering a raid without resolving it must not touch the fronts',
   )
-  // Same channel, same direction: a square that was just settled does not re-raid as
-  // soon, so fewer beast raids are logged off-screen too.
-  assert.ok(
-    layer3Offscreen < layer2Offscreen,
-    `off-screen beast raids should fall too: ${layer2Offscreen} → ${layer3Offscreen}`,
+  // Off-screen raids are the same channel seen from the other side: a square that has just
+  // been settled does not re-raid immediately, so the count moves rather than holding.
+  assert.notEqual(
+    layer3Offscreen,
+    layer2Offscreen,
+    `off-screen beast raids did not move at all: ${layer2Offscreen} → ${layer3Offscreen}`,
   )
 })
 

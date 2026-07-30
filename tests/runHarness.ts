@@ -552,9 +552,11 @@ export interface RunReport {
   /**
    * Squares burned to the ground by the time the run stopped.
    *
-   * Reported because it is the campaign-safety condition made checkable: an objective site
-   * in a razed square is a run that cannot be finished, since `handleGeneratedInteraction`
-   * refuses a burned shop or healer before it looks at whether an objective wanted it.
+   * Reported because it is the campaign-safety condition made checkable. It used to be a
+   * stranding condition outright — `handleGeneratedInteraction` refused a burned shop or
+   * healer before it looked at whether an objective wanted it — and roadmap 1.5 closed
+   * that: the node completes, the service does not. What is left to watch is that a
+   * reserved square burning still leaves the run finishable.
    */
   razedRegionIds: string[]
   rumours: RumourMetrics

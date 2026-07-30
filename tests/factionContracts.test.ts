@@ -767,6 +767,10 @@ function sweepSize(): number {
 interface ArmSummary {
   runs: number
   victories: number
+  /** Runs the scripted player was killed in — a combat outcome, not a campaign one. */
+  defeats: number
+  /** Runs that ran out of time with objectives outstanding. The campaign-safety number. */
+  timeouts: number
   orderingDivergence: number
   choiceRate: number
   forkVisible: number
@@ -787,6 +791,8 @@ function sweep(
   const summary: ArmSummary = {
     runs,
     victories: 0,
+    defeats: 0,
+    timeouts: 0,
     orderingDivergence: 0,
     choiceRate: 0,
     forkVisible: 0,
@@ -813,10 +819,19 @@ function sweep(
     })
     const inner = orders.get(faction) ?? new Map<string, number>()
     const key = report.contracts.middleOrder.join('>')
-    inner.set(key, (inner.get(key) ?? 0) + 1)
-    orders.set(faction, inner)
+    // Roadmap 1.5 — only runs that got through both middle nodes have an *order* at all.
+    // Spreading the optional sites lengthened the detours, so a scripted beeline player is
+    // now sometimes killed mid-campaign, and a truncated `middleOrder` counted as a third
+    // sequence: the `firstReady` control reported 1/36 "divergence" for a run that simply
+    // never finished. Ordering divergence is a question about completed orders.
+    if (report.contracts.middleOrder.length === 2) {
+      inner.set(key, (inner.get(key) ?? 0) + 1)
+      orders.set(faction, inner)
+    }
 
     if (report.outcome === 'victory') summary.victories += 1
+    if (report.outcome === 'defeat') summary.defeats += 1
+    if (report.outcome === 'timeout') summary.timeouts += 1
     if (report.contracts.chose) chose += 1
     if (report.contracts.maxReady >= 2) forkSeen += 1
     summary.contractsStarted += report.contracts.started
@@ -889,8 +904,21 @@ test('the fork produces ordering divergence, and the linearised placebo says it 
   assert.equal(baseline.forkVisible, 1, 'the branched arm never presented two ready nodes')
   assert.equal(placeboNearest.forkVisible, 0, 'the placebo still had a fork in it')
   assert.equal(placeboSeeded.forkVisible, 0, 'the placebo still had a fork in it')
+  // **Split by cause, because roadmap 1.5 changed one of them.** Spreading the six optional
+  // sites across the map lengthened the detours between objectives, and on the 36-seed panel
+  // the scripted beeline player — who never shops, never heals and never avoids a fight —
+  // went from 36/36 victories and 0 deaths to 31/36 and 5 deaths, at an unchanged mean run
+  // length (121.4 s → 123.1 s) and 24 % more damage taken. Every one of the five is a
+  // death in combat. **None is a campaign that ran out of road**, which is the property this
+  // guard exists for, so that is what it now asserts — with the victory floor kept as a
+  // second, looser check that the arm is finishing runs at all.
+  assert.equal(
+    baseline.timeouts,
+    0,
+    `${String(baseline.timeouts)} runs ended with objectives outstanding`,
+  )
   assert.ok(
-    baseline.victories / runs > 0.9,
+    baseline.victories / runs > 0.8,
     `the campaign stopped finishing: ${String(baseline.victories)}/${String(runs)}`,
   )
 
@@ -955,19 +983,32 @@ test('a contract that is always abandoned never strands a run', () => {
 
   // Non-vacuity: the arm has to have actually failed contracts, or it is measuring nothing.
   assert.equal(shirk.contractsKept, 0, 'the shirking arm honoured a contract')
+  // Every contract this arm started and lived to resolve, it abandoned. Counted against
+  // `contractsStarted` and allowed one shortfall per death, because roadmap 1.5's longer
+  // detours mean a run can now be killed while its contract is still running — and a run
+  // that never resolved one has not failed to fail it.
   assert.ok(
-    shirk.contractsFailedForward >= runs,
-    `only ${String(shirk.contractsFailedForward)} contracts failed across ${String(runs)} runs`,
+    shirk.contractsFailedForward >= shirk.contractsStarted - shirk.defeats,
+    `${String(shirk.contractsStarted - shirk.contractsFailedForward)} contracts neither kept nor failed, against ${String(shirk.defeats)} deaths`,
+  )
+  assert.ok(
+    shirk.contractsStarted >= runs - shirk.defeats,
+    `only ${String(shirk.contractsStarted)} contracts started across ${String(runs)} runs`,
   )
 
-  // The guarantee: every contract node still closed, and the runs still finished.
+  // The guarantee: every contract node a surviving run reached still closed, and the runs
+  // still finished.
+  assert.ok(
+    shirk.contractNodesClosed >= runs - shirk.defeats,
+    `${String(runs - shirk.defeats - shirk.contractNodesClosed)} surviving runs were left with a contract node nothing could close`,
+  )
   assert.equal(
-    shirk.contractNodesClosed,
-    runs,
-    `${String(runs - shirk.contractNodesClosed)} runs were left with a contract node nothing could close`,
+    shirk.timeouts,
+    0,
+    'abandoning contracts left runs with objectives outstanding when time ran out',
   )
   assert.ok(
-    shirk.victories / runs > 0.9,
+    shirk.victories / runs > 0.8,
     `abandoning contracts stopped runs finishing: ${String(shirk.victories)}/${String(runs)}`,
   )
   assert.ok(

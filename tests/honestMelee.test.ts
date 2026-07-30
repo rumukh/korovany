@@ -82,7 +82,12 @@ const WINDUP_FLOOR = 0.18
 /** The brute's wind-up. The top of the band signal 3 names. */
 const WINDUP_CEILING = 0.56
 
-const SEEDS = [424242, 182138, 991, 20260729, 7920, 15839]
+// Roadmap 1.5 widened this panel from six seeds to ten. Spreading the optional sites
+// across the map changed which squares a duelist walks through, and the thinnest arm —
+// `none`, which never answers a tell — dropped to 14 telegraphed heavies against a
+// non-vacuity floor of 15. The floor is the thing worth keeping, so the sample moved
+// rather than the assertion: the same three arms now see 23 / 52 / 150 heavies.
+const SEEDS = [424242, 182138, 991, 20260729, 7920, 15839, 3, 77, 3457, 60101]
 const TIME_LIMIT = 300
 
 interface Arm {

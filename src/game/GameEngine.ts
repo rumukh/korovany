@@ -4130,6 +4130,21 @@ export class GameEngine {
       this.isChronicleSiteRazed(site.id)
     ) {
       this.callbacks.onNotice(describeRazedSite(site.kind), 'warning')
+      // A burned shop sells nothing and a burned healer treats nobody — but the campaign
+      // node here is "go and look", and the player did. Returning before
+      // `completeGeneratedObjective` left an objective sited on a razeable square
+      // permanently unfinishable once the chronicle got to it, which is a stranded run.
+      // Roadmap 1.5 moves the optional sites around the map, so the squares an objective
+      // can land on are now the squares a raid can reach; the hazard was always here and
+      // the placement change is what made it reachable.
+      if (targetsNode && node) {
+        this.mutateGeneratedRegionDelta(String(site.regionId), (next) => {
+          if (!next.completedInteractionIds.includes(site.id)) {
+            next.completedInteractionIds.push(site.id)
+          }
+        })
+        this.completeGeneratedObjective(node)
+      }
       return true
     }
     if (site.kind === 'shop') {
