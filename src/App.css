@@ -2187,6 +2187,10 @@ button {
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
+  /* Two offers plus a verdict is the most this can ever hold, but a long stake wraps, so
+     the list is capped rather than trusted: the HUD-overload risk is a named one. */
+  max-height: 15rem;
+  overflow-y: auto;
   pointer-events: auto;
 }
 

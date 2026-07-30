@@ -436,6 +436,17 @@ export const RUMOUR_DEADLINE_TICKS = 12
 export const RUMOUR_OFFER_INTERVAL_TICKS = 4
 /** Ticks the player must spend in the cart's own square for the escort to count. */
 export const RUMOUR_ESCORT_TICKS = 2
+/**
+ * Ticks of slack an escort is offered on top of the presence it needs, so there is time to
+ * get to the cart at all. Without it a rumour raised about a cart two ticks from home is
+ * honourable only by somebody already standing next to it — which the browser produced on
+ * the first try.
+ *
+ * One rather than two, because a cart covers its whole route in about six ticks and only
+ * the youngest of the three in flight would clear a wider bar; the presence requirement
+ * shrinks to fit instead, in `requiredRumourProgressFor`.
+ */
+export const RUMOUR_ESCORT_APPROACH_TICKS = 1
 /** Ticks the player must spend inside the threatened square for the defence to count. */
 export const RUMOUR_DEFEND_TICKS = 3
 /** How long the HUD keeps the verdict on screen, so the outcome is attributed to a choice. */
@@ -645,7 +656,11 @@ function findEscortCandidates(context: RumourWorldContext): RumourCandidate[] {
     const currentRegionId = getCaravanRegionId(caravan)
     if (currentRegionId === null) continue
     const destinationId = String(caravan.regionPath[caravan.regionPath.length - 1])
-    if (context.reservedRegionIds.has(destinationId)) continue
+    // Unlike the other two kinds, an escort's destination is *not* filtered against the
+    // reserved set, and that is a decision rather than an oversight. The only writes an
+    // escort can produce are `supply` at the destination and one log line — no control
+    // flip, no settlement damage — so it cannot strand a campaign no matter where the cart
+    // is headed, and excluding anchors here would silently delete a third of the routes.
     const destination = regions.get(destinationId)
     const ours =
       caravan.ownerFaction === context.playerFaction ||
@@ -653,8 +668,11 @@ function findEscortCandidates(context: RumourWorldContext): RumourCandidate[] {
       destination.control === context.playerFaction ||
       destination.control === 'neutral'
     if (!ours) continue
-    // Only a cart that is actually in danger is worth a rumour: an escort down a quiet
-    // friendly corridor is a walk, and `advanceCaravans` would not have rolled anyway.
+    // How dangerous the road is, as a *weight* rather than a filter. Measured: requiring
+    // a hostile or beast-heavy square on the route rejected every cart on a quiet corridor,
+    // which across sixteen ticks of one seed was most of them. It is also unnecessary — the
+    // stake the rumour states is made true by the resolution, which intercepts an ignored
+    // cart through the hand-back path whether or not the chronicle would have.
     let risk = 0
     let interceptor: Faction | null = null
     for (const step of caravan.regionPath) {
@@ -666,18 +684,18 @@ function findEscortCandidates(context: RumourWorldContext): RumourCandidate[] {
       }
       if (region.beastPressure >= CARAVAN_BEAST_THRESHOLD) risk += 1
     }
-    if (risk === 0) continue
-    // The clock is the cart's, not the board's. Measured: with the flat twelve-tick
-    // deadline every escort outlived its caravan — a cart covers its route in about six
-    // ticks at `CARAVAN_PROGRESS_PER_TICK` — so the chronicle had already settled all but
-    // two of forty-five ignored rumours by the time they came due, and "resolves against
-    // the player" quietly became "resolves as nothing". Ending one tick before arrival is
-    // what puts the cart back on the hand-back path.
+    if (risk === 0) interceptor = null
+    // The clock is the cart's, not the board's. Measured twice. First: with a flat
+    // twelve-tick deadline every escort outlived its caravan — a cart covers its route in
+    // about six ticks at `CARAVAN_PROGRESS_PER_TICK` — so the chronicle had already settled
+    // all but two of forty-five ignored rumours by the time they came due, and "resolves
+    // against the player" quietly became "resolves as nothing". Second, in the browser: a
+    // cart already most of the way home produced a two-tick escort, which is exactly
+    // `RUMOUR_ESCORT_TICKS`, so honouring it required already standing beside the thing at
+    // the moment it was offered. A cart with no room left to be escorted is not a rumour.
     const ticksToArrival = Math.ceil((1 - caravan.progress) / CARAVAN_PROGRESS_PER_TICK)
-    const escortTicks = Math.max(
-      RUMOUR_ESCORT_TICKS,
-      Math.min(RUMOUR_DEADLINE_TICKS, ticksToArrival - 1),
-    )
+    const escortTicks = Math.min(RUMOUR_DEADLINE_TICKS, ticksToArrival - 1)
+    if (escortTicks < RUMOUR_ESCORT_TICKS + RUMOUR_ESCORT_APPROACH_TICKS) continue
     found.push({
       weight: 0.5 + Math.min(0.4, risk * 0.1) + caravan.progress * 0.1,
       rumour: {
@@ -821,10 +839,14 @@ export function offerRumours(
     (candidate) => !open.has(candidate.id),
   )
   if (candidates.length === 0) return null
-  // Prefer a kind the board does not already carry: two escorts at once teaches the player
-  // one verb twice instead of two verbs once.
+  // At most one of each kind on the board. A weaker version of this rule — prefer a fresh
+  // kind, fall back to any — let two sabotages fill both slots and then starve the other
+  // two verbs for a full deadline: measured on seed 900000 as the guard, escorts were
+  // available from tick 9 and the board did not have room for one until tick 15. Two rows
+  // that say the same thing are also the worst version of a two-row HUD.
   const fresh = candidates.filter((candidate) => !openKinds.has(candidate.kind))
-  const pool = (fresh.length > 0 ? fresh : candidates).slice(0, RUMOUR_CANDIDATE_POOL)
+  if (fresh.length === 0) return null
+  const pool = fresh.slice(0, RUMOUR_CANDIDATE_POOL)
   const chosen = pool.length === 1 ? pool[0] : rng.pick(pool)
   state.rumours.push(cloneChronicleRumour(chosen))
   state.nextOfferTick = context.state.tick + RUMOUR_OFFER_INTERVAL_TICKS
@@ -867,22 +889,37 @@ export function pinRumour(
   return true
 }
 
-/** Ticks of presence, or acts, the kind needs before it counts as honoured. */
+/** Ticks of presence, or acts, the kind nominally needs before it counts as honoured. */
 export function requiredRumourProgress(kind: RumourKind): number {
   if (kind === 'escort') return RUMOUR_ESCORT_TICKS
   if (kind === 'defend') return RUMOUR_DEFEND_TICKS
   return 1
 }
 
+/**
+ * What *this* rumour needs, which is not always the nominal figure.
+ *
+ * An escort borrows its clock from the cart, and a cart three ticks from home cannot be
+ * walked beside for three ticks. The requirement shrinks to fit the window rather than the
+ * window stretching past the cart's arrival, because a deadline that outlives its subject
+ * is the bug that made every ignored escort resolve into nothing.
+ */
+export function requiredRumourProgressFor(rumour: ChronicleRumour): number {
+  const nominal = requiredRumourProgress(rumour.kind)
+  if (rumour.kind === 'sabotage') return nominal
+  const window = rumour.deadlineTick - rumour.raisedTick
+  return Math.max(1, Math.min(nominal, window - 1))
+}
+
 export function isRumourHonoured(rumour: ChronicleRumour): boolean {
   if (rumour.kind === 'sabotage') return rumour.actioned
-  return rumour.progress >= requiredRumourProgress(rumour.kind)
+  return rumour.progress >= requiredRumourProgressFor(rumour)
 }
 
 /** 0..1, for the HUD's little bar. */
 export function rumourProgressShare(rumour: ChronicleRumour): number {
   if (rumour.kind === 'sabotage') return rumour.actioned ? 1 : 0
-  return Math.min(1, rumour.progress / requiredRumourProgress(rumour.kind))
+  return Math.min(1, rumour.progress / requiredRumourProgressFor(rumour))
 }
 
 /**

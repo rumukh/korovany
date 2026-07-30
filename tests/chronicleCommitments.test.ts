@@ -127,6 +127,21 @@ function fork(base: Situation): Situation {
   }
 }
 
+/** One more chronicle tick on an existing situation, with the player nowhere near it. */
+function advanceWorld(base: Situation, rng: RandomStream): void {
+  tickChronicle({
+    blueprint: base.context.blueprint,
+    state: base.state,
+    regions: base.regions,
+    rng,
+    environment: { nightFactor: 0.15, stormFactor: 0 },
+    playerFaction: base.faction,
+    playerObjectiveRatio: 0.25,
+    protectedRegionIds: getChronicleProtectedRegionIds(base.context.blueprint),
+    frozenRegionIds: new Set<string>(),
+  })
+}
+
 /** The first situation in a scan that can offer this kind. */
 function findSituationWith(kind: RumourKind): {
   base: Situation
@@ -206,9 +221,10 @@ test('at most two rumours are open, at most one is pinned, and the pin survives 
   const base = situation(7_654_321, 'elf', 18)
   const commitments = createChronicleCommitmentState()
   const rng = new RandomStream(deriveSeed(base.seed, 'gameplay:rumour'))
+  const worldRng = new RandomStream(deriveSeed(base.seed, 'gameplay:chronicle-board'))
   let offers = 0
   for (let tick = 0; tick < 60; tick += 1) {
-    base.state.tick += 1
+    advanceWorld(base, worldRng)
     if (offerRumours(commitments, base.context, rng)) offers += 1
     assert.ok(
       commitments.rumours.length <= RUMOUR_LIMIT,
@@ -495,6 +511,7 @@ test('the escort changes the interception roll, and only where the player is sta
 
 test('no rumour ever puts a campaign anchor or an objective square at stake', () => {
   let candidates = 0
+  let escorts = 0
   for (let index = 0; index < 60; index += 1) {
     const seed = 6_600_000 + index * 811
     const faction = FACTIONS[index % FACTIONS.length]
@@ -506,26 +523,45 @@ test('no rumour ever puts a campaign anchor or an objective square at stake', ()
       assert.ok(reserved.size >= 2, `only ${String(reserved.size)} squares are reserved`)
       for (const rumour of findRumourCandidates(base.context)) {
         candidates += 1
+        if (rumour.kind === 'escort') {
+          // An escort is exempt from the square filter *and cannot need it*: its only
+          // writes are supply at the destination and one log line. That exemption is
+          // asserted rather than described — the resolution is run against a reserved
+          // destination and the square is checked for a flip or a burn.
+          escorts += 1
+          if (!reserved.has(rumour.targetRegionId)) continue
+          const before = base.regions.get(rumour.targetRegionId)
+          const controlBefore = before?.control
+          const integrityBefore = before?.settlementIntegrity
+          const forked = fork(base)
+          resolveRumour(
+            rumour,
+            forked.context,
+            new RandomStream(deriveSeed(seed, 'gameplay:rumour')),
+            false,
+          )
+          const after = forked.regions.get(rumour.targetRegionId)
+          assert.equal(after?.control, controlBefore, `${rumour.id} flipped an anchor`)
+          assert.equal(after?.settlementIntegrity, integrityBefore)
+          continue
+        }
         assert.equal(
           reserved.has(rumour.targetRegionId),
           false,
           `${rumour.id} put a reserved square at stake`,
         )
         // Where the *player* has to be is a different question from what is at stake, and
-        // only for the two kinds whose square is the stake. An escort's square is wherever
-        // the cart currently is, and a cart is allowed to roll through an anchor — nothing
-        // there is being wagered on it.
-        if (rumour.kind !== 'escort') {
-          assert.equal(
-            reserved.has(rumour.regionId),
-            false,
-            `${rumour.id} sent the player into a reserved square`,
-          )
-        }
+        // for these two kinds they are the same square.
+        assert.equal(
+          reserved.has(rumour.regionId),
+          false,
+          `${rumour.id} sent the player into a reserved square`,
+        )
       }
     }
   }
   assert.ok(candidates > 200, `only ${String(candidates)} candidates were scanned`)
+  assert.ok(escorts > 0, 'the escort exemption was never exercised')
 })
 
 test('a rumour hand-built onto a reserved square still cannot take it or burn anything in it', () => {
@@ -643,8 +679,9 @@ test('the commitment survives a save, and refuses what it cannot read', () => {
   const base = situation(1_212_121, 'elf', 20)
   const commitments = createChronicleCommitmentState()
   const rng = new RandomStream(deriveSeed(base.seed, 'gameplay:rumour'))
+  const worldRng = new RandomStream(deriveSeed(base.seed, 'gameplay:chronicle-save'))
   for (let tick = 0; tick < 24; tick += 1) {
-    base.state.tick += 1
+    advanceWorld(base, worldRng)
     offerRumours(commitments, base.context, rng)
   }
   assert.ok(commitments.rumours.length > 0, 'nothing was offered to save')
@@ -768,14 +805,19 @@ function controlKey(control: Record<string, string>): string {
 test('committing changes who holds the map, and the placebo says it was the commitment', () => {
   // **Roadmap 1.3's signal.** Measured with `KOROVANY_COMMITMENT_SEEDS=96`, beeline policy,
   // 20 Hz, a 300 s limit, factions rotating: region control at the end of the run differed
-  // from the no-input baseline in **45.8 %** of runs — and, restricted to the 71 seeds
-  // where both arms actually reached victory, in **29.6 %**.
+  // from the no-input baseline in **53.1 %** of runs — and, restricted to the 57 seeds
+  // where both arms actually reached victory, in **29.8 %**.
   //
   // The number that keeps it honest is the third one. Walking somewhere else is itself an
   // input: the placebo arm, which takes the same detours and pins nothing, already differs
-  // from the baseline in 49.0 % of runs. **Commit against placebo is 44.8 %** (27.1 % over
+  // from the baseline in 58.3 % of runs. **Commit against placebo is 58.3 %** (25.5 % over
   // shared victories), which is the share attributable to the commitment rather than to the
   // legs, and it is what fails if a commitment ever stops doing anything.
+  //
+  // For scale, the same sweep counted 191 commitments pinned across 96 runs, 137 kept and
+  // 20 broken after being pinned — a stake the player can actually lose — and 10 083
+  // simulated seconds spent standing in a square a rumour asked them to stand in. All three
+  // verbs are offered: 231 escorts, 113 sabotages, 103 defences.
   //
   // The committed gate sweeps 18 seeds at a 240 s limit and asserts bands, because a sweep
   // aggregate is a fact about the design rather than a target.

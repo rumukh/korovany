@@ -464,7 +464,7 @@ export function describeRumourStake(
     return `Не пойдёшь — корован ляжет по дороге, а в квадрате ${context.targetLabel} всё подорожает.`
   }
   if (kind === 'defend') {
-    return `Не придёшь — ${factionName(context.faction)} займут квадрат ${context.targetLabel} и подпалят точку «${site}».`
+    return `Не придёшь — квадрат ${context.targetLabel} отойдёт под ${factionGenitive(context.faction)}, а точку «${site}» подпалят.`
   }
   return `Не тронешь — со склада снабдят набег на квадрат ${context.targetLabel}, и он сменит хозяина.`
 }
@@ -495,8 +495,8 @@ export function describeRumourVerdict(
       return `Набег на квадрат ${context.regionLabel} отбили. Пользователь стоял там, а не читал сводку.`
     }
     return committed
-      ? `Ты взялся держать квадрат ${context.regionLabel} и ушёл. ${capitalize(factionName(context.faction))} зашли без тебя.`
-      : `Квадрат ${context.regionLabel} держать было некому. ${capitalize(factionName(context.faction))} зашли.`
+      ? `Ты взялся держать квадрат ${context.regionLabel} и ушёл. Квадрат отошёл под ${factionGenitive(context.faction)}.`
+      : `Квадрат ${context.regionLabel} держать было некому — он отошёл под ${factionGenitive(context.faction)}.`
   }
   if (outcome === 'kept') {
     return `Склад «${site}» в квадрате ${context.regionLabel} сгорел. Набег на ${context.targetLabel} так и не собрался, а цены у соседей заметили.`
