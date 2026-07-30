@@ -32,6 +32,7 @@ import {
   type AbilityView,
   type BodyState,
   type ChronicleEntryView,
+  type ChronicleRumourView,
   type Faction,
   type GameView,
   type LootToastView,
@@ -164,6 +165,8 @@ export interface LiveViewInput {
   contestedRegionIds: ReadonlySet<string>
   currentRegionId: string | undefined
   chronicle: readonly ChronicleEntryView[]
+  /** Roadmap 1.3 — open rumours and, briefly, the last verdict. */
+  rumours: readonly ChronicleRumourView[]
   shopPriceMultiplier: number
   squad: number
   elapsed: number
@@ -243,6 +246,21 @@ export function buildMapMarkers(input: LiveViewInput): MapMarker[] {
       z: event.markerZ,
       kind: 'event',
       label: event.title,
+    })
+  }
+  // Roadmap 1.3 — the pinned rumour, and only the pinned one. Drawing both offers would
+  // make the map answer a question the player has not been asked yet; drawing the one they
+  // took on is what turns "go to C3" from a sentence into a direction.
+  const pinned = input.rumours.find(
+    (rumour) => rumour.pinned && rumour.x !== null && rumour.z !== null,
+  )
+  if (pinned && pinned.x !== null && pinned.z !== null) {
+    markers.push({
+      id: `rumour:${pinned.id}`,
+      x: pinned.x,
+      z: pinned.z,
+      kind: 'rumour',
+      label: pinned.title,
     })
   }
   for (const actor of input.actors) {
@@ -332,6 +350,7 @@ export function buildGameView(input: LiveViewInput): GameView {
       contestedRegionIds: input.contestedRegionIds,
     }),
     chronicle: [...input.chronicle],
+    rumours: input.rumours.map((rumour) => ({ ...rumour })),
     shopPriceMultiplier: input.shopPriceMultiplier,
     squad: input.squad,
     elapsed: input.elapsed,
@@ -463,6 +482,10 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
       contestedRegionIds,
     }),
     chronicle: [],
+    // The launch view predates the first chronicle tick, so there is nothing to be offered
+    // yet even on a restored run: `settleDueRumours` runs in the engine, and showing a
+    // rumour whose clock the engine has not yet checked would be showing a stale deadline.
+    rumours: [],
     shopPriceMultiplier: 1,
     squad: 0,
     elapsed,

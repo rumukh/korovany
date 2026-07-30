@@ -25,13 +25,33 @@ import {
   createGeneratedObjectiveText,
   type LocatedEventCopyContext,
 } from '../content/gameCopy.ts'
+import type { RandomStream } from '../random/RandomStream.ts'
 import type {
   Faction,
   Objective,
   RandomWorldEventKind,
+  RumourKind,
+  RumourOutcome,
   WorldEventKind,
 } from '../types.ts'
-import { CHRONICLE_TICK_SECONDS, type ChronicleEvent } from './Chronicle.ts'
+import { RUMOUR_KINDS } from '../types.ts'
+import {
+  CARAVAN_BEAST_THRESHOLD,
+  CARAVAN_PROGRESS_PER_TICK,
+  CHRONICLE_TICK_SECONDS,
+  applySabotagedSupply,
+  getChronicleProtectedRegionIds,
+  getChronicleSettlementSiteIds,
+  getCaravanRegionId,
+  isProtectedSite,
+  isRegionRazed,
+  resolveEscortedCaravanDelivery,
+  resolveMaterializedCaravan,
+  resolveMaterializedRaid,
+  type ChronicleEvent,
+  type ChronicleState,
+  type RegionChronicleState,
+} from './Chronicle.ts'
 import type { FactionObjectiveNode, WorldBlueprint } from './worldTypes.ts'
 
 // ---------------------------------------------------------------------------
@@ -370,4 +390,891 @@ export function selectChronicleFeedEvents(
     .filter((event) => discoveredRegionIds.has(String(event.regionId)))
     .slice(-CHRONICLE_FEED_LIMIT)
     .reverse()
+}
+
+// ---------------------------------------------------------------------------
+// Roadmap 1.3 — embodied chronicle commitments
+// ---------------------------------------------------------------------------
+
+/**
+ * The player already influences the chronicle three ways — by standing somewhere, by
+ * finishing objectives, and by winning a fight they happened to be near. All three are
+ * reactive and none of them is *chosen*, and `GameView.chronicle` never says "this
+ * happened because you did that". This section is the choosing.
+ *
+ * The shape is deliberately small and deliberately general, because roadmap 1.4's contract
+ * templates are the same flow with different content: **offer a time-boxed thing with a
+ * stated stake, let the player pin exactly one, and resolve it honestly either way.** What
+ * 1.4 will reuse is everything below except `findRumourCandidates`.
+ *
+ * Three rules the design is not allowed to break:
+ *
+ * 1. **Embodied, never purchased.** Every intervention requires the player's body in a
+ *    particular square: alongside the cart, inside the threatened region, or standing at
+ *    the depot with a torch. A "pay gold for +pressure" lever is the explicitly rejected
+ *    design, and the test for it is simple — if a commitment can be honoured without going
+ *    anywhere, it is the rejected one.
+ * 2. **An ignored rumour resolves against the player.** It does not evaporate. The
+ *    consequence goes through the same hand-back functions a materialized event uses when
+ *    the player walks out on it, so the world settles it exactly as it settles everything
+ *    else it does off-screen.
+ * 3. **A commitment may never strand a run.** `reservedRegionIds` — the chronicle-protected
+ *    anchors plus every square holding one of the player's objective sites — is excluded
+ *    twice over: once when a rumour is selected, and again when it resolves.
+ */
+
+/**
+ * `RumourKind` and `RumourOutcome` live in `types.ts` beside the event kinds, so the HUD and
+ * the copy can share the vocabulary without importing the director.
+ */
+
+/** At most two open at a time. This is a HUD, not a quest log. */
+export const RUMOUR_LIMIT = 2
+/** Chronicle ticks a rumour stays open. Twelve ticks is 96 s at `CHRONICLE_TICK_SECONDS`. */
+export const RUMOUR_DEADLINE_TICKS = 12
+/** Ticks between offers, so the feed does not become a queue. */
+export const RUMOUR_OFFER_INTERVAL_TICKS = 4
+/** Ticks the player must spend in the cart's own square for the escort to count. */
+export const RUMOUR_ESCORT_TICKS = 2
+/**
+ * Ticks of slack an escort is offered on top of the presence it needs, so there is time to
+ * get to the cart at all. Without it a rumour raised about a cart two ticks from home is
+ * honourable only by somebody already standing next to it — which the browser produced on
+ * the first try.
+ *
+ * One rather than two, because a cart covers its whole route in about six ticks and only
+ * the youngest of the three in flight would clear a wider bar; the presence requirement
+ * shrinks to fit instead, in `requiredRumourProgressFor`.
+ */
+export const RUMOUR_ESCORT_APPROACH_TICKS = 1
+/** Ticks the player must spend inside the threatened square for the defence to count. */
+export const RUMOUR_DEFEND_TICKS = 3
+/** How long the HUD keeps the verdict on screen, so the outcome is attributed to a choice. */
+export const RUMOUR_VERDICT_TICKS = 2
+/** How many ranked candidates the offer draws from. */
+export const RUMOUR_CANDIDATE_POOL = 4
+
+export interface ChronicleRumour {
+  /** Stable per situation, so one front never becomes two rumours. */
+  id: string
+  kind: RumourKind
+  /** The square the player has to be in. Tracks the cart for an escort. */
+  regionId: string
+  /** The square that pays for it. Never a reserved one. */
+  targetRegionId: string
+  /** The square an ignored raid marches from, when there is one. */
+  sourceRegionId: string | null
+  /** What the player acts on: the cart's destination, the settlement, or the depot. */
+  siteId: string | null
+  caravanId: string | null
+  /** The other side: interceptor, attacker, or whoever is stocking the depot. */
+  faction: Faction | null
+  raisedTick: number
+  deadlineTick: number
+  /** Chronicle ticks of qualifying presence. Only the pinned rumour accrues any. */
+  progress: number
+  /** The decisive act, for the kind that needs one rather than a stay. */
+  actioned: boolean
+}
+
+/** What happened, and whether it happened because of the player. */
+export interface RumourVerdict {
+  rumourId: string
+  kind: RumourKind
+  outcome: RumourOutcome
+  /** True when the player had pinned it. A broken promise reads differently from a shrug. */
+  committed: boolean
+  regionId: string
+  targetRegionId: string
+  siteId: string | null
+  faction: Faction | null
+  tick: number
+}
+
+/**
+ * Everything 1.3 adds to the save, and all of it.
+ *
+ * It lives in `directorState` for the reason 0.4's hint queue does: the bag is already
+ * persisted on `ActiveRunSaveV3`, already normalized as free-form JSON, and already the
+ * place run-scoped director bookkeeping goes. Nothing here is derivable from the chronicle
+ * — a pin is a decision, and a decision that does not survive a reload is not one.
+ */
+export interface ChronicleCommitmentState {
+  rumours: ChronicleRumour[]
+  pinnedRumourId: string | null
+  nextOfferTick: number
+  verdict: RumourVerdict | null
+}
+
+export function createChronicleCommitmentState(): ChronicleCommitmentState {
+  return {
+    rumours: [],
+    pinnedRumourId: null,
+    nextOfferTick: RUMOUR_OFFER_INTERVAL_TICKS,
+    verdict: null,
+  }
+}
+
+export function cloneChronicleRumour(rumour: ChronicleRumour): ChronicleRumour {
+  return { ...rumour }
+}
+
+export function cloneChronicleCommitmentState(
+  state: ChronicleCommitmentState,
+): ChronicleCommitmentState {
+  return {
+    rumours: state.rumours.map(cloneChronicleRumour),
+    pinnedRumourId: state.pinnedRumourId,
+    nextOfferTick: state.nextOfferTick,
+    verdict: state.verdict ? { ...state.verdict } : null,
+  }
+}
+
+export interface RumourWorldContext {
+  blueprint: WorldBlueprint
+  state: ChronicleState
+  regions: Map<string, RegionChronicleState>
+  playerFaction: Faction
+  /** Anchors plus objective squares. Never a target, never a burned site, never a flip. */
+  reservedRegionIds: ReadonlySet<string>
+}
+
+/**
+ * The squares a rumour may never put at stake.
+ *
+ * Two sources, and both matter. The chronicle-protected anchors are the campaign's start
+ * and finale, and `WorldValidator` already guarantees they never change hands. The second
+ * source is this initiative's own: an objective site in a razed square is a run that cannot
+ * be finished, because `handleGeneratedInteraction` refuses a burned shop or healer before
+ * it ever looks at whether an objective wanted it. So every square holding one of the
+ * player's objective sites is off limits too, done or not.
+ */
+export function getRumourReservedRegionIds(
+  blueprint: WorldBlueprint,
+  playerFaction: Faction,
+): ReadonlySet<string> {
+  const reserved = new Set(getChronicleProtectedRegionIds(blueprint))
+  for (const node of blueprint.objectives[playerFaction].nodes) {
+    reserved.add(String(node.regionId))
+    const site = blueprint.sites.find((candidate) => candidate.id === node.siteId)
+    if (site) reserved.add(String(site.regionId))
+  }
+  return reserved
+}
+
+const roadNeighbourCache = new WeakMap<WorldBlueprint, Map<string, string[]>>()
+/**
+ * Site kinds a rival could plausibly be stocking a push from.
+ *
+ * Wider than `CHRONICLE_SETTLEMENT_SITE_KINDS` on purpose, and measured rather than
+ * guessed: a first cut asked for a settlement site in the depot square *and* another in the
+ * square it would hit, and across twelve seeds and forty ticks that produced **zero**
+ * sabotage rumours — 139 of the rejections were "this square has no settlement at all". A
+ * generated world only has a handful of trading squares, so a torch that can only be put to
+ * a shop is a verb the player would never meet. Protected sites stay out, which is what
+ * keeps the campaign's anchors unburnable.
+ */
+const SABOTAGE_SITE_KINDS: readonly string[] = [
+  'settlement',
+  'shop',
+  'recovery',
+  'landmark',
+  'event',
+]
+const depotSiteCache = new WeakMap<WorldBlueprint, Map<string, string[]>>()
+
+function depotSiteIds(blueprint: WorldBlueprint, regionId: string): readonly string[] {
+  let index = depotSiteCache.get(blueprint)
+  if (!index) {
+    index = new Map<string, string[]>()
+    for (const site of blueprint.sites) {
+      if (isProtectedSite(site) || !SABOTAGE_SITE_KINDS.includes(site.kind)) continue
+      const key = String(site.regionId)
+      const list = index.get(key) ?? []
+      list.push(String(site.id))
+      index.set(key, list)
+    }
+    for (const list of index.values()) list.sort()
+    depotSiteCache.set(blueprint, index)
+  }
+  return index.get(regionId) ?? []
+}
+/** Road-adjacent squares, both ways, memoized per blueprint. */
+export function getRoadNeighbours(blueprint: WorldBlueprint): Map<string, string[]> {
+  const cached = roadNeighbourCache.get(blueprint)
+  if (cached) return cached
+  const neighbours = new Map<string, string[]>()
+  const add = (from: string, to: string): void => {
+    const list = neighbours.get(from) ?? []
+    if (!list.includes(to)) list.push(to)
+    neighbours.set(from, list)
+  }
+  for (const segment of blueprint.roads.segments) {
+    add(String(segment.fromRegionId), String(segment.toRegionId))
+    add(String(segment.toRegionId), String(segment.fromRegionId))
+  }
+  for (const list of neighbours.values()) list.sort()
+  return neighbours
+}
+
+interface RumourCandidate {
+  rumour: ChronicleRumour
+  /** How badly the world wants this. Ranking only; never a probability. */
+  weight: number
+}
+
+/**
+ * Every situation the world could currently gossip about, best first.
+ *
+ * Pure: no RNG, no clock. That is what lets `offerRumours` take exactly one draw from a
+ * dedicated stream, and what lets a test enumerate the candidates a given chronicle state
+ * produces without running a game.
+ */
+export function findRumourCandidates(context: RumourWorldContext): ChronicleRumour[] {
+  const candidates: RumourCandidate[] = [
+    ...findEscortCandidates(context),
+    ...findDefendCandidates(context),
+    ...findSabotageCandidates(context),
+  ]
+  candidates.sort(
+    (left, right) =>
+      right.weight - left.weight ||
+      (left.rumour.id < right.rumour.id ? -1 : left.rumour.id > right.rumour.id ? 1 : 0),
+  )
+  return candidates.map((candidate) => candidate.rumour)
+}
+
+function rumourDeadline(state: ChronicleState): number {
+  return state.tick + RUMOUR_DEADLINE_TICKS
+}
+
+function findEscortCandidates(context: RumourWorldContext): RumourCandidate[] {
+  const { state, regions } = context
+  const found: RumourCandidate[] = []
+  for (const caravan of state.caravans) {
+    if (!caravan.intact) continue
+    const currentRegionId = getCaravanRegionId(caravan)
+    if (currentRegionId === null) continue
+    const destinationId = String(caravan.regionPath[caravan.regionPath.length - 1])
+    // Unlike the other two kinds, an escort's destination is *not* filtered against the
+    // reserved set, and that is a decision rather than an oversight. The only writes an
+    // escort can produce are `supply` at the destination and one log line — no control
+    // flip, no settlement damage — so it cannot strand a campaign no matter where the cart
+    // is headed, and excluding anchors here would silently delete a third of the routes.
+    const destination = regions.get(destinationId)
+    const ours =
+      caravan.ownerFaction === context.playerFaction ||
+      destination === undefined ||
+      destination.control === context.playerFaction ||
+      destination.control === 'neutral'
+    if (!ours) continue
+    // How dangerous the road is, as a *weight* rather than a filter. Measured: requiring
+    // a hostile or beast-heavy square on the route rejected every cart on a quiet corridor,
+    // which across sixteen ticks of one seed was most of them. It is also unnecessary — the
+    // stake the rumour states is made true by the resolution, which intercepts an ignored
+    // cart through the hand-back path whether or not the chronicle would have.
+    let risk = 0
+    let interceptor: Faction | null = null
+    for (const step of caravan.regionPath) {
+      const region = regions.get(String(step))
+      if (!region) continue
+      if (region.control !== 'neutral' && region.control !== caravan.ownerFaction) {
+        risk += 1
+        interceptor ??= region.control
+      }
+      if (region.beastPressure >= CARAVAN_BEAST_THRESHOLD) risk += 1
+    }
+    if (risk === 0) interceptor = null
+    // The clock is the cart's, not the board's. Measured twice. First: with a flat
+    // twelve-tick deadline every escort outlived its caravan — a cart covers its route in
+    // about six ticks at `CARAVAN_PROGRESS_PER_TICK` — so the chronicle had already settled
+    // all but two of forty-five ignored rumours by the time they came due, and "resolves
+    // against the player" quietly became "resolves as nothing". Second, in the browser: a
+    // cart already most of the way home produced a two-tick escort, which is exactly
+    // `RUMOUR_ESCORT_TICKS`, so honouring it required already standing beside the thing at
+    // the moment it was offered. A cart with no room left to be escorted is not a rumour.
+    const ticksToArrival = Math.ceil((1 - caravan.progress) / CARAVAN_PROGRESS_PER_TICK)
+    const escortTicks = Math.min(RUMOUR_DEADLINE_TICKS, ticksToArrival - 1)
+    if (escortTicks < RUMOUR_ESCORT_TICKS + RUMOUR_ESCORT_APPROACH_TICKS) continue
+    found.push({
+      weight: 0.5 + Math.min(0.4, risk * 0.1) + caravan.progress * 0.1,
+      rumour: {
+        id: `rumour:escort:${caravan.id}`,
+        kind: 'escort',
+        regionId: String(currentRegionId),
+        targetRegionId: destinationId,
+        sourceRegionId: null,
+        siteId: caravan.toSiteId,
+        caravanId: caravan.id,
+        faction: interceptor,
+        raisedTick: state.tick,
+        deadlineTick: state.tick + escortTicks,
+        progress: 0,
+        actioned: false,
+      },
+    })
+  }
+  return found
+}
+
+function findDefendCandidates(context: RumourWorldContext): RumourCandidate[] {
+  const { blueprint, state, regions } = context
+  const neighbours = getRoadNeighbours(blueprint)
+  const found: RumourCandidate[] = []
+  for (const region of blueprint.regions) {
+    const key = String(region.id)
+    if (context.reservedRegionIds.has(key)) continue
+    const chronicle = regions.get(key)
+    if (!chronicle || isRegionRazed(chronicle)) continue
+    if (
+      chronicle.control !== context.playerFaction &&
+      chronicle.control !== 'neutral'
+    ) {
+      continue
+    }
+    const siteIds = getChronicleSettlementSiteIds(blueprint, region.id)
+    if (siteIds.length === 0) continue
+    const defenderPressure =
+      chronicle.control === 'neutral' ? 0 : chronicle.pressure[chronicle.control]
+    let best: { source: string; attacker: Faction; advantage: number } | null = null
+    for (const neighbourId of neighbours.get(key) ?? []) {
+      const source = regions.get(neighbourId)
+      if (!source || source.control === 'neutral') continue
+      if (source.control === chronicle.control) continue
+      const advantage = source.pressure[source.control] - defenderPressure
+      if (advantage <= 0) continue
+      if (!best || advantage > best.advantage) {
+        best = { source: neighbourId, attacker: source.control, advantage }
+      }
+    }
+    if (!best) continue
+    found.push({
+      weight: 0.6 + Math.min(0.35, best.advantage),
+      rumour: {
+        id: `rumour:defend:${key}:${best.attacker}`,
+        kind: 'defend',
+        regionId: key,
+        targetRegionId: key,
+        sourceRegionId: best.source,
+        siteId: String(siteIds[0]),
+        caravanId: null,
+        faction: best.attacker,
+        raisedTick: state.tick,
+        deadlineTick: rumourDeadline(state),
+        progress: 0,
+        actioned: false,
+      },
+    })
+  }
+  return found
+}
+
+function findSabotageCandidates(context: RumourWorldContext): RumourCandidate[] {
+  const { blueprint, state, regions } = context
+  const neighbours = getRoadNeighbours(blueprint)
+  const found: RumourCandidate[] = []
+  for (const region of blueprint.regions) {
+    const depotId = String(region.id)
+    if (context.reservedRegionIds.has(depotId)) continue
+    const depot = regions.get(depotId)
+    if (!depot || isRegionRazed(depot)) continue
+    if (depot.control === 'neutral' || depot.control === context.playerFaction) continue
+    const depotSiteIdList = depotSiteIds(blueprint, depotId)
+    if (depotSiteIdList.length === 0) continue
+    // The depot has to be stocked to be worth burning, and it has to have somewhere to
+    // send what it is stocking. Without a target the stake would be a number nobody sees.
+    if (depot.supply <= 0.35) continue
+    let target: string | null = null
+    for (const neighbourId of neighbours.get(depotId) ?? []) {
+      if (context.reservedRegionIds.has(neighbourId)) continue
+      const candidate = regions.get(neighbourId)
+      if (!candidate || isRegionRazed(candidate)) continue
+      if (
+        candidate.control !== context.playerFaction &&
+        candidate.control !== 'neutral'
+      ) {
+        continue
+      }
+      if (target === null || neighbourId < target) target = neighbourId
+    }
+    if (target === null) continue
+    found.push({
+      weight: 0.45 + depot.supply * 0.4,
+      rumour: {
+        id: `rumour:sabotage:${depotId}:${target}`,
+        kind: 'sabotage',
+        regionId: depotId,
+        targetRegionId: target,
+        sourceRegionId: depotId,
+        siteId: depotSiteIdList[0],
+        caravanId: null,
+        faction: depot.control,
+        raisedTick: state.tick,
+        deadlineTick: rumourDeadline(state),
+        progress: 0,
+        actioned: false,
+      },
+    })
+  }
+  return found
+}
+
+/**
+ * Tops the board up, at most one rumour per call and never past the limit.
+ *
+ * One draw from the caller's rumour stream, and only when there is actually something to
+ * choose between — a stream that advances on an empty board would make the offer cadence
+ * itself a source of divergence between two otherwise identical runs.
+ */
+export function offerRumours(
+  state: ChronicleCommitmentState,
+  context: RumourWorldContext,
+  rng: RandomStream,
+): ChronicleRumour | null {
+  if (context.state.tick < state.nextOfferTick) return null
+  if (state.rumours.length >= RUMOUR_LIMIT) return null
+  const open = new Set(state.rumours.map((rumour) => rumour.id))
+  const openKinds = new Set(state.rumours.map((rumour) => rumour.kind))
+  const candidates = findRumourCandidates(context).filter(
+    (candidate) => !open.has(candidate.id),
+  )
+  if (candidates.length === 0) return null
+  // At most one of each kind on the board. A weaker version of this rule — prefer a fresh
+  // kind, fall back to any — let two sabotages fill both slots and then starve the other
+  // two verbs for a full deadline: measured on seed 900000 as the guard, escorts were
+  // available from tick 9 and the board did not have room for one until tick 15. Two rows
+  // that say the same thing are also the worst version of a two-row HUD.
+  const fresh = candidates.filter((candidate) => !openKinds.has(candidate.kind))
+  if (fresh.length === 0) return null
+  const pool = fresh.slice(0, RUMOUR_CANDIDATE_POOL)
+  const chosen = pool.length === 1 ? pool[0] : rng.pick(pool)
+  state.rumours.push(cloneChronicleRumour(chosen))
+  state.nextOfferTick = context.state.tick + RUMOUR_OFFER_INTERVAL_TICKS
+  return chosen
+}
+
+export function getRumour(
+  state: ChronicleCommitmentState,
+  rumourId: string | null,
+): ChronicleRumour | null {
+  if (rumourId === null) return null
+  return state.rumours.find((rumour) => rumour.id === rumourId) ?? null
+}
+
+export function getPinnedRumour(
+  state: ChronicleCommitmentState,
+): ChronicleRumour | null {
+  return getRumour(state, state.pinnedRumourId)
+}
+
+/**
+ * Pins one rumour, or clears the pin. Reports whether anything moved.
+ *
+ * Takes no RNG and reads no clock, because this is a button: a UI event that consumed from
+ * a gameplay stream would shift every encounter and loot roll after it, which is the same
+ * rule `content/hints.ts` is built around.
+ */
+export function pinRumour(
+  state: ChronicleCommitmentState,
+  rumourId: string | null,
+): boolean {
+  if (rumourId === null) {
+    if (state.pinnedRumourId === null) return false
+    state.pinnedRumourId = null
+    return true
+  }
+  if (state.pinnedRumourId === rumourId) return false
+  if (!state.rumours.some((rumour) => rumour.id === rumourId)) return false
+  state.pinnedRumourId = rumourId
+  return true
+}
+
+/** Ticks of presence, or acts, the kind nominally needs before it counts as honoured. */
+export function requiredRumourProgress(kind: RumourKind): number {
+  if (kind === 'escort') return RUMOUR_ESCORT_TICKS
+  if (kind === 'defend') return RUMOUR_DEFEND_TICKS
+  return 1
+}
+
+/**
+ * What *this* rumour needs, which is not always the nominal figure.
+ *
+ * An escort borrows its clock from the cart, and a cart three ticks from home cannot be
+ * walked beside for three ticks. The requirement shrinks to fit the window rather than the
+ * window stretching past the cart's arrival, because a deadline that outlives its subject
+ * is the bug that made every ignored escort resolve into nothing.
+ */
+export function requiredRumourProgressFor(rumour: ChronicleRumour): number {
+  const nominal = requiredRumourProgress(rumour.kind)
+  if (rumour.kind === 'sabotage') return nominal
+  const window = rumour.deadlineTick - rumour.raisedTick
+  return Math.max(1, Math.min(nominal, window - 1))
+}
+
+export function isRumourHonoured(rumour: ChronicleRumour): boolean {
+  if (rumour.kind === 'sabotage') return rumour.actioned
+  return rumour.progress >= requiredRumourProgressFor(rumour)
+}
+
+/** 0..1, for the HUD's little bar. */
+export function rumourProgressShare(rumour: ChronicleRumour): number {
+  if (rumour.kind === 'sabotage') return rumour.actioned ? 1 : 0
+  return Math.min(1, rumour.progress / requiredRumourProgressFor(rumour))
+}
+
+/**
+ * The escort the chronicle tick should be told about, if any.
+ *
+ * Null unless a pinned escort's cart is in the very square the player is standing in, which
+ * is the whole of what "embodied" means here.
+ */
+export function getRumourEscort(
+  state: ChronicleCommitmentState,
+  context: RumourWorldContext,
+  playerRegionId: string | null,
+): { caravanId: string; regionId: string } | null {
+  const pinned = getPinnedRumour(state)
+  if (!pinned || pinned.kind !== 'escort' || pinned.caravanId === null) return null
+  if (playerRegionId === null) return null
+  const caravan = context.state.caravans.find(
+    (entry) => entry.id === pinned.caravanId,
+  )
+  if (!caravan || !caravan.intact) return null
+  const regionId = getCaravanRegionId(caravan)
+  if (regionId === null || String(regionId) !== playerRegionId) return null
+  return { caravanId: caravan.id, regionId: playerRegionId }
+}
+
+/**
+ * One tick of embodied bookkeeping: where the cart is now, and whether the player is there.
+ *
+ * Only the pinned rumour accrues progress. That is the "one at a time" rule expressed as
+ * mechanics rather than as a UI restriction — walking through a square you did not commit
+ * to buys nothing.
+ */
+export function advanceRumourProgress(
+  state: ChronicleCommitmentState,
+  context: RumourWorldContext,
+  playerRegionId: string | null,
+): void {
+  for (const rumour of state.rumours) {
+    if (rumour.kind === 'escort' && rumour.caravanId !== null) {
+      const caravan = context.state.caravans.find(
+        (entry) => entry.id === rumour.caravanId,
+      )
+      const regionId = caravan ? getCaravanRegionId(caravan) : null
+      if (regionId !== null) rumour.regionId = String(regionId)
+    }
+    if (rumour.id !== state.pinnedRumourId || playerRegionId === null) continue
+    if (rumour.kind === 'sabotage') continue
+    if (rumour.regionId === playerRegionId) rumour.progress += 1
+  }
+}
+
+/**
+ * The torch. Returns false when the player is not committed to burning this depot, which is
+ * what stops a sabotage from being something you stumble into.
+ *
+ * The supply drop lands here rather than at the deadline, because this is the half of the
+ * intervention the player is standing in front of: `getSupplyPriceMultiplier` reads it, so
+ * the shop in that square is dearer for its owner on the very next tick.
+ */
+export function markRumourActioned(
+  state: ChronicleCommitmentState,
+  context: RumourWorldContext,
+  rumourId: string,
+): boolean {
+  const rumour = getRumour(state, rumourId)
+  if (!rumour || rumour.id !== state.pinnedRumourId) return false
+  if (rumour.kind !== 'sabotage' || rumour.actioned) return false
+  rumour.actioned = true
+  const depot = context.regions.get(rumour.regionId)
+  if (depot) applySabotagedSupply(depot)
+  return true
+}
+
+export interface RumourSettlement {
+  verdicts: RumourVerdict[]
+  events: ChronicleEvent[]
+}
+
+/**
+ * Resolves every rumour whose clock has run out, honoured or not.
+ *
+ * A rumour never simply expires: the ignored branch is written into the world through the
+ * same hand-back functions Layer 2 uses for a fight the player walked away from, so "you
+ * did not go" and "you went and lost" produce the same class of consequence — a real one.
+ */
+export function settleDueRumours(
+  state: ChronicleCommitmentState,
+  context: RumourWorldContext,
+  rng: RandomStream,
+): RumourSettlement {
+  const verdicts: RumourVerdict[] = []
+  const events: ChronicleEvent[] = []
+  const surviving: ChronicleRumour[] = []
+  for (const rumour of state.rumours) {
+    const gone =
+      rumour.kind === 'escort' &&
+      rumour.caravanId !== null &&
+      !context.state.caravans.some((entry) => entry.id === rumour.caravanId)
+    if (context.state.tick < rumour.deadlineTick && !gone) {
+      surviving.push(rumour)
+      continue
+    }
+    const committed = state.pinnedRumourId === rumour.id
+    const honoured = committed && isRumourHonoured(rumour)
+    events.push(...resolveRumour(rumour, context, rng, honoured))
+    verdicts.push({
+      rumourId: rumour.id,
+      kind: rumour.kind,
+      outcome: honoured ? 'kept' : 'broken',
+      committed,
+      regionId: rumour.regionId,
+      targetRegionId: rumour.targetRegionId,
+      siteId: rumour.siteId,
+      faction: rumour.faction,
+      tick: context.state.tick,
+    })
+    if (committed) state.pinnedRumourId = null
+  }
+  state.rumours = surviving
+  if (verdicts.length > 0) state.verdict = verdicts[verdicts.length - 1]
+  return { verdicts, events }
+}
+
+/**
+ * What a rumour does to the world when its clock stops.
+ *
+ * Exported so a test can drive one resolution in isolation and so the negative controls can
+ * assert what an *ignored* one costs. The `protectedRegionIds` handed to the raid resolver
+ * is the reserved set, not merely the chronicle's own: that is the second of the two locks
+ * on campaign safety, and it holds even if selection were changed to offer a rumour it
+ * should not have.
+ */
+export function resolveRumour(
+  rumour: ChronicleRumour,
+  context: RumourWorldContext,
+  rng: RandomStream,
+  honoured: boolean,
+): ChronicleEvent[] {
+  const idPrefix = `commitment-${String(context.state.tick)}-${rumour.kind}`
+  if (rumour.kind === 'escort') {
+    if (rumour.caravanId === null) return []
+    const caravan = context.state.caravans.find(
+      (entry) => entry.id === rumour.caravanId,
+    )
+    // The chronicle already settled this one on its own — arrival or interception. Writing
+    // a second outcome over the top would be the feature lying about what happened.
+    if (!caravan) return []
+    if (honoured) {
+      return resolveEscortedCaravanDelivery({
+        state: context.state,
+        regions: context.regions,
+        idPrefix,
+        caravanId: rumour.caravanId,
+      })
+    }
+    return resolveMaterializedCaravan({
+      state: context.state,
+      regions: context.regions,
+      idPrefix,
+      outcome: {
+        caravanId: rumour.caravanId,
+        regionId: rumour.regionId,
+        intact: false,
+      },
+    })
+  }
+
+  const attacker = rumour.faction
+  if (attacker === null) return []
+  const targetReserved = context.reservedRegionIds.has(rumour.targetRegionId)
+  const settlementIds = getChronicleSettlementSiteIds(
+    context.blueprint,
+    rumour.targetRegionId,
+  )
+  const resolution = resolveMaterializedRaid({
+    state: context.state,
+    regions: context.regions,
+    rng,
+    protectedRegionIds: context.reservedRegionIds,
+    idPrefix,
+    outcome: {
+      regionId: rumour.targetRegionId,
+      sourceRegionId: rumour.sourceRegionId,
+      // Nothing burns in a reserved square, belt to the selection filter's braces.
+      siteId: targetReserved || settlementIds.length === 0 ? null : String(settlementIds[0]),
+      attacker,
+      // A decided outcome, passed as a decided outcome — the caveat on
+      // `resolveMaterializedRaid` is about handing it live survivor counts, and these are
+      // not counts. Honoured means the push never mustered; ignored means it landed.
+      attackerStrength: honoured ? 0 : 1,
+      defenderStrength: honoured ? 1 : 0,
+    },
+  })
+  return resolution.events
+}
+
+// --- save ownership --------------------------------------------------------
+
+const RUMOUR_OUTCOMES: readonly RumourOutcome[] = ['kept', 'broken']
+const RUMOUR_FACTIONS: readonly Faction[] = ['elf', 'guard', 'villain']
+const MAX_RUMOUR_ID = 128
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function readId(value: unknown, maxLength = MAX_RUMOUR_ID): string | null {
+  return typeof value === 'string' && value.length > 0 && value.length <= maxLength
+    ? value
+    : null
+}
+
+function readCounter(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : null
+}
+
+function readFaction(value: unknown): Faction | null {
+  return typeof value === 'string' && (RUMOUR_FACTIONS as readonly string[]).includes(value)
+    ? (value as Faction)
+    : null
+}
+
+function normalizeRumour(value: unknown): ChronicleRumour | null {
+  const record = readRecord(value)
+  if (!record) return null
+  const id = readId(record.id)
+  const kind = record.kind
+  const regionId = readId(record.regionId)
+  const targetRegionId = readId(record.targetRegionId)
+  const raisedTick = readCounter(record.raisedTick)
+  const deadlineTick = readCounter(record.deadlineTick)
+  const progress = readCounter(record.progress)
+  if (
+    id === null ||
+    typeof kind !== 'string' ||
+    !(RUMOUR_KINDS as readonly string[]).includes(kind) ||
+    regionId === null ||
+    targetRegionId === null ||
+    raisedTick === null ||
+    deadlineTick === null ||
+    progress === null ||
+    typeof record.actioned !== 'boolean'
+  ) {
+    return null
+  }
+  return {
+    id,
+    kind: kind as RumourKind,
+    regionId,
+    targetRegionId,
+    sourceRegionId: readId(record.sourceRegionId),
+    siteId: readId(record.siteId),
+    caravanId: readId(record.caravanId),
+    faction: readFaction(record.faction),
+    raisedTick,
+    deadlineTick,
+    progress,
+    actioned: record.actioned,
+  }
+}
+
+function normalizeVerdict(value: unknown): RumourVerdict | null {
+  const record = readRecord(value)
+  if (!record) return null
+  const rumourId = readId(record.rumourId)
+  const kind = record.kind
+  const outcome = record.outcome
+  const regionId = readId(record.regionId)
+  const targetRegionId = readId(record.targetRegionId)
+  const tick = readCounter(record.tick)
+  if (
+    rumourId === null ||
+    typeof kind !== 'string' ||
+    !(RUMOUR_KINDS as readonly string[]).includes(kind) ||
+    typeof outcome !== 'string' ||
+    !(RUMOUR_OUTCOMES as readonly string[]).includes(outcome) ||
+    regionId === null ||
+    targetRegionId === null ||
+    tick === null
+  ) {
+    return null
+  }
+  return {
+    rumourId,
+    kind: kind as RumourKind,
+    outcome: outcome as RumourOutcome,
+    committed: record.committed === true,
+    regionId,
+    targetRegionId,
+    siteId: readId(record.siteId),
+    faction: readFaction(record.faction),
+    tick,
+  }
+}
+
+/**
+ * Reads the commitment back off a save, dropping anything it does not recognise.
+ *
+ * Same policy as the hint queue rather than the save-level discard-and-report one: this is
+ * a field inside a free-form bag, so a rumour written by a build that knew a kind this one
+ * does not is forgotten, not fatal. A pin that names a rumour which did not survive the
+ * read is cleared, so the state can never claim a commitment to nothing.
+ */
+export function normalizeChronicleCommitmentState(
+  value: unknown,
+): ChronicleCommitmentState {
+  const record = readRecord(value)
+  if (!record) return createChronicleCommitmentState()
+  const rumours: ChronicleRumour[] = []
+  if (Array.isArray(record.rumours)) {
+    for (const entry of record.rumours) {
+      if (rumours.length >= RUMOUR_LIMIT) break
+      const rumour = normalizeRumour(entry)
+      if (rumour && !rumours.some((existing) => existing.id === rumour.id)) {
+        rumours.push(rumour)
+      }
+    }
+  }
+  const pinnedRumourId = readId(record.pinnedRumourId)
+  return {
+    rumours,
+    pinnedRumourId:
+      pinnedRumourId !== null && rumours.some((rumour) => rumour.id === pinnedRumourId)
+        ? pinnedRumourId
+        : null,
+    nextOfferTick: readCounter(record.nextOfferTick) ?? 0,
+    verdict: normalizeVerdict(record.verdict),
+  }
+}
+
+/** The JSON that goes into `directorState`. Bounded by `RUMOUR_LIMIT` by construction. */
+export function serializeChronicleCommitmentState(
+  state: ChronicleCommitmentState,
+): Record<string, unknown> {
+  return {
+    rumours: state.rumours.map((rumour) => ({ ...rumour })),
+    pinnedRumourId: state.pinnedRumourId,
+    nextOfferTick: state.nextOfferTick,
+    verdict: state.verdict ? { ...state.verdict } : null,
+  }
+}
+
+/** Seconds left on a rumour's clock, for the HUD. */
+export function rumourSecondsRemaining(
+  rumour: ChronicleRumour,
+  tick: number,
+): number {
+  return Math.max(0, (rumour.deadlineTick - tick) * CHRONICLE_TICK_SECONDS)
+}
+
+/** True while the HUD should still be showing the last verdict. */
+export function isVerdictFresh(verdict: RumourVerdict, tick: number): boolean {
+  return tick - verdict.tick <= RUMOUR_VERDICT_TICKS
 }

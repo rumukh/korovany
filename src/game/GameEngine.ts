@@ -96,6 +96,7 @@ import {
   type BodyPart,
   type BodyState,
   type ChronicleEntryView,
+  type ChronicleRumourView,
   type Faction,
   type GameCallbacks,
   type LootRarity,
@@ -156,6 +157,13 @@ import {
   describeRationEaten,
   describeRazedSite,
   describeRout,
+  describeRumourDropped,
+  describeRumourPinned,
+  describeRumourStake,
+  describeRumourTask,
+  describeRumourTitle,
+  describeRumourVerdict,
+  describeSabotagePrompt,
   describeSiteInspected,
   describeSquadOrder,
   describeThreatTier,
@@ -170,11 +178,13 @@ import {
   RALLY_NOTICE,
   REINFORCEMENTS_ORDERED_NOTICE,
   RICH_CARAVAN_LOOT_TAKEN_NOTICE,
+  SABOTAGE_DONE_NOTICE,
   SHIELD_DROPPED_NOTICE,
   TREASURE_ALREADY_LOOTED_NOTICE,
   WORLD_EVENT_FAILURE_MESSAGES,
   WORLD_EVENT_SUCCESS_MESSAGES,
   type LocatedEventCopyContext,
+  type RumourCopyContext,
 } from './content/gameCopy'
 import { HintDirector } from './content/hints'
 import { RandomStream } from './random/RandomStream'
@@ -311,24 +321,42 @@ import {
 import {
   EVENT_RETRY,
   advanceEventTimer,
+  advanceRumourProgress,
   buildChronicleFeedSignature,
   campaignObjectivesComplete,
   commitChronicleTicks,
   completeObjectiveEntry,
+  createChronicleCommitmentState,
   createGeneratedObjectives,
   enemyDamageMultiplier,
   enemyHealthMultiplier,
   eventCooldownRange,
   getActiveObjectiveNode,
+  getPinnedRumour,
+  getRumourEscort,
+  getRumourReservedRegionIds,
+  isVerdictFresh,
   isWithinObjectiveArrival,
+  markRumourActioned,
+  normalizeChronicleCommitmentState,
   objectivePrerequisitesDone,
+  offerRumours,
+  pinRumour,
   playerObjectiveRatio,
   rollEventCooldown,
+  rumourProgressShare,
+  rumourSecondsRemaining,
   selectChronicleAnnouncements,
   selectChronicleFeedEvents,
   selectWeightedEventKind,
+  serializeChronicleCommitmentState,
+  settleDueRumours,
   shouldHandBackForStreaming,
   threatWaveInterval,
+  type ChronicleCommitmentState,
+  type ChronicleRumour,
+  type RumourVerdict,
+  type RumourWorldContext,
 } from './world/CampaignDirector'
 import { buildGameView } from './world/CampaignView'
 import {
@@ -1670,6 +1698,16 @@ export class GameEngine {
   private chronicleAccumulator = 0
   private chronicleFeedSignature = ''
   private chronicleFeed: ChronicleEntryView[] = []
+  /**
+   * Roadmap 1.3 — the one piece of strategic state the player owns.
+   *
+   * Explicitly a field rather than something derived from the chronicle, because a pin is a
+   * decision and the chronicle records outcomes. It is written to `directorState` on every
+   * save and read back on restore; nothing else in the run can reconstruct it.
+   */
+  private chronicleCommitments: ChronicleCommitmentState
+  /** Squares a rumour may never put at stake: anchors, plus the player's objective squares. */
+  private readonly chronicleRumourReserved: ReadonlySet<string>
   private activeShopPriceMultiplier = 1
   private generatedCameraRegionSignature = ''
   private generatedNavigationRegionSignature = ''
@@ -1812,7 +1850,7 @@ export class GameEngine {
   private readonly collisionProbe = new THREE.Vector3()
   private readonly navigationWaypoint = new THREE.Vector3()
   private readonly generatedRngStreams: Record<
-    'combat' | 'director' | 'event' | 'loot' | 'chronicle',
+    'combat' | 'director' | 'event' | 'loot' | 'chronicle' | 'rumour',
     RandomStream
   >
   private readonly eventRng: () => number
@@ -2148,6 +2186,12 @@ export class GameEngine {
       event: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:event')),
       loot: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:loot')),
       chronicle: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:chronicle')),
+      // Roadmap 1.3 gets its own derived stream rather than sharing the chronicle's. Two
+      // reasons, and the second is the load-bearing one: a rumour offer and a commitment
+      // resolution must not move the draw the *next* front, beast raid or caravan roll
+      // takes, or the feature would change the world simply by existing — and then the
+      // baseline it is measured against would be measuring the measurement.
+      rumour: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:rumour')),
     }
     if (restoredRun) {
       for (const key of Object.keys(streams) as Array<keyof typeof streams>) {
@@ -2174,6 +2218,12 @@ export class GameEngine {
       blueprint,
       this.chronicleRegions,
     )
+    this.chronicleRumourReserved = getRumourReservedRegionIds(blueprint, faction)
+    this.chronicleCommitments = restoredRun
+      ? normalizeChronicleCommitmentState(
+          restoredRun.directorState.chronicleCommitments,
+        )
+      : createChronicleCommitmentState()
     this.eventRng = () => streams.event.next()
     this.directorRng = () => streams.director.next()
     this.combatRng = () => streams.combat.next()
@@ -3167,6 +3217,9 @@ export class GameEngine {
         caravanX: this.caravan.position.x,
         caravanZ: this.caravan.position.z,
         pendingHints: this.hints.pending(),
+        chronicleCommitments: serializeChronicleCommitmentState(
+          this.chronicleCommitments,
+        ) as SerializableState[string],
         pendingLoot: this.lootPickups
           .filter((pickup) => pickup.active)
           .sort((left, right) => left.serial - right.serial)
@@ -3191,6 +3244,7 @@ export class GameEngine {
         event: this.generatedRngStreams.event.getState(),
         loot: this.generatedRngStreams.loot.getState(),
         chronicle: this.generatedRngStreams.chronicle.getState(),
+        rumour: this.generatedRngStreams.rumour.getState(),
       },
       achievementRunState,
       ...(this.runEnding && this.generatedRunStatus !== 'active'
@@ -3775,6 +3829,21 @@ export class GameEngine {
       { x: this.player.position.x, z: this.player.position.z },
       6,
     )
+    // Roadmap 1.3 — the torch, before anything else this site could be. A depot is usually
+    // also a settlement or a shop, and "осмотреть" is not what the player came here to do.
+    if (site) {
+      const sabotage = this.pendingSabotageAt(site.id)
+      if (sabotage && markRumourActioned(
+        this.chronicleCommitments,
+        this.rumourContext(),
+        sabotage.id,
+      )) {
+        this.callbacks.onNotice(SABOTAGE_DONE_NOTICE, 'success')
+        this.playSound('objective')
+        this.syncChronicleToRegionDeltas()
+        return true
+      }
+    }
     if (!site) {
       if (
         this.generatedSupplyCount > 0 &&
@@ -3874,6 +3943,9 @@ export class GameEngine {
       6,
     )
     if (nearbySite) {
+      if (this.pendingSabotageAt(nearbySite.id)) {
+        return describeSabotagePrompt(generatedSiteLabel(nearbySite.kind))
+      }
       if (
         node?.siteId === nearbySite.id &&
         (node.kind === 'interact' || node.kind === 'claim')
@@ -7387,6 +7459,13 @@ export class GameEngine {
     const ratio = playerObjectiveRatio(this.objectives)
     const events: ChronicleEvent[] = []
     for (let tick = 0; tick < commitment.ticks; tick += 1) {
+      // Roadmap 1.3 — the player's square, read fresh each tick, is the whole of what makes
+      // a commitment embodied. Everything below reads it and nothing else.
+      const playerRegionId = this.generatedRegionIdAt(
+        this.player.position.x,
+        this.player.position.z,
+      )
+      const rumourContext = this.rumourContext()
       events.push(
         ...tickChronicle({
           blueprint: this.generatedBlueprint,
@@ -7398,14 +7477,195 @@ export class GameEngine {
           playerObjectiveRatio: ratio,
           protectedRegionIds: this.chronicleProtectedRegionIds,
           frozenRegionIds,
+          escort: getRumourEscort(
+            this.chronicleCommitments,
+            rumourContext,
+            playerRegionId,
+          ),
         }),
       )
+      events.push(...this.advanceChronicleCommitments(rumourContext, playerRegionId))
     }
     this.chronicleContestedRegionIds = getContestedRegionIds(
       this.generatedBlueprint,
       this.chronicleRegions,
     )
     if (events.length > 0) this.handleChronicleEvents(events)
+  }
+
+  // ---------------------------------------------------------------------------
+  // Roadmap 1.3 — embodied chronicle commitments
+  // ---------------------------------------------------------------------------
+
+  private rumourContext(): RumourWorldContext {
+    return {
+      blueprint: this.generatedBlueprint,
+      state: this.chronicleState,
+      regions: this.chronicleRegions,
+      playerFaction: this.faction,
+      reservedRegionIds: this.chronicleRumourReserved,
+    }
+  }
+
+  /**
+   * One tick of the commitment loop, in the order that makes it honest.
+   *
+   * Progress first, so a player standing in the right square on the tick a deadline falls
+   * gets credit for it; then the settlement, which is the only place an outcome is written;
+   * then the offer, so a board that just emptied can refill. Everything it produces is
+   * folded into the same `ChronicleEvent[]` the tick returned, which is what puts a
+   * commitment's consequences in the same feed as the world's own.
+   */
+  private advanceChronicleCommitments(
+    context: RumourWorldContext,
+    playerRegionId: string | null,
+  ): ChronicleEvent[] {
+    advanceRumourProgress(this.chronicleCommitments, context, playerRegionId)
+    const settlement = settleDueRumours(
+      this.chronicleCommitments,
+      context,
+      this.generatedRngStreams.rumour,
+    )
+    for (const verdict of settlement.verdicts) this.announceRumourVerdict(verdict)
+    offerRumours(this.chronicleCommitments, context, this.generatedRngStreams.rumour)
+    return settlement.events
+  }
+
+  private rumourCopyContext(source: {
+    regionId: string
+    targetRegionId: string
+    siteId: string | null
+    faction: Faction | null
+  }): RumourCopyContext {
+    const site = source.siteId
+      ? this.generatedBlueprint.sites.find(
+          (candidate) => candidate.id === source.siteId,
+        )
+      : undefined
+    return {
+      regionLabel: this.regionGridLabel(source.regionId),
+      targetLabel: this.regionGridLabel(source.targetRegionId),
+      siteLabel: site ? generatedSiteLabel(site.kind) : null,
+      faction: source.faction,
+    }
+  }
+
+  /**
+   * The line the chronicle feed has never said: *this happened because of what you did*.
+   *
+   * It goes through `onNotice` rather than into the log, because the log is the world's
+   * record of events and this is a sentence about a decision. The HUD holds the verdict on
+   * the rumour card for a couple of ticks alongside it.
+   */
+  private announceRumourVerdict(verdict: RumourVerdict): void {
+    this.callbacks.onNotice(
+      describeRumourVerdict(
+        verdict.kind,
+        verdict.outcome,
+        verdict.committed,
+        this.rumourCopyContext(verdict),
+      ),
+      verdict.outcome === 'kept' ? 'success' : verdict.committed ? 'danger' : 'warning',
+    )
+    this.playSound(verdict.outcome === 'kept' ? 'objective' : 'event')
+  }
+
+  /**
+   * Pins a rumour, or drops the pin. The HUD's only write into the simulation.
+   *
+   * Consumes nothing from any stream and reads no clock — a button that moved a seeded
+   * draw would make the run's history depend on how often the player clicked.
+   */
+  pinRumour(rumourId: string | null): void {
+    if (this.paused || this.ended) return
+    const previous = getPinnedRumour(this.chronicleCommitments)
+    if (!pinRumour(this.chronicleCommitments, rumourId)) return
+    const pinned = getPinnedRumour(this.chronicleCommitments)
+    if (pinned) this.callbacks.onNotice(describeRumourPinned(pinned.kind), 'info')
+    else if (previous) {
+      this.callbacks.onNotice(describeRumourDropped(previous.kind), 'warning')
+    }
+    this.playSound('command')
+    this.emitView(true)
+  }
+
+  /** The pinned sabotage the player is currently standing at, if any. */
+  private pendingSabotageAt(siteId: string): ChronicleRumour | null {
+    const pinned = getPinnedRumour(this.chronicleCommitments)
+    if (!pinned || pinned.kind !== 'sabotage' || pinned.actioned) return null
+    return pinned.siteId === siteId ? pinned : null
+  }
+
+  private buildRumourViews(): ChronicleRumourView[] {
+    const tick = this.chronicleState.tick
+    const views: ChronicleRumourView[] = this.chronicleCommitments.rumours.map(
+      (rumour) => {
+        const copy = this.rumourCopyContext(rumour)
+        const position = this.rumourPosition(rumour)
+        return {
+          id: rumour.id,
+          kind: rumour.kind,
+          title: describeRumourTitle(rumour.kind),
+          task: describeRumourTask(rumour.kind, copy),
+          stake: describeRumourStake(rumour.kind, copy),
+          regionLabel: copy.regionLabel,
+          timeRemaining: rumourSecondsRemaining(rumour, tick),
+          pinned: rumour.id === this.chronicleCommitments.pinnedRumourId,
+          progress: rumourProgressShare(rumour),
+          x: position?.x ?? null,
+          z: position?.z ?? null,
+          outcome: null,
+          outcomeText: null,
+        }
+      },
+    )
+    const verdict = this.chronicleCommitments.verdict
+    if (verdict && isVerdictFresh(verdict, tick)) {
+      const copy = this.rumourCopyContext(verdict)
+      views.push({
+        id: `${verdict.rumourId}:verdict`,
+        kind: verdict.kind,
+        title: describeRumourTitle(verdict.kind),
+        task: '',
+        stake: '',
+        regionLabel: copy.regionLabel,
+        timeRemaining: 0,
+        pinned: false,
+        progress: 1,
+        x: null,
+        z: null,
+        outcome: verdict.outcome,
+        outcomeText: describeRumourVerdict(
+          verdict.kind,
+          verdict.outcome,
+          verdict.committed,
+          copy,
+        ),
+      })
+    }
+    return views
+  }
+
+  /**
+   * Where the pin points.
+   *
+   * A sabotage points at the depot, because that is where the torch goes. The other two
+   * point at the square: a defence is a place to stand, and an escort's cart moves, so a
+   * site pin would send the player to where the cart is going rather than to where it is.
+   */
+  private rumourPosition(
+    rumour: ChronicleRumour,
+  ): { x: number; z: number } | undefined {
+    if (rumour.kind === 'sabotage' && rumour.siteId) {
+      const site = this.generatedWorld.getSitePosition(rumour.siteId)
+      if (site) return { x: site.x, z: site.z }
+    }
+    const bounds = this.generatedWorld.getRegionBounds(rumour.regionId)
+    if (!bounds) return undefined
+    return {
+      x: (bounds.minX + bounds.maxX) / 2,
+      z: (bounds.minZ + bounds.maxZ) / 2,
+    }
   }
 
   private handleChronicleEvents(events: readonly ChronicleEvent[]): void {
@@ -10252,6 +10512,7 @@ export class GameEngine {
           ? undefined
           : String(generatedCurrentRegionId),
       chronicle: this.buildChronicleFeed(),
+      rumours: this.buildRumourViews(),
       shopPriceMultiplier: this.activeShopPriceMultiplier,
       squad: this.actors.filter(
         (actor) =>

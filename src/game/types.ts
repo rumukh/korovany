@@ -240,6 +240,52 @@ export function isRandomWorldEventKind(
   return (RANDOM_WORLD_EVENT_KINDS as readonly string[]).includes(kind)
 }
 
+/**
+ * Roadmap 1.3 — the three things a chronicle rumour can ask for.
+ *
+ * They live here, beside the event kinds, because copy, the HUD and `CampaignDirector` all
+ * need the vocabulary and none of them should have to import the director to get it. The
+ * set is deliberately closed at three: each one is an *embodied* verb — walk beside it,
+ * stand in it, burn it — and anything that could be honoured without going somewhere would
+ * be the map-menu economy this project rejected by name.
+ */
+export type RumourKind = 'escort' | 'defend' | 'sabotage'
+
+export const RUMOUR_KINDS: readonly RumourKind[] = ['escort', 'defend', 'sabotage']
+
+export type RumourOutcome = 'kept' | 'broken'
+
+/**
+ * One rumour as the HUD sees it.
+ *
+ * Everything here is either a sentence or a number the panel draws directly; the director
+ * keeps the ids. `outcome` is set only on the resolved entry the panel holds on screen for
+ * a moment, which is the whole of 1.3's answer to "the feed never attributes an outcome to
+ * a decision".
+ */
+export interface ChronicleRumourView {
+  id: string
+  kind: RumourKind
+  title: string
+  /** What the player would have to physically do. */
+  task: string
+  /** What walking past it costs. */
+  stake: string
+  /** Map square the player has to be in, e.g. `C3`. */
+  regionLabel: string
+  /** Seconds left before it resolves either way. */
+  timeRemaining: number
+  pinned: boolean
+  /** 0..1 of the embodied requirement. */
+  progress: number
+  /** Where to go. Null when the square has not been placed in the world yet. */
+  x: number | null
+  z: number | null
+  /** Set only on a resolved entry, never on a live one. */
+  outcome: RumourOutcome | null
+  outcomeText: string | null
+}
+
 export interface WorldEventView {
   id: string
   kind: WorldEventKind
@@ -387,6 +433,8 @@ export interface MapMarker {
     | 'landmark'
     | 'objective'
     | 'event'
+    /** Roadmap 1.3 — the pinned rumour. Always visible, like the objective pin. */
+    | 'rumour'
   label?: string
   heading?: number
 }
@@ -443,6 +491,8 @@ export interface GameView {
   markers: MapMarker[]
   worldMap: WorldMapView
   chronicle: ChronicleEntryView[]
+  /** Roadmap 1.3 — up to two open rumours, plus the last verdict while it is fresh. */
+  rumours: ChronicleRumourView[]
   shopPriceMultiplier: number
   squad: number
   elapsed: number

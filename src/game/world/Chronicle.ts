@@ -38,12 +38,23 @@ export const SUPPLY_BASELINE = 0.6
 export const SUPPLY_DRIFT = 0.04
 export const SUPPLY_CARAVAN_GAIN = 0.14
 export const SUPPLY_CARAVAN_LOSS = 0.19
+/** Roadmap 1.3 — what a burned depot costs the square that was stocking it. */
+export const SUPPLY_SABOTAGE_LOSS = 0.34
 export const CHRONICLE_CARAVAN_LIMIT = 3
 export const CARAVAN_INTERCEPT_BASE = 0.12
 export const CARAVAN_HOSTILE_RISK = 0.18
 export const CARAVAN_BEAST_RISK = 0.2
 export const CARAVAN_BEAST_THRESHOLD = 0.5
 export const CARAVAN_PROGRESS_PER_TICK = 0.18
+/**
+ * Roadmap 1.3 — what a body walking beside the cart is worth.
+ *
+ * The interception roll is *scaled*, never skipped: `rng.chance` is still called with the
+ * same stream in the same order, so an escort changes an outcome without shifting a single
+ * draw the rest of the tick depends on. It is also not a guarantee — a quarter of the
+ * original risk survives, because a promise the world cannot break is not a stake.
+ */
+export const CARAVAN_ESCORT_RISK = 0.25
 export const STRENGTH_BASE = 0.25
 export const STRENGTH_TERRITORY_SHARE = 0.45
 export const STRENGTH_OBJECTIVE_SHARE = 0.3
@@ -139,6 +150,21 @@ export interface ChronicleTickContext {
   protectedRegionIds: ReadonlySet<string>
   /** Regions the player is currently in; Layer 2 materializes their fights instead. */
   frozenRegionIds: ReadonlySet<string>
+  /**
+   * Roadmap 1.3 — the caravan the player is physically walking beside, and the square they
+   * are standing in while they do it.
+   *
+   * Both halves are required on purpose: a commitment the player can honour from the other
+   * side of the map is a purchase, and purchases are the rejected design. The escort bites
+   * only where the escort *is*.
+   */
+  escort?: ChronicleEscort | null
+}
+
+export interface ChronicleEscort {
+  caravanId: string
+  /** The square the player is standing in this tick. */
+  regionId: string
 }
 
 interface ChronicleSiteIndex {
@@ -472,6 +498,52 @@ export function resolveMaterializedCaravan(context: {
   ]
 }
 
+/**
+ * Roadmap 1.3 — a caravan the player walked in themselves.
+ *
+ * The same two writes `advanceCaravans` performs when a route completes on its own, moved
+ * here so an escort that is honoured produces the *chronicle's* arrival rather than a
+ * parallel bookkeeping of its own. No roll: the outcome was decided by somebody's legs.
+ */
+export function resolveEscortedCaravanDelivery(context: {
+  state: ChronicleState
+  regions: Map<string, RegionChronicleState>
+  idPrefix: string
+  caravanId: string
+}): ChronicleEvent[] {
+  const { state, regions } = context
+  const caravan = state.caravans.find((entry) => entry.id === context.caravanId)
+  if (!caravan || !caravan.intact) return []
+  state.caravans = state.caravans.filter((entry) => entry.id !== context.caravanId)
+  const destinationId = caravan.regionPath[caravan.regionPath.length - 1]
+  const destination = regions.get(String(destinationId))
+  if (destination) {
+    destination.supply = clamp01(destination.supply + SUPPLY_CARAVAN_GAIN)
+  }
+  return [
+    appendChronicleEvent(
+      state,
+      `${context.idPrefix}-1`,
+      'caravanArrived',
+      destinationId,
+      caravan.ownerFaction,
+      caravan.toSiteId,
+    ),
+  ]
+}
+
+/**
+ * Roadmap 1.3 — a supply site the player put a torch to.
+ *
+ * `supply` is the one chronicle field the game already turns into something a player reads
+ * without a tooltip: `getSupplyPriceMultiplier` prices a shop off it. Dropping it is
+ * therefore the sabotage's *visible* half; the raid it then fails to feed is the other.
+ * No log entry and no roll — the player watched this one happen.
+ */
+export function applySabotagedSupply(region: RegionChronicleState): void {
+  region.supply = clamp01(region.supply - SUPPLY_SABOTAGE_LOSS)
+}
+
 export interface MaterializedWarbandOutcome {
   regionId: RegionId
   faction: Faction
@@ -776,6 +848,7 @@ function advanceCaravans(
   for (const caravan of state.caravans) {
     if (!caravan.intact || caravan.regionPath.length === 0) continue
     const previousIndex = regionIndexAt(caravan)
+    const previousRegionId = caravan.regionPath[previousIndex]
     caravan.progress = Math.min(1, caravan.progress + CARAVAN_PROGRESS_PER_TICK)
     const stepIndex = regionIndexAt(caravan)
     const currentRegionId = caravan.regionPath[stepIndex]
@@ -794,7 +867,20 @@ function advanceCaravans(
         CARAVAN_INTERCEPT_BASE +
         (hostileGround ? CARAVAN_HOSTILE_RISK : 0) +
         (beastGround ? (current?.beastPressure ?? 0) * CARAVAN_BEAST_RISK : 0)
-      if (rng.chance(Math.min(0.85, risk))) {
+      // Roadmap 1.3 — the escort scales the risk down; it never removes the roll, so the
+      // stream advances identically whether or not anybody is walking alongside.
+      //
+      // Either side of the boundary counts, and that is not generosity. The roll happens on
+      // the square the cart has just *entered*, and somebody walking beside it is still in
+      // the square it just left when that happens. Measured: matching only the entered
+      // square, escorted and unescorted carts were lost at exactly the same rate — 11 and
+      // 11 across ninety ticks — because the escort almost never lined up with the roll.
+      const escorted =
+        context.escort != null &&
+        context.escort.caravanId === caravan.id &&
+        (context.escort.regionId === String(currentRegionId) ||
+          context.escort.regionId === String(previousRegionId))
+      if (rng.chance(Math.min(0.85, risk) * (escorted ? CARAVAN_ESCORT_RISK : 1))) {
         caravan.intact = false
         const destination = regions.get(
           String(caravan.regionPath[caravan.regionPath.length - 1]),

@@ -16,6 +16,7 @@ import {
   Heart,
   Home,
   Map as MapIcon,
+  Megaphone,
   Moon,
   MousePointer2,
   Pause,
@@ -96,6 +97,10 @@ import {
   EPILOGUE_IMAGE_FAILED_LABEL,
   EPILOGUE_IMAGE_LABEL,
   EPILOGUE_SHARE_NOTE,
+  RUMOUR_PANEL_HINT,
+  RUMOUR_PANEL_TITLE,
+  RUMOUR_PIN_LABEL,
+  RUMOUR_UNPIN_LABEL,
   describeRunEpilogue,
   formatRussianCount,
   type RunEpilogueCopy,
@@ -549,6 +554,8 @@ function MiniMap({ view }: { view: GameView }) {
               />
             ) : marker.kind === 'objective' ? (
               <Flag aria-hidden="true" />
+            ) : marker.kind === 'rumour' ? (
+              <Megaphone aria-hidden="true" />
             ) : marker.kind === 'event' ? (
               <Sparkles aria-hidden="true" />
             ) : null}
@@ -630,6 +637,81 @@ function ChronicleFeed({ view }: { view: GameView }) {
           )}
         </div>
       )}
+    </section>
+  )
+}
+
+/**
+ * Roadmap 1.3 — the only place the world asks the player a question.
+ *
+ * Kept deliberately small: at most two live rows plus, briefly, the verdict of the one that
+ * just resolved. HUD overload is a named risk for this initiative, so there is no quest log,
+ * no filter and no history — the chronicle card two rows up is already the history.
+ */
+function RumourBoard({
+  view,
+  onPin,
+}: {
+  view: GameView
+  onPin: (rumourId: string | null) => void
+}) {
+  if (view.rumours.length === 0) return null
+
+  return (
+    <section className="hud-card rumour-card" aria-label={RUMOUR_PANEL_TITLE}>
+      <header className="hud-card-header">
+        <span>
+          <Megaphone aria-hidden="true" />
+          {RUMOUR_PANEL_TITLE}
+        </span>
+        <span className="zone-code">{RUMOUR_PANEL_HINT}</span>
+      </header>
+      <div className="rumour-list">
+        {view.rumours.map((rumour) =>
+          rumour.outcome === null ? (
+            <article
+              className={`rumour-entry ${rumour.kind} ${rumour.pinned ? 'pinned' : ''}`}
+              key={rumour.id}
+            >
+              <div className="rumour-line">
+                <span className="chronicle-square">{rumour.regionLabel}</span>
+                <strong>{rumour.title}</strong>
+                <span className="rumour-clock">
+                  <Clock3 aria-hidden="true" />
+                  {Math.ceil(rumour.timeRemaining)} с
+                </span>
+              </div>
+              <p className="rumour-task">{rumour.task}</p>
+              <p className="rumour-stake">{rumour.stake}</p>
+              {rumour.pinned ? (
+                <div className="rumour-progress" aria-hidden="true">
+                  <i style={{ width: `${String(Math.round(rumour.progress * 100))}%` }} />
+                </div>
+              ) : null}
+              <button
+                className={`rumour-pin ${rumour.pinned ? 'active' : ''}`}
+                type="button"
+                onClick={() => onPin(rumour.pinned ? null : rumour.id)}
+              >
+                {rumour.pinned ? RUMOUR_UNPIN_LABEL : RUMOUR_PIN_LABEL}
+              </button>
+            </article>
+          ) : (
+            <article className={`rumour-entry verdict ${rumour.outcome}`} key={rumour.id}>
+              <div className="rumour-line">
+                <span className="chronicle-square">{rumour.regionLabel}</span>
+                <strong>{rumour.title}</strong>
+                {rumour.outcome === 'kept' ? (
+                  <Check aria-hidden="true" />
+                ) : (
+                  <X aria-hidden="true" />
+                )}
+              </div>
+              <p className="rumour-outcome">{rumour.outcomeText}</p>
+            </article>
+          ),
+        )}
+      </div>
     </section>
   )
 }
@@ -2106,6 +2188,7 @@ function GameScreen({
   onAbilityUp,
   onInteract,
   onCommand,
+  onPinRumour,
   onPointerLock,
   onInput,
   onRetryFinalization,
@@ -2149,6 +2232,7 @@ function GameScreen({
   onAbilityUp: () => void
   onInteract: () => void
   onCommand: () => void
+  onPinRumour: (rumourId: string | null) => void
   onPointerLock: () => void
   onInput: (code: string, active: boolean) => void
   onRetryFinalization: () => void
@@ -2288,6 +2372,7 @@ function GameScreen({
         <div className="top-hud-side">
           <MiniMap view={view} />
           <ChronicleFeed view={view} />
+          <RumourBoard view={view} onPin={onPinRumour} />
         </div>
       </div>
 
@@ -3240,6 +3325,7 @@ function App() {
         onAbilityUp={() => engineRef.current?.setShield(false)}
         onInteract={() => engineRef.current?.interact()}
         onCommand={() => engineRef.current?.commandSquad()}
+        onPinRumour={(rumourId) => engineRef.current?.pinRumour(rumourId)}
         onPointerLock={() => engineRef.current?.requestPointerLock()}
         onInput={(code, active) => engineRef.current?.setInput(code, active)}
         onRetryFinalization={retryTerminalFinalization}
