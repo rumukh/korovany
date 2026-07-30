@@ -1141,18 +1141,46 @@ function validateRiverAndBridges(
         'River region does not exist',
       )
     }
-    const previous = index > 0 ? regionById.get(river.regionPath[index - 1]) : undefined
+    // Roadmap 1.5 — the macro river meanders, so a step may be south or one square
+    // sideways. The three rules below are what keep every campaign solvable while it does:
+    // the column stays inside the navigable band so the anchors at x ∈ {0, 4} always
+    // straddle it, steps stay grid-adjacent and never run north, and two sideways steps
+    // never follow each other — three river squares in a row would make the road that
+    // runs *with* the river read as a transverse crossing of it.
     if (
-      previous &&
       region &&
-      (region.coordinate.x !== previous.coordinate.x ||
-        region.coordinate.y !== previous.coordinate.y + 1)
+      (region.coordinate.x < 1 || region.coordinate.x > blueprint.dimensions.width - 2)
     ) {
       context.add(
-        'river.verticalPath',
+        'river.column',
         `river.regionPath[${index}]`,
-        'Macro river regions must form a north-to-south vertical sequence',
+        'Macro river must stay inside the navigable column band',
       )
+    }
+    const previous = index > 0 ? regionById.get(river.regionPath[index - 1]) : undefined
+    if (previous && region) {
+      const deltaX = region.coordinate.x - previous.coordinate.x
+      const deltaY = region.coordinate.y - previous.coordinate.y
+      if (!((deltaX === 0 && deltaY === 1) || (Math.abs(deltaX) === 1 && deltaY === 0))) {
+        context.add(
+          'river.macroStep',
+          `river.regionPath[${index}]`,
+          'Macro river must step south or one square sideways, never north',
+        )
+      }
+      const beforePrevious =
+        index > 1 ? regionById.get(river.regionPath[index - 2]) : undefined
+      if (
+        beforePrevious &&
+        deltaY === 0 &&
+        beforePrevious.coordinate.y === previous.coordinate.y
+      ) {
+        context.add(
+          'river.lateralRun',
+          `river.regionPath[${index}]`,
+          'Macro river may take at most one sideways step per row',
+        )
+      }
     }
   }
 
@@ -1187,6 +1215,11 @@ function validateRiverAndBridges(
   }
   indexById(bridges, 'bridges', context)
   const riverRegionIds = new Set(river.regionPath)
+  // Roadmap 1.5 — the squares where the river turns. Its water leaves such a square
+  // sideways, so a road fording it would have to run along the water to get out and no
+  // bridge spans that. The generator fords only straight rows; this is the check that
+  // makes that a guarantee rather than an intention.
+  const turningRegionIds = deriveTurningRiverRegionIds(river.regionPath, regionById)
   const expectedCrossings = deriveExpectedBridgeCrossings(
     roadConnections,
     riverRegionIds,
@@ -1234,6 +1267,13 @@ function validateRiverAndBridges(
         'bridge.riverRegion',
         `${path}.regionId`,
         'Bridge region is not occupied by the macro river',
+      )
+      malformed = true
+    } else if (turningRegionIds.has(region.id)) {
+      context.add(
+        'bridge.turningRegion',
+        `${path}.regionId`,
+        'Bridge cannot span a square where the macro river turns',
       )
       malformed = true
     }
@@ -1367,6 +1407,32 @@ function deriveExpectedBridgeCrossings(
     }
   }
   return crossings
+}
+
+/**
+ * The river squares that sit in a row holding more than one of them.
+ *
+ * A row with two river squares is a row where the river turns: its water enters from the
+ * north and leaves sideways. Nothing may be bridged there.
+ */
+function deriveTurningRiverRegionIds(
+  regionPath: readonly string[],
+  regionById: ReadonlyMap<string, WorldRegion>,
+): Set<string> {
+  const rowMembers = new Map<number, string[]>()
+  for (const regionId of regionPath) {
+    const region = regionById.get(regionId)
+    if (!region) continue
+    const members = rowMembers.get(region.coordinate.y) ?? []
+    members.push(region.id)
+    rowMembers.set(region.coordinate.y, members)
+  }
+  const turning = new Set<string>()
+  for (const members of rowMembers.values()) {
+    if (members.length < 2) continue
+    for (const member of members) turning.add(member)
+  }
+  return turning
 }
 
 function isTransverseRoadCrossing(

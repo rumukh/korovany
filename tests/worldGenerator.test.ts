@@ -151,11 +151,144 @@ test('every transverse road and river-region crossing has exactly one bridge', (
     (road) => road.id === 'road-branch-river-route',
   )
   assert.ok(riverRoute)
-  assert.deepEqual(riverRoute.regionPath, world.river.regionPath)
+  // Roadmap 1.5 — the riverside shop and recovery point are now placed along the river
+  // rather than pinned to its source and mouth, so the road that runs *with* the water is
+  // the stretch between them. It still carries no bridge, and that is what the meander's
+  // one-sideways-step-per-row rule buys: three river squares in a row would make this
+  // road read as a transverse crossing of its own river.
+  const shopRegionId = world.sites.find((site) => site.id === 'site-shop-riverside')?.regionId
+  const recoveryRegionId = world.sites.find(
+    (site) => site.id === 'site-recovery-riverside',
+  )?.regionId
+  const shopIndex = world.river.regionPath.indexOf(shopRegionId ?? '')
+  const recoveryIndex = world.river.regionPath.indexOf(recoveryRegionId ?? '')
+  assert.ok(shopIndex >= 0 && recoveryIndex > shopIndex)
+  assert.deepEqual(
+    riverRoute.regionPath,
+    world.river.regionPath.slice(shopIndex, recoveryIndex + 1),
+  )
   assert.equal(
     world.bridges.some((bridge) => bridge.roadConnectionId === riverRoute.id),
     false,
   )
+})
+
+/**
+ * Roadmap 1.5 — the meander, and the three things that keep it from breaking a campaign.
+ *
+ * The river may now step one square sideways as it runs south. Every rule below is
+ * load-bearing rather than decorative, and each one is checked over five hundred seeds
+ * because the failure mode is a seed nobody generated.
+ */
+test('the macro river meanders inside the rules that keep every campaign solvable', () => {
+  let jogged = 0
+  const shapes = new Set<string>()
+  for (let seed = 0; seed < 500; seed += 1) {
+    const world = generateWorld(seed)
+    const byId = new Map(world.regions.map((region) => [region.id, region]))
+    const path = world.river.regionPath.map((regionId) => {
+      const region = byId.get(regionId)
+      assert.ok(region, `${regionId} is not a region`)
+      return region.coordinate
+    })
+    shapes.add(path.map((step) => `${step.x},${step.y}`).join('>'))
+
+    assert.equal(path[0].y, 0, `seed ${seed}: the source is not on the north edge`)
+    assert.equal(
+      path[path.length - 1].y,
+      world.dimensions.height - 1,
+      `seed ${seed}: the mouth is not on the south edge`,
+    )
+
+    const rowCounts = new Map<number, number>()
+    for (let index = 0; index < path.length; index += 1) {
+      const step = path[index]
+      rowCounts.set(step.y, (rowCounts.get(step.y) ?? 0) + 1)
+      // Inside the navigable band, so the campaign anchors at x ∈ {0, 4} always straddle it.
+      assert.ok(
+        step.x >= 1 && step.x <= world.dimensions.width - 2,
+        `seed ${seed}: the river left the navigable band at ${step.x},${step.y}`,
+      )
+      if (index === 0) continue
+      const previous = path[index - 1]
+      const deltaX = step.x - previous.x
+      const deltaY = step.y - previous.y
+      assert.ok(
+        (deltaX === 0 && deltaY === 1) || (Math.abs(deltaX) === 1 && deltaY === 0),
+        `seed ${seed}: the river stepped ${deltaX},${deltaY}`,
+      )
+      if (deltaY === 0 && index > 1) {
+        assert.notEqual(
+          path[index - 2].y,
+          previous.y,
+          `seed ${seed}: two sideways steps in row ${step.y}`,
+        )
+      }
+    }
+
+    for (let row = 0; row < world.dimensions.height; row += 1) {
+      const count = rowCounts.get(row) ?? 0
+      assert.ok(count === 1 || count === 2, `seed ${seed}: row ${row} holds ${count} river squares`)
+    }
+    if (path.length > world.dimensions.height) jogged += 1
+
+    // No bridge may span a square where the river turns: its water leaves sideways, so a
+    // road fording it would have to run along the water to get out.
+    const turning = new Set(
+      [...rowCounts.entries()]
+        .filter(([, count]) => count > 1)
+        .flatMap(([row]) =>
+          path.filter((step) => step.y === row).map((step) => `region-${step.x}-${step.y}`),
+        ),
+    )
+    for (const bridge of world.bridges) {
+      assert.equal(
+        turning.has(bridge.regionId),
+        false,
+        `seed ${seed}: ${bridge.id} spans a turning square`,
+      )
+    }
+  }
+
+  // Non-vacuity: a meander that never meanders would satisfy every rule above.
+  assert.ok(jogged > 250, `only ${jogged} of 500 rivers took a sideways step`)
+  assert.ok(shapes.size > 40, `only ${shapes.size} distinct river shapes over 500 seeds`)
+})
+
+test('the validator rejects a river that leaves the rules the solver depends on', () => {
+  const world = generateWorld('river-rules')
+
+  const outOfBand = structuredClone(world)
+  const bandRegion = outOfBand.regions.find(
+    (region) => region.id === outOfBand.river.regionPath[0],
+  )
+  assert.ok(bandRegion)
+  outOfBand.river.regionPath[0] = 'region-0-0'
+  assert.ok(
+    validateWorldBlueprint(outOfBand).issues.some((issue) => issue.code === 'river.column'),
+  )
+
+  const jumped = structuredClone(world)
+  jumped.river.regionPath[1] = jumped.river.regionPath[jumped.river.regionPath.length - 1]
+  assert.ok(
+    validateWorldBlueprint(jumped).issues.some((issue) => issue.code === 'river.macroStep'),
+  )
+
+  // Three squares in a row is the shape that would make the road running *with* the river
+  // read as a transverse crossing of it, so it is rejected rather than merely unlikely.
+  const byId = new Map(world.regions.map((region) => [region.id, region]))
+  const straightRow = world.river.regionPath.find((regionId) => {
+    const coordinate = byId.get(regionId)?.coordinate
+    return coordinate?.x === 2 && coordinate.y > 0 && coordinate.y < 4
+  })
+  assert.ok(straightRow, 'this seed has no middle-column square to widen')
+  const widened = structuredClone(world)
+  const row = byId.get(straightRow)?.coordinate.y ?? 2
+  const at = widened.river.regionPath.indexOf(straightRow)
+  widened.river.regionPath.splice(at + 1, 0, `region-3-${row}`, `region-4-${row}`)
+  const widenedIssues = validateWorldBlueprint(widened).issues
+  assert.ok(widenedIssues.some((issue) => issue.code === 'river.lateralRun'))
+  assert.ok(widenedIssues.some((issue) => issue.code === 'river.column'))
 })
 
 test('semantic and fingerprint tampering produce structured validation issues', () => {

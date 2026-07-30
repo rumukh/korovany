@@ -112,6 +112,42 @@ const DIRECTION_ORDER: Record<CardinalDirection, number> = {
   west: 3,
 }
 
+/**
+ * Roadmap 1.5 — the band the macro river is allowed to wander inside.
+ *
+ * Not a style choice. `transverseRegionPath` throws unless the two campaign anchors differ
+ * in x with the river column strictly between them, and every anchor sits at x ∈ {0, 4}
+ * (`ENDPOINTS`). Keeping every river region inside `[1, WORLD_WIDTH - 2]` is therefore the
+ * invariant that keeps all three campaigns solvable, whatever the meander does — and
+ * `WorldValidator` checks it, so a regression throws at generation rather than shipping.
+ */
+const RIVER_MIN_COLUMN = 1
+const RIVER_MAX_COLUMN = WORLD_WIDTH - 2
+
+/** Per-row chance, in hundredths, of the river stepping one square west, then east. */
+const RIVER_JOG_WEST_PERMILLE = 240
+const RIVER_JOG_EAST_PERMILLE = 480
+
+/** How many shuffled orderings a road tries before falling back to a constructed path. */
+const ROAD_PATH_ATTEMPTS = 8
+
+/**
+ * What the road builders need to know about the water, derived once from the macro river.
+ *
+ * A row holding **two** river squares is a row where the river turns, and its water runs
+ * north-into-the-square, then east or west out of it. A road crossing such a row
+ * transversely would have to run *along* that lateral leg to leave, which no bridge spans,
+ * so a crossing there is impassable rather than merely ugly. Every road path in this file
+ * is built to ford only on a `straightRow`, and `WorldValidator` rejects a bridge that
+ * lands anywhere else.
+ */
+interface RiverPlan {
+  regionIds: ReadonlySet<string>
+  bendRegionIds: ReadonlySet<string>
+  columnsByRow: readonly (readonly number[])[]
+  straightRows: readonly number[]
+}
+
 export class WorldGenerationError extends Error {
   readonly issues: WorldValidationIssue[]
 
@@ -141,13 +177,14 @@ export function generateWorld(seedInput: SeedInput): WorldBlueprint {
     ]),
   )
   const river = createRiver(seed, regionByCoordinate, connectionByPair)
-  const sites = createSites(seed, river, regionById)
+  const riverPlan = planRiver(river, regionById)
+  const sites = createSites(seed, river, riverPlan, regions, regionById)
   const siteById = new Map(sites.map((site) => [site.id, site]))
   const starts = createStartMap()
   const finales = createFinaleMap()
   const criticalPaths = createCriticalPaths(
     seed,
-    river,
+    riverPlan,
     starts,
     finales,
     siteById,
@@ -156,6 +193,7 @@ export function generateWorld(seedInput: SeedInput): WorldBlueprint {
   const roads = createRoadNetwork(
     seed,
     river,
+    riverPlan,
     starts,
     sites,
     siteById,
@@ -385,15 +423,47 @@ function selectConnections(
   return selected
 }
 
+/**
+ * Roadmap 1.5 — one river, still north to south, no longer a straight column.
+ *
+ * The source column is drawn from the stream that always drew it, with the same bounds, so
+ * a given seed's river still *starts* where it always started. The meander is new entropy
+ * on its own derived stream, which is the rule this generator is built on: adding a step
+ * must not shift another step's numbers.
+ *
+ * Two constraints shape the walk, and both are load-bearing rather than aesthetic:
+ *
+ * - **At most one lateral step per row.** Two in a row would put three river squares side
+ *   by side, and `road-branch-river-route` — which follows the river — would then read as
+ *   a transverse crossing of its own water and demand a bridge in the middle of it.
+ * - **One row is drawn as the ford and never jogs.** It lies in `1 … WORLD_HEIGHT - 2`,
+ *   which is inside every faction's crossing band (elf and guard span rows 0–3, the
+ *   villain rows 1–4), so a straight square to ford at always exists for all three. Without
+ *   it a seed where every row happened to jog would have no legal crossing and
+ *   `transverseRegionPath` would throw — a generation failure, against a 0/500 gate.
+ */
 function createRiver(
   seed: number,
   regionByCoordinate: ReadonlyMap<string, WorldRegion>,
   connectionByPair: ReadonlyMap<string, RegionConnection>,
 ): MacroRiver {
   const stream = namedStream(seed, 'river:macro-path')
-  const column = stream.integer(1, WORLD_WIDTH - 1)
+  let column = stream.integer(RIVER_MIN_COLUMN, RIVER_MAX_COLUMN + 1)
+  const meander = namedStream(seed, 'river:meander')
+  const fordRow = meander.integer(1, WORLD_HEIGHT - 1)
+
   const regionPath: string[] = []
   for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+    regionPath.push(requireRegionAt(regionByCoordinate, { x: column, y }).id)
+    // Drawn on every row, taken on some: a constant number of draws per row keeps the
+    // meander's stream position independent of the shape it produces.
+    const roll = meander.integer(0, 1000)
+    if (y === fordRow) continue
+    const delta =
+      roll < RIVER_JOG_WEST_PERMILLE ? -1 : roll < RIVER_JOG_EAST_PERMILLE ? 1 : 0
+    const jogged = column + delta
+    if (delta === 0 || jogged < RIVER_MIN_COLUMN || jogged > RIVER_MAX_COLUMN) continue
+    column = jogged
     regionPath.push(requireRegionAt(regionByCoordinate, { x: column, y }).id)
   }
 
@@ -414,9 +484,58 @@ function createRiver(
   }
 }
 
+function planRiver(
+  river: MacroRiver,
+  regionById: ReadonlyMap<string, WorldRegion>,
+): RiverPlan {
+  const columnsByRow: number[][] = Array.from({ length: WORLD_HEIGHT }, () => [])
+  for (const regionIdValue of river.regionPath) {
+    const coordinate = requireRegion(regionById, regionIdValue).coordinate
+    columnsByRow[coordinate.y].push(coordinate.x)
+  }
+  for (const columns of columnsByRow) columns.sort((first, second) => first - second)
+
+  const bendRegionIds = new Set<string>()
+  for (let row = 0; row < columnsByRow.length; row += 1) {
+    if (columnsByRow[row].length <= 1) continue
+    for (const column of columnsByRow[row]) bendRegionIds.add(regionId(column, row))
+  }
+
+  return {
+    regionIds: new Set(river.regionPath),
+    bendRegionIds,
+    columnsByRow,
+    straightRows: columnsByRow
+      .map((columns, row) => (columns.length === 1 ? row : -1))
+      .filter((row) => row >= 0),
+  }
+}
+
+/**
+ * Roadmap 1.5 — optional sites placed by eligibility rather than at literal region ids.
+ *
+ * What was here put the settlement at `region-2-2`, the frontier event at `region-4-4` and
+ * the landmark at `region-2-3` for **every seed**, and only the treasure varied, over four
+ * fixed candidates. The six literals are genuinely independent of the river solver, which
+ * is why the roadmap files this ahead of anything that touches the critical path.
+ *
+ * Each site now draws from a candidate pool that matches the thing its name promises — a
+ * crossroads settlement in the middle of the map, a frontier event on the world edge, a
+ * riverside shop upstream of a riverside recovery, a treasure hidden away from where any
+ * faction lives — **on its own derived stream**, so adding a site's draw cannot shift
+ * another's. Anchor squares are excluded everywhere and no two optional sites may share a
+ * square, so the branch roads between them are always real roads.
+ *
+ * Every pool is non-empty by construction: the interior is nine squares against at most
+ * six river squares, the border sixteen against six anchors. The `pool.length === 0`
+ * fallback is there because a future change to `ENDPOINTS` or to the meander could narrow
+ * one, and a generation failure is measured against a 0/500 gate.
+ */
 function createSites(
   seed: number,
   river: MacroRiver,
+  riverPlan: RiverPlan,
+  regions: readonly WorldRegion[],
   regionById: ReadonlyMap<string, WorldRegion>,
 ): WorldSite[] {
   const sites: WorldSite[] = []
@@ -425,9 +544,12 @@ function createSites(
     requireRegion(regionById, site.regionId).siteIds.push(site.id)
   }
 
+  const claimed = new Set<string>()
   for (const faction of WORLD_FACTIONS) {
     const startRegion = requireRegionAtId(regionById, ENDPOINTS[faction].start)
     const finaleRegion = requireRegionAtId(regionById, ENDPOINTS[faction].finale)
+    claimed.add(startRegion.id)
+    claimed.add(finaleRegion.id)
     addSite({
       id: startSiteId(faction),
       kind: 'faction-start',
@@ -444,20 +566,76 @@ function createSites(
     })
   }
 
-  const siteStream = namedStream(seed, 'sites:optional-placement')
-  const treasureCandidates = [
-    regionId(3, 4),
-    regionId(4, 4),
-    regionId(3, 3),
-    regionId(1, 3),
-  ] as const
+  const anchorCoordinates = WORLD_FACTIONS.flatMap((faction) => [
+    ENDPOINTS[faction].start,
+    ENDPOINTS[faction].finale,
+  ])
+  const isFarFromAnchors = (region: WorldRegion): boolean =>
+    anchorCoordinates.every(
+      (anchor) => manhattanDistance(region.coordinate, anchor) >= 2,
+    )
+  const isBorder = (region: WorldRegion): boolean =>
+    region.coordinate.x === 0 ||
+    region.coordinate.y === 0 ||
+    region.coordinate.x === WORLD_WIDTH - 1 ||
+    region.coordinate.y === WORLD_HEIGHT - 1
+  const dryLand = (predicate: (region: WorldRegion) => boolean): string[] =>
+    regions
+      .filter(
+        (region) =>
+          !claimed.has(region.id) && !riverPlan.regionIds.has(region.id) && predicate(region),
+      )
+      .map((region) => region.id)
+
+  const place = (siteId: SiteId, candidates: readonly string[]): string => {
+    const pool =
+      candidates.length > 0
+        ? candidates
+        : regions.filter((region) => !claimed.has(region.id)).map((region) => region.id)
+    const chosen = namedStream(seed, `sites:placement:${siteId}`).pick(pool)
+    claimed.add(chosen)
+    return chosen
+  }
+
+  // The shop goes upstream of the recovery point, so `road-branch-river-route` runs down
+  // the river the way the river runs and never doubles back on itself.
+  const shopIndex = namedStream(seed, 'sites:placement:site-shop-riverside').integer(
+    0,
+    river.regionPath.length - 1,
+  )
+  const shopRegionId = river.regionPath[shopIndex]
+  claimed.add(shopRegionId)
+  const recoveryCandidates = river.regionPath
+    .slice(shopIndex + 1)
+    .filter((regionIdValue) => !claimed.has(regionIdValue))
+  const recoveryRegionId = place('site-recovery-riverside', recoveryCandidates)
+
   const optionalSites: ReadonlyArray<readonly [SiteId, WorldSite['kind'], string]> = [
-    ['site-settlement-crossroads', 'settlement', regionId(2, 2)],
-    ['site-shop-riverside', 'shop', river.regionPath[0]],
-    ['site-recovery-riverside', 'recovery', river.regionPath.at(-1) ?? river.regionPath[0]],
-    ['site-event-frontier', 'event', regionId(4, 4)],
-    ['site-treasure-hidden', 'treasure', siteStream.pick(treasureCandidates)],
-    ['site-landmark-old-road', 'landmark', regionId(2, 3)],
+    ['site-shop-riverside', 'shop', shopRegionId],
+    ['site-recovery-riverside', 'recovery', recoveryRegionId],
+    [
+      'site-settlement-crossroads',
+      'settlement',
+      place(
+        'site-settlement-crossroads',
+        dryLand(
+          (region) =>
+            Math.abs(region.coordinate.x - Math.floor(WORLD_WIDTH / 2)) <= 1 &&
+            Math.abs(region.coordinate.y - Math.floor(WORLD_HEIGHT / 2)) <= 1,
+        ),
+      ),
+    ],
+    ['site-event-frontier', 'event', place('site-event-frontier', dryLand(isBorder))],
+    [
+      'site-treasure-hidden',
+      'treasure',
+      place('site-treasure-hidden', dryLand(isFarFromAnchors)),
+    ],
+    [
+      'site-landmark-old-road',
+      'landmark',
+      place('site-landmark-old-road', dryLand(() => true)),
+    ],
   ]
   for (const [id, kind, regionIdValue] of optionalSites) {
     const region = requireRegion(regionById, regionIdValue)
@@ -474,13 +652,12 @@ function createSites(
 
 function createCriticalPaths(
   seed: number,
-  river: MacroRiver,
+  riverPlan: RiverPlan,
   starts: FactionRecord<SiteId>,
   finales: FactionRecord<SiteId>,
   siteById: ReadonlyMap<string, WorldSite>,
   regionById: ReadonlyMap<string, WorldRegion>,
 ): FactionRecord<CriticalPath> {
-  const riverRegion = requireRegion(regionById, river.regionPath[0])
   const create = (faction: Faction): CriticalPath => {
     const start = requireSite(siteById, starts[faction])
     const finale = requireSite(siteById, finales[faction])
@@ -489,7 +666,7 @@ function createCriticalPaths(
       `critical-path:${faction}`,
       requireRegion(regionById, start.regionId).coordinate,
       requireRegion(regionById, finale.regionId).coordinate,
-      riverRegion.coordinate.x,
+      riverPlan,
     )
     return {
       faction,
@@ -510,6 +687,7 @@ function createCriticalPaths(
 function createRoadNetwork(
   seed: number,
   river: MacroRiver,
+  riverPlan: RiverPlan,
   starts: FactionRecord<SiteId>,
   sites: readonly WorldSite[],
   siteById: ReadonlyMap<string, WorldSite>,
@@ -575,19 +753,30 @@ function createRoadNetwork(
       'branch',
       fromSiteId,
       toSiteId,
-      monotonicRegionPath(seed, `roads:${id}`, fromCoordinate, toCoordinate),
+      branchRegionPath(seed, `roads:${id}`, fromCoordinate, toCoordinate, riverPlan),
     )
+  }
+
+  const shopSite = requireSite(siteById, 'site-shop-riverside')
+  const recoverySite = requireSite(siteById, 'site-recovery-riverside')
+  const shopIndex = river.regionPath.indexOf(shopSite.regionId)
+  const recoveryIndex = river.regionPath.indexOf(recoverySite.regionId)
+  if (shopIndex < 0 || recoveryIndex <= shopIndex) {
+    throw new Error('Riverside sites must sit on the river, shop upstream of recovery')
   }
 
   addBranchRoad('road-connector-elf-guard', starts.elf, starts.guard)
   addBranchRoad('road-connector-guard-villain', starts.guard, starts.villain)
   addBranchRoad('road-branch-shop', starts.elf, 'site-shop-riverside')
+  // The one road that runs *with* the water rather than across it, so it carries no
+  // bridge — which the meander preserves, because one lateral step per row can never put
+  // three river squares in a row for this path to straddle.
   addRoad(
     'road-branch-river-route',
     'branch',
     'site-shop-riverside',
     'site-recovery-riverside',
-    [...river.regionPath],
+    river.regionPath.slice(shopIndex, recoveryIndex + 1),
   )
   addBranchRoad('road-branch-event', 'site-recovery-riverside', 'site-event-frontier')
   addBranchRoad('road-branch-treasure', 'site-event-frontier', 'site-treasure-hidden')
@@ -810,12 +999,12 @@ function createFinaleMap(): FactionRecord<SiteId> {
   }
 }
 
-function monotonicRegionPath(
+function monotonicCoordinatePath(
   seed: number,
   semanticKey: string,
   from: RegionCoordinate,
   to: RegionCoordinate,
-): string[] {
+): RegionCoordinate[] {
   const moves: Array<readonly [number, number]> = []
   const horizontalDirection = Math.sign(to.x - from.x)
   const verticalDirection = Math.sign(to.y - from.y)
@@ -828,61 +1017,204 @@ function monotonicRegionPath(
 
   const shuffledMoves = namedStream(seed, semanticKey).shuffle(moves)
   const coordinate = { ...from }
-  const path = [regionId(coordinate.x, coordinate.y)]
+  const path = [{ ...coordinate }]
   for (const [deltaX, deltaY] of shuffledMoves) {
     coordinate.x += deltaX
     coordinate.y += deltaY
-    path.push(regionId(coordinate.x, coordinate.y))
+    path.push({ ...coordinate })
   }
   return path
 }
 
+/** All moves on one axis, then all moves on the other. The two constructed orderings. */
+function axisOrderedPath(
+  from: RegionCoordinate,
+  to: RegionCoordinate,
+  first: 'vertical' | 'horizontal',
+): RegionCoordinate[] {
+  const path: RegionCoordinate[] = [{ ...from }]
+  const stepTo = (x: number, y: number): void => {
+    const current = path[path.length - 1]
+    const deltaX = Math.sign(x - current.x)
+    const deltaY = Math.sign(y - current.y)
+    let cursor = { ...current }
+    while (cursor.x !== x || cursor.y !== y) {
+      cursor = {
+        x: cursor.x + (cursor.x === x ? 0 : deltaX),
+        y: cursor.y + (cursor.y === y ? 0 : deltaY),
+      }
+      path.push(cursor)
+    }
+  }
+  if (first === 'vertical') {
+    stepTo(from.x, to.y)
+    stepTo(to.x, to.y)
+  } else {
+    stepTo(to.x, from.y)
+    stepTo(to.x, to.y)
+  }
+  return path
+}
+
+/**
+ * A monotonic path that never sets foot in the water.
+ *
+ * The shuffled orderings carry the variety, so they are tried first; the constructed
+ * fallback exists because a shuffle *can* wander onto a meandering river and the generator
+ * is not allowed to fail. Both fallbacks are river-free by construction for the endpoints
+ * this is ever called with:
+ *
+ * - `vertical` first runs up the anchor's own column, and every anchor sits at x ∈ {0, 4}
+ *   while every river square sits in `[1, WORLD_WIDTH - 2]`; the horizontal leg then runs
+ *   along the ford row and stops one square short of its single river square.
+ * - `horizontal` first runs away from that same single river square along the ford row,
+ *   then up the far anchor's column.
+ */
+function bankPath(
+  seed: number,
+  semanticKey: string,
+  from: RegionCoordinate,
+  to: RegionCoordinate,
+  riverPlan: RiverPlan,
+  fallback: 'vertical' | 'horizontal',
+): RegionCoordinate[] {
+  for (let attempt = 0; attempt < ROAD_PATH_ATTEMPTS; attempt += 1) {
+    const path = monotonicCoordinatePath(seed, `${semanticKey}:attempt-${attempt}`, from, to)
+    if (path.every((step) => !riverPlan.regionIds.has(regionId(step.x, step.y)))) {
+      return path
+    }
+  }
+  return axisOrderedPath(from, to, fallback)
+}
+
+/**
+ * Roadmap 1.5 — the campaign corridor, which still fords the river exactly once.
+ *
+ * The endpoints are `ENDPOINTS`, unchanged and unpermuted: this solver throws unless they
+ * differ in x with a river square strictly between them, and permuting the anchors means
+ * freeing the river's axis, which is roadmap 2.2 and explicitly not this milestone. What
+ * moved is *where* the ford is: the crossing row is drawn from the rows where the river
+ * runs straight, because a road that fords a turning square would have to leave along the
+ * water's lateral leg, and no bridge spans that.
+ */
 function transverseRegionPath(
   seed: number,
   semanticKey: string,
   from: RegionCoordinate,
   to: RegionCoordinate,
-  riverColumn: number,
+  riverPlan: RiverPlan,
 ): string[] {
   const horizontalDirection = Math.sign(to.x - from.x)
-  if (
-    horizontalDirection === 0 ||
-    riverColumn <= Math.min(from.x, to.x) ||
-    riverColumn >= Math.max(from.x, to.x)
-  ) {
+  const eligibleRows = riverPlan.straightRows.filter((row) => {
+    if (row < Math.min(from.y, to.y) || row > Math.max(from.y, to.y)) return false
+    const column = riverPlan.columnsByRow[row][0]
+    return column > Math.min(from.x, to.x) && column < Math.max(from.x, to.x)
+  })
+  if (horizontalDirection === 0 || eligibleRows.length === 0) {
     throw new Error('Critical path endpoints must lie on opposite sides of the river')
   }
 
-  const crossingY = namedStream(seed, `${semanticKey}:crossing-row`).integer(
-    Math.min(from.y, to.y),
-    Math.max(from.y, to.y) + 1,
-  )
-  const beforeRiver = {
-    x: riverColumn - horizontalDirection,
-    y: crossingY,
-  }
-  const afterRiver = {
-    x: riverColumn + horizontalDirection,
-    y: crossingY,
-  }
-  const approach = monotonicRegionPath(
+  const crossingY = namedStream(seed, `${semanticKey}:crossing-row`).pick(eligibleRows)
+  const riverColumn = riverPlan.columnsByRow[crossingY][0]
+  const beforeRiver = { x: riverColumn - horizontalDirection, y: crossingY }
+  const afterRiver = { x: riverColumn + horizontalDirection, y: crossingY }
+  const approach = bankPath(
     seed,
     `${semanticKey}:approach`,
     from,
     beforeRiver,
+    riverPlan,
+    'vertical',
   )
-  const departure = monotonicRegionPath(
+  const departure = bankPath(
     seed,
     `${semanticKey}:departure`,
     afterRiver,
     to,
+    riverPlan,
+    'horizontal',
   )
   return [
-    ...approach,
+    ...approach.map((step) => regionId(step.x, step.y)),
     regionId(riverColumn, crossingY),
-    regionId(afterRiver.x, afterRiver.y),
-    ...departure.slice(1),
+    ...departure.map((step) => regionId(step.x, step.y)),
   ]
+}
+
+/**
+ * A branch road between two sites, forbidden from fording the river where it turns.
+ *
+ * Branch roads run between squares the seed chose, so unlike the campaign corridor they
+ * cannot be constructed around a ford in advance. Shuffled orderings are tried first and
+ * almost always pass; the fallback takes the road to a straight row, crosses there, and
+ * comes back — a deliberate detour rather than a monotonic path, which the blueprint
+ * permits and which is the honest shape of a road that has to reach a bridge.
+ */
+function branchRegionPath(
+  seed: number,
+  semanticKey: string,
+  from: RegionCoordinate,
+  to: RegionCoordinate,
+  riverPlan: RiverPlan,
+): string[] {
+  for (let attempt = 0; attempt < ROAD_PATH_ATTEMPTS; attempt += 1) {
+    const path = monotonicCoordinatePath(seed, `${semanticKey}:attempt-${attempt}`, from, to)
+    if (!fordsABend(path, riverPlan)) return path.map((step) => regionId(step.x, step.y))
+  }
+  return fordedDetourPath(from, to, riverPlan).map((step) => regionId(step.x, step.y))
+}
+
+function fordsABend(
+  path: readonly RegionCoordinate[],
+  riverPlan: RiverPlan,
+): boolean {
+  for (let index = 1; index < path.length - 1; index += 1) {
+    const previous = path[index - 1]
+    const crossing = path[index]
+    const next = path[index + 1]
+    if (!riverPlan.bendRegionIds.has(regionId(crossing.x, crossing.y))) continue
+    if (previous.y !== crossing.y || next.y !== crossing.y) continue
+    if ((previous.x - crossing.x) * (next.x - crossing.x) < 0) return true
+  }
+  return false
+}
+
+function fordedDetourPath(
+  from: RegionCoordinate,
+  to: RegionCoordinate,
+  riverPlan: RiverPlan,
+): RegionCoordinate[] {
+  // Vertical travel can never straddle anything, so a road that changes no column needs no
+  // ford and no detour.
+  if (from.x === to.x) return axisOrderedPath(from, to, 'vertical')
+
+  const midpoint = (from.y + to.y) / 2
+  const inRange = riverPlan.straightRows.filter(
+    (row) => row >= Math.min(from.y, to.y) && row <= Math.max(from.y, to.y),
+  )
+  const rows = inRange.length > 0 ? inRange : riverPlan.straightRows
+  const fordRow = rows.reduce((best, row) =>
+    Math.abs(row - midpoint) < Math.abs(best - midpoint) ? row : best,
+  )
+
+  const path: RegionCoordinate[] = [{ ...from }]
+  const stepTo = (x: number, y: number): void => {
+    const start = path[path.length - 1]
+    const deltaX = Math.sign(x - start.x)
+    const deltaY = Math.sign(y - start.y)
+    let cursor = { ...start }
+    while (cursor.x !== x || cursor.y !== y) {
+      cursor = {
+        x: cursor.x + (cursor.x === x ? 0 : deltaX),
+        y: cursor.y + (cursor.y === y ? 0 : deltaY),
+      }
+      path.push(cursor)
+    }
+  }
+  stepTo(from.x, fordRow)
+  stepTo(to.x, fordRow)
+  stepTo(to.x, to.y)
+  return path
 }
 
 function isTransverseRiverCrossing(
