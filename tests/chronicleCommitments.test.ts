@@ -629,11 +629,13 @@ test('a rumour hand-built onto a reserved square still cannot take it or burn an
 })
 
 test('a committed run never razes a square the campaign needs', () => {
-  // The stranding condition, stated precisely: `handleGeneratedInteraction` refuses a
-  // burned shop or healer before it ever checks whether an objective wanted it, so an
-  // objective square reduced to ashes is a run that cannot be finished. The 500-seed
-  // completability gate in `tests/worldGenerator.test.ts` proves the *graph* is solvable;
-  // this proves a commitment cannot un-solve it afterwards.
+  // The stranding condition, stated precisely: `handleGeneratedInteraction` used to refuse
+  // a burned shop or healer before it ever checked whether an objective wanted it, so an
+  // objective square reduced to ashes was a run that could not be finished. Roadmap 1.5
+  // fixed that — the node completes at a burned site, the *service* is still refused — and
+  // this is the arm that keeps it fixed. The 500-seed completability gate in
+  // `tests/worldGenerator.test.ts` proves the *graph* is solvable; this proves the world
+  // burning down around it cannot un-solve it afterwards.
   let resolved = 0
   let victories = 0
   let razed = 0
@@ -656,12 +658,21 @@ test('a committed run never razes a square the campaign needs', () => {
     })
     const reserved = getRumourReservedRegionIds(generateWorld(seed), faction)
     assert.ok(reserved.size >= 2, `only ${String(reserved.size)} squares are reserved`)
-    for (const regionId of report.razedRegionIds) {
-      razed += 1
+    const razedReserved = report.razedRegionIds.filter((regionId) =>
+      reserved.has(regionId),
+    )
+    razed += report.razedRegionIds.length
+    // A reserved square *can* burn: the rumour board refuses to put one at stake — that is
+    // asserted directly above, in "no rumour ever puts a campaign anchor or an objective
+    // square at stake" — but the background chronicle has never been told to leave them
+    // alone, and roadmap 1.5 moved the optional sites onto squares raids can reach, which
+    // is what first produced the case. What must never happen is the run being *stranded*
+    // by it, so the assertion is on the outcome rather than on the fire.
+    if (razedReserved.length > 0) {
       assert.equal(
-        reserved.has(regionId),
-        false,
-        `seed ${String(seed)} razed reserved square ${regionId}`,
+        report.outcome,
+        'victory',
+        `seed ${String(seed)} stranded on razed reserved square ${razedReserved.join(', ')}`,
       )
     }
     resolved += report.rumours.resolved

@@ -4,6 +4,9 @@ import * as THREE from 'three'
 import {
   createGeneratedEncounterPlan,
   createGeneratedEncounterPlans,
+  getBlueprintRegionBounds,
+  getSiteWorldPosition2D,
+  isInsideRegionWater,
 } from '../src/game/content/registry.ts'
 import type { Faction } from '../src/game/types.ts'
 import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
@@ -281,6 +284,79 @@ test('generated world bounds are centered and site positions belong to their reg
   runtime.dispose()
 })
 
+/**
+ * Roadmap 1.5 — the same question asked of a river that turns.
+ *
+ * A square where the macro river changes column carries an L of water: in from the edge it
+ * came by, out by the edge it leaves by. That is a real barrier in two directions rather
+ * than one, and it is the thing that would strand a run if it were drawn but not collided,
+ * or collided but not drawn. Seeds are searched rather than pinned, so the case is found
+ * however the meander moves.
+ */
+test('a river that turns blocks both of its legs, and its ford still opens', () => {
+  let checkedBend = 0
+  let checkedFord = 0
+  for (let seed = 0; seed < 12 && (checkedBend === 0 || checkedFord === 0); seed += 1) {
+    const { blueprint, runtime } = createRuntime(seed)
+    try {
+      const regionById = new Map(blueprint.regions.map((region) => [region.id, region]))
+      const rows = new Map<number, string[]>()
+      for (const regionId of blueprint.river.regionPath) {
+        const row = regionById.get(regionId)?.coordinate.y ?? -1
+        rows.set(row, [...(rows.get(row) ?? []), regionId])
+      }
+      const bendRegionId = [...rows.values()].find((ids) => ids.length > 1)?.[0]
+      if (bendRegionId && checkedBend === 0) {
+        const centre = runtime.getRegionCenter(bendRegionId)
+        assert.ok(centre)
+        runtime.update({ deltaSeconds: 0, focus: centre })
+        // The turning square's entry leg comes down from the north edge, so a crossing that
+        // walks north of the centre meets water whichever way it is travelling.
+        const acrossTheEntry = runtime.collision.resolveMovement(
+          { x: centre.x - 9, z: centre.z - 14 },
+          { x: centre.x + 9, z: centre.z - 14 },
+          0.45,
+        )
+        assert.equal(
+          acrossTheEntry.blocked,
+          true,
+          `seed ${seed}: ${bendRegionId} let a crossing through its entry leg`,
+        )
+        assert.ok(acrossTheEntry.collisionIds.some((id) => id.startsWith('water:')))
+        // And no bridge is ever built on a turning square, which is the invariant that
+        // keeps that barrier honest rather than a trap.
+        assert.equal(
+          blueprint.bridges.some((bridge) => bridge.regionId === bendRegionId),
+          false,
+          `seed ${seed}: ${bendRegionId} carries a bridge over a turn`,
+        )
+        checkedBend += 1
+      }
+
+      const fordRegionId = blueprint.bridges[0]?.regionId
+      if (fordRegionId && checkedFord === 0) {
+        const centre = runtime.getRegionCenter(fordRegionId)
+        assert.ok(centre)
+        runtime.update({ deltaSeconds: 0, focus: centre })
+        const crossing = runtime.collision.resolveMovement(
+          { x: centre.x - 9, z: centre.z },
+          { x: centre.x + 9, z: centre.z },
+          0.45,
+        )
+        assert.ok(
+          crossing.x > centre.x + 8,
+          `seed ${seed}: the ford at ${fordRegionId} did not open`,
+        )
+        checkedFord += 1
+      }
+    } finally {
+      runtime.dispose()
+    }
+  }
+  assert.equal(checkedBend, 1, 'no seed in the first twelve produced a river that turns')
+  assert.equal(checkedFord, 1, 'no seed in the first twelve produced a bridge')
+})
+
 test('river water blocks ordinary crossings while bridge gaps remain traversable', () => {
   const { blueprint, runtime } = createRuntime('generated-runtime-test')
   const bridgedRegionId = blueprint.bridges[0]?.regionId
@@ -340,8 +416,38 @@ test('river water blocks ordinary crossings while bridge gaps remain traversable
 
 test('road and river surfaces form continuous terrain-projected ribbons', () => {
   const { scene, blueprint, runtime } = createRuntime(3_427_774_947)
-  const northRegionId = blueprint.river.regionPath[2]
-  const southRegionId = blueprint.river.regionPath[3]
+  // Roadmap 1.5 — the macro river meanders, so consecutive river squares are not always
+  // stacked north-to-south. The shared-boundary assertion below needs a vertical pair, and
+  // the ribbon assertions need a square that has a road *and* enough relief for following
+  // the ground to be visible, so this picks the hilliest roaded vertical pair rather than a
+  // fixed index. One vertical pair always exists: the ford row's step south never jogs.
+  const regionOf = (regionId: string) =>
+    blueprint.regions.find((candidate) => candidate.id === regionId)
+  const hasRoad = (regionId: string): boolean =>
+    blueprint.roads.segments.some(
+      (segment) => segment.fromRegionId === regionId || segment.toRegionId === regionId,
+    )
+  const verticalPairs = blueprint.river.regionPath
+    .map((regionId, index) => ({ regionId, next: blueprint.river.regionPath[index + 1] }))
+    .filter((pair) => {
+      const first = regionOf(pair.regionId)
+      const second = regionOf(pair.next)
+      return (
+        !!first &&
+        !!second &&
+        first.coordinate.x === second.coordinate.x &&
+        second.coordinate.y === first.coordinate.y + 1 &&
+        hasRoad(pair.regionId)
+      )
+    })
+    .sort(
+      (first, second) =>
+        (regionOf(second.regionId)?.heightProfile.relief ?? 0) -
+        (regionOf(first.regionId)?.heightProfile.relief ?? 0),
+    )
+  assert.ok(verticalPairs.length > 0)
+  const northRegionId = verticalPairs[0].regionId
+  const southRegionId = verticalPairs[0].next
   assert.ok(northRegionId)
   assert.ok(southRegionId)
   const focus = runtime.getRegionCenter(northRegionId)
@@ -688,6 +794,122 @@ test('encounter plans are deterministic, serializable, and respect actor budgets
       }
     }
   }
+})
+
+/**
+ * Roadmap 1.5 — the encounter grammar, which is the half of this milestone that makes a
+ * place read as a place.
+ *
+ * Layout permutation alone is isomorphic: a river in a different column is the same
+ * campaign somewhere else. What is asserted here is that a pack is arranged *by what the
+ * square is* — and, in the same breath, that it is arranged somewhere an actor can stand,
+ * because a bridge toll standing in the river would be worse than a generic pack.
+ */
+test('encounter packs are composed around what is actually in the square', () => {
+  const seen = new Map<string, number>()
+  let bridgeChecked = 0
+  let forestChecked = 0
+  let siegeChecked = 0
+
+  for (let seed = 0; seed < 60; seed += 1) {
+    const blueprint = generateWorld(seed)
+    const regionById = new Map(blueprint.regions.map((region) => [region.id, region]))
+    for (const slot of blueprint.encounters) {
+      const plan = createGeneratedEncounterPlan(blueprint, slot, 'elf')
+      seen.set(plan.terrain, (seen.get(plan.terrain) ?? 0) + 1)
+      const region = regionById.get(String(slot.regionId))
+      assert.ok(region)
+      const bounds = getBlueprintRegionBounds(blueprint, region)
+      assert.ok(bounds)
+
+      // Whatever the template, nobody starts in the water.
+      for (const spawn of plan.spawns) {
+        assert.equal(
+          isInsideRegionWater(blueprint, region, spawn.worldX, spawn.worldZ, 0.45),
+          false,
+          `seed ${seed}: ${spawn.id} (${plan.terrain}) spawned in the river`,
+        )
+      }
+
+      const centre = {
+        x: (bounds.minX + bounds.maxX) / 2,
+        z: (bounds.minZ + bounds.maxZ) / 2,
+      }
+      if (plan.terrain === 'bridge-toll') {
+        bridgeChecked += 1
+        assert.ok(
+          blueprint.bridges.some((bridge) => bridge.regionId === region.id),
+          `seed ${seed}: a bridge toll with no bridge`,
+        )
+        // A toll is collected at the crossing: somebody is on the deck, and everybody is on
+        // the same bank, which is what makes it a toll rather than a pack standing about.
+        const onDeck = plan.spawns.filter(
+          (spawn) => Math.hypot(spawn.worldX - centre.x, spawn.worldZ - centre.z) < 6,
+        )
+        assert.equal(onDeck.length, 1, `seed ${seed}: ${onDeck.length} collectors on the deck`)
+        const sides = new Set(plan.spawns.map((spawn) => Math.sign(spawn.worldX - centre.x)))
+        assert.equal(sides.size, 1, `seed ${seed}: the toll party straddles its own river`)
+      }
+      if (plan.terrain === 'settlement-siege') {
+        siegeChecked += 1
+        const site = blueprint.sites.find(
+          (candidate) =>
+            candidate.regionId === region.id &&
+            ['settlement', 'shop', 'recovery', 'faction-start'].includes(candidate.kind),
+        )
+        assert.ok(site, `seed ${seed}: a siege with nothing to besiege`)
+        const target = getSiteWorldPosition2D(blueprint, site.id)
+        assert.ok(target)
+        // A ring around the place, not a pile beside it.
+        for (const spawn of plan.spawns) {
+          const distance = Math.hypot(spawn.worldX - target.x, spawn.worldZ - target.z)
+          assert.ok(
+            distance > 6 && distance < 34,
+            `seed ${seed}: ${spawn.id} besieges from ${distance.toFixed(1)}`,
+          )
+        }
+      }
+      if (plan.terrain === 'forest-crossfire') {
+        forestChecked += 1
+        assert.equal(region.biome, 'forest', `seed ${seed}: a crossfire outside the woods`)
+        // Two firing lines rather than one clump: measured against the pack's own centroid,
+        // because the lane is wherever the road runs, not through the middle of the square.
+        if (plan.spawns.length >= 2) {
+          const middleX =
+            plan.spawns.reduce((sum, spawn) => sum + spawn.worldX, 0) / plan.spawns.length
+          const middleZ =
+            plan.spawns.reduce((sum, spawn) => sum + spawn.worldZ, 0) / plan.spawns.length
+          const straddles = (pick: (spawn: (typeof plan.spawns)[number]) => number, middle: number) =>
+            plan.spawns.some((spawn) => pick(spawn) - middle > 6) &&
+            plan.spawns.some((spawn) => pick(spawn) - middle < -6)
+          assert.ok(
+            straddles((spawn) => spawn.worldX, middleX) ||
+              straddles((spawn) => spawn.worldZ, middleZ),
+            `seed ${seed}: the crossfire is all on one side`,
+          )
+          assert.ok(
+            plan.spawns.some((spawn) => spawn.role === 'archer'),
+            `seed ${seed}: a crossfire with nobody shooting`,
+          )
+        }
+      }
+      if (plan.terrain === 'open-ground') {
+        assert.equal(
+          blueprint.bridges.some((bridge) => bridge.regionId === region.id) &&
+            slot.kind !== 'boss',
+          false,
+          `seed ${seed}: a bridge square left on the generic arrangement`,
+        )
+      }
+    }
+  }
+
+  // Non-vacuity: every template has to have actually fired, and the generic arrangement has
+  // to still be the common case, or "terrain-bound" would just mean "renamed".
+  assert.ok(bridgeChecked > 40, `only ${bridgeChecked} bridge tolls across 60 seeds`)
+  assert.ok(forestChecked > 40, `only ${forestChecked} forest crossfires across 60 seeds`)
+  assert.ok(siegeChecked > 40, `only ${siegeChecked} settlement sieges across 60 seeds`)
+  assert.ok((seen.get('open-ground') ?? 0) > 200, 'the generic arrangement vanished')
 })
 
 test('decoration quality changes only deterministic nonblocking cosmetics', () => {

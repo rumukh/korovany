@@ -153,7 +153,13 @@ function renderWeather(mix: WeatherMix): number {
 test('chronicle output is identical with the day/night and weather toggles on and off', () => {
   // Long enough that beast pressure crosses its raid threshold, so the night and storm
   // multipliers genuinely decide events rather than only nudging float state.
-  const base = { seed: 'environment-toggles', frames: 48_000, frameDelta: 0.05 }
+  //
+  // The seed moved with roadmap 1.5: the walk is fixed but the world under it is not, and
+  // on `environment-toggles` the new site placement leaves this run with **no beast raid at
+  // all**, which would make the equality below a comparison of two histories the
+  // environment never touched. `environment-toggles-2` produces eleven, and the
+  // beast-raid guard three assertions down is what caught it.
+  const base = { seed: 'environment-toggles-2', frames: 48_000, frameDelta: 0.05 }
   const allOn = runFrames({ ...base, dynamicDayNight: true, weatherEnabled: true })
   const allOff = runFrames({ ...base, dynamicDayNight: false, weatherEnabled: false })
   const dayNightOff = runFrames({

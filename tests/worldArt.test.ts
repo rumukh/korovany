@@ -2802,16 +2802,34 @@ test('settlement buildings block movement and their squares stay walkable', () =
 })
 
 test('every site in a region gets its own share of the ink budget', () => {
-  // Seed chosen because it puts two sites in one region — only about one region in
-  // forty does, so a self-selecting test would quietly never run.
-  const { scene, blueprint, runtime } = createRuntime('two-sites')
-  const counts = new Map<string, number>()
-  for (const site of blueprint.sites) {
-    counts.set(site.regionId, (counts.get(site.regionId) ?? 0) + 1)
+  // Roadmap 1.5 gives every optional site its own square, so a generated world no longer
+  // produces this case at all — the seeded search that used to find it would now be a test
+  // that silently never runs. The two-site region is therefore built rather than found,
+  // which keeps the sub-budget's split guarded now that only a future generator can
+  // produce it.
+  const scene = new THREE.Scene()
+  const generated = generateWorld('two-sites')
+  const settlement = generated.sites.find((site) => site.kind === 'settlement')
+  const landmark = generated.sites.find((site) => site.kind === 'landmark')
+  assert.ok(settlement)
+  assert.ok(landmark)
+  const blueprint: WorldBlueprint = {
+    ...generated,
+    sites: generated.sites.map((site) =>
+      site.id === landmark.id ? { ...site, regionId: settlement.regionId } : site,
+    ),
+    regions: generated.regions.map((region) => ({
+      ...region,
+      siteIds: region.siteIds
+        .filter((siteId) => siteId !== landmark.id)
+        .concat(region.id === settlement.regionId ? [landmark.id] : []),
+    })),
   }
-  const shared = [...counts.entries()].find(([, count]) => count > 1)
-  assert.ok(shared, 'the seed must produce a region with two sites')
-  const [regionId] = shared
+  const runtime = new GeneratedWorldRuntime(scene, blueprint, {
+    ...RUNTIME_OPTIONS,
+    outlineDressing: true,
+  })
+  const regionId = settlement.regionId
   const center = runtime.getRegionCenter(regionId)
   assert.ok(center)
   runtime.update({ deltaSeconds: 0, focus: center })
