@@ -18,8 +18,11 @@ import {
   BIOME_PROFILES,
   SITE_PRESENTATIONS,
   createGeneratedEncounterPlan,
+  getRegionRiverLegs,
   getSiteWorldPosition2D,
+  isInsideRegionRiver,
   type GeneratedEncounterPlan,
+  type RegionRiverLeg,
 } from '../content/registry.ts'
 import { RandomStream } from '../random/RandomStream.ts'
 import { deriveSeed } from '../random/seed.ts'
@@ -1174,42 +1177,56 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     }
   }
 
+  /**
+   * Roadmap 1.5 — the water, drawn along the legs the macro river actually takes.
+   *
+   * A square the river passes straight through still gets one north-to-south band, because
+   * its entry and exit legs are collinear. A square where the river turns gets a bend:
+   * in from the edge it came from, out by the edge it leaves by. The colliders follow the
+   * same legs, so what blocks a crossing is what is drawn.
+   */
   private createRiver(): void {
-    if (!this.context.blueprint.river.regionPath.includes(this.id)) return
+    const legs = getRegionRiverLegs(this.context.blueprint, this.id)
+    if (legs.length === 0) return
     const bounds = this.context.normalizedRegion.bounds
     const center = boundsCenter(bounds)
-    this.addProjectedStrip(
-      { x: center.x, z: bounds.minZ },
-      { x: center.x, z: bounds.maxZ },
-      this.context.style.riverWidth,
-      this.context.materials.water,
-      `river:${String(this.id)}`,
-      0.1,
-    )
-
-    const bridges = this.context.blueprint.bridges.filter(
-      (bridge) => bridge.regionId === this.id,
-    )
-    if (bridges.length === 0) {
-      this.registerWaterCollider(
-        `water:${String(this.id)}:full`,
-        bounds.minZ,
-        bounds.maxZ,
+    const straight = legs.length === 2 && isOppositeRiverLeg(legs[0], legs[1])
+    if (straight) {
+      this.addProjectedStrip(
+        legs[0].edge,
+        legs[1].edge,
+        this.context.style.riverWidth,
+        this.context.materials.water,
+        `river:${String(this.id)}`,
+        0.1,
       )
-      return
+    } else {
+      for (let index = 0; index < legs.length; index += 1) {
+        this.addProjectedStrip(
+          legs[index].edge,
+          center,
+          this.context.style.riverWidth,
+          this.context.materials.water,
+          index === 0 ? `river:${String(this.id)}` : `river:${String(this.id)}:bend`,
+          0.1,
+        )
+      }
     }
 
-    const gap = Math.max(6, this.context.style.bridgeWidth + 1.5)
-    this.registerWaterCollider(
-      `water:${String(this.id)}:north`,
-      bounds.minZ,
-      center.z - gap / 2,
+    const bridged = this.context.blueprint.bridges.some(
+      (bridge) => bridge.regionId === this.id,
     )
-    this.registerWaterCollider(
-      `water:${String(this.id)}:south`,
-      center.z + gap / 2,
-      bounds.maxZ,
-    )
+    // A bridge opens the middle of the square; without one the water runs edge to centre
+    // and the crossing is closed.
+    const gap = bridged ? Math.max(6, this.context.style.bridgeWidth + 1.5) : 0
+    for (let index = 0; index < legs.length; index += 1) {
+      this.registerWaterCollider(
+        `water:${String(this.id)}:${legs[index].direction}`,
+        legs[index],
+        center,
+        gap,
+      )
+    }
   }
 
   private createBridges(): void {
@@ -1606,8 +1623,13 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
         continue
       }
       if (
-        this.context.blueprint.river.regionPath.includes(this.id) &&
-        Math.abs(x - center.x) < this.context.style.riverWidth / 2 + 3
+        isInsideRegionRiver(
+          this.context.blueprint,
+          this.id,
+          x,
+          z,
+          this.context.style.riverWidth / 2 + 3,
+        )
       ) {
         continue
       }
@@ -1861,9 +1883,10 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     }
   }
 
-  /** Reeds along both banks, instanced and density-scaled. */
+  /** Reeds along both banks of each leg the river takes through this square. */
   private createRiverDressing(): void {
-    if (!this.context.blueprint.river.regionPath.includes(this.id)) return
+    const legs = getRegionRiverLegs(this.context.blueprint, this.id)
+    if (legs.length === 0) return
     const bounds = this.context.normalizedRegion.bounds
     const center = boundsCenter(bounds)
     const stream = new RandomStream(
@@ -1876,9 +1899,19 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     const placements: DressingPlacement[] = []
     const attempts = 96
     for (let attempt = 0; attempt < attempts && placements.length < 42; attempt += 1) {
+      const leg = legs[attempt % legs.length]
       const side = attempt % 2 === 0 ? -1 : 1
-      const x = center.x + side * stream.range(half - 0.6, half + 2.4)
-      const z = stream.range(bounds.minZ + 1, bounds.maxZ - 1)
+      const offset = side * stream.range(half - 0.6, half + 2.4)
+      const along = stream.range(0, 1)
+      const horizontal = leg.direction === 'east' || leg.direction === 'west'
+      const x = horizontal
+        ? center.x + (leg.edge.x - center.x) * along
+        : center.x + offset
+      const z = horizontal
+        ? center.z + offset
+        : center.z + (leg.edge.z - center.z) * along
+      if (x < bounds.minX + 1 || x > bounds.maxX - 1) continue
+      if (z < bounds.minZ + 1 || z > bounds.maxZ - 1) continue
       if (this.isInsideSiteClearing(x, z)) continue
       placements.push({
         index: placements.length,
@@ -2090,8 +2123,13 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       return false
     }
     if (
-      this.context.blueprint.river.regionPath.includes(this.id) &&
-      Math.abs(x - center.x) < this.context.style.riverWidth / 2 + 1.4
+      isInsideRegionRiver(
+        this.context.blueprint,
+        this.id,
+        x,
+        z,
+        this.context.style.riverWidth / 2 + 1.4,
+      )
     ) {
       return false
     }
@@ -2141,18 +2179,33 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
 
   private registerWaterCollider(
     id: string,
-    minZ: number,
-    maxZ: number,
+    leg: RegionRiverLeg,
+    center: Point2,
+    gap: number,
   ): void {
-    if (maxZ - minZ <= 0.1) return
-    const center = boundsCenter(this.context.normalizedRegion.bounds)
+    const half = this.context.style.riverWidth / 2
+    // The leg runs from the region edge to the centre; a bridge shortens the centre end.
+    const inset = gap / 2
+    const minX = Math.min(leg.edge.x, center.x)
+    const maxX = Math.max(leg.edge.x, center.x)
+    const minZ = Math.min(leg.edge.z, center.z)
+    const maxZ = Math.max(leg.edge.z, center.z)
+    const box =
+      leg.direction === 'north'
+        ? { minX: center.x - half, maxX: center.x + half, minZ, maxZ: maxZ - inset }
+        : leg.direction === 'south'
+          ? { minX: center.x - half, maxX: center.x + half, minZ: minZ + inset, maxZ }
+          : leg.direction === 'west'
+            ? { minX, maxX: maxX - inset, minZ: center.z - half, maxZ: center.z + half }
+            : { minX: minX + inset, maxX, minZ: center.z - half, maxZ: center.z + half }
+    if (box.maxX - box.minX <= 0.1 || box.maxZ - box.minZ <= 0.1) return
     this.context.collision.registerBox({
       id,
       regionId: this.id,
-      x: center.x,
-      z: (minZ + maxZ) / 2,
-      halfWidth: this.context.style.riverWidth / 2,
-      halfDepth: (maxZ - minZ) / 2,
+      x: (box.minX + box.maxX) / 2,
+      z: (box.minZ + box.maxZ) / 2,
+      halfWidth: (box.maxX - box.minX) / 2,
+      halfDepth: (box.maxZ - box.minZ) / 2,
       tags: ['water', 'river'],
     })
     this.runtime.ownCollider(id)
@@ -2772,6 +2825,17 @@ function boundsCenter(bounds: Bounds2D): Point2 {
     x: (bounds.minX + bounds.maxX) / 2,
     z: (bounds.minZ + bounds.maxZ) / 2,
   }
+}
+
+/** True when the river runs straight through a square rather than turning inside it. */
+function isOppositeRiverLeg(first: RegionRiverLeg, second: RegionRiverLeg): boolean {
+  const opposites: Record<string, string> = {
+    north: 'south',
+    south: 'north',
+    east: 'west',
+    west: 'east',
+  }
+  return opposites[first.direction] === second.direction
 }
 
 interface DressingPlacement {
