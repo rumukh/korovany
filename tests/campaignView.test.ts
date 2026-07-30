@@ -67,16 +67,18 @@ import type { WorldBlueprint } from '../src/game/world/worldTypes.ts'
 const FACTIONS: readonly Faction[] = ['elf', 'guard', 'villain']
 
 /**
- * Roadmap 1.4 added `contracts` to the `GameView`, and the deleted `App.tsx` builder
- * predates it by definition.
+ * Roadmap 1.4 added `contracts` to the `GameView` and roadmap 1.6 added `doctrines`, and the
+ * deleted `App.tsx` builder predates both by definition.
  *
  * So the equivalence below is asserted over the fields that existed on both sides, and the
- * new one is pinned by `tests/factionContracts.test.ts` instead. The alternative — teaching
- * the "before" copy to build a field it never had — would stop it being a copy, which is
- * the only thing that makes it worth keeping.
+ * new ones are pinned by `tests/factionContracts.test.ts` and `tests/doctrines.test.ts`
+ * instead. The alternative — teaching the "before" copy to build fields it never had —
+ * would stop it being a copy, which is the only thing that makes it worth keeping.
  */
-function withoutContracts(view: GameView): Omit<GameView, 'contracts'> {
-  const { contracts: _contracts, ...rest } = view
+function withoutLaterFields(
+  view: GameView,
+): Omit<GameView, 'contracts' | 'doctrines'> {
+  const { contracts: _contracts, doctrines: _doctrines, ...rest } = view
   return rest
 }
 // ---------------------------------------------------------------------------
@@ -104,7 +106,7 @@ function legacyInitialView(
   blueprint: WorldBlueprint,
   config: RunConfig,
   restored: ActiveRunSaveV3 | undefined,
-): Omit<GameView, 'contracts'> {
+): Omit<GameView, 'contracts' | 'doctrines'> {
   const startSite = blueprint.sites.find(
     (site) => site.id === blueprint.starts[config.faction],
   )
@@ -381,7 +383,7 @@ test('the launch view reproduces the deleted App.tsx builder on a fresh run', ()
         const expected = legacyInitialView(blueprint, config, undefined)
         const actual = buildInitialGameView({ blueprint, config, restored: undefined })
         assert.deepEqual(
-          withoutContracts(actual),
+          withoutLaterFields(actual),
           expected,
           `seed ${index}, ${faction}, boon ${selectedBoonId}`,
         )
@@ -411,7 +413,7 @@ test('the launch view reproduces the deleted builder on a restored run', () => {
       const expected = legacyInitialView(blueprint, config, restored)
       const actual = buildInitialGameView({ blueprint, config, restored })
       assert.deepEqual(
-        withoutContracts(actual),
+        withoutLaterFields(actual),
         expected,
         `seed ${index}, ${faction}`,
       )
@@ -719,6 +721,31 @@ test('the live view carries every field the HUD reads', () => {
         z: null,
       },
     ],
+    // Roadmap 1.6 — a draft open and a card already taken, so the round trip covers both
+    // halves of the panel.
+    doctrines: {
+      equipped: [
+        {
+          id: 'vanguard',
+          name: 'Устав дозора',
+          rule: 'Волны приходят на закрытый пункт.',
+          gives: 'Дорога тихая.',
+          takes: 'Пункт заканчивается дракой.',
+        },
+      ],
+      offer: [
+        {
+          id: 'pathfinder',
+          name: 'Устав следопыта',
+          rule: 'Соседние квадраты открываются сами.',
+          gives: 'Карта на шаг вперёд.',
+          takes: 'Тел на карте больше нет.',
+        },
+      ],
+      draft: 2,
+      draftsTotal: 3,
+      slots: 3,
+    },
   })
 
   // Health is clamped on the way out; the engine relied on that and the HUD does not clamp.
@@ -749,7 +776,7 @@ test('the live view carries every field the HUD reads', () => {
     'kills', 'damage', 'zone', 'body', 'objectives', 'prompt', 'markers', 'worldMap',
     'chronicle', 'shopPriceMultiplier', 'squad', 'elapsed', 'pointerLocked', 'paused',
     'caravanCooldown', 'ability', 'activeEvent', 'lootToast', 'campaignCompleted',
-    'threatTier', 'upgrades', 'contracts',
+    'threatTier', 'upgrades', 'contracts', 'doctrines',
   ]
   for (const key of required) {
     assert.ok(key in view, `the live view dropped ${key}`)

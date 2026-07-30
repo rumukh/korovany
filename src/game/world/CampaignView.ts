@@ -20,6 +20,15 @@
 
 import { getStartingBoonEffects } from '../run/profile.ts'
 import {
+  DOCTRINE_DRAFT_TIERS,
+  MAX_EQUIPPED_DOCTRINES,
+  getDoctrineDefinition,
+  getDoctrineOffer,
+  normalizeDoctrineRunState,
+  pendingDoctrineDraftIndex,
+  type DoctrineRunState,
+} from '../run/doctrine.ts'
+import {
   CONTRACT_ERRAND_STAKE,
   CONTRACT_FAILED_TASK,
   describeContractStake,
@@ -42,6 +51,8 @@ import {
   type CampaignContractView,
   type ChronicleEntryView,
   type ChronicleRumourView,
+  type DoctrineCardView,
+  type DoctrineView,
   type Faction,
   type GameView,
   type LootToastView,
@@ -185,6 +196,8 @@ export interface LiveViewInput {
   rumours: readonly ChronicleRumourView[]
   /** Roadmap 1.4 — every ready campaign node, the pinned one included. */
   contracts: readonly CampaignContractView[]
+  /** Roadmap 1.6 — the open draft and the rules the run already took. */
+  doctrines: DoctrineView
   shopPriceMultiplier: number
   squad: number
   elapsed: number
@@ -373,6 +386,46 @@ export function buildCampaignContractViews(
 }
 
 /**
+ * Roadmap 1.6 — the draft panel and the equipped strip.
+ *
+ * Shared by both view paths for the same reason everything else here is: the launch view
+ * has to be able to draw an equipped strip before the engine's first frame, or a player who
+ * checkpoints mid-run and continues would watch their doctrines blink into existence. The
+ * offer is *recomputed* from the seed and the ledger rather than read out of a stored list,
+ * which is what makes "the same seed and tier show the same three cards" structural instead
+ * of a promise.
+ */
+export function buildDoctrineView(
+  state: DoctrineRunState,
+  seed: number,
+): DoctrineView {
+  const draftIndex = pendingDoctrineDraftIndex(state)
+  return {
+    equipped: state.equipped.map(toDoctrineCardView).filter(isDoctrineCard),
+    offer: getDoctrineOffer(state, seed).map(toDoctrineCardView).filter(isDoctrineCard),
+    draft: draftIndex === null ? null : draftIndex + 1,
+    draftsTotal: DOCTRINE_DRAFT_TIERS.length,
+    slots: MAX_EQUIPPED_DOCTRINES,
+  }
+}
+
+function toDoctrineCardView(doctrineId: string): DoctrineCardView | null {
+  const definition = getDoctrineDefinition(doctrineId)
+  if (!definition) return null
+  return {
+    id: definition.id,
+    name: definition.name,
+    rule: definition.rule,
+    gives: definition.gives,
+    takes: definition.takes,
+  }
+}
+
+function isDoctrineCard(card: DoctrineCardView | null): card is DoctrineCardView {
+  return card !== null
+}
+
+/**
  * The ability button.
  *
  * `createAbilityView` answers "can this faction use its ability at this stamina with these
@@ -455,6 +508,13 @@ export function buildGameView(input: LiveViewInput): GameView {
     chronicle: [...input.chronicle],
     rumours: input.rumours.map((rumour) => ({ ...rumour })),
     contracts: input.contracts.map((entry) => ({ ...entry })),
+    doctrines: {
+      equipped: input.doctrines.equipped.map((card) => ({ ...card })),
+      offer: input.doctrines.offer.map((card) => ({ ...card })),
+      draft: input.doctrines.draft,
+      draftsTotal: input.doctrines.draftsTotal,
+      slots: input.doctrines.slots,
+    },
     shopPriceMultiplier: input.shopPriceMultiplier,
     squad: input.squad,
     elapsed: input.elapsed,
@@ -551,6 +611,14 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
       return position ? { x: position.x, z: position.z } : null
     },
   })
+  // Roadmap 1.6 — the same reasoning as the campaign board below: the strip is derived from
+  // the seed and the persisted ledger, neither of which needs a frame of engine, so a
+  // continued run shows what it is already committed to before the first frame rather than
+  // after it. A run that has not launched yet has an empty ledger and draws nothing.
+  const doctrines = buildDoctrineView(
+    normalizeDoctrineRunState(restored?.directorState.doctrines),
+    blueprint.seed,
+  )
 
   if (!restored && boon.revealAdjacentRegions) {
     for (const region of blueprint.regions) {
@@ -605,6 +673,7 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     // of engine to be true. Drawing it at launch is what makes "the pin survived the
     // reload" visible before the first frame rather than after it.
     contracts,
+    doctrines,
     shopPriceMultiplier: 1,
     squad: 0,
     elapsed,

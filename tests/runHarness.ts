@@ -73,6 +73,7 @@ import { deriveSeed } from '../src/game/random/seed.ts'
 import { getSiteWorldPosition2D } from '../src/game/content/registry.ts'
 import {
   areAllegiancesHostile,
+  getThreatTier,
   isBeastRole,
   type ActorRole,
   type Allegiance,
@@ -80,6 +81,18 @@ import {
   type Objective,
   type ZoneId,
 } from '../src/game/types.ts'
+import {
+  DEFAULT_DOCTRINE_IDS,
+  MAX_EQUIPPED_DOCTRINES,
+  advanceDoctrineAnchors,
+  createDoctrineRunState,
+  equipDoctrine,
+  getDoctrineOffer,
+  pendingDoctrineDraftIndex,
+  resolveDoctrineEffects,
+  type DoctrineEffects,
+  type DoctrineRunState,
+} from '../src/game/run/doctrine.ts'
 import { CollisionWorld } from '../src/game/systems/CollisionWorld.ts'
 import { NavigationSystem } from '../src/game/systems/NavigationSystem.ts'
 import { TerrainSystem } from '../src/game/world/TerrainSystem.ts'
@@ -341,6 +354,28 @@ export type CampaignShape = 'branched' | 'chain'
  */
 export type ContractOutcomePolicy = 'honour' | 'shirk'
 
+/**
+ * Roadmap 1.6 — what the scripted player does with the doctrine draft.
+ *
+ * Four arms, and the first and the last are the two that make the middle two mean anything:
+ *
+ * - `off` is **the default and stays the default**, for the same reason `legacy`,
+ *   `off` and `firstReady` are: every pinned number in `runHarness.test.ts`,
+ *   `runHarnessSchedules.test.ts` and `runHarnessSweep.test.ts` describes one fixed
+ *   simulation, and a drafted rule is a real change to it. No draft opens at all.
+ * - `none` is **the placebo**: the anchors are crossed and the offer is computed on every
+ *   one of them, but nothing is ever taken. Without it, "the doctrines changed the run"
+ *   would be indistinguishable from "reaching tier 2, 3 and 4 changed the run".
+ * - `seeded` is the treatment: a card drawn from the harness's own derived stream, which
+ *   is what separates "the draft produced different builds" from "the map did".
+ * - `first` is **the convergence control**, and it is the one the roadmap's second signal
+ *   needs. It always takes the first card on the table, so every run with the same pool
+ *   converges on the same equipped set. If a test cannot tell `first` from `seeded`, the
+ *   distinct-set count is measuring the offer's existence rather than the player's choice,
+ *   and the design has failed even though the number looks fine.
+ */
+export type DoctrinePolicy = 'off' | 'none' | 'seeded' | 'first'
+
 /** How close the scripted player has to be for a contract to be counted as under way. */
 export const HARNESS_CONTRACT_RANGE = 6
 /**
@@ -504,6 +539,26 @@ export interface ContractMetrics {
   completed: boolean
 }
 
+/**
+ * Roadmap 1.6 — what the draft did, per run.
+ *
+ * `capBreaches` is the negative one and it should never move: `equipDoctrine` refuses the
+ * fourth card, so a run that reports anything but zero has found a way past the mechanic's
+ * own cap rather than past a disabled button.
+ */
+export interface DoctrineMetrics {
+  /** The ids this run could draft from. */
+  pool: string[]
+  /** Every offer the run was shown, in draft order. */
+  offers: string[][]
+  /** What it took, in draft order. */
+  equipped: string[]
+  /** Attempts to equip a fourth card that the mechanic refused. Zero, or the cap leaks. */
+  capBreaches: number
+  /** Draft points the threat tier crossed. */
+  draftsOpened: number
+}
+
 export interface RunReport {
   seed: number
   faction: Faction
@@ -519,6 +574,8 @@ export interface RunReport {
   campaignShape: CampaignShape
   /** Roadmap 1.4 — whether the scripted player honoured the contract it started. */
   contractOutcome: ContractOutcomePolicy
+  /** Roadmap 1.6 — which doctrine arm this run was. */
+  doctrinePolicy: DoctrinePolicy
   /** Frames per simulated second the run was driven at. */
   hz: number
   outcome: RunOutcome
@@ -561,6 +618,7 @@ export interface RunReport {
   razedRegionIds: string[]
   rumours: RumourMetrics
   contracts: ContractMetrics
+  doctrines: DoctrineMetrics
   /** Weather target changes, and where the player was standing for each. */
   weatherTargetChanges: number
   finalWeather: WeatherKind
@@ -594,6 +652,16 @@ export interface RunOptions {
   campaignShape?: CampaignShape
   /** Defaults to `honour`. `shirk` is the fail-forward arm. */
   contractOutcome?: ContractOutcomePolicy
+  /** Defaults to `off`, which is the pre-1.6 run every pinned number describes. */
+  doctrinePolicy?: DoctrinePolicy
+  /**
+   * The doctrine ids the run may draft from. Defaults to the three open from run one.
+   *
+   * A parameter rather than a profile read, because the harness has no profile — and
+   * because "what does a wider pool do to the distinct-set count" is precisely the number
+   * the roadmap's second signal is about.
+   */
+  doctrinePool?: readonly string[]
 }
 
 // ---------------------------------------------------------------------------
@@ -670,6 +738,7 @@ export function runHarness(options: RunOptions): RunReport {
   const contractPolicy = options.contractPolicy ?? 'firstReady'
   const campaignShape = options.campaignShape ?? 'branched'
   const contractOutcome = options.contractOutcome ?? 'honour'
+  const doctrinePolicy = options.doctrinePolicy ?? 'off'
 
   const blueprint = generateWorld(options.seed)
   // Roadmap 1.4 — the placebo. Linearising the shipped graph leaves every site, encounter,
@@ -750,6 +819,55 @@ export function runHarness(options: RunOptions): RunReport {
   const contractRng = new RandomStream(deriveSeed(blueprint.seed, 'harness:contract'))
   /** Simulated seconds the player has held a live contract's site with nothing hostile near. */
   let contractHold = 0
+
+  // --- roadmap 1.6: the draft --------------------------------------------------
+  const doctrineState: DoctrineRunState = createDoctrineRunState(
+    options.doctrinePool ?? DEFAULT_DOCTRINE_IDS,
+  )
+  const doctrineMetrics: DoctrineMetrics = {
+    pool: [...doctrineState.pool],
+    offers: [],
+    equipped: [],
+    capBreaches: 0,
+    draftsOpened: 0,
+  }
+  // Its own derived stream, for the same reason 1.3's rumours and 1.4's pins got theirs.
+  // Note that this is the *policy's* coin, not the offer's: `rollDoctrineOffer` builds and
+  // discards its own stream from the world seed, so the three cards on the table are the
+  // same in every arm and only the pick differs.
+  const doctrineRng = new RandomStream(deriveSeed(blueprint.seed, 'harness:doctrine'))
+  let doctrineEffects: DoctrineEffects = resolveDoctrineEffects([])
+
+  /**
+   * One tick of the draft, in the engine's order: cross the anchors, then answer.
+   *
+   * The functions are the shipped ones. `capBreaches` counts a refusal that should be
+   * impossible — the policy never asks for a fourth card, so anything but zero means the
+   * ledger and the cap disagree.
+   */
+  const advanceDoctrines = (): void => {
+    if (doctrinePolicy === 'off') return
+    if (advanceDoctrineAnchors(doctrineState, getThreatTier(elapsed))) {
+      doctrineMetrics.draftsOpened = doctrineState.anchors
+    }
+    const index = pendingDoctrineDraftIndex(doctrineState)
+    if (index === null) return
+    // One row per draft, not one per frame. An unanswered offer stays the same offer — the
+    // engine shows one at a time and a player who walks past it meets it again — so the
+    // `none` arm records exactly one row and holds it for the rest of the run.
+    if (doctrineMetrics.offers.length > index) return
+    const offer = getDoctrineOffer(doctrineState, blueprint.seed)
+    if (offer.length === 0) return
+    doctrineMetrics.offers.push([...offer])
+    if (doctrinePolicy === 'none') return
+    const pick = doctrinePolicy === 'first' ? offer[0] : doctrineRng.pick(offer)
+    if (equipDoctrine(doctrineState, blueprint.seed, pick)) {
+      doctrineMetrics.equipped.push(pick)
+      doctrineEffects = resolveDoctrineEffects(doctrineState.equipped)
+    } else if (doctrineState.equipped.length < MAX_EQUIPPED_DOCTRINES) {
+      doctrineMetrics.capBreaches += 1
+    }
+  }
 
   const startSite = blueprint.sites.find(
     (site) => site.id === blueprint.starts[options.faction],
@@ -1035,7 +1153,13 @@ export function runHarness(options: RunOptions): RunReport {
           actionRemaining: 0,
           actionTargetIsPlayer: false,
           actionTargetId: null,
-          hostileToPlayer: areAllegiancesHostile(options.faction, allegiance),
+          hostileToPlayer:
+            // Roadmap 1.6 — «Устав звериного перемирия», the other doctrine rule this
+            // harness models. A beast under the truce simply is not the player's enemy, so
+            // threat selection, morale and the damage tally all agree without a special case.
+            doctrineEffects.beastTruce && isBeastRole(role)
+              ? false
+              : areAllegiancesHostile(options.faction, allegiance),
           aggroMemory: 0,
           routTimer: 0,
           deathAt: null,
@@ -1060,6 +1184,7 @@ export function runHarness(options: RunOptions): RunReport {
   while (elapsed < timeLimit) {
     frames += 1
     elapsed += delta
+    advanceDoctrines()
 
     // 1. Chronicle, against the weather mix as it stood before the player moved. This is
     //    the engine's order, and it is what the 30/60/144 Hz arms are testing.
@@ -1278,18 +1403,25 @@ export function runHarness(options: RunOptions): RunReport {
       // gates movement on, so the price of the third beat is paid identically in both.
       const committed = meleeModel === 'honest' && isPlayerMeleeCommitted(player.melee)
       if (committed) melee.committedSeconds += delta
-      if (sprinting) player.stamina = Math.max(0, player.stamina - delta * HARNESS_SPRINT_DRAIN)
-      else {
+      const dx = targetX - player.x
+      const dz = targetZ - player.z
+      const length = Math.hypot(dx, dz)
+      const moving = length > 0.001 && !holding && !committed
+      // Roadmap 1.6 — «Устав скорого шага», one of the two doctrine rules this harness
+      // models. The drain is gone rather than smaller, and recovery is conditional on
+      // moving rather than on not sprinting.
+      if (sprinting) {
+        if (!doctrineEffects.forcedMarch) {
+          player.stamina = Math.max(0, player.stamina - delta * HARNESS_SPRINT_DRAIN)
+        }
+      } else if (!doctrineEffects.forcedMarch || moving) {
         player.stamina = Math.min(
           player.maxStamina,
           player.stamina + delta * HARNESS_STAMINA_REGEN,
         )
       }
 
-      const dx = targetX - player.x
-      const dz = targetZ - player.z
-      const length = Math.hypot(dx, dz)
-      if (length > 0.001 && !holding && !committed) {
+      if (moving) {
         const speed = HARNESS_PLAYER_SPEED * (sprinting ? HARNESS_SPRINT_MULTIPLIER : 1)
         const step = Math.min(speed * delta, length)
         const moved = collision.resolveMovement(
@@ -1674,6 +1806,7 @@ export function runHarness(options: RunOptions): RunReport {
     contractPolicy,
     campaignShape,
     contractOutcome,
+    doctrinePolicy,
     hz,
     outcome,
     elapsed,
@@ -1696,6 +1829,7 @@ export function runHarness(options: RunOptions): RunReport {
     razedRegionIds,
     rumours,
     contracts: contractMetrics,
+    doctrines: doctrineMetrics,
     weatherTargetChanges,
     finalWeather: weatherTarget,
     finalStormFactor: computeStormFactor(weatherMix),

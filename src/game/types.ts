@@ -339,6 +339,46 @@ export interface CampaignContractView {
   z: number | null
 }
 
+/**
+ * Roadmap 1.6 — one doctrine card as the HUD sees it.
+ *
+ * `rule`, `gives` and `takes` are three separate sentences rather than one description,
+ * because the panel has to show the cost beside the gain: sidegrades-only is the mitigation
+ * for power creep, and a card that rendered as a single blurb could hide half of itself.
+ * No field here is a number — that is the whole point of the initiative and the shape says
+ * so.
+ */
+export interface DoctrineCardView {
+  id: string
+  name: string
+  /** The rule that changes. */
+  rule: string
+  /** What the run gains. */
+  gives: string
+  /** What the run gives up. */
+  takes: string
+}
+
+/**
+ * Roadmap 1.6 — the draft, and what the run is already committed to.
+ *
+ * `offer` is empty except while a draft is actually open, which is what makes the panel
+ * appear at the threat-tier anchors and nowhere else. `slots` is on the view rather than
+ * assumed by the HUD so the cap has exactly one source; the *enforcement* lives in
+ * `run/doctrine.ts`, not here.
+ */
+export interface DoctrineView {
+  equipped: DoctrineCardView[]
+  /** Cards on the table right now. Empty when no draft is open. */
+  offer: DoctrineCardView[]
+  /** Which draft this is, 1-based, or `null` when none is open. */
+  draft: number | null
+  /** How many drafts a run gets in total. */
+  draftsTotal: number
+  /** The hard cap on equipped doctrines. */
+  slots: number
+}
+
 export type BodyPart =
   | 'leftArm'
   | 'rightArm'
@@ -545,6 +585,8 @@ export interface GameView {
   rumours: ChronicleRumourView[]
   /** Roadmap 1.4 — every campaign node the player could take on right now. */
   contracts: CampaignContractView[]
+  /** Roadmap 1.6 — the open draft, if there is one, and the rules already taken. */
+  doctrines: DoctrineView
   shopPriceMultiplier: number
   squad: number
   elapsed: number

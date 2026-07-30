@@ -165,6 +165,15 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
     firstSighting: (view) => view.contracts.length > 1,
   },
   {
+    hint: 'doctrines',
+    viewFields: ['doctrines'],
+    // Roadmap 1.6 — the first *offer*, not the first equipped card. The lesson is that a
+    // choice is on the table and what kind of choice it is, so it has to arrive while the
+    // player can still make it. The strip alone would teach nothing: by the time a doctrine
+    // is equipped the decision is already spent.
+    firstSighting: (view) => view.doctrines.offer.length > 0,
+  },
+  {
     hint: 'squad',
     viewFields: ['squad'],
     firstSighting: (view) => view.squad > 0,
