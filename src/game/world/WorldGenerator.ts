@@ -3,6 +3,7 @@ import { deriveSeed, parseSeed, type SeedInput } from '../random/seed.ts'
 import type { Faction, ZoneId } from '../types.ts'
 import {
   DEFAULT_REGION_SIZE,
+  FACTION_CONTRACT_SITES,
   WORLD_FACTIONS,
   WORLD_GENERATOR_VERSION,
   WORLD_HEIGHT,
@@ -689,6 +690,33 @@ function createEncounters(
   return encounters
 }
 
+/**
+ * Roadmap 1.4 — the campaign graph, as a diamond rather than a chain.
+ *
+ * What was here emitted three nodes on a linear chain and took exactly one seeded draw per
+ * faction, which is where the roadmap's "3 factions × 2 middle sites = 6 distinct campaign
+ * graphs across all 2³² seeds" comes from. What is here now is:
+ *
+ * ```
+ *            ┌─ errand ──┐
+ *   start ───┤           ├─── finale
+ *            └─ contract ┘
+ * ```
+ *
+ * **Both middle nodes are required.** That is deliberate and it is the whole shape of the
+ * first slice: the persisted `Objective` has no optional concept and the win condition is
+ * still `every(o => o.done)`, so what the fork buys the player is an **order**, not an
+ * exclusive route. Exclusive routes are 2.1.
+ *
+ * The contract node names a signature template — one per faction, adapted from a shipped
+ * event builder — and it draws its site from **its own derived stream**, so adding this
+ * step cannot shift the errand draw that was here before. A given seed still gets exactly
+ * the errand it always got; the contract is new numbers from new entropy.
+ *
+ * Graph count per faction goes from 2 to 6, and across the three factions from 6 to 18,
+ * before the treasure site's own four placements are counted. That is a measured
+ * improvement rather than a fix: 1.5 is where generator diversity is actually addressed.
+ */
 function createObjectives(
   seed: number,
   starts: FactionRecord<SiteId>,
@@ -707,12 +735,22 @@ function createObjectives(
       siteById,
       namedStream(seed, `objectives:${faction}`).pick(choices[faction]),
     )
+    const template = FACTION_CONTRACT_SITES[faction]
+    const contractSite = requireSite(
+      siteById,
+      namedStream(seed, `objectives:contract:${faction}`).pick(template.siteIds),
+    )
     const finale = requireSite(siteById, finales[faction])
     const startNodeId = `objective-${faction}-start`
     const middleNodeId = `objective-${faction}-branch`
+    const contractNodeId = `objective-${faction}-contract`
     const finalNodeId = `objective-${faction}-finale`
     return {
       faction,
+      // Topologically ordered, and `tests/campaignDirector.test.ts` asserts it stays that
+      // way: with prerequisites listed before the nodes that need them, the first not-done
+      // node always has its prerequisites satisfied, which is what the pre-1.4 `.find()`
+      // depended on and what the new "all ready nodes" reader agrees with.
       nodes: [
         {
           id: startNodeId,
@@ -729,11 +767,19 @@ function createObjectives(
           prerequisiteIds: [startNodeId],
         },
         {
+          id: contractNodeId,
+          kind: template.kind,
+          siteId: contractSite.id,
+          regionId: contractSite.regionId,
+          prerequisiteIds: [startNodeId],
+          contract: template.id,
+        },
+        {
           id: finalNodeId,
           kind: 'defeat',
           siteId: finale.id,
           regionId: finale.regionId,
-          prerequisiteIds: [middleNodeId],
+          prerequisiteIds: [middleNodeId, contractNodeId],
         },
       ],
       rootNodeIds: [startNodeId],

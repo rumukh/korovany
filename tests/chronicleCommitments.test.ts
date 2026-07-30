@@ -646,7 +646,12 @@ test('a committed run never razes a square the campaign needs', () => {
       faction,
       policy: 'beeline',
       hz: 20,
-      timeLimit: 240,
+      // Roadmap 1.4 added a fourth required node to every campaign, so the same arm needs
+      // longer to finish: measured on these twelve seeds, the commit arm reached victory
+      // 6/12 at 240 s and 9/12 at 360 s. The limit moved rather than the assertion, because
+      // what this test is about is that a commitment cannot make a run *unfinishable* — not
+      // how long a run takes.
+      timeLimit: 360,
       rumourPolicy: 'commit',
     })
     const reserved = getRumourReservedRegionIds(generateWorld(seed), faction)
@@ -819,8 +824,11 @@ test('committing changes who holds the map, and the placebo says it was the comm
   // simulated seconds spent standing in a square a rumour asked them to stand in. All three
   // verbs are offered: 231 escorts, 113 sabotages, 103 defences.
   //
-  // The committed gate sweeps 18 seeds at a 240 s limit and asserts bands, because a sweep
-  // aggregate is a fact about the design rather than a target.
+  // The committed gate sweeps 18 seeds at a 360 s limit and asserts bands, because a sweep
+  // aggregate is a fact about the design rather than a target. The limit was 240 s until
+  // roadmap 1.4 added a fourth required node to every campaign; the arm needs longer to
+  // reach victory now, and the "campaign still finishes" assertion at the end is the one
+  // that would otherwise start failing for a reason that has nothing to do with 1.3.
   const seeds = signalSeeds()
   const arms: RumourPolicy[] = ['ignore', 'walk', 'commit']
   const reports = new Map<RumourPolicy, ReturnType<typeof runHarness>[]>(
@@ -837,7 +845,7 @@ test('committing changes who holds the map, and the placebo says it was the comm
           faction,
           policy: 'beeline',
           hz: 20,
-          timeLimit: 240,
+          timeLimit: 360,
           rumourPolicy: arm,
         }),
       )

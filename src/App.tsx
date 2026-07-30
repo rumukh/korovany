@@ -97,6 +97,10 @@ import {
   EPILOGUE_IMAGE_FAILED_LABEL,
   EPILOGUE_IMAGE_LABEL,
   EPILOGUE_SHARE_NOTE,
+  CONTRACT_PANEL_HINT,
+  CONTRACT_PANEL_TITLE,
+  CONTRACT_PIN_LABEL,
+  CONTRACT_UNPIN_LABEL,
   RUMOUR_PANEL_HINT,
   RUMOUR_PANEL_TITLE,
   RUMOUR_PIN_LABEL,
@@ -554,6 +558,8 @@ function MiniMap({ view }: { view: GameView }) {
               />
             ) : marker.kind === 'objective' ? (
               <Flag aria-hidden="true" />
+            ) : marker.kind === 'contract' ? (
+              <Flag aria-hidden="true" />
             ) : marker.kind === 'rumour' ? (
               <Megaphone aria-hidden="true" />
             ) : marker.kind === 'event' ? (
@@ -716,6 +722,74 @@ function RumourBoard({
   )
 }
 
+/**
+ * Roadmap 1.4 — the fork, as the only place the campaign asks the player which way round.
+ *
+ * The card exists because `getActiveObjectiveNode` returns the *first* ready node and the
+ * marker, the prompt and the objective list all follow it: a branched campaign read through
+ * that alone would look exactly like a straight line. This lists every ready node, so the
+ * player can see there are two and say which one first.
+ *
+ * The header hint is load-bearing copy rather than decoration. Both arms are required —
+ * pinning one does not drop the other — and the panel says so, because a HUD that let the
+ * player believe they were choosing a route would be promising 2.1.
+ */
+function ContractBoard({
+  view,
+  onPin,
+}: {
+  view: GameView
+  onPin: (nodeId: string | null) => void
+}) {
+  // One ready node is the campaign the game always had; the board only earns its space
+  // once there is actually something to choose between.
+  if (view.contracts.length < 2) return null
+
+  return (
+    <section className="hud-card contract-card" aria-label={CONTRACT_PANEL_TITLE}>
+      <header className="hud-card-header">
+        <span>
+          <Flag aria-hidden="true" />
+          {CONTRACT_PANEL_TITLE}
+        </span>
+        <span className="zone-code">{CONTRACT_PANEL_HINT}</span>
+      </header>
+      <div className="contract-list">
+        {view.contracts.map((entry) => (
+          <article
+            className={`contract-entry ${entry.contract ? 'signature' : 'errand'} ${
+              entry.pinned ? 'pinned' : ''
+            } ${entry.status === 'failed' ? 'failed' : ''}`}
+            key={entry.id}
+          >
+            <div className="contract-line">
+              <span className="chronicle-square">{entry.regionLabel}</span>
+              <strong>{entry.title}</strong>
+              {entry.timeRemaining === null ? null : (
+                <span className="contract-clock">
+                  <Clock3 aria-hidden="true" />
+                  {Math.ceil(entry.timeRemaining)} с
+                </span>
+              )}
+            </div>
+            <p className="contract-task">{entry.task}</p>
+            <p className="contract-stake">{entry.stake}</p>
+            <button
+              className={`contract-pin ${entry.pinned ? 'active' : ''}`}
+              type="button"
+              onClick={() => {
+                onPin(entry.pinned ? null : entry.id)
+              }}
+            >
+              {entry.pinned ? CONTRACT_UNPIN_LABEL : CONTRACT_PIN_LABEL}
+            </button>
+          </article>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 function ObjectiveList({ view }: { view: GameView }) {
   const completed = view.objectives.filter((objective) => objective.done).length
   const raidDone = view.objectives.some((objective) => objective.id === 'raid' && objective.done)
@@ -736,6 +810,12 @@ function ObjectiveList({ view }: { view: GameView }) {
       <div className="objective-list">
         {view.objectives.map((objective) => {
           const isLootTurnIn = view.faction === 'elf' && objective.id === 'home' && !objective.done
+          // Roadmap 1.4 — the list, the marker and the prompt have to agree about which
+          // node the player took on, so the pin is drawn here too rather than only on the
+          // board that sets it.
+          const pinned = view.contracts.some(
+            (entry) => entry.id === objective.id && entry.pinned,
+          )
           const lootHint = !isLootTurnIn
             ? null
             : !raidDone
@@ -748,7 +828,7 @@ function ObjectiveList({ view }: { view: GameView }) {
             <div
               className={`objective-item ${objective.done ? 'done' : ''} ${
                 isLootTurnIn && lootTurnInReady ? 'ready' : ''
-              }`}
+              } ${pinned ? 'pinned' : ''}`}
               key={objective.id}
             >
               <span className="objective-check">
@@ -2189,6 +2269,7 @@ function GameScreen({
   onInteract,
   onCommand,
   onPinRumour,
+  onPinObjective,
   onPointerLock,
   onInput,
   onRetryFinalization,
@@ -2233,6 +2314,7 @@ function GameScreen({
   onInteract: () => void
   onCommand: () => void
   onPinRumour: (rumourId: string | null) => void
+  onPinObjective: (nodeId: string | null) => void
   onPointerLock: () => void
   onInput: (code: string, active: boolean) => void
   onRetryFinalization: () => void
@@ -2442,6 +2524,7 @@ function GameScreen({
             ))}
           </div>
         </div>
+        <ContractBoard view={view} onPin={onPinObjective} />
         <ObjectiveList view={view} />
         <EventBanner event={view.activeEvent} />
       </div>
@@ -3326,6 +3409,7 @@ function App() {
         onInteract={() => engineRef.current?.interact()}
         onCommand={() => engineRef.current?.commandSquad()}
         onPinRumour={(rumourId) => engineRef.current?.pinRumour(rumourId)}
+        onPinObjective={(nodeId) => engineRef.current?.pinObjective(nodeId)}
         onPointerLock={() => engineRef.current?.requestPointerLock()}
         onInput={(code, active) => engineRef.current?.setInput(code, active)}
         onRetryFinalization={retryTerminalFinalization}

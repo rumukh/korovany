@@ -41,5 +41,8 @@ export function isMapMarkerVisible(
   // Roadmap 1.3 — a pin the player chose points somewhere they have not been yet, which is
   // the point of taking it on. Fogging it would make "go there" unanswerable.
   if (marker.kind === 'rumour') return true
+  // Roadmap 1.4 — the same argument, for the arm of the fork that is *not* pinned. A choice
+  // between one visible place and one fogged place is not a choice.
+  if (marker.kind === 'contract') return true
   return markerIsDiscovered(worldMap, marker.x, marker.z)
 }

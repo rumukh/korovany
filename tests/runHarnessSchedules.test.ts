@@ -11,7 +11,9 @@
  * **The weather-target transition.** `advanceWeatherMix` composes exactly across sub-steps
  * for a fixed target — asserted here — so the mix itself is not the hazard. *When* the
  * target changes is, and this file follows that difference all the way into
- * `advanceBeasts`, which nothing guarded before.
+ * `advanceBeasts`, which nothing guarded before. The *count* of target flips agreed across
+ * schedules when last measured; the test that records that says when it stopped diverging
+ * and why the claim about the hazard does not rest on it.
  */
 
 import assert from 'node:assert/strict'
@@ -95,9 +97,15 @@ test('the 30, 60 and 144 Hz arms agree on the run, and not on chronicle history'
   // either direction is visible: if it drops to zero, something made the chronicle
   // schedule-independent and that is worth knowing; if it climbs, something made frame
   // pacing matter more.
+  //
+  // It climbed from 3 to 5 when roadmap 1.4 turned the campaign into a four-node diamond.
+  // The mechanism is unchanged and the reading is the obvious one: a longer run samples
+  // the route at more points, so there are more chances for a tick to land with a
+  // different region frozen. The two assertions above — outcome and campaign progress —
+  // still hold on every seed, which is the part that would matter to a player.
   assert.equal(
     historyDivergences,
-    3,
+    5,
     `chronicle history diverged on ${historyDivergences} of ${seeds.length} seeds`,
   )
 })
@@ -256,15 +264,32 @@ test('a weather-target transition reaches advanceBeasts through stormFactor', ()
   }
 })
 
-test('the harness sees weather targets flip at schedule-dependent moments', () => {
+test('the weather-target flip count is schedule-independent on the measured seeds', () => {
   // The engine-level shape of the same hazard: the target is resolved from the biome under
   // the player *after* the player has moved, so a coarser schedule samples the crossing at
-  // a different point and can count a different number of flips.
-  const seeds = [991, 424242, 20260729]
+  // a different point and could count a different number of flips.
+  //
+  // **It used to, and on these seeds it no longer does.** This test asserted one divergence
+  // in three seeds until roadmap 1.4 lengthened the campaign and changed the route; measured
+  // again over nine seeds afterwards, the 30, 60 and 144 Hz arms agree on the flip count
+  // every time (11/11/11, 8/8/8, 4/4/4, 7/7/7, 5/5/5, 8/8/8, 4/4/4, 4/4/4, 4/4/4).
+  //
+  // The number is recorded rather than defended. The hazard itself is not in doubt: the
+  // mechanism is proved directly by the `advanceBeasts` test above, and the schedule
+  // sensitivity of the world's bookkeeping is still visible in the chronicle-history
+  // divergence — 5 of 9 seeds — measured at the top of this file. What this pin is for is
+  // noticing if the flip count starts diverging again, which would mean a route change made
+  // biome crossings land on a schedule boundary once more.
+  const seeds = [991, 424242, 20260729, 15839, 7920, 31677, 47515, 63353, 55434]
   let flipCountDivergences = 0
   for (const seed of seeds) {
     const arms = [30, 60, 144].map((hz) =>
       runHarness({ seed, faction: 'elf', policy: 'beeline', hz, timeLimit: 300 }),
+    )
+    // Non-vacuity: a run that counted no flips at all would make the agreement trivial.
+    assert.ok(
+      arms.every((report) => report.weatherTargetChanges > 0),
+      `seed ${String(seed)} never changed weather target`,
     )
     if (new Set(arms.map((report) => report.weatherTargetChanges)).size > 1) {
       flipCountDivergences += 1
@@ -272,7 +297,7 @@ test('the harness sees weather targets flip at schedule-dependent moments', () =
   }
   assert.equal(
     flipCountDivergences,
-    1,
+    0,
     `weather-target flip counts diverged on ${flipCountDivergences} of ${seeds.length} seeds`,
   )
 })

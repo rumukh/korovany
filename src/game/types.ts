@@ -297,6 +297,48 @@ export interface WorldEventView {
   timeRemaining?: number
 }
 
+/**
+ * Roadmap 1.4 — the status of a signature contract, as the HUD sees it.
+ *
+ * Mirrors `ContractStatus` in `CampaignDirector` for the same reason `RumourKind` mirrors
+ * nothing and simply lives here: the panel and the copy need the vocabulary and neither
+ * should have to import the director to get it.
+ */
+export type CampaignContractStatus = 'offered' | 'active' | 'kept' | 'failed'
+
+/**
+ * One ready campaign node as the HUD sees it.
+ *
+ * The list is the fork. Before 1.4 the HUD was handed exactly one active objective, because
+ * the director returned the *first* ready node and nothing else — so a branched graph would
+ * have presented a straight line. This is the list version, and every entry is something
+ * the player can pin right now.
+ *
+ * `contract` is null on an ordinary campaign errand and set on the faction's signature
+ * contract. Both are **required**: the entry says which one is pinned, never which one is
+ * skipped, because nothing here can be skipped.
+ */
+export interface CampaignContractView {
+  /** The objective node id. */
+  id: string
+  contract: string | null
+  title: string
+  /** What the player would have to physically go and do. */
+  task: string
+  /** What failing costs, stated before the choice. */
+  stake: string
+  /** Map square, e.g. `C3`. */
+  regionLabel: string
+  pinned: boolean
+  /** Null on an ordinary errand; the contract's state otherwise. */
+  status: CampaignContractStatus | null
+  /** Seconds left on a running contract's clock, null when it is not running. */
+  timeRemaining: number | null
+  /** Where to go. Null until the square has been placed in the world. */
+  x: number | null
+  z: number | null
+}
+
 export type BodyPart =
   | 'leftArm'
   | 'rightArm'
@@ -435,6 +477,14 @@ export interface MapMarker {
     | 'event'
     /** Roadmap 1.3 — the pinned rumour. Always visible, like the objective pin. */
     | 'rumour'
+    /**
+     * Roadmap 1.4 — a ready campaign node the player has *not* pinned.
+     *
+     * The pinned one keeps `objective`, so the compass still has one answer. This kind
+     * exists because a fork the map does not draw is a fork the player never finds out
+     * about, which is exactly the failure mode 1.4 is written against.
+     */
+    | 'contract'
   label?: string
   heading?: number
 }
@@ -493,6 +543,8 @@ export interface GameView {
   chronicle: ChronicleEntryView[]
   /** Roadmap 1.3 — up to two open rumours, plus the last verdict while it is fresh. */
   rumours: ChronicleRumourView[]
+  /** Roadmap 1.4 — every campaign node the player could take on right now. */
+  contracts: CampaignContractView[]
   shopPriceMultiplier: number
   squad: number
   elapsed: number

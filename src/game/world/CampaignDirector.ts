@@ -53,6 +53,7 @@ import {
   type RegionChronicleState,
 } from './Chronicle.ts'
 import type { FactionObjectiveNode, WorldBlueprint } from './worldTypes.ts'
+import { CONTRACT_IDS, type ContractId, type FactionRecord } from './worldTypes.ts'
 
 // ---------------------------------------------------------------------------
 // Objectives
@@ -95,12 +96,14 @@ export function objectivePrerequisitesDone(
 }
 
 /**
- * The objective the HUD points at.
+ * The first ready node.
  *
  * A `.find()`, not a filter: it returns the *first* ready node, so a graph with parallel
- * branches would still show one objective at a time. That is a known property rather than
- * an oversight — the roadmap's 1.4 turns on it — and it is pinned here so a later graph
- * change cannot alter what the player sees without this test noticing.
+ * branches still shows one objective at a time through this function. That was the whole
+ * of what the HUD pointed at before roadmap 1.4, and it survives as the **fallback** —
+ * `resolveActiveObjectiveNode` is what the engine asks now, and it falls through to this
+ * when nothing is pinned. Kept, and kept tested, because "the pin does nothing yet" and
+ * "the pin is ignored" have to be different states.
  */
 export function getActiveObjectiveNode(
   blueprint: WorldBlueprint,
@@ -117,7 +120,56 @@ export function getActiveObjectiveNode(
   )
 }
 
-/** The run ends in victory when every node is done, including the optional branches. */
+/**
+ * Roadmap 1.4 — **every** node whose prerequisites are met, in graph order.
+ *
+ * This is the function that makes the fork visible. `getActiveObjectiveNode` above answers
+ * "which one node does the compass point at"; a diamond graph read through that alone
+ * would present one objective at a time and the player would never learn there was a
+ * choice at all. The HUD draws this list; the marker layer draws a pin per entry.
+ */
+export function getReadyObjectiveNodes(
+  blueprint: WorldBlueprint,
+  faction: Faction,
+  objectives: readonly Objective[],
+): FactionObjectiveNode[] {
+  return blueprint.objectives[faction].nodes.filter(
+    (node) =>
+      !isObjectiveDone(objectives, node.id) &&
+      objectivePrerequisitesDone(node, objectives),
+  )
+}
+
+/**
+ * The node the compass, the prompt and the HUD all agree on: the pinned one if it is still
+ * ready, otherwise the first ready one.
+ *
+ * The fallback is not a nicety. A pin can stop being ready for reasons the player did not
+ * choose — the node completed, a restore brought back an id this graph no longer has — and
+ * a compass pointing at nothing is worse than a compass pointing at the wrong thing.
+ */
+export function resolveActiveObjectiveNode(
+  blueprint: WorldBlueprint,
+  faction: Faction,
+  objectives: readonly Objective[],
+  pinnedNodeId: string | null,
+): FactionObjectiveNode | null {
+  const ready = getReadyObjectiveNodes(blueprint, faction, objectives)
+  if (pinnedNodeId !== null) {
+    const pinned = ready.find((node) => node.id === pinnedNodeId)
+    if (pinned) return pinned
+  }
+  return ready[0] ?? null
+}
+
+/**
+ * The run ends in victory when every node is done.
+ *
+ * Unchanged by roadmap 1.4, and deliberately so: the branches the 1.4 graph adds are **all
+ * required**, so what the player chooses is an order rather than a route, and the persisted
+ * `Objective` needs no skipped or optional concept to express that. Replacing this
+ * expression is 2.1's cost, gated on what 1.4 measures.
+ */
 export function campaignObjectivesComplete(objectives: readonly Objective[]): boolean {
   return objectives.every((objective) => objective.done)
 }
@@ -1140,6 +1192,11 @@ function readCounter(value: unknown): number | null {
     : null
 }
 
+/** Like `readCounter`, but for a clock rather than a tally: seconds keep their fraction. */
+function readAmount(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
+
 function readFaction(value: unknown): Faction | null {
   return typeof value === 'string' && (RUMOUR_FACTIONS as readonly string[]).includes(value)
     ? (value as Faction)
@@ -1278,3 +1335,546 @@ export function rumourSecondsRemaining(
 export function isVerdictFresh(verdict: RumourVerdict, tick: number): boolean {
   return tick - verdict.tick <= RUMOUR_VERDICT_TICKS
 }
+
+// ---------------------------------------------------------------------------
+// Roadmap 1.4 — branching faction contracts, the first slice
+// ---------------------------------------------------------------------------
+
+/**
+ * A signature contract is a shipped event builder promoted into a campaign object.
+ *
+ * The behaviour is not new and is not written here: `startRichCaravanEvent`,
+ * `startDefendHomeEvent` and `startRescueEvent` already ship in `GameEngine`, already spawn
+ * their actors and props, already have their own success and failure conditions. Nine new
+ * campaign verbs is the explicitly rejected design and this is not it — the node still
+ * wears one of the four `ObjectiveKind`s.
+ *
+ * **What is new is the safety contract, and it is the whole of the work.** An event may
+ * fail harmlessly; a campaign objective may never strand a run. Three properties, and each
+ * one is a field below rather than a paragraph, so `findContractStrandRisks` can check it
+ * and a mutant can break it:
+ *
+ * 1. **A bounded clock.** `timeoutSeconds` is finite and positive, so `active` always
+ *    becomes `kept` or `failed`.
+ * 2. **A bounded start.** `startGraceSeconds` caps how long the engine may stand on the
+ *    site failing to start the thing — an actor budget with no room, a site position the
+ *    streamer has not published — before the contract gives up and fails forward. Without
+ *    this the `offered` state would be the one way a contract could hang for ever.
+ * 3. **Fail-forward.** `failForward` is true on every shipped template and the gate reports
+ *    it if it ever is not. A failed contract does not lock its node: the node degrades to
+ *    an arrival at its own site, which is a site the run's reserved set already protects
+ *    from being razed, so the campaign is always finishable and the price of failing is the
+ *    forfeited payout rather than the run.
+ *
+ * What the player is *choosing* between the two arms of the fork is an **order**, not a
+ * route. Both arms are required. Nothing in this section may be read as saying otherwise.
+ */
+export type ContractStatus = 'offered' | 'active' | 'kept' | 'failed'
+
+export const CONTRACT_STATUSES: readonly ContractStatus[] = [
+  'offered',
+  'active',
+  'kept',
+  'failed',
+]
+
+const CONTRACT_FACTIONS: readonly Faction[] = ['elf', 'guard', 'villain']
+const MAX_CONTRACT_ROWS = 8
+
+export interface FactionContractTemplate {
+  id: ContractId
+  faction: Faction
+  /** The shipped builder this contract is adapted from. Not a new behaviour. */
+  eventKind: RandomWorldEventKind
+  /** The contract's own clock, in seconds. Finite and positive, always. */
+  timeoutSeconds: number
+  /** How long the engine may fail to start it on site before it fails forward. */
+  startGraceSeconds: number
+  /**
+   * Whether a failed contract leaves its node completable.
+   *
+   * Always true on a shipped template. It is a field rather than an invariant baked into
+   * the code precisely so `tests/factionContracts.test.ts` can build a template with it
+   * false and prove the gate catches that — a safety check nobody can make fail is not one.
+   */
+  failForward: boolean
+  /** Gold the contract pays on top of the event's own reward when it is kept. */
+  reward: number
+}
+
+/**
+ * One signature contract per faction, and the pairing is the faction's own identity rather
+ * than a shuffle: the villain robs, the guard protects, the elf frees its own.
+ *
+ * The clocks differ because the builders do. `defendHome` ships with a 45 s timer of its
+ * own and a house that can burn down, so its contract clock only has to outlast that;
+ * `richCaravan` and `rescue` have no clock at all, so theirs *is* the clock, and it is long
+ * enough to fight through an escort and short enough that a player who wandered off finds
+ * out rather than waits.
+ */
+export const FACTION_CONTRACTS: FactionRecord<FactionContractTemplate> = {
+  elf: {
+    id: 'unshackle',
+    faction: 'elf',
+    eventKind: 'rescue',
+    timeoutSeconds: 150,
+    startGraceSeconds: 12,
+    failForward: true,
+    reward: 90,
+  },
+  guard: {
+    id: 'bulwark',
+    faction: 'guard',
+    eventKind: 'defendHome',
+    timeoutSeconds: 75,
+    startGraceSeconds: 12,
+    failForward: true,
+    reward: 110,
+  },
+  villain: {
+    id: 'plunder',
+    faction: 'villain',
+    eventKind: 'richCaravan',
+    timeoutSeconds: 150,
+    startGraceSeconds: 12,
+    failForward: true,
+    reward: 120,
+  },
+}
+
+export function getFactionContract(faction: Faction): FactionContractTemplate {
+  return FACTION_CONTRACTS[faction]
+}
+
+export function findContractTemplate(
+  contract: ContractId | undefined,
+): FactionContractTemplate | null {
+  if (contract === undefined) return null
+  for (const faction of CONTRACT_FACTIONS) {
+    if (FACTION_CONTRACTS[faction].id === contract) return FACTION_CONTRACTS[faction]
+  }
+  return null
+}
+
+/** The contract node of a faction's graph, or null on a graph that has none. */
+export function findContractNode(
+  blueprint: WorldBlueprint,
+  faction: Faction,
+): FactionObjectiveNode | null {
+  return (
+    blueprint.objectives[faction].nodes.find((node) => node.contract !== undefined) ?? null
+  )
+}
+
+export interface ContractProgress {
+  nodeId: string
+  contract: ContractId
+  status: ContractStatus
+  /** Seconds left on the contract's clock while it is `active`. */
+  remaining: number
+  /** Seconds spent on site failing to start it while it is `offered`. */
+  waited: number
+  /** How many times the engine has actually put the event on the ground. */
+  attempts: number
+}
+
+/**
+ * Everything 1.4 adds to the save, and all of it.
+ *
+ * `directorState` for the same reason 1.3's commitments and 0.4's hint queue are there: the
+ * bag is already persisted on `ActiveRunSaveV3`, already normalized as free-form JSON, and
+ * already where run-scoped director bookkeeping lives. And for the same reason as 1.3, none
+ * of it is derivable — **a pin is a decision, and a decision that does not survive a reload
+ * is not one.**
+ */
+export interface CampaignContractState {
+  /** The objective node the player took on. Null means "whatever comes first". */
+  pinnedNodeId: string | null
+  contracts: ContractProgress[]
+}
+
+export function createCampaignContractState(): CampaignContractState {
+  return { pinnedNodeId: null, contracts: [] }
+}
+
+export function cloneCampaignContractState(
+  state: CampaignContractState,
+): CampaignContractState {
+  return {
+    pinnedNodeId: state.pinnedNodeId,
+    contracts: state.contracts.map((entry) => ({ ...entry })),
+  }
+}
+
+/**
+ * Pins one ready objective, or clears the pin. Reports whether anything moved.
+ *
+ * Takes no RNG and reads no clock, exactly like `pinRumour`: this is a button, and a UI
+ * event that consumed from a gameplay stream would shift every encounter and loot roll
+ * after it.
+ */
+export function pinObjective(
+  state: CampaignContractState,
+  nodeId: string | null,
+  readyNodeIds: readonly string[],
+): boolean {
+  if (nodeId === null) {
+    if (state.pinnedNodeId === null) return false
+    state.pinnedNodeId = null
+    return true
+  }
+  if (state.pinnedNodeId === nodeId) return false
+  if (!readyNodeIds.includes(nodeId)) return false
+  state.pinnedNodeId = nodeId
+  return true
+}
+
+export function getContractProgress(
+  state: CampaignContractState,
+  nodeId: string,
+): ContractProgress | null {
+  return state.contracts.find((entry) => entry.nodeId === nodeId) ?? null
+}
+
+export function getContractStatus(
+  state: CampaignContractState,
+  node: FactionObjectiveNode,
+): ContractStatus | null {
+  if (node.contract === undefined) return null
+  return getContractProgress(state, node.id)?.status ?? 'offered'
+}
+
+/** Creates the row on first sight, so an untouched contract still reads as `offered`. */
+export function ensureContractProgress(
+  state: CampaignContractState,
+  node: FactionObjectiveNode,
+): ContractProgress | null {
+  if (node.contract === undefined) return null
+  const existing = getContractProgress(state, node.id)
+  if (existing) return existing
+  const created: ContractProgress = {
+    nodeId: node.id,
+    contract: node.contract,
+    status: 'offered',
+    remaining: 0,
+    waited: 0,
+    attempts: 0,
+  }
+  state.contracts.push(created)
+  return created
+}
+
+/** The event is on the ground: the clock starts and nothing else can restart it. */
+export function beginContract(
+  state: CampaignContractState,
+  node: FactionObjectiveNode,
+  template: FactionContractTemplate,
+): boolean {
+  const progress = ensureContractProgress(state, node)
+  if (!progress || progress.status !== 'offered') return false
+  progress.status = 'active'
+  progress.remaining = template.timeoutSeconds
+  progress.waited = 0
+  progress.attempts += 1
+  return true
+}
+
+/** Terminal, and only from `offered` or `active`. A resolved contract stays resolved. */
+export function resolveContract(
+  state: CampaignContractState,
+  nodeId: string,
+  outcome: 'kept' | 'failed',
+): boolean {
+  const progress = getContractProgress(state, nodeId)
+  if (!progress) return false
+  if (progress.status === 'kept' || progress.status === 'failed') return false
+  progress.status = outcome
+  progress.remaining = 0
+  progress.waited = 0
+  return true
+}
+
+/**
+ * What one frame does to a contract's clock, given whether the player is standing on it.
+ *
+ * Two clocks, and the second one is the one that closes the last hole. `active` counts the
+ * contract's own timer down and fails it at zero. `offered` counts *only while the player
+ * is on site and the engine could not put the event on the ground* — a budget with no
+ * chronicle slots, a site the streamer has not published — and fails forward when that
+ * patience runs out. Without it a contract could sit `offered` for the whole run and the
+ * node would never resolve, which is stranding by another name.
+ */
+export type ContractTick =
+  | { kind: 'idle' }
+  | { kind: 'waiting'; waited: number }
+  | { kind: 'running'; remaining: number }
+  | { kind: 'expired' }
+  | { kind: 'abandoned' }
+
+export function advanceContract(
+  progress: ContractProgress,
+  template: FactionContractTemplate,
+  delta: number,
+  onSite: boolean,
+): ContractTick {
+  if (progress.status === 'active') {
+    progress.remaining = Math.max(0, progress.remaining - delta)
+    if (progress.remaining > 0) return { kind: 'running', remaining: progress.remaining }
+    return { kind: 'expired' }
+  }
+  if (progress.status !== 'offered') return { kind: 'idle' }
+  if (!onSite) {
+    // Patience is only spent in front of the thing. A player who has not arrived has not
+    // been kept waiting, and burning the grace on their way over would fail a contract
+    // they never saw.
+    progress.waited = 0
+    return { kind: 'idle' }
+  }
+  progress.waited += delta
+  if (progress.waited < template.startGraceSeconds) {
+    return { kind: 'waiting', waited: progress.waited }
+  }
+  return { kind: 'abandoned' }
+}
+
+/**
+ * **The fail-forward rule, in one function.**
+ *
+ * A contract node whose contract has failed completes by arrival — walk to the site, and
+ * the campaign moves on. That site is one of the player's objective sites, so
+ * `getRumourReservedRegionIds` already keeps it out of every rumour's stake and out of
+ * every raid's reach; a burned shop cannot make this unreachable. The player loses the
+ * contract's payout and the event's own reward, and keeps the run.
+ *
+ * `failForward: false` is not a shipped state. It exists so a control can build one and
+ * prove `findContractStrandRisks` says so.
+ */
+export function isContractNodeCompletableByArrival(
+  status: ContractStatus | null,
+  template: FactionContractTemplate | null,
+): boolean {
+  if (status !== 'failed') return false
+  return template?.failForward === true
+}
+
+/** True while the contract is still the player's to win — the node is not free yet. */
+export function isContractLive(status: ContractStatus | null): boolean {
+  return status === 'offered' || status === 'active'
+}
+
+// --- the campaign-safety gate ----------------------------------------------
+
+export type ContractStrandProblem =
+  | 'missingTemplate'
+  | 'unboundedClock'
+  | 'unboundedStart'
+  | 'noFailForward'
+  | 'missingNode'
+  | 'siteMissing'
+  | 'siteUnreserved'
+  | 'terminalIncomplete'
+
+export interface ContractStrandRisk {
+  /** The faction, contract id or node id at fault. */
+  readonly subject: string
+  readonly problem: ContractStrandProblem
+}
+
+/**
+ * Every way a contract could leave a run unfinishable, reported rather than asserted.
+ *
+ * Written as a function taking its inputs as parameters — the same shape as
+ * `findHudCoverageGaps` — because a campaign-safety check that cannot be driven against a
+ * mutated table is a check nobody can prove fires. `tests/factionContracts.test.ts` runs it
+ * against the shipped tables and then against a template with no clock, a template with no
+ * fail-forward, and a graph whose contract site is not reserved, and requires each to be
+ * reported.
+ *
+ * The last check is the load-bearing one and it is a simulation rather than an assertion:
+ * every status is driven forward with a driver that never succeeds, and the contract has to
+ * reach a state the player can complete within the clock plus the grace. That is what
+ * "may never strand a run" means as something a machine can check.
+ */
+export function findContractStrandRisks(
+  blueprint: WorldBlueprint,
+  templates: FactionRecord<FactionContractTemplate> = FACTION_CONTRACTS,
+  reservedFor: (
+    blueprint: WorldBlueprint,
+    faction: Faction,
+  ) => ReadonlySet<string> = getRumourReservedRegionIds,
+): ContractStrandRisk[] {
+  const risks: ContractStrandRisk[] = []
+  for (const faction of CONTRACT_FACTIONS) {
+    const template = templates[faction] as FactionContractTemplate | undefined
+    if (!template) {
+      risks.push({ subject: faction, problem: 'missingTemplate' })
+      continue
+    }
+    if (!Number.isFinite(template.timeoutSeconds) || template.timeoutSeconds <= 0) {
+      risks.push({ subject: template.id, problem: 'unboundedClock' })
+    }
+    if (!Number.isFinite(template.startGraceSeconds) || template.startGraceSeconds <= 0) {
+      risks.push({ subject: template.id, problem: 'unboundedStart' })
+    }
+    if (template.failForward !== true) {
+      risks.push({ subject: template.id, problem: 'noFailForward' })
+    }
+
+    const node = findContractNode(blueprint, faction)
+    if (!node) {
+      risks.push({ subject: faction, problem: 'missingNode' })
+      continue
+    }
+    const site = blueprint.sites.find((candidate) => candidate.id === node.siteId)
+    if (!site) {
+      risks.push({ subject: node.id, problem: 'siteMissing' })
+      continue
+    }
+    // The second lock, and it is 1.3's: the reserved set is the anchors plus every square
+    // holding one of this faction's objective sites, and a contract site that fell outside
+    // it could be razed out from under the run.
+    //
+    // Against a shipped blueprint this can never fire, because a contract node *is* an
+    // objective node and `getRumourReservedRegionIds` reserves both its square and its
+    // site's. That is the guarantee rather than an excuse to delete the check — the
+    // reservation rule is 1.3's and could change without anyone thinking about contracts —
+    // so the reserved set is a parameter and `tests/factionContracts.test.ts` drives it
+    // with a rule that forgets, which is the only way to prove this branch can report.
+    const reserved = reservedFor(blueprint, faction)
+    if (
+      !reserved.has(String(node.regionId)) ||
+      !reserved.has(String(site.regionId))
+    ) {
+      risks.push({ subject: node.id, problem: 'siteUnreserved' })
+    }
+
+    if (!simulateContractAlwaysResolves(node, template)) {
+      risks.push({ subject: node.id, problem: 'terminalIncomplete' })
+    }
+  }
+  return risks
+}
+
+/**
+ * Drives one contract from every status with a driver that never succeeds, and reports
+ * whether the player is always left with something they can finish.
+ *
+ * The frame is a whole second and the horizon is generous on purpose: this is a proof that
+ * a bound exists, not a measurement of where it is. It is also *capped*, which is not
+ * decoration — a template whose clock is not finite would otherwise put this loop in an
+ * infinite one, and a safety check that hangs on the input it exists to reject is worse
+ * than one that misses it. A non-finite clock is reported as a risk rather than simulated.
+ */
+const CONTRACT_SIMULATION_MAX_STEPS = 4_096
+
+function simulateContractAlwaysResolves(
+  node: FactionObjectiveNode,
+  template: FactionContractTemplate,
+): boolean {
+  if (
+    !Number.isFinite(template.timeoutSeconds) ||
+    !Number.isFinite(template.startGraceSeconds)
+  ) {
+    return false
+  }
+  for (const start of CONTRACT_STATUSES) {
+    if (start === 'kept') continue
+    const state = createCampaignContractState()
+    const progress = ensureContractProgress(state, node)
+    if (!progress) return false
+    progress.status = start
+    if (start === 'active') progress.remaining = template.timeoutSeconds
+    const horizon = Math.min(
+      CONTRACT_SIMULATION_MAX_STEPS,
+      Math.ceil(template.timeoutSeconds + template.startGraceSeconds) + 4,
+    )
+    let resolved = start === 'failed'
+    for (let second = 0; second < horizon && !resolved; second += 1) {
+      const tick = advanceContract(progress, template, 1, true)
+      if (tick.kind === 'expired' || tick.kind === 'abandoned') {
+        resolveContract(state, node.id, 'failed')
+        resolved = true
+      }
+    }
+    if (!resolved) return false
+    if (
+      !isContractNodeCompletableByArrival(
+        getContractStatus(state, node),
+        template,
+      )
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+// --- save ownership --------------------------------------------------------
+
+function normalizeContractProgress(value: unknown): ContractProgress | null {
+  const record = readRecord(value)
+  if (!record) return null
+  const nodeId = readId(record.nodeId)
+  const contract = record.contract
+  const status = record.status
+  const remaining = readAmount(record.remaining)
+  const waited = readAmount(record.waited)
+  const attempts = readCounter(record.attempts)
+  if (
+    nodeId === null ||
+    typeof contract !== 'string' ||
+    !(CONTRACT_IDS as readonly string[]).includes(contract) ||
+    typeof status !== 'string' ||
+    !(CONTRACT_STATUSES as readonly string[]).includes(status) ||
+    remaining === null ||
+    waited === null ||
+    attempts === null
+  ) {
+    return null
+  }
+  return {
+    nodeId,
+    contract: contract as ContractId,
+    status: status as ContractStatus,
+    remaining,
+    waited,
+    attempts,
+  }
+}
+
+/**
+ * Reads the campaign board back off a save, dropping anything it does not recognise.
+ *
+ * Same policy as the hint queue and 1.3's commitments rather than the save-level
+ * discard-and-report one: this is a field inside a free-form bag, so a contract written by
+ * a build that knew an id this one does not is forgotten, not fatal. A pin naming a node
+ * this graph does not have is cleared by `resolveActiveObjectiveNode` on the first frame,
+ * which is why the pin is read as a plain id here rather than validated against a blueprint
+ * this function does not have.
+ */
+export function normalizeCampaignContractState(value: unknown): CampaignContractState {
+  const record = readRecord(value)
+  if (!record) return createCampaignContractState()
+  const contracts: ContractProgress[] = []
+  if (Array.isArray(record.contracts)) {
+    for (const entry of record.contracts) {
+      if (contracts.length >= MAX_CONTRACT_ROWS) break
+      const progress = normalizeContractProgress(entry)
+      if (progress && !contracts.some((existing) => existing.nodeId === progress.nodeId)) {
+        contracts.push(progress)
+      }
+    }
+  }
+  return { pinnedNodeId: readId(record.pinnedNodeId), contracts }
+}
+
+/** The JSON that goes into `directorState`. Bounded by `MAX_CONTRACT_ROWS`. */
+export function serializeCampaignContractState(
+  state: CampaignContractState,
+): Record<string, unknown> {
+  return {
+    pinnedNodeId: state.pinnedNodeId,
+    contracts: state.contracts.map((entry) => ({ ...entry })),
+  }
+}
+
