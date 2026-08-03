@@ -24,11 +24,34 @@
  *    `worldVariety.test.ts`'s anchor-exclusion test is written to fail when 2.2 frees
  *    `ENDPOINTS`.
  *
+ * 4. **Roadmap 2.1's arm**, added when subset completion shipped. Every arm above varies
+ *    the world; this one holds the world completely still and varies which road the player
+ *    takes. See its own test for why that is the only reading 2.1's claim lives in.
+ *
  * The measured corpus behind the bands is larger than the one CI runs. Over **120 seeds
  * per faction** with `MEASUREMENT_ARM`, completed campaigns printed **4 (elf), 4 (guard)
  * and 5 (villain)** distinct route lines, and the modal three-verb chronicle covered
  * **79 %, 81 % and 82 %** of them. The committed gate sweeps far fewer seeds so the suite
  * stays quick, and asserts bands rather than those numbers.
+ *
+ * **What roadmap 2.1 did and did not move here, stated before anyone reads a number off
+ * this file.** Re-measured after subset completion shipped, over the same 120 seeds per
+ * faction:
+ *
+ * | corpus                        | completed | routes | line agreement | square overlap |
+ * | ----------------------------- | --------: | -----: | -------------: | -------------: |
+ * | pre-2.1 (PR #84, elf)         |        85 |      4 |          0.787 |          0.852 |
+ * | shipped 2.1, elf              |        93 |      4 |          0.787 |          0.846 |
+ * | shipped 2.1, guard            |        98 |      4 |          0.786 |          0.841 |
+ * | shipped 2.1, villain          |        84 |      5 |          0.778 |          0.844 |
+ * | 2.1 with exclusivity removed  |        79 |      4 |          0.787 |          0.877 |
+ *
+ * **Across seeds the route still does not move, and 2.1 never claimed it would** — that was
+ * PR #84's finding about the *seed*, and this initiative changed the player's options
+ * rather than the generator's. What did move is the square overlap, by 0.031 against its
+ * own matched control (0.846 against 0.877 with `optional`/`exclusiveGroup` stripped), and
+ * that is a small number honestly reported rather than a large one dressed up. The reading
+ * 2.1's claim actually lives in is test 4 below, where the world is held still.
  */
 
 import assert from 'node:assert/strict'
@@ -42,6 +65,7 @@ import {
   measureRunFields,
   measureSeedVariance,
   runAblatedArm,
+  runChoiceArm,
   runFactionArm,
   runNoiseArm,
   runSeedArm,
@@ -57,8 +81,15 @@ function seedCount(): number {
   return Number.isInteger(raw) && raw > 0 ? raw : 18
 }
 
-/** A seed the scripted player finishes, so the control compares two completed campaigns. */
-const CONTROL_SEED = 1
+/**
+ * A seed the scripted player finishes, so the control compares two completed campaigns.
+ *
+ * Was 1 until roadmap 2.1; the exclusive fork changed which arm the seeded player walks on
+ * that seed and it stopped finishing inside the arm's clock. Re-picked by the same rule
+ * (elf and villain both complete it) rather than by loosening the control, because a corpus
+ * with a truncated campaign in it is exactly what this control exists to refuse.
+ */
+const CONTROL_SEED = 2
 
 function victories(runs: readonly MeasuredRun[]): MeasuredRun[] {
   return runs.filter((run) => run.report.outcome === 'victory')
@@ -174,6 +205,99 @@ test('with the faction pinned, completed campaigns still print a handful of rout
   assert.ok(
     report.meanControlDelta > 1,
     'a run that changes no square at all would make the control reading meaningless',
+  )
+})
+
+// ---------------------------------------------------------------------------
+// 4. Roadmap 2.1 — the route the *player* moves
+// ---------------------------------------------------------------------------
+
+test('the same world walked down its two roads is not the same route', () => {
+  // **What this arm is for.** Every other arm here varies the world — the seed, the
+  // faction, the dice, the layout — and PR #84's finding was that the route does not move
+  // with the seed. Roadmap 2.1 never claimed it would. Its claim is the other one: that a
+  // *player* can move the route with the world held completely still, which is exactly what
+  // 1.4's all-required fork could not offer.
+  //
+  // So this holds the seed, the faction, the layout, the chronicle and the dice still and
+  // varies one thing: which arm of the fork is taken. `firstReady` walks the faction's
+  // signature contract, `contrary` walks the alternative, and the pair is compared to
+  // itself.
+  //
+  // **Measured over 60 seeds per faction, on victories where both roads finished:**
+  //
+  // | shape         | faction | pairs | line agreement | square overlap |
+  // |---------------|---------|------:|---------------:|---------------:|
+  // | branched      | elf     |    30 |          0.775 |     **0.863**  |
+  // | branched      | guard   |    39 |          0.795 |     **0.890**  |
+  // | branched      | villain |    24 |          0.766 |     **0.849**  |
+  // | `allRequired` | elf     |    25 |          0.785 |       0.910    |
+  // | `allRequired` | guard   |    29 |          0.737 |       0.933    |
+  // | `allRequired` | villain |    23 |          0.717 |       0.942    |
+  //
+  // The `allRequired` rows are the matched control: the same two policies on the same
+  // worlds with only `optional`/`exclusiveGroup` removed, so both runs walk **both** arms
+  // and differ in nothing but the order. They still print different route *lines* — walking
+  // the same two places in a different order changes what streams in when — which is why
+  // the line-agreement column cannot discriminate here and the **square overlap** is what
+  // this test judges on. An exclusive choice removes squares the other road would have
+  // shown; an ordering does not.
+  const seeds = seedCount()
+  // One faction in the committed gate, and it is stated rather than hidden: this arm walks
+  // two whole runs per seed per shape, and sweeping all three factions took 161 s of CI for
+  // a comparison the table above already records for all of them. The guard is chosen
+  // because it completes most often, so the panel yields the most usable pairs per second.
+  // `KOROVANY_SEED_VARIANCE_SEEDS` widens it; `runChoiceArm` takes a faction.
+  const measure = (shape: 'branched' | 'allRequired'): { overlap: number; pairs: number; varied: number } => {
+    let overlap = 0
+    let pairs = 0
+    let varied = 0
+    for (const pair of runChoiceArm('guard', { seeds }, shape)) {
+      if (
+        pair.first.report.outcome !== 'victory' ||
+        pair.contrary.report.outcome !== 'victory'
+      ) {
+        continue
+      }
+      pairs += 1
+      overlap += measureSeedVariance([pair.first, pair.contrary]).routeOverlap
+      // Sets, not sequences. The control walks both arms in both runs and may walk them in
+      // either order, which is an ordering rather than a route — the exact distinction 1.4
+      // shipped and this initiative replaced.
+      const first = [...pair.first.report.contracts.route].sort().join('+')
+      const contrary = [...pair.contrary.report.contracts.route].sort().join('+')
+      if (first !== contrary) varied += 1
+    }
+    return { overlap: overlap / Math.max(1, pairs), pairs, varied }
+  }
+
+  const branched = measure('branched')
+  const required = measure('allRequired')
+
+  // Non-vacuity, twice over. The arm has to have produced pairs at all, and every one of
+  // them has to have actually taken different roads — otherwise the comparison below is
+  // between a policy and itself.
+  assert.ok(branched.pairs >= 5, `only ${branched.pairs} completed pairs to compare`)
+  assert.ok(required.pairs >= 5, `only ${required.pairs} completed control pairs`)
+  assert.equal(
+    branched.varied,
+    branched.pairs,
+    'the two policies walked the same campaign route, so nothing was exclusive',
+  )
+  // And the control walks *both* arms in both runs, so its "routes" are the same set every
+  // time — which is 1.4's shape, reproduced.
+  assert.equal(
+    required.varied,
+    0,
+    'the all-required control closed different sets of nodes, so it is not a matched control',
+  )
+
+  // **The finding.** Choosing a road drops squares the other road would have shown; merely
+  // reordering the same two errands does not.
+  assert.ok(
+    branched.overlap < required.overlap - 0.01,
+    `exclusive choice overlapped ${branched.overlap.toFixed(3)} against an ordering-only ` +
+      `control at ${required.overlap.toFixed(3)} — the choice is not removing any ground`,
   )
 })
 

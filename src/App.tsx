@@ -27,6 +27,7 @@ import {
   Shield,
   Skull,
   Sparkles,
+  Split,
   Sword,
   Sun,
   Swords,
@@ -97,10 +98,13 @@ import {
   EPILOGUE_IMAGE_FAILED_LABEL,
   EPILOGUE_IMAGE_LABEL,
   EPILOGUE_SHARE_NOTE,
+  CONTRACT_EXCLUSIVE_BADGE,
   CONTRACT_PANEL_HINT,
   CONTRACT_PANEL_TITLE,
   CONTRACT_PIN_LABEL,
   CONTRACT_UNPIN_LABEL,
+  OBJECTIVE_OPTIONAL_LABEL,
+  OBJECTIVE_SKIPPED_LABEL,
   DOCTRINE_DRAFT_HINT,
   DOCTRINE_EQUIPPED_HINT,
   DOCTRINE_MENU_EYEBROW,
@@ -737,16 +741,17 @@ function RumourBoard({
 }
 
 /**
- * Roadmap 1.4 — the fork, as the only place the campaign asks the player which way round.
+ * Roadmap 2.1 — the fork, as the place the campaign asks the player which *road*.
  *
  * The card exists because `getActiveObjectiveNode` returns the *first* ready node and the
  * marker, the prompt and the objective list all follow it: a branched campaign read through
  * that alone would look exactly like a straight line. This lists every ready node, so the
- * player can see there are two and say which one first.
+ * player can see there are several and say which.
  *
- * The header hint is load-bearing copy rather than decoration. Both arms are required —
- * pinning one does not drop the other — and the panel says so, because a HUD that let the
- * player believe they were choosing a route would be promising 2.1.
+ * 1.4's header hint had to say the opposite of what it says now — «выбираешь порядок, а не
+ * дорогу» — because every arm was required. Subset completion ships the road, so the badge
+ * on an exclusive arm and the header both say road, and the stake line under each arm says
+ * what taking it costs before it is taken.
  */
 function ContractBoard({
   view,
@@ -773,12 +778,20 @@ function ContractBoard({
           <article
             className={`contract-entry ${entry.contract ? 'signature' : 'errand'} ${
               entry.pinned ? 'pinned' : ''
-            } ${entry.status === 'failed' ? 'failed' : ''}`}
+            } ${entry.status === 'failed' ? 'failed' : ''} ${
+              entry.exclusive ? 'exclusive' : ''
+            }`}
             key={entry.id}
           >
             <div className="contract-line">
               <span className="chronicle-square">{entry.regionLabel}</span>
               <strong>{entry.title}</strong>
+              {entry.exclusive ? (
+                <span className="contract-exclusive">
+                  <Split aria-hidden="true" />
+                  {CONTRACT_EXCLUSIVE_BADGE}
+                </span>
+              ) : null}
               {entry.timeRemaining === null ? null : (
                 <span className="contract-clock">
                   <Clock3 aria-hidden="true" />
@@ -882,7 +895,19 @@ function DoctrineBoard({
   )
 }
 
-function ObjectiveList({ view }: { view: GameView }) {  const completed = view.objectives.filter((objective) => objective.done).length
+/**
+ * Roadmap 2.1 — «Суть такова», now that a node can close without being done.
+ *
+ * Two things changed and both are legibility rather than mechanism. The counter reads
+ * *settled* over total, because a run that skipped an arm has genuinely finished with it
+ * and a counter stuck at 4/5 on a victory screen would be a lie. And a skipped node stays
+ * in the list, struck through and labelled «Мимо» — deleting it would hide the decision the
+ * whole initiative exists to let the player make.
+ */
+function ObjectiveList({ view }: { view: GameView }) {
+  const settled = view.objectives.filter(
+    (objective) => objective.done || objective.skipped,
+  ).length
   const raidDone = view.objectives.some((objective) => objective.id === 'raid' && objective.done)
   const guards = view.objectives.find((objective) => objective.id === 'guards')
   const lootTurnInReady = raidDone && Boolean(guards?.done)
@@ -895,7 +920,7 @@ function ObjectiveList({ view }: { view: GameView }) {  const completed = view.o
           Суть такова
         </span>
         <span className="zone-code">
-          {completed}/{view.objectives.length}
+          {settled}/{view.objectives.length}
         </span>
       </header>
       <div className="objective-list">
@@ -918,15 +943,26 @@ function ObjectiveList({ view }: { view: GameView }) {  const completed = view.o
           return (
             <div
               className={`objective-item ${objective.done ? 'done' : ''} ${
-                isLootTurnIn && lootTurnInReady ? 'ready' : ''
-              } ${pinned ? 'pinned' : ''}`}
+                objective.skipped ? 'skipped' : ''
+              } ${isLootTurnIn && lootTurnInReady ? 'ready' : ''} ${pinned ? 'pinned' : ''}`}
               key={objective.id}
             >
               <span className="objective-check">
-                {objective.done ? <Check aria-hidden="true" /> : <span />}
+                {objective.done ? (
+                  <Check aria-hidden="true" />
+                ) : objective.skipped ? (
+                  <Split aria-hidden="true" />
+                ) : (
+                  <span />
+                )}
               </span>
               <div>
                 <p>{objective.text}</p>
+                {objective.skipped ? (
+                  <span className="objective-hint">{OBJECTIVE_SKIPPED_LABEL}</span>
+                ) : objective.optional && !objective.done ? (
+                  <span className="objective-hint">{OBJECTIVE_OPTIONAL_LABEL}</span>
+                ) : null}
                 {lootHint ? <span className="objective-hint">{lootHint}</span> : null}
                 {objective.target && !objective.done ? (
                   <div className="objective-progress">

@@ -165,6 +165,22 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
     firstSighting: (view) => view.contracts.length > 1,
   },
   {
+    hint: 'exclusive',
+    // Two fields, because the lesson lands in two places: the objective list is where the
+    // consequence shows up as a node that closed without being done, and the board is
+    // where the decision that closed it was made. A field may back several mechanics, and
+    // this is why.
+    viewFields: ['objectives', 'contracts'],
+    // Roadmap 2.1 — the frame a node goes off the board **without being done**, which is
+    // the moment subset completion stops being a rule in a panel and becomes a struck-out
+    // line the player did not put there. Deliberately not the frame the fork *opens*: the
+    // board already says «Возьмёшь один — второй закроется сам» and every exclusive arm
+    // wears an «Или — или» badge, so the offer is legible before the choice; what needs a
+    // line is the consequence, and it needs it the instant it is on screen. It also cannot
+    // collide with `contracts`, which reads a different field on a different frame.
+    firstSighting: (view) => view.objectives.some((objective) => objective.skipped === true),
+  },
+  {
     hint: 'doctrines',
     viewFields: ['doctrines'],
     // Roadmap 1.6 — the first *offer*, not the first equipped card. The lesson is that a

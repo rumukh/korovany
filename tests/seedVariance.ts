@@ -75,6 +75,7 @@ import type { Territory, WorldBlueprint } from '../src/game/world/worldTypes.ts'
 import { collapseAxis } from './worldVariety.ts'
 import {
   runHarness,
+  type CampaignShape,
   type ContractPolicy,
   type DoctrinePolicy,
   type InputPolicy,
@@ -82,7 +83,6 @@ import {
   type RumourPolicy,
   type RunReport,
 } from './runHarness.ts'
-
 // ---------------------------------------------------------------------------
 // The arm
 // ---------------------------------------------------------------------------
@@ -661,6 +661,8 @@ function walk(
   seed: number,
   faction: Faction,
   combatNoiseSalt?: number,
+  campaignShape?: CampaignShape,
+  contractPolicy?: ContractPolicy,
 ): MeasuredRun {
   return {
     report: runHarness({
@@ -669,6 +671,8 @@ function walk(
       blueprint,
       ...MEASUREMENT_ARM,
       ...(combatNoiseSalt === undefined ? {} : { combatNoiseSalt }),
+      ...(campaignShape === undefined ? {} : { campaignShape }),
+      ...(contractPolicy === undefined ? {} : { contractPolicy }),
     }),
     blueprint,
   }
@@ -681,6 +685,59 @@ export function runSeedArm(faction: Faction, options: ArmOptions): MeasuredRun[]
   return Array.from({ length: options.seeds }, (_, index) => {
     const seed = seedAt(options, index)
     return walk(generateWorld(seed), seed, faction)
+  })
+}
+
+/**
+ * **Roadmap 2.1's anti-placebo.** The same seeds and the same faction, with the fork's
+ * exclusivity removed and nothing else.
+ *
+ * `allRequired` strips `optional` and `exclusiveGroup` from the shipped graph, which
+ * reproduces 1.4's shape exactly: same sites, same contracts, same two ready nodes, same
+ * seeded pin — and both arms required, so the run walks both. It is the arm that separates
+ * "the player took one road" from "the map has two roads on it". If the route statistics
+ * move here too, the exclusive choice is not what moved them, and 2.1's claim is
+ * unfounded.
+ */
+export function runShapeArm(
+  faction: Faction,
+  options: ArmOptions,
+  shape: CampaignShape,
+): MeasuredRun[] {
+  return Array.from({ length: options.seeds }, (_, index) => {
+    const seed = seedAt(options, index)
+    return walk(generateWorld(seed), seed, faction, undefined, shape)
+  })
+}
+
+/**
+ * **Roadmap 2.1's primary, and the reason this instrument needed a fourth arm.**
+ *
+ * Every other arm here varies the *world*: the seed, the faction, the dice, the layout. But
+ * 2.1's claim is not that the world moved — it is that **the player can move the route
+ * without the world moving at all**, which is precisely what 1.4 could not offer and what
+ * PR #84 found the seed could not buy either.
+ *
+ * So this arm holds the seed, the faction, the layout, the chronicle and the dice all still
+ * and varies exactly one thing: which arm of the fork the player takes. `firstReady` walks
+ * the faction's signature contract; `contrary` walks the alternative. Two runs of the same
+ * world, and the only difference between them is a decision.
+ *
+ * It is the same shape as {@link runFactionArm}, which is this file's positive control, and
+ * it is read the same way: a *low* agreement here is the finding, and the noise arm's zero
+ * is the floor it has to clear.
+ */
+export function runChoiceArm(
+  faction: Faction,
+  options: ArmOptions,
+  shape: CampaignShape = 'branched',
+): { first: MeasuredRun; contrary: MeasuredRun }[] {
+  return Array.from({ length: options.seeds }, (_, index) => {
+    const seed = seedAt(options, index)
+    return {
+      first: walk(generateWorld(seed), seed, faction, undefined, shape, 'firstReady'),
+      contrary: walk(generateWorld(seed), seed, faction, undefined, shape, 'contrary'),
+    }
   })
 }
 

@@ -52,8 +52,16 @@ import {
   type ChronicleState,
   type RegionChronicleState,
 } from './Chronicle.ts'
-import type { FactionObjectiveNode, WorldBlueprint } from './worldTypes.ts'
-import { CONTRACT_IDS, type ContractId, type FactionRecord } from './worldTypes.ts'
+import type {
+  FactionObjectiveGraph,
+  FactionObjectiveNode,
+  WorldBlueprint,
+} from './worldTypes.ts'
+import {
+  CONTRACT_IDS,
+  type ContractId,
+  type FactionRecord,
+} from './worldTypes.ts'
 
 // ---------------------------------------------------------------------------
 // Objectives
@@ -77,6 +85,10 @@ export function createGeneratedObjectives(
       id: node.id,
       text: createGeneratedObjectiveText(node.kind, site?.kind),
       done: false,
+      // Roadmap 2.1 — carried onto the persisted objective rather than looked up in the
+      // blueprint on every read, because the win condition, the HUD and the run summary
+      // all ask it and only the save survives a reload of a build whose graph moved.
+      ...(node.optional === true ? { optional: true } : {}),
     }
   })
 }
@@ -88,11 +100,46 @@ export function isObjectiveDone(
   return objectives.some((objective) => objective.id === id && objective.done)
 }
 
+/**
+ * Roadmap 2.1 — **settled**: done, or *legitimately* passed over.
+ *
+ * This is the single predicate the whole of subset completion rests on. Prerequisites,
+ * readiness and the win condition all read it, so a skipped node behaves everywhere like a
+ * node the campaign has finished with — which is exactly what it is — rather than like a
+ * node that is merely still open.
+ *
+ * **Both fields are load-bearing and the `&&` is the safety property.** `skipped` alone
+ * would mean any node could be waved away by writing one boolean; `optional` alone would
+ * mean an arm nobody took still had to be walked. Requiring both means a *required* node
+ * that somehow acquired `skipped` — a corrupt save, a fork the generator built wrong — does
+ * not settle, so the campaign reports itself uncompletable to the strand gate instead of
+ * quietly declaring victory over a node the player never did.
+ */
+export function isObjectiveSettled(objective: Objective): boolean {
+  return objective.done || (objective.optional === true && objective.skipped === true)
+}
+
+export function isObjectiveSettledById(
+  objectives: readonly Objective[],
+  id: string,
+): boolean {
+  return objectives.some((objective) => objective.id === id && isObjectiveSettled(objective))
+}
+
+/**
+ * Prerequisites are satisfied by **settled** nodes, not by done ones.
+ *
+ * That single word is what lets a finale wait on both arms of a fork and still open when
+ * the player has taken only one: the arm they did not take is skipped, skipped is settled,
+ * and the campaign moves on. Written this way rather than as a quorum on the finale
+ * because the fork is where the decision lives, and a quorum would have put the rule
+ * somewhere the player never looks.
+ */
 export function objectivePrerequisitesDone(
   node: FactionObjectiveNode,
   objectives: readonly Objective[],
 ): boolean {
-  return node.prerequisiteIds.every((id) => isObjectiveDone(objectives, id))
+  return node.prerequisiteIds.every((id) => isObjectiveSettledById(objectives, id))
 }
 
 /**
@@ -114,7 +161,7 @@ export function getActiveObjectiveNode(
   return (
     graph.nodes.find(
       (node) =>
-        !isObjectiveDone(objectives, node.id) &&
+        !isObjectiveSettledById(objectives, node.id) &&
         objectivePrerequisitesDone(node, objectives),
     ) ?? null
   )
@@ -127,6 +174,9 @@ export function getActiveObjectiveNode(
  * "which one node does the compass point at"; a diamond graph read through that alone
  * would present one objective at a time and the player would never learn there was a
  * choice at all. The HUD draws this list; the marker layer draws a pin per entry.
+ *
+ * Roadmap 2.1 — a skipped node leaves this list on the frame it is skipped, which is the
+ * legibility half of an exclusive route: the arm the player did not take visibly closes.
  */
 export function getReadyObjectiveNodes(
   blueprint: WorldBlueprint,
@@ -135,7 +185,7 @@ export function getReadyObjectiveNodes(
 ): FactionObjectiveNode[] {
   return blueprint.objectives[faction].nodes.filter(
     (node) =>
-      !isObjectiveDone(objectives, node.id) &&
+      !isObjectiveSettledById(objectives, node.id) &&
       objectivePrerequisitesDone(node, objectives),
   )
 }
@@ -163,32 +213,113 @@ export function resolveActiveObjectiveNode(
 }
 
 /**
- * The run ends in victory when every node is done.
+ * **Roadmap 2.1 — subset completion.** The run ends in victory when every node is settled.
  *
- * Unchanged by roadmap 1.4, and deliberately so: the branches the 1.4 graph adds are **all
- * required**, so what the player chooses is an order rather than a route, and the persisted
- * `Objective` needs no skipped or optional concept to express that. Replacing this
- * expression is 2.1's cost, gated on what 1.4 measures.
+ * What was here was `objectives.every((o) => o.done)`, and it was the sentence that made
+ * 1.4's fork an *order* rather than a route: with every node required, choosing which arm
+ * to walk first changed the sequence and nothing else. Replacing it is the expensive half
+ * of 2.1 and this is the replacement, in one word — **settled**, not **done**.
+ *
+ * The two readings differ only on optional nodes, and that is the whole feature: a run can
+ * now be won with a node left un-done, provided the run has decided not to do it. It can
+ * never be won with a node merely *unattended*, because `skipped` is only ever written by
+ * `skipExclusiveAlternatives`, which needs a completed sibling to write it. So the set of
+ * winnable states is strictly larger than before and still strictly smaller than
+ * "anything" — which is the property a campaign-safety gate can actually check.
  */
 export function campaignObjectivesComplete(objectives: readonly Objective[]): boolean {
-  return objectives.every((objective) => objective.done)
+  return objectives.every(isObjectiveSettled)
 }
 
 /**
  * Marks one objective done, in place, and reports whether anything changed.
  *
  * Returns false for an unknown id and for one already done, which is what stops a repeated
- * arrival trigger from re-announcing and re-scoring the same objective every frame.
+ * arrival trigger from re-announcing and re-scoring the same objective every frame. A
+ * skipped objective is refused for the same reason: the run has already decided about it.
  */
 export function completeObjectiveEntry(
   objectives: Objective[],
   id: string,
 ): Objective | null {
   const objective = objectives.find((entry) => entry.id === id)
-  if (!objective || objective.done) return null
+  if (!objective || objective.done || objective.skipped === true) return null
   objective.done = true
   if (objective.target) objective.progress = objective.target
   return objective
+}
+
+/**
+ * **Roadmap 2.1 — the exclusive rule, in one function.**
+ *
+ * Completing one arm of a fork closes the others. Written as a separate step rather than
+ * folded into `completeObjectiveEntry` because it needs the graph and that function
+ * deliberately does not — and because the engine has to *do* something with the closed
+ * arms: cancel a contract that was already on the ground, drop a pin that now points at
+ * nothing, and tell the player which road they just gave up.
+ *
+ * Three safety properties, and each one is asserted in `tests/factionContracts.test.ts`:
+ *
+ * 1. **Only a completion skips.** The skipped arms are the siblings of a node that is
+ *    `done`, so a group can never settle itself by neglect and a run can never be won by
+ *    standing still.
+ * 2. **A done node is never skipped.** A player who somehow closed two arms keeps both.
+ * 3. **It is idempotent.** Re-running it on a settled graph returns nothing.
+ */
+export function skipExclusiveAlternatives(
+  graph: FactionObjectiveGraph,
+  objectives: Objective[],
+  completedNodeId: string,
+): Objective[] {
+  const completed = graph.nodes.find((node) => node.id === completedNodeId)
+  const group = completed?.exclusiveGroup
+  if (group === undefined) return []
+  const skipped: Objective[] = []
+  for (const node of graph.nodes) {
+    if (node.id === completedNodeId || node.exclusiveGroup !== group) continue
+    const objective = objectives.find((entry) => entry.id === node.id)
+    if (!objective || objective.done || objective.skipped === true) continue
+    objective.skipped = true
+    skipped.push(objective)
+  }
+  return skipped
+}
+
+/**
+ * How many reward steps a run earns, and **why it is not a count of ticked boxes**.
+ *
+ * `objectivesCompleted` used to be `objectives.filter(o => o.done).length`, feeding
+ * `RunHistorySummary` and `Math.min(20, objectivesCompleted * 4)` in `profile.ts`. That
+ * was honest while every campaign was the same four required nodes. It stops being honest
+ * the moment a route can be shorter than the campaign, and it stops in a way that damages
+ * the feature it is measuring:
+ *
+ * - **It prices routes.** A raw count pays more for the arm with more nodes in it, so the
+ *   currency-optimal play is to ignore the choice and take the long way — a reward for
+ *   refusing exactly the decision 2.1 exists to offer.
+ * - **It is inflatable by the generator rather than the player.** Adding a node to a graph
+ *   would raise everybody's payout with nobody deciding to.
+ * - **It stops being comparable.** Two victories that closed their campaigns completely
+ *   would print different numbers on the postcard because their campaigns were different
+ *   sizes.
+ *
+ * So it is re-decided as **how much of its own campaign the run closed**, quantised to the
+ * reward's own resolution. `committed` is every objective the run did not skip — the route
+ * it actually took on — and the floor means only a run that closed all of it earns the
+ * cap. The consequences are the properties the control asserts: every victory pays the
+ * same on every route, no completion ever lowers the number, and nothing a player can do
+ * pushes it past `OBJECTIVE_REWARD_STEPS`.
+ */
+export const OBJECTIVE_REWARD_STEPS = 5
+
+export function countRewardedObjectives(objectives: readonly Objective[]): number {
+  const committed = objectives.filter((objective) => objective.skipped !== true)
+  if (committed.length === 0) return 0
+  const done = committed.filter((objective) => objective.done).length
+  return Math.min(
+    OBJECTIVE_REWARD_STEPS,
+    Math.floor((done / committed.length) * OBJECTIVE_REWARD_STEPS),
+  )
 }
 
 /** How close the player has to stand before an `arrive` objective completes itself. */
@@ -1337,17 +1468,18 @@ export function isVerdictFresh(verdict: RumourVerdict, tick: number): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Roadmap 1.4 — branching faction contracts, the first slice
+// Roadmap 1.4 / 2.1 — faction contracts, and the fork they make
 // ---------------------------------------------------------------------------
 
 /**
- * A signature contract is a shipped event builder promoted into a campaign object.
+ * A contract is a shipped event builder promoted into a campaign object.
  *
- * The behaviour is not new and is not written here: `startRichCaravanEvent`,
- * `startDefendHomeEvent` and `startRescueEvent` already ship in `GameEngine`, already spawn
- * their actors and props, already have their own success and failure conditions. Nine new
- * campaign verbs is the explicitly rejected design and this is not it — the node still
- * wears one of the four `ObjectiveKind`s.
+ * The behaviour is not new and is not written here: all ten builders —
+ * `startRichCaravanEvent` and its nine siblings — already ship in `GameEngine`, already
+ * spawn their actors and props, already have their own success and failure conditions.
+ * Nine new campaign verbs is the explicitly rejected design and this is not it: the node
+ * still wears one of the four `ObjectiveKind`s, and 2.1 adds **zero** new campaign
+ * behaviour, only the promotion of the seven builders 1.4 left on the shelf.
  *
  * **What is new is the safety contract, and it is the whole of the work.** An event may
  * fail harmlessly; a campaign objective may never strand a run. Three properties, and each
@@ -1358,16 +1490,22 @@ export function isVerdictFresh(verdict: RumourVerdict, tick: number): boolean {
  *    becomes `kept` or `failed`.
  * 2. **A bounded start.** `startGraceSeconds` caps how long the engine may stand on the
  *    site failing to start the thing — an actor budget with no room, a site position the
- *    streamer has not published — before the contract gives up and fails forward. Without
- *    this the `offered` state would be the one way a contract could hang for ever.
+ *    streamer has not published, a builder whose own preconditions are not met — before
+ *    the contract gives up and fails forward. Without this the `offered` state would be the
+ *    one way a contract could hang for ever, and with seven more builders it is the field
+ *    that carries the most weight: five of them can decline to start for reasons of their
+ *    own.
  * 3. **Fail-forward.** `failForward` is true on every shipped template and the gate reports
  *    it if it ever is not. A failed contract does not lock its node: the node degrades to
  *    an arrival at its own site, which is a site the run's reserved set already protects
  *    from being razed, so the campaign is always finishable and the price of failing is the
  *    forfeited payout rather than the run.
  *
- * What the player is *choosing* between the two arms of the fork is an **order**, not a
- * route. Both arms are required. Nothing in this section may be read as saying otherwise.
+ * Roadmap 2.1 adds a fourth thing the gate must check, and it is the one optional nodes
+ * make possible: **a skippable node must never leave a run with nothing completable.**
+ * That is not a field, because it is a property of the graph rather than of a template, so
+ * it is `simulateCampaignAlwaysCompletable` below — a walk of every arm of every fork with
+ * every contract failing, which has to reach victory from all of them.
  */
 export type ContractStatus = 'offered' | 'active' | 'kept' | 'failed'
 
@@ -1385,7 +1523,7 @@ export interface FactionContractTemplate {
   id: ContractId
   faction: Faction
   /** The shipped builder this contract is adapted from. Not a new behaviour. */
-  eventKind: RandomWorldEventKind
+  eventKind: WorldEventKind
   /** The contract's own clock, in seconds. Finite and positive, always. */
   timeoutSeconds: number
   /** How long the engine may fail to start it on site before it fails forward. */
@@ -1403,17 +1541,25 @@ export interface FactionContractTemplate {
 }
 
 /**
- * One signature contract per faction, and the pairing is the faction's own identity rather
- * than a shuffle: the villain robs, the guard protects, the elf frees its own.
+ * All ten contracts, one per shipped builder.
  *
- * The clocks differ because the builders do. `defendHome` ships with a 45 s timer of its
- * own and a house that can burn down, so its contract clock only has to outlast that;
- * `richCaravan` and `rescue` have no clock at all, so theirs *is* the clock, and it is long
- * enough to fight through an escort and short enough that a player who wandered off finds
- * out rather than waits.
+ * **The clocks differ because the builders do**, and every one of them is a stated reading
+ * of the builder rather than a round number:
+ *
+ * - `defendHome` ships with a 45 s timer of its own and a house that can burn down, so its
+ *   contract clock only has to outlast that.
+ * - `bounty` ships a 40 s clock, so `reprisal` only has to outlast that too.
+ * - The five located builders run on `LOCATED_EVENT_TIMEOUT`, which the contract replaces
+ *   with its own; 110 s is long enough to fight three raiders and a brute and short enough
+ *   that a player who walked away finds out.
+ * - `richCaravan` and `rescue` have no clock at all, so theirs *is* the clock.
+ *
+ * The rewards differ by how much of the run the contract asks for, and none of them is a
+ * new economy: they sit beside the 90–180 gold the same builders already pay as events.
  */
-export const FACTION_CONTRACTS: FactionRecord<FactionContractTemplate> = {
-  elf: {
+export const CONTRACT_TEMPLATES: Record<ContractId, FactionContractTemplate> = {
+  // --- elf ----------------------------------------------------------------
+  unshackle: {
     id: 'unshackle',
     faction: 'elf',
     eventKind: 'rescue',
@@ -1422,7 +1568,27 @@ export const FACTION_CONTRACTS: FactionRecord<FactionContractTemplate> = {
     failForward: true,
     reward: 90,
   },
-  guard: {
+  duel: {
+    id: 'duel',
+    faction: 'elf',
+    eventKind: 'champion',
+    timeoutSeconds: 120,
+    startGraceSeconds: 12,
+    failForward: true,
+    reward: 100,
+  },
+  reprisal: {
+    id: 'reprisal',
+    faction: 'elf',
+    eventKind: 'bounty',
+    // The builder's own 40 s clock is the fight; this is the whole errand around it.
+    timeoutSeconds: 90,
+    startGraceSeconds: 12,
+    failForward: true,
+    reward: 80,
+  },
+  // --- guard --------------------------------------------------------------
+  bulwark: {
     id: 'bulwark',
     faction: 'guard',
     eventKind: 'defendHome',
@@ -1431,7 +1597,26 @@ export const FACTION_CONTRACTS: FactionRecord<FactionContractTemplate> = {
     failForward: true,
     reward: 110,
   },
-  villain: {
+  relief: {
+    id: 'relief',
+    faction: 'guard',
+    eventKind: 'factionRaid',
+    timeoutSeconds: 110,
+    startGraceSeconds: 12,
+    failForward: true,
+    reward: 115,
+  },
+  cull: {
+    id: 'cull',
+    faction: 'guard',
+    eventKind: 'beastRaid',
+    timeoutSeconds: 110,
+    startGraceSeconds: 12,
+    failForward: true,
+    reward: 105,
+  },
+  // --- villain ------------------------------------------------------------
+  plunder: {
     id: 'plunder',
     faction: 'villain',
     eventKind: 'richCaravan',
@@ -1440,6 +1625,46 @@ export const FACTION_CONTRACTS: FactionRecord<FactionContractTemplate> = {
     failForward: true,
     reward: 120,
   },
+  ambush: {
+    id: 'ambush',
+    faction: 'villain',
+    eventKind: 'caravanAmbush',
+    timeoutSeconds: 110,
+    startGraceSeconds: 12,
+    failForward: true,
+    reward: 100,
+  },
+  muster: {
+    id: 'muster',
+    faction: 'villain',
+    eventKind: 'warband',
+    timeoutSeconds: 110,
+    startGraceSeconds: 12,
+    failForward: true,
+    reward: 95,
+  },
+  scavenge: {
+    id: 'scavenge',
+    faction: 'villain',
+    eventKind: 'aftermath',
+    timeoutSeconds: 100,
+    startGraceSeconds: 12,
+    failForward: true,
+    reward: 75,
+  },
+}
+
+/**
+ * One signature contract per faction: the arm of the fork that is always on the table.
+ *
+ * The pairing is the faction's own identity rather than a shuffle — the villain robs, the
+ * guard protects, the elf frees its own — and it is what keeps "the three factions
+ * demonstrably pick different contracts" measurable after 2.1 widened the pool.
+ */
+export const FACTION_CONTRACTS: FactionRecord<FactionContractTemplate> = {
+  elf: CONTRACT_TEMPLATES.unshackle,
+  guard: CONTRACT_TEMPLATES.bulwark,
+  villain: CONTRACT_TEMPLATES.plunder,
 }
 
 export function getFactionContract(faction: Faction): FactionContractTemplate {
@@ -1450,19 +1675,53 @@ export function findContractTemplate(
   contract: ContractId | undefined,
 ): FactionContractTemplate | null {
   if (contract === undefined) return null
-  for (const faction of CONTRACT_FACTIONS) {
-    if (FACTION_CONTRACTS[faction].id === contract) return FACTION_CONTRACTS[faction]
-  }
-  return null
+  return Object.hasOwn(CONTRACT_TEMPLATES, contract)
+    ? CONTRACT_TEMPLATES[contract]
+    : null
 }
 
-/** The contract node of a faction's graph, or null on a graph that has none. */
+/** The template a node runs, or null on a node with no contract. */
+export function nodeContractTemplate(
+  node: FactionObjectiveNode,
+): FactionContractTemplate | null {
+  return findContractTemplate(node.contract)
+}
+
+/**
+ * The *first* contract node of a faction's graph, or null on a graph that has none.
+ *
+ * Kept from 1.4, when a graph had exactly one. It is now the signature arm, and it stays
+ * because the reserved-square guarantee and the faction-differentiation signal are both
+ * about that arm specifically. Anything that has to reason about the whole fork wants
+ * {@link getContractNodes}.
+ */
 export function findContractNode(
   blueprint: WorldBlueprint,
   faction: Faction,
 ): FactionObjectiveNode | null {
   return (
     blueprint.objectives[faction].nodes.find((node) => node.contract !== undefined) ?? null
+  )
+}
+
+/** Roadmap 2.1 — every contract node in a faction's graph, in graph order. */
+export function getContractNodes(
+  blueprint: WorldBlueprint,
+  faction: Faction,
+): FactionObjectiveNode[] {
+  return blueprint.objectives[faction].nodes.filter((node) => node.contract !== undefined)
+}
+
+/** The arms of one fork, in graph order. Empty for a node that is not in one. */
+export function getExclusiveSiblings(
+  graph: FactionObjectiveGraph,
+  nodeId: string,
+): FactionObjectiveNode[] {
+  const node = graph.nodes.find((candidate) => candidate.id === nodeId)
+  if (!node || node.exclusiveGroup === undefined) return []
+  return graph.nodes.filter(
+    (candidate) =>
+      candidate.id !== nodeId && candidate.exclusiveGroup === node.exclusiveGroup,
   )
 }
 
@@ -1673,6 +1932,8 @@ export type ContractStrandProblem =
   | 'siteMissing'
   | 'siteUnreserved'
   | 'terminalIncomplete'
+  | 'campaignUncompletable'
+  | 'lonelyFork'
 
 export interface ContractStrandRisk {
   /** The faction, contract id or node id at fault. */
@@ -1681,23 +1942,31 @@ export interface ContractStrandRisk {
 }
 
 /**
- * Every way a contract could leave a run unfinishable, reported rather than asserted.
+ * Every way a contract or an optional node could leave a run unfinishable, reported rather
+ * than asserted.
  *
  * Written as a function taking its inputs as parameters — the same shape as
  * `findHudCoverageGaps` — because a campaign-safety check that cannot be driven against a
  * mutated table is a check nobody can prove fires. `tests/factionContracts.test.ts` runs it
  * against the shipped tables and then against a template with no clock, a template with no
- * fail-forward, and a graph whose contract site is not reserved, and requires each to be
- * reported.
+ * fail-forward, a graph whose contract site is not reserved, and a fork whose second arm
+ * was deleted, and requires each to be reported.
  *
- * The last check is the load-bearing one and it is a simulation rather than an assertion:
- * every status is driven forward with a driver that never succeeds, and the contract has to
- * reach a state the player can complete within the clock plus the grace. That is what
- * "may never strand a run" means as something a machine can check.
+ * Two checks are simulations rather than assertions, and they are the load-bearing pair:
+ *
+ * - `terminalIncomplete` drives one contract from every status with a driver that never
+ *   succeeds, and requires it to reach a state the player can complete within the clock
+ *   plus the grace.
+ * - `campaignUncompletable` is **2.1's**, and it is the one optional nodes make necessary.
+ *   Subset completion means a node can now leave the board without being done, so the
+ *   question stops being "can this contract resolve" and becomes "can this *campaign*
+ *   always be finished, whichever arm the player takes and however badly it goes". It
+ *   walks every arm of every fork with every contract failing forward and requires victory
+ *   from all of them.
  */
 export function findContractStrandRisks(
   blueprint: WorldBlueprint,
-  templates: FactionRecord<FactionContractTemplate> = FACTION_CONTRACTS,
+  templates: Partial<Record<ContractId, FactionContractTemplate>> = CONTRACT_TEMPLATES,
   reservedFor: (
     blueprint: WorldBlueprint,
     faction: Faction,
@@ -1705,54 +1974,122 @@ export function findContractStrandRisks(
 ): ContractStrandRisk[] {
   const risks: ContractStrandRisk[] = []
   for (const faction of CONTRACT_FACTIONS) {
-    const template = templates[faction] as FactionContractTemplate | undefined
-    if (!template) {
-      risks.push({ subject: faction, problem: 'missingTemplate' })
-      continue
-    }
-    if (!Number.isFinite(template.timeoutSeconds) || template.timeoutSeconds <= 0) {
-      risks.push({ subject: template.id, problem: 'unboundedClock' })
-    }
-    if (!Number.isFinite(template.startGraceSeconds) || template.startGraceSeconds <= 0) {
-      risks.push({ subject: template.id, problem: 'unboundedStart' })
-    }
-    if (template.failForward !== true) {
-      risks.push({ subject: template.id, problem: 'noFailForward' })
-    }
-
-    const node = findContractNode(blueprint, faction)
-    if (!node) {
+    const graph = blueprint.objectives[faction]
+    const nodes = getContractNodes(blueprint, faction)
+    if (nodes.length === 0) {
       risks.push({ subject: faction, problem: 'missingNode' })
-      continue
     }
-    const site = blueprint.sites.find((candidate) => candidate.id === node.siteId)
-    if (!site) {
-      risks.push({ subject: node.id, problem: 'siteMissing' })
-      continue
-    }
-    // The second lock, and it is 1.3's: the reserved set is the anchors plus every square
-    // holding one of this faction's objective sites, and a contract site that fell outside
-    // it could be razed out from under the run.
-    //
-    // Against a shipped blueprint this can never fire, because a contract node *is* an
-    // objective node and `getRumourReservedRegionIds` reserves both its square and its
-    // site's. That is the guarantee rather than an excuse to delete the check — the
-    // reservation rule is 1.3's and could change without anyone thinking about contracts —
-    // so the reserved set is a parameter and `tests/factionContracts.test.ts` drives it
-    // with a rule that forgets, which is the only way to prove this branch can report.
     const reserved = reservedFor(blueprint, faction)
-    if (
-      !reserved.has(String(node.regionId)) ||
-      !reserved.has(String(site.regionId))
-    ) {
-      risks.push({ subject: node.id, problem: 'siteUnreserved' })
+
+    for (const node of nodes) {
+      const template = node.contract === undefined ? undefined : templates[node.contract]
+      if (!template) {
+        risks.push({ subject: node.contract ?? node.id, problem: 'missingTemplate' })
+        continue
+      }
+      if (!Number.isFinite(template.timeoutSeconds) || template.timeoutSeconds <= 0) {
+        risks.push({ subject: template.id, problem: 'unboundedClock' })
+      }
+      if (!Number.isFinite(template.startGraceSeconds) || template.startGraceSeconds <= 0) {
+        risks.push({ subject: template.id, problem: 'unboundedStart' })
+      }
+      if (template.failForward !== true) {
+        risks.push({ subject: template.id, problem: 'noFailForward' })
+      }
+
+      const site = blueprint.sites.find((candidate) => candidate.id === node.siteId)
+      if (!site) {
+        risks.push({ subject: node.id, problem: 'siteMissing' })
+        continue
+      }
+      // The second lock, and it is 1.3's: the reserved set is the anchors plus every square
+      // holding one of this faction's objective sites, and a contract site that fell outside
+      // it could be razed out from under the run.
+      //
+      // Against a shipped blueprint this can never fire, because a contract node *is* an
+      // objective node and `getRumourReservedRegionIds` reserves both its square and its
+      // site's. That is the guarantee rather than an excuse to delete the check — the
+      // reservation rule is 1.3's and could change without anyone thinking about contracts —
+      // so the reserved set is a parameter and `tests/factionContracts.test.ts` drives it
+      // with a rule that forgets, which is the only way to prove this branch can report.
+      if (!reserved.has(String(node.regionId)) || !reserved.has(String(site.regionId))) {
+        risks.push({ subject: node.id, problem: 'siteUnreserved' })
+      }
+
+      if (!simulateContractAlwaysResolves(node, template)) {
+        risks.push({ subject: node.id, problem: 'terminalIncomplete' })
+      }
     }
 
-    if (!simulateContractAlwaysResolves(node, template)) {
-      risks.push({ subject: node.id, problem: 'terminalIncomplete' })
+    // Roadmap 2.1 — a fork with one arm is not a fork, it is an optional node nobody can
+    // ever settle: `skipped` is only written by a *sibling's* completion, so a lone
+    // optional node would sit unsettled for ever and the win condition would never come
+    // true. That is the exact failure mode subset completion introduces, so it is named.
+    for (const group of new Set(
+      graph.nodes
+        .map((node) => node.exclusiveGroup)
+        .filter((group): group is string => group !== undefined),
+    )) {
+      const arms = graph.nodes.filter((node) => node.exclusiveGroup === group)
+      if (arms.length < 2) risks.push({ subject: group, problem: 'lonelyFork' })
+    }
+    for (const node of graph.nodes) {
+      if (node.optional === true && node.exclusiveGroup === undefined) {
+        risks.push({ subject: node.id, problem: 'lonelyFork' })
+      }
+    }
+
+    if (!simulateCampaignAlwaysCompletable(graph)) {
+      risks.push({ subject: faction, problem: 'campaignUncompletable' })
     }
   }
   return risks
+}
+
+/**
+ * **Roadmap 2.1's whole-campaign safety proof.**
+ *
+ * Walks the graph once per choice of arm at every fork, with a player who completes
+ * whatever is ready and a world in which **every contract fails** — the worst honest case,
+ * because a failed contract's node still completes by arrival — and requires
+ * `campaignObjectivesComplete` to come true every time.
+ *
+ * It is a proof that a bound exists rather than a measurement of where it is, so it is
+ * capped: a graph with a cycle, an unreachable node or a fork nothing can settle would
+ * otherwise make this loop forever, and a safety check that hangs on the input it exists to
+ * reject is worse than one that misses it.
+ */
+const CAMPAIGN_SIMULATION_MAX_CHOICES = 64
+
+function simulateCampaignAlwaysCompletable(graph: FactionObjectiveGraph): boolean {
+  const objectives = (): Objective[] =>
+    graph.nodes.map((node) => ({
+      id: node.id,
+      text: node.id,
+      done: false,
+      ...(node.optional === true ? { optional: true } : {}),
+    }))
+
+  // One walk per "always take the Nth ready node" policy. With every fork's arms ready at
+  // once, that is enough to reach every arm of every fork the graph has.
+  for (let preference = 0; preference < CAMPAIGN_SIMULATION_MAX_CHOICES; preference += 1) {
+    const state = objectives()
+    let steps = 0
+    while (!campaignObjectivesComplete(state) && steps < CAMPAIGN_SIMULATION_MAX_CHOICES) {
+      steps += 1
+      const ready = graph.nodes.filter(
+        (node) =>
+          !isObjectiveSettledById(state, node.id) &&
+          objectivePrerequisitesDone(node, state),
+      )
+      if (ready.length === 0) return false
+      const chosen = ready[preference % ready.length]
+      if (!completeObjectiveEntry(state, chosen.id)) return false
+      skipExclusiveAlternatives(graph, state, chosen.id)
+    }
+    if (!campaignObjectivesComplete(state)) return false
+  }
+  return true
 }
 
 /**

@@ -32,9 +32,16 @@ test('the harness produces a stable run report for a fixed seed', () => {
   // now, so the route is a different route. The default arms are unchanged:
   // `contractPolicy` is `firstReady`, which pins nothing and takes the ready nodes in graph
   // order, exactly as the pre-1.4 `.find()` did.
+  //
+  // **Roadmap 2.1 moved exactly one of them, and that is the finding.** The graph gained a
+  // fifth node — the fork's second arm — so `objectivesTotal` is 5 where it was 4. Every
+  // other number here, down to the fourth decimal of the distance walked, is *identical*:
+  // the errand and the signature contract still draw from the streams they always did, the
+  // second arm draws from new ones, and the run this seed produces is the same run. That is
+  // the determinism discipline 1.6 established, observed rather than promised.
   assert.equal(report.outcome, 'victory')
   assert.equal(report.objectivesCompleted, 4)
-  assert.equal(report.objectivesTotal, 4)
+  assert.equal(report.objectivesTotal, 5)
   assert.equal(report.frames, 8_260)
   assert.equal(report.kills, 2)
   assert.equal(report.regionsVisited, 10)
@@ -53,22 +60,31 @@ test('the harness produces a stable run report for a fixed seed', () => {
 
   // Time and distance to each objective, which is deliverable A's first bullet. The first
   // objective completes almost immediately because a faction's campaign begins at the site
-  // it spawns on: worth knowing, and not a defect.
-  const [first, second, third, fourth] = report.objectives
+  // it spawns on: worth knowing, and not a defect. The fourth entry is 2.1's skipped arm —
+  // never completed, never walked to, and the run finished anyway.
+  const [first, second, third, skipped, finale] = report.objectives
   assert.equal(first.completedAt?.toFixed(3), '0.017')
   assert.equal(first.distanceWalked.toFixed(2), '0.00')
   assert.equal(second.completedAt?.toFixed(3), '76.967')
   assert.equal(second.distanceWalked.toFixed(2), '492.48')
   assert.equal(third.completedAt?.toFixed(3), '116.400')
   assert.equal(third.distanceWalked.toFixed(2), '198.44')
-  assert.equal(fourth.completedAt?.toFixed(3), '137.667')
-  assert.equal(fourth.distanceWalked.toFixed(2), '123.72')
+  assert.equal(skipped.id, 'objective-elf-alt')
+  assert.equal(skipped.completedAt, null)
+  assert.equal(finale.completedAt?.toFixed(3), '137.667')
+  assert.equal(finale.distanceWalked.toFixed(2), '123.72')
 
-  // Roadmap 1.4 — the fork existed and the run took one of its arms. Two ready nodes at
-  // once is the whole shape; `chose` is false because this arm pins nothing.
+  // Roadmap 2.1 — the fork existed, the run took one of its arms and the other closed
+  // behind it. Three ready nodes at once is the whole shape; `chose` is false because this
+  // arm pins nothing, so it takes the first arm the graph offers.
   assert.equal(report.contracts.contractId, 'unshackle')
-  assert.equal(report.contracts.maxReady, 2)
+  assert.deepEqual(report.contracts.contractIds, ['unshackle', 'reprisal'])
+  assert.equal(report.contracts.maxReady, 3)
   assert.equal(report.contracts.chose, false)
+  assert.deepEqual(report.contracts.skipped, ['objective-elf-alt'])
+  assert.deepEqual(report.contracts.route, ['objective-elf-contract'])
+  assert.equal(report.contracts.rewardedObjectives, 5)
+  assert.equal(report.contracts.strandedAtEnd, false)
   assert.deepEqual(report.contracts.middleOrder, [
     'objective-elf-branch',
     'objective-elf-contract',

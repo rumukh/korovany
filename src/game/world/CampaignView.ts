@@ -354,6 +354,16 @@ export function buildCampaignContractViews(
     const progress = getContractProgress(input.contracts, node.id)
     const status = node.contract === undefined ? null : (progress?.status ?? 'offered')
     const contractId = node.contract ?? null
+    // Roadmap 2.1 — the arms of a fork are only exclusive while there is still another arm
+    // to lose. Read off the ready list rather than off the node, so the badge disappears
+    // on the frame the choice stops being one instead of lying about a decision already
+    // made.
+    const exclusive =
+      node.exclusiveGroup !== undefined &&
+      ready.some(
+        (candidate) =>
+          candidate.id !== node.id && candidate.exclusiveGroup === node.exclusiveGroup,
+      )
     const title =
       contractId === null
         ? (objective?.text ?? 'Пункт похода')
@@ -376,6 +386,7 @@ export function buildCampaignContractViews(
       stake,
       regionLabel,
       pinned: input.contracts.pinnedNodeId === node.id,
+      exclusive,
       status,
       timeRemaining:
         status === 'active' && progress && template ? progress.remaining : null,

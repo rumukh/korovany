@@ -715,6 +715,7 @@ test('the live view carries every field the HUD reads', () => {
         stake: 'Обязательный',
         regionLabel: 'A1',
         pinned: true,
+        exclusive: false,
         status: null,
         timeRemaining: null,
         x: null,

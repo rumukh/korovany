@@ -158,6 +158,7 @@ import {
   describeObjectiveCompleted,
   describeObjectiveDropped,
   describeObjectivePinned,
+  describeObjectiveSkipped,
   describeContractAbandoned,
   describeContractFailed,
   describeContractKept,
@@ -362,16 +363,16 @@ import {
   enemyHealthMultiplier,
   ensureContractProgress,
   eventCooldownRange,
-  findContractNode,
+  findContractTemplate,
+  getContractNodes,
+  getContractProgress,
   getContractStatus,
-  getFactionContract,
   getPinnedRumour,
   getReadyObjectiveNodes,
   getRumourEscort,
   getRumourReservedRegionIds,
   isContractLive,
   isContractNodeCompletableByArrival,
-  isObjectiveDone,
   isVerdictFresh,
   isWithinObjectiveArrival,
   markRumourActioned,
@@ -394,6 +395,7 @@ import {
   serializeChronicleCommitmentState,
   settleDueRumours,
   shouldHandBackForStreaming,
+  skipExclusiveAlternatives,
   threatWaveInterval,
   type CampaignContractState,
   type ChronicleCommitmentState,
@@ -4031,9 +4033,14 @@ export class GameEngine {
   }
 
   /**
-   * One frame of the signature contract, and the whole of the fail-forward guarantee.
+   * One frame of every live contract, and the whole of the fail-forward guarantee.
    *
-   * Three exits, and every one of them ends with a node the player can still finish:
+   * Roadmap 2.1 — a **loop**, because the fork now carries a contract on each arm. Only
+   * one may be on the ground at a time (`activeContractNodeId`), which is a budget rule as
+   * much as a design one: two contracts' worth of actors would starve the chronicle.
+   *
+   * Three exits per contract, and every one of them ends with a node the player can still
+   * finish:
    *
    * - the builder went down on the ground and the contract is now `active`, with its own
    *   bounded clock;
@@ -4047,10 +4054,19 @@ export class GameEngine {
    * burn down the place it needs.
    */
   private updateFactionContract(delta: number): void {
-    const template = getFactionContract(this.faction)
-    const node = findContractNode(this.generatedBlueprint, this.faction)
-    if (!node || node.contract !== template.id) return
-    if (isObjectiveDone(this.objectives, node.id)) return
+    for (const node of getContractNodes(this.generatedBlueprint, this.faction)) {
+      this.updateContractNode(node, delta)
+    }
+  }
+
+  private updateContractNode(node: FactionObjectiveNode, delta: number): void {
+    const template = findContractTemplate(node.contract)
+    if (!template) return
+    const objective = this.objectives.find((entry) => entry.id === node.id)
+    // Roadmap 2.1 — a skipped arm is finished with, so its clock stops. Without this the
+    // road the player did not take would keep counting down behind them and announce its
+    // own failure minutes later, which is a notice about a decision already made.
+    if (!objective || objective.done || objective.skipped === true) return
     const progress = ensureContractProgress(this.campaignContracts, node)
     if (!progress || !isContractLive(progress.status)) return
 
@@ -4113,7 +4129,11 @@ export class GameEngine {
     // node. `tests/factionContracts.test.ts` is where the impossible case is proved to be
     // reported rather than survived.
     this.callbacks.onNotice(
-      template.failForward ? message : WORLD_EVENT_FAILURE_MESSAGES[template.eventKind],
+      template.failForward
+        ? message
+        : isRandomWorldEventKind(template.eventKind)
+          ? WORLD_EVENT_FAILURE_MESSAGES[template.eventKind]
+          : message,
       'danger',
     )
     this.playSound('eventFail')
@@ -4123,10 +4143,19 @@ export class GameEngine {
   /**
    * Puts the contract's shipped builder on the ground at the objective's site.
    *
-   * This is the whole of the "adapt the builders" work: each of the three takes an optional
-   * origin now, and a contract passes the site instead of letting it pick a ring around the
-   * player. Nothing about what the builder *does* changed — the caravan still has its
-   * escort, the house still burns, the captive is still guarded by two.
+   * This is the whole of the "adapt the builders" work, and roadmap 2.1 is where it
+   * finishes. Five of the ten take an optional origin and a contract passes the site
+   * instead of letting them pick a ring around the player. The other five are the
+   * chronicle's **located** builders, which take a `PendingMaterialization`, so a contract
+   * hands them one describing its own site. Nothing about what any builder *does* changed:
+   * the caravan still has its escort, the house still burns, the captive is still guarded
+   * by two, the pack still comes for the homestead.
+   *
+   * **A builder is allowed to say no**, and five of these can — an actor budget with no
+   * room, a walkable position it could not find, a beast pack that came back empty. That
+   * is not a hole in the guarantee, it is the reason `startGraceSeconds` exists: the
+   * contract stays `offered`, the grace runs out in front of the player, and the node
+   * fails forward into an arrival.
    */
   private startContractEvent(
     node: FactionObjectiveNode,
@@ -4137,14 +4166,7 @@ export class GameEngine {
     if (this.playerAnchoredEvent) return false
     const origin = new THREE.Vector3(site.x, 0, site.z)
     origin.y = this.groundHeightAt(origin.x, origin.z)
-    const event =
-      template.eventKind === 'richCaravan'
-        ? this.startRichCaravanEvent(origin)
-        : template.eventKind === 'defendHome'
-          ? this.startDefendHomeEvent(origin)
-          : template.eventKind === 'rescue'
-            ? this.startRescueEvent(origin)
-            : null
+    const event = this.buildContractEvent(node, template, origin)
     if (!event) return false
     event.contractNodeId = node.id
     event.title = describeContractTitle(template.id)
@@ -4154,6 +4176,85 @@ export class GameEngine {
     this.activeEvents.push(event)
     this.activeContractNodeId = node.id
     return true
+  }
+
+  private buildContractEvent(
+    node: FactionObjectiveNode,
+    template: FactionContractTemplate,
+    origin: THREE.Vector3,
+  ): WorldEvent | null {
+    switch (template.eventKind) {
+      case 'richCaravan':
+        return this.startRichCaravanEvent(origin)
+      case 'defendHome':
+        return this.startDefendHomeEvent(origin)
+      case 'rescue':
+        return this.startRescueEvent(origin)
+      case 'champion':
+        return this.startChampionEvent(origin)
+      case 'bounty':
+        return this.startBountyEvent(origin)
+      case 'factionRaid':
+        return this.startFactionRaidEvent(this.contractSituation(node, template))
+      case 'caravanAmbush':
+        return this.startCaravanAmbushEvent(this.contractSituation(node, template))
+      case 'warband':
+        return this.startWarbandEvent(this.contractSituation(node, template))
+      case 'beastRaid':
+        return this.startBeastRaidEvent(this.contractSituation(node, template))
+      case 'aftermath':
+        return this.startAftermathEvent(this.contractSituation(node, template))
+    }
+  }
+
+  /**
+   * The situation a contract hands to one of the chronicle's located builders.
+   *
+   * A `PendingMaterialization` is normally something the chronicle *found*: a raid it had
+   * already decided on, at a square it already knows the state of. A contract is the same
+   * shape of fact — a thing happening at a named site in a named square — so the builders
+   * need no change at all, only a caller that fills the record honestly.
+   *
+   * Every field is read off the world rather than invented. The attacker is a faction that
+   * is genuinely not the player's, the defender is whoever actually holds the square, and
+   * the beast pressure is the square's own — floored only so `planBeastPack` cannot hand
+   * back an empty pack and turn a contract into a no-op the player would have to wait out.
+   * The id is the node's, so one contract can never produce two situations.
+   */
+  private contractSituation(
+    node: FactionObjectiveNode,
+    template: FactionContractTemplate,
+  ): PendingMaterialization {
+    const regionId = String(node.regionId)
+    const chronicle = this.chronicleRegions.get(regionId)
+    const region = this.generatedBlueprint.regions.find(
+      (candidate) => String(candidate.id) === regionId,
+    )
+    const defender = chronicle?.control ?? region?.territory ?? null
+    return {
+      id: `contract-${node.id}`,
+      kind: template.eventKind as PendingMaterialization['kind'],
+      regionId,
+      sourceRegionId: null,
+      siteId: node.siteId,
+      faction: this.contractOpponentFaction(defender),
+      defender,
+      // `caravanAmbush` refuses a situation with no caravan on it. The id is the node's, so
+      // the hand-back looks for a caravan the chronicle does not have and resolves to
+      // nothing — which is the honest outcome: a contract's cart is the contract's, and the
+      // chronicle's own convoys are not moved by it.
+      caravanId: `contract-cart-${node.id}`,
+      beastPressure: Math.max(0.6, chronicle?.beastPressure ?? 0),
+      urgency: 1,
+    }
+  }
+
+  /** A faction that is not the player's, preferring one that is not holding the ground. */
+  private contractOpponentFaction(defender: Territory | null): Faction {
+    const options = (['elf', 'guard', 'villain'] as Faction[]).filter(
+      (faction) => faction !== this.faction,
+    )
+    return options.find((faction) => faction !== defender) ?? options[0]
   }
 
   private completeGeneratedObjective(node: FactionObjectiveNode): boolean {
@@ -6948,7 +7049,7 @@ export class GameEngine {
     // place the player meets it: the payout is gone, the road is not.
     const failedForward = isContractNodeCompletableByArrival(
       node ? getContractStatus(this.campaignContracts, node) : null,
-      node?.contract === undefined ? null : getFactionContract(this.faction),
+      node === null ? null : findContractTemplate(node.contract),
     )
     if (node && (node.kind === 'arrive' || failedForward)) {
       const site = this.generatedWorld.getSitePosition(node.siteId)
@@ -8794,7 +8895,8 @@ export class GameEngine {
       (candidate) => candidate.id === nodeId,
     )
     if (!node) return
-    const template = getFactionContract(this.faction)
+    const template = findContractTemplate(node.contract)
+    if (!template) return
     if (!succeeded) {
       this.failContractForward(
         node,
@@ -9168,13 +9270,15 @@ export class GameEngine {
     return event
   }
 
-  private startChampionEvent(): WorldEvent | null {
+  /** Roadmap 2.1 — `origin` puts the champion at the contract's site rather than in a ring
+   * around the player. Same one champion, same one thing to do about him. */
+  private startChampionEvent(origin?: THREE.Vector3): WorldEvent | null {
     if (!this.reserveActorSlots('chronicle', EVENT_REQUIRED_SLOTS.champion)) {
       return null
     }
 
     const id = this.nextEventId('champion')
-    const position = this.pickEventPosition()
+    const position = origin ?? this.pickEventPosition()
     const champion = this.spawnActor(
       this.pickEventEnemyFaction(),
       'champion',
@@ -9344,11 +9448,12 @@ export class GameEngine {
     return event
   }
 
-  private startBountyEvent(): WorldEvent | null {
+  /** Roadmap 2.1 — `origin` puts the marked head at the contract's site. Same 40 s clock. */
+  private startBountyEvent(origin?: THREE.Vector3): WorldEvent | null {
     if (!this.reserveActorSlots('chronicle', EVENT_REQUIRED_SLOTS.bounty)) return null
 
     const id = this.nextEventId('bounty')
-    const position = this.pickEventPosition()
+    const position = origin ?? this.pickEventPosition()
     const bountyTarget = this.spawnActor(
       this.pickEventEnemyFaction(),
       'soldier',
@@ -10956,11 +11061,17 @@ export class GameEngine {
     this.callbacks.onNotice(describeObjectiveCompleted(objective.text), 'success')
     this.achievements.recordObjectiveCompleted()
     this.playSound('objective')
-    // Roadmap 1.6 — «Устав дозора». The wave the clock is no longer throwing arrives here
-    // instead, so the run's pressure is paced by what the player finishes rather than by how
-    // long they have been out. Tier 1 is left alone for the same reason the scheduler leaves
-    // it alone: the first three minutes are not a wave's business.
+    // **Roadmap 2.1 — the road closing behind the choice.** Every other arm of this node's
+    // fork is skipped here, which is the single write that turns 1.4's ordering into an
+    // exclusive route. It happens *after* the completion and *before* the win check, so a
+    // finale whose last outstanding prerequisite was the arm nobody took opens on the same
+    // frame rather than a frame later.
+    this.settleSkippedObjectives(id)
     if (this.doctrineEffects.threatWavesOnObjective && this.threatTier >= 2 && !this.ended) {
+      // Roadmap 1.6 — «Устав дозора». The wave the clock is no longer throwing arrives here
+      // instead, so the run's pressure is paced by what the player finishes rather than by how
+      // long they have been out. Tier 1 is left alone for the same reason the scheduler leaves
+      // it alone: the first three minutes are not a wave's business.
       const spawned = this.spawnThreatWave(this.elapsed)
       if (spawned > 0) {
         this.callbacks.onNotice(describeThreatWave(spawned, this.threatTier), 'warning')
@@ -10969,6 +11080,41 @@ export class GameEngine {
     }
     this.emitView(true)
     return true
+  }
+
+  /**
+   * Roadmap 2.1 — closes the arms the player did not take, and cleans up after them.
+   *
+   * Three things have to happen together, or the skip is only half a decision: the
+   * objective is marked, a contract already on the ground is taken off it, and the pin is
+   * dropped if it was pointing at a road that no longer exists.
+   */
+  private settleSkippedObjectives(completedNodeId: string): void {
+    const skipped = skipExclusiveAlternatives(
+      this.generatedBlueprint.objectives[this.faction],
+      this.objectives,
+      completedNodeId,
+    )
+    for (const objective of skipped) {
+      // A contract whose node was skipped is not failed — the player did not lose it, they
+      // chose past it — but it must stop being live or its clock would announce a failure
+      // for a road that is gone.
+      const progress = getContractProgress(this.campaignContracts, objective.id)
+      if (progress && isContractLive(progress.status)) {
+        resolveContract(this.campaignContracts, objective.id, 'failed')
+      }
+      if (this.activeContractNodeId === objective.id) {
+        const live = this.activeEvents.find(
+          (event) => event.contractNodeId === objective.id,
+        )
+        if (live && live.state === 'active') live.state = 'failed'
+        this.activeContractNodeId = null
+      }
+      if (this.campaignContracts.pinnedNodeId === objective.id) {
+        this.campaignContracts.pinnedNodeId = null
+      }
+      this.callbacks.onNotice(describeObjectiveSkipped(objective.text), 'info')
+    }
   }
 
 

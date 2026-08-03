@@ -125,17 +125,20 @@ import {
   campaignObjectivesComplete,
   commitChronicleTicks,
   completeObjectiveEntry,
+  countRewardedObjectives,
   createCampaignContractState,
   createChronicleCommitmentState,
   createGeneratedObjectives,
   enemyHealthMultiplier,
   ensureContractProgress,
+  findContractTemplate,
+  getContractProgress,
   getContractStatus,
-  getFactionContract,
   getPinnedRumour,
   getReadyObjectiveNodes,
   getRumourEscort,
   getRumourReservedRegionIds,
+  isContractLive,
   isContractNodeCompletableByArrival,
   isWithinObjectiveArrival,
   advanceRumourProgress,
@@ -148,6 +151,7 @@ import {
   resolveContract,
   selectChronicleAnnouncements,
   settleDueRumours,
+  skipExclusiveAlternatives,
   type CampaignContractState,
   type ChronicleCommitmentState,
   type ChronicleRumour,
@@ -316,31 +320,44 @@ export type RumourPolicy = 'off' | 'ignore' | 'walk' | 'commit'
 /**
  * Roadmap 1.4 — how the scripted player picks which arm of the fork to do first.
  *
- * Three arms, and the first one is the baseline the other two are measured against:
+ * Four arms, and the first one is the baseline the others are measured against:
  *
  * - `firstReady` is **the default and stays the default**. It pins nothing, so the active
  *   objective is whatever `getActiveObjectiveNode` returns — the *first* ready node, which
- *   is exactly what the campaign did before this slice. Every pinned number in
- *   `runHarness.test.ts` describes this arm.
+ *   is exactly what the campaign did before 1.4. Every pinned number in
+ *   `runHarness.test.ts` describes this arm. On a 2.1 graph it always takes the faction's
+ *   signature arm, because that is the one listed first.
  * - `nearest` pins the ready node the player is actually closest to. A real choice, made
  *   by the geometry of the seed rather than by a coin.
  * - `seeded` pins a draw from its own derived stream, which is the arm that separates
  *   "the fork produced different orders" from "the map produced different orders".
+ * - `contrary` is **roadmap 2.1's**, and it exists to make the exclusive choice
+ *   measurable rather than merely present. It always pins the *last* ready node, which on a
+ *   shipped graph is the fork's alternative arm — so `firstReady` and `contrary` walk the
+ *   same world with the same faction down the two different roads, and the difference
+ *   between them is the choice with everything else held still. Without it, "the road
+ *   moved" would be measured across seeds, where the seed moved too.
  */
-export type ContractPolicy = 'firstReady' | 'nearest' | 'seeded'
+export type ContractPolicy = 'firstReady' | 'nearest' | 'seeded' | 'contrary'
 
 /**
- * The anti-placebo control, and the reason it exists.
+ * The anti-placebo controls, and the reason each exists.
  *
- * `branched` is the shipped graph: two required middle nodes, both ready at once.
- * `chain` takes the same graph and **linearises it** — the second middle node is given the
- * first as a prerequisite — so exactly one node is ever ready and no policy can express a
- * preference. If ordering divergence still showed up in the `chain` arm, it would be coming
- * from something other than the fork, and the number 1.4 reports would be measuring the
- * harness rather than the feature. `tests/factionContracts.test.ts` runs both and requires
- * the `chain` arm to be flat.
+ * `branched` is the shipped graph: a required errand plus two **exclusive** contract arms.
+ *
+ * `chain` is 1.4's placebo. It **linearises** the graph — the second middle node is given
+ * the first as a prerequisite — so exactly one node is ever ready and no policy can express
+ * a preference. If ordering divergence still showed up there, it would be coming from
+ * something other than the fork.
+ *
+ * `allRequired` is **2.1's placebo, and it is the one that matters now.** It takes the
+ * shipped graph and strips `optional` and `exclusiveGroup` from every node, which is
+ * exactly 1.4's shape: the same sites, the same contracts, the same two ready nodes, the
+ * same policies — and every arm required, so the run walks both. If route divergence still
+ * showed up there, it would be produced by something other than an exclusive choice, and
+ * the number 2.1 reports would be measuring the harness rather than the feature.
  */
-export type CampaignShape = 'branched' | 'chain'
+export type CampaignShape = 'branched' | 'chain' | 'allRequired'
 
 /**
  * Roadmap 1.4 — what the scripted player does with a contract it has already started.
@@ -524,6 +541,8 @@ export interface ContractMetrics {
   contractId: string | null
   contractNodeId: string | null
   contractSiteId: string | null
+  /** Roadmap 2.1 — every contract the run's graph carried, in graph order. */
+  contractIds: string[]
   /** Completion order of the fork's arms, by node id. Empty until one completes. */
   middleOrder: string[]
   /** Node ids the run pinned, in order. */
@@ -537,6 +556,45 @@ export interface ContractMetrics {
   failedForward: number
   /** True when the contract node was completed at all, however it got there. */
   completed: boolean
+  /**
+   * Roadmap 2.1 — the nodes this run closed **by choosing past them**.
+   *
+   * The exclusive half of the initiative, as a number: a run with a non-empty `skipped` is
+   * a run that was won without completing every node, which is the thing 1.4's win
+   * condition made impossible.
+   */
+  skipped: string[]
+  /**
+   * Contracts that were live on the ground when their node was skipped.
+   *
+   * Not a failure — the player did not lose them, they chose past them — but they have to
+   * be counted somewhere, or a whole-run safety sweep would read them as contracts that
+   * neither resolved nor failed.
+   */
+  skippedLive: number
+  /**
+   * The **route**: the contract *node* ids the run walked, in completion order.
+   *
+   * Node ids rather than contract ids on purpose. Which contract a seed drew for its second
+   * arm is a generator decision and varies across seeds by itself; which *arm* the run took
+   * is the player's, and it is the only thing an exclusive fork changes. Comparing node ids
+   * isolates the second from the first, which is what makes the all-required placebo a
+   * matched control rather than a differently-seeded one.
+   */
+  route: string[]
+  /** What `RunHistorySummary.objectivesCompleted` would be for this run, re-decided. */
+  rewardedObjectives: number
+  /**
+   * **The campaign-safety property, observed on a whole run.**
+   *
+   * True when the run stopped with the campaign unfinished and **nothing ready** — no node
+   * the player could have walked to, whatever they did next. That is what "may never
+   * strand a run" means as something a sweep can count, and it is strictly stronger than
+   * "no timeouts": a run that ran out of the harness's clock one node from the finale ran
+   * out of *time*, not out of *road*, and counting the two together would report the clock
+   * as a safety defect.
+   */
+  strandedAtEnd: boolean
 }
 
 /**
@@ -785,10 +843,11 @@ export function runHarness(options: RunOptions): RunReport {
   const doctrinePolicy = options.doctrinePolicy ?? 'off'
 
   const blueprint = options.blueprint ?? generateWorld(options.seed)
-  // Roadmap 1.4 — the placebo. Linearising the shipped graph leaves every site, encounter,
-  // road and chronicle seed identical and removes only the fork, which is what makes "the
-  // fork produced the divergence" a comparison rather than a claim.
+  // The two placebos. Both leave every site, encounter, road and chronicle seed identical
+  // and remove exactly one thing — the fork itself, or only its exclusivity — which is what
+  // makes "the fork produced the divergence" a comparison rather than a claim.
   if (campaignShape === 'chain') linearizeCampaignGraph(blueprint, options.faction)
+  if (campaignShape === 'allRequired') unmakeExclusiveArms(blueprint, options.faction)
   const terrain = new TerrainSystem(blueprint)
   const collision = new CollisionWorld(terrain)
   collision.setWorldBounds(terrain.bounds)
@@ -840,14 +899,14 @@ export function runHarness(options: RunOptions): RunReport {
     reservedRegionIds: rumourReservedRegionIds,
   })
 
-  // --- roadmap 1.4: the fork ---------------------------------------------------
+  // --- roadmap 1.4 / 2.1: the fork ---------------------------------------------
   const contracts: CampaignContractState = createCampaignContractState()
-  const contractTemplate = getFactionContract(options.faction)
-  const contractNode =
-    blueprint.objectives[options.faction].nodes.find(
-      (node) => node.contract !== undefined,
-    ) ?? null
   const graph = blueprint.objectives[options.faction]
+  // Roadmap 2.1 — every contract node, not the one. `contractNode` stays as the signature
+  // arm, because the faction-differentiation signal and the reserved-square guarantee are
+  // both about that one specifically.
+  const contractNodes = graph.nodes.filter((node) => node.contract !== undefined)
+  const contractNode = contractNodes[0] ?? null
   const middleNodeIds = new Set(
     graph.nodes
       .filter((node) => !graph.rootNodeIds.includes(node.id) && node.id !== graph.finalNodeId)
@@ -857,6 +916,7 @@ export function runHarness(options: RunOptions): RunReport {
     contractId: contractNode?.contract ?? null,
     contractNodeId: contractNode?.id ?? null,
     contractSiteId: contractNode?.siteId ?? null,
+    contractIds: contractNodes.map((node) => String(node.contract)),
     middleOrder: [],
     pins: [],
     chose: false,
@@ -865,13 +925,40 @@ export function runHarness(options: RunOptions): RunReport {
     kept: 0,
     failedForward: 0,
     completed: false,
+    skipped: [],
+    skippedLive: 0,
+    route: [],
+    rewardedObjectives: 0,
+    strandedAtEnd: false,
   }
   // Its own derived stream, for the same reason 1.3's rumours got one: a pin drawn from the
   // event stream would move the next encounter roll, and the arm would then be changing the
   // world simply by existing.
   const contractRng = new RandomStream(deriveSeed(blueprint.seed, 'harness:contract'))
-  /** Simulated seconds the player has held a live contract's site with nothing hostile near. */
-  let contractHold = 0
+  /** Nodes the `shirk` arm has already walked away from. Shirking is a one-time decision. */
+  const shirkedNodeIds = new Set<string>()
+  /** Simulated seconds the player has held each live contract's site with nothing hostile near. */
+  const contractHold = new Map<string, number>()
+  /**
+   * Roadmap 2.1 — the shipped skip rule, run from the harness.
+   *
+   * `skipExclusiveAlternatives` is `CampaignDirector`'s own, not a re-implementation, so a
+   * run that finishes here finishes for the same reason a run in the browser does.
+   */
+  const settleSkips = (completedNodeId: string): void => {
+    for (const objective of skipExclusiveAlternatives(graph, objectives, completedNodeId)) {
+      contractMetrics.skipped.push(objective.id)
+      // Only a contract that was actually on the ground counts as chosen past. An `offered`
+      // arm the player never reached is simply an arm they never reached, and counting it
+      // would inflate the number the whole-run safety sweep balances against `started`.
+      const progress = getContractProgress(contracts, objective.id)
+      if (progress && isContractLive(progress.status)) {
+        if (progress.status === 'active') contractMetrics.skippedLive += 1
+        resolveContract(contracts, objective.id, 'failed')
+      }
+      if (contracts.pinnedNodeId === objective.id) contracts.pinnedNodeId = null
+    }
+  }
 
   // --- roadmap 1.6: the draft --------------------------------------------------
   const doctrineState: DoctrineRunState = createDoctrineRunState(
@@ -1336,31 +1423,45 @@ export function runHarness(options: RunOptions): RunReport {
       // Roadmap 1.4's fail-forward arm: a contract already on the clock is walked away
       // from, which is what makes the guarantee something a whole run can be measured
       // against rather than something a unit test asserts in isolation.
+      //
+      // Roadmap 2.1 — **once per node**, and the qualifier is not cosmetic. With three
+      // ready nodes the unqualified rule thrashed: the policy re-pinned every frame the
+      // pinned arm was live, `nearest` sent the player back toward whichever was closest,
+      // and one 36-seed panel spent 300 s making 1 083 pins without ever arriving anywhere.
+      // That measured the policy oscillating, not the campaign stranding — the two failed
+      // contracts were both completable by arrival the whole time. Shirking a contract is a
+      // decision a player makes once.
       const shirking =
         contractOutcome === 'shirk' &&
         contracts.pinnedNodeId !== null &&
+        !shirkedNodeIds.has(contracts.pinnedNodeId) &&
         getContractStatus(
           contracts,
           readyNodes.find((node) => node.id === contracts.pinnedNodeId) ?? readyNodes[0],
         ) === 'active'
       if (!pinnedStillReady || shirking) {
+        if (shirking && contracts.pinnedNodeId !== null) {
+          shirkedNodeIds.add(contracts.pinnedNodeId)
+        }
         const options_ = shirking
           ? readyNodes.filter((node) => node.id !== contracts.pinnedNodeId)
           : readyNodes
         const pool = options_.length > 0 ? options_ : readyNodes
         const chosen =
-          contractPolicy === 'nearest'
-            ? pool.reduce((best, node) => {
-                const bestSite = getSiteWorldPosition2D(blueprint, best.siteId)
-                const site = getSiteWorldPosition2D(blueprint, node.siteId)
-                if (!site) return best
-                if (!bestSite) return node
-                return Math.hypot(site.x - player.x, site.z - player.z) <
-                  Math.hypot(bestSite.x - player.x, bestSite.z - player.z)
-                  ? node
-                  : best
-              }, pool[0])
-            : contractRng.pick(pool)
+          contractPolicy === 'contrary'
+            ? pool[pool.length - 1]
+            : contractPolicy === 'nearest'
+              ? pool.reduce((best, node) => {
+                  const bestSite = getSiteWorldPosition2D(blueprint, best.siteId)
+                  const site = getSiteWorldPosition2D(blueprint, node.siteId)
+                  if (!site) return best
+                  if (!bestSite) return node
+                  return Math.hypot(site.x - player.x, site.z - player.z) <
+                    Math.hypot(bestSite.x - player.x, bestSite.z - player.z)
+                    ? node
+                    : best
+                }, pool[0])
+              : contractRng.pick(pool)
         if (pinObjective(contracts, chosen.id, readyNodes.map((node) => node.id))) {
           contractMetrics.pins.push(chosen.id)
           if (chosen.id !== readyNodes[0].id) contractMetrics.chose = true
@@ -1661,27 +1762,27 @@ export function runHarness(options: RunOptions): RunReport {
       }
     }
 
-    // 7. Roadmap 1.4 — the signature contract, then objective completion.
+    // 7. Roadmap 1.4 / 2.1 — every live contract, then objective completion.
     //
     // The contract state machine is the shipped one: `beginContract`, `advanceContract`,
     // `resolveContract` and the fail-forward rule all come from `CampaignDirector`. What
     // the harness supplies is the *outcome driver*, and it is a stated simplification —
     // this file spawns no event actors, so a contract is honoured by holding its site
     // clear rather than by fighting through an escort. What that does measure honestly is
-    // the half 1.4 is about: contracts that run out of clock fail forward, and the node
-    // they leave behind is one the run can still finish.
-    const contractProgress = contractNode
-      ? ensureContractProgress(contracts, contractNode)
-      : null
-    const contractSite = contractNode
-      ? getSiteWorldPosition2D(blueprint, contractNode.siteId)
-      : undefined
-    if (
-      contractNode &&
-      contractProgress &&
-      contractSite &&
-      !objectives.some((entry) => entry.id === contractNode.id && entry.done)
-    ) {
+    // the half the initiative is about: contracts that run out of clock fail forward, and
+    // the node they leave behind is one the run can still finish.
+    //
+    // 2.1 made this a loop, and added one rule: **a skipped node's clock stops.** The arm
+    // the run chose past is finished with, and a contract that kept counting behind it
+    // would report a failure for a road that no longer exists.
+    for (const node of contractNodes) {
+      const template = findContractTemplate(node.contract)
+      const objective = objectives.find((entry) => entry.id === node.id)
+      if (!template || !objective || objective.done || objective.skipped === true) continue
+      const progress = ensureContractProgress(contracts, node)
+      const contractSite = getSiteWorldPosition2D(blueprint, node.siteId)
+      if (!progress || !contractSite) continue
+
       const onSite =
         Math.hypot(contractSite.x - player.x, contractSite.z - player.z) <=
         HARNESS_CONTRACT_RANGE
@@ -1691,29 +1792,31 @@ export function runHarness(options: RunOptions): RunReport {
           actor.hostileToPlayer &&
           Math.hypot(actor.x - player.x, actor.z - player.z) < 12,
       )
-      const isActive = activeNode?.id === contractNode.id
-      if (contractProgress.status === 'offered' && onSite && isActive && policy !== 'idle') {
-        if (beginContract(contracts, contractNode, contractTemplate)) {
+      const isActive = activeNode?.id === node.id
+      if (progress.status === 'offered' && onSite && isActive && policy !== 'idle') {
+        if (beginContract(contracts, node, template)) {
           contractMetrics.started += 1
-          contractHold = 0
+          contractHold.set(node.id, 0)
         }
-      } else if (contractProgress.status === 'active') {
+      } else if (progress.status === 'active') {
         const holding =
           contractOutcome === 'honour' && onSite && clear && isActive && policy !== 'idle'
-        contractHold = holding ? contractHold + delta : 0
-        if (contractHold >= HARNESS_CONTRACT_HOLD) {
-          resolveContract(contracts, contractNode.id, 'kept')
+        const held = holding ? (contractHold.get(node.id) ?? 0) + delta : 0
+        contractHold.set(node.id, held)
+        if (held >= HARNESS_CONTRACT_HOLD) {
+          resolveContract(contracts, node.id, 'kept')
           contractMetrics.kept += 1
-          completeObjectiveEntry(objectives, contractNode.id)
-          finishObjective(contractNode.id)
+          completeObjectiveEntry(objectives, node.id)
+          settleSkips(node.id)
+          finishObjective(node.id)
         }
       }
       // The clock runs whether or not the pin is still on it: a contract on the ground is
       // a thing happening in the world, not a thing the HUD is looking at.
-      if (getContractStatus(contracts, contractNode) !== 'kept') {
-        const tick = advanceContract(contractProgress, contractTemplate, delta, onSite)
+      if (getContractStatus(contracts, node) !== 'kept') {
+        const tick = advanceContract(progress, template, delta, onSite)
         if (tick.kind === 'expired' || tick.kind === 'abandoned') {
-          resolveContract(contracts, contractNode.id, 'failed')
+          resolveContract(contracts, node.id, 'failed')
           contractMetrics.failedForward += 1
         }
       }
@@ -1725,13 +1828,14 @@ export function runHarness(options: RunOptions): RunReport {
       activeNode.contract !== undefined &&
       isContractNodeCompletableByArrival(
         getContractStatus(contracts, activeNode),
-        contractTemplate,
+        findContractTemplate(activeNode.contract),
       )
     if (activeNode && objectiveSite && (activeNode.kind === 'arrive' || contractFailedForward)) {
       if (
         isWithinObjectiveArrival(player.x, player.z, objectiveSite.x, objectiveSite.z)
       ) {
         completeObjectiveEntry(objectives, activeNode.id)
+        settleSkips(activeNode.id)
         finishObjective(activeNode.id)
       }
     }
@@ -1756,6 +1860,7 @@ export function runHarness(options: RunOptions): RunReport {
       )
       if (onSite && clear && policy !== 'idle') {
         completeObjectiveEntry(objectives, activeNode.id)
+        settleSkips(activeNode.id)
         finishObjective(activeNode.id)
       }
     }
@@ -1804,6 +1909,13 @@ export function runHarness(options: RunOptions): RunReport {
       contractMetrics.middleOrder.push(id)
     }
     if (id === contractMetrics.contractNodeId) contractMetrics.completed = true
+    // Roadmap 2.1 — the *route*, as the contract **node ids** walked, in order. This is
+    // what an exclusive fork changes and an ordering does not: two runs of the same seed
+    // that took different arms print different routes rather than the same set reordered.
+    const node = contractNodes.find((candidate) => candidate.id === id)
+    if (node?.contract !== undefined && !contractMetrics.route.includes(node.id)) {
+      contractMetrics.route.push(node.id)
+    }
     const report = objectiveReports.get(id)
     if (!report || report.completedAt !== null) return
     report.completedAt = elapsed
@@ -1824,6 +1936,12 @@ export function runHarness(options: RunOptions): RunReport {
         straightLineDistance: 0,
       },
   )
+  // The shipped re-decision, run from the harness rather than re-implemented, so a sweep
+  // can assert the farmability properties on real runs rather than on a fixture.
+  contractMetrics.rewardedObjectives = countRewardedObjectives(objectives)
+  contractMetrics.strandedAtEnd =
+    !campaignObjectivesComplete(objectives) &&
+    getReadyObjectiveNodes(blueprint, options.faction, objectives).length === 0
 
   melee.whiffRate =
     melee.beatsResolved > 0 ? melee.beatsWhiffed / melee.beatsResolved : 0
@@ -1922,6 +2040,33 @@ function linearizeCampaignGraph(blueprint: WorldBlueprint, faction: Faction): vo
   )
   for (let index = 1; index < middles.length; index += 1) {
     middles[index].prerequisiteIds = [middles[index - 1].id]
+  }
+  // Roadmap 2.1 — a linearised graph has no fork, so it can have no exclusive arms either:
+  // leaving them would let the *first* node skip the ones behind it and the placebo would
+  // quietly become the treatment.
+  for (const node of graph.nodes) {
+    delete node.optional
+    delete node.exclusiveGroup
+  }
+}
+
+/**
+ * **Roadmap 2.1's placebo: the same campaign, with the exclusivity taken out.**
+ *
+ * The fork is left exactly where it is — same sites, same contracts, same two ready nodes,
+ * same policies, same pins — and only `optional` and `exclusiveGroup` are removed, which
+ * makes every arm required and reproduces 1.4's shape precisely. It is the control that
+ * separates "the player chose a road" from "the map has two roads on it": any route
+ * divergence this arm still produces is not produced by an exclusive choice.
+ *
+ * Deliberately a mutation of an already-generated blueprint rather than a second generator
+ * path, for the same reason as the linearised arm: everything except the one variable has
+ * to be identical.
+ */
+function unmakeExclusiveArms(blueprint: WorldBlueprint, faction: Faction): void {
+  for (const node of blueprint.objectives[faction].nodes) {
+    delete node.optional
+    delete node.exclusiveGroup
   }
 }
 

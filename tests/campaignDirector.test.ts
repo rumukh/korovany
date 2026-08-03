@@ -86,6 +86,12 @@ function legacyAppObjectives(blueprint: WorldBlueprint, faction: Faction) {
       id: node.id,
       text: createGeneratedObjectiveText(node.kind, site?.kind),
       done: false,
+      // Roadmap 2.1 — the one field the persisted objective gained at build time. The
+      // equivalence this file exists to hold is about the *text*: the deleted `App.tsx`
+      // copy and the surviving builder must name the same nodes with the same words. That
+      // claim is unchanged; carrying the flag here keeps the comparison exact rather than
+      // loosening it to ignore a field.
+      ...(node.optional === true ? { optional: true } : {}),
     }
   })
 }
