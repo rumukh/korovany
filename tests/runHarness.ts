@@ -1628,10 +1628,16 @@ export function runHarness(options: RunOptions): RunReport {
       navigation.setActiveRegions(simulatedRegionIds)
       encounterScanCooldown = 0
     }
-    // Streamed-in regions count as discovered, exactly as they do in the engine: the fog
-    // lifts on the 3x3 window, not only on the square the player is standing in. That is
-    // what makes the exposure number a measure of the *player's* view rather than of the
-    // one square under their feet.
+    // Streamed-in regions count as discovered here, which is **not** what the engine does
+    // and is stated rather than assumed. `GeneratedWorldRuntime` builds its `RegionManager`
+    // with `discoverVisibleRegions: false`, so the shipped game lifts the fog on the one
+    // square under the player's feet; this file lifts it on the 3x3 window, because the
+    // exposure numbers it exists to produce are about what the player was in a position to
+    // see. The consequence for the route measurement is worth naming: the harness's
+    // discovery order starts at the square the player starts on (line above, and it is
+    // added first) and then admits whole streamed blocks in layout order, so it is a
+    // slightly *wider* and slightly *flatter* path than the engine's. It is a proxy, and
+    // the numbers this module reports about routes are proxy numbers.
     for (const regionId of simulatedRegionIds) discoveredRegionIds.add(regionId)
     encounterScanCooldown -= delta
     if (encounterScanCooldown <= 0) {

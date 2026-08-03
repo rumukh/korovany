@@ -55,6 +55,8 @@ import {
 import type { StorageLike } from '../src/game/run/storage.ts'
 import type { ChronicleEvent } from '../src/game/world/Chronicle.ts'
 import { CHRONICLE_LOG_LIMIT } from '../src/game/world/Chronicle.ts'
+import { RegionManager } from '../src/game/world/RegionManager.ts'
+import { RegionRuntime } from '../src/game/world/RegionRuntime.ts'
 
 class MemoryStorage implements StorageLike {
   values = new Map<string, string>()
@@ -328,8 +330,97 @@ test('the epilogue carries the route, the map, three beats, the body, the squad 
   assert.equal(epilogue.bestKillStreak, 9)
 })
 
-test('the terminal state decides the cause when the engine recorded none', () => {
-  // A victory is never "killed by" anything, an abandoned run is nobody's kill, and a defeat
+// ---------------------------------------------------------------------------
+// «Маршрут» is a path, and the control that keeps it one
+// ---------------------------------------------------------------------------
+
+/**
+ * A five-by-five layout shaped like the generated world, so a square's grid order and a
+ * player's walking order can disagree.
+ *
+ * `RegionManager`'s own fixture uses `x,z` ids; the epilogue formats `region-x-z`, so this
+ * one uses the generated shape. `formatRegionIdLabel` turns `region-4-0` into `E1`.
+ */
+function fiveByFiveLayout() {
+  const regions = []
+  for (let z = 0; z < 5; z += 1) {
+    for (let x = 0; x < 5; x += 1) {
+      regions.push({
+        id: `region-${String(x)}-${String(z)}`,
+        coordinate: { x, z },
+        bounds: { minX: x * 10, maxX: (x + 1) * 10, minZ: z * 10, maxZ: (z + 1) * 10 },
+        biomeId: `biome-${String(x)}-${String(z)}`,
+        heightProfile: { baseHeight: 0, amplitude: 0 },
+        territory: 'neutral' as string,
+      })
+    }
+  }
+  return { seed: 'route-order', regionSize: 10, bounds: { minX: 0, maxX: 50, minZ: 0, maxZ: 50 }, regions }
+}
+
+/**
+ * Walks a real `RegionManager`, configured exactly as `GeneratedWorldRuntime` configures
+ * its own, and hands back what the engine would persist.
+ */
+function walkDiscovery(path: readonly string[]): string[] {
+  const manager = new RegionManager(
+    fiveByFiveLayout() as never,
+    (regionBlueprint, context) => new RegionRuntime(regionBlueprint, context.regionId),
+    // The generated runtime's own options. `discoverVisibleRegions: false` is the reason
+    // the discovered set is a path at all: the fog lifts on the square underfoot, one at a
+    // time, so insertion order is walking order with no ties to break.
+    { visibleRadius: 1, simulationRadius: 1, discoverVisibleRegions: false },
+  )
+  for (const regionId of path) manager.setCurrentRegion(regionId as never)
+  return manager.getDiscoveredRegionIds().map(String)
+}
+
+test('**the route is a path, not the low corner of the map**', () => {
+  // The defect, as the sharpest assertion available. `RunEpilogue.route` is documented as
+  // "map squares in discovery order", and `RegionManager.getDiscoveredRegionIds` returned
+  // `sortedRegions(...)` — row-major grid order. So a guard who starts at **E1** printed a
+  // «Маршрут» line beginning at **A1**, a square they may never have entered, and two runs
+  // down genuinely different roads printed nearly the same line. Roadmap 2.1 ships exclusive
+  // routes, so a route the player cannot read is a feature that ships invisible.
+  //
+  // The walk below starts at E1 and goes down the right-hand column and back across the
+  // bottom — a path whose walking order and whose grid order are maximally different.
+  const path = ['region-4-0', 'region-4-1', 'region-4-2', 'region-3-2', 'region-2-2', 'region-1-2']
+  const discovered = walkDiscovery(path)
+
+  // The manager itself: discovery order, exactly the path, nothing else discovered.
+  assert.deepEqual(discovered, path, 'the manager no longer reports the order it was walked')
+
+  const snapshot = makeTerminalRun({})
+  const walked: ActiveRunSaveV3 = {
+    ...snapshot,
+    discoveredRegionIds: discovered,
+    currentLocation: { ...snapshot.currentLocation, regionId: 'region-1-2' },
+  }
+  const epilogue = buildRunEpilogue(walked)
+
+  assert.deepEqual(epilogue.route, ['E1', 'E2', 'E3', 'D3', 'C3', 'B3'])
+  assert.equal(epilogue.route[0], 'E1', 'a guard who starts at E1 must not print A1 first')
+  assert.notEqual(epilogue.route[0], 'A1')
+  assert.equal(epilogue.route[epilogue.route.length - 1], epilogue.finalRegion)
+
+  // **The control, and it is what stops this test being a snapshot of the current output.**
+  // Sorted into the order the manager used to return, the same walk prints a different line
+  // — and that line opens at the map's low corner rather than where the guard stood. If the
+  // sort ever comes back, `epilogue.route` becomes `gridOrder` and this assertion fails.
+  const gridOrder = buildRunEpilogue({
+    ...walked,
+    discoveredRegionIds: [...discovered].sort(),
+  }).route
+  assert.deepEqual(gridOrder, ['C3', 'D3', 'E1', 'E2', 'E3', 'B3'])
+  assert.notDeepEqual(
+    epilogue.route,
+    gridOrder,
+    'the walked line and the grid-sorted line agree, so the sort is back',
+  )
+})
+
+test('the terminal state decides the cause when the engine recorded none', () => {  // A victory is never "killed by" anything, an abandoned run is nobody's kill, and a defeat
   // from a save that predates the engine recording a cause says so rather than picking one.
   assert.equal(buildRunEpilogue(makeTerminalRun({ status: 'victory' })).cause, 'objectives')
   assert.equal(buildRunEpilogue(makeTerminalRun({ status: 'abandoned' })).cause, 'abandoned')

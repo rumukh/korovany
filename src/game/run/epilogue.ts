@@ -171,6 +171,13 @@ function beatsOf(
  * middle is what `routeTotal` is for. The final square is pulled out of the discovery order
  * rather than left where it was first seen, because a route that ends somewhere other than
  * where the body is reads as a contradiction.
+ *
+ * **This function was always correct and always printed the wrong thing**, which is worth
+ * recording rather than quietly fixing. It reads its input in the order it is handed, and
+ * `RegionManager.getDiscoveredRegionIds` used to hand it row-major grid order — so the line
+ * a player read was the low corner of the map. The order is now the discovery order this
+ * comment always claimed, and it is corrected at the manager rather than sorted back here,
+ * so nothing else reading the discovered set is left with the old answer.
  */
 function routeOf(discoveredRegionIds: readonly string[], finalRegion: string): string[] {
   const labels = discoveredRegionIds.map(formatRegionIdLabel)

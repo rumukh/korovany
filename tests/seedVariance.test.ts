@@ -52,6 +52,27 @@
  * own matched control (0.846 against 0.877 with `optional`/`exclusiveGroup` stripped), and
  * that is a small number honestly reported rather than a large one dressed up. The reading
  * 2.1's claim actually lives in is test 4 below, where the world is held still.
+ *
+ * **The route-order fix, as a separate line item.** `RegionManager.getDiscoveredRegionIds`
+ * used to sort the discovered set into row-major grid order, so the «Маршрут» line a player
+ * read was the low corner of the map rather than a path. It returns discovery order now.
+ * **Not one number above moved**, and that is the point rather than a relief: this module
+ * always judged on the discovery-order reading, and the harness builds its own discovered
+ * set, so the fix could only ever change what the *engine* prints. What it changed is the
+ * one column that measured that:
+ *
+ * | 120 seeds | walked line | shipped line, before | shipped line, after | grid lines | walked lines |
+ * | --------- | ----------: | -------------------: | ------------------: | ---------: | -----------: |
+ * | elf       |       0.787 |            **0.674** |           **0.787** |          6 |            4 |
+ * | guard     |       0.786 |            **0.350** |           **0.786** |         11 |            4 |
+ * | villain   |       0.778 |            **0.353** |           **0.778** |         17 |            5 |
+ *
+ * The last two columns are the sharpest statement of the defect available, and they correct
+ * this module's own earlier phrasing. The shipped line was never *flat* — sorted, it printed
+ * **17 distinct "routes" for the villain where there are 5**, because the eight labels
+ * `MAX_EPILOGUE_ROUTE` prints were the eight lowest-numbered squares of whatever set a run
+ * discovered. It varied more than the truth, and varied for a reason that had nothing to do
+ * with the road taken.
  */
 
 import assert from 'node:assert/strict'
@@ -110,7 +131,7 @@ test('the negative control holds: with the world fixed, the dice move nothing st
   )
 
   const report = measureSeedVariance(runs)
-  for (const metric of ['route', 'routeDiscovered', 'cause', 'control', 'controlBase', 'controlShift', 'controlMap', 'controlDelta', 'beatShape', 'beatVerbs', 'encounterMix'] as const) {
+  for (const metric of ['route', 'routeDiscovered', 'routeGridOrder', 'cause', 'control', 'controlBase', 'controlShift', 'controlMap', 'controlDelta', 'beatShape', 'beatVerbs', 'encounterMix'] as const) {
     assert.equal(
       report.fields[metric].distinct,
       1,
@@ -205,6 +226,37 @@ test('with the faction pinned, completed campaigns still print a handful of rout
   assert.ok(
     report.meanControlDelta > 1,
     'a run that changes no square at all would make the control reading meaningless',
+  )
+
+  // **The route-order regression guard, on a real corpus.** The postcard's line and the
+  // discovery-order line used to be different readings of the same run, and this module
+  // judged on the second because the first was not a path at all. The engine hands over the
+  // discovery order now, so they are the same line and the same statistic, and the
+  // grid-ordered reading is kept as the thing that must not come back.
+  assert.equal(
+    report.shippedRouteLineAgreement,
+    report.routeLineAgreement,
+    'what the postcard prints has come apart from the discovery order again',
+  )
+  assert.equal(
+    report.fields.route.distinct,
+    report.fields.routeDiscovered.distinct,
+    'the shipped line and the discovery-order line disagree about how many routes there are',
+  )
+  // Non-vacuity, and a correction worth recording rather than deleting. The first draft of
+  // this guard asserted the grid ordering was *flatter* — that a line which is the low
+  // corner of the map would agree more between two runs. **It is the other way round**, and
+  // this assertion is what found that: measured on the CI panel, grid order agrees 0.673
+  // against the walked line's 0.823, and on the 120-seed elf corpus 0.674 against 0.787.
+  // The reason is `MAX_EPILOGUE_ROUTE`: sorted, the eight printed labels are the eight
+  // lowest-numbered squares of whatever set the run happened to discover, so they move with
+  // the *set*; walked, they are the corridor out of the start, which a pinned faction shares.
+  // So the shipped line was never "flat" — it varied, and varied for a reason that has
+  // nothing to do with the road taken. The guard is therefore that the two differ at all.
+  assert.notEqual(
+    report.gridOrderRouteLineAgreement,
+    report.routeLineAgreement,
+    'the grid-sorted line and the walked line score identically, so the sort is back',
   )
 })
 

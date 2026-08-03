@@ -295,10 +295,30 @@ export class RegionManager {
       .map(([regionId]) => regionId)
   }
 
+  /**
+   * Every discovered square, **in the order it was discovered**.
+   *
+   * This used to return `sortedRegions(...)` — row-major grid order — and that was a real
+   * defect rather than a preference, because the one thing downstream of it is
+   * `RunEpilogue.route`, whose own contract says "map squares in discovery order". A guard
+   * who starts at E1 got a postcard whose route line opened at A1, so the «Маршрут» line
+   * was the low corner of the map rather than a path, and two runs that walked genuinely
+   * different roads printed nearly the same line.
+   *
+   * The order is not reconstructed here: `discoveredRegions` is a `Set` and a `Set` keeps
+   * insertion order, so discovery order was always present and was being thrown away one
+   * call before it was needed. The generated runtime streams with
+   * `discoverVisibleRegions: false`, which means squares are added one at a time as the
+   * player enters them — so for the shipped game this is exactly the path walked, with no
+   * ties to break.
+   *
+   * The layout filter stays. Every id in the set is resolved before it is added, so it can
+   * never fire today; it is kept because dropping an id the layout does not have is the
+   * one thing the old `sortedRegions` call was doing that anybody could still want.
+   */
   getDiscoveredRegionIds(): RegionId[] {
-    return this.sortedRegions(this.discoveredRegions).map(
-      (region) => region.id,
-    )
+    const known = new Set(this.layout.regions.map((region) => String(region.id)))
+    return [...this.discoveredRegions].filter((regionId) => known.has(String(regionId)))
   }
 
   isDiscovered(regionId: RegionId): boolean {

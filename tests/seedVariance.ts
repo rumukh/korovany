@@ -43,16 +43,28 @@
  * actually move is the **delta** from the generated territory, which is the quantity 1.3's
  * placebo arm was about. All three are reported and they are not the same number.
  *
- * **ROUTE IS MEASURED TWICE, AND THE DIFFERENCE IS A FINDING.** `RunEpilogue.route` is
- * documented as "map squares in discovery order", but the engine fills
- * `ActiveRunSaveV3.discoveredRegionIds` from `RegionManager.getDiscoveredRegionIds`, which
- * returns `sortedRegions(...)` — row-major grid order by `compareRegions`. So the line the
- * postcard prints today is the low corner of the map, not a path: a guard who starts at E1
- * gets a route line beginning at A1. {@link RunFields.route} is that shipped line and
- * {@link RunFields.routeDiscovered} is what it would say in the order its own comment
- * claims. The second is what the seed question is judged on, because the first cannot
- * discriminate anything and a metric that reports "no divergence" for everything is not
- * evidence.
+ * **ROUTE IS MEASURED TWICE, AND THE SECOND READING IS NOW A REGRESSION GUARD.** When this
+ * module was written, `RunEpilogue.route` was documented as "map squares in discovery order"
+ * and the engine filled `ActiveRunSaveV3.discoveredRegionIds` from
+ * `RegionManager.getDiscoveredRegionIds`, which returned `sortedRegions(...)` — row-major
+ * grid order by `compareRegions`. So the line the postcard printed was the low corner of the
+ * map, not a path: a guard who started at E1 got a route line beginning at A1. This module
+ * therefore measured both orders and judged the seed question on the discovery-order reading.
+ *
+ * **That defect is fixed.** `getDiscoveredRegionIds` now returns the order the squares were
+ * discovered in, which the `Set` behind it always held. {@link RunFields.route} and
+ * {@link RunFields.routeDiscovered} are consequently the *same* line on a shipped run, and
+ * both are kept: the first is what a player reads, the second is what this module always
+ * judged on, and a divergence between them means the grid order has come back.
+ *
+ * **One thing this module used to say about the shipped line was wrong, and the correction
+ * is recorded rather than quietly dropped.** "The shipped one cannot discriminate anything"
+ * reads as *flat*, and it is not: sorted, the eight labels `MAX_EPILOGUE_ROUTE` prints are
+ * the eight lowest-numbered squares of whatever set a run discovered, so they move with the
+ * *set*, and the grid line actually agrees **less** between two runs than the walked one
+ * (0.674 against 0.787 on the 120-seed elf corpus). What was true is the part that mattered:
+ * it was not a path, so its variation was never route variation. {@link RunFields.routeGridOrder}
+ * keeps it measurable so that claim stays checkable.
  *
  * **WHAT THIS CANNOT SEE ABOUT 1.5.** The harness composes its own encounter packs around
  * a centre and never calls `createGeneratedEncounterPlan`, so 1.5's terrain-bound templates
@@ -205,22 +217,21 @@ function regionDeltaFor(regionId: string, control: Territory): RegionDelta {
  * the achievement counters — and it is fabricated as a **constant**, so those fields
  * cannot contribute variety they did not earn.
  *
- * `routeOrder` exists because the two orders are not the same and only one of them is what
- * a player sees. `RunEpilogue.route` is documented as "map squares in discovery order",
- * but the engine fills `ActiveRunSaveV3.discoveredRegionIds` from
- * `RegionManager.getDiscoveredRegionIds`, which returns `sortedRegions(...)` — row-major
- * grid order by `compareRegions` (z, then x). So **`engine` is the shipped postcard** and
- * `discovery` is the more generous reading the field's own comment implies. Both are
- * measured, because the difference between them turned out to matter.
+ * `routeOrder` is the **regression control**, and it stays now that the defect is fixed.
+ * `engine` reproduces what the shipped engine hands the postcard; `gridOrder` reproduces
+ * what it handed the postcard *before* `RegionManager.getDiscoveredRegionIds` stopped
+ * sorting — row-major grid order by `compareRegions` (z, then x). The two used to be the
+ * same and are now different, which is the fix; keeping the second is what lets a test say
+ * "and it must not be that one again" rather than merely asserting the current output.
  */
 export function buildHarnessEpilogue(
   report: RunReport,
-  routeOrder: 'engine' | 'discovery' = 'engine',
+  routeOrder: 'engine' | 'gridOrder' = 'engine',
 ): RunEpilogue {
   const discovered =
-    routeOrder === 'discovery'
-      ? [...report.discoveredRegionIds]
-      : [...report.discoveredRegionIds].sort(compareRegionIds)
+    routeOrder === 'gridOrder'
+      ? [...report.discoveredRegionIds].sort(compareRegionIds)
+      : [...report.discoveredRegionIds]
   const snapshot: ActiveRunSaveV3 = {
     version: 3,
     runId: `harness-${report.seed}-${report.faction}`,
@@ -325,8 +336,24 @@ export function buildHarnessEpilogue(
 export interface RunFields {
   /** The postcard's bounded route line, in the order the engine actually persists. */
   route: string
-  /** The same line if `discoveredRegionIds` were in discovery order, as its doc claims. */
+  /**
+   * The same line read in **discovery order**, which is what this module always judged on.
+   *
+   * Kept, and kept under its own name, even though it is now identical to {@link route} on
+   * every shipped run — because every band and every recorded number in this module and its
+   * test is expressed in it, and folding it into `route` would silently re-baseline them
+   * against a field whose meaning had just changed. The two agreeing *is* the fix, and
+   * `seedVariance.test.ts` asserts that agreement rather than assuming it.
+   */
   routeDiscovered: string
+  /**
+   * The line the postcard printed **before** the discovery-order fix: row-major grid order.
+   *
+   * The regression control. A guard who starts at E1 printed a line beginning at A1; if
+   * this ever equals {@link route} again on a run that walked more than a corner of the
+   * map, the sort has come back.
+   */
+  routeGridOrder: string
   /** Every square discovered, sorted — for overlap rather than for equality. */
   routeSet: readonly string[]
   /** How the run ended, and who ended it. */
@@ -401,7 +428,7 @@ function encounterMixOf(report: RunReport, blueprint: WorldBlueprint): string {
 export function measureRunFields(run: MeasuredRun): RunFields {
   const { report, blueprint } = run
   const epilogue = buildHarnessEpilogue(report)
-  const walked = buildHarnessEpilogue(report, 'discovery')
+  const gridOrder = buildHarnessEpilogue(report, 'gridOrder')
   const base: Record<Territory, number> = { neutral: 0, elf: 0, guard: 0, villain: 0 }
   for (const region of blueprint.regions) base[region.territory] += 1
   const changed = blueprint.regions
@@ -416,7 +443,12 @@ export function measureRunFields(run: MeasuredRun): RunFields {
   const hurtBy = Object.keys(report.damageTaken.byAllegiance).sort().join('+')
   return {
     route: epilogue.route.join('>'),
-    routeDiscovered: walked.route.join('>'),
+    // The engine's own order *is* the discovery order now, so these two are the same string
+    // and the second is what every band here was measured in. Computing it from the same
+    // epilogue rather than from a second build is the point: if they ever came apart, the
+    // engine would have started sorting again.
+    routeDiscovered: epilogue.route.join('>'),
+    routeGridOrder: gridOrder.route.join('>'),
     routeSet: [...report.discoveredRegionIds].sort(),
     cause: `${epilogue.cause}/${epilogue.causeRole ?? '-'}`,
     bodyEpilogue: `w${epilogue.wounds.length}/l${epilogue.limbsLost}/i${epilogue.injuries}/${
@@ -449,6 +481,7 @@ export function measureRunFields(run: MeasuredRun): RunFields {
 export const VARIANCE_METRICS = [
   'route',
   'routeDiscovered',
+  'routeGridOrder',
   'cause',
   'bodyEpilogue',
   'bodyProxy',
@@ -479,6 +512,7 @@ export const METRIC_FIELDS: Readonly<
 > = {
   route: 'route',
   routeDiscovered: 'route',
+  routeGridOrder: 'route',
   cause: 'cause',
   bodyEpilogue: 'body',
   bodyProxy: 'body',
@@ -587,17 +621,20 @@ export interface SeedVarianceReport {
   /**
    * Mean pairwise agreement between two runs' route lines **in discovery order**.
    *
-   * Deliberately the discovery-order reading rather than the shipped one. The engine
-   * persists `discoveredRegionIds` in row-major grid order, so the printed line is the low
-   * corner of the map in every run of every faction and cannot discriminate anything —
-   * see {@link shippedRouteLineAgreement}, which measures that. This number is the
-   * generous reading: what the postcard would say if `route` were the discovery order its
-   * own doc comment claims. It is the one used to judge the seed question, because a
-   * metric that reports "no divergence" for everything is not evidence.
+   * This is the number every band in `seedVariance.test.ts` is expressed in, and it is the
+   * one the seed question was judged on. When the module was written the engine persisted
+   * `discoveredRegionIds` in row-major grid order, so this was the *generous* reading —
+   * what the postcard would say if `route` were the discovery order its own doc claimed.
+   * The engine now hands over that order, so this is simply what the postcard says, and
+   * {@link shippedRouteLineAgreement} agrees with it rather than measuring the low corner
+   * of the map. {@link gridOrderRouteLineAgreement} is what the old behaviour scored, kept
+   * as the regression reading.
    */
   routeLineAgreement: number
-  /** The same statistic on the line the game actually prints today. */
+  /** The same statistic on the line the game actually prints. Equal to the above. */
   shippedRouteLineAgreement: number
+  /** And the same statistic under the grid ordering the fix removed. The control. */
+  gridOrderRouteLineAgreement: number
   /** Mean squares whose holder moved off the generated territory. */
   meanControlDelta: number
   /** Mean simulated seconds, so a corpus that never got going is visible. */
@@ -628,6 +665,9 @@ export function measureSeedVariance(runs: readonly MeasuredRun[]): SeedVarianceR
     ),
     shippedRouteLineAgreement: meanRouteLineAgreement(
       fields.map((entry) => routeLine(entry.route)),
+    ),
+    gridOrderRouteLineAgreement: meanRouteLineAgreement(
+      fields.map((entry) => routeLine(entry.routeGridOrder)),
     ),
     meanControlDelta:
       fields.reduce((sum, entry) => sum + entry.controlDeltaCount, 0) / total,
