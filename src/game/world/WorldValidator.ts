@@ -1617,6 +1617,7 @@ function validateObjectives(
       ? reachableFrom(startSite.regionId, regionAdjacency)
       : new Set<string>()
     let contractNodes = 0
+    const exclusiveGroups = new Map<string, FactionObjectiveNode[]>()
 
     for (let index = 0; index < graph.nodes.length; index += 1) {
       const node = graph.nodes[index]
@@ -1672,6 +1673,33 @@ function validateObjectives(
         )
       }
       if (node.contract !== undefined) contractNodes += 1
+      // Roadmap 2.1 — the two fields subset completion added, and the rule that binds them.
+      // An optional node with no fork is a node nothing can ever settle: `skipped` is only
+      // written by a sibling's completion, so a lone optional node would sit open for ever
+      // and the win condition would never come true. That is the exact way an optional
+      // concept strands a run, so the generator is forbidden from emitting one.
+      if (node.optional !== undefined && typeof node.optional !== 'boolean') {
+        context.add('objective.optional', `${nodePath}.optional`, 'Objective optional flag must be a boolean')
+      }
+      if (node.exclusiveGroup !== undefined && typeof node.exclusiveGroup !== 'string') {
+        context.add(
+          'objective.exclusiveGroup',
+          `${nodePath}.exclusiveGroup`,
+          'Objective exclusive group must be a string',
+        )
+      }
+      if (node.optional === true && typeof node.exclusiveGroup !== 'string') {
+        context.add(
+          'objective.optionalWithoutFork',
+          nodePath,
+          'An optional objective must belong to an exclusive fork, or nothing can settle it',
+        )
+      }
+      if (typeof node.exclusiveGroup === 'string') {
+        const arms = exclusiveGroups.get(node.exclusiveGroup) ?? []
+        arms.push(node)
+        exclusiveGroups.set(node.exclusiveGroup, arms)
+      }
       if (!Array.isArray(node.prerequisiteIds)) {
         context.add(
           'objective.prerequisites',
@@ -1704,14 +1732,58 @@ function validateObjectives(
     validateObjectiveRoots(graph, nodeById, indegree, path, context)
     validateObjectiveDag(graph, dependents, indegree, path, context)
 
-    // Roadmap 1.4 — exactly one signature contract per faction. Zero would mean the fork
-    // has no contract arm on this seed; two would mean a faction with two signatures, and
-    // both are generator defects the 500-seed gate should catch rather than the browser.
-    if (contractNodes !== 1) {
+    // Roadmap 2.1 — the fork, checked as a shape rather than trusted as an intention.
+    // Two arms minimum, because one arm is an optional node nothing can settle; every arm
+    // optional, because a required node in a fork would be skipped by a sibling and then
+    // demanded by the win condition, which is a run that cannot end; and different sites,
+    // because a fork whose arms are the same place is a choice the player cannot see.
+    for (const [group, arms] of exclusiveGroups) {
+      if (arms.length < 2) {
+        context.add(
+          'objective.forkArms',
+          `${path}.nodes`,
+          `Exclusive fork ${group} has ${String(arms.length)} arm(s); a fork needs at least two`,
+        )
+      }
+      if (arms.some((node) => node.optional !== true)) {
+        context.add(
+          'objective.forkRequiredArm',
+          `${path}.nodes`,
+          `Exclusive fork ${group} has a required arm, which a sibling's completion would skip`,
+        )
+      }
+      if (new Set(arms.map((node) => node.siteId)).size !== arms.length) {
+        context.add(
+          'objective.forkSharedSite',
+          `${path}.nodes`,
+          `Exclusive fork ${group} puts two arms on one site`,
+        )
+      }
+      if (arms.some((node) => node.id === graph.finalNodeId)) {
+        context.add(
+          'objective.forkFinale',
+          `${path}.nodes`,
+          `Exclusive fork ${group} contains the finale, which must always be fought`,
+        )
+      }
+    }
+
+    // Roadmap 1.4 / 2.1 — a faction's fork carries a contract on every arm. Zero would
+    // mean a campaign with no contract at all on this seed; one would mean a fork that is
+    // not one, and both are generator defects the 500-seed gate should catch rather than
+    // the browser.
+    if (contractNodes !== 2) {
       context.add(
         'objective.contractCount',
         `${path}.nodes`,
-        `Faction ${faction} must have exactly one signature contract node, found ${String(contractNodes)}`,
+        `Faction ${faction} must have exactly two contract nodes, found ${String(contractNodes)}`,
+      )
+    }
+    if (new Set(graph.nodes.map((node) => node.contract).filter(Boolean)).size !== contractNodes) {
+      context.add(
+        'objective.contractDuplicate',
+        `${path}.nodes`,
+        `Faction ${faction} runs the same contract on two nodes`,
       )
     }
 

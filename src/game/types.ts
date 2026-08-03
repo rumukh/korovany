@@ -314,9 +314,9 @@ export type CampaignContractStatus = 'offered' | 'active' | 'kept' | 'failed'
  * have presented a straight line. This is the list version, and every entry is something
  * the player can pin right now.
  *
- * `contract` is null on an ordinary campaign errand and set on the faction's signature
- * contract. Both are **required**: the entry says which one is pinned, never which one is
- * skipped, because nothing here can be skipped.
+ * `contract` is null on an ordinary campaign errand and set on a contract node. Roadmap 2.1
+ * added `exclusive`, and it carries the sentence 1.4's copy was forbidden from saying: the
+ * entries that share a fork are **alternatives**, and closing one closes the others out.
  */
 export interface CampaignContractView {
   /** The objective node id. */
@@ -330,6 +330,13 @@ export interface CampaignContractView {
   /** Map square, e.g. `C3`. */
   regionLabel: string
   pinned: boolean
+  /**
+   * Roadmap 2.1 — true when taking this arm means not taking the others.
+   *
+   * Null-free on purpose: an ordinary required errand is `false`, and the panel's whole
+   * job is to make the difference between the two visible before the player commits.
+   */
+  exclusive: boolean
   /** Null on an ordinary errand; the contract's state otherwise. */
   status: CampaignContractStatus | null
   /** Seconds left on a running contract's clock, null when it is not running. */
@@ -489,10 +496,27 @@ export function createMeleeView(beats: number, finisherCost: number): MeleeView 
   }
 }
 
+/**
+ * One campaign objective, as the save and the HUD both hold it.
+ *
+ * Roadmap 2.1 is where this shape moved, and it is the expensive half of that initiative:
+ * while every node was required the win condition could stay `every(o => o.done)` and the
+ * persisted objective needed no skipped or optional concept at all. Two fields, and both
+ * are optional so a required node still serialises exactly as it did:
+ *
+ * - `optional` — victory does not require this node to be **done**, only **settled**.
+ * - `skipped` — the run took another arm of the same fork, so this one is off the board.
+ *
+ * The pair is deliberately not one tri-state field. "This node need not be done" is a
+ * property of the campaign the generator wrote; "this run is not doing it" is a fact about
+ * what the player chose, and collapsing the two would make a save unable to say which.
+ */
 export interface Objective {
   id: string
   text: string
   done: boolean
+  optional?: boolean
+  skipped?: boolean
   progress?: number
   target?: number
 }

@@ -3,6 +3,8 @@ import { deriveSeed, parseSeed, type SeedInput } from '../random/seed.ts'
 import type { Faction, ZoneId } from '../types.ts'
 import {
   DEFAULT_REGION_SIZE,
+  CONTRACT_SITINGS,
+  FACTION_CONTRACT_POOL,
   FACTION_CONTRACT_SITES,
   WORLD_FACTIONS,
   WORLD_GENERATOR_VERSION,
@@ -880,31 +882,38 @@ function createEncounters(
 }
 
 /**
- * Roadmap 1.4 — the campaign graph, as a diamond rather than a chain.
+ * Roadmap 2.1 — the campaign graph, as a fork with an exclusive arm.
  *
- * What was here emitted three nodes on a linear chain and took exactly one seeded draw per
- * faction, which is where the roadmap's "3 factions × 2 middle sites = 6 distinct campaign
- * graphs across all 2³² seeds" comes from. What is here now is:
+ * 1.4 made this a diamond: one required errand and one required signature contract, both
+ * ready at once. What the player chose there was an **order**, because both arms had to be
+ * closed before the finale opened. What is here now is:
  *
  * ```
- *            ┌─ errand ──┐
- *   start ───┤           ├─── finale
- *            └─ contract ┘
+ *            ┌─ errand ─────────── required ─┐
+ *   start ───┼─ signature contract ─┐         ├─── finale
+ *            └─ alternative contract┴ one of ─┘
  * ```
  *
- * **Both middle nodes are required.** That is deliberate and it is the whole shape of the
- * first slice: the persisted `Objective` has no optional concept and the win condition is
- * still `every(o => o.done)`, so what the fork buys the player is an **order**, not an
- * exclusive route. Exclusive routes are 2.1.
+ * **The two contract arms are alternatives.** Both carry `optional: true` and share an
+ * `exclusiveGroup`, so completing either one marks the other `skipped` and the finale
+ * opens. That is an exclusive route rather than an ordering, and it is what the replaced
+ * win condition in `CampaignDirector` buys.
  *
- * The contract node names a signature template — one per faction, adapted from a shipped
- * event builder — and it draws its site from **its own derived stream**, so adding this
- * step cannot shift the errand draw that was here before. A given seed still gets exactly
- * the errand it always got; the contract is new numbers from new entropy.
+ * The signature arm is always the faction's own — the elf frees its own, the guard
+ * protects, the villain robs — so the faction-differentiation signal 1.4 measured survives.
+ * The alternative is drawn from the rest of that faction's pool, which is where the seven
+ * builders 1.4 left unpromoted arrive.
  *
- * Graph count per faction goes from 2 to 6, and across the three factions from 6 to 18,
- * before the treasure site's own four placements are counted. That is a measured
- * improvement rather than a fix: 1.5 is where generator diversity is actually addressed.
+ * **Every new draw takes its own derived stream.** `objectives:${faction}` still chooses
+ * the errand and still returns exactly what it always returned, so the errand a seed gets
+ * is the errand it always got. The contract siting keeps `objectives:contract:${faction}`.
+ * The two 2.1 draws — which alternative, and where it goes — are new names, so adding them
+ * cannot shift a number that was already there.
+ *
+ * Graph count per faction goes from 6 to 6 × (pool − 1) × alternative sites, before the
+ * optional sites' own placements are counted: 36 for the elf and the guard, 54 for the
+ * villain. That is a by-product rather than the point — the point is that only one arm is
+ * walked.
  */
 function createObjectives(
   seed: number,
@@ -924,16 +933,36 @@ function createObjectives(
       siteById,
       namedStream(seed, `objectives:${faction}`).pick(choices[faction]),
     )
-    const template = FACTION_CONTRACT_SITES[faction]
+    const signature = FACTION_CONTRACT_SITES[faction]
     const contractSite = requireSite(
       siteById,
-      namedStream(seed, `objectives:contract:${faction}`).pick(template.siteIds),
+      namedStream(seed, `objectives:contract:${faction}`).pick(signature.siteIds),
+    )
+    // Roadmap 2.1 — the other arm. Its own two streams, and its site pool has the errand
+    // and the signature arm removed from it, so the three ready places are always three
+    // different squares and the fork is visible on the map rather than only in the panel.
+    const alternative =
+      CONTRACT_SITINGS[
+        namedStream(seed, `objectives:alt:${faction}`).pick(
+          FACTION_CONTRACT_POOL[faction].filter((id) => id !== signature.id),
+        )
+      ]
+    const alternativeCandidates = alternative.siteIds.filter(
+      (siteId) => siteId !== contractSite.id && siteId !== middle.id,
+    )
+    const alternativeSite = requireSite(
+      siteById,
+      namedStream(seed, `objectives:alt:site:${faction}`).pick(
+        alternativeCandidates.length > 0 ? alternativeCandidates : alternative.siteIds,
+      ),
     )
     const finale = requireSite(siteById, finales[faction])
     const startNodeId = `objective-${faction}-start`
     const middleNodeId = `objective-${faction}-branch`
     const contractNodeId = `objective-${faction}-contract`
+    const alternativeNodeId = `objective-${faction}-alt`
     const finalNodeId = `objective-${faction}-finale`
+    const forkGroup = `fork-${faction}`
     return {
       faction,
       // Topologically ordered, and `tests/campaignDirector.test.ts` asserts it stays that
@@ -957,18 +986,33 @@ function createObjectives(
         },
         {
           id: contractNodeId,
-          kind: template.kind,
+          kind: signature.kind,
           siteId: contractSite.id,
           regionId: contractSite.regionId,
           prerequisiteIds: [startNodeId],
-          contract: template.id,
+          contract: signature.id,
+          optional: true,
+          exclusiveGroup: forkGroup,
         },
         {
+          id: alternativeNodeId,
+          kind: alternative.kind,
+          siteId: alternativeSite.id,
+          regionId: alternativeSite.regionId,
+          prerequisiteIds: [startNodeId],
+          contract: alternative.id,
+          optional: true,
+          exclusiveGroup: forkGroup,
+        },
+        {
+          // The finale still lists both arms. Prerequisites are satisfied by *settled*
+          // nodes, so the arm the player skipped satisfies its own edge and the road opens
+          // the moment the other one closes.
           id: finalNodeId,
           kind: 'defeat',
           siteId: finale.id,
           regionId: finale.regionId,
-          prerequisiteIds: [middleNodeId, contractNodeId],
+          prerequisiteIds: [middleNodeId, contractNodeId, alternativeNodeId],
         },
       ],
       rootNodeIds: [startNodeId],

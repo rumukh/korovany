@@ -673,10 +673,61 @@ test('terminal run snapshots authoritatively archive the latest progress', () =>
   assert.equal(result.outcome, 'finalized')
   assert.equal(storage.profileWriteAttempts, 1)
   assert.equal(result.summary?.kills, 17)
-  assert.equal(result.summary?.objectivesCompleted, 2)
+  // **Roadmap 2.1 — `objectivesCompleted` is no longer a count of ticked boxes.** It is how
+  // much of its own campaign the run closed, on the reward's five-step scale, so a run that
+  // closed both of its two objectives reports the full five rather than the two it happened
+  // to have. The re-decision exists because a raw count prices routes the moment routes can
+  // be different lengths; see `countRewardedObjectives`.
+  assert.equal(result.summary?.objectivesCompleted, 5)
   assert.equal(result.summary?.endingGold, 143)
   assert.deepEqual(result.profile.runHistory[0], result.summary)
   assert.equal(storage.getItem(ACTIVE_RUN_SAVE_KEY), null)
+})
+
+test('the archived objective count reports the campaign, not the tick count', () => {
+  // The three readings that separate the re-decision from the raw count it replaced.
+  const half = makeTerminalRun('run-half')
+  half.player.objectives = [
+    { id: 'a', text: 'a', done: true },
+    { id: 'b', text: 'b', done: false },
+    { id: 'c', text: 'c', done: false },
+    { id: 'd', text: 'd', done: false },
+  ]
+  assert.equal(
+    finalizeRunSnapshot(new ControlledProfileStorage(), half).summary?.objectivesCompleted,
+    1,
+    'a quarter-closed campaign should report a quarter of the scale',
+  )
+
+  // A run that skipped an optional node and closed everything else has closed its campaign,
+  // and is paid for the campaign it took on rather than penalised for the road it chose.
+  const skipped = makeTerminalRun('run-skipped')
+  skipped.player.objectives = [
+    { id: 'a', text: 'a', done: true },
+    { id: 'b', text: 'b', done: true },
+    { id: 'c', text: 'c', done: false, optional: true, skipped: true },
+    { id: 'd', text: 'd', done: true },
+  ]
+  assert.equal(
+    finalizeRunSnapshot(new ControlledProfileStorage(), skipped).summary?.objectivesCompleted,
+    5,
+  )
+
+  // And the same campaign walked the completionist way — 1.4's shape — is paid exactly the
+  // same. Under the raw count it would have been paid more, which is the incentive against
+  // ever taking a road that the re-decision removes.
+  const everything = makeTerminalRun('run-everything')
+  everything.player.objectives = [
+    { id: 'a', text: 'a', done: true },
+    { id: 'b', text: 'b', done: true },
+    { id: 'c', text: 'c', done: true },
+    { id: 'd', text: 'd', done: true },
+  ]
+  assert.equal(
+    finalizeRunSnapshot(new ControlledProfileStorage(), everything).summary
+      ?.objectivesCompleted,
+    5,
+  )
 })
 
 test('terminal run snapshots finalize without a checkpoint and remain exact-once', () => {

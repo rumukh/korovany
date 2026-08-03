@@ -525,17 +525,17 @@ export const SABOTAGE_DONE_NOTICE =
   'Склад горит. Припасы, которыми собирались снабжать набег, теперь дым.'
 
 // ---------------------------------------------------------------------------
-// Roadmap 1.4 — faction contracts
+// Roadmap 1.4 / 2.1 — faction contracts
 // ---------------------------------------------------------------------------
 
 /**
  * The words for the fork.
  *
- * Two rules, and the second one is the one the roadmap is emphatic about. **The stake is
- * stated before the choice**, same as a rumour's. And **the copy never says the player is
- * choosing a route.** Every branch is required; what is being chosen is the order. A panel
- * that implied otherwise would be selling 2.1 on 1.4's budget, so the panel hint says so in
- * as many words and every line below is written to agree with it.
+ * Two rules, and the second one is where 2.1 rewrote 1.4. **The stake is stated before the
+ * choice**, same as a rumour's. And **the copy now says plainly that the arms are
+ * alternatives** — 1.4's panel was obliged to say the opposite («выбираешь порядок, а не
+ * дорогу») because both arms were required and a HUD implying otherwise would have been
+ * selling 2.1 on 1.4's budget. Subset completion ships the road, so the panel says road.
  */
 export interface ContractCopyContext {
   /** Where the work is, as a map square. */
@@ -544,17 +544,29 @@ export interface ContractCopyContext {
 }
 
 export const CONTRACT_PANEL_TITLE = 'Подряды'
-export const CONTRACT_PANEL_HINT = 'Закрыть придётся все. Выбираешь порядок, а не дорогу.'
-export const CONTRACT_PIN_LABEL = 'Взяться'
-export const CONTRACT_UNPIN_LABEL = 'Бросить'
+export const CONTRACT_PANEL_HINT = 'Возьмёшь один — второй закроется сам. Это дорога, а не очередь.'
 /** The line under a plain campaign node, so a required errand does not read as optional. */
 export const CONTRACT_ERRAND_STAKE = 'Пункт обязательный: без него забег не закроется.'
+/** The line under an arm of the fork, so an alternative does not read as required. */
+export const CONTRACT_EXCLUSIVE_BADGE = 'Или — или'
+export const CONTRACT_PIN_LABEL = 'Взяться'
+export const CONTRACT_UNPIN_LABEL = 'Бросить'
 export const CONTRACT_FAILED_TASK = 'Подряд сорван. Дойти до точки — пункт закроется пустым.'
+/** How a node the run walked past reads in the objective list. */
+export const OBJECTIVE_SKIPPED_LABEL = 'Мимо'
+export const OBJECTIVE_OPTIONAL_LABEL = 'На выбор'
 
 const CONTRACT_TITLES: Record<ContractId, string> = {
   plunder: 'Жирный корован',
   bulwark: 'Домики жгут',
   unshackle: 'Свои в верёвках',
+  duel: 'Заезжий чемпион',
+  reprisal: 'Долг по голове',
+  relief: 'Налёт на своих',
+  ambush: 'Чужой обоз уже берут',
+  muster: 'Чужая ватага',
+  cull: 'Зверьё у домиков',
+  scavenge: 'Пепелище с гостями',
 }
 
 export function describeContractTitle(id: ContractId): string {
@@ -567,13 +579,29 @@ export function describeContractTask(
   context: ContractCopyContext,
 ): string {
   const site = context.siteLabel ?? DEFAULT_SITE_LABEL
-  if (id === 'plunder') {
-    return `Дойти до точки «${site}» в квадрате ${context.regionLabel} и обнести обоз, пока охрана не опомнилась.`
+  const where = `до точки «${site}» в квадрате ${context.regionLabel}`
+  switch (id) {
+    case 'plunder':
+      return `Дойти ${where} и обнести обоз, пока охрана не опомнилась.`
+    case 'bulwark':
+      return `Дойти ${where} и отбить налёт, пока дом ещё стоит.`
+    case 'unshackle':
+      return `Дойти ${where} и снять верёвки со своего.`
+    case 'duel':
+      return `Дойти ${where} и уложить чемпиона. Он тут именно за этим.`
+    case 'reprisal':
+      return `Дойти ${where} и закрыть долг по голове, пока помеченный не ушёл.`
+    case 'relief':
+      return `Дойти ${where} и разогнать налётчиков, пока защитники ещё стоят.`
+    case 'ambush':
+      return `Дойти ${where} и забрать груз раньше тех, кто уже взялся.`
+    case 'muster':
+      return `Дойти ${where} и проредить чужую ватагу, пока она не окрепла.`
+    case 'cull':
+      return `Дойти ${where} и перебить стаю, пока домики целы.`
+    case 'scavenge':
+      return `Дойти ${where} и вынести из пепла всё, что мародёры ещё не унесли.`
   }
-  if (id === 'bulwark') {
-    return `Дойти до точки «${site}» в квадрате ${context.regionLabel} и отбить налёт, пока дом ещё стоит.`
-  }
-  return `Дойти до точки «${site}» в квадрате ${context.regionLabel} и снять верёвки со своего.`
 }
 
 /** What failing costs. Stated before the choice, and never overstated. */
@@ -582,29 +610,80 @@ export function describeContractStake(
   context: ContractCopyContext,
 ): string {
   const site = context.siteLabel ?? DEFAULT_SITE_LABEL
-  if (id === 'plunder') {
-    return `Провалишь — обоз уйдёт своим ходом. Платить будет некому, а пункт всё равно закрывать: дойдёшь до «${site}» и пойдёшь дальше пустым.`
+  const tail = `Награды не будет, а пункт всё равно закрывать: дойдёшь до «${site}» и пойдёшь дальше пустым.`
+  switch (id) {
+    case 'plunder':
+      return `Провалишь — обоз уйдёт своим ходом. Платить будет некому. ${tail}`
+    case 'bulwark':
+      return `Провалишь — «${site}» догорит без тебя. ${tail}`
+    case 'unshackle':
+      return `Провалишь — своего уведут. ${tail}`
+    case 'duel':
+      return `Провалишь — чемпион поедет дальше и будет рассказывать. ${tail}`
+    case 'reprisal':
+      return `Провалишь — помеченный уйдёт, и долг останется висеть. ${tail}`
+    case 'relief':
+      return `Провалишь — защитников положат, а квадрат сменит хозяина. ${tail}`
+    case 'ambush':
+      return `Провалишь — груз увезут те, кто взялся раньше. ${tail}`
+    case 'muster':
+      return `Провалишь — ватага останется на ногах и осмелеет. ${tail}`
+    case 'cull':
+      return `Провалишь — стая доломает домики. ${tail}`
+    case 'scavenge':
+      return `Провалишь — мародёры вынесут пепелище до тебя. ${tail}`
   }
-  if (id === 'bulwark') {
-    return `Провалишь — «${site}» догорит без тебя. Награды не будет, а пункт всё равно закрывать: дойдёшь и пойдёшь дальше пустым.`
-  }
-  return `Провалишь — своего уведут. Награды не будет, а пункт всё равно закрывать: дойдёшь до «${site}» и пойдёшь дальше пустым.`
 }
 
 export function describeContractStarted(id: ContractId): string {
-  if (id === 'plunder') return 'Обоз на месте, охрана тоже. Подряд пошёл.'
-  if (id === 'bulwark') return 'Налётчики уже здесь. Подряд пошёл, дом горит.'
-  return 'Свой в верёвках, рядом двое. Подряд пошёл.'
+  switch (id) {
+    case 'plunder':
+      return 'Обоз на месте, охрана тоже. Подряд пошёл.'
+    case 'bulwark':
+      return 'Налётчики уже здесь. Подряд пошёл, дом горит.'
+    case 'unshackle':
+      return 'Свой в верёвках, рядом двое. Подряд пошёл.'
+    case 'duel':
+      return 'Чемпион вышел и ждёт. Подряд пошёл.'
+    case 'reprisal':
+      return 'Помеченный на месте и уже оглядывается. Подряд пошёл.'
+    case 'relief':
+      return 'Налётчики жмут защитников. Подряд пошёл.'
+    case 'ambush':
+      return 'Обоз стоит, вокруг чужие руки. Подряд пошёл.'
+    case 'muster':
+      return 'Ватага на месте и не рада. Подряд пошёл.'
+    case 'cull':
+      return 'Стая уже у домиков. Подряд пошёл.'
+    case 'scavenge':
+      return 'Пепелище дымит, по нему ходят чужие. Подряд пошёл.'
+  }
 }
 
 export function describeContractKept(id: ContractId, reward: number): string {
-  if (id === 'plunder') {
-    return `Обоз обнесён по-хозяйски. Подряд закрыт, ${String(reward)} золотых сверху.`
+  const paid = `Подряд закрыт, ${String(reward)} золотых сверху.`
+  switch (id) {
+    case 'plunder':
+      return `Обоз обнесён по-хозяйски. ${paid}`
+    case 'bulwark':
+      return `Налёт отбит, дом стоит. ${paid}`
+    case 'unshackle':
+      return `Верёвки сняты, свой при оружии. ${paid}`
+    case 'duel':
+      return `Чемпион лёг, и рассказывать будет уже не он. ${paid}`
+    case 'reprisal':
+      return `Долг по голове закрыт. ${paid}`
+    case 'relief':
+      return `Налётчики разбежались, квадрат остался чей был. ${paid}`
+    case 'ambush':
+      return `Груз уехал с тобой, а не с ними. ${paid}`
+    case 'muster':
+      return `Ватага прорежена и больше не ватага. ${paid}`
+    case 'cull':
+      return `Стая легла, домики целы. ${paid}`
+    case 'scavenge':
+      return `Пепелище вынесено начисто. ${paid}`
   }
-  if (id === 'bulwark') {
-    return `Налёт отбит, дом стоит. Подряд закрыт, ${String(reward)} золотых сверху.`
-  }
-  return `Верёвки сняты, свой при оружии. Подряд закрыт, ${String(reward)} золотых сверху.`
 }
 
 /**
@@ -620,9 +699,28 @@ export function describeContractFailed(
 ): string {
   const site = context.siteLabel ?? DEFAULT_SITE_LABEL
   const tail = `Дорога не закрыта: дойди до точки «${site}» в квадрате ${context.regionLabel} — пункт закроется, но пустым.`
-  if (id === 'plunder') return `Обоз ушёл. ${tail}`
-  if (id === 'bulwark') return `Дом догорел. ${tail}`
-  return `Своего увели. ${tail}`
+  switch (id) {
+    case 'plunder':
+      return `Обоз ушёл. ${tail}`
+    case 'bulwark':
+      return `Дом догорел. ${tail}`
+    case 'unshackle':
+      return `Своего увели. ${tail}`
+    case 'duel':
+      return `Чемпион уехал непобитым. ${tail}`
+    case 'reprisal':
+      return `Помеченный ушёл. ${tail}`
+    case 'relief':
+      return `Защитников не стало. ${tail}`
+    case 'ambush':
+      return `Груз увезли без тебя. ${tail}`
+    case 'muster':
+      return `Ватага устояла. ${tail}`
+    case 'cull':
+      return `Домики доломали. ${tail}`
+    case 'scavenge':
+      return `Пепелище вынесли до тебя. ${tail}`
+  }
 }
 
 /** The contract could not even be put on the ground, and its patience ran out. */
@@ -635,11 +733,22 @@ export function describeContractAbandoned(
 }
 
 export function describeObjectivePinned(text: string): string {
-  return `Взялся: «${text}». Остальное подождёт своей очереди — очередь ты и выбираешь.`
+  return `Взялся: «${text}».`
 }
 
 export function describeObjectiveDropped(text: string): string {
   return `Бросил: «${text}». Пункт никуда не делся, просто теперь не первый.`
+}
+
+/**
+ * Roadmap 2.1 — the sentence the whole initiative exists to be able to say.
+ *
+ * It arrives at the exact moment the road forks shut, and it says the two things a player
+ * has to be told once: the other arm is gone, and that is not a loss. A run that closed
+ * every pin would not be a route.
+ */
+export function describeObjectiveSkipped(text: string): string {
+  return `Мимо: «${text}». Ты пошёл другой дорогой — этот пункт закрылся сам, и закрывать его больше не надо.`
 }
 
 // ---------------------------------------------------------------------------
@@ -1145,6 +1254,7 @@ export type HintId =
   | 'chronicle'
   | 'rumours'
   | 'contracts'
+  | 'exclusive'
   | 'doctrines'
   | 'squad'
   | 'threat'
@@ -1196,7 +1306,7 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'info',
   },
   objectives: {
-    text: 'Список «Суть такова» слева — весь смысл забега. Закроешь все пункты — победа, и корован ушёл не зря.',
+    text: 'Список «Суть такова» слева — весь смысл забега. Закроешь его — победа, и корован ушёл не зря. Не каждый пункт обязателен: часть закрывается тем, что ты выбрал другую дорогу.',
     tone: 'success',
   },
   interact: {
@@ -1216,8 +1326,12 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'info',
   },
   contracts: {
-    text: 'Пунктов открылось сразу несколько, и один из них — подряд твоей стороны. Берись за любой: закрывать всё равно все, ты выбираешь порядок, а не дорогу.',
+    text: 'Пунктов открылось сразу несколько, и один из них — подряд твоей стороны. Берись за любой: обязательные закроешь в любом порядке.',
     tone: 'info',
+  },
+  exclusive: {
+    text: 'Один пункт закрылся сам, зачёркнутым: ты пошёл другой дорогой, и туда уже не надо. Помеченные «или — или» — это развилка, а не очередь, и забег засчитается без того, что ты прошёл мимо.',
+    tone: 'warning',
   },
   doctrines: {
     text: 'Устав меняет правило, а не число: что-то даёт и что-то забирает. Раздача трижды за забег — на третьей, шестой и девятой минуте, — и принятое до конца похода не меняется.',

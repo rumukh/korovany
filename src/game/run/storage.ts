@@ -1,4 +1,5 @@
 import { normalizeAchievementRunState } from '../achievements.ts'
+import { countRewardedObjectives } from '../world/CampaignDirector.ts'
 import {
   normalizeChronicleState,
   normalizeRegionChronicleState,
@@ -275,6 +276,19 @@ function normalizeObjectives(value: unknown): RunPlayerState['objectives'] | nul
     ) {
       return null
     }
+    // Roadmap 2.1 — the two fields subset completion added. Absent means "required, and
+    // this run has not decided against it", which is exactly what every pre-2.1 objective
+    // meant; anything that is present but not a boolean is a malformed save and the
+    // project's policy for those is discard-and-report, not repair.
+    if (
+      (entry.optional !== undefined && typeof entry.optional !== 'boolean') ||
+      (entry.skipped !== undefined && typeof entry.skipped !== 'boolean')
+    ) {
+      return null
+    }
+    // A node cannot be both closed and passed over. A save claiming it is describes a
+    // campaign state the engine cannot produce, so it is refused rather than picked from.
+    if (entry.done === true && entry.skipped === true) return null
     if (seen.has(id)) continue
     seen.add(id)
     if (objectives.length >= 512) continue
@@ -292,6 +306,8 @@ function normalizeObjectives(value: unknown): RunPlayerState['objectives'] | nul
       id,
       text: entry.text,
       done: entry.done,
+      ...(entry.optional === true ? { optional: true } : {}),
+      ...(entry.skipped === true ? { skipped: true } : {}),
       ...(target === undefined ? {} : { target }),
       ...(progress === undefined
         ? {}
@@ -1238,9 +1254,11 @@ function buildRunHistorySummary(
     startedAt: terminalSnapshot.startedAt,
     endedAt,
     kills: terminalSnapshot.player.kills,
-    objectivesCompleted: terminalSnapshot.player.objectives.filter(
-      (objective) => objective.done,
-    ).length,
+    // **Roadmap 2.1 — re-decided, and not a count of ticked boxes.** `countRewardedObjectives`
+    // reports how much of *its own* campaign the run closed, so a route with more nodes in it
+    // cannot pay more than a route with fewer. See its own comment for why the raw count
+    // stopped being honest the moment a node could be skipped.
+    objectivesCompleted: countRewardedObjectives(terminalSnapshot.player.objectives),
     endingGold: terminalSnapshot.player.gold,
     profileCurrencyEarned: 0,
     blueprintFingerprint: terminalSnapshot.blueprintFingerprint,

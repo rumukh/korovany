@@ -122,7 +122,8 @@ const TRIPPING_VIEW: Record<HintId, (base: GameView) => GameView> = {
   contracts: (base) => ({
     ...base,
     // Roadmap 1.4 — **two**, because the lesson is the fork rather than the campaign. One
-    // entry is the state every run starts in and must teach nothing.
+    // entry is the state every run starts in and must teach nothing. Neither is exclusive,
+    // so this trips `contracts` without also tripping 2.1's `exclusive`.
     contracts: [
       {
         id: 'objective-elf-branch',
@@ -132,6 +133,7 @@ const TRIPPING_VIEW: Record<HintId, (base: GameView) => GameView> = {
         stake: 'Пункт обязательный.',
         regionLabel: 'B2',
         pinned: false,
+        exclusive: false,
         status: null,
         timeRemaining: null,
         x: null,
@@ -145,12 +147,21 @@ const TRIPPING_VIEW: Record<HintId, (base: GameView) => GameView> = {
         stake: 'Провалишь — уведут.',
         regionLabel: 'C3',
         pinned: false,
+        exclusive: false,
         status: 'offered',
         timeRemaining: null,
         x: null,
         z: null,
       },
     ],
+  }),
+  exclusive: (base) => ({
+    ...base,
+    // Roadmap 2.1 — a node that closed **without being done**. It reads `objectives`, and
+    // `skipped` is not `done`, so it cannot also trip the `objectives` line.
+    objectives: base.objectives.map((objective, index) =>
+      index === 1 ? { ...objective, skipped: true } : objective,
+    ),
   }),
   doctrines: (base) => ({
     ...base,

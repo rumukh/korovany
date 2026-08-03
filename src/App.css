@@ -2371,6 +2371,29 @@ button {
   border-color: color-mix(in srgb, var(--cp-danger) 45%, var(--cp-border));
 }
 
+/* Roadmap 2.1 — an arm of a fork. Dashed rather than coloured, because the difference it
+   marks is "this one can close without you" rather than "this one is urgent", and the
+   card already spends its colour on signature, pinned and failed. */
+.contract-entry.exclusive {
+  border-style: dashed;
+}
+
+.contract-exclusive {
+  align-items: center;
+  color: var(--cp-link);
+  display: flex;
+  font-size: 0.55rem;
+  gap: 0.18rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.contract-exclusive svg {
+  height: 0.6rem;
+  width: 0.6rem;
+}
+
 .contract-line {
   align-items: center;
   display: flex;
@@ -2814,6 +2837,24 @@ button {
 .objective-item.done {
   background: color-mix(in srgb, var(--cp-success) 8%, var(--cp-surface));
   color: var(--cp-text-muted);
+}
+
+/* Roadmap 2.1 — a node the run went past. Settled, so it is dimmed and struck through like
+   a closed one; not an achievement, so it borrows none of the success colour. */
+.objective-item.skipped {
+  background: var(--cp-surface-soft);
+  color: var(--cp-text-muted);
+  opacity: 0.72;
+}
+
+.objective-item.skipped .objective-check {
+  border-color: var(--cp-border);
+  color: var(--cp-text-muted);
+}
+
+.objective-item.skipped p {
+  color: var(--cp-text-muted);
+  text-decoration: line-through;
 }
 
 .objective-item.ready {
