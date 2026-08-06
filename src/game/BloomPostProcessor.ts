@@ -22,6 +22,71 @@ const HIGHLIGHT_TINT_AMOUNT = 0.1
 const DEFAULT_SHADOW_TINT = new THREE.Color(0x2c3c58)
 const DEFAULT_HIGHLIGHT_TINT = new THREE.Color(0xffe2b0)
 
+export interface PostProcessingOutputReader {
+  readonly drawingBufferWidth: number
+  readonly drawingBufferHeight: number
+  readonly RGBA: number
+  readonly UNSIGNED_BYTE: number
+  readPixels(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    format: number,
+    type: number,
+    pixels: Uint8Array,
+  ): void
+}
+
+export interface PostProcessingRenderActions {
+  renderPostProcessing(): void
+  outputIsVisible(): boolean
+  disablePostProcessing(error?: unknown): void
+  renderDirect(): void
+}
+
+/**
+ * The game scene always has an opaque background, so a transparent center pixel
+ * means the post chain silently dropped the base render.
+ */
+export function postProcessingOutputIsVisible(
+  context: PostProcessingOutputReader,
+  sample: Uint8Array,
+): boolean {
+  const width = context.drawingBufferWidth
+  const height = context.drawingBufferHeight
+  if (width < 1 || height < 1) return true
+
+  sample.fill(0)
+  context.readPixels(
+    Math.floor(width / 2),
+    Math.floor(height / 2),
+    1,
+    1,
+    context.RGBA,
+    context.UNSIGNED_BYTE,
+    sample,
+  )
+  return sample[3] > 0
+}
+
+export function renderPostProcessingFrame(
+  actions: PostProcessingRenderActions,
+  validateOutput: boolean,
+): boolean {
+  let renderError: unknown
+  try {
+    actions.renderPostProcessing()
+    if (!validateOutput || actions.outputIsVisible()) return true
+  } catch (error) {
+    renderError = error
+  }
+
+  actions.disablePostProcessing(renderError)
+  actions.renderDirect()
+  return false
+}
+
 /** Takes `source`'s hue at `reference`'s magnitude. Allocation-free. */
 function retint(
   source: THREE.Color,
@@ -108,6 +173,23 @@ export class BloomPostProcessor {
   private readonly highlightTint = DEFAULT_HIGHLIGHT_TINT.clone()
   private width = 1
   private height = 1
+  private validationPending = false
+  private readonly outputSample = new Uint8Array(4)
+  private readonly renderActions: PostProcessingRenderActions = {
+    renderPostProcessing: () => {
+      if (!this.composer) throw new Error('Bloom composer was unavailable during render')
+      this.composer.render()
+    },
+    outputIsVisible: () =>
+      postProcessingOutputIsVisible(this.renderer.getContext(), this.outputSample),
+    disablePostProcessing: (error) => {
+      this.disableComposerAfterFailure(
+        error === undefined ? 'produced a transparent frame' : 'failed while rendering',
+        error,
+      )
+    },
+    renderDirect: () => this.renderer.render(this.scene, this.camera),
+  }
 
   constructor(
     renderer: THREE.WebGLRenderer,
@@ -128,27 +210,32 @@ export class BloomPostProcessor {
       return
     }
 
-    const composer = new EffectComposer(this.renderer)
-    composer.addPass(new RenderPass(this.scene, this.camera))
-    composer.addPass(
-      new UnrealBloomPass(
-        new THREE.Vector2(this.width, this.height),
-        BLOOM_STRENGTH,
-        BLOOM_RADIUS,
-        BLOOM_THRESHOLD,
-      ),
-    )
-    const gradePass = new ShaderPass(ComicGradeShader)
-    composer.addPass(gradePass)
-    // OutputPass reads the renderer's tone mapping and exposure settings at render
-    // time, so it has to stay last.
-    composer.addPass(new OutputPass())
-    composer.setSize(this.width, this.height)
-    this.composer = composer
-    this.gradePass = gradePass
-    // Bloom can be toggled at any time; replay whatever the atmosphere last asked
-    // for so a fresh chain does not snap back to the noon defaults.
-    this.writeGradeTints()
+    try {
+      const composer = new EffectComposer(this.renderer)
+      this.composer = composer
+      composer.addPass(new RenderPass(this.scene, this.camera))
+      composer.addPass(
+        new UnrealBloomPass(
+          new THREE.Vector2(this.width, this.height),
+          BLOOM_STRENGTH,
+          BLOOM_RADIUS,
+          BLOOM_THRESHOLD,
+        ),
+      )
+      const gradePass = new ShaderPass(ComicGradeShader)
+      composer.addPass(gradePass)
+      // OutputPass reads the renderer's tone mapping and exposure settings at render
+      // time, so it has to stay last.
+      composer.addPass(new OutputPass())
+      composer.setSize(this.width, this.height)
+      this.gradePass = gradePass
+      this.validationPending = true
+      // Bloom can be toggled at any time; replay whatever the atmosphere last asked
+      // for so a fresh chain does not snap back to the noon defaults.
+      this.writeGradeTints()
+    } catch (error) {
+      this.disableComposerAfterFailure('could not be enabled', error)
+    }
   }
 
   /**
@@ -172,14 +259,26 @@ export class BloomPostProcessor {
   }
 
   render(): void {
-    if (this.composer) this.composer.render()
-    else this.renderer.render(this.scene, this.camera)
+    if (!this.composer) {
+      this.renderer.render(this.scene, this.camera)
+      return
+    }
+
+    const validateOutput = this.validationPending && this.scene.background !== null
+    if (validateOutput) this.validationPending = false
+    renderPostProcessingFrame(this.renderActions, validateOutput)
   }
 
   setSize(width: number, height: number): void {
     this.width = Math.max(1, width)
     this.height = Math.max(1, height)
-    this.composer?.setSize(this.width, this.height)
+    if (!this.composer) return
+    try {
+      this.composer.setSize(this.width, this.height)
+      this.validationPending = true
+    } catch (error) {
+      this.disableComposerAfterFailure('could not be resized', error)
+    }
   }
 
   dispose(): void {
@@ -187,10 +286,37 @@ export class BloomPostProcessor {
   }
 
   private disposeComposer(): void {
-    if (!this.composer) return
-    this.composer.passes.forEach((pass) => pass.dispose())
-    this.composer.dispose()
+    const composer = this.composer
     this.composer = null
     this.gradePass = null
+    this.validationPending = false
+    if (!composer) return
+    composer.passes.forEach((pass) => pass.dispose())
+    composer.dispose()
+  }
+
+  private disableComposerAfterFailure(reason: string, error?: unknown): void {
+    const message = `Korovany: bloom post-processing ${reason}. Direct rendering will be used.`
+    if (error === undefined) console.warn(message)
+    else console.warn(message, error)
+
+    const composer = this.composer
+    this.composer = null
+    this.gradePass = null
+    this.validationPending = false
+    if (!composer) return
+
+    composer.passes.forEach((pass) => {
+      try {
+        pass.dispose()
+      } catch (disposeError) {
+        console.warn('Korovany: a failed bloom pass could not be disposed.', disposeError)
+      }
+    })
+    try {
+      composer.dispose()
+    } catch (disposeError) {
+      console.warn('Korovany: failed bloom render targets could not be disposed.', disposeError)
+    }
   }
 }
