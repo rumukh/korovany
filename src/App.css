@@ -180,10 +180,9 @@ button {
   flex-wrap: wrap;
   gap: 0.5rem;
   justify-content: flex-end;
-  max-width: min(52rem, calc(100% - 2rem));
-  position: absolute;
-  right: clamp(1rem, 4vw, 4rem);
-  top: 1.5rem;
+  margin-left: auto;
+  max-width: min(52rem, 100%);
+  position: relative;
   z-index: 5;
 }
 
@@ -4521,11 +4520,6 @@ kbd {
 
   .menu-screen {
     padding: 1rem;
-  }
-
-  .menu-settings {
-    right: 1rem;
-    top: 1rem;
   }
 
   .theme-toggle,
