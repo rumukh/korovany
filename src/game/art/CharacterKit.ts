@@ -762,11 +762,43 @@ export function characterPartKeys(plan: CharacterPlan): CharacterPartKeys {
  * transform you inherit. As siblings they were not corrections at all; they were
  * the head and the chest leaning opposite ways in world space. So the animation was
  * already written for this hierarchy, and nothing in it needs to change.
+ *
+ * ## `torso-pivot` had the second property and not the first
+ *
+ * The head hung off nothing; the chest hung off `body-pivot` correctly and then sat at
+ * **the ground between the feet**, which is not where a spine meets a pelvis. Every
+ * chest rotation was therefore a rotation about the actor's own origin, and a rotation
+ * about a point 1.16-1.34 m below the joint it is meant to bend at is a *translation* of
+ * everything above it. The whole upper body — chest, shoulders, arms, weapon, cloak and
+ * the head now hanging off it — swung forward and down as one block while the pelvis and
+ * legs, which hang off `pelvis-pivot`, stayed planted. GFX-011: humanoid torsos detach
+ * and pitch forward from the pelvis.
+ *
+ * It survived for the same reason the head did. At rest every rotation is zero, the
+ * offsets sum to the old ones, and the body is identical to the float — so the defect is
+ * invisible on a body nothing has posed and appears the moment one leans.
+ *
+ * The joint is `hipY`: **the height the legs already hang from**, so nothing new is
+ * authored and nothing can drift. It sits 0.06-0.14 above the bottom rim of the torso
+ * mesh on all 30 plans, which is the waist, and it is the one height at which the chest
+ * and the pelvis share a point — the definition of a joint that connects them.
+ *
+ * What that is worth is measured by `the torso bends at the waist and stays on the
+ * pelvis`: on the shipped rig the *spine itself* — the line from the hip line to the
+ * shoulder line — pitched up to **2.9980x** the lean the animation authored and sat
+ * **32.07°** off the chest it belongs to, bending a body **69.55°** forward where
+ * **39.24°** was asked for. The chest block stood up to **0.8036 m** from where a waist
+ * hinge puts it, two-thirds of a head. Here the waist point does not move at all and
+ * the spine lies along the chest's own axis, to the float.
  */
 export interface CharacterSkeleton {
   /** The actor's own group. Every pivot below is already parented into it. */
   root: THREE.Group
   bodyPivot: THREE.Group
+  /**
+   * The waist: the chest's joint on the pelvis, sitting at {@link waistY} above the
+   * feet. Everything it carries is measured from there, not from the ground.
+   */
   torsoPivot: THREE.Group
   /**
    * The joint at the top of the spine. A child of {@link torsoPivot}, carrying the
@@ -797,6 +829,30 @@ export interface CharacterSkeleton {
   headPivot: THREE.Group
   pelvisPivot: THREE.Group
   /**
+   * Height of the waist joint — `torso-pivot` itself — above the feet.
+   *
+   * The one number that is still in ground space, because it is what converts the
+   * other two into it. Anything parented to `torso-pivot` from outside this module —
+   * the shield's rest pose is the only one — subtracts it.
+   */
+  waistY: number
+  /**
+   * Y for the `torso` mesh and its trim, in `torso-pivot` space.
+   *
+   * Measured from the waist rather than from the ground, for the reason
+   * {@link waistY} gives.
+   */
+  torsoY: number
+  /**
+   * Y for the shoulder joints, the cloak and the weapon's rest pose, in
+   * `torso-pivot` space — and the height `neck-pivot` is placed at.
+   *
+   * Measured from the waist. Read it from here rather than recomputing
+   * `shoulderY - hipY` at the call site: an arm and a neck that disagree about where
+   * the shoulder line is are a shoulder that has come apart.
+   */
+  shoulderY: number
+  /**
    * Y for `head`, `face`, `hair` and `headgear`, in `head-pivot` space.
    *
    * Measured from the neck rather than from the ground, because that is where the
@@ -821,12 +877,15 @@ export function buildCharacterSkeleton(p: CharacterProportions): CharacterSkelet
   root.add(bodyPivot)
   const torsoPivot = new THREE.Group()
   torsoPivot.name = 'torso-pivot'
+  // The waist, which is the hip line the legs already hang from — so the chest turns
+  // on the joint the pelvis ends at rather than on the ground between the feet.
+  torsoPivot.position.y = p.hipY
   bodyPivot.add(torsoPivot)
   const neckPivot = new THREE.Group()
   neckPivot.name = 'neck-pivot'
   // The base of the neck, which is the shoulder line — the same height the arms
   // hang from, and within 0.09 of where every head mesh's neck stub ends.
-  neckPivot.position.y = p.shoulderY
+  neckPivot.position.y = p.shoulderY - p.hipY
   torsoPivot.add(neckPivot)
   const headPivot = new THREE.Group()
   headPivot.name = 'head-pivot'
@@ -841,6 +900,9 @@ export function buildCharacterSkeleton(p: CharacterProportions): CharacterSkelet
     neckPivot,
     headPivot,
     pelvisPivot,
+    waistY: p.hipY,
+    torsoY: p.torsoY - p.hipY,
+    shoulderY: p.shoulderY - p.hipY,
     headY: p.headY - p.shoulderY,
   }
 }

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { actorGaitCadence, actorSpeedForRole, BEAST_ROLES } from '../src/game/types.ts'
 import { BEAST_PROFILES } from '../src/game/world/Fauna.ts'
+import { weatherHunch } from '../src/game/world/AmbientLife.ts'
 import * as THREE from 'three'
 import {
   BEAST_KINDS,
@@ -1101,7 +1102,13 @@ test('the head is rigid with the chest and hinges at the neck', () => {
           + `(${rest.x.toFixed(4)}, ${rest.y.toFixed(4)}, ${rest.z.toFixed(4)}). The rig `
           + 'change must be invisible on a body nothing has posed.',
         )
+        // Where the head sits in the chest's own frame — converted through the chest
+        // rather than copied from the world, because `torso-pivot` is the waist now and
+        // its rest transform is a translation of `hipY`, not the identity. Copying the
+        // world position worked only while the two frames coincided, and this assertion
+        // then read the head 1.3534 m off its own chest.
         restLocal.copy(rest)
+        skeleton.torsoPivot.worldToLocal(restLocal)
 
         // 1. Rigid with the chest.
         for (const pose of POSES) {
@@ -1164,9 +1171,442 @@ test('the head is rigid with the chest and hinges at the neck', () => {
   for (const { label, skeleton, p } of joints) {
     assert.equal(skeleton.neckPivot.parent, skeleton.torsoPivot, `${label}: neck off the spine`)
     assert.equal(skeleton.headPivot.parent, skeleton.neckPivot, `${label}: head off the neck`)
-    assert.equal(skeleton.neckPivot.position.y, p.shoulderY, `${label}: neck off the shoulders`)
+    // Measured from the waist, because that is where `torso-pivot` is — see `the torso
+    // bends at the waist and stays on the pelvis`. Written as the subtraction from the
+    // proportion table rather than as `skeleton.shoulderY`, which is the number under
+    // test: a check that reads its answer off the thing it is checking cannot fail.
+    assert.equal(
+      skeleton.neckPivot.position.y,
+      p.shoulderY - p.hipY,
+      `${label}: neck off the shoulders`,
+    )
     assert.equal(skeleton.headY, p.headY - p.shoulderY, `${label}: head Y not neck-relative`)
   }
+})
+
+/**
+ * The torso bends at the waist and stays on the pelvis.
+ *
+ * ## What was wrong
+ *
+ * `torso-pivot` hung off `body-pivot` — correct — and then sat at the actor's own
+ * origin, **the ground between the feet**. Every chest rotation was therefore taken
+ * about a point 1.16-1.34 m below the joint it is meant to bend at, and a rotation
+ * about a point that far below the bones is a *translation* of everything above it: the
+ * chest, the shoulders, the arms, the weapon, the cloak and the head that hangs off them
+ * swung forward and down as one block while the pelvis and the legs, on `pelvis-pivot`,
+ * stayed planted. GFX-011 — humanoid torsos detach and pitch forward from the pelvis.
+ *
+ * At rest it is invisible: every rotation is zero, the offsets sum to the old ones, and
+ * the body is identical to the float. That is why it shipped, and it is the same reason
+ * `head-pivot` survived review one defect earlier — **a rig defect that is a rotation
+ * times a lever arm cannot be seen in the rest pose**, which is the pose a screenshot
+ * and a reviewer both look at.
+ *
+ * ## What this measures, and against what
+ *
+ * Three bounds, every one of them derived from the proportion table rather than from the
+ * rig under test, over all 30 humanoid plans and the composed chest poses the pass can
+ * actually reach: idle, walking, running, windup, attack, stagger, flinch, and the
+ * weather hunch on top of the last two.
+ *
+ * 1. **The waist is a joint.** `torso-pivot`'s own origin must coincide with the hip line
+ *    the legs already hang from. The only thing allowed to separate them is the authored
+ *    idle weight shift — `idleWeightShift`, amplitude `0.035`, the *sole* translation the
+ *    pose pass writes to the chest, which is pinned below — and it is allowed sideways
+ *    only: the forward and vertical components must be zero to the float. Shipped, the
+ *    gap was the whole of `hipY`, up to **1.3405 m**.
+ * 2. **The spine reads as one body.** The line from the pelvis' hip line to the shoulder
+ *    line must lie along the chest's own up axis, so the silhouette shows the lean that
+ *    was authored and not a fold. The slip allowed is exactly the weight shift's own
+ *    angle, `asin(0.035 / (shoulderY - hipY))`, at most 2.18°. Shipped, the spine and
+ *    the chest disagreed by up to **32.07°**, the spine's forward pitch reached
+ *    **2.9980x** the pitch the animation asked for, and at its worst the body was bent
+ *    **69.55°** forward where **39.24°** was authored.
+ * 3. **The chest rides its own lever.** The torso mesh's travel from its rest position is
+ *    bounded by the chord `2 * (torsoY - hipY) * sin(angle / 2)` plus the weight shift,
+ *    where `torsoY - hipY` — 0.520 to 0.600 m — is the chest's reach above the waist.
+ *    Shipped it travelled **3.3000x** that bound, 1.1514 m against 0.3489 m, and stood
+ *    up to **0.8036 m** from where a waist hinge puts it. Two-thirds of a head.
+ *
+ * ## Why the shipped arrangement is rebuilt here
+ *
+ * Because a bound nothing has ever crossed is a bound nobody has measured. The pre-fix
+ * rig is constructed at the end and asserted to fail all three, with the figures above
+ * pinned to half of their last published digit — so if this file's state table drifts,
+ * it is this test that says the numbers in `CharacterKit`'s docblock are now wrong,
+ * rather than a reviewer noticing that they never were right.
+ */
+test('the torso bends at the waist and stays on the pelvis', () => {
+  const source = readFileSync(
+    fileURLToPath(new URL('../src/game/GameEngine.ts', import.meta.url)),
+    'utf8',
+  )
+  const posture = source.slice(
+    source.indexOf('private animateActorCharacter('),
+    source.indexOf('private samplePlayerPose('),
+  )
+  assert.ok(posture.length > 1000, 'could not isolate the actor posture pass')
+  // The states below are the engine's own terms at their extremes, so each coefficient
+  // is pinned where it is read. A sweep whose table has drifted from the pass it models
+  // is a sweep over poses nobody can reach, and it would still be green.
+  for (const [term, pattern] of [
+    ['the role\'s forward lean', /const forwardLean = this\.actorForwardLean\(actor\.role\)/],
+    ['the plan\'s own lean', /\(rig\?\.lean \?\? 0\)/],
+    ['the storm hunch', /this\.ambientStormHunch/],
+    ['the windup pitch', /pose\.anticipation \* \(heavy \? 0\.11 : 0\.16\)/],
+    ['the attack pitch', /pose\.attack \* 0\.12/],
+    ['the stagger pitch', /pose\.stagger \* 0\.2/],
+    ['the gait yaw', /chestGaitYaw\(actor\.stride, heavy\)/],
+    ['the flinch yaw', /pose\.flinch \* hitRight \* 0\.22/],
+    ['the turn roll', /-actor\.turnLean \* 0\.16/],
+    [
+      'the idle weight shift',
+      /const idleWeightShift =\s+Math\.sin\([^)]*\) \* 0\.035 \* \(1 - actor\.motionBlend\)/,
+    ],
+  ] as const) {
+    assert.ok(
+      pattern.test(posture),
+      `${term} is no longer written the way this test's state table models it. The table `
+      + 'is the engine\'s terms at their extremes; drifted from them it sweeps poses the '
+      + 'game cannot reach and the bounds below stop describing anything.',
+    )
+  }
+  // The one translation the chest pose is allowed, and the whole reason bound 1 can be
+  // as tight as the weight shift. A `position.y` or `position.z` write here would be
+  // this fix done as a per-frame compensation instead of as a joint — which is what the
+  // head's docblock means by "do not answer this with an offset".
+  assert.deepEqual(
+    posture.match(/torsoPivot\.position\.[xyz]\s*(?:[-+*/]?=)/g) ?? [],
+    ['torsoPivot.position.x ='],
+    'the chest pose writes a translation other than the authored idle weight shift. The '
+    + 'waist is a joint: a chest that has to be *moved* back onto its pelvis every frame '
+    + 'is the defect this test exists for, wearing the fix\'s clothes.',
+  )
+  const roleLean = source.slice(
+    source.indexOf('private actorForwardLean('),
+    source.indexOf('private animateBeastPosture('),
+  )
+  assert.ok(
+    /if \(role === 'scout'\) return 0\.075/.test(roleLean) &&
+      /if \(role === 'brute' \|\| role === 'champion'\) return 0\.055/.test(roleLean) &&
+      /if \(role === 'archer'\) return 0\.025/.test(roleLean) &&
+      /\n\s*return 0\.04\s*\n/.test(roleLean),
+    'the per-role forward lean has moved. Pinned by role rather than by value, because a '
+    + 'pin that only asks whether a number appears somewhere cannot see two roles trade '
+    + 'theirs — and half the point of a lookup is which key each value sits under.',
+  )
+
+  /** `idleWeightShift`'s amplitude: the only translation the chest pose writes. */
+  const WEIGHT_SHIFT = 0.035
+  /** `motionBlend`'s clamp, `stride`'s amplitude, and `turnLean`'s clamp. */
+  const MOTION_BLEND_MAX = 1.18
+  const STRIDE_MAX = 0.62
+  const TURN_LEAN_MAX = 0.5
+  /**
+   * The furthest forward a body may be bent, in radians.
+   *
+   * `0.6849` is the deepest pitch the terms below compose — a brute's own lean, its
+   * forward lean at the motion cap, a full storm hunch and a stagger, which is the
+   * deepest jointly reachable pose — and the XYZ Euler's yaw-roll cross-term adds
+   * `0.08` of a degree on top of it. Rounded up to `0.70` so the cap is a statement
+   * about the body rather than a restatement of the sum. The shipped rig reached
+   * `1.2140` here: 69.55 degrees, which is a bow, not a lean.
+   */
+  const DEEPEST_FORWARD_PITCH = 0.7
+  const asDegrees = (radians: number): number => radians * (180 / Math.PI)
+
+  const forwardLeanFor = (role: string): number =>
+    role === 'scout'
+      ? 0.075
+      : role === 'brute' || role === 'champion'
+        ? 0.055
+        : role === 'archer'
+          ? 0.025
+          : 0.04
+
+  interface ChestState {
+    name: string
+    pitch: number
+    yaw: number
+    roll: number
+    /** `torso-pivot.position.x`, the idle weight shift. */
+    x: number
+  }
+
+  const statesFor = (role: string, p: CharacterProportions): readonly ChestState[] => {
+    const heavy = role === 'brute' || role === 'champion'
+    const run = forwardLeanFor(role) * MOTION_BLEND_MAX + p.lean
+    const gait = chestGaitYaw(STRIDE_MAX, heavy)
+    const roll = -TURN_LEAN_MAX * 0.16
+    return [
+      // Standing: no gait, the plan's own posture, and the weight shifting foot to foot.
+      { name: 'idle', pitch: p.lean, yaw: 0, roll: WEIGHT_SHIFT * 0.55, x: WEIGHT_SHIFT },
+      {
+        name: 'walk',
+        pitch: forwardLeanFor(role) + p.lean,
+        yaw: chestGaitYaw(0.4, heavy),
+        roll,
+        x: 0,
+      },
+      { name: 'run', pitch: run, yaw: gait, roll, x: 0 },
+      { name: 'windup', pitch: run - (heavy ? 0.11 : 0.16), yaw: gait, roll, x: 0 },
+      { name: 'attack', pitch: run + 0.12, yaw: gait + 0.16, roll, x: 0 },
+      // Stagger and attack cannot co-occur: the stagger branch clears `actor.action`.
+      { name: 'stagger', pitch: run + 0.2, yaw: gait, roll, x: 0 },
+      { name: 'flinch', pitch: run, yaw: gait - 0.22, roll: roll - 0.18, x: 0 },
+      { name: 'storm walk', pitch: run + weatherHunch(1), yaw: gait, roll, x: 0 },
+      { name: 'storm stagger', pitch: run + weatherHunch(1) + 0.2, yaw: gait, roll, x: 0 },
+    ]
+  }
+
+  /** The five nodes measured: the chest's joint, its mesh, its shoulders, its pelvis. */
+  interface Probe {
+    root: THREE.Object3D
+    torsoPivot: THREE.Object3D
+    neckPivot: THREE.Object3D
+    chest: THREE.Object3D
+    hip: THREE.Object3D
+  }
+
+  /** The rig as it ships, with the torso mesh where `createCharacter` puts it. */
+  const built = (p: CharacterProportions): Probe => {
+    const skeleton = buildCharacterSkeleton(p)
+    const chest = new THREE.Object3D()
+    chest.position.y = skeleton.torsoY
+    skeleton.torsoPivot.add(chest)
+    const hip = new THREE.Object3D()
+    hip.position.y = p.hipY
+    skeleton.pelvisPivot.add(hip)
+    return {
+      root: skeleton.root,
+      torsoPivot: skeleton.torsoPivot,
+      neckPivot: skeleton.neckPivot,
+      chest,
+      hip,
+    }
+  }
+
+  /** The arrangement this test was written against: the chest hinged at the feet. */
+  const atTheFeet = (p: CharacterProportions): Probe => {
+    const root = new THREE.Group()
+    const bodyPivot = new THREE.Group()
+    root.add(bodyPivot)
+    const torsoPivot = new THREE.Group()
+    bodyPivot.add(torsoPivot)
+    const neckPivot = new THREE.Group()
+    neckPivot.position.y = p.shoulderY
+    torsoPivot.add(neckPivot)
+    const chest = new THREE.Object3D()
+    chest.position.y = p.torsoY
+    torsoPivot.add(chest)
+    const pelvisPivot = new THREE.Group()
+    bodyPivot.add(pelvisPivot)
+    const hip = new THREE.Object3D()
+    hip.position.y = p.hipY
+    pelvisPivot.add(hip)
+    return { root, torsoPivot, neckPivot, chest, hip }
+  }
+
+  const waistAt = new THREE.Vector3()
+  const jointAt = new THREE.Vector3()
+  const shoulderAt = new THREE.Vector3()
+  const chestAt = new THREE.Vector3()
+  const restAt = new THREE.Vector3()
+  const spine = new THREE.Vector3()
+  const chestUp = new THREE.Vector3()
+  const euler = new THREE.Euler()
+  const quaternion = new THREE.Quaternion()
+
+  interface Measurement {
+    /** Distance from `torso-pivot`'s origin to the hip line it must hinge on. */
+    gap: number
+    /** The forward and vertical part of that gap, which must be nothing at all. */
+    drift: number
+    /** Angle between the pelvis-to-shoulder line and the chest's own up axis. */
+    offAxis: number
+    /** How far forward the spine is bent. */
+    spinePitch: number
+    /** How far forward the chest's own up axis is pitched, which is the authored lean. */
+    chestPitch: number
+    /** The chest mesh's travel from rest, over the chord its lever allows. */
+    travel: number
+  }
+
+  const measure = (rig: Probe, p: CharacterProportions, state: ChestState): Measurement => {
+    rig.torsoPivot.position.x = 0
+    applyChestPose(rig.torsoPivot, 0, 0, 0)
+    rig.root.updateMatrixWorld(true)
+    restAt.setFromMatrixPosition(rig.chest.matrixWorld)
+    rig.torsoPivot.position.x = state.x
+    applyChestPose(rig.torsoPivot, state.pitch, state.yaw, state.roll)
+    rig.root.updateMatrixWorld(true)
+    waistAt.setFromMatrixPosition(rig.hip.matrixWorld)
+    jointAt.setFromMatrixPosition(rig.torsoPivot.matrixWorld)
+    shoulderAt.setFromMatrixPosition(rig.neckPivot.matrixWorld)
+    chestAt.setFromMatrixPosition(rig.chest.matrixWorld)
+    spine.copy(shoulderAt).sub(waistAt).normalize()
+    chestUp.set(0, 1, 0).transformDirection(rig.torsoPivot.matrixWorld).normalize()
+    // The chord the chest's own lever above the waist allows, plus the weight shift.
+    // `2 * r * sin(angle / 2)` is exact for a rotation of `angle` about that lever, so
+    // this is not a slack bound: the fixed rig runs it to within 0.05%.
+    quaternion.setFromEuler(euler.set(state.pitch, state.yaw, state.roll, 'XYZ'))
+    const angle = 2 * Math.acos(Math.min(1, Math.abs(quaternion.w)))
+    const chord = 2 * (p.torsoY - p.hipY) * Math.sin(angle / 2) + Math.abs(state.x)
+    return {
+      gap: jointAt.distanceTo(waistAt),
+      drift: Math.max(Math.abs(jointAt.y - waistAt.y), Math.abs(jointAt.z - waistAt.z)),
+      offAxis: spine.angleTo(chestUp),
+      spinePitch: Math.asin(THREE.MathUtils.clamp(spine.z, -1, 1)),
+      chestPitch: Math.asin(THREE.MathUtils.clamp(chestUp.z, -1, 1)),
+      travel: chestAt.distanceTo(restAt) / chord,
+    }
+  }
+
+  const worst = { gap: 0, drift: 0, offAxis: 0, pitchOver: 0, travel: 0, spinePitch: 0 }
+  const worstAt = { gap: '', offAxis: '', pitchOver: '', travel: '', spinePitch: '' }
+  const control = { gap: 0, offAxis: 0, ratio: 0, travel: 0, spinePitch: 0, block: 0 }
+  let authoredPitch = 0
+  let leverMin = Infinity
+  let leverMax = 0
+  let checked = 0
+
+  for (const faction of FACTIONS) {
+    for (const role of [...ROLES, 'player'] as const) {
+      for (let variant = 0; variant < CHARACTER_VARIANTS; variant += 1) {
+        const p = resolveCharacterPlan(faction, role, variant, role === 'player').proportions
+        const label = `${faction}/${role}/${String(variant)}`
+        const rig = built(p)
+        const shipped = atTheFeet(p)
+        // The slip the weight shift is worth as an angle at the shoulder line, which is
+        // the only reason `offAxis` is not zero. `asin` rather than `atan` because the
+        // shoulder's locus is a sphere of that radius about the chest's up axis and the
+        // tangent case, not the perpendicular one, is where the deviation maximises —
+        // `atan` is short by 0.0012 degrees and this bound is otherwise exact. From the
+        // proportion table, not from the rig under test.
+        const slip = Math.asin(WEIGHT_SHIFT / (p.shoulderY - p.hipY))
+        leverMin = Math.min(leverMin, p.torsoY - p.hipY)
+        leverMax = Math.max(leverMax, p.torsoY - p.hipY)
+        for (const state of statesFor(role, p)) {
+          checked += 1
+          authoredPitch = Math.max(authoredPitch, state.pitch)
+          const at = `${label} in "${state.name}"`
+          const m = measure(rig, p, state)
+          if (m.gap > worst.gap) {
+            worst.gap = m.gap
+            worstAt.gap = at
+          }
+          worst.drift = Math.max(worst.drift, m.drift)
+          if (m.offAxis - slip > worst.offAxis) {
+            worst.offAxis = m.offAxis - slip
+            worstAt.offAxis = `${at}, ${asDegrees(m.offAxis).toFixed(2)} deg off the chest`
+          }
+          const over = m.spinePitch - m.chestPitch - slip
+          if (over > worst.pitchOver) {
+            worst.pitchOver = over
+            worstAt.pitchOver = at
+          }
+          if (m.spinePitch > worst.spinePitch) {
+            worst.spinePitch = m.spinePitch
+            worstAt.spinePitch = at
+          }
+          if (m.travel > worst.travel) {
+            worst.travel = m.travel
+            worstAt.travel = at
+          }
+          const was = measure(shipped, p, state)
+          control.gap = Math.max(control.gap, was.gap)
+          control.offAxis = Math.max(control.offAxis, was.offAxis)
+          control.travel = Math.max(control.travel, was.travel)
+          control.spinePitch = Math.max(control.spinePitch, was.spinePitch)
+          if (state.pitch > 0.1) {
+            control.ratio = Math.max(control.ratio, was.spinePitch / state.pitch)
+          }
+          // Where the shipped block stood, against where a waist hinge puts it.
+          shoulderAt.setFromMatrixPosition(shipped.chest.matrixWorld)
+          rig.root.updateMatrixWorld(true)
+          chestAt.setFromMatrixPosition(rig.chest.matrixWorld)
+          control.block = Math.max(control.block, shoulderAt.distanceTo(chestAt))
+        }
+      }
+    }
+  }
+
+  assert.equal(checked, FACTIONS.length * (ROLES.length + 1) * CHARACTER_VARIANTS * 9)
+  assert.ok(
+    leverMin > 0.5 && leverMax < 0.62,
+    `the chest's reach above the waist is now ${leverMin.toFixed(3)}-${leverMax.toFixed(3)} m, `
+    + 'not the 0.520-0.600 the bounds here and in `CharacterKit`\'s docblock quote.',
+  )
+
+  // 1. The waist is a joint.
+  assert.ok(
+    worst.drift < 1e-12,
+    `the chest's joint left the hip line by ${worst.drift.toExponential(3)} m forward or `
+    + 'vertically. `torso-pivot` must *be* the waist, not a node near it: the pose pass '
+    + 'writes one translation and it is sideways.',
+  )
+  assert.ok(
+    worst.gap <= WEIGHT_SHIFT + 1e-12,
+    `the chest sat ${worst.gap.toFixed(4)} m off the hip line at ${worstAt.gap}, past the `
+    + `${WEIGHT_SHIFT.toFixed(3)} m the authored weight shift allows. Rooted at the feet `
+    + 'this reads the whole of `hipY` and the body comes apart at the waist.',
+  )
+
+  // 2. The spine reads as one body.
+  assert.ok(
+    worst.offAxis <= 1e-9,
+    `the pelvis-to-shoulder line is ${asDegrees(worst.offAxis).toFixed(4)} degrees past `
+    + `what the weight shift allows at ${worstAt.offAxis}. The spine must lie along the `
+    + 'chest\'s own up axis, or the silhouette shows a fold where a lean was authored.',
+  )
+  assert.ok(
+    worst.pitchOver <= 1e-9,
+    `the spine pitched ${asDegrees(worst.pitchOver).toFixed(4)} degrees further forward than `
+    + `the chest itself at ${worstAt.pitchOver}. A waist joint cannot add pitch; only a `
+    + 'lever below it can.',
+  )
+  assert.ok(
+    Math.abs(authoredPitch - 0.6849) < 0.00005,
+    `the deepest pitch this table composes is now ${authoredPitch.toFixed(4)} rad, not the `
+    + '0.6849 the cap below is sized against.',
+  )
+  assert.ok(
+    worst.spinePitch <= DEEPEST_FORWARD_PITCH,
+    `the deepest state bent the body ${asDegrees(worst.spinePitch).toFixed(2)} degrees `
+    + `forward at ${worstAt.spinePitch}, past the ${asDegrees(DEEPEST_FORWARD_PITCH).toFixed(2)} `
+    + 'a leaning body can reach. The pose is a lean, and a lean is all of it — the '
+    + 'shipped arrangement folded to 69.55 here.',
+  )
+
+  // 3. The chest rides its own lever.
+  assert.ok(
+    worst.travel <= 1,
+    `the torso mesh travelled ${worst.travel.toFixed(4)}x the chord its own lever above the `
+    + `waist allows, at ${worstAt.travel}. Hinged lower, the same rotation moves it further, `
+    + 'and the difference is the block of body that leaves the pelvis behind.',
+  )
+
+  // And the arrangement all three were written against fails all three, by the figures
+  // `CharacterKit`'s docblock quotes. Pinned to half the last digit published, because a
+  // guard on a published figure is a guard on how that figure *renders*.
+  assert.ok(
+    Math.abs(control.gap - 1.3405) < 0.00005 &&
+      Math.abs(asDegrees(control.offAxis) - 32.07) < 0.005 &&
+      Math.abs(control.ratio - 2.998) < 0.0005 &&
+      Math.abs(asDegrees(control.spinePitch) - 69.55) < 0.005 &&
+      Math.abs(control.travel - 3.3) < 0.005 &&
+      Math.abs(control.block - 0.8036) < 0.00005,
+    'a chest rooted at the feet no longer measures what this file and `CharacterKit`\'s '
+    + `docblock say it did: gap ${control.gap.toFixed(4)} m (1.3405), spine `
+    + `${asDegrees(control.offAxis).toFixed(2)} deg off the chest (32.07), pitch `
+    + `${control.ratio.toFixed(4)}x what was authored (2.998), bent `
+    + `${asDegrees(control.spinePitch).toFixed(2)} deg (69.55), travel `
+    + `${control.travel.toFixed(4)}x its lever (3.3000), block ${control.block.toFixed(4)} m `
+    + 'off a waist hinge (0.8036). Nothing is necessarily broken — the state table may '
+    + 'have moved — but every figure quoted for GFX-011 is now wrong, and the bounds above '
+    + 'are no longer known to be crossable.',
+  )
 })
 
 /**
