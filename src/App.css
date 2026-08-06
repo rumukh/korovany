@@ -4464,6 +4464,17 @@ kbd {
 }
 
 @media (max-width: 720px), (pointer: coarse) {
+  .game-screen {
+    --mobile-controls-bottom: max(0.8rem, env(safe-area-inset-bottom, 0px));
+    --mobile-controls-left: max(0.8rem, env(safe-area-inset-left, 0px));
+    --mobile-controls-right: max(0.8rem, env(safe-area-inset-right, 0px));
+    --mobile-hud-half-gap: 0.25rem;
+    --mobile-hud-region-gap: 0.25rem;
+    --mobile-objectives-flow-top: 20.85rem;
+    --mobile-objectives-left: max(0.55rem, env(safe-area-inset-left, 0px));
+    --mobile-touch-controls-height: 8.85rem;
+  }
+
   .achievement-gallery {
     max-height: calc(100dvh - 1rem);
     padding: 1rem;
@@ -4793,9 +4804,47 @@ kbd {
   }
 
   .left-hud {
-    left: 0.55rem;
+    left: var(--mobile-objectives-left);
     top: 5.2rem;
     width: 12rem;
+  }
+
+  .objectives-card {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    max-height: max(
+      3.6rem,
+      calc(
+        100dvh - var(--mobile-objectives-flow-top) - var(--mobile-touch-controls-height) -
+          var(--mobile-controls-bottom) - var(--mobile-hud-region-gap)
+      )
+    );
+    order: 1;
+    overflow: hidden;
+    width: calc(50vw - var(--mobile-objectives-left) - var(--mobile-hud-half-gap));
+  }
+
+  .contract-card,
+  .doctrine-card {
+    order: 2;
+  }
+
+  .event-banner {
+    order: 3;
+  }
+
+  .objectives-card .objective-list {
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    touch-action: pan-y;
+  }
+
+  .objectives-card .objective-item {
+    flex: 0 0 auto;
   }
 
   .stat-strip span:nth-child(3),
@@ -4827,20 +4876,26 @@ kbd {
   }
 
   .action-prompt {
-    bottom: 8.5rem;
-    max-width: calc(100% - 2rem);
+    bottom: calc(
+      var(--mobile-controls-bottom) + var(--mobile-touch-controls-height) +
+        var(--mobile-hud-region-gap)
+    );
+    left: calc(50% + var(--mobile-hud-half-gap));
+    max-width: none;
+    right: var(--mobile-controls-right);
     text-align: center;
-    white-space: nowrap;
+    transform: none;
+    white-space: normal;
   }
 
   .touch-controls {
-    bottom: 0.8rem;
+    bottom: var(--mobile-controls-bottom);
     display: flex;
     justify-content: space-between;
-    left: 0.8rem;
+    left: var(--mobile-controls-left);
     pointer-events: none;
     position: absolute;
-    right: 0.8rem;
+    right: var(--mobile-controls-right);
     z-index: 35;
   }
 
@@ -4943,11 +4998,12 @@ kbd {
   }
 
   .objectives-card {
-    padding: 0.5rem;
+    padding: 0.35rem;
   }
 
   .objectives-card .hud-card-header {
-    margin-bottom: 0.35rem;
+    line-height: 1;
+    margin-bottom: 0.2rem;
   }
 
   .objective-list {
@@ -4957,7 +5013,7 @@ kbd {
   .objective-item {
     gap: 0.35rem;
     min-height: 0;
-    padding: 0.35rem;
+    padding: 0.25rem;
   }
 
   .objective-item p {
