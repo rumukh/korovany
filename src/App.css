@@ -4607,12 +4607,37 @@ kbd {
   }
 
   .top-hud {
+    display: grid;
+    gap: 0.45rem;
+    grid-template-columns: minmax(0, 1fr) clamp(6.5rem, 34vw, 8.4rem);
     inset: 0.55rem 0.55rem auto;
   }
 
   .identity-panel {
+    display: grid;
+    gap: 0 0.35rem;
+    grid-template-areas:
+      "zone actions"
+      "threat actions";
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: 1fr 1fr;
     min-width: 0;
-    width: calc(100% - 7rem);
+    padding: 0.35rem 0.5rem;
+    width: auto;
+  }
+
+  .identity-panel .identity-icon,
+  .identity-panel .zone-motif {
+    display: none;
+  }
+
+  .identity-panel .zone-title,
+  .identity-panel .zone-title > div {
+    min-width: 0;
+  }
+
+  .identity-panel .zone-title {
+    grid-area: zone;
   }
 
   .identity-panel p,
@@ -4621,19 +4646,51 @@ kbd {
   }
 
   .identity-panel h1 {
-    max-width: 9rem;
+    line-height: 1.1;
+    margin-top: 0;
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
+  .threat-chip {
+    align-self: start;
+    gap: 0.05rem 0.2rem;
+    grid-area: threat;
+    margin-left: 0;
+    min-width: 4rem;
+    padding: 0.1rem 0.3rem;
+  }
+
+  .threat-chip span,
+  .threat-chip strong {
+    line-height: 1;
+  }
+
+  .hud-actions {
+    align-self: center;
+    grid-area: actions;
+    justify-self: end;
+  }
+
+  .hud-actions .icon-button {
+    min-height: 2.75rem;
+    width: 2.75rem;
+  }
+
+  .top-hud-side {
+    min-width: 0;
+    width: 100%;
+  }
+
   .minimap-card {
     padding: 0.35rem;
-    width: 6.2rem;
+    width: 100%;
   }
 
   .minimap-card.generated {
-    width: 8.4rem;
+    width: 100%;
   }
 
   .minimap-card .hud-card-header,
