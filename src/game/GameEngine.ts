@@ -1652,6 +1652,16 @@ interface CharacterRig {
   rightKnee: THREE.Object3D | null
   weapon: THREE.Object3D | null
   cloak: THREE.Object3D | null
+  /**
+   * Height of `torso-pivot` — the waist — above the feet.
+   *
+   * Everything parented to the chest is measured from there, so anything writing a
+   * chest-space position from outside `createCharacter` converts through this. The
+   * shield's guard pose is the only such writer; a beast's chest is at its origin, so
+   * a beast's is zero.
+   */
+  waistY: number
+  /** Height of the shoulder joints in `torso-pivot` space — above the waist. */
   shoulderY: number
   upperArm: number
   forearm: number
@@ -1670,6 +1680,17 @@ interface CharacterRig {
    */
   lean: number
 }
+
+/**
+ * The shield's height above the *feet*, guard down and guard up.
+ *
+ * Two sites write it — `createCharacter`'s rest pose and `updateShieldPose` — and they
+ * are in different frames from the number: both land on `torso-pivot`, which is the
+ * waist, so both subtract the wearer's own `waistY`. Shared so a change to one height
+ * cannot leave the other behind.
+ */
+const SHIELD_REST_Y = 1.85
+const SHIELD_GUARD_Y = 1.78
 
 /** A wheel rolls at its own radius, not at the average of the two the cart carries. */
 function wheelRadiusOf(wheel: THREE.Object3D): number {
@@ -10677,9 +10698,14 @@ export class GameEngine {
   private updateShieldPose(): void {
     const shield = this.player.getObjectByName('shield')
     if (!shield) return
+    // `shield` hangs off `torso-pivot`, which sits at the waist, and these heights are
+    // authored above the feet — the same conversion `createCharacter` does for the
+    // rest pose, through the same two constants so the two cannot disagree.
+    const rig = this.player.userData.rig as CharacterRig | undefined
+    const waistY = rig?.waistY ?? 0
     shield.position.set(
       this.shieldActive ? 0 : -0.82,
-      this.shieldActive ? 1.78 : 1.85,
+      (this.shieldActive ? SHIELD_GUARD_Y : SHIELD_REST_Y) - waistY,
       this.shieldActive ? 0.58 : 0.08,
     )
     shield.rotation.set(this.shieldActive ? -0.08 : 0, 0, this.shieldActive ? 0 : 0.12)
@@ -12915,8 +12941,16 @@ export class GameEngine {
     const build = (key: string, factory: () => THREE.BufferGeometry) =>
       this.acquireArtGeometry(key, factory)
 
-    const { root: group, torsoPivot, headPivot, pelvisPivot, headY } =
-      buildCharacterSkeleton(p)
+    const {
+      root: group,
+      torsoPivot,
+      headPivot,
+      pelvisPivot,
+      waistY,
+      torsoY: chestTorsoY,
+      shoulderY: chestShoulderY,
+      headY,
+    } = buildCharacterSkeleton(p)
 
     const bodyMaterial = this.characterBodyMaterial(plan)
     const limbMaterial = this.characterLimbMaterial(plan)
@@ -12927,7 +12961,7 @@ export class GameEngine {
 
     const torso = new THREE.Mesh(build(keys.torso, () => buildTorso(plan)), bodyMaterial)
     torso.name = 'torso'
-    torso.position.y = p.torsoY
+    torso.position.y = chestTorsoY
     torsoPivot.add(torso)
 
     if (keys.trim) {
@@ -12937,7 +12971,7 @@ export class GameEngine {
         leatherMaterial,
       )
       trim.name = 'torso-trim'
-      trim.position.y = p.torsoY
+      trim.position.y = chestTorsoY
       this.attachCharacterDetail(torsoPivot, trim)
     }
 
@@ -12946,7 +12980,7 @@ export class GameEngine {
       const cloakKind = plan.cloak
       cloakPivot = new THREE.Group()
       cloakPivot.name = 'cloak-pivot'
-      cloakPivot.position.set(0, p.shoulderY + 0.06, 0)
+      cloakPivot.position.set(0, chestShoulderY + 0.06, 0)
       const cloak = new THREE.Mesh(
         build(keys.cloak, () => buildCloak(plan.faction, cloakKind)),
         this.characterCloakMaterial(plan),
@@ -13010,7 +13044,7 @@ export class GameEngine {
     ] as const) {
       const pivot = new THREE.Group()
       pivot.name = name
-      pivot.position.set(side * p.shoulderX, p.shoulderY, 0)
+      pivot.position.set(side * p.shoulderX, chestShoulderY, 0)
       pivot.rotation.z = side * p.armSplay
       const upper = new THREE.Mesh(
         build(keys.upperArm, () => buildUpperArm(plan.faction, plan.armour, p.upperArm)),
@@ -13075,7 +13109,7 @@ export class GameEngine {
       // it the moment the ropes come off.
       const rope = new THREE.Mesh(build('wrist-rope', () => buildWristRope()), leatherMaterial)
       rope.name = 'wrist-rope'
-      rope.position.set(0, p.shoulderY - p.upperArm - p.forearm, 0.2)
+      rope.position.set(0, chestShoulderY - p.upperArm - p.forearm, 0.2)
       rope.scale.x = p.shoulderX / 0.5
       torsoPivot.add(rope)
     }
@@ -13089,7 +13123,7 @@ export class GameEngine {
     const mainHand = plan.mainHand === 'right' ? 1 : -1
     weaponPivot.position.set(
       mainHand * p.shoulderX,
-      p.shoulderY - p.upperArm - p.forearm,
+      chestShoulderY - p.upperArm - p.forearm,
       0,
     )
     if (keys.weaponHead) {
@@ -13116,13 +13150,15 @@ export class GameEngine {
     if (keys.offhand) {
       const offhandKind = plan.offhand
       // `shield` keeps its rest transform because `updateShieldPose` writes absolute
-      // local coordinates into it when the player raises guard.
+      // local coordinates into it when the player raises guard. Both heights are
+      // authored above the *feet* and land on `torso-pivot`, which is the waist, so
+      // both are converted through the wearer's own waist rather than by hand.
       const shield = new THREE.Mesh(
         build(keys.offhand, () => buildOffhand(offhandKind)),
         offhandKind === 'bundle' ? leatherMaterial : this.characterShieldMaterial(plan),
       )
       shield.name = 'shield'
-      shield.position.set(-0.82, 1.85, 0.08)
+      shield.position.set(-0.82, SHIELD_REST_Y - waistY, 0.08)
       shield.rotation.z = 0.12
       torsoPivot.add(shield)
     }
@@ -13166,7 +13202,8 @@ export class GameEngine {
       rightKnee: group.getObjectByName('rightKnee') ?? null,
       weapon: weaponPivot,
       cloak: cloakPivot,
-      shoulderY: p.shoulderY,
+      waistY,
+      shoulderY: chestShoulderY,
       upperArm: p.upperArm,
       forearm: p.forearm,
       elbowRest: p.elbowRest,
@@ -13757,6 +13794,9 @@ export class GameEngine {
       rightKnee: null,
       weapon: null,
       cloak: tailPivot,
+      // A quadruped's chest sits at its own origin — `buildBeastSkeleton` puts no
+      // waist under it — so its chest space and its body space are the same frame.
+      waistY: 0,
       shoulderY: rig.frontJointY,
       upperArm: rig.frontLimb * 0.5,
       forearm: rig.frontLimb * 0.5,
