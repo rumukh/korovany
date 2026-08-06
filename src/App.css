@@ -3661,6 +3661,7 @@ kbd {
 
 .pause-modal {
   max-height: calc(100dvh - 2rem);
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
@@ -5083,6 +5084,35 @@ kbd {
 
   .history-reward {
     grid-column: 2;
+  }
+}
+
+@media (max-width: 360px) {
+  .pause-setting {
+    min-width: 0;
+  }
+
+  .pause-setting > span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    text-align: left;
+  }
+
+  .pause-setting.sfx-volume-control {
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+
+  .pause-setting.sfx-volume-control input[type="range"] {
+    flex: 1 1 100%;
+    margin-left: 0;
+    min-width: 0;
+    order: 1;
+    width: 100%;
+  }
+
+  .pause-setting.sfx-volume-control strong {
+    min-width: 0;
   }
 }
 
