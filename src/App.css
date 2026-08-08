@@ -467,6 +467,10 @@ button {
   padding: 0.9rem;
 }
 
+.doctrine-panel {
+  grid-column: 1 / -1;
+}
+
 .run-setup-heading {
   align-items: start;
   display: flex;

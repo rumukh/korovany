@@ -59,6 +59,13 @@ test('menu settings reserve their wrapped height before the hero branding', () =
   assert.ok(settingsIndex < heroIndex)
 })
 
+test('doctrine choices span both columns of the run setup grid', () => {
+  const doctrinePanelRule = extractRule(appCss, '.doctrine-panel')
+
+  assert.match(doctrinePanelRule, /grid-column:\s*1\s*\/\s*-1;/)
+  assert.match(appSource, /className="boon-panel doctrine-panel"/)
+})
+
 test('flow-stacked settings have zero intersection with menu branding at target sizes', () => {
   const targets = [
     { height: 800, settingsHeight: 144, width: 1280 },
