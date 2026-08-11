@@ -177,6 +177,11 @@
         text-wrap: balance;
       }
 
+      .hero .product-name {
+        display: inline-block;
+        white-space: nowrap;
+      }
+
       .lede {
         color: var(--muted);
         font-size: clamp(1.1rem, 2.2vw, 1.5rem);
@@ -557,6 +562,10 @@
           font-size: clamp(3rem, 16vw, 4.7rem);
         }
 
+        .hero .product-name {
+          font-size: clamp(2.4rem, 11.5vw, 4.7rem);
+        }
+
         .story h2 {
           font-family: inherit;
           font-weight: 900;
@@ -598,7 +607,7 @@
     <main>
       <header class="hero">
         <div class="eyebrow">Я джва года хочу · Что изменилось</div>
-        <h1>Суть такова: как выросли «КОРОВАНЫ»</h1>
+        <h1>Суть такова: как выросли <span class="product-name">«КОРОВАНЫ»</span></h1>
         <p class="lede">
           Первая версия честно выдавала всё, что было обещано в легендарном письме. Теперь
           каждый seed собирает отдельный поход из 25 регионов, а мир воюет, горит и грабит
