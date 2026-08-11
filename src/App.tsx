@@ -54,6 +54,7 @@ import elfEmblem from './assets/factions/elf-emblem.svg'
 import guardEmblem from './assets/factions/guard-emblem.svg'
 import villainEmblem from './assets/factions/villain-emblem.svg'
 import './App.css'
+import { lockDocumentScroll } from './documentScrollLock'
 import { SFX_VOLUME_DEFAULT, normalizeSfxVolume } from './game/AudioDirector'
 import {
   GameEngine,
@@ -1128,6 +1129,8 @@ function AchievementGallery({
   onClose: () => void
 }) {
   const summary = summarizeAchievements(achievements)
+
+  useLayoutEffect(() => lockDocumentScroll(), [])
 
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => {
