@@ -5,6 +5,8 @@ original gallery, its nine images, and its manifest are unchanged. The baseline
 world is seed `20260906`, runtime ancestor
 `f36ee7ce06c9cf7b1c220d04b707be4fcf1cc7ff`.
 
+[Measured results and raw evidence](graphics-baseline-results.md)
+
 ## Run it
 
 Use the existing Node/npm toolchain and an installed Chrome. No browser testing

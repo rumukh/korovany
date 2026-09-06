@@ -1,0 +1,671 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-09-06T22:25:54.029Z",
+  "runtimeCommit": "931360200e5d24cb6f02da3ac1066174aeb0309f",
+  "dirtyTree": "",
+  "runtimeBaseline": "f36ee7ce06c9cf7b1c220d04b707be4fcf1cc7ff",
+  "buildSha256": "ecaf848e98ed025e03c005a53b6eac157df94f21834073af312723d79efe475e",
+  "host": {
+    "platform": "win32",
+    "osRelease": "10.0.19045",
+    "cpu": "AMD Ryzen 7 5800X 8-Core Processor             ",
+    "logicalProcessors": 16,
+    "memoryBytes": 103001661440,
+    "node": "v25.6.0"
+  },
+  "conditions": {
+    "viewport": {
+      "width": 1920,
+      "height": 1080,
+      "dpr": 1,
+      "mobileEmulation": false
+    },
+    "chrome": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "chromeFlags": [
+      "--user-data-dir=C:\\Users\\predi\\.copilot\\session-state\\78d2667c-359d-4f21-a9bb-3ed54c0390f0\\files\\gfx01-final-controls\\chrome-profile-ZRBIjE",
+      "--remote-debugging-port=0",
+      "--remote-debugging-address=127.0.0.1",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-background-networking",
+      "--disable-component-update",
+      "--disable-sync",
+      "--disable-extensions",
+      "--metrics-recording-only",
+      "--mute-audio",
+      "--window-size=1920,1080",
+      "--headless=new",
+      "about:blank"
+    ],
+    "serverOrigin": "http://127.0.0.1:49702",
+    "dedicatedBrowserProfile": true,
+    "exclusiveGraphicsWorkerLeaseRequired": true,
+    "wholeComputerIsolated": false,
+    "cpuThrottling": false,
+    "gpuBackendForced": false,
+    "unsupportedHardware": [
+      "No real mobile device benchmark",
+      "No integrated GPU device benchmark"
+    ],
+    "capture": "Manual production rendering of real worlds/checkpoints with explicitly staged prerequisites. No full-game CPU claim from capture frames.",
+    "repeatTolerance": {
+      "maxChangedPixels": 16,
+      "maxChannelDelta": 2
+    },
+    "profile": "Active production requestAnimationFrame updates; default 0.05 s simulation clamp and hit stop unchanged. Warm-up and samples separate; no per-frame screenshot/readback.",
+    "memory": "Observed WebGL storage bytes, not measured resident VRAM. Default framebuffer, implicit extension MSAA and driver/swapchain exclusions separately reported."
+  },
+  "cases": [
+    {
+      "id": "guard-opening",
+      "definition": {
+        "id": "guard-opening",
+        "faction": "guard",
+        "weather": "clear",
+        "time": 2,
+        "description": "Fresh production guard opening; no player/actor relocation. Staged visual clock and seed; simulation held for capture."
+      },
+      "captures": [
+        {
+          "repetition": 1,
+          "file": "guard-opening-1.png",
+          "sha256": "8334a073d2ae1cf88be6e9a9cb24dbebcf502d15f79e25e75932c241f395990f"
+        },
+        {
+          "repetition": 2,
+          "file": "guard-opening-2.png",
+          "sha256": "8334a073d2ae1cf88be6e9a9cb24dbebcf502d15f79e25e75932c241f395990f",
+          "comparison": {
+            "identicalPixels": true,
+            "changedPixels": 0,
+            "changedPixelRatio": 0,
+            "maxChannelDelta": 0,
+            "meanChannelDelta": 0,
+            "bounds": null,
+            "firstPixelSha256": "5ad41d140cd0e638fd061be7dac2125ee7d5d6d87b2f181a32befa58511f4414",
+            "secondPixelSha256": "5ad41d140cd0e638fd061be7dac2125ee7d5d6d87b2f181a32befa58511f4414"
+          }
+        }
+      ],
+      "externalRequests": [],
+      "performance": {
+        "file": "guard-opening-profile.json",
+        "samples": {
+          "frames": 300,
+          "frameTimeMs": {
+            "count": 300,
+            "min": 15.299999952316284,
+            "max": 18.200000047683716,
+            "mean": 16.680333333412808,
+            "p50": 16.699999928474426,
+            "p95": 17.399999976158142,
+            "p99": 17.899999976158142
+          },
+          "cpuUpdateMs": {
+            "count": 300,
+            "min": 0.5,
+            "max": 2.8000000715255737,
+            "mean": 0.9999999984105428,
+            "p50": 0.8999999761581421,
+            "p95": 1.600000023841858,
+            "p99": 2.200000047683716
+          },
+          "cpuSubmissionMs": {
+            "count": 300,
+            "min": 1.6999999284744263,
+            "max": 6.200000047683716,
+            "mean": 2.5723333315054577,
+            "p50": 2.299999952316284,
+            "p95": 4,
+            "p99": 5.599999904632568
+          },
+          "cpuTotalMs": {
+            "count": 300,
+            "min": 2.299999952316284,
+            "max": 8,
+            "mean": 3.5723333299160003,
+            "p50": 3.200000047683716,
+            "p95": 5.5,
+            "p99": 7.399999976158142
+          },
+          "streamingMs": {
+            "count": 300,
+            "min": 0,
+            "max": 0.5,
+            "mean": 0.07433333357175191,
+            "p50": 0.10000002384185791,
+            "p95": 0.20000004768371582,
+            "p99": 0.20000004768371582
+          },
+          "gpuMs": {
+            "count": 300,
+            "min": 1.690624,
+            "max": 6.636544,
+            "mean": 4.180888853333333,
+            "p50": 4.180992,
+            "p95": 5.475328,
+            "p99": 6.060032
+          },
+          "gpuStatuses": {
+            "available": 300
+          },
+          "calls": null,
+          "triangles": null,
+          "mainViewTriangles": null,
+          "passes": {
+            "scene": {
+              "calls": null,
+              "triangles": null
+            },
+            "ink": {
+              "calls": null,
+              "triangles": null
+            },
+            "shadow": {
+              "calls": null,
+              "triangles": null
+            },
+            "post": {
+              "calls": null,
+              "triangles": null
+            }
+          },
+          "trackedBytes": null,
+          "renderTargetBytes": null,
+          "npcs": {
+            "count": 300,
+            "min": 13,
+            "max": 13,
+            "mean": 13,
+            "p50": 13,
+            "p95": 13,
+            "p99": 13
+          },
+          "aliveNpcs": {
+            "count": 300,
+            "min": 13,
+            "max": 13,
+            "mean": 13,
+            "p50": 13,
+            "p95": 13,
+            "p99": 13
+          },
+          "movingNpcs": {
+            "count": 300,
+            "min": 4,
+            "max": 9,
+            "mean": 7.163333333333333,
+            "p50": 7,
+            "p95": 9,
+            "p99": 9
+          },
+          "actingNpcs": {
+            "count": 300,
+            "min": 0,
+            "max": 0,
+            "mean": 0,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0
+          },
+          "at25NpcCapFrames": 0,
+          "inactiveFrames": 0,
+          "counterDisagreements": [],
+          "counterUnavailableFrames": 300,
+          "readPixelsCalls": null,
+          "streamingTransitions": []
+        },
+        "warmup": {
+          "frames": 120,
+          "frameTimeMs": {
+            "count": 120,
+            "min": 14.799999952316284,
+            "max": 18.700000047683716,
+            "mean": 16.680833332737286,
+            "p50": 16.699999928474426,
+            "p95": 17.600000023841858,
+            "p99": 17.799999952316284
+          },
+          "cpuUpdateMs": {
+            "count": 120,
+            "min": 0.6999999284744263,
+            "max": 12.300000071525574,
+            "mean": 1.4033333301544189,
+            "p50": 1.2999999523162842,
+            "p95": 1.8000000715255737,
+            "p99": 2.6999999284744263
+          },
+          "cpuSubmissionMs": {
+            "count": 120,
+            "min": 1.899999976158142,
+            "max": 4.100000023841858,
+            "mean": 2.6233333349227905,
+            "p50": 2.5,
+            "p95": 3.6999999284744263,
+            "p99": 4.099999904632568
+          },
+          "cpuTotalMs": {
+            "count": 120,
+            "min": 2.899999976158142,
+            "max": 16,
+            "mean": 4.02666666507721,
+            "p50": 3.799999952316284,
+            "p95": 5.5,
+            "p99": 6.299999952316284
+          },
+          "streamingMs": {
+            "count": 120,
+            "min": 0,
+            "max": 0.30000007152557373,
+            "mean": 0.09500000476837159,
+            "p50": 0.10000002384185791,
+            "p95": 0.20000004768371582,
+            "p99": 0.20000004768371582
+          },
+          "gpuMs": {
+            "count": 120,
+            "min": 0.995072,
+            "max": 9.746432,
+            "mean": 4.2071701333333325,
+            "p50": 4.245504,
+            "p95": 5.020672,
+            "p99": 5.572608
+          },
+          "gpuStatuses": {
+            "available": 120
+          },
+          "calls": null,
+          "triangles": null,
+          "mainViewTriangles": null,
+          "passes": {
+            "scene": {
+              "calls": null,
+              "triangles": null
+            },
+            "ink": {
+              "calls": null,
+              "triangles": null
+            },
+            "shadow": {
+              "calls": null,
+              "triangles": null
+            },
+            "post": {
+              "calls": null,
+              "triangles": null
+            }
+          },
+          "trackedBytes": null,
+          "renderTargetBytes": null,
+          "npcs": {
+            "count": 120,
+            "min": 12,
+            "max": 13,
+            "mean": 12.991666666666667,
+            "p50": 13,
+            "p95": 13,
+            "p99": 13
+          },
+          "aliveNpcs": {
+            "count": 120,
+            "min": 12,
+            "max": 13,
+            "mean": 12.991666666666667,
+            "p50": 13,
+            "p95": 13,
+            "p99": 13
+          },
+          "movingNpcs": {
+            "count": 120,
+            "min": 4,
+            "max": 11,
+            "mean": 8.625,
+            "p50": 9,
+            "p95": 11,
+            "p99": 11
+          },
+          "actingNpcs": {
+            "count": 120,
+            "min": 0,
+            "max": 0,
+            "mean": 0,
+            "p50": 0,
+            "p95": 0,
+            "p99": 0
+          },
+          "at25NpcCapFrames": 0,
+          "inactiveFrames": 0,
+          "counterDisagreements": [],
+          "counterUnavailableFrames": 120,
+          "readPixelsCalls": null,
+          "streamingTransitions": []
+        },
+        "counterMode": "disabled: native GL/renderer methods restored; CPU markers, runtime telemetry and GPU queries retained",
+        "systemCpuBusyPercent": 22.866258973677215
+      },
+      "activeEnd": {
+        "file": "guard-opening-active-end.png",
+        "sha256": "bcc85e9f8d89a2039d0f32e7a5fbe16f2e430866a3999b2bb8184c880007bab6"
+      },
+      "byteIdenticalCaptures": true,
+      "repeatWithinTolerance": true
+    },
+    {
+      "id": "crowded-25",
+      "definition": {
+        "id": "crowded-25",
+        "faction": "guard",
+        "crowd": true,
+        "weather": "clear",
+        "time": 16.8,
+        "description": "Fresh guard world; existing NPCs positioned at legal arena points and remaining slots filled by production spawnActor/budget to 25 NPCs plus player. Real HP, allegiance, AI and combat; no invulnerability or replacement after death."
+      },
+      "captures": [
+        {
+          "repetition": 1,
+          "file": "crowded-25-1.png",
+          "sha256": "78a2bf9f9865efe221079c84aa73394dda8acb7cf5a86ea4f37b7342a9a407f0"
+        },
+        {
+          "repetition": 2,
+          "file": "crowded-25-2.png",
+          "sha256": "78a2bf9f9865efe221079c84aa73394dda8acb7cf5a86ea4f37b7342a9a407f0",
+          "comparison": {
+            "identicalPixels": true,
+            "changedPixels": 0,
+            "changedPixelRatio": 0,
+            "maxChannelDelta": 0,
+            "meanChannelDelta": 0,
+            "bounds": null,
+            "firstPixelSha256": "e96610cba3ef2a4471869b35248d3da56964448c2ff212c78bb318308c5a7afb",
+            "secondPixelSha256": "e96610cba3ef2a4471869b35248d3da56964448c2ff212c78bb318308c5a7afb"
+          }
+        }
+      ],
+      "externalRequests": [],
+      "performance": {
+        "file": "crowded-25-profile.json",
+        "samples": {
+          "frames": 300,
+          "frameTimeMs": {
+            "count": 300,
+            "min": 13,
+            "max": 24.200000047683716,
+            "mean": 16.680666666428248,
+            "p50": 16.700000047683716,
+            "p95": 17.699999928474426,
+            "p99": 18.100000023841858
+          },
+          "cpuUpdateMs": {
+            "count": 300,
+            "min": 1.399999976158142,
+            "max": 4.600000023841858,
+            "mean": 2.133000005086263,
+            "p50": 2,
+            "p95": 3.0999999046325684,
+            "p99": 4
+          },
+          "cpuSubmissionMs": {
+            "count": 300,
+            "min": 5.200000047683716,
+            "max": 13.600000023841858,
+            "mean": 6.450333332618078,
+            "p50": 6,
+            "p95": 8.600000023841858,
+            "p99": 12.699999928474426
+          },
+          "cpuTotalMs": {
+            "count": 300,
+            "min": 6.899999976158142,
+            "max": 17.90000009536743,
+            "mean": 8.58333333770434,
+            "p50": 8.099999904632568,
+            "p95": 11.600000023841858,
+            "p99": 15.400000095367432
+          },
+          "streamingMs": {
+            "count": 300,
+            "min": 0,
+            "max": 0.20000004768371582,
+            "mean": 0.08333333373069764,
+            "p50": 0.10000002384185791,
+            "p95": 0.20000004768371582,
+            "p99": 0.20000004768371582
+          },
+          "gpuMs": {
+            "count": 300,
+            "min": 1.86368,
+            "max": 13.686784,
+            "mean": 7.7872196266666664,
+            "p50": 7.697408,
+            "p95": 9.472,
+            "p99": 13.008896
+          },
+          "gpuStatuses": {
+            "available": 300
+          },
+          "calls": null,
+          "triangles": null,
+          "mainViewTriangles": null,
+          "passes": {
+            "scene": {
+              "calls": null,
+              "triangles": null
+            },
+            "ink": {
+              "calls": null,
+              "triangles": null
+            },
+            "shadow": {
+              "calls": null,
+              "triangles": null
+            },
+            "post": {
+              "calls": null,
+              "triangles": null
+            }
+          },
+          "trackedBytes": null,
+          "renderTargetBytes": null,
+          "npcs": {
+            "count": 300,
+            "min": 25,
+            "max": 25,
+            "mean": 25,
+            "p50": 25,
+            "p95": 25,
+            "p99": 25
+          },
+          "aliveNpcs": {
+            "count": 300,
+            "min": 21,
+            "max": 25,
+            "mean": 22.07,
+            "p50": 21,
+            "p95": 25,
+            "p99": 25
+          },
+          "movingNpcs": {
+            "count": 300,
+            "min": 7,
+            "max": 20,
+            "mean": 17.253333333333334,
+            "p50": 19,
+            "p95": 20,
+            "p99": 20
+          },
+          "actingNpcs": {
+            "count": 300,
+            "min": 0,
+            "max": 11,
+            "mean": 2.263333333333333,
+            "p50": 2,
+            "p95": 9,
+            "p99": 11
+          },
+          "at25NpcCapFrames": 300,
+          "inactiveFrames": 0,
+          "counterDisagreements": [],
+          "counterUnavailableFrames": 300,
+          "readPixelsCalls": null,
+          "streamingTransitions": []
+        },
+        "warmup": {
+          "frames": 120,
+          "frameTimeMs": {
+            "count": 120,
+            "min": 10.200000047683716,
+            "max": 137.5,
+            "mean": 18.208333333333332,
+            "p50": 16.700000047683716,
+            "p95": 19.5,
+            "p99": 62.699999928474426
+          },
+          "cpuUpdateMs": {
+            "count": 120,
+            "min": 1.600000023841858,
+            "max": 14.599999904632568,
+            "mean": 2.974166664481163,
+            "p50": 2.6999999284744263,
+            "p95": 4.799999952316284,
+            "p99": 7.5
+          },
+          "cpuSubmissionMs": {
+            "count": 120,
+            "min": 4.300000071525574,
+            "max": 58,
+            "mean": 6.977499999602636,
+            "p50": 5.800000071525574,
+            "p95": 8.300000071525574,
+            "p99": 29.100000023841858
+          },
+          "cpuTotalMs": {
+            "count": 120,
+            "min": 6.900000095367432,
+            "max": 61.799999952316284,
+            "mean": 9.951666664083799,
+            "p50": 8.5,
+            "p95": 13.600000023841858,
+            "p99": 33.89999997615814
+          },
+          "streamingMs": {
+            "count": 120,
+            "min": 0,
+            "max": 0.2999999523162842,
+            "mean": 0.10249999562899272,
+            "p50": 0.10000002384185791,
+            "p95": 0.20000004768371582,
+            "p99": 0.20000004768371582
+          },
+          "gpuMs": {
+            "count": 120,
+            "min": 3.134464,
+            "max": 59.46368,
+            "mean": 8.464437866666668,
+            "p50": 7.678976,
+            "p95": 9.433088,
+            "p99": 28.537856
+          },
+          "gpuStatuses": {
+            "available": 120
+          },
+          "calls": null,
+          "triangles": null,
+          "mainViewTriangles": null,
+          "passes": {
+            "scene": {
+              "calls": null,
+              "triangles": null
+            },
+            "ink": {
+              "calls": null,
+              "triangles": null
+            },
+            "shadow": {
+              "calls": null,
+              "triangles": null
+            },
+            "post": {
+              "calls": null,
+              "triangles": null
+            }
+          },
+          "trackedBytes": null,
+          "renderTargetBytes": null,
+          "npcs": {
+            "count": 120,
+            "min": 25,
+            "max": 25,
+            "mean": 25,
+            "p50": 25,
+            "p95": 25,
+            "p99": 25
+          },
+          "aliveNpcs": {
+            "count": 120,
+            "min": 25,
+            "max": 25,
+            "mean": 25,
+            "p50": 25,
+            "p95": 25,
+            "p99": 25
+          },
+          "movingNpcs": {
+            "count": 120,
+            "min": 10,
+            "max": 17,
+            "mean": 14.533333333333333,
+            "p50": 14,
+            "p95": 17,
+            "p99": 17
+          },
+          "actingNpcs": {
+            "count": 120,
+            "min": 1,
+            "max": 12,
+            "mean": 5.616666666666666,
+            "p50": 5,
+            "p95": 10,
+            "p99": 12
+          },
+          "at25NpcCapFrames": 120,
+          "inactiveFrames": 0,
+          "counterDisagreements": [],
+          "counterUnavailableFrames": 120,
+          "readPixelsCalls": null,
+          "streamingTransitions": []
+        },
+        "counterMode": "disabled: native GL/renderer methods restored; CPU markers, runtime telemetry and GPU queries retained",
+        "systemCpuBusyPercent": 23.710361961284978
+      },
+      "activeEnd": {
+        "file": "crowded-25-active-end.png",
+        "sha256": "59dd8e71a6a4b34b09c161b9471127b4908cf5dbdedf6be047eafce0c24c7bbd"
+      },
+      "byteIdenticalCaptures": true,
+      "repeatWithinTolerance": true
+    }
+  ],
+  "complete": true,
+  "browserVersion": {
+    "protocolVersion": "1.3",
+    "product": "Chrome/152.0.7977.76",
+    "revision": "@0d89dfa2dd7c1ec4b8a14b9f303f887bb63b6174",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+    "jsVersion": "15.2.124.19"
+  },
+  "processes": {
+    "serverPid": 65100,
+    "chromePid": 6184,
+    "debugPort": 49708
+  },
+  "defaultOffControl": {
+    "canvasPresent": true,
+    "diagnosticsAbsent": true
+  },
+  "finishedAt": "2026-09-06T22:26:32.405Z",
+  "shutdown": {
+    "ownedProcessesStopped": true,
+    "errors": []
+  }
+}
