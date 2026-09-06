@@ -2,6 +2,13 @@ import * as THREE from 'three'
 import { AudioDirector, type SoundCue, type SoundRequest } from './AudioDirector'
 import { musicIntensityRank, type MusicIntensity, type MusicOutcome } from './MusicScore.ts'
 import { BloomPostProcessor } from './BloomPostProcessor'
+import { GraphicsClock, graphicsClockOptions } from './diagnostics/GraphicsClock.ts'
+import {
+  GraphicsDiagnostics,
+  createInstrumentedGraphicsRenderer,
+  type GraphicsFixtureStage,
+} from './diagnostics/GraphicsDiagnostics.ts'
+import { graphicsSceneEvidence } from './diagnostics/GraphicsSceneEvidence.ts'
 import {
   AchievementTracker,
   type AchievementSummary,
@@ -1981,6 +1988,8 @@ export class GameEngine {
   private readonly camera = new THREE.PerspectiveCamera(CAMERA_BASE_FOV, 1, 0.1, 240)
   private readonly renderer: THREE.WebGLRenderer
   private readonly postProcessor: BloomPostProcessor
+  private readonly graphicsClock: GraphicsClock | null
+  private graphicsDiagnostics: GraphicsDiagnostics | null = null
   private readonly artLibrary: StylizedArtLibrary
   /** Shape cache shared by every actor: one buffer per shape, not one per actor. */
   private readonly artGeometry = new GeometryCache()
@@ -2284,6 +2293,9 @@ export class GameEngine {
     this.container = container
     this.callbacks = callbacks
     this.faction = faction
+    const diagnosticOptions = graphicsClockOptions(window.location.search)
+    const diagnosticStarted = diagnosticOptions ? performance.now() : 0
+    this.graphicsClock = diagnosticOptions ? new GraphicsClock(diagnosticOptions) : null
     const launch = settings.generatedRun
     let restoredRun: ActiveRunSaveV3 | null = null
     if (
@@ -2646,7 +2658,9 @@ export class GameEngine {
         ? -1
         : 1
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
+    const instrumented = this.graphicsClock ? createInstrumentedGraphicsRenderer() : null
+    this.renderer = instrumented?.renderer ??
+      new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
     this.renderer.shadowMap.enabled = true
     // `PCFSoftShadowMap` is deprecated in three 0.185: `WebGLShadowMap.render`
@@ -2836,6 +2850,50 @@ export class GameEngine {
     this.resizeObserver.observe(this.container)
     this.resize()
     this.emitView(true)
+    if (instrumented && this.graphicsClock) {
+      const initializationMs = performance.now() - diagnosticStarted
+      this.graphicsDiagnostics = new GraphicsDiagnostics(
+        this.renderer, this.scene, instrumented.resources, instrumented.defaultSamples, this.graphicsClock, {
+          runtime: () => this.graphicsRuntimeFrame(),
+          snapshot: () => ({ ...this.graphicsRuntimeSnapshot(), initializationMs }),
+          world: () => ({
+            blueprint: this.generatedBlueprint,
+            regions: this.generatedBlueprint.regions.map((region) => ({
+              id: region.id, biome: region.biome, center: this.generatedWorld.getRegionCenter(region.id),
+              bounds: this.generatedWorld.getRegionBounds(region.id),
+            })),
+            bridges: this.generatedBlueprint.bridges.map((bridge) => ({
+              ...bridge, position: this.generatedWorld.getBridgePosition(bridge),
+            })),
+            sites: this.generatedBlueprint.sites.map((site) => ({
+              ...site, position: this.generatedWorld.getSitePosition(site),
+            })),
+          }),
+          stage: (request) => this.stageGraphicsFixture(request),
+          present: () => {
+            this.updateDayNight()
+            this.updateWeather(0)
+            this.updateAtmosphere(0)
+            this.scene.updateMatrixWorld(true)
+            this.updateCamera(0, true)
+            this.emitView(true)
+          },
+          frame: (delta) => this.renderLogicalFrame(delta, 'manual'),
+          save: () => this.saveGeneratedRun(),
+          input: (keys) => {
+            this.keys.clear()
+            for (const code of keys) this.setInput(code, true)
+            this.setShield(keys.includes('KeyR'))
+          },
+          probe: (points) => points.map((point) => ({
+            ...point, y: this.groundHeightAt(point.x, point.z),
+            walkable: this.isWalkablePosition(point.x, point.z, 1.1),
+            region: this.generatedWorld.getRegionIdAt(point.x, point.z) ?? null,
+            biome: this.generatedWorld.getBiomeAt(point.x, point.z) ?? null,
+          })),
+        },
+      )
+    }
   }
 
   start(): void {
@@ -2963,6 +3021,7 @@ export class GameEngine {
     this.telegraphPool.length = 0
     this.telegraphGeometries.clear()
     attempt(() => this.audio.destroy())
+    attempt(() => this.graphicsDiagnostics?.dispose())
     if (errors.length > 0) {
       throw new AggregateError(errors, 'Game engine cleanup was incomplete')
     }
@@ -3702,7 +3761,20 @@ export class GameEngine {
 
   private readonly loop = (): void => {
     const elapsedDelta = this.clock.getDelta()
+    try {
+      if (this.graphicsDiagnostics?.manual) this.graphicsDiagnostics.poll()
+      else this.renderLogicalFrame(elapsedDelta, 'active')
+    } catch (error) {
+      this.graphicsDiagnostics?.fail(error instanceof Error ? error : new Error(String(error)))
+      throw error
+    }
+    this.frameHandle = requestAnimationFrame(this.loop)
+  }
+
+  private renderLogicalFrame(elapsedDelta: number, source: 'active' | 'manual'): void {
+    this.graphicsDiagnostics?.beginFrame(elapsedDelta, source)
     const visualDelta = Math.min(elapsedDelta, 0.05)
+    if (!this.paused && !this.ended) this.graphicsClock?.advance(visualDelta)
     let stopped = 0
     if (!this.paused && !this.ended && this.hitStopRemaining > 0) {
       stopped = Math.min(this.hitStopRemaining, elapsedDelta)
@@ -3715,8 +3787,9 @@ export class GameEngine {
     this.audioListenerRight.setFromMatrixColumn(this.camera.matrixWorld, 0)
     this.audio.setListener(this.camera.position, this.audioListenerRight)
     this.updateMusicContext()
+    this.graphicsDiagnostics?.meter.endUpdate()
     this.postProcessor.render()
-    this.frameHandle = requestAnimationFrame(this.loop)
+    this.graphicsDiagnostics?.endFrame()
   }
 
   private update(delta: number): void {
@@ -3747,6 +3820,7 @@ export class GameEngine {
     this.moraleNoticeCooldown = Math.max(0, this.moraleNoticeCooldown - delta)
     this.updatePlayerMelee(delta)
     this.updatePlayer(delta)
+    this.graphicsDiagnostics?.meter.beginStreaming()
     this.generatedWorld.update({
       focus: {
         x: this.player.position.x,
@@ -3756,6 +3830,7 @@ export class GameEngine {
     })
     this.syncGeneratedRegions()
     this.refreshGeneratedCameraObstacles()
+    this.graphicsDiagnostics?.meter.endStreaming()
     this.updateCaravan(delta)
     if (!this.finaleWithinArena()) {
       suspendFinale(this.finale)
@@ -3837,6 +3912,123 @@ export class GameEngine {
 
   private groundHeightAt(x: number, z: number): number {
     return this.generatedWorld.sampleHeight(x, z)
+  }
+
+  private get visualElapsed(): number {
+    return this.graphicsClock?.timeSeconds ?? this.elapsed
+  }
+
+  private graphicsRuntimeFrame() {
+    return {
+      elapsed: this.elapsed, paused: this.paused, ended: this.ended, health: this.health,
+      npcCount: this.actors.length, aliveNpcs: this.actors.filter((actor) => actor.alive).length,
+      movingNpcs: this.actors.filter((actor) => actor.alive && actor.velocity.lengthSq() > 0.01).length,
+      actingNpcs: this.actors.filter((actor) => actor.alive && actor.action !== null).length,
+      region: this.generatedWorld.currentRegionId ?? null,
+      visibleRegions: [...this.generatedWorld.regions.getVisibleRegionIds()].sort(),
+      simulatedRegions: [...this.generatedWorld.regions.getSimulatedRegionIds()].sort(),
+    }
+  }
+
+  private graphicsRuntimeSnapshot() {
+    const policyGetter: unknown = Reflect.get(this, 'getVisualPolicy')
+    return {
+      ...this.graphicsRuntimeFrame(), faction: this.faction,
+      worldSeed: this.generatedBlueprint.seed, fingerprint: this.generatedBlueprint.fingerprint,
+      player: this.player.position.toArray(), heading: this.player.rotation.y,
+      pointerInput: { locked: document.pointerLockElement === this.renderer.domElement, fallback: this.pointerFallback },
+      camera: { position: this.camera.position.toArray(), yaw: this.cameraYaw, pitch: this.cameraPitch,
+        fov: this.camera.fov, near: this.camera.near, far: this.camera.far,
+        horizontalDistance: Math.hypot(this.camera.position.x - this.player.position.x,
+          this.camera.position.z - this.player.position.z) },
+      presentation: { dynamicDayNight: this.dynamicDayNight, weather: this.weatherEnabled,
+        ink: this.inkOutlinesEnabled, foliage: this.groundFoliageQuality, cameraEffects: this.screenShakeEnabled,
+        reducedMotion: this.reducedMotion, visualNightFactor: this.nightFactor },
+      visualPolicy: typeof policyGetter === 'function' ? Reflect.apply(policyGetter, this, []) : null,
+      simulationWeather: { target: this.weatherTarget, weights: { ...this.weatherWeights } },
+      rngStates: Object.fromEntries(Object.entries(this.generatedRngStreams).map(([key, stream]) => [key, stream.getState()])),
+      actors: this.actors.map((actor) => ({
+        id: actor.id, role: actor.role, allegiance: actor.allegiance, budget: actor.budgetCategory,
+        alive: actor.alive, hp: actor.hp, maxHp: actor.maxHp, position: actor.mesh.position.toArray(),
+        squad: isSquadMember(actor, this.faction), action: actor.action?.phase ?? null,
+      })),
+      actorBudget: this.actorUsageByCategory(), maxNpcs: MAX_ACTORS,
+      world: this.generatedWorld.getDebugSnapshot(),
+      scene: graphicsSceneEvidence(this.scene, this.camera, [
+        { id: 'player', position: this.player.position },
+        ...this.actors.filter((actor) => isSquadMember(actor, this.faction))
+          .map((actor) => ({ id: actor.id, position: actor.mesh.position })),
+      ]),
+    }
+  }
+
+  private stageGraphicsFixture(request: GraphicsFixtureStage): void {
+    if (!this.graphicsDiagnostics?.manual) throw new Error('Graphics staging requires explicit manual diagnostics')
+    const points = [request.player, ...(request.companions ?? []).map((entry) => entry.position)]
+    const bounds = this.generatedWorld.bounds
+    for (const point of points) {
+      if (point && (point.x < bounds.minX || point.x > bounds.maxX || point.z < bounds.minZ || point.z > bounds.maxZ)) {
+        throw new Error('Fixture position is outside the production world')
+      }
+    }
+    const companions = (request.companions ?? []).map((entry) => {
+      const actor = this.actors.find((candidate) => candidate.id === entry.id && isSquadMember(candidate, this.faction))
+      if (!actor) throw new Error(`Fixture companion is absent: ${entry.id}`)
+      return { actor, position: entry.position }
+    })
+    if (request.player) this.player.position.copy(request.player)
+    this.generatedWorld.update({ focus: this.player.position, deltaSeconds: 0 })
+    this.syncGeneratedRegions()
+    this.refreshGeneratedCameraObstacles()
+    for (const { actor, position } of companions) {
+      actor.mesh.position.copy(position)
+      actor.home.copy(position)
+      actor.wanderTarget.copy(position)
+    }
+    if (request.camera) {
+      this.cameraYaw = request.camera.yaw
+      this.cameraPitch = request.camera.pitch
+    }
+    if (request.crowd) this.stageGraphicsCrowd()
+  }
+
+  private stageGraphicsCrowd(): void {
+    // Only the diagnostic adapter calls this. These are production actors, not
+    // decorative clones: claimActorSlot, AI, HP, attack timing and death remain real.
+    const origin = this.player.position
+    let attempts = 0
+    const placed: THREE.Vector3[] = []
+    const nextPosition = () => {
+      while (attempts < 800) {
+        const angle = attempts++ * 2.399963229728653
+        const radius = 4 + (attempts % 7) * 1.7
+        const x = origin.x + Math.cos(angle) * radius
+        const z = origin.z + Math.sin(angle) * radius
+        if (!this.isWalkablePosition(x, z, 1.1) || placed.some((point) => Math.hypot(point.x - x, point.z - z) < 2)) continue
+        const position = new THREE.Vector3(x, this.groundHeightAt(x, z), z)
+        placed.push(position)
+        return position
+      }
+      throw new Error('Could not find enough separated, walkable crowd prerequisite positions')
+    }
+    for (const actor of this.actors) {
+      const position = nextPosition()
+      actor.mesh.position.copy(position)
+      actor.home.copy(position)
+      actor.wanderTarget.copy(position)
+    }
+    while (this.actors.length < MAX_ACTORS) {
+      const index = this.actors.length
+      const position = nextPosition()
+      if (!this.reserveActorSlots('campaign', 1)) throw new Error('Production actor budget refused the crowd fixture')
+      this.spawnActor(index % 4 === 0 ? (this.faction === 'guard' ? 'elf' : 'guard') : this.faction,
+        index % 5 === 0 ? 'archer' : 'soldier', position.x, position.z, index, {
+          budget: 'campaign', appearanceId: `graphics-crowd:${index}`,
+          objectiveEligible: false, squadEligible: false,
+        })
+    }
+    if (this.actors.length !== MAX_ACTORS) throw new Error(`Crowd prerequisite reached ${this.actors.length}, not ${MAX_ACTORS} NPCs`)
+    if (this.reserveActorSlots('ambient', 1)) throw new Error('Production NPC cap unexpectedly admitted a 26th slot')
   }
 
   private generatedRegionIdAt(x: number, z: number): string | null {
@@ -13283,7 +13475,7 @@ export class GameEngine {
   }
 
   private setupWeather(): void {
-    const rainRandom = seededRandom(7879)
+    const rainRandom = this.graphicsClock?.createRandom('rain') ?? seededRandom(7879)
     for (let index = 0; index < RAIN_DROP_COUNT; index += 1) {
       const offset = index * 6
       const x =
@@ -13320,7 +13512,7 @@ export class GameEngine {
     this.rain.visible = false
     this.scene.add(this.rain)
 
-    const snowRandom = seededRandom(7919)
+    const snowRandom = this.graphicsClock?.createRandom('snow') ?? seededRandom(7919)
     for (let index = 0; index < SNOW_FLAKE_COUNT; index += 1) {
       const offset = index * 3
       this.snowPositions[offset] =
@@ -13433,7 +13625,7 @@ export class GameEngine {
   private weightedWeatherValue(key: keyof WeatherProfile): number {
     let value = 0
     for (const kind of WEATHER_KINDS) {
-      value += WEATHER_PROFILES[kind][key] * this.weatherWeights[kind]
+      value += WEATHER_PROFILES[kind][key] * (this.graphicsClock?.weather ?? this.weatherWeights)[kind]
     }
     return value
   }
@@ -13537,8 +13729,8 @@ export class GameEngine {
   }
 
   private updatePrecipitation(delta: number): void {
-    const rainWeight = this.weatherWeights.rain
-    const snowWeight = this.weatherWeights.snow
+    const rainWeight = (this.graphicsClock?.weather ?? this.weatherWeights).rain
+    const snowWeight = (this.graphicsClock?.weather ?? this.weatherWeights).snow
     this.rain.material.opacity = rainWeight * 0.72
     this.snow.material.opacity = snowWeight * 0.92
     this.rain.visible = rainWeight > 0.015
@@ -13595,7 +13787,7 @@ export class GameEngine {
     const centerZ = this.camera.position.z
     for (let index = 0; index < SNOW_FLAKE_COUNT; index += 1) {
       const offset = index * 3
-      const phase = this.elapsed * 1.3 + this.snowDriftPhases[index]
+      const phase = this.visualElapsed * 1.3 + this.snowDriftPhases[index]
       let x =
         this.snowPositions[offset] +
         (wind.x * SNOW_WIND_SPEED * windStrength +
@@ -13649,7 +13841,7 @@ export class GameEngine {
       }
     }
 
-    const rainWeight = this.weatherWeights.rain
+    const rainWeight = (this.graphicsClock?.weather ?? this.weatherWeights).rain
     if (rainWeight >= 0.72 && delta > 0) {
       this.lightningCooldown -= delta
       if (this.lightningCooldown <= 0) {
@@ -13678,7 +13870,7 @@ export class GameEngine {
   }
 
   private randomWeatherRange(min: number, max: number): number {
-    return min + (max - min) * this.weatherRng()
+    return min + (max - min) * (this.graphicsClock?.randomWeather() ?? this.weatherRng())
   }
 
   private updateAtmosphere(delta: number): void {
@@ -13692,11 +13884,11 @@ export class GameEngine {
       const { group, speed } = this.clouds[index]
       group.position.x += speed * delta
       if (group.position.x > 112) group.position.x = -112
-      group.position.y = Number(group.userData.baseY) + Math.sin(this.elapsed * 0.22 + index) * 0.65
+      group.position.y = Number(group.userData.baseY) + Math.sin(this.visualElapsed * 0.22 + index) * 0.65
     }
     for (let index = 0; index < this.flames.length; index += 1) {
       const flame = this.flames[index]
-      const pulse = 1 + Math.sin(this.elapsed * 9 + index * 1.7) * 0.16
+      const pulse = 1 + Math.sin(this.visualElapsed * 9 + index * 1.7) * 0.16
       const baseScale = Number(flame.userData.baseScale)
       flame.scale.setScalar(baseScale * pulse)
       const material = flame.material
@@ -13708,7 +13900,7 @@ export class GameEngine {
           ? THREE.MathUtils.lerp(0.16, 0.34, this.nightFactor)
           : 0.25
         material.emissiveIntensity =
-          baseIntensity + Math.sin(this.elapsed * 11 + index) * pulseIntensity
+          baseIntensity + Math.sin(this.visualElapsed * 11 + index) * pulseIntensity
       }
     }
   }
@@ -13786,14 +13978,14 @@ export class GameEngine {
       return
     }
 
-    const sunAngle = computeSunAngle(this.elapsed)
+    const sunAngle = computeSunAngle(this.visualElapsed)
     const elevation = Math.sin(sunAngle)
     const orbitalX = Math.cos(sunAngle) * SUN_ARC_RADIUS
     const orbitalY = elevation * SUN_ARC_HEIGHT
     const orbitalZ = Math.sin(sunAngle) * SUN_ARC_DEPTH
     const nightToTwilight = smoothstep(-0.18, 0.08, elevation)
     const twilightToDay = smoothstep(0.08, 0.6, elevation)
-    this.nightFactor = computeNightFactor(this.elapsed)
+    this.nightFactor = computeNightFactor(this.visualElapsed)
 
     this.sun.position.set(
       this.player.position.x + orbitalX,
