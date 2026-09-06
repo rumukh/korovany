@@ -270,7 +270,7 @@ try {
     'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], 'vite-preview')
   await waitStartup(async () => {
     try { return (await fetch(origin)).ok } catch (error) {
-      if (error.cause?.code === 'ECONNREFUSED') return false
+      if (error.cause?.code === 'ECONNREFUSED' || error.cause?.code === 'ECONNRESET') return false
       throw error
     }
   }, server)
