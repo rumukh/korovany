@@ -14,6 +14,11 @@ The art overhaul, aimed three-beat melee, ten contract adaptations, exclusive ca
 branches, doctrines, chronicle commitments, and run epilogues already exist. The
 historical assessment in `STRATEGY.md` must not be mistaken for the current baseline.
 
+The next graphics milestone is a separate
+[graphical upgrade proposal](15-next-gen-graphics-plan.md), grounded in
+[nine fresh faction screenshots](graphics-review.md). It does not change the
+implemented status of this gameplay milestone.
+
 ## 2. Hands-on evidence
 
 All three factions were played on seed `20260905` with the default starting supplies.
