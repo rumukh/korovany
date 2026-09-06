@@ -2,6 +2,8 @@ import * as THREE from 'three'
 import { AudioDirector, type SoundCue, type SoundRequest } from './AudioDirector'
 import { musicIntensityRank, type MusicIntensity, type MusicOutcome } from './MusicScore.ts'
 import { BloomPostProcessor } from './BloomPostProcessor'
+import { resolveVisualPolicy, type VisualQualityPolicy } from './visualPolicy.ts'
+import type { FoliageQuality, VisualSettings } from './visualSettings.ts'
 import {
   AchievementTracker,
   type AchievementSummary,
@@ -575,7 +577,7 @@ import {
   type ZoneVisualWeights,
 } from './zoneArt'
 
-export type FoliageQuality = 'off' | 'low' | 'high'
+export type { FoliageQuality } from './visualSettings.ts'
 
 export interface GeneratedRunLaunch {
   runId: string
@@ -584,15 +586,9 @@ export interface GeneratedRunLaunch {
   restored?: ActiveRunSaveV3
 }
 
-export interface GameEngineSettings {
+export interface GameEngineSettings extends VisualSettings {
   musicMuted: boolean
   sfxVolume: number
-  dynamicDayNight: boolean
-  weatherEnabled: boolean
-  bloomEnabled: boolean
-  inkOutlinesEnabled: boolean
-  screenShakeEnabled: boolean
-  foliageQuality: FoliageQuality
   achievementRunId: string
   generatedRun: GeneratedRunLaunch
   /**
@@ -1844,10 +1840,6 @@ function actorPosition(actor: Actor): AiPoint {
   return actor.mesh.position
 }
 
-function foliageQualityDensity(quality: FoliageQuality): number {
-  return quality === 'off' ? 0 : quality === 'low' ? 0.55 : 1
-}
-
 /** A bounded list of ids out of the save's free-form director bag. */
 function readSerializableStringArray(
   state: SerializableState | undefined,
@@ -1981,6 +1973,7 @@ export class GameEngine {
   private readonly camera = new THREE.PerspectiveCamera(CAMERA_BASE_FOV, 1, 0.1, 240)
   private readonly renderer: THREE.WebGLRenderer
   private readonly postProcessor: BloomPostProcessor
+  private visualPolicy: VisualQualityPolicy
   private readonly artLibrary: StylizedArtLibrary
   /** Shape cache shared by every actor: one buffer per shape, not one per actor. */
   private readonly artGeometry = new GeometryCache()
@@ -2374,13 +2367,15 @@ export class GameEngine {
     ) {
       throw new Error('Generated run achievement state is incompatible')
     }
-    this.dynamicDayNight = settings.dynamicDayNight ?? true
-    this.weatherEnabled = settings.weatherEnabled ?? true
-    this.inkOutlinesEnabled = settings.inkOutlinesEnabled ?? true
-    this.screenShakeEnabled = settings.screenShakeEnabled ?? true
-    this.honestMelee = settings.honestMelee ?? HONEST_MELEE_DEFAULT
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    this.groundFoliageQuality = settings.foliageQuality ?? 'high'
+    this.visualPolicy = resolveVisualPolicy(settings, { reducedMotion: this.reducedMotion })
+    const visuals = this.visualPolicy.preferences
+    this.dynamicDayNight = visuals.dynamicDayNight
+    this.weatherEnabled = visuals.weatherEnabled
+    this.inkOutlinesEnabled = visuals.inkOutlinesEnabled
+    this.screenShakeEnabled = visuals.screenShakeEnabled
+    this.honestMelee = settings.honestMelee ?? HONEST_MELEE_DEFAULT
+    this.groundFoliageQuality = visuals.foliageQuality
     this.palette = createPalette()
     // The art library has to exist before the world does: the generated world draws
     // its surfaces from the same material family as everything else, and handing it
@@ -2397,7 +2392,7 @@ export class GameEngine {
       keyIntensity: 2.65,
     })
     this.generatedWorld = new GeneratedWorldRuntime(this.scene, blueprint, {
-      decorationDensity: foliageQualityDensity(this.groundFoliageQuality),
+      decorationDensity: this.visualPolicy.density.foliage,
       art: this.artLibrary,
       outlineDressing: this.inkOutlinesEnabled,
       // Buildings, props, vegetation and rock take their colour from the world
@@ -2666,7 +2661,7 @@ export class GameEngine {
       this.renderer,
       this.scene,
       this.camera,
-      settings.bloomEnabled ?? true,
+      this.visualPolicy.post.enabled,
     )
 
     this.backgroundColor.copy(this.palette.worldSky)
@@ -3014,9 +3009,21 @@ export class GameEngine {
     this.audio.setSfxVolume(volume)
   }
 
+  getVisualPolicy(): VisualQualityPolicy {
+    return this.visualPolicy
+  }
+
+  private updateVisualPolicy(settings: Partial<VisualSettings>): void {
+    this.visualPolicy = resolveVisualPolicy(
+      { ...this.visualPolicy.preferences, ...settings },
+      { reducedMotion: this.reducedMotion },
+    )
+  }
+
   setDynamicDayNight(enabled: boolean): void {
     if (this.dynamicDayNight === enabled) return
     this.dynamicDayNight = enabled
+    this.updateVisualPolicy({ dynamicDayNight: enabled })
     this.updateDayNight()
     this.updateWeather(0)
     this.updateAtmosphere(0)
@@ -3025,6 +3032,7 @@ export class GameEngine {
   setWeatherEnabled(enabled: boolean): void {
     if (this.weatherEnabled === enabled) return
     this.weatherEnabled = enabled
+    this.updateVisualPolicy({ weatherEnabled: enabled })
     this.weatherZone = this.zoneAtPosition(this.player.position.x, this.player.position.z)
     // The target always follows the biome; `enabled` only decides whether it is drawn.
     this.setWeatherTarget(WEATHER_BY_ZONE[this.weatherZone], true)
@@ -3039,12 +3047,14 @@ export class GameEngine {
   }
 
   setBloomEnabled(enabled: boolean): void {
-    this.postProcessor.setEnabled(enabled)
+    this.updateVisualPolicy({ bloomEnabled: enabled })
+    this.postProcessor.setEnabled(this.visualPolicy.post.enabled)
   }
 
   setInkOutlinesEnabled(enabled: boolean): void {
     if (this.inkOutlinesEnabled === enabled) return
     this.inkOutlinesEnabled = enabled
+    this.updateVisualPolicy({ inkOutlinesEnabled: enabled })
     this.updatePlayerOutlineVisibility()
     for (const actor of this.actors) this.updateActorOutlineVisibility(actor)
     this.updateInteractableOutlines()
@@ -3054,11 +3064,13 @@ export class GameEngine {
   setFoliageQuality(quality: FoliageQuality): void {
     if (this.groundFoliageQuality === quality) return
     this.groundFoliageQuality = quality
-    this.generatedWorld.setDecorationDensity(foliageQualityDensity(quality))
+    this.updateVisualPolicy({ foliageQuality: quality })
+    this.generatedWorld.setDecorationDensity(this.visualPolicy.density.foliage)
   }
 
   setScreenShakeEnabled(enabled: boolean): void {
     this.screenShakeEnabled = enabled
+    this.updateVisualPolicy({ screenShakeEnabled: enabled })
     if (!enabled) {
       this.resetCameraMotion()
       this.hitStopRemaining = Math.min(this.hitStopRemaining, HIT_STOP_REDUCED_MAX)
