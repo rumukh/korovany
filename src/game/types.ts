@@ -1,4 +1,6 @@
 import type { AchievementUnlock } from './achievements'
+import type { ExpeditionView } from './world/ExpeditionPlanner'
+import type { SquadCommandView } from './world/SquadCommand'
 
 export type Faction = 'elf' | 'guard' | 'villain'
 
@@ -588,6 +590,26 @@ export interface WorldMapView {
   regions: WorldMapRegion[]
 }
 
+export type FinaleProfileId = 'huntsmaster' | 'warlord' | 'marshal'
+export type FinaleStage =
+  | 'introduction' | 'positioning' | 'telegraph' | 'contact' | 'recovery'
+  | 'transition' | 'resuming' | 'suspended' | 'defeated'
+
+export interface FinaleView {
+  profile: FinaleProfileId
+  encounterId: string
+  bossId: string
+  name: string
+  enemyFaction: Faction
+  health: number
+  maxHealth: number
+  phase: 1 | 2
+  stage: FinaleStage
+  cue: string
+  progress: number
+  escortsAlive: number
+}
+
 export interface GameView {
   faction: Faction
   health: number
@@ -611,14 +633,18 @@ export interface GameView {
   contracts: CampaignContractView[]
   /** Roadmap 1.6 — the open draft, if there is one, and the rules already taken. */
   doctrines: DoctrineView
+  expedition: ExpeditionView
+  finale: FinaleView | null
   shopPriceMultiplier: number
   squad: number
+  squadCommand: SquadCommandView
   elapsed: number
   pointerLocked: boolean
   paused: boolean
   caravanCooldown: number
   ability: AbilityView
   melee: MeleeView
+  combatMastery: import('./world/CombatMastery.ts').CombatMasteryView
   activeEvent: WorldEventView | null
   lootToast: LootToastView | null
   campaignCompleted: boolean
@@ -631,7 +657,10 @@ export interface GameCallbacks {
   onNotice: (message: string, tone?: NoticeTone) => void
   onShop: () => void
   onPauseRequest: () => void
+  onAtlasRequest?: () => void
+  onSquadCommandRequest?: () => void
   onSaveRequest: () => void
+  onPointerGestureCancelled?: (pointerId: number) => void
   onEnd: (result: 'victory' | 'defeat') => void
   onAchievementUnlocked: (achievement: AchievementUnlock) => void
   /**

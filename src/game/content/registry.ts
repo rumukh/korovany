@@ -349,6 +349,59 @@ export function getBlueprintRegionBounds(
 
 export type RegionRiverLegDirection = 'north' | 'south' | 'east' | 'west'
 
+export interface RegionRoadLeg {
+  id: string
+  regionId: string
+  direction: RegionRiverLegDirection
+  center: SerializablePoint2
+  edge: SerializablePoint2
+  segmentIds: string[]
+}
+
+/** The same centre-to-edge strips used by the renderer and the expedition graph. */
+export function getRegionRoadLegs(
+  blueprint: WorldBlueprint,
+  regionOrId: WorldRegion | RegionId,
+): RegionRoadLeg[] {
+  const region = typeof regionOrId === 'string'
+    ? blueprint.regions.find((candidate) => candidate.id === regionOrId)
+    : regionOrId
+  const bounds = region && getBlueprintRegionBounds(blueprint, region)
+  if (!region || !bounds) return []
+  const center = { x: (bounds.minX + bounds.maxX) / 2, z: (bounds.minZ + bounds.maxZ) / 2 }
+  const legs = new Map<RegionRiverLegDirection, RegionRoadLeg>()
+  for (const segment of blueprint.roads.segments) {
+    const otherId = segment.fromRegionId === region.id ? segment.toRegionId
+      : segment.toRegionId === region.id ? segment.fromRegionId : null
+    const other = blueprint.regions.find((candidate) => candidate.id === otherId)
+    if (!other) continue
+    const dx = other.coordinate.x - region.coordinate.x
+    const dz = other.coordinate.y - region.coordinate.y
+    const direction = dx === 1 && dz === 0 ? 'east'
+      : dx === -1 && dz === 0 ? 'west'
+        : dx === 0 && dz === -1 ? 'north'
+          : dx === 0 && dz === 1 ? 'south' : null
+    if (!direction) continue
+    const existing = legs.get(direction)
+    if (existing) {
+      existing.segmentIds.push(segment.id)
+      continue
+    }
+    legs.set(direction, {
+      id: `road:${region.id}:${direction}`,
+      regionId: region.id,
+      direction,
+      center,
+      edge: direction === 'east' ? { x: bounds.maxX, z: center.z }
+        : direction === 'west' ? { x: bounds.minX, z: center.z }
+          : direction === 'north' ? { x: center.x, z: bounds.minZ }
+            : { x: center.x, z: bounds.maxZ },
+      segmentIds: [segment.id],
+    })
+  }
+  return [...legs.values()].sort((a, b) => a.id.localeCompare(b.id))
+}
+
 export interface RegionRiverLeg {
   direction: RegionRiverLegDirection
   edge: SerializablePoint2
@@ -411,6 +464,32 @@ export function getRegionRiverLegs(
     edge: edgeOf(direction),
     center,
   }))
+}
+
+/** Axis-aligned water blockers, including the real opening at a bridge. */
+export function getRegionWaterBounds(
+  blueprint: WorldBlueprint,
+  regionId: RegionId,
+  riverWidth = 10,
+  bridgeWidth = 6,
+): { direction: RegionRiverLegDirection; bounds: { minX: number; maxX: number; minZ: number; maxZ: number } }[] {
+  const half = riverWidth / 2
+  const inset = blueprint.bridges.some((bridge) => bridge.regionId === regionId)
+    ? Math.max(6, bridgeWidth + 1.5) / 2 : 0
+  return getRegionRiverLegs(blueprint, regionId).map(({ direction, edge, center }) => {
+    const minX = Math.min(edge.x, center.x)
+    const maxX = Math.max(edge.x, center.x)
+    const minZ = Math.min(edge.z, center.z)
+    const maxZ = Math.max(edge.z, center.z)
+    const bounds = direction === 'north'
+      ? { minX: center.x - half, maxX: center.x + half, minZ, maxZ: maxZ - inset }
+      : direction === 'south'
+        ? { minX: center.x - half, maxX: center.x + half, minZ: minZ + inset, maxZ }
+        : direction === 'west'
+          ? { minX, maxX: maxX - inset, minZ: center.z - half, maxZ: center.z + half }
+          : { minX: minX + inset, maxX, minZ: center.z - half, maxZ: center.z + half }
+    return { direction, bounds }
+  }).filter(({ bounds }) => bounds.maxX - bounds.minX > 0.1 && bounds.maxZ - bounds.minZ > 0.1)
 }
 
 /**
@@ -611,6 +690,37 @@ export function getSiteWorldPosition2D(
     x: clamp(centerX + localX, bounds.minX + margin, bounds.maxX - margin),
     z: clamp(centerZ + localZ, bounds.minZ + margin, bounds.maxZ - margin),
   }
+}
+
+export function getFactionStartPosition2D(
+  blueprint: WorldBlueprint,
+  faction: Faction,
+): SerializablePoint2 | undefined {
+  const site = blueprint.sites.find((candidate) => candidate.id === blueprint.starts[faction])
+  const position = site && getSiteWorldPosition2D(blueprint, site)
+  if (!site || !position) return undefined
+  const next = getBlueprintRegionBounds(blueprint, blueprint.criticalPaths[faction].regionIds[1])
+  const bounds = getBlueprintRegionBounds(blueprint, site.regionId)
+  if (!next || !bounds) return position
+  const dx = (next.minX + next.maxX) / 2 - position.x
+  const dz = (next.minZ + next.maxZ) / 2 - position.z
+  const length = Math.hypot(dx, dz)
+  if (length <= 0.001) return position
+  return {
+    x: clamp(position.x - dx / length * 20, bounds.minX + 12, bounds.maxX - 12),
+    z: clamp(position.z - dz / length * 20, bounds.minZ + 12, bounds.maxZ - 12),
+  }
+}
+
+export function getFactionStartHeading(
+  blueprint: WorldBlueprint,
+  faction: Faction,
+  position: SerializablePoint2,
+): number {
+  const next = getBlueprintRegionBounds(blueprint, blueprint.criticalPaths[faction].regionIds[1])
+  return next ? Math.atan2((next.minX + next.maxX) / 2 - position.x,
+    position.z - (next.minZ + next.maxZ) / 2)
+    : faction === 'elf' ? -0.8 : faction === 'guard' ? 2.4 : 0.8
 }
 
 export function chooseHostileFaction(

@@ -12,6 +12,10 @@ A seeded 3D action roguelite inspired by the legendary Russian game-design meme.
 - Reproducible 25-region worlds with streamed terrain, hills, rivers, roads, bridges, settlements, and fog of war
 - Shareable text or numeric seeds with deterministic world validation and fingerprints
 - Melee combat, NPC squads, caravan raids, stylized injuries, prosthetics, healing, and trading
+- Directional evasion, perfect guard, and drag-to-look when mouse capture is unavailable
+- Follow, Hold, Focus, and Regroup squad orders with a live health and status roster
+- An expedition atlas with road/bridge itineraries, cautious routes, and a compact compass
+- Faction-specific two-phase finale opponents with readable attack tells and recovery windows
 - Dynamic events, escalating threat, pooled loot, run upgrades, achievements, and starting boons
 - Original vector faction emblems, caravan key art, and adaptive chip-folk soundtrack
 - Run endings score themselves: a brass fanfare march for victory, a tolling funeral lament for death
@@ -25,13 +29,34 @@ A seeded 3D action roguelite inspired by the legendary Russian game-design meme.
 | `WASD` | Move |
 | `Shift` | Sprint |
 | `Space` | Jump |
-| Mouse | Camera |
-| Left click | Attack |
-| Right click / `R` | Faction ability |
-| `E` | Interact |
-| `Q` | Command squad |
-| `F` | Save |
-| `P` / `Esc` | Pause |
+| Mouse / world drag | Camera while captured; drag the world to look if capture is unavailable |
+| Left click / world tap / touch sword | Aimed three-beat melee; a look drag does not attack |
+| `C` / touch **Уворот** | Directional evasive step (25 stamina); without movement, step backward |
+| Right click / `R` / touch ability | Faction ability; guard holds the shield |
+| `E` / touch `E` | Interact |
+| `Q` / touch `Q` | Toggle squad Follow / Hold |
+| `T` / squad HUD / touch `T` | Open squad orders: Follow, Hold, Focus, Regroup (pauses play) |
+| `M` / minimap / compass / touch map | Open the paused expedition atlas |
+| `F` / pause-menu save | Save |
+| `P` / `Esc` / pause button | Close the top overlay, or pause; terminal results stay open |
+
+On touch screens, hold a movement button and drag the world with another finger.
+The footprint button is a held sprint modifier, and the up-arrow action jumps.
+Pause, lost focus, and cancelled gestures release held movement, camera, and shield
+inputs. Paid recovery, cooldowns, stamina, and committed finishers are preserved.
+
+Evasion protects only 0.06–0.18 seconds of its 0.30-second step, respects collision and
+leg injuries, and cannot cancel a committed finisher. A guard's first frontal contact
+within 0.12 seconds of raising the shield can spend 12 stamina instead of health;
+the timing reward rearms no sooner than 0.65 seconds. Arrows never stun their shooter.
+
+The atlas selects a destination without accepting a rumour or changing a campaign
+commitment. It follows rendered road legs and actual bridges; shortest and cautious
+routes differ only when known danger warrants a detour. Dashed mission routes through
+fog reveal transport only. Dotted local approaches and unavailable-road compass
+bearings are not certified walkable paths. The compass stays independent of the `E`
+interaction prompt. Atlas and order selection share the same pause/overlay policy:
+closing one cannot resume an underlying shop or pause, and Escape closes only its owner.
 
 ## Development
 

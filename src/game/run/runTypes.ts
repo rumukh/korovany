@@ -68,6 +68,7 @@ export type SerializablePlayerState = RunPlayerState
 export interface RunCompanionState {
   id: string
   role: ActorRole
+  formationSlot?: number
   health: number
   maxHealth: number
   worldPosition: SerializablePosition

@@ -22,6 +22,7 @@ import type {
 } from '../run/runTypes.ts'
 import type { ChronicleEventKind } from '../world/Chronicle.ts'
 import type { ContractId, ObjectiveKind, SiteKind } from '../world/worldTypes.ts'
+import type { SquadCommandMode, SquadMemberStatus } from '../world/SquadCommand.ts'
 
 export type RussianCountForms = readonly [one: string, few: string, many: string]
 
@@ -834,6 +835,52 @@ export const ABILITY_BLOCKED_NO_STAMINA_NOTICE =
 export const FINISHER_BLOCKED_NO_STAMINA_NOTICE =
   'На добивание выносливости не хватило — вышел обычный замах.'
 export const SHIELD_DROPPED_NOTICE = 'Выносливость кончилась — щит опущен.'
+export const COMBAT_MASTERY_SAVE_WARNING =
+  'Боевые таймеры в записи повреждены: защита снята, оставлена безопасная передышка. Выносливость не восстановлена.'
+
+export const COMBAT_MASTERY_COPY = {
+  title: 'Боевой шаг',
+  seconds: 'с',
+  evade: 'Уворот',
+  ready: 'Готов',
+  active: 'Шаг идёт',
+  protected: 'Окно уворота',
+  recovery: 'Передышка',
+  guardReady: 'Точный щит готов',
+  guardWindow: 'Поймай удар щитом',
+  guardHeld: 'Обычный щит',
+  guardRecovery: 'Точный щит через',
+  guardUnavailable: 'Точный щит недоступен',
+  evaded: 'Ушёл от удара',
+  perfectGuard: 'Вовремя! Щит без урона',
+  camera: 'Управление камерой',
+  capture: 'Захватить мышь',
+  drag: 'Тяни по миру — камера. Щелчок — удар.',
+  touchLook: 'Тяни по миру — камера',
+  native: 'Мышь — камера; ЛКМ — удар',
+} as const
+
+export function describeEvadeRefused(reason: import('../world/CombatMastery.ts').EvadeReadiness): string {
+  switch (reason) {
+    case 'stamina': return 'На уворот нужно 25 выносливости.'
+    case 'legs': return 'Без обеих ног не отшагнуть. Нужен протез.'
+    case 'committed': return 'Добивание уже пошло — из него не выйти.'
+    case 'active': return 'Шаг уже идёт.'
+    case 'cooldown': return 'Сначала передышка — потом новый уворот.'
+    case 'paused': return 'Поход на паузе.'
+    case 'ended': return 'Поход закончен.'
+    case 'input': return 'Сначала закончи ввод.'
+    case 'ready': return 'Уворот готов.'
+  }
+}
+
+export function describePointerLockFailure(reason: string): string {
+  const cause = reason === 'WrongDocumentError' ? 'захват недоступен в этом окне' :
+    reason === 'NotSupportedError' ? 'браузер не умеет захватывать мышь' :
+    reason === 'SecurityError' || reason === 'NotAllowedError' ? 'браузер запретил захват мыши' :
+    'браузер отклонил захват мыши'
+  return `${cause[0].toUpperCase()}${cause.slice(1)}. Тяни по миру для обзора; щелчок — удар.`
+}
 
 /** Roadmap 1.6 — «Устав сухого пайка» spends a ration the moment blood shows. */
 export const RATION_ON_BLEED_NOTICE =
@@ -855,10 +902,61 @@ const SQUAD_NAMES: Record<Faction, string> = {
   villain: 'Войска злодея',
 }
 
-export function describeSquadOrder(faction: Faction, following: boolean): string {
-  return following
-    ? `${SQUAD_NAMES[faction]} идут за тобой. Пользователь сам себе командир.`
-    : `${SQUAD_NAMES[faction]} остаются на месте.`
+export const SQUAD_ORDER_LABELS: Record<SquadCommandMode, string> = {
+  follow: 'Следом',
+  hold: 'Держать',
+  focus: 'Всем в цель',
+  regroup: 'Ко мне',
+}
+
+export const SQUAD_ORDER_DETAILS: Record<SquadCommandMode, string> = {
+  follow: 'Идти строем, прикрывать фланги. Отставшие догоняют по дороге.',
+  hold: 'Занять место возле тебя. Оборонять 6 м, не гнаться дальше 8 м.',
+  focus: 'Выбери видимого врага в пределах 30 м. Потеряем цель — вернём прежний приказ.',
+  regroup: 'Выйти из погони и собраться. Снова пойдём следом, когда дойдут все живые.',
+}
+
+export const SQUAD_STATUS_LABELS: Record<SquadMemberStatus, string> = {
+  following: 'Следом',
+  holding: 'На месте',
+  positioning: 'К позиции',
+  regrouping: 'Собирается',
+  engaged: 'В бою',
+  distant: 'Далеко',
+  blocked: 'Путь закрыт',
+  routing: 'Отступает',
+  recovering: 'После удара',
+}
+
+export const SQUAD_COMMAND_COPY = {
+  title: 'Приказы отряду',
+  open: 'Открыть приказы отряду',
+  close: 'Закрыть приказы',
+  pause: 'Мир на паузе. Открытие панели само по себе ничего не приказывает.',
+  confirm: 'Отдать приказ',
+  cancel: 'Отмена',
+  roster: 'Живые спутники',
+  target: 'Цель отряда',
+  chooseTarget: 'Выбери противника',
+  noTargets: 'Видимых противников в пределах 30 м нет. Поверни камеру или подойди ближе.',
+  distant: 'Отставший не значит погибший. Если путь закрыт, приблизься: за границей активных областей отряд ждёт, а не телепортируется.',
+  empty: 'В отряде никого нет. Местная охрана тебе не подчиняется.',
+  invalidOrder: 'Такого приказа нет.',
+  invalidAnchor: 'Здесь отряду не встать. Выбери свободное место.',
+  invalidTarget: 'Цель недоступна: нужен видимый противник не дальше 30 м.',
+  invalidSave: 'Сохранённый приказ повреждён. Возвращён прежний режим отряда.',
+  focusLost: 'Цель потеряна. Отряд возвращается к прежнему приказу.',
+  regrouped: 'Отряд собрался. Снова идём следом.',
+  rejected: 'Приказ не принят. Проверь цель и состав отряда.',
+  quick: 'Q — следом / держать',
+  current: 'Сейчас',
+  anchor: 'Место обороны',
+  metres: 'м',
+} as const
+
+export function describeSquadOrder(faction: Faction, order: boolean | SquadCommandMode): string {
+  const mode = typeof order === 'boolean' ? order ? 'follow' : 'hold' : order
+  return `${SQUAD_NAMES[faction]}: приказ «${SQUAD_ORDER_LABELS[mode]}».`
 }
 
 export const REINFORCEMENTS_ORDERED_NOTICE =
@@ -977,6 +1075,10 @@ const ACTOR_ROLE_FORMS: Record<ActorRole, RussianCountForms> = {
   boar: ['кабан', 'кабана', 'кабанов'],
   bear: ['медведь', 'медведя', 'медведей'],
   troll: ['тролль', 'тролля', 'троллей'],
+}
+
+export function describeSquadRole(role: ActorRole): string {
+  return role === 'captive' ? 'освобождённый' : ACTOR_ROLE_FORMS[role][0]
 }
 
 const WOUND_STATUS_NAMES: Record<RunEpilogueWound['status'], string> = {
@@ -1238,6 +1340,48 @@ export function describeRunEpilogue(
  * line has to earn its place by telling the player something the HUD alone does not — what
  * the number is made of, what it costs, or what it will do next.
  */
+export const FINALE_COPY = {
+  huntsmaster: {
+    name: 'Имперский ловчий',
+    introduction: 'Ловчий вышел на след. Уходи с линии; после залпа сближайся.',
+    transition: 'Ловчий меняет ритм: линия, веер, линия.',
+  },
+  warlord: {
+    name: 'Воевода форта',
+    introduction: 'Воевода держит проход. Шаг вбок от разгона, удар после промаха.',
+    transition: 'Два тяжёлых замаха. После первого будет второй.',
+  },
+  marshal: {
+    name: 'Маршал дворца',
+    introduction: 'Маршал держит строй. Сними фланг — появится проход.',
+    transition: 'Строй распущен. Маршал идёт вперёд сам.',
+  },
+} as const
+
+export const FINALE_ATTACK_CUES = {
+  fan: 'Три стрелы веером — между линиями',
+  lane: 'Прицельная стрела — шаг вбок',
+  cleave: 'Широкий замах — отступи или прикройся',
+  charge: 'Разгон по прямой — уходи вбок',
+  heavyCleave: 'Первый замах — не спеши отвечать',
+  heavySlam: 'Второй удар — узкая полоса впереди',
+  commandSweep: 'Фронтальный взмах — зайди с фланга',
+  advance: 'Натиск — освободи полосу',
+  press: 'Последний взмах — потом отвечай',
+} as const
+
+export const FINALE_RECOVERY_CUE = 'Открыт — время ответить'
+export const FINALE_RESUME_CUE = 'Противник готовится. Смотри на новый замах.'
+export const FINALE_POSITIONING_CUE = 'Меняет позицию'
+export const FINALE_SUSPENDED_CUE = 'Бой приостановлен — здоровье сохранено'
+export const FINALE_DEFEATED_CUE = 'Противник повержен. Поход завершён.'
+
+export function describeFinaleDefeat(profile: keyof typeof FINALE_COPY): string {
+  return `${FINALE_COPY[profile].name}: ${FINALE_DEFEATED_CUE}`
+}
+export const FINALE_RESTORE_WARNING =
+  'Запись финального боя повреждена: состояние отвергнуто. Отметки побед сохранены.'
+
 export type HintId =
   | 'health'
   | 'stamina'
@@ -1251,6 +1395,7 @@ export type HintId =
   | 'objectives'
   | 'interact'
   | 'map'
+  | 'expedition'
   | 'chronicle'
   | 'rumours'
   | 'contracts'
@@ -1260,6 +1405,10 @@ export type HintId =
   | 'threat'
   | 'ability'
   | 'melee'
+  | 'evade'
+  | 'perfectGuard'
+  | 'cameraFallback'
+  | 'finale'
   | 'events'
   | 'loot'
 
@@ -1317,6 +1466,10 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     text: 'Карта открывается ногами: где прошёл, то и видно. Точки на ней — свои, чужие и корованы.',
     tone: 'info',
   },
+  expedition: {
+    text: 'M или карта — атлас с дорогами и мостами. Выбор пути не означает «взяться за слух». Пунктир в тумане — неизведанная дорога, а подход к ней ещё надо пройти самому.',
+    tone: 'info',
+  },
   chronicle: {
     text: 'Хроника справа — то, что мир делает без пользователя. Пока ты идёшь, кого-то уже грабят.',
     tone: 'info',
@@ -1338,7 +1491,7 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'info',
   },
   squad: {
-    text: 'Рядом свои, и счётчик с человечком слева считает живых. Q переключает приказ: идти следом или держать место.',
+    text: 'Q — следом или держать место, T — все приказы: выбрать цель или собрать отряд. Полоса показывает живых спутников; «далеко» не значит «погиб».',
     tone: 'success',
   },
   threat: {
@@ -1350,8 +1503,24 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'info',
   },
   melee: {
-    text: 'Удар идёт в три замаха: два лёгких, третий — добивание. Он ест выносливость и ломает стойку, но с него уже не сойти. Первые два можно бросить бегом, прыжком или приёмом — это и есть уворот.',
+    text: 'Удар идёт в три замаха: два лёгких, третий — добивание. Он ест выносливость и ломает стойку, но с него уже не сойти. Первые два можно бросить бегом, прыжком, приёмом или уворотом на C.',
     tone: 'info',
+  },
+  evade: {
+    text: 'C и направление — шаг из-под удара за 25 выносливости; без направления — назад. Защищает лишь середина шага. Стена остановит ноги, а кровь всё равно идёт.',
+    tone: 'info',
+  },
+  perfectGuard: {
+    text: 'Подними щит перед самым ударом в лицо: точный блок съест 12 выносливости, но не здоровье. Один раз за подъём; стрелку через полкарты сдачи не даст.',
+    tone: 'info',
+  },
+  cameraFallback: {
+    text: 'Без захвата мыши тоже воюют: тяни по миру для обзора, щёлкай для удара. На сенсорном экране одна рука ведёт героя кнопками, другая поворачивает мир.',
+    tone: 'info',
+  },
+  finale: {
+    text: 'Финальный противник показывает замах на земле. Шагни из полосы, прикройся щитом или зайди с отрядом сбоку. После удара он открыт; на половине здоровья меняет тактику, но не лечится.',
+    tone: 'warning',
   },
   events: {
     text: 'События идут по таймеру и заканчиваются без тебя тоже. Успел — забрал награду, ушёл из квадрата — прочитаешь в хронике.',
@@ -1373,3 +1542,73 @@ export function describeHint(id: HintId): HintCopy {
   return HINT_COPY[id]
 }
 
+export const EXPEDITION_COPY = {
+  title: 'Атлас похода',
+  open: 'Открыть атлас похода',
+  close: 'Закрыть атлас',
+  paused: 'Поход на паузе',
+  intro: 'Выбери, куда идти. Маршрут не принимает слух и не закрывает подряд.',
+  fit: 'Весь мир',
+  zoomIn: 'Приблизить карту',
+  zoomOut: 'Отдалить карту',
+  pan: 'Карту можно двигать пальцем или мышью. Все цели доступны в списке.',
+  destinations: 'Куда идём',
+  empty: 'Известных целей пока нет.',
+  clear: 'Убрать маршрут',
+  selected: 'Путь выбран',
+  select: 'Проложить путь',
+  shortest: 'Короткий',
+  cautious: 'Осторожный',
+  sameRoute: 'Другого пути с меньшей известной опасностью нет.',
+  riskPolicy: 'Осторожный путь учитывает только известных врагов и спорные земли. Неизведанное не считается безопасным.',
+  fog: 'Объезд проходит через туман. Для этой точки доступен только ориентир; карту открывают ногами.',
+  bearing: 'По прямой, не дорога',
+  plan: 'Выбери цель в атласе, чтобы проложить дорогу.',
+  noRoute: 'Дорожный путь недоступен. Компас — только направление, не проход через воду.',
+  noSelection: 'Цель не выбрана',
+  approach: 'Подход не проверен: обходи воду и препятствия.',
+  road: 'Дорога',
+  river: 'Река',
+  bridge: 'Мост',
+  unscouted: 'Пунктир: неизведанный путь',
+  connector: 'Точки: непроверенный подход',
+  knownRisk: 'Известные опасные регионы',
+  unknownRegions: 'Неизведанные регионы',
+  neutral: 'Люди',
+  exclusive: 'Или — или: другой подряд закроется',
+  committed: 'Уже выбран на доске',
+  objective: 'Пункт похода',
+  rumour: 'Слух',
+  site: 'Открытая точка',
+  arrive: 'Ты у цели. Действие — отдельно.',
+  nextBridge: 'Через мост',
+  nextRoad: 'По дороге',
+  nextApproach: 'Выход к дороге',
+  nextDestination: 'Подход к цели',
+  unknown: 'Неизведано',
+  directions: 'Север сверху',
+  legend: 'Условные обозначения',
+  atlas: 'Атлас',
+  meters: 'м',
+  roadMeters: 'м дороги',
+  approachMeters: 'м подхода',
+  straightMeters: 'м по прямой',
+  seconds: 'с',
+  regions: 'регионов',
+  itinerary: 'Путь по регионам',
+  routeOptions: 'Выбор дороги',
+  destination: 'Цель',
+  map: 'Карта',
+  targets: 'Цели',
+  atlasPane: 'Раздел атласа',
+} as const
+
+export const EXPEDITION_TARGET_UNAVAILABLE_NOTICE = 'Эта цель уже недоступна. Открой атлас и выбери действующую.'
+export const EXPEDITION_PREFERENCE_INVALID_NOTICE = 'Неизвестный способ прокладки пути.'
+export const GENERATED_ACTION_UNAVAILABLE_NOTICE = 'Это действие сейчас недоступно.'
+
+export function describeExpeditionNotice(notice: 'invalid-save' | 'stale-target'): string {
+  return notice === 'invalid-save'
+    ? 'Сохранённый маршрут повреждён или другой версии. Компас снова указывает на пункт похода.'
+    : 'Выбранная цель завершена, закрыта или больше неизвестна. Компас вернулся к текущему пункту похода.'
+}

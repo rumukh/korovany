@@ -144,6 +144,11 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
       previous !== null && discoveredRegionCount(view) > discoveredRegionCount(previous),
   },
   {
+    hint: 'expedition',
+    viewFields: ['expedition'],
+    firstSighting: (view) => view.expedition.mode === 'selected',
+  },
+  {
     hint: 'chronicle',
     viewFields: ['chronicle'],
     firstSighting: (view) => view.chronicle.length > 0,
@@ -191,7 +196,7 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
   },
   {
     hint: 'squad',
-    viewFields: ['squad'],
+    viewFields: ['squad', 'squadCommand'],
     firstSighting: (view) => view.squad > 0,
   },
   {
@@ -211,6 +216,27 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
     // the player has actually pressed attack, so the line arrives attached to the thing
     // it explains rather than to the sight of an enemy.
     firstSighting: (view) => view.melee.beat > 0,
+  },
+  {
+    hint: 'evade',
+    viewFields: ['combatMastery'],
+    firstSighting: (view) => view.combatMastery.evadeActive,
+  },
+  {
+    hint: 'perfectGuard',
+    viewFields: ['combatMastery'],
+    firstSighting: (view) => view.combatMastery.perfectGuard?.window === true ||
+      view.combatMastery.outcome === 'perfectGuard',
+  },
+  {
+    hint: 'cameraFallback',
+    viewFields: ['combatMastery'],
+    firstSighting: (view) => view.combatMastery.cameraMode === 'drag',
+  },
+  {
+    hint: 'finale',
+    viewFields: ['finale'],
+    firstSighting: (view) => view.finale !== null && view.finale.stage !== 'defeated',
   },
   {
     hint: 'events',

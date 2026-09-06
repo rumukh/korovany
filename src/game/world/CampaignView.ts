@@ -34,10 +34,21 @@ import {
   describeContractStake,
   describeContractTask,
   describeContractTitle,
+  describeRumourTitle,
+  describeRumourTask,
+  describeRumourStake,
+  describeRumourVerdict,
   formatRegionGridLabel,
   generatedSiteLabel,
+  FINALE_COPY,
+  FINALE_ATTACK_CUES,
+  FINALE_RECOVERY_CUE,
+  FINALE_RESUME_CUE,
+  FINALE_POSITIONING_CUE,
+  FINALE_SUSPENDED_CUE,
+  FINALE_DEFEATED_CUE,
 } from '../content/gameCopy.ts'
-import { getSiteWorldPosition2D } from '../content/registry.ts'
+import { getBlueprintRegionBounds, getFactionStartHeading, getFactionStartPosition2D, getSiteWorldPosition2D } from '../content/registry.ts'
 import {
   createAbilityView,
   createHealthyBody,
@@ -54,6 +65,7 @@ import {
   type DoctrineCardView,
   type DoctrineView,
   type Faction,
+  type FinaleView,
   type GameView,
   type LootToastView,
   type MapMarker,
@@ -71,18 +83,47 @@ import {
   findContractTemplate,
   getContractProgress,
   getReadyObjectiveNodes,
+  isVerdictFresh,
   normalizeCampaignContractState,
+  normalizeChronicleCommitmentState,
+  resolveActiveObjectiveNode,
+  rumourProgressShare,
+  rumourSecondsRemaining,
   type CampaignContractState,
+  type ChronicleCommitmentState,
+  type ChronicleRumour,
 } from './CampaignDirector.ts'
 import {
   PLAYER_MELEE_BEATS,
-  createPlayerMeleeState,
   isPlayerMeleeCommitted,
   nextPlayerMeleeBeat,
   playerBeatSpec,
   type PlayerMeleeState,
 } from './CombatResolver.ts'
 import type { WorldBlueprint } from './worldTypes.ts'
+import { ExpeditionPlanner, type ExpeditionView } from './ExpeditionPlanner.ts'
+import {
+  buildCombatMasteryView,
+  normalizeCombatMastery,
+  type CameraControlMode,
+  type CombatMasteryState,
+} from './CombatMastery.ts'
+import {
+  buildSavedSquadRoster,
+  buildSquadCommandView,
+  createSquadCommandState,
+  restoreSquadCommandState,
+  type SquadCommandView,
+} from './SquadCommand.ts'
+import {
+  FINALE_ENGAGE_RADIUS,
+  createFinaleIdentity,
+  finaleProgress,
+  finaleStage,
+  normalizeFinaleState,
+  prepareFinaleResume,
+  type FinaleState,
+} from './FinaleDirector.ts'
 /** A world marker as the runtime knows it, before it becomes a `MapMarker`. */
 export interface ViewMarkerSource {
   id: string
@@ -198,8 +239,11 @@ export interface LiveViewInput {
   contracts: readonly CampaignContractView[]
   /** Roadmap 1.6 — the open draft and the rules the run already took. */
   doctrines: DoctrineView
+  expedition: ExpeditionView
+  finale: FinaleView | null
   shopPriceMultiplier: number
   squad: number
+  squadCommand: SquadCommandView
   elapsed: number
   pointerLocked: boolean
   paused: boolean
@@ -208,6 +252,9 @@ export interface LiveViewInput {
   shieldActive: boolean
   abilityCooldown: number
   melee: PlayerMeleeState
+  combatMastery: CombatMasteryState
+  cameraMode: CameraControlMode
+  inputBlocked?: boolean
   campaignCompleted: boolean
   threatTier: number
   upgrades: GameView['upgrades']
@@ -396,6 +443,52 @@ export function buildCampaignContractViews(
   })
 }
 
+/** Shared by the live board and restored atlas; expired offers are never destinations. */
+export function buildChronicleRumourViews(
+  blueprint: WorldBlueprint,
+  commitments: ChronicleCommitmentState,
+  tick: number,
+): ChronicleRumourView[] {
+  const gridLabel = (id: string) => {
+    const region = blueprint.regions.find((entry) => entry.id === id)
+    return region ? formatRegionGridLabel(region.coordinate.x, region.coordinate.y) : '??'
+  }
+  const copyFor = (source: Pick<ChronicleRumour, 'regionId' | 'targetRegionId' | 'siteId' | 'faction'>) => {
+    const site = blueprint.sites.find((entry) => entry.id === source.siteId)
+    return {
+      regionLabel: gridLabel(source.regionId), targetLabel: gridLabel(source.targetRegionId),
+      siteLabel: site ? generatedSiteLabel(site.kind) : null, faction: source.faction,
+    }
+  }
+  const views: ChronicleRumourView[] = commitments.rumours
+    .filter((rumour) => rumourSecondsRemaining(rumour, tick) > 0)
+    .map((rumour) => {
+      const copy = copyFor(rumour)
+      const bounds = getBlueprintRegionBounds(blueprint, rumour.regionId)
+      const position = rumour.kind === 'sabotage' && rumour.siteId
+        ? getSiteWorldPosition2D(blueprint, rumour.siteId)
+        : bounds ? { x: (bounds.minX + bounds.maxX) / 2, z: (bounds.minZ + bounds.maxZ) / 2 } : undefined
+      return {
+        id: rumour.id, kind: rumour.kind, title: describeRumourTitle(rumour.kind),
+        task: describeRumourTask(rumour.kind, copy), stake: describeRumourStake(rumour.kind, copy),
+        regionLabel: copy.regionLabel, timeRemaining: rumourSecondsRemaining(rumour, tick),
+        pinned: commitments.pinnedRumourId === rumour.id, progress: rumourProgressShare(rumour),
+        x: position?.x ?? null, z: position?.z ?? null, outcome: null, outcomeText: null,
+      }
+    })
+  const verdict = commitments.verdict
+  if (verdict && isVerdictFresh(verdict, tick)) {
+    const copy = copyFor(verdict)
+    views.push({
+      id: `${verdict.rumourId}:verdict`, kind: verdict.kind, title: describeRumourTitle(verdict.kind),
+      task: '', stake: '', regionLabel: copy.regionLabel, timeRemaining: 0, pinned: false, progress: 1,
+      x: null, z: null, outcome: verdict.outcome,
+      outcomeText: describeRumourVerdict(verdict.kind, verdict.outcome, verdict.committed, copy),
+    })
+  }
+  return views
+}
+
 /**
  * Roadmap 1.6 — the draft panel and the equipped strip.
  *
@@ -452,6 +545,9 @@ export function buildAbilityView(input: {
   abilityCooldown: number
   paused: boolean
   ended: boolean
+  melee?: PlayerMeleeState
+  combatMastery?: CombatMasteryState
+  inputBlocked?: boolean
 }): AbilityView {
   const ability = createAbilityView(input.faction, input.stamina, input.body)
   ability.active = input.shieldActive
@@ -461,7 +557,10 @@ export function buildAbilityView(input: {
     !input.paused &&
     !input.ended &&
     !input.shieldActive &&
-    input.abilityCooldown <= 0
+    input.abilityCooldown <= 0 &&
+    !input.inputBlocked &&
+    !(input.melee && isPlayerMeleeCommitted(input.melee)) &&
+    !(input.combatMastery && input.combatMastery.evadeRemaining > 0)
   return ability
 }
 
@@ -489,6 +588,33 @@ export function buildMeleeView(input: {
     nextPlayerMeleeBeat(input.melee) === PLAYER_MELEE_BEATS.length &&
     input.stamina >= finisher.staminaCost
   return view
+}
+
+export function buildFinaleView(state: FinaleState, relevant: boolean): FinaleView | null {
+  if (!relevant || !state.introduced || !state.boss) return null
+  const stage = finaleStage(state)
+  const copy = FINALE_COPY[state.identity.profile]
+  const cue = stage === 'defeated' ? FINALE_DEFEATED_CUE
+    : stage === 'introduction' ? copy.introduction
+      : stage === 'transition' ? copy.transition
+        : stage === 'resuming' ? FINALE_RESUME_CUE
+          : stage === 'suspended' ? FINALE_SUSPENDED_CUE
+            : stage === 'recovery' ? FINALE_RECOVERY_CUE
+              : state.action ? FINALE_ATTACK_CUES[state.action.id]
+                : FINALE_POSITIONING_CUE
+  return {
+    profile: state.identity.profile,
+    encounterId: state.identity.encounterId,
+    bossId: `generated:${state.identity.bossId}`,
+    name: copy.name,
+    enemyFaction: state.identity.enemyFaction,
+    health: Math.max(0, state.boss.health),
+    maxHealth: state.boss.maxHealth,
+    phase: state.phase,
+    stage, cue, progress: finaleProgress(state),
+    escortsAlive: state.defeated ? 0 : state.escorts.filter((escort) =>
+      !escort.defeated && escort.body !== null && escort.body.health > 0).length,
+  }
 }
 
 /** The live view, emitted every frame. */
@@ -526,14 +652,26 @@ export function buildGameView(input: LiveViewInput): GameView {
       draftsTotal: input.doctrines.draftsTotal,
       slots: input.doctrines.slots,
     },
+    expedition: input.expedition,
+    finale: input.finale ? { ...input.finale } : null,
     shopPriceMultiplier: input.shopPriceMultiplier,
     squad: input.squad,
+    squadCommand: buildSquadCommandView({
+      version: 1,
+      mode: input.squadCommand.mode,
+      baseStance: input.squadCommand.baseStance,
+      anchor: input.squadCommand.anchor ?? { x: input.playerX, z: input.playerZ, heading: input.playerHeading },
+      focusTargetId: input.squadCommand.focusTargetId,
+    }, input.squadCommand.roster, input.squadCommand.targets, input.squadCommand.focus),
     elapsed: input.elapsed,
     pointerLocked: input.pointerLocked,
     paused: input.paused,
     caravanCooldown: input.caravanCooldown,
-    ability: buildAbilityView(input),
+    ability: buildAbilityView({ ...input, ended: input.ended || input.health <= 0 }),
     melee: buildMeleeView(input),
+    combatMastery: buildCombatMasteryView({
+      ...input, state: input.combatMastery, ended: input.ended || input.health <= 0,
+    }),
     campaignCompleted: input.campaignCompleted,
     threatTier: input.threatTier,
     upgrades: { ...input.upgrades },
@@ -577,7 +715,7 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     (site) => site.id === blueprint.starts[config.faction],
   )
   if (!startSite) throw new Error('Generated start site is missing')
-  const startPosition = getSiteWorldPosition2D(blueprint, startSite)
+  const startPosition = getFactionStartPosition2D(blueprint, config.faction)
   if (!startPosition) throw new Error('Generated start position is missing')
 
   const position = restored?.currentLocation.worldPosition ?? [
@@ -586,6 +724,8 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     startPosition.z,
   ]
   const currentRegionId = restored?.currentLocation.regionId ?? startSite.regionId
+  const heading = restored?.currentLocation.heading ??
+    getFactionStartHeading(blueprint, config.faction, { x: position[0], z: position[2] })
   const currentRegion =
     blueprint.regions.find((region) => region.id === currentRegionId) ??
     blueprint.regions.find((region) => region.id === startSite.regionId)
@@ -630,6 +770,28 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     normalizeDoctrineRunState(restored?.directorState.doctrines),
     blueprint.seed,
   )
+  const mastery = normalizeCombatMastery(restored?.directorState.combatMastery, config.faction)
+  const squadState = restoreSquadCommandState(
+    restored?.directorState.squadCommand,
+    createSquadCommandState({
+      x: position[0], z: position[2],
+      heading: Math.atan2(Math.sin(heading), Math.cos(heading)),
+    }, restored ? restored.directorState.squadFollowing === true : true),
+    blueprint.bounds,
+  ).state
+  const squadCommand = buildSquadCommandView(squadState,
+    buildSavedSquadRoster(restored?.companions ?? [], squadState, config.faction,
+      { x: position[0], z: position[2] }))
+  const finaleIdentity = createFinaleIdentity(blueprint, config.faction)
+  const finaleDelta = restored?.regionDeltas[finaleIdentity.regionId]
+  const finaleState = normalizeFinaleState(restored?.directorState.finale, finaleIdentity, {
+    defeatedActorIds: finaleDelta?.defeatedActorIds ?? [],
+    clearedEncounterIds: finaleDelta?.clearedEncounterIds ?? [],
+    objectiveDone: objectives.some((objective) => objective.id === finaleIdentity.objectiveId && objective.done),
+  }).state
+  if (restored) prepareFinaleResume(finaleState)
+  const finale = buildFinaleView(finaleState, finaleState.boss !== null &&
+    Math.hypot(position[0] - finaleState.boss.x, position[2] - finaleState.boss.z) <= FINALE_ENGAGE_RADIUS)
 
   if (!restored && boon.revealAdjacentRegions) {
     for (const region of blueprint.regions) {
@@ -641,6 +803,17 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
       }
     }
   }
+
+  const expedition = new ExpeditionPlanner(blueprint, restored?.directorState.expedition).buildView({
+    faction: config.faction, player: { x: position[0], z: position[2] },
+    heading, objectives, contracts,
+    rumours: buildChronicleRumourViews(blueprint,
+      normalizeChronicleCommitmentState(restored?.directorState.chronicleCommitments),
+      restored?.chronicleState.tick ?? 0),
+    activeObjectiveId: resolveActiveObjectiveNode(blueprint, config.faction, objectives,
+      normalizeCampaignContractState(restored?.directorState.campaignContracts).pinnedNodeId)?.id ?? null,
+    discoveredRegionIds: discovered, chronicleRegions, contestedRegionIds,
+  })
 
   return {
     faction: config.faction,
@@ -663,7 +836,7 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
         x: position[0],
         z: position[2],
         kind: 'player',
-        heading: restored?.currentLocation.heading ?? 0,
+        heading,
       },
     ],
     worldMap: buildWorldMapView({
@@ -685,18 +858,30 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     // reload" visible before the first frame rather than after it.
     contracts,
     doctrines,
+    expedition,
+    finale,
     shopPriceMultiplier: 1,
-    squad: 0,
+    squad: squadCommand.roster.length,
+    squadCommand,
     elapsed,
     pointerLocked: false,
     paused: false,
     caravanCooldown: serializableNumber(restored?.directorState.caravanCooldown),
-    ability: createAbilityView(config.faction, stamina, body),
+    ability: buildAbilityView({
+      faction: config.faction, stamina, body, shieldActive: false,
+      abilityCooldown: mastery.abilityCooldown, paused: false, ended: false,
+      melee: mastery.melee, combatMastery: mastery.state,
+    }),
     melee: buildMeleeView({
-      melee: createPlayerMeleeState(),
+      melee: mastery.melee,
       stamina,
       paused: false,
       ended: false,
+    }),
+    combatMastery: buildCombatMasteryView({
+      state: mastery.state, melee: mastery.melee, faction: config.faction, stamina, body,
+      paused: false, ended: false, shieldActive: false,
+      abilityCooldown: mastery.abilityCooldown, cameraMode: 'capture',
     }),
     activeEvent: null,
     lootToast: null,

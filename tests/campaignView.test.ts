@@ -33,7 +33,7 @@ import {
   type MapMarker,
   type Objective,
 } from '../src/game/types.ts'
-import { getSiteWorldPosition2D } from '../src/game/content/registry.ts'
+import { getFactionStartHeading, getFactionStartPosition2D } from '../src/game/content/registry.ts'
 import { generatedSiteLabel } from '../src/game/content/gameCopy.ts'
 import { getStartingBoonEffects } from '../src/game/run/profile.ts'
 import type { ActiveRunSaveV3, RunConfig } from '../src/game/run/runTypes.ts'
@@ -63,22 +63,43 @@ import {
   type ViewMarkerSource,
 } from '../src/game/world/CampaignView.ts'
 import type { WorldBlueprint } from '../src/game/world/worldTypes.ts'
+import {
+  advanceCombatMastery,
+  beginEvade,
+  buildCombatMasteryView,
+  createCombatMasteryState,
+  normalizeCombatMastery,
+  serializeCombatMastery,
+} from '../src/game/world/CombatMastery.ts'
+import {
+  buildSquadCommandView,
+  createSquadCommandState,
+  issueSquadCommand,
+  serializeSquadCommandState,
+} from '../src/game/world/SquadCommand.ts'
 
 const FACTIONS: readonly Faction[] = ['elf', 'guard', 'villain']
+type LegacyGameView = Omit<GameView,
+  'contracts' | 'doctrines' | 'expedition' | 'combatMastery' | 'squadCommand' | 'finale'>
 
 /**
  * Roadmap 1.4 added `contracts` to the `GameView` and roadmap 1.6 added `doctrines`, and the
  * deleted `App.tsx` builder predates both by definition.
  *
  * So the equivalence below is asserted over the fields that existed on both sides, and the
- * new ones are pinned by `tests/factionContracts.test.ts` and `tests/doctrines.test.ts`
+ * new ones are pinned by `tests/factionContracts.test.ts`, `tests/doctrines.test.ts`
+ * and the squad-specific view cases below
  * instead. The alternative — teaching the "before" copy to build fields it never had —
  * would stop it being a copy, which is the only thing that makes it worth keeping.
  */
 function withoutLaterFields(
   view: GameView,
-): Omit<GameView, 'contracts' | 'doctrines'> {
-  const { contracts: _contracts, doctrines: _doctrines, ...rest } = view
+): LegacyGameView {
+  const {
+    contracts: _contracts, doctrines: _doctrines,
+    expedition: _expedition, combatMastery: _combatMastery,
+    squadCommand: _squadCommand, finale: _finale, ...rest
+  } = view
   return rest
 }
 // ---------------------------------------------------------------------------
@@ -106,12 +127,13 @@ function legacyInitialView(
   blueprint: WorldBlueprint,
   config: RunConfig,
   restored: ActiveRunSaveV3 | undefined,
-): Omit<GameView, 'contracts' | 'doctrines'> {
+): LegacyGameView {
   const startSite = blueprint.sites.find(
     (site) => site.id === blueprint.starts[config.faction],
   )
   if (!startSite) throw new Error('Generated start site is missing')
-  const startPosition = getSiteWorldPosition2D(blueprint, startSite)
+  // NG-13 intentionally corrects the old launch-only site-centre spawn approximation.
+  const startPosition = getFactionStartPosition2D(blueprint, config.faction)
   if (!startPosition) throw new Error('Generated start position is missing')
 
   const position = restored?.currentLocation.worldPosition ?? [
@@ -181,7 +203,8 @@ function legacyInitialView(
         x: position[0],
         z: position[2],
         kind: 'player',
-        heading: restored?.currentLocation.heading ?? 0,
+        heading: restored?.currentLocation.heading ??
+          getFactionStartHeading(blueprint, config.faction, { x: position[0], z: position[2] }),
       },
     ],
     worldMap: {
@@ -638,7 +661,22 @@ test('the live view carries every field the HUD reads', () => {
   const objectives = createGeneratedObjectives(blueprint, faction)
   const node = blueprint.objectives[faction].nodes[0]
   const body = createHealthyBody()
+  const squadCommand = buildSquadCommandView(
+    issueSquadCommand(createSquadCommandState({ x: 12, z: -4, heading: 1.2 }, false),
+      'focus', { x: 12, z: -4, heading: 1.2 }, 'focus-enemy'),
+    [
+      { id: 'squad-one', role: 'archer', slot: 4, health: 23, maxHealth: 45, distance: 3, status: 'engaged' },
+      { id: 'squad-two', role: 'minion', slot: 9, health: 51, maxHealth: 70, distance: 35, status: 'blocked' },
+    ],
+    [{ id: 'focus-enemy', role: 'champion', health: 98, maxHealth: 180, distance: 12 }],
+    { id: 'focus-enemy', role: 'champion', health: 98, maxHealth: 180, distance: 12 },
+  )
   const view = buildGameView({
+    finale: null,
+    expedition: buildInitialGameView({
+      blueprint, config: { seed: blueprint.seed, generatorVersion: 1, faction, selectedBoonId: 'provisions' },
+      restored: undefined,
+    }).expedition,
     faction,
     blueprint,
     bounds: blueprint.bounds,
@@ -692,6 +730,7 @@ test('the live view carries every field the HUD reads', () => {
     ],
     shopPriceMultiplier: 1.2,
     squad: 2,
+    squadCommand,
     elapsed: 321,
     pointerLocked: true,
     paused: false,
@@ -700,6 +739,8 @@ test('the live view carries every field the HUD reads', () => {
     shieldActive: false,
     abilityCooldown: 0,
     melee: createPlayerMeleeState(),
+    combatMastery: createCombatMasteryState(),
+    cameraMode: 'locked',
     campaignCompleted: false,
     threatTier: 3,
     upgrades: { blade: 1, vitality: 0, endurance: 2 },
@@ -748,6 +789,8 @@ test('the live view carries every field the HUD reads', () => {
       slots: 3,
     },
   })
+  assert.deepEqual(view.squadCommand, squadCommand)
+  assert.notEqual(view.squadCommand.roster[0], squadCommand.roster[0])
 
   // Health is clamped on the way out; the engine relied on that and the HUD does not clamp.
   assert.equal(view.health, 0)
@@ -757,6 +800,8 @@ test('the live view carries every field the HUD reads', () => {
   assert.equal(view.threatTier, 3)
   assert.equal(view.shopPriceMultiplier, 1.2)
   assert.equal(view.pointerLocked, true)
+  assert.equal(view.combatMastery.cameraMode, 'locked')
+  assert.equal(view.combatMastery.evadeCost, 25)
   assert.equal(view.chronicle.length, 1)
   assert.deepEqual(view.upgrades, { blade: 1, vitality: 0, endurance: 2 })
   assert.equal(view.worldMap.regions.length, blueprint.regions.length)
@@ -777,11 +822,76 @@ test('the live view carries every field the HUD reads', () => {
     'kills', 'damage', 'zone', 'body', 'objectives', 'prompt', 'markers', 'worldMap',
     'chronicle', 'shopPriceMultiplier', 'squad', 'elapsed', 'pointerLocked', 'paused',
     'caravanCooldown', 'ability', 'activeEvent', 'lootToast', 'campaignCompleted',
-    'threatTier', 'upgrades', 'contracts', 'doctrines',
+    'threatTier', 'upgrades', 'contracts', 'doctrines', 'melee', 'combatMastery', 'squadCommand', 'expedition',
+    'finale',
   ]
   for (const key of required) {
     assert.ok(key in view, `the live view dropped ${key}`)
   }
+})
+
+test('initial and live mastery views share settled save state rather than inventing a fresh action', () => {
+  const blueprint = generateWorld(20260905)
+  for (const faction of FACTIONS) {
+    const config: RunConfig = {
+      seed: blueprint.seed, generatorVersion: blueprint.generatorVersion,
+      faction, selectedBoonId: 'provisions',
+    }
+    const save = makeRestored(blueprint, config, new RandomStream(19))
+    const state = createCombatMasteryState()
+    const melee = createPlayerMeleeState()
+    save.player.stamina = 100
+    save.player.maxStamina = 100
+    const action = beginEvade(state, {
+      stamina: save.player.stamina, body: save.player.body, melee, paused: false, ended: false,
+      moveX: 1, moveZ: 0, aimX: 0, aimZ: -1,
+    })
+    save.player.stamina -= action.staminaSpent
+    advanceCombatMastery(state, 0.1)
+    save.directorState.combatMastery = serializeCombatMastery(state, melee, 0.2, 0.1, false)
+    const initial = buildInitialGameView({ blueprint, config, restored: save })
+    const restored = normalizeCombatMastery(save.directorState.combatMastery, faction)
+    const live = buildCombatMasteryView({
+      state: restored.state, melee: restored.melee, faction, body: save.player.body,
+      stamina: save.player.stamina, paused: false, ended: false, shieldActive: false,
+      abilityCooldown: restored.abilityCooldown, cameraMode: 'capture',
+    })
+    assert.deepEqual(initial.combatMastery, live)
+    assert.equal(initial.combatMastery.evadeActive, true)
+    assert.equal(initial.combatMastery.evadeProtected, false)
+    assert.equal(initial.combatMastery.evadeReady, false)
+    assert.equal(initial.stamina, 75)
+    assert.equal(initial.ability.ready, false)
+    assert.equal(initial.ability.cooldown, 0.2)
+  }
+})
+
+test('initial squad views preserve legacy orders, anchored commands, living health and stable slots', () => {
+  const blueprint = generateWorld(20260905)
+  const config: RunConfig = {
+    seed: blueprint.seed, generatorVersion: blueprint.generatorVersion,
+    faction: 'guard', selectedBoonId: 'provisions',
+  }
+  const restored = makeRestored(blueprint, config, new RandomStream(42))
+  restored.currentLocation.worldPosition = [10, 0, 12]
+  restored.companions = [
+    { id: 'party-one', role: 'archer', formationSlot: 3, health: 19, maxHealth: 45, worldPosition: [50, 0, 12] },
+    { id: 'dead-member', role: 'soldier', formationSlot: 4, health: 0, maxHealth: 70, worldPosition: [12, 0, 12] },
+  ]
+  for (const following of [true, false]) {
+    restored.directorState.squadFollowing = following
+    const view = buildInitialGameView({ blueprint, config, restored })
+    assert.equal(view.squadCommand.mode, following ? 'follow' : 'hold')
+    assert.equal(view.squad, 1)
+    assert.deepEqual(view.squadCommand.roster.map((member) =>
+      [member.id, member.slot, member.health, member.status]), [['party-one', 3, 19, 'distant']])
+  }
+  const held = createSquadCommandState({ x: -30, z: 25, heading: 0.75 }, false)
+  restored.directorState.squadCommand = serializeSquadCommandState(held)
+  const view = buildInitialGameView({ blueprint, config, restored })
+  assert.equal(view.squadCommand.mode, 'hold')
+  assert.deepEqual(view.squadCommand.anchor, held.anchor)
+  assert.equal(buildInitialGameView({ blueprint, config, restored: undefined }).squadCommand.mode, 'follow')
 })
 
 test('a deliberately wrong view builder is caught by the same comparisons', () => {

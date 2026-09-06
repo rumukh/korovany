@@ -5,6 +5,7 @@ import {
   normalizeRegionChronicleState,
 } from '../world/Chronicle.ts'
 import { REGION_DELTA_VERSION } from '../world/RegionRuntime.ts'
+import { isSquadRole, isSquadSlot } from '../world/SquadCommand.ts'
 import {
   MAX_EPILOGUE_BEATS,
   MAX_EPILOGUE_COMPANIONS,
@@ -370,18 +371,7 @@ function normalizePlayer(value: unknown): RunPlayerState | null {
 }
 
 function normalizeCompanionRole(value: unknown): RunCompanionState['role'] | null {
-  switch (value) {
-    case 'soldier':
-    case 'scout':
-    case 'minion':
-    case 'archer':
-    case 'brute':
-    case 'champion':
-    case 'captive':
-      return value
-    default:
-      return null
-  }
+  return isSquadRole(value) ? value : null
 }
 
 function normalizeCompanions(
@@ -404,6 +394,7 @@ function normalizeCompanions(
       maxHealth === null ||
       maxHealth <= 0 ||
       health === null ||
+      (entry.formationSlot !== undefined && !isSquadSlot(entry.formationSlot)) ||
       !worldPosition
     ) {
       return null
@@ -414,6 +405,7 @@ function normalizeCompanions(
     companions.push({
       id,
       role,
+      ...(isSquadSlot(entry.formationSlot) ? { formationSlot: entry.formationSlot } : {}),
       health: Math.min(maxHealth, health),
       maxHealth,
       worldPosition,

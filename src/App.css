@@ -2098,6 +2098,53 @@ button {
   z-index: 20;
 }
 
+.gameplay-layer,
+.menu-layer {
+  display: contents;
+}
+
+.game-screen[data-zone] .left-hud:has(.mission-hud) {
+  height: calc(100dvh - 11.3rem);
+  overflow: visible;
+  pointer-events: none;
+}
+
+.status-hud,
+.mission-hud {
+  display: flex;
+  flex-direction: column;
+  gap: inherit;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  pointer-events: auto;
+  scrollbar-width: thin;
+  touch-action: pan-y;
+}
+
+.game-screen[data-zone] .left-hud .status-hud {
+  flex: 0 1 auto;
+}
+
+.mission-hud {
+  flex: 1 0 3.6rem;
+  min-height: 3.6rem;
+}
+
+.status-hud > *,
+.mission-hud > * {
+  flex: 0 0 auto;
+}
+
+.game-screen .top-hud-side .finale-hud {
+  top: 5.3rem;
+}
+
+.game-screen .top-hud-side .expedition-compass {
+  width: 16rem;
+}
+
 .top-hud-side {
   align-items: flex-end;
   display: flex;
@@ -4420,6 +4467,47 @@ kbd {
   }
 }
 
+@media (max-width: 45em) {
+  .run-setup,
+  .seed-controls {
+    grid-template-columns: 1fr;
+  }
+
+  .random-seed-button {
+    justify-self: start;
+  }
+
+  .boon-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .run-setup-heading {
+    flex-wrap: wrap;
+  }
+
+  .run-setup-heading > code {
+    max-width: 100%;
+    overflow: visible;
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+  }
+}
+
+@media (max-width: 30em) {
+  .boon-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .random-seed-button {
+    justify-self: stretch;
+  }
+
+  .run-setup-heading {
+    align-items: start;
+    flex-direction: column;
+  }
+}
+
 @media (max-width: 1000px) {
   .achievement-overview {
     grid-template-columns: 1fr;
@@ -4474,9 +4562,9 @@ kbd {
     --mobile-controls-right: max(0.8rem, env(safe-area-inset-right, 0px));
     --mobile-hud-half-gap: 0.25rem;
     --mobile-hud-region-gap: 0.25rem;
-    --mobile-objectives-flow-top: 20.85rem;
     --mobile-objectives-left: max(0.55rem, env(safe-area-inset-left, 0px));
     --mobile-touch-controls-height: 8.85rem;
+    --mobile-prompt-height: 5.5rem;
   }
 
   .achievement-gallery {
@@ -4596,14 +4684,6 @@ kbd {
     justify-content: center;
   }
 
-  .run-setup {
-    grid-template-columns: 1fr;
-  }
-
-  .boon-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .menu-side-stack {
     grid-template-columns: 1fr;
   }
@@ -4690,7 +4770,33 @@ kbd {
   }
 
   .top-hud-side {
+    max-height: calc(
+      100dvh - 0.55rem - var(--mobile-touch-controls-height) -
+        var(--mobile-controls-bottom) - var(--mobile-prompt-height) -
+        2 * var(--mobile-hud-region-gap)
+    );
+    min-height: 0;
     min-width: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    pointer-events: auto;
+    scrollbar-width: thin;
+    touch-action: pan-y;
+    width: 100%;
+  }
+
+  .top-hud-side > * {
+    flex-shrink: 0;
+  }
+
+  .game-screen .top-hud-side .expedition-compass {
+    width: 100%;
+  }
+
+  .game-screen .top-hud-side .finale-hud {
+    position: static;
+    transform: none;
     width: 100%;
   }
 
@@ -4716,7 +4822,7 @@ kbd {
      decision with a clock on it, so it stays and loses its prose instead. */
   .rumour-card {
     padding: 0.4rem;
-    width: 10.5rem;
+    width: 100%;
   }
 
   .rumour-card .hud-card-header .zone-code,
@@ -4727,7 +4833,7 @@ kbd {
 
   .rumour-pin {
     align-self: stretch;
-    min-height: 2rem;
+    min-height: 2.75rem;
     text-align: center;
   }
 
@@ -4746,7 +4852,7 @@ kbd {
 
   .contract-pin {
     align-self: stretch;
-    min-height: 2rem;
+    min-height: 2.75rem;
     text-align: center;
   }
 
@@ -4765,7 +4871,7 @@ kbd {
 
   .doctrine-take {
     align-self: stretch;
-    min-height: 2rem;
+    min-height: 2.75rem;
     text-align: center;
   }
 
@@ -4805,20 +4911,87 @@ kbd {
   .left-hud {
     left: var(--mobile-objectives-left);
     top: 5.2rem;
-    width: 12rem;
+    width: calc(50vw - var(--mobile-objectives-left) - var(--mobile-hud-half-gap));
+  }
+
+  .vitals {
+    padding: 0.45rem;
+  }
+
+  .vital-row {
+    font-size: 0.65rem;
+    gap: 0.25rem;
+  }
+
+  .vital-row svg {
+    flex: 0 0 0.8rem;
+    height: 0.8rem;
+    width: 0.8rem;
+  }
+
+  .game-screen[data-zone] .left-hud:has(.mission-hud) {
+    height: calc(
+      100dvh - 5.2rem - var(--mobile-touch-controls-height) -
+        var(--mobile-controls-bottom) - var(--mobile-hud-region-gap)
+    );
+    max-height: none;
+  }
+
+  .mission-hud > .contract-card,
+  .mission-hud > .doctrine-card {
+    width: 100%;
+  }
+
+  .game-screen .squad-command-strip {
+    align-items: start;
+    display: grid;
+    gap: 0.35rem;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+    padding-top: 0.25rem;
+  }
+
+  .game-screen .squad-strip-open {
+    flex-wrap: wrap;
+    gap: 0.2rem;
+  }
+
+  .game-screen .squad-strip-open strong {
+    flex: 1 0 100%;
+    font-size: 0.7rem;
+    overflow-wrap: anywhere;
+  }
+
+  .game-screen .squad-strip-open svg {
+    display: none;
+  }
+
+  .game-screen .squad-strip-roster {
+    margin: 0;
+    min-width: 0;
+  }
+
+  .game-screen .squad-strip-roster li {
+    flex-basis: 100%;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .game-screen .squad-member-health {
+    flex-direction: row;
+    flex-wrap: wrap;
+    font-size: 0.65rem;
+    gap: 0.2rem;
+  }
+
+  .game-screen .squad-member-state {
+    font-size: 0.65rem;
+    overflow-wrap: anywhere;
   }
 
   .objectives-card {
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    max-height: max(
-      3.6rem,
-      calc(
-        100dvh - var(--mobile-objectives-flow-top) - var(--mobile-touch-controls-height) -
-          var(--mobile-controls-bottom) - var(--mobile-hud-region-gap)
-      )
-    );
+    max-height: 100%;
     order: 1;
     overflow: hidden;
     width: calc(50vw - var(--mobile-objectives-left) - var(--mobile-hud-half-gap));
@@ -4880,14 +5053,19 @@ kbd {
         var(--mobile-hud-region-gap)
     );
     left: calc(50% + var(--mobile-hud-half-gap));
+    max-height: var(--mobile-prompt-height);
     max-width: none;
+    overflow-y: auto;
+    pointer-events: auto;
     right: var(--mobile-controls-right);
     text-align: center;
     transform: none;
+    touch-action: pan-y;
     white-space: normal;
   }
 
   .touch-controls {
+    align-items: flex-end;
     bottom: var(--mobile-controls-bottom);
     display: flex;
     justify-content: space-between;
@@ -4907,6 +5085,8 @@ kbd {
     color: var(--cp-text);
     display: flex;
     height: 2.75rem;
+    min-height: 2.75rem;
+    min-width: 2.75rem;
     justify-content: center;
     pointer-events: auto;
     width: 2.75rem;
@@ -4941,17 +5121,22 @@ kbd {
     grid-column: 3;
   }
 
+  .touch-move .touch-sprint {
+    grid-column: 3;
+    grid-row: 1;
+  }
+
   .touch-actions {
     align-content: end;
     display: grid;
     gap: 0.3rem;
-    grid-template-columns: repeat(2, 2.75rem);
+    grid-auto-rows: 2.75rem;
+    grid-template-columns: repeat(3, 2.75rem);
   }
 
   /*
-   * Roadmap 1.1 forbids a sixth touch control, so the beat counter rides the attack
-   * button that is already there rather than becoming one. The number is decorative; the
-   * button's `aria-label` carries the same state for a screen reader.
+   * The eight actions share three rows with the original HUD allowance. The attack's
+   * decorative beat counter is also announced by its button label.
    */
   .touch-attack {
     position: relative;
@@ -5066,20 +5251,6 @@ kbd {
   .active-run-actions {
     flex-direction: column;
     grid-column: auto;
-  }
-
-  .seed-controls,
-  .boon-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .run-setup-heading {
-    align-items: start;
-    flex-direction: column;
-  }
-
-  .run-setup-heading > code {
-    max-width: 100%;
   }
 
   .history-run {

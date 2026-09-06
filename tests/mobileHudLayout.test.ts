@@ -4,6 +4,7 @@ import test from 'node:test'
 
 const appCss = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
 const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+const combatHudSource = readFileSync(new URL('../src/game/ui/CombatMasteryHud.tsx', import.meta.url), 'utf8')
 
 function extractBlock(source: string, marker: string): string {
   const markerIndex = source.indexOf(marker)
@@ -28,6 +29,30 @@ function extractRule(source: string, selector: string): string {
 }
 
 const mobileHudCss = extractBlock(appCss, '@media (max-width: 720px), (pointer: coarse) {')
+
+function remValue(source: string, property: string): number {
+  const match = source.match(new RegExp(`(?:^|\\n)\\s*${property}:\\s*([\\d.]+)rem;`))
+  assert.ok(match, `Missing rem value for ${property}`)
+  return Number(match[1]) * 16
+}
+
+function touchGroupSource(group: string): string {
+  const start = appSource.indexOf(`<div className="${group}">`)
+  assert.notEqual(start, -1, `Missing ${group}`)
+  const end = appSource.indexOf('\n        </div>', start)
+  assert.notEqual(end, -1, `Missing end of ${group}`)
+  return appSource.slice(start, end)
+}
+
+function touchActionCount(): number {
+  const actions = touchGroupSource('touch-actions')
+  const evadeButton = combatHudSource.slice(
+    combatHudSource.indexOf('export function CombatEvadeButton'),
+    combatHudSource.indexOf('export function CombatCameraControls'),
+  )
+  return (actions.match(/<button\b/g) ?? []).length +
+    (actions.match(/<CombatEvadeButton\b/g) ?? []).length * (evadeButton.match(/<button\b/g) ?? []).length
+}
 
 interface Rectangle {
   bottom: number
@@ -71,7 +96,7 @@ test('mobile threat, music, pause, and minimap stay rendered with thumb-sized ac
   assert.match(appSource, /className=\{`threat-chip tier-\$\{view\.threatTier\}`\}/)
   assert.match(appSource, /className=\{`icon-button hud-music/)
   assert.match(appSource, /className="icon-button hud-pause"/)
-  assert.match(appSource, /<MiniMap view=\{view\} \/>/)
+  assert.match(appSource, /<MiniMap view=\{view\} onOpenAtlas=\{onOpenAtlas\} \/>/)
 })
 
 test('mobile header column budget fits the status and both 44px actions at target widths', () => {
@@ -101,6 +126,8 @@ test('mobile objectives, prompts, and touch controls use coordinated safe-area r
   const objectiveItemRule = extractRule(mobileHudCss, '.objectives-card .objective-item')
   const promptRule = extractRule(mobileHudCss, '.action-prompt')
   const controlsRule = extractRule(mobileHudCss, '.touch-controls')
+  const leftHudRule = extractRule(mobileHudCss, '.left-hud')
+  const columnRule = extractRule(mobileHudCss, '.game-screen[data-zone] .left-hud:has(.mission-hud)')
 
   assert.match(
     gameScreenRule,
@@ -114,8 +141,10 @@ test('mobile objectives, prompts, and touch controls use coordinated safe-area r
     gameScreenRule,
     /--mobile-controls-right:\s*max\(0\.8rem,\s*env\(safe-area-inset-right,\s*0px\)\);/,
   )
-  assert.match(objectivesRule, /max-height:\s*max\(/)
+  assert.match(columnRule, /height:\s*calc\(\s*100dvh\s*-\s*5\.2rem\s*-\s*var\(--mobile-touch-controls-height\)\s*-\s*var\(--mobile-controls-bottom\)\s*-\s*var\(--mobile-hud-region-gap\)/)
+  assert.match(objectivesRule, /max-height:\s*100%;/)
   assert.match(objectivesRule, /order:\s*1;/)
+  assert.match(leftHudRule, /width:\s*calc\(50vw\s*-\s*var\(--mobile-objectives-left\)\s*-\s*var\(--mobile-hud-half-gap\)\);/)
   assert.match(
     objectivesRule,
     /width:\s*calc\(50vw\s*-\s*var\(--mobile-objectives-left\)\s*-\s*var\(--mobile-hud-half-gap\)\);/,
@@ -134,19 +163,69 @@ test('mobile objectives, prompts, and touch controls use coordinated safe-area r
   )
   assert.match(promptRule, /left:\s*calc\(50%\s*\+\s*var\(--mobile-hud-half-gap\)\);/)
   assert.match(promptRule, /white-space:\s*normal;/)
+  assert.match(promptRule, /max-height:\s*var\(--mobile-prompt-height\);/)
+  assert.match(promptRule, /overflow-y:\s*auto;/)
+  assert.match(appCss, /\.mission-hud\s*\{\s*flex:\s*1\s+0\s+3\.6rem;\s*min-height:\s*3\.6rem;/)
+  assert.match(appCss, /\.status-hud,\s*\.mission-hud\s*\{[^}]*overflow-y:\s*auto;/)
+  assert.match(appCss, /\.game-screen\[data-zone\] \.left-hud \.status-hud\s*\{\s*flex:\s*0\s+1\s+auto;/)
   assert.match(controlsRule, /bottom:\s*var\(--mobile-controls-bottom\);/)
   assert.match(controlsRule, /left:\s*var\(--mobile-controls-left\);/)
   assert.match(controlsRule, /right:\s*var\(--mobile-controls-right\);/)
 })
 
-test('mobile HUD reserved regions have zero rectangle intersection at target sizes', () => {
+test('all eight actions and the sprint-enabled movement pad fit the original three-row allowance', () => {
+  const actionsRule = extractRule(mobileHudCss, '.touch-actions')
+  const moveRule = extractRule(mobileHudCss, '.touch-move')
+  const buttonRule = extractRule(mobileHudCss, '.touch-controls button')
+  const screenRule = extractRule(mobileHudCss, '.game-screen')
+  const actions = touchGroupSource('touch-actions')
+  const buttonSize = remValue(buttonRule, 'height')
+  const actionGap = remValue(actionsRule, 'gap')
+  const moveGap = remValue(moveRule, 'gap')
+  const actionCount = touchActionCount()
+
+  assert.equal(actionCount, 8)
+  assert.match(actions, /instantGameplayAction\(onAttack\)/)
+  assert.match(actions, /onPointerDown=[\s\S]*onAbilityDown\(\)/)
+  assert.match(actions, /<CombatEvadeButton/)
+  for (const callback of ['onInteract', 'onCommand', 'onOpenSquadCommand', 'onOpenAtlas']) {
+    assert.ok(actions.includes(`instantGameplayAction(${callback})`), `Missing touch ${callback}`)
+  }
+  assert.match(actions, /onInput\('Space', true\)/)
+  assert.match(actionsRule, /grid-template-columns:\s*repeat\(3,\s*2\.75rem\);/)
+  assert.match(actionsRule, /grid-auto-rows:\s*2\.75rem;/)
+  assert.match(moveRule, /grid-template-columns:\s*repeat\(3,\s*2\.75rem\);/)
+  assert.equal((touchGroupSource('touch-move').match(/<button\b/g) ?? []).length, 5)
+  assert.match(touchGroupSource('touch-move'), /touchHold\('ShiftLeft'\)/)
+  assert.ok(buttonSize >= 44)
+  assert.ok(remValue(buttonRule, 'width') >= 44)
+  const rows = Math.ceil(actionCount / 3)
+  const gridHeight = rows * buttonSize + (rows - 1) * actionGap
+  assert.ok(gridHeight <= remValue(screenRule, '--mobile-touch-controls-height') + 0.001)
+
+  for (const viewportWidth of [320, 390]) {
+    const available = viewportWidth - 2 * 0.8 * 16
+    const actionWidth = 3 * buttonSize + 2 * actionGap
+    const moveWidth = 3 * buttonSize + 2 * moveGap
+    assert.ok(moveWidth + actionWidth + 8 <= available, `${viewportWidth}px touch controls overflow`)
+  }
+})
+
+test('combined status/mission column, atlas/finale column, prompts and controls never intersect', () => {
   const rem = 16
   const controlsEdge = 0.8 * rem
-  const controlsHeight = 8.85 * rem
-  const halfGap = 0.25 * rem
+  const screenRule = extractRule(mobileHudCss, '.game-screen')
+  const controlsHeight = remValue(screenRule, '--mobile-touch-controls-height')
+  const halfGap = remValue(screenRule, '--mobile-hud-half-gap')
   const objectiveLeft = 0.55 * rem
-  const objectiveTop = 20.85 * rem
-  const regionGap = 0.25 * rem
+  const columnTop = remValue(extractRule(mobileHudCss, '.left-hud'), 'top')
+  const regionGap = remValue(screenRule, '--mobile-hud-region-gap')
+  const promptHeight = remValue(screenRule, '--mobile-prompt-height')
+  const sideRule = extractRule(mobileHudCss, '.top-hud-side')
+  assert.match(sideRule, /max-height:\s*calc\(\s*100dvh\s*-\s*0\.55rem\s*-\s*var\(--mobile-touch-controls-height\)\s*-\s*var\(--mobile-controls-bottom\)\s*-\s*var\(--mobile-prompt-height\)\s*-\s*2\s*\*\s*var\(--mobile-hud-region-gap\)/)
+  assert.match(sideRule, /overflow-y:\s*auto;/)
+  assert.match(extractRule(mobileHudCss, '.game-screen .top-hud-side .finale-hud'), /position:\s*static;/)
+  assert.ok(appSource.indexOf('<FinaleHud') > appSource.indexOf('<ExpeditionCompass'))
 
   for (const [viewportWidth, viewportHeight] of [
     [320, 568],
@@ -154,17 +233,17 @@ test('mobile HUD reserved regions have zero rectangle intersection at target siz
   ]) {
     const controlsTop = viewportHeight - controlsEdge - controlsHeight
     const reservedTop = controlsTop - regionGap
-    const objectives: Rectangle = {
+    const statusAndMissions: Rectangle = {
       bottom: reservedTop,
       left: objectiveLeft,
       right: viewportWidth / 2 - halfGap,
-      top: objectiveTop,
+      top: columnTop,
     }
     const prompt: Rectangle = {
       bottom: reservedTop,
       left: viewportWidth / 2 + halfGap,
       right: viewportWidth - controlsEdge,
-      top: 0,
+      top: reservedTop - promptHeight,
     }
     const controls: Rectangle = {
       bottom: viewportHeight - controlsEdge,
@@ -172,11 +251,21 @@ test('mobile HUD reserved regions have zero rectangle intersection at target siz
       right: viewportWidth - controlsEdge,
       top: controlsTop,
     }
+    const atlasAndFinale: Rectangle = {
+      bottom: prompt.top - regionGap,
+      left: viewportWidth - objectiveLeft - Math.min(8.4 * rem, Math.max(6.5 * rem, viewportWidth * 0.34)),
+      right: viewportWidth - objectiveLeft,
+      top: objectiveLeft,
+    }
 
-    assert.ok(objectives.bottom > objectives.top, `${viewportWidth}px objective region collapsed`)
+    assert.ok(statusAndMissions.bottom - statusAndMissions.top > 3.6 * rem, `${viewportWidth}px mission region collapsed`)
     assert.ok(prompt.right > prompt.left, `${viewportWidth}px prompt region collapsed`)
-    assert.equal(intersectionArea(objectives, prompt), 0)
-    assert.equal(intersectionArea(objectives, controls), 0)
+    assert.ok(atlasAndFinale.bottom > atlasAndFinale.top, `${viewportWidth}px atlas/finale column collapsed`)
+    assert.equal(intersectionArea(statusAndMissions, prompt), 0)
+    assert.equal(intersectionArea(statusAndMissions, controls), 0)
+    assert.equal(intersectionArea(statusAndMissions, atlasAndFinale), 0)
+    assert.equal(intersectionArea(atlasAndFinale, prompt), 0)
+    assert.equal(intersectionArea(atlasAndFinale, controls), 0)
     assert.equal(intersectionArea(prompt, controls), 0)
   }
 })

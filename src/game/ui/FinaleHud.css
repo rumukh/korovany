@@ -1,0 +1,109 @@
+.finale-hud {
+  background: var(--cp-panel-strong);
+  border: 1px solid var(--cp-warning);
+  border-radius: 0.625rem;
+  color: var(--cp-text);
+  left: 52%;
+  padding: 0.6rem 0.75rem;
+  pointer-events: none;
+  position: absolute;
+  top: 6.3rem;
+  transform: translateX(-50%);
+  width: min(26rem, calc(100vw - 40rem));
+  z-index: 21;
+}
+
+.finale-heading,
+.finale-status {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem 0.5rem;
+  justify-content: space-between;
+}
+
+.finale-heading strong {
+  font-size: 1rem;
+}
+
+.finale-heading span,
+.finale-status {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.72rem;
+}
+
+.finale-health {
+  background: var(--cp-surface);
+  border-radius: 0.15rem;
+  height: 0.45rem;
+  margin: 0.4rem 0;
+  overflow: hidden;
+}
+
+.finale-health i {
+  background: var(--cp-warning);
+  display: block;
+  height: 100%;
+}
+
+.finale-hud p {
+  font-size: 0.8rem;
+  line-height: 1.35;
+  margin: 0.35rem 0 0;
+}
+
+.finale-recovery,
+.finale-defeated {
+  border-color: var(--cp-success);
+}
+
+.finale-recovery .finale-status b,
+.finale-defeated .finale-status b,
+.finale-result strong {
+  color: var(--cp-success);
+}
+
+.finale-telegraph .finale-status b,
+.finale-transition .finale-status b {
+  color: var(--cp-warning);
+}
+
+.game-screen:has(.finale-hud) .notice-stack {
+  bottom: 4.5rem;
+  left: 1rem;
+  top: auto;
+  transform: none;
+  width: 19rem;
+}
+
+@media (max-width: 1000px) and (min-width: 721px) {
+  .finale-hud {
+    left: 56%;
+    width: min(20rem, calc(100vw - 35rem));
+  }
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+  .finale-hud {
+    left: auto;
+    padding: 0.45rem;
+    right: 0.55rem;
+    top: 10.5rem;
+    transform: none;
+    width: calc(50% - 0.85rem);
+  }
+
+  .finale-heading strong {
+    font-size: 0.88rem;
+  }
+
+  .finale-hud p {
+    font-size: 0.75rem;
+  }
+
+  .game-screen:has(.finale-hud) .notice-stack {
+    bottom: calc(var(--mobile-controls-bottom) + var(--mobile-touch-controls-height) + var(--mobile-hud-region-gap));
+    left: 0.55rem;
+    width: calc(50% - 0.85rem);
+  }
+}

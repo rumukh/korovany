@@ -18,7 +18,6 @@ import {
   Map as MapIcon,
   Megaphone,
   Moon,
-  MousePointer2,
   Pause,
   Play,
   RotateCcw,
@@ -54,6 +53,7 @@ import elfEmblem from './assets/factions/elf-emblem.svg'
 import guardEmblem from './assets/factions/guard-emblem.svg'
 import villainEmblem from './assets/factions/villain-emblem.svg'
 import './App.css'
+import { lockDocumentScroll } from './documentScrollLock'
 import { SFX_VOLUME_DEFAULT, normalizeSfxVolume } from './game/AudioDirector'
 import {
   GameEngine,
@@ -91,6 +91,28 @@ import {
 import { isMapMarkerVisible, projectMapMarker } from './game/mapMarkers'
 import { buildInitialGameView } from './game/world/CampaignView'
 import {
+  GameplayPointerCaptures,
+  bindGameplayPointerCancellation,
+  blocksGameplayKey,
+  instantGameplayAction,
+} from './game/input/CombatInput'
+import { CombatCameraControls, CombatEvadeButton, CombatMasteryHud } from './game/ui/CombatMasteryHud'
+import { ExpeditionAtlas, ExpeditionCompass, ExpeditionMinimap } from './game/ui/ExpeditionAtlas'
+import { SquadCommandPanel, SquadCommandStrip } from './game/ui/SquadCommandPanel'
+import { FinaleHud, FinaleResult } from './game/ui/FinaleHud'
+import {
+  closeTopGameOverlay,
+  dismissGameOverlay,
+  initialGameOverlayState,
+  openGameOverlay,
+  toggleGameOverlay,
+  topGameOverlay,
+  type GameOverlay,
+  type GameOverlayState,
+} from './game/ui/gameOverlay'
+import type { ExpeditionPreference, ExpeditionTargetIdentity } from './game/world/ExpeditionPlanner'
+import type { SquadCommandMode } from './game/world/SquadCommand'
+import {
   EPILOGUE_COPIED_LABEL,
   EPILOGUE_COPY_FAILED_LABEL,
   EPILOGUE_COPY_LABEL,
@@ -98,6 +120,8 @@ import {
   EPILOGUE_IMAGE_FAILED_LABEL,
   EPILOGUE_IMAGE_LABEL,
   EPILOGUE_SHARE_NOTE,
+  EXPEDITION_COPY,
+  SQUAD_COMMAND_COPY,
   CONTRACT_EXCLUSIVE_BADGE,
   CONTRACT_PANEL_HINT,
   CONTRACT_PANEL_TITLE,
@@ -487,7 +511,7 @@ function RegionBiomeIcon({ biome }: { biome: GameView['zone'] }) {
   return <Home aria-hidden="true" />
 }
 
-function MiniMap({ view }: { view: GameView }) {
+function MiniMap({ view, onOpenAtlas }: { view: GameView; onOpenAtlas: () => void }) {
   const hasObjectiveMarker = view.markers.some((marker) => marker.kind === 'objective')
   const hasEventMarker = view.markers.some((marker) => marker.kind === 'event')
   const hasBeastMarker = view.markers.some((marker) => marker.kind === 'beast')
@@ -559,6 +583,7 @@ function MiniMap({ view }: { view: GameView }) {
             </div>
           )
         })}
+        <ExpeditionMinimap view={view} />
         {visibleMarkers.map((marker) => (
           <span
             className={`map-marker ${marker.kind}`}
@@ -586,6 +611,16 @@ function MiniMap({ view }: { view: GameView }) {
           </span>
         ))}
       </div>
+      <button
+        type="button"
+        className="expedition-minimap-open"
+        onClick={onOpenAtlas}
+        data-expedition-open
+        aria-haspopup="dialog"
+        aria-label={EXPEDITION_COPY.open}
+      >
+        <span>M / {EXPEDITION_COPY.atlas}</span>
+      </button>
       <div className="map-legend">
         <span>
           <i className="legend-dot ally" /> свои
@@ -1129,13 +1164,7 @@ function AchievementGallery({
 }) {
   const summary = summarizeAchievements(achievements)
 
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.code === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [onClose])
+  useLayoutEffect(() => lockDocumentScroll(), [])
 
   return (
     <div className="modal-backdrop achievement-backdrop" role="presentation">
@@ -1856,8 +1885,11 @@ function MenuScreen({
         <span>WASD — движение</span>
         <span>мышь — камера и удар</span>
         <span>Space — прыжок</span>
+        <span>C — уворот</span>
         <span>E — действие</span>
-        <span>Q — приказ</span>
+        <span>Q — следом / держать</span>
+        <span>T — отряд</span>
+        <span>M — {EXPEDITION_COPY.atlas}</span>
       </footer>
     </main>
   )
@@ -2368,6 +2400,7 @@ function EndModal({
         <span className="eyebrow">{eyebrow}</span>
         <h2>{title}</h2>
         <p>{description}</p>
+        <FinaleResult finale={view.finale} />
         <div className="end-score">
           <span>
             <Clock3 aria-hidden="true" />
@@ -2451,9 +2484,9 @@ function GameScreen({
   notices,
   achievementBanner,
   runAchievements,
-  paused,
+  activeOverlay,
   simulationPaused,
-  shopOpen,
+  touchCaptures,
   endResult,
   terminalRun,
   onResume,
@@ -2463,11 +2496,19 @@ function GameScreen({
   onMenu,
   onBuy,
   onCloseShop,
+  onOpenAtlas,
+  onCloseAtlas,
+  onSelectExpedition,
+  onExpeditionPreference,
   onAttack,
+  onEvade,
   onAbilityDown,
   onAbilityUp,
   onInteract,
   onCommand,
+  onOpenSquadCommand,
+  onCloseSquadCommand,
+  onIssueSquadCommand,
   onPinRumour,
   onPinObjective,
   onTakeDoctrine,
@@ -2497,9 +2538,9 @@ function GameScreen({
   notices: Notice[]
   achievementBanner: AchievementUnlock | null
   runAchievements: AchievementView[]
-  paused: boolean
+  activeOverlay: GameOverlay | null
   simulationPaused: boolean
-  shopOpen: boolean
+  touchCaptures: GameplayPointerCaptures
   endResult: 'victory' | 'defeat' | null
   terminalRun: TerminalRunSummary | null
   onResume: () => void
@@ -2509,11 +2550,19 @@ function GameScreen({
   onMenu: () => void
   onBuy: (item: ShopItem) => void
   onCloseShop: () => void
+  onOpenAtlas: () => void
+  onCloseAtlas: () => void
+  onSelectExpedition: (target: ExpeditionTargetIdentity | null) => void
+  onExpeditionPreference: (preference: ExpeditionPreference) => void
   onAttack: () => void
+  onEvade: () => void
   onAbilityDown: () => void
   onAbilityUp: () => void
   onInteract: () => void
   onCommand: () => void
+  onOpenSquadCommand: () => void
+  onCloseSquadCommand: () => void
+  onIssueSquadCommand: (mode: SquadCommandMode, targetId?: string) => boolean
   onPinRumour: (rumourId: string | null) => void
   onPinObjective: (nodeId: string | null) => void
   onTakeDoctrine: (doctrineId: string) => void
@@ -2539,6 +2588,7 @@ function GameScreen({
   onToggleScreenShake: () => void
 }) {
   const [controlsDismissed, setControlsDismissed] = useState(false)
+  const jumpReleaseTimer = useRef<number | null>(null)
   const info = FACTION_INFO[view.faction]
   const zoneInfo = ZONE_INFO[view.zone]
   const eyeLoss =
@@ -2591,11 +2641,64 @@ function GameScreen({
     }
   }, [])
 
+  useLayoutEffect(() => {
+    if (!simulationPaused) return
+    touchCaptures.releaseAll()
+    if (jumpReleaseTimer.current !== null) window.clearTimeout(jumpReleaseTimer.current)
+    jumpReleaseTimer.current = null
+  }, [simulationPaused, touchCaptures])
+
+  useEffect(() => {
+    const release = () => {
+      touchCaptures.releaseAll()
+      if (jumpReleaseTimer.current !== null) window.clearTimeout(jumpReleaseTimer.current)
+      jumpReleaseTimer.current = null
+    }
+    const visibility = () => { if (document.hidden) release() }
+    window.addEventListener('blur', release)
+    document.addEventListener('visibilitychange', visibility)
+    return () => {
+      window.removeEventListener('blur', release)
+      document.removeEventListener('visibilitychange', visibility)
+      release()
+    }
+  }, [touchCaptures])
+
   const touchHold = (code: string) => ({
-    onPointerDown: () => onInput(code, true),
-    onPointerUp: () => onInput(code, false),
-    onPointerCancel: () => onInput(code, false),
-    onPointerLeave: () => onInput(code, false),
+    disabled: simulationPaused,
+    onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (simulationPaused || event.button !== 0) return
+      event.preventDefault()
+      try {
+        touchCaptures.capture(event.currentTarget, event.pointerId)
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error
+        onInput(code, false)
+        return
+      }
+      onInput(code, true)
+    },
+    onPointerUp: (event: React.PointerEvent<HTMLButtonElement>) => {
+      touchCaptures.release(event.pointerId)
+      onInput(code, false)
+    },
+    onPointerCancel: (event: React.PointerEvent<HTMLButtonElement>) => {
+      touchCaptures.cancel(event.pointerId)
+      onInput(code, false)
+    },
+    onLostPointerCapture: (event: React.PointerEvent<HTMLButtonElement>) => {
+      touchCaptures.release(event.pointerId)
+      onInput(code, false)
+    },
+    onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      if (event.code !== 'Space' && event.code !== 'Enter') return
+      event.preventDefault()
+      if (!simulationPaused) onInput(code, true)
+    },
+    onKeyUp: (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      if (event.code === 'Space' || event.code === 'Enter') onInput(code, false)
+    },
+    onBlur: () => onInput(code, false),
   })
 
   return (
@@ -2604,6 +2707,7 @@ function GameScreen({
       data-zone={view.zone}
       style={{ '--zone-accent': zoneInfo.accent } as CSSProperties}
     >
+      <div className="gameplay-layer" inert={simulationPaused}>
       <div className="world-stage" ref={worldRef} />
       <div className="screen-vignette" aria-hidden="true" />
       <div className="low-health-vignette" aria-hidden="true" />
@@ -2654,13 +2758,16 @@ function GameScreen({
           </div>
         </div>
         <div className="top-hud-side">
-          <MiniMap view={view} />
+          <MiniMap view={view} onOpenAtlas={onOpenAtlas} />
+          <ExpeditionCompass view={view} onOpen={onOpenAtlas} />
+          <FinaleHud finale={view.finale} />
           <ChronicleFeed view={view} />
           <RumourBoard view={view} onPin={onPinRumour} />
         </div>
       </div>
 
       <div className="left-hud">
+        <div className="status-hud">
         <div className="vitals hud-card">
           <div className="vital-row">
             <Heart aria-hidden="true" />
@@ -2696,6 +2803,8 @@ function GameScreen({
               <Clock3 aria-hidden="true" /> {formatTime(view.elapsed)}
             </span>
           </div>
+          <SquadCommandStrip view={view.squadCommand} onOpen={onOpenSquadCommand}
+            disabled={simulationPaused} />
         </div>
         <div
           className={`ability-chip hud-card ${view.ability.ready ? 'ready' : ''} ${view.ability.active ? 'active' : ''}`}
@@ -2725,11 +2834,15 @@ function GameScreen({
               />
             ))}
           </div>
+          <CombatMasteryHud view={view.combatMastery} />
         </div>
-        <ContractBoard view={view} onPin={onPinObjective} />
-        <DoctrineBoard view={view} onTake={onTakeDoctrine} />
-        <ObjectiveList view={view} />
-        <EventBanner event={view.activeEvent} />
+        </div>
+        <div className="mission-hud">
+          <ContractBoard view={view} onPin={onPinObjective} />
+          <DoctrineBoard view={view} onTake={onTakeDoctrine} />
+          <ObjectiveList view={view} />
+          <EventBanner event={view.activeEvent} />
+        </div>
       </div>
 
       <div className="notice-stack" aria-live="polite">
@@ -2755,12 +2868,8 @@ function GameScreen({
         <span />
       </div>
 
-      {!view.pointerLocked && !paused && !shopOpen && !endResult ? (
-        <button className="capture-prompt" type="button" onClick={onPointerLock}>
-          <MousePointer2 aria-hidden="true" />
-          Нажми, чтобы управлять камерой
-        </button>
-      ) : null}
+      <CombatCameraControls mode={view.combatMastery.cameraMode}
+        paused={simulationPaused} onCapture={onPointerLock} />
 
       {view.prompt ? <div className="action-prompt">{view.prompt}</div> : null}
 
@@ -2780,6 +2889,9 @@ function GameScreen({
             <kbd>Space</kbd> прыжок, сброс
           </span>
           <span>
+            <kbd>C</kbd> уворот
+          </span>
+          <span>
             <kbd>ЛКМ</kbd> связка из трёх
           </span>
           <span>
@@ -2789,10 +2901,16 @@ function GameScreen({
             <kbd>E</kbd> действие
           </span>
           <span>
-            <kbd>Q</kbd> приказ
+            <kbd>Q</kbd> следом / держать
+          </span>
+          <span>
+            <kbd>T</kbd> отряд
           </span>
           <span>
             <kbd>F</kbd> сохранить
+          </span>
+          <span>
+            <kbd>M</kbd> {EXPEDITION_COPY.atlas}
           </span>
         </div>
       </div>
@@ -2811,12 +2929,17 @@ function GameScreen({
           <button type="button" aria-label="Вправо" {...touchHold('KeyD')}>
             ▶
           </button>
+          <button className="touch-sprint" type="button" aria-label="Бег (удерживать)"
+            {...touchHold('ShiftLeft')}>
+            <Footprints aria-hidden="true" />
+          </button>
         </div>
         <div className="touch-actions">
           <button
             className={`touch-attack ${view.melee.committed ? 'committed' : ''} ${view.melee.finisherReady ? 'finisher' : ''}`}
             type="button"
-            onClick={onAttack}
+            {...instantGameplayAction(onAttack)}
+            disabled={simulationPaused || view.combatMastery.evadeActive}
             aria-label={`Удар, замах ${String(view.melee.beat)} из ${String(view.melee.beats)}`}
           >
             <Sword aria-hidden="true" />
@@ -2825,53 +2948,87 @@ function GameScreen({
           <button
             className={view.ability.active ? 'active' : undefined}
             type="button"
+            disabled={simulationPaused || (!view.ability.active && !view.ability.ready)}
             onPointerDown={(event) => {
+              if (simulationPaused || event.button !== 0) return
               event.preventDefault()
               try {
-                event.currentTarget.setPointerCapture(event.pointerId)
+                touchCaptures.capture(event.currentTarget, event.pointerId)
               } catch (error) {
                 if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error
+                return
               }
               onAbilityDown()
             }}
             onPointerUp={(event) => {
-              if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                event.currentTarget.releasePointerCapture(event.pointerId)
-              }
+              touchCaptures.release(event.pointerId)
               onAbilityUp()
             }}
-            onPointerCancel={onAbilityUp}
-            onPointerLeave={onAbilityUp}
+            onPointerCancel={(event) => {
+              touchCaptures.cancel(event.pointerId)
+              onAbilityUp()
+            }}
+            onLostPointerCapture={(event) => {
+              touchCaptures.release(event.pointerId)
+              onAbilityUp()
+            }}
+            onBlur={onAbilityUp}
             onClick={(event) => {
               if (event.detail !== 0) return
               if (view.ability.active) onAbilityUp()
               else onAbilityDown()
             }}
             aria-label={view.ability.name}
+            aria-pressed={view.faction === 'guard' ? view.ability.active : undefined}
           >
             {abilityIcons[view.ability.id]}
           </button>
-          <button type="button" onClick={onInteract} aria-label="Действие">
+          <CombatEvadeButton view={view.combatMastery} onEvade={onEvade} paused={simulationPaused} />
+          <button type="button" {...instantGameplayAction(onInteract)}
+            disabled={simulationPaused} aria-label="Действие">
             E
           </button>
-          <button type="button" onClick={onCommand} aria-label="Приказ">
+          <button type="button" {...instantGameplayAction(onCommand)}
+            disabled={simulationPaused} aria-label="Отряд: следом / держать">
             Q
           </button>
           <button
             type="button"
-            onClick={() => {
+            disabled={simulationPaused}
+            {...instantGameplayAction(() => {
+              if (jumpReleaseTimer.current !== null) window.clearTimeout(jumpReleaseTimer.current)
               onInput('Space', true)
-              window.setTimeout(() => onInput('Space', false), 120)
-            }}
+              jumpReleaseTimer.current = window.setTimeout(() => {
+                jumpReleaseTimer.current = null
+                onInput('Space', false)
+              }, 120)
+            })}
             aria-label="Прыжок"
           >
             ↑
           </button>
+          <button type="button" {...instantGameplayAction(onOpenSquadCommand)}
+            disabled={simulationPaused} aria-haspopup="dialog" aria-label={SQUAD_COMMAND_COPY.open}>
+            T
+          </button>
+          <button type="button" {...instantGameplayAction(onOpenAtlas)}
+            disabled={simulationPaused} aria-haspopup="dialog" aria-label={EXPEDITION_COPY.open}>
+            <MapIcon aria-hidden="true" />
+          </button>
         </div>
       </div>
+      </div>
 
-      {shopOpen ? <ShopModal view={view} onClose={onCloseShop} onBuy={onBuy} /> : null}
-      {paused && !shopOpen && !endResult ? (
+      {activeOverlay === 'shop' ? <ShopModal view={view} onClose={onCloseShop} onBuy={onBuy} /> : null}
+      {activeOverlay === 'atlas' ? (
+        <ExpeditionAtlas view={view} onClose={onCloseAtlas} onSelect={onSelectExpedition}
+          onPreference={onExpeditionPreference} />
+      ) : null}
+      {activeOverlay === 'orders' ? (
+        <SquadCommandPanel view={view.squadCommand} onClose={onCloseSquadCommand}
+          onConfirm={onIssueSquadCommand} />
+      ) : null}
+      {activeOverlay === 'pause' ? (
         <PauseModal
           view={view}
           sfxVolume={sfxVolume}
@@ -2894,7 +3051,7 @@ function GameScreen({
           onSfxVolumeChange={onSfxVolumeChange}
         />
       ) : null}
-      {endResult ? (
+      {activeOverlay === 'end' && endResult ? (
         <EndModal
           result={endResult}
           view={view}
@@ -2927,9 +3084,8 @@ function App() {
   )
   const [achievementQueue, setAchievementQueue] = useState<AchievementUnlock[]>([])
   const [runAchievements, setRunAchievements] = useState<AchievementView[]>([])
-  const [achievementsOpen, setAchievementsOpen] = useState(false)
-  const [paused, setPaused] = useState(false)
-  const [shopOpen, setShopOpen] = useState(false)
+  const [overlayState, setOverlayState] = useState(initialGameOverlayState)
+  const [touchCaptures] = useState(() => new GameplayPointerCaptures())
   const [endResult, setEndResult] = useState<'victory' | 'defeat' | null>(null)
   const [terminalRun, setTerminalRun] = useState<TerminalRunSummary | null>(null)
   const [pendingTerminalSnapshot, setPendingTerminalSnapshot] =
@@ -2948,7 +3104,8 @@ function App() {
   const worldRef = useRef<HTMLDivElement>(null)
   const engineRef = useRef<GameEngine | null>(null)
   const profileRef = useRef(profile)
-  const achievementsOpenRef = useRef(false)
+  const overlaysRef = useRef(overlayState)
+  const focusBeforeOverlayRef = useRef<HTMLElement | null>(null)
   const noticeCounter = useRef(0)
   const musicMutedRef = useRef(musicMuted)
   const sfxVolumeRef = useRef(sfxVolume)
@@ -2967,6 +3124,90 @@ function App() {
     [achievementCatalogue],
   )
   const canonicalSeed = useMemo(() => parseSeed(seedInput), [seedInput])
+  const activeOverlay = topGameOverlay(overlayState)
+
+  const applyGameOverlays = useCallback((next: GameOverlayState) => {
+    const current = overlaysRef.current
+    if (next === current) return
+    const blocked = topGameOverlay(next) !== null
+    if (topGameOverlay(current) === null && blocked) {
+      focusBeforeOverlayRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement : null
+    }
+    overlaysRef.current = next
+    setOverlayState(next)
+    if (blocked) touchCaptures.releaseAll()
+    engineRef.current?.setPaused(blocked)
+  }, [touchCaptures])
+
+  const requestPause = useCallback(() => {
+    applyGameOverlays(closeTopGameOverlay(overlaysRef.current))
+  }, [applyGameOverlays])
+
+  const closeOverlay = useCallback((owner: GameOverlay) => {
+    applyGameOverlays(dismissGameOverlay(overlaysRef.current, owner))
+  }, [applyGameOverlays])
+
+  const toggleAtlas = useCallback(() => {
+    applyGameOverlays(toggleGameOverlay(overlaysRef.current, 'atlas'))
+  }, [applyGameOverlays])
+
+  const toggleSquadCommand = useCallback(() => {
+    applyGameOverlays(toggleGameOverlay(overlaysRef.current, 'orders'))
+  }, [applyGameOverlays])
+
+  useEffect(() => bindGameplayPointerCancellation(document, touchCaptures), [touchCaptures])
+
+  useEffect(() => {
+    if (screen !== 'menu') return
+    const closeMenuGallery = (event: KeyboardEvent) => {
+      if (event.code !== 'Escape' || event.repeat || blocksGameplayKey(event) ||
+          topGameOverlay(overlaysRef.current) !== 'achievements') return
+      event.preventDefault()
+      requestPause()
+    }
+    window.addEventListener('keydown', closeMenuGallery)
+    return () => window.removeEventListener('keydown', closeMenuGallery)
+  }, [requestPause, screen])
+
+  useLayoutEffect(() => {
+    if (activeOverlay === null) {
+      const previous = focusBeforeOverlayRef.current
+      focusBeforeOverlayRef.current = null
+      if (previous?.isConnected && previous !== document.body) previous.focus({ preventScroll: true })
+      else document.querySelector<HTMLElement>('.game-canvas')?.focus({ preventScroll: true })
+      return
+    }
+    const dialog = document.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]')
+    if (!dialog) return
+    const controls = () => [...dialog.querySelectorAll<HTMLElement>(
+      'button:not(:disabled), input:not(:disabled), select:not(:disabled), a[href], [tabindex="0"]',
+    )].filter((control) => control.getClientRects().length > 0)
+    const focusDialog = () => controls()[0]?.focus({ preventScroll: true })
+    if (!dialog.contains(document.activeElement)) focusDialog()
+    const keepFocus = (event: FocusEvent) => {
+      if (event.target instanceof Node && !dialog.contains(event.target)) focusDialog()
+    }
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || event.defaultPrevented) return
+      const available = controls()
+      const first = available[0]
+      const last = available.at(-1)
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last?.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first?.focus()
+      }
+    }
+    document.addEventListener('focusin', keepFocus)
+    document.addEventListener('keydown', trapFocus)
+    return () => {
+      document.removeEventListener('focusin', keepFocus)
+      document.removeEventListener('keydown', trapFocus)
+    }
+  }, [activeOverlay])
 
   const addNotice = useMemo(
     () => (message: string, tone: Notice['tone'] = 'info') => {
@@ -3053,17 +3294,19 @@ function App() {
   )
 
   const openAchievements = () => {
-    achievementsOpenRef.current = true
-    if (screen === 'game') setPaused(true)
+    if (overlaysRef.current.ended) return
     setAchievementCatalogue(
       engineRef.current?.getAchievements() ?? readAchievementCatalogue(),
     )
-    setAchievementsOpen(true)
+    applyGameOverlays({
+      ...overlaysRef.current,
+      achievementsOpen: true,
+      paused: screen === 'game' || overlaysRef.current.paused,
+    })
   }
 
   const closeAchievements = () => {
-    achievementsOpenRef.current = false
-    setAchievementsOpen(false)
+    closeOverlay('achievements')
   }
 
   useLayoutEffect(() => {
@@ -3095,14 +3338,16 @@ function App() {
         {
         onView: setGameView,
         onNotice: addNotice,
-        onShop: () => setShopOpen(true),
-        onPauseRequest: () => {
-          if (!achievementsOpenRef.current) setPaused((current) => !current)
-        },
+        onShop: () => applyGameOverlays(openGameOverlay(overlaysRef.current, 'shop')),
+        onAtlasRequest: toggleAtlas,
+        onSquadCommandRequest: toggleSquadCommand,
+        onPauseRequest: requestPause,
         onSaveRequest: () => {
           checkpointGeneratedRun(engineRef.current, true)
         },
+        onPointerGestureCancelled: (pointerId) => touchCaptures.cancel(pointerId),
         onEnd: (result) => {
+          applyGameOverlays({ ...overlaysRef.current, ended: true })
           const currentEngine = engineRef.current
           let terminalSnapshot: ActiveRunSaveV3 | null = null
           try {
@@ -3166,11 +3411,12 @@ function App() {
       setActiveRun(readActiveGeneratedRun())
       setGameView(null)
       setPendingGeneratedLaunch(null)
-      setPaused(false)
+      applyGameOverlays(initialGameOverlayState())
       setScreen('menu')
       return
     }
     engineRef.current = engine
+    if (topGameOverlay(overlaysRef.current) !== null) engine.setPaused(true)
     setAchievementCatalogue(engine.getAchievements())
     setRunAchievements(engine.getCurrentRunAchievements())
     engine.start()
@@ -3192,13 +3438,18 @@ function App() {
   }, [
     achievementSessionId,
     addNotice,
+    applyGameOverlays,
     checkpointGeneratedRun,
     faction,
     markHintSeen,
     pendingGeneratedLaunch,
     recordTerminalRun,
+    requestPause,
     runId,
     screen,
+    toggleAtlas,
+    toggleSquadCommand,
+    touchCaptures,
   ])
 
   const retryTerminalFinalization = (): boolean => {
@@ -3218,12 +3469,6 @@ function App() {
     if (finalized) addNotice('Итог забега сохранён.', 'success')
     return finalized
   }
-
-  useEffect(() => {
-    engineRef.current?.setPaused(
-      paused || shopOpen || achievementsOpen || Boolean(endResult),
-    )
-  }, [paused, shopOpen, achievementsOpen, endResult])
 
   useEffect(() => {
     const launch = pendingGeneratedLaunch
@@ -3250,10 +3495,7 @@ function App() {
     setNotices([])
     setAchievementQueue([])
     setRunAchievements([])
-    achievementsOpenRef.current = false
-    setAchievementsOpen(false)
-    setPaused(false)
-    setShopOpen(false)
+    applyGameOverlays(initialGameOverlayState())
     setEndResult(null)
     setTerminalRun(null)
     setPendingTerminalSnapshot(null)
@@ -3348,15 +3590,12 @@ function App() {
     setScreen('menu')
     setGameView(null)
     setPendingGeneratedLaunch(null)
-    setPaused(false)
-    setShopOpen(false)
+    applyGameOverlays(initialGameOverlayState())
     setEndResult(null)
     setTerminalRun(null)
     setActiveRun(readActiveGeneratedRun())
     setProfile(readPlayerProfile())
     setAchievementCatalogue(readAchievementCatalogue())
-    achievementsOpenRef.current = false
-    setAchievementsOpen(false)
     lastGeneratedRegionRef.current = null
   }
 
@@ -3532,6 +3771,7 @@ function App() {
   if (screen === 'menu') {
     return (
       <>
+        <div className="menu-layer" inert={activeOverlay !== null}>
         <MenuScreen
           activeRun={activeRun}
           activeRunError={activeRunError}
@@ -3565,7 +3805,8 @@ function App() {
           onToggleScreenShake={toggleScreenShake}
           onSfxVolumeChange={changeSfxVolume}
         />
-        {achievementsOpen ? (
+        </div>
+        {activeOverlay === 'achievements' ? (
           <AchievementGallery
             achievements={achievementCatalogue}
             onClose={closeAchievements}
@@ -3597,26 +3838,34 @@ function App() {
   return (
     <>
       <GameScreen
+        key={runId}
         view={gameView}
         worldRef={worldRef}
         notices={notices}
         achievementBanner={achievementQueue[0] ?? null}
         runAchievements={runAchievements}
-        paused={paused}
-        simulationPaused={
-          paused || shopOpen || achievementsOpen || Boolean(endResult)
-        }
-        shopOpen={shopOpen}
+        activeOverlay={activeOverlay}
+        simulationPaused={activeOverlay !== null}
+        touchCaptures={touchCaptures}
         endResult={endResult}
         terminalRun={terminalRun}
-        onResume={() => setPaused(false)}
-        onPause={() => setPaused(true)}
+        onResume={() => closeOverlay('pause')}
+        onPause={() => {
+          if (topGameOverlay(overlaysRef.current) === null) {
+            applyGameOverlays({ ...overlaysRef.current, paused: true })
+          }
+        }}
         onSave={saveGame}
         onAchievements={openAchievements}
         onMenu={returnToMenu}
         onBuy={buyItem}
-        onCloseShop={() => setShopOpen(false)}
+        onCloseShop={() => closeOverlay('shop')}
+        onOpenAtlas={toggleAtlas}
+        onCloseAtlas={() => closeOverlay('atlas')}
+        onSelectExpedition={(target) => engineRef.current?.setExpeditionTarget(target)}
+        onExpeditionPreference={(preference) => engineRef.current?.setExpeditionPreference(preference)}
         onAttack={() => engineRef.current?.attack()}
+        onEvade={() => engineRef.current?.evade()}
         onAbilityDown={() => {
           if (faction === 'guard') engineRef.current?.setShield(true)
           else engineRef.current?.useAbility()
@@ -3624,13 +3873,25 @@ function App() {
         onAbilityUp={() => engineRef.current?.setShield(false)}
         onInteract={() => engineRef.current?.interact()}
         onCommand={() => engineRef.current?.commandSquad()}
+        onOpenSquadCommand={toggleSquadCommand}
+        onCloseSquadCommand={() => closeOverlay('orders')}
+        onIssueSquadCommand={(mode, targetId) => {
+          if (topGameOverlay(overlaysRef.current) !== 'orders') return false
+          const accepted = engineRef.current?.commandSquad(mode, targetId) ?? false
+          if (accepted) closeOverlay('orders')
+          return accepted
+        }}
         onPinRumour={(rumourId) => engineRef.current?.pinRumour(rumourId)}
         onPinObjective={(nodeId) => engineRef.current?.pinObjective(nodeId)}
         onTakeDoctrine={(doctrineId) => {
           engineRef.current?.chooseDoctrine(doctrineId)
         }}
         onPointerLock={() => engineRef.current?.requestPointerLock()}
-        onInput={(code, active) => engineRef.current?.setInput(code, active)}
+        onInput={(code, active) => {
+          if (!active || topGameOverlay(overlaysRef.current) === null) {
+            engineRef.current?.setInput(code, active)
+          }
+        }}
         onRetryFinalization={retryTerminalFinalization}
         onRestart={restartGame}
         musicMuted={musicMuted}
@@ -3650,7 +3911,7 @@ function App() {
         onCycleFoliageQuality={cycleFoliageQuality}
         onToggleScreenShake={toggleScreenShake}
       />
-      {achievementsOpen ? (
+      {activeOverlay === 'achievements' ? (
         <AchievementGallery
           achievements={achievementCatalogue}
           onClose={closeAchievements}

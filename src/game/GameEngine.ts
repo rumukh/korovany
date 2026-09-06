@@ -98,6 +98,7 @@ import {
   type ChronicleEntryView,
   type ChronicleRumourView,
   type Faction,
+  type FinaleProfileId,
   type GameCallbacks,
   type LootRarity,
   type LootReward,
@@ -130,11 +131,15 @@ import {
 import {
   createGeneratedEncounterPlans,
   createGeneratedEncounterPlan,
+  getFactionStartHeading,
   type GeneratedEncounterPlan,
 } from './content/registry'
 import {
   ABILITY_BLOCKED_NO_ARMS_NOTICE,
   ABILITY_BLOCKED_NO_STAMINA_NOTICE,
+  COMBAT_MASTERY_SAVE_WARNING,
+  describeEvadeRefused,
+  describePointerLockFailure,
   CARAVAN_ALREADY_ROBBED_NOTICE,
   CARAVAN_AMBUSH_NOTICE,
   CARAVAN_DEFENDED_BY_PLAYER_NOTICE,
@@ -149,6 +154,10 @@ import {
   describeDoctrineTaken,
   describeEventHandback,
   describeEventStarted,
+  describeExpeditionNotice,
+  EXPEDITION_TARGET_UNAVAILABLE_NOTICE,
+  EXPEDITION_PREFERENCE_INVALID_NOTICE,
+  GENERATED_ACTION_UNAVAILABLE_NOTICE,
   FINISHER_BLOCKED_NO_STAMINA_NOTICE,
   describeKillReward,
   describeLimbLost,
@@ -169,13 +178,11 @@ import {
   describeRout,
   describeRumourDropped,
   describeRumourPinned,
-  describeRumourStake,
-  describeRumourTask,
-  describeRumourTitle,
   describeRumourVerdict,
   describeSabotagePrompt,
   describeSiteInspected,
   describeSquadOrder,
+  SQUAD_COMMAND_COPY,
   describeThreatTier,
   describeThreatWave,
   describeTreasureFound,
@@ -194,11 +201,23 @@ import {
   TREASURE_ALREADY_LOOTED_NOTICE,
   WORLD_EVENT_FAILURE_MESSAGES,
   WORLD_EVENT_SUCCESS_MESSAGES,
+  FINALE_COPY,
+  describeFinaleDefeat,
+  FINALE_RESTORE_WARNING,
   type LocatedEventCopyContext,
   type ContractCopyContext,
   type RumourCopyContext,
 } from './content/gameCopy'
 import { HintDirector } from './content/hints'
+import {
+  beginLookGesture,
+  blocksGameplayKey,
+  cameraRelativeMovement,
+  finishLookGesture,
+  isEditableGameplayTarget,
+  moveLookGesture,
+  type LookGesture,
+} from './input/CombatInput.ts'
 import { RandomStream } from './random/RandomStream'
 import { deriveSeed, parseSeed } from './random/seed'
 import { getStartingBoonEffects } from './run/profile'
@@ -220,11 +239,40 @@ import {
 import { computeRunRulesetFingerprint } from './run/ruleset'
 import {
   STARTING_SQUAD_VERSION,
+  findSquadNavigationPath,
   getSquadFollowSpeed,
   getStartingSquad,
   shouldInitializeStartingSquad,
-  shouldSquadRegroup,
+  startingSquadIdentity,
 } from './squadMovement'
+import {
+  SQUAD_ARRIVAL_DISTANCE,
+  SQUAD_BLOCKED_SECONDS,
+  SQUAD_HOLD_RADIUS,
+  advanceSquadBlockedTime,
+  allocateSquadSlot,
+  buildSquadCommandView,
+  createSquadCommandState,
+  findSquadWalkablePosition,
+  finishSquadFocus,
+  isSquadCommandMode,
+  isSquadFocusTarget,
+  isSquadHoldStepAllowed,
+  isSquadMember,
+  isSquadSlot,
+  issueSquadCommand,
+  restoreSquadCommandState,
+  selectSquadIntent,
+  serializeSquadCommandState,
+  squadDistance,
+  squadMemberStatus,
+  type SquadCommandMode,
+  type SquadCommandState,
+  type SquadCommandView,
+  type SquadFocusView,
+  type SquadIntent,
+  type SquadPoint,
+} from './world/SquadCommand'
 import {
   ACTIVE_RUN_SAVE_VERSION,
   type ActiveRunSaveV3,
@@ -332,9 +380,7 @@ import {
   knockbackMagnitude,
   playerArmor,
   playerBeatSpec,
-  resetPlayerMelee,
   resolveActorDamage,
-  resolvePlayerDamage,
   rollMeleeDamage,
   rollPropBite,
   selectDeathStyle,
@@ -346,6 +392,20 @@ import {
   type MeleeArcCandidate,
   type PlayerBeatSpec,
 } from './world/CombatResolver'
+import {
+  EVADE_DURATION,
+  advanceCombatMastery,
+  applyPerfectGuardOpening,
+  beginEvade,
+  createCombatMasteryState,
+  missingPlayerLegs,
+  normalizeCombatMastery,
+  playerLegMobility,
+  raisePerfectGuard,
+  resolveCombatMasteryContact,
+  serializeCombatMastery,
+  settleCombatMastery,
+} from './world/CombatMastery.ts'
 import {
   EVENT_RETRY,
   advanceContract,
@@ -373,7 +433,6 @@ import {
   getRumourReservedRegionIds,
   isContractLive,
   isContractNodeCompletableByArrival,
-  isVerdictFresh,
   isWithinObjectiveArrival,
   markRumourActioned,
   normalizeCampaignContractState,
@@ -386,8 +445,6 @@ import {
   resolveActiveObjectiveNode,
   resolveContract,
   rollEventCooldown,
-  rumourProgressShare,
-  rumourSecondsRemaining,
   selectChronicleAnnouncements,
   selectChronicleFeedEvents,
   selectWeightedEventKind,
@@ -406,9 +463,47 @@ import {
 } from './world/CampaignDirector'
 import {
   buildCampaignContractViews,
+  buildChronicleRumourViews,
   buildDoctrineView,
   buildGameView,
+  buildFinaleView,
 } from './world/CampaignView'
+import {
+  ExpeditionPlanner,
+  type ExpeditionInput,
+  type ExpeditionPreference,
+  type ExpeditionTargetIdentity,
+} from './world/ExpeditionPlanner'
+import { chooseGeneratedInteraction } from './world/GeneratedInteraction'
+import {
+  FINALE_ATTACKS,
+  FINALE_ARENA_RADIUS,
+  FINALE_ENGAGE_RADIUS,
+  FINALE_PROFILES,
+  FINALE_PROJECTILE_RADIUS,
+  advanceFinale,
+  captureFinaleBody,
+  createFinaleIdentity,
+  finaleCanSpawn,
+  finaleEscortPost,
+  finaleOwnsActor,
+  finaleProgress,
+  finaleSavedBody,
+  firstFinaleCoverHit,
+  interruptFinale,
+  isFinaleDefeated,
+  normalizeFinaleState,
+  prepareFinaleResume,
+  reconcileFinale,
+  recordFinaleDeath,
+  resolveFinaleContactTargets,
+  serializeFinaleState,
+  suspendFinale,
+  type FinaleAction,
+  type FinaleAuthority,
+  type FinalePoint,
+  type FinaleState,
+} from './world/FinaleDirector'
 import {
   AMBIENT_CIVILIAN_LIMIT,
   BIRD_CLIMB_SPEED,
@@ -640,6 +735,7 @@ interface Actor {
   reinforcementsCalled: number
   objectiveEligible: boolean
   squadEligible: boolean
+  squadSlot: number | null
   aiMode: ActorAiMode
   eventOwnerId: string | null
   eventPropTargetId: string | null
@@ -781,6 +877,7 @@ interface ActorSpawnOptions {
   generatedUnique?: boolean
   hostileToPlayer?: boolean
   healthScale?: number
+  finaleProfile?: FinaleProfileId
   packId?: string | null
   packKinSize?: number
 }
@@ -788,6 +885,16 @@ interface ActorSpawnOptions {
 interface GeneratedNavigationCacheEntry {
   expiresAt: number
   waypoints: ReadonlyArray<readonly [number, number]> | null
+}
+
+interface SquadNavigationEntry {
+  requested: SquadPoint
+  destination: SquadPoint | null
+  path: readonly SquadPoint[] | null
+  waypoint: number
+  direct: boolean
+  revision: string
+  nextPlanAt: number
 }
 
 interface ActorKillContext {
@@ -1012,6 +1119,8 @@ interface Projectile {
   sourceActorId: string | null
   travelled: number
   detachChance: number
+  finale: boolean
+  straight: boolean
 }
 
 interface ProjectileHit {
@@ -1046,6 +1155,7 @@ interface DamageActorOptions {
 
 interface DamagePlayerOptions {
   attackKind: AttackKind
+  sourceActorId?: string
   /**
    * Whatever swung, when something did — the epilogue's only route to a cause of death.
    * The role is optional because a projectile can outlive its shooter.
@@ -1764,6 +1874,7 @@ export class GameEngine {
   private readonly generatedRun: GeneratedRunLaunch
   private readonly generatedWorld: GeneratedWorldRuntime
   private readonly generatedBlueprint: WorldBlueprint
+  private readonly expeditionPlanner: ExpeditionPlanner
   private readonly generatedEncounterPlans = new Map<string, GeneratedEncounterPlan[]>()
   private readonly generatedActivationSpawns = new Map<string, Set<string>>()
   private readonly simulatedGeneratedRegions = new Set<string>()
@@ -1812,6 +1923,9 @@ export class GameEngine {
    * arrival. Written to `directorState` on every save and read back on restore.
    */
   private campaignContracts: CampaignContractState
+  private readonly finale: FinaleState
+  private readonly finaleTelegraphs: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>[] = []
+  private finaleTelegraphAction: FinaleAction | null = null
   /** The contract event currently on the ground, by objective node id. */
   private activeContractNodeId: string | null = null
   /**
@@ -1926,6 +2040,7 @@ export class GameEngine {
   private readonly comicCalloutFx: ComicCalloutFx[] = []
   private readonly impactRayFx: ImpactRayFx[] = []
   private readonly projectileSourcesToClear = new Set<string>()
+  private updatingProjectiles = false
   private readonly generatedTextures = new Map<string, THREE.CanvasTexture>()
   private readonly outlineBindings: OutlineBinding[] = []
   private readonly interactableOutlineBindings: InteractableOutlineBinding[] = []
@@ -2034,6 +2149,7 @@ export class GameEngine {
   private activePlayerAttackKind: AttackKind = 'melee'
   /** Roadmap 1.1 — the buffered three-beat sequence. `honestMelee` off runs the old swing. */
   private readonly melee = createPlayerMeleeState()
+  private readonly combatMastery = createCombatMasteryState()
   private readonly honestMelee: boolean
   private wasSprinting = false
   private abilityCooldown = 0
@@ -2050,7 +2166,12 @@ export class GameEngine {
   private lightningFlash = 0
   private thunderDelay = -1
   private prompt = ''
-  private squadFollowing = false
+  private squadCommand: SquadCommandState = createSquadCommandState({ x: 0, z: 0, heading: 0 })
+  private readonly squadNavigation = new Map<string, SquadNavigationEntry>()
+  private readonly squadBlockedSeconds = new Map<string, number>()
+  private readonly squadIntents = new Map<string, SquadIntent<Actor>>()
+  private readonly squadSightRaycaster = new THREE.Raycaster()
+  private squadNavigationRevision = ''
   private caravanDirection = 1
   private caravanCooldown = 0
   private caravanRobbedFlash = 0
@@ -2136,10 +2257,22 @@ export class GameEngine {
   private boundMouseMove: (event: MouseEvent) => void
   private boundMouseDown: (event: MouseEvent) => void
   private boundMouseUp: (event: MouseEvent) => void
+  private boundPointerDown: (event: PointerEvent) => void
+  private boundPointerMove: (event: PointerEvent) => void
+  private boundPointerUp: (event: PointerEvent) => void
+  private boundPointerCancel: (event: PointerEvent) => void
+  private boundLostPointerCapture: (event: PointerEvent) => void
   private boundContextMenu: (event: MouseEvent) => void
   private boundWindowBlur: () => void
   private boundPointerLock: () => void
+  private boundPointerLockError: () => void
+  private boundFocusIn: (event: FocusEvent) => void
   private boundVisibilityChange: () => void
+  private lookGesture: LookGesture | null = null
+  private mousePointerId: number | null = null
+  private pointerFallback = false
+  private pointerLockPending = false
+  private inputDisposed = false
   private frameHandle = 0
 
   constructor(
@@ -2212,6 +2345,7 @@ export class GameEngine {
       ...(restoredRun ? { restored: restoredRun } : {}),
     }
     this.generatedBlueprint = blueprint
+    this.expeditionPlanner = new ExpeditionPlanner(blueprint, restoredRun?.directorState.expedition)
     this.audio = new AudioDirector({
       musicMuted: settings.musicMuted ?? false,
       sfxVolume: settings.sfxVolume,
@@ -2388,6 +2522,16 @@ export class GameEngine {
     this.objectives =
       generatedPlayer?.objectives.map((objective) => ({ ...objective })) ??
       createGeneratedObjectives(blueprint, faction)
+    const finaleIdentity = createFinaleIdentity(blueprint, faction)
+    const finaleDelta = this.generatedWorld.regions.getSavedDelta(finaleIdentity.regionId)
+    const finaleRestore = normalizeFinaleState(restoredRun?.directorState.finale, finaleIdentity, {
+      defeatedActorIds: finaleDelta?.defeatedActorIds ?? [],
+      clearedEncounterIds: finaleDelta?.clearedEncounterIds ?? [],
+      objectiveDone: this.objectives.some((objective) => objective.id === finaleIdentity.objectiveId && objective.done),
+    })
+    this.finale = finaleRestore.state
+    if (restoredRun) prepareFinaleResume(this.finale)
+    if (finaleRestore.rejected) this.callbacks.onNotice(FINALE_RESTORE_WARNING, 'warning')
     this.body = generatedPlayer ? { ...generatedPlayer.body } : createHealthyBody()
     this.upgrades = normalizeUpgradeLevels(generatedPlayer?.upgrades)
     const baseMaxHealth = getMaxHealth(this.upgrades)
@@ -2419,11 +2563,17 @@ export class GameEngine {
       (faction === 'villain' ? 31 : faction === 'guard' ? 28 : 26) +
         (boon?.startingDamageBonus ?? 0)
     const restoredDirector = restoredRun?.directorState
+    const restoredMastery = normalizeCombatMastery(restoredDirector?.combatMastery, faction)
+    Object.assign(this.combatMastery, restoredMastery.state)
+    Object.assign(this.melee, restoredMastery.melee)
+    this.abilityCooldown = restoredMastery.abilityCooldown
+    this.attackCooldown = restoredMastery.attackCooldown
+    if (restoredMastery.rejected) this.callbacks.onNotice(COMBAT_MASTERY_SAVE_WARNING, 'warning')
     const restoredEvent = restoredRun?.eventState
     const initializeGeneratedStartingSquad = shouldInitializeStartingSquad(
       restoredDirector?.startingSquadVersion,
+      restoredRun?.companions?.length ?? 0,
     )
-    this.squadFollowing = restoredDirector?.squadFollowing === true
     this.elapsed = this.readSerializableNumber(restoredDirector, 'elapsed', 0)
     this.generatedSupplyCount = Math.max(
       0,
@@ -2621,42 +2771,64 @@ export class GameEngine {
     )
     this.scene.add(this.caravan)
     this.registerNamedInteractableOutline(this.caravan, 'cargo')
+    this.cameraYaw =
+      restoredHeading ??
+      getFactionStartHeading(this.generatedBlueprint, faction, this.player.position)
+    const restoredSquad = restoreSquadCommandState(
+      restoredDirector?.squadCommand,
+      createSquadCommandState({
+        x: this.player.position.x,
+        z: this.player.position.z,
+        heading: Math.atan2(Math.sin(this.cameraYaw), Math.cos(this.cameraYaw)),
+      }, restoredRun ? restoredDirector?.squadFollowing === true : true),
+      this.generatedWorld.bounds,
+    )
+    this.squadCommand = restoredSquad.state
+    if (restoredSquad.rejected) {
+      this.callbacks.onNotice(SQUAD_COMMAND_COPY.invalidSave, 'warning')
+    }
     this.restoreGeneratedCompanions(restoredRun?.companions ?? [])
     if (initializeGeneratedStartingSquad) this.spawnGeneratedStartingSquad()
     this.syncGeneratedRegions()
-    const generatedNextRegionId =
-      this.generatedBlueprint.criticalPaths[faction].regionIds[1]
-    const generatedNextRegion = generatedNextRegionId
-      ? this.generatedWorld.getRegionCenter(generatedNextRegionId)
-      : undefined
-    const generatedCameraYaw = generatedNextRegion
-      ? Math.atan2(
-          generatedNextRegion.x - this.player.position.x,
-          this.player.position.z - generatedNextRegion.z,
-        )
-      : undefined
-    this.cameraYaw =
-      restoredHeading ??
-      generatedCameraYaw ??
-      (faction === 'elf' ? -0.8 : faction === 'guard' ? 2.4 : 0.8)
     this.updateCamera(0, true)
+    this.reconcileSquadFocus()
 
     this.boundKeyDown = this.onKeyDown.bind(this)
     this.boundKeyUp = this.onKeyUp.bind(this)
     this.boundMouseMove = this.onMouseMove.bind(this)
     this.boundMouseDown = this.onMouseDown.bind(this)
     this.boundMouseUp = this.onMouseUp.bind(this)
+    this.boundPointerDown = this.onWorldPointerDown.bind(this)
+    this.boundPointerMove = this.onWorldPointerMove.bind(this)
+    this.boundPointerUp = this.onWorldPointerUp.bind(this)
+    this.boundPointerCancel = this.onWorldPointerCancel.bind(this)
+    this.boundLostPointerCapture = this.onWorldPointerCancel.bind(this)
     this.boundContextMenu = this.onContextMenu.bind(this)
     this.boundWindowBlur = this.onWindowBlur.bind(this)
     this.boundPointerLock = this.onPointerLockChange.bind(this)
+    this.boundPointerLockError = () => this.onPointerLockFailure(new Error('PointerLockError'))
+    this.boundFocusIn = (event) => {
+      if (!isEditableGameplayTarget(event.target)) return
+      this.releaseGameplayInput()
+      this.emitView(true)
+    }
     this.boundVisibilityChange = this.onVisibilityChange.bind(this)
+    this.renderer.domElement.tabIndex = 0
+    this.pointerFallback = window.matchMedia('(pointer: coarse)').matches
     window.addEventListener('keydown', this.boundKeyDown)
     window.addEventListener('keyup', this.boundKeyUp)
     document.addEventListener('mousemove', this.boundMouseMove)
     document.addEventListener('mousedown', this.boundMouseDown)
     document.addEventListener('mouseup', this.boundMouseUp)
+    this.renderer.domElement.addEventListener('pointerdown', this.boundPointerDown)
+    document.addEventListener('pointermove', this.boundPointerMove)
+    document.addEventListener('pointerup', this.boundPointerUp)
+    document.addEventListener('pointercancel', this.boundPointerCancel)
+    this.renderer.domElement.addEventListener('lostpointercapture', this.boundLostPointerCapture)
     document.addEventListener('contextmenu', this.boundContextMenu)
     document.addEventListener('pointerlockchange', this.boundPointerLock)
+    document.addEventListener('pointerlockerror', this.boundPointerLockError)
+    document.addEventListener('focusin', this.boundFocusIn)
     document.addEventListener('visibilitychange', this.boundVisibilityChange)
     window.addEventListener('blur', this.boundWindowBlur)
     window.addEventListener('pagehide', this.pageHideAudioOwner)
@@ -2672,6 +2844,8 @@ export class GameEngine {
   }
 
   destroy(): void {
+    this.inputDisposed = true
+    this.releaseGameplayInput()
     const errors: unknown[] = []
     const attempt = (action: () => void): void => {
       try {
@@ -2690,8 +2864,15 @@ export class GameEngine {
     document.removeEventListener('mousemove', this.boundMouseMove)
     document.removeEventListener('mousedown', this.boundMouseDown)
     document.removeEventListener('mouseup', this.boundMouseUp)
+    this.renderer.domElement.removeEventListener('pointerdown', this.boundPointerDown)
+    document.removeEventListener('pointermove', this.boundPointerMove)
+    document.removeEventListener('pointerup', this.boundPointerUp)
+    document.removeEventListener('pointercancel', this.boundPointerCancel)
+    this.renderer.domElement.removeEventListener('lostpointercapture', this.boundLostPointerCapture)
     document.removeEventListener('contextmenu', this.boundContextMenu)
     document.removeEventListener('pointerlockchange', this.boundPointerLock)
+    document.removeEventListener('pointerlockerror', this.boundPointerLockError)
+    document.removeEventListener('focusin', this.boundFocusIn)
     document.removeEventListener('visibilitychange', this.boundVisibilityChange)
     window.removeEventListener('blur', this.boundWindowBlur)
     window.removeEventListener('pagehide', this.pageHideAudioOwner)
@@ -2774,6 +2955,9 @@ export class GameEngine {
     this.projectileSourcesToClear.clear()
     this.eventPropTargets.clear()
     this.generatedNavigationCache.clear()
+    this.squadNavigation.clear()
+    this.squadBlockedSeconds.clear()
+    this.squadIntents.clear()
     this.generatedNavigationRegionSignature = ''
     this.generatedCaravanPatrolReady = false
     this.telegraphPool.length = 0
@@ -2786,7 +2970,7 @@ export class GameEngine {
 
   setPaused(paused: boolean): void {
     if (paused) {
-      this.dropShield()
+      this.releaseGameplayInput()
       this.clearTransientCombatFeedback()
     }
     this.paused = paused
@@ -2797,14 +2981,23 @@ export class GameEngine {
   }
 
   requestPointerLock(): void {
-    if (!this.paused && !this.ended) {
-      this.resumeAudio()
-      this.renderer.domElement.requestPointerLock().catch(() => undefined)
+    if (this.paused || this.ended || this.inputDisposed || this.pointerLockPending) return
+    this.resumeAudio()
+    this.pointerLockPending = true
+    try {
+      if (typeof this.renderer.domElement.requestPointerLock !== 'function') {
+        this.onPointerLockFailure(new Error('NotSupportedError'))
+        return
+      }
+      const request = this.renderer.domElement.requestPointerLock()
+      if (request) void request.catch((error: unknown) => this.onPointerLockFailure(error))
+    } catch (error) {
+      this.onPointerLockFailure(error)
     }
   }
 
   setInput(code: string, active: boolean): void {
-    if (active) {
+    if (active && !this.paused && !this.ended && !isEditableGameplayTarget(document.activeElement)) {
       this.resumeAudio()
       this.keys.add(code)
     } else {
@@ -2916,7 +3109,8 @@ export class GameEngine {
       this.setShield(true)
       return
     }
-    if (this.paused || this.ended || this.abilityCooldown > 0) return
+    if (this.paused || this.ended || this.abilityCooldown > 0 ||
+        this.combatMastery.evadeRemaining > 0 || isEditableGameplayTarget(document.activeElement)) return
 
     const ability = ABILITY_INFO[this.faction]
     if (
@@ -2973,6 +3167,8 @@ export class GameEngine {
       this.shieldActive ||
       this.abilityCooldown > 0 ||
       this.stamina <= 0 ||
+      this.combatMastery.evadeRemaining > 0 ||
+      isEditableGameplayTarget(document.activeElement) ||
       // The guard's fourth cancel. Same rule as the other three: everything but the
       // committed finisher.
       isPlayerMeleeCommitted(this.melee)
@@ -2982,13 +3178,15 @@ export class GameEngine {
     this.cancelMelee()
     this.resumeAudio()
     this.shieldActive = true
+    raisePerfectGuard(this.combatMastery)
     this.achievements.recordAbilityUse('shield')
     this.updateShieldPose()
     this.emitView(true)
   }
 
   attack(): void {
-    if (this.paused || this.ended) return
+    if (this.paused || this.ended || this.combatMastery.evadeRemaining > 0 ||
+        isEditableGameplayTarget(document.activeElement)) return
     this.resumeAudio()
     this.menacePlayer()
     if (!this.honestMelee) {
@@ -3003,6 +3201,36 @@ export class GameEngine {
     this.emitView(true)
   }
 
+  evade(): void {
+    const aim = this.getAimDirection()
+    const move = cameraRelativeMovement(this.keys, this.cameraYaw)
+    const result = beginEvade(this.combatMastery, {
+      stamina: this.stamina,
+      body: this.body,
+      melee: this.melee,
+      paused: this.paused,
+      ended: this.ended || this.health <= 0,
+      inputBlocked: isEditableGameplayTarget(document.activeElement),
+      moveX: move.x,
+      moveZ: move.z,
+      aimX: aim.x,
+      aimZ: aim.z,
+    })
+    if (!result.accepted) {
+      if (!this.paused && !this.ended && result.reason !== 'input') {
+        this.callbacks.onNotice(describeEvadeRefused(result.reason), 'warning')
+      }
+      return
+    }
+    this.stamina -= result.staminaSpent
+    this.dropShield()
+    this.attackAnimation = 0
+    this.activePlayerAttackKind = 'melee'
+    this.resumeAudio()
+    this.playSound('whiff', { intensity: 0.45 })
+    this.emitView(true)
+  }
+
   /**
    * The pre-1.1 swing, kept as the flag's off arm.
    *
@@ -3011,7 +3239,7 @@ export class GameEngine {
    * is the asymmetry roadmap 1.1 exists to close.
    */
   private legacyAttack(): void {
-    if (this.attackCooldown > 0) return
+    if (this.attackCooldown > 0 || isPlayerMeleeCommitted(this.melee)) return
     this.attackCooldown = 0.52
     this.attackAnimation = 1
     this.activePlayerAttackKind = 'melee'
@@ -3073,7 +3301,12 @@ export class GameEngine {
    * every NPC, so both halves of the fight now revalidate at resolution time.
    */
   private updatePlayerMelee(delta: number): void {
-    if (!this.honestMelee) return
+    if (this.combatMastery.evadeRemaining > 0) return
+    if (!this.honestMelee) {
+      // Finish an already-paid saved commitment; only new attacks use the comparison arm.
+      this.melee.bufferRemaining = 0
+      if (this.melee.phase === 'idle' && this.melee.lockout <= 0) return
+    }
     const step = advancePlayerMelee(this.melee, { delta, stamina: this.stamina })
     if (step.startedBeat > 0) {
       const spec = playerBeatSpec(step.startedBeat)
@@ -3195,17 +3428,60 @@ export class GameEngine {
     }
   }
 
-  commandSquad(): void {
-    if (this.paused || this.ended) return
+  commandSquad(order?: SquadCommandMode, focusTargetId?: string): boolean {
+    if (this.ended || (this.paused && order === undefined)) return false
+    const members = this.actors.filter((actor) => isSquadMember(actor, this.faction))
+    if (members.length === 0) {
+      this.callbacks.onNotice(SQUAD_COMMAND_COPY.empty, 'info')
+      return false
+    }
+    const mode = order ?? (this.squadCommand.baseStance === 'hold' ? 'follow' : 'hold')
+    if (!isSquadCommandMode(mode)) {
+      this.callbacks.onNotice(SQUAD_COMMAND_COPY.invalidOrder, 'warning')
+      return false
+    }
+    const anchor = { x: this.player.position.x, z: this.player.position.z,
+      heading: Math.atan2(Math.sin(this.cameraYaw), Math.cos(this.cameraYaw)) }
+    if (mode === 'hold') {
+      const radius = Math.max(...members.map((actor) => this.actorColliderRadiusForRole(actor.role)))
+      const position = findSquadWalkablePosition(anchor, (point) =>
+        this.isWalkablePosition(point.x, point.z, radius), 2.4)
+      if (!position) {
+        this.callbacks.onNotice(SQUAD_COMMAND_COPY.invalidAnchor, 'warning')
+        return false
+      }
+      anchor.x = position.x
+      anchor.z = position.z
+    }
+    if (mode === 'focus') {
+      const target = this.actors.find((actor) => actor.id === focusTargetId)
+      if (!target || !isSquadFocusTarget(
+        target, this.faction, this.player.position, target.mesh.position,
+        this.isSquadTargetVisible(target, true),
+      )) {
+        this.callbacks.onNotice(SQUAD_COMMAND_COPY.invalidTarget, 'warning')
+        return false
+      }
+    }
     this.resumeAudio()
-    this.squadFollowing = !this.squadFollowing
+    this.squadCommand = issueSquadCommand(this.squadCommand, mode, anchor, focusTargetId ?? null)
+    this.squadNavigation.clear()
+    this.squadBlockedSeconds.clear()
+    this.squadIntents.clear()
+    for (const actor of members) {
+      actor.targetId = null
+      actor.retaliationTimer = 0
+      actor.alertTimer = 0
+      actor.alertPos = null
+    }
     this.achievements.recordSquadCommand()
     this.callbacks.onNotice(
-      describeSquadOrder(this.faction, this.squadFollowing),
-      this.squadFollowing ? 'success' : 'info',
+      describeSquadOrder(this.faction, mode),
+      mode === 'hold' ? 'info' : 'success',
     )
     this.playSound('command')
     this.emitView(true)
+    return true
   }
 
   purchase(item: ShopItem): { ok: boolean; message: string } {
@@ -3270,6 +3546,7 @@ export class GameEngine {
     const savedEventCooldown = this.playerAnchoredEvent
       ? Math.max(this.eventCooldown, this.eventCooldownRange().min)
       : this.eventCooldown
+    this.captureLiveFinale()
     this.syncChronicleToRegionDeltas()
     const regionState = this.generatedWorld.regions.saveState()
     const startSiteId = this.generatedBlueprint.starts[this.faction]
@@ -3340,17 +3617,11 @@ export class GameEngine {
         upgrades: { ...this.upgrades },
       },
       companions: this.actors
-        .filter(
-          (actor) =>
-            actor.alive &&
-            actor.allegiance === this.faction &&
-            actor.squadEligible &&
-            actor.role !== 'commander' &&
-            actor.eventOwnerId === null,
-        )
+        .filter((actor) => isSquadMember(actor, this.faction))
         .map((actor) => ({
           id: actor.id,
           role: actor.role,
+          ...(actor.squadSlot === null ? {} : { formationSlot: actor.squadSlot }),
           health: actor.hp,
           maxHealth: actor.maxHp,
           worldPosition: [
@@ -3362,8 +3633,10 @@ export class GameEngine {
       discoveredRegionIds: regionState.discoveredRegionIds.map(String),
       regionDeltas: regionState.deltas,
       directorState: {
+        finale: serializeFinaleState(this.finale),
         elapsed: this.elapsed,
-        squadFollowing: this.squadFollowing,
+        squadFollowing: this.squadCommand.baseStance === 'follow',
+        squadCommand: serializeSquadCommandState(this.squadCommand),
         startingSquadVersion: STARTING_SQUAD_VERSION,
         threatTier: this.threatTier,
         nextThreatWaveAt: this.nextThreatWaveAt,
@@ -3374,6 +3647,9 @@ export class GameEngine {
         caravanX: this.caravan.position.x,
         caravanZ: this.caravan.position.z,
         pendingHints: this.hints.pending(),
+        combatMastery: serializeCombatMastery(
+          this.combatMastery, this.melee, this.abilityCooldown, this.attackCooldown, this.shieldActive,
+        ),
         chronicleCommitments: serializeChronicleCommitmentState(
           this.chronicleCommitments,
         ) as SerializableState[string],
@@ -3387,6 +3663,7 @@ export class GameEngine {
         doctrines: serializeDoctrineRunState(
           this.doctrines,
         ) as SerializableState[string],
+        expedition: this.expeditionPlanner.serialize(),
         pendingLoot: this.lootPickups
           .filter((pickup) => pickup.active)
           .sort((left, right) => left.serial - right.serial)
@@ -3480,6 +3757,10 @@ export class GameEngine {
     this.syncGeneratedRegions()
     this.refreshGeneratedCameraObstacles()
     this.updateCaravan(delta)
+    if (!this.finaleWithinArena()) {
+      suspendFinale(this.finale)
+      this.clearFinaleThreats()
+    }
     this.updateProjectiles(delta)
     this.updateActors(delta)
     this.updateTorches()
@@ -3643,14 +3924,31 @@ export class GameEngine {
     const encounterId = actor.generatedEncounterId
     if (!regionId || !encounterId) return
     const spawnId = actor.generatedSpawnId
-    if (actor.generatedUnique && spawnId) {
+    const ownedFinale = finaleOwnsActor(this.finale.identity, actor)
+    if ((actor.generatedUnique || ownedFinale) && spawnId) {
       this.mutateGeneratedRegionDelta(regionId, (delta) => {
         if (!delta.defeatedActorIds.includes(spawnId)) {
           delta.defeatedActorIds.push(spawnId)
         }
       })
     }
-    if (actor.generatedObjectiveId) {
+    const finalNode = this.generatedBlueprint.objectives[this.faction].nodes.find(
+      (node) => node.id === this.finale.identity.objectiveId,
+    )
+    const finaleDefeated = ownedFinale && recordFinaleDeath(
+      this.finale, actor, finalNode !== undefined && this.generatedPrerequisitesDone(finalNode),
+    )
+    if (finaleDefeated) {
+      this.clearFinaleThreats()
+      for (const escort of [...this.actors]) {
+        if (escort !== actor && finaleOwnsActor(this.finale.identity, escort)) this.removeActorById(escort.id)
+      }
+      this.mutateGeneratedRegionDelta(regionId, (next) => {
+        if (!next.clearedEncounterIds.includes(encounterId)) next.clearedEncounterIds.push(encounterId)
+      })
+      this.callbacks.onNotice(describeFinaleDefeat(this.finale.identity.profile), 'success')
+    }
+    if (actor.generatedObjectiveId && (!ownedFinale || finaleDefeated)) {
       const node = this.generatedBlueprint.objectives[this.faction].nodes.find(
         (candidate) => candidate.id === actor.generatedObjectiveId,
       )
@@ -3697,9 +3995,14 @@ export class GameEngine {
     }
     for (const regionId of this.simulatedGeneratedRegions) {
       if (nextRegions.has(regionId)) continue
+      if (regionId === this.finale.identity.regionId) {
+        suspendFinale(this.finale)
+        this.clearFinaleThreats()
+      }
       for (const actor of [...this.actors]) {
         if (
           actor.generatedRegionId === regionId &&
+          !isSquadMember(actor, this.faction) &&
           (actor.generatedEncounterId !== null || actor.eventOwnerId === null)
         ) {
           this.removeActorById(actor.id)
@@ -3708,7 +4011,9 @@ export class GameEngine {
       this.generatedActivationSpawns.delete(regionId)
     }
     this.simulatedGeneratedRegions.clear()
-    for (const regionId of nextRegions) {
+    const orderedRegions = [...nextRegions].sort((left, right) =>
+      Number(right === this.finale.identity.regionId) - Number(left === this.finale.identity.regionId))
+    for (const regionId of orderedRegions) {
       this.simulatedGeneratedRegions.add(regionId)
       if (!this.generatedActivationSpawns.has(regionId)) {
         this.generatedActivationSpawns.set(regionId, new Set())
@@ -3720,9 +4025,10 @@ export class GameEngine {
   private restoreGeneratedCompanions(
     companions: readonly RunCompanionState[],
   ): void {
-    for (const companion of companions) {
-      if (!this.reserveActorSlots('squad', 1)) break
+    for (const companion of [...companions].sort((left, right) => left.id.localeCompare(right.id))) {
+      if (companion.health <= 0) continue
       if (this.actors.some((actor) => actor.id === companion.id)) continue
+      if (!this.reserveActorSlots('squad', 1)) break
       const actor = this.spawnActor(
         this.faction,
         companion.role,
@@ -3741,6 +4047,12 @@ export class GameEngine {
       actor.id = companion.id
       actor.maxHp = companion.maxHealth
       actor.hp = Math.min(companion.maxHealth, companion.health)
+      this.assignSquadSlot(actor, companion.formationSlot)
+      const legacySequence = /-(\d+)$/.exec(companion.id)
+      const sequence = legacySequence ? Number(legacySequence[1]) : -1
+      if (Number.isInteger(sequence) && sequence >= 0 && sequence <= 0xffffffff) {
+        this.actorSequence = Math.max(this.actorSequence, sequence + 1)
+      }
       actor.home.copy(actor.mesh.position)
       actor.wanderTarget.copy(actor.mesh.position)
       if (actor.role === 'captive') {
@@ -3754,13 +4066,25 @@ export class GameEngine {
   }
 
   private spawnGeneratedStartingSquad(): void {
-    for (const member of getStartingSquad(this.faction)) {
+    for (const [index, member] of getStartingSquad(this.faction).entries()) {
+      const id = startingSquadIdentity(this.faction, index)
+      if (this.actors.some((actor) => actor.id === id)) continue
       if (!this.reserveActorSlots('squad', 1)) break
+      const radius = this.actorColliderRadiusForRole(member.role)
+      const desired = {
+        x: this.player.position.x + member.offsetX,
+        z: this.player.position.z + member.offsetZ,
+      }
+      const position = findSquadWalkablePosition(desired, (point) =>
+        this.isWalkablePosition(point.x, point.z, radius) &&
+        (this.isMovementPathClear(point.x, point.z, this.player.position.x, this.player.position.z, radius) ||
+          this.generatedWorld.findPath(point, this.player.position) !== null), 8)
+      if (!position) throw new Error(`No reachable starting position for companion ${id}`)
       const actor = this.spawnActor(
         this.faction,
         member.role,
-        this.player.position.x + member.offsetX,
-        this.player.position.z + member.offsetZ,
+        position.x,
+        position.z,
         this.actorSequence,
         {
           budget: 'squad',
@@ -3768,11 +4092,23 @@ export class GameEngine {
           squadEligible: true,
           generatedRegionId: null,
           hostileToPlayer: false,
+          appearanceId: id,
         },
       )
+      actor.id = id
+      this.assignSquadSlot(actor)
       actor.home.copy(actor.mesh.position)
       actor.wanderTarget.copy(actor.mesh.position)
     }
+  }
+
+  private assignSquadSlot(actor: Actor, preferred?: number): void {
+    if (!isSquadMember(actor, this.faction)) return
+    const occupied = new Set(this.actors
+      .filter((other) => other !== actor && isSquadMember(other, this.faction))
+      .flatMap((other) => other.squadSlot === null ? [] : [other.squadSlot]))
+    actor.squadSlot = isSquadSlot(preferred) && !occupied.has(preferred)
+      ? preferred : allocateSquadSlot(actor.id, occupied)
   }
 
   private restoreGeneratedLoot(state: SerializableState | undefined): void {
@@ -3850,7 +4186,7 @@ export class GameEngine {
     if (!activationSpawns) return
     const graph = this.generatedBlueprint.objectives[this.faction]
     const finalNode = graph.nodes.find((node) => node.id === graph.finalNodeId)
-    const finalReady = finalNode ? this.generatedPrerequisitesDone(finalNode) : true
+    const finalReady = finalNode ? this.generatedPrerequisitesDone(finalNode) : false
     const finaleSiteId = this.generatedBlueprint.finales[this.faction]
     const startSiteId = this.generatedBlueprint.starts[this.faction]
     const startRegionId = this.generatedBlueprint.sites.find(
@@ -3861,13 +4197,25 @@ export class GameEngine {
         encounter.kind === 'boss' &&
         encounter.siteId === finaleSiteId,
     )?.id
-    for (const plan of this.generatedEncounterPlans.get(regionId) ?? []) {
+    reconcileFinale(this.finale, this.finaleAuthority())
+    const orderedPlans = [...(this.generatedEncounterPlans.get(regionId) ?? [])].sort(
+      (left, right) => Number(right.encounterId === finalEncounterId) - Number(left.encounterId === finalEncounterId),
+    )
+    for (const plan of orderedPlans) {
       if (delta.clearedEncounterIds.includes(plan.encounterId)) continue
       if (regionId === startRegionId && plan.kind !== 'boss') continue
       const isFinalEncounter = plan.encounterId === finalEncounterId
-      if (isFinalEncounter && !finalReady) continue
+      if (isFinalEncounter && (!finalReady || this.finale.defeated)) continue
       for (const spawn of plan.spawns) {
         if (activationSpawns.has(spawn.id)) continue
+        if (isFinalEncounter && !finaleCanSpawn(this.finale, spawn.id)) {
+          activationSpawns.add(spawn.id)
+          continue
+        }
+        if (this.actors.some((actor) => actor.generatedSpawnId === spawn.id)) {
+          activationSpawns.add(spawn.id)
+          continue
+        }
         if (spawn.unique && delta.defeatedActorIds.includes(spawn.id)) {
           activationSpawns.add(spawn.id)
           continue
@@ -3876,11 +4224,13 @@ export class GameEngine {
         // lower-priority categories give up actors, and nothing should die for a slot
         // that is then skipped.
         if (!this.reserveActorSlots('campaign', 1)) return
+        const savedBody = isFinalEncounter ? finaleSavedBody(this.finale, spawn.id) : null
+        const ownedBoss = isFinalEncounter && spawn.id === this.finale.identity.bossId
         const actor = this.spawnActor(
           spawn.faction,
           spawn.role,
-          spawn.worldX,
-          spawn.worldZ,
+          savedBody?.x ?? spawn.worldX,
+          savedBody?.z ?? spawn.worldZ,
           this.actorSequence++,
           {
             budget: 'campaign',
@@ -3894,8 +4244,29 @@ export class GameEngine {
             generatedUnique: spawn.unique,
             hostileToPlayer: plan.hostileToPlayer,
             healthScale: 1 + Math.max(0, plan.difficulty - 1) * 0.12,
+            ...(ownedBoss ? { finaleProfile: this.finale.identity.profile } : {}),
           },
         )
+        if (ownedBoss && !savedBody) {
+          actor.maxHp = Math.round(FINALE_PROFILES[this.faction].health * this.enemyHealthMultiplier(actor.allegiance))
+          actor.hp = actor.maxHp
+        }
+        if (savedBody) {
+          actor.maxHp = savedBody.maxHealth
+          actor.hp = savedBody.health
+          actor.mesh.rotation.y = savedBody.heading
+          actor.attackCooldown = savedBody.cooldown
+          if (ownedBoss && Math.hypot(actor.mesh.position.x - savedBody.x, actor.mesh.position.z - savedBody.z) > 0.1) {
+            interruptFinale(this.finale)
+          }
+        }
+        if (isFinalEncounter) {
+          actor.home.set(
+            this.finale.identity.arena.x, actor.mesh.position.y, this.finale.identity.arena.z,
+          )
+          this.captureFinaleActor(actor)
+          this.drawActorHealthBar(actor)
+        }
         actor.playerAggro = plan.hostileToPlayer
         activationSpawns.add(spawn.id)
       }
@@ -4041,6 +4412,43 @@ export class GameEngine {
       if (text) this.callbacks.onNotice(describeObjectiveDropped(text), 'info')
     }
     this.emitView(true)
+  }
+
+  setExpeditionTarget(target: ExpeditionTargetIdentity | null): void {
+    if (this.ended) return
+    if (!this.expeditionPlanner.select(target, this.buildExpeditionInput())) {
+      this.callbacks.onNotice(EXPEDITION_TARGET_UNAVAILABLE_NOTICE, 'warning')
+      return
+    }
+    this.emitView(true)
+  }
+
+  setExpeditionPreference(preference: ExpeditionPreference): void {
+    if (this.ended) return
+    if (!this.expeditionPlanner.setPreference(preference)) {
+      this.callbacks.onNotice(EXPEDITION_PREFERENCE_INVALID_NOTICE, 'warning')
+      return
+    }
+    this.emitView(true)
+  }
+
+  private buildExpeditionInput(): ExpeditionInput {
+    return {
+      faction: this.faction,
+      player: { x: this.player.position.x, z: this.player.position.z },
+      heading: this.cameraYaw,
+      objectives: this.objectives,
+      activeObjectiveId: this.getActiveGeneratedObjective()?.id ?? null,
+      contracts: buildCampaignContractViews({
+        blueprint: this.generatedBlueprint, faction: this.faction,
+        objectives: this.objectives, contracts: this.campaignContracts,
+        sitePosition: (id) => this.generatedWorld.getSitePosition(id) ?? null,
+      }),
+      rumours: this.buildRumourViews(),
+      discoveredRegionIds: new Set(this.generatedWorld.discoveredRegionIds.map(String)),
+      chronicleRegions: this.chronicleRegions,
+      contestedRegionIds: this.chronicleContestedRegionIds,
+    }
   }
 
   private contractCopyContext(node: FactionObjectiveNode): ContractCopyContext {
@@ -4280,17 +4688,47 @@ export class GameEngine {
 
   private completeGeneratedObjective(node: FactionObjectiveNode): boolean {
     if (!this.generatedPrerequisitesDone(node)) return false
+    if (node.id === this.finale.identity.objectiveId && !isFinaleDefeated(this.finale.identity, this.finaleAuthority())) return false
     return this.completeObjective(node.id)
   }
 
-  private handleGeneratedInteraction(): boolean {
+  private generatedInteraction() {
     const site = this.generatedWorld.findNearbySite(
       { x: this.player.position.x, z: this.player.position.z },
       6,
     )
-    // Roadmap 1.3 — the torch, before anything else this site could be. A depot is usually
-    // also a settlement or a shop, and "осмотреть" is not what the player came here to do.
-    if (site) {
+    const node = this.getActiveGeneratedObjective()
+    return {
+      site,
+      node,
+      ...chooseGeneratedInteraction({
+        site: site ?? null,
+        objective: node ? {
+          siteId: node.siteId, kind: node.kind,
+          liveContract: node.contract !== undefined && isContractLive(getContractStatus(this.campaignContracts, node)),
+        } : null,
+        sabotage: Boolean(site && this.pendingSabotageAt(site.id)),
+        razed: Boolean(site && this.isChronicleSiteRazed(site.id)),
+        caravanDistance: this.player.position.distanceTo(this.caravan.position),
+        supplyCount: this.generatedSupplyCount,
+        health: this.health, maxHealth: this.maxHealth,
+        rationOnBleed: this.doctrineEffects.rationOnBleed,
+      }),
+    }
+  }
+
+  private handleGeneratedInteraction(): boolean {
+    const { site, node, kind, targetsObjective: targetsNode } = this.generatedInteraction()
+    if (kind === 'ration') {
+      this.generatedSupplyCount -= 1
+      this.health = Math.min(this.maxHealth, this.health + 35)
+      this.body.bleeding = Math.max(0, this.body.bleeding - 0.35)
+      this.callbacks.onNotice(describeRationEaten(35), 'success')
+      this.playSound('objective')
+      return true
+    }
+    if (kind === 'none' || kind === 'caravan' || !site) return false
+    if (kind === 'sabotage') {
       const sabotage = this.pendingSabotageAt(site.id)
       if (sabotage && markRumourActioned(
         this.chronicleCommitments,
@@ -4302,44 +4740,8 @@ export class GameEngine {
         this.syncChronicleToRegionDeltas()
         return true
       }
-    }
-    if (!site) {
-      if (
-        this.generatedSupplyCount > 0 &&
-        this.health < this.maxHealth &&
-        // Roadmap 1.6 — «Устав сухого пайка» takes the ration out of the player's hands.
-        // It is not eaten for less; it is not eaten *by choice* at all, and waits for blood.
-        !this.doctrineEffects.rationOnBleed &&
-        this.player.position.distanceTo(this.caravan.position) >= 7
-      ) {
-        this.generatedSupplyCount -= 1
-        this.health = Math.min(this.maxHealth, this.health + 35)
-        this.body.bleeding = Math.max(0, this.body.bleeding - 0.35)
-        this.callbacks.onNotice(describeRationEaten(35), 'success')
-        this.playSound('objective')
-        return true
-      }
-      return false
-    }
-    const node = this.getActiveGeneratedObjective()
-    // Roadmap 1.4 — a live signature contract is not completed by pressing E at its site.
-    // The contract is the work; the plain interaction is what the node degrades to once the
-    // contract has failed forward, and that path is an arrival rather than a keypress.
-    const contractLive =
-      node !== null &&
-      node.contract !== undefined &&
-      isContractLive(getContractStatus(this.campaignContracts, node))
-    const targetsNode =
-      !contractLive &&
-      node?.siteId === site.id &&
-      (node.kind === 'interact' || node.kind === 'claim')
-    if (
-      !targetsNode &&
-      site.kind !== 'shop' &&
-      site.kind !== 'recovery' &&
-      site.kind !== 'treasure'
-    ) {
-      return false
+      this.callbacks.onNotice(GENERATED_ACTION_UNAVAILABLE_NOTICE, 'warning')
+      return true
     }
 
     const delta =
@@ -4413,7 +4815,7 @@ export class GameEngine {
       this.callbacks.onNotice(describeSiteInspected(site.kind), 'success')
     }
 
-    if (targetsNode) {
+    if (targetsNode && node) {
       if (!interacted) {
         this.mutateGeneratedRegionDelta(String(site.regionId), (next) => {
           if (!next.completedInteractionIds.includes(site.id)) {
@@ -4427,37 +4829,24 @@ export class GameEngine {
   }
 
   private getGeneratedPrompt(): string {
-    const node = this.getActiveGeneratedObjective()
-    // Roadmap 1.4 — the prompt agrees with the interaction gate, or the HUD would offer a
-    // keypress that does nothing while a contract is running.
-    const contractLive =
-      node !== null &&
-      node.contract !== undefined &&
-      isContractLive(getContractStatus(this.campaignContracts, node))
-    const nearbySite = this.generatedWorld.findNearbySite(
-      { x: this.player.position.x, z: this.player.position.z },
-      6,
-    )
+    const { site: nearbySite, kind } = this.generatedInteraction()
     if (nearbySite) {
-      if (this.pendingSabotageAt(nearbySite.id)) {
+      if (kind === 'sabotage') {
         return describeSabotagePrompt(generatedSiteLabel(nearbySite.kind))
       }
-      if (
-        !contractLive &&
-        node?.siteId === nearbySite.id &&
-        (node.kind === 'interact' || node.kind === 'claim')
-      ) {
-        return node.kind === 'claim'
+      if (kind === 'inspect' || kind === 'claim') {
+        return kind === 'claim'
           ? `[E] Забрать награду: ${generatedSiteLabel(nearbySite.kind)}`
           : `[E] Осмотреть: ${generatedSiteLabel(nearbySite.kind)}`
       }
-      if (nearbySite.kind === 'shop') {
+      if (kind === 'ruin') return `[E] Осмотреть: ${describeRazedSite(nearbySite.kind)}`
+      if (kind === 'shop') {
         return `[E] Купить что-нибудь: ${generatedSiteLabel(nearbySite.kind)}`
       }
-      if (nearbySite.kind === 'recovery') {
+      if (kind === 'recovery') {
         return `[E] Вылечиться: ${generatedSiteLabel(nearbySite.kind)}`
       }
-      if (nearbySite.kind === 'treasure') {
+      if (kind === 'treasure') {
         const claimed = this.generatedWorld.regions
           .getSavedDelta(nearbySite.regionId)
           ?.collectedLootIds.includes(nearbySite.id)
@@ -4466,42 +4855,153 @@ export class GameEngine {
           : `[E] Осмотреть: ${generatedSiteLabel(nearbySite.kind)}`
       }
     }
-    if (this.player.position.distanceTo(this.caravan.position) < 7) {
+    if (kind === 'caravan') {
       return this.faction === 'guard'
         ? '[E] Досмотреть корован'
         : this.caravanCooldown > 0
           ? 'Корован уже ограбили'
           : '[E] ГРАБИТЬ КОРОВАН'
     }
-    if (
-      this.generatedSupplyCount > 0 &&
-      this.health < this.maxHealth &&
-      // The prompt has to agree with the interaction: under «Устав сухого пайка» pressing E
-      // does nothing, so offering it would be the HUD lying about a rule.
-      !this.doctrineEffects.rationOnBleed
-    ) {
+    if (kind === 'ration') {
       return `[E] Съесть паёк • ${this.generatedSupplyCount}`
     }
-    if (node) {
-      const objective = this.objectives.find((entry) => entry.id === node.id)
-      const site = this.generatedWorld.getSitePosition(node.siteId)
-      const distance = site
-        ? Math.round(
-            Math.hypot(
-              site.x - this.player.position.x,
-              site.z - this.player.position.z,
-            ),
-          )
-        : 0
-      return `Цель: ${objective?.text ?? 'продолжить путь'} • ${distance} м`
-    }
-    return document.pointerLockElement === this.renderer.domElement
-      ? ''
-      : 'Нажми на мир, чтобы управлять камерой'
+    return ''
   }
 
   private isWalkablePosition(x: number, z: number, radius: number): boolean {
     return this.generatedWorld.collision.isWalkablePosition(x, z, radius)
+  }
+
+  private getSquadNavigation(actor: Actor, requested: SquadPoint): {
+    waypoint: SquadPoint | null
+    destination: SquadPoint | null
+    blocked: boolean
+  } {
+    let entry = this.squadNavigation.get(actor.id)
+    const radius = this.actorColliderRadiusForRole(actor.role)
+    const directlyReachable = (point: SquadPoint): boolean => this.isMovementPathClear(
+      actor.mesh.position.x, actor.mesh.position.z, point.x, point.z, radius,
+    )
+    if (entry?.direct && entry.destination && !directlyReachable(entry.destination)) {
+      entry = undefined
+    }
+    if (!entry || entry.revision !== this.squadNavigationRevision ||
+      (this.elapsed >= entry.nextPlanAt &&
+        (squadDistance(entry.requested, requested) > 1 ||
+          entry.path === null ||
+          (this.squadBlockedSeconds.get(actor.id) ?? 0) >= SQUAD_BLOCKED_SECONDS))) {
+      const destination = findSquadWalkablePosition(requested, (point) =>
+        this.isWalkablePosition(point.x, point.z, radius) &&
+        (this.squadCommand.mode !== 'hold' || squadDistance(point, this.squadCommand.anchor) <= SQUAD_HOLD_RADIUS))
+      const direct = destination !== null && directlyReachable(destination)
+      const path = destination
+        ? direct ? [destination] : findSquadNavigationPath(actor.mesh.position, destination, {
+            findPath: (start, end) => this.generatedWorld.findPath(start, end),
+            pathClear: (start, end) => this.isMovementPathClear(start.x, start.z, end.x, end.z, radius),
+            walkable: (point) => this.isWalkablePosition(point.x, point.z, radius),
+          })
+        : null
+      entry = {
+        requested: { x: requested.x, z: requested.z },
+        destination,
+        path,
+        waypoint: 0,
+        direct,
+        revision: this.squadNavigationRevision,
+        nextPlanAt: this.elapsed + (path ? 0.5 : 1),
+      }
+      this.squadNavigation.set(actor.id, entry)
+    }
+    if (!entry.path || !entry.destination) {
+      return { waypoint: null, destination: entry.destination, blocked: true }
+    }
+    if (!entry.direct && directlyReachable(entry.destination)) entry.direct = true
+    while (entry.waypoint < entry.path.length &&
+      squadDistance(actor.mesh.position, entry.path[entry.waypoint]) <= 0.7) {
+      entry.waypoint += 1
+    }
+    return {
+      waypoint: entry.direct ? null : entry.path[entry.waypoint] ?? null,
+      destination: entry.destination,
+      blocked: false,
+    }
+  }
+
+  private isSquadTargetVisible(actor: Actor, requireOnScreen: boolean): boolean {
+    if (!actor.mesh.visible || this.isInactiveFinaleActor(actor)) return false
+    const aim = actor.mesh.position.clone()
+    aim.y += 1.3
+    if (requireOnScreen) {
+      this.camera.updateMatrixWorld()
+      const projected = aim.clone().project(this.camera)
+      if (Math.abs(projected.x) > 1 || Math.abs(projected.y) > 1 ||
+        projected.z < -1 || projected.z > 1) return false
+    }
+    const eye = this.player.position.clone()
+    eye.y += 1.5
+    const direction = aim.clone().sub(eye)
+    const distance = direction.length()
+    if (distance < 0.01) return true
+    this.squadSightRaycaster.set(eye, direction.clone().normalize())
+    this.squadSightRaycaster.near = 0.1
+    this.squadSightRaycaster.far = Math.max(0.1, distance - 0.5)
+    if (this.squadSightRaycaster.intersectObjects(this.cameraObstacles, false).length > 0) return false
+    for (let step = 1; step < Math.ceil(distance); step += 1) {
+      const along = step / distance
+      if (this.groundHeightAt(eye.x + direction.x * along, eye.z + direction.z * along) >
+        eye.y + direction.y * along) return false
+    }
+    return true
+  }
+
+  private reconcileSquadFocus(): void {
+    if (this.squadCommand.mode !== 'focus') return
+    const target = this.actors.find((actor) => actor.id === this.squadCommand.focusTargetId)
+    if (target && isSquadFocusTarget(
+      target, this.faction, this.player.position, target.mesh.position,
+      this.isSquadTargetVisible(target, false),
+    )) return
+    this.squadCommand = finishSquadFocus(this.squadCommand)
+    this.squadNavigation.clear()
+    this.squadIntents.clear()
+    this.callbacks.onNotice(SQUAD_COMMAND_COPY.focusLost, 'info')
+  }
+
+  private buildLiveSquadCommandView(): SquadCommandView {
+    const combatTargets = this.getCombatTargets()
+    const focusView = (actor: Actor): SquadFocusView => ({
+      id: actor.id, role: actor.role, health: Math.max(0, actor.hp),
+      maxHealth: actor.maxHp, distance: squadDistance(actor.mesh.position, this.player.position),
+    })
+    const members = this.actors
+      .filter((actor) => isSquadMember(actor, this.faction))
+      .sort((left, right) => (left.squadSlot ?? 0) - (right.squadSlot ?? 0))
+    const targets = combatTargets.filter((actor) =>
+      isSquadFocusTarget(actor, this.faction, this.player.position, actor.mesh.position, true) &&
+      this.isSquadTargetVisible(actor, true))
+      .sort((left, right) => squadDistance(left.mesh.position, this.player.position) -
+        squadDistance(right.mesh.position, this.player.position) || left.id.localeCompare(right.id))
+    const focused = this.actors.find((actor) =>
+      actor.alive && actor.id === this.squadCommand.focusTargetId)
+    return buildSquadCommandView(this.squadCommand, members.map((actor) => {
+      const distance = squadDistance(actor.mesh.position, this.player.position)
+      const intent = this.squadIntents.get(actor.id) ?? selectSquadIntent(
+        actor, combatTargets, this.faction, this.squadCommand, this.player.position,
+        this.cameraYaw, actorPosition,
+      )
+      return {
+        id: actor.id,
+        role: actor.role,
+        slot: actor.squadSlot ?? 0,
+        health: Math.max(0, actor.hp),
+        maxHealth: actor.maxHp,
+        distance,
+        status: squadMemberStatus({
+          intent, distance, blockedSeconds: this.squadBlockedSeconds.get(actor.id) ?? 0,
+          routing: actor.routTimer > 0, reacting: actor.reaction !== 'none', attacking: actor.action !== null,
+        }),
+      }
+    }), targets.map(focusView), focused ? focusView(focused) : null)
   }
 
   private resolveCharacterOverlaps(position: THREE.Vector3, radius: number): boolean {
@@ -4652,6 +5152,7 @@ export class GameEngine {
     desiredDirection: THREE.Vector3,
     distance: number,
     allowInactiveBounds = false,
+    holdAnchor?: SquadPoint,
   ): number {
     const radius = this.actorColliderRadiusForRole(actor.role)
     const startX = actor.mesh.position.x
@@ -4677,6 +5178,7 @@ export class GameEngine {
       )
       const movedX = this.collisionProbe.x - startX
       const movedZ = this.collisionProbe.z - startZ
+      if (holdAnchor && !isSquadHoldStepAllowed(actor.mesh.position, this.collisionProbe, holdAnchor)) continue
       const travelled = Math.hypot(movedX, movedZ)
       const forwardProgress = movedX * desiredDirection.x + movedZ * desiredDirection.z
       const score = forwardProgress + travelled * 0.18 - Math.abs(angle) * distance * 0.015
@@ -4695,25 +5197,19 @@ export class GameEngine {
   private updatePlayer(delta: number): void {
     const wasOnGround = this.onGround
     const forward = this.getAimDirection()
-    const right = new THREE.Vector3(Math.cos(this.cameraYaw), 0, Math.sin(this.cameraYaw))
-    const move = new THREE.Vector3()
-    if (this.keys.has('KeyW') || this.keys.has('ArrowUp')) move.add(forward)
-    if (this.keys.has('KeyS') || this.keys.has('ArrowDown')) move.sub(forward)
-    if (this.keys.has('KeyD') || this.keys.has('ArrowRight')) move.add(right)
-    if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) move.sub(right)
+    const movement = cameraRelativeMovement(this.keys, this.cameraYaw)
+    const move = new THREE.Vector3(movement.x, 0, movement.z)
+    const evadeMotion = advanceCombatMastery(this.combatMastery, delta)
+    const evading = evadeMotion.activeSeconds > 0
 
     // Roadmap 1.1 — movement stays live through beats one and two and stops dead for the
     // finisher. That single line is the price of the third beat, and
     // `PLAYER_MELEE_FINISHER_COMMITMENT` is how long it lasts.
     const committed = isPlayerMeleeCommitted(this.melee)
-    if (committed) move.set(0, 0, 0)
+    if (committed || evading) move.set(0, 0, 0)
 
-    const missingLegs =
-      Number(this.body.leftLeg === 'missing') + Number(this.body.rightLeg === 'missing')
-    const prostheticLegs =
-      Number(this.body.leftLeg === 'prosthetic') + Number(this.body.rightLeg === 'prosthetic')
-    let mobility = missingLegs === 2 ? 0.24 : missingLegs === 1 ? 0.53 : 1
-    if (prostheticLegs > 0) mobility *= 0.9
+    const missingLegs = missingPlayerLegs(this.body)
+    let mobility = playerLegMobility(this.body)
     if (
       this.faction === 'elf' &&
       this.zoneAtPosition(this.player.position.x, this.player.position.z) === 'forest'
@@ -4749,14 +5245,27 @@ export class GameEngine {
       if (!this.doctrineEffects.forcedMarch) {
         this.stamina = Math.max(0, this.stamina - delta * 24)
       }
-    } else if (!this.doctrineEffects.forcedMarch || move.lengthSq() > 0) {
+    } else if (!evading && (!this.doctrineEffects.forcedMarch || move.lengthSq() > 0)) {
       // The same doctrine's other half: standing still returns nothing, so the run cannot be
       // rested through. Walking still does, which is what keeps it a sidegrade rather than a
       // tax on staying alive.
       this.stamina = Math.min(this.maxStamina, this.stamina + delta * 16)
     }
 
-    if (move.lengthSq() > 0) {
+    if (evading) {
+      const startX = this.player.position.x
+      const startZ = this.player.position.z
+      this.moveCharacter(this.player.position, evadeMotion.x, evadeMotion.z, PLAYER_COLLIDER_RADIUS)
+      const movedX = this.player.position.x - startX
+      const movedZ = this.player.position.z - startZ
+      const travelled = Math.hypot(movedX, movedZ)
+      const progress = 1 - this.combatMastery.evadeRemaining / EVADE_DURATION
+      const stepPose = travelled > 0.001 ? Math.sin(progress * Math.PI) : 0
+      if (travelled > 0.001) this.player.rotation.y = Math.atan2(movedX, movedZ)
+      this.animateCharacter(this.player, this.samplePlayerPose(stepPose * 0.62))
+      const torso = this.player.getObjectByName('torso-pivot')
+      if (torso) torso.rotation.x += stepPose * (this.reducedMotion ? 0.08 : 0.22)
+    } else if (move.lengthSq() > 0) {
       move.normalize()
       this.moveCharacter(
         this.player.position,
@@ -4776,7 +5285,7 @@ export class GameEngine {
 
     const jumpHeld = this.keys.has('Space')
     let tookOff = false
-    if (jumpHeld && this.onGround && missingLegs < 2 && !committed) {
+    if (jumpHeld && this.onGround && missingLegs < 2 && !committed && !evading) {
       this.cancelMelee()
       this.verticalVelocity = missingLegs === 1 ? 6.2 : 8.5
       this.onGround = false
@@ -4811,8 +5320,421 @@ export class GameEngine {
 
   }
 
+  private finaleAuthority(): FinaleAuthority {
+    const delta = this.generatedWorld.regions.getSavedDelta(this.finale.identity.regionId)
+    return {
+      defeatedActorIds: delta?.defeatedActorIds ?? [],
+      clearedEncounterIds: delta?.clearedEncounterIds ?? [],
+      objectiveDone: this.objectives.some((objective) =>
+        objective.id === this.finale.identity.objectiveId && objective.done),
+    }
+  }
+
+  private captureFinaleActor(actor: Actor): void {
+    if (!finaleOwnsActor(this.finale.identity, actor) || !actor.generatedSpawnId) return
+    captureFinaleBody(this.finale, actor.generatedSpawnId, {
+      health: actor.hp, maxHealth: actor.maxHp,
+      x: actor.mesh.position.x, z: actor.mesh.position.z,
+      heading: Math.atan2(Math.sin(actor.mesh.rotation.y), Math.cos(actor.mesh.rotation.y)),
+      cooldown: Math.max(actor.attackCooldown, actor.action
+        ? actor.action.duration - actor.action.elapsed : 0),
+    })
+  }
+
+  private captureLiveFinale(): void {
+    for (const actor of this.actors) this.captureFinaleActor(actor)
+  }
+
+  private finaleWithinArena(): boolean {
+    const boss = this.finale.boss
+    const arena = this.finale.identity.arena
+    return !this.finale.defeated && boss !== null && this.health > 0 &&
+      this.simulatedGeneratedRegions.has(this.finale.identity.regionId) &&
+      Math.hypot(this.player.position.x - arena.x, this.player.position.z - arena.z) <= FINALE_ENGAGE_RADIUS &&
+      Math.hypot(this.player.position.x - boss.x, this.player.position.z - boss.z) <= FINALE_ENGAGE_RADIUS
+  }
+
+  private isInactiveFinaleActor(actor: Actor): boolean {
+    return finaleOwnsActor(this.finale.identity, actor) && !this.finaleWithinArena()
+  }
+
+  private getCombatTargets(): Actor[] {
+    return this.finaleWithinArena()
+      ? this.actors
+      : this.actors.filter((actor) => !this.isInactiveFinaleActor(actor))
+  }
+
+  private finaleRelevant(): boolean {
+    const boss = this.finale.boss
+    return boss !== null && this.finale.introduced &&
+      Math.hypot(this.player.position.x - boss.x, this.player.position.z - boss.z) <= FINALE_ENGAGE_RADIUS
+  }
+
+  private finaleCoverHit(start: FinalePoint, end: FinalePoint, radius = 0): number | null {
+    const colliders = this.generatedWorld.collision.queryBounds({
+      minX: Math.min(start.x, end.x) - radius, maxX: Math.max(start.x, end.x) + radius,
+      minZ: Math.min(start.z, end.z) - radius, maxZ: Math.max(start.z, end.z) + radius,
+    })
+    let first = firstFinaleCoverHit(start, end, colliders, radius)
+    const steps = Math.max(1, Math.ceil(Math.hypot(end.x - start.x, end.z - start.z) / 0.4))
+    for (let index = 0; index <= steps; index += 1) {
+      const t = index / steps
+      if (first !== null && t >= first) break
+      const regionId = this.generatedRegionIdAt(
+        start.x + (end.x - start.x) * t, start.z + (end.z - start.z) * t,
+      )
+      if (regionId === null || !this.simulatedGeneratedRegions.has(regionId)) {
+        first = Math.max(0, (index - 1) / steps)
+        break
+      }
+    }
+    return first
+  }
+
+  private finaleLineClear(start: FinalePoint, end: FinalePoint): boolean {
+    return this.finaleCoverHit(start, end) === null
+  }
+
+  /** Also the explicit NG-11 perfect-guard hook; ordinary flinch is not a parry. */
+  private interruptFinaleAttack(sourceActorId: string): void {
+    if (sourceActorId !== `generated:${this.finale.identity.bossId}`) return
+    if (interruptFinale(this.finale)) this.hideFinaleTelegraphs()
+  }
+
+  private clearFinaleThreats(): void {
+    this.hideFinaleTelegraphs()
+    for (let index = this.projectiles.length - 1; index >= 0; index -= 1) {
+      const projectile = this.projectiles[index]
+      if (!projectile.finale) continue
+      if (this.updatingProjectiles && projectile.sourceActorId) {
+        this.projectileSourcesToClear.add(projectile.sourceActorId)
+      } else this.removeProjectile(index)
+    }
+    for (const actor of this.actors) {
+      if (!finaleOwnsActor(this.finale.identity, actor)) continue
+      actor.action = null
+      this.releaseActorTelegraph(actor.id)
+    }
+  }
+
+  private moveFinaleActor(actor: Actor, destination: FinalePoint, distance: number): number {
+    const target = new THREE.Vector3(destination.x, actor.mesh.position.y, destination.z)
+    const waypoint = this.getNavigationWaypoint(actor.mesh.position, target, this.actorColliderRadiusForRole(actor.role))
+    const direction = (waypoint ?? target).clone().sub(actor.mesh.position)
+    direction.y = 0
+    const remaining = direction.length()
+    if (remaining < 0.05) return 0
+    direction.normalize()
+    actor.mesh.rotation.y = Math.atan2(direction.x, direction.z)
+    return this.moveActorWithSteering(actor, direction, Math.min(distance, remaining))
+  }
+
+  private animateFinaleActor(actor: Actor, delta: number, travelled: number): void {
+    actor.visualSpeed = delta > 0 ? travelled / delta : 0
+    actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, Math.min(1.2, actor.visualSpeed / 3), 10, delta)
+    actor.gaitPhase += travelled * actorGaitCadence(actor.role)
+    actor.stride = THREE.MathUtils.damp(actor.stride, Math.sin(actor.gaitPhase) * 0.62 * actor.motionBlend, 15, delta)
+    actor.velocity.set(0, 0, 0)
+    this.animateActorCharacter(actor, delta, 0)
+    this.updateChampionAura(actor)
+  }
+
+  private updateFinaleBoss(actor: Actor, delta: number): void {
+    this.captureFinaleActor(actor)
+    const active = !this.paused && !this.ended && this.finaleWithinArena()
+    const choice = selectThreat(actor, this.actors, FINALE_ENGAGE_RADIUS, actorPosition, active
+      ? { position: this.player.position, hpFraction: this.health / this.maxHealth, provoked: true }
+      : null)
+    const target = choice === THREAT_PLAYER ? this.player.position : choice?.mesh.position ?? null
+    const action = this.finale.action
+    if (action?.stage === 'tell' && Math.hypot(
+      actor.mesh.position.x - action.origin.x, actor.mesh.position.z - action.origin.z,
+    ) > 0.12) this.interruptFinaleAttack(actor.id)
+    if (action?.stage === 'contact' && FINALE_ATTACKS[action.id].shape === 'charge') {
+      const x = actor.mesh.position.x - action.origin.x
+      const z = actor.mesh.position.z - action.origin.z
+      const lateral = x * action.direction.z - z * action.direction.x
+      const along = x * action.direction.x + z * action.direction.z
+      if (actor.knockbackVelocity.lengthSq() > 0.0001 || Math.abs(lateral) > 0.01 ||
+        along < -0.01 || along > FINALE_ATTACKS[action.id].range + 0.01) {
+        this.interruptFinaleAttack(actor.id)
+      }
+    }
+    if (actor.reaction === 'stagger') this.interruptFinaleAttack(actor.id)
+    const body = this.finale.boss
+    if (!body) throw new Error('Finale boss snapshot is missing')
+    const intents = advanceFinale(this.finale, {
+      body, active, target, canSeeTarget: target !== null && this.finaleLineClear(actor.mesh.position, target),
+      sourceHeight: actor.mesh.position.y + 1.45,
+      targetHeight: (target?.y ?? actor.mesh.position.y) + 1.45,
+      interrupted: actor.reaction === 'stagger',
+    }, delta)
+    let travelled = 0
+    for (const intent of intents) {
+      if (intent.kind === 'introduction' || intent.kind === 'transition') {
+        this.clearFinaleThreats()
+        this.callbacks.onNotice(FINALE_COPY[this.finale.identity.profile][intent.kind], 'warning')
+        this.playSound('event', { position: actor.mesh.position, intensity: 0.85 })
+      } else if (intent.kind === 'tell') {
+        const pending = this.finale.action
+        if (pending && FINALE_ATTACKS[pending.id].shape === 'charge') {
+          pending.travelLimit = this.planFinaleCharge(actor, pending)
+        }
+        this.playSound('attackTell', { position: actor.mesh.position, intensity: 1 })
+      } else if (intent.kind === 'move') {
+        if (actor.reaction !== 'stagger') travelled += this.moveFinaleActor(actor, intent.destination, intent.distance)
+      } else if (intent.kind === 'contact') {
+        this.resolveFinaleContact(actor, intent.action)
+      } else if (intent.kind === 'charge') {
+        const start = actor.mesh.position.clone()
+        const direction = intent.action.direction
+        const along = (start.x - intent.action.origin.x) * direction.x +
+          (start.z - intent.action.origin.z) * direction.z
+        const left = Math.max(0, intent.action.travelLimit - along)
+        const distance = Math.min(intent.distance, left)
+        this.collisionProbe.copy(start)
+        const end = { x: start.x + direction.x * distance, z: start.z + direction.z * distance }
+        const outside = Math.hypot(end.x - this.finale.identity.arena.x, end.z - this.finale.identity.arena.z) > FINALE_ARENA_RADIUS
+        const blocked = outside || this.moveCharacter(
+          this.collisionProbe, direction.x * distance, direction.z * distance,
+          this.actorColliderRadiusForRole(actor.role),
+        )
+        // No steering or sliding during a locked charge, even when a prop is hit.
+        if (!blocked) {
+          actor.mesh.position.copy(this.collisionProbe)
+          actor.mesh.position.y = this.groundHeightAt(actor.mesh.position.x, actor.mesh.position.z)
+          travelled += Math.hypot(actor.mesh.position.x - start.x, actor.mesh.position.z - start.z)
+        } else this.interruptFinaleAttack(actor.id)
+        this.resolveFinaleContact(actor, intent.action, { start, end: actor.mesh.position })
+        if (distance >= left - 0.0001) this.interruptFinaleAttack(actor.id)
+      }
+    }
+    const locked = this.finale.action
+    if (locked) actor.mesh.rotation.y = Math.atan2(locked.direction.x, locked.direction.z)
+    this.animateFinaleActor(actor, delta, travelled)
+    this.captureFinaleActor(actor)
+    this.updateFinaleTelegraphs()
+  }
+
+  private planFinaleCharge(actor: Actor, action: FinaleAction): number {
+    const range = FINALE_ATTACKS[action.id].range
+    const steps = Math.ceil(range / 0.1)
+    const probe = actor.mesh.position.clone()
+    const radius = this.actorColliderRadiusForRole(actor.role)
+    let reached = 0
+    for (let index = 1; index <= steps; index += 1) {
+      const along = range * index / steps
+      const x = action.origin.x + action.direction.x * along
+      const z = action.origin.z + action.direction.z * along
+      if (Math.hypot(x - this.finale.identity.arena.x, z - this.finale.identity.arena.z) > FINALE_ARENA_RADIUS ||
+        this.moveCharacter(probe, x - probe.x, z - probe.z, radius)) break
+      reached = along
+    }
+    return reached
+  }
+
+  private updateFinaleEscort(actor: Actor, delta: number): boolean {
+    const index = this.finale.identity.escortIds.indexOf(actor.generatedSpawnId ?? '')
+    if (index < 0) return false
+    const waiting = !this.finaleWithinArena() || !this.finale.introduced ||
+      this.finale.introRemaining > 0 || this.finale.transitionRemaining > 0 || this.finale.resumeRemaining > 0
+    const holdingFront = this.finale.identity.profile === 'marshal' && this.finale.phase === 1
+    const outside = Math.hypot(actor.mesh.position.x - this.finale.identity.arena.x,
+      actor.mesh.position.z - this.finale.identity.arena.z) > FINALE_ARENA_RADIUS
+    if (!waiting && !holdingFront && !outside) return false
+    let travelled = 0
+    if (waiting || outside) {
+      actor.action = null
+      actor.attackCooldown = Math.max(actor.attackCooldown, 0.65)
+      this.releaseActorTelegraph(actor.id)
+      if (actor.reaction !== 'stagger') {
+        travelled = this.moveFinaleActor(actor, finaleEscortPost(this.finale, index), actor.speed * delta)
+      }
+    } else if (actor.action) {
+      this.updateActorAction(actor, delta)
+    } else if (actor.reaction !== 'stagger' && actor.routTimer <= 0) {
+      const choice = selectThreat(actor, this.actors, 6, actorPosition, {
+        position: this.player.position, hpFraction: this.health / this.maxHealth, provoked: true,
+      })
+      const target = choice === THREAT_PLAYER ? this.player.position : choice?.mesh.position ?? null
+      const range = actor.role === 'archer' ? ARCHER_MAX_RANGE : 2.55
+      if (target && target.distanceTo(actor.mesh.position) <= range && actor.attackCooldown <= 0 &&
+        this.finaleLineClear(actor.mesh.position, target)) {
+        this.startActorAction(actor, actor.role === 'archer' ? 'arrow' : choice === THREAT_PLAYER ? 'meleePlayer' : 'meleeActor',
+          choice === THREAT_PLAYER || !choice ? { kind: 'player' } : { kind: 'actor', id: choice.id }, target, range)
+      } else {
+        travelled = this.moveFinaleActor(actor, finaleEscortPost(this.finale, index), actor.speed * delta)
+      }
+    }
+    this.animateFinaleActor(actor, delta, travelled)
+    this.captureFinaleActor(actor)
+    return true
+  }
+
+  private resolveFinaleContact(
+    actor: Actor, action: FinaleAction, sweep?: { start: FinalePoint; end: FinalePoint },
+  ): void {
+    if (!actor.alive || this.finale.defeated || !this.finaleWithinArena()) return
+    const spec = FINALE_ATTACKS[action.id]
+    if (spec.speed > 0 && spec.shape !== 'charge') {
+      for (const angle of spec.angles) {
+        const horizontal = Math.cos(action.pitch)
+        const direction = new THREE.Vector3(
+          (action.direction.x * Math.cos(angle) + action.direction.z * Math.sin(angle)) * horizontal,
+          Math.sin(action.pitch),
+          (action.direction.z * Math.cos(angle) - action.direction.x * Math.sin(angle)) * horizontal,
+        )
+        const origin = new THREE.Vector3(action.origin.x, action.originY, action.origin.z)
+        this.spawnProjectile('actor', actor.allegiance, origin, direction.multiplyScalar(spec.speed),
+          spec.range / spec.speed, spec.damage * this.enemyDamageMultiplier(actor), actor.id, 0, true, true)
+      }
+      this.playSound('arrow', { position: actor.mesh.position, intensity: 1 })
+      return
+    }
+    const targets = [
+      { id: 'player', x: this.player.position.x, z: this.player.position.z, radius: PLAYER_COLLIDER_RADIUS,
+        alive: this.health > 0 && Math.abs(this.player.position.y - actor.mesh.position.y) < 2.4,
+        hostile: actor.hostileToPlayer },
+      ...this.actors.map((target) => ({
+        id: target.id, x: target.mesh.position.x, z: target.mesh.position.z,
+        radius: this.actorColliderRadiusForRole(target.role),
+        alive: target.alive && Math.abs(target.mesh.position.y - actor.mesh.position.y) < 2.4,
+        hostile: hostile(actor.allegiance, target.allegiance),
+      })),
+    ]
+    const hits = resolveFinaleContactTargets(action, targets, (from, to) => this.finaleLineClear(from, to), sweep)
+    for (const id of hits) {
+      if (id === 'player') {
+        const incoming = actor.mesh.position.clone().sub(this.player.position)
+        if (incoming.lengthSq() < 0.001) incoming.set(-action.direction.x, 0, -action.direction.z)
+        const result = this.damagePlayer(spec.damage * this.enemyDamageMultiplier(actor), incoming, true, {
+          attackKind: 'allyMelee', sourceActorId: actor.id,
+          source: { role: actor.role, allegiance: actor.allegiance },
+        })
+        // A perfect guard cancels the remaining contacts in this signature sweep.
+        if (result.blocked && !result.applied) break
+      } else {
+        const target = this.actors.find((candidate) => candidate.id === id)
+        if (target?.alive) this.damageActor(target, spec.damage, actor.mesh.position, actor.allegiance, false, {
+          attackKind: 'allyMelee', sourceActorId: actor.id,
+        })
+      }
+    }
+    if (!sweep && hits.length === 0) this.playSound('whiff', { position: actor.mesh.position, intensity: 1 })
+  }
+
+  private hideFinaleTelegraphs(): void {
+    for (const mesh of this.finaleTelegraphs) mesh.visible = false
+    this.finaleTelegraphAction = null
+  }
+
+  private updateFinaleTelegraphs(): void {
+    const action = this.finale.action
+    if (!action || action.stage !== 'tell' || this.finale.suspended || this.finale.defeated || this.paused || this.ended) {
+      this.hideFinaleTelegraphs()
+      return
+    }
+    const spec = FINALE_ATTACKS[action.id]
+    const angles = spec.shape === 'fan' ? spec.angles : [0]
+    if (this.finaleTelegraphAction !== action) {
+      this.hideFinaleTelegraphs()
+      this.finaleTelegraphAction = action
+      for (let index = 0; index < angles.length; index += 1) {
+        let mesh = this.finaleTelegraphs[index]
+        if (!mesh) {
+          const geometry = new THREE.BufferGeometry()
+          geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(64 * 9), 3))
+          mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+            color: this.palette.warning, transparent: true, opacity: 0.65,
+            side: THREE.DoubleSide, depthWrite: false, toneMapped: false,
+          }))
+          mesh.name = 'finale-telegraph'
+          mesh.renderOrder = 3
+          this.finaleTelegraphs.push(mesh)
+          this.scene.add(mesh)
+        }
+        const angle = angles[index]
+        const dx = action.direction.x * Math.cos(angle) + action.direction.z * Math.sin(angle)
+        const dz = action.direction.z * Math.cos(angle) - action.direction.x * Math.sin(angle)
+        const positions = mesh.geometry.getAttribute('position')
+        const bounds = new THREE.Box3()
+        const vertexPosition = new THREE.Vector3()
+        let count = 0
+        const vertex = (x: number, z: number): void => {
+          // Generated roads sit 0.14 above terrain; warnings must not disappear under them.
+          vertexPosition.set(x, this.groundHeightAt(x, z) + 0.24, z)
+          positions.setXYZ(count++, vertexPosition.x, vertexPosition.y, vertexPosition.z)
+          bounds.expandByPoint(vertexPosition)
+        }
+        if (spec.shape === 'cone') {
+          const rays = 24
+          for (let ray = 0; ray < rays; ray += 1) {
+            vertex(action.origin.x, action.origin.z)
+            for (const fraction of [ray / rays, (ray + 1) / rays]) {
+              const theta = -spec.halfAngle + spec.halfAngle * 2 * fraction
+              const end = {
+                x: action.origin.x + (dx * Math.cos(theta) + dz * Math.sin(theta)) * spec.range,
+                z: action.origin.z + (dz * Math.cos(theta) - dx * Math.sin(theta)) * spec.range,
+              }
+              const hit = this.finaleCoverHit(action.origin, end) ?? 1
+              vertex(action.origin.x + (end.x - action.origin.x) * hit,
+                action.origin.z + (end.z - action.origin.z) * hit)
+            }
+          }
+        } else {
+          // Movement clipping and the damage envelope are different radii. Caps
+          // advertise nearby contact even when a charge cannot leave its start.
+          const width = spec.width + PLAYER_COLLIDER_RADIUS
+          const range = spec.speed > 0 ? spec.range * Math.cos(action.pitch) : spec.range
+          const end = { x: action.origin.x + dx * range, z: action.origin.z + dz * range }
+          const length = spec.shape === 'charge'
+            ? action.travelLimit
+            : range * (this.finaleCoverHit(action.origin, end, FINALE_PROJECTILE_RADIUS) ?? 1)
+          const segments = 8
+          for (let segment = 0; segment < segments; segment += 1) {
+            const near = length * segment / segments
+            const far = length * (segment + 1) / segments
+            for (const [along, side] of [[near, -1], [near, 1], [far, 1], [near, -1], [far, 1], [far, -1]]) {
+              vertex(action.origin.x + dx * along + dz * side * width,
+                action.origin.z + dz * along - dx * side * width)
+            }
+          }
+          const capSegments = 16
+          const capRadius = width / Math.cos(Math.PI / (capSegments * 2))
+          for (const [along, startAngle] of [[0, Math.PI / 2], [length, -Math.PI / 2]]) {
+            const cx = action.origin.x + dx * along
+            const cz = action.origin.z + dz * along
+            for (let segment = 0; segment < capSegments; segment += 1) {
+              vertex(cx, cz)
+              for (const fraction of [segment / capSegments, (segment + 1) / capSegments]) {
+                const theta = startAngle + fraction * Math.PI
+                vertex(cx + (dx * Math.cos(theta) + dz * Math.sin(theta)) * capRadius,
+                  cz + (dz * Math.cos(theta) - dx * Math.sin(theta)) * capRadius)
+              }
+            }
+          }
+        }
+        positions.needsUpdate = true
+        mesh.geometry.setDrawRange(0, count)
+        bounds.getBoundingSphere(mesh.geometry.boundingSphere ??= new THREE.Sphere())
+        mesh.visible = true
+      }
+    }
+    for (const mesh of this.finaleTelegraphs) {
+      mesh.material.opacity = 0.42 + finaleProgress(this.finale) * 0.35
+    }
+  }
+
   private updateActors(delta: number): void {
-    for (const actor of this.actors) {      this.updateActorIndicators(actor)
+    // Global collision revision also ticks for unchanged active bounds; region revisions
+    // identify real geometry changes without turning every frame into a new path search.
+    this.squadNavigationRevision = this.generatedNavigationRegionSignature + ':' +
+      this.generatedWorld.navigation.getActiveRegions()
+        .map((id) => `${id}:${this.generatedWorld.collision.getRevision(id)}`).join('|')
+    this.reconcileSquadFocus()
+    const combatTargets = this.getCombatTargets()
+    for (const actor of this.actors) {
+      this.updateActorIndicators(actor)
       if (!actor.alive) {
         this.updateActorDeathMotion(actor, delta)
         continue
@@ -4837,6 +5759,13 @@ export class GameEngine {
       }
       this.updateActorReaction(actor, delta)
       const knockbackSpeed = this.updateActorKnockback(actor, delta)
+      if (finaleOwnsActor(this.finale.identity, actor)) {
+        if (actor.generatedSpawnId === this.finale.identity.bossId) {
+          this.updateFinaleBoss(actor, delta)
+          continue
+        }
+        if (this.updateFinaleEscort(actor, delta)) continue
+      }
       if (actor.role === 'commander' && actor.reaction !== 'stagger') {
         this.updateCommander(actor, delta)
       }
@@ -4891,6 +5820,7 @@ export class GameEngine {
       let targetPosition: THREE.Vector3 | null = null
       let wandering = false
       let followingFormation = false
+      let squadPathUnavailable = false
       const baseAggroRange = isBeastRole(actor.role)
         ? BEAST_SENSE_RANGE
         : actor.role === 'archer'
@@ -4904,12 +5834,12 @@ export class GameEngine {
       const colliderRadius = this.actorColliderRadiusForRole(actor.role)
       const hostileToPlayer = actor.hostileToPlayer
       const commandedSquadMember =
-        actor.allegiance === this.faction &&
-        actor.squadEligible &&
-        this.squadFollowing &&
-        actor.role !== 'commander'
-      const regroupingWithSquad =
-        commandedSquadMember && shouldSquadRegroup(playerDistance)
+        isSquadMember(actor, this.faction)
+      const squadIntent = selectSquadIntent(
+        actor, combatTargets, this.faction, this.squadCommand, this.player.position,
+        this.cameraYaw, actorPosition,
+      )
+      if (squadIntent) this.squadIntents.set(actor.id, squadIntent)
       const canSensePlayer = hostileToPlayer && playerDistance < senseRange
       const canTrackPlayer =
         hostileToPlayer && actor.playerAggro && playerDistance < leashRange
@@ -4937,7 +5867,7 @@ export class GameEngine {
         actor.lastKnownTargetPos = null
       }
       let retaliationTarget: Actor | null = null
-      if (regroupingWithSquad) {
+      if (commandedSquadMember) {
         actor.retaliationTimer = 0
         actor.targetId = null
       } else if (actor.retaliationTimer > 0 && actor.targetId) {
@@ -4957,7 +5887,31 @@ export class GameEngine {
         ? this.eventPropTargets.get(actor.eventPropTargetId)
         : undefined
 
-      if (retaliationTarget) {
+      if (squadIntent) {
+        targetActor = squadIntent.target
+        actor.targetId = targetActor?.id ?? null
+        if (targetActor) {
+          targetPosition = targetActor.mesh.position
+        } else {
+          followingFormation = squadIntent.catchUp
+          const navigation = this.getSquadNavigation(actor, squadIntent.destination)
+          squadPathUnavailable = navigation.blocked
+          const destination = navigation.waypoint ?? navigation.destination
+          if (destination && !navigation.blocked) {
+            direction.set(destination.x - actor.mesh.position.x, 0, destination.z - actor.mesh.position.z)
+            const distance = direction.length()
+            if (distance > (navigation.waypoint ? 0.12 : SQUAD_ARRIVAL_DISTANCE)) {
+              direction.normalize()
+              moving = true
+              movementDistanceLimit = distance
+            }
+            if (this.squadCommand.mode === 'hold' && navigation.destination &&
+              squadDistance(actor.mesh.position, navigation.destination) <= SQUAD_ARRIVAL_DISTANCE) {
+              this.squadIntents.set(actor.id, { ...squadIntent, status: 'holding' })
+            }
+          }
+        }
+      } else if (retaliationTarget) {
         targetActor = retaliationTarget
         targetPosition = retaliationTarget.mesh.position
       } else if (
@@ -4990,7 +5944,6 @@ export class GameEngine {
               : 6.5
         const canHunt =
           actor.role !== 'commander' &&
-          !regroupingWithSquad &&
           (commandedSquadMember || playerDistance < 32 || isBeastRole(actor.role))
         const playerThreat: PlayerThreat | null =
           shouldPursuePlayer && (pursuit.canSense || pursuit.canTrack)
@@ -5005,7 +5958,7 @@ export class GameEngine {
           canHunt || playerThreat
             ? selectThreat(
                 actor,
-                this.actors,
+                combatTargets,
                 canHunt ? huntRadius : 0,
                 actorPosition,
                 playerThreat,
@@ -5053,27 +6006,6 @@ export class GameEngine {
             } else {
               investigating = true
               targetPosition = actor.alertPos
-            }
-          } else if (commandedSquadMember) {
-            followingFormation = true
-            const formationAngle = actor.phase * 3.7
-            const formationTarget = this.player.position
-              .clone()
-              .add(new THREE.Vector3(Math.sin(formationAngle) * 3.2, 0, Math.cos(formationAngle) * 3.2))
-            const navigationTarget = this.getNavigationWaypoint(
-              actor.mesh.position,
-              formationTarget,
-              colliderRadius,
-            )
-            const toFormation = (navigationTarget ?? formationTarget)
-              .clone()
-              .sub(actor.mesh.position)
-            toFormation.y = 0
-            const formationDistance = toFormation.length()
-            if (formationDistance > (navigationTarget ? 0.005 : 1.1)) {
-              direction.copy(toFormation).normalize()
-              moving = true
-              if (navigationTarget) movementDistanceLimit = formationDistance
             }
           } else if (actor.role !== 'commander') {
             const postDistance = this.moveToOrderPost(actor, direction, colliderRadius)
@@ -5128,14 +6060,18 @@ export class GameEngine {
         offset.y = 0
         const distance = offset.length()
         if (distance > 0.001) facingDirection.copy(offset).normalize()
-        const navigationTarget = this.getNavigationWaypoint(
-          actor.mesh.position,
-          targetPosition,
-          colliderRadius,
-        )
+        const squadNavigation = commandedSquadMember
+          ? this.getSquadNavigation(actor, targetPosition) : null
+        const navigationTarget = squadNavigation
+          ? squadNavigation.waypoint
+          : this.getNavigationWaypoint(actor.mesh.position, targetPosition, colliderRadius)
 
-        if (navigationTarget) {
-          const navigationOffset = navigationTarget.clone().sub(actor.mesh.position)
+        if (squadNavigation?.blocked) {
+          squadPathUnavailable = true
+        } else if (navigationTarget) {
+          const navigationOffset = new THREE.Vector3(
+            navigationTarget.x - actor.mesh.position.x, 0, navigationTarget.z - actor.mesh.position.z,
+          )
           navigationOffset.y = 0
           const navigationDistance = navigationOffset.length()
           if (navigationDistance > 0.005) {
@@ -5243,7 +6179,7 @@ export class GameEngine {
         continue
       }
 
-      if (actor.role !== 'commander') {
+      if (actor.role !== 'commander' && !squadPathUnavailable) {
         const separation = this.getActorSeparation(actor)
         if (separation.lengthSq() > 0.0001) {
           direction.addScaledVector(separation, moving ? 0.72 : 1)
@@ -5293,15 +6229,21 @@ export class GameEngine {
 
       const requestedSpeed = Math.hypot(actor.velocity.x, actor.velocity.z)
       let travelled = 0
+      let movementProgress = 0
       if (requestedSpeed > 0.02) {
         direction.set(actor.velocity.x / requestedSpeed, 0, actor.velocity.z / requestedSpeed)
         const requestedDistance = Math.min(requestedSpeed * delta, movementDistanceLimit)
+        const beforeX = actor.mesh.position.x
+        const beforeZ = actor.mesh.position.z
         travelled = this.moveActorWithSteering(
           actor,
           direction,
           requestedDistance,
-          followingFormation,
+          false,
+          commandedSquadMember && this.squadCommand.mode === 'hold' ? this.squadCommand.anchor : undefined,
         )
+        movementProgress = (actor.mesh.position.x - beforeX) * direction.x +
+          (actor.mesh.position.z - beforeZ) * direction.z
         if (
           requestedDistance > 0.001 &&
           travelled / requestedDistance < NPC_BLOCKED_SPEED_RATIO
@@ -5310,6 +6252,13 @@ export class GameEngine {
         }
       } else {
         actor.velocity.set(0, 0, 0)
+      }
+      if (commandedSquadMember) {
+        this.squadBlockedSeconds.set(actor.id, advanceSquadBlockedTime(
+          this.squadBlockedSeconds.get(actor.id) ?? 0, delta,
+          moving ? Math.min(requestedSpeed * delta, movementDistanceLimit) : 0,
+          movementProgress, squadPathUnavailable,
+        ))
       }
 
       const actualSpeed = delta > 0 ? travelled / delta : 0
@@ -5362,6 +6311,22 @@ export class GameEngine {
     // on the spot: this is what makes breaking a pack a way to actually end a raid.
     for (const actorId of this.fledBeastIds) this.removeActorById(actorId)
     this.fledBeastIds.length = 0
+    if (this.squadCommand.mode === 'regroup') {
+      const members = this.actors.filter((actor) => isSquadMember(actor, this.faction))
+      if (members.length > 0 && members.every((actor) => {
+        const navigation = this.squadNavigation.get(actor.id)
+        if (!navigation?.destination || !navigation.path) return false
+        const destination = navigation.destination
+        return actor.routTimer <= 0 && actor.reaction === 'none' &&
+          (this.squadBlockedSeconds.get(actor.id) ?? 0) < SQUAD_BLOCKED_SECONDS &&
+          squadDistance(actor.mesh.position, destination) <= SQUAD_ARRIVAL_DISTANCE + 0.25 &&
+          this.isMovementPathClear(actor.mesh.position.x, actor.mesh.position.z,
+            destination.x, destination.z, this.actorColliderRadiusForRole(actor.role))
+      })) {
+        this.squadCommand = issueSquadCommand(this.squadCommand, 'follow', this.squadCommand.anchor)
+        this.callbacks.onNotice(SQUAD_COMMAND_COPY.regrouped, 'success')
+      }
+    }
   }
 
   /**
@@ -5663,6 +6628,7 @@ export class GameEngine {
       incoming.y = 0
       this.damagePlayer(BOAR_CHARGE_DAMAGE * this.enemyDamageMultiplier(actor), incoming, true, {
         attackKind: 'allyMelee',
+        sourceActorId: actor.id,
         source: { role: actor.role, allegiance: actor.allegiance },
       })
       actor.chargeTimer = 0
@@ -5870,6 +6836,16 @@ export class GameEngine {
   private updateActorAction(actor: Actor, delta: number): void {
     const action = actor.action
     if (!action) return
+    if (action.target.kind === 'actor') {
+      const targetId = action.target.id
+      const target = this.actors.find((candidate) => candidate.id === targetId)
+      if (target && this.isInactiveFinaleActor(target)) {
+        this.releaseActorTelegraph(actor.id)
+        actor.action = null
+        actor.targetId = null
+        return
+      }
+    }
     const livePosition = this.resolveActorActionTarget(actor, action)
     if (livePosition) action.targetPosition.copy(livePosition)
     this.faceActorToward(actor, action.targetPosition, delta)
@@ -5904,7 +6880,8 @@ export class GameEngine {
     if (action.target.kind === 'actor') {
       const targetId = action.target.id
       const target = this.actors.find((candidate) => candidate.id === targetId)
-      return target?.alive && hostile(actor.allegiance, target.allegiance)
+      return target?.alive && !this.isInactiveFinaleActor(target) &&
+        hostile(actor.allegiance, target.allegiance)
         ? target.mesh.position
         : null
     }
@@ -5913,6 +6890,13 @@ export class GameEngine {
   }
 
   private resolveActorActionContact(actor: Actor, action: ActorAction): void {
+    if (finaleOwnsActor(this.finale.identity, actor)) {
+      const target = this.resolveActorActionTarget(actor, action)
+      if (!this.finaleWithinArena() || !target || !this.finaleLineClear(actor.mesh.position, target)) {
+        this.playActorActionSound(actor, action, 'whiff')
+        return
+      }
+    }
     if (action.kind === 'arrow') {
       const livePosition = this.resolveActorActionTarget(actor, action)
       if (!livePosition) this.playActorActionSound(actor, action, 'whiff')
@@ -6010,6 +6994,7 @@ export class GameEngine {
     actor.velocity.set(0, 0, 0)
     actor.action = null
     this.releaseActorTelegraph(actor.id)
+    this.interruptFinaleAttack(actor.id)
   }
 
   private updateActorKnockback(actor: Actor, delta: number): number {
@@ -6276,6 +7261,7 @@ export class GameEngine {
         this.enemyDamageMultiplier(actor),
       actor.id,
       0,
+      finaleOwnsActor(this.finale.identity, actor),
     )
     if (actor.mesh.position.distanceTo(this.player.position) < 20) {
       this.playSound('arrow', {
@@ -6294,6 +7280,8 @@ export class GameEngine {
     damage: number,
     sourceActorId: string | null,
     detachChance: number,
+    finale = false,
+    straight = false,
   ): void {
     const mesh = new THREE.Mesh(
       new THREE.BoxGeometry(0.12, 0.12, 0.9),
@@ -6321,6 +7309,8 @@ export class GameEngine {
       sourceActorId,
       travelled: 0,
       detachChance,
+      finale,
+      straight,
     })
   }
 
@@ -6760,6 +7750,8 @@ export class GameEngine {
 
   private updateProjectiles(delta: number): void {
     this.clearQueuedProjectiles()
+    this.updatingProjectiles = true
+    try {
     for (let index = this.projectiles.length - 1; index >= 0; index -= 1) {
       const projectile = this.projectiles[index]
       if (
@@ -6775,7 +7767,7 @@ export class GameEngine {
         continue
       }
       const start = projectile.mesh.position.clone()
-      projectile.velocity.y -= PROJECTILE_GRAVITY * step
+      if (!projectile.straight) projectile.velocity.y -= PROJECTILE_GRAVITY * step
       const end = start.clone().addScaledVector(projectile.velocity, step)
       let segmentDistance = start.distanceTo(end)
       if (projectile.owner === 'player') {
@@ -6798,6 +7790,7 @@ export class GameEngine {
           incomingDirection.y = 0
           this.damagePlayer(projectile.damage, incomingDirection, false, {
             attackKind: 'actorArrow',
+            sourceActorId: projectile.sourceActorId ?? undefined,
             source: {
               // The shooter may already be dead by the time its arrow lands, in which case
               // the сводка names the side but not the role rather than guessing at one.
@@ -6832,6 +7825,8 @@ export class GameEngine {
               sourceActorId: projectile.sourceActorId ?? undefined,
             },
           )
+        } else if (projectile.finale) {
+          this.createSparks(projectile.mesh.position, projectile.velocity.clone().normalize().negate(), 4)
         }
         this.removeProjectile(index)
         continue
@@ -6854,7 +7849,10 @@ export class GameEngine {
         this.removeProjectile(index)
       }
     }
-    this.clearQueuedProjectiles()
+    } finally {
+      this.updatingProjectiles = false
+      this.clearQueuedProjectiles()
+    }
   }
 
   private clearQueuedProjectiles(): void {
@@ -6877,6 +7875,21 @@ export class GameEngine {
     end: THREE.Vector3,
   ): ProjectileHit | null {
     let nearest: ProjectileHit | null = null
+    if (projectile.finale) {
+      const cover = this.finaleCoverHit(start, end, FINALE_PROJECTILE_RADIUS)
+      if (cover !== null) nearest = { fraction: cover, actor: null, player: false }
+      const steps = Math.max(1, Math.ceil(start.distanceTo(end) / 0.4))
+      for (let index = 0; index <= steps; index += 1) {
+        const fraction = index / steps
+        if (nearest && fraction >= nearest.fraction) break
+        const x = THREE.MathUtils.lerp(start.x, end.x, fraction)
+        const z = THREE.MathUtils.lerp(start.z, end.z, fraction)
+        if (THREE.MathUtils.lerp(start.y, end.y, fraction) <= this.groundHeightAt(x, z) + 0.1) {
+          nearest = { fraction, actor: null, player: false }
+          break
+        }
+      }
+    }
     const sourceActor = projectile.sourceActorId
       ? this.actors.find((actor) => actor.id === projectile.sourceActorId)
       : undefined
@@ -6886,8 +7899,9 @@ export class GameEngine {
         hostile(projectile.allegiance, this.faction))
     ) {
       const playerCenter = this.player.position.clone().add(new THREE.Vector3(0, 1.45, 0))
-      const fraction = this.segmentSphereHit(start, end, playerCenter, PROJECTILE_HIT_RADIUS)
-      if (fraction !== null) nearest = { fraction, actor: null, player: true }
+      const fraction = this.segmentSphereHit(start, end, playerCenter,
+        projectile.finale ? PLAYER_COLLIDER_RADIUS + FINALE_PROJECTILE_RADIUS : PROJECTILE_HIT_RADIUS)
+      if (fraction !== null && (!nearest || fraction < nearest.fraction)) nearest = { fraction, actor: null, player: true }
     }
 
     for (const actor of this.actors) {
@@ -6900,7 +7914,9 @@ export class GameEngine {
           : hostile(projectile.allegiance, actor.allegiance)
       if (!actor.alive || !canHit) continue
       const center = actor.mesh.position.clone().add(new THREE.Vector3(0, 1.45, 0))
-      const radius = actor.role === 'brute' ? 1.1 : PROJECTILE_HIT_RADIUS
+      const radius = projectile.finale
+        ? this.actorColliderRadiusForRole(actor.role) + FINALE_PROJECTILE_RADIUS
+        : actor.role === 'brute' ? 1.1 : PROJECTILE_HIT_RADIUS
       const fraction = this.segmentSphereHit(start, end, center, radius)
       if (fraction === null || (nearest && fraction >= nearest.fraction)) continue
       nearest = { fraction, actor, player: false }
@@ -7072,7 +8088,7 @@ export class GameEngine {
       node ? getContractStatus(this.campaignContracts, node) : null,
       node === null ? null : findContractTemplate(node.contract),
     )
-    if (node && (node.kind === 'arrive' || failedForward)) {
+    if (node && node.id !== this.finale.identity.objectiveId && (node.kind === 'arrive' || failedForward)) {
       const site = this.generatedWorld.getSitePosition(node.siteId)
       if (
         site &&
@@ -7085,6 +8101,12 @@ export class GameEngine {
       ) {
         this.completeGeneratedObjective(node)
       }
+    }
+    const finalNode = this.generatedBlueprint.objectives[this.faction].nodes.find(
+      (candidate) => candidate.id === this.finale.identity.objectiveId,
+    )
+    if (finalNode && isFinaleDefeated(this.finale.identity, this.finaleAuthority())) {
+      this.completeGeneratedObjective(finalNode)
     }
     if (campaignObjectivesComplete(this.objectives)) {
       this.campaignCompleted = true
@@ -8225,75 +9247,7 @@ export class GameEngine {
   }
 
   private buildRumourViews(): ChronicleRumourView[] {
-    const tick = this.chronicleState.tick
-    const views: ChronicleRumourView[] = this.chronicleCommitments.rumours.map(
-      (rumour) => {
-        const copy = this.rumourCopyContext(rumour)
-        const position = this.rumourPosition(rumour)
-        return {
-          id: rumour.id,
-          kind: rumour.kind,
-          title: describeRumourTitle(rumour.kind),
-          task: describeRumourTask(rumour.kind, copy),
-          stake: describeRumourStake(rumour.kind, copy),
-          regionLabel: copy.regionLabel,
-          timeRemaining: rumourSecondsRemaining(rumour, tick),
-          pinned: rumour.id === this.chronicleCommitments.pinnedRumourId,
-          progress: rumourProgressShare(rumour),
-          x: position?.x ?? null,
-          z: position?.z ?? null,
-          outcome: null,
-          outcomeText: null,
-        }
-      },
-    )
-    const verdict = this.chronicleCommitments.verdict
-    if (verdict && isVerdictFresh(verdict, tick)) {
-      const copy = this.rumourCopyContext(verdict)
-      views.push({
-        id: `${verdict.rumourId}:verdict`,
-        kind: verdict.kind,
-        title: describeRumourTitle(verdict.kind),
-        task: '',
-        stake: '',
-        regionLabel: copy.regionLabel,
-        timeRemaining: 0,
-        pinned: false,
-        progress: 1,
-        x: null,
-        z: null,
-        outcome: verdict.outcome,
-        outcomeText: describeRumourVerdict(
-          verdict.kind,
-          verdict.outcome,
-          verdict.committed,
-          copy,
-        ),
-      })
-    }
-    return views
-  }
-
-  /**
-   * Where the pin points.
-   *
-   * A sabotage points at the depot, because that is where the torch goes. The other two
-   * point at the square: a defence is a place to stand, and an escort's cart moves, so a
-   * site pin would send the player to where the cart is going rather than to where it is.
-   */
-  private rumourPosition(
-    rumour: ChronicleRumour,
-  ): { x: number; z: number } | undefined {
-    if (rumour.kind === 'sabotage' && rumour.siteId) {
-      const site = this.generatedWorld.getSitePosition(rumour.siteId)
-      if (site) return { x: site.x, z: site.z }
-    }
-    const bounds = this.generatedWorld.getRegionBounds(rumour.regionId)
-    if (!bounds) return undefined
-    return {
-      x: (bounds.minX + bounds.maxX) / 2,
-      z: (bounds.minZ + bounds.maxZ) / 2,
-    }
+    return buildChronicleRumourViews(this.generatedBlueprint, this.chronicleCommitments, this.chronicleState.tick)
   }
 
   private handleChronicleEvents(events: readonly ChronicleEvent[]): void {
@@ -9416,6 +10370,7 @@ export class GameEngine {
       // They belong to the player now, not to the event that produced them: without
       // this the freed captive would keep eating a chronicle slot for the whole run.
       captive.budgetCategory = 'squad'
+      this.assignSquadSlot(captive)
       captive.home.copy(captive.mesh.position)
       captive.wanderTarget.copy(captive.mesh.position)
       const weapon = captive.mesh.getObjectByName('weapon')
@@ -10255,17 +11210,29 @@ export class GameEngine {
   private removeActorById(actorId: string): void {
     const index = this.actors.findIndex((actor) => actor.id === actorId)
     if (index < 0) return
-    this.releaseActorTelegraph(actorId)
-    for (let projectileIndex = this.projectiles.length - 1; projectileIndex >= 0; projectileIndex -= 1) {
-      if (this.projectiles[projectileIndex].sourceActorId === actorId) {
-        this.removeProjectile(projectileIndex)
-      }
+    this.captureFinaleActor(this.actors[index])
+    if (this.actors[index].generatedSpawnId === this.finale.identity.bossId) {
+      suspendFinale(this.finale)
+      this.clearFinaleThreats()
     }
-    this.projectileSourcesToClear.delete(actorId)
+    this.releaseActorTelegraph(actorId)
+    if (this.updatingProjectiles && finaleOwnsActor(this.finale.identity, this.actors[index])) {
+      this.projectileSourcesToClear.add(actorId)
+    } else {
+      for (let projectileIndex = this.projectiles.length - 1; projectileIndex >= 0; projectileIndex -= 1) {
+        if (this.projectiles[projectileIndex].sourceActorId === actorId) {
+          this.removeProjectile(projectileIndex)
+        }
+      }
+      this.projectileSourcesToClear.delete(actorId)
+    }
     for (const other of this.actors) {
       if (other.targetId === actorId) other.targetId = null
     }
     const [actor] = this.actors.splice(index, 1)
+    this.squadNavigation.delete(actorId)
+    this.squadBlockedSeconds.delete(actorId)
+    this.squadIntents.delete(actorId)
     this.removeAndDisposeObject(actor.healthBar)
     actor.healthBarTexture.dispose()
     this.removeAndDisposeObject(actor.mesh)
@@ -10297,15 +11264,16 @@ export class GameEngine {
   }
 
   private actorAttackPlayer(actor: Actor): void {
-    const baseDamage = rollMeleeDamage(actor.role, 'player', this.combatRng)
     const incomingDirection = actor.mesh.position.clone().sub(this.player.position)
     incomingDirection.y = 0
     this.damagePlayer(
-      this.actorDamageWithAura(actor, baseDamage) * this.enemyDamageMultiplier(actor),
+      () => this.actorDamageWithAura(actor, rollMeleeDamage(actor.role, 'player', this.combatRng)) *
+        this.enemyDamageMultiplier(actor),
       incomingDirection,
       true,
       {
         attackKind: 'allyMelee',
+        sourceActorId: actor.id,
         source: { role: actor.role, allegiance: actor.allegiance },
       },
     )
@@ -10337,7 +11305,7 @@ export class GameEngine {
   }
 
   private damagePlayer(
-    baseDamage: number,
+    baseDamage: number | (() => number),
     incomingDirection: THREE.Vector3,
     canInjure: boolean,
     options: DamagePlayerOptions,
@@ -10347,9 +11315,12 @@ export class GameEngine {
     normalizedIncoming.y = 0
     const hasIncomingDirection = normalizedIncoming.lengthSq() > 0.0001
     if (hasIncomingDirection) normalizedIncoming.normalize()
-    const outcome = resolvePlayerDamage({
+    const outcome = resolveCombatMasteryContact({
+      state: this.combatMastery,
       baseDamage,
-      health: this.health,
+      health: this.paused || this.ended ? 0 : this.health,
+      stamina: this.stamina,
+      attackKind: options.attackKind,
       shieldActive: this.shieldActive,
       hasIncomingDirection,
       incomingDotAim: hasIncomingDirection
@@ -10357,6 +11328,24 @@ export class GameEngine {
         : 0,
       armor: playerArmor(this.faction),
     })
+    if (outcome.defense !== 'none') {
+      this.stamina = Math.max(0, this.stamina - outcome.staminaSpent)
+      if (this.stamina === 0) this.dropShield()
+      if (outcome.defense === 'perfectGuard') {
+        this.playSound('block', { intensity: 1, variantSeed: 11 })
+        if (outcome.interruptMelee && options.sourceActorId) {
+          const attacker = this.actors.find((actor) => actor.id === options.sourceActorId)
+          if (attacker && applyPerfectGuardOpening(attacker)) {
+            attacker.action = null
+            attacker.chargeTimer = 0
+            attacker.velocity.set(0, 0, 0)
+            this.releaseActorTelegraph(attacker.id)
+            this.interruptFinaleAttack(attacker.id)
+          }
+        }
+      }
+      this.emitView(true)
+    }
     if (!outcome.applied) {
       return {
         ...outcome,
@@ -10434,7 +11423,7 @@ export class GameEngine {
     direction.y = 0
     if (direction.lengthSq() > 0.0001) direction.normalize()
     else direction.set(0, 0, 1)
-    if (!target.alive) {
+    if (!target.alive || this.isInactiveFinaleActor(target)) {
       return {
         applied: false,
         dealt: 0,
@@ -10686,6 +11675,7 @@ export class GameEngine {
   }
 
   private dropShield(): void {
+    this.combatMastery.guardWindow = 0
     if (!this.shieldActive) return
     this.shieldActive = false
     this.abilityCooldown = Math.max(
@@ -11082,6 +12072,7 @@ export class GameEngine {
   }
 
   private completeObjective(id: string): boolean {
+    if (id === this.finale.identity.objectiveId && !isFinaleDefeated(this.finale.identity, this.finaleAuthority())) return false
     const objective = completeObjectiveEntry(this.objectives, id)
     if (!objective) return false
     this.callbacks.onNotice(describeObjectiveCompleted(objective.text), 'success')
@@ -11146,6 +12137,8 @@ export class GameEngine {
 
   private endGame(result: 'victory' | 'defeat'): void {
     if (this.ended) return
+    suspendFinale(this.finale)
+    this.clearFinaleThreats()
     this.dropShield()
     this.cancelActiveEvents()
     this.clearTransientCombatFeedback()
@@ -11198,6 +12191,8 @@ export class GameEngine {
       this.player.position.z,
     )
     const primary = this.primaryEvent
+    const expeditionInput = this.buildExpeditionInput()
+    const expedition = this.expeditionPlanner.buildView(expeditionInput)
     const view = buildGameView({
       faction: this.faction,
       blueprint: this.generatedBlueprint,
@@ -11262,23 +12257,14 @@ export class GameEngine {
           ? undefined
           : String(generatedCurrentRegionId),
       chronicle: this.buildChronicleFeed(),
-      rumours: this.buildRumourViews(),
-      contracts: buildCampaignContractViews({
-        blueprint: this.generatedBlueprint,
-        faction: this.faction,
-        objectives: this.objectives,
-        contracts: this.campaignContracts,
-        sitePosition: (siteId) => this.generatedWorld.getSitePosition(siteId) ?? null,
-      }),
+      rumours: expeditionInput.rumours,
+      contracts: expeditionInput.contracts,
       doctrines: buildDoctrineView(this.doctrines, this.generatedBlueprint.seed),
+      expedition,
+      finale: buildFinaleView(this.finale, this.finaleRelevant()),
       shopPriceMultiplier: this.activeShopPriceMultiplier,
-      squad: this.actors.filter(
-        (actor) =>
-          actor.alive &&
-          actor.allegiance === this.faction &&
-          actor.squadEligible &&
-          actor.role !== 'commander',
-      ).length,
+      squad: this.actors.filter((actor) => isSquadMember(actor, this.faction)).length,
+      squadCommand: this.buildLiveSquadCommandView(),
       elapsed: this.elapsed,
       pointerLocked: document.pointerLockElement === this.renderer.domElement,
       paused: this.paused,
@@ -11287,6 +12273,10 @@ export class GameEngine {
       shieldActive: this.shieldActive,
       abilityCooldown: this.abilityCooldown,
       melee: this.melee,
+      combatMastery: this.combatMastery,
+      cameraMode: document.pointerLockElement === this.renderer.domElement
+        ? 'locked' : this.pointerFallback ? 'drag' : 'capture',
+      inputBlocked: isEditableGameplayTarget(document.activeElement),
       campaignCompleted: this.campaignCompleted,
       threatTier: this.threatTier,
       upgrades: this.upgrades,
@@ -11307,6 +12297,8 @@ export class GameEngine {
         : null,
     })
     this.callbacks.onView(view)
+    const expeditionNotice = this.expeditionPlanner.takeNotice()
+    if (expeditionNotice) this.callbacks.onNotice(describeExpeditionNotice(expeditionNotice), 'warning')
     // After the HUD has the frame, so a hint can never describe a state the player has not
     // been shown yet. Skipped once the run is over: the end screen owns that moment.
     if (!this.ended) this.hints.observe(view)
@@ -12934,8 +13926,16 @@ export class GameEngine {
     player: boolean,
     role: ActorRole = 'soldier',
     variant = 0,
+    finaleProfile?: FinaleProfileId,
   ): THREE.Group {
-    const plan = resolveCharacterPlan(faction, player ? 'player' : role, variant, player)
+    const ordinaryPlan = resolveCharacterPlan(faction, player ? 'player' : role, variant, player)
+    const plan: CharacterPlan = finaleProfile === 'huntsmaster'
+      ? { ...ordinaryPlan, weapon: 'bow', mainHand: 'left', offhand: 'none', trim: 'quiver', headgear: 'hood' }
+      : finaleProfile === 'warlord'
+        ? { ...ordinaryPlan, weapon: 'maul', mainHand: 'right', offhand: 'none', headgear: 'hornedHelm' }
+        : finaleProfile === 'marshal'
+          ? { ...ordinaryPlan, weapon: 'glaive', mainHand: 'right', offhand: 'heater', headgear: 'crested' }
+          : ordinaryPlan
     const keys = characterPartKeys(plan)
     const p = plan.proportions
     const build = (key: string, factory: () => THREE.BufferGeometry) =>
@@ -13849,6 +14849,7 @@ export class GameEngine {
           false,
           role,
           variant,
+          options.finaleProfile,
         )
     // Scale stays here rather than in the geometry because
     // `actorColliderRadiusForRole` and `actorHealthBarHeight` are calibrated against
@@ -13942,6 +14943,7 @@ export class GameEngine {
       reinforcementsCalled: 0,
       objectiveEligible: options.objectiveEligible ?? true,
       squadEligible: options.squadEligible ?? true,
+      squadSlot: null,
       aiMode: options.aiMode ?? 'normal',
       eventOwnerId: options.eventOwnerId ?? null,
       eventPropTargetId: options.eventPropTargetId ?? null,
@@ -14128,6 +15130,7 @@ export class GameEngine {
   }
 
   private clearTransientCombatFeedback(): void {
+    this.hideFinaleTelegraphs()
     this.resetCameraMotion()
     this.damageFlash = 0
     this.hitStopRemaining = 0
@@ -14135,7 +15138,7 @@ export class GameEngine {
     this.calloutCooldown = 0
     this.attackAnimation = 0
     this.activePlayerAttackKind = 'melee'
-    resetPlayerMelee(this.melee)
+    settleCombatMastery(this.combatMastery, this.melee)
     this.damageNumberFx.forEach((entry) => this.releaseDamageNumberFx(entry))
     this.comicCalloutFx.forEach((entry) => this.releaseComicCalloutFx(entry))
     this.impactRayFx.forEach((entry) => this.releaseImpactRayFx(entry))
@@ -15325,7 +16328,8 @@ export class GameEngine {
     }
 
     if (!rig) return
-    if (actor.role === 'archer') {
+    if (actor.role === 'archer' || (actor.generatedSpawnId === this.finale.identity.bossId &&
+      this.finale.identity.profile === 'huntsmaster')) {
       // The bow is in the bow hand and the string hand pulls back past the jaw. The
       // weapon pivot is re-solved afterwards so the riser stays in the fist.
       const draw = Math.max(pose.anticipation, pose.attack * 0.8)
@@ -15333,12 +16337,14 @@ export class GameEngine {
       const bowElbow = rig.mainHand > 0 ? rig.rightElbow : rig.leftElbow
       const drawArm = rig.mainHand > 0 ? rig.leftArm : rig.rightArm
       const drawElbow = rig.mainHand > 0 ? rig.leftElbow : rig.rightElbow
-      const bowX = -1.22 - actor.stride * 0.08
+      const aimPitch = actor.generatedSpawnId === this.finale.identity.bossId
+        ? this.finale.action?.pitch ?? 0 : 0
+      const bowX = -1.22 - actor.stride * 0.08 - aimPitch
       const bowZ = rig.mainHand * (0.12 + draw * 0.06)
       const bowElbowX = 0.12
       if (bowArm) bowArm.rotation.set(bowX, 0, bowZ)
       if (bowElbow) bowElbow.rotation.x = bowElbowX
-      if (drawArm) drawArm.rotation.set(-1.05 - draw * 0.18, 0, -rig.mainHand * 0.34)
+      if (drawArm) drawArm.rotation.set(-1.05 - draw * 0.18 - aimPitch, 0, -rig.mainHand * 0.34)
       if (drawElbow) drawElbow.rotation.x = 0.5 + draw * 1.25
       this.placeWeaponInHand(
         rig,
@@ -15448,6 +16454,13 @@ export class GameEngine {
         attack = 1 - progress
         recovery = Math.sin(progress * Math.PI)
       }
+    }
+    if (actor.generatedSpawnId === this.finale.identity.bossId && this.finale.action) {
+      const action = this.finale.action
+      const progress = finaleProgress(this.finale)
+      anticipation = action.stage === 'tell' ? 0.3 + progress * 0.7 : 0
+      attack = action.stage === 'contact' ? 1 - progress * 0.4 : 0
+      recovery = action.stage === 'recovery' ? 1 - progress : 0
     }
     const pose = this.scratchPose
     pose.stride = actor.reaction === 'stagger' ? 0 : actor.stride
@@ -15625,24 +16638,47 @@ export class GameEngine {
   }
 
   private onKeyDown(event: KeyboardEvent): void {
+    if (blocksGameplayKey(event)) return
+    if (event.code === 'KeyP' || event.code === 'Escape') {
+      event.preventDefault()
+      if (!event.repeat) this.callbacks.onPauseRequest()
+      return
+    }
+    if (event.code === 'KeyM') {
+      event.preventDefault()
+      if (!event.repeat && !this.ended) this.callbacks.onAtlasRequest?.()
+      return
+    }
+    if (event.code === 'KeyT') {
+      event.preventDefault()
+      if (!event.repeat && !this.ended) this.callbacks.onSquadCommandRequest?.()
+      return
+    }
+    if (event.code === 'KeyF' && !this.ended) {
+      if (!event.repeat && !this.keys.has(event.code)) {
+        this.keys.add(event.code)
+        this.callbacks.onSaveRequest()
+      }
+      return
+    }
+    if (this.paused || this.ended) return
+    if (event.code === 'Space' && event.target instanceof Element &&
+        event.target.closest('button, a, [role="button"]')) return
     if (!this.paused && !this.ended) this.resumeAudio()
     if (
-      ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(
+      ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyC', 'Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(
         event.code,
       )
     ) {
       event.preventDefault()
     }
-    if (event.repeat && ['KeyE', 'KeyQ', 'KeyP', 'KeyF', 'KeyR'].includes(event.code)) return
+    if ((event.repeat || this.keys.has(event.code)) &&
+        ['KeyC', 'KeyE', 'KeyQ', 'KeyP', 'KeyF', 'KeyR'].includes(event.code)) return
     this.keys.add(event.code)
+    if (event.code === 'KeyC') this.evade()
     if (event.code === 'KeyE') this.interact()
     if (event.code === 'KeyQ') this.commandSquad()
-    if (event.code === 'KeyP' || event.code === 'Escape') this.callbacks.onPauseRequest()
-    if (event.code === 'KeyF' && !this.ended) this.callbacks.onSaveRequest()
-    if (
-      event.code === 'KeyR' &&
-      document.pointerLockElement === this.renderer.domElement
-    ) {
+    if (event.code === 'KeyR') {
       if (this.faction === 'guard') this.setShield(true)
       else this.useAbility()
     }
@@ -15654,18 +16690,91 @@ export class GameEngine {
   }
 
   private onMouseMove(event: MouseEvent): void {
-    if (document.pointerLockElement !== this.renderer.domElement || this.paused) return
-    this.cameraYaw += event.movementX * 0.0028
-    this.cameraPitch = THREE.MathUtils.clamp(this.cameraPitch + event.movementY * 0.0018, -0.15, 0.72)
+    if (document.pointerLockElement !== this.renderer.domElement || this.paused || this.ended) return
+    this.look(event.movementX, event.movementY)
   }
 
-  private onMouseDown(event: MouseEvent): void {
-    if (!this.container.contains(event.target as Node) || this.paused || this.ended) return
-    if (document.pointerLockElement !== this.renderer.domElement) {
+  private look(x: number, y: number): void {
+    this.cameraYaw += x * 0.0028
+    this.cameraPitch = THREE.MathUtils.clamp(this.cameraPitch + y * 0.0018, -0.15, 0.72)
+  }
+
+  private onWorldPointerDown(event: PointerEvent): void {
+    if (this.paused || this.ended || event.ctrlKey || event.altKey || event.metaKey) return
+    this.renderer.domElement.focus({ preventScroll: true })
+    if (event.pointerType === 'mouse') {
+      this.mousePointerId = event.pointerId
+      return
+    }
+    if (event.pointerType !== 'touch' && !this.pointerFallback &&
+        document.pointerLockElement !== this.renderer.domElement) {
       this.requestPointerLock()
       return
     }
-    if (event.button === 0) this.attack()
+    event.preventDefault()
+    if (event.button === 2) {
+      if (this.faction === 'guard') this.setShield(true)
+      else this.useAbility()
+      return
+    }
+    if (event.button !== 0) return
+    if (document.pointerLockElement === this.renderer.domElement) {
+      this.attack()
+      return
+    }
+    this.beginWorldLook(event.pointerId, event.clientX, event.clientY)
+  }
+
+  private beginWorldLook(pointerId: number, x: number, y: number): void {
+    if (this.lookGesture) return
+    this.pointerFallback = true
+    this.lookGesture = beginLookGesture(pointerId, x, y)
+    try {
+      this.renderer.domElement.setPointerCapture(pointerId)
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error
+      this.releaseGameplayInput()
+    }
+    this.emitView(true)
+  }
+
+  private onWorldPointerMove(event: PointerEvent): void {
+    if (event.pointerType === 'mouse') this.mousePointerId = event.pointerId
+    if (!this.lookGesture || this.paused || this.ended ||
+        document.pointerLockElement === this.renderer.domElement) return
+    const motion = moveLookGesture(this.lookGesture, event.pointerId, event.clientX, event.clientY)
+    this.look(motion.x, motion.y)
+  }
+
+  private onWorldPointerUp(event: PointerEvent): void {
+    if (event.button === 2) this.setShield(false)
+    this.finishWorldLook(event.pointerId, event.clientX, event.clientY)
+  }
+
+  private finishWorldLook(pointerId: number, x: number, y: number): void {
+    const gesture = this.lookGesture
+    if (!gesture || gesture.pointerId !== pointerId) return
+    const motion = moveLookGesture(gesture, pointerId, x, y)
+    this.look(motion.x, motion.y)
+    const attack = finishLookGesture(gesture, pointerId, false)
+    this.releaseLookGesture()
+    if (attack) this.attack()
+  }
+
+  // Mouse events retain every button edge in a chord; pointerdown/up only mark first/last.
+  private onMouseDown(event: MouseEvent): void {
+    if (event.target !== this.renderer.domElement || this.paused || this.ended ||
+        event.ctrlKey || event.altKey || event.metaKey) return
+    this.renderer.domElement.focus({ preventScroll: true })
+    const locked = document.pointerLockElement === this.renderer.domElement
+    if (!locked && !this.pointerFallback) {
+      this.requestPointerLock()
+      return
+    }
+    if (event.button === 0) {
+      if (locked) this.attack()
+      else if (this.mousePointerId !== null) this.beginWorldLook(this.mousePointerId, event.clientX, event.clientY)
+    }
     if (event.button === 2) {
       if (this.faction === 'guard') this.setShield(true)
       else this.useAbility()
@@ -15674,6 +16783,47 @@ export class GameEngine {
 
   private onMouseUp(event: MouseEvent): void {
     if (event.button === 2) this.setShield(false)
+    if (event.button === 0 && this.mousePointerId !== null) {
+      this.finishWorldLook(this.mousePointerId, event.clientX, event.clientY)
+    }
+  }
+
+  private onWorldPointerCancel(event: PointerEvent): void {
+    if (this.lookGesture?.pointerId === event.pointerId) {
+      this.releaseGameplayInput()
+      this.emitView(true)
+    } else if (event.type === 'pointercancel') {
+      this.releaseGameplayInput()
+      this.emitView(true)
+    }
+  }
+
+  private releaseLookGesture(cancelled = false): void {
+    const gesture = this.lookGesture
+    this.lookGesture = null
+    if (gesture && cancelled) this.callbacks.onPointerGestureCancelled?.(gesture.pointerId)
+    if (gesture && this.renderer.domElement.hasPointerCapture(gesture.pointerId)) {
+      this.renderer.domElement.releasePointerCapture(gesture.pointerId)
+    }
+  }
+
+  private releaseGameplayInput(): void {
+    this.keys.clear()
+    this.releaseLookGesture(true)
+    this.mousePointerId = null
+    settleCombatMastery(this.combatMastery, this.melee)
+    this.dropShield()
+    this.wasSprinting = false
+    this.isSprinting = false
+  }
+
+  private onPointerLockFailure(error: unknown): void {
+    if (this.inputDisposed || (!this.pointerLockPending && this.pointerFallback)) return
+    this.pointerLockPending = false
+    this.pointerFallback = true
+    const reason = error instanceof Error ? error.name === 'Error' ? error.message : error.name : ''
+    this.callbacks.onNotice(describePointerLockFailure(reason), 'warning')
+    this.emitView(true)
   }
 
   private onContextMenu(event: MouseEvent): void {
@@ -15686,32 +16836,27 @@ export class GameEngine {
   }
 
   private onWindowBlur(): void {
-    this.keys.clear()
+    this.releaseGameplayInput()
     this.clearTransientCombatFeedback()
-    if (this.shieldActive) {
-      this.dropShield()
-      this.emitView(true)
-    }
+    this.emitView(true)
   }
 
   private onPointerLockChange(): void {
-    if (
-      document.pointerLockElement !== this.renderer.domElement &&
-      this.shieldActive
-    ) {
-      this.dropShield()
+    this.pointerLockPending = false
+    if (document.pointerLockElement !== this.renderer.domElement) this.releaseGameplayInput()
+    else if (this.paused || this.ended || this.inputDisposed) document.exitPointerLock()
+    else {
+      this.pointerFallback = false
+      this.releaseLookGesture(true)
     }
     this.emitView(true)
   }
 
   private onVisibilityChange(): void {
     if (document.hidden) {
-      this.keys.clear()
+      this.releaseGameplayInput()
       this.clearTransientCombatFeedback()
-      if (this.shieldActive) {
-        this.dropShield()
-        this.emitView(true)
-      }
+      this.emitView(true)
     }
     this.audio.setHidden(document.hidden)
   }
@@ -15742,6 +16887,7 @@ export class GameEngine {
   }
 
   private desiredMusicIntensity(): MusicIntensity {
+    if (this.finale.introduced && !this.finale.suspended && this.finaleWithinArena()) return 'boss'
     let nearbyAggro = 0
     let immediateThreat = false
     let championEngaged = false

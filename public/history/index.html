@@ -2,6 +2,10 @@
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect rx='12' width='64' height='64' fill='%23b11f4b'/><path d='M16 12v40h8V36l16 16h11L31 31l18-19H38L24 28V12z' fill='white'/></svg>"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       name="description"
@@ -83,7 +87,7 @@
           var(--bg);
         color: var(--text);
         margin: 0;
-        min-width: 320px;
+        width: 100%;
       }
 
       body::before {
@@ -175,6 +179,11 @@
         margin: 1.1rem auto 1.35rem;
         max-width: 980px;
         text-wrap: balance;
+      }
+
+      .hero .product-name {
+        display: inline-block;
+        white-space: nowrap;
       }
 
       .lede {
@@ -557,6 +566,10 @@
           font-size: clamp(3rem, 16vw, 4.7rem);
         }
 
+        .hero .product-name {
+          font-size: clamp(2.4rem, 11.5vw, 4.7rem);
+        }
+
         .story h2 {
           font-family: inherit;
           font-weight: 900;
@@ -598,7 +611,7 @@
     <main>
       <header class="hero">
         <div class="eyebrow">Я джва года хочу · Что изменилось</div>
-        <h1>Суть такова: как выросли «КОРОВАНЫ»</h1>
+        <h1>Суть такова: как выросли <span class="product-name">«КОРОВАНЫ»</span></h1>
         <p class="lede">
           Первая версия честно выдавала всё, что было обещано в легендарном письме. Теперь
           каждый seed собирает отдельный поход из 25 регионов, а мир воюет, горит и грабит

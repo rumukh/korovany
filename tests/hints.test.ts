@@ -93,6 +93,7 @@ const TRIPPING_VIEW: Record<HintId, (base: GameView) => GameView> = {
       regions: base.worldMap.regions.map((region) => ({ ...region, discovered: true })),
     },
   }),
+  expedition: (base) => ({ ...base, expedition: { ...base.expedition, mode: 'selected' } }),
   chronicle: (base) => ({
     ...base,
     chronicle: [
@@ -185,6 +186,21 @@ const TRIPPING_VIEW: Record<HintId, (base: GameView) => GameView> = {
   threat: (base) => ({ ...base, threatTier: 2 }),
   ability: (base) => ({ ...base, ability: { ...base.ability, cooldown: 1.4 } }),
   melee: (base) => ({ ...base, melee: { ...base.melee, beat: 1 } }),
+  evade: (base) => ({ ...base, combatMastery: { ...base.combatMastery, evadeActive: true } }),
+  perfectGuard: (base) => ({
+    ...base, combatMastery: { ...base.combatMastery, outcome: 'perfectGuard' },
+  }),
+  cameraFallback: (base) => ({
+    ...base, combatMastery: { ...base.combatMastery, cameraMode: 'drag' },
+  }),
+  finale: (base) => ({
+    ...base,
+    finale: {
+      profile: 'huntsmaster', encounterId: 'finale', bossId: 'boss',
+      name: 'Имперский ловчий', enemyFaction: 'guard', health: 340, maxHealth: 340,
+      phase: 1, stage: 'telegraph', cue: 'Шаг вбок', progress: 0.5, escortsAlive: 2,
+    },
+  }),
   events: (base) => ({
     ...base,
     activeEvent: {

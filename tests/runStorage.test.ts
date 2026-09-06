@@ -37,6 +37,15 @@ import type { StorageLike } from '../src/game/run/storage.ts'
 import { BEAST_ROLES } from '../src/game/types.ts'
 import { RegionManager } from '../src/game/world/RegionManager.ts'
 import { RegionRuntime } from '../src/game/world/RegionRuntime.ts'
+import { createPlayerMeleeState } from '../src/game/world/CombatResolver.ts'
+import {
+  advanceCombatMastery,
+  beginEvade,
+  createCombatMasteryState,
+  normalizeCombatMastery,
+  serializeCombatMastery,
+} from '../src/game/world/CombatMastery.ts'
+import { createSquadCommandState, serializeSquadCommandState } from '../src/game/world/SquadCommand.ts'
 
 class MemoryStorage implements StorageLike {
   values = new Map<string, string>()
@@ -53,6 +62,28 @@ class MemoryStorage implements StorageLike {
     this.values.delete(key)
   }
 }
+
+test('command blocks and formation slots round-trip without overwriting sibling state', () => {
+  const run = makeRun()
+  run.directorState.squadCommand = serializeSquadCommandState(createSquadCommandState(
+    { x: 103, z: 196, heading: 1.25 }, false,
+  ))
+  run.directorState.combatMastery = { version: 1, cooldown: 0.6 }
+  run.directorState.expedition = { version: 1, destination: 'site-one' }
+  run.directorState.finale = { version: 1, health: 27 }
+  run.companions = [{
+    id: 'companion-one', role: 'archer', formationSlot: 24,
+    health: 23, maxHealth: 45, worldPosition: [103, 1, 190],
+  }]
+  const restored = parseActiveRunSaveV3(JSON.stringify(run))
+  assert.deepEqual(restored?.directorState, run.directorState)
+  assert.deepEqual(restored?.companions, run.companions)
+  for (const formationSlot of [-1, 25, 0.5, Number.NaN, 'one']) {
+    assert.equal(normalizeActiveRunSaveV3({
+      ...run, companions: [{ ...run.companions[0], formationSlot }],
+    }), null)
+  }
+})
 
 class ControlledProfileStorage extends MemoryStorage {
   failProfileWrites = false
@@ -249,6 +280,36 @@ function makeSummary(index: number): RunHistorySummary {
     blueprintFingerprint: `fingerprint-${index}`,
   }
 }
+
+test('combat recovery and paid stamina survive repeated active-run save/load without touching sibling blocks', () => {
+  const storage = new MemoryStorage()
+  const save = makeRun()
+  const state = createCombatMasteryState()
+  const melee = createPlayerMeleeState()
+  const action = beginEvade(state, {
+    stamina: save.player.stamina, body: save.player.body, melee, paused: false, ended: false,
+    moveX: 0, moveZ: 0, aimX: 0, aimZ: -1,
+  })
+  save.player.stamina -= action.staminaSpent
+  advanceCombatMastery(state, 0.1)
+  save.directorState.combatMastery = serializeCombatMastery(state, melee, 0.3, 0.2, false)
+  save.directorState.siblingSentinel = { order: 'hold', destination: 'bridge' }
+  for (let index = 0; index < 4; index += 1) {
+    assert.equal(saveActiveRun(storage, save), true)
+    const loaded = loadActiveRun(storage)
+    assert.ok(loaded)
+    const restored = normalizeCombatMastery(loaded.directorState.combatMastery, save.config.faction)
+    assert.equal(restored.rejected, false)
+    assert.equal(loaded.player.stamina, 39)
+    assert.equal(restored.state.evadeCooldown, state.evadeCooldown)
+    assert.equal(restored.state.evadeRemaining, state.evadeRemaining)
+    assert.equal(restored.state.evadeProtection, false)
+    assert.deepEqual(loaded.directorState.siblingSentinel, { order: 'hold', destination: 'bridge' })
+    save.directorState.combatMastery = serializeCombatMastery(
+      restored.state, restored.melee, restored.abilityCooldown, restored.attackCooldown, false,
+    )
+  }
+})
 
 test('active runs and profiles round-trip without touching unrelated storage', () => {
   const storage = new MemoryStorage()

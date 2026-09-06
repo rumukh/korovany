@@ -18,7 +18,10 @@ import {
   BIOME_PROFILES,
   SITE_PRESENTATIONS,
   createGeneratedEncounterPlan,
+  getFactionStartPosition2D,
+  getRegionRoadLegs,
   getRegionRiverLegs,
+  getRegionWaterBounds,
   getSiteWorldPosition2D,
   isInsideRegionRiver,
   type GeneratedEncounterPlan,
@@ -488,30 +491,9 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
    * never created there, so it does not matter when anyone asks.
    */
   private startCandidate(faction: Faction): Point3 {
-    const startSiteId = this.blueprint.starts[faction]
-    const sitePosition = this.requireSitePosition(startSiteId)
-    const path = this.blueprint.criticalPaths[faction].regionIds
-    const nextRegion = path[1] ? this.getRegionCenter(path[1]) : undefined
-    if (!nextRegion) return sitePosition
-    const directionX = nextRegion.x - sitePosition.x
-    const directionZ = nextRegion.z - sitePosition.z
-    const length = Math.hypot(directionX, directionZ)
-    if (length <= 0.001) return sitePosition
-    const startRegionId = this.blueprint.sites.find(
-      (site) => site.id === startSiteId,
-    )?.regionId
-    const bounds = startRegionId ? this.getRegionBounds(startRegionId) : undefined
-    const margin = 12
-    const candidateX = sitePosition.x - (directionX / length) * 20
-    const candidateZ = sitePosition.z - (directionZ / length) * 20
-    const x = bounds
-      ? THREE.MathUtils.clamp(candidateX, bounds.minX + margin, bounds.maxX - margin)
-      : candidateX
-    const z = bounds
-      ? THREE.MathUtils.clamp(candidateZ, bounds.minZ + margin, bounds.maxZ - margin)
-      : candidateZ
-    // Height at the offset point, not at the site it was measured from — the anchor can
-    // sit twenty units away across sloping ground.
+    const position = getFactionStartPosition2D(this.blueprint, faction)
+    if (!position) throw new Error(`Missing generated start for ${faction}`)
+    const { x, z } = position
     return { x, y: this.sampleHeight(x, z), z }
   }
 
@@ -1140,38 +1122,13 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
   }
 
   private createRoads(): void {
-    const directions = new Set<string>()
-    const regionById = new Map(
-      this.context.blueprint.regions.map((region) => [region.id, region]),
-    )
-    for (const segment of this.context.blueprint.roads.segments) {
-      if (
-        segment.fromRegionId !== this.id &&
-        segment.toRegionId !== this.id
-      ) {
-        continue
-      }
-      const otherId =
-        segment.fromRegionId === this.id
-          ? segment.toRegionId
-          : segment.fromRegionId
-      const other = regionById.get(otherId)
-      if (!other) continue
-      const direction = directionBetween(this.blueprint, other)
-      if (direction) directions.add(direction)
-    }
-    if (directions.size === 0) return
-
-    const bounds = this.context.normalizedRegion.bounds
-    const center = boundsCenter(bounds)
-    for (const direction of [...directions].sort()) {
-      const edge = edgeCenter(bounds, direction)
+    for (const leg of getRegionRoadLegs(this.context.blueprint, this.id)) {
       this.addProjectedStrip(
-        center,
-        edge,
+        leg.center,
+        leg.edge,
         this.context.style.roadWidth,
         this.context.materials.road,
-        `road:${String(this.id)}:${direction}`,
+        leg.id,
         0.14,
       )
     }
@@ -1213,18 +1170,12 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       }
     }
 
-    const bridged = this.context.blueprint.bridges.some(
-      (bridge) => bridge.regionId === this.id,
-    )
-    // A bridge opens the middle of the square; without one the water runs edge to centre
-    // and the crossing is closed.
-    const gap = bridged ? Math.max(6, this.context.style.bridgeWidth + 1.5) : 0
-    for (let index = 0; index < legs.length; index += 1) {
+    for (const water of getRegionWaterBounds(
+      this.context.blueprint, this.id, this.context.style.riverWidth, this.context.style.bridgeWidth,
+    )) {
       this.registerWaterCollider(
-        `water:${String(this.id)}:${legs[index].direction}`,
-        legs[index],
-        center,
-        gap,
+        `water:${String(this.id)}:${water.direction}`,
+        water.bounds,
       )
     }
   }
@@ -2179,26 +2130,8 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
 
   private registerWaterCollider(
     id: string,
-    leg: RegionRiverLeg,
-    center: Point2,
-    gap: number,
+    box: Bounds2D,
   ): void {
-    const half = this.context.style.riverWidth / 2
-    // The leg runs from the region edge to the centre; a bridge shortens the centre end.
-    const inset = gap / 2
-    const minX = Math.min(leg.edge.x, center.x)
-    const maxX = Math.max(leg.edge.x, center.x)
-    const minZ = Math.min(leg.edge.z, center.z)
-    const maxZ = Math.max(leg.edge.z, center.z)
-    const box =
-      leg.direction === 'north'
-        ? { minX: center.x - half, maxX: center.x + half, minZ, maxZ: maxZ - inset }
-        : leg.direction === 'south'
-          ? { minX: center.x - half, maxX: center.x + half, minZ: minZ + inset, maxZ }
-          : leg.direction === 'west'
-            ? { minX, maxX: maxX - inset, minZ: center.z - half, maxZ: center.z + half }
-            : { minX: minX + inset, maxX, minZ: center.z - half, maxZ: center.z + half }
-    if (box.maxX - box.minX <= 0.1 || box.maxZ - box.minZ <= 0.1) return
     this.context.collision.registerBox({
       id,
       regionId: this.id,
@@ -2570,30 +2503,6 @@ function normalizeStyle(options: GeneratedWorldRuntimeOptions): RuntimeStyle {
     castShadows: options.castShadows === true,
     outlineDressing: options.outlineDressing === true,
   }
-}
-
-function directionBetween(
-  region: RegionBlueprint,
-  other: RegionBlueprint,
-): 'east' | 'north' | 'south' | 'west' | undefined {
-  const dx = other.coordinate.x - region.coordinate.x
-  const dz = other.coordinate.y - region.coordinate.y
-  if (dx === 1 && dz === 0) return 'east'
-  if (dx === -1 && dz === 0) return 'west'
-  if (dx === 0 && dz === 1) return 'south'
-  if (dx === 0 && dz === -1) return 'north'
-  return undefined
-}
-
-function edgeCenter(
-  bounds: Bounds2D,
-  direction: string,
-): Point2 {
-  const center = boundsCenter(bounds)
-  if (direction === 'east') return { x: bounds.maxX, z: center.z }
-  if (direction === 'west') return { x: bounds.minX, z: center.z }
-  if (direction === 'north') return { x: center.x, z: bounds.minZ }
-  return { x: center.x, z: bounds.maxZ }
 }
 
 const PROJECTED_STRIP_UV_LENGTH = 8

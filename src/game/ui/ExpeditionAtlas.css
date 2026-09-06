@@ -1,0 +1,152 @@
+.expedition-backdrop {
+  align-items: center;
+  background: rgb(12 13 14 / 86%);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+  position: fixed;
+  z-index: 80;
+}
+
+.expedition-atlas {
+  background: var(--cp-bg, #292929);
+  border: 1px solid var(--cp-border, #474747);
+  border-radius: 1rem;
+  box-shadow: 0 18px 48px rgb(0 0 0 / 32%);
+  color: var(--cp-text, #dedede);
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  padding: 1.25rem;
+  width: min(72rem, 100%);
+}
+
+.expedition-atlas button,
+.expedition-compass {
+  background: var(--cp-panel, #343231);
+  border: 1px solid var(--cp-border, #474747);
+  border-radius: 0.625rem;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  min-height: 44px;
+}
+
+.expedition-atlas button:disabled { cursor: default; opacity: 0.55; }
+.expedition-atlas button:hover:not(:disabled) { border-color: var(--cp-accent, #fd8ea1); }
+.expedition-atlas button:focus-visible,
+.expedition-map:focus-visible,
+.expedition-compass:focus-visible,
+.expedition-minimap-open:focus-visible { outline: 2px solid var(--cp-accent, #fd8ea1); outline-offset: 3px; }
+.expedition-atlas h2 { font-size: clamp(1.45rem, 3vw, 2rem); line-height: 1.1; margin: 0.3rem 0 0; }
+.expedition-atlas h3 { align-items: center; display: flex; font-size: 1rem; gap: 0.4rem; margin: 0; }
+.expedition-atlas p { font-size: 0.88rem; line-height: 1.45; margin: 0.5rem 0; }
+.expedition-atlas svg:not(.expedition-map) { height: 1.15rem; width: 1.15rem; }
+.expedition-header { align-items: center; display: flex; gap: 1rem; justify-content: space-between; }
+.expedition-status { align-items: center; color: var(--cp-muted, #b0b0b0); display: flex; font-size: 0.78rem; gap: 0.4rem; }
+.expedition-atlas .expedition-icon-button { align-items: center; display: flex; flex: 0 0 44px; justify-content: center; width: 44px; }
+.expedition-intro { color: var(--cp-muted, #b0b0b0); flex: 0 0 auto; padding-bottom: 0.5rem; }
+.expedition-body { display: grid; gap: 1.25rem; grid-template-columns: minmax(0, 1.4fr) minmax(18rem, 1fr); min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.expedition-mobile-switch { display: none; }
+.expedition-map-column,
+.expedition-destination-column { min-width: 0; }
+.expedition-destination-column { display: flex; flex-direction: column; min-height: 0; }
+.expedition-map-toolbar { align-items: center; display: flex; font-size: 0.78rem; gap: 0.4rem; justify-content: space-between; margin-bottom: 0.5rem; }
+.expedition-map-toolbar > div { display: flex; gap: 0.35rem; }
+.expedition-map-toolbar button { align-items: center; display: flex; gap: 0.3rem; justify-content: center; min-width: 44px; padding: 0.4rem; }
+.expedition-map { background: #202324; border: 1px solid #5f5f5f; border-radius: 0.5rem; cursor: grab; display: block; height: clamp(16rem, 45vh, 26rem); touch-action: none; user-select: none; width: 100%; }
+.expedition-map:active { cursor: grabbing; }
+.expedition-region { fill: #242627; stroke: #535455; stroke-width: 0.6; }
+.expedition-region.known { fill: #47473f; }
+.expedition-region.territory-elf { fill: #2a4935; }
+.expedition-region.territory-guard { fill: #2f4051; }
+.expedition-region.territory-villain { fill: #4c333e; }
+.expedition-region.current { stroke: #dedede; stroke-width: 1.5; }
+.expedition-grid-label { fill: #c7c8c5; font: 8px Consolas, monospace; pointer-events: none; }
+.expedition-water { stroke: #508ca7; stroke-width: 10; }
+.expedition-road { stroke: #bea16e; stroke-width: 2; }
+.expedition-road.blocked { opacity: 0.45; stroke-dasharray: 1 3; }
+.expedition-route { fill: none; stroke: #fd8ea1; stroke-linecap: round; stroke-width: 3; }
+.expedition-route.unscouted { stroke-dasharray: 6 4; }
+.expedition-route.connector { stroke: #f5d89a; stroke-dasharray: 1 3; }
+.expedition-bridge rect { fill: #3d3430; stroke: #f5dcad; stroke-width: 1; }
+.expedition-bridge path { fill: none; stroke: #f5dcad; stroke-width: 1.2; }
+.expedition-bridge.unscouted { opacity: 0.8; stroke-dasharray: 2 1; }
+.expedition-next { fill: #fd8ea1; stroke: #292929; stroke-width: 1.5; }
+.expedition-target { fill: #dedede; stroke: #252525; stroke-width: 1; }
+.expedition-target.selected { fill: #fd8ea1; stroke: #fd8ea1; stroke-width: 2; }
+.expedition-player { fill: #fff; stroke: #202020; stroke-width: 1.2; }
+.expedition-legend { display: flex; flex-wrap: wrap; font-size: 0.7rem; gap: 0.4rem 0.7rem; margin-top: 0.5rem; }
+.expedition-legend span { align-items: center; display: inline-flex; gap: 0.3rem; }
+.expedition-legend i { border-top: 2px solid #bea16e; width: 1rem; }
+.expedition-legend i.river { border-color: #508ca7; border-width: 5px; }
+.expedition-legend i.bridge { border: 2px solid #f5dcad; height: 0.45rem; }
+.expedition-legend i.unscouted { border-color: #fd8ea1; border-style: dashed; }
+.expedition-legend i.connector { border-color: #f5d89a; border-style: dotted; }
+.expedition-map-help,
+.expedition-atlas .expedition-risk-note { color: var(--cp-muted, #b0b0b0); font-size: 0.75rem; }
+.expedition-route-summary { border-top: 1px solid var(--cp-border, #474747); margin-top: 0.8rem; padding: 0.7rem 0; }
+.expedition-next-step { color: var(--cp-accent, #fd8ea1); font-weight: 700; }
+.expedition-preferences { display: grid; gap: 0.5rem; grid-template-columns: 1fr 1fr; }
+.expedition-preferences button { padding: 0.5rem; }
+.expedition-preferences button[aria-pressed="true"] { background: var(--cp-accent, #fd8ea1); color: var(--cp-accent-fg, #292929); }
+.expedition-list-header { align-items: center; display: flex; gap: 0.5rem; justify-content: space-between; margin: 0.5rem 0; }
+.expedition-list-header button { font-size: 0.75rem; padding: 0.5rem; }
+.expedition-destination-list { display: flex; flex: 1 1 auto; flex-direction: column; gap: 0.45rem; max-height: 26rem; min-height: 9rem; overflow-y: auto; overscroll-behavior: contain; padding: 0.25rem; scrollbar-width: thin; }
+.expedition-destination { display: flex; flex: 0 0 auto; flex-direction: column; gap: 0.3rem; padding: 0.65rem; text-align: left; }
+.expedition-destination[aria-pressed="true"] { border-color: var(--cp-accent, #fd8ea1); }
+.expedition-destination strong { font-size: 0.9rem; overflow-wrap: anywhere; }
+.expedition-destination > span { font-size: 0.74rem; line-height: 1.35; }
+.expedition-destination-meta { color: var(--cp-muted, #b0b0b0); display: flex; flex-wrap: wrap; gap: 0.2rem 0.5rem; justify-content: space-between; }
+.expedition-exclusive { color: var(--cp-warning, #fbbf24); }
+.expedition-select-label { color: var(--cp-accent, #fd8ea1); }
+.expedition-destination-detail { border-top: 1px solid var(--cp-border, #474747); flex: 0 0 auto; margin-top: 0.5rem; padding-top: 0.7rem; }
+
+.minimap-card.generated { position: relative; }
+.expedition-minimap { height: 100%; inset: 0; pointer-events: none; position: absolute; width: 100%; z-index: 1; }
+.expedition-minimap-open { background: transparent; border: 0; border-radius: inherit; color: var(--cp-text, #dedede); cursor: pointer; inset: 0; min-height: 44px; position: absolute; width: 100%; z-index: 4; }
+.expedition-minimap-open span { background: var(--cp-bg, #292929); border: 1px solid var(--cp-border, #474747); border-radius: 0.3rem; bottom: 0.4rem; font-size: 0.65rem; padding: 0.15rem 0.3rem; position: absolute; right: 0.4rem; }
+.expedition-compass { align-items: center; color: var(--cp-text, #dedede); display: flex; gap: 0.45rem; padding: 0.5rem; pointer-events: auto; text-align: left; width: 100%; }
+.expedition-compass-arrow { flex: 0 0 1.2rem; }
+.expedition-compass-arrow svg { color: var(--cp-accent, #fd8ea1); height: 1.2rem; width: 1.2rem; }
+.expedition-compass-copy { display: flex; flex: 1 1 auto; flex-direction: column; font-size: 0.7rem; gap: 0.2rem; min-width: 0; }
+.expedition-compass-copy strong,
+.expedition-compass-copy span,
+.expedition-compass-copy small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.expedition-compass-copy strong { font-size: 0.75rem; }
+.expedition-compass-copy small { color: var(--cp-accent, #fd8ea1); font-size: 0.65rem; }
+.expedition-compass kbd { font-size: 0.65rem; }
+
+@media (max-width: 720px) {
+  .expedition-backdrop { padding: max(0.5rem, env(safe-area-inset-top)) max(0.5rem, env(safe-area-inset-right)) max(0.5rem, env(safe-area-inset-bottom)) max(0.5rem, env(safe-area-inset-left)); }
+  .expedition-atlas { border-radius: 0.75rem; height: 100%; padding: 0.75rem; }
+  .expedition-body { display: flex; flex-direction: column; gap: 0.75rem; }
+  .expedition-mobile-switch { display: grid; flex: 0 0 auto; gap: 0.5rem; grid-template-columns: 1fr 1fr; margin: 0 0 0.75rem; }
+  .expedition-mobile-switch button[aria-pressed="true"] { border-color: var(--cp-accent, #fd8ea1); color: var(--cp-accent, #fd8ea1); }
+  .expedition-body[data-pane="map"] .expedition-destination-column,
+  .expedition-body[data-pane="targets"] .expedition-map-column { display: none; }
+  .expedition-map { height: min(65vw, 18rem); }
+  .expedition-destination-column { flex: 0 0 auto; }
+  .expedition-destination-list { max-height: 21rem; }
+  .expedition-map-toolbar { flex-wrap: wrap; }
+  .expedition-map-help { display: none; }
+  .expedition-route-summary { margin-top: 0.5rem; padding-bottom: 0; }
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+  .expedition-compass { gap: 0.25rem; padding: 0.35rem; }
+  .expedition-compass-arrow { flex-basis: 0.9rem; }
+  .expedition-compass-arrow svg { height: 0.9rem; width: 0.9rem; }
+  .expedition-compass-copy strong { font-size: 0.75rem; }
+  .expedition-compass-copy span,
+  .expedition-compass-copy small { font-size: 0.7rem; }
+  .expedition-compass kbd { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .expedition-atlas *,
+  .expedition-compass * { animation: none !important; scroll-behavior: auto !important; transition: none !important; }
+}
