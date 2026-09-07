@@ -102,6 +102,22 @@ interface EngineProbe {
   shieldActive: boolean
   cameraYaw: number
   cameraPitch: number
+  camera: THREE.PerspectiveCamera
+  cameraFollowPosition: THREE.Vector3
+  cameraObstacles: THREE.Object3D[]
+  playerGaitPhase: number
+  playerPose: { stride: number }
+  onGround: boolean
+  groundHeightAt(x: number, z: number): number
+  updateCamera(delta: number, immediate: boolean): void
+  resolveCameraPosition(target: THREE.Vector3, desired: THREE.Vector3): THREE.Vector3
+  onMouseMove(event: { movementX: number; movementY: number }): void
+  fireArrow(): void
+  updateProjectiles(delta: number): void
+  projectiles: { mesh: THREE.Mesh; velocity: THREE.Vector3 }[]
+  findProjectileHit(projectile: EngineProbe['projectiles'][number], start: THREE.Vector3, end: THREE.Vector3): {
+    fraction: number; actor: Attacker | null; player: boolean
+  } | null
   paused: boolean
   ended: boolean
   honestMelee: boolean
@@ -156,10 +172,14 @@ function fixture(faction: Faction = 'elf', collision = new CollisionWorld({
     body: createHealthyBody(), health: 70, stamina: 100, maxStamina: 100, damage: 26,
     abilityCooldown: 0, attackCooldown: 0, attackAnimation: 0, shieldActive: false,
     cameraYaw: 0, cameraPitch: 0.38, paused: false, ended: false, honestMelee: true,
+    camera: new THREE.PerspectiveCamera(56, 1, 0.1, 240),
+    cameraFollowPosition: new THREE.Vector3(), cameraRaycaster: new THREE.Raycaster(),
+    cameraObstacles: [], foliageOccluders: [], screenShakeEnabled: false, trauma: 0,
+    scene: new THREE.Scene(), projectiles: [], projectileSourcesToClear: new Set<string>(), playerGaitPhase: 0,
     elapsed: 0, melee: createPlayerMeleeState(), combatMastery: createCombatMasteryState(),
     finale: createFinaleState(createFinaleIdentity(blueprint, faction)),
     finaleTelegraphs: [], finaleTelegraphAction: null,
-    actors: [attacker], generatedWorld: { collision }, doctrineEffects: { forcedMarch: false },
+    actors: [attacker], generatedWorld: { collision, bounds: collision.getWorldBounds() }, doctrineEffects: { forcedMarch: false },
     onGround: true, verticalVelocity: 0, airborneTime: 0, jumpAccentArmed: true,
     wasSprinting: false, isSprinting: false, reducedMotion: false, damageFlash: 0,
     playerPose: { stride: 0, attack: 0, anticipation: 0, recovery: 0, flinch: 0, stagger: 0 },
@@ -175,6 +195,7 @@ function fixture(faction: Faction = 'elf', collision = new CollisionWorld({
     achievements: { recordPlayerDamage: () => { counts.damageRecords += 1 }, recordAbilityUse() {} },
     combatRng: () => { counts.draws += 1; return 0 },
     emitView() {}, resumeAudio() {}, animateCharacter() {}, updateShieldPose() {},
+    updatePlayerOutlineVisibility() {}, allegianceColor: () => new THREE.Color('green'),
     groundHeightAt: () => 0, zoneAtPosition: () => 'neutral', queueCameraAccent() {},
     actorDamageWithAura: (_actor: Attacker, damage: number) => damage,
     enemyDamageMultiplier: () => 1,
@@ -198,6 +219,165 @@ function mouseUp(engine: EngineProbe, event: ReturnType<typeof pointer>): void {
   engine.onWorldPointerUp(event)
   engine.onMouseUp({ ...event, target: engine.renderer.domElement })
 }
+
+test('native mouse and touch drag can look above and below the horizon without going underground', () => {
+  for (const input of ['mouse', 'touch'] as const) {
+    const { engine, surface } = fixture()
+    engine.groundHeightAt = () => 3
+    engine.player.position.y = 3
+    if (input === 'mouse') dom.pointerLockElement = surface
+    else engine.onWorldPointerDown(pointer(1, 0, 0, 'touch'))
+    for (const y of [-2000, 2000, -2000]) {
+      if (input === 'mouse') engine.onMouseMove({ movementX: 0, movementY: y })
+      else engine.onWorldPointerMove(pointer(1, 0, y, 'touch'))
+      for (let frame = 0; frame < 30; frame += 1) engine.updateCamera(1 / 60, frame === 0)
+      const direction = engine.camera.getWorldDirection(new THREE.Vector3())
+      assert.ok(y < 0 ? direction.y > 0.7 : direction.y < -0.7,
+        `${input} pitch must rotate the actual view across the horizon`)
+      assert.ok(Math.abs(engine.cameraPitch) < Math.PI / 2, 'do not flip at the poles')
+      assert.ok(engine.camera.position.y >= 3.3, 'the camera must stay above terrain')
+    }
+  }
+})
+
+test('follow damping cannot put the camera through a near wall or a terrain ridge', () => {
+  const { engine } = fixture()
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(20, 20, 0.2), new THREE.MeshBasicMaterial())
+  wall.position.set(0, 1.65, 1)
+  wall.updateMatrixWorld(true)
+  engine.cameraObstacles.push(wall)
+  engine.cameraPitch = 0
+  engine.cameraFollowPosition.set(0, 1.65, 12)
+  engine.updateCamera(1 / 144, false)
+  assert.ok(engine.camera.position.z < 0.9, 'a near wall must override camera follow lag')
+  engine.cameraObstacles.length = 0
+  engine.groundHeightAt = (_x, z) => z >= 3 && z <= 4 ? 4 : 0
+  const resolved = engine.resolveCameraPosition(new THREE.Vector3(0, 1.65, 0), new THREE.Vector3(0, 1.65, 10))
+  assert.ok(resolved.z < 3, 'terrain between player and camera must obstruct the camera')
+  wall.geometry.dispose()
+  wall.material.dispose()
+})
+
+test('bow elevation follows pitch while walking and evasion stay horizontal and full speed', () => {
+  for (const pitch of [-1.2, 0, 1.2]) {
+    const { engine } = fixture()
+    engine.cameraPitch = pitch
+    engine.cameraYaw = 0.8
+    engine.updateCamera(0, true)
+    engine.fireArrow()
+    const arrow = engine.projectiles[0]
+    const direction = arrow.velocity.clone().sub(new THREE.Vector3(0, 0.55, 0)).normalize()
+    assert.ok(Math.abs(direction.y + Math.sin(pitch)) < 1e-10)
+    assert.ok(Math.abs(direction.x - Math.sin(0.8) * Math.cos(pitch)) < 1e-10)
+    assert.ok(direction.dot(engine.camera.getWorldDirection(new THREE.Vector3())) > 1 - 1e-10)
+    engine.setInput('KeyW', true)
+    engine.updatePlayer(0.1)
+    assert.ok(Math.abs(Math.hypot(engine.player.position.x, engine.player.position.z) - 0.82) < 1e-10)
+    assert.equal(engine.player.position.y, 0)
+    const before = engine.player.position.clone()
+    engine.evade()
+    engine.updatePlayer(0.3)
+    assert.ok(Math.abs(before.distanceTo(engine.player.position) - EVADE_DISTANCE) < 1e-10)
+    arrow.mesh.geometry.dispose()
+    const materials = Array.isArray(arrow.mesh.material) ? arrow.mesh.material : [arrow.mesh.material]
+    materials.forEach((material) => material.dispose())
+  }
+})
+
+test('walking gait follows actual travel rather than global time or a blocked movement request', () => {
+  const phases: number[] = []
+  for (const hz of [30, 60, 144]) {
+    const { engine, collision } = fixture()
+    engine.setInput('KeyW', true)
+    for (let frame = 0; frame < hz / 2; frame += 1) {
+      engine.elapsed += 1 / hz
+      engine.updatePlayer(1 / hz)
+    }
+    phases.push(engine.playerGaitPhase)
+    collision.registerBox({
+      id: 'wall', regionId: 'region:0:0', x: 0, z: -5, halfWidth: 10, halfDepth: 0.1,
+    })
+    for (let frame = 0; frame < hz; frame += 1) {
+      engine.elapsed += 1 / hz
+      engine.updatePlayer(1 / hz)
+    }
+    assert.equal(Math.abs(engine.playerPose.stride), 0, 'feet must stop walking when the wall stops travel')
+  }
+  assert.ok(phases[0] > 0, 'the gait must advance during actual travel')
+  assert.ok(phases.every((phase) => Math.abs(phase - phases[0]) < 1e-9), 'gait must not depend on frame rate')
+})
+
+test('pitched arrows hit terrain before targets behind it but still reach unobstructed targets', () => {
+  const { engine, attacker } = fixture()
+  engine.fireArrow()
+  const arrow = engine.projectiles[0]
+  Object.assign(attacker, { hostileToPlayer: true, allegiance: 'guard' })
+  attacker.mesh.position.set(0, 0, -5)
+  const start = new THREE.Vector3(0, 1.45, 0)
+  const end = new THREE.Vector3(0, 1.45, -8)
+  assert.equal(engine.findProjectileHit(arrow, start, end)?.actor, attacker)
+  engine.groundHeightAt = (_x, z) => z < -2 && z > -3 ? 3 : 0
+  const ridge = engine.findProjectileHit(arrow, start, end)
+  assert.ok(ridge && ridge.actor === null && ridge.fraction < 0.4, 'the ridge must stop the arrow first')
+  engine.groundHeightAt = () => 0
+  const ground = engine.findProjectileHit(arrow, start, new THREE.Vector3(0, -2, -1))
+  assert.ok(ground && ground.actor === null, 'aiming downward must not send an arrow through the ground')
+  arrow.mesh.geometry.dispose()
+  const materials = Array.isArray(arrow.mesh.material) ? arrow.mesh.material : [arrow.mesh.material]
+  materials.forEach((material) => material.dispose())
+})
+
+test('real bow flight hits elevated and downhill targets at different frame rates; horizontal-only aiming misses', () => {
+  for (const hz of [30, 60, 144]) {
+    for (const targetHeight of [5, -5]) {
+      for (const horizontalOnly of [false, true]) {
+        const { engine, attacker } = fixture()
+        engine.player.position.y = 10
+        attacker.mesh.position.set(0, 10 + targetHeight, -10)
+        Object.assign(attacker, { hostileToPlayer: true, allegiance: 'guard' })
+        let hits = 0
+        Object.assign(engine, { damageActor: (target: Attacker) => {
+          assert.equal(target, attacker)
+          hits += 1
+        } })
+        engine.cameraPitch = horizontalOnly ? 0 : Math.atan2(0.3 - targetHeight, 10)
+        engine.fireArrow()
+        for (let frame = 0; frame < hz * 2; frame += 1) engine.updateProjectiles(1 / hz)
+        assert.equal(hits, horizontalOnly ? 0 : 1)
+        assert.equal(engine.projectiles.length, 0)
+      }
+    }
+  }
+})
+
+test('holding jump through landing does not repeatedly launch the player', () => {
+  for (const hz of [30, 60, 144]) {
+    const { engine, counts } = fixture()
+    engine.setInput('Space', true)
+    for (let frame = 0; frame < hz * 2; frame += 1) engine.updatePlayer(1 / hz)
+    assert.equal(counts.sounds.filter((cue) => cue === 'jump').length, 1)
+    assert.equal(engine.onGround, true)
+    engine.setInput('Space', false)
+    engine.setInput('Space', true)
+    engine.updatePlayer(1 / hz)
+    assert.equal(counts.sounds.filter((cue) => cue === 'jump').length, 2)
+    assert.equal(engine.onGround, false)
+  }
+})
+
+test('keyboard release and focus loss rearm jumping even between simulation frames', () => {
+  for (const release of ['key', 'blur', 'pause'] as const) {
+    const { engine, counts } = fixture()
+    engine.onKeyDown(key('Space'))
+    for (let frame = 0; frame < 60; frame += 1) engine.updatePlayer(1 / 60)
+    if (release === 'key') engine.onKeyUp(key('Space'))
+    else if (release === 'blur') engine.onWindowBlur()
+    else { engine.setPaused(true); engine.setPaused(false) }
+    engine.onKeyDown(key('Space'))
+    engine.updatePlayer(1 / 60)
+    assert.equal(counts.sounds.filter((cue) => cue === 'jump').length, 2)
+  }
+})
 
 test('real keyboard and public touch action spend once, normalize diagonals and travel within 4.2', () => {
   for (const faction of ['elf', 'guard', 'villain'] as const) {

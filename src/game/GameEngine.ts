@@ -1293,6 +1293,9 @@ const BOW_DAMAGE = 18
 const BOW_MIN_DAMAGE = 10
 const BOW_RANGE = 30
 const BOW_SPEED = 24
+const CAMERA_ORBIT_DISTANCE = 12
+const CAMERA_PITCH_LIMIT = 1.2
+const CAMERA_CLEARANCE = 0.4
 const ACTOR_ARROW_DAMAGE = 7
 const ACTOR_ARROW_SPEED = 16
 const ARCHER_MIN_RANGE = 8
@@ -1752,6 +1755,7 @@ function interpolateKeyframes(
  * prosthetics, gore and the torch, and are still resolvable by name.
  */
 interface CharacterRig {
+  torsoPivot: THREE.Object3D
   leftArm: THREE.Object3D | null
   rightArm: THREE.Object3D | null
   leftElbow: THREE.Object3D | null
@@ -2130,9 +2134,10 @@ export class GameEngine {
   private onGround = true
   private airborneTime = 0
   private jumpAccentArmed = true
+  private playerGaitPhase = 0
   private isSprinting = false
   private cameraYaw = 0
-  private cameraPitch = 0.38
+  private cameraPitch = Math.atan2(6.53, 10)
   private readonly cameraAccents: CameraAccent[] = []
   private sprintFovBlend = 0
   private cameraAccentOffset = 0
@@ -3002,6 +3007,7 @@ export class GameEngine {
       this.keys.add(code)
     } else {
       this.keys.delete(code)
+      if (code === 'Space') this.jumpAccentArmed = true
     }
   }
 
@@ -5152,6 +5158,7 @@ export class GameEngine {
     desiredDirection: THREE.Vector3,
     distance: number,
     allowInactiveBounds = false,
+    actualDirectionOut?: THREE.Vector3,
     holdAnchor?: SquadPoint,
   ): number {
     const radius = this.actorColliderRadiusForRole(actor.role)
@@ -5191,7 +5198,14 @@ export class GameEngine {
     actor.mesh.position.x = bestX
     actor.mesh.position.z = bestZ
     actor.mesh.position.y = this.groundHeightAt(bestX, bestZ)
-    return Math.hypot(bestX - startX, bestZ - startZ)
+    const movedX = bestX - startX
+    const movedZ = bestZ - startZ
+    const travelled = Math.hypot(movedX, movedZ)
+    if (actualDirectionOut) {
+      if (travelled > 0.0001) actualDirectionOut.set(movedX / travelled, 0, movedZ / travelled)
+      else actualDirectionOut.set(0, 0, 0)
+    }
+    return travelled
   }
 
   private updatePlayer(delta: number): void {
@@ -5267,6 +5281,8 @@ export class GameEngine {
       if (torso) torso.rotation.x += stepPose * (this.reducedMotion ? 0.08 : 0.22)
     } else if (move.lengthSq() > 0) {
       move.normalize()
+      const startX = this.player.position.x
+      const startZ = this.player.position.z
       this.moveCharacter(
         this.player.position,
         move.x * speed * delta,
@@ -5276,7 +5292,11 @@ export class GameEngine {
       this.player.rotation.y = this.shieldActive
         ? Math.atan2(forward.x, forward.z)
         : Math.atan2(move.x, move.z)
-      const stride = Math.sin(this.elapsed * (sprinting ? 15 : 10)) * 0.62
+      const travelled = Math.hypot(this.player.position.x - startX, this.player.position.z - startZ)
+      const gaitSpeed = 8.2 * (sprinting ? 1.65 : 1)
+      this.playerGaitPhase = (this.playerGaitPhase + travelled * (sprinting ? 15 : 10) / gaitSpeed) % (Math.PI * 2)
+      const motion = delta > 0 ? Math.min(1, travelled / (speed * delta)) : 0
+      const stride = this.onGround ? Math.sin(this.playerGaitPhase) * 0.62 * motion : 0
       this.animateCharacter(this.player, this.samplePlayerPose(stride))
     } else {
       if (this.shieldActive) this.player.rotation.y = Math.atan2(forward.x, forward.z)
@@ -5285,7 +5305,7 @@ export class GameEngine {
 
     const jumpHeld = this.keys.has('Space')
     let tookOff = false
-    if (jumpHeld && this.onGround && missingLegs < 2 && !committed && !evading) {
+    if (jumpHeld && this.jumpAccentArmed && this.onGround && missingLegs < 2 && !committed && !evading) {
       this.cancelMelee()
       this.verticalVelocity = missingLegs === 1 ? 6.2 : 8.5
       this.onGround = false
@@ -5425,8 +5445,15 @@ export class GameEngine {
     const remaining = direction.length()
     if (remaining < 0.05) return 0
     direction.normalize()
-    actor.mesh.rotation.y = Math.atan2(direction.x, direction.z)
-    return this.moveActorWithSteering(actor, direction, Math.min(distance, remaining))
+    const travelled = this.moveActorWithSteering(
+      actor,
+      direction,
+      Math.min(distance, remaining),
+      false,
+      direction,
+    )
+    if (travelled > 0.0001) actor.mesh.rotation.y = Math.atan2(direction.x, direction.z)
+    return travelled
   }
 
   private animateFinaleActor(actor: Actor, delta: number, travelled: number): void {
@@ -5725,6 +5752,15 @@ export class GameEngine {
     }
   }
 
+  /** Stops movement state together so stale speed cannot restart a gait after an action. */
+  private settleActorLocomotion(actor: Actor, delta: number): void {
+    actor.velocity.set(0, 0, 0)
+    actor.visualSpeed = 0
+    actor.stride = decayStrideOnStagger(actor.stride, delta)
+    actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
+    actor.turnLean = THREE.MathUtils.damp(actor.turnLean, 0, 8, delta)
+  }
+
   private updateActors(delta: number): void {
     // Global collision revision also ticks for unchanged active bounds; region revisions
     // identify real geometry changes without turning every frame into a new path search.
@@ -5776,24 +5812,19 @@ export class GameEngine {
       if (isBeastRole(actor.role) && this.updateBeastCharge(actor, delta)) continue
       if (actor.action) {
         this.updateActorAction(actor, delta)
-        actor.velocity.set(0, 0, 0)
-        actor.stride = decayStrideOnStagger(actor.stride, delta)
-        actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
+        this.settleActorLocomotion(actor, delta)
         this.animateActorCharacter(actor, delta, 0)
         this.updateChampionAura(actor)
         continue
       }
       if (actor.reaction === 'stagger' || knockbackSpeed > KNOCKBACK_STEER_THRESHOLD) {
-        actor.velocity.set(0, 0, 0)
-        actor.stride = decayStrideOnStagger(actor.stride, delta)
-        actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
+        this.settleActorLocomotion(actor, delta)
         this.animateActorCharacter(actor, delta, 0)
         this.updateChampionAura(actor)
         continue
       }
       if (actor.aiMode === 'captive') {
-        actor.stride = decayStrideOnStagger(actor.stride, delta)
-        actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
+        this.settleActorLocomotion(actor, delta)
         this.animateActorCharacter(actor, delta, 0)
         continue
       }
@@ -6171,9 +6202,7 @@ export class GameEngine {
       }
 
       if (actor.action) {
-        actor.velocity.set(0, 0, 0)
-        actor.stride = decayStrideOnStagger(actor.stride, delta)
-        actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
+        this.settleActorLocomotion(actor, delta)
         this.animateActorCharacter(actor, delta, 0)
         this.updateChampionAura(actor)
         continue
@@ -6232,6 +6261,8 @@ export class GameEngine {
       let movementProgress = 0
       if (requestedSpeed > 0.02) {
         direction.set(actor.velocity.x / requestedSpeed, 0, actor.velocity.z / requestedSpeed)
+        const requestedDirectionX = direction.x
+        const requestedDirectionZ = direction.z
         const requestedDistance = Math.min(requestedSpeed * delta, movementDistanceLimit)
         const beforeX = actor.mesh.position.x
         const beforeZ = actor.mesh.position.z
@@ -6240,10 +6271,11 @@ export class GameEngine {
           direction,
           requestedDistance,
           false,
+          direction,
           commandedSquadMember && this.squadCommand.mode === 'hold' ? this.squadCommand.anchor : undefined,
         )
-        movementProgress = (actor.mesh.position.x - beforeX) * direction.x +
-          (actor.mesh.position.z - beforeZ) * direction.z
+        movementProgress = (actor.mesh.position.x - beforeX) * requestedDirectionX +
+          (actor.mesh.position.z - beforeZ) * requestedDirectionZ
         if (
           requestedDistance > 0.001 &&
           travelled / requestedDistance < NPC_BLOCKED_SPEED_RATIO
@@ -6545,11 +6577,26 @@ export class GameEngine {
     const flightSpeed =
       actor.speed *
       (actor.routReason === 'panic' ? CIVILIAN_PANIC_SPEED_MULTIPLIER : 1.15)
-    const travelled = this.moveActorWithSteering(actor, away, flightSpeed * delta)
-    actor.velocity.set(away.x * actor.speed, 0, away.z * actor.speed)
-    const yaw = Math.atan2(away.x, away.z)
-    actor.mesh.rotation.y = dampAngle(actor.mesh.rotation.y, yaw, 9, delta)
-    actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 1, 9, delta)
+    const travelled = this.moveActorWithSteering(
+      actor,
+      away,
+      flightSpeed * delta,
+      false,
+      away,
+    )
+    const actualSpeed = delta > 0 ? travelled / delta : 0
+    actor.velocity.set(away.x * actualSpeed, 0, away.z * actualSpeed)
+    if (travelled > 0.0001) {
+      const yaw = Math.atan2(away.x, away.z)
+      actor.mesh.rotation.y = dampAngle(actor.mesh.rotation.y, yaw, 9, delta)
+    }
+    actor.visualSpeed = THREE.MathUtils.damp(actor.visualSpeed, actualSpeed, 14, delta)
+    actor.motionBlend = THREE.MathUtils.damp(
+      actor.motionBlend,
+      THREE.MathUtils.clamp(actor.visualSpeed / Math.max(flightSpeed, 0.1), 0, 1.18),
+      9,
+      delta,
+    )
     actor.gaitPhase += travelled * actorGaitCadence(actor.role)
     actor.stride = THREE.MathUtils.damp(
       actor.stride,
@@ -6591,9 +6638,7 @@ export class GameEngine {
     if (actor.role !== 'boar') return false
     if (actor.chargeWindup > 0) {
       actor.chargeWindup = Math.max(0, actor.chargeWindup - delta)
-      actor.velocity.set(0, 0, 0)
-      actor.stride = decayStrideOnStagger(actor.stride, delta)
-      actor.motionBlend = THREE.MathUtils.damp(actor.motionBlend, 0, 9, delta)
+      this.settleActorLocomotion(actor, delta)
       this.animateActorCharacter(actor, delta, 0)
       if (actor.chargeWindup <= 0) actor.chargeTimer = BOAR_CHARGE_DURATION
       return true
@@ -6602,7 +6647,22 @@ export class GameEngine {
 
     actor.chargeTimer = Math.max(0, actor.chargeTimer - delta)
     const step = BOAR_CHARGE_SPEED * delta
-    const travelled = this.moveActorWithSteering(actor, actor.chargeDirection, step)
+    this.collisionProbe.copy(actor.mesh.position)
+    const blocked = this.moveCharacter(
+      this.collisionProbe,
+      actor.chargeDirection.x * step,
+      actor.chargeDirection.z * step,
+      this.actorColliderRadiusForRole(actor.role),
+    )
+    let travelled = 0
+    if (!blocked) {
+      travelled = Math.hypot(
+        this.collisionProbe.x - actor.mesh.position.x,
+        this.collisionProbe.z - actor.mesh.position.z,
+      )
+      actor.mesh.position.copy(this.collisionProbe)
+      actor.mesh.position.y = this.groundHeightAt(actor.mesh.position.x, actor.mesh.position.z)
+    }
     actor.mesh.rotation.y = Math.atan2(actor.chargeDirection.x, actor.chargeDirection.z)
     actor.motionBlend = 1.18
     actor.gaitPhase += travelled * actorGaitCadence(actor.role)
@@ -6610,7 +6670,7 @@ export class GameEngine {
     this.animateActorCharacter(actor, delta, 0)
     this.resolveBoarChargeContact(actor)
     // A charge that hits a wall ends there rather than grinding along it.
-    if (actor.chargeTimer <= 0 || travelled < step * 0.25) {
+    if (actor.chargeTimer <= 0 || blocked || travelled < step * 0.25) {
       actor.chargeTimer = 0
       actor.chargeCooldown = BOAR_CHARGE_COOLDOWN
     }
@@ -6806,6 +6866,12 @@ export class GameEngine {
 
   private getAimDirection(): THREE.Vector3 {
     return new THREE.Vector3(Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw))
+  }
+
+  private getViewDirection(): THREE.Vector3 {
+    const direction = this.getAimDirection().multiplyScalar(Math.cos(this.cameraPitch))
+    direction.y = -Math.sin(this.cameraPitch)
+    return direction
   }
 
   private startActorAction(
@@ -7162,7 +7228,7 @@ export class GameEngine {
   }
 
   private fireArrow(): void {
-    const direction = this.getAimDirection()
+    const direction = this.getViewDirection()
     this.activePlayerAttackKind = 'arrow'
     this.player.rotation.y = Math.atan2(direction.x, direction.z)
     const origin = this.player.position
@@ -7878,16 +7944,16 @@ export class GameEngine {
     if (projectile.finale) {
       const cover = this.finaleCoverHit(start, end, FINALE_PROJECTILE_RADIUS)
       if (cover !== null) nearest = { fraction: cover, actor: null, player: false }
-      const steps = Math.max(1, Math.ceil(start.distanceTo(end) / 0.4))
-      for (let index = 0; index <= steps; index += 1) {
-        const fraction = index / steps
-        if (nearest && fraction >= nearest.fraction) break
-        const x = THREE.MathUtils.lerp(start.x, end.x, fraction)
-        const z = THREE.MathUtils.lerp(start.z, end.z, fraction)
-        if (THREE.MathUtils.lerp(start.y, end.y, fraction) <= this.groundHeightAt(x, z) + 0.1) {
-          nearest = { fraction, actor: null, player: false }
-          break
-        }
+    }
+    const steps = Math.max(1, Math.ceil(start.distanceTo(end) / 0.4))
+    for (let index = 0; index <= steps; index += 1) {
+      const fraction = index / steps
+      if (nearest && fraction >= nearest.fraction) break
+      const x = THREE.MathUtils.lerp(start.x, end.x, fraction)
+      const z = THREE.MathUtils.lerp(start.z, end.z, fraction)
+      if (THREE.MathUtils.lerp(start.y, end.y, fraction) <= this.groundHeightAt(x, z) + 0.1) {
+        nearest = { fraction, actor: null, player: false }
+        break
       }
     }
     const sourceActor = projectile.sourceActorId
@@ -14192,6 +14258,7 @@ export class GameEngine {
 
     this.markCharacterShadows(group)
     const rig: CharacterRig = {
+      torsoPivot,
       leftArm: group.getObjectByName('leftArm') ?? null,
       rightArm: group.getObjectByName('rightArm') ?? null,
       leftElbow: group.getObjectByName('leftElbow') ?? null,
@@ -14784,6 +14851,7 @@ export class GameEngine {
 
     this.markCharacterShadows(group)
     const beastRig: CharacterRig = {
+      torsoPivot,
       leftArm: group.getObjectByName('leftArm') ?? null,
       rightArm: group.getObjectByName('rightArm') ?? null,
       leftElbow: null,
@@ -16073,6 +16141,9 @@ export class GameEngine {
       this.animateBeastRig(rig, pose)
       return
     }
+    // `updatePlayer` layers the evade dip on after this pass. Re-establishing the
+    // skeletal baseline here makes that offset a pose rather than accumulated state.
+    rig.torsoPivot.rotation.x = 0
     const stride = rig.boundArms ? 0 : pose.stride
     const swing = pose.stride
     const main = rig.mainHand > 0 ? rig.rightArm : rig.leftArm
@@ -16225,11 +16296,12 @@ export class GameEngine {
     const breathing = Math.sin(this.elapsed * 1.75 + actor.phase) * 0.018
     const idleWeightShift =
       Math.sin(this.elapsed * 0.7 + actor.phase * 1.9) * 0.035 * (1 - actor.motionBlend)
-    const stepBob =
-      Math.abs(Math.sin(actor.gaitPhase)) *
-      0.065 *
-      THREE.MathUtils.clamp(actor.motionBlend, 0, 1)
-    if (bodyPivot) bodyPivot.position.y = breathing + stepBob
+    const animatedStride = rig?.boundArms ? 0 : pose.stride
+    // The planted leg shortens as its joints rotate, so the hips settle rather than
+    // rising. Drive this from the posed stride: gait phase can outlive a stopped step.
+    const stepWeight = THREE.MathUtils.clamp(Math.abs(animatedStride) / 0.62, 0, 1)
+    const stepDrop = -stepWeight * stepWeight * 0.065
+    if (bodyPivot) bodyPivot.position.y = stepDrop
 
     // A quadruped's spine is not a biped's. `torso-pivot` on a beast carries the
     // whole ribcage, `pelvis-pivot` the hindquarters and `head-pivot` a skull that
@@ -16253,6 +16325,7 @@ export class GameEngine {
     const hitRight =
       Math.cos(yaw) * actor.lastHitDirection.x - Math.sin(yaw) * actor.lastHitDirection.z
     const forwardLean = this.actorForwardLean(actor.role)
+    const restingLean = this.actorRestingLean(rig)
 
     if (torsoPivot) {
       torsoPivot.position.x = idleWeightShift
@@ -16262,14 +16335,7 @@ export class GameEngine {
           pose.anticipation * (heavy ? 0.11 : 0.16) +
           pose.attack * 0.12 +
           pose.stagger * 0.2 +
-          // §5D — shoulders up against the weather. Cosmetic only, but it is driven by the
-          // simulation's storm factor so it reads the same whether or not precipitation is
-          // being drawn.
-          this.ambientStormHunch +
-          // §4 — the plan's own posture. A villain stoops, a scout runs light and an
-          // officer stands up straight; without this the proportion table resolves a
-          // lean that nothing ever reads.
-          (rig?.lean ?? 0),
+          restingLean,
         chestGaitYaw(actor.stride, heavy) +
           pose.attack * 0.16 -
           pose.flinch * hitRight * 0.22,
@@ -16370,10 +16436,28 @@ export class GameEngine {
     return pose
   }
 
-  private actorForwardLean(role: ActorRole): number {    if (role === 'scout') return 0.075
+  private actorForwardLean(role: ActorRole): number {
+    if (role === 'scout') return 0.075
     if (role === 'brute' || role === 'champion') return 0.055
     if (role === 'archer') return 0.025
     return 0.04
+  }
+
+  /**
+   * Blends authored posture toward the storm posture instead of adding two absolute
+   * lean angles. At full storm every ordinary body reaches at least the weather hunch,
+   * while an already-stooped role does not bend that same amount a second time.
+   */
+  private actorRestingLean(rig: CharacterRig | undefined): number {
+    const authoredLean = rig?.lean ?? 0
+    const fullStormLean = weatherHunch(1)
+    if (fullStormLean <= 0) return authoredLean
+    const storm = THREE.MathUtils.clamp(this.ambientStormHunch / fullStormLean, 0, 1)
+    return THREE.MathUtils.lerp(
+      authoredLean,
+      Math.max(authoredLean, fullStormLean),
+      storm,
+    )
   }
 
   /**
@@ -16495,15 +16579,18 @@ export class GameEngine {
   }
 
   private updateCamera(delta: number, immediate: boolean): void {
-    const forward = new THREE.Vector3(Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw))
+    const forward = this.getAimDirection()
     const target = this.player.position.clone().add(new THREE.Vector3(0, 1.65, 0))
+    // Looking up rotates the view without orbiting the camera below the player's feet.
+    const orbitPitch = Math.max(0, this.cameraPitch)
     const desired = target
       .clone()
-      .addScaledVector(forward, -10)
-      .add(new THREE.Vector3(0, 5.2 + this.cameraPitch * 3.5, 0))
+      .addScaledVector(forward, -CAMERA_ORBIT_DISTANCE * Math.cos(orbitPitch))
+    desired.y += CAMERA_ORBIT_DISTANCE * Math.sin(orbitPitch)
     const resolved = this.resolveCameraPosition(target, desired)
     if (immediate) this.cameraFollowPosition.copy(resolved)
     else this.cameraFollowPosition.lerp(resolved, dampingAlpha(CAMERA_FOLLOW_DAMPING, delta))
+    this.cameraFollowPosition.copy(this.resolveCameraPosition(target, this.cameraFollowPosition))
 
     let cameraPosition = this.cameraFollowPosition
     let roll = 0
@@ -16528,7 +16615,7 @@ export class GameEngine {
     }
 
     this.camera.position.copy(cameraPosition)
-    this.camera.lookAt(target)
+    this.camera.lookAt(cameraPosition.clone().add(this.getViewDirection()))
     if (roll !== 0) this.camera.rotateZ(roll)
     this.updateCameraFov(delta, immediate)
     this.updatePlayerOutlineVisibility()
@@ -16543,16 +16630,26 @@ export class GameEngine {
     const direction = offset.multiplyScalar(1 / distance)
     this.cameraRaycaster.set(target, direction)
     this.cameraRaycaster.camera = this.camera
-    this.cameraRaycaster.near = 0.45
+    this.cameraRaycaster.near = 0.1
     this.cameraRaycaster.far = distance
     const collision = this.cameraRaycaster
       .intersectObjects(this.cameraObstacles, false)
       .find(({ object }) => this.blocksCamera(object))
-    if (!collision) return desired
-
-    return target
-      .clone()
-      .addScaledVector(direction, Math.max(2.2, collision.distance - 1.15))
+    const clearDistance = collision
+      ? Math.max(0.1, collision.distance - CAMERA_CLEARANCE)
+      : distance
+    const steps = Math.max(1, Math.ceil(clearDistance / 0.5))
+    let safeDistance = 0
+    for (let step = 1; step <= steps; step += 1) {
+      const along = clearDistance * step / steps
+      const x = target.x + direction.x * along
+      const z = target.z + direction.z * along
+      if (target.y + direction.y * along < this.groundHeightAt(x, z) + CAMERA_CLEARANCE) {
+        return target.clone().addScaledVector(direction, safeDistance)
+      }
+      safeDistance = along
+    }
+    return target.clone().addScaledVector(direction, clearDistance)
   }
 
   private collectCameraObstacles(roots: THREE.Object3D[]): void {
@@ -16686,6 +16783,7 @@ export class GameEngine {
 
   private onKeyUp(event: KeyboardEvent): void {
     this.keys.delete(event.code)
+    if (event.code === 'Space') this.jumpAccentArmed = true
     if (event.code === 'KeyR') this.setShield(false)
   }
 
@@ -16696,7 +16794,7 @@ export class GameEngine {
 
   private look(x: number, y: number): void {
     this.cameraYaw += x * 0.0028
-    this.cameraPitch = THREE.MathUtils.clamp(this.cameraPitch + y * 0.0018, -0.15, 0.72)
+    this.cameraPitch = THREE.MathUtils.clamp(this.cameraPitch + y * 0.0018, -CAMERA_PITCH_LIMIT, CAMERA_PITCH_LIMIT)
   }
 
   private onWorldPointerDown(event: PointerEvent): void {
@@ -16809,6 +16907,7 @@ export class GameEngine {
 
   private releaseGameplayInput(): void {
     this.keys.clear()
+    this.jumpAccentArmed = true
     this.releaseLookGesture(true)
     this.mousePointerId = null
     settleCombatMastery(this.combatMastery, this.melee)

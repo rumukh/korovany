@@ -1220,14 +1220,14 @@ test('the head is rigid with the chest and hinges at the neck', () => {
  *    line must lie along the chest's own up axis, so the silhouette shows the lean that
  *    was authored and not a fold. The slip allowed is exactly the weight shift's own
  *    angle, `asin(0.035 / (shoulderY - hipY))`, at most 2.18°. Shipped, the spine and
- *    the chest disagreed by up to **32.07°**, the spine's forward pitch reached
+ *    the chest disagreed by up to **29.50°**, the spine's forward pitch reached
  *    **2.9980x** the pitch the animation asked for, and at its worst the body was bent
- *    **69.55°** forward where **39.24°** was authored.
+ *    **58.07°** forward where **29.14°** was authored.
  * 3. **The chest rides its own lever.** The torso mesh's travel from its rest position is
  *    bounded by the chord `2 * (torsoY - hipY) * sin(angle / 2)` plus the weight shift,
  *    where `torsoY - hipY` — 0.520 to 0.600 m — is the chest's reach above the waist.
- *    Shipped it travelled **3.3000x** that bound, 1.1514 m against 0.3489 m, and stood
- *    up to **0.8036 m** from where a waist hinge puts it. Two-thirds of a head.
+ *    Shipped it travelled **3.2937x** that bound and stood up to **0.6891 m** from
+ *    where a waist hinge puts it. More than half a head.
  *
  * ## Why the shipped arrangement is rebuilt here
  *
@@ -1252,8 +1252,7 @@ test('the torso bends at the waist and stays on the pelvis', () => {
   // is a sweep over poses nobody can reach, and it would still be green.
   for (const [term, pattern] of [
     ['the role\'s forward lean', /const forwardLean = this\.actorForwardLean\(actor\.role\)/],
-    ['the plan\'s own lean', /\(rig\?\.lean \?\? 0\)/],
-    ['the storm hunch', /this\.ambientStormHunch/],
+    ['the composed resting lean', /const restingLean = this\.actorRestingLean\(rig\)/],
     ['the windup pitch', /pose\.anticipation \* \(heavy \? 0\.11 : 0\.16\)/],
     ['the attack pitch', /pose\.attack \* 0\.12/],
     ['the stagger pitch', /pose\.stagger \* 0\.2/],
@@ -1306,14 +1305,14 @@ test('the torso bends at the waist and stays on the pelvis', () => {
   /**
    * The furthest forward a body may be bent, in radians.
    *
-   * `0.6849` is the deepest pitch the terms below compose — a brute's own lean, its
-   * forward lean at the motion cap, a full storm hunch and a stagger, which is the
+   * `0.5085` is the deepest pitch the terms below compose — a scout's storm posture,
+   * forward lean at the motion cap and a stagger, which is the
    * deepest jointly reachable pose — and the XYZ Euler's yaw-roll cross-term adds
-   * `0.08` of a degree on top of it. Rounded up to `0.70` so the cap is a statement
+   * `0.08` of a degree on top of it. Rounded up to `0.52` so the cap is a statement
    * about the body rather than a restatement of the sum. The shipped rig reached
-   * `1.2140` here: 69.55 degrees, which is a bow, not a lean.
+   * well beyond that cap, which is a bow rather than a lean.
    */
-  const DEEPEST_FORWARD_PITCH = 0.7
+  const DEEPEST_FORWARD_PITCH = 0.52
   const asDegrees = (radians: number): number => radians * (180 / Math.PI)
 
   const forwardLeanFor = (role: string): number =>
@@ -1337,6 +1336,8 @@ test('the torso bends at the waist and stays on the pelvis', () => {
   const statesFor = (role: string, p: CharacterProportions): readonly ChestState[] => {
     const heavy = role === 'brute' || role === 'champion'
     const run = forwardLeanFor(role) * MOTION_BLEND_MAX + p.lean
+    const stormRun =
+      forwardLeanFor(role) * MOTION_BLEND_MAX + Math.max(p.lean, weatherHunch(1))
     const gait = chestGaitYaw(STRIDE_MAX, heavy)
     const roll = -TURN_LEAN_MAX * 0.16
     return [
@@ -1355,8 +1356,8 @@ test('the torso bends at the waist and stays on the pelvis', () => {
       // Stagger and attack cannot co-occur: the stagger branch clears `actor.action`.
       { name: 'stagger', pitch: run + 0.2, yaw: gait, roll, x: 0 },
       { name: 'flinch', pitch: run, yaw: gait - 0.22, roll: roll - 0.18, x: 0 },
-      { name: 'storm walk', pitch: run + weatherHunch(1), yaw: gait, roll, x: 0 },
-      { name: 'storm stagger', pitch: run + weatherHunch(1) + 0.2, yaw: gait, roll, x: 0 },
+      { name: 'storm walk', pitch: stormRun, yaw: gait, roll, x: 0 },
+      { name: 'storm stagger', pitch: stormRun + 0.2, yaw: gait, roll, x: 0 },
     ]
   }
 
@@ -1567,16 +1568,16 @@ test('the torso bends at the waist and stays on the pelvis', () => {
     + 'lever below it can.',
   )
   assert.ok(
-    Math.abs(authoredPitch - 0.6849) < 0.00005,
+    Math.abs(authoredPitch - 0.5085) < 0.00005,
     `the deepest pitch this table composes is now ${authoredPitch.toFixed(4)} rad, not the `
-    + '0.6849 the cap below is sized against.',
+    + '0.5085 the cap below is sized against.',
   )
   assert.ok(
     worst.spinePitch <= DEEPEST_FORWARD_PITCH,
     `the deepest state bent the body ${asDegrees(worst.spinePitch).toFixed(2)} degrees `
     + `forward at ${worstAt.spinePitch}, past the ${asDegrees(DEEPEST_FORWARD_PITCH).toFixed(2)} `
     + 'a leaning body can reach. The pose is a lean, and a lean is all of it — the '
-    + 'shipped arrangement folded to 69.55 here.',
+    + 'foot-rooted arrangement folds much further here.',
   )
 
   // 3. The chest rides its own lever.
@@ -1592,18 +1593,18 @@ test('the torso bends at the waist and stays on the pelvis', () => {
   // guard on a published figure is a guard on how that figure *renders*.
   assert.ok(
     Math.abs(control.gap - 1.3405) < 0.00005 &&
-      Math.abs(asDegrees(control.offAxis) - 32.07) < 0.005 &&
+      Math.abs(asDegrees(control.offAxis) - 29.50) < 0.005 &&
       Math.abs(control.ratio - 2.998) < 0.0005 &&
-      Math.abs(asDegrees(control.spinePitch) - 69.55) < 0.005 &&
-      Math.abs(control.travel - 3.3) < 0.005 &&
-      Math.abs(control.block - 0.8036) < 0.00005,
+      Math.abs(asDegrees(control.spinePitch) - 58.07) < 0.005 &&
+      Math.abs(control.travel - 3.2937) < 0.005 &&
+      Math.abs(control.block - 0.6891) < 0.00005,
     'a chest rooted at the feet no longer measures what this file and `CharacterKit`\'s '
     + `docblock say it did: gap ${control.gap.toFixed(4)} m (1.3405), spine `
-    + `${asDegrees(control.offAxis).toFixed(2)} deg off the chest (32.07), pitch `
+    + `${asDegrees(control.offAxis).toFixed(2)} deg off the chest (29.50), pitch `
     + `${control.ratio.toFixed(4)}x what was authored (2.998), bent `
-    + `${asDegrees(control.spinePitch).toFixed(2)} deg (69.55), travel `
-    + `${control.travel.toFixed(4)}x its lever (3.3000), block ${control.block.toFixed(4)} m `
-    + 'off a waist hinge (0.8036). Nothing is necessarily broken — the state table may '
+    + `${asDegrees(control.spinePitch).toFixed(2)} deg (58.07), travel `
+    + `${control.travel.toFixed(4)}x its lever (3.2937), block ${control.block.toFixed(4)} m `
+    + 'off a waist hinge (0.6891). Nothing is necessarily broken — the state table may '
     + 'have moved — but every figure quoted for GFX-011 is now wrong, and the bounds above '
     + 'are no longer known to be crossable.',
   )
