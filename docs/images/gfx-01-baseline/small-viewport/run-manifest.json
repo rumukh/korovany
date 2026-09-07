@@ -1,0 +1,409 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-09-06T22:27:12.468Z",
+  "runtimeCommit": "931360200e5d24cb6f02da3ac1066174aeb0309f",
+  "dirtyTree": "",
+  "runtimeBaseline": "f36ee7ce06c9cf7b1c220d04b707be4fcf1cc7ff",
+  "buildSha256": "ecaf848e98ed025e03c005a53b6eac157df94f21834073af312723d79efe475e",
+  "host": {
+    "platform": "win32",
+    "osRelease": "10.0.19045",
+    "cpu": "AMD Ryzen 7 5800X 8-Core Processor             ",
+    "logicalProcessors": 16,
+    "memoryBytes": 103001661440,
+    "node": "v25.6.0"
+  },
+  "conditions": {
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "dpr": 1,
+      "mobileEmulation": false
+    },
+    "chrome": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "chromeFlags": [
+      "--user-data-dir=C:\\Users\\predi\\.copilot\\session-state\\78d2667c-359d-4f21-a9bb-3ed54c0390f0\\files\\gfx01-final-layout\\chrome-profile-TqQcnM",
+      "--remote-debugging-port=0",
+      "--remote-debugging-address=127.0.0.1",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-background-networking",
+      "--disable-component-update",
+      "--disable-sync",
+      "--disable-extensions",
+      "--metrics-recording-only",
+      "--mute-audio",
+      "--window-size=390,844",
+      "--headless=new",
+      "about:blank"
+    ],
+    "serverOrigin": "http://127.0.0.1:50506",
+    "dedicatedBrowserProfile": true,
+    "exclusiveGraphicsWorkerLeaseRequired": true,
+    "wholeComputerIsolated": false,
+    "cpuThrottling": false,
+    "gpuBackendForced": false,
+    "unsupportedHardware": [
+      "No real mobile device benchmark",
+      "No integrated GPU device benchmark"
+    ],
+    "capture": "Manual production rendering of real worlds/checkpoints with explicitly staged prerequisites. No full-game CPU claim from capture frames.",
+    "repeatTolerance": {
+      "maxChangedPixels": 16,
+      "maxChannelDelta": 2
+    },
+    "profile": "Active production requestAnimationFrame updates; default 0.05 s simulation clamp and hit stop unchanged. Warm-up and samples separate; no per-frame screenshot/readback.",
+    "memory": "Observed WebGL storage bytes, not measured resident VRAM. Default framebuffer, implicit extension MSAA and driver/swapchain exclusions separately reported."
+  },
+  "cases": [
+    {
+      "id": "elf-opening",
+      "definition": {
+        "id": "elf-opening",
+        "faction": "elf",
+        "weather": "rain",
+        "time": 2,
+        "description": "Fresh production elf opening; no player/actor relocation. Staged visual clock and seed; simulation held for capture."
+      },
+      "captures": [
+        {
+          "repetition": 1,
+          "file": "elf-opening-1.png",
+          "sha256": "a25326e152934df68484fa8d0e74042ba6d9792270d4f2ad0366794e24d65a45"
+        },
+        {
+          "repetition": 2,
+          "file": "elf-opening-2.png",
+          "sha256": "a25326e152934df68484fa8d0e74042ba6d9792270d4f2ad0366794e24d65a45",
+          "comparison": {
+            "identicalPixels": true,
+            "changedPixels": 0,
+            "changedPixelRatio": 0,
+            "maxChannelDelta": 0,
+            "meanChannelDelta": 0,
+            "bounds": null,
+            "firstPixelSha256": "14c378bda06d00154d2476578173cde502450ef439b83ba605d01e61a0ed683a",
+            "secondPixelSha256": "14c378bda06d00154d2476578173cde502450ef439b83ba605d01e61a0ed683a"
+          }
+        }
+      ],
+      "externalRequests": [],
+      "byteIdenticalCaptures": true,
+      "repeatWithinTolerance": true
+    },
+    {
+      "id": "guard-opening",
+      "definition": {
+        "id": "guard-opening",
+        "faction": "guard",
+        "weather": "clear",
+        "time": 2,
+        "description": "Fresh production guard opening; no player/actor relocation. Staged visual clock and seed; simulation held for capture."
+      },
+      "captures": [
+        {
+          "repetition": 1,
+          "file": "guard-opening-1.png",
+          "sha256": "20dde16543afa4863d2cd9e0251a54011c87e90d21f2449913f4158a2e405903"
+        },
+        {
+          "repetition": 2,
+          "file": "guard-opening-2.png",
+          "sha256": "20dde16543afa4863d2cd9e0251a54011c87e90d21f2449913f4158a2e405903",
+          "comparison": {
+            "identicalPixels": true,
+            "changedPixels": 0,
+            "changedPixelRatio": 0,
+            "maxChannelDelta": 0,
+            "meanChannelDelta": 0,
+            "bounds": null,
+            "firstPixelSha256": "0a106c199bcd6e7d153b8ca5712a3fedd27f8e157420cd5a797f05eddb9f3558",
+            "secondPixelSha256": "0a106c199bcd6e7d153b8ca5712a3fedd27f8e157420cd5a797f05eddb9f3558"
+          }
+        }
+      ],
+      "externalRequests": [],
+      "byteIdenticalCaptures": true,
+      "repeatWithinTolerance": true
+    },
+    {
+      "id": "villain-opening",
+      "definition": {
+        "id": "villain-opening",
+        "faction": "villain",
+        "weather": "snow",
+        "time": 2,
+        "description": "Fresh production villain opening; no player/actor relocation. Staged visual clock and seed; simulation held for capture."
+      },
+      "captures": [
+        {
+          "repetition": 1,
+          "file": "villain-opening-1.png",
+          "sha256": "201933514c2a84b15637967dcab66b83cc80a9ce446f9416f4ef7e8add1a63ab"
+        },
+        {
+          "repetition": 2,
+          "file": "villain-opening-2.png",
+          "sha256": "201933514c2a84b15637967dcab66b83cc80a9ce446f9416f4ef7e8add1a63ab",
+          "comparison": {
+            "identicalPixels": true,
+            "changedPixels": 0,
+            "changedPixelRatio": 0,
+            "maxChannelDelta": 0,
+            "meanChannelDelta": 0,
+            "bounds": null,
+            "firstPixelSha256": "6c74e7b083c8e687dff0860071c0396b96393ce575375d4b00f47f3c403569bc",
+            "secondPixelSha256": "6c74e7b083c8e687dff0860071c0396b96393ce575375d4b00f47f3c403569bc"
+          }
+        }
+      ],
+      "externalRequests": [],
+      "byteIdenticalCaptures": true,
+      "repeatWithinTolerance": true
+    },
+    {
+      "id": "elf-forest-obstruction",
+      "definition": {
+        "id": "elf-forest-obstruction",
+        "faction": "elf",
+        "save": "elf-save.json",
+        "reference": "elf-forest-contract.png",
+        "weather": "rain",
+        "time": 23.5,
+        "description": "Real 32.2 s elf checkpoint; player/companion positions and requested camera staged from the 23.5 s field frame. Saved HP/objectives retained; unsaved transient actors/FX not reconstructed."
+      },
+      "captures": [
+        {
+          "repetition": 1,
+          "file": "elf-forest-obstruction-1.png",
+          "sha256": "d88fe543c861b0cb11e0e33538952423e58d821aa6f68af8a1b3bc7a4690d0be"
+        },
+        {
+          "repetition": 2,
+          "file": "elf-forest-obstruction-2.png",
+          "sha256": "d88fe543c861b0cb11e0e33538952423e58d821aa6f68af8a1b3bc7a4690d0be",
+          "comparison": {
+            "identicalPixels": true,
+            "changedPixels": 0,
+            "changedPixelRatio": 0,
+            "maxChannelDelta": 0,
+            "meanChannelDelta": 0,
+            "bounds": null,
+            "firstPixelSha256": "e74f1567f380c11c56d9e2442571e1f8e300d8fd6c875f1c4b01064bccf49141",
+            "secondPixelSha256": "e74f1567f380c11c56d9e2442571e1f8e300d8fd6c875f1c4b01064bccf49141"
+          }
+        }
+      ],
+      "externalRequests": [],
+      "byteIdenticalCaptures": true,
+      "repeatWithinTolerance": true
+    },
+    {
+      "id": "guard-riverside-close",
+      "definition": {
+        "id": "guard-riverside-close",
+        "faction": "guard",
+        "save": "guard-save.json",
+        "reference": "guard-melee-impact.png",
+        "weather": "clear",
+        "time": 43,
+        "description": "Real 43.0 s guard checkpoint beside the riverside shop. Field camera yaw/pitch and rounded subject positions staged; production collision solver must reproduce the compressed camera, not a forced camera position."
+      },
+      "captures": [
+        {
+          "repetition": 1,
+          "file": "guard-riverside-close-1.png",
+          "sha256": "03a1f14b0995abc935ce126be72b99b121970b35372a18f64e2bce7d2eb8cb81"
+        },
+        {
+          "repetition": 2,
+          "file": "guard-riverside-close-2.png",
+          "sha256": "7ba4b963d2578cb2a489a8ce2447b0a456a290579f15e1ad5f908ac1cc8e810a",
+          "comparison": {
+            "identicalPixels": false,
+            "changedPixels": 1,
+            "changedPixelRatio": 0.0000030380362133916637,
+            "maxChannelDelta": 1,
+            "meanChannelDelta": 0.0000030380362133916637,
+            "bounds": {
+              "minX": 24,
+              "minY": 471,
+              "maxX": 24,
+              "maxY": 471
+            },
+            "firstPixelSha256": "2b8b3a8a85ce6095957cb183e1b7e54261040f84b935b563e630546627b02744",
+            "secondPixelSha256": "7de3ec3d75bdf7a1c1fb35327545e8b0e7afd9542547a750f81477847e3f4cc8"
+          }
+        }
+      ],
+      "externalRequests": [],
+      "byteIdenticalCaptures": false,
+      "repeatWithinTolerance": true
+    },
+    {
+      "id": "crowded-25",
+      "definition": {
+        "id": "crowded-25",
+        "faction": "guard",
+        "crowd": true,
+        "weather": "clear",
+        "time": 16.8,
+        "description": "Fresh guard world; existing NPCs positioned at legal arena points and remaining slots filled by production spawnActor/budget to 25 NPCs plus player. Real HP, allegiance, AI and combat; no invulnerability or replacement after death."
+      },
+      "captures": [
+        {
+          "repetition": 1,
+          "file": "crowded-25-1.png",
+          "sha256": "61863dec1b42c8cd42257a097ee06c7b7cdc8bc032268b1b52189ded188f7580"
+        },
+        {
+          "repetition": 2,
+          "file": "crowded-25-2.png",
+          "sha256": "61863dec1b42c8cd42257a097ee06c7b7cdc8bc032268b1b52189ded188f7580",
+          "comparison": {
+            "identicalPixels": true,
+            "changedPixels": 0,
+            "changedPixelRatio": 0,
+            "maxChannelDelta": 0,
+            "meanChannelDelta": 0,
+            "bounds": null,
+            "firstPixelSha256": "e3e0f899173c4cc99445d26ec1879e02224904e26cffd27e633aeee1cb703793",
+            "secondPixelSha256": "e3e0f899173c4cc99445d26ec1879e02224904e26cffd27e633aeee1cb703793"
+          }
+        }
+      ],
+      "externalRequests": [],
+      "byteIdenticalCaptures": true,
+      "repeatWithinTolerance": true
+    },
+    {
+      "id": "night",
+      "definition": {
+        "id": "night",
+        "faction": "guard",
+        "weather": "clear",
+        "time": 136.8,
+        "description": "Fresh production guard opening under a staged night presentation clock; campaign time/night-dependent AI are not advanced or rewritten."
+      },
+      "captures": [
+        {
+          "repetition": 1,
+          "file": "night-1.png",
+          "sha256": "0b0f78f866f82b0fa64791d126cc34a817053c2a091891282ba3e6db8f2fd0bd"
+        },
+        {
+          "repetition": 2,
+          "file": "night-2.png",
+          "sha256": "0b0f78f866f82b0fa64791d126cc34a817053c2a091891282ba3e6db8f2fd0bd",
+          "comparison": {
+            "identicalPixels": true,
+            "changedPixels": 0,
+            "changedPixelRatio": 0,
+            "maxChannelDelta": 0,
+            "meanChannelDelta": 0,
+            "bounds": null,
+            "firstPixelSha256": "dcdfddcf830fa560872a71af5cbcfdaa7233feeb14423b3a3aad35ab1188acd2",
+            "secondPixelSha256": "dcdfddcf830fa560872a71af5cbcfdaa7233feeb14423b3a3aad35ab1188acd2"
+          }
+        }
+      ],
+      "externalRequests": [],
+      "byteIdenticalCaptures": true,
+      "repeatWithinTolerance": true
+    },
+    {
+      "id": "rain",
+      "definition": {
+        "id": "rain",
+        "faction": "guard",
+        "target": "neutral",
+        "weather": "rain",
+        "time": 16.8,
+        "description": "Neutral biome rain presentation fixture with a separate art: precipitation seed. Simulation weather remains determined by the real biome."
+      },
+      "captures": [
+        {
+          "repetition": 1,
+          "file": "rain-1.png",
+          "sha256": "32937d0b5f3e1dc6a76cad06c8938cfe73180f40f54cf728c915c53d06bf1cb6"
+        },
+        {
+          "repetition": 2,
+          "file": "rain-2.png",
+          "sha256": "32937d0b5f3e1dc6a76cad06c8938cfe73180f40f54cf728c915c53d06bf1cb6",
+          "comparison": {
+            "identicalPixels": true,
+            "changedPixels": 0,
+            "changedPixelRatio": 0,
+            "maxChannelDelta": 0,
+            "meanChannelDelta": 0,
+            "bounds": null,
+            "firstPixelSha256": "25ada40ce3b71c9d650f3f73ec0b7ebcdc6bd31e3095b426375bf46e52bbac9d",
+            "secondPixelSha256": "25ada40ce3b71c9d650f3f73ec0b7ebcdc6bd31e3095b426375bf46e52bbac9d"
+          }
+        }
+      ],
+      "externalRequests": [],
+      "byteIdenticalCaptures": true,
+      "repeatWithinTolerance": true
+    },
+    {
+      "id": "snow",
+      "definition": {
+        "id": "snow",
+        "faction": "guard",
+        "target": "neutral",
+        "weather": "snow",
+        "time": 16.8,
+        "description": "Neutral biome snow presentation fixture with a separate art: precipitation seed. Simulation weather remains determined by the real biome."
+      },
+      "captures": [
+        {
+          "repetition": 1,
+          "file": "snow-1.png",
+          "sha256": "402a21ab6c6378cbf92ba294a18d1d91bec7bf324bcb571c5f0500ef1e0bd02f"
+        },
+        {
+          "repetition": 2,
+          "file": "snow-2.png",
+          "sha256": "402a21ab6c6378cbf92ba294a18d1d91bec7bf324bcb571c5f0500ef1e0bd02f",
+          "comparison": {
+            "identicalPixels": true,
+            "changedPixels": 0,
+            "changedPixelRatio": 0,
+            "maxChannelDelta": 0,
+            "meanChannelDelta": 0,
+            "bounds": null,
+            "firstPixelSha256": "48303cd1fc4ee7464ce90ac59a29e1114b5ddb08271b03265fcae02831ba3306",
+            "secondPixelSha256": "48303cd1fc4ee7464ce90ac59a29e1114b5ddb08271b03265fcae02831ba3306"
+          }
+        }
+      ],
+      "externalRequests": [],
+      "byteIdenticalCaptures": true,
+      "repeatWithinTolerance": true
+    }
+  ],
+  "complete": true,
+  "browserVersion": {
+    "protocolVersion": "1.3",
+    "product": "Chrome/152.0.7977.76",
+    "revision": "@0d89dfa2dd7c1ec4b8a14b9f303f887bb63b6174",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+    "jsVersion": "15.2.124.19"
+  },
+  "processes": {
+    "serverPid": 55908,
+    "chromePid": 67360,
+    "debugPort": 50519
+  },
+  "defaultOffControl": {
+    "canvasPresent": true,
+    "diagnosticsAbsent": true
+  },
+  "finishedAt": "2026-09-06T22:28:43.635Z",
+  "shutdown": {
+    "ownedProcessesStopped": true,
+    "errors": []
+  }
+}

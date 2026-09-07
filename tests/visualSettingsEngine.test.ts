@@ -3,6 +3,9 @@ import { readFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
 import { extname } from 'node:path'
 import test from 'node:test'
+import * as THREE from 'three'
+import { RandomStream } from '../src/game/random/RandomStream.ts'
+import { createWeatherMix } from '../src/game/world/WorldEnvironment.ts'
 import { resolveVisualPolicy, type VisualQualityPolicy } from '../src/game/visualPolicy.ts'
 import { DEFAULT_VISUAL_SETTINGS, type FoliageQuality } from '../src/game/visualSettings.ts'
 
@@ -22,6 +25,7 @@ interface VisualEngineProbe {
   companions: readonly string[]
   cameraObstacles: readonly object[]
   getVisualPolicy(): VisualQualityPolicy
+  graphicsRuntimeSnapshot(): { visualPolicy: VisualQualityPolicy }
   setBloomEnabled(enabled: boolean): void
   setInkOutlinesEnabled(enabled: boolean): void
   setFoliageQuality(quality: FoliageQuality): void
@@ -120,6 +124,63 @@ test('new policy bookkeeping leaves existing environment update semantics and pa
   assert.equal(engine.cameraObstacles, sight)
   assert.equal(Reflect.has(GameEngine.prototype, 'setVisualMode'), false)
   assert.equal(Reflect.has(GameEngine.prototype, 'setVisualQuality'), false)
+})
+
+test('combined diagnostic snapshots report the actual policy without bypassing unavailable preview', () => {
+  const { engine, calls } = fixture()
+  const combat = new RandomStream(20260906)
+  const weather = createWeatherMix('clear')
+  const scene = new THREE.Scene()
+  const camera = new THREE.PerspectiveCamera()
+  const player = new THREE.Group()
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true, value: { pointerLockElement: null },
+  })
+  Object.assign(engine, {
+    visualPolicy: resolveVisualPolicy(
+      { visualMode: 'enhanced', visualQuality: 'low' }, { enhancedAvailable: false },
+    ),
+    faction: 'guard', player, actors: [], scene, camera, cameraYaw: 0, cameraPitch: 0.38,
+    ended: false, health: 77, pointerFallback: true, nightFactor: 0,
+    renderer: { domElement: {} },
+    generatedBlueprint: { seed: 20260906, fingerprint: 'unchanged-world' },
+    generatedRngStreams: { combat }, weatherTarget: 'clear', weatherWeights: weather,
+    generatedWorld: {
+      currentRegionId: 'region-4-0',
+      regions: {
+        getVisibleRegionIds: () => ['region-4-0'],
+        getSimulatedRegionIds: () => ['region-4-0'],
+      },
+      getDebugSnapshot: () => ({ currentRegionId: 'region-4-0' }),
+    },
+  })
+  const originalRng = combat.getState()
+  const originalWeather = { ...weather }
+  try {
+    const before = engine.graphicsRuntimeSnapshot()
+    assert.equal(before.visualPolicy, engine.getVisualPolicy())
+    assert.equal(before.visualPolicy.preferences.visualMode, 'enhanced')
+    assert.equal(before.visualPolicy.preferences.visualQuality, 'low')
+    assert.equal(before.visualPolicy.mode, 'legacy')
+    assert.equal(before.visualPolicy.previewAvailable, false)
+    assert.equal(before.visualPolicy.render.maxPixels, null, 'Unavailable tiers must not be reported as active')
+    assert.equal(Object.isFrozen(before.visualPolicy), true)
+    engine.setBloomEnabled(false)
+    const after = engine.graphicsRuntimeSnapshot()
+    assert.equal(after.visualPolicy, engine.getVisualPolicy())
+    assert.equal(after.visualPolicy.preferences.bloomEnabled, false)
+    assert.equal(after.visualPolicy.post.enabled, false)
+    assert.equal(before.visualPolicy.post.enabled, true, 'Earlier evidence remains immutable')
+    assert.deepEqual(calls, [['post', false]])
+    assert.equal(engine.paused, true)
+    assert.equal(engine.elapsed, 77)
+    assert.equal(combat.getState(), originalRng)
+    assert.deepEqual(weather, originalWeather)
+  } finally {
+    if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument)
+    else Reflect.deleteProperty(globalThis, 'document')
+  }
 })
 
 test('App stages preview choices without restarting the engine or closing an overlay', () => {

@@ -122,9 +122,13 @@ as completed quality tiers.
 returns CSS dimensions, device and effective pixel ratios, and integer 3D buffer
 dimensions. It rejects invalid measurements, accommodates zero-sized hidden
 containers, and enforces the tier's internal pixel ceiling. This is sizing data,
-not a second resize observer or proof of a target allocation. GFX-06 owns its
-renderer/resize integration; GFX-02 AA and ink consume actual internal dimensions.
-The enabling checkpoint preserves the existing renderer sizing path.
+not a second resize observer or proof of a target allocation. GFX-02 owns the
+coordinator-authorized narrow adapter at the existing engine resize call site:
+consume this helper and synchronize the sole `BloomPostProcessor`'s actual
+dimensions and pixel ratio. AA and ink consume those actual internal dimensions.
+GFX-06 retains the policy/helper and final sizing/lifecycle acceptance. No second
+resize controller is introduced. The enabling checkpoint preserves the existing
+renderer sizing path.
 
 `src/game/visualLifecycle.ts` exports:
 

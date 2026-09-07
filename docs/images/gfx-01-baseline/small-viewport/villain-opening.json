@@ -1,0 +1,3572 @@
+{
+  "repetition": 1,
+  "path": "C:\\Users\\predi\\.copilot\\session-state\\78d2667c-359d-4f21-a9bb-3ed54c0390f0\\files\\gfx01-final-layout\\villain-opening-1.png",
+  "sha256": "201933514c2a84b15637967dcab66b83cc80a9ce446f9416f4ef7e8add1a63ab",
+  "bytes": 175812,
+  "before": {
+    "apiVersion": 1,
+    "visualRevision": "gfx-01-baseline-1",
+    "manual": true,
+    "stagedPrerequisites": [],
+    "visualClock": {
+      "seed": 20260906,
+      "timeSeconds": 2,
+      "weather": "snow",
+      "currentTimeSeconds": 2
+    },
+    "renderer": {
+      "backend": "THREE.WebGLRenderer / WebGL2",
+      "threeRevision": "185",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+      "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti SUPER (0x00002689) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "vendor": "Google Inc. (NVIDIA)",
+      "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "shadingLanguageVersion": "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)",
+      "contextAttributes": {
+        "alpha": false,
+        "antialias": true,
+        "depth": true,
+        "desynchronized": false,
+        "failIfMajorPerformanceCaveat": false,
+        "powerPreference": "high-performance",
+        "premultipliedAlpha": true,
+        "preserveDrawingBuffer": false,
+        "stencil": false,
+        "xrCompatible": false
+      },
+      "defaultFramebufferSamples": 4,
+      "gpuTimingExtension": "EXT_disjoint_timer_query_webgl2",
+      "gpuTimingUnavailableReason": null
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "bufferWidth": 390,
+      "bufferHeight": 844,
+      "devicePixelRatio": 1,
+      "rendererPixelRatio": 1
+    },
+    "accounting": "full",
+    "resources": {
+      "trackingActive": true,
+      "buffers": 0,
+      "textures": 4,
+      "renderbuffers": 0,
+      "framebuffers": 3,
+      "programs": 0,
+      "shaders": 0,
+      "vertexArrays": 0,
+      "bufferBytes": 0,
+      "textureBytes": 36,
+      "renderbufferBytes": 0,
+      "renderTargetBytes": 0,
+      "trackedBytes": 36,
+      "peakTrackedBytes": 36,
+      "allocatedBytes": 36,
+      "releasedBytes": 0,
+      "creates": 7,
+      "deletes": 0,
+      "storageCalls": 9,
+      "unknownFormats": [],
+      "implicitMultisampleBytesEstimate": 0
+    },
+    "renderTargets": [],
+    "defaultFramebufferEstimate": {
+      "width": 390,
+      "height": 844,
+      "samples": 4,
+      "colorResolveBytes": 1316640,
+      "multisampleColorBytes": 5266560,
+      "depthBytes": 5266560,
+      "excludes": "Browser swapchain copies, tiling/alignment, shader/driver overhead; not measured VRAM"
+    },
+    "lastFrame": null,
+    "runtime": {
+      "elapsed": 0,
+      "paused": false,
+      "ended": false,
+      "health": 100,
+      "npcCount": 11,
+      "aliveNpcs": 11,
+      "movingNpcs": 0,
+      "actingNpcs": 0,
+      "region": "region-0-4",
+      "visibleRegions": [
+        "region-0-3",
+        "region-0-4",
+        "region-1-3",
+        "region-1-4"
+      ],
+      "simulatedRegions": [
+        "region-0-3",
+        "region-0-4",
+        "region-1-4"
+      ],
+      "faction": "villain",
+      "worldSeed": 20260906,
+      "fingerprint": "wg1-9af1421ac05e081d",
+      "player": [
+        -177.82099347102331,
+        7.76781155684991,
+        182.38288733925546
+      ],
+      "heading": 0,
+      "pointerInput": {
+        "locked": false,
+        "fallback": false
+      },
+      "camera": {
+        "position": [
+          -187.56906301720696,
+          15.94781155684991,
+          184.61338955238304
+        ],
+        "yaw": 1.3458539189044576,
+        "pitch": 0.38,
+        "fov": 56,
+        "near": 0.1,
+        "far": 240,
+        "horizontalDistance": 10
+      },
+      "presentation": {
+        "dynamicDayNight": true,
+        "weather": true,
+        "ink": true,
+        "foliage": "high",
+        "cameraEffects": true,
+        "reducedMotion": false,
+        "visualNightFactor": 0
+      },
+      "visualPolicy": null,
+      "simulationWeather": {
+        "target": "snow",
+        "weights": {
+          "clear": 0,
+          "overcast": 0,
+          "rain": 0,
+          "snow": 1
+        }
+      },
+      "rngStates": {
+        "combat": 2315102050,
+        "director": 3349717333,
+        "event": 832990998,
+        "loot": 3111021425,
+        "chronicle": 1868283985,
+        "rumour": 2189674099
+      },
+      "actors": [
+        {
+          "id": "squad:villain:starter:0",
+          "role": "minion",
+          "allegiance": "villain",
+          "budget": "squad",
+          "alive": true,
+          "hp": 70,
+          "maxHp": 70,
+          "position": [
+            -181.0209934710233,
+            7.915033275578665,
+            185.78288733925547
+          ],
+          "squad": true,
+          "action": null
+        },
+        {
+          "id": "squad:villain:starter:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "squad",
+          "alive": true,
+          "hp": 130,
+          "maxHp": 130,
+          "position": [
+            -174.62099347102333,
+            8.200682439887476,
+            185.78288733925547
+          ],
+          "squad": true,
+          "action": null
+        },
+        {
+          "id": "squad:villain:starter:2",
+          "role": "archer",
+          "allegiance": "villain",
+          "budget": "squad",
+          "alive": true,
+          "hp": 45,
+          "maxHp": 45,
+          "position": [
+            -177.82099347102331,
+            7.797694563777716,
+            187.88288733925546
+          ],
+          "squad": true,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-region-0-3:actor:0",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 161,
+          "maxHp": 161,
+          "position": [
+            -144.5436605606449,
+            16.027135857741953,
+            70.83953424308851
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-region-0-3:actor:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 161,
+          "maxHp": 161,
+          "position": [
+            -141.61759280628428,
+            17.48648591800791,
+            68.02484160255918
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-region-0-3:actor:2",
+          "role": "archer",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 56,
+          "maxHp": 56,
+          "position": [
+            -150.21210925146823,
+            16.933883553519934,
+            67.03169505327547
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-boss-guard:actor:0",
+          "role": "champion",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 385,
+          "maxHp": 385,
+          "position": [
+            -134.0043031651365,
+            14.70805337991962,
+            87.52203413537845
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-boss-guard:actor:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 192,
+          "maxHp": 192,
+          "position": [
+            -129.69223337232998,
+            16.553366813113136,
+            85.88776148014591
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-boss-guard:actor:2",
+          "role": "minion",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 104,
+          "maxHp": 104,
+          "position": [
+            -140.32764684318172,
+            13.31134979488927,
+            85.56400729529037
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-region-1-4:actor:0",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 130,
+          "maxHp": 130,
+          "position": [
+            -75.78717974755965,
+            13.874717360321512,
+            149.73472773616504
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-region-1-4:actor:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 130,
+          "maxHp": 130,
+          "position": [
+            -71.57897638446902,
+            14.662395740197777,
+            145.39316102800245
+          ],
+          "squad": false,
+          "action": null
+        }
+      ],
+      "actorBudget": {
+        "squad": 3,
+        "campaign": 8,
+        "chronicle": 0,
+        "ambient": 0
+      },
+      "maxNpcs": 25,
+      "world": {
+        "disposed": false,
+        "currentRegionId": "region-0-4",
+        "visibleRegionIds": [
+          "region-0-3",
+          "region-1-3",
+          "region-0-4",
+          "region-1-4"
+        ],
+        "simulatedRegionIds": [
+          "region-0-3",
+          "region-0-4",
+          "region-1-4"
+        ],
+        "discoveredRegionIds": [
+          "region-0-4"
+        ],
+        "sceneRegionRootCount": 4,
+        "materials": {
+          "owned": 14,
+          "disposed": 0
+        },
+        "decorations": {
+          "density": 1,
+          "structuralInstanceCount": 35,
+          "cosmeticInstanceCount": 797,
+          "spawnBlockedPlacementCount": 0,
+          "maxCosmeticInstanceCount": 797
+        },
+        "siteStructures": {
+          "spawnBlockedBuildingColliderCount": 1,
+          "spawnBlockedPropColliderCount": 0
+        },
+        "collision": {
+          "colliderCount": 48,
+          "bucketCount": 58,
+          "regionCount": 4,
+          "lastQueryCandidateCount": 0,
+          "revision": 50
+        },
+        "navigation": {
+          "cachedGridCount": 0,
+          "gridBuildCount": 0,
+          "activeRegionCount": 3,
+          "revision": 75
+        },
+        "regionRoots": [
+          {
+            "regionId": "region-0-3",
+            "state": "simulated",
+            "attached": true,
+            "geometryCount": 2,
+            "colliderCount": 14,
+            "structuralDecorationCount": 8,
+            "spawnBlockedPlacements": 0,
+            "spawnBlockedBuildingColliders": 1,
+            "spawnBlockedPropColliders": 0,
+            "cosmeticDecorationCount": 200,
+            "maxCosmeticDecorationCount": 200,
+            "inkDraws": 6
+          },
+          {
+            "regionId": "region-0-4",
+            "state": "simulated",
+            "attached": true,
+            "geometryCount": 2,
+            "colliderCount": 14,
+            "structuralDecorationCount": 10,
+            "spawnBlockedPlacements": 0,
+            "spawnBlockedBuildingColliders": 0,
+            "spawnBlockedPropColliders": 0,
+            "cosmeticDecorationCount": 198,
+            "maxCosmeticDecorationCount": 198,
+            "inkDraws": 6
+          },
+          {
+            "regionId": "region-1-3",
+            "state": "visible",
+            "attached": true,
+            "geometryCount": 3,
+            "colliderCount": 12,
+            "structuralDecorationCount": 9,
+            "spawnBlockedPlacements": 0,
+            "spawnBlockedBuildingColliders": 0,
+            "spawnBlockedPropColliders": 0,
+            "cosmeticDecorationCount": 199,
+            "maxCosmeticDecorationCount": 199,
+            "inkDraws": 5
+          },
+          {
+            "regionId": "region-1-4",
+            "state": "simulated",
+            "attached": true,
+            "geometryCount": 4,
+            "colliderCount": 8,
+            "structuralDecorationCount": 8,
+            "spawnBlockedPlacements": 0,
+            "spawnBlockedBuildingColliders": 0,
+            "spawnBlockedPropColliders": 0,
+            "cosmeticDecorationCount": 200,
+            "maxCosmeticDecorationCount": 200,
+            "inkDraws": 3
+          }
+        ],
+        "lifecycle": [
+          {
+            "regionId": "region-0-0",
+            "coordinate": {
+              "x": 0,
+              "z": 0
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-1-0",
+            "coordinate": {
+              "x": 1,
+              "z": 0
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-2-0",
+            "coordinate": {
+              "x": 2,
+              "z": 0
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-3-0",
+            "coordinate": {
+              "x": 3,
+              "z": 0
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-4-0",
+            "coordinate": {
+              "x": 4,
+              "z": 0
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-0-1",
+            "coordinate": {
+              "x": 0,
+              "z": 1
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-1-1",
+            "coordinate": {
+              "x": 1,
+              "z": 1
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-2-1",
+            "coordinate": {
+              "x": 2,
+              "z": 1
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-3-1",
+            "coordinate": {
+              "x": 3,
+              "z": 1
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-4-1",
+            "coordinate": {
+              "x": 4,
+              "z": 1
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-0-2",
+            "coordinate": {
+              "x": 0,
+              "z": 2
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-1-2",
+            "coordinate": {
+              "x": 1,
+              "z": 2
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-2-2",
+            "coordinate": {
+              "x": 2,
+              "z": 2
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-3-2",
+            "coordinate": {
+              "x": 3,
+              "z": 2
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-4-2",
+            "coordinate": {
+              "x": 4,
+              "z": 2
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-0-3",
+            "coordinate": {
+              "x": 0,
+              "z": 3
+            },
+            "state": "simulated",
+            "visible": true,
+            "simulated": true,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-1-3",
+            "coordinate": {
+              "x": 1,
+              "z": 3
+            },
+            "state": "visible",
+            "visible": true,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-2-3",
+            "coordinate": {
+              "x": 2,
+              "z": 3
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-3-3",
+            "coordinate": {
+              "x": 3,
+              "z": 3
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-4-3",
+            "coordinate": {
+              "x": 4,
+              "z": 3
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-0-4",
+            "coordinate": {
+              "x": 0,
+              "z": 4
+            },
+            "state": "simulated",
+            "visible": true,
+            "simulated": true,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": true,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-1-4",
+            "coordinate": {
+              "x": 1,
+              "z": 4
+            },
+            "state": "simulated",
+            "visible": true,
+            "simulated": true,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-2-4",
+            "coordinate": {
+              "x": 2,
+              "z": 4
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-3-4",
+            "coordinate": {
+              "x": 3,
+              "z": 4
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-4-4",
+            "coordinate": {
+              "x": 4,
+              "z": 4
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          }
+        ]
+      },
+      "scene": {
+        "meshes": 957,
+        "inkShells": 220,
+        "shadowCasters": 212,
+        "dressingMeshes": 31,
+        "dressingInstances": 832,
+        "subjectRays": [
+          {
+            "subject": "player",
+            "firstDressingHit": null
+          },
+          {
+            "subject": "squad:villain:starter:0",
+            "firstDressingHit": null
+          },
+          {
+            "subject": "squad:villain:starter:1",
+            "firstDressingHit": null
+          },
+          {
+            "subject": "squad:villain:starter:2",
+            "firstDressingHit": null
+          }
+        ]
+      },
+      "initializationMs": 136.19999992847443
+    }
+  },
+  "stage": {
+    "label": "Fresh production villain opening; no player/actor relocation. Staged visual clock and seed; simulation held for capture."
+  },
+  "cold": {
+    "apiVersion": 1,
+    "visualRevision": "gfx-01-baseline-1",
+    "manual": true,
+    "stagedPrerequisites": [
+      "Fresh production villain opening; no player/actor relocation. Staged visual clock and seed; simulation held for capture."
+    ],
+    "visualClock": {
+      "seed": 20260906,
+      "timeSeconds": 2,
+      "weather": "snow",
+      "currentTimeSeconds": 2
+    },
+    "renderer": {
+      "backend": "THREE.WebGLRenderer / WebGL2",
+      "threeRevision": "185",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+      "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti SUPER (0x00002689) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "vendor": "Google Inc. (NVIDIA)",
+      "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "shadingLanguageVersion": "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)",
+      "contextAttributes": {
+        "alpha": false,
+        "antialias": true,
+        "depth": true,
+        "desynchronized": false,
+        "failIfMajorPerformanceCaveat": false,
+        "powerPreference": "high-performance",
+        "premultipliedAlpha": true,
+        "preserveDrawingBuffer": false,
+        "stencil": false,
+        "xrCompatible": false
+      },
+      "defaultFramebufferSamples": 4,
+      "gpuTimingExtension": "EXT_disjoint_timer_query_webgl2",
+      "gpuTimingUnavailableReason": null
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "bufferWidth": 390,
+      "bufferHeight": 844,
+      "devicePixelRatio": 1,
+      "rendererPixelRatio": 1
+    },
+    "accounting": "full",
+    "resources": {
+      "trackingActive": true,
+      "buffers": 266,
+      "textures": 26,
+      "renderbuffers": 13,
+      "framebuffers": 17,
+      "programs": 25,
+      "shaders": 0,
+      "vertexArrays": 122,
+      "bufferBytes": 1792960,
+      "textureBytes": 41314320,
+      "renderbufferBytes": 3841144,
+      "renderTargetBytes": 45077864,
+      "trackedBytes": 46948424,
+      "peakTrackedBytes": 46948424,
+      "allocatedBytes": 46948424,
+      "releasedBytes": 0,
+      "creates": 519,
+      "deletes": 50,
+      "storageCalls": 314,
+      "unknownFormats": [],
+      "implicitMultisampleBytesEstimate": 0
+    },
+    "renderTargets": [
+      {
+        "id": 8,
+        "kind": "texture",
+        "bytes": 2633280,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 390,
+            "height": 844,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 2633280
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "kind": "renderbuffer",
+        "bytes": 1316640,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 390,
+            "height": 844,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 1316640
+          }
+        ]
+      },
+      {
+        "id": 185,
+        "kind": "texture",
+        "bytes": 16777216,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 2048,
+            "height": 2048,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 16777216
+          }
+        ]
+      },
+      {
+        "id": 187,
+        "kind": "texture",
+        "bytes": 16777216,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 2048,
+            "height": 2048,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 16777216
+          }
+        ]
+      },
+      {
+        "id": 442,
+        "kind": "texture",
+        "bytes": 658320,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 195,
+            "height": 422,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 658320
+          }
+        ]
+      },
+      {
+        "id": 444,
+        "kind": "renderbuffer",
+        "bytes": 329160,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 195,
+            "height": 422,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 329160
+          }
+        ]
+      },
+      {
+        "id": 451,
+        "kind": "texture",
+        "bytes": 658320,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 195,
+            "height": 422,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 658320
+          }
+        ]
+      },
+      {
+        "id": 453,
+        "kind": "renderbuffer",
+        "bytes": 329160,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 195,
+            "height": 422,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 329160
+          }
+        ]
+      },
+      {
+        "id": 458,
+        "kind": "texture",
+        "bytes": 658320,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 195,
+            "height": 422,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 658320
+          }
+        ]
+      },
+      {
+        "id": 460,
+        "kind": "renderbuffer",
+        "bytes": 329160,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 195,
+            "height": 422,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 329160
+          }
+        ]
+      },
+      {
+        "id": 461,
+        "kind": "texture",
+        "bytes": 165424,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 98,
+            "height": 211,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 165424
+          }
+        ]
+      },
+      {
+        "id": 463,
+        "kind": "renderbuffer",
+        "bytes": 82712,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 98,
+            "height": 211,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 82712
+          }
+        ]
+      },
+      {
+        "id": 468,
+        "kind": "texture",
+        "bytes": 165424,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 98,
+            "height": 211,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 165424
+          }
+        ]
+      },
+      {
+        "id": 470,
+        "kind": "renderbuffer",
+        "bytes": 82712,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 98,
+            "height": 211,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 82712
+          }
+        ]
+      },
+      {
+        "id": 471,
+        "kind": "texture",
+        "bytes": 41552,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 49,
+            "height": 106,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 41552
+          }
+        ]
+      },
+      {
+        "id": 473,
+        "kind": "renderbuffer",
+        "bytes": 20776,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 49,
+            "height": 106,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 20776
+          }
+        ]
+      },
+      {
+        "id": 478,
+        "kind": "texture",
+        "bytes": 41552,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 49,
+            "height": 106,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 41552
+          }
+        ]
+      },
+      {
+        "id": 480,
+        "kind": "renderbuffer",
+        "bytes": 20776,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 49,
+            "height": 106,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 20776
+          }
+        ]
+      },
+      {
+        "id": 481,
+        "kind": "texture",
+        "bytes": 10600,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 25,
+            "height": 53,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 10600
+          }
+        ]
+      },
+      {
+        "id": 483,
+        "kind": "renderbuffer",
+        "bytes": 5300,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 25,
+            "height": 53,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 5300
+          }
+        ]
+      },
+      {
+        "id": 488,
+        "kind": "texture",
+        "bytes": 10600,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 25,
+            "height": 53,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 10600
+          }
+        ]
+      },
+      {
+        "id": 490,
+        "kind": "renderbuffer",
+        "bytes": 5300,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 25,
+            "height": 53,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 5300
+          }
+        ]
+      },
+      {
+        "id": 491,
+        "kind": "texture",
+        "bytes": 2808,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 13,
+            "height": 27,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 2808
+          }
+        ]
+      },
+      {
+        "id": 493,
+        "kind": "renderbuffer",
+        "bytes": 1404,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 13,
+            "height": 27,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 1404
+          }
+        ]
+      },
+      {
+        "id": 498,
+        "kind": "texture",
+        "bytes": 2808,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 13,
+            "height": 27,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 2808
+          }
+        ]
+      },
+      {
+        "id": 500,
+        "kind": "renderbuffer",
+        "bytes": 1404,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 13,
+            "height": 27,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 1404
+          }
+        ]
+      },
+      {
+        "id": 509,
+        "kind": "texture",
+        "bytes": 2633280,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 390,
+            "height": 844,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 2633280
+          }
+        ]
+      },
+      {
+        "id": 511,
+        "kind": "renderbuffer",
+        "bytes": 1316640,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 390,
+            "height": 844,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 1316640
+          }
+        ]
+      }
+    ],
+    "defaultFramebufferEstimate": {
+      "width": 390,
+      "height": 844,
+      "samples": 4,
+      "colorResolveBytes": 1316640,
+      "multisampleColorBytes": 5266560,
+      "depthBytes": 5266560,
+      "excludes": "Browser swapchain copies, tiling/alignment, shader/driver overhead; not measured VRAM"
+    },
+    "lastFrame": {
+      "gpuMs": null,
+      "gpuStatus": "pending",
+      "id": 1,
+      "source": "manual",
+      "phase": "capture",
+      "intervalMs": null,
+      "updateMs": 0.2999999523162842,
+      "submissionMs": 552.5,
+      "cpuMs": 552.7999999523163,
+      "streamingMs": 0,
+      "draws": {
+        "scene": {
+          "calls": 66,
+          "triangles": 46864,
+          "lines": 0,
+          "points": 480
+        },
+        "ink": {
+          "calls": 39,
+          "triangles": 13378,
+          "lines": 0,
+          "points": 0
+        },
+        "shadow": {
+          "calls": 82,
+          "triangles": 16956,
+          "lines": 0,
+          "points": 0
+        },
+        "post": {
+          "calls": 15,
+          "triangles": 15,
+          "lines": 0,
+          "points": 0
+        }
+      },
+      "total": {
+        "calls": 202,
+        "triangles": 77213,
+        "lines": 0,
+        "points": 480
+      },
+      "rendererInfo": {
+        "calls": 202,
+        "triangles": 77213,
+        "lines": 0,
+        "points": 480
+      },
+      "counterAgreement": true,
+      "readPixelsCalls": 1,
+      "blits": 0,
+      "resources": {
+        "trackingActive": true,
+        "buffers": 266,
+        "textures": 26,
+        "renderbuffers": 13,
+        "framebuffers": 17,
+        "programs": 25,
+        "shaders": 0,
+        "vertexArrays": 122,
+        "bufferBytes": 1792960,
+        "textureBytes": 41314320,
+        "renderbufferBytes": 3841144,
+        "renderTargetBytes": 45077864,
+        "trackedBytes": 46948424,
+        "peakTrackedBytes": 46948424,
+        "allocatedBytes": 46948424,
+        "releasedBytes": 0,
+        "creates": 519,
+        "deletes": 50,
+        "storageCalls": 314,
+        "unknownFormats": [],
+        "implicitMultisampleBytesEstimate": 0
+      },
+      "runtime": {
+        "elapsed": 0,
+        "paused": false,
+        "ended": false,
+        "health": 100,
+        "npcCount": 11,
+        "aliveNpcs": 11,
+        "movingNpcs": 0,
+        "actingNpcs": 0,
+        "region": "region-0-4",
+        "visibleRegions": [
+          "region-0-3",
+          "region-0-4",
+          "region-1-3",
+          "region-1-4"
+        ],
+        "simulatedRegions": [
+          "region-0-3",
+          "region-0-4",
+          "region-1-4"
+        ]
+      }
+    },
+    "runtime": {
+      "elapsed": 0,
+      "paused": false,
+      "ended": false,
+      "health": 100,
+      "npcCount": 11,
+      "aliveNpcs": 11,
+      "movingNpcs": 0,
+      "actingNpcs": 0,
+      "region": "region-0-4",
+      "visibleRegions": [
+        "region-0-3",
+        "region-0-4",
+        "region-1-3",
+        "region-1-4"
+      ],
+      "simulatedRegions": [
+        "region-0-3",
+        "region-0-4",
+        "region-1-4"
+      ],
+      "faction": "villain",
+      "worldSeed": 20260906,
+      "fingerprint": "wg1-9af1421ac05e081d",
+      "player": [
+        -177.82099347102331,
+        7.76781155684991,
+        182.38288733925546
+      ],
+      "heading": 0,
+      "pointerInput": {
+        "locked": false,
+        "fallback": false
+      },
+      "camera": {
+        "position": [
+          -187.56906301720696,
+          15.94781155684991,
+          184.61338955238304
+        ],
+        "yaw": 1.3458539189044576,
+        "pitch": 0.38,
+        "fov": 56,
+        "near": 0.1,
+        "far": 240,
+        "horizontalDistance": 10
+      },
+      "presentation": {
+        "dynamicDayNight": true,
+        "weather": true,
+        "ink": true,
+        "foliage": "high",
+        "cameraEffects": true,
+        "reducedMotion": false,
+        "visualNightFactor": 0
+      },
+      "visualPolicy": null,
+      "simulationWeather": {
+        "target": "snow",
+        "weights": {
+          "clear": 0,
+          "overcast": 0,
+          "rain": 0,
+          "snow": 1
+        }
+      },
+      "rngStates": {
+        "combat": 2315102050,
+        "director": 3349717333,
+        "event": 832990998,
+        "loot": 3111021425,
+        "chronicle": 1868283985,
+        "rumour": 2189674099
+      },
+      "actors": [
+        {
+          "id": "squad:villain:starter:0",
+          "role": "minion",
+          "allegiance": "villain",
+          "budget": "squad",
+          "alive": true,
+          "hp": 70,
+          "maxHp": 70,
+          "position": [
+            -181.0209934710233,
+            7.915033275578665,
+            185.78288733925547
+          ],
+          "squad": true,
+          "action": null
+        },
+        {
+          "id": "squad:villain:starter:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "squad",
+          "alive": true,
+          "hp": 130,
+          "maxHp": 130,
+          "position": [
+            -174.62099347102333,
+            8.200682439887476,
+            185.78288733925547
+          ],
+          "squad": true,
+          "action": null
+        },
+        {
+          "id": "squad:villain:starter:2",
+          "role": "archer",
+          "allegiance": "villain",
+          "budget": "squad",
+          "alive": true,
+          "hp": 45,
+          "maxHp": 45,
+          "position": [
+            -177.82099347102331,
+            7.797694563777716,
+            187.88288733925546
+          ],
+          "squad": true,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-region-0-3:actor:0",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 161,
+          "maxHp": 161,
+          "position": [
+            -144.5436605606449,
+            16.027135857741953,
+            70.83953424308851
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-region-0-3:actor:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 161,
+          "maxHp": 161,
+          "position": [
+            -141.61759280628428,
+            17.48648591800791,
+            68.02484160255918
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-region-0-3:actor:2",
+          "role": "archer",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 56,
+          "maxHp": 56,
+          "position": [
+            -150.21210925146823,
+            16.933883553519934,
+            67.03169505327547
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-boss-guard:actor:0",
+          "role": "champion",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 385,
+          "maxHp": 385,
+          "position": [
+            -134.0043031651365,
+            14.70805337991962,
+            87.52203413537845
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-boss-guard:actor:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 192,
+          "maxHp": 192,
+          "position": [
+            -129.69223337232998,
+            16.553366813113136,
+            85.88776148014591
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-boss-guard:actor:2",
+          "role": "minion",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 104,
+          "maxHp": 104,
+          "position": [
+            -140.32764684318172,
+            13.31134979488927,
+            85.56400729529037
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-region-1-4:actor:0",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 130,
+          "maxHp": 130,
+          "position": [
+            -75.78717974755965,
+            13.874717360321512,
+            149.73472773616504
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-region-1-4:actor:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 130,
+          "maxHp": 130,
+          "position": [
+            -71.57897638446902,
+            14.662395740197777,
+            145.39316102800245
+          ],
+          "squad": false,
+          "action": null
+        }
+      ],
+      "actorBudget": {
+        "squad": 3,
+        "campaign": 8,
+        "chronicle": 0,
+        "ambient": 0
+      },
+      "maxNpcs": 25,
+      "world": {
+        "disposed": false,
+        "currentRegionId": "region-0-4",
+        "visibleRegionIds": [
+          "region-0-3",
+          "region-1-3",
+          "region-0-4",
+          "region-1-4"
+        ],
+        "simulatedRegionIds": [
+          "region-0-3",
+          "region-0-4",
+          "region-1-4"
+        ],
+        "discoveredRegionIds": [
+          "region-0-4"
+        ],
+        "sceneRegionRootCount": 4,
+        "materials": {
+          "owned": 14,
+          "disposed": 0
+        },
+        "decorations": {
+          "density": 1,
+          "structuralInstanceCount": 35,
+          "cosmeticInstanceCount": 797,
+          "spawnBlockedPlacementCount": 0,
+          "maxCosmeticInstanceCount": 797
+        },
+        "siteStructures": {
+          "spawnBlockedBuildingColliderCount": 1,
+          "spawnBlockedPropColliderCount": 0
+        },
+        "collision": {
+          "colliderCount": 48,
+          "bucketCount": 58,
+          "regionCount": 4,
+          "lastQueryCandidateCount": 0,
+          "revision": 51
+        },
+        "navigation": {
+          "cachedGridCount": 0,
+          "gridBuildCount": 0,
+          "activeRegionCount": 3,
+          "revision": 75
+        },
+        "regionRoots": [
+          {
+            "regionId": "region-0-3",
+            "state": "simulated",
+            "attached": true,
+            "geometryCount": 2,
+            "colliderCount": 14,
+            "structuralDecorationCount": 8,
+            "spawnBlockedPlacements": 0,
+            "spawnBlockedBuildingColliders": 1,
+            "spawnBlockedPropColliders": 0,
+            "cosmeticDecorationCount": 200,
+            "maxCosmeticDecorationCount": 200,
+            "inkDraws": 6
+          },
+          {
+            "regionId": "region-0-4",
+            "state": "simulated",
+            "attached": true,
+            "geometryCount": 2,
+            "colliderCount": 14,
+            "structuralDecorationCount": 10,
+            "spawnBlockedPlacements": 0,
+            "spawnBlockedBuildingColliders": 0,
+            "spawnBlockedPropColliders": 0,
+            "cosmeticDecorationCount": 198,
+            "maxCosmeticDecorationCount": 198,
+            "inkDraws": 6
+          },
+          {
+            "regionId": "region-1-3",
+            "state": "visible",
+            "attached": true,
+            "geometryCount": 3,
+            "colliderCount": 12,
+            "structuralDecorationCount": 9,
+            "spawnBlockedPlacements": 0,
+            "spawnBlockedBuildingColliders": 0,
+            "spawnBlockedPropColliders": 0,
+            "cosmeticDecorationCount": 199,
+            "maxCosmeticDecorationCount": 199,
+            "inkDraws": 5
+          },
+          {
+            "regionId": "region-1-4",
+            "state": "simulated",
+            "attached": true,
+            "geometryCount": 4,
+            "colliderCount": 8,
+            "structuralDecorationCount": 8,
+            "spawnBlockedPlacements": 0,
+            "spawnBlockedBuildingColliders": 0,
+            "spawnBlockedPropColliders": 0,
+            "cosmeticDecorationCount": 200,
+            "maxCosmeticDecorationCount": 200,
+            "inkDraws": 3
+          }
+        ],
+        "lifecycle": [
+          {
+            "regionId": "region-0-0",
+            "coordinate": {
+              "x": 0,
+              "z": 0
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-1-0",
+            "coordinate": {
+              "x": 1,
+              "z": 0
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-2-0",
+            "coordinate": {
+              "x": 2,
+              "z": 0
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-3-0",
+            "coordinate": {
+              "x": 3,
+              "z": 0
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-4-0",
+            "coordinate": {
+              "x": 4,
+              "z": 0
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-0-1",
+            "coordinate": {
+              "x": 0,
+              "z": 1
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-1-1",
+            "coordinate": {
+              "x": 1,
+              "z": 1
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-2-1",
+            "coordinate": {
+              "x": 2,
+              "z": 1
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-3-1",
+            "coordinate": {
+              "x": 3,
+              "z": 1
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-4-1",
+            "coordinate": {
+              "x": 4,
+              "z": 1
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-0-2",
+            "coordinate": {
+              "x": 0,
+              "z": 2
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-1-2",
+            "coordinate": {
+              "x": 1,
+              "z": 2
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-2-2",
+            "coordinate": {
+              "x": 2,
+              "z": 2
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-3-2",
+            "coordinate": {
+              "x": 3,
+              "z": 2
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-4-2",
+            "coordinate": {
+              "x": 4,
+              "z": 2
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-0-3",
+            "coordinate": {
+              "x": 0,
+              "z": 3
+            },
+            "state": "simulated",
+            "visible": true,
+            "simulated": true,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-1-3",
+            "coordinate": {
+              "x": 1,
+              "z": 3
+            },
+            "state": "visible",
+            "visible": true,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-2-3",
+            "coordinate": {
+              "x": 2,
+              "z": 3
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-3-3",
+            "coordinate": {
+              "x": 3,
+              "z": 3
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-4-3",
+            "coordinate": {
+              "x": 4,
+              "z": 3
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-0-4",
+            "coordinate": {
+              "x": 0,
+              "z": 4
+            },
+            "state": "simulated",
+            "visible": true,
+            "simulated": true,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": true,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-1-4",
+            "coordinate": {
+              "x": 1,
+              "z": 4
+            },
+            "state": "simulated",
+            "visible": true,
+            "simulated": true,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-2-4",
+            "coordinate": {
+              "x": 2,
+              "z": 4
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-3-4",
+            "coordinate": {
+              "x": 3,
+              "z": 4
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-4-4",
+            "coordinate": {
+              "x": 4,
+              "z": 4
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          }
+        ]
+      },
+      "scene": {
+        "meshes": 957,
+        "inkShells": 220,
+        "shadowCasters": 212,
+        "dressingMeshes": 31,
+        "dressingInstances": 832,
+        "subjectRays": [
+          {
+            "subject": "player",
+            "firstDressingHit": null
+          },
+          {
+            "subject": "squad:villain:starter:0",
+            "firstDressingHit": null
+          },
+          {
+            "subject": "squad:villain:starter:1",
+            "firstDressingHit": null
+          },
+          {
+            "subject": "squad:villain:starter:2",
+            "firstDressingHit": null
+          }
+        ]
+      },
+      "initializationMs": 136.19999992847443
+    }
+  },
+  "manualRenderingPreservedSimulation": true,
+  "snapshot": {
+    "apiVersion": 1,
+    "visualRevision": "gfx-01-baseline-1",
+    "manual": true,
+    "stagedPrerequisites": [
+      "Fresh production villain opening; no player/actor relocation. Staged visual clock and seed; simulation held for capture."
+    ],
+    "visualClock": {
+      "seed": 20260906,
+      "timeSeconds": 2,
+      "weather": "snow",
+      "currentTimeSeconds": 2
+    },
+    "renderer": {
+      "backend": "THREE.WebGLRenderer / WebGL2",
+      "threeRevision": "185",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/152.0.0.0 Safari/537.36",
+      "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti SUPER (0x00002689) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "vendor": "Google Inc. (NVIDIA)",
+      "version": "WebGL 2.0 (OpenGL ES 3.0 Chromium)",
+      "shadingLanguageVersion": "WebGL GLSL ES 3.00 (OpenGL ES GLSL ES 3.0 Chromium)",
+      "contextAttributes": {
+        "alpha": false,
+        "antialias": true,
+        "depth": true,
+        "desynchronized": false,
+        "failIfMajorPerformanceCaveat": false,
+        "powerPreference": "high-performance",
+        "premultipliedAlpha": true,
+        "preserveDrawingBuffer": false,
+        "stencil": false,
+        "xrCompatible": false
+      },
+      "defaultFramebufferSamples": 4,
+      "gpuTimingExtension": "EXT_disjoint_timer_query_webgl2",
+      "gpuTimingUnavailableReason": null
+    },
+    "viewport": {
+      "width": 390,
+      "height": 844,
+      "bufferWidth": 390,
+      "bufferHeight": 844,
+      "devicePixelRatio": 1,
+      "rendererPixelRatio": 1
+    },
+    "accounting": "full",
+    "resources": {
+      "trackingActive": true,
+      "buffers": 266,
+      "textures": 26,
+      "renderbuffers": 13,
+      "framebuffers": 17,
+      "programs": 25,
+      "shaders": 0,
+      "vertexArrays": 122,
+      "bufferBytes": 1792960,
+      "textureBytes": 41314320,
+      "renderbufferBytes": 3841144,
+      "renderTargetBytes": 45077864,
+      "trackedBytes": 46948424,
+      "peakTrackedBytes": 46948424,
+      "allocatedBytes": 46948424,
+      "releasedBytes": 0,
+      "creates": 519,
+      "deletes": 50,
+      "storageCalls": 314,
+      "unknownFormats": [],
+      "implicitMultisampleBytesEstimate": 0
+    },
+    "renderTargets": [
+      {
+        "id": 8,
+        "kind": "texture",
+        "bytes": 2633280,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 390,
+            "height": 844,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 2633280
+          }
+        ]
+      },
+      {
+        "id": 10,
+        "kind": "renderbuffer",
+        "bytes": 1316640,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 390,
+            "height": 844,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 1316640
+          }
+        ]
+      },
+      {
+        "id": 185,
+        "kind": "texture",
+        "bytes": 16777216,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 2048,
+            "height": 2048,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 16777216
+          }
+        ]
+      },
+      {
+        "id": 187,
+        "kind": "texture",
+        "bytes": 16777216,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 2048,
+            "height": 2048,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 16777216
+          }
+        ]
+      },
+      {
+        "id": 442,
+        "kind": "texture",
+        "bytes": 658320,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 195,
+            "height": 422,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 658320
+          }
+        ]
+      },
+      {
+        "id": 444,
+        "kind": "renderbuffer",
+        "bytes": 329160,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 195,
+            "height": 422,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 329160
+          }
+        ]
+      },
+      {
+        "id": 451,
+        "kind": "texture",
+        "bytes": 658320,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 195,
+            "height": 422,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 658320
+          }
+        ]
+      },
+      {
+        "id": 453,
+        "kind": "renderbuffer",
+        "bytes": 329160,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 195,
+            "height": 422,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 329160
+          }
+        ]
+      },
+      {
+        "id": 458,
+        "kind": "texture",
+        "bytes": 658320,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 195,
+            "height": 422,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 658320
+          }
+        ]
+      },
+      {
+        "id": 460,
+        "kind": "renderbuffer",
+        "bytes": 329160,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 195,
+            "height": 422,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 329160
+          }
+        ]
+      },
+      {
+        "id": 461,
+        "kind": "texture",
+        "bytes": 165424,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 98,
+            "height": 211,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 165424
+          }
+        ]
+      },
+      {
+        "id": 463,
+        "kind": "renderbuffer",
+        "bytes": 82712,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 98,
+            "height": 211,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 82712
+          }
+        ]
+      },
+      {
+        "id": 468,
+        "kind": "texture",
+        "bytes": 165424,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 98,
+            "height": 211,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 165424
+          }
+        ]
+      },
+      {
+        "id": 470,
+        "kind": "renderbuffer",
+        "bytes": 82712,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 98,
+            "height": 211,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 82712
+          }
+        ]
+      },
+      {
+        "id": 471,
+        "kind": "texture",
+        "bytes": 41552,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 49,
+            "height": 106,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 41552
+          }
+        ]
+      },
+      {
+        "id": 473,
+        "kind": "renderbuffer",
+        "bytes": 20776,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 49,
+            "height": 106,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 20776
+          }
+        ]
+      },
+      {
+        "id": 478,
+        "kind": "texture",
+        "bytes": 41552,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 49,
+            "height": 106,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 41552
+          }
+        ]
+      },
+      {
+        "id": 480,
+        "kind": "renderbuffer",
+        "bytes": 20776,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 49,
+            "height": 106,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 20776
+          }
+        ]
+      },
+      {
+        "id": 481,
+        "kind": "texture",
+        "bytes": 10600,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 25,
+            "height": 53,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 10600
+          }
+        ]
+      },
+      {
+        "id": 483,
+        "kind": "renderbuffer",
+        "bytes": 5300,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 25,
+            "height": 53,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 5300
+          }
+        ]
+      },
+      {
+        "id": 488,
+        "kind": "texture",
+        "bytes": 10600,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 25,
+            "height": 53,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 10600
+          }
+        ]
+      },
+      {
+        "id": 490,
+        "kind": "renderbuffer",
+        "bytes": 5300,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 25,
+            "height": 53,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 5300
+          }
+        ]
+      },
+      {
+        "id": 491,
+        "kind": "texture",
+        "bytes": 2808,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 13,
+            "height": 27,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 2808
+          }
+        ]
+      },
+      {
+        "id": 493,
+        "kind": "renderbuffer",
+        "bytes": 1404,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 13,
+            "height": 27,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 1404
+          }
+        ]
+      },
+      {
+        "id": 498,
+        "kind": "texture",
+        "bytes": 2808,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 13,
+            "height": 27,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 2808
+          }
+        ]
+      },
+      {
+        "id": 500,
+        "kind": "renderbuffer",
+        "bytes": 1404,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 13,
+            "height": 27,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 1404
+          }
+        ]
+      },
+      {
+        "id": 509,
+        "kind": "texture",
+        "bytes": 2633280,
+        "samples": 1,
+        "images": [
+          {
+            "level": "3553:0",
+            "width": 390,
+            "height": 844,
+            "depth": 1,
+            "bytesPerPixel": 8,
+            "bytes": 2633280
+          }
+        ]
+      },
+      {
+        "id": 511,
+        "kind": "renderbuffer",
+        "bytes": 1316640,
+        "samples": 1,
+        "images": [
+          {
+            "level": "storage",
+            "width": 390,
+            "height": 844,
+            "depth": 1,
+            "bytesPerPixel": 4,
+            "bytes": 1316640
+          }
+        ]
+      }
+    ],
+    "defaultFramebufferEstimate": {
+      "width": 390,
+      "height": 844,
+      "samples": 4,
+      "colorResolveBytes": 1316640,
+      "multisampleColorBytes": 5266560,
+      "depthBytes": 5266560,
+      "excludes": "Browser swapchain copies, tiling/alignment, shader/driver overhead; not measured VRAM"
+    },
+    "lastFrame": {
+      "gpuMs": null,
+      "gpuStatus": "queue-full",
+      "id": 31,
+      "source": "manual",
+      "phase": "capture",
+      "intervalMs": null,
+      "updateMs": 0.10000002384185791,
+      "submissionMs": 1.100000023841858,
+      "cpuMs": 1.2000000476837158,
+      "streamingMs": 0,
+      "draws": {
+        "scene": {
+          "calls": 66,
+          "triangles": 46864,
+          "lines": 0,
+          "points": 480
+        },
+        "ink": {
+          "calls": 39,
+          "triangles": 13378,
+          "lines": 0,
+          "points": 0
+        },
+        "shadow": {
+          "calls": 82,
+          "triangles": 16956,
+          "lines": 0,
+          "points": 0
+        },
+        "post": {
+          "calls": 15,
+          "triangles": 15,
+          "lines": 0,
+          "points": 0
+        }
+      },
+      "total": {
+        "calls": 202,
+        "triangles": 77213,
+        "lines": 0,
+        "points": 480
+      },
+      "rendererInfo": {
+        "calls": 202,
+        "triangles": 77213,
+        "lines": 0,
+        "points": 480
+      },
+      "counterAgreement": true,
+      "readPixelsCalls": 0,
+      "blits": 0,
+      "resources": {
+        "trackingActive": true,
+        "buffers": 266,
+        "textures": 26,
+        "renderbuffers": 13,
+        "framebuffers": 17,
+        "programs": 25,
+        "shaders": 0,
+        "vertexArrays": 122,
+        "bufferBytes": 1792960,
+        "textureBytes": 41314320,
+        "renderbufferBytes": 3841144,
+        "renderTargetBytes": 45077864,
+        "trackedBytes": 46948424,
+        "peakTrackedBytes": 46948424,
+        "allocatedBytes": 46948424,
+        "releasedBytes": 0,
+        "creates": 519,
+        "deletes": 50,
+        "storageCalls": 314,
+        "unknownFormats": [],
+        "implicitMultisampleBytesEstimate": 0
+      },
+      "runtime": {
+        "elapsed": 0,
+        "paused": false,
+        "ended": false,
+        "health": 100,
+        "npcCount": 11,
+        "aliveNpcs": 11,
+        "movingNpcs": 0,
+        "actingNpcs": 0,
+        "region": "region-0-4",
+        "visibleRegions": [
+          "region-0-3",
+          "region-0-4",
+          "region-1-3",
+          "region-1-4"
+        ],
+        "simulatedRegions": [
+          "region-0-3",
+          "region-0-4",
+          "region-1-4"
+        ]
+      }
+    },
+    "runtime": {
+      "elapsed": 0,
+      "paused": false,
+      "ended": false,
+      "health": 100,
+      "npcCount": 11,
+      "aliveNpcs": 11,
+      "movingNpcs": 0,
+      "actingNpcs": 0,
+      "region": "region-0-4",
+      "visibleRegions": [
+        "region-0-3",
+        "region-0-4",
+        "region-1-3",
+        "region-1-4"
+      ],
+      "simulatedRegions": [
+        "region-0-3",
+        "region-0-4",
+        "region-1-4"
+      ],
+      "faction": "villain",
+      "worldSeed": 20260906,
+      "fingerprint": "wg1-9af1421ac05e081d",
+      "player": [
+        -177.82099347102331,
+        7.76781155684991,
+        182.38288733925546
+      ],
+      "heading": 0,
+      "pointerInput": {
+        "locked": false,
+        "fallback": false
+      },
+      "camera": {
+        "position": [
+          -187.56906301720696,
+          15.94781155684991,
+          184.61338955238304
+        ],
+        "yaw": 1.3458539189044576,
+        "pitch": 0.38,
+        "fov": 56,
+        "near": 0.1,
+        "far": 240,
+        "horizontalDistance": 10
+      },
+      "presentation": {
+        "dynamicDayNight": true,
+        "weather": true,
+        "ink": true,
+        "foliage": "high",
+        "cameraEffects": true,
+        "reducedMotion": false,
+        "visualNightFactor": 0
+      },
+      "visualPolicy": null,
+      "simulationWeather": {
+        "target": "snow",
+        "weights": {
+          "clear": 0,
+          "overcast": 0,
+          "rain": 0,
+          "snow": 1
+        }
+      },
+      "rngStates": {
+        "combat": 2315102050,
+        "director": 3349717333,
+        "event": 832990998,
+        "loot": 3111021425,
+        "chronicle": 1868283985,
+        "rumour": 2189674099
+      },
+      "actors": [
+        {
+          "id": "squad:villain:starter:0",
+          "role": "minion",
+          "allegiance": "villain",
+          "budget": "squad",
+          "alive": true,
+          "hp": 70,
+          "maxHp": 70,
+          "position": [
+            -181.0209934710233,
+            7.915033275578665,
+            185.78288733925547
+          ],
+          "squad": true,
+          "action": null
+        },
+        {
+          "id": "squad:villain:starter:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "squad",
+          "alive": true,
+          "hp": 130,
+          "maxHp": 130,
+          "position": [
+            -174.62099347102333,
+            8.200682439887476,
+            185.78288733925547
+          ],
+          "squad": true,
+          "action": null
+        },
+        {
+          "id": "squad:villain:starter:2",
+          "role": "archer",
+          "allegiance": "villain",
+          "budget": "squad",
+          "alive": true,
+          "hp": 45,
+          "maxHp": 45,
+          "position": [
+            -177.82099347102331,
+            7.797694563777716,
+            187.88288733925546
+          ],
+          "squad": true,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-region-0-3:actor:0",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 161,
+          "maxHp": 161,
+          "position": [
+            -144.5436605606449,
+            16.027135857741953,
+            70.83953424308851
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-region-0-3:actor:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 161,
+          "maxHp": 161,
+          "position": [
+            -141.61759280628428,
+            17.48648591800791,
+            68.02484160255918
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-region-0-3:actor:2",
+          "role": "archer",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 56,
+          "maxHp": 56,
+          "position": [
+            -150.21210925146823,
+            16.933883553519934,
+            67.03169505327547
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-boss-guard:actor:0",
+          "role": "champion",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 385,
+          "maxHp": 385,
+          "position": [
+            -134.0043031651365,
+            14.70805337991962,
+            87.52203413537845
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-boss-guard:actor:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 192,
+          "maxHp": 192,
+          "position": [
+            -129.69223337232998,
+            16.553366813113136,
+            85.88776148014591
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-boss-guard:actor:2",
+          "role": "minion",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 104,
+          "maxHp": 104,
+          "position": [
+            -140.32764684318172,
+            13.31134979488927,
+            85.56400729529037
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-region-1-4:actor:0",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 130,
+          "maxHp": 130,
+          "position": [
+            -75.78717974755965,
+            13.874717360321512,
+            149.73472773616504
+          ],
+          "squad": false,
+          "action": null
+        },
+        {
+          "id": "generated:encounter-region-1-4:actor:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "budget": "campaign",
+          "alive": true,
+          "hp": 130,
+          "maxHp": 130,
+          "position": [
+            -71.57897638446902,
+            14.662395740197777,
+            145.39316102800245
+          ],
+          "squad": false,
+          "action": null
+        }
+      ],
+      "actorBudget": {
+        "squad": 3,
+        "campaign": 8,
+        "chronicle": 0,
+        "ambient": 0
+      },
+      "maxNpcs": 25,
+      "world": {
+        "disposed": false,
+        "currentRegionId": "region-0-4",
+        "visibleRegionIds": [
+          "region-0-3",
+          "region-1-3",
+          "region-0-4",
+          "region-1-4"
+        ],
+        "simulatedRegionIds": [
+          "region-0-3",
+          "region-0-4",
+          "region-1-4"
+        ],
+        "discoveredRegionIds": [
+          "region-0-4"
+        ],
+        "sceneRegionRootCount": 4,
+        "materials": {
+          "owned": 14,
+          "disposed": 0
+        },
+        "decorations": {
+          "density": 1,
+          "structuralInstanceCount": 35,
+          "cosmeticInstanceCount": 797,
+          "spawnBlockedPlacementCount": 0,
+          "maxCosmeticInstanceCount": 797
+        },
+        "siteStructures": {
+          "spawnBlockedBuildingColliderCount": 1,
+          "spawnBlockedPropColliderCount": 0
+        },
+        "collision": {
+          "colliderCount": 48,
+          "bucketCount": 58,
+          "regionCount": 4,
+          "lastQueryCandidateCount": 0,
+          "revision": 51
+        },
+        "navigation": {
+          "cachedGridCount": 0,
+          "gridBuildCount": 0,
+          "activeRegionCount": 3,
+          "revision": 75
+        },
+        "regionRoots": [
+          {
+            "regionId": "region-0-3",
+            "state": "simulated",
+            "attached": true,
+            "geometryCount": 2,
+            "colliderCount": 14,
+            "structuralDecorationCount": 8,
+            "spawnBlockedPlacements": 0,
+            "spawnBlockedBuildingColliders": 1,
+            "spawnBlockedPropColliders": 0,
+            "cosmeticDecorationCount": 200,
+            "maxCosmeticDecorationCount": 200,
+            "inkDraws": 6
+          },
+          {
+            "regionId": "region-0-4",
+            "state": "simulated",
+            "attached": true,
+            "geometryCount": 2,
+            "colliderCount": 14,
+            "structuralDecorationCount": 10,
+            "spawnBlockedPlacements": 0,
+            "spawnBlockedBuildingColliders": 0,
+            "spawnBlockedPropColliders": 0,
+            "cosmeticDecorationCount": 198,
+            "maxCosmeticDecorationCount": 198,
+            "inkDraws": 6
+          },
+          {
+            "regionId": "region-1-3",
+            "state": "visible",
+            "attached": true,
+            "geometryCount": 3,
+            "colliderCount": 12,
+            "structuralDecorationCount": 9,
+            "spawnBlockedPlacements": 0,
+            "spawnBlockedBuildingColliders": 0,
+            "spawnBlockedPropColliders": 0,
+            "cosmeticDecorationCount": 199,
+            "maxCosmeticDecorationCount": 199,
+            "inkDraws": 5
+          },
+          {
+            "regionId": "region-1-4",
+            "state": "simulated",
+            "attached": true,
+            "geometryCount": 4,
+            "colliderCount": 8,
+            "structuralDecorationCount": 8,
+            "spawnBlockedPlacements": 0,
+            "spawnBlockedBuildingColliders": 0,
+            "spawnBlockedPropColliders": 0,
+            "cosmeticDecorationCount": 200,
+            "maxCosmeticDecorationCount": 200,
+            "inkDraws": 3
+          }
+        ],
+        "lifecycle": [
+          {
+            "regionId": "region-0-0",
+            "coordinate": {
+              "x": 0,
+              "z": 0
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-1-0",
+            "coordinate": {
+              "x": 1,
+              "z": 0
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-2-0",
+            "coordinate": {
+              "x": 2,
+              "z": 0
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-3-0",
+            "coordinate": {
+              "x": 3,
+              "z": 0
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-4-0",
+            "coordinate": {
+              "x": 4,
+              "z": 0
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-0-1",
+            "coordinate": {
+              "x": 0,
+              "z": 1
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-1-1",
+            "coordinate": {
+              "x": 1,
+              "z": 1
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-2-1",
+            "coordinate": {
+              "x": 2,
+              "z": 1
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-3-1",
+            "coordinate": {
+              "x": 3,
+              "z": 1
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-4-1",
+            "coordinate": {
+              "x": 4,
+              "z": 1
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-0-2",
+            "coordinate": {
+              "x": 0,
+              "z": 2
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-1-2",
+            "coordinate": {
+              "x": 1,
+              "z": 2
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-2-2",
+            "coordinate": {
+              "x": 2,
+              "z": 2
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-3-2",
+            "coordinate": {
+              "x": 3,
+              "z": 2
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-4-2",
+            "coordinate": {
+              "x": 4,
+              "z": 2
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-0-3",
+            "coordinate": {
+              "x": 0,
+              "z": 3
+            },
+            "state": "simulated",
+            "visible": true,
+            "simulated": true,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-1-3",
+            "coordinate": {
+              "x": 1,
+              "z": 3
+            },
+            "state": "visible",
+            "visible": true,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-2-3",
+            "coordinate": {
+              "x": 2,
+              "z": 3
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-3-3",
+            "coordinate": {
+              "x": 3,
+              "z": 3
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-4-3",
+            "coordinate": {
+              "x": 4,
+              "z": 3
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-0-4",
+            "coordinate": {
+              "x": 0,
+              "z": 4
+            },
+            "state": "simulated",
+            "visible": true,
+            "simulated": true,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": true,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-1-4",
+            "coordinate": {
+              "x": 1,
+              "z": 4
+            },
+            "state": "simulated",
+            "visible": true,
+            "simulated": true,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-2-4",
+            "coordinate": {
+              "x": 2,
+              "z": 4
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-3-4",
+            "coordinate": {
+              "x": 3,
+              "z": 4
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          },
+          {
+            "regionId": "region-4-4",
+            "coordinate": {
+              "x": 4,
+              "z": 4
+            },
+            "state": "blueprint-only",
+            "visible": false,
+            "simulated": false,
+            "pinned": false,
+            "pinReasons": [],
+            "discovered": false,
+            "hasDelta": true
+          }
+        ]
+      },
+      "scene": {
+        "meshes": 957,
+        "inkShells": 220,
+        "shadowCasters": 212,
+        "dressingMeshes": 31,
+        "dressingInstances": 832,
+        "subjectRays": [
+          {
+            "subject": "player",
+            "firstDressingHit": null
+          },
+          {
+            "subject": "squad:villain:starter:0",
+            "firstDressingHit": null
+          },
+          {
+            "subject": "squad:villain:starter:1",
+            "firstDressingHit": null
+          },
+          {
+            "subject": "squad:villain:starter:2",
+            "firstDressingHit": null
+          }
+        ]
+      },
+      "initializationMs": 136.19999992847443
+    }
+  }
+}
