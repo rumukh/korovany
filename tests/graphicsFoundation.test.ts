@@ -353,3 +353,72 @@ test('the joint skin/wind/depth fixture uses production bindings and releases it
   assert.equal(scene.children.length, 0)
   art.dispose()
 })
+
+test('a failed outline disposal still drains all borrowers and releases owned source geometry once', () => {
+  const art = library()
+  const geometry = box()
+  const source = new THREE.InstancedMesh(geometry, art.acquireMaterial('failure', { color: 0x889944, surface: 'foliage' }), 2)
+  const binding = art.bindRenderSource(source, { visibility: true })
+  const first = art.applyOutline(source, 'structural', { instanced: true })
+  const second = art.applyOutline(source, 'structural', { instanced: true })
+  const firstShell = first.shells[0] as THREE.InstancedMesh
+  const secondShell = second.shells[0] as THREE.InstancedMesh
+  firstShell.addEventListener('dispose', () => { throw new Error('Injected shell disposal failure') })
+  let secondReleased = 0, ownedReleased = 0
+  secondShell.addEventListener('dispose', () => secondReleased++)
+  source.geometry.addEventListener('dispose', () => ownedReleased++)
+  assert.throws(() => art.releaseRenderSource(binding), AggregateError)
+  assert.equal(firstShell.parent, null)
+  assert.equal(secondShell.parent, null)
+  assert.notEqual(firstShell.instanceMatrix, source.instanceMatrix)
+  assert.notEqual(secondShell.instanceMatrix, source.instanceMatrix)
+  assert.equal(secondReleased, 1)
+  assert.equal(ownedReleased, 1)
+  assert.equal(source.geometry, geometry)
+  assert.equal(art.getRenderBindingStats().sources, 0)
+  art.releaseRenderSource(binding)
+  art.releaseOutline(first); art.releaseOutline(second)
+  assert.equal(secondReleased, 1)
+  assert.equal(ownedReleased, 1)
+  source.dispose(); geometry.dispose(); art.dispose()
+})
+
+test('a failed replacement cleanup still releases its old lease after switching every borrower', () => {
+  const art = library()
+  const geometry = box()
+  const source = new THREE.Mesh(geometry, art.acquireMaterial('replace-failure', { color: 0xdab08e, surface: 'skin' }))
+  let oldLeaseReleased = 0
+  const binding = art.bindRenderSource(source, {
+    geometryLease: { geometry, release: () => oldLeaseReleased++ }, visibility: true,
+  })
+  const outline = art.applyOutline(source, 'structural')
+  source.geometry.addEventListener('dispose', () => { throw new Error('Injected old geometry disposal failure') })
+  const next = box()
+  let nextLeaseReleased = 0
+  assert.throws(() => art.replaceRenderSourceGeometry(binding, {
+    geometry: next, release: () => nextLeaseReleased++,
+  }), AggregateError)
+  assert.equal(oldLeaseReleased, 1)
+  assert.equal(nextLeaseReleased, 0)
+  assert.equal(outline.shells[0].geometry, source.geometry)
+  assert.notEqual(source.geometry, geometry)
+  art.releaseOutline(outline); art.releaseRenderSource(binding)
+  assert.equal(nextLeaseReleased, 1)
+  geometry.dispose(); next.dispose(); art.dispose()
+})
+
+test('presentation registration rejects foreign, duplicate and released source bindings', () => {
+  const art = library(), foreignArt = library(), registry = new WorldPresentationRegistry(art)
+  const geometry = box()
+  const source = new THREE.Mesh(geometry, art.acquireMaterial('registration', { color: 0x777777, surface: 'stone' }))
+  const binding = art.bindRenderSource(source)
+  assert.throws(() => foreignArt.releaseRenderSource(binding), /another owner/)
+  const foreignRegistry = new WorldPresentationRegistry(foreignArt)
+  assert.throws(() => foreignRegistry.registerOccluder({ id: 'foreign', regionId: 'r', binding, kind: 'solid' }), /registration/)
+  const registration = registry.registerOccluder({ id: 'valid', regionId: 'r', binding, kind: 'solid' })
+  assert.throws(() => registry.registerOccluder({ id: 'duplicate-source', regionId: 'r', binding, kind: 'foreground' }), /registration/)
+  art.releaseRenderSource(binding)
+  assert.throws(() => registry.prepare(new THREE.PerspectiveCamera()), /Unregister/)
+  registration.dispose()
+  registry.dispose(); foreignRegistry.dispose(); geometry.dispose(); art.dispose(); foreignArt.dispose()
+})

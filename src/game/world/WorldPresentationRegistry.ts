@@ -124,9 +124,12 @@ export class WorldPresentationRegistry implements CameraVolumeQuery {
   prepare(camera: THREE.PerspectiveCamera): void {
     for (const entry of this.entries.values()) {
       const { source, bounds } = entry.descriptor.binding
+      if (this.art.getRenderSourceBinding(source) !== entry.descriptor.binding) {
+        throw new Error('Unregister presentation sources before releasing their art binding')
+      }
       for (const lod of entry.lods) lod.update(camera)
       source.updateWorldMatrix(true, false)
-      entry.active = true
+      entry.active = source.layers.test(camera.layers)
       for (let node: THREE.Object3D | null = source; node !== null; node = node.parent) {
         if (!node.visible) { entry.active = false; break }
       }
@@ -272,6 +275,9 @@ export class WorldPresentationRegistry implements CameraVolumeQuery {
     const count = source instanceof THREE.InstancedMesh ? source.instanceMatrix.count : 1
     if (this.disposed || this.entries.has(key) || this.entries.size >= PRESENTATION_SOURCE_LIMIT ||
         this.debug.instances + count > PRESENTATION_INSTANCE_LIMIT || bounds.isEmpty() ||
+        !descriptor.id || !descriptor.regionId || this.art.getRenderSourceBinding(source) !== descriptor.binding ||
+        [...this.entries.values()].some((entry) => entry.descriptor.binding === descriptor.binding &&
+          (kind !== undefined ? entry.kind !== undefined : entry.priority !== undefined)) ||
         ![bounds.min.x, bounds.min.y, bounds.min.z, bounds.max.x, bounds.max.y, bounds.max.z].every(Number.isFinite)) {
       throw new Error(`Invalid or over-budget presentation registration: ${key}`)
     }

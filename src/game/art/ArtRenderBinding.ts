@@ -55,6 +55,9 @@ export class ArtRenderBindings {
 
   bind(source: THREE.Mesh, options: ArtRenderSourceOptions, depth?: THREE.MeshDepthMaterial): ArtRenderSourceBinding {
     if (this.states.has(source)) throw new Error(`Art source is already bound: ${source.name}`)
+    if (options.geometryLease && options.geometryLease.geometry !== source.geometry) {
+      throw new Error('Initial art lease must describe the source geometry; use replacement for a geometry change')
+    }
     const original = options.geometryLease?.geometry ?? source.geometry
     const padding = options.deformationPadding ?? 0
     if (!Number.isFinite(padding) || padding < 0) throw new RangeError('Invalid art deformation padding')
@@ -178,13 +181,17 @@ export class ArtRenderBindings {
     this.tokens.delete(binding)
     this.released.add(binding)
     this.states.delete(state.source)
-    for (const shell of state.shells) this.releaseShell(shell)
+    const errors: unknown[] = []
+    for (const shell of state.shells) {
+      try { this.releaseShell(shell) } catch (error) { errors.push(error) }
+    }
     state.shells.clear()
     state.source.geometry = state.original
     state.source.customDepthMaterial = state.previousDepth
     const lease = state.lease
     state.lease = undefined
-    this.releaseGeometry(state.owned ? state.geometry : undefined, lease)
+    try { this.releaseGeometry(state.owned ? state.geometry : undefined, lease) } catch (error) { errors.push(error) }
+    if (errors.length) throw new AggregateError(errors, 'Art source release was incomplete')
   }
 
   dispose(): void {

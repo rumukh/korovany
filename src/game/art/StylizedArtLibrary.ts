@@ -631,11 +631,14 @@ export class StylizedArtLibrary {
    * holds a vertex array object of its own, and that has to go.
    */
   releaseOutline(binding: OutlineBinding): void {
-    for (const shell of binding.shells) {
-      this.renderBindings.detachShell(shell)
-      disposeShell(shell)
+    const errors: unknown[] = []
+    for (const shell of binding.shells.splice(0)) {
+      try {
+        this.renderBindings.detachShell(shell)
+        disposeShell(shell)
+      } catch (error) { errors.push(error) }
     }
-    binding.shells.length = 0
+    if (errors.length) throw new AggregateError(errors, 'Outline cleanup was incomplete')
   }
 
   setViewport(width: number, height: number, minPixels: number, maxPixels: number): void {
