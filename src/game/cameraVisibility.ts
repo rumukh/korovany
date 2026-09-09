@@ -244,7 +244,12 @@ export class CameraVisibility {
   constrain(
     target: THREE.Vector3, candidate: THREE.Vector3, query: CameraVolumeQuery,
     terrain: (x: number, z: number) => number, output: THREE.Vector3,
-  ): void { this.safePosition(target, candidate, query, terrain, output) }
+  ): void {
+    this.safePosition(target, candidate, query, terrain, output)
+    this.debug.boomDistance = output.distanceTo(target)
+    this.debug.playerVisibility = Math.min(this.debug.playerVisibility,
+      THREE.MathUtils.smoothstep(this.debug.boomDistance, 0.8, 3.6))
+  }
 
   private sweep(query: CameraVolumeQuery, from: THREE.Vector3, to: THREE.Vector3): void {
     query.sweep(from, to, this.radius, this.sweepResult)

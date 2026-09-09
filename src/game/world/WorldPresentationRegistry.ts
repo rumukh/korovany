@@ -47,6 +47,7 @@ interface Fade {
   index: number
   wanted: boolean
   value: number
+  hold: number
 }
 
 export interface WorldPresentationDebug {
@@ -99,7 +100,7 @@ export class WorldPresentationRegistry implements CameraVolumeQuery {
   private readonly candidates: CameraTriangleSource[] = []
   private readonly shadowCandidates: Entry[] = []
   private readonly fades: Fade[] = Array.from({ length: FOREGROUND_FADE_LIMIT }, () => ({
-    entry: null, index: 0, wanted: false, value: 1,
+    entry: null, index: 0, wanted: false, value: 1, hold: 0,
   }))
   private readonly instance = new THREE.Matrix4()
   private readonly ray = new THREE.Ray()
@@ -156,7 +157,10 @@ export class WorldPresentationRegistry implements CameraVolumeQuery {
   }
 
   updateForeground(camera: THREE.Vector3, subjects: readonly THREE.Vector3[], delta: number, immediate: boolean): void {
-    for (const fade of this.fades) fade.wanted = false
+    for (const fade of this.fades) {
+      fade.wanted = false
+      fade.hold = immediate ? 0 : Math.max(0, fade.hold - delta)
+    }
     for (const entry of this.entries.values()) {
       if (!entry.active || entry.kind !== 'foreground') continue
       const source = entry.descriptor.binding.source
@@ -184,13 +188,17 @@ export class WorldPresentationRegistry implements CameraVolumeQuery {
           fade.entry = entry; fade.index = index; fade.value = 1
         }
         fade.wanted = true
+        fade.hold = 0.18
       }
     }
     this.debug.fadedInstances = 0
     for (const fade of this.fades) {
       if (!fade.entry) continue
       const source = fade.entry.descriptor.binding.source
-      if (!fade.entry.active || (source instanceof THREE.InstancedMesh && fade.index >= source.count)) fade.wanted = false
+      if (!fade.entry.active || (source instanceof THREE.InstancedMesh && fade.index >= source.count)) {
+        fade.wanted = false
+        fade.hold = 0
+      } else fade.wanted ||= fade.hold > 0
       fade.value = immediate ? (fade.wanted ? 0 : 1) :
         THREE.MathUtils.lerp(fade.value, fade.wanted ? 0 : 1, dampingAlpha(fade.wanted ? 18 : 7, delta))
       if (fade.value > 0.995 && !fade.wanted) fade.value = 1

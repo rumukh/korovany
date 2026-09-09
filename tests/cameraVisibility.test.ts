@@ -156,3 +156,17 @@ test('release damping converges across frame rates without hunting or invalid po
   }
   assert.ok(settle(30).distanceTo(settle(120)) < 0.002)
 })
+
+test('a collision on the final shake path updates close-player fade as well as camera clearance', () => {
+  const solver = new CameraVisibility()
+  const camera = new THREE.PerspectiveCamera(56, 1, 0.1, 200)
+  const target = new THREE.Vector3(0, 2, 0), out = new THREE.Vector3()
+  solver.resolve(target, new THREE.Vector3(0, 2, 10), camera, 0, true, query([]), () => 0, out)
+  assert.equal(solver.debug.playerVisibility, 1)
+  const wall = obstacle(0, 2, 2.5, 4, 8, 1)
+  solver.constrain(target, new THREE.Vector3(0.1, 2, 10), query([wall]), () => 0, out)
+  assert.ok(out.distanceTo(target) < 2)
+  assert.ok(solver.debug.playerVisibility < 0.5)
+  assert.equal(solver.debug.boomDistance, out.distanceTo(target))
+  wall.geometry.dispose()
+})

@@ -201,6 +201,26 @@ test('shadow admission prices submitted batches and groups, not a selected subse
   registration.dispose(); registry.dispose(); art.releaseRenderSource(binding); mesh.dispose(); geometry.dispose(); art.dispose()
 })
 
+test('foreground exit hysteresis suppresses one-frame canopy flicker without retaining unloaded sources', () => {
+  const art = library(), registry = new WorldPresentationRegistry(art)
+  const geometry = box()
+  const mesh = new THREE.InstancedMesh(geometry, art.acquireMaterial('canopy', { color: 0x718653, surface: 'foliage' }), 1)
+  mesh.setMatrixAt(0, new THREE.Matrix4().makeTranslation(0, 2, 4))
+  const binding = art.bindRenderSource(mesh, { visibility: true })
+  const registration = registry.registerOccluder({ id: 'canopy', regionId: 'test', binding, kind: 'foreground' })
+  registry.prepare(new THREE.PerspectiveCamera())
+  const camera = new THREE.Vector3(0, 2, 8)
+  registry.updateForeground(camera, [new THREE.Vector3(0, 2, 0)], 0, true)
+  assert.equal(art.getSourceVisibility(binding), 0)
+  registry.updateForeground(camera, [], 1 / 60, false)
+  assert.equal(art.getSourceVisibility(binding), 0)
+  registry.updateForeground(camera, [], 0.2, false)
+  assert.ok(art.getSourceVisibility(binding) > 0.5)
+  registration.dispose()
+  assert.equal(art.getSourceVisibility(binding), 1)
+  registry.dispose(); art.releaseRenderSource(binding); mesh.dispose(); geometry.dispose(); art.dispose()
+})
+
 test('a generated dense forest and nearby site actually contribute bounded world shadows', () => {
   const art = library()
   const scene = new THREE.Scene()
