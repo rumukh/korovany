@@ -12,6 +12,15 @@ export interface ArtGeometryLease {
   release(): void
 }
 
+/**
+ * Every returned outcome transfers the next lease. Only a thrown preparation
+ * error leaves it with the caller. A committed cleanup error must be reported
+ * outside the caller's rejected-lease release path.
+ */
+export type ArtGeometryReplacementOutcome =
+  | { readonly status: 'committed' }
+  | { readonly status: 'committed-with-errors'; readonly error: AggregateError }
+
 export interface ArtRenderSourceOptions {
   readonly geometryLease?: ArtGeometryLease
   readonly visibility?: boolean
@@ -77,8 +86,9 @@ export class ArtRenderBindings {
     return state
   }
 
-  replace(binding: ArtRenderSourceBinding, lease: ArtGeometryLease): void {
+  replace(binding: ArtRenderSourceBinding, lease: ArtGeometryLease): ArtGeometryReplacementOutcome {
     const state = this.require(binding)
+    this.assertSourceState(state)
     if (lease === state.lease || lease.geometry === state.original || lease.geometry === state.geometry) {
       throw new Error('Geometry replacement needs a distinct untransferred lease')
     }
@@ -99,9 +109,8 @@ export class ArtRenderBindings {
     const previousGeometry = state.geometry
     const previousOwned = state.owned
     const previousLease = state.lease
-    // No disposal event runs while a source/ink/depth borrower holds the old
-    // geometry. The stable shell nodes preserve existing outline binding arrays.
-    for (const shell of state.shells) shell.removeFromParent()
+    // Replace borrowed geometry links synchronously, without reparenting events.
+    // No old-resource disposal runs until every live borrower has switched.
     state.source.geometry = prepared.geometry
     state.geometry = prepared.geometry
     state.original = lease.geometry
@@ -109,19 +118,19 @@ export class ArtRenderBindings {
     state.lease = lease
     for (const shell of state.shells) {
       shell.geometry = state.geometry
-      state.source.add(shell)
     }
-    this.refresh(state)
-    this.releaseGeometry(previousOwned ? previousGeometry : undefined, previousLease)
+    const errors: unknown[] = []
+    try { this.refresh(state) } catch (error) { errors.push(error) }
+    try { this.releaseGeometry(previousOwned ? previousGeometry : undefined, previousLease) } catch (error) { errors.push(error) }
+    return errors.length
+      ? { status: 'committed-with-errors', error: new AggregateError(errors, 'Art geometry replacement committed with cleanup errors') }
+      : { status: 'committed' }
   }
 
   refresh(binding: ArtRenderSourceBinding): void {
     const state = this.require(binding)
-    if (state.source.geometry !== state.geometry) throw new Error('Replace art geometry through its binding')
+    this.assertSourceState(state)
     const source = state.source
-    if (source instanceof THREE.InstancedMesh &&
-        (source.instanceMatrix !== state.matrix || source.count < 0 || source.count > state.capacity ||
-          !Number.isInteger(source.count))) throw new Error('Art instance capacity or matrix identity changed')
     state.geometry.computeBoundingBox()
     state.geometry.computeBoundingSphere()
     state.bounds.copy(state.geometry.boundingBox!)
@@ -129,9 +138,12 @@ export class ArtRenderBindings {
     if (source instanceof THREE.InstancedMesh) {
       const count = source.count
       source.count = state.capacity
-      source.computeBoundingBox()
-      source.computeBoundingSphere()
-      source.count = count
+      try {
+        source.computeBoundingBox()
+        source.computeBoundingSphere()
+      } finally {
+        source.count = count
+      }
       source.boundingBox?.expandByScalar(state.padding)
       if (source.boundingSphere) source.boundingSphere.radius += state.padding
     }
@@ -143,6 +155,14 @@ export class ArtRenderBindings {
       source.boundingSphere.radius += state.padding
     }
     for (const shell of state.shells) this.syncShell(source, shell)
+  }
+
+  private assertSourceState(state: SourceState): void {
+    if (state.source.geometry !== state.geometry) throw new Error('Replace art geometry through its binding')
+    const source = state.source
+    if (source instanceof THREE.InstancedMesh &&
+        (source.instanceMatrix !== state.matrix || source.count < 0 || source.count > state.capacity ||
+          !Number.isInteger(source.count))) throw new Error('Art instance capacity or matrix identity changed')
   }
 
   attachShell(source: THREE.Mesh, shell: THREE.Mesh): void {

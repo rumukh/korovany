@@ -119,6 +119,7 @@ export {
 
 export type {
   ArtGeometryLease,
+  ArtGeometryReplacementOutcome,
   ArtRenderSourceBinding,
   ArtRenderSourceOptions,
 } from './ArtRenderBinding.ts'

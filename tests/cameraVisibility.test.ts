@@ -4,6 +4,8 @@ import * as THREE from 'three'
 import {
   CAMERA_CANDIDATE_LIMIT,
   CAMERA_OCCLUDER_LIMIT,
+  CAMERA_RECOVERY_DIRECTIONS,
+  CAMERA_RECOVERY_STEPS,
   CAMERA_TRIANGLE_LIMIT,
   CameraVisibility,
   sweepCameraSphere,
@@ -20,7 +22,7 @@ function obstacle(x: number, y: number, z: number, width = 1, height = 4, depth 
 }
 
 function sweep(from: THREE.Vector3, to: THREE.Vector3, sources: readonly CameraTriangleSource[], radius = 0.35) {
-  const result: CameraSweepResult = { distance: 0, blocked: false, overflow: false, triangleTests: 0 }
+  const result: CameraSweepResult = { distance: 0, blocked: false, overflow: false, triangleTests: 0, initialOverlap: false }
   sweepCameraSphere(from, to, radius, sources, result)
   return result
 }
@@ -66,8 +68,89 @@ test('overlap at the start is detected both at a face and inside a closed solid'
     const result = sweep(from, new THREE.Vector3(0, 2, 10), [source])
     assert.equal(result.distance, 0)
     assert.equal(result.blocked, true)
+    assert.equal(result.initialOverlap, true)
+    const stationary = sweep(from, from, [source])
+    assert.equal(stationary.blocked, true, 'A stationary pose inside a solid is not validated clearance')
+    assert.equal(stationary.initialOverlap, true)
   }
   source.geometry.dispose()
+})
+
+test('an overlapping look target retains a validated camera while moving away from or toward a wall', () => {
+  const wall = obstacle(0, 2, 0.4, 20, 20, 0.2)
+  const terrain = () => 0
+  for (const desiredZ of [-10, 10]) {
+    const solver = new CameraVisibility()
+    const camera = new THREE.PerspectiveCamera(56, 16 / 9, 0.1, 100)
+    const output = new THREE.Vector3()
+    solver.resolve(new THREE.Vector3(0, 1.65, -1), new THREE.Vector3(0, 7, -11),
+      camera, 0, true, query([wall]), terrain, output)
+    assert.deepEqual(output.toArray(), [0, 7, -11])
+    for (const z of [0, 0.01, -0.01, 0, -0.4, -1]) {
+      const target = new THREE.Vector3(0, 1.65, z)
+      const targetBefore = target.clone()
+      const previous = output.clone()
+      solver.resolve(target, new THREE.Vector3(0, 7, desiredZ), camera, 1 / 60, false,
+        query([wall]), terrain, output)
+      if (Math.abs(z) < 0.02) assert.ok(output.distanceTo(target) > 1, 'A look-target overlap must not collapse a safe camera to zero boom')
+      assert.equal(sweep(output, output, [wall], 0.32).blocked, false)
+      assert.equal(sweep(previous, output, [wall], 0.32).blocked, false, 'Actual follow travel must retain clearance')
+      assert.ok(wall.bounds.distanceToPoint(output) >= 0.32)
+      assert.deepEqual(target, targetBefore)
+      if (Math.abs(z) < 0.02) assert.equal(solver.debug.recovery, 'previous')
+      solver.constrain(target, output.clone().add(new THREE.Vector3(0.1, -0.1, 0.2)),
+        query([wall]), terrain, output)
+      assert.equal(sweep(output, output, [wall], 0.32).blocked, false, 'Shake must use the same validated-origin policy')
+      if (Math.abs(z) < 0.02) assert.ok(output.distanceTo(target) > 1)
+    }
+  }
+  wall.geometry.dispose()
+})
+
+test('overlap recovery rejects an unsafe previous camera and finds a bounded local origin', () => {
+  const wall = obstacle(0, 2, 0.4, 20, 20, 0.2)
+  const trap = obstacle(0, 7, -11, 3, 3, 3)
+  const solver = new CameraVisibility()
+  const camera = new THREE.PerspectiveCamera(56, 16 / 9, 0.1, 100)
+  const output = new THREE.Vector3()
+  solver.resolve(new THREE.Vector3(0, 1.65, -1), new THREE.Vector3(0, 7, -11),
+    camera, 0, true, query([wall]), () => 0, output)
+  assert.equal(sweep(output, output, [trap], 0.32).initialOverlap, true)
+  const target = new THREE.Vector3(0, 1.65, 0)
+  solver.resolve(target, new THREE.Vector3(0, 7, -10), camera, 1 / 60, false,
+    query([wall, trap]), () => 0, output)
+  assert.equal(solver.debug.recovery, 'local')
+  assert.ok(output.distanceTo(target) > 0)
+  assert.equal(sweep(output, output, [wall, trap], 0.32).blocked, false)
+  assert.ok(output.y >= 0.32)
+  solver.constrain(target, new THREE.Vector3(0, 7, -11), query([wall, trap]), () => 0, output)
+  assert.equal(sweep(output, output, [wall, trap], 0.32).blocked, false)
+  wall.geometry.dispose(); trap.geometry.dispose()
+})
+
+test('without a previous camera, a bounded free origin is found without crossing a wall outside the target', () => {
+  const wall = obstacle(0, 2, 0.4, 20, 20, 0.2)
+  for (const targetZ of [0, 0.4]) {
+    for (const desiredZ of [-10, 10]) {
+      const solver = new CameraVisibility()
+      const target = new THREE.Vector3(0, 1.65, targetZ)
+      const output = new THREE.Vector3()
+      const camera = new THREE.PerspectiveCamera(56, 16 / 9, 0.1, 100)
+      solver.resolve(target, new THREE.Vector3(0, 7, desiredZ), camera, 0, true, query([wall]), () => 0, output)
+      assert.equal(solver.debug.recovery, 'local')
+      assert.equal(sweep(output, output, [wall], 0.32).blocked, false)
+      assert.ok(output.distanceTo(target) > 0)
+      if (targetZ === 0) assert.ok(output.z < 0.3 - 0.32, 'An external target must recover on its original side of the wall')
+      assert.ok(solver.debug.sweeps <= CAMERA_RECOVERY_DIRECTIONS * CAMERA_RECOVERY_STEPS * 2 + CAMERA_CANDIDATE_LIMIT + 3)
+    }
+  }
+  const enclosure = obstacle(0, 0, 0, 100, 100, 100)
+  const output = new THREE.Vector3(9, 8, 7)
+  const solver = new CameraVisibility()
+  assert.throws(() => solver.resolve(new THREE.Vector3(0, 1.65, 0), new THREE.Vector3(0, 7, -10),
+    new THREE.PerspectiveCamera(56, 1, 0.1, 100), 0, true, query([enclosure]), () => 0, output), /no safe pose/)
+  assert.deepEqual(output.toArray(), [9, 8, 7], 'Exhausted recovery must report failure, not publish an overlapping camera')
+  wall.geometry.dispose(); enclosure.geometry.dispose()
 })
 
 test('merged courtyard bounds are only a broad phase, not a solid wall', () => {
@@ -161,7 +244,7 @@ test('a collision on the final shake path updates close-player fade as well as c
   const solver = new CameraVisibility()
   const camera = new THREE.PerspectiveCamera(56, 1, 0.1, 200)
   const target = new THREE.Vector3(0, 2, 0), out = new THREE.Vector3()
-  solver.resolve(target, new THREE.Vector3(0, 2, 10), camera, 0, true, query([]), () => 0, out)
+  solver.resolve(target, new THREE.Vector3(4, 2, 0), camera, 0, true, query([]), () => 0, out)
   assert.equal(solver.debug.playerVisibility, 1)
   const wall = obstacle(0, 2, 2.5, 4, 8, 1)
   solver.constrain(target, new THREE.Vector3(0.1, 2, 10), query([wall]), () => 0, out)

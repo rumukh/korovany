@@ -3,6 +3,7 @@ import { hasOutlineNormals } from './GeometryKit.ts'
 import {
   artShaderKey,
   getArtMaterialFeatures,
+  validateArtDeformationLayout,
   validateArtEnvironment,
   type ArtAttributeLayout,
   type ArtEnvironmentUniforms,
@@ -13,6 +14,7 @@ import {
 import {
   ArtRenderBindings,
   type ArtGeometryLease,
+  type ArtGeometryReplacementOutcome,
   type ArtRenderSourceBinding,
   type ArtRenderSourceOptions,
 } from './ArtRenderBinding.ts'
@@ -588,6 +590,7 @@ export class StylizedArtLibrary {
       if (object.name === 'faction-ring') return
       if (!isOpaqueMaterial(object.material)) return
       if (options.include && !options.include(object)) return
+      validateArtDeformationLayout(object)
       sources.push(object)
     })
 
@@ -652,8 +655,7 @@ export class StylizedArtLibrary {
 
   bindRenderSource(source: THREE.Mesh, options: ArtRenderSourceOptions = {}): ArtRenderSourceBinding {
     this.assertActive('bind a render source')
-    const materials = Array.isArray(source.material) ? source.material : [source.material]
-    const wind = materials.some((material) => getArtMaterialFeatures(material)?.attributes.wind)
+    const wind = validateArtDeformationLayout(source)
     const shadow = options.shadowParticipation === true
     let depth: THREE.MeshDepthMaterial | undefined
     if (wind || shadow) {
@@ -680,9 +682,9 @@ export class StylizedArtLibrary {
     return binding
   }
 
-  replaceRenderSourceGeometry(binding: ArtRenderSourceBinding, lease: ArtGeometryLease): void {
+  replaceRenderSourceGeometry(binding: ArtRenderSourceBinding, lease: ArtGeometryLease): ArtGeometryReplacementOutcome {
     this.assertActive('replace a render source')
-    this.renderBindings.replace(binding, lease)
+    return this.renderBindings.replace(binding, lease)
   }
 
   refreshRenderSource(binding: ArtRenderSourceBinding): void { this.renderBindings.refresh(binding) }

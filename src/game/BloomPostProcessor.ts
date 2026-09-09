@@ -229,7 +229,12 @@ export class BloomPostProcessor {
     this.setEnabled(enabled)
   }
 
-  setEnabled(enabled: boolean): void {
+  setEnabled(enabled: boolean, antialiasing: 'none' | 'fxaa' = this.antialiasing): void {
+    if (antialiasing !== 'none' && antialiasing !== 'fxaa') throw new Error('Unknown post antialiasing mode')
+    if (antialiasing !== this.antialiasing) {
+      this.disposeComposer()
+      this.antialiasing = antialiasing
+    }
     if (enabled === Boolean(this.composer)) return
     if (!enabled) {
       this.disposeComposer()
@@ -302,14 +307,9 @@ export class BloomPostProcessor {
     this.writeGradeTints()
   }
 
-  /** Diagnostic A/B seam; the engine's normal path always uses its resolved policy. */
+  /** Diagnostic override lasts until the next explicit engine post-policy update. */
   setAntialiasing(value: 'none' | 'fxaa'): void {
-    if (value !== 'none' && value !== 'fxaa') throw new Error('Unknown post antialiasing mode')
-    if (value === this.antialiasing) return
-    const enabled = this.composer !== null
-    this.disposeComposer()
-    this.antialiasing = value
-    this.setEnabled(enabled)
+    this.setEnabled(this.composer !== null, value)
   }
 
   private writeGradeTints(): void {

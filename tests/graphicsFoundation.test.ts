@@ -11,6 +11,9 @@ import {
   bakeOutlineNormals,
   ensureVertexColors,
   validateArtGeometry,
+  type ArtGeometryLease,
+  type ArtGeometryReplacementOutcome,
+  type ArtRenderSourceBinding,
 } from '../src/game/art/index.ts'
 import { BloomPostProcessor } from '../src/game/BloomPostProcessor.ts'
 import {
@@ -107,7 +110,8 @@ test('skinned ink borrows live bind data and atomic replacement retains excluded
   const replacement = geometry.clone()
   replacement.setIndex(Array.from(geometry.index!.array).slice(0, 12))
   let released = 0
-  art.replaceRenderSourceGeometry(binding, { geometry: replacement, release: () => { released++; replacement.dispose() } })
+  const outcome = art.replaceRenderSourceGeometry(binding, { geometry: replacement, release: () => { released++; replacement.dispose() } })
+  assert.deepEqual(outcome, { status: 'committed' })
   assert.equal(source.geometry.index!.count, 12)
   assert.equal(shell.geometry, source.geometry)
   assert.equal(art.getSourceVisibility(binding), 0.25)
@@ -143,6 +147,7 @@ test('packed response and wind are explicit layouts; source, skin-aware ink and 
     mapping: 'world-triplanar', metersPerRepeat: 2,
     attributes: { surfaceResponse: true, wind: true },
   })
+
   const source = new THREE.InstancedMesh(geometry, material, 2)
   const binding = art.bindRenderSource(source, { visibility: true, shadowParticipation: true, deformationPadding: 0.2 })
   const outline = art.applyOutline(source, 'structural', { instanced: true })
@@ -169,6 +174,55 @@ test('packed response and wind are explicit layouts; source, skin-aware ink and 
   assert.throws(() => validateArtGeometry(source, invalid), /artSurfaceResponse/)
   invalid.dispose()
   art.releaseOutline(outline); art.releaseRenderSource(binding); source.dispose(); geometry.dispose(); art.dispose()
+})
+
+test('material-array deformation is validated before binding or outlining regardless of slot order', () => {
+  const art = library()
+  const geometry = box()
+  geometry.setAttribute(ART_WIND_ATTRIBUTE,
+    new THREE.Float32BufferAttribute(new Float32Array(geometry.getAttribute('position').count * 2).fill(1), 2))
+  const rigid = art.acquireMaterial('rigid-slot', { color: 0x999999, surface: 'metal' })
+  const windy = art.acquireMaterial('wind-slot', { color: 0x445544, surface: 'foliage', attributes: { wind: true } })
+  const materialCount = art.libraryOwnedMaterialCount
+  for (const materials of [[rigid, windy], [windy, rigid]]) {
+    const source = new THREE.Mesh(geometry, materials)
+    assert.throws(() => validateArtGeometry(source), /one wind deformation layout/)
+    assert.throws(() => art.bindRenderSource(source, { visibility: true }), /one wind deformation layout/)
+    assert.equal(source.geometry, geometry)
+    assert.equal(source.customDepthMaterial, undefined)
+    assert.equal(art.getRenderBindingStats().sources, 0)
+    // A later incompatible sibling must not leave shells allocated on the first.
+    const root = new THREE.Group(), valid = new THREE.Mesh(geometry, rigid)
+    root.add(valid, source)
+    assert.throws(() => art.applyOutline(root, 'structural'), /one wind deformation layout/)
+    assert.equal(source.children.length, 0)
+    assert.equal(valid.children.length, 0)
+    assert.equal(art.libraryOwnedMaterialCount, materialCount)
+  }
+  geometry.dispose(); art.dispose()
+})
+
+test('same-layout material arrays share wind in source, ink and depth with rigid vertices using zero flex', () => {
+  const art = library()
+  const geometry = box()
+  const count = geometry.getAttribute('position').count
+  const wind = new Float32Array(count * 2)
+  for (let index = 0; index < count; index++) wind.set([index < 4 ? 0 : 1, 0.25], index * 2)
+  geometry.setAttribute(ART_WIND_ATTRIBUTE, new THREE.BufferAttribute(wind, 2))
+  const rigidSurface = art.acquireMaterial('wind-metal', { color: 0x999999, surface: 'metal', attributes: { wind: true } })
+  const clothSurface = art.acquireMaterial('wind-cloth', { color: 0x445544, surface: 'cloth', attributes: { wind: true } })
+  for (const materials of [[rigidSurface, clothSurface], [clothSurface, rigidSurface]]) {
+    const source = new THREE.Mesh(geometry, materials)
+    const binding = art.bindRenderSource(source)
+    const outline = art.applyOutline(source, 'structural')
+    for (const material of materials) assert.match(compile(material).vertexShader, /transformed \+= kArtWindShear/)
+    assert.match(compile(outline.shells[0].material as THREE.Material, 'basic').vertexShader, /transformed \+= kArtWindShear/)
+    assert.match(compile(source.customDepthMaterial!, 'depth').vertexShader, /transformed \+= kArtWindShear/)
+    assert.equal(source.geometry.getAttribute(ART_WIND_ATTRIBUTE).getX(0), 0)
+    assert.equal(source.geometry.getAttribute(ART_WIND_ATTRIBUTE).getX(4), 1)
+    art.releaseOutline(outline); art.releaseRenderSource(binding)
+  }
+  geometry.dispose(); art.dispose()
 })
 
 test('shadow admission prices submitted batches and groups, not a selected subset or camera fade', () => {
@@ -219,6 +273,68 @@ test('foreground exit hysteresis suppresses one-frame canopy flicker without ret
   registration.dispose()
   assert.equal(art.getSourceVisibility(binding), 1)
   registry.dispose(); art.releaseRenderSource(binding); mesh.dispose(); geometry.dispose(); art.dispose()
+})
+
+test('all inactive, count-removed and LOD-replaced fade slots are restored and reclaimed before candidate selection', () => {
+  for (const transition of ['visibility', 'count', 'lod'] as const) {
+    const art = library(), registry = new WorldPresentationRegistry(art), scene = new THREE.Scene()
+    const geometry = box()
+    const material = art.acquireMaterial('fade-transition', { color: 0x445544, surface: 'foliage' })
+    const oldSource = new THREE.InstancedMesh(geometry, material, 8)
+    const nextSource = new THREE.InstancedMesh(geometry, material, 8)
+    const lod = new THREE.LOD()
+    if (transition === 'lod') {
+      lod.addLevel(oldSource, 0); lod.addLevel(nextSource, 6); scene.add(lod)
+    } else scene.add(oldSource, nextSource)
+    const batches = [oldSource, nextSource].map((source, batch) => {
+      for (let index = 0; index < 8; index++) source.setMatrixAt(index, new THREE.Matrix4().makeTranslation(0, 2, 2 + index * 0.3))
+      const binding = art.bindRenderSource(source, { visibility: true })
+      const registration = registry.registerOccluder({ id: `batch-${batch}`, regionId: 'test', kind: 'foreground', binding })
+      return { source, binding, registration }
+    })
+    if (transition === 'visibility') nextSource.visible = false
+    if (transition === 'count') { nextSource.count = 0; art.refreshRenderSource(batches[1].binding) }
+    const camera = new THREE.PerspectiveCamera(56, 1.6, 0.1, 100)
+    camera.position.set(0, 2, 0)
+    camera.updateMatrixWorld()
+    const subjects = [new THREE.Vector3(0, 2, 10)]
+    registry.prepare(camera); registry.updateForeground(camera.position, subjects, 0, true)
+    assert.equal(registry.debug.fadedInstances, 8)
+    for (let index = 0; index < 8; index++) assert.equal(art.getSourceVisibility(batches[0].binding, index), 0)
+    if (transition === 'visibility') { oldSource.visible = false; nextSource.visible = true }
+    if (transition === 'count') {
+      oldSource.count = 0; nextSource.count = 8
+      for (const batch of batches) art.refreshRenderSource(batch.binding)
+    }
+    if (transition === 'lod') { camera.position.z = -8; camera.updateMatrixWorld() }
+    registry.prepare(camera)
+    registry.updateForeground(camera.position, subjects, 1 / 60, false)
+    for (let index = 0; index < 8; index++) {
+      assert.equal(art.getSourceVisibility(batches[0].binding, index), 1, transition)
+      assert.ok(art.getSourceVisibility(batches[1].binding, index) < 1, `New ${transition} occluders must start fading on this frame`)
+    }
+    for (let frame = 1; frame < 30; frame++) registry.updateForeground(camera.position, subjects, 1 / 60, false)
+    for (let index = 0; index < 8; index++) assert.equal(art.getSourceVisibility(batches[1].binding, index), 0)
+    // Drop every active instance, then restore high density. No stale fade owns
+    // an index while count is zero, and every restored member can fade again.
+    oldSource.count = nextSource.count = 0
+    for (const batch of batches) art.refreshRenderSource(batch.binding)
+    registry.prepare(camera); registry.updateForeground(camera.position, subjects, 1 / 60, false)
+    assert.equal(registry.debug.fadedInstances, 0)
+    for (let index = 0; index < 8; index++) assert.equal(art.getSourceVisibility(batches[1].binding, index), 1)
+    nextSource.count = 8
+    art.refreshRenderSource(batches[1].binding)
+    registry.prepare(camera); registry.updateForeground(camera.position, subjects, 1 / 60, false)
+    assert.equal(registry.debug.fadedInstances, 8)
+    for (let index = 0; index < 8; index++) {
+      const value = art.getSourceVisibility(batches[1].binding, index)
+      assert.ok(value > 0 && value < 1, 'Reactivation starts with correctly restored data')
+    }
+    for (const batch of batches) batch.registration.dispose()
+    registry.dispose()
+    for (const batch of batches) { art.releaseRenderSource(batch.binding); batch.source.dispose() }
+    geometry.dispose(); art.dispose()
+  }
 })
 
 test('a generated dense forest and nearby site actually contribute bounded world shadows', () => {
@@ -383,7 +499,19 @@ test('a failed outline disposal still drains all borrowers and releases owned so
   source.dispose(); geometry.dispose(); art.dispose()
 })
 
-test('a failed replacement cleanup still releases its old lease after switching every borrower', () => {
+function replaceAndReport(art: StylizedArtLibrary, binding: ArtRenderSourceBinding, nextLease: ArtGeometryLease): void {
+  let outcome: ArtGeometryReplacementOutcome
+  try {
+    outcome = art.replaceRenderSourceGeometry(binding, nextLease)
+  } catch (error) {
+    nextLease.release()
+    throw error
+  }
+  // Ownership has committed on either returned status, even when cleanup failed.
+  if (outcome.status === 'committed-with-errors') throw outcome.error
+}
+
+test('committed replacement cleanup failure is reported without returning its live lease to caller cleanup', () => {
   const art = library()
   const geometry = box()
   const source = new THREE.Mesh(geometry, art.acquireMaterial('replace-failure', { color: 0xdab08e, surface: 'skin' }))
@@ -395,7 +523,7 @@ test('a failed replacement cleanup still releases its old lease after switching 
   source.geometry.addEventListener('dispose', () => { throw new Error('Injected old geometry disposal failure') })
   const next = box()
   let nextLeaseReleased = 0
-  assert.throws(() => art.replaceRenderSourceGeometry(binding, {
+  assert.throws(() => replaceAndReport(art, binding, {
     geometry: next, release: () => nextLeaseReleased++,
   }), AggregateError)
   assert.equal(oldLeaseReleased, 1)
@@ -405,6 +533,50 @@ test('a failed replacement cleanup still releases its old lease after switching 
   art.releaseOutline(outline); art.releaseRenderSource(binding)
   assert.equal(nextLeaseReleased, 1)
   geometry.dispose(); next.dispose(); art.dispose()
+})
+
+test('direct borrowed geometry and ink survive a failed old lease and are released only once by their new owner', () => {
+  const art = library()
+  const geometry = box(), next = box()
+  const source = new THREE.Mesh(geometry, art.acquireMaterial('direct-lease', { color: 0xffffff, surface: 'cloth' }))
+  const failure = new Error('Injected previous lease failure')
+  const binding = art.bindRenderSource(source, { geometryLease: { geometry, release: () => { throw failure } } })
+  const outline = art.applyOutline(source, 'structural')
+  let nextReleased = 0, nextDisposed = 0
+  next.addEventListener('dispose', () => nextDisposed++)
+  const nextLease = { geometry: next, release: () => { nextReleased++; next.dispose() } }
+  let outcome: ArtGeometryReplacementOutcome | undefined
+  try { outcome = art.replaceRenderSourceGeometry(binding, nextLease) }
+  catch (error) { nextLease.release(); throw error }
+  assert.equal(outcome.status, 'committed-with-errors')
+  assert.ok(outcome.status === 'committed-with-errors' && outcome.error instanceof AggregateError)
+  assert.equal(source.geometry, next)
+  assert.equal(outline.shells[0].geometry, next)
+  assert.equal(nextReleased, 0)
+  assert.equal(nextDisposed, 0)
+  art.releaseOutline(outline); art.releaseRenderSource(binding); art.releaseRenderSource(binding)
+  assert.equal(nextReleased, 1)
+  assert.equal(nextDisposed, 1)
+  geometry.dispose(); art.dispose()
+})
+
+test('rejected replacement preparation leaves the old source intact and only the caller releases the rejected lease', () => {
+  const art = library()
+  const geometry = box(), invalid = box()
+  invalid.deleteAttribute('normal')
+  const source = new THREE.Mesh(geometry, art.acquireMaterial('reject-lease', { color: 0xffffff, surface: 'cloth' }))
+  let originalReleased = 0, rejectedReleased = 0
+  const binding = art.bindRenderSource(source, { geometryLease: { geometry, release: () => originalReleased++ } })
+  const outline = art.applyOutline(source, 'structural')
+  assert.throws(() => replaceAndReport(art, binding, { geometry: invalid, release: () => { rejectedReleased++; invalid.dispose() } }), /normal/)
+  assert.equal(source.geometry, geometry)
+  assert.equal(outline.shells[0].geometry, geometry)
+  assert.equal(originalReleased, 0)
+  assert.equal(rejectedReleased, 1)
+  art.releaseOutline(outline); art.releaseRenderSource(binding)
+  assert.equal(originalReleased, 1)
+  assert.equal(rejectedReleased, 1)
+  geometry.dispose(); art.dispose()
 })
 
 test('presentation registration rejects foreign, duplicate and released source bindings', () => {

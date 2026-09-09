@@ -81,6 +81,13 @@ turn a stored bloom-off preference back on. Runtime allocation/driver failures
 are reported by the frame owner separately: policy data is not a claim that a
 GPU effect succeeded.
 
+The live bloom setter applies resolved `post.enabled` and `post.antialiasing`
+together, including when bloom was off at launch. Thus an enhanced High/Balanced
+off-to-on transition creates the FXAA chain rather than retaining the launch-time
+`none` AA value. A labelled diagnostic no-AA comparison remains local to that
+comparison; the next explicit bloom setter call restores policy, while resize
+and ordinary comparison renders retain the diagnostic override.
+
 Shadow caster budgets count **submitted draws**, including groups and the active
 LOD. Instance and triangle budgets count **actual submitted work**, not merely
 selected casters: a full instanced batch still costs its submitted instances and

@@ -3148,7 +3148,7 @@ export class GameEngine {
 
   setBloomEnabled(enabled: boolean): void {
     this.updateVisualPolicy({ bloomEnabled: enabled })
-    this.postProcessor.setEnabled(this.visualPolicy.post.enabled)
+    this.postProcessor.setEnabled(this.visualPolicy.post.enabled, this.visualPolicy.post.antialiasing)
   }
 
   setInkOutlinesEnabled(enabled: boolean): void {

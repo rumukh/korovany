@@ -19,11 +19,25 @@ sweep. Overflow is reported and conservatively blocks rather than ignores work.
 Final follow and shake positions are constrained too. Recovery/shoulder changes
 use time-based damping and hysteresis, not a minimum boom that can pass a wall.
 
+An overlapping look-at target is never accepted as a camera sweep origin.
+Stationary sphere queries identify both surface overlap and closed-solid
+containment. Recovery first revalidates the previous camera (within 32 metres),
+then searches seven directions at four bounded local offsets if needed.
+An external target cannot recover through a wall simply because its other side
+is free. The camera origin alone changes; actors and the look target do not.
+Follow and shake share this recovery rule and validate actual camera travel.
+If no bounded safe pose exists, recovery reports an error without publishing an
+overlapping position. `CameraSweepResult.initialOverlap` and
+`CameraVisibility.debug.recovery` expose these cases.
+
 Streamed foreground instances are registered explicitly. At most eight fade at
 once, with source and ink sharing opaque depth-writing ordered dither. Camera
 fade never changes a shared material's opacity, source visibility, instance
 count, gameplay sight or world shadows. Close player geometry uses the same
 binding machinery. Distant enemies receive no depth-disabled silhouette.
+Inactive, LOD-replaced and out-of-count instances are restored to full visibility
+and release their fade slots before new candidates are selected. Exit hysteresis
+applies only to still-active instances leaving the camera corridor.
 
 Enhanced structural ink is neutral; existing faction rings, interaction/focus
 and threat feedback retain their separate meaning. Width is based on actual
@@ -83,6 +97,10 @@ texture, model or network dependency is required.
 require the corresponding layout during binding validation. Unbound ordinary
 enhanced meshes use a constant fully visible camera attribute. Bake optional
 channels/defaults before cache insertion and before merging mixed parts.
+Every material slot on a source must use the same wind deformation layout;
+rigid portions of a mixed-surface mesh use zero `artWind.x`, not a non-wind
+material slot. Binding, replacement validation and outlining reject mismatches
+in either slot order before creating inconsistent source/ink/depth silhouettes.
 
 `validateArtGeometry(source, geometry?)` checks required attribute counts/ranges,
 indices and skin data. `artGeometryBytes(geometry)` reports unique backing-array
@@ -105,7 +123,14 @@ const binding = art.bindRenderSource(source, {
 art.setSourceVisibility(binding, 0.25, instanceIndex)
 art.setShadowParticipation(binding, 1, instanceIndex)
 art.refreshRenderSource(binding) // after live count/matrix/bounds changes
-art.replaceRenderSourceGeometry(binding, nextLease)
+let replacement: ArtGeometryReplacementOutcome
+try {
+  replacement = art.replaceRenderSourceGeometry(binding, nextLease)
+} catch (error) {
+  nextLease.release() // preparation rejected this distinct, untransferred lease
+  throw error
+}
+if (replacement.status === 'committed-with-errors') throw replacement.error
 art.releaseRenderSource(binding)
 ```
 
@@ -115,10 +140,19 @@ cached attributes. `getRenderSourceBinding` finds an existing binding;
 reports source count and exclusive geometry/attribute bytes. Attribute bytes are
 a subset of geometry bytes, not an additional allocation.
 
-Replacement validates/prepares first, detaches old ink links, swaps the stable
-source and shell geometry, preserves fade/skin state, then releases the prior
-exclusive geometry/lease. Preparation failure leaves the old source intact and
-the next lease with its caller. Do not directly replace `source.geometry`.
+Replacement validates/prepares first, synchronously swaps the stable source and
+shell geometry links without reparenting events, preserves fade/skin state, then
+releases the prior exclusive geometry/lease. Preparation failure throws with
+the old source intact and the next lease still caller-owned.
+
+The exported `ArtGeometryReplacementOutcome` distinguishes `status: 'committed'`
+from `status: 'committed-with-errors'` with an `error: AggregateError`.
+**Every returned outcome transfers the next lease.** The latter reports a
+post-commit bounds-refresh or previous-resource cleanup failure; it is not a
+rejected replacement. Report/propagate that error outside the rejected-lease
+catch, and never release the live next lease from that catch. The binding later
+releases it exactly once. Do not ignore an error outcome or directly replace
+`source.geometry`.
 Keep the outline layout compatible. Capacity/matrix-buffer identity is fixed for
 an instance binding; increasing density inside capacity is supported.
 
@@ -180,6 +214,10 @@ only tone/color conversion; FXAA is display-referred and non-tone-mapped.
 No bloom ping-pong target is multisampled. The owner uses actual physical input
 dimensions with composer DPR 1, including resizing. Direct/Low/bloom-off paths
 have no composer.
+Each live bloom toggle applies both resolved enablement and antialiasing through
+`BloomPostProcessor.setEnabled(enabled, antialiasing)`. Enabling bloom after an
+enhanced High/Balanced bloom-off launch therefore installs FXAA immediately,
+without an intermediate incorrectly configured composer.
 
 The opt-in diagnostic stage supports `foundation: true` and
 `antialiasing: 'none' | 'fxaa'` for labelled shader and same-post AA comparisons.
@@ -187,6 +225,9 @@ They are not user quality settings. Actual passes remain reported alongside
 requested policy. The baseline runner accepts `--visual-mode`, `--quality`,
 `--foundation`, `--no-aa`, independent off flags and `--motion`; manual motion
 frames follow profiling and never enter its timing sample.
+An explicit diagnostic AA override survives comparison renders and resizing, but
+the next explicit engine bloom update restores the resolved AA policy (including
+when bloom is set to its current value). Off/Low remain composer-free.
 
 Original GFX-01 evidence remains immutable. Targeted CPU results and browser
 evidence accompany the checkpoint; pixel correctness, temporal quality and

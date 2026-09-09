@@ -75,6 +75,16 @@ export function getArtMaterialFeatures(material: THREE.Material): ArtShaderFeatu
   return MATERIAL_FEATURES.get(material)
 }
 
+/** Deformation is object-wide: rigid vertices in a wind layout have zero flex. */
+export function validateArtDeformationLayout(source: THREE.Mesh): boolean {
+  const materials = Array.isArray(source.material) ? source.material : [source.material]
+  const wind = getArtMaterialFeatures(materials[0])?.attributes.wind === true
+  if (materials.some((material) => (getArtMaterialFeatures(material)?.attributes.wind === true) !== wind)) {
+    throw new Error('Art material slots must share one wind deformation layout; use zero flex for rigid vertices')
+  }
+  return wind
+}
+
 export function artShaderKey(features: ArtShaderFeatures): string {
   return [
     features.enhanced ? 'enhanced' : 'legacy', features.mapping,
@@ -102,6 +112,7 @@ export function validateArtGeometry(
   source: THREE.Mesh,
   geometry: THREE.BufferGeometry = source.geometry,
 ): void {
+  validateArtDeformationLayout(source)
   const position = geometry.getAttribute('position')
   if (!position || position.itemSize !== 3 || position.count === 0) throw new Error('Art geometry requires positions')
   const count = position.count

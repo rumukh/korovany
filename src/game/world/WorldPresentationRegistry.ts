@@ -162,6 +162,16 @@ export class WorldPresentationRegistry implements CameraVolumeQuery {
   updateForeground(camera: THREE.Vector3, subjects: readonly THREE.Vector3[], delta: number, immediate: boolean): void {
     for (const fade of this.fades) {
       fade.wanted = false
+      if (fade.entry) {
+        const source = fade.entry.descriptor.binding.source
+        if (!fade.entry.active || (source instanceof THREE.InstancedMesh && fade.index >= source.count)) {
+          this.art.setSourceVisibility(fade.entry.descriptor.binding, 1,
+            source instanceof THREE.InstancedMesh ? fade.index : undefined)
+          fade.entry = null
+          fade.value = 1
+          fade.hold = 0
+        }
+      }
       fade.hold = immediate ? 0 : Math.max(0, fade.hold - delta)
     }
     for (const entry of this.entries.values()) {
@@ -198,10 +208,7 @@ export class WorldPresentationRegistry implements CameraVolumeQuery {
     for (const fade of this.fades) {
       if (!fade.entry) continue
       const source = fade.entry.descriptor.binding.source
-      if (!fade.entry.active || (source instanceof THREE.InstancedMesh && fade.index >= source.count)) {
-        fade.wanted = false
-        fade.hold = 0
-      } else fade.wanted ||= fade.hold > 0
+      fade.wanted ||= fade.hold > 0
       fade.value = immediate ? (fade.wanted ? 0 : 1) :
         THREE.MathUtils.lerp(fade.value, fade.wanted ? 0 : 1, dampingAlpha(fade.wanted ? 18 : 7, delta))
       if (fade.value > 0.995 && !fade.wanted) fade.value = 1

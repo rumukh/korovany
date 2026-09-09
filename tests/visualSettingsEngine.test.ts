@@ -4,6 +4,8 @@ import { registerHooks } from 'node:module'
 import { extname } from 'node:path'
 import test from 'node:test'
 import * as THREE from 'three'
+import { BloomPostProcessor } from '../src/game/BloomPostProcessor.ts'
+import type { GraphicsFixtureStage } from '../src/game/diagnostics/GraphicsDiagnostics.ts'
 import { RandomStream } from '../src/game/random/RandomStream.ts'
 import { createWeatherMix } from '../src/game/world/WorldEnvironment.ts'
 import { resolveVisualPolicy, type VisualQualityPolicy } from '../src/game/visualPolicy.ts'
@@ -32,6 +34,7 @@ interface VisualEngineProbe {
   setWeatherEnabled(enabled: boolean): void
   setDynamicDayNight(enabled: boolean): void
   setScreenShakeEnabled(enabled: boolean): void
+  stageGraphicsFixture(request: GraphicsFixtureStage): void
 }
 
 function fixture() {
@@ -80,6 +83,95 @@ test('the real engine getters retain a frozen launch policy and existing setters
   engine.setBloomEnabled(true)
   assert.equal(engine.getVisualPolicy().post.enabled, true)
   assert.deepEqual(calls.at(-1), ['post', true])
+})
+
+function postFixture(policy: VisualQualityPolicy) {
+  const scene = new THREE.Scene()
+  let target: THREE.WebGLRenderTarget | null = null
+  const clearColor = new THREE.Color(0)
+  const calls = { scene: 0, post: 0 }
+  const renderer = {
+    autoClear: true, autoClearColor: true, autoClearDepth: true, autoClearStencil: true,
+    outputColorSpace: THREE.SRGBColorSpace, toneMapping: THREE.NeutralToneMapping, toneMappingExposure: 1,
+    getDrawingBufferSize: (out: THREE.Vector2) => out.set(800, 600),
+    getPixelRatio: () => 1,
+    getRenderTarget: () => target,
+    setRenderTarget: (next: THREE.WebGLRenderTarget | null) => { target = next },
+    getClearColor: (out: THREE.Color) => out.copy(clearColor),
+    getClearAlpha: () => 1,
+    setClearColor: (color: THREE.ColorRepresentation) => { clearColor.set(color) },
+    clear() {},
+    render: (object: THREE.Object3D) => { if (object === scene) calls.scene++; else calls.post++ },
+  }
+  const post = new BloomPostProcessor(renderer as never, scene, new THREE.PerspectiveCamera(),
+    policy.post.enabled, { enhanced: policy.mode === 'enhanced', antialiasing: policy.post.antialiasing })
+  const { engine } = fixture()
+  Object.assign(engine, { visualPolicy: policy, postProcessor: post })
+  const render = (expectedPost: number) => {
+    calls.scene = calls.post = 0
+    // Execute the real composer/pass code against a CPU render sink. These are
+    // renderer invocations, not a WebGL performance or shader-compilation claim.
+    post.render()
+    assert.equal(calls.scene, 1)
+    assert.equal(calls.post, expectedPost)
+    assert.equal(post.getDebugSnapshot().composer, expectedPost !== 0)
+  }
+  return { engine, post, render }
+}
+
+test('real bloom toggles configure the actual AA pipeline for off-at-launch, re-enable, low and legacy policies', () => {
+  for (const visualMode of ['legacy', 'enhanced'] as const) {
+    for (const visualQuality of ['high', 'balanced', 'low'] as const) {
+      for (const bloomEnabled of [false, true]) {
+        const policy = resolveVisualPolicy({ visualMode, visualQuality, bloomEnabled })
+        const { engine, post, render } = postFixture(policy)
+        try {
+          render(policy.post.enabled ? policy.post.antialiasing === 'fxaa' ? 16 : 15 : 0)
+          for (const enabled of [true, false, true]) {
+            engine.setBloomEnabled(enabled)
+            const next = engine.getVisualPolicy().post
+            render(next.enabled ? next.antialiasing === 'fxaa' ? 16 : 15 : 0)
+            assert.equal(post.getDebugSnapshot().passes.includes('fxaa'), next.antialiasing === 'fxaa')
+            assert.equal(engine.paused, true)
+            assert.equal(engine.elapsed, 77)
+          }
+        } finally { post.dispose() }
+      }
+    }
+  }
+})
+
+test('a labelled diagnostic no-AA override persists for comparison and resets on an explicit live bloom policy update', () => {
+  const { engine, post, render } = postFixture(resolveVisualPolicy({
+    visualMode: 'enhanced', visualQuality: 'balanced', bloomEnabled: false,
+  }))
+  Object.assign(engine, {
+    graphicsDiagnostics: { manual: true }, actors: [],
+    player: new THREE.Group(),
+    generatedWorld: {
+      bounds: { minX: -50, maxX: 50, minZ: -50, maxZ: 50 }, update() {},
+    },
+    syncGeneratedRegions() {}, refreshGeneratedCameraObstacles() {},
+  })
+  try {
+    render(0)
+    engine.setBloomEnabled(true)
+    render(16)
+    engine.stageGraphicsFixture({ label: 'Explicit CPU same-post no-AA comparison', antialiasing: 'none' })
+    assert.equal(engine.getVisualPolicy().post.antialiasing, 'fxaa', 'A diagnostic override is not a persisted user preference')
+    render(15)
+    post.setSize(800, 600)
+    render(15)
+    engine.setBloomEnabled(true)
+    render(16)
+    engine.stageGraphicsFixture({ label: 'Second explicit AA comparison', antialiasing: 'none' })
+    engine.setBloomEnabled(false)
+    render(0)
+    engine.setBloomEnabled(true)
+    render(16)
+    assert.equal(engine.paused, true)
+    assert.equal(engine.elapsed, 77)
+  } finally { post.dispose() }
 })
 
 test('existing live ink and foliage setters still affect current world and actor surfaces', () => {

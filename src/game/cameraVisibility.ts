@@ -5,12 +5,15 @@ export const CAMERA_CANDIDATE_LIMIT = 5
 export const CAMERA_OCCLUDER_LIMIT = 64
 export const CAMERA_TRIANGLE_LIMIT = 32768
 export const CAMERA_TERRAIN_STEPS = 32
+export const CAMERA_RECOVERY_STEPS = 4
+export const CAMERA_RECOVERY_DIRECTIONS = 7
 
 export interface CameraSweepResult {
   distance: number
   blocked: boolean
   overflow: boolean
   triangleTests: number
+  initialOverlap: boolean
 }
 
 export interface CameraVolumeQuery {
@@ -82,7 +85,10 @@ export function sweepCameraSphere(
   result.blocked = false
   result.overflow = false
   result.triangleTests = 0
-  direction.multiplyScalar(1 / Math.max(length, 1e-9))
+  result.initialOverlap = false
+  if (length > 1e-8) direction.multiplyScalar(1 / length)
+  // Occupancy queries still need a ray to detect closed-solid containment.
+  else direction.set(0.3713906763541037, 0.5570860145311556, 0.7427813527082074)
   ray.set(from, direction)
   let candidates = 0
   for (const source of sources) {
@@ -113,9 +119,9 @@ export function sweepCameraSphere(
       if (closest.distanceToSquared(from) <= radius * radius) {
         result.distance = 0
         result.blocked = true
+        result.initialOverlap = true
         return
       }
-      if (length < 1e-8) continue
       triangle.getNormal(normal)
       const velocity = normal.dot(direction)
       const planeDistance = normal.dot(point.subVectors(from, a))
@@ -141,7 +147,11 @@ export function sweepCameraSphere(
     }
     // Closed authored solids can contain the starting center without touching
     // its sphere. The first outward crossing is not a safe exit camera position.
-    if (centerExits && firstCenterHit < Infinity) result.distance = 0
+    if (centerExits && firstCenterHit < Infinity) {
+      result.distance = 0
+      result.blocked = result.initialOverlap = true
+      return
+    }
   }
   result.blocked = result.distance < length - 1e-6
 }
@@ -155,19 +165,26 @@ export interface CameraVisibilityDebug {
   shoulder: number
   boomDistance: number
   playerVisibility: number
+  recovery: 'none' | 'previous' | 'local'
 }
 
 export class CameraVisibility {
   readonly debug: CameraVisibilityDebug = {
     candidates: 0, sweeps: 0, triangleTests: 0, terrainSamples: 0, overflows: 0,
-    shoulder: 0, boomDistance: 0, playerVisibility: 1,
+    shoulder: 0, boomDistance: 0, playerVisibility: 1, recovery: 'none',
   }
-  private readonly sweepResult: CameraSweepResult = { distance: 0, blocked: false, overflow: false, triangleTests: 0 }
+  private readonly sweepResult: CameraSweepResult = {
+    distance: 0, blocked: false, overflow: false, triangleTests: 0, initialOverlap: false,
+  }
   private readonly candidate = new THREE.Vector3()
   private readonly solved = new THREE.Vector3()
   private readonly best = new THREE.Vector3()
   private readonly follow = new THREE.Vector3()
   private readonly previous = new THREE.Vector3()
+  private readonly lastSafe = new THREE.Vector3()
+  private readonly collisionOrigin = new THREE.Vector3()
+  private readonly recoveryCandidate = new THREE.Vector3()
+  private readonly recoveryDirection = new THREE.Vector3()
   private readonly offset = new THREE.Vector3()
   private readonly right = new THREE.Vector3()
   private readonly sample = new THREE.Vector3()
@@ -188,11 +205,16 @@ export class CameraVisibility {
     this.debug.candidates = this.debug.sweeps = this.debug.triangleTests = this.debug.terrainSamples = this.debug.overflows = 0
     const halfHeight = camera.near * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
     this.radius = Math.max(0.32, Math.hypot(halfHeight, halfHeight * camera.aspect) + 0.12)
+    this.previous.copy(this.lastSafe)
+    const previousSafe = this.initialized && this.previous.distanceTo(target) <= 32 &&
+      this.clearPose(this.previous, query, terrain)
+    this.selectCollisionOrigin(target, desired, previousSafe, query, terrain)
     this.right.subVectors(desired, target).setY(0).normalize()
     this.right.set(this.right.z, 0, -this.right.x)
     this.shoulderHold = Math.max(0, this.shoulderHold - delta)
     this.releaseHold = Math.max(0, this.releaseHold - delta)
-    let score = -Infinity
+    this.best.copy(this.collisionOrigin)
+    let score = this.best.distanceTo(target)
     let chosen = 0
     for (let index = 0; index < CAMERA_CANDIDATE_LIMIT; index++) {
       this.candidate.copy(desired)
@@ -201,7 +223,7 @@ export class CameraVisibility {
         this.candidate.y += 0.8
       } else if (index === 3) this.candidate.y += 5.2
       else if (index === 4) { this.candidate.lerp(target, 0.25); this.candidate.y += 3 }
-      this.safePosition(target, this.candidate, query, terrain, this.solved)
+      this.safePosition(this.collisionOrigin, this.candidate, query, terrain, this.solved)
       this.debug.candidates++
       const distance = this.solved.distanceTo(target)
       const candidateScore = distance - (index === 0 ? 0 : index === 3 ? 1.1 : 0.55) +
@@ -212,28 +234,22 @@ export class CameraVisibility {
     if (chosen !== this.shoulder) { this.shoulder = chosen; this.shoulderHold = 0.35 }
     const wanted = this.best.distanceTo(target)
     const current = this.follow.distanceTo(target)
-    if (immediate || !this.initialized) {
+    if (immediate || !previousSafe) {
       this.follow.copy(this.best)
       this.initialized = true
     } else {
-      this.previous.copy(this.follow)
       if (wanted < current - 0.12) this.releaseHold = 0.16
       const alpha = wanted < current ? 1 : this.releaseHold > 0 ? 0 : dampingAlpha(6, delta)
       this.follow.lerp(this.best, alpha)
-      this.safePosition(target, this.follow, query, terrain, this.solved)
+      this.safePosition(this.collisionOrigin, this.follow, query, terrain, this.solved)
       this.follow.copy(this.solved)
-      // Check the actual follow displacement too. Do not smooth through a corner.
-      if (this.previous.distanceToSquared(this.follow) < 16 && this.previous.distanceToSquared(target) > 1) {
-        this.sweep(query, this.previous, this.follow)
-        if (this.sweepResult.blocked && this.sweepResult.distance > 0) {
-          this.offset.subVectors(this.follow, this.previous).setLength(Math.max(0, this.sweepResult.distance - 0.02))
-          this.follow.copy(this.previous).add(this.offset)
-          this.safePosition(target, this.follow, query, terrain, this.solved)
-          this.follow.copy(this.solved)
-        }
-      }
+      // A valid boom endpoint does not by itself validate camera travel between
+      // frames. The old position is used only after checking its current volume.
+      this.safePosition(this.previous, this.follow, query, terrain, this.solved)
+      this.follow.copy(this.solved)
     }
     output.copy(this.follow)
+    this.lastSafe.copy(output)
     this.debug.shoulder = this.shoulder
     this.debug.boomDistance = output.distanceTo(target)
     const visibility = THREE.MathUtils.smoothstep(this.debug.boomDistance, 0.8, 3.6)
@@ -245,14 +261,21 @@ export class CameraVisibility {
     target: THREE.Vector3, candidate: THREE.Vector3, query: CameraVolumeQuery,
     terrain: (x: number, z: number) => number, output: THREE.Vector3,
   ): void {
-    this.safePosition(target, candidate, query, terrain, output)
+    this.previous.copy(this.lastSafe)
+    const previousSafe = this.initialized && this.previous.distanceTo(target) <= 32 &&
+      this.clearPose(this.previous, query, terrain)
+    this.selectCollisionOrigin(target, candidate, previousSafe, query, terrain)
+    this.safePosition(this.collisionOrigin, candidate, query, terrain, this.solved)
+    if (previousSafe) this.safePosition(this.previous, this.solved, query, terrain, output)
+    else output.copy(this.solved)
+    this.lastSafe.copy(output)
     this.debug.boomDistance = output.distanceTo(target)
     this.debug.playerVisibility = Math.min(this.debug.playerVisibility,
       THREE.MathUtils.smoothstep(this.debug.boomDistance, 0.8, 3.6))
   }
 
-  private sweep(query: CameraVolumeQuery, from: THREE.Vector3, to: THREE.Vector3): void {
-    query.sweep(from, to, this.radius, this.sweepResult)
+  private sweep(query: CameraVolumeQuery, from: THREE.Vector3, to: THREE.Vector3, radius = this.radius): void {
+    query.sweep(from, to, radius, this.sweepResult)
     this.debug.sweeps++
     this.debug.triangleTests += this.sweepResult.triangleTests
     if (this.sweepResult.overflow) this.debug.overflows++
@@ -276,32 +299,83 @@ export class CameraVisibility {
     return true
   }
 
+  private clearPose(position: THREE.Vector3, query: CameraVolumeQuery, terrain: (x: number, z: number) => number): boolean {
+    if (!this.clearsTerrain(terrain, position)) return false
+    this.sweep(query, position, position)
+    return !this.sweepResult.blocked && !this.sweepResult.overflow
+  }
+
+  private selectCollisionOrigin(
+    target: THREE.Vector3, wanted: THREE.Vector3, previousSafe: boolean, query: CameraVolumeQuery,
+    terrain: (x: number, z: number) => number,
+  ): void {
+    this.debug.recovery = 'none'
+    if (this.clearPose(target, query, terrain)) {
+      this.collisionOrigin.copy(target)
+      return
+    }
+    if (previousSafe) {
+      this.collisionOrigin.copy(this.previous)
+      this.debug.recovery = 'previous'
+      return
+    }
+    // The look-at target is not a camera pose. Recover only the presentation
+    // origin; never move an actor or accept a zero-distance overlapping sweep.
+    this.sweep(query, target, target, 1e-4)
+    const centerInside = this.sweepResult.initialOverlap && !this.sweepResult.overflow
+    this.recoveryDirection.subVectors(wanted, target).normalize()
+    for (let step = 0; step < CAMERA_RECOVERY_STEPS; step++) {
+      const distance = (this.radius + 0.08) * 2 ** step
+      for (let direction = 0; direction < CAMERA_RECOVERY_DIRECTIONS; direction++) {
+        this.recoveryCandidate.copy(target)
+        if (direction === 0) this.recoveryCandidate.addScaledVector(this.recoveryDirection, distance)
+        else {
+          const axis = Math.floor((direction - 1) / 2)
+          this.recoveryCandidate.setComponent(axis,
+            target.getComponent(axis) + (direction % 2 ? distance : -distance))
+        }
+        if (!this.clearPose(this.recoveryCandidate, query, terrain)) continue
+        if (!centerInside) {
+          // An overlapping sphere outside a wall may back away, but may not
+          // jump through it merely because the other side is also unoccupied.
+          this.sweep(query, target, this.recoveryCandidate, 1e-4)
+          if (this.sweepResult.blocked || this.sweepResult.overflow) continue
+        }
+        this.collisionOrigin.copy(this.recoveryCandidate)
+        this.debug.recovery = 'local'
+        return
+      }
+    }
+    throw new Error('Camera overlap recovery found no safe pose within its bounded search')
+  }
+
   private safePosition(
-    target: THREE.Vector3, wanted: THREE.Vector3, query: CameraVolumeQuery,
+    origin: THREE.Vector3, wanted: THREE.Vector3, query: CameraVolumeQuery,
     terrain: (x: number, z: number) => number, output: THREE.Vector3,
   ): void {
     output.copy(wanted)
     output.y = Math.max(output.y, this.height(terrain, output.x, output.z) + this.radius + 0.16)
-    this.offset.subVectors(output, target)
+    this.offset.subVectors(output, origin)
     const distance = this.offset.length()
-    this.sweep(query, target, output)
-    if (this.sweepResult.blocked) output.copy(target).addScaledVector(
+    this.sweep(query, origin, output)
+    if (this.sweepResult.initialOverlap) throw new Error('Camera sweep origin lost its validated clearance')
+    if (this.sweepResult.blocked) output.copy(origin).addScaledVector(
       this.offset, Math.max(0, this.sweepResult.distance - 0.04) / Math.max(distance, 1e-6),
     )
-    this.offset.subVectors(output, target)
+    this.offset.subVectors(output, origin)
     const steps = Math.min(CAMERA_TERRAIN_STEPS, Math.max(1, Math.ceil(this.offset.length() / 0.45)))
     for (let step = 1; step <= steps; step++) {
-      this.sample.copy(target).addScaledVector(this.offset, step / steps)
+      this.sample.copy(origin).addScaledVector(this.offset, step / steps)
       if (this.clearsTerrain(terrain, this.sample)) continue
       let lower = (step - 1) / steps
       let upper = step / steps
       for (let iteration = 0; iteration < 6; iteration++) {
         const middle = (lower + upper) * 0.5
-        this.sample.copy(target).addScaledVector(this.offset, middle)
+        this.sample.copy(origin).addScaledVector(this.offset, middle)
         if (this.clearsTerrain(terrain, this.sample)) lower = middle
         else upper = middle
       }
-      output.copy(target).addScaledVector(this.offset, lower)
+      output.copy(origin).addScaledVector(this.offset, lower)
       break
     }
   }
