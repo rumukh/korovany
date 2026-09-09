@@ -150,6 +150,7 @@ export {
   buildBeastSkeleton,
   buildBeastTail,
   buildBirdBody,
+  buildBirdFoot,
   buildBirdWing,
   buildCharacterSkeleton,
   buildCloak,
@@ -237,6 +238,7 @@ export {
 
 export {
   CharacterPresenter,
+  TerrainFootFrame,
   characterPresenter,
   createCharacterPresenter,
   selectCharacterVisualLevel,

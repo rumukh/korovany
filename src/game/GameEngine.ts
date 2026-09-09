@@ -38,6 +38,7 @@ import {
   applyLimbPose,
   beastLookYaw,
   buildBirdBody,
+  buildBirdFoot,
   buildBirdWing,
   buildArticulatedBirdWing,
   buildCharacterSkeleton,
@@ -9342,6 +9343,11 @@ export class GameEngine {
         const wing = new THREE.Mesh(this.acquireArtGeometry(`articulated-wing:${side}`, () => buildArticulatedBirdWing(side)), feather)
         joint.add(wing)
         wings.add(joint)
+        const foot = new THREE.Group()
+        foot.name = side < 0 ? 'leftBirdFoot' : 'rightBirdFoot'
+        foot.position.set(side * 0.043, 0, 0.022)
+        foot.add(new THREE.Mesh(this.acquireArtGeometry('articulated-bird-foot', buildBirdFoot), beakMaterial))
+        group.add(foot)
       }
       this.creaturePresenters.add(new CreaturePresenter(group, this.artLibrary, this.artGeometry, 'illustrated-bird'))
     }
@@ -16628,8 +16634,9 @@ export class GameEngine {
 
     // Legs. A knee only bends one way, and it bends on the leg that is swinging
     // forward, which is the difference between walking and skating.
-    const leftX = stride
-    const rightX = -stride
+    const legStride = characterPresenter(group) ? pose.stride : stride
+    const leftX = legStride
+    const rightX = -legStride
     if (rig.leftLeg) rig.leftLeg.rotation.x = leftX
     if (rig.rightLeg) rig.rightLeg.rotation.x = rightX
     if (rig.leftKnee) {
@@ -16721,6 +16728,11 @@ export class GameEngine {
     }
     if (rig.leftLeg) rig.leftLeg.rotation.set(stride * 0.88 - pose.stagger * 0.3, 0, 0)
     if (rig.rightLeg) rig.rightLeg.rotation.set(-stride * 0.88 - pose.stagger * 0.3, 0, 0)
+    if (kind === 'troll') {
+      const flex = 0.25 + pose.anticipation * 0.6 - pose.attack * 0.18 + pose.stagger * 0.35
+      if (rig.leftElbow) rig.leftElbow.rotation.x = Math.max(0.03, flex - stride * 0.12)
+      if (rig.rightElbow) rig.rightElbow.rotation.x = Math.max(0.03, flex + stride * 0.12)
+    }
     if (rig.cloak) {
       // `cloak` holds the tail on a beast: it lifts with speed and tucks when hit.
       rig.cloak.rotation.x =

@@ -5,7 +5,7 @@ import { extname } from 'node:path'
 import * as THREE from 'three'
 import {
   BEAST_KINDS, GeometryCache, StylizedArtLibrary, creaturePresenter, validateArtGeometry,
-  type CreaturePresenter,
+  CreaturePresenter,
   type WagonPresenter, wagonPresenter,
 } from '../src/game/art/index.ts'
 import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
@@ -110,12 +110,15 @@ test('real deer and birds use independent leg and wing joints without changing t
   const dp = creaturePresenter(deer)!, bp = creaturePresenter(bird)!
   assert.equal(dp.legs.length, 4)
   assert.ok(bp.wings)
+  assert.equal(bp.perchFeet.length, 2)
   assert.equal(dp.source.geometry.groups.length, 0)
   assert.equal(bp.source.geometry.groups.length, 0)
   for (const panic of [false, true]) for (const time of [0.03, 0.14, 0.31, 0.62]) {
     dp.poseWildlife(time, panic, 1 / 60, () => 0)
     bp.poseWildlife(time, panic, 1 / 60, () => 0)
     assert.equal(bp.wings[0].rotation.z, -bp.wings[1].rotation.z)
+    assert.equal(bp.perchFeet[0].position.y, panic ? 0.07 : 0)
+    if (panic) assert.equal(bp.perchFeet[0].rotation.x, -0.8)
     assert.notEqual(dp.legs[0].upper.rotation.x, dp.legs[1].upper.rotation.x)
     assert.deepEqual(deer.position.toArray(), [0, 0, 0])
     assert.deepEqual(bird.position.toArray(), [0, 0, 0])
@@ -161,5 +164,96 @@ test('production plain and gilded wagons retain cargo and roll each wheel by its
     wagon.dispose()
     assert.throws(() => wagon.update(0.1, 0, () => 0), /disposed/)
   }
+  f.dispose()
+})
+
+test('animal soles match terrain normals through all parent axes and nonuniform art scales', () => {
+  const f = fixture()
+  const normal = new THREE.Vector3(), expected = new THREE.Vector3(), matrix = new THREE.Matrix3()
+  let checked = 0
+  let rejectedRuleError = 0
+  for (const kind of BEAST_KINDS) {
+    const root = f.engine.createBeast(kind), p = creaturePresenter(root)!
+    root.rotation.set(0.05, 0.6, -0.03)
+    root.getObjectByName('body-pivot')!.scale.set(1.05, 0.945, 0.97)
+    root.getObjectByName('torso-pivot')!.rotation.set(0.14, 0.18, -0.12)
+    root.getObjectByName('pelvis-pivot')!.rotation.set(-0.06, -0.08, 0.04)
+    for (const sx of [-0.2, 0, 0.2]) for (const sz of [-0.16, 0, 0.16]) {
+      p.poseFeet(1 / 60, 0.12, (x, z) => x * sx + z * sz)
+      root.updateMatrixWorld(true)
+      expected.set(-sx, 1, -sz).normalize()
+      for (const leg of p.legs) {
+        if (!leg.supportsWeight) continue
+        matrix.getNormalMatrix(leg.foot.matrixWorld)
+        normal.set(0, 1, 0).applyMatrix3(matrix).normalize()
+        assert.ok(normal.distanceTo(expected) < 1e-10, `${kind} sole did not follow the terrain's full normal`)
+        const saved = leg.foot.matrix.clone()
+        leg.foot.matrixAutoUpdate = true
+        leg.foot.rotation.set(-leg.upper.rotation.x - leg.knee.rotation.x, 0, 0)
+        leg.foot.updateWorldMatrix(true, false)
+        matrix.getNormalMatrix(leg.foot.matrixWorld)
+        normal.set(0, 1, 0).applyMatrix3(matrix).normalize()
+        rejectedRuleError = Math.max(rejectedRuleError, normal.distanceTo(expected))
+        leg.foot.matrixAutoUpdate = false
+        leg.foot.matrix.copy(saved)
+        leg.foot.matrixWorldNeedsUpdate = true
+        checked++
+      }
+    }
+  }
+  assert.equal(checked, 126)
+  assert.ok(rejectedRuleError > 0.1, 'the former X-angle subtraction must fail the same full-axis normal measurement')
+  f.dispose()
+})
+
+test('animal importance consumes projected size and common hysteresis without hiding body geometry', () => {
+  const f = fixture()
+  const root = f.engine.createDeer(), p = creaturePresenter(root)!
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200)
+  const policy = resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'balanced' })
+  const geometry = p.source.geometry
+  for (const [distance, level] of [[120, 'far'], [25, 'mid'], [10, 'near'], [2, 'hero'], [10, 'near']] as const) {
+    camera.position.set(0, 0, distance)
+    p.updateLod(camera, policy)
+    assert.equal(p.level, level)
+    assert.equal(p.source.visible, true)
+    assert.equal(p.source.geometry, geometry, 'an importance transition does not delete the animal or its limbs')
+  }
+  camera.position.z = 120
+  p.updateLod(camera, policy)
+  p.poseFeet(1 / 60, 0.2, () => { throw new Error('far animals should not perform terrain samples') })
+  p.dispose()
+  assert.throws(() => p.updateLod(camera, policy), /disposed/)
+  f.dispose()
+})
+
+test('failed creature binding restores named meshes and never consumes another body receipt', () => {
+  const f = fixture()
+  const material = f.art.acquireMaterial('test:creature-failure', { color: 0x80684c, surface: 'cloth' })
+  const makeRoot = () => {
+    const root = new THREE.Group()
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material)
+    mesh.name = 'head'
+    root.add(mesh)
+    return { root, mesh }
+  }
+  const a = makeRoot(), b = makeRoot()
+  const live = new CreaturePresenter(a.root, f.art, f.cache, 'test:creature-body')
+  assert.equal(f.cache.referenceCount('test:creature-body'), 2, 'canonical owner and active source have separate receipts')
+  const acquire = f.art.acquireMaterial
+  f.art.acquireMaterial = () => { throw new Error('injected material allocation failure') }
+  try {
+    assert.throws(() => new CreaturePresenter(b.root, f.art, f.cache, 'test:creature-body'), /injected material/)
+    assert.equal(f.cache.referenceCount('test:creature-body'), 2)
+    assert.equal(b.root.getObjectByName('head'), b.mesh, 'the preexisting render node survives rejected construction')
+    assert.equal(f.art.getRenderBindingStats().sources, 1)
+  } finally { f.art.acquireMaterial = acquire }
+  live.dispose()
+  assert.equal(f.cache.referenceCount('test:creature-body'), 0)
+  f.cache.dispose()
+  const c = makeRoot()
+  assert.throws(() => new CreaturePresenter(c.root, f.art, f.cache, 'test:closed-cache'), /disposed cache/)
+  assert.equal(c.root.getObjectByName('head'), c.mesh)
+  a.mesh.geometry.dispose(); b.mesh.geometry.dispose(); c.mesh.geometry.dispose()
   f.dispose()
 })

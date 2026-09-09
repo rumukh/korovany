@@ -5,11 +5,11 @@ import { StylizedArtLibrary } from './StylizedArtLibrary.ts'
 import { ART_SURFACE_ATTRIBUTE } from './ArtPresentation.ts'
 import type { ArtGeometryLease, ArtRenderSourceBinding } from './ArtRenderBinding.ts'
 import { bakeOutlineNormals } from './GeometryKit.ts'
-import { buildCreatureLimbSegment, buildCreatureFoot, type BeastKind } from './CharacterKit.ts'
+import { buildCreatureLimbSegment, buildCreatureFoot, type BeastKind, type CharacterVisualLevel } from './CharacterKit.ts'
 import type { VisualQualityPolicy } from '../visualPolicy.ts'
 import type { VisualAllocationReceipt } from '../diagnostics/VisualBudgetAccounting.ts'
 import { disposeOwnedVisualResources } from '../visualLifecycle.ts'
-import type { CharacterContact, CharacterContactPart } from './CharacterRig.ts'
+import { TerrainFootFrame, selectCharacterVisualLevel, type CharacterContact, type CharacterContactPart } from './CharacterRig.ts'
 
 const CREATURES = new WeakMap<THREE.Object3D, CreaturePresenter>()
 export function creaturePresenter(root: THREE.Object3D): CreaturePresenter | undefined { return CREATURES.get(root) }
@@ -66,6 +66,8 @@ export class CreaturePresenter {
   readonly binding: ArtRenderSourceBinding
   readonly legs: readonly CreatureLeg[]
   readonly wings: readonly [THREE.Object3D, THREE.Object3D] | null
+  readonly perchFeet: readonly THREE.Object3D[]
+  level: CharacterVisualLevel = 'near'
   private readonly art: StylizedArtLibrary
   private readonly cache: GeometryCache
   private readonly key: string
@@ -78,6 +80,8 @@ export class CreaturePresenter {
   private readonly local = new THREE.Vector3()
   private readonly rest = new THREE.Vector3()
   private readonly inverse = new THREE.Matrix4()
+  private readonly footFrame = new TerrainFootFrame()
+  private readonly height: number
   private disposed = false
 
   constructor(
@@ -87,6 +91,8 @@ export class CreaturePresenter {
     this.root = root; this.art = art; this.cache = cache; this.key = key; this.legs = legs
     const leftWing = root.getObjectByName('leftWing'), rightWing = root.getObjectByName('rightWing')
     this.wings = leftWing && rightWing ? [leftWing, rightWing] : null
+    const leftFoot = root.getObjectByName('leftBirdFoot'), rightFoot = root.getObjectByName('rightBirdFoot')
+    this.perchFeet = leftFoot && rightFoot ? [leftFoot, rightFoot] : []
     const originals: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>[] = []
     root.traverse((node) => {
       if (node instanceof THREE.Mesh && !(node instanceof THREE.SkinnedMesh) &&
@@ -103,31 +109,17 @@ export class CreaturePresenter {
       }
       return ''
     })
-    const bones = originals.map((source) => {
-      const bone = new THREE.Bone()
-      bone.name = source.name
-      bone.position.copy(source.position)
-      bone.quaternion.copy(source.quaternion)
-      bone.scale.copy(source.scale)
-      source.parent!.add(bone)
-      for (const child of [...source.children]) bone.add(child)
-      source.removeFromParent()
-      return bone
-    })
-    root.updateWorldMatrix(true, true)
-    this.skeleton = new THREE.Skeleton(bones)
-    for (const name of ['torso', 'head', 'leftArm', 'rightArm', 'leftLeg', 'rightLeg'] as const) {
-      const node = root.getObjectByName(name)
-      if (node) this.contacts.set(name, node)
-    }
     this.base = cache.acquire(key, () => {
       const parts: THREE.BufferGeometry[] = []
       try {
         originals.forEach((source, bone) => {
           const copy = source.geometry.clone()
           copy.deleteAttribute('uv')
-          const geometry = copy.index ? copy : mergeVertices(copy, 1e-5)
-          if (geometry !== copy) copy.dispose()
+          let geometry: THREE.BufferGeometry
+          if (copy.index) geometry = copy
+          else {
+            try { geometry = mergeVertices(copy, 1e-5) } finally { copy.dispose() }
+          }
           parts.push(geometry)
           geometry.applyMatrix4(binds[bone])
           bakeOutlineNormals(geometry)
@@ -152,25 +144,66 @@ export class CreaturePresenter {
         return geometry
       } finally { for (const part of parts) part.dispose() }
     })
-    let released = false
-    const lease: ArtGeometryLease = {
-      geometry: this.base,
-      release: () => { if (!released) { released = true; cache.release(key) } },
+    const bones = originals.map((source) => {
+      const bone = new THREE.Bone()
+      bone.name = source.name
+      bone.position.copy(source.position)
+      bone.quaternion.copy(source.quaternion)
+      bone.scale.copy(source.scale)
+      source.parent!.add(bone)
+      for (const child of [...source.children]) bone.add(child)
+      source.removeFromParent()
+      return bone
+    })
+    root.updateWorldMatrix(true, true)
+    this.skeleton = new THREE.Skeleton(bones)
+    for (const name of ['torso', 'head', 'leftArm', 'rightArm', 'leftLeg', 'rightLeg'] as const) {
+      const node = root.getObjectByName(name)
+      if (node) this.contacts.set(name, node)
     }
-    this.source = new THREE.SkinnedMesh(this.base, art.acquireMaterial('creature:mixed:response-v1', {
-      color: 0xffffff, surface: 'cloth', vertexColors: true, attributes: { surfaceResponse: true },
-    }))
-    this.source.name = `${key}-batch`
-    this.source.castShadow = this.source.receiveShadow = true
-    this.source.userData.visualSubsystem = 'dynamicArt'
-    root.add(this.source)
-    this.source.bind(this.skeleton, root.matrixWorld)
-    try { this.binding = art.bindRenderSource(this.source, { geometryLease: lease, deformationPadding: 1.2 }) }
-    catch (error) { lease.release(); this.skeleton.dispose(); throw error }
+    let lease: ArtGeometryLease | undefined
+    let source: THREE.SkinnedMesh | undefined
+    try {
+      const material = art.acquireMaterial('creature:mixed:response-v1', {
+        color: 0xffffff, surface: 'cloth', vertexColors: true, attributes: { surfaceResponse: true },
+      })
+      // The rig retains the canonical body independently of the binding's active view.
+      cache.acquire(key, () => { throw new Error('Creature canonical body receipt was lost') })
+      let released = false
+      lease = { geometry: this.base, release: () => {
+        if (!released) { released = true; cache.release(key) }
+      } }
+      this.source = source = new THREE.SkinnedMesh(this.base, material)
+      source.name = `${key}-batch`
+      source.castShadow = source.receiveShadow = true
+      source.userData.visualSubsystem = 'dynamicArt'
+      root.add(source)
+      source.bind(this.skeleton, root.matrixWorld)
+      this.binding = art.bindRenderSource(source, { geometryLease: lease, deformationPadding: 1.2 })
+    } catch (error) {
+      const cleanup = [
+        { dispose: () => cache.release(key) },
+        { dispose: () => this.skeleton.dispose() },
+        { dispose: () => lease?.release() },
+      ]
+      source?.removeFromParent()
+      for (let i = originals.length - 1; i >= 0; i--) {
+        const bone = bones[i], original = originals[i]
+        bone.parent?.add(original)
+        for (const child of [...bone.children]) original.add(child)
+        bone.removeFromParent()
+      }
+      try { disposeOwnedVisualResources(cleanup) } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Creature construction and cleanup failed')
+      }
+      throw error
+    }
+    this.height = this.base.boundingBox!.max.y - this.base.boundingBox!.min.y
     CREATURES.set(root, this)
   }
 
   hideLimb(name: string): void {
+    if (this.disposed) throw new Error('Creature presenter is disposed')
     if (this.hidden.has(name)) return
     if (!this.limbByBone.includes(name)) throw new Error(`Creature has no limb partition ${name}`)
     const hidden = new Set(this.hidden).add(name)
@@ -183,11 +216,9 @@ export class CreaturePresenter {
     }
     geometry.setIndex(indices)
     StylizedArtLibrary.markLibraryOwned(geometry)
-    // Hold the canonical body receipt separately when the binding switches to a derived body.
-    this.cache.acquire(this.key, () => { throw new Error('Creature canonical body receipt was lost') })
     let released = false
     const lease: ArtGeometryLease = { geometry, release: () => {
-      if (!released) { released = true; geometry.dispose(); this.cache.release(this.key) }
+      if (!released) { released = true; geometry.dispose() }
     } }
     let outcome
     try { outcome = this.art.replaceRenderSourceGeometry(this.binding, lease) }
@@ -206,6 +237,10 @@ export class CreaturePresenter {
       const gait = stride * leg.side * (leg.front ? -1 : 1)
       const bend = 0.12 + Math.max(0, -gait) * 0.8
       leg.knee.rotation.x = THREE.MathUtils.damp(leg.knee.rotation.x, bend, 14, delta)
+      if (this.level === 'far') {
+        this.footFrame.reset(leg.foot)
+        continue
+      }
       leg.knee.updateWorldMatrix(true, false)
       this.world.set(0, -leg.lowerLength, 0).applyMatrix4(leg.knee.matrixWorld)
       const ground = sampleHeight(this.world.x, this.world.z)
@@ -225,7 +260,7 @@ export class CreaturePresenter {
       this.rest.set(0, -(upper + lower * Math.cos(angle)) * scale, -lower * Math.sin(angle)).normalize()
       leg.upper.quaternion.setFromUnitVectors(this.rest, this.local.normalize())
       leg.knee.rotation.set(angle, 0, 0, 'XYZ')
-      leg.foot.rotation.x = -leg.upper.rotation.x - leg.knee.rotation.x
+      this.footFrame.apply(leg.foot, this.root, sampleHeight)
     }
   }
 
@@ -236,6 +271,12 @@ export class CreaturePresenter {
       this.wings[0].rotation.z = -flap
       this.wings[1].rotation.z = flap
       this.wings[0].rotation.x = this.wings[1].rotation.x = panic ? -0.12 : 0.06
+      for (const foot of this.perchFeet) {
+        this.footFrame.reset(foot)
+        foot.position.y = panic ? 0.07 : 0
+        foot.rotation.x = panic ? -0.8 : 0
+        if (!panic && this.level !== 'far') this.footFrame.apply(foot, this.root, sampleHeight)
+      }
       return
     }
     const stride = Math.sin(time * (panic ? 12 : 2.4)) * (panic ? 0.55 : 0.12)
@@ -244,12 +285,16 @@ export class CreaturePresenter {
   }
 
   updateLod(camera: THREE.PerspectiveCamera, policy: VisualQualityPolicy): void {
+    if (this.disposed) throw new Error('Creature presenter is disposed')
     this.root.getWorldPosition(this.world)
-    const distance = this.world.distanceTo(camera.position) / policy.lod.distanceScale
-    const previous = this.source.userData.characterInkEnabled !== false
-    const ink = distance < (previous ? 43 : 36)
+    const distance = Math.max(0.2, this.world.distanceTo(camera.position))
+    const projected = this.height * this.root.scale.y * camera.zoom * policy.lod.distanceScale /
+      (2 * distance * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2))
+    const hero = projected > 0.36 * (this.level === 'hero' ? 1 - policy.lod.hysteresis : 1 + policy.lod.hysteresis)
+    this.level = selectCharacterVisualLevel(this.level, projected, hero, policy.lod.hysteresis)
+    const ink = this.level !== 'far'
     this.source.userData.characterInkEnabled = ink
-    this.source.castShadow = policy.quality !== 'low' && distance < 28
+    this.source.castShadow = policy.quality !== 'low' && (this.level === 'near' || this.level === 'hero')
     for (const child of this.source.children) {
       if (!StylizedArtLibrary.isOutlineShell(child)) continue
       if (typeof child.userData.policyOutlineEnabled === 'boolean') child.visible = child.userData.policyOutlineEnabled && ink
@@ -274,6 +319,7 @@ export class CreaturePresenter {
   }
 
   allocationReceipts(): VisualAllocationReceipt[] {
+    if (this.disposed) throw new Error('Creature presenter is disposed')
     const receipts: VisualAllocationReceipt[] = []
     for (const geometry of new Set([this.base, this.source.geometry])) {
       const buffers = new Set<ArrayBufferLike>()
@@ -295,6 +341,7 @@ export class CreaturePresenter {
     this.disposed = true
     CREATURES.delete(this.root)
     try { disposeOwnedVisualResources([
+      { dispose: () => this.cache.release(this.key) },
       { dispose: () => this.skeleton.dispose() },
       { dispose: () => this.art.releaseRenderSource(this.binding) },
     ]) } finally { this.source.removeFromParent() }

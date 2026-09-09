@@ -5537,6 +5537,22 @@ export function buildArticulatedBirdWing(side: number): THREE.BufferGeometry {
   return finish([side < 0 ? mirrorX(wing) : wing], `articulated-wing:${side}`)
 }
 
+export function buildBirdFoot(): THREE.BufferGeometry {
+  const parts = [
+    tubeAlongPoints([
+      { x: 0, y: 0.015, z: 0 }, { x: 0, y: 0.075, z: -0.01 }, { x: 0, y: 0.145, z: 0.008 },
+    ], { radius: 0.009, radialSegments: 5, tubularSegments: 3, capStart: true, capEnd: true }),
+  ]
+  for (const side of [-1, 0, 1]) parts.push(tubeAlongPoints([
+    { x: 0, y: 0.02, z: 0 }, { x: side * 0.018, y: 0.009, z: 0.033 },
+    { x: side * 0.03, y: 0.006, z: side === 0 ? 0.082 : 0.062 },
+  ], { radius: 0.006, radialSegments: 4, tubularSegments: 3, capStart: true, capEnd: true }))
+  parts.push(tubeAlongPoints([
+    { x: 0, y: 0.018, z: 0 }, { x: 0, y: 0.008, z: -0.032 }, { x: 0.01, y: 0.004, z: -0.056 },
+  ], { radius: 0.005, radialSegments: 4, tubularSegments: 3, capStart: true, capEnd: true }))
+  return finish(parts, 'bird-foot')
+}
+
 export function buildDraftYoke(): THREE.BufferGeometry {
   const parts = [block({ width: 0.2, height: 0.18, depth: 2.3, bevel: 0.035 })]
   for (const side of [-1, 1]) parts.push(tubeAlongPoints([

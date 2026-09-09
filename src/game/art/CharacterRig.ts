@@ -23,7 +23,7 @@ import type { VisualQuality } from '../visualSettings.ts'
 export type CharacterLimb = 'leftArm' | 'rightArm' | 'leftLeg' | 'rightLeg'
 export type CharacterLimbAppearance = 'healthy' | 'wounded' | 'missing' | 'prosthetic'
 export type CharacterAppearance = Readonly<Partial<Record<CharacterLimb, CharacterLimbAppearance>>>
-export type CharacterContactPart = 'torso' | 'head' | CharacterLimb | 'weapon' | 'shield'
+export type CharacterContactPart = 'torso' | 'head' | CharacterLimb | 'weapon' | 'weaponGrip' | 'weaponTip' | 'shield'
 
 export interface CharacterAnimationRig {
   leftArm: THREE.Object3D | null
@@ -75,6 +75,7 @@ const LIMBS = ['leftArm', 'rightArm', 'leftLeg', 'rightLeg'] as const
 const SUPPORT_WEAPONS = new Set(['spear', 'glaive', 'maul', 'greatsword', 'staff'])
 const VISUAL_LEVELS: readonly CharacterVisualLevel[] = ['far', 'mid', 'near']
 const PROJECTED_THRESHOLDS = [0.055, 0.13] as const
+const BODY_GEOMETRY_RETENTION = 2
 const SURFACES: Record<CharacterPhysicalSurface, readonly [number, number, number, number]> = {
   skin: [0.79, 0, 0.46, 0.13], hair: [0.93, 0, 0.56, 0.08],
   cloth: [0.94, 0, 0.62, 0.12], leather: [0.86, 0.02, 0.62, 0.11],
@@ -142,6 +143,52 @@ export function selectCharacterVisualLevel(
   return VISUAL_LEVELS[level]
 }
 
+/** Shared affine sole frame for people, paws and hooves. Never writes a simulation root. */
+export class TerrainFootFrame {
+  private readonly point = new THREE.Vector3()
+  private readonly normal = new THREE.Vector3()
+  private readonly forward = new THREE.Vector3()
+  private readonly right = new THREE.Vector3()
+  private readonly frame = new THREE.Matrix4()
+  private readonly inverse = new THREE.Matrix4()
+
+  apply(foot: THREE.Object3D, facing: THREE.Object3D, sampleHeight: (x: number, z: number) => number): void {
+    const parent = foot.parent
+    if (!parent) throw new Error('A terrain foot needs its articulated parent')
+    parent.updateWorldMatrix(true, false)
+    facing.updateWorldMatrix(true, false)
+    this.point.copy(foot.position).applyMatrix4(parent.matrixWorld)
+    const x = this.point.x, z = this.point.z
+    const dx = (sampleHeight(x + 0.12, z) - sampleHeight(x - 0.12, z)) / 0.24
+    const dz = (sampleHeight(x, z + 0.12) - sampleHeight(x, z - 0.12)) / 0.24
+    if (!Number.isFinite(dx) || !Number.isFinite(dz)) throw new Error('Foot terrain normal is non-finite')
+    this.normal.set(-THREE.MathUtils.clamp(dx, -0.65, 0.65), 1, -THREE.MathUtils.clamp(dz, -0.65, 0.65)).normalize()
+    this.forward.set(0, 0, 1).transformDirection(facing.matrixWorld)
+    this.forward.addScaledVector(this.normal, -this.forward.dot(this.normal))
+    if (this.forward.lengthSq() < 1e-10) {
+      this.right.set(1, 0, 0).transformDirection(facing.matrixWorld)
+      this.forward.crossVectors(this.right, this.normal)
+    }
+    this.forward.normalize()
+    this.right.crossVectors(this.normal, this.forward).normalize()
+    const e = parent.matrixWorld.elements
+    this.right.multiplyScalar(Math.hypot(e[0], e[1], e[2]))
+    this.forward.multiplyScalar(Math.hypot(e[8], e[9], e[10]))
+    this.normal.multiplyScalar(Math.hypot(e[4], e[5], e[6]))
+    this.frame.makeBasis(this.right, this.normal, this.forward).setPosition(this.point)
+    this.inverse.copy(parent.matrixWorld).invert()
+    foot.matrixAutoUpdate = false
+    foot.matrix.multiplyMatrices(this.inverse, this.frame)
+    foot.matrixWorldNeedsUpdate = true
+  }
+
+  reset(foot: THREE.Object3D): void {
+    foot.matrixAutoUpdate = true
+    foot.rotation.set(0, 0, 0, 'XYZ')
+    foot.scale.setScalar(1)
+  }
+}
+
 /**
  * The engine's real named rig, with one body draw and independently addressable equipment.
  * Bone children follow the existing Group joints; the simulation never follows a bone.
@@ -171,6 +218,7 @@ export class CharacterPresenter {
     leftArm: 'healthy', rightArm: 'healthy', leftLeg: 'healthy', rightLeg: 'healthy',
   }
   private readonly sourceBases = new Map<THREE.Mesh, ArtGeometryLease>()
+  private readonly recentBodies = new Map<string, ArtGeometryLease>()
   private contactShadow: THREE.Object3D | null = null
   private wristRope: THREE.Object3D | null = null
   private ropeLease: ArtGeometryLease | null = null
@@ -181,10 +229,7 @@ export class CharacterPresenter {
   private readonly armLocal = new THREE.Vector3()
   private readonly orientation = new THREE.Quaternion()
   private readonly groundPoint = new THREE.Vector3()
-  private readonly groundNormal = new THREE.Vector3()
-  private readonly footForward = new THREE.Vector3()
-  private readonly footRight = new THREE.Vector3()
-  private readonly footFrame = new THREE.Matrix4()
+  private readonly footFrame = new TerrainFootFrame()
   private pelvisOffset = 0
   private clothPitch = 0
   private clothRoll = 0
@@ -205,6 +250,8 @@ export class CharacterPresenter {
     const metal = CHARACTER_PHYSICAL_PALETTE.metal
     const leather = CHARACTER_PHYSICAL_PALETTE.leather
     const dark = CHARACTER_PHYSICAL_PALETTE.dark
+    const chestSurface: CharacterPhysicalSurface = plan.armour === 'none' ? 'cloth'
+      : plan.faction === 'guard' ? 'metal' : 'leather'
     const bone = (name: string, parent: THREE.Object3D, x: number, y: number, z = 0, limb: CharacterLimb | null = null) => {
       const node = new THREE.Bone()
       node.name = name
@@ -227,8 +274,8 @@ export class CharacterPresenter {
     const torso = bone('torso', a.torsoPivot, 0, a.torsoY)
     part(torso, (level) => buildIllustratedTorso(plan, level), cloth, 'cloth')
     part(torso, (level) => buildIllustratedChestArmor(plan, level),
-      plan.faction === 'guard' && plan.armour !== 'none' ? metal : plan.faction === 'villain' ? leather : cloth,
-      plan.faction === 'guard' && plan.armour !== 'none' ? 'metal' : 'leather')
+      chestSurface === 'metal' ? metal : plan.faction === 'villain' && plan.armour !== 'none' ? leather : cloth,
+      chestSurface)
     if (plan.trim !== 'none') {
       part(torso, (level) => transformed(buildIllustratedTrim(plan.trim, level), { scale: { x: 0.88, y: 0.9, z: 0.92 } }), leather, 'leather')
     }
@@ -329,12 +376,30 @@ export class CharacterPresenter {
         mesh.name = 'weapon-head'
         weapon.add(mesh)
         this.bind(mesh, lease)
+        const positions = lease.geometry.getAttribute('position')
+        const bow = plan.weapon === 'bow'
+        let maximum = -Infinity
+        for (let i = 0; i < positions.count; i++) maximum = Math.max(maximum, bow ? positions.getZ(i) : positions.getY(i))
+        const tip = new THREE.Vector3()
+        let tips = 0
+        for (let i = 0; i < positions.count; i++) {
+          if (Math.abs((bow ? positions.getZ(i) : positions.getY(i)) - maximum) > 1e-5) continue
+          tip.add(this.scratch.fromBufferAttribute(positions, i))
+          tips++
+        }
+        if (tips === 0) throw new Error('Weapon geometry has no finite tip')
+        tip.multiplyScalar(1 / tips)
+        const limb = plan.mainHand === 'right' ? 'rightArm' : 'leftArm'
+        this.anchors.set('weaponGrip', { node: weapon, point: new THREE.Vector3(),
+          normal: new THREE.Vector3(0, 0, 1), surface: 'leather', limb })
+        this.anchors.set('weaponTip', { node: weapon, point: tip,
+          normal: new THREE.Vector3(0, bow ? 0 : 1, bow ? 1 : 0), surface: 'metal', limb })
       }
       if (plan.offhand !== 'none') {
         const offhandColor = plan.offhand === 'bundle' ? leather : cloth
+        const offhandSurface = plan.offhand === 'bundle' ? 'leather' : 'metal'
         const lease = cachedLease(cache, `illustrated-offhand:${plan.offhand}:${offhandColor}`, () =>
-          paint(buildOffhand(plan.offhand), offhandColor,
-            plan.offhand === 'bundle' ? 'leather' : 'metal'))
+          paint(buildOffhand(plan.offhand), offhandColor, offhandSurface))
         const shield = new THREE.Mesh(lease.geometry, material)
         shield.name = 'shield'
         shield.position.set(-0.82, 1.85 - a.waistY, 0.08)
@@ -342,7 +407,7 @@ export class CharacterPresenter {
         a.torsoPivot.add(shield)
         this.bind(shield, lease)
         this.anchors.set('shield', { node: shield, point: new THREE.Vector3(0, 0, 0.08),
-          normal: new THREE.Vector3(0, 0, 1), surface: 'metal', limb: 'leftArm' })
+          normal: new THREE.Vector3(0, 0, 1), surface: offhandSurface, limb: 'leftArm' })
       }
       if (plan.boundArms) {
         this.ropeLease = cachedLease(cache, 'wrist-rope', buildWristRope)
@@ -363,7 +428,7 @@ export class CharacterPresenter {
       throw error
     }
     this.anchors.set('torso', { node: torso, point: new THREE.Vector3(0, 0.12, p.chestDepth * 0.5),
-      normal: new THREE.Vector3(0, 0, 1), surface: plan.faction === 'guard' ? 'metal' : 'cloth', limb: null })
+      normal: new THREE.Vector3(0, 0, 1), surface: chestSurface, limb: null })
     this.anchors.set('head', { node: head, point: new THREE.Vector3(0, 0, 0.175),
       normal: new THREE.Vector3(0, 0, 1), surface: 'skin', limb: null })
     for (const name of LIMBS) {
@@ -371,8 +436,9 @@ export class CharacterPresenter {
       if (node) this.anchors.set(name, { node, point: new THREE.Vector3(0, -0.25, 0.13),
         normal: new THREE.Vector3(0, 0, 1), surface: 'cloth', limb: name })
     }
-    this.anchors.set('weapon', { node: weapon, point: new THREE.Vector3(0, 0.65, 0),
-      normal: new THREE.Vector3(0, 0, 1), surface: 'metal', limb: plan.mainHand === 'right' ? 'rightArm' : 'leftArm' })
+    if (plan.armed) this.anchors.set('weapon', { node: weapon, point: new THREE.Vector3(0, 0.65, 0),
+      normal: new THREE.Vector3(0, 0, 1), surface: plan.weapon === 'bow' ? 'leather' : 'metal',
+      limb: plan.mainHand === 'right' ? 'rightArm' : 'leftArm' })
     this.root.userData.rig = this.rig
     this.root.userData.characterPlan = plan
     PRESENTERS.set(this.root, this)
@@ -394,7 +460,14 @@ export class CharacterPresenter {
   private bodyLease(level: CharacterVisualLevel): ArtGeometryLease {
     const detail = this.detailLevel(level)
     const key = `${CHARACTER_ART_REVISION}:${JSON.stringify(this.plan)}:${detail}`
-    return cachedLease(this.cache, key, () => {
+    const retained = this.recentBodies.get(key)
+    if (retained) {
+      const lease = cachedLease(this.cache, key, () => { throw new Error('Retained character geometry was lost') })
+      this.recentBodies.delete(key)
+      this.recentBodies.set(key, retained)
+      return lease
+    }
+    const lease = cachedLease(this.cache, key, () => {
       const geometries: THREE.BufferGeometry[] = []
       try {
         for (const part of this.parts) {
@@ -429,6 +502,24 @@ export class CharacterPresenter {
         for (const geometry of geometries) geometry.dispose()
       }
     })
+    try {
+      this.recentBodies.set(key, cachedLease(this.cache, key, () => {
+        throw new Error('Newly acquired character geometry was lost')
+      }))
+      if (this.recentBodies.size > BODY_GEOMETRY_RETENTION) {
+        const oldest = this.recentBodies.keys().next().value
+        if (oldest === undefined) throw new Error('Character geometry retention is inconsistent')
+        const previous = this.recentBodies.get(oldest)!
+        this.recentBodies.delete(oldest)
+        previous.release()
+      }
+      return lease
+    } catch (error) {
+      try { lease.release() } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Character retention and lease cleanup failed')
+      }
+      throw error
+    }
   }
 
   updateLod(camera: THREE.PerspectiveCamera, policy: VisualQualityPolicy): void {
@@ -661,11 +752,7 @@ export class CharacterPresenter {
     body.position.y = baseBodyHeight
     if (!grounded || this.level === 'far') {
       this.pelvisOffset = 0
-      for (const foot of this.feet) {
-        foot.matrixAutoUpdate = true
-        foot.rotation.set(0, 0, 0, 'XYZ')
-        foot.scale.setScalar(1)
-      }
+      for (const foot of this.feet) this.footFrame.reset(foot)
       return
     }
     this.root.updateWorldMatrix(true, true)
@@ -710,25 +797,7 @@ export class CharacterPresenter {
       this.armTarget.normalize()
       leg.quaternion.setFromUnitVectors(this.armLocal, this.armTarget)
       knee.rotation.set(bend, 0, 0, 'XYZ')
-      knee.updateWorldMatrix(true, false)
-      this.groundPoint.set(0, -lower, 0).applyMatrix4(knee.matrixWorld)
-      const x = this.groundPoint.x, z = this.groundPoint.z
-      const dx = (sampleHeight(x + 0.12, z) - sampleHeight(x - 0.12, z)) / 0.24
-      const dz = (sampleHeight(x, z + 0.12) - sampleHeight(x, z - 0.12)) / 0.24
-      if (!Number.isFinite(dx) || !Number.isFinite(dz)) throw new Error('Character terrain normal is non-finite')
-      this.groundNormal.set(-THREE.MathUtils.clamp(dx, -0.65, 0.65), 1, -THREE.MathUtils.clamp(dz, -0.65, 0.65)).normalize()
-      this.footForward.set(0, 0, 1).transformDirection(this.root.matrixWorld)
-      this.footForward.addScaledVector(this.groundNormal, -this.footForward.dot(this.groundNormal)).normalize()
-      this.footRight.crossVectors(this.groundNormal, this.footForward).normalize()
-      const e = knee.matrixWorld.elements
-      this.footRight.multiplyScalar(Math.hypot(e[0], e[1], e[2]))
-      this.footForward.multiplyScalar(Math.hypot(e[8], e[9], e[10]))
-      this.groundNormal.multiplyScalar(Math.hypot(e[4], e[5], e[6]))
-      this.footFrame.makeBasis(this.footRight, this.groundNormal, this.footForward).setPosition(this.groundPoint)
-      this.inverse.copy(knee.matrixWorld).invert()
-      foot.matrixAutoUpdate = false
-      foot.matrix.multiplyMatrices(this.inverse, this.footFrame)
-      foot.matrixWorldNeedsUpdate = true
+      this.footFrame.apply(foot, this.root, sampleHeight)
     }
     // The pelvis adjustment carries the whole skeleton; equipment must see its final frame.
     this.syncAttachments()
@@ -765,6 +834,8 @@ export class CharacterPresenter {
       addGeometry(base.geometry, 'geometry')
       if (source.geometry !== base.geometry) addGeometry(source.geometry, 'binding-clone')
     }
+    for (const retained of this.recentBodies.values()) addGeometry(retained.geometry, 'geometry')
+    if (this.ropeLease) addGeometry(this.ropeLease.geometry, 'geometry')
     if (this.skeleton.boneMatrices) receipts.push({
       identity: this.skeleton.boneMatrices.buffer, chargedTo: 'dynamicArt', kind: 'skin',
       cpuBytes: this.skeleton.boneMatrices.byteLength, gpuBytes: null,
@@ -787,11 +858,13 @@ export class CharacterPresenter {
     this.disposed = true
     PRESENTERS.delete(this.root)
     const owners = [
+      ...[...this.recentBodies.values()].map((lease) => ({ dispose: () => lease.release() })),
       { dispose: () => this.skeleton.dispose() },
       ...this.bindings.map((binding) => ({ dispose: () => this.art.releaseRenderSource(binding) })),
     ]
     const ropeLease = this.ropeLease
     this.ropeLease = null
+    this.recentBodies.clear()
     if (ropeLease) owners.push({ dispose: () => ropeLease.release() })
     try { disposeOwnedVisualResources(owners) }
     finally {

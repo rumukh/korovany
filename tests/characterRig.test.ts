@@ -9,6 +9,7 @@ import {
   resolveCharacterPlan, characterRoles, buildIllustratedHead, buildIllustratedHeadgear,
   selectCharacterVisualLevel, validateArtGeometry,
   buildIllustratedHand,
+  type CharacterContact,
 } from '../src/game/art/index.ts'
 import { sumVisualAllocationReceipts } from '../src/game/diagnostics/VisualBudgetAccounting.ts'
 import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
@@ -233,7 +234,7 @@ test('live LOD rebinding preserves limbs, complete ranged weapons, fade and borr
     assert.equal(weapon.geometry, weaponGeometry, 'the bow/haft never disappears as a generic grip detail')
     for (const shell of outline.shells) assert.equal(shell.geometry, (shell.parent as THREE.Mesh).geometry)
     if (level === 'far') assert.ok(presenter.body.geometry.index!.count < nearTriangles)
-    assert.ok(cache.size <= 2, 'inactive full-body variants are not kept forever')
+    assert.ok(cache.size <= 3, 'at most two body templates and the complete bow are retained')
   }
   art.releaseOutline(outline); presenter.dispose(); art.dispose(); cache.dispose()
 })
@@ -375,4 +376,88 @@ test('shield cache keys include baked tint while identical bundles share one phy
   for (const p of [...guards, ...civilians]) p.dispose()
   assert.equal(cache.size, 0)
   cache.dispose(); art.dispose()
+})
+
+test('production bound-arm posing does not freeze an enhanced captive walking gait', () => {
+  const art = library(), cache = new GeometryCache()
+  const p = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('elf', 'captive', 0)), art, cache, false)
+  const pose = { stride: 0.5, attack: 0, anticipation: 0, recovery: 0, flinch: 0, stagger: 0 }
+  const engine: { animateCharacter(root: THREE.Group, animation: typeof pose): void } =
+    Object.assign(Object.create(GameEngine.prototype), { elapsed: 1.2, handOffset: new THREE.Vector3() })
+  engine.animateCharacter(p.root, pose)
+  assert.equal(p.rig.leftLeg!.rotation.x, 0.5)
+  assert.equal(p.rig.rightLeg!.rotation.x, -0.5)
+  assert.equal(p.rig.leftArm!.rotation.x, 0)
+  assert.equal(p.rig.rightArm!.rotation.x, 0)
+  p.rig.boundArms = false
+  engine.animateCharacter(p.root, pose)
+  assert.ok(Math.abs(p.rig.leftArm!.rotation.x) > 0.1)
+  assert.equal(p.rig.leftLeg!.rotation.x, 0.5)
+  p.dispose(); art.dispose(); cache.dispose()
+})
+
+test('contact surfaces match physical kit layers and weapon anchors follow the actual geometry', () => {
+  const art = library(), cache = new GeometryCache()
+  const sample: CharacterContact = { point: new THREE.Vector3(), normal: new THREE.Vector3(), surface: 'dark' }
+  for (const faction of CHARACTER_FACTIONS) for (const role of ['soldier', 'archer', 'peasant']) {
+    const plan = illustratedCharacterPlan(resolveCharacterPlan(faction, role, 0))
+    const p = createCharacterPresenter(plan, art, cache, false)
+    assert.ok(p.sampleContact('torso', sample))
+    assert.equal(sample.surface, role === 'peasant' ? 'cloth' : faction === 'guard' ? 'metal' : 'leather')
+    if (plan.armed) {
+      const weapon = p.root.getObjectByName('weapon-head') as THREE.Mesh
+      const position = weapon.geometry.getAttribute('position')
+      let maximum = -Infinity
+      for (let i = 0; i < position.count; i++) maximum = Math.max(maximum,
+        plan.weapon === 'bow' ? position.getZ(i) : position.getY(i))
+      p.rig.weapon!.rotation.set(-0.3, 0.2, 0.4)
+      p.syncAttachments()
+      p.root.updateMatrixWorld(true)
+      assert.ok(p.sampleContact('weaponTip', sample))
+      const local = p.rig.weapon!.worldToLocal(sample.point.clone())
+      assert.ok(Math.abs((plan.weapon === 'bow' ? local.z : local.y) - maximum) < 1e-5)
+      assert.ok(p.sampleContact('weaponGrip', sample))
+      assert.ok(sample.point.distanceTo(p.hands[p.rig.mainHand > 0 ? 1 : 0].getWorldPosition(new THREE.Vector3())) < 1e-10)
+      p.setAppearance({ [plan.mainHand === 'right' ? 'rightArm' : 'leftArm']: 'missing' })
+      assert.equal(p.sampleContact('weaponGrip', sample), false)
+      assert.equal(p.sampleContact('weaponTip', sample), false)
+    } else {
+      assert.equal(p.sampleContact('weapon', sample), false)
+      assert.equal(p.sampleContact('weaponGrip', sample), false)
+      assert.equal(p.sampleContact('weaponTip', sample), false)
+      assert.ok(p.sampleContact('shield', sample))
+      assert.equal(sample.surface, 'leather', 'the civilian bundle is not a metal shield')
+    }
+    p.dispose()
+  }
+  art.dispose(); cache.dispose()
+})
+
+test('a bounded two-template neighborhood reuses LOD geometry and drains every retained receipt', () => {
+  const art = library(), cache = new GeometryCache()
+  const p = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('guard', 'soldier', 0)), art, cache, false)
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200)
+  const policy = resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'balanced' })
+  const near = p.body.geometry
+  let nearDisposals = 0
+  near.addEventListener('dispose', () => { nearDisposals++ })
+  camera.position.z = 30
+  p.updateLod(camera, policy)
+  const mid = p.body.geometry
+  assert.notEqual(mid, near)
+  camera.position.z = 8
+  p.updateLod(camera, policy)
+  assert.equal(p.body.geometry, near, 'returning across the neighborhood must not rebuild the same body')
+  assert.equal(nearDisposals, 0)
+  for (const distance of [100, 30, 8, 100, 30, 8]) {
+    camera.position.z = distance
+    p.updateLod(camera, policy)
+    assert.ok(cache.size <= 4, 'two body templates plus weapon/shield bound the live cache population')
+    const usage = sumVisualAllocationReceipts(p.allocationReceipts()).dynamicArt
+    assert.ok(usage.cpuGeometryBytes >= p.geometryBytes, 'inactive retained backing stores are charged too')
+  }
+  p.dispose()
+  assert.equal(cache.size, 0)
+  assert.equal(nearDisposals, 1)
+  art.dispose()
 })

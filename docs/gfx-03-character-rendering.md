@@ -35,8 +35,11 @@ navigation, actor capacity and saved gameplay fields are not its outputs.
 
 `CreaturePresenter` batches the actual beast/fauna construction paths while
 retaining their named transforms. Beasts and deer have articulated leg segments
-and separate paws/cloven hooves; birds have independently hinged wings. Troll
-hands are excluded from ground planting. The four existing beast profiles and
+and separate paws/cloven hooves; birds have independently hinged wings and
+articulated perching feet that tuck during flight. `TerrainFootFrame` aligns
+human and animal soles through complete affine parent transforms rather than
+subtracting only knee/hip X angles. Troll hands are excluded from ground
+planting. The four existing beast profiles and
 wildlife simulation remain unchanged.
 
 `WagonPresenter` is used by the default patrol, rich moving event and located
@@ -57,11 +60,18 @@ shadow participation reduce separately; the engine's outline setting, distance
 and corpse policy remain required. LOD selection also runs for manual diagnostic
 frames after the camera is resolved.
 
-Animal topology/distance refinement and the full dynamic-art fleet performance
-gate remain work in progress. A one-body draw does not itself establish a tier
-pass, and the whole-frame draw budget is not a character-only allowance.
+Animals use their actual body height, projected importance and the shared
+hysteresis for hero/near/mid/far participation. Far animals retain their complete
+body and animation but skip close terrain-foot sampling and ink/shadow work.
+Animal topology refinement and the full dynamic-art fleet performance gate remain
+work in progress. A one-body draw does not itself establish a tier pass, and the
+whole-frame draw budget is not a character-only allowance.
 
-Healthy humanoid batches use cache receipts. Missing limb triangles are
+Healthy humanoid batches use cache receipts. Each live rig retains at most its
+two most recently used body templates, so a return across a nearby LOD threshold
+can reuse construction work without retaining the full taxonomy. Retention has
+its own receipts, is included in known CPU accounting and is drained after
+active source bindings at teardown. Missing limb triangles are
 explicitly removed from owned derived indices; prosthetic and wound data affect
 owned color/response attributes. Bone visibility is never used as a substitute
 for removing triangles. Replacements retain these states across LOD and camera
@@ -74,7 +84,9 @@ rejected-lease catch. Release outlines and source bindings before skeleton/bone
 textures. The source rig owns the skeleton; ink and depth borrow it.
 
 Creature source-part geometry is still retained by the engine's bounded geometry
-cache until teardown; the compiled body has its own release receipt. This is not
+cache until teardown; the rig retains one canonical body receipt independently
+of its binding's active geometry. Rejected material/binding preparation releases
+only that builder's receipts and restores its original named meshes. This is not
 yet a claim that every animal LOD/cache allocation settles at its final budget.
 
 ## Contact and accounting interfaces
@@ -84,8 +96,11 @@ corresponding production presenter, or `undefined` for a different/legacy root.
 Their `sampleContact(part, target)` methods use cached named transforms and fill
 caller-owned `point`/`normal` vectors plus physical `surface`. Hidden/missing or
 absent parts return `false`. Normals use the world inverse transpose.
-`CharacterContactPart` covers torso, head, four limbs, weapon and shield;
-not every creature has every part.
+`CharacterContactPart` covers torso, head, four limbs, weapon, weaponGrip,
+weaponTip and shield. Grip origins follow the actual hand frame; tip positions
+are read from the generated weapon geometry rather than one constant for every
+weapon. Torso surface identity follows the actual armor/cloth layer, including
+unarmored civilians. Not every creature has every part.
 
 These presentation anchors do not replace an already-resolved projectile
 intersection or `DamageResult.direction`. GFX-05 owns impact routing and effects.
