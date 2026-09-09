@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { hasOutlineNormals } from './GeometryKit.ts'
+import { SURFACE_WEATHER_RESPONSE } from './AtmospherePresentation.ts'
 import {
   artShaderKey,
   getArtMaterialFeatures,
@@ -348,6 +349,11 @@ export class StylizedArtLibrary {
       uArtWind: { value: new THREE.Vector3() },
       uArtSky: { value: new THREE.Color(0xa6bfd2) },
       uArtHorizon: { value: new THREE.Color(0xb8c5cf) },
+      uArtWeather: { value: new THREE.Vector3() },
+      uArtAtmosphereEnabled: { value: 0 },
+      uArtAtmosphereColor: { value: new THREE.Color() },
+      uArtAtmosphereDepth: { value: new THREE.Vector4(32, 77, 132, 0.3) },
+      uArtAtmosphereHeight: { value: new THREE.Vector4(0, 0.06, 0.45, 1) },
     }
     this.rampTextureInternal = createRampTexture(options.ramp ?? DEFAULT_RAMP)
     this.sharedUniforms = {
@@ -425,10 +431,25 @@ export class StylizedArtLibrary {
     if (reference.environment) {
       validateArtEnvironment(reference.environment)
       const environment = reference.environment
+      if (!this.enhanced && (environment.atmosphere || environment.wetness > 0)) {
+        throw new Error('Atmosphere and wetness require the explicit enhanced library')
+      }
       this.environmentUniforms.uArtTime.value = environment.timeSeconds
       this.environmentUniforms.uArtWind.value.set(environment.windX, environment.windZ, environment.windStrength)
       this.environmentUniforms.uArtSky.value.copy(environment.skyColor)
       this.environmentUniforms.uArtHorizon.value.copy(environment.horizonColor)
+      this.environmentUniforms.uArtWeather.value.set(environment.rain, environment.snow, environment.wetness)
+      const atmosphere = environment.atmosphere
+      this.environmentUniforms.uArtAtmosphereEnabled.value = atmosphere ? 1 : 0
+      if (atmosphere) {
+        this.environmentUniforms.uArtAtmosphereColor.value.copy(atmosphere.color)
+        this.environmentUniforms.uArtAtmosphereDepth.value.set(
+          atmosphere.nearDepth, atmosphere.midDepth, atmosphere.farDepth, atmosphere.midOpacity,
+        )
+        this.environmentUniforms.uArtAtmosphereHeight.value.set(
+          atmosphere.baseHeight, atmosphere.heightFalloff, atmosphere.heightInfluence, atmosphere.farOpacity,
+        )
+      }
     }
     if (reference.keyIntensity !== undefined) {
       this.sharedUniforms.uBandReference.value = Math.max(0.15, reference.keyIntensity)
@@ -450,7 +471,6 @@ export class StylizedArtLibrary {
     const metersPerRepeat = options.metersPerRepeat ?? 1
     if (!['uv', 'world-xz', 'world-triplanar'].includes(mapping) ||
         !Number.isFinite(metersPerRepeat) || metersPerRepeat <= 0) throw new RangeError('Invalid art material mapping')
-    if (options.attributes?.weatherResponse) throw new Error('Weather-response shading is reserved for GFX-05 and is not installed')
     if (!this.enhanced && (mapping !== 'uv' || Object.values(options.attributes ?? {}).some(Boolean))) {
       throw new Error('Enhanced art attributes require the explicit enhanced library')
     }
@@ -478,6 +498,8 @@ export class StylizedArtLibrary {
       bandStrength: (options.bandStrength ?? preset.bandStrength) * (this.enhanced ? 0.65 : 1),
       rimStrength: (options.rimStrength ?? preset.rimStrength) * (this.enhanced ? 0.45 : 1),
       rimPower: preset.rimPower,
+      weatherResponse: SURFACE_WEATHER_RESPONSE[options.surface],
+      weatherEligible: options.surface !== 'water' && options.surface !== 'glow' && !options.attributes?.water,
     }, { enhanced: this.enhanced, attributes: options.attributes ?? {}, mapping, metersPerRepeat })
     return material
   }
@@ -533,6 +555,8 @@ export class StylizedArtLibrary {
       bandStrength: (options.bandStrength ?? preset.bandStrength) * (this.enhanced ? 0.65 : 1),
       rimStrength: (options.rimStrength ?? preset.rimStrength) * (this.enhanced ? 0.45 : 1),
       rimPower: preset.rimPower,
+      weatherResponse: SURFACE_WEATHER_RESPONSE[surface],
+      weatherEligible: surface !== 'water' && surface !== 'glow',
     }, { enhanced: this.enhanced, attributes: {}, mapping: 'uv', metersPerRepeat: 1 })
     // A repaired clone already has a compiled program; force the recompile.
     material.needsUpdate = true

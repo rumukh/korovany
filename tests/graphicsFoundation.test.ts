@@ -168,7 +168,9 @@ test('packed response and wind are explicit layouts; source, skin-aware ink and 
     skyColor: new THREE.Color(0xc2d1df), horizonColor: new THREE.Color(0xb0a38d),
   } })
   assert.equal(depth.uniforms.uArtTime.value, 10)
-  assert.throws(() => art.createMaterial({ color: 0xffffff, surface: 'cloth', attributes: { weatherResponse: true } }), /not installed/)
+  const weatherMaterial = art.createMaterial({ color: 0xffffff, surface: 'cloth', attributes: { weatherResponse: true } })
+  assert.match(compile(weatherMaterial).fragmentShader, /kWeatherResponse/)
+  weatherMaterial.dispose()
   const invalid = geometry.clone()
   invalid.deleteAttribute(ART_SURFACE_ATTRIBUTE)
   assert.throws(() => validateArtGeometry(source, invalid), /artSurfaceResponse/)

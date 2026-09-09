@@ -55,6 +55,11 @@ export interface ArtEnvironmentUniforms {
   uArtWind: { value: THREE.Vector3 }
   uArtSky: { value: THREE.Color }
   uArtHorizon: { value: THREE.Color }
+  uArtWeather: { value: THREE.Vector3 }
+  uArtAtmosphereEnabled: { value: number }
+  uArtAtmosphereColor: { value: THREE.Color }
+  uArtAtmosphereDepth: { value: THREE.Vector4 }
+  uArtAtmosphereHeight: { value: THREE.Vector4 }
 }
 
 const MATERIAL_FEATURES = new WeakMap<THREE.Material, ArtShaderFeatures>()
@@ -96,16 +101,33 @@ export function artShaderKey(features: ArtShaderFeatures): string {
 
 export function validateArtEnvironment(environment: StylizedPresentationEnvironment): void {
   const { timeSeconds, windX, windZ, windStrength, rain, snow, wetness, skyColor, horizonColor } = environment
-  if (![timeSeconds, windX, windZ, windStrength, rain, snow, wetness,
-    skyColor.r, skyColor.g, skyColor.b, horizonColor.r, horizonColor.g, horizonColor.b].every(Number.isFinite) ||
+  if (!Number.isFinite(timeSeconds) || !Number.isFinite(windX) || !Number.isFinite(windZ) ||
+      !Number.isFinite(windStrength) || !unitValue(rain) || !unitValue(snow) || !unitValue(wetness) ||
+      !finiteColor(skyColor) || !finiteColor(horizonColor) ||
       timeSeconds < 0 || windStrength < 0 || windStrength > 2 ||
-      [rain, snow, wetness].some((value) => value < 0 || value > 1) ||
       (Math.hypot(windX, windZ) > 1e-6 && Math.abs(Math.hypot(windX, windZ) - 1) > 1e-4)) {
     throw new RangeError('Invalid stylized presentation environment')
   }
-  if (environment.atmosphere !== undefined || wetness !== 0) {
-    throw new Error('Enhanced atmosphere/wetness shading is not installed; GFX-05 owns these effects')
+  const atmosphere = environment.atmosphere
+  if (atmosphere && (!finiteColor(atmosphere.color) ||
+      !Number.isFinite(atmosphere.nearDepth) || !Number.isFinite(atmosphere.midDepth) ||
+      !Number.isFinite(atmosphere.farDepth) || atmosphere.nearDepth < 0 ||
+      atmosphere.midDepth <= atmosphere.nearDepth || atmosphere.farDepth <= atmosphere.midDepth ||
+      !unitValue(atmosphere.midOpacity) || !unitValue(atmosphere.farOpacity) ||
+      atmosphere.farOpacity < atmosphere.midOpacity || !Number.isFinite(atmosphere.baseHeight) ||
+      !Number.isFinite(atmosphere.heightFalloff) || atmosphere.heightFalloff < 0 ||
+      !unitValue(atmosphere.heightInfluence))) {
+    throw new RangeError('Invalid stylized atmosphere profile')
   }
+}
+
+function unitValue(value: number): boolean {
+  return Number.isFinite(value) && value >= 0 && value <= 1
+}
+
+function finiteColor(color: THREE.Color): boolean {
+  return Number.isFinite(color.r) && Number.isFinite(color.g) && Number.isFinite(color.b) &&
+    color.r >= 0 && color.g >= 0 && color.b >= 0
 }
 
 export function validateArtGeometry(
@@ -145,10 +167,11 @@ export function validateArtGeometry(
     const layout = features.attributes
     if (layout.surfaceResponse) check(ART_SURFACE_ATTRIBUTE, 4, 0, 1)
     if (layout.weatherResponse) {
-      check(ART_WEATHER_ATTRIBUTE, 2, 0, 0.3)
+      // Float32 attributes round decimal ceilings (notably 0.3) slightly upward.
+      check(ART_WEATHER_ATTRIBUTE, 2, 0, Math.fround(0.3))
       const response = geometry.getAttribute(ART_WEATHER_ATTRIBUTE)
       for (let index = 0; index < count; index++) {
-        if (response.getY(index) > 0.22) throw new RangeError('Art weather value response exceeds its bound')
+        if (response.getY(index) > Math.fround(0.22)) throw new RangeError('Art weather value response exceeds its bound')
       }
     }
     if (layout.wind) check(ART_WIND_ATTRIBUTE, 2, 0, 1)

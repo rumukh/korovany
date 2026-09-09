@@ -124,6 +124,18 @@ export type {
   ArtRenderSourceOptions,
 } from './ArtRenderBinding.ts'
 
+export {
+  ATMOSPHERE_REVISION,
+  SURFACE_WEATHER_RESPONSE,
+  WEATHER_ROUGHNESS_DROP_MAX,
+  WEATHER_ROUGHNESS_FLOOR,
+  WEATHER_VALUE_DROP_MAX,
+  createAtmospherePresentation,
+  sampleAtmosphereOpacity,
+  weatheredRoughness,
+  writeAtmospherePresentation,
+} from './AtmospherePresentation.ts'
+
 // --- CharacterKit ---
 // Wave 2A. People, animals and the caravan: the taxonomy plus every builder that
 // turns it into geometry. See `docs/09-npc-and-creature-models-spec.md`.
