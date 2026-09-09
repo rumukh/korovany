@@ -37,7 +37,7 @@ const option = (name, fallback) => {
   return value
 }
 if (flag('help')) {
-  console.log('node scripts\\graphics-run.mjs --out ABSOLUTE_DIRECTORY [--chrome PATH] [--cases all|id,id] [--profile] [--timing-only] [--warmup 120] [--frames 300] [--repeat 2] [--width 1920 --height 1080 --dpr 1] [--no-post] [--native-route] [--lifecycle] [--headed]')
+  console.log('node scripts\\graphics-run.mjs --out ABSOLUTE_DIRECTORY [--chrome PATH] [--cases all|id,id] [--profile] [--timing-only] [--warmup 120] [--frames 300] [--repeat 2] [--width 1920 --height 1080 --dpr 1] [--visual-mode legacy|enhanced] [--quality high|balanced|low] [--no-post] [--no-aa] [--no-ink] [--no-weather] [--reduced-motion] [--foundation] [--motion] [--native-route] [--lifecycle] [--headed]')
   console.log('Requires npm run build. A dedicated loopback server and disposable Chrome profile are owned and stopped by this command. Mobile dimensions are layout evidence, not a mobile-device benchmark.')
   process.exit(0)
 }
@@ -51,6 +51,10 @@ const dpr = Number(option('dpr', '1'))
 const repeat = Number(option('repeat', '2'))
 const warmupFrames = Number(option('warmup', '120'))
 const sampleFrames = Number(option('frames', '300'))
+const visualMode = option('visual-mode', 'legacy')
+const quality = option('quality', 'high')
+if (!['legacy', 'enhanced'].includes(visualMode) || !['high', 'balanced', 'low'].includes(quality)) throw new Error('Invalid visual policy selection')
+if ((flag('no-aa') || flag('foundation')) && visualMode !== 'enhanced') throw new Error('Foundation/AA comparison requires explicit enhanced preview')
 for (const [name, value, min, max] of [['width', width, 320, 7680], ['height', height, 320, 4320],
   ['repeat', repeat, 1, 5], ['warmup', warmupFrames, 1, 3600], ['frames', sampleFrames, 1, 7200]]) {
   if (!Number.isInteger(value) || value < min || value > max) throw new Error(`Invalid --${name}`)
@@ -109,6 +113,8 @@ const manifest = {
     repeatTolerance: { maxChangedPixels: 16, maxChannelDelta: 2 },
     profile: 'Active production requestAnimationFrame updates; default 0.05 s simulation clamp and hit stop unchanged. Warm-up and samples separate; no per-frame screenshot/readback.',
     memory: 'Observed WebGL storage bytes, not measured resident VRAM. Default framebuffer, implicit extension MSAA and driver/swapchain exclusions separately reported.',
+    requestedVisualMode: visualMode, requestedQuality: quality, diagnosticNoAA: flag('no-aa'),
+    foundationFixture: flag('foundation'), reducedMotion: flag('reduced-motion'),
   },
   cases: [], complete: false,
 }
@@ -142,9 +148,10 @@ async function launchFixture(fixture) {
     ? JSON.parse(await readFile(join(root, 'scripts', 'graphics', 'saves', fixture.save), 'utf8')) : {}
   const preferences = {
     'korovany-theme': 'dark', 'korovany-music-muted': 'true', 'korovany-sfx-volume': '0',
-    'korovany-bloom': String(!flag('no-post')), 'korovany-ink-outlines': 'true',
-    'korovany-weather': 'true', 'korovany-foliage': 'high', 'korovany-dynamic-day-night': 'true',
+    'korovany-bloom': String(!flag('no-post')), 'korovany-ink-outlines': String(!flag('no-ink')),
+    'korovany-weather': String(!flag('no-weather')), 'korovany-foliage': 'high', 'korovany-dynamic-day-night': 'true',
     'korovany-screen-shake': 'true',
+    'korovany-visual-preferences': JSON.stringify({ version: 1, visualMode, visualQuality: quality, hudMode: 'full' }),
   }
   await browser.send('Page.navigate', { url: origin })
   await browser.waitFor(`location.origin === ${JSON.stringify(origin)} && document.readyState === 'complete'`)
@@ -166,6 +173,10 @@ async function launchFixture(fixture) {
   const before = await browser.evaluate('window.__korovanyGraphics.snapshot()')
   const world = await browser.evaluate('window.__korovanyGraphics.world()')
   const stage = fixtureStage(fixture, world, reference, before)
+  if (flag('foundation')) stage.foundation = true
+  if (flag('no-aa')) stage.antialiasing = 'none'
+  if (flag('foundation') || flag('no-aa')) stage.label =
+    `${fixture.id}: explicit enhanced ${flag('foundation') ? 'procedural skin/wind/ink/depth fixture' : ''} ${flag('no-aa') ? 'post-AA disabled comparison' : ''}; original gameplay stats unchanged.`
   await browser.evaluate(`window.__korovanyGraphics.stage(${JSON.stringify(stage)})`)
   if (fixture.target) {
     const candidates = []
@@ -290,6 +301,9 @@ try {
   manifest.processes = { serverPid: server.child.pid, chromePid: chromeProcess.child.pid, debugPort }
   await writeFile(join(out, 'manifest.json'), JSON.stringify(manifest, null, 2))
   await browser.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: dpr, mobile: false })
+  await browser.send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-reduced-motion', value: flag('reduced-motion') ? 'reduce' : 'no-preference' }],
+  })
   for (const fixture of fixtures) {
     const result = { id: fixture.id, definition: fixture, captures: [] }
     manifest.cases.push(result)
@@ -327,6 +341,16 @@ try {
         await writeFile(join(out, `${fixture.id}-profile.json`), JSON.stringify(report))
         const after = await browser.screenshot(join(out, `${fixture.id}-active-end.png`))
         result.activeEnd = { file: `${fixture.id}-active-end.png`, sha256: sha256(after) }
+      }
+      if (repetition === repeat && flag('motion')) {
+        result.motion = { mode: 'labelled manual production steps after capture/profile; not RAF timing', frames: [] }
+        for (let frame = 0; frame < 12; frame++) {
+          await browser.evaluate('window.__korovanyGraphics.step(5, 1/60)')
+          const file = `${fixture.id}-motion-${String(frame).padStart(2, '0')}.png`
+          const bytes = await browser.screenshot(join(out, file))
+          result.motion.frames.push({ file, sha256: sha256(bytes),
+            snapshot: await browser.evaluate('window.__korovanyGraphics.snapshot().runtime') })
+        }
       }
       const errors = browser.events.filter((event) => event.method === 'Runtime.exceptionThrown'
         || (event.method === 'Runtime.consoleAPICalled' && event.params.type === 'error'))

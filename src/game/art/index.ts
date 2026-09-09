@@ -102,6 +102,27 @@ export {
 
 export { hasStylizedShader } from './stylizedShader.ts'
 
+export {
+  ART_SHADOW_ATTRIBUTE,
+  ART_SURFACE_ATTRIBUTE,
+  ART_VISIBILITY_ATTRIBUTE,
+  ART_WATER_ATTRIBUTE,
+  ART_WEATHER_ATTRIBUTE,
+  ART_WIND_ATTRIBUTE,
+  artGeometryBytes,
+  validateArtGeometry,
+  type ArtAttributeLayout,
+  type ArtMapping,
+  type StylizedAtmosphere,
+  type StylizedPresentationEnvironment,
+} from './ArtPresentation.ts'
+
+export type {
+  ArtGeometryLease,
+  ArtRenderSourceBinding,
+  ArtRenderSourceOptions,
+} from './ArtRenderBinding.ts'
+
 // --- CharacterKit ---
 // Wave 2A. People, animals and the caravan: the taxonomy plus every builder that
 // turns it into geometry. See `docs/09-npc-and-creature-models-spec.md`.

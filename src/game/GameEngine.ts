@@ -2,7 +2,9 @@ import * as THREE from 'three'
 import { AudioDirector, type SoundCue, type SoundRequest } from './AudioDirector'
 import { musicIntensityRank, type MusicIntensity, type MusicOutcome } from './MusicScore.ts'
 import { BloomPostProcessor } from './BloomPostProcessor'
-import { resolveVisualPolicy, type VisualQualityPolicy } from './visualPolicy.ts'
+import { resolveVisualPolicy, resolveVisualViewport, type VisualQualityPolicy } from './visualPolicy.ts'
+import { CameraVisibility } from './cameraVisibility.ts'
+import { stabilizeKeyLight } from './world/WorldPresentationRegistry.ts'
 import type { FoliageQuality, VisualSettings } from './visualSettings.ts'
 import { GraphicsClock, graphicsClockOptions } from './diagnostics/GraphicsClock.ts'
 import {
@@ -11,6 +13,7 @@ import {
   type GraphicsFixtureStage,
 } from './diagnostics/GraphicsDiagnostics.ts'
 import { graphicsSceneEvidence } from './diagnostics/GraphicsSceneEvidence.ts'
+import { GraphicsFoundationFixture } from './diagnostics/GraphicsFoundationFixture.ts'
 import {
   AchievementTracker,
   type AchievementSummary,
@@ -21,6 +24,7 @@ import {
   CHARACTER_DETAIL_DISTANCE,
   CHARACTER_VARIANTS,
   GeometryCache,
+  hasStylizedShader,
   StylizedArtLibrary,
   WAGON_RIG,
   artVariation,
@@ -75,6 +79,7 @@ import {
   type BeastKind,
   type BeastPosture,
   type CharacterPlan,
+  type ArtRenderSourceBinding,
   type OutlineBinding,
   type OutlineKind,
 } from './art/index.ts'
@@ -1983,6 +1988,7 @@ export class GameEngine {
   private visualPolicy: VisualQualityPolicy
   private readonly graphicsClock: GraphicsClock | null
   private graphicsDiagnostics: GraphicsDiagnostics | null = null
+  private graphicsFoundation: GraphicsFoundationFixture | null = null
   private readonly artLibrary: StylizedArtLibrary
   /** Shape cache shared by every actor: one buffer per shape, not one per actor. */
   private readonly artGeometry = new GeometryCache()
@@ -2086,6 +2092,17 @@ export class GameEngine {
   private readonly snowDriftPhases = new Float32Array(SNOW_FLAKE_COUNT)
   private readonly cameraRaycaster = new THREE.Raycaster()
   private readonly cameraFollowPosition = new THREE.Vector3()
+  private readonly cameraVisibility = new CameraVisibility()
+  private readonly enhancedTarget = new THREE.Vector3()
+  private readonly enhancedDesired = new THREE.Vector3()
+  private readonly enhancedPosition = new THREE.Vector3()
+  private readonly enhancedShaken = new THREE.Vector3()
+  private readonly drawingBufferSize = new THREE.Vector2()
+  private readonly nearSubjects: THREE.Vector3[] = []
+  private readonly nearSubjectPool = Array.from({ length: 8 }, () => new THREE.Vector3())
+  private readonly playerRenderBindings: ArtRenderSourceBinding[] = []
+  private readonly cameraTerrain = (x: number, z: number): number => this.groundHeightAt(x, z)
+  private rendererDevicePixelRatio = 1
   private readonly cameraObstacles: THREE.Object3D[] = []
   private readonly foliageOccluders: FoliageOccluder[] = []
   private readonly wind: WindState = {
@@ -2393,6 +2410,7 @@ export class GameEngine {
     // its surfaces from the same material family as everything else, and handing it
     // this instance is what keeps one screenshot looking like one drawing.
     this.artLibrary = new StylizedArtLibrary({
+      enhanced: this.visualPolicy.mode === 'enhanced',
       ink: {
         player: mix(this.palette.bg, this.palette.accent, 0.16),
         enemy: mix(this.palette.bg, this.palette.danger, 0.16),
@@ -2404,6 +2422,7 @@ export class GameEngine {
       keyIntensity: 2.65,
     })
     this.generatedWorld = new GeneratedWorldRuntime(this.scene, blueprint, {
+      visualPolicy: this.visualPolicy,
       decorationDensity: this.visualPolicy.density.foliage,
       art: this.artLibrary,
       outlineDressing: this.inkOutlinesEnabled,
@@ -2656,7 +2675,12 @@ export class GameEngine {
     const instrumented = this.graphicsClock ? createInstrumentedGraphicsRenderer() : null
     this.renderer = instrumented?.renderer ??
       new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
+    this.rendererDevicePixelRatio = window.devicePixelRatio
+    if (this.visualPolicy.mode === 'enhanced') {
+      const viewport = resolveVisualViewport(this.visualPolicy.render,
+        this.container.clientWidth, this.container.clientHeight, window.devicePixelRatio)
+      this.renderer.setDrawingBufferSize(viewport.cssWidth, viewport.cssHeight, viewport.pixelRatio)
+    } else this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
     this.renderer.shadowMap.enabled = true
     // `PCFSoftShadowMap` is deprecated in three 0.185: `WebGLShadowMap.render`
     // overwrites it with `PCFShadowMap` on the first frame and warns. Naming the
@@ -2676,6 +2700,7 @@ export class GameEngine {
       this.scene,
       this.camera,
       this.visualPolicy.post.enabled,
+      { enhanced: this.visualPolicy.mode === 'enhanced', antialiasing: this.visualPolicy.post.antialiasing },
     )
 
     this.backgroundColor.copy(this.palette.worldSky)
@@ -2707,7 +2732,17 @@ export class GameEngine {
     }
     this.scene.add(this.player)
     this.applySavedBodyAppearance()
-    this.playerOutline = this.registerOutline(this.player, 'player')
+    this.playerOutline = this.registerOutline(this.player, this.visualPolicy.mode === 'enhanced' ? 'structural' : 'player')
+    if (this.visualPolicy.camera.foregroundFade) {
+      const sources: THREE.Mesh[] = []
+      this.player.traverse((object) => {
+        if (!(object instanceof THREE.Mesh) || StylizedArtLibrary.isOutlineShell(object) ||
+            !StylizedArtLibrary.isOpaque(object.material)) return
+        const materials = Array.isArray(object.material) ? object.material : [object.material]
+        if (materials.every(hasStylizedShader)) sources.push(object)
+      })
+      for (const source of sources) this.playerRenderBindings.push(this.artLibrary.bindRenderSource(source, { visibility: true }))
+    }
     this.lastZone = this.zoneAtPosition(this.player.position.x, this.player.position.z)
     this.audio.setMusicContext({
       faction: this.faction,
@@ -2757,7 +2792,8 @@ export class GameEngine {
     this.updateWeather(0)
     this.updateAtmosphere(0)
     this.resolveCharacterOverlaps(this.player.position, PLAYER_COLLIDER_RADIUS)
-    this.collectCameraObstacles(this.scene.children.slice(worldRootIndex))
+    if (this.generatedWorld.legacySight) this.generatedWorld.collectLegacySightSources(this.cameraObstacles)
+    else this.collectCameraObstacles(this.scene.children.slice(worldRootIndex))
     this.initializeLootPool()
     this.restoreGeneratedLoot(restoredDirector)
     this.caravan = this.createCaravan()
@@ -2933,6 +2969,7 @@ export class GameEngine {
       attempt(() => document.exitPointerLock())
     }
     attempt(() => this.generatedWorld.dispose())
+    attempt(() => this.graphicsFoundation?.dispose())
     // Before the sweep, not during it. A shell borrows its source's geometry,
     // material and instance matrix, so the traversal below would either skip it or
     // free buffers the source still owns; `releaseOutline` is the only path that
@@ -2949,6 +2986,9 @@ export class GameEngine {
     this.interactableOutlineBindings.forEach((entry) =>
       attempt(() => this.artLibrary.releaseOutline(entry.binding)),
     )
+    for (const binding of this.playerRenderBindings.splice(0)) {
+      attempt(() => this.artLibrary.releaseRenderSource(binding))
+    }
     const geometries = new Set<THREE.BufferGeometry>()
     const materials = new Set<THREE.Material>()
     this.scene.traverse((object) => {
@@ -2986,6 +3026,7 @@ export class GameEngine {
       }
     })
     attempt(() => this.postProcessor.dispose())
+    attempt(() => this.sun.shadow.dispose())
     attempt(() => this.artGeometry.dispose())
     attempt(() => this.artLibrary.dispose())
     attempt(() => this.renderer.dispose())
@@ -3075,7 +3116,7 @@ export class GameEngine {
   private updateVisualPolicy(settings: Partial<VisualSettings>): void {
     this.visualPolicy = resolveVisualPolicy(
       { ...this.visualPolicy.preferences, ...settings },
-      { reducedMotion: this.reducedMotion },
+      { reducedMotion: this.reducedMotion, enhancedAvailable: this.visualPolicy.previewAvailable },
     )
   }
 
@@ -3795,6 +3836,7 @@ export class GameEngine {
     const gameplayDelta = Math.min(Math.max(0, elapsedDelta - stopped), 0.05)
     if (!this.paused && !this.ended && gameplayDelta > 0) this.update(gameplayDelta)
     if (!this.paused && !this.ended) this.updateCameraEffects(visualDelta)
+    this.graphicsFoundation?.update(this.graphicsClock?.timeSeconds ?? this.elapsed)
     this.updateCamera(visualDelta, false)
     this.audioListenerRight.setFromMatrixColumn(this.camera.matrixWorld, 0)
     this.audio.setListener(this.camera.position, this.audioListenerRight)
@@ -3939,6 +3981,18 @@ export class GameEngine {
       region: this.generatedWorld.currentRegionId ?? null,
       visibleRegions: [...this.generatedWorld.regions.getVisibleRegionIds()].sort(),
       simulatedRegions: [...this.generatedWorld.regions.getSimulatedRegionIds()].sort(),
+      ...(this.visualPolicy.mode === 'enhanced' ? {
+        cameraPresentation: {
+          x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z,
+          boom: this.cameraVisibility.debug.boomDistance, shoulder: this.cameraVisibility.debug.shoulder,
+          overflows: this.cameraVisibility.debug.overflows,
+          trianglesTested: this.cameraVisibility.debug.triangleTests,
+          fadedInstances: this.generatedWorld.presentation!.debug.fadedInstances,
+          worldShadowDraws: this.generatedWorld.presentation!.debug.shadowDraws,
+          worldShadowInstances: this.generatedWorld.presentation!.debug.shadowInstances,
+          worldShadowTriangles: this.generatedWorld.presentation!.debug.shadowTriangles,
+        },
+      } : {}),
     }
   }
 
@@ -3956,6 +4010,12 @@ export class GameEngine {
         ink: this.inkOutlinesEnabled, foliage: this.groundFoliageQuality, cameraEffects: this.screenShakeEnabled,
         reducedMotion: this.reducedMotion, visualNightFactor: this.nightFactor },
       visualPolicy: this.getVisualPolicy(),
+      rendering: {
+        camera: { ...this.cameraVisibility.debug },
+        bindings: this.artLibrary.getRenderBindingStats(),
+        post: this.postProcessor.getDebugSnapshot(),
+        foundationFixture: this.graphicsFoundation?.snapshot() ?? null,
+      },
       simulationWeather: { target: this.weatherTarget, weights: { ...this.weatherWeights } },
       rngStates: Object.fromEntries(Object.entries(this.generatedRngStreams).map(([key, stream]) => [key, stream.getState()])),
       actors: this.actors.map((actor) => ({
@@ -4001,6 +4061,15 @@ export class GameEngine {
       this.cameraPitch = request.camera.pitch
     }
     if (request.crowd) this.stageGraphicsCrowd()
+    if (request.foundation !== undefined) {
+      this.graphicsFoundation?.dispose()
+      this.graphicsFoundation = request.foundation
+        ? new GraphicsFoundationFixture(this.artLibrary, this.scene, this.player.position, this.cameraYaw) : null
+    }
+    if (request.antialiasing !== undefined) {
+      if (this.visualPolicy.mode !== 'enhanced') throw new Error('AA comparison requires enhanced preview')
+      this.postProcessor.setAntialiasing(request.antialiasing)
+    }
   }
 
   private stageGraphicsCrowd(): void {
@@ -4485,7 +4554,8 @@ export class GameEngine {
     if (signature === this.generatedCameraRegionSignature) return
     this.generatedCameraRegionSignature = signature
     this.cameraObstacles.length = 0
-    this.collectCameraObstacles(
+    if (this.generatedWorld.legacySight) this.generatedWorld.collectLegacySightSources(this.cameraObstacles)
+    else this.collectCameraObstacles(
       this.scene.children.filter(
         (child) => child.userData.generatedWorldRegionId !== undefined,
       ),
@@ -9584,6 +9654,7 @@ export class GameEngine {
       this.scorchedMaterialAdopted = true
     }
     for (const siteId of this.chronicleRazedSiteIds) {
+      this.generatedWorld.setLegacySightRazedSite(siteId, this.scorchedMaterial.side)
       const group = this.scene.getObjectByName(`site:${siteId}`)
       if (!group || group.userData.chronicleRazed === true) continue
       group.userData.chronicleRazed = true
@@ -13222,7 +13293,8 @@ export class GameEngine {
       this.player.position.z + 24,
     )
     this.sun.castShadow = true
-    this.sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE)
+    const mapSize = this.visualPolicy.mode === 'enhanced' ? this.visualPolicy.shadows.mapSize : SHADOW_MAP_SIZE
+    this.sun.shadow.mapSize.set(mapSize, mapSize)
     // The old frustum was +/-85 at the same map size. Nothing outside the streamed
     // neighbourhood ever needed a shadow, and halving the extent roughly triples the
     // texel density on the things that do.
@@ -13679,6 +13751,16 @@ export class GameEngine {
     rimColor: THREE.Color | undefined
     shadowTint: THREE.Color | undefined
   } = { keyIntensity: 0, rimColor: undefined, shadowTint: undefined }
+  private readonly readableSky = new THREE.Color(0xc2d1df)
+  private readonly readableGround = new THREE.Color(0xb0a38d)
+  private readonly artEnvironment = {
+    timeSeconds: 0, windX: 0, windZ: 0, windStrength: 0, rain: 0, snow: 0, wetness: 0,
+    skyColor: new THREE.Color(), horizonColor: new THREE.Color(),
+  }
+  private readonly enhancedLightingRef = {
+    keyIntensity: 0, rimColor: new THREE.Color(), shadowTint: new THREE.Color(),
+    environment: this.artEnvironment,
+  }
 
   /**
    * Anchors the lighting ramp to the light rig as it actually ends up.
@@ -13691,6 +13773,29 @@ export class GameEngine {
    * the first time round.
    */
   private updateStylizedLighting(): void {
+    if (this.visualPolicy.mode === 'enhanced') {
+      this.hemisphere.color.lerp(this.readableSky, 0.6)
+      this.hemisphere.groundColor.lerp(this.readableGround, 0.65)
+      this.hemisphere.intensity *= 1.3
+      this.rimLight.intensity *= 0.65
+      const environment = this.artEnvironment
+      environment.timeSeconds = this.graphicsClock?.timeSeconds ?? this.elapsed
+      environment.windX = this.wind.direction.x
+      environment.windZ = this.wind.direction.y
+      environment.windStrength = this.reducedMotion ? 0 : this.wind.strength
+      environment.rain = this.weatherEnabled ? (this.graphicsClock?.weather ?? this.weatherWeights).rain : 0
+      environment.snow = this.weatherEnabled ? (this.graphicsClock?.weather ?? this.weatherWeights).snow : 0
+      environment.skyColor.copy(this.hemisphere.color)
+      environment.horizonColor.copy(this.fog.color)
+      this.enhancedLightingRef.keyIntensity = this.sun.intensity + this.rimLight.intensity * 0.4
+      this.enhancedLightingRef.rimColor.copy(this.rimLight.color)
+      this.enhancedLightingRef.shadowTint.copy(this.hemisphere.groundColor)
+      this.artLibrary.setLightingReference(this.enhancedLightingRef)
+      this.postProcessor.setGradeTints(this.fog.color, this.sun.color)
+      this.enhancedTarget.copy(this.player.position).y += 1.5
+      stabilizeKeyLight(this.sun, this.enhancedTarget, Math.max(24, this.visualPolicy.shadows.worldDistance + 6))
+      return
+    }
     const reference = this.stylizedLightingRef
     reference.keyIntensity = this.sun.intensity + this.rimLight.intensity * 0.4
     reference.rimColor = this.rimLight.color
@@ -14510,7 +14615,7 @@ export class GameEngine {
         color: shade,
         surface: 'metal',
         emissive: base,
-        emissiveIntensity: 0.07,
+        emissiveIntensity: this.visualPolicy.mode === 'enhanced' ? 0 : 0.07,
       })
     }
     return this.artLibrary.acquireMaterial(`char:cloth:${plan.faction}:${String(tint)}`, {
@@ -14566,6 +14671,10 @@ export class GameEngine {
   }
 
   private characterSkinMaterial(tone: number): THREE.MeshStandardMaterial {
+    if (this.visualPolicy.mode === 'enhanced') {
+      const skin = [0xdab08e, 0xc59471, 0xad7755, 0x895c43]
+      return this.artLibrary.acquireMaterial(`char:skin:${tone}`, { color: skin[tone % skin.length], surface: 'skin' })
+    }
     // Skin has to stay light enough that a brow, a nose and a jaw still separate
     // under a helmet's shadow at night, which is where faces are lost first.
     const base = mix(this.palette.warning, this.palette.surface, 0.42)
@@ -15091,7 +15200,7 @@ export class GameEngine {
     }
     if (role === 'peasant') mesh.scale.setScalar(0.9)
     this.applyActorVisualVariation(mesh, allegiance, role, identity)
-    const outlineBinding = this.registerOutline(mesh, 'enemy')
+    const outlineBinding = this.registerOutline(mesh, this.visualPolicy.mode === 'enhanced' ? 'structural' : 'enemy')
     mesh.position.set(x, this.groundHeightAt(x, z), z)
     this.resolveCharacterOverlaps(mesh.position, this.actorColliderRadiusForRole(role))
     mesh.position.y = this.groundHeightAt(mesh.position.x, mesh.position.z)
@@ -16698,6 +16807,10 @@ export class GameEngine {
   }
 
   private updateCamera(delta: number, immediate: boolean): void {
+    if (this.visualPolicy.camera.collision === 'volume') {
+      this.updateEnhancedCamera(delta, immediate)
+      return
+    }
     const forward = new THREE.Vector3(Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw))
     const target = this.player.position.clone().add(new THREE.Vector3(0, 1.65, 0))
     const desired = target
@@ -16736,6 +16849,57 @@ export class GameEngine {
     this.updateCameraFov(delta, immediate)
     this.updatePlayerOutlineVisibility()
     this.updateFoliageOcclusion(target, this.camera.position, immediate)
+  }
+
+  private updateEnhancedCamera(delta: number, immediate: boolean): void {
+    const presentation = this.generatedWorld.presentation
+    if (!presentation) throw new Error('Enhanced camera requires its presentation registry')
+    if (this.rendererDevicePixelRatio !== window.devicePixelRatio) this.resize()
+    this.updateCameraFov(delta, immediate)
+    this.enhancedTarget.copy(this.player.position).y += 1.65
+    this.enhancedDesired.set(
+      this.enhancedTarget.x - Math.sin(this.cameraYaw) * 10,
+      this.enhancedTarget.y + 5.2 + this.cameraPitch * 3.5,
+      this.enhancedTarget.z + Math.cos(this.cameraYaw) * 10,
+    )
+    presentation.prepare(this.camera)
+    this.cameraVisibility.resolve(this.enhancedTarget, this.enhancedDesired, this.camera,
+      delta, immediate, presentation, this.cameraTerrain, this.enhancedPosition)
+    let roll = 0
+    if (this.visualPolicy.cameraEffects && this.trauma > 0 && !this.paused && !this.ended) {
+      const phase = this.shakeClock * SHAKE_FREQUENCY
+      const magnitude = this.trauma * this.trauma
+      const x = Math.sin(phase) * Math.sin(phase * 0.47 + 1.8) * SHAKE_POSITION * magnitude
+      this.enhancedShaken.copy(this.enhancedPosition)
+      this.enhancedShaken.x += Math.cos(this.cameraYaw) * x
+      this.enhancedShaken.z += Math.sin(this.cameraYaw) * x
+      this.enhancedShaken.y += Math.sin(phase * 1.31 + 0.7) * Math.sin(phase * 0.61 + 2.4) * SHAKE_POSITION * 0.65 * magnitude
+      this.cameraVisibility.constrain(this.enhancedTarget, this.enhancedShaken,
+        presentation, this.cameraTerrain, this.enhancedPosition)
+      roll = Math.sin(phase * 0.83 + 2.1) * Math.sin(phase * 0.37 + 0.4) * SHAKE_ROLL * magnitude
+    }
+    this.camera.position.copy(this.enhancedPosition)
+    this.camera.lookAt(this.enhancedTarget)
+    if (roll !== 0) this.camera.rotateZ(roll)
+    this.camera.updateMatrixWorld()
+    this.cameraFollowPosition.copy(this.enhancedPosition)
+    this.updatePlayerOutlineVisibility()
+    for (const binding of this.playerRenderBindings) {
+      this.artLibrary.setSourceVisibility(binding, this.cameraVisibility.debug.playerVisibility)
+    }
+    this.nearSubjects.length = 0
+    this.nearSubjects.push(this.nearSubjectPool[0].copy(this.enhancedTarget))
+    for (const actor of this.actors) {
+      if (this.nearSubjects.length >= this.nearSubjectPool.length) break
+      if (!actor.alive || actor.mesh.position.distanceToSquared(this.player.position) > 7 * 7 ||
+          !this.isSquadTargetVisible(actor, false)) continue
+      const point = this.nearSubjectPool[this.nearSubjects.length].copy(actor.mesh.position)
+      point.y += 1.35
+      this.nearSubjects.push(point)
+    }
+    presentation.prepare(this.camera)
+    presentation.updateForeground(this.camera.position, this.nearSubjects, delta, immediate)
+    presentation.updateShadows(this.player.position, this.visualPolicy.shadows)
   }
 
   private resolveCameraPosition(target: THREE.Vector3, desired: THREE.Vector3): THREE.Vector3 {
@@ -16834,8 +16998,15 @@ export class GameEngine {
   private resize(): void {
     const width = Math.max(1, this.container.clientWidth)
     const height = Math.max(1, this.container.clientHeight)
-    this.renderer.setSize(width, height, false)
+    if (this.visualPolicy.mode === 'enhanced') {
+      const viewport = resolveVisualViewport(this.visualPolicy.render, width, height, window.devicePixelRatio)
+      this.rendererDevicePixelRatio = window.devicePixelRatio
+      this.renderer.setDrawingBufferSize(viewport.cssWidth, viewport.cssHeight, viewport.pixelRatio)
+    } else this.renderer.setSize(width, height, false)
     this.postProcessor.setSize(width, height)
+    this.renderer.getDrawingBufferSize(this.drawingBufferSize)
+    this.artLibrary.setViewport(this.drawingBufferSize.x, this.drawingBufferSize.y,
+      this.visualPolicy.ink.minPixels, this.visualPolicy.ink.maxPixels)
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
   }

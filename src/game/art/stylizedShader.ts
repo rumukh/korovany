@@ -1,4 +1,10 @@
 import * as THREE from 'three'
+import {
+  artShaderKey,
+  setArtMaterialFeatures,
+  type ArtEnvironmentUniforms,
+  type ArtShaderFeatures,
+} from './ArtPresentation.ts'
 
 /**
  * GLSL injected into `MeshStandardMaterial` to get the marching-comic look.
@@ -32,6 +38,7 @@ export interface StylizedSharedUniforms {
   uShadowTint: { value: THREE.Color }
   /** Strength of the world-space "paper tooth" luminance wobble. */
   uPaperStrength: { value: number }
+  environment?: ArtEnvironmentUniforms
 }
 
 export interface OutlineSharedUniforms {
@@ -39,6 +46,8 @@ export interface OutlineSharedUniforms {
   uOutlineThickness: { value: number }
   uOutlineMinDepth: { value: number }
   uOutlineMaxDepth: { value: number }
+  uOutlineViewport?: { value: THREE.Vector2 }
+  uOutlinePixels?: { value: THREE.Vector2 }
 }
 
 const STYLIZED_VERTEX_HEADER = /* glsl */ `
@@ -152,11 +161,15 @@ attribute vec3 outlineNormal;
  * any shape, and clamping the depth term makes distant props fade to a hairline
  * rather than staying boldly outlined at the horizon.
  */
-function outlineProjection(smooth: boolean): string {
+function outlineProjection(smooth: boolean, enhanced = false, wind = false): string {
   const source = smooth ? 'outlineNormal' : 'normal'
   return /* glsl */ `
 vec4 mvPosition = vec4( transformed, 1.0 );
 vec3 kOutlineNormal = ${source};
+#ifdef USE_SKINNING
+  kOutlineNormal = vec4( skinMatrix * vec4( kOutlineNormal, 0.0 ) ).xyz;
+#endif
+${wind ? 'kOutlineNormal = kArtDeformNormal( kOutlineNormal );' : ''}
 #ifdef USE_INSTANCING
   mvPosition = instanceMatrix * mvPosition;
   // Not mat3( instanceMatrix ) * normal: that is the vertex transform, not the
@@ -178,9 +191,143 @@ kOutlineViewNormal = kOutlineLength > 1e-6
   ? kOutlineViewNormal / kOutlineLength
   : vec3( 0.0, 0.0, 1.0 );
 float kOutlineDepth = clamp( -mvPosition.z, uOutlineMinDepth, uOutlineMaxDepth );
+${enhanced ? `
+vec4 kClip = projectionMatrix * mvPosition;
+vec2 kDirection = ( projectionMatrix * vec4( kOutlineViewNormal, 0.0 ) ).xy;
+float kDirectionLength = length( kDirection );
+float kProjectedSize = projectionMatrix[ 1 ][ 1 ] * length( transformed ) *
+  length( modelViewMatrix[ 1 ].xyz ) * uOutlineViewport.y / max( -mvPosition.z, 0.1 );
+float kPixels = mix( uOutlinePixels.x, uOutlinePixels.y, smoothstep( 10.0, 100.0, kProjectedSize ) );
+kPixels *= min( 1.0, uOutlineMaxDepth / max( -mvPosition.z, 0.1 ) );
+kClip.xy += ( kDirection / max( kDirectionLength, 1e-6 ) ) *
+  ( 2.0 * kPixels / uOutlineViewport ) * kClip.w;
+gl_Position = kClip;
+` : `
 mvPosition.xyz += kOutlineViewNormal * ( uOutlineThickness * kOutlineDepth );
 gl_Position = projectionMatrix * mvPosition;
+`}
 `
+}
+
+const ART_WIND_VERTEX = /* glsl */ `
+attribute vec2 artWind;
+uniform float uArtTime;
+uniform vec3 uArtWind;
+vec3 kArtWindShear() {
+  mat4 basis = modelMatrix;
+  #ifdef USE_INSTANCING
+    basis = basis * instanceMatrix;
+  #endif
+  float phase = artWind.y * 6.2831853 + basis[ 3 ].x * 0.17 + basis[ 3 ].z * 0.11;
+  float bend = sin( uArtTime * 1.8 + phase ) * artWind.x * uArtWind.z * 0.035;
+  vec3 worldBend = vec3( uArtWind.x, 0.0, uArtWind.y ) * bend;
+  mat3 axes = mat3( basis );
+  return vec3( dot( axes[ 0 ], worldBend ), dot( axes[ 1 ], worldBend ), dot( axes[ 2 ], worldBend ) )
+    / max( vec3( dot( axes[ 0 ], axes[ 0 ] ), dot( axes[ 1 ], axes[ 1 ] ), dot( axes[ 2 ], axes[ 2 ] ) ), vec3( 1e-8 ) );
+}
+vec3 kArtDeformNormal( vec3 n ) {
+  vec3 shear = kArtWindShear();
+  return normalize( vec3( n.x, ( n.y - shear.x * n.x - shear.z * n.z ) / max( 1.0 + shear.y, 0.1 ), n.z ) );
+}
+`
+
+const ART_DITHER_FRAGMENT = /* glsl */ `
+varying float vArtVisibility;
+float kArtDither( vec2 pixel ) {
+  vec2 p = mod( floor( pixel ), 4.0 );
+  vec2 low = mod( p, 2.0 );
+  vec2 high = floor( p / 2.0 );
+  float a = 2.0 * low.x + 3.0 * low.y - 4.0 * low.x * low.y;
+  float b = 2.0 * high.x + 3.0 * high.y - 4.0 * high.x * high.y;
+  return ( 4.0 * a + b + 0.5 ) / 16.0;
+}
+`
+
+type CompileShader = Parameters<THREE.Material['onBeforeCompile']>[0]
+
+function applyArtVertex(
+  shader: CompileShader,
+  features: ArtShaderFeatures,
+  environment: ArtEnvironmentUniforms | undefined,
+  depth: boolean,
+): void {
+  if (environment) Object.assign(shader.uniforms, environment)
+  if (features.attributes.wind) {
+    if (!environment) throw new Error('Wind shader requires the shared presentation environment')
+    shader.vertexShader = ART_WIND_VERTEX + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace('#include <skinning_vertex>',
+      '#include <skinning_vertex>\ntransformed += kArtWindShear() * transformed.y;')
+    if (!depth) shader.vertexShader = shader.vertexShader.replace('#include <skinnormal_vertex>',
+      '#include <skinnormal_vertex>\nobjectNormal = kArtDeformNormal( objectNormal );')
+  }
+  if (!depth && features.enhanced) {
+    shader.vertexShader = 'attribute float artVisibility;\nvarying float vArtVisibility;\n' + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\nvArtVisibility = artVisibility;')
+    shader.fragmentShader = ART_DITHER_FRAGMENT + shader.fragmentShader
+    shader.fragmentShader = shader.fragmentShader.replace('#include <clipping_planes_fragment>',
+      '#include <clipping_planes_fragment>\nif ( vArtVisibility < kArtDither( gl_FragCoord.xy ) ) discard;')
+  }
+  if (depth && features.shadowParticipation) {
+    shader.vertexShader = 'attribute float artShadowParticipation;\nvarying float vArtShadowParticipation;\n' + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\nvArtShadowParticipation = artShadowParticipation;')
+    shader.fragmentShader = 'varying float vArtShadowParticipation;\n' + shader.fragmentShader
+    shader.fragmentShader = shader.fragmentShader.replace('#include <clipping_planes_fragment>',
+      '#include <clipping_planes_fragment>\nif ( vArtShadowParticipation < 0.5 ) discard;')
+  }
+}
+
+function applySurfaceFeatures(shader: CompileShader, features: ArtShaderFeatures): void {
+  if (features.attributes.surfaceResponse) {
+    shader.vertexShader = 'attribute vec4 artSurfaceResponse;\nvarying vec4 vArtSurface;\n' + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\nvArtSurface = artSurfaceResponse;')
+    shader.fragmentShader = 'varying vec4 vArtSurface;\n' + shader.fragmentShader
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = vArtSurface.x;')
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = vArtSurface.y;')
+      .replace('mix( 1.0, kScale, uBandStrength )', 'mix( 1.0, kScale, vArtSurface.z * 0.65 )')
+      .replace('* uRimStrength;', '* vArtSurface.w * 0.45;')
+  }
+  if (features.mapping !== 'uv') {
+    shader.uniforms.uArtMeters = { value: features.metersPerRepeat }
+    shader.fragmentShader = 'uniform float uArtMeters;\n' + shader.fragmentShader
+    const sample = features.mapping === 'world-xz'
+      ? 'texture2D( map, vStylizedWorld.xz / uArtMeters )'
+      : `( texture2D( map, vStylizedWorld.yz / uArtMeters ) * kWeights.x
+        + texture2D( map, vStylizedWorld.xz / uArtMeters ) * kWeights.y
+        + texture2D( map, vStylizedWorld.xy / uArtMeters ) * kWeights.z )`
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
+      #ifdef USE_MAP
+        ${features.mapping === 'world-triplanar' ? `
+          vec3 kMappingNormal = normalize( cross( dFdx( vStylizedWorld ), dFdy( vStylizedWorld ) ) );
+          vec3 kWeights = pow( abs( kMappingNormal ), vec3( 4.0 ) );
+          kWeights /= max( dot( kWeights, vec3( 1.0 ) ), 1e-5 );` : ''}
+        diffuseColor *= ${sample};
+      #endif
+    `)
+  }
+  if (features.attributes.water) {
+    shader.vertexShader = 'attribute vec4 artWater;\nvarying vec4 vArtWater;\n' + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\nvArtWater = artWater;')
+    shader.fragmentShader = `varying vec4 vArtWater;
+      uniform float uArtTime;
+      uniform vec3 uArtSky;
+      uniform vec3 uArtHorizon;
+      ` + shader.fragmentShader
+    shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `
+      float kFlow = sin( dot( vStylizedWorld.xz, vArtWater.xy ) * 2.5 - uArtTime * 1.2 );
+      float kReflect = pow( 1.0 - clamp( dot( normalize( vViewPosition ), normal ), 0.0, 1.0 ), 3.0 );
+      vec3 kSky = mix( uArtHorizon, uArtSky, clamp( normal.y, 0.0, 1.0 ) );
+      outgoingLight = mix( outgoingLight * ( 1.0 + kFlow * 0.025 ),
+        kSky, kReflect * 0.16 );
+      outgoingLight *= 1.0 - min( vArtWater.w, 6.0 ) * 0.018;
+      outgoingLight += diffuseColor.rgb * vArtWater.z * 0.035;
+      #include <opaque_fragment>
+    `)
+  }
 }
 
 function requireInjectionPoint(source: string, token: string, label: string): void {
@@ -245,8 +392,10 @@ export function applyStylizedShader(
     rimStrength: number
     rimPower: number
   },
+  features?: ArtShaderFeatures,
 ): void {
   markStylizedShader(material)
+  if (features) setArtMaterialFeatures(material, features)
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uToonRamp = shared.uToonRamp
     shader.uniforms.uBandReference = shared.uBandReference
@@ -274,6 +423,10 @@ export function applyStylizedShader(
       '#include <lights_fragment_end>',
       STYLIZED_FRAGMENT_BODY,
     )
+    if (features) {
+      applyArtVertex(shader, features, shared.environment, false)
+      applySurfaceFeatures(shader, features)
+    }
   }
   // three's default cache key is `onBeforeCompile.toString()`, so it would in fact
   // already separate stylized materials from stock ones and collapse ours onto a
@@ -284,7 +437,8 @@ export function applyStylizedShader(
   // source and differ only by a captured boolean; keying on the text alone would
   // collide them onto one program and render one of the two with the wrong shader.
   // Do not delete this on the grounds that three already handles it.
-  material.customProgramCacheKey = () => STYLIZED_PROGRAM_KEY
+  material.customProgramCacheKey = () => features?.enhanced
+    ? `${STYLIZED_PROGRAM_KEY}:${artShaderKey(features)}` : STYLIZED_PROGRAM_KEY
   material.needsUpdate = true
 }
 
@@ -293,27 +447,46 @@ export function applyOutlineShader(
   material: THREE.MeshBasicMaterial,
   shared: OutlineSharedUniforms,
   smooth: boolean,
+  features?: ArtShaderFeatures,
+  environment?: ArtEnvironmentUniforms,
 ): void {
+  if (features) setArtMaterialFeatures(material, features)
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uOutlineThickness = shared.uOutlineThickness
     shader.uniforms.uOutlineMinDepth = shared.uOutlineMinDepth
     shader.uniforms.uOutlineMaxDepth = shared.uOutlineMaxDepth
+    if (features?.enhanced) {
+      shader.uniforms.uOutlineViewport = shared.uOutlineViewport!
+      shader.uniforms.uOutlinePixels = shared.uOutlinePixels!
+    }
 
     requireInjectionPoint(shader.vertexShader, '#include <project_vertex>', 'outline')
 
     shader.vertexShader =
       OUTLINE_VERTEX_HEADER +
+      (features?.enhanced ? 'uniform vec2 uOutlineViewport;\nuniform vec2 uOutlinePixels;\n' : '') +
       (smooth ? OUTLINE_SMOOTH_ATTRIBUTE : '') +
       shader.vertexShader
     shader.vertexShader = shader.vertexShader.replace(
       '#include <project_vertex>',
-      outlineProjection(smooth),
+      outlineProjection(smooth, features?.enhanced, features?.attributes.wind),
     )
+    if (features) applyArtVertex(shader, features, environment, false)
   }
   // Captured, not written out: `smooth` never appears in this closure's source
   // text, so three's default `onBeforeCompile.toString()` key cannot tell the two
   // variants apart and would hand both the same compiled program.
   material.customProgramCacheKey = () =>
-    `${OUTLINE_PROGRAM_KEY}:${smooth ? 'smooth' : 'flat'}`
+    `${OUTLINE_PROGRAM_KEY}:${smooth ? 'smooth' : 'flat'}${features?.enhanced ? `:${artShaderKey(features)}` : ''}`
   material.needsUpdate = true
+}
+
+export function applyArtDepthShader(
+  material: THREE.MeshDepthMaterial,
+  features: ArtShaderFeatures,
+  environment: ArtEnvironmentUniforms,
+): void {
+  setArtMaterialFeatures(material, features)
+  material.onBeforeCompile = (shader) => applyArtVertex(shader, features, environment, true)
+  material.customProgramCacheKey = () => `korovany-depth:${artShaderKey(features)}`
 }

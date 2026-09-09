@@ -125,7 +125,7 @@ test('every applyOutline call site is one whose binding is released', () => {
 
   assert.deepEqual(
     sites.sort(),
-    ['GameEngine.ts', 'GeneratedWorldRuntime.ts'],
+    ['GameEngine.ts', 'GeneratedWorldRuntime.ts', 'GraphicsFoundationFixture.ts'],
     'a new file calls applyOutline. Route the binding into a collection that destroy() '
     + 'releases, or release it in that file\'s own teardown, then add the file here',
   )

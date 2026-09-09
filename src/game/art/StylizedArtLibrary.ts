@@ -1,6 +1,23 @@
 import * as THREE from 'three'
 import { hasOutlineNormals } from './GeometryKit.ts'
 import {
+  artShaderKey,
+  getArtMaterialFeatures,
+  validateArtEnvironment,
+  type ArtAttributeLayout,
+  type ArtEnvironmentUniforms,
+  type ArtMapping,
+  type ArtShaderFeatures,
+  type StylizedPresentationEnvironment,
+} from './ArtPresentation.ts'
+import {
+  ArtRenderBindings,
+  type ArtGeometryLease,
+  type ArtRenderSourceBinding,
+  type ArtRenderSourceOptions,
+} from './ArtRenderBinding.ts'
+import {
+  applyArtDepthShader,
   applyOutlineShader,
   applyStylizedShader,
   hasStylizedShader,
@@ -43,7 +60,7 @@ export type StylizedSurface =
   | 'water'
   | 'glow'
 
-export type OutlineKind = 'player' | 'enemy' | 'interactable' | 'landmark'
+export type OutlineKind = 'player' | 'enemy' | 'interactable' | 'landmark' | 'structural'
 
 export interface StylizedInkPalette {
   player: THREE.ColorRepresentation
@@ -54,6 +71,7 @@ export interface StylizedInkPalette {
 
 export interface StylizedArtLibraryOptions {
   ink: StylizedInkPalette
+  enhanced?: boolean
   /** Rim colour. Normally the sky colour of the current day/night keyframe. */
   rimColor?: THREE.ColorRepresentation
   /** Ambient tint applied where a surface is unlit. */
@@ -86,6 +104,9 @@ export interface StylizedMaterialOptions {
   bandStrength?: number
   rimStrength?: number
   name?: string
+  mapping?: ArtMapping
+  metersPerRepeat?: number
+  attributes?: ArtAttributeLayout
 }
 
 export interface OutlineOptions {
@@ -303,6 +324,10 @@ function isOpaqueMaterial(material: THREE.Material | THREE.Material[]): boolean 
 }
 
 export class StylizedArtLibrary {
+  readonly enhanced: boolean
+  private readonly environmentUniforms: ArtEnvironmentUniforms
+  private readonly renderBindings = new ArtRenderBindings(markOwned, disposeShell)
+  private readonly depthMaterials = new Map<string, THREE.MeshDepthMaterial>()
   private readonly rampTextureInternal: THREE.DataTexture
   private readonly sharedUniforms: StylizedSharedUniforms
   private readonly outlineUniforms: OutlineSharedUniforms
@@ -315,6 +340,13 @@ export class StylizedArtLibrary {
   private disposed = false
 
   constructor(options: StylizedArtLibraryOptions) {
+    this.enhanced = options.enhanced === true
+    this.environmentUniforms = {
+      uArtTime: { value: 0 },
+      uArtWind: { value: new THREE.Vector3() },
+      uArtSky: { value: new THREE.Color(0xa6bfd2) },
+      uArtHorizon: { value: new THREE.Color(0xb8c5cf) },
+    }
     this.rampTextureInternal = createRampTexture(options.ramp ?? DEFAULT_RAMP)
     this.sharedUniforms = {
       uToonRamp: { value: this.rampTextureInternal },
@@ -326,7 +358,8 @@ export class StylizedArtLibrary {
           new THREE.Color(),
         ),
       },
-      uPaperStrength: { value: options.paperStrength ?? 0.05 },
+      uPaperStrength: { value: options.paperStrength ?? (this.enhanced ? 0.022 : 0.05) },
+      environment: this.environmentUniforms,
     }
     this.outlineUniforms = {
       // Screen width of the ink works out to `thickness * height / (2 tan(fov/2))`
@@ -335,12 +368,15 @@ export class StylizedArtLibrary {
       uOutlineThickness: { value: options.outlineThickness ?? 0.0042 },
       uOutlineMinDepth: { value: 2 },
       uOutlineMaxDepth: { value: 42 },
+      uOutlineViewport: { value: new THREE.Vector2(1, 1) },
+      uOutlinePixels: { value: new THREE.Vector2(0.65, 1.25) },
     }
     this.inkColors = {
       player: createInkColor(options.ink.player),
       enemy: createInkColor(options.ink.enemy),
       interactable: createInkColor(options.ink.interactable),
       landmark: createInkColor(options.ink.landmark),
+      structural: new THREE.Color(0x161b20),
     }
   }
 
@@ -366,6 +402,7 @@ export class StylizedArtLibrary {
     return (
       this.sharedMaterials.size +
       this.outlineMaterials.size +
+      this.depthMaterials.size +
       this.contactShadowMaterials.size
     )
   }
@@ -381,19 +418,40 @@ export class StylizedArtLibrary {
     keyIntensity?: number
     rimColor?: THREE.Color
     shadowTint?: THREE.Color
+    environment?: StylizedPresentationEnvironment
   }): void {
+    if (reference.environment) {
+      validateArtEnvironment(reference.environment)
+      const environment = reference.environment
+      this.environmentUniforms.uArtTime.value = environment.timeSeconds
+      this.environmentUniforms.uArtWind.value.set(environment.windX, environment.windZ, environment.windStrength)
+      this.environmentUniforms.uArtSky.value.copy(environment.skyColor)
+      this.environmentUniforms.uArtHorizon.value.copy(environment.horizonColor)
+    }
     if (reference.keyIntensity !== undefined) {
       this.sharedUniforms.uBandReference.value = Math.max(0.15, reference.keyIntensity)
     }
     if (reference.rimColor) this.sharedUniforms.uRimColor.value.copy(reference.rimColor)
     if (reference.shadowTint) {
       writeShadowTint(reference.shadowTint, this.sharedUniforms.uShadowTint.value)
+      if (this.enhanced) {
+        const tint = this.sharedUniforms.uShadowTint.value
+        tint.setRGB((tint.r + 1) * 0.5, (tint.g + 1) * 0.5, (tint.b + 1) * 0.5)
+      }
     }
   }
 
   /** Creates a **caller-owned** stylized material. */
   createMaterial(options: StylizedMaterialOptions): THREE.MeshStandardMaterial {
     this.assertActive('create a material')
+    const mapping = options.mapping ?? 'uv'
+    const metersPerRepeat = options.metersPerRepeat ?? 1
+    if (!['uv', 'world-xz', 'world-triplanar'].includes(mapping) ||
+        !Number.isFinite(metersPerRepeat) || metersPerRepeat <= 0) throw new RangeError('Invalid art material mapping')
+    if (options.attributes?.weatherResponse) throw new Error('Weather-response shading is reserved for GFX-05 and is not installed')
+    if (!this.enhanced && (mapping !== 'uv' || Object.values(options.attributes ?? {}).some(Boolean))) {
+      throw new Error('Enhanced art attributes require the explicit enhanced library')
+    }
     const preset = SURFACE_PRESETS[options.surface]
     const material = new THREE.MeshStandardMaterial({
       color: options.color,
@@ -415,10 +473,10 @@ export class StylizedArtLibrary {
     // string while losing the shader entirely. Ask `hasStylizedShader(material)`.
     material.userData.stylizedSurfacePreset = options.surface
     applyStylizedShader(material, this.sharedUniforms, {
-      bandStrength: options.bandStrength ?? preset.bandStrength,
-      rimStrength: options.rimStrength ?? preset.rimStrength,
+      bandStrength: (options.bandStrength ?? preset.bandStrength) * (this.enhanced ? 0.65 : 1),
+      rimStrength: (options.rimStrength ?? preset.rimStrength) * (this.enhanced ? 0.45 : 1),
       rimPower: preset.rimPower,
-    })
+    }, { enhanced: this.enhanced, attributes: options.attributes ?? {}, mapping, metersPerRepeat })
     return material
   }
 
@@ -437,6 +495,7 @@ export class StylizedArtLibrary {
     }
     const existing = this.sharedMaterials.get(key)
     if (existing) return existing
+    if (this.enhanced && this.sharedMaterials.size >= 128) throw new Error('Enhanced shared material budget exceeded')
     const material = this.createMaterial({ ...options, name: options.name ?? key })
     markOwned(material)
     this.sharedMaterials.set(key, material)
@@ -469,25 +528,30 @@ export class StylizedArtLibrary {
     const preset = SURFACE_PRESETS[surface]
     material.userData.stylizedSurfacePreset = surface
     applyStylizedShader(material, this.sharedUniforms, {
-      bandStrength: options.bandStrength ?? preset.bandStrength,
-      rimStrength: options.rimStrength ?? preset.rimStrength,
+      bandStrength: (options.bandStrength ?? preset.bandStrength) * (this.enhanced ? 0.65 : 1),
+      rimStrength: (options.rimStrength ?? preset.rimStrength) * (this.enhanced ? 0.45 : 1),
       rimPower: preset.rimPower,
-    })
+    }, { enhanced: this.enhanced, attributes: {}, mapping: 'uv', metersPerRepeat: 1 })
     // A repaired clone already has a compiled program; force the recompile.
     material.needsUpdate = true
     return material
   }
 
-  getOutlineMaterial(kind: OutlineKind, smooth: boolean): THREE.MeshBasicMaterial {
+  getOutlineMaterial(kind: OutlineKind, smooth: boolean, sourceFeatures?: ArtShaderFeatures): THREE.MeshBasicMaterial {
     // Without this guard a post-dispose call would repopulate the cleared map
     // with a fresh library-owned material, and the idempotent second `dispose()`
     // returns early — so that material would never be freed.
     this.assertActive('build an outline material')
-    const key = `${kind}:${smooth ? 'smooth' : 'flat'}`
+    const features: ArtShaderFeatures = {
+      enhanced: this.enhanced, attributes: { wind: sourceFeatures?.attributes.wind },
+      mapping: 'uv', metersPerRepeat: 1,
+    }
+    const effectiveKind = this.enhanced ? 'structural' : kind
+    const key = `${effectiveKind}:${smooth ? 'smooth' : 'flat'}${features.attributes.wind ? ':wind' : ''}`
     const existing = this.outlineMaterials.get(key)
     if (existing) return existing
     const material = new THREE.MeshBasicMaterial({
-      color: this.inkColors[kind],
+      color: this.inkColors[effectiveKind],
       side: THREE.BackSide,
       depthTest: true,
       // Writing depth is what stops a wall drawn later from painting over the ink
@@ -498,7 +562,7 @@ export class StylizedArtLibrary {
     })
     material.name = `ink-outline:${key}`
     markOwned(material)
-    applyOutlineShader(material, this.outlineUniforms, smooth)
+    applyOutlineShader(material, this.outlineUniforms, smooth, features, this.environmentUniforms)
     this.outlineMaterials.set(key, material)
     return material
   }
@@ -529,11 +593,14 @@ export class StylizedArtLibrary {
 
     const shells = sources.map((source) => {
       const smooth = hasOutlineNormals(source.geometry)
-      const material = this.getOutlineMaterial(kind, smooth)
+      const sourceMaterial = Array.isArray(source.material) ? source.material[0] : source.material
+      const material = this.getOutlineMaterial(kind, smooth, getArtMaterialFeatures(sourceMaterial))
       const shell =
         source instanceof THREE.InstancedMesh
           ? createInstancedShell(source, material)
-          : new THREE.Mesh(source.geometry, material)
+          : source instanceof THREE.SkinnedMesh
+            ? createSkinnedShell(source, material)
+            : new THREE.Mesh(source.geometry, material)
       shell.name = `${source.name || 'mesh'}-ink`
       shell.castShadow = false
       shell.receiveShadow = false
@@ -549,6 +616,7 @@ export class StylizedArtLibrary {
         }
       }
       source.add(shell)
+      this.renderBindings.attachShell(source, shell)
       return shell
     })
 
@@ -563,9 +631,70 @@ export class StylizedArtLibrary {
    * holds a vertex array object of its own, and that has to go.
    */
   releaseOutline(binding: OutlineBinding): void {
-    for (const shell of binding.shells) disposeShell(shell)
+    for (const shell of binding.shells) {
+      this.renderBindings.detachShell(shell)
+      disposeShell(shell)
+    }
     binding.shells.length = 0
   }
+
+  setViewport(width: number, height: number, minPixels: number, maxPixels: number): void {
+    if (![width, height, minPixels, maxPixels].every(Number.isFinite) ||
+        width < 1 || height < 1 || minPixels < 0 || maxPixels < minPixels) {
+      throw new RangeError('Invalid ink viewport')
+    }
+    this.outlineUniforms.uOutlineViewport!.value.set(width, height)
+    this.outlineUniforms.uOutlinePixels!.value.set(minPixels, maxPixels)
+  }
+
+  bindRenderSource(source: THREE.Mesh, options: ArtRenderSourceOptions = {}): ArtRenderSourceBinding {
+    this.assertActive('bind a render source')
+    const materials = Array.isArray(source.material) ? source.material : [source.material]
+    const wind = materials.some((material) => getArtMaterialFeatures(material)?.attributes.wind)
+    const shadow = options.shadowParticipation === true
+    let depth: THREE.MeshDepthMaterial | undefined
+    if (wind || shadow) {
+      if (source.customDepthMaterial) throw new Error('Art binding cannot replace an independently owned depth shader')
+      const features: ArtShaderFeatures = {
+        enhanced: this.enhanced, attributes: { wind }, mapping: 'uv', metersPerRepeat: 1,
+        shadowParticipation: shadow,
+      }
+      const key = artShaderKey(features)
+      depth = this.depthMaterials.get(key)
+      if (!depth) {
+        depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking })
+        applyArtDepthShader(depth, features, this.environmentUniforms)
+        markOwned(depth)
+        this.depthMaterials.set(key, depth)
+      }
+    }
+    const binding = this.renderBindings.bind(source, options, depth)
+    for (const child of source.children) {
+      if (child instanceof THREE.Mesh && StylizedArtLibrary.isOutlineShell(child)) {
+        this.renderBindings.attachShell(source, child)
+      }
+    }
+    return binding
+  }
+
+  replaceRenderSourceGeometry(binding: ArtRenderSourceBinding, lease: ArtGeometryLease): void {
+    this.assertActive('replace a render source')
+    this.renderBindings.replace(binding, lease)
+  }
+
+  refreshRenderSource(binding: ArtRenderSourceBinding): void { this.renderBindings.refresh(binding) }
+  releaseRenderSource(binding: ArtRenderSourceBinding): void { this.renderBindings.release(binding) }
+  getRenderSourceBinding(source: THREE.Mesh): ArtRenderSourceBinding | undefined { return this.renderBindings.get(source) }
+  setSourceVisibility(binding: ArtRenderSourceBinding, value: number, instance?: number): void {
+    this.renderBindings.setVisibility(binding, value, instance)
+  }
+  getSourceVisibility(binding: ArtRenderSourceBinding, instance?: number): number {
+    return this.renderBindings.getVisibility(binding, instance)
+  }
+  setShadowParticipation(binding: ArtRenderSourceBinding, value: number, instance?: number): void {
+    this.renderBindings.setShadowParticipation(binding, value, instance)
+  }
+  getRenderBindingStats(): ReturnType<ArtRenderBindings['getStats']> { return this.renderBindings.getStats() }
 
   /**
    * An ink pool that grounds an object.
@@ -640,16 +769,24 @@ export class StylizedArtLibrary {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
-    this.rampTextureInternal.dispose()
-    for (const material of this.outlineMaterials.values()) material.dispose()
+    const errors: unknown[] = []
+    const release = (resource: { dispose(): void } | null): void => {
+      try { resource?.dispose() } catch (error) { errors.push(error) }
+    }
+    release(this.renderBindings)
+    release(this.rampTextureInternal)
+    for (const material of this.outlineMaterials.values()) release(material)
     this.outlineMaterials.clear()
-    for (const material of this.sharedMaterials.values()) material.dispose()
+    for (const material of this.depthMaterials.values()) release(material)
+    this.depthMaterials.clear()
+    for (const material of this.sharedMaterials.values()) release(material)
     this.sharedMaterials.clear()
-    this.contactShadowGeometry?.dispose()
-    for (const material of this.contactShadowMaterials.values()) material.dispose()
+    release(this.contactShadowGeometry)
+    for (const material of this.contactShadowMaterials.values()) release(material)
     this.contactShadowMaterials.clear()
-    this.contactShadowTexture?.dispose()
+    release(this.contactShadowTexture)
     this.contactShadowGeometry = null
+    if (errors.length) throw new AggregateError(errors, 'Art library cleanup was incomplete')
     this.contactShadowTexture = null
   }
 
@@ -750,6 +887,17 @@ function createInstancedShell(
   return shell
 }
 
+function createSkinnedShell(source: THREE.SkinnedMesh, material: THREE.Material): THREE.SkinnedMesh {
+  const shell = new THREE.SkinnedMesh(source.geometry, material)
+  shell.skeleton = source.skeleton
+  shell.bindMode = source.bindMode
+  shell.bindMatrix.copy(source.bindMatrix)
+  shell.bindMatrixInverse.copy(source.bindMatrixInverse)
+  shell.boundingBox = source.boundingBox
+  shell.boundingSphere = source.boundingSphere
+  return shell
+}
+
 /**
  * Frees a shell's renderer state without freeing anything it borrowed.
  *
@@ -763,7 +911,11 @@ function createInstancedShell(
  * `releaseStatesOfObject` against that shared bucket and drop the binding state of
  * every non-instanced mesh in the scene, for every geometry. Do not "simplify" it.
  */
+const releasedShells = new WeakSet<THREE.Mesh>()
+
 function disposeShell(shell: THREE.Mesh): void {
+  if (releasedShells.has(shell)) return
+  releasedShells.add(shell)
   shell.removeFromParent()
   if (!(shell instanceof THREE.InstancedMesh)) return
   const own = shell.userData[SHELL_OWN_MATRIX] as THREE.InstancedBufferAttribute | undefined

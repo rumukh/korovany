@@ -15,6 +15,8 @@ export interface GraphicsFixtureStage {
   companions?: Array<{ id: string; position: GraphicsPoint }>
   camera?: { yaw: number; pitch: number }
   crowd?: boolean
+  foundation?: boolean
+  antialiasing?: 'none' | 'fxaa'
 }
 export interface GraphicsProfileOptions {
   warmupFrames: number
@@ -62,6 +64,8 @@ export function validateGraphicsStage(request: GraphicsFixtureStage): void {
     }
   }
   if (request.crowd !== undefined && typeof request.crowd !== 'boolean') throw new Error('Invalid crowd prerequisite')
+  if (request.foundation !== undefined && typeof request.foundation !== 'boolean') throw new Error('Invalid foundation prerequisite')
+  if (request.antialiasing !== undefined && !['none', 'fxaa'].includes(request.antialiasing)) throw new Error('Invalid AA comparison prerequisite')
 }
 
 export function validateGraphicsProfile(options: GraphicsProfileOptions): void {

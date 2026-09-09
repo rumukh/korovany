@@ -97,9 +97,11 @@ RNG ownership, combat windows, injuries, objectives, or saves.
 
 ## Capability activation is not visual approval
 
-At the enabling checkpoint `VISUAL_PREVIEW_AVAILABLE` is `false`: no enhanced
-consumers have been integrated, and the controls explicitly say that the image
-is still legacy even if enhanced was requested.
+At the original enabling checkpoint `VISUAL_PREVIEW_AVAILABLE` was `false`.
+The GFX-02 foundation now sets it to `true` for an explicitly requested enhanced
+preview. Legacy remains the stored default. This enables the camera, foreground,
+material/ink, bounded world-shadow and AA foundation, not the later character,
+world-content or atmosphere upgrades and not an approved hardware tier.
 
 The supported next-stage activation is a **coordinated checkpoint change** to
 this single constant in `visualPolicy.ts`, alongside the integrated GFX-02
@@ -127,8 +129,18 @@ coordinator-authorized narrow adapter at the existing engine resize call site:
 consume this helper and synchronize the sole `BloomPostProcessor`'s actual
 dimensions and pixel ratio. AA and ink consume those actual internal dimensions.
 GFX-06 retains the policy/helper and final sizing/lifecycle acceptance. No second
-resize controller is introduced. The enabling checkpoint preserves the existing
-renderer sizing path.
+resize controller is introduced. The original enabling checkpoint preserved the existing renderer sizing path.
+The GFX-02 adapter now applies the resolved CSS dimensions/pixel ratio atomically
+with `setDrawingBufferSize` on the enhanced path; legacy keeps its original
+`setPixelRatio` cap and `setSize` behavior. Both use the one existing resize
+observer. Enhanced DPR changes re-enter that same adapter.
+
+`BloomPostProcessor` uses the renderer's actual drawing-buffer dimensions, an
+explicit scene target and composer pixel ratio 1. Thus cached composer DPR cannot
+double-apply scaling after construction, resize or monitor changes. FXAA receives
+the reciprocal actual input dimensions, and ink receives that same physical
+viewport. Target sizing does not upscale the DOM/HUD or briefly allocate targets
+using the previous CSS size and a new larger DPR.
 
 `src/game/visualLifecycle.ts` exports:
 

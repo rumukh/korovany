@@ -9,7 +9,15 @@ import {
   type OutlineKind,
   type PropPart,
   type PropSurface,
+  type ArtRenderSourceBinding,
 } from '../art/index.ts'
+import type { VisualQualityPolicy } from '../visualPolicy.ts'
+import {
+  LegacySightRegistry,
+  captureLegacySightHierarchy,
+  type LegacySightBinding,
+} from './LegacySightRegistry.ts'
+import { WorldPresentationRegistry, type PresentationRegistration, type WorldPresentationDebug } from './WorldPresentationRegistry.ts'
 import {
   createProceduralSurfaceTexture,
   type ProceduralSurfacePattern,
@@ -88,6 +96,7 @@ export interface GeneratedWorldPalette {
 }
 
 export interface GeneratedWorldRuntimeOptions {
+  visualPolicy?: VisualQualityPolicy
   palette?: GeneratedWorldPalette
   terrainResolution?: number
   roadWidth?: number
@@ -131,6 +140,7 @@ export interface GeneratedRegionRootDebugSnapshot {
 
 export interface GeneratedWorldRuntimeDebugSnapshot {
   disposed: boolean
+  presentation?: WorldPresentationDebug
   currentRegionId?: RegionId
   visibleRegionIds: RegionId[]
   simulatedRegionIds: RegionId[]
@@ -213,6 +223,8 @@ interface SceneRegionRuntimeContext {
   art: StylizedArtLibrary
   props: WorldPropLibrary
   style: RuntimeStyle
+  presentation: WorldPresentationRegistry | null
+  legacySight: LegacySightRegistry | null
   /**
    * Faction start positions that fall in this region, before any collision snapping.
    *
@@ -280,6 +292,8 @@ const OUTLINE_SITE_DRAWS_MAX = 4
 const BUILDING_LOD_DISTANCE = 46
 
 export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
+  readonly presentation: WorldPresentationRegistry | null
+  readonly legacySight: LegacySightRegistry | null
   readonly mode = 'generated' as const
   readonly blueprint: WorldBlueprint
   readonly bounds: Bounds2D
@@ -320,6 +334,10 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
     this.style = normalizeStyle(options)
     this.ownsArt = options.art === undefined
     this.art = options.art ?? createDefaultArtLibrary()
+    const enhanced = options.visualPolicy?.mode === 'enhanced'
+    if (enhanced && !this.art.enhanced) throw new Error('Enhanced world requires the shared enhanced art library')
+    this.presentation = enhanced ? new WorldPresentationRegistry(this.art) : null
+    this.legacySight = enhanced ? new LegacySightRegistry(scene) : null
     this.materials = createSharedMaterials(this.art, options.palette)
     this.props = new WorldPropLibrary()
     this.terrain = new TerrainSystem(blueprint, {
@@ -354,6 +372,8 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
           art: this.art,
           props: this.props,
           style: this.style,
+          presentation: this.presentation,
+          legacySight: this.legacySight,
           startAnchors: this.startAnchorsIn(context.regionId),
           onSpawnKeepOut: (population, count) => {
             this.spawnKeepOutSkips[population] += count
@@ -754,6 +774,16 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
     for (const runtime of this.sceneRegions.values()) {
       runtime.setDecorationDensity(normalized)
     }
+
+  }
+
+  collectLegacySightSources(target: THREE.Object3D[]): void {
+    if (!this.legacySight) throw new Error('Canonical sight collection requires enhanced presentation')
+    this.legacySight.collectLegacySightSources(target)
+  }
+
+  setLegacySightRazedSite(siteId: string, side: THREE.Side): void {
+    this.legacySight?.setRazedSite(siteId, side)
   }
 
   /**
@@ -809,6 +839,7 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
       )
     return {
       disposed: this.disposed,
+      ...(this.presentation ? { presentation: { ...this.presentation.debug } } : {}),
       ...(this.currentRegionId === undefined
         ? {}
         : { currentRegionId: this.currentRegionId }),
@@ -870,6 +901,8 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
       }
     }
     this.sceneRegions.clear()
+    try { this.presentation?.dispose() } catch (error) { errors.push(error) }
+    try { this.legacySight?.dispose() } catch (error) { errors.push(error) }
     this.sitePositions.clear()
     this.collision.clear()
     this.collision.setActiveBounds([])
@@ -941,6 +974,9 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
   private readonly propAssets: PropAsset[] = []
   private readonly lods: THREE.LOD[] = []
   private readonly outlines: OutlineBinding[] = []
+  private readonly renderSources: ArtRenderSourceBinding[] = []
+  private readonly registrations: PresentationRegistration[] = []
+  private legacySightBinding: LegacySightBinding | null = null
   private readonly siteClearings: Array<{ x: number; z: number; radius: number }> = []
   private readonly cosmeticDressing: Array<{
     mesh: THREE.InstancedMesh
@@ -984,6 +1020,12 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     })
     try {
       this.build()
+      if (this.context.legacySight) {
+        this.legacySightBinding = this.context.legacySight.registerLegacySightRegion(
+          String(this.id), captureLegacySightHierarchy(this.root),
+        )
+      }
+      this.registerPresentation()
     } catch (error) {
       try {
         this.releaseResources()
@@ -1023,6 +1065,8 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       const count = Math.floor(dressing.maximumCount * normalized)
       dressing.mesh.count = count
       dressing.mesh.visible = count > 0
+      const binding = this.context.art.getRenderSourceBinding(dressing.mesh)
+      if (binding) this.context.art.refreshRenderSource(binding)
     }
   }
 
@@ -1082,8 +1126,10 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       if (this.root.parent !== this.context.scene) {
         this.context.scene.add(this.root)
       }
+      this.legacySightBinding?.setAttached(true)
       return
     }
+    this.legacySightBinding?.setAttached(false)
     if (this.root.parent) this.root.removeFromParent()
     if (next === 'unloaded') this.releaseResources()
   }
@@ -1101,6 +1147,38 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     this.createRiverDressing()
     this.createDressing()
     this.createGroundCover()
+  }
+
+  private registerPresentation(): void {
+    const registry = this.context.presentation
+    if (!registry) return
+    const sources: THREE.Mesh[] = []
+    this.root.traverse((object) => {
+      if (!(object instanceof THREE.Mesh) || StylizedArtLibrary.isOutlineShell(object) ||
+          object.userData.cameraPassThrough === true ||
+          object.userData.noComicOutline === true || object.userData.generatedTerrainRegionId !== undefined ||
+          object.geometry instanceof THREE.PlaneGeometry || !StylizedArtLibrary.isOpaque(object.material)) return
+      if (object.name.startsWith('road:') || object.name.startsWith('river:') ||
+          object.name.includes('ground-') || object.name.startsWith('river-reeds:')) return
+      sources.push(object)
+    })
+    for (let index = 0; index < sources.length; index++) {
+      const source = sources[index]
+      const kind = source.userData.presentationDressingKind
+      const foreground = kind === 'tree' || kind === 'undergrowth'
+      const binding = this.context.art.bindRenderSource(source, {
+        visibility: foreground,
+        shadowParticipation: source instanceof THREE.InstancedMesh,
+      })
+      this.renderSources.push(binding)
+      const descriptor = { id: `${this.id}:${index}:${source.name}`, regionId: String(this.id), binding }
+      this.registrations.push(registry.registerOccluder({
+        ...descriptor, kind: foreground ? 'foreground' : 'solid',
+      }))
+      if (kind !== 'undergrowth') this.registrations.push(registry.registerShadowCaster({
+        ...descriptor, priority: kind === 'tree' ? 'canopy' : kind === 'rock' ? 'rock' : 'building',
+      }))
+    }
   }
 
   private createTerrain(): void {
@@ -1752,7 +1830,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
   private cachedSpawnAnchors: readonly { x: number; z: number }[] | null = null
 
   private createDressingMesh(
-    placement: DressingPlacementStyle,
+    placement: DressingPlacementStyle & { request?: PropRequest },
     asset: PropAsset,
     entries: readonly DressingPlacement[],
     name: string,
@@ -1764,6 +1842,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     )
     mesh.name = name
     mesh.userData.generatedDressingRegionId = this.id
+    mesh.userData.presentationDressingKind = placement.request?.kind ?? 'reeds'
     mesh.castShadow = this.context.style.castShadows
     mesh.receiveShadow = true
     mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage)
@@ -2161,6 +2240,11 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     if (this.resourcesDisposed) return
     const errors: unknown[] = []
     if (this.root.parent) this.root.removeFromParent()
+    for (const registration of this.registrations.splice(0)) {
+      try { registration.dispose() } catch (error) { errors.push(error) }
+    }
+    try { this.legacySightBinding?.dispose() } catch (error) { errors.push(error) }
+    this.legacySightBinding = null
     // Detach the ink shells first: instanced shells share `instanceMatrix` with their
     // source, so they have to be gone before the source instanced mesh is disposed or
     // one frees the other's buffer.
@@ -2172,6 +2256,9 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       }
     }
     this.outlines.length = 0
+    for (const binding of this.renderSources.splice(0)) {
+      try { this.context.art.releaseRenderSource(binding) } catch (error) { errors.push(error) }
+    }
     this.inkable.length = 0
     // LOD levels reference shared cached geometry. Dropping the level meshes frees
     // nothing, by design — the cache reference below is what actually releases them.

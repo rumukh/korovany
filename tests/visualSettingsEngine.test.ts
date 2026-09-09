@@ -144,6 +144,8 @@ test('combined diagnostic snapshots report the actual policy without bypassing u
     faction: 'guard', player, actors: [], scene, camera, cameraYaw: 0, cameraPitch: 0.38,
     ended: false, health: 77, pointerFallback: true, nightFactor: 0,
     renderer: { domElement: {} },
+    cameraVisibility: { debug: {} },
+    artLibrary: { getRenderBindingStats: () => ({ sources: 0, ownedGeometries: 0, geometryBytes: 0, attributeBytes: 0 }) },
     generatedBlueprint: { seed: 20260906, fingerprint: 'unchanged-world' },
     generatedRngStreams: { combat }, weatherTarget: 'clear', weatherWeights: weather,
     generatedWorld: {
@@ -155,6 +157,7 @@ test('combined diagnostic snapshots report the actual policy without bypassing u
       getDebugSnapshot: () => ({ currentRegionId: 'region-4-0' }),
     },
   })
+  Object.assign(Reflect.get(engine, 'postProcessor'), { getDebugSnapshot: () => ({ composer: false }) })
   const originalRng = combat.getState()
   const originalWeather = { ...weather }
   try {

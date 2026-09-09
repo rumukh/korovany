@@ -18,6 +18,19 @@ export interface GraphicsRuntimeFrame {
   region: string | null
   visibleRegions: string[]
   simulatedRegions: string[]
+  cameraPresentation?: {
+    x: number
+    y: number
+    z: number
+    boom: number
+    shoulder: number
+    overflows: number
+    trianglesTested: number
+    fadedInstances: number
+    worldShadowDraws: number
+    worldShadowInstances: number
+    worldShadowTriangles: number
+  }
 }
 export interface GraphicsFrame extends GraphicsGpuSample {
   id: number
