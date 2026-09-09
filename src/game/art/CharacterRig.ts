@@ -71,6 +71,7 @@ export interface CharacterContact {
 }
 
 const LIMBS = ['leftArm', 'rightArm', 'leftLeg', 'rightLeg'] as const
+const SUPPORT_WEAPONS = new Set(['spear', 'glaive', 'maul', 'greatsword', 'staff'])
 const SURFACES: Record<CharacterPhysicalSurface, readonly [number, number, number, number]> = {
   skin: [0.79, 0, 0.46, 0.13], hair: [0.93, 0, 0.56, 0.08],
   cloth: [0.94, 0, 0.62, 0.12], leather: [0.86, 0.02, 0.62, 0.11],
@@ -84,7 +85,9 @@ function paint(geometry: THREE.BufferGeometry, color: number, surface: Character
   const colors = new Float32Array(count * 3)
   const response = new Float32Array(count * 4)
   for (let i = 0; i < count; i++) {
-    colors.set([rgb.r, rgb.g, rgb.b], i * 3)
+    colors[i * 3] = rgb.r
+    colors[i * 3 + 1] = rgb.g
+    colors[i * 3 + 2] = rgb.b
     response.set(SURFACES[surface], i * 4)
   }
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
@@ -445,7 +448,9 @@ export class CharacterPresenter {
       const ink = level !== 'far' && (level !== 'mid' || source === this.body)
       source.userData.characterInkEnabled = ink
       for (const child of source.children) {
-        if (StylizedArtLibrary.isOutlineShell(child) && !ink) child.visible = false
+        if (!StylizedArtLibrary.isOutlineShell(child)) continue
+        if (typeof child.userData.policyOutlineEnabled === 'boolean') child.visible = child.userData.policyOutlineEnabled && ink
+        else if (!ink) child.visible = false
       }
     }
     if (this.contactShadow) this.contactShadow.visible = level !== 'far'
@@ -484,7 +489,8 @@ export class CharacterPresenter {
       changed ||= status !== this.appearance[name]
     }
     if (!changed) return
-    const state = { ...this.appearance, ...next }
+    const state = { ...this.appearance }
+    for (const name of LIMBS) state[name] = next[name] ?? state[name]
     const base = this.bodyLease(this.level)
     let lease: ArtGeometryLease
     try { lease = this.appearanceLease(base.geometry, state) } finally { base.release() }
@@ -507,11 +513,20 @@ export class CharacterPresenter {
       const color = copy.getAttribute('color')
       const surface = copy.getAttribute(ART_SURFACE_ATTRIBUTE)
       const prosthetic = new THREE.Color(CHARACTER_PHYSICAL_PALETTE.metal)
+      const wound = new THREE.Color(0x703b35)
       for (let i = 0; i < skin.count; i++) {
-        const limb = this.boneLimb[skin.getX(i)]
-        if (!limb || state[LIMBS[limb - 1]] !== 'prosthetic') continue
-        color.setXYZ(i, prosthetic.r, prosthetic.g, prosthetic.b)
-        surface.setXYZW(i, ...SURFACES.metal)
+        const bone = skin.getX(i), limb = this.boneLimb[bone]
+        if (!limb) continue
+        const status = state[LIMBS[limb - 1]]
+        if (status === 'prosthetic') {
+          color.setXYZ(i, prosthetic.r, prosthetic.g, prosthetic.b)
+          surface.setXYZW(i, ...SURFACES.metal)
+        } else if (status === 'wounded' && (this.bones[bone].name.endsWith('-upper') || this.bones[bone].name.endsWith('-thigh'))) {
+          this.scratch.fromBufferAttribute(copy.getAttribute('position'), i).applyMatrix4(this.skeleton.boneInverses[bone])
+          if (this.scratch.z > 0.05 && this.scratch.y < -0.08 && this.scratch.y > -0.4) {
+            color.setXYZ(i, wound.r, wound.g, wound.b)
+          }
+        }
       }
       const indices: number[] = []
       const index = copy.index!
@@ -583,14 +598,14 @@ export class CharacterPresenter {
     if (shield) {
       this.scratch.set(0, 0.02, -0.11).applyMatrix4(shield.matrixWorld).applyMatrix4(this.inverse)
       this.fitArm(-1, this.scratch)
-    } else if (['spear', 'glaive', 'maul', 'greatsword', 'staff', 'bow'].includes(this.plan.weapon)) {
+    } else if (SUPPORT_WEAPONS.has(this.plan.weapon) || this.plan.weapon === 'bow') {
       this.scratch.set(0, this.plan.weapon === 'bow' ? 0 : -0.28, this.plan.weapon === 'bow' ? -0.1 - draw * 0.3 : 0)
         .applyMatrix4(weapon.matrixWorld).applyMatrix4(this.inverse)
       this.fitArm(-this.rig.mainHand, this.scratch)
     }
     const side = this.rig.mainHand > 0 ? 0 : 1
     const hand = this.hands[side]
-    if ((shield || ['spear', 'glaive', 'maul', 'greatsword', 'staff'].includes(this.plan.weapon)) && hand.parent) {
+    if ((shield || SUPPORT_WEAPONS.has(this.plan.weapon)) && hand.parent) {
       hand.parent.updateWorldMatrix(true, false)
       const handle = shield ?? weapon
       handle.updateWorldMatrix(true, false)

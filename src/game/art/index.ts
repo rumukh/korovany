@@ -149,6 +149,10 @@ export {
   buildIllustratedHand,
   buildIllustratedShin,
   buildIllustratedBoot,
+  buildCreatureLimbSegment,
+  buildCreatureFoot,
+  buildArticulatedBirdWing,
+  buildDraftYoke,
   WAGON_RIG,
   applyChestPose,
   applyHeadPose,
@@ -238,6 +242,15 @@ export {
   type CharacterAppearance,
   type CharacterLimb,
 } from './CharacterRig.ts'
+
+export {
+  CreaturePresenter,
+  createCreatureLeg,
+  creaturePresenter,
+  type CreatureLeg,
+} from './CreatureRig.ts'
+
+export { WagonPresenter, wagonPresenter } from './WagonRig.ts'
 
 // --- PropKit ---
 // The world-object vocabulary. Buildings, settlement dressing, vegetation species,

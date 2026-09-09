@@ -4956,7 +4956,7 @@ export function buildWagonCargo(gilded: boolean): THREE.BufferGeometry {
 }
 
 /** A draft ox: heavy at the shoulder, head carried low. Origin between its feet. */
-export function buildOxBody(): THREE.BufferGeometry {
+export function buildOxBody(articulated = false): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [
     bodyAlongZ(
       rectProfile(0.86, 0.92, 0.18),
@@ -4996,6 +4996,7 @@ export function buildOxBody(): THREE.BufferGeometry {
     [-0.34, -0.6],
     [0.34, -0.6],
   ] as const) {
+    if (articulated) continue
     parts.push(
       loft({
         profile: rectProfile(0.24, 0.26, 0.05),
@@ -5129,15 +5130,16 @@ export const CHARACTER_PHYSICAL_PALETTE = {
 export function illustratedCharacterPlan(plan: CharacterPlan): CharacterPlan {
   const p = plan.proportions
   const heavy = plan.kit === 'heavy' || plan.kit === 'elite'
+  const chestWidth = p.chestWidth * (heavy ? 0.87 : 0.8)
   return {
     ...plan,
     proportions: {
       ...p,
-      headY: p.shoulderY + 0.32,
-      headScale: heavy ? 1.08 : 1,
-      chestWidth: p.chestWidth * 0.94,
-      chestDepth: p.chestDepth * 0.9,
-      shoulderX: p.shoulderX * 0.87,
+      headY: p.shoulderY + 0.27,
+      headScale: heavy ? 0.9 : plan.faction === 'elf' ? 0.78 : plan.faction === 'guard' ? 0.82 : 0.85,
+      chestWidth,
+      chestDepth: p.chestDepth * 0.82,
+      shoulderX: chestWidth * 0.58,
       waistScale: heavy ? 0.87 : 0.76,
       armSplay: Math.min(p.armSplay, 0.1),
       lean: plan.faction === 'villain' ? Math.min(p.lean, 0.1) : p.lean,
@@ -5423,3 +5425,56 @@ export function buildIllustratedBoot(): THREE.BufferGeometry {
   ], 'illustrated-boot')
 }
 
+export function buildCreatureLimbSegment(
+  kind: BeastKind | 'deer' | 'ox', length: number, upper: boolean,
+): THREE.BufferGeometry {
+  const width = kind === 'deer' ? 0.12 : kind === 'wolf' ? 0.16 : kind === 'boar' ? 0.2
+    : kind === 'bear' ? 0.3 : kind === 'ox' ? 0.23 : 0.32
+  return finish([loft({
+    profile: rectProfile(width * (upper ? 1 : 0.7), width * (upper ? 1.12 : 0.8), width * 0.2),
+    sections: [
+      { y: -length, scaleX: upper ? 0.72 : 0.68, scaleZ: 0.76 },
+      { y: -length * 0.58, scaleX: upper ? 1.02 : 0.77, scaleZ: upper ? 1.12 : 0.8, offsetZ: upper ? -width * 0.12 : 0 },
+      { y: 0.035, scaleX: upper ? 1.26 : 1, scaleZ: upper ? 1.2 : 1 },
+    ], name: `${kind}-${upper ? 'upper' : 'lower'}-limb`,
+  })], `${kind}-limb-segment`)
+}
+
+export function buildCreatureFoot(kind: BeastKind | 'deer' | 'ox'): THREE.BufferGeometry {
+  const hoof = kind === 'boar' || kind === 'deer' || kind === 'ox'
+  const width = kind === 'deer' ? 0.11 : kind === 'wolf' ? 0.21 : kind === 'boar' ? 0.22 : kind === 'ox' ? 0.27 : 0.4
+  const parts: THREE.BufferGeometry[] = []
+  if (hoof) {
+    for (const side of [-1, 1]) parts.push(block({
+      width: width * 0.46, height: width * 0.53, depth: width * 1.27, bevel: width * 0.1, topScale: 0.77,
+    }, { position: { x: side * width * 0.25, y: width * 0.28, z: width * 0.12 } }))
+  } else {
+    parts.push(block({ width, height: width * 0.42, depth: width * 1.32, topScale: 0.76, bevel: width * 0.17 },
+      { position: { x: 0, y: width * 0.22, z: width * 0.16 } }))
+    for (const side of [-1, 0, 1]) parts.push(block({
+      width: width * 0.24, height: width * 0.22, depth: width * 0.38, bevel: width * 0.06,
+    }, { position: { x: side * width * 0.29, y: width * 0.14, z: width * 0.69 } }))
+  }
+  return finish(parts, `${kind}-${hoof ? 'cloven-hoof' : 'paw'}`)
+}
+
+export function buildArticulatedBirdWing(side: number): THREE.BufferGeometry {
+  const wing = plate([
+    { x: 0, y: -0.07 }, { x: 0.14, y: -0.15 }, { x: 0.3, y: -0.16 },
+    { x: 0.44, y: -0.1 }, { x: 0.4, y: -0.06 }, { x: 0.36, y: -0.02 },
+    { x: 0.28, y: 0.055 }, { x: 0.13, y: 0.1 }, { x: 0, y: 0.06 },
+  ], 0.021, { rotation: { x: Math.PI / 2, y: 0, z: 0 } }, 0)
+  return finish([side < 0 ? mirrorX(wing) : wing], `articulated-wing:${side}`)
+}
+
+export function buildDraftYoke(): THREE.BufferGeometry {
+  const parts = [block({ width: 0.2, height: 0.18, depth: 2.3, bevel: 0.035 })]
+  for (const side of [-1, 1]) parts.push(tubeAlongPoints([
+    { x: 0, y: 0, z: side * WAGON_RIG.oxZ - 0.25 },
+    { x: 0, y: -0.28, z: side * WAGON_RIG.oxZ - 0.2 },
+    { x: 0, y: -0.4, z: side * WAGON_RIG.oxZ },
+    { x: 0, y: -0.28, z: side * WAGON_RIG.oxZ + 0.2 },
+    { x: 0, y: 0, z: side * WAGON_RIG.oxZ + 0.25 },
+  ], { radius: 0.045, radialSegments: 5, tubularSegments: 8, capStart: true, capEnd: true }))
+  return finish(parts, 'load-bearing-yoke')
+}
