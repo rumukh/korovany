@@ -191,6 +191,8 @@ test('compact controls keep 44px targets, scalable wrapping and original safe-ar
   assert.match(css, /\.compact-hud-disclosure > summary\s*\{[^}]*min-height:\s*44px;/)
   assert.match(css, /overflow-wrap:\s*anywhere;/)
   assert.match(css, /\.compact-hud-details button\s*\{[^}]*min-height:\s*44px;/)
+  assert.match(css, /\.compact-hud-details \.hud-card-header\s*\{[^}]*flex-wrap:\s*wrap;/)
+  assert.match(css, /\.hud-card-header > \.zone-code\s*\{[^}]*flex-basis:\s*100%;/)
   assert.match(css, /prefers-reduced-motion:\s*reduce/)
   assert.doesNotMatch(css, /(?:vitals|combat-mastery|squad-command|action-prompt|finale-hud)[^{]*\{[^}]*display:\s*none/)
   assert.doesNotMatch(css, /font-size:\s*[\d.]+px|position:\s*(?:absolute|fixed)/)

@@ -66,6 +66,18 @@
   overflow-wrap: anywhere;
 }
 
+.game-screen[data-hud="compact"] .compact-hud-details .hud-card-header {
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.game-screen[data-hud="compact"] .compact-hud-details .hud-card-header > .zone-code {
+  flex-basis: 100%;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 .game-screen[data-hud="compact"] .top-hud-side {
   width: 16rem;
 }
