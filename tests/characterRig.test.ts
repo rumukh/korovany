@@ -158,10 +158,12 @@ test('contact normals and grip positions follow full posed matrices, not rest po
   const bodyIndices = presenter.body.geometry.getAttribute('skinIndex')
   let vertex = 0
   const actual = new THREE.Vector3()
-  for (let i = 0; i < bodyIndices.count; i++) {
-    if (bodyIndices.getX(i) !== boneIndex) continue
+  const triangles = presenter.body.geometry.index!
+  for (let i = 0; i < triangles.count; i++) {
+    const v = triangles.getX(i)
+    if (bodyIndices.getX(v) !== boneIndex) continue
     expected.fromBufferAttribute(handPositions, vertex++).applyMatrix4(presenter.rig.weapon!.matrixWorld)
-    presenter.body.getVertexPosition(i, actual).applyMatrix4(presenter.body.matrixWorld)
+    presenter.body.getVertexPosition(v, actual).applyMatrix4(presenter.body.matrixWorld)
     assert.ok(actual.distanceTo(expected) < 1e-5, 'deformed finger vertices track the real handle, not only a named empty pivot')
   }
   assert.equal(vertex, handPositions.count)
@@ -210,4 +212,94 @@ test('projected character LOD has two-sided hysteresis and stable hero priority'
   assert.equal(selectCharacterVisualLevel('mid', 0.055, false, 0.15), 'mid')
   assert.equal(selectCharacterVisualLevel('far', 0, true, 0.15), 'hero')
   assert.throws(() => selectCharacterVisualLevel('near', NaN, false, 0.15))
+})
+
+test('live LOD rebinding preserves limbs, complete ranged weapons, fade and borrowed ink', () => {
+  const art = library(), cache = new GeometryCache()
+  const presenter = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('elf', 'archer', 1)), art, cache, false)
+  const outline = art.applyOutline(presenter.root, 'structural')
+  const camera = new THREE.PerspectiveCamera(50, 16 / 9, 0.1, 150)
+  const policy = resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'balanced' })
+  presenter.setAppearance({ rightLeg: 'missing' })
+  const weapon = presenter.root.getObjectByName('weapon-head') as THREE.Mesh
+  const weaponGeometry = weapon.geometry
+  const nearTriangles = presenter.body.geometry.index!.count
+  for (const [distance, level] of [[90, 'far'], [30, 'mid'], [8, 'near'], [90, 'far'], [8, 'near']] as const) {
+    camera.position.set(0, 2, distance)
+    presenter.updateLod(camera, policy)
+    assert.equal(presenter.level, level)
+    assert.equal(presenter.rig.rightLeg!.visible, false)
+    assert.equal(weapon.geometry, weaponGeometry, 'the bow/haft never disappears as a generic grip detail')
+    for (const shell of outline.shells) assert.equal(shell.geometry, (shell.parent as THREE.Mesh).geometry)
+    if (level === 'far') assert.ok(presenter.body.geometry.index!.count < nearTriangles)
+    assert.ok(cache.size <= 2, 'inactive full-body variants are not kept forever')
+  }
+  art.releaseOutline(outline); presenter.dispose(); art.dispose(); cache.dispose()
+})
+
+test('grounding follows signed slopes without moving simulation roots or restoring missing feet', () => {
+  const art = library(), cache = new GeometryCache()
+  const p = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('guard', 'soldier', 0)), art, cache, false)
+  p.root.position.set(4, 1, -3)
+  p.root.rotation.y = 0.6
+  const position = p.root.position.clone(), rotation = p.root.quaternion.clone()
+  const sample = (x: number, z: number) => 1 + (x - 4) * 0.12 + (z + 3) * -0.08
+  for (let frame = 0; frame < 60; frame++) {
+    p.rig.leftLeg!.rotation.x = 0
+    p.rig.rightLeg!.rotation.x = 0
+    p.rig.leftKnee!.rotation.x = 0.04
+    p.rig.rightKnee!.rotation.x = 0.04
+    p.ground(1 / 60, sample, true, 0, 0)
+  }
+  p.root.updateMatrixWorld(true)
+  for (const foot of p.feet) {
+    const world = foot.getWorldPosition(new THREE.Vector3())
+    assert.ok(Math.abs(world.y - sample(world.x, world.z)) < 0.045, 'sole is near its actual terrain sample')
+  }
+  assert.deepEqual(p.root.position, position)
+  assert.deepEqual(p.root.quaternion.toArray(), rotation.toArray())
+  assert.ok(Math.abs(p.anatomy.bodyPivot.position.y) <= 0.16)
+  p.setAppearance({ leftLeg: 'missing' })
+  p.ground(1 / 30, sample, true, 0, 0.2)
+  assert.equal(p.rig.leftLeg!.visible, false)
+  p.ground(1 / 60, sample, false, 0, 0)
+  assert.equal(p.anatomy.bodyPivot.position.y, 0, 'airborne pose has no terrain pelvis offset')
+  assert.throws(() => p.ground(1 / 60, () => NaN, true, 0, 0), /terrain sample/)
+  p.dispose(); art.dispose(); cache.dispose()
+})
+
+test('low near and mid can share geometry without violating distinct replacement leases', () => {
+  const art = library(), cache = new GeometryCache()
+  const p = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('guard', 'soldier', 0)), art, cache, false, 'low')
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 150)
+  const policy = resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'low' })
+  const original = p.body.geometry
+  camera.position.set(0, 0, 26)
+  p.updateLod(camera, policy)
+  assert.equal(p.level, 'mid')
+  assert.equal(p.body.geometry, original)
+  for (const source of p.sources) assert.equal(source.castShadow, false)
+  p.dispose()
+  assert.throws(() => p.updateLod(camera, policy), /disposed/)
+  assert.throws(() => p.setAppearance({ leftArm: 'missing' }), /disposed/)
+  art.dispose(); cache.dispose()
+})
+
+test('support hand reaches the actual shield handle through posed and scaled joints', () => {
+  const art = library(), cache = new GeometryCache()
+  const p = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('guard', 'soldier', 0)), art, cache, false)
+  const shield = p.root.getObjectByName('shield')!
+  const wanted = new THREE.Vector3(), actual = new THREE.Vector3()
+  for (const scale of [0.95, 1, 1.05]) for (const raised of [false, true]) {
+    p.rig.leftArm!.scale.y = scale
+    p.anatomy.torsoPivot.rotation.set(0.22, -0.3, 0.17)
+    p.anatomy.torsoPivot.scale.set(1.07, 1.01, 1)
+    shield.position.set(raised ? 0 : -0.82, (raised ? 1.78 : 1.85) - p.rig.waistY, raised ? 0.58 : 0.08)
+    p.poseSupport(0.4)
+    p.root.updateMatrixWorld(true)
+    wanted.set(0, 0.02, -0.11).applyMatrix4(shield.matrixWorld)
+    actual.setFromMatrixPosition(p.hands[0].matrixWorld)
+    assert.ok(actual.distanceTo(wanted) < 0.001, 'the shield is held by the hand, not an unrelated forearm pose')
+  }
+  p.dispose(); art.dispose(); cache.dispose()
 })

@@ -5147,7 +5147,7 @@ export function illustratedCharacterPlan(plan: CharacterPlan): CharacterPlan {
 
 /** A continuous skull surface: mandible, cheek, orbital recess and cranial vault. */
 export function buildIllustratedHead(faction: CharacterFaction, level: CharacterVisualLevel): THREE.BufferGeometry {
-  const sides = level === 'far' ? 12 : level === 'mid' ? 16 : 24
+  const sides = level === 'hero' ? 24 : level === 'near' ? 16 : 12
   const wide = faction === 'guard' ? 1.04 : faction === 'villain' ? 1.07 : 0.94
   // [height, half width, face depth, occipital depth]. The eye line is below the vault.
   const rings = [
@@ -5239,6 +5239,17 @@ export function buildIllustratedFace(level: CharacterVisualLevel): THREE.BufferG
   parts.push(block({ width: 0.084, height: 0.009, depth: 0.015, bevel: 0.002 },
     { position: { x: 0, y: -0.107, z: 0.151 } }))
   return finish(parts, `illustrated-face:${level}`)
+}
+
+export function buildIllustratedEyes(iris: boolean): THREE.BufferGeometry {
+  return finish(mirroredPair((side) => iris
+    ? block({ width: 0.016, height: 0.017, depth: 0.005, bevel: 0.004 },
+      { position: { x: side * 0.086, y: 0.058, z: 0.183 } })
+    : plate([
+      { x: -0.03, y: 0 }, { x: -0.013, y: -0.007 }, { x: 0.015, y: -0.006 },
+      { x: 0.03, y: 0.002 }, { x: 0.009, y: 0.009 }, { x: -0.014, y: 0.008 },
+    ], 0.005, { position: { x: side * 0.087, y: 0.058, z: 0.177 } }, 0)),
+  iris ? 'iris' : 'sclera')
 }
 
 /** Thick open-front cloth; no closed lathe wall between the eyes and the camera. */
@@ -5365,25 +5376,50 @@ export function buildIllustratedShoulder(plan: CharacterPlan, side: number): THR
 }
 
 /** Palm and curled fingers surround a +Y handle rather than intersecting its centre. */
-export function buildIllustratedHand(side: number): THREE.BufferGeometry {
+export function buildIllustratedHand(side: number, level: CharacterVisualLevel = 'near'): THREE.BufferGeometry {
   const parts = [
     block({ width: 0.125, height: 0.15, depth: 0.06, bevel: 0.022 },
       { position: { x: 0, y: -0.04, z: -0.052 } }),
     block({ width: 0.045, height: 0.11, depth: 0.09, bevel: 0.014 },
       { position: { x: side * 0.069, y: -0.016, z: -0.006 }, rotation: { x: 0, y: side * 0.24, z: side * 0.24 } }),
   ]
-  for (let finger = 0; finger < 4; finger++) {
-    parts.push(tubeAlongPoints([
-      { x: -side * 0.053, y: 0.011 - finger * 0.033, z: -0.053 },
-      { x: -side * 0.067, y: 0.009 - finger * 0.033, z: 0.013 },
-      { x: -side * 0.025, y: 0.006 - finger * 0.033, z: 0.048 },
-      { x: side * 0.034, y: 0.004 - finger * 0.033, z: 0.029 },
-    ], { radius: 0.014, radialSegments: 5, tubularSegments: 4, capStart: true, capEnd: true }))
+  const fingers = level === 'far' || level === 'mid' ? 1 : 4
+  for (let finger = 0; finger < fingers; finger++) {
+    const curl = plate([
+      { x: -0.068, y: -0.052 }, { x: -0.075, y: 0.01 }, { x: -0.055, y: 0.045 },
+      { x: -0.02, y: 0.06 }, { x: 0.04, y: 0.043 }, { x: 0.045, y: 0.019 },
+      { x: 0.023, y: 0.014 }, { x: -0.021, y: 0.034 }, { x: -0.043, y: 0.018 },
+      { x: -0.045, y: -0.052 },
+    ], fingers === 1 ? 0.105 : 0.026, {
+      position: { x: 0, y: fingers === 1 ? -0.04 : 0.011 - finger * 0.033, z: 0 },
+      rotation: { x: Math.PI / 2, y: 0, z: 0 },
+    }, 0)
+    parts.push(side < 0 ? mirrorX(curl) : curl)
   }
   return finish(parts, `gripping-hand:${side}`)
 }
 
+export function buildIllustratedShin(length: number): THREE.BufferGeometry {
+  return finish([loft({
+    profile: rectProfile(0.2, 0.235, 0.044),
+    sections: [
+      { y: -length + 0.1, scaleX: 0.63, scaleZ: 0.67 },
+      { y: -length * 0.62, scaleX: 0.79, scaleZ: 0.88 },
+      { y: -length * 0.24, scaleX: 1, scaleZ: 1, offsetZ: -0.023 },
+      { y: 0.055, scaleX: 0.9, scaleZ: 0.93 },
+    ], name: 'fitted-shin',
+  })], 'illustrated-shin')
+}
 
-
-
+/** Foot origin is the sole contact, so terrain correction never guesses its height. */
+export function buildIllustratedBoot(): THREE.BufferGeometry {
+  return finish([
+    block({ width: 0.19, height: 0.1, depth: 0.36, topScale: 0.91, bevel: 0.032 },
+      { position: { x: 0, y: 0.056, z: 0.075 } }),
+    block({ width: 0.175, height: 0.19, depth: 0.18, topScale: 0.86, bevel: 0.028 },
+      { position: { x: 0, y: 0.148, z: -0.014 } }),
+    block({ width: 0.205, height: 0.028, depth: 0.38, bevel: 0.011 },
+      { position: { x: 0, y: 0.014, z: 0.075 } }),
+  ], 'illustrated-boot')
+}
 

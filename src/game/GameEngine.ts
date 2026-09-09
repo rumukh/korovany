@@ -1998,6 +1998,7 @@ export class GameEngine {
   /** Shape cache shared by every actor: one buffer per shape, not one per actor. */
   private readonly artGeometry = new GeometryCache()
   private readonly characterPresenters = new Set<CharacterPresenter>()
+  private readonly characterHeightSample = (x: number, z: number): number => this.groundHeightAt(x, z)
   /** Scratch vector for the arm-chain solve. Reused so the pose never allocates. */
   private readonly handOffset = new THREE.Vector3()
   /**
@@ -3950,6 +3951,7 @@ export class GameEngine {
     // that just failed forward is already failed when `updateEvents` looks at its event.
     this.updateFactionContract(delta)
     this.updateEvents(delta)
+    for (const presenter of this.characterPresenters) presenter.updateLod(this.camera, this.visualPolicy)
     this.updatePrompt()
     this.emitView(false)
   }
@@ -5600,6 +5602,18 @@ export class GameEngine {
     )
     this.airborneTime = airborneUpdate.airborneTime
     if (airborneUpdate.landed) this.queueCameraAccent('land', -1.4, 0.16)
+    const presenter = characterPresenter(this.player)
+    if (presenter) {
+      const pose = this.playerPose
+      applyChestPose(presenter.anatomy.torsoPivot,
+        presenter.rig.lean - pose.anticipation * 0.1 + pose.attack * 0.12,
+        -pose.stride * 0.07 + pose.anticipation * 0.13 - pose.attack * 0.18, 0)
+      this.updateShieldPose()
+      presenter.syncAttachments()
+      presenter.poseSupport(Math.max(pose.anticipation, pose.attack * 0.8))
+      presenter.secondaryMotion(delta, pose.stride, pose.attack, this.reducedMotion)
+      presenter.ground(delta, this.characterHeightSample, this.onGround && !evading, 0, pose.stride)
+    }
 
   }
 
@@ -7052,7 +7066,9 @@ export class GameEngine {
   }
 
   private setOutlineVisible(binding: OutlineBinding, visible: boolean): void {
-    for (const shell of binding.shells) shell.visible = visible
+    for (const shell of binding.shells) {
+      shell.visible = visible && shell.parent?.userData.characterInkEnabled !== false
+    }
   }
 
   private unregisterOutlineRoot(root: THREE.Object3D): void {
@@ -12225,6 +12241,7 @@ export class GameEngine {
       }
     }
     if (head) head.rotation.z = side * 0.28 * eased
+    characterPresenter(actor.mesh)?.syncAttachments()
   }
 
   private injurePlayer(): void {
@@ -14272,7 +14289,7 @@ export class GameEngine {
           ? { ...ordinaryPlan, weapon: 'glaive', mainHand: 'right', offhand: 'heater', headgear: 'crested' }
           : ordinaryPlan
     if (this.visualPolicy.mode === 'enhanced') {
-      const presenter = createCharacterPresenter(illustratedCharacterPlan(plan), this.artLibrary, this.artGeometry, player)
+      const presenter = createCharacterPresenter(illustratedCharacterPlan(plan), this.artLibrary, this.artGeometry, player, this.visualPolicy.quality)
       this.characterPresenters.add(presenter)
       const group = presenter.root
       if (!player) {
@@ -14290,7 +14307,7 @@ export class GameEngine {
         ring.userData.visualSubsystem = 'dynamicArt'
         group.add(ring)
       }
-      group.add(this.artLibrary.createContactShadow({ radius: player ? 0.66 : 0.58 }))
+      presenter.attachContactShadow(this.artLibrary.createContactShadow({ radius: player ? 0.66 : 0.58 }))
       return group
     }
     const keys = characterPartKeys(plan)
@@ -14850,6 +14867,11 @@ export class GameEngine {
     // live in one place in `CharacterKit` so a Node test can drive the real code
     // instead of a copy of its arithmetic. See `setCharacterShoulderWidth`.
     setCharacterShoulderWidth(torsoPivot, mesh.getObjectByName('neck-pivot'), shoulders)
+    const presenter = characterPresenter(mesh)
+    if (presenter) {
+      presenter.syncAttachments()
+      presenter.poseSupport(0)
+    }
   }
 
   private createActorHealthBar(allegiance: Allegiance): {
@@ -16718,7 +16740,13 @@ export class GameEngine {
         -rig.mainHand * 0.12,
       )
     }
-    characterPresenter(actor.mesh)?.syncAttachments()
+    const presenter = characterPresenter(actor.mesh)
+    if (presenter) {
+      presenter.syncAttachments()
+      presenter.poseSupport(Math.max(pose.anticipation, pose.attack * 0.8))
+      presenter.secondaryMotion(delta, actor.stride, pose.attack, this.reducedMotion)
+      presenter.ground(delta, this.characterHeightSample, actor.alive, presenter.anatomy.bodyPivot.position.y, pose.stride)
+    }
   }
 
   /** The player's pose, in the same reused-buffer style as the actor sampler. */
@@ -16730,6 +16758,14 @@ export class GameEngine {
     pose.recovery = 0
     pose.flinch = 0
     pose.stagger = 0
+    if (characterPresenter(this.player) && this.melee.phase !== 'idle') {
+      const spec = playerBeatSpec(this.melee.beat)
+      const windup = this.melee.phase === 'windup'
+      const progress = THREE.MathUtils.clamp(1 - this.melee.phaseRemaining / (windup ? spec.windup : spec.recovery), 0, 1)
+      pose.anticipation = windup ? progress * progress * (3 - 2 * progress) : 0
+      pose.attack = windup ? 0 : Math.exp(-progress * 6)
+      pose.recovery = windup ? 0 : Math.sin(progress * Math.PI)
+    }
     return pose
   }
 
