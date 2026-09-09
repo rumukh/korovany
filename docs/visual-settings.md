@@ -102,6 +102,11 @@ achieved-device claims. They do not change `MAX_ACTORS = 25`, companion identiti
 collision, navigation, squad LOS/focus, terrain samples, generation fingerprints,
 RNG ownership, combat windows, injuries, objectives, or saves.
 
+The [subsystem allocation contract](graphics-subsystem-budgets.md) partitions
+these same global ceilings between dynamic art, world, and post/transient effects.
+It is acceptance data, not another preference or permission to alter gameplay.
+Incomplete subsystem attribution remains explicitly incomplete.
+
 ## Capability activation is not visual approval
 
 At the original enabling checkpoint `VISUAL_PREVIEW_AVAILABLE` was `false`.
