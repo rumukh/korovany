@@ -1,0 +1,122 @@
+.compact-hud-disclosure {
+  background: var(--cp-panel-strong);
+  border: 1px solid var(--cp-border);
+  border-radius: 0.625rem;
+  color: var(--cp-text);
+  min-width: 0;
+  pointer-events: auto;
+  width: 100%;
+}
+
+.compact-hud-disclosure > summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  min-height: 44px;
+  overflow-wrap: anywhere;
+  padding: 0.5rem;
+}
+
+.compact-hud-disclosure > summary:focus-visible {
+  outline: 2px solid var(--cp-accent);
+  outline-offset: -2px;
+}
+
+.compact-hud-summary {
+  display: grid;
+  gap: 0.25rem;
+  margin-top: 0.3rem;
+}
+
+.compact-hud-disclosure > summary small {
+  color: var(--cp-text-muted);
+  display: block;
+  font-size: 0.72rem;
+  margin-top: 0.3rem;
+}
+
+.compact-hud-deadline {
+  color: var(--cp-warning);
+}
+
+.compact-hud-details {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0 0.4rem 0.4rem;
+}
+
+.game-screen[data-hud="compact"] .compact-hud-details > .hud-card {
+  max-width: 100%;
+  width: 100%;
+}
+
+.game-screen[data-hud="compact"] .compact-hud-details .chronicle-card,
+.game-screen[data-hud="compact"] .compact-hud-details .rumour-task,
+.game-screen[data-hud="compact"] .compact-hud-details .rumour-stake,
+.game-screen[data-hud="compact"] .compact-hud-details .contract-stake,
+.game-screen[data-hud="compact"] .compact-hud-details .doctrine-gives,
+.game-screen[data-hud="compact"] .compact-hud-details .hud-card-header .zone-code {
+  display: block;
+}
+
+.game-screen[data-hud="compact"] .compact-hud-details button {
+  min-height: 44px;
+  min-width: 44px;
+  overflow-wrap: anywhere;
+}
+
+.game-screen[data-hud="compact"] .top-hud-side {
+  width: 16rem;
+}
+
+.game-screen[data-hud="compact"] .notice {
+  animation: none;
+  box-shadow: none;
+  padding: 0.4rem 0.6rem;
+}
+
+.game-screen[data-hud="compact"] .damage-vignette {
+  background: radial-gradient(ellipse at center, transparent 60%, color-mix(in srgb, var(--cp-danger) 48%, transparent));
+  filter: none;
+}
+
+.game-screen[data-hud="compact"] .damage-vignette::before,
+.game-screen[data-hud="compact"] .damage-vignette::after {
+  display: none;
+}
+
+@media (min-width: 721px) and (pointer: fine) {
+  .game-screen[data-hud="compact"] .top-hud-side {
+    max-height: calc(100dvh - 7rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    pointer-events: auto;
+    scrollbar-width: thin;
+  }
+}
+
+@media (max-width: 720px), (pointer: coarse) {
+  .game-screen[data-hud="compact"] .top-hud-side {
+    width: 100%;
+  }
+
+  .game-screen[data-hud="compact"] .compact-hud-details .objectives-card {
+    order: 0;
+  }
+
+  .game-screen[data-hud="compact"] .compact-hud-details .objective-item p,
+  .game-screen[data-hud="compact"] .compact-hud-details .objective-hint {
+    font-size: 0.75rem;
+    line-height: 1.4;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compact-hud-disclosure,
+  .compact-hud-disclosure * {
+    animation: none;
+    transition: none;
+    scroll-behavior: auto;
+  }
+}

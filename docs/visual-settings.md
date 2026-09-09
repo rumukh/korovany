@@ -18,9 +18,21 @@ from the menu. Closing pause keeps the current engine and visuals. The existing
 menu action refuses to leave when its checkpoint cannot be persisted; selectors
 never start a new campaign, clear a save, or resume a paused fight.
 
-`hudMode` is a DOM-only Full/Compact preference reserved for the compact HUD
-consumer. It defaults to Full and is excluded from renderer reload comparisons.
+`hudMode` is a DOM-only Full/Compact preference, exposed as **Боевой интерфейс**
+in the menu and pause visual controls. It defaults to Full and is excluded from
+renderer reload comparisons. Changing it applies immediately without restarting
+the engine, dismissing an overlay or resuming a paused fight.
 It is not a `GameView`, `RunConfig`, or `GameEngineSettings` field.
+
+Compact mode groups the existing mission boards under **Поход**, and chronicle
+and rumours under **Вести**. Native keyboard/touch disclosures keep all original
+actions and full copy available; active contract/rumour deadlines remain in the
+closed summaries. Vitals, ability/defense, squad, compass, E prompts, finale cues,
+all four notice slots and their teaching messages remain outside the disclosures.
+It also restrains notice decoration and the peripheral damage tint without
+changing damage state or intentional injury-related vision loss. Full mode keeps
+the original panel arrangement. Browser layout/visual acceptance is separate from
+the CPU-tested DOM contract.
 
 New preferences are stored as one versioned record at
 `korovany-visual-preferences`. Existing bloom, ink, foliage, weather, camera,
@@ -112,8 +124,10 @@ Incomplete subsystem attribution remains explicitly incomplete.
 At the original enabling checkpoint `VISUAL_PREVIEW_AVAILABLE` was `false`.
 The GFX-02 foundation now sets it to `true` for an explicitly requested enhanced
 preview. Legacy remains the stored default. This enables the camera, foreground,
-material/ink, bounded world-shadow and AA foundation, not the later character,
-world-content or atmosphere upgrades and not an approved hardware tier.
+material/ink, bounded world-shadow and AA foundation. GFX-05 Stage A adds the
+reserved bounded atmosphere/wetness and secondary-particle presentation to that
+same explicit preview. It is not the later joined character/world art, final
+atmosphere tuning, or an approved hardware tier.
 
 The supported next-stage activation is a **coordinated checkpoint change** to
 this single constant in `visualPolicy.ts`, alongside the integrated GFX-02

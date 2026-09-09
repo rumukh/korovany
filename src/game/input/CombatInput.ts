@@ -1,5 +1,10 @@
 export const LOOK_DRAG_THRESHOLD = 6
 
+/** Native disclosure activation must not also become the gameplay Space jump. */
+export function keepDisclosureKeyLocal(event: Pick<KeyboardEvent, 'code' | 'stopPropagation'>): void {
+  if (event.code === 'Space') event.stopPropagation()
+}
+
 export function cameraRelativeMovement(keys: ReadonlySet<string>, yaw: number): { x: number; z: number } {
   const forward = Number(keys.has('KeyW') || keys.has('ArrowUp')) -
     Number(keys.has('KeyS') || keys.has('ArrowDown'))

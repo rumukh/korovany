@@ -23,7 +23,25 @@ import type {
 import type { ChronicleEventKind } from '../world/Chronicle.ts'
 import type { ContractId, ObjectiveKind, SiteKind } from '../world/worldTypes.ts'
 import type { SquadCommandMode, SquadMemberStatus } from '../world/SquadCommand.ts'
-import type { VisualMode, VisualQuality } from '../visualSettings.ts'
+import type { HudMode, VisualMode, VisualQuality } from '../visualSettings.ts'
+
+export const HUD_MODE_LABELS: Readonly<Record<HudMode, string>> = {
+  full: 'Полный',
+  compact: 'Компактный',
+}
+
+export const COMPACT_HUD_COPY = {
+  setting: 'Боевой интерфейс',
+  settingHelp: 'Меняется сразу. В компактном виде раскрой «Поход» и «Вести», чтобы увидеть все подряды и слухи.',
+  mission: 'Поход',
+  news: 'Вести',
+  expand: 'Раскрыть / свернуть',
+  choices: 'Подряды на выбор',
+  doctrine: 'Можно выбрать устав',
+  chronicle: 'Записей в хронике',
+  settled: 'Пункты похода закрыты',
+  seconds: 'с',
+} as const
 
 export const VISUAL_MODE_LABELS: Readonly<Record<VisualMode, string>> = {
   legacy: 'Исходная',
