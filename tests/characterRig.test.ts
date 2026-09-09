@@ -71,7 +71,7 @@ test('actual enhanced taxonomy builds one skinned body with named independent eq
         const plan = illustratedCharacterPlan(resolveCharacterPlan(faction, role, variant, role === 'player'))
         const presenter = createCharacterPresenter(plan, art, cache, role === 'player')
         assert.equal(presenter.body.geometry.groups.length, 0, 'one body draw, not old material groups')
-        assert.ok(presenter.skeleton.bones.length <= 64)
+        assert.ok(presenter.jointCount <= 64)
         for (const source of presenter.sources) validateArtGeometry(source)
         assert.equal(presenter.root.getObjectByName('weapon')?.parent, presenter.anatomy.torsoPivot)
         assert.equal(presenter.root.getObjectByName('neck-pivot')?.parent, presenter.anatomy.torsoPivot)
@@ -320,7 +320,7 @@ test('each guard variant fits its source-plus-ink geometry envelope without drop
       assert.ok(triangles * 2 + 48 + 18 + 2 <= allocation.firstRole.nearMainViewTriangles,
         `${quality}/${variant}: ${triangles * 2 + 68} main-view geometry triangles`)
       assert.equal(p.sources.length, plan.offhand === 'none' ? 2 : 3)
-      assert.ok(p.skeleton.bones.length <= allocation.firstRole.joints)
+      assert.ok(p.jointCount <= allocation.firstRole.joints)
       assert.ok(p.geometryBytes <= allocation.firstRole.exclusiveCpuBackingBytes)
       p.dispose()
     }
@@ -419,6 +419,8 @@ test('contact surfaces match physical kit layers and weapon anchors follow the a
       assert.ok(p.sampleContact('weaponGrip', sample))
       assert.ok(sample.point.distanceTo(p.hands[p.rig.mainHand > 0 ? 1 : 0].getWorldPosition(new THREE.Vector3())) < 1e-10)
       p.setAppearance({ [plan.mainHand === 'right' ? 'rightArm' : 'leftArm']: 'missing' })
+      assert.ok(p.sampleContact('weaponGrip', sample), 'the remaining hand can carry the weapon')
+      p.setAppearance({ leftArm: 'missing', rightArm: 'missing' })
       assert.equal(p.sampleContact('weaponGrip', sample), false)
       assert.equal(p.sampleContact('weaponTip', sample), false)
     } else {
@@ -460,4 +462,114 @@ test('a bounded two-template neighborhood reuses LOD geometry and drains every r
   assert.equal(cache.size, 0)
   assert.equal(nearDisposals, 1)
   art.dispose()
+})
+
+test('the actual elf arrow event changes presentation without changing projectile timing or paid state', () => {
+  const art = library(), cache = new GeometryCache()
+  const p = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('elf', 'player', 0, true)), art, cache, true)
+  const source = p.root.getObjectByName('weapon-head') as THREE.SkinnedMesh
+  const skeleton = source.skeleton
+  const weapon = p.rig.weapon!
+  const torch = new THREE.Group(), trail = new THREE.Group()
+  torch.name = 'torch'; trail.name = 'weapon-trail'
+  weapon.add(torch, trail)
+  const outlines = art.applyOutline(p.root, 'structural')
+  const shell = outlines.shells.find((node) => node.parent === source)!
+  const binding = art.getRenderSourceBinding(source)!
+  art.setSourceVisibility(binding, 0.4)
+  const shots: unknown[][] = []
+  const paid = { beat: 3, phase: 'windup', phaseRemaining: 0.11, lockout: 0 }
+  const engine: { fireArrow(): void; stamina: number; abilityCooldown: number; melee: typeof paid } =
+    Object.assign(Object.create(GameEngine.prototype), {
+      player: p.root, faction: 'elf', cameraYaw: 0.4, activePlayerAttackKind: 'melee',
+      stamina: 74, abilityCooldown: 3, melee: paid,
+      spawnProjectile: (...args: unknown[]) => { shots.push(args) }, playSound() {},
+    })
+  p.root.position.set(3, 1.2, -4)
+  const position = p.root.position.toArray()
+  const before = JSON.stringify({ stamina: engine.stamina, abilityCooldown: engine.abilityCooldown, melee: paid })
+  engine.fireArrow()
+  assert.equal(shots.length, 1, 'the real projectile fires immediately; no visual windup delays it')
+  assert.equal(p.arrowPresentationActive, true)
+  assert.equal(p.weaponKind, 'bow')
+  assert.ok(source.geometry.name.endsWith('released'), 'the fired arrow is not duplicated on the held bow')
+  assert.equal(source.skeleton, skeleton)
+  assert.equal(shell.geometry, source.geometry)
+  assert.ok(Math.abs(art.getSourceVisibility(binding) - 0.4) < 1e-6)
+  assert.equal(torch.parent, weapon)
+  assert.equal(trail.parent, weapon)
+  assert.ok(p.root.getObjectByName('shield')!.position.z < 0, 'the elf offhand is stowed, not deleted')
+  p.advanceActionPresentation(0, false)
+  assert.equal(p.arrowPresentationActive, true)
+  p.root.rotation.y += 0.3
+  p.advanceActionPresentation(0.12, false)
+  p.poseArrowRecovery()
+  p.root.updateMatrixWorld(true)
+  const shotVelocity = shots[0][3]
+  assert.ok(shotVelocity instanceof THREE.Vector3)
+  const forward = new THREE.Vector3(0, 0, 1).transformDirection(weapon.matrixWorld)
+  assert.ok(Math.abs(Math.atan2(forward.x, forward.z) - Math.atan2(shotVelocity.x, shotVelocity.z)) < 1e-10)
+  p.advanceActionPresentation(0.3, false)
+  assert.equal(p.arrowPresentationActive, false)
+  assert.equal(p.weaponKind, 'sabre')
+  assert.equal(weapon.matrixAutoUpdate, true)
+  assert.equal(torch.parent, weapon)
+  assert.deepEqual(p.root.position.toArray(), position)
+  assert.equal(JSON.stringify({ stamina: engine.stamina, abilityCooldown: engine.abilityCooldown, melee: paid }), before)
+  art.releaseOutline(outlines); p.dispose()
+  assert.equal(cache.size, 0)
+  art.dispose()
+})
+
+test('bow string and nock share the draw bone, release excludes the nocked arrow, and missing arms stay missing', () => {
+  const art = library(), cache = new GeometryCache()
+  const p = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('elf', 'archer', 0)), art, cache, false)
+  const source = p.root.getObjectByName('weapon-head') as THREE.SkinnedMesh
+  assert.equal(source.skeleton.bones.length, 2)
+  const tip: CharacterContact = { point: new THREE.Vector3(), normal: new THREE.Vector3(), surface: 'dark' }
+  p.poseSupport(0)
+  p.root.updateMatrixWorld(true)
+  const positions = source.geometry.getAttribute('position')
+  let tipIndex = 0, endIndex = -1
+  for (let i = 0; i < positions.count; i++) {
+    if (positions.getZ(i) > positions.getZ(tipIndex)) tipIndex = i
+    if (Math.abs(positions.getY(i) - 0.74) < 1e-4 && Math.abs(positions.getZ(i) + 0.23) < 0.01 &&
+        Math.abs(positions.getX(i) - 0.02) < 0.01) endIndex = i
+  }
+  assert.ok(endIndex >= 0, 'the production bow contains its actual string endpoint')
+  const restTipVertex = source.getVertexPosition(tipIndex, new THREE.Vector3())
+  const restEnd = source.getVertexPosition(endIndex, new THREE.Vector3())
+  p.sampleContact('weaponTip', tip)
+  const rest = p.rig.weapon!.worldToLocal(tip.point.clone())
+  p.poseSupport(1)
+  p.root.updateMatrixWorld(true)
+  p.sampleContact('weaponTip', tip)
+  const drawn = p.rig.weapon!.worldToLocal(tip.point.clone())
+  assert.ok(Math.abs(rest.z - drawn.z - 0.3) < 1e-10)
+  const drawnVertex = source.getVertexPosition(tipIndex, new THREE.Vector3())
+  assert.ok(Math.abs(restTipVertex.z - drawnVertex.z - 0.3) < 1e-10, 'the rendered nocked arrow, not only its empty anchor, follows the draw')
+  assert.ok(source.getVertexPosition(endIndex, new THREE.Vector3()).distanceTo(restEnd) < 1e-10,
+    'the string endpoint stays attached to its bow limb')
+  const dopedGeometry = source.geometry.clone()
+  const weights = dopedGeometry.getAttribute('skinWeight')
+  for (let i = 0; i < weights.count; i++) weights.setXYZW(i, 1, 0, 0, 0)
+  const doped = new THREE.SkinnedMesh(dopedGeometry, source.material)
+  doped.skeleton = source.skeleton
+  doped.bindMatrix.copy(source.bindMatrix)
+  doped.bindMatrixInverse.copy(source.bindMatrixInverse)
+  assert.ok(doped.getVertexPosition(tipIndex, new THREE.Vector3()).distanceTo(drawnVertex) > 0.2,
+    'a rigid-only mutation must fail the same deformed-vertex measurement')
+  dopedGeometry.dispose()
+  const readyIndices = source.geometry.index?.count ?? source.geometry.getAttribute('position').count
+  p.setBowRelease(true)
+  const releasedIndices = source.geometry.index?.count ?? source.geometry.getAttribute('position').count
+  assert.ok(releasedIndices < readyIndices)
+  p.setBowRelease(false)
+  p.setAppearance({ leftArm: 'missing' })
+  assert.equal(p.rig.mainHand, 1)
+  p.syncAttachments()
+  assert.equal(p.rig.leftArm!.visible, false)
+  assert.ok(p.sampleContact('weaponGrip', tip))
+  validateArtGeometry(source)
+  p.dispose(); art.dispose(); cache.dispose()
 })

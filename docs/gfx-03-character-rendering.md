@@ -26,6 +26,16 @@ space. The full affine hand frame follows the handle through nonuniform art
 scale; support hands fit the shield or two-handed weapon. Captive wrist ropes
 remain separately hideable when rescued.
 
+Equipment uses a two-joint skin palette: rigid weapon surfaces use its root,
+while bow string/nock vertices use the draw joint. NPC windup pulls the actual
+string and arrow; contact/recovery removes the nocked arrow and releases the
+string. The elf player's real arrow event immediately emits its unchanged
+projectile, then starts a short, presentation-only released-bow recovery with
+the offhand stowed. Expiry or a new action restores the normal weapon. The
+named weapon node, torch/trail children, fade binding and skeleton stay stable
+through these geometry changes. A surviving hand is selected without restoring
+a missing arm. `jointCount` includes both body and equipment palettes.
+
 Player windup/contact/recovery presentation reads the existing melee state.
 It does not advance that state, spend stamina, create contacts or change
 finisher commitment. NPC/finale action and gaze code remains authoritative.

@@ -5497,6 +5497,7 @@ export class GameEngine {
   }
 
   private updatePlayer(delta: number): void {
+    characterPresenter(this.player)?.advanceActionPresentation(delta, this.activePlayerAttackKind !== 'arrow')
     const wasOnGround = this.onGround
     const forward = this.getAimDirection()
     const movement = cameraRelativeMovement(this.keys, this.cameraYaw)
@@ -5625,8 +5626,9 @@ export class GameEngine {
       applyChestPose(presenter.anatomy.torsoPivot,
         presenter.rig.lean - pose.anticipation * 0.1 + pose.attack * 0.12,
         -pose.stride * 0.07 + pose.anticipation * 0.13 - pose.attack * 0.18, 0)
-      this.updateShieldPose()
+      if (this.faction === 'guard') this.updateShieldPose()
       presenter.syncAttachments()
+      presenter.poseArrowRecovery()
       presenter.poseSupport(Math.max(pose.anticipation, pose.attack * 0.8))
       presenter.secondaryMotion(delta, pose.stride, pose.attack, this.reducedMotion)
       presenter.ground(delta, this.characterHeightSample, this.onGround && !evading, 0, pose.stride)
@@ -7500,6 +7502,7 @@ export class GameEngine {
       0.25,
     )
     this.playSound('bow')
+    characterPresenter(this.player)?.beginArrowPresentation(direction, 0.55 / BOW_SPEED)
   }
 
   private cleave(): void {
@@ -12210,6 +12213,7 @@ export class GameEngine {
 
   private updateActorDeathMotion(actor: Actor, delta: number): void {
     if (!actor.deathStyle || actor.deathAge >= DEATH_POSE_TIME) return
+    characterPresenter(actor.mesh)?.setBowRelease(true)
     actor.deathAge = Math.min(DEATH_POSE_TIME, actor.deathAge + delta)
     const progress = actor.deathAge / DEATH_POSE_TIME
     const eased = 1 - Math.pow(1 - progress, 3)
@@ -16861,6 +16865,7 @@ export class GameEngine {
       // The bow is in the bow hand and the string hand pulls back past the jaw. The
       // weapon pivot is re-solved afterwards so the riser stays in the fist.
       const draw = Math.max(pose.anticipation, pose.attack * 0.8)
+      characterPresenter(actor.mesh)?.setBowRelease(pose.attack > 0 || pose.recovery > 0)
       const bowArm = rig.mainHand > 0 ? rig.rightArm : rig.leftArm
       const bowElbow = rig.mainHand > 0 ? rig.rightElbow : rig.leftElbow
       const drawArm = rig.mainHand > 0 ? rig.leftArm : rig.rightArm

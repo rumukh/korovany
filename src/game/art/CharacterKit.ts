@@ -5553,6 +5553,21 @@ export function buildBirdFoot(): THREE.BufferGeometry {
   return finish(parts, 'bird-foot')
 }
 
+export function buildIllustratedBowString(): THREE.BufferGeometry {
+  return finish([tubeAlongPoints([
+    { x: 0.02, y: -0.74, z: -0.06 }, { x: 0.02, y: 0, z: -0.06 }, { x: 0.02, y: 0.74, z: -0.06 },
+  ], { radius: 0.008, radialSegments: 4, tubularSegments: 2, capStart: true, capEnd: true })], 'bow-string')
+}
+
+export function buildIllustratedNockedArrow(): THREE.BufferGeometry {
+  return finish([
+    tubeAlongPoints([
+      { x: 0.02, y: 0, z: -0.06 }, { x: 0.02, y: 0, z: 0.88 },
+    ], { radius: 0.009, radialSegments: 4, tubularSegments: 1, capStart: true, capEnd: true }),
+    spike(0.035, 0.12, { position: { x: 0.02, y: 0, z: 0.88 }, rotation: { x: Math.PI / 2, y: 0, z: 0 } }),
+  ], 'nocked-arrow')
+}
+
 export function buildDraftYoke(): THREE.BufferGeometry {
   const parts = [block({ width: 0.2, height: 0.18, depth: 2.3, bevel: 0.035 })]
   for (const side of [-1, 1]) parts.push(tubeAlongPoints([

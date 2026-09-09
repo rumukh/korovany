@@ -6,9 +6,10 @@ import {
   buildIllustratedHair, buildIllustratedHeadgear, buildIllustratedTorso, buildIllustratedEyes, buildIllustratedHorns,
   buildIllustratedChestArmor, buildIllustratedShoulder, buildIllustratedHand,
   buildIllustratedTrim, buildIllustratedArm,
+  buildIllustratedBowString, buildIllustratedNockedArrow,
   buildUpperArm, buildForearm, buildThigh, buildIllustratedShin, buildIllustratedBoot, buildCloak,
   buildWeaponHead, buildWeaponGrip, buildOffhand, buildWristRope,
-  type CharacterPlan, type CharacterVisualLevel, type CharacterPhysicalSurface,
+  type CharacterPlan, type CharacterVisualLevel, type CharacterPhysicalSurface, type WeaponKind,
 } from './CharacterKit.ts'
 import { bakeOutlineNormals, mergeAll, transformed } from './GeometryKit.ts'
 import { GeometryCache } from './GeometryCache.ts'
@@ -222,6 +223,18 @@ export class CharacterPresenter {
   private contactShadow: THREE.Object3D | null = null
   private wristRope: THREE.Object3D | null = null
   private ropeLease: ArtGeometryLease | null = null
+  private weaponSource: THREE.SkinnedMesh | null = null
+  private weaponBinding: ArtRenderSourceBinding | null = null
+  private weaponSkeleton: THREE.Skeleton | null = null
+  private readonly bowString = new THREE.Bone()
+  private activeWeapon: WeaponKind
+  private bowReleased = false
+  private arrowRemaining = 0
+  private readonly arrowDirection = new THREE.Vector3()
+  private readonly aimSide = new THREE.Vector3()
+  private readonly aimUp = new THREE.Vector3()
+  private readonly aimForward = new THREE.Vector3()
+  private readonly aimMatrix = new THREE.Matrix4()
   private readonly scratch = new THREE.Vector3()
   private readonly inverse = new THREE.Matrix4()
   private readonly normalMatrix = new THREE.Matrix3()
@@ -237,6 +250,7 @@ export class CharacterPresenter {
 
   constructor(plan: CharacterPlan, art: StylizedArtLibrary, cache: GeometryCache, player: boolean, quality: VisualQuality) {
     this.plan = plan
+    this.activeWeapon = plan.weapon
     this.art = art
     this.cache = cache
     this.player = player
@@ -363,37 +377,22 @@ export class CharacterPresenter {
     try {
       this.bind(this.body, base)
       if (plan.armed) {
-        const key = `illustrated-weapon:${plan.weapon}`
-        const lease = cachedLease(cache, key, () => {
-          const result = mergeAll([
-            paint(buildWeaponHead(plan.weapon), plan.weapon === 'bow' ? dark : metal, plan.weapon === 'bow' ? 'dark' : 'metal'),
-            paint(buildWeaponGrip(plan.weapon), leather, 'leather'),
-          ])
-          if (plan.weapon === 'bow') result.translate(0, 0, -0.17)
-          return result
-        })
-        const mesh = new THREE.Mesh(lease.geometry, material)
+        const rootBone = new THREE.Bone()
+        rootBone.name = 'weapon-root-bone'
+        this.bowString.name = 'bow-string-bone'
+        rootBone.add(this.bowString)
+        weapon.add(rootBone)
+        weapon.updateWorldMatrix(true, true)
+        this.weaponSkeleton = new THREE.Skeleton([rootBone, this.bowString])
+        const lease = this.weaponLease(plan.weapon, false)
+        const mesh = new THREE.SkinnedMesh(lease.geometry, material)
         mesh.name = 'weapon-head'
+        this.weaponSource = mesh
         weapon.add(mesh)
+        mesh.bind(this.weaponSkeleton, weapon.matrixWorld)
         this.bind(mesh, lease)
-        const positions = lease.geometry.getAttribute('position')
-        const bow = plan.weapon === 'bow'
-        let maximum = -Infinity
-        for (let i = 0; i < positions.count; i++) maximum = Math.max(maximum, bow ? positions.getZ(i) : positions.getY(i))
-        const tip = new THREE.Vector3()
-        let tips = 0
-        for (let i = 0; i < positions.count; i++) {
-          if (Math.abs((bow ? positions.getZ(i) : positions.getY(i)) - maximum) > 1e-5) continue
-          tip.add(this.scratch.fromBufferAttribute(positions, i))
-          tips++
-        }
-        if (tips === 0) throw new Error('Weapon geometry has no finite tip')
-        tip.multiplyScalar(1 / tips)
-        const limb = plan.mainHand === 'right' ? 'rightArm' : 'leftArm'
-        this.anchors.set('weaponGrip', { node: weapon, point: new THREE.Vector3(),
-          normal: new THREE.Vector3(0, 0, 1), surface: 'leather', limb })
-        this.anchors.set('weaponTip', { node: weapon, point: tip,
-          normal: new THREE.Vector3(0, bow ? 0 : 1, bow ? 1 : 0), surface: 'metal', limb })
+        this.weaponBinding = this.bindings[this.bindings.length - 1]
+        this.updateWeaponAnchors(lease.geometry)
       }
       if (plan.offhand !== 'none') {
         const offhandColor = plan.offhand === 'bundle' ? leather : cloth
@@ -436,9 +435,6 @@ export class CharacterPresenter {
       if (node) this.anchors.set(name, { node, point: new THREE.Vector3(0, -0.25, 0.13),
         normal: new THREE.Vector3(0, 0, 1), surface: 'cloth', limb: name })
     }
-    if (plan.armed) this.anchors.set('weapon', { node: weapon, point: new THREE.Vector3(0, 0.65, 0),
-      normal: new THREE.Vector3(0, 0, 1), surface: plan.weapon === 'bow' ? 'leather' : 'metal',
-      limb: plan.mainHand === 'right' ? 'rightArm' : 'leftArm' })
     this.root.userData.rig = this.rig
     this.root.userData.characterPlan = plan
     PRESENTERS.set(this.root, this)
@@ -451,6 +447,157 @@ export class CharacterPresenter {
     this.syncAttachments()
     this.poseSupport(0)
   }
+
+  private weaponLease(kind: WeaponKind, released: boolean): ArtGeometryLease {
+    return cachedLease(this.cache, `articulated-weapon:${kind}:${released ? 'released' : 'ready'}`, () => {
+      const parts: THREE.BufferGeometry[] = []
+      const take = (geometry: THREE.BufferGeometry, color: number, surface: CharacterPhysicalSurface, joint: 'rigid' | 'string' | 'arrow') => {
+        parts.push(geometry)
+        paint(geometry, color, surface)
+        const position = geometry.getAttribute('position')
+        const indices = new Uint16Array(position.count * 4)
+        const weights = new Float32Array(position.count * 4)
+        for (let i = 0; i < position.count; i++) {
+          const weight = joint === 'arrow' ? 1 : joint === 'string' ? Math.max(0, 1 - Math.abs(position.getY(i)) / 0.74) : 0
+          indices[i * 4 + 1] = 1
+          weights[i * 4] = 1 - weight
+          weights[i * 4 + 1] = weight
+        }
+        geometry.setAttribute('skinIndex', new THREE.BufferAttribute(indices, 4))
+        geometry.setAttribute('skinWeight', new THREE.BufferAttribute(weights, 4))
+      }
+      try {
+        if (kind === 'bow') {
+          take(buildIllustratedBowString(), CHARACTER_PHYSICAL_PALETTE.dark, 'dark', 'string')
+          if (!released) take(buildIllustratedNockedArrow(), CHARACTER_PHYSICAL_PALETTE.metal, 'metal', 'arrow')
+        } else take(buildWeaponHead(kind), CHARACTER_PHYSICAL_PALETTE.metal, 'metal', 'rigid')
+        take(buildWeaponGrip(kind), CHARACTER_PHYSICAL_PALETTE.leather, 'leather', 'rigid')
+        const result = mergeAll(parts, { dispose: false, name: `character-weapon:${kind}:${released ? 'released' : 'ready'}` })
+        if (kind === 'bow') result.translate(0, 0, -0.17)
+        return result
+      } finally { for (const part of parts) part.dispose() }
+    })
+  }
+
+  private updateWeaponAnchors(geometry: THREE.BufferGeometry): void {
+    const positions = geometry.getAttribute('position')
+    const bow = this.activeWeapon === 'bow'
+    let maximum = -Infinity
+    for (let i = 0; i < positions.count; i++) maximum = Math.max(maximum, bow ? positions.getZ(i) : positions.getY(i))
+    const tip = new THREE.Vector3()
+    let tips = 0
+    for (let i = 0; i < positions.count; i++) {
+      if (Math.abs((bow ? positions.getZ(i) : positions.getY(i)) - maximum) > 1e-5) continue
+      tip.add(this.scratch.fromBufferAttribute(positions, i))
+      tips++
+    }
+    if (tips === 0) throw new Error('Weapon geometry has no finite tip')
+    tip.multiplyScalar(1 / tips)
+    const limb = this.rig.mainHand > 0 ? 'rightArm' : 'leftArm'
+    this.anchors.set('weaponGrip', { node: this.rig.weapon!, point: new THREE.Vector3(),
+      normal: new THREE.Vector3(0, 0, 1), surface: 'leather', limb })
+    this.anchors.set('weaponTip', { node: bow && !this.bowReleased ? this.bowString : this.rig.weapon!, point: tip,
+      normal: new THREE.Vector3(0, bow ? 0 : 1, bow ? 1 : 0), surface: 'metal', limb })
+    this.anchors.set('weapon', { node: this.rig.weapon!, point: new THREE.Vector3(0, 0.65, 0),
+      normal: new THREE.Vector3(0, 0, 1), surface: bow ? 'leather' : 'metal', limb })
+  }
+
+  private selectWieldingHand(): void {
+    const preferred = this.activeWeapon === 'bow' ? -1 : this.plan.mainHand === 'right' ? 1 : -1
+    const main = preferred > 0 ? 'rightArm' : 'leftArm'
+    const other = preferred > 0 ? 'leftArm' : 'rightArm'
+    this.rig.mainHand = this.appearance[main] === 'missing' && this.appearance[other] !== 'missing' ? -preferred : preferred
+  }
+
+  private setWeapon(kind: WeaponKind, released: boolean): void {
+    if (!this.weaponSource || !this.weaponBinding) throw new Error('An unarmed character cannot draw a weapon')
+    if (kind === this.activeWeapon && released === this.bowReleased) return
+    const lease = this.weaponLease(kind, released)
+    let outcome
+    try { outcome = this.art.replaceRenderSourceGeometry(this.weaponBinding, lease) }
+    catch (error) { lease.release(); throw error }
+    this.sourceBases.set(this.weaponSource, lease)
+    this.activeWeapon = kind
+    this.bowReleased = released
+    if (released || kind !== 'bow') this.bowString.position.z = 0
+    this.selectWieldingHand()
+    this.updateWeaponAnchors(lease.geometry)
+    if (outcome.status === 'committed-with-errors') throw outcome.error
+  }
+
+  beginArrowPresentation(direction: THREE.Vector3, verticalAim: number): void {
+    this.assertActive()
+    if (!this.player || this.plan.faction !== 'elf' ||
+        ![direction.x, direction.z, verticalAim].every(Number.isFinite) || Math.hypot(direction.x, direction.z) < 1e-10 ||
+        (this.appearance.leftArm === 'missing' && this.appearance.rightArm === 'missing')) {
+      throw new Error('Player bow presentation requires an elf and a finite shot direction')
+    }
+    this.setWeapon('bow', true)
+    this.arrowRemaining = 0.35
+    this.arrowDirection.set(direction.x, verticalAim, direction.z).normalize()
+    this.stowOffhand(true)
+    this.poseArrowRecovery()
+  }
+
+  advanceActionPresentation(delta: number, interrupted: boolean): void {
+    this.assertActive()
+    if (this.arrowRemaining <= 0) return
+    if (!Number.isFinite(delta) || delta < 0) throw new Error('Invalid character presentation timestep')
+    this.arrowRemaining = interrupted ? 0 : Math.max(0, this.arrowRemaining - delta)
+    if (this.arrowRemaining > 0) return
+    this.setWeapon(this.plan.weapon, false)
+    this.rig.weapon!.matrixAutoUpdate = true
+    this.stowOffhand(false)
+  }
+
+  private stowOffhand(stowed: boolean): void {
+    const shield = this.anchors.get('shield')?.node
+    if (!shield) return
+    shield.position.set(stowed ? 0 : -0.82,
+      stowed ? this.rig.shoulderY - 0.28 : 1.85 - this.rig.waistY, stowed ? -0.44 : 0.08)
+    shield.rotation.set(0, stowed ? Math.PI : 0, stowed ? 0 : 0.12)
+  }
+
+  poseArrowRecovery(): void {
+    this.assertActive()
+    if (this.arrowRemaining <= 0) return
+    const arm = this.rig.mainHand > 0 ? this.rig.rightArm! : this.rig.leftArm!
+    const elbow = this.rig.mainHand > 0 ? this.rig.rightElbow! : this.rig.leftElbow!
+    const progress = 1 - this.arrowRemaining / 0.35
+    const recoil = Math.sin(progress * Math.PI)
+    arm.rotation.set(-1.22 + recoil * 0.14, 0, this.rig.mainHand * 0.1, 'XYZ')
+    elbow.rotation.set(0.12 + recoil * 0.12, 0, 0, 'XYZ')
+    const weapon = this.rig.weapon!
+    weapon.matrixAutoUpdate = true
+    this.syncAttachments()
+    this.aimForward.copy(this.arrowDirection)
+    this.aimForward.y += recoil * 0.05
+    this.aimForward.normalize()
+    this.aimUp.set(0, 1, 0)
+    this.aimSide.crossVectors(this.aimUp, this.aimForward).normalize()
+    this.aimUp.crossVectors(this.aimForward, this.aimSide).normalize()
+    this.scratch.setFromMatrixPosition(this.hands[this.rig.mainHand > 0 ? 1 : 0].matrixWorld)
+    const e = this.anatomy.torsoPivot.matrixWorld.elements
+    this.aimSide.multiplyScalar(Math.hypot(e[0], e[1], e[2]))
+    this.aimUp.multiplyScalar(Math.hypot(e[4], e[5], e[6]))
+    this.aimForward.multiplyScalar(Math.hypot(e[8], e[9], e[10]))
+    this.aimMatrix.makeBasis(this.aimSide, this.aimUp, this.aimForward).setPosition(this.scratch)
+    this.inverse.copy(this.anatomy.torsoPivot.matrixWorld).invert()
+    weapon.matrixAutoUpdate = false
+    weapon.matrix.multiplyMatrices(this.inverse, this.aimMatrix)
+    weapon.matrixWorldNeedsUpdate = true
+    this.syncAttachments()
+  }
+
+  setBowRelease(released: boolean): void {
+    this.assertActive()
+    if (this.plan.weapon !== 'bow' || this.arrowRemaining > 0) return
+    this.setWeapon('bow', released)
+  }
+
+  get arrowPresentationActive(): boolean { return this.arrowRemaining > 0 }
+  get weaponKind(): WeaponKind { return this.activeWeapon }
+  get jointCount(): number { return this.skeleton.bones.length + (this.weaponSkeleton?.bones.length ?? 0) }
 
   private detailLevel(level: CharacterVisualLevel): CharacterVisualLevel {
     return this.quality === 'low' && (level === 'near' || level === 'hero') ? 'mid'
@@ -605,6 +752,7 @@ export class CharacterPresenter {
       const joint = this.rig[name]
       if (joint) joint.visible = state[name] !== 'missing'
     }
+    this.selectWieldingHand()
     if (outcome.status === 'committed-with-errors') throw outcome.error
   }
 
@@ -705,20 +853,22 @@ export class CharacterPresenter {
   poseSupport(draw: number): void {
     this.assertActive()
     const weapon = this.rig.weapon!
-    const shield = this.anchors.get('shield')?.node
+    const kind = this.activeWeapon
+    const shield = this.arrowRemaining > 0 ? undefined : this.anchors.get('shield')?.node
+    this.bowString.position.z = kind === 'bow' && !this.bowReleased ? -draw * 0.3 : 0
     this.anatomy.torsoPivot.updateWorldMatrix(true, true)
     this.inverse.copy(this.anatomy.torsoPivot.matrixWorld).invert()
     if (shield) {
       this.scratch.set(0, 0.02, -0.11).applyMatrix4(shield.matrixWorld).applyMatrix4(this.inverse)
       this.fitArm(-1, this.scratch)
-    } else if (SUPPORT_WEAPONS.has(this.plan.weapon) || this.plan.weapon === 'bow') {
-      this.scratch.set(0, this.plan.weapon === 'bow' ? 0 : -0.28, this.plan.weapon === 'bow' ? -0.1 - draw * 0.3 : 0)
+    } else if (SUPPORT_WEAPONS.has(kind) || kind === 'bow') {
+      this.scratch.set(kind === 'bow' ? 0.02 : 0, kind === 'bow' ? 0 : -0.28, kind === 'bow' ? -0.23 - draw * 0.3 : 0)
         .applyMatrix4(weapon.matrixWorld).applyMatrix4(this.inverse)
       this.fitArm(-this.rig.mainHand, this.scratch)
     }
     const side = this.rig.mainHand > 0 ? 0 : 1
     const hand = this.hands[side]
-    if ((shield || SUPPORT_WEAPONS.has(this.plan.weapon)) && hand.parent) {
+    if ((shield || SUPPORT_WEAPONS.has(kind)) && hand.parent) {
       hand.parent.updateWorldMatrix(true, false)
       const handle = shield ?? weapon
       handle.updateWorldMatrix(true, false)
@@ -806,7 +956,9 @@ export class CharacterPresenter {
   sampleContact(part: CharacterContactPart, target: CharacterContact): boolean {
     this.assertActive()
     const anchor = this.anchors.get(part)
-    if (!anchor || (anchor.limb && this.appearance[anchor.limb] === 'missing')) return false
+    const weaponPart = part === 'weapon' || part === 'weaponGrip' || part === 'weaponTip'
+    const limb = weaponPart ? this.rig.mainHand > 0 ? 'rightArm' : 'leftArm' : anchor?.limb
+    if (!anchor || (limb && this.appearance[limb] === 'missing')) return false
     for (let node: THREE.Object3D | null = anchor.node; node; node = node.parent) {
       if (!node.visible) return false
     }
@@ -814,7 +966,7 @@ export class CharacterPresenter {
     target.point.copy(anchor.point).applyMatrix4(anchor.node.matrixWorld)
     this.normalMatrix.getNormalMatrix(anchor.node.matrixWorld)
     target.normal.copy(anchor.normal).applyMatrix3(this.normalMatrix).normalize()
-    target.surface = anchor.limb && this.appearance[anchor.limb] === 'prosthetic' ? 'metal' : anchor.surface
+    target.surface = !weaponPart && limb && this.appearance[limb] === 'prosthetic' ? 'metal' : anchor.surface
     return true
   }
 
@@ -840,6 +992,10 @@ export class CharacterPresenter {
       identity: this.skeleton.boneMatrices.buffer, chargedTo: 'dynamicArt', kind: 'skin',
       cpuBytes: this.skeleton.boneMatrices.byteLength, gpuBytes: null,
     })
+    if (this.weaponSkeleton?.boneMatrices) receipts.push({
+      identity: this.weaponSkeleton.boneMatrices.buffer, chargedTo: 'dynamicArt', kind: 'skin',
+      cpuBytes: this.weaponSkeleton.boneMatrices.byteLength, gpuBytes: null,
+    })
     // Matrix4.elements is a JS array, not an observable byte-addressed backing store.
     // Its runtime-dependent storage remains outside this explicitly incomplete inventory.
     return receipts
@@ -860,6 +1016,7 @@ export class CharacterPresenter {
     const owners = [
       ...[...this.recentBodies.values()].map((lease) => ({ dispose: () => lease.release() })),
       { dispose: () => this.skeleton.dispose() },
+      { dispose: () => this.weaponSkeleton?.dispose() },
       ...this.bindings.map((binding) => ({ dispose: () => this.art.releaseRenderSource(binding) })),
     ]
     const ropeLease = this.ropeLease
