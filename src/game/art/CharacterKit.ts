@@ -5149,10 +5149,10 @@ export function illustratedCharacterPlan(plan: CharacterPlan): CharacterPlan {
 
 /** A continuous skull surface: mandible, cheek, orbital recess and cranial vault. */
 export function buildIllustratedHead(faction: CharacterFaction, level: CharacterVisualLevel): THREE.BufferGeometry {
-  const sides = level === 'hero' ? 24 : level === 'near' ? 16 : 12
+  const sides = level === 'hero' ? 24 : level === 'near' ? 16 : level === 'mid' ? 8 : 6
   const wide = faction === 'guard' ? 1.04 : faction === 'villain' ? 1.07 : 0.94
   // [height, half width, face depth, occipital depth]. The eye line is below the vault.
-  const rings = [
+  const allRings = [
     [-0.24, 0.07, 0.12, 0.08],
     [-0.205, 0.12, 0.155, 0.105],
     [-0.15, 0.16, 0.15, 0.155],
@@ -5165,6 +5165,8 @@ export function buildIllustratedHead(faction: CharacterFaction, level: Character
     [0.275, 0.086, 0.078, 0.095],
     [0.29, 0.015, 0.014, 0.02],
   ] as const
+  const rings = level === 'hero' || level === 'near' ? allRings
+    : allRings.filter((_, i) => ![3, 7, 9].includes(i))
   const positions: number[] = []
   const indices: number[] = []
   for (const [y, width, front, back] of rings) {
@@ -5208,7 +5210,7 @@ export function buildIllustratedHead(faction: CharacterFaction, level: Character
   })
   const parts = [skull, nose,
     loft({
-      profile: polygonProfile(0.082, 10),
+      profile: polygonProfile(0.082, level === 'hero' || level === 'near' ? 10 : 6),
       sections: [{ y: -0.34, scaleX: 1.14, scaleZ: 1.05 }, { y: -0.15, scaleX: 0.94, scaleZ: 0.96 }],
       name: 'neck',
     }),
@@ -5219,7 +5221,8 @@ export function buildIllustratedHead(faction: CharacterFaction, level: Character
         { x: 0, y: -0.065 }, { x: 0.046, y: -0.049 },
         { x: faction === 'elf' ? 0.13 : 0.061, y: faction === 'elf' ? 0.09 : 0.052 },
         { x: 0.025, y: 0.081 }, { x: -0.005, y: 0.04 },
-      ], 0.022, { position: { x: 0.172 * wide, y: 0.015, z: -0.015 }, rotation: { x: 0, y: -0.25, z: 0 } }, 0.004,
+      ], 0.022, { position: { x: 0.172 * wide, y: 0.015, z: -0.015 }, rotation: { x: 0, y: -0.25, z: 0 } },
+      level === 'hero' || level === 'near' ? 0.004 : 0,
     )
     parts.push(side < 0 ? mirrorX(ear) : ear)
   }
@@ -5228,24 +5231,25 @@ export function buildIllustratedHead(faction: CharacterFaction, level: Character
 
 export function buildIllustratedFace(level: CharacterVisualLevel): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = []
+  const coarse = level === 'mid' || level === 'far'
   for (const side of [-1, 1]) {
-    parts.push(block({ width: 0.073, height: 0.022, depth: 0.027, bevel: 0.006 },
+    parts.push(block({ width: 0.073, height: 0.022, depth: 0.027, bevel: coarse ? 0 : 0.006 },
       { position: { x: side * 0.087, y: 0.058, z: 0.163 }, rotation: { x: 0, y: side * 0.12, z: side * 0.07 } }))
     if (level === 'hero' || level === 'near') {
-      parts.push(block({ width: 0.081, height: 0.014, depth: 0.022, bevel: 0.003 },
+      parts.push(block({ width: 0.081, height: 0.014, depth: 0.022 },
         { position: { x: side * 0.087, y: 0.099, z: 0.176 }, rotation: { x: 0, y: side * 0.12, z: -side * 0.07 } }))
       parts.push(block({ width: 0.016, height: 0.009, depth: 0.009 },
         { position: { x: side * 0.027, y: -0.04, z: 0.234 } }))
     }
   }
-  parts.push(block({ width: 0.084, height: 0.009, depth: 0.015, bevel: 0.002 },
+  parts.push(block({ width: 0.084, height: 0.009, depth: 0.015 },
     { position: { x: 0, y: -0.107, z: 0.151 } }))
   return finish(parts, `illustrated-face:${level}`)
 }
 
-export function buildIllustratedEyes(iris: boolean): THREE.BufferGeometry {
+export function buildIllustratedEyes(iris: boolean, level: CharacterVisualLevel = 'near'): THREE.BufferGeometry {
   return finish(mirroredPair((side) => iris
-    ? block({ width: 0.016, height: 0.017, depth: 0.005, bevel: 0.004 },
+    ? block({ width: 0.016, height: 0.017, depth: 0.005, bevel: level === 'mid' || level === 'far' ? 0 : 0.004 },
       { position: { x: side * 0.086, y: 0.058, z: 0.183 } })
     : plate([
       { x: -0.03, y: 0 }, { x: -0.013, y: -0.007 }, { x: 0.015, y: -0.006 },
@@ -5305,6 +5309,23 @@ function openHeadCover(ragged: boolean, level: CharacterVisualLevel): THREE.Buff
 
 export function buildIllustratedHeadgear(kind: HeadgearKind, level: CharacterVisualLevel): THREE.BufferGeometry {
   if (kind === 'hood' || kind === 'ragHood') return openHeadCover(kind === 'ragHood', level)
+  if (kind === 'kettle' && (level === 'mid' || level === 'far')) {
+    const segments = level === 'mid' ? 8 : 6
+    return finish([
+      transformed(helmDome(0.228, 0.273, segments), { position: { x: 0, y: 0.1892, z: -0.006 } }),
+      transformed(latheProfile([
+        { x: 0.171, y: -0.0186 }, { x: 0.2964, y: -0.0558 },
+        { x: 0.2964, y: -0.0186 }, { x: 0.171, y: 0.031 },
+      ], { segments }), { position: { x: 0, y: 0.1396, z: -0.006 }, scale: { x: 1, y: 1, z: 0.59 / 0.57 } }),
+    ], 'coarse-fitted-kettle')
+  }
+  if (kind === 'hornedHelm') {
+    return finish([
+      transformed(helmDome(0.229, 0.27, 10), { position: { x: 0, y: 0.229, z: -0.006 } }),
+      block({ width: 0.365, height: 0.046, depth: 0.044, bevel: 0.011 },
+        { position: { x: 0, y: 0.136, z: 0.173 } }),
+    ], 'fitted-iron-helm')
+  }
   if (kind === 'boneMask') {
     // Brow, temples and nasal bridge leave both eyes and lower face physically open.
     return finish([
@@ -5341,25 +5362,74 @@ export function buildIllustratedHair(kind: HairKind): THREE.BufferGeometry {
   })
 }
 
-export function buildIllustratedTorso(plan: CharacterPlan): THREE.BufferGeometry {
-  const p = plan.proportions
-  const height = p.shoulderY - p.hipY
-  return finish([loft({
-    profile: rectProfile(p.chestWidth, p.chestDepth, 0.12),
-    sections: [
-      { y: -0.53, scaleX: 0.78, scaleZ: 0.86 },
-      { y: -0.36, scaleX: p.waistScale, scaleZ: 0.8 },
-      { y: -0.1, scaleX: 0.9, scaleZ: 0.94 },
-      { y: 0.16, scaleX: 1, scaleZ: 1 },
-      { y: height - (p.torsoY - p.hipY) - 0.03, scaleX: 0.86, scaleZ: 0.83 },
-      { y: height - (p.torsoY - p.hipY) + 0.06, scaleX: 0.28, scaleZ: 0.35 },
-    ],
-    name: 'fitted-ribcage',
-  }), ...torsoSkirt(plan)], 'illustrated-torso')
+export function buildIllustratedHorns(): THREE.BufferGeometry {
+  return finish(mirroredPairX(() => tubeAlongPoints([
+    { x: 0.17, y: 0.2, z: -0.015 },
+    { x: 0.239, y: 0.249, z: -0.035 },
+    { x: 0.287, y: 0.33, z: -0.07 },
+    { x: 0.3, y: 0.409, z: -0.079 },
+  ], { radius: (t) => 0.049 * (1 - t) + 0.007, radialSegments: 6, tubularSegments: 7, capStart: true, capEnd: true })),
+  'fitted-bone-horns')
 }
 
-export function buildIllustratedChestArmor(plan: CharacterPlan): THREE.BufferGeometry {
+export function buildIllustratedTorso(plan: CharacterPlan, level: CharacterVisualLevel = 'near'): THREE.BufferGeometry {
+  const p = plan.proportions
+  const height = p.shoulderY - p.hipY
+  const coarse = level === 'mid' || level === 'far'
+  const sections: LoftSection[] = [
+    { y: -0.53, scaleX: 0.78, scaleZ: 0.86 },
+    { y: -0.36, scaleX: p.waistScale, scaleZ: 0.8 },
+    { y: -0.1, scaleX: 0.9, scaleZ: 0.94 },
+    { y: 0.16, scaleX: 1, scaleZ: 1 },
+    { y: height - (p.torsoY - p.hipY) - 0.03, scaleX: 0.86, scaleZ: 0.83 },
+    { y: height - (p.torsoY - p.hipY) + 0.06, scaleX: 0.28, scaleZ: 0.35 },
+  ]
+  const skirt = coarse && plan.faction === 'guard' && plan.armour !== 'none'
+    ? [-1, 0, 1].map((side) => block({
+      width: p.chestWidth * (side === 0 ? 0.44 : 0.34), height: 0.34,
+      depth: p.chestDepth * (side === 0 ? 0.5 : 0.72), bottomScale: 0.86,
+    }, { position: { x: side * p.chestWidth * 0.36, y: -0.84, z: side === 0 ? p.chestDepth * 0.34 : 0 },
+      rotation: { x: 0, y: 0, z: -side * 0.1 } }))
+    : torsoSkirt(plan)
+  return finish([loft({
+    profile: rectProfile(p.chestWidth, p.chestDepth, 0.12),
+    sections: coarse ? sections.filter((_, index) => index !== 2) : sections,
+    name: 'fitted-ribcage',
+  }), ...skirt], 'illustrated-torso')
+}
+
+export function buildIllustratedChestArmor(plan: CharacterPlan, level: CharacterVisualLevel = 'near'): THREE.BufferGeometry {
+  if ((level === 'mid' || level === 'far') && plan.faction === 'guard' && plan.armour !== 'none') {
+    return finish([
+      wedge(0.14, 0.62, 0.16, { position: { x: 0, y: 0.22, z: plan.proportions.chestDepth * 0.5 },
+        rotation: { x: Math.PI / 2, y: 0, z: 0 } }),
+      ...[-0.06, -0.26, -0.46].map((y) => block({
+        width: plan.proportions.chestWidth * 0.92, height: 0.06, depth: plan.proportions.chestDepth * 0.94, topScale: 1.04,
+      }, { position: { x: 0, y, z: 0 } })),
+    ], 'coarse-banded-cuirass')
+  }
   return finish([...torsoChestPiece(plan)], 'illustrated-chest-layer')
+}
+
+export function buildIllustratedTrim(trim: TrimKind, level: CharacterVisualLevel): THREE.BufferGeometry {
+  if ((level === 'mid' || level === 'far') && (trim === 'belt' || trim === 'beltPouch')) {
+    const parts = [
+      block({ width: 0.96, height: 0.13, depth: 0.66 }, { position: { x: 0, y: -0.33, z: 0 } }),
+      block({ width: 0.17, height: 0.17, depth: 0.09 }, { position: { x: 0, y: -0.33, z: 0.34 } }),
+    ]
+    if (trim === 'beltPouch') for (const side of [-1, 1]) parts.push(block({
+      width: 0.18, height: 0.22, depth: 0.13, bottomScale: 0.86,
+    }, { position: { x: side * 0.35, y: -0.45, z: 0.25 } }))
+    return finish(parts, 'coarse-belt-pouches')
+  }
+  return buildTorsoTrim(trim)
+}
+
+export function buildIllustratedArm(length: number, forearm: boolean): THREE.BufferGeometry {
+  return finish([block({
+    width: forearm ? 0.21 : 0.24, height: length + 0.05, depth: forearm ? 0.218 : 0.254,
+    topScale: 1, bottomScale: forearm ? 0.66 : 0.82, bevel: 0.036,
+  }, { position: { x: 0, y: -length * 0.5 + 0.025, z: 0 } })], 'coarse-arm')
 }
 
 export function buildIllustratedShoulder(plan: CharacterPlan, side: number): THREE.BufferGeometry {

@@ -15060,6 +15060,12 @@ export class GameEngine {
     cargo.position.y = 2.45
     group.add(cargo)
 
+    const frontAxle = enhanced ? new THREE.Group() : null
+    if (frontAxle) {
+      frontAxle.name = 'front-axle-pivot'
+      frontAxle.position.x = WAGON_RIG.frontAxleX
+      group.add(frontAxle)
+    }
     for (const [x, radius] of [
       [WAGON_RIG.rearAxleX, WAGON_RIG.rearWheelRadius],
       [WAGON_RIG.frontAxleX, WAGON_RIG.frontWheelRadius],
@@ -15068,23 +15074,25 @@ export class GameEngine {
         build('wagon-axle', () => buildWagonAxle(WAGON_RIG.axleWidth)),
         ironwork,
       )
-      axle.position.set(x, radius, 0)
-      group.add(axle)
+      const axleParent = x === WAGON_RIG.frontAxleX && frontAxle ? frontAxle : group
+      axle.position.set(axleParent === frontAxle ? 0 : x, radius, 0)
+      axleParent.add(axle)
       for (const side of [-1, 1]) {
         const wheel = new THREE.Group()
         wheel.name = 'wheel'
-        wheel.position.set(x, radius, side * WAGON_RIG.wheelZ)
+        wheel.position.set(axleParent === frontAxle ? 0 : x, radius, side * WAGON_RIG.wheelZ)
         // The two axles carry different wheels, so they cannot share one rolling
         // constant: a rear wheel turns 0.78/1.02 as fast as a front one over the
         // same ground. Carrying the radius on the object is what stops the animation
         // from having to guess.
         wheel.userData.wheelRadius = radius
+        wheel.userData.axleX = x
         const tyre = new THREE.Mesh(
           build(`wagon-wheel:${radius.toFixed(2)}`, () => buildWagonWheel(radius)),
           ironwork,
         )
         wheel.add(tyre)
-        group.add(wheel)
+        axleParent.add(wheel)
       }
     }
 
@@ -16860,7 +16868,7 @@ export class GameEngine {
         bowX,
         bowZ,
         bowElbowX,
-        0.06,
+        this.visualPolicy.mode === 'enhanced' ? 0.06 - aimPitch : 0.06,
         -rig.mainHand * 0.12,
       )
     }

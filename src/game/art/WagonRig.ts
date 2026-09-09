@@ -15,6 +15,7 @@ export class WagonPresenter {
   private readonly traces: readonly THREE.Object3D[]
   private readonly yoke: THREE.Object3D
   private readonly cargo: THREE.Object3D
+  private readonly frontAxle: THREE.Object3D
   private readonly point = new THREE.Vector3()
   private readonly from = new THREE.Vector3()
   private readonly to = new THREE.Vector3()
@@ -23,6 +24,7 @@ export class WagonPresenter {
   private previousSpeed = 0
   private frameLift = 0
   private lastCargoScale = 1
+  private previousHeading = 0
   private disposed = false
 
   constructor(root: THREE.Group) {
@@ -30,8 +32,11 @@ export class WagonPresenter {
     const frame = root.getObjectByName('wagon-frame-pivot')
     const yoke = root.getObjectByName('draft-yoke')
     const cargo = root.getObjectByName('cargo')
-    if (!frame || !yoke || !cargo) throw new Error('Incomplete production wagon rig')
+    const frontAxle = root.getObjectByName('front-axle-pivot')
+    if (!frame || !yoke || !cargo || !frontAxle) throw new Error('Incomplete production wagon rig')
     this.frame = frame; this.yoke = yoke; this.cargo = cargo
+    this.frontAxle = frontAxle
+    this.previousHeading = root.rotation.y
     this.wheels = root.getObjectsByProperty('name', 'wheel')
     this.oxen = root.getObjectsByProperty('name', 'draft-ox').map((ox) => {
       const head = ox.getObjectByName('ox-head'), rig = creaturePresenter(ox)
@@ -47,17 +52,23 @@ export class WagonPresenter {
   update(delta: number, travel: number, sampleHeight: (x: number, z: number) => number): void {
     if (this.disposed) throw new Error('Wagon presenter is disposed')
     if (!Number.isFinite(travel) || travel < 0 || !Number.isFinite(delta) || delta < 0) throw new Error('Invalid wagon visual motion')
+    const turn = Math.atan2(Math.sin(this.root.rotation.y - this.previousHeading), Math.cos(this.root.rotation.y - this.previousHeading))
+    if (delta > 0) this.previousHeading = this.root.rotation.y
+    this.frontAxle.rotation.y = THREE.MathUtils.damp(this.frontAxle.rotation.y,
+      travel > 0 ? THREE.MathUtils.clamp(turn * 2.5, -0.32, 0.32) : 0, 9, delta)
     this.root.updateWorldMatrix(true, true)
     let rear = 0, front = 0, left = 0, right = 0
     for (let i = 0; i < this.wheels.length; i++) {
       const wheel = this.wheels[i]
       const radius: unknown = wheel.userData.wheelRadius
+      const axleX: unknown = wheel.userData.axleX
       if (typeof radius !== 'number' || !Number.isFinite(radius) || radius <= 0) throw new Error('Wagon wheel has no valid rolling radius')
+      if (typeof axleX !== 'number' || !Number.isFinite(axleX)) throw new Error('Wagon wheel has no axle anchor')
       wheel.rotation.z -= travel / radius
-      this.point.set(wheel.position.x, 0, wheel.position.z).applyMatrix4(this.root.matrixWorld)
+      this.point.set(axleX, 0, wheel.position.z).applyMatrix4(this.root.matrixWorld)
       const height = sampleHeight(this.point.x, this.point.z) - this.root.position.y
       if (!Number.isFinite(height)) throw new Error('Wagon terrain sample is non-finite')
-      if (wheel.position.x < 0) rear += height * 0.5
+      if (axleX < 0) rear += height * 0.5
       else front += height * 0.5
       if (wheel.position.z < 0) left += height * 0.5
       else right += height * 0.5

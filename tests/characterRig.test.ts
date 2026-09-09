@@ -12,6 +12,7 @@ import {
 } from '../src/game/art/index.ts'
 import { sumVisualAllocationReceipts } from '../src/game/diagnostics/VisualBudgetAccounting.ts'
 import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
+import { resolveVisualSubsystemAllocation } from '../src/game/visualBudget.ts'
 
 const loader = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -302,4 +303,59 @@ test('support hand reaches the actual shield handle through posed and scaled joi
     assert.ok(actual.distanceTo(wanted) < 0.001, 'the shield is held by the hand, not an unrelated forearm pose')
   }
   p.dispose(); art.dispose(); cache.dispose()
+})
+
+test('each guard variant fits its source-plus-ink geometry envelope without dropping equipment', () => {
+  const art = library(), cache = new GeometryCache()
+  for (const quality of ['high', 'balanced', 'low'] as const) {
+    const allocation = resolveVisualSubsystemAllocation(resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: quality }))!
+    for (let variant = 0; variant < CHARACTER_VARIANTS; variant++) {
+      const plan = illustratedCharacterPlan(resolveCharacterPlan('guard', 'soldier', variant))
+      const p = createCharacterPresenter(plan, art, cache, false, quality)
+      const triangles = p.sources.reduce((sum, source) =>
+        sum + (source.geometry.index?.count ?? source.geometry.getAttribute('position').count) / 3, 0)
+      // Geometry upper bound, not a GL/whole-frame measurement: source + identical ink,
+      // plus the actual 24-segment ring, 18-segment contact disc and health sprite.
+      assert.ok(triangles * 2 + 48 + 18 + 2 <= allocation.firstRole.nearMainViewTriangles,
+        `${quality}/${variant}: ${triangles * 2 + 68} main-view geometry triangles`)
+      assert.equal(p.sources.length, plan.offhand === 'none' ? 2 : 3)
+      assert.ok(p.skeleton.bones.length <= allocation.firstRole.joints)
+      assert.ok(p.geometryBytes <= allocation.firstRole.exclusiveCpuBackingBytes)
+      p.dispose()
+    }
+  }
+  cache.dispose(); art.dispose()
+})
+
+test('captive rope follows posed wrists and failed construction cannot release another captive receipt', () => {
+  const art = library(), cache = new GeometryCache()
+  const plan = illustratedCharacterPlan(resolveCharacterPlan('elf', 'captive', 0))
+  const p = createCharacterPresenter(plan, art, cache, false)
+  const rope = p.root.getObjectByName('wrist-rope')!
+  assert.equal(cache.referenceCount('wrist-rope'), 1)
+  const wrist = new THREE.Vector3(), loop = new THREE.Vector3()
+  for (const pitch of [-0.2, 0.3, 0.6]) {
+    p.anatomy.torsoPivot.rotation.set(pitch, 0.2, -0.1)
+    p.rig.leftElbow!.rotation.x = 0.72 + pitch * 0.1
+    p.syncAttachments()
+    p.root.updateMatrixWorld(true)
+    for (const side of [0, 1]) {
+      wrist.setFromMatrixPosition(p.hands[side].matrixWorld)
+      loop.set(side === 0 ? -0.5 : 0.5, 0, 0).applyMatrix4(rope.matrixWorld)
+      assert.ok(wrist.distanceTo(loop) < 1e-9, 'rope cuffs stay on the actual wrists')
+    }
+  }
+  const originalBind = art.bindRenderSource
+  art.bindRenderSource = () => { throw new Error('injected preparation rejection') }
+  try {
+    assert.throws(() => createCharacterPresenter(plan, art, cache, false), /preparation rejection/)
+    assert.equal(cache.referenceCount('wrist-rope'), 1, 'a failed builder must not spend another holder receipt')
+  } finally { art.bindRenderSource = originalBind }
+  rope.visible = false
+  p.rig.boundArms = false
+  p.syncAttachments()
+  assert.equal(rope.visible, false, 'a rescued captive is not rebound by the pose pass')
+  p.dispose()
+  assert.equal(cache.size, 0)
+  art.dispose()
 })

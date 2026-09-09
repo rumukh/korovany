@@ -3,10 +3,11 @@ import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometr
 import {
   CHARACTER_ART_REVISION, CHARACTER_PHYSICAL_PALETTE,
   buildCharacterSkeleton, buildIllustratedHead, buildIllustratedFace,
-  buildIllustratedHair, buildIllustratedHeadgear, buildIllustratedTorso, buildIllustratedEyes,
+  buildIllustratedHair, buildIllustratedHeadgear, buildIllustratedTorso, buildIllustratedEyes, buildIllustratedHorns,
   buildIllustratedChestArmor, buildIllustratedShoulder, buildIllustratedHand,
+  buildIllustratedTrim, buildIllustratedArm,
   buildUpperArm, buildForearm, buildThigh, buildIllustratedShin, buildIllustratedBoot, buildCloak,
-  buildTorsoTrim, buildWeaponHead, buildWeaponGrip, buildOffhand, buildWristRope,
+  buildWeaponHead, buildWeaponGrip, buildOffhand, buildWristRope,
   type CharacterPlan, type CharacterVisualLevel, type CharacterPhysicalSurface,
 } from './CharacterKit.ts'
 import { bakeOutlineNormals, mergeAll, transformed } from './GeometryKit.ts'
@@ -72,6 +73,8 @@ export interface CharacterContact {
 
 const LIMBS = ['leftArm', 'rightArm', 'leftLeg', 'rightLeg'] as const
 const SUPPORT_WEAPONS = new Set(['spear', 'glaive', 'maul', 'greatsword', 'staff'])
+const VISUAL_LEVELS: readonly CharacterVisualLevel[] = ['far', 'mid', 'near']
+const PROJECTED_THRESHOLDS = [0.055, 0.13] as const
 const SURFACES: Record<CharacterPhysicalSurface, readonly [number, number, number, number]> = {
   skin: [0.79, 0, 0.46, 0.13], hair: [0.93, 0, 0.56, 0.08],
   cloth: [0.94, 0, 0.62, 0.12], leather: [0.86, 0.02, 0.62, 0.11],
@@ -132,13 +135,11 @@ export function selectCharacterVisualLevel(
     throw new RangeError('Invalid character projected importance')
   }
   if (hero) return 'hero'
-  const order: readonly CharacterVisualLevel[] = ['far', 'mid', 'near']
-  const current = Math.max(0, order.indexOf(previous))
-  const thresholds = [0.055, 0.13]
+  const current = Math.max(0, VISUAL_LEVELS.indexOf(previous))
   let level = current
-  while (level < 2 && projectedHeight > thresholds[level] * (1 + hysteresis)) level++
-  while (level > 0 && projectedHeight < thresholds[level - 1] * (1 - hysteresis)) level--
-  return order[level]
+  while (level < 2 && projectedHeight > PROJECTED_THRESHOLDS[level] * (1 + hysteresis)) level++
+  while (level > 0 && projectedHeight < PROJECTED_THRESHOLDS[level - 1] * (1 - hysteresis)) level--
+  return VISUAL_LEVELS[level]
 }
 
 /**
@@ -171,6 +172,8 @@ export class CharacterPresenter {
   }
   private readonly sourceBases = new Map<THREE.Mesh, ArtGeometryLease>()
   private contactShadow: THREE.Object3D | null = null
+  private wristRope: THREE.Object3D | null = null
+  private ropeLease: ArtGeometryLease | null = null
   private readonly scratch = new THREE.Vector3()
   private readonly inverse = new THREE.Matrix4()
   private readonly normalMatrix = new THREE.Matrix3()
@@ -222,19 +225,19 @@ export class CharacterPresenter {
       return node
     }
     const torso = bone('torso', a.torsoPivot, 0, a.torsoY)
-    part(torso, () => buildIllustratedTorso(plan), cloth, 'cloth')
-    part(torso, () => buildIllustratedChestArmor(plan),
+    part(torso, (level) => buildIllustratedTorso(plan, level), cloth, 'cloth')
+    part(torso, (level) => buildIllustratedChestArmor(plan, level),
       plan.faction === 'guard' && plan.armour !== 'none' ? metal : plan.faction === 'villain' ? leather : cloth,
       plan.faction === 'guard' && plan.armour !== 'none' ? 'metal' : 'leather')
     if (plan.trim !== 'none') {
-      part(torso, () => transformed(buildTorsoTrim(plan.trim), { scale: { x: 0.88, y: 0.9, z: 0.92 } }), leather, 'leather')
+      part(torso, (level) => transformed(buildIllustratedTrim(plan.trim, level), { scale: { x: 0.88, y: 0.9, z: 0.92 } }), leather, 'leather')
     }
     const head = bone('head', a.headPivot, 0, a.headY)
     head.scale.setScalar(p.headScale)
     part(head, (level) => buildIllustratedHead(plan.faction, level), skin, 'skin')
     part(head, buildIllustratedFace, 0x3c302c, 'dark')
-    part(head, () => buildIllustratedEyes(false), 0xc4b8a1, 'skin')
-    part(head, () => buildIllustratedEyes(true), 0x39352b, 'dark')
+    part(head, (level) => buildIllustratedEyes(false, level), 0xc4b8a1, 'skin')
+    part(head, (level) => buildIllustratedEyes(true, level), 0x39352b, 'dark')
     if (plan.hair !== 'none') {
       part(head, () => buildIllustratedHair(plan.hair), CHARACTER_PHYSICAL_PALETTE.hair[plan.hairTone % 4], 'hair')
     }
@@ -244,6 +247,7 @@ export class CharacterPresenter {
       part(head, (level) => buildIllustratedHeadgear(plan.headgear, level),
         soft ? cloth : mask ? CHARACTER_PHYSICAL_PALETTE.bone : plan.headgear === 'strap' ? leather : metal,
         soft ? 'cloth' : mask ? 'bone' : plan.headgear === 'strap' ? 'leather' : 'metal')
+      if (plan.headgear === 'hornedHelm') part(head, buildIllustratedHorns, CHARACTER_PHYSICAL_PALETTE.bone, 'bone')
     }
     const arms: THREE.Group[] = []
     const elbows: THREE.Group[] = []
@@ -255,14 +259,16 @@ export class CharacterPresenter {
       const limb: CharacterLimb = side < 0 ? 'leftArm' : 'rightArm'
       const arm = joint(limb, a.torsoPivot, side * p.shoulderX, a.shoulderY)
       const upper = bone(`${limb}-upper`, arm, 0, 0, 0, limb)
-      part(upper, () => buildUpperArm(plan.faction, 'none', p.upperArm), cloth, 'cloth', limb)
+      part(upper, (level) => level === 'mid' || level === 'far' ? buildIllustratedArm(p.upperArm, false)
+        : buildUpperArm(plan.faction, 'none', p.upperArm), cloth, 'cloth', limb)
       if (plan.armour !== 'none' && plan.kit !== 'light' && plan.kit !== 'ranged') {
         part(upper, () => buildIllustratedShoulder(plan, side), plan.faction === 'elf' ? cloth : metal,
           plan.faction === 'elf' ? 'leather' : 'metal', limb)
       }
       const elbow = joint(side < 0 ? 'leftElbow' : 'rightElbow', arm, 0, -p.upperArm)
       const forearm = bone(`${limb}-forearm`, elbow, 0, 0, 0, limb)
-      part(forearm, () => buildForearm(plan.faction, 'none', false, p.forearm),
+      part(forearm, (level) => level === 'mid' || level === 'far' ? buildIllustratedArm(p.forearm, true)
+        : buildForearm(plan.faction, 'none', false, p.forearm),
         plan.armour === 'none' ? skin : leather, plan.armour === 'none' ? 'skin' : 'leather', limb)
       const hand = bone(side < 0 ? 'leftHand' : 'rightHand', elbow, 0, -p.forearm, 0, limb)
       part(hand, (level) => buildIllustratedHand(side, level), plan.gloved ? leather : skin, plan.gloved ? 'leather' : 'skin', limb)
@@ -338,17 +344,21 @@ export class CharacterPresenter {
           normal: new THREE.Vector3(0, 0, 1), surface: 'metal', limb: 'leftArm' })
       }
       if (plan.boundArms) {
+        this.ropeLease = cachedLease(cache, 'wrist-rope', buildWristRope)
         const rope = new THREE.Mesh(
-          cache.acquire('wrist-rope', () => { const g = buildWristRope(); StylizedArtLibrary.markLibraryOwned(g); return g }),
+          this.ropeLease.geometry,
           art.acquireMaterial('character:rope', { color: leather, surface: 'leather' }),
         )
         rope.name = 'wrist-rope'
+        this.wristRope = rope
         rope.position.set(0, a.shoulderY - p.upperArm - p.forearm, 0.2)
         rope.scale.x = p.shoulderX / 0.5
         a.torsoPivot.add(rope)
       }
     } catch (error) {
-      this.dispose()
+      try { this.dispose() } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], 'Character construction and cleanup failed')
+      }
       throw error
     }
     this.anchors.set('torso', { node: torso, point: new THREE.Vector3(0, 0.12, p.chestDepth * 0.5),
@@ -560,6 +570,17 @@ export class CharacterPresenter {
     hand.matrixAutoUpdate = false
     hand.matrix.multiplyMatrices(this.inverse, weapon.matrixWorld)
     hand.matrixWorldNeedsUpdate = true
+    if (this.wristRope?.visible) {
+      this.root.updateWorldMatrix(true, true)
+      this.inverse.copy(this.anatomy.torsoPivot.matrixWorld).invert()
+      this.armLocal.setFromMatrixPosition(this.hands[0].matrixWorld).applyMatrix4(this.inverse)
+      this.armTarget.setFromMatrixPosition(this.hands[1].matrixWorld).applyMatrix4(this.inverse)
+      this.wristRope.position.copy(this.armLocal).add(this.armTarget).multiplyScalar(0.5)
+      this.armTarget.sub(this.armLocal)
+      this.wristRope.scale.set(this.armTarget.length(), 0.65, 0.65)
+      this.armLocal.set(1, 0, 0)
+      this.wristRope.quaternion.setFromUnitVectors(this.armLocal, this.armTarget.normalize())
+    }
   }
 
   /** Fit a support arm to a real equipment-space handle; never move the shield or collider. */
@@ -769,9 +790,11 @@ export class CharacterPresenter {
       { dispose: () => this.skeleton.dispose() },
       ...this.bindings.map((binding) => ({ dispose: () => this.art.releaseRenderSource(binding) })),
     ]
+    const ropeLease = this.ropeLease
+    this.ropeLease = null
+    if (ropeLease) owners.push({ dispose: () => ropeLease.release() })
     try { disposeOwnedVisualResources(owners) }
     finally {
-      if (this.plan.boundArms) this.cache.release('wrist-rope')
       for (const source of this.sources) source.removeFromParent()
       this.sourceBases.clear()
       this.bindings.length = 0
