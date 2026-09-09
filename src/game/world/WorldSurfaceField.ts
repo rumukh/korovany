@@ -5,6 +5,7 @@ import type { ZoneId } from '../types.ts'
 import { composeSiteLayout, resolveSiteLayoutTransform } from './SiteComposition.ts'
 import type { Bounds2D, Point2, TerrainSystem } from './TerrainSystem.ts'
 import type { RegionId, SiteKind, WorldBlueprint } from './worldTypes.ts'
+import { canonicalBridgeSize } from './WorldPropLibrary.ts'
 
 export const WORLD_SURFACE_REVISION = 'tactile-world-1'
 export const WORLD_DETAIL_METRES = 4
@@ -88,6 +89,7 @@ export class WorldSurfaceField {
   private readonly roadHalfWidth: number
   private readonly waterHalfWidth: number
   private readonly bridgeHalfWidth: number
+  private readonly bridgeHalfSpan: number
   private readonly scratch = createWorldSurfaceSample()
   private readonly biomes: ReadonlyMap<string, ZoneId>
 
@@ -105,7 +107,9 @@ export class WorldSurfaceField {
     this.seed = artNoiseSeed(blueprint.seed, 'world:surface')
     this.roadHalfWidth = options.roadWidth / 2
     this.waterHalfWidth = options.riverWidth / 2
-    this.bridgeHalfWidth = options.bridgeWidth / 2
+    const bridgeSize = canonicalBridgeSize(options.riverWidth + 4, options.bridgeWidth)
+    this.bridgeHalfWidth = bridgeSize.width / 2
+    this.bridgeHalfSpan = bridgeSize.span / 2
     this.roads = Object.freeze(blueprint.regions.flatMap((region) =>
       getRegionRoadLegs(blueprint, region).map((leg) => segment(leg.center, leg.edge))))
     const river: WaterSegment[] = []
@@ -135,8 +139,8 @@ export class WorldSurfaceField {
       const center = this.bridges[index]
       return [-1, 1].flatMap((sideX) => [-1, 1].map((sideZ) => Object.freeze({
         bridgeId: bridge.id, regionId: bridge.regionId,
-        x: center.x + sideX * (options.riverWidth + 4) * BRIDGE_PIER_SPAN_FRACTION,
-        z: center.z + sideZ * options.bridgeWidth * BRIDGE_PIER_WIDTH_FRACTION / 2,
+        x: center.x + sideX * bridgeSize.span * BRIDGE_PIER_SPAN_FRACTION,
+        z: center.z + sideZ * bridgeSize.width * BRIDGE_PIER_WIDTH_FRACTION / 2,
       })))
     }))
     const courts: WorldCourtSurface[] = []
@@ -252,7 +256,7 @@ export class WorldSurfaceField {
     out.visualWaterDepth = 2.8 * (1 - smooth(0, this.waterHalfWidth, distance))
     out.bridgeContact = 0
     for (const bridge of this.bridges) {
-      const pierX = (this.waterHalfWidth * 2 + 4) * BRIDGE_PIER_SPAN_FRACTION
+      const pierX = this.bridgeHalfSpan * 2 * BRIDGE_PIER_SPAN_FRACTION
       const dx = Math.min(Math.abs(x - bridge.x - pierX), Math.abs(x - bridge.x + pierX))
       const dz = Math.max(0, Math.abs(z - bridge.z) - this.bridgeHalfWidth * BRIDGE_PIER_WIDTH_FRACTION)
       out.bridgeContact = Math.max(out.bridgeContact, 1 - smooth(0.18, 0.65, Math.hypot(dx, dz)))
@@ -284,7 +288,7 @@ export class WorldSurfaceField {
 
   private onBridge(x: number, z: number): boolean {
     return this.bridges.some((bridge) =>
-      Math.abs(x - bridge.x) <= this.waterHalfWidth + 2 && Math.abs(z - bridge.z) <= this.bridgeHalfWidth)
+      Math.abs(x - bridge.x) <= this.bridgeHalfSpan && Math.abs(z - bridge.z) <= this.bridgeHalfWidth)
   }
 
   private courtCoverage(x: number, z: number): number {

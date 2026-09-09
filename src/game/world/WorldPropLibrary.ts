@@ -539,6 +539,10 @@ function quantize(value: number): number {
   return Math.round(value * 2) / 2
 }
 
+export function canonicalBridgeSize(span: number, width: number): { span: number; width: number } {
+  return { span: quantize(span), width: quantize(width) }
+}
+
 /**
  * Rounds a request's free dimensions to the same grid the cache key uses.
  *
@@ -555,8 +559,7 @@ function canonicalRequest(request: PropRequest): PropRequest {
     case 'bridge':
       return {
         ...request,
-        span: quantize(request.span),
-        width: quantize(request.width),
+        ...canonicalBridgeSize(request.span, request.width),
       }
     case 'siteProp':
       return request.length === undefined

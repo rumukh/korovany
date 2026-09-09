@@ -108,6 +108,12 @@ test('world surface metadata follows actual sites and routes without becoming he
   assert.equal('height' in one, false)
   assert.equal('normal' in one, false)
   assert.equal(JSON.stringify(blueprint), before)
+  const custom = new WorldSurfaceField(blueprint, terrain, { roadWidth: 4.5, riverWidth: 10.3, bridgeWidth: 6.3 })
+  const center = terrain.getRegion(blueprint.bridges[0].regionId)!.bounds
+  const contact = custom.bridgeContacts[0]
+  assert.ok(Math.abs(contact.x - (center.minX + center.maxX) / 2 + 14.5 * 0.22) < 1e-9,
+    'support metadata uses the same canonical half-metre size as the actual bridge builder')
+  assert.ok(Math.abs(contact.z - (center.minZ + center.maxZ) / 2 + 6.5 * 0.72 / 2) < 1e-9)
   assert.throws(() => field.sample(NaN, 0), /finite/)
   assert.throws(() => new WorldSurfaceField(blueprint, terrain,
     { roadWidth: 0, riverWidth: 10, bridgeWidth: 6 }), /positive/)
