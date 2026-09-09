@@ -217,8 +217,12 @@ The optional `environment.atmosphere` uses ordered view-depth knots
 linear `color`, world `baseHeight`, nonnegative `heightFalloff` and
 `heightInfluence` in [0,1]. A protected near band blends into a smooth mid/far
 ramp with bounded world-height attenuation. Source and ink sample the same
-unextruded positions and use one linear-space fog application before output
-conversion, not an additional post pass. `material.fog=false` excludes the sky.
+unextruded positions and use one linear-space fog application after material
+tone mapping but before color-space conversion, not an additional post pass.
+This preserves `toneMapped=false` ink and matches full-fog source/ink endpoints
+within the direct path. The composer's later common OutputPass still tone-maps
+the combined image: this is not a claim of identical direct/post fog pixels at
+every exposure. `material.fog=false` excludes the sky.
 A full environment without `atmosphere` restores stock fog; a lighting-only
 partial call retains the environment. Legacy shading remains unchanged.
 

@@ -4021,7 +4021,7 @@ export class GameEngine {
       rendering: {
         atmosphere: this.visualPolicy.mode === 'enhanced' ? {
           revision: ATMOSPHERE_REVISION, wetness: this.artEnvironment.wetness,
-          profile: this.artEnvironment.atmosphere,
+          profile: { ...this.artEnvironment.atmosphere, color: this.artEnvironment.atmosphere.color.toArray() },
         } : null,
         secondaryEffects: this.secondaryEffects?.snapshot() ?? null,
         camera: { ...this.cameraVisibility.debug },

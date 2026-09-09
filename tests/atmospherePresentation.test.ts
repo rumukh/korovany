@@ -83,7 +83,8 @@ test('source and ink share one linear-space atmosphere and restore stock fog wit
     assert.equal(shader.uniforms.uArtAtmosphereDepth, main.uniforms.uArtAtmosphereDepth)
     assert.equal(shader.uniforms.uArtAtmosphereColor, main.uniforms.uArtAtmosphereColor)
     assert.equal((shader.fragmentShader.match(/gl_FragColor\.rgb = mix\( gl_FragColor\.rgb, uArtAtmosphereColor/g) ?? []).length, 1)
-    assert.ok(shader.fragmentShader.indexOf('kFogOpacity *=') < shader.fragmentShader.indexOf('#include <tonemapping_fragment>'))
+    assert.ok(shader.fragmentShader.indexOf('kFogOpacity *=') > shader.fragmentShader.indexOf('#include <tonemapping_fragment>'))
+    assert.ok(shader.fragmentShader.indexOf('kFogOpacity *=') < shader.fragmentShader.indexOf('#include <colorspace_fragment>'))
     assert.match(shader.fragmentShader, /uArtAtmosphereEnabled < 0.5/)
     assert.match(shader.vertexShader, /modelMatrix \* kFogPosition/)
     assert.match(shader.vertexShader, /instanceMatrix \* kFogPosition/)
@@ -101,6 +102,68 @@ test('source and ink share one linear-space atmosphere and restore stock fog wit
   assert.equal((main.uniforms.uArtWeather.value as THREE.Vector3).z, 0)
   assert.equal(material.roughness, 0.94, 'dry shared material properties are immutable')
   art.releaseOutline(outline); art.releaseRenderSource(binding); source.dispose(); geometry.dispose(); material.dispose(); art.dispose()
+})
+
+test('assembled source/ink fog stages converge within direct and composer paths at varied Neutral exposures', () => {
+  // A CPU output-stage model, driven by the actual assembled shader ordering and
+  // material flags. This is not a GLSL driver/pixel result; that still requires a lease.
+  const chunks = THREE.ShaderChunk.tonemapping_pars_fragment
+  assert.match(chunks, /StartCompression = 0.8 - 0.04/)
+  assert.match(chunks, /Desaturation = 0.15/)
+  assert.match(chunks, /x < 0.08 \? x - 6.25 \* x \* x : 0.04/)
+  const neutral = (input: THREE.Color, exposure: number) => {
+    const color = input.clone().multiplyScalar(exposure)
+    const x = Math.min(color.r, color.g, color.b)
+    const offset = x < 0.08 ? x - 6.25 * x * x : 0.04
+    color.setRGB(color.r - offset, color.g - offset, color.b - offset)
+    const peak = Math.max(color.r, color.g, color.b)
+    if (peak < 0.76) return color
+    const newPeak = 1 - 0.24 * 0.24 / (peak + 0.24 - 0.76)
+    color.multiplyScalar(newPeak / peak)
+    return color.lerp(new THREE.Color(newPeak, newPeak, newPeak), 1 - 1 / (0.15 * (peak - newPeak) + 1))
+  }
+  const art = new StylizedArtLibrary({ ink, enhanced: true })
+  const source = art.createMaterial({ surface: 'stone', color: 0x999999 })
+  const shell = art.getOutlineMaterial('structural', false)
+  const fog = new THREE.Color(0.3, 0.45, 0.7)
+  assert.equal(source.toneMapped, true)
+  assert.equal(shell.toneMapped, false)
+  function output(material: THREE.Material, kind: 'standard' | 'basic', input: THREE.Color,
+    opacity: number, post: boolean, exposure: number, oldOrder = false) {
+    const shader = compile(material, kind).fragmentShader
+    const toneAt = shader.indexOf('#include <tonemapping_fragment>')
+    const fogAt = oldOrder ? toneAt - 1 : shader.indexOf('gl_FragColor.rgb = mix( gl_FragColor.rgb, uArtAtmosphereColor')
+    const colorAt = shader.indexOf('#include <colorspace_fragment>')
+    let color = input.clone()
+    const stages = [
+      { at: fogAt, apply: () => { color.lerp(fog, opacity) } },
+      { at: toneAt, apply: () => { if (!post && material.toneMapped) color = neutral(color, exposure) } },
+      { at: colorAt, apply: () => { if (!post) color.convertLinearToSRGB() } },
+    ].sort((left, right) => left.at - right.at)
+    stages.forEach((stage) => stage.apply())
+    if (post) color = neutral(color, exposure).convertLinearToSRGB()
+    return color
+  }
+  const body = new THREE.Color(0.7, 0.25, 0.12), inkColor = new THREE.Color(0.01, 0.02, 0.03)
+  for (const post of [false, true]) for (const exposure of [0.5, 1, 2]) {
+    assert.deepEqual(output(source, 'standard', body, 1, post, exposure), output(shell, 'basic', inkColor, 1, post, exposure))
+    for (const opacity of [0, 0.25, 0.65]) {
+      for (const [material, kind, input] of [[source, 'standard', body], [shell, 'basic', inkColor]] as const) {
+        const expected = post
+          ? neutral(input.clone().lerp(fog, opacity), exposure).convertLinearToSRGB()
+          : (material.toneMapped ? neutral(input, exposure) : input.clone()).lerp(fog, opacity).convertLinearToSRGB()
+        assert.deepEqual(output(material, kind, input, opacity, post, exposure), expected)
+      }
+    }
+    if (!post) assert.notDeepEqual(
+      output(source, 'standard', body, 1, post, exposure, true),
+      output(shell, 'basic', inkColor, 1, post, exposure, true),
+      'the previous pre-tone-map insertion must fail the endpoint comparison',
+    )
+  }
+  assert.notDeepEqual(output(source, 'standard', body, 1, true, 2), output(source, 'standard', body, 1, false, 2),
+    'within-path convergence does not promise cross-path equivalence')
+  source.dispose(); art.dispose()
 })
 
 test('wet response follows packed data after roughness maps, never metalness/emissive, with real opt-outs', () => {

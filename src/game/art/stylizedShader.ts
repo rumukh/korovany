@@ -364,7 +364,7 @@ function applyWeatherResponse(
 function applyAtmosphere(shader: CompileShader): void {
   requireInjectionPoint(shader.vertexShader, '#include <fog_vertex>', 'atmosphere vertex')
   requireInjectionPoint(shader.fragmentShader, '#include <fog_fragment>', 'atmosphere fog')
-  requireInjectionPoint(shader.fragmentShader, '#include <tonemapping_fragment>', 'atmosphere color')
+  requireInjectionPoint(shader.fragmentShader, '#include <colorspace_fragment>', 'atmosphere color')
   shader.vertexShader = '#ifdef USE_FOG\nvarying float vArtAtmosphereHeight;\n#endif\n' + shader.vertexShader
   shader.vertexShader = shader.vertexShader.replace('#include <fog_vertex>', `
     #include <fog_vertex>
@@ -385,7 +385,7 @@ function applyAtmosphere(shader: CompileShader): void {
       uniform vec4 uArtAtmosphereHeight;
     #endif
   ` + shader.fragmentShader
-  shader.fragmentShader = shader.fragmentShader.replace('#include <tonemapping_fragment>', `
+  shader.fragmentShader = shader.fragmentShader.replace('#include <colorspace_fragment>', `
     #ifdef USE_FOG
       if ( uArtAtmosphereEnabled > 0.5 ) {
         float kNearFog = smoothstep( uArtAtmosphereDepth.x, uArtAtmosphereDepth.y, vFogDepth );
@@ -398,7 +398,7 @@ function applyAtmosphere(shader: CompileShader): void {
         gl_FragColor.rgb = mix( gl_FragColor.rgb, uArtAtmosphereColor, kFogOpacity );
       }
     #endif
-    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
   `)
   shader.fragmentShader = shader.fragmentShader.replace('#include <fog_fragment>', `
     #ifdef USE_FOG
