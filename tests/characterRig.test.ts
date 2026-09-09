@@ -359,3 +359,20 @@ test('captive rope follows posed wrists and failed construction cannot release a
   assert.equal(cache.size, 0)
   art.dispose()
 })
+
+test('shield cache keys include baked tint while identical bundles share one physical asset', () => {
+  const art = library(), cache = new GeometryCache()
+  const guards = [0, 2].map((variant) => createCharacterPresenter(
+    illustratedCharacterPlan(resolveCharacterPlan('guard', 'soldier', variant)), art, cache, false))
+  const shields = guards.map((p) => p.root.getObjectByName('shield') as THREE.Mesh)
+  assert.notEqual(shields[0].geometry, shields[1].geometry, 'distinct baked colors cannot share a geometry key')
+  assert.notDeepEqual(shields[0].geometry.getAttribute('color').array, shields[1].geometry.getAttribute('color').array)
+  const civilians = CHARACTER_FACTIONS.map((faction) => createCharacterPresenter(
+    illustratedCharacterPlan(resolveCharacterPlan(faction, 'peasant', 0)), art, cache, false))
+  const bundles = civilians.map((p) => (p.root.getObjectByName('shield') as THREE.Mesh).geometry)
+  assert.equal(bundles[0], bundles[1])
+  assert.equal(bundles[1], bundles[2])
+  for (const p of [...guards, ...civilians]) p.dispose()
+  assert.equal(cache.size, 0)
+  cache.dispose(); art.dispose()
+})

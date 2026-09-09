@@ -331,8 +331,9 @@ export class CharacterPresenter {
         this.bind(mesh, lease)
       }
       if (plan.offhand !== 'none') {
-        const lease = cachedLease(cache, `illustrated-offhand:${plan.offhand}:${plan.faction}`, () =>
-          paint(buildOffhand(plan.offhand), plan.offhand === 'bundle' ? leather : cloth,
+        const offhandColor = plan.offhand === 'bundle' ? leather : cloth
+        const lease = cachedLease(cache, `illustrated-offhand:${plan.offhand}:${offhandColor}`, () =>
+          paint(buildOffhand(plan.offhand), offhandColor,
             plan.offhand === 'bundle' ? 'leather' : 'metal'))
         const shield = new THREE.Mesh(lease.geometry, material)
         shield.name = 'shield'
@@ -768,9 +769,8 @@ export class CharacterPresenter {
       identity: this.skeleton.boneMatrices.buffer, chargedTo: 'dynamicArt', kind: 'skin',
       cpuBytes: this.skeleton.boneMatrices.byteLength, gpuBytes: null,
     })
-    for (const inverse of this.skeleton.boneInverses) receipts.push({
-      identity: inverse.elements, chargedTo: 'dynamicArt', kind: 'skin', cpuBytes: 16 * 8, gpuBytes: 0,
-    })
+    // Matrix4.elements is a JS array, not an observable byte-addressed backing store.
+    // Its runtime-dependent storage remains outside this explicitly incomplete inventory.
     return receipts
   }
 

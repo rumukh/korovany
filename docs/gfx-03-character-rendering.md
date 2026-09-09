@@ -93,7 +93,9 @@ intersection or `DamageResult.direction`. GFX-05 owns impact routing and effects
 Presenters expose `allocationReceipts()` using actual CPU backing identities and
 the shared `VisualAllocationReceipt` schema. Unknown GPU upload attribution is
 `null`, not a CPU-array-size estimate of a GPU allocation. Active humanoid binding
-clones are reported separately from base geometry. Persistent source and
+clones are reported separately from base geometry. The runtime-dependent storage
+of plain JavaScript matrix arrays is not reported as an invented byte-addressed
+allocation. Persistent source and
 registered ink/health objects carry `visualSubsystem: 'dynamicArt'` tags for the
 existing diagnostics owner to integrate.
 
