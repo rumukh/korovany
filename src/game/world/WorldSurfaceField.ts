@@ -232,26 +232,29 @@ export class WorldSurfaceField {
   sampleWaterInto(x: number, z: number, out: WorldSurfaceSample): void {
     if (!Number.isFinite(x) || !Number.isFinite(z)) throw new RangeError('World surface coordinates must be finite')
     let distance = Infinity
-    let chosen: WaterSegment | undefined
-    let along = 0
+    let nearestX = 0, nearestZ = 1
+    let flowX = 0, flowZ = 0
+    const influence = this.waterHalfWidth * 2
     for (const leg of this.river) {
-      const t = fraction(x, z, leg)
-      const d = Math.hypot(x - leg.start.x - leg.dx * leg.length * t, z - leg.start.z - leg.dz * leg.length * t)
-      if (d < distance) { distance = d; chosen = leg; along = t }
-    }
-    out.flowX = 0
-    out.flowZ = 1
-    if (chosen) {
-      const t = smooth(0.55, 1, along)
-      const s = smooth(0, 0.45, along)
-      const incoming = chosen.fromX === chosen.dx && chosen.fromZ === chosen.dz
-      const weight = incoming ? t : s
-      const dx = chosen.fromX + (chosen.toX - chosen.fromX) * weight
-      const dz = chosen.fromZ + (chosen.toZ - chosen.fromZ) * weight
+      const along = fraction(x, z, leg)
+      const d = Math.hypot(x - leg.start.x - leg.dx * leg.length * along, z - leg.start.z - leg.dz * leg.length * along)
+      const nearest = d < distance
+      if (!nearest && d >= influence) continue
+      const incoming = leg.fromX === leg.dx && leg.fromZ === leg.dz
+      const turn = incoming ? smooth(0.55, 1, along) : smooth(0, 0.45, along)
+      const dx = leg.fromX + (leg.toX - leg.fromX) * turn
+      const dz = leg.fromZ + (leg.toZ - leg.fromZ) * turn
       const length = Math.hypot(dx, dz)
-      out.flowX = dx / length
-      out.flowZ = dz / length
+      if (nearest) { distance = d; nearestX = dx / length; nearestZ = dz / length }
+      // Overlapping legs contribute continuously; nearest-leg switching tears the
+      // procedural flow phase along the diagonal of a right-angle bend.
+      const weight = Math.max(0, 1 - d / influence) ** 2
+      flowX += dx / length * weight
+      flowZ += dz / length * weight
     }
+    const flowLength = Math.hypot(flowX, flowZ)
+    out.flowX = flowLength > 1e-8 ? flowX / flowLength : nearestX
+    out.flowZ = flowLength > 1e-8 ? flowZ / flowLength : nearestZ
     out.shore = smooth(this.waterHalfWidth - 1.4, this.waterHalfWidth, distance)
     out.visualWaterDepth = 2.8 * (1 - smooth(0, this.waterHalfWidth, distance))
     out.bridgeContact = 0

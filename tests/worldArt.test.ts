@@ -171,6 +171,27 @@ test('world surface water flow crosses real meander seams in the route direction
   assert.throws(() => field.sampleWaterInto(Infinity, 0, before), /finite/)
 })
 
+test('world surface bend flow stays continuous where river legs overlap', () => {
+  const blueprint = generateWorld(20260906)
+  const field = new WorldSurfaceField(blueprint, new TerrainSystem(blueprint),
+    { roadWidth: 4.5, riverWidth: 10, bridgeWidth: 6 })
+  const bend = blueprint.river.regionPath.map((id) => getRegionRiverLegs(blueprint, id))
+    .find(([entry, exit]) => entry.edge.x !== exit.edge.x && entry.edge.z !== exit.edge.z)
+  assert.ok(bend, 'this control needs a real right-angle river bend')
+  const [entry, exit] = bend
+  const inLength = Math.hypot(entry.center.x - entry.edge.x, entry.center.z - entry.edge.z)
+  const outLength = Math.hypot(exit.edge.x - exit.center.x, exit.edge.z - exit.center.z)
+  const inX = (entry.center.x - entry.edge.x) / inLength, inZ = (entry.center.z - entry.edge.z) / inLength
+  const outX = (exit.edge.x - exit.center.x) / outLength, outZ = (exit.edge.z - exit.center.z) / outLength
+  const x = entry.center.x - inX * 2 + outX * 2
+  const z = entry.center.z - inZ * 2 + outZ * 2
+  const a = createWorldSurfaceSample(), b = createWorldSurfaceSample()
+  field.sampleWaterInto(x - outX * 1e-4, z - outZ * 1e-4, a)
+  field.sampleWaterInto(x + outX * 1e-4, z + outZ * 1e-4, b)
+  assert.ok(Math.hypot(a.flowX - b.flowX, a.flowZ - b.flowZ) < 0.001,
+    'nearest-leg selection must not create a discontinuity inside the same water surface')
+})
+
 test('world surface colors and physical terrain meet across rendered region seams', () => {
   const blueprint = generateWorld(20260906)
   const scene = new THREE.Scene()
