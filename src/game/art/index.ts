@@ -135,6 +135,17 @@ export {
   CHARACTER_DETAIL_DISTANCE,
   CHARACTER_FACTIONS,
   CHARACTER_VARIANTS,
+  CHARACTER_ART_REVISION,
+  CHARACTER_PHYSICAL_PALETTE,
+  illustratedCharacterPlan,
+  buildIllustratedHead,
+  buildIllustratedFace,
+  buildIllustratedHair,
+  buildIllustratedHeadgear,
+  buildIllustratedTorso,
+  buildIllustratedChestArmor,
+  buildIllustratedShoulder,
+  buildIllustratedHand,
   WAGON_RIG,
   applyChestPose,
   applyHeadPose,
@@ -203,6 +214,8 @@ export {
   type CharacterPlan,
   type CharacterProportions,
   type CharacterSkeleton,
+  type CharacterVisualLevel,
+  type CharacterPhysicalSurface,
   type CloakKind,
   type HairKind,
   type HeadgearKind,
@@ -211,6 +224,17 @@ export {
   type TrimKind,
   type WeaponKind,
 } from './CharacterKit.ts'
+
+export {
+  CharacterPresenter,
+  createCharacterPresenter,
+  characterPresenter,
+  selectCharacterVisualLevel,
+  type CharacterContact,
+  type CharacterContactPart,
+  type CharacterAppearance,
+  type CharacterLimb,
+} from './CharacterRig.ts'
 
 // --- PropKit ---
 // The world-object vocabulary. Buildings, settlement dressing, vegetation species,

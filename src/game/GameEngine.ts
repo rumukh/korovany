@@ -72,6 +72,11 @@ import {
   buildWeaponHead,
   buildWristRope,
   characterPartKeys,
+  illustratedCharacterPlan,
+  createCharacterPresenter,
+  characterPresenter,
+  type CharacterPresenter,
+  type CharacterLimb,
   resolveCharacterPlan,
   setCharacterShoulderWidth,
   solveHandOffset,
@@ -1992,6 +1997,7 @@ export class GameEngine {
   private readonly artLibrary: StylizedArtLibrary
   /** Shape cache shared by every actor: one buffer per shape, not one per actor. */
   private readonly artGeometry = new GeometryCache()
+  private readonly characterPresenters = new Set<CharacterPresenter>()
   /** Scratch vector for the arm-chain solve. Reused so the pose never allocates. */
   private readonly handOffset = new THREE.Vector3()
   /**
@@ -2741,7 +2747,9 @@ export class GameEngine {
         const materials = Array.isArray(object.material) ? object.material : [object.material]
         if (materials.every(hasStylizedShader)) sources.push(object)
       })
-      for (const source of sources) this.playerRenderBindings.push(this.artLibrary.bindRenderSource(source, { visibility: true }))
+      for (const source of sources) this.playerRenderBindings.push(
+        this.artLibrary.getRenderSourceBinding(source) ?? this.artLibrary.bindRenderSource(source, { visibility: true }),
+      )
     }
     this.lastZone = this.zoneAtPosition(this.player.position.x, this.player.position.z)
     this.audio.setMusicContext({
@@ -2989,6 +2997,8 @@ export class GameEngine {
     for (const binding of this.playerRenderBindings.splice(0)) {
       attempt(() => this.artLibrary.releaseRenderSource(binding))
     }
+    for (const presenter of this.characterPresenters) attempt(() => presenter.dispose())
+    this.characterPresenters.clear()
     const geometries = new Set<THREE.BufferGeometry>()
     const materials = new Set<THREE.Material>()
     this.scene.traverse((object) => {
@@ -11514,6 +11524,11 @@ export class GameEngine {
 
   private removeAndDisposeObject(object: THREE.Object3D): void {
     this.unregisterOutlineRoot(object)
+    const presenter = characterPresenter(object)
+    if (presenter) {
+      this.characterPresenters.delete(presenter)
+      presenter.dispose()
+    }
     object.removeFromParent()
     const geometries = new Set<THREE.BufferGeometry>()
     const materials = new Set<THREE.Material>()
@@ -12247,6 +12262,7 @@ export class GameEngine {
     const limb = this.player.getObjectByName(part)
     if (!limb) return
     limb.visible = false
+    if (!part.includes('Eye')) characterPresenter(this.player)?.setAppearance({ [part]: 'missing' })
     this.createBloodBurst(
       this.player.position.clone().add(new THREE.Vector3(part.startsWith('left') ? -0.4 : 0.4, 1.2, 0)),
       new THREE.Vector3(part.startsWith('left') ? -1 : 1, 0, 0.25),
@@ -12275,6 +12291,11 @@ export class GameEngine {
   private restorePlayerLimb(part: BodyPart): void {
     const limb = this.player.getObjectByName(part)
     if (!limb) return
+    const presenter = characterPresenter(this.player)
+    if (presenter && !part.includes('Eye')) {
+      presenter.setAppearance({ [part]: 'prosthetic' })
+      return
+    }
     limb.visible = true
     limb.traverse((object) => {
       if (!(object instanceof THREE.Mesh) || StylizedArtLibrary.isOutlineShell(object)) return
@@ -12288,6 +12309,11 @@ export class GameEngine {
   }
 
   private applySavedBodyAppearance(): void {
+    const presenter = characterPresenter(this.player)
+    if (presenter) {
+      presenter.setAppearance(this.body)
+      return
+    }
     const limbs: BodyPart[] = ['leftArm', 'rightArm', 'leftLeg', 'rightLeg']
     for (const part of limbs) {
       const limb = this.player.getObjectByName(part)
@@ -12305,6 +12331,7 @@ export class GameEngine {
     if (visible.length === 0) return
     const limb = visible[Math.floor(Math.random() * visible.length)]
     limb.visible = false
+    characterPresenter(actor.mesh)?.setAppearance({ [limb.name as CharacterLimb]: 'missing' })
     this.createBloodBurst(
       actor.mesh.position.clone().add(new THREE.Vector3(0, 1.35, 0)),
       new THREE.Vector3((Math.random() - 0.5) * 2, 0, (Math.random() - 0.5) * 2),
@@ -14244,6 +14271,28 @@ export class GameEngine {
         : finaleProfile === 'marshal'
           ? { ...ordinaryPlan, weapon: 'glaive', mainHand: 'right', offhand: 'heater', headgear: 'crested' }
           : ordinaryPlan
+    if (this.visualPolicy.mode === 'enhanced') {
+      const presenter = createCharacterPresenter(illustratedCharacterPlan(plan), this.artLibrary, this.artGeometry, player)
+      this.characterPresenters.add(presenter)
+      const group = presenter.root
+      if (!player) {
+        const ring = new THREE.Mesh(
+          this.acquireArtGeometry('faction-ring', () => new THREE.RingGeometry(0.72, 0.9, 24)),
+          new THREE.MeshBasicMaterial({
+            color: this.factionColor(faction), transparent: true, opacity: 0.48,
+            depthWrite: false, side: THREE.DoubleSide, toneMapped: false,
+          }),
+        )
+        ring.name = 'faction-ring'
+        ring.position.y = 0.05
+        ring.rotation.x = -Math.PI / 2
+        ring.renderOrder = 2
+        ring.userData.visualSubsystem = 'dynamicArt'
+        group.add(ring)
+      }
+      group.add(this.artLibrary.createContactShadow({ radius: player ? 0.66 : 0.58 }))
+      return group
+    }
     const keys = characterPartKeys(plan)
     const p = plan.proportions
     const build = (key: string, factory: () => THREE.BufferGeometry) =>
@@ -14793,7 +14842,7 @@ export class GameEngine {
     const headScale = variation.around(1, 0.06)
     for (const name of ['head', 'face', 'hair', 'headgear']) {
       const part = mesh.getObjectByName(name)
-      if (part instanceof THREE.Mesh) part.scale.multiplyScalar(headScale)
+      if (part instanceof THREE.Mesh || part instanceof THREE.Bone) part.scale.multiplyScalar(headScale)
     }
     const headPivot = mesh.getObjectByName('head-pivot')
     if (headPivot) headPivot.rotation.y = variation.signed(0.12)
@@ -16466,6 +16515,7 @@ export class GameEngine {
         Math.sin(this.elapsed * 1.6) * 0.02
       rig.cloak.rotation.z = swing * 0.12
     }
+    characterPresenter(group)?.syncAttachments()
   }
 
   /**
@@ -16668,6 +16718,7 @@ export class GameEngine {
         -rig.mainHand * 0.12,
       )
     }
+    characterPresenter(actor.mesh)?.syncAttachments()
   }
 
   /** The player's pose, in the same reused-buffer style as the actor sampler. */
