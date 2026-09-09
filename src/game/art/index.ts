@@ -216,6 +216,8 @@ export {
 // The world-object vocabulary. Buildings, settlement dressing, vegetation species,
 // rock features and infrastructure. See `docs/10-world-objects-and-props-spec.md`.
 export {
+  BRIDGE_PIER_SPAN_FRACTION,
+  BRIDGE_PIER_WIDTH_FRACTION,
   PROP_SURFACES,
   bannerParts,
   barrelGeometry,
@@ -240,6 +242,7 @@ export {
   monumentParts,
   obeliskParts,
   outcropGeometry,
+  paintPropResponse,
   pillarParts,
   propPart,
   reedClusterGeometry,

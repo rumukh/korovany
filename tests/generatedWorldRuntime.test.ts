@@ -9,6 +9,8 @@ import {
   isInsideRegionWater,
 } from '../src/game/content/registry.ts'
 import type { Faction } from '../src/game/types.ts'
+import { StylizedArtLibrary } from '../src/game/art/index.ts'
+import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
 import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
 import type {
@@ -143,13 +145,14 @@ function assertSurfaceFollowsRenderedTerrain(
   surface: THREE.Mesh,
   terrain: THREE.Mesh,
   heightOffset: number,
+  indexed = true,
 ): void {
   assert.equal(surface.geometry.type, 'BufferGeometry')
   const position = surface.geometry.getAttribute('position')
   const index = surface.geometry.getIndex()
   assert.ok(position.count >= 6)
-  assert.ok(index)
-  assert.ok(index.count > 0)
+  if (indexed) assert.ok(index)
+  assert.ok((index?.count ?? position.count) > 0)
   const assertPoint = (x: number, y: number, z: number, label: string): void => {
     assert.ok(
       Math.abs(y - renderedTerrainHeight(terrain, x, z) - heightOffset) <
@@ -165,10 +168,10 @@ function assertSurfaceFollowsRenderedTerrain(
       `vertex ${vertex}`,
     )
   }
-  for (let offset = 0; offset < index.count; offset += 3) {
-    const first = index.getX(offset)
-    const second = index.getX(offset + 1)
-    const third = index.getX(offset + 2)
+  for (let offset = 0; offset < (index?.count ?? position.count); offset += 3) {
+    const first = index ? index.getX(offset) : offset
+    const second = index ? index.getX(offset + 1) : offset + 1
+    const third = index ? index.getX(offset + 2) : offset + 2
     assertPoint(
       (position.getX(first) + position.getX(second) + position.getX(third)) /
         3,
@@ -565,6 +568,57 @@ test('road and river surfaces form continuous terrain-projected ribbons', () => 
     boundaryVertices(adjacentRoad, roadAxis, roadBoundary),
   )
   runtime.dispose()
+})
+
+test('enhanced world surfaces preserve physical ribbons, colliders and projected court support', () => {
+  const blueprint = generateWorld(20260906)
+  const scene = new THREE.Scene(), originalScene = new THREE.Scene()
+  const art = new StylizedArtLibrary({
+    enhanced: true, ink: { player: 0x111111, enemy: 0x111111, interactable: 0x111111, landmark: 0x111111 },
+  })
+  const original = new GeneratedWorldRuntime(originalScene, blueprint)
+  const enhanced = new GeneratedWorldRuntime(scene, blueprint, {
+    art, visualPolicy: resolveVisualPolicy({ visualMode: 'enhanced' }),
+  })
+  let ribbons = 0, courts = 0, contacts = 0
+  try {
+    for (const region of blueprint.regions.filter((r) => r.biome === 'palace' ||
+      blueprint.bridges.some((b) => b.regionId === r.id))) {
+      const focus = original.getRegionCenter(region.id)!
+      original.update({ deltaSeconds: 0, focus }); enhanced.update({ deltaSeconds: 0, focus })
+      assert.deepEqual(enhanced.collision.queryBounds(enhanced.bounds), original.collision.queryBounds(original.bounds))
+      const root = regionRoot(scene, region.id)!
+      const terrain = root.getObjectByName(`terrain:${region.id}`)
+      assert.ok(terrain instanceof THREE.Mesh)
+      for (const surface of root.children) {
+        if (!(surface instanceof THREE.Mesh)) continue
+        if (surface.name.startsWith('road:') || surface.name.startsWith('river:')) {
+          const old = originalScene.getObjectByName(surface.name)
+          assert.ok(old instanceof THREE.Mesh)
+          assert.deepEqual(surface.geometry.getAttribute('position').array, old.geometry.getAttribute('position').array)
+          assert.deepEqual(surface.geometry.index?.array, old.geometry.index?.array)
+          ribbons++
+        }
+        if (surface.name.startsWith('paving:')) {
+          assertSurfaceFollowsRenderedTerrain(surface, terrain, 0.16, false)
+          courts++
+        }
+      }
+      root.traverse((object) => {
+        if (!object.name.startsWith('water-contact:') || !(object instanceof THREE.Mesh)) return
+        assert.equal(object.parent?.parent instanceof THREE.LOD, true)
+        assert.equal((object.parent!.parent as THREE.LOD).levels[0].object, object.parent)
+        contacts++
+      })
+      for (const density of [0, 0.55, 1]) {
+        enhanced.setDecorationDensity(density)
+        assert.deepEqual(enhanced.collision.queryBounds(enhanced.bounds), original.collision.queryBounds(original.bounds))
+      }
+    }
+    assert.ok(ribbons > 0 && courts > 0 && contacts > 0)
+  } finally {
+    original.dispose(); enhanced.dispose(); art.dispose()
+  }
 })
 
 test('map markers reveal discovered sites and current region without global spoilers', () => {
