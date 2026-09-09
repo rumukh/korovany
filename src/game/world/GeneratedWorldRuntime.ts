@@ -5,6 +5,8 @@ import {
   createLod,
   hashUnit,
   transformParts,
+  validateArtGeometry,
+  ART_WATER_ATTRIBUTE,
   type OutlineBinding,
   type OutlineKind,
   type PropPart,
@@ -12,6 +14,13 @@ import {
   type ArtRenderSourceBinding,
 } from '../art/index.ts'
 import type { VisualQualityPolicy } from '../visualPolicy.ts'
+import { resolveVisualSubsystemAllocation, type VisualSubsystemAllocation } from '../visualBudget.ts'
+import {
+  WorldSurfaceField,
+  WORLD_DETAIL_METRES,
+  WORLD_PAVING_METRES,
+  createWorldSurfaceSample,
+} from './WorldSurfaceField.ts'
 import {
   LegacySightRegistry,
   captureLegacySightHierarchy,
@@ -56,6 +65,7 @@ import {
 } from './RegionRuntime.ts'
 import {
   composeSiteLayout,
+  resolveSiteLayoutTransform,
   type SiteLayout,
 } from './SiteComposition.ts'
 import {
@@ -199,6 +209,7 @@ interface SharedMaterials {
   terrain: Record<ZoneId, THREE.MeshStandardMaterial>
   road: THREE.MeshStandardMaterial
   water: THREE.MeshStandardMaterial
+  paving: THREE.MeshStandardMaterial | null
   /**
    * The prop family. Every world object built by `PropKit` bakes its colour into
    * the vertices, so one material per *surface* covers the whole world instead of
@@ -225,6 +236,8 @@ interface SceneRegionRuntimeContext {
   style: RuntimeStyle
   presentation: WorldPresentationRegistry | null
   legacySight: LegacySightRegistry | null
+  surfaces: WorldSurfaceField | null
+  policy: VisualQualityPolicy | undefined
   /**
    * Faction start positions that fall in this region, before any collision snapping.
    *
@@ -294,6 +307,8 @@ const BUILDING_LOD_DISTANCE = 46
 export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
   readonly presentation: WorldPresentationRegistry | null
   readonly legacySight: LegacySightRegistry | null
+  readonly surfaces: WorldSurfaceField | null
+  readonly visualAllocation: VisualSubsystemAllocation | null
   readonly mode = 'generated' as const
   readonly blueprint: WorldBlueprint
   readonly bounds: Bounds2D
@@ -338,11 +353,13 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
     if (enhanced && !this.art.enhanced) throw new Error('Enhanced world requires the shared enhanced art library')
     this.presentation = enhanced ? new WorldPresentationRegistry(this.art) : null
     this.legacySight = enhanced ? new LegacySightRegistry(scene) : null
-    this.materials = createSharedMaterials(this.art, options.palette)
+    this.visualAllocation = options.visualPolicy ? resolveVisualSubsystemAllocation(options.visualPolicy) : null
+    this.materials = createSharedMaterials(this.art, options.palette, options.visualPolicy)
     this.props = new WorldPropLibrary()
     this.terrain = new TerrainSystem(blueprint, {
       tileResolution: this.style.terrainResolution,
     })
+    this.surfaces = enhanced ? new WorldSurfaceField(blueprint, this.terrain, this.style) : null
     this.bounds = { ...this.terrain.bounds }
     this.collision = new CollisionWorld(this.terrain, {
       cellSize: 8,
@@ -374,6 +391,8 @@ export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
           style: this.style,
           presentation: this.presentation,
           legacySight: this.legacySight,
+          surfaces: this.surfaces,
+          policy: options.visualPolicy,
           startAnchors: this.startAnchorsIn(context.regionId),
           onSpawnKeepOut: (population, count) => {
             this.spawnKeepOutSkips[population] += count
@@ -1187,6 +1206,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       this.context.style.terrainResolution,
     )
     this.geometries.add(geometry)
+    if (this.context.surfaces) this.paintSurface(geometry, 'terrain')
     const biome = this.blueprint.biome
     const mesh = new THREE.Mesh(
       geometry,
@@ -1196,6 +1216,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     mesh.receiveShadow = true
     mesh.castShadow = false
     mesh.userData.generatedTerrainRegionId = this.id
+    if (this.context.surfaces) validateArtGeometry(mesh)
     this.root.add(mesh)
   }
 
@@ -1321,28 +1342,9 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
   private createSitePrefab(site: WorldSite): void {
     const anchor = getSiteWorldPosition2D(this.context.blueprint, site)
     if (!anchor) return
-    const presentation = SITE_PRESENTATIONS[site.kind]
-    const prefab = presentation.prefab
     const bounds = this.context.normalizedRegion.bounds
-    const regionCenter = boundsCenter(bounds)
-    const radialX = anchor.x - regionCenter.x
-    const radialZ = anchor.z - regionCenter.z
-    const radialLength = Math.hypot(radialX, radialZ) || 1
-    const forwardX = radialX / radialLength
-    const forwardZ = radialZ / radialLength
-    const offset = prefab.footprintDepth / 2 + 2.5
-    const x = clamp(
-      anchor.x + forwardX * offset,
-      bounds.minX + prefab.footprintWidth / 2 + 2,
-      bounds.maxX - prefab.footprintWidth / 2 - 2,
-    )
-    const z = clamp(
-      anchor.z + forwardZ * offset,
-      bounds.minZ + prefab.footprintDepth / 2 + 2,
-      bounds.maxZ - prefab.footprintDepth / 2 - 2,
-    )
+    const { x, z, rotation } = resolveSiteLayoutTransform(site.kind, anchor, bounds)
     const y = this.context.terrain.sampleHeight(x, z)
-    const rotation = Math.atan2(forwardX, forwardZ)
     const group = new THREE.Group()
     group.name = `site:${site.id}`
     group.userData.generatedSiteId = site.id
@@ -2204,7 +2206,36 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
       heightOffset,
     )
     const mesh = this.addMesh(this.root, geometry, material, name)
+    if (this.context.surfaces) {
+      this.paintSurface(geometry, name.startsWith('river:') ? 'water' : 'road')
+      validateArtGeometry(mesh)
+    }
     mesh.receiveShadow = true
+  }
+
+  private paintSurface(geometry: THREE.BufferGeometry, kind: 'terrain' | 'road' | 'water'): void {
+    const field = this.context.surfaces
+    if (!field) throw new Error('Surface painting requires the enhanced world field')
+    const position = geometry.getAttribute('position')
+    const colors = new Float32Array(position.count * 3)
+    const water = kind === 'water' ? new Float32Array(position.count * 4) : null
+    const color = new THREE.Color()
+    const shallow = new THREE.Color(0x738e85)
+    const deep = new THREE.Color(0x365e65)
+    const sample = createWorldSurfaceSample()
+    for (let index = 0; index < position.count; index++) {
+      const x = position.getX(index), z = position.getZ(index)
+      if (water) {
+        field.sampleWaterInto(x, z, sample)
+        color.copy(deep).lerp(shallow, sample.shore * 0.7)
+        water.set([sample.flowX, sample.flowZ, sample.shore, sample.visualWaterDepth], index * 4)
+      } else if (kind === 'road') {
+        field.writePavingColor(x, z, color)
+      } else field.writeGroundColor(x, z, color)
+      colors.set([color.r, color.g, color.b], index * 3)
+    }
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
+    if (water) geometry.setAttribute(ART_WATER_ATTRIBUTE, new THREE.Float32BufferAttribute(water, 4))
   }
 
   private registerWaterCollider(
@@ -2407,7 +2438,9 @@ function createDefaultArtLibrary(): StylizedArtLibrary {
 function createSharedMaterials(
   art: StylizedArtLibrary,
   palette: GeneratedWorldPalette = {},
+  policy?: VisualQualityPolicy,
 ): SharedMaterials {
+  const enhanced = policy?.mode === 'enhanced'
   const all: THREE.Material[] = []
   const textures: THREE.Texture[] = []
   const stylized = (
@@ -2435,6 +2468,7 @@ function createSharedMaterials(
       pattern,
       repeatX,
       repeatY,
+      ...(enhanced ? { tactile: true, size: policy.quality === 'high' ? 128 : 64 } : {}),
     })
     map.anisotropy = 4
     textures.push(map)
@@ -2457,7 +2491,11 @@ function createSharedMaterials(
   const secondaryColors = createZoneMaterialRecord(
     (zone) => palette.secondary?.[zone] ?? BIOME_PROFILES[zone].secondaryColor,
   )
-  const terrain = createZoneMaterialRecord((zone) =>
+  const enhancedGround = enhanced ? textured(
+    'generated-ground-detail', 0xffffff, 'dirt', 1, 1, 'ground',
+    { vertexColors: true, mapping: 'world-xz', metersPerRepeat: WORLD_DETAIL_METRES, roughness: 0.95 },
+  ) : null
+  const terrain = createZoneMaterialRecord((zone) => enhancedGround ??
     textured(
       `generated-terrain-${zone}`,
       terrainColors[zone],
@@ -2472,7 +2510,7 @@ function createSharedMaterials(
     ),
   )
   const roadBase = palette.road ?? 0x70553b
-  const road = textured(
+  const road = enhancedGround ?? textured(
     'generated-road',
     roadBase,
     'dirt',
@@ -2486,7 +2524,7 @@ function createSharedMaterials(
   const waterBase = palette.water ?? 0x2f7187
   const water = textured(
     'generated-water',
-    waterBase,
+    enhanced ? 0xffffff : waterBase,
     'water',
     5,
     2,
@@ -2496,9 +2534,26 @@ function createSharedMaterials(
       metalness: 0.05,
       transparent: true,
       opacity: 0.82,
+      ...(enhanced ? {
+        vertexColors: true, mapping: 'world-xz' as const, metersPerRepeat: WORLD_DETAIL_METRES,
+        attributes: { water: true },
+      } : {}),
     },
     shadeColor(waterBase, 0.25),
   )
+  let paving: THREE.MeshStandardMaterial | null = null
+  if (enhanced) {
+    const map = createProceduralSurfaceTexture({
+      key: 'generated-paving-detail', base: 0xffffff, detail: 0xe0dfd7, pattern: 'stone',
+      repeatX: 1, repeatY: 1, tactile: true, size: policy.quality === 'high' ? 256 : 128,
+    })
+    map.anisotropy = 4
+    textures.push(map)
+    paving = stylized('ground', {
+      color: 0xffffff, map, vertexColors: true, mapping: 'world-xz',
+      metersPerRepeat: WORLD_PAVING_METRES, roughness: 0.93,
+    })
+  }
   // The prop family. Four materials cover every world object in the game because
   // `PropKit` bakes colour, contact darkening and sky occlusion into the vertices —
   // a vertex-coloured material on geometry without a `color` attribute renders
@@ -2547,6 +2602,7 @@ function createSharedMaterials(
     terrain,
     road,
     water,
+    paving,
     prop,
     propFoliage,
     propCloth,

@@ -43,6 +43,10 @@ import {
   type PropRequest,
 } from '../src/game/world/WorldPropLibrary.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
+import { WorldSurfaceField, createWorldSurfaceSample } from '../src/game/world/WorldSurfaceField.ts'
+import { TerrainSystem } from '../src/game/world/TerrainSystem.ts'
+import { createProceduralSurfaceTexture } from '../src/game/ProceduralSurfaceTexture.ts'
+import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
 import type { SiteKind, Territory, WorldBlueprint } from '../src/game/world/worldTypes.ts'
 
 /**
@@ -65,6 +69,104 @@ const PROP_PALETTE: PropPalette = {
   glow: 0xffc46a,
   accent: 0xc48742,
 }
+
+test('world surface metadata follows actual sites and routes without becoming height authority', () => {
+  const blueprint = generateWorld(20260906)
+  const before = JSON.stringify(blueprint)
+  const terrain = new TerrainSystem(blueprint)
+  const field = new WorldSurfaceField(blueprint, terrain, { roadWidth: 4.5, riverWidth: 10, bridgeWidth: 6 })
+  assert.ok(field.courts.length > 0)
+  assert.equal(Object.isFrozen(field.courts), true)
+  let paving = 0, country = 0, water = 0, bridge = 0
+  const sample = createWorldSurfaceSample()
+  for (let x = -198; x < 200; x += 4) for (let z = -198; z < 200; z += 4) {
+    field.sampleInto(x, z, sample)
+    assert.ok(sample.paving >= 0 && sample.paving <= 1)
+    assert.ok(sample.visualWaterDepth >= 0)
+    assert.ok(Math.abs(Math.hypot(sample.flowX, sample.flowZ) - 1) < 1e-9)
+    if (sample.material === 'water' || sample.material === 'bridge') {
+      assert.equal(sample.paving, 0, 'a court cannot invent a paved crossing')
+      assert.equal(sample.vegetation, 0)
+      if (sample.material === 'water') water++
+      else bridge++
+    } else if (sample.biome === 'palace') {
+      if (sample.paving > 0.8) paving++
+      if (sample.paving === 0 && sample.road === 0) country++
+    }
+  }
+  assert.ok(paving > 0 && country > paving && water > 0 && bridge > 0,
+    'the sample must include real paving, predominantly unpaved palace country, water and crossings')
+  const one = field.sample(0, 0)
+  assert.equal(Object.isFrozen(one), true)
+  assert.equal('height' in one, false)
+  assert.equal('normal' in one, false)
+  assert.equal(JSON.stringify(blueprint), before)
+  assert.throws(() => field.sample(NaN, 0), /finite/)
+  assert.throws(() => new WorldSurfaceField(blueprint, terrain,
+    { roadWidth: 0, riverWidth: 10, bridgeWidth: 6 }), /positive/)
+})
+
+test('tactile textures keep scale independent of resolution and suppress wallpaper contrast', () => {
+  const options = {
+    key: 'paving-test', base: 0xffffff, detail: 0x777777,
+    pattern: 'stone' as const, repeatX: 1, repeatY: 1,
+  }
+  const small = createProceduralSurfaceTexture({ ...options, tactile: true, size: 128 })
+  const large = createProceduralSurfaceTexture({ ...options, tactile: true, size: 256 })
+  const same = createProceduralSurfaceTexture({ ...options, tactile: true, size: 128 })
+  const legacy = createProceduralSurfaceTexture(options)
+  const bytes = (map: THREE.DataTexture) => map.image.data as Uint8Array
+  assert.deepEqual(bytes(small), bytes(same))
+  assert.equal(small.magFilter, THREE.LinearFilter)
+  assert.equal(legacy.magFilter, THREE.NearestFilter)
+  let error = 0, count = 0, minimum = 255, maximum = 0
+  for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) {
+    const a = bytes(small)[(y * 128 + x) * 4]
+    const b = [0, 1].flatMap((dy) => [0, 1].map((dx) =>
+      bytes(large)[((y * 2 + dy) * 256 + x * 2 + dx) * 4])).reduce((s, v) => s + v, 0) / 4
+    error += Math.abs(a - b)
+    count++
+    minimum = Math.min(minimum, a); maximum = Math.max(maximum, a)
+  }
+  assert.ok(error / count < 4, 'more pixels must sample the same world-sized courses, not create more tiles')
+  assert.ok(minimum > 180 && maximum - minimum < 65, 'paving cannot dominate the frame with black joints')
+  assert.ok(maximum - minimum > 10, 'a blank map does not satisfy restrained detail')
+  for (const map of [small, large, same, legacy]) map.dispose()
+})
+
+test('world surface colors and physical terrain meet across rendered region seams', () => {
+  const blueprint = generateWorld(20260906)
+  const scene = new THREE.Scene()
+  const art = new StylizedArtLibrary({
+    enhanced: true, ink: { player: 0x111111, enemy: 0x111111, interactable: 0x111111, landmark: 0x111111 },
+  })
+  const policy = resolveVisualPolicy({ visualMode: 'enhanced' })
+  const runtime = new GeneratedWorldRuntime(scene, blueprint, { art, visualPolicy: policy })
+  try {
+    const west = blueprint.regions.find((r) => r.coordinate.x === 2 && r.coordinate.y === 2)!
+    const east = blueprint.regions.find((r) => r.coordinate.x === 3 && r.coordinate.y === 2)!
+    runtime.update({ focus: runtime.getRegionCenter(west.id)!, deltaSeconds: 0 })
+    const a = scene.getObjectByName(`terrain:${west.id}`) as THREE.Mesh
+    const b = scene.getObjectByName(`terrain:${east.id}`) as THREE.Mesh
+    const p = a.geometry.getAttribute('position')
+    const q = b.geometry.getAttribute('position')
+    const c = a.geometry.getAttribute('color'), d = b.geometry.getAttribute('color')
+    assert.ok(c && d)
+    for (let row = 0; row <= 16; row++) {
+      const i = row * 17 + 16, j = row * 17
+      assert.deepEqual([p.getX(i), p.getY(i), p.getZ(i)], [q.getX(j), q.getY(j), q.getZ(j)])
+      assert.deepEqual([c.getX(i), c.getY(i), c.getZ(i)], [d.getX(j), d.getY(j), d.getZ(j)])
+    }
+    const original = runtime.terrain.createRegionGeometry(west.id, 16)
+    assert.deepEqual(a.geometry.getAttribute('position').array, original.getAttribute('position').array)
+    assert.deepEqual(a.geometry.index?.array, original.index?.array)
+    original.dispose()
+    assert.equal(a.material, b.material, 'the seam shares material scale as well as macro color')
+  } finally {
+    runtime.dispose()
+    art.dispose()
+  }
+})
 
 const BUILDING_PALETTE: BuildingPalette = {
   foundation: 0x6c6f74,

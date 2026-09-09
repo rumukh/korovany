@@ -1,0 +1,284 @@
+import { Color } from 'three'
+import { artNoiseSeed, fbm3 } from '../art/index.ts'
+import { getRegionRiverLegs, getRegionRoadLegs, getSiteWorldPosition2D } from '../content/registry.ts'
+import type { ZoneId } from '../types.ts'
+import { composeSiteLayout, resolveSiteLayoutTransform } from './SiteComposition.ts'
+import type { Point2, TerrainSystem } from './TerrainSystem.ts'
+import type { RegionId, SiteKind, WorldBlueprint } from './worldTypes.ts'
+
+export const WORLD_SURFACE_REVISION = 'tactile-world-1'
+export const WORLD_DETAIL_METRES = 4
+export const WORLD_PAVING_METRES = 6
+
+export type WorldSurfaceMaterial = 'grass' | 'soil' | 'rock' | 'paving' | 'water' | 'bridge'
+
+/** Presentation metadata only. TerrainSystem and CollisionWorld retain physical authority. */
+export interface WorldSurfaceSample {
+  regionId: RegionId | null
+  biome: ZoneId
+  material: WorldSurfaceMaterial
+  road: number
+  paving: number
+  vegetation: number
+  shore: number
+  visualWaterDepth: number
+  flowX: number
+  flowZ: number
+  bridgeContact: number
+}
+
+export interface WorldCourtSurface {
+  readonly siteId: string
+  readonly regionId: RegionId
+  readonly kind: SiteKind
+  readonly x: number
+  readonly z: number
+  readonly radius: number
+  readonly rotation: number
+}
+
+interface Segment {
+  readonly start: Point2
+  readonly end: Point2
+  readonly length: number
+  readonly dx: number
+  readonly dz: number
+}
+
+interface WaterSegment extends Segment {
+  readonly fromX: number
+  readonly fromZ: number
+  readonly toX: number
+  readonly toZ: number
+}
+
+const GROUND_COLORS: Readonly<Record<ZoneId, Color>> = {
+  neutral: new Color(0x92906b),
+  palace: new Color(0x959980),
+  forest: new Color(0x697b57),
+  fort: new Color(0x827d78),
+}
+const SOIL = new Color(0x96816a)
+const PAVING = new Color(0xaaa99a)
+const ROCK = new Color(0x8b8b84)
+
+export function createWorldSurfaceSample(): WorldSurfaceSample {
+  return {
+    regionId: null, biome: 'neutral', material: 'soil', road: 0, paving: 0,
+    vegetation: 0, shore: 0, visualWaterDepth: 0, flowX: 0, flowZ: 1, bridgeContact: 0,
+  }
+}
+
+export class WorldSurfaceField {
+  readonly revision = WORLD_SURFACE_REVISION
+  readonly courts: readonly WorldCourtSurface[]
+  private readonly terrain: TerrainSystem
+  private readonly roads: readonly Segment[]
+  private readonly river: readonly WaterSegment[]
+  private readonly bridges: readonly Point2[]
+  private readonly seed: number
+  private readonly roadHalfWidth: number
+  private readonly waterHalfWidth: number
+  private readonly bridgeHalfWidth: number
+  private readonly scratch = createWorldSurfaceSample()
+
+  constructor(blueprint: WorldBlueprint, terrain: TerrainSystem, options: {
+    readonly roadWidth: number
+    readonly riverWidth: number
+    readonly bridgeWidth: number
+  }) {
+    if (![options.roadWidth, options.riverWidth, options.bridgeWidth].every((v) => Number.isFinite(v) && v > 0)) {
+      throw new RangeError('World surface widths must be positive and finite')
+    }
+    this.terrain = terrain
+    this.seed = artNoiseSeed(blueprint.seed, 'world:surface')
+    this.roadHalfWidth = options.roadWidth / 2
+    this.waterHalfWidth = options.riverWidth / 2
+    this.bridgeHalfWidth = options.bridgeWidth / 2
+    this.roads = Object.freeze(blueprint.regions.flatMap((region) =>
+      getRegionRoadLegs(blueprint, region).map((leg) => segment(leg.center, leg.edge))))
+    const river: WaterSegment[] = []
+    for (const id of blueprint.river.regionPath) {
+      const [entry, exit] = getRegionRiverLegs(blueprint, id)
+      if (!entry || !exit) throw new Error(`Missing ordered river legs for ${id}`)
+      const incoming = segment(entry.edge, entry.center)
+      const outgoing = segment(exit.center, exit.edge)
+      const bendLength = Math.hypot(incoming.dx + outgoing.dx, incoming.dz + outgoing.dz)
+      const bendX = (incoming.dx + outgoing.dx) / bendLength
+      const bendZ = (incoming.dz + outgoing.dz) / bendLength
+      river.push(
+        { ...incoming, fromX: incoming.dx, fromZ: incoming.dz, toX: bendX, toZ: bendZ },
+        { ...outgoing, fromX: bendX, fromZ: bendZ, toX: outgoing.dx, toZ: outgoing.dz },
+      )
+    }
+    this.river = Object.freeze(river)
+    this.bridges = Object.freeze(blueprint.bridges.map((bridge) => {
+      const region = terrain.getRegion(bridge.regionId)
+      if (!region) throw new Error(`Missing bridge region ${bridge.regionId}`)
+      return Object.freeze({
+        x: (region.bounds.minX + region.bounds.maxX) / 2,
+        z: (region.bounds.minZ + region.bounds.maxZ) / 2,
+      })
+    }))
+    const courts: WorldCourtSurface[] = []
+    for (const site of blueprint.sites) {
+      const region = terrain.getRegion(site.regionId)
+      const anchor = getSiteWorldPosition2D(blueprint, site)
+      if (!region || !anchor) throw new Error(`Missing surface site ${site.id}`)
+      if (site.owner !== 'guard' && region.blueprint.biome !== 'palace') continue
+      if (!['settlement', 'shop', 'final-stronghold', 'faction-start'].includes(site.kind)) continue
+      const layout = composeSiteLayout({
+        siteId: site.id, kind: site.kind, owner: site.owner, biome: region.blueprint.biome, seed: blueprint.seed,
+      })
+      courts.push(Object.freeze({
+        siteId: site.id, regionId: site.regionId, kind: site.kind,
+        ...resolveSiteLayoutTransform(site.kind, anchor, region.bounds),
+        radius: Math.max(2, layout.clearingRadius - 3.5),
+      }))
+    }
+    this.courts = Object.freeze(courts)
+  }
+
+  /** Writes into caller-owned scratch; no height, collision, visibility or weather side effects. */
+  sampleInto(x: number, z: number, out: WorldSurfaceSample): WorldSurfaceSample {
+    if (!Number.isFinite(x) || !Number.isFinite(z)) throw new RangeError('World surface coordinates must be finite')
+    const region = this.terrain.getRegionAt(x, z)
+    out.regionId = region?.id ?? null
+    out.biome = region?.blueprint.biome ?? 'neutral'
+    let roadDistance = Infinity
+    for (const road of this.roads) roadDistance = Math.min(roadDistance, distanceToSegment(x, z, road))
+    out.road = 1 - smooth(this.roadHalfWidth - 0.35, this.roadHalfWidth + 1.25, roadDistance)
+    const edgeNoise = fbm3(x * 0.32, 0, z * 0.32, this.seed, 2)
+    let court = 0
+    for (const area of this.courts) {
+      court = Math.max(court, 1 - smooth(area.radius - 1.2, area.radius + 0.6,
+        Math.hypot(x - area.x, z - area.z) + edgeNoise * 0.8))
+    }
+    const palace = this.biomeWeight(x, z, 'palace')
+    out.paving = Math.max(court, out.road * smooth(0.4, 0.8, palace))
+    this.sampleWaterInto(x, z, out)
+    const waterDistance = this.waterDistance(x, z)
+    const wetBank = 1 - smooth(this.waterHalfWidth, this.waterHalfWidth + 4, waterDistance)
+    const patch = fbm3(x / 7, 0, z / 7, this.seed + 17, 2) * 0.5 + 0.5
+    out.vegetation = smooth(0.28, 0.7, patch + wetBank * 0.16) *
+      (1 - out.road) * (1 - out.paving) *
+      smooth(this.waterHalfWidth + 0.25, this.waterHalfWidth + 1, waterDistance)
+    const onBridge = this.bridges.some((bridge) =>
+      Math.abs(x - bridge.x) <= this.waterHalfWidth + 2 && Math.abs(z - bridge.z) <= this.bridgeHalfWidth)
+    if (onBridge || waterDistance < this.waterHalfWidth) {
+      out.vegetation = 0
+      out.paving = 0
+    }
+    out.material = onBridge ? 'bridge' : waterDistance < this.waterHalfWidth ? 'water'
+      : out.paving > 0.5 ? 'paving' : out.road > 0.35 ? 'soil'
+        : out.biome === 'fort' ? 'rock' : out.vegetation > 0.3 ? 'grass' : 'soil'
+    return out
+  }
+
+  sample(x: number, z: number): Readonly<WorldSurfaceSample> {
+    return Object.freeze(this.sampleInto(x, z, createWorldSurfaceSample()))
+  }
+
+  /** Optical cues for the unchanged ribbon, including water underneath a real bridge. */
+  sampleWaterInto(x: number, z: number, out: WorldSurfaceSample): void {
+    let distance = Infinity
+    let chosen: WaterSegment | undefined
+    let along = 0
+    for (const leg of this.river) {
+      const t = fraction(x, z, leg)
+      const d = Math.hypot(x - leg.start.x - leg.dx * leg.length * t, z - leg.start.z - leg.dz * leg.length * t)
+      if (d < distance) { distance = d; chosen = leg; along = t }
+    }
+    out.flowX = 0
+    out.flowZ = 1
+    if (chosen) {
+      const t = smooth(0.55, 1, along)
+      const s = smooth(0, 0.45, along)
+      const incoming = chosen.fromX === chosen.dx && chosen.fromZ === chosen.dz
+      const weight = incoming ? t : s
+      const dx = chosen.fromX + (chosen.toX - chosen.fromX) * weight
+      const dz = chosen.fromZ + (chosen.toZ - chosen.fromZ) * weight
+      const length = Math.hypot(dx, dz)
+      out.flowX = dx / length
+      out.flowZ = dz / length
+    }
+    out.shore = smooth(this.waterHalfWidth - 1.4, this.waterHalfWidth, distance)
+    out.visualWaterDepth = 2.8 * (1 - smooth(0, this.waterHalfWidth, distance))
+    out.bridgeContact = 0
+    for (const bridge of this.bridges) {
+      // Existing pier centers: bridgeParts uses +/-span*.22, width*.72.
+      const pierX = (this.waterHalfWidth * 2 + 4) * 0.22
+      const dx = Math.min(Math.abs(x - bridge.x - pierX), Math.abs(x - bridge.x + pierX))
+      const dz = Math.max(0, Math.abs(z - bridge.z) - this.bridgeHalfWidth * 0.72)
+      out.bridgeContact = Math.max(out.bridgeContact, 1 - smooth(0.18, 0.65, Math.hypot(dx, dz)))
+    }
+  }
+
+  writeGroundColor(x: number, z: number, out: Color): Color {
+    const sample = this.sampleInto(x, z, this.scratch)
+    out.setRGB(0, 0, 0)
+    for (const biome of ['neutral', 'palace', 'forest', 'fort'] as const) {
+      const weight = this.biomeWeight(x, z, biome)
+      out.r += GROUND_COLORS[biome].r * weight
+      out.g += GROUND_COLORS[biome].g * weight
+      out.b += GROUND_COLORS[biome].b * weight
+    }
+    const macro = fbm3(x / 38, 0, z / 38, this.seed, 3)
+    const medium = fbm3(x / 9, 0, z / 9, this.seed + 29, 2)
+    out.lerp(SOIL, (1 - sample.vegetation) * 0.22 + sample.road * 0.48)
+    const normal = this.terrain.sampleNormal(x, z)
+    out.lerp(ROCK, smooth(0.12, 0.48, 1 - normal.y) * 0.7)
+    return out.multiplyScalar(1 + macro * 0.19 + medium * 0.055)
+  }
+
+  writePavingColor(x: number, z: number, out: Color): Color {
+    const strength = this.sampleInto(x, z, this.scratch).paving
+    this.writeGroundColor(x, z, out)
+    return out.lerp(PAVING, smooth(0, 0.9, strength))
+  }
+
+  private waterDistance(x: number, z: number): number {
+    let distance = Infinity
+    for (const leg of this.river) distance = Math.min(distance, distanceToSegment(x, z, leg))
+    return distance
+  }
+
+  private biomeWeight(x: number, z: number, biome: ZoneId): number {
+    const layout = this.terrain.layout
+    const fx = (x - layout.origin.x) / layout.regionSize + layout.minCoordinate.x - 0.5
+    const fz = (z - layout.origin.z) / layout.regionSize + layout.minCoordinate.z - 0.5
+    const x0 = Math.floor(fx), z0 = Math.floor(fz)
+    const tx = smooth(0, 1, fx - x0), tz = smooth(0, 1, fz - z0)
+    let weight = 0
+    for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) {
+      const cx = Math.max(layout.minCoordinate.x, Math.min(layout.maxCoordinate.x, x0 + i))
+      const cz = Math.max(layout.minCoordinate.z, Math.min(layout.maxCoordinate.z, z0 + j))
+      const region = layout.regions.find((r) => r.coordinate.x === cx && r.coordinate.z === cz)
+      if (region?.blueprint.biome === biome) weight += (i ? tx : 1 - tx) * (j ? tz : 1 - tz)
+    }
+    return weight
+  }
+}
+
+function segment(start: Point2, end: Point2): Segment {
+  const length = Math.hypot(end.x - start.x, end.z - start.z)
+  if (!(length > 0)) throw new Error('World surface route has a zero-length leg')
+  return Object.freeze({
+    start: Object.freeze({ ...start }), end: Object.freeze({ ...end }), length,
+    dx: (end.x - start.x) / length, dz: (end.z - start.z) / length,
+  })
+}
+
+function fraction(x: number, z: number, leg: Segment): number {
+  return Math.max(0, Math.min(1, ((x - leg.start.x) * leg.dx + (z - leg.start.z) * leg.dz) / leg.length))
+}
+
+function distanceToSegment(x: number, z: number, leg: Segment): number {
+  const t = fraction(x, z, leg)
+  return Math.hypot(x - leg.start.x - leg.dx * leg.length * t, z - leg.start.z - leg.dz * leg.length * t)
+}
+
+function smooth(low: number, high: number, value: number): number {
+  const t = Math.max(0, Math.min(1, (value - low) / (high - low)))
+  return t * t * (3 - 2 * t)
+}

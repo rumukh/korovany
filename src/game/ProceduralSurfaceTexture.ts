@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { RandomStream } from './random/RandomStream.ts'
 import { deriveSeed } from './random/seed.ts'
+import { artNoiseSeed, hashUnit3 } from './art/index.ts'
 
 export type ProceduralSurfacePattern =
   | 'dirt'
@@ -20,6 +21,8 @@ export interface ProceduralSurfaceTextureOptions {
   repeatX: number
   repeatY: number
   size?: number
+  /** Construction-scoped content revision, selected by the shared visual policy. */
+  tactile?: boolean
 }
 
 type PixelColor = readonly [number, number, number]
@@ -29,6 +32,7 @@ const DEFAULT_TEXTURE_SIZE = 64
 export function createProceduralSurfaceTexture(
   options: ProceduralSurfaceTextureOptions,
 ): THREE.DataTexture {
+  if (options.tactile) return createTactileSurfaceTexture(options)
   const size = Math.max(
     16,
     Math.min(256, Math.floor(options.size ?? DEFAULT_TEXTURE_SIZE)),
@@ -84,6 +88,62 @@ export function createProceduralSurfaceTexture(
   texture.generateMipmaps = true
   texture.needsUpdate = true
   return texture
+}
+
+/** Periodic material-scale detail; broad world variation is baked into terrain colors. */
+function createTactileSurfaceTexture(options: ProceduralSurfaceTextureOptions): THREE.DataTexture {
+  const size = Math.max(16, Math.min(256, Math.floor(options.size ?? 128)))
+  const pixels = new Uint8Array(size * size * 4)
+  const seed = artNoiseSeed(options.key, `world:surface:${options.pattern}`)
+  const base = colorBytes(options.base)
+  const stone = options.pattern === 'stone'
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const u = (x + 0.5) / size, v = (y + 0.5) / size
+    const broad = periodicNoise(u, v, 3, seed)
+    const medium = periodicNoise(u, v, 11, seed + 1)
+    const grain = periodicNoise(u, v, 47, seed + 2)
+    let value = 0.95 + broad * 0.027 + medium * 0.018 + grain * 0.012
+    if (stone) {
+      const row = Math.floor(v * 12)
+      const column = u * 8 + (row % 2) * 0.5
+      const edgeX = Math.min(column % 1, 1 - column % 1)
+      const edgeY = Math.min((v * 12) % 1, 1 - (v * 12) % 1)
+      const joint = 1 - Math.min(1, Math.min(edgeX * 0.75, edgeY * 0.5) / 0.012)
+      const block = hashUnit3(Math.floor(column) % 8, row, 0, seed + 4) - 0.5
+      value += block * 0.055 - joint * 0.12
+    } else if (options.pattern === 'scree') {
+      value += periodicNoise(u, v, 19, seed + 5) * 0.025
+    } else if (options.pattern === 'water') {
+      value = 0.96 + medium * 0.012 + grain * 0.005
+    }
+    const offset = (y * size + x) * 4
+    pixels[offset] = Math.round(base[0] * Math.min(1, value))
+    pixels[offset + 1] = Math.round(base[1] * Math.min(1, value))
+    pixels[offset + 2] = Math.round(base[2] * Math.min(1, value))
+    pixels[offset + 3] = 255
+  }
+  const texture = new THREE.DataTexture(pixels, size, size, THREE.RGBAFormat, THREE.UnsignedByteType)
+  texture.name = `procedural-surface:${options.key}:tactile`
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping
+  texture.repeat.set(options.repeatX, options.repeatY)
+  texture.magFilter = THREE.LinearFilter
+  texture.minFilter = THREE.LinearMipmapLinearFilter
+  texture.generateMipmaps = true
+  texture.needsUpdate = true
+  return texture
+}
+
+function periodicNoise(u: number, v: number, cells: number, seed: number): number {
+  const x = u * cells, y = v * cells
+  const ix = Math.floor(x), iy = Math.floor(y)
+  const tx = x - ix, ty = y - iy
+  const sx = tx * tx * (3 - 2 * tx), sy = ty * ty * (3 - 2 * ty)
+  const a = hashUnit3(ix % cells, iy % cells, 0, seed)
+  const b = hashUnit3((ix + 1) % cells, iy % cells, 0, seed)
+  const c = hashUnit3(ix % cells, (iy + 1) % cells, 0, seed)
+  const d = hashUnit3((ix + 1) % cells, (iy + 1) % cells, 0, seed)
+  return (a + (b - a) * sx + (c + (d - c) * sx - a - (b - a) * sx) * sy) * 2 - 1
 }
 
 class PixelPainter {
