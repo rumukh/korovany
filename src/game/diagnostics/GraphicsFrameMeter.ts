@@ -25,6 +25,9 @@ export interface GraphicsRuntimeFrame {
     boom: number
     shoulder: number
     overflows: number
+    targetProbes?: number
+    visibleTargetProbes?: number
+    visibilityCut?: boolean
     trianglesTested: number
     fadedInstances: number
     worldShadowDraws: number

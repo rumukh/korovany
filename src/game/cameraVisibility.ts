@@ -7,6 +7,8 @@ export const CAMERA_TRIANGLE_LIMIT = 32768
 export const CAMERA_TERRAIN_STEPS = 32
 export const CAMERA_RECOVERY_STEPS = 4
 export const CAMERA_RECOVERY_DIRECTIONS = 7
+export const CAMERA_TARGET_PROBES = 3
+const TARGET_SIGHT_RADIUS = 0.02
 
 export interface CameraSweepResult {
   distance: number
@@ -166,12 +168,16 @@ export interface CameraVisibilityDebug {
   boomDistance: number
   playerVisibility: number
   recovery: 'none' | 'previous' | 'local'
+  targetProbes: number
+  visibleTargetProbes: number
+  visibilityCut: boolean
 }
 
 export class CameraVisibility {
   readonly debug: CameraVisibilityDebug = {
     candidates: 0, sweeps: 0, triangleTests: 0, terrainSamples: 0, overflows: 0,
     shoulder: 0, boomDistance: 0, playerVisibility: 1, recovery: 'none',
+    targetProbes: 0, visibleTargetProbes: 0, visibilityCut: false,
   }
   private readonly sweepResult: CameraSweepResult = {
     distance: 0, blocked: false, overflow: false, triangleTests: 0, initialOverlap: false,
@@ -188,6 +194,9 @@ export class CameraVisibility {
   private readonly offset = new THREE.Vector3()
   private readonly right = new THREE.Vector3()
   private readonly sample = new THREE.Vector3()
+  private readonly sightSample = new THREE.Vector3()
+  private readonly sightTargets = Array.from({ length: CAMERA_TARGET_PROBES }, () => new THREE.Vector3())
+  private readonly sightEligible = new Uint8Array(CAMERA_TARGET_PROBES)
   private initialized = false
   private shoulder = 0
   private shoulderHold = 0
@@ -205,16 +214,22 @@ export class CameraVisibility {
     this.debug.candidates = this.debug.sweeps = this.debug.triangleTests = this.debug.terrainSamples = this.debug.overflows = 0
     const halfHeight = camera.near * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
     this.radius = Math.max(0.32, Math.hypot(halfHeight, halfHeight * camera.aspect) + 0.12)
+    this.prepareTargetSight(target, query, terrain)
+    this.debug.visibilityCut = false
     this.previous.copy(this.lastSafe)
-    const previousSafe = this.initialized && this.previous.distanceTo(target) <= 32 &&
+    const previousClear = this.initialized && this.previous.distanceTo(target) <= 32 &&
       this.clearPose(this.previous, query, terrain)
+    const previousSafe = previousClear &&
+      this.targetSightScore(this.previous, query, terrain) === this.debug.targetProbes
     this.selectCollisionOrigin(target, desired, previousSafe, query, terrain)
     this.right.subVectors(desired, target).setY(0).normalize()
     this.right.set(this.right.z, 0, -this.right.x)
     this.shoulderHold = Math.max(0, this.shoulderHold - delta)
     this.releaseHold = Math.max(0, this.releaseHold - delta)
     this.best.copy(this.collisionOrigin)
-    let score = this.best.distanceTo(target)
+    let bestSight = this.targetSightScore(this.best, query, terrain)
+    let score = this.best.distanceTo(target) > this.radius
+      ? bestSight * 1000 + this.best.distanceTo(target) : -Infinity
     let chosen = 0
     for (let index = 0; index < CAMERA_CANDIDATE_LIMIT; index++) {
       this.candidate.copy(desired)
@@ -226,16 +241,19 @@ export class CameraVisibility {
       this.safePosition(this.collisionOrigin, this.candidate, query, terrain, this.solved)
       this.debug.candidates++
       const distance = this.solved.distanceTo(target)
-      const candidateScore = distance - (index === 0 ? 0 : index === 3 ? 1.1 : 0.55) +
+      const sight = this.targetSightScore(this.solved, query, terrain)
+      const candidateScore = sight * 1000 + distance - (index === 0 ? 0 : index === 3 ? 1.1 : 0.55) +
         (index === this.shoulder && this.shoulderHold > 0 ? 1.2 : 0)
-      if (candidateScore > score) { score = candidateScore; chosen = index; this.best.copy(this.solved) }
-      if (index === 0 && distance >= desired.distanceTo(target) - 0.15 && this.shoulderHold === 0) break
+      if (candidateScore > score) { score = candidateScore; bestSight = sight; chosen = index; this.best.copy(this.solved) }
+      if (index === 0 && sight === this.debug.targetProbes &&
+          distance >= desired.distanceTo(target) - 0.15 && this.shoulderHold === 0) break
     }
     if (chosen !== this.shoulder) { this.shoulder = chosen; this.shoulderHold = 0.35 }
     const wanted = this.best.distanceTo(target)
     const current = this.follow.distanceTo(target)
     if (immediate || !previousSafe) {
       this.follow.copy(this.best)
+      this.debug.visibilityCut = !immediate && previousClear && !previousSafe
       this.initialized = true
     } else {
       if (wanted < current - 0.12) this.releaseHold = 0.16
@@ -247,11 +265,18 @@ export class CameraVisibility {
       // frames. The old position is used only after checking its current volume.
       this.safePosition(this.previous, this.follow, query, terrain, this.solved)
       this.follow.copy(this.solved)
+      if (this.targetSightScore(this.follow, query, terrain) < bestSight) {
+        // Smooth camera travel must not strand the view behind a roof after a
+        // valid target boom was found. Reacquire that collision-cleared pose.
+        this.follow.copy(this.best)
+        this.debug.visibilityCut = true
+      }
     }
     output.copy(this.follow)
     this.lastSafe.copy(output)
     this.debug.shoulder = this.shoulder
     this.debug.boomDistance = output.distanceTo(target)
+    this.debug.visibleTargetProbes = this.targetSightScore(output, query, terrain)
     const visibility = THREE.MathUtils.smoothstep(this.debug.boomDistance, 0.8, 3.6)
     this.debug.playerVisibility = immediate ? visibility :
       THREE.MathUtils.lerp(this.debug.playerVisibility, visibility, dampingAlpha(16, delta))
@@ -261,15 +286,20 @@ export class CameraVisibility {
     target: THREE.Vector3, candidate: THREE.Vector3, query: CameraVolumeQuery,
     terrain: (x: number, z: number) => number, output: THREE.Vector3,
   ): void {
+    this.prepareTargetSight(target, query, terrain)
     this.previous.copy(this.lastSafe)
     const previousSafe = this.initialized && this.previous.distanceTo(target) <= 32 &&
-      this.clearPose(this.previous, query, terrain)
+      this.clearPose(this.previous, query, terrain) &&
+      this.targetSightScore(this.previous, query, terrain) === this.debug.targetProbes
     this.selectCollisionOrigin(target, candidate, previousSafe, query, terrain)
     this.safePosition(this.collisionOrigin, candidate, query, terrain, this.solved)
     if (previousSafe) this.safePosition(this.previous, this.solved, query, terrain, output)
     else output.copy(this.solved)
+    const sight = this.targetSightScore(output, query, terrain)
+    if (previousSafe && this.targetSightScore(this.previous, query, terrain) > sight) output.copy(this.previous)
     this.lastSafe.copy(output)
     this.debug.boomDistance = output.distanceTo(target)
+    this.debug.visibleTargetProbes = this.targetSightScore(output, query, terrain)
     this.debug.playerVisibility = Math.min(this.debug.playerVisibility,
       THREE.MathUtils.smoothstep(this.debug.boomDistance, 0.8, 3.6))
   }
@@ -303,6 +333,41 @@ export class CameraVisibility {
     if (!this.clearsTerrain(terrain, position)) return false
     this.sweep(query, position, position)
     return !this.sweepResult.blocked && !this.sweepResult.overflow
+  }
+
+  private prepareTargetSight(target: THREE.Vector3, query: CameraVolumeQuery, terrain: (x: number, z: number) => number): void {
+    this.debug.targetProbes = 0
+    for (let index = 0; index < CAMERA_TARGET_PROBES; index++) {
+      const point = this.sightTargets[index].copy(target)
+      point.y += index === 1 ? -0.45 : index === 2 ? 0.35 : 0
+      this.sweep(query, point, point, TARGET_SIGHT_RADIUS)
+      // A physically embedded subject point is not a visible-through-walls
+      // objective. Recover the camera volume without fabricating visibility.
+      this.sightEligible[index] = Number(!this.sweepResult.blocked && !this.sweepResult.overflow &&
+        point.y >= this.height(terrain, point.x, point.z) + TARGET_SIGHT_RADIUS)
+      this.debug.targetProbes += this.sightEligible[index]
+    }
+  }
+
+  private targetSightScore(position: THREE.Vector3, query: CameraVolumeQuery, terrain: (x: number, z: number) => number): number {
+    let visible = 0
+    for (let index = 0; index < CAMERA_TARGET_PROBES; index++) {
+      if (!this.sightEligible[index]) continue
+      const point = this.sightTargets[index]
+      this.sweep(query, point, position, TARGET_SIGHT_RADIUS)
+      if (this.sweepResult.blocked || this.sweepResult.overflow) continue
+      const steps = Math.min(CAMERA_TERRAIN_STEPS, Math.max(1, Math.ceil(point.distanceTo(position) / 0.45)))
+      let clear = true
+      for (let step = 1; step < steps; step++) {
+        this.sightSample.lerpVectors(point, position, step / steps)
+        if (this.sightSample.y < this.height(terrain, this.sightSample.x, this.sightSample.z) + TARGET_SIGHT_RADIUS) {
+          clear = false
+          break
+        }
+      }
+      if (clear) visible++
+    }
+    return visible
   }
 
   private selectCollisionOrigin(

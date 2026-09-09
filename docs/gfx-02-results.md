@@ -258,3 +258,24 @@ in the session's `files\gfx02-motion-review`; they are not substituted for raw
 captures. The original nine-image gallery and GFX-01 proof are unchanged.
 The supervisor recorded confirmed workload exit, no remaining owned processes,
 no cleanup errors, and release of the matching lease at 21:32:08 UTC.
+
+## CPU follow-up to the preserved failure
+
+After preserving this evidence, the narrow follow-up reproduces the exact
+recorded roof intersection using production world geometry and the recorded
+camera/player poses. The prior final follow sweep could retain a camera that
+was outside the roof but could no longer see its current torso target. The
+correction ranks three torso sight probes before boom distance, rejects
+occluded previous anchors, and revalidates target sight after the final travel
+sweep and scoped shake. Collision-safe target-visible reacquisition may cut the
+presentation camera; it does not move an actor or change gameplay LOS.
+
+`tests/cameraRouteVisibility.test.ts` includes the captured bad pose as a
+negative control and uses independent two-sided exact-triangle rays for its
+body assertions. It also exercises a labelled CPU interpolation between the
+recorded route endpoints, temporary near-wall overlap, scoped shake, forest
+control, and unchanged canonical sight/colliders/fingerprint. It does not claim
+to reconstruct every original input/RAF timestep or prove post-fix image quality.
+**The preserved PNGs and performance table above remain pre-fix evidence.**
+The necessary new browser route and live resize/DPR window is still gated by
+the coordinator's separate lease.

@@ -30,6 +30,20 @@ If no bounded safe pose exists, recovery reports an error without publishing an
 overlapping position. `CameraSweepResult.initialOverlap` and
 `CameraVisibility.debug.recovery` expose these cases.
 
+The post-native riverside evidence revealed that a collision-cleared previous
+camera could nevertheless have lost sight of the player. Three bounded
+presentation-only torso sight probes now rank framing before boom length, and a
+previous follow anchor must retain their visibility. Each probe excludes only a
+point physically embedded in a solid, never makes a wall transparent, and checks
+the original terrain height along its line. The final follow result is compared
+with the validated target-visible candidate; if the travel sweep strands it
+behind a roof, a presentation camera cut reacquires the candidate instead of
+retaining an obstructed view. Scoped shake cannot reduce valid torso visibility.
+`targetProbes`, `visibleTargetProbes` and `visibilityCut` are additive diagnostic
+fields, including active-frame telemetry; no rig, world-registration, rebind or
+gameplay sight API changed. Close constrained views may still shorten/fade the
+player, and real post-fix motion approval remains separate from CPU ray checks.
+
 Streamed foreground instances are registered explicitly. At most eight fade at
 once, with source and ink sharing opaque depth-writing ordered dither. Camera
 fade never changes a shared material's opacity, source visibility, instance
