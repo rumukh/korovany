@@ -5,6 +5,7 @@ import { BloomPostProcessor } from './BloomPostProcessor'
 import { resolveVisualPolicy, resolveVisualViewport, type VisualQualityPolicy } from './visualPolicy.ts'
 import { CameraVisibility } from './cameraVisibility.ts'
 import { RAIN_CAPACITY, SNOW_CAPACITY, precipitationCount, updatePrecipitationBuffer } from './PrecipitationPresentation.ts'
+import { SecondaryEffectPool } from './SecondaryEffectPool.ts'
 import { stabilizeKeyLight } from './world/WorldPresentationRegistry.ts'
 import type { FoliageQuality, VisualSettings } from './visualSettings.ts'
 import { GraphicsClock, graphicsClockOptions } from './diagnostics/GraphicsClock.ts'
@@ -1427,7 +1428,6 @@ const FLASH_DECAY = 2.4
 const SPARK_COUNT_BLOCK = 7
 const SPARK_COUNT_CLEAVE = 5
 const SPARK_LIFE = 0.24
-const SPARK_MAX_ACTIVE = 48
 const DAMAGE_NUMBER_MAX = 24
 const DAMAGE_NUMBER_LIFE = 0.72
 const DAMAGE_NUMBER_DISTANCE_SQ = 30 * 30
@@ -2169,7 +2169,8 @@ export class GameEngine {
   private shakeClock = 0
   private damageFlash = 0
   private bleedFxCooldown = 0
-  private activeSparks = 0
+  private secondaryEffects: SecondaryEffectPool | null = null
+  private readonly secondaryContactPoint = new THREE.Vector3()
   private activeGore = 0
   private decalSequence = 0
   private attackCooldown = 0
@@ -2956,6 +2957,7 @@ export class GameEngine {
     attempt(() => this.cancelActiveEvents())
     attempt(() => this.clearAmbientLife())
     attempt(() => this.clearLootRuntime())
+    attempt(() => this.secondaryEffects?.dispose())
     attempt(() => this.resizeObserver.disconnect())
     window.removeEventListener('keydown', this.boundKeyDown)
     window.removeEventListener('keyup', this.boundKeyUp)
@@ -4021,6 +4023,7 @@ export class GameEngine {
           revision: ATMOSPHERE_REVISION, wetness: this.artEnvironment.wetness,
           profile: this.artEnvironment.atmosphere,
         } : null,
+        secondaryEffects: this.secondaryEffects?.snapshot() ?? null,
         camera: { ...this.cameraVisibility.debug },
         bindings: this.artLibrary.getRenderBindingStats(),
         post: this.postProcessor.getDebugSnapshot(),
@@ -8241,6 +8244,7 @@ export class GameEngine {
   }
 
   private updateParticles(delta: number): void {
+    this.secondaryEffects?.update(delta, this.reducedMotion)
     for (let index = this.particles.length - 1; index >= 0; index -= 1) {
       const particle = this.particles[index]
       particle.life -= delta
@@ -8322,7 +8326,6 @@ export class GameEngine {
 
   private removeParticle(index: number): void {
     const particle = this.particles[index]
-    if (particle.mode === 'spark') this.activeSparks = Math.max(0, this.activeSparks - 1)
     if (particle.mode === 'blood' || particle.mode === 'gib') {
       this.activeGore = Math.max(0, this.activeGore - 1)
       particle.mesh.visible = false
@@ -15497,6 +15500,7 @@ export class GameEngine {
   }
 
   private clearTransientCombatFeedback(): void {
+    this.secondaryEffects?.clear()
     this.hideFinaleTelegraphs()
     this.resetCameraMotion()
     this.damageFlash = 0
@@ -16198,39 +16202,13 @@ export class GameEngine {
     incomingDirection: THREE.Vector3,
     count: number,
   ): void {
-    const available = Math.min(count, SPARK_MAX_ACTIVE - this.activeSparks)
-    if (available <= 0) return
+    if (this.paused || this.ended) return
+    this.getSecondaryEffects().emit('spark', position, incomingDirection, this.palette.warning, count, this.visualPolicy)
+  }
 
-    const outward = incomingDirection.clone()
-    outward.y = 0
-    if (outward.lengthSq() <= 0.0001) outward.set(0, 0, 1)
-    else outward.normalize()
-    const tangent = new THREE.Vector3(-outward.z, 0, outward.x)
-
-    for (let index = 0; index < available; index += 1) {
-      const color =
-        index % 3 === 0 ? new THREE.Color(0xffffff) : this.palette.warning.clone()
-      color.multiplyScalar(1.35)
-      const mesh = new THREE.Mesh(
-        new THREE.OctahedronGeometry(0.055, 0),
-        new THREE.MeshBasicMaterial({ color }),
-      )
-      mesh.position
-        .copy(position)
-        .addScaledVector(tangent, (Math.random() - 0.5) * 0.3)
-      this.scene.add(mesh)
-      this.particles.push({
-        mesh,
-        velocity: outward
-          .clone()
-          .multiplyScalar(1.5 + Math.random() * 3)
-          .addScaledVector(tangent, (Math.random() - 0.5) * 8)
-          .setY(4 + Math.random() * 5),
-        life: SPARK_LIFE,
-        mode: 'spark',
-      })
-      this.activeSparks += 1
-    }
+  private getSecondaryEffects(): SecondaryEffectPool {
+    this.secondaryEffects ??= new SecondaryEffectPool(this.scene, this.generatedBlueprint.seed)
+    return this.secondaryEffects
   }
 
   private acquireGoreParticle(): Particle | null {
@@ -16396,19 +16374,10 @@ export class GameEngine {
   }
 
   private createHitParticles(position: THREE.Vector3, allegiance: Allegiance): void {
-    for (let index = 0; index < 7; index += 1) {
-      const mesh = new THREE.Mesh(
-        new THREE.OctahedronGeometry(0.12, 0),
-        new THREE.MeshBasicMaterial({ color: this.allegianceColor(allegiance) }),
-      )
-      mesh.position.copy(position).add(new THREE.Vector3(0, 1.6, 0))
-      this.scene.add(mesh)
-      this.particles.push({
-        mesh,
-        velocity: new THREE.Vector3((Math.random() - 0.5) * 4, 2 + Math.random() * 4, (Math.random() - 0.5) * 4),
-        life: 0.55 + Math.random() * 0.35,
-      })
-    }
+    if (this.paused || this.ended) return
+    // Stage B supplies posed/material contacts. Keep the current admitted-contact anchor here.
+    this.secondaryContactPoint.copy(position).y += 1.6
+    this.getSecondaryEffects().emit('shard', this.secondaryContactPoint, null, this.allegianceColor(allegiance), 7, this.visualPolicy)
   }
 
   private createBleedParticle(): void {
