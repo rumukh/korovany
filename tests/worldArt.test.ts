@@ -28,10 +28,11 @@ import {
   type TreeSpecies,
   type WallStyle,
   ART_SURFACE_ATTRIBUTE,
+  ART_SHADOW_ATTRIBUTE,
   ART_WIND_ATTRIBUTE,
   validateArtGeometry,
 } from '../src/game/art/index.ts'
-import { SITE_PRESENTATIONS } from '../src/game/content/registry.ts'
+import { SITE_PRESENTATIONS, getRegionRiverLegs } from '../src/game/content/registry.ts'
 import { GeneratedWorldRuntime, inkDrawCost } from '../src/game/world/GeneratedWorldRuntime.ts'
 import {
   buildingSpecKey,
@@ -138,6 +139,30 @@ test('tactile textures keep scale independent of resolution and suppress wallpap
   assert.ok(minimum > 180 && maximum - minimum < 65, 'paving cannot dominate the frame with black joints')
   assert.ok(maximum - minimum > 10, 'a blank map does not satisfy restrained detail')
   for (const map of [small, large, same, legacy]) map.dispose()
+})
+
+test('world surface water flow crosses real meander seams in the route direction', () => {
+  const blueprint = generateWorld(20260906)
+  const field = new WorldSurfaceField(blueprint, new TerrainSystem(blueprint),
+    { roadWidth: 4.5, riverWidth: 10, bridgeWidth: 6 })
+  const before = createWorldSurfaceSample(), after = createWorldSurfaceSample()
+  let crossings = 0, sideways = 0
+  for (const id of blueprint.river.regionPath.slice(0, -1)) {
+    const exit = getRegionRiverLegs(blueprint, id)[1]
+    const length = Math.hypot(exit.edge.x - exit.center.x, exit.edge.z - exit.center.z)
+    const dx = (exit.edge.x - exit.center.x) / length, dz = (exit.edge.z - exit.center.z) / length
+    field.sampleWaterInto(exit.edge.x - dx * 0.001, exit.edge.z - dz * 0.001, before)
+    field.sampleWaterInto(exit.edge.x + dx * 0.001, exit.edge.z + dz * 0.001, after)
+    assert.ok(before.flowX * dx + before.flowZ * dz > 0.999)
+    assert.ok(after.flowX * dx + after.flowZ * dz > 0.999)
+    assert.ok(Math.abs(before.flowX - after.flowX) < 1e-4 && Math.abs(before.flowZ - after.flowZ) < 1e-4)
+    assert.ok(Math.abs(before.visualWaterDepth - after.visualWaterDepth) < 1e-4)
+    crossings++
+    if (Math.abs(dx) > 0.5) sideways++
+  }
+  assert.equal(crossings, blueprint.river.regionPath.length - 1)
+  assert.ok(sideways > 0, 'a straight-only fixture cannot prove meander direction')
+  assert.throws(() => field.sampleWaterInto(Infinity, 0, before), /finite/)
 })
 
 test('world surface colors and physical terrain meet across rendered region seams', () => {
@@ -320,6 +345,44 @@ test('tactile streaming accounts retained geometry and keeps source ink on the s
   assert.equal(runtime.getVisualInventory().receipts.length, 0)
   assert.equal(art.getRenderBindingStats().sources, 0)
   art.dispose()
+})
+
+test('tactile lower tiers preserve physics while avoiding unused world-shadow allocations', () => {
+  const blueprint = generateWorld(20260906)
+  const original = new GeneratedWorldRuntime(new THREE.Scene(), blueprint)
+  try {
+    for (const quality of ['balanced', 'low'] as const) {
+      const scene = new THREE.Scene()
+      const art = new StylizedArtLibrary({
+        enhanced: true, ink: { player: 0x111111, enemy: 0x111111, interactable: 0x111111, landmark: 0x111111 },
+      })
+      const policy = resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: quality })
+      const runtime = new GeneratedWorldRuntime(scene, blueprint, { art, visualPolicy: policy, castShadows: true })
+      try {
+        for (const biome of BIOMES) {
+          const region = blueprint.regions.find((r) => r.biome === biome)!
+          const focus = runtime.getRegionCenter(region.id)!
+          original.update({ focus, deltaSeconds: 0 }); runtime.update({ focus, deltaSeconds: 0 })
+          assert.deepEqual(runtime.collision.queryBounds(runtime.bounds), original.collision.queryBounds(original.bounds))
+          const inventory = runtime.getVisualInventory()
+          const usage = sumVisualAllocationReceipts(inventory.receipts).world
+          const limits = runtime.visualAllocation!.limits.world
+          assert.ok(usage.cpuGeometryBytes <= limits.cpuGeometryBytes)
+          assert.ok(usage.cpuBindingCloneBytes <= limits.cpuBindingCloneBytes)
+          assert.ok(usage.cpuCanonicalSightBytes <= limits.cpuCanonicalSightBytes)
+          if (quality === 'low') for (const source of inventory.sources) {
+            assert.equal(source.castShadow, false)
+            assert.equal(source.geometry.hasAttribute(ART_SHADOW_ATTRIBUTE), false)
+          }
+          runtime.setDecorationDensity(0); runtime.setDecorationDensity(1)
+          runtime.setOutlineDressing(true)
+          scene.traverse((object) => {
+            if (StylizedArtLibrary.isOutlineShell(object)) assert.equal(object.userData.visualSubsystem, 'world')
+          })
+        }
+      } finally { runtime.dispose(); art.dispose() }
+    }
+  } finally { original.dispose() }
 })
 
 const BUILDING_PALETTE: BuildingPalette = {

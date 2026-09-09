@@ -601,6 +601,14 @@ test('enhanced world surfaces preserve physical ribbons, colliders and projected
         }
         if (surface.name.startsWith('paving:')) {
           assertSurfaceFollowsRenderedTerrain(surface, terrain, 0.16, false)
+          if (courts === 0) {
+            const detached = surface.geometry.clone().translate(0, 0.3, 0)
+            try {
+              assert.throws(() => assertSurfaceFollowsRenderedTerrain(
+                new THREE.Mesh(detached, surface.material), terrain, 0.16, false,
+              ), /not projected/)
+            } finally { detached.dispose() }
+          }
           courts++
         }
       }

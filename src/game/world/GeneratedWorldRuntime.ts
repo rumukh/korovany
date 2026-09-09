@@ -1141,11 +1141,11 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     if (enabled) {
       if (this.outlines.length > 0) return
       for (const entry of this.inkable) {
-        this.outlines.push(
-          this.context.art.applyOutline(entry.object, entry.kind, {
-            instanced: entry.object instanceof THREE.InstancedMesh,
-          }),
-        )
+        const binding = this.context.art.applyOutline(entry.object, entry.kind, {
+          instanced: entry.object instanceof THREE.InstancedMesh,
+        })
+        this.outlines.push(binding)
+        for (const shell of binding.shells) shell.userData.visualSubsystem = 'world'
       }
       return
     }
