@@ -1,10 +1,11 @@
 # Next-generation graphics: a playable illustrated world
 
-**Status: implementation authorized; coordinated work is starting.** The field
-review and nine screenshots remain the unchanged baseline. GFX-01 through GFX-06
-are assigned to separate sessions using GPT-6 Astra, Max reasoning, and the 1M
-context tier. No visual milestone is complete or approved for default promotion
-merely because implementation has started.
+**Status: implementation in progress.** The reproducible baseline and shared
+rendering foundation are implemented. The enhanced foundation has now run through
+the browser capture matrix; character, world, and independent environment/HUD work
+are active in their original sessions. GFX-01 through GFX-06 retain GPT-6 Astra,
+Max reasoning, and the 1M context tier. Legacy remains the default; the current
+character models and final performance tiers are not visually approved.
 
 **Recommendation:** evolve the procedural comic into a richly lit, tactile
 illustrated world. Fix visibility and surface response before increasing geometric
@@ -19,6 +20,42 @@ features still missing.
 
 [Open the screenshot gallery](graphics-review.md) |
 [Read the capture manifest](images/graphics-review/capture-manifest.json)
+
+### Current implementation checkpoints
+
+The unchanged natural-play gallery below remains the original evidence, not the
+upgraded result. [GFX-01 results](graphics-baseline-results.md) document the
+repeatable baseline. [The rendering contract](gfx-02-rendering.md) and
+[subsystem allocations](graphics-subsystem-budgets.md) describe the implemented
+foundation and provisional budgets consumed by the content workstreams.
+
+The foundation at `bfae58b` completed the prescribed 14-job browser batch on
+2026-09-09, including the three faction openings, original forest/riverside
+camera scenarios, effects-off paths, motion fixtures, and bounded profiles.
+That batch is technical evidence, not proof of final art quality or a passed
+performance tier. The integration/allocation checkpoint is `3d2a77e`.
+Final evidence assessment, live resize coverage, and combined release acceptance
+remain separate from the recorded captures.
+
+### Character direction after the first preview
+
+The user's 2026-09-09 visual review found the guard uniform and helmets worth
+preserving, but described the elf and villain heads as pumpkins and the NPC
+models as insufficiently realistic. GFX-03 must address the anatomy, not merely
+recolor or shrink the same shapes.
+
+Keep the guard's recognizable uniform and helmet design. Give elves believable
+faces visible inside separate hoods, with skin distinct from green clothing.
+Give villains recognizable faces beneath fitted helmets and independently
+constructed horns, rather than bulbous colored heads standing in for anatomy.
+Skull, jaw, cheeks, brow, nose, eye sockets, ears, and neck must form a coherent
+person at both portrait and gameplay distances.
+
+The first character visual checkpoint covers all three factions from front,
+three-quarter, profile, and ordinary gameplay views. Believable adult proportions,
+hands, grips, and clothing layers are part of the target. This is anatomical
+realism within the procedural browser pipeline, not authorization for imported
+photoreal assets or a replacement engine. Final model approval is still open.
 
 ## 1. What was actually played
 
