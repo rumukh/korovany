@@ -314,6 +314,7 @@ const BUILDING_LOD_DISTANCE = 46
 const LEGACY_ROAD_SURFACE_LIFT = 0.14
 const ROAD_OVERLAY_LAYER = 1
 const PAVING_OVERLAY_LAYER = 2
+const GROUND_OVERLAY_DEPTH_UNITS = 8
 
 export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
   readonly presentation: WorldPresentationRegistry | null
@@ -2807,7 +2808,7 @@ function setGroundOverlayDepth(material: THREE.MeshStandardMaterial, layer: numb
   // instead pull the receiver through centimetre-scale soles at grazing angles.
   material.polygonOffset = true
   material.polygonOffsetFactor = 0
-  material.polygonOffsetUnits = -layer
+  material.polygonOffsetUnits = -layer * GROUND_OVERLAY_DEPTH_UNITS
 }
 
 type StylizedWorldSurface = Parameters<

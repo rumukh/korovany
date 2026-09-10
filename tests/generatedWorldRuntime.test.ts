@@ -683,7 +683,7 @@ test('enhanced road and paving receivers do not bury the joined-opening contact 
         if (/^(road|paving):/.test(source.name)) {
           assert.equal(source.material.polygonOffset, true)
           assert.equal(source.material.polygonOffsetFactor, 0, 'a slope-dependent bias can swallow small soles')
-          assert.equal(source.material.polygonOffsetUnits, source.name.startsWith('road:') ? -1 : -2)
+          assert.equal(source.material.polygonOffsetUnits, source.name.startsWith('road:') ? -8 : -16)
         } else assert.equal(source.material.polygonOffset, false, 'the shared terrain must not inherit road bias')
       }
     }
