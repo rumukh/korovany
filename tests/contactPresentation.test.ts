@@ -11,6 +11,8 @@ import { ContactPresentation, contactResponse, copyPresentationContact, type Pre
 import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
 import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
+import { SecondaryEffectPool } from '../src/game/SecondaryEffectPool.ts'
+import { createArtStream } from '../src/game/art/index.ts'
 
 const loader = registerHooks({ resolve(specifier, context, nextResolve) {
   return nextResolve(specifier.startsWith('.') && !extname(specifier) ? `${specifier}.ts` : specifier, context)
@@ -290,4 +292,90 @@ test('physical primary cue is depth-tested, uses sampled position/direction and 
     f.engine.updateImpactRayFx(1)
     assert.equal(sprite.visible, false)
   } finally { sprite.material.dispose(); f.dispose() }
+})
+
+test('actual paired engine modes reproduce global injury coupling; cosmetic isolation alone misses cold UUID consumption', () => {
+  function run(mode: 'legacy' | 'enhanced', isolateBloodControl = false, coldSecondary = false) {
+    const f = combatFixture()
+    const scene = new THREE.Scene()
+    const secondary = coldSecondary ? null : new SecondaryEffectPool(scene, 42)
+    const originalRandom = Math.random
+    const artRandom = createArtStream(42, 'coupling-control-only')
+    let globalDraws = 0, goreDraws = 0, uuidDraws = 0
+    const injuryAdmissions: number[] = [], limbMethodDraws: number[] = []
+    const controlled = () => {
+      globalDraws++
+      const stack = new Error().stack ?? ''
+      if (stack.includes('generateUUID')) uuidDraws++
+      else if (stack.includes('createBloodBurst')) goreDraws++
+      else if (stack.includes('detachActorLimb')) limbMethodDraws.push(globalDraws)
+      else if (stack.includes('damageActor')) injuryAdmissions.push(globalDraws)
+      return globalDraws === 1 ? 0.1 : 0.95
+    }
+    Object.assign(f.engine, {
+      visualPolicy: resolveVisualPolicy({ visualMode: mode }),
+      scene, secondaryEffects: secondary, generatedBlueprint: { seed: 42 },
+      artLibrary: f.art, activeGore: 0, particles: [], inactiveGoreParticles: [],
+      contactColor: new THREE.Color(), camera: new THREE.PerspectiveCamera(), spawnImpactRay() {},
+      allegianceColor: () => new THREE.Color(0x4da6ff),
+      createBloodBurst: Reflect.get(GameEngine.prototype, 'createBloodBurst'),
+      detachActorLimb: Reflect.get(GameEngine.prototype, 'detachActorLimb'),
+      presentPhysicalContact: Reflect.get(GameEngine.prototype, 'presentPhysicalContact'),
+    })
+    // Hold initial geometry/pose and allocation state constant. The real gore helper
+    // uses these warm slots; the cold-secondary arm deliberately removes that control.
+    const warm = []
+    for (let index = 0; index < 64; index++) warm.push(f.engine.acquireGoreParticle())
+    f.engine.inactiveGoreParticles.push(...warm)
+    if (isolateBloodControl) {
+      const realBlood = f.engine.createBloodBurst.bind(f.engine)
+      f.engine.createBloodBurst = (...args: unknown[]) => {
+        // Test-only counterfactual: execute the real helper with art randomness.
+        // Never use this global swapping technique as a production fix.
+        Math.random = () => artRandom.next()
+        try { return realBlood(...args) } finally { Math.random = controlled }
+      }
+    }
+    try {
+      Math.random = controlled
+      const outcome = f.engine.damageActor(f.actor, 20, new THREE.Vector3(), 'villain', false, {
+        attackKind: 'melee', detachChance: 0.75,
+      })
+      Math.random = originalRandom
+      const missing = ['leftArm', 'rightArm', 'leftLeg', 'rightLeg'].filter((part) =>
+        f.actor.mesh.getObjectByName(part)?.visible === false)
+      return { mode, isolateBloodControl, coldSecondary, health: f.actor.hp, dealt: outcome.dealt,
+        missing, injuryAdmissions, limbMethodDraws, goreDraws, uuidDraws, globalDraws }
+    } finally {
+      Math.random = originalRandom
+      f.engine.secondaryEffects?.dispose()
+      const geometry = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>()
+      scene.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return
+        geometry.add(object.geometry)
+        for (const material of Array.isArray(object.material) ? object.material : [object.material]) materials.add(material)
+      })
+      for (const entry of geometry) entry.dispose()
+      for (const entry of materials) entry.dispose()
+      f.dispose()
+    }
+  }
+  const legacy = run('legacy'), enhanced = run('enhanced')
+  const isolatedLegacy = run('legacy', true), isolatedEnhanced = run('enhanced', true)
+  const coldEnhanced = run('enhanced', true, true)
+  assert.equal(legacy.health, enhanced.health)
+  assert.equal(legacy.dealt, enhanced.dealt)
+  assert.deepEqual(legacy.missing, [])
+  assert.deepEqual(enhanced.missing, ['rightLeg'])
+  assert.deepEqual(legacy.injuryAdmissions, [308])
+  assert.deepEqual(enhanced.injuryAdmissions, [1])
+  assert.equal(legacy.goreDraws, 307)
+  assert.deepEqual(isolatedLegacy.missing, isolatedEnhanced.missing,
+    'redirecting explicit blood draws removes this warmed-path coupling')
+  assert.deepEqual(isolatedLegacy.injuryAdmissions, [1])
+  assert.deepEqual(coldEnhanced.missing, [],
+    'a real cold Three.js pool constructor consumes global UUID draws before the untouched injury admission')
+  assert.ok(coldEnhanced.uuidDraws > 0)
+  assert.ok(coldEnhanced.injuryAdmissions[0] > 1)
+  console.log(`GFX05_GLOBAL_RANDOM_REPRO ${JSON.stringify({ legacy, enhanced, isolatedLegacy, isolatedEnhanced, coldEnhanced })}`)
 })

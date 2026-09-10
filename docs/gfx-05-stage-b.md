@@ -82,6 +82,73 @@ reported to the coordinator; no unauthorized gameplay-RNG migration or invisible
 legacy-particle replay was added to conceal the coupling. Seeded stream and
 damage/window invariants are covered separately.
 
+### Actual paired-mode injury reproduction
+
+`tests/contactPresentation.test.ts`, test **actual paired engine modes reproduce
+global injury coupling; cosmetic isolation alone misses cold UUID consumption**,
+executes the production `damageActor`, `createBloodBurst`, `acquireGoreParticle`,
+`detachActorLimb`, presenter appearance replacement and enhanced secondary
+emission. The actor's initial real presenter/pose and health are held constant;
+64 real gore slots and, except for the cold control, the real secondary pool are
+prepared before tracing. Audio/text/health-bar rendering boundaries are not
+the injury implementation. This is a bounded call-path reproduction, not a
+natural campaign or GPU capture.
+
+The controlled global sequence is 0.1 followed by 0.95 values, with
+`baseDamage=20` and `detachChance=0.75`. Every arm deals 20 damage and leaves
+80 HP:
+
+| Actual engine arm | Explicit hit-gore global draws before admission | Global admission draw | Result |
+| --- | ---: | ---: | --- |
+| Legacy contact path, warm allocations | 307 | 308 (0.95) | No missing limb |
+| Enhanced material contact path, warm allocations | 0 | 1 (0.1) | Right leg missing |
+| Legacy, real blood helper redirected to art randomness in the test only | 0 | 1 (0.1) | Right leg missing |
+| Enhanced, same art-random blood control, warm secondary pool | 0 | 1 (0.1) | Right leg missing |
+| Enhanced, same control, cold real secondary pool | 0 | 13 (0.95) after 12 UUID draws | No missing limb |
+
+The isolated-blood control still executes the real helper. Its temporary
+global-function override is test instrumentation only, not a proposed runtime
+fix. The cold control constructs the real `SecondaryEffectPool` through the
+engine; it demonstrates an additional consumer, not a hypothetical statement.
+
+Affected locations in production checkpoint `9c47cd68`:
+
+- `GameEngine.ts:11978`: NPC non-brute detachment admission,
+  `Math.random() < options.detachChance`.
+- `GameEngine.ts:12511`: visible-limb selection inside `detachActorLimb`.
+  The death path calls this selection twice (three times for large bodies).
+  Player injury admission/selection instead uses the existing `combatRng`.
+- `GameEngine.ts:11954` calls hit `createBloodBurst` only in the legacy branch;
+  its explicit global draws are at `16613`, `16622-16633`, `16644-16654`.
+  The enhanced player hit branch likewise omits legacy hit-gore work.
+- Remaining explicit cosmetic global consumers are death satellite positions
+  (`12190-12197`), detached spray/velocity (`12517`, `12534`), callout
+  chance/rotation/word (`16135`, `16150`, `16168`), legacy impact-ray rotation
+  (`16317`), decal rotation/scale (`16710-16713`), and bleed direction (`16748`).
+  Different prior gore occupancy also changes later accepted particle counts.
+- Three.js `MathUtils.generateUUID` itself consumes four `Math.random` values
+  at `node_modules/three/src/math/MathUtils.js:21-24`. `BufferGeometry:81`,
+  `Material:51`, `Object3D:97` and `Texture:76` invoke it. Cold effects,
+  new sprites/maps, geometry replacement and mode-specific art allocations
+  therefore affect the same global source even when explicit art variation is
+  isolated.
+
+**Bounded follow-up proposal, not implemented:** route every explicit cosmetic
+caller above in both legacy and enhanced paths through existing
+`createArtStream(seed, label)` / `artVariation`, never through combat/event/loot
+streams. This removes the demonstrated explicit warm hit-gore coupling without
+editing the two injury roll sites or their probabilities. It does **not** prove
+mode-independent injury while those sites still read global randomness:
+the cold-pool control already fails because of Three.js UUID allocation.
+Prewarming one pool would not cover later sprites, streaming or injury geometry.
+
+A sufficient global guarantee would require separately authorized stable NPC
+injury randomness (with an explicit reproducibility/save policy), or controlling
+all implicit allocation consumers. The latter is not a narrow cosmetic fix and
+must not be attempted via global overrides or dependency patches. No such
+migration is implemented here; exact mode-independent injury remains the
+specific Stage B merge gate awaiting the coordinator's decision.
+
 ## Transient draw admission and inventory
 
 `TransientEffectBudget` consumes
