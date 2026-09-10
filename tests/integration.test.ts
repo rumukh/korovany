@@ -1693,6 +1693,44 @@ test('every bulk castShadow sweep excludes what you can see through', () => {
  * later. Twice was enough to stop widening reactively, so this walks every tracked
  * markdown file in the repository and the domain question is closed rather than deferred.
  */
+function oneMillisecondSubject(lines: readonly string[], index: number): string | null {
+  const text = lines[index]
+  // A component measurement such as 3.1 ms is not the one-millisecond regression allowance.
+  if (!/(?<![\w.,])1[ \t]+ms\b/.test(text)) return null
+  const after = lines.slice(index, index + 3).join(' ')
+  if (/frame time at 25 actors/i.test(after)) return 'frame-regression'
+  const before = lines.slice(Math.max(0, index - 5), index).join(' ')
+  if (/Layer 1 — Chronicle/.test(before) && /under 1 ms per tick with no per-frame cost/.test(text)) {
+    return 'chronicle-tick'
+  }
+  if (/Dynamic \/ world \/ effects CPU scope per frame/.test(before) &&
+      /^\| Balanced \| 120,000 \/ 170,000 \/ 10,000 = 300,000 \| 3 \/ 3 \/ 1 ms \|\s*$/.test(text)) {
+    return 'provisional-effects-cpu'
+  }
+  return 'unclassified'
+}
+
+test('one-millisecond scope classification distinguishes measurements and explicitly scoped unrelated budgets', () => {
+  for (const value of ['3.1 ms', '8.1 ms', '11 ms', '0.1 ms', '1.1 ms', '1 msec']) {
+    assert.equal(oneMillisecondSubject([value], 0), null, value)
+  }
+  const scoped = ['Sustained frame time at 25 actors within 1 ms', 'for changes that add no geometry.']
+  assert.equal(oneMillisecondSubject(scoped, 0), 'frame-regression')
+  assert.equal(oneMillisecondSubject(['An unexplained 1 ms budget'], 0), 'unclassified')
+  assert.equal(oneMillisecondSubject([
+    '#### Layer 1 — Chronicle', 'acceptance bar was under 1 ms per tick with no per-frame cost',
+  ], 1), 'chronicle-tick')
+  const table = [
+    '| Tier | Dynamic / world / effects CPU scope per frame |',
+    '| Balanced | 120,000 / 170,000 / 10,000 = 300,000 | 3 / 3 / 1 ms |',
+  ]
+  assert.equal(oneMillisecondSubject(table, 1), 'provisional-effects-cpu')
+  assert.equal(oneMillisecondSubject([table[1]], 0), 'unclassified', 'A naked table row has no subject')
+  assert.equal(oneMillisecondSubject([table[0], 'Sustained frame time at 25 actors within 1 ms'], 1),
+    'frame-regression', 'An unrelated table cannot hide a new regression claim')
+  assert.equal(oneMillisecondSubject([table[0], '| A new unexplained subsystem | 1 ms |'], 1), 'unclassified')
+})
+
 test('the scoped frame-time target is not restated unscoped in any spec', () => {
   const root = new URL('../', import.meta.url)
   // Walk directories explicitly and prune at the directory level. `readdirSync` with
@@ -1719,9 +1757,8 @@ test('the scoped frame-time target is not restated unscoped in any spec', () => 
     + 'whole point of the test, so a tiny listing means it broke rather than passed',
   )
 
-  // "1 ms" appears about two unrelated things. Separate them by subject, not by file,
+  // Separate exact one-millisecond figures by subject, not by file,
   // so a frame-time restatement in STRATEGY.md would still be caught.
-  const FRAME_TIME = /frame time at 25 actors/i
   const mentions: { file: string; line: number; text: string; window: string }[] = []
   const otherSubjects: string[] = []
 
@@ -1729,12 +1766,13 @@ test('the scoped frame-time target is not restated unscoped in any spec', () => 
     const source = readFileSync(new URL(file, root), 'utf8').replace(/\r\n?/g, '\n')
     const lines = source.split('\n')
     lines.forEach((text, index) => {
-      if (!text.includes('1 ms')) return
+      const subject = oneMillisecondSubject(lines, index)
+      if (subject === null) return
       const window = lines.slice(index, index + 3).join(' ')
-      if (FRAME_TIME.test(window)) {
+      if (subject === 'frame-regression') {
         mentions.push({ file, line: index + 1, text, window })
       } else {
-        otherSubjects.push(`${file}:${String(index + 1)}`)
+        otherSubjects.push(`${file}:${subject}${subject === 'unclassified' ? `:${index + 1}` : ''}`)
       }
     })
   }
@@ -1744,10 +1782,10 @@ test('the scoped frame-time target is not restated unscoped in any spec', () => 
   // decided it was out of scope.
   assert.deepEqual(
     otherSubjects,
-    ['docs/STRATEGY.md:376'],
-    'these mention "1 ms" without naming frame time at 25 actors. The known one is '
-    + "STRATEGY.md's Chronicle tick bar, which is a different budget about a different "
-    + 'subsystem. A new entry here means either a third budget shares the figure — list '
+    ['docs/STRATEGY.md:chronicle-tick', 'docs/graphics-subsystem-budgets.md:provisional-effects-cpu'],
+    'these mention exact "1 ms" outside the frame-time regression target. Known subjects are '
+    + "STRATEGY.md's Chronicle tick bar and the named provisional effects CPU allocation. "
+    + 'A new entry here means either another budget shares the figure — classify and list '
     + 'it — or a frame-time restatement was phrased so this scan missed it, which is the '
     + 'failure this test exists to prevent.',
   )

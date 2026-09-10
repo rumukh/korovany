@@ -130,6 +130,7 @@ export {
   WEATHER_ROUGHNESS_DROP_MAX,
   WEATHER_ROUGHNESS_FLOOR,
   WEATHER_VALUE_DROP_MAX,
+  bakeWeatherResponse,
   createAtmospherePresentation,
   sampleAtmosphereOpacity,
   weatheredRoughness,

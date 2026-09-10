@@ -1,5 +1,5 @@
 import * as THREE from 'three'
-import type { StylizedAtmosphere } from './ArtPresentation.ts'
+import { ART_WEATHER_ATTRIBUTE, type StylizedAtmosphere } from './ArtPresentation.ts'
 import type { StylizedSurface } from './StylizedArtLibrary.ts'
 
 export const ATMOSPHERE_REVISION = 'gfx-05-atmosphere-1'
@@ -22,6 +22,24 @@ export const SURFACE_WEATHER_RESPONSE: Readonly<Record<StylizedSurface, readonly
     water: Object.freeze([0, 0] as const),
     glow: Object.freeze([0, 0] as const),
   })
+
+/** Bake only on exclusive builder geometry, before cache insertion or mixed-surface merging. */
+export function bakeWeatherResponse(
+  geometry: THREE.BufferGeometry,
+  response: readonly [number, number],
+): THREE.BufferGeometry {
+  if (!Number.isFinite(response[0]) || response[0] < 0 || response[0] > WEATHER_ROUGHNESS_DROP_MAX ||
+      !Number.isFinite(response[1]) || response[1] < 0 || response[1] > WEATHER_VALUE_DROP_MAX) {
+    throw new RangeError('Invalid baked weather response')
+  }
+  if (geometry.hasAttribute(ART_WEATHER_ATTRIBUTE)) return geometry
+  const position = geometry.getAttribute('position')
+  if (!position) throw new Error('Weather response requires geometry positions')
+  const values = new Float32Array(position.count * 2)
+  for (let index = 0; index < position.count; index++) values.set(response, index * 2)
+  geometry.setAttribute(ART_WEATHER_ATTRIBUTE, new THREE.BufferAttribute(values, 2))
+  return geometry
+}
 
 type MutableAtmosphere = { -readonly [Key in keyof StylizedAtmosphere]: StylizedAtmosphere[Key] }
 

@@ -2,6 +2,8 @@ import * as THREE from 'three'
 import { fbm3 } from './ArtNoise.ts'
 import type { ArtVariation } from './ArtRandom.ts'
 import { ART_SURFACE_ATTRIBUTE, ART_WIND_ATTRIBUTE } from './ArtPresentation.ts'
+import { SURFACE_WEATHER_RESPONSE, bakeWeatherResponse } from './AtmospherePresentation.ts'
+import type { StylizedSurface } from './StylizedArtLibrary.ts'
 import {
   bakeOutlineNormals,
   bakeSkyOcclusion,
@@ -166,6 +168,7 @@ export function paintPropResponse(
   response: readonly [number, number, number, number] = [0.9, 0, 0.6, 0.12],
   flex = 0,
   phase = 0,
+  weatherSurface: StylizedSurface = 'stone',
 ): THREE.BufferGeometry {
   const position = geometry.getAttribute('position')
   if (!geometry.hasAttribute(ART_SURFACE_ATTRIBUTE)) {
@@ -186,7 +189,7 @@ export function paintPropResponse(
     colors.setXYZ(i, Math.min(1, Math.max(0, colors.getX(i))),
       Math.min(1, Math.max(0, colors.getY(i))), Math.min(1, Math.max(0, colors.getZ(i))))
   }
-  return geometry
+  return bakeWeatherResponse(geometry, SURFACE_WEATHER_RESPONSE[weatherSurface])
 }
 
 // ---------------------------------------------------------------------------
@@ -408,7 +411,7 @@ export function treeGeometry(
 }
 
 function layeredTreeGeometry(species: TreeSpecies, options: TreeOptions): THREE.BufferGeometry {
-  if (species === 'dead') return paintPropResponse(deadTreeGeometry(options))
+  if (species === 'dead') return paintPropResponse(deadTreeGeometry(options), undefined, 0, 0, 'bark')
   const variation = options.variation
   const height = options.height ?? 5.4
   const detail = options.detail ?? 'near'
@@ -425,7 +428,7 @@ function layeredTreeGeometry(species: TreeSpecies, options: TreeOptions): THREE.
     out.lerp(WHITE, 0.28)
     if (Math.sin(context.y * 9 + context.x * 3) > 0.82) out.multiplyScalar(0.7)
   })
-  const parts = [paintPropResponse(trunk, [0.97, 0, 0.55, 0.08])]
+  const parts = [paintPropResponse(trunk, [0.97, 0, 0.55, 0.08], 0, 0, 'bark')]
   const count = topiary ? 3 : conifer ? (detail === 'far' ? 7 : 12)
     : detail === 'far' ? 4 : slender ? 6 : thorn ? 7 : 9
   for (let i = 0; i < count; i++) {
@@ -441,7 +444,7 @@ function layeredTreeGeometry(species: TreeSpecies, options: TreeOptions): THREE.
       radialSegments: 3, tubularSegments: 1, capStart: true, capEnd: true,
     })
     shade(branch, options.palette.barkShade, options.palette.bark, 0.7)
-    parts.push(paintPropResponse(branch, [0.96, 0, 0.55, 0.08]))
+    parts.push(paintPropResponse(branch, [0.96, 0, 0.55, 0.08], 0, 0, 'bark'))
     const leafRadius = canopy * (conifer ? (1 - t * 0.68) * 0.5
       : topiary ? 0.54 : thorn ? 0.28 : slender ? 0.44 : 0.46) * variation.range(0.9, 1.12)
     const leafHeight = leafRadius * (conifer ? 1.5 : topiary ? 1.1 : slender ? 1.9 : 1.35)
@@ -459,7 +462,7 @@ function layeredTreeGeometry(species: TreeSpecies, options: TreeOptions): THREE.
       tone(options.palette.canopyHigh, t * 0.1), 0.75)
     transformed(crown, { position: end, rotation: { x: 0, y: angle, z: conifer ? 0.22 : 0 } })
     // One phase per crown/tree avoids detached leaves moving against their branch.
-    parts.push(paintPropResponse(crown, [0.88, 0, 0.5, 0.12], topiary ? 0.12 : 0.32, 0.25))
+    parts.push(paintPropResponse(crown, [0.88, 0, 0.5, 0.12], topiary ? 0.12 : 0.32, 0.25, 'foliage'))
   }
   return mergeAll(parts, { name: `layered-${species}` })
 }
@@ -1331,7 +1334,8 @@ export function buildingParts(options: BuildingOptions): PropPart[] {
     shade(body, palette.wallShade, palette.wall, 0.8)
     mottle(body, options.noiseSeed + storey * 31, 0.07, 0.9)
     if (options.tactile) {
-      paintPropResponse(body, [options.wallStyle === 'stone' ? 0.96 : 0.88, 0, 0.55, 0.1])
+      paintPropResponse(body, [options.wallStyle === 'stone' ? 0.96 : 0.88, 0, 0.55, 0.1],
+        0, 0, options.wallStyle === 'stone' ? 'stone' : 'bark')
       paintVertexColors(body, (context, out) => {
         const damp = Math.max(0, 1 - (context.y - plinthHeight) / (storeyHeight * 0.4))
         out.multiplyScalar(1 - damp * 0.08)
@@ -1398,7 +1402,8 @@ export function buildingParts(options: BuildingOptions): PropPart[] {
       options.crenellated === true,
     )
   if (options.tactile) for (const part of roof) {
-    paintPropResponse(part, [options.roofStyle === 'tile' ? 0.68 : 0.94, 0.01, 0.55, 0.15])
+    paintPropResponse(part, [options.roofStyle === 'tile' ? 0.68 : 0.94, 0.01, 0.55, 0.15],
+      0, 0, options.roofStyle === 'tile' ? 'stone' : 'bark')
   }
   hard.push(...roof)
   if (options.tactile) {
@@ -1435,7 +1440,8 @@ export function buildingParts(options: BuildingOptions): PropPart[] {
   // them the ink hull splits open along every wall corner and eave.
   bakeOutlineNormals(merged)
   parts.unshift(propPart(merged, 'hard'))
-  if (options.tactile) for (const part of parts) paintPropResponse(part.geometry)
+  if (options.tactile) for (const part of parts) paintPropResponse(part.geometry, undefined, 0, 0,
+    part.surface === 'hard' ? 'stone' : part.surface)
   return parts
 }
 

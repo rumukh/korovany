@@ -3,6 +3,7 @@ import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometr
 import { GeometryCache } from './GeometryCache.ts'
 import { StylizedArtLibrary } from './StylizedArtLibrary.ts'
 import { ART_SURFACE_ATTRIBUTE } from './ArtPresentation.ts'
+import { SURFACE_WEATHER_RESPONSE, bakeWeatherResponse } from './AtmospherePresentation.ts'
 import type { ArtGeometryLease, ArtRenderSourceBinding } from './ArtRenderBinding.ts'
 import { bakeOutlineNormals } from './GeometryKit.ts'
 import { buildCreatureLimbSegment, buildCreatureFoot, type BeastKind, type CharacterVisualLevel } from './CharacterKit.ts'
@@ -135,6 +136,10 @@ export class CreaturePresenter {
           }
           geometry.setAttribute('color', new THREE.BufferAttribute(color, 3))
           geometry.setAttribute(ART_SURFACE_ATTRIBUTE, new THREE.BufferAttribute(response, 4))
+          const weather = Object.entries(SURFACE_WEATHER_RESPONSE)
+            .find(([surface]) => surface === source.material.userData.stylizedSurfacePreset)?.[1]
+          if (!weather) throw new Error('Creature source material has no physical weather preset')
+          bakeWeatherResponse(geometry, weather)
           geometry.setAttribute('skinIndex', new THREE.BufferAttribute(indices, 4))
           geometry.setAttribute('skinWeight', new THREE.BufferAttribute(weights, 4))
         })
@@ -164,8 +169,8 @@ export class CreaturePresenter {
     let lease: ArtGeometryLease | undefined
     let source: THREE.SkinnedMesh | undefined
     try {
-      const material = art.acquireMaterial('creature:mixed:response-v1', {
-        color: 0xffffff, surface: 'cloth', vertexColors: true, attributes: { surfaceResponse: true },
+      const material = art.acquireMaterial('creature:mixed:response-weather-v1', {
+        color: 0xffffff, surface: 'cloth', vertexColors: true, attributes: { surfaceResponse: true, weatherResponse: true },
       })
       // The rig retains the canonical body independently of the binding's active view.
       cache.acquire(key, () => { throw new Error('Creature canonical body receipt was lost') })

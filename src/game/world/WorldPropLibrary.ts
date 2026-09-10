@@ -577,7 +577,8 @@ function buildParts(request: PropRequest, key: string): PropPart[] {
       (request.kind === 'undergrowth' &&
         UNDERGROWTH_SLOTS[request.biome][Math.abs(Math.floor(request.slot)) % UNDERGROWTH_SLOTS[request.biome].length] === 'bush')
     for (const part of parts) paintPropResponse(part.geometry,
-      part.surface === 'foliage' ? [0.9, 0, 0.5, 0.12] : [0.9, 0, 0.6, 0.12], living ? 0.45 : 0, 0.25)
+      part.surface === 'foliage' ? [0.9, 0, 0.5, 0.12] : [0.9, 0, 0.6, 0.12], living ? 0.45 : 0, 0.25,
+      part.surface === 'hard' ? 'stone' : part.surface)
   }
   return parts
 }

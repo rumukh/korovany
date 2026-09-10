@@ -14,7 +14,8 @@ import {
 import { bakeOutlineNormals, mergeAll, transformed } from './GeometryKit.ts'
 import { GeometryCache } from './GeometryCache.ts'
 import { StylizedArtLibrary } from './StylizedArtLibrary.ts'
-import { ART_SURFACE_ATTRIBUTE, artGeometryBytes } from './ArtPresentation.ts'
+import { ART_SURFACE_ATTRIBUTE, ART_WEATHER_ATTRIBUTE, artGeometryBytes } from './ArtPresentation.ts'
+import { SURFACE_WEATHER_RESPONSE, bakeWeatherResponse } from './AtmospherePresentation.ts'
 import type { ArtGeometryLease, ArtRenderSourceBinding } from './ArtRenderBinding.ts'
 import { disposeOwnedVisualResources } from '../visualLifecycle.ts'
 import type { VisualAllocationReceipt } from '../diagnostics/VisualBudgetAccounting.ts'
@@ -98,7 +99,9 @@ function paint(geometry: THREE.BufferGeometry, color: number, surface: Character
   }
   geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
   geometry.setAttribute(ART_SURFACE_ATTRIBUTE, new THREE.BufferAttribute(response, 4))
-  return geometry
+  return bakeWeatherResponse(geometry, SURFACE_WEATHER_RESPONSE[
+    surface === 'hair' ? 'cloth' : surface === 'bone' ? 'skin' : surface
+  ])
 }
 
 function ownedLease(geometry: THREE.BufferGeometry): ArtGeometryLease {
@@ -370,8 +373,8 @@ export class CharacterPresenter {
     this.root.updateMatrixWorld(true)
     for (const node of this.bones) this.bindMatrices.push(node.matrixWorld.clone())
     this.skeleton = new THREE.Skeleton(this.bones)
-    const material = art.acquireMaterial('character:mixed:response-v1', {
-      color: 0xffffff, surface: 'cloth', vertexColors: true, attributes: { surfaceResponse: true },
+    const material = art.acquireMaterial('character:mixed:response-weather-v1', {
+      color: 0xffffff, surface: 'cloth', vertexColors: true, attributes: { surfaceResponse: true, weatherResponse: true },
     })
     const base = this.bodyLease(this.level)
     this.body = new THREE.SkinnedMesh(base.geometry, material)
@@ -791,6 +794,7 @@ export class CharacterPresenter {
       const skin = copy.getAttribute('skinIndex')
       const color = copy.getAttribute('color')
       const surface = copy.getAttribute(ART_SURFACE_ATTRIBUTE)
+      const weather = copy.getAttribute(ART_WEATHER_ATTRIBUTE)
       const prosthetic = new THREE.Color(CHARACTER_PHYSICAL_PALETTE.metal)
       const wound = new THREE.Color(0x703b35)
       for (let i = 0; i < skin.count; i++) {
@@ -800,6 +804,7 @@ export class CharacterPresenter {
         if (status === 'prosthetic') {
           color.setXYZ(i, prosthetic.r, prosthetic.g, prosthetic.b)
           surface.setXYZW(i, ...SURFACES.metal)
+          weather.setXY(i, ...SURFACE_WEATHER_RESPONSE.metal)
         } else if (status === 'wounded' && (this.bones[bone].name.endsWith('-upper') || this.bones[bone].name.endsWith('-thigh'))) {
           this.scratch.fromBufferAttribute(copy.getAttribute('position'), i).applyMatrix4(this.skeleton.boneInverses[bone])
           if (this.scratch.z > 0.05 && this.scratch.y < -0.08 && this.scratch.y > -0.4) {

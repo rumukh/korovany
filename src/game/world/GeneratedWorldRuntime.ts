@@ -2721,26 +2721,26 @@ function createSharedMaterials(
     vertexColors: true,
     flatShading: false,
     name: 'generated-prop',
-    ...(enhanced ? { attributes: { surfaceResponse: true } } : {}),
+    ...(enhanced ? { attributes: { surfaceResponse: true, weatherResponse: true } } : {}),
   })
   const propRock = enhanced ? textured(
     'generated-rock-detail', 0xffffff, 'scree', 1, 1, 'stone',
     { vertexColors: true, mapping: 'world-triplanar', metersPerRepeat: WORLD_DETAIL_METRES,
-      attributes: { surfaceResponse: true } },
+      attributes: { surfaceResponse: true, weatherResponse: true } },
   ) : prop
   const propFoliage = stylized('foliage', {
     color: 0xffffff,
     vertexColors: true,
     flatShading: false,
     name: 'generated-prop-foliage',
-    ...(enhanced ? { attributes: { surfaceResponse: true, wind: true } } : {}),
+    ...(enhanced ? { attributes: { surfaceResponse: true, wind: true, weatherResponse: true } } : {}),
   })
   const propCloth = stylized('cloth', {
     color: 0xffffff,
     vertexColors: true,
     side: THREE.DoubleSide,
     name: 'generated-prop-cloth',
-    ...(enhanced ? { attributes: { surfaceResponse: true } } : {}),
+    ...(enhanced ? { attributes: { surfaceResponse: true, weatherResponse: true } } : {}),
   })
   // Lit windows, lantern panes, brazier coals and rune bands. Emissive rather than
   // merely bright, so bloom picks them up and a settlement reads as inhabited from
@@ -2761,7 +2761,7 @@ function createSharedMaterials(
       roughness: 1,
       side: THREE.DoubleSide,
       name: `generated-ground-cover-${zone}`,
-      ...(enhanced ? { attributes: { surfaceResponse: true, wind: true } } : {}),
+      ...(enhanced ? { attributes: { surfaceResponse: true, wind: true, weatherResponse: true } } : {}),
     }),
   )
   return {

@@ -26,6 +26,16 @@ space. The full affine hand frame follows the handle through nonuniform art
 scale; support hands fit the shield or two-handed weapon. Captive wrist ropes
 remain separately hideable when rescued.
 
+The joined atmosphere integration bakes `artWeatherResponse` into exclusive
+parts before mixed-body/equipment caching. Values come from GFX-05's existing
+`SURFACE_WEATHER_RESPONSE`: skin, cloth, leather and metal are distinct rather
+than inheriting one cloth response for the entire batch. Hair uses the cloth
+default and bone the skin default; neither introduces a new coefficient.
+Prosthetic replacements write the metal response only into their owned
+geometry. Creature and wagon batches preserve the weather preset of each
+original physical material. These extra backing arrays are included by the
+existing allocation receipts, not hidden from their CPU accounting.
+
 Equipment uses a two-joint skin palette: rigid weapon surfaces use its root,
 while bow string/nock vertices use the draw joint. NPC windup pulls the actual
 string and arrow; contact/recovery removes the nocked arrow and releases the

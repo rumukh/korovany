@@ -59,9 +59,13 @@ environment.
 
 World props pack `artSurfaceResponse` and `artWind` before caching. The
 world-owned `paintPropResponse` helper supplies rigid defaults on mixed parts.
-The reserved weather-response channel stays omitted until the separately owned
-GFX-05 shader checkpoint is integrated; this content does not enable unsupported
-positive wetness or implement a competing weather controller.
+The original CPU content checkpoint omitted the reserved weather-response
+channel. The joined GFX-05 integration now bakes it before cache insertion and
+mixed-part merging, using that owner's `SURFACE_WEATHER_RESPONSE` defaults.
+Trunk/branch bark and live foliage keep distinct response values; building and
+cloth groups retain their authored surface response. The same material family
+consumes the channel. Water/glow remain excluded, and no world-only material
+mutation or competing weather controller is introduced.
 
 ## Sight, instancing and ownership
 
