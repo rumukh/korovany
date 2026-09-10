@@ -72,10 +72,15 @@ allocations. Body and independently articulated weapon skeletons are both
 included. Canonical sight buffers remain CPU-only; a real observed GPU upload
 of a canonical-only backing is reported as a coverage violation.
 
-Cross-owner allocations occupy an explicit shared bucket. Conflicting byte
-lengths, resource kinds or CPU-only claims are reported separately and cannot
-turn into multiple successful exclusive charges. Unowned CPU data also remains
-separate. Raw provider coverage declarations are preserved under
+Unassigned cross-owner allocations occupy an explicit shared bucket. The
+[established retained-resource policy](graphics-subsystem-budgets.md#retained-resources-and-peak-allocation)
+already assigns standard-family ramp/contact maps, shadow/post targets and
+canvas/MSAA/depth storage to `postAndEffects` once. Their known physical
+identities follow that billing rule even when dynamic art and world both sample
+them; it does not reassign unrelated shared geometry or textures. Conflicting
+byte lengths, resource kinds or CPU-only claims are reported separately and
+cannot turn into multiple successful exclusive charges. Unowned CPU data also
+remains separate. Raw provider coverage declarations are preserved under
 `inventory.providers`, distinct from the composed collector's remaining gaps.
 
 `GraphicsResources` connects owners to **real GL handles and storage calls**:
@@ -84,23 +89,36 @@ separate. Raw provider coverage declarations are preserved under
 * Submitted sources identify their geometry, instance, skin and texture inputs.
 * Existing THREE texture properties link actual texture handles; missing handles
   remain unknown rather than forcing an upload.
-* Observed render targets identify color/depth/MSAA storage. Pipeline targets are
-  charged once to post/effects. Common shadow targets remain shared until an
-  explicit charge policy exists.
+* Observed render targets identify color/depth/MSAA storage. Shadow and post
+  targets are charged once to post/effects, not once per caster or sampling owner.
+* `StylizedArtLibrary.getStandardTextureInventory()` exposes only its
+  already-created ramp and contact map. It never constructs a contact map,
+  uploads a texture, changes a material, or transfers disposal ownership.
+  `standardPipelineTextures` names these exact diagnostic billing identities.
 
 GPU byte counts come from the existing ledger's actual GL storage dimensions,
 formats, samples and levels, **never a CPU receipt's byte length**. For example,
 a 16-byte uploaded view of a 128-byte CPU backing is 16 bytes of observed GL
 buffer storage, not 128. Multiple source/ink references do not duplicate the
-handle's storage. Live known-owner, shared and unattributed GPU bytes reconcile
-to the complete ledger. Unknown formats and implicit-MSAA estimates remain
-explicit.
+handle's storage. Live known-owner, unassigned shared and unattributed GPU bytes
+reconcile to the complete ledger. Allocation rows retain their sampling
+`claimantOwners` independently of `owner` billing and classify known pipeline
+storage as `standard-map`, `shadow-target` or `post-target`. Unknown formats and
+implicit-MSAA estimates remain explicit.
 
 `inventory.gpu.byOwner` reports known mapped storage, while the assessment's
 `subsystems.*.resources.gpuAllocatedBytes` remains null until ownership and
 coverage can actually be closed. A known mapped lower bound already exceeding
 its owner's ceiling is still reported as `knownMappedGpuBytes`; missing
-coverage cannot hide that overrun.
+coverage cannot hide that overrun. The pipeline's
+`knownPipelineGpuBytesIncludingEstimates` check also includes available
+same-frame canvas and implicit-MSAA estimates, as assigned by the existing
+policy. `knownGpuBudgetLowerBounds.pipeline` reports observed storage and each
+estimate separately; missing estimates are null, not invented zeros. Available
+terms still form a useful lower bound when other terms are unknown. These
+estimates do not change the observed GL ledger or double-count its depth,
+multisample renderbuffers or `renderTargetBytes` subset. The existing global
+ledger check remains in place.
 
 Upload ownership can outlive a source while the actual GL handle remains live.
 It is observation of retained API storage, not proof that a disposed owner
@@ -115,16 +133,20 @@ disposing instrumentation restores methods and drops the lookup state.
 | --- | --- |
 | `frameId`, `submissions`, `sourceDetails` | Work from the latest completed logical frame |
 | `inventory` | Current live retained owners, collected only on an explicit snapshot |
-| `sameFrameStorage` | Current allocation events still match the measured frame's ledger |
+| `sameFrameStorage` | Current allocation events and implicit-MSAA estimate still match the measured frame's ledger |
+| `knownGpuBudgetLowerBounds` | Known observed storage per owner plus separately labeled, matching pipeline estimates |
 | `subsystems.*.cpuMs` | Null: disjoint presentation-update scopes are not implemented |
 | `assessment` | Existing provisional policy assessment plus precise composed coverage gaps |
 
 CPU update/submission timings in the whole-frame profiler remain their original
 actual scopes. They are not apportioned by draw count, estimated from actor
 counts, summed across overlapping scopes, or reconstructed by adding p95s.
-The canvas allocation estimate is supplied only when its dimensions still match
-the measured frame. If resources changed after the frame, that staleness is
-explicit rather than pretending the live inventory was captured historically.
+The canvas allocation estimate is supplied only when its dimensions and known
+sample count describe the measured frame. If storage or implicit-MSAA state
+changed after the frame, pipeline estimates are withheld as null and that
+staleness is explicit rather than pretending the live inventory was captured
+historically. The source counter and live observed-storage lower bound remain
+separately identified.
 
 Counter-disabled controls expose no subsystem submissions or live GPU inventory.
 Their historical ledger is not recycled as current evidence. Legacy mode still
@@ -133,8 +155,9 @@ claim measured source work.
 
 **The current assessment intentionally remains incomplete** unless there is an
 observed overrun/inconsistency. Missing retained cache APIs, unused shared
-material/injected-uniform resources, unuploaded or unmapped backings, shared
-charge policy, canvas/driver storage, disjoint presentation-update timings and
+material/injected-uniform resources, unuploaded or unmapped backings, unassigned
+cross-owner storage outside the known pipeline policy, canvas/driver storage,
+disjoint presentation-update timings and
 temporary construction peaks prevent a false acceptance result. These are
 specific engineering coverage limits, not newly measured performance failures
 or hardware-tier approval.
