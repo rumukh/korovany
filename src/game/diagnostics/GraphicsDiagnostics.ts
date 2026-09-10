@@ -7,6 +7,9 @@ import {
   GraphicsFrameMeter, summarizeGraphicsFrames, type GraphicsFrame, type GraphicsRuntimeFrame,
 } from './GraphicsFrameMeter.ts'
 import { GraphicsResources } from './GraphicsResources.ts'
+import {
+  CHARACTER_PORTRAIT_VERSION, validateCharacterPortrait, type GraphicsCharacterPortraitRequest,
+} from './GraphicsCharacterPortrait.ts'
 
 export interface GraphicsPoint { x: number; y: number; z: number }
 export interface GraphicsFixtureStage {
@@ -17,6 +20,7 @@ export interface GraphicsFixtureStage {
   crowd?: boolean
   foundation?: boolean
   antialiasing?: 'none' | 'fxaa'
+  portrait?: GraphicsCharacterPortraitRequest | null
 }
 export interface GraphicsProfileOptions {
   warmupFrames: number
@@ -66,6 +70,16 @@ export function validateGraphicsStage(request: GraphicsFixtureStage): void {
   if (request.crowd !== undefined && typeof request.crowd !== 'boolean') throw new Error('Invalid crowd prerequisite')
   if (request.foundation !== undefined && typeof request.foundation !== 'boolean') throw new Error('Invalid foundation prerequisite')
   if (request.antialiasing !== undefined && !['none', 'fxaa'].includes(request.antialiasing)) throw new Error('Invalid AA comparison prerequisite')
+  if (request.portrait !== undefined) {
+    if (Object.keys(request).some((key) => key !== 'label' && key !== 'portrait')) {
+      throw new Error('Portrait staging cannot be combined with world, camera, crowd or effect prerequisites')
+    }
+    if (request.portrait !== null) validateCharacterPortrait(request.portrait)
+  }
+}
+
+export function assertPortraitCaptureOnly(active: boolean): void {
+  if (active) throw new Error('Clear the staged portrait before advancing simulation or profiling gameplay')
 }
 
 export function validateGraphicsProfile(options: GraphicsProfileOptions): void {
@@ -128,6 +142,8 @@ export class GraphicsDiagnostics {
   private lastFrame: GraphicsFrame | null = null
   private manualMode = true
   private disposed = false
+  private portraitActive = false
+  private portraitLabel: HTMLDivElement | null = null
   private record: {
     options: GraphicsProfileOptions
     frames: GraphicsFrame[]
@@ -169,6 +185,7 @@ export class GraphicsDiagnostics {
     }
     this.api = Object.freeze({
       version: GRAPHICS_DIAGNOSTICS_VERSION,
+      capabilities: Object.freeze({ characterPortrait: CHARACTER_PORTRAIT_VERSION }),
       snapshot: () => this.snapshot(),
       world: () => { this.assertUsable(); return this.host.world() },
       probe: (points: readonly { x: number; z: number }[]) => {
@@ -182,6 +199,19 @@ export class GraphicsDiagnostics {
         if (this.stages.length >= 64) throw new Error('Fixture prerequisite history is full; reload the fixture')
         validateGraphicsStage(request)
         this.host.stage(request)
+        if (request.portrait !== undefined) {
+          this.portraitActive = request.portrait !== null
+          this.portraitLabel?.remove()
+          this.portraitLabel = null
+          if (request.portrait) {
+            const label = document.createElement('div')
+            label.id = 'graphics-character-portrait-label'
+            label.textContent = `STAGED ${request.portrait.view === 'gameplay' ? 'GAMEPLAY VIEW' : 'PORTRAIT - NOT CAMERA COLLISION EVIDENCE'}: ${request.portrait.subject} | ${request.portrait.view} | ${request.portrait.pose}`
+            label.style.cssText = 'position:fixed;left:12px;bottom:32px;z-index:10001;max-width:calc(100vw - 24px);padding:4px 8px;background:#111;color:#fff;font:12px monospace;pointer-events:none'
+            document.body.append(label)
+            this.portraitLabel = label
+          }
+        }
         this.stages.push(request.label)
         this.host.present()
         return this.snapshot()
@@ -195,6 +225,7 @@ export class GraphicsDiagnostics {
       },
       step: (frames = 1, deltaSeconds = 1 / 60) => {
         this.assertManual()
+        assertPortraitCaptureOnly(this.portraitActive)
         this.assertFrameCount(frames)
         if (!Number.isFinite(deltaSeconds) || deltaSeconds <= 0 || deltaSeconds > 0.05) {
           throw new Error('Manual fixture step must be in (0, 0.05] seconds')
@@ -262,6 +293,7 @@ export class GraphicsDiagnostics {
 
   private profile(options: GraphicsProfileOptions): Promise<object> {
     this.assertManual()
+    assertPortraitCaptureOnly(this.portraitActive)
     validateGraphicsProfile(options)
     const runtime = this.host.runtime()
     if (runtime.paused || runtime.ended) throw new Error('Performance profiles require an active production run')
@@ -345,6 +377,8 @@ export class GraphicsDiagnostics {
     if (this.disposed) return
     if (this.record) this.fail(new Error('Graphics engine disposed during a profile'))
     this.disposed = true
+    this.portraitLabel?.remove()
+    this.portraitLabel = null
     this.renderer.domElement.removeEventListener('webglcontextlost', this.contextLost)
     this.meter.dispose()
     Object.defineProperty(window, '__korovanyGraphicsLastDisposal', {

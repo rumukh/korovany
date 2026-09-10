@@ -10,10 +10,14 @@ import { GraphicsClock, graphicsClockOptions } from './diagnostics/GraphicsClock
 import {
   GraphicsDiagnostics,
   createInstrumentedGraphicsRenderer,
+  validateGraphicsStage,
   type GraphicsFixtureStage,
 } from './diagnostics/GraphicsDiagnostics.ts'
 import { graphicsSceneEvidence } from './diagnostics/GraphicsSceneEvidence.ts'
 import { GraphicsFoundationFixture } from './diagnostics/GraphicsFoundationFixture.ts'
+import {
+  GraphicsCharacterPortrait, type GraphicsCharacterPortraitRequest, type PortraitPose, type PortraitSubject,
+} from './diagnostics/GraphicsCharacterPortrait.ts'
 import {
   AchievementTracker,
   type AchievementSummary,
@@ -2004,6 +2008,7 @@ export class GameEngine {
   private readonly graphicsClock: GraphicsClock | null
   private graphicsDiagnostics: GraphicsDiagnostics | null = null
   private graphicsFoundation: GraphicsFoundationFixture | null = null
+  private graphicsCharacterPortrait: GraphicsCharacterPortrait | null = null
   private readonly artLibrary: StylizedArtLibrary
   /** Shape cache shared by every actor: one buffer per shape, not one per actor. */
   private readonly artGeometry = new GeometryCache()
@@ -2927,7 +2932,9 @@ export class GameEngine {
             this.updateWeather(0)
             this.updateAtmosphere(0)
             this.scene.updateMatrixWorld(true)
+            this.graphicsCharacterPortrait?.restoreCameraProjection()
             this.updateCamera(0, true)
+            this.graphicsCharacterPortrait?.present(this.camera)
             this.emitView(true)
           },
           frame: (delta) => this.renderLogicalFrame(delta, 'manual'),
@@ -2991,6 +2998,8 @@ export class GameEngine {
     }
     attempt(() => this.generatedWorld.dispose())
     attempt(() => this.graphicsFoundation?.dispose())
+    attempt(() => this.graphicsCharacterPortrait?.dispose())
+    this.graphicsCharacterPortrait = null
     // Before the sweep, not during it. A shell borrows its source's geometry,
     // material and instance matrix, so the traversal below would either skip it or
     // free buffers the source still owns; `releaseOutline` is the only path that
@@ -3852,6 +3861,9 @@ export class GameEngine {
   }
 
   private renderLogicalFrame(elapsedDelta: number, source: 'active' | 'manual'): void {
+    if (this.graphicsCharacterPortrait && (source !== 'manual' || elapsedDelta !== 0)) {
+      throw new Error('Staged portraits permit only zero-simulation manual renders')
+    }
     this.graphicsDiagnostics?.beginFrame(elapsedDelta, source)
     const visualDelta = Math.min(elapsedDelta, 0.05)
     if (!this.paused && !this.ended) this.graphicsClock?.advance(visualDelta)
@@ -3864,9 +3876,13 @@ export class GameEngine {
     if (!this.paused && !this.ended && gameplayDelta > 0) this.update(gameplayDelta)
     if (!this.paused && !this.ended) this.updateCameraEffects(visualDelta)
     this.graphicsFoundation?.update(this.graphicsClock?.timeSeconds ?? this.elapsed)
+    this.graphicsCharacterPortrait?.restoreCameraProjection()
     this.updateCamera(visualDelta, false)
+    this.graphicsCharacterPortrait?.present(this.camera)
     for (const presenter of this.characterPresenters) presenter.updateLod(this.camera, this.visualPolicy)
     for (const presenter of this.creaturePresenters) presenter.updateLod(this.camera, this.visualPolicy)
+    // A close diagnostic camera can change LOD; record/fit the geometry actually submitted.
+    this.graphicsCharacterPortrait?.present(this.camera)
     this.audioListenerRight.setFromMatrixColumn(this.camera.matrixWorld, 0)
     this.audio.setListener(this.camera.position, this.audioListenerRight)
     this.updateMusicContext()
@@ -4044,8 +4060,22 @@ export class GameEngine {
         bindings: this.artLibrary.getRenderBindingStats(),
         post: this.postProcessor.getDebugSnapshot(),
         foundationFixture: this.graphicsFoundation?.snapshot() ?? null,
+        characterPortrait: this.graphicsCharacterPortrait?.snapshot() ?? null,
+        portraitContext: this.graphicsCharacterPortrait ? [this.player, ...this.actors
+          .filter((actor) => isSquadMember(actor, this.faction)).map((actor) => actor.mesh)].map((root) => {
+          const head = root.getObjectByName('head')
+          const point = (head ?? root).getWorldPosition(new THREE.Vector3()).project(this.camera)
+          return { player: root === this.player, projectedHead: point.toArray(),
+            headInsideClip: Math.abs(point.x) <= 1 && Math.abs(point.y) <= 1 && Math.abs(point.z) <= 1 }
+        }) : null,
       },
       simulationWeather: { target: this.weatherTarget, weights: { ...this.weatherWeights } },
+      characterCaptureState: {
+        stamina: this.stamina, abilityCooldown: this.abilityCooldown, attackCooldown: this.attackCooldown,
+        body: { ...this.body }, melee: { ...this.melee }, defense: { ...this.combatMastery },
+        actions: this.actors.map((actor) => ({ id: actor.id, action: actor.action, reaction: actor.reaction,
+          reactionRemaining: actor.reactionRemaining, deathAge: actor.deathAge })),
+      },
       rngStates: Object.fromEntries(Object.entries(this.generatedRngStreams).map(([key, stream]) => [key, stream.getState()])),
       actors: this.actors.map((actor) => ({
         id: actor.id, role: actor.role, allegiance: actor.allegiance, budget: actor.budgetCategory,
@@ -4064,6 +4094,18 @@ export class GameEngine {
 
   private stageGraphicsFixture(request: GraphicsFixtureStage): void {
     if (!this.graphicsDiagnostics?.manual) throw new Error('Graphics staging requires explicit manual diagnostics')
+    validateGraphicsStage(request)
+    if (request.portrait !== undefined) {
+      const subject = request.portrait ? this.graphicsPortraitSubject(request.portrait) : null
+      this.graphicsCharacterPortrait?.dispose()
+      this.graphicsCharacterPortrait = null
+      if (request.portrait && subject) {
+        this.graphicsCharacterPortrait = new GraphicsCharacterPortrait(request.portrait, subject,
+          (target, pose) => this.poseGraphicsPortrait(target, pose))
+      }
+      return
+    }
+    if (this.graphicsCharacterPortrait) throw new Error('Clear portrait staging before changing world prerequisites')
     const points = [request.player, ...(request.companions ?? []).map((entry) => entry.position)]
     const bounds = this.generatedWorld.bounds
     for (const point of points) {
@@ -4098,6 +4140,59 @@ export class GameEngine {
     if (request.antialiasing !== undefined) {
       if (this.visualPolicy.mode !== 'enhanced') throw new Error('AA comparison requires enhanced preview')
       this.postProcessor.setAntialiasing(request.antialiasing)
+    }
+  }
+
+  private graphicsPortraitSubject(request: GraphicsCharacterPortraitRequest): PortraitSubject {
+    const companionIndex = request.subject === 'player' ? -1 : Number(request.subject.slice(-1))
+    const companions = this.actors.filter((actor) => isSquadMember(actor, this.faction))
+      .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+    const actor = companionIndex < 0 ? null : companions[companionIndex]
+    if (companionIndex >= 0 && !actor) throw new Error(`Portrait companion is absent: ${request.subject}`)
+    const root = actor?.mesh ?? this.player
+    const presenter = characterPresenter(root)
+    const plan: unknown = root.userData.characterPlan
+    const weapon = presenter?.weaponKind ?? (plan && typeof plan === 'object' && 'weapon' in plan &&
+      typeof plan.weapon === 'string' ? plan.weapon : null)
+    return { root, id: actor?.id ?? 'player', role: actor?.role ?? 'player', faction: actor?.allegiance ?? this.faction,
+      player: actor === null, alive: actor ? actor.alive : this.health > 0, weapon }
+  }
+
+  private poseGraphicsPortrait(subject: PortraitSubject, preset: PortraitPose): void {
+    const rig = subject.root.userData.rig as CharacterRig | undefined
+    if (!rig || rig.beast) throw new Error('Character portraits require a production humanoid rig')
+    const pose: CharacterPose = {
+      stride: preset === 'walk' ? 0.45 : 0, attack: preset === 'contact' ? 0.8 : 0,
+      anticipation: preset === 'windup' || preset === 'aim' ? 0.85 : 0,
+      recovery: 0, flinch: 0, stagger: 0,
+    }
+    this.animateCharacter(subject.root, pose)
+    const torso = subject.root.getObjectByName('torso-pivot')
+    const head = subject.root.getObjectByName('head-pivot')
+    if (torso) applyChestPose(torso, rig.lean - pose.anticipation * 0.1 + pose.attack * 0.12,
+      -pose.stride * 0.07 + pose.anticipation * 0.13 - pose.attack * 0.18, 0)
+    if (head && torso) applyHeadPose(head, 0, solveHeadYaw(torso.rotation.x, torso.rotation.y, torso.rotation.z, 0, 0), 0)
+    if (preset === 'guard') {
+      const shield = subject.root.getObjectByName('shield')
+      if (!shield) throw new Error('Portrait shield equipment is absent')
+      shield.position.set(0, SHIELD_GUARD_Y - rig.waistY, 0.58)
+      shield.rotation.set(-0.08, 0, 0, 'XYZ')
+    }
+    if (preset === 'aim') {
+      const arm = rig.mainHand > 0 ? rig.rightArm : rig.leftArm
+      const elbow = rig.mainHand > 0 ? rig.rightElbow : rig.leftElbow
+      const off = rig.mainHand > 0 ? rig.leftArm : rig.rightArm
+      const offElbow = rig.mainHand > 0 ? rig.leftElbow : rig.rightElbow
+      if (arm) arm.rotation.set(-1.22, 0, rig.mainHand * 0.17, 'XYZ')
+      if (elbow) elbow.rotation.x = 0.12
+      if (off) off.rotation.set(-1.2, 0, -rig.mainHand * 0.34, 'XYZ')
+      if (offElbow) offElbow.rotation.x = 1.5
+      this.placeWeaponInHand(rig, arm, -1.22, rig.mainHand * 0.17, 0.12, 0.06, -rig.mainHand * 0.12)
+    }
+    const presenter = characterPresenter(subject.root)
+    if (presenter) {
+      presenter.syncAttachments()
+      presenter.poseSupport(preset === 'aim' ? 0.85 : Math.max(pose.anticipation, pose.attack * 0.8))
     }
   }
 
