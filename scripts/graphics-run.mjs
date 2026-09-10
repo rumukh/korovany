@@ -8,8 +8,11 @@ import { fileURLToPath } from 'node:url'
 import { GraphicsBrowser, delay } from './graphics/cdp.mjs'
 import { GRAPHICS_SEED, fixtureStage, selectGraphicsFixtures } from './graphics/fixtures.mjs'
 import { compareGraphicsPng } from './graphics/png.mjs'
+import {
+  FIRST_VISUAL_CASES, firstVisualPortraitStages, portraitSaveIdentity, portraitSimulationIdentity, portraitCameraReference,
+} from './graphics/portraits.mjs'
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const toolRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 const cpuBusyPercent = (before, after) => {
   let busy = 0
@@ -36,9 +39,13 @@ const option = (name, fallback) => {
   if (!value || value.startsWith('--')) throw new Error(`--${name} needs a value`)
   return value
 }
+const workspace = option('workspace', process.env.GRAPHICS_WORKSPACE ?? toolRoot)
+if (!isAbsolute(workspace)) throw new Error('--workspace / GRAPHICS_WORKSPACE must be absolute')
+const root = resolve(workspace)
 if (flag('help')) {
   console.log('node scripts\\graphics-run.mjs --out ABSOLUTE_DIRECTORY [--chrome PATH] [--cases all|id,id] [--profile] [--timing-only] [--warmup 120] [--frames 300] [--repeat 2] [--width 1920 --height 1080 --dpr 1] [--visual-mode legacy|enhanced] [--quality high|balanced|low] [--no-post] [--no-aa] [--no-ink] [--no-weather] [--reduced-motion] [--foundation] [--motion] [--native-route] [--lifecycle] [--headed]')
   console.log('Requires npm run build. A dedicated loopback server and disposable Chrome profile are owned and stopped by this command. Mobile dimensions are layout evidence, not a mobile-device benchmark.')
+  console.log('First visual: --portraits [--workspace ABSOLUTE_WORKTREE] [--portrait-reference MANIFEST_JSON]. Three opening worlds, held production portrait presets and normal gameplay views; incompatible with --profile/--motion/--native-route/--foundation/--lifecycle. No GPU authorization is implied.')
   process.exit(0)
 }
 const output = option('out')
@@ -48,7 +55,7 @@ const chrome = option('chrome', process.env.CHROME_PATH ?? 'C:\\Program Files\\G
 const width = Number(option('width', '1920'))
 const height = Number(option('height', '1080'))
 const dpr = Number(option('dpr', '1'))
-const repeat = Number(option('repeat', '2'))
+const repeat = Number(option('repeat', flag('portraits') ? '1' : '2'))
 const warmupFrames = Number(option('warmup', '120'))
 const sampleFrames = Number(option('frames', '300'))
 const visualMode = option('visual-mode', 'legacy')
@@ -62,7 +69,27 @@ for (const [name, value, min, max] of [['width', width, 320, 7680], ['height', h
 if (!Number.isFinite(dpr) || dpr < 0.5 || dpr > 3) throw new Error('Invalid --dpr')
 if (flag('native-route') && !flag('profile')) throw new Error('--native-route requires --profile')
 if (flag('timing-only') && !flag('profile')) throw new Error('--timing-only requires --profile')
-const fixtures = selectGraphicsFixtures(option('cases', 'all'))
+if (flag('portraits') && ['profile', 'motion', 'native-route', 'foundation', 'lifecycle', 'timing-only'].some(flag)) {
+  throw new Error('Portrait suite is held presentation only; do not combine it with gameplay/profiling/foundation jobs')
+}
+if (flag('portraits') && repeat !== 1) throw new Error('First portrait suite uses one launch per faction; use a new output for a repeat')
+const referencePath = option('portrait-reference')
+if (referencePath && (!flag('portraits') || !isAbsolute(referencePath))) throw new Error('--portrait-reference needs --portraits and an absolute manifest path')
+const referenceBytes = referencePath ? await readFile(referencePath) : null
+const portraitReference = referenceBytes ? JSON.parse(referenceBytes.toString('utf8')) : null
+const expectedCommit = option('expected-commit')
+const runtimeCommit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
+if (expectedCommit && (!/^[a-f0-9]{40}$/.test(expectedCommit) || expectedCommit !== runtimeCommit)) {
+  throw new Error('Target workspace does not match --expected-commit')
+}
+const fixtures = selectGraphicsFixtures(option('cases', flag('portraits') ? FIRST_VISUAL_CASES.join(',') : 'all'))
+  .map((fixture) => flag('portraits') ? {
+    ...fixture, time: 16.8, weather: 'clear',
+    description: `STAGED ${fixture.faction} first-visual opening, shared clear presentation light at t=16.8; actual player and companions, no relocation.`,
+  } : fixture)
+if (flag('portraits') && fixtures.some((fixture) => !FIRST_VISUAL_CASES.includes(fixture.id))) {
+  throw new Error('Portrait suite accepts only the three production faction openings')
+}
 await access(join(root, 'dist', 'index.html'))
 await access(chrome)
 await mkdir(out, { recursive: true })
@@ -98,15 +125,18 @@ let browser
 const runErrors = []
 const manifest = {
   schemaVersion: 1, startedAt: new Date().toISOString(),
-  runtimeCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
+  runtimeCommit,
   dirtyTree: execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).trim(),
   runtimeBaseline: reference.baselineCommit,
+  workspace: root,
+  tooling: { workspace: toolRoot, runnerSha256: sha256(await readFile(fileURLToPath(import.meta.url))) },
   buildSha256: sha256(await readFile(join(root, 'dist', 'index.html'))),
   host: { platform: platform(), osRelease: release(), cpu: cpus()[0]?.model ?? null, logicalProcessors: cpus().length,
     memoryBytes: totalmem(), node: process.version },
   conditions: {
     viewport: { width, height, dpr, mobileEmulation: false }, chrome, chromeFlags, serverOrigin: origin,
     dedicatedBrowserProfile: true, exclusiveGraphicsWorkerLeaseRequired: true,
+    declaredGraphicsLease: process.env.GRAPHICS_CAPTURE_LEASE ?? null,
     wholeComputerIsolated: false, cpuThrottling: false, gpuBackendForced: false,
     unsupportedHardware: ['No real mobile device benchmark', 'No integrated GPU device benchmark'],
     capture: 'Manual production rendering of real worlds/checkpoints with explicitly staged prerequisites. No full-game CPU claim from capture frames.',
@@ -115,6 +145,13 @@ const manifest = {
     memory: 'Observed WebGL storage bytes, not measured resident VRAM. Default framebuffer, implicit extension MSAA and driver/swapchain exclusions separately reported.',
     requestedVisualMode: visualMode, requestedQuality: quality, diagnosticNoAA: flag('no-aa'),
     foundationFixture: flag('foundation'), reducedMotion: flag('reduced-motion'),
+    portraitComparison: flag('portraits') ? {
+      version: 1, width, height, dpr, visualMode, quality, time: 16.8, weather: 'clear', seed: GRAPHICS_SEED,
+      bloom: !flag('no-post'), aa: !flag('no-aa'), ink: !flag('no-ink'), precipitation: !flag('no-weather'),
+      reducedMotion: flag('reduced-motion'),
+    } : null,
+    portraitReference: referencePath ?? null,
+    portraitReferenceSha256: referenceBytes ? sha256(referenceBytes) : null,
   },
   cases: [], complete: false,
 }
@@ -221,6 +258,78 @@ async function launchFixture(fixture) {
   return { before, stage, cold, manualRenderingPreservedSimulation: true }
 }
 
+async function capturePortraitSuite(fixture, result) {
+  const capability = await browser.evaluate('window.__korovanyGraphics.capabilities?.characterPortrait')
+  if (capability !== 1) throw new Error('Target build lacks the version-1 character portrait stage; rebuild the integrated source')
+  const before = await browser.evaluate('window.__korovanyGraphics.snapshot()')
+  const identity = portraitSimulationIdentity(before)
+  const saveIdentity = portraitSaveIdentity(await browser.evaluate('window.__korovanyGraphics.save()'))
+  const stages = firstVisualPortraitStages(fixture.faction, before.runtime.actors)
+  const companions = before.runtime.actors.filter((actor) => actor.squad)
+    .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+  result.portraits = []
+  for (const stage of stages) {
+    const request = structuredClone(stage.request)
+    const selector = request.portrait.subject
+    const actor = selector === 'player' ? null : companions[Number(selector.slice(-1))]
+    const subject = { id: actor?.id ?? 'player', role: actor?.role ?? 'player', faction: actor?.allegiance ?? fixture.faction }
+    if (portraitReference) {
+      const frame = portraitCameraReference(portraitReference, fixture.id, stage.id,
+        manifest.conditions.portraitComparison, subject)
+      if (frame) request.portrait.frame = frame
+    }
+    await browser.evaluate(`window.__korovanyGraphics.stage(${JSON.stringify(request)})`)
+    await browser.evaluate('window.__korovanyGraphics.render(2)')
+    const snapshot = await browser.evaluate('window.__korovanyGraphics.snapshot()')
+    if (portraitSimulationIdentity(snapshot) !== identity) throw new Error(`Portrait ${stage.id} mutated real gameplay identity`)
+    if (portraitSaveIdentity(await browser.evaluate('window.__korovanyGraphics.save()')) !== saveIdentity) {
+      throw new Error(`Portrait ${stage.id} changed the campaign save beyond its export timestamp`)
+    }
+    const portrait = snapshot.runtime.rendering.characterPortrait
+    if (!portrait || portrait.subject.id !== subject.id || portrait.subject.role !== subject.role) {
+      throw new Error('Portrait stage did not resolve the expected actual production subject')
+    }
+    if (request.portrait.view === 'gameplay' &&
+        !snapshot.runtime.rendering.portraitContext?.some((entry) => !entry.player && entry.headInsideClip)) {
+      throw new Error('Normal gameplay portrait contains no production companion head inside the camera frame')
+    }
+    if (!await browser.evaluate('!!document.querySelector("#graphics-character-portrait-label")')) {
+      throw new Error('Portrait is missing its visible STAGED label')
+    }
+    const file = `${fixture.id}-${stage.id}.png`
+    const bytes = await browser.screenshot(join(out, file))
+    const dataFile = `${fixture.id}-${stage.id}.json`
+    const record = {
+      id: stage.id, file, metadata: dataFile, sha256: sha256(bytes), bytes: bytes.length,
+      view: request.portrait.view, pose: request.portrait.pose,
+      subject: portrait.subject, cameraMode: portrait.cameraMode,
+      cameraFrame: portrait.camera.target ? {
+        position: portrait.camera.position, target: portrait.camera.target, fov: portrait.camera.fov,
+        near: portrait.camera.near, far: portrait.camera.far,
+      } : null,
+      gameplayCamera: portrait.cameraMode === 'production-gameplay' ? portrait.camera : null,
+      focusInsideClip: portrait.focusInsideClip, simulationPreserved: true, savePreservedExceptExportTimestamp: true,
+      effectivePolicy: snapshot.runtime.visualPolicy,
+      framingContext: snapshot.runtime.rendering.portraitContext,
+    }
+    result.portraits.push(record)
+    await writeFile(join(out, dataFile), JSON.stringify({
+      ...record, runtimeCommit: manifest.runtimeCommit, buildSha256: manifest.buildSha256,
+      request, portrait, snapshot,
+      limitation: 'Held staged production presentation; not natural play, attack timing, camera collision, GPU attribution or art approval.',
+    }, null, 2))
+    await writeFile(join(out, 'manifest.json'), JSON.stringify(manifest, null, 2))
+  }
+  await browser.evaluate('window.__korovanyGraphics.stage({label:"Restore production camera and original subject poses after portrait review",portrait:null})')
+  await browser.evaluate('window.__korovanyGraphics.render(2)')
+  const restored = await browser.evaluate('window.__korovanyGraphics.snapshot()')
+  if (portraitSimulationIdentity(restored) !== identity ||
+      portraitSaveIdentity(await browser.evaluate('window.__korovanyGraphics.save()')) !== saveIdentity) {
+    throw new Error('Clearing portrait staging changed production gameplay/save identity')
+  }
+  result.portraitRestoration = { simulationPreserved: true, portraitCleared: restored.runtime.rendering.characterPortrait === null }
+}
+
 async function nativeRoute() {
   const log = []
   const start = performance.now()
@@ -319,6 +428,7 @@ try {
           compareGraphicsPng(await readFile(join(out, `${fixture.id}-1.png`)), bytes)
       }
       await writeFile(join(out, `${fixture.id}-${repetition}.json`), JSON.stringify(capture, null, 2))
+      if (flag('portraits')) await capturePortraitSuite(fixture, result)
       if (repetition === repeat && flag('profile')) {
         await browser.evaluate(`(() => {
           for (const animation of window.__graphicsCaptureAnimations ?? []) animation.play();

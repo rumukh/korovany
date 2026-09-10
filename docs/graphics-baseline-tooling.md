@@ -7,6 +7,12 @@ world is seed `20260906`, runtime ancestor
 
 [Measured results and raw evidence](graphics-baseline-results.md)
 
+For the finite, held three-faction character review (not a baseline rerun), see
+[GFX-03 first-visual tooling](gfx-03-first-visual-tooling.md). Its optional
+versioned portrait stage and `--portraits` runner mode share this diagnostic
+owner; `--workspace` / `GRAPHICS_WORKSPACE` select an already-built integration
+worktree. Portrait overrides are not gameplay-camera collision evidence.
+
 ## Run it
 
 Use the existing Node/npm toolchain and an installed Chrome. No browser testing
