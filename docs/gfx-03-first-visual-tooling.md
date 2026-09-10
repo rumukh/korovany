@@ -3,8 +3,10 @@
 This is the CPU-prepared tooling for the **first human character-image decision**,
 not that decision or a completed graphics milestone. Character art stays at the
 existing implementation checkpoint. No browser/GPU run is part of the tooling
-checkpoint. Run only after the coordinator supplies the integrated affine-normal
-fix and a fresh serialized graphics window.
+checkpoint. Capture a built, immutable integration candidate with the affine-normal
+fix. Browser lease/GO/HOLD/AcquireBy requirements were cancelled by the user;
+no resource permission is required. Ordinary deadlines, isolated profiles/ports
+and cleanup of owned processes remain in force.
 
 ## One short job, three actual worlds
 
@@ -18,11 +20,10 @@ Dry preparation, with no server/browser/files created:
 node scripts\graphics-first-visual.mjs --workspace C:\absolute\integration-worktree --out C:\absolute\new-evidence
 ```
 
-After building the **approved integration worktree** and receiving its graphics
-window, the coordinator can execute:
+After building the **chosen integration worktree**, execute with its exact SHA:
 
 ```powershell
-node scripts\graphics-first-visual.mjs --workspace C:\absolute\integration-worktree --out C:\absolute\new-evidence --expected-commit FULL_40_CHARACTER_SHA --execute --lease CURRENT_COORDINATOR_WINDOW_ID
+node scripts\graphics-first-visual.mjs --workspace C:\absolute\integration-worktree --out C:\absolute\new-evidence --expected-commit FULL_40_CHARACTER_SHA --execute
 ```
 
 `GRAPHICS_WORKSPACE` and `GRAPHICS_OUTPUT` are equivalent defaults for the two
@@ -30,10 +31,15 @@ paths. `--chrome` overrides the existing installed-Chrome path.
 `--workspace` selects the build, dependency installation, Git identity, and
 fixture save/manifest resources; tooling can therefore be run against the
 authoritative GFX-06 worktree without copying art or changing that branch here.
-The job prints its exact executable/arguments before execution. A lease string
-is recorded provenance, **not acquisition or proof that the GPU is available**.
+The job prints its exact executable/arguments before execution. `--execute`
+requires a full `--expected-commit` SHA, which the existing runner checks before
+launching; this pins the content rather than adding a resource permission gate.
+An optional `--lease` string remains historical provenance only and is neither
+required nor used to authorize execution. Older executed manifests and scripts
+keep their original provenance; new manifests report
+`exclusiveGraphicsWorkerLeaseRequired: false`.
 
-The estimated reserved duration is **10-15 minutes**, not a measured runtime.
+The estimated duration is **10-15 minutes**, not a measured runtime.
 There are three launches, not fourteen baseline jobs:
 
 | Per faction | Frames |
@@ -147,7 +153,7 @@ Each image has a SHA-256, JSON sidecar, runtime commit, built HTML hash, effecti
 quality, subject identity, root transform, requested pose/view, actual posed
 body/head bounds, measured vertex count, and full camera/projection metadata.
 The run manifest records source worktree, tooling hash, reference-manifest hash,
-declared lease, backend/browser, viewport, staging labels and owned-process
+optional historical lease label, backend/browser, viewport, staging labels and owned-process
 cleanup. No existing manifest or baseline image is overwritten.
 
 The runner compares actual gameplay telemetry and an ordinary production save

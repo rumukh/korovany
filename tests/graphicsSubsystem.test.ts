@@ -416,6 +416,32 @@ test('production engine diagnostic adapter consumes live Character/Creature/Wago
     assert.equal(first.complete, false)
     assert.equal(first.cpu.conflicts.length, 0)
     assert.equal(first.sources.unattributed, 0, 'Inactive pooled effect sources retain their real inventory owner')
+    const liveWorld = world.getVisualInventory()
+    const road = liveWorld.sources.find((source) => source.name.startsWith('road:'))
+    const terrain = liveWorld.sources.find((source) => source.name.startsWith('terrain:'))
+    assert.ok(road?.material instanceof THREE.MeshStandardMaterial)
+    assert.ok(terrain?.material instanceof THREE.MeshStandardMaterial)
+    assert.notEqual(road.material, terrain.material, 'Receiver bias has its own material, not a mutated terrain')
+    assert.equal(road.material.map, terrain.material.map)
+    const sharedMap = road.material.map
+    assert.ok(sharedMap instanceof THREE.DataTexture)
+    const receiverTexture = f.gl.createTexture()
+    f.gl.bindTexture(0x0de1, receiverTexture)
+    f.gl.texStorage2D(0x0de1, 1, 0x8058, sharedMap.image.width, sharedMap.image.height)
+    f.records.set(sharedMap, { __webglTexture: receiverTexture })
+    try {
+      const mapped = collectGraphicsSubsystemInventory(inputs, f.resources, f.properties)
+      assert.equal(mapped.gpu.byOwner.world, sharedMap.image.width * sharedMap.image.height * 4,
+        'Terrain and its new road receiver material must charge the one observed texture handle only once')
+      assert.equal(mapped.cpu.retainedBytes, first.cpu.retainedBytes)
+      assert.equal(mapped.cpu.conflicts.length, 0)
+      assert.equal(mapped.gpu.canonicalSightGpuMappings, 0)
+      assert.equal(mapped.gpu.reconciled, true)
+      assert.equal(mapped.byOwner.world.gpuAllocatedBytes, null, 'A known receiver texture does not close GPU coverage')
+    } finally {
+      f.gl.deleteTexture(receiverTexture)
+      f.records.delete(sharedMap)
+    }
     effects.dispose()
     world.dispose()
     for (const presenter of characters) presenter.dispose()

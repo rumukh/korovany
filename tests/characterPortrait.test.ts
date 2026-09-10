@@ -4,6 +4,7 @@ import { registerHooks } from 'node:module'
 import { extname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
 import * as THREE from 'three'
 import {
   GraphicsCharacterPortrait, measurePortraitSubject, validateCharacterPortrait, PORTRAIT_VIEWS, PORTRAIT_POSES,
@@ -292,13 +293,15 @@ test('first-visual matrix uses finite production presets and rejects mismatched 
   assert.throws(() => module.portraitCameraReference(reference, 'elf-opening', 'absent', conditions, subject), /absent/)
 })
 
-test('first-visual job prints an inert, portable plan unless explicitly executed with a lease', () => {
+test('first-visual job stays inert by default and executes without a lease while enforcing candidate identity', () => {
   const root = process.cwd()
   const script = new URL('../scripts/graphics-first-visual.mjs', import.meta.url)
   const text = execFileSync(process.execPath, [fileURLToPath(script),
     '--workspace', root, '--out', join(root, 'unused-portrait-test-output')], { encoding: 'utf8' })
   const job = JSON.parse(text)
   assert.equal(job.execute, false)
+  assert.equal(job.lease, null)
+  assert.equal(job.exclusiveGraphicsWorkerLeaseRequired, false)
   assert.equal(job.worlds, 3)
   assert.equal(job.heldPortraits, 33)
   assert.equal(job.openingFrames, 3)
@@ -307,5 +310,21 @@ test('first-visual job prints an inert, portable plan unless explicitly executed
   assert.deepEqual(job.expectedMinutes, { minimum: 10, maximum: 15 })
   assert.throws(() => execFileSync(process.execPath, [fileURLToPath(script),
     '--workspace', root, '--out', join(root, 'unused-portrait-test-output'), '--execute'],
-  { encoding: 'utf8', stdio: 'pipe' }), /--execute requires/)
+  { encoding: 'utf8', stdio: 'pipe' }), /--execute requires an exact --expected-commit/)
+  assert.throws(() => execFileSync(process.execPath, [fileURLToPath(script),
+    '--workspace', root, '--out', join(root, 'unused-portrait-test-output'),
+    '--execute', '--expected-commit', '0'.repeat(40)],
+  { encoding: 'utf8', stdio: 'pipe' }), /Target workspace does not match --expected-commit/,
+  'Without a lease, execution reaches the existing runner and still rejects a mismatched immutable candidate before launch')
+  assert.equal(existsSync(join(root, 'unused-portrait-test-output')), false)
+  const historical = JSON.parse(execFileSync(process.execPath, [fileURLToPath(script),
+    '--workspace', root, '--out', join(root, 'unused-portrait-test-output'), '--lease', 'historical-run-label'],
+  { encoding: 'utf8' }))
+  assert.equal(historical.execute, false)
+  assert.equal(historical.lease, 'historical-run-label')
+  assert.equal(historical.exclusiveGraphicsWorkerLeaseRequired, false)
+  const runner = new URL('../scripts/graphics-run.mjs', import.meta.url)
+  const runnerSource = readFileSync(runner, 'utf8')
+  assert.match(runnerSource, /No browser lease, GO, HOLD or resource permission is required/)
+  assert.match(runnerSource, /exclusiveGraphicsWorkerLeaseRequired: false/)
 })

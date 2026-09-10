@@ -47,8 +47,8 @@ const root = resolve(workspace)
 const checkTime = () => assertCaptureDeadline(process.env.GFX_BROWSER_DEADLINE_UTC)
 if (flag('help')) {
   console.log('node scripts\\graphics-run.mjs --out ABSOLUTE_DIRECTORY [--chrome PATH] [--cases all|id,id] [--profile] [--timing-only] [--warmup 120] [--frames 300] [--repeat 2] [--width 1920 --height 1080 --dpr 1] [--visual-mode legacy|enhanced] [--quality high|balanced|low] [--no-post] [--no-aa] [--no-ink] [--no-weather] [--reduced-motion] [--foundation] [--motion] [--native-route] [--lifecycle] [--headed]')
-  console.log('Requires npm run build. A dedicated loopback server and disposable Chrome profile are owned and stopped by this command. Mobile dimensions are layout evidence, not a mobile-device benchmark.')
-  console.log('First visual: --portraits [--workspace ABSOLUTE_WORKTREE] [--portrait-reference MANIFEST_JSON]. Three opening worlds, held production portrait presets and normal gameplay views; incompatible with --profile/--motion/--native-route/--foundation/--lifecycle. No GPU authorization is implied.')
+  console.log('Requires npm run build. No browser lease, GO, HOLD or resource permission is required. A dedicated loopback server and disposable Chrome profile are owned and stopped by this command. Mobile dimensions are layout evidence, not a mobile-device benchmark.')
+  console.log('First visual: --portraits [--workspace ABSOLUTE_WORKTREE] [--portrait-reference MANIFEST_JSON]. Three opening worlds, held production portrait presets and normal gameplay views; incompatible with --profile/--motion/--native-route/--foundation/--lifecycle.')
   console.log('Joined preview: --portrait-smoke with --portraits captures only the fixed player/front/current stage. --runtime-controls checks held same-engine resize/DPR/bloom toggles. --hud-mode full|compact selects existing DOM preference. --recorded-river-endpoint stages the preserved river player/yaw/pitch, never a camera override.')
   process.exit(0)
 }
@@ -154,7 +154,7 @@ const manifest = {
     memoryBytes: totalmem(), node: process.version },
   conditions: {
     viewport: { width, height, dpr, mobileEmulation: false }, chrome, chromeFlags, serverOrigin: origin,
-    dedicatedBrowserProfile: true, exclusiveGraphicsWorkerLeaseRequired: true,
+    dedicatedBrowserProfile: true, exclusiveGraphicsWorkerLeaseRequired: false,
     declaredGraphicsLease: process.env.GRAPHICS_CAPTURE_LEASE ?? null,
     wholeComputerIsolated: false, cpuThrottling: false, gpuBackendForced: false,
     unsupportedHardware: ['No real mobile device benchmark', 'No integrated GPU device benchmark'],

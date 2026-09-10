@@ -40,8 +40,15 @@ loopback port with Vite's `--strictPort`, creates a fresh browser profile inside
 the requested artifact directory, and records the process IDs and Chrome flags.
 It closes that browser, stops only its own children, and deletes only the profile
 it created. It never opens the user's browser data. Existing result manifests
-are not overwritten. Acquire the coordinated graphics lease before a run; do not
-run two copies or simultaneous CPU-heavy builds during timing measurements.
+are not overwritten. Browser resource leases, GO requests, HOLD windows and
+AcquireBy requirements were cancelled by the user; no resource permission is
+required. Keep ordinary timeouts and the runner's isolated profile/port and
+owned-process cleanup. Avoid duplicate runs, record other machine load, and do
+not overlap CPU-heavy builds when taking timing measurements.
+
+New manifests report `exclusiveGraphicsWorkerLeaseRequired: false`. An inherited
+`GRAPHICS_CAPTURE_LEASE` label is optional historical provenance only, never an
+execution requirement. Existing executed manifests are not rewritten.
 
 Each run writes PNGs, per-capture JSON, raw per-frame profiles, browser events,
 process logs, and `manifest.json`. Captures include a visible **STAGED FIXTURE**

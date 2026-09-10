@@ -3,7 +3,7 @@ import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { FIRST_VISUAL_CASES, FIRST_VISUAL_ESTIMATED_MINUTES } from './graphics/portraits.mjs'
 
-// Dry by default. Execution still needs the coordinator's separate, current GPU window.
+// Dry by default. Execution is pinned to a candidate, not a browser resource lease.
 const args = process.argv.slice(2)
 const value = (name, fallback) => {
   const i = args.indexOf(`--${name}`)
@@ -25,19 +25,24 @@ for (const name of ['chrome', 'portrait-reference', 'expected-commit']) {
   if (option) parameters.push(`--${name}`, option)
 }
 const execute = args.includes('--execute')
+const expectedCommit = value('expected-commit')
 const lease = value('lease')
-if (execute && (!lease || lease.length > 160)) throw new Error('--execute requires the current coordinator-issued --lease identifier')
+if (execute && (!expectedCommit || !/^[a-f0-9]{40}$/.test(expectedCommit))) {
+  throw new Error('--execute requires an exact --expected-commit SHA')
+}
+if (lease && lease.length > 160) throw new Error('Optional historical --lease provenance exceeds 160 characters')
 console.log(JSON.stringify({
   kind: 'GFX-03 finite first-visual job', execute, lease: lease ?? null, workspace, output,
+  exclusiveGraphicsWorkerLeaseRequired: false,
   executable: process.execPath, parameters, expectedMinutes: FIRST_VISUAL_ESTIMATED_MINUTES,
   worlds: 3, heldPortraits: 33, openingFrames: 3,
   matrix: 'Per faction: player and companion-0 front/three-quarter/profile, normal gameplay, walk, windup, contact, plus guard or actual companion archer aim.',
-  prerequisite: 'Build the authoritative integrated worktree with the approved affine-normal correction first. Obtain a fresh serialized browser/GPU window. A --lease string is provenance, not acquisition or proof of availability.',
+  prerequisite: 'Build the exact integrated candidate first and execute with its --expected-commit SHA. No browser lease, GO, HOLD or resource permission is required. Retain ordinary timeouts, isolated profiles/ports and owned-process cleanup. Optional --lease is historical provenance only.',
   exclusions: 'No profiling, simulation steps, natural-play claim, baseline corpus rerun, image-generation service or visual approval.',
 }, null, 2))
 if (execute) {
   const child = spawn(process.execPath, parameters, { cwd: workspace, stdio: 'inherit', windowsHide: true,
-    env: { ...process.env, GRAPHICS_CAPTURE_LEASE: lease } })
+    env: { ...process.env, ...(lease ? { GRAPHICS_CAPTURE_LEASE: lease } : {}) } })
   child.once('error', (error) => { console.error(error); process.exitCode = 1 })
   child.once('exit', (code, signal) => {
     if (signal) console.error(`First-visual runner terminated by ${signal}`)
