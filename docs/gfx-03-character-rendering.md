@@ -70,6 +70,14 @@ shadow participation reduce separately; the engine's outline setting, distance
 and corpse policy remain required. LOD selection also runs for manual diagnostic
 frames after the camera is resolved.
 
+An active health bar replaces the redundant ground faction ring, not the actor.
+It also holds a distant engaged character at least at Mid importance. Low Mid
+omits the contact blob and Low Far omits the ground ring; body, weapon and shield
+remain drawn. Death keeps status decorations off. These preview rules bound
+the persistent status cost without discarding health or attack information.
+Flat enhanced faction rings use one double-sided pass rather than submitting
+an empty back-face pass followed by a front-face pass.
+
 Animals use their actual body height, projected importance and the shared
 hysteresis for hero/near/mid/far participation. Far animals retain their complete
 body and animation but skip close terrain-foot sampling and ink/shadow work.
@@ -139,6 +147,10 @@ animal joints, plain/gilded wagons and stopped wheel behavior. The original
 rig/gaze/geometry regressions remain in place. Guard variants are checked against
 the shared per-tier source-plus-ink geometry envelope with ring/contact/health
 geometry included; this is a geometry upper bound, not an actual GL/frame result.
+The production guard graph also stays within the per-role near/mid/far
+submission upper bounds with health both hidden and visible, explicitly pricing
+transparent double-sided material passes. This does not replace whole-frame GL
+measurements or establish the fleet's actual LOD mix.
 
 Still required before a complete milestone claim:
 

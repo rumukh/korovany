@@ -77,6 +77,7 @@ const SUPPORT_WEAPONS = new Set(['spear', 'glaive', 'maul', 'greatsword', 'staff
 const VISUAL_LEVELS: readonly CharacterVisualLevel[] = ['far', 'mid', 'near']
 const PROJECTED_THRESHOLDS = [0.055, 0.13] as const
 const BODY_GEOMETRY_RETENTION = 2
+const ARROW_PRESENTATION_SECONDS = 0.35
 const SURFACES: Record<CharacterPhysicalSurface, readonly [number, number, number, number]> = {
   skin: [0.79, 0, 0.46, 0.13], hair: [0.93, 0, 0.56, 0.08],
   cloth: [0.94, 0, 0.62, 0.12], leather: [0.86, 0.02, 0.62, 0.11],
@@ -221,6 +222,9 @@ export class CharacterPresenter {
   private readonly sourceBases = new Map<THREE.Mesh, ArtGeometryLease>()
   private readonly recentBodies = new Map<string, ArtGeometryLease>()
   private contactShadow: THREE.Object3D | null = null
+  private factionRing: THREE.Object3D | null = null
+  private healthBarVisible = false
+  private alive = true
   private wristRope: THREE.Object3D | null = null
   private ropeLease: ArtGeometryLease | null = null
   private weaponSource: THREE.SkinnedMesh | null = null
@@ -533,7 +537,7 @@ export class CharacterPresenter {
       throw new Error('Player bow presentation requires an elf and a finite shot direction')
     }
     this.setWeapon('bow', true)
-    this.arrowRemaining = 0.35
+    this.arrowRemaining = ARROW_PRESENTATION_SECONDS
     this.arrowDirection.set(direction.x, verticalAim, direction.z).normalize()
     this.stowOffhand(true)
     this.poseArrowRecovery()
@@ -563,7 +567,7 @@ export class CharacterPresenter {
     if (this.arrowRemaining <= 0) return
     const arm = this.rig.mainHand > 0 ? this.rig.rightArm! : this.rig.leftArm!
     const elbow = this.rig.mainHand > 0 ? this.rig.rightElbow! : this.rig.leftElbow!
-    const progress = 1 - this.arrowRemaining / 0.35
+    const progress = 1 - this.arrowRemaining / ARROW_PRESENTATION_SECONDS
     const recoil = Math.sin(progress * Math.PI)
     arm.rotation.set(-1.22 + recoil * 0.14, 0, this.rig.mainHand * 0.1, 'XYZ')
     elbow.rotation.set(0.12 + recoil * 0.12, 0, 0, 'XYZ')
@@ -675,7 +679,8 @@ export class CharacterPresenter {
     const distance = Math.max(0.2, this.scratch.distanceTo(camera.position))
     const projected = (this.plan.proportions.headY + 0.32) * this.root.scale.y * camera.zoom *
       policy.lod.distanceScale / (2 * distance * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2))
-    const level = selectCharacterVisualLevel(this.level, projected, this.player, policy.lod.hysteresis)
+    const projectedLevel = selectCharacterVisualLevel(this.level, projected, this.player, policy.lod.hysteresis)
+    const level = this.healthBarVisible && projectedLevel === 'far' ? 'mid' : projectedLevel
     if (this.detailLevel(level) !== this.detailLevel(this.level)) {
       const base = this.bodyLease(level)
       const altered = LIMBS.some((name) => this.appearance[name] !== 'healthy')
@@ -702,7 +707,7 @@ export class CharacterPresenter {
         else if (!ink) child.visible = false
       }
     }
-    if (this.contactShadow) this.contactShadow.visible = level !== 'far'
+    this.updateStatusPresentation()
   }
 
   attachContactShadow(shadow: THREE.Object3D): void {
@@ -711,6 +716,30 @@ export class CharacterPresenter {
     this.contactShadow = shadow
     shadow.userData.visualSubsystem = 'dynamicArt'
     this.root.add(shadow)
+    this.updateStatusPresentation()
+  }
+
+  attachFactionRing(ring: THREE.Object3D): void {
+    this.assertActive()
+    if (this.factionRing) throw new Error('Character faction ring is already attached')
+    this.factionRing = ring
+    ring.userData.visualSubsystem = 'dynamicArt'
+    this.root.add(ring)
+    this.updateStatusPresentation()
+  }
+
+  setStatusPresentation(healthBarVisible: boolean, alive: boolean): void {
+    this.assertActive()
+    this.healthBarVisible = healthBarVisible
+    this.alive = alive
+    this.updateStatusPresentation()
+  }
+
+  private updateStatusPresentation(): void {
+    if (this.factionRing) this.factionRing.visible = this.alive && !this.healthBarVisible &&
+      !(this.quality === 'low' && this.level === 'far')
+    if (this.contactShadow) this.contactShadow.visible = this.alive && this.level !== 'far' &&
+      !(this.quality === 'low' && this.level === 'mid')
   }
 
   private bind(source: THREE.Mesh, base: ArtGeometryLease): void {

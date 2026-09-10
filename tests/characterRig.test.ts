@@ -6,10 +6,12 @@ import * as THREE from 'three'
 import {
   CHARACTER_FACTIONS, CHARACTER_VARIANTS, CHARACTER_PHYSICAL_PALETTE,
   GeometryCache, StylizedArtLibrary, createCharacterPresenter, illustratedCharacterPlan,
+  characterPresenter,
   resolveCharacterPlan, characterRoles, buildIllustratedHead, buildIllustratedHeadgear,
   selectCharacterVisualLevel, validateArtGeometry,
   buildIllustratedHand,
   type CharacterContact,
+  type OutlineBinding,
 } from '../src/game/art/index.ts'
 import { sumVisualAllocationReceipts } from '../src/game/diagnostics/VisualBudgetAccounting.ts'
 import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
@@ -572,4 +574,68 @@ test('bow string and nock share the draw bone, release excludes the nocked arrow
   assert.ok(p.sampleContact('weaponGrip', tip))
   validateArtGeometry(source)
   p.dispose(); art.dispose(); cache.dispose()
+})
+
+test('production status and LOD rules bound the guard submission graph without hiding actors or health', () => {
+  const art = library(), cache = new GeometryCache()
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200)
+  const health = new THREE.Sprite(new THREE.SpriteMaterial())
+  const calls = (root: THREE.Object3D): number => {
+    let total = 0
+    root.traverseVisible((node) => {
+      if (node instanceof THREE.Sprite) { total++; return }
+      if (!(node instanceof THREE.Mesh)) return
+      assert.ok(!Array.isArray(node.material))
+      assert.equal(node.geometry.groups.length, 0)
+      const material = node.material
+      total += material.transparent && material.side === THREE.DoubleSide && !material.forceSinglePass ? 2 : 1
+      if (node.castShadow) total++
+    })
+    return total
+  }
+  for (const quality of ['high', 'balanced', 'low'] as const) {
+    const policy = resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: quality })
+    const limits = resolveVisualSubsystemAllocation(policy)!.firstRole
+    const owners = new Set<ReturnType<typeof createCharacterPresenter>>()
+    const engine: {
+      createCharacter(faction: 'guard', player: boolean, role: 'soldier', variant: number): THREE.Group
+      setOutlineVisible(binding: OutlineBinding, visible: boolean): void
+    } = Object.assign(Object.create(GameEngine.prototype), {
+      artLibrary: art, artGeometry: cache, characterPresenters: owners, visualPolicy: policy,
+      palette: { link: new THREE.Color(0x4da6ff) },
+    })
+    for (let variant = 0; variant < CHARACTER_VARIANTS; variant++) {
+      const root = engine.createCharacter('guard', false, 'soldier', variant)
+      const p = characterPresenter(root)!
+      const outline = art.applyOutline(root, 'structural')
+      root.add(health)
+      for (const distance of [8, 30, 120]) for (const healthVisible of [false, true]) {
+        camera.position.z = distance
+        health.visible = healthVisible
+        p.setStatusPresentation(healthVisible, true)
+        engine.setOutlineVisible(outline, true)
+        p.updateLod(camera, policy)
+        const cap = p.level === 'far' ? limits.farDraws : p.level === 'mid' ? limits.midDraws : limits.nearDraws
+        assert.ok(calls(root) <= cap, `${quality}/${variant}/${p.level}: submission upper bound ${calls(root)} > ${cap}`)
+        assert.equal(root.visible, true)
+        assert.equal(p.body.visible, true)
+        assert.equal(health.visible, healthVisible)
+        if (healthVisible) {
+          assert.equal(root.getObjectByName('faction-ring')!.visible, false)
+          assert.notEqual(p.level, 'far', 'engaged health presentation keeps at least mid importance')
+        }
+      }
+      p.setStatusPresentation(false, false)
+      p.updateLod(camera, policy)
+      assert.equal(root.getObjectByName('faction-ring')!.visible, false)
+      assert.equal(root.getObjectByName('contact-shadow')!.visible, false)
+      health.removeFromParent()
+      art.releaseOutline(outline); p.dispose()
+      const ring = root.getObjectByName('faction-ring') as THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>
+      ring.material.dispose()
+    }
+  }
+  // This prices the real scene graph and one key shadow; GL/profile evidence is still required.
+  health.material.dispose()
+  art.dispose(); cache.dispose()
 })

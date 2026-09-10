@@ -7018,6 +7018,7 @@ export class GameEngine {
       actor.hostileToPlayer &&
       playerDistance < 34 &&
       (this.elapsed < actor.healthBarVisibleUntil || actor.rageTimer > 0)
+    characterPresenter(actor.mesh)?.setStatusPresentation(actor.healthBar.visible, actor.alive)
     this.updateActorOutlineVisibility(actor, playerDistance * playerDistance)
   }
 
@@ -12154,6 +12155,7 @@ export class GameEngine {
     actor.healthBar.visible = false
     const ring = actor.mesh.getObjectByName('faction-ring')
     if (ring) ring.visible = false
+    characterPresenter(actor.mesh)?.setStatusPresentation(false, false)
     this.projectileSourcesToClear.add(actor.id)
     this.recordGeneratedActorDeath(actor)
     // §5C.2 — losing the commander is a morale event for everyone who watched it, and
@@ -14376,15 +14378,14 @@ export class GameEngine {
           this.acquireArtGeometry('faction-ring', () => new THREE.RingGeometry(0.72, 0.9, 24)),
           new THREE.MeshBasicMaterial({
             color: this.factionColor(faction), transparent: true, opacity: 0.48,
-            depthWrite: false, side: THREE.DoubleSide, toneMapped: false,
+            depthWrite: false, side: THREE.DoubleSide, toneMapped: false, forceSinglePass: true,
           }),
         )
         ring.name = 'faction-ring'
         ring.position.y = 0.05
         ring.rotation.x = -Math.PI / 2
         ring.renderOrder = 2
-        ring.userData.visualSubsystem = 'dynamicArt'
-        group.add(ring)
+        presenter.attachFactionRing(ring)
       }
       presenter.attachContactShadow(this.artLibrary.createContactShadow({ radius: player ? 0.66 : 0.58 }))
       return group
@@ -15287,6 +15288,7 @@ export class GameEngine {
         color: this.allegianceColor('beast'),
         transparent: true,
         opacity: 0.48,
+        forceSinglePass: this.visualPolicy.mode === 'enhanced',
         depthWrite: false,
         side: THREE.DoubleSide,
         toneMapped: false,
