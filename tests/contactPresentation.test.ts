@@ -13,6 +13,21 @@ import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.t
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
 import { SecondaryEffectPool } from '../src/game/SecondaryEffectPool.ts'
 import { createArtStream } from '../src/game/art/index.ts'
+import { createGeneratedRngStreams } from '../src/game/random/GeneratedRngStreams.ts'
+import { RandomStream } from '../src/game/random/RandomStream.ts'
+import { deriveSeed } from '../src/game/random/seed.ts'
+import type { ActiveRunSaveV3 } from '../src/game/run/runTypes.ts'
+import { parseActiveRunSaveV3 } from '../src/game/run/storage.ts'
+import { createHealthyBody } from '../src/game/types.ts'
+import { createDoctrineRunState } from '../src/game/run/doctrine.ts'
+import { createCampaignContractState, createChronicleCommitmentState, createGeneratedObjectives } from '../src/game/world/CampaignDirector.ts'
+import { createChronicleRegions, createChronicleState } from '../src/game/world/Chronicle.ts'
+import { createFinaleIdentity, createFinaleState } from '../src/game/world/FinaleDirector.ts'
+import { advanceCombatMastery, beginEvade, createCombatMasteryState, raisePerfectGuard } from '../src/game/world/CombatMastery.ts'
+import { createPlayerMeleeState } from '../src/game/world/CombatResolver.ts'
+import { createSquadCommandState } from '../src/game/world/SquadCommand.ts'
+import { ExpeditionPlanner } from '../src/game/world/ExpeditionPlanner.ts'
+import { RegionManager } from '../src/game/world/RegionManager.ts'
 
 const loader = registerHooks({ resolve(specifier, context, nextResolve) {
   return nextResolve(specifier.startsWith('.') && !extname(specifier) ? `${specifier}.ts` : specifier, context)
@@ -153,8 +168,12 @@ test('world material classification cannot introduce a new height or overwrite t
   } finally { runtime.dispose(); art.dispose() }
 })
 
-function combatFixture() {
+function combatFixture(seed = 42, restored?: ActiveRunSaveV3) {
   const f = artFixture()
+  const blueprint = generateWorld(seed), regions = new RegionManager(blueprint)
+  const config = { seed: blueprint.seed, generatorVersion: blueprint.generatorVersion, faction: 'villain' as const, selectedBoonId: 'provisions' }
+  const runId = 'npc-injury-run', startedAt = '2026-09-10T10:00:00.000Z'
+  const chronicleRegions = createChronicleRegions(blueprint)
   const actor = {
     id: 'contact-target', mesh: f.guard.root, role: 'soldier', allegiance: 'guard', alive: true, hp: 100, maxHp: 100,
     reaction: 'none', reactionRemaining: 0, poise: 30, maxPoise: 30, poiseRecoveryDelay: 0, staggerImmunity: 0,
@@ -171,8 +190,35 @@ function combatFixture() {
     presentPhysicalContact: (contact: PresentationContact) => contacts.push(copyPresentationContact(contact)),
     presentCombatFeedback() {}, addTrauma() {}, queueCameraAccent() {}, moveCharacter() {},
     getAimDirection: () => new THREE.Vector3(0, 0, -1), playSound: (sound: string) => sounds.push(sound),
+    generatedBlueprint: blueprint, generatedRngStreams: createGeneratedRngStreams(blueprint.seed, restored?.rngStates),
+    generatedRun: { runId, startedAt, config }, generatedRunStatus: 'active',
+    generatedWorld: {
+      regions,
+      getRegionIdAt: (x: number, z: number) => regions.layout.regions.find((region) =>
+        x >= region.bounds.minX && x <= region.bounds.maxX && z >= region.bounds.minZ && z <= region.bounds.maxZ)?.id,
+      getRegionBounds: (id: string) => regions.layout.regions.find((region) => region.id === id)?.bounds,
+    },
+    chronicleRegions, chronicleState: createChronicleState(), chronicleCommitments: createChronicleCommitmentState(),
+    campaignContracts: createCampaignContractState(), doctrines: createDoctrineRunState([]),
+    finale: createFinaleState(createFinaleIdentity(blueprint, 'villain')),
+    objectives: createGeneratedObjectives(blueprint, 'villain'),
+    health: 100, maxHealth: 100, stamina: 100, maxStamina: 100, gold: 55, kills: 0,
+    upgrades: { blade: 0, vitality: 0, endurance: 0 }, threatTier: 1, nextThreatWaveAt: 180,
+    championDamageBonus: 0, generatedSupplyCount: 2, caravanCooldown: 0, caravanDirection: 1,
+    caravan: new THREE.Group(), eventCooldown: 90, eventSequence: 0,
+    squadCommand: createSquadCommandState({ x: 0, z: 0, heading: 0 }),
+    expeditionPlanner: new ExpeditionPlanner(blueprint), hints: { pending: () => [] },
+    combatMastery: createCombatMasteryState(), melee: createPlayerMeleeState(),
+    abilityCooldown: 0, attackCooldown: 0, shieldActive: false, lootPickups: [], activeEvents: [],
+    achievements: { getRunState: () => ({
+      runId, faction: 'villain', startedAt, kills: 0, killsSinceDamage: 0, bestKillStreak: 0,
+      damageTaken: 0, injuries: 0, limbsLost: 0, goldEarned: 0, purchases: 0, objectivesCompleted: 0,
+      eventsCompleted: 0, abilitiesUsed: 0, shieldBlocks: 0, squadCommands: 0, caravansRobbed: 0,
+      zonesVisited: ['fort'], eventKindsCompleted: [], unlockedIds: [], result: null, elapsedAtEnd: 0, healthAtEnd: 100,
+    }) },
   })
-  return { ...f, actor, engine, contacts, legacyGore, sounds }
+  engine.body = createHealthyBody()
+  return { ...f, actor, engine, contacts, legacyGore, sounds, dispose() { regions.dispose(); f.dispose() } }
 }
 
 test('real damageActor preserves damage/reaction vectors and routes one admitted posed contact, not a miss/dead target', () => {
@@ -294,9 +340,9 @@ test('physical primary cue is depth-tested, uses sampled position/direction and 
   } finally { sprite.material.dispose(); f.dispose() }
 })
 
-test('actual paired engine modes reproduce global injury coupling; cosmetic isolation alone misses cold UUID consumption', () => {
-  function run(mode: 'legacy' | 'enhanced', isolateBloodControl = false, coldSecondary = false) {
-    const f = combatFixture()
+test('actual paired engine modes keep NPC injury independent of warm cosmetics and cold UUID allocations', () => {
+  function run(mode: 'legacy' | 'enhanced', seed: number, isolateBloodControl = false, coldSecondary = false) {
+    const f = combatFixture(seed)
     const scene = new THREE.Scene()
     const secondary = coldSecondary ? null : new SecondaryEffectPool(scene, 42)
     const originalRandom = Math.random
@@ -314,7 +360,7 @@ test('actual paired engine modes reproduce global injury coupling; cosmetic isol
     }
     Object.assign(f.engine, {
       visualPolicy: resolveVisualPolicy({ visualMode: mode }),
-      scene, secondaryEffects: secondary, generatedBlueprint: { seed: 42 },
+      scene, secondaryEffects: secondary,
       artLibrary: f.art, activeGore: 0, particles: [], inactiveGoreParticles: [],
       contactColor: new THREE.Color(), camera: new THREE.PerspectiveCamera(), spawnImpactRay() {},
       allegianceColor: () => new THREE.Color(0x4da6ff),
@@ -337,6 +383,10 @@ test('actual paired engine modes reproduce global injury coupling; cosmetic isol
       }
     }
     try {
+      const initialSave: ActiveRunSaveV3 = f.engine.saveGeneratedRun()
+      const expected = RandomStream.fromState(initialSave.rngStates.injury)
+      const expectedLoss = expected.next() < 0.75
+      const expectedLimb = expectedLoss ? ['leftArm', 'rightArm', 'leftLeg', 'rightLeg'][Math.floor(expected.next() * 4)] : null
       Math.random = controlled
       const outcome = f.engine.damageActor(f.actor, 20, new THREE.Vector3(), 'villain', false, {
         attackKind: 'melee', detachChance: 0.75,
@@ -344,8 +394,15 @@ test('actual paired engine modes reproduce global injury coupling; cosmetic isol
       Math.random = originalRandom
       const missing = ['leftArm', 'rightArm', 'leftLeg', 'rightLeg'].filter((part) =>
         f.actor.mesh.getObjectByName(part)?.visible === false)
-      return { mode, isolateBloodControl, coldSecondary, health: f.actor.hp, dealt: outcome.dealt,
-        missing, injuryAdmissions, limbMethodDraws, goreDraws, uuidDraws, globalDraws }
+      const saved: ActiveRunSaveV3 = f.engine.saveGeneratedRun()
+      assert.equal(saved.rngStates.injury, expected.getState())
+      assert.deepEqual(missing, expectedLimb ? [expectedLimb] : [])
+      for (const key of ['combat', 'director', 'event', 'loot', 'chronicle', 'rumour']) {
+        assert.equal(saved.rngStates[key], initialSave.rngStates[key])
+      }
+      assert.deepEqual(injuryAdmissions, [], 'NPC injury admission must not read Math.random')
+      return { mode, seed, isolateBloodControl, coldSecondary, health: f.actor.hp, dealt: outcome.dealt,
+        missing, injuryState: saved.rngStates.injury, injuryAdmissions, limbMethodDraws, goreDraws, uuidDraws, globalDraws }
     } finally {
       Math.random = originalRandom
       f.engine.secondaryEffects?.dispose()
@@ -360,22 +417,218 @@ test('actual paired engine modes reproduce global injury coupling; cosmetic isol
       f.dispose()
     }
   }
-  const legacy = run('legacy'), enhanced = run('enhanced')
-  const isolatedLegacy = run('legacy', true), isolatedEnhanced = run('enhanced', true)
-  const coldEnhanced = run('enhanced', true, true)
-  assert.equal(legacy.health, enhanced.health)
-  assert.equal(legacy.dealt, enhanced.dealt)
-  assert.deepEqual(legacy.missing, [])
-  assert.deepEqual(enhanced.missing, ['rightLeg'])
-  assert.deepEqual(legacy.injuryAdmissions, [308])
-  assert.deepEqual(enhanced.injuryAdmissions, [1])
-  assert.equal(legacy.goreDraws, 307)
-  assert.deepEqual(isolatedLegacy.missing, isolatedEnhanced.missing,
-    'redirecting explicit blood draws removes this warmed-path coupling')
-  assert.deepEqual(isolatedLegacy.injuryAdmissions, [1])
-  assert.deepEqual(coldEnhanced.missing, [],
-    'a real cold Three.js pool constructor consumes global UUID draws before the untouched injury admission')
-  assert.ok(coldEnhanced.uuidDraws > 0)
-  assert.ok(coldEnhanced.injuryAdmissions[0] > 1)
-  console.log(`GFX05_GLOBAL_RANDOM_REPRO ${JSON.stringify({ legacy, enhanced, isolatedLegacy, isolatedEnhanced, coldEnhanced })}`)
+  const results = []
+  for (const seed of [42, 20260906, 20260910]) {
+    const legacy = run('legacy', seed), enhanced = run('enhanced', seed)
+    const isolatedLegacy = run('legacy', seed, true), isolatedEnhanced = run('enhanced', seed, true)
+    const coldEnhanced = run('enhanced', seed, true, true)
+    for (const arm of [enhanced, isolatedLegacy, isolatedEnhanced, coldEnhanced]) {
+      assert.equal(arm.health, legacy.health)
+      assert.equal(arm.dealt, legacy.dealt)
+      assert.deepEqual(arm.missing, legacy.missing)
+      assert.equal(arm.injuryState, legacy.injuryState)
+    }
+    assert.ok(legacy.goreDraws >= 307, 'the real cosmetic consumer must still be exercised')
+    assert.ok(coldEnhanced.uuidDraws >= 12, 'the cold real pool must still allocate Three.js resources')
+    results.push({ legacy, enhanced, isolatedLegacy, isolatedEnhanced, coldEnhanced })
+  }
+  assert.ok(results.some((arms) => arms.legacy.missing.length > 0), 'exercise a real detachment, not only failed chances')
+  console.log(`GFX05_INJURY_STREAM_REPRO ${JSON.stringify(results)}`)
+})
+
+const injuryLimbs = ['leftArm', 'rightArm', 'leftLeg', 'rightLeg'] as const
+
+function enableRealNpcDetachment(f: ReturnType<typeof combatFixture>, mode: 'legacy' | 'enhanced') {
+  const scene = new THREE.Scene()
+  Object.assign(f.engine, {
+    scene, artLibrary: f.art, particles: [], visualPolicy: resolveVisualPolicy({ visualMode: mode }),
+    detachActorLimb: Reflect.get(GameEngine.prototype, 'detachActorLimb'),
+    allegianceColor: () => new THREE.Color(0x4da6ff),
+  })
+  return () => {
+    scene.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return
+      object.geometry.dispose()
+      for (const material of Array.isArray(object.material) ? object.material : [object.material]) material.dispose()
+    })
+  }
+}
+
+test('actual save and constructor stream initializer continue NPC injury identically across restored visual modes', () => {
+  const probabilities = [1, 0.4, 0.75, 0.6, 1, 0.3]
+  const uninterrupted = combatFixture()
+  const cleanup = enableRealNpcDetachment(uninterrupted, 'legacy')
+  const decide = (f: ReturnType<typeof combatFixture>, probability: number) => {
+    // A subsequent fresh admitted NPC, not a claim that ordinary NPC limb appearances
+    // have acquired a new save schema. Both continuations use this same real candidate set.
+    f.guard.setAppearance({ leftArm: 'healthy', rightArm: 'healthy', leftLeg: 'healthy', rightLeg: 'healthy' })
+    f.actor.hp = 100
+    const before: ActiveRunSaveV3 = f.engine.saveGeneratedRun()
+    const expected = RandomStream.fromState(before.rngStates.injury)
+    const chosen = expected.next() < probability
+    const limb = chosen ? injuryLimbs[Math.floor(expected.next() * injuryLimbs.length)] : null
+    const result = f.engine.damageActor(f.actor, 20, new THREE.Vector3(), 'villain', false, {
+      attackKind: 'melee', detachChance: probability,
+    })
+    const after: ActiveRunSaveV3 = f.engine.saveGeneratedRun()
+    const missing = injuryLimbs.filter((part) => f.actor.mesh.getObjectByName(part)?.visible === false)
+    assert.deepEqual(missing, limb ? [limb] : [])
+    assert.equal(after.rngStates.injury, expected.getState())
+    for (const key of Object.keys(before.rngStates).filter((key) => key !== 'injury')) {
+      assert.equal(after.rngStates[key], before.rngStates[key])
+    }
+    return { missing, dealt: result.dealt, health: f.actor.hp, rngStates: after.rngStates }
+  }
+  try {
+    const initial: ActiveRunSaveV3 = uninterrupted.engine.saveGeneratedRun()
+    for (const probability of probabilities.slice(0, 3)) decide(uninterrupted, probability)
+    const checkpoint: ActiveRunSaveV3 = uninterrupted.engine.saveGeneratedRun()
+    assert.notEqual(checkpoint.rngStates.injury, initial.rngStates.injury)
+    const raw = JSON.stringify(checkpoint)
+    const saved = parseActiveRunSaveV3(raw)
+    assert.ok(saved)
+    assert.equal(saved.version, 3)
+    const next = probabilities.slice(3).map((probability) => decide(uninterrupted, probability))
+    for (const mode of ['legacy', 'enhanced'] as const) {
+      const restored = combatFixture(saved.config.seed, saved)
+      const release = enableRealNpcDetachment(restored, mode)
+      try {
+        const restoredSave: ActiveRunSaveV3 = restored.engine.saveGeneratedRun()
+        assert.deepEqual(restoredSave.rngStates, saved.rngStates)
+        assert.equal(restoredSave.blueprintFingerprint, checkpoint.blueprintFingerprint)
+        assert.equal(restoredSave.rulesetFingerprint, checkpoint.rulesetFingerprint)
+        assert.deepEqual(probabilities.slice(3).map((probability) => decide(restored, probability)), next)
+        assert.equal(JSON.stringify(saved), raw, 'restore must not rewrite the input save')
+      } finally { release(); restored.dispose() }
+    }
+  } finally { cleanup(); uninterrupted.dispose() }
+})
+
+test('old valid saves without injury remain accepted and start at the deterministic blueprint-derived decision', () => {
+  const source = combatFixture(20260906)
+  const old: ActiveRunSaveV3 = source.engine.saveGeneratedRun()
+  source.dispose()
+  delete old.rngStates.injury
+  const serialized = JSON.stringify(old)
+  const valid = parseActiveRunSaveV3(serialized)
+  assert.ok(valid)
+  assert.equal(Object.hasOwn(valid.rngStates, 'injury'), false)
+  const outcomes = []
+  for (const mode of ['legacy', 'enhanced'] as const) {
+    const restored = combatFixture(valid.config.seed, valid)
+    const cleanup = enableRealNpcDetachment(restored, mode)
+    try {
+      const initialized: ActiveRunSaveV3 = restored.engine.saveGeneratedRun()
+      assert.equal(initialized.rngStates.injury, deriveSeed(valid.config.seed, 'gameplay:injury'))
+      for (const [key, state] of Object.entries(valid.rngStates)) assert.equal(initialized.rngStates[key], state)
+      const expected = RandomStream.fromState(initialized.rngStates.injury)
+      expected.next() // A probability of one still pays the original chance draw.
+      const limb = injuryLimbs[Math.floor(expected.next() * injuryLimbs.length)]
+      restored.engine.damageActor(restored.actor, 20, new THREE.Vector3(), 'villain', false, {
+        attackKind: 'melee', detachChance: 1,
+      })
+      const saved: ActiveRunSaveV3 = restored.engine.saveGeneratedRun()
+      const missing = injuryLimbs.filter((part) => restored.actor.mesh.getObjectByName(part)?.visible === false)
+      assert.deepEqual(missing, [limb])
+      assert.equal(saved.rngStates.injury, expected.getState())
+      outcomes.push({ missing, state: saved.rngStates.injury })
+    } finally { cleanup(); restored.dispose() }
+  }
+  assert.deepEqual(outcomes[0], outcomes[1])
+  assert.equal(JSON.stringify(valid), serialized, 'old source save remains unchanged')
+})
+
+test('NPC injury admission consumes only its chance/selected-limb draws and never a rejected or no-detach path', () => {
+  for (const mode of ['legacy', 'enhanced'] as const) {
+    for (const scenario of ['no-option', 'zero-chance', 'zero-damage', 'dead', 'inactive', 'brute', 'paused', 'ended',
+      'chance-fails', 'chance-one', 'no-limbs', 'direct-no-limbs', 'direct-selection'] as const) {
+      const f = combatFixture()
+      const release = enableRealNpcDetachment(f, mode)
+      try {
+        const save: ActiveRunSaveV3 = f.engine.saveGeneratedRun()
+        const expected = RandomStream.fromState(save.rngStates.injury)
+        const options: { attackKind: 'melee'; detachChance?: number } = { attackKind: 'melee', detachChance: 1 }
+        if (scenario === 'no-option') delete options.detachChance
+        if (scenario === 'zero-chance') options.detachChance = 0
+        if (scenario === 'dead') f.actor.alive = false
+        if (scenario === 'inactive') f.engine.isInactiveFinaleActor = () => true
+        if (scenario === 'brute') f.actor.role = 'brute'
+        if (scenario === 'paused') f.engine.paused = true
+        if (scenario === 'ended') f.engine.ended = true
+        if (scenario === 'chance-fails') options.detachChance = Number.MIN_VALUE
+        if (scenario === 'no-limbs' || scenario === 'direct-no-limbs') {
+          f.guard.setAppearance({ leftArm: 'missing', rightArm: 'missing', leftLeg: 'missing', rightLeg: 'missing' })
+        }
+        const before = injuryLimbs.filter((part) => f.actor.mesh.getObjectByName(part)?.visible === false)
+        if (scenario.startsWith('direct-')) f.engine.detachActorLimb(f.actor)
+        else f.engine.damageActor(f.actor, scenario === 'zero-damage' ? 0 : 20, new THREE.Vector3(), 'villain', false, options)
+        const drawCount = scenario === 'chance-one' ? 2 :
+          ['chance-fails', 'no-limbs', 'direct-selection'].includes(scenario) ? 1 : 0
+        for (let index = 0; index < drawCount; index++) expected.next()
+        const after: ActiveRunSaveV3 = f.engine.saveGeneratedRun()
+        assert.equal(after.rngStates.injury, expected.getState(), `${mode}/${scenario}`)
+        for (const key of Object.keys(save.rngStates).filter((key) => key !== 'injury')) {
+          assert.equal(after.rngStates[key], save.rngStates[key], `${mode}/${scenario}/${key}`)
+        }
+        const missing = injuryLimbs.filter((part) => f.actor.mesh.getObjectByName(part)?.visible === false)
+        assert.equal(missing.length, before.length + (scenario === 'chance-one' || scenario === 'direct-selection' ? 1 : 0))
+      } finally { release(); f.dispose() }
+    }
+  }
+})
+
+test('player damage, block, perfect guard and evasion retain combat RNG ownership and never consume NPC injury', () => {
+  for (const mode of ['legacy', 'enhanced'] as const) {
+    for (const contact of ['ordinary', 'block', 'perfect', 'evaded', 'paused', 'ended'] as const) {
+      const f = combatFixture()
+      Object.assign(f.engine, {
+        visualPolicy: resolveVisualPolicy({ visualMode: mode }), damageFlash: 0,
+        combatRng: () => f.engine.generatedRngStreams.combat.next(),
+        injurePlayer() {}, createSparks() {}, emitView() {},
+      })
+      f.engine.achievements.recordPlayerDamage = () => {}
+      f.engine.health = 70
+      if (contact === 'block' || contact === 'perfect') f.engine.shieldActive = true
+      if (contact === 'perfect') raisePerfectGuard(f.engine.combatMastery)
+      if (contact === 'evaded') {
+        const result = beginEvade(f.engine.combatMastery, {
+          stamina: 100, body: f.engine.body, melee: f.engine.melee, paused: false, ended: false,
+          moveX: 1, moveZ: 0, aimX: 0, aimZ: -1,
+        })
+        assert.equal(result.accepted, true)
+        advanceCombatMastery(f.engine.combatMastery, 0.1)
+      }
+      if (contact === 'paused') f.engine.paused = true
+      if (contact === 'ended') f.engine.ended = true
+      try {
+        const before: ActiveRunSaveV3 = f.engine.saveGeneratedRun()
+        const combat = RandomStream.fromState(before.rngStates.combat)
+        if (contact === 'ordinary') combat.next()
+        f.engine.damagePlayer(20, new THREE.Vector3(0, 0, -1), true, { attackKind: 'allyMelee' })
+        const after: ActiveRunSaveV3 = f.engine.saveGeneratedRun()
+        assert.equal(after.rngStates.combat, combat.getState(), `${mode}/${contact}`)
+        assert.equal(after.rngStates.injury, before.rngStates.injury, `${mode}/${contact}`)
+      } finally { f.dispose() }
+    }
+  }
+})
+
+test('visual settings and repeated serialization cannot advance the saved injury stream', () => {
+  const f = combatFixture()
+  Object.assign(f.engine, {
+    weatherEnabled: true, dynamicDayNight: true, reducedMotion: false, weatherTarget: 'clear',
+    renderer: { domElement: { dataset: {} } },
+    updateDayNight() {}, updateWeather() {}, updateAtmosphere() {}, resetCameraMotion() {},
+    postProcessor: { setEnabled() {} }, hitStopRemaining: 0,
+  })
+  try {
+    const before: ActiveRunSaveV3 = f.engine.saveGeneratedRun()
+    for (const value of [false, true, false, true]) {
+      f.engine.setWeatherEnabled(value)
+      f.engine.setDynamicDayNight(value)
+      f.engine.setBloomEnabled(value)
+      f.engine.setScreenShakeEnabled(value)
+      assert.deepEqual((f.engine.saveGeneratedRun() as ActiveRunSaveV3).rngStates, before.rngStates)
+    }
+  } finally { f.dispose() }
 })

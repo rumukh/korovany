@@ -255,7 +255,7 @@ import {
   moveLookGesture,
   type LookGesture,
 } from './input/CombatInput.ts'
-import { RandomStream } from './random/RandomStream'
+import { createGeneratedRngStreams, type GeneratedRngStreams } from './random/GeneratedRngStreams.ts'
 import { deriveSeed, parseSeed } from './random/seed'
 import { getStartingBoonEffects } from './run/profile'
 import {
@@ -2149,10 +2149,7 @@ export class GameEngine {
   }
   private readonly collisionProbe = new THREE.Vector3()
   private readonly navigationWaypoint = new THREE.Vector3()
-  private readonly generatedRngStreams: Record<
-    'combat' | 'director' | 'event' | 'loot' | 'chronicle' | 'rumour',
-    RandomStream
-  >
+  private readonly generatedRngStreams: GeneratedRngStreams
   private readonly eventRng: () => number
   private readonly directorRng: () => number
   private readonly combatRng: () => number
@@ -2511,27 +2508,7 @@ export class GameEngine {
         throw error
       }
     }
-    const streams = {
-      combat: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:combat')),
-      director: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:director')),
-      event: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:event')),
-      loot: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:loot')),
-      chronicle: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:chronicle')),
-      // Roadmap 1.3 gets its own derived stream rather than sharing the chronicle's. Two
-      // reasons, and the second is the load-bearing one: a rumour offer and a commitment
-      // resolution must not move the draw the *next* front, beast raid or caravan roll
-      // takes, or the feature would change the world simply by existing — and then the
-      // baseline it is measured against would be measuring the measurement.
-      rumour: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:rumour')),
-    }
-    if (restoredRun) {
-      for (const key of Object.keys(streams) as Array<keyof typeof streams>) {
-        const state = restoredRun.rngStates[key]
-        if (Number.isInteger(state) && state >= 0 && state <= 0xffffffff) {
-          streams[key].setState(state)
-        }
-      }
-    }
+    const streams = createGeneratedRngStreams(blueprint.seed, restoredRun?.rngStates)
     this.generatedRngStreams = streams
     this.chronicleProtectedRegionIds = getChronicleProtectedRegionIds(blueprint)
     this.chronicleState = restoredRun
@@ -3851,6 +3828,7 @@ export class GameEngine {
         loot: this.generatedRngStreams.loot.getState(),
         chronicle: this.generatedRngStreams.chronicle.getState(),
         rumour: this.generatedRngStreams.rumour.getState(),
+        injury: this.generatedRngStreams.injury.getState(),
       },
       achievementRunState,
       ...(this.runEnding && this.generatedRunStatus !== 'active'
@@ -11973,9 +11951,10 @@ export class GameEngine {
     this.drawActorHealthBar(target)
     if (this.visualPolicy?.mode !== 'enhanced') this.createHitParticles(target.mesh.position, target.allegiance)
     if (
+      outcome.applied && !outcome.blocked && dealt > 0 && !this.paused && !this.ended &&
       target.role !== 'brute' &&
       options.detachChance &&
-      Math.random() < options.detachChance
+      this.generatedRngStreams.injury.next() < options.detachChance
     ) {
       this.detachActorLimb(target)
     }
@@ -12508,7 +12487,7 @@ export class GameEngine {
       .map((name) => actor.mesh.getObjectByName(name))
       .filter((part): part is THREE.Object3D => Boolean(part?.visible))
     if (visible.length === 0) return
-    const limb = visible[Math.floor(Math.random() * visible.length)]
+    const limb = visible[Math.floor(this.generatedRngStreams.injury.next() * visible.length)]
     limb.visible = false
     characterPresenter(actor.mesh)?.setAppearance({ [limb.name as CharacterLimb]: 'missing' })
     creaturePresenter(actor.mesh)?.hideLimb(limb.name)

@@ -6,6 +6,11 @@ portrait/normal/capture branch, a browser/GPU result, a completed quality tier,
 or human/default approval. Stage A remains in history; its environment and
 compact-HUD implementation is not replaced.
 
+The separately authorized NPC injury-stream fix follows the unchanged
+`9c47cd68` implementation and `b931c40` reproduction ancestry. It fixes the
+mode-dependent injury RNG gate described below; visual and complete
+whole-frame/resource acceptance remain open.
+
 ## Contact routing
 
 `ContactPresentation.ts` consumes the published `characterPresenter` and
@@ -72,21 +77,70 @@ Existing injury/death/bleeding cosmetics retain their owners and population
 ceilings. This change does not redesign dismemberment or change seeded combat,
 event, loot, director, chronicle or world streams.
 
-**Pre-existing global-random boundary:** legacy hit gore, decals and callouts
-use global `Math.random`, and NPC dismemberment also reads that source. Enhanced
-material feedback replaces some cosmetic draws with the isolated `art:` pool,
-so exact legacy global-random draw-sequence parity is not claimed. Gameplay
-roll sites and probabilities are unchanged, but a deterministic replay that
-monkey-patches global `Math.random` can choose a different NPC limb. This was
-reported to the coordinator; no unauthorized gameplay-RNG migration or invisible
-legacy-particle replay was added to conceal the coupling. Seeded stream and
-damage/window invariants are covered separately.
+### Persisted NPC injury stream (fixed)
 
-### Actual paired-mode injury reproduction
+`GameEngine.generatedRngStreams.injury` is a dedicated gameplay stream derived
+from `deriveSeed(blueprint.seed, 'gameplay:injury')`. The shared
+`createGeneratedRngStreams` initializer in `random/GeneratedRngStreams.ts`
+is called by the actual engine constructor in both visual modes. Its exact
+record contains combat, director, event, loot, chronicle, rumour and injury;
+the six existing labels/restore behavior are unchanged.
 
-`tests/contactPresentation.test.ts`, test **actual paired engine modes reproduce
-global injury coupling; cosmetic isolation alone misses cold UUID consumption**,
-executes the production `damageActor`, `createBloodBurst`, `acquireGoreParticle`,
+Only the two NPC injury decisions now read `injury.next()`:
+`damageActor`'s existing detachment chance and `detachActorLimb`'s existing
+ordered visible-limb selection, also used by the death path. No player injury
+roll is moved off `combatRng`. Cosmetic variation, Three.js UUID construction,
+render settings, skin/material construction and pool occupancy cannot consume
+or influence this stream.
+
+An eligible positive-damage, non-brute admitted hit with a nonzero detachment
+option consumes one chance draw. If chosen, detachment consumes one additional
+draw only when a visible limb exists. The selection still uses the same
+`floor(next * visible.length)` rule and left-arm/right-arm/left-leg/right-leg
+candidate order. Probability one still consumes its original chance draw;
+zero/absent chance, rejected/dead/inactive, zero-damage, blocked, paused and
+ended contacts consume none. A direct death-path limb choice consumes one
+selection draw; an empty candidate set consumes none. Damage, hit-stop,
+stamina, defense windows, visual body updates and death behavior are unchanged.
+
+`saveGeneratedRun()` writes the current uint32 at
+`ActiveRunSaveV3.rngStates.injury`. A stored value, including zero, restores
+exactly. The existing free-form bounded RNG map accepts this additive key:
+no save version/key/fingerprint change or destructive migration is needed.
+Old valid saves without injury initialize it from the world seed, in either
+visual mode, and persist it at their next ordinary save. This is a deterministic
+starting point for the newly recorded stream, not reconstruction of historical
+unrecorded global-random state. Other saved stream values remain intact.
+
+The updated actual-engine regression observes stream states only through the
+existing save API. Warm legacy, warm enhanced, test-only isolated-cosmetic
+controls and cold enhanced allocations agree for all three seeds:
+
+| Seed | First admitted hit | Saved injury state after the hit |
+| --- | --- | ---: |
+| 42 | Left leg missing; 20 damage, 80 HP | 4247260669 |
+| 20260906 | Left arm missing; 20 damage, 80 HP | 316882220 |
+| 20260910 | No limb missing; 20 damage, 80 HP | 4050900814 |
+
+The tests still exercise real gore and cold Three.js constructors. Additional
+cases serialize after multiple decisions, restore using the same constructor
+initializer and compare subsequent fresh-NPC hit sequences in both modes;
+they do not introduce an ordinary-NPC appearance save format. Old-save
+acceptance, zero-state restore, exact chance/selection draw counts, no-limb
+cases, real lethal selection, player defense/combat ownership and live visual
+settings are covered separately. No production global override, ghost legacy
+work, cosmetic-only partial isolation or dependency patch is used.
+
+### Historical paired-mode reproduction (`b931c40`, before the fix)
+
+At `b931c40`, `tests/contactPresentation.test.ts`, test **actual paired engine
+modes reproduce global injury coupling; cosmetic isolation alone misses cold
+UUID consumption**, executed the paths below. The current test is **actual
+paired engine modes keep NPC injury independent of warm cosmetics and cold
+UUID allocations**; it turns the same warm/cold controls into a regression for
+the fixed stream rather than asserting the former divergent result.
+
+The original reproduction executed the production `damageActor`, `createBloodBurst`, `acquireGoreParticle`,
 `detachActorLimb`, presenter appearance replacement and enhanced secondary
 emission. The actor's initial real presenter/pose and health are held constant;
 64 real gore slots and, except for the cold control, the real secondary pool are
@@ -133,7 +187,7 @@ Affected locations in production checkpoint `9c47cd68`:
   therefore affect the same global source even when explicit art variation is
   isolated.
 
-**Bounded follow-up proposal, not implemented:** route every explicit cosmetic
+**Historical cosmetic-only proposal (not adopted):** route every explicit cosmetic
 caller above in both legacy and enhanced paths through existing
 `createArtStream(seed, label)` / `artVariation`, never through combat/event/loot
 streams. This removes the demonstrated explicit warm hit-gore coupling without
@@ -142,12 +196,11 @@ mode-independent injury while those sites still read global randomness:
 the cold-pool control already fails because of Three.js UUID allocation.
 Prewarming one pool would not cover later sprites, streaming or injury geometry.
 
-A sufficient global guarantee would require separately authorized stable NPC
-injury randomness (with an explicit reproducibility/save policy), or controlling
-all implicit allocation consumers. The latter is not a narrow cosmetic fix and
-must not be attempted via global overrides or dependency patches. No such
-migration is implemented here; exact mode-independent injury remains the
-specific Stage B merge gate awaiting the coordinator's decision.
+The coordinator subsequently authorized the dedicated persisted NPC injury
+stream documented above. That fixes the root cause rather than attempting to
+control every implicit allocation consumer. The historical reproduction and its
+raw log remain evidence of the original failure; they are not the result of the
+fixed code. No broader cosmetic/global-RNG migration was made.
 
 ## Transient draw admission and inventory
 

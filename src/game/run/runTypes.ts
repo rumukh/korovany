@@ -75,6 +75,7 @@ export interface RunCompanionState {
 }
 
 export type RegionDeltaMap = Record<string, RegionDelta>
+/** Named uint32 states; older saves may omit later streams such as gameplay `injury`. */
 export type RuntimeRngStateMap = Record<string, number>
 
 /**
