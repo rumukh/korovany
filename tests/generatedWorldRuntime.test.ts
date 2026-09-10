@@ -9,7 +9,7 @@ import {
   isInsideRegionWater,
 } from '../src/game/content/registry.ts'
 import type { Faction } from '../src/game/types.ts'
-import { StylizedArtLibrary } from '../src/game/art/index.ts'
+import { StylizedArtLibrary, hasStylizedShader } from '../src/game/art/index.ts'
 import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
 import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
@@ -153,9 +153,12 @@ function assertSurfaceFollowsRenderedTerrain(
   assert.ok(position.count >= 6)
   if (indexed) assert.ok(index)
   assert.ok((index?.count ?? position.count) > 0)
+  surface.updateWorldMatrix(true, false)
+  const worldPoint = new THREE.Vector3()
   const assertPoint = (x: number, y: number, z: number, label: string): void => {
+    worldPoint.set(x, y, z).applyMatrix4(surface.matrixWorld)
     assert.ok(
-      Math.abs(y - renderedTerrainHeight(terrain, x, z) - heightOffset) <
+      Math.abs(worldPoint.y - renderedTerrainHeight(terrain, worldPoint.x, worldPoint.z) - heightOffset) <
         0.002,
       `${surface.name} ${label} is not projected onto rendered terrain`,
     )
@@ -597,15 +600,16 @@ test('enhanced world surfaces preserve physical ribbons, colliders and projected
           assert.ok(old instanceof THREE.Mesh)
           assert.deepEqual(surface.geometry.getAttribute('position').array, old.geometry.getAttribute('position').array)
           assert.deepEqual(surface.geometry.index?.array, old.geometry.index?.array)
+          assertSurfaceFollowsRenderedTerrain(surface, terrain, surface.name.startsWith('river:') ? 0.1 : 0)
           ribbons++
         }
         if (surface.name.startsWith('paving:')) {
-          assertSurfaceFollowsRenderedTerrain(surface, terrain, 0.16, false)
+          assertSurfaceFollowsRenderedTerrain(surface, terrain, 0, false)
           if (courts === 0) {
             const detached = surface.geometry.clone().translate(0, 0.3, 0)
             try {
               assert.throws(() => assertSurfaceFollowsRenderedTerrain(
-                new THREE.Mesh(detached, surface.material), terrain, 0.16, false,
+                new THREE.Mesh(detached, surface.material), terrain, 0, false,
               ), /not projected/)
             } finally { detached.dispose() }
           }
@@ -627,6 +631,77 @@ test('enhanced world surfaces preserve physical ribbons, colliders and projected
   } finally {
     original.dispose(); enhanced.dispose(); art.dispose()
   }
+})
+
+test('enhanced road and paving receivers do not bury the joined-opening contact discs', () => {
+  const scene = new THREE.Scene()
+  const art = new StylizedArtLibrary({
+    enhanced: true, ink: { player: 0x111111, enemy: 0x111111, interactable: 0x111111, landmark: 0x111111 },
+  })
+  const runtime = new GeneratedWorldRuntime(scene, generateWorld(20260906), {
+    art, visualPolicy: resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'balanced' }),
+  })
+  // Actual roots in the joined 8823c17 guard opening, not a flat synthetic floor.
+  const subjects = [
+    { id: 'player', x: 161.8642216574657, z: -162.05014414416382, scale: 1 },
+    { id: 'soldier', x: 158.6642216574657, z: -158.65014414416382, scale: 1 },
+    { id: 'archer', x: 165.06422165746568, z: -158.65014414416382, scale: 0.94 },
+    { id: 'rear-soldier', x: 161.8642216574657, z: -156.55014414416382, scale: 1 },
+  ]
+  try {
+    runtime.update({ focus: subjects[0], deltaSeconds: 0 })
+    scene.updateMatrixWorld(true)
+    const receivers: THREE.Mesh[] = []
+    scene.traverse((object) => {
+      if (object instanceof THREE.Mesh &&
+          /^(terrain|road|paving):/.test(object.name)) receivers.push(object)
+    })
+    const ray = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0))
+    let roadHits = 0, pavingHits = 0
+    for (const subject of subjects) {
+      const root = new THREE.Group()
+      const shadow = art.createContactShadow()
+      root.position.set(subject.x, runtime.sampleHeight(subject.x, subject.z), subject.z)
+      root.scale.setScalar(subject.scale)
+      root.add(shadow)
+      root.updateMatrixWorld(true)
+      const contact = shadow.getWorldPosition(new THREE.Vector3())
+      ray.ray.origin.set(subject.x, contact.y + 10, subject.z)
+      const hits = ray.intersectObjects(receivers, false)
+      assert.ok(hits.some((hit) => hit.object.name.startsWith('terrain:')))
+      for (const hit of hits) {
+        if (hit.object.name.startsWith('road:')) roadHits++
+        if (hit.object.name.startsWith('paving:')) pavingHits++
+        assert.ok(hit.point.y < contact.y - 0.001,
+          `${subject.id}: ${hit.object.name} at ${hit.point.y} buries contact at ${contact.y}`)
+        const source = hit.object
+        assert.ok(source instanceof THREE.Mesh && source.material instanceof THREE.MeshStandardMaterial)
+        assert.equal(hasStylizedShader(source.material), true)
+        assert.equal(source.material.depthTest, true)
+        assert.equal(source.material.depthWrite, true)
+        if (/^(road|paving):/.test(source.name)) {
+          assert.equal(source.material.polygonOffset, true)
+          assert.equal(source.material.polygonOffsetFactor, 0, 'a slope-dependent bias can swallow small soles')
+          assert.equal(source.material.polygonOffsetUnits, source.name.startsWith('road:') ? -8 : -16)
+        } else assert.equal(source.material.polygonOffset, false, 'the shared terrain must not inherit road bias')
+      }
+    }
+    assert.ok(roadHits > 0 && pavingHits > 0, 'the probe must exercise both overlay populations')
+    const roads = receivers.filter((mesh) => mesh.name.startsWith('road:'))
+    const terrains = receivers.filter((mesh) => mesh.name.startsWith('terrain:'))
+    const roadMaterial = roads[0].material, terrainMaterial = terrains[0].material
+    assert.ok(roadMaterial instanceof THREE.MeshStandardMaterial && terrainMaterial instanceof THREE.MeshStandardMaterial)
+    assert.ok(roads.every((mesh) => mesh.material === roadMaterial), 'one scoped material, not one per region')
+    assert.notEqual(roadMaterial, terrainMaterial, 'road depth bias must not mutate the shared terrain')
+    assert.equal(roadMaterial.map, terrainMaterial.map, 'the new material borrows the existing world texture')
+    assert.ok(roadMaterial.map)
+    let materialDisposals = 0, textureDisposals = 0
+    roadMaterial.addEventListener('dispose', () => { materialDisposals++ })
+    roadMaterial.map.addEventListener('dispose', () => { textureDisposals++ })
+    runtime.dispose()
+    assert.equal(materialDisposals, 1)
+    assert.equal(textureDisposals, 1, 'the shared map has one runtime owner despite two materials')
+  } finally { runtime.dispose(); art.dispose() }
 })
 
 test('map markers reveal discovered sites and current region without global spoilers', () => {

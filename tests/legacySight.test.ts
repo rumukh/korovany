@@ -159,3 +159,47 @@ test('generated enhanced sight is differential-equal across density, LOD, fade, 
   legacy.runtime.dispose()
   enhanced.art.dispose(); legacy.art.dispose()
 })
+
+test('flush road rendering keeps the exact lifted legacy sight buffer and matrix cadence', () => {
+  const blueprint = generateWorld(20260906)
+  const scene = new THREE.Scene(), legacyScene = new THREE.Scene()
+  const art = new StylizedArtLibrary({ ink, enhanced: true })
+  const runtime = new GeneratedWorldRuntime(scene, blueprint, {
+    art, visualPolicy: resolveVisualPolicy({ visualMode: 'enhanced' }),
+  })
+  const legacy = new GeneratedWorldRuntime(legacyScene, blueprint)
+  const sources: THREE.Object3D[] = []
+  const point = new THREE.Vector3(158.6642216574657, 50, -158.65014414416382)
+  try {
+    for (const world of [legacy, runtime]) world.update({ focus: point, deltaSeconds: 0 })
+    runtime.collectLegacySightSources(sources)
+    const name = 'road:region-4-0:south'
+    const painted = scene.getObjectByName(name), original = legacyScene.getObjectByName(name)
+    assert.ok(painted instanceof THREE.Mesh && original instanceof THREE.Mesh)
+    const canonical = sources.filter((source): source is THREE.Mesh =>
+      source instanceof THREE.Mesh && source.geometry === painted.geometry)
+    assert.equal(canonical.length, 1)
+    assert.deepEqual(painted.geometry.getAttribute('position').array, original.geometry.getAttribute('position').array)
+    assert.deepEqual(painted.geometry.index?.array, original.geometry.index?.array)
+    assert.deepEqual(canonical[0].matrix.elements, original.matrix.elements)
+    assert.deepEqual(canonical[0].matrixWorld.elements, original.matrixWorld.elements,
+      'aligning a render layer must not eagerly update canonical sight')
+    scene.updateMatrixWorld(true); legacyScene.updateMatrixWorld(true)
+    assert.deepEqual(canonical[0].matrixWorld.elements, original.matrixWorld.elements)
+    const ray = new THREE.Raycaster(point, new THREE.Vector3(0, -1, 0))
+    const rayHeight = (mesh: THREE.Mesh): number => {
+      const hit = ray.intersectObject(mesh, false)[0]
+      assert.ok(hit, `the real point must intersect ${mesh.name}`)
+      return hit.point.y
+    }
+    assert.equal(rayHeight(canonical[0]), rayHeight(original), 'the actual legacy ray result is preserved')
+    assert.ok(Math.abs(rayHeight(canonical[0]) - rayHeight(painted) - 0.14) < 1e-6)
+    let disposals = 0
+    painted.geometry.addEventListener('dispose', () => {
+      assert.equal(sources.includes(canonical[0]), false, 'drain canonical borrowers before freeing their geometry')
+      disposals++
+    })
+    runtime.dispose()
+    assert.equal(disposals, 1, 'render and canonical sight share one owned road buffer')
+  } finally { runtime.dispose(); legacy.dispose(); art.dispose() }
+})

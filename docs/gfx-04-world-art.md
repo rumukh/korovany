@@ -15,6 +15,24 @@ guard/palace site courts, with irregular worn edges. Court patches subdivide and
 clip the original triangle planes; terrain, road and river position/index streams
 are not replaced or displaced.
 
+Enhanced road and paving paint now lie on those rendered terrain planes instead
+of introducing a raised walking surface. The first joined guard opening showed
+the former 16 cm paving lift hiding boots and contact discs rooted at the physical
+terrain. The inherited 14 cm road lift caused the same occlusion at junctions.
+Paving no longer adds that geometric lift. Roads keep their exact original buffers
+and canonical sight matrices; only their rendered transform cancels the lift,
+after canonical capture. Legacy rendering, terrain queries, actors, water and
+bridges are unchanged.
+
+Terrain, road and paving use ordered opaque draws with fixed depth-unit polygon
+bias on the two paint layers, not a slope-dependent bias or disabled depth test.
+A single caller-owned road material shares the ground texture through the existing
+material factory, preserving shader/weather hooks without biasing the terrain
+material. There are no extra surface draws, textures or per-region materials.
+This removes overlay-induced burial; it does not eliminate the existing difference
+between the coarse rendered terrain and continuous physical height queries, or
+project flat character contact discs onto every slope.
+
 The existing species catalogue now has branch-supported leaf masses and canopy
 gaps. Trunks, dead wood and stones have zero wind flex; live masses, reeds and
 ground cover use the shared foundation wind. Ground cover grows in deterministic
@@ -75,6 +93,8 @@ including both LOD forms and material-side semantics. Additional court, footing
 and water-contact art is added only after capture. The existing canonical registry
 owns proxy nodes and scene-matrix cadence; no art-only transform or fade enters
 squad sight. Raze/save-restoration behavior stays with the foundation.
+Road render alignment likewise happens after capture, with canonical and rendered
+sources still borrowing the same unchanged road geometry until proxy teardown.
 
 Enhanced outline creation follows render-source binding, so ink actually borrows
 the mutable source clone rather than an earlier cache buffer. Registrations

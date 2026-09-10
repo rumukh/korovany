@@ -29,7 +29,7 @@ export function createWorldPavingGeometry(
   const append = (vertices: PavingVertex[]): void => {
     for (let i = 1; i + 1 < vertices.length; i++) {
       for (const vertex of [vertices[0], vertices[i], vertices[i + 1]]) {
-        positions.push(vertex.x, vertex.y + 0.16, vertex.z)
+        positions.push(vertex.x, vertex.y, vertex.z)
         const length = Math.hypot(vertex.nx, vertex.ny, vertex.nz)
         normals.push(vertex.nx / length, vertex.ny / length, vertex.nz / length)
         const key = `${vertex.x}:${vertex.z}`
