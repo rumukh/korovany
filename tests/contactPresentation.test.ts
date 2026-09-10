@@ -221,6 +221,31 @@ function combatFixture(seed = 42, restored?: ActiveRunSaveV3) {
   return { ...f, actor, engine, contacts, legacyGore, sounds, dispose() { regions.dispose(); f.dispose() } }
 }
 
+test('portrait save exports leave unchanged region revisions and all campaign fields intact', async () => {
+  const { portraitSaveIdentity } = await import(new URL('../scripts/graphics/portraits.mjs', import.meta.url).href)
+  const f = combatFixture(20260906)
+  try {
+    const before: ActiveRunSaveV3 = f.engine.saveGeneratedRun()
+    const after: ActiveRunSaveV3 = f.engine.saveGeneratedRun()
+    const changed = Object.keys(after.regionDeltas).flatMap((regionId) =>
+      before.regionDeltas[regionId]?.revision === after.regionDeltas[regionId].revision ? [] : [{
+        field: `regionDeltas.${regionId}.revision`,
+        before: before.regionDeltas[regionId]?.revision,
+        after: after.regionDeltas[regionId].revision,
+      }])
+    assert.deepEqual(changed, [], 'Saving the held scene must not record a new Chronicle change')
+    assert.equal(portraitSaveIdentity(after), portraitSaveIdentity(before))
+
+    const regionId = String(f.engine.generatedBlueprint.regions[0].id)
+    f.engine.chronicleRegions.get(regionId)!.supply = 0.125
+    const changedSave: ActiveRunSaveV3 = f.engine.saveGeneratedRun()
+    assert.notEqual(portraitSaveIdentity(changedSave), portraitSaveIdentity(after),
+      'The portrait comparator must still reject a real campaign change')
+    assert.equal(changedSave.regionDeltas[regionId].chronicle.supply, 0.125)
+    assert.equal(portraitSaveIdentity(f.engine.saveGeneratedRun()), portraitSaveIdentity(changedSave))
+  } finally { f.dispose() }
+})
+
 test('real damageActor preserves damage/reaction vectors and routes one admitted posed contact, not a miss/dead target', () => {
   const f = combatFixture()
   try {

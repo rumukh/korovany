@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { RegionManager } from '../src/game/world/RegionManager.ts'
 import { RegionRuntime } from '../src/game/world/RegionRuntime.ts'
+import { cloneRegionChronicleState, type RegionChronicleState } from '../src/game/world/Chronicle.ts'
 
 function createFiveByFiveWorld() {
   const regions = []
@@ -506,4 +507,52 @@ test('region chronicle state round-trips through the manager and its runtimes', 
 
   manager.dispose()
   restored.dispose()
+})
+
+test('repeated Chronicle synchronization preserves revisions while every changed field is persisted', () => {
+  const world = createFiveByFiveWorld()
+  const manager = new RegionManager(world as never)
+  const regionId = world.regions[0].id as never
+  manager.update(regionId)
+  const runtime = manager.getRuntime(regionId) as RegionRuntime
+  runtime.markActorDefeated('preserved-actor')
+  const mutations: Array<[string, (state: RegionChronicleState) => void]> = [
+    ['control', (state) => { state.control = 'villain' }],
+    ['pressure.elf', (state) => { state.pressure.elf = 0.2 }],
+    ['pressure.guard', (state) => { state.pressure.guard = 0.3 }],
+    ['pressure.villain', (state) => { state.pressure.villain = 0.4 }],
+    ['beastPressure', (state) => { state.beastPressure = 0.5 }],
+    ['settlementIntegrity', (state) => { state.settlementIntegrity = 80 }],
+    ['supply', (state) => { state.supply = 0.25 }],
+    ['lastEventTick', (state) => { state.lastEventTick = 7 }],
+  ]
+  try {
+    for (const [field, mutate] of mutations) {
+      const before = manager.saveState()
+      const state = manager.getRegionChronicle(regionId)!
+      assert.equal(manager.setRegionChronicle(regionId, state), true)
+      assert.deepEqual(manager.saveState(), before, `${field}: identical live sync changed storage`)
+      const changed = cloneRegionChronicleState(state)
+      mutate(changed)
+      assert.equal(manager.setRegionChronicle(regionId, changed), true)
+      const after = manager.saveState()
+      assert.equal(after.deltas[regionId].revision, before.deltas[regionId].revision + 1, field)
+      assert.deepEqual(after.deltas[regionId].chronicle, changed, field)
+      assert.deepEqual(after.deltas[regionId].defeatedActorIds, ['preserved-actor'])
+      assert.equal(manager.setRegionChronicle(regionId, cloneRegionChronicleState(changed)), true)
+      assert.deepEqual(manager.saveState(), after, `${field}: equal cloned input changed revision`)
+      changed.pressure.elf = 0.99
+      assert.deepEqual(manager.saveState(), after, `${field}: caller retained mutable storage`)
+    }
+    const saved = manager.saveState()
+    const restored = new RegionManager(world as never)
+    try {
+      assert.equal(restored.applyState(saved), true)
+      const same = restored.getRegionChronicle(regionId)!
+      assert.equal(restored.setRegionChronicle(regionId, same), true)
+      assert.deepEqual(restored.saveState(), saved, 'Unloaded restored region changed on no-op sync')
+      assert.equal(restored.setRegionChronicle(regionId, { ...same, supply: NaN }), false)
+      assert.deepEqual(restored.saveState(), saved, 'Invalid synchronization changed saved data')
+    } finally { restored.dispose() }
+  } finally { manager.dispose() }
 })

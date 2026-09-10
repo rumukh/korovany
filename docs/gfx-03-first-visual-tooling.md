@@ -156,6 +156,13 @@ timestamp is excluded; injuries, player/actor positions, health, stamina,
 cooldowns, melee/defense/action state, objectives, identities, and gameplay RNG
 remain compared. Failure stops the job and retains its partial evidence.
 
+The first joined guard smoke exposed a save-path mutation: synchronizing
+unchanged Chronicle state incremented all 25 region-delta revisions on every
+save export, without a portrait or simulation update. Region synchronization
+is now idempotent for equal normalized Chronicle data; real state changes still
+advance the revision and persist normally. The portrait comparison remains
+strict and does not ignore revisions or any additional campaign fields.
+
 CPU coverage validates the finite contract, 108 all-faction/view/pose combinations
 with wounded/missing/prosthetic parts, repeatable held transforms and exact frame
 replay, real production stage/companion routing, rejected active simulation,
