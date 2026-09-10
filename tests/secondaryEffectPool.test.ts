@@ -123,3 +123,21 @@ test('exclusive pool resources dispose once, even on cleanup failure; no post-di
   assert.throws(() => pool.emit('spark', point, direction, color, 1, high), /disposed/)
   assert.throws(() => pool.update(0.1, false), /disposed/)
 })
+
+test('material particles scatter about the actual contact normal without mutating it or adding draws', () => {
+  const pool = new SecondaryEffectPool(new THREE.Scene(), 42)
+  const normal = new THREE.Vector3(0.4, 0.8, -0.2).normalize(), before = normal.clone()
+  const position = new THREE.Vector3(2, 3, 4)
+  pool.emit('chip', position, direction, color, 5, high, normal)
+  pool.update(0.01, false)
+  const matrix = new THREE.Matrix4(), location = new THREE.Vector3()
+  for (let index = 0; index < pool.mesh.count; index++) {
+    pool.mesh.getMatrixAt(index, matrix)
+    location.setFromMatrixPosition(matrix).sub(position)
+    assert.ok(location.dot(normal) > 0, 'chips leave the actual contact surface')
+  }
+  assert.deepEqual(normal, before)
+  assert.equal(pool.snapshot().sourceDrawCeiling, 1)
+  assert.throws(() => pool.emit('chip', position, direction, color, 1, high, new THREE.Vector3(NaN, 0, 0)), /Invalid/)
+  pool.dispose()
+})

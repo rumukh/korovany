@@ -6,7 +6,7 @@ import type { VisualQualityPolicy } from './visualPolicy.ts'
 
 export const SECONDARY_EFFECT_CAPACITY = 48
 export const SECONDARY_EFFECT_REVISION = 'gfx-05-secondary-1'
-type SecondaryKind = 'spark' | 'shard'
+export type SecondaryKind = 'spark' | 'shard' | 'chip' | 'dust' | 'blood' | 'splash'
 
 // Position, velocity, age/lifetime, radius, priority, serial, RGB.
 const STRIDE = 14
@@ -23,6 +23,9 @@ export class SecondaryEffectPool {
   private readonly euler = new THREE.Euler()
   private readonly scale = new THREE.Vector3()
   private readonly color = new THREE.Color()
+  private readonly outward = new THREE.Vector3()
+  private readonly tangent = new THREE.Vector3()
+  private readonly bitangent = new THREE.Vector3()
   private readonly owned: VisualResourceOwner[]
   private readonly receipts: readonly VisualAllocationReceipt[]
   private count = 0
@@ -40,6 +43,7 @@ export class SecondaryEffectPool {
     this.owned = [geometry, material, this.mesh]
     this.mesh.name = 'secondary-contact-effects'
     this.mesh.userData.noComicOutline = true
+    this.mesh.userData.visualSubsystem = 'postAndEffects'
     this.mesh.castShadow = false
     this.mesh.receiveShadow = false
     this.mesh.frustumCulled = false
@@ -73,12 +77,14 @@ export class SecondaryEffectPool {
     color: THREE.Color,
     requested: number,
     policy: Pick<VisualQualityPolicy, 'density' | 'reducedMotion'>,
+    contactNormal?: THREE.Vector3,
   ): number {
     this.assertActive()
-    if (!['spark', 'shard'].includes(kind) || !Number.isInteger(requested) || requested < 0 ||
+    if (!['spark', 'shard', 'chip', 'dust', 'blood', 'splash'].includes(kind) || !Number.isInteger(requested) || requested < 0 ||
         !Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z) ||
         !Number.isFinite(color.r) || !Number.isFinite(color.g) || !Number.isFinite(color.b) ||
-        (direction && (!Number.isFinite(direction.x) || !Number.isFinite(direction.y) || !Number.isFinite(direction.z)))) {
+        (direction && (!Number.isFinite(direction.x) || !Number.isFinite(direction.y) || !Number.isFinite(direction.z))) ||
+        (contactNormal && (!Number.isFinite(contactNormal.x) || !Number.isFinite(contactNormal.y) || !Number.isFinite(contactNormal.z)))) {
       throw new RangeError('Invalid secondary contact effect')
     }
     const density = policy.density.particles
@@ -101,6 +107,13 @@ export class SecondaryEffectPool {
     const directionLength = direction ? Math.hypot(direction.x, direction.z) : 0
     const dx = directionLength > 0.0001 ? direction!.x / directionLength : 0
     const dz = directionLength > 0.0001 ? direction!.z / directionLength : 1
+    if (contactNormal) {
+      this.outward.copy(contactNormal).normalize()
+      if (this.outward.lengthSq() < 1e-8) this.outward.set(0, 1, 0)
+      this.tangent.set(Math.abs(this.outward.y) > 0.9 ? 1 : 0, Math.abs(this.outward.y) > 0.9 ? 0 : 1, 0)
+        .cross(this.outward).normalize()
+      this.bitangent.crossVectors(this.outward, this.tangent).normalize()
+    }
     let emitted = 0
     this.dropped += requested - admitted
     for (let index = 0; index < admitted; index++) {
@@ -115,9 +128,16 @@ export class SecondaryEffectPool {
       this.states[offset + 3] = dx * outward - dz * side
       this.states[offset + 4] = (kind === 'spark' ? 4 + this.rng.next() * 5 : 2 + this.rng.next() * 4) * motion
       this.states[offset + 5] = dz * outward + dx * side
+      if (contactNormal) {
+        const spread = (this.rng.next() - 0.5) * 2 * motion
+        const force = Math.abs(outward) + motion
+        for (let axis = 0; axis < 3; axis++) this.states[offset + 3 + axis] =
+          this.outward.getComponent(axis) * force + this.tangent.getComponent(axis) * side +
+          this.bitangent.getComponent(axis) * spread
+      }
       this.states[offset + AGE] = 0
-      this.states[offset + LIFE] = kind === 'spark' ? 0.24 : 0.55 + this.rng.next() * 0.35
-      this.states[offset + RADIUS] = kind === 'spark' ? 0.055 : 0.12
+      this.states[offset + LIFE] = kind === 'spark' ? 0.24 : kind === 'shard' ? 0.55 + this.rng.next() * 0.35 : 0.3 + this.rng.next() * 0.2
+      this.states[offset + RADIUS] = kind === 'spark' ? 0.055 : kind === 'shard' ? 0.12 : kind === 'dust' ? 0.065 : 0.045
       this.states[offset + PRIORITY] = priority
       this.states[offset + SERIAL] = ++this.serial
       const whiteSpark = kind === 'spark' && index % 3 === 0

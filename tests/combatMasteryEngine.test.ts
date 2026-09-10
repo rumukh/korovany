@@ -28,6 +28,8 @@ import { createFinaleIdentity, createFinaleState } from '../src/game/world/Final
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
 import { SecondaryEffectPool } from '../src/game/SecondaryEffectPool.ts'
 import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
+import { GeometryCache, StylizedArtLibrary, createCharacterPresenter, illustratedCharacterPlan, resolveCharacterPlan } from '../src/game/art/index.ts'
+import { ContactPresentation, copyPresentationContact, type PresentationContact } from '../src/game/ContactPresentation.ts'
 
 // Load the production class with Node's TS support, including its Vite-style imports.
 // Only construction/presentation are replaced below; inputs, movement and damage are real methods.
@@ -135,8 +137,8 @@ interface EngineProbe {
   updatePlayerMelee(delta: number): void
   actorAttackPlayer(actor: Attacker): void
   damagePlayer(damage: number | (() => number), incoming: THREE.Vector3, canInjure: boolean, options: {
-    attackKind: CombatAttackKind; sourceActorId?: string
-  }): CombatOutcome
+    attackKind: CombatAttackKind; sourceActorId?: string; presentationPoint?: THREE.Vector3; presentationNormal?: THREE.Vector3
+  }): CombatOutcome & { position: THREE.Vector3; direction: THREE.Vector3; presentationContact?: PresentationContact | null }
 }
 
 function fixture(faction: Faction = 'elf', collision = new CollisionWorld({
@@ -545,12 +547,14 @@ test('real admitted damage uses the bounded secondary pool without changing defe
     const pool = new SecondaryEffectPool(new THREE.Scene(), 42)
     Object.assign(engine, {
       secondaryEffects: pool, secondaryContactPoint: new THREE.Vector3(),
+      contactNormal: new THREE.Vector3(), contactColor: new THREE.Color(), spawnImpactRay() {},
       palette: { warning: new THREE.Color(0xffbb22) },
       visualPolicy: resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'low' }),
       allegianceColor: () => new THREE.Color(0x4da6ff),
       createSparks: Reflect.get(GameEngine.prototype, 'createSparks'),
       createHitParticles: Reflect.get(GameEngine.prototype, 'createHitParticles'),
     })
+
     if (kind === 'block' || kind === 'perfect') engine.setShield(true)
     if (kind === 'block') engine.combatMastery.guardWindow = 0
     if (kind === 'evaded') { engine.evade(); engine.updatePlayer(0.1) }
@@ -559,12 +563,238 @@ test('real admitted damage uses the bounded secondary pool without changing defe
     assert.equal(counts.hitFx, kind === 'normal' || kind === 'block' ? 1 : 0)
     assert.equal(counts.injuries, kind === 'normal' ? 1 : 0)
     assert.equal(counts.draws, kind === 'normal' ? 2 : kind === 'block' ? 1 : 0)
-    assert.equal(pool.snapshot().active > 0, kind === 'normal' || kind === 'block')
+    assert.equal(pool.snapshot().active > 0, kind === 'normal' || kind === 'block' || kind === 'perfect')
     if (kind === 'normal' || kind === 'block') assert.ok(engine.health < 70)
     else assert.equal(engine.health, 70)
     engine.setPaused(true)
     assert.equal(pool.snapshot().active, 0)
     assert.equal(pool.mesh.count, 0)
     pool.dispose()
+  }
+})
+
+test('real perfect guard uses the posed shield without damage feedback and evasion emits no physical contact at every tier', () => {
+  for (const quality of ['high', 'balanced', 'low'] as const) {
+    for (const defense of ['perfect', 'late', 'rear', 'evade'] as const) {
+      const { engine, counts } = fixture('guard')
+      const art = new StylizedArtLibrary({ enhanced: true, ink: {
+        player: 0x222222, enemy: 0x222222, interactable: 0x222222, landmark: 0x222222,
+      } })
+      const cache = new GeometryCache()
+      const presenter = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('guard', 'player', 0, true)), art, cache, true)
+      const contacts: PresentationContact[] = []
+      engine.player = presenter.root
+      engine.player.scale.set(0.8, 1.2, 1.1)
+      Object.assign(engine, {
+        visualPolicy: resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: quality }),
+        characterHeightSample: () => 0,
+        contactNormal: new THREE.Vector3(), secondaryContactPoint: new THREE.Vector3(),
+        presentPhysicalContact: (contact: PresentationContact) => contacts.push(copyPresentationContact(contact)),
+      })
+      try {
+        if (defense === 'evade') { engine.evade(); engine.updatePlayer(0.1) }
+        else {
+          engine.setShield(true)
+          if (defense === 'late') engine.updatePlayer(0.13)
+        }
+        const normal = new THREE.Vector3(0, 0, defense === 'rear' ? 1 : -1)
+        const result = engine.damagePlayer(20, normal, true, { attackKind: 'allyMelee' })
+        assert.equal(contacts.length, defense === 'evade' ? 0 : 1)
+        assert.equal(counts.hitFx, defense === 'perfect' || defense === 'evade' ? 0 : 1)
+        assert.equal(result.dealt, defense === 'perfect' || defense === 'evade' ? 0 : 20 * 0.72 * (defense === 'late' ? 0.15 : 1))
+        if (defense === 'perfect') {
+          const expected = { point: new THREE.Vector3(), normal: new THREE.Vector3(), surface: 'skin' as const }
+          assert.equal(presenter.sampleContact('shield', expected), true)
+          assert.deepEqual(contacts[0].point, expected.point)
+          assert.equal(contacts[0].surface, expected.surface)
+          assert.equal(contacts[0].origin, 'posed')
+          assert.equal(engine.stamina, 88)
+          assert.equal(counts.draws, 0)
+          assert.deepEqual(counts.sounds.filter((sound) => sound === 'block'), ['block'])
+        }
+        assert.deepEqual(normal.toArray(), [0, 0, defense === 'rear' ? 1 : -1])
+      } finally { presenter.dispose(); art.dispose(); cache.dispose() }
+    }
+  }
+})
+
+function posedShieldFixture(missingLeftArm: boolean, mode: 'legacy' | 'enhanced' = 'enhanced') {
+  const value = fixture('guard')
+  const { engine, attacker } = value
+  const art = new StylizedArtLibrary({ enhanced: true, ink: {
+    player: 0x222222, enemy: 0x222222, interactable: 0x222222, landmark: 0x222222,
+  } })
+  const cache = new GeometryCache()
+  const player = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('guard', 'player', 0, true)), art, cache, true)
+  const source = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('villain', 'player', 0, true)), art, cache, true)
+  source.root.position.copy(attacker.mesh.position)
+  attacker.mesh = source.root
+  engine.player = player.root
+  if (missingLeftArm) {
+    engine.body.leftArm = 'missing'
+    player.setAppearance({ leftArm: 'missing' })
+  }
+  const resolver = new ContactPresentation()
+  const pool = new SecondaryEffectPool(new THREE.Scene(), 42)
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial())
+  const ray = { sprite, material: sprite.material, age: 0, lifetime: 1, active: false, priority: 0, weight: 'normal' }
+  const emitted: { contact: PresentationContact; defense: boolean; stamina: number; raised: boolean }[] = []
+  let legacySparks = 0
+  Object.assign(engine, {
+    visualPolicy: resolveVisualPolicy({ visualMode: mode }),
+    contactPresentation: resolver, contactNormal: new THREE.Vector3(), contactColor: new THREE.Color(),
+    secondaryContactPoint: new THREE.Vector3(), secondaryEffects: pool, camera: new THREE.PerspectiveCamera(),
+    updateShieldPose: Reflect.get(GameEngine.prototype, 'updateShieldPose'),
+    acquireImpactRayFx: () => ray,
+    createSparks: () => { legacySparks++ },
+    presentPhysicalContact(contact: PresentationContact, defense: boolean, weight: string, primary: boolean) {
+      emitted.push({ contact: copyPresentationContact(contact), defense, stamina: engine.stamina, raised: engine.shieldActive })
+      Reflect.get(GameEngine.prototype, 'presentPhysicalContact').call(engine, contact, defense, weight, primary)
+    },
+  })
+  return {
+    ...value, player, source, resolver, pool, ray, emitted, legacySparks: () => legacySparks,
+    dispose() { pool.dispose(); sprite.material.dispose(); player.dispose(); source.dispose(); art.dispose(); cache.dispose() },
+  }
+}
+
+test('confirmed ordinary and perfect blocks retain admitted shield cues after left-arm loss without restoring it', () => {
+  for (const perfect of [false, true]) for (const projectile of [false, true]) {
+    const f = posedShieldFixture(true)
+    try {
+      f.engine.setShield(true)
+      if (!perfect) f.engine.combatMastery.guardWindow = 0
+      const incoming = new THREE.Vector3(0, 0, -1)
+      const projectilePoint = projectile ? new THREE.Vector3(0.16, 1.72, -0.68) : undefined
+      const projectileNormal = projectile ? new THREE.Vector3(0.2, 0.3, -0.9).normalize() : undefined
+      const expectedPoint = projectilePoint?.clone() ?? new THREE.Vector3(0, 1.35, -0.72)
+      const expectedNormal = projectileNormal?.clone() ?? incoming.clone()
+      const weapon = { point: new THREE.Vector3(), normal: new THREE.Vector3(), surface: 'skin' as const }
+      assert.equal(f.source.sampleContact('weaponTip', weapon), true)
+      const unavailable = { point: new THREE.Vector3(99, 99, 99), normal: new THREE.Vector3(), surface: 'skin' as const }
+      assert.equal(f.player.sampleContact('shield', unavailable), false)
+      assert.equal(f.resolver.actor(f.player.root, 'leftArm', expectedPoint, incoming), null)
+      const result = f.engine.damagePlayer(20, incoming, true, {
+        attackKind: projectile ? 'actorArrow' : 'allyMelee', sourceActorId: f.attacker.id,
+        presentationPoint: projectilePoint, presentationNormal: projectileNormal,
+      })
+      assert.equal(result.dealt, perfect ? 0 : 20 * 0.72 * 0.15)
+      assert.equal(f.engine.health, perfect ? 70 : 70 - 20 * 0.72 * 0.15)
+      assert.equal(f.engine.stamina, perfect ? 88 : 100)
+      assert.equal(f.emitted.length, 1)
+      const cue = f.emitted[0]
+      assert.equal(cue.defense, true)
+      assert.equal(cue.contact.origin, 'admitted-shield')
+      assert.equal(cue.contact.surface, 'metal')
+      assert.equal(cue.contact.sourceSurface, weapon.surface)
+      assert.ok(cue.contact.point.distanceTo(expectedPoint) < 1e-12)
+      assert.ok(cue.contact.normal.distanceTo(expectedNormal) < 1e-12)
+      assert.equal(f.ray.active, true)
+      assert.equal(f.ray.material.depthTest, true)
+      assert.ok(f.ray.sprite.position.distanceTo(expectedPoint) < 1e-12)
+      assert.ok(f.pool.snapshot().active > 0)
+      assert.equal(f.counts.draws, 0)
+      assert.equal(f.counts.injuries, 0)
+      assert.equal(f.counts.hitFx, perfect ? 0 : 1)
+      assert.deepEqual(f.counts.sounds, perfect ? ['block'] : [])
+      assert.equal(f.engine.body.leftArm, 'missing')
+      assert.equal(f.player.root.getObjectByName('leftArm')?.visible, false)
+      assert.equal(f.player.sampleContact('shield', unavailable), false)
+      assert.ok(result.presentationContact)
+      assert.notEqual(result.presentationContact.point, f.resolver.contact.point)
+      assert.notEqual(result.presentationContact.point, projectilePoint)
+      const stored = copyPresentationContact(result.presentationContact)
+      f.resolver.actor(f.player.root, 'head', new THREE.Vector3(), incoming)
+      projectilePoint?.set(99, 99, 99)
+      assert.deepEqual(result.presentationContact, stored)
+      assert.ok(result.direction.distanceTo(new THREE.Vector3(0, 0, 1)) < 1e-12)
+      assert.deepEqual(incoming.toArray(), [0, 0, -1])
+    } finally { f.dispose() }
+  }
+})
+
+test('an exhausted perfect guard emits the captured raised contact after the real shield drop, not the lowered pose', () => {
+  for (const missingLeftArm of [false, true]) for (const stamina of [12, 100]) {
+    const f = posedShieldFixture(missingLeftArm)
+    try {
+      f.engine.stamina = stamina
+      f.engine.setShield(true)
+      const raised = { point: new THREE.Vector3(), normal: new THREE.Vector3(), surface: 'skin' as const }
+      assert.equal(f.player.sampleContact('shield', raised), !missingLeftArm)
+      const expected = missingLeftArm ? new THREE.Vector3(0, 1.35, -0.72) : raised.point.clone()
+      const result = f.engine.damagePlayer(20, new THREE.Vector3(0, 0, -1), true, {
+        attackKind: 'allyMelee', sourceActorId: f.attacker.id,
+      })
+      assert.equal(result.dealt, 0)
+      assert.equal(f.engine.health, 70)
+      assert.equal(f.engine.stamina, stamina - 12)
+      assert.equal(f.engine.shieldActive, stamina !== 12)
+      assert.equal(f.emitted.length, 1)
+      assert.equal(f.emitted[0].stamina, stamina - 12, 'emission follows the paid defense resolution')
+      assert.equal(f.emitted[0].raised, stamina !== 12)
+      assert.ok(f.emitted[0].contact.point.distanceTo(expected) < 1e-12)
+      assert.ok(f.ray.sprite.position.distanceTo(expected) < 1e-12)
+      assert.ok(result.presentationContact)
+      assert.ok(result.presentationContact.point.distanceTo(expected) < 1e-12)
+      assert.equal(f.counts.draws, 0)
+      assert.equal(f.counts.injuries, 0)
+      assert.equal(f.attacker.reaction, 'stagger')
+      assert.equal(f.attacker.action, null)
+      assert.deepEqual(f.counts.sounds, ['block'])
+      if (!missingLeftArm) {
+        const current = { point: new THREE.Vector3(), normal: new THREE.Vector3(), surface: 'skin' as const }
+        assert.equal(f.player.sampleContact('shield', current), true)
+        if (stamina === 12) {
+          assert.ok(raised.point.distanceTo(current.point) > 0.9, 'negative control: post-drop sampling is visibly misplaced')
+          assert.ok(f.emitted[0].contact.point.distanceTo(current.point) > 0.9)
+          assert.ok(f.engine.abilityCooldown > 0)
+        } else {
+          assert.ok(current.point.distanceTo(raised.point) < 1e-12)
+          assert.equal(f.engine.abilityCooldown, 0)
+        }
+      } else assert.equal(f.engine.body.leftArm, 'missing')
+    } finally { f.dispose() }
+  }
+})
+
+test('shield fallback is limited to admitted guards; ordinary missing contacts and rejected defenses remain excluded', () => {
+  for (const scenario of ['unblocked', 'rear', 'evaded', 'paused', 'ended'] as const) {
+    const f = posedShieldFixture(true)
+    try {
+      const admitted = new THREE.Vector3(0, 1.35, -0.72)
+      assert.equal(f.resolver.actor(f.player.root, 'leftArm', admitted, new THREE.Vector3(0, 0, 1)), null)
+      assert.equal(f.resolver.actor(f.player.root, 'shield', admitted, new THREE.Vector3(0, 0, 1)), null)
+      if (scenario !== 'unblocked') f.engine.setShield(true)
+      if (scenario === 'evaded') Object.assign(f.engine.combatMastery, {
+        evadeProtection: true, evadeRemaining: 0.14, evadeCooldown: 0.8,
+      })
+      if (scenario === 'paused') f.engine.paused = true
+      if (scenario === 'ended') f.engine.ended = true
+      f.engine.damagePlayer(20, new THREE.Vector3(0, 0, scenario === 'rear' ? 1 : -1), false, { attackKind: 'allyMelee' })
+      assert.equal(f.emitted.length, scenario === 'unblocked' || scenario === 'rear' ? 1 : 0)
+      assert.ok(f.emitted.every((entry) => !entry.defense && entry.contact.origin !== 'admitted-shield'))
+      assert.equal(f.engine.body.leftArm, 'missing')
+    } finally { f.dispose() }
+  }
+  for (const perfect of [false, true]) for (const stamina of [12, 100]) {
+    const enhanced = posedShieldFixture(true)
+    const legacy = posedShieldFixture(true, 'legacy')
+    try {
+      for (const f of [enhanced, legacy]) { f.engine.stamina = stamina; f.engine.setShield(true) }
+      if (!perfect) for (const f of [enhanced, legacy]) f.engine.combatMastery.guardWindow = 0
+      const input = new THREE.Vector3(0, 0, -1)
+      const improved = enhanced.engine.damagePlayer(20, input, true, { attackKind: 'allyMelee' })
+      const original = legacy.engine.damagePlayer(20, input, true, { attackKind: 'allyMelee' })
+      assert.equal(improved.dealt, original.dealt)
+      assert.deepEqual(improved.position, original.position)
+      assert.deepEqual(improved.direction, original.direction)
+      assert.equal(enhanced.engine.stamina, legacy.engine.stamina)
+      assert.equal(enhanced.engine.shieldActive, legacy.engine.shieldActive)
+      assert.equal(enhanced.engine.abilityCooldown, legacy.engine.abilityCooldown)
+      assert.equal(legacy.emitted.length, 0, 'legacy output does not acquire enhanced physical cues')
+      assert.equal(legacy.legacySparks(), perfect ? 0 : 1)
+      assert.equal(original.presentationContact, undefined)
+      assert.deepEqual(enhanced.counts.sounds, legacy.counts.sounds)
+    } finally { enhanced.dispose(); legacy.dispose() }
   }
 })

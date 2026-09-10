@@ -149,11 +149,17 @@ test('actual production logical-frame hook preserves hit stop, update order, pau
     camera: new THREE.Camera(), audioListenerRight: new THREE.Vector3(),
     audio: { setListener: () => events.push('audio') }, updateMusicContext: () => events.push('music'),
     postProcessor: { render: () => events.push('render') },
+    prepareTransientEffects: () => events.push('fx-prepare'),
+    transientBudget: {
+      apply: () => events.push('fx-apply'),
+      restore: () => events.push('fx-restore'),
+    },
   })
   engine.renderLogicalFrame(0.05, 'active')
   assert.deepEqual(events, [
     ['begin', 0.05, 'active'], ['update', 0.030000000000000002], ['accents', 0.05],
-    'camera', 'character-lod', 'creature-lod', 'audio', 'music', 'update-end', 'render', 'frame-end',
+    'camera', 'character-lod', 'creature-lod', 'audio', 'music', 'update-end',
+    'fx-prepare', 'fx-apply', 'render', 'fx-restore', 'frame-end',
   ])
   assert.equal(engine.hitStopRemaining, 0)
   assert.equal(clock.timeSeconds, 0.05)
@@ -161,9 +167,14 @@ test('actual production logical-frame hook preserves hit stop, update order, pau
   engine.paused = true
   engine.renderLogicalFrame(0.05, 'manual')
   assert.deepEqual(events, [
-    ['begin', 0.05, 'manual'], 'camera', 'character-lod', 'creature-lod', 'audio', 'music', 'update-end', 'render', 'frame-end',
+    ['begin', 0.05, 'manual'], 'camera', 'character-lod', 'creature-lod', 'audio', 'music', 'update-end',
+    'fx-prepare', 'fx-apply', 'render', 'fx-restore', 'frame-end',
   ])
   assert.equal(clock.timeSeconds, 0.05)
+  events.length = 0
+  engine.postProcessor.render = () => { throw new Error('render failure') }
+  assert.throws(() => engine.renderLogicalFrame(0.05, 'manual'), /render failure/)
+  assert.equal(events.at(-1), 'fx-restore')
 })
 
 test('staged prerequisites are validated before moving gameplay roots', () => {
