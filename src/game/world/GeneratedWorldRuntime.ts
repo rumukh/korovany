@@ -311,6 +311,9 @@ const OUTLINE_SITE_DRAWS_MAX = 4
 
 /** Camera distance at which a building swaps to its cheap level. */
 const BUILDING_LOD_DISTANCE = 46
+const LEGACY_ROAD_SURFACE_LIFT = 0.14
+const ROAD_OVERLAY_LAYER = 1
+const PAVING_OVERLAY_LAYER = 2
 
 export class GeneratedWorldRuntime implements GeneratedWorldRuntimeContract {
   readonly presentation: WorldPresentationRegistry | null
@@ -1070,6 +1073,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
           }),
         )
       }
+      this.alignRoadOverlays()
       this.createFoundationContacts()
       this.createPaving()
       this.createWaterContacts()
@@ -1269,7 +1273,19 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
     const mesh = this.addMesh(this.root, geometry, material, `paving:${this.id}`)
     mesh.userData.noComicOutline = true
     mesh.receiveShadow = true
+    mesh.renderOrder = PAVING_OVERLAY_LAYER
     validateArtGeometry(mesh)
+  }
+
+  private alignRoadOverlays(): void {
+    if (!this.context.surfaces) return
+    // Capture above retains the original road buffer AND local matrix for squad
+    // sight. Remove its visual lift only from the rendered road, not its borrowers.
+    for (const object of this.root.children) {
+      if (!(object instanceof THREE.Mesh) || !object.name.startsWith('road:')) continue
+      object.position.y = -LEGACY_ROAD_SURFACE_LIFT
+      object.renderOrder = ROAD_OVERLAY_LAYER
+    }
   }
 
   private createFoundationContacts(): void {
@@ -1345,7 +1361,7 @@ class SceneRegionRuntime implements ManagedRegionRuntime {
         this.context.style.roadWidth,
         this.context.materials.road,
         leg.id,
-        0.14,
+        LEGACY_ROAD_SURFACE_LIFT,
       )
     }
   }
@@ -2663,7 +2679,10 @@ function createSharedMaterials(
     ),
   )
   const roadBase = palette.road ?? 0x70553b
-  const road = enhancedGround ?? textured(
+  const road = enhancedGround ? stylized('ground', {
+    color: 0xffffff, map: enhancedGround.map, vertexColors: true, mapping: 'world-xz',
+    metersPerRepeat: WORLD_DETAIL_METRES, roughness: 0.95, name: 'generated-road-detail',
+  }) : textured(
     'generated-road',
     roadBase,
     'dirt',
@@ -2674,6 +2693,7 @@ function createSharedMaterials(
       roughness: 1,
     },
   )
+  if (enhanced) setGroundOverlayDepth(road, ROAD_OVERLAY_LAYER)
   const waterBase = palette.water ?? 0x2f7187
   const water = textured(
     'generated-water',
@@ -2710,6 +2730,7 @@ function createSharedMaterials(
       color: 0xffffff, map, vertexColors: true, mapping: 'world-xz',
       metersPerRepeat: WORLD_PAVING_METRES, roughness: 0.93,
     })
+    setGroundOverlayDepth(paving, PAVING_OVERLAY_LAYER)
   }
   // The prop family. Four materials cover every world object in the game because
   // `PropKit` bakes colour, contact darkening and sky occlusion into the vertices —
@@ -2779,6 +2800,14 @@ function createSharedMaterials(
     all,
     textures,
   }
+}
+
+function setGroundOverlayDepth(material: THREE.MeshStandardMaterial, layer: number): void {
+  // Fixed depth units separate coincident paint layers. A slope-scaled bias can
+  // instead pull the receiver through centimetre-scale soles at grazing angles.
+  material.polygonOffset = true
+  material.polygonOffsetFactor = 0
+  material.polygonOffsetUnits = -layer
 }
 
 type StylizedWorldSurface = Parameters<
