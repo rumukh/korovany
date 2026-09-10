@@ -10,7 +10,8 @@ import {
 import { GraphicsFrameMeter, addGraphicsDraw, type GraphicsRuntimeFrame } from '../src/game/diagnostics/GraphicsFrameMeter.ts'
 import { GraphicsResources } from '../src/game/diagnostics/GraphicsResources.ts'
 import {
-  collectGraphicsSubsystemInventory, graphicsSubsystemBudgetSnapshot, type GraphicsSubsystemInputs,
+  collectGraphicsSubsystemInventory, graphicsSubsystemBudgetSnapshot, matchingGraphicsCanvasEstimate,
+  type GraphicsSubsystemInputs,
 } from '../src/game/diagnostics/GraphicsSubsystemInventory.ts'
 import {
   GraphicsSourceResolver, GRAPHICS_SOURCE_DETAIL_LIMIT, type GraphicsSourceRoot,
@@ -31,10 +32,13 @@ const { GameEngine } = await import('../src/game/GameEngine.ts')
 loader.deregister()
 
 /** Only GL/DOM-dependent execution is doubled; the production observers/collector remain intact. */
-function instrument() {
+function instrument(multisampledRenderToTexture = false) {
   const noop = (..._args: unknown[]) => {}
+  const multisample = { renderbufferStorageMultisampleEXT: noop, framebufferTexture2DMultisampleEXT: noop }
   const gl = Object.assign(Object.create(null), {
-    getExtension: () => null, isContextLost: () => false, beginQuery: noop,
+    getExtension: (name: string) =>
+      multisampledRenderToTexture && name === 'WEBGL_multisampled_render_to_texture' ? multisample : null,
+    isContextLost: () => false, beginQuery: noop,
     bindBuffer: noop, bindVertexArray: noop, bufferData: noop, activeTexture: noop, bindTexture: noop,
     texStorage2D: noop, texStorage3D: noop, texImage2D: noop, texImage3D: noop, texSubImage2D: noop, texSubImage3D: noop,
     compressedTexImage2D: noop, compressedTexImage3D: noop, copyTexImage2D: noop, generateMipmap: noop,
@@ -90,7 +94,7 @@ const library = () => new StylizedArtLibrary({
   enhanced: true, ink: { player: 0, enemy: 0, interactable: 0, landmark: 0 },
 })
 const emptyInputs = (): GraphicsSubsystemInputs => ({
-  policy, roots: [], owners: [], sharedTextures: [], missing: [],
+  policy, roots: [], owners: [], standardPipelineTextures: [], missing: [],
 })
 
 test('same real observer attributes actual material groups, double passes, ink, shadows, nested post and instances once', () => {
@@ -298,7 +302,7 @@ test('real source/ink borrow geometry and skeleton once, including actual bone t
   }
 })
 
-test('observed pipeline targets, mip storage and shared shadows reconcile and release without a scene-size estimate', () => {
+test('observed pipeline targets, mip storage and common shadows bill the pipeline once and release without a scene-size estimate', () => {
   const f = instrument(), target = new THREE.WebGLRenderTarget(8, 8), scene = new THREE.Scene()
   const meter = new GraphicsFrameMeter(f.renderer, scene, f.resources)
   try {
@@ -313,13 +317,196 @@ test('observed pipeline targets, mip storage and shared shadows reconcile and re
     assert.equal(pipeline.gpu.reconciled, true)
     assert.equal(pipeline.sources.targets, 1)
     f.resources.observeRenderTarget(target, f.properties, true)
-    const shared = collectGraphicsSubsystemInventory(emptyInputs(), f.resources, f.properties)
-    assert.equal(shared.gpu.sharedBytes, 1364)
-    assert.equal(shared.gpu.byOwner.postAndEffects, 0)
+    const shadow = collectGraphicsSubsystemInventory(emptyInputs(), f.resources, f.properties)
+    assert.equal(shadow.gpu.sharedBytes, 0)
+    assert.equal(shadow.gpu.byOwner.postAndEffects, 1364)
+    assert.ok(shadow.gpu.allocations.every((entry) => entry.pipeline === 'shadow-target'))
     target.dispose()
     f.gl.deleteTexture(color); f.gl.deleteRenderbuffer(depth)
     assert.equal(f.resources.liveRenderTargets().length, 0)
     assert.equal(collectGraphicsSubsystemInventory(emptyInputs(), f.resources, f.properties).gpu.trackedBytes, 0)
+  } finally { meter.dispose(); target.dispose(); f.resources.dispose() }
+})
+
+test('already-created standard maps, common shadow storage and matching estimates bill the established pipeline once despite consumers', () => {
+  const f = instrument(true), art = library(), scene = new THREE.Scene()
+  const meter = new GraphicsFrameMeter(f.renderer, scene, f.resources)
+  const target = new THREE.WebGLRenderTarget(8, 8)
+  const materials: THREE.Material[] = []
+  const gpuTextures: object[] = []
+  const shared = new Uint8Array(32)
+  const sharedBuffer = f.upload(shared)
+  let depth: object | null = null
+  try {
+    const initial = art.getStandardTextureInventory()
+    assert.deepEqual(initial, [art.rampTexture])
+    assert.equal(art.libraryOwnedMaterialCount, 0, 'Diagnostic access must not allocate a contact map/material')
+    const contact = art.createContactShadow()
+    const maps = art.getStandardTextureInventory()
+    assert.equal(maps.length, 2)
+    assert.ok(contact.material instanceof THREE.MeshBasicMaterial)
+    assert.equal(maps[1], contact.material.map)
+    assert.notEqual(maps, art.getStandardTextureInventory(), 'Callers do not mutate an internal owner list')
+    const originalRamp = art.rampTexture
+    const duplicateMaps = [...maps, ...maps]
+    const mapBacking = (map: THREE.DataTexture) => {
+      assert.ok(map.image.data)
+      return map.image.data.buffer
+    }
+    const roots: GraphicsSourceRoot[] = []
+    let mapBytes = 0
+    for (const [index, map] of maps.entries()) {
+      const handle = f.gl.createTexture()
+      gpuTextures.push(handle)
+      f.gl.bindTexture(0x0de1, handle)
+      const bpp = index === 0 ? 1 : 4
+      f.gl.texStorage2D(0x0de1, 1, index === 0 ? 0x8229 : 0x8058, map.image.width, map.image.height)
+      f.gl.texSubImage2D(0x0de1, 0, 0, 0, map.image.width, map.image.height,
+        index === 0 ? 0x1903 : 0x1908, 0x1401, map.image.data)
+      f.records.set(map, { __webglTexture: handle })
+      mapBytes += map.image.width * map.image.height * bpp
+      for (const subsystem of ['dynamicArt', 'world'] as const) {
+        const material = new THREE.SpriteMaterial({ map })
+        materials.push(material)
+        const source = new THREE.Sprite(material)
+        roots.push({ root: source, subsystem })
+        f.resources.observeSource(source, subsystem, f.properties)
+      }
+    }
+    const color = f.gl.createTexture()
+    gpuTextures.push(color)
+    depth = f.gl.createRenderbuffer()
+    f.gl.bindTexture(0x0de1, color); f.gl.texStorage2D(0x0de1, 1, 0x8058, 8, 8)
+    const extension = f.gl.getExtension('WEBGL_multisampled_render_to_texture')
+    extension.framebufferTexture2DMultisampleEXT(0x8d40, 0x8ce0, 0x0de1, color, 0, 4)
+    f.gl.bindRenderbuffer(0x8d41, depth); f.gl.renderbufferStorageMultisample(0x8d41, 4, 0x81a6, 8, 8)
+    f.records.set(target.texture, { __webglTexture: color })
+    f.records.set(target, { __webglDepthRenderbuffer: depth })
+    f.renderer.setRenderTarget(target)
+    f.resources.observeRenderTarget(target, f.properties, true)
+    f.resources.observeRenderTarget(target, f.properties, true)
+    for (const subsystem of ['dynamicArt', 'world'] as const) {
+      const material = new THREE.SpriteMaterial({ map: target.texture })
+      materials.push(material)
+      const source = new THREE.Sprite(material)
+      roots.push({ root: source, subsystem })
+      f.resources.observeSource(source, subsystem, f.properties)
+    }
+    const inputs: GraphicsSubsystemInputs = {
+      ...emptyInputs(), roots, standardPipelineTextures: duplicateMaps,
+      owners: (['dynamicArt', 'world'] as const).map((subsystem) => ({
+        name: subsystem, subsystem, sources: [], missing: [],
+        receipts: [
+          { identity: shared.buffer, chargedTo: subsystem, kind: 'geometry', cpuBytes: 32, gpuBytes: null },
+          ...maps.map((map): VisualAllocationReceipt => ({
+            identity: mapBacking(map), chargedTo: subsystem, kind: 'other',
+            cpuBytes: mapBacking(map).byteLength, gpuBytes: null,
+          })),
+        ],
+      })),
+    }
+    meter.begin(1 / 60, 'active'); meter.endUpdate()
+    const frame = meter.end(runtime, 'sample')
+    frame.bufferDimensions = { width: 8, height: 8 }
+    const canvas = matchingGraphicsCanvasEstimate(frame, 8, 8, 4)
+    assert.equal(canvas, 2304)
+    const snapshot = graphicsSubsystemBudgetSnapshot(inputs, frame, [], f.resources, f.properties, canvas)
+    const inventory = snapshot.inventory!
+    const pipelineBytes = mapBytes + 256 + 1024
+    assert.equal(inventory.gpu.byOwner.postAndEffects, pipelineBytes)
+    assert.equal(inventory.gpu.sharedBytes, 32, 'Unrelated cross-owner geometry is NOT pipeline billing')
+    assert.equal(inventory.gpu.byOwner.dynamicArt, 0)
+    assert.equal(inventory.gpu.byOwner.world, 0)
+    assert.equal(inventory.gpu.reconciled, true)
+    const sharedSpriteBuffers = new Set(roots.flatMap(({ root }) => root instanceof THREE.Sprite
+      ? [...Object.values(root.geometry.attributes).map((attribute) => attribute.array.buffer),
+        ...(root.geometry.index ? [root.geometry.index.array.buffer] : [])] : []))
+    assert.equal(inventory.cpu.sharedBytes,
+      32 + [...sharedSpriteBuffers].reduce((sum, buffer) => sum + buffer.byteLength, 0),
+      'Shared sprite geometry and the unrelated buffer are not standard-map allocations')
+    assert.equal(inventory.cpu.conflictingBytes, 0)
+    assert.equal(inventory.byOwner.postAndEffects.cpuBackingBytes,
+      maps.reduce((sum, map) => sum + mapBacking(map).byteLength, 0))
+    const common = inventory.gpu.allocations.filter((entry) => entry.pipeline !== null)
+    assert.equal(common.length, 4)
+    assert.equal(common.filter((entry) => entry.pipeline === 'shadow-target').length, 2)
+    assert.equal(common.filter((entry) => entry.pipeline === 'standard-map').length, 2)
+    assert.ok(common.filter((entry) => entry.kind === 'texture').every((entry) =>
+      entry.claimantOwners.includes('dynamicArt') && entry.claimantOwners.includes('world')))
+    assert.deepEqual(snapshot.knownGpuBudgetLowerBounds!.pipeline, {
+      observedStorageBytes: pipelineBytes,
+      estimatedDefaultFramebufferBytes: 2304,
+      estimatedImplicitMultisampleBytes: 1024,
+      estimatesComplete: true,
+      scope: 'Known observed pipeline storage plus available same-frame canvas/implicit-MSAA estimates; not resident VRAM or complete ownership',
+    })
+    assert.equal(snapshot.knownGpuBudgetLowerBounds!.byOwner.postAndEffects, pipelineBytes + 2304 + 1024)
+    assert.equal(snapshot.subsystems!.postAndEffects.resources.gpuAllocatedBytes, null)
+    assert.equal(snapshot.assessment.status, 'incomplete')
+    assert.ok(!snapshot.assessment.issues.some((issue) => issue.scope === 'reconciliation'))
+    art.dispose()
+    assert.deepEqual(art.getStandardTextureInventory(), [])
+    assert.equal(initial[0], originalRamp, 'Accessor did not replace the library-owned resource')
+  } finally {
+    meter.dispose(); target.dispose()
+    for (const material of materials) material.dispose()
+    for (const handle of gpuTextures) f.gl.deleteTexture(handle)
+    if (depth) f.gl.deleteRenderbuffer(depth)
+    f.gl.deleteBuffer(sharedBuffer); art.dispose(); f.resources.dispose()
+  }
+})
+
+test('matching canvas and implicit-MSAA estimates expose a partial pipeline overrun without inventing stale or unknown bytes', () => {
+  const f = instrument(true), scene = new THREE.Scene(), target = new THREE.WebGLRenderTarget(4096, 4096)
+  const meter = new GraphicsFrameMeter(f.renderer, scene, f.resources)
+  const size = 4096
+  const actualBytes = size * size * 4
+  const matchingSize = { width: 4096, height: 2048 }
+  try {
+    const color = f.gl.createTexture()
+    f.gl.bindTexture(0x0de1, color); f.gl.texStorage2D(0x0de1, 1, 0x8058, size, size)
+    const extension = f.gl.getExtension('WEBGL_multisampled_render_to_texture')
+    extension.framebufferTexture2DMultisampleEXT(0x8d40, 0x8ce0, 0x0de1, color, 0, 2)
+    f.records.set(target.texture, { __webglTexture: color })
+    f.renderer.setRenderTarget(target)
+    f.resources.observeRenderTarget(target, f.properties, true)
+    meter.begin(1 / 60, 'active'); meter.endUpdate()
+    const frame = meter.end(runtime, 'sample')
+    frame.bufferDimensions = matchingSize
+    const canvas = matchingGraphicsCanvasEstimate(frame, 4096, 2048, 1)
+    assert.equal(canvas, 64 * 1024 * 1024)
+    const snapshot = graphicsSubsystemBudgetSnapshot(emptyInputs(), frame, [], f.resources, f.properties, canvas)
+    assert.equal(snapshot.inventory!.gpu.byOwner.postAndEffects, actualBytes)
+    assert.equal(snapshot.knownGpuBudgetLowerBounds!.pipeline.estimatedImplicitMultisampleBytes, 2 * actualBytes)
+    assert.equal(snapshot.knownGpuBudgetLowerBounds!.byOwner.postAndEffects, 256 * 1024 * 1024)
+    assert.ok(snapshot.assessment.issues.some((issue) =>
+      issue.scope === 'postAndEffects' && issue.metric === 'knownPipelineGpuBytesIncludingEstimates' &&
+      issue.observed === 256 * 1024 * 1024 && issue.limit === 176 * 1024 * 1024))
+    assert.ok(!snapshot.assessment.issues.some((issue) => issue.scope === 'global'),
+      'The existing global ledger remains within256MiB; the assigned pipeline exceeds176MiB')
+    assert.equal(snapshot.inventory!.complete, false)
+    assert.equal(snapshot.subsystems!.postAndEffects.resources.gpuAllocatedBytes, null)
+    assert.equal(matchingGraphicsCanvasEstimate(frame, 390, 844, 1), null, 'Resized canvas is not the measured frame')
+    assert.equal(matchingGraphicsCanvasEstimate(frame, 4096, 2048, null), null, 'Unknown sample count has no made-up estimate')
+    assert.equal(matchingGraphicsCanvasEstimate(null, 4096, 2048, 1), null)
+    const noCanvas = graphicsSubsystemBudgetSnapshot(emptyInputs(), frame, [], f.resources, f.properties,
+      matchingGraphicsCanvasEstimate(frame, 390, 844, 1))
+    assert.equal(noCanvas.knownGpuBudgetLowerBounds!.pipeline.estimatedDefaultFramebufferBytes, null)
+    assert.equal(noCanvas.knownGpuBudgetLowerBounds!.byOwner.postAndEffects, 192 * 1024 * 1024)
+    assert.ok(noCanvas.assessment.missing.includes('same-frame canvas allocation estimate unavailable'))
+    extension.framebufferTexture2DMultisampleEXT(0x8d40, 0x8ce0, 0x0de1, color, 0, 4)
+    const staleMsaa = graphicsSubsystemBudgetSnapshot(emptyInputs(), frame, [], f.resources, f.properties, canvas)
+    assert.equal(staleMsaa.sameFrameStorage, false, 'Implicit MSAA can change without a storage-call counter change')
+    assert.equal(staleMsaa.knownGpuBudgetLowerBounds!.pipeline.estimatedImplicitMultisampleBytes, null)
+    extension.framebufferTexture2DMultisampleEXT(0x8d40, 0x8ce0, 0x0de1, color, 0, 2)
+    const added = f.upload(new Uint8Array(4))
+    const stale = graphicsSubsystemBudgetSnapshot(emptyInputs(), frame, [], f.resources, f.properties, canvas)
+    assert.equal(stale.sameFrameStorage, false)
+    assert.equal(stale.knownGpuBudgetLowerBounds!.pipeline.estimatedDefaultFramebufferBytes, null)
+    assert.equal(stale.knownGpuBudgetLowerBounds!.pipeline.estimatedImplicitMultisampleBytes, null)
+    assert.equal(stale.knownGpuBudgetLowerBounds!.byOwner.postAndEffects, actualBytes)
+    assert.ok(stale.assessment.missing.includes('same-frame implicit-MSAA allocation estimate unavailable'))
+    f.gl.deleteBuffer(added); f.gl.deleteTexture(color)
   } finally { meter.dispose(); target.dispose(); f.resources.dispose() }
 })
 
@@ -362,7 +549,7 @@ test('known mapped GPU storage can exceed its owner budget even while complete G
     const snapshot = graphicsSubsystemBudgetSnapshot(emptyInputs(), frame, [], f.resources, f.properties, 0)
     assert.equal(snapshot.assessment.status, 'over-budget-or-inconsistent')
     assert.ok(snapshot.assessment.issues.some((issue) =>
-      issue.scope === 'postAndEffects' && issue.metric === 'knownMappedGpuBytes' && issue.observed === 268435456))
+      issue.scope === 'postAndEffects' && issue.metric === 'knownPipelineGpuBytesIncludingEstimates' && issue.observed === 268435456))
     assert.equal(snapshot.subsystems!.postAndEffects.resources.gpuAllocatedBytes, null)
     f.gl.deleteTexture(handle)
     const stale = graphicsSubsystemBudgetSnapshot(emptyInputs(), frame, [], f.resources, f.properties, 0)

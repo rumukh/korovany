@@ -4090,12 +4090,11 @@ export class GameEngine {
         { name: 'world', subsystem: 'world', sources: world.sources, receipts: world.receipts, missing: world.missing },
         { name: 'transient-effects', subsystem: 'postAndEffects', sources: effects.sources, receipts: effects.receipts, missing: effects.missing },
       ],
-      sharedTextures: [this.artLibrary.rampTexture],
+      standardPipelineTextures: this.artLibrary.getStandardTextureInventory(),
       missing: [
         'Engine geometry cache entries not exposed by a live presenter are outside the retained CPU inventory',
         'Unused shared material-library resources and hidden injected-uniform textures have no inventory API',
         'Persistent effects outside registered atmosphere/flame roots are unattributed, not world art',
-        'Shared shadow/pipeline allocations require an explicit exclusive charge policy',
       ],
     }
   }

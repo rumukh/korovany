@@ -22,7 +22,8 @@ export interface GraphicsSubsystemInputs {
   readonly policy: VisualQualityPolicy
   readonly roots: readonly GraphicsSourceRoot[]
   readonly owners: readonly GraphicsOwnerInventory[]
-  readonly sharedTextures: readonly THREE.Texture[]
+  /** Already-created standard-family ramp/contact maps, billed once to the pipeline by policy. */
+  readonly standardPipelineTextures: readonly THREE.Texture[]
   readonly missing: readonly string[]
 }
 interface CpuAllocation {
@@ -57,6 +58,8 @@ export function collectGraphicsSubsystemInventory(
   const missing = new Set(inputs.missing)
   const cpu = new Map<object, CpuAllocation>()
   const claims = new Map<object, Set<VisualSubsystem>>()
+  const standardPipelineTextures = new Set(inputs.standardPipelineTextures)
+  const standardMapBackings = new Set([...standardPipelineTextures].map(textureData).filter((value) => value !== null))
   const resolver = new GraphicsSourceResolver(() => [
     ...inputs.roots,
     ...inputs.owners.flatMap((owner) => owner.sources.map((root) => ({ root, subsystem: owner.subsystem }))),
@@ -80,10 +83,12 @@ export function collectGraphicsSubsystemInventory(
     // Reuse the production receipt validator, including canonical-sight's CPU-only invariant.
     sumVisualAllocationReceipts([value])
     addClaim(value.identity, value.chargedTo)
+    const billedOwner = value.kind === 'other' && standardMapBackings.has(value.identity)
+      ? 'postAndEffects' : value.chargedTo
     const existing = cpu.get(value.identity)
     if (existing) {
       duplicateReceipts++
-      existing.owners.add(value.chargedTo)
+      existing.owners.add(billedOwner)
       existing.providers.add(provider)
       if (authoritative) existing.kinds.add(value.kind)
       existing.conflict ||= existing.bytes !== value.cpuBytes ||
@@ -91,7 +96,7 @@ export function collectGraphicsSubsystemInventory(
       return
     }
     cpu.set(value.identity, {
-      identity: value.identity, owners: new Set([value.chargedTo]), kinds: new Set([value.kind]),
+      identity: value.identity, owners: new Set([billedOwner]), kinds: new Set([value.kind]),
       bytes: value.cpuBytes, cpuOnly: value.gpuBytes === 0, providers: new Set([provider]), conflict: false,
     })
   }
@@ -177,7 +182,9 @@ export function collectGraphicsSubsystemInventory(
       }
     }
   }
-  for (const value of inputs.sharedTextures) texture(value, new Set(VISUAL_SUBSYSTEMS))
+  for (const value of standardPipelineTextures) {
+    if (!textures.has(value)) textures.set(value, new Set())
+  }
   const targets = resources.liveRenderTargets()
   for (const target of targets) {
     // Physical target ownership is decided by the renderer observer. Do not
@@ -186,7 +193,15 @@ export function collectGraphicsSubsystemInventory(
     if (target.depthTexture) resources.linkTexture(target.depthTexture, properties)
   }
   for (const [value, owners] of textures) {
-    resources.linkTexture(value, properties)
+    const standardMap = standardPipelineTextures.has(value)
+    resources.linkTexture(value, properties, standardMap)
+    if (standardMap) {
+      const data = textureData(value)
+      if (data instanceof ArrayBuffer || (typeof SharedArrayBuffer !== 'undefined' && data instanceof SharedArrayBuffer)) {
+        receipt({ identity: data, chargedTo: 'postAndEffects', kind: 'other',
+          cpuBytes: data.byteLength, gpuBytes: null }, `standard-map:${value.id}`, false)
+      }
+    }
     for (const owner of owners) {
       addClaim(value, owner)
       const data = textureData(value)
@@ -220,7 +235,7 @@ export function collectGraphicsSubsystemInventory(
   const unmapped = [...cpu.values()].filter((entry) => !entry.cpuOnly && !gpu.mappedBackings.has(entry.identity))
   const canonicalOnGpu = [...cpu.values()].filter((entry) =>
     entry.kinds.has('canonical-sight') && gpu.mappedBackings.has(entry.identity))
-  if (sharedCpuBytes || gpu.sharedBytes) missing.add('shared physical allocations have no exclusive subsystem charge policy')
+  if (sharedCpuBytes || gpu.sharedBytes) missing.add('unassigned cross-owner physical allocations remain shared outside known pipeline billing')
   if (conflicts.length) missing.add('conflicting live allocation receipts')
   if (unmapped.length) missing.add(`${unmapped.length} CPU backing identities have no observed GL storage mapping (including unuploaded retained geometry)`)
   if (canonicalOnGpu.length) missing.add('canonical-only sight backing unexpectedly observed in GPU storage')
@@ -269,6 +284,17 @@ export function collectGraphicsSubsystemInventory(
   }
 }
 
+export function matchingGraphicsCanvasEstimate(
+  frame: Pick<GraphicsFrame, 'bufferDimensions'> | null,
+  width: number, height: number, samples: number | null,
+): number | null {
+  if (!Number.isSafeInteger(width) || width < 1 || !Number.isSafeInteger(height) || height < 1 ||
+    samples === null || !Number.isSafeInteger(samples) || samples < 0 ||
+    frame?.bufferDimensions?.width !== width || frame.bufferDimensions.height !== height) return null
+  const bytes = width * height * 4 * (1 + (samples > 1 ? samples : 0) + Math.max(1, samples))
+  return Number.isSafeInteger(bytes) ? bytes : null
+}
+
 export function graphicsSubsystemBudgetSnapshot(
   inputs: GraphicsSubsystemInputs, frame: GraphicsFrame | null,
   sourceDetails: readonly GraphicsSourceSubmission[],
@@ -288,8 +314,28 @@ export function graphicsSubsystemBudgetSnapshot(
   }
   const inventory = collectGraphicsSubsystemInventory(inputs, resources, properties)
   const sameFrameStorage = frame?.resources !== null && frame?.resources !== undefined &&
-    ['allocatedBytes', 'releasedBytes', 'creates', 'deletes'].every((key) =>
+    ['allocatedBytes', 'releasedBytes', 'creates', 'deletes', 'implicitMultisampleBytesEstimate'].every((key) =>
       Reflect.get(frame.resources!, key) === Reflect.get(ledger, key))
+  const canvasEstimate = sameFrameStorage ? defaultFramebufferBytes : null
+  const implicitMsaaEstimate = sameFrameStorage ? frame!.resources!.implicitMultisampleBytesEstimate : null
+  for (const value of [canvasEstimate, implicitMsaaEstimate]) {
+    if (value !== null && (!Number.isSafeInteger(value) || value < 0)) {
+      throw new RangeError('Invalid same-frame pipeline allocation estimate')
+    }
+  }
+  const knownGpuBudgetLowerBounds = {
+    byOwner: {
+      ...inventory.gpu.byOwner,
+      postAndEffects: inventory.gpu.byOwner.postAndEffects + (canvasEstimate ?? 0) + (implicitMsaaEstimate ?? 0),
+    },
+    pipeline: {
+      observedStorageBytes: inventory.gpu.byOwner.postAndEffects,
+      estimatedDefaultFramebufferBytes: canvasEstimate,
+      estimatedImplicitMultisampleBytes: implicitMsaaEstimate,
+      estimatesComplete: canvasEstimate !== null && implicitMsaaEstimate !== null,
+      scope: 'Known observed pipeline storage plus available same-frame canvas/implicit-MSAA estimates; not resident VRAM or complete ownership',
+    },
+  }
   const submissions = frame?.subsystems ?? null
   const subsystems = {
     dynamicArt: { draws: submissions?.byOwner.dynamicArt ?? null, cpuMs: null, resources: inventory.byOwner.dynamicArt },
@@ -297,7 +343,7 @@ export function graphicsSubsystemBudgetSnapshot(
     postAndEffects: { draws: submissions?.byOwner.postAndEffects ?? null, cpuMs: null, resources: inventory.byOwner.postAndEffects },
   }
   const assessed = allocation && frame ? assessVisualSubsystemBudget(allocation, {
-    frame, subsystems, resourcesComplete: false, defaultFramebufferBytes,
+    frame, subsystems, resourcesComplete: false, defaultFramebufferBytes: canvasEstimate,
     unattributedDraws: submissions?.byOwner.unattributed,
     worldShadows: submissions ? {
       shadowDraws: submissions.byOwner.world.shadow.calls,
@@ -308,20 +354,26 @@ export function graphicsSubsystemBudgetSnapshot(
   const missing = [...new Set([
     ...inventory.missing, ...(submissions?.missing ?? ['same-frame source submissions unavailable']),
     ...(!sameFrameStorage ? ['live inventory storage changed since the measured frame'] : []),
+    ...(canvasEstimate === null ? ['same-frame canvas allocation estimate unavailable'] : []),
+    ...(implicitMsaaEstimate === null ? ['same-frame implicit-MSAA allocation estimate unavailable'] : []),
     ...(!allocation ? ['legacy policy has no subsystem tier allocation'] : []),
     ...(!frame ? ['no completed diagnostic frame'] : []),
     ...(assessed?.missing ?? []),
   ])]
   const knownGpuOverruns = allocation ? VISUAL_SUBSYSTEMS.flatMap((owner) => {
-    const observed = inventory.gpu.byOwner[owner]
+    const observed = knownGpuBudgetLowerBounds.byOwner[owner]
     const limit = allocation.limits[owner].gpuAllocatedBytes
-    return observed > limit ? [{ scope: owner, metric: 'knownMappedGpuBytes', observed, limit }] : []
+    return observed > limit ? [{
+      scope: owner,
+      metric: owner === 'postAndEffects' ? 'knownPipelineGpuBytesIncludingEstimates' : 'knownMappedGpuBytes',
+      observed, limit,
+    }] : []
   }) : []
   const issues = [...(assessed?.issues ?? []), ...knownGpuOverruns]
   return {
     revision: 'gfx-subsystem-observer-1', frameId: frame?.id ?? null,
     provisional: true, allocation, subsystems,
-    submissions, sourceDetails, inventory, sameFrameStorage,
+    submissions, sourceDetails, inventory, sameFrameStorage, knownGpuBudgetLowerBounds,
     inventorySample: 'live retained owners at snapshot time; not a construction-peak or historical-frame inventory',
     assessment: {
       status: issues.length ? 'over-budget-or-inconsistent' : 'incomplete',

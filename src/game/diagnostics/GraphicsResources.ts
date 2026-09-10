@@ -19,7 +19,7 @@ interface Allocation {
   samples: number
   images: Map<string, ImageAllocation>
   backings: Set<object>
-  pipeline: 'postAndEffects' | 'shared-shadow' | null
+  pipeline: 'post-target' | 'shadow-target' | 'standard-map' | null
 }
 
 export interface GraphicsResourceSnapshot {
@@ -392,7 +392,8 @@ export class GraphicsResources {
   }
 
   /** A texture's real renderer handle, not its CPU byte length or scene visibility. */
-  linkTexture(texture: THREE.Texture, properties: THREE.WebGLRenderer['properties']): boolean {
+  linkTexture(texture: THREE.Texture, properties: THREE.WebGLRenderer['properties'],
+    standardPipelineMap = false): boolean {
     if (!properties.has(texture)) return false
     const values: unknown = properties.get(texture)
     if (!values || typeof values !== 'object') return false
@@ -401,6 +402,7 @@ export class GraphicsResources {
     const allocation = this.resources.get(resource)
     if (!allocation) return false
     allocation.backings.add(texture)
+    if (standardPipelineMap) allocation.pipeline ??= 'standard-map'
     return true
   }
 
@@ -424,7 +426,7 @@ export class GraphicsResources {
       if (!handle || typeof handle !== 'object') return
       const allocation = this.resources.get(handle)
       if (!allocation) return
-      allocation.pipeline = shadow || allocation.pipeline === 'shared-shadow' ? 'shared-shadow' : 'postAndEffects'
+      allocation.pipeline = shadow || allocation.pipeline === 'shadow-target' ? 'shadow-target' : 'post-target'
     }
     for (const texture of [...target.textures, ...(target.depthTexture ? [target.depthTexture] : [])]) {
       this.linkTexture(texture, properties)
@@ -495,10 +497,11 @@ export class GraphicsResources {
           for (const owner of submittedOwners ?? []) owners.add(owner)
         }
       }
-      if (entry.pipeline === 'postAndEffects') owners.add('postAndEffects')
       const list = [...owners].sort()
-      const owner = entry.pipeline === 'shared-shadow' || list.length > 1
-        ? 'shared' : list.length ? list[0] : 'unattributed'
+      // The established subsystem policy bills common maps and all render targets
+      // to the pipeline once, independently of their observed sampling consumers.
+      const owner = entry.pipeline !== null ? 'postAndEffects' :
+        list.length > 1 ? 'shared' : list.length ? list[0] : 'unattributed'
       if (owner === 'shared') sharedBytes += entry.bytes
       else if (owner === 'unattributed') unattributedBytes += entry.bytes
       else byOwner[owner] += entry.bytes

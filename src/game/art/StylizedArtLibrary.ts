@@ -393,6 +393,13 @@ export class StylizedArtLibrary {
     return this.rampTextureInternal
   }
 
+  /** Diagnostic identities only: never creates a contact map or transfers ownership. */
+  getStandardTextureInventory(): readonly THREE.DataTexture[] {
+    if (this.disposed) return []
+    return this.contactShadowTexture
+      ? [this.rampTextureInternal, this.contactShadowTexture] : [this.rampTextureInternal]
+  }
+
   /** Count of shared materials handed out by {@link acquireMaterial}. */
   get sharedMaterialCount(): number {
     return this.sharedMaterials.size

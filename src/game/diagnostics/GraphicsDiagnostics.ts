@@ -8,7 +8,7 @@ import {
 } from './GraphicsFrameMeter.ts'
 import { GraphicsResources } from './GraphicsResources.ts'
 import {
-  graphicsSubsystemBudgetSnapshot, type GraphicsSubsystemInputs,
+  graphicsSubsystemBudgetSnapshot, matchingGraphicsCanvasEstimate, type GraphicsSubsystemInputs,
 } from './GraphicsSubsystemInventory.ts'
 import type { GraphicsSourceRoot } from './GraphicsSubsystemSubmissions.ts'
 import {
@@ -276,12 +276,10 @@ export class GraphicsDiagnostics {
     const width = canvas.width
     const height = canvas.height
     const inputs = this.host.subsystemInventory?.()
-    const frameSize = this.lastFrame?.bufferDimensions
     const subsystemBudget = inputs ? graphicsSubsystemBudgetSnapshot(
       inputs, this.lastFrame, this.meter.subsystemSubmissions.sourceDetails(),
       this.meter.resources, this.renderer.properties,
-      frameSize?.width === width && frameSize.height === height
-        ? width * height * 4 * (1 + (this.defaultSamples > 1 ? this.defaultSamples : 0) + Math.max(1, this.defaultSamples)) : null,
+      matchingGraphicsCanvasEstimate(this.lastFrame, width, height, this.defaultSamples),
     ) : null
     return {
       apiVersion: GRAPHICS_DIAGNOSTICS_VERSION, visualRevision: GRAPHICS_VISUAL_REVISION,

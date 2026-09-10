@@ -20,6 +20,7 @@ opt-in, and bloom-off/Low retain the sole pipeline's genuine direct path.
 | Strict portrait-save fix | `f61ce8d9e3381d4c73a48b0e09d40a777831e619` | Unchanged Chronicle synchronization no longer increments region revisions; full save comparison remains strict |
 | Live subsystem diagnostics | `6313eecf66472cb83914abb5c748340acc5af648` | Actual source/pass and GL-handle attribution, shared/unmapped buckets and explicitly incomplete assessment |
 | Flush ground receivers | `34b2bd4552bc921a5385c9521a1a9ab0122f23b5` | Paving on terrain and render-only road alignment after canonical capture; fixed depth bias and one factory road material |
+| Known pipeline allocation billing | `218ae58c79380d695c7cdbdacf77e50a49ba8dbd` | Standard maps and observed shadow/post targets billed once; matching canvas/MSAA estimates separately labeled |
 
 The merges preserve the individual histories, including the original GFX-01
 corpus and GFX-02 failed motion evidence. Their measurements remain attributed
@@ -110,21 +111,28 @@ once to `dynamicArt`, `world`, `postAndEffects` or `unattributed`.
 The snapshot combines those actual completed-frame counts with current retained
 owner receipts and observed GL handles. Source details are bounded to 2,048
 records; unknown ownership stays unattributed. CPU backing identity is distinct
-from actual GPU storage size. Shared and unmapped GPU allocations remain
+from actual GPU storage size. Unassigned shared and unmapped GPU allocations remain
 separate, known mapped lower bounds can expose overruns, and missing subsystem
 CPU scopes remain `null`. A no-overrun frame is not a complete inventory or
 device pass. See [live subsystem diagnostics](graphics-subsystem-diagnostics.md)
 for exact fields, stale-frame checks and explicit coverage gaps.
 
-One reviewed follow-up is still required for this diagnostic checkpoint:
-the established subsystem policy already assigns known common shadow targets,
-ramps/contact maps and canvas/MSAA to `postAndEffects`, while the initial
-observer leaves some of those known allocations in its shared bucket. Its
-reported known post-processing lower bound is therefore not yet the complete
-policy-assigned lower bound. The original diagnostics owner is correcting those
-explicit known resources; unrelated shared or unmapped resources must not be
-silently reassigned to make coverage look complete. Integrate only that owner's
-coordinator-forwarded immutable follow-up before the final profiling matrix.
+The approved pipeline-billing follow-up now applies the established subsystem
+policy to known common shadow/post targets and standard ramps/contact maps:
+these exact physical identities are charged to `postAndEffects` once, while
+raw `claimantOwners` preserve who sampled them. The read-only
+`StylizedArtLibrary.getStandardTextureInventory()` exposes only already-created
+standard maps through `standardPipelineTextures`; it creates or uploads nothing
+and transfers no resource ownership. Unrelated cross-owner storage stays shared.
+
+`subsystemBudget.knownGpuBudgetLowerBounds.pipeline` reports observed storage
+and available matching canvas/implicit-MSAA estimates separately. Stale storage,
+resized framebuffers, unknown sample counts or absent frames do not get invented
+estimates. The known pipeline lower bound can expose an overrun without making
+full `gpuAllocatedBytes`, disjoint CPU timings, unused cache/material storage
+or construction-peak coverage complete. The original `6313eecf` smoke remains
+historical evidence; its formerly shared pipeline classification is not a fresh
+measurement of this merged checkpoint.
 
 The flush-receiver checkpoint composes through the same world inventory.
 Enhanced paving removes its former 16 cm lift. Rendered roads cancel their
@@ -159,7 +167,7 @@ character-direction approval resolves the final world/motion/device matrix.
 | `GameEngine.getVisualPolicy()` | Single effective settings policy, reported by the existing diagnostic snapshot. New art, compact DOM and effect preferences do not become campaign fields. |
 | `ContactPresentation` / `getTransientEffectInventory()` | Actual cached posed/material routing and source/backing inventory; explicit fallback provenance and incomplete GPU/CPU measurement coverage. |
 | Diagnostic `rendering` | Combined `camera`, `bindings`, `post`, `foundationFixture`, `characterPortrait`, `atmosphere`, `secondaryEffects`, `contacts` and `transientEffects`; raw inventories contain object identities and are not automatically JSON-safe GPU evidence. |
-| Diagnostic `subsystemBudget` | Actual same-frame owner/pass submissions, bounded source details, live retained CPU/GL inventory, shared/unattributed mapping, `sameFrameStorage` and provisional `assessment`; missing GPU/CPU coverage is explicit. |
+| Diagnostic `subsystemBudget` | Actual same-frame owner/pass submissions, bounded source details, live retained CPU/GL inventory, known pipeline billing with raw consumers, `sameFrameStorage`, `knownGpuBudgetLowerBounds` and provisional `assessment`; missing GPU/CPU coverage is explicit. |
 
 GFX-05 Stage B's completed posed-contact selection, per-hit material routing and
 perfect-guard/cleave feedback are now integrated. Final visual tuning and actual
