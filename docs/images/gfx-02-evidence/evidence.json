@@ -1,0 +1,2447 @@
+{
+  "schemaVersion": 1,
+  "runtimeCommit": "bfae58b34a411ab434d387e6710fd97be6b2acb3",
+  "buildSha256": "368b220caff1b70dd9b35f9ceda3ab294677e60a41ad19a207fdc137805f3ec1",
+  "workloadSha256": "4addf5fd3fd1770b2f70e384446c86504078417a7eb651417ec30d17ce8c0839",
+  "rawBatchRoot": "C:\\Users\\predi\\.copilot\\session-state\\071ce686-b3bf-4406-b482-0cad5b87136b\\files\\browser-windows\\GFX02-BROWSER-20260909-01-PRELAUNCH2\\gfx02-ba35ad41-077f-4783-afa8-5980af594925",
+  "startedAt": "2026-09-09T21:25:36.3287841+00:00",
+  "finishedAt": "2026-09-09T21:32:07.8723624+00:00",
+  "verdict": "Executed matrix complete; temporal riverside torso visibility fails after native route. Not a final camera/tier/art pass.",
+  "rawInventory": [
+    {
+      "file": "01-glsl-smoke\\guard-opening-1-browser.json",
+      "bytes": 47563,
+      "sha256": "6185445f3f844592ab43f513a8c1a917b804d631e6c6bf4b4a8fcd3d5a661acd"
+    },
+    {
+      "file": "01-glsl-smoke\\guard-opening-1.json",
+      "bytes": 101213,
+      "sha256": "76e9216684676f2efb6551b8f3f1694050a1cd93d28eb66e7927869fcaa78005"
+    },
+    {
+      "file": "01-glsl-smoke\\guard-opening-1.png",
+      "bytes": 315472,
+      "sha256": "599b06caa1862b74621d4c801872990d480dcdfdfaf6402537f0db17f1c8fbde"
+    },
+    {
+      "file": "01-glsl-smoke\\manifest.json",
+      "bytes": 3812,
+      "sha256": "7ca0e9ee82af57f0512a0d3e4bd6a3164189957e16c8ef495ff43a2a2a959f82"
+    },
+    {
+      "file": "01-glsl-smoke\\process-log.json",
+      "bytes": 7518,
+      "sha256": "27c893eb08d0435fee3974d5b1d531ea458e105dbb1f5fcbefa73df5193d78e2"
+    },
+    {
+      "file": "01-glsl-smoke-runner.log",
+      "bytes": 92,
+      "sha256": "ea030e04897026f87d0bdddd39a4803ff4f8c5eeb614420b96c7ba4c0adc1a71"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-1-browser.json",
+      "bytes": 47743,
+      "sha256": "1f4789ca85f5d7d462575ee7d65ab2814f0317fd064148ba9fa37a1edb57a363"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-1.json",
+      "bytes": 119093,
+      "sha256": "a89294717fd822a4d78fc2148fe01bd71414045c15a55584fd6637bf4026729f"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-1.png",
+      "bytes": 1468232,
+      "sha256": "a49079cdbf1eb2be037717387964a970576a6c82bb7d715a50994b35a4010bb5"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-active-end.png",
+      "bytes": 1424525,
+      "sha256": "a782d50a1a99a3c42c10804800000e3e18e20f8511a03c686bf65e4c5be26220"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-motion-00.png",
+      "bytes": 1426380,
+      "sha256": "7ada56c5a3142388a4c592f06e70ed1bcbac354e8d921a86c574bb6962effb21"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-motion-01.png",
+      "bytes": 1429795,
+      "sha256": "7a528ff7bef5bcfe2a771391cf770482b3fe4bfbf1838cb84666187c7d9e627a"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-motion-02.png",
+      "bytes": 1440777,
+      "sha256": "8304565fe1c5ca3bdefc62756ca7037aa31558983ff0dff951d81dd4a4ac9865"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-motion-03.png",
+      "bytes": 1429348,
+      "sha256": "b2f6fb81585bc2d31396b36114739c56b047e89f7de5f4d8e312ba76a5202615"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-motion-04.png",
+      "bytes": 1428005,
+      "sha256": "106fd8f6feb4962c849bd0e989a033096975b42fb1f1d78199f7f91348f46f92"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-motion-05.png",
+      "bytes": 1429868,
+      "sha256": "c5cf15865b76d52ee0c4f4c052efa78be288ff6d576e79bec992b02c05d02236"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-motion-06.png",
+      "bytes": 1432525,
+      "sha256": "49cb2fa7c4e1584a1195cd0a26c617af58bbce76cdfcb1497e04ae39c7beead6"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-motion-07.png",
+      "bytes": 1427364,
+      "sha256": "a51e4ed35f3139e61ac8593ef3d642fddcad4b9e0de7cd08b64b67b6b8e105c0"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-motion-08.png",
+      "bytes": 1437542,
+      "sha256": "261ff80df1d7e806f656893335a6f37f33f28f8bcd0e74b1de6cf0d5a9946638"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-motion-09.png",
+      "bytes": 1439569,
+      "sha256": "649f7cc50e094b1476b8c5d59576091618f9269055689cce082e4b4b575ad293"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-motion-10.png",
+      "bytes": 1439835,
+      "sha256": "771e12464fb3131e2a85bd75e4f790e271e369cac2a0adb0e5d489cdf5b4f8c9"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-motion-11.png",
+      "bytes": 1443688,
+      "sha256": "b7e6c713be677c2d96cca0526ae252c7559d05f4b1e331c6089a916ddeb0dcf3"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-profile.json",
+      "bytes": 777454,
+      "sha256": "fe707de10f3a6e82564a704134fb8780f89ef93b3ceee0255eca468d22183f07"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-1-browser.json",
+      "bytes": 48813,
+      "sha256": "16b5c0979e0756346e4e9f45432ec59b78889ec3019af406892624921f7bfa2e"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-1.json",
+      "bytes": 117544,
+      "sha256": "55619cae0232209984beb6edc2797100b3de80c07e37e05edb443e496085cc5b"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-1.png",
+      "bytes": 1470618,
+      "sha256": "171a7286e1702001bcd7cc790d065f35aa67ec92e407d9de843617811950d932"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-active-end.png",
+      "bytes": 1165488,
+      "sha256": "810c5881ba19b8a845e01a9af34445b6ba0d81e3d4bcfb8adefbc7c54f47ac82"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-00.png",
+      "bytes": 1152013,
+      "sha256": "264c1b2004621e825f590c71dc7fdb82b07021d41c543307d04fd920625abc4f"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-01.png",
+      "bytes": 1166146,
+      "sha256": "23e9c8a20adfdd6b7d27dddf31a21f0261d55e4c06af257747177946c1bac434"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-02.png",
+      "bytes": 1166622,
+      "sha256": "a6f58834815512c2e1f5ffcd10f5baee0668c7f725878b90e6b584d1c6fa80c6"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-03.png",
+      "bytes": 1171412,
+      "sha256": "b637264ff40e621b14e9b76d14c095dbfe1d3828105b3f0b57cb745695325cd6"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-04.png",
+      "bytes": 1174358,
+      "sha256": "41f33b73647a3732c228656c06dd089805b9d2fdb3a0be83af4592abb13de440"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-05.png",
+      "bytes": 1163503,
+      "sha256": "10482bef71699259f0a5dcbd595c480cde7b3dc01dedfb8c71cc0b86675571ac"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-06.png",
+      "bytes": 1177253,
+      "sha256": "7f7bd3c64a644bc9e12ffb81e0a86248131df8bf37dadfa95f38b3eceb5f90b6"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-07.png",
+      "bytes": 1174630,
+      "sha256": "c313af670970037d8b79719bf760cf4cd6396dcdeb62e4c012cc643aa1fb36e4"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-08.png",
+      "bytes": 1174157,
+      "sha256": "3a5373cd1a6967705e351623c2409f4754178dfc52af73dff17b52088b0f65d5"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-09.png",
+      "bytes": 1186204,
+      "sha256": "79f985a3b469452c2ce2155466ddb9eba2dc0344ec0ae174ccec9db699809959"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-10.png",
+      "bytes": 1184768,
+      "sha256": "7d3416abc4e046cc99a84715b91fec26c2a307051ca56d3db2f739c1c57fe527"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-11.png",
+      "bytes": 1177587,
+      "sha256": "74495c7c7ef13c171eaabc041c8912d1e429cc81a6af601ca442403b2a307d3a"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-profile.json",
+      "bytes": 778121,
+      "sha256": "54885fa31b84707dc12070dc02d5a3682754c0d1095af0f915fe7573fe7be581"
+    },
+    {
+      "file": "02-camera-routes\\manifest.json",
+      "bytes": 1119019,
+      "sha256": "4fa9afc653a2270ecd20b8fa39eb5880030eb43a15633e4e2fd3654e6e757c1d"
+    },
+    {
+      "file": "02-camera-routes\\process-log.json",
+      "bytes": 9247,
+      "sha256": "3d30861d456832042b620b435ae58850f5e2cd518bfe4675917428bbb5b78578"
+    },
+    {
+      "file": "02-camera-routes-runner.log",
+      "bytes": 227,
+      "sha256": "c3b1df6044b59e94eaf10c37a0ef1b27dfff8cc1802a65fce4d734d0b2b4c765"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-1-browser.json",
+      "bytes": 47471,
+      "sha256": "d17c47e42156d6bd3977ac1f633bbc60051c4e320274ea9323045293e6c0ad5d"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-1.json",
+      "bytes": 98226,
+      "sha256": "1801e16779790e7ac8a24322500d9211a8276f6a8e8f561fed8af6a8d40b4dfb"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-1.png",
+      "bytes": 1448777,
+      "sha256": "fe31aac28cc9217579b156bdcbe65f43b47395f5a340f995008b80db135832a8"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-2-browser.json",
+      "bytes": 48616,
+      "sha256": "4b8494bd2bc2366569003c488ee83ab70f38aab341fba73a5b29dffa08df4e54"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-2.json",
+      "bytes": 98227,
+      "sha256": "5cb9bd5e3959d598b2365ed97a3b7a2165c16474c0445db0a359950d693dacea"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-2.png",
+      "bytes": 1448777,
+      "sha256": "fe31aac28cc9217579b156bdcbe65f43b47395f5a340f995008b80db135832a8"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-active-end.png",
+      "bytes": 1453127,
+      "sha256": "0317b24d220c3ac50983ac8a67ca30a95c58defadf6ce1229f75b4a6b9d6b524"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-motion-00.png",
+      "bytes": 1452069,
+      "sha256": "3fd7177889b75289927ffa9df64ae3f10b96dae43d0db76725006cbd0f50386d"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-motion-01.png",
+      "bytes": 1446854,
+      "sha256": "4f31567ac5757e110d7924825008c73fb20cbbd5d1d53134bf0cf4e5ac9742d9"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-motion-02.png",
+      "bytes": 1466459,
+      "sha256": "0cbb699f744d88b10eb253878f80507184132c8823f4afd759bafbd9d195c73a"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-motion-03.png",
+      "bytes": 1463886,
+      "sha256": "a28a72067ff02f900a1c151099474256338b7eea50307041d22250095ed68d57"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-motion-04.png",
+      "bytes": 1452819,
+      "sha256": "e2dd85a40f7389d38fbd1068b20fe275ababbe259b6fd64052d487015a068f3a"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-motion-05.png",
+      "bytes": 1464398,
+      "sha256": "79db90ac0526d2364ce5680ccca033f9a14815c4c7cfe57c607b66bcfa8ae782"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-motion-06.png",
+      "bytes": 1462878,
+      "sha256": "ed309130b38b9e840a3ce11d6d0e98a4c7deff003b891b28024a21ad7e3af01b"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-motion-07.png",
+      "bytes": 1460774,
+      "sha256": "9f1d87e45286ec313d34edb4584748bd83207abca8c9c01175cc98af90cc261a"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-motion-08.png",
+      "bytes": 1480104,
+      "sha256": "4fcf4504bb6f10964f5e8a5cc79d4c3ffd65e28223b27722911a2d97d88981ea"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-motion-09.png",
+      "bytes": 1483716,
+      "sha256": "85380c86f737f1b1d2c671cdc1dfdbab793218a3f3d16feaf3c782366b7afa66"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-motion-10.png",
+      "bytes": 1487947,
+      "sha256": "6fc4cae706a134315ca83c3644778a11b40e63fb72b9ff40157ecf7dde9cd0ce"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-motion-11.png",
+      "bytes": 1489907,
+      "sha256": "bb42f28a36d2a1ebc748f9eab8075748ae666e3df7bc41d5f367f860d3cf8406"
+    },
+    {
+      "file": "03-faction-frames\\elf-opening-profile.json",
+      "bytes": 737000,
+      "sha256": "06c2a679ddbd1ff6d426fb710bc07903ffae88c98c5bc1805338495cd7e9b671"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-1-browser.json",
+      "bytes": 48744,
+      "sha256": "b262da1b24f2f4f20907b4efd254ec39db7ffb021da9755ca599f69f2fa653fc"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-1.json",
+      "bytes": 100749,
+      "sha256": "42aef42732ee3bd4deec07aeea60d3f0a6ad88c8df7f827514ab5b27d77547f3"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-1.png",
+      "bytes": 1252042,
+      "sha256": "05d8b94dba5ef53c3e4726a94a9aa4e615a9a22bc74987c290d56d518ac0d695"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-2-browser.json",
+      "bytes": 48750,
+      "sha256": "f62167c8743fab0154d619c63d3fe8ebe6e46fad92af0c49fe4401bea69927be"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-2.json",
+      "bytes": 100688,
+      "sha256": "c066c14c4cc3f3b99564c7185737a559d26b8aef3558ce22b54846e11e4a85ef"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-2.png",
+      "bytes": 1252042,
+      "sha256": "6cd20708abc67a212376b6335dbdea35e356759afe5d2b61073c61d9a632852d"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-active-end.png",
+      "bytes": 1329526,
+      "sha256": "ce39480cb5a2ada84d23e289a3c4f3484f5ab86cbfac702e4055b89b76900bac"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-motion-00.png",
+      "bytes": 1328237,
+      "sha256": "849a4741976f247c0203d08e648f13ca80bd1e6999c7ff0df4de87a0bf806762"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-motion-01.png",
+      "bytes": 1327487,
+      "sha256": "1efdeabec85a1f6885bf22039ae84d20e6265f684f14864e8518ac5c35e6db29"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-motion-02.png",
+      "bytes": 1326895,
+      "sha256": "74a5f9c0a5c42acd972500253783281e057dc27b0c7c29c2946bd27cb9902e29"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-motion-03.png",
+      "bytes": 1326467,
+      "sha256": "8e47458d29df6864d50ca4b1ed4b84eeff11dd3c1cc0dbeca7d19502796cfb51"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-motion-04.png",
+      "bytes": 1325332,
+      "sha256": "97f271e028f83e764a7da1994fcea2a0596fe3eb64925fc8b87a36beb9b373da"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-motion-05.png",
+      "bytes": 1325210,
+      "sha256": "79f973eedc0def6423d46e041c4a39c1dd6bf0ddfc23b8d837eaa27ba8a8cd9a"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-motion-06.png",
+      "bytes": 1325344,
+      "sha256": "c0c2ff8325a1f23aac3a273ae04ddccb98cc4e8879c40dee6adb98c4d9622748"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-motion-07.png",
+      "bytes": 1326679,
+      "sha256": "e282f92d1b6d7013e992645c7651e6516c288eafc34d1f958ada5ceac0a3744a"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-motion-08.png",
+      "bytes": 1327570,
+      "sha256": "617149bd05bd9e1d6b8e3147861c9488561246102de3eae818f74402ffad125d"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-motion-09.png",
+      "bytes": 1325077,
+      "sha256": "1d47159e14c7ecb505cdb576a5f0e5bba11a48f5b01e61b5161204ee7b183cef"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-motion-10.png",
+      "bytes": 1325724,
+      "sha256": "a7e0af145c3881aa77f68b446f831dd9bd36ca04d75c84fbef3862c9d6641892"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-motion-11.png",
+      "bytes": 1328392,
+      "sha256": "bcce00920f8991693ba57457368cff1e2b77545a1ae6463b5bc794587ff07a48"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-profile.json",
+      "bytes": 730156,
+      "sha256": "67b41cc66fd089cf77da504085c8d65f13135dcf5d179dd1367c01036c13f674"
+    },
+    {
+      "file": "03-faction-frames\\manifest.json",
+      "bytes": 1143785,
+      "sha256": "b5b522ae11772931d71b7d05e35cda5c829a4181208cd2d6d23dce26e0cd771e"
+    },
+    {
+      "file": "03-faction-frames\\process-log.json",
+      "bytes": 10117,
+      "sha256": "c520d76591b67fafeff7507fc4cabc857832362cf7d223f58e33548d13282c3b"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-1-browser.json",
+      "bytes": 48688,
+      "sha256": "925230f6783512c9d27e4bdd85ece0dd9ec0ce1155c453f33e689e8283d93511"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-1.json",
+      "bytes": 100900,
+      "sha256": "86af6ccb7ba851190fde98b67434cbab66544f574e7d68bc3216fe987b933188"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-1.png",
+      "bytes": 1324813,
+      "sha256": "0beb6e3d41bd789337d47bcfb95644f8427ec8cf1ac9f9a138a132405e51470f"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-2-browser.json",
+      "bytes": 48687,
+      "sha256": "9d9bc442900bb70c2fbca7ebbe66734708d9d4b76e436bd0fa44a5a650eb2c8a"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-2.json",
+      "bytes": 100871,
+      "sha256": "a7f130cfc867b780c06cb9618f1d79b3a022a9cce536c0c917170733661604fd"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-2.png",
+      "bytes": 1324813,
+      "sha256": "df931e75d6be1ef2b60a2de2c8efca5ef44ae95226782cdf3aabffbf86b87335"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-active-end.png",
+      "bytes": 1345026,
+      "sha256": "79de9b155dc29ded4013b4f63a30a73eefd2c18647fc7f1312036fe6fedee9fa"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-motion-00.png",
+      "bytes": 1344744,
+      "sha256": "9448e8312d82cf064de0f120f67bab1e48e31e27f2695f8c40d1f4598a1d3e79"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-motion-01.png",
+      "bytes": 1347069,
+      "sha256": "0cd62a156cb8d4f8c5a7edb33003a43545e142ee36a3fbaa2ae22be8e0bd74df"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-motion-02.png",
+      "bytes": 1346797,
+      "sha256": "23d49ec521c52641b76839c276fd084dc0c28b1bcf8b6c4ce3893b39b5064cef"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-motion-03.png",
+      "bytes": 1348694,
+      "sha256": "b5e5d6af63171f2ae561af7fc5104f104d7a6ec2d107a518cb708d7024cd289b"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-motion-04.png",
+      "bytes": 1355386,
+      "sha256": "502cf203c2976f9af8e4663cdfda496369badf02b01af7e3fe4e6f3856a93b01"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-motion-05.png",
+      "bytes": 1352062,
+      "sha256": "856943ff86fcd594b2bb8d31c320fc48e539ff3166b87ff2caa296a266d89a68"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-motion-06.png",
+      "bytes": 1350424,
+      "sha256": "3a2c0aeffec0373ac6ef86823e6b1e291407f5b9b73a738a0a7eb517bae888c9"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-motion-07.png",
+      "bytes": 1356591,
+      "sha256": "3c69a01b165a0978df1a0376f8b9cab75c33b70411f071644b96d13845cc330e"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-motion-08.png",
+      "bytes": 1355806,
+      "sha256": "25734157dcb605f9462a7ca830659b46bea1b46b90036866455299d492d35619"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-motion-09.png",
+      "bytes": 1356426,
+      "sha256": "2b5eb7d7702f56f854c518186314716d8d3e986d14ae59acfd21370419d19b8b"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-motion-10.png",
+      "bytes": 1354869,
+      "sha256": "cd2f8ae57bf4603c4f439282d3b648fee6e319f468796ca65f1024adcbb01bc2"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-motion-11.png",
+      "bytes": 1348273,
+      "sha256": "ffc824727843d90e620b2ed521dba1e5bcadd8c309e07118b69d39ee79b073ec"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-profile.json",
+      "bytes": 730766,
+      "sha256": "e872dc72238e5a870462186ecf1324938ffd41e38f2355979d830a3250a131b5"
+    },
+    {
+      "file": "03-faction-frames-runner.log",
+      "bytes": 303,
+      "sha256": "600dec41af0136467c812da499b9d540631953ac73307d29a681a8cccc3cfd88"
+    },
+    {
+      "file": "04-no-aa-reference\\elf-forest-obstruction-1-browser.json",
+      "bytes": 48879,
+      "sha256": "1a517fc4f4f28b909c1b761fe29dce8fa5c84abf8e4c1b9394052c7c77651e35"
+    },
+    {
+      "file": "04-no-aa-reference\\elf-forest-obstruction-1.json",
+      "bytes": 118841,
+      "sha256": "95b5dfd670a6c100486f91f540b98266b3e2d93310b1ce8e4190ce29265e3582"
+    },
+    {
+      "file": "04-no-aa-reference\\elf-forest-obstruction-1.png",
+      "bytes": 1284479,
+      "sha256": "28e904378ad32db79162235a65dec588fd461050823e170780910ec4a5b5c04f"
+    },
+    {
+      "file": "04-no-aa-reference\\elf-forest-obstruction-motion-00.png",
+      "bytes": 1282648,
+      "sha256": "d1950a3f688a36ee1b5fd09fb7968c0959efe50bc0e90359e9c1217954cada66"
+    },
+    {
+      "file": "04-no-aa-reference\\elf-forest-obstruction-motion-01.png",
+      "bytes": 1286844,
+      "sha256": "c8594917636cb9e999a75187976d2ff47531028de1a8fc66ad49ea329effd943"
+    },
+    {
+      "file": "04-no-aa-reference\\elf-forest-obstruction-motion-02.png",
+      "bytes": 1282659,
+      "sha256": "3fe6a41ad0d49be973a291dbffa9fc143b7acc147e746e71fce143ffe90f677b"
+    },
+    {
+      "file": "04-no-aa-reference\\elf-forest-obstruction-motion-03.png",
+      "bytes": 1281527,
+      "sha256": "4c36cdca08b42deeb676a29ee0701b78b3d25f25bf6c5649127024aadfdbe0b0"
+    },
+    {
+      "file": "04-no-aa-reference\\elf-forest-obstruction-motion-04.png",
+      "bytes": 1286457,
+      "sha256": "e8f482e5e36eba71b8b7dbc6ad38ad671680cb9546aebb0380010171207090c2"
+    },
+    {
+      "file": "04-no-aa-reference\\elf-forest-obstruction-motion-05.png",
+      "bytes": 1281902,
+      "sha256": "c2cfb2e134dd9647df8656b6593f15d5c59c3d20fa2fc35b689599239296426a"
+    },
+    {
+      "file": "04-no-aa-reference\\elf-forest-obstruction-motion-06.png",
+      "bytes": 1282694,
+      "sha256": "22c0197c8407255a4646a70710943d20be06bdb04627b63a5fb54e9f7ba19937"
+    },
+    {
+      "file": "04-no-aa-reference\\elf-forest-obstruction-motion-07.png",
+      "bytes": 1286270,
+      "sha256": "ca8512fb5d7a61ad4d9f7908e23a0a2e7e9950be79d6109700dbd2b417458d87"
+    },
+    {
+      "file": "04-no-aa-reference\\elf-forest-obstruction-motion-08.png",
+      "bytes": 1278898,
+      "sha256": "1d3f387c288040ad266c5c7257afbb0adff91881dcbc27059e06353dec199f9d"
+    },
+    {
+      "file": "04-no-aa-reference\\elf-forest-obstruction-motion-09.png",
+      "bytes": 1286909,
+      "sha256": "e90462e7b4c048996b94045cd81ddfbe4c6b02701f6ce65ec207767af837fbfe"
+    },
+    {
+      "file": "04-no-aa-reference\\elf-forest-obstruction-motion-10.png",
+      "bytes": 1275265,
+      "sha256": "1c3ba4efb55e1c546aa78d9e8fbafc59088660ede48f0604d23eb8ef70176d4b"
+    },
+    {
+      "file": "04-no-aa-reference\\elf-forest-obstruction-motion-11.png",
+      "bytes": 1278767,
+      "sha256": "4938d366fbfc1454c85fbd10b1a44a8c06fba6ce89bb5b1c2876c7201db89880"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-1-browser.json",
+      "bytes": 39923,
+      "sha256": "601d4b8042626f15c1c441e2e5ec8ce6601da6b5cdc0a1c82ddaa499d24f294b"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-1.json",
+      "bytes": 100674,
+      "sha256": "bcbf97c682f834147ef6fb70fd19854f9319d7b7b12bff0a2dc1047ac3207081"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-1.png",
+      "bytes": 1108339,
+      "sha256": "2f40ad35707701daea2b0e81b40add8bf8f96773513456e017e59d7f3198c5ce"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-motion-00.png",
+      "bytes": 1107080,
+      "sha256": "eeedb10577349f44d03fdb9297bb8836c72ae6b21e69d38da9d83490bdac149c"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-motion-01.png",
+      "bytes": 1113378,
+      "sha256": "120a84cdc462e363544dede6e9a3112e1deace9218c7d9bf7a59bb82c242f46b"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-motion-02.png",
+      "bytes": 1116040,
+      "sha256": "6bd5ea1e0b0efbb3950bf994642cf19c9b8592e3a01c724289cd808a3ba357c8"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-motion-03.png",
+      "bytes": 1118198,
+      "sha256": "cba6d0a7a3fd445b34c0e237acdd9e17a69118b2597d4322dec58b47b5810243"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-motion-04.png",
+      "bytes": 1117239,
+      "sha256": "3f6316d3023e8d6e71673b43cd7e7a5a869c0ee91affe95371c09321b8c31c41"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-motion-05.png",
+      "bytes": 1120094,
+      "sha256": "9c7b8d81794d5d995a9dd14bd2c45869288747158fbae2d49cac7f1ce8af4227"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-motion-06.png",
+      "bytes": 1135204,
+      "sha256": "b3fbb7125a0e17eabbc1d0bb9054c34e7aa119dd47208676c4cff5703bc294ba"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-motion-07.png",
+      "bytes": 1148147,
+      "sha256": "a297a05bc2586cde1500f91bdac7c5b6f21db5f7d60b1413bc40d17f94e28e6a"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-motion-08.png",
+      "bytes": 1163474,
+      "sha256": "aec225f85b976869f928765366791ac27d65538cbe2474aaab45d1c27ba5c680"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-motion-09.png",
+      "bytes": 1177109,
+      "sha256": "8b6450cca98e4ad48843c0cdb72f705b446477141ff912839196d8ea58a654fc"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-motion-10.png",
+      "bytes": 1187253,
+      "sha256": "2a8d8aa8b1bb6e72ddcb01f4a5bec65e23598d6897575ec8d2f3d305c27faaf9"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-motion-11.png",
+      "bytes": 1183999,
+      "sha256": "f507a8cdf82bae49f41bcfa87a94572651ccceb5a991bede14e10c4ff3af4804"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-riverside-close-1-browser.json",
+      "bytes": 48812,
+      "sha256": "985f99e37067cb74b9d67ff28bbafcd303979c1dd2d4dabdec0a11383c5cd704"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-riverside-close-1.json",
+      "bytes": 117203,
+      "sha256": "7652badcb1b1137b11428ac719c2bda8cb4423c09362808d6884e607f56d4758"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-riverside-close-1.png",
+      "bytes": 1318777,
+      "sha256": "69340a291f0a039439e9e3c9870d60923755d2e4859278745326bf2b709735bd"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-riverside-close-motion-00.png",
+      "bytes": 1320219,
+      "sha256": "f458094a3b3a845f484c10189bc476b4a411ecc8b84af07a7e2b612a0c021e28"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-riverside-close-motion-01.png",
+      "bytes": 1321340,
+      "sha256": "f0bb19cc95ab0ff96bac713a6a41f0ab3762bcc03e25b0c0dde1d1f023886ca0"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-riverside-close-motion-02.png",
+      "bytes": 1320717,
+      "sha256": "45af895479c82039bd047dc245c809c1726fd5b4f7d03f77c66fb1f3126d2a7d"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-riverside-close-motion-03.png",
+      "bytes": 1321175,
+      "sha256": "990f3d3fa8de2f2a2829a433f2921d570ad0ba3d7d59189de00b001298eb0cee"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-riverside-close-motion-04.png",
+      "bytes": 1321899,
+      "sha256": "471fe4726be66f0b697b2d5ecfc5746c3e9493529c3d77c384b981a644a2a346"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-riverside-close-motion-05.png",
+      "bytes": 1321165,
+      "sha256": "0b9ff4f58ca09d626f8d837ed3f989a0d0a88f05f404ede04e5474d7fc9ad4bb"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-riverside-close-motion-06.png",
+      "bytes": 1321603,
+      "sha256": "ca5bb327917d646cb399a21cddfcdbcc34a350df22ef8dab2182a1fea8bff31a"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-riverside-close-motion-07.png",
+      "bytes": 1320423,
+      "sha256": "78f85ba74c85ba9a59806b028860744fb19d0a37eb6e5036e858166557fe8756"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-riverside-close-motion-08.png",
+      "bytes": 1322548,
+      "sha256": "e40efdbb453e853236d561ee63f8bf320192f99923afa583c2a069fb533273c6"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-riverside-close-motion-09.png",
+      "bytes": 1321289,
+      "sha256": "28a1f4b012ab3f27389f065df54d0733d0103a97a3fafff2413459368b04e67f"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-riverside-close-motion-10.png",
+      "bytes": 1323965,
+      "sha256": "74d86cacf89a46ff7d2aeabefe63fde07529a43f6b090ae370798dc824a3a6dd"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-riverside-close-motion-11.png",
+      "bytes": 1324044,
+      "sha256": "fda511d9c33f4519c49f503ad75715eed78646d1e24daee4aa7e6d0809693413"
+    },
+    {
+      "file": "04-no-aa-reference\\manifest.json",
+      "bytes": 1258638,
+      "sha256": "caa7f0b02eb8d8bcf14a3ab2673913431557abb00f182e35d98fe4c5c81a4d40"
+    },
+    {
+      "file": "04-no-aa-reference\\process-log.json",
+      "bytes": 9408,
+      "sha256": "18294cc495aa58bcd6895f8a8f1029bbfc66be3251fdcdcb7099578b8510a088"
+    },
+    {
+      "file": "04-no-aa-reference-runner.log",
+      "bytes": 293,
+      "sha256": "81add0bd01caaa58de5641956103347dbf4303f8926bd22ec1844da7d929f90e"
+    },
+    {
+      "file": "05-direct-routes-lifecycle\\elf-forest-obstruction-1-browser.json",
+      "bytes": 40062,
+      "sha256": "a6eba32438c9c0e545374aaff07ee47af5b13489b6af03e025f30d54bfcca9e0"
+    },
+    {
+      "file": "05-direct-routes-lifecycle\\elf-forest-obstruction-1.json",
+      "bytes": 101311,
+      "sha256": "11a10559b94d699e2cb0c9567dbd13ef757670e58f3e8cd18d303d2b17dd22d4"
+    },
+    {
+      "file": "05-direct-routes-lifecycle\\elf-forest-obstruction-1.png",
+      "bytes": 1348802,
+      "sha256": "2de0f3d751a317bc452f872e3eccc1fb6b7174ca40b85921e392724842f06784"
+    },
+    {
+      "file": "05-direct-routes-lifecycle\\elf-forest-obstruction-active-end.png",
+      "bytes": 1309340,
+      "sha256": "50c1664aff31e697a351b240a7f4ed8aa897e4e3470a56965e9a0fc6de3dae61"
+    },
+    {
+      "file": "05-direct-routes-lifecycle\\elf-forest-obstruction-profile.json",
+      "bytes": 765540,
+      "sha256": "41c98bd53b49beab51bfca4ea2b556c2c16fe45025106b4b8b06db63a6ca13d6"
+    },
+    {
+      "file": "05-direct-routes-lifecycle\\guard-riverside-close-1-browser.json",
+      "bytes": 48815,
+      "sha256": "436ab4fcf1477c76e0cce9acdb3f718242d12ccacc9f44cb0aaa042e004b3d5b"
+    },
+    {
+      "file": "05-direct-routes-lifecycle\\guard-riverside-close-1.json",
+      "bytes": 99714,
+      "sha256": "10804943db03698d97100a7ef93e832cb747761957e4172b0795063c3cbb0c1e"
+    },
+    {
+      "file": "05-direct-routes-lifecycle\\guard-riverside-close-1.png",
+      "bytes": 1391209,
+      "sha256": "2288627894179835653bed6ccf6c3f715d5f415107ad669c69cfa6ad0b21ed47"
+    },
+    {
+      "file": "05-direct-routes-lifecycle\\guard-riverside-close-active-end.png",
+      "bytes": 1148777,
+      "sha256": "7dd6369bcf52e473acdba68f4d4aefdc286d4c5b6dc344c7eb3bf735e60138de"
+    },
+    {
+      "file": "05-direct-routes-lifecycle\\guard-riverside-close-profile.json",
+      "bytes": 766767,
+      "sha256": "eb1465a8d9cfc4d0f41309aa4843d4f4fe47e6f3414b8a351444a0f9e205e170"
+    },
+    {
+      "file": "05-direct-routes-lifecycle\\manifest.json",
+      "bytes": 179057,
+      "sha256": "baf4c001402dc5722327dd47c9dbcdcb320baf48e4cb172fb45599629c5744f6"
+    },
+    {
+      "file": "05-direct-routes-lifecycle\\process-log.json",
+      "bytes": 7150,
+      "sha256": "7854f345ebbd52b5f89a0cc9e1624a27d57d502549e08a083ee479400ceb04ca"
+    },
+    {
+      "file": "05-direct-routes-lifecycle-runner.log",
+      "bytes": 225,
+      "sha256": "22e3ed98ede4f51bef8678462c308a611b7158e0056d6a9e937dc380bba78636"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-1-browser.json",
+      "bytes": 47564,
+      "sha256": "6eff4faded57bf734a5ecf1c3f7ec95d0b89af150197f1abe5156c6cf08b3209"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-1.json",
+      "bytes": 101387,
+      "sha256": "1f81d438e5e2509fdcc63d24e4bad4db7453946d4fdf4ad4e66afc2d89d4b186"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-1.png",
+      "bytes": 1245593,
+      "sha256": "03d3c12e2309974ded4b80a891fc47e8bbe20bb4db2d33b9a1036f93ab72142a"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-motion-00.png",
+      "bytes": 1253538,
+      "sha256": "406bb05c8b9e04fba4d02e51ce79712afea87a744af2eec3973459bd53a72da0"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-motion-01.png",
+      "bytes": 1267001,
+      "sha256": "3e25161f588a66d74f02ff2b1e1f453774983c95d4014bb1ab4d2e84340d7c62"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-motion-02.png",
+      "bytes": 1275867,
+      "sha256": "4cb70684ecb43a807d601a3184a31929b0784f377e7094d7b07dbbc07250d652"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-motion-03.png",
+      "bytes": 1283728,
+      "sha256": "0cd21be535f43e3cdc5aa7926f676b63b3ef5de6520fca7730715cfb3e6e8567"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-motion-04.png",
+      "bytes": 1283489,
+      "sha256": "2e2aaad3f013194bfaa24847299ac97330903e7070c4580c579b4da351b3d021"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-motion-05.png",
+      "bytes": 1286172,
+      "sha256": "2b8f6cde1d5a130116a43919ee9e8b4c59e9a96912bda1f0c577696494c05efc"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-motion-06.png",
+      "bytes": 1302967,
+      "sha256": "29571a9aca7514b302acb0de7d73e579464f6d6d375ad11bb6b723e1d690a18f"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-motion-07.png",
+      "bytes": 1316356,
+      "sha256": "0785a225bb4a5394ff81815d8a55feb608ae09f53eeeb80bdaa4ad57eee6a83b"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-motion-08.png",
+      "bytes": 1332984,
+      "sha256": "3390108faaeabdc43170caccd065dd64e9dadc564cb7ca3f1aa8feef4508ba25"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-motion-09.png",
+      "bytes": 1342437,
+      "sha256": "bc6aed2e0de243de95db759de34d71652f289b5b94094a73014fce204574f28c"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-motion-10.png",
+      "bytes": 1349146,
+      "sha256": "d0a477f6ed4bc263be4fbc5dfce8274cacc4f06a74bf0c4aa3028c16f5d052c7"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-motion-11.png",
+      "bytes": 1345083,
+      "sha256": "d031ac423f9b2a8648ddc4b22ea77fb9c8b83cf7ff68fbde0339806ca9ffe10f"
+    },
+    {
+      "file": "06-foundation-motion-aa\\manifest.json",
+      "bytes": 378769,
+      "sha256": "8c4a9e7b159b6c1aba6543126a5e1b2a7159b2090af8315dcd9b2a3a7691edf4"
+    },
+    {
+      "file": "06-foundation-motion-aa\\process-log.json",
+      "bytes": 4475,
+      "sha256": "1f9bd5d5eba59c66c48c7d35240ac6336d3d21b6f5b1f0bb6480f0a31f8ef7c6"
+    },
+    {
+      "file": "06-foundation-motion-aa-runner.log",
+      "bytes": 92,
+      "sha256": "ea030e04897026f87d0bdddd39a4803ff4f8c5eeb614420b96c7ba4c0adc1a71"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-1-browser.json",
+      "bytes": 39927,
+      "sha256": "9e1683e498ab7c6bf4ad7999032e59e41c4a834fa3d0c78d6b60d4c20640fb0a"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-1.json",
+      "bytes": 101458,
+      "sha256": "531d5ed8b05b739100d32b5dda29a03342e5d39652d7f3e2872233b93cc983db"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-1.png",
+      "bytes": 1099600,
+      "sha256": "b31b42c47dc7d868d44a141034ce4472e50402059a00e20e64fc262cc3b288d9"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-motion-00.png",
+      "bytes": 1102535,
+      "sha256": "802cd58b037803d5bb0c9add3c8cd63c0de4ff75393d21550eb89e3b64ecc49f"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-motion-01.png",
+      "bytes": 1113986,
+      "sha256": "3a165102f16b6d6c235d9fc1334cf5ccc4243fc8ccb1694c8a34a5f38fcbeb48"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-motion-02.png",
+      "bytes": 1122983,
+      "sha256": "915190d18d4c9d0133718ff583215a357f314679ab4210ac6b190f0798cbd62a"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-motion-03.png",
+      "bytes": 1132621,
+      "sha256": "a4568e7759c7f07098ecc640b8b377e611375f9d9f6244f61385a30f7c5dc085"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-motion-04.png",
+      "bytes": 1131451,
+      "sha256": "85d8475acff0684113b748ea64b5e333aecd32178151c53e2ae6dc7be754d84f"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-motion-05.png",
+      "bytes": 1135608,
+      "sha256": "9e913c4b4e4b6a8425bf276adf6e45092c0fd8b0b6029db58e61f7ac07b5e90d"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-motion-06.png",
+      "bytes": 1148844,
+      "sha256": "11124a8f2f737d71540e0809634fba60e34126ad3302ca0da6f746a14531d5ac"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-motion-07.png",
+      "bytes": 1160620,
+      "sha256": "102d1af642b6fab00cdb2f97a0041a22890bf09cbe8712152ae91521c3b52432"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-motion-08.png",
+      "bytes": 1175788,
+      "sha256": "26eb3e041a4bb68d22fd5143b1a6b724943a24a824843aeb11f17dfaa811a36d"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-motion-09.png",
+      "bytes": 1188787,
+      "sha256": "2551f181ed9931661d4a18562896b95e49159a8876663df8bd0c25b137f87352"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-motion-10.png",
+      "bytes": 1196721,
+      "sha256": "ad13b5a7b3ccb5e0355eab7f0a1f21ed5f378e36ca447ee8e73a27df6c3d3bcc"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-motion-11.png",
+      "bytes": 1191935,
+      "sha256": "8e34296efdf75091a22203f9fe202303871aca4e10acdaf4e15040795c855ebb"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\manifest.json",
+      "bytes": 378423,
+      "sha256": "3464750f1b0390bfca2f845e71864036cc50e58c718dfc668c0a489458ea4b18"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\process-log.json",
+      "bytes": 6489,
+      "sha256": "50be55fb5c1518b141af740fb1ad923e4f2d24e6eb0baa8e78f34df07867d855"
+    },
+    {
+      "file": "07-foundation-motion-no-aa-runner.log",
+      "bytes": 92,
+      "sha256": "ea030e04897026f87d0bdddd39a4803ff4f8c5eeb614420b96c7ba4c0adc1a71"
+    },
+    {
+      "file": "08-world-and-environment\\bridge-water-edge-1-browser.json",
+      "bytes": 48945,
+      "sha256": "796b663bb47cbf104fc2cbf7063d2c640e858f90f1a98f5d31bc87e791ab9e19"
+    },
+    {
+      "file": "08-world-and-environment\\bridge-water-edge-1.json",
+      "bytes": 114999,
+      "sha256": "7d96cad45fc6022c52237714cbff3b22807345d6ce5ad7304a06305d996094b2"
+    },
+    {
+      "file": "08-world-and-environment\\bridge-water-edge-1.png",
+      "bytes": 1967037,
+      "sha256": "cf55cf1d956dcdf6dedfdbf791890c89487f89442b1833c351337d7b158b15f9"
+    },
+    {
+      "file": "08-world-and-environment\\manifest.json",
+      "bytes": 6569,
+      "sha256": "7c3a0c53c241e73417c5c8d8bf0cd830506d4e5f7d13dc4fee3fadab756eb47e"
+    },
+    {
+      "file": "08-world-and-environment\\night-1-browser.json",
+      "bytes": 49014,
+      "sha256": "ff2d8d5607ea0fac28c14cf838e2c020f1e04ebfd9f856d4f7e259114574cf07"
+    },
+    {
+      "file": "08-world-and-environment\\night-1.json",
+      "bytes": 100812,
+      "sha256": "9c209bf3a3b4f0e94cb8fbb711d6a1c456fc3b29482602eadb159883515f5fe9"
+    },
+    {
+      "file": "08-world-and-environment\\night-1.png",
+      "bytes": 940928,
+      "sha256": "f6eeb4787a600be9526bd3216c8a3eecfc174a22159396557de09f2b9b910f79"
+    },
+    {
+      "file": "08-world-and-environment\\process-log.json",
+      "bytes": 5217,
+      "sha256": "32f473d0082cb386ecec72500f4a1455c3377cbfe667d53beac89c82009031b0"
+    },
+    {
+      "file": "08-world-and-environment\\rain-1-browser.json",
+      "bytes": 48888,
+      "sha256": "2e6d780ababce71f3f7d6e8ba9ec364d0e7c4ff6f4b8f2bf8f6de9c334e78a6d"
+    },
+    {
+      "file": "08-world-and-environment\\rain-1.json",
+      "bytes": 105823,
+      "sha256": "2574441c1f430ba42506d2423234b02fbac930aafd76c4fdc0089823091df43b"
+    },
+    {
+      "file": "08-world-and-environment\\rain-1.png",
+      "bytes": 1683719,
+      "sha256": "9002a3ceade21692fc1e0172e33a0be0ff539819428299bf0472cf6f6ab67da4"
+    },
+    {
+      "file": "08-world-and-environment\\snow-1-browser.json",
+      "bytes": 48888,
+      "sha256": "6abea47e43838eff948b06ec1d41e2bfb03c348518982683e178001e65230ad7"
+    },
+    {
+      "file": "08-world-and-environment\\snow-1.json",
+      "bytes": 105840,
+      "sha256": "36775b57eb223cd37d1700e4c626f79a3920777c213a96efc7453a24478a9350"
+    },
+    {
+      "file": "08-world-and-environment\\snow-1.png",
+      "bytes": 1779578,
+      "sha256": "fc22ddaf2918b9c908836ef5809031ef76370e5ec851a77ecaab3af9b1abaec8"
+    },
+    {
+      "file": "08-world-and-environment\\villain-slope-1-browser.json",
+      "bytes": 47750,
+      "sha256": "0e52a046666f479fcd00931e3270f77e29fb7a55e8c3677a908978e6b2ee4054"
+    },
+    {
+      "file": "08-world-and-environment\\villain-slope-1.json",
+      "bytes": 108713,
+      "sha256": "1a811b87f02e665687db418ec70ea64376162ba3d65e85fb4656e497864056c5"
+    },
+    {
+      "file": "08-world-and-environment\\villain-slope-1.png",
+      "bytes": 1325711,
+      "sha256": "c04d0a0492a500a4a5a00d4eeccc77131f9a0b4ec1af9cae43bfc61be399a14a"
+    },
+    {
+      "file": "08-world-and-environment-runner.log",
+      "bytes": 438,
+      "sha256": "5bda58d02b29a5c9ddf25cc3c193da8bc13cdfe558748631eb08ed985ffe7369"
+    },
+    {
+      "file": "09-ink-off\\elf-forest-obstruction-1-browser.json",
+      "bytes": 47744,
+      "sha256": "b192ea7e30f6ee77f7bbe70dd27e6d9d2e823c2a57c839c2ed5d2f48757dc7a6"
+    },
+    {
+      "file": "09-ink-off\\elf-forest-obstruction-1.json",
+      "bytes": 119056,
+      "sha256": "a10be68ef2a4e593f411bd0d32f09843cabed64662f8cdd8c2a1bd13e96e15f4"
+    },
+    {
+      "file": "09-ink-off\\elf-forest-obstruction-1.png",
+      "bytes": 1447619,
+      "sha256": "dfff52b2a032cde6574699d28934d06c54b633c6aa63145394f7be747a864179"
+    },
+    {
+      "file": "09-ink-off\\guard-riverside-close-1-browser.json",
+      "bytes": 48810,
+      "sha256": "9e8b3fa32ffaeffbd5097b20863493b491457275d9e25598fe3d5baa6da54a64"
+    },
+    {
+      "file": "09-ink-off\\guard-riverside-close-1.json",
+      "bytes": 117474,
+      "sha256": "9da4550ba5e4344c500c1dc707115dd43340028e4f8927a3fb947a83d4ec9d9c"
+    },
+    {
+      "file": "09-ink-off\\guard-riverside-close-1.png",
+      "bytes": 1432898,
+      "sha256": "48097dab026472fd9c0ef718e99773f06af495ade236710be4b642d973e640b1"
+    },
+    {
+      "file": "09-ink-off\\manifest.json",
+      "bytes": 4821,
+      "sha256": "52d2dfc5c04a5c374d3e38c8068946566d41b04742db33a9d2110dd56f89f860"
+    },
+    {
+      "file": "09-ink-off\\process-log.json",
+      "bytes": 7092,
+      "sha256": "138fcce5bfa949f3a6c6eef1375fa9fdb0bf38f94ccdb55c3b2438da973f992f"
+    },
+    {
+      "file": "09-ink-off-runner.log",
+      "bytes": 201,
+      "sha256": "7b786cdf5c4e2923a292515e84f468e22af678abb06a56e30a0ab1848abce4c1"
+    },
+    {
+      "file": "10-weather-off\\elf-opening-1-browser.json",
+      "bytes": 47471,
+      "sha256": "474a786b2c4aa2ea2ad41cf374ae6f0ca128d3c494d799eac4b07218e3991f48"
+    },
+    {
+      "file": "10-weather-off\\elf-opening-1.json",
+      "bytes": 98201,
+      "sha256": "ceaf6dfe9c2519db30154a1c1ecab3977454c5317325d9bd2bd61cfc5368d193"
+    },
+    {
+      "file": "10-weather-off\\elf-opening-1.png",
+      "bytes": 1721238,
+      "sha256": "005a80035ecb0fa51e5cb4cc6ee969423a6a0ddc4692cbfe267e1990faf14d48"
+    },
+    {
+      "file": "10-weather-off\\manifest.json",
+      "bytes": 4445,
+      "sha256": "43e1c1569698013df7b1b3ea82305876af12ae7835da750ccb53f7d20cb67471"
+    },
+    {
+      "file": "10-weather-off\\process-log.json",
+      "bytes": 9420,
+      "sha256": "c6591771dfa587a3191e244cb885dd21b5a77226d345bd10180ca6caaf5fd475"
+    },
+    {
+      "file": "10-weather-off\\villain-opening-1-browser.json",
+      "bytes": 48675,
+      "sha256": "68e054c02da7c4c09989b415575f4ed335af6dcc4c4663e82c1b144dd9006bd2"
+    },
+    {
+      "file": "10-weather-off\\villain-opening-1.json",
+      "bytes": 100864,
+      "sha256": "0611e8f7e8b3db6b62ab8ac1059e0c95e04fbe4dee013b6f8316c349eb71a14d"
+    },
+    {
+      "file": "10-weather-off\\villain-opening-1.png",
+      "bytes": 1473553,
+      "sha256": "eb1e0eb22dc038f31aedc75135357f39bf8be0dc6aa1644d186f1f937f135c66"
+    },
+    {
+      "file": "10-weather-off-runner.log",
+      "bytes": 184,
+      "sha256": "0b3acf05e3e3218ded0982d2e9272072620d5c3a6b08a3474d9771f74fdf76f6"
+    },
+    {
+      "file": "11-reduced-motion\\guard-riverside-close-1-browser.json",
+      "bytes": 47655,
+      "sha256": "6f2be96cd94cee59bbf6c7a5403aa9ee164f428788741d481e1370d9b85390b4"
+    },
+    {
+      "file": "11-reduced-motion\\guard-riverside-close-1.json",
+      "bytes": 117565,
+      "sha256": "9af574e693187e787ddb77ce2195bec9b2e38c66ed45a265b5d3b0fbacdbde9d"
+    },
+    {
+      "file": "11-reduced-motion\\guard-riverside-close-1.png",
+      "bytes": 1470618,
+      "sha256": "171a7286e1702001bcd7cc790d065f35aa67ec92e407d9de843617811950d932"
+    },
+    {
+      "file": "11-reduced-motion\\guard-riverside-close-motion-00.png",
+      "bytes": 1470330,
+      "sha256": "dfcffd7d49162c1a6eb2a6fdd6cc049f234ba1ff04a9e647442bd3dc31f3ef32"
+    },
+    {
+      "file": "11-reduced-motion\\guard-riverside-close-motion-01.png",
+      "bytes": 1471203,
+      "sha256": "fc5c36ed18c26151e2f4b171bc1ae933a249cc931288b028f7d6cc6478a57bb0"
+    },
+    {
+      "file": "11-reduced-motion\\guard-riverside-close-motion-02.png",
+      "bytes": 1471928,
+      "sha256": "33ccb480639cd89bcd9e97d33c4a29089944ac846eedd38996d16715cd76e333"
+    },
+    {
+      "file": "11-reduced-motion\\guard-riverside-close-motion-03.png",
+      "bytes": 1471590,
+      "sha256": "9696abfe9ef6180b342844fb7b05ea6d37fce132fcc21fb753b47e65688d5d1b"
+    },
+    {
+      "file": "11-reduced-motion\\guard-riverside-close-motion-04.png",
+      "bytes": 1471347,
+      "sha256": "c95c63a90b45ab5d8d105f202b6f66773a700817968149597b892b460e2c4ecf"
+    },
+    {
+      "file": "11-reduced-motion\\guard-riverside-close-motion-05.png",
+      "bytes": 1472002,
+      "sha256": "a6c30cfcb08091ff916e7b7dfae0db93a3f73273cce59b8ab2a4f7ed5c4c7bad"
+    },
+    {
+      "file": "11-reduced-motion\\guard-riverside-close-motion-06.png",
+      "bytes": 1470056,
+      "sha256": "87e03948eac081d9c20ed2daebc124843a17c9022b534ecb3288dceff7995fc5"
+    },
+    {
+      "file": "11-reduced-motion\\guard-riverside-close-motion-07.png",
+      "bytes": 1470557,
+      "sha256": "6a36a0c58add0b3e282a2ad61e649e86bbc346fc85405d2ef194e0d6d370b3a2"
+    },
+    {
+      "file": "11-reduced-motion\\guard-riverside-close-motion-08.png",
+      "bytes": 1472661,
+      "sha256": "6949c0a88af7e4697b0f1d43a25585cc14558da4832b64bf82b8c56d1303226f"
+    },
+    {
+      "file": "11-reduced-motion\\guard-riverside-close-motion-09.png",
+      "bytes": 1470981,
+      "sha256": "70c13e308bd909105723f0b30851d683d10c9a1a9524da8568c074748687c793"
+    },
+    {
+      "file": "11-reduced-motion\\guard-riverside-close-motion-10.png",
+      "bytes": 1471929,
+      "sha256": "68d0b9a4077b892e9df57fdb5d0ef52ae466a1853df9f930d924a22152e351c1"
+    },
+    {
+      "file": "11-reduced-motion\\guard-riverside-close-motion-11.png",
+      "bytes": 1472095,
+      "sha256": "0d40f05e76e773a8e6963b16073f5da2da82ab2eab1fb989654828c6ab93120a"
+    },
+    {
+      "file": "11-reduced-motion\\manifest.json",
+      "bytes": 812641,
+      "sha256": "6c4aa8d5d576acf54e8f355384cf23d95cdb07060cfecaeb9c09cbf8907ad866"
+    },
+    {
+      "file": "11-reduced-motion\\night-1-browser.json",
+      "bytes": 49012,
+      "sha256": "a7c486e09e18471fdf1a4801fd52061394460fbe4c5a85e08a39239fee6d6e8b"
+    },
+    {
+      "file": "11-reduced-motion\\night-1.json",
+      "bytes": 100808,
+      "sha256": "807a15a2f2f2676b48f38d741cba7c515d1bd66d1e55df40ba11110a60b90762"
+    },
+    {
+      "file": "11-reduced-motion\\night-1.png",
+      "bytes": 940928,
+      "sha256": "f6eeb4787a600be9526bd3216c8a3eecfc174a22159396557de09f2b9b910f79"
+    },
+    {
+      "file": "11-reduced-motion\\night-motion-00.png",
+      "bytes": 942436,
+      "sha256": "6bb682e7f2547f85eab670408cf347df1dad29fce7f94e1df5614b2abfecce10"
+    },
+    {
+      "file": "11-reduced-motion\\night-motion-01.png",
+      "bytes": 950024,
+      "sha256": "51f1c4505fee6ed5ae0389fe11c6d8b23365a65dff8fb2a0d62fb6f87a58d6c2"
+    },
+    {
+      "file": "11-reduced-motion\\night-motion-02.png",
+      "bytes": 952581,
+      "sha256": "9b90083d3bdab76ec6d63c67c00c57817e727a469b618a839517bcd982c2f446"
+    },
+    {
+      "file": "11-reduced-motion\\night-motion-03.png",
+      "bytes": 953559,
+      "sha256": "ff3fee10e8162ca6be8b51dbbb9f6074c831f6285ba35e1ea0e3887ba45b4a32"
+    },
+    {
+      "file": "11-reduced-motion\\night-motion-04.png",
+      "bytes": 954052,
+      "sha256": "e12c70b0cf69f08f66abd4fab0d07a69a45117b0f3da48c6d978a76b7af580dd"
+    },
+    {
+      "file": "11-reduced-motion\\night-motion-05.png",
+      "bytes": 956814,
+      "sha256": "3c014696073db90d2612fba0897aded5735292ff22cace6026012e592ab5f96d"
+    },
+    {
+      "file": "11-reduced-motion\\night-motion-06.png",
+      "bytes": 964500,
+      "sha256": "c2b21248d262517aabee7c759633f614afbc151ead382f2e14f5194f1c60330c"
+    },
+    {
+      "file": "11-reduced-motion\\night-motion-07.png",
+      "bytes": 972137,
+      "sha256": "28eb9ec980aef1a0124ce2ed5188cd5ed2a4c830b26a0ea0c990001485b26de0"
+    },
+    {
+      "file": "11-reduced-motion\\night-motion-08.png",
+      "bytes": 974310,
+      "sha256": "a4c749c6b03759d6a43aee0ed28d3ca38675009010058b2f4f2f5f2315f43612"
+    },
+    {
+      "file": "11-reduced-motion\\night-motion-09.png",
+      "bytes": 978419,
+      "sha256": "244b1d4b29816f770e75968fee56ae7b52f4c203509b6116f0293eb126a3e4ba"
+    },
+    {
+      "file": "11-reduced-motion\\night-motion-10.png",
+      "bytes": 987890,
+      "sha256": "c0f3848b9cd907b01697c08b2e1d47c0125b213c375ac5e79a8ffbfe188b6764"
+    },
+    {
+      "file": "11-reduced-motion\\night-motion-11.png",
+      "bytes": 987640,
+      "sha256": "2df1d80f389a45151e4bc887ddc0b405e49a4ccbeff9e4aa0e93a0f4c871927e"
+    },
+    {
+      "file": "11-reduced-motion\\process-log.json",
+      "bytes": 9391,
+      "sha256": "56540c78695949bc6092703c2dd625a4e53aa3971a0adaa71aafaeeee869f8a9"
+    },
+    {
+      "file": "11-reduced-motion-runner.log",
+      "bytes": 184,
+      "sha256": "d6055378ff57e9ec1181474f15369e84c61797d93aa190715612213864da0beb"
+    },
+    {
+      "file": "12-small-direct-layout\\elf-opening-1-browser.json",
+      "bytes": 39858,
+      "sha256": "459c52bcfead2e4e42416a04be1c985d9ed4f32b9920c8f083483998d65865d7"
+    },
+    {
+      "file": "12-small-direct-layout\\elf-opening-1.json",
+      "bytes": 80302,
+      "sha256": "804216241e1b597ae9a2e068b1aa0631b6e747b4c18ef6bc079ceefa8ec87534"
+    },
+    {
+      "file": "12-small-direct-layout\\elf-opening-1.png",
+      "bytes": 211416,
+      "sha256": "52683da6ba7769397ffac1a4478dab05ce859c0ffef64330cdb1239540c6d31f"
+    },
+    {
+      "file": "12-small-direct-layout\\guard-opening-1-browser.json",
+      "bytes": 48744,
+      "sha256": "a558a21e77cfc78011e6191d4fb37c3b44a99ab4cd0892dd7acfe6d51854d09b"
+    },
+    {
+      "file": "12-small-direct-layout\\guard-opening-1.json",
+      "bytes": 82848,
+      "sha256": "1d1859d26a4289164b669a44d1095b75b9895271e9156137298f934ad4d986f7"
+    },
+    {
+      "file": "12-small-direct-layout\\guard-opening-1.png",
+      "bytes": 224197,
+      "sha256": "941b60695d50b67dbf759582ed478b49e782abfc5e819d548f44d948359840f5"
+    },
+    {
+      "file": "12-small-direct-layout\\guard-riverside-close-1-browser.json",
+      "bytes": 48818,
+      "sha256": "aac6232616209a078885035346cbc8b7dee6a8ed0036eda4e689431849d6fbec"
+    },
+    {
+      "file": "12-small-direct-layout\\guard-riverside-close-1.json",
+      "bytes": 99606,
+      "sha256": "7cb4e1f22b1aa0c848539943a11fa8833c88722e72ee035984051bd021ecbbfe"
+    },
+    {
+      "file": "12-small-direct-layout\\guard-riverside-close-1.png",
+      "bytes": 244680,
+      "sha256": "f42d4dfb978d1b0164ed0d46941f0b5abd8e480435e41c28ee6e55259be10ed3"
+    },
+    {
+      "file": "12-small-direct-layout\\manifest.json",
+      "bytes": 5910,
+      "sha256": "11598a2d2ef22433733c546977aadf5eb573edd976a2c158fa0ef90fa317d74c"
+    },
+    {
+      "file": "12-small-direct-layout\\process-log.json",
+      "bytes": 4545,
+      "sha256": "289191942f6a4d718fff7356dd448ea3f6b97366f34aa3afaf74620fbdb42518"
+    },
+    {
+      "file": "12-small-direct-layout\\villain-opening-1-browser.json",
+      "bytes": 48677,
+      "sha256": "2e23b47cf0b0d6a532a6c360c128a0d8035303f54faa3bccedf698ed920528b2"
+    },
+    {
+      "file": "12-small-direct-layout\\villain-opening-1.json",
+      "bytes": 82963,
+      "sha256": "bebbaf3c6644d19ca8764c4fcf36df9ca97be29335c19ca9233e95e12c3312c8"
+    },
+    {
+      "file": "12-small-direct-layout\\villain-opening-1.png",
+      "bytes": 197795,
+      "sha256": "256e383c20962f2abb7216bc50ee82dbfe3f687a36a5ae77d2adff928f8e2e4d"
+    },
+    {
+      "file": "12-small-direct-layout-runner.log",
+      "bytes": 376,
+      "sha256": "a54c457cbd4d8a954edae377094dedcbd1d3a782f5582199ccad560436b6d132"
+    },
+    {
+      "file": "13-balanced-dpr\\elf-forest-obstruction-1-browser.json",
+      "bytes": 48881,
+      "sha256": "bf2d588a2bb9bccc44163c0cf7d90aa47b89c1eccdb5958799ea1835958d510d"
+    },
+    {
+      "file": "13-balanced-dpr\\elf-forest-obstruction-1.json",
+      "bytes": 119133,
+      "sha256": "6b48b767d99de2f8005a6d263155adcf41dd1cbb98c54cd4c80c7778821fd593"
+    },
+    {
+      "file": "13-balanced-dpr\\elf-forest-obstruction-1.png",
+      "bytes": 1939440,
+      "sha256": "56619bb50d3b27a7a39ee4108469921866969571a9f1b4eb2b23e03f94f37551"
+    },
+    {
+      "file": "13-balanced-dpr\\elf-forest-obstruction-active-end.png",
+      "bytes": 1882031,
+      "sha256": "637172d83f20b2a8c006851c2d2aebe963b5e69ea8bf03b04235cfc122613e70"
+    },
+    {
+      "file": "13-balanced-dpr\\elf-forest-obstruction-profile.json",
+      "bytes": 774711,
+      "sha256": "42980ca7555ec7a8d7fe07718216021baf902f7a455d496cf5213284e756e2ff"
+    },
+    {
+      "file": "13-balanced-dpr\\guard-opening-1-browser.json",
+      "bytes": 47563,
+      "sha256": "a4f64732a7a5b109b872853f9ec26c48a4843440fb3f2ae913c4c661d3eedb0e"
+    },
+    {
+      "file": "13-balanced-dpr\\guard-opening-1.json",
+      "bytes": 100738,
+      "sha256": "dd7fc99d08622644cc66372d9089fd884d6c22e3925292f310a12f6d5102c6ca"
+    },
+    {
+      "file": "13-balanced-dpr\\guard-opening-1.png",
+      "bytes": 1637888,
+      "sha256": "1cc053954741035c5725cf8ee4b78c45c9659da1e47e4420b3853cb61dc0db01"
+    },
+    {
+      "file": "13-balanced-dpr\\guard-opening-active-end.png",
+      "bytes": 1789239,
+      "sha256": "7cee7891b31d08b2699780f670e5d8e4b8179a92f2795a595e5e481fcb67ed87"
+    },
+    {
+      "file": "13-balanced-dpr\\guard-opening-profile.json",
+      "bytes": 729776,
+      "sha256": "3063a4cbbdb5724fc90a3d63b96fb6aa7e112e5f989c3437ee4c4391b4c073f3"
+    },
+    {
+      "file": "13-balanced-dpr\\manifest.json",
+      "bytes": 29906,
+      "sha256": "c3f07ddaf45e03070355aa4fc9bf0b521879c6b8e6b6c4d41c86beaeef3055e6"
+    },
+    {
+      "file": "13-balanced-dpr\\process-log.json",
+      "bytes": 9129,
+      "sha256": "291a5a16655205fa9885f4df8cf4d9bf0c06861ef705832eadc1c226d4075a19"
+    },
+    {
+      "file": "13-balanced-dpr-runner.log",
+      "bytes": 218,
+      "sha256": "5b6ab5ce4572302e85a104cf47b71e2c481b82fcc777ad55baf37d62b6bb0c62"
+    },
+    {
+      "file": "14-crowd-and-streaming\\crowded-25-1-browser.json",
+      "bytes": 47838,
+      "sha256": "77c2243ee6d872c94ef8321f63c9f6ab05052a0e081a01ee5717d93d73142bb4"
+    },
+    {
+      "file": "14-crowd-and-streaming\\crowded-25-1.json",
+      "bytes": 112426,
+      "sha256": "e153cfc8fec0714435933a2a6fce990590086a5e2adc28649feaecc905bb79ee"
+    },
+    {
+      "file": "14-crowd-and-streaming\\crowded-25-1.png",
+      "bytes": 1402471,
+      "sha256": "9cc64219d54a88a90106bdc8e336a79e87fb1ff92bfca9cf0f36aa80041d36e0"
+    },
+    {
+      "file": "14-crowd-and-streaming\\crowded-25-active-end.png",
+      "bytes": 1518904,
+      "sha256": "7b999af1e8bb4081c60e3f6af5734a25f98cb19ddadbe35976d447a3f39977ae"
+    },
+    {
+      "file": "14-crowd-and-streaming\\crowded-25-profile.json",
+      "bytes": 738752,
+      "sha256": "86e2a38132e2efa9d35f37cbaefea3840d3885283f23daa0eefe84f9abf470e4"
+    },
+    {
+      "file": "14-crowd-and-streaming\\manifest.json",
+      "bytes": 40573,
+      "sha256": "e0912192b5cbd18a3794fcef5a4f13b847d9da6b22290b57b0264644092c7779"
+    },
+    {
+      "file": "14-crowd-and-streaming\\process-log.json",
+      "bytes": 4209,
+      "sha256": "c0b4a4f7140828e9b032661dc1537442a7b43dcdb22aa587b07e70c79a2fa7eb"
+    },
+    {
+      "file": "14-crowd-and-streaming\\streaming-boundary-1-browser.json",
+      "bytes": 48885,
+      "sha256": "2698090063af1c11f6c374ab34b3b5d1e0a876f1a1f6f1189fbf0c9fef91b7a3"
+    },
+    {
+      "file": "14-crowd-and-streaming\\streaming-boundary-1.json",
+      "bytes": 101811,
+      "sha256": "b8f5e54476dc0551a826c900e02c7f2f4d5cd578e8ba3b7354a0f89895fd7cd0"
+    },
+    {
+      "file": "14-crowd-and-streaming\\streaming-boundary-1.png",
+      "bytes": 1355504,
+      "sha256": "c357ac24ac83c5df63733c1ac5d758bf2b35ef7346134ad48074acb480f5beb4"
+    },
+    {
+      "file": "14-crowd-and-streaming\\streaming-boundary-active-end.png",
+      "bytes": 1290830,
+      "sha256": "6cbcac9270fe5087e9a45c0882999108e6d3a7f4310b1c7c1413d93de2536a6d"
+    },
+    {
+      "file": "14-crowd-and-streaming\\streaming-boundary-profile.json",
+      "bytes": 734342,
+      "sha256": "4dad52a8c3f2d4abbbbab6340b20ade7b483f1370f4f8ccdf0b1739215c0d9b7"
+    },
+    {
+      "file": "14-crowd-and-streaming-runner.log",
+      "bytes": 199,
+      "sha256": "da69e36236a53f9763a5e0a73b701ce2c41cf79d349bfda5151f9b0bfdfac6ce"
+    },
+    {
+      "file": "batch-result.json",
+      "bytes": 18673,
+      "sha256": "9a16f3e42de8192363520e395cb0093fb913f1e5176e582d372db5de32233698"
+    }
+  ],
+  "packagedFiles": [
+    {
+      "file": "03-faction-frames\\elf-opening-1.png",
+      "original": "03-faction-frames\\elf-opening-1.png",
+      "compression": "none",
+      "bytes": 1448777,
+      "sha256": "fe31aac28cc9217579b156bdcbe65f43b47395f5a340f995008b80db135832a8",
+      "originalBytes": 1448777,
+      "originalSha256": "fe31aac28cc9217579b156bdcbe65f43b47395f5a340f995008b80db135832a8"
+    },
+    {
+      "file": "03-faction-frames\\guard-opening-1.png",
+      "original": "03-faction-frames\\guard-opening-1.png",
+      "compression": "none",
+      "bytes": 1252042,
+      "sha256": "05d8b94dba5ef53c3e4726a94a9aa4e615a9a22bc74987c290d56d518ac0d695",
+      "originalBytes": 1252042,
+      "originalSha256": "05d8b94dba5ef53c3e4726a94a9aa4e615a9a22bc74987c290d56d518ac0d695"
+    },
+    {
+      "file": "03-faction-frames\\villain-opening-1.png",
+      "original": "03-faction-frames\\villain-opening-1.png",
+      "compression": "none",
+      "bytes": 1324813,
+      "sha256": "0beb6e3d41bd789337d47bcfb95644f8427ec8cf1ac9f9a138a132405e51470f",
+      "originalBytes": 1324813,
+      "originalSha256": "0beb6e3d41bd789337d47bcfb95644f8427ec8cf1ac9f9a138a132405e51470f"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-1.png",
+      "original": "02-camera-routes\\elf-forest-obstruction-1.png",
+      "compression": "none",
+      "bytes": 1468232,
+      "sha256": "a49079cdbf1eb2be037717387964a970576a6c82bb7d715a50994b35a4010bb5",
+      "originalBytes": 1468232,
+      "originalSha256": "a49079cdbf1eb2be037717387964a970576a6c82bb7d715a50994b35a4010bb5"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-1.png",
+      "original": "02-camera-routes\\guard-riverside-close-1.png",
+      "compression": "none",
+      "bytes": 1470618,
+      "sha256": "171a7286e1702001bcd7cc790d065f35aa67ec92e407d9de843617811950d932",
+      "originalBytes": 1470618,
+      "originalSha256": "171a7286e1702001bcd7cc790d065f35aa67ec92e407d9de843617811950d932"
+    },
+    {
+      "file": "02-camera-routes\\elf-forest-obstruction-active-end.png",
+      "original": "02-camera-routes\\elf-forest-obstruction-active-end.png",
+      "compression": "none",
+      "bytes": 1424525,
+      "sha256": "a782d50a1a99a3c42c10804800000e3e18e20f8511a03c686bf65e4c5be26220",
+      "originalBytes": 1424525,
+      "originalSha256": "a782d50a1a99a3c42c10804800000e3e18e20f8511a03c686bf65e4c5be26220"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-active-end.png",
+      "original": "02-camera-routes\\guard-riverside-close-active-end.png",
+      "compression": "none",
+      "bytes": 1165488,
+      "sha256": "810c5881ba19b8a845e01a9af34445b6ba0d81e3d4bcfb8adefbc7c54f47ac82",
+      "originalBytes": 1165488,
+      "originalSha256": "810c5881ba19b8a845e01a9af34445b6ba0d81e3d4bcfb8adefbc7c54f47ac82"
+    },
+    {
+      "file": "05-direct-routes-lifecycle\\elf-forest-obstruction-1.png",
+      "original": "05-direct-routes-lifecycle\\elf-forest-obstruction-1.png",
+      "compression": "none",
+      "bytes": 1348802,
+      "sha256": "2de0f3d751a317bc452f872e3eccc1fb6b7174ca40b85921e392724842f06784",
+      "originalBytes": 1348802,
+      "originalSha256": "2de0f3d751a317bc452f872e3eccc1fb6b7174ca40b85921e392724842f06784"
+    },
+    {
+      "file": "05-direct-routes-lifecycle\\guard-riverside-close-1.png",
+      "original": "05-direct-routes-lifecycle\\guard-riverside-close-1.png",
+      "compression": "none",
+      "bytes": 1391209,
+      "sha256": "2288627894179835653bed6ccf6c3f715d5f415107ad669c69cfa6ad0b21ed47",
+      "originalBytes": 1391209,
+      "originalSha256": "2288627894179835653bed6ccf6c3f715d5f415107ad669c69cfa6ad0b21ed47"
+    },
+    {
+      "file": "04-no-aa-reference\\guard-opening-1.png",
+      "original": "04-no-aa-reference\\guard-opening-1.png",
+      "compression": "none",
+      "bytes": 1108339,
+      "sha256": "2f40ad35707701daea2b0e81b40add8bf8f96773513456e017e59d7f3198c5ce",
+      "originalBytes": 1108339,
+      "originalSha256": "2f40ad35707701daea2b0e81b40add8bf8f96773513456e017e59d7f3198c5ce"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-1.png",
+      "original": "06-foundation-motion-aa\\guard-opening-1.png",
+      "compression": "none",
+      "bytes": 1245593,
+      "sha256": "03d3c12e2309974ded4b80a891fc47e8bbe20bb4db2d33b9a1036f93ab72142a",
+      "originalBytes": 1245593,
+      "originalSha256": "03d3c12e2309974ded4b80a891fc47e8bbe20bb4db2d33b9a1036f93ab72142a"
+    },
+    {
+      "file": "07-foundation-motion-no-aa\\guard-opening-1.png",
+      "original": "07-foundation-motion-no-aa\\guard-opening-1.png",
+      "compression": "none",
+      "bytes": 1099600,
+      "sha256": "b31b42c47dc7d868d44a141034ce4472e50402059a00e20e64fc262cc3b288d9",
+      "originalBytes": 1099600,
+      "originalSha256": "b31b42c47dc7d868d44a141034ce4472e50402059a00e20e64fc262cc3b288d9"
+    },
+    {
+      "file": "12-small-direct-layout\\guard-riverside-close-1.png",
+      "original": "12-small-direct-layout\\guard-riverside-close-1.png",
+      "compression": "none",
+      "bytes": 244680,
+      "sha256": "f42d4dfb978d1b0164ed0d46941f0b5abd8e480435e41c28ee6e55259be10ed3",
+      "originalBytes": 244680,
+      "originalSha256": "f42d4dfb978d1b0164ed0d46941f0b5abd8e480435e41c28ee6e55259be10ed3"
+    },
+    {
+      "file": "08-world-and-environment\\night-1.png",
+      "original": "08-world-and-environment\\night-1.png",
+      "compression": "none",
+      "bytes": 940928,
+      "sha256": "f6eeb4787a600be9526bd3216c8a3eecfc174a22159396557de09f2b9b910f79",
+      "originalBytes": 940928,
+      "originalSha256": "f6eeb4787a600be9526bd3216c8a3eecfc174a22159396557de09f2b9b910f79"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-00.png",
+      "original": "02-camera-routes\\guard-riverside-close-motion-00.png",
+      "compression": "none",
+      "bytes": 1152013,
+      "sha256": "264c1b2004621e825f590c71dc7fdb82b07021d41c543307d04fd920625abc4f",
+      "originalBytes": 1152013,
+      "originalSha256": "264c1b2004621e825f590c71dc7fdb82b07021d41c543307d04fd920625abc4f"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-01.png",
+      "original": "02-camera-routes\\guard-riverside-close-motion-01.png",
+      "compression": "none",
+      "bytes": 1166146,
+      "sha256": "23e9c8a20adfdd6b7d27dddf31a21f0261d55e4c06af257747177946c1bac434",
+      "originalBytes": 1166146,
+      "originalSha256": "23e9c8a20adfdd6b7d27dddf31a21f0261d55e4c06af257747177946c1bac434"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-02.png",
+      "original": "02-camera-routes\\guard-riverside-close-motion-02.png",
+      "compression": "none",
+      "bytes": 1166622,
+      "sha256": "a6f58834815512c2e1f5ffcd10f5baee0668c7f725878b90e6b584d1c6fa80c6",
+      "originalBytes": 1166622,
+      "originalSha256": "a6f58834815512c2e1f5ffcd10f5baee0668c7f725878b90e6b584d1c6fa80c6"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-03.png",
+      "original": "02-camera-routes\\guard-riverside-close-motion-03.png",
+      "compression": "none",
+      "bytes": 1171412,
+      "sha256": "b637264ff40e621b14e9b76d14c095dbfe1d3828105b3f0b57cb745695325cd6",
+      "originalBytes": 1171412,
+      "originalSha256": "b637264ff40e621b14e9b76d14c095dbfe1d3828105b3f0b57cb745695325cd6"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-04.png",
+      "original": "02-camera-routes\\guard-riverside-close-motion-04.png",
+      "compression": "none",
+      "bytes": 1174358,
+      "sha256": "41f33b73647a3732c228656c06dd089805b9d2fdb3a0be83af4592abb13de440",
+      "originalBytes": 1174358,
+      "originalSha256": "41f33b73647a3732c228656c06dd089805b9d2fdb3a0be83af4592abb13de440"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-05.png",
+      "original": "02-camera-routes\\guard-riverside-close-motion-05.png",
+      "compression": "none",
+      "bytes": 1163503,
+      "sha256": "10482bef71699259f0a5dcbd595c480cde7b3dc01dedfb8c71cc0b86675571ac",
+      "originalBytes": 1163503,
+      "originalSha256": "10482bef71699259f0a5dcbd595c480cde7b3dc01dedfb8c71cc0b86675571ac"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-06.png",
+      "original": "02-camera-routes\\guard-riverside-close-motion-06.png",
+      "compression": "none",
+      "bytes": 1177253,
+      "sha256": "7f7bd3c64a644bc9e12ffb81e0a86248131df8bf37dadfa95f38b3eceb5f90b6",
+      "originalBytes": 1177253,
+      "originalSha256": "7f7bd3c64a644bc9e12ffb81e0a86248131df8bf37dadfa95f38b3eceb5f90b6"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-07.png",
+      "original": "02-camera-routes\\guard-riverside-close-motion-07.png",
+      "compression": "none",
+      "bytes": 1174630,
+      "sha256": "c313af670970037d8b79719bf760cf4cd6396dcdeb62e4c012cc643aa1fb36e4",
+      "originalBytes": 1174630,
+      "originalSha256": "c313af670970037d8b79719bf760cf4cd6396dcdeb62e4c012cc643aa1fb36e4"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-08.png",
+      "original": "02-camera-routes\\guard-riverside-close-motion-08.png",
+      "compression": "none",
+      "bytes": 1174157,
+      "sha256": "3a5373cd1a6967705e351623c2409f4754178dfc52af73dff17b52088b0f65d5",
+      "originalBytes": 1174157,
+      "originalSha256": "3a5373cd1a6967705e351623c2409f4754178dfc52af73dff17b52088b0f65d5"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-09.png",
+      "original": "02-camera-routes\\guard-riverside-close-motion-09.png",
+      "compression": "none",
+      "bytes": 1186204,
+      "sha256": "79f985a3b469452c2ce2155466ddb9eba2dc0344ec0ae174ccec9db699809959",
+      "originalBytes": 1186204,
+      "originalSha256": "79f985a3b469452c2ce2155466ddb9eba2dc0344ec0ae174ccec9db699809959"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-10.png",
+      "original": "02-camera-routes\\guard-riverside-close-motion-10.png",
+      "compression": "none",
+      "bytes": 1184768,
+      "sha256": "7d3416abc4e046cc99a84715b91fec26c2a307051ca56d3db2f739c1c57fe527",
+      "originalBytes": 1184768,
+      "originalSha256": "7d3416abc4e046cc99a84715b91fec26c2a307051ca56d3db2f739c1c57fe527"
+    },
+    {
+      "file": "02-camera-routes\\guard-riverside-close-motion-11.png",
+      "original": "02-camera-routes\\guard-riverside-close-motion-11.png",
+      "compression": "none",
+      "bytes": 1177587,
+      "sha256": "74495c7c7ef13c171eaabc041c8912d1e429cc81a6af601ca442403b2a307d3a",
+      "originalBytes": 1177587,
+      "originalSha256": "74495c7c7ef13c171eaabc041c8912d1e429cc81a6af601ca442403b2a307d3a"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-motion-00.png",
+      "original": "06-foundation-motion-aa\\guard-opening-motion-00.png",
+      "compression": "none",
+      "bytes": 1253538,
+      "sha256": "406bb05c8b9e04fba4d02e51ce79712afea87a744af2eec3973459bd53a72da0",
+      "originalBytes": 1253538,
+      "originalSha256": "406bb05c8b9e04fba4d02e51ce79712afea87a744af2eec3973459bd53a72da0"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-motion-05.png",
+      "original": "06-foundation-motion-aa\\guard-opening-motion-05.png",
+      "compression": "none",
+      "bytes": 1286172,
+      "sha256": "2b8f6cde1d5a130116a43919ee9e8b4c59e9a96912bda1f0c577696494c05efc",
+      "originalBytes": 1286172,
+      "originalSha256": "2b8f6cde1d5a130116a43919ee9e8b4c59e9a96912bda1f0c577696494c05efc"
+    },
+    {
+      "file": "06-foundation-motion-aa\\guard-opening-motion-11.png",
+      "original": "06-foundation-motion-aa\\guard-opening-motion-11.png",
+      "compression": "none",
+      "bytes": 1345083,
+      "sha256": "d031ac423f9b2a8648ddc4b22ea77fb9c8b83cf7ff68fbde0339806ca9ffe10f",
+      "originalBytes": 1345083,
+      "originalSha256": "d031ac423f9b2a8648ddc4b22ea77fb9c8b83cf7ff68fbde0339806ca9ffe10f"
+    },
+    {
+      "file": "records\\01-glsl-smoke-manifest.json.gz",
+      "original": "01-glsl-smoke\\manifest.json",
+      "compression": "gzip",
+      "bytes": 1919,
+      "sha256": "0ad7dc2e7fa9d2ab9a11fc78a127fdd2bdef116737c1d8b3483fd41e59b37bee",
+      "originalBytes": 3812,
+      "originalSha256": "7ca0e9ee82af57f0512a0d3e4bd6a3164189957e16c8ef495ff43a2a2a959f82"
+    },
+    {
+      "file": "records\\02-camera-routes-manifest.json.gz",
+      "original": "02-camera-routes\\manifest.json",
+      "compression": "gzip",
+      "bytes": 107182,
+      "sha256": "15a8e16c1b8f2e7adf65d2a3e04d0ebf1babef3464e0dd711f8bd6d60d8081b7",
+      "originalBytes": 1119019,
+      "originalSha256": "4fa9afc653a2270ecd20b8fa39eb5880030eb43a15633e4e2fd3654e6e757c1d"
+    },
+    {
+      "file": "records\\03-faction-frames-manifest.json.gz",
+      "original": "03-faction-frames\\manifest.json",
+      "compression": "gzip",
+      "bytes": 40203,
+      "sha256": "11905311565be8f87cb6ed426a7c4e6c133a4ebde7a15b106b012bb6ecfc0d85",
+      "originalBytes": 1143785,
+      "originalSha256": "b5b522ae11772931d71b7d05e35cda5c829a4181208cd2d6d23dce26e0cd771e"
+    },
+    {
+      "file": "records\\04-no-aa-reference-manifest.json.gz",
+      "original": "04-no-aa-reference\\manifest.json",
+      "compression": "gzip",
+      "bytes": 91759,
+      "sha256": "0c86bf96798e2cf9d9fd9038b8a4fdabef65d76cb062ea5a1d9262f1128e2c42",
+      "originalBytes": 1258638,
+      "originalSha256": "caa7f0b02eb8d8bcf14a3ab2673913431557abb00f182e35d98fe4c5c81a4d40"
+    },
+    {
+      "file": "records\\05-direct-routes-lifecycle-manifest.json.gz",
+      "original": "05-direct-routes-lifecycle\\manifest.json",
+      "compression": "gzip",
+      "bytes": 18648,
+      "sha256": "84dd20b9467f1e95e56feedd81e29b497198501a1b1395d8aed7acc97cfb26c9",
+      "originalBytes": 179057,
+      "originalSha256": "baf4c001402dc5722327dd47c9dbcdcb320baf48e4cb172fb45599629c5744f6"
+    },
+    {
+      "file": "records\\06-foundation-motion-aa-manifest.json.gz",
+      "original": "06-foundation-motion-aa\\manifest.json",
+      "compression": "gzip",
+      "bytes": 13301,
+      "sha256": "333eab4261c7ab892136f2c4243526e6f8d825854bd4543c844944811747660b",
+      "originalBytes": 378769,
+      "originalSha256": "8c4a9e7b159b6c1aba6543126a5e1b2a7159b2090af8315dcd9b2a3a7691edf4"
+    },
+    {
+      "file": "records\\07-foundation-motion-no-aa-manifest.json.gz",
+      "original": "07-foundation-motion-no-aa\\manifest.json",
+      "compression": "gzip",
+      "bytes": 13316,
+      "sha256": "4d6f5b4eac832709f72eed1c20edbd102891cb3ec0efcad56f84355e38a4af0c",
+      "originalBytes": 378423,
+      "originalSha256": "3464750f1b0390bfca2f845e71864036cc50e58c718dfc668c0a489458ea4b18"
+    },
+    {
+      "file": "records\\08-world-and-environment-manifest.json.gz",
+      "original": "08-world-and-environment\\manifest.json",
+      "compression": "gzip",
+      "bytes": 2516,
+      "sha256": "c4e13ee93b56a1849ea7daecaf2d2e8c86ce947bee848d72d8a54a8f88d9bb63",
+      "originalBytes": 6569,
+      "originalSha256": "7c3a0c53c241e73417c5c8d8bf0cd830506d4e5f7d13dc4fee3fadab756eb47e"
+    },
+    {
+      "file": "records\\09-ink-off-manifest.json.gz",
+      "original": "09-ink-off\\manifest.json",
+      "compression": "gzip",
+      "bytes": 2204,
+      "sha256": "1ec4673f33fc037c8e71d0ac689d75bcc4535394b8211e14b57838d7ee010ba4",
+      "originalBytes": 4821,
+      "originalSha256": "52d2dfc5c04a5c374d3e38c8068946566d41b04742db33a9d2110dd56f89f860"
+    },
+    {
+      "file": "records\\10-weather-off-manifest.json.gz",
+      "original": "10-weather-off\\manifest.json",
+      "compression": "gzip",
+      "bytes": 2000,
+      "sha256": "5e4ef71e86a4ef4a482ac1ad1a4330ea9a6a59fa933422e52bc95b27f7907648",
+      "originalBytes": 4445,
+      "originalSha256": "43e1c1569698013df7b1b3ea82305876af12ae7835da750ccb53f7d20cb67471"
+    },
+    {
+      "file": "records\\11-reduced-motion-manifest.json.gz",
+      "original": "11-reduced-motion\\manifest.json",
+      "compression": "gzip",
+      "bytes": 51109,
+      "sha256": "828caaec3c4088c1ef033d032367a8e87de344a16521d733c7dffd6d3ad024de",
+      "originalBytes": 812641,
+      "originalSha256": "6c4aa8d5d576acf54e8f355384cf23d95cdb07060cfecaeb9c09cbf8907ad866"
+    },
+    {
+      "file": "records\\12-small-direct-layout-manifest.json.gz",
+      "original": "12-small-direct-layout\\manifest.json",
+      "compression": "gzip",
+      "bytes": 2310,
+      "sha256": "ebc7148fea2a9c9c2e3032e7be89f1ee46ff62341960c464cda8e5007e8cf8fd",
+      "originalBytes": 5910,
+      "originalSha256": "11598a2d2ef22433733c546977aadf5eb573edd976a2c158fa0ef90fa317d74c"
+    },
+    {
+      "file": "records\\13-balanced-dpr-manifest.json.gz",
+      "original": "13-balanced-dpr\\manifest.json",
+      "compression": "gzip",
+      "bytes": 4884,
+      "sha256": "bd9dca4885cde8756f44c400adae3067a7376d252b2fd50c519f3c88c0251997",
+      "originalBytes": 29906,
+      "originalSha256": "c3f07ddaf45e03070355aa4fc9bf0b521879c6b8e6b6c4d41c86beaeef3055e6"
+    },
+    {
+      "file": "records\\14-crowd-and-streaming-manifest.json.gz",
+      "original": "14-crowd-and-streaming\\manifest.json",
+      "compression": "gzip",
+      "bytes": 6185,
+      "sha256": "5709af904aef118fc513403dc5034eb38298f9f7b0ed9c649b6994cb9d2b92c0",
+      "originalBytes": 40573,
+      "originalSha256": "e0912192b5cbd18a3794fcef5a4f13b847d9da6b22290b57b0264644092c7779"
+    },
+    {
+      "file": "profiles\\02-camera-routes\\elf-forest-obstruction-profile.json.gz",
+      "original": "02-camera-routes\\elf-forest-obstruction-profile.json",
+      "compression": "gzip",
+      "bytes": 26423,
+      "sha256": "6ca9de2c5cd6a20a2e49c6c76e5fe89c45a861ae327d30b9bdc2f9b5dcb876f0",
+      "originalBytes": 777454,
+      "originalSha256": "fe707de10f3a6e82564a704134fb8780f89ef93b3ceee0255eca468d22183f07"
+    },
+    {
+      "file": "profiles\\02-camera-routes\\guard-riverside-close-profile.json.gz",
+      "original": "02-camera-routes\\guard-riverside-close-profile.json",
+      "compression": "gzip",
+      "bytes": 26170,
+      "sha256": "eea176da6c7789139fd470eb486c3a365b6cfe08e81a6a867217f827bd5b9a60",
+      "originalBytes": 778121,
+      "originalSha256": "54885fa31b84707dc12070dc02d5a3682754c0d1095af0f915fe7573fe7be581"
+    },
+    {
+      "file": "profiles\\03-faction-frames\\elf-opening-profile.json.gz",
+      "original": "03-faction-frames\\elf-opening-profile.json",
+      "compression": "gzip",
+      "bytes": 28169,
+      "sha256": "6c255272b6d8b3cf67d65d3a334efc06a16ef61895e00f912f4a8c0623c7db89",
+      "originalBytes": 737000,
+      "originalSha256": "06c2a679ddbd1ff6d426fb710bc07903ffae88c98c5bc1805338495cd7e9b671"
+    },
+    {
+      "file": "profiles\\03-faction-frames\\guard-opening-profile.json.gz",
+      "original": "03-faction-frames\\guard-opening-profile.json",
+      "compression": "gzip",
+      "bytes": 23070,
+      "sha256": "fa1752a50a840c27283f36a08175833f08601411729c945744d4afdc1ff1f14d",
+      "originalBytes": 730156,
+      "originalSha256": "67b41cc66fd089cf77da504085c8d65f13135dcf5d179dd1367c01036c13f674"
+    },
+    {
+      "file": "profiles\\03-faction-frames\\villain-opening-profile.json.gz",
+      "original": "03-faction-frames\\villain-opening-profile.json",
+      "compression": "gzip",
+      "bytes": 22028,
+      "sha256": "f0e81b9d34be3041b0fc1e90a52e03ec1dae8710ffe65859bf1a3b055c56f4c0",
+      "originalBytes": 730766,
+      "originalSha256": "e872dc72238e5a870462186ecf1324938ffd41e38f2355979d830a3250a131b5"
+    },
+    {
+      "file": "profiles\\05-direct-routes-lifecycle\\elf-forest-obstruction-profile.json.gz",
+      "original": "05-direct-routes-lifecycle\\elf-forest-obstruction-profile.json",
+      "compression": "gzip",
+      "bytes": 26199,
+      "sha256": "81cf68f3ffe0c9355239e774692e1596f945eefc392db22dd933744c5782dc63",
+      "originalBytes": 765540,
+      "originalSha256": "41c98bd53b49beab51bfca4ea2b556c2c16fe45025106b4b8b06db63a6ca13d6"
+    },
+    {
+      "file": "profiles\\05-direct-routes-lifecycle\\guard-riverside-close-profile.json.gz",
+      "original": "05-direct-routes-lifecycle\\guard-riverside-close-profile.json",
+      "compression": "gzip",
+      "bytes": 25613,
+      "sha256": "9a56fea98743aa1015fb4b3b5e909f43de2c6d644dfc7e1253b21c8c38eb398c",
+      "originalBytes": 766767,
+      "originalSha256": "eb1465a8d9cfc4d0f41309aa4843d4f4fe47e6f3414b8a351444a0f9e205e170"
+    },
+    {
+      "file": "profiles\\13-balanced-dpr\\guard-opening-profile.json.gz",
+      "original": "13-balanced-dpr\\guard-opening-profile.json",
+      "compression": "gzip",
+      "bytes": 21817,
+      "sha256": "2e111ba3c0855061fb940ffa17131b78f71af2242878894e88e2d4043b57f8c0",
+      "originalBytes": 729776,
+      "originalSha256": "3063a4cbbdb5724fc90a3d63b96fb6aa7e112e5f989c3437ee4c4391b4c073f3"
+    },
+    {
+      "file": "profiles\\13-balanced-dpr\\elf-forest-obstruction-profile.json.gz",
+      "original": "13-balanced-dpr\\elf-forest-obstruction-profile.json",
+      "compression": "gzip",
+      "bytes": 25599,
+      "sha256": "08b6539148eb474594c70afca5550348ff16d68582cd5154c4f7be6508ef1061",
+      "originalBytes": 774711,
+      "originalSha256": "42980ca7555ec7a8d7fe07718216021baf902f7a455d496cf5213284e756e2ff"
+    },
+    {
+      "file": "profiles\\14-crowd-and-streaming\\crowded-25-profile.json.gz",
+      "original": "14-crowd-and-streaming\\crowded-25-profile.json",
+      "compression": "gzip",
+      "bytes": 32611,
+      "sha256": "0237301ee211bd339048605a1d9cd03d620e09f3a475e2d6d908a5646dcc50aa",
+      "originalBytes": 738752,
+      "originalSha256": "86e2a38132e2efa9d35f37cbaefea3840d3885283f23daa0eefe84f9abf470e4"
+    },
+    {
+      "file": "profiles\\14-crowd-and-streaming\\streaming-boundary-profile.json.gz",
+      "original": "14-crowd-and-streaming\\streaming-boundary-profile.json",
+      "compression": "gzip",
+      "bytes": 32317,
+      "sha256": "4805d44bbc192b514fdf523562ec7fa6f2f984b0b50cf74ee3741c6578ce1d44",
+      "originalBytes": 734342,
+      "originalSha256": "4dad52a8c3f2d4abbbbab6340b20ade7b483f1370f4f8ccdf0b1739215c0d9b7"
+    },
+    {
+      "file": "captures\\01-glsl-smoke\\guard-opening-1.json.gz",
+      "original": "01-glsl-smoke\\guard-opening-1.json",
+      "compression": "gzip",
+      "bytes": 12779,
+      "sha256": "f4309140581f6759670666d7b4d17b8ddcdf7da01db44386cc1455c19eb2abe3",
+      "originalBytes": 101213,
+      "originalSha256": "76e9216684676f2efb6551b8f3f1694050a1cd93d28eb66e7927869fcaa78005"
+    },
+    {
+      "file": "captures\\02-camera-routes\\elf-forest-obstruction-1.json.gz",
+      "original": "02-camera-routes\\elf-forest-obstruction-1.json",
+      "compression": "gzip",
+      "bytes": 14809,
+      "sha256": "64246b157c2bc240bbea9f9731fc5d4922089bceefd45e1560ada02923ccc654",
+      "originalBytes": 119093,
+      "originalSha256": "a89294717fd822a4d78fc2148fe01bd71414045c15a55584fd6637bf4026729f"
+    },
+    {
+      "file": "captures\\02-camera-routes\\guard-riverside-close-1.json.gz",
+      "original": "02-camera-routes\\guard-riverside-close-1.json",
+      "compression": "gzip",
+      "bytes": 14187,
+      "sha256": "b2e2b65d0b4a71a0b1e48e494978c3863f23fe22b5ee0cca746f7654fe362a24",
+      "originalBytes": 117544,
+      "originalSha256": "55619cae0232209984beb6edc2797100b3de80c07e37e05edb443e496085cc5b"
+    },
+    {
+      "file": "captures\\03-faction-frames\\elf-opening-1.json.gz",
+      "original": "03-faction-frames\\elf-opening-1.json",
+      "compression": "gzip",
+      "bytes": 12212,
+      "sha256": "596daa45d47ae5c1ac4774f2685a20359cee1c873a2f4ae3f24561fa06c6eca4",
+      "originalBytes": 98226,
+      "originalSha256": "1801e16779790e7ac8a24322500d9211a8276f6a8e8f561fed8af6a8d40b4dfb"
+    },
+    {
+      "file": "captures\\03-faction-frames\\elf-opening-2.json.gz",
+      "original": "03-faction-frames\\elf-opening-2.json",
+      "compression": "gzip",
+      "bytes": 12205,
+      "sha256": "aebc5843f4810ba724a899fa852daf884798e0989d0e56142c441a6feb59ac52",
+      "originalBytes": 98227,
+      "originalSha256": "5cb9bd5e3959d598b2365ed97a3b7a2165c16474c0445db0a359950d693dacea"
+    },
+    {
+      "file": "captures\\03-faction-frames\\guard-opening-1.json.gz",
+      "original": "03-faction-frames\\guard-opening-1.json",
+      "compression": "gzip",
+      "bytes": 12593,
+      "sha256": "27689e533bc99150450dae1cd10ab978d0340e47030b74ea9fdb147d357c308b",
+      "originalBytes": 100749,
+      "originalSha256": "42aef42732ee3bd4deec07aeea60d3f0a6ad88c8df7f827514ab5b27d77547f3"
+    },
+    {
+      "file": "captures\\03-faction-frames\\guard-opening-2.json.gz",
+      "original": "03-faction-frames\\guard-opening-2.json",
+      "compression": "gzip",
+      "bytes": 12574,
+      "sha256": "584c73fc232f7c082b94a18d26e0d0a1deaa8bf2fd63dc219dd23a89c2d95aad",
+      "originalBytes": 100688,
+      "originalSha256": "c066c14c4cc3f3b99564c7185737a559d26b8aef3558ce22b54846e11e4a85ef"
+    },
+    {
+      "file": "captures\\03-faction-frames\\villain-opening-1.json.gz",
+      "original": "03-faction-frames\\villain-opening-1.json",
+      "compression": "gzip",
+      "bytes": 12716,
+      "sha256": "0458a867e465d7efb0ae22f44589ad2ace5397bb999e34ccf8b272b93c389140",
+      "originalBytes": 100900,
+      "originalSha256": "86af6ccb7ba851190fde98b67434cbab66544f574e7d68bc3216fe987b933188"
+    },
+    {
+      "file": "captures\\03-faction-frames\\villain-opening-2.json.gz",
+      "original": "03-faction-frames\\villain-opening-2.json",
+      "compression": "gzip",
+      "bytes": 12696,
+      "sha256": "34a5d276d68f7e8d3ecc32cf2f96c6ebbfd0c76e32f8b69e8598b4031a1ce816",
+      "originalBytes": 100871,
+      "originalSha256": "a7f130cfc867b780c06cb9618f1d79b3a022a9cce536c0c917170733661604fd"
+    },
+    {
+      "file": "captures\\04-no-aa-reference\\guard-opening-1.json.gz",
+      "original": "04-no-aa-reference\\guard-opening-1.json",
+      "compression": "gzip",
+      "bytes": 12561,
+      "sha256": "c09bb8ac279ff8139ae8193c0717f0307b6226afae66e719f32808ebe696e2d5",
+      "originalBytes": 100674,
+      "originalSha256": "bcbf97c682f834147ef6fb70fd19854f9319d7b7b12bff0a2dc1047ac3207081"
+    },
+    {
+      "file": "captures\\04-no-aa-reference\\elf-forest-obstruction-1.json.gz",
+      "original": "04-no-aa-reference\\elf-forest-obstruction-1.json",
+      "compression": "gzip",
+      "bytes": 14707,
+      "sha256": "5a7694f21088557196dcb3ae42404ea01629dd71f6c2c34d131a5d2e2542b09d",
+      "originalBytes": 118841,
+      "originalSha256": "95b5dfd670a6c100486f91f540b98266b3e2d93310b1ce8e4190ce29265e3582"
+    },
+    {
+      "file": "captures\\04-no-aa-reference\\guard-riverside-close-1.json.gz",
+      "original": "04-no-aa-reference\\guard-riverside-close-1.json",
+      "compression": "gzip",
+      "bytes": 14064,
+      "sha256": "81082790ababb503c111beadd1d59cf509ba6602cd1736af9aeec34f7dfb45b5",
+      "originalBytes": 117203,
+      "originalSha256": "7652badcb1b1137b11428ac719c2bda8cb4423c09362808d6884e607f56d4758"
+    },
+    {
+      "file": "captures\\05-direct-routes-lifecycle\\elf-forest-obstruction-1.json.gz",
+      "original": "05-direct-routes-lifecycle\\elf-forest-obstruction-1.json",
+      "compression": "gzip",
+      "bytes": 13284,
+      "sha256": "642b3046ebd435378b75e2fe75f9fd364f770d716df9b65c0a1c662adc3b99bf",
+      "originalBytes": 101311,
+      "originalSha256": "11a10559b94d699e2cb0c9567dbd13ef757670e58f3e8cd18d303d2b17dd22d4"
+    },
+    {
+      "file": "captures\\05-direct-routes-lifecycle\\guard-riverside-close-1.json.gz",
+      "original": "05-direct-routes-lifecycle\\guard-riverside-close-1.json",
+      "compression": "gzip",
+      "bytes": 12578,
+      "sha256": "93a05a740fd38aed4c4057c1374fee79a33fc988bf2903c69b2f7fc869eb2f02",
+      "originalBytes": 99714,
+      "originalSha256": "10804943db03698d97100a7ef93e832cb747761957e4172b0795063c3cbb0c1e"
+    },
+    {
+      "file": "captures\\06-foundation-motion-aa\\guard-opening-1.json.gz",
+      "original": "06-foundation-motion-aa\\guard-opening-1.json",
+      "compression": "gzip",
+      "bytes": 12789,
+      "sha256": "cb1e9f35fa1e8ca8dd85126238ef152696bcdd1366770d3bb9f0611da59e8927",
+      "originalBytes": 101387,
+      "originalSha256": "1f81d438e5e2509fdcc63d24e4bad4db7453946d4fdf4ad4e66afc2d89d4b186"
+    },
+    {
+      "file": "captures\\07-foundation-motion-no-aa\\guard-opening-1.json.gz",
+      "original": "07-foundation-motion-no-aa\\guard-opening-1.json",
+      "compression": "gzip",
+      "bytes": 12823,
+      "sha256": "417d80db520f4a6115e9a1e682fb72df52bc62e72c2a3443ccd2584d958c4a88",
+      "originalBytes": 101458,
+      "originalSha256": "531d5ed8b05b739100d32b5dda29a03342e5d39652d7f3e2872233b93cc983db"
+    },
+    {
+      "file": "captures\\08-world-and-environment\\villain-slope-1.json.gz",
+      "original": "08-world-and-environment\\villain-slope-1.json",
+      "compression": "gzip",
+      "bytes": 13483,
+      "sha256": "bbeafae73bb47df5ba41cf75e9bacea9896a64cb93845ac2dd78fb40c5a2b10b",
+      "originalBytes": 108713,
+      "originalSha256": "1a811b87f02e665687db418ec70ea64376162ba3d65e85fb4656e497864056c5"
+    },
+    {
+      "file": "captures\\08-world-and-environment\\bridge-water-edge-1.json.gz",
+      "original": "08-world-and-environment\\bridge-water-edge-1.json",
+      "compression": "gzip",
+      "bytes": 14381,
+      "sha256": "ed46a527494212f710b7add3f031b3b9a15acb02cd578c6d6c4abb4a903e0d9e",
+      "originalBytes": 114999,
+      "originalSha256": "7d96cad45fc6022c52237714cbff3b22807345d6ce5ad7304a06305d996094b2"
+    },
+    {
+      "file": "captures\\08-world-and-environment\\night-1.json.gz",
+      "original": "08-world-and-environment\\night-1.json",
+      "compression": "gzip",
+      "bytes": 12614,
+      "sha256": "778ab4057660fde0f536effeebc15fe375971678b22e72bc5b0d94674677971b",
+      "originalBytes": 100812,
+      "originalSha256": "9c209bf3a3b4f0e94cb8fbb711d6a1c456fc3b29482602eadb159883515f5fe9"
+    },
+    {
+      "file": "captures\\08-world-and-environment\\rain-1.json.gz",
+      "original": "08-world-and-environment\\rain-1.json",
+      "compression": "gzip",
+      "bytes": 13286,
+      "sha256": "2c298ad439776a9e16d04aac03385c54fbc3656d9986651cf56880814dcc53db",
+      "originalBytes": 105823,
+      "originalSha256": "2574441c1f430ba42506d2423234b02fbac930aafd76c4fdc0089823091df43b"
+    },
+    {
+      "file": "captures\\08-world-and-environment\\snow-1.json.gz",
+      "original": "08-world-and-environment\\snow-1.json",
+      "compression": "gzip",
+      "bytes": 13280,
+      "sha256": "6f7cdf889d0d3d7c32c2c4fd0fc6c72eea64df1461e83c09714cf919c66aa0f1",
+      "originalBytes": 105840,
+      "originalSha256": "36775b57eb223cd37d1700e4c626f79a3920777c213a96efc7453a24478a9350"
+    },
+    {
+      "file": "captures\\09-ink-off\\elf-forest-obstruction-1.json.gz",
+      "original": "09-ink-off\\elf-forest-obstruction-1.json",
+      "compression": "gzip",
+      "bytes": 14793,
+      "sha256": "1542d2fcdef3dcf179e34d52af93eba6b3a6a4ad6097f7a2fd8b833555bfdd9e",
+      "originalBytes": 119056,
+      "originalSha256": "a10be68ef2a4e593f411bd0d32f09843cabed64662f8cdd8c2a1bd13e96e15f4"
+    },
+    {
+      "file": "captures\\09-ink-off\\guard-riverside-close-1.json.gz",
+      "original": "09-ink-off\\guard-riverside-close-1.json",
+      "compression": "gzip",
+      "bytes": 14146,
+      "sha256": "da1986f7dbe52deeadc29c980682ce3cb02f3ab6c02b2b08ef271097ff8e26bf",
+      "originalBytes": 117474,
+      "originalSha256": "9da4550ba5e4344c500c1dc707115dd43340028e4f8927a3fb947a83d4ec9d9c"
+    },
+    {
+      "file": "captures\\10-weather-off\\elf-opening-1.json.gz",
+      "original": "10-weather-off\\elf-opening-1.json",
+      "compression": "gzip",
+      "bytes": 12189,
+      "sha256": "580d87d373005b97c5cb84a614252277d40688bd8c38a4b420d899f95501607c",
+      "originalBytes": 98201,
+      "originalSha256": "ceaf6dfe9c2519db30154a1c1ecab3977454c5317325d9bd2bd61cfc5368d193"
+    },
+    {
+      "file": "captures\\10-weather-off\\villain-opening-1.json.gz",
+      "original": "10-weather-off\\villain-opening-1.json",
+      "compression": "gzip",
+      "bytes": 12704,
+      "sha256": "c915b3dd5c854ba7df8a3f5ff56f0c693a0c452ad50cf944f00e109685a6512b",
+      "originalBytes": 100864,
+      "originalSha256": "0611e8f7e8b3db6b62ab8ac1059e0c95e04fbe4dee013b6f8316c349eb71a14d"
+    },
+    {
+      "file": "captures\\11-reduced-motion\\guard-riverside-close-1.json.gz",
+      "original": "11-reduced-motion\\guard-riverside-close-1.json",
+      "compression": "gzip",
+      "bytes": 14203,
+      "sha256": "716e7e1abfc8bfbed125c38427074d3008f053f6e80eacb4c80db55aeb0d374c",
+      "originalBytes": 117565,
+      "originalSha256": "9af574e693187e787ddb77ce2195bec9b2e38c66ed45a265b5d3b0fbacdbde9d"
+    },
+    {
+      "file": "captures\\11-reduced-motion\\night-1.json.gz",
+      "original": "11-reduced-motion\\night-1.json",
+      "compression": "gzip",
+      "bytes": 12613,
+      "sha256": "41b245c4896977d1e810293052a9d84ab24919cab84631c911b3e96d752d828d",
+      "originalBytes": 100808,
+      "originalSha256": "807a15a2f2f2676b48f38d741cba7c515d1bd66d1e55df40ba11110a60b90762"
+    },
+    {
+      "file": "captures\\12-small-direct-layout\\elf-opening-1.json.gz",
+      "original": "12-small-direct-layout\\elf-opening-1.json",
+      "compression": "gzip",
+      "bytes": 5562,
+      "sha256": "9efdeda86e8602a7149f1368d376c9230389b401d507753262bd1358d20826b0",
+      "originalBytes": 80302,
+      "originalSha256": "804216241e1b597ae9a2e068b1aa0631b6e747b4c18ef6bc079ceefa8ec87534"
+    },
+    {
+      "file": "captures\\12-small-direct-layout\\guard-opening-1.json.gz",
+      "original": "12-small-direct-layout\\guard-opening-1.json",
+      "compression": "gzip",
+      "bytes": 5729,
+      "sha256": "392d0b907c9cfa40cdbf5cbfce31f17cec8686de3bb6c537d50eaa654f43da94",
+      "originalBytes": 82848,
+      "originalSha256": "1d1859d26a4289164b669a44d1095b75b9895271e9156137298f934ad4d986f7"
+    },
+    {
+      "file": "captures\\12-small-direct-layout\\villain-opening-1.json.gz",
+      "original": "12-small-direct-layout\\villain-opening-1.json",
+      "compression": "gzip",
+      "bytes": 5780,
+      "sha256": "40bba3a82b884fec1f3874de1b4ebcbe180e30812979e54555d47fcc3accd9f4",
+      "originalBytes": 82963,
+      "originalSha256": "bebbaf3c6644d19ca8764c4fcf36df9ca97be29335c19ca9233e95e12c3312c8"
+    },
+    {
+      "file": "captures\\12-small-direct-layout\\guard-riverside-close-1.json.gz",
+      "original": "12-small-direct-layout\\guard-riverside-close-1.json",
+      "compression": "gzip",
+      "bytes": 12573,
+      "sha256": "a1cd17b6baa1588133e38f95a8b277f0673568ad029c060d899424dd7978df1a",
+      "originalBytes": 99606,
+      "originalSha256": "7cb4e1f22b1aa0c848539943a11fa8833c88722e72ee035984051bd021ecbbfe"
+    },
+    {
+      "file": "captures\\13-balanced-dpr\\guard-opening-1.json.gz",
+      "original": "13-balanced-dpr\\guard-opening-1.json",
+      "compression": "gzip",
+      "bytes": 12694,
+      "sha256": "59ed21ea572ec5ec48805716082532db63bef181bc6dbbd5f10e71b4ecf3b252",
+      "originalBytes": 100738,
+      "originalSha256": "dd7fc99d08622644cc66372d9089fd884d6c22e3925292f310a12f6d5102c6ca"
+    },
+    {
+      "file": "captures\\13-balanced-dpr\\elf-forest-obstruction-1.json.gz",
+      "original": "13-balanced-dpr\\elf-forest-obstruction-1.json",
+      "compression": "gzip",
+      "bytes": 14907,
+      "sha256": "6e1ff76eecabe0d1beb2d3edb75bdc347aaa8a2362a5e28812509474b89201e5",
+      "originalBytes": 119133,
+      "originalSha256": "6b48b767d99de2f8005a6d263155adcf41dd1cbb98c54cd4c80c7778821fd593"
+    },
+    {
+      "file": "captures\\14-crowd-and-streaming\\crowded-25-1.json.gz",
+      "original": "14-crowd-and-streaming\\crowded-25-1.json",
+      "compression": "gzip",
+      "bytes": 14203,
+      "sha256": "efed3360814b97f2608fc66e7d6c275205e501c84215c9909d40a84d9691c62c",
+      "originalBytes": 112426,
+      "originalSha256": "e153cfc8fec0714435933a2a6fce990590086a5e2adc28649feaecc905bb79ee"
+    },
+    {
+      "file": "captures\\14-crowd-and-streaming\\streaming-boundary-1.json.gz",
+      "original": "14-crowd-and-streaming\\streaming-boundary-1.json",
+      "compression": "gzip",
+      "bytes": 12969,
+      "sha256": "88f10352f1f9863410f7fc6183c39880070563895cadb70d3b5966376501747a",
+      "originalBytes": 101811,
+      "originalSha256": "b8f5e54476dc0551a826c900e02c7f2f4d5cd578e8ba3b7354a0f89895fd7cd0"
+    },
+    {
+      "file": "records\\06-foundation-motion-aa\\guard-opening-1-browser.json.gz",
+      "original": "06-foundation-motion-aa\\guard-opening-1-browser.json",
+      "compression": "gzip",
+      "bytes": 3779,
+      "sha256": "13077d2b9ae58b326a3f27a658705968fdca60acd3d6ff1e6e55908b720148d3",
+      "originalBytes": 47564,
+      "originalSha256": "6eff4faded57bf734a5ecf1c3f7ec95d0b89af150197f1abe5156c6cf08b3209"
+    },
+    {
+      "file": "records\\07-foundation-motion-no-aa\\guard-opening-1-browser.json.gz",
+      "original": "07-foundation-motion-no-aa\\guard-opening-1-browser.json",
+      "compression": "gzip",
+      "bytes": 3323,
+      "sha256": "0bf2abf39406661d1f5c8835141478afda9a1c58da9ab761ba3b7e1ec9a8cfed",
+      "originalBytes": 39927,
+      "originalSha256": "9e1683e498ab7c6bf4ad7999032e59e41c4a834fa3d0c78d6b60d4c20640fb0a"
+    },
+    {
+      "file": "records\\02-camera-routes\\guard-riverside-close-1-browser.json.gz",
+      "original": "02-camera-routes\\guard-riverside-close-1-browser.json",
+      "compression": "gzip",
+      "bytes": 3486,
+      "sha256": "bb504e6fde4c08d8efae53610aa223dba42f918c352130c31fa165683609ee46",
+      "originalBytes": 48813,
+      "originalSha256": "16b5c0979e0756346e4e9f45432ec59b78889ec3019af406892624921f7bfa2e"
+    },
+    {
+      "file": "batch-result.json",
+      "original": "batch-result.json",
+      "compression": "none",
+      "bytes": 18673,
+      "sha256": "9a16f3e42de8192363520e395cb0093fb913f1e5176e582d372db5de32233698",
+      "originalBytes": 18673,
+      "originalSha256": "9a16f3e42de8192363520e395cb0093fb913f1e5176e582d372db5de32233698"
+    },
+    {
+      "file": "supervisor.json.gz",
+      "original": "..\\supervisor.json",
+      "compression": "gzip",
+      "bytes": 3423,
+      "sha256": "f334535dd1a62626fca99b8070de01337c71b647586413e346ff35c08a2c85a6",
+      "originalBytes": 28311,
+      "originalSha256": "72d0958bdadfcb7b0bd488ddc6f7aa251cfce3cbeaf778b269ef9a9a62f2210f"
+    },
+    {
+      "file": "approved-workload.ps1.gz",
+      "original": "..\\approved-workload.ps1",
+      "compression": "gzip",
+      "bytes": 4847,
+      "sha256": "4ffbe136ad82026141dc461889ca8100e0c52423e8ba3830ef98bee6963e159b",
+      "originalBytes": 14539,
+      "originalSha256": "4addf5fd3fd1770b2f70e384446c86504078417a7eb651417ec30d17ce8c0839"
+    },
+    {
+      "file": "summary.json",
+      "bytes": 309796,
+      "sha256": "6f7811edd8e07626894badca54ef42df56c8d85f9894dbbea48ab85ea310fc9d",
+      "derived": true
+    }
+  ],
+  "pngCount": 29,
+  "packagedBytes": 36323657
+}
