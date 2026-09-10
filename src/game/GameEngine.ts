@@ -38,7 +38,9 @@ import {
   applyLimbPose,
   beastLookYaw,
   buildBirdBody,
+  buildBirdFoot,
   buildBirdWing,
+  buildArticulatedBirdWing,
   buildCharacterSkeleton,
   buildCloak,
   chestGaitYaw,
@@ -72,6 +74,19 @@ import {
   buildWeaponHead,
   buildWristRope,
   characterPartKeys,
+  illustratedCharacterPlan,
+  createCharacterPresenter,
+  characterPresenter,
+  type CharacterPresenter,
+  type CharacterLimb,
+  CreaturePresenter,
+  creaturePresenter,
+  createCreatureLeg,
+  type CreatureLeg,
+  WagonPresenter,
+  wagonPresenter,
+  buildDraftYoke,
+  taperedBox,
   resolveCharacterPlan,
   setCharacterShoulderWidth,
   solveHandOffset,
@@ -1992,6 +2007,10 @@ export class GameEngine {
   private readonly artLibrary: StylizedArtLibrary
   /** Shape cache shared by every actor: one buffer per shape, not one per actor. */
   private readonly artGeometry = new GeometryCache()
+  private readonly characterPresenters = new Set<CharacterPresenter>()
+  private readonly creaturePresenters = new Set<CreaturePresenter>()
+  private readonly wagonPresenters = new Set<WagonPresenter>()
+  private readonly characterHeightSample = (x: number, z: number): number => this.groundHeightAt(x, z)
   /** Scratch vector for the arm-chain solve. Reused so the pose never allocates. */
   private readonly handOffset = new THREE.Vector3()
   /**
@@ -2741,7 +2760,9 @@ export class GameEngine {
         const materials = Array.isArray(object.material) ? object.material : [object.material]
         if (materials.every(hasStylizedShader)) sources.push(object)
       })
-      for (const source of sources) this.playerRenderBindings.push(this.artLibrary.bindRenderSource(source, { visibility: true }))
+      for (const source of sources) this.playerRenderBindings.push(
+        this.artLibrary.getRenderSourceBinding(source) ?? this.artLibrary.bindRenderSource(source, { visibility: true }),
+      )
     }
     this.lastZone = this.zoneAtPosition(this.player.position.x, this.player.position.z)
     this.audio.setMusicContext({
@@ -2989,6 +3010,12 @@ export class GameEngine {
     for (const binding of this.playerRenderBindings.splice(0)) {
       attempt(() => this.artLibrary.releaseRenderSource(binding))
     }
+    for (const presenter of this.characterPresenters) attempt(() => presenter.dispose())
+    this.characterPresenters.clear()
+    for (const presenter of this.creaturePresenters) attempt(() => presenter.dispose())
+    this.creaturePresenters.clear()
+    for (const presenter of this.wagonPresenters) presenter.dispose()
+    this.wagonPresenters.clear()
     const geometries = new Set<THREE.BufferGeometry>()
     const materials = new Set<THREE.Material>()
     this.scene.traverse((object) => {
@@ -3838,6 +3865,8 @@ export class GameEngine {
     if (!this.paused && !this.ended) this.updateCameraEffects(visualDelta)
     this.graphicsFoundation?.update(this.graphicsClock?.timeSeconds ?? this.elapsed)
     this.updateCamera(visualDelta, false)
+    for (const presenter of this.characterPresenters) presenter.updateLod(this.camera, this.visualPolicy)
+    for (const presenter of this.creaturePresenters) presenter.updateLod(this.camera, this.visualPolicy)
     this.audioListenerRight.setFromMatrixColumn(this.camera.matrixWorld, 0)
     this.audio.setListener(this.camera.position, this.audioListenerRight)
     this.updateMusicContext()
@@ -5471,6 +5500,7 @@ export class GameEngine {
   }
 
   private updatePlayer(delta: number): void {
+    characterPresenter(this.player)?.advanceActionPresentation(delta, this.activePlayerAttackKind !== 'arrow')
     const wasOnGround = this.onGround
     const forward = this.getAimDirection()
     const movement = cameraRelativeMovement(this.keys, this.cameraYaw)
@@ -5593,6 +5623,19 @@ export class GameEngine {
     )
     this.airborneTime = airborneUpdate.airborneTime
     if (airborneUpdate.landed) this.queueCameraAccent('land', -1.4, 0.16)
+    const presenter = characterPresenter(this.player)
+    if (presenter) {
+      const pose = this.playerPose
+      applyChestPose(presenter.anatomy.torsoPivot,
+        presenter.rig.lean - pose.anticipation * 0.1 + pose.attack * 0.12,
+        -pose.stride * 0.07 + pose.anticipation * 0.13 - pose.attack * 0.18, 0)
+      if (this.faction === 'guard') this.updateShieldPose()
+      presenter.syncAttachments()
+      presenter.poseArrowRecovery()
+      presenter.poseSupport(Math.max(pose.anticipation, pose.attack * 0.8))
+      presenter.secondaryMotion(delta, pose.stride, pose.attack, this.reducedMotion)
+      presenter.ground(delta, this.characterHeightSample, this.onGround && !evading, 0, pose.stride)
+    }
 
   }
 
@@ -6978,6 +7021,7 @@ export class GameEngine {
       actor.hostileToPlayer &&
       playerDistance < 34 &&
       (this.elapsed < actor.healthBarVisibleUntil || actor.rageTimer > 0)
+    characterPresenter(actor.mesh)?.setStatusPresentation(actor.healthBar.visible, actor.alive)
     this.updateActorOutlineVisibility(actor, playerDistance * playerDistance)
   }
 
@@ -6999,6 +7043,9 @@ export class GameEngine {
 
   private registerOutline(root: THREE.Object3D, kind: OutlineKind): OutlineBinding {
     const binding = this.artLibrary.applyOutline(root, kind)
+    for (const shell of binding.shells) {
+      if (shell.parent?.userData.visualSubsystem === 'dynamicArt') shell.userData.visualSubsystem = 'dynamicArt'
+    }
     this.outlineBindings.push(binding)
     this.setOutlineVisible(binding, false)
     return binding
@@ -7045,7 +7092,10 @@ export class GameEngine {
   }
 
   private setOutlineVisible(binding: OutlineBinding, visible: boolean): void {
-    for (const shell of binding.shells) shell.visible = visible
+    for (const shell of binding.shells) {
+      shell.userData.policyOutlineEnabled = visible
+      shell.visible = visible && shell.parent?.userData.characterInkEnabled !== false
+    }
   }
 
   private unregisterOutlineRoot(root: THREE.Object3D): void {
@@ -7456,6 +7506,7 @@ export class GameEngine {
       0.25,
     )
     this.playSound('bow')
+    characterPresenter(this.player)?.beginArrowPresentation(direction, 0.55 / BOW_SPEED)
   }
 
   private cleave(): void {
@@ -7855,8 +7906,12 @@ export class GameEngine {
         this.caravan.position.z,
       )
     }
-    const wheels = this.caravan.getObjectsByProperty('name', 'wheel')
-    for (const wheel of wheels) wheel.rotation.z -= wheelTravel / wheelRadiusOf(wheel)
+    const wagon = wagonPresenter(this.caravan)
+    if (wagon) wagon.update(delta, wheelTravel, this.characterHeightSample)
+    else {
+      const wheels = this.caravan.getObjectsByProperty('name', 'wheel')
+      for (const wheel of wheels) wheel.rotation.z -= wheelTravel / wheelRadiusOf(wheel)
+    }
     const cargo = this.caravan.getObjectByName('cargo')
     if (cargo instanceof THREE.Mesh) {
       const scale = this.caravanCooldown > 0 ? 0.35 : 1
@@ -9109,7 +9164,7 @@ export class GameEngine {
       if (prop.velocity.lengthSq() > 0.001) {
         prop.mesh.rotation.y = Math.atan2(prop.velocity.x, prop.velocity.z)
       }
-      this.animateWildlife(prop, true)
+      this.animateWildlife(prop, true, delta)
       // A bird that has finished climbing is ~19 m up and 27 m out, which is nowhere near
       // `WILDLIFE_DESPAWN_RADIUS`. Letting it fall through to the landed branch below
       // would hard-assign its `y` to ground height and teleport it straight down in one
@@ -9123,7 +9178,7 @@ export class GameEngine {
       prop.mesh.position.y =
         this.groundHeightAt(prop.mesh.position.x, prop.mesh.position.z) +
         Math.max(0, Math.sin(this.elapsed * 6 + prop.phase)) * 0.16
-      this.animateWildlife(prop, false)
+      this.animateWildlife(prop, false, delta)
       return
     }
 
@@ -9150,7 +9205,7 @@ export class GameEngine {
     } else {
       prop.wanderTimer = 0
     }
-    this.animateWildlife(prop, false)
+    this.animateWildlife(prop, false, delta)
   }
 
   /** Closest thing worth running from: the player, or anything on the actor list. */
@@ -9170,7 +9225,12 @@ export class GameEngine {
     return { position, distance: best }
   }
 
-  private animateWildlife(prop: WildlifeProp, panicking: boolean): void {
+  private animateWildlife(prop: WildlifeProp, panicking: boolean, delta: number): void {
+    const presenter = creaturePresenter(prop.mesh)
+    if (presenter) {
+      presenter.poseWildlife(this.elapsed + prop.phase, panicking, delta, this.characterHeightSample)
+      return
+    }
     if (prop.kind === 'bird') {
       const wings = prop.mesh.getObjectByName('wings')
       if (wings) {
@@ -9205,13 +9265,14 @@ export class GameEngine {
    */
   private createDeer(): THREE.Group {
     const group = new THREE.Group()
-    const coat = mix(this.palette.warning, this.palette.text, 0.42)
+    const enhanced = this.visualPolicy.mode === 'enhanced'
+    const coat = enhanced ? new THREE.Color(0x967252) : mix(this.palette.warning, this.palette.text, 0.42)
     const hide = this.artLibrary.acquireMaterial('fauna:deer:hide', {
       color: coat,
       surface: 'cloth',
     })
     const dark = this.artLibrary.acquireMaterial('fauna:deer:dark', {
-      color: mix(coat, this.palette.bg, 0.5),
+      color: mix(coat, enhanced ? new THREE.Color(0x302a24) : this.palette.bg, 0.5),
       surface: 'dark',
     })
     const build = (key: string, factory: () => THREE.BufferGeometry) =>
@@ -9226,36 +9287,42 @@ export class GameEngine {
 
     const legs = new THREE.Group()
     legs.name = 'legs'
-    legs.position.y = 0.9
-    group.add(legs)
+    legs.position.y = enhanced ? 0 : 0.9
+    if (enhanced) body.add(legs)
+    else group.add(legs)
+    const articulatedLegs: CreatureLeg[] = []
     for (const [x, z, front] of [
       [-0.19, 0.52, true],
       [0.19, 0.52, true],
       [-0.19, -0.52, false],
       [0.19, -0.52, false],
     ] as const) {
-      const leg = new THREE.Mesh(
-        build(`deer-leg:${front ? 'front' : 'hind'}`, () => buildDeerLeg(front)),
-        dark,
-      )
+      const articulated = enhanced ? createCreatureLeg('deer', `deer-${front ? 'front' : 'hind'}-${x < 0 ? 'left' : 'right'}`,
+        0.9, front, x < 0 ? -1 : 1, dark, build) : null
+      const leg = articulated?.upper ?? new THREE.Mesh(
+        build(`deer-leg:${front ? 'front' : 'hind'}`, () => buildDeerLeg(front)), dark)
       leg.position.set(x, 0, z)
       legs.add(leg)
+      if (articulated) articulatedLegs.push(articulated)
     }
 
     group.add(this.artLibrary.createContactShadow({ radius: 0.72 }))
     this.markCharacterShadows(group)
+    if (enhanced) this.creaturePresenters.add(
+      new CreaturePresenter(group, this.artLibrary, this.artGeometry, 'illustrated-deer', articulatedLegs))
     return group
   }
 
   /** A bird: a tapered body, a fanned tail and one wing bar that flaps. */
   private createBird(): THREE.Group {
     const group = new THREE.Group()
+    const enhanced = this.visualPolicy.mode === 'enhanced'
     const feather = this.artLibrary.acquireMaterial('fauna:bird:feather', {
-      color: mix(this.palette.text, this.palette.bg, 0.24),
+      color: enhanced ? 0x746e62 : mix(this.palette.text, this.palette.bg, 0.24),
       surface: 'dark',
     })
     const beakMaterial = this.artLibrary.acquireMaterial('fauna:bird:beak', {
-      color: this.palette.warning,
+      color: enhanced ? 0x9a794b : this.palette.warning,
       surface: 'skin',
     })
     const build = (key: string, factory: () => THREE.BufferGeometry) =>
@@ -9271,10 +9338,26 @@ export class GameEngine {
     beak.position.set(0, 0.32, 0.29)
     beak.rotation.x = Math.PI / 2
     group.add(beak)
-    const wings = new THREE.Mesh(build('bird-wing', () => buildBirdWing()), feather)
+    const wings = enhanced ? new THREE.Group() : new THREE.Mesh(build('bird-wing', () => buildBirdWing()), feather)
     wings.name = 'wings'
     wings.position.y = 0.25
     group.add(wings)
+    if (enhanced) {
+      for (const side of [-1, 1]) {
+        const joint = new THREE.Group()
+        joint.name = side < 0 ? 'leftWing' : 'rightWing'
+        joint.position.x = side * 0.06
+        const wing = new THREE.Mesh(this.acquireArtGeometry(`articulated-wing:${side}`, () => buildArticulatedBirdWing(side)), feather)
+        joint.add(wing)
+        wings.add(joint)
+        const foot = new THREE.Group()
+        foot.name = side < 0 ? 'leftBirdFoot' : 'rightBirdFoot'
+        foot.position.set(side * 0.043, 0, 0.022)
+        foot.add(new THREE.Mesh(this.acquireArtGeometry('articulated-bird-foot', buildBirdFoot), beakMaterial))
+        group.add(foot)
+      }
+      this.creaturePresenters.add(new CreaturePresenter(group, this.artLibrary, this.artGeometry, 'illustrated-bird'))
+    }
     group.traverse((object) => {
       // Same predicate as `markCharacterShadows`, for the same reason. Every material
       // this builder makes is opaque today, so the guard changes nothing — which is
@@ -10358,7 +10441,10 @@ export class GameEngine {
             -travelDirection.y * direction,
             travelDirection.x * direction,
           )
-          for (const wheel of caravan.getObjectsByProperty('name', 'wheel')) {
+          const wagon = wagonPresenter(caravan)
+          if (wagon) wagon.update(delta,
+            Math.hypot(caravan.position.x - previousX, caravan.position.z - previousZ), this.characterHeightSample)
+          else for (const wheel of caravan.getObjectsByProperty('name', 'wheel')) {
             wheel.rotation.z -= (delta * 2.8) / wheelRadiusOf(wheel)
           }
           event.markerPos.copy(caravan.position)
@@ -10380,6 +10466,7 @@ export class GameEngine {
             escort.wanderTarget.copy(escort.home)
           }
         })
+        if (robbed) wagonPresenter(caravan)?.update(delta, 0, this.characterHeightSample)
         if (!robbed) return
         if (!robberyPoint) return
         event.progress = Math.min(event.target, this.player.position.distanceTo(robberyPoint))
@@ -11060,8 +11147,9 @@ export class GameEngine {
       markerPos: cart.position.clone(),
       ownedActorIds: [...escortIds, ...raiderIds],
       ownedProps: [cart],
-      update: () => {
+      update: (delta) => {
         event.markerPos.copy(cart.position)
+        wagonPresenter(cart)?.update(delta, 0, this.characterHeightSample)
         // A caravan whose escort is gone is a caravan somebody else is taking.
         if (
           !robbed &&
@@ -11517,6 +11605,25 @@ export class GameEngine {
 
   private removeAndDisposeObject(object: THREE.Object3D): void {
     this.unregisterOutlineRoot(object)
+    const wagon = wagonPresenter(object)
+    if (wagon) {
+      this.wagonPresenters.delete(wagon)
+      wagon.dispose()
+    }
+    const presenter = characterPresenter(object)
+    if (presenter) {
+      this.characterPresenters.delete(presenter)
+      presenter.dispose()
+    }
+    const creatures: CreaturePresenter[] = []
+    object.traverse((node) => {
+      const creature = creaturePresenter(node)
+      if (creature) creatures.push(creature)
+    })
+    for (const creature of creatures) {
+      this.creaturePresenters.delete(creature)
+      creature.dispose()
+    }
     object.removeFromParent()
     const geometries = new Set<THREE.BufferGeometry>()
     const materials = new Set<THREE.Material>()
@@ -12051,6 +12158,7 @@ export class GameEngine {
     actor.healthBar.visible = false
     const ring = actor.mesh.getObjectByName('faction-ring')
     if (ring) ring.visible = false
+    characterPresenter(actor.mesh)?.setStatusPresentation(false, false)
     this.projectileSourcesToClear.add(actor.id)
     this.recordGeneratedActorDeath(actor)
     // §5C.2 — losing the commander is a morale event for everyone who watched it, and
@@ -12110,6 +12218,7 @@ export class GameEngine {
 
   private updateActorDeathMotion(actor: Actor, delta: number): void {
     if (!actor.deathStyle || actor.deathAge >= DEATH_POSE_TIME) return
+    characterPresenter(actor.mesh)?.setBowRelease(true)
     actor.deathAge = Math.min(DEATH_POSE_TIME, actor.deathAge + delta)
     const progress = actor.deathAge / DEATH_POSE_TIME
     const eased = 1 - Math.pow(1 - progress, 3)
@@ -12213,6 +12322,7 @@ export class GameEngine {
       }
     }
     if (head) head.rotation.z = side * 0.28 * eased
+    characterPresenter(actor.mesh)?.syncAttachments()
   }
 
   private injurePlayer(): void {
@@ -12239,6 +12349,7 @@ export class GameEngine {
       this.callbacks.onNotice(describeLimbLost(part), 'danger')
     } else {
       this.body[part] = 'wounded'
+      if (!part.includes('Eye')) characterPresenter(this.player)?.setAppearance({ [part]: 'wounded' })
       this.achievements.recordInjury(part, false)
       this.body.bleeding = Math.min(1.2, this.body.bleeding + 0.12)
       this.callbacks.onNotice(describeWound(part), 'warning')
@@ -12250,6 +12361,7 @@ export class GameEngine {
     const limb = this.player.getObjectByName(part)
     if (!limb) return
     limb.visible = false
+    if (!part.includes('Eye')) characterPresenter(this.player)?.setAppearance({ [part]: 'missing' })
     this.createBloodBurst(
       this.player.position.clone().add(new THREE.Vector3(part.startsWith('left') ? -0.4 : 0.4, 1.2, 0)),
       new THREE.Vector3(part.startsWith('left') ? -1 : 1, 0, 0.25),
@@ -12278,6 +12390,11 @@ export class GameEngine {
   private restorePlayerLimb(part: BodyPart): void {
     const limb = this.player.getObjectByName(part)
     if (!limb) return
+    const presenter = characterPresenter(this.player)
+    if (presenter && !part.includes('Eye')) {
+      presenter.setAppearance({ [part]: 'prosthetic' })
+      return
+    }
     limb.visible = true
     limb.traverse((object) => {
       if (!(object instanceof THREE.Mesh) || StylizedArtLibrary.isOutlineShell(object)) return
@@ -12291,6 +12408,11 @@ export class GameEngine {
   }
 
   private applySavedBodyAppearance(): void {
+    const presenter = characterPresenter(this.player)
+    if (presenter) {
+      presenter.setAppearance(this.body)
+      return
+    }
     const limbs: BodyPart[] = ['leftArm', 'rightArm', 'leftLeg', 'rightLeg']
     for (const part of limbs) {
       const limb = this.player.getObjectByName(part)
@@ -12308,6 +12430,8 @@ export class GameEngine {
     if (visible.length === 0) return
     const limb = visible[Math.floor(Math.random() * visible.length)]
     limb.visible = false
+    characterPresenter(actor.mesh)?.setAppearance({ [limb.name as CharacterLimb]: 'missing' })
+    creaturePresenter(actor.mesh)?.hideLimb(limb.name)
     this.createBloodBurst(
       actor.mesh.position.clone().add(new THREE.Vector3(0, 1.35, 0)),
       new THREE.Vector3((Math.random() - 0.5) * 2, 0, (Math.random() - 0.5) * 2),
@@ -12346,6 +12470,7 @@ export class GameEngine {
     for (const part of parts) {
       if (this.body[part] === 'wounded') this.body[part] = 'healthy'
     }
+    characterPresenter(this.player)?.setAppearance(this.body)
   }
 
   private completeObjective(id: string): boolean {
@@ -14247,6 +14372,27 @@ export class GameEngine {
         : finaleProfile === 'marshal'
           ? { ...ordinaryPlan, weapon: 'glaive', mainHand: 'right', offhand: 'heater', headgear: 'crested' }
           : ordinaryPlan
+    if (this.visualPolicy.mode === 'enhanced') {
+      const presenter = createCharacterPresenter(illustratedCharacterPlan(plan), this.artLibrary, this.artGeometry, player, this.visualPolicy.quality)
+      this.characterPresenters.add(presenter)
+      const group = presenter.root
+      if (!player) {
+        const ring = new THREE.Mesh(
+          this.acquireArtGeometry('faction-ring', () => new THREE.RingGeometry(0.72, 0.9, 24)),
+          new THREE.MeshBasicMaterial({
+            color: this.factionColor(faction), transparent: true, opacity: 0.48,
+            depthWrite: false, side: THREE.DoubleSide, toneMapped: false, forceSinglePass: true,
+          }),
+        )
+        ring.name = 'faction-ring'
+        ring.position.y = 0.05
+        ring.rotation.x = -Math.PI / 2
+        ring.renderOrder = 2
+        presenter.attachFactionRing(ring)
+      }
+      presenter.attachContactShadow(this.artLibrary.createContactShadow({ radius: player ? 0.66 : 0.58 }))
+      return group
+    }
     const keys = characterPartKeys(plan)
     const p = plan.proportions
     const build = (key: string, factory: () => THREE.BufferGeometry) =>
@@ -14796,7 +14942,7 @@ export class GameEngine {
     const headScale = variation.around(1, 0.06)
     for (const name of ['head', 'face', 'hair', 'headgear']) {
       const part = mesh.getObjectByName(name)
-      if (part instanceof THREE.Mesh) part.scale.multiplyScalar(headScale)
+      if (part instanceof THREE.Mesh || part instanceof THREE.Bone) part.scale.multiplyScalar(headScale)
     }
     const headPivot = mesh.getObjectByName('head-pivot')
     if (headPivot) headPivot.rotation.y = variation.signed(0.12)
@@ -14804,6 +14950,11 @@ export class GameEngine {
     // live in one place in `CharacterKit` so a Node test can drive the real code
     // instead of a copy of its arithmetic. See `setCharacterShoulderWidth`.
     setCharacterShoulderWidth(torsoPivot, mesh.getObjectByName('neck-pivot'), shoulders)
+    const presenter = characterPresenter(mesh)
+    if (presenter) {
+      presenter.syncAttachments()
+      presenter.poseSupport(0)
+    }
   }
 
   private createActorHealthBar(allegiance: Allegiance): {
@@ -14830,6 +14981,7 @@ export class GameEngine {
     sprite.scale.set(1.85, 0.26, 1)
     sprite.visible = false
     sprite.renderOrder = 12
+    sprite.userData.visualSubsystem = 'dynamicArt'
 
     const context = canvas.getContext('2d')
     if (!context) throw new Error('Could not create actor health bar')
@@ -14869,31 +15021,32 @@ export class GameEngine {
    */
   private createCaravan(gilded = false): THREE.Group {
     const group = new THREE.Group()
+    const enhanced = this.visualPolicy.mode === 'enhanced'
     const key = gilded ? 'gilded' : 'plain'
     const timber = this.artLibrary.acquireMaterial(`caravan:timber:${key}`, {
-      color: gilded
+      color: enhanced ? gilded ? 0x85633c : 0x69503b : gilded
         ? mix(this.palette.warning, this.palette.surface, 0.3)
         : mix(this.palette.warning, this.palette.bg, 0.52),
       surface: 'bark',
     })
     const ironwork = this.artLibrary.acquireMaterial(`caravan:iron:${key}`, {
-      color: gilded ? this.palette.warning : this.palette.borderStrong,
+      color: enhanced ? gilded ? 0xb29a60 : 0x5b6265 : gilded ? this.palette.warning : this.palette.borderStrong,
       surface: 'metal',
       metalness: gilded ? 0.76 : 0.45,
       roughness: 0.55,
     })
     const canvas = this.artLibrary.acquireMaterial(`caravan:canvas:${key}`, {
-      color: gilded
+      color: enhanced ? gilded ? 0xc1ad83 : 0xb5a98d : gilded
         ? mix(this.palette.warning, this.palette.surface, 0.62)
         : mix(this.palette.surface, this.palette.warning, 0.22),
       surface: 'cloth',
     })
     const hide = this.artLibrary.acquireMaterial('caravan:hide', {
-      color: mix(this.palette.warning, this.palette.text, 0.56),
+      color: enhanced ? 0xa99475 : mix(this.palette.warning, this.palette.text, 0.56),
       surface: 'cloth',
     })
     const leather = this.artLibrary.acquireMaterial('caravan:leather', {
-      color: mix(this.palette.warning, this.palette.bg, 0.7),
+      color: enhanced ? 0x4f382a : mix(this.palette.warning, this.palette.bg, 0.7),
       surface: 'leather',
     })
 
@@ -14921,6 +15074,12 @@ export class GameEngine {
     cargo.position.y = 2.45
     group.add(cargo)
 
+    const frontAxle = enhanced ? new THREE.Group() : null
+    if (frontAxle) {
+      frontAxle.name = 'front-axle-pivot'
+      frontAxle.position.x = WAGON_RIG.frontAxleX
+      group.add(frontAxle)
+    }
     for (const [x, radius] of [
       [WAGON_RIG.rearAxleX, WAGON_RIG.rearWheelRadius],
       [WAGON_RIG.frontAxleX, WAGON_RIG.frontWheelRadius],
@@ -14929,32 +15088,49 @@ export class GameEngine {
         build('wagon-axle', () => buildWagonAxle(WAGON_RIG.axleWidth)),
         ironwork,
       )
-      axle.position.set(x, radius, 0)
-      group.add(axle)
+      const axleParent = x === WAGON_RIG.frontAxleX && frontAxle ? frontAxle : group
+      axle.position.set(axleParent === frontAxle ? 0 : x, radius, 0)
+      axleParent.add(axle)
       for (const side of [-1, 1]) {
         const wheel = new THREE.Group()
         wheel.name = 'wheel'
-        wheel.position.set(x, radius, side * WAGON_RIG.wheelZ)
+        wheel.position.set(axleParent === frontAxle ? 0 : x, radius, side * WAGON_RIG.wheelZ)
         // The two axles carry different wheels, so they cannot share one rolling
         // constant: a rear wheel turns 0.78/1.02 as fast as a front one over the
         // same ground. Carrying the radius on the object is what stops the animation
         // from having to guess.
         wheel.userData.wheelRadius = radius
+        wheel.userData.axleX = x
         const tyre = new THREE.Mesh(
           build(`wagon-wheel:${radius.toFixed(2)}`, () => buildWagonWheel(radius)),
           ironwork,
         )
         wheel.add(tyre)
-        group.add(wheel)
+        axleParent.add(wheel)
       }
     }
 
-    group.add(new THREE.Mesh(build('wagon-harness', () => buildHarness()), leather))
+    if (enhanced) {
+      const yoke = new THREE.Mesh(this.acquireArtGeometry('draft-yoke', buildDraftYoke), timber)
+      yoke.name = 'draft-yoke'
+      yoke.position.set(5.5, 2.02, 0)
+      group.add(yoke)
+      for (const side of [-1, 1]) {
+        const trace = new THREE.Mesh(this.acquireArtGeometry('draft-trace', () =>
+          taperedBox({ width: 1, height: 0.045, depth: 0.045 })), leather)
+        trace.name = side < 0 ? 'left-trace' : 'right-trace'
+        trace.position.set(3.7, 1.65, side * 0.65)
+        trace.scale.x = 3.2
+        group.add(trace)
+      }
+    } else group.add(new THREE.Mesh(build('wagon-harness', () => buildHarness()), leather))
     for (const side of [-1, 1]) {
       const ox = new THREE.Group()
       ox.name = 'draft-ox'
       ox.position.set(WAGON_RIG.oxX, 0, side * WAGON_RIG.oxZ)
-      const body = new THREE.Mesh(build('ox-body', () => buildOxBody()), hide)
+      const body = new THREE.Mesh(enhanced
+        ? this.acquireArtGeometry('articulated-ox-body', () => buildOxBody(true))
+        : build('ox-body', () => buildOxBody()), hide)
       ox.add(body)
       const head = new THREE.Mesh(build('ox-head', () => buildOxHead()), hide)
       head.name = 'ox-head'
@@ -14964,6 +15140,17 @@ export class GameEngine {
       // The team faces the way the cart travels, which is +X.
       ox.rotation.y = Math.PI / 2
       group.add(ox)
+      if (enhanced) {
+        const legs: CreatureLeg[] = []
+        for (const front of [true, false]) for (const side of [-1, 1]) {
+          const leg = createCreatureLeg('ox', `ox-${front ? 'front' : 'hind'}-${side < 0 ? 'left' : 'right'}`,
+            1.2, front, side, leather, build)
+          leg.upper.position.set(side * 0.34, 1.2, front ? 0.6 : -0.6)
+          ox.add(leg.upper)
+          legs.push(leg)
+        }
+        this.creaturePresenters.add(new CreaturePresenter(ox, this.artLibrary, this.artGeometry, 'illustrated-ox', legs))
+      }
       const shadow = this.artLibrary.createContactShadow({ radius: 1.05 })
       shadow.position.set(WAGON_RIG.oxX, 0, side * WAGON_RIG.oxZ)
       group.add(shadow)
@@ -14984,6 +15171,19 @@ export class GameEngine {
     }
 
     this.markCharacterShadows(group)
+    if (enhanced) {
+      const frame = new THREE.Group()
+      frame.name = 'wagon-frame-pivot'
+      for (const child of [...group.children]) {
+        if (child.name === 'draft-ox' || child.name === 'draft-yoke' ||
+            child.name.endsWith('-trace') || child.userData.noComicOutline === true) continue
+        frame.add(child)
+      }
+      group.add(frame)
+      this.creaturePresenters.add(new CreaturePresenter(group, this.artLibrary, this.artGeometry,
+        `illustrated-wagon:${key}`, [], ['cargo']))
+      this.wagonPresenters.add(new WagonPresenter(group))
+    }
     group.position.set(-54, 0, -23)
     return group
   }
@@ -15021,7 +15221,7 @@ export class GameEngine {
       surface: 'cloth',
     })
     const darkMaterial = this.artLibrary.acquireMaterial(`beast:dark:${role}`, {
-      color: mix(pelt, this.palette.bg, 0.55),
+      color: mix(pelt, this.visualPolicy.mode === 'enhanced' ? new THREE.Color(0x26231f) : this.palette.bg, 0.55),
       surface: 'dark',
     })
     const build = (key: string, factory: () => THREE.BufferGeometry) =>
@@ -15043,6 +15243,7 @@ export class GameEngine {
     head.position.set(0, headY, headZ)
     headPivot.add(head)
 
+    const articulatedLegs: CreatureLeg[] = []
     // Front limbs answer to `leftArm` / `rightArm`, hind limbs to `leftLeg` /
     // `rightLeg`, so the shared stride already produces a diagonal gait.
     for (const [name, side, front] of [
@@ -15051,21 +15252,26 @@ export class GameEngine {
       ['leftLeg', -1, false],
       ['rightLeg', 1, false],
     ] as const) {
-      const pivot = new THREE.Group()
+      const length = front ? rig.frontLimb : rig.hindLimb
+      const articulated = this.visualPolicy.mode === 'enhanced'
+        ? createCreatureLeg(kind, name, length, front, side, darkMaterial, build) : null
+      const pivot = articulated?.upper ?? new THREE.Group()
       pivot.name = name
       pivot.position.set(
         side * (front ? rig.frontX : rig.hindX),
         front ? rig.frontJointY : rig.hindJointY,
         front ? rig.frontZ : rig.hindZ,
       )
-      const length = front ? rig.frontLimb : rig.hindLimb
-      const limb = new THREE.Mesh(
-        build(`beast-limb:${role}:${front ? 'front' : 'hind'}`, () =>
-          buildBeastLimb(kind, front, length),
-        ),
-        darkMaterial,
-      )
-      pivot.add(limb)
+      if (articulated) articulatedLegs.push(articulated)
+      else {
+        const limb = new THREE.Mesh(
+          build(`beast-limb:${role}:${front ? 'front' : 'hind'}`, () =>
+            buildBeastLimb(kind, front, length),
+          ),
+          darkMaterial,
+        )
+        pivot.add(limb)
+      }
       ;(front ? torsoPivot : pelvisPivot).add(pivot)
     }
 
@@ -15085,6 +15291,7 @@ export class GameEngine {
         color: this.allegianceColor('beast'),
         transparent: true,
         opacity: 0.48,
+        forceSinglePass: this.visualPolicy.mode === 'enhanced',
         depthWrite: false,
         side: THREE.DoubleSide,
         toneMapped: false,
@@ -15101,12 +15308,12 @@ export class GameEngine {
     const beastRig: CharacterRig = {
       leftArm: group.getObjectByName('leftArm') ?? null,
       rightArm: group.getObjectByName('rightArm') ?? null,
-      leftElbow: null,
-      rightElbow: null,
+      leftElbow: group.getObjectByName('leftElbow') ?? null,
+      rightElbow: group.getObjectByName('rightElbow') ?? null,
       leftLeg: group.getObjectByName('leftLeg') ?? null,
       rightLeg: group.getObjectByName('rightLeg') ?? null,
-      leftKnee: null,
-      rightKnee: null,
+      leftKnee: group.getObjectByName('leftKnee') ?? null,
+      rightKnee: group.getObjectByName('rightKnee') ?? null,
       weapon: null,
       cloak: tailPivot,
       // A quadruped's chest sits at its own origin — `buildBeastSkeleton` puts no
@@ -15124,10 +15331,17 @@ export class GameEngine {
       lean: 0,
     }
     group.userData.rig = beastRig
+    if (this.visualPolicy.mode === 'enhanced') {
+      this.creaturePresenters.add(new CreaturePresenter(group, this.artLibrary, this.artGeometry,
+        `illustrated-beast:${role}`, articulatedLegs))
+    }
     return group
   }
 
   private beastPeltColor(role: BeastRole): THREE.Color {
+    if (this.visualPolicy.mode === 'enhanced') {
+      return new THREE.Color(role === 'wolf' ? 0x837d6e : role === 'boar' ? 0x695443 : role === 'bear' ? 0x594733 : 0x78816b)
+    }
     const base = this.allegianceColor('beast')
     if (role === 'wolf') return mix(base, this.palette.borderStrong, 0.42)
     if (role === 'boar') return mix(base, this.palette.text, 0.3)
@@ -16429,8 +16643,9 @@ export class GameEngine {
 
     // Legs. A knee only bends one way, and it bends on the leg that is swinging
     // forward, which is the difference between walking and skating.
-    const leftX = stride
-    const rightX = -stride
+    const legStride = characterPresenter(group) ? pose.stride : stride
+    const leftX = legStride
+    const rightX = -legStride
     if (rig.leftLeg) rig.leftLeg.rotation.x = leftX
     if (rig.rightLeg) rig.rightLeg.rotation.x = rightX
     if (rig.leftKnee) {
@@ -16469,6 +16684,7 @@ export class GameEngine {
         Math.sin(this.elapsed * 1.6) * 0.02
       rig.cloak.rotation.z = swing * 0.12
     }
+    characterPresenter(group)?.syncAttachments()
   }
 
   /**
@@ -16521,6 +16737,11 @@ export class GameEngine {
     }
     if (rig.leftLeg) rig.leftLeg.rotation.set(stride * 0.88 - pose.stagger * 0.3, 0, 0)
     if (rig.rightLeg) rig.rightLeg.rotation.set(-stride * 0.88 - pose.stagger * 0.3, 0, 0)
+    if (kind === 'troll') {
+      const flex = 0.25 + pose.anticipation * 0.6 - pose.attack * 0.18 + pose.stagger * 0.35
+      if (rig.leftElbow) rig.leftElbow.rotation.x = Math.max(0.03, flex - stride * 0.12)
+      if (rig.rightElbow) rig.rightElbow.rotation.x = Math.max(0.03, flex + stride * 0.12)
+    }
     if (rig.cloak) {
       // `cloak` holds the tail on a beast: it lifts with speed and tucks when hit.
       rig.cloak.rotation.x =
@@ -16558,6 +16779,7 @@ export class GameEngine {
         pelvisPivot,
         headPivot,
       })
+      creaturePresenter(actor.mesh)?.poseFeet(delta, pose.stride, this.characterHeightSample)
       return
     }
 
@@ -16648,6 +16870,7 @@ export class GameEngine {
       // The bow is in the bow hand and the string hand pulls back past the jaw. The
       // weapon pivot is re-solved afterwards so the riser stays in the fist.
       const draw = Math.max(pose.anticipation, pose.attack * 0.8)
+      characterPresenter(actor.mesh)?.setBowRelease(pose.attack > 0 || pose.recovery > 0)
       const bowArm = rig.mainHand > 0 ? rig.rightArm : rig.leftArm
       const bowElbow = rig.mainHand > 0 ? rig.rightElbow : rig.leftElbow
       const drawArm = rig.mainHand > 0 ? rig.leftArm : rig.rightArm
@@ -16667,9 +16890,16 @@ export class GameEngine {
         bowX,
         bowZ,
         bowElbowX,
-        0.06,
+        this.visualPolicy.mode === 'enhanced' ? 0.06 - aimPitch : 0.06,
         -rig.mainHand * 0.12,
       )
+    }
+    const presenter = characterPresenter(actor.mesh)
+    if (presenter) {
+      presenter.syncAttachments()
+      presenter.poseSupport(Math.max(pose.anticipation, pose.attack * 0.8))
+      presenter.secondaryMotion(delta, actor.stride, pose.attack, this.reducedMotion)
+      presenter.ground(delta, this.characterHeightSample, actor.alive, presenter.anatomy.bodyPivot.position.y, pose.stride)
     }
   }
 
@@ -16682,6 +16912,14 @@ export class GameEngine {
     pose.recovery = 0
     pose.flinch = 0
     pose.stagger = 0
+    if (characterPresenter(this.player) && this.melee.phase !== 'idle') {
+      const spec = playerBeatSpec(this.melee.beat)
+      const windup = this.melee.phase === 'windup'
+      const progress = THREE.MathUtils.clamp(1 - this.melee.phaseRemaining / (windup ? spec.windup : spec.recovery), 0, 1)
+      pose.anticipation = windup ? progress * progress * (3 - 2 * progress) : 0
+      pose.attack = windup ? 0 : Math.exp(-progress * 6)
+      pose.recovery = windup ? 0 : Math.sin(progress * Math.PI)
+    }
     return pose
   }
 

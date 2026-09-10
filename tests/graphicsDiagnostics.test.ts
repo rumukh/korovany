@@ -144,6 +144,8 @@ test('actual production logical-frame hook preserves hit stop, update order, pau
     update: (delta: number) => events.push(['update', delta]),
     updateCameraEffects: (delta: number) => events.push(['accents', delta]),
     updateCamera: () => events.push('camera'),
+    characterPresenters: new Set([{ updateLod: () => events.push('character-lod') }]),
+    creaturePresenters: new Set([{ updateLod: () => events.push('creature-lod') }]),
     camera: new THREE.Camera(), audioListenerRight: new THREE.Vector3(),
     audio: { setListener: () => events.push('audio') }, updateMusicContext: () => events.push('music'),
     postProcessor: { render: () => events.push('render') },
@@ -151,7 +153,7 @@ test('actual production logical-frame hook preserves hit stop, update order, pau
   engine.renderLogicalFrame(0.05, 'active')
   assert.deepEqual(events, [
     ['begin', 0.05, 'active'], ['update', 0.030000000000000002], ['accents', 0.05],
-    'camera', 'audio', 'music', 'update-end', 'render', 'frame-end',
+    'camera', 'character-lod', 'creature-lod', 'audio', 'music', 'update-end', 'render', 'frame-end',
   ])
   assert.equal(engine.hitStopRemaining, 0)
   assert.equal(clock.timeSeconds, 0.05)
@@ -159,7 +161,7 @@ test('actual production logical-frame hook preserves hit stop, update order, pau
   engine.paused = true
   engine.renderLogicalFrame(0.05, 'manual')
   assert.deepEqual(events, [
-    ['begin', 0.05, 'manual'], 'camera', 'audio', 'music', 'update-end', 'render', 'frame-end',
+    ['begin', 0.05, 'manual'], 'camera', 'character-lod', 'creature-lod', 'audio', 'music', 'update-end', 'render', 'frame-end',
   ])
   assert.equal(clock.timeSeconds, 0.05)
 })
