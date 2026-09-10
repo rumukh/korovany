@@ -4,6 +4,8 @@ import { musicIntensityRank, type MusicIntensity, type MusicOutcome } from './Mu
 import { BloomPostProcessor } from './BloomPostProcessor'
 import { resolveVisualPolicy, resolveVisualViewport, type VisualQualityPolicy } from './visualPolicy.ts'
 import { CameraVisibility } from './cameraVisibility.ts'
+import { RAIN_CAPACITY, SNOW_CAPACITY, precipitationCount, updatePrecipitationBuffer } from './PrecipitationPresentation.ts'
+import { SecondaryEffectPool } from './SecondaryEffectPool.ts'
 import { stabilizeKeyLight } from './world/WorldPresentationRegistry.ts'
 import type { FoliageQuality, VisualSettings } from './visualSettings.ts'
 import { GraphicsClock, graphicsClockOptions } from './diagnostics/GraphicsClock.ts'
@@ -28,6 +30,9 @@ import {
   StylizedArtLibrary,
   WAGON_RIG,
   artVariation,
+  ATMOSPHERE_REVISION,
+  createAtmospherePresentation,
+  writeAtmospherePresentation,
   buildBeastBody,
   buildBeastHead,
   buildBeastLimb,
@@ -1438,7 +1443,6 @@ const FLASH_DECAY = 2.4
 const SPARK_COUNT_BLOCK = 7
 const SPARK_COUNT_CLEAVE = 5
 const SPARK_LIFE = 0.24
-const SPARK_MAX_ACTIVE = 48
 const DAMAGE_NUMBER_MAX = 24
 const DAMAGE_NUMBER_LIFE = 0.72
 const DAMAGE_NUMBER_DISTANCE_SQ = 30 * 30
@@ -1541,8 +1545,8 @@ const WEATHER_PROFILES: Record<WeatherKind, WeatherProfile> = {
   },
 }
 const BASE_CLOUD_OPACITY = 0.58
-const RAIN_DROP_COUNT = 420
-const SNOW_FLAKE_COUNT = 300
+const RAIN_DROP_COUNT = RAIN_CAPACITY
+const SNOW_FLAKE_COUNT = SNOW_CAPACITY
 const PRECIPITATION_HALF_WIDTH = 24
 const PRECIPITATION_HALF_DEPTH = 20
 const PRECIPITATION_TOP = 25
@@ -2109,6 +2113,11 @@ export class GameEngine {
   private readonly rainPositions = new Float32Array(RAIN_DROP_COUNT * 6)
   private readonly snowPositions = new Float32Array(SNOW_FLAKE_COUNT * 3)
   private readonly snowDriftPhases = new Float32Array(SNOW_FLAKE_COUNT)
+  private readonly precipitationHeight = (x: number, z: number) => this.groundHeightAt(x, z)
+  private readonly precipitationFrame = {
+    delta: 0, time: 0, cameraX: 0, cameraY: 0, cameraZ: 0,
+    windX: 0, windZ: 0, windStrength: 0, reducedMotion: false,
+  }
   private readonly cameraRaycaster = new THREE.Raycaster()
   private readonly cameraFollowPosition = new THREE.Vector3()
   private readonly cameraVisibility = new CameraVisibility()
@@ -2179,7 +2188,8 @@ export class GameEngine {
   private shakeClock = 0
   private damageFlash = 0
   private bleedFxCooldown = 0
-  private activeSparks = 0
+  private secondaryEffects: SecondaryEffectPool | null = null
+  private readonly secondaryContactPoint = new THREE.Vector3()
   private activeGore = 0
   private decalSequence = 0
   private attackCooldown = 0
@@ -2968,6 +2978,7 @@ export class GameEngine {
     attempt(() => this.cancelActiveEvents())
     attempt(() => this.clearAmbientLife())
     attempt(() => this.clearLootRuntime())
+    attempt(() => this.secondaryEffects?.dispose())
     attempt(() => this.resizeObserver.disconnect())
     window.removeEventListener('keydown', this.boundKeyDown)
     window.removeEventListener('keyup', this.boundKeyUp)
@@ -3160,10 +3171,7 @@ export class GameEngine {
     if (this.weatherEnabled === enabled) return
     this.weatherEnabled = enabled
     this.updateVisualPolicy({ weatherEnabled: enabled })
-    this.weatherZone = this.zoneAtPosition(this.player.position.x, this.player.position.z)
-    // The target always follows the biome; `enabled` only decides whether it is drawn.
-    this.setWeatherTarget(WEATHER_BY_ZONE[this.weatherZone], true)
-    this.applyGroundWeather()
+    this.renderer.domElement.dataset.weather = enabled ? this.weatherTarget : 'disabled'
     if (!enabled) {
       this.lightningFlash = 0
       this.thunderDelay = -1
@@ -4043,6 +4051,11 @@ export class GameEngine {
         reducedMotion: this.reducedMotion, visualNightFactor: this.nightFactor },
       visualPolicy: this.getVisualPolicy(),
       rendering: {
+        atmosphere: this.visualPolicy.mode === 'enhanced' ? {
+          revision: ATMOSPHERE_REVISION, wetness: this.artEnvironment.wetness,
+          profile: { ...this.artEnvironment.atmosphere, color: this.artEnvironment.atmosphere.color.toArray() },
+        } : null,
+        secondaryEffects: this.secondaryEffects?.snapshot() ?? null,
         camera: { ...this.cameraVisibility.debug },
         bindings: this.artLibrary.getRenderBindingStats(),
         post: this.postProcessor.getDebugSnapshot(),
@@ -8289,6 +8302,7 @@ export class GameEngine {
   }
 
   private updateParticles(delta: number): void {
+    this.secondaryEffects?.update(delta, this.reducedMotion)
     for (let index = this.particles.length - 1; index >= 0; index -= 1) {
       const particle = this.particles[index]
       particle.life -= delta
@@ -8370,7 +8384,6 @@ export class GameEngine {
 
   private removeParticle(index: number): void {
     const particle = this.particles[index]
-    if (particle.mode === 'spark') this.activeSparks = Math.max(0, this.activeSparks - 1)
     if (particle.mode === 'blood' || particle.mode === 'gib') {
       this.activeGore = Math.max(0, this.activeGore - 1)
       particle.mesh.visible = false
@@ -13806,12 +13819,14 @@ export class GameEngine {
     // The weather the world *has* is simulation state: it tracks the biome under the
     // player whether or not it is being drawn, so switching weather off for performance
     // cannot change chronicle outcomes.
-    const nextZone = this.resolveWeatherZone()
-    if (nextZone !== this.weatherZone) {
-      this.weatherZone = nextZone
-      this.setWeatherTarget(WEATHER_BY_ZONE[nextZone])
+    if (delta > 0) {
+      const nextZone = this.resolveWeatherZone()
+      if (nextZone !== this.weatherZone) {
+        this.weatherZone = nextZone
+        this.setWeatherTarget(WEATHER_BY_ZONE[nextZone])
+      }
+      this.updateWeatherWeights(delta)
     }
-    this.updateWeatherWeights(delta)
 
     if (!this.weatherEnabled) {
       this.restoreWeatherVisuals()
@@ -13822,7 +13837,7 @@ export class GameEngine {
     this.applyWeatherEnvironment()
     this.updateStylizedLighting()
     this.updatePrecipitation(delta)
-    this.updateLightning(delta)
+    if (delta > 0) this.updateLightning(delta)
   }
 
   private resolveWeatherZone(): ZoneId {
@@ -13884,7 +13899,9 @@ export class GameEngine {
   private readonly artEnvironment = {
     timeSeconds: 0, windX: 0, windZ: 0, windStrength: 0, rain: 0, snow: 0, wetness: 0,
     skyColor: new THREE.Color(), horizonColor: new THREE.Color(),
+    atmosphere: createAtmospherePresentation(),
   }
+  private readonly atmosphereReference = { environment: this.artEnvironment }
   private readonly enhancedLightingRef = {
     keyIntensity: 0, rimColor: new THREE.Color(), shadowTint: new THREE.Color(),
     environment: this.artEnvironment,
@@ -13913,8 +13930,10 @@ export class GameEngine {
       environment.windStrength = this.reducedMotion ? 0 : this.wind.strength
       environment.rain = this.weatherEnabled ? (this.graphicsClock?.weather ?? this.weatherWeights).rain : 0
       environment.snow = this.weatherEnabled ? (this.graphicsClock?.weather ?? this.weatherWeights).snow : 0
+      environment.wetness = environment.rain
       environment.skyColor.copy(this.hemisphere.color)
       environment.horizonColor.copy(this.fog.color)
+      writeAtmospherePresentation(environment.atmosphere, this.fog.color, this.fog.near, this.fog.far)
       this.enhancedLightingRef.keyIntensity = this.sun.intensity + this.rimLight.intensity * 0.4
       this.enhancedLightingRef.rimColor.copy(this.rimLight.color)
       this.enhancedLightingRef.shadowTint.copy(this.hemisphere.groundColor)
@@ -13975,6 +13994,38 @@ export class GameEngine {
   private updatePrecipitation(delta: number): void {
     const rainWeight = (this.graphicsClock?.weather ?? this.weatherWeights).rain
     const snowWeight = (this.graphicsClock?.weather ?? this.weatherWeights).snow
+    if (this.visualPolicy.mode === 'enhanced') {
+      const density = this.visualPolicy.density.weather
+      const reduced = this.visualPolicy.reducedMotion
+      const rainCount = precipitationCount(RAIN_DROP_COUNT, density, rainWeight, reduced)
+      const snowCount = precipitationCount(SNOW_FLAKE_COUNT, density, snowWeight, reduced)
+      this.rain.geometry.setDrawRange(0, rainCount * 2)
+      this.snow.geometry.setDrawRange(0, snowCount)
+      this.rain.material.opacity = reduced ? 0.24 : 0.38
+      this.snow.material.opacity = reduced ? 0.38 : 0.58
+      this.snow.material.size = reduced ? 0.22 : 0.3
+      this.rain.visible = rainCount > 0
+      this.snow.visible = snowCount > 0
+      const frame = this.precipitationFrame
+      frame.delta = delta
+      frame.time = this.visualElapsed
+      frame.cameraX = this.camera.position.x
+      frame.cameraY = this.camera.position.y
+      frame.cameraZ = this.camera.position.z
+      frame.windX = this.wind.direction.x
+      frame.windZ = this.wind.direction.y
+      frame.windStrength = this.wind.strength
+      frame.reducedMotion = reduced
+      if (rainCount > 0) {
+        updatePrecipitationBuffer('rain', this.rainPositions, this.snowDriftPhases, rainCount, frame, this.precipitationHeight)
+        this.rain.geometry.getAttribute('position').needsUpdate = true
+      }
+      if (snowCount > 0) {
+        updatePrecipitationBuffer('snow', this.snowPositions, this.snowDriftPhases, snowCount, frame, this.precipitationHeight)
+        this.snow.geometry.getAttribute('position').needsUpdate = true
+      }
+      return
+    }
     this.rain.material.opacity = rainWeight * 0.72
     this.snow.material.opacity = snowWeight * 0.92
     this.rain.visible = rainWeight > 0.015
@@ -14109,7 +14160,7 @@ export class GameEngine {
     const pulse =
       (1 - progress) * (0.72 + Math.sin(progress * Math.PI * 6) ** 2 * 0.28)
     this.lightningLight.intensity =
-      LIGHTNING_INTENSITY * pulse * Math.max(0.35, rainWeight)
+      this.reducedMotion ? 0 : LIGHTNING_INTENSITY * pulse * Math.max(0.35, rainWeight)
     this.lightningFlash = Math.max(0, this.lightningFlash - delta)
   }
 
@@ -14124,6 +14175,13 @@ export class GameEngine {
       this.player.position.z,
     )
     this.updateZoneTint(delta)
+    if (this.visualPolicy.mode === 'enhanced') {
+      // Zone tint is the final fog color; do not repeat the light-rig adjustment.
+      this.artEnvironment.horizonColor.copy(this.fog.color)
+      writeAtmospherePresentation(this.artEnvironment.atmosphere, this.fog.color, this.fog.near, this.fog.far)
+      this.artLibrary.setLightingReference(this.atmosphereReference)
+      this.postProcessor.setGradeTints(this.fog.color, this.sun.color)
+    }
     for (let index = 0; index < this.clouds.length; index += 1) {
       const { group, speed } = this.clouds[index]
       group.position.x += speed * delta
@@ -15659,6 +15717,7 @@ export class GameEngine {
   }
 
   private clearTransientCombatFeedback(): void {
+    this.secondaryEffects?.clear()
     this.hideFinaleTelegraphs()
     this.resetCameraMotion()
     this.damageFlash = 0
@@ -16360,39 +16419,13 @@ export class GameEngine {
     incomingDirection: THREE.Vector3,
     count: number,
   ): void {
-    const available = Math.min(count, SPARK_MAX_ACTIVE - this.activeSparks)
-    if (available <= 0) return
+    if (this.paused || this.ended) return
+    this.getSecondaryEffects().emit('spark', position, incomingDirection, this.palette.warning, count, this.visualPolicy)
+  }
 
-    const outward = incomingDirection.clone()
-    outward.y = 0
-    if (outward.lengthSq() <= 0.0001) outward.set(0, 0, 1)
-    else outward.normalize()
-    const tangent = new THREE.Vector3(-outward.z, 0, outward.x)
-
-    for (let index = 0; index < available; index += 1) {
-      const color =
-        index % 3 === 0 ? new THREE.Color(0xffffff) : this.palette.warning.clone()
-      color.multiplyScalar(1.35)
-      const mesh = new THREE.Mesh(
-        new THREE.OctahedronGeometry(0.055, 0),
-        new THREE.MeshBasicMaterial({ color }),
-      )
-      mesh.position
-        .copy(position)
-        .addScaledVector(tangent, (Math.random() - 0.5) * 0.3)
-      this.scene.add(mesh)
-      this.particles.push({
-        mesh,
-        velocity: outward
-          .clone()
-          .multiplyScalar(1.5 + Math.random() * 3)
-          .addScaledVector(tangent, (Math.random() - 0.5) * 8)
-          .setY(4 + Math.random() * 5),
-        life: SPARK_LIFE,
-        mode: 'spark',
-      })
-      this.activeSparks += 1
-    }
+  private getSecondaryEffects(): SecondaryEffectPool {
+    this.secondaryEffects ??= new SecondaryEffectPool(this.scene, this.generatedBlueprint.seed)
+    return this.secondaryEffects
   }
 
   private acquireGoreParticle(): Particle | null {
@@ -16558,19 +16591,10 @@ export class GameEngine {
   }
 
   private createHitParticles(position: THREE.Vector3, allegiance: Allegiance): void {
-    for (let index = 0; index < 7; index += 1) {
-      const mesh = new THREE.Mesh(
-        new THREE.OctahedronGeometry(0.12, 0),
-        new THREE.MeshBasicMaterial({ color: this.allegianceColor(allegiance) }),
-      )
-      mesh.position.copy(position).add(new THREE.Vector3(0, 1.6, 0))
-      this.scene.add(mesh)
-      this.particles.push({
-        mesh,
-        velocity: new THREE.Vector3((Math.random() - 0.5) * 4, 2 + Math.random() * 4, (Math.random() - 0.5) * 4),
-        life: 0.55 + Math.random() * 0.35,
-      })
-    }
+    if (this.paused || this.ended) return
+    // Stage B supplies posed/material contacts. Keep the current admitted-contact anchor here.
+    this.secondaryContactPoint.copy(position).y += 1.6
+    this.getSecondaryEffects().emit('shard', this.secondaryContactPoint, null, this.allegianceColor(allegiance), 7, this.visualPolicy)
   }
 
   private createBleedParticle(): void {

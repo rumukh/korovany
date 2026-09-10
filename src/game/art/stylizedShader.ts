@@ -5,6 +5,7 @@ import {
   type ArtEnvironmentUniforms,
   type ArtShaderFeatures,
 } from './ArtPresentation.ts'
+import { WEATHER_ROUGHNESS_DROP_MAX, WEATHER_ROUGHNESS_FLOOR, WEATHER_VALUE_DROP_MAX } from './AtmospherePresentation.ts'
 
 /**
  * GLSL injected into `MeshStandardMaterial` to get the marching-comic look.
@@ -330,6 +331,84 @@ function applySurfaceFeatures(shader: CompileShader, features: ArtShaderFeatures
   }
 }
 
+function applyWeatherResponse(
+  shader: CompileShader, features: ArtShaderFeatures, response: readonly [number, number], eligible: boolean,
+): void {
+  shader.uniforms.uArtWeatherResponse = { value: new THREE.Vector2(...response) }
+  shader.uniforms.uArtWeatherEligible = { value: eligible ? 1 : 0 }
+  shader.fragmentShader = `uniform vec3 uArtWeather;
+    uniform vec2 uArtWeatherResponse;
+    uniform float uArtWeatherEligible;\n` + shader.fragmentShader
+  if (features.attributes.weatherResponse) {
+    shader.vertexShader = 'attribute vec2 artWeatherResponse;\nvarying vec2 vArtWeatherResponse;\n' + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\nvArtWeatherResponse = artWeatherResponse;')
+    shader.fragmentShader = 'varying vec2 vArtWeatherResponse;\n' + shader.fragmentShader
+  }
+  // After packed surface/roughness-map evaluation, before PhysicalMaterial is built.
+  requireInjectionPoint(shader.fragmentShader, '#include <lights_physical_fragment>', 'weather response')
+  shader.fragmentShader = shader.fragmentShader.replace('#include <lights_physical_fragment>', `
+    vec2 kWeatherResponse = clamp( ${features.attributes.weatherResponse ? 'vArtWeatherResponse' : 'uArtWeatherResponse'},
+      vec2( 0.0 ), vec2( ${WEATHER_ROUGHNESS_DROP_MAX}, ${WEATHER_VALUE_DROP_MAX} ) );
+    float kWetness = clamp( uArtWeather.z, 0.0, 1.0 ) * uArtWeatherEligible;
+    // Stable local variation, not a moving specular sheet or a change to metalness.
+    kWetness *= 0.8 + 0.2 * sin( vStylizedWorld.x * 0.47 ) * sin( vStylizedWorld.z * 0.39 );
+    roughnessFactor = max( min( roughnessFactor, ${WEATHER_ROUGHNESS_FLOOR} ),
+      roughnessFactor - kWeatherResponse.x * kWetness );
+    diffuseColor.rgb *= 1.0 - kWeatherResponse.y * kWetness;
+    #include <lights_physical_fragment>
+  `)
+}
+
+/** Same unextruded world height/view depth and linear-space blend for source and ink. */
+function applyAtmosphere(shader: CompileShader): void {
+  requireInjectionPoint(shader.vertexShader, '#include <fog_vertex>', 'atmosphere vertex')
+  requireInjectionPoint(shader.fragmentShader, '#include <fog_fragment>', 'atmosphere fog')
+  requireInjectionPoint(shader.fragmentShader, '#include <colorspace_fragment>', 'atmosphere color')
+  shader.vertexShader = '#ifdef USE_FOG\nvarying float vArtAtmosphereHeight;\n#endif\n' + shader.vertexShader
+  shader.vertexShader = shader.vertexShader.replace('#include <fog_vertex>', `
+    #include <fog_vertex>
+    #ifdef USE_FOG
+      vec4 kFogPosition = vec4( transformed, 1.0 );
+      #ifdef USE_INSTANCING
+        kFogPosition = instanceMatrix * kFogPosition;
+      #endif
+      vArtAtmosphereHeight = ( modelMatrix * kFogPosition ).y;
+    #endif
+  `)
+  shader.fragmentShader = `
+    #ifdef USE_FOG
+      varying float vArtAtmosphereHeight;
+      uniform float uArtAtmosphereEnabled;
+      uniform vec3 uArtAtmosphereColor;
+      uniform vec4 uArtAtmosphereDepth;
+      uniform vec4 uArtAtmosphereHeight;
+    #endif
+  ` + shader.fragmentShader
+  shader.fragmentShader = shader.fragmentShader.replace('#include <colorspace_fragment>', `
+    #ifdef USE_FOG
+      if ( uArtAtmosphereEnabled > 0.5 ) {
+        float kNearFog = smoothstep( uArtAtmosphereDepth.x, uArtAtmosphereDepth.y, vFogDepth );
+        float kFarFog = smoothstep( uArtAtmosphereDepth.y, uArtAtmosphereDepth.z, vFogDepth );
+        float kFogOpacity = uArtAtmosphereDepth.w * kNearFog +
+          ( uArtAtmosphereHeight.w - uArtAtmosphereDepth.w ) * kFarFog;
+        float kHeightFog = exp( -min( 80.0, max( 0.0, vArtAtmosphereHeight - uArtAtmosphereHeight.x ) *
+          uArtAtmosphereHeight.y ) );
+        kFogOpacity *= mix( 1.0, kHeightFog, uArtAtmosphereHeight.z );
+        gl_FragColor.rgb = mix( gl_FragColor.rgb, uArtAtmosphereColor, kFogOpacity );
+      }
+    #endif
+    #include <colorspace_fragment>
+  `)
+  shader.fragmentShader = shader.fragmentShader.replace('#include <fog_fragment>', `
+    #ifdef USE_FOG
+      if ( uArtAtmosphereEnabled < 0.5 ) {
+        #include <fog_fragment>
+      }
+    #endif
+  `)
+}
+
 function requireInjectionPoint(source: string, token: string, label: string): void {
   if (!source.includes(token)) {
     throw new Error(
@@ -391,6 +470,8 @@ export function applyStylizedShader(
     bandStrength: number
     rimStrength: number
     rimPower: number
+    weatherResponse?: readonly [number, number]
+    weatherEligible?: boolean
   },
   features?: ArtShaderFeatures,
 ): void {
@@ -426,6 +507,11 @@ export function applyStylizedShader(
     if (features) {
       applyArtVertex(shader, features, shared.environment, false)
       applySurfaceFeatures(shader, features)
+      if (features.enhanced) {
+        if (!shared.environment) throw new Error('Atmosphere shader requires the shared presentation environment')
+        applyWeatherResponse(shader, features, perMaterial.weatherResponse ?? [0, 0], perMaterial.weatherEligible === true)
+        applyAtmosphere(shader)
+      }
     }
   }
   // three's default cache key is `onBeforeCompile.toString()`, so it would in fact
@@ -438,7 +524,7 @@ export function applyStylizedShader(
   // collide them onto one program and render one of the two with the wrong shader.
   // Do not delete this on the grounds that three already handles it.
   material.customProgramCacheKey = () => features?.enhanced
-    ? `${STYLIZED_PROGRAM_KEY}:${artShaderKey(features)}` : STYLIZED_PROGRAM_KEY
+    ? `${STYLIZED_PROGRAM_KEY}:${artShaderKey(features)}:atmosphere-1` : STYLIZED_PROGRAM_KEY
   material.needsUpdate = true
 }
 
@@ -472,12 +558,16 @@ export function applyOutlineShader(
       outlineProjection(smooth, features?.enhanced, features?.attributes.wind),
     )
     if (features) applyArtVertex(shader, features, environment, false)
+    if (features?.enhanced) {
+      if (!environment) throw new Error('Ink atmosphere requires the shared presentation environment')
+      applyAtmosphere(shader)
+    }
   }
   // Captured, not written out: `smooth` never appears in this closure's source
   // text, so three's default `onBeforeCompile.toString()` key cannot tell the two
   // variants apart and would hand both the same compiled program.
   material.customProgramCacheKey = () =>
-    `${OUTLINE_PROGRAM_KEY}:${smooth ? 'smooth' : 'flat'}${features?.enhanced ? `:${artShaderKey(features)}` : ''}`
+    `${OUTLINE_PROGRAM_KEY}:${smooth ? 'smooth' : 'flat'}${features?.enhanced ? `:${artShaderKey(features)}:atmosphere-1` : ''}`
   material.needsUpdate = true
 }
 

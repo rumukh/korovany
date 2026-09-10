@@ -26,6 +26,8 @@ import type { LookGesture } from '../src/game/input/CombatInput.ts'
 import type { SoundCue } from '../src/game/AudioDirector.ts'
 import { createFinaleIdentity, createFinaleState } from '../src/game/world/FinaleDirector.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
+import { SecondaryEffectPool } from '../src/game/SecondaryEffectPool.ts'
+import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
 
 // Load the production class with Node's TS support, including its Vite-style imports.
 // Only construction/presentation are replaced below; inputs, movement and damage are real methods.
@@ -535,4 +537,34 @@ test('touch camera and movement pointers stay independent; pointer cancellation 
   assert.equal(engine.shieldActive, true, 'R must work without native pointer lock')
   engine.onKeyUp(key('KeyR'))
   assert.equal(engine.shieldActive, false)
+})
+
+test('real admitted damage uses the bounded secondary pool without changing defense, damage, sound or pause semantics', () => {
+  for (const kind of ['normal', 'block', 'perfect', 'evaded', 'paused'] as const) {
+    const { engine, attacker, counts } = fixture('guard')
+    const pool = new SecondaryEffectPool(new THREE.Scene(), 42)
+    Object.assign(engine, {
+      secondaryEffects: pool, secondaryContactPoint: new THREE.Vector3(),
+      palette: { warning: new THREE.Color(0xffbb22) },
+      visualPolicy: resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'low' }),
+      allegianceColor: () => new THREE.Color(0x4da6ff),
+      createSparks: Reflect.get(GameEngine.prototype, 'createSparks'),
+      createHitParticles: Reflect.get(GameEngine.prototype, 'createHitParticles'),
+    })
+    if (kind === 'block' || kind === 'perfect') engine.setShield(true)
+    if (kind === 'block') engine.combatMastery.guardWindow = 0
+    if (kind === 'evaded') { engine.evade(); engine.updatePlayer(0.1) }
+    if (kind === 'paused') engine.setPaused(true)
+    engine.actorAttackPlayer(attacker)
+    assert.equal(counts.hitFx, kind === 'normal' || kind === 'block' ? 1 : 0)
+    assert.equal(counts.injuries, kind === 'normal' ? 1 : 0)
+    assert.equal(counts.draws, kind === 'normal' ? 2 : kind === 'block' ? 1 : 0)
+    assert.equal(pool.snapshot().active > 0, kind === 'normal' || kind === 'block')
+    if (kind === 'normal' || kind === 'block') assert.ok(engine.health < 70)
+    else assert.equal(engine.health, 70)
+    engine.setPaused(true)
+    assert.equal(pool.snapshot().active, 0)
+    assert.equal(pool.mesh.count, 0)
+    pool.dispose()
+  }
 })

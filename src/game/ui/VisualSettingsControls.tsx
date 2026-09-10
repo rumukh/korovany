@@ -3,6 +3,8 @@ import {
   VISUAL_MODE_LABELS,
   VISUAL_QUALITY_LABELS,
   VISUAL_SETTINGS_COPY,
+  HUD_MODE_LABELS,
+  COMPACT_HUD_COPY,
 } from '../content/gameCopy.ts'
 import { VISUAL_PREVIEW_AVAILABLE, type VisualQualityPolicy } from '../visualPolicy.ts'
 import {
@@ -65,6 +67,17 @@ export function VisualSettingsControls({
           <option value="low">{VISUAL_QUALITY_LABELS.low}</option>
         </select>
       </label>
+      <label htmlFor={`${id}-hud`}>
+        {COMPACT_HUD_COPY.setting}
+        <select id={`${id}-hud`} value={visualPreferences.hudMode} aria-describedby={`${id}-hud-help`}
+          onChange={(event) => onVisualPreferencesChange(normalizeVisualPreferences({
+            ...visualPreferences, hudMode: event.currentTarget.value,
+          }))}>
+          <option value="full">{HUD_MODE_LABELS.full}</option>
+          <option value="compact">{HUD_MODE_LABELS.compact}</option>
+        </select>
+      </label>
+      <p id={`${id}-hud-help`}>{COMPACT_HUD_COPY.settingHelp}</p>
       <p id={`${id}-application`} role="status">
         {activeVisualPolicy ? (
           <strong>

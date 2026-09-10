@@ -45,6 +45,7 @@ function fixture() {
     reducedMotion: false, screenShakeEnabled: true, inkOutlinesEnabled: true,
     groundFoliageQuality: 'high', weatherEnabled: true, dynamicDayNight: true,
     player: { position: { x: 4, z: 5 } }, actors: [{ id: 'friendly' }, { id: 'hostile' }],
+    renderer: { domElement: { dataset: {} } }, weatherTarget: 'overcast',
     paused: true, elapsed: 77, body: { leftArm: 'missing', rightLeg: 'prosthetic' },
     companions: ['companion-0', 'companion-1', 'companion-2'],
     cameraObstacles: [{ id: 'gameplay-sight-obstacle' }],
@@ -200,7 +201,7 @@ test('new policy bookkeeping leaves existing environment update semantics and pa
   assert.equal(engine.getVisualPolicy().density.weather, 0)
   assert.equal(engine.getVisualPolicy().preferences.weatherEnabled, false)
   assert.deepEqual(calls.map(([name]) => name), [
-    'weather-target', 'ground-weather', 'day-night', 'weather', 'atmosphere',
+    'day-night', 'weather', 'atmosphere',
   ])
   calls.length = 0
   engine.setDynamicDayNight(false)

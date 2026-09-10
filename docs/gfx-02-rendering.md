@@ -105,9 +105,9 @@ texture, model or network dependency is required.
 | `artWater` | Optional vec4 normalized flow X/Z, shore proximity 0..1 and nonnegative visual depth in metres |
 | `artVisibility` | Camera-only scalar 0..1; an instance-divisor attribute on instanced sources |
 | `artShadowParticipation` | Separate depth-only scalar instance admission mask |
-| `artWeatherResponse` | Reserved vec2 capped roughness/value response; effect not installed yet |
+| `artWeatherResponse` | Optional vec2 maximum roughness drop (0..0.3) / fractional value darkening (0..0.22), installed by GFX-05 Stage A |
 
-`attributes.surfaceResponse`, `.wind`, `.water` and `.visibility` explicitly
+`attributes.surfaceResponse`, `.weatherResponse`, `.wind`, `.water` and `.visibility` explicitly
 require the corresponding layout during binding validation. Unbound ordinary
 enhanced meshes use a constant fully visible camera attribute. Bake optional
 channels/defaults before cache insertion and before merging mixed parts.
@@ -218,10 +218,32 @@ Skin/wind position/normal transforms agree between source, ink and key depth.
 The water layout provides bounded flow and procedural-sky response within this
 family, without another renderer or real-time reflection target.
 
-GFX-05's atmosphere/wetness formulas are deliberately not installed here.
-Positive wetness, an atmosphere request or `attributes.weatherResponse` throws
-descriptively rather than silently claiming an effect. The agreed types are
-reserved for that consumer's implementation and visual review.
+GFX-05 Stage A installs the reserved atmosphere/wetness composition. Positive
+wetness and `attributes.weatherResponse` work in the enhanced library, including
+newly streamed materials sharing its uniforms. Attribute-free materials use
+bounded physical-surface presets. Water/glow/ink are excluded from wetness;
+there is no metalness or emissive change. Roughness never drops below the smaller
+of dry roughness and 0.35. Invalid environment/geometry values still throw before
+publishing partial state.
+
+The optional `environment.atmosphere` uses ordered view-depth knots
+`nearDepth`/`midDepth`/`farDepth`, ordered `midOpacity`/`farOpacity` in [0,1],
+linear `color`, world `baseHeight`, nonnegative `heightFalloff` and
+`heightInfluence` in [0,1]. A protected near band blends into a smooth mid/far
+ramp with bounded world-height attenuation. Source and ink sample the same
+unextruded positions and use one linear-space fog application after material
+tone mapping but before color-space conversion, not an additional post pass.
+This preserves `toneMapped=false` ink and matches full-fog source/ink endpoints
+within the direct path. The composer's later common OutputPass still tone-maps
+the combined image: this is not a claim of identical direct/post fog pixels at
+every exposure. `material.fog=false` excludes the sky.
+A full environment without `atmosphere` restores stock fog; a lighting-only
+partial call retains the environment. Legacy shading remains unchanged.
+
+`ATMOSPHERE_REVISION` and the pure profile/reference helpers are exported from
+the art barrel. The engine reports its active profile in diagnostic snapshots.
+These are technical preview defaults: joined GFX-03/GFX-04 tuning, GPU evidence
+and human visual approval remain separate gates.
 
 Enhanced post is scene -> bloom -> grade -> OutputPass -> FXAA. OutputPass is the
 only tone/color conversion; FXAA is display-referred and non-tone-mapped.

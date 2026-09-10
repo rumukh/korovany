@@ -100,6 +100,7 @@ import { CombatCameraControls, CombatEvadeButton, CombatMasteryHud } from './gam
 import { ExpeditionAtlas, ExpeditionCompass, ExpeditionMinimap } from './game/ui/ExpeditionAtlas'
 import { SquadCommandPanel, SquadCommandStrip } from './game/ui/SquadCommandPanel'
 import { FinaleHud, FinaleResult } from './game/ui/FinaleHud'
+import { CompactMissionHud, CompactWorldNews } from './game/ui/CompactCombatHud'
 import {
   VisualSettingsControls,
   type VisualPreferencesControlProps,
@@ -2516,7 +2517,7 @@ function EndModal({
   )
 }
 
-function GameScreen({
+export function GameScreen({
   view,
   worldRef,
   notices,
@@ -2747,6 +2748,7 @@ function GameScreen({
     <main
       className={`game-screen faction-${view.faction}${lowHealth ? ' low-health' : ''}${simulationPaused ? ' simulation-paused' : ''}`}
       data-zone={view.zone}
+      data-hud={visualPreferences.hudMode}
       style={{ '--zone-accent': zoneInfo.accent } as CSSProperties}
     >
       <div className="gameplay-layer" inert={simulationPaused}>
@@ -2803,8 +2805,10 @@ function GameScreen({
           <MiniMap view={view} onOpenAtlas={onOpenAtlas} />
           <ExpeditionCompass view={view} onOpen={onOpenAtlas} />
           <FinaleHud finale={view.finale} />
-          <ChronicleFeed view={view} />
-          <RumourBoard view={view} onPin={onPinRumour} />
+          <CompactWorldNews mode={visualPreferences.hudMode} view={view}>
+            <ChronicleFeed view={view} />
+            <RumourBoard view={view} onPin={onPinRumour} />
+          </CompactWorldNews>
         </div>
       </div>
 
@@ -2880,9 +2884,11 @@ function GameScreen({
         </div>
         </div>
         <div className="mission-hud">
-          <ContractBoard view={view} onPin={onPinObjective} />
-          <DoctrineBoard view={view} onTake={onTakeDoctrine} />
-          <ObjectiveList view={view} />
+          <CompactMissionHud mode={visualPreferences.hudMode} view={view}>
+            <ContractBoard view={view} onPin={onPinObjective} />
+            <DoctrineBoard view={view} onTake={onTakeDoctrine} />
+            <ObjectiveList view={view} />
+          </CompactMissionHud>
           <EventBanner event={view.activeEvent} />
         </div>
       </div>
