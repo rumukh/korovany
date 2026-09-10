@@ -78,17 +78,31 @@ combat commitments retain their production owners.
 
 ## Remaining gates
 
-The separately assigned affine/nonuniform-bone **shader** normal correction is
-not implemented by this integration. Correct CPU contact normals do not prove
-correct rendered source/ink/depth normals. Only an exact coordinator-forwarded
-follow-up may be merged; no duplicate normal patch is implied here.
+The coordinator-forwarded affine/nonuniform-bone **shader** normal correction
+`9840eed0fff1f853978cefbe526b20d979637250` is now integrated. Main and ink retain
+both its program revision and the atmosphere revision; position/depth skinning
+remains the original owner implementation. CPU contact/GLSL arithmetic checks
+still do not prove actual driver compilation or rendered correctness.
 
-Portrait tooling remains with its original owner. After that and the normal
-fix, the first joined browser window should show the actual three factions
+Original-owner portrait tooling
+`dcd4958cf52b0749e7dae18dd574e35764b766f9` is integrated with its diagnostic
+camera restoration, post-LOD fitting and zero-simulation guards. The first
+joined browser window should show the actual three factions
 front/three-quarter/profile and in player-plus-NPC play, not repeat the full
 old baseline before the user sees the new anatomy. The user's guard uniform
 preference and rejection of elf/villain pumpkin-like heads remain an explicit
 visual decision, not something CPU geometry bounds can approve.
+
+For that bounded window the existing runner adds only `--portrait-smoke`
+(one fixed player/front/current stage with `--portraits`), `--hud-mode`,
+`--recorded-river-endpoint` and `--runtime-controls`. The recorded endpoint
+comes from the immutable GFX-02 failure manifest, stages player/yaw/pitch rather
+than forcing a camera position, and stays separate from a newly driven native
+route. Runtime controls use the same held engine for four fixed size/DPR
+combinations and actual paused bloom toggles, then restore its viewport. The
+work deadline is checked before new stages; no phase retries or builds run
+inside the coordinator's foreground job. These are prepared capture controls,
+not a claim that the browser checks have run or that the image is approved.
 
 Post-fix river-camera endpoint/motion, actual shader compilation, world/biome/
 water/bridge continuity, night/weather/compact-HUD behavior, resize/DPR,

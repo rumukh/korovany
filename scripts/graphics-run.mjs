@@ -5,12 +5,14 @@ import { createServer } from 'node:net'
 import { cpus, platform, release, totalmem } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { gunzipSync } from 'node:zlib'
 import { GraphicsBrowser, delay } from './graphics/cdp.mjs'
 import { GRAPHICS_SEED, fixtureStage, selectGraphicsFixtures } from './graphics/fixtures.mjs'
 import { compareGraphicsPng } from './graphics/png.mjs'
 import {
   FIRST_VISUAL_CASES, firstVisualPortraitStages, portraitSaveIdentity, portraitSimulationIdentity, portraitCameraReference,
 } from './graphics/portraits.mjs'
+import { assertCaptureDeadline, captureRuntimeControls, recordedRiverEndpoint } from './graphics/runtime-controls.mjs'
 
 const toolRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
@@ -42,10 +44,12 @@ const option = (name, fallback) => {
 const workspace = option('workspace', process.env.GRAPHICS_WORKSPACE ?? toolRoot)
 if (!isAbsolute(workspace)) throw new Error('--workspace / GRAPHICS_WORKSPACE must be absolute')
 const root = resolve(workspace)
+const checkTime = () => assertCaptureDeadline(process.env.GFX_BROWSER_DEADLINE_UTC)
 if (flag('help')) {
   console.log('node scripts\\graphics-run.mjs --out ABSOLUTE_DIRECTORY [--chrome PATH] [--cases all|id,id] [--profile] [--timing-only] [--warmup 120] [--frames 300] [--repeat 2] [--width 1920 --height 1080 --dpr 1] [--visual-mode legacy|enhanced] [--quality high|balanced|low] [--no-post] [--no-aa] [--no-ink] [--no-weather] [--reduced-motion] [--foundation] [--motion] [--native-route] [--lifecycle] [--headed]')
   console.log('Requires npm run build. A dedicated loopback server and disposable Chrome profile are owned and stopped by this command. Mobile dimensions are layout evidence, not a mobile-device benchmark.')
   console.log('First visual: --portraits [--workspace ABSOLUTE_WORKTREE] [--portrait-reference MANIFEST_JSON]. Three opening worlds, held production portrait presets and normal gameplay views; incompatible with --profile/--motion/--native-route/--foundation/--lifecycle. No GPU authorization is implied.')
+  console.log('Joined preview: --portrait-smoke with --portraits captures only the fixed player/front/current stage. --runtime-controls checks held same-engine resize/DPR/bloom toggles. --hud-mode full|compact selects existing DOM preference. --recorded-river-endpoint stages the preserved river player/yaw/pitch, never a camera override.')
   process.exit(0)
 }
 const output = option('out')
@@ -60,6 +64,8 @@ const warmupFrames = Number(option('warmup', '120'))
 const sampleFrames = Number(option('frames', '300'))
 const visualMode = option('visual-mode', 'legacy')
 const quality = option('quality', 'high')
+const hudMode = option('hud-mode', 'full')
+if (!['full', 'compact'].includes(hudMode)) throw new Error('Invalid HUD mode')
 if (!['legacy', 'enhanced'].includes(visualMode) || !['high', 'balanced', 'low'].includes(quality)) throw new Error('Invalid visual policy selection')
 if ((flag('no-aa') || flag('foundation')) && visualMode !== 'enhanced') throw new Error('Foundation/AA comparison requires explicit enhanced preview')
 for (const [name, value, min, max] of [['width', width, 320, 7680], ['height', height, 320, 4320],
@@ -73,6 +79,11 @@ if (flag('portraits') && ['profile', 'motion', 'native-route', 'foundation', 'li
   throw new Error('Portrait suite is held presentation only; do not combine it with gameplay/profiling/foundation jobs')
 }
 if (flag('portraits') && repeat !== 1) throw new Error('First portrait suite uses one launch per faction; use a new output for a repeat')
+if (flag('portrait-smoke') && !flag('portraits')) throw new Error('--portrait-smoke requires --portraits')
+if (flag('runtime-controls') && (visualMode !== 'enhanced' ||
+    ['portraits', 'profile', 'motion', 'native-route', 'foundation', 'lifecycle', 'no-aa'].some(flag))) {
+  throw new Error('Runtime controls require ordinary enhanced held fixtures without other diagnostic stages')
+}
 const referencePath = option('portrait-reference')
 if (referencePath && (!flag('portraits') || !isAbsolute(referencePath))) throw new Error('--portrait-reference needs --portraits and an absolute manifest path')
 const referenceBytes = referencePath ? await readFile(referencePath) : null
@@ -90,6 +101,14 @@ const fixtures = selectGraphicsFixtures(option('cases', flag('portraits') ? FIRS
 if (flag('portraits') && fixtures.some((fixture) => !FIRST_VISUAL_CASES.includes(fixture.id))) {
   throw new Error('Portrait suite accepts only the three production faction openings')
 }
+if (flag('recorded-river-endpoint') && (fixtures.length !== 1 || fixtures[0].id !== 'guard-riverside-close' ||
+    ['portraits', 'foundation', 'native-route'].some(flag))) {
+  throw new Error('Recorded endpoint requires only the riverside fixture, without portrait/foundation/native restaging')
+}
+const endpointFile = join(root, 'docs', 'images', 'gfx-02-evidence', 'records', '02-camera-routes-manifest.json.gz')
+const endpointBytes = flag('recorded-river-endpoint') ? await readFile(endpointFile) : null
+const endpointStage = endpointBytes ? recordedRiverEndpoint(JSON.parse(gunzipSync(endpointBytes).toString('utf8'))) : null
+checkTime()
 await access(join(root, 'dist', 'index.html'))
 await access(chrome)
 await mkdir(out, { recursive: true })
@@ -144,10 +163,12 @@ const manifest = {
     profile: 'Active production requestAnimationFrame updates; default 0.05 s simulation clamp and hit stop unchanged. Warm-up and samples separate; no per-frame screenshot/readback.',
     memory: 'Observed WebGL storage bytes, not measured resident VRAM. Default framebuffer, implicit extension MSAA and driver/swapchain exclusions separately reported.',
     requestedVisualMode: visualMode, requestedQuality: quality, diagnosticNoAA: flag('no-aa'),
+    hudMode, portraitSmoke: flag('portrait-smoke'), runtimeControls: flag('runtime-controls'),
+    recordedEndpoint: endpointBytes ? { file: endpointFile, sha256: sha256(endpointBytes), sourceCommit: 'bfae58b34a411ab434d387e6710fd97be6b2acb3' } : null,
     foundationFixture: flag('foundation'), reducedMotion: flag('reduced-motion'),
     portraitComparison: flag('portraits') ? {
       version: 1, width, height, dpr, visualMode, quality, time: 16.8, weather: 'clear', seed: GRAPHICS_SEED,
-      bloom: !flag('no-post'), aa: !flag('no-aa'), ink: !flag('no-ink'), precipitation: !flag('no-weather'),
+      bloom: !flag('no-post'), aa: !flag('no-aa'), ink: !flag('no-ink'), precipitation: !flag('no-weather'), hudMode,
       reducedMotion: flag('reduced-motion'),
     } : null,
     portraitReference: referencePath ?? null,
@@ -180,6 +201,7 @@ async function waitStartup(test, entry) {
 }
 
 async function launchFixture(fixture) {
+  checkTime()
   browser.events.length = 0
   const storage = fixture.save
     ? JSON.parse(await readFile(join(root, 'scripts', 'graphics', 'saves', fixture.save), 'utf8')) : {}
@@ -188,7 +210,7 @@ async function launchFixture(fixture) {
     'korovany-bloom': String(!flag('no-post')), 'korovany-ink-outlines': String(!flag('no-ink')),
     'korovany-weather': String(!flag('no-weather')), 'korovany-foliage': 'high', 'korovany-dynamic-day-night': 'true',
     'korovany-screen-shake': 'true',
-    'korovany-visual-preferences': JSON.stringify({ version: 1, visualMode, visualQuality: quality, hudMode: 'full' }),
+    'korovany-visual-preferences': JSON.stringify({ version: 1, visualMode, visualQuality: quality, hudMode }),
   }
   await browser.send('Page.navigate', { url: origin })
   await browser.waitFor(`location.origin === ${JSON.stringify(origin)} && document.readyState === 'complete'`)
@@ -210,6 +232,7 @@ async function launchFixture(fixture) {
   const before = await browser.evaluate('window.__korovanyGraphics.snapshot()')
   const world = await browser.evaluate('window.__korovanyGraphics.world()')
   const stage = fixtureStage(fixture, world, reference, before)
+  if (endpointStage) Object.assign(stage, endpointStage)
   if (flag('foundation')) stage.foundation = true
   if (flag('no-aa')) stage.antialiasing = 'none'
   if (flag('foundation') || flag('no-aa')) stage.label =
@@ -264,11 +287,13 @@ async function capturePortraitSuite(fixture, result) {
   const before = await browser.evaluate('window.__korovanyGraphics.snapshot()')
   const identity = portraitSimulationIdentity(before)
   const saveIdentity = portraitSaveIdentity(await browser.evaluate('window.__korovanyGraphics.save()'))
-  const stages = firstVisualPortraitStages(fixture.faction, before.runtime.actors)
+  const allStages = firstVisualPortraitStages(fixture.faction, before.runtime.actors)
+  const stages = flag('portrait-smoke') ? allStages.slice(0, 1) : allStages
   const companions = before.runtime.actors.filter((actor) => actor.squad)
     .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
   result.portraits = []
   for (const stage of stages) {
+    checkTime()
     const request = structuredClone(stage.request)
     const selector = request.portrait.subject
     const actor = selector === 'player' ? null : companions[Number(selector.slice(-1))]
@@ -281,6 +306,10 @@ async function capturePortraitSuite(fixture, result) {
     await browser.evaluate(`window.__korovanyGraphics.stage(${JSON.stringify(request)})`)
     await browser.evaluate('window.__korovanyGraphics.render(2)')
     const snapshot = await browser.evaluate('window.__korovanyGraphics.snapshot()')
+    assertBrowserHealthy(stage.id)
+    if (snapshot.runtime.rendering.post.composer !== snapshot.runtime.visualPolicy.post.enabled) {
+      throw new Error('Portrait post pipeline fell back instead of applying the selected policy')
+    }
     if (portraitSimulationIdentity(snapshot) !== identity) throw new Error(`Portrait ${stage.id} mutated real gameplay identity`)
     if (portraitSaveIdentity(await browser.evaluate('window.__korovanyGraphics.save()')) !== saveIdentity) {
       throw new Error(`Portrait ${stage.id} changed the campaign save beyond its export timestamp`)
@@ -289,6 +318,7 @@ async function capturePortraitSuite(fixture, result) {
     if (!portrait || portrait.subject.id !== subject.id || portrait.subject.role !== subject.role) {
       throw new Error('Portrait stage did not resolve the expected actual production subject')
     }
+    if (flag('portrait-smoke') && !portrait.focusInsideClip) throw new Error('Initial head smoke failed geometric portrait framing')
     if (request.portrait.view === 'gameplay' &&
         !snapshot.runtime.rendering.portraitContext?.some((entry) => !entry.player && entry.headInsideClip)) {
       throw new Error('Normal gameplay portrait contains no production companion head inside the camera frame')
@@ -328,6 +358,12 @@ async function capturePortraitSuite(fixture, result) {
     throw new Error('Clearing portrait staging changed production gameplay/save identity')
   }
   result.portraitRestoration = { simulationPreserved: true, portraitCleared: restored.runtime.rendering.characterPortrait === null }
+}
+
+function assertBrowserHealthy(label) {
+  const errors = browser.events.filter((event) => event.method === 'Runtime.exceptionThrown' ||
+    event.method === 'Runtime.consoleAPICalled' && event.params.type === 'error')
+  if (errors.length) throw new Error(`Browser errors in ${label}: ${JSON.stringify(errors)}`)
 }
 
 async function nativeRoute() {
@@ -386,6 +422,7 @@ async function lifecycleCycles() {
 }
 
 try {
+  checkTime()
   const server = startOwned(process.execPath, [join(root, 'node_modules', 'vite', 'bin', 'vite.js'),
     'preview', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], 'vite-preview')
   await waitStartup(async () => {
@@ -414,9 +451,11 @@ try {
     features: [{ name: 'prefers-reduced-motion', value: flag('reduced-motion') ? 'reduce' : 'no-preference' }],
   })
   for (const fixture of fixtures) {
+    checkTime()
     const result = { id: fixture.id, definition: fixture, captures: [] }
     manifest.cases.push(result)
     for (let repetition = 1; repetition <= repeat; repetition++) {
+      checkTime()
       const setup = await launchFixture(fixture)
       const path = join(out, `${fixture.id}-${repetition}.png`)
       const bytes = await browser.screenshot(path)
@@ -428,8 +467,24 @@ try {
           compareGraphicsPng(await readFile(join(out, `${fixture.id}-1.png`)), bytes)
       }
       await writeFile(join(out, `${fixture.id}-${repetition}.json`), JSON.stringify(capture, null, 2))
+      assertBrowserHealthy(fixture.id)
       if (flag('portraits')) await capturePortraitSuite(fixture, result)
+      if (flag('runtime-controls')) {
+        result.runtimeControls = { captures: [] }
+        result.runtimeControls.summary = await captureRuntimeControls(browser, { width, height, dpr },
+          async (id, snapshot) => {
+            checkTime()
+            assertBrowserHealthy(`${fixture.id}:${id}`)
+            const file = `${fixture.id}-controls-${id}.png`
+            const bytes = await browser.screenshot(join(out, file))
+            const record = { id, file, sha256: sha256(bytes), snapshot }
+            result.runtimeControls.captures.push(record)
+            await writeFile(join(out, `${fixture.id}-controls-${id}.json`), JSON.stringify(record, null, 2))
+            await writeFile(join(out, 'manifest.json'), JSON.stringify(manifest, null, 2))
+          }, checkTime)
+      }
       if (repetition === repeat && flag('profile')) {
+        checkTime()
         await browser.evaluate(`(() => {
           for (const animation of window.__graphicsCaptureAnimations ?? []) animation.play();
           delete window.__graphicsCaptureAnimations;
@@ -455,6 +510,7 @@ try {
       if (repetition === repeat && flag('motion')) {
         result.motion = { mode: 'labelled manual production steps after capture/profile; not RAF timing', frames: [] }
         for (let frame = 0; frame < 12; frame++) {
+          checkTime()
           await browser.evaluate('window.__korovanyGraphics.step(5, 1/60)')
           const file = `${fixture.id}-motion-${String(frame).padStart(2, '0')}.png`
           const bytes = await browser.screenshot(join(out, file))
@@ -488,6 +544,7 @@ try {
   }
   // Launch the ordinary build without the opt-in query as a real default-off
   // control, not merely a check of an empty menu where no engine exists.
+  checkTime()
   await browser.send('Page.navigate', { url: origin })
   await browser.waitFor('document.readyState === "complete" && !!document.querySelector("#world-seed, .active-run-card")')
   if (await browser.evaluate('!!document.querySelector(".active-run-card")')) {
