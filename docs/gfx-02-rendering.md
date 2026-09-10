@@ -180,6 +180,52 @@ GFX-03's intended one-body batch may use logical part/index ranges and
 event-driven actor-owned injury/prosthetic geometry. Bindings preserve the
 excluded triangles; `Bone.visible` is not treated as vertex visibility.
 
+### Affine skinned normals
+
+The enhanced shader now transports both `normal` and welded `outlineNormal`
+through the inverse-transpose of the **complete weighted skin map**:
+`bindMatrixInverse * weightedBoneMatrix * bindMatrix`. It does not normalize the
+old forward direction transform or average separately inverted bone matrices.
+Three's later model/view `normalMatrix` still applies exactly once. Optional
+wind's affine shear follows skinning for normals and forward-transformed
+tangents, in the same order as the unchanged position deformation.
+
+`skinNormalShader.ts` supplies the shared normal-only GLSL helpers and guarded
+replacement of three's normal assignment. Enhanced main/ink cache keys carry
+`affine-skin-normal-v1`; legacy keys/shading and depth skin-position code stay
+unchanged. There is no new geometry attribute, rig/binding API, bone texture,
+shader family or per-frame CPU deformation. GFX-05 fog/atmosphere integration
+remains a separate merge.
+
+The implementation scales the matrix, multiplies the normal by its cofactor
+matrix, corrects determinant sign and normalizes without dividing by determinant
+magnitude. This avoids unbounded inverse values near zero scale. For a singular
+rank-two map, surviving oriented tangent area supplies the normal. If that area
+also collapses, no physical normal exists: source and ink use the same finite
+unit rest-direction fallback (positive Z for an invalid zero rest normal).
+This is a bounded degeneracy rule, **not proof of correct shading for collapsed
+geometry**. Positions and depth are never expanded or repaired. Non-finite or
+incomplete bind/bone matrices are rejected by binding/geometry validation; pose
+owners must continue supplying finite matrices after binding.
+
+This is per-vertex affine normal transport. It is exact for the constant-weight
+rigid partitions used by the actual character, creature and ox bodies and for
+a local tangent under a fixed weighted affine map. It does not reconstruct
+spatial derivatives of varying skin weights or wind flex across a triangle.
+The bowstring's varying-weight deformation is not claimed to have newly
+recomputed geometric normals; that is a distinct surface-differential problem.
+
+CPU evidence uses 24 actual immutable `fc1af54` character/equipment/beast/ox poses:
+266 vertex maps and 188 independently deformed production triangles. The emitted
+GLSL arithmetic agrees with their tangent/face oracles; the old rule is wrong by
+up to 10.2343 degrees on these poses. Negative controls cover omitted binds,
+double model normal matrices, blended inverses and reversed skin/wind order.
+The recorded wagon/ox pose is also a rigid control, not falsely labeled an
+anisotropic failure. See `tests/affineSkinNormals.test.ts` and the fixture
+provenance under `tests/fixtures/`. GPU compilation and integrated art/motion
+evidence remain required; these CPU results do not establish driver behavior,
+performance budgets or human model approval.
+
 ## Canonical gameplay sight
 
 `LegacySightRegistry` and `WorldPresentationRegistry` are separate. Enhancing

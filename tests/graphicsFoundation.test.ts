@@ -154,7 +154,7 @@ test('packed response and wind are explicit layouts; source, skin-aware ink and 
   const main = compile(material), inkShader = compile(outline.shells[0].material as THREE.Material, 'basic')
   const depth = compile(source.customDepthMaterial!, 'depth')
   for (const shader of [main, inkShader, depth]) assert.match(shader.vertexShader, /transformed \+= kArtWindShear/)
-  assert.match(inkShader.vertexShader, /skinMatrix \* vec4\( kOutlineNormal/)
+  assert.match(inkShader.vertexShader, /kArtAffineNormal\( mat3\( skinMatrix \), kOutlineNormal \)/)
   assert.match(main.fragmentShader, /roughnessFactor = vArtSurface.x/)
   assert.match(main.fragmentShader, /vStylizedWorld\.yz \/ uArtMeters/)
   assert.match(main.fragmentShader, /kArtDither/)

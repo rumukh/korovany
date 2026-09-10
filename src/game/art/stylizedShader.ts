@@ -6,6 +6,7 @@ import {
   type ArtShaderFeatures,
 } from './ArtPresentation.ts'
 import { WEATHER_ROUGHNESS_DROP_MAX, WEATHER_ROUGHNESS_FLOOR, WEATHER_VALUE_DROP_MAX } from './AtmospherePresentation.ts'
+import { AFFINE_SKIN_NORMAL_GLSL, AFFINE_SKIN_NORMAL_REVISION, affineSkinNormalChunk } from './skinNormalShader.ts'
 
 /**
  * GLSL injected into `MeshStandardMaterial` to get the marching-comic look.
@@ -168,7 +169,8 @@ function outlineProjection(smooth: boolean, enhanced = false, wind = false): str
 vec4 mvPosition = vec4( transformed, 1.0 );
 vec3 kOutlineNormal = ${source};
 #ifdef USE_SKINNING
-  kOutlineNormal = vec4( skinMatrix * vec4( kOutlineNormal, 0.0 ) ).xyz;
+  ${enhanced ? 'kOutlineNormal = kArtAffineNormal( mat3( skinMatrix ), kOutlineNormal );'
+    : 'kOutlineNormal = vec4( skinMatrix * vec4( kOutlineNormal, 0.0 ) ).xyz;'}
 #endif
 ${wind ? 'kOutlineNormal = kArtDeformNormal( kOutlineNormal );' : ''}
 #ifdef USE_INSTANCING
@@ -210,7 +212,8 @@ gl_Position = projectionMatrix * mvPosition;
 `
 }
 
-const ART_WIND_VERTEX = /* glsl */ `
+function artWindVertex(enhanced: boolean): string {
+  return /* glsl */ `
 attribute vec2 artWind;
 uniform float uArtTime;
 uniform vec3 uArtWind;
@@ -228,9 +231,12 @@ vec3 kArtWindShear() {
 }
 vec3 kArtDeformNormal( vec3 n ) {
   vec3 shear = kArtWindShear();
-  return normalize( vec3( n.x, ( n.y - shear.x * n.x - shear.z * n.z ) / max( 1.0 + shear.y, 0.1 ), n.z ) );
+  ${enhanced ? `return kArtAffineNormal( mat3(
+    vec3( 1.0, 0.0, 0.0 ), vec3( shear.x, 1.0 + shear.y, shear.z ), vec3( 0.0, 0.0, 1.0 )
+  ), n );` : 'return normalize( vec3( n.x, ( n.y - shear.x * n.x - shear.z * n.z ) / max( 1.0 + shear.y, 0.1 ), n.z ) );'}
 }
 `
+}
 
 const ART_DITHER_FRAGMENT = /* glsl */ `
 varying float vArtVisibility;
@@ -253,13 +259,24 @@ function applyArtVertex(
   depth: boolean,
 ): void {
   if (environment) Object.assign(shader.uniforms, environment)
+  let skinNormal = '#include <skinnormal_vertex>'
+  if (!depth && features.enhanced) skinNormal = affineSkinNormalChunk(THREE.ShaderChunk.skinnormal_vertex)
   if (features.attributes.wind) {
     if (!environment) throw new Error('Wind shader requires the shared presentation environment')
-    shader.vertexShader = ART_WIND_VERTEX + shader.vertexShader
+    // Depth keeps the old helper body (unused for normals) and exact position
+    // deformation. Main/ink apply wind's normal map after skin, never before it.
+    shader.vertexShader = artWindVertex(features.enhanced && !depth) + shader.vertexShader
     shader.vertexShader = shader.vertexShader.replace('#include <skinning_vertex>',
       '#include <skinning_vertex>\ntransformed += kArtWindShear() * transformed.y;')
-    if (!depth) shader.vertexShader = shader.vertexShader.replace('#include <skinnormal_vertex>',
-      '#include <skinnormal_vertex>\nobjectNormal = kArtDeformNormal( objectNormal );')
+    if (!depth) {
+      skinNormal += '\nobjectNormal = kArtDeformNormal( objectNormal );'
+      if (features.enhanced) skinNormal += '\n#ifdef USE_TANGENT\nobjectTangent += kArtWindShear() * objectTangent.y;\n#endif'
+    }
+  }
+  if (!depth) {
+    requireInjectionPoint(shader.vertexShader, '#include <skinnormal_vertex>', 'skin normal')
+    shader.vertexShader = shader.vertexShader.replace('#include <skinnormal_vertex>', skinNormal)
+    if (features.enhanced) shader.vertexShader = AFFINE_SKIN_NORMAL_GLSL + shader.vertexShader
   }
   if (!depth && features.enhanced) {
     shader.vertexShader = 'attribute float artVisibility;\nvarying float vArtVisibility;\n' + shader.vertexShader
@@ -524,7 +541,7 @@ export function applyStylizedShader(
   // collide them onto one program and render one of the two with the wrong shader.
   // Do not delete this on the grounds that three already handles it.
   material.customProgramCacheKey = () => features?.enhanced
-    ? `${STYLIZED_PROGRAM_KEY}:${artShaderKey(features)}:atmosphere-1` : STYLIZED_PROGRAM_KEY
+    ? `${STYLIZED_PROGRAM_KEY}:${artShaderKey(features)}:atmosphere-1:${AFFINE_SKIN_NORMAL_REVISION}` : STYLIZED_PROGRAM_KEY
   material.needsUpdate = true
 }
 
@@ -567,7 +584,7 @@ export function applyOutlineShader(
   // text, so three's default `onBeforeCompile.toString()` key cannot tell the two
   // variants apart and would hand both the same compiled program.
   material.customProgramCacheKey = () =>
-    `${OUTLINE_PROGRAM_KEY}:${smooth ? 'smooth' : 'flat'}${features?.enhanced ? `:${artShaderKey(features)}:atmosphere-1` : ''}`
+    `${OUTLINE_PROGRAM_KEY}:${smooth ? 'smooth' : 'flat'}${features?.enhanced ? `:${artShaderKey(features)}:atmosphere-1:${AFFINE_SKIN_NORMAL_REVISION}` : ''}`
   material.needsUpdate = true
 }
 
