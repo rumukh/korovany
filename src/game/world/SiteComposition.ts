@@ -115,6 +115,34 @@ export interface SiteLayoutInput {
   seed: number | string
 }
 
+export interface SiteLayoutTransform {
+  readonly x: number
+  readonly z: number
+  readonly rotation: number
+}
+
+/** The existing clamped site origin, shared by rendering and surface metadata. */
+export function resolveSiteLayoutTransform(
+  kind: SiteKind,
+  anchor: { readonly x: number; readonly z: number },
+  bounds: { readonly minX: number; readonly maxX: number; readonly minZ: number; readonly maxZ: number },
+): SiteLayoutTransform {
+  const prefab = SITE_PRESENTATIONS[kind].prefab
+  const radialX = anchor.x - (bounds.minX + bounds.maxX) / 2
+  const radialZ = anchor.z - (bounds.minZ + bounds.maxZ) / 2
+  const radialLength = Math.hypot(radialX, radialZ) || 1
+  const forwardX = radialX / radialLength
+  const forwardZ = radialZ / radialLength
+  const offset = prefab.footprintDepth / 2 + 2.5
+  return {
+    x: Math.min(bounds.maxX - prefab.footprintWidth / 2 - 2,
+      Math.max(bounds.minX + prefab.footprintWidth / 2 + 2, anchor.x + forwardX * offset)),
+    z: Math.min(bounds.maxZ - prefab.footprintDepth / 2 - 2,
+      Math.max(bounds.minZ + prefab.footprintDepth / 2 + 2, anchor.z + forwardZ * offset)),
+    rotation: Math.atan2(forwardX, forwardZ),
+  }
+}
+
 interface TerritoryStyle {
   wallStyle: WallStyle
   roofStyle: RoofStyle

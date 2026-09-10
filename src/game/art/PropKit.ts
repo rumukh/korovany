@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { fbm3 } from './ArtNoise.ts'
 import type { ArtVariation } from './ArtRandom.ts'
+import { ART_SURFACE_ATTRIBUTE, ART_WIND_ATTRIBUTE } from './ArtPresentation.ts'
 import {
   bakeOutlineNormals,
   bakeSkyOcclusion,
@@ -157,6 +158,35 @@ export function propPart(
   surface: PropSurface = 'hard',
 ): PropPart {
   return { geometry, surface }
+}
+
+/** Packed response belongs to the immutable prop, never to a shared material mutation. */
+export function paintPropResponse(
+  geometry: THREE.BufferGeometry,
+  response: readonly [number, number, number, number] = [0.9, 0, 0.6, 0.12],
+  flex = 0,
+  phase = 0,
+): THREE.BufferGeometry {
+  const position = geometry.getAttribute('position')
+  if (!geometry.hasAttribute(ART_SURFACE_ATTRIBUTE)) {
+    const values = new Float32Array(position.count * 4)
+    for (let i = 0; i < position.count; i++) values.set(response, i * 4)
+    geometry.setAttribute(ART_SURFACE_ATTRIBUTE, new THREE.Float32BufferAttribute(values, 4))
+  }
+  if (!geometry.hasAttribute(ART_WIND_ATTRIBUTE)) {
+    const values = new Float32Array(position.count * 2)
+    for (let i = 0; i < position.count; i++) {
+      values[i * 2] = position.getY(i) <= 0.04 ? 0 : flex
+      values[i * 2 + 1] = phase
+    }
+    geometry.setAttribute(ART_WIND_ATTRIBUTE, new THREE.Float32BufferAttribute(values, 2))
+  }
+  const colors = geometry.getAttribute('color')
+  if (colors) for (let i = 0; i < colors.count; i++) {
+    colors.setXYZ(i, Math.min(1, Math.max(0, colors.getX(i))),
+      Math.min(1, Math.max(0, colors.getY(i))), Math.min(1, Math.max(0, colors.getZ(i))))
+  }
+  return geometry
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +374,7 @@ export interface TreePalette {
 }
 
 export interface TreeOptions {
+  tactile?: boolean
   variation: ArtVariation
   /** Uint32 noise seed for bark displacement. */
   noiseSeed: number
@@ -369,11 +400,68 @@ export function treeGeometry(
   species: TreeSpecies,
   options: TreeOptions,
 ): THREE.BufferGeometry {
-  const geometry = buildTree(species, options)
+  const geometry = options.tactile ? layeredTreeGeometry(species, options) : buildTree(species, options)
   geometry.name = options.name ?? `prop-tree-${species}`
   bakeSkyOcclusion(geometry, { strength: 0.24 })
   bakeVerticalOcclusion(geometry, { strength: 0.26, falloff: 0.9 })
   return bakeOutlineNormals(geometry)
+}
+
+function layeredTreeGeometry(species: TreeSpecies, options: TreeOptions): THREE.BufferGeometry {
+  if (species === 'dead') return paintPropResponse(deadTreeGeometry(options))
+  const variation = options.variation
+  const height = options.height ?? 5.4
+  const detail = options.detail ?? 'near'
+  const conifer = species === 'conifer'
+  const slender = species === 'slender'
+  const thorn = species === 'thorn'
+  const topiary = species === 'topiary'
+  const radius = options.trunkRadius ?? (slender ? 0.17 : thorn ? 0.16 : 0.27)
+  const canopy = options.canopyRadius ?? (conifer ? 1.75 : slender ? 1.05 : thorn ? 0.8 : 1.9)
+  const lean = variation.signed(0.18)
+  const trunk = trunkGeometry(height * (conifer ? 0.93 : 0.8), radius, options.palette,
+    options.noiseSeed, 6, lean, detail)
+  if (slender) paintVertexColors(trunk, (context, out) => {
+    out.lerp(WHITE, 0.28)
+    if (Math.sin(context.y * 9 + context.x * 3) > 0.82) out.multiplyScalar(0.7)
+  })
+  const parts = [paintPropResponse(trunk, [0.97, 0, 0.55, 0.08])]
+  const count = topiary ? 3 : conifer ? (detail === 'far' ? 7 : 12)
+    : detail === 'far' ? 4 : slender ? 6 : thorn ? 7 : 9
+  for (let i = 0; i < count; i++) {
+    const tier = conifer ? Math.floor(i / 3) : i
+    const t = conifer ? tier / Math.max(1, Math.ceil(count / 3) - 1) : i / Math.max(1, count - 1)
+    const angle = i * 2.39996 + variation.signed(0.28)
+    const reach = canopy * (conifer ? (1 - t * 0.65) * 0.62 : topiary ? 0.25 : variation.range(0.4, 0.88))
+    const y = height * (conifer ? 0.28 + t * 0.62 : slender ? 0.67 + t * 0.3 : thorn ? 0.3 + t * 0.45 : 0.5 + t * 0.35)
+    const end = { x: Math.cos(angle) * reach + lean, y, z: Math.sin(angle) * reach }
+    const start = { x: lean * 0.6, y: y - height * (conifer ? 0.07 : 0.16), z: 0 }
+    const branch = tubeAlongPoints([start, end], {
+      radius: (along) => radius * (conifer ? 0.2 : 0.32) * (1 - along * 0.7),
+      radialSegments: 3, tubularSegments: 1, capStart: true, capEnd: true,
+    })
+    shade(branch, options.palette.barkShade, options.palette.bark, 0.7)
+    parts.push(paintPropResponse(branch, [0.96, 0, 0.55, 0.08]))
+    const leafRadius = canopy * (conifer ? (1 - t * 0.68) * 0.5
+      : topiary ? 0.54 : thorn ? 0.28 : slender ? 0.44 : 0.46) * variation.range(0.9, 1.12)
+    const leafHeight = leafRadius * (conifer ? 1.5 : topiary ? 1.1 : slender ? 1.9 : 1.35)
+    const crown = loftProfile({
+      profile: polygonProfile(leafRadius, detail === 'far' ? 4 : 5, variation.angle()),
+      sections: [
+        { y: -leafHeight * 0.32, scaleX: 0.2 },
+        { y: 0, scaleX: 1, scaleZ: conifer ? 0.65 : 0.85 },
+        { y: leafHeight * 0.42, scaleX: 0.65, offsetX: leafRadius * 0.12 },
+        { y: leafHeight * 0.7, scaleX: 0.08 },
+      ],
+      name: `leaf-mass:${species}:${i}`,
+    })
+    shade(crown, tone(options.palette.canopyLow, 0.08),
+      tone(options.palette.canopyHigh, t * 0.1), 0.75)
+    transformed(crown, { position: end, rotation: { x: 0, y: angle, z: conifer ? 0.22 : 0 } })
+    // One phase per crown/tree avoids detached leaves moving against their branch.
+    parts.push(paintPropResponse(crown, [0.88, 0, 0.5, 0.12], topiary ? 0.12 : 0.32, 0.25))
+  }
+  return mergeAll(parts, { name: `layered-${species}` })
 }
 
 function buildTree(
@@ -1156,6 +1244,7 @@ export interface BuildingPalette {
 }
 
 export interface BuildingOptions {
+  tactile?: boolean
   variation: ArtVariation
   noiseSeed: number
   palette: BuildingPalette
@@ -1241,6 +1330,13 @@ export function buildingParts(options: BuildingOptions): PropPart[] {
     )
     shade(body, palette.wallShade, palette.wall, 0.8)
     mottle(body, options.noiseSeed + storey * 31, 0.07, 0.9)
+    if (options.tactile) {
+      paintPropResponse(body, [options.wallStyle === 'stone' ? 0.96 : 0.88, 0, 0.55, 0.1])
+      paintVertexColors(body, (context, out) => {
+        const damp = Math.max(0, 1 - (context.y - plinthHeight) / (storeyHeight * 0.4))
+        out.multiplyScalar(1 - damp * 0.08)
+      })
+    }
     hard.push(body)
 
     if (detail === 'near') {
@@ -1290,8 +1386,7 @@ export function buildingParts(options: BuildingOptions): PropPart[] {
     options.roofStyle === 'flat'
       ? Math.max(0.24, storeyHeight * 0.18)
       : Math.max(0.5, (Math.min(topWidth, topDepth) / 2) * (options.roofPitch ?? 0.86))
-  hard.push(
-    ...roofParts(
+  const roof = roofParts(
       options.roofStyle,
       topWidth + eaves * 2,
       topDepth + eaves * 2,
@@ -1301,8 +1396,23 @@ export function buildingParts(options: BuildingOptions): PropPart[] {
       options.noiseSeed,
       detail,
       options.crenellated === true,
-    ),
-  )
+    )
+  if (options.tactile) for (const part of roof) {
+    paintPropResponse(part, [options.roofStyle === 'tile' ? 0.68 : 0.94, 0.01, 0.55, 0.15])
+  }
+  hard.push(...roof)
+  if (options.tactile) {
+    const fascia = piece(topWidth + eaves * 1.8, 0.13, topDepth + eaves * 1.8,
+      palette.timber, { position: { x: 0, y: cursor - 0.14, z: 0 } }, { bevel: 0.04 })
+    shade(fascia, tone(palette.timber, -0.16), palette.timber, 0.7)
+    hard.push(fascia)
+    if (detail === 'near') {
+      const footing = piece(width + plinthHeight * 1.55, 0.12, depth + plinthHeight * 1.55,
+        palette.foundation, { position: { x: 0, y: -0.1, z: 0 } }, { bevel: 0.05 })
+      shade(footing, tone(palette.foundation, -0.18), palette.foundation, 0.8)
+      hard.push(footing)
+    }
+  }
 
   if (detail === 'near' && options.roofStyle !== 'flat') {
     hard.push(...rafterTails(topWidth, topDepth, eaves, cursor, palette))
@@ -1316,6 +1426,7 @@ export function buildingParts(options: BuildingOptions): PropPart[] {
     hard.push(...porchParts(topWidth, topDepth, storeyHeight, plinthHeight, palette))
   }
 
+  if (options.tactile) for (const geometry of hard) paintPropResponse(geometry, [0.86, 0, 0.55, 0.12])
   const merged = mergeAll(hard, { name: options.name ?? 'prop-building' })
   bakeSkyOcclusion(merged, { strength: 0.24 })
   bakeVerticalOcclusion(merged, { strength: 0.26, falloff: storeyHeight * 0.5 })
@@ -1324,6 +1435,7 @@ export function buildingParts(options: BuildingOptions): PropPart[] {
   // them the ink hull splits open along every wall corner and eave.
   bakeOutlineNormals(merged)
   parts.unshift(propPart(merged, 'hard'))
+  if (options.tactile) for (const part of parts) paintPropResponse(part.geometry)
   return parts
 }
 
@@ -3310,6 +3422,9 @@ export interface BridgeOptions extends PropOptions {
   detail?: 'near' | 'far'
 }
 
+export const BRIDGE_PIER_SPAN_FRACTION = 0.22
+export const BRIDGE_PIER_WIDTH_FRACTION = 0.72
+
 /**
  * A bridge that is not a box.
  *
@@ -3383,9 +3498,9 @@ export function bridgeParts(options: BridgeOptions): PropPart[] {
       const pier = piece(
         0.44,
         2.6,
-        width * 0.72,
+        width * BRIDGE_PIER_WIDTH_FRACTION,
         options.style === 'stone' ? palette.stone : palette.timber,
-        { position: { x: signX * span * 0.22, y: -2.5, z: 0 } },
+        { position: { x: signX * span * BRIDGE_PIER_SPAN_FRACTION, y: -2.5, z: 0 } },
         { topScale: 0.78 },
       )
       shade(pier, deckShade, deckColor, 0.8)
@@ -3397,7 +3512,7 @@ export function bridgeParts(options: BridgeOptions): PropPart[] {
           0.16,
           deckColor,
           {
-            position: { x: signX * span * 0.22, y: -1.4, z: signZ * width * 0.28 },
+            position: { x: signX * span * BRIDGE_PIER_SPAN_FRACTION, y: -1.4, z: signZ * width * 0.28 },
             rotation: { x: -signZ * 0.5, y: 0, z: 0 },
           },
         )
@@ -3925,6 +4040,7 @@ export interface GroundCoverPalette {
 }
 
 export interface GroundCoverOptions {
+  tactile?: boolean
   variation: ArtVariation
   noiseSeed: number
   palette: GroundCoverPalette
@@ -3962,16 +4078,16 @@ function buildGroundCover(
 function grassTuftGeometry(options: GroundCoverOptions): THREE.BufferGeometry {
   const variation = options.variation
   const blades: THREE.BufferGeometry[] = []
-  const count = 5
+  const count = options.tactile ? 3 : 5
   for (let index = 0; index < count; index += 1) {
     const rotation = (index / count) * Math.PI * 2 + variation.signed(0.5)
     const height = variation.range(0.38, 0.78)
     const lean = variation.signed(0.26)
     const blade = loftProfile({
-      profile: rectProfile(0.075, 0.018),
+      profile: options.tactile ? polygonProfile(0.032, 3) : rectProfile(0.075, 0.018),
       sections: [
         { y: 0, scaleX: 1, scaleZ: 1 },
-        { y: height * 0.45, scaleX: 0.72, offsetX: lean * 0.4 },
+        ...(!options.tactile ? [{ y: height * 0.45, scaleX: 0.72, offsetX: lean * 0.4 }] : []),
         { y: height, scaleX: 0.08, offsetX: lean },
       ],
       name: `grass-blade-${String(index)}`,
@@ -4118,5 +4234,3 @@ function pebbleGeometry(options: GroundCoverOptions): THREE.BufferGeometry {
   })
   return geometry
 }
-
-

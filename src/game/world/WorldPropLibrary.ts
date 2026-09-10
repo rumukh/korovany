@@ -25,6 +25,7 @@ import {
   monumentParts,
   obeliskParts,
   outcropGeometry,
+  paintPropResponse,
   pillarParts,
   propPart,
   reedClusterGeometry,
@@ -118,7 +119,7 @@ export interface PropAsset {
  */
 const PROP_RECEIPT = Symbol('worldPropReceipt')
 
-export type PropRequest =
+export type PropRequest = (
   | { kind: 'tree'; biome: ZoneId; slot: number; detail: PropDetail }
   | { kind: 'undergrowth'; biome: ZoneId; slot: number }
   | { kind: 'rock'; biome: ZoneId; slot: number; detail: PropDetail }
@@ -153,7 +154,7 @@ export type PropRequest =
       span: number
       width: number
       detail: PropDetail
-    }
+    }) & { readonly tactile?: boolean }
 
 /**
  * Keys the retention window holds by default, and the dominant term in the live cache
@@ -199,9 +200,17 @@ export class WorldPropLibrary {
    */
   private readonly retained: string[] = []
   private readonly retentionLimit: number
+  private readonly tactile: boolean
+  private readonly geometryInventory = new Map<string, THREE.BufferGeometry>()
 
-  constructor(options: { retention?: number } = {}) {
+  /** Includes retained keys, not just geometry still reachable from scene meshes. */
+  getGeometryInventory(): ReadonlyMap<string, THREE.BufferGeometry> {
+    return new Map(this.geometryInventory)
+  }
+
+  constructor(options: { retention?: number; tactile?: boolean } = {}) {
     this.retentionLimit = Math.max(0, Math.floor(options.retention ?? PROP_RETENTION_DEFAULT))
+    this.tactile = options.tactile === true
   }
 
   /** Live cache entries, including geometry held only by the retention window. */
@@ -225,7 +234,7 @@ export class WorldPropLibrary {
    * {@link release} exactly once.
    */
   acquire(request: PropRequest): PropAsset {
-    const canonical = canonicalRequest(request)
+    const canonical = canonicalRequest({ ...request, tactile: request.tactile ?? this.tactile })
     const key = describeRequest(canonical)
     return this.acquireKeyed(key, surfaceLayout(canonical), () =>
       buildParts(canonical, key),
@@ -246,7 +255,7 @@ export class WorldPropLibrary {
     surfaces: readonly PropSurface[],
     build: () => PropPart[],
   ): PropAsset {
-    return this.acquireKeyed(key, surfaces, build)
+    return this.acquireKeyed(this.tactile ? `tactile:${key}` : key, surfaces, build)
   }
 
   private acquireKeyed(
@@ -282,6 +291,10 @@ export class WorldPropLibrary {
         // reference count to zero, dispose the geometry the window exists to
         // preserve, and rebuild it on the very next line.
         const geometry = this.cache.acquire(surfaceKey, () => take(surface))
+        if (!this.geometryInventory.has(surfaceKey)) {
+          this.geometryInventory.set(surfaceKey, geometry)
+          geometry.addEventListener('dispose', () => { this.geometryInventory.delete(surfaceKey) })
+        }
         this.unretain(surfaceKey)
         surfaces.push({ surface, geometry, key: surfaceKey })
       }
@@ -382,13 +395,14 @@ export class WorldPropLibrary {
    * The returned parts are the caller's to merge or dispose.
    */
   build(request: PropRequest): PropPart[] {
-    const canonical = canonicalRequest(request)
+    const canonical = canonicalRequest({ ...request, tactile: request.tactile ?? this.tactile })
     return buildParts(canonical, describeRequest(canonical))
   }
 
   dispose(): void {
     this.retained.length = 0
     this.cache.dispose()
+    this.geometryInventory.clear()
   }
 
   /** Takes over the caller's reference rather than dropping it. */
@@ -488,6 +502,10 @@ const SITE_PROP_SURFACES: Record<SitePropKind, PropSurface[]> = {
 }
 
 function describeRequest(request: PropRequest): string {
+  return `${request.tactile ? 'tactile:' : ''}${describeLegacyRequest(request)}`
+}
+
+function describeLegacyRequest(request: PropRequest): string {
   switch (request.kind) {
     case 'tree':
       return `tree:${request.biome}:${String(request.slot)}:${request.detail}`
@@ -521,6 +539,10 @@ function quantize(value: number): number {
   return Math.round(value * 2) / 2
 }
 
+export function canonicalBridgeSize(span: number, width: number): { span: number; width: number } {
+  return { span: quantize(span), width: quantize(width) }
+}
+
 /**
  * Rounds a request's free dimensions to the same grid the cache key uses.
  *
@@ -537,8 +559,7 @@ function canonicalRequest(request: PropRequest): PropRequest {
     case 'bridge':
       return {
         ...request,
-        span: quantize(request.span),
-        width: quantize(request.width),
+        ...canonicalBridgeSize(request.span, request.width),
       }
     case 'siteProp':
       return request.length === undefined
@@ -550,6 +571,18 @@ function canonicalRequest(request: PropRequest): PropRequest {
 }
 
 function buildParts(request: PropRequest, key: string): PropPart[] {
+  const parts = buildPropParts(request, request.tactile ? key.slice('tactile:'.length) : key)
+  if (request.tactile) {
+    const living = request.kind === 'reeds' || (request.kind === 'groundCover' && request.cover !== 'pebble') ||
+      (request.kind === 'undergrowth' &&
+        UNDERGROWTH_SLOTS[request.biome][Math.abs(Math.floor(request.slot)) % UNDERGROWTH_SLOTS[request.biome].length] === 'bush')
+    for (const part of parts) paintPropResponse(part.geometry,
+      part.surface === 'foliage' ? [0.9, 0, 0.5, 0.12] : [0.9, 0, 0.6, 0.12], living ? 0.45 : 0, 0.25)
+  }
+  return parts
+}
+
+function buildPropParts(request: PropRequest, key: string): PropPart[] {
   const variation = artVariation(PROP_ART_SEED, key)
   const noiseSeed = artNoiseSeed(PROP_ART_SEED, key)
   switch (request.kind) {
@@ -559,6 +592,7 @@ function buildParts(request: PropRequest, key: string): PropPart[] {
       return [
         propPart(
           treeGeometry(species, {
+            tactile: request.tactile,
             variation,
             noiseSeed,
             palette: profile.palette,
@@ -597,6 +631,7 @@ function buildParts(request: PropRequest, key: string): PropPart[] {
       return [
         propPart(
           groundCoverGeometry(request.cover, {
+            tactile: request.tactile,
             variation,
             noiseSeed,
             palette: groundCoverPalette(request.biome),
@@ -607,6 +642,7 @@ function buildParts(request: PropRequest, key: string): PropPart[] {
       ]
     case 'building':
       return buildingParts({
+        tactile: request.tactile,
         variation,
         noiseSeed,
         palette: buildingPalette(request.biome, request.owner),
