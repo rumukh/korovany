@@ -483,7 +483,7 @@ test('the actual elf arrow event changes presentation without changing projectil
   const paid = { beat: 3, phase: 'windup', phaseRemaining: 0.11, lockout: 0 }
   const engine: { fireArrow(): void; stamina: number; abilityCooldown: number; melee: typeof paid } =
     Object.assign(Object.create(GameEngine.prototype), {
-      player: p.root, faction: 'elf', cameraYaw: 0.4, activePlayerAttackKind: 'melee',
+      player: p.root, faction: 'elf', cameraYaw: 0.4, cameraPitch: 0, activePlayerAttackKind: 'melee',
       stamina: 74, abilityCooldown: 3, melee: paid,
       spawnProjectile: (...args: unknown[]) => { shots.push(args) }, playSound() {},
     })

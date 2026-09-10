@@ -786,8 +786,8 @@ export function characterPartKeys(plan: CharacterPlan): CharacterPartKeys {
  * What that is worth is measured by `the torso bends at the waist and stays on the
  * pelvis`: on the shipped rig the *spine itself* — the line from the hip line to the
  * shoulder line — pitched up to **2.9980x** the lean the animation authored and sat
- * **32.07°** off the chest it belongs to, bending a body **69.55°** forward where
- * **39.24°** was asked for. The chest block stood up to **0.8036 m** from where a waist
+ * **29.50°** off the chest it belongs to, bending a body **58.07°** forward where
+ * **29.14°** was asked for. The chest block stood up to **0.6891 m** from where a waist
  * hinge puts it, two-thirds of a head. Here the waist point does not move at all and
  * the spine lies along the chest's own axis, to the float.
  */

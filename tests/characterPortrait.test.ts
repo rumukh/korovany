@@ -16,6 +16,7 @@ import {
 } from '../src/game/art/index.ts'
 import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
 import { createHealthyBody } from '../src/game/types.ts'
+import { TransientEffectBudget } from '../src/game/TransientEffectBudget.ts'
 
 const loader = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -200,10 +201,17 @@ test('actual production stage selects known companion and restores on clear with
   assert.throws(() => f.engine.renderLogicalFrame(1 / 60, 'manual'), /zero-simulation/)
   assert.throws(() => f.engine.renderLogicalFrame(0, 'active'), /zero-simulation/)
   let rendered = 0, simulated = 0
+  const transientBudget = new TransientEffectBudget()
+  const emptyEffect = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial())
+  emptyEffect.visible = false
   Object.assign(f.engine, {
     graphicsDiagnostics: { manual: true, beginFrame() {}, meter: { endUpdate() {} }, endFrame() {} },
     update: () => { simulated++ }, updateCamera() {}, creaturePresenters: new Set(),
     audioListenerRight: new THREE.Vector3(), audio: { setListener() {} }, updateMusicContext() {},
+    transientBudget, telegraphPool: [], finaleTelegraphs: [], projectiles: [],
+    lootPickups: [], lootCollectionBursts: [], particles: [], impactRayFx: [],
+    damageNumberFx: [], comicCalloutFx: [], decals: [],
+    weaponTrail: emptyEffect, rain: emptyEffect, snow: emptyEffect,
     postProcessor: { render: () => {
       rendered++
       assert.equal(f.engine.graphicsCharacterPortrait!.snapshot()!.bounds.measuredVertices,
@@ -214,6 +222,10 @@ test('actual production stage selects known companion and restores on clear with
   assert.equal(rendered, 1)
   assert.equal(simulated, 0)
   assert.equal(Reflect.get(f.engine, 'paused'), true)
+  assert.equal(transientBudget.snapshot().complete, false)
+  transientBudget.clear()
+  emptyEffect.geometry.dispose()
+  emptyEffect.material.dispose()
   f.engine.stageGraphicsFixture({ label: 'clear', portrait: null })
   assert.equal(f.engine.graphicsCharacterPortrait, null)
   assert.deepEqual(localTransforms(companion), before)

@@ -28,6 +28,7 @@ export type CharacterAppearance = Readonly<Partial<Record<CharacterLimb, Charact
 export type CharacterContactPart = 'torso' | 'head' | CharacterLimb | 'weapon' | 'weaponGrip' | 'weaponTip' | 'shield'
 
 export interface CharacterAnimationRig {
+  torsoPivot: THREE.Object3D
   leftArm: THREE.Object3D | null
   rightArm: THREE.Object3D | null
   leftElbow: THREE.Object3D | null
@@ -364,6 +365,7 @@ export class CharacterPresenter {
     }
     const weapon = joint('weapon', a.torsoPivot, 0, 0)
     this.rig = {
+      torsoPivot: a.torsoPivot,
       leftArm: arms[0], rightArm: arms[1], leftElbow: elbows[0], rightElbow: elbows[1],
       leftLeg: legs[0], rightLeg: legs[1], leftKnee: knees[0], rightKnee: knees[1],
       weapon, cloak, waistY: a.waistY, shoulderY: a.shoulderY, upperArm: p.upperArm,

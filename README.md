@@ -42,6 +42,9 @@ A seeded 3D action roguelite inspired by the legendary Russian game-design meme.
 
 On touch screens, hold a movement button and drag the world with another finger.
 The footprint button is a held sprint modifier, and the up-arrow action jumps.
+Jump once per press; release before jumping again. Mouse and world-drag look can
+aim above or below the horizon, including bow shots. Movement, evasion, shields,
+and melee keep their ground-plane heading regardless of camera pitch.
 Pause, lost focus, and cancelled gestures release held movement, camera, and shield
 inputs. Paid recovery, cooldowns, stamina, and committed finishers are preserved.
 
