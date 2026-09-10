@@ -9,8 +9,7 @@ import {
   isInsideRegionWater,
 } from '../src/game/content/registry.ts'
 import type { Faction } from '../src/game/types.ts'
-import { StylizedArtLibrary } from '../src/game/art/index.ts'
-import { hasStylizedShader } from '../src/game/art/index.ts'
+import { StylizedArtLibrary, hasStylizedShader } from '../src/game/art/index.ts'
 import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
 import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
@@ -688,6 +687,20 @@ test('enhanced road and paving receivers do not bury the joined-opening contact 
       }
     }
     assert.ok(roadHits > 0 && pavingHits > 0, 'the probe must exercise both overlay populations')
+    const roads = receivers.filter((mesh) => mesh.name.startsWith('road:'))
+    const terrains = receivers.filter((mesh) => mesh.name.startsWith('terrain:'))
+    const roadMaterial = roads[0].material, terrainMaterial = terrains[0].material
+    assert.ok(roadMaterial instanceof THREE.MeshStandardMaterial && terrainMaterial instanceof THREE.MeshStandardMaterial)
+    assert.ok(roads.every((mesh) => mesh.material === roadMaterial), 'one scoped material, not one per region')
+    assert.notEqual(roadMaterial, terrainMaterial, 'road depth bias must not mutate the shared terrain')
+    assert.equal(roadMaterial.map, terrainMaterial.map, 'the new material borrows the existing world texture')
+    assert.ok(roadMaterial.map)
+    let materialDisposals = 0, textureDisposals = 0
+    roadMaterial.addEventListener('dispose', () => { materialDisposals++ })
+    roadMaterial.map.addEventListener('dispose', () => { textureDisposals++ })
+    runtime.dispose()
+    assert.equal(materialDisposals, 1)
+    assert.equal(textureDisposals, 1, 'the shared map has one runtime owner despite two materials')
   } finally { runtime.dispose(); art.dispose() }
 })
 
