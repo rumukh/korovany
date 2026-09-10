@@ -169,6 +169,13 @@ export function validateArtGeometry(
   if (geometry.hasAttribute(ART_SHADOW_ATTRIBUTE)) check(ART_SHADOW_ATTRIBUTE, 1, 0, 1, true)
   if (source instanceof THREE.SkinnedMesh) {
     if (!source.skeleton) throw new Error('Skinned art source requires a bound skeleton')
+    const finiteMatrix = (matrix: THREE.Matrix4): boolean => matrix.elements.every(Number.isFinite)
+    if (!finiteMatrix(source.bindMatrix) || !finiteMatrix(source.bindMatrixInverse) ||
+        source.skeleton.boneInverses.length !== source.skeleton.bones.length ||
+        source.skeleton.boneInverses.some((matrix) => !finiteMatrix(matrix)) ||
+        source.skeleton.bones.some((bone) => !finiteMatrix(bone.matrixWorld))) {
+      throw new Error('Skinned art bind and bone matrices must be finite and complete')
+    }
     check('skinIndex', 4, 0, source.skeleton.bones.length - 1)
     check('skinWeight', 4, 0, 1)
     const indices = geometry.getAttribute('skinIndex')
