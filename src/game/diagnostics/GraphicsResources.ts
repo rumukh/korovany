@@ -1,4 +1,6 @@
+import * as THREE from 'three'
 import { MethodPatch } from './MethodPatch.ts'
+import type { VisualSubsystem } from '../visualBudget.ts'
 
 type ResourceKind = 'buffer' | 'texture' | 'renderbuffer' | 'framebuffer' | 'program' | 'shader' | 'vertexArray'
 interface ImageAllocation {
@@ -16,6 +18,8 @@ interface Allocation {
   renderTarget: boolean
   samples: number
   images: Map<string, ImageAllocation>
+  backings: Set<object>
+  pipeline: 'postAndEffects' | 'shared-shadow' | null
 }
 
 export interface GraphicsResourceSnapshot {
@@ -115,6 +119,8 @@ export class GraphicsResources {
   private readonly elementBuffers = new Map<object | null, object | null>()
   private readonly boundTextures = new Map<string, object | null>()
   private readonly extensions = new Set<object>()
+  private readonly targetsSeen = new Map<THREE.WebGLRenderTarget, { release(): void; shadow: boolean }>()
+  private submissionOwners = new WeakMap<object, Set<VisualSubsystem>>()
   private readonly unknownFormats = new Set<number>()
   private vertexArray: object | null = null
   private boundRenderbuffer: object | null = null
@@ -143,6 +149,7 @@ export class GraphicsResources {
           if (resource === null) throw new Error(`WebGL could not allocate ${kind}`)
           this.resources.set(resource, {
             id: ++this.sequence, kind, bytes: 0, target: 0, renderTarget: false, samples: 1, images: new Map(),
+            backings: new Set(), pipeline: null,
           })
           this.creates++
         })
@@ -172,6 +179,8 @@ export class GraphicsResources {
         } else if (data instanceof ArrayBuffer) size = data.byteLength
         else throw new Error('Unknown WebGL bufferData source')
         this.replace(resource, size)
+        resource.backings.clear()
+        this.backing(resource, data)
       })
       this.observe(gl, 'activeTexture', (args) => { this.textureUnit = number(args[0]) })
       this.observe(gl, 'bindTexture', (args) => {
@@ -184,6 +193,9 @@ export class GraphicsResources {
       this.observe(gl, 'texStorage3D', (args) => this.storage(args, true))
       this.observe(gl, 'texImage2D', (args) => this.image(args, false))
       this.observe(gl, 'texImage3D', (args) => this.image(args, true))
+      this.observe(gl, 'texSubImage2D', (args) =>
+        this.backing(this.texture(number(args[0])), args[args.length === 7 ? 6 : 8]))
+      this.observe(gl, 'texSubImage3D', (args) => this.backing(this.texture(number(args[0])), args[10]))
       this.observe(gl, 'compressedTexImage2D', (args) => this.compressedImage(args, false))
       this.observe(gl, 'compressedTexImage3D', (args) => this.compressedImage(args, true))
       this.observe(gl, 'copyTexImage2D', (args) => {
@@ -302,6 +314,7 @@ export class GraphicsResources {
     const type = number(args[sourceOverload ? 4 : threeDimensional ? 8 : 7])
     this.setImage(this.texture(target), target, number(args[1]), width, height,
       threeDimensional ? number(args[5]) : 1, this.format(number(args[2]), type))
+    this.backing(this.texture(target), args[sourceOverload ? 5 : threeDimensional ? 9 : 8])
   }
 
   private compressedImage(args: readonly unknown[], threeDimensional: boolean): void {
@@ -309,6 +322,7 @@ export class GraphicsResources {
     const bytes = ArrayBuffer.isView(data) ? data.byteLength : number(data)
     this.setImage(this.texture(number(args[0])), number(args[0]), number(args[1]),
       number(args[3]), number(args[4]), threeDimensional ? number(args[5]) : 1, 0, bytes)
+    this.backing(this.texture(number(args[0])), data)
   }
 
   private renderbuffer(args: readonly unknown[], multisampled: boolean): void {
@@ -372,10 +386,144 @@ export class GraphicsResources {
     }))
   }
 
+  private backing(allocation: Allocation, source: unknown): void {
+    if (ArrayBuffer.isView(source)) allocation.backings.add(source.buffer)
+    else if (typeof source === 'object' && source !== null) allocation.backings.add(source)
+  }
+
+  /** A texture's real renderer handle, not its CPU byte length or scene visibility. */
+  linkTexture(texture: THREE.Texture, properties: THREE.WebGLRenderer['properties']): boolean {
+    if (!properties.has(texture)) return false
+    const values: unknown = properties.get(texture)
+    if (!values || typeof values !== 'object') return false
+    const resource: unknown = Reflect.get(values, '__webglTexture')
+    if (!resource || typeof resource !== 'object') return false
+    const allocation = this.resources.get(resource)
+    if (!allocation) return false
+    allocation.backings.add(texture)
+    return true
+  }
+
+  /** Only targets actually encountered by the production renderer are registered. */
+  observeRenderTarget(target: THREE.WebGLRenderTarget, properties: THREE.WebGLRenderer['properties'],
+    shadow: boolean): void {
+    if (!this.trackingActive) return
+    const existing = this.targetsSeen.get(target)
+    if (existing && (!shadow || existing.shadow)) return
+    if (!existing) {
+      if (this.targetsSeen.size >= 256) throw new Error('Graphics target observer capacity exceeded')
+      const release = () => {
+        target.removeEventListener('dispose', release)
+        this.targetsSeen.delete(target)
+      }
+      this.targetsSeen.set(target, { release, shadow })
+      target.addEventListener('dispose', release)
+    } else existing.shadow = shadow
+    const assign = (handle: unknown): void => {
+      if (Array.isArray(handle)) { for (const value of handle) assign(value); return }
+      if (!handle || typeof handle !== 'object') return
+      const allocation = this.resources.get(handle)
+      if (!allocation) return
+      allocation.pipeline = shadow || allocation.pipeline === 'shared-shadow' ? 'shared-shadow' : 'postAndEffects'
+    }
+    for (const texture of [...target.textures, ...(target.depthTexture ? [target.depthTexture] : [])]) {
+      this.linkTexture(texture, properties)
+      const values: unknown = properties.has(texture) ? properties.get(texture) : null
+      if (values && typeof values === 'object') assign(Reflect.get(values, '__webglTexture'))
+    }
+    const values: unknown = properties.has(target) ? properties.get(target) : null
+    if (values && typeof values === 'object') {
+      for (const key of ['__webglDepthbuffer', '__webglColorRenderbuffer', '__webglDepthRenderbuffer']) {
+        assign(Reflect.get(values, key))
+      }
+    }
+  }
+
+  liveRenderTargets(): readonly THREE.WebGLRenderTarget[] { return [...this.targetsSeen.keys()] }
+
+  /** Source attributes identify storage; ONLY the observed GL ledger supplies its byte size. */
+  observeSource(source: THREE.Object3D, owner: VisualSubsystem,
+    properties: THREE.WebGLRenderer['properties']): void {
+    if (!(source instanceof THREE.Mesh || source instanceof THREE.Points ||
+      source instanceof THREE.Line || source instanceof THREE.Sprite)) return
+    const claim = (identity: object) => {
+      let owners = this.submissionOwners.get(identity)
+      if (!owners) { owners = new Set(); this.submissionOwners.set(identity, owners) }
+      owners.add(owner)
+    }
+    if (source instanceof THREE.Mesh || source instanceof THREE.Points || source instanceof THREE.Line) {
+      for (const attribute of [
+        ...Object.values(source.geometry.attributes), ...(source.geometry.index ? [source.geometry.index] : []),
+        ...Object.values(source.geometry.morphAttributes).flat(),
+      ]) claim((attribute instanceof THREE.InterleavedBufferAttribute ? attribute.data.array : attribute.array).buffer)
+    }
+    if (source instanceof THREE.InstancedMesh) {
+      claim(source.instanceMatrix.array.buffer)
+      if (source.instanceColor) claim(source.instanceColor.array.buffer)
+    }
+    const texture = (value: THREE.Texture) => {
+      this.linkTexture(value, properties)
+      claim(value)
+    }
+    if (source instanceof THREE.SkinnedMesh && source.skeleton.boneTexture) texture(source.skeleton.boneTexture)
+    if (source instanceof THREE.Mesh || source instanceof THREE.Points || source instanceof THREE.Line || source instanceof THREE.Sprite) {
+      for (const material of Array.isArray(source.material) ? source.material : [source.material]) {
+        for (const value of Object.values(material)) if (value instanceof THREE.Texture) texture(value)
+        if (material instanceof THREE.ShaderMaterial) {
+          for (const uniform of Object.values(material.uniforms)) {
+            if (uniform.value instanceof THREE.Texture) texture(uniform.value)
+          }
+        }
+      }
+    }
+  }
+
+  allocationOwnership(claims: ReadonlyMap<object, ReadonlySet<VisualSubsystem>>) {
+    const byOwner = { dynamicArt: 0, world: 0, postAndEffects: 0 }
+    let sharedBytes = 0, unattributedBytes = 0
+    const mappedBackings = new Set<object>()
+    const rows = [...this.resources.values()].filter((entry) => entry.bytes > 0).map((entry) => {
+      const owners = new Set<VisualSubsystem>()
+      let matchedBackings = 0
+      for (const identity of entry.backings) {
+        const identityOwners = claims.get(identity)
+        const submittedOwners = this.submissionOwners.get(identity)
+        if (identityOwners || submittedOwners) {
+          matchedBackings++
+          mappedBackings.add(identity)
+          for (const owner of identityOwners ?? []) owners.add(owner)
+          for (const owner of submittedOwners ?? []) owners.add(owner)
+        }
+      }
+      if (entry.pipeline === 'postAndEffects') owners.add('postAndEffects')
+      const list = [...owners].sort()
+      const owner = entry.pipeline === 'shared-shadow' || list.length > 1
+        ? 'shared' : list.length ? list[0] : 'unattributed'
+      if (owner === 'shared') sharedBytes += entry.bytes
+      else if (owner === 'unattributed') unattributedBytes += entry.bytes
+      else byOwner[owner] += entry.bytes
+      return {
+        id: entry.id, kind: entry.kind, bytes: entry.bytes, owner, claimantOwners: list,
+        matchedBackings, pipeline: entry.pipeline,
+      }
+    })
+    return {
+      byOwner, sharedBytes, unattributedBytes,
+      trackedBytes: this.totalBytes,
+      reconciled: Object.values(byOwner).reduce((sum, bytes) => sum + bytes, 0) +
+        sharedBytes + unattributedBytes === this.totalBytes,
+      mappedBackings,
+      allocations: rows,
+      complete: this.trackingActive && sharedBytes === 0 && unattributedBytes === 0 && this.unknownFormats.size === 0,
+    }
+  }
+
   stopTracking(): void {
     if (!this.trackingActive) return
     this.patches.dispose()
     this.trackingActive = false
+    for (const entry of [...this.targetsSeen.values()]) entry.release()
+    this.submissionOwners = new WeakMap()
   }
 
   dispose(): void {
@@ -387,5 +535,6 @@ export class GraphicsResources {
     this.elementBuffers.clear()
     this.boundTextures.clear()
     this.extensions.clear()
+    this.submissionOwners = new WeakMap()
   }
 }
