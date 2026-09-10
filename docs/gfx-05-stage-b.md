@@ -11,6 +11,11 @@ The separately authorized NPC injury-stream fix follows the unchanged
 mode-dependent injury RNG gate described below; visual and complete
 whole-frame/resource acceptance remain open.
 
+The final CPU review corrections on top of `bea7fe3` also fix zero-opacity
+transient accounting, missing-left-arm guard cues and exhausted perfect-guard
+contact ordering. These are presentation/admission corrections, not changes to
+shield eligibility, defense payment, injury randomness or tier approval.
+
 ## Contact routing
 
 `ContactPresentation.ts` consumes the published `characterPresenter` and
@@ -35,8 +40,31 @@ death, contact eligibility or audio positions. Retained feedback copies the
 scratch; synchronous secondary emission reuses it.
 
 Contact origins distinguish `posed`, `projectile`, `admitted-legacy`,
-`admitted-event` and `admitted-world`. Legacy roots without presenters retain
+`admitted-event`, `admitted-world` and `admitted-shield`. Legacy roots without presenters retain
 only the existing admitted point with unknown physical surface.
+
+### Confirmed shield contacts (final review fixed)
+
+Gameplay permits a guard to block after losing the left arm, although the posed
+shield sampler correctly rejects its missing-arm anchor. The narrow
+`ContactPresentation.confirmedShield` helper is used **only after** gameplay
+confirms a frontal block or perfect guard. If no posed shield contact is
+available, it retains the already-admitted shield point (or primary resolved
+projectile intersection), outward contact normal and available attacking-weapon
+surface, explicitly classified as a metal `admitted-shield` fallback. It does
+not restore the limb, mark a nonexistent anchor as posed, or weaken ordinary
+missing/hidden/unarmed contact rejection. Rear/unblocked contacts, evasion,
+pause and ended-state rejection cannot obtain that fallback.
+
+The engine captures and copies this confirmed contact before defense payment
+can call `dropShield`. It emits the saved contact after the original stamina
+expenditure and pose update. A perfect guard with exactly 12 stamina therefore
+keeps its raised-shield impact point even though the shield is already lowered
+when the cue is emitted. Non-exhausted guards keep their posed point; unavailable
+missing-arm anchors use the same pre-payment admitted fallback. Stored
+`DamageResult.presentationContact` is detached from reusable sampler scratch
+and caller projectile vectors. Damage/result direction, cooldown/interruption
+and drop timing are unchanged; legacy feedback takes its original path.
 
 **Actual wagon API limitation:** on this base `WagonPresenter` has no
 `sampleContact` method. Its existing weak-map lookup can identify a wagon
@@ -216,6 +244,17 @@ depth submissions. The controller includes secondary particles, gore, smoke,
 debris, decals, damage numbers, callouts, impact rays, weapon trail, rain/snow,
 projectiles, telegraphs and pooled loot presentation.
 
+Zero material opacity is **not** a draw exclusion. Three.js submits visible
+material slots with nonempty draw ranges/instance counts even when opacity is
+zero, and `bindLootOpacity.onBeforeRender` can replace a shared material's
+previous pickup opacity at draw time. Costing now ignores opacity and retains
+only actual visibility/material-slot/range/instance exclusions. The regression
+uses 20 protected one-pass sources plus a shared double-sided loot beam whose
+stored opacity is zero and whose real callback sets 0.32: requested work is 22
+draws. A protected beam remains admitted with an explicit Low-tier overrun;
+an unprotected beam is omitted while the 20 protected sources remain. Plain
+zero-opacity transparent meshes and sprites without callbacks are also counted.
+
 Defensive/finale tells, projectiles and visible reward tokens are protected.
 Contact rays/secondary feedback rank ahead of decorative callouts, gore,
 decals and smoke. Only cosmetic render visibility is temporarily omitted;
@@ -249,6 +288,12 @@ at all tiers, the actual primary-cue update, actual engine budget collection
 and real logical-frame render failure cleanup. Negative cases forbid per-hit
 scene lookup, mutate posed transforms, move disposed projectile storage,
 reject missing anchors, saturate cosmetic pools and overflow protected tells.
+Final-review cases invoke real shield positioning, defense, drop, secondary
+emission and primary-cue routing: missing-left-arm ordinary/perfect blocks,
+resolved projectile fallback, separately owned saved contacts, exhausted
+pre-drop versus lowered pose, non-exhausted parity and unblocked/rejected
+negative controls. The actual shared loot-opacity callback is exercised without
+a GPU, alongside existing group/range/instance/shadow accounting.
 The existing build/type/lint and combat/finale/diagnostic suites remain the
 validation tools; no dependency or test framework is added.
 

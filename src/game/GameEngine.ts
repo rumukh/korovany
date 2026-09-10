@@ -11747,17 +11747,23 @@ export class GameEngine {
         : 0,
       armor: playerArmor(this.faction),
     })
+    let presentationContact: PresentationContact | null | undefined
+    if (this.visualPolicy?.mode === 'enhanced' &&
+        (outcome.defense === 'perfectGuard' || (outcome.applied && outcome.blocked))) {
+      const admitted = this.secondaryContactPoint.copy(this.player.position).addScaledVector(normalizedIncoming, 0.72)
+      admitted.y += 1.35
+      const source = options.sourceActorId ? this.actors.find((actor) => actor.id === options.sourceActorId)?.mesh : undefined
+      // The confirmed contact belongs to the raised shield, even when this payment will lower it.
+      presentationContact = copyPresentationContact(this.getContactPresentation().confirmedShield(
+        this.player, admitted, this.contactNormal.copy(normalizedIncoming).negate(),
+        options.presentationPoint, source, options.presentationNormal,
+      ))
+    }
     if (outcome.defense !== 'none') {
       this.stamina = Math.max(0, this.stamina - outcome.staminaSpent)
       if (this.stamina === 0) this.dropShield()
       if (outcome.defense === 'perfectGuard') {
-        if (this.visualPolicy?.mode === 'enhanced') {
-          const admitted = this.secondaryContactPoint.copy(this.player.position).addScaledVector(normalizedIncoming, 0.72)
-          admitted.y += 1.35
-          const contact = this.getContactPresentation().actor(this.player, 'shield', admitted, this.contactNormal.copy(normalizedIncoming).negate(),
-            options.presentationPoint, undefined, options.presentationNormal)
-          if (contact) this.presentPhysicalContact(contact, true, 'blocked', true)
-        }
+        if (presentationContact) this.presentPhysicalContact(presentationContact, true, 'blocked', true)
         this.playSound('block', { intensity: 1, variantSeed: 11 })
         if (outcome.interruptMelee && options.sourceActorId) {
           const attacker = this.actors.find((actor) => actor.id === options.sourceActorId)
@@ -11777,6 +11783,7 @@ export class GameEngine {
         ...outcome,
         position: this.player.position.clone().add(new THREE.Vector3(0, 1.3, 0)),
         direction: fallbackDirection,
+        ...(presentationContact ? { presentationContact } : {}),
       }
     }
     const { dealt, impact, blocked: frontalBlock } = outcome
@@ -11813,13 +11820,14 @@ export class GameEngine {
         THREE.MathUtils.lerp(0.9, 2.25, impact),
       )
     }
-    let presentationContact: PresentationContact | null | undefined
     if (this.visualPolicy?.mode === 'enhanced') {
-      const source = options.sourceActorId ? this.actors.find((actor) => actor.id === options.sourceActorId)?.mesh : undefined
-      const sampled = this.getContactPresentation().actor(this.player, frontalBlock ? 'shield' : 'torso',
-        contact, this.contactNormal.copy(normalizedIncoming).negate(), options.presentationPoint, source, options.presentationNormal)
-      presentationContact = sampled ? copyPresentationContact(sampled) : null
-      if (sampled && (dealt > 0 || frontalBlock)) this.presentPhysicalContact(sampled, frontalBlock, outcome.weight, true)
+      if (!frontalBlock) {
+        const source = options.sourceActorId ? this.actors.find((actor) => actor.id === options.sourceActorId)?.mesh : undefined
+        const sampled = this.getContactPresentation().actor(this.player, 'torso',
+          contact, this.contactNormal.copy(normalizedIncoming).negate(), options.presentationPoint, source, options.presentationNormal)
+        presentationContact = sampled ? copyPresentationContact(sampled) : null
+      }
+      if (presentationContact && (dealt > 0 || frontalBlock)) this.presentPhysicalContact(presentationContact, frontalBlock, outcome.weight, true)
     } else this.createHitParticles(this.player.position, this.faction)
     // The `canInjure && !frontalBlock` gate stays out here on purpose: it is what keeps
     // the injury roll off the combat stream on a blocked hit.

@@ -18,7 +18,7 @@ interface Candidate {
 export function transientSourceCost(source: TransientSource, target = { calls: 0, triangles: 0 }): { calls: number; triangles: number } {
   target.calls = target.triangles = 0
   if (source instanceof THREE.Sprite) {
-    if (source.material.visible && source.material.opacity > 0) { target.calls = 1; target.triangles = 2 }
+    if (source.material.visible) { target.calls = 1; target.triangles = 2 }
     return target
   }
   const geometry = source.geometry
@@ -27,7 +27,8 @@ export function transientSourceCost(source: TransientSource, target = { calls: 0
   const start = geometry.drawRange.start, end = Math.min(available, start + geometry.drawRange.count)
   let calls = 0, triangles = 0
   const count = (material: THREE.Material | undefined, from: number, to: number) => {
-    if (!material?.visible || material.opacity <= 0 || instances === 0 || to <= from) return
+    // Opacity does not suppress submission and shared loot callbacks can change it at draw time.
+    if (!material?.visible || instances === 0 || to <= from) return
     const sides = material.transparent && material.side === THREE.DoubleSide && !material.forceSinglePass ? 2 : 1
     calls += sides + (source.castShadow ? 1 : 0)
     if (source instanceof THREE.Mesh) triangles += (to - from) / 3 * instances * sides

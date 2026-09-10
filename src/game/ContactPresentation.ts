@@ -6,7 +6,7 @@ import {
 import { createWorldSurfaceSample, type WorldSurfaceField } from './world/WorldSurfaceField.ts'
 
 export type ContactSurface = CharacterPhysicalSurface | 'wood' | 'stone' | 'soil' | 'water' | 'unknown'
-export type ContactOrigin = 'posed' | 'projectile' | 'admitted-legacy' | 'admitted-event' | 'admitted-world'
+export type ContactOrigin = 'posed' | 'projectile' | 'admitted-legacy' | 'admitted-event' | 'admitted-world' | 'admitted-shield'
 
 export interface PresentationContact {
   readonly point: THREE.Vector3
@@ -74,13 +74,43 @@ export class ContactPresentation {
     if (resolvedProjectile) this.projectiles++
     else if (found) this.sampled++
     else this.fallbacks++
+    this.applySource(result, sourceRoot, resolvedProjectile !== undefined)
+    return result
+  }
+
+  /** Call only after gameplay confirms a frontal block or perfect guard, before a paid shield drop. */
+  confirmedShield(root: THREE.Object3D, admittedPoint: THREE.Vector3, incoming: THREE.Vector3,
+    resolvedProjectile?: THREE.Vector3, sourceRoot?: THREE.Object3D, resolvedNormal?: THREE.Vector3): PresentationContact {
+    const sampled = this.actor(root, 'shield', admittedPoint, incoming, resolvedProjectile, sourceRoot, resolvedNormal)
+    if (sampled) {
+      if (sampled.surface === 'unknown') {
+        if (sampled.origin !== 'admitted-legacy') this.fallbacks++
+        sampled.surface = 'metal'
+        sampled.origin = 'admitted-shield'
+      }
+      return sampled
+    }
+    const result = this.contact
+    result.point.copy(resolvedProjectile ?? admittedPoint)
+    result.normal.copy(resolvedNormal ?? incoming).normalize()
+    if (!resolvedNormal) result.normal.negate()
+    if (result.normal.lengthSq() < 1e-8) result.normal.set(0, 1, 0)
+    result.direction.copy(incoming).normalize()
+    result.surface = 'metal'
+    result.sourceSurface = null
+    this.fallbacks++
+    result.origin = 'admitted-shield'
+    this.applySource(result, sourceRoot, resolvedProjectile !== undefined)
+    return result
+  }
+
+  private applySource(result: PresentationContact, sourceRoot: THREE.Object3D | undefined, resolvedProjectile: boolean): void {
     const attacker = sourceRoot && (characterPresenter(sourceRoot) ?? creaturePresenter(sourceRoot))
     if (attacker?.sampleContact('weaponTip', this.source)) {
       result.sourceSurface = this.source.surface
       if (!resolvedProjectile) result.direction.copy(result.point).sub(this.source.point).normalize()
     }
     if (result.direction.lengthSq() < 1e-8) result.direction.copy(result.normal).negate()
-    return result
   }
 
   event(root: THREE.Object3D, admittedPoint: THREE.Vector3, incoming: THREE.Vector3,

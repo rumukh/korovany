@@ -29,8 +29,61 @@ test('costs use actual draw ranges, groups, instances, transparent sides and sha
   geometry.setDrawRange(0, Infinity)
   assert.deepEqual(transientSourceCost(grouped), { calls: 12, triangles: 24 })
   material.opacity = 0
+  assert.deepEqual(transientSourceCost(grouped), { calls: 12, triangles: 24 })
+  assert.deepEqual(transientSourceCost(mesh), { calls: 3, triangles: 72 })
+  const spriteMaterial = new THREE.SpriteMaterial({ opacity: 0 })
+  const sprite = new THREE.Sprite(spriteMaterial)
+  assert.deepEqual(transientSourceCost(sprite), { calls: 1, triangles: 2 })
+  spriteMaterial.visible = false
+  assert.deepEqual(transientSourceCost(sprite), { calls: 0, triangles: 0 })
+  material.visible = false
   assert.deepEqual(transientSourceCost(grouped), { calls: 0, triangles: 0 })
-  geometry.dispose(); material.dispose(); mesh.dispose()
+  geometry.dispose(); material.dispose(); spriteMaterial.dispose(); mesh.dispose()
+})
+
+test('shared loot opacity from a previous draw cannot hide a real double-sided submission from admission', () => {
+  const geometry = new THREE.PlaneGeometry()
+  const ordinaryMaterial = new THREE.MeshBasicMaterial()
+  const sharedMaterial = new THREE.MeshBasicMaterial({ transparent: true, side: THREE.DoubleSide, opacity: 0 })
+  const scene = new THREE.Scene(), camera = new THREE.Camera()
+  const engine = Object.create(GameEngine.prototype)
+  const previousPickup = new THREE.Mesh(geometry, sharedMaterial)
+  const beam = new THREE.Mesh(geometry, sharedMaterial)
+  engine.bindLootOpacity(previousPickup)
+  engine.bindLootOpacity(beam)
+  previousPickup.userData.lootOpacity = 0
+  beam.userData.lootOpacity = 0.32
+  const beforeRender = (mesh: THREE.Mesh) =>
+    Reflect.apply(mesh.onBeforeRender, mesh, [null, scene, camera, geometry, sharedMaterial, null])
+  const sources = Array.from({ length: 20 }, () => new THREE.Mesh(geometry, ordinaryMaterial))
+  const budget = new TransientEffectBudget()
+  try {
+    for (const protectedBeam of [true, false]) {
+      beforeRender(previousPickup)
+      assert.equal(sharedMaterial.opacity, 0)
+      budget.begin(resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'low' }))
+      for (const source of sources) budget.add(source, 'tell', 200, true)
+      budget.add(beam, 'loot', 150, protectedBeam)
+      budget.apply()
+      assert.equal(budget.snapshot().requestedDrawUpperBound, 22)
+      assert.equal(budget.snapshot().admittedDrawUpperBound, protectedBeam ? 22 : 20)
+      assert.equal(budget.snapshot().protectedDrawUpperBound, protectedBeam ? 22 : 20)
+      assert.equal(budget.snapshot().omittedDrawUpperBound, protectedBeam ? 0 : 2)
+      assert.equal(budget.snapshot().overBudget, protectedBeam)
+      assert.equal(beam.visible, protectedBeam)
+      assert.ok(sources.every((source) => source.visible), 'protected tell semantics must remain unchanged')
+      if (beam.visible) {
+        beforeRender(beam)
+        assert.equal(sharedMaterial.opacity, 0.32, 'the real production callback changes opacity at draw time')
+        assert.deepEqual(transientSourceCost(beam), { calls: 2, triangles: 4 })
+      }
+      budget.restore()
+      assert.equal(beam.visible, true)
+    }
+  } finally {
+    budget.clear()
+    geometry.dispose(); ordinaryMaterial.dispose(); sharedMaterial.dispose()
+  }
 })
 
 function engineFixture(quality: 'high' | 'balanced' | 'low', bloomEnabled = true) {
