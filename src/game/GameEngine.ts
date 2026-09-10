@@ -9,6 +9,8 @@ import { SecondaryEffectPool } from './SecondaryEffectPool.ts'
 import { ContactPresentation, contactResponse, copyPresentationContact, type ContactSurface, type PresentationContact } from './ContactPresentation.ts'
 import { TransientEffectBudget, transientAllocationReceipts, type TransientSource } from './TransientEffectBudget.ts'
 import { sumVisualAllocationReceipts } from './diagnostics/VisualBudgetAccounting.ts'
+import type { GraphicsSourceRoot } from './diagnostics/GraphicsSubsystemSubmissions.ts'
+import type { GraphicsSubsystemInputs } from './diagnostics/GraphicsSubsystemInventory.ts'
 import { stabilizeKeyLight } from './world/WorldPresentationRegistry.ts'
 import type { FoliageQuality, VisualSettings } from './visualSettings.ts'
 import { GraphicsClock, graphicsClockOptions } from './diagnostics/GraphicsClock.ts'
@@ -2919,6 +2921,8 @@ export class GameEngine {
         this.renderer, this.scene, instrumented.resources, instrumented.defaultSamples, this.graphicsClock, {
           runtime: () => this.graphicsRuntimeFrame(),
           snapshot: () => ({ ...this.graphicsRuntimeSnapshot(), initializationMs }),
+          subsystemRoots: () => this.graphicsSubsystemRoots(),
+          subsystemInventory: () => this.graphicsSubsystemInventory(),
           world: () => ({
             blueprint: this.generatedBlueprint,
             regions: this.generatedBlueprint.regions.map((region) => ({
@@ -4054,6 +4058,45 @@ export class GameEngine {
           worldShadowTriangles: this.generatedWorld.presentation!.debug.shadowTriangles,
         },
       } : {}),
+    }
+  }
+
+  private graphicsSubsystemRoots(): GraphicsSourceRoot[] {
+    return [
+      { root: this.player, subsystem: 'dynamicArt' },
+      { root: this.caravan, subsystem: 'dynamicArt' },
+      ...this.actors.map((actor) => ({ root: actor.mesh, subsystem: 'dynamicArt' as const })),
+      ...[...this.creaturePresenters].map((presenter) => ({ root: presenter.root, subsystem: 'dynamicArt' as const })),
+      ...[...this.wagonPresenters].map((presenter) => ({ root: presenter.root, subsystem: 'dynamicArt' as const })),
+      { root: this.atmosphereRoot, subsystem: 'postAndEffects' },
+      ...this.flames.map((root) => ({ root, subsystem: 'postAndEffects' as const })),
+    ]
+  }
+
+  private graphicsSubsystemInventory(): GraphicsSubsystemInputs {
+    const world = this.generatedWorld.getVisualInventory()
+    const effects = this.getTransientEffectInventory()
+    return {
+      policy: this.getVisualPolicy(), roots: this.graphicsSubsystemRoots(),
+      owners: [
+        ...[...this.characterPresenters].map((presenter) => ({
+          name: `character:${presenter.root.id}`, subsystem: 'dynamicArt' as const, sources: presenter.sources,
+          receipts: presenter.allocationReceipts(), missing: [],
+        })),
+        ...[...this.creaturePresenters].map((presenter) => ({
+          name: `creature:${presenter.root.id}`, subsystem: 'dynamicArt' as const, sources: [presenter.source],
+          receipts: presenter.allocationReceipts(), missing: [],
+        })),
+        { name: 'world', subsystem: 'world', sources: world.sources, receipts: world.receipts, missing: world.missing },
+        { name: 'transient-effects', subsystem: 'postAndEffects', sources: effects.sources, receipts: effects.receipts, missing: effects.missing },
+      ],
+      sharedTextures: [this.artLibrary.rampTexture],
+      missing: [
+        'Engine geometry cache entries not exposed by a live presenter are outside the retained CPU inventory',
+        'Unused shared material-library resources and hidden injected-uniform textures have no inventory API',
+        'Persistent effects outside registered atmosphere/flame roots are unattributed, not world art',
+        'Shared shadow/pipeline allocations require an explicit exclusive charge policy',
+      ],
     }
   }
 

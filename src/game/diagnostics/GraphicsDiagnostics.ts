@@ -8,6 +8,10 @@ import {
 } from './GraphicsFrameMeter.ts'
 import { GraphicsResources } from './GraphicsResources.ts'
 import {
+  graphicsSubsystemBudgetSnapshot, type GraphicsSubsystemInputs,
+} from './GraphicsSubsystemInventory.ts'
+import type { GraphicsSourceRoot } from './GraphicsSubsystemSubmissions.ts'
+import {
   CHARACTER_PORTRAIT_VERSION, validateCharacterPortrait, type GraphicsCharacterPortraitRequest,
 } from './GraphicsCharacterPortrait.ts'
 
@@ -38,6 +42,8 @@ export interface GraphicsDiagnosticHost {
   save(): ActiveRunSaveV3
   input(keys: readonly string[]): void
   probe(points: readonly { x: number; z: number }[]): object[]
+  subsystemRoots?(): readonly GraphicsSourceRoot[]
+  subsystemInventory?(): GraphicsSubsystemInputs
 }
 
 export function validateGraphicsProbe(points: readonly { x: number; z: number }[]): void {
@@ -160,7 +166,7 @@ export class GraphicsDiagnostics {
     this.host = host
     this.defaultSamples = defaultSamples
     this.clock = clock
-    this.meter = new GraphicsFrameMeter(renderer, scene, resources)
+    this.meter = new GraphicsFrameMeter(renderer, scene, resources, undefined, () => host.subsystemRoots?.() ?? [])
     const gl = renderer.getContext()
     const debug: unknown = gl.getExtension('WEBGL_debug_renderer_info')
     const debugField = (key: string): string | null => {
@@ -185,7 +191,7 @@ export class GraphicsDiagnostics {
     }
     this.api = Object.freeze({
       version: GRAPHICS_DIAGNOSTICS_VERSION,
-      capabilities: Object.freeze({ characterPortrait: CHARACTER_PORTRAIT_VERSION }),
+      capabilities: Object.freeze({ characterPortrait: CHARACTER_PORTRAIT_VERSION, subsystemBudget: 1 }),
       snapshot: () => this.snapshot(),
       world: () => { this.assertUsable(); return this.host.world() },
       probe: (points: readonly { x: number; z: number }[]) => {
@@ -269,6 +275,14 @@ export class GraphicsDiagnostics {
     const rect = canvas.getBoundingClientRect()
     const width = canvas.width
     const height = canvas.height
+    const inputs = this.host.subsystemInventory?.()
+    const frameSize = this.lastFrame?.bufferDimensions
+    const subsystemBudget = inputs ? graphicsSubsystemBudgetSnapshot(
+      inputs, this.lastFrame, this.meter.subsystemSubmissions.sourceDetails(),
+      this.meter.resources, this.renderer.properties,
+      frameSize?.width === width && frameSize.height === height
+        ? width * height * 4 * (1 + (this.defaultSamples > 1 ? this.defaultSamples : 0) + Math.max(1, this.defaultSamples)) : null,
+    ) : null
     return {
       apiVersion: GRAPHICS_DIAGNOSTICS_VERSION, visualRevision: GRAPHICS_VISUAL_REVISION,
       manual: this.manualMode, stagedPrerequisites: [...this.stages],
@@ -287,6 +301,7 @@ export class GraphicsDiagnostics {
         excludes: 'Browser swapchain copies, tiling/alignment, shader/driver overhead; not measured VRAM',
       },
       lastFrame: this.lastFrame,
+      subsystemBudget,
       runtime: this.host.snapshot(),
     }
   }
@@ -325,6 +340,9 @@ export class GraphicsDiagnostics {
     const runtime = this.lastFrame.runtime
     if (this.lastFrame.counterAgreement === false) {
       throw new Error(`Whole-frame GL/renderer counters disagree at frame ${this.lastFrame.id}`)
+    }
+    if (this.lastFrame.subsystems?.reconciled === false) {
+      throw new Error(`Subsystem/whole-frame GL counters disagree at frame ${this.lastFrame.id}`)
     }
     if (!this.record) return
     this.record.frames.push(this.lastFrame)

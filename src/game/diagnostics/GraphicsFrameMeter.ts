@@ -3,6 +3,9 @@ import { StylizedArtLibrary } from '../art/StylizedArtLibrary.ts'
 import { GraphicsGpuTimer, type GraphicsGpuSample } from './GraphicsGpuTimer.ts'
 import { GraphicsResources, type GraphicsResourceSnapshot } from './GraphicsResources.ts'
 import { MethodPatch } from './MethodPatch.ts'
+import {
+  GraphicsSubsystemSubmissions, type GraphicsSourceRoot, type GraphicsSubsystemFrame,
+} from './GraphicsSubsystemSubmissions.ts'
 
 export type GraphicsPass = 'scene' | 'ink' | 'shadow' | 'post'
 export interface GraphicsDraws { calls: number; triangles: number; lines: number; points: number }
@@ -51,6 +54,8 @@ export interface GraphicsFrame extends GraphicsGpuSample {
   readPixelsCalls: number | null
   blits: number | null
   resources: GraphicsResourceSnapshot | null
+  subsystems: GraphicsSubsystemFrame | null
+  bufferDimensions: { width: number; height: number } | null
   runtime: GraphicsRuntimeFrame
 }
 
@@ -78,6 +83,7 @@ function numeric(value: unknown): number {
 export class GraphicsFrameMeter {
   readonly gpu: GraphicsGpuTimer
   readonly resources: GraphicsResources
+  readonly subsystemSubmissions: GraphicsSubsystemSubmissions
   private readonly renderer: THREE.WebGLRenderer
   private readonly patches = new MethodPatch()
   private readonly originalAutoReset: boolean
@@ -101,33 +107,83 @@ export class GraphicsFrameMeter {
   private counting = true
 
   constructor(renderer: THREE.WebGLRenderer, scene: THREE.Scene, resources: GraphicsResources,
-    now: () => number = () => performance.now()) {
+    now: () => number = () => performance.now(), readRoots?: () => readonly GraphicsSourceRoot[]) {
     this.renderer = renderer
     this.resources = resources
     this.now = now
+    this.subsystemSubmissions = new GraphicsSubsystemSubmissions(readRoots)
     const gl = renderer.getContext()
     if (!('beginQuery' in gl)) throw new Error('Graphics diagnostics require WebGL2')
     this.gpu = new GraphicsGpuTimer(gl)
     this.originalAutoReset = renderer.info.autoReset
     renderer.info.autoReset = false
+    try {
+      this.installObservers(renderer, scene, resources, gl)
+    } catch (error) {
+      const errors: unknown[] = [error]
+      try { this.patches.dispose() } catch (cleanupError) { errors.push(cleanupError) }
+      try { this.gpu.dispose() } catch (cleanupError) { errors.push(cleanupError) }
+      renderer.info.autoReset = this.originalAutoReset
+      throw new AggregateError(errors, 'Graphics observer installation failed')
+    }
+  }
+
+  private installObservers(renderer: THREE.WebGLRenderer, scene: THREE.Scene,
+    resources: GraphicsResources, gl: WebGL2RenderingContext): void {
     this.patches.wrap(renderer, 'render', (call, args) => {
       const previous = this.category
       this.category = args[0] === scene ? 'scene' : 'post'
-      try { return call() } finally { this.category = previous }
+      try { return this.subsystemSubmissions.withSource(null, null, null, this.category, call) }
+      finally { this.category = previous }
     })
     this.patches.wrap(renderer, 'renderBufferDirect', (call, args) => {
       const previous = this.category
       const object = args[4]
       if (args[1] === null) this.category = 'shadow'
       else if (object instanceof THREE.Object3D && StylizedArtLibrary.isOutlineShell(object)) this.category = 'ink'
-      try { return call() } finally { this.category = previous }
+      const material = args[3] instanceof THREE.Material ? args[3] : null
+      const value = args[5]
+      const group = value && typeof value === 'object' && 'start' in value && 'count' in value &&
+        typeof value.start === 'number' && typeof value.count === 'number'
+        ? { start: value.start, count: value.count,
+          ...('materialIndex' in value && typeof value.materialIndex === 'number' ? { materialIndex: value.materialIndex } : {}) }
+        : null
+      const before = this.current?.draws[this.category].calls ?? 0
+      const pass = this.category
+      try {
+        const target = renderer.getRenderTarget()
+        if (target) resources.observeRenderTarget(target, renderer.properties, pass === 'shadow')
+        return this.subsystemSubmissions.withSource(object instanceof THREE.Object3D ? object : null,
+          material, group, this.category, call)
+      } finally {
+        this.category = previous
+        if (object instanceof THREE.Object3D && (this.current?.draws[pass].calls ?? 0) > before) {
+          const { owner } = this.subsystemSubmissions.resolver.resolve(object, pass)
+          if (owner !== 'unattributed') resources.observeSource(object, owner, renderer.properties)
+        }
+      }
+    })
+    this.patches.wrap(renderer, 'setRenderTarget', (call, args) => {
+      const result = call()
+      if (args[0] instanceof THREE.WebGLRenderTarget) {
+        resources.observeRenderTarget(args[0], renderer.properties, false)
+      }
+      return result
     })
     const draw = (key: 'drawArrays' | 'drawElements' | 'drawArraysInstanced' | 'drawElementsInstanced' | 'drawRangeElements',
       countIndex: number, instanceIndex?: number) => {
       this.patches.wrap(gl, key, (call, args) => {
         const result = call()
-        if (this.current) addGraphicsDraw(this.current.draws[this.category], numeric(args[0]),
-          numeric(args[countIndex]), instanceIndex === undefined ? 1 : numeric(args[instanceIndex]))
+        if (this.current) {
+          const total = this.current.draws[this.category]
+          const calls = total.calls, triangles = total.triangles, lines = total.lines, points = total.points
+          const instances = instanceIndex === undefined ? 1 : numeric(args[instanceIndex])
+          addGraphicsDraw(total, numeric(args[0]), numeric(args[countIndex]), instances)
+          this.subsystemSubmissions.record(this.category, {
+            calls: total.calls - calls, triangles: total.triangles - triangles,
+            lines: total.lines - lines, points: total.points - points,
+          }, instances)
+        }
         return result
       })
     }
@@ -150,6 +206,7 @@ export class GraphicsFrameMeter {
     if (this.disposed || this.current) throw new Error('Invalid graphics logical-frame begin')
     if (!Number.isFinite(deltaSeconds) || deltaSeconds < 0) throw new Error('Invalid frame delta')
     if (this.counting) this.renderer.info.reset()
+    if (this.counting) this.subsystemSubmissions.begin()
     const started = this.now()
     this.current = {
       id: ++this.sequence, source, intervalMs: source === 'active' ? deltaSeconds * 1000 : null,
@@ -202,6 +259,9 @@ export class GraphicsFrameMeter {
         Reflect.get(total, key) === Reflect.get(rendererInfo, key)) : null,
       readPixelsCalls: this.counting ? current.readPixelsCalls : null, blits: this.counting ? current.blits : null,
       resources: this.counting ? this.resources.snapshot() : null, runtime,
+      subsystems: this.counting ? this.subsystemSubmissions.snapshot(current.draws) : null,
+      bufferDimensions: this.renderer.domElement
+        ? { width: this.renderer.domElement.width, height: this.renderer.domElement.height } : null,
     })
     return frame
   }
@@ -209,6 +269,7 @@ export class GraphicsFrameMeter {
   abort(): void {
     this.gpu.end()
     this.current = null
+    this.category = 'scene'
   }
 
   get countersEnabled(): boolean { return this.counting }
@@ -220,6 +281,7 @@ export class GraphicsFrameMeter {
     this.resources.stopTracking()
     this.renderer.info.autoReset = this.originalAutoReset
     this.counting = false
+    this.subsystemSubmissions.clear()
   }
 
   dispose(): void {
@@ -229,6 +291,7 @@ export class GraphicsFrameMeter {
     this.gpu.dispose()
     this.patches.dispose()
     this.renderer.info.autoReset = this.originalAutoReset
+    this.subsystemSubmissions.clear()
   }
 }
 

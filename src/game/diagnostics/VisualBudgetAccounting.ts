@@ -99,6 +99,7 @@ export interface VisualBudgetEvidence {
   readonly frame: Pick<GraphicsFrame, 'draws' | 'total' | 'counterAgreement' | 'cpuMs' | 'resources'>
   /** Explicit inventory closure; known receipts alone do not prove complete coverage. */
   readonly resourcesComplete: boolean
+  readonly unattributedDraws?: Readonly<Record<GraphicsPass, Readonly<GraphicsDraws>>>
   /** Color resolve + actual MSAA color/depth estimate from the same frame's viewport. */
   readonly defaultFramebufferBytes: number | null
   readonly worldShadows: Pick<WorldPresentationDebug, 'shadowDraws' | 'shadowInstances' | 'shadowTriangles'> | null
@@ -142,6 +143,9 @@ export function assessVisualSubsystemBudget(
     }
   }
   const frame = evidence.frame
+  if (evidence.unattributedDraws && PASSES.some((pass) => evidence.unattributedDraws![pass].calls > 0)) {
+    missing.add('unattributed source submissions')
+  }
   amount(frame.cpuMs, 'frame CPU duration', false)
   if (!evidence.resourcesComplete) missing.add('complete retained allocation inventory')
   let cpuTotal = 0
@@ -200,7 +204,8 @@ export function assessVisualSubsystemBudget(
       reconcile(`frame total ${metric}`, summedPasses, actual)
       if (allDraws) for (const pass of PASSES) {
         reconcile(`${pass}.${metric}`, VISUAL_SUBSYSTEMS.reduce((sum, subsystem) =>
-          sum + evidence.subsystems[subsystem].draws![pass][metric], 0), frame.draws[pass][metric])
+          sum + evidence.subsystems[subsystem].draws![pass][metric], 0) +
+          (evidence.unattributedDraws?.[pass][metric] ?? 0), frame.draws[pass][metric])
       }
     }
     check('global', 'wholeFrameDrawCalls', frame.total.calls, allocation.global.wholeFrameDrawCalls)
