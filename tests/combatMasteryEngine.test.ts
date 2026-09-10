@@ -28,6 +28,8 @@ import { createFinaleIdentity, createFinaleState } from '../src/game/world/Final
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
 import { SecondaryEffectPool } from '../src/game/SecondaryEffectPool.ts'
 import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
+import { GeometryCache, StylizedArtLibrary, createCharacterPresenter, illustratedCharacterPlan, resolveCharacterPlan } from '../src/game/art/index.ts'
+import { copyPresentationContact, type PresentationContact } from '../src/game/ContactPresentation.ts'
 
 // Load the production class with Node's TS support, including its Vite-style imports.
 // Only construction/presentation are replaced below; inputs, movement and damage are real methods.
@@ -545,12 +547,14 @@ test('real admitted damage uses the bounded secondary pool without changing defe
     const pool = new SecondaryEffectPool(new THREE.Scene(), 42)
     Object.assign(engine, {
       secondaryEffects: pool, secondaryContactPoint: new THREE.Vector3(),
+      contactNormal: new THREE.Vector3(), contactColor: new THREE.Color(), spawnImpactRay() {},
       palette: { warning: new THREE.Color(0xffbb22) },
       visualPolicy: resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'low' }),
       allegianceColor: () => new THREE.Color(0x4da6ff),
       createSparks: Reflect.get(GameEngine.prototype, 'createSparks'),
       createHitParticles: Reflect.get(GameEngine.prototype, 'createHitParticles'),
     })
+
     if (kind === 'block' || kind === 'perfect') engine.setShield(true)
     if (kind === 'block') engine.combatMastery.guardWindow = 0
     if (kind === 'evaded') { engine.evade(); engine.updatePlayer(0.1) }
@@ -559,12 +563,57 @@ test('real admitted damage uses the bounded secondary pool without changing defe
     assert.equal(counts.hitFx, kind === 'normal' || kind === 'block' ? 1 : 0)
     assert.equal(counts.injuries, kind === 'normal' ? 1 : 0)
     assert.equal(counts.draws, kind === 'normal' ? 2 : kind === 'block' ? 1 : 0)
-    assert.equal(pool.snapshot().active > 0, kind === 'normal' || kind === 'block')
+    assert.equal(pool.snapshot().active > 0, kind === 'normal' || kind === 'block' || kind === 'perfect')
     if (kind === 'normal' || kind === 'block') assert.ok(engine.health < 70)
     else assert.equal(engine.health, 70)
     engine.setPaused(true)
     assert.equal(pool.snapshot().active, 0)
     assert.equal(pool.mesh.count, 0)
     pool.dispose()
+  }
+})
+
+test('real perfect guard uses the posed shield without damage feedback and evasion emits no physical contact at every tier', () => {
+  for (const quality of ['high', 'balanced', 'low'] as const) {
+    for (const defense of ['perfect', 'late', 'rear', 'evade'] as const) {
+      const { engine, counts } = fixture('guard')
+      const art = new StylizedArtLibrary({ enhanced: true, ink: {
+        player: 0x222222, enemy: 0x222222, interactable: 0x222222, landmark: 0x222222,
+      } })
+      const cache = new GeometryCache()
+      const presenter = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('guard', 'player', 0, true)), art, cache, true)
+      const contacts: PresentationContact[] = []
+      engine.player = presenter.root
+      engine.player.scale.set(0.8, 1.2, 1.1)
+      Object.assign(engine, {
+        visualPolicy: resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: quality }),
+        characterHeightSample: () => 0,
+        contactNormal: new THREE.Vector3(), secondaryContactPoint: new THREE.Vector3(),
+        presentPhysicalContact: (contact: PresentationContact) => contacts.push(copyPresentationContact(contact)),
+      })
+      try {
+        if (defense === 'evade') { engine.evade(); engine.updatePlayer(0.1) }
+        else {
+          engine.setShield(true)
+          if (defense === 'late') engine.updatePlayer(0.13)
+        }
+        const normal = new THREE.Vector3(0, 0, defense === 'rear' ? 1 : -1)
+        const result = engine.damagePlayer(20, normal, true, { attackKind: 'allyMelee' })
+        assert.equal(contacts.length, defense === 'evade' ? 0 : 1)
+        assert.equal(counts.hitFx, defense === 'perfect' || defense === 'evade' ? 0 : 1)
+        assert.equal(result.dealt, defense === 'perfect' || defense === 'evade' ? 0 : 20 * 0.72 * (defense === 'late' ? 0.15 : 1))
+        if (defense === 'perfect') {
+          const expected = { point: new THREE.Vector3(), normal: new THREE.Vector3(), surface: 'skin' as const }
+          assert.equal(presenter.sampleContact('shield', expected), true)
+          assert.deepEqual(contacts[0].point, expected.point)
+          assert.equal(contacts[0].surface, expected.surface)
+          assert.equal(contacts[0].origin, 'posed')
+          assert.equal(engine.stamina, 88)
+          assert.equal(counts.draws, 0)
+          assert.deepEqual(counts.sounds.filter((sound) => sound === 'block'), ['block'])
+        }
+        assert.deepEqual(normal.toArray(), [0, 0, defense === 'rear' ? 1 : -1])
+      } finally { presenter.dispose(); art.dispose(); cache.dispose() }
+    }
   }
 })

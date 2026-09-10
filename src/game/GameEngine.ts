@@ -6,6 +6,9 @@ import { resolveVisualPolicy, resolveVisualViewport, type VisualQualityPolicy } 
 import { CameraVisibility } from './cameraVisibility.ts'
 import { RAIN_CAPACITY, SNOW_CAPACITY, precipitationCount, updatePrecipitationBuffer } from './PrecipitationPresentation.ts'
 import { SecondaryEffectPool } from './SecondaryEffectPool.ts'
+import { ContactPresentation, contactResponse, copyPresentationContact, type ContactSurface, type PresentationContact } from './ContactPresentation.ts'
+import { TransientEffectBudget, transientAllocationReceipts, type TransientSource } from './TransientEffectBudget.ts'
+import { sumVisualAllocationReceipts } from './diagnostics/VisualBudgetAccounting.ts'
 import { stabilizeKeyLight } from './world/WorldPresentationRegistry.ts'
 import type { FoliageQuality, VisualSettings } from './visualSettings.ts'
 import { GraphicsClock, graphicsClockOptions } from './diagnostics/GraphicsClock.ts'
@@ -690,6 +693,7 @@ interface EventPropTarget {
   maxHp: number
   position: THREE.Vector3
   attackRange: number
+  presentationSurface?: ContactSurface
 }
 
 interface ActorAction {
@@ -1165,6 +1169,7 @@ type ComicCallout = 'БАЦ!' | 'ХРЯСЬ!' | 'БУМ!' | 'БЛОК!'
 interface DamageResult extends CombatOutcome {
   position: THREE.Vector3
   direction: THREE.Vector3
+  presentationContact?: PresentationContact | null
 }
 
 interface CombatFeedbackEvent extends DamageResult {
@@ -1179,11 +1184,15 @@ interface DamageActorOptions {
   knockback?: number
   sourceActorId?: string
   deferFeedback?: boolean
+  presentationPoint?: THREE.Vector3
+  presentationNormal?: THREE.Vector3
 }
 
 interface DamagePlayerOptions {
   attackKind: AttackKind
   sourceActorId?: string
+  presentationPoint?: THREE.Vector3
+  presentationNormal?: THREE.Vector3
   /**
    * Whatever swung, when something did — the epilogue's only route to a cause of death.
    * The role is optional because a projectile can outlive its shooter.
@@ -1227,6 +1236,7 @@ interface ImpactRayFx {
   active: boolean
   priority: number
   weight: HitWeight
+  physical?: boolean
 }
 
 interface CombatFeedbackChannels {
@@ -2189,6 +2199,10 @@ export class GameEngine {
   private damageFlash = 0
   private bleedFxCooldown = 0
   private secondaryEffects: SecondaryEffectPool | null = null
+  private contactPresentation: ContactPresentation | null = null
+  private readonly transientBudget = new TransientEffectBudget()
+  private readonly contactColor = new THREE.Color()
+  private readonly contactNormal = new THREE.Vector3()
   private readonly secondaryContactPoint = new THREE.Vector3()
   private activeGore = 0
   private decalSequence = 0
@@ -2979,6 +2993,7 @@ export class GameEngine {
     attempt(() => this.clearAmbientLife())
     attempt(() => this.clearLootRuntime())
     attempt(() => this.secondaryEffects?.dispose())
+    attempt(() => this.transientBudget.clear())
     attempt(() => this.resizeObserver.disconnect())
     window.removeEventListener('keydown', this.boundKeyDown)
     window.removeEventListener('keyup', this.boundKeyUp)
@@ -3879,7 +3894,13 @@ export class GameEngine {
     this.audio.setListener(this.camera.position, this.audioListenerRight)
     this.updateMusicContext()
     this.graphicsDiagnostics?.meter.endUpdate()
-    this.postProcessor.render()
+    this.prepareTransientEffects()
+    try {
+      this.transientBudget.apply()
+      this.postProcessor.render()
+    } finally {
+      this.transientBudget.restore()
+    }
     this.graphicsDiagnostics?.endFrame()
   }
 
@@ -4056,6 +4077,8 @@ export class GameEngine {
           profile: { ...this.artEnvironment.atmosphere, color: this.artEnvironment.atmosphere.color.toArray() },
         } : null,
         secondaryEffects: this.secondaryEffects?.snapshot() ?? null,
+        contacts: this.contactPresentation?.snapshot() ?? null,
+        transientEffects: this.transientBudget?.snapshot() ?? null,
         camera: { ...this.cameraVisibility.debug },
         bindings: this.artLibrary.getRenderBindingStats(),
         post: this.postProcessor.getDebugSnapshot(),
@@ -7554,10 +7577,12 @@ export class GameEngine {
       ) {
         continue
       }
-      const impactPosition = actor.mesh.position.clone().add(new THREE.Vector3(0, 1.25, 0))
-      const incomingDirection = this.player.position.clone().sub(actor.mesh.position)
-      incomingDirection.y = 0
-      this.createSparks(impactPosition, incomingDirection, SPARK_COUNT_CLEAVE)
+      if (this.visualPolicy.mode !== 'enhanced') {
+        const impactPosition = actor.mesh.position.clone().add(new THREE.Vector3(0, 1.25, 0))
+        const incomingDirection = this.player.position.clone().sub(actor.mesh.position)
+        incomingDirection.y = 0
+        this.createSparks(impactPosition, incomingDirection, SPARK_COUNT_CLEAVE)
+      }
       const result = this.damageActor(actor, dealt, this.player.position, this.faction, true, {
         attackKind: 'cleave',
         detachChance: 0.75,
@@ -8135,6 +8160,8 @@ export class GameEngine {
           this.damagePlayer(projectile.damage, incomingDirection, false, {
             attackKind: 'actorArrow',
             sourceActorId: projectile.sourceActorId ?? undefined,
+            presentationPoint: projectile.mesh.position,
+            presentationNormal: projectile.mesh.position.clone().sub(this.player.position).add(new THREE.Vector3(0, -1.45, 0)).normalize(),
             source: {
               // The shooter may already be dead by the time its arrow lands, in which case
               // the сводка names the side but not the role rather than guessing at one.
@@ -8167,10 +8194,20 @@ export class GameEngine {
               attackKind: projectile.owner === 'player' ? 'arrow' : 'actorArrow',
               detachChance: projectile.detachChance,
               sourceActorId: projectile.sourceActorId ?? undefined,
+              presentationPoint: projectile.mesh.position,
+              presentationNormal: projectile.mesh.position.clone().sub(hit.actor.mesh.position).add(new THREE.Vector3(0, -1.45, 0)).normalize(),
             },
           )
         } else if (projectile.finale) {
-          this.createSparks(projectile.mesh.position, projectile.velocity.clone().normalize().negate(), 4)
+          if (this.visualPolicy?.mode === 'enhanced') {
+            const point = projectile.mesh.position
+            const terrainContact = point.y <= this.groundHeightAt(point.x, point.z) + 0.11
+            if (terrainContact) this.contactNormal.copy(this.generatedWorld.sampleNormal(point.x, point.z))
+            else this.contactNormal.copy(projectile.velocity).negate().normalize()
+            const contact = this.getContactPresentation().terrain(point, this.contactNormal, projectile.velocity,
+              terrainContact ? this.generatedWorld.surfaces : null)
+            this.presentPhysicalContact(contact, false, 'normal', true)
+          } else this.createSparks(projectile.mesh.position, projectile.velocity.clone().normalize().negate(), 4)
         }
         this.removeProjectile(index)
         continue
@@ -11689,9 +11726,16 @@ export class GameEngine {
   }
 
   private actorAttackEventProp(actor: Actor, target: EventPropTarget): void {
+    const before = target.hp
     const bite = rollPropBite(actor.role, this.eventRng())
     target.hp = Math.max(0, target.hp - bite)
-    this.createHitParticles(target.position, actor.allegiance)
+    if (this.visualPolicy?.mode === 'enhanced') {
+      if (before > 0 && bite > 0 && !this.paused && !this.ended) {
+        const incoming = this.contactNormal.copy(target.position).sub(actor.mesh.position)
+        const contact = this.getContactPresentation().event(target.object, target.position, incoming, target.presentationSurface)
+        this.presentPhysicalContact(contact, false, 'normal', true)
+      }
+    } else this.createHitParticles(target.position, actor.allegiance)
     if (target.position.distanceTo(this.player.position) < 25) {
       this.playSound('hitLight', {
         position: target.position,
@@ -11729,6 +11773,13 @@ export class GameEngine {
       this.stamina = Math.max(0, this.stamina - outcome.staminaSpent)
       if (this.stamina === 0) this.dropShield()
       if (outcome.defense === 'perfectGuard') {
+        if (this.visualPolicy?.mode === 'enhanced') {
+          const admitted = this.secondaryContactPoint.copy(this.player.position).addScaledVector(normalizedIncoming, 0.72)
+          admitted.y += 1.35
+          const contact = this.getContactPresentation().actor(this.player, 'shield', admitted, this.contactNormal.copy(normalizedIncoming).negate(),
+            options.presentationPoint, undefined, options.presentationNormal)
+          if (contact) this.presentPhysicalContact(contact, true, 'blocked', true)
+        }
         this.playSound('block', { intensity: 1, variantSeed: 11 })
         if (outcome.interruptMelee && options.sourceActorId) {
           const attacker = this.actors.find((actor) => actor.id === options.sourceActorId)
@@ -11767,7 +11818,7 @@ export class GameEngine {
       )
       contact.y += 0.05
       contact.addScaledVector(normalizedIncoming, 0.72)
-      this.createSparks(contact, normalizedIncoming, SPARK_COUNT_BLOCK)
+      if (this.visualPolicy?.mode !== 'enhanced') this.createSparks(contact, normalizedIncoming, SPARK_COUNT_BLOCK)
     } else {
       this.addTrauma(THREE.MathUtils.lerp(0.12, 0.35, impact))
       this.damageFlash = Math.max(
@@ -11777,14 +11828,21 @@ export class GameEngine {
       const sprayDirection = hasIncomingDirection
         ? normalizedIncoming.clone().multiplyScalar(-1)
         : new THREE.Vector3(0, 0, 1)
-      this.createBloodBurst(
+      if (this.visualPolicy?.mode !== 'enhanced') this.createBloodBurst(
         this.player.position.clone().add(new THREE.Vector3(0, 1.3, 0)),
         sprayDirection,
         Math.round(THREE.MathUtils.lerp(GORE_PLAYER_HIT_MIN, GORE_PLAYER_HIT_MAX, impact)),
         THREE.MathUtils.lerp(0.9, 2.25, impact),
       )
     }
-    this.createHitParticles(this.player.position, this.faction)
+    let presentationContact: PresentationContact | null | undefined
+    if (this.visualPolicy?.mode === 'enhanced') {
+      const source = options.sourceActorId ? this.actors.find((actor) => actor.id === options.sourceActorId)?.mesh : undefined
+      const sampled = this.getContactPresentation().actor(this.player, frontalBlock ? 'shield' : 'torso',
+        contact, this.contactNormal.copy(normalizedIncoming).negate(), options.presentationPoint, source, options.presentationNormal)
+      presentationContact = sampled ? copyPresentationContact(sampled) : null
+      if (sampled && (dealt > 0 || frontalBlock)) this.presentPhysicalContact(sampled, frontalBlock, outcome.weight, true)
+    } else this.createHitParticles(this.player.position, this.faction)
     // The `canInjure && !frontalBlock` gate stays out here on purpose: it is what keeps
     // the injury roll off the combat stream on a blocked hit.
     if (canInjure && !frontalBlock && shouldInjurePlayer(this.combatRng(), this.health)) {
@@ -11796,6 +11854,7 @@ export class GameEngine {
       direction: hasIncomingDirection
         ? normalizedIncoming.clone().multiplyScalar(-1)
         : fallbackDirection,
+      presentationContact,
     }
     this.presentCombatFeedback({
       ...result,
@@ -11895,7 +11954,15 @@ export class GameEngine {
     })
     const { dealt, impact, killed } = outcome
 
-    this.createBloodBurst(
+    let presentationContact: PresentationContact | null | undefined
+    if (this.visualPolicy?.mode === 'enhanced') {
+      const source = directPlayerKill ? this.player :
+        options.sourceActorId ? this.actors.find((actor) => actor.id === options.sourceActorId)?.mesh : undefined
+      const sampled = this.getContactPresentation().actor(target.mesh, 'torso', position, direction,
+        options.presentationPoint, source, options.presentationNormal)
+      presentationContact = sampled ? copyPresentationContact(sampled) : null
+      if (sampled && dealt > 0) this.presentPhysicalContact(sampled, false, outcome.weight, directPlayerKill)
+    } else this.createBloodBurst(
       position,
       direction,
       Math.round(THREE.MathUtils.lerp(GORE_HIT_MIN, GORE_HIT_MAX, impact)),
@@ -11904,7 +11971,7 @@ export class GameEngine {
     target.hp = Math.max(0, target.hp - dealt)
     target.healthBarVisibleUntil = this.elapsed + 3.4
     this.drawActorHealthBar(target)
-    this.createHitParticles(target.mesh.position, target.allegiance)
+    if (this.visualPolicy?.mode !== 'enhanced') this.createHitParticles(target.mesh.position, target.allegiance)
     if (
       target.role !== 'brute' &&
       options.detachChance &&
@@ -11912,7 +11979,7 @@ export class GameEngine {
     ) {
       this.detachActorLimb(target)
     }
-    const result: DamageResult = { ...outcome, position, direction }
+    const result: DamageResult = { ...outcome, position, direction, presentationContact }
     this.applyActorDamageReaction(
       target,
       result,
@@ -15741,7 +15808,7 @@ export class GameEngine {
   ): void {
     if (!event.applied) return
     if (channels.number ?? true) this.spawnDamageNumber(event)
-    if (channels.ray ?? true) this.spawnImpactRay(event)
+    if ((channels.ray ?? true) && event.presentationContact === undefined) this.spawnImpactRay(event)
     if (channels.callout ?? true) this.spawnComicCallout(event)
     if (channels.hitStop ?? true) this.requestHitStop(this.hitStopForEvent(event))
     if (channels.camera ?? true) this.presentCameraFeedback(event)
@@ -16226,7 +16293,7 @@ export class GameEngine {
     entry.velocity.set(0, 0, 0)
   }
 
-  private spawnImpactRay(event: CombatFeedbackEvent): void {
+  private spawnImpactRay(event: Pick<CombatFeedbackEvent, 'position' | 'direction' | 'weight' | 'targetId' | 'directPlayerAction' | 'presentationContact'>): void {
     if (!event.directPlayerAction && event.targetId !== 'player') return
     const priority = HIT_WEIGHT_PRIORITY[event.weight]
     const entry = this.acquireImpactRayFx(priority)
@@ -16236,12 +16303,21 @@ export class GameEngine {
     entry.active = true
     entry.priority = priority
     entry.weight = event.weight
+    entry.physical = event.presentationContact != null
     entry.sprite.visible = true
     entry.sprite.position.copy(event.position)
     entry.sprite.scale.setScalar(0.4)
     entry.material.opacity = 1
-    entry.material.rotation = Math.random() * Math.PI
-    entry.material.color.copy(this.impactRayColor(event.weight))
+    if (event.presentationContact) {
+      this.contactNormal.copy(event.presentationContact.direction).transformDirection(this.camera.matrixWorldInverse)
+      entry.material.rotation = Math.atan2(this.contactNormal.y, this.contactNormal.x)
+      entry.material.color.setHex(contactResponse(event.presentationContact.surface, event.weight === 'blocked', event.presentationContact.sourceSurface).color)
+      entry.material.depthTest = true
+    } else {
+      entry.material.rotation = Math.random() * Math.PI
+      entry.material.color.copy(this.impactRayColor(event.weight))
+      entry.material.depthTest = false
+    }
   }
 
   private acquireImpactRayFx(priority: number): ImpactRayFx | null {
@@ -16331,7 +16407,9 @@ export class GameEngine {
         continue
       }
       const progress = entry.age / entry.lifetime
-      entry.sprite.scale.setScalar(THREE.MathUtils.lerp(0.4, 1.8, progress))
+      entry.sprite.scale.setScalar(entry.physical
+        ? this.reducedMotion ? 0.38 : THREE.MathUtils.lerp(0.22, 0.65, progress)
+        : THREE.MathUtils.lerp(0.4, 1.8, progress))
       entry.material.opacity = 1 - progress
     }
   }
@@ -16421,6 +16499,73 @@ export class GameEngine {
   ): void {
     if (this.paused || this.ended) return
     this.getSecondaryEffects().emit('spark', position, incomingDirection, this.palette.warning, count, this.visualPolicy)
+  }
+
+  private getContactPresentation(): ContactPresentation {
+    this.contactPresentation ??= new ContactPresentation()
+    return this.contactPresentation
+  }
+
+  private prepareTransientEffects(): void {
+    const budget = this.transientBudget
+    budget.begin(this.visualPolicy)
+    for (const entry of this.telegraphPool) budget.add(entry.mesh, 'tell', 200, true)
+    for (const mesh of this.finaleTelegraphs) budget.add(mesh, 'tell', 200, true)
+    for (const projectile of this.projectiles) budget.add(projectile.mesh, 'projectile', 190, true)
+    for (const pickup of this.lootPickups) if (pickup.active) {
+      budget.addTree(pickup.tokenRoot, 'loot', 150, true)
+      budget.addTree(pickup.root, 'loot', 20)
+    }
+    for (const burst of this.lootCollectionBursts) if (burst.active) budget.addTree(burst.root, 'loot', 25)
+    if (this.secondaryEffects) budget.add(this.secondaryEffects.mesh, 'contact', 100)
+    for (const entry of this.impactRayFx) if (entry.active) budget.add(entry.sprite, 'ray', 90 + entry.priority)
+    for (const entry of this.damageNumberFx) if (entry.active) budget.add(entry.sprite, 'number', 70 + entry.priority)
+    budget.add(this.weaponTrail, 'trail', 85)
+    for (const particle of this.particles) budget.add(particle.mesh,
+      particle.mode === 'smoke' ? 'smoke' : particle.mode === 'blood' || particle.mode === 'gib' ? 'gore' : 'debris',
+      particle.mode === 'smoke' ? 5 : particle.mode === 'blood' ? 15 : 30)
+    for (const entry of this.comicCalloutFx) if (entry.active) budget.add(entry.sprite, 'callout', 35 + entry.priority)
+    for (const entry of this.decals) if (entry.active) budget.add(entry.mesh, 'decal', 10)
+    budget.add(this.rain, 'weather', 45)
+    budget.add(this.snow, 'weather', 45)
+  }
+
+  getTransientEffectInventory() {
+    const sources: TransientSource[] = [
+      this.weaponTrail, this.rain, this.snow,
+      ...this.particles.map((entry) => entry.mesh), ...this.inactiveGoreParticles.map((entry) => entry.mesh),
+      ...this.decals.map((entry) => entry.mesh), ...this.damageNumberFx.map((entry) => entry.sprite),
+      ...this.comicCalloutFx.map((entry) => entry.sprite), ...this.impactRayFx.map((entry) => entry.sprite),
+      ...this.projectiles.map((entry) => entry.mesh), ...this.telegraphPool.map((entry) => entry.mesh), ...this.finaleTelegraphs,
+    ]
+    for (const root of [...this.lootPickups.map((entry) => entry.root), ...this.lootCollectionBursts.map((entry) => entry.root)]) {
+      root.traverse((object) => {
+        if (object instanceof THREE.Mesh || object instanceof THREE.Sprite) sources.push(object)
+      })
+    }
+    const receipts = transientAllocationReceipts(sources)
+    if (this.secondaryEffects) {
+      sources.push(this.secondaryEffects.mesh)
+      receipts.push(...this.secondaryEffects.getAllocationReceipts())
+    }
+    return {
+      sources, receipts, resources: sumVisualAllocationReceipts(receipts).postAndEffects,
+      budget: this.transientBudget.snapshot(), complete: false,
+      missing: ['Actual GPU allocation identities', 'Persistent sky/cloud/fire presentation attribution',
+        'Canvas-backed texture storage', 'Shader uniforms, JS object storage and temporary peak allocations', 'Disjoint CPU/submission scopes'],
+    }
+  }
+
+  private presentPhysicalContact(contact: PresentationContact, defense: boolean, weight: HitWeight, primary: boolean): void {
+    if (this.paused || this.ended || contact.point.distanceToSquared(this.player.position) > DAMAGE_NUMBER_DISTANCE_SQ) return
+    const response = contactResponse(contact.surface, defense, contact.sourceSurface)
+    this.contactColor.setHex(response.color)
+    this.getSecondaryEffects().emit(response.kind, contact.point, contact.direction, this.contactColor,
+      response.count, this.visualPolicy, contact.normal)
+    if (primary) this.spawnImpactRay({
+      position: contact.point, direction: contact.direction, weight, targetId: 'player', directPlayerAction: false,
+      presentationContact: contact,
+    })
   }
 
   private getSecondaryEffects(): SecondaryEffectPool {
