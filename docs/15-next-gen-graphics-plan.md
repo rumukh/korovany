@@ -1,11 +1,13 @@
 # Next-generation graphics: a playable illustrated world
 
-**Status: implementation in progress.** The reproducible baseline and shared
-rendering foundation are implemented. The enhanced foundation has now run through
-the browser capture matrix; character, world, and independent environment/HUD work
-are active in their original sessions. GFX-01 through GFX-06 retain GPT-6 Astra,
-Max reasoning, and the 1M context tier. Legacy remains the default; the current
-character models and final performance tiers are not visually approved.
+**Status: enhanced preview integrated; final acceptance in progress.** The
+reproducible baseline, rendering foundation, character/world art, atmosphere,
+effects, compact HUD and live subsystem diagnostics are joined. GFX-01 through
+GFX-06 retain GPT-6 Astra, Max reasoning, and the 1M context tier. The user has
+approved the stylized character direction after the three-faction portrait
+gallery. Legacy remains the default; that art decision does not approve
+performance tiers, physical mobile/integrated devices, or incomplete resource
+accounting.
 
 **Recommendation:** evolve the procedural comic into a richly lit, tactile
 illustrated world. Fix visibility and surface response before increasing geometric
@@ -37,6 +39,14 @@ performance tier. The integration/allocation checkpoint is `3d2a77e`.
 Final evidence assessment, live resize coverage, and combined release acceptance
 remain separate from the recorded captures.
 
+The recovered joined checkpoint `ec1d317` preserves the original workstream
+histories and the newer main-branch movement/aim fixes. It includes idempotent
+Chronicle save synchronization, flush visual road/paving receivers, and actual
+same-frame subsystem submissions and allocation diagnostics. Current browser
+commands use ordinary isolated profiles, timeouts and owned-process cleanup;
+they require no graphics lease, GO, HOLD, or acquisition window. Historical
+capture identifiers remain provenance, not execution prerequisites.
+
 ### Character direction after the first preview
 
 The user's 2026-09-09 visual review found the guard uniform and helmets worth
@@ -55,7 +65,13 @@ The first character visual checkpoint covers all three factions from front,
 three-quarter, profile, and ordinary gameplay views. Believable adult proportions,
 hands, grips, and clothing layers are part of the target. This is anatomical
 realism within the procedural browser pipeline, not authorization for imported
-photoreal assets or a replacement engine. Final model approval is still open.
+photoreal assets or a replacement engine.
+
+**Subsequent decision:** the user explicitly selected **Approve this stylized
+character direction** after viewing the actual `f61ce8d` gallery: three faction
+openings and 33 player/NPC portrait and held-pose views. Front, three-quarter and
+profile images used the production models, not concept art. This closes the
+art-direction decision, not every animation, camera, performance or device gate.
 
 ## 1. What was actually played
 
