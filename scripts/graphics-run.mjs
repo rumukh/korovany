@@ -13,6 +13,7 @@ import {
   FIRST_VISUAL_CASES, firstVisualPortraitStages, portraitSaveIdentity, portraitSimulationIdentity, portraitCameraReference,
 } from './graphics/portraits.mjs'
 import { assertCaptureDeadline, captureRuntimeControls, recordedRiverEndpoint } from './graphics/runtime-controls.mjs'
+import { captureNoticeLayout } from './graphics/notice-layout.mjs'
 
 const toolRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
@@ -50,6 +51,7 @@ if (flag('help')) {
   console.log('Requires npm run build. No browser lease, GO, HOLD or resource permission is required. A dedicated loopback server and disposable Chrome profile are owned and stopped by this command. Mobile dimensions are layout evidence, not a mobile-device benchmark.')
   console.log('First visual: --portraits [--workspace ABSOLUTE_WORKTREE] [--portrait-reference MANIFEST_JSON]. Three opening worlds, held production portrait presets and normal gameplay views; incompatible with --profile/--motion/--native-route/--foundation/--lifecycle.')
   console.log('Joined preview: --portrait-smoke with --portraits captures only the fixed player/front/current stage. --runtime-controls checks held same-engine resize/DPR/bloom toggles. --hud-mode full|compact selects existing DOM preference. --recorded-river-endpoint stages the preserved river player/yaw/pitch, never a camera override.')
+  console.log('Compact HUD: --notice-layout captures actual guard teaching notice rectangles at 390 and 1920 in one held crowded-25 fixture; asserts no essential HUD overlap.')
   process.exit(0)
 }
 const output = option('out')
@@ -83,6 +85,10 @@ if (flag('portrait-smoke') && !flag('portraits')) throw new Error('--portrait-sm
 if (flag('runtime-controls') && (visualMode !== 'enhanced' ||
     ['portraits', 'profile', 'motion', 'native-route', 'foundation', 'lifecycle', 'no-aa'].some(flag))) {
   throw new Error('Runtime controls require ordinary enhanced held fixtures without other diagnostic stages')
+}
+if (flag('notice-layout') && (hudMode !== 'compact' || option('cases') !== 'crowded-25' || repeat !== 1 ||
+    ['portraits', 'profile', 'motion', 'runtime-controls', 'native-route', 'lifecycle'].some(flag))) {
+  throw new Error('Notice layout requires --cases crowded-25 --repeat 1 --hud-mode compact without other diagnostic jobs')
 }
 const referencePath = option('portrait-reference')
 if (referencePath && (!flag('portraits') || !isAbsolute(referencePath))) throw new Error('--portrait-reference needs --portraits and an absolute manifest path')
@@ -163,7 +169,7 @@ const manifest = {
     profile: 'Active production requestAnimationFrame updates; default 0.05 s simulation clamp and hit stop unchanged. Warm-up and samples separate; no per-frame screenshot/readback.',
     memory: 'Observed WebGL storage bytes, not measured resident VRAM. Default framebuffer, implicit extension MSAA and driver/swapchain exclusions separately reported.',
     requestedVisualMode: visualMode, requestedQuality: quality, diagnosticNoAA: flag('no-aa'),
-    hudMode, portraitSmoke: flag('portrait-smoke'), runtimeControls: flag('runtime-controls'),
+    hudMode, portraitSmoke: flag('portrait-smoke'), runtimeControls: flag('runtime-controls'), noticeLayout: flag('notice-layout'),
     recordedEndpoint: endpointBytes ? { file: endpointFile, sha256: sha256(endpointBytes), sourceCommit: 'bfae58b34a411ab434d387e6710fd97be6b2acb3' } : null,
     foundationFixture: flag('foundation'), reducedMotion: flag('reduced-motion'),
     portraitComparison: flag('portraits') ? {
@@ -469,6 +475,20 @@ try {
       await writeFile(join(out, `${fixture.id}-${repetition}.json`), JSON.stringify(capture, null, 2))
       assertBrowserHealthy(fixture.id)
       if (flag('portraits')) await capturePortraitSuite(fixture, result)
+      if (flag('notice-layout')) {
+        result.noticeLayout = { captures: [] }
+        result.noticeLayout.summary = await captureNoticeLayout(browser, { width, height, dpr },
+          async (id, measurement) => {
+            checkTime()
+            assertBrowserHealthy(`${fixture.id}:${id}`)
+            const file = `${fixture.id}-${id}.png`
+            const bytes = await browser.screenshot(join(out, file))
+            const record = { id, file, sha256: sha256(bytes), measurement }
+            result.noticeLayout.captures.push(record)
+            await writeFile(join(out, `${fixture.id}-${id}.json`), JSON.stringify(record, null, 2))
+            await writeFile(join(out, 'manifest.json'), JSON.stringify(manifest, null, 2))
+          }, checkTime)
+      }
       if (flag('runtime-controls')) {
         result.runtimeControls = { captures: [] }
         result.runtimeControls.summary = await captureRuntimeControls(browser, { width, height, dpr },

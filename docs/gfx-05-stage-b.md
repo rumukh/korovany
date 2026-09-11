@@ -318,8 +318,69 @@ a GPU, alongside existing group/range/instance/shadow accounting.
 The existing build/type/lint and combat/finale/diagnostic suites remain the
 validation tools; no dependency or test framework is added.
 
-There is no GPU/browser lease for this CPU task. Surface contacts in motion,
-first combined visual review, grayscale/night/wetness/flare tuning, true
-whole-frame/subsystem GPU and CPU accounting, physical-device budgets, live
-390x844 focus/touch/text-scaling evidence and human approval still require a
-separate serialized capture task. No AO or default promotion is included.
+Those CPU checkpoints did not include browser evidence. The separately
+authorized measured follow-up below is narrower than full acceptance: broader
+surface-contact motion, grayscale/night/wetness/flare tuning, complete retained
+inventory and disjoint subsystem CPU attribution, physical-device budgets,
+full live focus/text-scaling coverage and human approval remain integration
+gates. Browser work no longer requires a resource lease or central permission.
+No AO or default promotion is included.
+
+## Measured effects and compact-notice follow-up (2026-09-11)
+
+This follow-up fast-forwarded the clean GFX-05 worktree to the specifically
+approved integrated `ec1d3174d65d772f78e1ee8488458b64e61a7cde`. It did not follow
+moving camera or character-budget branches.
+
+The environment reservation fix is
+`022b56a6a7c202a4cb58968e3a604536bedea970`. One High crowded-25 production run
+recorded 120 warm-up and 600 sample frames with the existing whole-frame
+profiler. Every sample retained 25 NPCs, active simulation and reconciled,
+complete submission attribution. Maximum `postAndEffects` work was **58**:
+42 non-post plus the unchanged 16 post calls, below the existing 60 limit.
+Environment reservation was two draws in every sample; admission never exceeded
+44 and no protected-only overrun occurred. Actual contact counters were
+23 sampled contacts, six projectile contacts and 134 accepted secondary
+particles. The original five over-limit frames and raw 61-call run were retained.
+
+This is a draw-envelope result, **not** a frame-time or complete-tier pass:
+RAF/CPU/GPU p95 were 35.8/30.7/21.093 ms, whole-frame maximum was 332 draws and
+main-view maximum was 174229 triangles. All 600 GPU queries were available.
+The timing runs were not an isolated performance comparison; no speedup is
+claimed. Resource/CPU ownership assessment remains explicitly incomplete.
+Raw profile, manifest, screenshots and strict all-sample summary are in the
+session artifact directory `gfx05-high-reserve-20260911`.
+
+The additional compact-mobile issue was reproduced using the actual native
+guard input and production teaching notice, respecting both simulation-time
+hint pacing and wall-time notice expiry. At 390x844 the old notice occupied
+x16..374, y84.797..147.906 and covered both health and stamina bars (intersection
+areas 1007.829 and 541.481 square pixels). It also overlapped map/navigation.
+
+Compact mode now renders its one existing polite live notice region in the
+right-hand HUD column, after map/compass/finale and before optional world news.
+On narrow/coarse layouts it participates in normal flow and the existing
+scrollable safe region, rather than covering vitals. Copy, tones, timers,
+essential left-side HUD, controls, overlays, full mode and gameplay are unchanged.
+No duplicate mobile/desktop live regions or hidden notice copy is introduced.
+
+The same real notice then occupied x248.609..381.203, y189.922..381.906 at
+390x844, with zero intersection against vitals, health/stamina, squad, defense,
+map, compass or touch controls. Touch buttons remained 44x44. At 1920x1080 its
+rectangle remained exactly x736..1184, y16..79.109, matching the original
+desktop placement. Both layouts have actual screenshots and DOM receipts;
+the left combat/mission layout was not redesigned.
+
+The ordinary runner's `--notice-layout` option reproduces this one held
+crowded-25 case at both sizes. It reuses the same browser/engine and owned
+cleanup, does not create another profiler, and fails on missing/expired notice
+or an essential-HUD intersection. Run with `--cases crowded-25 --repeat 1
+--hud-mode compact --notice-layout` and an absolute new output directory;
+do not combine with performance/portrait/motion suites. Original failing
+receipts are in `gfx05-notice-original-layout-20260911`; passing screenshots
+and receipts are in `gfx05-notice-fixed-layout-20260911`.
+
+Focused effects/contact/subsystem/diagnostic regressions passed 46 cases;
+compact/component/mobile/overlay regressions passed 18. Production app/test
+types, build and changed-path lint passed. These bounded results do not replace
+the broader visual and device acceptance gates above.

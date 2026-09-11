@@ -99,6 +99,11 @@
 }
 
 @media (min-width: 721px) and (pointer: fine) {
+  .game-screen[data-hud="compact"] .notice-stack {
+    top: 0;
+    width: min(28rem, calc(100% - 30rem));
+  }
+
   .game-screen[data-hud="compact"] .top-hud-side {
     max-height: calc(100dvh - 7rem);
     overflow-y: auto;
@@ -108,7 +113,28 @@
   }
 }
 
+@media (min-width: 721px) and (max-width: 1000px) and (pointer: fine) {
+  .game-screen[data-hud="compact"] .notice-stack {
+    top: 4.7rem;
+    width: min(26rem, 100%);
+  }
+}
+
 @media (max-width: 720px), (pointer: coarse) {
+  .game-screen[data-hud="compact"] .notice-stack {
+    position: static;
+    transform: none;
+    width: 100%;
+  }
+
+  .game-screen[data-hud="compact"] .notice-stack:empty {
+    display: none;
+  }
+
+  .game-screen[data-hud="compact"] .notice {
+    overflow-wrap: anywhere;
+  }
+
   .game-screen[data-hud="compact"] .top-hud-side {
     width: 100%;
   }

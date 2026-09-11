@@ -116,6 +116,13 @@ test('production HUD retains essential combat/navigation/interaction and every n
       for (const notice of props.notices) assert.ok(rendered.includes(notice.message))
       assert.equal((rendered.match(/class="notice (?:info|success|warning|danger)"/g) ?? []).length, 4)
       assert.ok(rendered.includes('aria-live="polite"'))
+      assert.equal((rendered.match(/class="notice-stack"/g) ?? []).length, 1, 'one live notice region, not duplicate responsive copies')
+      const side = rendered.slice(rendered.indexOf('class="top-hud-side"'), rendered.indexOf('class="left-hud"'))
+      assert.equal(side.includes('class="notice-stack"'), mode === 'compact')
+      if (mode === 'compact') {
+        assert.ok(side.indexOf('class="notice-stack"') > side.indexOf('finale-hud'), 'finale cues retain priority above notices')
+        assert.ok(side.indexOf('class="notice-stack"') < side.indexOf('compact-hud-disclosure'), 'notices are not buried below optional world news')
+      }
       for (const entry of props.view.contracts) {
         assert.ok(rendered.includes(entry.task))
         assert.ok(rendered.includes(entry.stake))
