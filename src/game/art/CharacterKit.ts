@@ -3051,7 +3051,7 @@ function bladeProfile(
   })
 }
 
-export function buildWeaponHead(kind: WeaponKind): THREE.BufferGeometry {
+export function buildWeaponHead(kind: WeaponKind, compact = false): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = []
   if (kind === 'sword' || kind === 'greatsword' || kind === 'dagger') {
     const long = kind === 'greatsword'
@@ -3067,7 +3067,7 @@ export function buildWeaponHead(kind: WeaponKind): THREE.BufferGeometry {
           height: short ? 0.06 : 0.09,
           depth: short ? 0.1 : 0.15,
           topScale: 0.78,
-          bevel: 0.02,
+          bevel: compact ? 0 : 0.02,
           shearZ: long ? 0.04 : 0,
         },
         { position: { x: 0, y: guardY, z: 0 } },
@@ -3084,7 +3084,7 @@ export function buildWeaponHead(kind: WeaponKind): THREE.BufferGeometry {
             { x: 0.06, y: 0.05 },
             { x: 0.001, y: 0.07 },
           ],
-          { segments: 7, name: 'pommel' },
+          { segments: compact ? 5 : 7, name: 'pommel' },
         ),
         { position: { x: 0, y: short ? -0.22 : long ? -0.56 : -0.32, z: 0 } },
       ),
@@ -3342,7 +3342,7 @@ export function buildWeaponGrip(kind: WeaponKind, compact = false): THREE.Buffer
   ): void => {
     parts.push(
       loft({
-        profile: polygonProfile(radius, 6),
+        profile: polygonProfile(radius, compact ? 4 : 6),
         sections: [
           { y: centre - height / 2, scaleX: 0.9 },
           { y: centre - height / 2 + 0.03, scaleX: 1 },
@@ -5425,10 +5425,10 @@ export function buildIllustratedTrim(trim: TrimKind, level: CharacterVisualLevel
   return buildTorsoTrim(trim)
 }
 
-export function buildIllustratedArm(length: number, forearm: boolean): THREE.BufferGeometry {
+export function buildIllustratedArm(length: number, forearm: boolean, compact = false): THREE.BufferGeometry {
   return finish([block({
     width: forearm ? 0.21 : 0.24, height: length + 0.05, depth: forearm ? 0.218 : 0.254,
-    topScale: 1, bottomScale: forearm ? 0.66 : 0.82, bevel: 0.036,
+    topScale: 1, bottomScale: forearm ? 0.66 : 0.82, bevel: compact ? 0 : 0.036,
   }, { position: { x: 0, y: -length * 0.5 + 0.025, z: 0 } })], 'coarse-arm')
 }
 
@@ -5460,12 +5460,13 @@ export function buildIllustratedHand(
   ]
   const fingers = coarse || compact ? 1 : 4
   for (let finger = 0; finger < fingers; finger++) {
-    const curl = plate([
+    const outline = [
       { x: -0.068, y: -0.052 }, { x: -0.075, y: 0.01 }, { x: -0.055, y: 0.045 },
       { x: -0.02, y: 0.06 }, { x: 0.04, y: 0.043 }, { x: 0.045, y: 0.019 },
       { x: 0.023, y: 0.014 }, { x: -0.021, y: 0.034 }, { x: -0.043, y: 0.018 },
       { x: -0.045, y: -0.052 },
-    ], fingers === 1 ? 0.105 : 0.026, {
+    ]
+    const curl = plate(compact ? outline.filter((_, i) => i !== 2 && i !== 8) : outline, fingers === 1 ? 0.105 : 0.026, {
       position: { x: 0, y: fingers === 1 ? -0.04 : 0.011 - finger * 0.033, z: 0 },
       rotation: { x: Math.PI / 2, y: 0, z: 0 },
     }, 0)

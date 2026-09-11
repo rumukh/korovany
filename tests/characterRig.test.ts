@@ -9,7 +9,7 @@ import {
   characterPresenter,
   resolveCharacterPlan, characterRoles, buildIllustratedHead, buildIllustratedHeadgear,
   selectCharacterVisualLevel, validateArtGeometry,
-  buildIllustratedHand, buildIllustratedBoot, buildWeaponGrip,
+  buildIllustratedHand, buildIllustratedBoot, buildWeaponGrip, buildWeaponHead,
   type CharacterContact,
   type OutlineBinding,
 } from '../src/game/art/index.ts'
@@ -323,7 +323,7 @@ test('each guard variant fits its source-plus-ink geometry envelope without drop
       assert.ok(triangles * 2 + 48 + 18 + 2 <= allocation.firstRole.nearMainViewTriangles,
         `${quality}/${variant}: ${triangles * 2 + 68} main-view geometry triangles`)
       if (quality !== 'high') {
-        assert.ok(p.body.geometry.index!.count / 3 <= (quality === 'balanced' ? 2100 : 1300),
+        assert.ok(p.body.geometry.index!.count / 3 <= (quality === 'balanced' ? 2080 : 1220),
           `${quality}/${variant}: compact crowd body topology regressed`)
       }
       assert.equal(p.sources.length, plan.offhand === 'none' ? 2 : 3)
@@ -491,6 +491,22 @@ test('compact wrapped grips retain the full haft and player geometry remains ful
     assert.ok(full.boundingBox && compact.boundingBox)
     assert.equal(compact.boundingBox.min.y, full.boundingBox.min.y)
     assert.equal(compact.boundingBox.max.y, full.boundingBox.max.y)
+    assert.ok(compact.getAttribute('position').count < full.getAttribute('position').count)
+    full.dispose(); compact.dispose()
+  }
+  for (const kind of ['sword', 'greatsword', 'dagger'] as const) {
+    const full = buildWeaponHead(kind), compact = buildWeaponHead(kind, true)
+    const blade = (g: THREE.BufferGeometry) => {
+      const positions = g.getAttribute('position'), values: number[] = []
+      for (let i = 0; i < positions.count; i++) if (positions.getY(i) > 0.25) {
+        values.push(positions.getX(i), positions.getY(i), positions.getZ(i))
+      }
+      return values
+    }
+    assert.deepEqual(blade(compact), blade(full), 'the attack blade is not shortened or simplified')
+    full.computeBoundingBox(); compact.computeBoundingBox()
+    assert.equal(compact.boundingBox!.min.y, full.boundingBox!.min.y, 'pommel endpoint remains')
+    assert.equal(compact.boundingBox!.max.y, full.boundingBox!.max.y, 'geometry-derived weapon tip remains')
     assert.ok(compact.getAttribute('position').count < full.getAttribute('position').count)
     full.dispose(); compact.dispose()
   }

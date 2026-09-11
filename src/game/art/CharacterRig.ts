@@ -330,7 +330,7 @@ export class CharacterPresenter {
       const limb: CharacterLimb = side < 0 ? 'leftArm' : 'rightArm'
       const arm = joint(limb, a.torsoPivot, side * p.shoulderX, a.shoulderY)
       const upper = bone(`${limb}-upper`, arm, 0, 0, 0, limb)
-      part(upper, (level) => level === 'mid' || level === 'far' ? buildIllustratedArm(p.upperArm, false)
+      part(upper, (level) => level === 'mid' || level === 'far' ? buildIllustratedArm(p.upperArm, false, compact)
         : compact ? buildIllustratedCompactLimb(p.upperArm, 'upperArm', false)
         : buildUpperArm(plan.faction, 'none', p.upperArm), cloth, 'cloth', limb)
       if (plan.armour !== 'none' && plan.kit !== 'light' && plan.kit !== 'ranged') {
@@ -340,7 +340,7 @@ export class CharacterPresenter {
       }
       const elbow = joint(side < 0 ? 'leftElbow' : 'rightElbow', arm, 0, -p.upperArm)
       const forearm = bone(`${limb}-forearm`, elbow, 0, 0, 0, limb)
-      part(forearm, (level) => level === 'mid' || level === 'far' ? buildIllustratedArm(p.forearm, true)
+      part(forearm, (level) => level === 'mid' || level === 'far' ? buildIllustratedArm(p.forearm, true, compact)
         : compact ? buildIllustratedCompactLimb(p.forearm, 'forearm', false)
         : buildForearm(plan.faction, 'none', false, p.forearm),
         plan.armour === 'none' ? skin : leather, plan.armour === 'none' ? 'skin' : 'leather', limb)
@@ -487,7 +487,7 @@ export class CharacterPresenter {
         if (kind === 'bow') {
           take(buildIllustratedBowString(), CHARACTER_PHYSICAL_PALETTE.dark, 'dark', 'string')
           if (!released) take(buildIllustratedNockedArrow(), CHARACTER_PHYSICAL_PALETTE.metal, 'metal', 'arrow')
-        } else take(buildWeaponHead(kind), CHARACTER_PHYSICAL_PALETTE.metal, 'metal', 'rigid')
+        } else take(buildWeaponHead(kind, compact), CHARACTER_PHYSICAL_PALETTE.metal, 'metal', 'rigid')
         take(buildWeaponGrip(kind, compact), CHARACTER_PHYSICAL_PALETTE.leather, 'leather', 'rigid')
         const result = mergeAll(parts, { dispose: false, name: `character-weapon:${kind}:${released ? 'released' : 'ready'}` })
         if (kind === 'bow') result.translate(0, 0, -0.17)

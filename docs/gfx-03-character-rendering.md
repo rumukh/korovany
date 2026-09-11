@@ -100,7 +100,7 @@ Balanced and Low NPC bodies use compact limb and boot topology; players and High
 retain their previous geometry. Faces, headgear, head normals, physical palette
 and weather-response channels are unchanged at the corresponding detail level.
 Near hands retain the curled handle opening with one finger band instead of
-separate subpixel finger extrusions; Mid also omits tiny palm/shoulder chamfers.
+separate subpixel finger extrusions; Mid also omits tiny palm/arm/shoulder chamfers.
 Joint bulges and limb endpoints remain, with fewer intermediate rings and a
 six-sided Mid leg section. Boots replace three overlapping closed solids with
 one closed outside skin, retaining the exact sole plane and bounding extents.
@@ -108,8 +108,10 @@ Six-direction surface probes bound the boot contour difference to less than
 3 cm; they do not mistake a grazing-ray ankle-to-sole depth jump for a vertical
 rig offset. Full-affine hand and sole transforms are unchanged.
 
-Wrapped NPC grips retain the complete haft and all blade/guard/pommel geometry,
-omitting small concentric wrap ridges in these two tiers. Bow draw/release geometry,
+Wrapped NPC grips retain the complete haft and blade, omitting small concentric
+wrap ridges in these two tiers. Sword guards omit their small corner chamfer and
+pommels retain their axial profile with five rather than seven radial segments.
+Bow draw/release geometry,
 shields, torch/trail children and contacts stay unchanged. Compact/full topology
 has distinct cache keys; active and retained receipts still use real backing
 identities. Neither the projected LOD thresholds, engaged-Mid floor, actor
