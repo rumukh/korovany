@@ -3332,7 +3332,7 @@ export function buildWeaponHead(kind: WeaponKind): THREE.BufferGeometry {
   return finish(parts, `character-weapon:${kind}:head`)
 }
 
-export function buildWeaponGrip(kind: WeaponKind): THREE.BufferGeometry {
+export function buildWeaponGrip(kind: WeaponKind, compact = false): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = []
   const wrap = (
     height: number,
@@ -3352,7 +3352,7 @@ export function buildWeaponGrip(kind: WeaponKind): THREE.BufferGeometry {
         name: 'grip',
       }),
     )
-    for (let index = 0; index < ridges; index += 1) {
+    for (let index = 0; index < (compact ? 0 : ridges); index += 1) {
       const t = (index + 0.5) / ridges
       parts.push(
         transformed(
@@ -5116,7 +5116,7 @@ export const WAGON_RIG = {
 export type CharacterVisualLevel = 'hero' | 'near' | 'mid' | 'far'
 export type CharacterPhysicalSurface = 'skin' | 'hair' | 'cloth' | 'leather' | 'bone' | 'metal' | 'dark'
 
-export const CHARACTER_ART_REVISION = 'character-anatomy-1'
+export const CHARACTER_ART_REVISION = 'character-anatomy-2'
 export const CHARACTER_PHYSICAL_PALETTE = {
   skin: [0xd6a582, 0xb98161, 0x956749, 0x684a39],
   hair: [0x594536, 0x997747, 0x302b29, 0x655b52],
@@ -5432,14 +5432,14 @@ export function buildIllustratedArm(length: number, forearm: boolean): THREE.Buf
   }, { position: { x: 0, y: -length * 0.5 + 0.025, z: 0 } })], 'coarse-arm')
 }
 
-export function buildIllustratedShoulder(plan: CharacterPlan, side: number): THREE.BufferGeometry {
+export function buildIllustratedShoulder(plan: CharacterPlan, side: number, compact = false): THREE.BufferGeometry {
   const width = plan.kit === 'heavy' || plan.kit === 'elite' ? 0.36 : 0.29
   if (plan.faction === 'elf') {
     return finish([plate([
       { x: -0.12, y: -0.15 }, { x: 0.12, y: -0.17 }, { x: 0.16, y: 0.07 }, { x: 0, y: 0.13 }, { x: -0.15, y: 0.07 },
     ], 0.28, { position: { x: 0, y: 0.015, z: -0.04 } }, 0.012)], 'leaf-shoulder')
   }
-  const cap = block({ width, height: 0.18, depth: 0.34, topScale: 0.76, bevel: 0.047 },
+  const cap = block({ width, height: 0.18, depth: 0.34, topScale: 0.76, bevel: compact ? 0 : 0.047 },
     { position: { x: side * 0.016, y: 0.015, z: 0 } })
   if (plan.faction === 'villain' && side > 0) {
     return finish([cap, spike(0.04, 0.16, { position: { x: 0.075, y: 0.09, z: -0.04 }, rotation: { x: -0.3, y: 0, z: -0.4 } })], 'scavenged-shoulder')
@@ -5448,14 +5448,17 @@ export function buildIllustratedShoulder(plan: CharacterPlan, side: number): THR
 }
 
 /** Palm and curled fingers surround a +Y handle rather than intersecting its centre. */
-export function buildIllustratedHand(side: number, level: CharacterVisualLevel = 'near'): THREE.BufferGeometry {
+export function buildIllustratedHand(
+  side: number, level: CharacterVisualLevel = 'near', compact = false,
+): THREE.BufferGeometry {
+  const coarse = level === 'mid' || level === 'far'
   const parts = [
-    block({ width: 0.125, height: 0.15, depth: 0.06, bevel: 0.022 },
+    block({ width: 0.125, height: 0.15, depth: 0.06, bevel: compact && coarse ? 0 : 0.022 },
       { position: { x: 0, y: -0.04, z: -0.052 } }),
-    block({ width: 0.045, height: 0.11, depth: 0.09, bevel: 0.014 },
+    block({ width: 0.045, height: 0.11, depth: 0.09, bevel: compact && coarse ? 0 : 0.014 },
       { position: { x: side * 0.069, y: -0.016, z: -0.006 }, rotation: { x: 0, y: side * 0.24, z: side * 0.24 } }),
   ]
-  const fingers = level === 'far' || level === 'mid' ? 1 : 4
+  const fingers = coarse || compact ? 1 : 4
   for (let finger = 0; finger < fingers; finger++) {
     const curl = plate([
       { x: -0.068, y: -0.052 }, { x: -0.075, y: 0.01 }, { x: -0.055, y: 0.045 },
@@ -5471,6 +5474,38 @@ export function buildIllustratedHand(side: number, level: CharacterVisualLevel =
   return finish(parts, `gripping-hand:${side}`)
 }
 
+/** Keep joint bulges and extremities; spend fewer rings on almost straight limb spans. */
+export function buildIllustratedCompactLimb(
+  length: number, kind: 'upperArm' | 'forearm' | 'thigh' | 'shin', coarse: boolean,
+): THREE.BufferGeometry {
+  const width = kind === 'upperArm' ? 0.24 : kind === 'forearm' ? 0.21 : kind === 'thigh' ? 0.3 : 0.2
+  const depth = width * (kind === 'upperArm' ? 1.06 : kind === 'forearm' ? 1.04 : kind === 'thigh' ? 1.1 : 1.175)
+  const bevel = kind === 'forearm' ? 0.05 : kind === 'shin' ? 0.044 : 0.06
+  const x = width * 0.5, z = depth * 0.5
+  const profile = coarse ? [
+    { x: -x + bevel, y: -z }, { x: x - bevel, y: -z }, { x, y: 0 },
+    { x: x - bevel, y: z }, { x: -x + bevel, y: z }, { x: -x, y: 0 },
+  ] : rectProfile(width, depth, bevel)
+  const sections: LoftSection[] = kind === 'upperArm' ? [
+    { y: 0.1, scaleX: 0.78, scaleZ: 0.8 },
+    { y: 0.04, scaleX: 1.06, scaleZ: 1.06 },
+    { y: -length, scaleX: 0.82, scaleZ: 0.86 },
+  ] : kind === 'forearm' ? [
+    { y: 0.06, scaleX: 0.9, scaleZ: 0.94 },
+    { y: -0.02, scaleX: 1.04, scaleZ: 1.02 },
+    { y: -length, scaleX: 0.66, scaleZ: 0.7 },
+  ] : kind === 'thigh' ? [
+    { y: 0.1, scaleX: 0.9, scaleZ: 0.92 },
+    { y: 0, scaleX: 1.04, scaleZ: 1.04 },
+    { y: -length, scaleX: 0.82, scaleZ: 0.86 },
+  ] : [
+    { y: -length + 0.1, scaleX: 0.63, scaleZ: 0.67 },
+    { y: -length * 0.24, scaleX: 1, scaleZ: 1, offsetZ: -0.023 },
+    { y: 0.055, scaleX: 0.9, scaleZ: 0.93 },
+  ]
+  return finish([loft({ profile, sections })], `compact-${kind}`)
+}
+
 export function buildIllustratedShin(length: number): THREE.BufferGeometry {
   return finish([loft({
     profile: rectProfile(0.2, 0.235, 0.044),
@@ -5484,7 +5519,35 @@ export function buildIllustratedShin(length: number): THREE.BufferGeometry {
 }
 
 /** Foot origin is the sole contact, so terrain correction never guesses its height. */
-export function buildIllustratedBoot(): THREE.BufferGeometry {
+export function buildIllustratedBoot(compact = false): THREE.BufferGeometry {
+  if (compact) {
+    // One closed outside skin instead of three mutually intersecting capped blocks.
+    // Each side-profile point carries its width; the ankle is not as wide as the sole.
+    const contour = [
+      [-0.115, 0, 0.0915], [0.254, 0, 0.1025], [0.265, 0.028, 0.0915],
+      [0.255, 0.106, 0.073], [0.076, 0.106, 0.0875],
+      [0.0634, 0.243, 0.07525], [-0.0914, 0.243, 0.07525],
+      [-0.104, 0.106, 0.0875],
+    ] as const
+    const points = contour.map(([z, y]) => new THREE.Vector2(z, y))
+    const caps = THREE.ShapeUtils.triangulateShape(points, [])
+    const positions: number[] = []
+    const indices: number[] = []
+    for (const side of [-1, 1]) for (const [z, y, width] of contour) positions.push(side * width, y, z)
+    const n = contour.length
+    for (const [a, b, c] of caps) indices.push(a, b, c, a + n, c + n, b + n)
+    for (let a = 0; a < n; a++) {
+      const b = (a + 1) % n
+      indices.push(a, a + n, b + n, a, b + n, b)
+    }
+    const indexed = new THREE.BufferGeometry()
+    indexed.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    indexed.setIndex(indices)
+    const geometry = indexed.toNonIndexed()
+    indexed.dispose()
+    geometry.computeVertexNormals()
+    return finish([geometry], 'compact-boot')
+  }
   return finish([
     block({ width: 0.19, height: 0.1, depth: 0.36, topScale: 0.91, bevel: 0.032 },
       { position: { x: 0, y: 0.056, z: 0.075 } }),
