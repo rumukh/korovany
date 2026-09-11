@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { gunzipSync } from 'node:zlib'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { runInNewContext } from 'node:vm'
 import test from 'node:test'
 import * as THREE from 'three'
 import {
@@ -13,8 +14,36 @@ import { AFFINE_SKIN_NORMAL_REVISION } from '../src/game/art/skinNormalShader.ts
 import { resolveVisualPolicy, resolveVisualViewport } from '../src/game/visualPolicy.ts'
 
 const moduleUrl = new URL('../scripts/graphics/runtime-controls.mjs', import.meta.url)
-const { assertCaptureDeadline, recordedRiverEndpoint, validateRuntimeControlSnapshot, RUNTIME_CONTROL_VIEWPORTS } =
+const { assertCaptureDeadline, recordedRiverEndpoint, validateRuntimeControlSnapshot, RUNTIME_CONTROL_VIEWPORTS, settleHeldViewport } =
   await import(moduleUrl.href)
+
+test('held viewport settling lets resize observers run before capture and rejects an engine replacement', async () => {
+  const frames: Array<() => void> = []
+  const window = { __korovanyGraphics: { snapshot: () => ({ manual: true }) } }
+  const browser = {
+    evaluate: (source: string) => runInNewContext(source, {
+      window, requestAnimationFrame: (callback: () => void) => { frames.push(callback) },
+    }),
+  }
+  let settled = false
+  const pending = settleHeldViewport(browser).then(() => { settled = true })
+  assert.equal(frames.length, 1)
+  frames.shift()!()
+  await Promise.resolve()
+  assert.equal(settled, false)
+  assert.equal(frames.length, 1)
+  frames.shift()!()
+  await pending
+  assert.equal(settled, true)
+
+  const replaced = settleHeldViewport(browser)
+  window.__korovanyGraphics = { snapshot: () => ({ manual: true }) }
+  frames.shift()!()
+  frames.shift()!()
+  await assert.rejects(replaced, /owner changed/)
+  window.__korovanyGraphics = { snapshot: () => ({ manual: false }) }
+  assert.throws(() => settleHeldViewport(browser), /requires held/)
+})
 
 function compile(material: THREE.Material, kind: 'standard' | 'basic') {
   const shader = {

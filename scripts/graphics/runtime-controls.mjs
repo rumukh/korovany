@@ -9,6 +9,21 @@ export const RUNTIME_CONTROL_VIEWPORTS = Object.freeze([
   Object.freeze({ width: 1920, height: 1080, dpr: 1.5 }),
 ])
 
+/** ResizeObserver runs after animation callbacks; settle it before the next held render. */
+export function settleHeldViewport(browser) {
+  return browser.evaluate(`(() => {
+    const owner = window.__korovanyGraphics;
+    if (!owner?.snapshot().manual) throw new Error('Viewport settling requires held graphics diagnostics');
+    return new Promise((resolve, reject) => requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (window.__korovanyGraphics !== owner) {
+        reject(new Error('Graphics owner changed while the viewport settled'));
+        return;
+      }
+      resolve(true);
+    })));
+  })()`)
+}
+
 export function assertCaptureDeadline(deadline, now = Date.now()) {
   if (!deadline) return
   const limit = Date.parse(deadline)
@@ -75,6 +90,7 @@ export async function captureRuntimeControls(browser, originalViewport, record, 
         width: viewport.width, height: viewport.height, deviceScaleFactor: viewport.dpr, mobile: false,
       })
       await browser.waitFor(`innerWidth === ${viewport.width} && innerHeight === ${viewport.height} && devicePixelRatio === ${viewport.dpr}`)
+      await settleHeldViewport(browser)
       const snapshot = await browser.evaluate('window.__korovanyGraphics.render(2)')
       validateRuntimeControlSnapshot(snapshot, viewport, originalBloom)
       await checkPreservation(snapshot)
@@ -96,6 +112,7 @@ export async function captureRuntimeControls(browser, originalViewport, record, 
       width: originalViewport.width, height: originalViewport.height, deviceScaleFactor: originalViewport.dpr, mobile: false,
     })
     await browser.waitFor(`innerWidth === ${originalViewport.width} && innerHeight === ${originalViewport.height} && devicePixelRatio === ${originalViewport.dpr}`)
+    await settleHeldViewport(browser)
     const restored = await browser.evaluate('window.__korovanyGraphics.render(2)')
     validateRuntimeControlSnapshot(restored, originalViewport, originalBloom)
     await checkPreservation(restored)

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describeHint } from '../../src/game/content/gameCopy.ts'
 import { delay } from './cdp.mjs'
+import { settleHeldViewport } from './runtime-controls.mjs'
 
 /** Reuses the runner's browser. A real guard key edge produces the notice, not injected DOM. */
 export async function captureNoticeLayout(browser, originalViewport, record, checkTime) {
@@ -24,6 +25,7 @@ export async function captureNoticeLayout(browser, originalViewport, record, che
         width: viewport.width, height: viewport.height, deviceScaleFactor: viewport.dpr, mobile: false,
       })
       await browser.waitFor(`innerWidth === ${viewport.width} && innerHeight === ${viewport.height}`)
+      await settleHeldViewport(browser)
       await browser.evaluate('window.__korovanyGraphics.render(2)')
       const measurement = await browser.evaluate(`(() => {
         const message = ${JSON.stringify(message)};
