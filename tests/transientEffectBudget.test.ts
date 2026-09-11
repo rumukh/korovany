@@ -99,6 +99,7 @@ function engineFixture(quality: 'high' | 'balanced' | 'low', bloomEnabled = true
   const tellMeshes = meshes(4), projectiles = meshes(3)
   const engine = Object.assign(Object.create(GameEngine.prototype), {
     visualPolicy: policy, transientBudget: new TransientEffectBudget(), secondaryEffects: pool,
+    atmosphereRoot: new THREE.Group(), flames: [], camera: new THREE.PerspectiveCamera(),
     telegraphPool: tellMeshes.map((mesh) => ({ mesh })), finaleTelegraphs: meshes(1),
     projectiles: projectiles.map((mesh) => ({ mesh })), lootPickups: [], lootCollectionBursts: [],
     weaponTrail: meshes(1)[0], rain: new THREE.LineSegments(geometry, material), snow: new THREE.Points(geometry, material),
@@ -149,6 +150,127 @@ test('real engine collection reconciles every owned transient category under H44
       } finally { budget.restore(); f.dispose() }
     }
   }
+})
+
+test('production sky and zero-opacity stars reserve two draws before crowded transients without budgeting off-view clouds', () => {
+  const f = engineFixture('high')
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document')
+  const context = { createLinearGradient: () => ({ addColorStop() {} }), fillRect() {}, fillStyle: '', globalAlpha: 1 }
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true, value: { createElement: () => ({ width: 0, height: 0, getContext: () => context }) },
+  })
+  const scene = new THREE.Scene()
+  const budget = f.engine.transientBudget as TransientEffectBudget
+  const camera = new THREE.PerspectiveCamera(56, 1920 / 1080, 0.1, 240)
+  camera.position.set(0, 8, 10)
+  camera.lookAt(0, 0, 0)
+  camera.updateMatrixWorld()
+  Object.assign(f.engine, {
+    scene, player: new THREE.Group(), camera,
+    palette: { worldSky: new THREE.Color(0xa0b8c8), bg: new THREE.Color(0x303030),
+      worldHorizon: new THREE.Color(0xb0c0c8), worldSun: new THREE.Color(0xffdfaf), worldFog: new THREE.Color(0xa0b0c0) },
+    dayNightKeyframes: { day: { skyTint: new THREE.Color(1, 1, 1) } },
+    generatedTextures: new Map(), cloudBaseColor: new THREE.Color(), clouds: [],
+  })
+  try {
+    f.engine.createAtmosphere()
+    // The day/night update places the moon opposite the sun before any production frame.
+    f.engine.moonDisc.position.copy(f.engine.sunDisc.position).multiplyScalar(-1)
+    assert.equal(f.engine.stars.material.opacity, 0)
+    assert.equal(f.engine.stars.frustumCulled, false)
+    const sky = f.engine.atmosphereRoot.getObjectByName('atmosphere-sky')
+    assert.ok(sky instanceof THREE.Mesh)
+    assert.equal(transientSourceCost(sky).triangles, 1088)
+    f.engine.prepareTransientEffects()
+    budget.apply()
+    assert.equal(budget.snapshot().reservedEnvironmentDrawUpperBound, 2)
+    assert.equal(budget.snapshot().admittedDrawUpperBound, 44)
+    assert.equal(budget.snapshot().protectedDrawUpperBound, 10)
+    assert.equal(budget.snapshot().overBudget, false)
+    assert.equal(sky.visible, true)
+    assert.equal(f.engine.stars.visible, true)
+    assert.equal(f.pool.mesh.visible, true)
+    const environmentSources: THREE.Object3D[] = []
+    f.engine.atmosphereRoot.traverse((source: THREE.Object3D) => environmentSources.push(source))
+    assert.equal(environmentSources.filter((source) => source.userData.transientCategory === 'environment').length, 2)
+    assert.ok(f.engine.clouds.every(({ group }: { group: THREE.Group }) =>
+      group.children.every((cloud) => cloud.visible)), 'off-view clouds are not hidden just to fit an invented reserve')
+    budget.restore()
+    const inventory = f.engine.getTransientEffectInventory()
+    assert.ok(inventory.sources.includes(sky) && inventory.sources.includes(f.engine.stars))
+    assert.ok(inventory.sources.includes(f.engine.clouds[0].group.children[0]), 'retained off-view backing is still inventoried')
+
+    // Without the reservation, a saturated 44-draw transient allowance misses the two real environment submissions.
+    const missed = new TransientEffectBudget()
+    missed.begin(f.engine.visualPolicy)
+    for (const particle of f.engine.particles) missed.add(particle.mesh, 'gore', 0)
+    missed.apply()
+    assert.equal(missed.snapshot().admittedDrawUpperBound + transientSourceCost(sky).calls +
+      transientSourceCost(f.engine.stars).calls, 46)
+    missed.restore()
+
+    f.engine.flames.push(new THREE.Mesh(new THREE.ConeGeometry(0.4, 1, 6), new THREE.MeshBasicMaterial()))
+    scene.add(f.engine.flames[0])
+    f.engine.prepareTransientEffects()
+    budget.apply()
+    assert.equal(budget.snapshot().reservedEnvironmentDrawUpperBound, 3)
+    assert.equal(budget.snapshot().admittedDrawUpperBound, 44)
+    assert.equal(f.engine.flames[0].visible, true)
+    budget.restore()
+  } finally {
+    budget.clear()
+    const geometries = new Set<THREE.BufferGeometry>(), materials = new Set<THREE.Material>()
+    scene.traverse((source) => {
+      if (!(source instanceof THREE.Mesh) && !(source instanceof THREE.Points)) return
+      geometries.add(source.geometry)
+      for (const material of Array.isArray(source.material) ? source.material : [source.material]) materials.add(material)
+    })
+    for (const geometry of geometries) geometry.dispose()
+    for (const material of materials) material.dispose()
+    for (const texture of f.engine.generatedTextures.values()) texture.dispose()
+    if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument)
+    else Reflect.deleteProperty(globalThis, 'document')
+    f.dispose()
+  }
+})
+
+test('environment reservation follows live view/layer visibility and never hides a protected-only overrun', () => {
+  const geometry = new THREE.PlaneGeometry(), material = new THREE.MeshBasicMaterial({ opacity: 0 })
+  const root = new THREE.Group(), offView = new THREE.Mesh(geometry, material), hidden = new THREE.Mesh(geometry, material)
+  offView.position.set(1000, 0, -10)
+  hidden.visible = false
+  root.add(offView, hidden)
+  const camera = new THREE.PerspectiveCamera(56, 1, 0.1, 100), budget = new TransientEffectBudget()
+  const sky = new THREE.Mesh(geometry, material)
+  sky.position.z = -2
+  root.add(sky)
+  try {
+    budget.begin(resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'low' }), camera)
+    budget.reserveEnvironment(root)
+    budget.reserveEnvironment(root)
+    const tells = Array.from({ length: 20 }, () => new THREE.Mesh(geometry, material))
+    for (const tell of tells) budget.add(tell, 'tell', 200, true)
+    budget.apply()
+    assert.equal(budget.snapshot().reservedEnvironmentDrawUpperBound, 1, 'duplicate roots do not double-charge')
+    assert.equal(budget.snapshot().admittedDrawUpperBound, 21)
+    assert.equal(budget.snapshot().overBudget, true)
+    assert.ok(sky.visible && tells.every((tell) => tell.visible))
+    budget.restore()
+    sky.layers.set(1)
+    budget.begin(resolveVisualPolicy({ visualMode: 'enhanced' }), camera)
+    budget.reserveEnvironment(root)
+    budget.apply()
+    assert.equal(budget.snapshot().reservedEnvironmentDrawUpperBound, 0)
+    budget.restore()
+    sky.layers.set(0)
+    offView.position.set(0, 0, -3)
+    budget.begin(resolveVisualPolicy({ visualMode: 'enhanced' }), camera)
+    budget.reserveEnvironment(root)
+    budget.apply()
+    assert.equal(budget.snapshot().reservedEnvironmentDrawUpperBound, 2, 'moving a cloud into view updates the reserve')
+    budget.restore()
+    assert.equal(hidden.visible, false)
+  } finally { budget.clear(); geometry.dispose(); material.dispose() }
 })
 
 test('over-budget defensive tells are not hidden, and visibility restores after an explicit render failure', () => {

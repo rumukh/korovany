@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import type { TransientEffectBudget } from '../TransientEffectBudget.ts'
 import { StylizedArtLibrary } from '../art/StylizedArtLibrary.ts'
 import { GraphicsGpuTimer, type GraphicsGpuSample } from './GraphicsGpuTimer.ts'
 import { GraphicsResources, type GraphicsResourceSnapshot } from './GraphicsResources.ts'
@@ -21,6 +22,7 @@ export interface GraphicsRuntimeFrame {
   region: string | null
   visibleRegions: string[]
   simulatedRegions: string[]
+  transientPresentation?: ReturnType<TransientEffectBudget['snapshot']>
   cameraPresentation?: {
     x: number
     y: number

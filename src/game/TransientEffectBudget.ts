@@ -4,7 +4,7 @@ import type { VisualQualityPolicy } from './visualPolicy.ts'
 import type { VisualAllocationReceipt } from './diagnostics/VisualBudgetAccounting.ts'
 
 export type TransientSource = THREE.Mesh | THREE.Sprite | THREE.Points | THREE.Line
-export type TransientCategory = 'contact' | 'number' | 'callout' | 'ray' | 'gore' | 'decal' | 'smoke' | 'debris' | 'trail' | 'weather' | 'tell' | 'projectile' | 'loot'
+export type TransientCategory = 'contact' | 'number' | 'callout' | 'ray' | 'gore' | 'decal' | 'smoke' | 'debris' | 'trail' | 'weather' | 'tell' | 'projectile' | 'loot' | 'environment'
 interface Candidate {
   source: TransientSource
   priority: number
@@ -56,20 +56,50 @@ export class TransientEffectBudget {
   private limit = 0
   private triangleLimit = 0
   private protectedCalls = 0
+  private environmentCalls = 0
+  private camera: THREE.Camera | null = null
+  private readonly frustum = new THREE.Frustum()
+  private readonly projection = new THREE.Matrix4()
   private readonly cost = { calls: 0, triangles: 0 }
 
-  begin(policy: VisualQualityPolicy): void {
+  begin(policy: VisualQualityPolicy, camera?: THREE.Camera): void {
     if (this.prepared) throw new Error('Transient visibility must be restored before preparing another frame')
     this.candidates.length = 0
     this.seen.clear()
     this.submitted = this.triangles = this.requested = this.omitted = 0
     this.protectedCalls = 0
+    this.environmentCalls = 0
+    this.camera = camera ?? null
+    if (camera) {
+      this.projection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+      this.frustum.setFromProjectionMatrix(this.projection, camera.coordinateSystem, camera.reversedDepth)
+    }
     if (this.policy !== policy) {
       const allocation = resolveVisualSubsystemAllocation(policy)
       this.limit = allocation?.transientEffectDraws ?? Infinity
       this.triangleLimit = allocation?.limits.postAndEffects.mainViewTriangles ?? Infinity
       this.policy = policy
     }
+  }
+
+  /** Reserve existing environment submissions, not every cloud outside the current view. */
+  reserveEnvironment(root: THREE.Object3D): void {
+    if (!this.camera) throw new Error('Environment draw reservation requires the production camera')
+    root.updateWorldMatrix(true, true)
+    this.reserveEnvironmentSources(root, this.camera)
+  }
+
+  private reserveEnvironmentSources(root: THREE.Object3D, camera: THREE.Camera): void {
+    if (!root.visible) return
+    if ((root instanceof THREE.Mesh || root instanceof THREE.Sprite || root instanceof THREE.Points || root instanceof THREE.Line) &&
+        root.layers.test(camera.layers) &&
+        (root.castShadow || !root.frustumCulled || (root instanceof THREE.Sprite
+          ? this.frustum.intersectsSprite(root) : this.frustum.intersectsObject(root)))) {
+      const before = this.requested
+      this.add(root, 'environment', 250, true)
+      this.environmentCalls += this.requested - before
+    }
+    for (const child of root.children) this.reserveEnvironmentSources(child, camera)
   }
 
   add(source: TransientSource, category: TransientCategory, priority: number, protectedSource = false): void {
@@ -130,7 +160,9 @@ export class TransientEffectBudget {
     this.candidates.length = 0
     this.seen.clear()
     this.policy = null
+    this.camera = null
     this.submitted = this.triangles = this.requested = this.omitted = this.protectedCalls = 0
+    this.environmentCalls = 0
   }
 
   snapshot() {
@@ -139,9 +171,10 @@ export class TransientEffectBudget {
       requestedDrawUpperBound: this.requested, admittedDrawUpperBound: this.submitted,
       omittedDrawUpperBound: this.omitted, admittedMainTrianglesUpperBound: this.triangles,
       protectedDrawUpperBound: this.protectedCalls,
+      reservedEnvironmentDrawUpperBound: this.environmentCalls,
       overBudget: this.submitted > this.limit || this.triangles > this.triangleLimit,
       measuredDraws: null, cpuMs: null, complete: false,
-      missing: ['Actual per-subsystem GL submissions and CPU scopes', 'Persistent sky/cloud/fire presentation and complete allocation closure'],
+      missing: ['Actual per-subsystem GL submissions and CPU scopes', 'Persistent effects outside known environment roots and complete allocation closure'],
     }
   }
 }

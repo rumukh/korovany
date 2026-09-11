@@ -244,6 +244,26 @@ depth submissions. The controller includes secondary particles, gore, smoke,
 debris, decals, damage numbers, callouts, impact rays, weapon trail, rain/snow,
 projectiles, telegraphs and pooled loot presentation.
 
+The measured `ec1d3174` High crowded profile exposed two already-attributed
+environment submissions outside that admission set: the 1088-triangle sky sphere
+and the 180-point star buffer (zero opacity still submits). Five of its 600
+sample frames reached 45 non-post draws plus 16 post draws. The original raw
+profile remains unchanged; its final-frame assessment did not describe that peak.
+
+Known atmosphere/flame roots now reserve their actual in-view source costs
+inside the same 44/24/20 allowance before cosmetic selection. The same camera
+layers/frustum determine view participation; non-frustum-culled sources such as
+stars still count, and shadow casters reserve conservatively even outside the
+main view. Off-view clouds do not consume an invented forty-draw reserve.
+Environment sources, tells and projectiles remain protected; if protected work
+alone exceeds the allowance it is still displayed and reported, never hidden to
+claim a pass. Original visibility and all physics/RNG/timing remain unchanged.
+The existing runtime frame record includes `transientPresentation` with the
+admitted/protected and reserved-environment upper bounds, so later proof can
+compare every sampled frame rather than just the final snapshot. Known
+atmosphere/flame geometry also joins the retained-source inventory without
+changing its disposal owner or reclassifying it as world art.
+
 Zero material opacity is **not** a draw exclusion. Three.js submits visible
 material slots with nonempty draw ranges/instance counts even when opacity is
 zero, and `bindLootOpacity.onBeforeRender` can replace a shared material's
@@ -278,7 +298,8 @@ The existing diagnostic `rendering.contacts` reports sampler/fallback counters;
 `rendering.transientEffects` reports requested/admitted/omitted conservative
 draw/triangle bounds, protected cost, `overBudget` and explicit missing data.
 `measuredDraws`, `cpuMs` and `complete` do not pretend a source estimate is an
-actual GPU frame. Persistent sky/cloud/fire attribution remains open.
+actual GPU frame. Persistent effects outside the known environment roots and
+complete allocation/CPU attribution remain open.
 
 ## CPU evidence and remaining visual tasks
 
@@ -297,8 +318,105 @@ a GPU, alongside existing group/range/instance/shadow accounting.
 The existing build/type/lint and combat/finale/diagnostic suites remain the
 validation tools; no dependency or test framework is added.
 
-There is no GPU/browser lease for this CPU task. Surface contacts in motion,
-first combined visual review, grayscale/night/wetness/flare tuning, true
-whole-frame/subsystem GPU and CPU accounting, physical-device budgets, live
-390x844 focus/touch/text-scaling evidence and human approval still require a
-separate serialized capture task. No AO or default promotion is included.
+Those CPU checkpoints did not include browser evidence. The separately
+authorized measured follow-up below is narrower than full acceptance: broader
+surface-contact motion, grayscale/night/wetness/flare tuning, complete retained
+inventory and disjoint subsystem CPU attribution, physical-device budgets,
+full live focus/text-scaling coverage and human approval remain integration
+gates. Browser work no longer requires a resource lease or central permission.
+No AO or default promotion is included.
+
+## Measured effects and compact-notice follow-up (2026-09-11)
+
+This follow-up fast-forwarded the clean GFX-05 worktree to the specifically
+approved integrated `ec1d3174d65d772f78e1ee8488458b64e61a7cde`. It did not follow
+moving camera or character-budget branches.
+
+The environment reservation fix is
+`022b56a6a7c202a4cb58968e3a604536bedea970`. One High crowded-25 production run
+recorded 120 warm-up and 600 sample frames with the existing whole-frame
+profiler. Every sample retained 25 NPCs, active simulation and reconciled,
+complete submission attribution. Maximum `postAndEffects` work was **58**:
+42 non-post plus the unchanged 16 post calls, below the existing 60 limit.
+Environment reservation was two draws in every sample; admission never exceeded
+44 and no protected-only overrun occurred. Actual contact counters were
+23 sampled contacts, six projectile contacts and 134 accepted secondary
+particles. The original five over-limit frames and raw 61-call run were retained.
+
+This is a draw-envelope result, **not** a frame-time or complete-tier pass:
+RAF/CPU/GPU p95 were 35.8/30.7/21.093 ms, whole-frame maximum was 332 draws and
+main-view maximum was 174229 triangles. All 600 GPU queries were available.
+The timing runs were not an isolated performance comparison; no speedup is
+claimed. Resource/CPU ownership assessment remains explicitly incomplete.
+Raw profile, manifest, screenshots and strict all-sample summary are in the
+session artifact directory `gfx05-high-reserve-20260911`.
+
+The additional compact-mobile issue was reproduced using the actual native
+guard input and production teaching notice, respecting both simulation-time
+hint pacing and wall-time notice expiry. At 390x844 the old notice occupied
+x16..374, y84.797..147.906 and covered both health and stamina bars (intersection
+areas 1007.829 and 541.481 square pixels). It also overlapped map/navigation.
+
+Compact mode now renders its one existing polite live notice region in the
+right-hand HUD column, after map/compass/finale and before optional world news.
+On narrow/coarse layouts it participates in normal flow and the existing
+scrollable safe region, rather than covering vitals. Copy, tones, timers,
+essential left-side HUD, controls, overlays, full mode and gameplay are unchanged.
+No duplicate mobile/desktop live regions or hidden notice copy is introduced.
+
+The same real notice then occupied x248.609..381.203, y189.922..381.906 at
+390x844, with zero intersection against vitals, health/stamina, squad, defense,
+map, compass or touch controls. Touch buttons remained 44x44. At 1920x1080 its
+rectangle remained exactly x736..1184, y16..79.109, matching the original
+desktop placement. Both layouts have actual screenshots and DOM receipts;
+the left combat/mission layout was not redesigned.
+
+The ordinary runner's `--notice-layout` option reproduces this one held
+crowded-25 case at both sizes. It reuses the same browser/engine and owned
+cleanup, does not create another profiler, and fails on missing/expired notice
+or an essential-HUD intersection. Run with `--cases crowded-25 --repeat 1
+--hud-mode compact --notice-layout` and an absolute new output directory;
+do not combine with performance/portrait/motion suites. Original failing
+receipts are in `gfx05-notice-original-layout-20260911`; passing screenshots
+and receipts are in `gfx05-notice-fixed-layout-20260911`.
+
+Focused effects/contact/subsystem/diagnostic regressions passed 46 cases;
+compact/component/mobile/overlay regressions passed 18. Production app/test
+types, build and changed-path lint passed. These bounded results do not replace
+the broader visual and device acceptance gates above.
+
+### Desktop finale notice lane correction
+
+The subsequent review found a distinct existing CSS contract not exercised by
+the ordinary crowd: `FinaleHud.css` relocates desktop notices to the lower-left
+game-screen lane. After the compact notice node moved into the top HUD, that
+rule's `left`/`bottom` used the wrong containing block, while the equal-specificity
+compact rule supplied `top: 0` and a wider notice. Actual built-CSS component
+layout showed x32..480, y16..79.109, covering the identity/pause header, with the
+stack stretched down to y356.734. The single-notice fixture did not intersect
+vitals; the proven defect was the changed lane and header overlap.
+
+A desktop/fine-pointer compact-plus-finale rule now anchors only this lane to
+the viewport with the original left `1rem`, bottom `4.5rem` and width `19rem`,
+explicitly resetting `top: auto`. The one live region remains in its existing
+DOM position; mobile keeps bounded right-side normal flow. Full mode, ordinary
+compact layout, timers, copy, defense and finale gameplay are unchanged.
+
+The existing SSR component fixture and production build's exact CSS order were
+used at 1920x1080 and 390x844, for full/compact and ordinary/finale combinations.
+All eight cases have clearly labeled component screenshots and computed-style/
+rectangle receipts, **not boss gameplay or an engine capture**. The corrected
+desktop compact-finale lane is x16..320 with bottom y1008, matching the original
+game-screen lane, and clears identity/pause, vitals, defense timing, finale,
+prompts and controls. The other seven combinations retain their original notice,
+stack, style and shared essential-HUD rectangles exactly, including mobile finale
+normal flow. The fixture inherits the existing SSR asset stubs; it is layout,
+not faction-emblem or world-art evidence.
+
+Artifacts: `gfx05-finale-notice-before-20260911` and
+`gfx05-finale-notice-fixed-20260911`, including `all-cases-proof.json`.
+To reproduce without replaying combat, set `GFX_NOTICE_COMPONENT_OUTPUT` to a
+new absolute JSON path when running `tests\compactCombatHud.test.ts`, then pass
+that path to the existing runner using `--notice-component-layout` and
+`--repeat 1`. That path never creates a game engine, profiles frames or performs
+a native-input replay. Malformed packets fail rather than falling back to play.

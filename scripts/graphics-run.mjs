@@ -13,6 +13,7 @@ import {
   FIRST_VISUAL_CASES, firstVisualPortraitStages, portraitSaveIdentity, portraitSimulationIdentity, portraitCameraReference,
 } from './graphics/portraits.mjs'
 import { assertCaptureDeadline, captureRuntimeControls, recordedRiverEndpoint } from './graphics/runtime-controls.mjs'
+import { captureNoticeLayout, captureNoticeComponentLayout } from './graphics/notice-layout.mjs'
 
 const toolRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
@@ -50,6 +51,8 @@ if (flag('help')) {
   console.log('Requires npm run build. No browser lease, GO, HOLD or resource permission is required. A dedicated loopback server and disposable Chrome profile are owned and stopped by this command. Mobile dimensions are layout evidence, not a mobile-device benchmark.')
   console.log('First visual: --portraits [--workspace ABSOLUTE_WORKTREE] [--portrait-reference MANIFEST_JSON]. Three opening worlds, held production portrait presets and normal gameplay views; incompatible with --profile/--motion/--native-route/--foundation/--lifecycle.')
   console.log('Joined preview: --portrait-smoke with --portraits captures only the fixed player/front/current stage. --runtime-controls checks held same-engine resize/DPR/bloom toggles. --hud-mode full|compact selects existing DOM preference. --recorded-river-endpoint stages the preserved river player/yaw/pitch, never a camera override.')
+  console.log('Compact HUD: --notice-layout captures actual guard teaching notice rectangles at 390 and 1920 in one held crowded-25 fixture; asserts no essential HUD overlap.')
+  console.log('HUD-only: --notice-component-layout ABSOLUTE_JSON uses the exported compactCombatHud.test.ts component fixture and built CSS; no engine, combat or profiling run.')
   process.exit(0)
 }
 const output = option('out')
@@ -65,6 +68,15 @@ const sampleFrames = Number(option('frames', '300'))
 const visualMode = option('visual-mode', 'legacy')
 const quality = option('quality', 'high')
 const hudMode = option('hud-mode', 'full')
+const componentLayoutPath = option('notice-component-layout')
+if (componentLayoutPath && (!isAbsolute(componentLayoutPath) || repeat !== 1 ||
+    ['portraits', 'profile', 'motion', 'runtime-controls', 'notice-layout', 'native-route', 'lifecycle', 'foundation'].some(flag))) {
+  throw new Error('Notice component layout requires an absolute fixture, --repeat 1 and no engine diagnostic jobs')
+}
+const componentLayout = componentLayoutPath ? JSON.parse(await readFile(componentLayoutPath, 'utf8')) : null
+if (componentLayoutPath && componentLayout?.kind !== 'production-hud-component-layout-v1') {
+  throw new Error('Invalid HUD component layout packet; refusing to fall back to an engine run')
+}
 if (!['full', 'compact'].includes(hudMode)) throw new Error('Invalid HUD mode')
 if (!['legacy', 'enhanced'].includes(visualMode) || !['high', 'balanced', 'low'].includes(quality)) throw new Error('Invalid visual policy selection')
 if ((flag('no-aa') || flag('foundation')) && visualMode !== 'enhanced') throw new Error('Foundation/AA comparison requires explicit enhanced preview')
@@ -83,6 +95,10 @@ if (flag('portrait-smoke') && !flag('portraits')) throw new Error('--portrait-sm
 if (flag('runtime-controls') && (visualMode !== 'enhanced' ||
     ['portraits', 'profile', 'motion', 'native-route', 'foundation', 'lifecycle', 'no-aa'].some(flag))) {
   throw new Error('Runtime controls require ordinary enhanced held fixtures without other diagnostic stages')
+}
+if (flag('notice-layout') && (hudMode !== 'compact' || option('cases') !== 'crowded-25' || repeat !== 1 ||
+    ['portraits', 'profile', 'motion', 'runtime-controls', 'native-route', 'lifecycle'].some(flag))) {
+  throw new Error('Notice layout requires --cases crowded-25 --repeat 1 --hud-mode compact without other diagnostic jobs')
 }
 const referencePath = option('portrait-reference')
 if (referencePath && (!flag('portraits') || !isAbsolute(referencePath))) throw new Error('--portrait-reference needs --portraits and an absolute manifest path')
@@ -163,7 +179,8 @@ const manifest = {
     profile: 'Active production requestAnimationFrame updates; default 0.05 s simulation clamp and hit stop unchanged. Warm-up and samples separate; no per-frame screenshot/readback.',
     memory: 'Observed WebGL storage bytes, not measured resident VRAM. Default framebuffer, implicit extension MSAA and driver/swapchain exclusions separately reported.',
     requestedVisualMode: visualMode, requestedQuality: quality, diagnosticNoAA: flag('no-aa'),
-    hudMode, portraitSmoke: flag('portrait-smoke'), runtimeControls: flag('runtime-controls'),
+    hudMode, portraitSmoke: flag('portrait-smoke'), runtimeControls: flag('runtime-controls'), noticeLayout: flag('notice-layout'),
+    noticeComponentLayout: componentLayoutPath ?? null,
     recordedEndpoint: endpointBytes ? { file: endpointFile, sha256: sha256(endpointBytes), sourceCommit: 'bfae58b34a411ab434d387e6710fd97be6b2acb3' } : null,
     foundationFixture: flag('foundation'), reducedMotion: flag('reduced-motion'),
     portraitComparison: flag('portraits') ? {
@@ -450,7 +467,22 @@ try {
   await browser.send('Emulation.setEmulatedMedia', {
     features: [{ name: 'prefers-reduced-motion', value: flag('reduced-motion') ? 'reduce' : 'no-preference' }],
   })
-  for (const fixture of fixtures) {
+  if (componentLayout) {
+    manifest.componentLayout = { captures: [] }
+    manifest.componentLayout.summary = await captureNoticeComponentLayout(
+      browser, componentLayout, await readFile(join(root, 'dist', 'index.html'), 'utf8'),
+      async (id, measurement) => {
+        checkTime()
+        assertBrowserHealthy(id)
+        const file = `${id}.png`
+        const bytes = await browser.screenshot(join(out, file))
+        const record = { id, file, sha256: sha256(bytes), measurement }
+        manifest.componentLayout.captures.push(record)
+        await writeFile(join(out, `${id}.json`), JSON.stringify(record, null, 2))
+        await writeFile(join(out, 'manifest.json'), JSON.stringify(manifest, null, 2))
+      }, checkTime)
+  }
+  for (const fixture of componentLayout ? [] : fixtures) {
     checkTime()
     const result = { id: fixture.id, definition: fixture, captures: [] }
     manifest.cases.push(result)
@@ -469,6 +501,20 @@ try {
       await writeFile(join(out, `${fixture.id}-${repetition}.json`), JSON.stringify(capture, null, 2))
       assertBrowserHealthy(fixture.id)
       if (flag('portraits')) await capturePortraitSuite(fixture, result)
+      if (flag('notice-layout')) {
+        result.noticeLayout = { captures: [] }
+        result.noticeLayout.summary = await captureNoticeLayout(browser, { width, height, dpr },
+          async (id, measurement) => {
+            checkTime()
+            assertBrowserHealthy(`${fixture.id}:${id}`)
+            const file = `${fixture.id}-${id}.png`
+            const bytes = await browser.screenshot(join(out, file))
+            const record = { id, file, sha256: sha256(bytes), measurement }
+            result.noticeLayout.captures.push(record)
+            await writeFile(join(out, `${fixture.id}-${id}.json`), JSON.stringify(record, null, 2))
+            await writeFile(join(out, 'manifest.json'), JSON.stringify(manifest, null, 2))
+          }, checkTime)
+      }
       if (flag('runtime-controls')) {
         result.runtimeControls = { captures: [] }
         result.runtimeControls.summary = await captureRuntimeControls(browser, { width, height, dpr },
@@ -544,15 +590,17 @@ try {
   }
   // Launch the ordinary build without the opt-in query as a real default-off
   // control, not merely a check of an empty menu where no engine exists.
-  checkTime()
-  await browser.send('Page.navigate', { url: origin })
-  await browser.waitFor('document.readyState === "complete" && !!document.querySelector("#world-seed, .active-run-card")')
-  if (await browser.evaluate('!!document.querySelector(".active-run-card")')) {
-    await browser.clickSelector('.active-run-actions .primary-button')
-  } else await browser.clickSelector('.faction-card.guard button')
-  await browser.waitFor('!!document.querySelector(".game-canvas")')
-  manifest.defaultOffControl = await browser.evaluate('({canvasPresent:!!document.querySelector(".game-canvas"),diagnosticsAbsent:window.__korovanyGraphics === undefined})')
-  if (!manifest.defaultOffControl.diagnosticsAbsent) throw new Error('Diagnostics activated without the explicit query')
+  if (!componentLayout) {
+    checkTime()
+    await browser.send('Page.navigate', { url: origin })
+    await browser.waitFor('document.readyState === "complete" && !!document.querySelector("#world-seed, .active-run-card")')
+    if (await browser.evaluate('!!document.querySelector(".active-run-card")')) {
+      await browser.clickSelector('.active-run-actions .primary-button')
+    } else await browser.clickSelector('.faction-card.guard button')
+    await browser.waitFor('!!document.querySelector(".game-canvas")')
+    manifest.defaultOffControl = await browser.evaluate('({canvasPresent:!!document.querySelector(".game-canvas"),diagnosticsAbsent:window.__korovanyGraphics === undefined})')
+    if (!manifest.defaultOffControl.diagnosticsAbsent) throw new Error('Diagnostics activated without the explicit query')
+  }
   manifest.complete = true
 } catch (error) {
   manifest.error = { message: error.message, stack: error.stack }

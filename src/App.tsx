@@ -2744,6 +2744,25 @@ export function GameScreen({
     onBlur: () => onInput(code, false),
   })
 
+  const noticeStack = (
+    <div className="notice-stack" aria-live="polite">
+      {notices.map((notice) => (
+        <div className={`notice ${notice.tone}`} key={notice.id}>
+          {notice.tone === 'success' ? (
+            <Check aria-hidden="true" />
+          ) : notice.tone === 'danger' ? (
+            <Skull aria-hidden="true" />
+          ) : notice.tone === 'warning' ? (
+            <Shield aria-hidden="true" />
+          ) : (
+            <Sparkles aria-hidden="true" />
+          )}
+          <span>{notice.message}</span>
+        </div>
+      ))}
+    </div>
+  )
+
   return (
     <main
       className={`game-screen faction-${view.faction}${lowHealth ? ' low-health' : ''}${simulationPaused ? ' simulation-paused' : ''}`}
@@ -2805,6 +2824,7 @@ export function GameScreen({
           <MiniMap view={view} onOpenAtlas={onOpenAtlas} />
           <ExpeditionCompass view={view} onOpen={onOpenAtlas} />
           <FinaleHud finale={view.finale} />
+          {visualPreferences.hudMode === 'compact' ? noticeStack : null}
           <CompactWorldNews mode={visualPreferences.hudMode} view={view}>
             <ChronicleFeed view={view} />
             <RumourBoard view={view} onPin={onPinRumour} />
@@ -2893,22 +2913,7 @@ export function GameScreen({
         </div>
       </div>
 
-      <div className="notice-stack" aria-live="polite">
-        {notices.map((notice) => (
-          <div className={`notice ${notice.tone}`} key={notice.id}>
-            {notice.tone === 'success' ? (
-              <Check aria-hidden="true" />
-            ) : notice.tone === 'danger' ? (
-              <Skull aria-hidden="true" />
-            ) : notice.tone === 'warning' ? (
-              <Shield aria-hidden="true" />
-            ) : (
-              <Sparkles aria-hidden="true" />
-            )}
-            <span>{notice.message}</span>
-          </div>
-        ))}
-      </div>
+      {visualPreferences.hudMode === 'full' ? noticeStack : null}
       <LootToast toast={view.lootToast} />
       <AchievementBanner achievement={achievementBanner} />
 
