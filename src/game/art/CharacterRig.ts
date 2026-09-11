@@ -217,6 +217,7 @@ export class CharacterPresenter {
   private readonly player: boolean
   private readonly quality: VisualQuality
   private readonly compact: boolean
+  private readonly compactHeadgear: boolean
   private readonly parts: Part[] = []
   private readonly bones: THREE.Bone[] = []
   private readonly boneLimb: number[] = []
@@ -265,6 +266,7 @@ export class CharacterPresenter {
     this.player = player
     this.quality = quality
     const compact = this.compact = quality !== 'high' && !player
+    this.compactHeadgear = compact && quality === 'low'
     this.level = player ? 'hero' : 'near'
     const p = plan.proportions
     const a = this.anatomy = buildCharacterSkeleton(p)
@@ -315,7 +317,7 @@ export class CharacterPresenter {
     if (plan.headgear !== 'none') {
       const soft = ['hood', 'ragHood', 'cap'].includes(plan.headgear)
       const mask = plan.headgear === 'boneMask'
-      part(head, (level) => buildIllustratedHeadgear(plan.headgear, level),
+      part(head, (level) => buildIllustratedHeadgear(plan.headgear, level, this.compactHeadgear),
         soft ? cloth : mask ? CHARACTER_PHYSICAL_PALETTE.bone : plan.headgear === 'strap' ? leather : metal,
         soft ? 'cloth' : mask ? 'bone' : plan.headgear === 'strap' ? 'leather' : 'metal')
       if (plan.headgear === 'hornedHelm') part(head, buildIllustratedHorns, CHARACTER_PHYSICAL_PALETTE.bone, 'bone')
@@ -623,7 +625,7 @@ export class CharacterPresenter {
 
   private bodyLease(level: CharacterVisualLevel): ArtGeometryLease {
     const detail = this.detailLevel(level)
-    const key = `${CHARACTER_ART_REVISION}:${JSON.stringify(this.plan)}:${detail}:${this.compact}`
+    const key = `${CHARACTER_ART_REVISION}:${JSON.stringify(this.plan)}:${detail}:${this.compact}:${this.compactHeadgear}`
     const retained = this.recentBodies.get(key)
     if (retained) {
       const lease = cachedLease(this.cache, key, () => { throw new Error('Retained character geometry was lost') })

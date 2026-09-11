@@ -10,6 +10,7 @@ import {
   resolveCharacterPlan, characterRoles, buildIllustratedHead, buildIllustratedHeadgear,
   selectCharacterVisualLevel, validateArtGeometry,
   buildIllustratedHand, buildIllustratedBoot, buildWeaponGrip, buildWeaponHead,
+  buildIllustratedFace, buildIllustratedEyes, buildIllustratedHair,
   type CharacterContact,
   type OutlineBinding,
 } from '../src/game/art/index.ts'
@@ -335,18 +336,20 @@ test('each guard variant fits its source-plus-ink geometry envelope without drop
   cache.dispose(); art.dispose()
 })
 
-test('compact crowd topology retains every approved head and physical channel across the taxonomy', () => {
+test('compact crowd topology retains facial anatomy and physical channels across the taxonomy', () => {
   const art = library(), cache = new GeometryCache()
   const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200)
   const high = resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'high' })
-  const headTriangles = (p: ReturnType<typeof createCharacterPresenter>) => {
+  const headTriangles = (p: ReturnType<typeof createCharacterPresenter>, corners = Infinity) => {
     const g = p.body.geometry, head = p.skeleton.bones.findIndex((b) => b.name === 'head')
     const channels = ['position', 'normal', 'outlineNormal', 'color', ART_SURFACE_ATTRIBUTE, ART_WEATHER_ATTRIBUTE]
     for (const name of channels) assert.ok(g.hasAttribute(name), name)
     const values: number[] = []
+    let seen = 0
     for (let i = 0; i < g.index!.count; i++) {
       const vertex = g.index!.getX(i)
       if (g.getAttribute('skinIndex').getX(vertex) !== head) continue
+      if (seen++ >= corners) break
       for (const name of channels) {
         const attribute = g.getAttribute(name)
         for (let c = 0; c < attribute.itemSize; c++) values.push(attribute.getComponent(vertex, c))
@@ -367,7 +370,17 @@ test('compact crowd topology retains every approved head and physical channel ac
           assert.equal(full.level, 'mid')
         }
         const compact = createCharacterPresenter(plan, art, cache, false, quality)
-        assert.deepEqual(headTriangles(compact), headTriangles(full), `${quality}/${faction}/${role}/${variant}`)
+        let faceCorners = Infinity
+        if (quality === 'low') {
+          const parts = [
+            buildIllustratedHead(faction, 'mid'), buildIllustratedFace('mid'),
+            buildIllustratedEyes(false, 'mid'), buildIllustratedEyes(true, 'mid'),
+            ...(plan.hair === 'none' ? [] : [buildIllustratedHair(plan.hair)]),
+          ]
+          faceCorners = parts.reduce((sum, g) => sum + (g.index?.count ?? g.getAttribute('position').count), 0)
+          for (const g of parts) g.dispose()
+        }
+        assert.deepEqual(headTriangles(compact, faceCorners), headTriangles(full, faceCorners), `${quality}/${faction}/${role}/${variant}`)
         assert.ok(compact.body.geometry.index!.count < full.body.geometry.index!.count)
         assert.equal(compact.sources.length, full.sources.length, 'body and all equipment still exist')
         assert.equal(compact.jointCount, full.jointCount)
@@ -378,6 +391,41 @@ test('compact crowd topology retains every approved head and physical channel ac
       }
     }
   }
+  cache.dispose(); art.dispose()
+})
+
+test('Low headgear keeps eye openings, fitted extents and separate quality cache receipts', () => {
+  for (const kind of ['nasal', 'crested', 'kettle', 'hood', 'ragHood', 'cap'] as const) {
+    const full = buildIllustratedHeadgear(kind, 'mid')
+    const compact = buildIllustratedHeadgear(kind, 'mid', true)
+    assert.ok(compact.getAttribute('position').count < full.getAttribute('position').count, `${kind} coarse tessellation`)
+    full.computeBoundingBox(); compact.computeBoundingBox()
+    assert.ok(full.boundingBox!.min.distanceTo(compact.boundingBox!.min) < 0.045)
+    assert.ok(full.boundingBox!.max.distanceTo(compact.boundingBox!.max) < 0.045)
+    const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
+    const mesh = new THREE.Mesh(compact, material)
+    mesh.updateMatrixWorld(true)
+    for (const x of [-0.087, 0.087]) {
+      const ray = new THREE.Raycaster(new THREE.Vector3(x, 0.058, 1), new THREE.Vector3(0, 0, -1), 0, 0.83)
+      assert.equal(ray.intersectObject(mesh).length, 0, `${kind} closes the approved face opening`)
+    }
+    full.dispose(); compact.dispose(); material.dispose()
+  }
+  const art = library(), cache = new GeometryCache()
+  const plan = illustratedCharacterPlan(resolveCharacterPlan('guard', 'soldier', 1))
+  const balanced = createCharacterPresenter(plan, art, cache, false, 'balanced')
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 150)
+  camera.position.z = 30
+  balanced.updateLod(camera, resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'balanced' }))
+  assert.equal(balanced.level, 'mid')
+  const previous = balanced.body.geometry.index!.array.slice()
+  const low = createCharacterPresenter(plan, art, cache, false, 'low')
+  assert.notEqual(low.body.geometry, balanced.body.geometry)
+  assert.ok(low.body.geometry.index!.count < balanced.body.geometry.index!.count)
+  low.setAppearance({ rightArm: 'missing' })
+  assert.deepEqual(balanced.body.geometry.index!.array, previous)
+  low.dispose(); balanced.dispose()
+  assert.equal(cache.size, 0)
   cache.dispose(); art.dispose()
 })
 

@@ -2215,7 +2215,7 @@ function helmDome(radius: number, height: number, segments = 9): THREE.BufferGeo
   )
 }
 
-export function buildHeadgear(kind: HeadgearKind): THREE.BufferGeometry {
+export function buildHeadgear(kind: HeadgearKind, compact = false): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = []
   if (kind === 'circlet' || kind === 'crown') {
     const band = latheProfile(
@@ -2297,11 +2297,11 @@ export function buildHeadgear(kind: HeadgearKind): THREE.BufferGeometry {
       ),
     )
   } else if (kind === 'nasal' || kind === 'crested') {
-    parts.push(transformed(helmDome(0.42, 0.5), { position: { x: 0, y: 0.2, z: 0 } }))
+    parts.push(transformed(helmDome(0.42, 0.5, compact ? 6 : 9), { position: { x: 0, y: 0.2, z: 0 } }))
     parts.push(
       // Nasal bar.
       block(
-        { width: 0.08, height: 0.34, depth: 0.09, topScale: 1.5, bevel: 0.02 },
+        { width: 0.08, height: 0.34, depth: 0.09, topScale: 1.5, bevel: compact ? 0 : 0.02 },
         { position: { x: 0, y: 0.02, z: 0.36 } },
       ),
       // Cheek plates.
@@ -2318,6 +2318,7 @@ export function buildHeadgear(kind: HeadgearKind): THREE.BufferGeometry {
             position: { x: 0.31, y: 0.02, z: 0.2 },
             rotation: { x: 0, y: -1.2, z: 0 },
           },
+          compact ? 0 : 0.012,
         ),
       ),
       // Brow band, riveted.
@@ -2329,7 +2330,7 @@ export function buildHeadgear(kind: HeadgearKind): THREE.BufferGeometry {
             { x: 0.45, y: 0.04 },
             { x: 0.4, y: 0.06 },
           ],
-          { segments: 12, name: 'helm-band' },
+          { segments: compact ? 6 : 12, name: 'helm-band' },
         ),
         { position: { x: 0, y: 0.09, z: 0 } },
       ),
@@ -2459,7 +2460,7 @@ export function buildHeadgear(kind: HeadgearKind): THREE.BufferGeometry {
           { x: 0.24, y: 0.24 },
           { x: 0.001, y: 0.3 },
         ],
-        { segments: 9, name: 'cap' },
+        { segments: compact ? 6 : 9, name: 'cap' },
       ),
       // A knotted tail at the back — a headscarf, not a beanie.
       block(
@@ -5307,10 +5308,12 @@ function openHeadCover(ragged: boolean, level: CharacterVisualLevel): THREE.Buff
   return finish([shell], ragged ? 'ragged-open-hood' : 'open-hood')
 }
 
-export function buildIllustratedHeadgear(kind: HeadgearKind, level: CharacterVisualLevel): THREE.BufferGeometry {
-  if (kind === 'hood' || kind === 'ragHood') return openHeadCover(kind === 'ragHood', level)
+export function buildIllustratedHeadgear(
+  kind: HeadgearKind, level: CharacterVisualLevel, compact = false,
+): THREE.BufferGeometry {
+  if (kind === 'hood' || kind === 'ragHood') return openHeadCover(kind === 'ragHood', compact ? 'far' : level)
   if (kind === 'kettle' && (level === 'mid' || level === 'far')) {
-    const segments = level === 'mid' ? 8 : 6
+    const segments = level === 'mid' && !compact ? 8 : 6
     return finish([
       transformed(helmDome(0.228, 0.273, segments), { position: { x: 0, y: 0.1892, z: -0.006 } }),
       transformed(latheProfile([
@@ -5350,7 +5353,7 @@ export function buildIllustratedHeadgear(kind: HeadgearKind, level: CharacterVis
     ], 'fitted-open-greathelm')
   }
   // Keep the recognizable guard brim, nasal bar and officer crest, fitted to the new skull.
-  return transformed(buildHeadgear(kind), {
+  return transformed(buildHeadgear(kind, compact), {
     scale: { x: 0.57, y: 0.62, z: 0.59 }, position: { x: 0, y: 0.09, z: -0.006 },
   })
 }
