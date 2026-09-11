@@ -17654,11 +17654,24 @@ export class GameEngine {
   private resize(): void {
     const width = Math.max(1, this.container.clientWidth)
     const height = Math.max(1, this.container.clientHeight)
+    this.renderer.getSize(this.drawingBufferSize)
+    const cssChanged = this.drawingBufferSize.x !== width || this.drawingBufferSize.y !== height
+    const canvas = this.renderer.domElement
+    // Rewriting unchanged canvas dimensions clears a frame already presented
+    // before a queued ResizeObserver notification, including held captures.
     if (this.visualPolicy.mode === 'enhanced') {
       const viewport = resolveVisualViewport(this.visualPolicy.render, width, height, window.devicePixelRatio)
       this.rendererDevicePixelRatio = window.devicePixelRatio
-      this.renderer.setDrawingBufferSize(viewport.cssWidth, viewport.cssHeight, viewport.pixelRatio)
-    } else this.renderer.setSize(width, height, false)
+      if (cssChanged || this.renderer.getPixelRatio() !== viewport.pixelRatio ||
+          canvas.width !== viewport.drawingBufferWidth || canvas.height !== viewport.drawingBufferHeight) {
+        this.renderer.setDrawingBufferSize(viewport.cssWidth, viewport.cssHeight, viewport.pixelRatio)
+      }
+    } else {
+      const ratio = this.renderer.getPixelRatio()
+      if (cssChanged || canvas.width !== Math.floor(width * ratio) || canvas.height !== Math.floor(height * ratio)) {
+        this.renderer.setSize(width, height, false)
+      }
+    }
     this.postProcessor.setSize(width, height)
     this.renderer.getDrawingBufferSize(this.drawingBufferSize)
     this.artLibrary.setViewport(this.drawingBufferSize.x, this.drawingBufferSize.y,

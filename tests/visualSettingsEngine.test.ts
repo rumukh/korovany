@@ -71,6 +71,72 @@ function fixture() {
   return { engine, calls }
 }
 
+test('duplicate resize notifications preserve the presented canvas while real size and DPR changes still apply', () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
+  const viewport = { devicePixelRatio: 1 }
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: viewport })
+  try {
+    for (const visualMode of ['legacy', 'enhanced'] as const) {
+      viewport.devicePixelRatio = 1
+      const container = { clientWidth: 800, clientHeight: 600 }
+      const canvas = { width: 300, height: 150 }
+      let cssWidth = 300, cssHeight = 150, pixelRatio = 1, writes = 0, presented = false
+      const setBuffer = (width: number, height: number, ratio: number) => {
+        cssWidth = width; cssHeight = height; pixelRatio = ratio
+        canvas.width = Math.floor(width * ratio)
+        canvas.height = Math.floor(height * ratio)
+        writes++
+        presented = false
+      }
+      const engine: { resize(): void } = Object.assign(Object.create(GameEngine.prototype), {
+        container, visualPolicy: resolveVisualPolicy({ visualMode, visualQuality: 'balanced' }),
+        rendererDevicePixelRatio: 1, drawingBufferSize: new THREE.Vector2(),
+        camera: new THREE.PerspectiveCamera(), artLibrary: { setViewport() {} },
+        postProcessor: { setSize() {} },
+        renderer: {
+          domElement: canvas,
+          getSize: (out: THREE.Vector2) => out.set(cssWidth, cssHeight),
+          getPixelRatio: () => pixelRatio,
+          getDrawingBufferSize: (out: THREE.Vector2) => out.set(canvas.width, canvas.height),
+          setDrawingBufferSize: setBuffer,
+          setSize: (width: number, height: number) => setBuffer(width, height, pixelRatio),
+        },
+      })
+      engine.resize()
+      assert.equal(writes, 1)
+      presented = true
+      engine.resize()
+      assert.equal(writes, 1, `${visualMode}: a duplicate observer must not rewrite canvas dimensions`)
+      assert.equal(presented, true)
+
+      container.clientWidth = 960; container.clientHeight = 540
+      engine.resize()
+      assert.equal(writes, 2)
+      assert.equal(canvas.width, 960)
+      assert.equal(canvas.height, 540)
+      if (visualMode === 'enhanced') {
+        viewport.devicePixelRatio = 2
+        engine.resize()
+        assert.equal(writes, 3)
+        assert.equal(canvas.width, 1440)
+        assert.equal(canvas.height, 810)
+      }
+      presented = true
+      const settledWrites = writes
+      engine.resize()
+      assert.equal(writes, settledWrites)
+      assert.equal(presented, true)
+      canvas.width = 1
+      engine.resize()
+      assert.equal(writes, settledWrites + 1, 'Externally changed backing dimensions are repaired')
+      assert.equal(canvas.width, Math.floor(cssWidth * pixelRatio))
+    }
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow)
+    else Reflect.deleteProperty(globalThis, 'window')
+  }
+})
+
 test('the real engine getters retain a frozen launch policy and existing setters refresh it', () => {
   const { engine, calls } = fixture()
   const first = engine.getVisualPolicy()
