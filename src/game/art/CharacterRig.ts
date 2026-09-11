@@ -217,7 +217,7 @@ export class CharacterPresenter {
   private readonly player: boolean
   private readonly quality: VisualQuality
   private readonly compact: boolean
-  private readonly compactHeadgear: boolean
+  private readonly lowDetail: boolean
   private readonly parts: Part[] = []
   private readonly bones: THREE.Bone[] = []
   private readonly boneLimb: number[] = []
@@ -266,7 +266,7 @@ export class CharacterPresenter {
     this.player = player
     this.quality = quality
     const compact = this.compact = quality !== 'high' && !player
-    this.compactHeadgear = compact && quality === 'low'
+    this.lowDetail = compact && quality === 'low'
     this.level = player ? 'hero' : 'near'
     const p = plan.proportions
     const a = this.anatomy = buildCharacterSkeleton(p)
@@ -308,16 +308,16 @@ export class CharacterPresenter {
     const head = bone('head', a.headPivot, 0, a.headY)
     head.scale.setScalar(p.headScale)
     part(head, (level) => buildIllustratedHead(plan.faction, level), skin, 'skin')
-    part(head, buildIllustratedFace, 0x3c302c, 'dark')
-    part(head, (level) => buildIllustratedEyes(false, level), 0xc4b8a1, 'skin')
-    part(head, (level) => buildIllustratedEyes(true, level), 0x39352b, 'dark')
+    part(head, (level) => buildIllustratedFace(level, this.lowDetail), 0x3c302c, 'dark')
+    part(head, (level) => buildIllustratedEyes(false, level, this.lowDetail), 0xc4b8a1, 'skin')
+    part(head, (level) => buildIllustratedEyes(true, level, this.lowDetail), 0x39352b, 'dark')
     if (plan.hair !== 'none') {
       part(head, () => buildIllustratedHair(plan.hair), CHARACTER_PHYSICAL_PALETTE.hair[plan.hairTone % 4], 'hair')
     }
     if (plan.headgear !== 'none') {
       const soft = ['hood', 'ragHood', 'cap'].includes(plan.headgear)
       const mask = plan.headgear === 'boneMask'
-      part(head, (level) => buildIllustratedHeadgear(plan.headgear, level, this.compactHeadgear),
+      part(head, (level) => buildIllustratedHeadgear(plan.headgear, level, this.lowDetail),
         soft ? cloth : mask ? CHARACTER_PHYSICAL_PALETTE.bone : plan.headgear === 'strap' ? leather : metal,
         soft ? 'cloth' : mask ? 'bone' : plan.headgear === 'strap' ? 'leather' : 'metal')
       if (plan.headgear === 'hornedHelm') part(head, buildIllustratedHorns, CHARACTER_PHYSICAL_PALETTE.bone, 'bone')
@@ -625,7 +625,7 @@ export class CharacterPresenter {
 
   private bodyLease(level: CharacterVisualLevel): ArtGeometryLease {
     const detail = this.detailLevel(level)
-    const key = `${CHARACTER_ART_REVISION}:${JSON.stringify(this.plan)}:${detail}:${this.compact}:${this.compactHeadgear}`
+    const key = `${CHARACTER_ART_REVISION}:${JSON.stringify(this.plan)}:${detail}:${this.compact}:${this.lowDetail}`
     const retained = this.recentBodies.get(key)
     if (retained) {
       const lease = cachedLease(this.cache, key, () => { throw new Error('Retained character geometry was lost') })

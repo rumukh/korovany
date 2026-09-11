@@ -10,7 +10,7 @@ import {
   resolveCharacterPlan, characterRoles, buildIllustratedHead, buildIllustratedHeadgear,
   selectCharacterVisualLevel, validateArtGeometry,
   buildIllustratedHand, buildIllustratedBoot, buildWeaponGrip, buildWeaponHead,
-  buildIllustratedFace, buildIllustratedEyes, buildIllustratedHair,
+  buildIllustratedFace, buildIllustratedEyes,
   type CharacterContact,
   type OutlineBinding,
 } from '../src/game/art/index.ts'
@@ -372,11 +372,7 @@ test('compact crowd topology retains facial anatomy and physical channels across
         const compact = createCharacterPresenter(plan, art, cache, false, quality)
         let faceCorners = Infinity
         if (quality === 'low') {
-          const parts = [
-            buildIllustratedHead(faction, 'mid'), buildIllustratedFace('mid'),
-            buildIllustratedEyes(false, 'mid'), buildIllustratedEyes(true, 'mid'),
-            ...(plan.hair === 'none' ? [] : [buildIllustratedHair(plan.hair)]),
-          ]
+          const parts = [buildIllustratedHead(faction, 'mid')]
           faceCorners = parts.reduce((sum, g) => sum + (g.index?.count ?? g.getAttribute('position').count), 0)
           for (const g of parts) g.dispose()
         }
@@ -392,6 +388,30 @@ test('compact crowd topology retains facial anatomy and physical channels across
     }
   }
   cache.dispose(); art.dispose()
+})
+
+test('Low facial marks keep every original front triangle and charge retained backing arrays', () => {
+  const pairs = [
+    [buildIllustratedFace('mid'), buildIllustratedFace('mid', true)],
+    [buildIllustratedEyes(false, 'mid'), buildIllustratedEyes(false, 'mid', true)],
+    [buildIllustratedEyes(true, 'mid'), buildIllustratedEyes(true, 'mid', true)],
+  ]
+  let fullTriangles = 0, frontTriangles = 0
+  for (const [full, front] of pairs) {
+    for (const name of Object.keys(full.attributes)) {
+      assert.deepEqual(front.getAttribute(name).array, full.getAttribute(name).array, `${name} front surface data changed`)
+    }
+    const normal = full.getAttribute('normal'), expected: number[] = []
+    for (let i = 0; i < normal.count; i += 3) {
+      if (normal.getZ(i) > 0.9 && normal.getZ(i + 1) > 0.9 && normal.getZ(i + 2) > 0.9) expected.push(i, i + 1, i + 2)
+    }
+    assert.deepEqual(Array.from(front.index!.array), expected)
+    fullTriangles += normal.count / 3
+    frontTriangles += front.index!.count / 3
+    full.dispose(); front.dispose()
+  }
+  assert.equal(fullTriangles, 100)
+  assert.equal(frontTriangles, 18)
 })
 
 test('Low headgear keeps eye openings, fitted extents and separate quality cache receipts', () => {

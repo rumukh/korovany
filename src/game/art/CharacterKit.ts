@@ -5230,7 +5230,29 @@ export function buildIllustratedHead(faction: CharacterFaction, level: Character
   return finish(parts, `illustrated-head:${faction}:${level}`)
 }
 
-export function buildIllustratedFace(level: CharacterVisualLevel): THREE.BufferGeometry {
+/** Low facial marks retain their front polygons, not subpixel box/extrusion walls. */
+function facialFront(geometry: THREE.BufferGeometry, frontOnly: boolean): THREE.BufferGeometry {
+  if (!frontOnly) return geometry
+  const normals = geometry.getAttribute('normal')
+  const index = geometry.getIndex()
+  const count = index?.count ?? normals.count
+  const indices: number[] = []
+  for (let i = 0; i < count; i += 3) {
+    const a = index ? index.getX(i) : i
+    const b = index ? index.getX(i + 1) : i + 1
+    const c = index ? index.getX(i + 2) : i + 2
+    if (normals.getZ(a) > 0.9 && normals.getZ(b) > 0.9 && normals.getZ(c) > 0.9) indices.push(a, b, c)
+  }
+  if (!indices.length) {
+    geometry.dispose()
+    throw new Error('A facial mark has no front surface')
+  }
+  // Leave original backing attributes intact; their bytes are still owned and billed.
+  geometry.setIndex(indices)
+  return geometry
+}
+
+export function buildIllustratedFace(level: CharacterVisualLevel, frontOnly = false): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = []
   const coarse = level === 'mid' || level === 'far'
   for (const side of [-1, 1]) {
@@ -5245,18 +5267,20 @@ export function buildIllustratedFace(level: CharacterVisualLevel): THREE.BufferG
   }
   parts.push(block({ width: 0.084, height: 0.009, depth: 0.015 },
     { position: { x: 0, y: -0.107, z: 0.151 } }))
-  return finish(parts, `illustrated-face:${level}`)
+  return facialFront(finish(parts, `illustrated-face:${level}`), frontOnly)
 }
 
-export function buildIllustratedEyes(iris: boolean, level: CharacterVisualLevel = 'near'): THREE.BufferGeometry {
-  return finish(mirroredPair((side) => iris
+export function buildIllustratedEyes(
+  iris: boolean, level: CharacterVisualLevel = 'near', frontOnly = false,
+): THREE.BufferGeometry {
+  return facialFront(finish(mirroredPair((side) => iris
     ? block({ width: 0.016, height: 0.017, depth: 0.005, bevel: level === 'mid' || level === 'far' ? 0 : 0.004 },
       { position: { x: side * 0.086, y: 0.058, z: 0.183 } })
     : plate([
       { x: -0.03, y: 0 }, { x: -0.013, y: -0.007 }, { x: 0.015, y: -0.006 },
       { x: 0.03, y: 0.002 }, { x: 0.009, y: 0.009 }, { x: -0.014, y: 0.008 },
     ], 0.005, { position: { x: side * 0.087, y: 0.058, z: 0.177 } }, 0)),
-  iris ? 'iris' : 'sclera')
+  iris ? 'iris' : 'sclera'), frontOnly)
 }
 
 /** Thick open-front cloth; no closed lathe wall between the eyes and the camera. */

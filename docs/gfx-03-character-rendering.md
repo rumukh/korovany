@@ -97,8 +97,8 @@ work in progress. A one-body draw does not itself establish a tier pass, and the
 whole-frame draw budget is not a character-only allowance.
 
 Balanced and Low NPC bodies use compact limb and boot topology; players and High
-retain their previous geometry. Facial anatomy, hair, facial normals, physical palette
-and weather-response channels are unchanged at the corresponding detail level.
+retain their previous geometry. Skull/jaw/nose/ear/neck anatomy, hair, physical
+palette and weather-response values are unchanged at the corresponding detail level.
 Near hands retain the curled handle opening with one finger band instead of
 separate subpixel finger extrusions; Mid also omits tiny palm/arm/shoulder chamfers.
 Joint bulges and limb endpoints remain, with fewer intermediate rings and a
@@ -125,6 +125,11 @@ change skulls, jaw/nose/eye geometry, the fitted gear vocabulary, eye openings o
 the presence of crests/horns. Players, Balanced and High keep their original
 headgear buffers. Low headgear has its own body-template cache identity even
 when Low Near and Balanced Mid otherwise resolve to the same body detail.
+Low NPC eye and mouth marks keep their original forward polygons and planes,
+indexing out the subpixel rear/side walls of their solid boxes/extrusions.
+Their source backing attributes are retained and billed, not reported as freed
+CPU memory. This reduces the three paired facial-mark parts from 100 to 18
+submitted triangles without shortening a nose, changing a jaw or moving an eye.
 
 Healthy humanoid batches use cache receipts. Each live rig retains at most its
 two most recently used body templates, so a return across a nearby LOD threshold
