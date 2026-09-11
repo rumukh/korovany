@@ -4043,6 +4043,7 @@ export class GameEngine {
       region: this.generatedWorld.currentRegionId ?? null,
       visibleRegions: [...this.generatedWorld.regions.getVisibleRegionIds()].sort(),
       simulatedRegions: [...this.generatedWorld.regions.getSimulatedRegionIds()].sort(),
+      ...(this.transientBudget ? { transientPresentation: this.transientBudget.snapshot() } : {}),
       ...(this.visualPolicy.mode === 'enhanced' ? {
         cameraPresentation: {
           x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z,
@@ -13876,6 +13877,7 @@ export class GameEngine {
       new THREE.SphereGeometry(178, 32, 18),
       this.skyMaterial,
     )
+    sky.name = 'atmosphere-sky'
     this.atmosphereRoot.add(sky)
 
     this.sunDisc = new THREE.Mesh(
@@ -13888,6 +13890,7 @@ export class GameEngine {
       }),
     )
     this.sunDisc.position.set(-88, 74, -112)
+    this.sunDisc.name = 'atmosphere-sun'
     this.atmosphereRoot.add(this.sunDisc)
 
     this.moonDisc = new THREE.Mesh(
@@ -13901,6 +13904,7 @@ export class GameEngine {
       }),
     )
     this.atmosphereRoot.add(this.moonDisc)
+    this.moonDisc.name = 'atmosphere-moon'
 
     const starPositions = new Float32Array(STAR_COUNT * 3)
     const starRandom = seededRandom(1947)
@@ -13928,6 +13932,7 @@ export class GameEngine {
       }),
     )
     this.stars.frustumCulled = false
+    this.stars.name = 'atmosphere-stars'
     this.atmosphereRoot.add(this.stars)
 
     const random = seededRandom(731)
@@ -13944,6 +13949,7 @@ export class GameEngine {
       const group = new THREE.Group()
       for (let puff = 0; puff < 4; puff += 1) {
         const cloud = new THREE.Mesh(cloudGeometry, this.cloudMaterial)
+        cloud.name = `atmosphere-cloud:${index}:${puff}`
         cloud.position.set((puff - 1.5) * 3.6, Math.sin(puff) * 1.1, (random() - 0.5) * 2.4)
         cloud.scale.set(1 + random() * 0.8, 0.45 + random() * 0.35, 0.7 + random() * 0.5)
         group.add(cloud)
@@ -16700,7 +16706,9 @@ export class GameEngine {
 
   private prepareTransientEffects(): void {
     const budget = this.transientBudget
-    budget.begin(this.visualPolicy)
+    budget.begin(this.visualPolicy, this.camera)
+    budget.reserveEnvironment(this.atmosphereRoot)
+    for (const flame of this.flames) budget.reserveEnvironment(flame)
     for (const entry of this.telegraphPool) budget.add(entry.mesh, 'tell', 200, true)
     for (const mesh of this.finaleTelegraphs) budget.add(mesh, 'tell', 200, true)
     for (const projectile of this.projectiles) budget.add(projectile.mesh, 'projectile', 190, true)
@@ -16730,9 +16738,11 @@ export class GameEngine {
       ...this.comicCalloutFx.map((entry) => entry.sprite), ...this.impactRayFx.map((entry) => entry.sprite),
       ...this.projectiles.map((entry) => entry.mesh), ...this.telegraphPool.map((entry) => entry.mesh), ...this.finaleTelegraphs,
     ]
-    for (const root of [...this.lootPickups.map((entry) => entry.root), ...this.lootCollectionBursts.map((entry) => entry.root)]) {
+    for (const root of [this.atmosphereRoot, ...this.flames,
+      ...this.lootPickups.map((entry) => entry.root), ...this.lootCollectionBursts.map((entry) => entry.root)]) {
       root.traverse((object) => {
-        if (object instanceof THREE.Mesh || object instanceof THREE.Sprite) sources.push(object)
+        if (object instanceof THREE.Mesh || object instanceof THREE.Sprite ||
+            object instanceof THREE.Points || object instanceof THREE.Line) sources.push(object)
       })
     }
     const receipts = transientAllocationReceipts(sources)
@@ -16743,7 +16753,7 @@ export class GameEngine {
     return {
       sources, receipts, resources: sumVisualAllocationReceipts(receipts).postAndEffects,
       budget: this.transientBudget.snapshot(), complete: false,
-      missing: ['Actual GPU allocation identities', 'Persistent sky/cloud/fire presentation attribution',
+      missing: ['Actual GPU allocation identities', 'Persistent effects outside known environment roots',
         'Canvas-backed texture storage', 'Shader uniforms, JS object storage and temporary peak allocations', 'Disjoint CPU/submission scopes'],
     }
   }

@@ -244,6 +244,26 @@ depth submissions. The controller includes secondary particles, gore, smoke,
 debris, decals, damage numbers, callouts, impact rays, weapon trail, rain/snow,
 projectiles, telegraphs and pooled loot presentation.
 
+The measured `ec1d3174` High crowded profile exposed two already-attributed
+environment submissions outside that admission set: the 1088-triangle sky sphere
+and the 180-point star buffer (zero opacity still submits). Five of its 600
+sample frames reached 45 non-post draws plus 16 post draws. The original raw
+profile remains unchanged; its final-frame assessment did not describe that peak.
+
+Known atmosphere/flame roots now reserve their actual in-view source costs
+inside the same 44/24/20 allowance before cosmetic selection. The same camera
+layers/frustum determine view participation; non-frustum-culled sources such as
+stars still count, and shadow casters reserve conservatively even outside the
+main view. Off-view clouds do not consume an invented forty-draw reserve.
+Environment sources, tells and projectiles remain protected; if protected work
+alone exceeds the allowance it is still displayed and reported, never hidden to
+claim a pass. Original visibility and all physics/RNG/timing remain unchanged.
+The existing runtime frame record includes `transientPresentation` with the
+admitted/protected and reserved-environment upper bounds, so later proof can
+compare every sampled frame rather than just the final snapshot. Known
+atmosphere/flame geometry also joins the retained-source inventory without
+changing its disposal owner or reclassifying it as world art.
+
 Zero material opacity is **not** a draw exclusion. Three.js submits visible
 material slots with nonempty draw ranges/instance counts even when opacity is
 zero, and `bindLootOpacity.onBeforeRender` can replace a shared material's
@@ -278,7 +298,8 @@ The existing diagnostic `rendering.contacts` reports sampler/fallback counters;
 `rendering.transientEffects` reports requested/admitted/omitted conservative
 draw/triangle bounds, protected cost, `overBudget` and explicit missing data.
 `measuredDraws`, `cpuMs` and `complete` do not pretend a source estimate is an
-actual GPU frame. Persistent sky/cloud/fire attribution remains open.
+actual GPU frame. Persistent effects outside the known environment roots and
+complete allocation/CPU attribution remain open.
 
 ## CPU evidence and remaining visual tasks
 
