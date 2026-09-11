@@ -5466,7 +5466,8 @@ export function buildIllustratedHand(
       { x: 0.023, y: 0.014 }, { x: -0.021, y: 0.034 }, { x: -0.043, y: 0.018 },
       { x: -0.045, y: -0.052 },
     ]
-    const curl = plate(compact ? outline.filter((_, i) => i !== 2 && i !== 8) : outline, fingers === 1 ? 0.105 : 0.026, {
+    const curl = plate(compact ? outline.filter((_, i) => i !== 2 && i !== 8 && (!coarse || (i !== 4 && i !== 6)))
+      : outline, fingers === 1 ? 0.105 : 0.026, {
       position: { x: 0, y: fingers === 1 ? -0.04 : 0.011 - finger * 0.033, z: 0 },
       rotation: { x: Math.PI / 2, y: 0, z: 0 },
     }, 0)

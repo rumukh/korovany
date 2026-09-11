@@ -485,6 +485,17 @@ test('compact geometry preserves full-affine grips, injury indices and independe
 })
 
 test('compact wrapped grips retain the full haft and player geometry remains full detail', () => {
+  for (const side of [-1, 1]) {
+    const geometry = buildIllustratedHand(side, 'mid', true)
+    const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
+    const hand = new THREE.Mesh(geometry, material)
+    hand.updateMatrixWorld(true)
+    for (const x of [-0.01, 0, 0.01]) for (const z of [-0.01, 0, 0.01]) {
+      const ray = new THREE.Raycaster(new THREE.Vector3(x, 1, z), new THREE.Vector3(0, -1, 0), 0, 2)
+      assert.equal(ray.intersectObject(hand).length, 0, 'coarse fingers must leave the physical handle aperture open')
+    }
+    geometry.dispose(); material.dispose()
+  }
   for (const weapon of ['sword', 'greatsword', 'dagger', 'sabre', 'cleaver'] as const) {
     const full = buildWeaponGrip(weapon), compact = buildWeaponGrip(weapon, true)
     full.computeBoundingBox(); compact.computeBoundingBox()
