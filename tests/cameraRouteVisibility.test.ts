@@ -22,7 +22,7 @@ const records: { cases: RouteRecord[] } = JSON.parse(gunzipSync(readFileSync(new
   '../docs/images/gfx-02-evidence/records/02-camera-routes-manifest.json.gz', import.meta.url,
 ))).toString('utf8'))
 
-function fixture(id: string) {
+function fixture(id: string, truePitch = false) {
   const record = records.cases.find((entry) => entry.id === id)!
   assert.ok(record)
   const art = new StylizedArtLibrary({
@@ -42,10 +42,20 @@ function fixture(id: string) {
   const terrain = (x: number, z: number) => world.sampleHeight(x, z)
   const step = (player: readonly number[], yaw: number, pitch: number, immediate = false) => {
     target.fromArray(player).y += 1.65
-    desired.copy(target).add(new THREE.Vector3(-Math.sin(yaw) * 10, 5.2 + pitch * 3.5, Math.cos(yaw) * 10))
+    if (truePitch) {
+      const orbit = Math.max(0, pitch)
+      desired.copy(target).add(new THREE.Vector3(-Math.sin(yaw) * 12 * Math.cos(orbit),
+        12 * Math.sin(orbit), Math.cos(yaw) * 12 * Math.cos(orbit)))
+    } else desired.copy(target).add(new THREE.Vector3(-Math.sin(yaw) * 10, 5.2 + pitch * 3.5, Math.cos(yaw) * 10))
     world.presentation!.prepare(camera)
-    solver.resolve(target, desired, camera, immediate ? 0 : 1 / 60, immediate, world.presentation!, terrain, output)
-    camera.position.copy(output); camera.lookAt(target); camera.updateMatrixWorld()
+    solver.resolve(target, desired, camera, immediate ? 0 : 1 / 60, immediate, world.presentation!, terrain, output,
+      truePitch ? yaw : undefined, pitch)
+    camera.position.copy(output)
+    if (truePitch) camera.lookAt(output.clone().add(new THREE.Vector3(
+      Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch),
+    )))
+    else camera.lookAt(target)
+    camera.updateMatrixWorld()
   }
   // Independent exact-triangle rays, not the solver's own success counters.
   // CPU material clones make the probe two-sided without modifying render or
@@ -61,6 +71,7 @@ function fixture(id: string) {
     proxy.matrixWorld.copy(object.matrixWorld)
     blockers.push(proxy)
   })
+
   const ray = new THREE.Raycaster()
   const body = new THREE.Vector3()
   const firstBodyHit = (eye: THREE.Vector3, center: THREE.Vector3, yOffset = 0) => {
@@ -95,6 +106,52 @@ function fixture(id: string) {
   const dispose = () => { world.dispose(); art.dispose(); rayMaterial.dispose() }
   return { record, initial, endpoint, camera, solver, world, target, desired, output, step, terrain, firstBodyHit, assertSight, dispose }
 }
+
+test('true-view routes report constrained framing and recover rather than retaining off-screen endpoints', () => {
+  for (const id of ['elf-forest-obstruction', 'guard-riverside-close']) {
+    const f = fixture(id, true)
+    try {
+      let maxSweeps = 0, maxTriangles = 0, constrainedFrames = 0
+      // The native route rotates while stationary, then strafes at the final
+      // yaw. Simultaneously interpolating yaw and position invents a different
+      // camera approach to the roof. These endpoint roots are the ec1d317 run.
+      const endpoint = id === 'guard-riverside-close'
+        ? [13.41004327541765, 11.88043831962156, -95.37079333601508]
+        : [-90.22464004576628, 5.668731126915277, -75.12576403106766]
+      for (let frame = 0; frame <= 90; frame++) {
+        const move = Math.max(0, Math.min(1, (frame - 22) / 42))
+        const player = f.initial.player.map((v, index) => v + (endpoint[index] - v) * move)
+        player[1] = f.world.sampleHeight(player[0], player[2])
+        const yaw = f.initial.camera.yaw + 0.336 * Math.min(1, frame / 22)
+        f.step(player, yaw, f.initial.camera.pitch, frame === 0)
+        f.assertSight(`${id} true-view step ${frame}`, false)
+        const occupancy = { distance: 0, blocked: false, overflow: false, triangleTests: 0, initialOverlap: false }
+        f.world.presentation!.sweep(f.output, f.output, 0.32, occupancy)
+        assert.equal(occupancy.blocked, false)
+        assert.ok(f.output.y >= f.terrain(f.output.x, f.output.z) + 0.32)
+        let outsideMargins = false
+        for (const height of [1.1, 1.65, 2.2]) {
+          const ndc = new THREE.Vector3().fromArray(player).add(new THREE.Vector3(0, height, 0)).project(f.camera)
+          const framed = Math.abs(ndc.x) <= 0.6 && Math.abs(ndc.y) <= 0.82 && Math.abs(ndc.z) < 1
+          outsideMargins ||= !framed
+          if (id === 'elf-forest-obstruction' || frame === 0 || frame >= 64) assert.ok(framed,
+            `${id} frame ${frame} height ${height}: projected body ${ndc.toArray()}; debug ${JSON.stringify(f.solver.debug)}`)
+        }
+        // A tight wall/roof approach cannot promise full-body third-person
+        // framing at fixed aim. Keep independent physical sight assertions,
+        // report clipping, and require recovery at every settled endpoint step.
+        constrainedFrames += Number(outsideMargins)
+        assert.equal(f.solver.debug.framingError > 0, outsideMargins)
+        if (!outsideMargins) assert.equal(f.solver.debug.framedTargetProbes, 3)
+        assert.equal(f.solver.debug.overflows, 0)
+        assert.ok(f.solver.debug.sweeps <= 72)
+        maxSweeps = Math.max(maxSweeps, f.solver.debug.sweeps)
+        maxTriangles = Math.max(maxTriangles, f.solver.debug.triangleTests)
+      }
+      console.log(`${id} true-view CPU route: max ${maxSweeps} sweeps/${maxTriangles} triangles; ${constrainedFrames} explicitly reported constrained steps; initial and settled endpoint framed`)
+    } finally { f.dispose() }
+  }
+})
 
 test('the actual recorded riverside roof failure is a negative control, and the next resolved frame restores torso sight', () => {
   const f = fixture('guard-riverside-close')

@@ -44,6 +44,29 @@ fields, including active-frame telemetry; no rig, world-registration, rebind or
 gameplay sight API changed. Close constrained views may still shorten/fade the
 player, and real post-fix motion approval remains separate from CPU ray checks.
 
+The joined true-pitch camera exposed a second, distinct failure: a retained
+camera could have three clear physical sight rays while projecting the actual
+player off-screen. Production `CameraVisibility.resolve` now receives the
+requested yaw, pitch and shake roll as optional trailing angles (omitting them
+retains the geometry-only solver contract). A cached projection basis checks
+player heights 1.1, 1.65 and 2.2 metres before candidate ranking, previous-anchor
+reuse, final follow and scoped shake. Jointly clear and framed candidates rank
+before boom length or shoulder hysteresis; an off-screen previous anchor cannot
+strand an otherwise usable candidate. The five-candidate and geometry-query
+bounds do not expand, and the projection checks allocate no per-frame objects.
+
+Usable body-centre margins are normalized screen x within +/-0.6 and y within
++/-0.82, with near/far clipping enforced. Deliberate upward look may already put
+the body below the screen in the unobstructed requested orbit; only that nominal
+vertical range is retained rather than rotating the camera back at the player.
+The actual yaw, pitch, arrow direction, actor roots and canonical sight remain
+unchanged. Physically impossible framing retains bounded collision-safe recovery
+and reports a positive `framingError`, not a false framing pass. Additive
+`framingCut`, `framedTargetProbes`, `framingError`, torso/head NDC coordinates and
+`framingActive` distinguish this gate from physical visibility. NDC counters use
+the same final roll and projection as the rendered camera; they are not a
+substitute for identifying the actual player in native-route screenshots.
+
 Streamed foreground instances are registered explicitly. At most eight fade at
 once, with source and ink sharing opaque depth-writing ordered dither. Camera
 fade never changes a shared material's opacity, source visibility, instance

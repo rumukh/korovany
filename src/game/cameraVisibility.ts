@@ -171,6 +171,14 @@ export interface CameraVisibilityDebug {
   targetProbes: number
   visibleTargetProbes: number
   visibilityCut: boolean
+  framingActive: boolean
+  framingCut: boolean
+  framedTargetProbes: number
+  framingError: number
+  torsoNdcX: number
+  torsoNdcY: number
+  headNdcX: number
+  headNdcY: number
 }
 
 export class CameraVisibility {
@@ -178,6 +186,8 @@ export class CameraVisibility {
     candidates: 0, sweeps: 0, triangleTests: 0, terrainSamples: 0, overflows: 0,
     shoulder: 0, boomDistance: 0, playerVisibility: 1, recovery: 'none',
     targetProbes: 0, visibleTargetProbes: 0, visibilityCut: false,
+    framingActive: false, framingCut: false, framedTargetProbes: 0, framingError: 0,
+    torsoNdcX: 0, torsoNdcY: 0, headNdcX: 0, headNdcY: 0,
   }
   private readonly sweepResult: CameraSweepResult = {
     distance: 0, blocked: false, overflow: false, triangleTests: 0, initialOverlap: false,
@@ -197,6 +207,21 @@ export class CameraVisibility {
   private readonly sightSample = new THREE.Vector3()
   private readonly sightTargets = Array.from({ length: CAMERA_TARGET_PROBES }, () => new THREE.Vector3())
   private readonly sightEligible = new Uint8Array(CAMERA_TARGET_PROBES)
+  private readonly framingTarget = new THREE.Vector3()
+  private readonly viewForward = new THREE.Vector3()
+  private readonly viewRight = new THREE.Vector3()
+  private readonly viewUp = new THREE.Vector3()
+  private readonly projected = new THREE.Vector3()
+  private projectionX = 1
+  private projectionY = 1
+  private projectionOffsetX = 0
+  private projectionOffsetY = 0
+  private viewNear = 0.1
+  private viewFar = 240
+  private rollCos = 1
+  private rollSin = 0
+  private frameMinY = -0.82
+  private frameMaxY = 0.82
   private initialized = false
   private shoulder = 0
   private shoulderHold = 0
@@ -209,18 +234,22 @@ export class CameraVisibility {
     target: THREE.Vector3, desired: THREE.Vector3, camera: THREE.PerspectiveCamera,
     delta: number, immediate: boolean, query: CameraVolumeQuery,
     terrain: (x: number, z: number) => number, output: THREE.Vector3,
+    viewYaw?: number, viewPitch = 0, viewRoll = 0,
   ): void {
     if (!Number.isFinite(delta) || delta < 0) throw new RangeError('Invalid camera delta')
     this.debug.candidates = this.debug.sweeps = this.debug.triangleTests = this.debug.terrainSamples = this.debug.overflows = 0
     const halfHeight = camera.near * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)
     this.radius = Math.max(0.32, Math.hypot(halfHeight, halfHeight * camera.aspect) + 0.12)
+    this.prepareFraming(target, desired, camera, viewYaw, viewPitch, viewRoll)
     this.prepareTargetSight(target, query, terrain)
-    this.debug.visibilityCut = false
+    this.debug.visibilityCut = this.debug.framingCut = false
     this.previous.copy(this.lastSafe)
     const previousClear = this.initialized && this.previous.distanceTo(target) <= 32 &&
       this.clearPose(this.previous, query, terrain)
-    const previousSafe = previousClear &&
+    const previousVisible = previousClear &&
       this.targetSightScore(this.previous, query, terrain) === this.debug.targetProbes
+    const previousFramed = this.framingError(this.previous) === 0
+    const previousSafe = previousVisible && previousFramed
     this.selectCollisionOrigin(target, desired, previousSafe, query, terrain)
     this.right.subVectors(desired, target).setY(0).normalize()
     this.right.set(this.right.z, 0, -this.right.x)
@@ -228,8 +257,9 @@ export class CameraVisibility {
     this.releaseHold = Math.max(0, this.releaseHold - delta)
     this.best.copy(this.collisionOrigin)
     let bestSight = this.targetSightScore(this.best, query, terrain)
+    let bestFraming = this.framingError(this.best)
     let score = this.best.distanceTo(target) > this.radius
-      ? bestSight * 1000 + this.best.distanceTo(target) : -Infinity
+      ? this.poseScore(bestSight, bestFraming) + this.best.distanceTo(target) : -Infinity
     let chosen = 0
     for (let index = 0; index < CAMERA_CANDIDATE_LIMIT; index++) {
       this.candidate.copy(desired)
@@ -242,10 +272,13 @@ export class CameraVisibility {
       this.debug.candidates++
       const distance = this.solved.distanceTo(target)
       const sight = this.targetSightScore(this.solved, query, terrain)
-      const candidateScore = sight * 1000 + distance - (index === 0 ? 0 : index === 3 ? 1.1 : 0.55) +
+      const framing = this.framingError(this.solved)
+      const candidateScore = this.poseScore(sight, framing) + distance - (index === 0 ? 0 : index === 3 ? 1.1 : 0.55) +
         (index === this.shoulder && this.shoulderHold > 0 ? 1.2 : 0)
-      if (candidateScore > score) { score = candidateScore; bestSight = sight; chosen = index; this.best.copy(this.solved) }
-      if (index === 0 && sight === this.debug.targetProbes &&
+      if (candidateScore > score) {
+        score = candidateScore; bestSight = sight; bestFraming = framing; chosen = index; this.best.copy(this.solved)
+      }
+      if (index === 0 && sight === this.debug.targetProbes && framing === 0 &&
           distance >= desired.distanceTo(target) - 0.15 && this.shoulderHold === 0) break
     }
     if (chosen !== this.shoulder) { this.shoulder = chosen; this.shoulderHold = 0.35 }
@@ -253,7 +286,8 @@ export class CameraVisibility {
     const current = this.follow.distanceTo(target)
     if (immediate || !previousSafe) {
       this.follow.copy(this.best)
-      this.debug.visibilityCut = !immediate && previousClear && !previousSafe
+      this.debug.visibilityCut = !immediate && previousClear && !previousVisible
+      this.debug.framingCut = !immediate && previousClear && !previousFramed
       this.initialized = true
     } else {
       if (wanted < current - 0.12) this.releaseHold = 0.16
@@ -265,11 +299,14 @@ export class CameraVisibility {
       // frames. The old position is used only after checking its current volume.
       this.safePosition(this.previous, this.follow, query, terrain, this.solved)
       this.follow.copy(this.solved)
-      if (this.targetSightScore(this.follow, query, terrain) < bestSight) {
+      const lostSight = this.targetSightScore(this.follow, query, terrain) < bestSight
+      const lostFraming = this.framingError(this.follow) > bestFraming + 1e-6
+      if (lostSight || lostFraming) {
         // Smooth camera travel must not strand the view behind a roof after a
         // valid target boom was found. Reacquire that collision-cleared pose.
         this.follow.copy(this.best)
-        this.debug.visibilityCut = true
+        this.debug.visibilityCut = lostSight
+        this.debug.framingCut = lostFraming
       }
     }
     output.copy(this.follow)
@@ -277,6 +314,7 @@ export class CameraVisibility {
     this.debug.shoulder = this.shoulder
     this.debug.boomDistance = output.distanceTo(target)
     this.debug.visibleTargetProbes = this.targetSightScore(output, query, terrain)
+    this.updateFramingDebug(output)
     const visibility = THREE.MathUtils.smoothstep(this.debug.boomDistance, 0.8, 3.6)
     this.debug.playerVisibility = immediate ? visibility :
       THREE.MathUtils.lerp(this.debug.playerVisibility, visibility, dampingAlpha(16, delta))
@@ -286,22 +324,106 @@ export class CameraVisibility {
     target: THREE.Vector3, candidate: THREE.Vector3, query: CameraVolumeQuery,
     terrain: (x: number, z: number) => number, output: THREE.Vector3,
   ): void {
+    this.framingTarget.copy(target)
     this.prepareTargetSight(target, query, terrain)
     this.previous.copy(this.lastSafe)
-    const previousSafe = this.initialized && this.previous.distanceTo(target) <= 32 &&
-      this.clearPose(this.previous, query, terrain) &&
+    const previousClear = this.initialized && this.previous.distanceTo(target) <= 32 &&
+      this.clearPose(this.previous, query, terrain)
+    const previousSafe = previousClear &&
+      this.framingError(this.previous) === 0 &&
       this.targetSightScore(this.previous, query, terrain) === this.debug.targetProbes
     this.selectCollisionOrigin(target, candidate, previousSafe, query, terrain)
     this.safePosition(this.collisionOrigin, candidate, query, terrain, this.solved)
     if (previousSafe) this.safePosition(this.previous, this.solved, query, terrain, output)
     else output.copy(this.solved)
     const sight = this.targetSightScore(output, query, terrain)
-    if (previousSafe && this.targetSightScore(this.previous, query, terrain) > sight) output.copy(this.previous)
+    if (previousSafe && (this.targetSightScore(this.previous, query, terrain) > sight ||
+        this.framingError(output) > 0)) output.copy(this.previous)
     this.lastSafe.copy(output)
     this.debug.boomDistance = output.distanceTo(target)
     this.debug.visibleTargetProbes = this.targetSightScore(output, query, terrain)
+    this.updateFramingDebug(output)
     this.debug.playerVisibility = Math.min(this.debug.playerVisibility,
       THREE.MathUtils.smoothstep(this.debug.boomDistance, 0.8, 3.6))
+  }
+
+  private prepareFraming(
+    target: THREE.Vector3, desired: THREE.Vector3, camera: THREE.PerspectiveCamera,
+    yaw: number | undefined, pitch: number, roll: number,
+  ): void {
+    this.debug.framingActive = yaw !== undefined
+    if (yaw === undefined) return
+    if (!Number.isFinite(yaw) || !Number.isFinite(pitch) || !Number.isFinite(roll)) throw new RangeError('Invalid camera view angles')
+    this.framingTarget.copy(target)
+    this.viewForward.set(Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch))
+    this.viewRight.set(Math.cos(yaw), 0, Math.sin(yaw))
+    this.viewUp.crossVectors(this.viewRight, this.viewForward)
+    this.rollCos = Math.cos(roll); this.rollSin = Math.sin(roll)
+    this.projectionX = camera.projectionMatrix.elements[0]
+    this.projectionY = camera.projectionMatrix.elements[5]
+    this.projectionOffsetX = camera.projectionMatrix.elements[8]
+    this.projectionOffsetY = camera.projectionMatrix.elements[9]
+    this.viewNear = camera.near; this.viewFar = camera.far
+    this.frameMinY = -0.82; this.frameMaxY = 0.82
+    // Looking deliberately above the horizon can place the player below the
+    // frame even at the requested free orbit. Do not undo that view intent.
+    for (let index = 0; index < CAMERA_TARGET_PROBES; index++) {
+      this.projectTarget(desired, index)
+      this.frameMinY = Math.min(this.frameMinY, this.projected.y)
+      this.frameMaxY = Math.max(this.frameMaxY, this.projected.y)
+    }
+  }
+
+  private projectTarget(position: THREE.Vector3, index: number): void {
+    const x = this.framingTarget.x - position.x
+    const y = this.framingTarget.y + (index === 1 ? -0.55 : index === 2 ? 0.55 : 0) - position.y
+    const z = this.framingTarget.z - position.z
+    const right = x * this.viewRight.x + y * this.viewRight.y + z * this.viewRight.z
+    const up = x * this.viewUp.x + y * this.viewUp.y + z * this.viewUp.z
+    const depth = x * this.viewForward.x + y * this.viewForward.y + z * this.viewForward.z
+    const divisor = Math.abs(depth) > 1e-6 ? depth : depth < 0 ? -1e-6 : 1e-6
+    this.projected.set(
+      (right * this.rollCos + up * this.rollSin) * this.projectionX / divisor - this.projectionOffsetX,
+      (up * this.rollCos - right * this.rollSin) * this.projectionY / divisor - this.projectionOffsetY,
+      depth,
+    )
+  }
+
+  private projectedError(): number {
+    if (this.projected.z <= this.viewNear || this.projected.z >= this.viewFar) return 1000
+    return Math.max(0, Math.abs(this.projected.x) - 0.6,
+      this.frameMinY - this.projected.y, this.projected.y - this.frameMaxY)
+  }
+
+  private framingError(position: THREE.Vector3): number {
+    if (!this.debug.framingActive) return 0
+    let error = 0
+    for (let index = 0; index < CAMERA_TARGET_PROBES; index++) {
+      this.projectTarget(position, index)
+      error = Math.max(error, this.projectedError())
+    }
+    return error
+  }
+
+  private poseScore(sight: number, framing: number): number {
+    if (!this.debug.framingActive) return sight * 1000
+    const jointlyUsable = sight === this.debug.targetProbes && framing === 0
+    return sight * 10000 + (jointlyUsable ? 100000 : 0) - Math.min(framing, 100) * 10
+  }
+
+  private updateFramingDebug(position: THREE.Vector3): void {
+    this.debug.framedTargetProbes = 0
+    this.debug.framingError = this.framingError(position)
+    if (!this.debug.framingActive) return
+    for (let index = 0; index < CAMERA_TARGET_PROBES; index++) {
+      this.projectTarget(position, index)
+      if (this.projectedError() === 0) this.debug.framedTargetProbes++
+      if (index === 1) {
+        this.debug.torsoNdcX = this.projected.x; this.debug.torsoNdcY = this.projected.y
+      } else if (index === 2) {
+        this.debug.headNdcX = this.projected.x; this.debug.headNdcY = this.projected.y
+      }
+    }
   }
 
   private sweep(query: CameraVolumeQuery, from: THREE.Vector3, to: THREE.Vector3, radius = this.radius): void {
