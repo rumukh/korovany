@@ -57,15 +57,34 @@ population. It preserves existing admitted-contact anchors and colors for now;
 material/posed-anchor routing is explicitly Stage B. No contact light is added
 in Stage A.
 
-| Pool accounting | Meaning |
-| --- | --- |
-| `SECONDARY_EFFECT_CAPACITY` / `SECONDARY_EFFECT_REVISION` | 48 combined slots / implemented visual revision |
-| `getAllocationReceipts()` | Unique actual typed backing stores, charged only to `postAndEffects` |
-| `snapshot().resources` | Existing `sumVisualAllocationReceipts` result; retained buffer payload under 32 KiB, not exact JS heap |
-| `sourceDrawCeiling` / `sourceTriangles` | One potential scene submission and 8 triangles per live slot (384 maximum), not measured rendered work |
-| `accepted` / `dropped` / `replaced` | Admission and saturation counters |
-| `gpuAllocatedBytes`, `draws`, `cpuMs` | Unknown until attached to actual GPU allocations and disjoint whole-frame measurements |
-| `resourcesComplete` | Explicitly false: the pool is not the complete pipeline/effects inventory |
+**Pool accounting:** `SECONDARY_EFFECT_CAPACITY` / `SECONDARY_EFFECT_REVISION`
+
+- **Meaning:** 48 combined slots / implemented visual revision
+
+**Pool accounting:** `getAllocationReceipts()`
+
+- **Meaning:** Unique actual typed backing stores, charged only to `postAndEffects`
+
+**Pool accounting:** `snapshot().resources`
+
+- **Meaning:** Existing `sumVisualAllocationReceipts` result; retained buffer payload under 32 KiB, not exact JS heap
+
+**Pool accounting:** `sourceDrawCeiling` / `sourceTriangles`
+
+- **Meaning:** One potential scene submission and 8 triangles per live slot (384 maximum), not measured rendered work
+
+**Pool accounting:** `accepted` / `dropped` / `replaced`
+
+- **Meaning:** Admission and saturation counters
+
+**Pool accounting:** `gpuAllocatedBytes`, `draws`, `cpuMs`
+
+- **Meaning:** Unknown until attached to actual GPU allocations and disjoint whole-frame measurements
+
+**Pool accounting:** `resourcesComplete`
+
+- **Meaning:** Explicitly false: the pool is not the complete pipeline/effects inventory
+
 
 These receipts do not claim the 176/136/88 MiB shared bucket, count the composer,
 shadow or canvas twice, or borrow another subsystem's capacity. The existing

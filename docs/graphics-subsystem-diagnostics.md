@@ -8,7 +8,8 @@ Use the existing production build and isolated runner:
 
 ```powershell
 npm run build
-node scripts\graphics-run.mjs --out C:\graphics-evidence\subsystem-smoke --cases guard-opening --repeat 1 --visual-mode enhanced
+node scripts\graphics-run.mjs --out C:\graphics-evidence\subsystem-smoke --cases guard-opening --repeat 1 `
+  --visual-mode enhanced
 ```
 
 This command performs a bounded manual rendering smoke, not an active performance

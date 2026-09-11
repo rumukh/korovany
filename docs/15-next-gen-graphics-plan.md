@@ -1,6 +1,6 @@
 # Next-generation graphics: a playable illustrated world
 
-**Status: enhanced preview integrated; final acceptance in progress.** The
+**Status: local enhanced preview completed; default promotion remains gated.** The
 reproducible baseline, rendering foundation, character/world art, atmosphere,
 effects, compact HUD and live subsystem diagnostics are joined. GFX-01 through
 GFX-06 retain GPT-6 Astra, Max reasoning, and the 1M context tier. The user has
@@ -8,6 +8,10 @@ approved the stylized character direction after the three-faction portrait
 gallery. Legacy remains the default; that art decision does not approve
 performance tiers, physical mobile/integrated devices, or incomplete resource
 accounting.
+
+[Integrated results and final screenshots](graphics-upgrade-results.md) record
+the delivered build, the corrected camera/HUD paths, sampled geometry/draw
+envelopes, offline behavior, and the remaining performance/device gates.
 
 **Recommendation:** evolve the procedural comic into a richly lit, tactile
 illustrated world. Fix visibility and surface response before increasing geometric
@@ -81,11 +85,30 @@ through CDP. Mouse capture was refused, so play used the game's supported
 drag-to-look path. Engine references were read for navigation and evidence, not
 used to rewrite player positions, health, actors, or objectives.
 
-| Faction | Active game time | Observed play | Result at the last sample |
-| --- | --- | --- | --- |
-| Forest elves | 32.2 s | Caravan skirmish, archery and melee, evasion, camp arrival, forest travel, atlas destination selection, Hold/Follow/Regroup, bounty contract | Three regions discovered; camp and bounty completed; the alternative contract skipped by normal exclusivity; one personal kill |
-| Palace guard | 43.1 s | Camp arrival, shield holding, settlement approach and interaction, riverside fighting against elves, Hold/Follow, melee and evasion | Four regions discovered; camp and settlement objective completed; one personal kill; riverside contract unfinished |
-| Villain | 34.2 s | Uphill camp arrival, pursuit of a moving caravan, rush ability, close melee, damage and ration recovery, highland travel and Regroup | Two regions discovered; camp completed; one personal kill; reached the vicinity of an allied stronghold |
+**Faction:** Forest elves
+
+- **Active game time:** 32.2 s
+- **Observed play:** Caravan skirmish, archery and melee, evasion, camp arrival, forest travel, atlas destination
+  selection, Hold/Follow/Regroup, bounty contract
+- **Result at the last sample:** Three regions discovered; camp and bounty completed; the alternative contract skipped
+  by normal exclusivity; one personal kill
+
+**Faction:** Palace guard
+
+- **Active game time:** 43.1 s
+- **Observed play:** Camp arrival, shield holding, settlement approach and interaction, riverside fighting against
+  elves, Hold/Follow, melee and evasion
+- **Result at the last sample:** Four regions discovered; camp and settlement objective completed; one personal kill;
+  riverside contract unfinished
+
+**Faction:** Villain
+
+- **Active game time:** 34.2 s
+- **Observed play:** Uphill camp arrival, pursuit of a moving caravan, rush ability, close melee, damage and ration
+  recovery, highland travel and Regroup
+- **Result at the last sample:** Two regions discovered; camp completed; one personal kill; reached the vicinity of an
+  allied stronghold
+
 
 These are bounded opening/combat sessions, **not three completed campaigns**.
 No finale was completed. The guard shield was held, but a successful perfect
@@ -104,16 +127,77 @@ These pictures are visual evidence, not pixel-exact regression fixtures.
 
 ## 2. Findings that set the priorities
 
-| Priority | Observed problem | Evidence and current implementation | Upgrade consequence |
-| --- | --- | --- | --- |
-| P0 | The camera can stop showing a usable fight | [Guard close combat](images/graphics-review/guard-melee-impact.png). The camera was approximately 2.86 m above the player's ground position and only 1.85 m away horizontally, versus the ordinary 10 m horizontal offset. `resolveCameraPosition` uses one ray and a 2.2 m minimum boom distance. | Collision response must preserve character and opponent framing, not merely keep one camera point outside a wall. |
-| P0 | Large foreground foliage interrupts nearby character silhouettes | [Elf contract approach](images/graphics-review/elf-forest-contract.png). A conifer covers companions at close range. `blocksCamera` explicitly excludes `InstancedMesh`; the separate foliage-occlusion path must not be assumed to cover streamed instanced vegetation. | Add a presentation-only visibility policy that works with generated instances and their ink shells. |
-| P1 | Faces, cloth, armor, and background have weak value separation | [Elf opening](images/graphics-review/elf-opening.png), [villain opening](images/graphics-review/villain-opening.png). Existing geometry has faces and gear, but much of it reads as dark fill plus colored linework. Skin color is derived from UI warning/surface colors in `characterSkinMaterial`. | Give skin and physical surfaces deliberate art palettes; improve light response before adding more small meshes. |
-| P1 | Colored contours compete with faction and combat signals | All three openings. `spawnActor` registers the `enemy` outline kind for actors, including allies; player ink is also tinted. This is not a claim that allegiance logic is wrong. | Separate neutral structural ink, selection, allegiance, and momentary threat highlighting. |
-| P1 | Ground dominates the image with repetition rather than place | [Guard opening](images/graphics-review/guard-opening.png), [villain highlands](images/graphics-review/villain-highland-squad.png). Terrain uses repeating 64x64 procedural maps with nearest magnification; the palace biome applies paving across its terrain. | Introduce macro variation, authored material scale, and local paving/road/soil transitions. Do not just enlarge the existing pattern. |
-| P1 | Important world objects are not participating in the same shadow budget as actors | Code inspection: the live `GeneratedWorldRuntime` construction omits `castShadows`, and `normalizeStyle` enables it only for explicit `true`. Terrain receives shadows; generated prop shadow flags depend on that option. | Route selected nearby buildings, trees, and large props into a bounded shadow policy. Do not enable every streamed object indiscriminately. |
-| P1 | The composed image needs deliberate edge treatment | `WebGLRenderer({ antialias: true })` exists, but `BloomPostProcessor` creates a default `EffectComposer` without a multisampled target or an AA pass. In three 0.185, the default composer targets are not multisampled. | Treat scene resolve and final-image AA as part of the post pipeline; canvas antialiasing alone is not that solution. |
-| P2 | Combat effects and persistent panels compete for the same small subjects | [Elf melee](images/graphics-review/elf-caravan-fight.png), [villain taking damage](images/graphics-review/villain-caravan-combat.png). Numbers, splashes, notices, ink, and bodies overlap. | Establish an effects hierarchy and offer a compact combat HUD without removing important information. |
+**Priority:** P0
+
+- **Observed problem:** The camera can stop showing a usable fight
+- **Evidence and current implementation:** [Guard close combat](images/graphics-review/guard-melee-impact.png) . The
+  camera was approximately 2.86 m above the player's ground position and only 1.85 m away horizontally, versus the
+  ordinary 10 m horizontal offset. `resolveCameraPosition` uses one ray and a 2.2 m minimum boom distance.
+- **Upgrade consequence:** Collision response must preserve character and opponent framing, not merely keep one camera
+  point outside a wall.
+
+**Priority:** P0
+
+- **Observed problem:** Large foreground foliage interrupts nearby character silhouettes
+- **Evidence and current implementation:** [Elf contract approach](images/graphics-review/elf-forest-contract.png) . A
+  conifer covers companions at close range. `blocksCamera` explicitly excludes `InstancedMesh` ; the separate
+  foliage-occlusion path must not be assumed to cover streamed instanced vegetation.
+- **Upgrade consequence:** Add a presentation-only visibility policy that works with generated instances and their ink
+  shells.
+
+**Priority:** P1
+
+- **Observed problem:** Faces, cloth, armor, and background have weak value separation
+- **Evidence and current implementation:** [Elf opening](images/graphics-review/elf-opening.png) ,
+  [villain opening](images/graphics-review/villain-opening.png) . Existing geometry has faces and gear, but much of it
+  reads as dark fill plus colored linework. Skin color is derived from UI warning/surface colors in
+  `characterSkinMaterial` .
+- **Upgrade consequence:** Give skin and physical surfaces deliberate art palettes; improve light response before
+  adding more small meshes.
+
+**Priority:** P1
+
+- **Observed problem:** Colored contours compete with faction and combat signals
+- **Evidence and current implementation:** All three openings. `spawnActor` registers the `enemy` outline kind for
+  actors, including allies; player ink is also tinted. This is not a claim that allegiance logic is wrong.
+- **Upgrade consequence:** Separate neutral structural ink, selection, allegiance, and momentary threat highlighting.
+
+**Priority:** P1
+
+- **Observed problem:** Ground dominates the image with repetition rather than place
+- **Evidence and current implementation:** [Guard opening](images/graphics-review/guard-opening.png) ,
+  [villain highlands](images/graphics-review/villain-highland-squad.png) . Terrain uses repeating 64x64 procedural
+  maps with nearest magnification; the palace biome applies paving across its terrain.
+- **Upgrade consequence:** Introduce macro variation, authored material scale, and local paving/road/soil transitions.
+  Do not just enlarge the existing pattern.
+
+**Priority:** P1
+
+- **Observed problem:** Important world objects are not participating in the same shadow budget as actors
+- **Evidence and current implementation:** Code inspection: the live `GeneratedWorldRuntime` construction omits
+  `castShadows` , and `normalizeStyle` enables it only for explicit `true` . Terrain receives shadows; generated prop
+  shadow flags depend on that option.
+- **Upgrade consequence:** Route selected nearby buildings, trees, and large props into a bounded shadow policy. Do
+  not enable every streamed object indiscriminately.
+
+**Priority:** P1
+
+- **Observed problem:** The composed image needs deliberate edge treatment
+- **Evidence and current implementation:** `WebGLRenderer({ antialias: true })` exists, but `BloomPostProcessor`
+  creates a default `EffectComposer` without a multisampled target or an AA pass. In three 0.185, the default composer
+  targets are not multisampled.
+- **Upgrade consequence:** Treat scene resolve and final-image AA as part of the post pipeline; canvas antialiasing
+  alone is not that solution.
+
+**Priority:** P2
+
+- **Observed problem:** Combat effects and persistent panels compete for the same small subjects
+- **Evidence and current implementation:** [Elf melee](images/graphics-review/elf-caravan-fight.png) ,
+  [villain taking damage](images/graphics-review/villain-caravan-combat.png) . Numbers, splashes, notices, ink, and
+  bodies overlap.
+- **Upgrade consequence:** Establish an effects hierarchy and offer a compact combat HUD without removing important
+  information.
+
 
 The screenshots do not prove animation sliding, broken rig mathematics, bad
 collision topology, or a memory leak. Those require their own measurements.
@@ -127,11 +211,27 @@ spatial depth, material response, motion quality, and image stability expected
 from a modern game. Bold silhouettes remain; red wire-like detail everywhere does
 not. Preserve the existing green/blue/pink faction semantics and Russian voice.
 
-| Faction | Character direction | World and light direction |
-| --- | --- | --- |
-| Elves | Lean, layered woodland kit; readable hood openings, bow/quiver separation, leaf-shaped shields, warm skin against muted green cloth | Mixed canopy heights, shafts of open sky, bark and leaf-litter scale, damp soil, soft green bounce without turning every material green |
-| Guard | Broad steel-and-cloth construction; visible visor/face distinction, blue tabards, restrained brass trim, unmistakable shield profiles | Paved courtyards rather than an infinite tile carpet, stone foundations, worn road edges, cool stone balanced by warm occupied windows |
-| Villain | Asymmetric heavy kit, distinctive horns and silhouettes, rough leather, bone and dark iron; pink is an accent, not the entire material model | Layered scree and rock strata, weathered fortifications, cold distance, warm localized fire, legible characters against dark slopes |
+**Faction:** Elves
+
+- **Character direction:** Lean, layered woodland kit; readable hood openings, bow/quiver separation, leaf-shaped
+  shields, warm skin against muted green cloth
+- **World and light direction:** Mixed canopy heights, shafts of open sky, bark and leaf-litter scale, damp soil, soft
+  green bounce without turning every material green
+
+**Faction:** Guard
+
+- **Character direction:** Broad steel-and-cloth construction; visible visor/face distinction, blue tabards,
+  restrained brass trim, unmistakable shield profiles
+- **World and light direction:** Paved courtyards rather than an infinite tile carpet, stone foundations, worn road
+  edges, cool stone balanced by warm occupied windows
+
+**Faction:** Villain
+
+- **Character direction:** Asymmetric heavy kit, distinctive horns and silhouettes, rough leather, bone and dark iron;
+  pink is an accent, not the entire material model
+- **World and light direction:** Layered scree and rock strata, weathered fortifications, cold distance, warm
+  localized fire, legible characters against dark slopes
+
 
 Roles must still read independently of color: archer, line fighter, brute, officer,
 civilian, and player. Upgrade the existing role taxonomy and deterministic
@@ -328,14 +428,40 @@ plays without external resource requests.
 
 ## 5. Shared implementation contract
 
-| Boundary | Contract |
-| --- | --- |
-| Simulation | Preserve world seed/fingerprint, terrain queries, routes, actor cap, allegiance, action timing, damage, injuries, objectives, and save/continue semantics. Decorative changes are not permission to alter any of them. |
-| Visual randomness | Reuse `art:` seed derivations. Never consume combat, loot, director, or world-generation streams for detail. Record a separate visual revision for comparisons; do not invalidate a campaign solely because its mesh changed. |
-| Resource ownership | Material/geometry libraries own their shared resources; region and actor owners release references. Audit outlines, skinning data, instance buffers, procedural maps, and post targets together. No per-frame allocation of reusable render data. |
-| Engine integration | Keep `GameEngine` as the gameplay owner. Add small typed presentation helpers at existing call sites, not an unrelated engine migration. Character and world work share the approved material/attribute/LOD contract. |
-| Art production | Everything shipped for play remains generated in code. No downloaded textures, character packs, GLTF/FBX models, remote generation service, or runtime account is required. Review screenshots under `docs` are evidence, not game assets. |
-| Interface | Preserve Russian copy and existing controls/overlay behavior. New quality controls use the current settings, copy, and accessibility patterns; they must not resume a paused fight. |
+**Boundary:** Simulation
+
+- **Contract:** Preserve world seed/fingerprint, terrain queries, routes, actor cap, allegiance, action timing,
+  damage, injuries, objectives, and save/continue semantics. Decorative changes are not permission to alter any of
+  them.
+
+**Boundary:** Visual randomness
+
+- **Contract:** Reuse `art:` seed derivations. Never consume combat, loot, director, or world-generation streams for
+  detail. Record a separate visual revision for comparisons; do not invalidate a campaign solely because its mesh
+  changed.
+
+**Boundary:** Resource ownership
+
+- **Contract:** Material/geometry libraries own their shared resources; region and actor owners release references.
+  Audit outlines, skinning data, instance buffers, procedural maps, and post targets together. No per-frame allocation
+  of reusable render data.
+
+**Boundary:** Engine integration
+
+- **Contract:** Keep `GameEngine` as the gameplay owner. Add small typed presentation helpers at existing call sites,
+  not an unrelated engine migration. Character and world work share the approved material/attribute/LOD contract.
+
+**Boundary:** Art production
+
+- **Contract:** Everything shipped for play remains generated in code. No downloaded textures, character packs,
+  GLTF/FBX models, remote generation service, or runtime account is required. Review screenshots under `docs` are
+  evidence, not game assets.
+
+**Boundary:** Interface
+
+- **Contract:** Preserve Russian copy and existing controls/overlay behavior. New quality controls use the current
+  settings, copy, and accessibility patterns; they must not resume a paused fight.
+
 
 Character and world content work can proceed independently after the common
 material, camera, and resource contracts are settled. Integrate those branches
@@ -348,15 +474,48 @@ These are **proposed engineering targets, not measurements from this review**.
 GFX-01 must name representative devices and either demonstrate these budgets or
 revise the quality scope openly before implementation commits to them.
 
-| Budget | High desktop | Balanced desktop/integrated | Low/mobile |
-| --- | --- | --- | --- |
-| Frame-time target, p95 after warm-up | At most 16.7 ms | At most 16.7 ms | At most 33.3 ms |
-| Internal 3D pixel ceiling | About 2.1 MP | About 1.4 MP | About 0.9 MP |
-| Whole-frame draw-call ceiling, including ink/shadow/post | 700 | 450 | 300 |
-| Main-view triangle ceiling | 600k | 300k | 150k |
-| Tracked allocated GPU-resource budget, including render targets | 256 MiB | 192 MiB | 128 MiB |
-| Shadow policy | One 2048 key map, prioritized nearby world casters | One 1024-2048 key map, smaller caster set | Minimal key shadow or contact-only fallback |
-| Post policy | Resolved AA, restrained bloom/grade; AO only if approved | Measured AA and optional bloom/grade | Genuine direct/no-post path |
+**Budget:** Frame-time target, p95 after warm-up
+
+- **High desktop:** At most 16.7 ms
+- **Balanced desktop/integrated:** At most 16.7 ms
+- **Low/mobile:** At most 33.3 ms
+
+**Budget:** Internal 3D pixel ceiling
+
+- **High desktop:** About 2.1 MP
+- **Balanced desktop/integrated:** About 1.4 MP
+- **Low/mobile:** About 0.9 MP
+
+**Budget:** Whole-frame draw-call ceiling, including ink/shadow/post
+
+- **High desktop:** 700
+- **Balanced desktop/integrated:** 450
+- **Low/mobile:** 300
+
+**Budget:** Main-view triangle ceiling
+
+- **High desktop:** 600k
+- **Balanced desktop/integrated:** 300k
+- **Low/mobile:** 150k
+
+**Budget:** Tracked allocated GPU-resource budget, including render targets
+
+- **High desktop:** 256 MiB
+- **Balanced desktop/integrated:** 192 MiB
+- **Low/mobile:** 128 MiB
+
+**Budget:** Shadow policy
+
+- **High desktop:** One 2048 key map, prioritized nearby world casters
+- **Balanced desktop/integrated:** One 1024-2048 key map, smaller caster set
+- **Low/mobile:** Minimal key shadow or contact-only fallback
+
+**Budget:** Post policy
+
+- **High desktop:** Resolved AA, restrained bloom/grade; AO only if approved
+- **Balanced desktop/integrated:** Measured AA and optional bloom/grade
+- **Low/mobile:** Genuine direct/no-post path
+
 
 All tiers retain `MAX_ACTORS = 25`, the three companions, and identical gameplay.
 The current world-ink caps are eight draws per region and 48 visible draws total;
@@ -370,16 +529,47 @@ Do not trade one obvious visual problem for temporal shimmer or ghosted attacks.
 
 ## 7. Acceptance before release
 
-| Area | Required evidence |
-| --- | --- |
-| Faction coverage | Natural opening, movement, defense/ability, melee, and interaction for each faction; player plus friendly and hostile NPCs in the new screenshots. Full-campaign claims require actual campaign completion. |
-| Camera | Revisit the exact forest obstruction and riverside collision; orbit, strafe, back against walls, cross slopes, fight near crowds, and exercise drag-to-look as well as native capture. Observe temporal transitions, not only resting images. |
-| Character quality | Near/mid/far, front/back/side, bright/shadowed, grayscale, all faction/role combinations; moving and injured poses, prosthetics, shield, death, and every attachment. |
-| World quality | All four biomes, settlements/forts, caravan/animals, road edges, steep slopes, a real river crossing, night, rain, snow, and streamed LOD boundaries. |
-| Gameplay safety | Quality and effect toggles do not change collision, AI targets, actor counts, RNG state, paid cooldowns, damage windows, objective state, or save/continue results. |
-| Accessibility and UI | Desktop and 390x844 touch layout; readable text, reachable 44 CSS-pixel controls where applicable, reduced motion, keyboard UI, overlay/focus cancellation, and independent effect toggles. |
-| Lifecycle and performance | Sustained crowded combat and traversal on named devices, warm/cold runs, region load/unload loops, resize/DPR changes, repeated run/menu cycles, supported context recovery, and bounded resource ownership. |
-| Delivery | Existing build and offline bundle; no new network or asset dependency. A raw capture, measured frame data, and a written visual decision accompany each tier's approval. |
+**Area:** Faction coverage
+
+- **Required evidence:** Natural opening, movement, defense/ability, melee, and interaction for each faction; player
+  plus friendly and hostile NPCs in the new screenshots. Full-campaign claims require actual campaign completion.
+
+**Area:** Camera
+
+- **Required evidence:** Revisit the exact forest obstruction and riverside collision; orbit, strafe, back against
+  walls, cross slopes, fight near crowds, and exercise drag-to-look as well as native capture. Observe temporal
+  transitions, not only resting images.
+
+**Area:** Character quality
+
+- **Required evidence:** Near/mid/far, front/back/side, bright/shadowed, grayscale, all faction/role combinations;
+  moving and injured poses, prosthetics, shield, death, and every attachment.
+
+**Area:** World quality
+
+- **Required evidence:** All four biomes, settlements/forts, caravan/animals, road edges, steep slopes, a real river
+  crossing, night, rain, snow, and streamed LOD boundaries.
+
+**Area:** Gameplay safety
+
+- **Required evidence:** Quality and effect toggles do not change collision, AI targets, actor counts, RNG state, paid
+  cooldowns, damage windows, objective state, or save/continue results.
+
+**Area:** Accessibility and UI
+
+- **Required evidence:** Desktop and 390x844 touch layout; readable text, reachable 44 CSS-pixel controls where
+  applicable, reduced motion, keyboard UI, overlay/focus cancellation, and independent effect toggles.
+
+**Area:** Lifecycle and performance
+
+- **Required evidence:** Sustained crowded combat and traversal on named devices, warm/cold runs, region load/unload
+  loops, resize/DPR changes, repeated run/menu cycles, supported context recovery, and bounded resource ownership.
+
+**Area:** Delivery
+
+- **Required evidence:** Existing build and offline bundle; no new network or asset dependency. A raw capture,
+  measured frame data, and a written visual decision accompany each tier's approval.
+
 
 Extend the existing Node tests for art, character geometry/poses, world art,
 outlines, bloom, camera behavior, environment, streaming, and persistence.

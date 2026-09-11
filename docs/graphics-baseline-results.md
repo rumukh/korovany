@@ -156,16 +156,48 @@ structural `region-1-1` instance 6. The guard collision solver reproduces a
 The native routes successfully used the game's drag fallback after Chrome
 refused pointer capture, with actual yaw change and player movement.
 
-| Desktop fixture | Raw capture |
-| --- | --- |
-| Three faction openings | [Elf](images/gfx-01-baseline/desktop/elf-opening.png), [guard](images/gfx-01-baseline/desktop/guard-opening.png), [villain](images/gfx-01-baseline/desktop/villain-opening.png) |
-| Foreground tree and collision camera | [Forest](images/gfx-01-baseline/desktop/elf-forest-obstruction.png), [riverside](images/gfx-01-baseline/desktop/guard-riverside-close.png) |
-| Slope and crossing | [Villain slope](images/gfx-01-baseline/desktop/villain-slope.png), [bridge/water](images/gfx-01-baseline/desktop/bridge-water-edge.png) |
-| Real crowd | [Staged 25-NPC setup](images/gfx-01-baseline/desktop/crowded-25.png), [active combat endpoint](images/gfx-01-baseline/desktop/crowded-25-active-end.png) |
-| Environment | [Neutral](images/gfx-01-baseline/desktop/neutral-biome.png), [night](images/gfx-01-baseline/desktop/night.png), [rain](images/gfx-01-baseline/desktop/rain.png), [snow](images/gfx-01-baseline/desktop/snow.png) |
-| Streaming prerequisite | [Connected boundary](images/gfx-01-baseline/desktop/streaming-boundary.png) |
-| No-post native endpoints | [Forest](images/gfx-01-baseline/native-no-post/elf-forest-obstruction-active-end.png), [riverside](images/gfx-01-baseline/native-no-post/guard-riverside-close-active-end.png) |
-| 390x844 problem cases | [Crowd](images/gfx-01-baseline/small-viewport/crowded-25.png), [riverside](images/gfx-01-baseline/small-viewport/guard-riverside-close.png), [night](images/gfx-01-baseline/small-viewport/night.png) |
+**Desktop fixture:** Three faction openings
+
+- **Raw capture:** [Elf](images/gfx-01-baseline/desktop/elf-opening.png) ,
+  [guard](images/gfx-01-baseline/desktop/guard-opening.png) ,
+  [villain](images/gfx-01-baseline/desktop/villain-opening.png)
+
+**Desktop fixture:** Foreground tree and collision camera
+
+- **Raw capture:** [Forest](images/gfx-01-baseline/desktop/elf-forest-obstruction.png) ,
+  [riverside](images/gfx-01-baseline/desktop/guard-riverside-close.png)
+
+**Desktop fixture:** Slope and crossing
+
+- **Raw capture:** [Villain slope](images/gfx-01-baseline/desktop/villain-slope.png) ,
+  [bridge/water](images/gfx-01-baseline/desktop/bridge-water-edge.png)
+
+**Desktop fixture:** Real crowd
+
+- **Raw capture:** [Staged 25-NPC setup](images/gfx-01-baseline/desktop/crowded-25.png) ,
+  [active combat endpoint](images/gfx-01-baseline/desktop/crowded-25-active-end.png)
+
+**Desktop fixture:** Environment
+
+- **Raw capture:** [Neutral](images/gfx-01-baseline/desktop/neutral-biome.png) ,
+  [night](images/gfx-01-baseline/desktop/night.png) , [rain](images/gfx-01-baseline/desktop/rain.png) ,
+  [snow](images/gfx-01-baseline/desktop/snow.png)
+
+**Desktop fixture:** Streaming prerequisite
+
+- **Raw capture:** [Connected boundary](images/gfx-01-baseline/desktop/streaming-boundary.png)
+
+**Desktop fixture:** No-post native endpoints
+
+- **Raw capture:** [Forest](images/gfx-01-baseline/native-no-post/elf-forest-obstruction-active-end.png) ,
+  [riverside](images/gfx-01-baseline/native-no-post/guard-riverside-close-active-end.png)
+
+**Desktop fixture:** 390x844 problem cases
+
+- **Raw capture:** [Crowd](images/gfx-01-baseline/small-viewport/crowded-25.png) ,
+  [riverside](images/gfx-01-baseline/small-viewport/guard-riverside-close.png) ,
+  [night](images/gfx-01-baseline/small-viewport/night.png)
+
 
 The 390x844 captures retain the existing crowded HUD and severe riverside
 cropping; they do not declare those readability problems solved.

@@ -44,11 +44,22 @@ campaigns and full model/action acceptance are not established.
 
 ## Initial framing versus the moving-camera failure
 
-| Recorded prerequisite | Initial result at 1920x1080 | Decision |
-| --- | --- | --- |
-| Forest contract obstruction | 10.000 m horizontal / 11.943 m boom; three foreground instances faded | Player and companions are no longer hidden by the central conifer |
-| Riverside shop collision | 10.562 m horizontal / 12.856 m boom; shoulder candidate 1; player fully framed | Substantial improvement over GFX-01's 1.842 m horizontal view; roof still legitimately hides part of the left NPC |
-| Riverside after native drag/strafe | 7.566 m horizontal / 7.809868 m boom; roof/wall at image center | **Fails torso visibility** in active-end and all 12 subsequent motion frames |
+**Recorded prerequisite:** Forest contract obstruction
+
+- **Initial result at 1920x1080:** 10.000 m horizontal / 11.943 m boom; three foreground instances faded
+- **Decision:** Player and companions are no longer hidden by the central conifer
+
+**Recorded prerequisite:** Riverside shop collision
+
+- **Initial result at 1920x1080:** 10.562 m horizontal / 12.856 m boom; shoulder candidate 1; player fully framed
+- **Decision:** Substantial improvement over GFX-01's 1.842 m horizontal view; roof still legitimately hides part of
+  the left NPC
+
+**Recorded prerequisite:** Riverside after native drag/strafe
+
+- **Initial result at 1920x1080:** 7.566 m horizontal / 7.809868 m boom; roof/wall at image center
+- **Decision:** **Fails torso visibility** in active-end and all 12 subsequent motion frames
+
 
 The forest initial frame recorded four admitted world-shadow draws, 24 submitted
 instances / 10,600 triangles and 22 selected instances. The riverside frame
@@ -61,7 +72,7 @@ is not substituted for submitted cost.
 
 ![Riverside: initial full-body camera recovery](images/gfx-02-evidence/02-camera-routes/guard-riverside-close-1.png)
 
-![Riverside: failing native-route endpoint, not a passing camera shot](images/gfx-02-evidence/02-camera-routes/guard-riverside-close-active-end.png)
+![Riverside: failing native-route endpoint, not a passing camera shot][graphics-wrap-1]
 
 At the failing endpoint, player position is
 `[13.411848615952803, 11.880030381648718, -95.35531828691352]`;
@@ -100,10 +111,16 @@ The different active sequences are not frame-synchronized A/B benchmarks.
 
 There were **zero browser error/exception events**, but warnings were retained:
 
-| Warning | Recorded console messages | Assessment |
-| --- | ---: | --- |
-| `THREE.Clock` deprecated | 35 | Existing clock warning, not shader failure |
-| ANGLE `X3595` gradient in varying loop and `X4000` potentially uninitialized `f_ApplyFXAA` | 10 | Program-info warnings from the FXAA path; unresolved portability caveat |
+**Warning:** `THREE.Clock` deprecated
+
+- **Recorded console messages:** 35
+- **Assessment:** Existing clock warning, not shader failure
+
+**Warning:** ANGLE `X3595` gradient in varying loop and `X4000` potentially uninitialized `f_ApplyFXAA`
+
+- **Recorded console messages:** 10
+- **Assessment:** Program-info warnings from the FXAA path; unresolved portability caveat
+
 
 `ApplyFXAA`, its data-dependent edge-search loops and implicit-gradient texture
 samples originate in the installed, unmodified three.js
@@ -153,7 +170,7 @@ and none exceeds the resolved pixel ceiling. These are fresh-launch dimensions,
 **not an in-session resize/DPR transition test**. The 390px HUD still overlays
 much of the world; a correct small 3D buffer does not solve the full mobile HUD.
 
-![Low direct riverside layout, with remaining HUD obstruction](images/gfx-02-evidence/12-small-direct-layout/guard-riverside-close-1.png)
+![Low direct riverside layout, with remaining HUD obstruction][graphics-wrap-2]
 
 ## Active performance and inherited overages
 
@@ -279,3 +296,7 @@ to reconstruct every original input/RAF timestep or prove post-fix image quality
 **The preserved PNGs and performance table above remain pre-fix evidence.**
 The necessary new browser route and live resize/DPR window is still gated by
 the coordinator's separate lease.
+
+
+[graphics-wrap-1]: images/gfx-02-evidence/02-camera-routes/guard-riverside-close-active-end.png
+[graphics-wrap-2]: images/gfx-02-evidence/12-small-direct-layout/guard-riverside-close-1.png

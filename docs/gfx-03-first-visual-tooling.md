@@ -23,7 +23,8 @@ node scripts\graphics-first-visual.mjs --workspace C:\absolute\integration-workt
 After building the **chosen integration worktree**, execute with its exact SHA:
 
 ```powershell
-node scripts\graphics-first-visual.mjs --workspace C:\absolute\integration-worktree --out C:\absolute\new-evidence --expected-commit FULL_40_CHARACTER_SHA --execute
+node scripts\graphics-first-visual.mjs --workspace C:\absolute\integration-worktree --out C:\absolute\new-evidence `
+  --expected-commit FULL_40_CHARACTER_SHA --execute
 ```
 
 `GRAPHICS_WORKSPACE` and `GRAPHICS_OUTPUT` are equivalent defaults for the two

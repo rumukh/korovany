@@ -59,7 +59,7 @@ Approximately 31.2 s. The player is holding the shield while companions engage
 an elf. More NPCs, a deer, a building, water, and a distant bridge provide context.
 This frame demonstrates shield use, not proof of a successful perfect guard.
 
-![Guard player holding the shield while allied NPCs engage an elf attacker](images/graphics-review/guard-riverside-combat.png)
+![Guard player holding the shield while allied NPCs engage an elf attacker][graphics-wrap-1]
 
 ### Collision camera compressed into the formation
 
@@ -68,7 +68,7 @@ close. The player is cropped in the foreground, an allied guard fills the center
 and a defeated elf is visible at the right. The view no longer presents a usable
 overview of the fight. This is the camera priority in the upgrade plan.
 
-![Cropped guard player and nearby NPCs filling a collision-compressed camera view](images/graphics-review/guard-melee-impact.png)
+![Cropped guard player and nearby NPCs filling a collision-compressed camera view][graphics-wrap-2]
 
 ## Villain
 
@@ -96,4 +96,9 @@ companions outside the old stronghold. The frame exposes rock/soil repetition,
 wall shading, sloped ground, and equipment readability together. This was not
 a completed finale encounter.
 
-![Villain player and regrouped companion NPCs outside the highland stronghold](images/graphics-review/villain-highland-squad.png)
+![Villain player and regrouped companion NPCs outside the highland stronghold][graphics-wrap-3]
+
+
+[graphics-wrap-1]: images/graphics-review/guard-riverside-combat.png
+[graphics-wrap-2]: images/graphics-review/guard-melee-impact.png
+[graphics-wrap-3]: images/graphics-review/villain-highland-squad.png

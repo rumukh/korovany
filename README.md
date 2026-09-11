@@ -41,7 +41,8 @@ The stylized character direction is user-approved, but the quality tiers are
 still provisional: desktop viewport emulation is not mobile-device certification,
 and complete resource/performance acceptance is separate from art approval.
 See [visual settings](docs/visual-settings.md) and the
-[graphics upgrade plan](docs/15-next-gen-graphics-plan.md) for the rollout contract.
+[graphics upgrade results and screenshots](docs/graphics-upgrade-results.md).
+The [graphics upgrade plan](docs/15-next-gen-graphics-plan.md) records the rollout contract.
 
 ## Controls
 

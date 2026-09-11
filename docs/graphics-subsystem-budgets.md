@@ -114,7 +114,7 @@ to dynamic art; world-only procedural maps belong to world. Classification for
 accounting does not transfer disposal ownership from `StylizedArtLibrary`,
 `BloomPostProcessor`, the renderer or source owners.
 
-| Tier / owner | CPU backing total | Geometry subset | Full binding-clone subset of geometry | Non-geometry skin subset | Additional CPU-only sight subset |
+| Tier / owner | CPU backing | Geometry | Full binding clones | Skin | CPU-only sight |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | High dynamic | 64 | 40 | 24 | 8 | 0 |
 | High world | 96 | 64 | 24 | 0 | 24 |
@@ -204,12 +204,25 @@ over budget; no full-role/tier approval follows automatically.
 
 `src/game/diagnostics/VisualBudgetAccounting.ts` exports:
 
-| Export | Contract |
-| --- | --- |
-| `VisualAllocationReceipt` | Actual allocation identity, one `chargedTo` bucket, kind, CPU bytes and known GPU bytes or `null` |
-| `sumVisualAllocationReceipts(receipts)` | Deduplicates identical backing-buffer/GL-handle identities; rejects conflicting charges; no ownership/disposal/GL side effects |
-| `VisualBudgetEvidence` | Same-frame per-subsystem pass totals/CPU scopes/resources, existing `GraphicsFrame` data, explicit inventory closure, canvas estimate and actual world-shadow counters |
-| `assessVisualSubsystemBudget(allocation, evidence)` | `within-provisional-envelope`, `incomplete`, or `over-budget-or-inconsistent`; named issues/missing data, never a device approval |
+**Export:** `VisualAllocationReceipt`
+
+- **Contract:** Actual allocation identity, one `chargedTo` bucket, kind, CPU bytes and known GPU bytes or `null`
+
+**Export:** `sumVisualAllocationReceipts(receipts)`
+
+- **Contract:** Deduplicates identical backing-buffer/GL-handle identities; rejects conflicting charges; no
+  ownership/disposal/GL side effects
+
+**Export:** `VisualBudgetEvidence`
+
+- **Contract:** Same-frame per-subsystem pass totals/CPU scopes/resources, existing `GraphicsFrame` data, explicit
+  inventory closure, canvas estimate and actual world-shadow counters
+
+**Export:** `assessVisualSubsystemBudget(allocation, evidence)`
+
+- **Contract:** `within-provisional-envelope` , `incomplete` , or `over-budget-or-inconsistent` ; named issues/missing
+  data, never a device approval
+
 
 Receipts are an accounting input, **not new lifetime owners**. A CPU backing
 buffer and its distinct GPU buffer are different allocations; use separate

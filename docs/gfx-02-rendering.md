@@ -116,19 +116,51 @@ Metre scale is positive. World mapping samples world coordinates, not arbitrary
 object scale. All variants remain the same standard-material family. No new
 texture, model or network dependency is required.
 
-| Geometry input | Contract |
-| --- | --- |
-| `position`, `normal` | Finite vec3 position/shading data; existing winding and indices preserved |
-| `outlineNormal` | Welded rest-space normal for hard-edged ink, transformed with skin/wind |
-| `color` | Linear RGB, required with `vertexColors`; use white material base for mixed-surface batches |
-| `uv` | Required by a UV-mapped texture, not a world-mapped layout |
-| `skinIndex`, `skinWeight` | Four valid integral joint indices and four finite nonnegative normalized weights |
-| `artSurfaceResponse` | Optional vec4 absolute roughness/metalness/band/rim, each 0..1 |
-| `artWind` | Optional vec2 flex/phase, each 0..1; rigid parts have zero flex |
-| `artWater` | Optional vec4 normalized flow X/Z, shore proximity 0..1 and nonnegative visual depth in metres |
-| `artVisibility` | Camera-only scalar 0..1; an instance-divisor attribute on instanced sources |
-| `artShadowParticipation` | Separate depth-only scalar instance admission mask |
-| `artWeatherResponse` | Optional vec2 maximum roughness drop (0..0.3) / fractional value darkening (0..0.22), installed by GFX-05 Stage A |
+**Geometry input:** `position`, `normal`
+
+- **Contract:** Finite vec3 position/shading data; existing winding and indices preserved
+
+**Geometry input:** `outlineNormal`
+
+- **Contract:** Welded rest-space normal for hard-edged ink, transformed with skin/wind
+
+**Geometry input:** `color`
+
+- **Contract:** Linear RGB, required with `vertexColors`; use white material base for mixed-surface batches
+
+**Geometry input:** `uv`
+
+- **Contract:** Required by a UV-mapped texture, not a world-mapped layout
+
+**Geometry input:** `skinIndex`, `skinWeight`
+
+- **Contract:** Four valid integral joint indices and four finite nonnegative normalized weights
+
+**Geometry input:** `artSurfaceResponse`
+
+- **Contract:** Optional vec4 absolute roughness/metalness/band/rim, each 0..1
+
+**Geometry input:** `artWind`
+
+- **Contract:** Optional vec2 flex/phase, each 0..1; rigid parts have zero flex
+
+**Geometry input:** `artWater`
+
+- **Contract:** Optional vec4 normalized flow X/Z, shore proximity 0..1 and nonnegative visual depth in metres
+
+**Geometry input:** `artVisibility`
+
+- **Contract:** Camera-only scalar 0..1; an instance-divisor attribute on instanced sources
+
+**Geometry input:** `artShadowParticipation`
+
+- **Contract:** Separate depth-only scalar instance admission mask
+
+**Geometry input:** `artWeatherResponse`
+
+- **Contract:** Optional vec2 maximum roughness drop (0..0.3) / fractional value darkening (0..0.22), installed by
+  GFX-05 Stage A
+
 
 `attributes.surfaceResponse`, `.weatherResponse`, `.wind`, `.water` and `.visibility` explicitly
 require the corresponding layout during binding validation. Unbound ordinary

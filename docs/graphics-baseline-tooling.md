@@ -23,10 +23,14 @@ replace the absolute output directories with new directories of your own.
 ```powershell
 npm run build
 npm run graphics:baseline -- --out C:\graphics-evidence\captures --repeat 2
-npm run graphics:baseline -- --out C:\graphics-evidence\active --cases elf-opening,guard-opening,villain-opening,crowded-25,streaming-boundary --profile --warmup 120 --frames 300
-npm run graphics:baseline -- --out C:\graphics-evidence\counter-control --cases guard-opening,crowded-25 --profile --timing-only --warmup 120 --frames 300
-npm run graphics:baseline -- --out C:\graphics-evidence\camera-route --cases elf-forest-obstruction,guard-riverside-close --profile --native-route --no-post --lifecycle
-npm run graphics:baseline -- --out C:\graphics-evidence\touch-layout --cases guard-riverside-close,crowded-25,night --width 390 --height 844
+npm run graphics:baseline -- --out C:\graphics-evidence\active --cases `
+  elf-opening,guard-opening,villain-opening,crowded-25,streaming-boundary --profile --warmup 120 --frames 300
+npm run graphics:baseline -- --out C:\graphics-evidence\counter-control --cases guard-opening,crowded-25 --profile `
+  --timing-only --warmup 120 --frames 300
+npm run graphics:baseline -- --out C:\graphics-evidence\camera-route --cases `
+  elf-forest-obstruction,guard-riverside-close --profile --native-route --no-post --lifecycle
+npm run graphics:baseline -- --out C:\graphics-evidence\touch-layout --cases guard-riverside-close,crowded-25,night `
+  --width 390 --height 844
 ```
 
 `--chrome` (or `CHROME_PATH`) selects an executable. The Windows default is
@@ -58,16 +62,44 @@ Keep the raw files; a summary is not a replacement for them.
 
 ## What the fixtures mean
 
-| Fixture | Actual production prerequisite |
-| --- | --- |
-| `elf-opening`, `guard-opening`, `villain-opening` | Fresh UI-launched world and normal starting actors, no relocation; held simulation with an explicit visual clock |
-| `elf-forest-obstruction` | Real elf save, then field-manifest player/companion coordinates and yaw/pitch at the obstructing tree |
-| `guard-riverside-close` | Real guard save beside the riverside shop; original yaw/pitch; the **production solver**, not a forced camera position, produces the collision view |
-| `villain-slope` | Real villain save with field-manifest highland slope positions |
-| `bridge-water-edge` | Generated bridge/river/terrain; nearby subjects placed using production terrain and collision queries |
-| `crowded-25` | Normal world plus 25 actual NPCs, excluding the player; existing NPCs staged at legal separated points, missing slots filled through `spawnActor` and `ActorBudget` |
-| `neutral-biome`, `night`, `rain`, `snow` | Real generated terrain; explicit presentation-only environment conditions |
-| `streaming-boundary` | Actual connected region seam; scheduled normal forward/back input loads and unloads the production neighborhood |
+**Fixture:** `elf-opening`, `guard-opening`, `villain-opening`
+
+- **Actual production prerequisite:** Fresh UI-launched world and normal starting actors, no relocation; held
+  simulation with an explicit visual clock
+
+**Fixture:** `elf-forest-obstruction`
+
+- **Actual production prerequisite:** Real elf save, then field-manifest player/companion coordinates and yaw/pitch at
+  the obstructing tree
+
+**Fixture:** `guard-riverside-close`
+
+- **Actual production prerequisite:** Real guard save beside the riverside shop; original yaw/pitch; the **production
+  solver**, not a forced camera position, produces the collision view
+
+**Fixture:** `villain-slope`
+
+- **Actual production prerequisite:** Real villain save with field-manifest highland slope positions
+
+**Fixture:** `bridge-water-edge`
+
+- **Actual production prerequisite:** Generated bridge/river/terrain; nearby subjects placed using production terrain
+  and collision queries
+
+**Fixture:** `crowded-25`
+
+- **Actual production prerequisite:** Normal world plus 25 actual NPCs, excluding the player; existing NPCs staged at
+  legal separated points, missing slots filled through `spawnActor` and `ActorBudget`
+
+**Fixture:** `neutral-biome`, `night`, `rain`, `snow`
+
+- **Actual production prerequisite:** Real generated terrain; explicit presentation-only environment conditions
+
+**Fixture:** `streaming-boundary`
+
+- **Actual production prerequisite:** Actual connected region seam; scheduled normal forward/back input loads and
+  unloads the production neighborhood
+
 
 The three JSON files under `scripts\graphics\saves` are unchanged exports of
 isolated virtual game runs, **not personal browser saves**. They contain the
@@ -111,17 +143,48 @@ simulation advances.
 
 The version-1 `window.__korovanyGraphics` API exists for one engine lifetime:
 
-| Method | Contract |
-| --- | --- |
-| `snapshot()` | Actual viewport, backend, camera, policy (when the integration getter exists), world fingerprint, actor counts, gameplay RNG states, resource ledger, latest complete frame |
-| `world()` | Real blueprint, generated site/bridge positions and region bounds |
-| `probe([{x,z}])` | Bounded, read-only production terrain/collision samples in the loaded neighborhood |
-| `stage({label, player?, companions?, camera?, crowd?})` | Manual mode only; finite/bounded coordinates, existing companion identities and an explicit prerequisite label required |
-| `render(frames = 1)` | Production builders' existing scene and render pipeline; zero simulation delta; **not an FPS measurement** |
-| `step(frames = 1, deltaSeconds = 1/60)` | Bounded fixed-step calls to the actual logical-frame path; labeled manual, never substituted for RAF profiling |
-| `profile({warmupFrames, sampleFrames, inputs?, counters?})` | Active production RAF updates; resolves after requested samples and bounded asynchronous GPU query draining |
-| `stop()` | Explicit cancellation, rejects an outstanding profile |
-| engine destruction | Cancels profiling, restores instance methods/`info.autoReset`, deletes owned queries, drops diagnostic references and removes the browser API |
+**Method:** `snapshot()`
+
+- **Contract:** Actual viewport, backend, camera, policy (when the integration getter exists), world fingerprint,
+  actor counts, gameplay RNG states, resource ledger, latest complete frame
+
+**Method:** `world()`
+
+- **Contract:** Real blueprint, generated site/bridge positions and region bounds
+
+**Method:** `probe([{x,z}])`
+
+- **Contract:** Bounded, read-only production terrain/collision samples in the loaded neighborhood
+
+**Method:** `stage({label, player?, companions?, camera?, crowd?})`
+
+- **Contract:** Manual mode only; finite/bounded coordinates, existing companion identities and an explicit
+  prerequisite label required
+
+**Method:** `render(frames = 1)`
+
+- **Contract:** Production builders' existing scene and render pipeline; zero simulation delta; **not an FPS
+  measurement**
+
+**Method:** `step(frames = 1, deltaSeconds = 1/60)`
+
+- **Contract:** Bounded fixed-step calls to the actual logical-frame path; labeled manual, never substituted for RAF
+  profiling
+
+**Method:** `profile({warmupFrames, sampleFrames, inputs?, counters?})`
+
+- **Contract:** Active production RAF updates; resolves after requested samples and bounded asynchronous GPU query
+  draining
+
+**Method:** `stop()`
+
+- **Contract:** Explicit cancellation, rejects an outstanding profile
+
+**Method:** engine destruction
+
+- **Contract:** Cancels profiling, restores instance methods/`info.autoReset`, deletes owned queries, drops diagnostic
+  references and removes the browser API
+
 
 `inputs` is an ordered array of `{frame, keys}`. It uses normal movement/shield
 input and cannot save, rewrite RNG/time, or change stats. Profiling a paused or

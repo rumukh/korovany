@@ -8,19 +8,65 @@ approval of performance tiers, all animation/camera/world cases, device support
 or complete resource ownership. Legacy remains the default; enhanced remains
 opt-in, and bloom-off/Low retain the sole pipeline's genuine direct path.
 
-| Input | Immutable checkpoint | Scope |
-| --- | --- | --- |
-| User feedback and progress | `7929bcce47609e5e6cc0420765df532388c089ad` | Master-plan status and requested three-faction head/anatomy direction |
-| Foundation camera/evidence | `025973ea91fff14a6ddff6a51bdde3c4c0e74be1` | Original failures preserved; torso-visibility CPU correction, not post-fix GPU approval |
-| Character/creature/caravan | `fc1af5436c7db73cd090f8a61823430f4a45408c` | Production presenters, anatomy, equipment, injury/LOD and all caravan paths |
-| World | `3ef70590d68c6e509c006bf206478a61a9dfa563` | Tactile world, continuous water flow, exact physical/canonical sight boundaries |
-| Atmosphere/effects/HUD | `e7383b84ca3c9099210871a8207522c451ca9022` | Actual shared weather/atmosphere, bounded secondary pool and optional compact HUD |
-| Completed contact/admission/injury follow-up | `d48233b6c6d4f59abedfd2ae113b5fb818d87b9c` | Stage B, persisted NPC injury isolation and final three CPU review corrections |
-| Exact current-main gameplay fixes | `4963002d9b2629dc809495e3d13583dbc3cb79c2` | Locomotion/posture, stopped and blocked movement, jump rearming, committed boar charge, true vertical camera/bow aiming and terrain collision |
-| Strict portrait-save fix | `f61ce8d9e3381d4c73a48b0e09d40a777831e619` | Unchanged Chronicle synchronization no longer increments region revisions; full save comparison remains strict |
-| Live subsystem diagnostics | `6313eecf66472cb83914abb5c748340acc5af648` | Actual source/pass and GL-handle attribution, shared/unmapped buckets and explicitly incomplete assessment |
-| Flush ground receivers | `34b2bd4552bc921a5385c9521a1a9ab0122f23b5` | Paving on terrain and render-only road alignment after canonical capture; fixed depth bias and one factory road material |
-| Known pipeline allocation billing | `218ae58c79380d695c7cdbdacf77e50a49ba8dbd` | Standard maps and observed shadow/post targets billed once; matching canvas/MSAA estimates separately labeled |
+**Input:** User feedback and progress
+
+- **Immutable checkpoint:** `7929bcce47609e5e6cc0420765df532388c089ad`
+- **Scope:** Master-plan status and requested three-faction head/anatomy direction
+
+**Input:** Foundation camera/evidence
+
+- **Immutable checkpoint:** `025973ea91fff14a6ddff6a51bdde3c4c0e74be1`
+- **Scope:** Original failures preserved; torso-visibility CPU correction, not post-fix GPU approval
+
+**Input:** Character/creature/caravan
+
+- **Immutable checkpoint:** `fc1af5436c7db73cd090f8a61823430f4a45408c`
+- **Scope:** Production presenters, anatomy, equipment, injury/LOD and all caravan paths
+
+**Input:** World
+
+- **Immutable checkpoint:** `3ef70590d68c6e509c006bf206478a61a9dfa563`
+- **Scope:** Tactile world, continuous water flow, exact physical/canonical sight boundaries
+
+**Input:** Atmosphere/effects/HUD
+
+- **Immutable checkpoint:** `e7383b84ca3c9099210871a8207522c451ca9022`
+- **Scope:** Actual shared weather/atmosphere, bounded secondary pool and optional compact HUD
+
+**Input:** Completed contact/admission/injury follow-up
+
+- **Immutable checkpoint:** `d48233b6c6d4f59abedfd2ae113b5fb818d87b9c`
+- **Scope:** Stage B, persisted NPC injury isolation and final three CPU review corrections
+
+**Input:** Exact current-main gameplay fixes
+
+- **Immutable checkpoint:** `4963002d9b2629dc809495e3d13583dbc3cb79c2`
+- **Scope:** Locomotion/posture, stopped and blocked movement, jump rearming, committed boar charge, true vertical
+  camera/bow aiming and terrain collision
+
+**Input:** Strict portrait-save fix
+
+- **Immutable checkpoint:** `f61ce8d9e3381d4c73a48b0e09d40a777831e619`
+- **Scope:** Unchanged Chronicle synchronization no longer increments region revisions; full save comparison remains
+  strict
+
+**Input:** Live subsystem diagnostics
+
+- **Immutable checkpoint:** `6313eecf66472cb83914abb5c748340acc5af648`
+- **Scope:** Actual source/pass and GL-handle attribution, shared/unmapped buckets and explicitly incomplete assessment
+
+**Input:** Flush ground receivers
+
+- **Immutable checkpoint:** `34b2bd4552bc921a5385c9521a1a9ab0122f23b5`
+- **Scope:** Paving on terrain and render-only road alignment after canonical capture; fixed depth bias and one
+  factory road material
+
+**Input:** Known pipeline allocation billing
+
+- **Immutable checkpoint:** `218ae58c79380d695c7cdbdacf77e50a49ba8dbd`
+- **Scope:** Standard maps and observed shadow/post targets billed once; matching canvas/MSAA estimates separately
+  labeled
+
 
 The merges preserve the individual histories, including the original GFX-01
 corpus and GFX-02 failed motion evidence. Their measurements remain attributed
@@ -152,22 +198,78 @@ character-direction approval resolves the final world/motion/device matrix.
 
 ## Interfaces for the next consumers
 
-| Interface | Required semantics |
-| --- | --- |
-| `characterPresenter(root)` / `creaturePresenter(root)` from `art/index.ts` | Actual cached presenter lookup; `undefined` for absent/legacy/wrong roots. No inferred cast or per-contact scene traversal. |
-| `presenter.sampleContact(part, target)` | Fills caller-owned `CharacterContact.point`, `.normal`, `.surface`; world-space point and inverse-transpose contact normal. Returns `false` for absent/hidden/missing/unarmed anchors; callers must not reuse stale scratch after `false`. |
-| `CharacterContactPart` | Torso/head/four limbs/weapon/weaponGrip/weaponTip/shield; not every creature supplies every part. |
-| `characterPresenter(root).setAppearance(...)` | Existing owned derived geometry and replacement contract, preserving missing/prosthetic state and shared neighbors. |
-| `wagonPresenter(root)` | All default/rich/located production paths retain their presenter, cargo and articulated draft animals; motion does not replace route/collision authority. |
-| `GeneratedWorldRuntime.surfaces` | `WorldSurfaceField` in enhanced mode, `null` in legacy. |
-| `createWorldSurfaceSample()` / `surfaces.sampleInto(x, z, target)` | Read-only classification scratch: material, region/biome, road/paving/vegetation/shore/flow/visual water depth/bridge contact. No new physical height or normal. |
-| `surfaces.courts` / `.bridgeContacts` | Frozen metadata from unchanged site layouts and canonical bridge dimensions. Decorative bridge camber is not a new collision deck. |
-| `GeneratedWorldRuntime.getVisualInventory()` | Actual CPU receipts and source identities, retained caches/full clones/maps/canonical-only backing. Explicitly incomplete GPU/JS/temporary-peak coverage. |
-| `presenter.allocationReceipts()` / `SecondaryEffectPool.getAllocationReceipts()` | Real backing identities and existing charge buckets; unknown uploads remain `gpuBytes: null`. The small secondary pool is not the full effects inventory. |
-| `GameEngine.getVisualPolicy()` | Single effective settings policy, reported by the existing diagnostic snapshot. New art, compact DOM and effect preferences do not become campaign fields. |
-| `ContactPresentation` / `getTransientEffectInventory()` | Actual cached posed/material routing and source/backing inventory; explicit fallback provenance and incomplete GPU/CPU measurement coverage. |
-| Diagnostic `rendering` | Combined `camera`, `bindings`, `post`, `foundationFixture`, `characterPortrait`, `atmosphere`, `secondaryEffects`, `contacts` and `transientEffects`; raw inventories contain object identities and are not automatically JSON-safe GPU evidence. |
-| Diagnostic `subsystemBudget` | Actual same-frame owner/pass submissions, bounded source details, live retained CPU/GL inventory, known pipeline billing with raw consumers, `sameFrameStorage`, `knownGpuBudgetLowerBounds` and provisional `assessment`; missing GPU/CPU coverage is explicit. |
+**Interface:** `characterPresenter(root)` / `creaturePresenter(root)` from `art/index.ts`
+
+- **Required semantics:** Actual cached presenter lookup; `undefined` for absent/legacy/wrong roots. No inferred cast
+  or per-contact scene traversal.
+
+**Interface:** `presenter.sampleContact(part, target)`
+
+- **Required semantics:** Fills caller-owned `CharacterContact.point` , `.normal` , `.surface` ; world-space point and
+  inverse-transpose contact normal. Returns `false` for absent/hidden/missing/unarmed anchors; callers must not reuse
+  stale scratch after `false` .
+
+**Interface:** `CharacterContactPart`
+
+- **Required semantics:** Torso/head/four limbs/weapon/weaponGrip/weaponTip/shield; not every creature supplies every
+  part.
+
+**Interface:** `characterPresenter(root).setAppearance(...)`
+
+- **Required semantics:** Existing owned derived geometry and replacement contract, preserving missing/prosthetic
+  state and shared neighbors.
+
+**Interface:** `wagonPresenter(root)`
+
+- **Required semantics:** All default/rich/located production paths retain their presenter, cargo and articulated
+  draft animals; motion does not replace route/collision authority.
+
+**Interface:** `GeneratedWorldRuntime.surfaces`
+
+- **Required semantics:** `WorldSurfaceField` in enhanced mode, `null` in legacy.
+
+**Interface:** `createWorldSurfaceSample()` / `surfaces.sampleInto(x, z, target)`
+
+- **Required semantics:** Read-only classification scratch: material, region/biome,
+  road/paving/vegetation/shore/flow/visual water depth/bridge contact. No new physical height or normal.
+
+**Interface:** `surfaces.courts` / `.bridgeContacts`
+
+- **Required semantics:** Frozen metadata from unchanged site layouts and canonical bridge dimensions. Decorative
+  bridge camber is not a new collision deck.
+
+**Interface:** `GeneratedWorldRuntime.getVisualInventory()`
+
+- **Required semantics:** Actual CPU receipts and source identities, retained caches/full clones/maps/canonical-only
+  backing. Explicitly incomplete GPU/JS/temporary-peak coverage.
+
+**Interface:** `presenter.allocationReceipts()` / `SecondaryEffectPool.getAllocationReceipts()`
+
+- **Required semantics:** Real backing identities and existing charge buckets; unknown uploads remain `gpuBytes: null`
+  . The small secondary pool is not the full effects inventory.
+
+**Interface:** `GameEngine.getVisualPolicy()`
+
+- **Required semantics:** Single effective settings policy, reported by the existing diagnostic snapshot. New art,
+  compact DOM and effect preferences do not become campaign fields.
+
+**Interface:** `ContactPresentation` / `getTransientEffectInventory()`
+
+- **Required semantics:** Actual cached posed/material routing and source/backing inventory; explicit fallback
+  provenance and incomplete GPU/CPU measurement coverage.
+
+**Interface:** Diagnostic `rendering`
+
+- **Required semantics:** Combined `camera` , `bindings` , `post` , `foundationFixture` , `characterPortrait` ,
+  `atmosphere` , `secondaryEffects` , `contacts` and `transientEffects` ; raw inventories contain object identities
+  and are not automatically JSON-safe GPU evidence.
+
+**Interface:** Diagnostic `subsystemBudget`
+
+- **Required semantics:** Actual same-frame owner/pass submissions, bounded source details, live retained CPU/GL
+  inventory, known pipeline billing with raw consumers, `sameFrameStorage` , `knownGpuBudgetLowerBounds` and
+  provisional `assessment` ; missing GPU/CPU coverage is explicit.
+
 
 GFX-05 Stage B's completed posed-contact selection, per-hit material routing and
 perfect-guard/cleave feedback are now integrated. Final visual tuning and actual

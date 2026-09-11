@@ -46,18 +46,47 @@ tab without claiming it was persisted.
 
 `src/game/visualSettings.ts` exports:
 
-| Export | Contract |
-| --- | --- |
-| `VisualLaunchPreferences` | `visualMode: 'legacy' \| 'enhanced'`, `visualQuality: 'high' \| 'balanced' \| 'low'` |
-| `VisualPreferences` | Launch preferences plus `hudMode: 'full' \| 'compact'`; App-owned |
-| `VisualSettings` | Launch preferences plus the existing `dynamicDayNight`, `weatherEnabled`, `bloomEnabled`, `inkOutlinesEnabled`, `screenShakeEnabled`, `foliageQuality` engine fields |
-| `FoliageQuality` | Existing `'off' \| 'low' \| 'high'`; still re-exported from `GameEngine.ts` |
-| `normalizeVisualPreferences(value, onWarning?)` | Validated, immutable preferences; invalid fields warn and independently fall back |
-| `normalizeVisualSettings(value, onWarning?)` | Immutable engine visual subset; no device probing, campaign data, or HUD field |
-| `loadVisualPreferences(storage, onWarning?)` | Reads the new record only; accepts the existing `StorageLike` read interface |
-| `saveVisualPreferences(storage, preferences, onWarning?)` | One write, returns `false` on failure; never writes campaign or old effect keys |
-| `visualPreferenceApplication(selected, active)` | `'next-launch'`, `'current'`, or `'reload-required'`; HUD-only changes do not require a reload |
-| `foliageQualityDensity(quality)` | Existing density mapping: Off 0, Low 0.55, High 1 |
+**Export:** `VisualLaunchPreferences`
+
+- **Contract:** `visualMode: 'legacy' | 'enhanced'`, `visualQuality: 'high' | 'balanced' | 'low'`
+
+**Export:** `VisualPreferences`
+
+- **Contract:** Launch preferences plus `hudMode: 'full' | 'compact'`; App-owned
+
+**Export:** `VisualSettings`
+
+- **Contract:** Launch preferences plus the existing `dynamicDayNight` , `weatherEnabled` , `bloomEnabled` ,
+  `inkOutlinesEnabled` , `screenShakeEnabled` , `foliageQuality` engine fields
+
+**Export:** `FoliageQuality`
+
+- **Contract:** Existing `'off' | 'low' | 'high'`; still re-exported from `GameEngine.ts`
+
+**Export:** `normalizeVisualPreferences(value, onWarning?)`
+
+- **Contract:** Validated, immutable preferences; invalid fields warn and independently fall back
+
+**Export:** `normalizeVisualSettings(value, onWarning?)`
+
+- **Contract:** Immutable engine visual subset; no device probing, campaign data, or HUD field
+
+**Export:** `loadVisualPreferences(storage, onWarning?)`
+
+- **Contract:** Reads the new record only; accepts the existing `StorageLike` read interface
+
+**Export:** `saveVisualPreferences(storage, preferences, onWarning?)`
+
+- **Contract:** One write, returns `false` on failure; never writes campaign or old effect keys
+
+**Export:** `visualPreferenceApplication(selected, active)`
+
+- **Contract:** `'next-launch'`, `'current'`, or `'reload-required'`; HUD-only changes do not require a reload
+
+**Export:** `foliageQualityDensity(quality)`
+
+- **Contract:** Existing density mapping: Off 0, Low 0.55, High 1
+
 
 `GameEngineSettings extends VisualSettings`; `GameEngineOptions` retains its
 existing partial-options/required-`generatedRun` shape. There is no
@@ -69,19 +98,52 @@ application paths.
 deeply immutable policy from `src/game/visualPolicy.ts`. Reading it does not
 allocate each frame.
 
-| Policy field | Meaning |
-| --- | --- |
-| `preferences` | Normalized requested engine visual settings, including independent off preferences |
-| `mode`, `quality`, `previewAvailable`, `revision` | Effective legacy/enhanced mode, requested tier, compiled capability, and presentation-only revision |
-| `reducedMotion`, `cameraEffects` | Explicit environmental motion preference and permitted decorative camera effects |
-| `camera` | `collision: 'legacy-ray' \| 'volume'`, `foregroundFade`; no gameplay sight-policy input |
-| `render` | `scale`, `maxPixelRatio`, `maxPixels`; CSS/HUD layout stays unscaled |
-| `post` | `enabled`, `bloom`, `grade`, `antialiasing: 'none' \| 'fxaa'` |
-| `shadows` | `mapSize`, `worldDistance`, `worldCasterBudget`, `worldInstanceBudget`, `worldTriangleBudget` |
-| `ink` | `enabled`, `minPixels`, `maxPixels`; legacy retains its existing extrusion instead |
-| `lod` | `distanceScale`, fractional `hysteresis`; character projected-importance selection and world LOD consume the same tier envelope |
-| `density` | Bounded `foliage`, `weather`, `ambientLife`, and `particles` cosmetic factors |
-| `budget` | Provisional frame-time, whole-frame draw, main-view triangle and tracked-resource ceilings; `null` for the unchanged legacy comparison |
+**Policy field:** `preferences`
+
+- **Meaning:** Normalized requested engine visual settings, including independent off preferences
+
+**Policy field:** `mode`, `quality`, `previewAvailable`, `revision`
+
+- **Meaning:** Effective legacy/enhanced mode, requested tier, compiled capability, and presentation-only revision
+
+**Policy field:** `reducedMotion`, `cameraEffects`
+
+- **Meaning:** Explicit environmental motion preference and permitted decorative camera effects
+
+**Policy field:** `camera`
+
+- **Meaning:** `collision: 'legacy-ray' | 'volume'`, `foregroundFade`; no gameplay sight-policy input
+
+**Policy field:** `render`
+
+- **Meaning:** `scale`, `maxPixelRatio`, `maxPixels`; CSS/HUD layout stays unscaled
+
+**Policy field:** `post`
+
+- **Meaning:** `enabled`, `bloom`, `grade`, `antialiasing: 'none' | 'fxaa'`
+
+**Policy field:** `shadows`
+
+- **Meaning:** `mapSize`, `worldDistance`, `worldCasterBudget`, `worldInstanceBudget`, `worldTriangleBudget`
+
+**Policy field:** `ink`
+
+- **Meaning:** `enabled`, `minPixels`, `maxPixels`; legacy retains its existing extrusion instead
+
+**Policy field:** `lod`
+
+- **Meaning:** `distanceScale` , fractional `hysteresis` ; character projected-importance selection and world LOD
+  consume the same tier envelope
+
+**Policy field:** `density`
+
+- **Meaning:** Bounded `foliage`, `weather`, `ambientLife`, and `particles` cosmetic factors
+
+**Policy field:** `budget`
+
+- **Meaning:** Provisional frame-time, whole-frame draw, main-view triangle and tracked-resource ceilings; `null` for
+  the unchanged legacy comparison
+
 
 `resolveVisualPolicy(settings, environment?)` is the pure resolver.
 `environment.reducedMotion` is supplied by the caller; the resolver performs no
