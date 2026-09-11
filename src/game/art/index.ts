@@ -184,6 +184,7 @@ export {
   buildIllustratedBoot,
   buildIllustratedBowString,
   buildIllustratedChestArmor,
+  buildIllustratedCompactLimb,
   buildIllustratedEyes,
   buildIllustratedFace,
   buildIllustratedHair,

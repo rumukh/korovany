@@ -5,7 +5,7 @@ import {
   buildCharacterSkeleton, buildIllustratedHead, buildIllustratedFace,
   buildIllustratedHair, buildIllustratedHeadgear, buildIllustratedTorso, buildIllustratedEyes, buildIllustratedHorns,
   buildIllustratedChestArmor, buildIllustratedShoulder, buildIllustratedHand,
-  buildIllustratedTrim, buildIllustratedArm,
+  buildIllustratedTrim, buildIllustratedArm, buildIllustratedCompactLimb,
   buildIllustratedBowString, buildIllustratedNockedArrow,
   buildUpperArm, buildForearm, buildThigh, buildIllustratedShin, buildIllustratedBoot, buildCloak,
   buildWeaponHead, buildWeaponGrip, buildOffhand, buildWristRope,
@@ -216,6 +216,8 @@ export class CharacterPresenter {
   private readonly cache: GeometryCache
   private readonly player: boolean
   private readonly quality: VisualQuality
+  private readonly compact: boolean
+  private readonly lowDetail: boolean
   private readonly parts: Part[] = []
   private readonly bones: THREE.Bone[] = []
   private readonly boneLimb: number[] = []
@@ -263,6 +265,8 @@ export class CharacterPresenter {
     this.cache = cache
     this.player = player
     this.quality = quality
+    const compact = this.compact = quality !== 'high' && !player
+    this.lowDetail = compact && quality === 'low'
     this.level = player ? 'hero' : 'near'
     const p = plan.proportions
     const a = this.anatomy = buildCharacterSkeleton(p)
@@ -304,16 +308,16 @@ export class CharacterPresenter {
     const head = bone('head', a.headPivot, 0, a.headY)
     head.scale.setScalar(p.headScale)
     part(head, (level) => buildIllustratedHead(plan.faction, level), skin, 'skin')
-    part(head, buildIllustratedFace, 0x3c302c, 'dark')
-    part(head, (level) => buildIllustratedEyes(false, level), 0xc4b8a1, 'skin')
-    part(head, (level) => buildIllustratedEyes(true, level), 0x39352b, 'dark')
+    part(head, (level) => buildIllustratedFace(level, this.lowDetail), 0x3c302c, 'dark')
+    part(head, (level) => buildIllustratedEyes(false, level, this.lowDetail), 0xc4b8a1, 'skin')
+    part(head, (level) => buildIllustratedEyes(true, level, this.lowDetail), 0x39352b, 'dark')
     if (plan.hair !== 'none') {
       part(head, () => buildIllustratedHair(plan.hair), CHARACTER_PHYSICAL_PALETTE.hair[plan.hairTone % 4], 'hair')
     }
     if (plan.headgear !== 'none') {
       const soft = ['hood', 'ragHood', 'cap'].includes(plan.headgear)
       const mask = plan.headgear === 'boneMask'
-      part(head, (level) => buildIllustratedHeadgear(plan.headgear, level),
+      part(head, (level) => buildIllustratedHeadgear(plan.headgear, level, this.lowDetail),
         soft ? cloth : mask ? CHARACTER_PHYSICAL_PALETTE.bone : plan.headgear === 'strap' ? leather : metal,
         soft ? 'cloth' : mask ? 'bone' : plan.headgear === 'strap' ? 'leather' : 'metal')
       if (plan.headgear === 'hornedHelm') part(head, buildIllustratedHorns, CHARACTER_PHYSICAL_PALETTE.bone, 'bone')
@@ -328,31 +332,36 @@ export class CharacterPresenter {
       const limb: CharacterLimb = side < 0 ? 'leftArm' : 'rightArm'
       const arm = joint(limb, a.torsoPivot, side * p.shoulderX, a.shoulderY)
       const upper = bone(`${limb}-upper`, arm, 0, 0, 0, limb)
-      part(upper, (level) => level === 'mid' || level === 'far' ? buildIllustratedArm(p.upperArm, false)
+      part(upper, (level) => level === 'mid' || level === 'far' ? buildIllustratedArm(p.upperArm, false, compact)
+        : compact ? buildIllustratedCompactLimb(p.upperArm, 'upperArm', false)
         : buildUpperArm(plan.faction, 'none', p.upperArm), cloth, 'cloth', limb)
       if (plan.armour !== 'none' && plan.kit !== 'light' && plan.kit !== 'ranged') {
-        part(upper, () => buildIllustratedShoulder(plan, side), plan.faction === 'elf' ? cloth : metal,
+        part(upper, (level) => buildIllustratedShoulder(plan, side, compact && (level === 'mid' || level === 'far')),
+          plan.faction === 'elf' ? cloth : metal,
           plan.faction === 'elf' ? 'leather' : 'metal', limb)
       }
       const elbow = joint(side < 0 ? 'leftElbow' : 'rightElbow', arm, 0, -p.upperArm)
       const forearm = bone(`${limb}-forearm`, elbow, 0, 0, 0, limb)
-      part(forearm, (level) => level === 'mid' || level === 'far' ? buildIllustratedArm(p.forearm, true)
+      part(forearm, (level) => level === 'mid' || level === 'far' ? buildIllustratedArm(p.forearm, true, compact)
+        : compact ? buildIllustratedCompactLimb(p.forearm, 'forearm', false)
         : buildForearm(plan.faction, 'none', false, p.forearm),
         plan.armour === 'none' ? skin : leather, plan.armour === 'none' ? 'skin' : 'leather', limb)
       const hand = bone(side < 0 ? 'leftHand' : 'rightHand', elbow, 0, -p.forearm, 0, limb)
-      part(hand, (level) => buildIllustratedHand(side, level), plan.gloved ? leather : skin, plan.gloved ? 'leather' : 'skin', limb)
+      part(hand, (level) => buildIllustratedHand(side, level, compact), plan.gloved ? leather : skin, plan.gloved ? 'leather' : 'skin', limb)
       arms.push(arm); elbows.push(elbow); hands.push(hand)
     }
     for (const side of [-1, 1]) {
       const limb: CharacterLimb = side < 0 ? 'leftLeg' : 'rightLeg'
       const leg = joint(limb, a.pelvisPivot, side * p.hipX, p.hipY)
       const thigh = bone(`${limb}-thigh`, leg, 0, 0, 0, limb)
-      part(thigh, () => buildThigh(plan.faction, 'none', p.thigh), dark, 'cloth', limb)
+      part(thigh, (level) => compact ? buildIllustratedCompactLimb(p.thigh, 'thigh', level === 'mid' || level === 'far')
+        : buildThigh(plan.faction, 'none', p.thigh), dark, 'cloth', limb)
       const knee = joint(side < 0 ? 'leftKnee' : 'rightKnee', leg, 0, -p.thigh)
       const shin = bone(`${limb}-shin`, knee, 0, 0, 0, limb)
-      part(shin, () => buildIllustratedShin(p.shin), leather, 'leather', limb)
+      part(shin, (level) => compact ? buildIllustratedCompactLimb(p.shin, 'shin', level === 'mid' || level === 'far')
+        : buildIllustratedShin(p.shin), leather, 'leather', limb)
       const foot = bone(`${limb}-sole`, knee, 0, -p.shin, 0, limb)
-      part(foot, buildIllustratedBoot, leather, 'leather', limb)
+      part(foot, () => buildIllustratedBoot(compact), leather, 'leather', limb)
       legs.push(leg); knees.push(knee); feet.push(foot)
     }
     this.hands = [hands[0], hands[1]]
@@ -458,7 +467,8 @@ export class CharacterPresenter {
   }
 
   private weaponLease(kind: WeaponKind, released: boolean): ArtGeometryLease {
-    return cachedLease(this.cache, `articulated-weapon:${kind}:${released ? 'released' : 'ready'}`, () => {
+    const compact = this.compact && ['sword', 'greatsword', 'dagger', 'sabre', 'cleaver'].includes(kind)
+    return cachedLease(this.cache, `articulated-weapon:${kind}:${released ? 'released' : 'ready'}:${compact}`, () => {
       const parts: THREE.BufferGeometry[] = []
       const take = (geometry: THREE.BufferGeometry, color: number, surface: CharacterPhysicalSurface, joint: 'rigid' | 'string' | 'arrow') => {
         parts.push(geometry)
@@ -479,8 +489,8 @@ export class CharacterPresenter {
         if (kind === 'bow') {
           take(buildIllustratedBowString(), CHARACTER_PHYSICAL_PALETTE.dark, 'dark', 'string')
           if (!released) take(buildIllustratedNockedArrow(), CHARACTER_PHYSICAL_PALETTE.metal, 'metal', 'arrow')
-        } else take(buildWeaponHead(kind), CHARACTER_PHYSICAL_PALETTE.metal, 'metal', 'rigid')
-        take(buildWeaponGrip(kind), CHARACTER_PHYSICAL_PALETTE.leather, 'leather', 'rigid')
+        } else take(buildWeaponHead(kind, compact), CHARACTER_PHYSICAL_PALETTE.metal, 'metal', 'rigid')
+        take(buildWeaponGrip(kind, compact), CHARACTER_PHYSICAL_PALETTE.leather, 'leather', 'rigid')
         const result = mergeAll(parts, { dispose: false, name: `character-weapon:${kind}:${released ? 'released' : 'ready'}` })
         if (kind === 'bow') result.translate(0, 0, -0.17)
         return result
@@ -615,7 +625,7 @@ export class CharacterPresenter {
 
   private bodyLease(level: CharacterVisualLevel): ArtGeometryLease {
     const detail = this.detailLevel(level)
-    const key = `${CHARACTER_ART_REVISION}:${JSON.stringify(this.plan)}:${detail}`
+    const key = `${CHARACTER_ART_REVISION}:${JSON.stringify(this.plan)}:${detail}:${this.compact}:${this.lowDetail}`
     const retained = this.recentBodies.get(key)
     if (retained) {
       const lease = cachedLease(this.cache, key, () => { throw new Error('Retained character geometry was lost') })

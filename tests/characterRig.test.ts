@@ -9,13 +9,15 @@ import {
   characterPresenter,
   resolveCharacterPlan, characterRoles, buildIllustratedHead, buildIllustratedHeadgear,
   selectCharacterVisualLevel, validateArtGeometry,
-  buildIllustratedHand,
+  buildIllustratedHand, buildIllustratedBoot, buildWeaponGrip, buildWeaponHead,
+  buildIllustratedFace, buildIllustratedEyes,
   type CharacterContact,
   type OutlineBinding,
 } from '../src/game/art/index.ts'
 import { sumVisualAllocationReceipts } from '../src/game/diagnostics/VisualBudgetAccounting.ts'
 import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
 import { resolveVisualSubsystemAllocation } from '../src/game/visualBudget.ts'
+import { ART_SURFACE_ATTRIBUTE, ART_WEATHER_ATTRIBUTE } from '../src/game/art/ArtPresentation.ts'
 
 const loader = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -321,11 +323,279 @@ test('each guard variant fits its source-plus-ink geometry envelope without drop
       // plus the actual 24-segment ring, 18-segment contact disc and health sprite.
       assert.ok(triangles * 2 + 48 + 18 + 2 <= allocation.firstRole.nearMainViewTriangles,
         `${quality}/${variant}: ${triangles * 2 + 68} main-view geometry triangles`)
+      if (quality !== 'high') {
+        assert.ok(p.body.geometry.index!.count / 3 <= (quality === 'balanced' ? 2080 : 1220),
+          `${quality}/${variant}: compact crowd body topology regressed`)
+      }
       assert.equal(p.sources.length, plan.offhand === 'none' ? 2 : 3)
       assert.ok(p.jointCount <= allocation.firstRole.joints)
       assert.ok(p.geometryBytes <= allocation.firstRole.exclusiveCpuBackingBytes)
       p.dispose()
     }
+  }
+  cache.dispose(); art.dispose()
+})
+
+test('compact crowd topology retains facial anatomy and physical channels across the taxonomy', () => {
+  const art = library(), cache = new GeometryCache()
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200)
+  const high = resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'high' })
+  const headTriangles = (p: ReturnType<typeof createCharacterPresenter>, corners = Infinity) => {
+    const g = p.body.geometry, head = p.skeleton.bones.findIndex((b) => b.name === 'head')
+    const channels = ['position', 'normal', 'outlineNormal', 'color', ART_SURFACE_ATTRIBUTE, ART_WEATHER_ATTRIBUTE]
+    for (const name of channels) assert.ok(g.hasAttribute(name), name)
+    const values: number[] = []
+    let seen = 0
+    for (let i = 0; i < g.index!.count; i++) {
+      const vertex = g.index!.getX(i)
+      if (g.getAttribute('skinIndex').getX(vertex) !== head) continue
+      if (seen++ >= corners) break
+      for (const name of channels) {
+        const attribute = g.getAttribute(name)
+        for (let c = 0; c < attribute.itemSize; c++) values.push(attribute.getComponent(vertex, c))
+      }
+    }
+    assert.ok(values.length > 0)
+    return values
+  }
+  for (const quality of ['balanced', 'low'] as const) {
+    for (const faction of CHARACTER_FACTIONS) for (const role of characterRoles()) {
+      for (let variant = 0; variant < CHARACTER_VARIANTS; variant++) {
+        const plan = illustratedCharacterPlan(resolveCharacterPlan(faction, role, variant))
+        const full = createCharacterPresenter(plan, art, cache, false, 'high')
+        if (quality === 'low') {
+          camera.position.set(0, 0, (plan.proportions.headY + 0.32) * high.lod.distanceScale /
+            (2 * 0.09 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)))
+          full.updateLod(camera, high)
+          assert.equal(full.level, 'mid')
+        }
+        const compact = createCharacterPresenter(plan, art, cache, false, quality)
+        let faceCorners = Infinity
+        if (quality === 'low') {
+          const parts = [buildIllustratedHead(faction, 'mid')]
+          faceCorners = parts.reduce((sum, g) => sum + (g.index?.count ?? g.getAttribute('position').count), 0)
+          for (const g of parts) g.dispose()
+        }
+        assert.deepEqual(headTriangles(compact, faceCorners), headTriangles(full, faceCorners), `${quality}/${faction}/${role}/${variant}`)
+        assert.ok(compact.body.geometry.index!.count < full.body.geometry.index!.count)
+        assert.equal(compact.sources.length, full.sources.length, 'body and all equipment still exist')
+        assert.equal(compact.jointCount, full.jointCount)
+        assert.equal(compact.body.geometry.groups.length, 0)
+        for (const source of compact.sources) validateArtGeometry(source)
+        compact.dispose(); full.dispose()
+        assert.equal(cache.size, 0, 'compact and full cache receipts both drain')
+      }
+    }
+  }
+  cache.dispose(); art.dispose()
+})
+
+test('Low facial marks keep every original front triangle and charge retained backing arrays', () => {
+  const pairs = [
+    [buildIllustratedFace('mid'), buildIllustratedFace('mid', true)],
+    [buildIllustratedEyes(false, 'mid'), buildIllustratedEyes(false, 'mid', true)],
+    [buildIllustratedEyes(true, 'mid'), buildIllustratedEyes(true, 'mid', true)],
+  ]
+  let fullTriangles = 0, frontTriangles = 0
+  for (const [full, front] of pairs) {
+    for (const name of Object.keys(full.attributes)) {
+      assert.deepEqual(front.getAttribute(name).array, full.getAttribute(name).array, `${name} front surface data changed`)
+    }
+    const normal = full.getAttribute('normal'), expected: number[] = []
+    for (let i = 0; i < normal.count; i += 3) {
+      if (normal.getZ(i) > 0.9 && normal.getZ(i + 1) > 0.9 && normal.getZ(i + 2) > 0.9) expected.push(i, i + 1, i + 2)
+    }
+    assert.deepEqual(Array.from(front.index!.array), expected)
+    fullTriangles += normal.count / 3
+    frontTriangles += front.index!.count / 3
+    full.dispose(); front.dispose()
+  }
+  assert.equal(fullTriangles, 100)
+  assert.equal(frontTriangles, 18)
+})
+
+test('Low headgear keeps eye openings, fitted extents and separate quality cache receipts', () => {
+  for (const kind of ['nasal', 'crested', 'kettle', 'hood', 'ragHood', 'cap'] as const) {
+    const full = buildIllustratedHeadgear(kind, 'mid')
+    const compact = buildIllustratedHeadgear(kind, 'mid', true)
+    assert.ok(compact.getAttribute('position').count < full.getAttribute('position').count, `${kind} coarse tessellation`)
+    full.computeBoundingBox(); compact.computeBoundingBox()
+    assert.ok(full.boundingBox!.min.distanceTo(compact.boundingBox!.min) < 0.045)
+    assert.ok(full.boundingBox!.max.distanceTo(compact.boundingBox!.max) < 0.045)
+    const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
+    const mesh = new THREE.Mesh(compact, material)
+    mesh.updateMatrixWorld(true)
+    for (const x of [-0.087, 0.087]) {
+      const ray = new THREE.Raycaster(new THREE.Vector3(x, 0.058, 1), new THREE.Vector3(0, 0, -1), 0, 0.83)
+      assert.equal(ray.intersectObject(mesh).length, 0, `${kind} closes the approved face opening`)
+    }
+    full.dispose(); compact.dispose(); material.dispose()
+  }
+  const art = library(), cache = new GeometryCache()
+  const plan = illustratedCharacterPlan(resolveCharacterPlan('guard', 'soldier', 1))
+  const balanced = createCharacterPresenter(plan, art, cache, false, 'balanced')
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 150)
+  camera.position.z = 30
+  balanced.updateLod(camera, resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'balanced' }))
+  assert.equal(balanced.level, 'mid')
+  const previous = balanced.body.geometry.index!.array.slice()
+  const low = createCharacterPresenter(plan, art, cache, false, 'low')
+  assert.notEqual(low.body.geometry, balanced.body.geometry)
+  assert.ok(low.body.geometry.index!.count < balanced.body.geometry.index!.count)
+  low.setAppearance({ rightArm: 'missing' })
+  assert.deepEqual(balanced.body.geometry.index!.array, previous)
+  low.dispose(); balanced.dispose()
+  assert.equal(cache.size, 0)
+  cache.dispose(); art.dispose()
+})
+
+test('compact boots keep the sole plane, closed outside skin and bounded all-view contour', () => {
+  const full = buildIllustratedBoot(), compact = buildIllustratedBoot(true)
+  full.computeBoundingBox(); compact.computeBoundingBox()
+  assert.ok(full.boundingBox && compact.boundingBox)
+  assert.ok(full.boundingBox.min.distanceTo(compact.boundingBox.min) < 1e-6)
+  assert.ok(full.boundingBox.max.distanceTo(compact.boundingBox.max) < 1e-6)
+  assert.equal(compact.getAttribute('position').count / 3, 28)
+  const material = new THREE.MeshBasicMaterial()
+  const reference = new THREE.Mesh(full, material), candidate = new THREE.Mesh(compact, material)
+  reference.updateMatrixWorld(true); candidate.updateMatrixWorld(true)
+  const ray = new THREE.Raycaster(), origin = new THREE.Vector3(), direction = new THREE.Vector3()
+  const triangle = new THREE.Triangle(), closest = new THREE.Vector3()
+  const surfaceDistance = (point: THREE.Vector3, geometry: THREE.BufferGeometry) => {
+    const position = geometry.getAttribute('position')
+    let distance = Infinity
+    for (let i = 0; i < position.count; i += 3) {
+      triangle.a.fromBufferAttribute(position, i)
+      triangle.b.fromBufferAttribute(position, i + 1)
+      triangle.c.fromBufferAttribute(position, i + 2)
+      triangle.closestPointToPoint(point, closest)
+      distance = Math.min(distance, point.distanceTo(closest))
+    }
+    return distance
+  }
+  let comparisons = 0
+  // Compare actual first surfaces, not internal faces of the old intersecting blocks.
+  for (let axis = 0; axis < 3; axis++) for (const sign of [-1, 1]) {
+    const a = (axis + 1) % 3, b = (axis + 2) % 3
+    for (let u = 1; u < 20; u++) for (let v = 1; v < 20; v++) {
+      origin.set(0, 0, 0).setComponent(axis, sign)
+      origin.setComponent(a, THREE.MathUtils.lerp(full.boundingBox.min.getComponent(a), full.boundingBox.max.getComponent(a), u / 20))
+      origin.setComponent(b, THREE.MathUtils.lerp(full.boundingBox.min.getComponent(b), full.boundingBox.max.getComponent(b), v / 20))
+      direction.set(0, 0, 0).setComponent(axis, -sign)
+      ray.set(origin, direction)
+      const before = ray.intersectObject(reference)[0], after = ray.intersectObject(candidate)[0]
+      // Grazing a chamfer can switch a ray from ankle to sole. Nearest-surface
+      // distance bounds its contour displacement without treating that depth jump as lift.
+      if (before) {
+        assert.ok(surfaceDistance(before.point, compact) < 0.03)
+        comparisons++
+      }
+      if (after) assert.ok(surfaceDistance(after.point, full) < 0.03)
+    }
+  }
+  assert.ok(comparisons > 1300)
+  full.dispose(); compact.dispose(); material.dispose()
+})
+
+test('compact geometry preserves full-affine grips, injury indices and independent full-detail neighbors', () => {
+  const art = library(), cache = new GeometryCache()
+  const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200)
+  for (const quality of ['balanced', 'low'] as const) {
+    const plan = illustratedCharacterPlan(resolveCharacterPlan('guard', 'soldier', 0))
+    const p = createCharacterPresenter(plan, art, cache, false, quality)
+    const neighbor = createCharacterPresenter(plan, art, cache, false, 'high')
+    const original = neighbor.body.geometry.index!.array.slice()
+    assert.notEqual(p.body.geometry, neighbor.body.geometry, 'quality-specific topology has distinct cache keys')
+    const weapon = p.rig.weapon!
+    const torch = new THREE.Group(), trail = new THREE.Group()
+    weapon.add(torch, trail)
+    const outlines = art.applyOutline(p.root, 'structural')
+    p.setAppearance({ leftLeg: 'missing', rightArm: 'prosthetic', rightLeg: 'wounded' })
+    const policy = resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: quality })
+    for (const distance of [8, 30, 90, 8]) {
+      camera.position.set(0, 0, distance)
+      p.updateLod(camera, policy)
+      for (const x of [-0.6, 0.7]) for (const y of [-0.5, 0.6]) for (const z of [-0.3, 0.3]) {
+        p.anatomy.bodyPivot.scale.set(1.05, 0.95, 0.97)
+        p.anatomy.torsoPivot.rotation.set(x, y, z)
+        p.anatomy.torsoPivot.scale.set(1.07, 1.01, 1)
+        p.rig.rightArm!.rotation.set(x, y, z)
+        p.rig.rightElbow!.rotation.set(0.7, -0.1, 0.2)
+        p.syncAttachments()
+        p.root.updateMatrixWorld(true)
+        const hand = p.hands[1]
+        const local = buildIllustratedHand(1, quality === 'low' || p.level === 'mid' || p.level === 'far' ? 'mid' : 'near', true)
+        const position = local.getAttribute('position'), skin = p.body.geometry.getAttribute('skinIndex')
+        const bone = p.skeleton.bones.indexOf(hand)
+        const missing = new Set(p.skeleton.bones.flatMap((b, i) => b.name.startsWith('leftLeg-') ? [i] : []))
+        const actual = new THREE.Vector3(), expected = new THREE.Vector3()
+        let finger = 0
+        for (let i = 0; i < p.body.geometry.index!.count; i++) {
+          const vertex = p.body.geometry.index!.getX(i)
+          assert.ok(!missing.has(skin.getX(vertex)), 'LOD must not restore the missing leg triangles')
+          if (skin.getX(vertex) !== bone) continue
+          expected.fromBufferAttribute(position, finger++).applyMatrix4(weapon.matrixWorld)
+          p.body.getVertexPosition(vertex, actual).applyMatrix4(p.body.matrixWorld)
+          assert.ok(actual.distanceTo(expected) < 1e-5, 'compact finger surface still follows the complete handle matrix')
+        }
+        assert.equal(finger, position.count)
+        local.dispose()
+      }
+      assert.equal(torch.parent, weapon); assert.equal(trail.parent, weapon)
+      for (const shell of outlines.shells) assert.equal(shell.geometry, (shell.parent as THREE.Mesh).geometry)
+    }
+    assert.deepEqual(neighbor.body.geometry.index!.array, original)
+    assert.equal(sumVisualAllocationReceipts(p.allocationReceipts()).dynamicArt.gpuAllocatedBytes, null)
+    art.releaseOutline(outlines); p.dispose(); neighbor.dispose()
+    assert.equal(cache.size, 0)
+  }
+  art.dispose(); cache.dispose()
+})
+
+test('compact wrapped grips retain the full haft and player geometry remains full detail', () => {
+  for (const side of [-1, 1]) {
+    const geometry = buildIllustratedHand(side, 'mid', true)
+    const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
+    const hand = new THREE.Mesh(geometry, material)
+    hand.updateMatrixWorld(true)
+    for (const x of [-0.01, 0, 0.01]) for (const z of [-0.01, 0, 0.01]) {
+      const ray = new THREE.Raycaster(new THREE.Vector3(x, 1, z), new THREE.Vector3(0, -1, 0), 0, 2)
+      assert.equal(ray.intersectObject(hand).length, 0, 'coarse fingers must leave the physical handle aperture open')
+    }
+    geometry.dispose(); material.dispose()
+  }
+  for (const weapon of ['sword', 'greatsword', 'dagger', 'sabre', 'cleaver'] as const) {
+    const full = buildWeaponGrip(weapon), compact = buildWeaponGrip(weapon, true)
+    full.computeBoundingBox(); compact.computeBoundingBox()
+    assert.ok(full.boundingBox && compact.boundingBox)
+    assert.equal(compact.boundingBox.min.y, full.boundingBox.min.y)
+    assert.equal(compact.boundingBox.max.y, full.boundingBox.max.y)
+    assert.ok(compact.getAttribute('position').count < full.getAttribute('position').count)
+    full.dispose(); compact.dispose()
+  }
+  for (const kind of ['sword', 'greatsword', 'dagger'] as const) {
+    const full = buildWeaponHead(kind), compact = buildWeaponHead(kind, true)
+    const blade = (g: THREE.BufferGeometry) => {
+      const positions = g.getAttribute('position'), values: number[] = []
+      for (let i = 0; i < positions.count; i++) if (positions.getY(i) > 0.25) {
+        values.push(positions.getX(i), positions.getY(i), positions.getZ(i))
+      }
+      return values
+    }
+    assert.deepEqual(blade(compact), blade(full), 'the attack blade is not shortened or simplified')
+    full.computeBoundingBox(); compact.computeBoundingBox()
+    assert.equal(compact.boundingBox!.min.y, full.boundingBox!.min.y, 'pommel endpoint remains')
+    assert.equal(compact.boundingBox!.max.y, full.boundingBox!.max.y, 'geometry-derived weapon tip remains')
+    assert.ok(compact.getAttribute('position').count < full.getAttribute('position').count)
+    full.dispose(); compact.dispose()
+  }
+  const art = library(), cache = new GeometryCache()
+  for (const [quality, bodyTriangles] of [['balanced', 2712], ['low', 1768]] as const) {
+    const p = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('guard', 'player', 0, true)), art, cache, true, quality)
+    assert.equal(p.body.geometry.index!.count / 3, bodyTriangles, 'player retains its pre-optimization geometry')
+    const weapon = p.sources[1].geometry
+    assert.equal((weapon.index?.count ?? weapon.getAttribute('position').count) / 3, 284, 'player grip wraps remain')
+    p.dispose()
   }
   cache.dispose(); art.dispose()
 })

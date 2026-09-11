@@ -1,7 +1,8 @@
 # GFX-03 character rendering: implementation checkpoints
 
-**Enhanced-preview implementation in progress. Not visual approval or a completed
-performance tier.** Legacy remains unchanged and the existing staged
+**The user approved the stylized character art direction on 2026-09-11 after
+the three-faction portrait review. This is not a completed performance tier.**
+Legacy remains unchanged and the existing staged
 save-to-menu/continue preference lifecycle applies.
 
 The user requested believable adult anatomy, visible elf faces inside separate
@@ -95,6 +96,41 @@ Animal topology refinement and the full dynamic-art fleet performance gate remai
 work in progress. A one-body draw does not itself establish a tier pass, and the
 whole-frame draw budget is not a character-only allowance.
 
+Balanced and Low NPC bodies use compact limb and boot topology; players and High
+retain their previous geometry. Skull/jaw/nose/ear/neck anatomy, hair, physical
+palette and weather-response values are unchanged at the corresponding detail level.
+Near hands retain the curled handle opening with one finger band instead of
+separate subpixel finger extrusions; Mid also omits tiny palm/arm/shoulder chamfers.
+Joint bulges and limb endpoints remain, with fewer intermediate rings and a
+six-sided Mid leg section. Boots replace three overlapping closed solids with
+one closed outside skin, retaining the exact sole plane and bounding extents.
+Six-direction surface probes bound the boot contour difference to less than
+3 cm; they do not mistake a grazing-ray ankle-to-sole depth jump for a vertical
+rig offset. Full-affine hand and sole transforms are unchanged.
+
+Wrapped NPC grips retain the complete haft and blade, omitting small concentric
+wrap ridges in these two tiers. Sword guards omit their small corner chamfer and
+pommels retain their axial profile with five rather than seven radial segments.
+Bow draw/release geometry,
+shields, torch/trail children and contacts stay unchanged. Compact/full topology
+has distinct cache keys; active and retained receipts still use real backing
+identities. Neither the projected LOD thresholds, engaged-Mid floor, actor
+population, ink participation nor subsystem allocations were reduced to obtain
+the geometry savings. Whole-frame source-plus-ink maxima, not this per-actor
+description, determine whether a crowded run fits its allocation.
+
+Low NPC headgear also has coarse tessellation: nasal/crested dome and brow-band
+rings, cheek-plate bevels, kettle brims, caps and open hood arcs. This does not
+change skulls, jaw/nose/eye geometry, the fitted gear vocabulary, eye openings or
+the presence of crests/horns. Players, Balanced and High keep their original
+headgear buffers. Low headgear has its own body-template cache identity even
+when Low Near and Balanced Mid otherwise resolve to the same body detail.
+Low NPC eye and mouth marks keep their original forward polygons and planes,
+indexing out the subpixel rear/side walls of their solid boxes/extrusions.
+Their source backing attributes are retained and billed, not reported as freed
+CPU memory. This reduces the three paired facial-mark parts from 100 to 18
+submitted triangles without shortening a nose, changing a jaw or moving an eye.
+
 Healthy humanoid batches use cache receipts. Each live rig retains at most its
 two most recently used body templates, so a return across a nearby LOD threshold
 can reuse construction work without retaining the full taxonomy. Retention has
@@ -164,18 +200,15 @@ measurements or establish the fleet's actual LOD mix.
 
 Still required before a complete milestone claim:
 
-- Real same-camera/lighting all-faction portraits and player-plus-NPC gameplay
-  frames, followed by the user's anatomical/art-direction decision.
-- The coordinated affine-bone normal correction. At the approved starting
-  foundation, skin/ink normals use direction multiplication, which is not the
-  inverse transpose for nonuniform/sheared bone transforms. Keeping source and
-  ink equal does not make that normal mathematically correct.
 - Complete pose/attachment/injury/LOD motion evidence across the population.
 - Remaining animal/faction art refinement and measured construction/replacement
   CPU, submitted draws and full allocation inventory.
-- Leased production 25-actor whole-frame and lifecycle measurements with explicit
+- Production 25-actor whole-frame and lifecycle measurements with explicit
   device and unsupported-hardware limitations.
 
-No browser/GPU job is authorized by this document. The coordinator's serialized
-window and the existing GFX-01 capture contract remain mandatory. No default
-promotion or human approval is implied by a CPU checkpoint or a successful bundle.
+The initial three-faction portrait/art-direction gate and coordinated affine-bone
+normal correction are complete; neither stands in for the remaining coverage
+above. Browser resource permission gates were cancelled by the user; the existing
+GFX-01 capture contract, ordinary timeouts and owned-process cleanup remain.
+No default promotion or hardware-tier approval is implied by a CPU checkpoint or
+a successful bundle.
