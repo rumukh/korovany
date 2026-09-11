@@ -35,6 +35,7 @@ const closest = new THREE.Vector3()
 const normal = new THREE.Vector3()
 const triangle = new THREE.Triangle()
 const direction = new THREE.Vector3()
+const containmentDirection = new THREE.Vector3(0.3713906763541037, 0.5570860145311556, 0.7427813527082074)
 const point = new THREE.Vector3()
 const expanded = new THREE.Box3()
 const ray = new THREE.Ray()
@@ -90,7 +91,7 @@ export function sweepCameraSphere(
   result.initialOverlap = false
   if (length > 1e-8) direction.multiplyScalar(1 / length)
   // Occupancy queries still need a ray to detect closed-solid containment.
-  else direction.set(0.3713906763541037, 0.5570860145311556, 0.7427813527082074)
+  else direction.copy(containmentDirection)
   ray.set(from, direction)
   let candidates = 0
   for (const source of sources) {
@@ -105,6 +106,7 @@ export function sweepCameraSphere(
     const position = source.geometry.getAttribute('position')
     const indices = source.geometry.getIndex()
     const count = indices?.count ?? position.count
+    const canContainCenter = source.bounds.containsPoint(from)
     let firstCenterHit = Infinity
     let centerExits = false
     for (let offset = 0; offset + 2 < count; offset += 3) {
@@ -125,17 +127,22 @@ export function sweepCameraSphere(
         return
       }
       triangle.getNormal(normal)
-      const velocity = normal.dot(direction)
       const planeDistance = normal.dot(point.subVectors(from, a))
-      if (Math.abs(velocity) > 1e-8) {
-        const centerDistance = -planeDistance / velocity
+      // Origin occupancy must agree with a stationary query. A different motion
+      // ray through a compound/open mesh must not turn a clear origin into a solid.
+      const containmentVelocity = canContainCenter ? normal.dot(containmentDirection) : 0
+      if (Math.abs(containmentVelocity) > 1e-8) {
+        const centerDistance = -planeDistance / containmentVelocity
         if (centerDistance >= 0 && centerDistance < firstCenterHit) {
-          point.copy(from).addScaledVector(direction, centerDistance)
+          point.copy(from).addScaledVector(containmentDirection, centerDistance)
           if (triangle.containsPoint(point)) {
             firstCenterHit = centerDistance
-            centerExits = velocity > 0
+            centerExits = containmentVelocity > 0
           }
         }
+      }
+      const velocity = normal.dot(direction)
+      if (Math.abs(velocity) > 1e-8) {
         for (let side = -1; side <= 1; side += 2) {
           const distance = (side * radius - planeDistance) / velocity
           if (distance < 0 || distance > result.distance) continue
@@ -258,8 +265,10 @@ export class CameraVisibility {
     this.best.copy(this.collisionOrigin)
     let bestSight = this.targetSightScore(this.best, query, terrain)
     let bestFraming = this.framingError(this.best)
-    let score = this.best.distanceTo(target) > this.radius
-      ? this.poseScore(bestSight, bestFraming) + this.best.distanceTo(target) : -Infinity
+    const nominalDistance = desired.distanceTo(target)
+    const initialDistance = this.best.distanceTo(target)
+    let score = initialDistance > this.radius
+      ? this.poseScore(bestSight, bestFraming) + Math.min(initialDistance, nominalDistance) : -Infinity
     let chosen = 0
     for (let index = 0; index < CAMERA_CANDIDATE_LIMIT; index++) {
       this.candidate.copy(desired)
@@ -273,13 +282,16 @@ export class CameraVisibility {
       const distance = this.solved.distanceTo(target)
       const sight = this.targetSightScore(this.solved, query, terrain)
       const framing = this.framingError(this.solved)
-      const candidateScore = this.poseScore(sight, framing) + distance - (index === 0 ? 0 : index === 3 ? 1.1 : 0.55) +
+      // Extra recovery height is not extra useful boom. Otherwise the elevated
+      // candidate defeats a clear nominal view whenever the hold forces a full scan.
+      const candidateScore = this.poseScore(sight, framing) + Math.min(distance, nominalDistance) -
+        (index === 0 ? 0 : index === 3 ? 1.1 : 0.55) +
         (index === this.shoulder && this.shoulderHold > 0 ? 1.2 : 0)
       if (candidateScore > score) {
         score = candidateScore; bestSight = sight; bestFraming = framing; chosen = index; this.best.copy(this.solved)
       }
       if (index === 0 && sight === this.debug.targetProbes && framing === 0 &&
-          distance >= desired.distanceTo(target) - 0.15 && this.shoulderHold === 0) break
+          distance >= nominalDistance - 0.15 && this.shoulderHold === 0) break
     }
     if (chosen !== this.shoulder) { this.shoulder = chosen; this.shoulderHold = 0.35 }
     const wanted = this.best.distanceTo(target)
@@ -291,7 +303,9 @@ export class CameraVisibility {
       this.initialized = true
     } else {
       if (wanted < current - 0.12) this.releaseHold = 0.16
-      const alpha = wanted < current ? 1 : this.releaseHold > 0 ? 0 : dampingAlpha(6, delta)
+      // An unsafe previous view already cuts above; a still-valid recovery view
+      // can return smoothly instead of snapping down to a shorter nominal orbit.
+      const alpha = wanted < current || this.releaseHold === 0 ? dampingAlpha(6, delta) : 0
       this.follow.lerp(this.best, alpha)
       this.safePosition(this.collisionOrigin, this.follow, query, terrain, this.solved)
       this.follow.copy(this.solved)

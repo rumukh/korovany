@@ -19,6 +19,17 @@ sweep. Overflow is reported and conservatively blocks rather than ignores work.
 Final follow and shake positions are constrained too. Recovery/shoulder changes
 use time-based damping and hysteresis, not a minimum boom that can pass a wall.
 
+Candidate scores credit distance only up to the requested nominal boom. Extra
+recovery height cannot repeatedly defeat an unobstructed normal view when the
+shoulder hold expires. A still-clear, framed recovery view returns smoothly;
+unsafe previous views retain immediate collision/framing recovery.
+
+Origin containment uses the same fixed ray in stationary and moving queries,
+and only considers centers inside the source bounds. Sweep direction still
+controls face/edge contact, but cannot change whether an already-validated
+origin is inside a compound source. This fixes the captured seed `4189091098`
+failure that threw during follow movement and stopped the animation loop.
+
 An overlapping look-at target is never accepted as a camera sweep origin.
 Stationary sphere queries identify both surface overlap and closed-solid
 containment. Recovery first revalidates the previous camera (within 32 metres),

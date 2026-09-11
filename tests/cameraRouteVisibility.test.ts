@@ -4,7 +4,7 @@ import test from 'node:test'
 import { gunzipSync } from 'node:zlib'
 import * as THREE from 'three'
 import { StylizedArtLibrary } from '../src/game/art/index.ts'
-import { CameraVisibility, CAMERA_CANDIDATE_LIMIT, CAMERA_TRIANGLE_LIMIT } from '../src/game/cameraVisibility.ts'
+import { CameraVisibility, CAMERA_CANDIDATE_LIMIT, CAMERA_TRIANGLE_LIMIT, type CameraSweepResult } from '../src/game/cameraVisibility.ts'
 import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
 import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
@@ -106,6 +106,59 @@ function fixture(id: string, truePitch = false) {
   const dispose = () => { world.dispose(); art.dispose(); rayMaterial.dispose() }
   return { record, initial, endpoint, camera, solver, world, target, desired, output, step, terrain, firstBodyHit, assertSight, dispose }
 }
+
+test('the captured frozen elf camera remains outside compound site geometry when its sweep direction changes', () => {
+  const art = new StylizedArtLibrary({
+    enhanced: true, ink: { player: 0, enemy: 0, interactable: 0, landmark: 0 },
+  })
+  const scene = new THREE.Scene()
+  const world = new GeneratedWorldRuntime(scene, generateWorld(4189091098), {
+    art, visualPolicy: resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'high' }), outlineDressing: true,
+  })
+  const player = new THREE.Vector3(15.275452955456846, 3.015006832099368, -22.922785243645798)
+  const previous = new THREE.Vector3(13.112283928509637, 5.9984239567836415, -23.799412492308186)
+  const candidate = new THREE.Vector3(13.7855649102703, 5.765646892632725, -23.69257970593632)
+  const camera = new THREE.PerspectiveCamera(56, 0.8477078477078477, 0.1, 240)
+  camera.position.copy(previous)
+  camera.quaternion.fromArray([-0.15890843893811826, -0.7961773414373347, -0.23715602515975517, 0.5334854906616054])
+  camera.updateMatrixWorld()
+  const result = (): CameraSweepResult => ({
+    distance: 0, blocked: false, overflow: false, triangleTests: 0, initialOverlap: false,
+  })
+  try {
+    world.update({ focus: { x: player.x, z: player.z }, deltaSeconds: 0 })
+    scene.updateMatrixWorld(true)
+    world.presentation!.prepare(camera)
+    const stationary = result(), moving = result()
+    world.presentation!.sweep(previous, previous, 0.32, stationary)
+    world.presentation!.sweep(previous, candidate, 0.32, moving)
+    assert.equal(stationary.initialOverlap, false)
+    assert.equal(moving.initialOverlap, false, 'A validated center cannot become inside merely by changing ray direction')
+    assert.equal(moving.overflow, false)
+
+    const solver = new CameraVisibility()
+    Reflect.set(solver, 'initialized', true)
+    Reflect.set(solver, 'shoulderHold', 0.2765666667)
+    Reflect.set(solver, 'releaseHold', 0.16)
+    for (const key of ['lastSafe', 'follow']) {
+      const vector: unknown = Reflect.get(solver, key)
+      assert.ok(vector instanceof THREE.Vector3)
+      vector.copy(previous)
+    }
+    const yaw = 2.0476982453848125, pitch = 0.5807999999999993
+    const target = player.clone().add(new THREE.Vector3(0, 1.65, 0))
+    const desired = target.clone().add(new THREE.Vector3(
+      -Math.sin(yaw) * 12 * Math.cos(pitch), 12 * Math.sin(pitch), Math.cos(yaw) * 12 * Math.cos(pitch),
+    ))
+    const output = new THREE.Vector3()
+    assert.doesNotThrow(() => solver.resolve(target, desired, camera, 1 / 60, false,
+      world.presentation!, (x, z) => world.sampleHeight(x, z), output, yaw, pitch))
+    const final = result()
+    world.presentation!.sweep(output, output, 0.32, final)
+    assert.equal(final.blocked, false)
+    assert.equal(solver.debug.visibleTargetProbes, solver.debug.targetProbes)
+  } finally { world.dispose(); art.dispose() }
+})
 
 test('true-view routes report constrained framing and recover rather than retaining off-screen endpoints', () => {
   for (const id of ['elf-forest-obstruction', 'guard-riverside-close']) {

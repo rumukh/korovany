@@ -62,6 +62,21 @@ test('geometry entirely behind or beside the sweep does not clamp its length', (
   for (const source of sources) source.geometry.dispose()
 })
 
+test('a back-facing surface ahead blocks travel without classifying the starting center as inside', () => {
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute([
+    -2, -2, 3, 2, -2, 3, 0, 2, 3,
+  ], 3))
+  geometry.computeBoundingBox()
+  const source = { geometry, matrix: new THREE.Matrix4(), bounds: geometry.boundingBox! }
+  try {
+    const result = sweep(new THREE.Vector3(), new THREE.Vector3(0, 0, 6), [source])
+    assert.equal(result.initialOverlap, false)
+    assert.equal(result.blocked, true)
+    assert.ok(Math.abs(result.distance - 2.65) < 1e-6)
+  } finally { geometry.dispose() }
+})
+
 test('overlap at the start is detected both at a face and inside a closed solid', () => {
   const source = obstacle(0, 2, 0, 4, 4, 4)
   for (const from of [new THREE.Vector3(0, 2, 0), new THREE.Vector3(0, 2, 1.9)]) {
@@ -238,6 +253,41 @@ test('release damping converges across frame rates without hunting or invalid po
     return out
   }
   assert.ok(settle(30).distanceTo(settle(120)) < 0.002)
+})
+
+test('looking down over an open hill returns to the nominal view without repeated elevation jumps', () => {
+  const terrain = (x: number, z: number) =>
+    5 * Math.exp(-(((z - 5) / 1.3) ** 2)) * Math.exp(-((x / 6) ** 2))
+  for (const fps of [30, 60, 120]) {
+    const solver = new CameraVisibility()
+    const camera = new THREE.PerspectiveCamera(56, 16 / 9, 0.1, 240)
+    const target = new THREE.Vector3(0, terrain(0, 0) + 1.65, 0)
+    const desired = new THREE.Vector3(), output = new THREE.Vector3()
+    const step = (pitch: number, immediate = false) => {
+      desired.copy(target).add(new THREE.Vector3(0, 12 * Math.sin(pitch), 12 * Math.cos(pitch)))
+      solver.resolve(target, desired, camera, immediate ? 0 : 1 / fps, immediate,
+        query([]), terrain, output, 0, pitch)
+    }
+    step(0.38, true)
+    const initialShoulder = solver.debug.shoulder
+    assert.equal(initialShoulder, 3, 'The ridge initially needs an elevated camera')
+    let previousShoulder = solver.debug.shoulder, switches = 0, returning = false, largestReturnStep = 0
+    const previous = output.clone()
+    for (let frame = 0; frame < fps * 4; frame++) {
+      step(0.95)
+      if (solver.debug.shoulder !== previousShoulder) switches++
+      if (solver.debug.shoulder === 0) returning = true
+      if (returning) largestReturnStep = Math.max(largestReturnStep, output.distanceTo(previous))
+      previous.copy(output)
+      previousShoulder = solver.debug.shoulder
+      assert.equal(solver.debug.visibleTargetProbes, solver.debug.targetProbes)
+      assert.equal(solver.debug.framingError, 0)
+      if (frame > fps * 2) assert.equal(solver.debug.shoulder, 0, 'A clear nominal view must not lose to extra height')
+    }
+    assert.equal(switches, 1, `${fps}fps must settle rather than alternate on every hold timeout`)
+    assert.ok(largestReturnStep < 40 / fps, `Unobstructed return snapped ${largestReturnStep}m at ${fps}fps`)
+    assert.ok(output.distanceTo(desired) < 0.002)
+  }
 })
 
 test('a collision on the final shake path updates close-player fade as well as camera clearance', () => {
