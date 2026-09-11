@@ -4051,6 +4051,13 @@ export class GameEngine {
           targetProbes: this.cameraVisibility.debug.targetProbes,
           visibleTargetProbes: this.cameraVisibility.debug.visibleTargetProbes,
           visibilityCut: this.cameraVisibility.debug.visibilityCut,
+          framingCut: this.cameraVisibility.debug.framingCut,
+          framedTargetProbes: this.cameraVisibility.debug.framedTargetProbes,
+          framingError: this.cameraVisibility.debug.framingError,
+          torsoNdcX: this.cameraVisibility.debug.torsoNdcX,
+          torsoNdcY: this.cameraVisibility.debug.torsoNdcY,
+          headNdcX: this.cameraVisibility.debug.headNdcX,
+          headNdcY: this.cameraVisibility.debug.headNdcY,
           trianglesTested: this.cameraVisibility.debug.triangleTests,
           fadedInstances: this.generatedWorld.presentation!.debug.fadedInstances,
           worldShadowDraws: this.generatedWorld.presentation!.debug.shadowDraws,
@@ -17485,21 +17492,26 @@ export class GameEngine {
       this.enhancedTarget.y + CAMERA_ORBIT_DISTANCE * Math.sin(orbitPitch),
       this.enhancedTarget.z + Math.cos(this.cameraYaw) * horizontalDistance,
     )
-    presentation.prepare(this.camera)
-    this.cameraVisibility.resolve(this.enhancedTarget, this.enhancedDesired, this.camera,
-      delta, immediate, presentation, this.cameraTerrain, this.enhancedPosition)
-    let roll = 0
-    if (this.visualPolicy.cameraEffects && this.trauma > 0 && !this.paused && !this.ended) {
+    const shake = this.visualPolicy.cameraEffects && this.trauma > 0 && !this.paused && !this.ended
+    let roll = 0, shakeX = 0, shakeY = 0
+    if (shake) {
       const phase = this.shakeClock * SHAKE_FREQUENCY
       const magnitude = this.trauma * this.trauma
-      const x = Math.sin(phase) * Math.sin(phase * 0.47 + 1.8) * SHAKE_POSITION * magnitude
+      shakeX = Math.sin(phase) * Math.sin(phase * 0.47 + 1.8) * SHAKE_POSITION * magnitude
+      shakeY = Math.sin(phase * 1.31 + 0.7) * Math.sin(phase * 0.61 + 2.4) * SHAKE_POSITION * 0.65 * magnitude
+      roll = Math.sin(phase * 0.83 + 2.1) * Math.sin(phase * 0.37 + 0.4) * SHAKE_ROLL * magnitude
+    }
+    presentation.prepare(this.camera)
+    this.cameraVisibility.resolve(this.enhancedTarget, this.enhancedDesired, this.camera,
+      delta, immediate, presentation, this.cameraTerrain, this.enhancedPosition,
+      this.cameraYaw, this.cameraPitch, roll)
+    if (shake) {
       this.enhancedShaken.copy(this.enhancedPosition)
-      this.enhancedShaken.x += Math.cos(this.cameraYaw) * x
-      this.enhancedShaken.z += Math.sin(this.cameraYaw) * x
-      this.enhancedShaken.y += Math.sin(phase * 1.31 + 0.7) * Math.sin(phase * 0.61 + 2.4) * SHAKE_POSITION * 0.65 * magnitude
+      this.enhancedShaken.x += Math.cos(this.cameraYaw) * shakeX
+      this.enhancedShaken.z += Math.sin(this.cameraYaw) * shakeX
+      this.enhancedShaken.y += shakeY
       this.cameraVisibility.constrain(this.enhancedTarget, this.enhancedShaken,
         presentation, this.cameraTerrain, this.enhancedPosition)
-      roll = Math.sin(phase * 0.83 + 2.1) * Math.sin(phase * 0.37 + 0.4) * SHAKE_ROLL * magnitude
     }
     this.camera.position.copy(this.enhancedPosition)
     this.enhancedShaken.copy(this.enhancedPosition).add(this.getViewDirection())
