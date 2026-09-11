@@ -44,6 +44,13 @@ test('compact mobile notices use the normal-flow right-hand safe region without 
   const desktopNotice = extractRule(desktop, '.game-screen[data-hud="compact"] .notice-stack')
   assert.match(desktopNotice, /top:\s*0;/)
   assert.match(desktopNotice, /width:\s*min\(28rem,\s*calc\(100% - 30rem\)\);/)
+  const finaleNotice = extractRule(desktop, '.game-screen[data-hud="compact"]:has(.finale-hud) .notice-stack')
+  assert.match(finaleNotice, /position:\s*fixed;/)
+  assert.match(finaleNotice, /top:\s*auto;/)
+  assert.match(finaleNotice, /bottom:\s*4\.5rem;/)
+  assert.match(finaleNotice, /left:\s*1rem;/)
+  assert.match(finaleNotice, /width:\s*19rem;/)
+  assert.doesNotMatch(mobile, /position:\s*fixed;/)
 })
 
 function remValue(source: string, property: string): number {

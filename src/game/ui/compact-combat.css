@@ -104,6 +104,16 @@
     width: min(28rem, calc(100% - 30rem));
   }
 
+  .game-screen[data-hud="compact"]:has(.finale-hud) .notice-stack {
+    /* Mobile keeps this node in the sidebar; the desktop finale lane must not anchor to that header. */
+    position: fixed;
+    bottom: 4.5rem;
+    left: 1rem;
+    top: auto;
+    transform: none;
+    width: 19rem;
+  }
+
   .game-screen[data-hud="compact"] .top-hud-side {
     max-height: calc(100dvh - 7rem);
     overflow-y: auto;

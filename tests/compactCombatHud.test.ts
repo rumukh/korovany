@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { registerHooks } from 'node:module'
-import { extname } from 'node:path'
+import { extname, isAbsolute } from 'node:path'
 import test from 'node:test'
 import { createElement, createRef, type ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ts from 'typescript'
 import { GameplayPointerCaptures, keepDisclosureKeyLocal } from '../src/game/input/CombatInput.ts'
-import { COMPACT_HUD_COPY } from '../src/game/content/gameCopy.ts'
+import { COMPACT_HUD_COPY, describeHint } from '../src/game/content/gameCopy.ts'
 import { buildInitialGameView } from '../src/game/world/CampaignView.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
 import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
@@ -96,6 +96,25 @@ function fixture(mode: HudMode, faction: 'elf' | 'guard' | 'villain' = 'guard'):
     onToggleWeather: noop, onToggleBloom: noop, onToggleInkOutlines: noop,
     onCycleFoliageQuality: noop, onToggleScreenShake: noop,
   }
+}
+
+if (process.env.GFX_NOTICE_COMPONENT_OUTPUT) {
+  test('export the production HUD fixture for explicitly staged browser layout evidence', () => {
+    const output = process.env.GFX_NOTICE_COMPONENT_OUTPUT!
+    assert.ok(isAbsolute(output))
+    const cases = (['compact', 'full'] as const).flatMap((mode) => [true, false].map((finale) => {
+      const props = fixture(mode)
+      if (!finale) props.view.finale = null
+      props.notices = [{ id: 1, message: describeHint('perfectGuard').text, tone: describeHint('perfectGuard').tone }]
+      return { id: `${mode}-${finale ? 'finale' : 'ordinary'}`, mode, finale,
+        markup: renderToStaticMarkup(createElement(GameScreen, props)) }
+    }))
+    writeFileSync(output, JSON.stringify({
+      kind: 'production-hud-component-layout-v1',
+      limitation: 'STAGED COMPONENT LAYOUT: real GameScreen/FinaleHud markup and notice copy, not engine boss gameplay or a native notice trigger.',
+      cases,
+    }, null, 2), { flag: 'wx' })
+  })
 }
 
 test('production HUD retains essential combat/navigation/interaction and every notice outside compact disclosures for all factions', () => {
@@ -202,7 +221,10 @@ test('compact controls keep 44px targets, scalable wrapping and original safe-ar
   assert.match(css, /\.hud-card-header > \.zone-code\s*\{[^}]*flex-basis:\s*100%;/)
   assert.match(css, /prefers-reduced-motion:\s*reduce/)
   assert.doesNotMatch(css, /(?:vitals|combat-mastery|squad-command|action-prompt|finale-hud)[^{]*\{[^}]*display:\s*none/)
-  assert.doesNotMatch(css, /font-size:\s*[\d.]+px|position:\s*(?:absolute|fixed)/)
+  assert.doesNotMatch(css, /font-size:\s*[\d.]+px|position:\s*absolute/)
+  const viewportLanes = [...css.matchAll(/([^{}]+)\{[^{}]*position:\s*fixed;[^{}]*\}/g)]
+  assert.equal(viewportLanes.length, 1)
+  assert.equal(viewportLanes[0][1].trim(), '.game-screen[data-hud="compact"]:has(.finale-hud) .notice-stack')
   const app = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
   const change = app.slice(app.indexOf('const changeVisualPreferences ='), app.indexOf('const selectBoon ='))
   assert.doesNotMatch(change, /setPaused|setScreen|destroy|new GameEngine|applyGameOverlays/)

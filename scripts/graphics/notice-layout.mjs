@@ -73,3 +73,80 @@ export async function captureNoticeLayout(browser, originalViewport, record, che
     })
   }
 }
+
+/** Uses actual server-rendered components and production CSS, without creating an engine. */
+export async function captureNoticeComponentLayout(browser, packet, buildHtml, record, checkTime) {
+  assert.equal(packet.kind, 'production-hud-component-layout-v1')
+  assert.deepEqual(packet.cases.map(entry => entry.id),
+    ['compact-finale', 'compact-ordinary', 'full-finale', 'full-ordinary'])
+  const styles = [...buildHtml.matchAll(/<style\b[^>]*>[\s\S]*?<\/style>/g)].map(match => match[0]).join('\n')
+  assert.ok(styles.includes('notice-stack') && styles.includes('finale-hud'), 'Use built production CSS in its actual cascade order')
+  const measurements = []
+  const { frameTree } = await browser.send('Page.getFrameTree')
+  for (const entry of packet.cases) {
+    for (const viewport of [{ width: 1920, height: 1080 }, { width: 390, height: 844 }]) {
+      checkTime()
+      await browser.send('Emulation.setDeviceMetricsOverride', {
+        ...viewport, deviceScaleFactor: 1, mobile: false,
+      })
+      await browser.send('Page.setDocumentContent', {
+        frameId: frameTree.frame.id,
+        html: `<!doctype html><html lang="ru" data-theme="dark"><head><meta charset="UTF-8">${styles}</head>
+          <body><div id="root">${entry.markup}</div>
+          <div style="position:fixed;left:40%;bottom:0;z-index:10000;background:#111;color:#fff;font:12px monospace;pointer-events:none">
+          STAGED COMPONENT LAYOUT: ${entry.id}; no engine/boss gameplay</div></body></html>`,
+      })
+      await browser.evaluate(`(() => {
+        for (const animation of document.getAnimations()) { animation.pause(); animation.currentTime = 1000; }
+      })()`)
+      const measurement = await browser.evaluate(`(() => {
+        const rectangle = node => {
+          const r = node.getBoundingClientRect();
+          return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width,height:r.height};
+        };
+        const notice = document.querySelector('.notice'), stack = document.querySelector('.notice-stack');
+        if (!notice || !stack) throw new Error('Missing actual notice component');
+        const style = getComputedStyle(stack), rect = rectangle(notice);
+        const essentials = Object.fromEntries(['.identity-panel','.hud-pause','.vitals','.meter.health','.meter.stamina','.combat-mastery-hud',
+          '.finale-hud','.touch-controls','.bottom-hud','.action-prompt','.expedition-compass'].map(selector => {
+          const node = document.querySelector(selector);
+          return [selector,node ? rectangle(node) : null];
+        }));
+        const area = (a,b) => b ? Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left)) *
+          Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)) : 0;
+        return {viewport:{width:innerWidth,height:innerHeight},notice:rect,stack:rectangle(stack),essentials,
+          intersections:Object.fromEntries(Object.entries(essentials).map(([selector,value]) => [selector,area(rect,value)])),
+          style:{position:style.position,top:style.top,bottom:style.bottom,left:style.left,width:style.width,transform:style.transform},
+          offsetParent:stack.offsetParent?.className ?? null,parent:stack.parentElement.className,
+          message:notice.textContent,noticeCount:document.querySelectorAll('.notice').length,
+          liveRegions:document.querySelectorAll('.notice-stack[aria-live="polite"]').length,
+          engineAbsent:window.__korovanyGraphics === undefined && !document.querySelector('.game-canvas')};
+      })()`)
+      const result = { ...entry, markup: undefined, ...measurement, limitation: packet.limitation }
+      measurements.push(result)
+      await record(`${entry.id}-${viewport.width}`, result)
+    }
+  }
+  for (const measurement of measurements) {
+    assert.equal(measurement.engineAbsent, true)
+    assert.equal(measurement.noticeCount, 1)
+    assert.equal(measurement.liveRegions, 1)
+    assert.equal(measurement.message, describeHint('perfectGuard').text)
+    if (measurement.mode !== 'compact') continue
+    for (const [selector, area] of Object.entries(measurement.intersections)) {
+      assert.equal(area, 0, `${measurement.id} ${measurement.viewport.width}px notice intersects ${selector}`)
+    }
+    if (measurement.finale && measurement.viewport.width === 1920) {
+      const originalLane = measurements.find(entry => entry.id === 'full-finale' && entry.viewport.width === 1920)
+      for (const edge of ['left', 'right', 'bottom']) {
+        assert.equal(measurement.stack[edge], originalLane.stack[edge], `Compact finale retains original lane ${edge}`)
+      }
+    }
+    if (measurement.viewport.width === 390) {
+      assert.equal(measurement.style.position, 'static')
+      assert.equal(measurement.parent, 'top-hud-side')
+      assert.ok(measurement.notice.right <= 390 && measurement.notice.left >= 0)
+    }
+  }
+  return { complete: true, cases: measurements.length, componentLayoutOnly: true, engineOrBossGameplay: false }
+}

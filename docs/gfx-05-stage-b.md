@@ -384,3 +384,39 @@ Focused effects/contact/subsystem/diagnostic regressions passed 46 cases;
 compact/component/mobile/overlay regressions passed 18. Production app/test
 types, build and changed-path lint passed. These bounded results do not replace
 the broader visual and device acceptance gates above.
+
+### Desktop finale notice lane correction
+
+The subsequent review found a distinct existing CSS contract not exercised by
+the ordinary crowd: `FinaleHud.css` relocates desktop notices to the lower-left
+game-screen lane. After the compact notice node moved into the top HUD, that
+rule's `left`/`bottom` used the wrong containing block, while the equal-specificity
+compact rule supplied `top: 0` and a wider notice. Actual built-CSS component
+layout showed x32..480, y16..79.109, covering the identity/pause header, with the
+stack stretched down to y356.734. The single-notice fixture did not intersect
+vitals; the proven defect was the changed lane and header overlap.
+
+A desktop/fine-pointer compact-plus-finale rule now anchors only this lane to
+the viewport with the original left `1rem`, bottom `4.5rem` and width `19rem`,
+explicitly resetting `top: auto`. The one live region remains in its existing
+DOM position; mobile keeps bounded right-side normal flow. Full mode, ordinary
+compact layout, timers, copy, defense and finale gameplay are unchanged.
+
+The existing SSR component fixture and production build's exact CSS order were
+used at 1920x1080 and 390x844, for full/compact and ordinary/finale combinations.
+All eight cases have clearly labeled component screenshots and computed-style/
+rectangle receipts, **not boss gameplay or an engine capture**. The corrected
+desktop compact-finale lane is x16..320 with bottom y1008, matching the original
+game-screen lane, and clears identity/pause, vitals, defense timing, finale,
+prompts and controls. The other seven combinations retain their original notice,
+stack, style and shared essential-HUD rectangles exactly, including mobile finale
+normal flow. The fixture inherits the existing SSR asset stubs; it is layout,
+not faction-emblem or world-art evidence.
+
+Artifacts: `gfx05-finale-notice-before-20260911` and
+`gfx05-finale-notice-fixed-20260911`, including `all-cases-proof.json`.
+To reproduce without replaying combat, set `GFX_NOTICE_COMPONENT_OUTPUT` to a
+new absolute JSON path when running `tests\compactCombatHud.test.ts`, then pass
+that path to the existing runner using `--notice-component-layout` and
+`--repeat 1`. That path never creates a game engine, profiles frames or performs
+a native-input replay. Malformed packets fail rather than falling back to play.
