@@ -5,11 +5,19 @@ workstream histories, the later gameplay fixes, and the corrections found during
 joined browser runs are preserved. Nothing in this report promotes a hardware
 tier or changes the legacy default.
 
-The delivered runtime is `a9a9a857cf087e1e613d61d01870f6353e9a9303`.
-The standalone `bundle.html` is 2,108,418 bytes, SHA-256
-`433289f38b6b77fb256e4540974ca8372caeb34e754f617a3ce9e53a75bc308a`.
+The camera-fixed runtime is `7d54a3eb890caa7ae6d3bc5d3898d8e143f24e5c`.
+The standalone `bundle.html` is 2,108,511 bytes, SHA-256
+`c8021f43dcd861da5384265e70d170e710455f7807eaefb242450693634836fd`.
 [The evidence index](images/graphics-upgrade/evidence.json) records the source
 commit and unmodified PNG hash for every image, plus the measured results.
+
+The shipping audit reproduced two later camera defects: repeated elevation
+switches on open hills and a direction-dependent overlap exception that stopped
+the frame loop. The correction makes candidate distance credit consistent,
+smoothly returns a still-valid view, and keeps origin containment independent of
+the movement ray. The exact frozen-world case is a regression fixture; the saved
+run was restored in the patched browser, and the user confirmed stable camera
+behavior. Earlier image/profile receipts retain their original source commits.
 
 Select **Улучшенная (предпросмотр)** in the menu or pause visual settings.
 During a run, apply a mode/quality change by saving to **В главное меню** and
