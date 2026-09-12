@@ -1,0 +1,422 @@
+# GFX-05 Stage B: posed contacts and transient admission
+
+CPU implementation on the pinned joined base
+`9a0e875a69e03acc84ec734d328d56ea78e3898f`. This is not the later moving
+portrait/normal/capture branch, a browser/GPU result, a completed quality tier,
+or human/default approval. Stage A remains in history; its environment and
+compact-HUD implementation is not replaced.
+
+The separately authorized NPC injury-stream fix follows the unchanged
+`9c47cd68` implementation and `b931c40` reproduction ancestry. It fixes the
+mode-dependent injury RNG gate described below; visual and complete
+whole-frame/resource acceptance remain open.
+
+The final CPU review corrections on top of `bea7fe3` also fix zero-opacity
+transient accounting, missing-left-arm guard cues and exhausted perfect-guard
+contact ordering. These are presentation/admission corrections, not changes to
+shield eligibility, defense payment, injury randomness or tier approval.
+
+## Contact routing
+
+`ContactPresentation.ts` consumes the published `characterPresenter` and
+`creaturePresenter` weak-map lookups. `sampleContact` fills reusable caller
+scratch using the actual posed point, inverse-transpose CPU normal and physical
+surface. No per-hit `getObjectByName`/scene traversal or rig mutation is added.
+Missing, hidden and unarmed anchor rejection does not reuse a previous sample.
+
+An already-admitted projectile intersection remains the primary point.
+The existing collision-sphere center supplies its presentation normal; a bounded
+set of cached body anchors selects available material identity, not a new hit
+test. Hidden/absent anchors leave a projectile explicitly unclassified rather
+than fabricate a posed success. Ordinary melee uses torso; shield contacts use
+the posed shield. A sampled attacker weapon tip supplies a cosmetic incoming
+direction and source material where available.
+
+`DamageActorOptions` and `DamagePlayerOptions` carry optional
+`presentationPoint`/`presentationNormal`. `DamageResult.presentationContact`
+is additive and separately owned: it does not replace or mutate
+`DamageResult.position`, `.direction`, projectile storage, poise, knockback,
+death, contact eligibility or audio positions. Retained feedback copies the
+scratch; synchronous secondary emission reuses it.
+
+Contact origins distinguish `posed`, `projectile`, `admitted-legacy`,
+`admitted-event`, `admitted-world` and `admitted-shield`. Legacy roots without presenters retain
+only the existing admitted point with unknown physical surface.
+
+### Confirmed shield contacts (final review fixed)
+
+Gameplay permits a guard to block after losing the left arm, although the posed
+shield sampler correctly rejects its missing-arm anchor. The narrow
+`ContactPresentation.confirmedShield` helper is used **only after** gameplay
+confirms a frontal block or perfect guard. If no posed shield contact is
+available, it retains the already-admitted shield point (or primary resolved
+projectile intersection), outward contact normal and available attacking-weapon
+surface, explicitly classified as a metal `admitted-shield` fallback. It does
+not restore the limb, mark a nonexistent anchor as posed, or weaken ordinary
+missing/hidden/unarmed contact rejection. Rear/unblocked contacts, evasion,
+pause and ended-state rejection cannot obtain that fallback.
+
+The engine captures and copies this confirmed contact before defense payment
+can call `dropShield`. It emits the saved contact after the original stamina
+expenditure and pose update. A perfect guard with exactly 12 stamina therefore
+keeps its raised-shield impact point even though the shield is already lowered
+when the cue is emitted. Non-exhausted guards keep their posed point; unavailable
+missing-arm anchors use the same pre-payment admitted fallback. Stored
+`DamageResult.presentationContact` is detached from reusable sampler scratch
+and caller projectile vectors. Damage/result direction, cooldown/interruption
+and drop timing are unchanged; legacy feedback takes its original path.
+
+**Actual wagon API limitation:** on this base `WagonPresenter` has no
+`sampleContact` method. Its existing weak-map lookup can identify a wagon
+event fallback, but no posed wagon anchor is claimed. The event point remains
+the admitted point. Existing homestead/fire event targets have no per-part
+physical surface metadata and remain `unknown`; optional `presentationSurface`
+can carry a known classification from a real future caller. A fire marker does
+not imply that all building surfaces are wood.
+
+World collision feedback samples `WorldSurfaceField.sampleInto` only when the
+already-resolved contact is on existing terrain. Stone/paving, soil/grass,
+water and bridge classification select secondary response without changing the
+point or physical normal. Optical water depth and decorative bridge camber are
+not new heights. Cover impacts without terrain metadata remain unknown.
+
+## Bounded material response and primary cues
+
+Metal produces restrained sparks; skin/hair produces small blood particles;
+cloth/soil produces dust; leather/bone/wood/stone produces chips; water produces
+small droplets. Known non-metal weapons against armor use chips rather than
+metal-on-metal sparks. These are physical response colors, not faction colors.
+
+All secondary kinds share the existing 48-slot opaque instance batch and its
+quality/motion admission. Surface-normal-oriented scattering uses reusable
+vectors. No light, per-actor material, new shader family or transparent particle
+stack is introduced. The existing primary impact-ray pool is reused at the
+sampled point, depth-tested and directionally oriented, with a smaller bounded
+envelope and restrained reduced-motion size.
+
+Real `damagePlayer`, `damageActor`, projectile, cleave and event-prop call sites
+route the admitted contact. Zero-damage perfect guard emits a shield contact,
+not a damage number or extra sound/hit-stop. Evasion, rejected/dead targets,
+missing melee anchors and zero-damage non-defense contacts produce no new
+physical burst. Each cleave target routes once; its summary retains the original
+text/audio/hit-stop behavior and does not emit a centroid physical burst.
+
+Existing injury/death/bleeding cosmetics retain their owners and population
+ceilings. This change does not redesign dismemberment or change seeded combat,
+event, loot, director, chronicle or world streams.
+
+### Persisted NPC injury stream (fixed)
+
+`GameEngine.generatedRngStreams.injury` is a dedicated gameplay stream derived
+from `deriveSeed(blueprint.seed, 'gameplay:injury')`. The shared
+`createGeneratedRngStreams` initializer in `random/GeneratedRngStreams.ts`
+is called by the actual engine constructor in both visual modes. Its exact
+record contains combat, director, event, loot, chronicle, rumour and injury;
+the six existing labels/restore behavior are unchanged.
+
+Only the two NPC injury decisions now read `injury.next()`:
+`damageActor`'s existing detachment chance and `detachActorLimb`'s existing
+ordered visible-limb selection, also used by the death path. No player injury
+roll is moved off `combatRng`. Cosmetic variation, Three.js UUID construction,
+render settings, skin/material construction and pool occupancy cannot consume
+or influence this stream.
+
+An eligible positive-damage, non-brute admitted hit with a nonzero detachment
+option consumes one chance draw. If chosen, detachment consumes one additional
+draw only when a visible limb exists. The selection still uses the same
+`floor(next * visible.length)` rule and left-arm/right-arm/left-leg/right-leg
+candidate order. Probability one still consumes its original chance draw;
+zero/absent chance, rejected/dead/inactive, zero-damage, blocked, paused and
+ended contacts consume none. A direct death-path limb choice consumes one
+selection draw; an empty candidate set consumes none. Damage, hit-stop,
+stamina, defense windows, visual body updates and death behavior are unchanged.
+
+`saveGeneratedRun()` writes the current uint32 at
+`ActiveRunSaveV3.rngStates.injury`. A stored value, including zero, restores
+exactly. The existing free-form bounded RNG map accepts this additive key:
+no save version/key/fingerprint change or destructive migration is needed.
+Old valid saves without injury initialize it from the world seed, in either
+visual mode, and persist it at their next ordinary save. This is a deterministic
+starting point for the newly recorded stream, not reconstruction of historical
+unrecorded global-random state. Other saved stream values remain intact.
+
+The updated actual-engine regression observes stream states only through the
+existing save API. Warm legacy, warm enhanced, test-only isolated-cosmetic
+controls and cold enhanced allocations agree for all three seeds:
+
+| Seed | First admitted hit | Saved injury state after the hit |
+| --- | --- | ---: |
+| 42 | Left leg missing; 20 damage, 80 HP | 4247260669 |
+| 20260906 | Left arm missing; 20 damage, 80 HP | 316882220 |
+| 20260910 | No limb missing; 20 damage, 80 HP | 4050900814 |
+
+The tests still exercise real gore and cold Three.js constructors. Additional
+cases serialize after multiple decisions, restore using the same constructor
+initializer and compare subsequent fresh-NPC hit sequences in both modes;
+they do not introduce an ordinary-NPC appearance save format. Old-save
+acceptance, zero-state restore, exact chance/selection draw counts, no-limb
+cases, real lethal selection, player defense/combat ownership and live visual
+settings are covered separately. No production global override, ghost legacy
+work, cosmetic-only partial isolation or dependency patch is used.
+
+### Historical paired-mode reproduction (`b931c40`, before the fix)
+
+At `b931c40`, `tests/contactPresentation.test.ts`, test **actual paired engine
+modes reproduce global injury coupling; cosmetic isolation alone misses cold
+UUID consumption**, executed the paths below. The current test is **actual
+paired engine modes keep NPC injury independent of warm cosmetics and cold
+UUID allocations**; it turns the same warm/cold controls into a regression for
+the fixed stream rather than asserting the former divergent result.
+
+The original reproduction executed the production `damageActor`, `createBloodBurst`, `acquireGoreParticle`,
+`detachActorLimb`, presenter appearance replacement and enhanced secondary
+emission. The actor's initial real presenter/pose and health are held constant;
+64 real gore slots and, except for the cold control, the real secondary pool are
+prepared before tracing. Audio/text/health-bar rendering boundaries are not
+the injury implementation. This is a bounded call-path reproduction, not a
+natural campaign or GPU capture.
+
+The controlled global sequence is 0.1 followed by 0.95 values, with
+`baseDamage=20` and `detachChance=0.75`. Every arm deals 20 damage and leaves
+80 HP:
+
+| Actual engine arm | Explicit hit-gore global draws before admission | Global admission draw | Result |
+| --- | ---: | ---: | --- |
+| Legacy contact path, warm allocations | 307 | 308 (0.95) | No missing limb |
+| Enhanced material contact path, warm allocations | 0 | 1 (0.1) | Right leg missing |
+| Legacy, real blood helper redirected to art randomness in the test only | 0 | 1 (0.1) | Right leg missing |
+| Enhanced, same art-random blood control, warm secondary pool | 0 | 1 (0.1) | Right leg missing |
+| Enhanced, same control, cold real secondary pool | 0 | 13 (0.95) after 12 UUID draws | No missing limb |
+
+The isolated-blood control still executes the real helper. Its temporary
+global-function override is test instrumentation only, not a proposed runtime
+fix. The cold control constructs the real `SecondaryEffectPool` through the
+engine; it demonstrates an additional consumer, not a hypothetical statement.
+
+Affected locations in production checkpoint `9c47cd68`:
+
+- `GameEngine.ts:11978`: NPC non-brute detachment admission,
+  `Math.random() < options.detachChance`.
+- `GameEngine.ts:12511`: visible-limb selection inside `detachActorLimb`.
+  The death path calls this selection twice (three times for large bodies).
+  Player injury admission/selection instead uses the existing `combatRng`.
+- `GameEngine.ts:11954` calls hit `createBloodBurst` only in the legacy branch;
+  its explicit global draws are at `16613`, `16622-16633`, `16644-16654`.
+  The enhanced player hit branch likewise omits legacy hit-gore work.
+- Remaining explicit cosmetic global consumers are death satellite positions
+  (`12190-12197`), detached spray/velocity (`12517`, `12534`), callout
+  chance/rotation/word (`16135`, `16150`, `16168`), legacy impact-ray rotation
+  (`16317`), decal rotation/scale (`16710-16713`), and bleed direction (`16748`).
+  Different prior gore occupancy also changes later accepted particle counts.
+- Three.js `MathUtils.generateUUID` itself consumes four `Math.random` values
+  at `node_modules/three/src/math/MathUtils.js:21-24`. `BufferGeometry:81`,
+  `Material:51`, `Object3D:97` and `Texture:76` invoke it. Cold effects,
+  new sprites/maps, geometry replacement and mode-specific art allocations
+  therefore affect the same global source even when explicit art variation is
+  isolated.
+
+**Historical cosmetic-only proposal (not adopted):** route every explicit cosmetic
+caller above in both legacy and enhanced paths through existing
+`createArtStream(seed, label)` / `artVariation`, never through combat/event/loot
+streams. This removes the demonstrated explicit warm hit-gore coupling without
+editing the two injury roll sites or their probabilities. It does **not** prove
+mode-independent injury while those sites still read global randomness:
+the cold-pool control already fails because of Three.js UUID allocation.
+Prewarming one pool would not cover later sprites, streaming or injury geometry.
+
+The coordinator subsequently authorized the dedicated persisted NPC injury
+stream documented above. That fixes the root cause rather than attempting to
+control every implicit allocation consumer. The historical reproduction and its
+raw log remain evidence of the original failure; they are not the result of the
+fixed code. No broader cosmetic/global-RNG migration was made.
+
+## Transient draw admission and inventory
+
+`TransientEffectBudget` consumes
+`resolveVisualSubsystemAllocation(getVisualPolicy())`: **44/24/20** transient
+draws for High/Balanced/Low. The 16/16/0 post reservation is never donated.
+Legacy remains uncapped by the enhanced tier allocation.
+
+The engine prepares actual live source identities before its single post/direct
+render call. Conservative costs account for geometry draw ranges, material
+groups, submitted instances, transparent double-sided source draws and caster
+depth submissions. The controller includes secondary particles, gore, smoke,
+debris, decals, damage numbers, callouts, impact rays, weapon trail, rain/snow,
+projectiles, telegraphs and pooled loot presentation.
+
+The measured `ec1d3174` High crowded profile exposed two already-attributed
+environment submissions outside that admission set: the 1088-triangle sky sphere
+and the 180-point star buffer (zero opacity still submits). Five of its 600
+sample frames reached 45 non-post draws plus 16 post draws. The original raw
+profile remains unchanged; its final-frame assessment did not describe that peak.
+
+Known atmosphere/flame roots now reserve their actual in-view source costs
+inside the same 44/24/20 allowance before cosmetic selection. The same camera
+layers/frustum determine view participation; non-frustum-culled sources such as
+stars still count, and shadow casters reserve conservatively even outside the
+main view. Off-view clouds do not consume an invented forty-draw reserve.
+Environment sources, tells and projectiles remain protected; if protected work
+alone exceeds the allowance it is still displayed and reported, never hidden to
+claim a pass. Original visibility and all physics/RNG/timing remain unchanged.
+The existing runtime frame record includes `transientPresentation` with the
+admitted/protected and reserved-environment upper bounds, so later proof can
+compare every sampled frame rather than just the final snapshot. Known
+atmosphere/flame geometry also joins the retained-source inventory without
+changing its disposal owner or reclassifying it as world art.
+
+Zero material opacity is **not** a draw exclusion. Three.js submits visible
+material slots with nonempty draw ranges/instance counts even when opacity is
+zero, and `bindLootOpacity.onBeforeRender` can replace a shared material's
+previous pickup opacity at draw time. Costing now ignores opacity and retains
+only actual visibility/material-slot/range/instance exclusions. The regression
+uses 20 protected one-pass sources plus a shared double-sided loot beam whose
+stored opacity is zero and whose real callback sets 0.32: requested work is 22
+draws. A protected beam remains admitted with an explicit Low-tier overrun;
+an unprotected beam is omitted while the 20 protected sources remain. Plain
+zero-opacity transparent meshes and sprites without callbacks are also counted.
+
+Defensive/finale tells, projectiles and visible reward tokens are protected.
+Contact rays/secondary feedback rank ahead of decorative callouts, gore,
+decals and smoke. Only cosmetic render visibility is temporarily omitted;
+simulation, timers, pool capacities and actor population are unchanged.
+Original visibility is restored in `finally`, including a rendering failure.
+Owned resources remain with their original pools; the controller does not
+dispose borrowed sources and clears its own references at engine teardown.
+
+If protected work alone exceeds a tier, it stays visible and `overBudget` is
+reported instead of hiding an attack or inventing a pass. This situation needs
+later batching/evidence, not a silently larger allocation.
+
+`getTransientEffectInventory()` returns actual source identities and deduplicated
+typed backing receipts charged to `postAndEffects`. Shared geometry and inactive
+retained pool resources are counted once. Canvas-backed texture storage is
+explicitly missing, not reported as exact `width * height * 4` allocation.
+GPU uploads, complete retained/peak inventory and disjoint CPU scopes remain
+unknown. The shared composer/shadow/canvas bucket is not charged again here.
+
+The existing diagnostic `rendering.contacts` reports sampler/fallback counters;
+`rendering.transientEffects` reports requested/admitted/omitted conservative
+draw/triangle bounds, protected cost, `overBudget` and explicit missing data.
+`measuredDraws`, `cpuMs` and `complete` do not pretend a source estimate is an
+actual GPU frame. Persistent effects outside the known environment roots and
+complete allocation/CPU attribution remain open.
+
+## CPU evidence and remaining visual tasks
+
+Targeted tests invoke real production samplers, generated world classification,
+damage/projectile/cleave/event methods, perfect/rear/late defense and evasion
+at all tiers, the actual primary-cue update, actual engine budget collection
+and real logical-frame render failure cleanup. Negative cases forbid per-hit
+scene lookup, mutate posed transforms, move disposed projectile storage,
+reject missing anchors, saturate cosmetic pools and overflow protected tells.
+Final-review cases invoke real shield positioning, defense, drop, secondary
+emission and primary-cue routing: missing-left-arm ordinary/perfect blocks,
+resolved projectile fallback, separately owned saved contacts, exhausted
+pre-drop versus lowered pose, non-exhausted parity and unblocked/rejected
+negative controls. The actual shared loot-opacity callback is exercised without
+a GPU, alongside existing group/range/instance/shadow accounting.
+The existing build/type/lint and combat/finale/diagnostic suites remain the
+validation tools; no dependency or test framework is added.
+
+Those CPU checkpoints did not include browser evidence. The separately
+authorized measured follow-up below is narrower than full acceptance: broader
+surface-contact motion, grayscale/night/wetness/flare tuning, complete retained
+inventory and disjoint subsystem CPU attribution, physical-device budgets,
+full live focus/text-scaling coverage and human approval remain integration
+gates. Browser work no longer requires a resource lease or central permission.
+No AO or default promotion is included.
+
+## Measured effects and compact-notice follow-up (2026-09-11)
+
+This follow-up fast-forwarded the clean GFX-05 worktree to the specifically
+approved integrated `ec1d3174d65d772f78e1ee8488458b64e61a7cde`. It did not follow
+moving camera or character-budget branches.
+
+The environment reservation fix is
+`022b56a6a7c202a4cb58968e3a604536bedea970`. One High crowded-25 production run
+recorded 120 warm-up and 600 sample frames with the existing whole-frame
+profiler. Every sample retained 25 NPCs, active simulation and reconciled,
+complete submission attribution. Maximum `postAndEffects` work was **58**:
+42 non-post plus the unchanged 16 post calls, below the existing 60 limit.
+Environment reservation was two draws in every sample; admission never exceeded
+44 and no protected-only overrun occurred. Actual contact counters were
+23 sampled contacts, six projectile contacts and 134 accepted secondary
+particles. The original five over-limit frames and raw 61-call run were retained.
+
+This is a draw-envelope result, **not** a frame-time or complete-tier pass:
+RAF/CPU/GPU p95 were 35.8/30.7/21.093 ms, whole-frame maximum was 332 draws and
+main-view maximum was 174229 triangles. All 600 GPU queries were available.
+The timing runs were not an isolated performance comparison; no speedup is
+claimed. Resource/CPU ownership assessment remains explicitly incomplete.
+Raw profile, manifest, screenshots and strict all-sample summary are in the
+session artifact directory `gfx05-high-reserve-20260911`.
+
+The additional compact-mobile issue was reproduced using the actual native
+guard input and production teaching notice, respecting both simulation-time
+hint pacing and wall-time notice expiry. At 390x844 the old notice occupied
+x16..374, y84.797..147.906 and covered both health and stamina bars (intersection
+areas 1007.829 and 541.481 square pixels). It also overlapped map/navigation.
+
+Compact mode now renders its one existing polite live notice region in the
+right-hand HUD column, after map/compass/finale and before optional world news.
+On narrow/coarse layouts it participates in normal flow and the existing
+scrollable safe region, rather than covering vitals. Copy, tones, timers,
+essential left-side HUD, controls, overlays, full mode and gameplay are unchanged.
+No duplicate mobile/desktop live regions or hidden notice copy is introduced.
+
+The same real notice then occupied x248.609..381.203, y189.922..381.906 at
+390x844, with zero intersection against vitals, health/stamina, squad, defense,
+map, compass or touch controls. Touch buttons remained 44x44. At 1920x1080 its
+rectangle remained exactly x736..1184, y16..79.109, matching the original
+desktop placement. Both layouts have actual screenshots and DOM receipts;
+the left combat/mission layout was not redesigned.
+
+The ordinary runner's `--notice-layout` option reproduces this one held
+crowded-25 case at both sizes. It reuses the same browser/engine and owned
+cleanup, does not create another profiler, and fails on missing/expired notice
+or an essential-HUD intersection. Run with `--cases crowded-25 --repeat 1
+--hud-mode compact --notice-layout` and an absolute new output directory;
+do not combine with performance/portrait/motion suites. Original failing
+receipts are in `gfx05-notice-original-layout-20260911`; passing screenshots
+and receipts are in `gfx05-notice-fixed-layout-20260911`.
+
+Focused effects/contact/subsystem/diagnostic regressions passed 46 cases;
+compact/component/mobile/overlay regressions passed 18. Production app/test
+types, build and changed-path lint passed. These bounded results do not replace
+the broader visual and device acceptance gates above.
+
+### Desktop finale notice lane correction
+
+The subsequent review found a distinct existing CSS contract not exercised by
+the ordinary crowd: `FinaleHud.css` relocates desktop notices to the lower-left
+game-screen lane. After the compact notice node moved into the top HUD, that
+rule's `left`/`bottom` used the wrong containing block, while the equal-specificity
+compact rule supplied `top: 0` and a wider notice. Actual built-CSS component
+layout showed x32..480, y16..79.109, covering the identity/pause header, with the
+stack stretched down to y356.734. The single-notice fixture did not intersect
+vitals; the proven defect was the changed lane and header overlap.
+
+A desktop/fine-pointer compact-plus-finale rule now anchors only this lane to
+the viewport with the original left `1rem`, bottom `4.5rem` and width `19rem`,
+explicitly resetting `top: auto`. The one live region remains in its existing
+DOM position; mobile keeps bounded right-side normal flow. Full mode, ordinary
+compact layout, timers, copy, defense and finale gameplay are unchanged.
+
+The existing SSR component fixture and production build's exact CSS order were
+used at 1920x1080 and 390x844, for full/compact and ordinary/finale combinations.
+All eight cases have clearly labeled component screenshots and computed-style/
+rectangle receipts, **not boss gameplay or an engine capture**. The corrected
+desktop compact-finale lane is x16..320 with bottom y1008, matching the original
+game-screen lane, and clears identity/pause, vitals, defense timing, finale,
+prompts and controls. The other seven combinations retain their original notice,
+stack, style and shared essential-HUD rectangles exactly, including mobile finale
+normal flow. The fixture inherits the existing SSR asset stubs; it is layout,
+not faction-emblem or world-art evidence.
+
+Artifacts: `gfx05-finale-notice-before-20260911` and
+`gfx05-finale-notice-fixed-20260911`, including `all-cases-proof.json`.
+To reproduce without replaying combat, set `GFX_NOTICE_COMPONENT_OUTPUT` to a
+new absolute JSON path when running `tests\compactCombatHud.test.ts`, then pass
+that path to the existing runner using `--notice-component-layout` and
+`--repeat 1`. That path never creates a game engine, profiles frames or performs
+a native-input replay. Malformed packets fail rather than falling back to play.

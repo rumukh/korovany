@@ -100,6 +100,18 @@ import { CombatCameraControls, CombatEvadeButton, CombatMasteryHud } from './gam
 import { ExpeditionAtlas, ExpeditionCompass, ExpeditionMinimap } from './game/ui/ExpeditionAtlas'
 import { SquadCommandPanel, SquadCommandStrip } from './game/ui/SquadCommandPanel'
 import { FinaleHud, FinaleResult } from './game/ui/FinaleHud'
+import { CompactMissionHud, CompactWorldNews } from './game/ui/CompactCombatHud'
+import {
+  VisualSettingsControls,
+  type VisualPreferencesControlProps,
+} from './game/ui/VisualSettingsControls'
+import {
+  DEFAULT_VISUAL_PREFERENCES,
+  loadVisualPreferences,
+  normalizeVisualPreferences,
+  saveVisualPreferences,
+  type VisualPreferences,
+} from './game/visualSettings.ts'
 import {
   closeTopGameOverlay,
   dismissGameOverlay,
@@ -449,6 +461,15 @@ function readScreenShakeEnabled(): boolean {
     console.warn('Korovany: screen-shake preference could not be read.', error)
   }
   return !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+function readVisualPreferences(): VisualPreferences {
+  try {
+    return loadVisualPreferences(window.localStorage, warnRunStorage)
+  } catch (error) {
+    console.warn('Korovany: visual preference storage could not be accessed.', error)
+    return DEFAULT_VISUAL_PREFERENCES
+  }
 }
 
 function formatTime(seconds: number): string {
@@ -1305,6 +1326,9 @@ function MenuScreen({
   inkOutlinesEnabled,
   foliageQuality,
   screenShakeEnabled,
+  visualPreferences,
+  visualPreferencesError,
+  onVisualPreferencesChange,
   sfxVolume,
   onStart,
   onContinueGenerated,
@@ -1355,7 +1379,7 @@ function MenuScreen({
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
   onSfxVolumeChange: (volume: number) => void
-}) {
+} & VisualPreferencesControlProps) {
   const selectedBoonId = selectedProfileBoon(profile)
   const previewWorld = useMemo(() => blueprintForSeed(canonicalSeed), [canonicalSeed])
   const activeElapsed = serializableNumber(activeRun?.directorState.elapsed)
@@ -1487,6 +1511,11 @@ function MenuScreen({
           />
           <strong>{Math.round(sfxVolume * 100)}%</strong>
         </label>
+        <VisualSettingsControls
+          visualPreferences={visualPreferences}
+          visualPreferencesError={visualPreferencesError}
+          onVisualPreferencesChange={onVisualPreferencesChange}
+        />
       </div>
       <header className="hero-header">
         <div className="hackathon-tag">
@@ -2002,6 +2031,10 @@ function PauseModal({
   inkOutlinesEnabled,
   foliageQuality,
   screenShakeEnabled,
+  visualPreferences,
+  activeVisualPolicy,
+  visualPreferencesError,
+  onVisualPreferencesChange,
   onResume,
   onSave,
   onMenu,
@@ -2033,7 +2066,7 @@ function PauseModal({
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
   onSfxVolumeChange: (volume: number) => void
-}) {
+} & VisualPreferencesControlProps) {
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="modal pause-modal" role="dialog" aria-modal="true" aria-labelledby="pause-title">
@@ -2131,6 +2164,12 @@ function PauseModal({
           />
           <strong>{Math.round(sfxVolume * 100)}%</strong>
         </label>
+        <VisualSettingsControls
+          visualPreferences={visualPreferences}
+          activeVisualPolicy={activeVisualPolicy}
+          visualPreferencesError={visualPreferencesError}
+          onVisualPreferencesChange={onVisualPreferencesChange}
+        />
         <div className="pause-actions">
           <button className="primary-button" type="button" onClick={onResume}>
             <Play aria-hidden="true" />
@@ -2478,7 +2517,7 @@ function EndModal({
   )
 }
 
-function GameScreen({
+export function GameScreen({
   view,
   worldRef,
   notices,
@@ -2524,6 +2563,10 @@ function GameScreen({
   inkOutlinesEnabled,
   foliageQuality,
   screenShakeEnabled,
+  visualPreferences,
+  activeVisualPolicy,
+  visualPreferencesError,
+  onVisualPreferencesChange,
   onToggleMusic,
   onSfxVolumeChange,
   onToggleDynamicDayNight,
@@ -2586,7 +2629,7 @@ function GameScreen({
   onToggleInkOutlines: () => void
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
-}) {
+} & VisualPreferencesControlProps) {
   const [controlsDismissed, setControlsDismissed] = useState(false)
   const jumpReleaseTimer = useRef<number | null>(null)
   const info = FACTION_INFO[view.faction]
@@ -2701,10 +2744,30 @@ function GameScreen({
     onBlur: () => onInput(code, false),
   })
 
+  const noticeStack = (
+    <div className="notice-stack" aria-live="polite">
+      {notices.map((notice) => (
+        <div className={`notice ${notice.tone}`} key={notice.id}>
+          {notice.tone === 'success' ? (
+            <Check aria-hidden="true" />
+          ) : notice.tone === 'danger' ? (
+            <Skull aria-hidden="true" />
+          ) : notice.tone === 'warning' ? (
+            <Shield aria-hidden="true" />
+          ) : (
+            <Sparkles aria-hidden="true" />
+          )}
+          <span>{notice.message}</span>
+        </div>
+      ))}
+    </div>
+  )
+
   return (
     <main
       className={`game-screen faction-${view.faction}${lowHealth ? ' low-health' : ''}${simulationPaused ? ' simulation-paused' : ''}`}
       data-zone={view.zone}
+      data-hud={visualPreferences.hudMode}
       style={{ '--zone-accent': zoneInfo.accent } as CSSProperties}
     >
       <div className="gameplay-layer" inert={simulationPaused}>
@@ -2761,8 +2824,11 @@ function GameScreen({
           <MiniMap view={view} onOpenAtlas={onOpenAtlas} />
           <ExpeditionCompass view={view} onOpen={onOpenAtlas} />
           <FinaleHud finale={view.finale} />
-          <ChronicleFeed view={view} />
-          <RumourBoard view={view} onPin={onPinRumour} />
+          {visualPreferences.hudMode === 'compact' ? noticeStack : null}
+          <CompactWorldNews mode={visualPreferences.hudMode} view={view}>
+            <ChronicleFeed view={view} />
+            <RumourBoard view={view} onPin={onPinRumour} />
+          </CompactWorldNews>
         </div>
       </div>
 
@@ -2838,29 +2904,16 @@ function GameScreen({
         </div>
         </div>
         <div className="mission-hud">
-          <ContractBoard view={view} onPin={onPinObjective} />
-          <DoctrineBoard view={view} onTake={onTakeDoctrine} />
-          <ObjectiveList view={view} />
+          <CompactMissionHud mode={visualPreferences.hudMode} view={view}>
+            <ContractBoard view={view} onPin={onPinObjective} />
+            <DoctrineBoard view={view} onTake={onTakeDoctrine} />
+            <ObjectiveList view={view} />
+          </CompactMissionHud>
           <EventBanner event={view.activeEvent} />
         </div>
       </div>
 
-      <div className="notice-stack" aria-live="polite">
-        {notices.map((notice) => (
-          <div className={`notice ${notice.tone}`} key={notice.id}>
-            {notice.tone === 'success' ? (
-              <Check aria-hidden="true" />
-            ) : notice.tone === 'danger' ? (
-              <Skull aria-hidden="true" />
-            ) : notice.tone === 'warning' ? (
-              <Shield aria-hidden="true" />
-            ) : (
-              <Sparkles aria-hidden="true" />
-            )}
-            <span>{notice.message}</span>
-          </div>
-        ))}
-      </div>
+      {visualPreferences.hudMode === 'full' ? noticeStack : null}
       <LootToast toast={view.lootToast} />
       <AchievementBanner achievement={achievementBanner} />
 
@@ -3038,6 +3091,10 @@ function GameScreen({
           inkOutlinesEnabled={inkOutlinesEnabled}
           foliageQuality={foliageQuality}
           screenShakeEnabled={screenShakeEnabled}
+          visualPreferences={visualPreferences}
+          activeVisualPolicy={activeVisualPolicy}
+          visualPreferencesError={visualPreferencesError}
+          onVisualPreferencesChange={onVisualPreferencesChange}
           onResume={onResume}
           onSave={onSave}
           onMenu={onMenu}
@@ -3096,6 +3153,8 @@ function App() {
   const [inkOutlinesEnabled, setInkOutlinesEnabled] = useState(() => readInkOutlinesEnabled())
   const [foliageQuality, setFoliageQuality] = useState(() => readFoliageQuality())
   const [screenShakeEnabled, setScreenShakeEnabled] = useState(() => readScreenShakeEnabled())
+  const [visualPreferences, setVisualPreferences] = useState(() => readVisualPreferences())
+  const [visualPreferencesError, setVisualPreferencesError] = useState(false)
   const [theme, setTheme] = useState<Theme>(() => readTheme())
   const [dynamicDayNight, setDynamicDayNight] = useState(() => readDynamicDayNight())
   const [weatherEnabled, setWeatherEnabled] = useState(() => readWeatherEnabled())
@@ -3115,6 +3174,7 @@ function App() {
   const inkOutlinesEnabledRef = useRef(inkOutlinesEnabled)
   const foliageQualityRef = useRef(foliageQuality)
   const screenShakeEnabledRef = useRef(screenShakeEnabled)
+  const visualPreferencesRef = useRef(visualPreferences)
   const lastGeneratedRegionRef = useRef<{
     runId: string
     regionId: string
@@ -3394,6 +3454,8 @@ function App() {
           inkOutlinesEnabled: inkOutlinesEnabledRef.current,
           foliageQuality: foliageQualityRef.current,
           screenShakeEnabled: screenShakeEnabledRef.current,
+          visualMode: visualPreferencesRef.current.visualMode,
+          visualQuality: visualPreferencesRef.current.visualQuality,
           achievementRunId: `${achievementSessionId}:${runId}`,
           generatedRun: launch,
           blueprint: blueprintForSeed(launch.config.seed),
@@ -3718,6 +3780,20 @@ function App() {
     }
   }
 
+  const changeVisualPreferences = (preferences: VisualPreferences) => {
+    const next = normalizeVisualPreferences(preferences, warnRunStorage)
+    visualPreferencesRef.current = next
+    setVisualPreferences(next)
+    let saved: boolean
+    try {
+      saved = saveVisualPreferences(window.localStorage, next, warnRunStorage)
+    } catch (error) {
+      console.warn('Korovany: visual preference storage could not be accessed.', error)
+      saved = false
+    }
+    setVisualPreferencesError(!saved)
+  }
+
   const selectBoon = (boonId: string) => {
     const nextProfile = selectProfileBoon(profile, boonId)
     if (nextProfile && writePlayerProfile(nextProfile)) setProfile(nextProfile)
@@ -3786,6 +3862,9 @@ function App() {
           inkOutlinesEnabled={inkOutlinesEnabled}
           foliageQuality={foliageQuality}
           screenShakeEnabled={screenShakeEnabled}
+          visualPreferences={visualPreferences}
+          visualPreferencesError={visualPreferencesError}
+          onVisualPreferencesChange={changeVisualPreferences}
           sfxVolume={sfxVolume}
           onStart={(selectedFaction) => startGeneratedRun(selectedFaction)}
           onContinueGenerated={continueGeneratedRun}
@@ -3901,6 +3980,10 @@ function App() {
         weatherEnabled={weatherEnabled}
         foliageQuality={foliageQuality}
         screenShakeEnabled={screenShakeEnabled}
+        visualPreferences={visualPreferences}
+        activeVisualPolicy={engineRef.current?.getVisualPolicy() ?? null}
+        visualPreferencesError={visualPreferencesError}
+        onVisualPreferencesChange={changeVisualPreferences}
         onToggleMusic={toggleMusic}
         onSfxVolumeChange={changeSfxVolume}
         dynamicDayNight={dynamicDayNight}

@@ -23,6 +23,51 @@ import type {
 import type { ChronicleEventKind } from '../world/Chronicle.ts'
 import type { ContractId, ObjectiveKind, SiteKind } from '../world/worldTypes.ts'
 import type { SquadCommandMode, SquadMemberStatus } from '../world/SquadCommand.ts'
+import type { HudMode, VisualMode, VisualQuality } from '../visualSettings.ts'
+
+export const HUD_MODE_LABELS: Readonly<Record<HudMode, string>> = {
+  full: 'Полный',
+  compact: 'Компактный',
+}
+
+export const COMPACT_HUD_COPY = {
+  setting: 'Боевой интерфейс',
+  settingHelp: 'Меняется сразу. В компактном виде раскрой «Поход» и «Вести», чтобы увидеть все подряды и слухи.',
+  mission: 'Поход',
+  news: 'Вести',
+  expand: 'Раскрыть / свернуть',
+  choices: 'Подряды на выбор',
+  doctrine: 'Можно выбрать устав',
+  chronicle: 'Записей в хронике',
+  settled: 'Пункты похода закрыты',
+  seconds: 'с',
+} as const
+
+export const VISUAL_MODE_LABELS: Readonly<Record<VisualMode, string>> = {
+  legacy: 'Исходная',
+  enhanced: 'Улучшенная (предпросмотр)',
+}
+
+export const VISUAL_QUALITY_LABELS: Readonly<Record<VisualQuality, string>> = {
+  high: 'Высокое',
+  balanced: 'Сбалансированное',
+  low: 'Низкое',
+}
+
+export const VISUAL_SETTINGS_COPY = {
+  title: 'Графика: предпросмотр',
+  mode: 'Режим графики',
+  quality: 'Качество предпросмотра',
+  active: 'Сейчас',
+  nextLaunch: 'Выбор применяется при запуске или продолжении сохранённого похода.',
+  current: 'Настройки этого запуска. Смена режима или качества потребует повторного входа.',
+  reloadRequired: 'Для применения выйдите в главное меню с сохранением похода и продолжите его оттуда. Закрытие паузы графику не меняет.',
+  unavailable: 'Улучшенная графика в этой сборке ещё не подключена. Пока отображается исходный режим.',
+  preview: 'Предпросмотр в разработке. Исходная графика остаётся режимом по умолчанию.',
+  legacyQuality: 'В исходном режиме качество предпросмотра не влияет на изображение.',
+  lowNoPost: 'Низкое качество предпросмотра: без постобработки, даже при включённом свечении.',
+  storageFailed: 'Не удалось сохранить настройки. Выбор останется только в этой вкладке.',
+} as const
 
 export type RussianCountForms = readonly [one: string, few: string, many: string]
 

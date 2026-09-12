@@ -102,6 +102,41 @@ export {
 
 export { hasStylizedShader } from './stylizedShader.ts'
 
+export {
+  ART_SHADOW_ATTRIBUTE,
+  ART_SURFACE_ATTRIBUTE,
+  ART_VISIBILITY_ATTRIBUTE,
+  ART_WATER_ATTRIBUTE,
+  ART_WEATHER_ATTRIBUTE,
+  ART_WIND_ATTRIBUTE,
+  artGeometryBytes,
+  validateArtGeometry,
+  type ArtAttributeLayout,
+  type ArtMapping,
+  type StylizedAtmosphere,
+  type StylizedPresentationEnvironment,
+} from './ArtPresentation.ts'
+
+export type {
+  ArtGeometryLease,
+  ArtGeometryReplacementOutcome,
+  ArtRenderSourceBinding,
+  ArtRenderSourceOptions,
+} from './ArtRenderBinding.ts'
+
+export {
+  ATMOSPHERE_REVISION,
+  SURFACE_WEATHER_RESPONSE,
+  WEATHER_ROUGHNESS_DROP_MAX,
+  WEATHER_ROUGHNESS_FLOOR,
+  WEATHER_VALUE_DROP_MAX,
+  bakeWeatherResponse,
+  createAtmospherePresentation,
+  sampleAtmosphereOpacity,
+  weatheredRoughness,
+  writeAtmospherePresentation,
+} from './AtmospherePresentation.ts'
+
 // --- CharacterKit ---
 // Wave 2A. People, animals and the caravan: the taxonomy plus every builder that
 // turns it into geometry. See `docs/09-npc-and-creature-models-spec.md`.
@@ -110,8 +145,10 @@ export {
   BEAST_KINDS,
   BEAST_LOOK_CLAMP,
   BEAST_RIG,
+  CHARACTER_ART_REVISION,
   CHARACTER_DETAIL_DISTANCE,
   CHARACTER_FACTIONS,
+  CHARACTER_PHYSICAL_PALETTE,
   CHARACTER_VARIANTS,
   WAGON_RIG,
   applyChestPose,
@@ -119,18 +156,23 @@ export {
   applyLimbPose,
   beastBreathScale,
   beastLookYaw,
+  buildArticulatedBirdWing,
   buildBeastBody,
   buildBeastHead,
   buildBeastLimb,
   buildBeastSkeleton,
   buildBeastTail,
   buildBirdBody,
+  buildBirdFoot,
   buildBirdWing,
   buildCharacterSkeleton,
   buildCloak,
+  buildCreatureFoot,
+  buildCreatureLimbSegment,
   buildDeerBody,
   buildDeerCrown,
   buildDeerLeg,
+  buildDraftYoke,
   buildFace,
   buildForearm,
   buildHair,
@@ -138,6 +180,23 @@ export {
   buildHarness,
   buildHead,
   buildHeadgear,
+  buildIllustratedArm,
+  buildIllustratedBoot,
+  buildIllustratedBowString,
+  buildIllustratedChestArmor,
+  buildIllustratedCompactLimb,
+  buildIllustratedEyes,
+  buildIllustratedFace,
+  buildIllustratedHair,
+  buildIllustratedHand,
+  buildIllustratedHead,
+  buildIllustratedHeadgear,
+  buildIllustratedHorns,
+  buildIllustratedNockedArrow,
+  buildIllustratedShin,
+  buildIllustratedShoulder,
+  buildIllustratedTorso,
+  buildIllustratedTrim,
   buildOffhand,
   buildOxBody,
   buildOxHead,
@@ -162,6 +221,7 @@ export {
   cloakVariant,
   decayStrideOnStagger,
   forearmVariant,
+  illustratedCharacterPlan,
   poseBeast,
   resolveCharacterPlan,
   setCharacterShoulderWidth,
@@ -178,9 +238,11 @@ export {
   type CharacterFaction,
   type CharacterKitId,
   type CharacterPartKeys,
+  type CharacterPhysicalSurface,
   type CharacterPlan,
   type CharacterProportions,
   type CharacterSkeleton,
+  type CharacterVisualLevel,
   type CloakKind,
   type HairKind,
   type HeadgearKind,
@@ -190,10 +252,36 @@ export {
   type WeaponKind,
 } from './CharacterKit.ts'
 
+export {
+  CharacterPresenter,
+  TerrainFootFrame,
+  characterPresenter,
+  createCharacterPresenter,
+  selectCharacterVisualLevel,
+  type CharacterAppearance,
+  type CharacterContact,
+  type CharacterContactPart,
+  type CharacterLimb,
+} from './CharacterRig.ts'
+
+export {
+  CreaturePresenter,
+  createCreatureLeg,
+  creaturePresenter,
+  type CreatureLeg,
+} from './CreatureRig.ts'
+
+export {
+  WagonPresenter,
+  wagonPresenter,
+} from './WagonRig.ts'
+
 // --- PropKit ---
 // The world-object vocabulary. Buildings, settlement dressing, vegetation species,
 // rock features and infrastructure. See `docs/10-world-objects-and-props-spec.md`.
 export {
+  BRIDGE_PIER_SPAN_FRACTION,
+  BRIDGE_PIER_WIDTH_FRACTION,
   PROP_SURFACES,
   bannerParts,
   barrelGeometry,
@@ -218,6 +306,7 @@ export {
   monumentParts,
   obeliskParts,
   outcropGeometry,
+  paintPropResponse,
   pillarParts,
   propPart,
   reedClusterGeometry,

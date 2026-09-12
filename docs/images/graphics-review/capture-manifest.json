@@ -1,0 +1,1105 @@
+{
+  "baselineCommit": "f36ee7ce06c9cf7b1c220d04b707be4fcf1cc7ff",
+  "seed": 20260906,
+  "browser": "Chrome 152.0.7977.76 on Windows",
+  "viewport": {
+    "width": 1920,
+    "height": 1080,
+    "deviceScaleFactor": 1
+  },
+  "settings": {
+    "theme": "dark",
+    "startingBoon": "Supplies (default)",
+    "foliage": "high",
+    "bloom": true,
+    "inkOutlines": true,
+    "dynamicDayNight": true,
+    "weather": true,
+    "cameraEffects": true
+  },
+  "method": "Fresh UI-launched runs in an isolated browser profile. Native CDP keyboard, mouse clicks, and supported drag-to-look. Engine references were read only. No position, health, actor, or objective overrides. Screenshots were captured before pausing.",
+  "limitations": "Bounded field sessions, not full campaigns or performance benchmarks. State samples follow screenshot capture and may differ by a frame; HUD updates can lag the sampled engine time. The seed reproduces world generation, not an exact input, weather-particle, or rendered-frame replay.",
+  "runs": [
+    {
+      "faction": "elf",
+      "elapsedSeconds": 32.213399999976204,
+      "discoveredRegions": 3,
+      "personalKills": 1,
+      "completedObjectives": [
+        "objective-elf-start",
+        "objective-elf-alt"
+      ],
+      "skippedObjectives": [
+        "objective-elf-contract"
+      ],
+      "campaignCompleted": false
+    },
+    {
+      "faction": "guard",
+      "elapsedSeconds": 43.1146000000243,
+      "discoveredRegions": 4,
+      "personalKills": 1,
+      "completedObjectives": [
+        "objective-guard-start",
+        "objective-guard-branch"
+      ],
+      "skippedObjectives": [],
+      "campaignCompleted": false
+    },
+    {
+      "faction": "villain",
+      "elapsedSeconds": 34.16600000011942,
+      "discoveredRegions": 2,
+      "personalKills": 1,
+      "completedObjectives": [
+        "objective-villain-start"
+      ],
+      "skippedObjectives": [],
+      "campaignCompleted": false
+    }
+  ],
+  "captures": [
+    {
+      "file": "elf-opening.png",
+      "caption": "Elf player, three companions, and caravan guards in the rainy forest.",
+      "capturedAt": "2026-09-06T20:53:27.527Z",
+      "faction": "elf",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 1269917,
+      "sha256": "d1711738b400e203022cdaf526c8645cd77f41cbd4a4f315df3428c0f8725b23",
+      "sampledElapsedSeconds": 2.0671000001430504,
+      "player": {
+        "position": {
+          "x": -150.66,
+          "y": 3.67,
+          "z": -163.34
+        },
+        "health": 100,
+        "stamina": 100,
+        "kills": 0
+      },
+      "camera": {
+        "position": {
+          "x": -149.55,
+          "y": 11.85,
+          "z": -173.28
+        },
+        "yaw": -3.0300422844222297,
+        "pitch": 0.38
+      },
+      "nearbyActors": [
+        {
+          "id": "squad:elf:starter:0",
+          "role": "scout",
+          "allegiance": "elf",
+          "hp": 55,
+          "maxHp": 55,
+          "position": {
+            "x": -153.67,
+            "y": 3.59,
+            "z": -159.77
+          },
+          "distance": 4.67
+        },
+        {
+          "id": "squad:elf:starter:1",
+          "role": "archer",
+          "allegiance": "elf",
+          "hp": 45,
+          "maxHp": 45,
+          "position": {
+            "x": -148.62,
+            "y": 3.56,
+            "z": -159.28
+          },
+          "distance": 4.55
+        },
+        {
+          "id": "squad:elf:starter:2",
+          "role": "scout",
+          "allegiance": "elf",
+          "hp": 42,
+          "maxHp": 55,
+          "position": {
+            "x": -154.94,
+            "y": 3.62,
+            "z": -160.16
+          },
+          "distance": 5.32
+        },
+        {
+          "id": "guard-soldier-10",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 57,
+          "maxHp": 70,
+          "position": {
+            "x": -157.4,
+            "y": 3.67,
+            "z": -158.56
+          },
+          "distance": 8.26
+        },
+        {
+          "id": "guard-soldier-12",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": -159.58,
+            "y": 3.76,
+            "z": -159.08
+          },
+          "distance": 9.88
+        }
+      ]
+    },
+    {
+      "file": "elf-caravan-fight.png",
+      "caption": "Elf player and allied NPCs in a close caravan skirmish.",
+      "capturedAt": "2026-09-06T20:55:15.188Z",
+      "faction": "elf",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 1408759,
+      "sha256": "8f864dea517326b7aaae676abbbf9ab0701b1dbe0f485b0c91f192b6eb24daf1",
+      "sampledElapsedSeconds": 4.490900000095365,
+      "player": {
+        "position": {
+          "x": -153.42,
+          "y": 3.6,
+          "z": -160.15
+        },
+        "health": 100,
+        "stamina": 100,
+        "kills": 0
+      },
+      "camera": {
+        "position": {
+          "x": -146.88,
+          "y": 11.78,
+          "z": -167.72
+        },
+        "yaw": -2.4294641594222313,
+        "pitch": 0.38
+      },
+      "nearbyActors": [
+        {
+          "id": "squad:elf:starter:0",
+          "role": "scout",
+          "allegiance": "elf",
+          "hp": 55,
+          "maxHp": 55,
+          "position": {
+            "x": -152.47,
+            "y": 3.56,
+            "z": -158.46
+          },
+          "distance": 1.94
+        },
+        {
+          "id": "squad:elf:starter:1",
+          "role": "archer",
+          "allegiance": "elf",
+          "hp": 45,
+          "maxHp": 45,
+          "position": {
+            "x": -146.89,
+            "y": 3.57,
+            "z": -159.24
+          },
+          "distance": 6.58
+        },
+        {
+          "id": "squad:elf:starter:2",
+          "role": "scout",
+          "allegiance": "elf",
+          "hp": 29,
+          "maxHp": 55,
+          "position": {
+            "x": -153.85,
+            "y": 3.63,
+            "z": -161.55
+          },
+          "distance": 1.47
+        },
+        {
+          "id": "guard-soldier-10",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 0,
+          "maxHp": 70,
+          "position": {
+            "x": -154.63,
+            "y": 4.22,
+            "z": -159.35
+          },
+          "distance": 1.58
+        },
+        {
+          "id": "guard-soldier-12",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 29,
+          "maxHp": 70,
+          "position": {
+            "x": -155.68,
+            "y": 3.64,
+            "z": -160.63
+          },
+          "distance": 2.31
+        }
+      ]
+    },
+    {
+      "file": "elf-forest-contract.png",
+      "caption": "Elf player and companions partly obscured by foreground trees near the contract.",
+      "capturedAt": "2026-09-06T20:57:35.678Z",
+      "faction": "elf",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 1108805,
+      "sha256": "3ec29e4707a91bea7c898f986f8d1c6c41b8298633e35f44f00be33e33d65646",
+      "sampledElapsedSeconds": 23.54090000009538,
+      "player": {
+        "position": {
+          "x": -96.41,
+          "y": 5.92,
+          "z": -73.01
+        },
+        "health": 100,
+        "stamina": 100,
+        "kills": 0
+      },
+      "camera": {
+        "position": {
+          "x": -102.15,
+          "y": 14.1,
+          "z": -81.2
+        },
+        "yaw": -3.753389232664417,
+        "pitch": 0.38
+      },
+      "nearbyActors": [
+        {
+          "id": "squad:elf:starter:0",
+          "role": "scout",
+          "allegiance": "elf",
+          "hp": 55,
+          "maxHp": 55,
+          "position": {
+            "x": -94.09,
+            "y": 5.66,
+            "z": -72.9
+          },
+          "distance": 2.34
+        },
+        {
+          "id": "squad:elf:starter:1",
+          "role": "archer",
+          "allegiance": "elf",
+          "hp": 45,
+          "maxHp": 45,
+          "position": {
+            "x": -98.39,
+            "y": 6.49,
+            "z": -75.92
+          },
+          "distance": 3.56
+        },
+        {
+          "id": "squad:elf:starter:2",
+          "role": "scout",
+          "allegiance": "elf",
+          "hp": 16,
+          "maxHp": 55,
+          "position": {
+            "x": -96.88,
+            "y": 5.79,
+            "z": -70.94
+          },
+          "distance": 2.13
+        },
+        {
+          "id": "generated:encounter-region-1-1:actor:1",
+          "role": "archer",
+          "allegiance": "elf",
+          "hp": 50,
+          "maxHp": 50,
+          "position": {
+            "x": -81.95,
+            "y": 6.77,
+            "z": -83.7
+          },
+          "distance": 18
+        }
+      ]
+    },
+    {
+      "file": "guard-opening.png",
+      "caption": "Guard player, companions, and caravan escorts on the palace paving.",
+      "capturedAt": "2026-09-06T20:59:43.952Z",
+      "faction": "guard",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 1226214,
+      "sha256": "95a2a940ccde8a2e754af684889e66962b18c0b290435e37943b4572d846cb97",
+      "sampledElapsedSeconds": 2.5575000001192083,
+      "player": {
+        "position": {
+          "x": 161.86,
+          "y": 8.07,
+          "z": -162.05
+        },
+        "health": 100,
+        "stamina": 100,
+        "kills": 0
+      },
+      "camera": {
+        "position": {
+          "x": 162.09,
+          "y": 16.25,
+          "z": -172.05
+        },
+        "yaw": -3.118876045444491,
+        "pitch": 0.38
+      },
+      "nearbyActors": [
+        {
+          "id": "squad:guard:starter:0",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": 164.48,
+            "y": 8.11,
+            "z": -158.52
+          },
+          "distance": 4.4
+        },
+        {
+          "id": "squad:guard:starter:1",
+          "role": "archer",
+          "allegiance": "guard",
+          "hp": 45,
+          "maxHp": 45,
+          "position": {
+            "x": 163.67,
+            "y": 8.21,
+            "z": -165.43
+          },
+          "distance": 3.83
+        },
+        {
+          "id": "squad:guard:starter:2",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": 161.44,
+            "y": 8,
+            "z": -158.82
+          },
+          "distance": 3.26
+        },
+        {
+          "id": "guard-soldier-12",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": 160.13,
+            "y": 7.83,
+            "z": -148.79
+          },
+          "distance": 13.37
+        },
+        {
+          "id": "guard-soldier-14",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": 161.42,
+            "y": 7.85,
+            "z": -148.81
+          },
+          "distance": 13.25
+        }
+      ]
+    },
+    {
+      "file": "guard-riverside-combat.png",
+      "caption": "Guard player holding the shield while the squad engages an elf attacker.",
+      "capturedAt": "2026-09-06T21:02:07.485Z",
+      "faction": "guard",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 1126036,
+      "sha256": "7d0b960d8a426d5f3ccb1ebc6bf9b3d98c09820510fcdb27fcf27d90adc93177",
+      "sampledElapsedSeconds": 31.200600000143073,
+      "player": {
+        "position": {
+          "x": 29.62,
+          "y": 12.05,
+          "z": -108.25
+        },
+        "health": 100,
+        "stamina": 78.66280000042909,
+        "kills": 0
+      },
+      "camera": {
+        "position": {
+          "x": 29.82,
+          "y": 20.23,
+          "z": -118.25
+        },
+        "yaw": -3.1209818559913667,
+        "pitch": 0.38
+      },
+      "nearbyActors": [
+        {
+          "id": "squad:guard:starter:0",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": 30.7,
+            "y": 12.01,
+            "z": -104.32
+          },
+          "distance": 4.08
+        },
+        {
+          "id": "squad:guard:starter:1",
+          "role": "archer",
+          "allegiance": "guard",
+          "hp": 45,
+          "maxHp": 45,
+          "position": {
+            "x": 38.61,
+            "y": 11.96,
+            "z": -109.03
+          },
+          "distance": 9.02
+        },
+        {
+          "id": "squad:guard:starter:2",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": 26.61,
+            "y": 12.04,
+            "z": -105.37
+          },
+          "distance": 4.16
+        },
+        {
+          "id": "elf-soldier-43",
+          "role": "soldier",
+          "allegiance": "elf",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": 9.78,
+            "y": 11.84,
+            "z": -94.04
+          },
+          "distance": 24.4
+        },
+        {
+          "id": "guard-soldier-47",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": 16.22,
+            "y": 11.5,
+            "z": -84.74
+          },
+          "distance": 27.06
+        },
+        {
+          "id": "elf-soldier-56",
+          "role": "soldier",
+          "allegiance": "elf",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": 15.49,
+            "y": 11.61,
+            "z": -87.23
+          },
+          "distance": 25.33
+        },
+        {
+          "id": "elf-soldier-57",
+          "role": "soldier",
+          "allegiance": "elf",
+          "hp": 50,
+          "maxHp": 70,
+          "position": {
+            "x": 30.01,
+            "y": 12,
+            "z": -103.02
+          },
+          "distance": 5.24
+        },
+        {
+          "id": "elf-soldier-58",
+          "role": "soldier",
+          "allegiance": "elf",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": 10.96,
+            "y": 12.03,
+            "z": -102.69
+          },
+          "distance": 19.47
+        }
+      ]
+    },
+    {
+      "file": "guard-melee-impact.png",
+      "caption": "Collision-compressed guard camera: player in the foreground and NPC bodies filling the view.",
+      "capturedAt": "2026-09-06T21:03:11.625Z",
+      "faction": "guard",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 1156190,
+      "sha256": "327b61be8e96cd403f02dc53460e0da3e1abb61268b463e8a8e8dec41edc4c1c",
+      "sampledElapsedSeconds": 42.97880000007198,
+      "player": {
+        "position": {
+          "x": 12.73,
+          "y": 12,
+          "z": -101.2
+        },
+        "health": 100,
+        "stamina": 70.05760000133496,
+        "kills": 1
+      },
+      "camera": {
+        "position": {
+          "x": 14.39,
+          "y": 14.86,
+          "z": -102.01
+        },
+        "yaw": -2.0229327348976165,
+        "pitch": 0.38
+      },
+      "nearbyActors": [
+        {
+          "id": "squad:guard:starter:0",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 31,
+          "maxHp": 70,
+          "position": {
+            "x": 11.2,
+            "y": 11.93,
+            "z": -97.34
+          },
+          "distance": 4.15
+        },
+        {
+          "id": "squad:guard:starter:1",
+          "role": "archer",
+          "allegiance": "guard",
+          "hp": 45,
+          "maxHp": 45,
+          "position": {
+            "x": 16.73,
+            "y": 12.03,
+            "z": -103.13
+          },
+          "distance": 4.45
+        },
+        {
+          "id": "squad:guard:starter:2",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": 9.98,
+            "y": 11.98,
+            "z": -99.95
+          },
+          "distance": 3.03
+        },
+        {
+          "id": "generated:encounter-region-2-1:actor:0",
+          "role": "brute",
+          "allegiance": "guard",
+          "hp": 154.5,
+          "maxHp": 161,
+          "position": {
+            "x": -4.07,
+            "y": 11.26,
+            "z": -80.26
+          },
+          "distance": 26.86
+        },
+        {
+          "id": "generated:encounter-region-2-1:actor:1",
+          "role": "archer",
+          "allegiance": "guard",
+          "hp": 56,
+          "maxHp": 56,
+          "position": {
+            "x": -12.81,
+            "y": 11.4,
+            "z": -82.01
+          },
+          "distance": 31.95
+        },
+        {
+          "id": "generated:encounter-region-2-1:actor:2",
+          "role": "archer",
+          "allegiance": "guard",
+          "hp": 56,
+          "maxHp": 56,
+          "position": {
+            "x": -11.92,
+            "y": 11.58,
+            "z": -85.94
+          },
+          "distance": 29
+        },
+        {
+          "id": "elf-soldier-41",
+          "role": "soldier",
+          "allegiance": "elf",
+          "hp": 42,
+          "maxHp": 70,
+          "position": {
+            "x": -4.8,
+            "y": 11.34,
+            "z": -81.76
+          },
+          "distance": 26.19
+        },
+        {
+          "id": "elf-soldier-43",
+          "role": "soldier",
+          "allegiance": "elf",
+          "hp": 57,
+          "maxHp": 70,
+          "position": {
+            "x": 13.58,
+            "y": 11.37,
+            "z": -82.2
+          },
+          "distance": 19.03
+        },
+        {
+          "id": "guard-soldier-45",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": -10.3,
+            "y": 11.7,
+            "z": -89
+          },
+          "distance": 26.07
+        },
+        {
+          "id": "guard-soldier-47",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 5,
+          "maxHp": 70,
+          "position": {
+            "x": 15.44,
+            "y": 11.21,
+            "z": -79.05
+          },
+          "distance": 22.33
+        },
+        {
+          "id": "elf-soldier-56",
+          "role": "soldier",
+          "allegiance": "elf",
+          "hp": 0,
+          "maxHp": 70,
+          "position": {
+            "x": 15.71,
+            "y": 12.19,
+            "z": -86.22
+          },
+          "distance": 15.27
+        },
+        {
+          "id": "elf-soldier-57",
+          "role": "soldier",
+          "allegiance": "elf",
+          "hp": 0,
+          "maxHp": 70,
+          "position": {
+            "x": 29.06,
+            "y": 12.58,
+            "z": -99.95
+          },
+          "distance": 16.38
+        },
+        {
+          "id": "elf-soldier-58",
+          "role": "soldier",
+          "allegiance": "elf",
+          "hp": 0,
+          "maxHp": 70,
+          "position": {
+            "x": 10.72,
+            "y": 12.62,
+            "z": -101.03
+          },
+          "distance": 2.11
+        },
+        {
+          "id": "elf-brute-59",
+          "role": "brute",
+          "allegiance": "elf",
+          "hp": 130,
+          "maxHp": 130,
+          "position": {
+            "x": -5.72,
+            "y": 11.89,
+            "z": -95.76
+          },
+          "distance": 19.24
+        }
+      ]
+    },
+    {
+      "file": "villain-opening.png",
+      "caption": "Villain player with minion, brute, and archer companions in the highlands.",
+      "capturedAt": "2026-09-06T21:03:50.104Z",
+      "faction": "villain",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 1117620,
+      "sha256": "b5b9b53924c27c424376731437a2b17e3e4d68c5501a52a4b7685d43cd0ab9c0",
+      "sampledElapsedSeconds": 2.423400000095366,
+      "player": {
+        "position": {
+          "x": -177.82,
+          "y": 7.77,
+          "z": 182.38
+        },
+        "health": 100,
+        "stamina": 100,
+        "kills": 0
+      },
+      "camera": {
+        "position": {
+          "x": -187.57,
+          "y": 15.95,
+          "z": 184.61
+        },
+        "yaw": 1.3458539189044576,
+        "pitch": 0.38
+      },
+      "nearbyActors": [
+        {
+          "id": "squad:villain:starter:0",
+          "role": "minion",
+          "allegiance": "villain",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": -176.27,
+            "y": 7.88,
+            "z": 182.33
+          },
+          "distance": 1.55
+        },
+        {
+          "id": "squad:villain:starter:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "hp": 130,
+          "maxHp": 130,
+          "position": {
+            "x": -175.06,
+            "y": 8.08,
+            "z": 184.32
+          },
+          "distance": 3.39
+        },
+        {
+          "id": "squad:villain:starter:2",
+          "role": "archer",
+          "allegiance": "villain",
+          "hp": 45,
+          "maxHp": 45,
+          "position": {
+            "x": -179.18,
+            "y": 7.79,
+            "z": 186.69
+          },
+          "distance": 4.52
+        }
+      ]
+    },
+    {
+      "file": "villain-caravan-combat.png",
+      "caption": "Villain player taking damage from two caravan guards while companions catch up.",
+      "capturedAt": "2026-09-06T21:04:47.990Z",
+      "faction": "villain",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 1403465,
+      "sha256": "e24b6e75bd0df6933e655216e0af3ec33495422770b60e1d200abfa53892344d",
+      "sampledElapsedSeconds": 11.573399999976122,
+      "player": {
+        "position": {
+          "x": -136.09,
+          "y": 15.93,
+          "z": 160.06
+        },
+        "health": 78.67882746038958,
+        "stamina": 64.47520000362398,
+        "kills": 0
+      },
+      "camera": {
+        "position": {
+          "x": -145.9,
+          "y": 24.11,
+          "z": 162
+        },
+        "yaw": 1.3755030888263327,
+        "pitch": 0.38
+      },
+      "nearbyActors": [
+        {
+          "id": "squad:villain:starter:0",
+          "role": "minion",
+          "allegiance": "villain",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": -142.3,
+            "y": 15.83,
+            "z": 160.82
+          },
+          "distance": 6.25
+        },
+        {
+          "id": "squad:villain:starter:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "hp": 130,
+          "maxHp": 130,
+          "position": {
+            "x": -145.78,
+            "y": 15.41,
+            "z": 159.59
+          },
+          "distance": 9.71
+        },
+        {
+          "id": "squad:villain:starter:2",
+          "role": "archer",
+          "allegiance": "villain",
+          "hp": 45,
+          "maxHp": 45,
+          "position": {
+            "x": -147.7,
+            "y": 14.92,
+            "z": 166
+          },
+          "distance": 13.08
+        },
+        {
+          "id": "guard-soldier-12",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": -138.58,
+            "y": 16.01,
+            "z": 160.19
+          },
+          "distance": 2.49
+        },
+        {
+          "id": "guard-soldier-14",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": -137.81,
+            "y": 15.9,
+            "z": 161.47
+          },
+          "distance": 2.22
+        }
+      ]
+    },
+    {
+      "file": "villain-highland-squad.png",
+      "caption": "Villain player and regrouped companions outside the old stronghold.",
+      "capturedAt": "2026-09-06T21:06:55.252Z",
+      "faction": "villain",
+      "width": 1920,
+      "height": 1080,
+      "bytes": 1053127,
+      "sha256": "a0c39f2e035cbf97eb65dba7b3848d34cf00683f232e34cabbbbdb109a17c093",
+      "sampledElapsedSeconds": 30.513500000119276,
+      "player": {
+        "position": {
+          "x": -144.6,
+          "y": 14.22,
+          "z": 101.65
+        },
+        "health": 100,
+        "stamina": 100,
+        "kills": 1
+      },
+      "camera": {
+        "position": {
+          "x": -144.94,
+          "y": 22.4,
+          "z": 111.64
+        },
+        "yaw": 6.31717359663883,
+        "pitch": 0.38
+      },
+      "nearbyActors": [
+        {
+          "id": "squad:villain:starter:0",
+          "role": "minion",
+          "allegiance": "villain",
+          "hp": 57,
+          "maxHp": 70,
+          "position": {
+            "x": -144.55,
+            "y": 13.82,
+            "z": 100.15
+          },
+          "distance": 1.55
+        },
+        {
+          "id": "squad:villain:starter:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "hp": 130,
+          "maxHp": 130,
+          "position": {
+            "x": -142.95,
+            "y": 14.1,
+            "z": 100.28
+          },
+          "distance": 2.14
+        },
+        {
+          "id": "squad:villain:starter:2",
+          "role": "archer",
+          "allegiance": "villain",
+          "hp": 32,
+          "maxHp": 45,
+          "position": {
+            "x": -141.52,
+            "y": 15.34,
+            "z": 105.26
+          },
+          "distance": 4.88
+        },
+        {
+          "id": "generated:encounter-region-0-3:actor:0",
+          "role": "brute",
+          "allegiance": "villain",
+          "hp": 161,
+          "maxHp": 161,
+          "position": {
+            "x": -149.5,
+            "y": 16.6,
+            "z": 68.1
+          },
+          "distance": 33.99
+        },
+        {
+          "id": "generated:encounter-region-0-3:actor:2",
+          "role": "archer",
+          "allegiance": "villain",
+          "hp": 56,
+          "maxHp": 56,
+          "position": {
+            "x": -150.84,
+            "y": 15.55,
+            "z": 70.23
+          },
+          "distance": 32.06
+        },
+        {
+          "id": "generated:encounter-boss-guard:actor:0",
+          "role": "champion",
+          "allegiance": "villain",
+          "hp": 385,
+          "maxHp": 385,
+          "position": {
+            "x": -137.06,
+            "y": 14.68,
+            "z": 83.23
+          },
+          "distance": 19.91
+        },
+        {
+          "id": "generated:encounter-boss-guard:actor:1",
+          "role": "brute",
+          "allegiance": "villain",
+          "hp": 192,
+          "maxHp": 192,
+          "position": {
+            "x": -126.78,
+            "y": 17.52,
+            "z": 85.1
+          },
+          "distance": 24.55
+        },
+        {
+          "id": "generated:encounter-boss-guard:actor:2",
+          "role": "minion",
+          "allegiance": "villain",
+          "hp": 104,
+          "maxHp": 104,
+          "position": {
+            "x": -142.07,
+            "y": 13.2,
+            "z": 82.96
+          },
+          "distance": 18.89
+        },
+        {
+          "id": "guard-soldier-20",
+          "role": "soldier",
+          "allegiance": "guard",
+          "hp": 70,
+          "maxHp": 70,
+          "position": {
+            "x": -148.31,
+            "y": 16.44,
+            "z": 128.59
+          },
+          "distance": 27.29
+        }
+      ]
+    }
+  ]
+}

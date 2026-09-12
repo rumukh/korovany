@@ -10,6 +10,7 @@ import {
 } from '../src/game/art/index.ts'
 import { weatherHunch } from '../src/game/world/AmbientLife.ts'
 import { createSquadCommandState } from '../src/game/world/SquadCommand.ts'
+import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
 
 const loader = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -348,6 +349,7 @@ test('walking hips settle toward the planted foot and breathing leaves feet plan
         turnLean: 0,
       })
       const engine = Object.assign(Object.create(GameEngine.prototype), {
+        visualPolicy: resolveVisualPolicy({ visualMode: 'legacy' }),
         elapsed: Math.PI / (2 * 1.75),
         ambientStormHunch: 0,
         scratchPose: { stride: 0, attack: 0, anticipation: 0, recovery: 0, flinch: 0, stagger: 0 },
