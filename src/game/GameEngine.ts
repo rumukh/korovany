@@ -17971,6 +17971,7 @@ export class GameEngine {
     if (!locked && !this.pointerFallback) {
       if (event.button === 2 && this.faction === 'elf') this.setBowAiming(true, 'mouse')
       this.requestPointerLock()
+      if (event.button === 0 && this.bowAiming) this.attack()
       return
     }
     if (event.button === 0) {

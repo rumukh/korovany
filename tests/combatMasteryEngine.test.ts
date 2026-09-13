@@ -283,6 +283,20 @@ test('R and RMB independently hold aim; only LMB pays for one shot, release neve
   disposeArrows(engine)
 })
 
+test('the first LMB after R fires even while native mouse capture is being requested', async () => {
+  const { engine } = fixture()
+  engine.onKeyDown(key('KeyR'))
+  mouseDown(engine, pointer(1, 0, 0))
+  await Promise.resolve()
+  assert.equal(engine.projectiles.length, 1)
+  assert.equal(engine.stamina, 85)
+  assert.equal(engine.bowAiming, true)
+  assert.equal(engine.pointerFallback, true)
+  mouseUp(engine, pointer(1, 0, 0))
+  assert.equal(engine.projectiles.length, 1)
+  disposeArrows(engine)
+})
+
 test('button aim works without stamina or cooldown readiness; all interruptions leave no delayed shot', () => {
   for (const cancel of ['pause', 'blur', 'hidden', 'pointer', 'evade', 'sprint', 'arms', 'release'] as const) {
     const { engine } = fixture()

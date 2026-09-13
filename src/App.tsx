@@ -2927,7 +2927,7 @@ export function GameScreen({
       </div>
 
       <CombatCameraControls mode={view.combatMastery.cameraMode}
-        paused={simulationPaused} onCapture={onPointerLock} />
+        paused={simulationPaused} bowAiming={bowAiming} onCapture={onPointerLock} />
 
       {view.prompt ? <div className="action-prompt">{view.prompt}</div> : null}
 
