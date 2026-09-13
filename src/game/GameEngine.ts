@@ -17994,6 +17994,9 @@ export class GameEngine {
   }
 
   private onWorldPointerCancel(event: PointerEvent): void {
+    // An explicit release can dispatch its loss after the same pointer has already
+    // started another drag. That old loss must not cancel the newly owned capture.
+    if (event.type === 'lostpointercapture' && this.renderer.domElement.hasPointerCapture(event.pointerId)) return
     if (this.lookGesture?.pointerId === event.pointerId) {
       this.releaseGameplayInput()
       this.emitView(true)

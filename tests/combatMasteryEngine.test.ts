@@ -334,6 +334,27 @@ test('changing aim during a fallback tap cancels that tap instead of emitting a 
   assert.equal(engine.projectiles.length, 0)
 })
 
+test('delayed loss of an older pointer capture cannot cancel a new bow-aim drag with the same pointer', () => {
+  const { engine } = fixture()
+  engine.pointerFallback = true
+  engine.onKeyDown(key('KeyR'))
+  engine.onWorldPointerDown(pointer(7, 100, 100, 'touch'))
+  engine.onWorldPointerMove(pointer(7, 140, 100, 'touch'))
+  engine.onWorldPointerUp(pointer(7, 140, 100, 'touch'))
+  engine.onWorldPointerDown(pointer(7, 100, 100, 'touch'))
+  engine.onWorldPointerCancel({ ...pointer(7, 140, 100, 'touch'), type: 'lostpointercapture' })
+  assert.equal(engine.bowAiming, true)
+  assert.equal(engine.keys.has('KeyR'), true)
+  assert.equal(engine.lookGesture?.pointerId, 7)
+  engine.onWorldPointerMove(pointer(7, 150, 100, 'touch'))
+  engine.onWorldPointerUp(pointer(7, 150, 100, 'touch'))
+  assert.equal(engine.bowAiming, true)
+  engine.onWorldPointerDown(pointer(7, 100, 100, 'touch'))
+  engine.renderer.domElement.releasePointerCapture(7)
+  engine.onWorldPointerCancel({ ...pointer(7, 100, 100, 'touch'), type: 'lostpointercapture' })
+  assert.equal(engine.bowAiming, false, 'a genuinely lost capture still cancels input')
+})
+
 test('manual shots travel a useful distance and resolve the existing distance-based damage', () => {
   for (const pitch of [-0.35, 0, 0.35]) for (const hz of [30, 60, 144]) {
     const { engine, attacker } = fixture()
