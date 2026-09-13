@@ -97,6 +97,49 @@ real gait/grounding, breathing scale and both one-arm fallbacks. It measures
 actual nock/finger vertices and unchanged roots, pelvis, legs and injury indices;
 it is not a browser/input/physics or human visual acceptance claim.
 
+### Legacy held-bow adapter
+
+`LegacyBowPresentation` is a separate elf-player-only adapter over the production
+legacy named rig. Construct it before applying that root's legacy outlines:
+
+```ts
+const bow = new LegacyBowPresentation(root, {
+  bowGeometry, arrowGeometry, stringGeometry,
+  bowMaterial, arrowMaterial, stringMaterial,
+})
+```
+
+The caller supplies immutable cached assets: `buildWeaponGrip('bow')` wood
+(the existing cache key is `char-weapon:bow:grip`),
+`buildIllustratedNockedArrow()` and a centered unit-height Y segment such as
+`new THREE.BoxGeometry(0.016, 1, 0.016)`. Materials are the caller's existing
+wood/leather, arrow/metal and string/dark materials. Do not use
+`buildWeaponHead('bow')`: that legacy part combines arrow and string and cannot
+hide the released arrow independently. The helper owns only its group and four
+mesh nodes, **not** the supplied geometry/materials; it never mutates or disposes
+those cache assets. `dispose()` restores baseline state and removes its group.
+Release caller-owned outline bindings and resources through their existing
+owners at teardown.
+
+It exposes the same `setBowAiming`, `poseBowAim`, `beginArrowPresentation`,
+`advanceActionPresentation` and `bowAimingActive` integration surface. Pose it
+last and use the same gameplay-owned canonical origin/direction. The shared
+`BowAimPose` math handles both enhanced wrist anchors and legacy's actual glove
+palm center, which is part of the forearm geometry. There are no detached hands,
+stretched limbs, actor/root/leg writes or new gameplay decisions. A steady pose
+only changes transforms; its two rigid string segments meet at the nock and
+remain attached to the bow endpoints. `visual` exposes the helper's
+`legacy-bow-presentation` group for the caller's normal outline ownership.
+
+Only the original `weapon-head` and `weapon-grip-detail` representation are hidden
+while held; hiding the LOD parent prevents automatic LOD updates from reviving
+the old melee grip. The named weapon pivot, torch/trails, limb visibility,
+prosthetic materials and shield remain intact. Release hides the real arrow,
+recovery rearms it after 0.35 s, and exit/cancellation restores the saved melee
+and shield state. Non-held shot notifications intentionally do nothing so the
+unchanged legacy baseline is not modified. No GameEngine hookup is supplied by
+this art module.
+
 Player windup/contact/recovery presentation reads the existing melee state.
 It does not advance that state, spend stamina, create contacts or change
 finisher commitment. NPC/finale action and gaze code remains authoritative.
