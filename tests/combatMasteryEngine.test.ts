@@ -440,6 +440,62 @@ test('held bow survives actual animation and grounding; paid melee is not hidden
   } finally { disposeArrows(engine); presenter.dispose(); cache.dispose(); art.dispose() }
 })
 
+test('losing the last arm after the player update cancels aim before same-frame rendering without refunding a shot', () => {
+  for (const quality of ['high', 'low'] as const) for (const paid of [false, true]) {
+    const { engine } = fixture()
+    const art = new StylizedArtLibrary({ enhanced: true, ink: {
+      player: 0x222222, enemy: 0x222222, interactable: 0x222222, landmark: 0x222222,
+    } })
+    const cache = new GeometryCache()
+    const presenter = createCharacterPresenter(
+      illustratedCharacterPlan(resolveCharacterPlan('elf', 'player', 0, true)), art, cache, true, quality,
+    )
+    const particles: { mesh: THREE.Mesh }[] = []
+    engine.player = presenter.root
+    engine.body.leftArm = 'missing'
+    engine.body.rightArm = 'wounded'
+    presenter.setAppearance(engine.body)
+    Object.assign(engine, {
+      characterHeightSample: () => 0, artLibrary: art, particles, combatRng: () => 0,
+      factionColor: () => new THREE.Color('green'),
+    })
+    Object.assign(Reflect.get(engine, 'achievements'), { recordInjury() {} })
+    try {
+      engine.setBowAiming(true)
+      engine.updatePlayer(1 / 60)
+      if (paid) engine.attack()
+      const stamina = engine.stamina, cooldown = engine.abilityCooldown
+      const origin = engine.player.position.clone()
+      Reflect.get(GameEngine.prototype, 'injurePlayer').call(engine)
+      assert.equal(engine.body.rightArm, 'missing')
+      assert.doesNotThrow(() => {
+        engine.updateCamera(0, true)
+        engine.presentBowAim()
+      })
+      assert.equal(engine.bowAiming, false)
+      assert.equal(engine.bowAim.sources.size, 0)
+      assert.equal(presenter.bowAimingActive, false)
+      assert.equal(presenter.root.getObjectByName('leftArm')?.visible, false)
+      assert.equal(presenter.root.getObjectByName('rightArm')?.visible, false)
+      assert.equal(engine.cameraPitch, 0.38)
+      assert.equal(engine.stamina, stamina)
+      assert.equal(engine.abilityCooldown, cooldown)
+      assert.equal(engine.projectiles.length, paid ? 1 : 0)
+      assert.ok(engine.player.position.equals(origin))
+    } finally {
+      disposeArrows(engine)
+      for (const { mesh } of particles) {
+        mesh.geometry.dispose()
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+        for (const material of materials) if (!StylizedArtLibrary.isLibraryOwned(material)) material.dispose()
+      }
+      presenter.dispose()
+      cache.dispose()
+      art.dispose()
+    }
+  }
+})
+
 test('native mouse and touch drag can look above and below the horizon without going underground', () => {
   for (const input of ['mouse', 'touch'] as const) {
     const { engine, surface } = fixture()

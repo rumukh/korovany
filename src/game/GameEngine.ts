@@ -12737,6 +12737,7 @@ export class GameEngine {
     const severe = wasWounded || this.combatRng() < 0.4
     if (severe) {
       this.body[part] = 'missing'
+      if (this.body.leftArm === 'missing' && this.body.rightArm === 'missing') this.cancelBowAim()
       this.achievements.recordInjury(part, true)
       if (!part.includes('Eye')) {
         this.body.bleeding = Math.min(2.1, this.body.bleeding + (part.includes('Leg') ? 0.48 : 0.34))
