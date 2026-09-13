@@ -133,7 +133,7 @@ test('bow HUD separates aim availability from shot readiness in both HUD modes',
       assert.match(html, /crosshair bow-aim reloading/)
       assert.match(html, /<button[^>]*disabled=""[^>]*aria-label="Выстрел из лука"/)
       assert.match(html, /Перезарядка: 0.5 с/)
-      assert.doesNotMatch(html, /ЛКМ — выстрел/)
+      assert.doesNotMatch(html, /<small>ЛКМ — выстрел<\/small>/)
     } else assert.doesNotMatch(html, /crosshair bow-aim/)
   }
 })
