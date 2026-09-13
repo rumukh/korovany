@@ -21,6 +21,7 @@ import { disposeOwnedVisualResources } from '../visualLifecycle.ts'
 import type { VisualAllocationReceipt } from '../diagnostics/VisualBudgetAccounting.ts'
 import type { VisualQualityPolicy } from '../visualPolicy.ts'
 import type { VisualQuality } from '../visualSettings.ts'
+import { BOW_AIM_DRAW, BowAimPose } from './BowAimPose.ts'
 
 export type CharacterLimb = 'leftArm' | 'rightArm' | 'leftLeg' | 'rightLeg'
 export type CharacterLimbAppearance = 'healthy' | 'wounded' | 'missing' | 'prosthetic'
@@ -89,8 +90,6 @@ const VISUAL_LEVELS: readonly CharacterVisualLevel[] = ['far', 'mid', 'near']
 const PROJECTED_THRESHOLDS = [0.055, 0.13] as const
 const BODY_GEOMETRY_RETENTION = 2
 const ARROW_PRESENTATION_SECONDS = 0.35
-const BOW_AIM_DRAW = 0.3
-const BOW_AIM_MIN_DRAW = 0.08
 const SURFACES: Record<CharacterPhysicalSurface, readonly [number, number, number, number]> = {
   skin: [0.79, 0, 0.46, 0.13], hair: [0.93, 0, 0.56, 0.08],
   cloth: [0.94, 0, 0.62, 0.12], leather: [0.86, 0.02, 0.62, 0.11],
@@ -252,15 +251,8 @@ export class CharacterPresenter {
   private bowReleased = false
   private arrowRemaining = 0
   private bowAiming = false
-  private aimDraw = BOW_AIM_DRAW
+  private readonly bowAimPose: BowAimPose
   private bowRestore: BowRestoreTransform[] = []
-  private readonly bowGripTarget = new THREE.Vector3()
-  private readonly bowNockTarget = new THREE.Vector3()
-  private readonly bowOrigin = new THREE.Vector3()
-  private readonly bowGripOrigin = new THREE.Vector3()
-  private readonly bowFrame = new THREE.Matrix4()
-  private readonly bowInverse = new THREE.Matrix4()
-  private readonly bowLocalFrame = new THREE.Matrix4()
   private readonly arrowDirection = new THREE.Vector3()
   private readonly aimSide = new THREE.Vector3()
   private readonly aimUp = new THREE.Vector3()
@@ -402,6 +394,10 @@ export class CharacterPresenter {
       forearm: p.forearm, elbowRest: p.elbowRest, armSplay: p.armSplay, legSplay: p.legSplay,
       mainHand: plan.mainHand === 'right' ? 1 : -1, beast: null, boundArms: plan.boundArms, lean: p.lean,
     }
+    this.bowAimPose = new BowAimPose({
+      torso: a.torsoPivot, leftArm: arms[0], rightArm: arms[1],
+      leftElbow: elbows[0], rightElbow: elbows[1], upperArm: p.upperArm, forearm: p.forearm,
+    })
     this.root.updateMatrixWorld(true)
     for (const node of this.bones) this.bindMatrices.push(node.matrixWorld.clone())
     this.skeleton = new THREE.Skeleton(this.bones)
@@ -663,7 +659,7 @@ export class CharacterPresenter {
       this.setWeapon('bow', this.arrowRemaining > 0, () => {
         this.bowRestore = restore
         this.bowAiming = true
-        this.aimDraw = BOW_AIM_DRAW
+        this.bowAimPose.reset()
         this.bowString.position.z = this.bowReleased ? 0 : -BOW_AIM_DRAW
         this.stowOffhand(true)
       })
@@ -691,119 +687,30 @@ export class CharacterPresenter {
   poseBowAim(origin: THREE.Vector3, direction: THREE.Vector3): void {
     this.assertActive()
     if (!this.bowAiming) return
-    if (![origin.x, origin.y, origin.z, direction.x, direction.y, direction.z].every(Number.isFinite) ||
-        Math.abs(direction.lengthSq() - 1) > 1e-5) {
-      throw new Error('Bow aim requires a finite world nock origin and unit flight direction')
-    }
-    const torso = this.anatomy.torsoPivot
-    torso.updateWorldMatrix(true, true)
-    const determinant = torso.matrixWorld.determinant()
-    if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-8) {
-      throw new Error('Bow aim requires a finite invertible torso transform')
-    }
-    this.bowInverse.copy(torso.matrixWorld).invert()
-    this.aimForward.copy(direction)
-    this.aimUp.set(0, 1, 0)
-    this.aimSide.crossVectors(this.aimUp, this.aimForward)
-    if (this.aimSide.lengthSq() < 1e-8) {
-      this.aimSide.set(1, 0, 0)
-      this.aimSide.addScaledVector(this.aimForward, -this.aimSide.dot(this.aimForward))
-    }
-    this.aimSide.normalize()
-    this.aimUp.crossVectors(this.aimForward, this.aimSide).normalize()
-    const e = torso.matrixWorld.elements
-    this.aimSide.multiplyScalar(Math.hypot(e[0], e[1], e[2]))
-    this.aimUp.multiplyScalar(Math.hypot(e[4], e[5], e[6]))
-    this.aimForward.multiplyScalar(Math.hypot(e[8], e[9], e[10]))
     const progress = 1 - this.arrowRemaining / ARROW_PRESENTATION_SECONDS
     const recoil = this.arrowRemaining > 0 ? Math.sin(progress * Math.PI) : 0
-    let draw = this.bowReleased ? this.aimDraw : BOW_AIM_DRAW
-    this.bowOrigin.copy(origin).addScaledVector(direction, -0.045 * recoil)
-    this.bowFrame.makeBasis(this.aimSide, this.aimUp, this.aimForward)
-    this.bowGripOrigin.copy(this.bowOrigin).addScaledVector(this.aimSide, -0.02).addScaledVector(this.aimForward, 0.23)
-    this.bowGripTarget.copy(this.bowGripOrigin).addScaledVector(this.aimForward, draw).applyMatrix4(this.bowInverse)
-    this.bowNockTarget.copy(this.bowOrigin).applyMatrix4(this.bowInverse)
-    // Validate both reaches before changing either arm or forcing a hand matrix.
-    const main = this.rig.mainHand
+    const main = this.rig.mainHand > 0 ? 1 : -1
     const otherLimb = main > 0 ? 'leftArm' : 'rightArm'
-    const supportBend = this.appearance[otherLimb] === 'missing' ? null : this.bowArmBend(-main, this.bowNockTarget)
-    const arm = main > 0 ? this.rig.rightArm! : this.rig.leftArm!
-    const maxReach = this.bowArmLength(main, 0.02)
-    if (!this.bowReleased && this.bowGripTarget.distanceTo(arm.position) > maxReach) {
-      // A lower draw keeps the supplied nock fixed without extending either limb.
-      let lo = BOW_AIM_MIN_DRAW, hi = BOW_AIM_DRAW
-      for (let i = 0; i < 24; i++) {
-        const candidate = (lo + hi) * 0.5
-        this.bowGripTarget.copy(this.bowGripOrigin).addScaledVector(this.aimForward, candidate).applyMatrix4(this.bowInverse)
-        if (this.bowGripTarget.distanceTo(arm.position) > maxReach) hi = candidate
-        else lo = candidate
-      }
-      draw = lo
-      this.bowGripTarget.copy(this.bowGripOrigin).addScaledVector(this.aimForward, draw).applyMatrix4(this.bowInverse)
-    }
-    const gripBend = this.bowArmBend(main, this.bowGripTarget)
-    this.aimDraw = draw
-    this.scratch.copy(this.bowGripOrigin).addScaledVector(this.aimForward, draw)
-    this.bowFrame.setPosition(this.scratch)
-    this.applyBowArm(main, this.bowGripTarget, gripBend)
-    if (supportBend !== null) this.applyBowArm(-main, this.bowNockTarget, supportBend)
+    const support = this.appearance[otherLimb] !== 'missing'
+    this.bowAimPose.apply(origin, direction, main, support, this.bowReleased, recoil)
     const weapon = this.rig.weapon!
-    this.bowLocalFrame.multiplyMatrices(this.bowInverse, this.bowFrame)
+    this.inverse.copy(this.anatomy.torsoPivot.matrixWorld).invert()
     weapon.matrixAutoUpdate = false
-    weapon.matrix.copy(this.bowLocalFrame)
+    weapon.matrix.multiplyMatrices(this.inverse, this.bowAimPose.frame)
     weapon.matrixWorldNeedsUpdate = true
-    this.bowString.position.z = this.bowReleased ? 0 : -draw
+    this.bowString.position.z = this.bowReleased ? 0 : -this.bowAimPose.drawMeters
     this.stowOffhand(true)
     for (const side of [-1, 1]) {
-      if (side !== main && supportBend === null) continue
+      if (side !== main && !support) continue
       const hand = this.hands[side > 0 ? 1 : 0]
       hand.parent!.updateWorldMatrix(true, false)
       this.inverse.copy(hand.parent!.matrixWorld).invert()
-      this.aimMatrix.copy(this.bowFrame)
-      if (side !== main) this.aimMatrix.setPosition(this.bowOrigin)
+      this.aimMatrix.copy(this.bowAimPose.frame)
+      if (side !== main) this.aimMatrix.setPosition(this.bowAimPose.nock)
       hand.matrixAutoUpdate = false
       hand.matrix.multiplyMatrices(this.inverse, this.aimMatrix)
       hand.matrixWorldNeedsUpdate = true
     }
-  }
-
-  private bowArmBend(side: number, target: THREE.Vector3): number {
-    const arm = side > 0 ? this.rig.rightArm! : this.rig.leftArm!
-    const reach = this.armTarget.copy(target).sub(arm.position).length()
-    let lo = 0.02, hi = 2.55
-    if (!Number.isFinite(reach) || reach > this.bowArmLength(side, lo) + 1e-6 || reach < this.bowArmLength(side, hi) - 1e-6) {
-      throw new RangeError(`Bow ${side > 0 ? 'right' : 'left'} hand target is unreachable: ${reach.toFixed(4)}m`)
-    }
-    for (let i = 0; i < 24; i++) {
-      const bend = (lo + hi) * 0.5
-      if (this.bowArmLength(side, bend) > reach) lo = bend
-      else hi = bend
-    }
-    return (lo + hi) * 0.5
-  }
-
-  private bowArmLength(side: number, bend: number): number {
-    const arm = side > 0 ? this.rig.rightArm! : this.rig.leftArm!
-    const elbow = side > 0 ? this.rig.rightElbow! : this.rig.leftElbow!
-    const upper = this.plan.proportions.upperArm
-    const forearm = this.plan.proportions.forearm * elbow.scale.y
-    const sy = arm.scale.y, sz = arm.scale.z
-    if (!Number.isFinite(arm.scale.lengthSq() + elbow.scale.lengthSq()) ||
-        Math.min(arm.scale.x, sy, sz, elbow.scale.x, elbow.scale.y, elbow.scale.z, forearm) <= 0) {
-      throw new Error('Bow aim requires finite positive arm segment scales')
-    }
-    return Math.hypot((upper + forearm * Math.cos(bend)) * sy, forearm * Math.sin(bend) * sz)
-  }
-
-  private applyBowArm(side: number, target: THREE.Vector3, bend: number): void {
-    const arm = side > 0 ? this.rig.rightArm! : this.rig.leftArm!
-    const elbow = side > 0 ? this.rig.rightElbow! : this.rig.leftElbow!
-    const forearm = this.plan.proportions.forearm * elbow.scale.y
-    this.armLocal.set(0, -(this.plan.proportions.upperArm + forearm * Math.cos(bend)) * arm.scale.y,
-      -forearm * Math.sin(bend) * arm.scale.z).normalize()
-    this.armTarget.copy(target).sub(arm.position).normalize()
-    arm.quaternion.setFromUnitVectors(this.armLocal, this.armTarget)
-    elbow.rotation.set(bend, 0, 0, 'XYZ')
   }
 
   setBowRelease(released: boolean): void {
