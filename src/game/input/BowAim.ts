@@ -22,9 +22,10 @@ export class BowAim {
     const sin = Math.sin(yaw), cos = Math.cos(yaw)
     this.forward.set(sin, 0, -cos)
     this.anchor.copy(position).y += BOW_AIM_HEIGHT
-    this.eye.copy(this.anchor).addScaledVector(this.forward, -4)
-    this.eye.x += cos * 0.75
-    this.eye.z += sin * 0.75
+    this.eye.copy(this.anchor).addScaledVector(this.forward, -4.5)
+    this.eye.y += 0.35
+    this.eye.x += cos * 1.25
+    this.eye.z += sin * 1.25
     this.direction.copy(this.forward).multiplyScalar(Math.cos(pitch)).y = -Math.sin(pitch)
     this.target.copy(this.anchor).addScaledVector(this.direction, range)
     const hit = firstHit(this.anchor, this.target)
