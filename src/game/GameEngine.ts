@@ -87,6 +87,8 @@ import {
   buildWagonWheel,
   buildWeaponGrip,
   buildWeaponHead,
+  buildIllustratedNockedArrow,
+  LegacyBowPresentation,
   buildWristRope,
   characterPartKeys,
   illustratedCharacterPlan,
@@ -2229,6 +2231,7 @@ export class GameEngine {
   private abilityCooldown = 0
   private shieldActive = false
   private readonly bowAim = new BowAim()
+  private legacyBowPresentation: LegacyBowPresentation | null = null
   private bowAiming = false
   private bowOverviewPitch = 0
   private readonly bowRaycaster = new THREE.Raycaster()
@@ -2754,6 +2757,16 @@ export class GameEngine {
     this.fog = new THREE.Fog(this.palette.worldFog, 48, 132)
     this.scene.fog = this.fog
     this.player = this.createCharacter(faction, true)
+    if (faction === 'elf' && this.visualPolicy.mode === 'legacy') {
+      this.legacyBowPresentation = new LegacyBowPresentation(this.player, {
+        bowGeometry: this.acquireArtGeometry('char-weapon:bow:grip', () => buildWeaponGrip('bow')),
+        arrowGeometry: this.acquireArtGeometry('legacy-bow:nocked-arrow', buildIllustratedNockedArrow),
+        stringGeometry: this.acquireArtGeometry('legacy-bow:string', () => new THREE.BoxGeometry(0.016, 1, 0.016)),
+        bowMaterial: this.characterSharedMaterial('leather'),
+        arrowMaterial: this.characterSharedMaterial('steel'),
+        stringMaterial: this.characterSharedMaterial('dark'),
+      })
+    }
     this.weaponTrail = this.createWeaponTrail()
     const weaponParent = this.player.getObjectByName('weapon') ?? this.player
     weaponParent.add(this.weaponTrail)
@@ -3047,6 +3060,8 @@ export class GameEngine {
     }
     for (const presenter of this.characterPresenters) attempt(() => presenter.dispose())
     this.characterPresenters.clear()
+    attempt(() => this.legacyBowPresentation?.dispose())
+    this.legacyBowPresentation = null
     for (const presenter of this.creaturePresenters) attempt(() => presenter.dispose())
     this.creaturePresenters.clear()
     for (const presenter of this.wagonPresenters) presenter.dispose()
@@ -3298,7 +3313,7 @@ export class GameEngine {
       this.resolveBowAim()
     } else {
       this.cameraPitch = this.bowOverviewPitch
-      characterPresenter(this.player)?.setBowAiming(false)
+      ;(characterPresenter(this.player) ?? this.legacyBowPresentation)?.setBowAiming(false)
     }
     this.cameraVisibility.reset()
     this.emitView(true)
@@ -3319,14 +3334,17 @@ export class GameEngine {
   private presentBowAim(): void {
     if (!this.bowAiming) return
     const presenter = characterPresenter(this.player)
+    const bow = presenter ?? this.legacyBowPresentation
     // Entering aim is not a free cancellation of an already paid melee animation.
     const visible = this.melee.phase === 'idle' &&
       (this.activePlayerAttackKind === 'arrow' || this.attackAnimation <= 0)
-    if (!presenter) return
-    if (presenter.bowAimingActive !== visible) presenter.setBowAiming(visible)
+    if (!bow) return
+    if (bow.bowAimingActive !== visible) bow.setBowAiming(visible)
     if (visible) {
-      applyChestPose(presenter.anatomy.torsoPivot, 0, 0, 0)
-      presenter.poseBowAim(this.bowAim.origin, this.bowAim.direction)
+      const torso = presenter?.anatomy.torsoPivot ?? (this.player.userData.rig as CharacterRig).torsoPivot
+      if (!torso) throw new Error('Bow presentation requires the player torso')
+      applyChestPose(torso, 0, 0, 0)
+      bow.poseBowAim(this.bowAim.origin, this.bowAim.direction)
     }
   }
 
@@ -5749,7 +5767,7 @@ export class GameEngine {
   private updatePlayer(delta: number): void {
     if (this.bowAiming && (this.health <= 0 ||
         (this.body.leftArm === 'missing' && this.body.rightArm === 'missing'))) this.cancelBowAim()
-    characterPresenter(this.player)?.advanceActionPresentation(delta,
+    ;(characterPresenter(this.player) ?? this.legacyBowPresentation)?.advanceActionPresentation(delta,
       !this.bowAiming && this.activePlayerAttackKind !== 'arrow')
     const wasOnGround = this.onGround
     const forward = this.getAimDirection()
@@ -7812,7 +7830,8 @@ export class GameEngine {
     )
     this.playSound('bow')
     this.presentBowAim()
-    characterPresenter(this.player)?.beginArrowPresentation(direction, direction.y + (this.bowAiming ? 0 : 0.55 / BOW_SPEED))
+    ;(characterPresenter(this.player) ?? this.legacyBowPresentation)?.beginArrowPresentation(
+      direction, direction.y + (this.bowAiming ? 0 : 0.55 / BOW_SPEED))
   }
 
   private cleave(): void {
