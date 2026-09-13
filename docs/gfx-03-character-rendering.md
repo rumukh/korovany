@@ -47,6 +47,99 @@ named weapon node, torch/trail children, fade binding and skeleton stay stable
 through these geometry changes. A surviving hand is selected without restoring
 a missing arm. `jointCount` includes both body and equipment palettes.
 
+### Held Forest Arrow presentation
+
+`CharacterPresenter.setBowAiming(enabled: boolean): void` is an additive
+enhanced elf-player presentation state, not gameplay authority.
+`bowAimingActive` exposes its current visual state. Enabling requires a weapon
+and at least one surviving arm; losing both arms exits immediately. The real
+weapon source swaps to the existing two-bone ready bow, the offhand is stowed,
+and all named torch/trail/ink children and source bindings remain attached.
+Disabling restores the pre-aim arm/equipment transforms and the normal melee
+weapon without mutating a paid projectile, damage, stamina or cooldown.
+
+`poseBowAim(origin: THREE.Vector3, direction: THREE.Vector3): void` consumes a
+finite **world nock origin** and **unit initial flight direction** supplied by
+gameplay. Apply it last, after ordinary chest/arm/attachment and grounding work.
+It fits both surviving arms without translating wrists away from the actual
+forearm ends, preserves full affine hand matrices, and aligns the deformed arrow
+nock and bow-forward axis to those supplied values. Hold draw is bounded to
+0.08--0.30 m to accommodate the posed reach; this is not an aim-power mechanic.
+An invalid or unreachable input throws before changing either arm/weapon pose;
+the caller must not mask that contract failure with a visual-success fallback.
+
+Call the existing `advanceActionPresentation(delta, interrupted)` each frame.
+Here `interrupted` means an actual cancellation, **not** "the current attack is
+not an arrow" while aim is held. `delta = 0` freezes the visual clock; a genuine
+interruption still cancels immediately. `beginArrowPresentation(direction,
+verticalAim)` remains the real-shot notification: it removes the nocked arrow
+immediately, releases the string and plays the existing 0.35 s recovery. While
+held, the grip recoils at most 0.045 m instead of jumping by the draw distance,
+and recovery returns to a ready bow. Exiting during recoil restores melee
+immediately. Without held aim, the original direct-shot recovery still returns
+to the original melee weapon. `poseArrowRecovery` and `poseSupport` deliberately
+do nothing while held, avoiding a second pose pass over `poseBowAim`.
+
+The rejected initial gameplay nock offset `(-0.25, 1.65, 0.65)` is **not reachable**
+by the existing elf hero at level aim: its draw-hand shoulder is 1.19236 m from
+that origin but the upper arm plus forearm is 1.18 m; the bow hand with just
+0.08 m of draw requires about 1.1996 m. This is not corrected by moving a root,
+lengthening limbs or sourcing physics from render anchors. The art-side
+regression fixture also covers arbitrary full-affine posed parents.
+The gameplay owner settled the canonical nock at root-local
+`(-0.25, 2.05, 0.35)`, mirrored for a missing left arm and rotated by the player
+root heading, with neutral chest rotation during aim. Close targets may reduce
+the lateral/forward offsets proportionally. This module consumes that origin;
+it does not own or alter the gameplay muzzle constants.
+The production CPU sweep covers 1,620 combinations through pitch +/-1.2 radians,
+relative yaw +/-0.27, three close-target offset factors, signed terrain slopes,
+real gait/grounding, breathing scale and both one-arm fallbacks. It measures
+actual nock/finger vertices and unchanged roots, pelvis, legs and injury indices;
+it is not a browser/input/physics or human visual acceptance claim.
+
+### Legacy held-bow adapter
+
+`LegacyBowPresentation` is a separate elf-player-only adapter over the production
+legacy named rig. Construct it before applying that root's legacy outlines:
+
+```ts
+const bow = new LegacyBowPresentation(root, {
+  bowGeometry, arrowGeometry, stringGeometry,
+  bowMaterial, arrowMaterial, stringMaterial,
+})
+```
+
+The caller supplies immutable cached assets: `buildWeaponGrip('bow')` wood
+(the existing cache key is `char-weapon:bow:grip`),
+`buildIllustratedNockedArrow()` and a centered unit-height Y segment such as
+`new THREE.BoxGeometry(0.016, 1, 0.016)`. Materials are the caller's existing
+wood/leather, arrow/metal and string/dark materials. Do not use
+`buildWeaponHead('bow')`: that legacy part combines arrow and string and cannot
+hide the released arrow independently. The helper owns only its group and four
+mesh nodes, **not** the supplied geometry/materials; it never mutates or disposes
+those cache assets. `dispose()` restores baseline state and removes its group.
+Release caller-owned outline bindings and resources through their existing
+owners at teardown.
+
+It exposes the same `setBowAiming`, `poseBowAim`, `beginArrowPresentation`,
+`advanceActionPresentation` and `bowAimingActive` integration surface. Pose it
+last and use the same gameplay-owned canonical origin/direction. The shared
+`BowAimPose` math handles both enhanced wrist anchors and legacy's actual glove
+palm center, which is part of the forearm geometry. There are no detached hands,
+stretched limbs, actor/root/leg writes or new gameplay decisions. A steady pose
+only changes transforms; its two rigid string segments meet at the nock and
+remain attached to the bow endpoints. `visual` exposes the helper's
+`legacy-bow-presentation` group for the caller's normal outline ownership.
+
+Only the original `weapon-head` and `weapon-grip-detail` representation are hidden
+while held; hiding the LOD parent prevents automatic LOD updates from reviving
+the old melee grip. The named weapon pivot, torch/trails, limb visibility,
+prosthetic materials and shield remain intact. Release hides the real arrow,
+recovery rearms it after 0.35 s, and exit/cancellation restores the saved melee
+and shield state. Non-held shot notifications intentionally do nothing so the
+unchanged legacy baseline is not modified. No GameEngine hookup is supplied by
+this art module.
+
 Player windup/contact/recovery presentation reads the existing melee state.
 It does not advance that state, spend stamina, create contacts or change
 finisher commitment. NPC/finale action and gaze code remains authoritative.

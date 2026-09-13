@@ -901,8 +901,10 @@ export const COMBAT_MASTERY_COPY = {
   camera: 'Управление камерой',
   capture: 'Захватить мышь',
   drag: 'Тяни по миру — камера. Щелчок — удар.',
+  bowDrag: 'Тяни по миру — прицел. Щелчок — выстрел.',
   touchLook: 'Тяни по миру — камера',
   native: 'Мышь — камера; ЛКМ — удар',
+  bowNative: 'Мышь — прицел; ЛКМ — выстрел',
 } as const
 
 export function describeEvadeRefused(reason: import('../world/CombatMastery.ts').EvadeReadiness): string {
@@ -1544,7 +1546,7 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'warning',
   },
   ability: {
-    text: 'Приём (ПКМ или R) не бесплатный: ест выносливость и уходит на перезарядку. Полоска под иконкой — сколько ждать.',
+    text: 'Эльф: держи ПКМ/R — прицел, ЛКМ — выстрел за 15 выносливости. Отпусти — клинок. Охрана держит щит, злодей делает рывок. Полоска — перезарядка.',
     tone: 'info',
   },
   melee: {

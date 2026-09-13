@@ -265,6 +265,11 @@ export {
 } from './CharacterRig.ts'
 
 export {
+  LegacyBowPresentation,
+  type LegacyBowResources,
+} from './LegacyBowPresentation.ts'
+
+export {
   CreaturePresenter,
   createCreatureLeg,
   creaturePresenter,

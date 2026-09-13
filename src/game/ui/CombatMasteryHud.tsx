@@ -51,15 +51,18 @@ export function CombatEvadeButton({ view, onEvade, paused }: {
   )
 }
 
-export function CombatCameraControls({ mode, paused, onCapture }: {
+export function CombatCameraControls({ mode, paused, bowAiming = false, onCapture }: {
   mode: CombatMasteryView['cameraMode']
   paused: boolean
+  bowAiming?: boolean
   onCapture: () => void
 }) {
   if (paused || mode === 'locked') return null
   return (
     <div className={`combat-camera-controls mode-${mode}`} aria-label={copy.camera}>
-      <span className="combat-mouse-help">{mode === 'drag' ? copy.drag : copy.native}</span>
+      <span className="combat-mouse-help">{bowAiming
+        ? mode === 'drag' ? copy.bowDrag : copy.bowNative
+        : mode === 'drag' ? copy.drag : copy.native}</span>
       <button type="button" onClick={onCapture}>{copy.capture}</button>
     </div>
   )

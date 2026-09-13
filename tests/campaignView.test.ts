@@ -623,7 +623,8 @@ test('the ability button matches the engine gating it replaced', () => {
 
     // Exactly what `GameEngine.emitView` did.
     const expected = createAbilityView(input.faction, input.stamina, input.body)
-    expected.active = input.shieldActive
+    expected.active = input.faction !== 'elf' && input.shieldActive
+    expected.aimAvailable = expected.aimAvailable && !input.paused && !input.ended
     expected.cooldown = input.abilityCooldown
     expected.ready =
       expected.ready &&

@@ -2650,7 +2650,11 @@ export function GameScreen({
         )
       : 100
   }%`
-  const abilityStatus = view.ability.active
+  const bowAiming = view.ability.id === 'bow' && view.ability.active
+  const abilityStatus = bowAiming
+    ? view.ability.ready ? 'ЛКМ — выстрел' : view.ability.cooldown > 0
+      ? `Перезарядка: ${view.ability.cooldown.toFixed(1)} с` : 'Нужна выносливость'
+    : view.ability.active
     ? 'Удерживается'
     : view.ability.ready
       ? 'Готово'
@@ -2889,8 +2893,8 @@ export function GameScreen({
           className={`melee-chip hud-card ${view.melee.finisherReady ? 'finisher' : ''} ${view.melee.committed ? 'committed' : ''}`}
         >
           <div className="ability-copy">
-            <span>Связка</span>
-            <strong>{meleeStatus}</strong>
+            <span>{bowAiming ? 'Лук' : 'Связка'}</span>
+            <strong>{bowAiming ? 'Отпусти ПКМ/R — клинок' : meleeStatus}</strong>
           </div>
           <div className="melee-beats" aria-hidden="true">
             {[...Array(view.melee.beats).keys()].map((index) => (
@@ -2917,12 +2921,13 @@ export function GameScreen({
       <LootToast toast={view.lootToast} />
       <AchievementBanner achievement={achievementBanner} />
 
-      <div className="crosshair" aria-hidden="true">
+      <div className={`crosshair${bowAiming ? ' bow-aim' : ''}${bowAiming && !view.ability.ready ? ' reloading' : ''}`}
+        aria-hidden="true">
         <span />
       </div>
 
       <CombatCameraControls mode={view.combatMastery.cameraMode}
-        paused={simulationPaused} onCapture={onPointerLock} />
+        paused={simulationPaused} bowAiming={bowAiming} onCapture={onPointerLock} />
 
       {view.prompt ? <div className="action-prompt">{view.prompt}</div> : null}
 
@@ -2945,10 +2950,10 @@ export function GameScreen({
             <kbd>C</kbd> уворот
           </span>
           <span>
-            <kbd>ЛКМ</kbd> связка из трёх
+            <kbd>ЛКМ</kbd> {bowAiming ? 'выстрел' : 'связка из трёх'}
           </span>
           <span>
-            <kbd>ПКМ/R</kbd> {view.ability.name}
+            <kbd>ПКМ/R</kbd> {view.ability.id === 'bow' ? 'держать — прицел' : view.ability.name}
           </span>
           <span>
             <kbd>E</kbd> действие
@@ -2992,16 +2997,17 @@ export function GameScreen({
             className={`touch-attack ${view.melee.committed ? 'committed' : ''} ${view.melee.finisherReady ? 'finisher' : ''}`}
             type="button"
             {...instantGameplayAction(onAttack)}
-            disabled={simulationPaused || view.combatMastery.evadeActive}
-            aria-label={`Удар, замах ${String(view.melee.beat)} из ${String(view.melee.beats)}`}
+            disabled={simulationPaused || view.combatMastery.evadeActive || (bowAiming && !view.ability.ready)}
+            aria-label={bowAiming ? 'Выстрел из лука' : `Удар, замах ${String(view.melee.beat)} из ${String(view.melee.beats)}`}
           >
-            <Sword aria-hidden="true" />
-            <b aria-hidden="true">{view.melee.beat > 0 ? view.melee.beat : ''}</b>
+            {bowAiming ? abilityIcons.bow : <Sword aria-hidden="true" />}
+            <b aria-hidden="true">{!bowAiming && view.melee.beat > 0 ? view.melee.beat : ''}</b>
           </button>
           <button
             className={view.ability.active ? 'active' : undefined}
             type="button"
-            disabled={simulationPaused || (!view.ability.active && !view.ability.ready)}
+            disabled={simulationPaused || (!view.ability.active &&
+              !(view.ability.id === 'bow' ? view.ability.aimAvailable : view.ability.ready))}
             onPointerDown={(event) => {
               if (simulationPaused || event.button !== 0) return
               event.preventDefault()
@@ -3025,14 +3031,14 @@ export function GameScreen({
               touchCaptures.release(event.pointerId)
               onAbilityUp()
             }}
-            onBlur={onAbilityUp}
+            onBlur={view.ability.id === 'bow' ? undefined : onAbilityUp}
             onClick={(event) => {
               if (event.detail !== 0) return
               if (view.ability.active) onAbilityUp()
               else onAbilityDown()
             }}
-            aria-label={view.ability.name}
-            aria-pressed={view.faction === 'guard' ? view.ability.active : undefined}
+            aria-label={view.ability.id === 'bow' ? 'Лук: удерживать для прицеливания' : view.ability.name}
+            aria-pressed={view.faction !== 'villain' ? view.ability.active : undefined}
           >
             {abilityIcons[view.ability.id]}
           </button>
@@ -3947,9 +3953,13 @@ function App() {
         onEvade={() => engineRef.current?.evade()}
         onAbilityDown={() => {
           if (faction === 'guard') engineRef.current?.setShield(true)
+          else if (faction === 'elf') engineRef.current?.setBowAiming(true)
           else engineRef.current?.useAbility()
         }}
-        onAbilityUp={() => engineRef.current?.setShield(false)}
+        onAbilityUp={() => {
+          engineRef.current?.setShield(false)
+          engineRef.current?.setBowAiming(false)
+        }}
         onInteract={() => engineRef.current?.interact()}
         onCommand={() => engineRef.current?.commandSquad()}
         onOpenSquadCommand={toggleSquadCommand}

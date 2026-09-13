@@ -130,6 +130,8 @@ function fixture(faction: Faction = 'guard') {
     finale, actors, player, objectives, achievements, scene: new THREE.Scene(),
     finaleTelegraphs: [], finaleTelegraphAction: null, telegraphPool: [],
     projectiles: [], projectileSourcesToClear: new Set(),
+    projectileCenter: new THREE.Vector3(), bowRayDirection: new THREE.Vector3(),
+    bowRaycaster: new THREE.Raycaster(), bowIntersections: [], cameraObstacles: [],
     generatedEncounterPlans: new Map([[identity.regionId, [finalPlan]]]),
     generatedActivationSpawns: new Map([[identity.regionId, new Set([identity.bossId])]]),
     simulatedGeneratedRegions: new Set(regions.getSimulatedRegionIds()),
@@ -506,6 +508,26 @@ test('the real fan spawns three locked projectile directions rather than homing 
   assert.deepEqual(projectiles.map((projectile) => projectile.velocity.toArray()), velocities)
   assert.equal(Reflect.get(value.engine, 'health'), 100)
   assert.ok(projectiles.every((projectile) => projectile.life < 1.2))
+})
+
+test('saving a paid bow shot preserves stamina and cooldown but does not persist held aim or its camera', () => {
+  const value = fixture('elf')
+  Reflect.set(value.engine, 'stamina', 85)
+  Reflect.set(value.engine, 'abilityCooldown', 0.7)
+  const before = invoke<ActiveRunSaveV3>(value.engine, 'saveGeneratedRun')
+  Reflect.set(value.engine, 'bowAiming', true)
+  Reflect.set(value.engine, 'cameraPitch', -0.9)
+  Reflect.set(value.engine, 'bowOverviewPitch', 0.578)
+  const held = invoke<ActiveRunSaveV3>(value.engine, 'saveGeneratedRun')
+  assert.deepEqual({ ...held, updatedAt: '' }, { ...before, updatedAt: '' })
+  const restored = parseActiveRunSaveV3(JSON.stringify(held))
+  assert.ok(restored)
+  const view = buildInitialGameView({ blueprint: value.blueprint, config: value.config, restored })
+  assert.equal(view.stamina, 85)
+  assert.equal(view.ability.cooldown, 0.7)
+  assert.equal(view.ability.active, false)
+  assert.equal(view.ability.ready, false)
+  assert.equal(view.ability.aimAvailable, true)
 })
 
 test('one live save preserves finale wounds, paid evasion, squad orders and the selected itinerary', () => {

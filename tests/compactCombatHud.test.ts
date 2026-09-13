@@ -117,6 +117,27 @@ if (process.env.GFX_NOTICE_COMPONENT_OUTPUT) {
   })
 }
 
+test('bow HUD separates aim availability from shot readiness in both HUD modes', () => {
+  for (const mode of ['full', 'compact'] as const) for (const aiming of [false, true]) {
+    const props = fixture(mode, 'elf')
+    props.view.ability.active = aiming
+    props.view.ability.ready = false
+    props.view.ability.aimAvailable = true
+    props.view.ability.cooldown = 0.5
+    const html = renderToStaticMarkup(createElement(GameScreen, props))
+    const ability = html.match(/<button[^>]*aria-label="Лук: удерживать для прицеливания"[^>]*>/)?.[0]
+    assert.ok(ability)
+    assert.doesNotMatch(ability, /disabled/)
+    assert.match(ability, new RegExp(`aria-pressed="${aiming}"`))
+    if (aiming) {
+      assert.match(html, /crosshair bow-aim reloading/)
+      assert.match(html, /<button[^>]*disabled=""[^>]*aria-label="Выстрел из лука"/)
+      assert.match(html, /Перезарядка: 0.5 с/)
+      assert.doesNotMatch(html, /<small>ЛКМ — выстрел<\/small>/)
+    } else assert.doesNotMatch(html, /crosshair bow-aim/)
+  }
+})
+
 test('production HUD retains essential combat/navigation/interaction and every notice outside compact disclosures for all factions', () => {
   for (const faction of ['elf', 'guard', 'villain'] as const) {
     for (const mode of ['full', 'compact'] as const) {
