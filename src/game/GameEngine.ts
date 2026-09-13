@@ -4,6 +4,7 @@ import { musicIntensityRank, type MusicIntensity, type MusicOutcome } from './Mu
 import { BloomPostProcessor } from './BloomPostProcessor'
 import { resolveVisualPolicy, resolveVisualViewport, type VisualQualityPolicy } from './visualPolicy.ts'
 import { CameraVisibility } from './cameraVisibility.ts'
+import { BowAim, type BowAimSource } from './input/BowAim.ts'
 import { RAIN_CAPACITY, SNOW_CAPACITY, precipitationCount, updatePrecipitationBuffer } from './PrecipitationPresentation.ts'
 import { SecondaryEffectPool } from './SecondaryEffectPool.ts'
 import { ContactPresentation, contactResponse, copyPresentationContact, type ContactSurface, type PresentationContact } from './ContactPresentation.ts'
@@ -1167,6 +1168,8 @@ interface ProjectileHit {
   player: boolean
 }
 
+type ProjectileQuery = Pick<Projectile, 'owner' | 'allegiance' | 'sourceActorId' | 'finale'>
+
 type AttackKind = CombatAttackKind
 type HitWeight = CombatHitWeight
 type ComicCallout = 'БАЦ!' | 'ХРЯСЬ!' | 'БУМ!' | 'БЛОК!'
@@ -2225,6 +2228,16 @@ export class GameEngine {
   private wasSprinting = false
   private abilityCooldown = 0
   private shieldActive = false
+  private readonly bowAim = new BowAim()
+  private bowAiming = false
+  private bowOverviewPitch = 0
+  private readonly bowRaycaster = new THREE.Raycaster()
+  private readonly bowRayDirection = new THREE.Vector3()
+  private readonly bowIntersections: THREE.Intersection[] = []
+  private readonly projectileCenter = new THREE.Vector3()
+  private readonly bowFirstHit = (start: THREE.Vector3, end: THREE.Vector3): number | null =>
+    this.findProjectileHit({ owner: 'player', allegiance: this.faction, sourceActorId: null, finale: false },
+      start, end)?.fraction ?? null
   private lastViewAt = 0
   private lastZone: ZoneId
   private weatherZone: ZoneId
@@ -2340,6 +2353,7 @@ export class GameEngine {
   private boundFocusIn: (event: FocusEvent) => void
   private boundVisibilityChange: () => void
   private lookGesture: LookGesture | null = null
+  private lookGestureBowAiming = false
   private mousePointerId: number | null = null
   private pointerFallback = false
   private pointerLockPending = false
@@ -3147,6 +3161,7 @@ export class GameEngine {
       this.keys.delete(code)
       if (code === 'Space') this.jumpAccentArmed = true
     }
+    if (code === 'KeyR' && this.faction === 'elf') this.setBowAiming(active, 'button')
   }
 
   setMusicMuted(muted: boolean): void {
@@ -3262,6 +3277,59 @@ export class GameEngine {
     )
   }
 
+  setBowAiming(active: boolean, source: BowAimSource = 'button'): void {
+    if (this.faction !== 'elf') return
+    if (active) {
+      if (this.paused || this.ended || this.health <= 0 || this.combatMastery.evadeRemaining > 0 ||
+          isPlayerMeleeCommitted(this.melee) || isEditableGameplayTarget(document.activeElement)) return
+      if (this.body.leftArm === 'missing' && this.body.rightArm === 'missing') {
+        this.callbacks.onNotice(ABILITY_BLOCKED_NO_ARMS_NOTICE, 'warning')
+        return
+      }
+      this.bowAim.sources.add(source)
+    } else this.bowAim.sources.delete(source)
+    const aiming = this.bowAim.sources.size > 0
+    if (aiming === this.bowAiming) return
+    this.bowAiming = aiming
+    if (aiming) {
+      this.resumeAudio()
+      this.bowOverviewPitch = this.cameraPitch
+      this.cameraPitch = 0
+      this.resolveBowAim()
+    } else {
+      this.cameraPitch = this.bowOverviewPitch
+      characterPresenter(this.player)?.setBowAiming(false)
+    }
+    this.cameraVisibility.reset()
+    this.emitView(true)
+  }
+
+  private cancelBowAim(): void {
+    if (!this.bowAiming) return
+    this.bowAim.sources.clear()
+    this.setBowAiming(false)
+  }
+
+  private resolveBowAim(): void {
+    this.bowAim.resolve(this.player.position, this.cameraYaw, this.cameraPitch,
+      this.body.leftArm === 'missing', BOW_RANGE, this.bowFirstHit)
+    this.player.rotation.y = this.bowAim.heading
+  }
+
+  private presentBowAim(): void {
+    if (!this.bowAiming) return
+    const presenter = characterPresenter(this.player)
+    // Entering aim is not a free cancellation of an already paid melee animation.
+    const visible = this.melee.phase === 'idle' &&
+      (this.activePlayerAttackKind === 'arrow' || this.attackAnimation <= 0)
+    if (!presenter) return
+    if (presenter.bowAimingActive !== visible) presenter.setBowAiming(visible)
+    if (visible) {
+      applyChestPose(presenter.anatomy.torsoPivot, 0, 0, 0)
+      presenter.poseBowAim(this.bowAim.origin, this.bowAim.direction)
+    }
+  }
+
   useAbility(): void {
     if (this.faction === 'guard') {
       this.setShield(true)
@@ -3345,6 +3413,10 @@ export class GameEngine {
   attack(): void {
     if (this.paused || this.ended || this.combatMastery.evadeRemaining > 0 ||
         isEditableGameplayTarget(document.activeElement)) return
+    if (this.bowAiming) {
+      this.useAbility()
+      return
+    }
     this.resumeAudio()
     this.menacePlayer()
     if (!this.honestMelee) {
@@ -3381,6 +3453,7 @@ export class GameEngine {
       return
     }
     this.stamina -= result.staminaSpent
+    this.cancelBowAim()
     this.dropShield()
     this.attackAnimation = 0
     this.activePlayerAttackKind = 'melee'
@@ -3892,6 +3965,7 @@ export class GameEngine {
     this.graphicsCharacterPortrait?.present(this.camera)
     for (const presenter of this.characterPresenters) presenter.updateLod(this.camera, this.visualPolicy)
     for (const presenter of this.creaturePresenters) presenter.updateLod(this.camera, this.visualPolicy)
+    this.presentBowAim()
     // A close diagnostic camera can change LOD; record/fit the geometry actually submitted.
     this.graphicsCharacterPortrait?.present(this.camera)
     this.audioListenerRight.setFromMatrixColumn(this.camera.matrixWorld, 0)
@@ -5673,7 +5747,10 @@ export class GameEngine {
   }
 
   private updatePlayer(delta: number): void {
-    characterPresenter(this.player)?.advanceActionPresentation(delta, this.activePlayerAttackKind !== 'arrow')
+    if (this.bowAiming && (this.health <= 0 ||
+        (this.body.leftArm === 'missing' && this.body.rightArm === 'missing'))) this.cancelBowAim()
+    characterPresenter(this.player)?.advanceActionPresentation(delta,
+      !this.bowAiming && this.activePlayerAttackKind !== 'arrow')
     const wasOnGround = this.onGround
     const forward = this.getAimDirection()
     const movement = cameraRelativeMovement(this.keys, this.cameraYaw)
@@ -5707,6 +5784,7 @@ export class GameEngine {
     if (sprinting && !this.wasSprinting) this.cancelMelee()
     this.wasSprinting = sprinting
     this.isSprinting = sprinting
+    if (sprinting) this.cancelBowAim()
     const speed =
       8.2 *
       mobility *
@@ -5803,6 +5881,7 @@ export class GameEngine {
     this.airborneTime = airborneUpdate.airborneTime
     if (airborneUpdate.landed) this.queueCameraAccent('land', -1.4, 0.16)
     const presenter = characterPresenter(this.player)
+    if (this.bowAiming) this.resolveBowAim()
     if (presenter) {
       const pose = this.playerPose
       applyChestPose(presenter.anatomy.torsoPivot,
@@ -5815,7 +5894,7 @@ export class GameEngine {
       presenter.secondaryMotion(delta, pose.stride, pose.attack, this.reducedMotion)
       presenter.ground(delta, this.characterHeightSample, this.onGround && !evading, 0, pose.stride)
     }
-
+    this.presentBowAim()
   }
 
   private finaleAuthority(): FinaleAuthority {
@@ -7713,10 +7792,11 @@ export class GameEngine {
   }
 
   private fireArrow(): void {
-    const direction = this.getViewDirection()
+    if (this.bowAiming) this.resolveBowAim()
+    const direction = this.bowAiming ? this.bowAim.direction.clone() : this.getViewDirection()
     this.activePlayerAttackKind = 'arrow'
-    this.player.rotation.y = Math.atan2(direction.x, direction.z)
-    const origin = this.player.position
+    if (!this.bowAiming) this.player.rotation.y = Math.atan2(direction.x, direction.z)
+    const origin = this.bowAiming ? this.bowAim.origin.clone() : this.player.position
       .clone()
       .add(new THREE.Vector3(0, 1.75, 0))
       .addScaledVector(direction, 1)
@@ -7724,14 +7804,15 @@ export class GameEngine {
       'player',
       this.faction,
       origin,
-      direction.clone().multiplyScalar(BOW_SPEED).add(new THREE.Vector3(0, 0.55, 0)),
+      direction.clone().multiplyScalar(BOW_SPEED).add(new THREE.Vector3(0, this.bowAiming ? 0 : 0.55, 0)),
       BOW_RANGE / BOW_SPEED,
       BOW_DAMAGE,
       null,
       0.25,
     )
     this.playSound('bow')
-    characterPresenter(this.player)?.beginArrowPresentation(direction, direction.y + 0.55 / BOW_SPEED)
+    this.presentBowAim()
+    characterPresenter(this.player)?.beginArrowPresentation(direction, direction.y + (this.bowAiming ? 0 : 0.55 / BOW_SPEED))
   }
 
   private cleave(): void {
@@ -8440,13 +8521,17 @@ export class GameEngine {
   }
 
   private findProjectileHit(
-    projectile: Projectile,
+    projectile: ProjectileQuery,
     start: THREE.Vector3,
     end: THREE.Vector3,
   ): ProjectileHit | null {
     let nearest: ProjectileHit | null = null
     if (projectile.finale) {
       const cover = this.finaleCoverHit(start, end, FINALE_PROJECTILE_RADIUS)
+      if (cover !== null) nearest = { fraction: cover, actor: null, player: false }
+    }
+    if (projectile.owner === 'player') {
+      const cover = this.bowCoverHit(start, end)
       if (cover !== null) nearest = { fraction: cover, actor: null, player: false }
     }
     const steps = Math.max(1, Math.ceil(start.distanceTo(end) / 0.4))
@@ -8468,7 +8553,8 @@ export class GameEngine {
       (sourceActor?.hostileToPlayer ??
         hostile(projectile.allegiance, this.faction))
     ) {
-      const playerCenter = this.player.position.clone().add(new THREE.Vector3(0, 1.45, 0))
+      const playerCenter = this.projectileCenter.copy(this.player.position)
+      playerCenter.y += 1.45
       const fraction = this.segmentSphereHit(start, end, playerCenter,
         projectile.finale ? PLAYER_COLLIDER_RADIUS + FINALE_PROJECTILE_RADIUS : PROJECTILE_HIT_RADIUS)
       if (fraction !== null && (!nearest || fraction < nearest.fraction)) nearest = { fraction, actor: null, player: true }
@@ -8483,7 +8569,8 @@ export class GameEngine {
             actor.hostileToPlayer || actor.allegiance === 'civilian'
           : hostile(projectile.allegiance, actor.allegiance)
       if (!actor.alive || !canHit) continue
-      const center = actor.mesh.position.clone().add(new THREE.Vector3(0, 1.45, 0))
+      const center = this.projectileCenter.copy(actor.mesh.position)
+      center.y += 1.45
       const radius = projectile.finale
         ? this.actorColliderRadiusForRole(actor.role) + FINALE_PROJECTILE_RADIUS
         : actor.role === 'brute' ? 1.1 : PROJECTILE_HIT_RADIUS
@@ -8494,18 +8581,30 @@ export class GameEngine {
     return nearest
   }
 
+  private bowCoverHit(start: THREE.Vector3, end: THREE.Vector3): number | null {
+    const length = this.bowRayDirection.subVectors(end, start).length()
+    if (length < 1e-8) return null
+    this.bowRaycaster.set(start, this.bowRayDirection.multiplyScalar(1 / length))
+    this.bowRaycaster.near = 0
+    this.bowRaycaster.far = length
+    this.bowIntersections.length = 0
+    // The same canonical, unfaded sources used by squad sight in both visual modes.
+    this.bowRaycaster.intersectObjects(this.cameraObstacles, false, this.bowIntersections)
+    return this.bowIntersections.length > 0 ? this.bowIntersections[0].distance / length : null
+  }
+
   private segmentSphereHit(
     start: THREE.Vector3,
     end: THREE.Vector3,
     center: THREE.Vector3,
     radius: number,
   ): number | null {
-    const segment = end.clone().sub(start)
-    const offset = start.clone().sub(center)
-    const a = segment.lengthSq()
+    const dx = end.x - start.x, dy = end.y - start.y, dz = end.z - start.z
+    const ox = start.x - center.x, oy = start.y - center.y, oz = start.z - center.z
+    const a = dx * dx + dy * dy + dz * dz
     if (a < 0.000001) return null
-    const b = 2 * offset.dot(segment)
-    const c = offset.lengthSq() - radius * radius
+    const b = 2 * (ox * dx + oy * dy + oz * dz)
+    const c = ox * ox + oy * oy + oz * oz - radius * radius
     if (c <= 0) return 0
     const discriminant = b * b - 4 * a * c
     if (discriminant < 0) return null
@@ -12952,6 +13051,7 @@ export class GameEngine {
       caravanCooldown: this.caravanCooldown,
       shieldActive: this.shieldActive,
       abilityCooldown: this.abilityCooldown,
+      bowAiming: this.bowAiming,
       melee: this.melee,
       combatMastery: this.combatMastery,
       cameraMode: document.pointerLockElement === this.renderer.domElement
@@ -17442,10 +17542,15 @@ export class GameEngine {
   }
 
   private updateCamera(delta: number, immediate: boolean): void {
+    if (this.bowAiming) {
+      this.updateBowCamera(delta, immediate)
+      return
+    }
     if (this.visualPolicy.camera.collision === 'volume') {
       this.updateEnhancedCamera(delta, immediate)
       return
     }
+
     const forward = this.getAimDirection()
     const target = this.player.position.clone().add(new THREE.Vector3(0, 1.65, 0))
     // Looking up rotates the view without orbiting the camera below the player's feet.
@@ -17487,6 +17592,34 @@ export class GameEngine {
     this.updateCameraFov(delta, immediate)
     this.updatePlayerOutlineVisibility()
     this.updateFoliageOcclusion(target, this.camera.position, immediate)
+  }
+
+  private updateBowCamera(delta: number, immediate: boolean): void {
+    this.resolveBowAim()
+    this.updateCameraFov(delta, immediate)
+    const { anchor, eye, target } = this.bowAim
+    const presentation = this.generatedWorld.presentation
+    if (this.visualPolicy.camera.collision === 'volume') {
+      if (!presentation) throw new Error('Enhanced bow camera requires its presentation registry')
+      if (this.rendererDevicePixelRatio !== window.devicePixelRatio) this.resize()
+      presentation.prepare(this.camera)
+      this.cameraVisibility.resolve(anchor, eye, this.camera, delta, immediate,
+        presentation, this.cameraTerrain, this.cameraFollowPosition)
+      for (const binding of this.playerRenderBindings) {
+        this.artLibrary.setSourceVisibility(binding, this.cameraVisibility.debug.playerVisibility)
+      }
+    } else this.cameraFollowPosition.copy(this.resolveCameraPosition(anchor, eye))
+    this.camera.position.copy(this.cameraFollowPosition)
+    this.camera.lookAt(target)
+    this.camera.updateMatrixWorld()
+    this.updatePlayerOutlineVisibility()
+    if (presentation) {
+      this.nearSubjects.length = 0
+      this.nearSubjects.push(anchor)
+      presentation.prepare(this.camera)
+      presentation.updateForeground(this.camera.position, this.nearSubjects, delta, immediate)
+      presentation.updateShadows(this.player.position, this.visualPolicy.shadows)
+    } else this.updateFoliageOcclusion(anchor, this.camera.position, immediate)
   }
 
   private updateEnhancedCamera(delta: number, immediate: boolean): void {
@@ -17723,6 +17856,7 @@ export class GameEngine {
     if (event.code === 'KeyQ') this.commandSquad()
     if (event.code === 'KeyR') {
       if (this.faction === 'guard') this.setShield(true)
+      else if (this.faction === 'elf') this.setBowAiming(true, 'keyboard')
       else this.useAbility()
     }
   }
@@ -17731,6 +17865,7 @@ export class GameEngine {
     this.keys.delete(event.code)
     if (event.code === 'Space') this.jumpAccentArmed = true
     if (event.code === 'KeyR') this.setShield(false)
+    if (event.code === 'KeyR') this.setBowAiming(false, 'keyboard')
   }
 
   private onMouseMove(event: MouseEvent): void {
@@ -17758,6 +17893,7 @@ export class GameEngine {
     event.preventDefault()
     if (event.button === 2) {
       if (this.faction === 'guard') this.setShield(true)
+      else if (this.faction === 'elf') this.setBowAiming(true, 'pointer')
       else this.useAbility()
       return
     }
@@ -17773,6 +17909,7 @@ export class GameEngine {
     if (this.lookGesture) return
     this.pointerFallback = true
     this.lookGesture = beginLookGesture(pointerId, x, y)
+    this.lookGestureBowAiming = this.bowAiming
     try {
       this.renderer.domElement.setPointerCapture(pointerId)
     } catch (error) {
@@ -17792,6 +17929,7 @@ export class GameEngine {
 
   private onWorldPointerUp(event: PointerEvent): void {
     if (event.button === 2) this.setShield(false)
+    if (event.button === 2 && event.pointerType !== 'mouse') this.setBowAiming(false, 'pointer')
     this.finishWorldLook(event.pointerId, event.clientX, event.clientY)
   }
 
@@ -17800,7 +17938,7 @@ export class GameEngine {
     if (!gesture || gesture.pointerId !== pointerId) return
     const motion = moveLookGesture(gesture, pointerId, x, y)
     this.look(motion.x, motion.y)
-    const attack = finishLookGesture(gesture, pointerId, false)
+    const attack = finishLookGesture(gesture, pointerId, this.lookGestureBowAiming !== this.bowAiming)
     this.releaseLookGesture()
     if (attack) this.attack()
   }
@@ -17812,6 +17950,7 @@ export class GameEngine {
     this.renderer.domElement.focus({ preventScroll: true })
     const locked = document.pointerLockElement === this.renderer.domElement
     if (!locked && !this.pointerFallback) {
+      if (event.button === 2 && this.faction === 'elf') this.setBowAiming(true, 'mouse')
       this.requestPointerLock()
       return
     }
@@ -17821,12 +17960,14 @@ export class GameEngine {
     }
     if (event.button === 2) {
       if (this.faction === 'guard') this.setShield(true)
+      else if (this.faction === 'elf') this.setBowAiming(true, 'mouse')
       else this.useAbility()
     }
   }
 
   private onMouseUp(event: MouseEvent): void {
     if (event.button === 2) this.setShield(false)
+    if (event.button === 2) this.setBowAiming(false, 'mouse')
     if (event.button === 0 && this.mousePointerId !== null) {
       this.finishWorldLook(this.mousePointerId, event.clientX, event.clientY)
     }
@@ -17852,6 +17993,7 @@ export class GameEngine {
   }
 
   private releaseGameplayInput(): void {
+    this.cancelBowAim()
     this.keys.clear()
     this.jumpAccentArmed = true
     this.releaseLookGesture(true)

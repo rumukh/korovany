@@ -3375,6 +3375,18 @@ button {
   z-index: 16;
 }
 
+.crosshair.bow-aim {
+  border: 1px solid var(--cp-text);
+  border-radius: 50%;
+  box-shadow: 0 0 2px var(--cp-panel-strong);
+  height: 1.8rem;
+  width: 1.8rem;
+}
+
+.crosshair.bow-aim.reloading {
+  opacity: 0.45;
+}
+
 .crosshair::before,
 .crosshair::after,
 .crosshair span::before,

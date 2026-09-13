@@ -413,6 +413,7 @@ export interface AbilityView {
   name: string
   ready: boolean
   active: boolean
+  aimAvailable: boolean
   cooldown: number
   cooldownMax: number
 }
@@ -462,6 +463,7 @@ export function createAbilityView(
     name: info.name,
     ready: (info.id === 'shield' ? stamina > 0 : stamina >= info.staminaCost) && canUseBow,
     active: false,
+    aimAvailable: info.id === 'bow' && canUseBow,
     cooldown: 0,
     cooldownMax: info.cooldownMax,
   }

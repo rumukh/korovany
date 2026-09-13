@@ -130,6 +130,8 @@ function fixture(faction: Faction = 'guard') {
     finale, actors, player, objectives, achievements, scene: new THREE.Scene(),
     finaleTelegraphs: [], finaleTelegraphAction: null, telegraphPool: [],
     projectiles: [], projectileSourcesToClear: new Set(),
+    projectileCenter: new THREE.Vector3(), bowRayDirection: new THREE.Vector3(),
+    bowRaycaster: new THREE.Raycaster(), bowIntersections: [], cameraObstacles: [],
     generatedEncounterPlans: new Map([[identity.regionId, [finalPlan]]]),
     generatedActivationSpawns: new Map([[identity.regionId, new Set([identity.bossId])]]),
     simulatedGeneratedRegions: new Set(regions.getSimulatedRegionIds()),

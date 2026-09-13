@@ -52,9 +52,9 @@ The [graphics upgrade plan](docs/15-next-gen-graphics-plan.md) records the rollo
 | `Shift` | Sprint |
 | `Space` | Jump |
 | Mouse / world drag | Camera while captured; drag the world to look if capture is unavailable |
-| Left click / world tap / touch sword | Aimed three-beat melee; a look drag does not attack |
+| Left click / world tap / touch attack | Three-beat melee, or fire while aiming the bow; a look drag does not attack |
 | `C` / touch **Уворот** | Directional evasive step (25 stamina); without movement, step backward |
-| Right click / `R` / touch ability | Faction ability; guard holds the shield |
+| Right click / `R` / touch ability | Hold to aim the elf's bow or raise the guard's shield; villain uses the rush |
 | `E` / touch `E` | Interact |
 | `Q` / touch `Q` | Toggle squad Follow / Hold |
 | `T` / squad HUD / touch `T` | Open squad orders: Follow, Hold, Focus, Regroup (pauses play) |
@@ -67,7 +67,15 @@ The footprint button is a held sprint modifier, and the up-arrow action jumps.
 Jump once per press; release before jumping again. Mouse and world-drag look can
 aim above or below the horizon, including bow shots. Movement, evasion, shields,
 and melee keep their ground-plane heading regardless of camera pitch.
-Pause, lost focus, and cancelled gestures release held movement, camera, and shield
+The elf's held bow uses a separate shoulder view, starting level; release aim to return
+to the overview camera and melee. Holding aim costs nothing. Each attack press fires
+one arrow for 15 stamina with the existing 0.9-second cooldown and 18–10 distance-based
+damage. Arrows leave the nock toward the reticle, then fall under gravity; there is no
+automatic target selection. Terrain and solid sight-blocking world surfaces stop them.
+On touch screens, hold the bow button, drag the world to aim, and tap the attack button
+with another finger. The accessible bow button also toggles aim on keyboard activation.
+Sprint and evasion leave bow mode without refunding a shot.
+Pause, lost focus, and cancelled gestures release held movement, camera, bow, and shield
 inputs. Paid recovery, cooldowns, stamina, and committed finishers are preserved.
 
 Evasion protects only 0.06–0.18 seconds of its 0.30-second step, respects collision and
