@@ -34,6 +34,9 @@ selectors. Previously stored original/low/balanced choices are ignored.
 foliage, weather and camera effects remain independently configurable, including
 previously saved effect-off choices. Bloom-off uses the real no-post path.
 Interface preferences do not replace or reset campaign saves.
+Faction launch cards come first, above seed and starting-gift customization.
+Theme, effect, audio and interface controls are grouped under **Настройки** at
+the bottom of the main menu; the pause dialog keeps its live controls.
 
 The stylized character direction is user-approved, but the quality tiers are
 still provisional: desktop viewport emulation is not mobile-device certification,

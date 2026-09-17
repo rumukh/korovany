@@ -27,36 +27,41 @@ function extractRule(source: string, selector: string): string {
   return extractBlock(source, `${selector} {`)
 }
 
-interface Rectangle {
-  bottom: number
-  left: number
-  right: number
-  top: number
-}
-
-function intersectionArea(first: Rectangle, second: Rectangle): number {
-  const width = Math.max(0, Math.min(first.right, second.right) - Math.max(first.left, second.left))
-  const height = Math.max(
-    0,
-    Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top),
-  )
-  return width * height
-}
-
-test('menu settings reserve their wrapped height before the hero branding', () => {
+test('menu settings follow launch, setup and profile content in natural document flow', () => {
   const settingsRule = extractRule(appCss, '.menu-settings')
   const mobileMenuCss = extractBlock(appCss, '@media (max-width: 720px), (pointer: coarse) {')
-  const settingsIndex = appSource.indexOf('<div className="menu-settings">')
+  const settingsIndex = appSource.indexOf('<section className="menu-settings" aria-labelledby="menu-settings-title">')
   const heroIndex = appSource.indexOf('<header className="hero-header">')
+  const launchIndex = appSource.indexOf('<div className="faction-grid">')
+  const setupIndex = appSource.indexOf('<div className="run-setup">')
+  const lowerIndex = appSource.indexOf('<section className="menu-lower">')
+  const footerIndex = appSource.indexOf('<footer className="menu-footer">')
 
-  assert.match(settingsRule, /margin-left:\s*auto;/)
-  assert.match(settingsRule, /max-width:\s*min\(52rem,\s*100%\);/)
+  assert.match(settingsRule, /margin:\s*1rem auto 0;/)
+  assert.match(settingsRule, /max-width:\s*76rem;/)
   assert.match(settingsRule, /position:\s*relative;/)
-  assert.doesNotMatch(settingsRule, /position:\s*absolute;/)
+  assert.doesNotMatch(settingsRule, /position:\s*(?:absolute|fixed)|\border:/)
   assert.doesNotMatch(mobileMenuCss, /\.menu-settings\s*\{/)
-  assert.notEqual(settingsIndex, -1)
-  assert.notEqual(heroIndex, -1)
-  assert.ok(settingsIndex < heroIndex)
+  const order = [heroIndex, launchIndex, setupIndex, lowerIndex, settingsIndex, footerIndex]
+  assert.ok(order.every((index) => index >= 0), 'Every menu section is present')
+  assert.deepEqual(order, order.toSorted((a, b) => a - b), 'DOM, keyboard and visual order agree')
+  assert.match(appSource, /<h2 id="menu-settings-title">Настройки<\/h2>/)
+})
+
+test('faction launches precede seed and unlock grids while active-run continuation retains priority', () => {
+  const activeIndex = appSource.indexOf('<section className="active-run-card"')
+  const blockedIndex = appSource.indexOf('<p className="new-run-blocked-note">')
+  const launchIndex = appSource.indexOf('<div className="faction-grid">')
+  const seedIndex = appSource.indexOf('<div className="seed-panel">')
+  const boonIndex = appSource.indexOf('<div className="boon-panel">')
+  const doctrineIndex = appSource.indexOf('<div className="boon-panel doctrine-panel">')
+  assert.ok(activeIndex >= 0 && activeIndex < blockedIndex && blockedIndex < launchIndex)
+  assert.ok(launchIndex < seedIndex && seedIndex < boonIndex && boonIndex < doctrineIndex)
+  const launch = appSource.slice(launchIndex, seedIndex)
+  assert.match(launch, /disabled=\{Boolean\(activeRun\)\}/)
+  assert.match(launch, /onClick=\{\(\) => onStart\(faction\)\}/)
+  assert.match(launch, /Начать · seed \$\{canonicalSeed\}/)
+  assert.match(extractRule(appCss, '.run-setup'), /margin-top:\s*1rem;/)
 })
 
 test('doctrine choices span both columns of the run setup grid', () => {
@@ -64,61 +69,4 @@ test('doctrine choices span both columns of the run setup grid', () => {
 
   assert.match(doctrinePanelRule, /grid-column:\s*1\s*\/\s*-1;/)
   assert.match(appSource, /className="boon-panel doctrine-panel"/)
-})
-
-test('flow-stacked settings have zero intersection with menu branding at target sizes', () => {
-  const targets = [
-    { height: 800, settingsHeight: 144, width: 1280 },
-    { height: 844, settingsHeight: 96, width: 390 },
-    { height: 568, settingsHeight: 144, width: 320 },
-  ] as const
-
-  for (const theme of ['dark', 'light'] as const) {
-    for (const target of targets) {
-      const mobile = target.width <= 720
-      const menuPaddingTop = (mobile ? 1 : 1.5) * 16
-      const heroPaddingTop = (mobile ? 2.8 : 3.6) * 16
-      const titleMarginTop = 1.3 * 16
-      const kickerMarginTop = 1.15 * 16
-      const tagHeight = 30
-      const titleHeight = mobile ? 58 : 86
-      const kickerHeight = 20
-      const settings: Rectangle = {
-        bottom: menuPaddingTop + target.settingsHeight,
-        left: 0,
-        right: target.width,
-        top: menuPaddingTop,
-      }
-      const tag: Rectangle = {
-        bottom: settings.bottom + heroPaddingTop + tagHeight,
-        left: 0,
-        right: target.width,
-        top: settings.bottom + heroPaddingTop,
-      }
-      const title: Rectangle = {
-        bottom: tag.bottom + titleMarginTop + titleHeight,
-        left: 0,
-        right: target.width,
-        top: tag.bottom + titleMarginTop,
-      }
-      const kicker: Rectangle = {
-        bottom: title.bottom + kickerMarginTop + kickerHeight,
-        left: 0,
-        right: target.width,
-        top: title.bottom + kickerMarginTop,
-      }
-
-      for (const [name, branding] of [
-        ['tag', tag],
-        ['title', title],
-        ['kicker', kicker],
-      ] as const) {
-        assert.equal(
-          intersectionArea(settings, branding),
-          0,
-          `${theme} ${target.width}x${target.height}: settings intersect ${name}`,
-        )
-      }
-    }
-  }
 })

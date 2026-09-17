@@ -12,6 +12,11 @@ graphics-reload instructions. App launches use the engine defaults rather than
 persisted graphics choices, so existing original/low/balanced preferences cannot
 downgrade a run. Campaign data and independently saved effect choices are retained.
 
+The main menu places faction start cards above seed, boon and doctrine setup.
+Theme, effect, audio and HUD controls follow the world preview and profile history
+in a bottom **Настройки** section. DOM order matches the visual and keyboard order.
+The pause dialog retains its existing live controls.
+
 Mode and quality remain construction-scoped engine options for explicit
 diagnostic comparisons. They are not player preferences. Closing pause keeps the
 current engine and visuals. The existing **В главное меню** action saves the
@@ -198,6 +203,8 @@ Diagnostic choices are never persisted in campaign or interface records.
 Run `node scripts/graphics-run.mjs --out ABSOLUTE_DIRECTORY --cases guard-opening --repeat 1 --settings-controls`
 to check real desktop/mobile menu and pause controls, fresh and migrated High
 defaults, live HUD changes without an engine restart, and save/continue preservation.
+The same check measures all three launch buttons inside the initial QHD viewport,
+including 125% and 150% display scaling, and verifies the bottom settings layout.
 The runner also asserts that requested diagnostic comparisons match the active policy.
 
 Pure tests can pass `{ enhancedAvailable: false }` to exercise the unavailable

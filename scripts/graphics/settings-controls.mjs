@@ -4,13 +4,53 @@ import { settleHeldViewport } from './runtime-controls.mjs'
 
 export async function captureSettingsControls(browser, origin, originalViewport, record, checkTime) {
   const cases = [
-    { id: 'fresh', saved: null, hudMode: 'full', bloom: true, width: 1440, height: 1000 },
+    { id: 'fresh', faction: 'elf', saved: null, hudMode: 'full', bloom: true, width: 1440, height: 1000 },
     { id: 'legacy-low', saved: { version: 1, visualMode: 'legacy', visualQuality: 'low', hudMode: 'compact' },
-      hudMode: 'compact', bloom: false, width: 390, height: 844 },
+      faction: 'guard', hudMode: 'compact', bloom: false, width: 390, height: 844 },
     { id: 'enhanced-balanced', saved: { version: 1, visualMode: 'enhanced', visualQuality: 'balanced', hudMode: 'full' },
-      hudMode: 'full', bloom: true, width: 1440, height: 1000 },
+      faction: 'villain', hudMode: 'full', bloom: true, width: 1440, height: 1000 },
   ]
   const results = []
+  const measureMenu = async (firstScreen) => {
+    const layout = await browser.evaluate(`(() => {
+      scrollTo(0, 0);
+      const rect = selector => {
+        const node = document.querySelector(selector);
+        if (!node) throw new Error('Missing menu element: ' + selector);
+        const box = node.getBoundingClientRect();
+        return { top: box.top, bottom: box.bottom, left: box.left, right: box.right };
+      };
+      const selectors = ['.hero-header', '.faction-grid', '.run-setup', '.menu-lower', '.menu-settings', '.menu-footer'];
+      const sections = selectors.map(rect);
+      const nodes = selectors.map(selector => document.querySelector(selector));
+      return {
+        width: innerWidth, height: innerHeight, clientWidth: document.documentElement.clientWidth,
+        scrollWidth: document.documentElement.scrollWidth, sections,
+        buttons: ['elf', 'guard', 'villain'].map(faction => rect('.faction-card.' + faction + ' button')),
+        documentOrder: nodes.slice(1).every((node, index) => Boolean(
+          nodes[index].compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING)),
+        settingsOverflow: document.querySelector('.menu-settings').scrollWidth >
+          document.querySelector('.menu-settings').clientWidth + 1,
+      };
+    })()`)
+    assert.equal(layout.documentOrder, true)
+    assert.ok(layout.scrollWidth <= layout.clientWidth, `Horizontal overflow at ${layout.width}`)
+    assert.equal(layout.settingsOverflow, false)
+    assert.ok(layout.sections.slice(0, -1).every(section => section.bottom > section.top),
+      'Primary menu content must remain visible')
+    for (let index = 1; index < layout.sections.length; index++) {
+      if (index === layout.sections.length - 1 && layout.sections[index].bottom === 0) continue
+      assert.ok(layout.sections[index].top >= layout.sections[index - 1].bottom,
+        `Menu sections overlap at ${layout.width}: ${JSON.stringify(layout.sections)}`)
+    }
+    for (const button of layout.buttons) {
+      assert.ok(button.left >= 0 && button.right <= layout.clientWidth)
+      assert.ok(button.bottom - button.top >= 44)
+      if (firstScreen) assert.ok(button.top >= 0 && button.bottom <= layout.height,
+        `Launch button below the fold at ${layout.width}x${layout.height}: ${JSON.stringify(button)}`)
+    }
+    return layout
+  }
   const controls = async (scope, hudMode) => {
     const state = await browser.evaluate(`(() => {
       const root = document.querySelector(${JSON.stringify(scope)});
@@ -62,13 +102,38 @@ export async function captureSettingsControls(browser, origin, originalViewport,
     // Instrument the real launch without supplying any mode or quality override.
     await browser.send('Page.navigate', { url: `${origin}/?graphicsDiagnostics=1` })
     await browser.waitFor('!!document.querySelector("#world-seed")')
+    if (entry.id === 'fresh') {
+      for (const [width, height, dpr] of [[2560, 1440, 1], [2048, 1152, 1.25], [1707, 960, 1.5], [1280, 800, 1]]) {
+        checkTime()
+        await browser.send('Emulation.setDeviceMetricsOverride', {
+          width, height, deviceScaleFactor: dpr, mobile: false,
+        })
+        await browser.waitFor(`innerWidth === ${width} && innerHeight === ${height}`)
+        await record(`launch-${width}`, await measureMenu(height >= 960))
+      }
+      await browser.send('Emulation.setDeviceMetricsOverride', {
+        width: entry.width, height: entry.height, deviceScaleFactor: 1, mobile: false,
+      })
+    }
+    await measureMenu(entry.width >= 1000)
+    const theme = await browser.evaluate('document.documentElement.dataset.theme')
+    await browser.clickSelector('.menu-settings .theme-toggle')
+    await browser.waitFor(`document.documentElement.dataset.theme !== ${JSON.stringify(theme)}`)
+    assert.equal(await browser.evaluate('localStorage.getItem("korovany-theme")'),
+      theme === 'dark' ? 'light' : 'dark')
+    await measureMenu(entry.width >= 1000)
+    await browser.clickSelector('.menu-settings .theme-toggle')
+    await browser.type('#world-seed', '20260906')
+    await browser.waitFor('[...document.querySelectorAll(".faction-card button")].every(button => button.textContent.includes("20260906"))')
     const menu = await controls('.menu-settings .visual-settings', entry.hudMode)
     await browser.evaluate('document.querySelector(".menu-settings .visual-settings").scrollIntoView({block:"center"})')
     await record(`${entry.id}-menu`, menu)
-    await browser.clickSelector('.faction-card.guard button')
+    await browser.clickSelector(`.faction-card.${entry.faction} button`)
     await browser.waitFor('!!window.__korovanyGraphics', 60000)
     await settleHeldViewport(browser)
     const launch = await checkPolicy(entry.bloom)
+    assert.equal(launch.runtime.faction, entry.faction)
+    assert.equal((await browser.evaluate('window.__korovanyGraphics.save()')).config.seed, 20260906)
     await browser.clickSelector('.hud-pause')
     await browser.waitFor('!!document.querySelector(".pause-modal")')
     await controls('.pause-modal .visual-settings', entry.hudMode)

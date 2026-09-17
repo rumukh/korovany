@@ -176,14 +176,22 @@ button {
 }
 
 .menu-settings {
+  background: var(--cp-panel-strong);
+  border: 1px solid var(--cp-border);
+  border-radius: 16px;
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  justify-content: flex-end;
-  margin-left: auto;
-  max-width: min(52rem, 100%);
+  margin: 1rem auto 0;
+  max-width: 76rem;
+  padding: clamp(1.1rem, 2.5vw, 2rem);
   position: relative;
-  z-index: 5;
+}
+
+.menu-settings > h2 {
+  flex-basis: 100%;
+  font-size: 1.25rem;
+  margin-bottom: 0.5rem;
 }
 
 .visual-settings {
@@ -372,7 +380,7 @@ button {
   align-items: center;
   display: flex;
   flex-direction: column;
-  padding: 3.6rem 1rem 3rem;
+  padding: 1rem 1rem 1.5rem;
   text-align: center;
 }
 
@@ -393,7 +401,7 @@ button {
 
 .hero-header h1 {
   color: var(--cp-text);
-  font-size: clamp(3.8rem, 10vw, 6rem);
+  font-size: clamp(3.8rem, 10vw, 5rem);
   font-weight: 900;
   letter-spacing: -0.04em;
   line-height: 0.9;
@@ -414,7 +422,7 @@ button {
 .hero-key-art {
   display: block;
   filter: drop-shadow(0 0.8rem 1rem rgba(0, 0, 0, 0.18));
-  height: clamp(5.2rem, 9vw, 7.2rem);
+  height: 5.2rem;
   margin: 0.7rem auto -0.15rem;
   max-width: 60rem;
   object-fit: contain;
@@ -519,7 +527,7 @@ button {
   display: grid;
   gap: 0.8rem;
   grid-template-columns: minmax(16rem, 0.75fr) minmax(0, 1.6fr);
-  margin-bottom: 1rem;
+  margin-top: 1rem;
 }
 
 .seed-panel,
@@ -4712,7 +4720,7 @@ kbd {
   }
 
   .hero-header {
-    padding: 2.8rem 0 2rem;
+    padding: 1rem 0 1.5rem;
   }
 
   .hero-header h1 {

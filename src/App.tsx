@@ -1400,123 +1400,6 @@ function MenuScreen({
         <div className="contour contour-b" />
         <div className="contour contour-c" />
       </div>
-      <div className="menu-settings">
-        <button
-          className="theme-toggle secondary-button"
-          type="button"
-          onClick={onToggleTheme}
-          aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
-          title={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
-        >
-          {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-          <span>{theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}</span>
-        </button>
-        <button
-          className="day-night-toggle secondary-button"
-          type="button"
-          onClick={onToggleDynamicDayNight}
-          aria-pressed={dynamicDayNight}
-          aria-label={
-            dynamicDayNight
-              ? 'Отключить динамическое время суток'
-              : 'Включить динамическое время суток'
-          }
-          title={
-            dynamicDayNight
-              ? 'Отключить динамическое время суток'
-              : 'Включить динамическое время суток'
-          }
-        >
-          <Clock3 aria-hidden="true" />
-          <span>{dynamicDayNight ? 'Время суток: вкл.' : 'Время суток: выкл.'}</span>
-        </button>
-        <button
-          className="weather-toggle secondary-button"
-          type="button"
-          onClick={onToggleWeather}
-          aria-pressed={weatherEnabled}
-          aria-label={weatherEnabled ? 'Отключить динамическую погоду' : 'Включить динамическую погоду'}
-          title={weatherEnabled ? 'Отключить динамическую погоду' : 'Включить динамическую погоду'}
-        >
-          <CloudRain aria-hidden="true" />
-          <span>{weatherEnabled ? 'Погода: вкл.' : 'Погода: выкл.'}</span>
-        </button>
-        <button
-          className="bloom-toggle secondary-button"
-          type="button"
-          onClick={onToggleBloom}
-          aria-pressed={bloomEnabled}
-          aria-label={bloomEnabled ? 'Отключить свечение' : 'Включить свечение'}
-          title={bloomEnabled ? 'Отключить свечение' : 'Включить свечение'}
-        >
-          <Sparkles aria-hidden="true" />
-          <span>{bloomEnabled ? 'Свечение: вкл.' : 'Свечение: выкл.'}</span>
-        </button>
-        <button
-          className="ink-outlines-toggle secondary-button"
-          type="button"
-          onClick={onToggleInkOutlines}
-          aria-pressed={inkOutlinesEnabled}
-          aria-label={
-            inkOutlinesEnabled
-              ? 'Отключить чернильные контуры'
-              : 'Включить чернильные контуры'
-          }
-          title={
-            inkOutlinesEnabled
-              ? 'Отключить чернильные контуры'
-              : 'Включить чернильные контуры'
-          }
-        >
-          <Eye aria-hidden="true" />
-          <span>
-            {inkOutlinesEnabled
-              ? 'Чернильные контуры: вкл.'
-              : 'Чернильные контуры: выкл.'}
-          </span>
-        </button>
-        <button
-          className="foliage-toggle secondary-button"
-          type="button"
-          onClick={onCycleFoliageQuality}
-          data-quality={foliageQuality}
-          aria-label={`Качество растительности: ${foliageQualityLabels[foliageQuality]}`}
-          title="Изменить качество растительности"
-        >
-          <Trees aria-hidden="true" />
-          <span>Растительность: {foliageQualityLabels[foliageQuality]}</span>
-        </button>
-        <button
-          className="screen-shake-toggle secondary-button"
-          type="button"
-          onClick={onToggleScreenShake}
-          aria-pressed={screenShakeEnabled}
-          aria-label={screenShakeEnabled ? 'Отключить эффекты камеры' : 'Включить эффекты камеры'}
-          title={screenShakeEnabled ? 'Отключить эффекты камеры' : 'Включить эффекты камеры'}
-        >
-          <Vibrate aria-hidden="true" />
-          <span>{screenShakeEnabled ? 'Камера: вкл.' : 'Камера: выкл.'}</span>
-        </button>
-        <label className="sfx-volume-control menu-sfx-volume">
-          <Volume2 aria-hidden="true" />
-          <span>Громкость эффектов</span>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.05"
-            value={sfxVolume}
-            onChange={(event) => onSfxVolumeChange(Number(event.currentTarget.value))}
-            aria-label="Громкость эффектов"
-          />
-          <strong>{Math.round(sfxVolume * 100)}%</strong>
-        </label>
-        <VisualSettingsControls
-          visualPreferences={visualPreferences}
-          visualPreferencesError={visualPreferencesError}
-          onVisualPreferencesChange={onVisualPreferencesChange}
-        />
-      </div>
       <header className="hero-header">
         <div className="hackathon-tag">
           <Sparkles aria-hidden="true" />
@@ -1600,6 +1483,47 @@ function MenuScreen({
             Одна жизнь, свой мир и свой маршрут к крепости противника для каждой
             стороны.
           </p>
+        </div>
+
+        {activeRun ? (
+          <p className="new-run-blocked-note">
+            <Shield aria-hidden="true" />
+            Новый забег станет доступен после продолжения или явного отказа от активного.
+          </p>
+        ) : null}
+
+        <div className="faction-grid">
+          {(Object.keys(FACTION_INFO) as Faction[]).map((faction) => {
+            const info = FACTION_INFO[faction]
+            return (
+              <article className={`faction-card ${faction}`} key={faction}>
+                <div className="faction-scenery" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </div>
+                <div className="faction-icon">
+                  <FactionEmblem faction={faction} />
+                </div>
+                <span className="faction-subtitle">{info.subtitle}</span>
+                <h3>{info.name}</h3>
+                <p>{info.description}</p>
+                <div className="perk">
+                  <Sparkles aria-hidden="true" />
+                  <span>{info.perk}</span>
+                </div>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={Boolean(activeRun)}
+                  onClick={() => onStart(faction)}
+                >
+                  <Play aria-hidden="true" />
+                  {activeRun ? 'Есть активный забег' : `Начать · seed ${canonicalSeed}`}
+                </button>
+              </article>
+            )
+          })}
         </div>
 
         <div className="run-setup">
@@ -1759,46 +1683,6 @@ function MenuScreen({
           </div>
         </div>
 
-        {activeRun ? (
-          <p className="new-run-blocked-note">
-            <Shield aria-hidden="true" />
-            Новый забег станет доступен после продолжения или явного отказа от активного.
-          </p>
-        ) : null}
-
-        <div className="faction-grid">
-          {(Object.keys(FACTION_INFO) as Faction[]).map((faction) => {
-            const info = FACTION_INFO[faction]
-            return (
-              <article className={`faction-card ${faction}`} key={faction}>
-                <div className="faction-scenery" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </div>
-                <div className="faction-icon">
-                  <FactionEmblem faction={faction} />
-                </div>
-                <span className="faction-subtitle">{info.subtitle}</span>
-                <h3>{info.name}</h3>
-                <p>{info.description}</p>
-                <div className="perk">
-                  <Sparkles aria-hidden="true" />
-                  <span>{info.perk}</span>
-                </div>
-                <button
-                  className="primary-button"
-                  type="button"
-                  disabled={Boolean(activeRun)}
-                  onClick={() => onStart(faction)}
-                >
-                  <Play aria-hidden="true" />
-                  {activeRun ? 'Есть активный забег' : `Начать · seed ${canonicalSeed}`}
-                </button>
-              </article>
-            )
-          })}
-        </div>
       </section>
 
       <section className="menu-lower">
@@ -1909,6 +1793,124 @@ function MenuScreen({
             )}
           </section>
         </div>
+      </section>
+      <section className="menu-settings" aria-labelledby="menu-settings-title">
+        <h2 id="menu-settings-title">Настройки</h2>
+        <button
+          className="theme-toggle secondary-button"
+          type="button"
+          onClick={onToggleTheme}
+          aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
+          title={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
+        >
+          {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+          <span>{theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}</span>
+        </button>
+        <button
+          className="day-night-toggle secondary-button"
+          type="button"
+          onClick={onToggleDynamicDayNight}
+          aria-pressed={dynamicDayNight}
+          aria-label={
+            dynamicDayNight
+              ? 'Отключить динамическое время суток'
+              : 'Включить динамическое время суток'
+          }
+          title={
+            dynamicDayNight
+              ? 'Отключить динамическое время суток'
+              : 'Включить динамическое время суток'
+          }
+        >
+          <Clock3 aria-hidden="true" />
+          <span>{dynamicDayNight ? 'Время суток: вкл.' : 'Время суток: выкл.'}</span>
+        </button>
+        <button
+          className="weather-toggle secondary-button"
+          type="button"
+          onClick={onToggleWeather}
+          aria-pressed={weatherEnabled}
+          aria-label={weatherEnabled ? 'Отключить динамическую погоду' : 'Включить динамическую погоду'}
+          title={weatherEnabled ? 'Отключить динамическую погоду' : 'Включить динамическую погоду'}
+        >
+          <CloudRain aria-hidden="true" />
+          <span>{weatherEnabled ? 'Погода: вкл.' : 'Погода: выкл.'}</span>
+        </button>
+        <button
+          className="bloom-toggle secondary-button"
+          type="button"
+          onClick={onToggleBloom}
+          aria-pressed={bloomEnabled}
+          aria-label={bloomEnabled ? 'Отключить свечение' : 'Включить свечение'}
+          title={bloomEnabled ? 'Отключить свечение' : 'Включить свечение'}
+        >
+          <Sparkles aria-hidden="true" />
+          <span>{bloomEnabled ? 'Свечение: вкл.' : 'Свечение: выкл.'}</span>
+        </button>
+        <button
+          className="ink-outlines-toggle secondary-button"
+          type="button"
+          onClick={onToggleInkOutlines}
+          aria-pressed={inkOutlinesEnabled}
+          aria-label={
+            inkOutlinesEnabled
+              ? 'Отключить чернильные контуры'
+              : 'Включить чернильные контуры'
+          }
+          title={
+            inkOutlinesEnabled
+              ? 'Отключить чернильные контуры'
+              : 'Включить чернильные контуры'
+          }
+        >
+          <Eye aria-hidden="true" />
+          <span>
+            {inkOutlinesEnabled
+              ? 'Чернильные контуры: вкл.'
+              : 'Чернильные контуры: выкл.'}
+          </span>
+        </button>
+        <button
+          className="foliage-toggle secondary-button"
+          type="button"
+          onClick={onCycleFoliageQuality}
+          data-quality={foliageQuality}
+          aria-label={`Качество растительности: ${foliageQualityLabels[foliageQuality]}`}
+          title="Изменить качество растительности"
+        >
+          <Trees aria-hidden="true" />
+          <span>Растительность: {foliageQualityLabels[foliageQuality]}</span>
+        </button>
+        <button
+          className="screen-shake-toggle secondary-button"
+          type="button"
+          onClick={onToggleScreenShake}
+          aria-pressed={screenShakeEnabled}
+          aria-label={screenShakeEnabled ? 'Отключить эффекты камеры' : 'Включить эффекты камеры'}
+          title={screenShakeEnabled ? 'Отключить эффекты камеры' : 'Включить эффекты камеры'}
+        >
+          <Vibrate aria-hidden="true" />
+          <span>{screenShakeEnabled ? 'Камера: вкл.' : 'Камера: выкл.'}</span>
+        </button>
+        <label className="sfx-volume-control menu-sfx-volume">
+          <Volume2 aria-hidden="true" />
+          <span>Громкость эффектов</span>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={sfxVolume}
+            onChange={(event) => onSfxVolumeChange(Number(event.currentTarget.value))}
+            aria-label="Громкость эффектов"
+          />
+          <strong>{Math.round(sfxVolume * 100)}%</strong>
+        </label>
+        <VisualSettingsControls
+          visualPreferences={visualPreferences}
+          visualPreferencesError={visualPreferencesError}
+          onVisualPreferencesChange={onVisualPreferencesChange}
+        />
       </section>
       <footer className="menu-footer">
         <span>WASD — движение</span>
