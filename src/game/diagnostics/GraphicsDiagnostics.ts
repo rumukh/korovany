@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { ActiveRunSaveV3 } from '../run/runTypes.ts'
+import type { VisualLaunchPreferences } from '../visualSettings.ts'
 import {
   GRAPHICS_DIAGNOSTICS_VERSION, GRAPHICS_VISUAL_REVISION, type GraphicsClock,
 } from './GraphicsClock.ts'
@@ -16,6 +17,24 @@ import {
 } from './GraphicsCharacterPortrait.ts'
 
 export interface GraphicsPoint { x: number; y: number; z: number }
+
+export function graphicsVisualSettings(search: string): Partial<VisualLaunchPreferences> {
+  const params = new URLSearchParams(search)
+  if (params.get('graphicsDiagnostics') !== '1') return {}
+  const visualMode = params.get('visualMode')
+  const visualQuality = params.get('visualQuality')
+  if (visualMode !== null && visualMode !== 'legacy' && visualMode !== 'enhanced') {
+    throw new Error('Graphics diagnostics: visualMode must be legacy or enhanced')
+  }
+  if (visualQuality !== null && visualQuality !== 'high' && visualQuality !== 'balanced' && visualQuality !== 'low') {
+    throw new Error('Graphics diagnostics: visualQuality must be high, balanced or low')
+  }
+  return {
+    ...(visualMode !== null ? { visualMode } : {}),
+    ...(visualQuality !== null ? { visualQuality } : {}),
+  }
+}
+
 export interface GraphicsFixtureStage {
   label: string
   player?: GraphicsPoint

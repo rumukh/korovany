@@ -1,26 +1,25 @@
-# Visual preferences and preview integration
+# Graphics defaults and interface preferences
 
-The graphics preview uses the existing `GameEngineSettings`, `GameEngineOptions`,
+Graphics use the existing `GameEngineSettings`, `GameEngineOptions`,
 App preference state, effect setters, and save/continue flow. It does not introduce
 another game engine, campaign format, or settings service.
 
 ## Player-facing behavior
 
-The menu and pause dialog offer **Исходная / Улучшенная (предпросмотр)** and
-**Высокое / Сбалансированное / Низкое**. Legacy remains the default. Quality only
-affects the enhanced path; selecting Low must not degrade the legacy comparison.
+New and continued runs use **enhanced graphics at High quality**. The menu and
+pause dialog no longer expose mode or quality selectors, preview notices, or
+graphics-reload instructions. App launches use the engine defaults rather than
+persisted graphics choices, so existing original/low/balanced preferences cannot
+downgrade a run. Campaign data and independently saved effect choices are retained.
 
-Mode and quality are construction-scoped. Changing a selector records a pending
-preference, not a live scene rebuild. The pause dialog separately identifies the
-current rendering mode and explains how to apply a change: leave through
-**В главное меню**, which saves the active campaign, then continue that campaign
-from the menu. Closing pause keeps the current engine and visuals. The existing
-menu action refuses to leave when its checkpoint cannot be persisted; selectors
-never start a new campaign, clear a save, or resume a paused fight.
+Mode and quality remain construction-scoped engine options for explicit
+diagnostic comparisons. They are not player preferences. Closing pause keeps the
+current engine and visuals. The existing **В главное меню** action saves the
+active campaign and refuses to leave when its checkpoint cannot be persisted.
 
 `hudMode` is a DOM-only Full/Compact preference, exposed as **Боевой интерфейс**
-in the menu and pause visual controls. It defaults to Full and is excluded from
-renderer reload comparisons. Changing it applies immediately without restarting
+in the menu and pause interface controls. It defaults to Full.
+Changing it applies immediately without restarting
 the engine, dismissing an overlay or resuming a paused fight.
 It is not a `GameView`, `RunConfig`, or `GameEngineSettings` field.
 
@@ -34,8 +33,11 @@ changing damage state or intentional injury-related vision loss. Full mode keeps
 the original panel arrangement. Browser layout/visual acceptance is separate from
 the CPU-tested DOM contract.
 
-New preferences are stored as one versioned record at
-`korovany-visual-preferences`. Existing bloom, ink, foliage, weather, camera,
+Interface preferences are stored as `{ version: 2, hudMode }` at
+`korovany-visual-preferences`. Version 1 records are also read, retaining only
+`hudMode` and discarding the retired graphics fields. Reads do not rewrite
+storage; the next HUD preference save writes version 2.
+Existing bloom, ink, foliage, weather, camera,
 day/night, audio, and theme keys remain authoritative and are not migrated or
 overwritten. Invalid records and storage failures use the existing
 `Korovany: ...` console-warning convention. A failed preference write also leaves
@@ -52,7 +54,7 @@ tab without claiming it was persisted.
 
 **Export:** `VisualPreferences`
 
-- **Contract:** Launch preferences plus `hudMode: 'full' | 'compact'`; App-owned
+- **Contract:** Only `hudMode: 'full' | 'compact'`; App-owned, with no graphics tier fields
 
 **Export:** `VisualSettings`
 
@@ -65,23 +67,20 @@ tab without claiming it was persisted.
 
 **Export:** `normalizeVisualPreferences(value, onWarning?)`
 
-- **Contract:** Validated, immutable preferences; invalid fields warn and independently fall back
+- **Contract:** Validated, immutable HUD preferences; invalid HUD values warn and fall back to Full
 
 **Export:** `normalizeVisualSettings(value, onWarning?)`
 
-- **Contract:** Immutable engine visual subset; no device probing, campaign data, or HUD field
+- **Contract:** Immutable engine visual subset, defaulting to enhanced/High; explicit diagnostic tiers remain supported.
+  No device probing, campaign data, or HUD field
 
 **Export:** `loadVisualPreferences(storage, onWarning?)`
 
-- **Contract:** Reads the new record only; accepts the existing `StorageLike` read interface
+- **Contract:** Reads version 1 or 2 of the interface record only; accepts the existing `StorageLike` read interface
 
 **Export:** `saveVisualPreferences(storage, preferences, onWarning?)`
 
 - **Contract:** One write, returns `false` on failure; never writes campaign or old effect keys
-
-**Export:** `visualPreferenceApplication(selected, active)`
-
-- **Contract:** `'next-launch'`, `'current'`, or `'reload-required'`; HUD-only changes do not require a reload
 
 **Export:** `foliageQualityDensity(quality)`
 
@@ -150,8 +149,8 @@ allocate each frame.
 media-query, user-agent, GPU, simulation, or random-stream access.
 
 Bloom disabled always resolves to **no composer**, including in enhanced mode.
-Low enhanced also resolves to the direct path. Selecting enhanced must never
-turn a stored bloom-off preference back on. Runtime allocation/driver failures
+Low enhanced diagnostic comparisons also resolve to the direct path. The enhanced
+default must never turn a stored bloom-off preference back on. Runtime allocation/driver failures
 are reported by the frame owner separately: policy data is not a claim that a
 GPU effect succeeded.
 
@@ -181,30 +180,29 @@ these same global ceilings between dynamic art, world, and post/transient effect
 It is acceptance data, not another preference or permission to alter gameplay.
 Incomplete subsystem attribution remains explicitly incomplete.
 
-## Capability activation is not visual approval
+## Default promotion and diagnostic comparisons
 
-At the original enabling checkpoint `VISUAL_PREVIEW_AVAILABLE` was `false`.
-The GFX-02 foundation now sets it to `true` for an explicitly requested enhanced
-preview. Legacy remains the stored default. This enables the camera, foreground,
-material/ink, bounded world-shadow and AA foundation. GFX-05 Stage A adds the
-reserved bounded atmosphere/wetness and secondary-particle presentation to that
-same explicit preview. It is not the later joined character/world art, final
-atmosphere tuning, or an approved hardware tier.
+The September 17, 2026 settings change promotes the integrated enhanced path to
+High by default at the user's request. `VISUAL_PREVIEW_AVAILABLE` remains the
+single compiled capability flag; consumers still use the resolved policy.
+This promotion is not a new claim of physical-device or performance certification.
 
-The supported next-stage activation is a **coordinated checkpoint change** to
-this single constant in `visualPolicy.ts`, alongside the integrated GFX-02
-consumers. GFX-02 may make that change in its coordinator-approved implementation
-checkpoint to capture its actual preview. This is not a per-device guess or an
-additional feature flag in each builder. Consumers use effective policy fields,
-not private copies of `visualMode` or URL-dependent bypasses.
+The graphics runner defaults to enhanced/High. Its `--visual-mode` and `--quality`
+arguments now use `visualMode` and `visualQuality` query parameters, accepted only
+with `graphicsDiagnostics=1`, rather than retired local-storage preferences.
+Invalid diagnostic values fail explicitly. Without diagnostic opt-in the query
+cannot override the normal defaults. Explicit legacy comparisons retain the
+original renderer, and lower enhanced tiers remain covered by policy tests.
+Diagnostic choices are never persisted in campaign or interface records.
 
-Pure tests can explicitly pass `{ enhancedAvailable: true }` to the resolver to
-exercise candidate policy data before GPU work. That override alone does not
-activate an engine, allocate graphics, or constitute browser evidence.
-Enabling capability leaves `DEFAULT_VISUAL_PREFERENCES.visualMode = 'legacy'`.
-Human visual approval, real-device budgets and default promotion are separate
-gates owned by the coordinator. Partial preview milestones must not be described
-as completed quality tiers.
+Run `node scripts/graphics-run.mjs --out ABSOLUTE_DIRECTORY --cases guard-opening --repeat 1 --settings-controls`
+to check real desktop/mobile menu and pause controls, fresh and migrated High
+defaults, live HUD changes without an engine restart, and save/continue preservation.
+The runner also asserts that requested diagnostic comparisons match the active policy.
+
+Pure tests can pass `{ enhancedAvailable: false }` to exercise the unavailable
+capability fallback. An environment override alone does not allocate graphics or
+constitute browser evidence.
 
 ## Sizing and resource ownership
 

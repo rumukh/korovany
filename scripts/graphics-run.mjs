@@ -14,6 +14,7 @@ import {
 } from './graphics/portraits.mjs'
 import { assertCaptureDeadline, captureRuntimeControls, recordedRiverEndpoint } from './graphics/runtime-controls.mjs'
 import { captureNoticeLayout, captureNoticeComponentLayout } from './graphics/notice-layout.mjs'
+import { captureSettingsControls } from './graphics/settings-controls.mjs'
 
 const toolRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
@@ -53,6 +54,7 @@ if (flag('help')) {
   console.log('Joined preview: --portrait-smoke with --portraits captures only the fixed player/front/current stage. --runtime-controls checks held same-engine resize/DPR/bloom toggles. --hud-mode full|compact selects existing DOM preference. --recorded-river-endpoint stages the preserved river player/yaw/pitch, never a camera override.')
   console.log('Compact HUD: --notice-layout captures actual guard teaching notice rectangles at 390 and 1920 in one held crowded-25 fixture; asserts no essential HUD overlap.')
   console.log('HUD-only: --notice-component-layout ABSOLUTE_JSON uses the exported compactCombatHud.test.ts component fixture and built CSS; no engine, combat or profiling run.')
+  console.log('Settings: --settings-controls checks fresh/migrated defaults, menu/pause controls and save/continue at desktop/mobile sizes.')
   process.exit(0)
 }
 const output = option('out')
@@ -65,12 +67,12 @@ const dpr = Number(option('dpr', '1'))
 const repeat = Number(option('repeat', flag('portraits') ? '1' : '2'))
 const warmupFrames = Number(option('warmup', '120'))
 const sampleFrames = Number(option('frames', '300'))
-const visualMode = option('visual-mode', 'legacy')
+const visualMode = option('visual-mode', 'enhanced')
 const quality = option('quality', 'high')
 const hudMode = option('hud-mode', 'full')
 const componentLayoutPath = option('notice-component-layout')
 if (componentLayoutPath && (!isAbsolute(componentLayoutPath) || repeat !== 1 ||
-    ['portraits', 'profile', 'motion', 'runtime-controls', 'notice-layout', 'native-route', 'lifecycle', 'foundation'].some(flag))) {
+    ['portraits', 'profile', 'motion', 'runtime-controls', 'notice-layout', 'settings-controls', 'native-route', 'lifecycle', 'foundation'].some(flag))) {
   throw new Error('Notice component layout requires an absolute fixture, --repeat 1 and no engine diagnostic jobs')
 }
 const componentLayout = componentLayoutPath ? JSON.parse(await readFile(componentLayoutPath, 'utf8')) : null
@@ -227,7 +229,7 @@ async function launchFixture(fixture) {
     'korovany-bloom': String(!flag('no-post')), 'korovany-ink-outlines': String(!flag('no-ink')),
     'korovany-weather': String(!flag('no-weather')), 'korovany-foliage': 'high', 'korovany-dynamic-day-night': 'true',
     'korovany-screen-shake': 'true',
-    'korovany-visual-preferences': JSON.stringify({ version: 1, visualMode, visualQuality: quality, hudMode }),
+    'korovany-visual-preferences': JSON.stringify({ version: 2, hudMode }),
   }
   await browser.send('Page.navigate', { url: origin })
   await browser.waitFor(`location.origin === ${JSON.stringify(origin)} && document.readyState === 'complete'`)
@@ -237,6 +239,7 @@ async function launchFixture(fixture) {
   })()`)
   const query = new URLSearchParams({
     graphicsDiagnostics: '1', visualSeed: String(GRAPHICS_SEED), visualTime: String(fixture.time), visualWeather: fixture.weather,
+    visualMode, visualQuality: quality,
   })
   await browser.send('Page.navigate', { url: `${origin}/?${query}` })
   await browser.waitFor(`!!document.querySelector(${JSON.stringify(fixture.save ? '.active-run-actions .primary-button' : '#world-seed')})`)
@@ -247,6 +250,9 @@ async function launchFixture(fixture) {
   }
   await browser.waitFor('!!window.__korovanyGraphics', 60000)
   const before = await browser.evaluate('window.__korovanyGraphics.snapshot()')
+  if (before.runtime.visualPolicy.mode !== visualMode || before.runtime.visualPolicy.quality !== quality) {
+    throw new Error('Diagnostic visual policy does not match the requested comparison')
+  }
   const world = await browser.evaluate('window.__korovanyGraphics.world()')
   const stage = fixtureStage(fixture, world, reference, before)
   if (endpointStage) Object.assign(stage, endpointStage)
@@ -467,6 +473,18 @@ try {
   await browser.send('Emulation.setEmulatedMedia', {
     features: [{ name: 'prefers-reduced-motion', value: flag('reduced-motion') ? 'reduce' : 'no-preference' }],
   })
+  if (flag('settings-controls')) {
+    manifest.settingsControls = { captures: [] }
+    manifest.settingsControls.summary = await captureSettingsControls(browser, origin, { width, height, dpr },
+      async (id, measurement) => {
+        checkTime()
+        assertBrowserHealthy(`settings:${id}`)
+        const file = `settings-${id}.png`
+        const bytes = await browser.screenshot(join(out, file))
+        manifest.settingsControls.captures.push({ id, file, sha256: sha256(bytes) })
+        await writeFile(join(out, `settings-${id}.json`), JSON.stringify(measurement, null, 2))
+      }, checkTime)
+  }
   if (componentLayout) {
     manifest.componentLayout = { captures: [] }
     manifest.componentLayout.summary = await captureNoticeComponentLayout(

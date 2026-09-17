@@ -11,7 +11,7 @@ import {
 } from '../src/game/diagnostics/GraphicsFrameMeter.ts'
 import { MethodPatch } from '../src/game/diagnostics/MethodPatch.ts'
 import {
-  validateGraphicsProfile, validateGraphicsStage, validateGraphicsProbe,
+  graphicsVisualSettings, validateGraphicsProfile, validateGraphicsStage, validateGraphicsProbe,
 } from '../src/game/diagnostics/GraphicsDiagnostics.ts'
 import { RandomStream } from '../src/game/random/RandomStream.ts'
 import { deriveSeed } from '../src/game/random/seed.ts'
@@ -84,6 +84,24 @@ test('diagnostics are opt-in and reject malformed seed, time and weather', () =>
   for (const suffix of ['visualSeed=-1', 'visualSeed=1.5', 'visualSeed=4294967296',
     'visualTime=NaN', 'visualTime=-1', 'visualWeather=hail']) {
     assert.throws(() => graphicsClockOptions(`?graphicsDiagnostics=1&${suffix}`))
+  }
+})
+
+test('graphics comparisons require diagnostic opt-in and reject invalid modes or tiers', () => {
+  for (const query of ['', '?visualMode=legacy&visualQuality=low',
+    '?graphicsDiagnostics=true&visualMode=invalid']) {
+    assert.deepEqual(graphicsVisualSettings(query), {})
+  }
+  assert.deepEqual(graphicsVisualSettings('?graphicsDiagnostics=1'), {})
+  for (const visualMode of ['legacy', 'enhanced']) {
+    for (const visualQuality of ['high', 'balanced', 'low']) {
+      assert.deepEqual(graphicsVisualSettings(
+        `?graphicsDiagnostics=1&visualMode=${visualMode}&visualQuality=${visualQuality}`,
+      ), { visualMode, visualQuality })
+    }
+  }
+  for (const suffix of ['visualMode=auto', 'visualMode=', 'visualQuality=ultra', 'visualQuality=']) {
+    assert.throws(() => graphicsVisualSettings(`?graphicsDiagnostics=1&${suffix}`), /Graphics diagnostics:/)
   }
 })
 

@@ -3,7 +3,8 @@
 **The local opt-in preview is implemented and integrated.** The six original
 workstream histories, the later gameplay fixes, and the corrections found during
 joined browser runs are preserved. Nothing in this report promotes a hardware
-tier or changes the legacy default.
+tier or changed the legacy default at that checkpoint. The September 17, 2026
+settings update subsequently made enhanced/High the default at the user's request.
 
 The camera-fixed runtime is `7d54a3eb890caa7ae6d3bc5d3898d8e143f24e5c`.
 The standalone `bundle.html` is 2,108,511 bytes, SHA-256
@@ -19,9 +20,9 @@ the movement ray. The exact frozen-world case is a regression fixture; the saved
 run was restored in the patched browser, and the user confirmed stable camera
 behavior. Earlier image/profile receipts retain their original source commits.
 
-Select **Улучшенная (предпросмотр)** in the menu or pause visual settings.
-During a run, apply a mode/quality change by saving to **В главное меню** and
-continuing the campaign. **Боевой интерфейс** changes the Full/Compact HUD live.
+Enhanced/High now applies automatically to new and continued runs; the graphics
+mode and preview-quality selectors have been removed. **Боевой интерфейс** still
+changes the Full/Compact HUD live.
 See [visual preferences](visual-settings.md) for the complete behavior.
 
 ## What is included
@@ -164,9 +165,9 @@ ResizeObserver delivery settle before drawing. The final mobile/desktop
 captures retain the world as well as the HUD; earlier black-frame artifacts
 remain in the local evidence rather than being called successful visual proof.
 
-## Remaining promotion gates
+## Remaining hardware validation
 
-Legacy stays the default. Physical mobile/integrated hardware, sustained thermal
+Default promotion does not certify physical mobile/integrated hardware. Sustained thermal
 behavior, and full frame-time approval remain open. The allocation report also
 keeps unexposed caches, unmapped/unuploaded backing stores, temporary peaks,
 disjoint presentation CPU scopes and driver storage explicitly incomplete.

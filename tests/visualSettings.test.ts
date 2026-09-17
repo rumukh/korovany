@@ -4,12 +4,12 @@ import {
   DEFAULT_VISUAL_PREFERENCES,
   DEFAULT_VISUAL_SETTINGS,
   VISUAL_PREFERENCES_KEY,
+  VISUAL_PREFERENCES_VERSION,
   foliageQualityDensity,
   loadVisualPreferences,
   normalizeVisualPreferences,
   normalizeVisualSettings,
   saveVisualPreferences,
-  visualPreferenceApplication,
   type VisualPreferences,
   type VisualQuality,
 } from '../src/game/visualSettings.ts'
@@ -45,25 +45,31 @@ function warnings() {
   return { messages, errors, warn }
 }
 
-test('absent preferences keep legacy rendering and the existing engine defaults', () => {
+test('absent preferences launch enhanced graphics at the highest tier with the full HUD', () => {
   const { storage, calls } = memoryStorage()
   const { warn, messages } = warnings()
-  assert.deepEqual(loadVisualPreferences(storage, warn), {
-    visualMode: 'legacy', visualQuality: 'balanced', hudMode: 'full',
-  })
+  assert.deepEqual(loadVisualPreferences(storage, warn), { hudMode: 'full' })
   assert.deepEqual(normalizeVisualSettings(undefined, warn), DEFAULT_VISUAL_SETTINGS)
+  const policy = resolveVisualPolicy({})
+  assert.equal(policy.mode, 'enhanced')
+  assert.equal(policy.quality, 'high')
+  assert.equal(policy.post.antialiasing, 'fxaa')
+  assert.equal(policy.shadows.mapSize, 2048)
+  assert.equal(policy.shadows.worldCasterBudget, 16)
+  assert.equal(policy.render.maxPixels, 2_100_000)
+  assert.deepEqual(policy.density, { foliage: 1, weather: 1, ambientLife: 1, particles: 1 })
   assert.deepEqual(calls, [`read:${VISUAL_PREFERENCES_KEY}`])
   assert.deepEqual(messages, [])
   assert.equal('hudMode' in DEFAULT_VISUAL_SETTINGS, false, 'HUD presentation is not an engine setting')
 })
 
-test('normalization validates fields independently without promoting an invalid mode', () => {
+test('HUD preferences discard retired graphics fields and warn about invalid HUD values', () => {
   const { warn, messages } = warnings()
   const preferences = normalizeVisualPreferences({
     visualMode: 'auto', visualQuality: 'low', hudMode: 'compact', seed: 99,
   }, warn)
-  assert.deepEqual(preferences, { visualMode: 'legacy', visualQuality: 'low', hudMode: 'compact' })
-  assert.deepEqual(messages, ['Korovany: invalid visualMode preference ignored.'])
+  assert.deepEqual(preferences, { hudMode: 'compact' })
+  assert.deepEqual(messages, [])
   assert.equal(Object.isFrozen(preferences), true)
   assert.equal(Reflect.set(preferences, 'visualMode', 'enhanced'), false)
 
@@ -71,12 +77,28 @@ test('normalization validates fields independently without promoting an invalid 
   assert.deepEqual(normalizeVisualPreferences({
     visualMode: true, visualQuality: 0, hudMode: [],
   }, invalid.warn), DEFAULT_VISUAL_PREFERENCES)
-  assert.equal(invalid.messages.length, 3)
+  assert.deepEqual(invalid.messages, ['Korovany: invalid hudMode preference ignored.'])
   for (const value of [null, [], false, 3, 'enhanced']) {
     const rejected = warnings()
     assert.deepEqual(normalizeVisualPreferences(value, rejected.warn), DEFAULT_VISUAL_PREFERENCES)
     assert.equal(rejected.messages.length, 1)
   }
+})
+
+test('explicit engine comparison settings remain valid while invalid values fall back to enhanced high', () => {
+  for (const visualMode of ['legacy', 'enhanced'] as const) {
+    for (const visualQuality of ['low', 'balanced', 'high'] as const) {
+      const settings = normalizeVisualSettings({ visualMode, visualQuality })
+      assert.equal(settings.visualMode, visualMode)
+      assert.equal(settings.visualQuality, visualQuality)
+    }
+  }
+  const { warn, messages } = warnings()
+  assert.deepEqual(normalizeVisualSettings({ visualMode: 'auto', visualQuality: 0 }, warn), DEFAULT_VISUAL_SETTINGS)
+  assert.deepEqual(messages, [
+    'Korovany: invalid visualMode preference ignored.',
+    'Korovany: invalid visualQuality preference ignored.',
+  ])
 })
 
 test('normalization retains independent effect-off preferences and warns about invalid booleans', () => {
@@ -112,29 +134,51 @@ test('new visual preferences round-trip atomically without changing campaign or 
     ['korovany-active-run-v3', '{"runId":"untouched","seed":20260906}'],
   ]
   const { storage, values, calls } = memoryStorage(before)
-  const preferences: VisualPreferences = {
-    visualMode: 'enhanced', visualQuality: 'high', hudMode: 'compact',
-  }
+  const preferences: VisualPreferences = { hudMode: 'compact' }
   assert.equal(saveVisualPreferences(storage, preferences), true)
   assert.deepEqual(loadVisualPreferences(storage), preferences)
   for (const [key, value] of before) assert.equal(values.get(key), value)
   assert.deepEqual(calls, [`write:${VISUAL_PREFERENCES_KEY}`, `read:${VISUAL_PREFERENCES_KEY}`])
-  assert.deepEqual(JSON.parse(values.get(VISUAL_PREFERENCES_KEY)!), { version: 1, ...preferences })
+  assert.deepEqual(JSON.parse(values.get(VISUAL_PREFERENCES_KEY)!), { version: VISUAL_PREFERENCES_VERSION, ...preferences })
 })
 
-test('malformed and unsupported persisted records warn and fall back to legacy', () => {
-  for (const raw of ['{', 'null', '[]', '{"version":2,"visualMode":"enhanced"}', '{}']) {
+test('existing graphics selections cannot downgrade a launch and migration preserves HUD and campaign data', () => {
+  for (const visualMode of ['legacy', 'enhanced']) {
+    for (const visualQuality of ['low', 'balanced', 'high']) {
+      const saved = JSON.stringify({ version: 1, visualMode, visualQuality, hudMode: 'compact' })
+      const { storage, values, calls } = memoryStorage([
+        [VISUAL_PREFERENCES_KEY, saved],
+        ['korovany-active-run-v3', '{"runId":"unchanged","seed":20260906}'],
+        ['korovany-bloom', 'false'],
+      ])
+      const { warn, messages } = warnings()
+      const preferences = loadVisualPreferences(storage, warn)
+      assert.deepEqual(preferences, { hudMode: 'compact' })
+      const policy = resolveVisualPolicy({ ...preferences, bloomEnabled: false })
+      assert.equal(policy.mode, 'enhanced')
+      assert.equal(policy.quality, 'high')
+      assert.equal(policy.post.enabled, false)
+      assert.deepEqual(calls, [`read:${VISUAL_PREFERENCES_KEY}`], 'migration must not mutate storage during reads')
+      assert.equal(saveVisualPreferences(storage, preferences, warn), true)
+      assert.deepEqual(JSON.parse(values.get(VISUAL_PREFERENCES_KEY)!), { version: 2, hudMode: 'compact' })
+      assert.equal(values.get('korovany-active-run-v3'), '{"runId":"unchanged","seed":20260906}')
+      assert.equal(values.get('korovany-bloom'), 'false')
+      assert.deepEqual(messages, [])
+    }
+  }
+})
+
+test('malformed and unsupported persisted records warn and fall back to the full HUD', () => {
+  for (const raw of ['{', 'null', '[]', '{"version":3,"hudMode":"compact"}', '{}']) {
     const { storage } = memoryStorage([[VISUAL_PREFERENCES_KEY, raw]])
     const { warn, messages } = warnings()
     assert.deepEqual(loadVisualPreferences(storage, warn), DEFAULT_VISUAL_PREFERENCES)
     assert.ok(messages.length > 0, `missing warning for ${raw}`)
   }
   const { storage } = memoryStorage([[VISUAL_PREFERENCES_KEY,
-    '{"version":1,"visualMode":"enhanced","visualQuality":"invalid","hudMode":"compact"}']])
+    '{"version":2,"hudMode":"invalid"}']])
   const { warn, messages } = warnings()
-  assert.deepEqual(loadVisualPreferences(storage, warn), {
-    visualMode: 'enhanced', visualQuality: 'balanced', hudMode: 'compact',
-  })
+  assert.deepEqual(loadVisualPreferences(storage, warn), { hudMode: 'full' })
   assert.equal(messages.length, 1)
 })
 
@@ -151,20 +195,6 @@ test('storage failures are explicit and do not produce a success result', () => 
     setItem() { throw writeError },
   }, DEFAULT_VISUAL_PREFERENCES, writeWarnings.warn), false)
   assert.deepEqual(writeWarnings.errors, [writeError])
-})
-
-test('mode and quality need a preserving reload but a DOM-only HUD choice does not', () => {
-  const active = DEFAULT_VISUAL_PREFERENCES
-  assert.equal(visualPreferenceApplication(active, null), 'next-launch')
-  assert.equal(visualPreferenceApplication(active, active), 'current')
-  const enhanced: VisualPreferences = { ...active, visualMode: 'enhanced' }
-  const high: VisualPreferences = { ...active, visualQuality: 'high' }
-  const compact: VisualPreferences = { ...active, hudMode: 'compact' }
-  assert.equal(visualPreferenceApplication(enhanced, active), 'reload-required')
-  assert.equal(visualPreferenceApplication(high, active), 'reload-required')
-  assert.equal(visualPreferenceApplication(compact, active), 'current')
-  assert.equal(visualPreferenceApplication(active, active), 'current', 'canceling a staged choice needs no reload')
-  assert.deepEqual(active, DEFAULT_VISUAL_PREFERENCES)
 })
 
 test('an unavailable preview reports requested enhanced separately from effective legacy', () => {
@@ -186,10 +216,10 @@ test('an unavailable preview reports requested enhanced separately from effectiv
 const qualities: readonly VisualQuality[] = ['high', 'balanced', 'low']
 
 test('legacy quality choices cannot change existing render, shadow, ink, LOD or density behavior', () => {
-  const baseline = resolveVisualPolicy(DEFAULT_VISUAL_SETTINGS)
+  const baseline = resolveVisualPolicy({ visualMode: 'legacy' })
   for (const quality of qualities) {
-    const legacy = resolveVisualPolicy({ visualQuality: quality }, { enhancedAvailable: true })
-    assert.equal(legacy.mode, 'legacy', 'availability alone is not an opt-in')
+    const legacy = resolveVisualPolicy({ visualMode: 'legacy', visualQuality: quality }, { enhancedAvailable: true })
+    assert.equal(legacy.mode, 'legacy', 'explicit legacy comparison remains available')
     for (const domain of ['render', 'post', 'camera', 'ink', 'shadows', 'lod', 'density'] as const) {
       assert.deepEqual(legacy[domain], baseline[domain], `${quality}: changed legacy ${domain}`)
     }
@@ -287,7 +317,7 @@ test('viewport policy bounds real 3D pixels without resizing CSS or HUD coordina
       }
     }
   }
-  const legacy = resolveVisualPolicy({})
+  const legacy = resolveVisualPolicy({ visualMode: 'legacy' })
   assert.deepEqual(resolveVisualViewport(legacy.render, 1920, 1080, 2), {
     cssWidth: 1920, cssHeight: 1080, devicePixelRatio: 2, pixelRatio: 1.75,
     drawingBufferWidth: 3360, drawingBufferHeight: 1890,

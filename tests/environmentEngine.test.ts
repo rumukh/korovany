@@ -180,7 +180,7 @@ test('real engine presentation refresh wires final fog, wetness and terrain/dens
     engine.updateAtmosphere(0)
     assert.equal((shader.uniforms.uArtWeather.value as THREE.Vector3).z, 0.8)
     assert.deepEqual((shader.uniforms.uArtAtmosphereColor.value as THREE.Color).toArray(), [0.1, 0.2, 0.3])
-    assert.equal(rain.geometry.drawRange.count, Math.floor(420 * 0.7 * 0.8) * 2)
+    assert.equal(rain.geometry.drawRange.count, Math.floor(420 * 0.8) * 2)
     assert.ok(rainPositions[1] > 60)
     assert.ok(terrainSamples <= 420 + 300)
     const attributes = [rain.geometry.getAttribute('position'), snow.geometry.getAttribute('position')]

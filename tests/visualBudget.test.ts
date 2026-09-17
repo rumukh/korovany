@@ -101,7 +101,7 @@ test('named subsystem envelopes partition the actual global policy without chang
 })
 
 test('legacy comparison has no subsystem tier and disabled effects do not donate their reserve', () => {
-  assert.equal(resolveVisualSubsystemAllocation(resolveVisualPolicy({})), null)
+  assert.equal(resolveVisualSubsystemAllocation(resolveVisualPolicy({ visualMode: 'legacy' })), null)
   assert.equal(resolveVisualSubsystemAllocation(resolveVisualPolicy(
     { visualMode: 'enhanced' }, { enhancedAvailable: false },
   )), null)

@@ -2032,7 +2032,6 @@ function PauseModal({
   foliageQuality,
   screenShakeEnabled,
   visualPreferences,
-  activeVisualPolicy,
   visualPreferencesError,
   onVisualPreferencesChange,
   onResume,
@@ -2166,7 +2165,6 @@ function PauseModal({
         </label>
         <VisualSettingsControls
           visualPreferences={visualPreferences}
-          activeVisualPolicy={activeVisualPolicy}
           visualPreferencesError={visualPreferencesError}
           onVisualPreferencesChange={onVisualPreferencesChange}
         />
@@ -2564,7 +2562,6 @@ export function GameScreen({
   foliageQuality,
   screenShakeEnabled,
   visualPreferences,
-  activeVisualPolicy,
   visualPreferencesError,
   onVisualPreferencesChange,
   onToggleMusic,
@@ -3098,7 +3095,6 @@ export function GameScreen({
           foliageQuality={foliageQuality}
           screenShakeEnabled={screenShakeEnabled}
           visualPreferences={visualPreferences}
-          activeVisualPolicy={activeVisualPolicy}
           visualPreferencesError={visualPreferencesError}
           onVisualPreferencesChange={onVisualPreferencesChange}
           onResume={onResume}
@@ -3180,7 +3176,6 @@ function App() {
   const inkOutlinesEnabledRef = useRef(inkOutlinesEnabled)
   const foliageQualityRef = useRef(foliageQuality)
   const screenShakeEnabledRef = useRef(screenShakeEnabled)
-  const visualPreferencesRef = useRef(visualPreferences)
   const lastGeneratedRegionRef = useRef<{
     runId: string
     regionId: string
@@ -3460,8 +3455,6 @@ function App() {
           inkOutlinesEnabled: inkOutlinesEnabledRef.current,
           foliageQuality: foliageQualityRef.current,
           screenShakeEnabled: screenShakeEnabledRef.current,
-          visualMode: visualPreferencesRef.current.visualMode,
-          visualQuality: visualPreferencesRef.current.visualQuality,
           achievementRunId: `${achievementSessionId}:${runId}`,
           generatedRun: launch,
           blueprint: blueprintForSeed(launch.config.seed),
@@ -3788,7 +3781,6 @@ function App() {
 
   const changeVisualPreferences = (preferences: VisualPreferences) => {
     const next = normalizeVisualPreferences(preferences, warnRunStorage)
-    visualPreferencesRef.current = next
     setVisualPreferences(next)
     let saved: boolean
     try {
@@ -3991,7 +3983,6 @@ function App() {
         foliageQuality={foliageQuality}
         screenShakeEnabled={screenShakeEnabled}
         visualPreferences={visualPreferences}
-        activeVisualPolicy={engineRef.current?.getVisualPolicy() ?? null}
         visualPreferencesError={visualPreferencesError}
         onVisualPreferencesChange={changeVisualPreferences}
         onToggleMusic={toggleMusic}

@@ -345,29 +345,29 @@ test('combined diagnostic snapshots report the actual policy without bypassing u
   }
 })
 
-test('App stages preview choices without restarting the engine or closing an overlay', () => {
+test('App applies HUD preferences without overriding graphics defaults, restarting the engine or closing an overlay', () => {
   const source = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
   const start = source.indexOf('const changeVisualPreferences = ')
   const end = source.indexOf('const selectBoon = ', start)
   assert.ok(start >= 0 && end > start)
   const handler = source.slice(start, end)
   assert.match(handler, /saveVisualPreferences\(window\.localStorage, next, warnRunStorage\)/)
-  assert.match(handler, /visualPreferencesRef\.current = next/)
+  assert.match(handler, /setVisualPreferences\(next\)/)
   assert.match(handler, /setVisualPreferencesError\(!saved\)/)
   assert.doesNotMatch(handler, /engineRef|setScreen|setRunId|applyGameOverlays|launchGeneratedRun|checkpointGeneratedRun/)
-  assert.match(source, /visualMode: visualPreferencesRef\.current\.visualMode/)
-  assert.match(source, /visualQuality: visualPreferencesRef\.current\.visualQuality/)
-  assert.doesNotMatch(source, /hudMode: visualPreferencesRef/)
+  const launchStart = source.indexOf('engine = new GameEngine(')
+  const launchEnd = source.indexOf('engineRef.current = engine', launchStart)
+  assert.ok(launchStart >= 0 && launchEnd > launchStart)
+  assert.doesNotMatch(source.slice(launchStart, launchEnd), /visualMode:|visualQuality:|hudMode:/)
+  assert.doesNotMatch(source, /activeVisualPolicy|visualPreferencesRef/)
 })
 
-test('the shared controls expose labels, pending application and shrinkable 44px selectors', () => {
+test('the shared controls expose only live HUD choices, storage errors and shrinkable 44px selectors', () => {
   const source = readFileSync(new URL('../src/game/ui/VisualSettingsControls.tsx', import.meta.url), 'utf8')
   const css = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
-  assert.match(source, /visualPreferenceApplication\(/)
+  assert.doesNotMatch(source, /visualPreferenceApplication|visualMode|visualQuality|activeVisualPolicy/)
   assert.match(source, /aria-describedby=/)
   assert.match(source, /htmlFor=/)
-  assert.match(source, /VISUAL_SETTINGS_COPY\.reloadRequired/)
-  assert.match(source, /VISUAL_SETTINGS_COPY\.unavailable/)
   assert.match(source, /VISUAL_SETTINGS_COPY\.storageFailed/)
   assert.match(css, /\.visual-settings select \{[^}]*min-height: 2\.75rem;[^}]*min-width: 0;/)
   assert.match(css, /\.visual-settings select:focus-visible \{/)

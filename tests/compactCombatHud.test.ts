@@ -13,7 +13,7 @@ import { generateWorld } from '../src/game/world/WorldGenerator.ts'
 import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
 import {
   DEFAULT_VISUAL_PREFERENCES, loadVisualPreferences, saveVisualPreferences,
-  visualPreferenceApplication, type HudMode,
+  type HudMode,
 } from '../src/game/visualSettings.ts'
 import { closeTopGameOverlay, initialGameOverlayState, topGameOverlay } from '../src/game/ui/gameOverlay.ts'
 
@@ -90,7 +90,6 @@ function fixture(mode: HudMode, faction: 'elf' | 'guard' | 'villain' = 'guard'):
     musicMuted: false, sfxVolume: 0.5, dynamicDayNight: true, weatherEnabled: true,
     bloomEnabled: false, inkOutlinesEnabled: false, foliageQuality: 'low', screenShakeEnabled: false,
     visualPreferences: { ...DEFAULT_VISUAL_PREFERENCES, hudMode: mode },
-    activeVisualPolicy: resolveVisualPolicy({ bloomEnabled: false }),
     visualPreferencesError: false, onVisualPreferencesChange: noop,
     onToggleMusic: noop, onSfxVolumeChange: noop, onToggleDynamicDayNight: noop,
     onToggleWeather: noop, onToggleBloom: noop, onToggleInkOutlines: noop,
@@ -186,10 +185,11 @@ test('full remains the persisted default; changing only HUD mode is live and doe
   assert.equal(loadVisualPreferences(storage).hudMode, 'full')
   const policy = resolveVisualPolicy({ visualMode: 'enhanced', bloomEnabled: false, weatherEnabled: false })
   for (const hudMode of ['compact', 'full'] as const) {
-    const preferences = { ...DEFAULT_VISUAL_PREFERENCES, visualMode: 'enhanced' as const, hudMode }
+    const preferences = { hudMode }
     assert.equal(saveVisualPreferences(storage, preferences), true)
     assert.deepEqual(loadVisualPreferences(storage), preferences)
-    assert.equal(visualPreferenceApplication(preferences, policy.preferences), 'current')
+    assert.equal(policy.mode, 'enhanced')
+    assert.equal(policy.quality, 'high')
     assert.equal(policy.post.enabled, false)
     assert.equal(policy.preferences.weatherEnabled, false)
     assert.equal('hudMode' in policy.preferences, false)
@@ -204,6 +204,10 @@ test('real blocking overlays remain singular and inert with either presentation;
       const html = renderToStaticMarkup(createElement(GameScreen, props))
       assert.match(html, /class="gameplay-layer" inert=""/)
       assert.equal((html.match(/role="dialog"/g) ?? []).length, 1, `${mode}/${owner}`)
+      if (owner === 'pause') {
+        assert.doesNotMatch(html, /Графика: предпросмотр|Режим графики|Качество предпросмотра|Улучшенная \(предпросмотр\)/)
+        assert.ok(html.includes(COMPACT_HUD_COPY.setting))
+      }
     }
     const state = { ...initialGameOverlayState(), paused: true, achievementsOpen: true }
     assert.equal(topGameOverlay(closeTopGameOverlay(state)), 'pause')
@@ -222,6 +226,8 @@ test('shared visual controls provide native labeled HUD choices and immediate-ap
     assert.ok(html.includes(`value="${hudMode}" selected=""`))
     assert.match(html, /<label for="[^"]+-hud">/)
     assert.match(html, /<select id="[^"]+-hud" aria-describedby="[^"]+-hud-help">/)
+    assert.equal((html.match(/<select /g) ?? []).length, 1)
+    assert.doesNotMatch(html, /предпросмотр|повторного входа|выберите|value="(?:legacy|enhanced|high|balanced|low)"/i)
   }
 })
 

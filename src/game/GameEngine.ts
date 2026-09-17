@@ -18,6 +18,7 @@ import { GraphicsClock, graphicsClockOptions } from './diagnostics/GraphicsClock
 import {
   GraphicsDiagnostics,
   createInstrumentedGraphicsRenderer,
+  graphicsVisualSettings,
   validateGraphicsStage,
   type GraphicsFixtureStage,
 } from './diagnostics/GraphicsDiagnostics.ts'
@@ -2373,6 +2374,7 @@ export class GameEngine {
     this.callbacks = callbacks
     this.faction = faction
     const diagnosticOptions = graphicsClockOptions(window.location.search)
+    const diagnosticVisuals = graphicsVisualSettings(window.location.search)
     const diagnosticStarted = diagnosticOptions ? performance.now() : 0
     this.graphicsClock = diagnosticOptions ? new GraphicsClock(diagnosticOptions) : null
     const launch = settings.generatedRun
@@ -2466,7 +2468,9 @@ export class GameEngine {
       throw new Error('Generated run achievement state is incompatible')
     }
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    this.visualPolicy = resolveVisualPolicy(settings, { reducedMotion: this.reducedMotion })
+    this.visualPolicy = resolveVisualPolicy(
+      { ...settings, ...diagnosticVisuals }, { reducedMotion: this.reducedMotion },
+    )
     const visuals = this.visualPolicy.preferences
     this.dynamicDayNight = visuals.dynamicDayNight
     this.weatherEnabled = visuals.weatherEnabled

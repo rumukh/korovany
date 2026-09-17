@@ -6,8 +6,7 @@ import {
   type VisualSettings,
 } from './visualSettings.ts'
 
-// GFX-02 foundation is available only by explicit opt-in. This is neither
-// default promotion nor approval of later art, atmosphere or device tiers.
+// Legacy and lower tiers remain available for explicit diagnostic comparisons.
 export const VISUAL_PREVIEW_AVAILABLE: boolean = true
 export const LEGACY_VISUAL_REVISION = 'legacy-f36ee7c'
 export const ENHANCED_VISUAL_REVISION = 'illustrated-v1'

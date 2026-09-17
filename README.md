@@ -21,21 +21,19 @@ A seeded 3D action roguelite inspired by the legendary Russian game-design meme.
 - Run endings score themselves: a brass fanfare march for victory, a tolling funeral lament for death
 - Suspend/continue, terminal victory or defeat, profile rewards, and run history
 - Procedural 3D art and generated instruments with no external art, audio, or asset packs
-- Opt-in enhanced graphics with articulated faction characters, tactile world surfaces,
+- Highest-quality enhanced graphics with articulated faction characters, tactile world surfaces,
   bounded atmosphere and combat effects, and a compact combat HUD
 
-## Enhanced graphics preview
+## Graphics and interface
 
-In the menu or pause visual settings, select **Улучшенная (предпросмотр)** and a
-quality level: **Высокое**, **Сбалансированное**, or **Низкое**. The original
-graphics remain the default. To apply a mode or quality change during a run,
-choose **В главное меню** to save the campaign, then continue it from the menu.
-Closing pause alone does not rebuild the scene.
+Enhanced graphics at **High** quality are the default for new and continued runs.
+The menu and pause dialog no longer offer graphics mode or preview-quality
+selectors. Previously stored original/low/balanced choices are ignored.
 
 **Боевой интерфейс** offers a live Full/Compact HUD preference. Bloom, ink,
-weather and camera effects remain independently configurable; bloom-off and
-Low enhanced use the real no-post path. Visual preferences do not replace or
-reset campaign saves.
+foliage, weather and camera effects remain independently configurable, including
+previously saved effect-off choices. Bloom-off uses the real no-post path.
+Interface preferences do not replace or reset campaign saves.
 
 The stylized character direction is user-approved, but the quality tiers are
 still provisional: desktop viewport emulation is not mobile-device certification,

@@ -10,7 +10,7 @@ export interface VisualLaunchPreferences {
   readonly visualQuality: VisualQuality
 }
 
-export interface VisualPreferences extends VisualLaunchPreferences {
+export interface VisualPreferences {
   readonly hudMode: HudMode
 }
 
@@ -25,17 +25,15 @@ export interface VisualSettings extends VisualLaunchPreferences {
 }
 
 export const VISUAL_PREFERENCES_KEY = 'korovany-visual-preferences'
-export const VISUAL_PREFERENCES_VERSION = 1
+export const VISUAL_PREFERENCES_VERSION = 2
 
 export const DEFAULT_VISUAL_PREFERENCES: VisualPreferences = Object.freeze({
-  visualMode: 'legacy',
-  visualQuality: 'balanced',
   hudMode: 'full',
 })
 
 export const DEFAULT_VISUAL_SETTINGS: VisualSettings = Object.freeze({
-  visualMode: DEFAULT_VISUAL_PREFERENCES.visualMode,
-  visualQuality: DEFAULT_VISUAL_PREFERENCES.visualQuality,
+  visualMode: 'enhanced',
+  visualQuality: 'high',
   dynamicDayNight: true,
   weatherEnabled: true,
   bloomEnabled: true,
@@ -94,12 +92,6 @@ export function normalizeVisualPreferences(
 ): VisualPreferences {
   const record = preferenceRecord(value, onWarning)
   return Object.freeze({
-    visualMode: enumPreference(
-      record.visualMode, ['legacy', 'enhanced'], 'legacy', 'visualMode', onWarning,
-    ),
-    visualQuality: enumPreference(
-      record.visualQuality, ['high', 'balanced', 'low'], 'balanced', 'visualQuality', onWarning,
-    ),
     hudMode: enumPreference(record.hudMode, ['full', 'compact'], 'full', 'hudMode', onWarning),
   })
 }
@@ -109,10 +101,13 @@ export function normalizeVisualSettings(
   onWarning: StorageWarning = warnVisualSettings,
 ): VisualSettings {
   const record = preferenceRecord(value, onWarning)
-  const preferences = normalizeVisualPreferences(record, onWarning)
   return Object.freeze({
-    visualMode: preferences.visualMode,
-    visualQuality: preferences.visualQuality,
+    visualMode: enumPreference(
+      record.visualMode, ['legacy', 'enhanced'], DEFAULT_VISUAL_SETTINGS.visualMode, 'visualMode', onWarning,
+    ),
+    visualQuality: enumPreference(
+      record.visualQuality, ['high', 'balanced', 'low'], DEFAULT_VISUAL_SETTINGS.visualQuality, 'visualQuality', onWarning,
+    ),
     dynamicDayNight: booleanPreference(record.dynamicDayNight, true, 'dynamicDayNight', onWarning),
     weatherEnabled: booleanPreference(record.weatherEnabled, true, 'weatherEnabled', onWarning),
     bloomEnabled: booleanPreference(record.bloomEnabled, true, 'bloomEnabled', onWarning),
@@ -145,7 +140,7 @@ export function loadVisualPreferences(
     return DEFAULT_VISUAL_PREFERENCES
   }
   const record = preferenceRecord(value, onWarning)
-  if (record.version !== VISUAL_PREFERENCES_VERSION) {
+  if (record.version !== 1 && record.version !== VISUAL_PREFERENCES_VERSION) {
     onWarning('Korovany: unsupported visual preferences version ignored.')
     return DEFAULT_VISUAL_PREFERENCES
   }
@@ -168,17 +163,6 @@ export function saveVisualPreferences(
     onWarning('Korovany: visual preferences could not be saved.', error)
     return false
   }
-}
-
-export type VisualPreferenceApplication = 'next-launch' | 'current' | 'reload-required'
-
-export function visualPreferenceApplication(
-  selected: VisualLaunchPreferences,
-  active: VisualLaunchPreferences | null,
-): VisualPreferenceApplication {
-  if (!active) return 'next-launch'
-  return selected.visualMode === active.visualMode &&
-    selected.visualQuality === active.visualQuality ? 'current' : 'reload-required'
 }
 
 export function foliageQualityDensity(quality: FoliageQuality): number {
