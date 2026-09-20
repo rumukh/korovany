@@ -26,6 +26,7 @@ import type { LookGesture } from '../src/game/input/CombatInput.ts'
 import type { SoundCue } from '../src/game/AudioDirector.ts'
 import { createFinaleIdentity, createFinaleState } from '../src/game/world/FinaleDirector.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
+import { CAMERA_DEFAULT_PITCH, CAMERA_PIVOT_HEIGHT, cameraOrbitDistance } from '../src/game/cameraAccents.ts'
 
 // Load the production class with Node's TS support, including its Vite-style imports.
 // Only construction/presentation are replaced below; inputs, movement and damage are real methods.
@@ -256,6 +257,29 @@ test('follow damping cannot put the camera through a near wall or a terrain ridg
   assert.ok(resolved.z < 3, 'terrain between player and camera must obstruct the camera')
   wall.geometry.dispose()
   wall.material.dispose()
+})
+
+test('default framing shows the road ahead and gives portrait combat more horizontal room without rotating aim', () => {
+  for (const aspect of [1366 / 768, 390 / 844]) {
+    const { engine } = fixture()
+    engine.camera.aspect = aspect
+    engine.camera.updateProjectionMatrix()
+    engine.cameraPitch = CAMERA_DEFAULT_PITCH
+    engine.updateCamera(0, true)
+    engine.camera.updateMatrixWorld(true)
+    const feet = engine.player.position.clone().project(engine.camera)
+    const road = engine.player.position.clone().add(new THREE.Vector3(0, 0, -20)).project(engine.camera)
+    assert.ok(feet.y < -0.1 && feet.y > -0.8, 'player should sit below centre, not obscure the destination')
+    assert.ok(road.y > -1 && road.y < 1, 'the road ahead must stay on screen')
+    const pivot = engine.player.position.clone().add(new THREE.Vector3(0, CAMERA_PIVOT_HEIGHT, 0))
+    assert.ok(Math.abs(engine.camera.position.distanceTo(pivot) - cameraOrbitDistance(aspect)) < 1e-8)
+    assert.equal(engine.cameraYaw, 0)
+    assert.equal(engine.cameraPitch, CAMERA_DEFAULT_PITCH)
+    const facing = engine.camera.getWorldDirection(new THREE.Vector3())
+    assert.ok(Math.abs(facing.y + Math.sin(CAMERA_DEFAULT_PITCH)) < 1e-8)
+  }
+  assert.ok(cameraOrbitDistance(390 / 844) > cameraOrbitDistance(1366 / 768))
+  assert.ok(cameraOrbitDistance(0.1) <= cameraOrbitDistance(1) * 1.3)
 })
 
 test('bow elevation follows pitch while walking and evasion stay horizontal and full speed', () => {

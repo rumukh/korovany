@@ -1,4 +1,4 @@
-export type GameOverlay = 'end' | 'achievements' | 'shop' | 'atlas' | 'orders' | 'pause'
+export type GameOverlay = 'end' | 'achievements' | 'shop' | 'atlas' | 'orders' | 'journal' | 'pause'
 
 export interface GameOverlayState {
   ended: boolean
@@ -6,6 +6,7 @@ export interface GameOverlayState {
   shopOpen: boolean
   atlasOpen: boolean
   squadCommandOpen: boolean
+  journalOpen: boolean
   paused: boolean
 }
 
@@ -16,6 +17,7 @@ export function initialGameOverlayState(): GameOverlayState {
     shopOpen: false,
     atlasOpen: false,
     squadCommandOpen: false,
+    journalOpen: false,
     paused: false,
   }
 }
@@ -24,6 +26,7 @@ const overlayFields = {
   atlas: 'atlasOpen',
   orders: 'squadCommandOpen',
   shop: 'shopOpen',
+  journal: 'journalOpen',
 } as const
 
 type RequestedGameOverlay = keyof typeof overlayFields
@@ -35,6 +38,7 @@ export function topGameOverlay(state: GameOverlayState): GameOverlay | null {
   if (state.shopOpen) return 'shop'
   if (state.atlasOpen) return 'atlas'
   if (state.squadCommandOpen) return 'orders'
+  if (state.journalOpen) return 'journal'
   return state.paused ? 'pause' : null
 }
 
@@ -66,6 +70,7 @@ export function closeTopGameOverlay(state: GameOverlayState): GameOverlayState {
     case 'shop': return { ...state, shopOpen: false }
     case 'atlas': return { ...state, atlasOpen: false }
     case 'orders': return { ...state, squadCommandOpen: false }
+    case 'journal': return { ...state, journalOpen: false }
     case 'pause': return { ...state, paused: false }
     case null: return { ...state, paused: true }
   }

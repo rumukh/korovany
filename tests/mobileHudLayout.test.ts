@@ -85,7 +85,7 @@ test('mobile gameplay header assigns identity and minimap to explicit non-overla
   assert.match(mapRule, /width:\s*100%;/)
 })
 
-test('mobile threat, music, pause, and minimap stay rendered with thumb-sized actions', () => {
+test('mobile threat, music, pause, and atlas access stay rendered with thumb-sized actions', () => {
   const actionRule = extractRule(mobileHudCss, '.hud-actions .icon-button')
   const threatRule = extractRule(mobileHudCss, '.threat-chip')
 
@@ -96,7 +96,8 @@ test('mobile threat, music, pause, and minimap stay rendered with thumb-sized ac
   assert.match(appSource, /className=\{`threat-chip tier-\$\{view\.threatTier\}`\}/)
   assert.match(appSource, /className=\{`icon-button hud-music/)
   assert.match(appSource, /className="icon-button hud-pause"/)
-  assert.match(appSource, /<MiniMap view=\{view\} onOpenAtlas=\{onOpenAtlas\} \/>/)
+  assert.match(appSource, /className="tactical-toolbar"[\s\S]*onClick=\{onOpenAtlas\}/)
+  assert.match(appSource, /<MiniMap view=\{view\} onOpenAtlas=/)
 })
 
 test('mobile header column budget fits the status and both 44px actions at target widths', () => {

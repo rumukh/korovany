@@ -515,19 +515,37 @@ export function resolveEscortedCaravanDelivery(context: {
   const caravan = state.caravans.find((entry) => entry.id === context.caravanId)
   if (!caravan || !caravan.intact) return []
   state.caravans = state.caravans.filter((entry) => entry.id !== context.caravanId)
-  const destinationId = caravan.regionPath[caravan.regionPath.length - 1]
-  const destination = regions.get(String(destinationId))
+  return resolveRegionalCaravanDelivery({
+    state,
+    regions,
+    idPrefix: context.idPrefix,
+    regionId: caravan.regionPath[caravan.regionPath.length - 1],
+    faction: caravan.ownerFaction,
+    siteId: caravan.toSiteId,
+  })
+}
+
+/** A local supply delivery need not name a settlement when the region has none. */
+export function resolveRegionalCaravanDelivery(context: {
+  state: ChronicleState
+  regions: Map<string, RegionChronicleState>
+  idPrefix: string
+  regionId: RegionId
+  faction: Faction
+  siteId: SiteId | null
+}): ChronicleEvent[] {
+  const destination = context.regions.get(String(context.regionId))
   if (destination) {
     destination.supply = clamp01(destination.supply + SUPPLY_CARAVAN_GAIN)
   }
   return [
     appendChronicleEvent(
-      state,
+      context.state,
       `${context.idPrefix}-1`,
       'caravanArrived',
-      destinationId,
-      caravan.ownerFaction,
-      caravan.toSiteId,
+      context.regionId,
+      context.faction,
+      context.siteId,
     ),
   ]
 }

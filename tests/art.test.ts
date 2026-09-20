@@ -387,9 +387,26 @@ test('stylized materials compile the injection and share a program key', () => {
   assert.ok(shader.uniforms.uToonRamp, 'the ramp uniform is bound')
   assert.ok(shader.vertexShader.includes('vStylizedWorld'))
   assert.ok(shader.fragmentShader.includes('uToonRamp'))
+  assert.equal(
+    shader.fragmentShader.match(/#include <lights_fragment_end>/g)?.length,
+    1,
+    'the stock lighting chunk remains the single base of the stylized injection',
+  )
   assert.ok(
     !shader.fragmentShader.includes('#include <lights_fragment_end>\n#include'),
     'the injection replaces the chunk exactly once',
+  )
+  assert.ok(
+    shader.fragmentShader.includes(
+      'vec3 kToothPhaseWidth = fwidth( kToothPhase );',
+    ),
+    'paper tooth attenuation follows the projected world-space footprint',
+  )
+  assert.ok(
+    shader.fragmentShader.includes(
+      'kTooth * uPaperStrength * kToothVisibility',
+    ),
+    'distant tooth fades without changing the shared material strength',
   )
 
   const outline = library.getOutlineMaterial('enemy', true)

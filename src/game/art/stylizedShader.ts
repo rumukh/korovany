@@ -122,11 +122,24 @@ const STYLIZED_FRAGMENT_BODY = /* glsl */ `
 
   // Three cheap sines beat a noise texture: no sampler, no tiling, no memory, and
   // the wobble is anchored in world space so it never swims with the camera.
+  vec3 kToothPhase = vStylizedWorld * vec3( 3.1, 2.7, 3.7 );
   float kTooth =
-    sin( vStylizedWorld.x * 3.1 ) *
-    sin( vStylizedWorld.y * 2.7 + 1.3 ) *
-    sin( vStylizedWorld.z * 3.7 + 2.1 );
-  float kToothScale = 1.0 + kTooth * uPaperStrength;
+    sin( kToothPhase.x ) *
+    sin( kToothPhase.y + 1.3 ) *
+    sin( kToothPhase.z + 2.1 );
+
+  // Attenuate the tooth as its world-space phase approaches a pixel footprint.
+  // This responds to both projection distance and object scale without a camera
+  // uniform: close, well-resolved ink keeps its grain, while distant terrain does
+  // not turn the same high-frequency wobble into value noise or aliasing.
+  vec3 kToothPhaseWidth = fwidth( kToothPhase );
+  float kToothFootprint = max(
+    kToothPhaseWidth.x,
+    max( kToothPhaseWidth.y, kToothPhaseWidth.z )
+  );
+  float kToothVisibility = 1.0 - smoothstep( 0.18, 0.82, kToothFootprint );
+  float kToothScale =
+    1.0 + kTooth * uPaperStrength * kToothVisibility;
   reflectedLight.directDiffuse *= kToothScale;
   reflectedLight.indirectDiffuse *= kToothScale;
 }

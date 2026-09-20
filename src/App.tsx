@@ -23,6 +23,7 @@ import {
   RotateCcw,
   Save,
   ScrollText,
+  Settings2,
   Shield,
   Skull,
   Sparkles,
@@ -53,6 +54,7 @@ import elfEmblem from './assets/factions/elf-emblem.svg'
 import guardEmblem from './assets/factions/guard-emblem.svg'
 import villainEmblem from './assets/factions/villain-emblem.svg'
 import './App.css'
+import './game/ui/openingExperience.css'
 import { lockDocumentScroll } from './documentScrollLock'
 import { SFX_VOLUME_DEFAULT, normalizeSfxVolume } from './game/AudioDirector'
 import {
@@ -100,6 +102,9 @@ import { CombatCameraControls, CombatEvadeButton, CombatMasteryHud } from './gam
 import { ExpeditionAtlas, ExpeditionCompass, ExpeditionMinimap } from './game/ui/ExpeditionAtlas'
 import { SquadCommandPanel, SquadCommandStrip } from './game/ui/SquadCommandPanel'
 import { FinaleHud, FinaleResult } from './game/ui/FinaleHud'
+import { BridgeAmbushHud } from './game/ui/BridgeAmbushHud'
+import { CampaignJournal } from './game/ui/CampaignJournal'
+import type { BridgeAmbushChoice } from './game/world/BridgeAmbush'
 import {
   closeTopGameOverlay,
   dismissGameOverlay,
@@ -1291,7 +1296,37 @@ function AchievementGallery({
   )
 }
 
-function MenuScreen({
+function FactionLaunchCards({ activeRun, canonicalSeed, onStart }: {
+  activeRun: ActiveRunSaveV3 | null
+  canonicalSeed: number
+  onStart: (faction: Faction) => void
+}) {
+  return (
+    <div className="faction-grid">
+      {(Object.keys(FACTION_INFO) as Faction[]).map((faction) => {
+        const info = FACTION_INFO[faction]
+        return (
+          <article className={`faction-card ${faction}`} key={faction}>
+            <div className="faction-scenery" aria-hidden="true"><i /><i /><i /></div>
+            <div className="faction-icon"><FactionEmblem faction={faction} /></div>
+            <h3>{info.name}</h3>
+            <p>{info.description}</p>
+            <div className="perk">
+              <Sparkles aria-hidden="true" /><span>{info.perk}</span>
+            </div>
+            <button className="primary-button" type="button" disabled={Boolean(activeRun)}
+              onClick={() => onStart(faction)} title={`Начать · seed ${canonicalSeed}`}>
+              <Play aria-hidden="true" />
+              {activeRun ? 'Есть активный забег' : `Играть: ${info.shortName}`}
+            </button>
+          </article>
+        )
+      })}
+    </div>
+  )
+}
+
+export function MenuScreen({
   activeRun,
   activeRunError,
   profile,
@@ -1370,13 +1405,21 @@ function MenuScreen({
       : activeRunError
 
   return (
-    <main className="menu-screen">
+    <main className="menu-screen opening-menu">
       <div className="menu-atmosphere" aria-hidden="true">
         <div className="contour contour-a" />
         <div className="contour contour-b" />
         <div className="contour contour-c" />
       </div>
-      <div className="menu-settings">
+      <nav className="menu-toolbar" aria-label="Главное меню">
+        <span className="menu-edition">Процедурный 3D-поход</span>
+        <button className="secondary-button achievement-menu-button" type="button" onClick={onAchievements}>
+          <Trophy aria-hidden="true" />
+          Достижения {achievementSummary.unlocked}/{achievementSummary.total}
+        </button>
+        <details className="menu-preferences">
+          <summary><Settings2 aria-hidden="true" /> Настройки</summary>
+          <div className="menu-settings">
         <button
           className="theme-toggle secondary-button"
           type="button"
@@ -1487,14 +1530,17 @@ function MenuScreen({
           />
           <strong>{Math.round(sfxVolume * 100)}%</strong>
         </label>
-      </div>
+          </div>
+        </details>
+      </nav>
       <header className="hero-header">
-        <div className="hackathon-tag">
-          <Sparkles aria-hidden="true" />
-          Хакатонная сборка • 3D-экшон
-        </div>
+        <div className="hero-title">
         <h1>КОРОВАНЫ</h1>
         <p className="hero-kicker">Джва года в разработке</p>
+        <p className="hero-copy">
+          Один отряд. Один поход. У каждого корована — своя судьба.
+        </p>
+        </div>
         <img
           className="hero-key-art"
           src={caravanKeyArt}
@@ -1502,14 +1548,6 @@ function MenuScreen({
           aria-hidden="true"
           draggable={false}
         />
-        <p className="hero-copy">
-          3Д-экшон, суть такова: каждый seed собирает 25 регионов, четыре зоны и
-          отдельный путь для лесных эльфов, охраны дворца и злодея.
-        </p>
-        <button className="secondary-button achievement-menu-button" type="button" onClick={onAchievements}>
-          <Trophy aria-hidden="true" />
-          Достижения {achievementSummary.unlocked}/{achievementSummary.total}
-        </button>
       </header>
 
       {activeRun ? (
@@ -1564,7 +1602,6 @@ function MenuScreen({
       >
         <div className="section-heading">
           <div>
-            <span className="eyebrow">Новый сгенерированный забег</span>
             <h2 id="faction-title">Выберите, за кого нагибать</h2>
           </div>
           <p>
@@ -1573,7 +1610,22 @@ function MenuScreen({
           </p>
         </div>
 
-        <div className="run-setup">
+        {activeRun ? (
+          <p className="new-run-blocked-note">
+            <Shield aria-hidden="true" />
+            Продолжите или бросьте активный забег, чтобы начать новый.
+          </p>
+        ) : null}
+        <FactionLaunchCards activeRun={activeRun} canonicalSeed={canonicalSeed} onStart={onStart} />
+
+        <details className="run-options">
+          <summary>
+            <Settings2 aria-hidden="true" />
+            Настроить поход
+            <span>seed {canonicalSeed} · {BOON_CATALOGUE.find((boon) => boon.id === selectedBoonId)?.name}</span>
+            <ChevronDown aria-hidden="true" />
+          </summary>
+          <div className="run-setup">
           <div className="seed-panel">
             <div className="run-setup-heading">
               <div>
@@ -1728,48 +1780,8 @@ function MenuScreen({
               })}
             </div>
           </div>
-        </div>
-
-        {activeRun ? (
-          <p className="new-run-blocked-note">
-            <Shield aria-hidden="true" />
-            Новый забег станет доступен после продолжения или явного отказа от активного.
-          </p>
-        ) : null}
-
-        <div className="faction-grid">
-          {(Object.keys(FACTION_INFO) as Faction[]).map((faction) => {
-            const info = FACTION_INFO[faction]
-            return (
-              <article className={`faction-card ${faction}`} key={faction}>
-                <div className="faction-scenery" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
-                </div>
-                <div className="faction-icon">
-                  <FactionEmblem faction={faction} />
-                </div>
-                <span className="faction-subtitle">{info.subtitle}</span>
-                <h3>{info.name}</h3>
-                <p>{info.description}</p>
-                <div className="perk">
-                  <Sparkles aria-hidden="true" />
-                  <span>{info.perk}</span>
-                </div>
-                <button
-                  className="primary-button"
-                  type="button"
-                  disabled={Boolean(activeRun)}
-                  onClick={() => onStart(faction)}
-                >
-                  <Play aria-hidden="true" />
-                  {activeRun ? 'Есть активный забег' : `Начать · seed ${canonicalSeed}`}
-                </button>
-              </article>
-            )
-          })}
-        </div>
+          </div>
+        </details>
       </section>
 
       <section className="menu-lower">
@@ -2478,7 +2490,7 @@ function EndModal({
   )
 }
 
-function GameScreen({
+export function GameScreen({
   view,
   worldRef,
   notices,
@@ -2509,6 +2521,10 @@ function GameScreen({
   onOpenSquadCommand,
   onCloseSquadCommand,
   onIssueSquadCommand,
+  onOpenJournal,
+  onCloseJournal,
+  onBridgeChoice,
+  onTrackBridge,
   onPinRumour,
   onPinObjective,
   onTakeDoctrine,
@@ -2563,6 +2579,10 @@ function GameScreen({
   onOpenSquadCommand: () => void
   onCloseSquadCommand: () => void
   onIssueSquadCommand: (mode: SquadCommandMode, targetId?: string) => boolean
+  onOpenJournal: () => void
+  onCloseJournal: () => void
+  onBridgeChoice: (choice: BridgeAmbushChoice) => void
+  onTrackBridge: () => void
   onPinRumour: (rumourId: string | null) => void
   onPinObjective: (nodeId: string | null) => void
   onTakeDoctrine: (doctrineId: string) => void
@@ -2596,6 +2616,8 @@ function GameScreen({
   const healthPercent = `${(view.health / view.maxHealth) * 100}%`
   const lowHealth = view.health > 0 && view.health / view.maxHealth <= 0.25
   const staminaPercent = `${(view.stamina / view.maxStamina) * 100}%`
+  const squadNeedsAttention = view.squadCommand.roster.some((member) =>
+    member.status === 'blocked' || member.status === 'distant' || member.health < member.maxHealth * 0.4)
   const abilityProgress = `${
     view.ability.cooldownMax > 0
       ? Math.max(
@@ -2703,7 +2725,7 @@ function GameScreen({
 
   return (
     <main
-      className={`game-screen faction-${view.faction}${lowHealth ? ' low-health' : ''}${simulationPaused ? ' simulation-paused' : ''}`}
+      className={`game-screen focused-hud faction-${view.faction}${lowHealth ? ' low-health' : ''}${simulationPaused ? ' simulation-paused' : ''}`}
       data-zone={view.zone}
       style={{ '--zone-accent': zoneInfo.accent } as CSSProperties}
     >
@@ -2758,11 +2780,27 @@ function GameScreen({
           </div>
         </div>
         <div className="top-hud-side">
-          <MiniMap view={view} onOpenAtlas={onOpenAtlas} />
-          <ExpeditionCompass view={view} onOpen={onOpenAtlas} />
+          <nav className="tactical-toolbar" aria-label="Планирование похода">
+            <button type="button" onClick={onOpenAtlas} aria-haspopup="dialog"
+              aria-label={EXPEDITION_COPY.open}><MapIcon aria-hidden="true" /><span>Карта</span><kbd>M</kbd></button>
+            <button type="button" onClick={onOpenSquadCommand} aria-haspopup="dialog"
+              aria-label={SQUAD_COMMAND_COPY.open}><UserRound aria-hidden="true" /><span>Отряд</span><kbd>T</kbd></button>
+            <button type="button" onClick={onOpenJournal} aria-haspopup="dialog"
+              aria-label="Журнал похода"><ScrollText aria-hidden="true" /><span>Поход</span><kbd>J</kbd>
+              {view.doctrines.offer.length > 0 ? <i className="journal-alert" aria-label="Доступен устав" /> : null}
+            </button>
+          </nav>
+          {!view.bridgeAmbush?.active ? (
+            <ExpeditionCompass view={view} onOpen={onOpenAtlas} />
+          ) : null}
+          <BridgeAmbushHud view={view.bridgeAmbush} paused={simulationPaused}
+            onChoose={onBridgeChoice} onSquad={onOpenSquadCommand} onTrack={onTrackBridge} />
           <FinaleHud finale={view.finale} />
-          <ChronicleFeed view={view} />
-          <RumourBoard view={view} onPin={onPinRumour} />
+          {view.rumours.some((rumour) => rumour.outcome === null) ? (
+            <button className="field-alert" type="button" onClick={onOpenJournal}>
+              <Megaphone aria-hidden="true" /> Есть вести с дороги <span>J</span>
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -2805,6 +2843,11 @@ function GameScreen({
           </div>
           <SquadCommandStrip view={view.squadCommand} onOpen={onOpenSquadCommand}
             disabled={simulationPaused} />
+          {squadNeedsAttention ? (
+            <button className="field-alert squad-attention" type="button" onClick={onOpenSquadCommand}>
+              <UserRound aria-hidden="true" /> Отряду нужна помощь
+            </button>
+          ) : null}
         </div>
         <div
           className={`ability-chip hud-card ${view.ability.ready ? 'ready' : ''} ${view.ability.active ? 'active' : ''}`}
@@ -2838,9 +2881,6 @@ function GameScreen({
         </div>
         </div>
         <div className="mission-hud">
-          <ContractBoard view={view} onPin={onPinObjective} />
-          <DoctrineBoard view={view} onTake={onTakeDoctrine} />
-          <ObjectiveList view={view} />
           <EventBanner event={view.activeEvent} />
         </div>
       </div>
@@ -2911,6 +2951,9 @@ function GameScreen({
           </span>
           <span>
             <kbd>M</kbd> {EXPEDITION_COPY.atlas}
+          </span>
+          <span>
+            <kbd>J</kbd> журнал
           </span>
         </div>
       </div>
@@ -3027,6 +3070,30 @@ function GameScreen({
       {activeOverlay === 'orders' ? (
         <SquadCommandPanel view={view.squadCommand} onClose={onCloseSquadCommand}
           onConfirm={onIssueSquadCommand} />
+      ) : null}
+      {activeOverlay === 'journal' ? (
+        <CampaignJournal onClose={onCloseJournal}>
+          <div className="journal-missions">
+            <ContractBoard view={view} onPin={onPinObjective} />
+            <DoctrineBoard view={view} onTake={onTakeDoctrine} />
+            <ObjectiveList view={view} />
+          </div>
+          <div className="journal-world">
+            <BridgeAmbushHud view={view.bridgeAmbush} paused={false} inJournal
+              onChoose={onBridgeChoice}
+              onSquad={() => { onCloseJournal(); onOpenSquadCommand() }}
+              onTrack={onTrackBridge} />
+            <MiniMap view={view} onOpenAtlas={() => { onCloseJournal(); onOpenAtlas() }} />
+            <ChronicleFeed view={view} />
+            <RumourBoard view={view} onPin={onPinRumour} />
+            {view.bridgeAmbush?.phase === 'unavailable' ? (
+              <section className="journal-consequence">
+                <h3>{view.bridgeAmbush.title}</h3>
+                <p>{view.bridgeAmbush.consequence ?? view.bridgeAmbush.description}</p>
+              </section>
+            ) : null}
+          </div>
+        </CampaignJournal>
       ) : null}
       {activeOverlay === 'pause' ? (
         <PauseModal
@@ -3155,6 +3222,21 @@ function App() {
   const toggleSquadCommand = useCallback(() => {
     applyGameOverlays(toggleGameOverlay(overlaysRef.current, 'orders'))
   }, [applyGameOverlays])
+
+  const toggleJournal = useCallback(() => {
+    applyGameOverlays(toggleGameOverlay(overlaysRef.current, 'journal'))
+  }, [applyGameOverlays])
+
+  useEffect(() => {
+    if (screen !== 'game') return
+    const openJournal = (event: KeyboardEvent) => {
+      if (event.code !== 'KeyJ' || event.repeat || blocksGameplayKey(event)) return
+      event.preventDefault()
+      toggleJournal()
+    }
+    window.addEventListener('keydown', openJournal)
+    return () => window.removeEventListener('keydown', openJournal)
+  }, [screen, toggleJournal])
 
   useEffect(() => bindGameplayPointerCancellation(document, touchCaptures), [touchCaptures])
 
@@ -3875,6 +3957,10 @@ function App() {
         onCommand={() => engineRef.current?.commandSquad()}
         onOpenSquadCommand={toggleSquadCommand}
         onCloseSquadCommand={() => closeOverlay('orders')}
+        onOpenJournal={toggleJournal}
+        onCloseJournal={() => closeOverlay('journal')}
+        onBridgeChoice={(choice) => { engineRef.current?.chooseBridgeAmbush(choice) }}
+        onTrackBridge={() => { engineRef.current?.trackBridgeAmbush() }}
         onIssueSquadCommand={(mode, targetId) => {
           if (topGameOverlay(overlaysRef.current) !== 'orders') return false
           const accepted = engineRef.current?.commandSquad(mode, targetId) ?? false

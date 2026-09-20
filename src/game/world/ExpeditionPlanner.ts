@@ -28,7 +28,7 @@ const TRANSPORT_CLEARANCE = 0.6
 export interface ExpeditionPoint { x: number; z: number }
 export type ExpeditionPreference = 'shortest' | 'cautious'
 export interface ExpeditionTargetIdentity {
-  kind: 'objective' | 'rumour' | 'site'
+  kind: 'objective' | 'rumour' | 'site' | 'bridgeAmbush'
   id: string
 }
 export interface ExpeditionState {
@@ -138,6 +138,14 @@ export interface ExpeditionInput {
   discoveredRegionIds: ReadonlySet<string>
   chronicleRegions: ReadonlyMap<string, RegionChronicleState>
   contestedRegionIds: ReadonlySet<string>
+  bridgeAmbush?: {
+    id: string
+    title: string
+    regionId: string
+    position: ExpeditionPoint
+    task: string
+    stake: string
+  } | null
 }
 
 export function createExpeditionState(): ExpeditionState {
@@ -167,7 +175,8 @@ export function normalizeExpeditionState(value: unknown): { state: ExpeditionSta
 function readTargetIdentity(value: unknown): ExpeditionTargetIdentity | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null
   const record: Record<string, unknown> = { ...value }
-  return (record.kind === 'objective' || record.kind === 'rumour' || record.kind === 'site') &&
+  return (record.kind === 'objective' || record.kind === 'rumour' ||
+    record.kind === 'site' || record.kind === 'bridgeAmbush') &&
     typeof record.id === 'string' && record.id.length > 0 && record.id.length <= 160 &&
     record.id.trim() === record.id
     ? { kind: record.kind, id: record.id } : null
@@ -510,6 +519,21 @@ export function buildExpeditionTargets(blueprint: WorldBlueprint, input: Expedit
     add({ kind: 'rumour', id: rumour.id, position, regionId, title: rumour.title, task: rumour.task,
       stake: rumour.stake, timeRemaining: rumour.timeRemaining, exclusive: false, committed: rumour.pinned })
   }
+  if (input.bridgeAmbush) {
+    const target = input.bridgeAmbush
+    add({
+      kind: 'bridgeAmbush',
+      id: target.id,
+      position: target.position,
+      regionId: target.regionId,
+      title: target.title,
+      task: target.task,
+      stake: target.stake,
+      timeRemaining: null,
+      exclusive: false,
+      committed: false,
+    })
+  }
   for (const site of blueprint.sites) {
     if (!input.discoveredRegionIds.has(site.regionId)) continue
     const position = getSiteWorldPosition2D(blueprint, site)
@@ -608,8 +632,9 @@ export class ExpeditionPlanner {
     const targets = buildExpeditionTargets(this.blueprint, input)
     if (this.state.mode === 'selected' && !targets.some((entry) =>
       this.state.target && entry.key === expeditionTargetKey(this.state.target))) {
+      const completedBridgeTarget = this.state.target?.kind === 'bridgeAmbush'
       this.state = { ...this.state, mode: 'campaign', target: null }
-      this.notice = 'stale-target'
+      this.notice = completedBridgeTarget ? null : 'stale-target'
       this.decisionKey = ''
     }
     const target = this.state.mode === 'none' ? null

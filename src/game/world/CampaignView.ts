@@ -31,6 +31,9 @@ import {
 import {
   CONTRACT_ERRAND_STAKE,
   CONTRACT_FAILED_TASK,
+  BRIDGE_AMBUSH_EXPEDITION_STAKE,
+  BRIDGE_AMBUSH_EXPEDITION_TASK,
+  BRIDGE_AMBUSH_TITLE,
   describeContractStake,
   describeContractTask,
   describeContractTitle,
@@ -102,6 +105,13 @@ import {
 } from './CombatResolver.ts'
 import type { WorldBlueprint } from './worldTypes.ts'
 import { ExpeditionPlanner, type ExpeditionView } from './ExpeditionPlanner.ts'
+import {
+  buildBridgeAmbushView,
+  createBridgeAmbushPlan,
+  createBridgeAmbushState,
+  normalizeBridgeAmbushState,
+  type BridgeAmbushView,
+} from './BridgeAmbush.ts'
 import {
   buildCombatMasteryView,
   normalizeCombatMastery,
@@ -240,6 +250,9 @@ export interface LiveViewInput {
   /** Roadmap 1.6 — the open draft and the rules the run already took. */
   doctrines: DoctrineView
   expedition: ExpeditionView
+  bridgeAmbush: BridgeAmbushView | null
+  bridgeAmbushX: number | null
+  bridgeAmbushZ: number | null
   finale: FinaleView | null
   shopPriceMultiplier: number
   squad: number
@@ -324,6 +337,23 @@ export function buildMapMarkers(input: LiveViewInput): MapMarker[] {
       z: event.markerZ,
       kind: 'event',
       label: event.title,
+    })
+  }
+  if (
+    input.bridgeAmbush &&
+    input.bridgeAmbushX !== null &&
+    input.bridgeAmbushZ !== null &&
+    input.bridgeAmbush.active === true &&
+    input.bridgeAmbush.phase !== 'resolved' &&
+    input.bridgeAmbush.phase !== 'lost' &&
+    input.bridgeAmbush.phase !== 'unavailable'
+  ) {
+    markers.push({
+      id: 'bridge-ambush',
+      x: input.bridgeAmbushX,
+      z: input.bridgeAmbushZ,
+      kind: 'event',
+      label: input.bridgeAmbush.title,
     })
   }
   // Roadmap 1.3 — the pinned rumour, and only the pinned one. Drawing both offers would
@@ -653,6 +683,7 @@ export function buildGameView(input: LiveViewInput): GameView {
       slots: input.doctrines.slots,
     },
     expedition: input.expedition,
+    bridgeAmbush: input.bridgeAmbush ? { ...input.bridgeAmbush } : null,
     finale: input.finale ? { ...input.finale } : null,
     shopPriceMultiplier: input.shopPriceMultiplier,
     squad: input.squad,
@@ -687,7 +718,7 @@ export function buildGameView(input: LiveViewInput): GameView {
 export interface InitialViewInput {
   blueprint: WorldBlueprint
   config: RunConfig
-  restored: ActiveRunSaveV3 | undefined
+  restored?: ActiveRunSaveV3
 }
 
 function serializableNumber(value: unknown, fallback = 0): number {
@@ -804,6 +835,33 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     }
   }
 
+  const bridgePlan = createBridgeAmbushPlan(blueprint, config.faction)
+  const bridgeState = restored
+    ? restored.directorState.bridgeAmbush === undefined ||
+      restored.directorState.bridgeAmbush === null
+      ? null
+      : normalizeBridgeAmbushState(
+          restored.directorState.bridgeAmbush,
+          blueprint,
+          config.faction,
+          bridgePlan,
+        ).state
+    : createBridgeAmbushState(blueprint, config.faction, bridgePlan)
+  const bridgeTarget = bridgeState &&
+    bridgePlan &&
+    bridgeState.phase !== 'delivering' &&
+    bridgeState.phase !== 'resolved' &&
+    bridgeState.phase !== 'lost' &&
+    bridgeState.phase !== 'unavailable'
+    ? {
+        id: bridgePlan.id,
+        title: BRIDGE_AMBUSH_TITLE,
+        regionId: bridgePlan.regionId,
+        position: { x: bridgeState.cargoX, z: bridgeState.cargoZ },
+        task: BRIDGE_AMBUSH_EXPEDITION_TASK,
+        stake: BRIDGE_AMBUSH_EXPEDITION_STAKE,
+      }
+    : null
   const expedition = new ExpeditionPlanner(blueprint, restored?.directorState.expedition).buildView({
     faction: config.faction, player: { x: position[0], z: position[2] },
     heading, objectives, contracts,
@@ -813,7 +871,26 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     activeObjectiveId: resolveActiveObjectiveNode(blueprint, config.faction, objectives,
       normalizeCampaignContractState(restored?.directorState.campaignContracts).pinnedNodeId)?.id ?? null,
     discoveredRegionIds: discovered, chronicleRegions, contestedRegionIds,
+    bridgeAmbush: bridgeTarget,
   })
+  const bridgeAmbush = bridgeState
+    ? buildBridgeAmbushView(
+        blueprint,
+        config.faction,
+        objectives,
+        bridgePlan,
+        bridgeState,
+        { x: position[0], z: position[2] },
+        heading,
+        (expedition.mode === 'selected' &&
+          expedition.target?.kind !== 'bridgeAmbush') ||
+          (expedition.mode === 'campaign' &&
+            expedition.target?.committed === true),
+        expedition.mode === 'selected' &&
+          expedition.target?.kind === 'bridgeAmbush',
+        expedition,
+      )
+    : null
 
   return {
     faction: config.faction,
@@ -838,6 +915,20 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
         kind: 'player',
         heading,
       },
+      ...(bridgeAmbush &&
+      bridgePlan &&
+      bridgeAmbush.active === true &&
+      bridgeAmbush.phase !== 'resolved' &&
+      bridgeAmbush.phase !== 'lost' &&
+      bridgeAmbush.phase !== 'unavailable'
+        ? [{
+            id: 'bridge-ambush',
+            x: bridgeState?.cargoX ?? bridgePlan.cargoStart.x,
+            z: bridgeState?.cargoZ ?? bridgePlan.cargoStart.z,
+            kind: 'event' as const,
+            label: bridgeAmbush.title,
+          }]
+        : []),
     ],
     worldMap: buildWorldMapView({
       blueprint,
@@ -859,6 +950,7 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     contracts,
     doctrines,
     expedition,
+    bridgeAmbush,
     finale,
     shopPriceMultiplier: 1,
     squad: squadCommand.roster.length,

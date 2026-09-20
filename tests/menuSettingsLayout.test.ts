@@ -4,6 +4,7 @@ import test from 'node:test'
 
 const appCss = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
 const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
+const openingCss = readFileSync(new URL('../src/game/ui/openingExperience.css', import.meta.url), 'utf8')
 
 function extractBlock(source: string, marker: string): string {
   const markerIndex = source.indexOf(marker)
@@ -27,33 +28,16 @@ function extractRule(source: string, selector: string): string {
   return extractBlock(source, `${selector} {`)
 }
 
-interface Rectangle {
-  bottom: number
-  left: number
-  right: number
-  top: number
-}
-
-function intersectionArea(first: Rectangle, second: Rectangle): number {
-  const width = Math.max(0, Math.min(first.right, second.right) - Math.max(first.left, second.left))
-  const height = Math.max(
-    0,
-    Math.min(first.bottom, second.bottom) - Math.max(first.top, second.top),
-  )
-  return width * height
-}
-
-test('menu settings reserve their wrapped height before the hero branding', () => {
-  const settingsRule = extractRule(appCss, '.menu-settings')
-  const mobileMenuCss = extractBlock(appCss, '@media (max-width: 720px), (pointer: coarse) {')
-  const settingsIndex = appSource.indexOf('<div className="menu-settings">')
+test('menu settings are opt-in and their expanded panel is bounded by the toolbar', () => {
+  const settingsRule = extractRule(openingCss, '.opening-menu .menu-settings')
+  const toolbarRule = extractRule(openingCss, '.opening-menu .menu-toolbar')
+  const settingsIndex = appSource.indexOf('<details className="menu-preferences">')
   const heroIndex = appSource.indexOf('<header className="hero-header">')
 
-  assert.match(settingsRule, /margin-left:\s*auto;/)
-  assert.match(settingsRule, /max-width:\s*min\(52rem,\s*100%\);/)
-  assert.match(settingsRule, /position:\s*relative;/)
-  assert.doesNotMatch(settingsRule, /position:\s*absolute;/)
-  assert.doesNotMatch(mobileMenuCss, /\.menu-settings\s*\{/)
+  assert.match(settingsRule, /width:\s*min\(46rem,\s*100%\);/)
+  assert.match(settingsRule, /position:\s*absolute;/)
+  assert.match(settingsRule, /right:\s*0;/)
+  assert.match(toolbarRule, /position:\s*relative;/)
   assert.notEqual(settingsIndex, -1)
   assert.notEqual(heroIndex, -1)
   assert.ok(settingsIndex < heroIndex)
@@ -66,59 +50,8 @@ test('doctrine choices span both columns of the run setup grid', () => {
   assert.match(appSource, /className="boon-panel doctrine-panel"/)
 })
 
-test('flow-stacked settings have zero intersection with menu branding at target sizes', () => {
-  const targets = [
-    { height: 800, settingsHeight: 144, width: 1280 },
-    { height: 844, settingsHeight: 96, width: 390 },
-    { height: 568, settingsHeight: 144, width: 320 },
-  ] as const
-
-  for (const theme of ['dark', 'light'] as const) {
-    for (const target of targets) {
-      const mobile = target.width <= 720
-      const menuPaddingTop = (mobile ? 1 : 1.5) * 16
-      const heroPaddingTop = (mobile ? 2.8 : 3.6) * 16
-      const titleMarginTop = 1.3 * 16
-      const kickerMarginTop = 1.15 * 16
-      const tagHeight = 30
-      const titleHeight = mobile ? 58 : 86
-      const kickerHeight = 20
-      const settings: Rectangle = {
-        bottom: menuPaddingTop + target.settingsHeight,
-        left: 0,
-        right: target.width,
-        top: menuPaddingTop,
-      }
-      const tag: Rectangle = {
-        bottom: settings.bottom + heroPaddingTop + tagHeight,
-        left: 0,
-        right: target.width,
-        top: settings.bottom + heroPaddingTop,
-      }
-      const title: Rectangle = {
-        bottom: tag.bottom + titleMarginTop + titleHeight,
-        left: 0,
-        right: target.width,
-        top: tag.bottom + titleMarginTop,
-      }
-      const kicker: Rectangle = {
-        bottom: title.bottom + kickerMarginTop + kickerHeight,
-        left: 0,
-        right: target.width,
-        top: title.bottom + kickerMarginTop,
-      }
-
-      for (const [name, branding] of [
-        ['tag', tag],
-        ['title', title],
-        ['kicker', kicker],
-      ] as const) {
-        assert.equal(
-          intersectionArea(settings, branding),
-          0,
-          `${theme} ${target.width}x${target.height}: settings intersect ${name}`,
-        )
-      }
-    }
-  }
+test('optional setup uses native keyboard-accessible disclosure with a visible focus ring', () => {
+  assert.match(appSource, /<details className="run-options">\s*<summary>/)
+  assert.match(openingCss, /\.run-options > summary:focus-visible\s*\{\s*outline:\s*2px solid var\(--cp-accent\);/)
+  assert.match(openingCss, /\.run-options > summary[^}]*min-height:\s*44px;/)
 })

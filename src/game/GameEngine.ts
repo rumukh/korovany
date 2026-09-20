@@ -3,6 +3,17 @@ import { AudioDirector, type SoundCue, type SoundRequest } from './AudioDirector
 import { musicIntensityRank, type MusicIntensity, type MusicOutcome } from './MusicScore.ts'
 import { BloomPostProcessor } from './BloomPostProcessor'
 import {
+  bowReleaseProgress,
+  GUARD_ARM_PITCH,
+  GUARD_ARM_ROLL,
+  GUARD_ELBOW_PITCH,
+} from './art/AbilityPresentation.ts'
+import {
+  createMeleePresentation,
+  sampleMeleePresentation,
+  type MeleePresentation,
+} from './art/MeleePresentation.ts'
+import {
   AchievementTracker,
   type AchievementSummary,
   type AchievementView,
@@ -70,7 +81,17 @@ import {
   type OutlineKind,
 } from './art/index.ts'
 import {
+  CHARACTER_INK_COLORS,
+  CHARACTER_SHARED_COLORS,
+  characterFactionInkColor,
+  characterHairColor,
+  characterSkinColor,
+  resolveCharacterMaterialPalette,
+} from './art/CharacterPalette.ts'
+import {
   CAMERA_BASE_FOV,
+  CAMERA_DEFAULT_PITCH,
+  CAMERA_PIVOT_HEIGHT,
   CAMERA_FOLLOW_DAMPING,
   CAMERA_FOV_DAMPING,
   KILL_ACCENT_RANGE,
@@ -79,6 +100,7 @@ import {
   advanceCameraAccents,
   advanceJumpAccentLatch,
   composeCameraFov,
+  cameraOrbitDistance,
   dampValue,
   dampingAlpha,
   queueCameraAccent as enqueueCameraAccent,
@@ -142,11 +164,29 @@ import {
   describePointerLockFailure,
   CARAVAN_ALREADY_ROBBED_NOTICE,
   CARAVAN_AMBUSH_NOTICE,
+  CARAVAN_DEFENSE_COOLDOWN_NOTICE,
+  CARAVAN_DEFENSE_NOT_EARNED_NOTICE,
   CARAVAN_DEFENDED_BY_PLAYER_NOTICE,
+  CARAVAN_STILL_GUARDED_NOTICE,
+  BRIDGE_AMBUSH_CAPACITY_NOTICE,
+  BRIDGE_AMBUSH_CHOICE_FOCUS_NOTICE,
+  BRIDGE_AMBUSH_DELIVERY_STARTED_NOTICE,
+  BRIDGE_AMBUSH_DELIVERED_SUPPLIES,
+  BRIDGE_AMBUSH_EXPEDITION_STAKE,
+  BRIDGE_AMBUSH_EXPEDITION_TASK,
+  BRIDGE_AMBUSH_LOST_NOTICE,
+  BRIDGE_AMBUSH_SAVE_WARNING,
+  BRIDGE_AMBUSH_SECURED_NOTICE,
+  BRIDGE_AMBUSH_SEIZED_GOLD,
+  BRIDGE_AMBUSH_TITLE,
+  BRIDGE_AMBUSH_UNAVAILABLE_NOTICE,
   chronicleEventTone,
   describeBeastProwler,
   describeCaravanPlundered,
+  describeCaravanDefenseAid,
   describeCaravanRobbed,
+  describeBridgeAmbushDelivered,
+  describeBridgeAmbushSeized,
   describeChampionDefeated,
   describeChronicleEvent,
   describeCivilianDeath,
@@ -312,6 +352,7 @@ import {
   resolveMaterializedCaravan,
   resolveMaterializedRaid,
   resolveMaterializedWarband,
+  resolveRegionalCaravanDelivery,
   tickChronicle,
   type ChronicleEvent,
   type ChronicleState,
@@ -474,6 +515,25 @@ import {
   type ExpeditionPreference,
   type ExpeditionTargetIdentity,
 } from './world/ExpeditionPlanner'
+import {
+  BRIDGE_AMBUSH_ACTIVATION_RADIUS,
+  BRIDGE_AMBUSH_CHOICE_RADIUS,
+  BRIDGE_AMBUSH_DELIVERY_ESCORT_RADIUS,
+  BRIDGE_AMBUSH_DELIVERY_SPEED,
+  bridgeAmbushCanChoose,
+  bridgeAmbushDeliveryProgress,
+  bridgeAmbushRemainingEnemies,
+  bridgeAmbushReservesStagingPoint,
+  buildBridgeAmbushView,
+  createBridgeAmbushPlan,
+  createBridgeAmbushState,
+  normalizeBridgeAmbushState,
+  serializeBridgeAmbushState,
+  type BridgeAmbushChoice,
+  type BridgeAmbushCombatantState,
+  type BridgeAmbushPlan,
+  type BridgeAmbushState,
+} from './world/BridgeAmbush'
 import { chooseGeneratedInteraction } from './world/GeneratedInteraction'
 import {
   FINALE_ATTACKS,
@@ -1293,7 +1353,6 @@ const BOW_DAMAGE = 18
 const BOW_MIN_DAMAGE = 10
 const BOW_RANGE = 30
 const BOW_SPEED = 24
-const CAMERA_ORBIT_DISTANCE = 12
 const CAMERA_PITCH_LIMIT = 1.2
 const CAMERA_CLEARANCE = 0.4
 const ACTOR_ARROW_DAMAGE = 7
@@ -1397,6 +1456,11 @@ const CARAVAN_GUARDED_RANGE = 7
 const CARAVAN_PLUNDER_RANGE = 3.4
 /** How long a plundered cart stays empty. Longer than a player robbery: it was taken. */
 const CARAVAN_PLUNDER_COOLDOWN = 55
+const CARAVAN_DEFENSE_CREDIT_RANGE = 20
+const CARAVAN_DEFENSE_AID_COOLDOWN = 30
+const BRIDGE_AMBUSH_OWNER_ID = 'bridge-ambush'
+const BRIDGE_AMBUSH_CARGO_TARGET_ID = 'bridge-ambush:cargo'
+const BRIDGE_AMBUSH_SPAWN_RETRY_SECONDS = 2
 const KNOCKBACK_DAMPING = 11
 const KNOCKBACK_STEER_THRESHOLD = 0.8
 const TELEGRAPH_MAX = 8
@@ -1879,6 +1943,11 @@ export class GameEngine {
   private readonly generatedWorld: GeneratedWorldRuntime
   private readonly generatedBlueprint: WorldBlueprint
   private readonly expeditionPlanner: ExpeditionPlanner
+  private bridgeAmbushPlan: BridgeAmbushPlan | null = null
+  private bridgeAmbushState: BridgeAmbushState | null = null
+  private bridgeAmbushCart: THREE.Group | null = null
+  private bridgeAmbushSpawnRetryAt = 0
+  private bridgeAmbushCapacityNoticeShown = false
   private readonly generatedEncounterPlans = new Map<string, GeneratedEncounterPlan[]>()
   private readonly generatedActivationSpawns = new Map<string, Set<string>>()
   private readonly simulatedGeneratedRegions = new Set<string>()
@@ -2023,11 +2092,9 @@ export class GameEngine {
     breathing: 0,
     headYaw: 0,
   }
-  private readonly playerPose: CharacterPose = {
+  private readonly playerPose: CharacterPose & MeleePresentation = {
+    ...createMeleePresentation(),
     stride: 0,
-    attack: 0,
-    anticipation: 0,
-    recovery: 0,
     flinch: 0,
     stagger: 0,
   }
@@ -2137,7 +2204,7 @@ export class GameEngine {
   private playerGaitPhase = 0
   private isSprinting = false
   private cameraYaw = 0
-  private cameraPitch = Math.atan2(6.53, 10)
+  private cameraPitch = CAMERA_DEFAULT_PITCH
   private readonly cameraAccents: CameraAccent[] = []
   private sprintFovBlend = 0
   private cameraAccentOffset = 0
@@ -2186,6 +2253,8 @@ export class GameEngine {
   private caravanPanicTimer = 0
   /** Elapsed time before which a killed escort is not replaced. */
   private caravanEscortRespawnAt = 0
+  private caravanDefenseCredit = false
+  private caravanAidCooldown = 0
   /** Rate limit for rout and rally notices, so a squad breaking is one line, not five. */
   private moraleNoticeCooldown = 0
   private readonly activeEvents: WorldEvent[] = []
@@ -2351,6 +2420,33 @@ export class GameEngine {
     }
     this.generatedBlueprint = blueprint
     this.expeditionPlanner = new ExpeditionPlanner(blueprint, restoredRun?.directorState.expedition)
+    this.bridgeAmbushPlan = createBridgeAmbushPlan(blueprint, faction)
+    if (restoredRun) {
+      if (
+        restoredRun.directorState.bridgeAmbush !== undefined &&
+        restoredRun.directorState.bridgeAmbush !== null
+      ) {
+        const restoredBridge = normalizeBridgeAmbushState(
+          restoredRun.directorState.bridgeAmbush,
+          blueprint,
+          faction,
+          this.bridgeAmbushPlan,
+        )
+        this.bridgeAmbushState = restoredBridge.state
+        if (restoredBridge.rejected) {
+          this.callbacks.onNotice(BRIDGE_AMBUSH_SAVE_WARNING, 'warning')
+        }
+      }
+    } else {
+      this.bridgeAmbushState = createBridgeAmbushState(
+        blueprint,
+        faction,
+        this.bridgeAmbushPlan,
+      )
+      if (!this.bridgeAmbushPlan) {
+        this.callbacks.onNotice(BRIDGE_AMBUSH_UNAVAILABLE_NOTICE, 'warning')
+      }
+    }
     this.audio = new AudioDirector({
       musicMuted: settings.musicMuted ?? false,
       sfxVolume: settings.sfxVolume,
@@ -2392,10 +2488,10 @@ export class GameEngine {
     // this instance is what keeps one screenshot looking like one drawing.
     this.artLibrary = new StylizedArtLibrary({
       ink: {
-        player: mix(this.palette.bg, this.palette.accent, 0.16),
-        enemy: mix(this.palette.bg, this.palette.danger, 0.16),
-        interactable: mix(this.palette.bg, this.palette.warning, 0.18),
-        landmark: mix(this.palette.bg, this.palette.worldFog, 0.14),
+        player: characterFactionInkColor(faction),
+        enemy: CHARACTER_INK_COLORS.enemy,
+        interactable: CHARACTER_INK_COLORS.interactable,
+        landmark: CHARACTER_INK_COLORS.landmark,
       },
       rimColor: this.palette.worldSky,
       shadowTint: mix(this.palette.worldAmbientGround, this.palette.worldSky, 0.55),
@@ -2650,6 +2746,12 @@ export class GameEngine {
       this.readSerializableNumber(restoredDirector, 'caravanDirection', 1) < 0
         ? -1
         : 1
+    this.caravanDefenseCredit =
+      restoredDirector?.caravanDefenseCredit === true
+    this.caravanAidCooldown = Math.max(
+      0,
+      this.readSerializableNumber(restoredDirector, 'caravanAidCooldown', 0),
+    )
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
@@ -2776,6 +2878,7 @@ export class GameEngine {
     )
     this.scene.add(this.caravan)
     this.registerNamedInteractableOutline(this.caravan, 'cargo')
+    this.initializeBridgeAmbushCart()
     this.cameraYaw =
       restoredHeading ??
       getFactionStartHeading(this.generatedBlueprint, faction, this.player.position)
@@ -2795,6 +2898,7 @@ export class GameEngine {
     this.restoreGeneratedCompanions(restoredRun?.companions ?? [])
     if (initializeGeneratedStartingSquad) this.spawnGeneratedStartingSquad()
     this.syncGeneratedRegions()
+    this.updateBridgeAmbush(0)
     this.updateCamera(0, true)
     this.reconcileSquadFocus()
 
@@ -3403,6 +3507,10 @@ export class GameEngine {
   interact(): void {
     if (this.paused || this.ended) return
     this.resumeAudio()
+    if (this.focusBridgeAmbushChoice()) {
+      this.emitView(true)
+      return
+    }
     if (this.activeEvents.some((event) => event.onInteract?.() === true)) {
       this.emitView(true)
       return
@@ -3414,12 +3522,31 @@ export class GameEngine {
     const playerPosition = this.player.position
     if (playerPosition.distanceTo(this.caravan.position) < 7) {
       if (this.faction === 'guard') {
-        this.callbacks.onNotice(CARAVAN_DEFENDED_BY_PLAYER_NOTICE, 'info')
-        this.health = Math.min(this.maxHealth, this.health + 8)
+        if (this.caravanAidCooldown > 0) {
+          this.callbacks.onNotice(CARAVAN_DEFENSE_COOLDOWN_NOTICE, 'info')
+        } else if (!this.caravanDefenseCredit) {
+          this.callbacks.onNotice(CARAVAN_DEFENSE_NOT_EARNED_NOTICE, 'info')
+        } else if (this.health >= this.maxHealth) {
+          this.callbacks.onNotice(CARAVAN_DEFENDED_BY_PLAYER_NOTICE, 'info')
+        } else {
+          const healed = Math.min(8, this.maxHealth - this.health)
+          this.health += healed
+          this.caravanDefenseCredit = false
+          this.caravanAidCooldown = CARAVAN_DEFENSE_AID_COOLDOWN
+          this.callbacks.onNotice(describeCaravanDefenseAid(healed), 'success')
+          this.playSound('objective')
+        }
+        this.emitView(true)
+        return
+      }
+      if (this.isOrdinaryCaravanGuarded()) {
+        this.callbacks.onNotice(CARAVAN_STILL_GUARDED_NOTICE, 'warning')
+        this.emitView(true)
         return
       }
       if (this.caravanCooldown > 0) {
         this.callbacks.onNotice(CARAVAN_ALREADY_ROBBED_NOTICE, 'warning')
+        this.emitView(true)
         return
       }
       this.gold += 95
@@ -3552,6 +3679,7 @@ export class GameEngine {
     const savedEventCooldown = this.playerAnchoredEvent
       ? Math.max(this.eventCooldown, this.eventCooldownRange().min)
       : this.eventCooldown
+    this.syncBridgeAmbushCombatState()
     this.captureLiveFinale()
     this.syncChronicleToRegionDeltas()
     const regionState = this.generatedWorld.regions.saveState()
@@ -3652,6 +3780,13 @@ export class GameEngine {
         caravanDirection: this.caravanDirection,
         caravanX: this.caravan.position.x,
         caravanZ: this.caravan.position.z,
+        caravanDefenseCredit: this.caravanDefenseCredit === true,
+        caravanAidCooldown: Number.isFinite(this.caravanAidCooldown)
+          ? Math.max(0, this.caravanAidCooldown)
+          : 0,
+        bridgeAmbush: this.bridgeAmbushState
+          ? serializeBridgeAmbushState(this.bridgeAmbushState)
+          : null,
         pendingHints: this.hints.pending(),
         combatMastery: serializeCombatMastery(
           this.combatMastery, this.melee, this.abilityCooldown, this.attackCooldown, this.shieldActive,
@@ -3749,6 +3884,7 @@ export class GameEngine {
     this.attackAnimation = Math.max(0, this.attackAnimation - delta * 4.2)
     this.abilityCooldown = Math.max(0, this.abilityCooldown - delta)
     this.caravanCooldown = Math.max(0, this.caravanCooldown - delta)
+    this.caravanAidCooldown = Math.max(0, this.caravanAidCooldown - delta)
     this.caravanRobbedFlash = Math.max(0, this.caravanRobbedFlash - delta * 2)
     this.moraleNoticeCooldown = Math.max(0, this.moraleNoticeCooldown - delta)
     this.updatePlayerMelee(delta)
@@ -3763,12 +3899,14 @@ export class GameEngine {
     this.syncGeneratedRegions()
     this.refreshGeneratedCameraObstacles()
     this.updateCaravan(delta)
+    this.updateBridgeAmbush(delta)
     if (!this.finaleWithinArena()) {
       suspendFinale(this.finale)
       this.clearFinaleThreats()
     }
     this.updateProjectiles(delta)
     this.updateActors(delta)
+    this.syncBridgeAmbushCombatState()
     this.updateTorches()
     this.updateCampfires(delta)
     this.updateWildlife(delta)
@@ -4212,6 +4350,7 @@ export class GameEngine {
       if (regionId === startRegionId && plan.kind !== 'boss') continue
       const isFinalEncounter = plan.encounterId === finalEncounterId
       if (isFinalEncounter && (!finalReady || this.finale.defeated)) continue
+      if (this.shouldDeferGeneratedEncounter(plan, activationSpawns)) continue
       for (const spawn of plan.spawns) {
         if (activationSpawns.has(spawn.id)) continue
         if (isFinalEncounter && !finaleCanSpawn(this.finale, spawn.id)) {
@@ -4277,6 +4416,35 @@ export class GameEngine {
         activationSpawns.add(spawn.id)
       }
     }
+  }
+
+  private shouldDeferGeneratedEncounter(
+    plan: GeneratedEncounterPlan,
+    activationSpawns: ReadonlySet<string>,
+  ): boolean {
+    const bridgePlan = this.bridgeAmbushPlan
+    const bridgeState = this.bridgeAmbushState
+    if (
+      !bridgePlan ||
+      !bridgeState ||
+      plan.regionId !== bridgePlan.regionId ||
+      plan.kind === 'boss' ||
+      plan.spawns.some((spawn) => spawn.objective || spawn.objectiveEligible)
+    ) {
+      return false
+    }
+    const started = plan.spawns.some((spawn) =>
+      activationSpawns.has(spawn.id) ||
+      this.actors.some((actor) =>
+        actor.generatedEncounterId === plan.encounterId &&
+        actor.generatedSpawnId === spawn.id))
+    if (started) return false
+    return plan.spawns.some((spawn) =>
+      bridgeAmbushReservesStagingPoint(
+        bridgePlan,
+        bridgeState,
+        { x: spawn.worldX, z: spawn.worldZ },
+      ))
   }
 
   private refreshGeneratedCameraObstacles(): void {
@@ -4371,6 +4539,389 @@ export class GameEngine {
       this.generatedCaravanPatrolStart.z + segmentZ * progress
   }
 
+  private initializeBridgeAmbushCart(): void {
+    const state = this.bridgeAmbushState
+    const plan = this.bridgeAmbushPlan
+    if (!state || !plan || state.phase === 'unavailable') return
+    const cart = this.createCaravan(true)
+    cart.name = 'bridge-ambush-cart'
+    cart.position.set(
+      state.cargoX,
+      this.groundHeightAt(state.cargoX, state.cargoZ),
+      state.cargoZ,
+    )
+    const direction = -plan.approachSign
+    cart.rotation.y = Math.atan2(
+      -plan.axis.z * direction,
+      plan.axis.x * direction,
+    )
+    this.bridgeAmbushCart = cart
+    this.scene.add(cart)
+    this.registerNamedInteractableOutline(cart, 'cargo')
+    this.updateBridgeAmbushCartAppearance()
+    this.registerBridgeAmbushCargoTarget()
+  }
+
+  private registerBridgeAmbushCargoTarget(): void {
+    const state = this.bridgeAmbushState
+    const cart = this.bridgeAmbushCart
+    if (
+      !state ||
+      !cart ||
+      this.faction !== 'guard' ||
+      state.phase !== 'fighting' ||
+      state.cargoHealth <= 0
+    ) {
+      this.eventPropTargets.delete(BRIDGE_AMBUSH_CARGO_TARGET_ID)
+      return
+    }
+    const existing = this.eventPropTargets.get(BRIDGE_AMBUSH_CARGO_TARGET_ID)
+    if (existing) {
+      existing.hp = state.cargoHealth
+      existing.maxHp = state.cargoMaxHealth
+      existing.position = cart.position
+      existing.object = cart
+      return
+    }
+    this.eventPropTargets.set(BRIDGE_AMBUSH_CARGO_TARGET_ID, {
+      id: BRIDGE_AMBUSH_CARGO_TARGET_ID,
+      ownerId: BRIDGE_AMBUSH_OWNER_ID,
+      object: cart,
+      hp: state.cargoHealth,
+      maxHp: state.cargoMaxHealth,
+      position: cart.position,
+      attackRange: 4.4,
+    })
+  }
+
+  private updateBridgeAmbushCartAppearance(): void {
+    const state = this.bridgeAmbushState
+    const cart = this.bridgeAmbushCart
+    if (!state || !cart) return
+    const cargo = cart.getObjectByName('cargo')
+    if (cargo) {
+      const loaded = state.phase === 'lost'
+        ? 0.18
+        : state.phase === 'resolved' && state.outcome === 'seize'
+          ? 0.32
+          : 1
+      cargo.scale.y = loaded
+    }
+    cart.rotation.z = state.phase === 'lost' ? 0.08 : 0
+  }
+
+  private updateBridgeAmbush(delta: number): void {
+    const state = this.bridgeAmbushState
+    const plan = this.bridgeAmbushPlan
+    const cart = this.bridgeAmbushCart
+    if (!state || !plan || !cart || state.phase === 'unavailable') return
+    const visible = this.generatedWorld.regions
+      .getVisibleRegionIds()
+      .map(String)
+      .includes(plan.regionId)
+    cart.visible = visible
+    if (state.phase === 'approach') {
+      const closeEnough =
+        this.player.position.distanceTo(cart.position) <= BRIDGE_AMBUSH_ACTIVATION_RADIUS
+      if (
+        closeEnough &&
+        this.simulatedGeneratedRegions.has(plan.regionId) &&
+        this.elapsed >= this.bridgeAmbushSpawnRetryAt
+      ) {
+        this.materializeBridgeAmbush()
+      }
+      return
+    }
+    if (
+      this.simulatedGeneratedRegions.has(plan.regionId) &&
+      this.player.position.distanceTo(cart.position) <= CARAVAN_ESCORT_RANGE &&
+      this.elapsed >= this.bridgeAmbushSpawnRetryAt
+    ) {
+      this.materializeBridgeAmbush()
+    }
+    if (state.phase === 'fighting') {
+      this.registerBridgeAmbushCargoTarget()
+      this.refreshBridgeAmbushOrders()
+      return
+    }
+    this.eventPropTargets.delete(BRIDGE_AMBUSH_CARGO_TARGET_ID)
+    if (state.phase === 'delivering') this.updateBridgeAmbushDelivery(delta)
+  }
+
+  private materializeBridgeAmbush(): boolean {
+    const state = this.bridgeAmbushState
+    const plan = this.bridgeAmbushPlan
+    if (!state || !plan || state.phase === 'unavailable') {
+      return false
+    }
+    const missing = state.combatants.filter((entry) =>
+      !entry.defeated &&
+      !this.actors.some((actor) => actor.generatedSpawnId === entry.id))
+    if (missing.length === 0) {
+      if (state.phase === 'approach') state.phase = 'fighting'
+      return true
+    }
+    const placements = new Map<string, THREE.Vector3>()
+    for (const combatant of missing) {
+      const position = this.findBridgeAmbushSpawnPosition(combatant)
+      if (!position) {
+        if (state.phase === 'approach') {
+          state.phase = 'unavailable'
+          state.unavailableReason =
+            'Берег у выбранного моста занят постройками; безопасно поставить встречу нельзя.'
+          state.cargoHealth = 0
+          state.combatants = []
+          if (this.bridgeAmbushCart) this.bridgeAmbushCart.visible = false
+          this.callbacks.onNotice(state.unavailableReason, 'warning')
+          this.eventPropTargets.delete(BRIDGE_AMBUSH_CARGO_TARGET_ID)
+          this.emitView(true)
+        }
+        return false
+      }
+      placements.set(combatant.id, position)
+    }
+    if (!this.reserveActorSlots('campaign', missing.length)) {
+      this.bridgeAmbushSpawnRetryAt = this.elapsed + BRIDGE_AMBUSH_SPAWN_RETRY_SECONDS
+      if (!this.bridgeAmbushCapacityNoticeShown) {
+        this.bridgeAmbushCapacityNoticeShown = true
+        this.callbacks.onNotice(BRIDGE_AMBUSH_CAPACITY_NOTICE, 'info')
+      }
+      return false
+    }
+
+    for (const combatant of missing) {
+      const position = placements.get(combatant.id)
+      if (!position) continue
+      const attacksCargo =
+        (state.phase === 'approach' || state.phase === 'fighting') &&
+        this.faction === 'guard' &&
+        combatant.enemy &&
+        state.combatants.filter((entry) => entry.enemy).indexOf(combatant) === 0
+      const actor = this.spawnActor(
+        combatant.allegiance,
+        combatant.role,
+        position.x,
+        position.z,
+        this.actorSequence++,
+        {
+          budget: 'campaign',
+          objectiveEligible: false,
+          squadEligible: false,
+          aiMode: attacksCargo ? 'attackEventProp' : 'normal',
+          eventOwnerId: BRIDGE_AMBUSH_OWNER_ID,
+          eventPropTargetId: attacksCargo ? BRIDGE_AMBUSH_CARGO_TARGET_ID : null,
+          generatedRegionId: plan.regionId,
+          generatedEncounterId: plan.id,
+          generatedSpawnId: combatant.id,
+          generatedUnique: true,
+          appearanceId: combatant.id,
+          hostileToPlayer: combatant.enemy,
+        },
+      )
+      if (combatant.maxHealth > 0) {
+        actor.maxHp = combatant.maxHealth
+        actor.hp = Math.min(combatant.maxHealth, combatant.health)
+        this.drawActorHealthBar(actor)
+      } else {
+        combatant.maxHealth = actor.maxHp
+        combatant.health = actor.hp
+      }
+      actor.home.copy(this.bridgeAmbushCart?.position ?? position)
+      actor.wanderTarget.copy(position)
+    }
+    if (state.phase === 'approach') state.phase = 'fighting'
+    this.bridgeAmbushCapacityNoticeShown = false
+    this.registerBridgeAmbushCargoTarget()
+    this.refreshBridgeAmbushOrders()
+    this.emitView(true)
+    return true
+  }
+
+  private findBridgeAmbushSpawnPosition(
+    combatant: BridgeAmbushCombatantState,
+  ): THREE.Vector3 | null {
+    const plan = this.bridgeAmbushPlan
+    if (!plan) return null
+    const authored = plan.spawnPoints.find((entry) => entry.combatantId === combatant.id)
+    if (!authored) return null
+    const radius = this.actorColliderRadiusForRole(combatant.role)
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const ring = attempt === 0 ? 0 : 0.8 + Math.floor((attempt - 1) / 4) * 0.8
+      const angle = attempt * Math.PI * 0.5
+      const x = authored.x + Math.cos(angle) * ring
+      const z = authored.z + Math.sin(angle) * ring
+      if (!this.isWalkablePosition(x, z, radius)) continue
+      return new THREE.Vector3(x, this.groundHeightAt(x, z), z)
+    }
+    return null
+  }
+
+  private refreshBridgeAmbushOrders(): void {
+    const state = this.bridgeAmbushState
+    const cart = this.bridgeAmbushCart
+    if (!state || !cart || state.phase !== 'fighting') return
+    for (const actor of this.actors) {
+      const combatant = state.combatants.find((entry) => entry.id === actor.generatedSpawnId)
+      if (!combatant || !actor.alive || actor.aiMode === 'attackEventProp') continue
+      if (actor.order) {
+        actor.order.kind = 'hold'
+        actor.order.position.copy(cart.position)
+        actor.order.timer = COMMANDER_ORDER_DURATION
+      } else {
+        actor.order = {
+          kind: 'hold',
+          position: cart.position.clone(),
+          timer: COMMANDER_ORDER_DURATION,
+        }
+      }
+    }
+  }
+
+  private captureBridgeAmbushActor(actor: Actor): void {
+    const state = this.bridgeAmbushState
+    if (!state || !actor.generatedSpawnId) return
+    const combatant = state.combatants.find((entry) => entry.id === actor.generatedSpawnId)
+    if (!combatant) return
+    combatant.maxHealth = Math.max(combatant.maxHealth, actor.maxHp)
+    combatant.health = actor.alive ? Math.max(0, actor.hp) : 0
+    if (!actor.alive) combatant.defeated = true
+  }
+
+  private syncBridgeAmbushCombatState(): void {
+    const state = this.bridgeAmbushState
+    const plan = this.bridgeAmbushPlan
+    const cart = this.bridgeAmbushCart
+    if (!state || !plan || !cart || state.phase === 'unavailable') return
+    for (const actor of this.actors) this.captureBridgeAmbushActor(actor)
+    const target = this.eventPropTargets.get(BRIDGE_AMBUSH_CARGO_TARGET_ID)
+    if (target) state.cargoHealth = Math.max(0, target.hp)
+    state.cargoX = cart.position.x
+    state.cargoZ = cart.position.z
+    if (state.phase === 'delivering') {
+      state.progress = bridgeAmbushDeliveryProgress(plan, cart.position)
+    } else if (state.phase === 'resolved' && state.outcome === 'deliver') {
+      state.progress = 1
+    }
+    if (state.phase !== 'fighting') return
+    if (state.cargoHealth <= 0) {
+      state.phase = 'lost'
+      state.outcome = null
+      state.rewardPaid = false
+      state.consequence = BRIDGE_AMBUSH_LOST_NOTICE
+      this.eventPropTargets.delete(BRIDGE_AMBUSH_CARGO_TARGET_ID)
+      for (const actor of this.actors) {
+        if (!state.combatants.some((entry) => entry.id === actor.generatedSpawnId)) continue
+        actor.eventPropTargetId = null
+        if (actor.aiMode === 'attackEventProp') actor.aiMode = 'normal'
+      }
+      this.updateBridgeAmbushCartAppearance()
+      this.callbacks.onNotice(BRIDGE_AMBUSH_LOST_NOTICE, 'danger')
+      this.playSound('event')
+      this.emitView(true)
+      return
+    }
+    if (bridgeAmbushRemainingEnemies(state) === 0) {
+      state.phase = 'secured'
+      this.eventPropTargets.delete(BRIDGE_AMBUSH_CARGO_TARGET_ID)
+      this.callbacks.onNotice(BRIDGE_AMBUSH_SECURED_NOTICE, 'success')
+      this.playSound('objective')
+      this.emitView(true)
+    }
+  }
+
+  private updateBridgeAmbushDelivery(delta: number): void {
+    const state = this.bridgeAmbushState
+    const plan = this.bridgeAmbushPlan
+    const cart = this.bridgeAmbushCart
+    if (
+      !state ||
+      !plan ||
+      !cart ||
+      state.phase !== 'delivering' ||
+      state.outcome !== 'deliver' ||
+      state.rewardPaid
+    ) {
+      return
+    }
+    if (this.player.position.distanceTo(cart.position) > BRIDGE_AMBUSH_DELIVERY_ESCORT_RADIUS) {
+      return
+    }
+    const dx = plan.deliveryEnd.x - cart.position.x
+    const dz = plan.deliveryEnd.z - cart.position.z
+    const remaining = Math.hypot(dx, dz)
+    if (remaining <= 0.12) {
+      this.resolveBridgeAmbushDelivery()
+      return
+    }
+    const requested = Math.min(remaining, Math.max(0, delta) * BRIDGE_AMBUSH_DELIVERY_SPEED)
+    if (requested <= 0) return
+    const beforeX = cart.position.x
+    const beforeZ = cart.position.z
+    this.moveCharacter(
+      cart.position,
+      dx / remaining * requested,
+      dz / remaining * requested,
+      GENERATED_CARAVAN_COLLIDER_RADIUS,
+    )
+    const movedX = cart.position.x - beforeX
+    const movedZ = cart.position.z - beforeZ
+    const travelled = Math.hypot(movedX, movedZ)
+    cart.position.y = this.groundHeightAt(cart.position.x, cart.position.z)
+    if (travelled > 0.0001) {
+      cart.rotation.y = Math.atan2(-movedZ, movedX)
+      for (const wheel of cart.getObjectsByProperty('name', 'wheel')) {
+        wheel.rotation.z -= travelled / wheelRadiusOf(wheel)
+      }
+    }
+    state.cargoX = cart.position.x
+    state.cargoZ = cart.position.z
+    state.progress = bridgeAmbushDeliveryProgress(plan, cart.position)
+    if (state.progress >= 0.995 && cart.position.distanceTo(
+      new THREE.Vector3(plan.deliveryEnd.x, cart.position.y, plan.deliveryEnd.z),
+    ) <= 0.35) {
+      this.resolveBridgeAmbushDelivery()
+    }
+  }
+
+  private resolveBridgeAmbushDelivery(): void {
+    const state = this.bridgeAmbushState
+    const plan = this.bridgeAmbushPlan
+    if (
+      !state ||
+      !plan ||
+      state.phase !== 'delivering' ||
+      state.outcome !== 'deliver' ||
+      state.rewardPaid
+    ) {
+      return
+    }
+    state.phase = 'resolved'
+    state.rewardPaid = true
+    state.progress = 1
+    state.consequence = describeBridgeAmbushDelivered(BRIDGE_AMBUSH_DELIVERED_SUPPLIES)
+    this.generatedSupplyCount += BRIDGE_AMBUSH_DELIVERED_SUPPLIES
+
+    const destinationSite = this.generatedBlueprint.sites.find((site) =>
+      String(site.regionId) === plan.regionId &&
+      (site.kind === 'settlement' || site.kind === 'shop' || site.kind === 'recovery'))
+    const events = resolveRegionalCaravanDelivery({
+      state: this.chronicleState,
+      regions: this.chronicleRegions,
+      idPrefix: `bridge-delivery-${plan.bridgeId}`,
+      regionId: plan.regionId,
+      faction: 'guard',
+      siteId: destinationSite?.id ?? null,
+    })
+    if (events.length !== 1) {
+      throw new Error('Bridge delivery did not produce its chronicle consequence')
+    }
+    this.syncChronicleToRegionDeltas()
+    this.updateBridgeAmbushCartAppearance()
+    this.callbacks.onNotice(state.consequence, 'success')
+    this.playSound('objective')
+    this.emitView(true)
+  }
+
   private generatedPrerequisitesDone(node: FactionObjectiveNode): boolean {
     return objectivePrerequisitesDone(node, this.objectives)
   }
@@ -4438,6 +4989,58 @@ export class GameEngine {
     this.emitView(true)
   }
 
+  trackBridgeAmbush(): boolean {
+    if (this.ended) return false
+    const target = this.bridgeAmbushExpeditionTarget()
+    if (!target || !this.expeditionPlanner.select(
+      { kind: 'bridgeAmbush', id: target.id },
+      this.buildExpeditionInput(),
+    )) {
+      return false
+    }
+    this.emitView(true)
+    return true
+  }
+
+  chooseBridgeAmbush(choice: BridgeAmbushChoice): boolean {
+    if (
+      this.ended ||
+      (choice !== 'seize' && choice !== 'deliver') ||
+      !this.bridgeAmbushState ||
+      !this.bridgeAmbushPlan ||
+      !this.bridgeAmbushCart
+    ) {
+      return false
+    }
+    this.syncBridgeAmbushCombatState()
+    const state = this.bridgeAmbushState
+    if (!bridgeAmbushCanChoose(state, this.player.position)) return false
+    if (this.actors.some((actor) =>
+      actor.alive &&
+      state.combatants.some((entry) => entry.enemy && entry.id === actor.generatedSpawnId))) {
+      return false
+    }
+
+    state.outcome = choice
+    this.eventPropTargets.delete(BRIDGE_AMBUSH_CARGO_TARGET_ID)
+    if (choice === 'deliver') {
+      state.phase = 'delivering'
+      state.consequence = null
+      this.callbacks.onNotice(BRIDGE_AMBUSH_DELIVERY_STARTED_NOTICE, 'info')
+    } else {
+      state.phase = 'resolved'
+      state.rewardPaid = true
+      state.consequence = describeBridgeAmbushSeized(BRIDGE_AMBUSH_SEIZED_GOLD)
+      this.gold += BRIDGE_AMBUSH_SEIZED_GOLD
+      this.achievements.recordGoldEarned(BRIDGE_AMBUSH_SEIZED_GOLD)
+      this.callbacks.onNotice(state.consequence, 'success')
+      this.playSound('coin')
+    }
+    this.updateBridgeAmbushCartAppearance()
+    this.emitView(true)
+    return true
+  }
+
   private buildExpeditionInput(): ExpeditionInput {
     return {
       faction: this.faction,
@@ -4454,6 +5057,30 @@ export class GameEngine {
       discoveredRegionIds: new Set(this.generatedWorld.discoveredRegionIds.map(String)),
       chronicleRegions: this.chronicleRegions,
       contestedRegionIds: this.chronicleContestedRegionIds,
+      bridgeAmbush: this.bridgeAmbushExpeditionTarget(),
+    }
+  }
+
+  private bridgeAmbushExpeditionTarget(): NonNullable<ExpeditionInput['bridgeAmbush']> | null {
+    const state = this.bridgeAmbushState
+    const plan = this.bridgeAmbushPlan
+    if (
+      !state ||
+      !plan ||
+      state.phase === 'delivering' ||
+      state.phase === 'resolved' ||
+      state.phase === 'lost' ||
+      state.phase === 'unavailable'
+    ) {
+      return null
+    }
+    return {
+      id: plan.id,
+      title: BRIDGE_AMBUSH_TITLE,
+      regionId: plan.regionId,
+      position: { x: state.cargoX, z: state.cargoZ },
+      task: BRIDGE_AMBUSH_EXPEDITION_TASK,
+      stake: BRIDGE_AMBUSH_EXPEDITION_STAKE,
     }
   }
 
@@ -4862,16 +5489,71 @@ export class GameEngine {
       }
     }
     if (kind === 'caravan') {
-      return this.faction === 'guard'
-        ? '[E] Досмотреть корован'
-        : this.caravanCooldown > 0
-          ? 'Корован уже ограбили'
-          : '[E] ГРАБИТЬ КОРОВАН'
+      if (this.faction === 'guard') {
+        if (this.caravanDefenseCredit && this.caravanAidCooldown <= 0 && this.health < this.maxHealth) {
+          return '[E] Получить перевязку за защиту корована'
+        }
+        return this.caravanDefenseCredit && this.health >= this.maxHealth
+          ? 'Перевязка заслужена, но здоровье полное'
+          : this.caravanAidCooldown > 0
+            ? 'Интендант пополняет перевязь'
+            : 'Корован под охраной'
+      }
+      if (this.isOrdinaryCaravanGuarded()) return 'Живая охрана не даёт взять груз'
+      return this.caravanCooldown > 0
+        ? 'Корован уже ограбили'
+        : '[E] ГРАБИТЬ КОРОВАН'
     }
     if (kind === 'ration') {
       return `[E] Съесть паёк • ${this.generatedSupplyCount}`
     }
     return ''
+  }
+
+  private getBridgeAmbushPrompt(): string | null {
+    const state = this.bridgeAmbushState
+    const cart = this.bridgeAmbushCart
+    if (!state || !cart || state.phase === 'unavailable') return null
+    const distance = this.player.position.distanceTo(cart.position)
+    if (state.phase === 'secured' && distance <= BRIDGE_AMBUSH_CHOICE_RADIUS + 2) {
+      return distance <= BRIDGE_AMBUSH_CHOICE_RADIUS
+        ? document.pointerLockElement === this.renderer.domElement
+          ? '[E] Освободить курсор и выбрать судьбу груза'
+          : 'Выбери кнопкой: забрать груз или провести телегу'
+        : 'Подойди к телеге, чтобы решить судьбу груза'
+    }
+    if (state.phase === 'delivering' && distance <= BRIDGE_AMBUSH_DELIVERY_ESCORT_RADIUS + 5) {
+      return distance <= BRIDGE_AMBUSH_DELIVERY_ESCORT_RADIUS
+        ? 'Иди рядом: телега движется по мосту'
+        : 'Вернись к телеге — без проводника она стоит'
+    }
+    if (state.phase === 'fighting' && distance <= BRIDGE_AMBUSH_ACTIVATION_RADIUS) {
+      return bridgeAmbushRemainingEnemies(state) > 0
+        ? this.faction === 'guard'
+          ? 'Отбей налётчиков от телеги'
+          : 'Сначала одолей живых защитников телеги'
+        : 'Подступ к телеге свободен'
+    }
+    return null
+  }
+
+  private focusBridgeAmbushChoice(): boolean {
+    const state = this.bridgeAmbushState
+    const cart = this.bridgeAmbushCart
+    if (
+      !state ||
+      !cart ||
+      state.phase !== 'secured' ||
+      this.player.position.distanceTo(cart.position) > BRIDGE_AMBUSH_CHOICE_RADIUS
+    ) {
+      return false
+    }
+    if (document.pointerLockElement === this.renderer.domElement) {
+      this.releaseGameplayInput()
+      document.exitPointerLock()
+    }
+    this.callbacks.onNotice(BRIDGE_AMBUSH_CHOICE_FOCUS_NOTICE, 'info')
+    return true
   }
 
   private isWalkablePosition(x: number, z: number, radius: number): boolean {
@@ -7757,6 +8439,13 @@ export class GameEngine {
     return escorts
   }
 
+  private isOrdinaryCaravanGuarded(): boolean {
+    return this.livingCaravanEscorts().some((guard) =>
+      guard.routTimer <= 0 &&
+      guard.mesh.position.distanceToSquared(this.caravan.position) <=
+        CARAVAN_GUARDED_RANGE * CARAVAN_GUARDED_RANGE)
+  }
+
   /** The nearest thing that would happily take the cart, beast or raider alike. */
   private nearestCaravanThreat(): Actor | null {
     let nearest: Actor | null = null
@@ -7804,6 +8493,7 @@ export class GameEngine {
   /** Escort down, raider at the tailgate: the cart is gone whoever the player is. */
   private plunderCaravan(raider: Actor): void {
     this.caravanCooldown = CARAVAN_PLUNDER_COOLDOWN
+    this.caravanDefenseCredit = false
     this.caravanRobbedFlash = 1
     this.playSound('event')
     if (this.player.position.distanceTo(this.caravan.position) < 60) {
@@ -8128,7 +8818,7 @@ export class GameEngine {
       eventPrompt = event.getPrompt?.() ?? null
       if (eventPrompt) break
     }
-    this.prompt = eventPrompt ?? this.getGeneratedPrompt()
+    this.prompt = eventPrompt ?? this.getBridgeAmbushPrompt() ?? this.getGeneratedPrompt()
   }
 
   private updateMission(): void {
@@ -8250,7 +8940,7 @@ export class GameEngine {
    * only one of them has a button.
    */
   chooseDoctrine(doctrineId: string): boolean {
-    if (this.paused || this.ended) return false
+    if (this.ended) return false
     if (!equipDoctrine(this.doctrines, this.generatedBlueprint.seed, doctrineId)) {
       return false
     }
@@ -9293,7 +9983,7 @@ export class GameEngine {
    * draw would make the run's history depend on how often the player clicked.
    */
   pinRumour(rumourId: string | null): void {
-    if (this.paused || this.ended) return
+    if (this.ended) return
     const previous = getPinnedRumour(this.chronicleCommitments)
     if (!pinRumour(this.chronicleCommitments, rumourId)) return
     const pinned = getPinnedRumour(this.chronicleCommitments)
@@ -11276,6 +11966,7 @@ export class GameEngine {
   private removeActorById(actorId: string): void {
     const index = this.actors.findIndex((actor) => actor.id === actorId)
     if (index < 0) return
+    this.captureBridgeAmbushActor(this.actors[index])
     this.captureFinaleActor(this.actors[index])
     if (this.actors[index].generatedSpawnId === this.finale.identity.bossId) {
       suspendFinale(this.finale)
@@ -11749,6 +12440,9 @@ export class GameEngine {
       ABILITY_INFO.guard.cooldownMax,
     )
     this.updateShieldPose()
+    if (this.player.userData.rig) {
+      this.animateCharacter(this.player, this.samplePlayerPose(0))
+    }
   }
 
   private updateShieldPose(): void {
@@ -11758,6 +12452,22 @@ export class GameEngine {
     // authored above the feet — the same conversion `createCharacter` does for the
     // rest pose, through the same two constants so the two cannot disagree.
     const rig = this.player.userData.rig as CharacterRig | undefined
+    if (rig && this.shieldActive) {
+      const arm = rig.mainHand > 0 ? rig.leftArm : rig.rightArm
+      const elbow = rig.mainHand > 0 ? rig.leftElbow : rig.rightElbow
+      const roll = rig.mainHand * GUARD_ARM_ROLL
+      if (arm) arm.rotation.set(GUARD_ARM_PITCH, 0, roll)
+      if (elbow) elbow.rotation.x = GUARD_ELBOW_PITCH
+      const hand = solveHandOffset(this.handOffset, rig.upperArm, rig.forearm,
+        GUARD_ARM_PITCH, roll, GUARD_ELBOW_PITCH)
+      shield.position.set(
+        (arm?.position.x ?? -rig.mainHand * 0.6) + hand.x,
+        (arm?.position.y ?? rig.shoulderY) + hand.y,
+        hand.z + 0.06,
+      )
+      shield.rotation.set(-0.08, 0, 0)
+      return
+    }
     const waistY = rig?.waistY ?? 0
     shield.position.set(
       this.shieldActive ? 0 : -0.82,
@@ -11841,6 +12551,16 @@ export class GameEngine {
     const ring = actor.mesh.getObjectByName('faction-ring')
     if (ring) ring.visible = false
     this.projectileSourcesToClear.add(actor.id)
+    if (
+      directPlayerKill &&
+      this.faction === 'guard' &&
+      hostile(actor.allegiance, CARAVAN_ALLEGIANCE) &&
+      actor.mesh.position.distanceTo(this.caravan.position) <= CARAVAN_DEFENSE_CREDIT_RANGE &&
+      this.caravanCooldown <= 0
+    ) {
+      this.caravanDefenseCredit = true
+    }
+    this.captureBridgeAmbushActor(actor)
     this.recordGeneratedActorDeath(actor)
     // §5C.2 — losing the commander is a morale event for everyone who watched it, and
     // it must land before any of them takes their next check.
@@ -12259,6 +12979,24 @@ export class GameEngine {
     const primary = this.primaryEvent
     const expeditionInput = this.buildExpeditionInput()
     const expedition = this.expeditionPlanner.buildView(expeditionInput)
+    const bridgeAmbush = this.bridgeAmbushState
+      ? buildBridgeAmbushView(
+          this.generatedBlueprint,
+          this.faction,
+          this.objectives,
+          this.bridgeAmbushPlan,
+          this.bridgeAmbushState,
+          this.player.position,
+          this.cameraYaw,
+          (expedition.mode === 'selected' &&
+            expedition.target?.kind !== 'bridgeAmbush') ||
+            (expedition.mode === 'campaign' &&
+              expedition.target?.committed === true),
+          expedition.mode === 'selected' &&
+            expedition.target?.kind === 'bridgeAmbush',
+          expedition,
+        )
+      : null
     const view = buildGameView({
       faction: this.faction,
       blueprint: this.generatedBlueprint,
@@ -12327,6 +13065,9 @@ export class GameEngine {
       contracts: expeditionInput.contracts,
       doctrines: buildDoctrineView(this.doctrines, this.generatedBlueprint.seed),
       expedition,
+      bridgeAmbush,
+      bridgeAmbushX: this.bridgeAmbushState?.cargoX ?? null,
+      bridgeAmbushZ: this.bridgeAmbushState?.cargoZ ?? null,
       finale: buildFinaleView(this.finale, this.finaleRelevant()),
       shopPriceMultiplier: this.activeShopPriceMultiplier,
       squad: this.actors.filter((actor) => isSquadMember(actor, this.faction)).length,
@@ -14213,6 +14954,21 @@ export class GameEngine {
     }
     torsoPivot.add(weaponPivot)
 
+    if (player && faction === 'elf') {
+      const bow = new THREE.Group()
+      bow.name = 'ability-bow'
+      bow.visible = false
+      bow.add(new THREE.Mesh(
+        build('char-weapon:bow:head', () => buildWeaponHead('bow')),
+        leatherMaterial,
+      ))
+      bow.add(new THREE.Mesh(
+        build('char-weapon:bow:grip', () => buildWeaponGrip('bow')),
+        leatherMaterial,
+      ))
+      torsoPivot.add(bow)
+    }
+
     if (keys.offhand) {
       const offhandKind = plan.offhand
       // `shield` keeps its rest transform because `updateShieldPose` writes absolute
@@ -14357,28 +15113,21 @@ export class GameEngine {
    */
   private characterBodyMaterial(plan: CharacterPlan): THREE.MeshStandardMaterial {
     const tint = plan.tint
+    const colors = resolveCharacterMaterialPalette(plan)
     if (plan.armour === 'none') {
       return this.artLibrary.acquireMaterial(`char:civil:${String(tint)}`, {
-        color: mix(
-          mix(this.palette.muted, this.palette.bg, 0.24),
-          this.palette.warning,
-          tint * 0.09,
-        ),
+        color: colors.body,
         surface: 'cloth',
       })
     }
-    const base = this.factionColor(plan.faction)
-    const shade = mix(base, tint % 2 === 0 ? this.palette.bg : this.palette.surface, 0.06 + tint * 0.05)
     if (plan.faction === 'guard') {
       return this.artLibrary.acquireMaterial(`char:armour:guard:${String(tint)}`, {
-        color: shade,
+        color: colors.body,
         surface: 'metal',
-        emissive: base,
-        emissiveIntensity: 0.07,
       })
     }
     return this.artLibrary.acquireMaterial(`char:cloth:${plan.faction}:${String(tint)}`, {
-      color: shade,
+      color: colors.body,
       surface: plan.faction === 'villain' ? 'leather' : 'cloth',
     })
   }
@@ -14390,18 +15139,18 @@ export class GameEngine {
     // villains looked like when limbs shared the torso material.
     if (plan.faction === 'guard') {
       return this.artLibrary.acquireMaterial('char:limb:guard', {
-        color: mix(this.palette.borderStrong, this.palette.link, 0.3),
+        color: resolveCharacterMaterialPalette(plan).limb,
         surface: 'metal',
       })
     }
     if (plan.faction === 'villain') {
       return this.artLibrary.acquireMaterial('char:limb:villain', {
-        color: mix(this.palette.borderStrong, this.palette.danger, 0.22),
+        color: resolveCharacterMaterialPalette(plan).limb,
         surface: 'metal',
       })
     }
     return this.artLibrary.acquireMaterial('char:limb:elf', {
-      color: mix(this.factionColor('elf'), this.palette.bg, 0.5),
+      color: resolveCharacterMaterialPalette(plan).limb,
       surface: 'leather',
     })
   }
@@ -14417,14 +15166,14 @@ export class GameEngine {
   private characterShieldMaterial(plan: CharacterPlan): THREE.MeshStandardMaterial {
     if (plan.armour === 'none') return this.characterBodyMaterial(plan)
     return this.artLibrary.acquireMaterial(`char:shield:${plan.faction}`, {
-      color: mix(this.factionColor(plan.faction), this.palette.surface, 0.26),
+      color: resolveCharacterMaterialPalette(plan).shield,
       surface: plan.faction === 'elf' ? 'bark' : 'metal',
     })
   }
 
   private characterCloakMaterial(plan: CharacterPlan): THREE.MeshStandardMaterial {
     return this.artLibrary.acquireMaterial(`char:cloak:${plan.faction}`, {
-      color: mix(this.factionColor(plan.faction), this.palette.bg, 0.46),
+      color: resolveCharacterMaterialPalette(plan).cloak,
       surface: 'cloth',
     })
   }
@@ -14432,17 +15181,15 @@ export class GameEngine {
   private characterSkinMaterial(tone: number): THREE.MeshStandardMaterial {
     // Skin has to stay light enough that a brow, a nose and a jaw still separate
     // under a helmet's shadow at night, which is where faces are lost first.
-    const base = mix(this.palette.warning, this.palette.surface, 0.42)
     return this.artLibrary.acquireMaterial(`char:skin:${String(tone)}`, {
-      color: mix(base, tone < 2 ? this.palette.text : this.palette.warning, 0.05 + tone * 0.06),
+      color: characterSkinColor(tone),
       surface: 'skin',
     })
   }
 
   private characterHairMaterial(tone: number): THREE.MeshStandardMaterial {
-    const base = mix(this.palette.text, this.palette.bg, 0.3)
     return this.artLibrary.acquireMaterial(`char:hair:${String(tone)}`, {
-      color: mix(base, tone < 2 ? this.palette.warning : this.palette.bg, 0.12 + tone * 0.12),
+      color: characterHairColor(tone),
       surface: 'cloth',
     })
   }
@@ -14452,24 +15199,24 @@ export class GameEngine {
   ): THREE.MeshStandardMaterial {
     if (kind === 'leather') {
       return this.artLibrary.acquireMaterial('char:leather', {
-        color: mix(this.palette.warning, this.palette.bg, 0.66),
+        color: CHARACTER_SHARED_COLORS.leather,
         surface: 'leather',
       })
     }
     if (kind === 'steel') {
       return this.artLibrary.acquireMaterial('char:steel', {
-        color: mix(this.palette.borderStrong, this.palette.text, 0.24),
+        color: CHARACTER_SHARED_COLORS.steel,
         surface: 'metal',
       })
     }
     if (kind === 'bone') {
       return this.artLibrary.acquireMaterial('char:bone', {
-        color: mix(this.palette.text, this.palette.surface, 0.35),
+        color: CHARACTER_SHARED_COLORS.bone,
         surface: 'skin',
       })
     }
     return this.artLibrary.acquireMaterial('char:dark', {
-      color: mix(this.palette.text, this.palette.bg, 0.28),
+      color: CHARACTER_SHARED_COLORS.dark,
       surface: 'dark',
     })
   }
@@ -15872,6 +16619,15 @@ export class GameEngine {
   }
 
   private updateWeaponTrail(): void {
+    if ((this.honestMelee || this.melee.phase !== 'idle') && this.activePlayerAttackKind !== 'cleave') {
+      const envelope = sampleMeleePresentation(this.melee, this.playerPose).trail
+      const finisher = this.melee.beat === 3
+      this.weaponTrail.visible = envelope > 0.02
+      this.weaponTrail.material.opacity = envelope * (finisher ? 0.72 : 0.52)
+      this.weaponTrail.scale.set(finisher ? 1.2 : 0.9, finisher ? 1.15 : 0.85, 1)
+      this.weaponTrail.rotation.z = this.melee.beat === 2 ? 0.65 : -0.65
+      return
+    }
     if (
       this.activePlayerAttackKind === 'arrow' ||
       this.attackAnimation <= 0.1 ||
@@ -16144,6 +16900,8 @@ export class GameEngine {
     // `updatePlayer` layers the evade dip on after this pass. Re-establishing the
     // skeletal baseline here makes that offset a pose rather than accumulated state.
     rig.torsoPivot.rotation.x = 0
+    const playerAttack = group === this.player ? this.playerPose : null
+    const sweep = playerAttack?.sweep ?? 0
     const stride = rig.boundArms ? 0 : pose.stride
     const swing = pose.stride
     const main = rig.mainHand > 0 ? rig.rightArm : rig.leftArm
@@ -16161,7 +16919,7 @@ export class GameEngine {
       pose.stagger * 0.62
     const mainZ =
       rig.mainHand * (rig.armSplay + pose.flinch * 0.18 + pose.stagger * 0.42) -
-      pose.attack * 0.2
+      pose.attack * 0.2 + sweep * rig.mainHand * 0.7
     const offX =
       -stride * 0.62 + pose.flinch * 0.3 + pose.stagger * 0.62 - pose.attack * 0.16
     const offZ = -rig.mainHand * (rig.armSplay + pose.flinch * 0.18 + pose.stagger * 0.42)
@@ -16212,7 +16970,7 @@ export class GameEngine {
           pose.attack * 1.85 -
           pose.recovery * 0.32 +
           mainX * 0.35,
-        -rig.mainHand * (0.44 + pose.attack * 0.22) + mainZ * 0.4,
+        -rig.mainHand * (0.44 + pose.attack * 0.22 + sweep * 0.85) + mainZ * 0.4,
       )
     }
 
@@ -16224,6 +16982,70 @@ export class GameEngine {
         pose.attack * 0.2 +
         Math.sin(this.elapsed * 1.6) * 0.02
       rig.cloak.rotation.z = swing * 0.12
+    }
+    if (playerAttack) {
+      this.animatePlayerPosture(group, rig, playerAttack)
+      this.animatePlayerAbility(group, rig)
+    }
+  }
+
+  private animatePlayerAbility(group: THREE.Group, rig: CharacterRig): void {
+    if (this.faction === 'guard') {
+      this.updateShieldPose()
+      return
+    }
+    if (this.faction !== 'elf') return
+    const bow = group.getObjectByName('ability-bow')
+    if (!bow) return
+    const progress = this.melee.phase === 'idle' && this.combatMastery.evadeRemaining <= 0 &&
+      (this.body.leftArm !== 'missing' || this.body.rightArm !== 'missing')
+      ? bowReleaseProgress(this.abilityCooldown, ABILITY_INFO.elf.cooldownMax)
+      : null
+    bow.visible = progress !== null
+    if (rig.weapon) rig.weapon.visible = progress === null
+    const shield = group.getObjectByName('shield')
+    if (shield) shield.visible = progress === null
+    if (progress === null) return
+    group.rotation.y = Math.atan2(Math.sin(this.cameraYaw), -Math.cos(this.cameraYaw))
+
+    // Use the remaining arm if injured; posing never restores a hidden limb.
+    const left = this.body.leftArm !== 'missing'
+    const arm = left ? rig.leftArm : rig.rightArm
+    const elbow = left ? rig.leftElbow : rig.rightElbow
+    const drawingArm = left ? rig.rightArm : rig.leftArm
+    const drawingElbow = left ? rig.rightElbow : rig.leftElbow
+    const side = left ? -1 : 1
+    const settle = progress * progress * (3 - 2 * progress)
+    const armX = -1.32 + settle * 0.22 + this.cameraPitch
+    const armZ = side * 0.16
+    const elbowX = 0.12
+    if (arm) arm.rotation.set(armX, 0, armZ)
+    if (elbow) elbow.rotation.x = elbowX
+    if (drawingArm) drawingArm.rotation.set(-1.1 + this.cameraPitch, 0, -side * 0.42)
+    if (drawingElbow) drawingElbow.rotation.x = 1.2 - settle * 0.65
+    const hand = solveHandOffset(this.handOffset, rig.upperArm, rig.forearm, armX, armZ, elbowX)
+    bow.position.set((arm?.position.x ?? side * 0.6) + hand.x,
+      (arm?.position.y ?? rig.shoulderY) + hand.y, hand.z)
+    bow.rotation.set(this.cameraPitch - rig.torsoPivot.rotation.x, 0, side * 0.1)
+  }
+
+  private animatePlayerPosture(
+    group: THREE.Group,
+    rig: CharacterRig,
+    pose: CharacterPose & MeleePresentation,
+  ): void {
+    const motion = this.reducedMotion ? 0.45 : 1
+    const twist = pose.twist * rig.mainHand * motion
+    const forwardLean = (this.isSprinting ? 0.1 : 0.035) * Math.abs(pose.stride)
+    applyChestPose(rig.torsoPivot, rig.lean + forwardLean + pose.drive * motion, twist, 0)
+    const pelvis = group.getObjectByName('pelvis-pivot')
+    if (pelvis) pelvis.rotation.y = -twist * 0.28
+    const body = group.getObjectByName('body-pivot')
+    if (body) body.position.y = -Math.pow(Math.min(1, Math.abs(pose.stride) / 0.62), 2) * 0.065
+    const head = group.getObjectByName('head-pivot')
+    if (head) {
+      applyHeadPose(head, -forwardLean * 0.35,
+        solveHeadYaw(rig.torsoPivot.rotation.x, twist, 0, -forwardLean * 0.35, 0), 0)
     }
   }
 
@@ -16427,10 +17249,11 @@ export class GameEngine {
   /** The player's pose, in the same reused-buffer style as the actor sampler. */
   private samplePlayerPose(stride: number): CharacterPose {
     const pose = this.playerPose
+    sampleMeleePresentation(this.melee, pose)
     pose.stride = stride
-    pose.attack = this.attackAnimation
-    pose.anticipation = 0
-    pose.recovery = 0
+    if (this.melee.phase === 'idle' && (!this.honestMelee || this.activePlayerAttackKind === 'cleave')) {
+      pose.attack = this.attackAnimation
+    }
     pose.flinch = 0
     pose.stagger = 0
     return pose
@@ -16580,13 +17403,14 @@ export class GameEngine {
 
   private updateCamera(delta: number, immediate: boolean): void {
     const forward = this.getAimDirection()
-    const target = this.player.position.clone().add(new THREE.Vector3(0, 1.65, 0))
+    const target = this.player.position.clone().add(new THREE.Vector3(0, CAMERA_PIVOT_HEIGHT, 0))
     // Looking up rotates the view without orbiting the camera below the player's feet.
     const orbitPitch = Math.max(0, this.cameraPitch)
+    const orbitDistance = cameraOrbitDistance(this.camera.aspect)
     const desired = target
       .clone()
-      .addScaledVector(forward, -CAMERA_ORBIT_DISTANCE * Math.cos(orbitPitch))
-    desired.y += CAMERA_ORBIT_DISTANCE * Math.sin(orbitPitch)
+      .addScaledVector(forward, -orbitDistance * Math.cos(orbitPitch))
+    desired.y += orbitDistance * Math.sin(orbitPitch)
     const resolved = this.resolveCameraPosition(target, desired)
     if (immediate) this.cameraFollowPosition.copy(resolved)
     else this.cameraFollowPosition.lerp(resolved, dampingAlpha(CAMERA_FOLLOW_DAMPING, delta))

@@ -25,6 +25,7 @@ import { buildCampaignContractViews, buildChronicleRumourViews, buildInitialGame
 import { createCampaignContractState, createGeneratedObjectives } from '../src/game/world/CampaignDirector.ts'
 import { createChronicleRegions, createChronicleState } from '../src/game/world/Chronicle.ts'
 import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
+import { createBridgeAmbushPlan } from '../src/game/world/BridgeAmbush.ts'
 import type { ActiveRunSaveV3 } from '../src/game/run/runTypes.ts'
 import { normalizeActiveRunSaveV3 } from '../src/game/run/storage.ts'
 import { RandomStream } from '../src/game/random/RandomStream.ts'
@@ -198,6 +199,47 @@ test('selection and repeated view/pan reads do not mutate commitments, clocks, d
   assert.ok(planner.select(null, input))
   assert.equal(planner.buildView(input).target, null)
   assert.equal(new ExpeditionPlanner(blueprint, planner.serialize()).buildView(input).target, null)
+})
+
+test('bridge tracking charts a real road without pinning campaign or rumour state', () => {
+  const { blueprint, input } = fixture('elf')
+  const plan = createBridgeAmbushPlan(blueprint, 'elf')
+  assert.ok(plan)
+  input.bridgeAmbush = {
+    id: plan.id,
+    title: 'Засада у старого моста',
+    regionId: plan.regionId,
+    position: plan.cargoStart,
+    task: 'Дойти по дороге.',
+    stake: 'Не принимает подряд.',
+  }
+  const before = JSON.stringify({
+    objectives: input.objectives,
+    contracts: input.contracts,
+    rumours: input.rumours,
+  })
+  const planner = new ExpeditionPlanner(blueprint)
+  assert.equal(planner.select({ kind: 'bridgeAmbush', id: plan.id }, input), true)
+  const view = planner.buildView(input)
+  assert.equal(view.target?.kind, 'bridgeAmbush')
+  assert.equal(view.target?.id, plan.id)
+  assert.equal(view.route?.status, 'road')
+  assert.deepEqual(validateExpeditionRoute(planner.graph, view.route!), [])
+  assert.equal(view.bearingReason, null)
+  assert.deepEqual(normalizeExpeditionState(planner.serialize()).state.target, {
+    kind: 'bridgeAmbush',
+    id: plan.id,
+  })
+  assert.equal(JSON.stringify({
+    objectives: input.objectives,
+    contracts: input.contracts,
+    rumours: input.rumours,
+  }), before)
+
+  input.bridgeAmbush = null
+  const completed = planner.buildView(input)
+  assert.equal(completed.mode, 'campaign')
+  assert.equal(completed.notice, null)
 })
 
 test('a discovered utility site does not grant the mission-only unscouted transport exception', () => {
