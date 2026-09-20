@@ -5,6 +5,7 @@ import test from 'node:test'
 const appCss = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
 const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
 const combatHudSource = readFileSync(new URL('../src/game/ui/CombatMasteryHud.tsx', import.meta.url), 'utf8')
+const openingCss = readFileSync(new URL('../src/game/ui/openingExperience.css', import.meta.url), 'utf8')
 
 function extractBlock(source: string, marker: string): string {
   const markerIndex = source.indexOf(marker)
@@ -30,6 +31,15 @@ function extractRule(source: string, selector: string): string {
 
 const mobileHudCss = extractBlock(appCss, '@media (max-width: 720px), (pointer: coarse) {')
 const compactCss = readFileSync(new URL('../src/game/ui/compact-combat.css', import.meta.url), 'utf8')
+
+test('journal compatibility styles leave the upstream compact HUD geometry authoritative', () => {
+  assert.doesNotMatch(openingCss, /\.focused-hud|\.opening-menu|\.run-options|\.menu-preferences/)
+  assert.match(openingCss, /\.tactical-toolbar button,\s*\.field-alert\s*\{[^}]*min-height:\s*44px;/)
+  assert.match(openingCss, /\.campaign-journal \.contract-pin,[^}]*min-width:\s*44px;/)
+  const mobile = extractBlock(openingCss, '@media (max-width: 720px), (pointer: coarse) {')
+  assert.match(mobile, /\.tactical-toolbar,[^}]*width:\s*100%;/)
+  assert.doesNotMatch(mobile, /\.left-hud|\.top-hud(?:\s|,|\{)|\.vitals|\.ability-chip|\.melee-chip/)
+})
 
 test('compact mobile notices use the normal-flow right-hand safe region without covering vitals or duplicating live content', () => {
   const mobile = extractBlock(compactCss, '@media (max-width: 720px), (pointer: coarse) {')
@@ -108,7 +118,7 @@ test('mobile gameplay header assigns identity and minimap to explicit non-overla
   assert.match(mapRule, /width:\s*100%;/)
 })
 
-test('mobile threat, music, pause, and minimap stay rendered with thumb-sized actions', () => {
+test('mobile threat, music, pause, and atlas access stay rendered with thumb-sized actions', () => {
   const actionRule = extractRule(mobileHudCss, '.hud-actions .icon-button')
   const threatRule = extractRule(mobileHudCss, '.threat-chip')
 
@@ -119,7 +129,8 @@ test('mobile threat, music, pause, and minimap stay rendered with thumb-sized ac
   assert.match(appSource, /className=\{`threat-chip tier-\$\{view\.threatTier\}`\}/)
   assert.match(appSource, /className=\{`icon-button hud-music/)
   assert.match(appSource, /className="icon-button hud-pause"/)
-  assert.match(appSource, /<MiniMap view=\{view\} onOpenAtlas=\{onOpenAtlas\} \/>/)
+  assert.match(appSource, /className="tactical-toolbar"[\s\S]*onClick=\{onOpenAtlas\}/)
+  assert.match(appSource, /<MiniMap view=\{view\} onOpenAtlas=/)
 })
 
 test('mobile header column budget fits the status and both 44px actions at target widths', () => {
@@ -209,7 +220,10 @@ test('all eight actions and the sprint-enabled movement pad fit the original thr
 
   assert.equal(actionCount, 8)
   assert.match(actions, /instantGameplayAction\(onAttack\)/)
-  assert.match(actions, /onPointerDown=[\s\S]*onAbilityDown\(\)/)
+  assert.match(actions, /onPointerDown=[\s\S]*abilityDown\(\)/)
+  assert.match(actions, /onPointerUp=[\s\S]*abilityUp\(\)/)
+  assert.match(appSource, /const abilityDown = view\.ability\.id === 'bow' \? onBowAimDown : onAbilityDown/)
+  assert.match(appSource, /const abilityUp = view\.ability\.id === 'bow' \? onBowAimUp : onAbilityUp/)
   assert.match(actions, /<CombatEvadeButton/)
   for (const callback of ['onInteract', 'onCommand', 'onOpenSquadCommand', 'onOpenAtlas']) {
     assert.ok(actions.includes(`instantGameplayAction(${callback})`), `Missing touch ${callback}`)

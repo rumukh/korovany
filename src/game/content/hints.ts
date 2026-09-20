@@ -149,6 +149,14 @@ export const HUD_MECHANICS: readonly HudMechanic[] = [
     firstSighting: (view) => view.expedition.mode === 'selected',
   },
   {
+    hint: 'bridgeAmbush',
+    viewFields: ['bridgeAmbush'],
+    firstSighting: (view) =>
+      view.bridgeAmbush !== null &&
+      view.bridgeAmbush.phase !== 'unavailable' &&
+      view.bridgeAmbush.active === true,
+  },
+  {
     hint: 'chronicle',
     viewFields: ['chronicle'],
     firstSighting: (view) => view.chronicle.length > 0,

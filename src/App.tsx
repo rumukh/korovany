@@ -53,6 +53,7 @@ import elfEmblem from './assets/factions/elf-emblem.svg'
 import guardEmblem from './assets/factions/guard-emblem.svg'
 import villainEmblem from './assets/factions/villain-emblem.svg'
 import './App.css'
+import './game/ui/openingExperience.css'
 import { lockDocumentScroll } from './documentScrollLock'
 import { SFX_VOLUME_DEFAULT, normalizeSfxVolume } from './game/AudioDirector'
 import {
@@ -100,6 +101,9 @@ import { CombatCameraControls, CombatEvadeButton, CombatMasteryHud } from './gam
 import { ExpeditionAtlas, ExpeditionCompass, ExpeditionMinimap } from './game/ui/ExpeditionAtlas'
 import { SquadCommandPanel, SquadCommandStrip } from './game/ui/SquadCommandPanel'
 import { FinaleHud, FinaleResult } from './game/ui/FinaleHud'
+import { BridgeAmbushHud } from './game/ui/BridgeAmbushHud'
+import { CampaignJournal } from './game/ui/CampaignJournal'
+import type { BridgeAmbushChoice } from './game/world/BridgeAmbush'
 import { CompactMissionHud, CompactWorldNews } from './game/ui/CompactCombatHud'
 import {
   VisualSettingsControls,
@@ -1312,7 +1316,7 @@ function AchievementGallery({
   )
 }
 
-function MenuScreen({
+export function MenuScreen({
   activeRun,
   activeRunError,
   profile,
@@ -1682,7 +1686,6 @@ function MenuScreen({
             </div>
           </div>
         </div>
-
       </section>
 
       <section className="menu-lower">
@@ -2543,11 +2546,17 @@ export function GameScreen({
   onEvade,
   onAbilityDown,
   onAbilityUp,
+  onBowAimDown,
+  onBowAimUp,
   onInteract,
   onCommand,
   onOpenSquadCommand,
   onCloseSquadCommand,
   onIssueSquadCommand,
+  onOpenJournal,
+  onCloseJournal,
+  onBridgeChoice,
+  onTrackBridge,
   onPinRumour,
   onPinObjective,
   onTakeDoctrine,
@@ -2600,11 +2609,17 @@ export function GameScreen({
   onEvade: () => void
   onAbilityDown: () => void
   onAbilityUp: () => void
+  onBowAimDown: () => void
+  onBowAimUp: () => void
   onInteract: () => void
   onCommand: () => void
   onOpenSquadCommand: () => void
   onCloseSquadCommand: () => void
   onIssueSquadCommand: (mode: SquadCommandMode, targetId?: string) => boolean
+  onOpenJournal: () => void
+  onCloseJournal: () => void
+  onBridgeChoice: (choice: BridgeAmbushChoice) => void
+  onTrackBridge: () => void
   onPinRumour: (rumourId: string | null) => void
   onPinObjective: (nodeId: string | null) => void
   onTakeDoctrine: (doctrineId: string) => void
@@ -2638,6 +2653,8 @@ export function GameScreen({
   const healthPercent = `${(view.health / view.maxHealth) * 100}%`
   const lowHealth = view.health > 0 && view.health / view.maxHealth <= 0.25
   const staminaPercent = `${(view.stamina / view.maxStamina) * 100}%`
+  const squadNeedsAttention = view.squadCommand.roster.some((member) =>
+    member.status === 'blocked' || member.status === 'distant' || member.health < member.maxHealth * 0.4)
   const abilityProgress = `${
     view.ability.cooldownMax > 0
       ? Math.max(
@@ -2670,6 +2687,8 @@ export function GameScreen({
       : view.melee.beat > 0
         ? `Замах ${view.melee.beat}/${view.melee.beats}`
         : 'ЛКМ — связка из трёх'
+  const abilityDown = view.ability.id === 'bow' ? onBowAimDown : onAbilityDown
+  const abilityUp = view.ability.id === 'bow' ? onBowAimUp : onAbilityUp
 
   useEffect(() => {
     let hideTimer: number | undefined
@@ -2824,8 +2843,22 @@ export function GameScreen({
           </div>
         </div>
         <div className="top-hud-side">
-          <MiniMap view={view} onOpenAtlas={onOpenAtlas} />
-          <ExpeditionCompass view={view} onOpen={onOpenAtlas} />
+          <nav className="tactical-toolbar" aria-label="Планирование похода">
+            <button type="button" onClick={onOpenAtlas} aria-haspopup="dialog"
+              aria-label={EXPEDITION_COPY.open}><MapIcon aria-hidden="true" /><span>Карта</span><kbd>M</kbd></button>
+            <button type="button" onClick={onOpenSquadCommand} aria-haspopup="dialog"
+              aria-label={SQUAD_COMMAND_COPY.open}><UserRound aria-hidden="true" /><span>Отряд</span><kbd>T</kbd></button>
+            <button type="button" onClick={onOpenJournal} aria-haspopup="dialog"
+              aria-label={view.doctrines.offer.length > 0 ? 'Журнал похода, доступен устав' : 'Журнал похода'}>
+              <ScrollText aria-hidden="true" /><span>Поход</span><kbd>J</kbd>
+              {view.doctrines.offer.length > 0 ? <i className="journal-alert" aria-hidden="true" /> : null}
+            </button>
+          </nav>
+          {!view.bridgeAmbush?.active ? (
+            <ExpeditionCompass view={view} onOpen={onOpenAtlas} />
+          ) : null}
+          <BridgeAmbushHud view={view.bridgeAmbush} paused={simulationPaused}
+            onChoose={onBridgeChoice} onSquad={onOpenSquadCommand} onTrack={onTrackBridge} />
           <FinaleHud finale={view.finale} />
           {visualPreferences.hudMode === 'compact' ? noticeStack : null}
           <CompactWorldNews mode={visualPreferences.hudMode} view={view}>
@@ -2874,6 +2907,11 @@ export function GameScreen({
           </div>
           <SquadCommandStrip view={view.squadCommand} onOpen={onOpenSquadCommand}
             disabled={simulationPaused} />
+          {squadNeedsAttention ? (
+            <button className="field-alert squad-attention" type="button" onClick={onOpenSquadCommand}>
+              <UserRound aria-hidden="true" /> Отряду нужна помощь
+            </button>
+          ) : null}
         </div>
         <div
           className={`ability-chip hud-card ${view.ability.ready ? 'ready' : ''} ${view.ability.active ? 'active' : ''}`}
@@ -2969,6 +3007,9 @@ export function GameScreen({
           <span>
             <kbd>M</kbd> {EXPEDITION_COPY.atlas}
           </span>
+          <span>
+            <kbd>J</kbd> журнал
+          </span>
         </div>
       </div>
 
@@ -3016,25 +3057,25 @@ export function GameScreen({
                 if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error
                 return
               }
-              onAbilityDown()
+              abilityDown()
             }}
             onPointerUp={(event) => {
               touchCaptures.release(event.pointerId)
-              onAbilityUp()
+              abilityUp()
             }}
             onPointerCancel={(event) => {
               touchCaptures.cancel(event.pointerId)
-              onAbilityUp()
+              abilityUp()
             }}
             onLostPointerCapture={(event) => {
               touchCaptures.release(event.pointerId)
-              onAbilityUp()
+              abilityUp()
             }}
-            onBlur={view.ability.id === 'bow' ? undefined : onAbilityUp}
+            onBlur={view.ability.id === 'bow' ? undefined : abilityUp}
             onClick={(event) => {
               if (event.detail !== 0) return
-              if (view.ability.active) onAbilityUp()
-              else onAbilityDown()
+              if (view.ability.active) abilityUp()
+              else abilityDown()
             }}
             aria-label={view.ability.id === 'bow' ? 'Лук: удерживать для прицеливания' : view.ability.name}
             aria-pressed={view.faction !== 'villain' ? view.ability.active : undefined}
@@ -3085,6 +3126,30 @@ export function GameScreen({
       {activeOverlay === 'orders' ? (
         <SquadCommandPanel view={view.squadCommand} onClose={onCloseSquadCommand}
           onConfirm={onIssueSquadCommand} />
+      ) : null}
+      {activeOverlay === 'journal' ? (
+        <CampaignJournal onClose={onCloseJournal}>
+          <div className="journal-missions">
+            <ContractBoard view={view} onPin={onPinObjective} />
+            <DoctrineBoard view={view} onTake={onTakeDoctrine} />
+            <ObjectiveList view={view} />
+          </div>
+          <div className="journal-world">
+            <BridgeAmbushHud view={view.bridgeAmbush} paused={false} inJournal
+              onChoose={onBridgeChoice}
+              onSquad={() => { onCloseJournal(); onOpenSquadCommand() }}
+              onTrack={onTrackBridge} />
+            <MiniMap view={view} onOpenAtlas={() => { onCloseJournal(); onOpenAtlas() }} />
+            <ChronicleFeed view={view} />
+            <RumourBoard view={view} onPin={onPinRumour} />
+            {view.bridgeAmbush?.phase === 'unavailable' ? (
+              <section className="journal-consequence">
+                <h3>{view.bridgeAmbush.title}</h3>
+                <p>{view.bridgeAmbush.consequence ?? view.bridgeAmbush.description}</p>
+              </section>
+            ) : null}
+          </div>
+        </CampaignJournal>
       ) : null}
       {activeOverlay === 'pause' ? (
         <PauseModal
@@ -3218,6 +3283,21 @@ function App() {
   const toggleSquadCommand = useCallback(() => {
     applyGameOverlays(toggleGameOverlay(overlaysRef.current, 'orders'))
   }, [applyGameOverlays])
+
+  const toggleJournal = useCallback(() => {
+    applyGameOverlays(toggleGameOverlay(overlaysRef.current, 'journal'))
+  }, [applyGameOverlays])
+
+  useEffect(() => {
+    if (screen !== 'game') return
+    const openJournal = (event: KeyboardEvent) => {
+      if (event.code !== 'KeyJ' || event.repeat || blocksGameplayKey(event)) return
+      event.preventDefault()
+      toggleJournal()
+    }
+    window.addEventListener('keydown', openJournal)
+    return () => window.removeEventListener('keydown', openJournal)
+  }, [screen, toggleJournal])
 
   useEffect(() => bindGameplayPointerCancellation(document, touchCaptures), [touchCaptures])
 
@@ -3947,17 +4027,21 @@ function App() {
         onEvade={() => engineRef.current?.evade()}
         onAbilityDown={() => {
           if (faction === 'guard') engineRef.current?.setShield(true)
-          else if (faction === 'elf') engineRef.current?.setBowAiming(true)
-          else engineRef.current?.useAbility()
+          else if (faction === 'villain') engineRef.current?.useAbility()
         }}
         onAbilityUp={() => {
           engineRef.current?.setShield(false)
-          engineRef.current?.setBowAiming(false)
         }}
+        onBowAimDown={() => engineRef.current?.setBowAiming(true, 'button')}
+        onBowAimUp={() => engineRef.current?.setBowAiming(false, 'button')}
         onInteract={() => engineRef.current?.interact()}
         onCommand={() => engineRef.current?.commandSquad()}
         onOpenSquadCommand={toggleSquadCommand}
         onCloseSquadCommand={() => closeOverlay('orders')}
+        onOpenJournal={toggleJournal}
+        onCloseJournal={() => closeOverlay('journal')}
+        onBridgeChoice={(choice) => { engineRef.current?.chooseBridgeAmbush(choice) }}
+        onTrackBridge={() => { engineRef.current?.trackBridgeAmbush() }}
         onIssueSquadCommand={(mode, targetId) => {
           if (topGameOverlay(overlaysRef.current) !== 'orders') return false
           const accepted = engineRef.current?.commandSquad(mode, targetId) ?? false

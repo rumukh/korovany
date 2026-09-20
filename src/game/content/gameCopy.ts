@@ -915,11 +915,81 @@ export const RATION_ON_BLEED_NOTICE =
 export const CARAVAN_DEFENDED_BY_PLAYER_NOTICE =
   'Ты играешь охраной дворца: этот корован надо защищать.'
 export const CARAVAN_ALREADY_ROBBED_NOTICE = 'Этот корован уже ограбили. Ждём следующий.'
+export const CARAVAN_STILL_GUARDED_NOTICE =
+  'Сначала разберись с живой охраной корована.'
+export const CARAVAN_DEFENSE_NOT_EARNED_NOTICE =
+  'Корован цел. Перевязку выдают только за врага, которого ты снял с телеги.'
+export const CARAVAN_DEFENSE_COOLDOWN_NOTICE =
+  'Перевязку уже выдали. Интенданту нужно время пополнить сумку.'
 export const CARAVAN_AMBUSH_NOTICE = 'Засада! Охрана корована набигает.'
 export const RICH_CARAVAN_LOOT_TAKEN_NOTICE = 'Добыча у тебя. Теперь уходи от погони!'
 
 export function describeCaravanRobbed(reward: number): string {
   return `Корован ограблен! +${reward} золота. Охрана уже набигает.`
+}
+
+export function describeCaravanDefenseAid(healed: number): string {
+  return `Корован отстояли. Интендант перевязал раны: +${healed} здоровья.`
+}
+
+export const BRIDGE_AMBUSH_TITLE = 'Засада у старого моста'
+export const BRIDGE_AMBUSH_EXPEDITION_TASK =
+  'Добраться по настоящей дороге к гружёной телеге у моста.'
+export const BRIDGE_AMBUSH_EXPEDITION_STAKE =
+  'Необязательная встреча: маршрут не принимает слух и не меняет выбранный подряд.'
+export const BRIDGE_AMBUSH_SAVE_WARNING =
+  'Запись засады у моста повреждена. Встреча закрыта без награды; поход продолжается.'
+export const BRIDGE_AMBUSH_UNAVAILABLE_NOTICE =
+  'На открывающей дороге не нашлось доступного моста. Встреча отмечена как недоступная.'
+export const BRIDGE_AMBUSH_SECURED_NOTICE =
+  'Подступ к телеге свободен. Реши в панели: забрать груз или провести его через мост.'
+export const BRIDGE_AMBUSH_DELIVERY_STARTED_NOTICE =
+  'Веди телегу рядом с собой по дороге через мост.'
+export const BRIDGE_AMBUSH_CHOICE_FOCUS_NOTICE =
+  'Курсор свободен. Выбери: забрать груз сейчас или провести телегу через мост.'
+export const BRIDGE_AMBUSH_LOST_NOTICE =
+  'Налётчики разбили телегу. Груз у моста потерян.'
+export const BRIDGE_AMBUSH_CAPACITY_NOTICE =
+  'У моста сейчас слишком людно. Засада дождётся, пока освободится дорога.'
+export const BRIDGE_AMBUSH_SEIZED_GOLD = 85
+export const BRIDGE_AMBUSH_DELIVERED_SUPPLIES = 2
+
+export function describeBridgeAmbushApproach(faction: Faction): string {
+  return faction === 'guard'
+    ? 'На мостовой дороге налётчики зажали гружёную телегу. Подойди по дороге или с сухого берега и прикрой груз.'
+    : 'Охрана держит гружёную телегу у настоящего мостового перехода. Подойди по дороге или обойди по сухому берегу.'
+}
+
+export function describeBridgeAmbushFight(faction: Faction, remaining: number): string {
+  return faction === 'guard'
+    ? `Налётчики бьют охрану и телегу. Осталось врагов: ${remaining}.`
+    : `Охрана не отдаёт телегу. Осталось защитников: ${remaining}.`
+}
+
+export const BRIDGE_AMBUSH_SECURED_DESCRIPTION =
+  'Телега цела, противников не осталось. Груз можно присвоить или провести по дороге через мост.'
+export const BRIDGE_AMBUSH_DELIVERING_DESCRIPTION =
+  'Иди рядом с телегой: она движется только по оси моста и только с проводником рядом.'
+export const BRIDGE_AMBUSH_LOST_DESCRIPTION =
+  'Телега разбита. Этот груз уже не забрать и не доставить.'
+
+export function describeBridgeAmbushSeized(gold: number): string {
+  return `Груз присвоен: +${gold} золота. Местные склады ничего не получили.`
+}
+
+export function describeBridgeAmbushDelivered(supplies: number): string {
+  return `Телега прошла мост: +${supplies} пайка, а местные склады пополнены.`
+}
+
+export function describeBridgeAmbushSeizeChoice(gold: number): string {
+  return `+${gold} золота сразу; местные склады останутся без этого груза.`
+}
+
+export function describeBridgeAmbushDeliverChoice(
+  supplies: number,
+  regionLabel: string,
+): string {
+  return `+${supplies} пайка; поставка пополнит снабжение региона ${regionLabel}.`
 }
 
 const SQUAD_NAMES: Record<Faction, string> = {
@@ -1422,6 +1492,7 @@ export type HintId =
   | 'interact'
   | 'map'
   | 'expedition'
+  | 'bridgeAmbush'
   | 'chronicle'
   | 'rumours'
   | 'contracts'
@@ -1494,6 +1565,10 @@ const HINT_COPY: Record<HintId, HintCopy> = {
   },
   expedition: {
     text: 'M или карта — атлас с дорогами и мостами. Выбор пути не означает «взяться за слух». Пунктир в тумане — неизведанная дорога, а подход к ней ещё надо пройти самому.',
+    tone: 'info',
+  },
+  bridgeAmbush: {
+    text: 'На ранней дороге отмечена необязательная засада у моста. Подойди, расставь отряд и реши судьбу телеги только после боя.',
     tone: 'info',
   },
   chronicle: {
@@ -1606,6 +1681,7 @@ export const EXPEDITION_COPY = {
   objective: 'Пункт похода',
   rumour: 'Слух',
   site: 'Открытая точка',
+  bridgeAmbush: 'Засада у моста',
   arrive: 'Ты у цели. Действие — отдельно.',
   nextBridge: 'Через мост',
   nextRoad: 'По дороге',

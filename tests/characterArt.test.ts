@@ -6238,6 +6238,9 @@ test('the geometry cache budget counts every key the cache actually holds', () =
     'a key produced by both a plan and a constructor would be double counted below',
   )
   const everyKey = new Set([...planKeys, ...engineKeys])
+  for (const key of ['char-weapon:bow:head', 'char-weapon:bow:grip']) {
+    assert.ok(planKeys.has(key), 'the player bow must reuse the archer parts, not grow the cache')
+  }
 
   // Domain guards, both sides, because a budget over an empty population is the failure
   // this file exists to refuse and either half could collapse independently.
@@ -6276,7 +6279,7 @@ test('the geometry cache budget counts every key the cache actually holds', () =
     families.add(match[2].split('${')[0])
   }
   const unaccounted = [...families].filter(
-    (prefix) => ![...engineKeys].some((key) => key.startsWith(prefix)),
+    (prefix) => ![...everyKey].some((key) => key.startsWith(prefix)),
   )
   // Without this, a scan that matched nothing would report no drift and read as clean.
   // Pinned rather than floored, because the count is knowable and a drop of two is
@@ -6285,14 +6288,14 @@ test('the geometry cache budget counts every key the cache actually holds', () =
     families.size,
     21,
     `found ${String(families.size)} cache key families in GameEngine.ts, expected 21. `
-    + 'Either a constructor gained or lost one — in which case update `engineKeys` and '
-    + 'the ceiling together — or the scan has stopped matching and cannot report drift.',
+    + 'Account for new constructor keys or explicit reuse of plan keys without silently '
+    + 'raising the cache ceiling; a changed scan must still report drift.',
   )
   assert.deepEqual(
     unaccounted,
     [],
     'these key families reach GameEngine.artGeometry and are absent from the budget above, '
-    + 'so the cache holds more than anything measures. Add them to `engineKeys`, and check '
+    + 'so the cache holds more than anything measures. Account for their keys, and check '
     + 'the total against the ceiling in the same commit.',
   )
 })

@@ -1,4 +1,5 @@
 import type { AchievementUnlock } from './achievements'
+import type { BridgeAmbushView } from './world/BridgeAmbush'
 import type { ExpeditionView } from './world/ExpeditionPlanner'
 import type { SquadCommandView } from './world/SquadCommand'
 
@@ -636,6 +637,7 @@ export interface GameView {
   /** Roadmap 1.6 — the open draft, if there is one, and the rules already taken. */
   doctrines: DoctrineView
   expedition: ExpeditionView
+  bridgeAmbush: BridgeAmbushView | null
   finale: FinaleView | null
   shopPriceMultiplier: number
   squad: number

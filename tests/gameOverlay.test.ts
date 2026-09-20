@@ -14,7 +14,7 @@ import {
 const empty = initialGameOverlayState()
 
 test('Escape closes only the topmost owner and never toggles pause behind atlas/orders/shop', () => {
-  for (const field of ['atlasOpen', 'squadCommandOpen', 'shopOpen', 'achievementsOpen'] as const) {
+  for (const field of ['atlasOpen', 'squadCommandOpen', 'journalOpen', 'shopOpen', 'achievementsOpen'] as const) {
     const open = { ...empty, [field]: true }
     const closed = closeTopGameOverlay(open)
     assert.equal(topGameOverlay(closed), null)
@@ -28,7 +28,7 @@ test('Escape closes only the topmost owner and never toggles pause behind atlas/
 })
 
 test('opening another blocking overlay is rejected and only the agreed highest owner can render', () => {
-  for (const requested of ['atlas', 'orders', 'shop'] as const) {
+  for (const requested of ['atlas', 'orders', 'shop', 'journal'] as const) {
     assert.equal(canOpenGameOverlay(empty, requested), true)
     assert.equal(canOpenGameOverlay({ ...empty, ended: true }, requested), false)
     assert.equal(canOpenGameOverlay({ ...empty, achievementsOpen: true }, requested), false)
@@ -44,14 +44,14 @@ test('opening another blocking overlay is rejected and only the agreed highest o
 test('the full shared ordering dismisses exactly one owner, with terminal results undismissable', () => {
   let state: GameOverlayState = {
     ended: true, achievementsOpen: true, shopOpen: true, atlasOpen: true,
-    squadCommandOpen: true, paused: true,
+    squadCommandOpen: true, journalOpen: true, paused: true,
   }
   assert.equal(topGameOverlay(state), 'end')
   assert.equal(closeTopGameOverlay(state), state)
   assert.equal(dismissGameOverlay(state, 'end'), state)
   state = { ...state, ended: false }
 
-  for (const owner of ['achievements', 'shop', 'atlas', 'orders', 'pause'] as const) {
+  for (const owner of ['achievements', 'shop', 'atlas', 'orders', 'journal', 'pause'] as const) {
     assert.equal(topGameOverlay(state), owner)
     const previous = state
     state = dismissGameOverlay(state, owner)
@@ -63,14 +63,14 @@ test('the full shared ordering dismisses exactly one owner, with terminal result
 })
 
 test('atlas and orders toggle through the actual request policy without bypassing blockers', () => {
-  for (const requested of ['atlas', 'orders', 'shop'] as const) {
+  for (const requested of ['atlas', 'orders', 'shop', 'journal'] as const) {
     const opened = openGameOverlay(empty, requested)
     assert.equal(topGameOverlay(opened), requested)
     assert.equal(openGameOverlay(opened, requested), opened, 'repeated open must not close a dialog')
     assert.deepEqual(toggleGameOverlay(opened, requested), empty)
     assert.deepEqual(empty, initialGameOverlayState(), 'requests must not mutate their input')
 
-    for (const blocker of ['end', 'achievements', 'pause', 'atlas', 'orders', 'shop'] as const) {
+    for (const blocker of ['end', 'achievements', 'pause', 'atlas', 'orders', 'shop', 'journal'] as const) {
       if (blocker === requested) continue
       const blocked = blocker === 'end' ? { ...empty, ended: true }
         : blocker === 'achievements' ? { ...empty, achievementsOpen: true }
@@ -84,7 +84,7 @@ test('atlas and orders toggle through the actual request policy without bypassin
 })
 
 test('stale controls cannot clear an obscured atlas or order panel or resume an underlying dialog', () => {
-  for (const requested of ['atlas', 'orders'] as const) {
+  for (const requested of ['atlas', 'orders', 'journal'] as const) {
     const opened = toggleGameOverlay(empty, requested)
     const underShop = { ...opened, shopOpen: true, paused: true }
     assert.equal(toggleGameOverlay(underShop, requested), underShop)

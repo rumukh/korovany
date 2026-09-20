@@ -12,6 +12,7 @@ A seeded 3D action roguelite inspired by the legendary Russian game-design meme.
 - Reproducible 25-region worlds with streamed terrain, hills, rivers, roads, bridges, settlements, and fog of war
 - Shareable text or numeric seeds with deterministic world validation and fingerprints
 - Melee combat, NPC squads, caravan raids, stylized injuries, prosthetics, healing, and trading
+- A one-per-run bridge ambush with guarded cargo, a physical delivery, and a lasting supply consequence
 - Directional evasion, perfect guard, and drag-to-look when mouse capture is unavailable
 - Follow, Hold, Focus, and Regroup squad orders with a live health and status roster
 - An expedition atlas with road/bridge itineraries, cautious routes, and a compact compass
@@ -45,6 +46,9 @@ See [visual settings](docs/visual-settings.md) and the
 [graphics upgrade results and screenshots](docs/graphics-upgrade-results.md).
 The [graphics upgrade plan](docs/15-next-gen-graphics-plan.md) records the rollout contract.
 
+Character materials keep their own world palette across light and dark UI themes:
+faction-colored cloth, warm skin, neutral steel, and dark leather remain distinct.
+
 ## Controls
 
 | Input | Action |
@@ -60,6 +64,7 @@ The [graphics upgrade plan](docs/15-next-gen-graphics-plan.md) records the rollo
 | `Q` / touch `Q` | Toggle squad Follow / Hold |
 | `T` / squad HUD / touch `T` | Open squad orders: Follow, Hold, Focus, Regroup (pauses play) |
 | `M` / minimap / compass / touch map | Open the paused expedition atlas |
+| `J` / **Поход** | Open the paused journal: contracts, objectives, doctrines, rumours, and chronicle |
 | `F` / pause-menu save | Save |
 | `P` / `Esc` / pause button | Close the top overlay, or pause; terminal results stay open |
 
@@ -78,6 +83,41 @@ with another finger. The accessible bow button also toggles aim on keyboard acti
 Sprint and evasion leave bow mode without refunding a shot.
 Pause, lost focus, and cancelled gestures release held movement, camera, bow, and shield
 inputs. Paid recovery, cooldowns, stamina, and committed finishers are preserved.
+
+The three melee beats have alternating wind-ups and follow-through, with a stronger
+full-body finisher. Poses and weapon trails follow the actual combat clock rather
+than a separate animation timer; cancelling a swing also cancels its visual strike.
+The guard braces the shield with the offhand, including while moving or attacking.
+The elf's held bow and shot recovery use the shared manual-aim presentation in both
+the enhanced and legacy renderers. Releasing aim restores the melee equipment.
+These poses do not change damage or restore an injured limb.
+The default camera looks farther ahead and pulls back on portrait screens without
+changing aim direction. Reduced motion softens secondary torso movement.
+
+Faction launch is available before optional run configuration. Expand **Настроить поход**
+to change the seed or starting boon; graphics and audio controls live under **Настройки**.
+The field HUD keeps immediate vitals and navigation visible. Open **Поход** for the
+full campaign details, or **Отряд** for individual companion health and orders.
+
+## The bridge ambush
+
+New runs place an optional caravan encounter on a real generated bridge. It does not
+replace campaign objectives or alter the world's seed. After reaching camp, follow
+the bridge guidance or find **Засада у старого моста** in the journal and atlas.
+The guard protects the cargo from raiders; the other factions overcome its escorts.
+Once selected, the bridge HUD follows the atlas's live route, including cautious
+detours and resumed runs. If no road can be planned, it labels the direction as a
+straight-line bearing rather than directing you along the original camp itinerary.
+
+Secure the cart before deciding its fate. **Забрать груз** pays 85 gold immediately;
+**Довести обоз** requires staying beside the moving cart across the bridge, grants two
+rations, and replenishes the bridge region's supply. If the cargo is destroyed, it
+cannot be claimed. Press `E` by secured cargo to release a captured mouse for the
+choice buttons. Combat wounds, delivery progress, and the single outcome survive
+suspend/continue. Existing saves without this encounter keep their original campaign.
+
+Ordinary caravans also require their escorts to be overcome before robbery. Guard
+aid is a bounded reward for defending the caravan, not healing for repeated inspections.
 
 Evasion protects only 0.06–0.18 seconds of its 0.30-second step, respects collision and
 leg injuries, and cannot cancel a committed finisher. A guard's first frontal contact

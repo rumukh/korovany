@@ -40,11 +40,14 @@ test('menu settings follow launch, setup and profile content in natural document
   assert.match(settingsRule, /margin:\s*1rem auto 0;/)
   assert.match(settingsRule, /max-width:\s*76rem;/)
   assert.match(settingsRule, /position:\s*relative;/)
-  assert.doesNotMatch(settingsRule, /position:\s*(?:absolute|fixed)|\border:/)
+  assert.match(settingsRule, /border:\s*1px solid var\(--cp-border\);/)
+  assert.doesNotMatch(settingsRule, /position:\s*(?:absolute|fixed)/)
   assert.doesNotMatch(mobileMenuCss, /\.menu-settings\s*\{/)
   const order = [heroIndex, launchIndex, setupIndex, lowerIndex, settingsIndex, footerIndex]
   assert.ok(order.every((index) => index >= 0), 'Every menu section is present')
   assert.deepEqual(order, order.toSorted((a, b) => a - b), 'DOM, keyboard and visual order agree')
+  assert.equal((appSource.match(/<section className="menu-settings"/g) ?? []).length, 1)
+  assert.doesNotMatch(appSource, /menu-preferences|run-options/)
   assert.match(appSource, /<h2 id="menu-settings-title">Настройки<\/h2>/)
 })
 

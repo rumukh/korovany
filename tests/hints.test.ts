@@ -94,6 +94,26 @@ const TRIPPING_VIEW: Record<HintId, (base: GameView) => GameView> = {
     },
   }),
   expedition: (base) => ({ ...base, expedition: { ...base.expedition, mode: 'selected' } }),
+  bridgeAmbush: (base) => ({
+    ...base,
+    bridgeAmbush: base.bridgeAmbush ? { ...base.bridgeAmbush, active: true } : {
+      phase: 'approach',
+      title: 'Засада у моста',
+      description: 'Гружёная телега ждёт у моста.',
+      hint: 'Подойди по дороге.',
+      distance: 40,
+      bearing: 0,
+      remainingEnemies: 3,
+      totalEnemies: 3,
+      cargoHealth: 100,
+      cargoMaxHealth: 100,
+      progress: 0,
+      canChoose: false,
+      outcome: null,
+      consequence: null,
+      active: true,
+    },
+  }),
   chronicle: (base) => ({
     ...base,
     chronicle: [

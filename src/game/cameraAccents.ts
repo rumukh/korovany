@@ -1,4 +1,7 @@
 export const CAMERA_BASE_FOV = 56
+export const CAMERA_DEFAULT_PITCH = 0.32
+export const CAMERA_PIVOT_HEIGHT = 2.2
+export const CAMERA_ORBIT_DISTANCE = 12
 export const CAMERA_FOV_MIN = 52
 export const CAMERA_FOV_MAX = 65
 export const SPRINT_FOV_BONUS = 4.5
@@ -12,6 +15,12 @@ export const LANDING_MIN_AIR_TIME = 0.22
 export const KILL_ACCENT_RANGE = 14
 
 export type CameraAccentKind = 'cleave' | 'jump' | 'land' | 'block' | 'kill'
+
+/** Preserve room around the player in portrait without changing aim or FOV. */
+export function cameraOrbitDistance(aspect: number): number {
+  const width = Number.isFinite(aspect) && aspect > 0 ? aspect : 1
+  return CAMERA_ORBIT_DISTANCE * Math.min(1.3, Math.max(1, Math.sqrt(1 / width)))
+}
 
 export interface CameraAccent {
   kind: CameraAccentKind
