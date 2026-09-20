@@ -220,7 +220,10 @@ test('all eight actions and the sprint-enabled movement pad fit the original thr
 
   assert.equal(actionCount, 8)
   assert.match(actions, /instantGameplayAction\(onAttack\)/)
-  assert.match(actions, /onPointerDown=[\s\S]*onAbilityDown\(\)/)
+  assert.match(actions, /onPointerDown=[\s\S]*abilityDown\(\)/)
+  assert.match(actions, /onPointerUp=[\s\S]*abilityUp\(\)/)
+  assert.match(appSource, /const abilityDown = view\.ability\.id === 'bow' \? onBowAimDown : onAbilityDown/)
+  assert.match(appSource, /const abilityUp = view\.ability\.id === 'bow' \? onBowAimUp : onAbilityUp/)
   assert.match(actions, /<CombatEvadeButton/)
   for (const callback of ['onInteract', 'onCommand', 'onOpenSquadCommand', 'onOpenAtlas']) {
     assert.ok(actions.includes(`instantGameplayAction(${callback})`), `Missing touch ${callback}`)
