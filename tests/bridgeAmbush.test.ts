@@ -660,6 +660,7 @@ function harness(faction: Faction = 'guard', seed = 20_260_909) {
       loot: new RandomStream(4),
       chronicle: new RandomStream(5),
       rumour: new RandomStream(6),
+      injury: new RandomStream(7),
     },
     achievements: {
       getRunState: () => achievementState(runId, faction),

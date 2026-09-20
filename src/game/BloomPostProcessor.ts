@@ -4,6 +4,8 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js'
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js'
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
+import { FXAAShader } from 'three/addons/shaders/FXAAShader.js'
+import { disposeOwnedVisualResources, type VisualResourceOwner } from './visualLifecycle.ts'
 
 // §08 — retuned so emissive FX still bloom but ink lines and dark cloth do not get
 // eaten. The old 0.55 / 0.4 / 0.85 washed out every outline it touched.
@@ -49,6 +51,26 @@ export interface PostProcessingRenderActions {
   disableBloom?(error?: unknown): boolean
   disablePostProcessing(error?: unknown): void
   renderDirect(): void
+}
+
+export interface BloomPresentationOptions {
+  readonly enhanced?: boolean
+  readonly antialiasing?: 'none' | 'fxaa'
+}
+
+export function postProcessingPassNames(
+  enabled: boolean,
+  antialiasing: 'none' | 'fxaa',
+  bloom = enabled,
+): readonly string[] {
+  if (!enabled) return []
+  return [
+    'scene',
+    ...(bloom ? ['bloom'] : []),
+    'grade',
+    'output',
+    ...(antialiasing === 'fxaa' ? ['fxaa'] : []),
+  ]
 }
 
 /**
@@ -175,14 +197,14 @@ const ComicGradeShader = {
 }
 
 /**
- * The post chain always keeps the comic grade:
+ * The optional chain follows the resolved visual policy:
  *
- * - glow on: `RenderPass -> UnrealBloomPass -> ComicGradePass -> OutputPass`
- * - glow off: `RenderPass -> ComicGradePass -> OutputPass`
+ * - enabled: `RenderPass -> UnrealBloomPass -> ComicGradePass -> OutputPass`
+ * - enhanced FXAA appends a non-converting resolve
+ * - disabled: direct rendering, with no composer allocations
  *
- * Disabling bloom removes and disposes its multi-resolution targets instead of
- * bypassing the composer, so the no-glow path retains the palette and pays only
- * for the two small finishing passes.
+ * If bloom fails while the policy still enables post-processing, only its
+ * multi-resolution targets are released and the grade is retried for that frame.
  */
 export class BloomPostProcessor {
   private readonly renderer: THREE.WebGLRenderer
@@ -191,6 +213,11 @@ export class BloomPostProcessor {
   private composer: EffectComposer | null = null
   private gradePass: ShaderPass | null = null
   private bloomPass: UnrealBloomPass | null = null
+  private aaPass: ShaderPass | null = null
+  private readonly options: BloomPresentationOptions
+  private antialiasing: 'none' | 'fxaa'
+  private readonly owned: VisualResourceOwner[] = []
+  private readonly bufferSize = new THREE.Vector2()
   private readonly shadowTint = DEFAULT_SHADOW_TINT.clone()
   private readonly highlightTint = DEFAULT_HIGHLIGHT_TINT.clone()
   private readonly savedClearColor = new THREE.Color()
@@ -220,19 +247,32 @@ export class BloomPostProcessor {
     scene: THREE.Scene,
     camera: THREE.Camera,
     enabled: boolean,
+    options: BloomPresentationOptions = {},
   ) {
     this.renderer = renderer
     this.scene = scene
     this.camera = camera
+    this.options = options
+    this.antialiasing = options.antialiasing ?? 'none'
+    this.renderer.getDrawingBufferSize(this.bufferSize)
+    this.width = Math.max(1, this.bufferSize.x)
+    this.height = Math.max(1, this.bufferSize.y)
     this.setEnabled(enabled)
   }
 
-  setEnabled(enabled: boolean): void {
-    if (!this.composer && !this.createGradeComposer()) return
-    if (enabled === Boolean(this.bloomPass)) return
+  setEnabled(enabled: boolean, antialiasing: 'none' | 'fxaa' = this.antialiasing): void {
+    if (antialiasing !== 'none' && antialiasing !== 'fxaa') throw new Error('Unknown post antialiasing mode')
+    if (antialiasing !== this.antialiasing) {
+      this.disposeComposer()
+      this.antialiasing = antialiasing
+    }
+    if (!enabled) {
+      this.disposeComposer()
+      return
+    }
 
-    if (enabled) this.enableBloom()
-    else this.removeBloomPass()
+    if (!this.composer && !this.createGradeComposer()) return
+    this.enableBloom()
   }
 
   /**
@@ -246,6 +286,11 @@ export class BloomPostProcessor {
     retint(shadow, DEFAULT_SHADOW_TINT, this.shadowTint)
     retint(highlight, DEFAULT_HIGHLIGHT_TINT, this.highlightTint)
     this.writeGradeTints()
+  }
+
+  /** Diagnostic override lasts until the next explicit engine post-policy update. */
+  setAntialiasing(value: 'none' | 'fxaa'): void {
+    this.setEnabled(this.composer !== null, value)
   }
 
   private writeGradeTints(): void {
@@ -268,13 +313,21 @@ export class BloomPostProcessor {
   }
 
   setSize(width: number, height: number): void {
-    this.width = Math.max(1, width)
-    this.height = Math.max(1, height)
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width < 1 || height < 1) {
+      throw new RangeError('Post-processing dimensions must be finite and positive')
+    }
+    this.renderer.getDrawingBufferSize(this.bufferSize)
+    const nextWidth = Math.max(1, this.bufferSize.x)
+    const nextHeight = Math.max(1, this.bufferSize.y)
+    if (this.width === nextWidth && this.height === nextHeight) return
+    this.width = nextWidth
+    this.height = nextHeight
     const composer = this.composer
     if (!composer) return
 
     try {
       composer.setSize(this.width, this.height)
+      this.aaPass?.uniforms.resolution.value.set(1 / this.width, 1 / this.height)
       this.validationPending = true
       return
     } catch (error) {
@@ -286,12 +339,10 @@ export class BloomPostProcessor {
 
     try {
       composer.setSize(this.width, this.height)
+      this.aaPass?.uniforms.resolution.value.set(1 / this.width, 1 / this.height)
       this.validationPending = true
     } catch (error) {
-      this.disableComposerAfterFailure(
-        'could not be resized after bloom was removed',
-        error,
-      )
+      this.disableComposerAfterFailure('could not be resized after bloom was removed', error)
     }
   }
 
@@ -300,37 +351,56 @@ export class BloomPostProcessor {
   }
 
   private createGradeComposer(): boolean {
-    let composer: EffectComposer
     try {
-      composer = new EffectComposer(this.renderer)
-    } catch (error) {
-      this.reportPipelineFailure('could not be created', error)
-      return false
-    }
-
-    const ownedPasses: Array<RenderPass | ShaderPass | OutputPass> = []
-    try {
-      const renderPass = new RenderPass(this.scene, this.camera)
-      ownedPasses.push(renderPass)
-      const gradePass = new ShaderPass(ComicGradeShader)
-      ownedPasses.push(gradePass)
-      const outputPass = new OutputPass()
-      ownedPasses.push(outputPass)
-
-      composer.addPass(renderPass)
-      composer.addPass(gradePass)
-      composer.addPass(outputPass)
-      composer.setSize(this.width, this.height)
-
+      const target = new THREE.WebGLRenderTarget(this.width, this.height, {
+        type: THREE.HalfFloatType,
+      })
+      this.owned.push(target)
+      const composer = new EffectComposer(this.renderer, target)
+      this.owned.pop()
+      this.owned.push(composer)
       this.composer = composer
+      // Targets and pass sizes are physical pixels. Composer's cached renderer
+      // DPR must not multiply them a second time, including after a DPI change.
+      composer.setPixelRatio(1)
+
+      const renderPass = new RenderPass(this.scene, this.camera)
+      this.owned.push(renderPass)
+      composer.addPass(renderPass)
+
+      const gradePass = new ShaderPass(ComicGradeShader)
+      this.owned.push(gradePass)
+      if (this.options.enhanced) {
+        gradePass.uniforms.uVignette.value = 0.1
+        gradePass.uniforms.uSaturation.value = 1.02
+        gradePass.uniforms.uShadowAmount.value = 0.035
+        gradePass.uniforms.uHighlightAmount.value = 0.04
+      }
+      composer.addPass(gradePass)
       this.gradePass = gradePass
+
+      const outputPass = new OutputPass()
+      this.owned.push(outputPass)
+      composer.addPass(outputPass)
+
+      if (this.antialiasing === 'fxaa') {
+        const aaPass = new ShaderPass(FXAAShader)
+        this.owned.push(aaPass)
+        aaPass.material.toneMapped = false
+        // FXAAShader samples display-referred pixels and contains no output
+        // transform. OutputPass remains the one and only conversion.
+        aaPass.uniforms.resolution.value.set(1 / this.width, 1 / this.height)
+        composer.addPass(aaPass)
+        this.aaPass = aaPass
+      }
+
       this.validationPending = true
+      // Atmosphere updates can arrive while policy disables the chain. Replay the
+      // latest tint when policy later creates a fresh grade.
       this.writeGradeTints()
       return true
     } catch (error) {
-      this.disposePasses(ownedPasses, 'partially created comic-grade pass')
-      this.disposeComposerTargets(composer)
-      this.reportPipelineFailure('could not be created', error)
+      this.disableComposerAfterFailure('could not be enabled', error)
       return false
     }
   }
@@ -355,6 +425,7 @@ export class BloomPostProcessor {
       return
     }
 
+    this.owned.push(bloomPass)
     try {
       composer.insertPass(bloomPass, 1)
       this.bloomPass = bloomPass
@@ -363,7 +434,7 @@ export class BloomPostProcessor {
       // EffectComposer inserts before sizing, so an insertion error can leave the
       // failed pass in the array even though ownership was never committed.
       composer.removePass(bloomPass)
-      this.disposePasses([bloomPass], 'failed bloom pass')
+      this.disposeOwnedResource(bloomPass, 'failed bloom pass')
       console.warn(
         'Korovany: bloom could not be attached. Comic grade remains active.',
         error,
@@ -399,7 +470,7 @@ export class BloomPostProcessor {
     this.bloomPass = null
     this.composer?.removePass(bloomPass)
     this.validationPending = true
-    this.disposePasses([bloomPass], 'bloom pass')
+    this.disposeOwnedResource(bloomPass, 'bloom pass')
     return true
   }
 
@@ -419,52 +490,46 @@ export class BloomPostProcessor {
     return true
   }
 
-  private disposeComposer(): void {
-    const composer = this.composer
-    this.composer = null
-    this.gradePass = null
-    this.bloomPass = null
-    this.validationPending = false
-    if (!composer) return
-
-    this.disposePasses(composer.passes, 'post-processing pass')
-    this.disposeComposerTargets(composer)
-  }
-
-  private disposePasses(
-    passes: ReadonlyArray<{ dispose(): void }>,
-    label: string,
-  ): void {
-    passes.forEach((pass) => {
-      try {
-        pass.dispose()
-      } catch (error) {
-        console.warn(`Korovany: a ${label} could not be disposed.`, error)
-      }
-    })
-  }
-
-  private disposeComposerTargets(composer: EffectComposer): void {
+  private disposeOwnedResource(resource: VisualResourceOwner, label: string): void {
+    const index = this.owned.indexOf(resource)
+    if (index >= 0) this.owned.splice(index, 1)
     try {
-      composer.dispose()
+      resource.dispose()
     } catch (error) {
-      console.warn(
-        'Korovany: post-processing render targets could not be disposed.',
-        error,
-      )
+      console.warn(`Korovany: a ${label} could not be disposed.`, error)
     }
   }
 
-  private reportPipelineFailure(reason: string, error?: unknown): void {
-    const message =
-      `Korovany: comic grade post-processing ${reason}. ` +
-      'Direct rendering will be used.'
-    if (error === undefined) console.warn(message)
-    else console.warn(message, error)
+  private disposeComposer(): void {
+    this.composer = null
+    this.gradePass = null
+    this.bloomPass = null
+    this.aaPass = null
+    this.validationPending = false
+    disposeOwnedVisualResources(this.owned)
   }
 
   private disableComposerAfterFailure(reason: string, error?: unknown): void {
-    this.reportPipelineFailure(reason, error)
-    this.disposeComposer()
+    const message = `Korovany: post-processing ${reason}. Direct rendering will be used.`
+    if (error === undefined) console.warn(message)
+    else console.warn(message, error)
+
+    try {
+      this.disposeComposer()
+    } catch (disposeError) {
+      console.warn('Korovany: failed post-processing resources could not all be disposed.', disposeError)
+    }
+  }
+
+  getDebugSnapshot() {
+    return {
+      width: this.width, height: this.height, composer: this.composer !== null,
+      passes: postProcessingPassNames(
+        this.composer !== null,
+        this.antialiasing,
+        this.bloomPass !== null,
+      ),
+      sceneSamples: this.composer?.renderTarget1.samples ?? 0,
+    }
   }
 }

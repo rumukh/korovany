@@ -23,6 +23,30 @@ import type {
 import type { ChronicleEventKind } from '../world/Chronicle.ts'
 import type { ContractId, ObjectiveKind, SiteKind } from '../world/worldTypes.ts'
 import type { SquadCommandMode, SquadMemberStatus } from '../world/SquadCommand.ts'
+import type { HudMode } from '../visualSettings.ts'
+
+export const HUD_MODE_LABELS: Readonly<Record<HudMode, string>> = {
+  full: 'Полный',
+  compact: 'Компактный',
+}
+
+export const COMPACT_HUD_COPY = {
+  setting: 'Боевой интерфейс',
+  settingHelp: 'Меняется сразу. В компактном виде раскрой «Поход» и «Вести», чтобы увидеть все подряды и слухи.',
+  mission: 'Поход',
+  news: 'Вести',
+  expand: 'Раскрыть / свернуть',
+  choices: 'Подряды на выбор',
+  doctrine: 'Можно выбрать устав',
+  chronicle: 'Записей в хронике',
+  settled: 'Пункты похода закрыты',
+  seconds: 'с',
+} as const
+
+export const VISUAL_SETTINGS_COPY = {
+  title: 'Интерфейс',
+  storageFailed: 'Не удалось сохранить настройки. Выбор останется только в этой вкладке.',
+} as const
 
 export type RussianCountForms = readonly [one: string, few: string, many: string]
 
@@ -856,8 +880,10 @@ export const COMBAT_MASTERY_COPY = {
   camera: 'Управление камерой',
   capture: 'Захватить мышь',
   drag: 'Тяни по миру — камера. Щелчок — удар.',
+  bowDrag: 'Тяни по миру — прицел. Щелчок — выстрел.',
   touchLook: 'Тяни по миру — камера',
   native: 'Мышь — камера; ЛКМ — удар',
+  bowNative: 'Мышь — прицел; ЛКМ — выстрел',
 } as const
 
 export function describeEvadeRefused(reason: import('../world/CombatMastery.ts').EvadeReadiness): string {
@@ -1574,7 +1600,7 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'warning',
   },
   ability: {
-    text: 'Приём (ПКМ или R) не бесплатный: ест выносливость и уходит на перезарядку. Полоска под иконкой — сколько ждать.',
+    text: 'Эльф: держи ПКМ/R — прицел, ЛКМ — выстрел за 15 выносливости. Отпусти — клинок. Охрана держит щит, злодей делает рывок. Полоска — перезарядка.',
     tone: 'info',
   },
   melee: {

@@ -4,7 +4,6 @@ import test from 'node:test'
 
 const appCss = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
 const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
-const openingCss = readFileSync(new URL('../src/game/ui/openingExperience.css', import.meta.url), 'utf8')
 
 function extractBlock(source: string, marker: string): string {
   const markerIndex = source.indexOf(marker)
@@ -28,19 +27,44 @@ function extractRule(source: string, selector: string): string {
   return extractBlock(source, `${selector} {`)
 }
 
-test('menu settings are opt-in and their expanded panel is bounded by the toolbar', () => {
-  const settingsRule = extractRule(openingCss, '.opening-menu .menu-settings')
-  const toolbarRule = extractRule(openingCss, '.opening-menu .menu-toolbar')
-  const settingsIndex = appSource.indexOf('<details className="menu-preferences">')
+test('menu settings follow launch, setup and profile content in natural document flow', () => {
+  const settingsRule = extractRule(appCss, '.menu-settings')
+  const mobileMenuCss = extractBlock(appCss, '@media (max-width: 720px), (pointer: coarse) {')
+  const settingsIndex = appSource.indexOf('<section className="menu-settings" aria-labelledby="menu-settings-title">')
   const heroIndex = appSource.indexOf('<header className="hero-header">')
+  const launchIndex = appSource.indexOf('<div className="faction-grid">')
+  const setupIndex = appSource.indexOf('<div className="run-setup">')
+  const lowerIndex = appSource.indexOf('<section className="menu-lower">')
+  const footerIndex = appSource.indexOf('<footer className="menu-footer">')
 
-  assert.match(settingsRule, /width:\s*min\(46rem,\s*100%\);/)
-  assert.match(settingsRule, /position:\s*absolute;/)
-  assert.match(settingsRule, /right:\s*0;/)
-  assert.match(toolbarRule, /position:\s*relative;/)
-  assert.notEqual(settingsIndex, -1)
-  assert.notEqual(heroIndex, -1)
-  assert.ok(settingsIndex < heroIndex)
+  assert.match(settingsRule, /margin:\s*1rem auto 0;/)
+  assert.match(settingsRule, /max-width:\s*76rem;/)
+  assert.match(settingsRule, /position:\s*relative;/)
+  assert.match(settingsRule, /border:\s*1px solid var\(--cp-border\);/)
+  assert.doesNotMatch(settingsRule, /position:\s*(?:absolute|fixed)/)
+  assert.doesNotMatch(mobileMenuCss, /\.menu-settings\s*\{/)
+  const order = [heroIndex, launchIndex, setupIndex, lowerIndex, settingsIndex, footerIndex]
+  assert.ok(order.every((index) => index >= 0), 'Every menu section is present')
+  assert.deepEqual(order, order.toSorted((a, b) => a - b), 'DOM, keyboard and visual order agree')
+  assert.equal((appSource.match(/<section className="menu-settings"/g) ?? []).length, 1)
+  assert.doesNotMatch(appSource, /menu-preferences|run-options/)
+  assert.match(appSource, /<h2 id="menu-settings-title">Настройки<\/h2>/)
+})
+
+test('faction launches precede seed and unlock grids while active-run continuation retains priority', () => {
+  const activeIndex = appSource.indexOf('<section className="active-run-card"')
+  const blockedIndex = appSource.indexOf('<p className="new-run-blocked-note">')
+  const launchIndex = appSource.indexOf('<div className="faction-grid">')
+  const seedIndex = appSource.indexOf('<div className="seed-panel">')
+  const boonIndex = appSource.indexOf('<div className="boon-panel">')
+  const doctrineIndex = appSource.indexOf('<div className="boon-panel doctrine-panel">')
+  assert.ok(activeIndex >= 0 && activeIndex < blockedIndex && blockedIndex < launchIndex)
+  assert.ok(launchIndex < seedIndex && seedIndex < boonIndex && boonIndex < doctrineIndex)
+  const launch = appSource.slice(launchIndex, seedIndex)
+  assert.match(launch, /disabled=\{Boolean\(activeRun\)\}/)
+  assert.match(launch, /onClick=\{\(\) => onStart\(faction\)\}/)
+  assert.match(launch, /Начать · seed \$\{canonicalSeed\}/)
+  assert.match(extractRule(appCss, '.run-setup'), /margin-top:\s*1rem;/)
 })
 
 test('doctrine choices span both columns of the run setup grid', () => {
@@ -48,10 +72,4 @@ test('doctrine choices span both columns of the run setup grid', () => {
 
   assert.match(doctrinePanelRule, /grid-column:\s*1\s*\/\s*-1;/)
   assert.match(appSource, /className="boon-panel doctrine-panel"/)
-})
-
-test('optional setup uses native keyboard-accessible disclosure with a visible focus ring', () => {
-  assert.match(appSource, /<details className="run-options">\s*<summary>/)
-  assert.match(openingCss, /\.run-options > summary:focus-visible\s*\{\s*outline:\s*2px solid var\(--cp-accent\);/)
-  assert.match(openingCss, /\.run-options > summary[^}]*min-height:\s*44px;/)
 })

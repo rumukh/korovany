@@ -1,4 +1,12 @@
 import * as THREE from 'three'
+import {
+  artShaderKey,
+  setArtMaterialFeatures,
+  type ArtEnvironmentUniforms,
+  type ArtShaderFeatures,
+} from './ArtPresentation.ts'
+import { WEATHER_ROUGHNESS_DROP_MAX, WEATHER_ROUGHNESS_FLOOR, WEATHER_VALUE_DROP_MAX } from './AtmospherePresentation.ts'
+import { AFFINE_SKIN_NORMAL_GLSL, AFFINE_SKIN_NORMAL_REVISION, affineSkinNormalChunk } from './skinNormalShader.ts'
 
 /**
  * GLSL injected into `MeshStandardMaterial` to get the marching-comic look.
@@ -32,6 +40,7 @@ export interface StylizedSharedUniforms {
   uShadowTint: { value: THREE.Color }
   /** Strength of the world-space "paper tooth" luminance wobble. */
   uPaperStrength: { value: number }
+  environment?: ArtEnvironmentUniforms
 }
 
 export interface OutlineSharedUniforms {
@@ -39,6 +48,8 @@ export interface OutlineSharedUniforms {
   uOutlineThickness: { value: number }
   uOutlineMinDepth: { value: number }
   uOutlineMaxDepth: { value: number }
+  uOutlineViewport?: { value: THREE.Vector2 }
+  uOutlinePixels?: { value: THREE.Vector2 }
 }
 
 const STYLIZED_VERTEX_HEADER = /* glsl */ `
@@ -165,11 +176,16 @@ attribute vec3 outlineNormal;
  * any shape, and clamping the depth term makes distant props fade to a hairline
  * rather than staying boldly outlined at the horizon.
  */
-function outlineProjection(smooth: boolean): string {
+function outlineProjection(smooth: boolean, enhanced = false, wind = false): string {
   const source = smooth ? 'outlineNormal' : 'normal'
   return /* glsl */ `
 vec4 mvPosition = vec4( transformed, 1.0 );
 vec3 kOutlineNormal = ${source};
+#ifdef USE_SKINNING
+  ${enhanced ? 'kOutlineNormal = kArtAffineNormal( mat3( skinMatrix ), kOutlineNormal );'
+    : 'kOutlineNormal = vec4( skinMatrix * vec4( kOutlineNormal, 0.0 ) ).xyz;'}
+#endif
+${wind ? 'kOutlineNormal = kArtDeformNormal( kOutlineNormal );' : ''}
 #ifdef USE_INSTANCING
   mvPosition = instanceMatrix * mvPosition;
   // Not mat3( instanceMatrix ) * normal: that is the vertex transform, not the
@@ -191,9 +207,236 @@ kOutlineViewNormal = kOutlineLength > 1e-6
   ? kOutlineViewNormal / kOutlineLength
   : vec3( 0.0, 0.0, 1.0 );
 float kOutlineDepth = clamp( -mvPosition.z, uOutlineMinDepth, uOutlineMaxDepth );
+${enhanced ? `
+vec4 kClip = projectionMatrix * mvPosition;
+vec2 kDirection = ( projectionMatrix * vec4( kOutlineViewNormal, 0.0 ) ).xy;
+float kDirectionLength = length( kDirection );
+float kProjectedSize = projectionMatrix[ 1 ][ 1 ] * length( transformed ) *
+  length( modelViewMatrix[ 1 ].xyz ) * uOutlineViewport.y / max( -mvPosition.z, 0.1 );
+float kPixels = mix( uOutlinePixels.x, uOutlinePixels.y, smoothstep( 10.0, 100.0, kProjectedSize ) );
+kPixels *= min( 1.0, uOutlineMaxDepth / max( -mvPosition.z, 0.1 ) );
+kClip.xy += ( kDirection / max( kDirectionLength, 1e-6 ) ) *
+  ( 2.0 * kPixels / uOutlineViewport ) * kClip.w;
+gl_Position = kClip;
+` : `
 mvPosition.xyz += kOutlineViewNormal * ( uOutlineThickness * kOutlineDepth );
 gl_Position = projectionMatrix * mvPosition;
+`}
 `
+}
+
+function artWindVertex(enhanced: boolean): string {
+  return /* glsl */ `
+attribute vec2 artWind;
+uniform float uArtTime;
+uniform vec3 uArtWind;
+vec3 kArtWindShear() {
+  mat4 basis = modelMatrix;
+  #ifdef USE_INSTANCING
+    basis = basis * instanceMatrix;
+  #endif
+  float phase = artWind.y * 6.2831853 + basis[ 3 ].x * 0.17 + basis[ 3 ].z * 0.11;
+  float bend = sin( uArtTime * 1.8 + phase ) * artWind.x * uArtWind.z * 0.035;
+  vec3 worldBend = vec3( uArtWind.x, 0.0, uArtWind.y ) * bend;
+  mat3 axes = mat3( basis );
+  return vec3( dot( axes[ 0 ], worldBend ), dot( axes[ 1 ], worldBend ), dot( axes[ 2 ], worldBend ) )
+    / max( vec3( dot( axes[ 0 ], axes[ 0 ] ), dot( axes[ 1 ], axes[ 1 ] ), dot( axes[ 2 ], axes[ 2 ] ) ), vec3( 1e-8 ) );
+}
+vec3 kArtDeformNormal( vec3 n ) {
+  vec3 shear = kArtWindShear();
+  ${enhanced ? `return kArtAffineNormal( mat3(
+    vec3( 1.0, 0.0, 0.0 ), vec3( shear.x, 1.0 + shear.y, shear.z ), vec3( 0.0, 0.0, 1.0 )
+  ), n );` : 'return normalize( vec3( n.x, ( n.y - shear.x * n.x - shear.z * n.z ) / max( 1.0 + shear.y, 0.1 ), n.z ) );'}
+}
+`
+}
+
+const ART_DITHER_FRAGMENT = /* glsl */ `
+varying float vArtVisibility;
+float kArtDither( vec2 pixel ) {
+  vec2 p = mod( floor( pixel ), 4.0 );
+  vec2 low = mod( p, 2.0 );
+  vec2 high = floor( p / 2.0 );
+  float a = 2.0 * low.x + 3.0 * low.y - 4.0 * low.x * low.y;
+  float b = 2.0 * high.x + 3.0 * high.y - 4.0 * high.x * high.y;
+  return ( 4.0 * a + b + 0.5 ) / 16.0;
+}
+`
+
+type CompileShader = Parameters<THREE.Material['onBeforeCompile']>[0]
+
+function applyArtVertex(
+  shader: CompileShader,
+  features: ArtShaderFeatures,
+  environment: ArtEnvironmentUniforms | undefined,
+  depth: boolean,
+): void {
+  if (environment) Object.assign(shader.uniforms, environment)
+  let skinNormal = '#include <skinnormal_vertex>'
+  if (!depth && features.enhanced) skinNormal = affineSkinNormalChunk(THREE.ShaderChunk.skinnormal_vertex)
+  if (features.attributes.wind) {
+    if (!environment) throw new Error('Wind shader requires the shared presentation environment')
+    // Depth keeps the old helper body (unused for normals) and exact position
+    // deformation. Main/ink apply wind's normal map after skin, never before it.
+    shader.vertexShader = artWindVertex(features.enhanced && !depth) + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace('#include <skinning_vertex>',
+      '#include <skinning_vertex>\ntransformed += kArtWindShear() * transformed.y;')
+    if (!depth) {
+      skinNormal += '\nobjectNormal = kArtDeformNormal( objectNormal );'
+      if (features.enhanced) skinNormal += '\n#ifdef USE_TANGENT\nobjectTangent += kArtWindShear() * objectTangent.y;\n#endif'
+    }
+  }
+  if (!depth) {
+    requireInjectionPoint(shader.vertexShader, '#include <skinnormal_vertex>', 'skin normal')
+    shader.vertexShader = shader.vertexShader.replace('#include <skinnormal_vertex>', skinNormal)
+    if (features.enhanced) shader.vertexShader = AFFINE_SKIN_NORMAL_GLSL + shader.vertexShader
+  }
+  if (!depth && features.enhanced) {
+    shader.vertexShader = 'attribute float artVisibility;\nvarying float vArtVisibility;\n' + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\nvArtVisibility = artVisibility;')
+    shader.fragmentShader = ART_DITHER_FRAGMENT + shader.fragmentShader
+    shader.fragmentShader = shader.fragmentShader.replace('#include <clipping_planes_fragment>',
+      '#include <clipping_planes_fragment>\nif ( vArtVisibility < kArtDither( gl_FragCoord.xy ) ) discard;')
+  }
+  if (depth && features.shadowParticipation) {
+    shader.vertexShader = 'attribute float artShadowParticipation;\nvarying float vArtShadowParticipation;\n' + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\nvArtShadowParticipation = artShadowParticipation;')
+    shader.fragmentShader = 'varying float vArtShadowParticipation;\n' + shader.fragmentShader
+    shader.fragmentShader = shader.fragmentShader.replace('#include <clipping_planes_fragment>',
+      '#include <clipping_planes_fragment>\nif ( vArtShadowParticipation < 0.5 ) discard;')
+  }
+}
+
+function applySurfaceFeatures(shader: CompileShader, features: ArtShaderFeatures): void {
+  if (features.attributes.surfaceResponse) {
+    shader.vertexShader = 'attribute vec4 artSurfaceResponse;\nvarying vec4 vArtSurface;\n' + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\nvArtSurface = artSurfaceResponse;')
+    shader.fragmentShader = 'varying vec4 vArtSurface;\n' + shader.fragmentShader
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <roughnessmap_fragment>', '#include <roughnessmap_fragment>\nroughnessFactor = vArtSurface.x;')
+      .replace('#include <metalnessmap_fragment>', '#include <metalnessmap_fragment>\nmetalnessFactor = vArtSurface.y;')
+      .replace('mix( 1.0, kScale, uBandStrength )', 'mix( 1.0, kScale, vArtSurface.z * 0.65 )')
+      .replace('* uRimStrength;', '* vArtSurface.w * 0.45;')
+  }
+  if (features.mapping !== 'uv') {
+    shader.uniforms.uArtMeters = { value: features.metersPerRepeat }
+    shader.fragmentShader = 'uniform float uArtMeters;\n' + shader.fragmentShader
+    const sample = features.mapping === 'world-xz'
+      ? 'texture2D( map, vStylizedWorld.xz / uArtMeters )'
+      : `( texture2D( map, vStylizedWorld.yz / uArtMeters ) * kWeights.x
+        + texture2D( map, vStylizedWorld.xz / uArtMeters ) * kWeights.y
+        + texture2D( map, vStylizedWorld.xy / uArtMeters ) * kWeights.z )`
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
+      #ifdef USE_MAP
+        ${features.mapping === 'world-triplanar' ? `
+          vec3 kMappingNormal = normalize( cross( dFdx( vStylizedWorld ), dFdy( vStylizedWorld ) ) );
+          vec3 kWeights = pow( abs( kMappingNormal ), vec3( 4.0 ) );
+          kWeights /= max( dot( kWeights, vec3( 1.0 ) ), 1e-5 );` : ''}
+        diffuseColor *= ${sample};
+      #endif
+    `)
+  }
+  if (features.attributes.water) {
+    shader.vertexShader = 'attribute vec4 artWater;\nvarying vec4 vArtWater;\n' + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\nvArtWater = artWater;')
+    shader.fragmentShader = `varying vec4 vArtWater;
+      uniform float uArtTime;
+      uniform vec3 uArtSky;
+      uniform vec3 uArtHorizon;
+      ` + shader.fragmentShader
+    shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>', `
+      float kFlow = sin( dot( vStylizedWorld.xz, vArtWater.xy ) * 2.5 - uArtTime * 1.2 );
+      float kReflect = pow( 1.0 - clamp( dot( normalize( vViewPosition ), normal ), 0.0, 1.0 ), 3.0 );
+      vec3 kSky = mix( uArtHorizon, uArtSky, clamp( normal.y, 0.0, 1.0 ) );
+      outgoingLight = mix( outgoingLight * ( 1.0 + kFlow * 0.025 ),
+        kSky, kReflect * 0.16 );
+      outgoingLight *= 1.0 - min( vArtWater.w, 6.0 ) * 0.018;
+      outgoingLight += diffuseColor.rgb * vArtWater.z * 0.035;
+      #include <opaque_fragment>
+    `)
+  }
+}
+
+function applyWeatherResponse(
+  shader: CompileShader, features: ArtShaderFeatures, response: readonly [number, number], eligible: boolean,
+): void {
+  shader.uniforms.uArtWeatherResponse = { value: new THREE.Vector2(...response) }
+  shader.uniforms.uArtWeatherEligible = { value: eligible ? 1 : 0 }
+  shader.fragmentShader = `uniform vec3 uArtWeather;
+    uniform vec2 uArtWeatherResponse;
+    uniform float uArtWeatherEligible;\n` + shader.fragmentShader
+  if (features.attributes.weatherResponse) {
+    shader.vertexShader = 'attribute vec2 artWeatherResponse;\nvarying vec2 vArtWeatherResponse;\n' + shader.vertexShader
+    shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>',
+      '#include <begin_vertex>\nvArtWeatherResponse = artWeatherResponse;')
+    shader.fragmentShader = 'varying vec2 vArtWeatherResponse;\n' + shader.fragmentShader
+  }
+  // After packed surface/roughness-map evaluation, before PhysicalMaterial is built.
+  requireInjectionPoint(shader.fragmentShader, '#include <lights_physical_fragment>', 'weather response')
+  shader.fragmentShader = shader.fragmentShader.replace('#include <lights_physical_fragment>', `
+    vec2 kWeatherResponse = clamp( ${features.attributes.weatherResponse ? 'vArtWeatherResponse' : 'uArtWeatherResponse'},
+      vec2( 0.0 ), vec2( ${WEATHER_ROUGHNESS_DROP_MAX}, ${WEATHER_VALUE_DROP_MAX} ) );
+    float kWetness = clamp( uArtWeather.z, 0.0, 1.0 ) * uArtWeatherEligible;
+    // Stable local variation, not a moving specular sheet or a change to metalness.
+    kWetness *= 0.8 + 0.2 * sin( vStylizedWorld.x * 0.47 ) * sin( vStylizedWorld.z * 0.39 );
+    roughnessFactor = max( min( roughnessFactor, ${WEATHER_ROUGHNESS_FLOOR} ),
+      roughnessFactor - kWeatherResponse.x * kWetness );
+    diffuseColor.rgb *= 1.0 - kWeatherResponse.y * kWetness;
+    #include <lights_physical_fragment>
+  `)
+}
+
+/** Same unextruded world height/view depth and linear-space blend for source and ink. */
+function applyAtmosphere(shader: CompileShader): void {
+  requireInjectionPoint(shader.vertexShader, '#include <fog_vertex>', 'atmosphere vertex')
+  requireInjectionPoint(shader.fragmentShader, '#include <fog_fragment>', 'atmosphere fog')
+  requireInjectionPoint(shader.fragmentShader, '#include <colorspace_fragment>', 'atmosphere color')
+  shader.vertexShader = '#ifdef USE_FOG\nvarying float vArtAtmosphereHeight;\n#endif\n' + shader.vertexShader
+  shader.vertexShader = shader.vertexShader.replace('#include <fog_vertex>', `
+    #include <fog_vertex>
+    #ifdef USE_FOG
+      vec4 kFogPosition = vec4( transformed, 1.0 );
+      #ifdef USE_INSTANCING
+        kFogPosition = instanceMatrix * kFogPosition;
+      #endif
+      vArtAtmosphereHeight = ( modelMatrix * kFogPosition ).y;
+    #endif
+  `)
+  shader.fragmentShader = `
+    #ifdef USE_FOG
+      varying float vArtAtmosphereHeight;
+      uniform float uArtAtmosphereEnabled;
+      uniform vec3 uArtAtmosphereColor;
+      uniform vec4 uArtAtmosphereDepth;
+      uniform vec4 uArtAtmosphereHeight;
+    #endif
+  ` + shader.fragmentShader
+  shader.fragmentShader = shader.fragmentShader.replace('#include <colorspace_fragment>', `
+    #ifdef USE_FOG
+      if ( uArtAtmosphereEnabled > 0.5 ) {
+        float kNearFog = smoothstep( uArtAtmosphereDepth.x, uArtAtmosphereDepth.y, vFogDepth );
+        float kFarFog = smoothstep( uArtAtmosphereDepth.y, uArtAtmosphereDepth.z, vFogDepth );
+        float kFogOpacity = uArtAtmosphereDepth.w * kNearFog +
+          ( uArtAtmosphereHeight.w - uArtAtmosphereDepth.w ) * kFarFog;
+        float kHeightFog = exp( -min( 80.0, max( 0.0, vArtAtmosphereHeight - uArtAtmosphereHeight.x ) *
+          uArtAtmosphereHeight.y ) );
+        kFogOpacity *= mix( 1.0, kHeightFog, uArtAtmosphereHeight.z );
+        gl_FragColor.rgb = mix( gl_FragColor.rgb, uArtAtmosphereColor, kFogOpacity );
+      }
+    #endif
+    #include <colorspace_fragment>
+  `)
+  shader.fragmentShader = shader.fragmentShader.replace('#include <fog_fragment>', `
+    #ifdef USE_FOG
+      if ( uArtAtmosphereEnabled < 0.5 ) {
+        #include <fog_fragment>
+      }
+    #endif
+  `)
 }
 
 function requireInjectionPoint(source: string, token: string, label: string): void {
@@ -257,9 +500,13 @@ export function applyStylizedShader(
     bandStrength: number
     rimStrength: number
     rimPower: number
+    weatherResponse?: readonly [number, number]
+    weatherEligible?: boolean
   },
+  features?: ArtShaderFeatures,
 ): void {
   markStylizedShader(material)
+  if (features) setArtMaterialFeatures(material, features)
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uToonRamp = shared.uToonRamp
     shader.uniforms.uBandReference = shared.uBandReference
@@ -287,6 +534,15 @@ export function applyStylizedShader(
       '#include <lights_fragment_end>',
       STYLIZED_FRAGMENT_BODY,
     )
+    if (features) {
+      applyArtVertex(shader, features, shared.environment, false)
+      applySurfaceFeatures(shader, features)
+      if (features.enhanced) {
+        if (!shared.environment) throw new Error('Atmosphere shader requires the shared presentation environment')
+        applyWeatherResponse(shader, features, perMaterial.weatherResponse ?? [0, 0], perMaterial.weatherEligible === true)
+        applyAtmosphere(shader)
+      }
+    }
   }
   // three's default cache key is `onBeforeCompile.toString()`, so it would in fact
   // already separate stylized materials from stock ones and collapse ours onto a
@@ -297,7 +553,8 @@ export function applyStylizedShader(
   // source and differ only by a captured boolean; keying on the text alone would
   // collide them onto one program and render one of the two with the wrong shader.
   // Do not delete this on the grounds that three already handles it.
-  material.customProgramCacheKey = () => STYLIZED_PROGRAM_KEY
+  material.customProgramCacheKey = () => features?.enhanced
+    ? `${STYLIZED_PROGRAM_KEY}:${artShaderKey(features)}:atmosphere-1:${AFFINE_SKIN_NORMAL_REVISION}` : STYLIZED_PROGRAM_KEY
   material.needsUpdate = true
 }
 
@@ -306,27 +563,50 @@ export function applyOutlineShader(
   material: THREE.MeshBasicMaterial,
   shared: OutlineSharedUniforms,
   smooth: boolean,
+  features?: ArtShaderFeatures,
+  environment?: ArtEnvironmentUniforms,
 ): void {
+  if (features) setArtMaterialFeatures(material, features)
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uOutlineThickness = shared.uOutlineThickness
     shader.uniforms.uOutlineMinDepth = shared.uOutlineMinDepth
     shader.uniforms.uOutlineMaxDepth = shared.uOutlineMaxDepth
+    if (features?.enhanced) {
+      shader.uniforms.uOutlineViewport = shared.uOutlineViewport!
+      shader.uniforms.uOutlinePixels = shared.uOutlinePixels!
+    }
 
     requireInjectionPoint(shader.vertexShader, '#include <project_vertex>', 'outline')
 
     shader.vertexShader =
       OUTLINE_VERTEX_HEADER +
+      (features?.enhanced ? 'uniform vec2 uOutlineViewport;\nuniform vec2 uOutlinePixels;\n' : '') +
       (smooth ? OUTLINE_SMOOTH_ATTRIBUTE : '') +
       shader.vertexShader
     shader.vertexShader = shader.vertexShader.replace(
       '#include <project_vertex>',
-      outlineProjection(smooth),
+      outlineProjection(smooth, features?.enhanced, features?.attributes.wind),
     )
+    if (features) applyArtVertex(shader, features, environment, false)
+    if (features?.enhanced) {
+      if (!environment) throw new Error('Ink atmosphere requires the shared presentation environment')
+      applyAtmosphere(shader)
+    }
   }
   // Captured, not written out: `smooth` never appears in this closure's source
   // text, so three's default `onBeforeCompile.toString()` key cannot tell the two
   // variants apart and would hand both the same compiled program.
   material.customProgramCacheKey = () =>
-    `${OUTLINE_PROGRAM_KEY}:${smooth ? 'smooth' : 'flat'}`
+    `${OUTLINE_PROGRAM_KEY}:${smooth ? 'smooth' : 'flat'}${features?.enhanced ? `:${artShaderKey(features)}:atmosphere-1:${AFFINE_SKIN_NORMAL_REVISION}` : ''}`
   material.needsUpdate = true
+}
+
+export function applyArtDepthShader(
+  material: THREE.MeshDepthMaterial,
+  features: ArtShaderFeatures,
+  environment: ArtEnvironmentUniforms,
+): void {
+  setArtMaterialFeatures(material, features)
+  material.onBeforeCompile = (shader) => applyArtVertex(shader, features, environment, true)
+  material.customProgramCacheKey = () => `korovany-depth:${artShaderKey(features)}`
 }

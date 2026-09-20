@@ -3,6 +3,7 @@ import { registerHooks } from 'node:module'
 import { extname } from 'node:path'
 import test from 'node:test'
 import * as THREE from 'three'
+import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
 import {
   CHARACTER_FACTIONS,
   CHARACTER_VARIANTS,
@@ -92,6 +93,7 @@ function fixture(theme: 'light' | 'dark' = 'dark'): {
   return {
     engine: Object.assign(Object.create(GameEngine.prototype), {
       artLibrary: library,
+      visualPolicy: resolveVisualPolicy({ visualMode: 'legacy' }),
       palette: uiPalette(theme),
     }),
     library,

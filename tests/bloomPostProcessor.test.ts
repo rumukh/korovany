@@ -26,19 +26,27 @@ function inspect(processor: BloomPostProcessor): PostProcessorProbe {
 
 function headlessRenderer(): {
   renderer: THREE.WebGLRenderer
-  state: { directRenders: number; renderTarget: THREE.WebGLRenderTarget | null }
+  state: {
+    directRenders: number
+    renderTarget: THREE.WebGLRenderTarget | null
+    clearColor: THREE.Color
+    clearAlpha: number
+  }
 } {
   const state = {
     directRenders: 0,
     renderTarget: null as THREE.WebGLRenderTarget | null,
+    clearColor: new THREE.Color(0x172033),
+    clearAlpha: 1,
   }
-  const clearColor = new THREE.Color(0x172033)
-  let clearAlpha = 1
 
   const renderer = {
     autoClear: true,
     getPixelRatio(): number {
       return 1
+    },
+    getDrawingBufferSize(target: THREE.Vector2): THREE.Vector2 {
+      return target.set(64, 36)
     },
     getSize(target: THREE.Vector2): THREE.Vector2 {
       return target.set(64, 36)
@@ -50,14 +58,14 @@ function headlessRenderer(): {
       state.renderTarget = target
     },
     getClearColor(target: THREE.Color): THREE.Color {
-      return target.copy(clearColor)
+      return target.copy(state.clearColor)
     },
     getClearAlpha(): number {
-      return clearAlpha
+      return state.clearAlpha
     },
     setClearColor(color: THREE.ColorRepresentation, alpha?: number): void {
-      clearColor.set(color)
-      if (alpha !== undefined) clearAlpha = alpha
+      state.clearColor.set(color)
+      if (alpha !== undefined) state.clearAlpha = alpha
     },
     render(): void {
       state.directRenders += 1
@@ -270,7 +278,7 @@ test('a failed grade-only retry still falls back to the base scene', () => {
   assert.equal(reported, gradeFailure)
 })
 
-test('turning bloom off keeps the grade chain and releases only glow resources', () => {
+test('policy disable releases the whole chain and re-enable replays stored grade tints', () => {
   const { renderer } = headlessRenderer()
   const processor = new BloomPostProcessor(
     renderer,
@@ -280,16 +288,21 @@ test('turning bloom off keeps the grade chain and releases only glow resources',
   )
   let probe = inspect(processor)
 
-  assert.deepEqual(
-    probe.composer?.passes.map((pass) => pass.constructor.name),
-    ['RenderPass', 'ShaderPass', 'OutputPass'],
-  )
-  assert.ok(probe.gradePass, 'the comic grade exists with bloom initially off')
+  assert.equal(probe.composer, null, 'the visual policy owns the optional pipeline')
+  assert.equal(probe.gradePass, null)
   assert.equal(probe.bloomPass, null)
   processor.setGradeTints(
     new THREE.Color().setRGB(0, 1, 0),
     new THREE.Color().setRGB(0, 0, 1),
   )
+
+  processor.setEnabled(true)
+  probe = inspect(processor)
+  assert.deepEqual(
+    probe.composer?.passes.map((pass) => pass.constructor.name),
+    ['RenderPass', 'UnrealBloomPass', 'ShaderPass', 'OutputPass'],
+  )
+  assert.ok(probe.gradePass)
   const shadowTint = probe.gradePass.uniforms.uShadowTint.value as THREE.Color
   const highlightTint = probe.gradePass.uniforms.uHighlightTint.value as THREE.Color
   assert.equal(shadowTint.r, 0)
@@ -299,14 +312,6 @@ test('turning bloom off keeps the grade chain and releases only glow resources',
   assert.equal(highlightTint.g, 0)
   assert.ok(highlightTint.b > 0)
 
-  processor.setEnabled(true)
-  probe = inspect(processor)
-  assert.deepEqual(
-    probe.composer?.passes.map((pass) => pass.constructor.name),
-    ['RenderPass', 'UnrealBloomPass', 'ShaderPass', 'OutputPass'],
-  )
-
-  const gradePass = probe.gradePass
   const bloomPass = probe.bloomPass
   assert.ok(bloomPass)
   let bloomDisposals = 0
@@ -315,21 +320,82 @@ test('turning bloom off keeps the grade chain and releases only glow resources',
     bloomDisposals += 1
     disposeBloom()
   }
-
   processor.setEnabled(false)
   probe = inspect(processor)
-  assert.deepEqual(
-    probe.composer?.passes.map((pass) => pass.constructor.name),
-    ['RenderPass', 'ShaderPass', 'OutputPass'],
-  )
-  assert.equal(probe.gradePass, gradePass, 'the grade survives the bloom toggle')
+  probe = inspect(processor)
+  assert.equal(probe.composer, null)
+  assert.equal(probe.gradePass, null)
   assert.equal(probe.bloomPass, null)
+  assert.deepEqual(processor.getDebugSnapshot().passes, [])
   assert.equal(bloomDisposals, 1)
 
   processor.dispose()
+  assert.equal(bloomDisposals, 1, 'idempotent teardown does not release bloom twice')
 })
 
 test('a live bloom render failure removes bloom and completes the frame with grade', () => {
+  const { renderer, state } = headlessRenderer()
+  const processor = new BloomPostProcessor(
+    renderer,
+    new THREE.Scene(),
+    new THREE.PerspectiveCamera(),
+    true,
+    { enhanced: true, antialiasing: 'fxaa' },
+  )
+  const composer = inspect(processor).composer
+  assert.ok(composer)
+  const bloomPass = inspect(processor).bloomPass
+  assert.ok(bloomPass)
+  let bloomDisposals = 0
+  const disposeBloom = bloomPass.dispose.bind(bloomPass)
+  bloomPass.dispose = () => {
+    bloomDisposals += 1
+    disposeBloom()
+  }
+
+  const failure = new Error('simulated bloom render failure')
+  const originalTarget = new THREE.WebGLRenderTarget(2, 2)
+  const failedTarget = new THREE.WebGLRenderTarget(1, 1)
+  state.renderTarget = originalTarget
+  let postRenders = 0
+  composer.render = () => {
+    postRenders += 1
+    if (postRenders === 1) {
+      renderer.setRenderTarget(failedTarget)
+      renderer.setClearColor(0xff0000, 0.25)
+      renderer.autoClear = false
+      throw failure
+    }
+    assert.equal(renderer.getRenderTarget(), originalTarget)
+    assert.equal(renderer.autoClear, true)
+    assert.equal(renderer.getClearColor(new THREE.Color()).getHex(), 0x172033)
+    assert.equal(renderer.getClearAlpha(), 1)
+  }
+
+  const warnings = captureWarnings(() => processor.render())
+
+  assert.equal(postRenders, 2, 'the second render uses the grade-only chain')
+  assert.equal(state.directRenders, 0)
+  assert.ok(inspect(processor).composer, 'post-processing remains available')
+  assert.equal(inspect(processor).bloomPass, null)
+  assert.equal(bloomDisposals, 1)
+  assert.deepEqual(
+    processor.getDebugSnapshot().passes,
+    ['scene', 'grade', 'output', 'fxaa'],
+  )
+  assert.equal(state.renderTarget, originalTarget)
+  assert.equal(renderer.autoClear, true)
+  assert.equal(state.clearColor.getHex(), 0x172033)
+  assert.equal(state.clearAlpha, 1)
+  assert.match(String(warnings[0]?.[0]), /retrying the comic grade only/)
+
+  processor.dispose()
+  assert.equal(bloomDisposals, 1, 'full teardown does not revisit removed bloom')
+  originalTarget.dispose()
+  failedTarget.dispose()
+})
+
+test('a failed grade-only retry restores renderer state before direct fallback', () => {
   const { renderer, state } = headlessRenderer()
   const processor = new BloomPostProcessor(
     renderer,
@@ -340,20 +406,32 @@ test('a live bloom render failure removes bloom and completes the frame with gra
   const composer = inspect(processor).composer
   assert.ok(composer)
 
-  const failure = new Error('simulated bloom render failure')
+  const originalTarget = new THREE.WebGLRenderTarget(2, 2)
+  const failedTarget = new THREE.WebGLRenderTarget(1, 1)
+  state.renderTarget = originalTarget
   let postRenders = 0
   composer.render = () => {
     postRenders += 1
-    if (postRenders === 1) throw failure
+    renderer.setRenderTarget(failedTarget)
+    renderer.setClearColor(0xff0000, 0.25)
+    renderer.autoClear = false
+    throw new Error(postRenders === 1 ? 'bloom failed' : 'grade failed')
   }
 
   const warnings = captureWarnings(() => processor.render())
 
-  assert.equal(postRenders, 2, 'the second render uses the grade-only chain')
-  assert.equal(state.directRenders, 0)
-  assert.ok(inspect(processor).composer, 'post-processing remains available')
-  assert.equal(inspect(processor).bloomPass, null)
+  assert.equal(postRenders, 2)
+  assert.equal(state.directRenders, 1)
+  assert.equal(inspect(processor).composer, null)
+  assert.deepEqual(processor.getDebugSnapshot().passes, [])
+  assert.equal(state.renderTarget, null, 'direct fallback explicitly targets the canvas')
+  assert.equal(renderer.autoClear, true)
+  assert.equal(state.clearColor.getHex(), 0x172033)
+  assert.equal(state.clearAlpha, 1)
   assert.match(String(warnings[0]?.[0]), /retrying the comic grade only/)
+  assert.match(String(warnings[1]?.[0]), /Direct rendering will be used/)
 
   processor.dispose()
+  originalTarget.dispose()
+  failedTarget.dispose()
 })

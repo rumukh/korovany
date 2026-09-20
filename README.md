@@ -22,6 +22,29 @@ A seeded 3D action roguelite inspired by the legendary Russian game-design meme.
 - Run endings score themselves: a brass fanfare march for victory, a tolling funeral lament for death
 - Suspend/continue, terminal victory or defeat, profile rewards, and run history
 - Procedural 3D art and generated instruments with no external art, audio, or asset packs
+- Highest-quality enhanced graphics with articulated faction characters, tactile world surfaces,
+  bounded atmosphere and combat effects, and a compact combat HUD
+
+## Graphics and interface
+
+Enhanced graphics at **High** quality are the default for new and continued runs.
+The menu and pause dialog no longer offer graphics mode or preview-quality
+selectors. Previously stored original/low/balanced choices are ignored.
+
+**Боевой интерфейс** offers a live Full/Compact HUD preference. Bloom, ink,
+foliage, weather and camera effects remain independently configurable, including
+previously saved effect-off choices. Bloom-off uses the real no-post path.
+Interface preferences do not replace or reset campaign saves.
+Faction launch cards come first, above seed and starting-gift customization.
+Theme, effect, audio and interface controls are grouped under **Настройки** at
+the bottom of the main menu; the pause dialog keeps its live controls.
+
+The stylized character direction is user-approved, but the quality tiers are
+still provisional: desktop viewport emulation is not mobile-device certification,
+and complete resource/performance acceptance is separate from art approval.
+See [visual settings](docs/visual-settings.md) and the
+[graphics upgrade results and screenshots](docs/graphics-upgrade-results.md).
+The [graphics upgrade plan](docs/15-next-gen-graphics-plan.md) records the rollout contract.
 
 Character materials keep their own world palette across light and dark UI themes:
 faction-colored cloth, warm skin, neutral steel, and dark leather remain distinct.
@@ -34,9 +57,9 @@ faction-colored cloth, warm skin, neutral steel, and dark leather remain distinc
 | `Shift` | Sprint |
 | `Space` | Jump |
 | Mouse / world drag | Camera while captured; drag the world to look if capture is unavailable |
-| Left click / world tap / touch sword | Aimed three-beat melee; a look drag does not attack |
+| Left click / world tap / touch attack | Three-beat melee, or fire while aiming the bow; a look drag does not attack |
 | `C` / touch **Уворот** | Directional evasive step (25 stamina); without movement, step backward |
-| Right click / `R` / touch ability | Faction ability; guard holds the shield |
+| Right click / `R` / touch ability | Hold to aim the elf's bow or raise the guard's shield; villain uses the rush |
 | `E` / touch `E` | Interact |
 | `Q` / touch `Q` | Toggle squad Follow / Hold |
 | `T` / squad HUD / touch `T` | Open squad orders: Follow, Hold, Focus, Regroup (pauses play) |
@@ -50,16 +73,24 @@ The footprint button is a held sprint modifier, and the up-arrow action jumps.
 Jump once per press; release before jumping again. Mouse and world-drag look can
 aim above or below the horizon, including bow shots. Movement, evasion, shields,
 and melee keep their ground-plane heading regardless of camera pitch.
-Pause, lost focus, and cancelled gestures release held movement, camera, and shield
+The elf's held bow uses a separate shoulder view, starting level; release aim to return
+to the overview camera and melee. Holding aim costs nothing. Each attack press fires
+one arrow for 15 stamina with the existing 0.9-second cooldown and 18–10 distance-based
+damage. Arrows leave the nock toward the reticle, then fall under gravity; there is no
+automatic target selection. Terrain and solid sight-blocking world surfaces stop them.
+On touch screens, hold the bow button, drag the world to aim, and tap the attack button
+with another finger. The accessible bow button also toggles aim on keyboard activation.
+Sprint and evasion leave bow mode without refunding a shot.
+Pause, lost focus, and cancelled gestures release held movement, camera, bow, and shield
 inputs. Paid recovery, cooldowns, stamina, and committed finishers are preserved.
 
 The three melee beats have alternating wind-ups and follow-through, with a stronger
 full-body finisher. Poses and weapon trails follow the actual combat clock rather
 than a separate animation timer; cancelling a swing also cancels its visual strike.
 The guard braces the shield with the offhand, including while moving or attacking.
-The elf briefly equips a bow for the shot's follow-through, using the existing
-ability cooldown; a new melee attack or evasion immediately takes visual priority.
-Neither pose adds a wind-up, changes damage, or restores an injured limb.
+The elf's held bow and shot recovery use the shared manual-aim presentation in both
+the enhanced and legacy renderers. Releasing aim restores the melee equipment.
+These poses do not change damage or restore an injured limb.
 The default camera looks farther ahead and pulls back on portrait screens without
 changing aim direction. Reduced motion softens secondary torso movement.
 

@@ -2,8 +2,32 @@ import * as THREE from 'three'
 import { AudioDirector, type SoundCue, type SoundRequest } from './AudioDirector'
 import { musicIntensityRank, type MusicIntensity, type MusicOutcome } from './MusicScore.ts'
 import { BloomPostProcessor } from './BloomPostProcessor'
+import { resolveVisualPolicy, resolveVisualViewport, type VisualQualityPolicy } from './visualPolicy.ts'
+import { CameraVisibility } from './cameraVisibility.ts'
+import { BowAim, type BowAimSource } from './input/BowAim.ts'
+import { RAIN_CAPACITY, SNOW_CAPACITY, precipitationCount, updatePrecipitationBuffer } from './PrecipitationPresentation.ts'
+import { SecondaryEffectPool } from './SecondaryEffectPool.ts'
+import { ContactPresentation, contactResponse, copyPresentationContact, type ContactSurface, type PresentationContact } from './ContactPresentation.ts'
+import { TransientEffectBudget, transientAllocationReceipts, type TransientSource } from './TransientEffectBudget.ts'
+import { sumVisualAllocationReceipts } from './diagnostics/VisualBudgetAccounting.ts'
+import type { GraphicsSourceRoot } from './diagnostics/GraphicsSubsystemSubmissions.ts'
+import type { GraphicsSubsystemInputs } from './diagnostics/GraphicsSubsystemInventory.ts'
+import { stabilizeKeyLight } from './world/WorldPresentationRegistry.ts'
+import type { FoliageQuality, VisualSettings } from './visualSettings.ts'
+import { GraphicsClock, graphicsClockOptions } from './diagnostics/GraphicsClock.ts'
 import {
-  bowReleaseProgress,
+  GraphicsDiagnostics,
+  createInstrumentedGraphicsRenderer,
+  graphicsVisualSettings,
+  validateGraphicsStage,
+  type GraphicsFixtureStage,
+} from './diagnostics/GraphicsDiagnostics.ts'
+import { graphicsSceneEvidence } from './diagnostics/GraphicsSceneEvidence.ts'
+import { GraphicsFoundationFixture } from './diagnostics/GraphicsFoundationFixture.ts'
+import {
+  GraphicsCharacterPortrait, type GraphicsCharacterPortraitRequest, type PortraitPose, type PortraitSubject,
+} from './diagnostics/GraphicsCharacterPortrait.ts'
+import {
   GUARD_ARM_PITCH,
   GUARD_ARM_ROLL,
   GUARD_ELBOW_PITCH,
@@ -23,9 +47,13 @@ import {
   CHARACTER_DETAIL_DISTANCE,
   CHARACTER_VARIANTS,
   GeometryCache,
+  hasStylizedShader,
   StylizedArtLibrary,
   WAGON_RIG,
   artVariation,
+  ATMOSPHERE_REVISION,
+  createAtmospherePresentation,
+  writeAtmospherePresentation,
   buildBeastBody,
   buildBeastHead,
   buildBeastLimb,
@@ -36,7 +64,9 @@ import {
   applyLimbPose,
   beastLookYaw,
   buildBirdBody,
+  buildBirdFoot,
   buildBirdWing,
+  buildArticulatedBirdWing,
   buildCharacterSkeleton,
   buildCloak,
   chestGaitYaw,
@@ -68,8 +98,23 @@ import {
   buildWagonWheel,
   buildWeaponGrip,
   buildWeaponHead,
+  buildIllustratedNockedArrow,
+  LegacyBowPresentation,
   buildWristRope,
   characterPartKeys,
+  illustratedCharacterPlan,
+  createCharacterPresenter,
+  characterPresenter,
+  type CharacterPresenter,
+  type CharacterLimb,
+  CreaturePresenter,
+  creaturePresenter,
+  createCreatureLeg,
+  type CreatureLeg,
+  WagonPresenter,
+  wagonPresenter,
+  buildDraftYoke,
+  taperedBox,
   resolveCharacterPlan,
   setCharacterShoulderWidth,
   solveHandOffset,
@@ -77,6 +122,7 @@ import {
   type BeastKind,
   type BeastPosture,
   type CharacterPlan,
+  type ArtRenderSourceBinding,
   type OutlineBinding,
   type OutlineKind,
 } from './art/index.ts'
@@ -258,7 +304,7 @@ import {
   moveLookGesture,
   type LookGesture,
 } from './input/CombatInput.ts'
-import { RandomStream } from './random/RandomStream'
+import { createGeneratedRngStreams, type GeneratedRngStreams } from './random/GeneratedRngStreams.ts'
 import { deriveSeed, parseSeed } from './random/seed'
 import { getStartingBoonEffects } from './run/profile'
 import {
@@ -635,7 +681,7 @@ import {
   type ZoneVisualWeights,
 } from './zoneArt'
 
-export type FoliageQuality = 'off' | 'low' | 'high'
+export type { FoliageQuality } from './visualSettings.ts'
 
 export interface GeneratedRunLaunch {
   runId: string
@@ -644,15 +690,9 @@ export interface GeneratedRunLaunch {
   restored?: ActiveRunSaveV3
 }
 
-export interface GameEngineSettings {
+export interface GameEngineSettings extends VisualSettings {
   musicMuted: boolean
   sfxVolume: number
-  dynamicDayNight: boolean
-  weatherEnabled: boolean
-  bloomEnabled: boolean
-  inkOutlinesEnabled: boolean
-  screenShakeEnabled: boolean
-  foliageQuality: FoliageQuality
   achievementRunId: string
   generatedRun: GeneratedRunLaunch
   /**
@@ -722,6 +762,7 @@ interface EventPropTarget {
   maxHp: number
   position: THREE.Vector3
   attackRange: number
+  presentationSurface?: ContactSurface
 }
 
 interface ActorAction {
@@ -1189,6 +1230,8 @@ interface ProjectileHit {
   player: boolean
 }
 
+type ProjectileQuery = Pick<Projectile, 'owner' | 'allegiance' | 'sourceActorId' | 'finale'>
+
 type AttackKind = CombatAttackKind
 type HitWeight = CombatHitWeight
 type ComicCallout = 'БАЦ!' | 'ХРЯСЬ!' | 'БУМ!' | 'БЛОК!'
@@ -1197,6 +1240,7 @@ type ComicCallout = 'БАЦ!' | 'ХРЯСЬ!' | 'БУМ!' | 'БЛОК!'
 interface DamageResult extends CombatOutcome {
   position: THREE.Vector3
   direction: THREE.Vector3
+  presentationContact?: PresentationContact | null
 }
 
 interface CombatFeedbackEvent extends DamageResult {
@@ -1211,11 +1255,15 @@ interface DamageActorOptions {
   knockback?: number
   sourceActorId?: string
   deferFeedback?: boolean
+  presentationPoint?: THREE.Vector3
+  presentationNormal?: THREE.Vector3
 }
 
 interface DamagePlayerOptions {
   attackKind: AttackKind
   sourceActorId?: string
+  presentationPoint?: THREE.Vector3
+  presentationNormal?: THREE.Vector3
   /**
    * Whatever swung, when something did — the epilogue's only route to a cause of death.
    * The role is optional because a projectile can outlive its shooter.
@@ -1259,6 +1307,7 @@ interface ImpactRayFx {
   active: boolean
   priority: number
   weight: HitWeight
+  physical?: boolean
 }
 
 interface CombatFeedbackChannels {
@@ -1482,7 +1531,6 @@ const FLASH_DECAY = 2.4
 const SPARK_COUNT_BLOCK = 7
 const SPARK_COUNT_CLEAVE = 5
 const SPARK_LIFE = 0.24
-const SPARK_MAX_ACTIVE = 48
 const DAMAGE_NUMBER_MAX = 24
 const DAMAGE_NUMBER_LIFE = 0.72
 const DAMAGE_NUMBER_DISTANCE_SQ = 30 * 30
@@ -1585,8 +1633,8 @@ const WEATHER_PROFILES: Record<WeatherKind, WeatherProfile> = {
   },
 }
 const BASE_CLOUD_OPACITY = 0.58
-const RAIN_DROP_COUNT = 420
-const SNOW_FLAKE_COUNT = 300
+const RAIN_DROP_COUNT = RAIN_CAPACITY
+const SNOW_FLAKE_COUNT = SNOW_CAPACITY
 const PRECIPITATION_HALF_WIDTH = 24
 const PRECIPITATION_HALF_DEPTH = 20
 const PRECIPITATION_TOP = 25
@@ -1912,10 +1960,6 @@ function actorPosition(actor: Actor): AiPoint {
   return actor.mesh.position
 }
 
-function foliageQualityDensity(quality: FoliageQuality): number {
-  return quality === 'off' ? 0 : quality === 'low' ? 0.55 : 1
-}
-
 /** A bounded list of ids out of the save's free-form director bag. */
 function readSerializableStringArray(
   state: SerializableState | undefined,
@@ -2054,9 +2098,18 @@ export class GameEngine {
   private readonly camera = new THREE.PerspectiveCamera(CAMERA_BASE_FOV, 1, 0.1, 240)
   private readonly renderer: THREE.WebGLRenderer
   private readonly postProcessor: BloomPostProcessor
+  private visualPolicy: VisualQualityPolicy
+  private readonly graphicsClock: GraphicsClock | null
+  private graphicsDiagnostics: GraphicsDiagnostics | null = null
+  private graphicsFoundation: GraphicsFoundationFixture | null = null
+  private graphicsCharacterPortrait: GraphicsCharacterPortrait | null = null
   private readonly artLibrary: StylizedArtLibrary
   /** Shape cache shared by every actor: one buffer per shape, not one per actor. */
   private readonly artGeometry = new GeometryCache()
+  private readonly characterPresenters = new Set<CharacterPresenter>()
+  private readonly creaturePresenters = new Set<CreaturePresenter>()
+  private readonly wagonPresenters = new Set<WagonPresenter>()
+  private readonly characterHeightSample = (x: number, z: number): number => this.groundHeightAt(x, z)
   /** Scratch vector for the arm-chain solve. Reused so the pose never allocates. */
   private readonly handOffset = new THREE.Vector3()
   /**
@@ -2153,8 +2206,24 @@ export class GameEngine {
   private readonly rainPositions = new Float32Array(RAIN_DROP_COUNT * 6)
   private readonly snowPositions = new Float32Array(SNOW_FLAKE_COUNT * 3)
   private readonly snowDriftPhases = new Float32Array(SNOW_FLAKE_COUNT)
+  private readonly precipitationHeight = (x: number, z: number) => this.groundHeightAt(x, z)
+  private readonly precipitationFrame = {
+    delta: 0, time: 0, cameraX: 0, cameraY: 0, cameraZ: 0,
+    windX: 0, windZ: 0, windStrength: 0, reducedMotion: false,
+  }
   private readonly cameraRaycaster = new THREE.Raycaster()
   private readonly cameraFollowPosition = new THREE.Vector3()
+  private readonly cameraVisibility = new CameraVisibility()
+  private readonly enhancedTarget = new THREE.Vector3()
+  private readonly enhancedDesired = new THREE.Vector3()
+  private readonly enhancedPosition = new THREE.Vector3()
+  private readonly enhancedShaken = new THREE.Vector3()
+  private readonly drawingBufferSize = new THREE.Vector2()
+  private readonly nearSubjects: THREE.Vector3[] = []
+  private readonly nearSubjectPool = Array.from({ length: 8 }, () => new THREE.Vector3())
+  private readonly playerRenderBindings: ArtRenderSourceBinding[] = []
+  private readonly cameraTerrain = (x: number, z: number): number => this.groundHeightAt(x, z)
+  private rendererDevicePixelRatio = 1
   private readonly cameraObstacles: THREE.Object3D[] = []
   private readonly foliageOccluders: FoliageOccluder[] = []
   private readonly wind: WindState = {
@@ -2163,10 +2232,7 @@ export class GameEngine {
   }
   private readonly collisionProbe = new THREE.Vector3()
   private readonly navigationWaypoint = new THREE.Vector3()
-  private readonly generatedRngStreams: Record<
-    'combat' | 'director' | 'event' | 'loot' | 'chronicle' | 'rumour',
-    RandomStream
-  >
+  private readonly generatedRngStreams: GeneratedRngStreams
   private readonly eventRng: () => number
   private readonly directorRng: () => number
   private readonly combatRng: () => number
@@ -2213,7 +2279,12 @@ export class GameEngine {
   private shakeClock = 0
   private damageFlash = 0
   private bleedFxCooldown = 0
-  private activeSparks = 0
+  private secondaryEffects: SecondaryEffectPool | null = null
+  private contactPresentation: ContactPresentation | null = null
+  private readonly transientBudget = new TransientEffectBudget()
+  private readonly contactColor = new THREE.Color()
+  private readonly contactNormal = new THREE.Vector3()
+  private readonly secondaryContactPoint = new THREE.Vector3()
   private activeGore = 0
   private decalSequence = 0
   private attackCooldown = 0
@@ -2226,6 +2297,17 @@ export class GameEngine {
   private wasSprinting = false
   private abilityCooldown = 0
   private shieldActive = false
+  private readonly bowAim = new BowAim()
+  private legacyBowPresentation: LegacyBowPresentation | null = null
+  private bowAiming = false
+  private bowOverviewPitch = 0
+  private readonly bowRaycaster = new THREE.Raycaster()
+  private readonly bowRayDirection = new THREE.Vector3()
+  private readonly bowIntersections: THREE.Intersection[] = []
+  private readonly projectileCenter = new THREE.Vector3()
+  private readonly bowFirstHit = (start: THREE.Vector3, end: THREE.Vector3): number | null =>
+    this.findProjectileHit({ owner: 'player', allegiance: this.faction, sourceActorId: null, finale: false },
+      start, end)?.fraction ?? null
   private lastViewAt = 0
   private lastZone: ZoneId
   private weatherZone: ZoneId
@@ -2343,6 +2425,7 @@ export class GameEngine {
   private boundFocusIn: (event: FocusEvent) => void
   private boundVisibilityChange: () => void
   private lookGesture: LookGesture | null = null
+  private lookGestureBowAiming = false
   private mousePointerId: number | null = null
   private pointerFallback = false
   private pointerLockPending = false
@@ -2358,6 +2441,10 @@ export class GameEngine {
     this.container = container
     this.callbacks = callbacks
     this.faction = faction
+    const diagnosticOptions = graphicsClockOptions(window.location.search)
+    const diagnosticVisuals = graphicsVisualSettings(window.location.search)
+    const diagnosticStarted = diagnosticOptions ? performance.now() : 0
+    this.graphicsClock = diagnosticOptions ? new GraphicsClock(diagnosticOptions) : null
     const launch = settings.generatedRun
     let restoredRun: ActiveRunSaveV3 | null = null
     if (
@@ -2475,18 +2562,23 @@ export class GameEngine {
     ) {
       throw new Error('Generated run achievement state is incompatible')
     }
-    this.dynamicDayNight = settings.dynamicDayNight ?? true
-    this.weatherEnabled = settings.weatherEnabled ?? true
-    this.inkOutlinesEnabled = settings.inkOutlinesEnabled ?? true
-    this.screenShakeEnabled = settings.screenShakeEnabled ?? true
-    this.honestMelee = settings.honestMelee ?? HONEST_MELEE_DEFAULT
     this.reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    this.groundFoliageQuality = settings.foliageQuality ?? 'high'
+    this.visualPolicy = resolveVisualPolicy(
+      { ...settings, ...diagnosticVisuals }, { reducedMotion: this.reducedMotion },
+    )
+    const visuals = this.visualPolicy.preferences
+    this.dynamicDayNight = visuals.dynamicDayNight
+    this.weatherEnabled = visuals.weatherEnabled
+    this.inkOutlinesEnabled = visuals.inkOutlinesEnabled
+    this.screenShakeEnabled = visuals.screenShakeEnabled
+    this.honestMelee = settings.honestMelee ?? HONEST_MELEE_DEFAULT
+    this.groundFoliageQuality = visuals.foliageQuality
     this.palette = createPalette()
     // The art library has to exist before the world does: the generated world draws
     // its surfaces from the same material family as everything else, and handing it
     // this instance is what keeps one screenshot looking like one drawing.
     this.artLibrary = new StylizedArtLibrary({
+      enhanced: this.visualPolicy.mode === 'enhanced',
       ink: {
         player: characterFactionInkColor(faction),
         enemy: CHARACTER_INK_COLORS.enemy,
@@ -2498,7 +2590,8 @@ export class GameEngine {
       keyIntensity: 2.65,
     })
     this.generatedWorld = new GeneratedWorldRuntime(this.scene, blueprint, {
-      decorationDensity: foliageQualityDensity(this.groundFoliageQuality),
+      visualPolicy: this.visualPolicy,
+      decorationDensity: this.visualPolicy.density.foliage,
       art: this.artLibrary,
       outlineDressing: this.inkOutlinesEnabled,
       // Buildings, props, vegetation and rock take their colour from the world
@@ -2543,27 +2636,7 @@ export class GameEngine {
         throw error
       }
     }
-    const streams = {
-      combat: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:combat')),
-      director: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:director')),
-      event: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:event')),
-      loot: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:loot')),
-      chronicle: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:chronicle')),
-      // Roadmap 1.3 gets its own derived stream rather than sharing the chronicle's. Two
-      // reasons, and the second is the load-bearing one: a rumour offer and a commitment
-      // resolution must not move the draw the *next* front, beast raid or caravan roll
-      // takes, or the feature would change the world simply by existing — and then the
-      // baseline it is measured against would be measuring the measurement.
-      rumour: new RandomStream(deriveSeed(blueprint.seed, 'gameplay:rumour')),
-    }
-    if (restoredRun) {
-      for (const key of Object.keys(streams) as Array<keyof typeof streams>) {
-        const state = restoredRun.rngStates[key]
-        if (Number.isInteger(state) && state >= 0 && state <= 0xffffffff) {
-          streams[key].setState(state)
-        }
-      }
-    }
+    const streams = createGeneratedRngStreams(blueprint.seed, restoredRun?.rngStates)
     this.generatedRngStreams = streams
     this.chronicleProtectedRegionIds = getChronicleProtectedRegionIds(blueprint)
     this.chronicleState = restoredRun
@@ -2753,8 +2826,15 @@ export class GameEngine {
       this.readSerializableNumber(restoredDirector, 'caravanAidCooldown', 0),
     )
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
+    const instrumented = this.graphicsClock ? createInstrumentedGraphicsRenderer() : null
+    this.renderer = instrumented?.renderer ??
+      new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
+    this.rendererDevicePixelRatio = window.devicePixelRatio
+    if (this.visualPolicy.mode === 'enhanced') {
+      const viewport = resolveVisualViewport(this.visualPolicy.render,
+        this.container.clientWidth, this.container.clientHeight, window.devicePixelRatio)
+      this.renderer.setDrawingBufferSize(viewport.cssWidth, viewport.cssHeight, viewport.pixelRatio)
+    } else this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75))
     this.renderer.shadowMap.enabled = true
     // `PCFSoftShadowMap` is deprecated in three 0.185: `WebGLShadowMap.render`
     // overwrites it with `PCFShadowMap` on the first frame and warns. Naming the
@@ -2773,7 +2853,8 @@ export class GameEngine {
       this.renderer,
       this.scene,
       this.camera,
-      settings.bloomEnabled ?? true,
+      this.visualPolicy.post.enabled,
+      { enhanced: this.visualPolicy.mode === 'enhanced', antialiasing: this.visualPolicy.post.antialiasing },
     )
 
     this.backgroundColor.copy(this.palette.worldSky)
@@ -2781,6 +2862,16 @@ export class GameEngine {
     this.fog = new THREE.Fog(this.palette.worldFog, 48, 132)
     this.scene.fog = this.fog
     this.player = this.createCharacter(faction, true)
+    if (faction === 'elf' && this.visualPolicy.mode === 'legacy') {
+      this.legacyBowPresentation = new LegacyBowPresentation(this.player, {
+        bowGeometry: this.acquireArtGeometry('char-weapon:bow:grip', () => buildWeaponGrip('bow')),
+        arrowGeometry: this.acquireArtGeometry('legacy-bow:nocked-arrow', buildIllustratedNockedArrow),
+        stringGeometry: this.acquireArtGeometry('legacy-bow:string', () => new THREE.BoxGeometry(0.016, 1, 0.016)),
+        bowMaterial: this.characterSharedMaterial('leather'),
+        arrowMaterial: this.characterSharedMaterial('steel'),
+        stringMaterial: this.characterSharedMaterial('dark'),
+      })
+    }
     this.weaponTrail = this.createWeaponTrail()
     const weaponParent = this.player.getObjectByName('weapon') ?? this.player
     weaponParent.add(this.weaponTrail)
@@ -2805,7 +2896,19 @@ export class GameEngine {
     }
     this.scene.add(this.player)
     this.applySavedBodyAppearance()
-    this.playerOutline = this.registerOutline(this.player, 'player')
+    this.playerOutline = this.registerOutline(this.player, this.visualPolicy.mode === 'enhanced' ? 'structural' : 'player')
+    if (this.visualPolicy.camera.foregroundFade) {
+      const sources: THREE.Mesh[] = []
+      this.player.traverse((object) => {
+        if (!(object instanceof THREE.Mesh) || StylizedArtLibrary.isOutlineShell(object) ||
+            !StylizedArtLibrary.isOpaque(object.material)) return
+        const materials = Array.isArray(object.material) ? object.material : [object.material]
+        if (materials.every(hasStylizedShader)) sources.push(object)
+      })
+      for (const source of sources) this.playerRenderBindings.push(
+        this.artLibrary.getRenderSourceBinding(source) ?? this.artLibrary.bindRenderSource(source, { visibility: true }),
+      )
+    }
     this.lastZone = this.zoneAtPosition(this.player.position.x, this.player.position.z)
     this.audio.setMusicContext({
       faction: this.faction,
@@ -2855,7 +2958,8 @@ export class GameEngine {
     this.updateWeather(0)
     this.updateAtmosphere(0)
     this.resolveCharacterOverlaps(this.player.position, PLAYER_COLLIDER_RADIUS)
-    this.collectCameraObstacles(this.scene.children.slice(worldRootIndex))
+    if (this.generatedWorld.legacySight) this.generatedWorld.collectLegacySightSources(this.cameraObstacles)
+    else this.collectCameraObstacles(this.scene.children.slice(worldRootIndex))
     this.initializeLootPool()
     this.restoreGeneratedLoot(restoredDirector)
     this.caravan = this.createCaravan()
@@ -2945,6 +3049,54 @@ export class GameEngine {
     this.resizeObserver.observe(this.container)
     this.resize()
     this.emitView(true)
+    if (instrumented && this.graphicsClock) {
+      const initializationMs = performance.now() - diagnosticStarted
+      this.graphicsDiagnostics = new GraphicsDiagnostics(
+        this.renderer, this.scene, instrumented.resources, instrumented.defaultSamples, this.graphicsClock, {
+          runtime: () => this.graphicsRuntimeFrame(),
+          snapshot: () => ({ ...this.graphicsRuntimeSnapshot(), initializationMs }),
+          subsystemRoots: () => this.graphicsSubsystemRoots(),
+          subsystemInventory: () => this.graphicsSubsystemInventory(),
+          world: () => ({
+            blueprint: this.generatedBlueprint,
+            regions: this.generatedBlueprint.regions.map((region) => ({
+              id: region.id, biome: region.biome, center: this.generatedWorld.getRegionCenter(region.id),
+              bounds: this.generatedWorld.getRegionBounds(region.id),
+            })),
+            bridges: this.generatedBlueprint.bridges.map((bridge) => ({
+              ...bridge, position: this.generatedWorld.getBridgePosition(bridge),
+            })),
+            sites: this.generatedBlueprint.sites.map((site) => ({
+              ...site, position: this.generatedWorld.getSitePosition(site),
+            })),
+          }),
+          stage: (request) => this.stageGraphicsFixture(request),
+          present: () => {
+            this.updateDayNight()
+            this.updateWeather(0)
+            this.updateAtmosphere(0)
+            this.scene.updateMatrixWorld(true)
+            this.graphicsCharacterPortrait?.restoreCameraProjection()
+            this.updateCamera(0, true)
+            this.graphicsCharacterPortrait?.present(this.camera)
+            this.emitView(true)
+          },
+          frame: (delta) => this.renderLogicalFrame(delta, 'manual'),
+          save: () => this.saveGeneratedRun(),
+          input: (keys) => {
+            this.keys.clear()
+            for (const code of keys) this.setInput(code, true)
+            this.setShield(keys.includes('KeyR'))
+          },
+          probe: (points) => points.map((point) => ({
+            ...point, y: this.groundHeightAt(point.x, point.z),
+            walkable: this.isWalkablePosition(point.x, point.z, 1.1),
+            region: this.generatedWorld.getRegionIdAt(point.x, point.z) ?? null,
+            biome: this.generatedWorld.getBiomeAt(point.x, point.z) ?? null,
+          })),
+        },
+      )
+    }
   }
 
   start(): void {
@@ -2967,6 +3119,8 @@ export class GameEngine {
     attempt(() => this.cancelActiveEvents())
     attempt(() => this.clearAmbientLife())
     attempt(() => this.clearLootRuntime())
+    attempt(() => this.secondaryEffects?.dispose())
+    attempt(() => this.transientBudget.clear())
     attempt(() => this.resizeObserver.disconnect())
     window.removeEventListener('keydown', this.boundKeyDown)
     window.removeEventListener('keyup', this.boundKeyUp)
@@ -2989,6 +3143,9 @@ export class GameEngine {
       attempt(() => document.exitPointerLock())
     }
     attempt(() => this.generatedWorld.dispose())
+    attempt(() => this.graphicsFoundation?.dispose())
+    attempt(() => this.graphicsCharacterPortrait?.dispose())
+    this.graphicsCharacterPortrait = null
     // Before the sweep, not during it. A shell borrows its source's geometry,
     // material and instance matrix, so the traversal below would either skip it or
     // free buffers the source still owns; `releaseOutline` is the only path that
@@ -3005,6 +3162,17 @@ export class GameEngine {
     this.interactableOutlineBindings.forEach((entry) =>
       attempt(() => this.artLibrary.releaseOutline(entry.binding)),
     )
+    for (const binding of this.playerRenderBindings.splice(0)) {
+      attempt(() => this.artLibrary.releaseRenderSource(binding))
+    }
+    for (const presenter of this.characterPresenters) attempt(() => presenter.dispose())
+    this.characterPresenters.clear()
+    attempt(() => this.legacyBowPresentation?.dispose())
+    this.legacyBowPresentation = null
+    for (const presenter of this.creaturePresenters) attempt(() => presenter.dispose())
+    this.creaturePresenters.clear()
+    for (const presenter of this.wagonPresenters) presenter.dispose()
+    this.wagonPresenters.clear()
     const geometries = new Set<THREE.BufferGeometry>()
     const materials = new Set<THREE.Material>()
     this.scene.traverse((object) => {
@@ -3042,6 +3210,7 @@ export class GameEngine {
       }
     })
     attempt(() => this.postProcessor.dispose())
+    attempt(() => this.sun.shadow.dispose())
     attempt(() => this.artGeometry.dispose())
     attempt(() => this.artLibrary.dispose())
     attempt(() => this.renderer.dispose())
@@ -3072,6 +3241,7 @@ export class GameEngine {
     this.telegraphPool.length = 0
     this.telegraphGeometries.clear()
     attempt(() => this.audio.destroy())
+    attempt(() => this.graphicsDiagnostics?.dispose())
     if (errors.length > 0) {
       throw new AggregateError(errors, 'Game engine cleanup was incomplete')
     }
@@ -3113,6 +3283,7 @@ export class GameEngine {
       this.keys.delete(code)
       if (code === 'Space') this.jumpAccentArmed = true
     }
+    if (code === 'KeyR' && this.faction === 'elf') this.setBowAiming(active, 'button')
   }
 
   setMusicMuted(muted: boolean): void {
@@ -3124,9 +3295,21 @@ export class GameEngine {
     this.audio.setSfxVolume(volume)
   }
 
+  getVisualPolicy(): VisualQualityPolicy {
+    return this.visualPolicy
+  }
+
+  private updateVisualPolicy(settings: Partial<VisualSettings>): void {
+    this.visualPolicy = resolveVisualPolicy(
+      { ...this.visualPolicy.preferences, ...settings },
+      { reducedMotion: this.reducedMotion, enhancedAvailable: this.visualPolicy.previewAvailable },
+    )
+  }
+
   setDynamicDayNight(enabled: boolean): void {
     if (this.dynamicDayNight === enabled) return
     this.dynamicDayNight = enabled
+    this.updateVisualPolicy({ dynamicDayNight: enabled })
     this.updateDayNight()
     this.updateWeather(0)
     this.updateAtmosphere(0)
@@ -3135,10 +3318,8 @@ export class GameEngine {
   setWeatherEnabled(enabled: boolean): void {
     if (this.weatherEnabled === enabled) return
     this.weatherEnabled = enabled
-    this.weatherZone = this.zoneAtPosition(this.player.position.x, this.player.position.z)
-    // The target always follows the biome; `enabled` only decides whether it is drawn.
-    this.setWeatherTarget(WEATHER_BY_ZONE[this.weatherZone], true)
-    this.applyGroundWeather()
+    this.updateVisualPolicy({ weatherEnabled: enabled })
+    this.renderer.domElement.dataset.weather = enabled ? this.weatherTarget : 'disabled'
     if (!enabled) {
       this.lightningFlash = 0
       this.thunderDelay = -1
@@ -3149,12 +3330,14 @@ export class GameEngine {
   }
 
   setBloomEnabled(enabled: boolean): void {
-    this.postProcessor.setEnabled(enabled)
+    this.updateVisualPolicy({ bloomEnabled: enabled })
+    this.postProcessor.setEnabled(this.visualPolicy.post.enabled, this.visualPolicy.post.antialiasing)
   }
 
   setInkOutlinesEnabled(enabled: boolean): void {
     if (this.inkOutlinesEnabled === enabled) return
     this.inkOutlinesEnabled = enabled
+    this.updateVisualPolicy({ inkOutlinesEnabled: enabled })
     this.updatePlayerOutlineVisibility()
     for (const actor of this.actors) this.updateActorOutlineVisibility(actor)
     this.updateInteractableOutlines()
@@ -3164,11 +3347,13 @@ export class GameEngine {
   setFoliageQuality(quality: FoliageQuality): void {
     if (this.groundFoliageQuality === quality) return
     this.groundFoliageQuality = quality
-    this.generatedWorld.setDecorationDensity(foliageQualityDensity(quality))
+    this.updateVisualPolicy({ foliageQuality: quality })
+    this.generatedWorld.setDecorationDensity(this.visualPolicy.density.foliage)
   }
 
   setScreenShakeEnabled(enabled: boolean): void {
     this.screenShakeEnabled = enabled
+    this.updateVisualPolicy({ screenShakeEnabled: enabled })
     if (!enabled) {
       this.resetCameraMotion()
       this.hitStopRemaining = Math.min(this.hitStopRemaining, HIT_STOP_REDUCED_MAX)
@@ -3212,6 +3397,62 @@ export class GameEngine {
       this.player.position.x,
       this.player.position.z,
     )
+  }
+
+  setBowAiming(active: boolean, source: BowAimSource = 'button'): void {
+    if (this.faction !== 'elf') return
+    if (active) {
+      if (this.paused || this.ended || this.health <= 0 || this.combatMastery.evadeRemaining > 0 ||
+          isPlayerMeleeCommitted(this.melee) || isEditableGameplayTarget(document.activeElement)) return
+      if (this.body.leftArm === 'missing' && this.body.rightArm === 'missing') {
+        this.callbacks.onNotice(ABILITY_BLOCKED_NO_ARMS_NOTICE, 'warning')
+        return
+      }
+      this.bowAim.sources.add(source)
+    } else this.bowAim.sources.delete(source)
+    const aiming = this.bowAim.sources.size > 0
+    if (aiming === this.bowAiming) return
+    this.bowAiming = aiming
+    if (aiming) {
+      this.resumeAudio()
+      this.bowOverviewPitch = this.cameraPitch
+      this.cameraPitch = 0
+      this.resolveBowAim()
+    } else {
+      this.cameraPitch = this.bowOverviewPitch
+      ;(characterPresenter(this.player) ?? this.legacyBowPresentation)?.setBowAiming(false)
+    }
+    this.cameraVisibility.reset()
+    this.emitView(true)
+  }
+
+  private cancelBowAim(): void {
+    if (!this.bowAiming) return
+    this.bowAim.sources.clear()
+    this.setBowAiming(false)
+  }
+
+  private resolveBowAim(): void {
+    this.bowAim.resolve(this.player.position, this.cameraYaw, this.cameraPitch,
+      this.body.leftArm === 'missing', BOW_RANGE, this.bowFirstHit)
+    this.player.rotation.y = this.bowAim.heading
+  }
+
+  private presentBowAim(): void {
+    if (!this.bowAiming) return
+    const presenter = characterPresenter(this.player)
+    const bow = presenter ?? this.legacyBowPresentation
+    // Entering aim is not a free cancellation of an already paid melee animation.
+    const visible = this.melee.phase === 'idle' &&
+      (this.activePlayerAttackKind === 'arrow' || this.attackAnimation <= 0)
+    if (!bow) return
+    if (bow.bowAimingActive !== visible) bow.setBowAiming(visible)
+    if (visible) {
+      const torso = presenter?.anatomy.torsoPivot ?? (this.player.userData.rig as CharacterRig).torsoPivot
+      if (!torso) throw new Error('Bow presentation requires the player torso')
+      applyChestPose(torso, 0, 0, 0)
+      bow.poseBowAim(this.bowAim.origin, this.bowAim.direction)
+    }
   }
 
   useAbility(): void {
@@ -3297,6 +3538,10 @@ export class GameEngine {
   attack(): void {
     if (this.paused || this.ended || this.combatMastery.evadeRemaining > 0 ||
         isEditableGameplayTarget(document.activeElement)) return
+    if (this.bowAiming) {
+      this.useAbility()
+      return
+    }
     this.resumeAudio()
     this.menacePlayer()
     if (!this.honestMelee) {
@@ -3333,6 +3578,7 @@ export class GameEngine {
       return
     }
     this.stamina -= result.staminaSpent
+    this.cancelBowAim()
     this.dropShield()
     this.attackAnimation = 0
     this.activePlayerAttackKind = 'melee'
@@ -3830,6 +4076,7 @@ export class GameEngine {
         loot: this.generatedRngStreams.loot.getState(),
         chronicle: this.generatedRngStreams.chronicle.getState(),
         rumour: this.generatedRngStreams.rumour.getState(),
+        injury: this.generatedRngStreams.injury.getState(),
       },
       achievementRunState,
       ...(this.runEnding && this.generatedRunStatus !== 'active'
@@ -3843,7 +4090,23 @@ export class GameEngine {
 
   private readonly loop = (): void => {
     const elapsedDelta = this.clock.getDelta()
+    try {
+      if (this.graphicsDiagnostics?.manual) this.graphicsDiagnostics.poll()
+      else this.renderLogicalFrame(elapsedDelta, 'active')
+    } catch (error) {
+      this.graphicsDiagnostics?.fail(error instanceof Error ? error : new Error(String(error)))
+      throw error
+    }
+    this.frameHandle = requestAnimationFrame(this.loop)
+  }
+
+  private renderLogicalFrame(elapsedDelta: number, source: 'active' | 'manual'): void {
+    if (this.graphicsCharacterPortrait && (source !== 'manual' || elapsedDelta !== 0)) {
+      throw new Error('Staged portraits permit only zero-simulation manual renders')
+    }
+    this.graphicsDiagnostics?.beginFrame(elapsedDelta, source)
     const visualDelta = Math.min(elapsedDelta, 0.05)
+    if (!this.paused && !this.ended) this.graphicsClock?.advance(visualDelta)
     let stopped = 0
     if (!this.paused && !this.ended && this.hitStopRemaining > 0) {
       stopped = Math.min(this.hitStopRemaining, elapsedDelta)
@@ -3852,12 +4115,27 @@ export class GameEngine {
     const gameplayDelta = Math.min(Math.max(0, elapsedDelta - stopped), 0.05)
     if (!this.paused && !this.ended && gameplayDelta > 0) this.update(gameplayDelta)
     if (!this.paused && !this.ended) this.updateCameraEffects(visualDelta)
+    this.graphicsFoundation?.update(this.graphicsClock?.timeSeconds ?? this.elapsed)
+    this.graphicsCharacterPortrait?.restoreCameraProjection()
     this.updateCamera(visualDelta, false)
+    this.graphicsCharacterPortrait?.present(this.camera)
+    for (const presenter of this.characterPresenters) presenter.updateLod(this.camera, this.visualPolicy)
+    for (const presenter of this.creaturePresenters) presenter.updateLod(this.camera, this.visualPolicy)
+    this.presentBowAim()
+    // A close diagnostic camera can change LOD; record/fit the geometry actually submitted.
+    this.graphicsCharacterPortrait?.present(this.camera)
     this.audioListenerRight.setFromMatrixColumn(this.camera.matrixWorld, 0)
     this.audio.setListener(this.camera.position, this.audioListenerRight)
     this.updateMusicContext()
-    this.postProcessor.render()
-    this.frameHandle = requestAnimationFrame(this.loop)
+    this.graphicsDiagnostics?.meter.endUpdate()
+    this.prepareTransientEffects()
+    try {
+      this.transientBudget.apply()
+      this.postProcessor.render()
+    } finally {
+      this.transientBudget.restore()
+    }
+    this.graphicsDiagnostics?.endFrame()
   }
 
   private update(delta: number): void {
@@ -3889,6 +4167,7 @@ export class GameEngine {
     this.moraleNoticeCooldown = Math.max(0, this.moraleNoticeCooldown - delta)
     this.updatePlayerMelee(delta)
     this.updatePlayer(delta)
+    this.graphicsDiagnostics?.meter.beginStreaming()
     this.generatedWorld.update({
       focus: {
         x: this.player.position.x,
@@ -3898,6 +4177,7 @@ export class GameEngine {
     })
     this.syncGeneratedRegions()
     this.refreshGeneratedCameraObstacles()
+    this.graphicsDiagnostics?.meter.endStreaming()
     this.updateCaravan(delta)
     this.updateBridgeAmbush(delta)
     if (!this.finaleWithinArena()) {
@@ -3981,6 +4261,284 @@ export class GameEngine {
 
   private groundHeightAt(x: number, z: number): number {
     return this.generatedWorld.sampleHeight(x, z)
+  }
+
+  private get visualElapsed(): number {
+    return this.graphicsClock?.timeSeconds ?? this.elapsed
+  }
+
+  private graphicsRuntimeFrame() {
+    return {
+      elapsed: this.elapsed, paused: this.paused, ended: this.ended, health: this.health,
+      npcCount: this.actors.length, aliveNpcs: this.actors.filter((actor) => actor.alive).length,
+      movingNpcs: this.actors.filter((actor) => actor.alive && actor.velocity.lengthSq() > 0.01).length,
+      actingNpcs: this.actors.filter((actor) => actor.alive && actor.action !== null).length,
+      region: this.generatedWorld.currentRegionId ?? null,
+      visibleRegions: [...this.generatedWorld.regions.getVisibleRegionIds()].sort(),
+      simulatedRegions: [...this.generatedWorld.regions.getSimulatedRegionIds()].sort(),
+      ...(this.transientBudget ? { transientPresentation: this.transientBudget.snapshot() } : {}),
+      ...(this.visualPolicy.mode === 'enhanced' ? {
+        cameraPresentation: {
+          x: this.camera.position.x, y: this.camera.position.y, z: this.camera.position.z,
+          boom: this.cameraVisibility.debug.boomDistance, shoulder: this.cameraVisibility.debug.shoulder,
+          overflows: this.cameraVisibility.debug.overflows,
+          targetProbes: this.cameraVisibility.debug.targetProbes,
+          visibleTargetProbes: this.cameraVisibility.debug.visibleTargetProbes,
+          visibilityCut: this.cameraVisibility.debug.visibilityCut,
+          framingCut: this.cameraVisibility.debug.framingCut,
+          framedTargetProbes: this.cameraVisibility.debug.framedTargetProbes,
+          framingError: this.cameraVisibility.debug.framingError,
+          torsoNdcX: this.cameraVisibility.debug.torsoNdcX,
+          torsoNdcY: this.cameraVisibility.debug.torsoNdcY,
+          headNdcX: this.cameraVisibility.debug.headNdcX,
+          headNdcY: this.cameraVisibility.debug.headNdcY,
+          trianglesTested: this.cameraVisibility.debug.triangleTests,
+          fadedInstances: this.generatedWorld.presentation!.debug.fadedInstances,
+          worldShadowDraws: this.generatedWorld.presentation!.debug.shadowDraws,
+          worldShadowInstances: this.generatedWorld.presentation!.debug.shadowInstances,
+          worldShadowTriangles: this.generatedWorld.presentation!.debug.shadowTriangles,
+        },
+      } : {}),
+    }
+  }
+
+  private graphicsSubsystemRoots(): GraphicsSourceRoot[] {
+    return [
+      { root: this.player, subsystem: 'dynamicArt' },
+      { root: this.caravan, subsystem: 'dynamicArt' },
+      ...this.actors.map((actor) => ({ root: actor.mesh, subsystem: 'dynamicArt' as const })),
+      ...[...this.creaturePresenters].map((presenter) => ({ root: presenter.root, subsystem: 'dynamicArt' as const })),
+      ...[...this.wagonPresenters].map((presenter) => ({ root: presenter.root, subsystem: 'dynamicArt' as const })),
+      { root: this.atmosphereRoot, subsystem: 'postAndEffects' },
+      ...this.flames.map((root) => ({ root, subsystem: 'postAndEffects' as const })),
+    ]
+  }
+
+  private graphicsSubsystemInventory(): GraphicsSubsystemInputs {
+    const world = this.generatedWorld.getVisualInventory()
+    const effects = this.getTransientEffectInventory()
+    return {
+      policy: this.getVisualPolicy(), roots: this.graphicsSubsystemRoots(),
+      owners: [
+        ...[...this.characterPresenters].map((presenter) => ({
+          name: `character:${presenter.root.id}`, subsystem: 'dynamicArt' as const, sources: presenter.sources,
+          receipts: presenter.allocationReceipts(), missing: [],
+        })),
+        ...[...this.creaturePresenters].map((presenter) => ({
+          name: `creature:${presenter.root.id}`, subsystem: 'dynamicArt' as const, sources: [presenter.source],
+          receipts: presenter.allocationReceipts(), missing: [],
+        })),
+        { name: 'world', subsystem: 'world', sources: world.sources, receipts: world.receipts, missing: world.missing },
+        { name: 'transient-effects', subsystem: 'postAndEffects', sources: effects.sources, receipts: effects.receipts, missing: effects.missing },
+      ],
+      standardPipelineTextures: this.artLibrary.getStandardTextureInventory(),
+      missing: [
+        'Engine geometry cache entries not exposed by a live presenter are outside the retained CPU inventory',
+        'Unused shared material-library resources and hidden injected-uniform textures have no inventory API',
+        'Persistent effects outside registered atmosphere/flame roots are unattributed, not world art',
+      ],
+    }
+  }
+
+  private graphicsRuntimeSnapshot() {
+    return {
+      ...this.graphicsRuntimeFrame(), faction: this.faction,
+      worldSeed: this.generatedBlueprint.seed, fingerprint: this.generatedBlueprint.fingerprint,
+      player: this.player.position.toArray(), heading: this.player.rotation.y,
+      pointerInput: { locked: document.pointerLockElement === this.renderer.domElement, fallback: this.pointerFallback },
+      camera: { position: this.camera.position.toArray(), yaw: this.cameraYaw, pitch: this.cameraPitch,
+        fov: this.camera.fov, near: this.camera.near, far: this.camera.far,
+        horizontalDistance: Math.hypot(this.camera.position.x - this.player.position.x,
+          this.camera.position.z - this.player.position.z) },
+      presentation: { dynamicDayNight: this.dynamicDayNight, weather: this.weatherEnabled,
+        ink: this.inkOutlinesEnabled, foliage: this.groundFoliageQuality, cameraEffects: this.screenShakeEnabled,
+        reducedMotion: this.reducedMotion, visualNightFactor: this.nightFactor },
+      visualPolicy: this.getVisualPolicy(),
+      rendering: {
+        atmosphere: this.visualPolicy.mode === 'enhanced' ? {
+          revision: ATMOSPHERE_REVISION, wetness: this.artEnvironment.wetness,
+          profile: { ...this.artEnvironment.atmosphere, color: this.artEnvironment.atmosphere.color.toArray() },
+        } : null,
+        secondaryEffects: this.secondaryEffects?.snapshot() ?? null,
+        contacts: this.contactPresentation?.snapshot() ?? null,
+        transientEffects: this.transientBudget?.snapshot() ?? null,
+        camera: { ...this.cameraVisibility.debug },
+        bindings: this.artLibrary.getRenderBindingStats(),
+        post: this.postProcessor.getDebugSnapshot(),
+        foundationFixture: this.graphicsFoundation?.snapshot() ?? null,
+        characterPortrait: this.graphicsCharacterPortrait?.snapshot() ?? null,
+        portraitContext: this.graphicsCharacterPortrait ? [this.player, ...this.actors
+          .filter((actor) => isSquadMember(actor, this.faction)).map((actor) => actor.mesh)].map((root) => {
+          const head = root.getObjectByName('head')
+          const point = (head ?? root).getWorldPosition(new THREE.Vector3()).project(this.camera)
+          return { player: root === this.player, projectedHead: point.toArray(),
+            headInsideClip: Math.abs(point.x) <= 1 && Math.abs(point.y) <= 1 && Math.abs(point.z) <= 1 }
+        }) : null,
+      },
+      simulationWeather: { target: this.weatherTarget, weights: { ...this.weatherWeights } },
+      characterCaptureState: {
+        stamina: this.stamina, abilityCooldown: this.abilityCooldown, attackCooldown: this.attackCooldown,
+        body: { ...this.body }, melee: { ...this.melee }, defense: { ...this.combatMastery },
+        actions: this.actors.map((actor) => ({ id: actor.id, action: actor.action, reaction: actor.reaction,
+          reactionRemaining: actor.reactionRemaining, deathAge: actor.deathAge })),
+      },
+      rngStates: Object.fromEntries(Object.entries(this.generatedRngStreams).map(([key, stream]) => [key, stream.getState()])),
+      actors: this.actors.map((actor) => ({
+        id: actor.id, role: actor.role, allegiance: actor.allegiance, budget: actor.budgetCategory,
+        alive: actor.alive, hp: actor.hp, maxHp: actor.maxHp, position: actor.mesh.position.toArray(),
+        squad: isSquadMember(actor, this.faction), action: actor.action?.phase ?? null,
+      })),
+      actorBudget: this.actorUsageByCategory(), maxNpcs: MAX_ACTORS,
+      world: this.generatedWorld.getDebugSnapshot(),
+      scene: graphicsSceneEvidence(this.scene, this.camera, [
+        { id: 'player', position: this.player.position },
+        ...this.actors.filter((actor) => isSquadMember(actor, this.faction))
+          .map((actor) => ({ id: actor.id, position: actor.mesh.position })),
+      ]),
+    }
+  }
+
+  private stageGraphicsFixture(request: GraphicsFixtureStage): void {
+    if (!this.graphicsDiagnostics?.manual) throw new Error('Graphics staging requires explicit manual diagnostics')
+    validateGraphicsStage(request)
+    if (request.portrait !== undefined) {
+      const subject = request.portrait ? this.graphicsPortraitSubject(request.portrait) : null
+      this.graphicsCharacterPortrait?.dispose()
+      this.graphicsCharacterPortrait = null
+      if (request.portrait && subject) {
+        this.graphicsCharacterPortrait = new GraphicsCharacterPortrait(request.portrait, subject,
+          (target, pose) => this.poseGraphicsPortrait(target, pose))
+      }
+      return
+    }
+    if (this.graphicsCharacterPortrait) throw new Error('Clear portrait staging before changing world prerequisites')
+    const points = [request.player, ...(request.companions ?? []).map((entry) => entry.position)]
+    const bounds = this.generatedWorld.bounds
+    for (const point of points) {
+      if (point && (point.x < bounds.minX || point.x > bounds.maxX || point.z < bounds.minZ || point.z > bounds.maxZ)) {
+        throw new Error('Fixture position is outside the production world')
+      }
+    }
+    const companions = (request.companions ?? []).map((entry) => {
+      const actor = this.actors.find((candidate) => candidate.id === entry.id && isSquadMember(candidate, this.faction))
+      if (!actor) throw new Error(`Fixture companion is absent: ${entry.id}`)
+      return { actor, position: entry.position }
+    })
+    if (request.player) this.player.position.copy(request.player)
+    this.generatedWorld.update({ focus: this.player.position, deltaSeconds: 0 })
+    this.syncGeneratedRegions()
+    this.refreshGeneratedCameraObstacles()
+    for (const { actor, position } of companions) {
+      actor.mesh.position.copy(position)
+      actor.home.copy(position)
+      actor.wanderTarget.copy(position)
+    }
+    if (request.camera) {
+      this.cameraYaw = request.camera.yaw
+      this.cameraPitch = request.camera.pitch
+    }
+    if (request.crowd) this.stageGraphicsCrowd()
+    if (request.foundation !== undefined) {
+      this.graphicsFoundation?.dispose()
+      this.graphicsFoundation = request.foundation
+        ? new GraphicsFoundationFixture(this.artLibrary, this.scene, this.player.position, this.cameraYaw) : null
+    }
+    if (request.antialiasing !== undefined) {
+      if (this.visualPolicy.mode !== 'enhanced') throw new Error('AA comparison requires enhanced preview')
+      this.postProcessor.setAntialiasing(request.antialiasing)
+    }
+  }
+
+  private graphicsPortraitSubject(request: GraphicsCharacterPortraitRequest): PortraitSubject {
+    const companionIndex = request.subject === 'player' ? -1 : Number(request.subject.slice(-1))
+    const companions = this.actors.filter((actor) => isSquadMember(actor, this.faction))
+      .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0)
+    const actor = companionIndex < 0 ? null : companions[companionIndex]
+    if (companionIndex >= 0 && !actor) throw new Error(`Portrait companion is absent: ${request.subject}`)
+    const root = actor?.mesh ?? this.player
+    const presenter = characterPresenter(root)
+    const plan: unknown = root.userData.characterPlan
+    const weapon = presenter?.weaponKind ?? (plan && typeof plan === 'object' && 'weapon' in plan &&
+      typeof plan.weapon === 'string' ? plan.weapon : null)
+    return { root, id: actor?.id ?? 'player', role: actor?.role ?? 'player', faction: actor?.allegiance ?? this.faction,
+      player: actor === null, alive: actor ? actor.alive : this.health > 0, weapon }
+  }
+
+  private poseGraphicsPortrait(subject: PortraitSubject, preset: PortraitPose): void {
+    const rig = subject.root.userData.rig as CharacterRig | undefined
+    if (!rig || rig.beast) throw new Error('Character portraits require a production humanoid rig')
+    const pose: CharacterPose = {
+      stride: preset === 'walk' ? 0.45 : 0, attack: preset === 'contact' ? 0.8 : 0,
+      anticipation: preset === 'windup' || preset === 'aim' ? 0.85 : 0,
+      recovery: 0, flinch: 0, stagger: 0,
+    }
+    this.animateCharacter(subject.root, pose)
+    const torso = subject.root.getObjectByName('torso-pivot')
+    const head = subject.root.getObjectByName('head-pivot')
+    if (torso) applyChestPose(torso, rig.lean - pose.anticipation * 0.1 + pose.attack * 0.12,
+      -pose.stride * 0.07 + pose.anticipation * 0.13 - pose.attack * 0.18, 0)
+    if (head && torso) applyHeadPose(head, 0, solveHeadYaw(torso.rotation.x, torso.rotation.y, torso.rotation.z, 0, 0), 0)
+    if (preset === 'guard') {
+      const shield = subject.root.getObjectByName('shield')
+      if (!shield) throw new Error('Portrait shield equipment is absent')
+      shield.position.set(0, SHIELD_GUARD_Y - rig.waistY, 0.58)
+      shield.rotation.set(-0.08, 0, 0, 'XYZ')
+    }
+    if (preset === 'aim') {
+      const arm = rig.mainHand > 0 ? rig.rightArm : rig.leftArm
+      const elbow = rig.mainHand > 0 ? rig.rightElbow : rig.leftElbow
+      const off = rig.mainHand > 0 ? rig.leftArm : rig.rightArm
+      const offElbow = rig.mainHand > 0 ? rig.leftElbow : rig.rightElbow
+      if (arm) arm.rotation.set(-1.22, 0, rig.mainHand * 0.17, 'XYZ')
+      if (elbow) elbow.rotation.x = 0.12
+      if (off) off.rotation.set(-1.2, 0, -rig.mainHand * 0.34, 'XYZ')
+      if (offElbow) offElbow.rotation.x = 1.5
+      this.placeWeaponInHand(rig, arm, -1.22, rig.mainHand * 0.17, 0.12, 0.06, -rig.mainHand * 0.12)
+    }
+    const presenter = characterPresenter(subject.root)
+    if (presenter) {
+      presenter.syncAttachments()
+      presenter.poseSupport(preset === 'aim' ? 0.85 : Math.max(pose.anticipation, pose.attack * 0.8))
+    }
+  }
+
+  private stageGraphicsCrowd(): void {
+    // Only the diagnostic adapter calls this. These are production actors, not
+    // decorative clones: claimActorSlot, AI, HP, attack timing and death remain real.
+    const origin = this.player.position
+    let attempts = 0
+    const placed: THREE.Vector3[] = []
+    const nextPosition = () => {
+      while (attempts < 800) {
+        const angle = attempts++ * 2.399963229728653
+        const radius = 4 + (attempts % 7) * 1.7
+        const x = origin.x + Math.cos(angle) * radius
+        const z = origin.z + Math.sin(angle) * radius
+        if (!this.isWalkablePosition(x, z, 1.1) || placed.some((point) => Math.hypot(point.x - x, point.z - z) < 2)) continue
+        const position = new THREE.Vector3(x, this.groundHeightAt(x, z), z)
+        placed.push(position)
+        return position
+      }
+      throw new Error('Could not find enough separated, walkable crowd prerequisite positions')
+    }
+    for (const actor of this.actors) {
+      const position = nextPosition()
+      actor.mesh.position.copy(position)
+      actor.home.copy(position)
+      actor.wanderTarget.copy(position)
+    }
+    while (this.actors.length < MAX_ACTORS) {
+      const index = this.actors.length
+      const position = nextPosition()
+      if (!this.reserveActorSlots('campaign', 1)) throw new Error('Production actor budget refused the crowd fixture')
+      this.spawnActor(index % 4 === 0 ? (this.faction === 'guard' ? 'elf' : 'guard') : this.faction,
+        index % 5 === 0 ? 'archer' : 'soldier', position.x, position.z, index, {
+          budget: 'campaign', appearanceId: `graphics-crowd:${index}`,
+          objectiveEligible: false, squadEligible: false,
+        })
+    }
+    if (this.actors.length !== MAX_ACTORS) throw new Error(`Crowd prerequisite reached ${this.actors.length}, not ${MAX_ACTORS} NPCs`)
+    if (this.reserveActorSlots('ambient', 1)) throw new Error('Production NPC cap unexpectedly admitted a 26th slot')
   }
 
   private generatedRegionIdAt(x: number, z: number): string | null {
@@ -4456,7 +5014,8 @@ export class GameEngine {
     if (signature === this.generatedCameraRegionSignature) return
     this.generatedCameraRegionSignature = signature
     this.cameraObstacles.length = 0
-    this.collectCameraObstacles(
+    if (this.generatedWorld.legacySight) this.generatedWorld.collectLegacySightSources(this.cameraObstacles)
+    else this.collectCameraObstacles(
       this.scene.children.filter(
         (child) => child.userData.generatedWorldRegionId !== undefined,
       ),
@@ -4620,6 +5179,9 @@ export class GameEngine {
       .map(String)
       .includes(plan.regionId)
     cart.visible = visible
+    if (state.phase !== 'delivering') {
+      wagonPresenter(cart)?.update(delta, 0, this.characterHeightSample)
+    }
     if (state.phase === 'approach') {
       const closeEnough =
         this.player.position.distanceTo(cart.position) <= BRIDGE_AMBUSH_ACTIVATION_RADIUS
@@ -4844,6 +5406,7 @@ export class GameEngine {
       return
     }
     if (this.player.position.distanceTo(cart.position) > BRIDGE_AMBUSH_DELIVERY_ESCORT_RADIUS) {
+      wagonPresenter(cart)?.update(delta, 0, this.characterHeightSample)
       return
     }
     const dx = plan.deliveryEnd.x - cart.position.x
@@ -4869,6 +5432,10 @@ export class GameEngine {
     cart.position.y = this.groundHeightAt(cart.position.x, cart.position.z)
     if (travelled > 0.0001) {
       cart.rotation.y = Math.atan2(-movedZ, movedX)
+    }
+    const wagon = wagonPresenter(cart)
+    if (wagon) wagon.update(delta, travelled, this.characterHeightSample)
+    else if (travelled > 0.0001) {
       for (const wheel of cart.getObjectsByProperty('name', 'wheel')) {
         wheel.rotation.z -= travelled / wheelRadiusOf(wheel)
       }
@@ -5891,6 +6458,10 @@ export class GameEngine {
   }
 
   private updatePlayer(delta: number): void {
+    if (this.bowAiming && (this.health <= 0 ||
+        (this.body.leftArm === 'missing' && this.body.rightArm === 'missing'))) this.cancelBowAim()
+    ;(characterPresenter(this.player) ?? this.legacyBowPresentation)?.advanceActionPresentation(delta,
+      !this.bowAiming && this.activePlayerAttackKind !== 'arrow')
     const wasOnGround = this.onGround
     const forward = this.getAimDirection()
     const movement = cameraRelativeMovement(this.keys, this.cameraYaw)
@@ -5924,6 +6495,7 @@ export class GameEngine {
     if (sprinting && !this.wasSprinting) this.cancelMelee()
     this.wasSprinting = sprinting
     this.isSprinting = sprinting
+    if (sprinting) this.cancelBowAim()
     const speed =
       8.2 *
       mobility *
@@ -6019,7 +6591,18 @@ export class GameEngine {
     )
     this.airborneTime = airborneUpdate.airborneTime
     if (airborneUpdate.landed) this.queueCameraAccent('land', -1.4, 0.16)
-
+    const presenter = characterPresenter(this.player)
+    if (this.bowAiming) this.resolveBowAim()
+    if (presenter) {
+      const pose = this.playerPose
+      if (this.faction === 'guard') this.updateShieldPose()
+      presenter.syncAttachments()
+      presenter.poseArrowRecovery()
+      presenter.poseSupport(Math.max(pose.anticipation, pose.attack * 0.8))
+      presenter.secondaryMotion(delta, pose.stride, pose.attack, this.reducedMotion)
+      presenter.ground(delta, this.characterHeightSample, this.onGround && !evading, 0, pose.stride)
+    }
+    this.presentBowAim()
   }
 
   private finaleAuthority(): FinaleAuthority {
@@ -7444,6 +8027,7 @@ export class GameEngine {
       actor.hostileToPlayer &&
       playerDistance < 34 &&
       (this.elapsed < actor.healthBarVisibleUntil || actor.rageTimer > 0)
+    characterPresenter(actor.mesh)?.setStatusPresentation(actor.healthBar.visible, actor.alive)
     this.updateActorOutlineVisibility(actor, playerDistance * playerDistance)
   }
 
@@ -7465,6 +8049,9 @@ export class GameEngine {
 
   private registerOutline(root: THREE.Object3D, kind: OutlineKind): OutlineBinding {
     const binding = this.artLibrary.applyOutline(root, kind)
+    for (const shell of binding.shells) {
+      if (shell.parent?.userData.visualSubsystem === 'dynamicArt') shell.userData.visualSubsystem = 'dynamicArt'
+    }
     this.outlineBindings.push(binding)
     this.setOutlineVisible(binding, false)
     return binding
@@ -7511,7 +8098,10 @@ export class GameEngine {
   }
 
   private setOutlineVisible(binding: OutlineBinding, visible: boolean): void {
-    for (const shell of binding.shells) shell.visible = visible
+    for (const shell of binding.shells) {
+      shell.userData.policyOutlineEnabled = visible
+      shell.visible = visible && shell.parent?.userData.characterInkEnabled !== false
+    }
   }
 
   private unregisterOutlineRoot(root: THREE.Object3D): void {
@@ -7910,10 +8500,11 @@ export class GameEngine {
   }
 
   private fireArrow(): void {
-    const direction = this.getViewDirection()
+    if (this.bowAiming) this.resolveBowAim()
+    const direction = this.bowAiming ? this.bowAim.direction.clone() : this.getViewDirection()
     this.activePlayerAttackKind = 'arrow'
-    this.player.rotation.y = Math.atan2(direction.x, direction.z)
-    const origin = this.player.position
+    if (!this.bowAiming) this.player.rotation.y = Math.atan2(direction.x, direction.z)
+    const origin = this.bowAiming ? this.bowAim.origin.clone() : this.player.position
       .clone()
       .add(new THREE.Vector3(0, 1.75, 0))
       .addScaledVector(direction, 1)
@@ -7921,13 +8512,16 @@ export class GameEngine {
       'player',
       this.faction,
       origin,
-      direction.clone().multiplyScalar(BOW_SPEED).add(new THREE.Vector3(0, 0.55, 0)),
+      direction.clone().multiplyScalar(BOW_SPEED).add(new THREE.Vector3(0, this.bowAiming ? 0 : 0.55, 0)),
       BOW_RANGE / BOW_SPEED,
       BOW_DAMAGE,
       null,
       0.25,
     )
     this.playSound('bow')
+    this.presentBowAim()
+    ;(characterPresenter(this.player) ?? this.legacyBowPresentation)?.beginArrowPresentation(
+      direction, direction.y + (this.bowAiming ? 0 : 0.55 / BOW_SPEED))
   }
 
   private cleave(): void {
@@ -7962,10 +8556,12 @@ export class GameEngine {
       ) {
         continue
       }
-      const impactPosition = actor.mesh.position.clone().add(new THREE.Vector3(0, 1.25, 0))
-      const incomingDirection = this.player.position.clone().sub(actor.mesh.position)
-      incomingDirection.y = 0
-      this.createSparks(impactPosition, incomingDirection, SPARK_COUNT_CLEAVE)
+      if (this.visualPolicy.mode !== 'enhanced') {
+        const impactPosition = actor.mesh.position.clone().add(new THREE.Vector3(0, 1.25, 0))
+        const incomingDirection = this.player.position.clone().sub(actor.mesh.position)
+        incomingDirection.y = 0
+        this.createSparks(impactPosition, incomingDirection, SPARK_COUNT_CLEAVE)
+      }
       const result = this.damageActor(actor, dealt, this.player.position, this.faction, true, {
         attackKind: 'cleave',
         detachChance: 0.75,
@@ -8327,8 +8923,12 @@ export class GameEngine {
         this.caravan.position.z,
       )
     }
-    const wheels = this.caravan.getObjectsByProperty('name', 'wheel')
-    for (const wheel of wheels) wheel.rotation.z -= wheelTravel / wheelRadiusOf(wheel)
+    const wagon = wagonPresenter(this.caravan)
+    if (wagon) wagon.update(delta, wheelTravel, this.characterHeightSample)
+    else {
+      const wheels = this.caravan.getObjectsByProperty('name', 'wheel')
+      for (const wheel of wheels) wheel.rotation.z -= wheelTravel / wheelRadiusOf(wheel)
+    }
     const cargo = this.caravan.getObjectByName('cargo')
     if (cargo instanceof THREE.Mesh) {
       const scale = this.caravanCooldown > 0 ? 0.35 : 1
@@ -8547,6 +9147,8 @@ export class GameEngine {
           this.damagePlayer(projectile.damage, incomingDirection, false, {
             attackKind: 'actorArrow',
             sourceActorId: projectile.sourceActorId ?? undefined,
+            presentationPoint: projectile.mesh.position,
+            presentationNormal: projectile.mesh.position.clone().sub(this.player.position).add(new THREE.Vector3(0, -1.45, 0)).normalize(),
             source: {
               // The shooter may already be dead by the time its arrow lands, in which case
               // the сводка names the side but not the role rather than guessing at one.
@@ -8579,10 +9181,20 @@ export class GameEngine {
               attackKind: projectile.owner === 'player' ? 'arrow' : 'actorArrow',
               detachChance: projectile.detachChance,
               sourceActorId: projectile.sourceActorId ?? undefined,
+              presentationPoint: projectile.mesh.position,
+              presentationNormal: projectile.mesh.position.clone().sub(hit.actor.mesh.position).add(new THREE.Vector3(0, -1.45, 0)).normalize(),
             },
           )
         } else if (projectile.finale) {
-          this.createSparks(projectile.mesh.position, projectile.velocity.clone().normalize().negate(), 4)
+          if (this.visualPolicy?.mode === 'enhanced') {
+            const point = projectile.mesh.position
+            const terrainContact = point.y <= this.groundHeightAt(point.x, point.z) + 0.11
+            if (terrainContact) this.contactNormal.copy(this.generatedWorld.sampleNormal(point.x, point.z))
+            else this.contactNormal.copy(projectile.velocity).negate().normalize()
+            const contact = this.getContactPresentation().terrain(point, this.contactNormal, projectile.velocity,
+              terrainContact ? this.generatedWorld.surfaces : null)
+            this.presentPhysicalContact(contact, false, 'normal', true)
+          } else this.createSparks(projectile.mesh.position, projectile.velocity.clone().normalize().negate(), 4)
         }
         this.removeProjectile(index)
         continue
@@ -8626,13 +9238,17 @@ export class GameEngine {
   }
 
   private findProjectileHit(
-    projectile: Projectile,
+    projectile: ProjectileQuery,
     start: THREE.Vector3,
     end: THREE.Vector3,
   ): ProjectileHit | null {
     let nearest: ProjectileHit | null = null
     if (projectile.finale) {
       const cover = this.finaleCoverHit(start, end, FINALE_PROJECTILE_RADIUS)
+      if (cover !== null) nearest = { fraction: cover, actor: null, player: false }
+    }
+    if (projectile.owner === 'player') {
+      const cover = this.bowCoverHit(start, end)
       if (cover !== null) nearest = { fraction: cover, actor: null, player: false }
     }
     const steps = Math.max(1, Math.ceil(start.distanceTo(end) / 0.4))
@@ -8654,7 +9270,8 @@ export class GameEngine {
       (sourceActor?.hostileToPlayer ??
         hostile(projectile.allegiance, this.faction))
     ) {
-      const playerCenter = this.player.position.clone().add(new THREE.Vector3(0, 1.45, 0))
+      const playerCenter = this.projectileCenter.copy(this.player.position)
+      playerCenter.y += 1.45
       const fraction = this.segmentSphereHit(start, end, playerCenter,
         projectile.finale ? PLAYER_COLLIDER_RADIUS + FINALE_PROJECTILE_RADIUS : PROJECTILE_HIT_RADIUS)
       if (fraction !== null && (!nearest || fraction < nearest.fraction)) nearest = { fraction, actor: null, player: true }
@@ -8669,7 +9286,8 @@ export class GameEngine {
             actor.hostileToPlayer || actor.allegiance === 'civilian'
           : hostile(projectile.allegiance, actor.allegiance)
       if (!actor.alive || !canHit) continue
-      const center = actor.mesh.position.clone().add(new THREE.Vector3(0, 1.45, 0))
+      const center = this.projectileCenter.copy(actor.mesh.position)
+      center.y += 1.45
       const radius = projectile.finale
         ? this.actorColliderRadiusForRole(actor.role) + FINALE_PROJECTILE_RADIUS
         : actor.role === 'brute' ? 1.1 : PROJECTILE_HIT_RADIUS
@@ -8680,18 +9298,30 @@ export class GameEngine {
     return nearest
   }
 
+  private bowCoverHit(start: THREE.Vector3, end: THREE.Vector3): number | null {
+    const length = this.bowRayDirection.subVectors(end, start).length()
+    if (length < 1e-8) return null
+    this.bowRaycaster.set(start, this.bowRayDirection.multiplyScalar(1 / length))
+    this.bowRaycaster.near = 0
+    this.bowRaycaster.far = length
+    this.bowIntersections.length = 0
+    // The same canonical, unfaded sources used by squad sight in both visual modes.
+    this.bowRaycaster.intersectObjects(this.cameraObstacles, false, this.bowIntersections)
+    return this.bowIntersections.length > 0 ? this.bowIntersections[0].distance / length : null
+  }
+
   private segmentSphereHit(
     start: THREE.Vector3,
     end: THREE.Vector3,
     center: THREE.Vector3,
     radius: number,
   ): number | null {
-    const segment = end.clone().sub(start)
-    const offset = start.clone().sub(center)
-    const a = segment.lengthSq()
+    const dx = end.x - start.x, dy = end.y - start.y, dz = end.z - start.z
+    const ox = start.x - center.x, oy = start.y - center.y, oz = start.z - center.z
+    const a = dx * dx + dy * dy + dz * dz
     if (a < 0.000001) return null
-    const b = 2 * offset.dot(segment)
-    const c = offset.lengthSq() - radius * radius
+    const b = 2 * (ox * dx + oy * dy + oz * dz)
+    const c = ox * ox + oy * oy + oz * oz - radius * radius
     if (c <= 0) return 0
     const discriminant = b * b - 4 * a * c
     if (discriminant < 0) return null
@@ -8714,6 +9344,7 @@ export class GameEngine {
   }
 
   private updateParticles(delta: number): void {
+    this.secondaryEffects?.update(delta, this.reducedMotion)
     for (let index = this.particles.length - 1; index >= 0; index -= 1) {
       const particle = this.particles[index]
       particle.life -= delta
@@ -8795,7 +9426,6 @@ export class GameEngine {
 
   private removeParticle(index: number): void {
     const particle = this.particles[index]
-    if (particle.mode === 'spark') this.activeSparks = Math.max(0, this.activeSparks - 1)
     if (particle.mode === 'blood' || particle.mode === 'gib') {
       this.activeGore = Math.max(0, this.activeGore - 1)
       particle.mesh.visible = false
@@ -9589,7 +10219,7 @@ export class GameEngine {
       if (prop.velocity.lengthSq() > 0.001) {
         prop.mesh.rotation.y = Math.atan2(prop.velocity.x, prop.velocity.z)
       }
-      this.animateWildlife(prop, true)
+      this.animateWildlife(prop, true, delta)
       // A bird that has finished climbing is ~19 m up and 27 m out, which is nowhere near
       // `WILDLIFE_DESPAWN_RADIUS`. Letting it fall through to the landed branch below
       // would hard-assign its `y` to ground height and teleport it straight down in one
@@ -9603,7 +10233,7 @@ export class GameEngine {
       prop.mesh.position.y =
         this.groundHeightAt(prop.mesh.position.x, prop.mesh.position.z) +
         Math.max(0, Math.sin(this.elapsed * 6 + prop.phase)) * 0.16
-      this.animateWildlife(prop, false)
+      this.animateWildlife(prop, false, delta)
       return
     }
 
@@ -9630,7 +10260,7 @@ export class GameEngine {
     } else {
       prop.wanderTimer = 0
     }
-    this.animateWildlife(prop, false)
+    this.animateWildlife(prop, false, delta)
   }
 
   /** Closest thing worth running from: the player, or anything on the actor list. */
@@ -9650,7 +10280,12 @@ export class GameEngine {
     return { position, distance: best }
   }
 
-  private animateWildlife(prop: WildlifeProp, panicking: boolean): void {
+  private animateWildlife(prop: WildlifeProp, panicking: boolean, delta: number): void {
+    const presenter = creaturePresenter(prop.mesh)
+    if (presenter) {
+      presenter.poseWildlife(this.elapsed + prop.phase, panicking, delta, this.characterHeightSample)
+      return
+    }
     if (prop.kind === 'bird') {
       const wings = prop.mesh.getObjectByName('wings')
       if (wings) {
@@ -9685,13 +10320,14 @@ export class GameEngine {
    */
   private createDeer(): THREE.Group {
     const group = new THREE.Group()
-    const coat = mix(this.palette.warning, this.palette.text, 0.42)
+    const enhanced = this.visualPolicy.mode === 'enhanced'
+    const coat = enhanced ? new THREE.Color(0x967252) : mix(this.palette.warning, this.palette.text, 0.42)
     const hide = this.artLibrary.acquireMaterial('fauna:deer:hide', {
       color: coat,
       surface: 'cloth',
     })
     const dark = this.artLibrary.acquireMaterial('fauna:deer:dark', {
-      color: mix(coat, this.palette.bg, 0.5),
+      color: mix(coat, enhanced ? new THREE.Color(0x302a24) : this.palette.bg, 0.5),
       surface: 'dark',
     })
     const build = (key: string, factory: () => THREE.BufferGeometry) =>
@@ -9706,36 +10342,42 @@ export class GameEngine {
 
     const legs = new THREE.Group()
     legs.name = 'legs'
-    legs.position.y = 0.9
-    group.add(legs)
+    legs.position.y = enhanced ? 0 : 0.9
+    if (enhanced) body.add(legs)
+    else group.add(legs)
+    const articulatedLegs: CreatureLeg[] = []
     for (const [x, z, front] of [
       [-0.19, 0.52, true],
       [0.19, 0.52, true],
       [-0.19, -0.52, false],
       [0.19, -0.52, false],
     ] as const) {
-      const leg = new THREE.Mesh(
-        build(`deer-leg:${front ? 'front' : 'hind'}`, () => buildDeerLeg(front)),
-        dark,
-      )
+      const articulated = enhanced ? createCreatureLeg('deer', `deer-${front ? 'front' : 'hind'}-${x < 0 ? 'left' : 'right'}`,
+        0.9, front, x < 0 ? -1 : 1, dark, build) : null
+      const leg = articulated?.upper ?? new THREE.Mesh(
+        build(`deer-leg:${front ? 'front' : 'hind'}`, () => buildDeerLeg(front)), dark)
       leg.position.set(x, 0, z)
       legs.add(leg)
+      if (articulated) articulatedLegs.push(articulated)
     }
 
     group.add(this.artLibrary.createContactShadow({ radius: 0.72 }))
     this.markCharacterShadows(group)
+    if (enhanced) this.creaturePresenters.add(
+      new CreaturePresenter(group, this.artLibrary, this.artGeometry, 'illustrated-deer', articulatedLegs))
     return group
   }
 
   /** A bird: a tapered body, a fanned tail and one wing bar that flaps. */
   private createBird(): THREE.Group {
     const group = new THREE.Group()
+    const enhanced = this.visualPolicy.mode === 'enhanced'
     const feather = this.artLibrary.acquireMaterial('fauna:bird:feather', {
-      color: mix(this.palette.text, this.palette.bg, 0.24),
+      color: enhanced ? 0x746e62 : mix(this.palette.text, this.palette.bg, 0.24),
       surface: 'dark',
     })
     const beakMaterial = this.artLibrary.acquireMaterial('fauna:bird:beak', {
-      color: this.palette.warning,
+      color: enhanced ? 0x9a794b : this.palette.warning,
       surface: 'skin',
     })
     const build = (key: string, factory: () => THREE.BufferGeometry) =>
@@ -9751,10 +10393,26 @@ export class GameEngine {
     beak.position.set(0, 0.32, 0.29)
     beak.rotation.x = Math.PI / 2
     group.add(beak)
-    const wings = new THREE.Mesh(build('bird-wing', () => buildBirdWing()), feather)
+    const wings = enhanced ? new THREE.Group() : new THREE.Mesh(build('bird-wing', () => buildBirdWing()), feather)
     wings.name = 'wings'
     wings.position.y = 0.25
     group.add(wings)
+    if (enhanced) {
+      for (const side of [-1, 1]) {
+        const joint = new THREE.Group()
+        joint.name = side < 0 ? 'leftWing' : 'rightWing'
+        joint.position.x = side * 0.06
+        const wing = new THREE.Mesh(this.acquireArtGeometry(`articulated-wing:${side}`, () => buildArticulatedBirdWing(side)), feather)
+        joint.add(wing)
+        wings.add(joint)
+        const foot = new THREE.Group()
+        foot.name = side < 0 ? 'leftBirdFoot' : 'rightBirdFoot'
+        foot.position.set(side * 0.043, 0, 0.022)
+        foot.add(new THREE.Mesh(this.acquireArtGeometry('articulated-bird-foot', buildBirdFoot), beakMaterial))
+        group.add(foot)
+      }
+      this.creaturePresenters.add(new CreaturePresenter(group, this.artLibrary, this.artGeometry, 'illustrated-bird'))
+    }
     group.traverse((object) => {
       // Same predicate as `markCharacterShadows`, for the same reason. Every material
       // this builder makes is opaque today, so the guard changes nothing — which is
@@ -10137,6 +10795,7 @@ export class GameEngine {
       this.scorchedMaterialAdopted = true
     }
     for (const siteId of this.chronicleRazedSiteIds) {
+      this.generatedWorld.setLegacySightRazedSite(siteId, this.scorchedMaterial.side)
       const group = this.scene.getObjectByName(`site:${siteId}`)
       if (!group || group.userData.chronicleRazed === true) continue
       group.userData.chronicleRazed = true
@@ -10837,7 +11496,10 @@ export class GameEngine {
             -travelDirection.y * direction,
             travelDirection.x * direction,
           )
-          for (const wheel of caravan.getObjectsByProperty('name', 'wheel')) {
+          const wagon = wagonPresenter(caravan)
+          if (wagon) wagon.update(delta,
+            Math.hypot(caravan.position.x - previousX, caravan.position.z - previousZ), this.characterHeightSample)
+          else for (const wheel of caravan.getObjectsByProperty('name', 'wheel')) {
             wheel.rotation.z -= (delta * 2.8) / wheelRadiusOf(wheel)
           }
           event.markerPos.copy(caravan.position)
@@ -10859,6 +11521,7 @@ export class GameEngine {
             escort.wanderTarget.copy(escort.home)
           }
         })
+        if (robbed) wagonPresenter(caravan)?.update(delta, 0, this.characterHeightSample)
         if (!robbed) return
         if (!robberyPoint) return
         event.progress = Math.min(event.target, this.player.position.distanceTo(robberyPoint))
@@ -11539,8 +12202,9 @@ export class GameEngine {
       markerPos: cart.position.clone(),
       ownedActorIds: [...escortIds, ...raiderIds],
       ownedProps: [cart],
-      update: () => {
+      update: (delta) => {
         event.markerPos.copy(cart.position)
+        wagonPresenter(cart)?.update(delta, 0, this.characterHeightSample)
         // A caravan whose escort is gone is a caravan somebody else is taking.
         if (
           !robbed &&
@@ -11997,6 +12661,25 @@ export class GameEngine {
 
   private removeAndDisposeObject(object: THREE.Object3D): void {
     this.unregisterOutlineRoot(object)
+    const wagon = wagonPresenter(object)
+    if (wagon) {
+      this.wagonPresenters.delete(wagon)
+      wagon.dispose()
+    }
+    const presenter = characterPresenter(object)
+    if (presenter) {
+      this.characterPresenters.delete(presenter)
+      presenter.dispose()
+    }
+    const creatures: CreaturePresenter[] = []
+    object.traverse((node) => {
+      const creature = creaturePresenter(node)
+      if (creature) creatures.push(creature)
+    })
+    for (const creature of creatures) {
+      this.creaturePresenters.delete(creature)
+      creature.dispose()
+    }
     object.removeFromParent()
     const geometries = new Set<THREE.BufferGeometry>()
     const materials = new Set<THREE.Material>()
@@ -12049,9 +12732,16 @@ export class GameEngine {
   }
 
   private actorAttackEventProp(actor: Actor, target: EventPropTarget): void {
+    const before = target.hp
     const bite = rollPropBite(actor.role, this.eventRng())
     target.hp = Math.max(0, target.hp - bite)
-    this.createHitParticles(target.position, actor.allegiance)
+    if (this.visualPolicy?.mode === 'enhanced') {
+      if (before > 0 && bite > 0 && !this.paused && !this.ended) {
+        const incoming = this.contactNormal.copy(target.position).sub(actor.mesh.position)
+        const contact = this.getContactPresentation().event(target.object, target.position, incoming, target.presentationSurface)
+        this.presentPhysicalContact(contact, false, 'normal', true)
+      }
+    } else this.createHitParticles(target.position, actor.allegiance)
     if (target.position.distanceTo(this.player.position) < 25) {
       this.playSound('hitLight', {
         position: target.position,
@@ -12085,10 +12775,23 @@ export class GameEngine {
         : 0,
       armor: playerArmor(this.faction),
     })
+    let presentationContact: PresentationContact | null | undefined
+    if (this.visualPolicy?.mode === 'enhanced' &&
+        (outcome.defense === 'perfectGuard' || (outcome.applied && outcome.blocked))) {
+      const admitted = this.secondaryContactPoint.copy(this.player.position).addScaledVector(normalizedIncoming, 0.72)
+      admitted.y += 1.35
+      const source = options.sourceActorId ? this.actors.find((actor) => actor.id === options.sourceActorId)?.mesh : undefined
+      // The confirmed contact belongs to the raised shield, even when this payment will lower it.
+      presentationContact = copyPresentationContact(this.getContactPresentation().confirmedShield(
+        this.player, admitted, this.contactNormal.copy(normalizedIncoming).negate(),
+        options.presentationPoint, source, options.presentationNormal,
+      ))
+    }
     if (outcome.defense !== 'none') {
       this.stamina = Math.max(0, this.stamina - outcome.staminaSpent)
       if (this.stamina === 0) this.dropShield()
       if (outcome.defense === 'perfectGuard') {
+        if (presentationContact) this.presentPhysicalContact(presentationContact, true, 'blocked', true)
         this.playSound('block', { intensity: 1, variantSeed: 11 })
         if (outcome.interruptMelee && options.sourceActorId) {
           const attacker = this.actors.find((actor) => actor.id === options.sourceActorId)
@@ -12108,6 +12811,7 @@ export class GameEngine {
         ...outcome,
         position: this.player.position.clone().add(new THREE.Vector3(0, 1.3, 0)),
         direction: fallbackDirection,
+        ...(presentationContact ? { presentationContact } : {}),
       }
     }
     const { dealt, impact, blocked: frontalBlock } = outcome
@@ -12127,7 +12831,7 @@ export class GameEngine {
       )
       contact.y += 0.05
       contact.addScaledVector(normalizedIncoming, 0.72)
-      this.createSparks(contact, normalizedIncoming, SPARK_COUNT_BLOCK)
+      if (this.visualPolicy?.mode !== 'enhanced') this.createSparks(contact, normalizedIncoming, SPARK_COUNT_BLOCK)
     } else {
       this.addTrauma(THREE.MathUtils.lerp(0.12, 0.35, impact))
       this.damageFlash = Math.max(
@@ -12137,14 +12841,22 @@ export class GameEngine {
       const sprayDirection = hasIncomingDirection
         ? normalizedIncoming.clone().multiplyScalar(-1)
         : new THREE.Vector3(0, 0, 1)
-      this.createBloodBurst(
+      if (this.visualPolicy?.mode !== 'enhanced') this.createBloodBurst(
         this.player.position.clone().add(new THREE.Vector3(0, 1.3, 0)),
         sprayDirection,
         Math.round(THREE.MathUtils.lerp(GORE_PLAYER_HIT_MIN, GORE_PLAYER_HIT_MAX, impact)),
         THREE.MathUtils.lerp(0.9, 2.25, impact),
       )
     }
-    this.createHitParticles(this.player.position, this.faction)
+    if (this.visualPolicy?.mode === 'enhanced') {
+      if (!frontalBlock) {
+        const source = options.sourceActorId ? this.actors.find((actor) => actor.id === options.sourceActorId)?.mesh : undefined
+        const sampled = this.getContactPresentation().actor(this.player, 'torso',
+          contact, this.contactNormal.copy(normalizedIncoming).negate(), options.presentationPoint, source, options.presentationNormal)
+        presentationContact = sampled ? copyPresentationContact(sampled) : null
+      }
+      if (presentationContact && (dealt > 0 || frontalBlock)) this.presentPhysicalContact(presentationContact, frontalBlock, outcome.weight, true)
+    } else this.createHitParticles(this.player.position, this.faction)
     // The `canInjure && !frontalBlock` gate stays out here on purpose: it is what keeps
     // the injury roll off the combat stream on a blocked hit.
     if (canInjure && !frontalBlock && shouldInjurePlayer(this.combatRng(), this.health)) {
@@ -12156,6 +12868,7 @@ export class GameEngine {
       direction: hasIncomingDirection
         ? normalizedIncoming.clone().multiplyScalar(-1)
         : fallbackDirection,
+      presentationContact,
     }
     this.presentCombatFeedback({
       ...result,
@@ -12255,7 +12968,15 @@ export class GameEngine {
     })
     const { dealt, impact, killed } = outcome
 
-    this.createBloodBurst(
+    let presentationContact: PresentationContact | null | undefined
+    if (this.visualPolicy?.mode === 'enhanced') {
+      const source = directPlayerKill ? this.player :
+        options.sourceActorId ? this.actors.find((actor) => actor.id === options.sourceActorId)?.mesh : undefined
+      const sampled = this.getContactPresentation().actor(target.mesh, 'torso', position, direction,
+        options.presentationPoint, source, options.presentationNormal)
+      presentationContact = sampled ? copyPresentationContact(sampled) : null
+      if (sampled && dealt > 0) this.presentPhysicalContact(sampled, false, outcome.weight, directPlayerKill)
+    } else this.createBloodBurst(
       position,
       direction,
       Math.round(THREE.MathUtils.lerp(GORE_HIT_MIN, GORE_HIT_MAX, impact)),
@@ -12264,15 +12985,16 @@ export class GameEngine {
     target.hp = Math.max(0, target.hp - dealt)
     target.healthBarVisibleUntil = this.elapsed + 3.4
     this.drawActorHealthBar(target)
-    this.createHitParticles(target.mesh.position, target.allegiance)
+    if (this.visualPolicy?.mode !== 'enhanced') this.createHitParticles(target.mesh.position, target.allegiance)
     if (
+      outcome.applied && !outcome.blocked && dealt > 0 && !this.paused && !this.ended &&
       target.role !== 'brute' &&
       options.detachChance &&
-      Math.random() < options.detachChance
+      this.generatedRngStreams.injury.next() < options.detachChance
     ) {
       this.detachActorLimb(target)
     }
-    const result: DamageResult = { ...outcome, position, direction }
+    const result: DamageResult = { ...outcome, position, direction, presentationContact }
     this.applyActorDamageReaction(
       target,
       result,
@@ -12550,6 +13272,7 @@ export class GameEngine {
     actor.healthBar.visible = false
     const ring = actor.mesh.getObjectByName('faction-ring')
     if (ring) ring.visible = false
+    characterPresenter(actor.mesh)?.setStatusPresentation(false, false)
     this.projectileSourcesToClear.add(actor.id)
     if (
       directPlayerKill &&
@@ -12619,6 +13342,7 @@ export class GameEngine {
 
   private updateActorDeathMotion(actor: Actor, delta: number): void {
     if (!actor.deathStyle || actor.deathAge >= DEATH_POSE_TIME) return
+    characterPresenter(actor.mesh)?.setBowRelease(true)
     actor.deathAge = Math.min(DEATH_POSE_TIME, actor.deathAge + delta)
     const progress = actor.deathAge / DEATH_POSE_TIME
     const eased = 1 - Math.pow(1 - progress, 3)
@@ -12722,6 +13446,7 @@ export class GameEngine {
       }
     }
     if (head) head.rotation.z = side * 0.28 * eased
+    characterPresenter(actor.mesh)?.syncAttachments()
   }
 
   private injurePlayer(): void {
@@ -12740,6 +13465,7 @@ export class GameEngine {
     const severe = wasWounded || this.combatRng() < 0.4
     if (severe) {
       this.body[part] = 'missing'
+      if (this.body.leftArm === 'missing' && this.body.rightArm === 'missing') this.cancelBowAim()
       this.achievements.recordInjury(part, true)
       if (!part.includes('Eye')) {
         this.body.bleeding = Math.min(2.1, this.body.bleeding + (part.includes('Leg') ? 0.48 : 0.34))
@@ -12748,6 +13474,7 @@ export class GameEngine {
       this.callbacks.onNotice(describeLimbLost(part), 'danger')
     } else {
       this.body[part] = 'wounded'
+      if (!part.includes('Eye')) characterPresenter(this.player)?.setAppearance({ [part]: 'wounded' })
       this.achievements.recordInjury(part, false)
       this.body.bleeding = Math.min(1.2, this.body.bleeding + 0.12)
       this.callbacks.onNotice(describeWound(part), 'warning')
@@ -12759,6 +13486,7 @@ export class GameEngine {
     const limb = this.player.getObjectByName(part)
     if (!limb) return
     limb.visible = false
+    if (!part.includes('Eye')) characterPresenter(this.player)?.setAppearance({ [part]: 'missing' })
     this.createBloodBurst(
       this.player.position.clone().add(new THREE.Vector3(part.startsWith('left') ? -0.4 : 0.4, 1.2, 0)),
       new THREE.Vector3(part.startsWith('left') ? -1 : 1, 0, 0.25),
@@ -12787,6 +13515,11 @@ export class GameEngine {
   private restorePlayerLimb(part: BodyPart): void {
     const limb = this.player.getObjectByName(part)
     if (!limb) return
+    const presenter = characterPresenter(this.player)
+    if (presenter && !part.includes('Eye')) {
+      presenter.setAppearance({ [part]: 'prosthetic' })
+      return
+    }
     limb.visible = true
     limb.traverse((object) => {
       if (!(object instanceof THREE.Mesh) || StylizedArtLibrary.isOutlineShell(object)) return
@@ -12800,6 +13533,11 @@ export class GameEngine {
   }
 
   private applySavedBodyAppearance(): void {
+    const presenter = characterPresenter(this.player)
+    if (presenter) {
+      presenter.setAppearance(this.body)
+      return
+    }
     const limbs: BodyPart[] = ['leftArm', 'rightArm', 'leftLeg', 'rightLeg']
     for (const part of limbs) {
       const limb = this.player.getObjectByName(part)
@@ -12815,8 +13553,10 @@ export class GameEngine {
       .map((name) => actor.mesh.getObjectByName(name))
       .filter((part): part is THREE.Object3D => Boolean(part?.visible))
     if (visible.length === 0) return
-    const limb = visible[Math.floor(Math.random() * visible.length)]
+    const limb = visible[Math.floor(this.generatedRngStreams.injury.next() * visible.length)]
     limb.visible = false
+    characterPresenter(actor.mesh)?.setAppearance({ [limb.name as CharacterLimb]: 'missing' })
+    creaturePresenter(actor.mesh)?.hideLimb(limb.name)
     this.createBloodBurst(
       actor.mesh.position.clone().add(new THREE.Vector3(0, 1.35, 0)),
       new THREE.Vector3((Math.random() - 0.5) * 2, 0, (Math.random() - 0.5) * 2),
@@ -12855,6 +13595,7 @@ export class GameEngine {
     for (const part of parts) {
       if (this.body[part] === 'wounded') this.body[part] = 'healthy'
     }
+    characterPresenter(this.player)?.setAppearance(this.body)
   }
 
   private completeObjective(id: string): boolean {
@@ -13079,6 +13820,7 @@ export class GameEngine {
       caravanCooldown: this.caravanCooldown,
       shieldActive: this.shieldActive,
       abilityCooldown: this.abilityCooldown,
+      bowAiming: this.bowAiming,
       melee: this.melee,
       combatMastery: this.combatMastery,
       cameraMode: document.pointerLockElement === this.renderer.domElement
@@ -13826,7 +14568,8 @@ export class GameEngine {
       this.player.position.z + 24,
     )
     this.sun.castShadow = true
-    this.sun.shadow.mapSize.set(SHADOW_MAP_SIZE, SHADOW_MAP_SIZE)
+    const mapSize = this.visualPolicy.mode === 'enhanced' ? this.visualPolicy.shadows.mapSize : SHADOW_MAP_SIZE
+    this.sun.shadow.mapSize.set(mapSize, mapSize)
     // The old frustum was +/-85 at the same map size. Nothing outside the streamed
     // neighbourhood ever needed a shadow, and halving the extent roughly triples the
     // texel density on the things that do.
@@ -14010,6 +14753,7 @@ export class GameEngine {
       new THREE.SphereGeometry(178, 32, 18),
       this.skyMaterial,
     )
+    sky.name = 'atmosphere-sky'
     this.atmosphereRoot.add(sky)
 
     this.sunDisc = new THREE.Mesh(
@@ -14022,6 +14766,7 @@ export class GameEngine {
       }),
     )
     this.sunDisc.position.set(-88, 74, -112)
+    this.sunDisc.name = 'atmosphere-sun'
     this.atmosphereRoot.add(this.sunDisc)
 
     this.moonDisc = new THREE.Mesh(
@@ -14035,6 +14780,7 @@ export class GameEngine {
       }),
     )
     this.atmosphereRoot.add(this.moonDisc)
+    this.moonDisc.name = 'atmosphere-moon'
 
     const starPositions = new Float32Array(STAR_COUNT * 3)
     const starRandom = seededRandom(1947)
@@ -14062,6 +14808,7 @@ export class GameEngine {
       }),
     )
     this.stars.frustumCulled = false
+    this.stars.name = 'atmosphere-stars'
     this.atmosphereRoot.add(this.stars)
 
     const random = seededRandom(731)
@@ -14078,6 +14825,7 @@ export class GameEngine {
       const group = new THREE.Group()
       for (let puff = 0; puff < 4; puff += 1) {
         const cloud = new THREE.Mesh(cloudGeometry, this.cloudMaterial)
+        cloud.name = `atmosphere-cloud:${index}:${puff}`
         cloud.position.set((puff - 1.5) * 3.6, Math.sin(puff) * 1.1, (random() - 0.5) * 2.4)
         cloud.scale.set(1 + random() * 0.8, 0.45 + random() * 0.35, 0.7 + random() * 0.5)
         group.add(cloud)
@@ -14090,7 +14838,7 @@ export class GameEngine {
   }
 
   private setupWeather(): void {
-    const rainRandom = seededRandom(7879)
+    const rainRandom = this.graphicsClock?.createRandom('rain') ?? seededRandom(7879)
     for (let index = 0; index < RAIN_DROP_COUNT; index += 1) {
       const offset = index * 6
       const x =
@@ -14127,7 +14875,7 @@ export class GameEngine {
     this.rain.visible = false
     this.scene.add(this.rain)
 
-    const snowRandom = seededRandom(7919)
+    const snowRandom = this.graphicsClock?.createRandom('snow') ?? seededRandom(7919)
     for (let index = 0; index < SNOW_FLAKE_COUNT; index += 1) {
       const offset = index * 3
       this.snowPositions[offset] =
@@ -14210,12 +14958,14 @@ export class GameEngine {
     // The weather the world *has* is simulation state: it tracks the biome under the
     // player whether or not it is being drawn, so switching weather off for performance
     // cannot change chronicle outcomes.
-    const nextZone = this.resolveWeatherZone()
-    if (nextZone !== this.weatherZone) {
-      this.weatherZone = nextZone
-      this.setWeatherTarget(WEATHER_BY_ZONE[nextZone])
+    if (delta > 0) {
+      const nextZone = this.resolveWeatherZone()
+      if (nextZone !== this.weatherZone) {
+        this.weatherZone = nextZone
+        this.setWeatherTarget(WEATHER_BY_ZONE[nextZone])
+      }
+      this.updateWeatherWeights(delta)
     }
-    this.updateWeatherWeights(delta)
 
     if (!this.weatherEnabled) {
       this.restoreWeatherVisuals()
@@ -14226,7 +14976,7 @@ export class GameEngine {
     this.applyWeatherEnvironment()
     this.updateStylizedLighting()
     this.updatePrecipitation(delta)
-    this.updateLightning(delta)
+    if (delta > 0) this.updateLightning(delta)
   }
 
   private resolveWeatherZone(): ZoneId {
@@ -14240,7 +14990,7 @@ export class GameEngine {
   private weightedWeatherValue(key: keyof WeatherProfile): number {
     let value = 0
     for (const kind of WEATHER_KINDS) {
-      value += WEATHER_PROFILES[kind][key] * this.weatherWeights[kind]
+      value += WEATHER_PROFILES[kind][key] * (this.graphicsClock?.weather ?? this.weatherWeights)[kind]
     }
     return value
   }
@@ -14283,6 +15033,18 @@ export class GameEngine {
     rimColor: THREE.Color | undefined
     shadowTint: THREE.Color | undefined
   } = { keyIntensity: 0, rimColor: undefined, shadowTint: undefined }
+  private readonly readableSky = new THREE.Color(0xc2d1df)
+  private readonly readableGround = new THREE.Color(0xb0a38d)
+  private readonly artEnvironment = {
+    timeSeconds: 0, windX: 0, windZ: 0, windStrength: 0, rain: 0, snow: 0, wetness: 0,
+    skyColor: new THREE.Color(), horizonColor: new THREE.Color(),
+    atmosphere: createAtmospherePresentation(),
+  }
+  private readonly atmosphereReference = { environment: this.artEnvironment }
+  private readonly enhancedLightingRef = {
+    keyIntensity: 0, rimColor: new THREE.Color(), shadowTint: new THREE.Color(),
+    environment: this.artEnvironment,
+  }
 
   /**
    * Anchors the lighting ramp to the light rig as it actually ends up.
@@ -14295,6 +15057,31 @@ export class GameEngine {
    * the first time round.
    */
   private updateStylizedLighting(): void {
+    if (this.visualPolicy.mode === 'enhanced') {
+      this.hemisphere.color.lerp(this.readableSky, 0.6)
+      this.hemisphere.groundColor.lerp(this.readableGround, 0.65)
+      this.hemisphere.intensity *= 1.3
+      this.rimLight.intensity *= 0.65
+      const environment = this.artEnvironment
+      environment.timeSeconds = this.graphicsClock?.timeSeconds ?? this.elapsed
+      environment.windX = this.wind.direction.x
+      environment.windZ = this.wind.direction.y
+      environment.windStrength = this.reducedMotion ? 0 : this.wind.strength
+      environment.rain = this.weatherEnabled ? (this.graphicsClock?.weather ?? this.weatherWeights).rain : 0
+      environment.snow = this.weatherEnabled ? (this.graphicsClock?.weather ?? this.weatherWeights).snow : 0
+      environment.wetness = environment.rain
+      environment.skyColor.copy(this.hemisphere.color)
+      environment.horizonColor.copy(this.fog.color)
+      writeAtmospherePresentation(environment.atmosphere, this.fog.color, this.fog.near, this.fog.far)
+      this.enhancedLightingRef.keyIntensity = this.sun.intensity + this.rimLight.intensity * 0.4
+      this.enhancedLightingRef.rimColor.copy(this.rimLight.color)
+      this.enhancedLightingRef.shadowTint.copy(this.hemisphere.groundColor)
+      this.artLibrary.setLightingReference(this.enhancedLightingRef)
+      this.postProcessor.setGradeTints(this.fog.color, this.sun.color)
+      this.enhancedTarget.copy(this.player.position).y += 1.5
+      stabilizeKeyLight(this.sun, this.enhancedTarget, Math.max(24, this.visualPolicy.shadows.worldDistance + 6))
+      return
+    }
     const reference = this.stylizedLightingRef
     reference.keyIntensity = this.sun.intensity + this.rimLight.intensity * 0.4
     reference.rimColor = this.rimLight.color
@@ -14344,8 +15131,40 @@ export class GameEngine {
   }
 
   private updatePrecipitation(delta: number): void {
-    const rainWeight = this.weatherWeights.rain
-    const snowWeight = this.weatherWeights.snow
+    const rainWeight = (this.graphicsClock?.weather ?? this.weatherWeights).rain
+    const snowWeight = (this.graphicsClock?.weather ?? this.weatherWeights).snow
+    if (this.visualPolicy.mode === 'enhanced') {
+      const density = this.visualPolicy.density.weather
+      const reduced = this.visualPolicy.reducedMotion
+      const rainCount = precipitationCount(RAIN_DROP_COUNT, density, rainWeight, reduced)
+      const snowCount = precipitationCount(SNOW_FLAKE_COUNT, density, snowWeight, reduced)
+      this.rain.geometry.setDrawRange(0, rainCount * 2)
+      this.snow.geometry.setDrawRange(0, snowCount)
+      this.rain.material.opacity = reduced ? 0.24 : 0.38
+      this.snow.material.opacity = reduced ? 0.38 : 0.58
+      this.snow.material.size = reduced ? 0.22 : 0.3
+      this.rain.visible = rainCount > 0
+      this.snow.visible = snowCount > 0
+      const frame = this.precipitationFrame
+      frame.delta = delta
+      frame.time = this.visualElapsed
+      frame.cameraX = this.camera.position.x
+      frame.cameraY = this.camera.position.y
+      frame.cameraZ = this.camera.position.z
+      frame.windX = this.wind.direction.x
+      frame.windZ = this.wind.direction.y
+      frame.windStrength = this.wind.strength
+      frame.reducedMotion = reduced
+      if (rainCount > 0) {
+        updatePrecipitationBuffer('rain', this.rainPositions, this.snowDriftPhases, rainCount, frame, this.precipitationHeight)
+        this.rain.geometry.getAttribute('position').needsUpdate = true
+      }
+      if (snowCount > 0) {
+        updatePrecipitationBuffer('snow', this.snowPositions, this.snowDriftPhases, snowCount, frame, this.precipitationHeight)
+        this.snow.geometry.getAttribute('position').needsUpdate = true
+      }
+      return
+    }
     this.rain.material.opacity = rainWeight * 0.72
     this.snow.material.opacity = snowWeight * 0.92
     this.rain.visible = rainWeight > 0.015
@@ -14402,7 +15221,7 @@ export class GameEngine {
     const centerZ = this.camera.position.z
     for (let index = 0; index < SNOW_FLAKE_COUNT; index += 1) {
       const offset = index * 3
-      const phase = this.elapsed * 1.3 + this.snowDriftPhases[index]
+      const phase = this.visualElapsed * 1.3 + this.snowDriftPhases[index]
       let x =
         this.snowPositions[offset] +
         (wind.x * SNOW_WIND_SPEED * windStrength +
@@ -14456,7 +15275,7 @@ export class GameEngine {
       }
     }
 
-    const rainWeight = this.weatherWeights.rain
+    const rainWeight = (this.graphicsClock?.weather ?? this.weatherWeights).rain
     if (rainWeight >= 0.72 && delta > 0) {
       this.lightningCooldown -= delta
       if (this.lightningCooldown <= 0) {
@@ -14480,12 +15299,12 @@ export class GameEngine {
     const pulse =
       (1 - progress) * (0.72 + Math.sin(progress * Math.PI * 6) ** 2 * 0.28)
     this.lightningLight.intensity =
-      LIGHTNING_INTENSITY * pulse * Math.max(0.35, rainWeight)
+      this.reducedMotion ? 0 : LIGHTNING_INTENSITY * pulse * Math.max(0.35, rainWeight)
     this.lightningFlash = Math.max(0, this.lightningFlash - delta)
   }
 
   private randomWeatherRange(min: number, max: number): number {
-    return min + (max - min) * this.weatherRng()
+    return min + (max - min) * (this.graphicsClock?.randomWeather() ?? this.weatherRng())
   }
 
   private updateAtmosphere(delta: number): void {
@@ -14495,15 +15314,22 @@ export class GameEngine {
       this.player.position.z,
     )
     this.updateZoneTint(delta)
+    if (this.visualPolicy.mode === 'enhanced') {
+      // Zone tint is the final fog color; do not repeat the light-rig adjustment.
+      this.artEnvironment.horizonColor.copy(this.fog.color)
+      writeAtmospherePresentation(this.artEnvironment.atmosphere, this.fog.color, this.fog.near, this.fog.far)
+      this.artLibrary.setLightingReference(this.atmosphereReference)
+      this.postProcessor.setGradeTints(this.fog.color, this.sun.color)
+    }
     for (let index = 0; index < this.clouds.length; index += 1) {
       const { group, speed } = this.clouds[index]
       group.position.x += speed * delta
       if (group.position.x > 112) group.position.x = -112
-      group.position.y = Number(group.userData.baseY) + Math.sin(this.elapsed * 0.22 + index) * 0.65
+      group.position.y = Number(group.userData.baseY) + Math.sin(this.visualElapsed * 0.22 + index) * 0.65
     }
     for (let index = 0; index < this.flames.length; index += 1) {
       const flame = this.flames[index]
-      const pulse = 1 + Math.sin(this.elapsed * 9 + index * 1.7) * 0.16
+      const pulse = 1 + Math.sin(this.visualElapsed * 9 + index * 1.7) * 0.16
       const baseScale = Number(flame.userData.baseScale)
       flame.scale.setScalar(baseScale * pulse)
       const material = flame.material
@@ -14515,7 +15341,7 @@ export class GameEngine {
           ? THREE.MathUtils.lerp(0.16, 0.34, this.nightFactor)
           : 0.25
         material.emissiveIntensity =
-          baseIntensity + Math.sin(this.elapsed * 11 + index) * pulseIntensity
+          baseIntensity + Math.sin(this.visualElapsed * 11 + index) * pulseIntensity
       }
     }
   }
@@ -14593,14 +15419,14 @@ export class GameEngine {
       return
     }
 
-    const sunAngle = computeSunAngle(this.elapsed)
+    const sunAngle = computeSunAngle(this.visualElapsed)
     const elevation = Math.sin(sunAngle)
     const orbitalX = Math.cos(sunAngle) * SUN_ARC_RADIUS
     const orbitalY = elevation * SUN_ARC_HEIGHT
     const orbitalZ = Math.sin(sunAngle) * SUN_ARC_DEPTH
     const nightToTwilight = smoothstep(-0.18, 0.08, elevation)
     const twilightToDay = smoothstep(0.08, 0.6, elevation)
-    this.nightFactor = computeNightFactor(this.elapsed)
+    this.nightFactor = computeNightFactor(this.visualElapsed)
 
     this.sun.position.set(
       this.player.position.x + orbitalX,
@@ -14743,6 +15569,27 @@ export class GameEngine {
         : finaleProfile === 'marshal'
           ? { ...ordinaryPlan, weapon: 'glaive', mainHand: 'right', offhand: 'heater', headgear: 'crested' }
           : ordinaryPlan
+    if (this.visualPolicy.mode === 'enhanced') {
+      const presenter = createCharacterPresenter(illustratedCharacterPlan(plan), this.artLibrary, this.artGeometry, player, this.visualPolicy.quality)
+      this.characterPresenters.add(presenter)
+      const group = presenter.root
+      if (!player) {
+        const ring = new THREE.Mesh(
+          this.acquireArtGeometry('faction-ring', () => new THREE.RingGeometry(0.72, 0.9, 24)),
+          new THREE.MeshBasicMaterial({
+            color: this.factionColor(faction), transparent: true, opacity: 0.48,
+            depthWrite: false, side: THREE.DoubleSide, toneMapped: false, forceSinglePass: true,
+          }),
+        )
+        ring.name = 'faction-ring'
+        ring.position.y = 0.05
+        ring.rotation.x = -Math.PI / 2
+        ring.renderOrder = 2
+        presenter.attachFactionRing(ring)
+      }
+      presenter.attachContactShadow(this.artLibrary.createContactShadow({ radius: player ? 0.66 : 0.58 }))
+      return group
+    }
     const keys = characterPartKeys(plan)
     const p = plan.proportions
     const build = (key: string, factory: () => THREE.BufferGeometry) =>
@@ -14954,21 +15801,6 @@ export class GameEngine {
     }
     torsoPivot.add(weaponPivot)
 
-    if (player && faction === 'elf') {
-      const bow = new THREE.Group()
-      bow.name = 'ability-bow'
-      bow.visible = false
-      bow.add(new THREE.Mesh(
-        build('char-weapon:bow:head', () => buildWeaponHead('bow')),
-        leatherMaterial,
-      ))
-      bow.add(new THREE.Mesh(
-        build('char-weapon:bow:grip', () => buildWeaponGrip('bow')),
-        leatherMaterial,
-      ))
-      torsoPivot.add(bow)
-    }
-
     if (keys.offhand) {
       const offhandKind = plan.offhand
       // `shield` keeps its rest transform because `updateShieldPose` writes absolute
@@ -15179,6 +16011,10 @@ export class GameEngine {
   }
 
   private characterSkinMaterial(tone: number): THREE.MeshStandardMaterial {
+    if (this.visualPolicy.mode === 'enhanced') {
+      const skin = [0xdab08e, 0xc59471, 0xad7755, 0x895c43]
+      return this.artLibrary.acquireMaterial(`char:skin:${tone}`, { color: skin[tone % skin.length], surface: 'skin' })
+    }
     // Skin has to stay light enough that a brow, a nose and a jaw still separate
     // under a helmet's shadow at night, which is where faces are lost first.
     return this.artLibrary.acquireMaterial(`char:skin:${String(tone)}`, {
@@ -15295,7 +16131,7 @@ export class GameEngine {
     const headScale = variation.around(1, 0.06)
     for (const name of ['head', 'face', 'hair', 'headgear']) {
       const part = mesh.getObjectByName(name)
-      if (part instanceof THREE.Mesh) part.scale.multiplyScalar(headScale)
+      if (part instanceof THREE.Mesh || part instanceof THREE.Bone) part.scale.multiplyScalar(headScale)
     }
     const headPivot = mesh.getObjectByName('head-pivot')
     if (headPivot) headPivot.rotation.y = variation.signed(0.12)
@@ -15303,6 +16139,11 @@ export class GameEngine {
     // live in one place in `CharacterKit` so a Node test can drive the real code
     // instead of a copy of its arithmetic. See `setCharacterShoulderWidth`.
     setCharacterShoulderWidth(torsoPivot, mesh.getObjectByName('neck-pivot'), shoulders)
+    const presenter = characterPresenter(mesh)
+    if (presenter) {
+      presenter.syncAttachments()
+      presenter.poseSupport(0)
+    }
   }
 
   private createActorHealthBar(allegiance: Allegiance): {
@@ -15329,6 +16170,7 @@ export class GameEngine {
     sprite.scale.set(1.85, 0.26, 1)
     sprite.visible = false
     sprite.renderOrder = 12
+    sprite.userData.visualSubsystem = 'dynamicArt'
 
     const context = canvas.getContext('2d')
     if (!context) throw new Error('Could not create actor health bar')
@@ -15368,31 +16210,32 @@ export class GameEngine {
    */
   private createCaravan(gilded = false): THREE.Group {
     const group = new THREE.Group()
+    const enhanced = this.visualPolicy.mode === 'enhanced'
     const key = gilded ? 'gilded' : 'plain'
     const timber = this.artLibrary.acquireMaterial(`caravan:timber:${key}`, {
-      color: gilded
+      color: enhanced ? gilded ? 0x85633c : 0x69503b : gilded
         ? mix(this.palette.warning, this.palette.surface, 0.3)
         : mix(this.palette.warning, this.palette.bg, 0.52),
       surface: 'bark',
     })
     const ironwork = this.artLibrary.acquireMaterial(`caravan:iron:${key}`, {
-      color: gilded ? this.palette.warning : this.palette.borderStrong,
+      color: enhanced ? gilded ? 0xb29a60 : 0x5b6265 : gilded ? this.palette.warning : this.palette.borderStrong,
       surface: 'metal',
       metalness: gilded ? 0.76 : 0.45,
       roughness: 0.55,
     })
     const canvas = this.artLibrary.acquireMaterial(`caravan:canvas:${key}`, {
-      color: gilded
+      color: enhanced ? gilded ? 0xc1ad83 : 0xb5a98d : gilded
         ? mix(this.palette.warning, this.palette.surface, 0.62)
         : mix(this.palette.surface, this.palette.warning, 0.22),
       surface: 'cloth',
     })
     const hide = this.artLibrary.acquireMaterial('caravan:hide', {
-      color: mix(this.palette.warning, this.palette.text, 0.56),
+      color: enhanced ? 0xa99475 : mix(this.palette.warning, this.palette.text, 0.56),
       surface: 'cloth',
     })
     const leather = this.artLibrary.acquireMaterial('caravan:leather', {
-      color: mix(this.palette.warning, this.palette.bg, 0.7),
+      color: enhanced ? 0x4f382a : mix(this.palette.warning, this.palette.bg, 0.7),
       surface: 'leather',
     })
 
@@ -15420,6 +16263,12 @@ export class GameEngine {
     cargo.position.y = 2.45
     group.add(cargo)
 
+    const frontAxle = enhanced ? new THREE.Group() : null
+    if (frontAxle) {
+      frontAxle.name = 'front-axle-pivot'
+      frontAxle.position.x = WAGON_RIG.frontAxleX
+      group.add(frontAxle)
+    }
     for (const [x, radius] of [
       [WAGON_RIG.rearAxleX, WAGON_RIG.rearWheelRadius],
       [WAGON_RIG.frontAxleX, WAGON_RIG.frontWheelRadius],
@@ -15428,32 +16277,49 @@ export class GameEngine {
         build('wagon-axle', () => buildWagonAxle(WAGON_RIG.axleWidth)),
         ironwork,
       )
-      axle.position.set(x, radius, 0)
-      group.add(axle)
+      const axleParent = x === WAGON_RIG.frontAxleX && frontAxle ? frontAxle : group
+      axle.position.set(axleParent === frontAxle ? 0 : x, radius, 0)
+      axleParent.add(axle)
       for (const side of [-1, 1]) {
         const wheel = new THREE.Group()
         wheel.name = 'wheel'
-        wheel.position.set(x, radius, side * WAGON_RIG.wheelZ)
+        wheel.position.set(axleParent === frontAxle ? 0 : x, radius, side * WAGON_RIG.wheelZ)
         // The two axles carry different wheels, so they cannot share one rolling
         // constant: a rear wheel turns 0.78/1.02 as fast as a front one over the
         // same ground. Carrying the radius on the object is what stops the animation
         // from having to guess.
         wheel.userData.wheelRadius = radius
+        wheel.userData.axleX = x
         const tyre = new THREE.Mesh(
           build(`wagon-wheel:${radius.toFixed(2)}`, () => buildWagonWheel(radius)),
           ironwork,
         )
         wheel.add(tyre)
-        group.add(wheel)
+        axleParent.add(wheel)
       }
     }
 
-    group.add(new THREE.Mesh(build('wagon-harness', () => buildHarness()), leather))
+    if (enhanced) {
+      const yoke = new THREE.Mesh(this.acquireArtGeometry('draft-yoke', buildDraftYoke), timber)
+      yoke.name = 'draft-yoke'
+      yoke.position.set(5.5, 2.02, 0)
+      group.add(yoke)
+      for (const side of [-1, 1]) {
+        const trace = new THREE.Mesh(this.acquireArtGeometry('draft-trace', () =>
+          taperedBox({ width: 1, height: 0.045, depth: 0.045 })), leather)
+        trace.name = side < 0 ? 'left-trace' : 'right-trace'
+        trace.position.set(3.7, 1.65, side * 0.65)
+        trace.scale.x = 3.2
+        group.add(trace)
+      }
+    } else group.add(new THREE.Mesh(build('wagon-harness', () => buildHarness()), leather))
     for (const side of [-1, 1]) {
       const ox = new THREE.Group()
       ox.name = 'draft-ox'
       ox.position.set(WAGON_RIG.oxX, 0, side * WAGON_RIG.oxZ)
-      const body = new THREE.Mesh(build('ox-body', () => buildOxBody()), hide)
+      const body = new THREE.Mesh(enhanced
+        ? this.acquireArtGeometry('articulated-ox-body', () => buildOxBody(true))
+        : build('ox-body', () => buildOxBody()), hide)
       ox.add(body)
       const head = new THREE.Mesh(build('ox-head', () => buildOxHead()), hide)
       head.name = 'ox-head'
@@ -15463,6 +16329,17 @@ export class GameEngine {
       // The team faces the way the cart travels, which is +X.
       ox.rotation.y = Math.PI / 2
       group.add(ox)
+      if (enhanced) {
+        const legs: CreatureLeg[] = []
+        for (const front of [true, false]) for (const side of [-1, 1]) {
+          const leg = createCreatureLeg('ox', `ox-${front ? 'front' : 'hind'}-${side < 0 ? 'left' : 'right'}`,
+            1.2, front, side, leather, build)
+          leg.upper.position.set(side * 0.34, 1.2, front ? 0.6 : -0.6)
+          ox.add(leg.upper)
+          legs.push(leg)
+        }
+        this.creaturePresenters.add(new CreaturePresenter(ox, this.artLibrary, this.artGeometry, 'illustrated-ox', legs))
+      }
       const shadow = this.artLibrary.createContactShadow({ radius: 1.05 })
       shadow.position.set(WAGON_RIG.oxX, 0, side * WAGON_RIG.oxZ)
       group.add(shadow)
@@ -15483,6 +16360,19 @@ export class GameEngine {
     }
 
     this.markCharacterShadows(group)
+    if (enhanced) {
+      const frame = new THREE.Group()
+      frame.name = 'wagon-frame-pivot'
+      for (const child of [...group.children]) {
+        if (child.name === 'draft-ox' || child.name === 'draft-yoke' ||
+            child.name.endsWith('-trace') || child.userData.noComicOutline === true) continue
+        frame.add(child)
+      }
+      group.add(frame)
+      this.creaturePresenters.add(new CreaturePresenter(group, this.artLibrary, this.artGeometry,
+        `illustrated-wagon:${key}`, [], ['cargo']))
+      this.wagonPresenters.add(new WagonPresenter(group))
+    }
     group.position.set(-54, 0, -23)
     return group
   }
@@ -15520,7 +16410,7 @@ export class GameEngine {
       surface: 'cloth',
     })
     const darkMaterial = this.artLibrary.acquireMaterial(`beast:dark:${role}`, {
-      color: mix(pelt, this.palette.bg, 0.55),
+      color: mix(pelt, this.visualPolicy.mode === 'enhanced' ? new THREE.Color(0x26231f) : this.palette.bg, 0.55),
       surface: 'dark',
     })
     const build = (key: string, factory: () => THREE.BufferGeometry) =>
@@ -15542,6 +16432,7 @@ export class GameEngine {
     head.position.set(0, headY, headZ)
     headPivot.add(head)
 
+    const articulatedLegs: CreatureLeg[] = []
     // Front limbs answer to `leftArm` / `rightArm`, hind limbs to `leftLeg` /
     // `rightLeg`, so the shared stride already produces a diagonal gait.
     for (const [name, side, front] of [
@@ -15550,21 +16441,26 @@ export class GameEngine {
       ['leftLeg', -1, false],
       ['rightLeg', 1, false],
     ] as const) {
-      const pivot = new THREE.Group()
+      const length = front ? rig.frontLimb : rig.hindLimb
+      const articulated = this.visualPolicy.mode === 'enhanced'
+        ? createCreatureLeg(kind, name, length, front, side, darkMaterial, build) : null
+      const pivot = articulated?.upper ?? new THREE.Group()
       pivot.name = name
       pivot.position.set(
         side * (front ? rig.frontX : rig.hindX),
         front ? rig.frontJointY : rig.hindJointY,
         front ? rig.frontZ : rig.hindZ,
       )
-      const length = front ? rig.frontLimb : rig.hindLimb
-      const limb = new THREE.Mesh(
-        build(`beast-limb:${role}:${front ? 'front' : 'hind'}`, () =>
-          buildBeastLimb(kind, front, length),
-        ),
-        darkMaterial,
-      )
-      pivot.add(limb)
+      if (articulated) articulatedLegs.push(articulated)
+      else {
+        const limb = new THREE.Mesh(
+          build(`beast-limb:${role}:${front ? 'front' : 'hind'}`, () =>
+            buildBeastLimb(kind, front, length),
+          ),
+          darkMaterial,
+        )
+        pivot.add(limb)
+      }
       ;(front ? torsoPivot : pelvisPivot).add(pivot)
     }
 
@@ -15584,6 +16480,7 @@ export class GameEngine {
         color: this.allegianceColor('beast'),
         transparent: true,
         opacity: 0.48,
+        forceSinglePass: this.visualPolicy.mode === 'enhanced',
         depthWrite: false,
         side: THREE.DoubleSide,
         toneMapped: false,
@@ -15601,12 +16498,12 @@ export class GameEngine {
       torsoPivot,
       leftArm: group.getObjectByName('leftArm') ?? null,
       rightArm: group.getObjectByName('rightArm') ?? null,
-      leftElbow: null,
-      rightElbow: null,
+      leftElbow: group.getObjectByName('leftElbow') ?? null,
+      rightElbow: group.getObjectByName('rightElbow') ?? null,
       leftLeg: group.getObjectByName('leftLeg') ?? null,
       rightLeg: group.getObjectByName('rightLeg') ?? null,
-      leftKnee: null,
-      rightKnee: null,
+      leftKnee: group.getObjectByName('leftKnee') ?? null,
+      rightKnee: group.getObjectByName('rightKnee') ?? null,
       weapon: null,
       cloak: tailPivot,
       // A quadruped's chest sits at its own origin — `buildBeastSkeleton` puts no
@@ -15624,10 +16521,17 @@ export class GameEngine {
       lean: 0,
     }
     group.userData.rig = beastRig
+    if (this.visualPolicy.mode === 'enhanced') {
+      this.creaturePresenters.add(new CreaturePresenter(group, this.artLibrary, this.artGeometry,
+        `illustrated-beast:${role}`, articulatedLegs))
+    }
     return group
   }
 
   private beastPeltColor(role: BeastRole): THREE.Color {
+    if (this.visualPolicy.mode === 'enhanced') {
+      return new THREE.Color(role === 'wolf' ? 0x837d6e : role === 'boar' ? 0x695443 : role === 'bear' ? 0x594733 : 0x78816b)
+    }
     const base = this.allegianceColor('beast')
     if (role === 'wolf') return mix(base, this.palette.borderStrong, 0.42)
     if (role === 'boar') return mix(base, this.palette.text, 0.3)
@@ -15703,7 +16607,7 @@ export class GameEngine {
     }
     if (role === 'peasant') mesh.scale.setScalar(0.9)
     this.applyActorVisualVariation(mesh, allegiance, role, identity)
-    const outlineBinding = this.registerOutline(mesh, 'enemy')
+    const outlineBinding = this.registerOutline(mesh, this.visualPolicy.mode === 'enhanced' ? 'structural' : 'enemy')
     mesh.position.set(x, this.groundHeightAt(x, z), z)
     this.resolveCharacterOverlaps(mesh.position, this.actorColliderRadiusForRole(role))
     mesh.position.y = this.groundHeightAt(mesh.position.x, mesh.position.z)
@@ -15945,6 +16849,7 @@ export class GameEngine {
   }
 
   private clearTransientCombatFeedback(): void {
+    this.secondaryEffects?.clear()
     this.hideFinaleTelegraphs()
     this.resetCameraMotion()
     this.damageFlash = 0
@@ -15968,7 +16873,7 @@ export class GameEngine {
   ): void {
     if (!event.applied) return
     if (channels.number ?? true) this.spawnDamageNumber(event)
-    if (channels.ray ?? true) this.spawnImpactRay(event)
+    if ((channels.ray ?? true) && event.presentationContact === undefined) this.spawnImpactRay(event)
     if (channels.callout ?? true) this.spawnComicCallout(event)
     if (channels.hitStop ?? true) this.requestHitStop(this.hitStopForEvent(event))
     if (channels.camera ?? true) this.presentCameraFeedback(event)
@@ -16453,7 +17358,7 @@ export class GameEngine {
     entry.velocity.set(0, 0, 0)
   }
 
-  private spawnImpactRay(event: CombatFeedbackEvent): void {
+  private spawnImpactRay(event: Pick<CombatFeedbackEvent, 'position' | 'direction' | 'weight' | 'targetId' | 'directPlayerAction' | 'presentationContact'>): void {
     if (!event.directPlayerAction && event.targetId !== 'player') return
     const priority = HIT_WEIGHT_PRIORITY[event.weight]
     const entry = this.acquireImpactRayFx(priority)
@@ -16463,12 +17368,21 @@ export class GameEngine {
     entry.active = true
     entry.priority = priority
     entry.weight = event.weight
+    entry.physical = event.presentationContact != null
     entry.sprite.visible = true
     entry.sprite.position.copy(event.position)
     entry.sprite.scale.setScalar(0.4)
     entry.material.opacity = 1
-    entry.material.rotation = Math.random() * Math.PI
-    entry.material.color.copy(this.impactRayColor(event.weight))
+    if (event.presentationContact) {
+      this.contactNormal.copy(event.presentationContact.direction).transformDirection(this.camera.matrixWorldInverse)
+      entry.material.rotation = Math.atan2(this.contactNormal.y, this.contactNormal.x)
+      entry.material.color.setHex(contactResponse(event.presentationContact.surface, event.weight === 'blocked', event.presentationContact.sourceSurface).color)
+      entry.material.depthTest = true
+    } else {
+      entry.material.rotation = Math.random() * Math.PI
+      entry.material.color.copy(this.impactRayColor(event.weight))
+      entry.material.depthTest = false
+    }
   }
 
   private acquireImpactRayFx(priority: number): ImpactRayFx | null {
@@ -16558,7 +17472,9 @@ export class GameEngine {
         continue
       }
       const progress = entry.age / entry.lifetime
-      entry.sprite.scale.setScalar(THREE.MathUtils.lerp(0.4, 1.8, progress))
+      entry.sprite.scale.setScalar(entry.physical
+        ? this.reducedMotion ? 0.38 : THREE.MathUtils.lerp(0.22, 0.65, progress)
+        : THREE.MathUtils.lerp(0.4, 1.8, progress))
       entry.material.opacity = 1 - progress
     }
   }
@@ -16655,39 +17571,84 @@ export class GameEngine {
     incomingDirection: THREE.Vector3,
     count: number,
   ): void {
-    const available = Math.min(count, SPARK_MAX_ACTIVE - this.activeSparks)
-    if (available <= 0) return
+    if (this.paused || this.ended) return
+    this.getSecondaryEffects().emit('spark', position, incomingDirection, this.palette.warning, count, this.visualPolicy)
+  }
 
-    const outward = incomingDirection.clone()
-    outward.y = 0
-    if (outward.lengthSq() <= 0.0001) outward.set(0, 0, 1)
-    else outward.normalize()
-    const tangent = new THREE.Vector3(-outward.z, 0, outward.x)
+  private getContactPresentation(): ContactPresentation {
+    this.contactPresentation ??= new ContactPresentation()
+    return this.contactPresentation
+  }
 
-    for (let index = 0; index < available; index += 1) {
-      const color =
-        index % 3 === 0 ? new THREE.Color(0xffffff) : this.palette.warning.clone()
-      color.multiplyScalar(1.35)
-      const mesh = new THREE.Mesh(
-        new THREE.OctahedronGeometry(0.055, 0),
-        new THREE.MeshBasicMaterial({ color }),
-      )
-      mesh.position
-        .copy(position)
-        .addScaledVector(tangent, (Math.random() - 0.5) * 0.3)
-      this.scene.add(mesh)
-      this.particles.push({
-        mesh,
-        velocity: outward
-          .clone()
-          .multiplyScalar(1.5 + Math.random() * 3)
-          .addScaledVector(tangent, (Math.random() - 0.5) * 8)
-          .setY(4 + Math.random() * 5),
-        life: SPARK_LIFE,
-        mode: 'spark',
-      })
-      this.activeSparks += 1
+  private prepareTransientEffects(): void {
+    const budget = this.transientBudget
+    budget.begin(this.visualPolicy, this.camera)
+    budget.reserveEnvironment(this.atmosphereRoot)
+    for (const flame of this.flames) budget.reserveEnvironment(flame)
+    for (const entry of this.telegraphPool) budget.add(entry.mesh, 'tell', 200, true)
+    for (const mesh of this.finaleTelegraphs) budget.add(mesh, 'tell', 200, true)
+    for (const projectile of this.projectiles) budget.add(projectile.mesh, 'projectile', 190, true)
+    for (const pickup of this.lootPickups) if (pickup.active) {
+      budget.addTree(pickup.tokenRoot, 'loot', 150, true)
+      budget.addTree(pickup.root, 'loot', 20)
     }
+    for (const burst of this.lootCollectionBursts) if (burst.active) budget.addTree(burst.root, 'loot', 25)
+    if (this.secondaryEffects) budget.add(this.secondaryEffects.mesh, 'contact', 100)
+    for (const entry of this.impactRayFx) if (entry.active) budget.add(entry.sprite, 'ray', 90 + entry.priority)
+    for (const entry of this.damageNumberFx) if (entry.active) budget.add(entry.sprite, 'number', 70 + entry.priority)
+    budget.add(this.weaponTrail, 'trail', 85)
+    for (const particle of this.particles) budget.add(particle.mesh,
+      particle.mode === 'smoke' ? 'smoke' : particle.mode === 'blood' || particle.mode === 'gib' ? 'gore' : 'debris',
+      particle.mode === 'smoke' ? 5 : particle.mode === 'blood' ? 15 : 30)
+    for (const entry of this.comicCalloutFx) if (entry.active) budget.add(entry.sprite, 'callout', 35 + entry.priority)
+    for (const entry of this.decals) if (entry.active) budget.add(entry.mesh, 'decal', 10)
+    budget.add(this.rain, 'weather', 45)
+    budget.add(this.snow, 'weather', 45)
+  }
+
+  getTransientEffectInventory() {
+    const sources: TransientSource[] = [
+      this.weaponTrail, this.rain, this.snow,
+      ...this.particles.map((entry) => entry.mesh), ...this.inactiveGoreParticles.map((entry) => entry.mesh),
+      ...this.decals.map((entry) => entry.mesh), ...this.damageNumberFx.map((entry) => entry.sprite),
+      ...this.comicCalloutFx.map((entry) => entry.sprite), ...this.impactRayFx.map((entry) => entry.sprite),
+      ...this.projectiles.map((entry) => entry.mesh), ...this.telegraphPool.map((entry) => entry.mesh), ...this.finaleTelegraphs,
+    ]
+    for (const root of [this.atmosphereRoot, ...this.flames,
+      ...this.lootPickups.map((entry) => entry.root), ...this.lootCollectionBursts.map((entry) => entry.root)]) {
+      root.traverse((object) => {
+        if (object instanceof THREE.Mesh || object instanceof THREE.Sprite ||
+            object instanceof THREE.Points || object instanceof THREE.Line) sources.push(object)
+      })
+    }
+    const receipts = transientAllocationReceipts(sources)
+    if (this.secondaryEffects) {
+      sources.push(this.secondaryEffects.mesh)
+      receipts.push(...this.secondaryEffects.getAllocationReceipts())
+    }
+    return {
+      sources, receipts, resources: sumVisualAllocationReceipts(receipts).postAndEffects,
+      budget: this.transientBudget.snapshot(), complete: false,
+      missing: ['Actual GPU allocation identities', 'Persistent effects outside known environment roots',
+        'Canvas-backed texture storage', 'Shader uniforms, JS object storage and temporary peak allocations', 'Disjoint CPU/submission scopes'],
+    }
+  }
+
+  private presentPhysicalContact(contact: PresentationContact, defense: boolean, weight: HitWeight, primary: boolean): void {
+    if (this.paused || this.ended || contact.point.distanceToSquared(this.player.position) > DAMAGE_NUMBER_DISTANCE_SQ) return
+    const response = contactResponse(contact.surface, defense, contact.sourceSurface)
+    this.contactColor.setHex(response.color)
+    this.getSecondaryEffects().emit(response.kind, contact.point, contact.direction, this.contactColor,
+      response.count, this.visualPolicy, contact.normal)
+    if (primary) this.spawnImpactRay({
+      position: contact.point, direction: contact.direction, weight, targetId: 'player', directPlayerAction: false,
+      presentationContact: contact,
+    })
+  }
+
+  private getSecondaryEffects(): SecondaryEffectPool {
+    this.secondaryEffects ??= new SecondaryEffectPool(this.scene, this.generatedBlueprint.seed)
+    return this.secondaryEffects
   }
 
   private acquireGoreParticle(): Particle | null {
@@ -16853,19 +17814,10 @@ export class GameEngine {
   }
 
   private createHitParticles(position: THREE.Vector3, allegiance: Allegiance): void {
-    for (let index = 0; index < 7; index += 1) {
-      const mesh = new THREE.Mesh(
-        new THREE.OctahedronGeometry(0.12, 0),
-        new THREE.MeshBasicMaterial({ color: this.allegianceColor(allegiance) }),
-      )
-      mesh.position.copy(position).add(new THREE.Vector3(0, 1.6, 0))
-      this.scene.add(mesh)
-      this.particles.push({
-        mesh,
-        velocity: new THREE.Vector3((Math.random() - 0.5) * 4, 2 + Math.random() * 4, (Math.random() - 0.5) * 4),
-        life: 0.55 + Math.random() * 0.35,
-      })
-    }
+    if (this.paused || this.ended) return
+    // Stage B supplies posed/material contacts. Keep the current admitted-contact anchor here.
+    this.secondaryContactPoint.copy(position).y += 1.6
+    this.getSecondaryEffects().emit('shard', this.secondaryContactPoint, null, this.allegianceColor(allegiance), 7, this.visualPolicy)
   }
 
   private createBleedParticle(): void {
@@ -16943,8 +17895,9 @@ export class GameEngine {
 
     // Legs. A knee only bends one way, and it bends on the leg that is swinging
     // forward, which is the difference between walking and skating.
-    const leftX = stride
-    const rightX = -stride
+    const legStride = characterPresenter(group) ? pose.stride : stride
+    const leftX = legStride
+    const rightX = -legStride
     if (rig.leftLeg) rig.leftLeg.rotation.x = leftX
     if (rig.rightLeg) rig.rightLeg.rotation.x = rightX
     if (rig.leftKnee) {
@@ -16985,48 +17938,9 @@ export class GameEngine {
     }
     if (playerAttack) {
       this.animatePlayerPosture(group, rig, playerAttack)
-      this.animatePlayerAbility(group, rig)
+      if (this.faction === 'guard') this.updateShieldPose()
     }
-  }
-
-  private animatePlayerAbility(group: THREE.Group, rig: CharacterRig): void {
-    if (this.faction === 'guard') {
-      this.updateShieldPose()
-      return
-    }
-    if (this.faction !== 'elf') return
-    const bow = group.getObjectByName('ability-bow')
-    if (!bow) return
-    const progress = this.melee.phase === 'idle' && this.combatMastery.evadeRemaining <= 0 &&
-      (this.body.leftArm !== 'missing' || this.body.rightArm !== 'missing')
-      ? bowReleaseProgress(this.abilityCooldown, ABILITY_INFO.elf.cooldownMax)
-      : null
-    bow.visible = progress !== null
-    if (rig.weapon) rig.weapon.visible = progress === null
-    const shield = group.getObjectByName('shield')
-    if (shield) shield.visible = progress === null
-    if (progress === null) return
-    group.rotation.y = Math.atan2(Math.sin(this.cameraYaw), -Math.cos(this.cameraYaw))
-
-    // Use the remaining arm if injured; posing never restores a hidden limb.
-    const left = this.body.leftArm !== 'missing'
-    const arm = left ? rig.leftArm : rig.rightArm
-    const elbow = left ? rig.leftElbow : rig.rightElbow
-    const drawingArm = left ? rig.rightArm : rig.leftArm
-    const drawingElbow = left ? rig.rightElbow : rig.leftElbow
-    const side = left ? -1 : 1
-    const settle = progress * progress * (3 - 2 * progress)
-    const armX = -1.32 + settle * 0.22 + this.cameraPitch
-    const armZ = side * 0.16
-    const elbowX = 0.12
-    if (arm) arm.rotation.set(armX, 0, armZ)
-    if (elbow) elbow.rotation.x = elbowX
-    if (drawingArm) drawingArm.rotation.set(-1.1 + this.cameraPitch, 0, -side * 0.42)
-    if (drawingElbow) drawingElbow.rotation.x = 1.2 - settle * 0.65
-    const hand = solveHandOffset(this.handOffset, rig.upperArm, rig.forearm, armX, armZ, elbowX)
-    bow.position.set((arm?.position.x ?? side * 0.6) + hand.x,
-      (arm?.position.y ?? rig.shoulderY) + hand.y, hand.z)
-    bow.rotation.set(this.cameraPitch - rig.torsoPivot.rotation.x, 0, side * 0.1)
+    characterPresenter(group)?.syncAttachments()
   }
 
   private animatePlayerPosture(
@@ -17099,6 +18013,11 @@ export class GameEngine {
     }
     if (rig.leftLeg) rig.leftLeg.rotation.set(stride * 0.88 - pose.stagger * 0.3, 0, 0)
     if (rig.rightLeg) rig.rightLeg.rotation.set(-stride * 0.88 - pose.stagger * 0.3, 0, 0)
+    if (kind === 'troll') {
+      const flex = 0.25 + pose.anticipation * 0.6 - pose.attack * 0.18 + pose.stagger * 0.35
+      if (rig.leftElbow) rig.leftElbow.rotation.x = Math.max(0.03, flex - stride * 0.12)
+      if (rig.rightElbow) rig.rightElbow.rotation.x = Math.max(0.03, flex + stride * 0.12)
+    }
     if (rig.cloak) {
       // `cloak` holds the tail on a beast: it lifts with speed and tucks when hit.
       rig.cloak.rotation.x =
@@ -17137,6 +18056,7 @@ export class GameEngine {
         pelvisPivot,
         headPivot,
       })
+      creaturePresenter(actor.mesh)?.poseFeet(delta, pose.stride, this.characterHeightSample)
       return
     }
 
@@ -17221,6 +18141,7 @@ export class GameEngine {
       // The bow is in the bow hand and the string hand pulls back past the jaw. The
       // weapon pivot is re-solved afterwards so the riser stays in the fist.
       const draw = Math.max(pose.anticipation, pose.attack * 0.8)
+      characterPresenter(actor.mesh)?.setBowRelease(pose.attack > 0 || pose.recovery > 0)
       const bowArm = rig.mainHand > 0 ? rig.rightArm : rig.leftArm
       const bowElbow = rig.mainHand > 0 ? rig.rightElbow : rig.leftElbow
       const drawArm = rig.mainHand > 0 ? rig.leftArm : rig.rightArm
@@ -17240,9 +18161,16 @@ export class GameEngine {
         bowX,
         bowZ,
         bowElbowX,
-        0.06,
+        this.visualPolicy.mode === 'enhanced' ? 0.06 - aimPitch : 0.06,
         -rig.mainHand * 0.12,
       )
+    }
+    const presenter = characterPresenter(actor.mesh)
+    if (presenter) {
+      presenter.syncAttachments()
+      presenter.poseSupport(Math.max(pose.anticipation, pose.attack * 0.8))
+      presenter.secondaryMotion(delta, actor.stride, pose.attack, this.reducedMotion)
+      presenter.ground(delta, this.characterHeightSample, actor.alive, presenter.anatomy.bodyPivot.position.y, pose.stride)
     }
   }
 
@@ -17256,6 +18184,14 @@ export class GameEngine {
     }
     pose.flinch = 0
     pose.stagger = 0
+    if (characterPresenter(this.player) && this.melee.phase !== 'idle') {
+      const spec = playerBeatSpec(this.melee.beat)
+      const windup = this.melee.phase === 'windup'
+      const progress = THREE.MathUtils.clamp(1 - this.melee.phaseRemaining / (windup ? spec.windup : spec.recovery), 0, 1)
+      pose.anticipation = windup ? progress * progress * (3 - 2 * progress) : 0
+      pose.attack = windup ? 0 : Math.exp(-progress * 6)
+      pose.recovery = windup ? 0 : Math.sin(progress * Math.PI)
+    }
     return pose
   }
 
@@ -17402,6 +18338,15 @@ export class GameEngine {
   }
 
   private updateCamera(delta: number, immediate: boolean): void {
+    if (this.bowAiming) {
+      this.updateBowCamera(delta, immediate)
+      return
+    }
+    if (this.visualPolicy.camera.collision === 'volume') {
+      this.updateEnhancedCamera(delta, immediate)
+      return
+    }
+
     const forward = this.getAimDirection()
     const target = this.player.position.clone().add(new THREE.Vector3(0, CAMERA_PIVOT_HEIGHT, 0))
     // Looking up rotates the view without orbiting the camera below the player's feet.
@@ -17444,6 +18389,95 @@ export class GameEngine {
     this.updateCameraFov(delta, immediate)
     this.updatePlayerOutlineVisibility()
     this.updateFoliageOcclusion(target, this.camera.position, immediate)
+  }
+
+  private updateBowCamera(delta: number, immediate: boolean): void {
+    this.resolveBowAim()
+    this.updateCameraFov(delta, immediate)
+    const { anchor, eye, target } = this.bowAim
+    const presentation = this.generatedWorld.presentation
+    if (this.visualPolicy.camera.collision === 'volume') {
+      if (!presentation) throw new Error('Enhanced bow camera requires its presentation registry')
+      if (this.rendererDevicePixelRatio !== window.devicePixelRatio) this.resize()
+      presentation.prepare(this.camera)
+      this.cameraVisibility.resolve(anchor, eye, this.camera, delta, immediate,
+        presentation, this.cameraTerrain, this.cameraFollowPosition)
+      for (const binding of this.playerRenderBindings) {
+        this.artLibrary.setSourceVisibility(binding, this.cameraVisibility.debug.playerVisibility)
+      }
+    } else this.cameraFollowPosition.copy(this.resolveCameraPosition(anchor, eye))
+    this.camera.position.copy(this.cameraFollowPosition)
+    this.camera.lookAt(target)
+    this.camera.updateMatrixWorld()
+    this.updatePlayerOutlineVisibility()
+    if (presentation) {
+      this.nearSubjects.length = 0
+      this.nearSubjects.push(anchor)
+      presentation.prepare(this.camera)
+      presentation.updateForeground(this.camera.position, this.nearSubjects, delta, immediate)
+      presentation.updateShadows(this.player.position, this.visualPolicy.shadows)
+    } else this.updateFoliageOcclusion(anchor, this.camera.position, immediate)
+  }
+
+  private updateEnhancedCamera(delta: number, immediate: boolean): void {
+    const presentation = this.generatedWorld.presentation
+    if (!presentation) throw new Error('Enhanced camera requires its presentation registry')
+    if (this.rendererDevicePixelRatio !== window.devicePixelRatio) this.resize()
+    this.updateCameraFov(delta, immediate)
+    // The volume solver's torso/head probes are anchored around this height.
+    this.enhancedTarget.copy(this.player.position).y += 1.65
+    const orbitPitch = Math.max(0, this.cameraPitch)
+    const orbitDistance = cameraOrbitDistance(this.camera.aspect)
+    const horizontalDistance = orbitDistance * Math.cos(orbitPitch)
+    this.enhancedDesired.set(
+      this.enhancedTarget.x - Math.sin(this.cameraYaw) * horizontalDistance,
+      this.enhancedTarget.y + orbitDistance * Math.sin(orbitPitch),
+      this.enhancedTarget.z + Math.cos(this.cameraYaw) * horizontalDistance,
+    )
+    const shake = this.visualPolicy.cameraEffects && this.trauma > 0 && !this.paused && !this.ended
+    let roll = 0, shakeX = 0, shakeY = 0
+    if (shake) {
+      const phase = this.shakeClock * SHAKE_FREQUENCY
+      const magnitude = this.trauma * this.trauma
+      shakeX = Math.sin(phase) * Math.sin(phase * 0.47 + 1.8) * SHAKE_POSITION * magnitude
+      shakeY = Math.sin(phase * 1.31 + 0.7) * Math.sin(phase * 0.61 + 2.4) * SHAKE_POSITION * 0.65 * magnitude
+      roll = Math.sin(phase * 0.83 + 2.1) * Math.sin(phase * 0.37 + 0.4) * SHAKE_ROLL * magnitude
+    }
+    presentation.prepare(this.camera)
+    this.cameraVisibility.resolve(this.enhancedTarget, this.enhancedDesired, this.camera,
+      delta, immediate, presentation, this.cameraTerrain, this.enhancedPosition,
+      this.cameraYaw, this.cameraPitch, roll)
+    if (shake) {
+      this.enhancedShaken.copy(this.enhancedPosition)
+      this.enhancedShaken.x += Math.cos(this.cameraYaw) * shakeX
+      this.enhancedShaken.z += Math.sin(this.cameraYaw) * shakeX
+      this.enhancedShaken.y += shakeY
+      this.cameraVisibility.constrain(this.enhancedTarget, this.enhancedShaken,
+        presentation, this.cameraTerrain, this.enhancedPosition)
+    }
+    this.camera.position.copy(this.enhancedPosition)
+    this.enhancedShaken.copy(this.enhancedPosition).add(this.getViewDirection())
+    this.camera.lookAt(this.enhancedShaken)
+    if (roll !== 0) this.camera.rotateZ(roll)
+    this.camera.updateMatrixWorld()
+    this.cameraFollowPosition.copy(this.enhancedPosition)
+    this.updatePlayerOutlineVisibility()
+    for (const binding of this.playerRenderBindings) {
+      this.artLibrary.setSourceVisibility(binding, this.cameraVisibility.debug.playerVisibility)
+    }
+    this.nearSubjects.length = 0
+    this.nearSubjects.push(this.nearSubjectPool[0].copy(this.enhancedTarget))
+    for (const actor of this.actors) {
+      if (this.nearSubjects.length >= this.nearSubjectPool.length) break
+      if (!actor.alive || actor.mesh.position.distanceToSquared(this.player.position) > 7 * 7 ||
+          !this.isSquadTargetVisible(actor, false)) continue
+      const point = this.nearSubjectPool[this.nearSubjects.length].copy(actor.mesh.position)
+      point.y += 1.35
+      this.nearSubjects.push(point)
+    }
+    presentation.prepare(this.camera)
+    presentation.updateForeground(this.camera.position, this.nearSubjects, delta, immediate)
+    presentation.updateShadows(this.player.position, this.visualPolicy.shadows)
   }
 
   private resolveCameraPosition(target: THREE.Vector3, desired: THREE.Vector3): THREE.Vector3 {
@@ -17552,8 +18586,28 @@ export class GameEngine {
   private resize(): void {
     const width = Math.max(1, this.container.clientWidth)
     const height = Math.max(1, this.container.clientHeight)
-    this.renderer.setSize(width, height, false)
+    this.renderer.getSize(this.drawingBufferSize)
+    const cssChanged = this.drawingBufferSize.x !== width || this.drawingBufferSize.y !== height
+    const canvas = this.renderer.domElement
+    // Rewriting unchanged canvas dimensions clears a frame already presented
+    // before a queued ResizeObserver notification, including held captures.
+    if (this.visualPolicy.mode === 'enhanced') {
+      const viewport = resolveVisualViewport(this.visualPolicy.render, width, height, window.devicePixelRatio)
+      this.rendererDevicePixelRatio = window.devicePixelRatio
+      if (cssChanged || this.renderer.getPixelRatio() !== viewport.pixelRatio ||
+          canvas.width !== viewport.drawingBufferWidth || canvas.height !== viewport.drawingBufferHeight) {
+        this.renderer.setDrawingBufferSize(viewport.cssWidth, viewport.cssHeight, viewport.pixelRatio)
+      }
+    } else {
+      const ratio = this.renderer.getPixelRatio()
+      if (cssChanged || canvas.width !== Math.floor(width * ratio) || canvas.height !== Math.floor(height * ratio)) {
+        this.renderer.setSize(width, height, false)
+      }
+    }
     this.postProcessor.setSize(width, height)
+    this.renderer.getDrawingBufferSize(this.drawingBufferSize)
+    this.artLibrary.setViewport(this.drawingBufferSize.x, this.drawingBufferSize.y,
+      this.visualPolicy.ink.minPixels, this.visualPolicy.ink.maxPixels)
     this.camera.aspect = width / height
     this.camera.updateProjectionMatrix()
   }
@@ -17601,6 +18655,7 @@ export class GameEngine {
     if (event.code === 'KeyQ') this.commandSquad()
     if (event.code === 'KeyR') {
       if (this.faction === 'guard') this.setShield(true)
+      else if (this.faction === 'elf') this.setBowAiming(true, 'keyboard')
       else this.useAbility()
     }
   }
@@ -17609,6 +18664,7 @@ export class GameEngine {
     this.keys.delete(event.code)
     if (event.code === 'Space') this.jumpAccentArmed = true
     if (event.code === 'KeyR') this.setShield(false)
+    if (event.code === 'KeyR') this.setBowAiming(false, 'keyboard')
   }
 
   private onMouseMove(event: MouseEvent): void {
@@ -17636,6 +18692,7 @@ export class GameEngine {
     event.preventDefault()
     if (event.button === 2) {
       if (this.faction === 'guard') this.setShield(true)
+      else if (this.faction === 'elf') this.setBowAiming(true, 'pointer')
       else this.useAbility()
       return
     }
@@ -17651,6 +18708,7 @@ export class GameEngine {
     if (this.lookGesture) return
     this.pointerFallback = true
     this.lookGesture = beginLookGesture(pointerId, x, y)
+    this.lookGestureBowAiming = this.bowAiming
     try {
       this.renderer.domElement.setPointerCapture(pointerId)
     } catch (error) {
@@ -17670,6 +18728,7 @@ export class GameEngine {
 
   private onWorldPointerUp(event: PointerEvent): void {
     if (event.button === 2) this.setShield(false)
+    if (event.button === 2 && event.pointerType !== 'mouse') this.setBowAiming(false, 'pointer')
     this.finishWorldLook(event.pointerId, event.clientX, event.clientY)
   }
 
@@ -17678,7 +18737,7 @@ export class GameEngine {
     if (!gesture || gesture.pointerId !== pointerId) return
     const motion = moveLookGesture(gesture, pointerId, x, y)
     this.look(motion.x, motion.y)
-    const attack = finishLookGesture(gesture, pointerId, false)
+    const attack = finishLookGesture(gesture, pointerId, this.lookGestureBowAiming !== this.bowAiming)
     this.releaseLookGesture()
     if (attack) this.attack()
   }
@@ -17690,7 +18749,9 @@ export class GameEngine {
     this.renderer.domElement.focus({ preventScroll: true })
     const locked = document.pointerLockElement === this.renderer.domElement
     if (!locked && !this.pointerFallback) {
+      if (event.button === 2 && this.faction === 'elf') this.setBowAiming(true, 'mouse')
       this.requestPointerLock()
+      if (event.button === 0 && this.bowAiming) this.attack()
       return
     }
     if (event.button === 0) {
@@ -17699,18 +18760,23 @@ export class GameEngine {
     }
     if (event.button === 2) {
       if (this.faction === 'guard') this.setShield(true)
+      else if (this.faction === 'elf') this.setBowAiming(true, 'mouse')
       else this.useAbility()
     }
   }
 
   private onMouseUp(event: MouseEvent): void {
     if (event.button === 2) this.setShield(false)
+    if (event.button === 2) this.setBowAiming(false, 'mouse')
     if (event.button === 0 && this.mousePointerId !== null) {
       this.finishWorldLook(this.mousePointerId, event.clientX, event.clientY)
     }
   }
 
   private onWorldPointerCancel(event: PointerEvent): void {
+    // An explicit release can dispatch its loss after the same pointer has already
+    // started another drag. That old loss must not cancel the newly owned capture.
+    if (event.type === 'lostpointercapture' && this.renderer.domElement.hasPointerCapture(event.pointerId)) return
     if (this.lookGesture?.pointerId === event.pointerId) {
       this.releaseGameplayInput()
       this.emitView(true)
@@ -17730,6 +18796,7 @@ export class GameEngine {
   }
 
   private releaseGameplayInput(): void {
+    this.cancelBowAim()
     this.keys.clear()
     this.jumpAccentArmed = true
     this.releaseLookGesture(true)

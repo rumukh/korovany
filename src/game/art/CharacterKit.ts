@@ -2215,7 +2215,7 @@ function helmDome(radius: number, height: number, segments = 9): THREE.BufferGeo
   )
 }
 
-export function buildHeadgear(kind: HeadgearKind): THREE.BufferGeometry {
+export function buildHeadgear(kind: HeadgearKind, compact = false): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = []
   if (kind === 'circlet' || kind === 'crown') {
     const band = latheProfile(
@@ -2297,11 +2297,11 @@ export function buildHeadgear(kind: HeadgearKind): THREE.BufferGeometry {
       ),
     )
   } else if (kind === 'nasal' || kind === 'crested') {
-    parts.push(transformed(helmDome(0.42, 0.5), { position: { x: 0, y: 0.2, z: 0 } }))
+    parts.push(transformed(helmDome(0.42, 0.5, compact ? 6 : 9), { position: { x: 0, y: 0.2, z: 0 } }))
     parts.push(
       // Nasal bar.
       block(
-        { width: 0.08, height: 0.34, depth: 0.09, topScale: 1.5, bevel: 0.02 },
+        { width: 0.08, height: 0.34, depth: 0.09, topScale: 1.5, bevel: compact ? 0 : 0.02 },
         { position: { x: 0, y: 0.02, z: 0.36 } },
       ),
       // Cheek plates.
@@ -2318,6 +2318,7 @@ export function buildHeadgear(kind: HeadgearKind): THREE.BufferGeometry {
             position: { x: 0.31, y: 0.02, z: 0.2 },
             rotation: { x: 0, y: -1.2, z: 0 },
           },
+          compact ? 0 : 0.012,
         ),
       ),
       // Brow band, riveted.
@@ -2329,7 +2330,7 @@ export function buildHeadgear(kind: HeadgearKind): THREE.BufferGeometry {
             { x: 0.45, y: 0.04 },
             { x: 0.4, y: 0.06 },
           ],
-          { segments: 12, name: 'helm-band' },
+          { segments: compact ? 6 : 12, name: 'helm-band' },
         ),
         { position: { x: 0, y: 0.09, z: 0 } },
       ),
@@ -2459,7 +2460,7 @@ export function buildHeadgear(kind: HeadgearKind): THREE.BufferGeometry {
           { x: 0.24, y: 0.24 },
           { x: 0.001, y: 0.3 },
         ],
-        { segments: 9, name: 'cap' },
+        { segments: compact ? 6 : 9, name: 'cap' },
       ),
       // A knotted tail at the back — a headscarf, not a beanie.
       block(
@@ -3051,7 +3052,7 @@ function bladeProfile(
   })
 }
 
-export function buildWeaponHead(kind: WeaponKind): THREE.BufferGeometry {
+export function buildWeaponHead(kind: WeaponKind, compact = false): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = []
   if (kind === 'sword' || kind === 'greatsword' || kind === 'dagger') {
     const long = kind === 'greatsword'
@@ -3067,7 +3068,7 @@ export function buildWeaponHead(kind: WeaponKind): THREE.BufferGeometry {
           height: short ? 0.06 : 0.09,
           depth: short ? 0.1 : 0.15,
           topScale: 0.78,
-          bevel: 0.02,
+          bevel: compact ? 0 : 0.02,
           shearZ: long ? 0.04 : 0,
         },
         { position: { x: 0, y: guardY, z: 0 } },
@@ -3084,7 +3085,7 @@ export function buildWeaponHead(kind: WeaponKind): THREE.BufferGeometry {
             { x: 0.06, y: 0.05 },
             { x: 0.001, y: 0.07 },
           ],
-          { segments: 7, name: 'pommel' },
+          { segments: compact ? 5 : 7, name: 'pommel' },
         ),
         { position: { x: 0, y: short ? -0.22 : long ? -0.56 : -0.32, z: 0 } },
       ),
@@ -3332,7 +3333,7 @@ export function buildWeaponHead(kind: WeaponKind): THREE.BufferGeometry {
   return finish(parts, `character-weapon:${kind}:head`)
 }
 
-export function buildWeaponGrip(kind: WeaponKind): THREE.BufferGeometry {
+export function buildWeaponGrip(kind: WeaponKind, compact = false): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = []
   const wrap = (
     height: number,
@@ -3342,7 +3343,7 @@ export function buildWeaponGrip(kind: WeaponKind): THREE.BufferGeometry {
   ): void => {
     parts.push(
       loft({
-        profile: polygonProfile(radius, 6),
+        profile: polygonProfile(radius, compact ? 4 : 6),
         sections: [
           { y: centre - height / 2, scaleX: 0.9 },
           { y: centre - height / 2 + 0.03, scaleX: 1 },
@@ -3352,7 +3353,7 @@ export function buildWeaponGrip(kind: WeaponKind): THREE.BufferGeometry {
         name: 'grip',
       }),
     )
-    for (let index = 0; index < ridges; index += 1) {
+    for (let index = 0; index < (compact ? 0 : ridges); index += 1) {
       const t = (index + 0.5) / ridges
       parts.push(
         transformed(
@@ -4956,7 +4957,7 @@ export function buildWagonCargo(gilded: boolean): THREE.BufferGeometry {
 }
 
 /** A draft ox: heavy at the shoulder, head carried low. Origin between its feet. */
-export function buildOxBody(): THREE.BufferGeometry {
+export function buildOxBody(articulated = false): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = [
     bodyAlongZ(
       rectProfile(0.86, 0.92, 0.18),
@@ -4996,6 +4997,7 @@ export function buildOxBody(): THREE.BufferGeometry {
     [-0.34, -0.6],
     [0.34, -0.6],
   ] as const) {
+    if (articulated) continue
     parts.push(
       loft({
         profile: rectProfile(0.24, 0.26, 0.05),
@@ -5111,6 +5113,561 @@ export const WAGON_RIG = {
   oxHeadZ: 1.24,
 } as const
 
+// Enhanced anatomy uses the same joint vocabulary, not the legacy head's bounding box.
+export type CharacterVisualLevel = 'hero' | 'near' | 'mid' | 'far'
+export type CharacterPhysicalSurface = 'skin' | 'hair' | 'cloth' | 'leather' | 'bone' | 'metal' | 'dark'
 
+export const CHARACTER_ART_REVISION = 'character-anatomy-2'
+export const CHARACTER_PHYSICAL_PALETTE = {
+  skin: [0xd6a582, 0xb98161, 0x956749, 0x684a39],
+  hair: [0x594536, 0x997747, 0x302b29, 0x655b52],
+  cloth: { elf: [0x39704d, 0x46654b, 0x4e7958], guard: [0x326eaa, 0x3e79ae, 0x315f91], villain: [0x975869, 0x864959, 0xa56977] },
+  leather: 0x5a4030,
+  bone: 0xc3b59a,
+  metal: 0x8b969e,
+  dark: 0x282c2d,
+} as const
 
+export function illustratedCharacterPlan(plan: CharacterPlan): CharacterPlan {
+  const p = plan.proportions
+  const heavy = plan.kit === 'heavy' || plan.kit === 'elite'
+  const chestWidth = p.chestWidth * (heavy ? 0.87 : 0.8)
+  return {
+    ...plan,
+    proportions: {
+      ...p,
+      headY: p.shoulderY + 0.27,
+      headScale: heavy ? 0.9 : plan.faction === 'elf' ? 0.78 : plan.faction === 'guard' ? 0.82 : 0.85,
+      chestWidth,
+      chestDepth: p.chestDepth * 0.82,
+      shoulderX: chestWidth * 0.58,
+      waistScale: heavy ? 0.87 : 0.76,
+      armSplay: Math.min(p.armSplay, 0.1),
+      lean: plan.faction === 'villain' ? Math.min(p.lean, 0.1) : p.lean,
+    },
+  }
+}
 
+/** A continuous skull surface: mandible, cheek, orbital recess and cranial vault. */
+export function buildIllustratedHead(faction: CharacterFaction, level: CharacterVisualLevel): THREE.BufferGeometry {
+  const sides = level === 'hero' ? 24 : level === 'near' ? 16 : level === 'mid' ? 8 : 6
+  const wide = faction === 'guard' ? 1.04 : faction === 'villain' ? 1.07 : 0.94
+  // [height, half width, face depth, occipital depth]. The eye line is below the vault.
+  const allRings = [
+    [-0.24, 0.07, 0.12, 0.08],
+    [-0.205, 0.12, 0.155, 0.105],
+    [-0.15, 0.16, 0.15, 0.155],
+    [-0.075, 0.182, 0.158, 0.185],
+    [0, 0.188, 0.17, 0.2],
+    [0.06, 0.185, 0.148, 0.202],
+    [0.11, 0.186, 0.177, 0.197],
+    [0.18, 0.175, 0.172, 0.186],
+    [0.235, 0.145, 0.14, 0.155],
+    [0.275, 0.086, 0.078, 0.095],
+    [0.29, 0.015, 0.014, 0.02],
+  ] as const
+  const rings = level === 'hero' || level === 'near' ? allRings
+    : allRings.filter((_, i) => ![3, 7, 9].includes(i))
+  const positions: number[] = []
+  const indices: number[] = []
+  for (const [y, width, front, back] of rings) {
+    for (let segment = 0; segment < sides; segment++) {
+      const a = segment * Math.PI * 2 / sides
+      const s = Math.sin(a)
+      const c = Math.cos(a)
+      // Flatten the central face, keeping temples round. A sphere cannot form these planes.
+      const facialPlane = c > 0 ? Math.pow(c, 0.43) : c
+      const cheek = c > 0 && y >= -0.075 && y <= 0 ? Math.abs(s) * c * 0.025 : 0
+      positions.push(s * width * wide, y, facialPlane * (c > 0 ? front : back) + cheek)
+    }
+  }
+  for (let ring = 0; ring < rings.length - 1; ring++) {
+    for (let s = 0; s < sides; s++) {
+      const a = ring * sides + s
+      const b = ring * sides + (s + 1) % sides
+      indices.push(a, b, b + sides, a, b + sides, a + sides)
+    }
+  }
+  const bottom = positions.length / 3
+  positions.push(0, rings[0][0], 0, 0, rings[rings.length - 1][0], 0)
+  for (let s = 0; s < sides; s++) {
+    indices.push(bottom, (s + 1) % sides, s)
+    const top = (rings.length - 1) * sides
+    indices.push(bottom + 1, top + s, top + (s + 1) % sides)
+  }
+  const skull = new THREE.BufferGeometry()
+  skull.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  skull.setIndex(indices)
+  skull.computeVertexNormals()
+  const nose = loft({
+    profile: rectProfile(0.065, 0.065, 0.012),
+    sections: [
+      { y: -0.045, scaleX: 0.88, scaleZ: 0.85, offsetZ: 0.213 },
+      { y: -0.015, scaleX: 1.14, scaleZ: 1.16, offsetZ: 0.227 },
+      { y: 0.045, scaleX: 0.57, scaleZ: 0.7, offsetZ: 0.197 },
+      { y: 0.115, scaleX: 0.45, scaleZ: 0.32, offsetZ: 0.173 },
+    ],
+    name: 'nasal-bridge',
+  })
+  const parts = [skull, nose,
+    loft({
+      profile: polygonProfile(0.082, level === 'hero' || level === 'near' ? 10 : 6),
+      sections: [{ y: -0.34, scaleX: 1.14, scaleZ: 1.05 }, { y: -0.15, scaleX: 0.94, scaleZ: 0.96 }],
+      name: 'neck',
+    }),
+  ]
+  for (const side of [-1, 1]) {
+    const ear = plate(
+      [
+        { x: 0, y: -0.065 }, { x: 0.046, y: -0.049 },
+        { x: faction === 'elf' ? 0.13 : 0.061, y: faction === 'elf' ? 0.09 : 0.052 },
+        { x: 0.025, y: 0.081 }, { x: -0.005, y: 0.04 },
+      ], 0.022, { position: { x: 0.172 * wide, y: 0.015, z: -0.015 }, rotation: { x: 0, y: -0.25, z: 0 } },
+      level === 'hero' || level === 'near' ? 0.004 : 0,
+    )
+    parts.push(side < 0 ? mirrorX(ear) : ear)
+  }
+  return finish(parts, `illustrated-head:${faction}:${level}`)
+}
+
+/** Low facial marks retain their front polygons, not subpixel box/extrusion walls. */
+function facialFront(geometry: THREE.BufferGeometry, frontOnly: boolean): THREE.BufferGeometry {
+  if (!frontOnly) return geometry
+  const normals = geometry.getAttribute('normal')
+  const index = geometry.getIndex()
+  const count = index?.count ?? normals.count
+  const indices: number[] = []
+  for (let i = 0; i < count; i += 3) {
+    const a = index ? index.getX(i) : i
+    const b = index ? index.getX(i + 1) : i + 1
+    const c = index ? index.getX(i + 2) : i + 2
+    if (normals.getZ(a) > 0.9 && normals.getZ(b) > 0.9 && normals.getZ(c) > 0.9) indices.push(a, b, c)
+  }
+  if (!indices.length) {
+    geometry.dispose()
+    throw new Error('A facial mark has no front surface')
+  }
+  // Leave original backing attributes intact; their bytes are still owned and billed.
+  geometry.setIndex(indices)
+  return geometry
+}
+
+export function buildIllustratedFace(level: CharacterVisualLevel, frontOnly = false): THREE.BufferGeometry {
+  const parts: THREE.BufferGeometry[] = []
+  const coarse = level === 'mid' || level === 'far'
+  for (const side of [-1, 1]) {
+    parts.push(block({ width: 0.073, height: 0.022, depth: 0.027, bevel: coarse ? 0 : 0.006 },
+      { position: { x: side * 0.087, y: 0.058, z: 0.163 }, rotation: { x: 0, y: side * 0.12, z: side * 0.07 } }))
+    if (level === 'hero' || level === 'near') {
+      parts.push(block({ width: 0.081, height: 0.014, depth: 0.022 },
+        { position: { x: side * 0.087, y: 0.099, z: 0.176 }, rotation: { x: 0, y: side * 0.12, z: -side * 0.07 } }))
+      parts.push(block({ width: 0.016, height: 0.009, depth: 0.009 },
+        { position: { x: side * 0.027, y: -0.04, z: 0.234 } }))
+    }
+  }
+  parts.push(block({ width: 0.084, height: 0.009, depth: 0.015 },
+    { position: { x: 0, y: -0.107, z: 0.151 } }))
+  return facialFront(finish(parts, `illustrated-face:${level}`), frontOnly)
+}
+
+export function buildIllustratedEyes(
+  iris: boolean, level: CharacterVisualLevel = 'near', frontOnly = false,
+): THREE.BufferGeometry {
+  return facialFront(finish(mirroredPair((side) => iris
+    ? block({ width: 0.016, height: 0.017, depth: 0.005, bevel: level === 'mid' || level === 'far' ? 0 : 0.004 },
+      { position: { x: side * 0.086, y: 0.058, z: 0.183 } })
+    : plate([
+      { x: -0.03, y: 0 }, { x: -0.013, y: -0.007 }, { x: 0.015, y: -0.006 },
+      { x: 0.03, y: 0.002 }, { x: 0.009, y: 0.009 }, { x: -0.014, y: 0.008 },
+    ], 0.005, { position: { x: side * 0.087, y: 0.058, z: 0.177 } }, 0)),
+  iris ? 'iris' : 'sclera'), frontOnly)
+}
+
+/** Thick open-front cloth; no closed lathe wall between the eyes and the camera. */
+function openHeadCover(ragged: boolean, level: CharacterVisualLevel): THREE.BufferGeometry {
+  const segments = level === 'far' ? 8 : 14
+  const ringData = [
+    [-0.30, 0.23, 0.205], [-0.15, 0.24, 0.22], [0.055, 0.235, 0.232],
+    [0.22, 0.211, 0.214], [0.33, 0.14, 0.156], [0.37, 0.032, 0.046],
+  ] as const
+  const positions: number[] = []
+  const indices: number[] = []
+  const gap = 0.85
+  const count = ringData.length * (segments + 1)
+  for (const thickness of [0, -0.022]) {
+    for (const [y, rx, rz] of ringData) {
+      for (let s = 0; s <= segments; s++) {
+        const angle = gap + (Math.PI * 2 - gap * 2) * s / segments
+        positions.push(
+          Math.sin(angle) * (rx + thickness),
+          y + (ragged && y === -0.30 ? Math.cos(s * 2.2) * 0.027 : 0),
+          Math.cos(angle) * (rz + thickness) - 0.015,
+        )
+      }
+    }
+  }
+  const quad = (a: number, b: number, c: number, d: number) => indices.push(a, b, c, a, c, d)
+  for (let r = 0; r < ringData.length - 1; r++) {
+    for (let s = 0; s < segments; s++) {
+      const a = r * (segments + 1) + s
+      const b = a + 1
+      const d = a + segments + 1
+      quad(a, b, d + 1, d)
+      quad(a + count, d + count, d + count + 1, b + count)
+    }
+    const a = r * (segments + 1)
+    const b = a + segments + 1
+    quad(a, b, b + count, a + count)
+    quad(a + segments, a + segments + count, b + segments + count, b + segments)
+  }
+  for (let s = 0; s < segments; s++) {
+    quad(s, s + count, s + count + 1, s + 1)
+    const a = (ringData.length - 1) * (segments + 1) + s
+    quad(a, a + 1, a + count + 1, a + count)
+  }
+  const shell = new THREE.BufferGeometry()
+  shell.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  shell.setIndex(indices)
+  shell.computeVertexNormals()
+  return finish([shell], ragged ? 'ragged-open-hood' : 'open-hood')
+}
+
+export function buildIllustratedHeadgear(
+  kind: HeadgearKind, level: CharacterVisualLevel, compact = false,
+): THREE.BufferGeometry {
+  if (kind === 'hood' || kind === 'ragHood') return openHeadCover(kind === 'ragHood', compact ? 'far' : level)
+  if (kind === 'kettle' && (level === 'mid' || level === 'far')) {
+    const segments = level === 'mid' && !compact ? 8 : 6
+    return finish([
+      transformed(helmDome(0.228, 0.273, segments), { position: { x: 0, y: 0.1892, z: -0.006 } }),
+      transformed(latheProfile([
+        { x: 0.171, y: -0.0186 }, { x: 0.2964, y: -0.0558 },
+        { x: 0.2964, y: -0.0186 }, { x: 0.171, y: 0.031 },
+      ], { segments }), { position: { x: 0, y: 0.1396, z: -0.006 }, scale: { x: 1, y: 1, z: 0.59 / 0.57 } }),
+    ], 'coarse-fitted-kettle')
+  }
+  if (kind === 'hornedHelm') {
+    return finish([
+      transformed(helmDome(0.229, 0.27, 10), { position: { x: 0, y: 0.229, z: -0.006 } }),
+      block({ width: 0.365, height: 0.046, depth: 0.044, bevel: 0.011 },
+        { position: { x: 0, y: 0.136, z: 0.173 } }),
+    ], 'fitted-iron-helm')
+  }
+  if (kind === 'boneMask') {
+    // Brow, temples and nasal bridge leave both eyes and lower face physically open.
+    return finish([
+      block({ width: 0.38, height: 0.043, depth: 0.044, bevel: 0.012 },
+        { position: { x: 0, y: 0.13, z: 0.184 } }),
+      block({ width: 0.037, height: 0.15, depth: 0.05, bevel: 0.009 },
+        { position: { x: 0, y: 0.06, z: 0.214 } }),
+      ...mirroredPairX(() => plate([
+        { x: 0, y: 0.13 }, { x: 0.05, y: 0.1 }, { x: 0.045, y: -0.09 }, { x: 0, y: -0.03 },
+      ], 0.026, { position: { x: 0.161, y: 0, z: 0.126 }, rotation: { x: 0, y: -0.3, z: 0 } }, 0.004)),
+    ], 'open-bone-mask')
+  }
+  if (kind === 'greathelm') {
+    return finish([
+      transformed(helmDome(0.221, 0.3, 10), { position: { x: 0, y: 0.255, z: -0.01 } }),
+      ...mirroredPairX(() => block({ width: 0.055, height: 0.28, depth: 0.32, bevel: 0.014 },
+        { position: { x: 0.197, y: 0.035, z: -0.01 } })),
+      block({ width: 0.37, height: 0.09, depth: 0.05, bevel: 0.01 },
+        { position: { x: 0, y: -0.08, z: 0.183 } }),
+      block({ width: 0.033, height: 0.22, depth: 0.039, bevel: 0.005 },
+        { position: { x: 0, y: 0.062, z: 0.205 } }),
+    ], 'fitted-open-greathelm')
+  }
+  // Keep the recognizable guard brim, nasal bar and officer crest, fitted to the new skull.
+  return transformed(buildHeadgear(kind, compact), {
+    scale: { x: 0.57, y: 0.62, z: 0.59 }, position: { x: 0, y: 0.09, z: -0.006 },
+  })
+}
+
+export function buildIllustratedHair(kind: HairKind): THREE.BufferGeometry {
+  // The hair cap is behind the hairline; it must not replace forehead or eyes.
+  return transformed(buildHair(kind), {
+    scale: { x: 0.57, y: 0.62, z: 0.59 }, position: { x: 0, y: 0.025, z: -0.032 },
+  })
+}
+
+export function buildIllustratedHorns(): THREE.BufferGeometry {
+  return finish(mirroredPairX(() => tubeAlongPoints([
+    { x: 0.17, y: 0.2, z: -0.015 },
+    { x: 0.239, y: 0.249, z: -0.035 },
+    { x: 0.287, y: 0.33, z: -0.07 },
+    { x: 0.3, y: 0.409, z: -0.079 },
+  ], { radius: (t) => 0.049 * (1 - t) + 0.007, radialSegments: 6, tubularSegments: 7, capStart: true, capEnd: true })),
+  'fitted-bone-horns')
+}
+
+export function buildIllustratedTorso(plan: CharacterPlan, level: CharacterVisualLevel = 'near'): THREE.BufferGeometry {
+  const p = plan.proportions
+  const height = p.shoulderY - p.hipY
+  const coarse = level === 'mid' || level === 'far'
+  const sections: LoftSection[] = [
+    { y: -0.53, scaleX: 0.78, scaleZ: 0.86 },
+    { y: -0.36, scaleX: p.waistScale, scaleZ: 0.8 },
+    { y: -0.1, scaleX: 0.9, scaleZ: 0.94 },
+    { y: 0.16, scaleX: 1, scaleZ: 1 },
+    { y: height - (p.torsoY - p.hipY) - 0.03, scaleX: 0.86, scaleZ: 0.83 },
+    { y: height - (p.torsoY - p.hipY) + 0.06, scaleX: 0.28, scaleZ: 0.35 },
+  ]
+  const skirt = coarse && plan.faction === 'guard' && plan.armour !== 'none'
+    ? [-1, 0, 1].map((side) => block({
+      width: p.chestWidth * (side === 0 ? 0.44 : 0.34), height: 0.34,
+      depth: p.chestDepth * (side === 0 ? 0.5 : 0.72), bottomScale: 0.86,
+    }, { position: { x: side * p.chestWidth * 0.36, y: -0.84, z: side === 0 ? p.chestDepth * 0.34 : 0 },
+      rotation: { x: 0, y: 0, z: -side * 0.1 } }))
+    : torsoSkirt(plan)
+  return finish([loft({
+    profile: rectProfile(p.chestWidth, p.chestDepth, 0.12),
+    sections: coarse ? sections.filter((_, index) => index !== 2) : sections,
+    name: 'fitted-ribcage',
+  }), ...skirt], 'illustrated-torso')
+}
+
+export function buildIllustratedChestArmor(plan: CharacterPlan, level: CharacterVisualLevel = 'near'): THREE.BufferGeometry {
+  if ((level === 'mid' || level === 'far') && plan.faction === 'guard' && plan.armour !== 'none') {
+    return finish([
+      wedge(0.14, 0.62, 0.16, { position: { x: 0, y: 0.22, z: plan.proportions.chestDepth * 0.5 },
+        rotation: { x: Math.PI / 2, y: 0, z: 0 } }),
+      ...[-0.06, -0.26, -0.46].map((y) => block({
+        width: plan.proportions.chestWidth * 0.92, height: 0.06, depth: plan.proportions.chestDepth * 0.94, topScale: 1.04,
+      }, { position: { x: 0, y, z: 0 } })),
+    ], 'coarse-banded-cuirass')
+  }
+  return finish([...torsoChestPiece(plan)], 'illustrated-chest-layer')
+}
+
+export function buildIllustratedTrim(trim: TrimKind, level: CharacterVisualLevel): THREE.BufferGeometry {
+  if ((level === 'mid' || level === 'far') && (trim === 'belt' || trim === 'beltPouch')) {
+    const parts = [
+      block({ width: 0.96, height: 0.13, depth: 0.66 }, { position: { x: 0, y: -0.33, z: 0 } }),
+      block({ width: 0.17, height: 0.17, depth: 0.09 }, { position: { x: 0, y: -0.33, z: 0.34 } }),
+    ]
+    if (trim === 'beltPouch') for (const side of [-1, 1]) parts.push(block({
+      width: 0.18, height: 0.22, depth: 0.13, bottomScale: 0.86,
+    }, { position: { x: side * 0.35, y: -0.45, z: 0.25 } }))
+    return finish(parts, 'coarse-belt-pouches')
+  }
+  return buildTorsoTrim(trim)
+}
+
+export function buildIllustratedArm(length: number, forearm: boolean, compact = false): THREE.BufferGeometry {
+  return finish([block({
+    width: forearm ? 0.21 : 0.24, height: length + 0.05, depth: forearm ? 0.218 : 0.254,
+    topScale: 1, bottomScale: forearm ? 0.66 : 0.82, bevel: compact ? 0 : 0.036,
+  }, { position: { x: 0, y: -length * 0.5 + 0.025, z: 0 } })], 'coarse-arm')
+}
+
+export function buildIllustratedShoulder(plan: CharacterPlan, side: number, compact = false): THREE.BufferGeometry {
+  const width = plan.kit === 'heavy' || plan.kit === 'elite' ? 0.36 : 0.29
+  if (plan.faction === 'elf') {
+    return finish([plate([
+      { x: -0.12, y: -0.15 }, { x: 0.12, y: -0.17 }, { x: 0.16, y: 0.07 }, { x: 0, y: 0.13 }, { x: -0.15, y: 0.07 },
+    ], 0.28, { position: { x: 0, y: 0.015, z: -0.04 } }, 0.012)], 'leaf-shoulder')
+  }
+  const cap = block({ width, height: 0.18, depth: 0.34, topScale: 0.76, bevel: compact ? 0 : 0.047 },
+    { position: { x: side * 0.016, y: 0.015, z: 0 } })
+  if (plan.faction === 'villain' && side > 0) {
+    return finish([cap, spike(0.04, 0.16, { position: { x: 0.075, y: 0.09, z: -0.04 }, rotation: { x: -0.3, y: 0, z: -0.4 } })], 'scavenged-shoulder')
+  }
+  return finish([cap], 'fitted-shoulder')
+}
+
+/** Palm and curled fingers surround a +Y handle rather than intersecting its centre. */
+export function buildIllustratedHand(
+  side: number, level: CharacterVisualLevel = 'near', compact = false,
+): THREE.BufferGeometry {
+  const coarse = level === 'mid' || level === 'far'
+  const parts = [
+    block({ width: 0.125, height: 0.15, depth: 0.06, bevel: compact && coarse ? 0 : 0.022 },
+      { position: { x: 0, y: -0.04, z: -0.052 } }),
+    block({ width: 0.045, height: 0.11, depth: 0.09, bevel: compact && coarse ? 0 : 0.014 },
+      { position: { x: side * 0.069, y: -0.016, z: -0.006 }, rotation: { x: 0, y: side * 0.24, z: side * 0.24 } }),
+  ]
+  const fingers = coarse || compact ? 1 : 4
+  for (let finger = 0; finger < fingers; finger++) {
+    const outline = [
+      { x: -0.068, y: -0.052 }, { x: -0.075, y: 0.01 }, { x: -0.055, y: 0.045 },
+      { x: -0.02, y: 0.06 }, { x: 0.04, y: 0.043 }, { x: 0.045, y: 0.019 },
+      { x: 0.023, y: 0.014 }, { x: -0.021, y: 0.034 }, { x: -0.043, y: 0.018 },
+      { x: -0.045, y: -0.052 },
+    ]
+    const curl = plate(compact ? outline.filter((_, i) => i !== 2 && i !== 8 && (!coarse || (i !== 4 && i !== 6)))
+      : outline, fingers === 1 ? 0.105 : 0.026, {
+      position: { x: 0, y: fingers === 1 ? -0.04 : 0.011 - finger * 0.033, z: 0 },
+      rotation: { x: Math.PI / 2, y: 0, z: 0 },
+    }, 0)
+    parts.push(side < 0 ? mirrorX(curl) : curl)
+  }
+  return finish(parts, `gripping-hand:${side}`)
+}
+
+/** Keep joint bulges and extremities; spend fewer rings on almost straight limb spans. */
+export function buildIllustratedCompactLimb(
+  length: number, kind: 'upperArm' | 'forearm' | 'thigh' | 'shin', coarse: boolean,
+): THREE.BufferGeometry {
+  const width = kind === 'upperArm' ? 0.24 : kind === 'forearm' ? 0.21 : kind === 'thigh' ? 0.3 : 0.2
+  const depth = width * (kind === 'upperArm' ? 1.06 : kind === 'forearm' ? 1.04 : kind === 'thigh' ? 1.1 : 1.175)
+  const bevel = kind === 'forearm' ? 0.05 : kind === 'shin' ? 0.044 : 0.06
+  const x = width * 0.5, z = depth * 0.5
+  const profile = coarse ? [
+    { x: -x + bevel, y: -z }, { x: x - bevel, y: -z }, { x, y: 0 },
+    { x: x - bevel, y: z }, { x: -x + bevel, y: z }, { x: -x, y: 0 },
+  ] : rectProfile(width, depth, bevel)
+  const sections: LoftSection[] = kind === 'upperArm' ? [
+    { y: 0.1, scaleX: 0.78, scaleZ: 0.8 },
+    { y: 0.04, scaleX: 1.06, scaleZ: 1.06 },
+    { y: -length, scaleX: 0.82, scaleZ: 0.86 },
+  ] : kind === 'forearm' ? [
+    { y: 0.06, scaleX: 0.9, scaleZ: 0.94 },
+    { y: -0.02, scaleX: 1.04, scaleZ: 1.02 },
+    { y: -length, scaleX: 0.66, scaleZ: 0.7 },
+  ] : kind === 'thigh' ? [
+    { y: 0.1, scaleX: 0.9, scaleZ: 0.92 },
+    { y: 0, scaleX: 1.04, scaleZ: 1.04 },
+    { y: -length, scaleX: 0.82, scaleZ: 0.86 },
+  ] : [
+    { y: -length + 0.1, scaleX: 0.63, scaleZ: 0.67 },
+    { y: -length * 0.24, scaleX: 1, scaleZ: 1, offsetZ: -0.023 },
+    { y: 0.055, scaleX: 0.9, scaleZ: 0.93 },
+  ]
+  return finish([loft({ profile, sections })], `compact-${kind}`)
+}
+
+export function buildIllustratedShin(length: number): THREE.BufferGeometry {
+  return finish([loft({
+    profile: rectProfile(0.2, 0.235, 0.044),
+    sections: [
+      { y: -length + 0.1, scaleX: 0.63, scaleZ: 0.67 },
+      { y: -length * 0.62, scaleX: 0.79, scaleZ: 0.88 },
+      { y: -length * 0.24, scaleX: 1, scaleZ: 1, offsetZ: -0.023 },
+      { y: 0.055, scaleX: 0.9, scaleZ: 0.93 },
+    ], name: 'fitted-shin',
+  })], 'illustrated-shin')
+}
+
+/** Foot origin is the sole contact, so terrain correction never guesses its height. */
+export function buildIllustratedBoot(compact = false): THREE.BufferGeometry {
+  if (compact) {
+    // One closed outside skin instead of three mutually intersecting capped blocks.
+    // Each side-profile point carries its width; the ankle is not as wide as the sole.
+    const contour = [
+      [-0.115, 0, 0.0915], [0.254, 0, 0.1025], [0.265, 0.028, 0.0915],
+      [0.255, 0.106, 0.073], [0.076, 0.106, 0.0875],
+      [0.0634, 0.243, 0.07525], [-0.0914, 0.243, 0.07525],
+      [-0.104, 0.106, 0.0875],
+    ] as const
+    const points = contour.map(([z, y]) => new THREE.Vector2(z, y))
+    const caps = THREE.ShapeUtils.triangulateShape(points, [])
+    const positions: number[] = []
+    const indices: number[] = []
+    for (const side of [-1, 1]) for (const [z, y, width] of contour) positions.push(side * width, y, z)
+    const n = contour.length
+    for (const [a, b, c] of caps) indices.push(a, b, c, a + n, c + n, b + n)
+    for (let a = 0; a < n; a++) {
+      const b = (a + 1) % n
+      indices.push(a, a + n, b + n, a, b + n, b)
+    }
+    const indexed = new THREE.BufferGeometry()
+    indexed.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+    indexed.setIndex(indices)
+    const geometry = indexed.toNonIndexed()
+    indexed.dispose()
+    geometry.computeVertexNormals()
+    return finish([geometry], 'compact-boot')
+  }
+  return finish([
+    block({ width: 0.19, height: 0.1, depth: 0.36, topScale: 0.91, bevel: 0.032 },
+      { position: { x: 0, y: 0.056, z: 0.075 } }),
+    block({ width: 0.175, height: 0.19, depth: 0.18, topScale: 0.86, bevel: 0.028 },
+      { position: { x: 0, y: 0.148, z: -0.014 } }),
+    block({ width: 0.205, height: 0.028, depth: 0.38, bevel: 0.011 },
+      { position: { x: 0, y: 0.014, z: 0.075 } }),
+  ], 'illustrated-boot')
+}
+
+export function buildCreatureLimbSegment(
+  kind: BeastKind | 'deer' | 'ox', length: number, upper: boolean,
+): THREE.BufferGeometry {
+  const width = kind === 'deer' ? 0.12 : kind === 'wolf' ? 0.16 : kind === 'boar' ? 0.2
+    : kind === 'bear' ? 0.3 : kind === 'ox' ? 0.23 : 0.32
+  return finish([loft({
+    profile: rectProfile(width * (upper ? 1 : 0.7), width * (upper ? 1.12 : 0.8), width * 0.2),
+    sections: [
+      { y: -length, scaleX: upper ? 0.72 : 0.68, scaleZ: 0.76 },
+      { y: -length * 0.58, scaleX: upper ? 1.02 : 0.77, scaleZ: upper ? 1.12 : 0.8, offsetZ: upper ? -width * 0.12 : 0 },
+      { y: 0.035, scaleX: upper ? 1.26 : 1, scaleZ: upper ? 1.2 : 1 },
+    ], name: `${kind}-${upper ? 'upper' : 'lower'}-limb`,
+  })], `${kind}-limb-segment`)
+}
+
+export function buildCreatureFoot(kind: BeastKind | 'deer' | 'ox'): THREE.BufferGeometry {
+  const hoof = kind === 'boar' || kind === 'deer' || kind === 'ox'
+  const width = kind === 'deer' ? 0.11 : kind === 'wolf' ? 0.21 : kind === 'boar' ? 0.22 : kind === 'ox' ? 0.27 : 0.4
+  const parts: THREE.BufferGeometry[] = []
+  if (hoof) {
+    for (const side of [-1, 1]) parts.push(block({
+      width: width * 0.46, height: width * 0.53, depth: width * 1.27, bevel: width * 0.1, topScale: 0.77,
+    }, { position: { x: side * width * 0.25, y: width * 0.28, z: width * 0.12 } }))
+  } else {
+    parts.push(block({ width, height: width * 0.42, depth: width * 1.32, topScale: 0.76, bevel: width * 0.17 },
+      { position: { x: 0, y: width * 0.22, z: width * 0.16 } }))
+    for (const side of [-1, 0, 1]) parts.push(block({
+      width: width * 0.24, height: width * 0.22, depth: width * 0.38, bevel: width * 0.06,
+    }, { position: { x: side * width * 0.29, y: width * 0.14, z: width * 0.69 } }))
+  }
+  return finish(parts, `${kind}-${hoof ? 'cloven-hoof' : 'paw'}`)
+}
+
+export function buildArticulatedBirdWing(side: number): THREE.BufferGeometry {
+  const wing = plate([
+    { x: 0, y: -0.07 }, { x: 0.14, y: -0.15 }, { x: 0.3, y: -0.16 },
+    { x: 0.44, y: -0.1 }, { x: 0.4, y: -0.06 }, { x: 0.36, y: -0.02 },
+    { x: 0.28, y: 0.055 }, { x: 0.13, y: 0.1 }, { x: 0, y: 0.06 },
+  ], 0.021, { rotation: { x: Math.PI / 2, y: 0, z: 0 } }, 0)
+  return finish([side < 0 ? mirrorX(wing) : wing], `articulated-wing:${side}`)
+}
+
+export function buildBirdFoot(): THREE.BufferGeometry {
+  const parts = [
+    tubeAlongPoints([
+      { x: 0, y: 0.015, z: 0 }, { x: 0, y: 0.075, z: -0.01 }, { x: 0, y: 0.145, z: 0.008 },
+    ], { radius: 0.009, radialSegments: 5, tubularSegments: 3, capStart: true, capEnd: true }),
+  ]
+  for (const side of [-1, 0, 1]) parts.push(tubeAlongPoints([
+    { x: 0, y: 0.02, z: 0 }, { x: side * 0.018, y: 0.009, z: 0.033 },
+    { x: side * 0.03, y: 0.006, z: side === 0 ? 0.082 : 0.062 },
+  ], { radius: 0.006, radialSegments: 4, tubularSegments: 3, capStart: true, capEnd: true }))
+  parts.push(tubeAlongPoints([
+    { x: 0, y: 0.018, z: 0 }, { x: 0, y: 0.008, z: -0.032 }, { x: 0.01, y: 0.004, z: -0.056 },
+  ], { radius: 0.005, radialSegments: 4, tubularSegments: 3, capStart: true, capEnd: true }))
+  return finish(parts, 'bird-foot')
+}
+
+export function buildIllustratedBowString(): THREE.BufferGeometry {
+  return finish([tubeAlongPoints([
+    { x: 0.02, y: -0.74, z: -0.06 }, { x: 0.02, y: 0, z: -0.06 }, { x: 0.02, y: 0.74, z: -0.06 },
+  ], { radius: 0.008, radialSegments: 4, tubularSegments: 2, capStart: true, capEnd: true })], 'bow-string')
+}
+
+export function buildIllustratedNockedArrow(): THREE.BufferGeometry {
+  return finish([
+    tubeAlongPoints([
+      { x: 0.02, y: 0, z: -0.06 }, { x: 0.02, y: 0, z: 0.88 },
+    ], { radius: 0.009, radialSegments: 4, tubularSegments: 1, capStart: true, capEnd: true }),
+    spike(0.035, 0.12, { position: { x: 0.02, y: 0, z: 0.88 }, rotation: { x: Math.PI / 2, y: 0, z: 0 } }),
+  ], 'nocked-arrow')
+}
+
+export function buildDraftYoke(): THREE.BufferGeometry {
+  const parts = [block({ width: 0.2, height: 0.18, depth: 2.3, bevel: 0.035 })]
+  for (const side of [-1, 1]) parts.push(tubeAlongPoints([
+    { x: 0, y: 0, z: side * WAGON_RIG.oxZ - 0.25 },
+    { x: 0, y: -0.28, z: side * WAGON_RIG.oxZ - 0.2 },
+    { x: 0, y: -0.4, z: side * WAGON_RIG.oxZ },
+    { x: 0, y: -0.28, z: side * WAGON_RIG.oxZ + 0.2 },
+    { x: 0, y: 0, z: side * WAGON_RIG.oxZ + 0.25 },
+  ], { radius: 0.045, radialSegments: 5, tubularSegments: 8, capStart: true, capEnd: true }))
+  return finish(parts, 'load-bearing-yoke')
+}

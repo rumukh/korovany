@@ -8,7 +8,7 @@ export function CampaignJournal({ children, onClose }: {
 }) {
   useLayoutEffect(() => lockDocumentScroll(), [])
   return (
-    <div className="modal-backdrop journal-backdrop">
+    <div className="modal-backdrop journal-backdrop" role="presentation">
       <section className="campaign-journal" role="dialog" aria-modal="true"
         aria-labelledby="journal-title">
         <header className="journal-header">

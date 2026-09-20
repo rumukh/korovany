@@ -27,8 +27,12 @@ import {
   type RoofStyle,
   type TreeSpecies,
   type WallStyle,
+  ART_SURFACE_ATTRIBUTE,
+  ART_SHADOW_ATTRIBUTE,
+  ART_WIND_ATTRIBUTE,
+  validateArtGeometry,
 } from '../src/game/art/index.ts'
-import { SITE_PRESENTATIONS } from '../src/game/content/registry.ts'
+import { SITE_PRESENTATIONS, getRegionRiverLegs } from '../src/game/content/registry.ts'
 import { GeneratedWorldRuntime, inkDrawCost } from '../src/game/world/GeneratedWorldRuntime.ts'
 import {
   buildingSpecKey,
@@ -43,6 +47,12 @@ import {
   type PropRequest,
 } from '../src/game/world/WorldPropLibrary.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
+import { WorldSurfaceField, createWorldSurfaceSample } from '../src/game/world/WorldSurfaceField.ts'
+import { TerrainSystem } from '../src/game/world/TerrainSystem.ts'
+import { createProceduralSurfaceTexture } from '../src/game/ProceduralSurfaceTexture.ts'
+import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
+import { createFoundationContactGeometry } from '../src/game/world/WorldSurfaceGeometry.ts'
+import { sumVisualAllocationReceipts } from '../src/game/diagnostics/VisualBudgetAccounting.ts'
 import type { SiteKind, Territory, WorldBlueprint } from '../src/game/world/worldTypes.ts'
 
 /**
@@ -65,6 +75,342 @@ const PROP_PALETTE: PropPalette = {
   glow: 0xffc46a,
   accent: 0xc48742,
 }
+
+test('world surface metadata follows actual sites and routes without becoming height authority', () => {
+  const blueprint = generateWorld(20260906)
+  const before = JSON.stringify(blueprint)
+  const terrain = new TerrainSystem(blueprint)
+  const field = new WorldSurfaceField(blueprint, terrain, { roadWidth: 4.5, riverWidth: 10, bridgeWidth: 6 })
+  assert.ok(field.courts.length > 0)
+  assert.equal(Object.isFrozen(field.courts), true)
+  let paving = 0, country = 0, water = 0, bridge = 0
+  const sample = createWorldSurfaceSample()
+  for (let x = -198; x < 200; x += 4) for (let z = -198; z < 200; z += 4) {
+    field.sampleInto(x, z, sample)
+    assert.equal(field.pavingAt(x, z), sample.paving)
+    assert.ok(sample.paving >= 0 && sample.paving <= 1)
+    assert.ok(sample.visualWaterDepth >= 0)
+    assert.ok(Math.abs(Math.hypot(sample.flowX, sample.flowZ) - 1) < 1e-9)
+    if (sample.material === 'water' || sample.material === 'bridge') {
+      assert.equal(sample.paving, 0, 'a court cannot invent a paved crossing')
+      assert.equal(sample.vegetation, 0)
+      if (sample.material === 'water') water++
+      else bridge++
+    } else if (sample.biome === 'palace') {
+      if (sample.paving > 0.8) paving++
+      if (sample.paving === 0 && sample.road === 0) country++
+    }
+  }
+  assert.ok(paving > 0 && country > paving && water > 0 && bridge > 0,
+    'the sample must include real paving, predominantly unpaved palace country, water and crossings')
+  const one = field.sample(0, 0)
+  assert.equal(Object.isFrozen(one), true)
+  assert.equal('height' in one, false)
+  assert.equal('normal' in one, false)
+  assert.equal(JSON.stringify(blueprint), before)
+  const custom = new WorldSurfaceField(blueprint, terrain, { roadWidth: 4.5, riverWidth: 10.3, bridgeWidth: 6.3 })
+  const center = terrain.getRegion(blueprint.bridges[0].regionId)!.bounds
+  const contact = custom.bridgeContacts[0]
+  assert.ok(Math.abs(contact.x - (center.minX + center.maxX) / 2 + 14.5 * 0.22) < 1e-9,
+    'support metadata uses the same canonical half-metre size as the actual bridge builder')
+  assert.ok(Math.abs(contact.z - (center.minZ + center.maxZ) / 2 + 6.5 * 0.72 / 2) < 1e-9)
+  assert.throws(() => field.sample(NaN, 0), /finite/)
+  assert.throws(() => new WorldSurfaceField(blueprint, terrain,
+    { roadWidth: 0, riverWidth: 10, bridgeWidth: 6 }), /positive/)
+})
+
+test('tactile textures keep scale independent of resolution and suppress wallpaper contrast', () => {
+  const options = {
+    key: 'paving-test', base: 0xffffff, detail: 0x777777,
+    pattern: 'stone' as const, repeatX: 1, repeatY: 1,
+  }
+  const small = createProceduralSurfaceTexture({ ...options, tactile: true, size: 128 })
+  const large = createProceduralSurfaceTexture({ ...options, tactile: true, size: 256 })
+  const same = createProceduralSurfaceTexture({ ...options, tactile: true, size: 128 })
+  const legacy = createProceduralSurfaceTexture(options)
+  const bytes = (map: THREE.DataTexture) => map.image.data as Uint8Array
+  assert.deepEqual(bytes(small), bytes(same))
+  assert.equal(small.magFilter, THREE.LinearFilter)
+  assert.equal(legacy.magFilter, THREE.NearestFilter)
+  let error = 0, count = 0, minimum = 255, maximum = 0
+  for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) {
+    const a = bytes(small)[(y * 128 + x) * 4]
+    const b = [0, 1].flatMap((dy) => [0, 1].map((dx) =>
+      bytes(large)[((y * 2 + dy) * 256 + x * 2 + dx) * 4])).reduce((s, v) => s + v, 0) / 4
+    error += Math.abs(a - b)
+    count++
+    minimum = Math.min(minimum, a); maximum = Math.max(maximum, a)
+  }
+  assert.ok(error / count < 4, 'more pixels must sample the same world-sized courses, not create more tiles')
+  assert.ok(minimum > 180 && maximum - minimum < 65, 'paving cannot dominate the frame with black joints')
+  assert.ok(maximum - minimum > 10, 'a blank map does not satisfy restrained detail')
+  for (const map of [small, large, same, legacy]) map.dispose()
+})
+
+test('world surface water flow crosses real meander seams in the route direction', () => {
+  const blueprint = generateWorld(20260906)
+  const field = new WorldSurfaceField(blueprint, new TerrainSystem(blueprint),
+    { roadWidth: 4.5, riverWidth: 10, bridgeWidth: 6 })
+  const before = createWorldSurfaceSample(), after = createWorldSurfaceSample()
+  let crossings = 0, sideways = 0
+  for (const id of blueprint.river.regionPath.slice(0, -1)) {
+    const exit = getRegionRiverLegs(blueprint, id)[1]
+    const length = Math.hypot(exit.edge.x - exit.center.x, exit.edge.z - exit.center.z)
+    const dx = (exit.edge.x - exit.center.x) / length, dz = (exit.edge.z - exit.center.z) / length
+    field.sampleWaterInto(exit.edge.x - dx * 0.001, exit.edge.z - dz * 0.001, before)
+    field.sampleWaterInto(exit.edge.x + dx * 0.001, exit.edge.z + dz * 0.001, after)
+    assert.ok(before.flowX * dx + before.flowZ * dz > 0.999)
+    assert.ok(after.flowX * dx + after.flowZ * dz > 0.999)
+    assert.ok(Math.abs(before.flowX - after.flowX) < 1e-4 && Math.abs(before.flowZ - after.flowZ) < 1e-4)
+    assert.ok(Math.abs(before.visualWaterDepth - after.visualWaterDepth) < 1e-4)
+    crossings++
+    if (Math.abs(dx) > 0.5) sideways++
+  }
+  assert.equal(crossings, blueprint.river.regionPath.length - 1)
+  assert.ok(sideways > 0, 'a straight-only fixture cannot prove meander direction')
+  assert.throws(() => field.sampleWaterInto(Infinity, 0, before), /finite/)
+})
+
+test('world surface bend flow stays continuous where river legs overlap', () => {
+  const blueprint = generateWorld(20260906)
+  const field = new WorldSurfaceField(blueprint, new TerrainSystem(blueprint),
+    { roadWidth: 4.5, riverWidth: 10, bridgeWidth: 6 })
+  const bend = blueprint.river.regionPath.map((id) => getRegionRiverLegs(blueprint, id))
+    .find(([entry, exit]) => entry.edge.x !== exit.edge.x && entry.edge.z !== exit.edge.z)
+  assert.ok(bend, 'this control needs a real right-angle river bend')
+  const [entry, exit] = bend
+  const inLength = Math.hypot(entry.center.x - entry.edge.x, entry.center.z - entry.edge.z)
+  const outLength = Math.hypot(exit.edge.x - exit.center.x, exit.edge.z - exit.center.z)
+  const inX = (entry.center.x - entry.edge.x) / inLength, inZ = (entry.center.z - entry.edge.z) / inLength
+  const outX = (exit.edge.x - exit.center.x) / outLength, outZ = (exit.edge.z - exit.center.z) / outLength
+  const x = entry.center.x - inX * 2 + outX * 2
+  const z = entry.center.z - inZ * 2 + outZ * 2
+  const a = createWorldSurfaceSample(), b = createWorldSurfaceSample()
+  field.sampleWaterInto(x - outX * 1e-4, z - outZ * 1e-4, a)
+  field.sampleWaterInto(x + outX * 1e-4, z + outZ * 1e-4, b)
+  assert.ok(Math.hypot(a.flowX - b.flowX, a.flowZ - b.flowZ) < 0.001,
+    'nearest-leg selection must not create a discontinuity inside the same water surface')
+})
+
+test('world surface colors and physical terrain meet across rendered region seams', () => {
+  const blueprint = generateWorld(20260906)
+  const scene = new THREE.Scene()
+  const art = new StylizedArtLibrary({
+    enhanced: true, ink: { player: 0x111111, enemy: 0x111111, interactable: 0x111111, landmark: 0x111111 },
+  })
+  const policy = resolveVisualPolicy({ visualMode: 'enhanced' })
+  const runtime = new GeneratedWorldRuntime(scene, blueprint, { art, visualPolicy: policy })
+  try {
+    const west = blueprint.regions.find((r) => r.coordinate.x === 2 && r.coordinate.y === 2)!
+    const east = blueprint.regions.find((r) => r.coordinate.x === 3 && r.coordinate.y === 2)!
+    runtime.update({ focus: runtime.getRegionCenter(west.id)!, deltaSeconds: 0 })
+    const a = scene.getObjectByName(`terrain:${west.id}`) as THREE.Mesh
+    const b = scene.getObjectByName(`terrain:${east.id}`) as THREE.Mesh
+    const p = a.geometry.getAttribute('position')
+    const q = b.geometry.getAttribute('position')
+    const c = a.geometry.getAttribute('color'), d = b.geometry.getAttribute('color')
+    assert.ok(c && d)
+    for (let row = 0; row <= 16; row++) {
+      const i = row * 17 + 16, j = row * 17
+      assert.deepEqual([p.getX(i), p.getY(i), p.getZ(i)], [q.getX(j), q.getY(j), q.getZ(j)])
+      assert.deepEqual([c.getX(i), c.getY(i), c.getZ(i)], [d.getX(j), d.getY(j), d.getZ(j)])
+    }
+    const original = runtime.terrain.createRegionGeometry(west.id, 16)
+    assert.deepEqual(a.geometry.getAttribute('position').array, original.getAttribute('position').array)
+    assert.deepEqual(a.geometry.index?.array, original.index?.array)
+    original.dispose()
+    assert.equal(a.material, b.material, 'the seam shares material scale as well as macro color')
+  } finally {
+    runtime.dispose()
+    art.dispose()
+  }
+})
+
+test('tactile prop channels preserve rigid parts and the exact bridge geometry', () => {
+  const library = new WorldPropLibrary({ tactile: true, retention: 0 })
+  const art = new StylizedArtLibrary({
+    enhanced: true, ink: { player: 0x111111, enemy: 0x111111, interactable: 0x111111, landmark: 0x111111 },
+  })
+  const material = art.createMaterial({
+    color: 0xffffff, surface: 'foliage', vertexColors: true,
+    attributes: { surfaceResponse: true, wind: true },
+  })
+  let checked = 0
+  const requests = everyPropRequest()
+  for (const [, request] of requests) {
+    const enhanced = library.acquire(request)
+    for (const { geometry } of enhanced.surfaces) {
+      const source = new THREE.Mesh(geometry, material)
+      validateArtGeometry(source)
+      assert.equal(windingDisagreements(geometry).disagreeing, 0)
+      if (!(request.kind === 'groundCover' && request.cover === 'fern')) {
+        assert.ok(signedVolume(geometry) > 0, `${enhanced.key} must remain an outward solid`)
+      }
+      const wind = geometry.getAttribute(ART_WIND_ATTRIBUTE)
+      const rigid = request.kind === 'bridge' || request.kind === 'building' ||
+        request.kind === 'rock' || (request.kind === 'groundCover' && request.cover === 'pebble')
+      if (rigid) for (let i = 0; i < wind.count; i++) assert.equal(wind.getX(i), 0)
+      assert.equal(geometry.getAttribute(ART_SURFACE_ATTRIBUTE).count, geometry.getAttribute('position').count)
+      checked++
+    }
+    if (request.kind === 'bridge') {
+      const original = library.acquire({ ...request, tactile: false })
+      assert.deepEqual(enhanced.surfaces[0].geometry.getAttribute('position').array,
+        original.surfaces[0].geometry.getAttribute('position').array, 'bridge support is not an art height knob')
+      assert.deepEqual(enhanced.surfaces[0].geometry.index?.array, original.surfaces[0].geometry.index?.array)
+      library.release(original)
+    }
+    library.release(enhanced)
+  }
+  assert.ok(checked >= requests.length, 'every request must produce a nonempty validated merged surface')
+  const tree = library.acquire({ kind: 'tree', biome: 'forest', slot: 0, detail: 'near' })
+  const geometry = tree.surfaces[0].geometry
+  const flex = geometry.getAttribute(ART_WIND_ATTRIBUTE)
+  const weights = Array.from({ length: flex.count }, (_, i) => flex.getX(i))
+  assert.ok(weights.some((v) => v === 0) && weights.some((v) => v > 0), 'bark and leaf masses have different motion')
+  const damaged = geometry.clone()
+  damaged.getAttribute(ART_WIND_ATTRIBUTE).setX(0, 2)
+  assert.throws(() => validateArtGeometry(new THREE.Mesh(damaged, material)), /invalid data/)
+  damaged.dispose()
+  library.release(tree)
+  assert.equal(library.getGeometryInventory().size, 0)
+  library.dispose(); material.dispose(); art.dispose()
+})
+
+test('tactile crowns open real canopy gaps instead of enlarging sealed conifer skirts', () => {
+  const library = new WorldPropLibrary({ retention: 0 })
+  const request = { kind: 'tree', biome: 'forest', slot: 0, detail: 'near' } as const
+  const legacy = library.acquire(request)
+  const enhanced = library.acquire({ ...request, tactile: true })
+  const material = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })
+  const a = new THREE.Mesh(legacy.surfaces[0].geometry, material)
+  const b = new THREE.Mesh(enhanced.surfaces[0].geometry, material)
+  a.updateMatrixWorld(); b.updateMatrixWorld()
+  const ray = new THREE.Raycaster()
+  let oldHits = 0, newHits = 0, rays = 0
+  for (const height of [2.5, 3.2, 4, 4.7]) for (let z = -1.5; z <= 1.5; z += 0.15) {
+    ray.set(new THREE.Vector3(-4, height, z), new THREE.Vector3(1, 0, 0))
+    if (ray.intersectObject(a, false).length) oldHits++
+    if (ray.intersectObject(b, false).length) newHits++
+    rays++
+  }
+  assert.ok(oldHits > rays * 0.4, 'the baseline probe must actually intersect its sealed canopy')
+  assert.ok(newHits < oldHits * 0.9, `layered crowns must expose gaps (${newHits} versus ${oldHits})`)
+  assert.ok(newHits > 10, 'deleting the canopy is not improved vegetation')
+  assert.notDeepEqual(a.geometry.getAttribute('position').array, b.geometry.getAttribute('position').array)
+  library.release(legacy); library.release(enhanced); material.dispose(); library.dispose()
+})
+
+test('tactile footings extend downward without introducing a raised walking surface', () => {
+  const building = composeSiteLayout({
+    seed: 11, siteId: 'contact', kind: 'settlement', biome: 'palace', owner: 'guard',
+  }).buildings[0]
+  assert.ok(building)
+  const floor = (x: number, z: number) => (x - building.x) * 0.15 + (z - building.z) * 0.08
+  const contact = createFoundationContactGeometry(building, floor)
+  assert.ok(contact)
+  const positions = contact.getAttribute('position')
+  const normals = contact.getAttribute('normal')
+  const top = Math.max(0.16, building.spec.wallHeight * 0.11) * 0.9
+  let lower = 0
+  for (let i = 0; i < positions.count; i++) {
+    assert.ok(positions.getY(i) <= top + 1e-6)
+    assert.ok(Math.abs(normals.getY(i)) < 1e-5, 'the new support has no horizontal walkable cap')
+    const dx = positions.getX(i) - building.x, dz = positions.getZ(i) - building.z
+    assert.ok(normals.getX(i) * dx + normals.getZ(i) * dz > 0, 'support walls face out, not inside out')
+    if (positions.getY(i) < -0.14) lower++
+  }
+  assert.ok(lower > 0, 'a flat duplicate plinth is not terrain contact')
+  contact.dispose()
+  assert.equal(createFoundationContactGeometry(building, () => 0), null)
+})
+
+test('tactile streaming accounts retained geometry and keeps source ink on the same mutable buffer', () => {
+  const blueprint = generateWorld(20260906)
+  const scene = new THREE.Scene()
+  const art = new StylizedArtLibrary({
+    enhanced: true, ink: { player: 0x111111, enemy: 0x111111, interactable: 0x111111, landmark: 0x111111 },
+  })
+  const runtime = new GeneratedWorldRuntime(scene, blueprint, {
+    art, visualPolicy: resolveVisualPolicy({ visualMode: 'enhanced' }), outlineDressing: true,
+  })
+  let peak = 0, pairs = 0
+  const geometryPeaks: number[] = []
+  for (let lap = 0; lap < 3; lap++) {
+    for (const region of blueprint.regions) {
+      runtime.update({ focus: runtime.getRegionCenter(region.id)!, deltaSeconds: 0 })
+      const inventory = runtime.getVisualInventory()
+      const usage = sumVisualAllocationReceipts(inventory.receipts).world
+      assert.equal(inventory.cacheEntries, runtime.propCacheSize)
+      assert.equal(inventory.complete, false, 'CPU receipts cannot fabricate a complete GPU inventory')
+      assert.equal(usage.gpuAllocatedBytes, null)
+      assert.ok(inventory.textureMipBytes <= 0.75 * 1024 * 1024)
+      assert.ok(usage.cpuGeometryBytes <= runtime.visualAllocation!.limits.world.cpuGeometryBytes)
+      assert.ok(usage.cpuBindingCloneBytes <= runtime.visualAllocation!.limits.world.cpuBindingCloneBytes)
+      assert.ok(usage.cpuCanonicalSightBytes <= runtime.visualAllocation!.limits.world.cpuCanonicalSightBytes)
+      assert.ok(inventory.additionalSightGeometries > 0)
+      assert.ok(runtime.retentionIsIntact)
+      peak = Math.max(peak, runtime.propCacheSize)
+      scene.traverse((object) => {
+        if (!StylizedArtLibrary.isOutlineShell(object) || !(object instanceof THREE.InstancedMesh)) return
+        const source = object.parent
+        assert.ok(source instanceof THREE.InstancedMesh)
+        assert.equal(object.geometry, source.geometry)
+        assert.equal(object.instanceMatrix, source.instanceMatrix)
+        assert.ok(art.getRenderSourceBinding(source))
+        pairs++
+      })
+    }
+    geometryPeaks.push(runtime.getVisualInventory().receipts.reduce((n, r) => n + r.cpuBytes, 0))
+  }
+  assert.ok(pairs > 0)
+  assert.ok(peak <= PROP_RETENTION_DEFAULT + PROP_RESIDENT_HEADROOM, `tactile cache peak ${peak}`)
+  assert.equal(geometryPeaks[1], geometryPeaks[2], 'retained backing stores settle after repeat streaming')
+  runtime.setDecorationDensity(0); runtime.setDecorationDensity(1)
+  runtime.setOutlineDressing(false); runtime.setOutlineDressing(true)
+  runtime.dispose()
+  assert.equal(runtime.getVisualInventory().receipts.length, 0)
+  assert.equal(art.getRenderBindingStats().sources, 0)
+  art.dispose()
+})
+
+test('tactile lower tiers preserve physics while avoiding unused world-shadow allocations', () => {
+  const blueprint = generateWorld(20260906)
+  const original = new GeneratedWorldRuntime(new THREE.Scene(), blueprint)
+  try {
+    for (const quality of ['balanced', 'low'] as const) {
+      const scene = new THREE.Scene()
+      const art = new StylizedArtLibrary({
+        enhanced: true, ink: { player: 0x111111, enemy: 0x111111, interactable: 0x111111, landmark: 0x111111 },
+      })
+      const policy = resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: quality })
+      const runtime = new GeneratedWorldRuntime(scene, blueprint, { art, visualPolicy: policy, castShadows: true })
+      try {
+        for (const biome of BIOMES) {
+          const region = blueprint.regions.find((r) => r.biome === biome)!
+          const focus = runtime.getRegionCenter(region.id)!
+          original.update({ focus, deltaSeconds: 0 }); runtime.update({ focus, deltaSeconds: 0 })
+          assert.deepEqual(runtime.collision.queryBounds(runtime.bounds), original.collision.queryBounds(original.bounds))
+          const inventory = runtime.getVisualInventory()
+          const usage = sumVisualAllocationReceipts(inventory.receipts).world
+          const limits = runtime.visualAllocation!.limits.world
+          assert.ok(usage.cpuGeometryBytes <= limits.cpuGeometryBytes)
+          assert.ok(usage.cpuBindingCloneBytes <= limits.cpuBindingCloneBytes)
+          assert.ok(usage.cpuCanonicalSightBytes <= limits.cpuCanonicalSightBytes)
+          if (quality === 'low') for (const source of inventory.sources) {
+            assert.equal(source.castShadow, false)
+            assert.equal(source.geometry.hasAttribute(ART_SHADOW_ATTRIBUTE), false)
+          }
+          runtime.setDecorationDensity(0); runtime.setDecorationDensity(1)
+          runtime.setOutlineDressing(true)
+          scene.traverse((object) => {
+            if (StylizedArtLibrary.isOutlineShell(object)) assert.equal(object.userData.visualSubsystem, 'world')
+          })
+        }
+      } finally { runtime.dispose(); art.dispose() }
+    }
+  } finally { original.dispose() }
+})
 
 const BUILDING_PALETTE: BuildingPalette = {
   foundation: 0x6c6f74,

@@ -6286,8 +6286,8 @@ test('the geometry cache budget counts every key the cache actually holds', () =
   // precisely the failure this guard already caught once.
   assert.equal(
     families.size,
-    23,
-    `found ${String(families.size)} cache key families in GameEngine.ts, expected 23. `
+    21,
+    `found ${String(families.size)} cache key families in GameEngine.ts, expected 21. `
     + 'Account for new constructor keys or explicit reuse of plan keys without silently '
     + 'raising the cache ceiling; a changed scan must still report drift.',
   )

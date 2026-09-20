@@ -5,6 +5,7 @@ import test from 'node:test'
 const appCss = readFileSync(new URL('../src/App.css', import.meta.url), 'utf8')
 const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
 const combatHudSource = readFileSync(new URL('../src/game/ui/CombatMasteryHud.tsx', import.meta.url), 'utf8')
+const openingCss = readFileSync(new URL('../src/game/ui/openingExperience.css', import.meta.url), 'utf8')
 
 function extractBlock(source: string, marker: string): string {
   const markerIndex = source.indexOf(marker)
@@ -29,6 +30,38 @@ function extractRule(source: string, selector: string): string {
 }
 
 const mobileHudCss = extractBlock(appCss, '@media (max-width: 720px), (pointer: coarse) {')
+const compactCss = readFileSync(new URL('../src/game/ui/compact-combat.css', import.meta.url), 'utf8')
+
+test('journal compatibility styles leave the upstream compact HUD geometry authoritative', () => {
+  assert.doesNotMatch(openingCss, /\.focused-hud|\.opening-menu|\.run-options|\.menu-preferences/)
+  assert.match(openingCss, /\.tactical-toolbar button,\s*\.field-alert\s*\{[^}]*min-height:\s*44px;/)
+  assert.match(openingCss, /\.campaign-journal \.contract-pin,[^}]*min-width:\s*44px;/)
+  const mobile = extractBlock(openingCss, '@media (max-width: 720px), (pointer: coarse) {')
+  assert.match(mobile, /\.tactical-toolbar,[^}]*width:\s*100%;/)
+  assert.doesNotMatch(mobile, /\.left-hud|\.top-hud(?:\s|,|\{)|\.vitals|\.ability-chip|\.melee-chip/)
+})
+
+test('compact mobile notices use the normal-flow right-hand safe region without covering vitals or duplicating live content', () => {
+  const mobile = extractBlock(compactCss, '@media (max-width: 720px), (pointer: coarse) {')
+  const notices = extractRule(mobile, '.game-screen[data-hud="compact"] .notice-stack')
+  assert.match(notices, /position:\s*static;/)
+  assert.match(notices, /transform:\s*none;/)
+  assert.match(notices, /width:\s*100%;/)
+  assert.match(extractRule(mobile, '.game-screen[data-hud="compact"] .notice'), /overflow-wrap:\s*anywhere;/)
+  assert.match(extractRule(mobile, '.game-screen[data-hud="compact"] .notice-stack:empty'), /display:\s*none;/)
+  assert.doesNotMatch(notices, /max-height|overflow:\s*hidden|display:\s*none/)
+  const desktop = extractBlock(compactCss, '@media (min-width: 721px) and (pointer: fine) {')
+  const desktopNotice = extractRule(desktop, '.game-screen[data-hud="compact"] .notice-stack')
+  assert.match(desktopNotice, /top:\s*0;/)
+  assert.match(desktopNotice, /width:\s*min\(28rem,\s*calc\(100% - 30rem\)\);/)
+  const finaleNotice = extractRule(desktop, '.game-screen[data-hud="compact"]:has(.finale-hud) .notice-stack')
+  assert.match(finaleNotice, /position:\s*fixed;/)
+  assert.match(finaleNotice, /top:\s*auto;/)
+  assert.match(finaleNotice, /bottom:\s*4\.5rem;/)
+  assert.match(finaleNotice, /left:\s*1rem;/)
+  assert.match(finaleNotice, /width:\s*19rem;/)
+  assert.doesNotMatch(mobile, /position:\s*fixed;/)
+})
 
 function remValue(source: string, property: string): number {
   const match = source.match(new RegExp(`(?:^|\\n)\\s*${property}:\\s*([\\d.]+)rem;`))

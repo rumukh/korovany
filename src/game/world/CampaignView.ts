@@ -264,6 +264,7 @@ export interface LiveViewInput {
   caravanCooldown: number
   shieldActive: boolean
   abilityCooldown: number
+  bowAiming?: boolean
   melee: PlayerMeleeState
   combatMastery: CombatMasteryState
   cameraMode: CameraControlMode
@@ -572,6 +573,7 @@ export function buildAbilityView(input: {
   stamina: number
   body: BodyState
   shieldActive: boolean
+  bowAiming?: boolean
   abilityCooldown: number
   paused: boolean
   ended: boolean
@@ -580,7 +582,7 @@ export function buildAbilityView(input: {
   inputBlocked?: boolean
 }): AbilityView {
   const ability = createAbilityView(input.faction, input.stamina, input.body)
-  ability.active = input.shieldActive
+  ability.active = ability.id === 'bow' ? input.bowAiming === true : input.shieldActive
   ability.cooldown = input.abilityCooldown
   ability.ready =
     ability.ready &&
@@ -589,6 +591,9 @@ export function buildAbilityView(input: {
     !input.shieldActive &&
     input.abilityCooldown <= 0 &&
     !input.inputBlocked &&
+    !(input.melee && isPlayerMeleeCommitted(input.melee)) &&
+    !(input.combatMastery && input.combatMastery.evadeRemaining > 0)
+  ability.aimAvailable = ability.aimAvailable && !input.paused && !input.ended && !input.inputBlocked &&
     !(input.melee && isPlayerMeleeCommitted(input.melee)) &&
     !(input.combatMastery && input.combatMastery.evadeRemaining > 0)
   return ability

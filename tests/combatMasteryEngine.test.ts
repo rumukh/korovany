@@ -23,10 +23,16 @@ import {
   type CombatMasteryState,
 } from '../src/game/world/CombatMastery.ts'
 import type { LookGesture } from '../src/game/input/CombatInput.ts'
+import { BowAim, type BowAimSource } from '../src/game/input/BowAim.ts'
+import { CameraVisibility } from '../src/game/cameraVisibility.ts'
 import type { SoundCue } from '../src/game/AudioDirector.ts'
 import { createFinaleIdentity, createFinaleState } from '../src/game/world/FinaleDirector.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
 import { CAMERA_DEFAULT_PITCH, CAMERA_PIVOT_HEIGHT, cameraOrbitDistance } from '../src/game/cameraAccents.ts'
+import { SecondaryEffectPool } from '../src/game/SecondaryEffectPool.ts'
+import { resolveVisualPolicy } from '../src/game/visualPolicy.ts'
+import { GeometryCache, StylizedArtLibrary, createCharacterPresenter, illustratedCharacterPlan, resolveCharacterPlan } from '../src/game/art/index.ts'
+import { ContactPresentation, copyPresentationContact, type PresentationContact } from '../src/game/ContactPresentation.ts'
 
 // Load the production class with Node's TS support, including its Vite-style imports.
 // Only construction/presentation are replaced below; inputs, movement and damage are real methods.
@@ -101,6 +107,11 @@ interface EngineProbe {
   attackCooldown: number
   attackAnimation: number
   shieldActive: boolean
+  bowAiming: boolean
+  bowAim: BowAim
+  setBowAiming(active: boolean, source?: BowAimSource): void
+  presentBowAim(): void
+  resolveBowAim(): void
   cameraYaw: number
   cameraPitch: number
   camera: THREE.PerspectiveCamera
@@ -115,8 +126,10 @@ interface EngineProbe {
   onMouseMove(event: { movementX: number; movementY: number }): void
   fireArrow(): void
   updateProjectiles(delta: number): void
-  projectiles: { mesh: THREE.Mesh; velocity: THREE.Vector3 }[]
-  findProjectileHit(projectile: EngineProbe['projectiles'][number], start: THREE.Vector3, end: THREE.Vector3): {
+  projectiles: { mesh: THREE.Mesh; velocity: THREE.Vector3; owner: 'player' | 'actor';
+    allegiance: string; sourceActorId: string | null; finale: boolean }[]
+  findProjectileHit(projectile: Pick<EngineProbe['projectiles'][number], 'owner' | 'allegiance' | 'sourceActorId' | 'finale'>,
+    start: THREE.Vector3, end: THREE.Vector3): {
     fraction: number; actor: Attacker | null; player: boolean
   } | null
   paused: boolean
@@ -150,8 +163,8 @@ interface EngineProbe {
   updatePlayerMelee(delta: number): void
   actorAttackPlayer(actor: Attacker): void
   damagePlayer(damage: number | (() => number), incoming: THREE.Vector3, canInjure: boolean, options: {
-    attackKind: CombatAttackKind; sourceActorId?: string
-  }): CombatOutcome
+    attackKind: CombatAttackKind; sourceActorId?: string; presentationPoint?: THREE.Vector3; presentationNormal?: THREE.Vector3
+  }): CombatOutcome & { position: THREE.Vector3; direction: THREE.Vector3; presentationContact?: PresentationContact | null }
 }
 
 function fixture(faction: Faction = 'elf', collision = new CollisionWorld({
@@ -170,8 +183,13 @@ function fixture(faction: Faction = 'elf', collision = new CollisionWorld({
   attacker.mesh.position.set(0, 0, -2)
   const engine: EngineProbe = Object.assign(Object.create(GameEngine.prototype), {
     faction, player, renderer: { domElement: surface }, keys: new Set<string>(),
+    visualPolicy: resolveVisualPolicy({ visualMode: 'legacy' }),
+    handOffset: new THREE.Vector3(),
     body: createHealthyBody(), health: 70, stamina: 100, maxStamina: 100, damage: 26,
     abilityCooldown: 0, attackCooldown: 0, attackAnimation: 0, shieldActive: false,
+    bowAiming: false, bowAim: new BowAim(), bowOverviewPitch: 0,
+    bowRaycaster: new THREE.Raycaster(), bowRayDirection: new THREE.Vector3(), bowIntersections: [],
+    projectileCenter: new THREE.Vector3(), cameraVisibility: new CameraVisibility(),
     cameraYaw: 0, cameraPitch: 0.38, paused: false, ended: false, honestMelee: true,
     camera: new THREE.PerspectiveCamera(56, 1, 0.1, 240),
     cameraFollowPosition: new THREE.Vector3(), cameraRaycaster: new THREE.Raycaster(),
@@ -207,6 +225,10 @@ function fixture(faction: Faction = 'elf', collision = new CollisionWorld({
     resetCameraMotion() {}, releaseActorTelegraph() {}, releaseAllTelegraphs() {},
   })
   const attack = engine.attack.bind(engine)
+  Object.assign(engine, { bowFirstHit: (start: THREE.Vector3, end: THREE.Vector3) =>
+    engine.findProjectileHit({
+      owner: 'player', allegiance: engine.faction, sourceActorId: null, finale: false,
+    }, start, end)?.fraction ?? null })
   engine.attack = () => { counts.attacks += 1; attack() }
   return { engine, counts, attacker, collision, surface }
 }
@@ -220,6 +242,261 @@ function mouseUp(engine: EngineProbe, event: ReturnType<typeof pointer>): void {
   engine.onWorldPointerUp(event)
   engine.onMouseUp({ ...event, target: engine.renderer.domElement })
 }
+
+function disposeArrows(engine: EngineProbe): void {
+  for (const arrow of engine.projectiles) {
+    arrow.mesh.geometry.dispose()
+    const materials = Array.isArray(arrow.mesh.material) ? arrow.mesh.material : [arrow.mesh.material]
+    materials.forEach((material) => material.dispose())
+  }
+  engine.projectiles.length = 0
+}
+
+test('R and RMB independently hold aim; only LMB pays for one shot, release never fires', () => {
+  const { engine, surface } = fixture()
+  dom.pointerLockElement = surface
+  const pitch = engine.cameraPitch
+  engine.onKeyDown(key('KeyR'))
+  assert.equal(engine.bowAiming, true)
+  assert.equal(engine.cameraPitch, 0)
+  assert.equal(engine.stamina, 100)
+  assert.equal(engine.projectiles.length, 0)
+  engine.onKeyDown(key('KeyR', true))
+  mouseDown(engine, { ...pointer(1, 0, 0), button: 2, buttons: 2 })
+  engine.onKeyUp(key('KeyR'))
+  assert.equal(engine.bowAiming, true, 'the mouse source is still held')
+  mouseDown(engine, { ...pointer(1, 0, 0), button: 0, buttons: 3 })
+  assert.equal(engine.projectiles.length, 1)
+  assert.equal(engine.stamina, 85)
+  assert.equal(engine.abilityCooldown, 0.9)
+  assert.equal(engine.melee.bufferRemaining, 0)
+  const arrow = engine.projectiles[0]
+  assert.ok(arrow.mesh.position.distanceTo(engine.bowAim.origin) < 1e-12)
+  assert.ok(arrow.velocity.clone().normalize().distanceTo(engine.bowAim.direction) < 1e-12)
+  engine.attack()
+  assert.equal(engine.projectiles.length, 1, 'cooldown blocks a second click, not aiming')
+  mouseUp(engine, { ...pointer(1, 0, 0), button: 2, buttons: 1 })
+  assert.equal(engine.bowAiming, false)
+  assert.equal(engine.cameraPitch, pitch)
+  assert.equal(engine.projectiles.length, 1, 'release keeps the paid projectile')
+  assert.equal(engine.abilityCooldown, 0.9)
+  engine.attack()
+  assert.ok(engine.melee.bufferRemaining > 0, 'release restores melee')
+  disposeArrows(engine)
+})
+
+test('the first LMB after R fires even while native mouse capture is being requested', async () => {
+  const { engine } = fixture()
+  engine.onKeyDown(key('KeyR'))
+  mouseDown(engine, pointer(1, 0, 0))
+  await Promise.resolve()
+  assert.equal(engine.projectiles.length, 1)
+  assert.equal(engine.stamina, 85)
+  assert.equal(engine.bowAiming, true)
+  assert.equal(engine.pointerFallback, true)
+  mouseUp(engine, pointer(1, 0, 0))
+  assert.equal(engine.projectiles.length, 1)
+  disposeArrows(engine)
+})
+
+test('button aim works without stamina or cooldown readiness; all interruptions leave no delayed shot', () => {
+  for (const cancel of ['pause', 'blur', 'hidden', 'pointer', 'evade', 'sprint', 'arms', 'release'] as const) {
+    const { engine } = fixture()
+    engine.stamina = 0
+    engine.abilityCooldown = 0.7
+    engine.setBowAiming(true)
+    assert.equal(engine.bowAiming, true)
+    engine.attack()
+    assert.equal(engine.projectiles.length, 0)
+    engine.stamina = 100
+    if (cancel === 'pause') engine.setPaused(true)
+    if (cancel === 'blur') engine.onWindowBlur()
+    if (cancel === 'hidden') { dom.hidden = true; engine.onVisibilityChange() }
+    if (cancel === 'pointer') engine.onWorldPointerCancel({ ...pointer(1, 0, 0), type: 'pointercancel' })
+    if (cancel === 'evade') engine.evade()
+    if (cancel === 'sprint') { engine.setInput('KeyW', true); engine.setInput('ShiftLeft', true); engine.updatePlayer(0.01) }
+    if (cancel === 'arms') { engine.body.leftArm = engine.body.rightArm = 'missing'; engine.updatePlayer(0.01) }
+    if (cancel === 'release') engine.setBowAiming(false)
+    assert.equal(engine.bowAiming, false, cancel)
+    assert.equal(engine.bowAim.sources.size, 0, cancel)
+    assert.equal(engine.cameraPitch, 0.38, cancel)
+    assert.equal(engine.abilityCooldown, 0.7, 'cancellation never refunds the cooldown')
+    assert.equal(engine.projectiles.length, 0)
+  }
+})
+
+test('changing aim during a fallback tap cancels that tap instead of emitting a late melee or arrow', () => {
+  const { engine, counts } = fixture()
+  engine.pointerFallback = true
+  engine.setBowAiming(true)
+  engine.onWorldPointerDown(pointer(7, 100, 100, 'touch'))
+  engine.setBowAiming(false)
+  engine.onWorldPointerUp(pointer(7, 100, 100, 'touch'))
+  assert.equal(counts.attacks, 0)
+  assert.equal(engine.projectiles.length, 0)
+})
+
+test('delayed loss of an older pointer capture cannot cancel a new bow-aim drag with the same pointer', () => {
+  const { engine } = fixture()
+  engine.pointerFallback = true
+  engine.onKeyDown(key('KeyR'))
+  engine.onWorldPointerDown(pointer(7, 100, 100, 'touch'))
+  engine.onWorldPointerMove(pointer(7, 140, 100, 'touch'))
+  engine.onWorldPointerUp(pointer(7, 140, 100, 'touch'))
+  engine.onWorldPointerDown(pointer(7, 100, 100, 'touch'))
+  engine.onWorldPointerCancel({ ...pointer(7, 140, 100, 'touch'), type: 'lostpointercapture' })
+  assert.equal(engine.bowAiming, true)
+  assert.equal(engine.keys.has('KeyR'), true)
+  assert.equal(engine.lookGesture?.pointerId, 7)
+  engine.onWorldPointerMove(pointer(7, 150, 100, 'touch'))
+  engine.onWorldPointerUp(pointer(7, 150, 100, 'touch'))
+  assert.equal(engine.bowAiming, true)
+  engine.onWorldPointerDown(pointer(7, 100, 100, 'touch'))
+  engine.renderer.domElement.releasePointerCapture(7)
+  engine.onWorldPointerCancel({ ...pointer(7, 100, 100, 'touch'), type: 'lostpointercapture' })
+  assert.equal(engine.bowAiming, false, 'a genuinely lost capture still cancels input')
+})
+
+test('manual shots travel a useful distance and resolve the existing distance-based damage', () => {
+  for (const pitch of [-0.35, 0, 0.35]) for (const hz of [30, 60, 144]) {
+    const { engine, attacker } = fixture()
+    Object.assign(attacker, { hostileToPlayer: true, allegiance: 'guard' })
+    attacker.mesh.position.set(0, -Math.tan(pitch) * 12 + 0.6, -12)
+    engine.groundHeightAt = () => -20
+    const damage: number[] = []
+    Object.assign(engine, {
+      damageActor: (actor: Attacker, dealt: number) => { assert.equal(actor, attacker); damage.push(dealt); actor.hp -= dealt },
+    })
+    engine.setBowAiming(true)
+    engine.cameraPitch = pitch
+    engine.updateCamera(0, true)
+    const projected = engine.bowAim.target.clone().project(engine.camera)
+    assert.ok(Math.hypot(projected.x, projected.y) < 1e-9, 'reticle points at the gameplay target')
+    engine.attack()
+    engine.updateProjectiles(0.12)
+    assert.equal(engine.projectiles.length, 1, 'not the former 0.097-second ground strike')
+    for (let frame = 0; frame < hz * 2; frame++) engine.updateProjectiles(1 / hz)
+    assert.equal(damage.length, 1)
+    assert.ok(damage[0] >= 10 && damage[0] < 18)
+    assert.ok(attacker.hp < 90)
+    assert.equal(engine.projectiles.length, 0)
+  }
+})
+
+test('bow muzzle cannot skip a nearby wall and regular arrows stop at real solid sight surfaces', () => {
+  const { engine } = fixture()
+  const wall = new THREE.Mesh(new THREE.BoxGeometry(4, 4, 0.1), new THREE.MeshBasicMaterial())
+  wall.position.set(0, 2, -0.2)
+  wall.updateMatrixWorld(true)
+  engine.cameraObstacles.push(wall)
+  engine.setBowAiming(true)
+  assert.ok(engine.bowAim.origin.z > -0.15, 'muzzle remains on the player side of the wall')
+  engine.attack()
+  engine.updateProjectiles(1 / 30)
+  assert.equal(engine.projectiles.length, 0, 'the wall, not an enemy behind it, takes the shot')
+  wall.geometry.dispose()
+  wall.material.dispose()
+})
+
+test('held bow survives actual animation and grounding; paid melee is not hidden by aim entry', () => {
+  const { engine } = fixture()
+  const art = new StylizedArtLibrary({ enhanced: true, ink: {
+    player: 0x222222, enemy: 0x222222, interactable: 0x222222, landmark: 0x222222,
+  } })
+  const cache = new GeometryCache()
+  const presenter = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('elf', 'player', 0, true)),
+    art, cache, true)
+  engine.player = presenter.root
+  Object.assign(engine, {
+    characterHeightSample: () => 0, handOffset: new THREE.Vector3(),
+    animateCharacter: Reflect.get(GameEngine.prototype, 'animateCharacter'),
+  })
+  try {
+    engine.melee.phase = 'windup'
+    engine.melee.beat = 1
+    engine.melee.phaseRemaining = playerBeatSpec(1).windup
+    engine.setBowAiming(true)
+    engine.updatePlayer(1 / 60)
+    assert.equal(presenter.bowAimingActive, false)
+    assert.equal(engine.melee.phase, 'windup', 'aim alone does not cancel an attack')
+    engine.melee.phase = 'idle'
+    for (const pitch of [-1.2, 0, 1.2]) {
+      engine.cameraPitch = pitch
+      engine.setInput('KeyW', true)
+      for (let frame = 0; frame < 24; frame++) {
+        engine.updatePlayer(1 / 60)
+        presenter.updateLod(engine.camera, resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'low' }))
+        engine.presentBowAim()
+        assert.equal(presenter.bowAimingActive, true)
+        assert.equal(presenter.weaponKind, 'bow')
+      }
+    }
+    engine.attack()
+    assert.equal(presenter.arrowPresentationActive, true)
+    for (let frame = 0; frame < 30; frame++) engine.updatePlayer(1 / 60)
+    assert.equal(presenter.bowAimingActive, true)
+    assert.equal(presenter.arrowPresentationActive, false)
+    engine.setBowAiming(false)
+    assert.equal(presenter.weaponKind, 'sabre')
+    assert.equal(presenter.bowAimingActive, false)
+  } finally { disposeArrows(engine); presenter.dispose(); cache.dispose(); art.dispose() }
+})
+
+test('losing the last arm after the player update cancels aim before same-frame rendering without refunding a shot', () => {
+  for (const quality of ['high', 'low'] as const) for (const paid of [false, true]) {
+    const { engine } = fixture()
+    const art = new StylizedArtLibrary({ enhanced: true, ink: {
+      player: 0x222222, enemy: 0x222222, interactable: 0x222222, landmark: 0x222222,
+    } })
+    const cache = new GeometryCache()
+    const presenter = createCharacterPresenter(
+      illustratedCharacterPlan(resolveCharacterPlan('elf', 'player', 0, true)), art, cache, true, quality,
+    )
+    const particles: { mesh: THREE.Mesh }[] = []
+    engine.player = presenter.root
+    engine.body.leftArm = 'missing'
+    engine.body.rightArm = 'wounded'
+    presenter.setAppearance(engine.body)
+    Object.assign(engine, {
+      characterHeightSample: () => 0, artLibrary: art, particles, combatRng: () => 0,
+      factionColor: () => new THREE.Color('green'),
+    })
+    Object.assign(Reflect.get(engine, 'achievements'), { recordInjury() {} })
+    try {
+      engine.setBowAiming(true)
+      engine.updatePlayer(1 / 60)
+      if (paid) engine.attack()
+      const stamina = engine.stamina, cooldown = engine.abilityCooldown
+      const origin = engine.player.position.clone()
+      Reflect.get(GameEngine.prototype, 'injurePlayer').call(engine)
+      assert.equal(engine.body.rightArm, 'missing')
+      assert.doesNotThrow(() => {
+        engine.updateCamera(0, true)
+        engine.presentBowAim()
+      })
+      assert.equal(engine.bowAiming, false)
+      assert.equal(engine.bowAim.sources.size, 0)
+      assert.equal(presenter.bowAimingActive, false)
+      assert.equal(presenter.root.getObjectByName('leftArm')?.visible, false)
+      assert.equal(presenter.root.getObjectByName('rightArm')?.visible, false)
+      assert.equal(engine.cameraPitch, 0.38)
+      assert.equal(engine.stamina, stamina)
+      assert.equal(engine.abilityCooldown, cooldown)
+      assert.equal(engine.projectiles.length, paid ? 1 : 0)
+      assert.ok(engine.player.position.equals(origin))
+    } finally {
+      disposeArrows(engine)
+      for (const { mesh } of particles) {
+        mesh.geometry.dispose()
+        const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+        for (const material of materials) if (!StylizedArtLibrary.isLibraryOwned(material)) material.dispose()
+      }
+      presenter.dispose()
+      cache.dispose()
+      art.dispose()
+    }
+  }
+})
 
 test('native mouse and touch drag can look above and below the horizon without going underground', () => {
   for (const input of ['mouse', 'touch'] as const) {
@@ -739,4 +1016,262 @@ test('touch camera and movement pointers stay independent; pointer cancellation 
   assert.equal(engine.shieldActive, true, 'R must work without native pointer lock')
   engine.onKeyUp(key('KeyR'))
   assert.equal(engine.shieldActive, false)
+})
+
+test('real admitted damage uses the bounded secondary pool without changing defense, damage, sound or pause semantics', () => {
+  for (const kind of ['normal', 'block', 'perfect', 'evaded', 'paused'] as const) {
+    const { engine, attacker, counts } = fixture('guard')
+    const pool = new SecondaryEffectPool(new THREE.Scene(), 42)
+    Object.assign(engine, {
+      secondaryEffects: pool, secondaryContactPoint: new THREE.Vector3(),
+      contactNormal: new THREE.Vector3(), contactColor: new THREE.Color(), spawnImpactRay() {},
+      palette: { warning: new THREE.Color(0xffbb22) },
+      visualPolicy: resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'low' }),
+      allegianceColor: () => new THREE.Color(0x4da6ff),
+      createSparks: Reflect.get(GameEngine.prototype, 'createSparks'),
+      createHitParticles: Reflect.get(GameEngine.prototype, 'createHitParticles'),
+    })
+
+    if (kind === 'block' || kind === 'perfect') engine.setShield(true)
+    if (kind === 'block') engine.combatMastery.guardWindow = 0
+    if (kind === 'evaded') { engine.evade(); engine.updatePlayer(0.1) }
+    if (kind === 'paused') engine.setPaused(true)
+    engine.actorAttackPlayer(attacker)
+    assert.equal(counts.hitFx, kind === 'normal' || kind === 'block' ? 1 : 0)
+    assert.equal(counts.injuries, kind === 'normal' ? 1 : 0)
+    assert.equal(counts.draws, kind === 'normal' ? 2 : kind === 'block' ? 1 : 0)
+    assert.equal(pool.snapshot().active > 0, kind === 'normal' || kind === 'block' || kind === 'perfect')
+    if (kind === 'normal' || kind === 'block') assert.ok(engine.health < 70)
+    else assert.equal(engine.health, 70)
+    engine.setPaused(true)
+    assert.equal(pool.snapshot().active, 0)
+    assert.equal(pool.mesh.count, 0)
+    pool.dispose()
+  }
+})
+
+test('real perfect guard uses the posed shield without damage feedback and evasion emits no physical contact at every tier', () => {
+  for (const quality of ['high', 'balanced', 'low'] as const) {
+    for (const defense of ['perfect', 'late', 'rear', 'evade'] as const) {
+      const { engine, counts } = fixture('guard')
+      const art = new StylizedArtLibrary({ enhanced: true, ink: {
+        player: 0x222222, enemy: 0x222222, interactable: 0x222222, landmark: 0x222222,
+      } })
+      const cache = new GeometryCache()
+      const presenter = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('guard', 'player', 0, true)), art, cache, true)
+      const contacts: PresentationContact[] = []
+      engine.player = presenter.root
+      engine.player.scale.set(0.8, 1.2, 1.1)
+      Object.assign(engine, {
+        visualPolicy: resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: quality }),
+        characterHeightSample: () => 0,
+        contactNormal: new THREE.Vector3(), secondaryContactPoint: new THREE.Vector3(),
+        presentPhysicalContact: (contact: PresentationContact) => contacts.push(copyPresentationContact(contact)),
+      })
+      try {
+        if (defense === 'evade') { engine.evade(); engine.updatePlayer(0.1) }
+        else {
+          engine.setShield(true)
+          if (defense === 'late') engine.updatePlayer(0.13)
+        }
+        const normal = new THREE.Vector3(0, 0, defense === 'rear' ? 1 : -1)
+        const result = engine.damagePlayer(20, normal, true, { attackKind: 'allyMelee' })
+        assert.equal(contacts.length, defense === 'evade' ? 0 : 1)
+        assert.equal(counts.hitFx, defense === 'perfect' || defense === 'evade' ? 0 : 1)
+        assert.equal(result.dealt, defense === 'perfect' || defense === 'evade' ? 0 : 20 * 0.72 * (defense === 'late' ? 0.15 : 1))
+        if (defense === 'perfect') {
+          const expected = { point: new THREE.Vector3(), normal: new THREE.Vector3(), surface: 'skin' as const }
+          assert.equal(presenter.sampleContact('shield', expected), true)
+          assert.deepEqual(contacts[0].point, expected.point)
+          assert.equal(contacts[0].surface, expected.surface)
+          assert.equal(contacts[0].origin, 'posed')
+          assert.equal(engine.stamina, 88)
+          assert.equal(counts.draws, 0)
+          assert.deepEqual(counts.sounds.filter((sound) => sound === 'block'), ['block'])
+        }
+        assert.deepEqual(normal.toArray(), [0, 0, defense === 'rear' ? 1 : -1])
+      } finally { presenter.dispose(); art.dispose(); cache.dispose() }
+    }
+  }
+})
+
+function posedShieldFixture(missingLeftArm: boolean, mode: 'legacy' | 'enhanced' = 'enhanced') {
+  const value = fixture('guard')
+  const { engine, attacker } = value
+  const art = new StylizedArtLibrary({ enhanced: true, ink: {
+    player: 0x222222, enemy: 0x222222, interactable: 0x222222, landmark: 0x222222,
+  } })
+  const cache = new GeometryCache()
+  const player = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('guard', 'player', 0, true)), art, cache, true)
+  const source = createCharacterPresenter(illustratedCharacterPlan(resolveCharacterPlan('villain', 'player', 0, true)), art, cache, true)
+  source.root.position.copy(attacker.mesh.position)
+  attacker.mesh = source.root
+  engine.player = player.root
+  if (missingLeftArm) {
+    engine.body.leftArm = 'missing'
+    player.setAppearance({ leftArm: 'missing' })
+  }
+  const resolver = new ContactPresentation()
+  const pool = new SecondaryEffectPool(new THREE.Scene(), 42)
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial())
+  const ray = { sprite, material: sprite.material, age: 0, lifetime: 1, active: false, priority: 0, weight: 'normal' }
+  const emitted: { contact: PresentationContact; defense: boolean; stamina: number; raised: boolean }[] = []
+  let legacySparks = 0
+  Object.assign(engine, {
+    visualPolicy: resolveVisualPolicy({ visualMode: mode }),
+    contactPresentation: resolver, contactNormal: new THREE.Vector3(), contactColor: new THREE.Color(),
+    secondaryContactPoint: new THREE.Vector3(), secondaryEffects: pool, camera: new THREE.PerspectiveCamera(),
+    updateShieldPose: Reflect.get(GameEngine.prototype, 'updateShieldPose'),
+    acquireImpactRayFx: () => ray,
+    createSparks: () => { legacySparks++ },
+    presentPhysicalContact(contact: PresentationContact, defense: boolean, weight: string, primary: boolean) {
+      emitted.push({ contact: copyPresentationContact(contact), defense, stamina: engine.stamina, raised: engine.shieldActive })
+      Reflect.get(GameEngine.prototype, 'presentPhysicalContact').call(engine, contact, defense, weight, primary)
+    },
+  })
+  return {
+    ...value, player, source, resolver, pool, ray, emitted, legacySparks: () => legacySparks,
+    dispose() { pool.dispose(); sprite.material.dispose(); player.dispose(); source.dispose(); art.dispose(); cache.dispose() },
+  }
+}
+
+test('confirmed ordinary and perfect blocks retain admitted shield cues after left-arm loss without restoring it', () => {
+  for (const perfect of [false, true]) for (const projectile of [false, true]) {
+    const f = posedShieldFixture(true)
+    try {
+      f.engine.setShield(true)
+      if (!perfect) f.engine.combatMastery.guardWindow = 0
+      const incoming = new THREE.Vector3(0, 0, -1)
+      const projectilePoint = projectile ? new THREE.Vector3(0.16, 1.72, -0.68) : undefined
+      const projectileNormal = projectile ? new THREE.Vector3(0.2, 0.3, -0.9).normalize() : undefined
+      const expectedPoint = projectilePoint?.clone() ?? new THREE.Vector3(0, 1.35, -0.72)
+      const expectedNormal = projectileNormal?.clone() ?? incoming.clone()
+      const weapon = { point: new THREE.Vector3(), normal: new THREE.Vector3(), surface: 'skin' as const }
+      assert.equal(f.source.sampleContact('weaponTip', weapon), true)
+      const unavailable = { point: new THREE.Vector3(99, 99, 99), normal: new THREE.Vector3(), surface: 'skin' as const }
+      assert.equal(f.player.sampleContact('shield', unavailable), false)
+      assert.equal(f.resolver.actor(f.player.root, 'leftArm', expectedPoint, incoming), null)
+      const result = f.engine.damagePlayer(20, incoming, true, {
+        attackKind: projectile ? 'actorArrow' : 'allyMelee', sourceActorId: f.attacker.id,
+        presentationPoint: projectilePoint, presentationNormal: projectileNormal,
+      })
+      assert.equal(result.dealt, perfect ? 0 : 20 * 0.72 * 0.15)
+      assert.equal(f.engine.health, perfect ? 70 : 70 - 20 * 0.72 * 0.15)
+      assert.equal(f.engine.stamina, perfect ? 88 : 100)
+      assert.equal(f.emitted.length, 1)
+      const cue = f.emitted[0]
+      assert.equal(cue.defense, true)
+      assert.equal(cue.contact.origin, 'admitted-shield')
+      assert.equal(cue.contact.surface, 'metal')
+      assert.equal(cue.contact.sourceSurface, weapon.surface)
+      assert.ok(cue.contact.point.distanceTo(expectedPoint) < 1e-12)
+      assert.ok(cue.contact.normal.distanceTo(expectedNormal) < 1e-12)
+      assert.equal(f.ray.active, true)
+      assert.equal(f.ray.material.depthTest, true)
+      assert.ok(f.ray.sprite.position.distanceTo(expectedPoint) < 1e-12)
+      assert.ok(f.pool.snapshot().active > 0)
+      assert.equal(f.counts.draws, 0)
+      assert.equal(f.counts.injuries, 0)
+      assert.equal(f.counts.hitFx, perfect ? 0 : 1)
+      assert.deepEqual(f.counts.sounds, perfect ? ['block'] : [])
+      assert.equal(f.engine.body.leftArm, 'missing')
+      assert.equal(f.player.root.getObjectByName('leftArm')?.visible, false)
+      assert.equal(f.player.sampleContact('shield', unavailable), false)
+      assert.ok(result.presentationContact)
+      assert.notEqual(result.presentationContact.point, f.resolver.contact.point)
+      assert.notEqual(result.presentationContact.point, projectilePoint)
+      const stored = copyPresentationContact(result.presentationContact)
+      f.resolver.actor(f.player.root, 'head', new THREE.Vector3(), incoming)
+      projectilePoint?.set(99, 99, 99)
+      assert.deepEqual(result.presentationContact, stored)
+      assert.ok(result.direction.distanceTo(new THREE.Vector3(0, 0, 1)) < 1e-12)
+      assert.deepEqual(incoming.toArray(), [0, 0, -1])
+    } finally { f.dispose() }
+  }
+})
+
+test('an exhausted perfect guard emits the captured raised contact after the real shield drop, not the lowered pose', () => {
+  for (const missingLeftArm of [false, true]) for (const stamina of [12, 100]) {
+    const f = posedShieldFixture(missingLeftArm)
+    try {
+      f.engine.stamina = stamina
+      f.engine.setShield(true)
+      const raised = { point: new THREE.Vector3(), normal: new THREE.Vector3(), surface: 'skin' as const }
+      assert.equal(f.player.sampleContact('shield', raised), !missingLeftArm)
+      const expected = missingLeftArm ? new THREE.Vector3(0, 1.35, -0.72) : raised.point.clone()
+      const result = f.engine.damagePlayer(20, new THREE.Vector3(0, 0, -1), true, {
+        attackKind: 'allyMelee', sourceActorId: f.attacker.id,
+      })
+      assert.equal(result.dealt, 0)
+      assert.equal(f.engine.health, 70)
+      assert.equal(f.engine.stamina, stamina - 12)
+      assert.equal(f.engine.shieldActive, stamina !== 12)
+      assert.equal(f.emitted.length, 1)
+      assert.equal(f.emitted[0].stamina, stamina - 12, 'emission follows the paid defense resolution')
+      assert.equal(f.emitted[0].raised, stamina !== 12)
+      assert.ok(f.emitted[0].contact.point.distanceTo(expected) < 1e-12)
+      assert.ok(f.ray.sprite.position.distanceTo(expected) < 1e-12)
+      assert.ok(result.presentationContact)
+      assert.ok(result.presentationContact.point.distanceTo(expected) < 1e-12)
+      assert.equal(f.counts.draws, 0)
+      assert.equal(f.counts.injuries, 0)
+      assert.equal(f.attacker.reaction, 'stagger')
+      assert.equal(f.attacker.action, null)
+      assert.deepEqual(f.counts.sounds, ['block'])
+      if (!missingLeftArm) {
+        const current = { point: new THREE.Vector3(), normal: new THREE.Vector3(), surface: 'skin' as const }
+        assert.equal(f.player.sampleContact('shield', current), true)
+        if (stamina === 12) {
+          assert.ok(raised.point.distanceTo(current.point) > 0.9, 'negative control: post-drop sampling is visibly misplaced')
+          assert.ok(f.emitted[0].contact.point.distanceTo(current.point) > 0.9)
+          assert.ok(f.engine.abilityCooldown > 0)
+        } else {
+          assert.ok(current.point.distanceTo(raised.point) < 1e-12)
+          assert.equal(f.engine.abilityCooldown, 0)
+        }
+      } else assert.equal(f.engine.body.leftArm, 'missing')
+    } finally { f.dispose() }
+  }
+})
+
+test('shield fallback is limited to admitted guards; ordinary missing contacts and rejected defenses remain excluded', () => {
+  for (const scenario of ['unblocked', 'rear', 'evaded', 'paused', 'ended'] as const) {
+    const f = posedShieldFixture(true)
+    try {
+      const admitted = new THREE.Vector3(0, 1.35, -0.72)
+      assert.equal(f.resolver.actor(f.player.root, 'leftArm', admitted, new THREE.Vector3(0, 0, 1)), null)
+      assert.equal(f.resolver.actor(f.player.root, 'shield', admitted, new THREE.Vector3(0, 0, 1)), null)
+      if (scenario !== 'unblocked') f.engine.setShield(true)
+      if (scenario === 'evaded') Object.assign(f.engine.combatMastery, {
+        evadeProtection: true, evadeRemaining: 0.14, evadeCooldown: 0.8,
+      })
+      if (scenario === 'paused') f.engine.paused = true
+      if (scenario === 'ended') f.engine.ended = true
+      f.engine.damagePlayer(20, new THREE.Vector3(0, 0, scenario === 'rear' ? 1 : -1), false, { attackKind: 'allyMelee' })
+      assert.equal(f.emitted.length, scenario === 'unblocked' || scenario === 'rear' ? 1 : 0)
+      assert.ok(f.emitted.every((entry) => !entry.defense && entry.contact.origin !== 'admitted-shield'))
+      assert.equal(f.engine.body.leftArm, 'missing')
+    } finally { f.dispose() }
+  }
+  for (const perfect of [false, true]) for (const stamina of [12, 100]) {
+    const enhanced = posedShieldFixture(true)
+    const legacy = posedShieldFixture(true, 'legacy')
+    try {
+      for (const f of [enhanced, legacy]) { f.engine.stamina = stamina; f.engine.setShield(true) }
+      if (!perfect) for (const f of [enhanced, legacy]) f.engine.combatMastery.guardWindow = 0
+      const input = new THREE.Vector3(0, 0, -1)
+      const improved = enhanced.engine.damagePlayer(20, input, true, { attackKind: 'allyMelee' })
+      const original = legacy.engine.damagePlayer(20, input, true, { attackKind: 'allyMelee' })
+      assert.equal(improved.dealt, original.dealt)
+      assert.deepEqual(improved.position, original.position)
+      assert.deepEqual(improved.direction, original.direction)
+      assert.equal(enhanced.engine.stamina, legacy.engine.stamina)
+      assert.equal(enhanced.engine.shieldActive, legacy.engine.shieldActive)
+      assert.equal(enhanced.engine.abilityCooldown, legacy.engine.abilityCooldown)
+      assert.equal(legacy.emitted.length, 0, 'legacy output does not acquire enhanced physical cues')
+      assert.equal(legacy.legacySparks(), perfect ? 0 : 1)
+      assert.equal(original.presentationContact, undefined)
+      assert.deepEqual(enhanced.counts.sounds, legacy.counts.sounds)
+    } finally { enhanced.dispose(); legacy.dispose() }
+  }
 })

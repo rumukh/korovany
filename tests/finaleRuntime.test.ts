@@ -130,6 +130,8 @@ function fixture(faction: Faction = 'guard') {
     finale, actors, player, objectives, achievements, scene: new THREE.Scene(),
     finaleTelegraphs: [], finaleTelegraphAction: null, telegraphPool: [],
     projectiles: [], projectileSourcesToClear: new Set(),
+    projectileCenter: new THREE.Vector3(), bowRayDirection: new THREE.Vector3(),
+    bowRaycaster: new THREE.Raycaster(), bowIntersections: [], cameraObstacles: [],
     generatedEncounterPlans: new Map([[identity.regionId, [finalPlan]]]),
     generatedActivationSpawns: new Map([[identity.regionId, new Set([identity.bossId])]]),
     simulatedGeneratedRegions: new Set(regions.getSimulatedRegionIds()),
@@ -142,6 +144,7 @@ function fixture(faction: Faction = 'guard') {
     generatedRngStreams: {
       combat: new RandomStream(1), director: new RandomStream(2), event: new RandomStream(3),
       loot: new RandomStream(4), chronicle: new RandomStream(5), rumour: new RandomStream(6),
+      injury: new RandomStream(7),
     },
     hints: { pending: () => [] }, lootRng: () => 0.1, combatRng: () => 0.99,
     health: 100, maxHealth: 100, stamina: 100, maxStamina: 100,
@@ -379,6 +382,50 @@ test('real player and allied lethal damage completes the owned finale and finali
   }
 })
 
+test('actual lethal NPC path spends only its visible-limb selections, independent of death cosmetics', () => {
+  for (const randomValue of [0.1, 0.95]) {
+    const value = fixture('villain')
+    const originalRandom = Math.random
+    const names = ['leftArm', 'rightArm', 'leftLeg', 'rightLeg']
+    for (const name of names) {
+      const limb = new THREE.Object3D()
+      limb.name = name
+      value.boss.mesh.add(limb)
+    }
+    value.boss.role = 'soldier'
+    value.boss.hp = 20
+    Reflect.set(value.engine, 'detachActorLimb', Reflect.get(GameEngine.prototype, 'detachActorLimb'))
+    Reflect.set(value.engine, 'particles', [])
+    Reflect.set(value.engine, 'artLibrary', { createMaterial: () => new THREE.MeshBasicMaterial() })
+    const before = invoke<ActiveRunSaveV3>(value.engine, 'saveGeneratedRun')
+    const expected = RandomStream.fromState(before.rngStates.injury)
+    const visible = [...names], missing = []
+    for (let count = 0; count < 2; count++) missing.push(...visible.splice(Math.floor(expected.next() * visible.length), 1))
+    try {
+      Math.random = () => randomValue
+      invoke(value.engine, 'damageActor', value.boss, 100, value.player.position, 'villain', false, { attackKind: 'allyMelee' })
+      Math.random = originalRandom
+      assert.equal(value.boss.alive, false)
+      assert.equal(value.boss.hp, 0)
+      assert.deepEqual(names.filter((name) => value.boss.mesh.getObjectByName(name)?.visible === false).sort(), missing.sort())
+      const saved = invoke<ActiveRunSaveV3>(value.engine, 'saveGeneratedRun')
+      assert.equal(saved.rngStates.injury, expected.getState())
+      assert.equal(saved.rngStates.combat, before.rngStates.combat)
+      const state = saved.rngStates.injury
+      invoke(value.engine, 'damageActor', value.boss, 100, value.player.position, 'villain', false, { attackKind: 'allyMelee', detachChance: 1 })
+      assert.equal(invoke<ActiveRunSaveV3>(value.engine, 'saveGeneratedRun').rngStates.injury, state)
+    } finally {
+      Math.random = originalRandom
+      const scene = Reflect.get(value.engine, 'scene') as THREE.Scene
+      scene.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return
+        object.geometry.dispose()
+        for (const material of Array.isArray(object.material) ? object.material : [object.material]) material.dispose()
+      })
+    }
+  }
+})
+
 test('arrival, a failed contract, an unrelated champion and repeated callbacks cannot invent a final win', () => {
   const value = fixture()
   for (const objective of value.objectives) if (objective.id !== value.identity.objectiveId) objective.done = false
@@ -461,6 +508,26 @@ test('the real fan spawns three locked projectile directions rather than homing 
   assert.deepEqual(projectiles.map((projectile) => projectile.velocity.toArray()), velocities)
   assert.equal(Reflect.get(value.engine, 'health'), 100)
   assert.ok(projectiles.every((projectile) => projectile.life < 1.2))
+})
+
+test('saving a paid bow shot preserves stamina and cooldown but does not persist held aim or its camera', () => {
+  const value = fixture('elf')
+  Reflect.set(value.engine, 'stamina', 85)
+  Reflect.set(value.engine, 'abilityCooldown', 0.7)
+  const before = invoke<ActiveRunSaveV3>(value.engine, 'saveGeneratedRun')
+  Reflect.set(value.engine, 'bowAiming', true)
+  Reflect.set(value.engine, 'cameraPitch', -0.9)
+  Reflect.set(value.engine, 'bowOverviewPitch', 0.578)
+  const held = invoke<ActiveRunSaveV3>(value.engine, 'saveGeneratedRun')
+  assert.deepEqual({ ...held, updatedAt: '' }, { ...before, updatedAt: '' })
+  const restored = parseActiveRunSaveV3(JSON.stringify(held))
+  assert.ok(restored)
+  const view = buildInitialGameView({ blueprint: value.blueprint, config: value.config, restored })
+  assert.equal(view.stamina, 85)
+  assert.equal(view.ability.cooldown, 0.7)
+  assert.equal(view.ability.active, false)
+  assert.equal(view.ability.ready, false)
+  assert.equal(view.ability.aimAvailable, true)
 })
 
 test('one live save preserves finale wounds, paid evasion, squad orders and the selected itinerary', () => {

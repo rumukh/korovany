@@ -12,6 +12,9 @@ import { FACTION_INFO } from '../src/game/types.ts'
 import { buildInitialGameView } from '../src/game/world/CampaignView.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
 import { GameplayPointerCaptures } from '../src/game/input/CombatInput.ts'
+import { DEFAULT_VISUAL_PREFERENCES } from '../src/game/visualSettings.ts'
+
+const appSource = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8')
 
 const loader = registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -50,6 +53,8 @@ const menuProps: ComponentProps<typeof MenuScreen> = {
   seedInput: '7', canonicalSeed: 7, achievementSummary: summarizeAchievements([]),
   theme: 'dark', dynamicDayNight: true, weatherEnabled: true, bloomEnabled: true,
   inkOutlinesEnabled: true, foliageQuality: 'high', screenShakeEnabled: true, sfxVolume: 0.8,
+  visualPreferences: DEFAULT_VISUAL_PREFERENCES, visualPreferencesError: false,
+  onVisualPreferencesChange: noop,
   onStart: noop, onContinueGenerated: noop, onAbandonGenerated: noop,
   onSeedInput: noop, onRandomSeed: noop, onSelectBoon: noop, onUnlockBoon: noop,
   onUnlockDoctrine: noop, onAchievements: noop, onToggleTheme: noop,
@@ -58,19 +63,24 @@ const menuProps: ComponentProps<typeof MenuScreen> = {
   onSfxVolumeChange: noop,
 }
 
-test('all three faction launch actions render before optional run configuration', () => {
+test('all three faction launches precede run setup while settings stay at the bottom', () => {
   const html = renderToStaticMarkup(createElement(MenuScreen, menuProps))
-  const setup = html.indexOf('class="run-options"')
-  assert.ok(setup > 0)
-  for (const label of Object.values(FACTION_INFO).map((faction) => `Играть: ${faction.shortName}`)) {
-    const action = html.indexOf(label)
-    assert.ok(action > 0 && action < setup, `${label} must precede seed/boon setup`)
+  const launchStart = html.indexOf('class="faction-grid"')
+  const setup = html.indexOf('class="run-setup"')
+  const lower = html.indexOf('class="menu-lower"')
+  const settings = html.indexOf('id="menu-settings-title"')
+  assert.ok(launchStart > 0 && launchStart < setup)
+  const launchMarkup = html.slice(launchStart, setup)
+  assert.equal((launchMarkup.match(/Начать · seed 7/g) ?? []).length, 3)
+  for (const faction of Object.values(FACTION_INFO)) {
+    assert.match(launchMarkup, new RegExp(faction.name))
   }
-  assert.match(html, /<details class="menu-preferences">/)
-  assert.match(html, /<details class="run-options">/)
-  assert.doesNotMatch(html, /<details[^>]*\bopen[=\s>]/)
+  assert.ok(lower > setup && settings > lower)
+  assert.doesNotMatch(html, /menu-preferences|run-options/)
   assert.match(html, /id="world-seed"/)
+  assert.match(html, /Достижения \d+\/\d+/)
   assert.match(html, /Громкость эффектов/)
+  assert.match(html, /Боевой интерфейс/)
 })
 
 const bridge: NonNullable<ComponentProps<typeof BridgeAmbushHud>['view']> = {
@@ -139,28 +149,56 @@ const gameProps: ComponentProps<typeof GameScreen> = {
   onAchievements: noop, onMenu: noop, onBuy: noop, onCloseShop: noop,
   onOpenAtlas: noop, onCloseAtlas: noop, onSelectExpedition: noop, onExpeditionPreference: noop,
   onAttack: noop, onEvade: noop, onAbilityDown: noop, onAbilityUp: noop,
+  onBowAimDown: noop, onBowAimUp: noop,
   onInteract: noop, onCommand: noop, onOpenSquadCommand: noop, onCloseSquadCommand: noop,
   onIssueSquadCommand: () => true, onOpenJournal: noop, onCloseJournal: noop,
   onBridgeChoice: noop, onTrackBridge: noop, onPinRumour: noop, onPinObjective: noop, onTakeDoctrine: noop,
   onPointerLock: noop, onInput: noop, onRetryFinalization: noop, onRestart: noop,
   musicMuted: true, sfxVolume: 0.8, dynamicDayNight: true, weatherEnabled: true,
   bloomEnabled: true, inkOutlinesEnabled: true, foliageQuality: 'high', screenShakeEnabled: true,
+  visualPreferences: { ...DEFAULT_VISUAL_PREFERENCES, hudMode: 'compact' },
+  visualPreferencesError: false, onVisualPreferencesChange: noop,
   onToggleMusic: noop, onSfxVolumeChange: noop, onToggleDynamicDayNight: noop,
   onToggleWeather: noop, onToggleBloom: noop, onToggleInkOutlines: noop,
   onCycleFoliageQuality: noop, onToggleScreenShake: noop,
 }
 
-test('normal gameplay leaves full objectives and chronicle in the paused journal', () => {
+test('compact field HUD keeps journal access and the paused journal renders full campaign boards', () => {
   const playing = renderToStaticMarkup(createElement(GameScreen, gameProps))
-  assert.match(playing, /class="game-screen focused-hud/)
+  assert.match(playing, /class="game-screen faction-elf/)
+  assert.match(playing, /data-hud="compact"/)
   assert.match(playing, /aria-label="Журнал похода"/)
-  assert.doesNotMatch(playing, /class="objective-list"/)
-  assert.doesNotMatch(playing, /aria-label="Хроника мира"/)
+  assert.equal((playing.match(/class="compact-hud-disclosure"/g) ?? []).length, 2)
   const planning = renderToStaticMarkup(createElement(GameScreen, {
     ...gameProps, activeOverlay: 'journal', simulationPaused: true,
   }))
-  assert.match(planning, /role="dialog" aria-modal="true" aria-labelledby="journal-title"/)
-  assert.match(planning, /class="objective-list"/)
-  assert.match(planning, /aria-label="Хроника мира"/)
+  const journal = planning.slice(planning.indexOf('class="campaign-journal"'))
+  assert.match(journal, /role="dialog" aria-modal="true" aria-labelledby="journal-title"/)
+  assert.match(journal, /class="journal-missions"/)
+  assert.match(journal, /class="objective-list"/)
+  assert.match(journal, /aria-label="Хроника мира"/)
+  assert.match(journal, /class="journal-world"/)
   assert.match(planning, /class="gameplay-layer" inert=""/)
+})
+
+test('bow hold and bridge actions keep dedicated engine callback contracts', () => {
+  const gameScreen = appSource.slice(
+    appSource.indexOf('export function GameScreen'),
+    appSource.indexOf('function App()'),
+  )
+  assert.match(gameScreen, /onBowAimDown:\s*\(\) => void/)
+  assert.match(gameScreen, /onBowAimUp:\s*\(\) => void/)
+  assert.match(gameScreen, /const abilityDown = view\.ability\.id === 'bow' \? onBowAimDown : onAbilityDown/)
+  assert.match(gameScreen, /const abilityUp = view\.ability\.id === 'bow' \? onBowAimUp : onAbilityUp/)
+
+  const appWiring = appSource.slice(appSource.lastIndexOf('<GameScreen'))
+  const genericAbility = appWiring.slice(
+    appWiring.indexOf('onAbilityDown='),
+    appWiring.indexOf('onBowAimDown='),
+  )
+  assert.doesNotMatch(genericAbility, /setBowAiming|faction === 'elf'/)
+  assert.match(appWiring, /onBowAimDown=\{\(\) => engineRef\.current\?\.setBowAiming\(true, 'button'\)\}/)
+  assert.match(appWiring, /onBowAimUp=\{\(\) => engineRef\.current\?\.setBowAiming\(false, 'button'\)\}/)
+  assert.match(appWiring, /onBridgeChoice=\{\(choice\) => \{ engineRef\.current\?\.chooseBridgeAmbush\(choice\) \}\}/)
+  assert.match(appWiring, /onTrackBridge=\{\(\) => \{ engineRef\.current\?\.trackBridgeAmbush\(\) \}\}/)
 })

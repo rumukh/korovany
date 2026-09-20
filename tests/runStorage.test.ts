@@ -46,6 +46,8 @@ import {
   serializeCombatMastery,
 } from '../src/game/world/CombatMastery.ts'
 import { createSquadCommandState, serializeSquadCommandState } from '../src/game/world/SquadCommand.ts'
+import { createGeneratedRngStreams } from '../src/game/random/GeneratedRngStreams.ts'
+import { deriveSeed } from '../src/game/random/seed.ts'
 
 class MemoryStorage implements StorageLike {
   values = new Map<string, string>()
@@ -250,7 +252,36 @@ function makeRun(runId = 'run-alpha'): ActiveRunSaveV3 {
       healthAtEnd: 0,
     },
   }
+
 }
+
+test('injury state is an additive V3 stream: zero/current states persist and old saves keep deterministic defaults', () => {
+  const old = makeRun()
+  const storage = new MemoryStorage()
+  assert.equal(Object.hasOwn(old.rngStates, 'injury'), false)
+  assert.equal(saveActiveRun(storage, old), true)
+  const oldRestored = loadActiveRun(storage)
+  assert.ok(oldRestored)
+  assert.equal(oldRestored.version, 3)
+  assert.deepEqual(oldRestored.rngStates, old.rngStates)
+  const initialized = createGeneratedRngStreams(oldRestored.config.seed, oldRestored.rngStates)
+  const control = createGeneratedRngStreams(oldRestored.config.seed)
+  assert.equal(initialized.injury.next(), control.injury.next())
+  assert.deepEqual(oldRestored.rngStates, old.rngStates, 'initialization does not mutate a saved record')
+  for (const state of [0, 0xffffffff, deriveSeed(old.config.seed, 'gameplay:injury')]) {
+    const upgraded = { ...old, rngStates: { ...old.rngStates, injury: state, 'future-stream': 13579 } }
+    assert.equal(saveActiveRun(storage, upgraded), true)
+    const restored = loadActiveRun(storage)
+    assert.ok(restored)
+    assert.deepEqual(restored.rngStates, upgraded.rngStates)
+    assert.equal(restored.blueprintFingerprint, old.blueprintFingerprint)
+    assert.deepEqual(restored.player, old.player)
+    const actual = createGeneratedRngStreams(restored.config.seed, restored.rngStates)
+    const repeated = createGeneratedRngStreams(restored.config.seed, { injury: state })
+    assert.equal(actual.injury.next(), repeated.injury.next(), 'state zero must restore rather than use the seed')
+  }
+  assert.equal(normalizeActiveRunSaveV3({ ...old, rngStates: { ...old.rngStates, injury: NaN } }), null)
+})
 
 function makeTerminalRun(
   runId = 'run-alpha',

@@ -15,6 +15,7 @@ import {
 import {
   cloneRegionChronicleState,
   createRegionChronicleState,
+  normalizeRegionChronicleState,
   type RegionChronicleState,
 } from './Chronicle.ts'
 import {
@@ -423,8 +424,21 @@ export class RegionManager {
   ): boolean {
     const region = this.resolveRegion(regionId)
     if (!region || this.disposed) return false
-    const next = cloneDelta(this.readCurrentDelta(region))
-    next.chronicle = cloneRegionChronicleState(chronicle)
+    const normalized = normalizeRegionChronicleState(chronicle)
+    if (!normalized) return false
+    const current = this.readCurrentDelta(region)
+    const previous = current.chronicle
+    // Saving synchronizes every region; a repeated snapshot is not a Chronicle change.
+    if (previous.control === normalized.control &&
+        previous.pressure.elf === normalized.pressure.elf &&
+        previous.pressure.guard === normalized.pressure.guard &&
+        previous.pressure.villain === normalized.pressure.villain &&
+        previous.beastPressure === normalized.beastPressure &&
+        previous.settlementIntegrity === normalized.settlementIntegrity &&
+        previous.supply === normalized.supply &&
+        previous.lastEventTick === normalized.lastEventTick) return true
+    const next = cloneDelta(current)
+    next.chronicle = normalized
     next.revision += 1
     return this.applyRegionDelta(region.id, next)
   }

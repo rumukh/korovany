@@ -23,7 +23,6 @@ import {
   RotateCcw,
   Save,
   ScrollText,
-  Settings2,
   Shield,
   Skull,
   Sparkles,
@@ -105,6 +104,18 @@ import { FinaleHud, FinaleResult } from './game/ui/FinaleHud'
 import { BridgeAmbushHud } from './game/ui/BridgeAmbushHud'
 import { CampaignJournal } from './game/ui/CampaignJournal'
 import type { BridgeAmbushChoice } from './game/world/BridgeAmbush'
+import { CompactMissionHud, CompactWorldNews } from './game/ui/CompactCombatHud'
+import {
+  VisualSettingsControls,
+  type VisualPreferencesControlProps,
+} from './game/ui/VisualSettingsControls'
+import {
+  DEFAULT_VISUAL_PREFERENCES,
+  loadVisualPreferences,
+  normalizeVisualPreferences,
+  saveVisualPreferences,
+  type VisualPreferences,
+} from './game/visualSettings.ts'
 import {
   closeTopGameOverlay,
   dismissGameOverlay,
@@ -454,6 +465,15 @@ function readScreenShakeEnabled(): boolean {
     console.warn('Korovany: screen-shake preference could not be read.', error)
   }
   return !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+}
+
+function readVisualPreferences(): VisualPreferences {
+  try {
+    return loadVisualPreferences(window.localStorage, warnRunStorage)
+  } catch (error) {
+    console.warn('Korovany: visual preference storage could not be accessed.', error)
+    return DEFAULT_VISUAL_PREFERENCES
+  }
 }
 
 function formatTime(seconds: number): string {
@@ -1296,36 +1316,6 @@ function AchievementGallery({
   )
 }
 
-function FactionLaunchCards({ activeRun, canonicalSeed, onStart }: {
-  activeRun: ActiveRunSaveV3 | null
-  canonicalSeed: number
-  onStart: (faction: Faction) => void
-}) {
-  return (
-    <div className="faction-grid">
-      {(Object.keys(FACTION_INFO) as Faction[]).map((faction) => {
-        const info = FACTION_INFO[faction]
-        return (
-          <article className={`faction-card ${faction}`} key={faction}>
-            <div className="faction-scenery" aria-hidden="true"><i /><i /><i /></div>
-            <div className="faction-icon"><FactionEmblem faction={faction} /></div>
-            <h3>{info.name}</h3>
-            <p>{info.description}</p>
-            <div className="perk">
-              <Sparkles aria-hidden="true" /><span>{info.perk}</span>
-            </div>
-            <button className="primary-button" type="button" disabled={Boolean(activeRun)}
-              onClick={() => onStart(faction)} title={`Начать · seed ${canonicalSeed}`}>
-              <Play aria-hidden="true" />
-              {activeRun ? 'Есть активный забег' : `Играть: ${info.shortName}`}
-            </button>
-          </article>
-        )
-      })}
-    </div>
-  )
-}
-
 export function MenuScreen({
   activeRun,
   activeRunError,
@@ -1340,6 +1330,9 @@ export function MenuScreen({
   inkOutlinesEnabled,
   foliageQuality,
   screenShakeEnabled,
+  visualPreferences,
+  visualPreferencesError,
+  onVisualPreferencesChange,
   sfxVolume,
   onStart,
   onContinueGenerated,
@@ -1390,7 +1383,7 @@ export function MenuScreen({
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
   onSfxVolumeChange: (volume: number) => void
-}) {
+} & VisualPreferencesControlProps) {
   const selectedBoonId = selectedProfileBoon(profile)
   const previewWorld = useMemo(() => blueprintForSeed(canonicalSeed), [canonicalSeed])
   const activeElapsed = serializableNumber(activeRun?.directorState.elapsed)
@@ -1405,142 +1398,19 @@ export function MenuScreen({
       : activeRunError
 
   return (
-    <main className="menu-screen opening-menu">
+    <main className="menu-screen">
       <div className="menu-atmosphere" aria-hidden="true">
         <div className="contour contour-a" />
         <div className="contour contour-b" />
         <div className="contour contour-c" />
       </div>
-      <nav className="menu-toolbar" aria-label="Главное меню">
-        <span className="menu-edition">Процедурный 3D-поход</span>
-        <button className="secondary-button achievement-menu-button" type="button" onClick={onAchievements}>
-          <Trophy aria-hidden="true" />
-          Достижения {achievementSummary.unlocked}/{achievementSummary.total}
-        </button>
-        <details className="menu-preferences">
-          <summary><Settings2 aria-hidden="true" /> Настройки</summary>
-          <div className="menu-settings">
-        <button
-          className="theme-toggle secondary-button"
-          type="button"
-          onClick={onToggleTheme}
-          aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
-          title={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
-        >
-          {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
-          <span>{theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}</span>
-        </button>
-        <button
-          className="day-night-toggle secondary-button"
-          type="button"
-          onClick={onToggleDynamicDayNight}
-          aria-pressed={dynamicDayNight}
-          aria-label={
-            dynamicDayNight
-              ? 'Отключить динамическое время суток'
-              : 'Включить динамическое время суток'
-          }
-          title={
-            dynamicDayNight
-              ? 'Отключить динамическое время суток'
-              : 'Включить динамическое время суток'
-          }
-        >
-          <Clock3 aria-hidden="true" />
-          <span>{dynamicDayNight ? 'Время суток: вкл.' : 'Время суток: выкл.'}</span>
-        </button>
-        <button
-          className="weather-toggle secondary-button"
-          type="button"
-          onClick={onToggleWeather}
-          aria-pressed={weatherEnabled}
-          aria-label={weatherEnabled ? 'Отключить динамическую погоду' : 'Включить динамическую погоду'}
-          title={weatherEnabled ? 'Отключить динамическую погоду' : 'Включить динамическую погоду'}
-        >
-          <CloudRain aria-hidden="true" />
-          <span>{weatherEnabled ? 'Погода: вкл.' : 'Погода: выкл.'}</span>
-        </button>
-        <button
-          className="bloom-toggle secondary-button"
-          type="button"
-          onClick={onToggleBloom}
-          aria-pressed={bloomEnabled}
-          aria-label={bloomEnabled ? 'Отключить свечение' : 'Включить свечение'}
-          title={bloomEnabled ? 'Отключить свечение' : 'Включить свечение'}
-        >
-          <Sparkles aria-hidden="true" />
-          <span>{bloomEnabled ? 'Свечение: вкл.' : 'Свечение: выкл.'}</span>
-        </button>
-        <button
-          className="ink-outlines-toggle secondary-button"
-          type="button"
-          onClick={onToggleInkOutlines}
-          aria-pressed={inkOutlinesEnabled}
-          aria-label={
-            inkOutlinesEnabled
-              ? 'Отключить чернильные контуры'
-              : 'Включить чернильные контуры'
-          }
-          title={
-            inkOutlinesEnabled
-              ? 'Отключить чернильные контуры'
-              : 'Включить чернильные контуры'
-          }
-        >
-          <Eye aria-hidden="true" />
-          <span>
-            {inkOutlinesEnabled
-              ? 'Чернильные контуры: вкл.'
-              : 'Чернильные контуры: выкл.'}
-          </span>
-        </button>
-        <button
-          className="foliage-toggle secondary-button"
-          type="button"
-          onClick={onCycleFoliageQuality}
-          data-quality={foliageQuality}
-          aria-label={`Качество растительности: ${foliageQualityLabels[foliageQuality]}`}
-          title="Изменить качество растительности"
-        >
-          <Trees aria-hidden="true" />
-          <span>Растительность: {foliageQualityLabels[foliageQuality]}</span>
-        </button>
-        <button
-          className="screen-shake-toggle secondary-button"
-          type="button"
-          onClick={onToggleScreenShake}
-          aria-pressed={screenShakeEnabled}
-          aria-label={screenShakeEnabled ? 'Отключить эффекты камеры' : 'Включить эффекты камеры'}
-          title={screenShakeEnabled ? 'Отключить эффекты камеры' : 'Включить эффекты камеры'}
-        >
-          <Vibrate aria-hidden="true" />
-          <span>{screenShakeEnabled ? 'Камера: вкл.' : 'Камера: выкл.'}</span>
-        </button>
-        <label className="sfx-volume-control menu-sfx-volume">
-          <Volume2 aria-hidden="true" />
-          <span>Громкость эффектов</span>
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.05"
-            value={sfxVolume}
-            onChange={(event) => onSfxVolumeChange(Number(event.currentTarget.value))}
-            aria-label="Громкость эффектов"
-          />
-          <strong>{Math.round(sfxVolume * 100)}%</strong>
-        </label>
-          </div>
-        </details>
-      </nav>
       <header className="hero-header">
-        <div className="hero-title">
+        <div className="hackathon-tag">
+          <Sparkles aria-hidden="true" />
+          Хакатонная сборка • 3D-экшон
+        </div>
         <h1>КОРОВАНЫ</h1>
         <p className="hero-kicker">Джва года в разработке</p>
-        <p className="hero-copy">
-          Один отряд. Один поход. У каждого корована — своя судьба.
-        </p>
-        </div>
         <img
           className="hero-key-art"
           src={caravanKeyArt}
@@ -1548,6 +1418,14 @@ export function MenuScreen({
           aria-hidden="true"
           draggable={false}
         />
+        <p className="hero-copy">
+          3Д-экшон, суть такова: каждый seed собирает 25 регионов, четыре зоны и
+          отдельный путь для лесных эльфов, охраны дворца и злодея.
+        </p>
+        <button className="secondary-button achievement-menu-button" type="button" onClick={onAchievements}>
+          <Trophy aria-hidden="true" />
+          Достижения {achievementSummary.unlocked}/{achievementSummary.total}
+        </button>
       </header>
 
       {activeRun ? (
@@ -1602,6 +1480,7 @@ export function MenuScreen({
       >
         <div className="section-heading">
           <div>
+            <span className="eyebrow">Новый сгенерированный забег</span>
             <h2 id="faction-title">Выберите, за кого нагибать</h2>
           </div>
           <p>
@@ -1613,19 +1492,45 @@ export function MenuScreen({
         {activeRun ? (
           <p className="new-run-blocked-note">
             <Shield aria-hidden="true" />
-            Продолжите или бросьте активный забег, чтобы начать новый.
+            Новый забег станет доступен после продолжения или явного отказа от активного.
           </p>
         ) : null}
-        <FactionLaunchCards activeRun={activeRun} canonicalSeed={canonicalSeed} onStart={onStart} />
 
-        <details className="run-options">
-          <summary>
-            <Settings2 aria-hidden="true" />
-            Настроить поход
-            <span>seed {canonicalSeed} · {BOON_CATALOGUE.find((boon) => boon.id === selectedBoonId)?.name}</span>
-            <ChevronDown aria-hidden="true" />
-          </summary>
-          <div className="run-setup">
+        <div className="faction-grid">
+          {(Object.keys(FACTION_INFO) as Faction[]).map((faction) => {
+            const info = FACTION_INFO[faction]
+            return (
+              <article className={`faction-card ${faction}`} key={faction}>
+                <div className="faction-scenery" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
+                </div>
+                <div className="faction-icon">
+                  <FactionEmblem faction={faction} />
+                </div>
+                <span className="faction-subtitle">{info.subtitle}</span>
+                <h3>{info.name}</h3>
+                <p>{info.description}</p>
+                <div className="perk">
+                  <Sparkles aria-hidden="true" />
+                  <span>{info.perk}</span>
+                </div>
+                <button
+                  className="primary-button"
+                  type="button"
+                  disabled={Boolean(activeRun)}
+                  onClick={() => onStart(faction)}
+                >
+                  <Play aria-hidden="true" />
+                  {activeRun ? 'Есть активный забег' : `Начать · seed ${canonicalSeed}`}
+                </button>
+              </article>
+            )
+          })}
+        </div>
+
+        <div className="run-setup">
           <div className="seed-panel">
             <div className="run-setup-heading">
               <div>
@@ -1780,8 +1685,7 @@ export function MenuScreen({
               })}
             </div>
           </div>
-          </div>
-        </details>
+        </div>
       </section>
 
       <section className="menu-lower">
@@ -1892,6 +1796,124 @@ export function MenuScreen({
             )}
           </section>
         </div>
+      </section>
+      <section className="menu-settings" aria-labelledby="menu-settings-title">
+        <h2 id="menu-settings-title">Настройки</h2>
+        <button
+          className="theme-toggle secondary-button"
+          type="button"
+          onClick={onToggleTheme}
+          aria-label={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
+          title={theme === 'dark' ? 'Включить светлую тему' : 'Включить тёмную тему'}
+        >
+          {theme === 'dark' ? <Sun aria-hidden="true" /> : <Moon aria-hidden="true" />}
+          <span>{theme === 'dark' ? 'Светлая тема' : 'Тёмная тема'}</span>
+        </button>
+        <button
+          className="day-night-toggle secondary-button"
+          type="button"
+          onClick={onToggleDynamicDayNight}
+          aria-pressed={dynamicDayNight}
+          aria-label={
+            dynamicDayNight
+              ? 'Отключить динамическое время суток'
+              : 'Включить динамическое время суток'
+          }
+          title={
+            dynamicDayNight
+              ? 'Отключить динамическое время суток'
+              : 'Включить динамическое время суток'
+          }
+        >
+          <Clock3 aria-hidden="true" />
+          <span>{dynamicDayNight ? 'Время суток: вкл.' : 'Время суток: выкл.'}</span>
+        </button>
+        <button
+          className="weather-toggle secondary-button"
+          type="button"
+          onClick={onToggleWeather}
+          aria-pressed={weatherEnabled}
+          aria-label={weatherEnabled ? 'Отключить динамическую погоду' : 'Включить динамическую погоду'}
+          title={weatherEnabled ? 'Отключить динамическую погоду' : 'Включить динамическую погоду'}
+        >
+          <CloudRain aria-hidden="true" />
+          <span>{weatherEnabled ? 'Погода: вкл.' : 'Погода: выкл.'}</span>
+        </button>
+        <button
+          className="bloom-toggle secondary-button"
+          type="button"
+          onClick={onToggleBloom}
+          aria-pressed={bloomEnabled}
+          aria-label={bloomEnabled ? 'Отключить свечение' : 'Включить свечение'}
+          title={bloomEnabled ? 'Отключить свечение' : 'Включить свечение'}
+        >
+          <Sparkles aria-hidden="true" />
+          <span>{bloomEnabled ? 'Свечение: вкл.' : 'Свечение: выкл.'}</span>
+        </button>
+        <button
+          className="ink-outlines-toggle secondary-button"
+          type="button"
+          onClick={onToggleInkOutlines}
+          aria-pressed={inkOutlinesEnabled}
+          aria-label={
+            inkOutlinesEnabled
+              ? 'Отключить чернильные контуры'
+              : 'Включить чернильные контуры'
+          }
+          title={
+            inkOutlinesEnabled
+              ? 'Отключить чернильные контуры'
+              : 'Включить чернильные контуры'
+          }
+        >
+          <Eye aria-hidden="true" />
+          <span>
+            {inkOutlinesEnabled
+              ? 'Чернильные контуры: вкл.'
+              : 'Чернильные контуры: выкл.'}
+          </span>
+        </button>
+        <button
+          className="foliage-toggle secondary-button"
+          type="button"
+          onClick={onCycleFoliageQuality}
+          data-quality={foliageQuality}
+          aria-label={`Качество растительности: ${foliageQualityLabels[foliageQuality]}`}
+          title="Изменить качество растительности"
+        >
+          <Trees aria-hidden="true" />
+          <span>Растительность: {foliageQualityLabels[foliageQuality]}</span>
+        </button>
+        <button
+          className="screen-shake-toggle secondary-button"
+          type="button"
+          onClick={onToggleScreenShake}
+          aria-pressed={screenShakeEnabled}
+          aria-label={screenShakeEnabled ? 'Отключить эффекты камеры' : 'Включить эффекты камеры'}
+          title={screenShakeEnabled ? 'Отключить эффекты камеры' : 'Включить эффекты камеры'}
+        >
+          <Vibrate aria-hidden="true" />
+          <span>{screenShakeEnabled ? 'Камера: вкл.' : 'Камера: выкл.'}</span>
+        </button>
+        <label className="sfx-volume-control menu-sfx-volume">
+          <Volume2 aria-hidden="true" />
+          <span>Громкость эффектов</span>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={sfxVolume}
+            onChange={(event) => onSfxVolumeChange(Number(event.currentTarget.value))}
+            aria-label="Громкость эффектов"
+          />
+          <strong>{Math.round(sfxVolume * 100)}%</strong>
+        </label>
+        <VisualSettingsControls
+          visualPreferences={visualPreferences}
+          visualPreferencesError={visualPreferencesError}
+          onVisualPreferencesChange={onVisualPreferencesChange}
+        />
       </section>
       <footer className="menu-footer">
         <span>WASD — движение</span>
@@ -2014,6 +2036,9 @@ function PauseModal({
   inkOutlinesEnabled,
   foliageQuality,
   screenShakeEnabled,
+  visualPreferences,
+  visualPreferencesError,
+  onVisualPreferencesChange,
   onResume,
   onSave,
   onMenu,
@@ -2045,7 +2070,7 @@ function PauseModal({
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
   onSfxVolumeChange: (volume: number) => void
-}) {
+} & VisualPreferencesControlProps) {
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="modal pause-modal" role="dialog" aria-modal="true" aria-labelledby="pause-title">
@@ -2143,6 +2168,11 @@ function PauseModal({
           />
           <strong>{Math.round(sfxVolume * 100)}%</strong>
         </label>
+        <VisualSettingsControls
+          visualPreferences={visualPreferences}
+          visualPreferencesError={visualPreferencesError}
+          onVisualPreferencesChange={onVisualPreferencesChange}
+        />
         <div className="pause-actions">
           <button className="primary-button" type="button" onClick={onResume}>
             <Play aria-hidden="true" />
@@ -2516,6 +2546,8 @@ export function GameScreen({
   onEvade,
   onAbilityDown,
   onAbilityUp,
+  onBowAimDown,
+  onBowAimUp,
   onInteract,
   onCommand,
   onOpenSquadCommand,
@@ -2540,6 +2572,9 @@ export function GameScreen({
   inkOutlinesEnabled,
   foliageQuality,
   screenShakeEnabled,
+  visualPreferences,
+  visualPreferencesError,
+  onVisualPreferencesChange,
   onToggleMusic,
   onSfxVolumeChange,
   onToggleDynamicDayNight,
@@ -2574,6 +2609,8 @@ export function GameScreen({
   onEvade: () => void
   onAbilityDown: () => void
   onAbilityUp: () => void
+  onBowAimDown: () => void
+  onBowAimUp: () => void
   onInteract: () => void
   onCommand: () => void
   onOpenSquadCommand: () => void
@@ -2606,7 +2643,7 @@ export function GameScreen({
   onToggleInkOutlines: () => void
   onCycleFoliageQuality: () => void
   onToggleScreenShake: () => void
-}) {
+} & VisualPreferencesControlProps) {
   const [controlsDismissed, setControlsDismissed] = useState(false)
   const jumpReleaseTimer = useRef<number | null>(null)
   const info = FACTION_INFO[view.faction]
@@ -2629,7 +2666,11 @@ export function GameScreen({
         )
       : 100
   }%`
-  const abilityStatus = view.ability.active
+  const bowAiming = view.ability.id === 'bow' && view.ability.active
+  const abilityStatus = bowAiming
+    ? view.ability.ready ? 'ЛКМ — выстрел' : view.ability.cooldown > 0
+      ? `Перезарядка: ${view.ability.cooldown.toFixed(1)} с` : 'Нужна выносливость'
+    : view.ability.active
     ? 'Удерживается'
     : view.ability.ready
       ? 'Готово'
@@ -2646,6 +2687,8 @@ export function GameScreen({
       : view.melee.beat > 0
         ? `Замах ${view.melee.beat}/${view.melee.beats}`
         : 'ЛКМ — связка из трёх'
+  const abilityDown = view.ability.id === 'bow' ? onBowAimDown : onAbilityDown
+  const abilityUp = view.ability.id === 'bow' ? onBowAimUp : onAbilityUp
 
   useEffect(() => {
     let hideTimer: number | undefined
@@ -2723,10 +2766,30 @@ export function GameScreen({
     onBlur: () => onInput(code, false),
   })
 
+  const noticeStack = (
+    <div className="notice-stack" aria-live="polite">
+      {notices.map((notice) => (
+        <div className={`notice ${notice.tone}`} key={notice.id}>
+          {notice.tone === 'success' ? (
+            <Check aria-hidden="true" />
+          ) : notice.tone === 'danger' ? (
+            <Skull aria-hidden="true" />
+          ) : notice.tone === 'warning' ? (
+            <Shield aria-hidden="true" />
+          ) : (
+            <Sparkles aria-hidden="true" />
+          )}
+          <span>{notice.message}</span>
+        </div>
+      ))}
+    </div>
+  )
+
   return (
     <main
-      className={`game-screen focused-hud faction-${view.faction}${lowHealth ? ' low-health' : ''}${simulationPaused ? ' simulation-paused' : ''}`}
+      className={`game-screen faction-${view.faction}${lowHealth ? ' low-health' : ''}${simulationPaused ? ' simulation-paused' : ''}`}
       data-zone={view.zone}
+      data-hud={visualPreferences.hudMode}
       style={{ '--zone-accent': zoneInfo.accent } as CSSProperties}
     >
       <div className="gameplay-layer" inert={simulationPaused}>
@@ -2786,8 +2849,9 @@ export function GameScreen({
             <button type="button" onClick={onOpenSquadCommand} aria-haspopup="dialog"
               aria-label={SQUAD_COMMAND_COPY.open}><UserRound aria-hidden="true" /><span>Отряд</span><kbd>T</kbd></button>
             <button type="button" onClick={onOpenJournal} aria-haspopup="dialog"
-              aria-label="Журнал похода"><ScrollText aria-hidden="true" /><span>Поход</span><kbd>J</kbd>
-              {view.doctrines.offer.length > 0 ? <i className="journal-alert" aria-label="Доступен устав" /> : null}
+              aria-label={view.doctrines.offer.length > 0 ? 'Журнал похода, доступен устав' : 'Журнал похода'}>
+              <ScrollText aria-hidden="true" /><span>Поход</span><kbd>J</kbd>
+              {view.doctrines.offer.length > 0 ? <i className="journal-alert" aria-hidden="true" /> : null}
             </button>
           </nav>
           {!view.bridgeAmbush?.active ? (
@@ -2796,11 +2860,11 @@ export function GameScreen({
           <BridgeAmbushHud view={view.bridgeAmbush} paused={simulationPaused}
             onChoose={onBridgeChoice} onSquad={onOpenSquadCommand} onTrack={onTrackBridge} />
           <FinaleHud finale={view.finale} />
-          {view.rumours.some((rumour) => rumour.outcome === null) ? (
-            <button className="field-alert" type="button" onClick={onOpenJournal}>
-              <Megaphone aria-hidden="true" /> Есть вести с дороги <span>J</span>
-            </button>
-          ) : null}
+          {visualPreferences.hudMode === 'compact' ? noticeStack : null}
+          <CompactWorldNews mode={visualPreferences.hudMode} view={view}>
+            <ChronicleFeed view={view} />
+            <RumourBoard view={view} onPin={onPinRumour} />
+          </CompactWorldNews>
         </div>
       </div>
 
@@ -2866,8 +2930,8 @@ export function GameScreen({
           className={`melee-chip hud-card ${view.melee.finisherReady ? 'finisher' : ''} ${view.melee.committed ? 'committed' : ''}`}
         >
           <div className="ability-copy">
-            <span>Связка</span>
-            <strong>{meleeStatus}</strong>
+            <span>{bowAiming ? 'Лук' : 'Связка'}</span>
+            <strong>{bowAiming ? 'Отпусти ПКМ/R — клинок' : meleeStatus}</strong>
           </div>
           <div className="melee-beats" aria-hidden="true">
             {[...Array(view.melee.beats).keys()].map((index) => (
@@ -2881,35 +2945,26 @@ export function GameScreen({
         </div>
         </div>
         <div className="mission-hud">
+          <CompactMissionHud mode={visualPreferences.hudMode} view={view}>
+            <ContractBoard view={view} onPin={onPinObjective} />
+            <DoctrineBoard view={view} onTake={onTakeDoctrine} />
+            <ObjectiveList view={view} />
+          </CompactMissionHud>
           <EventBanner event={view.activeEvent} />
         </div>
       </div>
 
-      <div className="notice-stack" aria-live="polite">
-        {notices.map((notice) => (
-          <div className={`notice ${notice.tone}`} key={notice.id}>
-            {notice.tone === 'success' ? (
-              <Check aria-hidden="true" />
-            ) : notice.tone === 'danger' ? (
-              <Skull aria-hidden="true" />
-            ) : notice.tone === 'warning' ? (
-              <Shield aria-hidden="true" />
-            ) : (
-              <Sparkles aria-hidden="true" />
-            )}
-            <span>{notice.message}</span>
-          </div>
-        ))}
-      </div>
+      {visualPreferences.hudMode === 'full' ? noticeStack : null}
       <LootToast toast={view.lootToast} />
       <AchievementBanner achievement={achievementBanner} />
 
-      <div className="crosshair" aria-hidden="true">
+      <div className={`crosshair${bowAiming ? ' bow-aim' : ''}${bowAiming && !view.ability.ready ? ' reloading' : ''}`}
+        aria-hidden="true">
         <span />
       </div>
 
       <CombatCameraControls mode={view.combatMastery.cameraMode}
-        paused={simulationPaused} onCapture={onPointerLock} />
+        paused={simulationPaused} bowAiming={bowAiming} onCapture={onPointerLock} />
 
       {view.prompt ? <div className="action-prompt">{view.prompt}</div> : null}
 
@@ -2932,10 +2987,10 @@ export function GameScreen({
             <kbd>C</kbd> уворот
           </span>
           <span>
-            <kbd>ЛКМ</kbd> связка из трёх
+            <kbd>ЛКМ</kbd> {bowAiming ? 'выстрел' : 'связка из трёх'}
           </span>
           <span>
-            <kbd>ПКМ/R</kbd> {view.ability.name}
+            <kbd>ПКМ/R</kbd> {view.ability.id === 'bow' ? 'держать — прицел' : view.ability.name}
           </span>
           <span>
             <kbd>E</kbd> действие
@@ -2982,16 +3037,17 @@ export function GameScreen({
             className={`touch-attack ${view.melee.committed ? 'committed' : ''} ${view.melee.finisherReady ? 'finisher' : ''}`}
             type="button"
             {...instantGameplayAction(onAttack)}
-            disabled={simulationPaused || view.combatMastery.evadeActive}
-            aria-label={`Удар, замах ${String(view.melee.beat)} из ${String(view.melee.beats)}`}
+            disabled={simulationPaused || view.combatMastery.evadeActive || (bowAiming && !view.ability.ready)}
+            aria-label={bowAiming ? 'Выстрел из лука' : `Удар, замах ${String(view.melee.beat)} из ${String(view.melee.beats)}`}
           >
-            <Sword aria-hidden="true" />
-            <b aria-hidden="true">{view.melee.beat > 0 ? view.melee.beat : ''}</b>
+            {bowAiming ? abilityIcons.bow : <Sword aria-hidden="true" />}
+            <b aria-hidden="true">{!bowAiming && view.melee.beat > 0 ? view.melee.beat : ''}</b>
           </button>
           <button
             className={view.ability.active ? 'active' : undefined}
             type="button"
-            disabled={simulationPaused || (!view.ability.active && !view.ability.ready)}
+            disabled={simulationPaused || (!view.ability.active &&
+              !(view.ability.id === 'bow' ? view.ability.aimAvailable : view.ability.ready))}
             onPointerDown={(event) => {
               if (simulationPaused || event.button !== 0) return
               event.preventDefault()
@@ -3001,28 +3057,28 @@ export function GameScreen({
                 if (!(error instanceof DOMException && error.name === 'NotFoundError')) throw error
                 return
               }
-              onAbilityDown()
+              abilityDown()
             }}
             onPointerUp={(event) => {
               touchCaptures.release(event.pointerId)
-              onAbilityUp()
+              abilityUp()
             }}
             onPointerCancel={(event) => {
               touchCaptures.cancel(event.pointerId)
-              onAbilityUp()
+              abilityUp()
             }}
             onLostPointerCapture={(event) => {
               touchCaptures.release(event.pointerId)
-              onAbilityUp()
+              abilityUp()
             }}
-            onBlur={onAbilityUp}
+            onBlur={view.ability.id === 'bow' ? undefined : abilityUp}
             onClick={(event) => {
               if (event.detail !== 0) return
-              if (view.ability.active) onAbilityUp()
-              else onAbilityDown()
+              if (view.ability.active) abilityUp()
+              else abilityDown()
             }}
-            aria-label={view.ability.name}
-            aria-pressed={view.faction === 'guard' ? view.ability.active : undefined}
+            aria-label={view.ability.id === 'bow' ? 'Лук: удерживать для прицеливания' : view.ability.name}
+            aria-pressed={view.faction !== 'villain' ? view.ability.active : undefined}
           >
             {abilityIcons[view.ability.id]}
           </button>
@@ -3105,6 +3161,9 @@ export function GameScreen({
           inkOutlinesEnabled={inkOutlinesEnabled}
           foliageQuality={foliageQuality}
           screenShakeEnabled={screenShakeEnabled}
+          visualPreferences={visualPreferences}
+          visualPreferencesError={visualPreferencesError}
+          onVisualPreferencesChange={onVisualPreferencesChange}
           onResume={onResume}
           onSave={onSave}
           onMenu={onMenu}
@@ -3163,6 +3222,8 @@ function App() {
   const [inkOutlinesEnabled, setInkOutlinesEnabled] = useState(() => readInkOutlinesEnabled())
   const [foliageQuality, setFoliageQuality] = useState(() => readFoliageQuality())
   const [screenShakeEnabled, setScreenShakeEnabled] = useState(() => readScreenShakeEnabled())
+  const [visualPreferences, setVisualPreferences] = useState(() => readVisualPreferences())
+  const [visualPreferencesError, setVisualPreferencesError] = useState(false)
   const [theme, setTheme] = useState<Theme>(() => readTheme())
   const [dynamicDayNight, setDynamicDayNight] = useState(() => readDynamicDayNight())
   const [weatherEnabled, setWeatherEnabled] = useState(() => readWeatherEnabled())
@@ -3800,6 +3861,19 @@ function App() {
     }
   }
 
+  const changeVisualPreferences = (preferences: VisualPreferences) => {
+    const next = normalizeVisualPreferences(preferences, warnRunStorage)
+    setVisualPreferences(next)
+    let saved: boolean
+    try {
+      saved = saveVisualPreferences(window.localStorage, next, warnRunStorage)
+    } catch (error) {
+      console.warn('Korovany: visual preference storage could not be accessed.', error)
+      saved = false
+    }
+    setVisualPreferencesError(!saved)
+  }
+
   const selectBoon = (boonId: string) => {
     const nextProfile = selectProfileBoon(profile, boonId)
     if (nextProfile && writePlayerProfile(nextProfile)) setProfile(nextProfile)
@@ -3868,6 +3942,9 @@ function App() {
           inkOutlinesEnabled={inkOutlinesEnabled}
           foliageQuality={foliageQuality}
           screenShakeEnabled={screenShakeEnabled}
+          visualPreferences={visualPreferences}
+          visualPreferencesError={visualPreferencesError}
+          onVisualPreferencesChange={changeVisualPreferences}
           sfxVolume={sfxVolume}
           onStart={(selectedFaction) => startGeneratedRun(selectedFaction)}
           onContinueGenerated={continueGeneratedRun}
@@ -3950,9 +4027,13 @@ function App() {
         onEvade={() => engineRef.current?.evade()}
         onAbilityDown={() => {
           if (faction === 'guard') engineRef.current?.setShield(true)
-          else engineRef.current?.useAbility()
+          else if (faction === 'villain') engineRef.current?.useAbility()
         }}
-        onAbilityUp={() => engineRef.current?.setShield(false)}
+        onAbilityUp={() => {
+          engineRef.current?.setShield(false)
+        }}
+        onBowAimDown={() => engineRef.current?.setBowAiming(true, 'button')}
+        onBowAimUp={() => engineRef.current?.setBowAiming(false, 'button')}
         onInteract={() => engineRef.current?.interact()}
         onCommand={() => engineRef.current?.commandSquad()}
         onOpenSquadCommand={toggleSquadCommand}
@@ -3987,6 +4068,9 @@ function App() {
         weatherEnabled={weatherEnabled}
         foliageQuality={foliageQuality}
         screenShakeEnabled={screenShakeEnabled}
+        visualPreferences={visualPreferences}
+        visualPreferencesError={visualPreferencesError}
+        onVisualPreferencesChange={changeVisualPreferences}
         onToggleMusic={toggleMusic}
         onSfxVolumeChange={changeSfxVolume}
         dynamicDayNight={dynamicDayNight}
