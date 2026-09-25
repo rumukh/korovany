@@ -107,6 +107,95 @@ function fixture(id: string, truePitch = false) {
   return { record, initial, endpoint, camera, solver, world, target, desired, output, step, terrain, firstBodyHit, assertSight, dispose }
 }
 
+test('palace-guard seed 1265882869 castle and camp eave spots recover the camera instead of freezing the run', () => {
+  const art = new StylizedArtLibrary({
+    enhanced: true, ink: { player: 0, enemy: 0, interactable: 0, landmark: 0 },
+  })
+  const scene = new THREE.Scene()
+  const policy = resolveVisualPolicy({ visualMode: 'enhanced', visualQuality: 'high' })
+  const world = new GeneratedWorldRuntime(scene, generateWorld(1265882869), {
+    art, visualPolicy: policy, decorationDensity: policy.density.foliage, outlineDressing: true,
+  })
+  // Exact walkable roots where every frame threw once the previous camera had
+  // lost sight of the player: a camp hut eave and castle keep/tower corners.
+  const roots: [string, number, number][] = [
+    ['site-start-guard', 134.33595703939332, -152.53855719593093],
+    ['site-finale-guard', -187.52227267360885, 64.35755604159768],
+    ['site-finale-guard', -174.27227267360885, 74.35755604159768],
+    ['site-finale-villain', 166.42525028398796, -56.80651478591764],
+  ]
+  const camera = new THREE.PerspectiveCamera(56, 16 / 9, 0.1, 240)
+  const terrain = (x: number, z: number) => world.sampleHeight(x, z)
+  const occupancy: CameraSweepResult = { distance: 0, blocked: false, overflow: false, triangleTests: 0, initialOverlap: false }
+  const target = new THREE.Vector3(), desired = new THREE.Vector3(), output = new THREE.Vector3()
+  const pose = (x: number, z: number, yaw: number, pitch: number) => {
+    target.set(x, terrain(x, z) + 1.65, z)
+    desired.set(target.x - Math.sin(yaw) * 12 * Math.cos(pitch), target.y + 12 * Math.sin(pitch),
+      target.z + Math.cos(yaw) * 12 * Math.cos(pitch))
+  }
+  const present = (yaw: number, pitch: number) => {
+    camera.position.copy(output)
+    camera.lookAt(output.clone().add(new THREE.Vector3(
+      Math.sin(yaw) * Math.cos(pitch), -Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch))))
+    camera.updateMatrixWorld()
+  }
+  const assertClear = (label: string) => {
+    world.presentation!.sweep(output, output, 0.32, occupancy)
+    assert.equal(occupancy.initialOverlap, false, `${label}: published camera ${output.toArray()} overlaps`)
+    assert.ok(output.y >= terrain(output.x, output.z) + 0.32 - 1e-9, `${label}: camera below terrain clearance`)
+  }
+  try {
+    for (const [site, x, z] of roots) {
+      world.update({ focus: { x, z }, deltaSeconds: 0 })
+      scene.updateMatrixWorld(true)
+      output.set(x, terrain(x, z) + 8, z + 10)
+      present(0, 0.6)
+      world.presentation!.prepare(camera)
+      assert.ok(world.collision.isWalkablePosition(x, z, 0.64), `${site}: the collision world lets the player stand here`)
+      pose(x, z, 0, 0)
+      world.presentation!.sweep(target, target, 0.32, occupancy)
+      assert.equal(occupancy.initialOverlap, true, `${site}: the head volume overlaps site geometry`)
+      world.presentation!.sweep(target, target, 1e-4, occupancy)
+      assert.equal(occupancy.initialOverlap, false, `${site}: compound parity reports the head centre outside`)
+
+      // Continue/restore constructs a fresh solver with no previous camera.
+      let embedded = 0
+      for (let yawIndex = 0; yawIndex < 8; yawIndex++) {
+        const yaw = yawIndex * Math.PI / 4, pitch = Math.atan2(6.53, 10)
+        pose(x, z, yaw, pitch)
+        const solver = new CameraVisibility()
+        assert.doesNotThrow(() => solver.resolve(target, desired, camera, 0, true, world.presentation!, terrain,
+          output, yaw, pitch), `${site}: restore yaw ${yawIndex}`)
+        assert.notEqual(solver.debug.recovery, 'failed')
+        embedded += Number(solver.debug.recovery === 'embedded')
+        assertClear(`${site} restore yaw ${yawIndex}`)
+      }
+      assert.ok(embedded > 0, `${site}: exercise recovery past the strict no-crossing rule`)
+
+      // Live fighting: walk in, then orbit so buildings block the previous view.
+      const solver = new CameraVisibility()
+      const start = { x: x + 2.5, z }
+      let yaw = Math.PI / 2
+      const pitch = Math.atan2(6.53, 10)
+      for (let frame = 0; frame <= 90; frame++) {
+        const t = Math.min(1, frame / 30)
+        if (frame > 30) yaw += Math.PI * 2 / 60
+        pose(start.x + (x - start.x) * t, start.z + (z - start.z) * t, yaw, pitch)
+        world.presentation!.prepare(camera)
+        solver.resolve(target, desired, camera, frame === 0 ? 0 : 1 / 60, frame === 0, world.presentation!, terrain,
+          output, yaw, pitch)
+        assert.notEqual(solver.debug.recovery, 'failed')
+        present(yaw, pitch)
+        if (frame % 5 === 0) {
+          solver.constrain(target, output.clone().add(new THREE.Vector3(Math.sin(frame) * 0.1, -0.08, Math.cos(frame) * 0.1)),
+            world.presentation!, terrain, output)
+        }
+      }
+      assertClear(`${site} settled live camera`)
+    }
+  } finally { world.dispose(); art.dispose() }
+})
+
 test('the captured frozen elf camera remains outside compound site geometry when its sweep direction changes', () => {
   const art = new StylizedArtLibrary({
     enhanced: true, ink: { player: 0, enemy: 0, interactable: 0, landmark: 0 },

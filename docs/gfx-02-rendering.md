@@ -33,13 +33,30 @@ failure that threw during follow movement and stopped the animation loop.
 An overlapping look-at target is never accepted as a camera sweep origin.
 Stationary sphere queries identify both surface overlap and closed-solid
 containment. Recovery first revalidates the previous camera (within 32 metres),
-then searches seven directions at four bounded local offsets if needed.
-An external target cannot recover through a wall simply because its other side
-is free. The camera origin alone changes; actors and the look target do not.
-Follow and shake share this recovery rule and validate actual camera travel.
-If no bounded safe pose exists, recovery reports an error without publishing an
-overlapping position. `CameraSweepResult.initialOverlap` and
-`CameraVisibility.debug.recovery` expose these cases.
+then searches seven directions at six bounded local offsets (0.4 to 12.8 metres
+at the default radius) if needed. An external target cannot recover through a
+wall simply because its other side is free. The camera origin alone changes;
+actors and the look target do not. Follow and shake share this recovery rule
+and validate actual camera travel.
+
+Circular building colliders let the player's head stand under a low eave or in
+a wall corner, and compound meshes there defeat the one-ray containment test:
+the centre reads as outside while every path out is blocked. Seed `1265882869`
+froze this way in all three castles and in faction camps once the previous
+camera had also lost sight of the player behind a building. When no clear
+volume is reachable from the target, recovery now ranks the clear offsets and
+the previous collision-free camera (even if it lost sight or framing) by the
+same pose score used for camera candidates: sight of an unembedded body probe
+first, which keeps the origin on the player's side, then framing, then boom.
+Sight sweeps are paid only for the eight nearest clear offsets, and one blocked
+ray rejects its farther offsets without another sweep. An offset wins as
+`recovery: 'embedded'`, the kept camera as `'previous'`. Only when nothing is
+clear does it throw `CameraRecoveryError` with `recovery: 'failed'`, without
+publishing an overlapping position. The engine treats that as a presentation
+limit: it holds the last presented camera (or the legacy boom before the first
+one) and warns once per episode, so neither the frame loop nor a restored run
+stops. `CameraSweepResult.initialOverlap` and `CameraVisibility.debug.recovery`
+expose these cases.
 
 The post-native riverside evidence revealed that a collision-cleared previous
 camera could nevertheless have lost sight of the player. Three bounded

@@ -188,6 +188,76 @@ test('current-main view pitch survives both graphics policies and enhanced colli
   }
 })
 
+test('exhausted camera recovery holds the presented camera instead of stopping the frame loop or a restore', () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window')
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { devicePixelRatio: 1 } })
+  const originalWarn = console.warn
+  const warnings: unknown[][] = []
+  const art = new StylizedArtLibrary({ enhanced: true, ink: { player: 0, enemy: 0, interactable: 0, landmark: 0 } })
+  const presentation = new WorldPresentationRegistry(art)
+  const camera = new THREE.PerspectiveCamera(56, 16 / 9, 0.1, 240)
+  const player = new THREE.Group()
+  player.position.y = 3
+  const solver = new CameraVisibility()
+  const engine: {
+    cameraYaw: number
+    cameraVisibility: unknown
+    updateCamera(delta: number, immediate: boolean): void
+  } = Object.assign(Object.create(GameEngine.prototype), {
+    visualPolicy: resolveVisualPolicy({ visualMode: 'enhanced' }), player, camera, artLibrary: art,
+    cameraPitch: Math.atan2(6.53, 10), cameraYaw: 0.7, cameraFollowPosition: new THREE.Vector3(),
+    cameraRaycaster: new THREE.Raycaster(), cameraObstacles: [], foliageOccluders: [],
+    generatedWorld: { presentation }, cameraVisibility: solver,
+    enhancedTarget: new THREE.Vector3(), enhancedDesired: new THREE.Vector3(),
+    enhancedPosition: new THREE.Vector3(), enhancedShaken: new THREE.Vector3(),
+    rendererDevicePixelRatio: 1, cameraTerrain: () => 3, groundHeightAt: () => 3,
+    playerRenderBindings: [], nearSubjects: [], nearSubjectPool: Array.from({ length: 5 }, () => new THREE.Vector3()),
+    actors: [], trauma: 0, screenShakeEnabled: false, paused: false, ended: false,
+    updatePlayerOutlineVisibility() {}, updateCameraFov() {},
+  })
+  // A closed solid larger than the whole bounded search around the look target.
+  const geometry = new THREE.BoxGeometry(40, 40, 40)
+  const material = art.createMaterial({ color: 0x778899, surface: 'stone' })
+  const enclosure = new THREE.Mesh(geometry, material)
+  enclosure.position.set(0, 4.65, 0)
+  enclosure.updateMatrixWorld(true)
+  const binding = art.bindRenderSource(enclosure, {})
+  let registration = presentation.registerOccluder({ id: 'enclosure', regionId: 'test', kind: 'solid', binding })
+  try {
+    console.warn = (...args: unknown[]) => { warnings.push(args) }
+    assert.doesNotThrow(() => engine.updateCamera(0, true), 'A restored run must still construct its first camera')
+    assert.equal(solver.debug.recovery, 'failed')
+    const held = camera.position.clone()
+    assert.ok(held.distanceTo(new THREE.Vector3(0, 4.65, 0)) > 10, `Before any presented pose the legacy boom is used: ${held.toArray()}`)
+    for (let frame = 0; frame < 3; frame++) {
+      engine.cameraYaw += 0.2
+      assert.doesNotThrow(() => engine.updateCamera(1 / 60, false), 'A failed camera must not stop the frame loop')
+      assert.deepEqual(camera.position.toArray(), held.toArray(), 'Later failures hold the presented camera')
+    }
+    assert.equal(warnings.length, 1, 'Warn once per failure episode, not every frame')
+    registration.dispose()
+    engine.updateCamera(1 / 60, false)
+    assert.equal(solver.debug.recovery, 'none')
+    registration = presentation.registerOccluder({ id: 'enclosure', regionId: 'test', kind: 'solid', binding })
+    const recovered = camera.position.clone()
+    engine.updateCamera(1 / 60, false)
+    assert.deepEqual(camera.position.toArray(), recovered.toArray())
+    assert.equal(warnings.length, 2, 'A new failure episode warns again')
+    engine.cameraVisibility = { debug: { playerVisibility: 1 }, resolve() { throw new Error('unrelated camera fault') } }
+    assert.throws(() => engine.updateCamera(1 / 60, false), /unrelated camera fault/)
+  } finally {
+    console.warn = originalWarn
+    registration.dispose()
+    presentation.dispose()
+    art.releaseRenderSource(binding)
+    geometry.dispose()
+    material.dispose()
+    art.dispose()
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow)
+    else Reflect.deleteProperty(globalThis, 'window')
+  }
+})
+
 test('actual enhanced elf bow follows elevated shots and torso reset without consuming persisted injury state', () => {
   const art = new StylizedArtLibrary({
     enhanced: true, ink: { player: 0, enemy: 0, interactable: 0, landmark: 0 },

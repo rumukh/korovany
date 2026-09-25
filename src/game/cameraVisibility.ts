@@ -5,10 +5,20 @@ export const CAMERA_CANDIDATE_LIMIT = 5
 export const CAMERA_OCCLUDER_LIMIT = 64
 export const CAMERA_TRIANGLE_LIMIT = 32768
 export const CAMERA_TERRAIN_STEPS = 32
-export const CAMERA_RECOVERY_STEPS = 4
+export const CAMERA_RECOVERY_STEPS = 6
 export const CAMERA_RECOVERY_DIRECTIONS = 7
 export const CAMERA_TARGET_PROBES = 3
+const CAMERA_RECOVERY_CANDIDATES = CAMERA_RECOVERY_STEPS * CAMERA_RECOVERY_DIRECTIONS
+const CAMERA_EMBEDDED_SIGHT_CHECKS = 8
 const TARGET_SIGHT_RADIUS = 0.02
+
+/** Bounded recovery found no clear camera volume; nothing overlapping was published. */
+export class CameraRecoveryError extends Error {
+  constructor() {
+    super('Camera overlap recovery found no safe pose within its bounded search')
+    this.name = 'CameraRecoveryError'
+  }
+}
 
 export interface CameraSweepResult {
   distance: number
@@ -174,7 +184,7 @@ export interface CameraVisibilityDebug {
   shoulder: number
   boomDistance: number
   playerVisibility: number
-  recovery: 'none' | 'previous' | 'local'
+  recovery: 'none' | 'previous' | 'local' | 'embedded' | 'failed'
   targetProbes: number
   visibleTargetProbes: number
   visibilityCut: boolean
@@ -208,6 +218,8 @@ export class CameraVisibility {
   private readonly collisionOrigin = new THREE.Vector3()
   private readonly recoveryCandidate = new THREE.Vector3()
   private readonly recoveryDirection = new THREE.Vector3()
+  private readonly recoveryClear = new Uint8Array(CAMERA_RECOVERY_CANDIDATES)
+  private readonly recoveryBlocked = new Uint8Array(CAMERA_RECOVERY_DIRECTIONS)
   private readonly offset = new THREE.Vector3()
   private readonly right = new THREE.Vector3()
   private readonly sample = new THREE.Vector3()
@@ -257,7 +269,7 @@ export class CameraVisibility {
       this.targetSightScore(this.previous, query, terrain) === this.debug.targetProbes
     const previousFramed = this.framingError(this.previous) === 0
     const previousSafe = previousVisible && previousFramed
-    this.selectCollisionOrigin(target, desired, previousSafe, query, terrain)
+    this.selectCollisionOrigin(target, desired, previousSafe, previousClear, query, terrain)
     this.right.subVectors(desired, target).setY(0).normalize()
     this.right.set(this.right.z, 0, -this.right.x)
     this.shoulderHold = Math.max(0, this.shoulderHold - delta)
@@ -346,7 +358,7 @@ export class CameraVisibility {
     const previousSafe = previousClear &&
       this.framingError(this.previous) === 0 &&
       this.targetSightScore(this.previous, query, terrain) === this.debug.targetProbes
-    this.selectCollisionOrigin(target, candidate, previousSafe, query, terrain)
+    this.selectCollisionOrigin(target, candidate, previousSafe, previousClear, query, terrain)
     this.safePosition(this.collisionOrigin, candidate, query, terrain, this.solved)
     if (previousSafe) this.safePosition(this.previous, this.solved, query, terrain, output)
     else output.copy(this.solved)
@@ -507,8 +519,8 @@ export class CameraVisibility {
   }
 
   private selectCollisionOrigin(
-    target: THREE.Vector3, wanted: THREE.Vector3, previousSafe: boolean, query: CameraVolumeQuery,
-    terrain: (x: number, z: number) => number,
+    target: THREE.Vector3, wanted: THREE.Vector3, previousSafe: boolean, previousClear: boolean,
+    query: CameraVolumeQuery, terrain: (x: number, z: number) => number,
   ): void {
     this.debug.recovery = 'none'
     if (this.clearPose(target, query, terrain)) {
@@ -525,29 +537,75 @@ export class CameraVisibility {
     this.sweep(query, target, target, 1e-4)
     const centerInside = this.sweepResult.initialOverlap && !this.sweepResult.overflow
     this.recoveryDirection.subVectors(wanted, target).normalize()
-    for (let step = 0; step < CAMERA_RECOVERY_STEPS; step++) {
-      const distance = (this.radius + 0.08) * 2 ** step
-      for (let direction = 0; direction < CAMERA_RECOVERY_DIRECTIONS; direction++) {
-        this.recoveryCandidate.copy(target)
-        if (direction === 0) this.recoveryCandidate.addScaledVector(this.recoveryDirection, distance)
-        else {
-          const axis = Math.floor((direction - 1) / 2)
-          this.recoveryCandidate.setComponent(axis,
-            target.getComponent(axis) + (direction % 2 ? distance : -distance))
+    this.recoveryBlocked.fill(0)
+    for (let index = 0; index < CAMERA_RECOVERY_CANDIDATES; index++) {
+      const candidate = this.recoveryPoint(target, index)
+      const clear = this.clearPose(candidate, query, terrain)
+      this.recoveryClear[index] = clear ? 1 : 0
+      if (!clear) continue
+      if (!centerInside) {
+        // An overlapping sphere outside a wall may back away, but may not
+        // jump through it merely because the other side is also unoccupied.
+        // Farther offsets share the ray, so one blocked sweep rejects them all.
+        const direction = index % CAMERA_RECOVERY_DIRECTIONS
+        if (this.recoveryBlocked[direction]) continue
+        this.sweep(query, target, candidate, 1e-4)
+        if (this.sweepResult.blocked || this.sweepResult.overflow) {
+          this.recoveryBlocked[direction] = 1
+          continue
         }
-        if (!this.clearPose(this.recoveryCandidate, query, terrain)) continue
-        if (!centerInside) {
-          // An overlapping sphere outside a wall may back away, but may not
-          // jump through it merely because the other side is also unoccupied.
-          this.sweep(query, target, this.recoveryCandidate, 1e-4)
-          if (this.sweepResult.blocked || this.sweepResult.overflow) continue
-        }
-        this.collisionOrigin.copy(this.recoveryCandidate)
-        this.debug.recovery = 'local'
-        return
       }
+      this.collisionOrigin.copy(candidate)
+      this.debug.recovery = 'local'
+      return
     }
-    throw new Error('Camera overlap recovery found no safe pose within its bounded search')
+    // No clear volume is reachable from the target. Circular building colliders
+    // let a head stand under a low eave or in a wall corner, and compound meshes
+    // there defeat the one-ray containment test, so every path out is "blocked".
+    // Rank clear offsets and the previous collision-free camera by the pose score
+    // itself: sight of an unembedded body probe first (same side as the player),
+    // then framing and boom. Only the nearest offsets pay for sight sweeps.
+    const nominal = wanted.distanceTo(target)
+    let best = -1
+    let bestScore = -Infinity
+    let sightChecks = 0
+    for (let index = 0; index < CAMERA_RECOVERY_CANDIDATES; index++) {
+      if (!this.recoveryClear[index]) continue
+      const candidate = this.recoveryPoint(target, index)
+      let sight = 0
+      if (this.debug.targetProbes > 0 && sightChecks < CAMERA_EMBEDDED_SIGHT_CHECKS) {
+        sightChecks++
+        sight = this.targetSightScore(candidate, query, terrain)
+      }
+      const score = this.poseScore(sight, this.framingError(candidate)) + Math.min(candidate.distanceTo(target), nominal)
+      if (score > bestScore) { bestScore = score; best = index }
+    }
+    if (previousClear && this.poseScore(this.targetSightScore(this.previous, query, terrain),
+      this.framingError(this.previous)) + Math.min(this.previous.distanceTo(target), nominal) >= bestScore) {
+      this.collisionOrigin.copy(this.previous)
+      this.debug.recovery = 'previous'
+      return
+    }
+    if (best >= 0) {
+      this.collisionOrigin.copy(this.recoveryPoint(target, best))
+      this.debug.recovery = 'embedded'
+      return
+    }
+    this.debug.recovery = 'failed'
+    throw new CameraRecoveryError()
+  }
+
+  private recoveryPoint(target: THREE.Vector3, index: number): THREE.Vector3 {
+    const direction = index % CAMERA_RECOVERY_DIRECTIONS
+    const distance = (this.radius + 0.08) * 2 ** Math.floor(index / CAMERA_RECOVERY_DIRECTIONS)
+    this.recoveryCandidate.copy(target)
+    if (direction === 0) this.recoveryCandidate.addScaledVector(this.recoveryDirection, distance)
+    else {
+      const axis = Math.floor((direction - 1) / 2)
+      this.recoveryCandidate.setComponent(axis,
+        target.getComponent(axis) + (direction % 2 ? distance : -distance))
+    }
+    return this.recoveryCandidate
   }
 
   private safePosition(

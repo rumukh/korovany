@@ -3,7 +3,7 @@ import { AudioDirector, type SoundCue, type SoundRequest } from './AudioDirector
 import { musicIntensityRank, type MusicIntensity, type MusicOutcome } from './MusicScore.ts'
 import { BloomPostProcessor } from './BloomPostProcessor'
 import { resolveVisualPolicy, resolveVisualViewport, type VisualQualityPolicy } from './visualPolicy.ts'
-import { CameraVisibility } from './cameraVisibility.ts'
+import { CameraRecoveryError, CameraVisibility } from './cameraVisibility.ts'
 import { BowAim, type BowAimSource } from './input/BowAim.ts'
 import { RAIN_CAPACITY, SNOW_CAPACITY, precipitationCount, updatePrecipitationBuffer } from './PrecipitationPresentation.ts'
 import { SecondaryEffectPool } from './SecondaryEffectPool.ts'
@@ -2218,6 +2218,8 @@ export class GameEngine {
   private readonly enhancedDesired = new THREE.Vector3()
   private readonly enhancedPosition = new THREE.Vector3()
   private readonly enhancedShaken = new THREE.Vector3()
+  private cameraPosePresented = false
+  private cameraRecoveryFailing = false
   private readonly drawingBufferSize = new THREE.Vector2()
   private readonly nearSubjects: THREE.Vector3[] = []
   private readonly nearSubjectPool = Array.from({ length: 8 }, () => new THREE.Vector3())
@@ -18400,13 +18402,19 @@ export class GameEngine {
       if (!presentation) throw new Error('Enhanced bow camera requires its presentation registry')
       if (this.rendererDevicePixelRatio !== window.devicePixelRatio) this.resize()
       presentation.prepare(this.camera)
-      this.cameraVisibility.resolve(anchor, eye, this.camera, delta, immediate,
-        presentation, this.cameraTerrain, this.cameraFollowPosition)
+      try {
+        this.cameraVisibility.resolve(anchor, eye, this.camera, delta, immediate,
+          presentation, this.cameraTerrain, this.cameraFollowPosition)
+        this.cameraRecoveryFailing = false
+      } catch (error) {
+        this.holdCameraAfterFailedRecovery(error, anchor, eye, this.cameraFollowPosition)
+      }
       for (const binding of this.playerRenderBindings) {
         this.artLibrary.setSourceVisibility(binding, this.cameraVisibility.debug.playerVisibility)
       }
     } else this.cameraFollowPosition.copy(this.resolveCameraPosition(anchor, eye))
     this.camera.position.copy(this.cameraFollowPosition)
+    this.cameraPosePresented = true
     this.camera.lookAt(target)
     this.camera.updateMatrixWorld()
     this.updatePlayerOutlineVisibility()
@@ -18444,18 +18452,29 @@ export class GameEngine {
       roll = Math.sin(phase * 0.83 + 2.1) * Math.sin(phase * 0.37 + 0.4) * SHAKE_ROLL * magnitude
     }
     presentation.prepare(this.camera)
-    this.cameraVisibility.resolve(this.enhancedTarget, this.enhancedDesired, this.camera,
-      delta, immediate, presentation, this.cameraTerrain, this.enhancedPosition,
-      this.cameraYaw, this.cameraPitch, roll)
+    try {
+      this.cameraVisibility.resolve(this.enhancedTarget, this.enhancedDesired, this.camera,
+        delta, immediate, presentation, this.cameraTerrain, this.enhancedPosition,
+        this.cameraYaw, this.cameraPitch, roll)
+      this.cameraRecoveryFailing = false
+    } catch (error) {
+      this.holdCameraAfterFailedRecovery(error, this.enhancedTarget, this.enhancedDesired, this.enhancedPosition)
+    }
     if (shake) {
       this.enhancedShaken.copy(this.enhancedPosition)
       this.enhancedShaken.x += Math.cos(this.cameraYaw) * shakeX
       this.enhancedShaken.z += Math.sin(this.cameraYaw) * shakeX
       this.enhancedShaken.y += shakeY
-      this.cameraVisibility.constrain(this.enhancedTarget, this.enhancedShaken,
-        presentation, this.cameraTerrain, this.enhancedPosition)
+      try {
+        this.cameraVisibility.constrain(this.enhancedTarget, this.enhancedShaken,
+          presentation, this.cameraTerrain, this.enhancedPosition)
+      } catch (error) {
+        // The unshaken pose resolved above stays in place.
+        this.acceptCameraRecoveryFailure(error)
+      }
     }
     this.camera.position.copy(this.enhancedPosition)
+    this.cameraPosePresented = true
     this.enhancedShaken.copy(this.enhancedPosition).add(this.getViewDirection())
     this.camera.lookAt(this.enhancedShaken)
     if (roll !== 0) this.camera.rotateZ(roll)
@@ -18478,6 +18497,27 @@ export class GameEngine {
     presentation.prepare(this.camera)
     presentation.updateForeground(this.camera.position, this.nearSubjects, delta, immediate)
     presentation.updateShadows(this.player.position, this.visualPolicy.shadows)
+  }
+
+  /**
+   * Exhausted camera recovery publishes no overlapping pose. That is a
+   * presentation limit, not a simulation fault: hold the last presented camera
+   * (or the legacy boom before one exists) rather than stopping the frame loop
+   * or refusing to restore a run.
+   */
+  private holdCameraAfterFailedRecovery(
+    error: unknown, target: THREE.Vector3, desired: THREE.Vector3, output: THREE.Vector3,
+  ): void {
+    this.acceptCameraRecoveryFailure(error)
+    if (this.cameraPosePresented) output.copy(this.camera.position)
+    else output.copy(this.resolveCameraPosition(target, desired))
+  }
+
+  private acceptCameraRecoveryFailure(error: unknown): void {
+    if (!(error instanceof CameraRecoveryError)) throw error
+    if (this.cameraRecoveryFailing) return
+    this.cameraRecoveryFailing = true
+    console.warn('Korovany: camera recovery found no clear pose; holding the last camera.', error)
   }
 
   private resolveCameraPosition(target: THREE.Vector3, desired: THREE.Vector3): THREE.Vector3 {

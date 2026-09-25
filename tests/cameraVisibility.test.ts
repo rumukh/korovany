@@ -7,6 +7,7 @@ import {
   CAMERA_RECOVERY_DIRECTIONS,
   CAMERA_RECOVERY_STEPS,
   CAMERA_TRIANGLE_LIMIT,
+  CameraRecoveryError,
   CameraVisibility,
   sweepCameraSphere,
   type CameraSweepResult,
@@ -163,9 +164,76 @@ test('without a previous camera, a bounded free origin is found without crossing
   const output = new THREE.Vector3(9, 8, 7)
   const solver = new CameraVisibility()
   assert.throws(() => solver.resolve(new THREE.Vector3(0, 1.65, 0), new THREE.Vector3(0, 7, -10),
-    new THREE.PerspectiveCamera(56, 1, 0.1, 100), 0, true, query([enclosure]), () => 0, output), /no safe pose/)
+    new THREE.PerspectiveCamera(56, 1, 0.1, 100), 0, true, query([enclosure]), () => 0, output),
+  (error) => error instanceof CameraRecoveryError && /no safe pose/.test(error.message))
   assert.deepEqual(output.toArray(), [9, 8, 7], 'Exhausted recovery must report failure, not publish an overlapping camera')
+  assert.equal(solver.debug.recovery, 'failed')
   wall.geometry.dispose(); enclosure.geometry.dispose()
+})
+
+/** Two closed boxes in one buffer, like a building body merged with its eave. */
+function compound(...boxes: readonly (readonly [number, number, number, number, number, number])[]): CameraTriangleSource {
+  const parts = boxes.map(([x, y, z, width, height, depth]) => {
+    const part = new THREE.BoxGeometry(width, height, depth).toNonIndexed()
+    part.translate(x, y, z)
+    return part
+  })
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(
+    parts.flatMap((part) => [...part.getAttribute('position').array]), 3))
+  geometry.computeBoundingBox()
+  for (const part of parts) part.dispose()
+  return { geometry, matrix: new THREE.Matrix4(), bounds: geometry.boundingBox! }
+}
+
+test('a head embedded in compound eave geometry recovers beside the visible torso instead of throwing', () => {
+  // The target sits inside the eave slab, but the containment ray first enters
+  // the overlapping post above it, so the target is not classified as inside.
+  // Every path out crosses the slab, which is what froze the palace-guard run.
+  const eave = compound([0, 1.7, 0, 4, 0.3, 4], [0, 2.05, 0, 0.6, 0.7, 0.6])
+  const target = new THREE.Vector3(0, 1.65, 0)
+  const occupancy = sweep(target, target, [eave], 1e-4)
+  assert.equal(occupancy.initialOverlap, false, 'Negative control: compound parity reports the center outside')
+  assert.equal(sweep(target, target, [eave], 0.32).initialOverlap, true)
+  for (const desired of [new THREE.Vector3(0, 6.65, -10), new THREE.Vector3(10, 6.65, 0)]) {
+    const solver = new CameraVisibility()
+    const camera = new THREE.PerspectiveCamera(56, 16 / 9, 0.1, 100)
+    const output = new THREE.Vector3()
+    solver.resolve(target, desired, camera, 0, true, query([eave]), () => 0, output)
+    assert.equal(solver.debug.recovery, 'embedded')
+    assert.equal(sweep(output, output, [eave], 0.32).blocked, false)
+    assert.ok(!(Math.abs(output.x) < 2.32 && Math.abs(output.z) < 2.32 && output.y > 1.85),
+      `The camera must not cross to the upper side of the eave: ${output.toArray()}`)
+    assert.ok(solver.debug.visibleTargetProbes > 0, 'The recovered camera must still see the unembedded torso')
+    solver.constrain(target, output.clone().add(new THREE.Vector3(0.1, -0.05, 0.1)), query([eave]), () => 0, output)
+    assert.equal(sweep(output, output, [eave], 0.32).blocked, false)
+  }
+  eave.geometry.dispose()
+})
+
+test('a clear previous camera is kept when no local volume can be recovered around an embedded target', () => {
+  // A thick ceiling holds the head; a floor leaves only a thin gap at torso height.
+  const ceiling = obstacle(0, 21.4, 0, 40, 40, 40)
+  const floor = obstacle(0, -19, 0, 40, 40, 40)
+  const target = new THREE.Vector3(0, 1.65, 0)
+  const camera = new THREE.PerspectiveCamera(56, 16 / 9, 0.1, 100)
+  const terrain = () => -60
+  const solver = new CameraVisibility()
+  const output = new THREE.Vector3()
+  solver.resolve(target, new THREE.Vector3(0, 1.65, -24), camera, 0, true, query([]), terrain, output)
+  const previous = output.clone()
+  assert.deepEqual(previous.toArray(), [0, 1.65, -24])
+  solver.resolve(target, new THREE.Vector3(0, 1.65, -24), camera, 1 / 60, false, query([ceiling, floor]), terrain, output)
+  assert.equal(solver.debug.recovery, 'previous')
+  assert.equal(solver.debug.targetProbes, 1, 'Only the torso probe in the gap is eligible')
+  assert.equal(sweep(output, output, [ceiling, floor], 0.32).blocked, false)
+  assert.equal(sweep(previous, output, [ceiling, floor], 0.32).blocked, false, 'Recovery must validate travel from the kept camera')
+  const fresh = new CameraVisibility()
+  const untouched = new THREE.Vector3(1, 2, 3)
+  assert.throws(() => fresh.resolve(target, new THREE.Vector3(0, 1.65, -24), camera, 0, true,
+    query([ceiling, floor]), terrain, untouched), CameraRecoveryError)
+  assert.deepEqual(untouched.toArray(), [1, 2, 3])
+  ceiling.geometry.dispose(); floor.geometry.dispose()
 })
 
 test('merged courtyard bounds are only a broad phase, not a solid wall', () => {
