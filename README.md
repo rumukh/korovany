@@ -204,6 +204,10 @@ Run deterministic generator, persistence, streaming, audio, and camera tests:
 npm test
 ```
 
+The headless run harness doubles as a balance instrument: the squad, wounds and healing,
+events as fights and the generator's own encounters sit behind opt-in arms. See
+[the run harness](docs/run-harness.md) for its baseline and how to widen its sweep.
+
 Create a standalone offline HTML file:
 
 ```bash
