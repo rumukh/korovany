@@ -1862,6 +1862,12 @@ export function resolveContract(
  * chronicle slots, a site the streamer has not published — and fails forward when that
  * patience runs out. Without it a contract could sit `offered` for the whole run and the
  * node would never resolve, which is stranding by another name.
+ *
+ * W1-1 — the engine passes `onSite` as true only for a **genuine** stall: the player stands
+ * on the site of the contract they took on and its builder still cannot be staged after
+ * the game's own events made way. The arm they did not take, a wait behind the contract
+ * already on the ground and a random event of the game's own making all pass false, so
+ * none of them can spend the grace.
  */
 export type ContractTick =
   | { kind: 'idle' }
