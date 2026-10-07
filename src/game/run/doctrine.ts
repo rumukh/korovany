@@ -199,14 +199,49 @@ export interface DoctrineDraftMoment {
  *
  * A draft is a decision, and a decision offered mid-fight is either ignored or paid for
  * in blood. The threat tier itself does not wait — it is the run's pacing, announced as the
- * consequence of the step that raised it — but the cards do. No timer and nothing persisted:
- * the check is made fresh every frame, and the anchors it gates only ever rise.
+ * consequence of the step that raised it — but the cards do. Nothing persisted: the check
+ * is made fresh every frame, the anchors it gates only ever rise, and the one clock beside
+ * it, the ceiling on the wait (`mayOpenDoctrineDraft`), lives in the engine, not the save.
  */
 export function isDoctrineDraftMomentCalm(moment: DoctrineDraftMoment): boolean {
   if (moment.finaleEngaged) return false
   for (const hostile of moment.engagedHostiles) {
     if (hostile.distance <= DOCTRINE_DRAFT_CALM_RADIUS) return false
     if (hostile.targetingPlayer && hostile.distance <= DOCTRINE_DRAFT_ALERT_RADIUS) return false
+  }
+  return true
+}
+
+/**
+ * W2-1 — the ceiling on that wait, in seconds of run time.
+ *
+ * Calm is the rule and this is its bound. A player who kites a pack, or tanks a wave behind
+ * a shield, keeps a hostile inside 14 m for minutes, and a draft earned then would wait as
+ * long: in the shipped harness arms, two stuck guard seeds held one for 240 s and never
+ * opened it. Thirty seconds is about twice the longest wait any draft that did open had
+ * there (15.7 s), so an ordinary fight is never overridden, and under half the shortest gap
+ * between threat waves (70 s), so a player who never stops fighting still gets the cards
+ * before the next wave is on them.
+ *
+ * Runtime only: the engine starts the wait when the tier crosses a draft point and does not
+ * save it, so a continue restarts the wait. That is bounded — one more ceiling at most — and
+ * there is nothing in it to farm: the wait only ever delays the cards, it never deals one.
+ */
+export const DOCTRINE_DRAFT_MAX_HOLD_SECONDS = 30
+
+/**
+ * W2-1 — whether a draft that has waited `heldSeconds` of run time may open now.
+ *
+ * At a calm moment, always. Past `DOCTRINE_DRAFT_MAX_HOLD_SECONDS`, at any moment but the
+ * two that are still a blow on its way: a finale under way, and a hostile winding up,
+ * swinging or loosing at the player from within `DOCTRINE_DRAFT_CALM_RADIUS`. A pursuer at
+ * the player's heels, or an archer farther off, no longer holds the cards back.
+ */
+export function mayOpenDoctrineDraft(moment: DoctrineDraftMoment, heldSeconds: number): boolean {
+  if (!(heldSeconds >= DOCTRINE_DRAFT_MAX_HOLD_SECONDS)) return isDoctrineDraftMomentCalm(moment)
+  if (moment.finaleEngaged) return false
+  for (const hostile of moment.engagedHostiles) {
+    if (hostile.targetingPlayer && hostile.distance <= DOCTRINE_DRAFT_CALM_RADIUS) return false
   }
   return true
 }
@@ -392,6 +427,14 @@ export function createDoctrineRunState(pool: readonly string[]): DoctrineRunStat
 
 export function cloneDoctrineRunState(state: DoctrineRunState): DoctrineRunState {
   return { pool: [...state.pool], equipped: [...state.equipped], anchors: state.anchors }
+}
+
+/**
+ * Whether the tier has crossed a draft point the ledger has not opened yet: a draft is
+ * waiting for its moment. W2-1's ceiling on that wait is timed from the frame this turns true.
+ */
+export function isDoctrineAnchorDue(state: DoctrineRunState, threatTier: number): boolean {
+  return DOCTRINE_DRAFT_TIERS.filter((tier) => threatTier >= tier).length > state.anchors
 }
 
 /**

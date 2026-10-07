@@ -34,10 +34,15 @@
  * fought at pacing tier 3 with its boss scaled at the clock's tier 1, and the median win
  * length moved by ten percent or less. Without a card taken and with the director silent, a
  * `progress` run is the `time` run to the frame; `progressAll` is not.
+ *
+ * The calm gate's 30 s ceiling (`DOCTRINE_DRAFT_MAX_HOLD_SECONDS`) changed four of the 360
+ * `progress` runs, and no win: the stuck guard timeouts on seeds 79191 and 142543 under the
+ * beeline and cautious scripts, whose third and fourth drafts the gate alone never opened.
  */
 
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { DOCTRINE_DRAFT_MAX_HOLD_SECONDS } from '../src/game/run/doctrine.ts'
 import type { Faction } from '../src/game/types.ts'
 import {
   HARNESS_SHIPPED_ARMS,
@@ -100,11 +105,46 @@ test('drafts follow progress: winning runs open two, where the clock alone opene
       assert.ok(rise && at >= rise.at, `${report.faction}/${report.seed}: a draft before its tier`)
     })
   }
+  // And at a calm moment: the ceiling on the wait is for fights that never end, not for these.
+  assert.ok(wins.every((report) => report.balance.draftsForced === 0), 'a win needed the ceiling')
 
   // Control: the same seeds on the clock alone. The metric can tell the two rules apart.
   const timeWins = time.filter((report) => report.outcome === 'victory')
   assert.equal(median(timeWins.map((report) => report.balance.draftsOpenedAt.length)), 0)
   assert.ok(timeWins.every((report) => report.balance.tierRises.every((rise) => rise.cause === 'time')))
+})
+
+test('a fight that never ends cannot starve a draft: the ceiling opens it 30 s after its tier', () => {
+  // Guard seed 142543 under the beeline script is pinned in a fight from the clock's third
+  // tier to the 600 s timeout. The calm gate alone held its third and fourth drafts for the
+  // rest of the run; the ceiling opens each `DOCTRINE_DRAFT_MAX_HOLD_SECONDS` after its tier.
+  const stuckRun: RunOptions = {
+    ...HARNESS_SHIPPED_ARMS,
+    seed: 142543,
+    faction: 'guard',
+    policy: 'beeline',
+    hz: 30,
+    timeLimit: 600,
+  }
+  const stuck = runHarness(stuckRun)
+  assert.equal(stuck.outcome, 'timeout')
+  assert.equal(stuck.balance.draftsOpenedAt.length, 3)
+  assert.equal(stuck.balance.draftsForced, 2, 'the ceiling did not open the starved drafts')
+  const clockRises = stuck.balance.tierRises.filter((rise) => rise.cause === 'time')
+  assert.equal(clockRises.length, 2)
+  for (const rise of clockRises) {
+    const waited = (stuck.balance.draftsOpenedAt.find((at) => at >= rise.at) ?? Infinity) - rise.at
+    assert.ok(
+      waited >= DOCTRINE_DRAFT_MAX_HOLD_SECONDS && waited < DOCTRINE_DRAFT_MAX_HOLD_SECONDS + 1,
+      `tier ${rise.tier}: the draft waited ${waited} s`,
+    )
+  }
+
+  // Control: the same run on the clock alone has no gate, so the same three drafts open on
+  // their tiers' frames and none counts as forced. The count is the ceiling's, not lateness.
+  const clock = runHarness({ ...stuckRun, escalation: 'time' })
+  assert.equal(clock.balance.draftsOpenedAt.length, 3)
+  assert.equal(clock.balance.draftsForced, 0)
 })
 
 test('the finale is paced by the earned tier and scaled by the clock', () => {

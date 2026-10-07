@@ -328,7 +328,8 @@ import {
   equipDoctrine,
   getDoctrineDefinition,
   getDoctrineOffer,
-  isDoctrineDraftMomentCalm,
+  isDoctrineAnchorDue,
+  mayOpenDoctrineDraft,
   normalizeDoctrineRunState,
   pendingDoctrineDraftIndex,
   resolveDoctrineEffects,
@@ -2370,6 +2371,11 @@ export class GameEngine {
   private threatTier = 1
   /** W2-1 — the clock's tier last announced; derived from `elapsed`, never saved. */
   private announcedScalingTier = 1
+  /**
+   * W2-1 — the run time a crossed draft point began waiting for calm, or null while none
+   * waits. Never saved, so a continue restarts the wait (`DOCTRINE_DRAFT_MAX_HOLD_SECONDS`).
+   */
+  private doctrineDraftHeldSince: number | null = null
   private nextThreatWaveAt = THREAT_WAVE_FIRST_AT
   private paused = false
   private ended = false
@@ -10184,6 +10190,9 @@ export class GameEngine {
    * cards wait until no hostile is at the player's throat — none chasing within 14 m, none
    * swinging or shooting at them within 38 m — and no finale is under way
    * (`isDoctrineDraftMomentCalm`), so a choice is never put on the table mid-fight. The
+   * wait has a ceiling: after `DOCTRINE_DRAFT_MAX_HOLD_SECONDS` of run time the cards come
+   * anyway, unless a finale is on or a blow is already on its way from within 14 m
+   * (`mayOpenDoctrineDraft`), so a fight that never ends cannot starve the draft. The
    * draft stays a HUD card and a journal entry: it never opens or closes an overlay.
    *
    * A player who walks past an open offer meets it again rather than losing it, so the
@@ -10194,7 +10203,13 @@ export class GameEngine {
    */
   private updateDoctrineDraft(): void {
     if (this.ended) return
-    if (!this.isDraftMomentCalm()) return
+    if (!isDoctrineAnchorDue(this.doctrines, this.threatTier)) {
+      this.doctrineDraftHeldSince = null
+      return
+    }
+    this.doctrineDraftHeldSince ??= this.elapsed
+    if (!this.draftMayOpen(this.elapsed - this.doctrineDraftHeldSince)) return
+    this.doctrineDraftHeldSince = null
     if (!advanceDoctrineAnchors(this.doctrines, this.threatTier)) return
     const index = pendingDoctrineDraftIndex(this.doctrines)
     if (index === null) return
@@ -10206,8 +10221,11 @@ export class GameEngine {
     this.emitView(true)
   }
 
-  /** W2-1 — no hostile is in a fight with the player close by, and no finale is on. */
-  private isDraftMomentCalm(): boolean {
+  /**
+   * W2-1 — whether the waiting draft may open on this frame, `heldSeconds` into its wait: at
+   * a calm moment, or past the ceiling at any moment but a finale and a blow from close by.
+   */
+  private draftMayOpen(heldSeconds: number): boolean {
     const engagedHostiles: { distance: number; targetingPlayer: boolean }[] = []
     for (const actor of this.actors) {
       if (!actor.alive || !actor.hostileToPlayer) continue
@@ -10218,11 +10236,14 @@ export class GameEngine {
         targetingPlayer,
       })
     }
-    return isDoctrineDraftMomentCalm({
-      engagedHostiles,
-      finaleEngaged:
-        this.finale.introduced && !this.finale.suspended && this.finaleWithinArena(),
-    })
+    return mayOpenDoctrineDraft(
+      {
+        engagedHostiles,
+        finaleEngaged:
+          this.finale.introduced && !this.finale.suspended && this.finaleWithinArena(),
+      },
+      heldSeconds,
+    )
   }
 
   /**

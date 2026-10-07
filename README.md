@@ -204,7 +204,9 @@ and says that too, even when the tier in the corner is already higher: «Вре�
 
 Doctrine drafts open at tiers 2, 3 and 4, so a winning run meets two of them on the way to
 its finale. A draft waits for a calm moment: nothing chasing you within 14 m, nothing
-swinging or shooting at you within 38 m, and no finale under way. It never opens an overlay:
+swinging or shooting at you within 38 m, and no finale under way. A fight that never ends
+cannot hold it for ever: after 30 s of waiting it opens anyway, unless a finale is under way
+or something is already swinging or shooting at you from within 14 m. It never opens an overlay:
 take a card on the HUD or in the journal. «Устав дозора» still moves the waves off the clock
 and onto closed objectives; without it, closing an objective never sends a wave.
 
@@ -217,7 +219,8 @@ day/night display off changes the lighting only, never the world's night.
 
 None of this adds to a save. The tier comes from the saved tier and the saved objectives,
 so suspend/continue never counts a step twice, and an older save catches up on its first
-frame, with the notice.
+frame, with the notice. The draft's 30 s wait is not saved either: a continue starts it
+again, which can hold a draft back by one more wait but never deals an extra one.
 
 ## Profile rewards
 

@@ -27,9 +27,12 @@ import {
   DEFAULT_DOCTRINE_IDS,
   DOCTRINE_DRAFT_ALERT_RADIUS,
   DOCTRINE_DRAFT_CALM_RADIUS,
+  DOCTRINE_DRAFT_MAX_HOLD_SECONDS,
   DOCTRINE_DRAFT_TIERS,
   createDoctrineRunState,
+  isDoctrineAnchorDue,
   isDoctrineDraftMomentCalm,
+  mayOpenDoctrineDraft,
   normalizeDoctrineRunState,
   resolveDoctrineEffects,
   serializeDoctrineRunState,
@@ -52,6 +55,7 @@ import {
   eventCooldownRange,
   restoreThreatTier,
   skipExclusiveAlternatives,
+  threatWaveInterval,
 } from '../src/game/world/CampaignDirector.ts'
 import { buildInitialGameView } from '../src/game/world/CampaignView.ts'
 import { createFinaleIdentity, createFinaleState } from '../src/game/world/FinaleDirector.ts'
@@ -250,6 +254,52 @@ test('the calm predicate refuses a fight at the player and a running finale, and
   assert.equal(calm([], true), false)
 })
 
+test('past the ceiling only a finale or a blow from close by holds a draft back', () => {
+  const chasing = (distance: number) => ({ distance, targetingPlayer: false })
+  const aiming = (distance: number) => ({ distance, targetingPlayer: true })
+  type Hostiles = Array<{ distance: number; targetingPlayer: boolean }>
+  const may = (heldSeconds: number, engagedHostiles: Hostiles, finaleEngaged = false) =>
+    mayOpenDoctrineDraft({ engagedHostiles, finaleEngaged }, heldSeconds)
+  const ceiling = DOCTRINE_DRAFT_MAX_HOLD_SECONDS
+  // Under the ceiling, and on a wait that is not a number, it is the calm predicate case for case.
+  const cases: Hostiles[] = [[], [chasing(10)], [chasing(20)], [aiming(10)], [aiming(25)], [aiming(40)]]
+  for (const heldSeconds of [0, 12, ceiling - 0.01, Number.NaN]) {
+    for (const engagedHostiles of cases) {
+      for (const finaleEngaged of [false, true]) {
+        assert.equal(
+          may(heldSeconds, engagedHostiles, finaleEngaged),
+          isDoctrineDraftMomentCalm({ engagedHostiles, finaleEngaged }),
+          `held ${heldSeconds}: ${JSON.stringify(engagedHostiles)}, finale ${finaleEngaged}`,
+        )
+      }
+    }
+  }
+  // At the ceiling a pursuer at the heels and an archer beyond 14 m stop holding it — the
+  // same moments the calm predicate refuses (the negative control: no ceiling, no cards).
+  assert.equal(may(ceiling, [chasing(10)]), true)
+  assert.equal(may(ceiling - 0.01, [chasing(10)]), false)
+  assert.equal(may(ceiling, [chasing(1), aiming(DOCTRINE_DRAFT_CALM_RADIUS + 0.1)]), true)
+  // A blow on its way from within 14 m, and a finale, hold it however long it has waited.
+  assert.equal(may(ceiling, [aiming(DOCTRINE_DRAFT_CALM_RADIUS)]), false)
+  assert.equal(may(ceiling * 10, [chasing(30), aiming(3)]), false)
+  assert.equal(may(ceiling * 10, [], true), false)
+  // The bound's reason: a player who never stops fighting gets the cards in under half the
+  // shortest gap the clock leaves between threat waves, so before the next wave is on them.
+  for (let tier = 1; tier <= MAX_THREAT_TIER; tier += 1) {
+    assert.ok(2 * ceiling < threatWaveInterval(tier), `tier ${tier}: waves every ${threatWaveInterval(tier)} s`)
+  }
+
+  // The wait starts when a crossed draft point is still unopened, and only then.
+  const ledger = createDoctrineRunState(DEFAULT_DOCTRINE_IDS)
+  assert.equal(isDoctrineAnchorDue(ledger, 1), false)
+  assert.equal(isDoctrineAnchorDue(ledger, 2), true)
+  ledger.anchors = 1
+  assert.equal(isDoctrineAnchorDue(ledger, 2), false)
+  assert.equal(isDoctrineAnchorDue(ledger, 4), true)
+  ledger.anchors = DOCTRINE_DRAFT_TIERS.length
+  assert.equal(isDoctrineAnchorDue(ledger, MAX_THREAT_TIER), false)
+})
+
 // ---------------------------------------------------------------------------
 // The engine
 // ---------------------------------------------------------------------------
@@ -290,6 +340,7 @@ function engineFixture(faction: Faction, options: { elapsed?: number; doctrines?
     elapsed: options.elapsed ?? 30,
     threatTier: 1,
     announcedScalingTier: getEnemyScalingTier(options.elapsed ?? 30),
+    doctrineDraftHeldSince: null,
     nextThreatWaveAt: 240,
     ended: false,
     actors: [] as FixtureActor[],
@@ -433,12 +484,130 @@ test('the draft waits for the fight to end, while the tier does not', () => {
 
   // Negative control: without the gate the same fight gets the cards mid-swing.
   const control = engineFixture('elf')
-  Reflect.set(control.engine, 'isDraftMomentCalm', () => true)
+  Reflect.set(control.engine, 'draftMayOpen', () => true)
   control.engine.actors.push(hostile(10))
   control.engine.completeObjective(nodeId('elf', 'start'))
   control.engine.completeObjective(nodeId('elf', 'branch'))
   frame(control.engine)
   assert.equal(control.engine.doctrines.anchors, 1, 'the control should have opened the draft')
+})
+
+/**
+ * Earns the elf's first draft point with a pursuer weaving `distance` ± 1 m from the player,
+ * then runs frames until the draft opens or `limit` seconds of run time pass. `arm` turns
+ * the pursuer into an attacker; `waited` is how long the cards took, or null if they never came.
+ */
+function chaseAfterEarning(
+  fixture: ReturnType<typeof engineFixture>,
+  limit: number,
+  options: { distance?: number; arm?: (pursuer: FixtureActor) => void } = {},
+): { pursuer: FixtureActor; waited: number | null } {
+  const distance = options.distance ?? 11
+  const pursuer = hostile(distance)
+  options.arm?.(pursuer)
+  fixture.engine.actors.push(pursuer)
+  fixture.engine.completeObjective(nodeId('elf', 'start'))
+  fixture.engine.completeObjective(nodeId('elf', 'branch'))
+  frame(fixture.engine)
+  assert.equal(fixture.engine.threatTier, 2, 'the step did not raise the tier')
+  const dueAt = fixture.engine.elapsed
+  while (fixture.engine.doctrines.anchors === 0 && fixture.engine.elapsed - dueAt < limit) {
+    pursuer.mesh.position.set(distance + Math.sin(fixture.engine.elapsed * 1.7), 0, 0)
+    frame(fixture.engine)
+  }
+  return {
+    pursuer,
+    waited: fixture.engine.doctrines.anchors > 0 ? fixture.engine.elapsed - dueAt : null,
+  }
+}
+
+test('a fight that never ends holds the draft for the ceiling, not for ever', () => {
+  const ceiling = DOCTRINE_DRAFT_MAX_HOLD_SECONDS
+  const opened = describeDoctrineDraftOpened(1, DOCTRINE_DRAFT_TIERS.length)
+  const told = (notices: Notice[]) => notices.filter((notice) => notice.message === opened).length
+  const swinging = (pursuer: FixtureActor) => {
+    pursuer.action = { target: { kind: 'player' } }
+  }
+
+  // A pursuer 10–12 m away that never swings — a pack being kited: the cards come at the ceiling.
+  const kited = engineFixture('elf')
+  const { waited } = chaseAfterEarning(kited, 120)
+  assert.ok(waited !== null && waited >= ceiling && waited < ceiling + 0.2, `waited ${waited} s`)
+  assert.equal(told(kited.notices), 1)
+  assert.equal(kited.engine.doctrineDraftHeldSince, null, 'the wait outlived its draft')
+
+  // An archer 25 m off, loosing at the player the whole time: a fight for the calm gate, but
+  // not one that may hold the cards past the ceiling.
+  const archer = engineFixture('elf')
+  const volley = chaseAfterEarning(archer, 120, { distance: 25, arm: swinging })
+  assert.ok(volley.waited !== null && volley.waited >= ceiling && volley.waited < ceiling + 0.2)
+
+  // The same pursuer swinging at the player from 10–12 m: it waits for as long as the blows come…
+  const tanked = engineFixture('elf')
+  const fight = chaseAfterEarning(tanked, 120, { arm: swinging })
+  assert.equal(fight.waited, null, 'the draft opened under a blow from close by')
+  assert.equal(told(tanked.notices), 0)
+  // …and opens on the first frame they stop, the ceiling long since passed, pursuer or not.
+  fight.pursuer.action = null
+  frame(tanked.engine)
+  assert.equal(tanked.engine.doctrines.anchors, 1, 'the draft did not open once the blows stopped')
+  assert.equal(told(tanked.notices), 1)
+
+  // A finale under way: it waits, and opens once the player is out of the arena.
+  const finale = engineFixture('elf')
+  finale.engine.finale.introduced = true
+  finale.engine.finale.suspended = false
+  Reflect.set(finale.engine, 'finaleWithinArena', () => true)
+  assert.equal(chaseAfterEarning(finale, 120).waited, null, 'the draft opened during the finale')
+  Reflect.set(finale.engine, 'finaleWithinArena', () => false)
+  frame(finale.engine)
+  assert.equal(finale.engine.doctrines.anchors, 1, 'the draft did not open after the finale')
+
+  // Negative control: the calm gate with no ceiling — the production gate, never past zero
+  // seconds of wait — starves the same chase for ten ceilings.
+  const control = engineFixture('elf')
+  const gate = Reflect.get(GameEngine.prototype, 'draftMayOpen') as (heldSeconds: number) => boolean
+  Reflect.set(control.engine, 'draftMayOpen', function (this: unknown) {
+    return gate.call(this, 0)
+  })
+  assert.equal(chaseAfterEarning(control, ceiling * 10).waited, null, 'the control should have starved')
+  assert.equal(told(control.notices), 0)
+})
+
+test('a continue restarts the wait, and the wait is never saved', () => {
+  const ceiling = DOCTRINE_DRAFT_MAX_HOLD_SECONDS
+  const first = engineFixture('elf')
+  assert.equal(chaseAfterEarning(first, 20).waited, null)
+  const saved = {
+    threatTier: first.engine.threatTier,
+    elapsed: first.engine.elapsed,
+    objectives: (first.engine.objectives as Objective[]).map((entry) => ({ ...entry })),
+    doctrines: serializeDoctrineRunState(first.engine.doctrines),
+  }
+  // The doctrine block is the ledger and nothing else: twenty seconds of waiting are not in it.
+  assert.deepEqual(Object.keys(saved.doctrines).sort(), ['anchors', 'equipped', 'pool'])
+  assert.equal(saved.doctrines.anchors, 0)
+
+  // The same fight after a continue: the cards come a full ceiling after it, not ten seconds
+  // after it. One more wait at most, and never a card more or fewer.
+  for (let cycle = 0; cycle < 3; cycle += 1) {
+    const next = engineFixture('elf', { elapsed: saved.elapsed })
+    next.engine.objectives = saved.objectives.map((entry) => ({ ...entry }))
+    next.engine.doctrines = normalizeDoctrineRunState(saved.doctrines)
+    next.engine.threatTier = restoreThreatTier(saved.threatTier, saved.elapsed, steps(next.engine.objectives, 'elf'))
+    const pursuer = hostile(11)
+    next.engine.actors.push(pursuer)
+    const resumedAt = next.engine.elapsed
+    while (next.engine.doctrines.anchors === 0 && next.engine.elapsed - resumedAt < 120) {
+      pursuer.mesh.position.set(11 + Math.sin(next.engine.elapsed * 1.7), 0, 0)
+      frame(next.engine)
+    }
+    const waited = next.engine.elapsed - resumedAt
+    assert.ok(waited >= ceiling && waited < ceiling + 0.3, `cycle ${cycle}: waited ${waited} s after the continue`)
+    assert.equal(next.engine.doctrines.anchors, 1, `cycle ${cycle}`)
+    const opened = describeDoctrineDraftOpened(1, DOCTRINE_DRAFT_TIERS.length)
+    assert.equal(next.notices.filter((notice) => notice.message === opened).length, 1)
+  }
 })
 
 test('a checkpoint and a continue neither raise the tier again nor reopen a draft', () => {

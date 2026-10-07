@@ -163,9 +163,12 @@ import {
   createDoctrineRunState,
   equipDoctrine,
   getDoctrineOffer,
+  isDoctrineAnchorDue,
   isDoctrineDraftMomentCalm,
+  mayOpenDoctrineDraft,
   pendingDoctrineDraftIndex,
   resolveDoctrineEffects,
+  type DoctrineDraftMoment,
   type DoctrineEffects,
   type DoctrineRunState,
 } from '../src/game/run/doctrine.ts'
@@ -794,8 +797,10 @@ export type EncounterModel = 'harness' | 'shipped'
  * - `progress` is the shipped rule: the pacing tier is the clock or the run's progress,
  *   whichever is further (`getThreatTier(elapsed, countProgressSteps(...))`), and drives the
  *   drafts, the director's cadence and the threat waves; a draft waits for a calm moment
- *   (`isDoctrineDraftMomentCalm`). Enemy health and damage stay on the clock's tier
- *   (`getEnemyScalingTier`) in both arms. `HARNESS_SHIPPED_ARMS` carries `progress`.
+ *   (`isDoctrineDraftMomentCalm`), for at most `DOCTRINE_DRAFT_MAX_HOLD_SECONDS` of run
+ *   time unless a blow is on its way (`mayOpenDoctrineDraft`). Enemy health and damage
+ *   stay on the clock's tier (`getEnemyScalingTier`) in both arms. `HARNESS_SHIPPED_ARMS`
+ *   carries `progress`.
  *
  * Both run on one build, so "progress raised the tier" is a comparison against a matched
  * control rather than against a different checkout of the game.
@@ -1289,6 +1294,11 @@ export interface BalanceMetrics {
   tierRises: Array<{ at: number; tier: number; cause: 'time' | 'progress' }>
   /** W2-1 — when each doctrine draft actually opened. Empty while the doctrine arm is `off`. */
   draftsOpenedAt: number[]
+  /**
+   * W2-1 — drafts the ceiling opened: waited `DOCTRINE_DRAFT_MAX_HOLD_SECONDS` and still not
+   * at a calm moment. Always zero under `time`, which has no gate to wait at.
+   */
+  draftsForced: number
   /** W2-1 — the pacing tier when the finale boss was put on the field, or null if it never was. */
   finaleTier: number | null
   /** W2-1 — the clock's tier at the same moment: what the boss's health was scaled by. */
@@ -1911,14 +1921,29 @@ export function runHarness(options: RunOptions): RunReport {
    *
    * W2-1 — under `progress` the anchors follow the run's tier (set by `w15FrameStart`, which
    * runs first, as `updateThreat` runs before `updateDoctrineDraft`) and wait for a calm
-   * moment: the engine's own predicate, fed this file's bodies. Under `time` it is the
+   * moment, up to the ceiling: the engine's own predicates, fed this file's bodies, and the
+   * engine's own wait, timed from the frame a draft point is crossed. Under `time` it is the
    * clock-only rule it always was, called where it always was.
    */
   const advanceDoctrines = (): void => {
     if (doctrinePolicy === 'off') return
     const reached = escalation === 'time' ? getThreatTier(elapsed) : threatTier
-    const calm = escalation === 'time' || draftMomentCalm()
-    if (calm && advanceDoctrineAnchors(doctrineState, reached)) {
+    let open = true
+    if (escalation !== 'time') {
+      if (!isDoctrineAnchorDue(doctrineState, reached)) {
+        draftHeldSince = null
+        open = false
+      } else {
+        draftHeldSince ??= elapsed
+        const moment = draftMoment()
+        open = mayOpenDoctrineDraft(moment, elapsed - draftHeldSince)
+        if (open) {
+          if (!isDoctrineDraftMomentCalm(moment)) draftsForced += 1
+          draftHeldSince = null
+        }
+      }
+    }
+    if (open && advanceDoctrineAnchors(doctrineState, reached)) {
       doctrineMetrics.draftsOpened = doctrineState.anchors
       draftsOpenedAt.push(elapsed)
     }
@@ -2171,23 +2196,25 @@ export function runHarness(options: RunOptions): RunReport {
   // W2-1 — what the escalation arms report.
   const tierRises: BalanceMetrics['tierRises'] = []
   const draftsOpenedAt: number[] = []
+  /** `doctrineDraftHeldSince`: when a crossed draft point began waiting, null while none waits. */
+  let draftHeldSince: number | null = null
+  let draftsForced = 0
   const wavesBy: BalanceMetrics['wavesBy'] = { clock: 0, objective: 0 }
   let finaleTier: number | null = null
   let finaleScalingTier: number | null = null
-  /** `isDraftMomentCalm`: nothing in a fight with the player close by, no finale on. */
-  const draftMomentCalm = (): boolean =>
-    isDoctrineDraftMomentCalm({
-      engagedHostiles: actors
-        .filter((actor) => {
-          const targetingPlayer = actor.actionPhase !== 'idle' && actor.actionTargetIsPlayer
-          return actor.alive && actor.hostileToPlayer && (actor.playerAggro || targetingPlayer)
-        })
-        .map((actor) => ({
-          distance: Math.hypot(actor.x - player.x, actor.z - player.z),
-          targetingPlayer: actor.actionPhase !== 'idle' && actor.actionTargetIsPlayer,
-        })),
-      finaleEngaged: finaleState.introduced && !finaleState.suspended && finaleWithinArena(),
-    })
+  /** `draftMayOpen`'s reading: every hostile in a fight with the player, and the finale. */
+  const draftMoment = (): DoctrineDraftMoment => ({
+    engagedHostiles: actors
+      .filter((actor) => {
+        const targetingPlayer = actor.actionPhase !== 'idle' && actor.actionTargetIsPlayer
+        return actor.alive && actor.hostileToPlayer && (actor.playerAggro || targetingPlayer)
+      })
+      .map((actor) => ({
+        distance: Math.hypot(actor.x - player.x, actor.z - player.z),
+        targetingPlayer: actor.actionPhase !== 'idle' && actor.actionTargetIsPlayer,
+      })),
+    finaleEngaged: finaleState.introduced && !finaleState.suspended && finaleWithinArena(),
+  })
   let championDamageBonus = 0
   let interactCooldown = 0
 
@@ -6153,6 +6180,7 @@ export function runHarness(options: RunOptions): RunReport {
     draftsReached: DOCTRINE_DRAFT_TIERS.filter((tier) => maxThreatTier >= tier).length,
     tierRises,
     draftsOpenedAt,
+    draftsForced,
     finaleTier,
     finaleScalingTier,
     wavesBy,

@@ -110,8 +110,9 @@ Every report carries a `balance` block, populated by the arms that feed it. Noth
   deadline, and the share beyond reach.
 - **Companions:** started, recruited, lost and to whom, standing when the finale opened and at the end, their kills.
 - **Doctrine drafts reached** and the **maximum threat tier**, whatever the doctrine arm.
-- **W2-1:** every tier rise with its cause (`time` or `progress`), when each draft actually opened, the finale's
-  pacing tier and the clock's tier its boss was scaled by, and threat waves by trigger (clock or closed objective).
+- **W2-1:** every tier rise with its cause (`time` or `progress`), when each draft actually opened and how many of
+  them the 30 s ceiling opened outside a calm moment (`draftsForced`), the finale's pacing tier and the clock's tier
+  its boss was scaled by, and threat waves by trigger (clock or closed objective).
 - **Damage by system** (encounter, finale, random, contract or located event, threat wave, caravan, bleeding) and the
   **system behind each death**.
 - **Encounters:** how many the generator fielded, the bodies it spawned, how many stood on the road at once on
@@ -262,7 +263,12 @@ and rejected: progress scaling enemy stats as well. Same seeds, the engine's win
 
 - Per policy, out of 120: beeline 51, 48 and 31; cautious 40, 39 and 22; duelist 109, 109 and 74.
 - Under `time` the median win opened no draft. Under `progress`, 194 of 196 wins opened two or more before the end.
-  Drafts wait for calm: the median delay after the tier that dealt them is 0 s, the p90 3.1 s and the longest 15.7 s.
+  Drafts in wins wait for calm: after the tier that dealt them the median delay is 0 s, the p90 3.1 s, the longest
+  15.7 s.
+- Calm alone had no ceiling. Four guard runs pinned in a fight from 360 s to the 600 s timeout (seeds 79191 and
+  142543, beeline and cautious) never opened their third and fourth drafts. With the 30 s ceiling those eight open
+  at 390 s and 570 s, `draftsForced` counts them, and the other 356 runs are the same in every recorded field: no win
+  count moved, under `progress` or `progressAll`.
 - The finale is fought at pacing tier 3 with its boss scaled at the clock's tier 1. Under `progressAll` the same boss
   had a quarter more health, and the finale's defeats are most of the gap in that column.
 - Run length moved by ten percent or less in every cell.
