@@ -21,6 +21,11 @@ import type { WorldBlueprint, WorldBounds } from './worldTypes.ts'
 export const EXPEDITION_VERSION = 1
 export const MAX_EXPEDITION_POINTS = 128
 export const MAX_EXPEDITION_REGIONS = 25
+/** A dry straight approach this short replaces a road detour. docs/13 records why 60 m. */
+export const DIRECT_APPROACH_METERS = 60
+/** Up to this far only when the road itinerary would at least double the walk, or is missing. */
+export const DIRECT_APPROACH_DETOUR_METERS = 80
+export const DIRECT_APPROACH_DETOUR_RATIO = 2
 const EPSILON = 0.001
 const ROAD_ARRIVAL_RADIUS = 3
 const TRANSPORT_CLEARANCE = 0.6
@@ -33,7 +38,8 @@ export interface ExpeditionTargetIdentity {
 }
 export interface ExpeditionState {
   version: 1
-  mode: 'campaign' | 'selected' | 'none'
+  /** `campaign` charts the active objective; `selected` charts an explicit atlas choice. */
+  mode: 'campaign' | 'selected'
   target: ExpeditionTargetIdentity | null
   preference: ExpeditionPreference
 }
@@ -86,7 +92,8 @@ export interface ExpeditionWaypoint extends ExpeditionPoint {
 }
 export type ExpeditionRouteReason = 'off-road' | 'disconnected' | 'out-of-bounds' | 'limit'
 export interface ExpeditionRoute {
-  status: 'road' | 'arrived' | 'unavailable'
+  /** `direct` is a short unverified straight approach that replaced a road detour. */
+  status: 'road' | 'direct' | 'arrived' | 'unavailable'
   reason: ExpeditionRouteReason | null
   preference: ExpeditionPreference
   legs: ExpeditionLeg[]
@@ -124,7 +131,7 @@ export interface ExpeditionView {
   cautious: ExpeditionRoute | null
   transport: ExpeditionTransport
   guidance: ExpeditionGuidance | null
-  bearingReason: 'not-planned' | 'fog' | null
+  bearingReason: 'fog' | null
   notice: ExpeditionNotice
 }
 export interface ExpeditionInput {
@@ -163,8 +170,13 @@ export function normalizeExpeditionState(value: unknown): { state: ExpeditionSta
       (record.mode === 'campaign' || record.mode === 'none' || record.mode === 'selected') &&
       (record.mode === 'selected' ? target !== null : record.target === null)
     ) {
+      // A version-1 `none` is the old «Убрать маршрут». Clearing now returns to the
+      // active objective's route, so such a save resumes on that default.
       return {
-        state: { version: 1, mode: record.mode, target, preference: record.preference },
+        state: {
+          version: 1, mode: record.mode === 'selected' ? 'selected' : 'campaign', target,
+          preference: record.preference,
+        },
         notice: null,
       }
     }
@@ -474,11 +486,68 @@ function routeFromLegs(
   }
 }
 
+/** The straight line cut at region borders, so every leg stays local to one region. */
+function directLegs(graph: ExpeditionGraph, from: ExpeditionPoint, to: ExpeditionPoint): ExpeditionLeg[] {
+  const cuts = new Set([0, 1])
+  for (const bounds of graph.regions.values()) {
+    for (const [start, end, edges] of [
+      [from.x, to.x, [bounds.minX, bounds.maxX]],
+      [from.z, to.z, [bounds.minZ, bounds.maxZ]],
+    ] as const) {
+      if (Math.abs(end - start) < EPSILON) continue
+      for (const edge of edges) {
+        const share = (edge - start) / (end - start)
+        if (share > EPSILON && share < 1 - EPSILON) cuts.add(share)
+      }
+    }
+  }
+  const at = (share: number): ExpeditionPoint => share === 0 ? { ...from } : share === 1 ? { ...to }
+    : { x: from.x + (to.x - from.x) * share, z: from.z + (to.z - from.z) * share }
+  const shares = [...cuts].sort((a, b) => a - b)
+  const legs: ExpeditionLeg[] = []
+  for (let index = 1; index < shares.length; index += 1) {
+    const regionId = regionAt(graph, at((shares[index - 1] + shares[index]) / 2))
+    if (!regionId) return []
+    legs.push({ kind: 'connector', roadLegId: null, regionId, from: at(shares[index - 1]), to: at(shares[index]) })
+  }
+  return legs
+}
+
+/**
+ * A short target on a dry straight line is approached directly rather than by a road
+ * detour. Only water and the world edge are checked, so it stays an unverified approach.
+ */
+export function planDirectApproach(
+  graph: ExpeditionGraph,
+  from: ExpeditionPoint,
+  to: ExpeditionPoint,
+  knowledge: ExpeditionKnowledge,
+  road: ExpeditionRoute,
+): ExpeditionRoute | null {
+  const length = distance(from, to)
+  if (length <= EPSILON || length > DIRECT_APPROACH_DETOUR_METERS ||
+    !isExpeditionSegmentClear(graph, from, to)) return null
+  if (length > DIRECT_APPROACH_METERS && road.status === 'road' &&
+    road.roadDistance + road.connectorDistance < length * DIRECT_APPROACH_DETOUR_RATIO) return null
+  const legs = directLegs(graph, from, to)
+  if (!legs.length) return null
+  const route = routeFromLegs(graph, legs, knowledge, road.preference, length, length)
+  return route.status === 'road' ? { ...route, status: 'direct' } : null
+}
+
+function withinRegion(graph: ExpeditionGraph, regionId: string, point: ExpeditionPoint): boolean {
+  const bounds = graph.regions.get(regionId)
+  return bounds !== undefined && point.x >= bounds.minX - EPSILON && point.x <= bounds.maxX + EPSILON &&
+    point.z >= bounds.minZ - EPSILON && point.z <= bounds.maxZ + EPSILON
+}
+
 export function validateExpeditionRoute(graph: ExpeditionGraph, route: ExpeditionRoute): string[] {
   const errors: string[] = []
-  if (route.status !== 'road') return ['not-a-road-itinerary']
+  if (route.status !== 'road' && route.status !== 'direct') return ['not-a-road-itinerary']
   if (route.points.length > MAX_EXPEDITION_POINTS || route.regionIds.length > MAX_EXPEDITION_REGIONS) errors.push('unbounded')
   if (!route.legs.length) errors.push('empty')
+  if (route.status === 'direct' && (route.legs.some((leg) => leg.kind !== 'connector') ||
+    route.connectorDistance > DIRECT_APPROACH_DETOUR_METERS + EPSILON)) errors.push('not-a-direct-approach')
   route.legs.forEach((leg, index) => {
     if (!isExpeditionSegmentClear(graph, leg.from, leg.to)) errors.push('water-or-bounds')
     if (index && distance(route.legs[index - 1].to, leg.from) > EPSILON) errors.push('disconnected')
@@ -487,7 +556,7 @@ export function validateExpeditionRoute(graph: ExpeditionGraph, route: Expeditio
       if (!road?.traversable || road.regionId !== leg.regionId ||
         distance(project(leg.from, road.center, road.edge), leg.from) > EPSILON ||
         distance(project(leg.to, road.center, road.edge), leg.to) > EPSILON) errors.push('not-a-road')
-    } else if (regionAt(graph, leg.from) !== leg.regionId || regionAt(graph, leg.to) !== leg.regionId) {
+    } else if (!withinRegion(graph, leg.regionId, leg.from) || !withinRegion(graph, leg.regionId, leg.to)) {
       errors.push('nonlocal-connector')
     }
   })
@@ -617,7 +686,8 @@ export class ExpeditionPlanner {
   select(target: ExpeditionTargetIdentity | null, input: ExpeditionInput): boolean {
     if (target !== null && !buildExpeditionTargets(this.blueprint, input)
       .some((entry) => entry.key === expeditionTargetKey(target))) return false
-    this.state = { ...this.state, mode: target ? 'selected' : 'none', target: target ? { ...target } : null }
+    // Clearing an explicit choice returns to the active objective's route, not to nothing.
+    this.state = { ...this.state, mode: target ? 'selected' : 'campaign', target: target ? { ...target } : null }
     this.notice = null
     this.decisionKey = ''
     return true
@@ -637,42 +707,52 @@ export class ExpeditionPlanner {
       this.notice = completedBridgeTarget ? null : 'stale-target'
       this.decisionKey = ''
     }
-    const target = this.state.mode === 'none' ? null
-      : targets.find((entry) => this.state.mode === 'selected'
-        ? this.state.target && entry.key === expeditionTargetKey(this.state.target)
-        : entry.kind === 'objective' && entry.id === input.activeObjectiveId) ?? null
+    const selected = this.state.target
+    const target = this.state.mode === 'selected'
+      ? targets.find((entry) => selected !== null && entry.key === expeditionTargetKey(selected)) ?? null
+      // A taken live rumour is a time-boxed commitment, so it leads until it resolves.
+      : targets.find((entry) => entry.kind === 'rumour' && entry.committed) ??
+        targets.find((entry) => entry.kind === 'objective' && entry.id === input.activeObjectiveId) ?? null
     const knowledge = buildExpeditionKnowledge(input, this.blueprint)
     const attached = attachments(this.graph, input.player)[0]
+    const reach = target ? distance(input.player, target.position) : Infinity
+    const directBand = !target || reach > DIRECT_APPROACH_DETOUR_METERS ||
+      !isExpeditionSegmentClear(this.graph, input.player, target.position) ? 'far'
+      : reach > DIRECT_APPROACH_METERS ? 'detour' : 'near'
     const key = [
       this.state.mode, target?.key ?? '', target?.position.x, target?.position.z,
-      attached?.road.id ?? regionAt(this.graph, input.player),
+      attached?.road.id ?? regionAt(this.graph, input.player), directBand,
       [...knowledge.discoveredRegionIds].sort().join(','),
       [...knowledge.risks].sort(([a], [b]) => a.localeCompare(b))
         .map(([id, risk]) => `${id}:${Number(risk.hostile)}:${Number(risk.contested)}`).join(','),
     ].join('|')
     // Off-road travel can change the reachable bank without changing the nearest road.
     const route = this.state.preference === 'cautious' ? this.cautious ?? this.shortest : this.shortest
-    const farFromRoute = route?.status === 'road' && route.legs.every((leg) =>
+    const farFromRoute = (route?.status === 'road' || route?.status === 'direct') && route.legs.every((leg) =>
       distance(input.player, project(input.player, leg.from, leg.to)) > 12)
     if (key !== this.decisionKey || farFromRoute) {
       this.decisionKey = key
-      // The default campaign compass is a bearing. Only explicit selection charts fog.
-      if (target && this.state.mode === 'selected') {
+      // The default target is charted exactly as if the player had selected it.
+      if (target) {
         this.planCount += 1
-        this.shortest = planExpeditionRoute(this.graph, input.player, target.position, knowledge)
-        const cautious = planExpeditionRoute(this.graph, input.player, target.position, knowledge, 'cautious')
-        const different = cautious.legs.map((leg) => leg.roadLegId).join('|') !==
-          this.shortest.legs.map((leg) => leg.roadLegId).join('|')
-        this.cautious = different && cautious.status === 'road' &&
-          cautious.knownRiskDistance < this.shortest.knownRiskDistance - 1 ? cautious : null
+        const road = planExpeditionRoute(this.graph, input.player, target.position, knowledge)
+        const direct = planDirectApproach(this.graph, input.player, target.position, knowledge, road)
+        this.shortest = direct ?? road
+        const cautious = direct ? null
+          : planExpeditionRoute(this.graph, input.player, target.position, knowledge, 'cautious')
+        const different = cautious !== null && cautious.legs.map((leg) => leg.roadLegId).join('|') !==
+          road.legs.map((leg) => leg.roadLegId).join('|')
+        this.cautious = cautious && different && cautious.status === 'road' &&
+          cautious.knownRiskDistance < road.knownRiskDistance - 1 ? cautious : null
       } else {
         this.shortest = null
         this.cautious = null
       }
     }
     const chosen = this.state.preference === 'cautious' ? this.cautious ?? this.shortest : this.shortest
-    const exposeUnscouted = this.state.mode === 'selected' && target?.kind !== 'site'
-    // A discovered utility site does not grant a mission's fog exception.
+    // A mission, including the default objective, may chart its own itinerary through fog.
+    // A discovered utility site does not grant that exception.
+    const exposeUnscouted = target !== null && target.kind !== 'site'
     const visibleRoute = chosen && !exposeUnscouted && chosen.unscoutedRegionIds.length ? null : chosen
     const bridgeLocations = new Set<string>()
     const bridges = this.graph.bridges.filter((bridge) => {
@@ -698,7 +778,7 @@ export class ExpeditionPlanner {
         bridges,
       },
       guidance: target ? buildExpeditionGuidance(this.graph, visibleRoute, target, input.player, input.heading) : null,
-      bearingReason: chosen && !visibleRoute ? 'fog' : target && !chosen ? 'not-planned' : null,
+      bearingReason: chosen && !visibleRoute ? 'fog' : null,
       notice: this.notice,
     }
   }
