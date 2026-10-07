@@ -109,6 +109,31 @@ export class ActorBudget {
     return true
   }
 
+  /**
+   * W1-6 — slots the category can take out of its own reservation alone: nothing borrowed
+   * from the categories below it, and nobody asked to yield.
+   */
+  ownAvailableFor(category: ActorBudgetCategory): number {
+    return Math.max(
+      0,
+      Math.min(MAX_ACTORS - this.total, ACTOR_BUDGET[category] - this.used[category]),
+    )
+  }
+
+  /**
+   * W1-6 — all-or-nothing, inside the category's own reservation. Never borrows and never
+   * evicts. While every category keeps to its own reservation, a slot taken this way leaves
+   * what each lower category could claim exactly as it was. A summons that can wait — a
+   * commander's reinforcement — asks this way, and waits.
+   */
+  reserveOwn(category: ActorBudgetCategory, count: number): boolean {
+    const wanted = normalizeCount(count)
+    if (wanted === 0) return true
+    if (this.ownAvailableFor(category) < wanted) return false
+    this.used[category] += wanted
+    return true
+  }
+
   /** Partial reservation: grants as many of `count` as fit, and returns how many. */
   reserveUpTo(category: ActorBudgetCategory, count: number): number {
     const wanted = normalizeCount(count)

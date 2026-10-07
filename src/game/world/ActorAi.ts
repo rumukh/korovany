@@ -722,6 +722,43 @@ export function acceptsAlert<T extends AiActor>(
 }
 
 // ---------------------------------------------------------------------------
+// W1-6 — a commander's call for men
+// ---------------------------------------------------------------------------
+
+/**
+ * W1-6 — whether a commander's own people are fighting right now.
+ *
+ * His people are the ones his orders reach: he himself, and every living actor friendly to
+ * him within `range`. One of them is fighting when it is in the middle of a blow or a shot
+ * (`attacking`), when it is going for the player, or when it has picked out a living enemy
+ * — a threat it chose, or the one it is hitting back at. A commander who is not hostile to
+ * the player calls for reinforcements only while this holds: before W1-6 he called them
+ * the moment his square streamed in, fight or no fight, and a garrison standing by the road
+ * filled the actor budget a contract down the road needed.
+ */
+export function isCommanderGroupEngaged<T extends AiActor>(
+  commander: T,
+  actors: readonly T[],
+  range: number,
+  positionOf: AiPositionOf<T>,
+  attacking: (actor: T) => boolean,
+): boolean {
+  const origin = positionOf(commander)
+  for (const member of actors) {
+    if (!member.alive) continue
+    if (member !== commander) {
+      if (allegianceRelation(member.allegiance, commander.allegiance) !== 'friendly') continue
+      if (aiDistance(positionOf(member), origin) > range) continue
+    }
+    if (attacking(member) || member.playerAggro) return true
+    if (member.targetId === null) continue
+    const target = actors.find((candidate) => candidate.id === member.targetId)
+    if (target?.alive && areAllegiancesHostile(member.allegiance, target.allegiance)) return true
+  }
+  return false
+}
+
+// ---------------------------------------------------------------------------
 // Layer 4 — flanking
 // ---------------------------------------------------------------------------
 

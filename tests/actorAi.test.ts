@@ -38,6 +38,7 @@ import {
   flankApproachAngle,
   flankBlend,
   FLANK_MAX_ANGLE,
+  isCommanderGroupEngaged,
   localGroupShare,
   playerEngagementRank,
   selectCombatTarget,
@@ -723,5 +724,79 @@ test('threat scoring beats nearest-wins on the cases it was built for', () => {
     ),
     THREAT_PLAYER,
     'and a player at arm"s length wins the same way',
+  )
+})
+
+test('W1-6: a commander\'s people are fighting only when one of them is', () => {
+  const body = (id: string, overrides: Partial<Sample> = {}): Sample => ({
+    id,
+    allegiance: 'guard',
+    role: 'soldier',
+    alive: true,
+    ignoredTargetId: null,
+    targetId: null,
+    packId: null,
+    packKinSize: 1,
+    hp: 70,
+    maxHp: 70,
+    playerAggro: false,
+    position: { x: 0, y: 0, z: 0 },
+    ...overrides,
+  })
+  const commander = body('commander', { role: 'commander' })
+  const swinging = new Set<string>()
+  const engaged = (actors: readonly Sample[], range = 18): boolean =>
+    isCommanderGroupEngaged(commander, actors, range, positionOf, (actor) => swinging.has(actor.id))
+
+  const garrison = [commander, body('soldier-1', { position: { x: 6, y: 0, z: 0 } })]
+  const wolf = body('wolf', { allegiance: 'beast', role: 'wolf', position: { x: 40, y: 0, z: 0 } })
+  const other = body('other-guard', { position: { x: 25, y: 0, z: 0 } })
+  assert.equal(engaged([...garrison, wolf, other]), false, 'a garrison with nothing to fight is idle')
+
+  // Each way in, and the same body with that one fact taken away as its control.
+  const fighting = body('soldier-1', { position: { x: 6, y: 0, z: 0 }, targetId: 'wolf' })
+  assert.equal(engaged([commander, fighting, wolf]), true, 'a man with a living enemy picked out')
+  assert.equal(
+    engaged([commander, fighting, { ...wolf, alive: false }]),
+    false,
+    'a dead enemy is no fight',
+  )
+  assert.equal(
+    engaged([commander, body('soldier-1', { targetId: 'other-guard' }), other]),
+    false,
+    'nor is a friend it happens to be looking at',
+  )
+  assert.equal(engaged([commander, fighting]), false, 'nor a target that is not on the field')
+  assert.equal(engaged([commander, body('soldier-1', { playerAggro: true })]), true, 'going for the player')
+  swinging.add('soldier-1')
+  assert.equal(engaged(garrison), true, 'in the middle of a blow')
+  swinging.clear()
+  const answering = body('commander', { role: 'commander', targetId: 'wolf' })
+  assert.equal(
+    isCommanderGroupEngaged(answering, [answering, wolf], 18, positionOf, () => false),
+    true,
+    'the commander himself hitting back',
+  )
+
+  // Whose fight counts: his own people, in reach of his orders.
+  assert.equal(
+    engaged([commander, body('far', { position: { x: 30, y: 0, z: 0 }, targetId: 'wolf' }), wolf]),
+    false,
+    'a friend fighting out of earshot is not his fight',
+  )
+  assert.equal(
+    engaged([commander, body('far', { position: { x: 30, y: 0, z: 0 }, targetId: 'wolf' }), wolf], 40),
+    true,
+    'the same fight inside the range is',
+  )
+  assert.equal(
+    engaged([commander, body('elf', { allegiance: 'elf', position: { x: 3, y: 0, z: 0 }, targetId: 'wolf' }), wolf]),
+    false,
+    'an enemy fighting beside him is not his men fighting',
+  )
+  assert.equal(
+    engaged([commander, body('dead', { alive: false, targetId: 'wolf' }), wolf]),
+    false,
+    'nor is a corpse',
   )
 })

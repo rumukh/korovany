@@ -132,6 +132,12 @@ without losing patience while the first is still on the ground. A lost contract 
 forward: walk to its site and the node closes without the payout. The bridge ambush never
 takes a contract's fighters to make room for its own; on a crowded road it waits and retries.
 
+Nor do idle garrisons crowd a contract out. A commander on your own side, such as the palace
+guard's garrison commanders, calls for reinforcements only while his men are fighting, and no
+commander's call ever takes the room a contract would stage in: it waits for his own side's
+share of the field. The guard used to reach a contract beside the palace and find the square
+already full of soldiers nobody had sent for.
+
 ## The bridge ambush
 
 New runs place an optional caravan encounter on a real generated bridge. It does not
