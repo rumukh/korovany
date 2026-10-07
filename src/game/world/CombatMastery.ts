@@ -62,6 +62,14 @@ export function missingPlayerLegs(body: BodyState): number {
   return Number(body.leftLeg === 'missing') + Number(body.rightLeg === 'missing')
 }
 
+/**
+ * The player's walking pace in m/s, on two good legs. `playerLegMobility` scales it; sprint
+ * and the elf's forest stride multiply it in `GameEngine.updatePlayer`. W2-3 — the cards'
+ * travel estimates time a walk with the same number, so it lives here rather than as a
+ * literal in the engine.
+ */
+export const PLAYER_WALK_SPEED = 8.2
+
 export function playerLegMobility(body: BodyState): number {
   const missing = missingPlayerLegs(body)
   const mobility = missing === 2 ? 0.24 : missing === 1 ? 0.53 : 1

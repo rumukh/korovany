@@ -27,6 +27,7 @@ import {
 } from '../content/gameCopy.ts'
 import type { RandomStream } from '../random/RandomStream.ts'
 import type {
+  ChoicePayoutView,
   Faction,
   Objective,
   RandomWorldEventKind,
@@ -523,12 +524,51 @@ export function rollEventCooldown(threatTier: number, roll: number): number {
   return range.min + roll * (range.max - range.min)
 }
 
-/** Gold a completed chronicle-materialized event pays. */
-export function locatedEventReward(
-  rewards: Readonly<Record<string, number>>,
-  kind: WorldEventKind,
-): number {
-  return rewards[kind] ?? 0
+/**
+ * W2-3 — what winning each event kind is worth, and the one place that says so.
+ *
+ * `GameEngine` pays from this table, the contract cards price from it through
+ * `contractPayout`, and the success lines are handed the amounts rather than spelling them.
+ * Before, the gold lived in four places — literals in `resolveRandomEventOutcome`, a record
+ * of its own for the located kinds, the loot tier in `spawnEventLoot` and «+180» inside the
+ * copy — and a card could show none of it.
+ */
+export type EventLootTier = 'uncommon' | 'legendary'
+
+export interface EventReward {
+  /** Gold paid on success. */
+  gold: number
+  /** Health restored on success, capped by maximum health. */
+  heal: number
+  /** Damage a win adds, before the run-wide `CHAMPION_DAMAGE_CAP`. */
+  damage: number
+  /** True when the win puts a freed captive in the squad. */
+  companion: boolean
+  /** The lowest rarity the guaranteed drop can roll. */
+  loot: EventLootTier
+}
+
+const NO_EXTRAS = { heal: 0, damage: 0, companion: false, loot: 'uncommon' } as const
+
+export const WORLD_EVENT_REWARDS: Readonly<Record<WorldEventKind, EventReward>> = {
+  richCaravan: { ...NO_EXTRAS, gold: 180 },
+  defendHome: { ...NO_EXTRAS, gold: 90, heal: 8 },
+  champion: { ...NO_EXTRAS, gold: 120, damage: 6, loot: 'legendary' },
+  rescue: { ...NO_EXTRAS, gold: 0, companion: true },
+  bounty: { ...NO_EXTRAS, gold: 70 },
+  factionRaid: { ...NO_EXTRAS, gold: 110 },
+  caravanAmbush: { ...NO_EXTRAS, gold: 140 },
+  warband: { ...NO_EXTRAS, gold: 80 },
+  aftermath: { ...NO_EXTRAS, gold: 45 },
+  beastRaid: { ...NO_EXTRAS, gold: 95 },
+}
+
+/** The most damage champion wins can add across a whole run. */
+export const CHAMPION_DAMAGE_CAP = 18
+
+/** The damage a win adds now, given how much earlier champion wins already added. */
+export function eventDamageGain(reward: EventReward, championBonusSoFar: number): number {
+  return Math.min(reward.damage, Math.max(0, CHAMPION_DAMAGE_CAP - championBonusSoFar))
 }
 
 /** The fallback copy context used when an event's own context was already released. */
@@ -1755,6 +1795,26 @@ export function nodeContractTemplate(
   node: FactionObjectiveNode,
 ): FactionContractTemplate | null {
   return findContractTemplate(node.contract)
+}
+
+/**
+ * W2-3 — everything keeping a contract pays: its own bonus on top of what the shipped event
+ * pays when it is won, read from `WORLD_EVENT_REWARDS` so the card and the payment cannot
+ * disagree. The damage part is what this run can still gain under the champion cap.
+ */
+export function contractPayout(
+  template: FactionContractTemplate,
+  championBonusSoFar = 0,
+): ChoicePayoutView {
+  const reward = WORLD_EVENT_REWARDS[template.eventKind]
+  return {
+    gold: template.reward + reward.gold,
+    supplies: 0,
+    heal: reward.heal,
+    damage: eventDamageGain(reward, championBonusSoFar),
+    companion: reward.companion,
+    loot: reward.loot,
+  }
 }
 
 /**

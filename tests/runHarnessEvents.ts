@@ -34,7 +34,12 @@ import {
   getBlueprintRegionBounds,
   getSiteWorldPosition2D,
 } from '../src/game/content/registry.ts'
-import { areAllegiancesHostile, isBeastRole } from '../src/game/types.ts'
+import {
+  CHRONICLE_WORLD_EVENT_KINDS,
+  RANDOM_WORLD_EVENT_KINDS,
+  areAllegiancesHostile,
+  isBeastRole,
+} from '../src/game/types.ts'
 import type {
   ActorRole,
   Allegiance,
@@ -45,6 +50,7 @@ import type {
   RandomWorldEventKind,
   WorldEventKind,
 } from '../src/game/types.ts'
+import { CHAMPION_DAMAGE_CAP, WORLD_EVENT_REWARDS } from '../src/game/world/CampaignDirector.ts'
 import {
   advanceCaravanClaim,
   createCaravanClaimState,
@@ -87,29 +93,25 @@ export const HARNESS_EVENT_REQUIRED_SLOTS: Record<WorldEventKind, number> = {
   beastRaid: 5,
 }
 
-/** Matches `LOCATED_EVENT_REWARDS`. */
-export const HARNESS_LOCATED_EVENT_REWARDS: Record<ChronicleWorldEventKind, number> = {
-  factionRaid: 110,
-  caravanAmbush: 140,
-  warband: 80,
-  aftermath: 45,
-  beastRaid: 95,
-}
+/**
+ * W2-3 — what winning pays is read from `WORLD_EVENT_REWARDS`, the table `GameEngine` pays
+ * from, rather than copied beside it; the fidelity test still holds these to the engine's
+ * own `resolve…Outcome` methods.
+ */
+export const HARNESS_LOCATED_EVENT_REWARDS = Object.fromEntries(
+  CHRONICLE_WORLD_EVENT_KINDS.map((kind) => [kind, WORLD_EVENT_REWARDS[kind].gold]),
+) as Record<ChronicleWorldEventKind, number>
 
 /** The gold `resolveRandomEventOutcome` pays. A rescue pays in people instead. */
-export const HARNESS_RANDOM_EVENT_REWARDS: Record<RandomWorldEventKind, number> = {
-  richCaravan: 180,
-  defendHome: 90,
-  champion: 120,
-  rescue: 0,
-  bounty: 70,
-}
+export const HARNESS_RANDOM_EVENT_REWARDS = Object.fromEntries(
+  RANDOM_WORLD_EVENT_KINDS.map((kind) => [kind, WORLD_EVENT_REWARDS[kind].gold]),
+) as Record<RandomWorldEventKind, number>
 
 /** `resolveRandomEventOutcome`'s other two payouts. */
-export const HARNESS_DEFEND_HOME_HEAL = 8
-export const HARNESS_CHAMPION_DAMAGE_STEP = 6
-/** Matches `CHAMPION_DAMAGE_CAP`. */
-export const HARNESS_CHAMPION_DAMAGE_CAP = 18
+export const HARNESS_DEFEND_HOME_HEAL = WORLD_EVENT_REWARDS.defendHome.heal
+export const HARNESS_CHAMPION_DAMAGE_STEP = WORLD_EVENT_REWARDS.champion.damage
+/** `CHAMPION_DAMAGE_CAP`, imported rather than copied. */
+export const HARNESS_CHAMPION_DAMAGE_CAP = CHAMPION_DAMAGE_CAP
 /** Matches `FIRST_EVENT_AT`. */
 export const HARNESS_FIRST_EVENT_AT = 30
 /** Matches `MAX_LOCATED_EVENTS`. */
