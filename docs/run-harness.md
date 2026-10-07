@@ -27,6 +27,7 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 | `encounterModel` | `harness` | `shipped`: `createGeneratedEncounterPlans` and the finale | `harness` |
 | `regionWindow` | `square`; `engine` with shipped encounters or fought events | `engine`: the plus | `square` |
 | `commanders` | `inert`: a body and a swing | `shipped`: W1-6's call for men | `legacy`: the call before W1-6 |
+| `staging` | `none`: nobody steps back | `friendly`: W1-6's own packs make room | `none` |
 | `escalation` (W2-1) | `time` | `progress`: pacing follows progress, enemy stats the clock | `time`; `progressAll` |
 
 - **Squad.** `getStartingSquad`'s starters spawn where `spawnGeneratedStartingSquad` puts them, follow in formation
@@ -62,6 +63,16 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
   are exported (`advanceCommanderClock`, `commanderGathers`), and the fidelity test steps them beside the engine's own
   `updateCommander` frame for frame. Only the guard meets such a commander: the boss slots of the elf's and the
   villain's finales are the guard's own strongholds, so for the guard they field friendly garrisons, each led by one.
+- **The player's own packs make room (W1-6).** When the contract the player stands on is still short of room once
+  the game's own events made way, `world/StagingRoom.ts` picks the generator's ordinary packs that are not hostile
+  to the player, idle, unhurt, at least 60 m away and outside the camera's view. They step back into their squares,
+  farthest first, as many as the contract is short. They come home when no staging has asked for 4 s, the whole
+  pack fits and none of its stations is in view or within 60 m, or with their square. A player who walks within
+  25 m of one of its stations calls the pack home, and from then on only sight keeps it away (the empty-post
+  rule). The harness and the engine share the module. The harness's camera is the engine's at rest:
+  `cameraOrbitDistance` behind the heading at `CAMERA_DEFAULT_PITCH`, `CAMERA_BASE_FOV` on 16:9. The fidelity test
+  has the engine's own `updateCamera` pose its camera and holds the harness's cone to what the engine's
+  `stagingViewer` reads off it.
 
 ### Walk speed: the harness's 6.4 m/s is not the engine's 8.2
 
@@ -119,7 +130,8 @@ Every report carries a `balance` block, populated by the arms that feed it. Noth
   **system behind each death**.
 - **Encounters:** how many the generator fielded, the bodies it spawned, how many stood on the road at once on
   average, and the seconds in which the actor budget refused one. The report's `regionWindow` names the window. Also
-  the soldiers commanders called (W1-6), which count on the road once called.
+  the soldiers commanders called (W1-6), which count on the road once called, the packs that stepped back to make
+  room for a contract and came home again, and how many of those the player called home from their posts (W1-6).
 - `sweepBalance` aggregates them per faction and policy, with the run-length distribution.
 
 ## Running it
@@ -135,7 +147,9 @@ The committed file runs in about 20 s: its sweep takes three seeds per cell and 
 
 `HARNESS_SHIPPED_ARMS`, 30 Hz, 600 s limit, seeds `1 + 7919 n` for n = 0…39: 360 runs on `main` at 29adca3, in the
 engine's streaming window. W1-6 added `commanders: 'shipped'` to the shipped arms. The same 360 runs with it are this
-baseline cell for cell: no friendly garrison fought beside a scripted player long enough to call a soldier.
+baseline cell for cell: no friendly garrison fought beside a scripted player long enough to call a soldier. W1-6 also
+added `staging: 'friendly'`, which changes no cell of it: on the nearest arm no contract was ever short of room, so no
+pack stepped back.
 
 | Policy · faction | Win / defeat / timeout | Won in p10–p50–p90 | Damage taken | Kills |
 | --- | --- | --- | ---: | ---: |
@@ -220,7 +234,8 @@ give 53/60 against 0/60: the review's 88 % against 0 %.
 ## W1-6: commanders and the contract room
 
 `HARNESS_SHIPPED_ARMS` on both arms of the fork, `contractPolicy` `nearest` and `contrary`, with `commanders` at
-`legacy` and then `shipped`; 30 Hz, 600 s, seeds `1 + 7919 n` for n = 0…39, all three policies, 120 runs a row.
+`legacy` and then `shipped` and nobody stepping back (`staging: 'none'`); 30 Hz, 600 s, seeds `1 + 7919 n` for
+n = 0…39, all three policies, 120 runs a row.
 
 | Arm · faction | Arrivals | Started / kept | `crowded` | Calls per run | Wins |
 | --- | ---: | --- | --- | --- | --- |
@@ -234,15 +249,44 @@ give 53/60 against 0/60: the review's 88 % against 0 %.
 - The scripted players walk past the palace strongholds within a call or two, so the old rule called a quarter of a
   soldier per guard run and decided no contract. Started, kept and abandoned are identical under both rules in every
   row; guard kills per run move by 0.02, road bodies by less than 0.1, and a guard cell's median win by 2.4 s at most.
-- **Known residual.** The three `crowded` arrivals are one site: seed 1's «Зверьё у домиков» (`cull`), which every
-  policy reaches on the contrary arm. Its window holds 18 bodies of the guard's own garrisons, and a beast raid needs
-  five slots where four are left, under every commander rule, `inert` included. A guard who takes that arm always
-  loses its payout. A follow-up lets the guard's own idle garrisons step out of sight to make room for a contract.
+- **The residual, closed below.** The three `crowded` arrivals are one site: seed 1's «Зверьё у домиков» (`cull`),
+  which every policy reaches on the contrary arm. Its window holds 18 bodies of the guard's own garrisons, and a
+  beast raid needs five slots where four are left, under every commander rule, `inert` included.
 - The scripted player is what hides the old cost. `tests/commanderReinforcements.test.ts` fields each contract
   site's window through the engine's own spawner and holds the player 100 s by it before arriving. Over the 240 sites
   the old rule crowds out 16 of the guard's 80, and 11 with every hostile pack cleared; the shipped rule crowds out
   one, the same seed 1 site. A person who fights, heals or looks around by the palace before taking the contract
   pays the old rule's price; a script does not.
+
+### The player's own packs make room
+
+`HARNESS_SHIPPED_ARMS` as W2-1 and W2-2's first PR left them (`escalation: 'progress'`, defended carts), on both
+arms of the fork, with `staging` at `none` and then `friendly`; the same seeds and settings.
+
+| Arm · faction | Arrivals | Started / kept | `crowded` | Packs stepped back per run | Win / defeat / timeout |
+| --- | ---: | --- | --- | --- | --- |
+| nearest · elf | 120 | 120 / 118 | 0 → 0 | 0 → 0 | 57 / 44 / 19 |
+| nearest · guard | 120 | 120 / 108 | 0 → 0 | 0 → 0 | 66 / 42 / 12 |
+| nearest · villain | 120 | 120 / 120 | 0 → 0 | 0 → 0 | 75 / 34 / 11 |
+| contrary · elf | 120 | 120 / 118 | 0 → 0 | 0 → 0 | 48 / 54 / 18 |
+| contrary · guard | 120 | 117 / 94 → 120 / 97 | 3 → 0 | 0 → 0.025 | 61 / 40 / 19 → 61 / 39 / 20 |
+| contrary · villain | 120 | 120 / 120 | 0 → 0 | 0 → 0 | 77 / 36 / 7 |
+
+- Every row but the guard's contrary arm is identical cell for cell: no contract there was ever short of room once
+  the game's own events made way, so no pack stepped back.
+- On the guard's contrary arm the three arrivals at «Зверьё у домиков» now start. In each run one pack of the
+  palace's soldiers, out of sight behind the guard, steps back and comes home later, and all three contracts are
+  kept. The cautious run that died at 142 s now lasts to the time limit, so one defeat becomes a timeout. Encounters
+  fielded per run move by 0.02, kills by 0.03 and the duelist's median win by 1.0 s.
+- `tests/contractStaging.test.ts` arrives at every contract site of the same 40 seeds through the engine's own
+  spawner, facing each of four ways. With nobody stepping back the guard's one site is crowded; with the staging no
+  site is, for any faction or heading. No enemy and nothing in view ever stepped back.
+- **The empty-post rule** moves no cell of the table: no scripted player walks back to a post after its pack stepped
+  back, so none of the three packs was called home (`packsCalledHome` 0). It is measured in the engine tests.
+- **Known behaviour.** Until a pack is back, its post stands empty and the journal map shows none of its dots. The
+  empty-post rule shortens that: a player at the post who looks away has the pack back as soon as the field has
+  room for it. A player who keeps the post in view, or stays between 25 and 60 m without having walked up to it,
+  still sees it empty.
 
 ## W2-1: escalation by progress
 
@@ -301,7 +345,8 @@ colliders. No player bow, shield, rush, evasion, perfect guard or knockback, so 
 off a cart. No flanking, separation, commanders' orders and rallies, or boar charges. The squad only follows. The
 sustain policy is a script that never buys an upgrade. Caravan beats (the bridge ambush among them), civilians,
 ambient prowlers, campfires, achievements and the profile are not modelled. The pinned arms keep a 6.4 m/s walk, a
-22 m sense range, a contract grace from before W1-1, a simulated 3x3 and an inert commander, none of them the
-engine's.
+22 m sense range, a contract grace from before W1-1, a simulated 3x3, an inert commander and nobody making room, none
+of them the engine's. The staging arm's camera never looks round, so what it counts as out of sight is what a player
+watching the road would not see.
 
 A number from this harness is a scripted player's, not a person's.

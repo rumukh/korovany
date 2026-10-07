@@ -138,6 +138,22 @@ commander's call ever takes the room a contract would stage in: it waits for his
 share of the field. The guard used to reach a contract beside the palace and find the square
 already full of soldiers nobody had sent for.
 
+When your own side still fills the field, it makes room. If a contract you have reached is
+short of room once the game's own events have made way, your side's idle packs step back into
+their squares, farthest first and only as many as it needs. A pack steps back only if it is not
+hostile to you, at least 60 m away, outside the camera's view, unhurt and not fighting. Enemies
+never step back, and neither do the squad, a stronghold's garrison, a unique, an objective, the
+finale or anyone an event put down. Stepping back is not losing: the pack is not counted as
+beaten, and it drops and pays nothing. It comes home to its stations once nothing has asked for
+room for 4 seconds and the whole pack fits, at the first moment none of its stations is in view
+and all are at least 60 m from you, or with its square when that streams back in. Walk up to an
+empty post, within 25 m of one of its stations, and the pack is called home: from then on it
+only waits for you to look away. Seed 1's guard used to lose «Зверьё у домиков», beside the
+palace's two strongholds, as crowded every time.
+
+Known behaviour: until a pack is back, its post stands empty and the journal map shows none of
+its dots. Looking away at the post, or going 60 m off, ends that as soon as the field has room.
+
 ## Caravan beats
 
 «Можно грабить корованы» is a decision, not scenery. A caravan beat is a gilded cart on a real

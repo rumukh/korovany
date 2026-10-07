@@ -377,6 +377,34 @@ test('W1-6 in whole runs: the guard\'s own garrisons call for men only in a figh
   }
 })
 
+test('W1-6 in whole runs: the guard\'s own idle soldiers step back for a contract, and come home', () => {
+  // Seed 1, the contrary arm: the guard takes «Зверьё у домиков» beside the elf's and the
+  // villain's strongholds, and eighteen of the palace's own soldiers fill the window. With
+  // nobody stepping back the beast raid finds four of the five slots it needs and is
+  // abandoned as `crowded`. The shipped staging asks the farthest pack out of sight to step
+  // back, and it comes home once the room is free and nobody would see it come.
+  const options = {
+    ...HARNESS_SHIPPED_ARMS,
+    seed: 1,
+    faction: 'guard',
+    policy: 'beeline',
+    contractPolicy: 'contrary',
+    hz: 30,
+    timeLimit: 300,
+  } as const
+  const shipped = runHarness(options)
+  const none = runHarness({ ...options, staging: 'none' })
+  assert.equal(shipped.staging, 'friendly')
+  assert.equal(shipped.balance.contracts.started, 1)
+  assert.equal(shipped.balance.contracts.abandoned, 0)
+  assert.equal(shipped.balance.encounters.packsSteppedBack, 1)
+  assert.equal(shipped.balance.encounters.packsReturned, 1)
+  assert.equal(none.staging, 'none')
+  assert.equal(none.balance.contracts.started, 0)
+  assert.deepEqual(none.balance.contracts.abandonedBy, { crowded: 1 })
+  assert.equal(none.balance.encounters.packsSteppedBack, 0)
+})
+
 test('the arms leave the pinned run alone, and the shipped kit walks the engine\'s road', () => {
   const base = { seed: 424242, faction: 'elf', policy: 'beeline', hz: 60, timeLimit: 40 } as const
   const omitted = runHarness(base)
@@ -391,6 +419,7 @@ test('the arms leave the pinned run alone, and the shipped kit walks the engine\
     encounterModel: 'harness',
     regionWindow: 'square',
     commanders: 'inert',
+    staging: 'none',
   })
   assert.deepEqual(explicit, omitted, 'the declared defaults must be the defaults')
   assert.equal(omitted.balance.companions.started, 0)
