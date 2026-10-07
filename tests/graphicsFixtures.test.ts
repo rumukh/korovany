@@ -7,6 +7,7 @@ import { validateGraphicsStage } from '../src/game/diagnostics/GraphicsDiagnosti
 import { normalizeActiveRunSaveV3 } from '../src/game/run/storage.ts'
 import { GeneratedWorldRuntime } from '../src/game/world/GeneratedWorldRuntime.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
+import { computeNightFactor } from '../src/game/world/WorldEnvironment.ts'
 
 const fixtureModule = new URL('../scripts/graphics/fixtures.mjs', import.meta.url)
 const pngModule = new URL('../scripts/graphics/png.mjs', import.meta.url)
@@ -22,6 +23,19 @@ test('the corpus names every required real scenario and rejects missing selectio
   assert.throws(() => selectGraphicsFixtures('not-a-fixture'))
   assert.throws(() => selectGraphicsFixtures('night,night'))
   for (const fixture of GRAPHICS_FIXTURES) validateGraphicsStage({ label: fixture.description })
+})
+
+test('the night fixture is staged at a real deep night and every other fixture in daylight', () => {
+  // W2-1 moved the night to the middle of a nine-minute day, so a staged clock that used to
+  // be midnight (136.8 s) is now early afternoon. The fixture's clock is pinned against the
+  // shipped curve, not against a remembered number.
+  for (const fixture of GRAPHICS_FIXTURES as Array<{ id: string; time: number }>) {
+    const night = computeNightFactor(fixture.time)
+    if (fixture.id === 'night') assert.ok(night > 0.99, `the night fixture reads ${night.toFixed(3)}`)
+    else assert.ok(night < 0.01, `${fixture.id} at ${fixture.time} s reads ${night.toFixed(3)} of night`)
+  }
+  // Negative control: the old staged clock is broad daylight now.
+  assert.ok(computeNightFactor(136.8) < 0.01)
 })
 
 test('real saved-world prerequisites resolve without inventing neutral sites or a northeast edge', () => {

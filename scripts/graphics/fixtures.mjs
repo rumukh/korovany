@@ -18,7 +18,7 @@ export const GRAPHICS_FIXTURES = [
     description: 'Fresh guard world; existing NPCs positioned at legal arena points and remaining slots filled by production spawnActor/budget to 25 NPCs plus player. Real HP, allegiance, AI and combat; no invulnerability or replacement after death.' },
   { id: 'neutral-biome', faction: 'guard', target: 'neutral', weather: 'overcast', time: 16.8,
     description: 'Fresh real world; subjects staged at a terrain-queried neutral biome center. Overcast is a presentation override, not a change to simulated weather.' },
-  { id: 'night', faction: 'guard', weather: 'clear', time: 136.8,
+  { id: 'night', faction: 'guard', weather: 'clear', time: 345.6,
     description: 'Fresh production guard opening under a staged night presentation clock; campaign time/night-dependent AI are not advanced or rewritten.' },
   { id: 'rain', faction: 'guard', target: 'neutral', weather: 'rain', time: 16.8,
     description: 'Neutral biome rain presentation fixture with a separate art: precipitation seed. Simulation weather remains determined by the real biome.' },

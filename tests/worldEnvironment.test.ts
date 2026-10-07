@@ -9,16 +9,20 @@ import {
   computeStormFactor,
   createChronicleEnvironment,
   createWeatherMix,
+  nightFellBetween,
+  smoothstep,
   snapWeatherMix,
   type WeatherMix,
 } from '../src/game/world/WorldEnvironment.ts'
 import {
+  BEAST_NIGHT_MULTIPLIER,
   createChronicleRegions,
   createChronicleState,
   getChronicleProtectedRegionIds,
   tickChronicle,
   type ChronicleEvent,
 } from '../src/game/world/Chronicle.ts'
+import { CAMPFIRE_NIGHT_THRESHOLD } from '../src/game/world/AmbientLife.ts'
 import { RandomStream } from '../src/game/random/RandomStream.ts'
 import { deriveSeed } from '../src/game/random/seed.ts'
 import { generateWorld } from '../src/game/world/WorldGenerator.ts'
@@ -213,4 +217,140 @@ test('a chronicle environment carries no channel for a display setting', () => {
   assert.equal(environment.nightFactor, computeNightFactor(120))
   assert.equal(environment.stormFactor, computeStormFactor(mix))
   assert.equal(createChronicleEnvironment.length, 2)
+})
+
+// ---------------------------------------------------------------------------
+// W2-1 — night is a short phase of a nine-minute day, not most of the run
+// ---------------------------------------------------------------------------
+
+/**
+ * The curve this change replaced, restated: a 240-second day starting at 0.18 of its
+ * cycle, with no warp. Every band below is checked against it as the negative control —
+ * a band the old curve also passes would not be measuring the change.
+ */
+function legacyNightFactor(elapsed: number): number {
+  const phase = (((elapsed / 240 + 0.18) % 1) + 1) % 1
+  return 1 - smoothstep(-0.08, 0.45, Math.sin(phase * Math.PI * 2))
+}
+
+const NIGHT = CAMPFIRE_NIGHT_THRESHOLD
+
+/** The share of `[from, to)` the world spends at or above the campfire threshold. */
+function nightShare(nightFactor: (elapsed: number) => number, from: number, to: number): number {
+  const step = 0.05
+  let night = 0
+  let total = 0
+  for (let elapsed = from; elapsed < to; elapsed += step) {
+    total += 1
+    if (nightFactor(elapsed) >= NIGHT) night += 1
+  }
+  return night / total
+}
+
+/** Every step that crosses into night, under a rule given as an edge or a level. */
+function nightfalls(
+  from: number,
+  to: number,
+  rule: (previous: number, current: number) => boolean,
+): number[] {
+  const crossings: number[] = []
+  const step = 0.05
+  for (let elapsed = from + step; elapsed < to; elapsed += step) {
+    if (rule(elapsed - step, elapsed)) crossings.push(elapsed)
+  }
+  return crossings
+}
+
+test('night is about 28% of a nine-minute day, and a tenth of the first five minutes', () => {
+  assert.equal(DAY_LENGTH, 540)
+  const cycle = nightShare(computeNightFactor, 0, DAY_LENGTH)
+  const firstFive = nightShare(computeNightFactor, 0, 300)
+  const firstThree = nightShare(computeNightFactor, 0, 180)
+  assert.ok(cycle > 0.27 && cycle < 0.29, `night is ${cycle.toFixed(3)} of the day`)
+  assert.ok(firstFive <= 0.15, `night is ${firstFive.toFixed(3)} of the first five minutes`)
+  assert.equal(firstThree, 0, 'the opening is daylight')
+  // The run starts in daylight with the sun high, and a real deep night still comes.
+  assert.equal(computeNightFactor(0), 0)
+  assert.ok(computeNightFactor(345.6) > 0.99, 'expected a deep night at the new midnight')
+
+  // Negative control: the old curve spends more than half of every day, and almost half of
+  // the first five minutes, at night — exactly what the bands above refuse.
+  const legacyCycle = nightShare(legacyNightFactor, 0, 240)
+  const legacyFive = nightShare(legacyNightFactor, 0, 300)
+  assert.ok(legacyCycle > 0.55, `legacy cycle ${legacyCycle.toFixed(3)}`)
+  assert.ok(legacyFive > 0.44, `legacy first five minutes ${legacyFive.toFixed(3)}`)
+  assert.equal(legacyCycle > 0.27 && legacyCycle < 0.29, false)
+  assert.equal(legacyFive <= 0.15, false)
+})
+
+test('the first dusk falls about four and a half minutes in, and night lasts about two and a half', () => {
+  const edge = (previous: number, current: number) =>
+    nightFellBetween(previous, current, NIGHT)
+  const dusks = nightfalls(0, DAY_LENGTH * 2, edge)
+  assert.equal(dusks.length, 2, `${dusks.length} nightfalls in two days`)
+  assert.ok(Math.abs(dusks[0] - 270) <= 5, `first dusk at ${dusks[0].toFixed(1)} s`)
+  assert.ok(Math.abs(dusks[1] - dusks[0] - DAY_LENGTH) < 0.1, 'the second dusk is a day later')
+  let dawn = dusks[0]
+  while (computeNightFactor(dawn) >= NIGHT) dawn += 0.05
+  assert.ok(dawn - dusks[0] > 140 && dawn - dusks[0] < 160, `night lasted ${(dawn - dusks[0]).toFixed(1)} s`)
+
+  // Negative control: the old curve fell dark 69 seconds in.
+  const legacy = nightfalls(0, 240, (previous, current) =>
+    legacyNightFactor(previous) < NIGHT && legacyNightFactor(current) >= NIGHT)
+  assert.ok(legacy.length === 1 && legacy[0] < 75, `legacy dusk at ${legacy[0]?.toFixed(1)}`)
+})
+
+test('nightfall is an edge: once per night, silent for a run continued in the dark', () => {
+  const edge = (previous: number, current: number) =>
+    nightFellBetween(previous, current, NIGHT)
+  // Once a night across three days, whatever the frame step.
+  for (const step of [1 / 144, 1 / 60, 1 / 30, 0.25]) {
+    let count = 0
+    for (let elapsed = step; elapsed < DAY_LENGTH * 3; elapsed += step) {
+      if (edge(elapsed - step, elapsed)) count += 1
+    }
+    assert.equal(count, 3, `step ${step}: ${count} nightfalls in three days`)
+  }
+  // A continue at midnight starts dark: its first step crosses nothing.
+  assert.equal(edge(345.6, 345.65), false)
+  assert.equal(edge(345.6, 345.6), false)
+  // Negative control: the level reading ("it is night") answers on every dark step.
+  const level = nightfalls(0, DAY_LENGTH, (_previous, current) => computeNightFactor(current) >= NIGHT)
+  assert.ok(level.length > 1_000, `${level.length} level answers`)
+})
+
+test('the day phase advances smoothly and never runs backwards', () => {
+  let previous = computeDayPhase(0)
+  let largest = 0
+  for (let elapsed = 0.05; elapsed <= DAY_LENGTH * 2; elapsed += 0.05) {
+    const phase = computeDayPhase(elapsed)
+    let advance = phase - previous
+    if (advance < -0.5) advance += 1
+    assert.ok(advance > 0, `the sun went backwards at ${elapsed.toFixed(2)} s`)
+    largest = Math.max(largest, advance)
+    previous = phase
+  }
+  // Fastest at midnight, at about 2.3 times the average speed of 0.05/540 per step.
+  const average = 0.05 / DAY_LENGTH
+  assert.ok(largest < average * 2.5, `the sun jumped ${(largest / average).toFixed(2)}× its average`)
+  assert.ok(computeDayPhase(Number.NaN) === computeDayPhase(0), 'a broken clock reads as the start')
+})
+
+test('the shorter night keeps the beasts\' pressure per day and moves it into the night', () => {
+  // Mean growth multiplier over a whole day, as `advanceBeasts` applies it every tick.
+  const meanGrowth = (nightFactor: (elapsed: number) => number, day: number, multiplier: number) => {
+    let total = 0
+    let samples = 0
+    for (let elapsed = 0; elapsed < day; elapsed += 0.05) {
+      total += 1 + (multiplier - 1) * nightFactor(elapsed)
+      samples += 1
+    }
+    return total / samples
+  }
+  const before = meanGrowth(legacyNightFactor, 240, 1.6)
+  const after = meanGrowth(computeNightFactor, DAY_LENGTH, BEAST_NIGHT_MULTIPLIER)
+  assert.ok(Math.abs(after / before - 1) < 0.02, `per-day beast growth moved by ${((after / before - 1) * 100).toFixed(1)}%`)
+  // Negative control: the old multiplier under the new curve quietly loses about an eighth.
+  const unchanged = meanGrowth(computeNightFactor, DAY_LENGTH, 1.6)
+  assert.ok(unchanged / before < 0.9, `keeping 1.6 kept ${(unchanged / before).toFixed(3)} of it`)
 })

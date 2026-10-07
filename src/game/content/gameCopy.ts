@@ -1180,6 +1180,15 @@ export function describeZoneDiscovered(zone: ZoneId): string {
 }
 
 /**
+ * W2-1 — the night, said once, on the step that crosses into it. That step is dusk — the
+ * moment the villagers gather and the fires are lit, with the sun still low over the
+ * horizon — so the line says it is getting dark rather than that it is dark. Short on
+ * purpose: it lands in the same stack as everything else, and the world shows the rest.
+ */
+export const NIGHT_FALL_NOTICE =
+  'Смеркается: деревни садятся у костров, зверьё выходит на охоту. До рассвета пара минут.'
+
+/**
  * The threat-tier line. W2-1 — a tier the run *earned* says so, because the rule to learn
  * is that closing objectives is what brings the guests; the clock's own rise keeps its line.
  */

@@ -287,6 +287,7 @@ import {
   formatRegionGridLabel,
   generatedSiteLabel,
   HEALER_TREATED_NOTICE,
+  NIGHT_FALL_NOTICE,
   RALLY_NOTICE,
   RATION_ON_BLEED_NOTICE,
   REINFORCEMENTS_ORDERED_NOTICE,
@@ -700,6 +701,7 @@ import {
   computeSunAngle,
   createChronicleEnvironment,
   createWeatherMix,
+  nightFellBetween,
   smoothstep,
   snapWeatherMix,
   type WeatherKind,
@@ -4257,6 +4259,7 @@ export class GameEngine {
     // `this.weatherEnabled` gates the precipitation, so neither may be read by anything
     // that decides what the world *does*.
     this.ambientNightFactor = computeNightFactor(this.elapsed)
+    this.announceNightfall(delta)
     const storm = computeStormFactor(this.weatherWeights)
     this.ambientStormPace = weatherPaceMultiplier(storm)
     this.ambientStormHunch = weatherHunch(storm)
@@ -4348,6 +4351,20 @@ export class GameEngine {
     this.updateEvents(delta)
     this.updatePrompt()
     this.emitView(false)
+  }
+
+  /**
+   * W2-1 — night is a phase of the run now, so the run says when it starts, once.
+   *
+   * Read off the world's night (`computeNightFactor` of the simulation's own clock), at the
+   * threshold where the villagers gather and the fires are lit, so the line and what the
+   * player sees agree. An edge rather than a level: a continue in the middle of a night says
+   * nothing, and nothing has to be saved for that to be true.
+   */
+  private announceNightfall(delta: number): void {
+    if (this.ended || delta <= 0) return
+    if (!nightFellBetween(this.elapsed - delta, this.elapsed, CAMPFIRE_NIGHT_THRESHOLD)) return
+    this.callbacks.onNotice(NIGHT_FALL_NOTICE, 'warning')
   }
 
   private readSerializableNumber(
