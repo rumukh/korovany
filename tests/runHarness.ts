@@ -58,6 +58,10 @@
  *   engine simulates. That is the five-square plus around the player's square, not the 3x3
  *   it shows. This follows W1-6's finding, and the fidelity test walks a real runtime over
  *   the whole map to hold it.
+ * - `world/StagingRoom.ts` — W1-6's rule for making room: when a contract the player stands
+ *   on is short of it, the player's own idle packs out of the camera's sight step back into
+ *   their squares and come home later (`StagingModel`). The camera is the third-person one
+ *   at rest, held to the engine's `updateCamera` by the fidelity test.
  *
  * ---
  *
@@ -85,7 +89,9 @@
  *    per-frame smoke draws, so a harness run and a browser run on one seed do not meet the
  *    same events — nor would they on one stream, because the harness's route is scripted.
  * 5. **No rendering, audio, camera, hit-stop or particles.** Nothing here can tell you
- *    whether a fight feels good.
+ *    whether a fight feels good. The one camera there is, W1-6's staging arm's, never looks
+ *    round: it trails the heading at rest, so what it counts as out of sight is what a
+ *    player who keeps their eyes on the road would not see.
  * 6. **Flanking, separation and commanders' orders are still unmeasurable.** Actors steer
  *    only around terrain; nobody keeps an elbow's distance, sights a stranger for a friend,
  *    obeys or rallies to a commander, or charges like a boar. A commander here is a body
@@ -305,6 +311,23 @@ import {
   WOLF_PACK_RADIUS,
 } from '../src/game/world/Fauna.ts'
 import { ActorBudget, type ActorBudgetCategory } from '../src/game/world/ActorBudget.ts'
+import {
+  STAGING_PARK_HOLD_SECONDS,
+  canReturnPack,
+  choosePacksToPark,
+  gatherStagingPacks,
+  horizontalHalfFov,
+  parkableBodies,
+  stagingCapacity,
+  type StagingBody,
+  type StagingPack,
+  type StagingViewer,
+} from '../src/game/world/StagingRoom.ts'
+import {
+  CAMERA_BASE_FOV,
+  CAMERA_DEFAULT_PITCH,
+  cameraOrbitDistance,
+} from '../src/game/cameraAccents.ts'
 import {
   getSquadFollowSpeed,
   getStartingSquad,
@@ -883,6 +906,39 @@ export function advanceCommanderClock(
   return true
 }
 
+/**
+ * W1-6 — whether the player's own packs step back to make room for a staging the player
+ * has reached.
+ *
+ * `none` (the default) is the rule every pinned number was measured with. `friendly` is the
+ * engine's `makeRoomForStaging` (`world/StagingRoom.ts`): when the contract the player stands
+ * on is short of room once the game's own events made way, the generator's ordinary packs
+ * that are not hostile to the player, idle, unwounded, at least
+ * `STAGING_PARK_MIN_DISTANCE` away and out of the camera's sight step back into their
+ * squares, farthest first, as many as it is short. They come back when no staging has asked
+ * for `STAGING_PARK_HOLD_SECONDS`, the whole pack fits and none of its stations is near the
+ * player or in sight. Enemies never step back.
+ */
+export type StagingModel = 'none' | 'friendly'
+
+/** W1-6 — the screen the staging arm's camera is measured on: a desktop's 16:9. */
+export const HARNESS_SCREEN_ASPECT = 16 / 9
+
+/**
+ * W1-6 — what the scripted player can see: the third-person camera at its resting pitch,
+ * `cameraOrbitDistance` behind the heading, with `CAMERA_BASE_FOV` on a 16:9 screen.
+ */
+export function harnessStagingViewer(player: { x: number; z: number; heading: number }): StagingViewer {
+  const forward = { x: Math.sin(player.heading), z: -Math.cos(player.heading) }
+  const behind = cameraOrbitDistance(HARNESS_SCREEN_ASPECT) * Math.cos(CAMERA_DEFAULT_PITCH)
+  return {
+    player: { x: player.x, z: player.z },
+    camera: { x: player.x - forward.x * behind, z: player.z - forward.z * behind },
+    forward,
+    halfFov: horizontalHalfFov(CAMERA_BASE_FOV, HARNESS_SCREEN_ASPECT),
+  }
+}
+
 /** How close the scripted player has to be for a contract to be counted as under way. */
 export const HARNESS_CONTRACT_RANGE = 6
 /**
@@ -1245,6 +1301,10 @@ export interface EncounterMetrics {
   refusedSeconds: number
   /** W1-6 — soldiers commanders called onto the field. Counted on the road once called. */
   reinforcementsCalled: number
+  /** W1-6 — the player's own packs that stepped back to make room for a staging. */
+  packsSteppedBack: number
+  /** W1-6 — packs that stepped back and came back onto their stations before streaming out. */
+  packsReturned: number
 }
 
 /**
@@ -1299,6 +1359,8 @@ export interface RunReport {
   regionWindow: RegionWindow
   /** W1-6 — what the commanders did besides swing. */
   commanders: CommanderModel
+  /** W1-6 — whether the player's own packs stepped back for a staging. */
+  staging: StagingModel
   /** Frames per simulated second the run was driven at. */
   hz: number
   outcome: RunOutcome
@@ -1457,6 +1519,12 @@ export interface RunOptions {
    * and a swing. `legacy` is the engine's call for men before W1-6, `shipped` after it.
    */
   commanders?: CommanderModel
+  /**
+   * W1-6 — defaults to `none`, the rule every pinned number was measured with: nobody steps
+   * back for a staging. `friendly` is the engine's `makeRoomForStaging`. Read only under the
+   * shipped encounters, whose packs are the ones that can step back.
+   */
+  staging?: StagingModel
 }
 
 /**
@@ -1489,6 +1557,7 @@ export const HARNESS_SHIPPED_ARMS = {
   playerKit: 'shipped',
   encounterModel: 'shipped',
   commanders: 'shipped',
+  staging: 'friendly',
 } as const satisfies Partial<RunOptions>
 
 // ---------------------------------------------------------------------------
@@ -1720,6 +1789,9 @@ export function runHarness(options: RunOptions): RunReport {
   const regionWindow: RegionWindow =
     options.regionWindow ?? (shippedEncounters || eventsFought ? 'engine' : 'square')
   const commanderModel: CommanderModel = options.commanders ?? 'inert'
+  const stagingModel: StagingModel = options.staging ?? 'none'
+  // W1-6 — only the generator's own packs can step back, so only its shipped encounters can.
+  const stagingOn = stagingModel === 'friendly' && shippedEncounters
 
   const blueprint = options.blueprint ?? generateWorld(options.seed)
   // The two placebos. Both leave every site, encounter, road and chronicle seed identical
@@ -2097,6 +2169,8 @@ export function runHarness(options: RunOptions): RunReport {
     meanOnField: 0,
     refusedSeconds: 0,
     reinforcementsCalled: 0,
+    packsSteppedBack: 0,
+    packsReturned: 0,
   }
   const fieldedEncounterIds = new Set<string>()
   /** Live encounter bodies times seconds, divided out into `meanOnField` at the end. */
@@ -3175,7 +3249,8 @@ export function runHarness(options: RunOptions): RunReport {
   }
   /**
    * `chronicleRoomOnceEventsMakeWay`: the scratch-ledger sum of what the interrupted random
-   * event and every located fight that is not a contract would hand back.
+   * event and every located fight that is not a contract would hand back, and, under W1-6's
+   * staging, the player's own packs that could step back right now.
    */
   const roomOnceEventsMakeWay = (required: number, interrupted: LiveEvent | null): boolean => {
     const usage = budgetUsage()
@@ -3186,6 +3261,10 @@ export function runHarness(options: RunOptions): RunReport {
       usage.chronicle -= actors.filter(
         (actor) => actor.budgetCategory === 'chronicle' && live.actorIds.includes(actor.id),
       ).length
+    }
+    if (stagingOn) {
+      const packs = standAsidePacks()
+      if (packs.length > 0) usage.campaign -= parkableBodies(harnessStagingViewer(player), packs)
     }
     const ledger = new ActorBudget()
     ledger.sync(usage)
@@ -3238,7 +3317,8 @@ export function runHarness(options: RunOptions): RunReport {
    * make way for the contract the player took on — a random event the player was merely
    * near stands down, located fights are handed back — unless another contract is on the
    * ground or the player is in the middle of that random event, which the contract waits
-   * for. Only a genuine stall, no room or no ground, is a refusal.
+   * for. Only a genuine stall, no room or no ground, is a refusal. W1-6's staging adds the
+   * player's own idle packs out of sight to what makes way.
    */
   const startContractEvent = (
     node: FactionObjectiveNode,
@@ -3259,6 +3339,7 @@ export function runHarness(options: RunOptions): RunReport {
     if (gate) return gate
     if (interrupted) standDownRandomEvent(interrupted)
     reclaimChronicleSlotsForContract(required)
+    if (stagingOn) makeRoomForStaging('chronicle', required)
     let plan: EventPlan | null
     let situation: PendingMaterialization | null = null
     if (isRandomWorldEventKind(kind)) {
@@ -3877,6 +3958,8 @@ export function runHarness(options: RunOptions): RunReport {
       removeActor(actor.id)
     }
     encounterActivated.delete(regionId)
+    // W1-6 — a pack that stepped back leaves with its square, and comes back with it once.
+    parkedSpawns.delete(regionId)
   }
   /** `recordGeneratedActorDeath`: uniques stay dead, an emptied encounter stays cleared. */
   const recordEncounterDeath = (actor: HarnessActor): void => {
@@ -3903,8 +3986,114 @@ export function runHarness(options: RunOptions): RunReport {
     )
     const activated = encounterActivated.get(actor.regionId)
     const spawnIds = encounterSpawnIds.get(actor.encounterId) ?? []
-    if (!living && activated && spawnIds.every((id) => activated.has(id))) {
+    // W1-6 — a pack that stepped back to make room was not beaten.
+    const away = [...parkedSpawns.values()].some((parked) => spawnIds.some((id) => parked.has(id)))
+    if (!living && !away && activated && spawnIds.every((id) => activated.has(id))) {
       clearedEncounterIds.add(actor.encounterId)
+    }
+  }
+
+  // --- W1-6: the player's own packs make room for a staging ----------------------
+
+  /** `parkedGeneratedSpawns`: spawns standing back from each square, still activated. */
+  const parkedSpawns = new Map<string, Set<string>>()
+  let parkHoldUntil = 0
+  /** `stagingBody`: whether a body is idle, and whether it may go at all. */
+  const stagingBody = (actor: HarnessActor): StagingBody => ({
+    alive: actor.alive,
+    hostileToPlayer: actor.hostileToPlayer,
+    x: actor.x,
+    z: actor.z,
+    busy:
+      actor.targetId !== null ||
+      actor.actionPhase !== 'idle' ||
+      actor.playerAggro ||
+      actor.aggroMemory > 0 ||
+      actor.routTimer > 0 ||
+      actor.rageTimer > 0 ||
+      actor.retaliationTimer > 0 ||
+      actor.reaction !== 'none' ||
+      actor.hp < actor.maxHp ||
+      actor.orderX !== null ||
+      loadingCart(actor),
+    untouchable:
+      actor.budgetCategory !== 'campaign' ||
+      actor.squadSlot !== null ||
+      actor.eventOwnerId !== null ||
+      actor.role === 'commander' ||
+      actor.system === 'finale' ||
+      actor.objectiveId !== null ||
+      uniqueSpawnIds.has(actor.id.slice('generated:'.length)),
+  })
+  /** `standAsidePacks`: the player's own packs in the simulated squares. */
+  const standAsidePacks = (): StagingPack[] =>
+    gatherStagingPacks(simulatedRegionIds, encounterPlansFor, (_regionId, encounterId) =>
+      actors
+        .filter(
+          (actor) =>
+            actor.model === 'engine' &&
+            actor.id.startsWith('generated:') &&
+            actor.encounterId === encounterId,
+        )
+        .map(stagingBody))
+  /** `stagingRoom`: what `category` could take once everything below it but a contract yielded. */
+  const stagingRoom = (category: ActorBudgetCategory): number => {
+    const pinned: Record<ActorBudgetCategory, number> = { squad: 0, campaign: 0, chronicle: 0, ambient: 0 }
+    for (const actor of actors) if (contractOwned(actor.id)) pinned[actor.budgetCategory] += 1
+    return stagingCapacity(budgetUsage(), category, pinned)
+  }
+  /** `parkGeneratedPack`: the living step back, the unfielded with them, the fallen stay. */
+  const parkPack = (pack: StagingPack): void => {
+    const plan = encounterPlansFor(pack.regionId).find((candidate) => candidate.encounterId === pack.key)
+    const activated = encounterActivated.get(pack.regionId)
+    if (!plan || !activated) return
+    let parked = parkedSpawns.get(pack.regionId)
+    if (!parked) {
+      parked = new Set()
+      parkedSpawns.set(pack.regionId, parked)
+    }
+    for (const entry of plan.spawns) {
+      const body = actors.find((actor) => actor.id === `generated:${entry.id}`)
+      if (body) {
+        if (!body.alive) continue
+        removeActor(body.id)
+        parked.add(entry.id)
+      } else if (!activated.has(entry.id)) {
+        activated.add(entry.id)
+        parked.add(entry.id)
+      }
+    }
+    encounterMetrics.packsSteppedBack += 1
+  }
+  /** `makeRoomForStaging`: as many of the player's own packs as the staging is short. */
+  const makeRoomForStaging = (category: ActorBudgetCategory, count: number): boolean => {
+    parkHoldUntil = Math.max(parkHoldUntil, elapsed + STAGING_PARK_HOLD_SECONDS)
+    const shortfall = count - stagingRoom(category)
+    if (shortfall <= 0) return true
+    const packs = standAsidePacks()
+    if (packs.length === 0) return false
+    const chosen = choosePacksToPark(harnessStagingViewer(player), packs, shortfall)
+    if (!chosen) return false
+    for (const pack of chosen) parkPack(pack)
+    return stagingRoom(category) >= count
+  }
+  /** `returnParkedPacks`: home, once nobody asks, the pack fits and nobody would see it. */
+  const returnParkedPacks = (regionId: string): void => {
+    const parked = parkedSpawns.get(regionId)
+    if (!parked || parked.size === 0 || elapsed < parkHoldUntil) return
+    const activated = encounterActivated.get(regionId)
+    if (!activated) return
+    const viewer = harnessStagingViewer(player)
+    for (const plan of encounterPlansFor(regionId)) {
+      const away = plan.spawns.filter((entry) => parked.has(entry.id))
+      if (away.length === 0) continue
+      if (!canReturnPack(viewer, away.map((entry) => ({ x: entry.worldX, z: entry.worldZ })))) continue
+      if (availableSlots('campaign') < away.length) continue
+      for (const entry of away) {
+        parked.delete(entry.id)
+        activated.delete(entry.id)
+      }
+      encounterMetrics.packsReturned += 1
     }
   }
 
@@ -5621,7 +5810,10 @@ export function runHarness(options: RunOptions): RunReport {
         (left, right) =>
           Number(right === finaleIdentity.regionId) - Number(left === finaleIdentity.regionId),
       )
-      for (const regionId of ordered) spawnShippedEncounters(regionId)
+      for (const regionId of ordered) {
+        if (stagingOn) returnParkedPacks(regionId)
+        spawnShippedEncounters(regionId)
+      }
     } else {
       encounterScanCooldown -= delta
       if (encounterScanCooldown <= 0) {
@@ -6085,6 +6277,7 @@ export function runHarness(options: RunOptions): RunReport {
     encounterModel,
     regionWindow,
     commanders: commanderModel,
+    staging: stagingModel,
     hz,
     outcome,
     elapsed,
@@ -6764,6 +6957,8 @@ export interface BalanceCell {
     meanRefusedSeconds: number
     /** W1-6 — soldiers commanders called, per run. */
     meanReinforcements: number
+    /** W1-6 — the player's own packs that stepped back for a staging, per run. */
+    meanPacksSteppedBack: number
   }
   meanGoldEarned: number
   meanGoldSpent: number
@@ -6868,6 +7063,7 @@ function summarizeCell(
     meanOnField: 0,
     meanRefusedSeconds: 0,
     meanReinforcements: 0,
+    meanPacksSteppedBack: 0,
   }
   let damage = 0
   let kills = 0
@@ -6921,6 +7117,7 @@ function summarizeCell(
     encounters.meanOnField += balance.encounters.meanOnField / runs
     encounters.meanRefusedSeconds += balance.encounters.refusedSeconds / runs
     encounters.meanReinforcements += balance.encounters.reinforcementsCalled / runs
+    encounters.meanPacksSteppedBack += balance.encounters.packsSteppedBack / runs
     goldEarned += balance.sustain.goldEarned
     goldSpent += balance.sustain.goldSpent
     healed += balance.sustain.healed

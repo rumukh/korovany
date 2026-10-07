@@ -393,6 +393,18 @@ import {
   type ActorBudgetUsage,
 } from './world/ActorBudget'
 import {
+  STAGING_PARK_HOLD_SECONDS,
+  canReturnPack,
+  choosePacksToPark,
+  gatherStagingPacks,
+  horizontalHalfFov,
+  parkableBodies,
+  stagingCapacity,
+  type StagingBody,
+  type StagingPack,
+  type StagingViewer,
+} from './world/StagingRoom'
+import {
   cloneChronicleState,
   cloneRegionChronicleState,
   createChronicleRegions,
@@ -2087,6 +2099,15 @@ export class GameEngine {
   private bridgeAmbushCapacityNoticeShown = false
   private readonly generatedEncounterPlans = new Map<string, GeneratedEncounterPlan[]>()
   private readonly generatedActivationSpawns = new Map<string, Set<string>>()
+  /**
+   * W1-6 — spawns of the player's own packs that stepped back into their squares to make room
+   * for a staged set piece, by square. They stay in `generatedActivationSpawns`, so the spawner
+   * leaves them alone. Residency state like it, never saved: a continue rebuilds every square,
+   * and the pack with it.
+   */
+  private readonly parkedGeneratedSpawns = new Map<string, Set<string>>()
+  /** W1-6 — no pack that stepped back comes back before this, while a staging still asks. */
+  private parkHoldUntil = 0
   private readonly simulatedGeneratedRegions = new Set<string>()
   /** §5.1 — the single gate every actor spawn passes through. */
   private readonly actorBudget = new ActorBudget((category, count) =>
@@ -4786,6 +4807,9 @@ export class GameEngine {
     ) {
       return
     }
+    // W1-6 — a pack that stepped back to make room was not beaten. While any of it is away
+    // the encounter is not cleared, whoever happens to fall last.
+    if (plan && this.isEncounterParked(regionId, plan)) return
     this.mutateGeneratedRegionDelta(regionId, (delta) => {
       if (!delta.clearedEncounterIds.includes(encounterId)) {
         delta.clearedEncounterIds.push(encounterId)
@@ -4822,6 +4846,8 @@ export class GameEngine {
         }
       }
       this.generatedActivationSpawns.delete(regionId)
+      // W1-6 — a pack that stepped back leaves with its square, and comes back with it once.
+      this.parkedGeneratedSpawns?.delete(regionId)
     }
     this.simulatedGeneratedRegions.clear()
     const orderedRegions = [...nextRegions].sort((left, right) =>
@@ -4831,6 +4857,7 @@ export class GameEngine {
       if (!this.generatedActivationSpawns.has(regionId)) {
         this.generatedActivationSpawns.set(regionId, new Set())
       }
+      this.returnParkedPacks(regionId)
       this.spawnGeneratedRegionEncounters(regionId)
     }
   }
@@ -5972,6 +5999,9 @@ export class GameEngine {
    * reclaimed, `noGround` when the builder found nowhere to stand. Waiting behind the
    * contract already on the ground is not a no but a queue, and the running contract's
    * clock is what bounds it.
+   *
+   * W1-6 — and when the game's own events are not room enough, the player's own idle packs
+   * out of sight step back for it (`makeRoomForStaging`). Enemies never do.
    */
   private startContractEvent(
     node: FactionObjectiveNode,
@@ -5994,6 +6024,7 @@ export class GameEngine {
     if (!this.chronicleRoomOnceEventsMakeWay(required, interrupted)) return 'crowded'
     if (interrupted) this.standDownRandomEvent(interrupted)
     this.reclaimChronicleSlotsForContract(required)
+    this.makeRoomForStaging('chronicle', required)
     const origin = new THREE.Vector3(site.x, 0, site.z)
     origin.y = this.groundHeightAt(origin.x, origin.z)
     const event = this.buildContractEvent(node, template, origin)
@@ -6066,6 +6097,8 @@ export class GameEngine {
    * events made way: the interrupted random event, then every located fight that is not a
    * contract. Arithmetic on a scratch ledger, so nothing is stood down or handed back for a
    * start that would fail anyway.
+   *
+   * W1-6 — and the player's own packs that could step back right now.
    */
   private chronicleRoomOnceEventsMakeWay(
     required: number,
@@ -6081,6 +6114,8 @@ export class GameEngine {
           actor.budgetCategory === 'chronicle' && event.ownedActorIds.includes(actor.id),
       ).length
     }
+    const packs = this.standAsidePacks()
+    if (packs.length > 0) usage.campaign -= parkableBodies(this.stagingViewer(), packs)
     const ledger = new ActorBudget()
     ledger.sync(usage)
     return ledger.capacityFor('chronicle') >= required
@@ -6096,6 +6131,171 @@ export class GameEngine {
         describeEventHandbackForContract(this.regionGridLabel(event.regionId)),
       )
     }
+  }
+
+  /**
+   * W1-6 — makes room for `count` actors of `category` for a set piece the player has
+   * reached, by asking the player's **own** idle packs out of sight to step back into their
+   * squares, farthest first, as many as it is short (`world/StagingRoom.ts`). Enemies never
+   * step back, nor do the squad, a commander, uniques, objectives, the finale or an event's
+   * actors. True when the room is there.
+   *
+   * Every call holds back the packs that already stepped back for
+   * `STAGING_PARK_HOLD_SECONDS`, so a staging that keeps retrying keeps its room. A contract
+   * asks for `chronicle`; a caravan beat that materialises into `campaign` asks the same way,
+   * then reserves its slots with `reserveActorSlots`.
+   */
+  private makeRoomForStaging(category: ActorBudgetCategory, count: number): boolean {
+    this.parkHoldUntil = Math.max(this.parkHoldUntil ?? 0, this.elapsed + STAGING_PARK_HOLD_SECONDS)
+    const shortfall = count - this.stagingRoom(category)
+    if (shortfall <= 0) return true
+    const packs = this.standAsidePacks()
+    if (packs.length === 0) return false
+    const chosen = choosePacksToPark(this.stagingViewer(), packs, shortfall)
+    if (!chosen) return false
+    for (const pack of chosen) this.parkGeneratedPack(pack)
+    return this.stagingRoom(category) >= count
+  }
+
+  /** W1-6 — what `category` could take once everything below it but a contract yielded. */
+  private stagingRoom(category: ActorBudgetCategory): number {
+    const pinned = createActorBudgetUsage()
+    for (const actor of this.actors) {
+      if (this.isContractOwnedActor(actor.id)) pinned[actor.budgetCategory] += 1
+    }
+    return stagingCapacity(this.actorUsageByCategory(), category, pinned)
+  }
+
+  /** W1-6 — the player's own packs in the simulated squares that might step back. */
+  private standAsidePacks(): StagingPack[] {
+    return gatherStagingPacks(
+      this.simulatedGeneratedRegions ?? [],
+      (regionId) => this.generatedEncounterPlans?.get(regionId) ?? [],
+      (regionId, encounterId) =>
+        this.actors
+          .filter(
+            (actor) =>
+              actor.generatedRegionId === regionId && actor.generatedEncounterId === encounterId,
+          )
+          .map((actor) => this.stagingBody(actor)),
+    )
+  }
+
+  /** W1-6 — one body, as `StagingRoom` judges it: is it idle, and may it go at all. */
+  private stagingBody(actor: Actor): StagingBody {
+    return {
+      alive: actor.alive,
+      hostileToPlayer: actor.hostileToPlayer,
+      x: actor.mesh.position.x,
+      z: actor.mesh.position.z,
+      busy:
+        actor.targetId !== null ||
+        actor.action !== null ||
+        actor.playerAggro ||
+        actor.aggroMemory > 0 ||
+        actor.routTimer > 0 ||
+        actor.rageTimer > 0 ||
+        actor.retaliationTimer > 0 ||
+        actor.alertTimer > 0 ||
+        actor.reaction !== 'none' ||
+        actor.hp < actor.maxHp ||
+        actor.chargeWindup > 0 ||
+        actor.chargeTimer > 0 ||
+        actor.order?.kind === 'assault' ||
+        actor.order?.kind === 'escort' ||
+        this.caravanLootCartFor(actor) !== null,
+      untouchable:
+        actor.budgetCategory !== 'campaign' ||
+        isSquadMember(actor, this.faction) ||
+        actor.eventOwnerId !== null ||
+        actor.role === 'commander' ||
+        actor.generatedUnique ||
+        actor.objectiveEligible ||
+        actor.generatedObjectiveId !== null ||
+        finaleOwnsActor(this.finale.identity, actor),
+    }
+  }
+
+  /**
+   * W1-6 — what the player can see: the rendered camera's horizontal view cone, read off the
+   * camera itself, so the bow's aim and the shake are what is checked.
+   */
+  private stagingViewer(): StagingViewer {
+    const forward = this.camera.getWorldDirection(new THREE.Vector3())
+    return {
+      player: { x: this.player.position.x, z: this.player.position.z },
+      camera: { x: this.camera.position.x, z: this.camera.position.z },
+      forward: { x: forward.x, z: forward.z },
+      halfFov: horizontalHalfFov(this.camera.fov, this.camera.aspect),
+    }
+  }
+
+  /**
+   * W1-6 — one of the player's own packs steps back into its square. Its living members leave
+   * the field, which is not a death: nothing drops or pays, and no defeat is recorded. Its
+   * spawns stay activated, so the spawner leaves them be until they come back, and so do any
+   * of its members that had not been fielded yet: the pack goes, and comes back, whole.
+   */
+  private parkGeneratedPack(pack: StagingPack): void {
+    const plan = (this.generatedEncounterPlans.get(pack.regionId) ?? []).find(
+      (candidate) => candidate.encounterId === pack.key,
+    )
+    const activation = this.generatedActivationSpawns.get(pack.regionId)
+    if (!plan || !activation || !this.parkedGeneratedSpawns) return
+    let parked = this.parkedGeneratedSpawns.get(pack.regionId)
+    if (!parked) {
+      parked = new Set()
+      this.parkedGeneratedSpawns.set(pack.regionId, parked)
+    }
+    for (const spawn of plan.spawns) {
+      const body = this.actors.find(
+        (actor) =>
+          actor.generatedRegionId === pack.regionId &&
+          actor.generatedEncounterId === plan.encounterId &&
+          actor.generatedSpawnId === spawn.id,
+      )
+      if (body) {
+        // The fallen stay fallen.
+        if (!body.alive) continue
+        this.removeActorById(body.id)
+        parked.add(spawn.id)
+      } else if (!activation.has(spawn.id)) {
+        activation.add(spawn.id)
+        parked.add(spawn.id)
+      }
+    }
+  }
+
+  /**
+   * W1-6 — packs that stepped back come home, once no staging has asked for room for
+   * `STAGING_PARK_HOLD_SECONDS`, when the whole pack fits without anyone yielding and none of
+   * its stations is near the player or in sight. Releasing the spawns is all it takes: the
+   * spawner puts them back on their stations this same frame, once each.
+   */
+  private returnParkedPacks(regionId: string): void {
+    const parked = this.parkedGeneratedSpawns?.get(regionId)
+    if (!parked || parked.size === 0 || this.elapsed < this.parkHoldUntil) return
+    const activation = this.generatedActivationSpawns.get(regionId)
+    if (!activation) return
+    let viewer: StagingViewer | null = null
+    for (const plan of this.generatedEncounterPlans.get(regionId) ?? []) {
+      const away = plan.spawns.filter((spawn) => parked.has(spawn.id))
+      if (away.length === 0) continue
+      viewer ??= this.stagingViewer()
+      if (!canReturnPack(viewer, away.map((spawn) => ({ x: spawn.worldX, z: spawn.worldZ })))) continue
+      this.actorBudget.sync(this.actorUsageByCategory())
+      if (this.actorBudget.availableFor('campaign') < away.length) continue
+      for (const spawn of away) {
+        parked.delete(spawn.id)
+        activation.delete(spawn.id)
+      }
+    }
+  }
+
+  /** W1-6 — whether any of this encounter is away making room. Read defensively, for tests. */
+  private isEncounterParked(regionId: string, plan: GeneratedEncounterPlan): boolean {
+    const parked = this.parkedGeneratedSpawns?.get(regionId)
+    return parked !== undefined && plan.spawns.some((spawn) => parked.has(spawn.id))
   }
 
   private buildContractEvent(

@@ -138,6 +138,17 @@ commander's call ever takes the room a contract would stage in: it waits for his
 share of the field. The guard used to reach a contract beside the palace and find the square
 already full of soldiers nobody had sent for.
 
+When your own side still fills the field, it makes room. If a contract you have reached is
+short of room once the game's own events have made way, your side's idle packs step back into
+their squares, farthest first and only as many as it needs. A pack steps back only if it is not
+hostile to you, at least 60 m away, outside the camera's view, unhurt and not fighting. Enemies
+never step back, and neither do the squad, a stronghold's garrison, a unique, an objective, the
+finale or anyone an event put down. Stepping back is not losing: the pack is not counted as
+beaten, and it drops and pays nothing. It comes home to its stations when nothing has asked for
+room for 4 seconds, the whole pack fits and none of its stations is near you or in view, or
+with its square when that streams back in. Seed 1's guard used to lose «Зверьё у домиков»,
+beside the palace's two strongholds, as crowded every time.
+
 ## The bridge ambush
 
 New runs place an optional caravan encounter on a real generated bridge. It does not

@@ -109,12 +109,16 @@ import {
 import {
   HARNESS_COMMANDER_INTERVAL,
   HARNESS_COMMANDER_LIMIT,
+  HARNESS_SCREEN_ASPECT,
   advanceCommanderClock,
   commanderGathers,
   createCommanderClock,
   createRegionWindow,
+  harnessStagingViewer,
   type CommanderModel,
 } from './runHarness.ts'
+import { CAMERA_BASE_FOV, CAMERA_DEFAULT_PITCH } from '../src/game/cameraAccents.ts'
+import type { StagingViewer } from '../src/game/world/StagingRoom.ts'
 
 // The shipped class, through the same extensionless-import adapter `squadRuntimeHarness.ts`
 // uses. Nothing here edits it: every method called below is `GameEngine.prototype`'s own.
@@ -1523,4 +1527,54 @@ test('W1-6: a commander calls for men when `updateCommander` does, frame for fra
   // on the idle garrison and on the spent share.
   assert.ok(drive('shipped', idle, 'legacy').disagreements > 0)
   assert.ok(drive('shipped', crowded, 'legacy').disagreements > 0)
+})
+
+// ---------------------------------------------------------------------------
+// W1-6 — what the player can see when a staging asks for room
+// ---------------------------------------------------------------------------
+
+test('W1-6: the staging arm sees from where `updateCamera` puts the camera, and as far round', () => {
+  // The engine's own `updateCamera` — the classic path, its collision and presentation
+  // boundaries replaced — poses the engine's camera behind a player facing each heading, and
+  // the engine's own `stagingViewer` reads it back. The harness has to see the same cone from
+  // the same place, or its staging would step back packs the player could see.
+  const engineView = (heading: number, at: PlanPoint): StagingViewer => {
+    const self = Object.assign(Object.create(RuntimeEngine.prototype), {
+      player: { position: new THREE.Vector3(at.x, 0, at.z) },
+      camera: new THREE.PerspectiveCamera(CAMERA_BASE_FOV, HARNESS_SCREEN_ASPECT, 0.1, 240),
+      cameraYaw: heading,
+      cameraPitch: CAMERA_DEFAULT_PITCH,
+      cameraFollowPosition: new THREE.Vector3(),
+      bowAiming: false,
+      visualPolicy: { camera: { collision: 'classic' } },
+      screenShakeEnabled: false,
+      trauma: 0,
+      resolveCameraPosition: (_target: THREE.Vector3, desired: THREE.Vector3) => desired.clone(),
+      updateCameraFov() {},
+      updatePlayerOutlineVisibility() {},
+      updateFoliageOcclusion() {},
+    })
+    self.updateCamera(0, true)
+    return self.stagingViewer() as StagingViewer
+  }
+  const unit = (point: PlanPoint): PlanPoint => {
+    const length = Math.hypot(point.x, point.z)
+    return { x: point.x / length, z: point.z / length }
+  }
+  const apart = (left: PlanPoint, right: PlanPoint): number => Math.hypot(left.x - right.x, left.z - right.z)
+  const at = { x: 146.1, z: 11.4 }
+  for (const heading of [0, 0.7, Math.PI / 2, 2.4, Math.PI, -1.1]) {
+    const engine = engineView(heading, at)
+    const harness = harnessStagingViewer({ ...at, heading })
+    assert.ok(apart(engine.player, harness.player) < 1e-9)
+    assert.ok(apart(engine.camera, harness.camera) < 1e-6, `heading ${heading}: the camera stands elsewhere`)
+    assert.ok(apart(unit(engine.forward), unit(harness.forward)) < 1e-6, `heading ${heading}: it looks elsewhere`)
+    assert.ok(Math.abs(engine.halfFov - harness.halfFov) < 1e-12)
+  }
+  // Negative control: a harness that read the heading the other way round would stand its
+  // camera in front of the player and look back at them, and is told apart.
+  const engine = engineView(0.7, at)
+  const flipped = harnessStagingViewer({ ...at, heading: 0.7 + Math.PI })
+  assert.ok(apart(engine.camera, flipped.camera) > 20)
+  assert.ok(apart(unit(engine.forward), unit(flipped.forward)) > 1.9)
 })
