@@ -994,7 +994,7 @@ export const DOCTRINE_EQUIPPED_HINT = 'Устав принят и не меня�
 export const DOCTRINE_MENU_EYEBROW = 'Уставы'
 export const DOCTRINE_MENU_TITLE = 'Правила, а не числа — по три на забег'
 export const DOCTRINE_MENU_NOTE =
-  'Открытые уставы попадают в раздачу: чем их больше, тем реальнее выбор на третьей минуте.'
+  'Открытые уставы попадают в раздачу: чем их больше, тем реальнее выбор на первом же закрытом пункте.'
 
 export function describeDoctrineDraftOpened(index: number, total: number): string {
   return `Раздача уставов ${String(index)}/${String(total)}: выбери, по какому правилу идти дальше.`
@@ -1319,8 +1319,39 @@ export function describeZoneDiscovered(zone: ZoneId): string {
   return `Открыта область: «${ZONE_DISCOVERY_NAMES[zone]}».`
 }
 
-export function describeThreatTier(tier: number, maxTier: number): string {
+/**
+ * W2-1 — the night, said once, on the step that crosses into it. That step is dusk — the
+ * moment the villagers gather and the fires are lit, with the sun still low over the
+ * horizon — so the line says it is getting dark rather than that it is dark. Short on
+ * purpose: it lands in the same stack as everything else, and the world shows the rest.
+ */
+export const NIGHT_FALL_NOTICE =
+  'Смеркается: деревни садятся у костров, зверьё выходит на охоту. До рассвета пара минут.'
+
+/**
+ * The threat-tier line, for a rise of the tier on the HUD.
+ *
+ * W2-1 — that tier is pacing: events, waves and drafts. Enemies only get tougher with the
+ * clock (`getEnemyScalingTier`), so only a rise the clock paid for says «Враги сильнее». A
+ * rise the run's progress earned says so, and promises attention rather than stats.
+ */
+export function describeThreatTier(
+  tier: number,
+  maxTier: number,
+  cause: 'time' | 'progress' = 'time',
+): string {
+  if (cause === 'progress') {
+    return `Про пользователя прослышали: угроза ${tier}/${maxTier}. Гостей и событий больше, и раздают уставы.`
+  }
   return `Угроза растёт: уровень ${tier}/${maxTier}. Враги сильнее, событий и набегов больше.`
+}
+
+/**
+ * W2-1 — the clock's tier rose under one the run had already earned: the HUD does not move,
+ * but the enemies did, and that is the one change a player has to be told about.
+ */
+export function describeEnemiesStronger(clockTier: number, maxTier: number): string {
+  return `Время берёт своё: враги крепче и бьют больнее — по часам угроза уже ${clockTier}/${maxTier}.`
 }
 
 export function describeThreatWave(spawned: number, tier: number): string {
@@ -1812,6 +1843,7 @@ export type HintId =
   | 'doctrines'
   | 'squad'
   | 'threat'
+  | 'threatEarned'
   | 'ability'
   | 'melee'
   | 'evade'
@@ -1904,7 +1936,7 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'warning',
   },
   doctrines: {
-    text: 'Устав меняет правило, а не число: что-то даёт и что-то забирает. Раздача трижды за забег — на третьей, шестой и девятой минуте, — и принятое до конца похода не меняется.',
+    text: 'Устав меняет правило, а не число: что-то даёт и что-то забирает. Раздача приходит с угрозой — за закрытые пункты, а кто тянет, тому по часам, — и принятое уже не меняется.',
     tone: 'info',
   },
   squad: {
@@ -1912,7 +1944,13 @@ const HINT_COPY: Record<HintId, HintCopy> = {
     tone: 'success',
   },
   threat: {
-    text: 'Угроза в углу растёт от времени, а не от подвигов. Чем дольше забег, тем злее гости.',
+    text: 'Угроза в углу растёт по часам, раз в три минуты, и тогда враги крепчают. Закрытые пункты поднимают её раньше, но это гости и события, а не сила врагов.',
+    tone: 'warning',
+  },
+  // W2-1 — for every profile, including the ones that learned the old rule: the first time
+  // the tier on the HUD is one the run earned rather than one the clock paid for.
+  threatEarned: {
+    text: 'Угрозу ты заработал: за закрытый пункт гостей и событий больше и раздают уставы. А крепчают враги только по часам — раз в три минуты.',
     tone: 'warning',
   },
   ability: {

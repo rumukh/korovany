@@ -86,12 +86,13 @@
  *    same events — nor would they on one stream, because the harness's route is scripted.
  * 5. **No rendering, audio, camera, hit-stop or particles.** Nothing here can tell you
  *    whether a fight feels good.
- * 6. **Flanking, separation and commanders are still unmeasurable.** Actors steer only
- *    around terrain; nobody keeps an elbow's distance, sights a stranger for a friend,
+ * 6. **Flanking, separation and commanders' orders are still unmeasurable.** Actors steer
+ *    only around terrain; nobody keeps an elbow's distance, sights a stranger for a friend,
  *    obeys or rallies to a commander, or charges like a boar. A commander here is a body
- *    with its role's swing. Without knockback or charges, only the blow itself takes a
- *    looter off a cart, and an ambush raider that reaches its post stands there rather
- *    than wandering round its spawn.
+ *    with its role's swing; W1-6's `commanders` arm adds the one thing that changes the
+ *    actor budget, his call for reinforcements, and the shipped arms turn it on. Without
+ *    knockback or charges, only the blow itself takes a looter off a cart, and an ambush
+ *    raider that reaches its post stands there rather than wandering round its spawn.
  * 7. **The squad only follows.** Hold, Focus and Regroup are never ordered; companions
  *    steer straight at their formation slot with no squad pathing, and a routed companion
  *    falls back on where it spawned, as the engine's does.
@@ -139,6 +140,7 @@ import {
   areAllegiancesHostile,
   createHealthyBody,
   getShopItemPrice,
+  getEnemyScalingTier,
   getThreatTier,
   isBeastRole,
   isRandomWorldEventKind,
@@ -161,8 +163,12 @@ import {
   createDoctrineRunState,
   equipDoctrine,
   getDoctrineOffer,
+  isDoctrineAnchorDue,
+  isDoctrineDraftMomentCalm,
+  mayOpenDoctrineDraft,
   pendingDoctrineDraftIndex,
   resolveDoctrineEffects,
+  type DoctrineDraftMoment,
   type DoctrineEffects,
   type DoctrineRunState,
 } from '../src/game/run/doctrine.ts'
@@ -210,6 +216,7 @@ import {
   campaignObjectivesComplete,
   commitChronicleTicks,
   completeObjectiveEntry,
+  countProgressSteps,
   countRewardedObjectives,
   createCampaignContractState,
   createChronicleCommitmentState,
@@ -289,12 +296,14 @@ import {
   beastPackShare,
   evaluateMorale,
   evaluatePlayerPursuit,
+  isCommanderGroupEngaged,
   isPacifistRole,
   localGroupShare,
   selectThreat,
   THREAT_PLAYER,
   type AiActor,
   type AiPoint,
+  type AiPositionOf,
   type MoraleBreak,
 } from '../src/game/world/ActorAi.ts'
 import type { FactionObjectiveNode, Territory, WorldBlueprint } from '../src/game/world/worldTypes.ts'
@@ -785,6 +794,30 @@ export type PlayerKit = 'harness' | 'shipped'
 export type EncounterModel = 'harness' | 'shipped'
 
 /**
+ * W2-1 — what sets the threat tier.
+ *
+ * - `time` is **the default and stays the default**: the clock alone, one tier every three
+ *   minutes, which is the rule every pinned number in this suite was measured under and the
+ *   rule the game had before W2-1. A draft opens on the frame its tier is crossed.
+ * - `progress` is the shipped rule: the pacing tier is the clock or the run's progress,
+ *   whichever is further (`getThreatTier(elapsed, countProgressSteps(...))`), and drives the
+ *   drafts, the director's cadence and the threat waves; a draft waits for a calm moment
+ *   (`isDoctrineDraftMomentCalm`), for at most `DOCTRINE_DRAFT_MAX_HOLD_SECONDS` of run
+ *   time unless a blow is on its way (`mayOpenDoctrineDraft`). Enemy health and damage
+ *   stay on the clock's tier (`getEnemyScalingTier`) in both arms. `HARNESS_SHIPPED_ARMS`
+ *   carries `progress`.
+ *
+ * Both run on one build, so "progress raised the tier" is a comparison against a matched
+ * control rather than against a different checkout of the game.
+ *
+ * `progressAll` is the rejected design, kept as the negative control: progress raises the
+ * enemies' health and damage too. With it, "the earned tier leaves enemy stats alone" is a
+ * comparison rather than a claim — and the gap it measured is why the shipped rule keeps
+ * stats on the clock (`tests/runHarnessEscalation.test.ts` has the numbers).
+ */
+export type Escalation = 'time' | 'progress' | 'progressAll'
+
+/**
  * Which squares a run simulates (a follow-up to W1-5, found by W1-6).
  *
  * `GeneratedWorldRuntime` builds its `RegionManager` with `visibleRadius: 1` and
@@ -810,6 +843,80 @@ export const HARNESS_ENGINE_REGION_STREAMING = {
   simulationRadius: 1,
   discoverVisibleRegions: false,
 } as const
+
+/**
+ * W1-6 — what a `commander` does besides swing.
+ *
+ * `inert` (the default) is this file's commander until W1-6: a body with its role's swing,
+ * which every pinned number was measured with. `legacy` is `updateCommander` before W1-6:
+ * every commander called a reinforcement every 25 s from the moment he was fielded, four in
+ * all, each borrowing whatever room the budget would lend. `shipped` is the engine's rule
+ * now: a commander who is not hostile to the player calls only while his own people are
+ * fighting (`isCommanderGroupEngaged`), and every call reserves out of its category's own
+ * share (`ActorBudget.reserveOwn`), never borrowing and never evicting.
+ *
+ * Only the guard meets a commander outside its finale. The boss slots of the elf's and the
+ * villain's finales are the guard's own strongholds, so for the guard they field friendly
+ * garrisons, each led by one. The finale's own commander takes the finale's director and
+ * never calls.
+ */
+export type CommanderModel = 'inert' | 'legacy' | 'shipped'
+
+/** `COMMANDER_REINFORCEMENT_INTERVAL`: seconds between calls. The fidelity test holds it. */
+export const HARNESS_COMMANDER_INTERVAL = 25
+/** `COMMANDER_REINFORCEMENT_LIMIT`: calls per commander each time he is fielded. */
+export const HARNESS_COMMANDER_LIMIT = 4
+/** `COMMANDER_ORDER_RANGE`: whose fight counts as his men's fight. */
+export const HARNESS_COMMANDER_ORDER_RANGE = 18
+
+/** One commander's reinforcement clock, made with his body, as `spawnActor` arms it. */
+export interface CommanderClock {
+  timer: number
+  called: number
+}
+
+export function createCommanderClock(): CommanderClock {
+  return { timer: HARNESS_COMMANDER_INTERVAL, called: 0 }
+}
+
+/** W1-6 — `commanderGathersMen` under each model: whether his clock runs this frame. */
+export function commanderGathers<T extends AiActor & { hostileToPlayer: boolean }>(
+  model: CommanderModel,
+  commander: T,
+  actors: readonly T[],
+  positionOf: AiPositionOf<T>,
+  attacking: (actor: T) => boolean,
+): boolean {
+  if (model === 'inert') return false
+  if (model === 'legacy' || commander.hostileToPlayer) return true
+  return isCommanderGroupEngaged(
+    commander,
+    actors,
+    HARNESS_COMMANDER_ORDER_RANGE,
+    positionOf,
+    attacking,
+  )
+}
+
+/**
+ * W1-6 — one frame of `updateCommander`'s call for men. `gathers` is whether his clock runs
+ * this frame, and `admit` reserves the slot; it is asked only when a call is due and the
+ * limit is not reached. True when a reinforcement takes the field.
+ */
+export function advanceCommanderClock(
+  clock: CommanderClock,
+  delta: number,
+  gathers: boolean,
+  admit: () => boolean,
+): boolean {
+  if (!gathers) return false
+  clock.timer -= delta
+  if (clock.timer > 0) return false
+  clock.timer += HARNESS_COMMANDER_INTERVAL
+  if (clock.called >= HARNESS_COMMANDER_LIMIT || !admit()) return false
+  clock.called += 1
+  return true
+}
 
 /** How close the scripted player has to be for a contract to be counted as under way. */
 export const HARNESS_CONTRACT_RANGE = 6
@@ -1180,6 +1287,8 @@ export interface EncounterMetrics {
   meanOnField: number
   /** Seconds in which the actor budget turned away at least one encounter body. */
   refusedSeconds: number
+  /** W1-6 — soldiers commanders called onto the field. Counted on the road once called. */
+  reinforcementsCalled: number
 }
 
 /**
@@ -1192,6 +1301,24 @@ export interface BalanceMetrics {
   maxThreatTier: number
   /** `DOCTRINE_DRAFT_TIERS` crossed, whatever the doctrine arm took from them. */
   draftsReached: number
+  /**
+   * W2-1 — every rise of the threat tier: when, to what, and whether the clock had reached
+   * it yet (`time`) or the run's progress got there first (`progress`).
+   */
+  tierRises: Array<{ at: number; tier: number; cause: 'time' | 'progress' }>
+  /** W2-1 — when each doctrine draft actually opened. Empty while the doctrine arm is `off`. */
+  draftsOpenedAt: number[]
+  /**
+   * W2-1 — drafts the ceiling opened: waited `DOCTRINE_DRAFT_MAX_HOLD_SECONDS` and still not
+   * at a calm moment. Always zero under `time`, which has no gate to wait at.
+   */
+  draftsForced: number
+  /** W2-1 — the pacing tier when the finale boss was put on the field, or null if it never was. */
+  finaleTier: number | null
+  /** W2-1 — the clock's tier at the same moment: what the boss's health was scaled by. */
+  finaleScalingTier: number | null
+  /** W2-1 — threat waves by what threw them: the clock, or a closed objective under «Устав дозора». */
+  wavesBy: { clock: number; objective: number }
   /** Damage taken, by the system that spawned the hand that dealt it. */
   damageBySystem: Record<string, number>
   /** The system whose actor landed the last blow, or `bleeding`. */
@@ -1230,8 +1357,12 @@ export interface RunReport {
   eventDirector: EventDirector
   playerKit: PlayerKit
   encounterModel: EncounterModel
+  /** W2-1 — which rule set the threat tier. */
+  escalation: Escalation
   /** The window the run simulated in: `engine` under the shipped encounters or events. */
   regionWindow: RegionWindow
+  /** W1-6 — what the commanders did besides swing. */
+  commanders: CommanderModel
   /** Frames per simulated second the run was driven at. */
   hz: number
   outcome: RunOutcome
@@ -1378,6 +1509,8 @@ export interface RunOptions {
   playerKit?: PlayerKit
   /** W1-5 — defaults to `harness`, this file's original encounter stand-in. */
   encounterModel?: EncounterModel
+  /** W2-1 — defaults to `time`, the clock-only tier every pinned number describes. */
+  escalation?: Escalation
   /**
    * The streaming window (W1-6's finding). Defaults to `engine`, the plus the engine
    * simulates, whenever `encounterModel` is `shipped` or `eventModel` is `fought`.
@@ -1385,13 +1518,19 @@ export interface RunOptions {
    * Setting it to `square` under the shipped arms is the control.
    */
   regionWindow?: RegionWindow
+  /**
+   * W1-6 — defaults to `inert`, the commander every pinned number was measured with: a body
+   * and a swing. `legacy` is the engine's call for men before W1-6, `shipped` after it.
+   */
+  commanders?: CommanderModel
 }
 
 /**
  * W1-5 — every shipped arm at once: the configuration the balance baseline is measured in.
  *
  * Honest melee answering heavies, the nearest arm of the fork and seeded drafts are the
- * gameplay review's sweep; the seven W1-5 arms are what that sweep lacked. Rumours are
+ * gameplay review's sweep; the seven W1-5 arms are what that sweep lacked, and W2-1's
+ * `progress` escalation is the tier the game ships with since. Rumours are
  * offered, measured for feasibility and resolved, but not chased: the review's `commit`
  * arm pins every rumour within reach and, with the shipped arms on, measured as a player
  * standing in one square for minutes at a time while the campaign waits, which is a fact
@@ -1416,6 +1555,8 @@ export const HARNESS_SHIPPED_ARMS = {
   eventDirector: 'shipped',
   playerKit: 'shipped',
   encounterModel: 'shipped',
+  commanders: 'shipped',
+  escalation: 'progress',
 } as const satisfies Partial<RunOptions>
 
 // ---------------------------------------------------------------------------
@@ -1637,6 +1778,7 @@ export function runHarness(options: RunOptions): RunReport {
   const eventDirector = options.eventDirector ?? 'shipped'
   const playerKit = options.playerKit ?? 'harness'
   const encounterModel = options.encounterModel ?? 'harness'
+  const escalation = options.escalation ?? 'time'
   const squadOn = squadPolicy !== 'off'
   const sustainOn = sustainPolicy !== 'off'
   const healingOn = sustainPolicy === 'shipped'
@@ -1646,6 +1788,7 @@ export function runHarness(options: RunOptions): RunReport {
   // W1-6 — the engine's window whenever its encounters or its fights are on.
   const regionWindow: RegionWindow =
     options.regionWindow ?? (shippedEncounters || eventsFought ? 'engine' : 'square')
+  const commanderModel: CommanderModel = options.commanders ?? 'inert'
 
   const blueprint = options.blueprint ?? generateWorld(options.seed)
   // The two placebos. Both leave every site, encounter, road and chronicle seed identical
@@ -1793,11 +1936,34 @@ export function runHarness(options: RunOptions): RunReport {
    * The functions are the shipped ones. `capBreaches` counts a refusal that should be
    * impossible — the policy never asks for a fourth card, so anything but zero means the
    * ledger and the cap disagree.
+   *
+   * W2-1 — under `progress` the anchors follow the run's tier (set by `w15FrameStart`, which
+   * runs first, as `updateThreat` runs before `updateDoctrineDraft`) and wait for a calm
+   * moment, up to the ceiling: the engine's own predicates, fed this file's bodies, and the
+   * engine's own wait, timed from the frame a draft point is crossed. Under `time` it is the
+   * clock-only rule it always was, called where it always was.
    */
   const advanceDoctrines = (): void => {
     if (doctrinePolicy === 'off') return
-    if (advanceDoctrineAnchors(doctrineState, getThreatTier(elapsed))) {
+    const reached = escalation === 'time' ? getThreatTier(elapsed) : threatTier
+    let open = true
+    if (escalation !== 'time') {
+      if (!isDoctrineAnchorDue(doctrineState, reached)) {
+        draftHeldSince = null
+        open = false
+      } else {
+        draftHeldSince ??= elapsed
+        const moment = draftMoment()
+        open = mayOpenDoctrineDraft(moment, elapsed - draftHeldSince)
+        if (open) {
+          if (!isDoctrineDraftMomentCalm(moment)) draftsForced += 1
+          draftHeldSince = null
+        }
+      }
+    }
+    if (open && advanceDoctrineAnchors(doctrineState, reached)) {
       doctrineMetrics.draftsOpened = doctrineState.anchors
+      draftsOpenedAt.push(elapsed)
     }
     const index = pendingDoctrineDraftIndex(doctrineState)
     if (index === null) return
@@ -2026,6 +2192,7 @@ export function runHarness(options: RunOptions): RunReport {
     actorsSpawned: 0,
     meanOnField: 0,
     refusedSeconds: 0,
+    reinforcementsCalled: 0,
   }
   const fieldedEncounterIds = new Set<string>()
   /** Live encounter bodies times seconds, divided out into `meanOnField` at the end. */
@@ -2037,6 +2204,35 @@ export function runHarness(options: RunOptions): RunReport {
   let bledOut = false
   let threatTier = getThreatTier(0)
   let maxThreatTier = threatTier
+  /**
+   * W2-1 — `getEnemyScalingTier`: the clock's tier, which enemy health and damage follow.
+   * `threatTier` above is pacing — events, waves and drafts. Under `time` the two agree;
+   * `progressAll`, the negative control, scales enemies by the pacing tier instead.
+   */
+  const scalingTier = (): number =>
+    escalation === 'progressAll' ? threatTier : getEnemyScalingTier(elapsed)
+  // W2-1 — what the escalation arms report.
+  const tierRises: BalanceMetrics['tierRises'] = []
+  const draftsOpenedAt: number[] = []
+  /** `doctrineDraftHeldSince`: when a crossed draft point began waiting, null while none waits. */
+  let draftHeldSince: number | null = null
+  let draftsForced = 0
+  const wavesBy: BalanceMetrics['wavesBy'] = { clock: 0, objective: 0 }
+  let finaleTier: number | null = null
+  let finaleScalingTier: number | null = null
+  /** `draftMayOpen`'s reading: every hostile in a fight with the player, and the finale. */
+  const draftMoment = (): DoctrineDraftMoment => ({
+    engagedHostiles: actors
+      .filter((actor) => {
+        const targetingPlayer = actor.actionPhase !== 'idle' && actor.actionTargetIsPlayer
+        return actor.alive && actor.hostileToPlayer && (actor.playerAggro || targetingPlayer)
+      })
+      .map((actor) => ({
+        distance: Math.hypot(actor.x - player.x, actor.z - player.z),
+        targetingPlayer: actor.actionPhase !== 'idle' && actor.actionTargetIsPlayer,
+      })),
+    finaleEngaged: finaleState.introduced && !finaleState.suspended && finaleWithinArena(),
+  })
   let championDamageBonus = 0
   let interactCooldown = 0
 
@@ -2072,6 +2268,11 @@ export function runHarness(options: RunOptions): RunReport {
   const reserveSlotsUpTo = (category: ActorBudgetCategory, count: number): number => {
     actorBudget.sync(budgetUsage())
     return actorBudget.reserveUpTo(category, count)
+  }
+  /** W1-6 — `reserveOwnActorSlots`: the category's own share only, nothing borrowed. */
+  const reserveOwnSlots = (category: ActorBudgetCategory, count: number): boolean => {
+    actorBudget.sync(budgetUsage())
+    return actorBudget.reserveOwn(category, count)
   }
   const availableSlots = (category: ActorBudgetCategory): number => {
     actorBudget.sync(budgetUsage())
@@ -2143,7 +2344,7 @@ export function runHarness(options: RunOptions): RunReport {
       input.maxHp ??
       Math.round(
         actorBaseHealth(input.role) *
-          enemyHealthMultiplier(threatTier, areAllegiancesHostile(options.faction, input.allegiance)) *
+          enemyHealthMultiplier(scalingTier(), areAllegiancesHostile(options.faction, input.allegiance)) *
           Math.max(0.1, input.healthScale ?? 1),
       )
     actorSequence += 1
@@ -3359,7 +3560,7 @@ export function runHarness(options: RunOptions): RunReport {
       return
     }
     nextThreatWaveAt = elapsed + threatWaveInterval(threatTier)
-    spawnThreatWave()
+    if (spawnThreatWave() > 0) wavesBy.clock += 1
   }
 
   /** `updateEvents`: the builders' updates and clocks, materialization, then the director. */
@@ -3771,7 +3972,7 @@ export function runHarness(options: RunOptions): RunReport {
                 maxHp: Math.round(
                   profile.health *
                     enemyHealthMultiplier(
-                      threatTier,
+                      scalingTier(),
                       areAllegiancesHostile(options.faction, entry.faction),
                     ),
                 ),
@@ -3782,6 +3983,10 @@ export function runHarness(options: RunOptions): RunReport {
         actor.id = `generated:${entry.id}`
         actor.playerAggro = plan.hostileToPlayer
         activated.add(entry.id)
+        if (boss && finaleTier === null) {
+          finaleTier = threatTier
+          finaleScalingTier = scalingTier()
+        }
         if (!isFinal) {
           encounterMetrics.actorsSpawned += 1
           if (!fieldedEncounterIds.has(plan.encounterId)) {
@@ -4219,7 +4424,7 @@ export function runHarness(options: RunOptions): RunReport {
       life: HARNESS_ARROW_LIFE,
       damage:
         (HARNESS_ARROW_DAMAGE + (actor.rageTimer > 0 ? HARNESS_RAGE_DAMAGE : 0)) *
-        enemyDamageMultiplier(threatTier, actor.hostileToPlayer),
+        enemyDamageMultiplier(scalingTier(), actor.hostileToPlayer),
       allegiance: actor.allegiance,
       sourceId: actor.id,
       finale: false,
@@ -4370,7 +4575,7 @@ export function runHarness(options: RunOptions): RunReport {
       if (connected && playerCommitted) melee.hitsWhileCommitted += 1
       if (connected) {
         const base = rollMeleeDamage(actor.role, 'player', () => combatRng.next())
-        strikePlayer(actor, (base + rage) * enemyDamageMultiplier(threatTier, actor.hostileToPlayer), true)
+        strikePlayer(actor, (base + rage) * enemyDamageMultiplier(scalingTier(), actor.hostileToPlayer), true)
       }
       return
     }
@@ -4515,7 +4720,7 @@ export function runHarness(options: RunOptions): RunReport {
   ): void => {
     if (!actor.alive || finaleState.defeated || !finaleWithinArena()) return
     const spec = FINALE_ATTACKS[action.id]
-    const scale = enemyDamageMultiplier(threatTier, actor.hostileToPlayer)
+    const scale = enemyDamageMultiplier(scalingTier(), actor.hostileToPlayer)
     if (spec.speed > 0 && spec.shape !== 'charge') {
       for (const angle of spec.angles) {
         const dx = action.direction.x * Math.cos(angle) + action.direction.z * Math.sin(angle)
@@ -4674,6 +4879,43 @@ export function runHarness(options: RunOptions): RunReport {
   }
 
   /**
+   * W1-6 — `updateCommander`'s call for men. Each commander's clock is made with his body,
+   * so a commander the streamer fields again calls again, as the engine's fresh actor does.
+   * The call takes his position's square and his side, and joins the road as one of the
+   * encounter's bodies.
+   */
+  const commanderClocks = new WeakMap<HarnessActor, CommanderClock>()
+  const stepCommander = (actor: HarnessActor): void => {
+    let clock = commanderClocks.get(actor)
+    if (!clock) {
+      clock = createCommanderClock()
+      commanderClocks.set(actor, clock)
+    }
+    const gathers = commanderGathers(
+      commanderModel,
+      actor,
+      actors,
+      actorPoint,
+      (member) => member.actionPhase !== 'idle',
+    )
+    const category = actor.budgetCategory
+    const called = advanceCommanderClock(clock, delta, gathers, () =>
+      commanderModel === 'shipped' ? reserveOwnSlots(category, 1) : reserveSlots(category, 1))
+    if (!called) return
+    const angle = (clock.called - 1) * 1.9
+    spawnEngineActor({
+      allegiance: actor.allegiance,
+      role: 'soldier',
+      x: actor.x + Math.sin(angle) * 3.2,
+      z: actor.z + Math.cos(angle) * 3.2,
+      system: actor.system,
+      budget: category,
+      hostileToPlayer: actor.hostileToPlayer,
+    })
+    encounterMetrics.reinforcementsCalled += 1
+  }
+
+  /**
    * One `engine`-model body, one frame: `updateActors`' order — timers, stance, morale on
    * its own clock, the action in flight, stagger, ropes, the rout — then either the squad's
    * `selectSquadIntent` or the world's `selectThreat`, at the engine's own ranges.
@@ -4701,6 +4943,11 @@ export function runHarness(options: RunOptions): RunReport {
         actor.orderX = null
         actor.orderZ = null
       }
+    }
+    // W1-6 — where `updateActors` calls `updateCommander`: after the finale's own bodies,
+    // before morale, and never while he is staggered.
+    if (commanderModel !== 'inert' && actor.role === 'commander' && actor.reaction !== 'stagger') {
+      stepCommander(actor)
     }
 
     actor.moraleTimer -= delta
@@ -4889,7 +5136,17 @@ export function runHarness(options: RunOptions): RunReport {
 
   /** The frame's opening: the tier, the loot on the ground, the clock's threat waves. */
   const w15FrameStart = (): void => {
-    threatTier = getThreatTier(elapsed)
+    // W2-1 — `updateThreat`'s target: the clock, or under `progress` the clock or the run's
+    // settled steps, whichever is further. The tier never falls, as in the engine; under
+    // `time` this is exactly the old assignment, since the clock only rises.
+    const clockTier = getThreatTier(elapsed)
+    const target = escalation !== 'time'
+      ? getThreatTier(elapsed, countProgressSteps({ graph, objectives }))
+      : clockTier
+    if (target > threatTier) {
+      tierRises.push({ at: elapsed, tier: target, cause: target > clockTier ? 'progress' : 'time' })
+      threatTier = target
+    }
     if (threatTier > maxThreatTier) maxThreatTier = threatTier
     interactCooldown = Math.max(0, interactCooldown - delta)
     if (sustainOn) updateLoot()
@@ -5183,8 +5440,11 @@ export function runHarness(options: RunOptions): RunReport {
   while (elapsed < timeLimit) {
     frames += 1
     elapsed += delta
-    advanceDoctrines()
+    // W2-1 — the engine settles the tier before the draft. `time` keeps this file's
+    // original order, so every pinned run is the run it was.
+    if (escalation === 'time') advanceDoctrines()
     w15FrameStart()
+    if (escalation !== 'time') advanceDoctrines()
 
     // 1. Chronicle, against the weather mix as it stood before the player moved. This is
     //    the engine's order, and it is what the 30/60/144 Hz arms are testing.
@@ -5887,7 +6147,7 @@ export function runHarness(options: RunOptions): RunReport {
       threatTier >= 2 &&
       !objectiveReports.get(id)?.completedAt
     ) {
-      spawnThreatWave()
+      if (spawnThreatWave() > 0) wavesBy.objective += 1
     }
     if (middleNodeIds.has(id) && !contractMetrics.middleOrder.includes(id)) {
       contractMetrics.middleOrder.push(id)
@@ -5966,6 +6226,12 @@ export function runHarness(options: RunOptions): RunReport {
   const balance: BalanceMetrics = {
     maxThreatTier,
     draftsReached: DOCTRINE_DRAFT_TIERS.filter((tier) => maxThreatTier >= tier).length,
+    tierRises,
+    draftsOpenedAt,
+    draftsForced,
+    finaleTier,
+    finaleScalingTier,
+    wavesBy,
     damageBySystem,
     deathSystem: outcome === 'defeat' ? (bledOut ? 'bleeding' : lastAttackerSystem) : null,
     companions: companionMetrics,
@@ -5995,7 +6261,9 @@ export function runHarness(options: RunOptions): RunReport {
     eventDirector,
     playerKit,
     encounterModel,
+    escalation,
     regionWindow,
+    commanders: commanderModel,
     hz,
     outcome,
     elapsed,
@@ -6673,6 +6941,8 @@ export interface BalanceCell {
     meanActorsSpawned: number
     meanOnField: number
     meanRefusedSeconds: number
+    /** W1-6 — soldiers commanders called, per run. */
+    meanReinforcements: number
   }
   meanGoldEarned: number
   meanGoldSpent: number
@@ -6771,7 +7041,13 @@ function summarizeCell(
   }
   const events = { random: 0, located: 0, threatWaves: 0, wonWithoutPlayer: 0, stoodDown: 0 }
   const rumours = { offered: 0, beyondReach: 0, beyondReachShare: 0 }
-  const encounters = { meanFielded: 0, meanActorsSpawned: 0, meanOnField: 0, meanRefusedSeconds: 0 }
+  const encounters = {
+    meanFielded: 0,
+    meanActorsSpawned: 0,
+    meanOnField: 0,
+    meanRefusedSeconds: 0,
+    meanReinforcements: 0,
+  }
   let damage = 0
   let kills = 0
   let companionsAtEnd = 0
@@ -6823,6 +7099,7 @@ function summarizeCell(
     encounters.meanActorsSpawned += balance.encounters.actorsSpawned / runs
     encounters.meanOnField += balance.encounters.meanOnField / runs
     encounters.meanRefusedSeconds += balance.encounters.refusedSeconds / runs
+    encounters.meanReinforcements += balance.encounters.reinforcementsCalled / runs
     goldEarned += balance.sustain.goldEarned
     goldSpent += balance.sustain.goldSpent
     healed += balance.sustain.healed

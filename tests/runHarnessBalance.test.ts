@@ -49,7 +49,11 @@
  *   has the ablation.
  * - **F1, unchanged.** 302 of 360 runs end inside three minutes and the median doctrine
  *   drafts reached is zero in every cell but cautious elf and guard, where a third of the
- *   runs stall to the time limit.
+ *   runs stall to the time limit. **W2-1 has since fixed the drafts half:** the tier follows
+ *   the run's progress as well as the clock, so the same runs reach two drafts, while enemy
+ *   stats stay on the clock and the win counts stay within noise. The table above is the
+ *   clock-only rule (`escalation: 'time'`); `tests/runHarnessEscalation.test.ts` holds the
+ *   comparison.
  * - **F2, corrected.** Every run reached its contract and started it: 360 started, 346
  *   kept, none abandoned. The first baseline's 239 `crowded` abandonments came from the
  *   harness simulating the whole 3x3 where the engine simulates only the plus inside it
@@ -119,15 +123,18 @@ test('the shipped baseline: three factions, three policies, inside the measured 
   assert.ok(beeline >= 0.1 && beeline <= 0.9, `beeline won ${beeline}`)
   assert.ok(duelist >= beeline, `duelist ${duelist} should win at least as often as beeline ${beeline}`)
 
-  // Runs are short: a winning run is still the review's two-to-three-minute errand, so the
-  // tier and draft clocks barely start (F1).
+  // Runs are short: a winning run is still the review's two-to-three-minute errand (F1).
+  // W2-1 fixed F1's other half: the tier now follows the run's progress as well as the
+  // clock, so the errand and the contract arm deal the first two drafts on the way to the
+  // finale. Enemy health and damage stay on the clock, which is why the win bands above
+  // did not have to move.
   for (const cell of [...byPolicy('beeline'), ...byPolicy('duelist')]) {
     if (cell.outcomes.victory === 0) continue
     assert.ok(
       cell.victoryLength.p50 >= 45 && cell.victoryLength.p50 <= 240,
       `${cell.policy}/${cell.faction} median win ${cell.victoryLength.p50}`,
     )
-    assert.ok(cell.draftsReached.median <= 1, `${cell.policy}/${cell.faction} drafts`)
+    assert.ok(cell.draftsReached.median >= 2, `${cell.policy}/${cell.faction} drafts`)
   }
 
   // Both ends of a run kill: the road's encounters and the finale's director.
@@ -299,19 +306,19 @@ test('W1-1 in whole runs: a random event up at arrival stands down, and the cont
 })
 
 test('W1-2 in whole runs: a cart is lost to an NPC only after a load, and never to the squad', () => {
-  // Under `engage`, the elf on seed 31677, the guard on seed 190057 and the villain on seed
-  // 79191 each reach a chronicle ambush whose raiders load their cart. In the baseline's
-  // `ignore` arm no NPC ever starts a load, so these are the runs that show the channel
-  // working end to end. The pre-W1-2 touch rule would lose a cart without a load
-  // (`lost > loads`), and the old squad rule would show up in `robbedBySquad`.
+  // Under `engage`, the elf on seed 7920 and the guard on seed 47515 each reach a chronicle
+  // ambush whose raiders load their cart. In the baseline's `ignore` arm no NPC ever starts a
+  // load, so these are the runs that show the channel working end to end. The pre-W1-2
+  // touch rule would lose a cart without a load (`lost > loads`), and the old squad rule
+  // would show up in `robbedBySquad`.
   //
-  // The guard was on seed 182138 until W2-3 changed which rumours the chronicle is offered:
-  // that moves the world's history, and its ambush no longer reaches a load. The three runs
-  // are chosen so that any one of them drifting the same way still leaves a load to see.
+  // Were 31677 and 182138 until W2-1, re-picked by the same rule — the first seed in the
+  // stride on which each faction's raiders start a load. W2-1 moved what the shipped arms
+  // run into: the tier on the HUD now follows progress, so events, waves and drafts come
+  // sooner, and the night moved, so the chronicle's carts meet different ground.
   const reports = ([
-    [31677, 'elf'],
-    [190057, 'guard'],
-    [79191, 'villain'],
+    [7920, 'elf'],
+    [47515, 'guard'],
   ] as const).map(([seed, faction]) =>
     runHarness({
       ...HARNESS_SHIPPED_ARMS,
@@ -347,6 +354,32 @@ test('the window arm: the shipped arms simulate the engine\'s plus, and the 3x3 
   assert.ok(refused(plus) < refused(square), `refused ${refused(plus)} s in the plus, ${refused(square)} s in the 3x3`)
 })
 
+test('W1-6 in whole runs: the guard\'s own garrisons call for men only in a fight', () => {
+  // Seed 95029: the guard's road to «Домики жгут» runs past the two palace strongholds,
+  // whose friendly commanders called a soldier under the old rule while nobody fought. The
+  // shipped rule calls nobody there, and the contract is the same contract. The `inert`
+  // commander, a body and a swing, is what every pinned number was measured with.
+  const options = {
+    ...HARNESS_SHIPPED_ARMS,
+    seed: 95029,
+    faction: 'guard',
+    policy: 'beeline',
+    hz: 30,
+    timeLimit: 300,
+  } as const
+  const shipped = runHarness(options)
+  const legacy = runHarness({ ...options, commanders: 'legacy' })
+  const inert = runHarness({ ...options, commanders: 'inert' })
+  assert.equal(shipped.commanders, 'shipped')
+  assert.equal(shipped.balance.encounters.reinforcementsCalled, 0, 'an idle garrison called a soldier')
+  assert.ok(legacy.balance.encounters.reinforcementsCalled >= 1, 'the old rule called nobody: the arm is not wired')
+  assert.equal(inert.balance.encounters.reinforcementsCalled, 0)
+  for (const report of [shipped, legacy, inert]) {
+    assert.equal(report.balance.contracts.started, 1)
+    assert.equal(report.balance.contracts.abandoned, 0)
+  }
+})
+
 test('the arms leave the pinned run alone, and the shipped kit walks the engine\'s road', () => {
   const base = { seed: 424242, faction: 'elf', policy: 'beeline', hz: 60, timeLimit: 40 } as const
   const omitted = runHarness(base)
@@ -360,6 +393,7 @@ test('the arms leave the pinned run alone, and the shipped kit walks the engine\
     playerKit: 'harness',
     encounterModel: 'harness',
     regionWindow: 'square',
+    commanders: 'inert',
   })
   assert.deepEqual(explicit, omitted, 'the declared defaults must be the defaults')
   assert.equal(omitted.balance.companions.started, 0)

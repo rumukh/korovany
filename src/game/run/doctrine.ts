@@ -157,12 +157,94 @@ export const MAX_EQUIPPED_DOCTRINES = 3
 /**
  * When a draft opens, in `threatTier`.
  *
- * `getThreatTier` is `min(5, 1 + floor(elapsed / 180))`, so tiers 2, 3 and 4 are three, six
- * and nine minutes. The anchor is deliberately the tier and not a timer of this feature's
- * own: the tier already exists, is already persisted in `directorState` and already paces
- * the run, so the draft lands on beats the player is already feeling.
+ * The anchor is deliberately the tier and not a timer of this feature's own: the tier
+ * already exists, is already persisted in `directorState` and already paces the run, so the
+ * draft lands on beats the player is already feeling.
+ *
+ * W2-1 — `getThreatTier` is the clock or the run's progress, whichever is further, so the
+ * three drafts arrive with the first, second and third closed step. The clock is only the
+ * backstop now: a run that closes nothing still meets them at three, six and nine minutes.
  */
 export const DOCTRINE_DRAFT_TIERS = [2, 3, 4] as const
+
+/**
+ * W2-1 — a fight, by the score's own two ranges (`desiredMusicIntensity`).
+ *
+ * A hostile chasing the player is a fight once it is within `DOCTRINE_DRAFT_CALM_RADIUS`
+ * (the score's combat range); one winding up or loosing at the player is a fight anywhere
+ * within `DOCTRINE_DRAFT_ALERT_RADIUS` (its alert range). Measured, not guessed: with the
+ * alert range for both, a scripted player walking to the finale with pursuers 20–35 m behind
+ * often met no calm moment at all, and only 174 of 197 winning runs opened their second
+ * draft; with the combat range for pursuers, 194 of 196 did, none of them mid-swing.
+ */
+export const DOCTRINE_DRAFT_CALM_RADIUS = 14
+export const DOCTRINE_DRAFT_ALERT_RADIUS = 38
+
+export interface EngagedHostile {
+  /** Metres from the player. */
+  distance: number
+  /** Its current action — a wind-up, a swing, a shot — is aimed at the player. */
+  targetingPlayer: boolean
+}
+
+export interface DoctrineDraftMoment {
+  /** Every live hostile that is chasing the player or acting against them. */
+  engagedHostiles: Iterable<EngagedHostile>
+  /** A finale fight is under way around the player. */
+  finaleEngaged: boolean
+}
+
+/**
+ * W2-1 — whether this is a moment to put a choice in front of the player.
+ *
+ * A draft is a decision, and a decision offered mid-fight is either ignored or paid for
+ * in blood. The threat tier itself does not wait — it is the run's pacing, announced as the
+ * consequence of the step that raised it — but the cards do. Nothing persisted: the check
+ * is made fresh every frame, the anchors it gates only ever rise, and the one clock beside
+ * it, the ceiling on the wait (`mayOpenDoctrineDraft`), lives in the engine, not the save.
+ */
+export function isDoctrineDraftMomentCalm(moment: DoctrineDraftMoment): boolean {
+  if (moment.finaleEngaged) return false
+  for (const hostile of moment.engagedHostiles) {
+    if (hostile.distance <= DOCTRINE_DRAFT_CALM_RADIUS) return false
+    if (hostile.targetingPlayer && hostile.distance <= DOCTRINE_DRAFT_ALERT_RADIUS) return false
+  }
+  return true
+}
+
+/**
+ * W2-1 — the ceiling on that wait, in seconds of run time.
+ *
+ * Calm is the rule and this is its bound. A player who kites a pack, or tanks a wave behind
+ * a shield, keeps a hostile inside 14 m for minutes, and a draft earned then would wait as
+ * long: in the shipped harness arms, two stuck guard seeds held one for 240 s and never
+ * opened it. Thirty seconds is about twice the longest wait any draft that did open had
+ * there (15.7 s), so an ordinary fight is never overridden, and under half the shortest gap
+ * between threat waves (70 s), so a player who never stops fighting still gets the cards
+ * before the next wave is on them.
+ *
+ * Runtime only: the engine starts the wait when the tier crosses a draft point and does not
+ * save it, so a continue restarts the wait. That is bounded — one more ceiling at most — and
+ * there is nothing in it to farm: the wait only ever delays the cards, it never deals one.
+ */
+export const DOCTRINE_DRAFT_MAX_HOLD_SECONDS = 30
+
+/**
+ * W2-1 — whether a draft that has waited `heldSeconds` of run time may open now.
+ *
+ * At a calm moment, always. Past `DOCTRINE_DRAFT_MAX_HOLD_SECONDS`, at any moment but the
+ * two that are still a blow on its way: a finale under way, and a hostile winding up,
+ * swinging or loosing at the player from within `DOCTRINE_DRAFT_CALM_RADIUS`. A pursuer at
+ * the player's heels, or an archer farther off, no longer holds the cards back.
+ */
+export function mayOpenDoctrineDraft(moment: DoctrineDraftMoment, heldSeconds: number): boolean {
+  if (!(heldSeconds >= DOCTRINE_DRAFT_MAX_HOLD_SECONDS)) return isDoctrineDraftMomentCalm(moment)
+  if (moment.finaleEngaged) return false
+  for (const hostile of moment.engagedHostiles) {
+    if (hostile.targetingPlayer && hostile.distance <= DOCTRINE_DRAFT_CALM_RADIUS) return false
+  }
+  return true
+}
 
 /** Cards on the table at one draft. Fewer only when the pool has run short. */
 export const DOCTRINE_OFFER_SIZE = 3
@@ -345,6 +427,14 @@ export function createDoctrineRunState(pool: readonly string[]): DoctrineRunStat
 
 export function cloneDoctrineRunState(state: DoctrineRunState): DoctrineRunState {
   return { pool: [...state.pool], equipped: [...state.equipped], anchors: state.anchors }
+}
+
+/**
+ * Whether the tier has crossed a draft point the ledger has not opened yet: a draft is
+ * waiting for its moment. W2-1's ceiling on that wait is timed from the frame this turns true.
+ */
+export function isDoctrineAnchorDue(state: DoctrineRunState, threatTier: number): boolean {
+  return DOCTRINE_DRAFT_TIERS.filter((tier) => threatTier >= tier).length > state.anchors
 }
 
 /**

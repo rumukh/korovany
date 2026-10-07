@@ -191,6 +191,7 @@ import {
   getMaxHealth,
   getMaxStamina,
   getShopItemPrice,
+  getEnemyScalingTier,
   getThreatTier,
   actorGaitCadence,
   actorSpeedForRole,
@@ -244,6 +245,7 @@ import {
   describeCivilianDeath,
   describeDoctrineDraftOpened,
   describeDoctrineTaken,
+  describeEnemiesStronger,
   describeEventHandback,
   describeEventStarted,
   describeExpeditionNotice,
@@ -290,6 +292,7 @@ import {
   formatRegionGridLabel,
   generatedSiteLabel,
   HEALER_TREATED_NOTICE,
+  NIGHT_FALL_NOTICE,
   RALLY_NOTICE,
   RATION_ON_BLEED_NOTICE,
   REINFORCEMENTS_ORDERED_NOTICE,
@@ -327,6 +330,8 @@ import {
   equipDoctrine,
   getDoctrineDefinition,
   getDoctrineOffer,
+  isDoctrineAnchorDue,
+  mayOpenDoctrineDraft,
   normalizeDoctrineRunState,
   pendingDoctrineDraftIndex,
   resolveDoctrineEffects,
@@ -446,6 +451,7 @@ import {
   findCivilianAlarm,
   flankApproachAngle,
   flankBlend,
+  isCommanderGroupEngaged,
   isPacifistRole,
   localGroupShare,
   playerEngagementRank,
@@ -534,6 +540,7 @@ import {
   campaignObjectivesComplete,
   commitChronicleTicks,
   completeObjectiveEntry,
+  countProgressSteps,
   createCampaignContractState,
   createChronicleCommitmentState,
   createGeneratedObjectives,
@@ -563,6 +570,7 @@ import {
   playerObjectiveRatio,
   resolveActiveObjectiveNode,
   resolveContract,
+  restoreThreatTier,
   rollEventCooldown,
   rumourKeptReward,
   selectChronicleAnnouncements,
@@ -705,6 +713,7 @@ import {
   computeSunAngle,
   createChronicleEnvironment,
   createWeatherMix,
+  nightFellBetween,
   smoothstep,
   snapWeatherMix,
   type WeatherKind,
@@ -2362,7 +2371,15 @@ export class GameEngine {
   private upgrades: UpgradeLevels
   private elapsed = 0
   private campaignCompleted = false
+  /** W2-1 — the pacing tier: the HUD's «Угроза», drafts, event cadence and waves. */
   private threatTier = 1
+  /** W2-1 — the clock's tier last announced; derived from `elapsed`, never saved. */
+  private announcedScalingTier = 1
+  /**
+   * W2-1 — the run time a crossed draft point began waiting for calm, or null while none
+   * waits. Never saved, so a continue restarts the wait (`DOCTRINE_DRAFT_MAX_HOLD_SECONDS`).
+   */
+  private doctrineDraftHeldSince: number | null = null
   private nextThreatWaveAt = THREAT_WAVE_FIRST_AT
   private paused = false
   private ended = false
@@ -2868,17 +2885,13 @@ export class GameEngine {
     )
     this.generatedRunStatus = restoredRun?.status ?? 'active'
     this.campaignCompleted = this.objectives.every((objective) => objective.done)
-    this.threatTier = THREE.MathUtils.clamp(
-      Math.floor(
-        this.readSerializableNumber(
-          restoredDirector,
-          'threatTier',
-          getThreatTier(this.elapsed),
-        ),
-      ),
-      1,
-      MAX_THREAT_TIER,
+    this.threatTier = restoreThreatTier(
+      restoredDirector?.threatTier,
+      this.elapsed,
+      this.campaignProgressSteps(),
     )
+    // The clock's tier is a function of `elapsed`, so a continue knows what was announced.
+    this.announcedScalingTier = getEnemyScalingTier(this.elapsed)
     this.eventCooldown =
       Math.min(
         this.eventCooldownRange().max,
@@ -4259,6 +4272,7 @@ export class GameEngine {
     // `this.weatherEnabled` gates the precipitation, so neither may be read by anything
     // that decides what the world *does*.
     this.ambientNightFactor = computeNightFactor(this.elapsed)
+    this.announceNightfall(delta)
     const storm = computeStormFactor(this.weatherWeights)
     this.ambientStormPace = weatherPaceMultiplier(storm)
     this.ambientStormHunch = weatherHunch(storm)
@@ -4350,6 +4364,20 @@ export class GameEngine {
     this.updateEvents(delta)
     this.updatePrompt()
     this.emitView(false)
+  }
+
+  /**
+   * W2-1 — night is a phase of the run now, so the run says when it starts, once.
+   *
+   * Read off the world's night (`computeNightFactor` of the simulation's own clock), at the
+   * threshold where the villagers gather and the fires are lit, so the line and what the
+   * player sees agree. An edge rather than a level: a continue in the middle of a night says
+   * nothing, and nothing has to be saved for that to be true.
+   */
+  private announceNightfall(delta: number): void {
+    if (this.ended || delta <= 0) return
+    if (!nightFellBetween(this.elapsed - delta, this.elapsed, CAMPFIRE_NIGHT_THRESHOLD)) return
+    this.callbacks.onNotice(NIGHT_FALL_NOTICE, 'warning')
   }
 
   private readSerializableNumber(
@@ -8969,12 +8997,16 @@ export class GameEngine {
 
   private updateCommander(actor: Actor, delta: number): void {
     this.broadcastCommanderOrder(actor)
+    if (!this.commanderGathersMen(actor)) return
     actor.reinforcementTimer -= delta
     if (actor.reinforcementTimer > 0) return
     actor.reinforcementTimer += COMMANDER_REINFORCEMENT_INTERVAL
     if (
       actor.reinforcementsCalled >= COMMANDER_REINFORCEMENT_LIMIT ||
-      !this.reserveActorSlots(actor.budgetCategory, 1)
+      // W1-6 — out of his own side's share only: a summons never borrows the room a
+      // contract or a located fight would stage in, and never pushes anyone out for it.
+      // With no room it waits for the next call, as it always has.
+      !this.reserveOwnActorSlots(actor.budgetCategory, 1)
     ) {
       return
     }
@@ -9001,6 +9033,30 @@ export class GameEngine {
     if (actor.mesh.position.distanceTo(this.player.position) < 35) {
       this.callbacks.onNotice(REINFORCEMENTS_ORDERED_NOTICE, 'warning')
     }
+  }
+
+  /**
+   * W1-6 — whether a commander's reinforcement clock runs this frame.
+   *
+   * One hostile to the player keeps the old rule: the men he gathers are part of the fight
+   * the player walks into, so he gathers them whether or not anyone is swinging yet. One
+   * who is not — the guard's own garrisons at the two palace strongholds the elves and the
+   * villain march on — calls for men only while his own are fighting, and his clock stands
+   * still in between. He used to call four the moment his square streamed in, every time it
+   * did, with nobody to fight, and those idle garrisons were what filled the room a guard
+   * contract nearby needed.
+   */
+  private commanderGathersMen(commander: Actor): boolean {
+    return (
+      commander.hostileToPlayer ||
+      isCommanderGroupEngaged(
+        commander,
+        this.actors,
+        COMMANDER_ORDER_RANGE,
+        (actor) => actor.mesh.position,
+        (actor) => actor.action !== null,
+      )
+    )
   }
 
   /**
@@ -10052,16 +10108,55 @@ export class GameEngine {
     }
   }
 
+  /**
+   * W2-1 — the steps the threat tier answers to, read off the saved objective list.
+   *
+   * Derived every time rather than counted as completions happen, so a checkpoint and a
+   * continue cannot count a step twice. W2-2's caravan beats join through
+   * `countProgressSteps`'s own input.
+   */
+  private campaignProgressSteps(): number {
+    return countProgressSteps({
+      graph: this.generatedBlueprint.objectives[this.faction],
+      objectives: this.objectives,
+    })
+  }
+
+  /** W2-1 — the pacing tier the rules owe the run right now: the clock or the progress, whichever is further. */
+  private threatTierTarget(): number {
+    return getThreatTier(this.elapsed, this.campaignProgressSteps())
+  }
+
+  /** W2-1 — the tier enemy health and damage follow: the clock's alone. */
+  private enemyScalingTier(): number {
+    return getEnemyScalingTier(this.elapsed)
+  }
+
   private updateThreat(): void {
-    const nextTier = getThreatTier(this.elapsed)
+    const nextTier = this.threatTierTarget()
+    const scalingTier = this.enemyScalingTier()
+    // W2-1 — two rises, each said for what it is. The HUD's tier is pacing and rises with
+    // the clock or with progress; enemies get tougher with the clock alone. A rise the clock
+    // paid for keeps the «сильнее» line, a rise the run earned says so and promises guests
+    // rather than stats, and a clock tick under an already-earned tier still says the
+    // enemies grew, because that is the change the player would otherwise never be told.
+    const enemiesGrew = scalingTier > this.announcedScalingTier
+    this.announcedScalingTier = Math.max(this.announcedScalingTier, scalingTier)
     if (nextTier > this.threatTier) {
       this.threatTier = nextTier
+      const cause = nextTier > scalingTier ? 'progress' : 'time'
       this.callbacks.onNotice(
-        describeThreatTier(this.threatTier, MAX_THREAT_TIER),
+        describeThreatTier(this.threatTier, MAX_THREAT_TIER, cause),
         'warning',
       )
+      if (enemiesGrew && cause === 'progress') {
+        this.callbacks.onNotice(describeEnemiesStronger(scalingTier, MAX_THREAT_TIER), 'warning')
+      }
       this.playSound('event')
       this.emitView(true)
+    } else if (enemiesGrew) {
+      this.callbacks.onNotice(describeEnemiesStronger(scalingTier, MAX_THREAT_TIER), 'warning')
+      this.playSound('event')
     }
     this.updateDoctrineDraft()
 
@@ -10089,10 +10184,20 @@ export class GameEngine {
   /**
    * Roadmap 1.6 — opens a draft when the threat tier reaches one of its anchors.
    *
-   * The anchors are tiers 2, 3 and 4, which `getThreatTier` puts at three, six and nine
-   * minutes. Anchoring on the tier rather than on a timer of this feature's own is
-   * deliberate: the tier already exists, is already persisted, already paces the run, and —
-   * the load-bearing part — it decoupled this initiative from 1.4 entirely.
+   * The anchors are tiers 2, 3 and 4. Anchoring on the tier rather than on a timer of this
+   * feature's own is deliberate: the tier already exists, is already persisted, already
+   * paces the run, and — the load-bearing part — it decoupled this initiative from 1.4
+   * entirely. W2-1 made the tier follow the run's progress as well as the clock, so the
+   * drafts now arrive with the first, second and third closed step.
+   *
+   * W2-1 — and only at a calm moment. The tier rises on the frame it is earned, but the
+   * cards wait until no hostile is at the player's throat — none chasing within 14 m, none
+   * swinging or shooting at them within 38 m — and no finale is under way
+   * (`isDoctrineDraftMomentCalm`), so a choice is never put on the table mid-fight. The
+   * wait has a ceiling: after `DOCTRINE_DRAFT_MAX_HOLD_SECONDS` of run time the cards come
+   * anyway, unless a finale is on or a blow is already on its way from within 14 m
+   * (`mayOpenDoctrineDraft`), so a fight that never ends cannot starve the draft. The
+   * draft stays a HUD card and a journal entry: it never opens or closes an overlay.
    *
    * A player who walks past an open offer meets it again rather than losing it, so the
    * announcement fires when a draft *becomes* pending and not on every frame it stays that
@@ -10102,6 +10207,13 @@ export class GameEngine {
    */
   private updateDoctrineDraft(): void {
     if (this.ended) return
+    if (!isDoctrineAnchorDue(this.doctrines, this.threatTier)) {
+      this.doctrineDraftHeldSince = null
+      return
+    }
+    this.doctrineDraftHeldSince ??= this.elapsed
+    if (!this.draftMayOpen(this.elapsed - this.doctrineDraftHeldSince)) return
+    this.doctrineDraftHeldSince = null
     if (!advanceDoctrineAnchors(this.doctrines, this.threatTier)) return
     const index = pendingDoctrineDraftIndex(this.doctrines)
     if (index === null) return
@@ -10111,6 +10223,31 @@ export class GameEngine {
     )
     this.playSound('objective')
     this.emitView(true)
+  }
+
+  /**
+   * W2-1 — whether the waiting draft may open on this frame, `heldSeconds` into its wait: at
+   * a calm moment, or past the ceiling at any moment but a finale and a blow from close by.
+   */
+  private draftMayOpen(heldSeconds: number): boolean {
+    const engagedHostiles: { distance: number; targetingPlayer: boolean }[] = []
+    for (const actor of this.actors) {
+      if (!actor.alive || !actor.hostileToPlayer) continue
+      const targetingPlayer = actor.action?.target.kind === 'player'
+      if (!actor.playerAggro && !targetingPlayer) continue
+      engagedHostiles.push({
+        distance: actor.mesh.position.distanceTo(this.player.position),
+        targetingPlayer,
+      })
+    }
+    return mayOpenDoctrineDraft(
+      {
+        engagedHostiles,
+        finaleEngaged:
+          this.finale.introduced && !this.finale.suspended && this.finaleWithinArena(),
+      },
+      heldSeconds,
+    )
   }
 
   /**
@@ -11411,12 +11548,13 @@ export class GameEngine {
     return eventCooldownRange(this.threatTier)
   }
 
+  // W2-1 — enemy stats follow the clock's tier only; `this.threatTier` is pacing.
   private enemyHealthMultiplier(allegiance: Allegiance): number {
-    return enemyHealthMultiplier(this.threatTier, hostile(this.faction, allegiance))
+    return enemyHealthMultiplier(this.enemyScalingTier(), hostile(this.faction, allegiance))
   }
 
   private enemyDamageMultiplier(actor: Actor): number {
-    return enemyDamageMultiplier(this.threatTier, actor.hostileToPlayer)
+    return enemyDamageMultiplier(this.enemyScalingTier(), actor.hostileToPlayer)
   }
 
   private spawnThreatWave(scheduledAt: number): number {
@@ -11505,6 +11643,15 @@ export class GameEngine {
   ): number {
     this.actorBudget.sync(this.actorUsageByCategory())
     return this.actorBudget.reserveUpTo(category, count)
+  }
+
+  /**
+   * W1-6 — a reservation out of the category's own share alone: nothing borrowed from the
+   * categories below it, and nobody made to yield. For a summons that can wait.
+   */
+  private reserveOwnActorSlots(category: ActorBudgetCategory, count: number): boolean {
+    this.actorBudget.sync(this.actorUsageByCategory())
+    return this.actorBudget.reserveOwn(category, count)
   }
 
   /** Frees room for a higher-priority category. Ambient is asked first, by design. */
@@ -14271,7 +14418,9 @@ export class GameEngine {
       // Roadmap 1.6 — «Устав дозора». The wave the clock is no longer throwing arrives here
       // instead, so the run's pressure is paced by what the player finishes rather than by how
       // long they have been out. Tier 1 is left alone for the same reason the scheduler leaves
-      // it alone: the first three minutes are not a wave's business.
+      // it alone: a run that has neither closed a step nor been out three minutes is not a
+      // wave's business. W2-1 — the wave is sized by the tier the run had *before* this
+      // closure; the tier the closure earns arrives on the next frame, with its own line.
       const spawned = this.spawnThreatWave(this.elapsed)
       if (spawned > 0) {
         this.callbacks.onNotice(describeThreatWave(spawned, this.threatTier), 'warning')

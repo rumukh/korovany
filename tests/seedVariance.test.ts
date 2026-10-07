@@ -109,8 +109,14 @@ function seedCount(): number {
  * that seed and it stopped finishing inside the arm's clock. Re-picked by the same rule
  * (elf and villain both complete it) rather than by loosening the control, because a corpus
  * with a truncated campaign in it is exactly what this control exists to refuse.
+ *
+ * Was 2 until W2-1. The nine-minute day moved the night into the middle of this arm's long
+ * cautious runs and the beasts' growth into the night, so the chronicle the elf walks through
+ * on seed 2 changed, and three of its twelve noise samples now stall short of the finale
+ * (timeouts, not deaths). Re-picked by the same rule again: 10 is the first seed after 2 on
+ * which all twelve elf and all twelve villain samples finish, with nothing structural moving.
  */
-const CONTROL_SEED = 2
+const CONTROL_SEED = 10
 
 function victories(runs: readonly MeasuredRun[]): MeasuredRun[] {
   return runs.filter((run) => run.report.outcome === 'victory')
