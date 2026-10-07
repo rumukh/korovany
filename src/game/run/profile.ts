@@ -233,18 +233,79 @@ function boundedInteger(value: number, maximum: number): number {
   return Math.min(maximum, Math.max(0, Math.floor(value)))
 }
 
-export function computeRunCompletionReward(
-  summary: Pick<RunHistorySummary, 'status' | 'kills' | 'objectivesCompleted'>,
-): number {
-  if (summary.status === 'abandoned') return 0
-  if (summary.status !== 'victory' && summary.status !== 'defeat') return 0
-  const completionReward = summary.status === 'victory' ? 45 : 12
-  const killReward = Math.min(25, Math.floor(boundedInteger(summary.kills, 10_000) / 4))
-  const objectiveReward = Math.min(
-    20,
-    boundedInteger(summary.objectivesCompleted, 100) * 4,
+/**
+ * Every number the profile reward is made of, so the end screen can print the same rules
+ * the archive pays by.
+ *
+ * W1-4 added the purse. The «gold» hint always promised that gold surviving the run comes
+ * back as profile coins, and until then the formula did not read gold at all. Ten gold make
+ * a coin, at most fifteen a run, and the bounds are the argument:
+ *
+ * - **The cap is below the victory/defeat gap (45 − 12 = 33).** Hoarding can never out-earn
+ *   the heal or prosthetic that wins the run, so spending stays right when the alternative
+ *   is dying, and banking is right only when it is not.
+ * - **It is the smallest bonus** (kills 25, objectives 20). A run now pays at most 105; the
+ *   laziest one, dying at once with the untouched 55-gold purse, gains five coins, not a loop.
+ * - **Ten to one is the counter's own scale.** A field kit costs 35 and an upgrade 100–140,
+ *   so a purchase visibly costs 3–14 coins of the bonus, and 150 gold or more pays the cap.
+ */
+export const RUN_COMPLETION_REWARD = {
+  victory: 45,
+  defeat: 12,
+  killsPerCoin: 4,
+  killCap: 25,
+  coinsPerObjective: 4,
+  objectiveCap: 20,
+  goldPerCoin: 10,
+  goldCap: 15,
+} as const
+
+export interface RunCompletionRewardBreakdown {
+  /** The outcome itself: victory or defeat. Zero for an abandoned run. */
+  completion: number
+  kills: number
+  objectives: number
+  /** The purse: gold that survived to the end, converted at the bounded rate. */
+  gold: number
+  total: number
+}
+
+export type RunCompletionRewardInput = Pick<
+  RunHistorySummary,
+  'status' | 'kills' | 'objectivesCompleted' | 'endingGold'
+>
+
+/** What a purse of this size pays at the end of a run; the shop prints it beside the purse. */
+export function computePurseReward(gold: number): number {
+  const rules = RUN_COMPLETION_REWARD
+  return Math.min(
+    rules.goldCap,
+    Math.floor(boundedInteger(gold, 1_000_000) / rules.goldPerCoin),
   )
-  return completionReward + killReward + objectiveReward
+}
+
+export function computeRunCompletionRewardBreakdown(
+  summary: RunCompletionRewardInput,
+): RunCompletionRewardBreakdown {
+  if (summary.status !== 'victory' && summary.status !== 'defeat') {
+    return { completion: 0, kills: 0, objectives: 0, gold: 0, total: 0 }
+  }
+  const rules = RUN_COMPLETION_REWARD
+  const completion = summary.status === 'victory' ? rules.victory : rules.defeat
+  const kills = Math.min(
+    rules.killCap,
+    Math.floor(boundedInteger(summary.kills, 10_000) / rules.killsPerCoin),
+  )
+  const objectives = Math.min(
+    rules.objectiveCap,
+    boundedInteger(summary.objectivesCompleted, 100) * rules.coinsPerObjective,
+  )
+  const gold = computePurseReward(summary.endingGold)
+  return { completion, kills, objectives, gold, total: completion + kills + objectives + gold }
+}
+
+export function computeRunCompletionReward(summary: RunCompletionRewardInput): number {
+  return computeRunCompletionRewardBreakdown(summary).total
 }
 
 export const computeCompletionReward = computeRunCompletionReward

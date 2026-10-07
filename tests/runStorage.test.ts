@@ -3,7 +3,10 @@ import test from 'node:test'
 import {
   DEFAULT_STARTING_BOON_IDS,
   MAX_SEEN_HINTS,
+  RUN_COMPLETION_REWARD,
+  computePurseReward,
   computeRunCompletionReward,
+  computeRunCompletionRewardBreakdown,
   getStartingBoonEffects,
   recordSeenHint,
   selectProfileBoon,
@@ -951,4 +954,137 @@ test('boons validate selections, apply modest effects, unlock immutably, and rew
   assert.equal(computeRunCompletionReward(victory), computeRunCompletionReward({ ...victory }))
   assert.ok(computeRunCompletionReward(victory) > computeRunCompletionReward(defeat))
   assert.equal(computeRunCompletionReward(abandoned), 0)
+})
+
+// ---------------------------------------------------------------------------
+// W1-4 — the purse: gold that survives the run, as the «gold» hint promises
+// ---------------------------------------------------------------------------
+
+/** The reward exactly as it shipped before W1-4: it never read gold. The negative control. */
+function rewardIgnoringGold(summary: Parameters<typeof computeRunCompletionReward>[0]): number {
+  if (summary.status !== 'victory' && summary.status !== 'defeat') return 0
+  return (
+    (summary.status === 'victory' ? 45 : 12) +
+    Math.min(25, Math.floor(summary.kills / 4)) +
+    Math.min(20, summary.objectivesCompleted * 4)
+  )
+}
+
+/** Coins a 114-gold purse adds over an empty one — the villain's purse from the review. */
+function purseDelta(reward: typeof computeRunCompletionReward): number {
+  const run = { status: 'defeat' as const, kills: 9, objectivesCompleted: 4 }
+  return reward({ ...run, endingGold: 114 }) - reward({ ...run, endingGold: 0 })
+}
+
+test('W1-4: the purse pays a coin per ten gold, at most fifteen, and only for a finished run', () => {
+  // The defect, measured both ways: the shipped formula pays the purse, the old one did not.
+  assert.equal(purseDelta(computeRunCompletionReward), 11)
+  assert.equal(purseDelta(rewardIgnoringGold), 0, 'the control must reproduce the old defect')
+
+  const rules = RUN_COMPLETION_REWARD
+  assert.equal(rules.goldPerCoin, 10)
+  assert.equal(rules.goldCap, 15)
+  // The bound that keeps it from being a farm: hoarding never out-earns winning.
+  assert.ok(rules.goldCap < rules.victory - rules.defeat)
+
+  const cases: readonly (readonly [number, number])[] = [
+    [0, 0], [9, 0], [10, 1], [55, 5], [114, 11], [149, 14], [150, 15], [151, 15],
+    [10_000, 15], [Number.MAX_SAFE_INTEGER, 15], [-40, 0], [Number.NaN, 0],
+    [Number.POSITIVE_INFINITY, 0], [12.9, 1],
+  ]
+  for (const [endingGold, coins] of cases) {
+    assert.equal(computePurseReward(endingGold), coins, `purse ${String(endingGold)}`)
+    for (const status of ['victory', 'defeat'] as const) {
+      const summary = { status, kills: 17, objectivesCompleted: 5, endingGold }
+      const breakdown = computeRunCompletionRewardBreakdown(summary)
+      assert.equal(breakdown.gold, coins)
+      assert.equal(breakdown.completion, status === 'victory' ? 45 : 12)
+      assert.equal(breakdown.kills, 4)
+      assert.equal(breakdown.objectives, 20)
+      assert.equal(
+        breakdown.total,
+        breakdown.completion + breakdown.kills + breakdown.objectives + breakdown.gold,
+      )
+      assert.equal(computeRunCompletionReward(summary), breakdown.total)
+    }
+    // Leaving a run never banks its purse: abandoning cannot be a way to cash out.
+    assert.deepEqual(
+      computeRunCompletionRewardBreakdown({
+        status: 'abandoned',
+        kills: 17,
+        objectivesCompleted: 5,
+        endingGold,
+      }),
+      { completion: 0, kills: 0, objectives: 0, gold: 0, total: 0 },
+    )
+  }
+  // The ceiling of the whole reward moved from 90 to 105, and no further.
+  assert.equal(
+    computeRunCompletionReward({
+      status: 'victory',
+      kills: 10_000,
+      objectivesCompleted: 100,
+      endingGold: 1_000_000,
+    }),
+    105,
+  )
+})
+
+test('W1-4: finalization pays the purse exactly once, and suspend/continue cannot refill it', () => {
+  // A defeat with the review's 114 unspent gold, the way the engine writes it.
+  const terminal = makeTerminalRun('purse-run', 'defeat')
+  terminal.player.gold = 114
+  const storage = new ControlledProfileStorage()
+  assert.equal(saveProfile(storage, { ...createDefaultProfile(), profileCurrency: 7 }), true)
+
+  const first = finalizeRunSnapshot(storage, terminal)
+  assert.equal(first.outcome, 'finalized')
+  assert.ok(first.summary)
+  assert.equal(first.summary.endingGold, 114)
+  const breakdown = computeRunCompletionRewardBreakdown(first.summary)
+  assert.equal(breakdown.gold, 11)
+  assert.equal(first.rewardGranted, breakdown.total)
+  assert.equal(first.summary.profileCurrencyEarned, breakdown.total)
+  assert.equal(first.profile.profileCurrency, 7 + breakdown.total)
+  assert.equal(
+    first.rewardGranted - rewardIgnoringGold(first.summary),
+    11,
+    'the archive paid a reward that still ignores the purse',
+  )
+
+  const repeated = finalizeRunSnapshot(storage, terminal)
+  assert.equal(repeated.outcome, 'already-finalized')
+  assert.equal(repeated.rewardGranted, 0)
+  assert.equal(repeated.profile.profileCurrency, first.profile.profileCurrency)
+
+  // Suspend/continue writes the same player record back each time. Five round trips later the
+  // purse, and therefore the reward, is exactly what it was: nothing is refreshed on continue.
+  const continued = new MemoryStorage()
+  const active = makeRun('purse-continued')
+  active.player.gold = 114
+  for (let cycle = 0; cycle < 5; cycle += 1) {
+    assert.equal(saveActiveRun(continued, loadActiveRun(continued) ?? active), true)
+  }
+  const resumed = loadActiveRun(continued)
+  assert.ok(resumed)
+  assert.equal(resumed.player.gold, 114)
+  const resumedTerminal: ActiveRunSaveV3 = {
+    ...resumed,
+    status: 'defeat',
+    updatedAt: '2026-01-02T04:00:00.000Z',
+    achievementRunState: { ...resumed.achievementRunState, result: 'defeat' },
+  }
+  const resumedResult = finalizeRunSnapshot(continued, resumedTerminal)
+  assert.equal(resumedResult.outcome, 'finalized')
+  assert.equal(resumedResult.rewardGranted, first.rewardGranted)
+
+  // And an abandoned run with a full purse still pays nothing at all.
+  const abandoned = makeRun('purse-abandoned')
+  abandoned.status = 'abandoned'
+  abandoned.player.gold = 10_000
+  const abandonedResult = finalizeRunSnapshot(new ControlledProfileStorage(), abandoned)
+  assert.equal(abandonedResult.outcome, 'finalized')
+  assert.equal(abandonedResult.rewardGranted, 0)
+  assert.equal(abandonedResult.summary?.endingGold, 10_000)
+  assert.equal(abandonedResult.profile.profileCurrency, 0)
 })

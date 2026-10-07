@@ -156,8 +156,11 @@ import {
   RUMOUR_PANEL_TITLE,
   RUMOUR_PIN_LABEL,
   RUMOUR_UNPIN_LABEL,
+  RUN_REWARD_LINES_LABEL,
   describeDoctrineSlots,
+  describePurseReward,
   describeRunEpilogue,
+  describeRunRewardLines,
   formatRussianCount,
   type RunEpilogueCopy,
 } from './game/content/gameCopy'
@@ -170,6 +173,8 @@ import {
 } from './game/run/doctrine'
 import {
   BOON_CATALOGUE,
+  computePurseReward,
+  computeRunCompletionRewardBreakdown,
   isBoonUnlocked,
   recordSeenHint,
   selectProfileBoon,
@@ -1958,6 +1963,7 @@ function ShopModal({
           <Coins aria-hidden="true" />
           <span>Ваш кошель</span>
           <strong>{view.gold}</strong>
+          <small className="shop-purse-reward">{describePurseReward(computePurseReward(view.gold))}</small>
         </div>
         {view.shopPriceMultiplier > 1.02 ? (
           <p className="shop-supply-note">
@@ -2425,6 +2431,15 @@ function EndModal({
 }) {
   const profileReward =
     terminalRun?.summary?.profileCurrencyEarned ?? terminalRun?.rewardGranted ?? 0
+  // The receipt is recomputed from the archived summary and shown only when it adds up to
+  // what the archive actually paid. A summary finalized under an older formula keeps its
+  // bare total rather than a breakdown that would claim a different sum.
+  const rewardSummary = terminalRun?.summary ?? null
+  const rewardBreakdown = rewardSummary ? computeRunCompletionRewardBreakdown(rewardSummary) : null
+  const rewardLines =
+    rewardSummary && rewardBreakdown && rewardBreakdown.total === profileReward
+      ? describeRunRewardLines(rewardSummary, rewardBreakdown)
+      : null
   const eyebrow =
     result === 'victory' ? 'Суть выполнена: забег пройден' : 'Пользователь не выжил'
   const title = result === 'victory' ? 'Можно грабить корованы!' : 'Труп тоже 3Д'
@@ -2483,6 +2498,16 @@ function EndModal({
               <strong>+{profileReward}</strong>
               <small>Новый баланс: {terminalRun.profileCurrency}</small>
             </div>
+            {rewardLines ? (
+              <dl className="terminal-reward-lines" aria-label={RUN_REWARD_LINES_LABEL}>
+                {rewardLines.map((line) => (
+                  <div className={`reward-line-${line.id}`} key={line.id}>
+                    <dt>{line.label}</dt>
+                    <dd>+{line.amount}</dd>
+                  </div>
+                ))}
+              </dl>
+            ) : null}
           </div>
         ) : null}
         {terminalRun?.finalizationPending ? (

@@ -306,3 +306,144 @@ test('combined status/mission column, atlas/finale column, prompts and controls 
     assert.equal(intersectionArea(prompt, controls), 0)
   }
 })
+
+// ---------------------------------------------------------------------------
+// W1-4 — desktop lanes. With mouse capture off, the bottom-right «Захватить мышь» card is
+// what a click lands on, and at 1366x768 it sat on the rumour board's «Взяться» (measured:
+// card x1039..1350 y583..640 over the button x1113..1167 y611..637; the click reached the
+// card). The notice lane, centred, began under the pause button whenever «Зона людей»
+// widened the identity panel to x493 (lane from x459). Both are now lanes by construction.
+// ---------------------------------------------------------------------------
+
+const combatMasteryCss = readFileSync(new URL('../src/game/ui/combatMastery.css', import.meta.url), 'utf8')
+const desktopLaneCss = extractBlock(appCss, '@media (min-width: 721px) and (pointer: fine) {')
+const desktopNoticeCss = extractBlock(appCss, '@media (min-width: 1001px) and (pointer: fine) {')
+const compactDesktopCss = extractBlock(compactCss, '@media (min-width: 721px) and (pointer: fine) {')
+const compactWideCss = extractBlock(compactCss, '@media (min-width: 1001px) and (pointer: fine) {')
+const REM = 16
+
+interface DesktopLane {
+  cameraBottom: number
+  cameraHeight: number
+  sideMaxHeight: (viewportHeight: number) => number
+}
+
+/** The lane the CSS declares, read back from the CSS rather than restated. */
+function declaredCameraLane(): DesktopLane {
+  const screen = extractRule(desktopLaneCss, '.game-screen')
+  assert.match(screen, /--camera-card-bottom:\s*8rem;/)
+  assert.match(screen, /--camera-card-top:\s*calc\(var\(--camera-card-bottom\)\s*\+\s*44px\s*\+\s*0\.7rem\s*\+\s*2px\);/)
+  assert.match(screen, /--hud-side-max-height:\s*calc\(100dvh\s*-\s*1rem\s*-\s*var\(--camera-card-top\)\s*-\s*0\.65rem\);/)
+  // The card really is that tall: one 44px control, 0.35rem padding and a 1px border each way.
+  const card = extractRule(combatMasteryCss, '.combat-camera-controls')
+  assert.match(card, /bottom:\s*var\(--camera-card-bottom,\s*8rem\);/)
+  assert.match(card, /padding:\s*0\.35rem\s+0\.65rem;/)
+  assert.match(card, /border:\s*1px solid/)
+  assert.match(extractRule(combatMasteryCss, '.combat-camera-controls button'), /min-height:\s*44px;/)
+  const cameraBottom = 8 * REM
+  const cameraHeight = 44 + 0.7 * REM + 2
+  return {
+    cameraBottom,
+    cameraHeight,
+    sideMaxHeight: (height) => height - REM - (cameraBottom + cameraHeight) - 0.65 * REM,
+  }
+}
+
+function sideColumnAndCard(
+  lane: DesktopLane,
+  width: number,
+  height: number,
+): { side: Rectangle; card: Rectangle } {
+  // The full column widens by its thin scrollbar (measured 266px); allow a whole rem.
+  const side = { left: width - REM - 17 * REM, right: width - REM, top: REM, bottom: REM + lane.sideMaxHeight(height) }
+  // The widest the card may be: min(28rem, 100% - 2rem), anchored right.
+  const cardWidth = Math.min(28 * REM, width - 2 * REM)
+  const card = {
+    left: width - REM - cardWidth,
+    right: width - REM,
+    top: height - lane.cameraBottom - lane.cameraHeight,
+    bottom: height - lane.cameraBottom,
+  }
+  return { side, card }
+}
+
+test('desktop: the right column ends above the camera card in both HUD modes and scrolls instead', () => {
+  const lane = declaredCameraLane()
+  const full = extractRule(desktopLaneCss, '.top-hud-side')
+  assert.match(full, /max-height:\s*var\(--hud-side-max-height\);/)
+  assert.match(full, /overflow-y:\s*auto;/)
+  // A bounded column that cannot be wheeled would hide its buttons instead of covering them.
+  assert.match(full, /pointer-events:\s*auto;/)
+  const compact = extractRule(compactDesktopCss, '.game-screen[data-hud="compact"] .top-hud-side')
+  assert.match(compact, /max-height:\s*var\(--hud-side-max-height\);/)
+  assert.match(compact, /overflow-y:\s*auto;/)
+
+  for (const width of [721, 1000, 1366, 1920]) {
+    for (const height of [600, 700, 768, 900, 1080]) {
+      const { side, card } = sideColumnAndCard(lane, width, height)
+      assert.ok(side.bottom - side.top >= 10 * REM, `${width}x${height}: the column collapsed`)
+      assert.equal(intersectionArea(side, card), 0, `${width}x${height}: the column runs under the card`)
+    }
+  }
+
+  // Negative controls: the measured pre-fix full column (y16..656) and the old compact bound
+  // (100dvh - 7rem) both put the column under the card at 1366x768, so the arithmetic above
+  // can see the defect it rules out.
+  const { card } = sideColumnAndCard(lane, 1366, 768)
+  const column = { left: 1094, right: 1350, top: 16 }
+  assert.ok(intersectionArea({ ...column, bottom: 656 }, card) > 0)
+  assert.ok(intersectionArea({ ...column, bottom: REM + 768 - 7 * REM }, card) > 0)
+})
+
+/** The full lane in screen space; its containing block is the game screen. */
+function fullNoticeLane(width: number): { left: number; right: number } {
+  const left = Math.max(33 * REM, width / 2 - 14 * REM)
+  return { left, right: left + Math.min(28 * REM, width - 52 * REM) }
+}
+
+/** The compact lane in screen space; its containing block is the top HUD, 1rem in. */
+function compactNoticeLane(width: number): { left: number; right: number } {
+  const inner = width - 2 * REM
+  const left = REM + Math.max(33 * REM, inner / 2 - 14 * REM)
+  return { left, right: left + Math.min(28 * REM, inner - 50 * REM) }
+}
+
+test('desktop: the notice lane starts past the widest identity panel and stops short of the right column', () => {
+  const notice = extractRule(desktopNoticeCss, '.notice-stack')
+  assert.match(notice, /left:\s*max\(33rem,\s*calc\(50% - 14rem\)\);/)
+  assert.match(notice, /transform:\s*none;/)
+  assert.match(notice, /width:\s*min\(28rem,\s*calc\(100% - 52rem\)\);/)
+  // The cap is what turns «past the widest panel» into a guarantee rather than a copy-length
+  // coincidence. In Chrome «Зона людей» measured 477px, inside it.
+  assert.match(extractRule(desktopNoticeCss, '.identity-panel'), /max-width:\s*31rem;/)
+  assert.match(
+    extractRule(compactWideCss, '.game-screen[data-hud="compact"] .notice-stack'),
+    /width:\s*min\(28rem,\s*calc\(100% - 50rem\)\);/,
+  )
+  // Finale lanes keep their own, more specific placement.
+  assert.match(
+    extractRule(compactDesktopCss, '.game-screen[data-hud="compact"]:has(.finale-hud) .notice-stack'),
+    /left:\s*1rem;/,
+  )
+
+  const identity = { left: REM, right: REM + 31 * REM, top: REM, bottom: 6 * REM }
+  for (const width of [1001, 1100, 1280, 1366, 1440, 1600, 1920, 2560]) {
+    for (const [mode, lane, columnWidth] of [
+      ['full', fullNoticeLane(width), 17 * REM],
+      ['compact', compactNoticeLane(width), 16 * REM],
+    ] as const) {
+      const rectangle = { ...lane, top: REM, bottom: 20 * REM }
+      const column = { left: width - REM - columnWidth, right: width - REM, top: REM, bottom: 40 * REM }
+      assert.equal(intersectionArea(rectangle, identity), 0, `${mode} ${width}px lane under the identity panel`)
+      assert.equal(intersectionArea(rectangle, column), 0, `${mode} ${width}px lane over the right column`)
+      assert.ok(lane.right - lane.left >= 10 * REM, `${mode} ${width}px lane too narrow to read`)
+    }
+  }
+  // Wide screens keep the original centred lane, which the graphics work measured at 1920.
+  assert.deepEqual(fullNoticeLane(1920), { left: 736, right: 1184 })
+  assert.deepEqual(compactNoticeLane(1920), { left: 736, right: 1184 })
+
+  // Negative control: the old centred lane at 1366 starts at x459, under the capped panel.
+  const centred = { left: 683 - 14 * REM, right: 683 + 14 * REM, top: REM, bottom: 20 * REM }
+  assert.ok(intersectionArea(centred, identity) > 0)
+})

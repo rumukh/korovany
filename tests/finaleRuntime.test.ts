@@ -6,6 +6,7 @@ import { AchievementTracker } from '../src/game/achievements.ts'
 import { createGeneratedEncounterPlans } from '../src/game/content/registry.ts'
 import { RandomStream } from '../src/game/random/RandomStream.ts'
 import { createDoctrineRunState, resolveDoctrineEffects } from '../src/game/run/doctrine.ts'
+import { computeRunCompletionRewardBreakdown } from '../src/game/run/profile.ts'
 import type { ActiveRunSaveV3 } from '../src/game/run/runTypes.ts'
 import { finalizeRunSnapshot, parseActiveRunSaveV3, type StorageLike } from '../src/game/run/storage.ts'
 import { CollisionWorld } from '../src/game/systems/CollisionWorld.ts'
@@ -380,6 +381,43 @@ test('real player and allied lethal damage completes the owned finale and finali
     assert.equal(second.profile.profileCurrency, first.profile.profileCurrency)
     assert.equal(second.profile.runHistory.length, 1)
   }
+})
+
+test('W1-4: the purse survives continue unchanged and the terminal save pays it into the profile once', () => {
+  const value = fixture('villain')
+  Reflect.set(value.engine, 'gold', 114)
+  // Suspend/continue: the continued run starts from the saved purse, not a fresh 55.
+  const suspended = parseActiveRunSaveV3(JSON.stringify(invoke<ActiveRunSaveV3>(value.engine, 'saveGeneratedRun')))
+  assert.ok(suspended)
+  assert.equal(suspended.status, 'active')
+  assert.equal(suspended.player.gold, 114)
+  assert.equal(buildInitialGameView({ blueprint: value.blueprint, config: value.config, restored: suspended }).gold, 114)
+
+  invoke(value.engine, 'damageActor', value.boss, 400, value.player.position, 'villain', true, { attackKind: 'melee' })
+  invoke(value.engine, 'updateMission')
+  assert.deepEqual(value.ends, ['victory'])
+  const purse = Reflect.get(value.engine, 'gold') as number
+  const save = invoke<ActiveRunSaveV3>(value.engine, 'saveGeneratedRun')
+  assert.equal(save.status, 'victory')
+  assert.equal(save.player.gold, purse)
+  const records = new Map<string, string>()
+  const storage: StorageLike = {
+    getItem: (key) => records.get(key) ?? null,
+    setItem: (key, data) => { records.set(key, data) },
+    removeItem: (key) => { records.delete(key) },
+  }
+  const first = finalizeRunSnapshot(storage, save)
+  assert.equal(first.outcome, 'finalized')
+  assert.equal(first.summary?.endingGold, purse)
+  assert.ok(first.summary)
+  const breakdown = computeRunCompletionRewardBreakdown(first.summary)
+  assert.equal(breakdown.gold, Math.min(15, Math.floor(purse / 10)))
+  assert.ok(breakdown.gold >= 11, 'the engine lost the purse on the way to the archive')
+  assert.equal(first.rewardGranted, breakdown.total)
+  const second = finalizeRunSnapshot(storage, save)
+  assert.equal(second.outcome, 'already-finalized')
+  assert.equal(second.rewardGranted, 0)
+  assert.equal(second.profile.profileCurrency, first.profile.profileCurrency)
 })
 
 test('actual lethal NPC path spends only its visible-limb selections, independent of death cosmetics', () => {

@@ -650,6 +650,7 @@ test('**the farmability control**: objectivesCompleted cannot be raised by refus
     assert.equal(walkCampaign(required, walkedRequired, 1).won, true)
 
     // Both are victories over the same campaign. The raw count pays them differently.
+    // The purse is held empty in every reward below so each comparison prices objectives only.
     assert.ok(
       rawCount(walkedRequired) > rawCount(exclusive),
       `${faction}: the raw count did not price the road, so nothing needed re-deciding`,
@@ -659,11 +660,13 @@ test('**the farmability control**: objectivesCompleted cannot be raised by refus
         status: 'victory',
         kills: 0,
         objectivesCompleted: rawCount(exclusive),
+        endingGold: 0,
       }) <
         computeRunCompletionReward({
           status: 'victory',
           kills: 0,
           objectivesCompleted: rawCount(walkedRequired),
+          endingGold: 0,
         }),
       true,
       `${faction}: the raw count would have charged the player for taking a road`,
@@ -722,7 +725,8 @@ test('**the farmability control**: objectivesCompleted cannot be raised by refus
     }
   }
 
-  // And the currency it feeds is bounded exactly where `profile.ts` says it is.
+  // And the currency it feeds is bounded exactly where `profile.ts` says it is. An empty
+  // purse keeps W1-4's gold term out of this objective-only arithmetic.
   const victory = createGeneratedObjectives(blueprint, 'elf')
   walkCampaign(blueprint.objectives.elf, victory, 0)
   assert.equal(
@@ -730,6 +734,7 @@ test('**the farmability control**: objectivesCompleted cannot be raised by refus
       status: 'victory',
       kills: 0,
       objectivesCompleted: countRewardedObjectives(victory),
+      endingGold: 0,
     }),
     45 + 20,
   )
@@ -740,6 +745,7 @@ test('**the farmability control**: objectivesCompleted cannot be raised by refus
       objectivesCompleted: countRewardedObjectives(
         createGeneratedObjectives(blueprint, 'elf'),
       ),
+      endingGold: 0,
     }),
     45,
   )

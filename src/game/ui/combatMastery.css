@@ -57,7 +57,7 @@
   background: var(--cp-panel);
   border: 1px solid var(--cp-border);
   border-radius: 0.625rem;
-  bottom: 8rem;
+  bottom: var(--camera-card-bottom, 8rem);
   color: var(--cp-text);
   display: flex;
   font-size: 0.75rem;
