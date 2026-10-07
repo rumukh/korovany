@@ -104,6 +104,9 @@
 .expedition-exclusive { color: var(--cp-warning, #fbbf24); }
 .expedition-select-label { color: var(--cp-accent, #fd8ea1); }
 .expedition-destination-detail { border-top: 1px solid var(--cp-border, #474747); flex: 0 0 auto; margin-top: 0.5rem; padding-top: 0.7rem; }
+/* W2-3 — the price reads at the size of the row or the detail it sits in, not the HUD card's. */
+.expedition-price { color: var(--cp-success, #4ade80); font-weight: 600; }
+.expedition-destination-detail .choice-price p { font-size: inherit; }
 
 .minimap-card.generated { position: relative; }
 .expedition-minimap { height: 100%; inset: 0; pointer-events: none; position: absolute; width: 100%; z-index: 1; }

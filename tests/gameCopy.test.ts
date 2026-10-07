@@ -14,6 +14,7 @@ import {
   describeLocatedEvent,
   describeLocatedEventOutcome,
   describeLocatedEventStart,
+  describeRandomEventSuccess,
   describeRationEaten,
   describeRazedSite,
   describeSquadOrder,
@@ -302,9 +303,15 @@ test('moved notices name the amount the engine actually awarded', () => {
   assert.ok(describeKillReward('beast', 12).includes('+12 золота'))
   assert.ok(describeKillReward('soldier', 7).includes('+7 золота'))
   assert.equal(describeKillReward('commander', 7).includes('золота'), false)
-  assert.ok(describeChampionDefeated(4).includes('+4 к урону'))
-  assert.ok(describeChampionDefeated(0).includes('предела'))
-  assert.equal(describeChampionDefeated(0).includes('+0'), false)
+  assert.ok(describeChampionDefeated(120, 4).includes('+4 к урону'))
+  assert.ok(describeChampionDefeated(120, 4).includes('+120 золота'))
+  assert.ok(describeChampionDefeated(120, 0).includes('предела'))
+  assert.equal(describeChampionDefeated(120, 0).includes('+0'), false)
+  // W2-3 — the event success lines are handed their amounts too.
+  assert.ok(describeRandomEventSuccess('richCaravan', { gold: 181, heal: 0 }).includes('+181 золота'))
+  assert.ok(describeRandomEventSuccess('defendHome', { gold: 91, heal: 9 }).includes('+91 золота и +9 здоровья'))
+  assert.ok(describeRandomEventSuccess('bounty', { gold: 71, heal: 0 }).includes('+71 золота'))
+  assert.equal(describeRandomEventSuccess('rescue', { gold: 0, heal: 0 }).includes('золота'), false)
   assert.equal(describeThreatTier(3, 5), 'Угроза растёт: уровень 3/5. Враги сильнее, событий и набегов больше.')
   assert.ok(describeThreatWave(1, 2).includes('1 враг.'))
   assert.ok(describeThreatWave(3, 2).includes('3 врага'))

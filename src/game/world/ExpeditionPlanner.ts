@@ -9,6 +9,8 @@ import {
 import { formatRegionGridLabel, generatedSiteLabel } from '../content/gameCopy.ts'
 import type {
   CampaignContractView,
+  ChoicePayoutView,
+  ChoiceTravelView,
   ChronicleRumourView,
   Faction,
   Objective,
@@ -29,6 +31,9 @@ export const DIRECT_APPROACH_DETOUR_RATIO = 2
 const EPSILON = 0.001
 const ROAD_ARRIVAL_RADIUS = 3
 const TRANSPORT_CLEARANCE = 0.6
+/** W2-3 — metres of player movement a card's memoised travel estimate may lag behind. */
+export const TRAVEL_MEMO_STEP = 4
+const TRAVEL_MEMO_LIMIT = 64
 
 export interface ExpeditionPoint { x: number; z: number }
 export type ExpeditionPreference = 'shortest' | 'cautious'
@@ -56,6 +61,12 @@ export interface ExpeditionTarget extends ExpeditionTargetIdentity {
   timeRemaining: number | null
   exclusive: boolean
   committed: boolean
+  /** W2-3 — what the choice pays, passed through from its card. Absent on unpriced targets. */
+  payout?: ChoicePayoutView | null
+  /** W2-3 — a contract's own clock while it is on offer. */
+  timeLimit?: number | null
+  /** W2-3 — the walk its card quotes. Absent for a plain site. */
+  travel?: ChoiceTravelView | null
 }
 export interface ExpeditionKnowledge {
   discoveredRegionIds: ReadonlySet<string>
@@ -535,6 +546,64 @@ export function planDirectApproach(
   return route.status === 'road' ? { ...route, status: 'direct' } : null
 }
 
+/**
+ * W2-3 — the walk a choice card quotes: the itinerary the compass would chart from `from`
+ * to `to` under the shortest preference (the shortest road route, or the short straight
+ * approach that replaces it, decided exactly as `buildView` decides it), timed at `speed`
+ * metres per second.
+ *
+ * With no road itinerary to plan the card still gets a number, the straight line, and
+ * `basis: 'straight'` says so; like the compass's labelled bearing it has not been checked
+ * for water. Danger is read from `knowledge`, which only carries discovered squares, so a
+ * card never names a square the fog still hides: those are counted in `unscouted` instead.
+ */
+export function estimateChoiceTravel(
+  blueprint: WorldBlueprint,
+  from: ExpeditionPoint,
+  to: ExpeditionPoint,
+  knowledge: ExpeditionKnowledge,
+  speed: number,
+): ChoiceTravelView {
+  const graph = getExpeditionGraph(blueprint)
+  const road = planExpeditionRoute(graph, from, to, knowledge)
+  const route = planDirectApproach(graph, from, to, knowledge, road) ?? road
+  let meters: number
+  let basis: ChoiceTravelView['basis']
+  let regionIds: string[]
+  if (route.status === 'road' || route.status === 'direct') {
+    meters = route.roadDistance + route.connectorDistance
+    basis = route.status
+    regionIds = route.regionIds
+  } else if (route.status === 'arrived') {
+    meters = 0
+    basis = 'arrived'
+    regionIds = []
+  } else {
+    meters = distance(from, to)
+    basis = 'straight'
+    regionIds = [...new Set(directLegs(graph, from, to).map((leg) => leg.regionId))]
+  }
+  const label = (id: string): string => {
+    const region = blueprint.regions.find((entry) => entry.id === id)
+    return region ? formatRegionGridLabel(region.coordinate.x, region.coordinate.y) : '??'
+  }
+  return {
+    meters,
+    seconds: Math.ceil(meters / Math.max(0.1, speed)),
+    basis,
+    danger: regionIds.filter((id) => riskPenalty(knowledge, id) > 0).map(label),
+    unscouted: regionIds.filter((id) => !knowledge.discoveredRegionIds.has(id)).length,
+  }
+}
+
+function knowledgeKey(knowledge: ExpeditionKnowledge): string {
+  return [
+    [...knowledge.discoveredRegionIds].sort().join(','),
+    [...knowledge.risks].sort(([a], [b]) => a.localeCompare(b))
+      .map(([id, risk]) => `${id}:${Number(risk.hostile)}:${Number(risk.contested)}`).join(','),
+  ].join('|')
+}
+
 function withinRegion(graph: ExpeditionGraph, regionId: string, point: ExpeditionPoint): boolean {
   const bounds = graph.regions.get(regionId)
   return bounds !== undefined && point.x >= bounds.minX - EPSILON && point.x <= bounds.maxX + EPSILON &&
@@ -578,7 +647,8 @@ export function buildExpeditionTargets(blueprint: WorldBlueprint, input: Expedit
     if (!contract || !position) continue
     add({ kind: 'objective', id: node.id, regionId: node.regionId, position, title: contract.title,
       task: contract.task, stake: contract.stake, timeRemaining: contract.timeRemaining,
-      exclusive: contract.exclusive, committed: contract.pinned })
+      exclusive: contract.exclusive, committed: contract.pinned,
+      payout: contract.payout ?? null, timeLimit: contract.timeLimit ?? null, travel: contract.travel ?? null })
   }
   for (const rumour of input.rumours) {
     if (rumour.outcome !== null || rumour.timeRemaining <= 0 || rumour.x === null || rumour.z === null) continue
@@ -696,6 +766,32 @@ export class ExpeditionPlanner {
     if (preference !== 'shortest' && preference !== 'cautious') return false
     this.state.preference = preference
     return true
+  }
+
+  private readonly travelMemo = new Map<string, ChoiceTravelView>()
+
+  /**
+   * W2-3 — `estimateChoiceTravel` for the cards, remembered per `TRAVEL_MEMO_STEP` metres of
+   * the player's movement, so a card re-plans about twice a second at walking pace rather
+   * than on every emitted view. Display only: no rumour offer and no seeded draw reads it.
+   */
+  measureTravel(
+    input: Pick<ExpeditionInput, 'faction' | 'discoveredRegionIds' | 'chronicleRegions' | 'contestedRegionIds'>,
+    from: ExpeditionPoint,
+    to: ExpeditionPoint,
+    speed: number,
+  ): ChoiceTravelView {
+    const knowledge = buildExpeditionKnowledge(input, this.blueprint)
+    const key = [
+      Math.round(from.x / TRAVEL_MEMO_STEP), Math.round(from.z / TRAVEL_MEMO_STEP),
+      to.x, to.z, speed, knowledgeKey(knowledge),
+    ].join('|')
+    const remembered = this.travelMemo.get(key)
+    if (remembered) return { ...remembered, danger: [...remembered.danger] }
+    if (this.travelMemo.size >= TRAVEL_MEMO_LIMIT) this.travelMemo.clear()
+    const travel = estimateChoiceTravel(this.blueprint, from, to, knowledge, speed)
+    this.travelMemo.set(key, travel)
+    return { ...travel, danger: [...travel.danger] }
   }
 
   buildView(input: ExpeditionInput): ExpeditionView {

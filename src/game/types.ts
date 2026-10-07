@@ -310,6 +310,42 @@ export interface WorldEventView {
 export type CampaignContractStatus = 'offered' | 'active' | 'kept' | 'failed'
 
 /**
+ * W2-3 — what a choice pays, as its card shows it before the choice is made.
+ *
+ * Plain numbers and flags rather than a sentence, so a card, a test and the engine's own
+ * payment can be compared field by field; `gameCopy.describeChoicePayout` makes the line.
+ */
+export interface ChoicePayoutView {
+  gold: number
+  /** Rations added to the pack. */
+  supplies: number
+  /** Health restored on success. */
+  heal: number
+  /** Damage added, already bounded by what this run can still gain. */
+  damage: number
+  /** A freed captive joins the squad. */
+  companion: boolean
+  /** The guaranteed drop, by its lowest rarity; null when there is none. */
+  loot: 'uncommon' | 'legendary' | null
+}
+
+/**
+ * W2-3 — the walk a choice card quotes, measured on the itinerary the compass would chart.
+ *
+ * `basis` says how honest the number is: `straight` means no road itinerary could be planned
+ * and the card is quoting the straight line. `danger` names only discovered hostile or
+ * contested squares on the way; squares still in fog are counted in `unscouted`, never named.
+ */
+export interface ChoiceTravelView {
+  meters: number
+  /** At walking pace, rounded up: no sprint, no fights, no detours round props. */
+  seconds: number
+  basis: 'road' | 'direct' | 'straight' | 'arrived'
+  danger: string[]
+  unscouted: number
+}
+
+/**
  * One ready campaign node as the HUD sees it.
  *
  * The list is the fork. Before 1.4 the HUD was handed exactly one active objective, because
@@ -344,6 +380,16 @@ export interface CampaignContractView {
   status: CampaignContractStatus | null
   /** Seconds left on a running contract's clock, null when it is not running. */
   timeRemaining: number | null
+  /**
+   * W2-3 — what keeping it pays; null on an errand and once the contract is settled.
+   * The three priced fields are optional only so a hand-built card stays valid; both view
+   * builders always set them.
+   */
+  payout?: ChoicePayoutView | null
+  /** W2-3 — the contract's own clock in seconds, quoted while it is still on offer. */
+  timeLimit?: number | null
+  /** W2-3 — the walk to its site; null until the site is placed or when nothing measured it. */
+  travel?: ChoiceTravelView | null
   /** Where to go. Null until the square has been placed in the world. */
   x: number | null
   z: number | null
