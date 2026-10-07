@@ -44,7 +44,9 @@ Every addition is an opt-in arm. With all of them at their defaults a run is the
 - **Who gets the cart.** W1-2's `world/CaravanClaim.ts` runs as shipped. Once a cart's escort is down, a looter has to
   stand at it for 3.5 s and any blow that lands breaks the channel. A player who won the escort fight keeps the cart
   for 9 s, the squad never loads it, and an ambush's raiders walk to their cart. The fidelity test drives this wiring
-  beside the engine's `updateCaravanEscort` and the ambush's `update`, frame for frame.
+  beside the engine's `updateCaravanEscort` and the ambush's `update`, frame for frame. Since W2-2 an ambush of the
+  player's own side's cart is defended, not robbed: there is nothing to take, it is won when both raiders are down,
+  and it pays 90 instead of 140, as `startCaravanAmbushEvent` and `resolveLocatedEventOutcome` do.
 - **Contracts as the engine runs them, W1-1 included.** Before the fix landed, the harness reproduced the defect: seed
   31677 as the elf lost its contract to a bounty, and the same run with the director held `silent` kept it. The
   fidelity test written to go red when the fix landed did. Now a random event the player was merely near stands down,
@@ -276,13 +278,30 @@ and rejected: progress scaling enemy stats as well. Same seeds, the engine's win
 - `tests/runHarnessEscalation.test.ts` holds these in whole runs. With no card taken and the director silent, a
   `progress` run is the `time` run to the frame, and a `progressAll` run is not.
 
+## W2-2: a side defends its own ambushed cart
+
+A chronicle ambush of the player's own side's cart is now defended, not robbed: no cargo is taken, it is won when both
+raiders are down, and it pays 90 instead of 140. `HARNESS_SHIPPED_ARMS`, W2-1's `escalation: 'progress'` included, on
+the baseline's seeds, `main` at 9f3bf5d against the W2-2 branch, 360 runs a policy:
+
+| `eventPolicy` | Wins | Carts robbed | Carts escorted | Carts lost |
+| --- | --- | --- | --- | --- |
+| `ignore` | 196 → 198 | 76 → 76 | 22 → 22 | 70 → 70 |
+| `engage` | 26 → 31 | 887 → 682 | 1 → 245 | 39 → 33 |
+
+- Under `ignore` only guard runs change: two more wins and a little more gold. Every elf and villain run is identical.
+- Under `engage` the scripted player detours to every ambush, and every side now fights for its own carts instead of
+  robbing them: 205 fewer robberies and 244 more escorts, and no cell moved by more than two wins.
+- The caravan beats themselves are not modelled yet, so these numbers say nothing about them.
+
 ## What it still does not model
 
 The harness header lists these with the bias each one introduces. In short: no props, buildings, trees or water as
 colliders. No player bow, shield, rush, evasion, perfect guard or knockback, so only the blow itself knocks a looter
 off a cart. No flanking, separation, commanders' orders and rallies, or boar charges. The squad only follows. The
-sustain policy is a script that never buys an upgrade. The bridge ambush, civilians, ambient prowlers, campfires,
-achievements and the profile are not modelled. The pinned arms keep a 6.4 m/s walk, a 22 m sense range, a contract
-grace from before W1-1, a simulated 3x3 and an inert commander, none of them the engine's.
+sustain policy is a script that never buys an upgrade. Caravan beats (the bridge ambush among them), civilians,
+ambient prowlers, campfires, achievements and the profile are not modelled. The pinned arms keep a 6.4 m/s walk, a
+22 m sense range, a contract grace from before W1-1, a simulated 3x3 and an inert commander, none of them the
+engine's.
 
 A number from this harness is a scripted player's, not a person's.

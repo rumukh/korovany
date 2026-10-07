@@ -234,7 +234,9 @@ blocks report a warning; completed, legitimately skipped, expired, and unknown t
 explain their removal and return to the existing campaign-selection fallback.
 Clearing writes `campaign`, which survives a reload. A version-1 save from before
 2026-10-07 may hold `none`, the old «Убрать маршрут»; it loads as `campaign` without
-a warning, because clearing now means returning to the default route.
+a warning, because clearing now means returning to the default route. A target of kind
+`bridgeAmbush` loads as `caravanBeat` with the same ID: W2-2 made the bridge one caravan
+beat among others, and the atlas lists every beat that is not yet settled under that kind.
 
 Both initial and live views carry `expedition`. Initial position and heading now use
 the same start projection as the actual engine rather than the former site-center
@@ -357,8 +359,9 @@ Evidence:
   restored first frames carry the planner's road.
 - `tests\hints.test.ts`: the launch frame stays quiet, the first default road fires the
   line once, an earlier explicit choice counts, and the objectives line keeps its spacing.
-- `tests\bridgeAmbush.test.ts`: the engine's expedition input, the tracked bridge card,
-  «Убрать маршрут», a taken rumour and `saveGeneratedRun` agree.
+- `tests\caravanBeats.test.ts` (formerly `tests\bridgeAmbush.test.ts`): the engine's
+  expedition input, the tracked bridge card, «Убрать маршрут», a taken rumour and
+  `saveGeneratedRun` agree.
 - Six mutations each fail at least one of these tests: no straight approach, a straight
   approach through water, no detour ratio, rumours that never lead, the hint only on
   selection, and re-planning every frame. Selection-only planning fails 14 of them,

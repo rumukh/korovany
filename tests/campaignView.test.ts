@@ -91,7 +91,7 @@ import {
 
 const FACTIONS: readonly Faction[] = ['elf', 'guard', 'villain']
 type LegacyGameView = Omit<GameView,
-  'contracts' | 'doctrines' | 'expedition' | 'bridgeAmbush' | 'caravanLoot' | 'combatMastery' | 'squadCommand' | 'finale'>
+  'contracts' | 'doctrines' | 'expedition' | 'caravanBeats' | 'caravanLoot' | 'combatMastery' | 'squadCommand' | 'finale'>
 
 /**
  * Roadmap 1.4 added `contracts` to the `GameView` and roadmap 1.6 added `doctrines`, and the
@@ -108,12 +108,12 @@ function withoutLaterFields(
 ): LegacyGameView {
   const {
     contracts: _contracts, doctrines: _doctrines,
-    expedition: _expedition, bridgeAmbush: _bridgeAmbush, caravanLoot: _caravanLoot,
+    expedition: _expedition, caravanBeats: _caravanBeats, caravanLoot: _caravanLoot,
     combatMastery: _combatMastery, squadCommand: _squadCommand, finale: _finale, ...rest
   } = view
   return {
     ...rest,
-    markers: rest.markers.filter((marker) => marker.id !== 'bridge-ambush'),
+    markers: rest.markers.filter((marker) => !marker.id.startsWith('caravan-beat:')),
   }
 }
 // ---------------------------------------------------------------------------
@@ -703,9 +703,7 @@ test('the live view carries every field the HUD reads', () => {
   )
   const view = buildGameView({
     finale: null,
-    bridgeAmbush: null,
-    bridgeAmbushX: null,
-    bridgeAmbushZ: null,
+    caravanBeats: { beats: [], active: null },
     expedition: buildInitialGameView({
       blueprint, config: { seed: blueprint.seed, generatorVersion: 1, faction, selectedBoonId: 'provisions' },
       restored: undefined,

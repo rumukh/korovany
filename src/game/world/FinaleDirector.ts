@@ -254,6 +254,45 @@ export function captureFinaleBody(state: FinaleState, spawnId: string, body: Fin
   }
 }
 
+/**
+ * W2-2 — which palace escort a burned supply cart would send away now, without sending it.
+ *
+ * Any escort not standing in the world can go: one the player saw at the gate on an earlier
+ * visit is simply not there next time. An escort on the field stays, and a finale that has
+ * begun keeps the garrison it started with. The caravan panel asks this before it promises
+ * anything, so the burn choice never offers what `thinFinaleGarrison` would then refuse.
+ */
+export function finaleGarrisonThinTarget(
+  state: FinaleState,
+  present: (spawnId: string) => boolean,
+): string | null {
+  if (state.defeated || state.introduced) return null
+  for (let index = state.escorts.length - 1; index >= 0; index -= 1) {
+    const escort = state.escorts[index]
+    if (!escort.defeated && !present(escort.id)) return escort.id
+  }
+  return null
+}
+
+/**
+ * W2-2 — the villain burned an imperial supply cart, so the palace finale has one fewer
+ * escort waiting at the gate: the one `finaleGarrisonThinTarget` names.
+ *
+ * The escort is recorded as defeated with no body, a state the save already accepts, so
+ * `finaleCanSpawn` skips it from then on. Returns its id, or null when nobody was thinned.
+ */
+export function thinFinaleGarrison(
+  state: FinaleState,
+  present: (spawnId: string) => boolean,
+): string | null {
+  const id = finaleGarrisonThinTarget(state, present)
+  const escort = id === null ? undefined : state.escorts.find((entry) => entry.id === id)
+  if (!escort) return null
+  escort.defeated = true
+  escort.body = null
+  return escort.id
+}
+
 /** Called only after the engine has applied a real lethal hit. */
 export function recordFinaleDeath(
   state: FinaleState,

@@ -31,9 +31,6 @@ import {
 import {
   CONTRACT_ERRAND_STAKE,
   CONTRACT_FAILED_TASK,
-  BRIDGE_AMBUSH_EXPEDITION_STAKE,
-  BRIDGE_AMBUSH_EXPEDITION_TASK,
-  BRIDGE_AMBUSH_TITLE,
   describeContractStake,
   describeContractTask,
   describeContractTitle,
@@ -80,7 +77,7 @@ import {
   type ZoneId,
 } from '../types.ts'
 import type { ActiveRunSaveV3, RunConfig } from '../run/runTypes.ts'
-import { getContestedRegionIds, isRegionRazed, type RegionChronicleState } from './Chronicle.ts'
+import { SUPPLY_BASELINE, getContestedRegionIds, isRegionRazed, type RegionChronicleState } from './Chronicle.ts'
 import type { CaravanLootView } from './CaravanClaim.ts'
 import {
   CHAMPION_DAMAGE_CAP,
@@ -116,12 +113,13 @@ import {
   type ExpeditionView,
 } from './ExpeditionPlanner.ts'
 import {
-  buildBridgeAmbushView,
-  createBridgeAmbushPlan,
-  createBridgeAmbushState,
-  normalizeBridgeAmbushState,
-  type BridgeAmbushView,
-} from './BridgeAmbush.ts'
+  buildCaravanBeatsView,
+  caravanBeatExpeditionTargets,
+  createCaravanBeatPlans,
+  createCaravanBeatsState,
+  restoreCaravanBeatsState,
+  type CaravanBeatsView,
+} from './CaravanBeats.ts'
 import {
   buildCombatMasteryView,
   normalizeCombatMastery,
@@ -140,6 +138,7 @@ import {
 import {
   FINALE_ENGAGE_RADIUS,
   createFinaleIdentity,
+  finaleGarrisonThinTarget,
   finaleProgress,
   finaleStage,
   normalizeFinaleState,
@@ -262,9 +261,8 @@ export interface LiveViewInput {
   /** Roadmap 1.6 — the open draft and the rules the run already took. */
   doctrines: DoctrineView
   expedition: ExpeditionView
-  bridgeAmbush: BridgeAmbushView | null
-  bridgeAmbushX: number | null
-  bridgeAmbushZ: number | null
+  /** W2-2 — every caravan beat, built by the engine from its plans and state. */
+  caravanBeats: CaravanBeatsView
   /** The nearest cart somebody else is loading within sight; absent means none. */
   caravanLoot?: CaravanLootView | null
   finale: FinaleView | null
@@ -288,6 +286,21 @@ export interface LiveViewInput {
   upgrades: GameView['upgrades']
   lootToast: LootToastView | null
   activeEvent: WorldEventView | null
+}
+
+/**
+ * W2-2 — a pin for each beat the HUD treats as live. Drawn as an event, never with the road
+ * cart's `caravan` mark: the ordinary road cart is world texture, and the map must not make
+ * it look like one of the run's caravans.
+ */
+export function caravanBeatMarkers(view: CaravanBeatsView | undefined): MapMarker[] {
+  return (view?.beats ?? [])
+    .filter((beat) => beat.active &&
+      beat.phase !== 'resolved' && beat.phase !== 'lost' &&
+      beat.phase !== 'escaped' && beat.phase !== 'unavailable')
+    .map((beat) => ({
+      id: `caravan-beat:${beat.id}`, x: beat.x, z: beat.z, kind: 'event' as const, label: beat.title,
+    }))
 }
 
 /**
@@ -354,23 +367,7 @@ export function buildMapMarkers(input: LiveViewInput): MapMarker[] {
       label: event.title,
     })
   }
-  if (
-    input.bridgeAmbush &&
-    input.bridgeAmbushX !== null &&
-    input.bridgeAmbushZ !== null &&
-    input.bridgeAmbush.active === true &&
-    input.bridgeAmbush.phase !== 'resolved' &&
-    input.bridgeAmbush.phase !== 'lost' &&
-    input.bridgeAmbush.phase !== 'unavailable'
-  ) {
-    markers.push({
-      id: 'bridge-ambush',
-      x: input.bridgeAmbushX,
-      z: input.bridgeAmbushZ,
-      kind: 'event',
-      label: input.bridgeAmbush.title,
-    })
-  }
+  for (const marker of caravanBeatMarkers(input.caravanBeats)) markers.push(marker)
   // Roadmap 1.3 — the pinned rumour, and only the pinned one. Drawing both offers would
   // make the map answer a question the player has not been asked yet; drawing the one they
   // took on is what turns "go to C3" from a sentence into a direction.
@@ -717,7 +714,12 @@ export function buildGameView(input: LiveViewInput): GameView {
       slots: input.doctrines.slots,
     },
     expedition: input.expedition,
-    bridgeAmbush: input.bridgeAmbush ? { ...input.bridgeAmbush } : null,
+    caravanBeats: {
+      beats: input.caravanBeats.beats.map((beat) => ({ ...beat, choices: beat.choices.map((choice) => ({ ...choice })) })),
+      active: input.caravanBeats.active
+        ? { ...input.caravanBeats.active, choices: input.caravanBeats.active.choices.map((choice) => ({ ...choice })) }
+        : null,
+    },
     caravanLoot: input.caravanLoot ? { ...input.caravanLoot } : null,
     finale: input.finale ? { ...input.finale } : null,
     shopPriceMultiplier: input.shopPriceMultiplier,
@@ -881,33 +883,12 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
       travelKnowledge, walkSpeed),
   })
 
-  const bridgePlan = createBridgeAmbushPlan(blueprint, config.faction)
-  const bridgeState = restored
-    ? restored.directorState.bridgeAmbush === undefined ||
-      restored.directorState.bridgeAmbush === null
-      ? null
-      : normalizeBridgeAmbushState(
-          restored.directorState.bridgeAmbush,
-          blueprint,
-          config.faction,
-          bridgePlan,
-        ).state
-    : createBridgeAmbushState(blueprint, config.faction, bridgePlan)
-  const bridgeTarget = bridgeState &&
-    bridgePlan &&
-    bridgeState.phase !== 'delivering' &&
-    bridgeState.phase !== 'resolved' &&
-    bridgeState.phase !== 'lost' &&
-    bridgeState.phase !== 'unavailable'
-    ? {
-        id: bridgePlan.id,
-        title: BRIDGE_AMBUSH_TITLE,
-        regionId: bridgePlan.regionId,
-        position: { x: bridgeState.cargoX, z: bridgeState.cargoZ },
-        task: BRIDGE_AMBUSH_EXPEDITION_TASK,
-        stake: BRIDGE_AMBUSH_EXPEDITION_STAKE,
-      }
-    : null
+  // W2-2 — the same plans, restore and builder the engine uses, so a continued run shows
+  // its caravans exactly as the first live frame will.
+  const beatPlans = createCaravanBeatPlans(blueprint, config.faction)
+  const beatState = restored
+    ? restoreCaravanBeatsState(restored.directorState, blueprint, config.faction, beatPlans).state
+    : createCaravanBeatsState(beatPlans)
   const expedition = new ExpeditionPlanner(blueprint, restored?.directorState.expedition).buildView({
     faction: config.faction, player: { x: position[0], z: position[2] },
     heading, objectives, contracts,
@@ -917,27 +898,25 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     activeObjectiveId: resolveActiveObjectiveNode(blueprint, config.faction, objectives,
       normalizeCampaignContractState(restored?.directorState.campaignContracts).pinnedNodeId)?.id ?? null,
     discoveredRegionIds: discovered, chronicleRegions, contestedRegionIds,
-    bridgeAmbush: bridgeTarget,
+    caravanBeats: caravanBeatExpeditionTargets(config.faction, beatPlans, beatState),
   })
-  const bridgeAmbush = bridgeState
-    ? buildBridgeAmbushView(
-        blueprint,
-        config.faction,
-        objectives,
-        bridgePlan,
-        bridgeState,
-        { x: position[0], z: position[2] },
-        heading,
-        (expedition.mode === 'selected' &&
-          expedition.target?.kind !== 'bridgeAmbush') ||
-          (expedition.mode === 'campaign' &&
-            expedition.target?.committed === true),
-        expedition.mode === 'selected' &&
-          expedition.target?.kind === 'bridgeAmbush',
-        expedition,
-      )
-    : null
-
+  const marketRegionId = beatPlans[0]?.marketRegionId ?? null
+  const caravanBeats = buildCaravanBeatsView({
+    blueprint,
+    faction: config.faction,
+    objectives,
+    player: { x: position[0], z: position[2] },
+    heading,
+    expedition,
+    squadSize: squadCommand.roster.length,
+    garrisonThinned: beatState?.garrisonThinned ?? false,
+    // Nothing stands in the world before the engine's first frame, so only the finale's own
+    // state can stop a burn from sending a guard away.
+    garrisonCanThin: finaleGarrisonThinTarget(finaleState, () => false) !== null,
+    marketSupply: marketRegionId === null
+      ? null
+      : chronicleRegions.get(marketRegionId)?.supply ?? SUPPLY_BASELINE,
+  }, beatPlans, beatState)
   return {
     faction: config.faction,
     health,
@@ -961,20 +940,8 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
         kind: 'player',
         heading,
       },
-      ...(bridgeAmbush &&
-      bridgePlan &&
-      bridgeAmbush.active === true &&
-      bridgeAmbush.phase !== 'resolved' &&
-      bridgeAmbush.phase !== 'lost' &&
-      bridgeAmbush.phase !== 'unavailable'
-        ? [{
-            id: 'bridge-ambush',
-            x: bridgeState?.cargoX ?? bridgePlan.cargoStart.x,
-            z: bridgeState?.cargoZ ?? bridgePlan.cargoStart.z,
-            kind: 'event' as const,
-            label: bridgeAmbush.title,
-          }]
-        : []),
+      ...caravanBeatMarkers(caravanBeats),
+
     ],
     worldMap: buildWorldMapView({
       blueprint,
@@ -996,7 +963,7 @@ export function buildInitialGameView(input: InitialViewInput): GameView {
     contracts,
     doctrines,
     expedition,
-    bridgeAmbush,
+    caravanBeats,
     // Nobody is loading a cart before the engine's first frame, restored run or not: the
     // channel is bound to live looters and is never saved.
     caravanLoot: null,

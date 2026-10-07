@@ -1,32 +1,30 @@
+/**
+ * The old bridge's geometry and its version-1 save format.
+ *
+ * The bridge ambush was the game's one caravan beat. W2-2 generalised it into
+ * `world/CaravanBeats.ts`, where the bridge is one placement among several. Two things stay
+ * here:
+ *
+ * - **Placement.** `createBridgeAmbushPlan` still picks the first reachable bridge on the
+ *   faction's road to its finale. The crossing beat uses that plan unchanged, so its id,
+ *   its combatant ids and its lane are exactly what the old saves recorded.
+ * - **The version-1 `directorState.bridgeAmbush` block.** `normalizeBridgeAmbushState` is
+ *   what `restoreCaravanBeatsState` migrates. A save is never rewritten in this format
+ *   again; the serializer remains so tests can write the old shape.
+ */
 import {
   getBlueprintRegionBounds,
   getFactionStartPosition2D,
   getSiteWorldPosition2D,
   isInsideRegionWater,
 } from '../content/registry.ts'
-import {
-  BRIDGE_AMBUSH_DELIVERING_DESCRIPTION,
-  BRIDGE_AMBUSH_DELIVERED_SUPPLIES,
-  BRIDGE_AMBUSH_LOST_DESCRIPTION,
-  BRIDGE_AMBUSH_SECURED_DESCRIPTION,
-  BRIDGE_AMBUSH_SEIZED_GOLD,
-  BRIDGE_AMBUSH_TITLE,
-  describeBridgeAmbushApproach,
-  describeBridgeAmbushDeliverChoice,
-  describeBridgeAmbushFight,
-  describeBridgeAmbushSeizeChoice,
-  formatRegionGridLabel,
-} from '../content/gameCopy.ts'
 import type { SerializableState } from '../run/runTypes.ts'
-import type { ActorRole, Allegiance, Faction, Objective } from '../types.ts'
+import type { ActorRole, Allegiance, Faction } from '../types.ts'
 import {
-  buildExpeditionGuidance,
   getExpeditionGraph,
   planExpeditionRoute,
   validateExpeditionRoute,
   type ExpeditionRoute,
-  type ExpeditionTarget,
-  type ExpeditionView,
 } from './ExpeditionPlanner.ts'
 import type { WorldBlueprint } from './worldTypes.ts'
 
@@ -39,27 +37,6 @@ export type BridgeAmbushPhase =
   | 'resolved'
   | 'lost'
   | 'unavailable'
-
-export interface BridgeAmbushView {
-  phase: BridgeAmbushPhase
-  title: string
-  description: string
-  hint: string
-  distance: number
-  bearing: number
-  remainingEnemies: number
-  totalEnemies: number
-  cargoHealth: number
-  cargoMaxHealth: number
-  progress: number
-  canChoose: boolean
-  outcome: BridgeAmbushChoice | null
-  consequence: string | null
-  seizeDetail?: string
-  deliverDetail?: string
-  routeLabel?: string
-  active?: boolean
-}
 
 export interface BridgeAmbushPoint {
   x: number
@@ -308,12 +285,17 @@ export function createBridgeAmbushPlan(
   return null
 }
 
-function enemyFaction(blueprint: WorldBlueprint, faction: Faction, plan: BridgeAmbushPlan): Faction {
+/** Who holds the bridge cart's road: the guard's escort, or the raiders the guard fights. */
+export function bridgeAmbushEnemyFaction(
+  blueprint: WorldBlueprint,
+  faction: Faction,
+  plan: BridgeAmbushPlan,
+): Faction {
   if (faction !== 'guard') return 'guard'
   return deterministicSide(blueprint.seed, plan.id) < 0 ? 'elf' : 'villain'
 }
 
-function enemyRole(allegiance: Faction, index: number): ActorRole {
+export function bridgeAmbushEnemyRole(allegiance: Faction, index: number): ActorRole {
   if (index === 2) return 'archer'
   if (allegiance === 'villain') return 'minion'
   return index === 1 ? 'scout' : 'soldier'
@@ -327,11 +309,11 @@ export function createBridgeAmbushState(
   if (!plan) {
     return createUnavailableBridgeAmbushState(null, 'На открывающей дороге нет доступного мостового перехода.')
   }
-  const hostile = enemyFaction(blueprint, faction, plan)
+  const hostile = bridgeAmbushEnemyFaction(blueprint, faction, plan)
   const combatants: BridgeAmbushCombatantState[] = Array.from({ length: 3 }, (_, index) => ({
     id: `bridge-ambush:${plan.bridgeId}:enemy:${index}`,
     allegiance: hostile,
-    role: enemyRole(hostile, index),
+    role: bridgeAmbushEnemyRole(hostile, index),
     enemy: true,
     health: 0,
     maxHealth: 0,
@@ -386,10 +368,6 @@ export function createUnavailableBridgeAmbushState(
   }
 }
 
-export function bridgeAmbushRemainingEnemies(state: BridgeAmbushState): number {
-  return state.combatants.filter((entry) => entry.enemy && !entry.defeated).length
-}
-
 export function bridgeAmbushDeliveryProgress(
   plan: BridgeAmbushPlan,
   point: BridgeAmbushPoint,
@@ -400,215 +378,6 @@ export function bridgeAmbushDeliveryProgress(
   if (lengthSq <= Number.EPSILON) return 0
   return Math.min(1, Math.max(0,
     ((point.x - plan.cargoStart.x) * dx + (point.z - plan.cargoStart.z) * dz) / lengthSq))
-}
-
-/** Keeps unrelated encounter spawns out of the cart-to-bank composition until it settles. */
-export function bridgeAmbushReservesStagingPoint(
-  plan: BridgeAmbushPlan,
-  state: BridgeAmbushState,
-  point: BridgeAmbushPoint,
-): boolean {
-  if (
-    state.phase === 'resolved' ||
-    state.phase === 'lost' ||
-    state.phase === 'unavailable'
-  ) {
-    return false
-  }
-  const dx = plan.deliveryEnd.x - plan.cargoStart.x
-  const dz = plan.deliveryEnd.z - plan.cargoStart.z
-  const lengthSq = dx * dx + dz * dz
-  const progress = lengthSq <= Number.EPSILON
-    ? 0
-    : Math.min(1, Math.max(0,
-        ((point.x - plan.cargoStart.x) * dx +
-          (point.z - plan.cargoStart.z) * dz) / lengthSq))
-  const x = plan.cargoStart.x + dx * progress
-  const z = plan.cargoStart.z + dz * progress
-  return Math.hypot(point.x - x, point.z - z) <= BRIDGE_AMBUSH_STAGING_CLEARANCE
-}
-
-export function bridgeAmbushCanChoose(
-  state: BridgeAmbushState,
-  player: BridgeAmbushPoint,
-): boolean {
-  return state.phase === 'secured' &&
-    state.cargoHealth > 0 &&
-    bridgeAmbushRemainingEnemies(state) === 0 &&
-    distance({ x: state.cargoX, z: state.cargoZ }, player) <= BRIDGE_AMBUSH_CHOICE_RADIUS
-}
-
-export function bridgeAmbushRootCompleted(
-  blueprint: WorldBlueprint,
-  faction: Faction,
-  objectives: readonly Objective[],
-): boolean {
-  const root = blueprint.objectives[faction].nodes.find(
-    (node) => node.siteId === blueprint.starts[faction],
-  )
-  return root !== undefined &&
-    objectives.some((objective) => objective.id === root.id && objective.done)
-}
-
-function bridgeAmbushAutomaticallyActive(
-  blueprint: WorldBlueprint,
-  faction: Faction,
-  objectives: readonly Objective[],
-  state: BridgeAmbushState,
-  player: BridgeAmbushPoint,
-): boolean {
-  if (
-    state.phase === 'resolved' ||
-    state.phase === 'lost' ||
-    state.phase === 'unavailable'
-  ) {
-    return false
-  }
-  if (state.phase !== 'approach') return true
-  return bridgeAmbushRootCompleted(blueprint, faction, objectives) ||
-    distance({ x: state.cargoX, z: state.cargoZ }, player) <= BRIDGE_AMBUSH_ACTIVATION_RADIUS
-}
-
-function directBearing(
-  player: BridgeAmbushPoint,
-  target: BridgeAmbushPoint,
-  heading: number,
-): { bearing: number; distance: number } {
-  return {
-    bearing: Math.atan2(target.x - player.x, player.z - target.z) - heading,
-    distance: distance(player, target),
-  }
-}
-
-export function buildBridgeAmbushView(
-  blueprint: WorldBlueprint,
-  faction: Faction,
-  objectives: readonly Objective[],
-  plan: BridgeAmbushPlan | null,
-  state: BridgeAmbushState,
-  player: BridgeAmbushPoint,
-  heading: number,
-  suppressApproach = false,
-  trackApproach = false,
-  expedition?: Pick<ExpeditionView, 'target' | 'route' | 'guidance'>,
-): BridgeAmbushView {
-  const enemies = state.combatants.filter((entry) => entry.enemy)
-  const remaining = bridgeAmbushRemainingEnemies(state)
-  if (!plan || state.phase === 'unavailable') {
-    return {
-      phase: 'unavailable',
-      title: BRIDGE_AMBUSH_TITLE,
-      description: state.unavailableReason ?? 'Мостовой переход недоступен.',
-      hint: 'Поход и его цели продолжаются без этой необязательной встречи.',
-      distance: 0,
-      bearing: 0,
-      remainingEnemies: 0,
-      totalEnemies: 0,
-      cargoHealth: 0,
-      cargoMaxHealth: state.cargoMaxHealth,
-      progress: 0,
-      canChoose: false,
-      outcome: null,
-      consequence: null,
-      active: false,
-    }
-  }
-
-  const cargo = { x: state.cargoX, z: state.cargoZ }
-  let guidance = directBearing(player, cargo, heading)
-  let routeLabel = 'прямой ориентир'
-  if (state.phase === 'approach') {
-    const selected = trackApproach && expedition?.target?.kind === 'bridgeAmbush' &&
-      expedition.target.id === plan.id ? expedition : null
-    const target: ExpeditionTarget = {
-      kind: 'site',
-      id: plan.id,
-      key: `site:${plan.id}`,
-      title: BRIDGE_AMBUSH_TITLE,
-      regionId: plan.regionId,
-      regionLabel: '',
-      position: plan.cargoStart,
-      directDistance: distance(player, plan.cargoStart),
-      task: '',
-      stake: '',
-      timeRemaining: null,
-      exclusive: false,
-      committed: false,
-    }
-    const route = selected ? selected.route : plan.openingRoute
-    const road = selected?.guidance ?? buildExpeditionGuidance(
-      getExpeditionGraph(blueprint),
-      route,
-      target,
-      player,
-      heading,
-    )
-    if (road.next) {
-      guidance = { bearing: road.bearing, distance: road.distance }
-      routeLabel = road.arrived ? 'у телеги'
-        : route?.status === 'road'
-          ? road.connector ? 'подход к дороге' : 'по дороге к мосту'
-          : 'по прямой, не дорога'
-    }
-  } else if (state.phase === 'delivering') {
-    routeLabel = 'телега идёт по оси моста'
-  }
-
-  const description = state.phase === 'approach'
-    ? describeBridgeAmbushApproach(faction)
-    : state.phase === 'fighting'
-      ? describeBridgeAmbushFight(faction, remaining)
-      : state.phase === 'secured'
-        ? BRIDGE_AMBUSH_SECURED_DESCRIPTION
-        : state.phase === 'delivering'
-          ? BRIDGE_AMBUSH_DELIVERING_DESCRIPTION
-          : state.phase === 'lost'
-            ? BRIDGE_AMBUSH_LOST_DESCRIPTION
-            : state.consequence ?? BRIDGE_AMBUSH_SECURED_DESCRIPTION
-  const destination = blueprint.regions.find((region) => region.id === plan.regionId)
-  const destinationLabel = destination
-    ? formatRegionGridLabel(destination.coordinate.x, destination.coordinate.y)
-    : plan.regionId
-  const hint = state.phase === 'approach'
-    ? `Маршрут: ${routeLabel}. Запасной подход — по сухому берегу рядом с телегой.`
-    : state.phase === 'fighting'
-      ? faction === 'guard'
-        ? 'Не дай налётчикам добить телегу; твой отряд принимает обычные приказы.'
-        : 'Выбор груза откроется только после последнего живого защитника.'
-      : state.phase === 'secured'
-        ? 'Подойди к телеге и выбери один исход. E ничего не тратит автоматически.'
-        : state.phase === 'delivering'
-          ? 'Держись рядом с телегой до отмеченного конца дороги за мостом.'
-          : state.phase === 'lost'
-            ? 'Встреча проиграна, но обязательные цели похода не менялись.'
-            : 'Исход записан в этом забеге.'
-
-  return {
-    phase: state.phase,
-    title: BRIDGE_AMBUSH_TITLE,
-    description,
-    hint,
-    distance: guidance.distance,
-    bearing: guidance.bearing,
-    remainingEnemies: remaining,
-    totalEnemies: enemies.length,
-    cargoHealth: state.cargoHealth,
-    cargoMaxHealth: state.cargoMaxHealth,
-    progress: state.progress,
-    canChoose: bridgeAmbushCanChoose(state, player),
-    outcome: state.outcome,
-    consequence: state.consequence,
-    seizeDetail: describeBridgeAmbushSeizeChoice(BRIDGE_AMBUSH_SEIZED_GOLD),
-    deliverDetail: describeBridgeAmbushDeliverChoice(
-      BRIDGE_AMBUSH_DELIVERED_SUPPLIES,
-      destinationLabel,
-    ),
-    routeLabel,
-    active: (trackApproach ||
-      bridgeAmbushAutomaticallyActive(blueprint, faction, objectives, state, player)) &&
-      (state.phase !== 'approach' || trackApproach || !suppressApproach ||
-        distance(player, cargo) <= BRIDGE_AMBUSH_ACTIVATION_RADIUS),
-  }
 }
 
 export function serializeBridgeAmbushState(state: BridgeAmbushState): SerializableState {

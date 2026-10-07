@@ -74,6 +74,7 @@ import {
 import type { PendingMaterialization } from '../src/game/world/Materialization.ts'
 import type { WorldBlueprint } from '../src/game/world/worldTypes.ts'
 import {
+  HARNESS_CARAVAN_AMBUSH_DEFENDED_REWARD,
   HARNESS_EVENT_REQUIRED_SLOTS,
   HARNESS_EVENT_WEIGHTS,
   HARNESS_LOCATED_EVENT_REWARDS,
@@ -84,6 +85,7 @@ import {
   createAmbushLoot,
   evaluateEventFrame,
   evaluateEventKill,
+  eventProgress,
   findCartLooter,
   mayLootRoadCart,
   planBounty,
@@ -571,6 +573,20 @@ test('event rewards, weights and slot costs are the engine\'s', () => {
   for (const kind of Object.keys(HARNESS_LOCATED_EVENT_REWARDS) as Array<keyof typeof HARNESS_LOCATED_EVENT_REWARDS>) {
     assert.equal(gold(kind, true), HARNESS_LOCATED_EVENT_REWARDS[kind], `${kind} reward`)
   }
+  // W2-2 — a defended ambush of one's own cart pays its owners' thanks instead.
+  {
+    const { self } = engineFor(SEEDS[0], 'guard', { x: 0, z: 0 }, new RandomStream(1))
+    Object.assign(self, {
+      gold: 0,
+      achievements: { recordGoldEarned() {}, recordCaravanRobbed() {} },
+      handleChronicleEvents: () => {},
+    })
+    self.resolveLocatedEventOutcome(
+      { id: 'x', kind: 'caravanAmbush', regionId: null, handBack: () => [], lootSite: { defend: true } },
+      true,
+    )
+    assert.equal(self.gold, HARNESS_CARAVAN_AMBUSH_DEFENDED_REWARD)
+  }
   // The weights and costs are read back through the engine's own selection and affordance:
   // a kind is affordable at exactly its slot cost and not one slot below it.
   for (const faction of FACTIONS) {
@@ -824,6 +840,30 @@ test('the builders\' own update and onKill agree with the harness\'s verdicts', 
   // W1-2 — an ambush whose escort is down is not lost until a raider has loaded the cart;
   // the W1-2 test below drives that channel frame by frame.
   assert.deepEqual(located('caravanAmbush', 'startCaravanAmbushEvent', [0, 1]), { engine: 'active', harness: 'active' })
+  assert.deepEqual(located('caravanAmbush', 'startCaravanAmbushEvent', [2, 3]), { engine: 'active', harness: 'active' })
+  // W2-2 — an ambush of the player's own side's cart is defended: both raiders down is the
+  // win, the escort's deaths are not, and the plan counts the raiders the way the engine does.
+  const defended = (deaths: number[]) => {
+    const base = situationFor(seed, 'caravanAmbush', faction)
+    if (!base?.siteId) throw new Error('no situation')
+    const situation = { ...base, faction }
+    const player = standOff(seed, base.siteId, 40)
+    const engine = engineFor(seed, faction, player, new RandomStream(29))
+    const event = engine.self.startCaravanAmbushEvent(situation)
+    const plan = planLocatedEvent(harnessWorld(seed, faction, player, new RandomStream(29)), situation, () => true)
+    if (!event || !plan) throw new Error('startCaravanAmbushEvent did not build')
+    assert.equal(plan.defend, true)
+    assert.equal(plan.target, event.target)
+    for (const index of deaths) engine.actors[index].alive = false
+    event.update?.(1 / 60)
+    const view = viewOf(plan, engine.actors)
+    assert.equal(eventProgress(plan, view), event.progress)
+    return { engine: event.state, harness: evaluateEventFrame(plan, view) }
+  }
+  assert.deepEqual(defended([2, 3]), { engine: 'succeeded', harness: 'succeeded' })
+  assert.deepEqual(defended([2]), { engine: 'active', harness: 'active' })
+  assert.deepEqual(defended([0, 1]), { engine: 'active', harness: 'active' })
+  // Negative control: the same raider deaths at an enemy's cart win nothing.
   assert.deepEqual(located('caravanAmbush', 'startCaravanAmbushEvent', [2, 3]), { engine: 'active', harness: 'active' })
   assert.deepEqual(located('warband', 'startWarbandEvent', [0, 1, 2]), { engine: 'succeeded', harness: 'succeeded' })
   assert.deepEqual(located('aftermath', 'startAftermathEvent', [0]), { engine: 'active', harness: 'active' })

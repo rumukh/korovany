@@ -12,7 +12,7 @@ A seeded 3D action roguelite inspired by the legendary Russian game-design meme.
 - Reproducible 25-region worlds with streamed terrain, hills, rivers, roads, bridges, settlements, and fog of war
 - Shareable text or numeric seeds with deterministic world validation and fingerprints
 - Melee combat, NPC squads, caravan raids, stylized injuries, prosthetics, healing, and trading
-- A one-per-run bridge ambush with guarded cargo, a physical delivery, and a lasting supply consequence
+- Caravan beats: each side settles a won cart with its own verb from the letter, and the market's prices remember it
 - Directional evasion, perfect guard, and drag-to-look when mouse capture is unavailable
 - Follow, Hold, Focus, and Regroup squad orders with a live health and status roster
 - An expedition atlas with road/bridge itineraries and cautious routes; the compass follows the road by default
@@ -129,7 +129,7 @@ Only a genuine inability to stage the contract spends its 12-second start grace:
 budget that cannot be reclaimed, or no walkable ground at the site. The notice then names
 the reason. Lingering by the arm you did not take costs nothing, and the second arm waits
 without losing patience while the first is still on the ground. A lost contract still fails
-forward: walk to its site and the node closes without the payout. The bridge ambush never
+forward: walk to its site and the node closes without the payout. A caravan beat never
 takes a contract's fighters to make room for its own; on a crowded road it waits and retries.
 
 Nor do idle garrisons crowd a contract out. A commander on your own side, such as the palace
@@ -138,25 +138,70 @@ commander's call ever takes the room a contract would stage in: it waits for his
 share of the field. The guard used to reach a contract beside the palace and find the square
 already full of soldiers nobody had sent for.
 
-## The bridge ambush
+## Caravan beats
 
-New runs place an optional caravan encounter on a real generated bridge. It does not
-replace campaign objectives or alter the world's seed. After reaching camp, follow
-the bridge guidance or find **Засада у старого моста** in the journal and atlas.
-The guard protects the cargo from raiders; the other factions overcome its escorts.
-Once selected, the bridge HUD follows the atlas's live route, including cautious
-detours and resumed runs. If no road can be planned, it labels the direction as a
-straight-line bearing rather than directing you along the original camp itinerary.
+«Можно грабить корованы» is a decision, not scenery. A caravan beat is a gilded cart on a real
+road: you win the fight at the cart, then settle it with your own side's verb from the letter.
+New runs place one on a real generated bridge on the road to the finale. It does not replace
+campaign objectives or alter the world's seed. After reaching camp, follow its guidance or
+find it in the journal and atlas, where the card names the square and who holds the cart.
+Once selected, the card follows the atlas's live route, including cautious detours and
+resumed runs. If no road can be planned, it labels the direction as a straight-line bearing
+rather than directing you along the original camp itinerary.
 
-Secure the cart before deciding its fate. **Забрать груз** pays 85 gold immediately;
-**Довести обоз** requires staying beside the moving cart across the bridge, grants two
-rations, and replenishes the bridge region's supply. If the cargo is destroyed, it
-cannot be claimed. Press `E` by secured cargo to release a captured mouse for the
-choice buttons. Combat wounds, delivery progress, and the single outcome survive
-suspend/continue. Existing saves without this encounter keep their original campaign.
+The guard escorts its own carts and never pockets cargo. The elves and the villain overcome
+the escort of the guard's cart. Once the last escort or raider at the cart is down, the panel
+offers your side's choices and what each one pays:
 
-Ordinary caravans also require their escorts to be overcome before robbery. Guard
-aid is a bounded reward for defending the caravan, not healing for repeated inspections.
+| Side | Choice | Pays |
+| --- | --- | --- |
+| Elves | **Забрать груз** | 90 gold |
+| Elves | **Отдать домикам деревяным** | walk the cart to its mark: two rations |
+| Palace guard | **Довести обоз** | walk the cart to its mark: the commander's 55 gold and a ration |
+| Palace guard | **Отпустить своим ходом** | nothing; the cart goes on alone |
+| Villain | **Забрать добро** | 90 gold |
+| Villain | **Забрить в войско** | one more companion, up to a squad of four |
+| Villain | **Сжечь груз** | no gold; one escort fewer at the palace finale, once, and only before it begins |
+
+The burn choice says whether the palace can still lose a guard, and burning does exactly what it
+says: not once the finale has begun, and not a guard standing in the world at that moment. A guard
+you saw at the gate on an earlier visit can still be sent away, and a guard sent away stays away,
+on every later visit and after a continue.
+
+Every generated world has one shop, «Можно покупать и т. п.», and every ending moves its
+prices through the chronicle. A cart that reaches the market adds 0.14 supply and makes them
+cheaper; one that never does takes 0.19 and makes them dearer, and burned cargo takes 0.34.
+The choice shows the price factor before and after, for example `×1,18 → ×1,27`. The notice,
+the journal card and the сводка's caravan line say what became of the cart. The supply
+drifts back by 4 % every 8-second chronicle tick, so a shock fades over a few minutes.
+
+Seizing a cart counts once toward «Грабить корованы»: taking, giving, plundering, press-ganging
+and burning, and the guard's confiscations. Walking a cart in or sending it on does not. On a
+raid, the guard's rich caravan and the chronicle's ambushed enemy carts read **Конфисковать
+груз для дворца** and pay as before. Press `E` by secured cargo to release a captured mouse
+for the choice buttons. If the cargo is destroyed, it cannot be claimed.
+
+A beat always ends. Stay more than 90 m from a cart you are fighting, holding or walking,
+and after 30 seconds it settles itself. A robbery you never finished gets away with what is
+left of its escort, a defence you left is lost, and a won cart left standing is looted. An
+escorted cart goes on alone, unpaid, and a walk finishes without its guide or its reward. A
+walked cart that cannot move for six seconds beside you arrives where it stands. Until a
+choice is made, a won cart follows the claim rules below, and your squad never loads it. No
+random event is rolled while a cart is being fought, held or walked, or within 120 m of one
+not yet started; one already running stands down when the fight starts unless you are in
+the middle of it.
+
+Combat wounds, cargo health, the walk's progress, the walked-away clock and the single
+outcome survive suspend/continue. A save from before caravan beats migrates its bridge
+ambush: a seizure already paid keeps its words and is never paid again. A villain who was
+walking the old cart has no walking verb any more, so the cart returns to the bridge and
+the choice opens again. Existing saves without the encounter keep their original campaign.
+
+Ordinary road carts are world texture, not caravan beats: they have no card and write no
+consequence. They also require their escorts to be overcome before robbery, and an escort
+you kill stays dead across walking away and a continue until its replacement is due 25
+seconds later. Guard aid is a bounded reward for defending the cart, not healing for
+repeated inspections.
 
 Evasion protects only 0.06–0.18 seconds of its 0.30-second step, respects collision and
 leg injuries, and cannot cancel a committed finisher. A guard's first frontal contact
@@ -187,8 +232,11 @@ If you damaged an escort in the last 10 seconds, or stood within 10 m when the l
 fell, nobody else may start loading for 9 seconds: the robbery is yours. The palace guard
 gets no such window because it defends the road cart, and knocking a looter off that cart
 earns its bounded caravan aid. The chronicle's ambushed carts follow the same rules, and
-taking their cargo counts toward caravan achievements. An emptied road cart says who
-emptied it. None of this is saved: a continue brings the escorts and the raiders back.
+taking their cargo counts toward caravan achievements. An ambush of your own side's cart is
+defended, never robbed: there is no «Забрать груз», the event is won when its raiders are
+down with the cargo still on the cart, and the owners pay 90 gold. An emptied road cart says
+who emptied it. The claim and the channel are not saved, so a continue brings an ambush's
+raiders back; the road cart's dead escorts are saved, as described above.
 
 ## Threat, doctrines and night
 

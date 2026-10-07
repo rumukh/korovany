@@ -217,28 +217,36 @@ import {
   CARAVAN_DEFENSE_NOT_EARNED_NOTICE,
   CARAVAN_DEFENDED_BY_PLAYER_NOTICE,
   CARAVAN_STILL_GUARDED_NOTICE,
-  BRIDGE_AMBUSH_CAPACITY_NOTICE,
-  BRIDGE_AMBUSH_CHOICE_FOCUS_NOTICE,
-  BRIDGE_AMBUSH_DELIVERY_STARTED_NOTICE,
-  BRIDGE_AMBUSH_DELIVERED_SUPPLIES,
-  BRIDGE_AMBUSH_EXPEDITION_STAKE,
-  BRIDGE_AMBUSH_EXPEDITION_TASK,
-  BRIDGE_AMBUSH_LOST_NOTICE,
-  BRIDGE_AMBUSH_SAVE_WARNING,
-  BRIDGE_AMBUSH_SECURED_NOTICE,
-  BRIDGE_AMBUSH_SEIZED_GOLD,
-  BRIDGE_AMBUSH_TITLE,
   BRIDGE_AMBUSH_UNAVAILABLE_NOTICE,
+  CARAVAN_AMBUSH_CONFISCATED_OUTCOME,
+  CARAVAN_AMBUSH_DEFENCE_PROMPT,
+  CARAVAN_BEAT_CAPACITY_NOTICE,
+  CARAVAN_BEAT_CHOICE_FOCUS_NOTICE,
+  CARAVAN_BEAT_NO_ROOM_NOTICE,
+  CARAVAN_BEAT_PROMPTS,
+  CARAVAN_BEAT_REOPENED_NOTICE,
+  CARAVAN_BEAT_SQUAD_FULL_NOTICE,
+  CARAVAN_BEATS_SAVE_WARNING,
+  RICH_CARAVAN_CONFISCATE_DESCRIPTION,
+  CARAVAN_CONFISCATE_PROMPT,
+  RICH_CARAVAN_CONFISCATED_NOTICE,
   chronicleEventTone,
   describeBeastProwler,
+  describeCaravanAmbushDefence,
+  describeCaravanAmbushDefenceStart,
+  describeCaravanAmbushDefended,
+  describeCaravanBeatDeliveryStarted,
+  describeCaravanBeatEscaped,
+  describeCaravanBeatLost,
+  describeCaravanBeatNoGround,
+  describeCaravanBeatOutcome,
+  describeCaravanBeatSecuredNotice,
   describeCaravanPlundered,
   describeCaravanAlreadyRobbed,
   describeCaravanDefenseAid,
   describeCaravanEmptyPrompt,
   describeCaravanLootInterrupted,
   describeCaravanRobbed,
-  describeBridgeAmbushDelivered,
-  describeBridgeAmbushSeized,
   describeChampionDefeated,
   describeChronicleEvent,
   describeCivilianDeath,
@@ -270,7 +278,9 @@ import {
   describeContractWaitsForEvent,
   describeEventHandbackForContract,
   describeRandomEventStoodDown,
+  describeRandomEventStoodDownForCaravan,
   describeRandomEventSuccess,
+  describeRichCaravanConfiscated,
   describeRationEaten,
   describeRazedSite,
   describeRout,
@@ -414,6 +424,9 @@ import {
   resolveMaterializedRaid,
   resolveMaterializedWarband,
   resolveRegionalCaravanDelivery,
+  resolveRegionalCaravanLoss,
+  CARAVAN_BEAT_CHRONICLE_PREFIX,
+  SUPPLY_BASELINE,
   tickChronicle,
   type ChronicleEvent,
   type ChronicleState,
@@ -527,6 +540,7 @@ import {
   type CaravanRobber,
 } from './world/CaravanClaim.ts'
 import {
+  CARAVAN_AMBUSH_DEFENDED_REWARD,
   CHAMPION_DAMAGE_CAP,
   EVENT_RETRY,
   WORLD_EVENT_REWARDS,
@@ -598,26 +612,43 @@ import {
   type ExpeditionInput,
   type ExpeditionPreference,
   type ExpeditionTargetIdentity,
+  type ExpeditionView,
 } from './world/ExpeditionPlanner'
 import {
-  BRIDGE_AMBUSH_ACTIVATION_RADIUS,
-  BRIDGE_AMBUSH_CHOICE_RADIUS,
-  BRIDGE_AMBUSH_DELIVERY_ESCORT_RADIUS,
-  BRIDGE_AMBUSH_DELIVERY_SPEED,
-  bridgeAmbushCanChoose,
-  bridgeAmbushDeliveryProgress,
-  bridgeAmbushRemainingEnemies,
-  bridgeAmbushReservesStagingPoint,
-  buildBridgeAmbushView,
-  createBridgeAmbushPlan,
-  createBridgeAmbushState,
-  normalizeBridgeAmbushState,
-  serializeBridgeAmbushState,
-  type BridgeAmbushChoice,
-  type BridgeAmbushCombatantState,
-  type BridgeAmbushPlan,
-  type BridgeAmbushState,
-} from './world/BridgeAmbush'
+  CARAVAN_BEAT_ACTIVATION_RADIUS,
+  CARAVAN_BEAT_CHOICE_RADIUS,
+  CARAVAN_BEAT_DELIVERY_ESCORT_RADIUS,
+  CARAVAN_BEAT_DELIVERY_SPEED,
+  CARAVAN_BEAT_DELIVERY_STALL_SECONDS,
+  CARAVAN_BEAT_SQUAD_CAP,
+  advanceCaravanBeatAbandon,
+  buildCaravanBeatsView,
+  caravanBeatCanChoose,
+  caravanBeatChoices,
+  caravanBeatCountsAsRobbery,
+  caravanBeatDeliveryProgress,
+  caravanBeatExpeditionTargets,
+  caravanBeatMarketChange,
+  caravanBeatMarketWrite,
+  caravanBeatRemainingEnemies,
+  caravanBeatReservesStagingPoint,
+  caravanBeatReward,
+  caravanBeatThinsGarrison,
+  createCaravanBeatPlans,
+  createCaravanBeatsState,
+  isCaravanBeatEngaged,
+  isCaravanBeatLaneOutcome,
+  restoreCaravanBeatsState,
+  serializeCaravanBeatsState,
+  type CaravanBeatAbandonEnding,
+  type CaravanBeatCombatantState,
+  type CaravanBeatEnding,
+  type CaravanBeatOutcome,
+  type CaravanBeatPlan,
+  type CaravanBeatState,
+  type CaravanBeatsState,
+  type CaravanBeatsView,
+} from './world/CaravanBeats'
 import { chooseGeneratedInteraction } from './world/GeneratedInteraction'
 import {
   FINALE_ATTACKS,
@@ -643,6 +674,8 @@ import {
   resolveFinaleContactTargets,
   serializeFinaleState,
   suspendFinale,
+  finaleGarrisonThinTarget,
+  thinFinaleGarrison,
   type FinaleAction,
   type FinaleAuthority,
   type FinalePoint,
@@ -1054,6 +1087,23 @@ interface CaravanLootSite {
   isEscort(actorId: string): boolean
   /** Seconds until the next handful of coins leaves the cart while it is being loaded. */
   sparkle: number
+}
+
+/** W2-2 — what a caravan beat has in the scene. Rebuilt from the saved state, never saved. */
+interface CaravanBeatRuntime {
+  cart: THREE.Group
+  spawnRetryAt: number
+  capacityNoticeShown: boolean
+  /** W1-2 — a secured cart left standing can be loaded by passers-by, over a channel. */
+  lootSite: CaravanLootSite
+  /** Seconds a walked cart has not moved although the player was beside it. */
+  stalled: number
+}
+
+interface CaravanBeatEntry {
+  plan: CaravanBeatPlan
+  state: CaravanBeatState
+  runtime: CaravanBeatRuntime | null
 }
 
 interface InteractableOutlineBinding {
@@ -1616,9 +1666,22 @@ const CARAVAN_LOOT_SPARKLE_INTERVAL = 0.45
 const CARAVAN_LOOT_CARGO_SHARE = 0.65
 /** How loud the positioned tell is when somebody starts loading a cart. */
 const CARAVAN_LOOT_TELL_INTENSITY = 0.55
-const BRIDGE_AMBUSH_OWNER_ID = 'bridge-ambush'
-const BRIDGE_AMBUSH_CARGO_TARGET_ID = 'bridge-ambush:cargo'
-const BRIDGE_AMBUSH_SPAWN_RETRY_SECONDS = 2
+/** W2-2 — a beat waits this long before asking the actor budget again on a crowded road. */
+const CARAVAN_BEAT_SPAWN_RETRY_SECONDS = 2
+
+function caravanBeatOwnerId(beatId: string): string {
+  return `caravan-beat:${beatId}`
+}
+
+function caravanBeatCargoTargetId(beatId: string): string {
+  return `caravan-beat:${beatId}:cargo`
+}
+
+/** An escorted, escaped or released cart has left the road; nothing is drawn where it stood. */
+function caravanBeatCartGone(state: CaravanBeatState): boolean {
+  return state.phase === 'unavailable' || state.phase === 'escaped' ||
+    (state.phase === 'resolved' && state.outcome === 'release')
+}
 const KNOCKBACK_DAMPING = 11
 const KNOCKBACK_STEER_THRESHOLD = 0.8
 const TELEGRAPH_MAX = 8
@@ -2088,11 +2151,11 @@ export class GameEngine {
   private readonly generatedWorld: GeneratedWorldRuntime
   private readonly generatedBlueprint: WorldBlueprint
   private readonly expeditionPlanner: ExpeditionPlanner
-  private bridgeAmbushPlan: BridgeAmbushPlan | null = null
-  private bridgeAmbushState: BridgeAmbushState | null = null
-  private bridgeAmbushCart: THREE.Group | null = null
-  private bridgeAmbushSpawnRetryAt = 0
-  private bridgeAmbushCapacityNoticeShown = false
+  /** W2-2 — the run's caravan beats: plans from the seed, state from the save. */
+  private caravanBeatPlans: CaravanBeatPlan[] = []
+  /** Null for a run saved before any beat existed, which keeps its original campaign. */
+  private caravanBeats: CaravanBeatsState | null = null
+  private readonly caravanBeatRuntime = new Map<string, CaravanBeatRuntime>()
   private readonly generatedEncounterPlans = new Map<string, GeneratedEncounterPlan[]>()
   private readonly generatedActivationSpawns = new Map<string, Set<string>>()
   private readonly simulatedGeneratedRegions = new Set<string>()
@@ -2451,6 +2514,12 @@ export class GameEngine {
   private caravanPanicTimer = 0
   /** Elapsed time before which a killed escort is not replaced. */
   private caravanEscortRespawnAt = 0
+  /**
+   * W1-2 backlog — escorts killed (or taken by the budget) whose replacements have not
+   * arrived. Saved with the remaining respawn time, so a continue brings back only the
+   * guards who were still standing, and walking away and back does not refill the cart.
+   */
+  private caravanEscortsDown = 0
   private caravanDefenseCredit = false
   private caravanAidCooldown = 0
   /** W1-2 — who may load the road cart once its escort is down, and who is loading it. */
@@ -2627,30 +2696,20 @@ export class GameEngine {
     }
     this.generatedBlueprint = blueprint
     this.expeditionPlanner = new ExpeditionPlanner(blueprint, restoredRun?.directorState.expedition)
-    this.bridgeAmbushPlan = createBridgeAmbushPlan(blueprint, faction)
+    this.caravanBeatPlans = createCaravanBeatPlans(blueprint, faction)
     if (restoredRun) {
-      if (
-        restoredRun.directorState.bridgeAmbush !== undefined &&
-        restoredRun.directorState.bridgeAmbush !== null
-      ) {
-        const restoredBridge = normalizeBridgeAmbushState(
-          restoredRun.directorState.bridgeAmbush,
-          blueprint,
-          faction,
-          this.bridgeAmbushPlan,
-        )
-        this.bridgeAmbushState = restoredBridge.state
-        if (restoredBridge.rejected) {
-          this.callbacks.onNotice(BRIDGE_AMBUSH_SAVE_WARNING, 'warning')
-        }
-      }
-    } else {
-      this.bridgeAmbushState = createBridgeAmbushState(
+      const restoredBeats = restoreCaravanBeatsState(
+        restoredRun.directorState,
         blueprint,
         faction,
-        this.bridgeAmbushPlan,
+        this.caravanBeatPlans,
       )
-      if (!this.bridgeAmbushPlan) {
+      this.caravanBeats = restoredBeats.state
+      if (restoredBeats.rejected) this.callbacks.onNotice(CARAVAN_BEATS_SAVE_WARNING, 'warning')
+      if (restoredBeats.reopened) this.callbacks.onNotice(CARAVAN_BEAT_REOPENED_NOTICE, 'info')
+    } else {
+      this.caravanBeats = createCaravanBeatsState(this.caravanBeatPlans)
+      if (this.caravanBeatPlans.length === 0) {
         this.callbacks.onNotice(BRIDGE_AMBUSH_UNAVAILABLE_NOTICE, 'warning')
       }
     }
@@ -2941,6 +3000,17 @@ export class GameEngine {
       0,
       this.readSerializableNumber(restoredDirector, 'caravanAidCooldown', 0),
     )
+    // W1-2 backlog — absent in older saves, which brought every escort back at once.
+    this.caravanEscortsDown = THREE.MathUtils.clamp(
+      Math.floor(this.readSerializableNumber(restoredDirector, 'caravanEscortsDown', 0)),
+      0,
+      CARAVAN_ESCORT_COUNT,
+    )
+    this.caravanEscortRespawnAt = this.elapsed + THREE.MathUtils.clamp(
+      this.readSerializableNumber(restoredDirector, 'caravanEscortRespawnIn', 0),
+      0,
+      CARAVAN_ESCORT_RESPAWN_DELAY,
+    )
 
     const instrumented = this.graphicsClock ? createInstrumentedGraphicsRenderer() : null
     this.renderer = instrumented?.renderer ??
@@ -3098,7 +3168,7 @@ export class GameEngine {
     )
     this.scene.add(this.caravan)
     this.registerNamedInteractableOutline(this.caravan, 'cargo')
-    this.initializeBridgeAmbushCart()
+    this.initializeCaravanBeatCarts()
     this.cameraYaw =
       restoredHeading ??
       getFactionStartHeading(this.generatedBlueprint, faction, this.player.position)
@@ -3118,7 +3188,7 @@ export class GameEngine {
     this.restoreGeneratedCompanions(restoredRun?.companions ?? [])
     if (initializeGeneratedStartingSquad) this.spawnGeneratedStartingSquad()
     this.syncGeneratedRegions()
-    this.updateBridgeAmbush(0)
+    this.updateCaravanBeats(0)
     this.updateCamera(0, true)
     this.reconcileSquadFocus()
 
@@ -3869,7 +3939,7 @@ export class GameEngine {
   interact(): void {
     if (this.paused || this.ended) return
     this.resumeAudio()
-    if (this.focusBridgeAmbushChoice()) {
+    if (this.focusCaravanBeatChoice()) {
       this.emitView(true)
       return
     }
@@ -4047,7 +4117,7 @@ export class GameEngine {
     const savedEventCooldown = this.playerAnchoredEvent
       ? Math.max(this.eventCooldown, this.eventCooldownRange().min)
       : this.eventCooldown
-    this.syncBridgeAmbushCombatState()
+    this.syncCaravanBeatCombat()
     this.captureLiveFinale()
     this.syncChronicleToRegionDeltas()
     const regionState = this.generatedWorld.regions.saveState()
@@ -4152,8 +4222,13 @@ export class GameEngine {
         caravanAidCooldown: Number.isFinite(this.caravanAidCooldown)
           ? Math.max(0, this.caravanAidCooldown)
           : 0,
-        bridgeAmbush: this.bridgeAmbushState
-          ? serializeBridgeAmbushState(this.bridgeAmbushState)
+        // W1-2 backlog — the road cart's dead stay dead across a continue.
+        caravanEscortsDown: this.caravanEscortsDown ?? 0,
+        caravanEscortRespawnIn: Math.max(0, (this.caravanEscortRespawnAt ?? 0) - this.elapsed),
+        // W2-2 — the run's caravan beats. The version-1 `bridgeAmbush` block is read on
+        // restore and migrated, and never written again.
+        caravanBeats: this.caravanBeats
+          ? serializeCaravanBeatsState(this.caravanBeats)
           : null,
         pendingHints: this.hints.pending(),
         combatMastery: serializeCombatMastery(
@@ -4302,14 +4377,14 @@ export class GameEngine {
     this.refreshGeneratedCameraObstacles()
     this.graphicsDiagnostics?.meter.endStreaming()
     this.updateCaravan(delta)
-    this.updateBridgeAmbush(delta)
+    this.updateCaravanBeats(delta)
     if (!this.finaleWithinArena()) {
       suspendFinale(this.finale)
       this.clearFinaleThreats()
     }
     this.updateProjectiles(delta)
     this.updateActors(delta)
-    this.syncBridgeAmbushCombatState()
+    this.syncCaravanBeatCombat()
     this.updateTorches()
     this.updateCampfires(delta)
     this.updateWildlife(delta)
@@ -5118,29 +5193,20 @@ export class GameEngine {
     plan: GeneratedEncounterPlan,
     activationSpawns: ReadonlySet<string>,
   ): boolean {
-    const bridgePlan = this.bridgeAmbushPlan
-    const bridgeState = this.bridgeAmbushState
-    if (
-      !bridgePlan ||
-      !bridgeState ||
-      plan.regionId !== bridgePlan.regionId ||
-      plan.kind === 'boss' ||
-      plan.spawns.some((spawn) => spawn.objective || spawn.objectiveEligible)
-    ) {
+    if (plan.kind === 'boss' || plan.spawns.some((spawn) => spawn.objective || spawn.objectiveEligible)) {
       return false
     }
+    // W2-2 — every unsettled beat keeps ordinary encounters off its cart lane, as the bridge did.
+    const beats = this.caravanBeatEntries().filter((entry) => entry.plan.regionId === plan.regionId)
+    if (beats.length === 0) return false
     const started = plan.spawns.some((spawn) =>
       activationSpawns.has(spawn.id) ||
       this.actors.some((actor) =>
         actor.generatedEncounterId === plan.encounterId &&
         actor.generatedSpawnId === spawn.id))
     if (started) return false
-    return plan.spawns.some((spawn) =>
-      bridgeAmbushReservesStagingPoint(
-        bridgePlan,
-        bridgeState,
-        { x: spawn.worldX, z: spawn.worldZ },
-      ))
+    return plan.spawns.some((spawn) => beats.some((entry) =>
+      caravanBeatReservesStagingPoint(entry.plan, entry.state, { x: spawn.worldX, z: spawn.worldZ })))
   }
 
   private refreshGeneratedCameraObstacles(): void {
@@ -5236,144 +5302,192 @@ export class GameEngine {
       this.generatedCaravanPatrolStart.z + segmentZ * progress
   }
 
-  private initializeBridgeAmbushCart(): void {
-    const state = this.bridgeAmbushState
-    const plan = this.bridgeAmbushPlan
-    if (!state || !plan || state.phase === 'unavailable') return
-    const cart = this.createCaravan(true)
-    cart.name = 'bridge-ambush-cart'
-    cart.position.set(
-      state.cargoX,
-      this.groundHeightAt(state.cargoX, state.cargoZ),
-      state.cargoZ,
-    )
-    const direction = -plan.approachSign
-    cart.rotation.y = Math.atan2(
-      -plan.axis.z * direction,
-      plan.axis.x * direction,
-    )
-    this.bridgeAmbushCart = cart
-    this.scene.add(cart)
-    this.registerNamedInteractableOutline(cart, 'cargo')
-    this.updateBridgeAmbushCartAppearance()
-    this.registerBridgeAmbushCargoTarget()
+  /** W2-2 — every beat with its plan and its scene objects. Empty for a run without beats. */
+  private caravanBeatEntries(): CaravanBeatEntry[] {
+    const state = this.caravanBeats
+    if (!state) return []
+    // Read defensively: an engine assembled field by field for a test may have no beats.
+    const plans = this.caravanBeatPlans ?? []
+    const entries: CaravanBeatEntry[] = []
+    for (const beat of state.beats) {
+      const plan = plans.find((candidate) => candidate.id === beat.id)
+      if (plan) entries.push({ plan, state: beat, runtime: this.caravanBeatRuntime?.get(beat.id) ?? null })
+    }
+    return entries
   }
 
-  private registerBridgeAmbushCargoTarget(): void {
-    const state = this.bridgeAmbushState
-    const cart = this.bridgeAmbushCart
-    if (
-      !state ||
-      !cart ||
-      this.faction !== 'guard' ||
-      state.phase !== 'fighting' ||
-      state.cargoHealth <= 0
-    ) {
-      this.eventPropTargets.delete(BRIDGE_AMBUSH_CARGO_TARGET_ID)
+  private caravanBeatEntry(beatId: string): CaravanBeatEntry | null {
+    return this.caravanBeatEntries().find((entry) => entry.plan.id === beatId) ?? null
+  }
+
+  private initializeCaravanBeatCarts(): void {
+    for (const entry of this.caravanBeatEntries()) {
+      const { plan, state } = entry
+      if (state.phase === 'unavailable') continue
+      const cart = this.createCaravan(true)
+      cart.name = `caravan-beat-cart:${plan.id}`
+      cart.position.set(state.cargoX, this.groundHeightAt(state.cargoX, state.cargoZ), state.cargoZ)
+      const direction = -plan.approachSign
+      cart.rotation.y = Math.atan2(-plan.axis.z * direction, plan.axis.x * direction)
+      this.scene.add(cart)
+      this.registerNamedInteractableOutline(cart, 'cargo')
+      const runtime: CaravanBeatRuntime = {
+        cart,
+        spawnRetryAt: 0,
+        capacityNoticeShown: false,
+        stalled: 0,
+        lootSite: {
+          claim: createCaravanClaimState(),
+          cart,
+          defend: plan.role === 'defend',
+          isEscort: (actorId) => this.isCaravanBeatEnemy(plan.id, actorId),
+          sparkle: 0,
+        },
+      }
+      this.caravanBeatRuntime.set(plan.id, runtime)
+      this.updateCaravanBeatCartAppearance({ plan, state, runtime })
+      this.registerCaravanBeatCargoTarget({ plan, state, runtime })
+    }
+  }
+
+  private isCaravanBeatEnemy(beatId: string, actorId: string): boolean {
+    const spawnId = this.actors.find((actor) => actor.id === actorId)?.generatedSpawnId
+    const state = spawnId ? this.caravanBeatEntry(beatId)?.state : undefined
+    return state?.combatants.some((entry) => entry.enemy && entry.id === spawnId) ?? false
+  }
+
+  private registerCaravanBeatCargoTarget(entry: CaravanBeatEntry): void {
+    const { plan, state, runtime } = entry
+    const id = caravanBeatCargoTargetId(plan.id)
+    if (!runtime || plan.role !== 'defend' || state.phase !== 'fighting' || state.cargoHealth <= 0) {
+      this.eventPropTargets.delete(id)
       return
     }
-    const existing = this.eventPropTargets.get(BRIDGE_AMBUSH_CARGO_TARGET_ID)
+    const existing = this.eventPropTargets.get(id)
     if (existing) {
       existing.hp = state.cargoHealth
       existing.maxHp = state.cargoMaxHealth
-      existing.position = cart.position
-      existing.object = cart
+      existing.position = runtime.cart.position
+      existing.object = runtime.cart
       return
     }
-    this.eventPropTargets.set(BRIDGE_AMBUSH_CARGO_TARGET_ID, {
-      id: BRIDGE_AMBUSH_CARGO_TARGET_ID,
-      ownerId: BRIDGE_AMBUSH_OWNER_ID,
-      object: cart,
+    this.eventPropTargets.set(id, {
+      id,
+      ownerId: caravanBeatOwnerId(plan.id),
+      object: runtime.cart,
       hp: state.cargoHealth,
       maxHp: state.cargoMaxHealth,
-      position: cart.position,
+      position: runtime.cart.position,
       attackRange: 4.4,
     })
   }
 
-  private updateBridgeAmbushCartAppearance(): void {
-    const state = this.bridgeAmbushState
-    const cart = this.bridgeAmbushCart
-    if (!state || !cart) return
-    const cargo = cart.getObjectByName('cargo')
+  private updateCaravanBeatCartAppearance(entry: CaravanBeatEntry): void {
+    const { state, runtime } = entry
+    if (!runtime) return
+    const burned = state.phase === 'resolved' && state.outcome === 'burn'
+    const cargo = runtime.cart.getObjectByName('cargo')
     if (cargo) {
-      const loaded = state.phase === 'lost'
+      cargo.scale.y = state.phase === 'lost'
         ? 0.18
-        : state.phase === 'resolved' && state.outcome === 'seize'
-          ? 0.32
-          : 1
-      cargo.scale.y = loaded
+        : burned
+          ? 0.12
+          : state.phase === 'resolved' && state.outcome !== null && !isCaravanBeatLaneOutcome(state.outcome)
+            ? 0.32
+            : 1
     }
-    cart.rotation.z = state.phase === 'lost' ? 0.08 : 0
+    runtime.cart.rotation.z = state.phase === 'lost' || burned ? 0.08 : 0
   }
 
-  private updateBridgeAmbush(delta: number): void {
-    const state = this.bridgeAmbushState
-    const plan = this.bridgeAmbushPlan
-    const cart = this.bridgeAmbushCart
-    if (!state || !plan || !cart || state.phase === 'unavailable') return
-    const visible = this.generatedWorld.regions
-      .getVisibleRegionIds()
-      .map(String)
-      .includes(plan.regionId)
-    cart.visible = visible
-    if (state.phase !== 'delivering') {
-      wagonPresenter(cart)?.update(delta, 0, this.characterHeightSample)
-    }
-    if (state.phase === 'approach') {
-      const closeEnough =
-        this.player.position.distanceTo(cart.position) <= BRIDGE_AMBUSH_ACTIVATION_RADIUS
-      if (
-        closeEnough &&
-        this.simulatedGeneratedRegions.has(plan.regionId) &&
-        this.elapsed >= this.bridgeAmbushSpawnRetryAt
-      ) {
-        this.materializeBridgeAmbush()
+  private updateCaravanBeats(delta: number): void {
+    const entries = this.caravanBeatEntries()
+    if (entries.length === 0) return
+    const visible = this.generatedWorld.regions.getVisibleRegionIds().map(String)
+    for (const entry of entries) {
+      const { plan, state, runtime } = entry
+      if (!runtime || state.phase === 'unavailable') continue
+      const cart = runtime.cart
+      cart.visible = visible.includes(plan.regionId) && !caravanBeatCartGone(state)
+      if (state.phase !== 'delivering') {
+        wagonPresenter(cart)?.update(delta, 0, this.characterHeightSample)
       }
-      return
+      const away = this.player.position.distanceTo(cart.position)
+      const abandoned = advanceCaravanBeatAbandon(plan, state, away, delta)
+      if (abandoned) {
+        this.settleAbandonedCaravanBeat(entry, abandoned)
+        continue
+      }
+      const simulated = this.simulatedGeneratedRegions.has(plan.regionId)
+      if (state.phase === 'approach') {
+        if (away <= CARAVAN_BEAT_ACTIVATION_RADIUS && simulated && this.elapsed >= runtime.spawnRetryAt) {
+          this.materializeCaravanBeat(entry)
+        }
+        continue
+      }
+      if (
+        !caravanBeatCartGone(state) &&
+        simulated &&
+        away <= CARAVAN_ESCORT_RANGE &&
+        this.elapsed >= runtime.spawnRetryAt
+      ) {
+        this.materializeCaravanBeat(entry)
+      }
+      if (state.phase === 'fighting') {
+        this.registerCaravanBeatCargoTarget(entry)
+        this.refreshCaravanBeatOrders(entry)
+        this.advanceCaravanBeatLoot(entry, delta, true)
+        continue
+      }
+      this.eventPropTargets.delete(caravanBeatCargoTargetId(plan.id))
+      if (state.phase === 'secured') this.advanceCaravanBeatLoot(entry, delta, false)
+      else if (state.phase === 'delivering') this.updateCaravanBeatDelivery(entry, delta)
     }
-    if (
-      this.simulatedGeneratedRegions.has(plan.regionId) &&
-      this.player.position.distanceTo(cart.position) <= CARAVAN_ESCORT_RANGE &&
-      this.elapsed >= this.bridgeAmbushSpawnRetryAt
-    ) {
-      this.materializeBridgeAmbush()
-    }
-    if (state.phase === 'fighting') {
-      this.registerBridgeAmbushCargoTarget()
-      this.refreshBridgeAmbushOrders()
-      return
-    }
-    this.eventPropTargets.delete(BRIDGE_AMBUSH_CARGO_TARGET_ID)
-    if (state.phase === 'delivering') this.updateBridgeAmbushDelivery(delta)
   }
 
-  private materializeBridgeAmbush(): boolean {
-    const state = this.bridgeAmbushState
-    const plan = this.bridgeAmbushPlan
-    if (!state || !plan || state.phase === 'unavailable') {
-      return false
-    }
-    const missing = state.combatants.filter((entry) =>
-      !entry.defeated &&
-      !this.actors.some((actor) => actor.generatedSpawnId === entry.id))
+  /**
+   * W1-2 — the claim rules on a beat's cart. While its escort (or the raiders) still stand
+   * the cart is guarded; the frame they fall, a player who won the fight holds it, and after
+   * that a passer-by hostile to the cart's owner can load it over the visible channel.
+   */
+  private advanceCaravanBeatLoot(entry: CaravanBeatEntry, delta: number, fighting: boolean): void {
+    const { plan, state, runtime } = entry
+    if (!runtime) return
+    const step = this.advanceCaravanLoot(runtime.lootSite, delta, {
+      guarded: fighting,
+      escortFell: false,
+      empty: false,
+      quietClaim: true,
+      mayLoot: (actor) => actor.alive &&
+        hostile(actor.allegiance, plan.owner) &&
+        !state.combatants.some((combatant) => combatant.id === actor.generatedSpawnId) &&
+        !isSquadMember(actor, this.faction) &&
+        !finaleOwnsActor(this.finale.identity, actor),
+    })
+    if (step.plundered && state.phase === 'secured') this.loseCaravanBeat(entry, 'looted')
+  }
+
+  private materializeCaravanBeat(entry: CaravanBeatEntry): boolean {
+    const { plan, state, runtime } = entry
+    if (!runtime || caravanBeatCartGone(state)) return false
+    const missing = state.combatants.filter((combatant) =>
+      !combatant.defeated &&
+      !this.actors.some((actor) => actor.generatedSpawnId === combatant.id))
     if (missing.length === 0) {
-      if (state.phase === 'approach') state.phase = 'fighting'
+      if (state.phase === 'approach') this.beginCaravanBeatFight(entry)
       return true
     }
     const placements = new Map<string, THREE.Vector3>()
     for (const combatant of missing) {
-      const position = this.findBridgeAmbushSpawnPosition(combatant)
+      const position = this.findCaravanBeatSpawnPosition(plan, combatant)
       if (!position) {
         if (state.phase === 'approach') {
           state.phase = 'unavailable'
-          state.unavailableReason =
-            'Берег у выбранного моста занят постройками; безопасно поставить встречу нельзя.'
+          state.unavailableReason = describeCaravanBeatNoGround(plan.placement)
           state.cargoHealth = 0
           state.combatants = []
-          if (this.bridgeAmbushCart) this.bridgeAmbushCart.visible = false
+          runtime.cart.visible = false
           this.callbacks.onNotice(state.unavailableReason, 'warning')
-          this.eventPropTargets.delete(BRIDGE_AMBUSH_CARGO_TARGET_ID)
+          this.eventPropTargets.delete(caravanBeatCargoTargetId(plan.id))
           this.emitView(true)
         }
         return false
@@ -5381,22 +5495,22 @@ export class GameEngine {
       placements.set(combatant.id, position)
     }
     if (!this.reserveActorSlots('campaign', missing.length)) {
-      this.bridgeAmbushSpawnRetryAt = this.elapsed + BRIDGE_AMBUSH_SPAWN_RETRY_SECONDS
-      if (!this.bridgeAmbushCapacityNoticeShown) {
-        this.bridgeAmbushCapacityNoticeShown = true
-        this.callbacks.onNotice(BRIDGE_AMBUSH_CAPACITY_NOTICE, 'info')
+      runtime.spawnRetryAt = this.elapsed + CARAVAN_BEAT_SPAWN_RETRY_SECONDS
+      if (!runtime.capacityNoticeShown) {
+        runtime.capacityNoticeShown = true
+        this.callbacks.onNotice(CARAVAN_BEAT_CAPACITY_NOTICE, 'info')
       }
       return false
     }
 
+    const firstEnemy = state.combatants.find((candidate) => candidate.enemy)
     for (const combatant of missing) {
       const position = placements.get(combatant.id)
       if (!position) continue
       const attacksCargo =
         (state.phase === 'approach' || state.phase === 'fighting') &&
-        this.faction === 'guard' &&
-        combatant.enemy &&
-        state.combatants.filter((entry) => entry.enemy).indexOf(combatant) === 0
+        plan.role === 'defend' &&
+        combatant === firstEnemy
       const actor = this.spawnActor(
         combatant.allegiance,
         combatant.role,
@@ -5408,8 +5522,8 @@ export class GameEngine {
           objectiveEligible: false,
           squadEligible: false,
           aiMode: attacksCargo ? 'attackEventProp' : 'normal',
-          eventOwnerId: BRIDGE_AMBUSH_OWNER_ID,
-          eventPropTargetId: attacksCargo ? BRIDGE_AMBUSH_CARGO_TARGET_ID : null,
+          eventOwnerId: caravanBeatOwnerId(plan.id),
+          eventPropTargetId: attacksCargo ? caravanBeatCargoTargetId(plan.id) : null,
           generatedRegionId: plan.regionId,
           generatedEncounterId: plan.id,
           generatedSpawnId: combatant.id,
@@ -5426,22 +5540,39 @@ export class GameEngine {
         combatant.maxHealth = actor.maxHp
         combatant.health = actor.hp
       }
-      actor.home.copy(this.bridgeAmbushCart?.position ?? position)
+      actor.home.copy(runtime.cart.position)
       actor.wanderTarget.copy(position)
     }
-    if (state.phase === 'approach') state.phase = 'fighting'
-    this.bridgeAmbushCapacityNoticeShown = false
-    this.registerBridgeAmbushCargoTarget()
-    this.refreshBridgeAmbushOrders()
+    if (state.phase === 'approach') this.beginCaravanBeatFight(entry)
+    runtime.capacityNoticeShown = false
+    this.registerCaravanBeatCargoTarget(entry)
+    this.refreshCaravanBeatOrders(entry)
     this.emitView(true)
     return true
   }
 
-  private findBridgeAmbushSpawnPosition(
-    combatant: BridgeAmbushCombatantState,
+  /**
+   * The cart's fight starts. W1-1's rule holds for caravans as for contracts: a random event
+   * the player is not in the middle of is stood down rather than fought over the cart.
+   */
+  private beginCaravanBeatFight(entry: CaravanBeatEntry): void {
+    entry.state.phase = 'fighting'
+    // Read defensively: an engine assembled field by field for a test has no event list.
+    const interrupted = this.activeEvents ? this.playerAnchoredEvent : null
+    if (
+      interrupted &&
+      interrupted.state === 'active' &&
+      !interrupted.contractNodeId &&
+      !this.isPlayerEngagedWith(interrupted)
+    ) {
+      this.standDownRandomEvent(interrupted, describeRandomEventStoodDownForCaravan(interrupted.title))
+    }
+  }
+
+  private findCaravanBeatSpawnPosition(
+    plan: CaravanBeatPlan,
+    combatant: CaravanBeatCombatantState,
   ): THREE.Vector3 | null {
-    const plan = this.bridgeAmbushPlan
-    if (!plan) return null
     const authored = plan.spawnPoints.find((entry) => entry.combatantId === combatant.id)
     if (!authored) return null
     const radius = this.actorColliderRadiusForRole(combatant.role)
@@ -5456,94 +5587,149 @@ export class GameEngine {
     return null
   }
 
-  private refreshBridgeAmbushOrders(): void {
-    const state = this.bridgeAmbushState
-    const cart = this.bridgeAmbushCart
-    if (!state || !cart || state.phase !== 'fighting') return
+  private refreshCaravanBeatOrders(entry: CaravanBeatEntry): void {
+    const { state, runtime } = entry
+    if (!runtime || state.phase !== 'fighting') return
     for (const actor of this.actors) {
-      const combatant = state.combatants.find((entry) => entry.id === actor.generatedSpawnId)
+      const combatant = state.combatants.find((candidate) => candidate.id === actor.generatedSpawnId)
       if (!combatant || !actor.alive || actor.aiMode === 'attackEventProp') continue
       if (actor.order) {
         actor.order.kind = 'hold'
-        actor.order.position.copy(cart.position)
+        actor.order.position.copy(runtime.cart.position)
         actor.order.timer = COMMANDER_ORDER_DURATION
       } else {
         actor.order = {
           kind: 'hold',
-          position: cart.position.clone(),
+          position: runtime.cart.position.clone(),
           timer: COMMANDER_ORDER_DURATION,
         }
       }
     }
   }
 
-  private captureBridgeAmbushActor(actor: Actor): void {
-    const state = this.bridgeAmbushState
-    if (!state || !actor.generatedSpawnId) return
-    const combatant = state.combatants.find((entry) => entry.id === actor.generatedSpawnId)
-    if (!combatant) return
-    combatant.maxHealth = Math.max(combatant.maxHealth, actor.maxHp)
-    combatant.health = actor.alive ? Math.max(0, actor.hp) : 0
-    if (!actor.alive) combatant.defeated = true
+  private captureCaravanBeatActor(actor: Actor): void {
+    if (!actor.generatedSpawnId) return
+    for (const entry of this.caravanBeatEntries()) {
+      const combatant = entry.state.combatants.find((candidate) => candidate.id === actor.generatedSpawnId)
+      if (!combatant) continue
+      combatant.maxHealth = Math.max(combatant.maxHealth, actor.maxHp)
+      combatant.health = actor.alive ? Math.max(0, actor.hp) : 0
+      if (!actor.alive) combatant.defeated = true
+      return
+    }
   }
 
-  private syncBridgeAmbushCombatState(): void {
-    const state = this.bridgeAmbushState
-    const plan = this.bridgeAmbushPlan
-    const cart = this.bridgeAmbushCart
-    if (!state || !plan || !cart || state.phase === 'unavailable') return
-    for (const actor of this.actors) this.captureBridgeAmbushActor(actor)
-    const target = this.eventPropTargets.get(BRIDGE_AMBUSH_CARGO_TARGET_ID)
-    if (target) state.cargoHealth = Math.max(0, target.hp)
-    state.cargoX = cart.position.x
-    state.cargoZ = cart.position.z
-    if (state.phase === 'delivering') {
-      state.progress = bridgeAmbushDeliveryProgress(plan, cart.position)
-    } else if (state.phase === 'resolved' && state.outcome === 'deliver') {
-      state.progress = 1
-    }
-    if (state.phase !== 'fighting') return
-    if (state.cargoHealth <= 0) {
-      state.phase = 'lost'
-      state.outcome = null
-      state.rewardPaid = false
-      state.consequence = BRIDGE_AMBUSH_LOST_NOTICE
-      this.eventPropTargets.delete(BRIDGE_AMBUSH_CARGO_TARGET_ID)
+  private syncCaravanBeatCombat(): void {
+    for (const entry of this.caravanBeatEntries()) {
+      const { plan, state, runtime } = entry
+      if (!runtime || state.phase === 'unavailable') continue
       for (const actor of this.actors) {
-        if (!state.combatants.some((entry) => entry.id === actor.generatedSpawnId)) continue
-        actor.eventPropTargetId = null
-        if (actor.aiMode === 'attackEventProp') actor.aiMode = 'normal'
+        if (!actor.generatedSpawnId) continue
+        const combatant = state.combatants.find((candidate) => candidate.id === actor.generatedSpawnId)
+        if (!combatant) continue
+        combatant.maxHealth = Math.max(combatant.maxHealth, actor.maxHp)
+        combatant.health = actor.alive ? Math.max(0, actor.hp) : 0
+        if (!actor.alive) combatant.defeated = true
       }
-      this.updateBridgeAmbushCartAppearance()
-      this.callbacks.onNotice(BRIDGE_AMBUSH_LOST_NOTICE, 'danger')
-      this.playSound('event')
-      this.emitView(true)
-      return
-    }
-    if (bridgeAmbushRemainingEnemies(state) === 0) {
-      state.phase = 'secured'
-      this.eventPropTargets.delete(BRIDGE_AMBUSH_CARGO_TARGET_ID)
-      this.callbacks.onNotice(BRIDGE_AMBUSH_SECURED_NOTICE, 'success')
-      this.playSound('objective')
-      this.emitView(true)
+      const target = this.eventPropTargets.get(caravanBeatCargoTargetId(plan.id))
+      if (target) state.cargoHealth = Math.max(0, target.hp)
+      state.cargoX = runtime.cart.position.x
+      state.cargoZ = runtime.cart.position.z
+      if (state.phase === 'delivering') {
+        state.progress = caravanBeatDeliveryProgress(plan, runtime.cart.position)
+      } else if (state.phase === 'resolved' && state.outcome && isCaravanBeatLaneOutcome(state.outcome)) {
+        state.progress = 1
+      }
+      if (state.phase !== 'fighting') continue
+      if (state.cargoHealth <= 0) {
+        this.loseCaravanBeat(entry, 'destroyed')
+        continue
+      }
+      if (caravanBeatRemainingEnemies(state) === 0) {
+        state.phase = 'secured'
+        this.eventPropTargets.delete(caravanBeatCargoTargetId(plan.id))
+        this.callbacks.onNotice(describeCaravanBeatSecuredNotice(plan.role), 'success')
+        this.playSound('objective')
+        this.emitView(true)
+      }
     }
   }
 
-  private updateBridgeAmbushDelivery(delta: number): void {
-    const state = this.bridgeAmbushState
-    const plan = this.bridgeAmbushPlan
-    const cart = this.bridgeAmbushCart
-    if (
-      !state ||
-      !plan ||
-      !cart ||
-      state.phase !== 'delivering' ||
-      state.outcome !== 'deliver' ||
-      state.rewardPaid
-    ) {
+  /** The cargo is gone: destroyed in the fight, loaded by somebody else, or left too long. */
+  private loseCaravanBeat(entry: CaravanBeatEntry, cause: 'destroyed' | 'looted' | 'abandoned'): void {
+    const { plan, state, runtime } = entry
+    state.phase = 'lost'
+    state.cargoHealth = 0
+    state.outcome = null
+    state.rewardPaid = false
+    state.abandonRemaining = null
+    const market = this.writeCaravanBeatMarket(entry, 'lost')
+    state.consequence = describeCaravanBeatLost(plan.role, cause, market)
+    this.eventPropTargets.delete(caravanBeatCargoTargetId(plan.id))
+    for (const actor of this.actors) {
+      if (!state.combatants.some((combatant) => combatant.id === actor.generatedSpawnId)) continue
+      actor.eventPropTargetId = null
+      if (actor.aiMode === 'attackEventProp') actor.aiMode = 'normal'
+    }
+    if (runtime) cancelCaravanLoot(runtime.lootSite.claim)
+    this.updateCaravanBeatCartAppearance(entry)
+    this.callbacks.onNotice(state.consequence, 'danger')
+    this.playSound('event')
+    this.emitView(true)
+  }
+
+  /** The player left an engaged cart for `CARAVAN_BEAT_ABANDON_SECONDS`; it settles itself. */
+  private settleAbandonedCaravanBeat(entry: CaravanBeatEntry, ending: CaravanBeatAbandonEnding): void {
+    const { state } = entry
+    if (ending === 'unattended') {
+      this.resolveCaravanBeatDelivery(entry, true)
       return
     }
-    if (this.player.position.distanceTo(cart.position) > BRIDGE_AMBUSH_DELIVERY_ESCORT_RADIUS) {
+    // A cart whose escort is already down is not escaping anywhere: left standing, it is taken.
+    if (ending === 'lost' || (ending === 'escaped' && caravanBeatRemainingEnemies(state) === 0)) {
+      this.loseCaravanBeat(entry, 'abandoned')
+      return
+    }
+    if (ending === 'release') {
+      state.phase = 'resolved'
+      state.outcome = 'release'
+      state.rewardPaid = true
+      this.applyCaravanBeatOutcome(entry, 'release', true)
+      return
+    }
+    // A robbery the player never finished: the cart and what is left of its escort go on.
+    state.phase = 'escaped'
+    state.outcome = null
+    state.rewardPaid = false
+    const market = this.writeCaravanBeatMarket(entry, 'escaped')
+    state.consequence = describeCaravanBeatEscaped(market)
+    this.sendCaravanBeatOnItsWay(entry)
+    this.callbacks.onNotice(state.consequence, 'warning')
+    this.emitView(true)
+  }
+
+  /** The cart left the road with whoever was still walking beside it; nothing comes back. */
+  private sendCaravanBeatOnItsWay(entry: CaravanBeatEntry): void {
+    const { plan, state, runtime } = entry
+    for (const actor of [...this.actors]) {
+      if (!actor.alive) continue
+      if (state.combatants.some((combatant) => combatant.id === actor.generatedSpawnId)) {
+        this.removeActorById(actor.id)
+      }
+    }
+    if (runtime) {
+      cancelCaravanLoot(runtime.lootSite.claim)
+      runtime.cart.visible = false
+    }
+    this.eventPropTargets.delete(caravanBeatCargoTargetId(plan.id))
+  }
+
+  private updateCaravanBeatDelivery(entry: CaravanBeatEntry, delta: number): void {
+    const { plan, state, runtime } = entry
+    if (!runtime || state.phase !== 'delivering' || !state.outcome || state.rewardPaid) return
+    const cart = runtime.cart
+    if (this.player.position.distanceTo(cart.position) > CARAVAN_BEAT_DELIVERY_ESCORT_RADIUS) {
+      runtime.stalled = 0
       wagonPresenter(cart)?.update(delta, 0, this.characterHeightSample)
       return
     }
@@ -5551,10 +5737,10 @@ export class GameEngine {
     const dz = plan.deliveryEnd.z - cart.position.z
     const remaining = Math.hypot(dx, dz)
     if (remaining <= 0.12) {
-      this.resolveBridgeAmbushDelivery()
+      this.resolveCaravanBeatDelivery(entry)
       return
     }
-    const requested = Math.min(remaining, Math.max(0, delta) * BRIDGE_AMBUSH_DELIVERY_SPEED)
+    const requested = Math.min(remaining, Math.max(0, delta) * CARAVAN_BEAT_DELIVERY_SPEED)
     if (requested <= 0) return
     const beforeX = cart.position.x
     const beforeZ = cart.position.z
@@ -5568,9 +5754,7 @@ export class GameEngine {
     const movedZ = cart.position.z - beforeZ
     const travelled = Math.hypot(movedX, movedZ)
     cart.position.y = this.groundHeightAt(cart.position.x, cart.position.z)
-    if (travelled > 0.0001) {
-      cart.rotation.y = Math.atan2(-movedZ, movedX)
-    }
+    if (travelled > 0.0001) cart.rotation.y = Math.atan2(-movedZ, movedX)
     const wagon = wagonPresenter(cart)
     if (wagon) wagon.update(delta, travelled, this.characterHeightSample)
     else if (travelled > 0.0001) {
@@ -5578,53 +5762,163 @@ export class GameEngine {
         wheel.rotation.z -= travelled / wheelRadiusOf(wheel)
       }
     }
+    // A cart wedged against something the lane test did not see would otherwise wait for
+    // ever beside a player doing everything right: after a few seconds it is through.
+    runtime.stalled = travelled < requested * 0.2 ? runtime.stalled + delta : 0
+    if (runtime.stalled >= CARAVAN_BEAT_DELIVERY_STALL_SECONDS) {
+      this.resolveCaravanBeatDelivery(entry)
+      return
+    }
     state.cargoX = cart.position.x
     state.cargoZ = cart.position.z
-    state.progress = bridgeAmbushDeliveryProgress(plan, cart.position)
-    if (state.progress >= 0.995 && cart.position.distanceTo(
-      new THREE.Vector3(plan.deliveryEnd.x, cart.position.y, plan.deliveryEnd.z),
+    state.progress = caravanBeatDeliveryProgress(plan, cart.position)
+    if (state.progress >= 0.995 && Math.hypot(
+      plan.deliveryEnd.x - cart.position.x,
+      plan.deliveryEnd.z - cart.position.z,
     ) <= 0.35) {
-      this.resolveBridgeAmbushDelivery()
+      this.resolveCaravanBeatDelivery(entry)
     }
   }
 
-  private resolveBridgeAmbushDelivery(): void {
-    const state = this.bridgeAmbushState
-    const plan = this.bridgeAmbushPlan
-    if (
-      !state ||
-      !plan ||
-      state.phase !== 'delivering' ||
-      state.outcome !== 'deliver' ||
-      state.rewardPaid
-    ) {
-      return
-    }
+  /** The walk is over, with the player beside the cart or, `unattended`, without them. */
+  private resolveCaravanBeatDelivery(entry: CaravanBeatEntry, unattended = false): void {
+    const { plan, state, runtime } = entry
+    if (!runtime || state.phase !== 'delivering' || !state.outcome || state.rewardPaid) return
+    runtime.cart.position.set(
+      plan.deliveryEnd.x,
+      this.groundHeightAt(plan.deliveryEnd.x, plan.deliveryEnd.z),
+      plan.deliveryEnd.z,
+    )
+    state.cargoX = plan.deliveryEnd.x
+    state.cargoZ = plan.deliveryEnd.z
+    state.progress = 1
     state.phase = 'resolved'
     state.rewardPaid = true
-    state.progress = 1
-    state.consequence = describeBridgeAmbushDelivered(BRIDGE_AMBUSH_DELIVERED_SUPPLIES)
-    this.generatedSupplyCount += BRIDGE_AMBUSH_DELIVERED_SUPPLIES
+    state.abandonRemaining = null
+    runtime.stalled = 0
+    this.applyCaravanBeatOutcome(entry, state.outcome, unattended)
+  }
 
-    const destinationSite = this.generatedBlueprint.sites.find((site) =>
-      String(site.regionId) === plan.regionId &&
-      (site.kind === 'settlement' || site.kind === 'shop' || site.kind === 'recovery'))
-    const events = resolveRegionalCaravanDelivery({
-      state: this.chronicleState,
-      regions: this.chronicleRegions,
-      idPrefix: `bridge-delivery-${plan.bridgeId}`,
-      regionId: plan.regionId,
-      faction: 'guard',
-      siteId: destinationSite?.id ?? null,
+  /**
+   * Pays an outcome and writes what it did to the world, once. Every caller has already set
+   * `rewardPaid`, which is what a save carries, so a continue can never pay twice.
+   */
+  private applyCaravanBeatOutcome(
+    entry: CaravanBeatEntry,
+    outcome: CaravanBeatOutcome,
+    unattended: boolean,
+  ): void {
+    const { plan, state } = entry
+    const reward = caravanBeatReward(plan, outcome)
+    const gold = unattended ? 0 : reward.gold
+    const rations = unattended ? 0 : reward.rations
+    if (gold > 0) {
+      this.gold += gold
+      this.achievements.recordGoldEarned(gold)
+    }
+    if (rations > 0) this.generatedSupplyCount += rations
+    let thinned = false
+    const beats = this.caravanBeats
+    if (
+      reward.burnsSupply &&
+      beats &&
+      caravanBeatThinsGarrison(this.faction, plan, beats.garrisonThinned)
+    ) {
+      thinned = thinFinaleGarrison(this.finale, (spawnId) => this.isFinaleEscortOnField(spawnId)) !== null
+      if (thinned) beats.garrisonThinned = true
+    }
+    // Counted here, where an outcome is applied exactly once, so «Грабить корованы» sees it once.
+    if (caravanBeatCountsAsRobbery(outcome)) this.achievements.recordCaravanRobbed(false)
+    const market = this.writeCaravanBeatMarket(entry, outcome)
+    state.consequence = describeCaravanBeatOutcome({
+      outcome,
+      gold,
+      rations,
+      thinnedGarrison: thinned,
+      unattended,
+      market,
     })
-    if (events.length !== 1) {
-      throw new Error('Bridge delivery did not produce its chronicle consequence')
+    if (outcome === 'burn' && entry.runtime) {
+      this.spawnDecal(entry.runtime.cart.position, 'scorch', 3.2)
+    }
+    // Sent on alone, the cart leaves the road with the soldier who was walking beside it.
+    if (outcome === 'release') this.sendCaravanBeatOnItsWay(entry)
+    this.updateCaravanBeatCartAppearance(entry)
+    this.callbacks.onNotice(state.consequence, unattended ? 'info' : 'success')
+    this.playSound(gold > 0 ? 'coin' : 'objective')
+    this.emitView(true)
+  }
+
+  /**
+   * One beat's write to the world's market, through the chronicle's own helpers: an arrival
+   * or a loss with no roll. Returns the before/after price line the outcome's words carry.
+   */
+  private writeCaravanBeatMarket(
+    entry: CaravanBeatEntry,
+    ending: CaravanBeatEnding,
+  ): { regionLabel: string; before: number; after: number } | null {
+    const { plan } = entry
+    const write = caravanBeatMarketWrite(plan, ending)
+    const regionId = plan.marketRegionId
+    if (!write || !regionId) return null
+    const change = caravanBeatMarketChange(
+      write,
+      this.chronicleRegions.get(regionId)?.supply ?? SUPPLY_BASELINE,
+    )
+    const idPrefix = `${CARAVAN_BEAT_CHRONICLE_PREFIX}${plan.id}`
+    if (write.kind === 'arrival') {
+      resolveRegionalCaravanDelivery({
+        state: this.chronicleState,
+        regions: this.chronicleRegions,
+        idPrefix,
+        regionId,
+        faction: plan.owner,
+        siteId: plan.marketSiteId,
+      })
+    } else {
+      resolveRegionalCaravanLoss({
+        state: this.chronicleState,
+        regions: this.chronicleRegions,
+        idPrefix,
+        regionId: plan.regionId,
+        supplyRegionId: regionId,
+        faction: plan.owner,
+        siteId: plan.marketSiteId,
+        loss: write.amount,
+      })
     }
     this.syncChronicleToRegionDeltas()
-    this.updateBridgeAmbushCartAppearance()
-    this.callbacks.onNotice(state.consequence, 'success')
-    this.playSound('objective')
-    this.emitView(true)
+    return change ? { regionLabel: this.regionGridLabel(regionId), ...change } : null
+  }
+
+  /** The villain's press-gang: one fresh companion at the cart, up to the squad cap. */
+  private recruitCaravanBeatCompanion(entry: CaravanBeatEntry): boolean {
+    const { plan, runtime } = entry
+    if (!runtime) return false
+    const members = this.actors.filter((actor) => isSquadMember(actor, this.faction)).length
+    if (members >= CARAVAN_BEAT_SQUAD_CAP) return false
+    const role: ActorRole = this.faction === 'villain' ? 'minion' : 'soldier'
+    const radius = this.actorColliderRadiusForRole(role)
+    const position = findSquadWalkablePosition(
+      { x: runtime.cart.position.x, z: runtime.cart.position.z },
+      (point) => this.isWalkablePosition(point.x, point.z, radius),
+      6,
+    )
+    if (!position || !this.reserveActorSlots('squad', 1)) return false
+    const id = `${plan.id}:recruit`
+    const actor = this.spawnActor(this.faction, role, position.x, position.z, this.actorSequence++, {
+      budget: 'squad',
+      objectiveEligible: false,
+      squadEligible: true,
+      generatedRegionId: null,
+      hostileToPlayer: false,
+      appearanceId: id,
+    })
+    actor.id = id
+    this.assignSquadSlot(actor)
+    actor.home.copy(actor.mesh.position)
+    actor.wanderTarget.copy(actor.mesh.position)
+    return true
   }
 
   private generatedPrerequisitesDone(node: FactionObjectiveNode): boolean {
@@ -5694,55 +5988,61 @@ export class GameEngine {
     this.emitView(true)
   }
 
-  trackBridgeAmbush(): boolean {
+  /** W2-2 — charts the road to one beat in the atlas, as `trackBridgeAmbush` did for the bridge. */
+  trackCaravanBeat(beatId: string): boolean {
     if (this.ended) return false
-    const target = this.bridgeAmbushExpeditionTarget()
-    if (!target || !this.expeditionPlanner.select(
-      { kind: 'bridgeAmbush', id: target.id },
-      this.buildExpeditionInput(),
-    )) {
+    const input = this.buildExpeditionInput()
+    if (!(input.caravanBeats ?? []).some((target) => target.id === beatId) ||
+      !this.expeditionPlanner.select({ kind: 'caravanBeat', id: beatId }, input)) {
       return false
     }
     this.emitView(true)
     return true
   }
 
-  chooseBridgeAmbush(choice: BridgeAmbushChoice): boolean {
-    if (
-      this.ended ||
-      (choice !== 'seize' && choice !== 'deliver') ||
-      !this.bridgeAmbushState ||
-      !this.bridgeAmbushPlan ||
-      !this.bridgeAmbushCart
-    ) {
-      return false
-    }
-    this.syncBridgeAmbushCombatState()
-    const state = this.bridgeAmbushState
-    if (!bridgeAmbushCanChoose(state, this.player.position)) return false
+  /**
+   * W2-2 — the side's own verb on a secured cart. Refused unless the verb is this side's,
+   * the cart's defenders are all down, and the player is standing at it; once accepted the
+   * outcome is applied exactly once, or the walk begins.
+   */
+  chooseCaravanBeat(beatId: string, outcome: CaravanBeatOutcome): boolean {
+    if (this.ended) return false
+    const entry = this.caravanBeatEntry(beatId)
+    if (!entry || !entry.runtime) return false
+    const { plan, state, runtime } = entry
+    if (!caravanBeatChoices(this.faction, plan).includes(outcome)) return false
+    this.syncCaravanBeatCombat()
+    if (!caravanBeatCanChoose(state, this.player.position)) return false
     if (this.actors.some((actor) =>
       actor.alive &&
-      state.combatants.some((entry) => entry.enemy && entry.id === actor.generatedSpawnId))) {
+      state.combatants.some((combatant) => combatant.enemy && combatant.id === actor.generatedSpawnId))) {
+      return false
+    }
+    if (outcome === 'press' && !this.recruitCaravanBeatCompanion(entry)) {
+      const members = this.actors.filter((actor) => isSquadMember(actor, this.faction)).length
+      this.callbacks.onNotice(
+        members >= CARAVAN_BEAT_SQUAD_CAP ? CARAVAN_BEAT_SQUAD_FULL_NOTICE : CARAVAN_BEAT_NO_ROOM_NOTICE,
+        'warning',
+      )
       return false
     }
 
-    state.outcome = choice
-    this.eventPropTargets.delete(BRIDGE_AMBUSH_CARGO_TARGET_ID)
-    if (choice === 'deliver') {
+    state.outcome = outcome
+    state.abandonRemaining = null
+    this.eventPropTargets.delete(caravanBeatCargoTargetId(plan.id))
+    cancelCaravanLoot(runtime.lootSite.claim)
+    if (isCaravanBeatLaneOutcome(outcome)) {
       state.phase = 'delivering'
       state.consequence = null
-      this.callbacks.onNotice(BRIDGE_AMBUSH_DELIVERY_STARTED_NOTICE, 'info')
+      runtime.stalled = 0
+      this.callbacks.onNotice(describeCaravanBeatDeliveryStarted(outcome), 'info')
+      this.updateCaravanBeatCartAppearance(entry)
+      this.emitView(true)
     } else {
       state.phase = 'resolved'
       state.rewardPaid = true
-      state.consequence = describeBridgeAmbushSeized(BRIDGE_AMBUSH_SEIZED_GOLD)
-      this.gold += BRIDGE_AMBUSH_SEIZED_GOLD
-      this.achievements.recordGoldEarned(BRIDGE_AMBUSH_SEIZED_GOLD)
-      this.callbacks.onNotice(state.consequence, 'success')
-      this.playSound('coin')
+      this.applyCaravanBeatOutcome(entry, outcome, false)
     }
-    this.updateBridgeAmbushCartAppearance()
-    this.emitView(true)
     return true
   }
 
@@ -5772,31 +6072,40 @@ export class GameEngine {
       discoveredRegionIds,
       chronicleRegions: this.chronicleRegions,
       contestedRegionIds: this.chronicleContestedRegionIds,
-      bridgeAmbush: this.bridgeAmbushExpeditionTarget(),
+      caravanBeats: caravanBeatExpeditionTargets(
+        this.faction,
+        this.caravanBeatPlans ?? [],
+        this.caravanBeats ?? null,
+      ),
     }
   }
 
-  private bridgeAmbushExpeditionTarget(): NonNullable<ExpeditionInput['bridgeAmbush']> | null {
-    const state = this.bridgeAmbushState
-    const plan = this.bridgeAmbushPlan
-    if (
-      !state ||
-      !plan ||
-      state.phase === 'delivering' ||
-      state.phase === 'resolved' ||
-      state.phase === 'lost' ||
-      state.phase === 'unavailable'
-    ) {
-      return null
-    }
-    return {
-      id: plan.id,
-      title: BRIDGE_AMBUSH_TITLE,
-      regionId: plan.regionId,
-      position: { x: state.cargoX, z: state.cargoZ },
-      task: BRIDGE_AMBUSH_EXPEDITION_TASK,
-      stake: BRIDGE_AMBUSH_EXPEDITION_STAKE,
-    }
+  /** W2-2 — the beats as the HUD reads them, from the same expedition the compass uses. */
+  private buildCaravanBeatsView(expedition: ExpeditionView): CaravanBeatsView {
+    const plans = this.caravanBeatPlans ?? []
+    const market = plans[0]?.marketRegionId ?? null
+    return buildCaravanBeatsView({
+      blueprint: this.generatedBlueprint,
+      faction: this.faction,
+      objectives: this.objectives,
+      player: { x: this.player.position.x, z: this.player.position.z },
+      heading: this.cameraYaw,
+      expedition,
+      squadSize: this.actors.filter((actor) => isSquadMember(actor, this.faction)).length,
+      garrisonThinned: this.caravanBeats?.garrisonThinned ?? false,
+      // The same question `applyCaravanBeatOutcome` asks, so the panel never over-promises.
+      garrisonCanThin: this.finale
+        ? finaleGarrisonThinTarget(this.finale, (spawnId) => this.isFinaleEscortOnField(spawnId)) !== null
+        : false,
+      marketSupply: market === null
+        ? null
+        : this.chronicleRegions.get(market)?.supply ?? SUPPLY_BASELINE,
+    }, plans, this.caravanBeats ?? null)
+  }
+
+  /** A palace escort standing in the world right now, which a burned cart cannot send away. */
+  private isFinaleEscortOnField(spawnId: string): boolean {
+    return this.actors.some((actor) => actor.alive && actor.generatedSpawnId === spawnId)
   }
 
   private contractCopyContext(node: FactionObjectiveNode): ContractCopyContext {
@@ -6045,10 +6354,10 @@ export class GameEngine {
    * handed back to, which is why this is a stand-down rather than a hand-back. It only ever
    * happens to an event the player is not engaged in (`isPlayerEngagedWith`).
    */
-  private standDownRandomEvent(event: WorldEvent): void {
+  private standDownRandomEvent(event: WorldEvent, notice?: string): void {
     this.releaseEvent(event)
     this.eventCooldown = Math.max(this.eventCooldown, this.eventCooldownRange().min)
-    this.callbacks.onNotice(describeRandomEventStoodDown(event.title), 'info')
+    this.callbacks.onNotice(notice ?? describeRandomEventStoodDown(event.title), 'info')
   }
 
   /**
@@ -6401,52 +6710,44 @@ export class GameEngine {
     return ''
   }
 
-  private getBridgeAmbushPrompt(): string | null {
-    const state = this.bridgeAmbushState
-    const cart = this.bridgeAmbushCart
-    if (!state || !cart || state.phase === 'unavailable') return null
-    const distance = this.player.position.distanceTo(cart.position)
-    if (state.phase === 'secured' && distance <= BRIDGE_AMBUSH_CHOICE_RADIUS + 2) {
-      return distance <= BRIDGE_AMBUSH_CHOICE_RADIUS
-        ? document.pointerLockElement === this.renderer.domElement
-          ? '[E] Освободить курсор и выбрать судьбу груза'
-          : 'Выбери кнопкой: забрать груз или провести телегу'
-        : 'Подойди к телеге, чтобы решить судьбу груза'
-    }
-    if (state.phase === 'delivering' && distance <= BRIDGE_AMBUSH_DELIVERY_ESCORT_RADIUS + 5) {
-      return distance <= BRIDGE_AMBUSH_DELIVERY_ESCORT_RADIUS
-        ? 'Иди рядом: телега движется по мосту'
-        : 'Вернись к телеге — без проводника она стоит'
-    }
-    if (state.phase === 'fighting' && distance <= BRIDGE_AMBUSH_ACTIVATION_RADIUS) {
-      return bridgeAmbushRemainingEnemies(state) > 0
-        ? this.faction === 'guard'
-          ? 'Отбей налётчиков от телеги'
-          : 'Сначала одолей живых защитников телеги'
-        : 'Подступ к телеге свободен'
+  private getCaravanBeatPrompt(): string | null {
+    for (const { plan, state, runtime } of this.caravanBeatEntries()) {
+      if (!runtime || state.phase === 'unavailable') continue
+      const distance = this.player.position.distanceTo(runtime.cart.position)
+      if (state.phase === 'secured' && distance <= CARAVAN_BEAT_CHOICE_RADIUS + 2) {
+        return distance <= CARAVAN_BEAT_CHOICE_RADIUS
+          ? document.pointerLockElement === this.renderer.domElement
+            ? CARAVAN_BEAT_PROMPTS.releaseCursor
+            : CARAVAN_BEAT_PROMPTS.chooseWithButtons
+          : CARAVAN_BEAT_PROMPTS.approachToChoose
+      }
+      if (state.phase === 'delivering' && distance <= CARAVAN_BEAT_DELIVERY_ESCORT_RADIUS + 5) {
+        return distance <= CARAVAN_BEAT_DELIVERY_ESCORT_RADIUS
+          ? CARAVAN_BEAT_PROMPTS.walkBeside
+          : CARAVAN_BEAT_PROMPTS.returnToCart
+      }
+      if (state.phase === 'fighting' && distance <= CARAVAN_BEAT_ACTIVATION_RADIUS) {
+        return caravanBeatRemainingEnemies(state) > 0
+          ? plan.role === 'defend' ? CARAVAN_BEAT_PROMPTS.defend : CARAVAN_BEAT_PROMPTS.rob
+          : CARAVAN_BEAT_PROMPTS.clear
+      }
     }
     return null
   }
 
-  private focusBridgeAmbushChoice(): boolean {
-    const state = this.bridgeAmbushState
-    const cart = this.bridgeAmbushCart
-    if (
-      !state ||
-      !cart ||
-      state.phase !== 'secured' ||
-      this.player.position.distanceTo(cart.position) > BRIDGE_AMBUSH_CHOICE_RADIUS
-    ) {
-      return false
-    }
+  private focusCaravanBeatChoice(): boolean {
+    const secured = this.caravanBeatEntries().some(({ state, runtime }) =>
+      runtime !== null &&
+      state.phase === 'secured' &&
+      this.player.position.distanceTo(runtime.cart.position) <= CARAVAN_BEAT_CHOICE_RADIUS)
+    if (!secured) return false
     if (document.pointerLockElement === this.renderer.domElement) {
       this.releaseGameplayInput()
       document.exitPointerLock()
     }
-    this.callbacks.onNotice(BRIDGE_AMBUSH_CHOICE_FOCUS_NOTICE, 'info')
+    this.callbacks.onNotice(CARAVAN_BEAT_CHOICE_FOCUS_NOTICE, 'info')
     return true
   }
-
   private isWalkablePosition(x: number, z: number, radius: number): boolean {
     return this.generatedWorld.collision.isWalkablePosition(x, z, radius)
   }
@@ -9358,6 +9659,15 @@ export class GameEngine {
     // fresh soldier out of thin air next to the player who had just killed one.
     if (this.caravanEscortIds.length < before) {
       this.caravanEscortRespawnAt = this.elapsed + CARAVAN_ESCORT_RESPAWN_DELAY
+      // W1-2 backlog — the gap is remembered, and saved, so walking away and back or a
+      // continue brings back only the guards who were still standing.
+      this.caravanEscortsDown = Math.min(
+        CARAVAN_ESCORT_COUNT,
+        (this.caravanEscortsDown ?? 0) + before - this.caravanEscortIds.length,
+      )
+    }
+    if ((this.caravanEscortsDown ?? 0) > 0 && this.elapsed >= this.caravanEscortRespawnAt) {
+      this.caravanEscortsDown = 0
     }
     // W1-2 — the moment the last guard goes down is the moment the claim is decided.
     const escortFell = before > 0 && this.caravanEscortIds.length === 0
@@ -9381,10 +9691,7 @@ export class GameEngine {
       return false
     }
 
-    if (
-      this.caravanEscortIds.length < CARAVAN_ESCORT_COUNT &&
-      this.elapsed >= this.caravanEscortRespawnAt
-    ) {
+    if (this.caravanEscortIds.length < CARAVAN_ESCORT_COUNT - (this.caravanEscortsDown ?? 0)) {
       this.spawnCaravanEscort(regionId)
     }
 
@@ -9529,6 +9836,8 @@ export class GameEngine {
       escortFell: boolean
       empty: boolean
       mayLoot: (actor: Actor) => boolean
+      /** W2-2 — a caravan beat says it was won in its own words, so the claim line stays quiet. */
+      quietClaim?: boolean
     },
   ): CaravanClaimStep {
     const cart = site.cart.position
@@ -9550,7 +9859,7 @@ export class GameEngine {
         : this.findCaravanLooter(cart, world.mayLoot),
       plunderRange: CARAVAN_PLUNDER_RANGE,
     })
-    if (step.claimOpened) this.callbacks.onNotice(CARAVAN_CLAIM_NOTICE, 'success')
+    if (step.claimOpened && world.quietClaim !== true) this.callbacks.onNotice(CARAVAN_CLAIM_NOTICE, 'success')
     if (step.started) {
       site.sparkle = 0
       this.playSound('attackTell', {
@@ -9628,12 +9937,8 @@ export class GameEngine {
 
   /** The cart this actor is loading, or null. The hold, the pose and the cue read this. */
   private caravanLootCartFor(actor: Actor): THREE.Vector3 | null {
-    const ordinary = this.ordinaryCaravanLootSite
-    if (ordinary && ordinary.claim.looterId === actor.id) return ordinary.cart.position
-    // Read defensively: an engine assembled field by field for a test has no event list.
-    for (const event of this.activeEvents ?? []) {
-      const site = event.lootSite
-      if (site && site.claim.looterId === actor.id) return site.cart.position
+    for (const site of this.caravanLootSites()) {
+      if (site.claim.looterId === actor.id) return site.cart.position
     }
     return null
   }
@@ -9646,9 +9951,7 @@ export class GameEngine {
   private noteCaravanLootHit(target: Actor, result: DamageResult, byPlayer: boolean): void {
     if (!result.applied || !(result.dealt > 0)) return
     const ordinary = this.ordinaryCaravanLootSite
-    const sites: CaravanLootSite[] = ordinary ? [ordinary] : []
-    for (const event of this.activeEvents ?? []) if (event.lootSite) sites.push(event.lootSite)
-    for (const site of sites) {
+    for (const site of this.caravanLootSites()) {
       if (byPlayer && site.isEscort(target.id)) noteCaravanEscortHit(site.claim, this.elapsed)
       if (!interruptCaravanLoot(site.claim, target.id) || !byPlayer) continue
       this.callbacks.onNotice(describeCaravanLootInterrupted(site.defend), 'success')
@@ -9694,10 +9997,7 @@ export class GameEngine {
   /** The cue the HUD shows: the nearest cart somebody else is loading within sight. */
   private buildCaravanLootCue(): CaravanLootView | null {
     let best: CaravanLootView | null = null
-    const ordinary = this.ordinaryCaravanLootSite
-    const sites: CaravanLootSite[] = ordinary ? [ordinary] : []
-    for (const event of this.activeEvents) if (event.lootSite) sites.push(event.lootSite)
-    for (const site of sites) {
+    for (const site of this.caravanLootSites()) {
       const cart = site.cart.position
       const view = buildCaravanLootView(site.claim, {
         playerDistance: Math.hypot(this.player.position.x - cart.x, this.player.position.z - cart.z),
@@ -9706,6 +10006,16 @@ export class GameEngine {
       if (view && (!best || view.distance < best.distance)) best = view
     }
     return best
+  }
+
+  /** Every cart the W1-2 rules apply to: the road cart, the chronicle's, and the run's beats. */
+  private caravanLootSites(): CaravanLootSite[] {
+    const ordinary = this.ordinaryCaravanLootSite
+    const sites: CaravanLootSite[] = ordinary ? [ordinary] : []
+    // Read defensively: an engine assembled field by field for a test has no event list.
+    for (const event of this.activeEvents ?? []) if (event.lootSite) sites.push(event.lootSite)
+    for (const runtime of this.caravanBeatRuntime?.values() ?? []) sites.push(runtime.lootSite)
+    return sites
   }
 
   private updateProjectiles(delta: number): void {
@@ -10052,7 +10362,7 @@ export class GameEngine {
       eventPrompt = event.getPrompt?.() ?? null
       if (eventPrompt) break
     }
-    this.prompt = eventPrompt ?? this.getBridgeAmbushPrompt() ?? this.getGeneratedPrompt()
+    this.prompt = eventPrompt ?? this.getCaravanBeatPrompt() ?? this.getGeneratedPrompt()
   }
 
   private updateMission(): void {
@@ -11761,6 +12071,27 @@ export class GameEngine {
     return regionId !== null && this.simulatedGeneratedRegions.has(regionId)
   }
 
+  /**
+   * W2-2 — W1-1's quiet rule for caravans: no random event is rolled while a beat is being
+   * fought, secured or walked, or while one that has not started is within
+   * `CONTRACT_QUIET_RADIUS`, because an event rolled there would still be running when the
+   * player reached the cart.
+   */
+  private caravanBeatHoldsRandomEvents(): boolean {
+    for (const { state, runtime } of this.caravanBeatEntries()) {
+      if (isCaravanBeatEngaged(state)) return true
+      if (state.phase !== 'approach' || !runtime) continue
+      if (this.player.position.distanceTo(runtime.cart.position) <= CONTRACT_QUIET_RADIUS) return true
+    }
+    return false
+  }
+
+  /** W2-2 — the square of a caravan being fought takes no chronicle fight on top of it. */
+  private caravanBeatOccupiesRegion(regionId: string): boolean {
+    return this.caravanBeatEntries().some(({ plan, state }) =>
+      plan.regionId === regionId && isCaravanBeatEngaged(state))
+  }
+
   private updateEvents(delta: number): void {
     if (this.ended) {
       this.cancelActiveEvents()
@@ -11802,7 +12133,8 @@ export class GameEngine {
     if (this.eventCooldown > 0) return
     // W1-1 — the director keeps out of the player's contract. It waits the way it waits
     // when it can afford nothing, and draws nothing from the event stream while it does.
-    if (this.contractHoldsRandomEvents()) {
+    // W2-2 — and out of the player's caravans, by the same rule.
+    if (this.contractHoldsRandomEvents() || this.caravanBeatHoldsRandomEvents()) {
       this.eventCooldown = EVENT_RETRY
       return
     }
@@ -11833,6 +12165,7 @@ export class GameEngine {
       if (this.activeEvents.some((event) => event.regionId === situation.regionId)) {
         continue
       }
+      if (this.caravanBeatOccupiesRegion(situation.regionId)) continue
       const event = this.materializeSituation(situation)
       if (!event) continue
       this.activeEvents.push(event)
@@ -11840,8 +12173,11 @@ export class GameEngine {
       if (situation.kind === 'aftermath') {
         this.seenAftermathRegionIds.add(situation.regionId)
       }
+      const copyContext = this.locatedCopyContext(situation)
       this.callbacks.onNotice(
-        describeLocatedEventStart(situation.kind, this.locatedCopyContext(situation)),
+        event.lootSite?.defend === true
+          ? describeCaravanAmbushDefenceStart(copyContext)
+          : describeLocatedEventStart(situation.kind, copyContext),
         'warning',
       )
       this.playSound('event')
@@ -12057,6 +12393,8 @@ export class GameEngine {
       this.damage += damageBonus
       return describeChampionDefeated(reward.gold, damageBonus)
     }
+    // W2-2 — the guard never robs a cart; it confiscates one for the palace, for the same pay.
+    if (kind === 'richCaravan' && this.faction === 'guard') return describeRichCaravanConfiscated(reward.gold)
     return describeRandomEventSuccess(kind, reward)
   }
 
@@ -12069,13 +12407,17 @@ export class GameEngine {
     succeeded: boolean,
   ): string {
     const chronicleEvents = event.handBack?.() ?? []
+    // W1-2 backlog — a defended cart of one's own side pays the owners' thanks, not loot.
+    const defended = event.kind === 'caravanAmbush' && event.lootSite?.defend === true
     if (succeeded) {
-      const reward = WORLD_EVENT_REWARDS[event.kind].gold
+      const reward = defended
+        ? CARAVAN_AMBUSH_DEFENDED_REWARD
+        : WORLD_EVENT_REWARDS[event.kind].gold
       this.gold += reward
       this.achievements.recordGoldEarned(reward)
       // W1-2 — taking a chronicle cart's cargo is robbing a caravan. Counted here, where an
       // event settles exactly once, so «Грабить корованы» and the run's tally see it once.
-      if (event.kind === 'caravanAmbush') this.achievements.recordCaravanRobbed(false)
+      if (event.kind === 'caravanAmbush' && !defended) this.achievements.recordCaravanRobbed(false)
     }
     const context = this.locatedEventCopy.get(event.id) ?? {
       regionLabel: this.regionGridLabel(event.regionId),
@@ -12084,6 +12426,11 @@ export class GameEngine {
       defender: null,
     }
     if (chronicleEvents.length > 0) this.handleChronicleEvents(chronicleEvents)
+    if (defended && succeeded) return describeCaravanAmbushDefended(CARAVAN_AMBUSH_DEFENDED_REWARD)
+    // W2-2 — the guard raids an enemy's cart for the palace; it does not rob one.
+    if (event.kind === 'caravanAmbush' && succeeded && this.faction === 'guard') {
+      return CARAVAN_AMBUSH_CONFISCATED_OUTCOME
+    }
     return describeLocatedEventOutcome(
       event.kind as ChronicleWorldEventKind,
       succeeded,
@@ -12190,7 +12537,9 @@ export class GameEngine {
       kind: 'richCaravan',
       state: 'active',
       title: 'Богатый корован',
-      description: 'Ограбь обоз и отойди от места налёта на 18 метров.',
+      description: this.faction === 'guard'
+        ? RICH_CARAVAN_CONFISCATE_DESCRIPTION
+        : 'Ограбь обоз и отойди от места налёта на 18 метров.',
       tone: 'warning',
       timer: 25,
       progress: 0,
@@ -12261,14 +12610,17 @@ export class GameEngine {
           event.markerPos.copy(robberyPoint)
           const cargo = caravan.getObjectByName('cargo')
           if (cargo instanceof THREE.Mesh) cargo.scale.y = 0.38
-          this.callbacks.onNotice(RICH_CARAVAN_LOOT_TAKEN_NOTICE, 'warning')
+          this.callbacks.onNotice(
+            this.faction === 'guard' ? RICH_CARAVAN_CONFISCATED_NOTICE : RICH_CARAVAN_LOOT_TAKEN_NOTICE,
+            'warning',
+          )
           this.playSound('coin')
         }
         return true
       },
       getPrompt: () =>
         !robbed && this.player.position.distanceTo(caravan.position) < 7
-          ? '[E] Ограбить богатый корован'
+          ? this.faction === 'guard' ? CARAVAN_CONFISCATE_PROMPT : '[E] Ограбить богатый корован'
           : null,
     })
     return event
@@ -12906,7 +13258,12 @@ export class GameEngine {
 
     const copyContext = this.locatedCopyContext(situation)
     this.locatedEventCopy.set(id, copyContext)
-    const copy = describeLocatedEvent('caravanAmbush', copyContext)
+    // W1-2 backlog — a cart of the player's own side is defended, never robbed: the guard
+    // does not pocket a guard cart's cargo, and the same holds for every side's own carts.
+    const defend = !hostile(this.faction, owner)
+    const copy = defend
+      ? describeCaravanAmbushDefence(copyContext)
+      : describeLocatedEvent('caravanAmbush', copyContext)
     let robbed = false
     // W1-2 — the raiders take the cargo only by loading it at the cart, and a player who
     // won the escort fight keeps it for a moment. Companions are never on `raiderIds`.
@@ -12915,7 +13272,7 @@ export class GameEngine {
     const lootSite: CaravanLootSite = {
       claim: createCaravanClaimState(),
       cart,
-      defend: !hostile(this.faction, owner),
+      defend,
       isEscort: (actorId) => escortIds.includes(actorId),
       sparkle: 0,
     }
@@ -12932,7 +13289,7 @@ export class GameEngine {
       tone: 'warning',
       timer: LOCATED_EVENT_TIMEOUT,
       progress: 0,
-      target: 1,
+      target: defend ? raiderIds.length : 1,
       markerId: `${id}-marker`,
       markerPos: cart.position.clone(),
       ownedActorIds: [...escortIds, ...raiderIds],
@@ -12964,10 +13321,17 @@ export class GameEngine {
         if (step.plundered) {
           plundered = true
           event.state = 'failed'
+          return
+        }
+        if (defend) {
+          // Defended once every raider is down with the cargo still on the cart.
+          const raidersStanding = this.countAliveActors(raiderIds)
+          event.progress = raiderIds.length - raidersStanding
+          if (raidersStanding === 0) event.state = 'succeeded'
         }
       },
       onInteract: () => {
-        if (robbed || plundered) return false
+        if (defend || robbed || plundered) return false
         if (this.player.position.distanceTo(cart.position) >= 7) return false
         robbed = true
         cancelCaravanLoot(lootSite.claim)
@@ -12978,10 +13342,16 @@ export class GameEngine {
         event.state = 'succeeded'
         return true
       },
-      getPrompt: () =>
-        !robbed && !plundered && this.player.position.distanceTo(cart.position) < 7
-          ? '[E] Забрать груз корована'
-          : null,
+      getPrompt: () => {
+        if (robbed || plundered) return null
+        const near = this.player.position.distanceTo(cart.position)
+        if (defend) {
+          return near < 12 && this.countAliveActors(raiderIds) > 0 ? CARAVAN_AMBUSH_DEFENCE_PROMPT : null
+        }
+        return near < 7
+          ? this.faction === 'guard' ? CARAVAN_CONFISCATE_PROMPT : '[E] Забрать груз корована'
+          : null
+      },
       handBack: () =>
         resolveMaterializedCaravan({
           state: this.chronicleState,
@@ -12990,7 +13360,12 @@ export class GameEngine {
           outcome: {
             caravanId: situation.caravanId ?? '',
             regionId: situation.regionId,
-            intact: !robbed && !plundered && this.countAliveActors(escortIds) > 0,
+            // A defended cart goes on if it was not loaded and either its escort or the
+            // player saw the raiders off; a robbed one goes on only if nobody took it.
+            intact: defend
+              ? !plundered && (this.countAliveActors(raiderIds) === 0 ||
+                this.countAliveActors(escortIds) > 0)
+              : !robbed && !plundered && this.countAliveActors(escortIds) > 0,
           },
         }),
     })
@@ -13383,7 +13758,7 @@ export class GameEngine {
   private removeActorById(actorId: string): void {
     const index = this.actors.findIndex((actor) => actor.id === actorId)
     if (index < 0) return
-    this.captureBridgeAmbushActor(this.actors[index])
+    this.captureCaravanBeatActor(this.actors[index])
     this.captureFinaleActor(this.actors[index])
     if (this.actors[index].generatedSpawnId === this.finale.identity.bossId) {
       suspendFinale(this.finale)
@@ -14042,7 +14417,7 @@ export class GameEngine {
     ) {
       this.caravanDefenseCredit = true
     }
-    this.captureBridgeAmbushActor(actor)
+    this.captureCaravanBeatActor(actor)
     this.recordGeneratedActorDeath(actor)
     // §5C.2 — losing the commander is a morale event for everyone who watched it, and
     // it must land before any of them takes their next check.
@@ -14483,24 +14858,7 @@ export class GameEngine {
     const primary = this.primaryEvent
     const expeditionInput = this.buildExpeditionInput()
     const expedition = this.expeditionPlanner.buildView(expeditionInput)
-    const bridgeAmbush = this.bridgeAmbushState
-      ? buildBridgeAmbushView(
-          this.generatedBlueprint,
-          this.faction,
-          this.objectives,
-          this.bridgeAmbushPlan,
-          this.bridgeAmbushState,
-          this.player.position,
-          this.cameraYaw,
-          (expedition.mode === 'selected' &&
-            expedition.target?.kind !== 'bridgeAmbush') ||
-            (expedition.mode === 'campaign' &&
-              expedition.target?.committed === true),
-          expedition.mode === 'selected' &&
-            expedition.target?.kind === 'bridgeAmbush',
-          expedition,
-        )
-      : null
+    const caravanBeats = this.buildCaravanBeatsView(expedition)
     const view = buildGameView({
       faction: this.faction,
       blueprint: this.generatedBlueprint,
@@ -14569,9 +14927,7 @@ export class GameEngine {
       contracts: expeditionInput.contracts,
       doctrines: buildDoctrineView(this.doctrines, this.generatedBlueprint.seed),
       expedition,
-      bridgeAmbush,
-      bridgeAmbushX: this.bridgeAmbushState?.cargoX ?? null,
-      bridgeAmbushZ: this.bridgeAmbushState?.cargoZ ?? null,
+      caravanBeats,
       caravanLoot: this.buildCaravanLootCue(),
       finale: buildFinaleView(this.finale, this.finaleRelevant()),
       shopPriceMultiplier: this.activeShopPriceMultiplier,
