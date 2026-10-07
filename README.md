@@ -165,7 +165,8 @@ offers your side's choices and what each one pays:
 
 The burn choice says whether the palace can still lose a guard, and burning does exactly what it
 says: not once the finale has begun, and not a guard standing in the world at that moment. A guard
-you saw at the gate on an earlier visit can still be sent away.
+you saw at the gate on an earlier visit can still be sent away, and a guard sent away stays away,
+on every later visit and after a continue.
 
 Every generated world has one shop, «Можно покупать и т. п.», and every ending moves its
 prices through the chronicle. A cart that reaches the market adds 0.14 supply and makes them
