@@ -56,15 +56,23 @@
 }
 
 @media (max-width: 720px), (pointer: coarse) {
+  /* The narrow prompt lane is 5.5rem tall and also has to carry the E prompt: the cue
+     keeps its line and its bar, and drops the decorative icon and the distance. */
+  .caravan-loot-cue:not(:last-child) {
+    margin-bottom: 0.25rem;
+  }
+
   .caravan-loot-title {
     justify-content: center;
   }
 
-  .caravan-loot-title strong {
-    flex-basis: 100%;
+  .caravan-loot-title svg,
+  .caravan-loot-title small {
+    display: none;
   }
 
   .caravan-loot-meter {
+    margin-top: 0.25rem;
     min-width: 0;
   }
 }
